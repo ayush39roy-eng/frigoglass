@@ -1,0 +1,205 @@
+[project]
+name = "rpd-backend"
+version = "0.1.0"
+description = "RPD Web Application backend (FastAPI + SQLAlchemy 2.0 async) — Frigoglass"
+requires-python = ">=3.13"
+license = { text = "Proprietary" }
+
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "gunicorn>=23.0",
+    "pydantic>=2.9",
+    "pydantic-settings>=2.6",
+    "sqlalchemy[asyncio]>=2.0.35",
+    "asyncpg>=0.30",
+    "alembic>=1.13",
+    "redis>=5.1",
+    "celery[redis]>=5.4",
+    "minio>=7.2",
+    # P5-T04 (CSV/XLSX export): openpyxl is the standard, actively-maintained
+    # library for writing real .xlsx workbooks from Python (streaming
+    # `write_only=True` mode keeps memory bounded for the ~236-project /
+    # 14-step-per-project scale this app targets) — chosen over `xlsxwriter`
+    # (also maintained, materially the same feature set for this task's plain
+    # tabular-export needs — either would work; openpyxl was picked for being
+    # the more commonly already-vendored choice, no functional reason to
+    # prefer one over the other here) and over hand-rolling OOXML (pointless
+    # reinvention for a solved problem). CSV needs no library — the stdlib
+    # `csv` module is used for the small-export path.
+    "openpyxl>=3.1",
+    "ortools>=9.11",
+    "cryptography>=43.0",
+    # P3-T09 (security remediation, findings #2/#3): replaced
+    # `python-jose[cryptography]` with `pyjwt[crypto]` — python-jose pulled in
+    # the unmaintained `ecdsa` package transitively (PYSEC-2026-1325, no fix
+    # version planned) purely to support ES*-family algorithms this app never
+    # configures (`OIDCSettings.algorithms` is RS256-only). pyjwt[crypto]
+    # verifies all algorithm families via `cryptography` directly and does
+    # not depend on `ecdsa`. Also dropped `authlib` (was declared but
+    # imported nowhere in backend/ — see docs/MEMORY.md P1-T06/P3-T08).
+    "pyjwt[crypto]>=2.9",
+    "httpx>=0.27",
+    # P6-T06 (observability): the de-facto standard, minimal-dependency
+    # client for exposing Prometheus text-exposition-format metrics
+    # (`GET /metrics`, `core/observability.py`). No `prometheus_client`-like
+    # dependency existed in this file before this task (checked first, per
+    # this task's own instruction). Deliberately NOT
+    # `prometheus-fastapi-instrumentator` or similar — this app has a
+    # load-bearing SSE streaming endpoint
+    # (`GET /schedule-runs/{id}/progress`) and needed a raw-ASGI middleware
+    # anyway (see `core/observability.py`'s docstring on why
+    # `BaseHTTPMiddleware`-based instrumentator packages are a risk here);
+    # `prometheus_client` alone (Counter/Histogram/generate_latest) is all
+    # that's actually needed.
+    "prometheus-client>=0.21",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+    "pytest-cov>=5.0",
+    "testcontainers[postgres]>=4.8",
+    # Pinned exact (not `>=`): ruff ships new lint rules in minor releases, and
+    # a floating pin let rules that were not firing at the P1 gate (UP037/UP042/
+    # extra B008 sites) silently accumulate as unaddressed lint debt between
+    # sessions (see docs/MEMORY.md P1-T08). Bump deliberately, re-run
+    # `ruff check .`, and update this pin in the same change.
+    "ruff==0.16.5",
+    "mypy>=1.13",
+    "aiosqlite>=0.20",
+    # P5-T04 (CSV/XLSX export): `openpyxl` ships no `py.typed` marker of its
+    # own; `types-openpyxl` is the official, actively-maintained third-party
+    # stub package (unlike `celery`, which has no equivalent — see
+    # `workers/celery_app.py`'s/`workers/worker_app.py`'s pre-existing,
+    # accepted `[import-untyped]` mypy gap, not addressed by this task since
+    # no stub package exists to install for it).
+    "types-openpyxl>=3.1",
+]
+
+# --- Packaging -----------------------------------------------------------
+# Flat layout: `backend/` is the Docker build context and the import root
+# (top-level importable packages live directly under `backend/`, e.g.
+# `models`, `scheduling`, `api`). No `backend.` prefix is used in imports —
+# see docs/MEMORY.md P1-T01 entry for the rationale. `scheduling/` belongs
+# to algorithm-engineer and does not exist yet as of this commit; setuptools
+# auto-discovery below tolerates that (it only packages what exists).
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["models*", "scheduling*", "api*", "core*", "schemas*", "services*", "workers*"]
+exclude = ["tests*"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+# P1-T05 (qa-inspector): coverage scope is everything under backend/ except
+# `scheduling/` (algorithm-engineer's package — 85% is its own, higher, P2-T09
+# threshold, not this 70% one) and `alembic/` (the migration/env scripts are
+# invoked via subprocess in tests/test_migrations.py and
+# tests/test_seed_scripts.py — real Postgres DDL up/down/up-again and
+# duplicate-guard/--reset behaviour are functionally verified there, but
+# subprocess execution isn't attributed to this in-process coverage.py run;
+# excluded from the *measured* percentage rather than silently miscounted as
+# 0%-covered dead code). `scheduling/` doesn't exist yet as of P1 — this
+# addopts line is written so it stays correct once it does, per this task's
+# acceptance criteria ("keep the coverage config scoped correctly for when it
+# does exist").
+#
+# P3-T02 note: `core/` (this task's new package — OIDC verification, RBAC
+# table) and `services/` (added in P3-T01 but never added here — a
+# pre-existing gap this task is fixing while touching this line anyway, not
+# silently leaving a second package uncovered) are added below, consistent
+# with the stated intent above ("everything under backend/ except
+# scheduling/ and alembic/"), not a scope change to that intent.
+#
+# P3-T06 note: `workers/` (this task's new package — the Celery app, the
+# CP-SAT dispatch task, the Redis progress publisher) is added below for the
+# same "everything except scheduling/ and alembic/" reason. Some of this
+# package's lines (the Celery-worker-process code paths inside
+# `_run_cp_sat_schedule_async`) are only exercisable against a real running
+# Celery worker + Redis + Postgres, not via in-process unit tests — see
+# `docs/MEMORY.md`'s P3-T06 entry for exactly what is unit-tested vs.
+# live-verified-only, and why a modest coverage drop on this package
+# specifically is expected and accepted rather than a regression to chase.
+addopts = "--cov=models --cov=api --cov=schemas --cov=seed --cov=domain_constants --cov=core --cov=services --cov=workers --cov-report=term-missing --cov-fail-under=70"
+
+# --- Coverage ----------------------------------------------------------------
+# Two enforced gates, deliberately separate (see docs/MEMORY.md P2-T09):
+#   1. Backend-wide, everything EXCEPT `scheduling/` and `alembic/`: >=70%,
+#      enforced by the `addopts` line above on the default `pytest` run.
+#   2. `scheduling/` (algorithm-engineer's package, the correctness-critical
+#      core): >=85%, enforced by `pytest -c pytest-scheduling.ini` (which adds
+#      `--cov=scheduling --cov-fail-under=85`). `make test` runs both.
+# The `[tool.coverage.*]` settings below apply to BOTH runs.
+[tool.coverage.run]
+branch = false
+omit = [
+    # Informal engineering self-test scripts. Kept in the tree as
+    # `python -m scheduling._selftest*` entry points and referenced by other
+    # agents / MEMORY.md; their assertions are ported into
+    # `tests/scheduling/test_*_selftest.py` and run as real pytest cases, so
+    # the scripts themselves are not product code to be coverage-measured.
+    "scheduling/_selftest*.py",
+    "tests/*",
+]
+
+[tool.coverage.report]
+exclude_also = [
+    "if __name__ == .__main__.:",
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
+    "@(abc\\.)?abstractmethod",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+# `alembic/versions/*.py` migration scripts are excluded from lint. They are
+# Alembic-generated scaffold following Alembic's own template conventions
+# (`Union[str, None]` revision hints, an unsorted `revision`/`down_revision`
+# header block, long inline DDL / PL/pgSQL trigger-body string literals), and
+# per docs/IMPLEMENTATION_PLAN.md P1-T07 an already-applied migration must
+# never be edited in place — so the findings there are unfixable by policy,
+# not just unfixed. `alembic/` is likewise excluded from coverage measurement
+# for the analogous "invoked via subprocess, not product code to restyle"
+# reason — see the [tool.pytest.ini_options] addopts comment above.
+extend-exclude = ["alembic/"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.ruff.lint.per-file-ignores]
+# B008 (function-call-in-default-argument) fires on FastAPI's *documented*
+# dependency-injection pattern: `param: X = Depends(...)` / `Header(...)` /
+# `Query(...)` / `Path(...)` / `Security(...)` in a parameter default is how
+# FastAPI is designed to be used. FastAPI's DI system re-resolves these per
+# request — they are never shared mutable default state, which is the actual
+# bug B008 exists to catch. Rewriting ~40 endpoint signatures to a
+# `param = Depends(...)`-free style to silence a linter false positive would
+# make every route harder to read for no safety gain. Scoped to the modules
+# that declare routes / route-level dependencies only.
+"api/routers/*.py" = ["B008"]
+"api/deps.py" = ["B008"]
+# UP042 (replace-str-enum) would rewrite `class X(str, enum.Enum)` to
+# `class X(enum.StrEnum)`. That is a behaviour change, not a lint fix:
+# `StrEnum` redefines `__str__` / `__format__` to return the bare member
+# *value*, while `(str, Enum)` returns `"X.MEMBER"`. These enums are
+# interpolated into log lines, error messages and f-strings throughout the
+# codebase and exercised by tests written against the `(str, Enum)` `__str__`
+# (see models/enums.py's module docstring and docs/MEMORY.md's P1-T02
+# "enum-values-callable" note). Changing it is out of scope for a lint-only
+# pass; the `(str, Enum)` mixin is deliberate.
+"models/enums.py" = ["UP042"]
+"core/rbac.py" = ["UP042"]
+
+[tool.mypy]
+python_version = "3.13"
+plugins = ["pydantic.mypy"]
+strict = true
+exclude = ["scheduling/"]

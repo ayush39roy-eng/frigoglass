@@ -1,0 +1,608 @@
+/*
+ * RPD design tokens — three layers, one direction of reference:
+ *
+ *   1. PRIMITIVES   raw palette / dimension ramps. No semantic meaning. Never used directly in components.
+ *   2. SEMANTIC     role-based aliases (canvas, surface, border, text, primary, danger, ...).
+ *                   Re-pointed per theme in `.dark`. This is the layer the Tailwind config consumes.
+ *   3. COMPONENT    a small set of shared component dimensions (radii, app chrome sizes).
+ *
+ * Components consume layer 2 (and 3) only, via Tailwind classes (`bg-surface`, `text-muted`, ...).
+ * Raw hex must never appear in a component. If you need a new colour, add a primitive + a semantic alias here.
+ *
+ * Colour values are stored as space-separated HSL channels ("H S% L%") so Tailwind's
+ * `hsl(var(--token) / <alpha-value>)` opacity modifier works everywhere.
+ *
+ * Design intent (see .claude/skills/ui-ux-pro-max/SKILL.md): industrial B2B planning tool.
+ * Data-dense, calm, print-safe. Frigoglass blue is the only brand colour; every other colour
+ * is either neutral structure or reserved for a single status meaning.
+ */
+
+:root {
+  /* ---------------------------------------------------------------------------
+   * LAYER 1 — PRIMITIVES
+   * ------------------------------------------------------------------------- */
+
+  /* Neutral — cool slate, faint blue cast so it sits under the brand without clashing */
+  --slate-0: 0 0% 100%;
+  --slate-50: 210 40% 98%;
+  --slate-100: 210 40% 96%;
+  --slate-150: 213 33% 93%;
+  --slate-200: 214 32% 89%;
+  --slate-300: 213 27% 82%;
+  --slate-400: 215 20% 63%;
+  --slate-450: 215 20% 42%;  /* dedicated a11y-safe step for --color-text-subtle (light) — see P4-T11 */
+  --slate-500: 215 16% 46%;
+  --slate-550: 215 20% 56%;  /* dedicated a11y-safe step for --color-text-subtle (dark) — see P4-T11 */
+  --slate-600: 215 19% 34%;
+  --slate-700: 215 25% 25%;
+  --slate-800: 217 33% 16%;
+  --slate-850: 220 39% 12%;
+  --slate-900: 222 44% 9%;
+  --slate-950: 229 45% 6%;
+
+  /* Brand — Frigoglass blue */
+  --blue-50: 214 100% 97%;
+  --blue-100: 214 95% 93%;
+  --blue-200: 213 97% 87%;
+  --blue-300: 212 96% 78%;
+  --blue-400: 213 94% 68%;
+  --blue-500: 217 91% 60%;
+  --blue-600: 221 83% 53%;
+  --blue-700: 224 76% 45%;
+  --blue-800: 226 71% 37%;
+  --blue-900: 224 64% 30%;
+  --blue-950: 226 57% 21%;
+
+  /* Status — red (blocking: ENG_CONFLICT, OVERLAP, errors) */
+  --red-50: 0 86% 97%;
+  --red-100: 0 93% 94%;
+  --red-500: 0 84% 60%;
+  --red-600: 0 72% 51%;
+  --red-700: 0 74% 42%;
+  --red-950: 0 63% 15%;
+
+  /* Status — amber (warning: SPILLOVER, LEFT_OUT) */
+  --amber-50: 48 100% 96%;
+  --amber-100: 48 96% 89%;
+  --amber-500: 38 92% 50%;
+  --amber-600: 32 95% 44%;
+  --amber-700: 26 90% 37%;
+  --amber-950: 26 80% 13%;
+
+  /* Status — emerald (positive: on-track, within-year, PASS) */
+  --emerald-50: 152 81% 96%;
+  --emerald-100: 149 80% 90%;
+  --emerald-500: 160 84% 39%;
+  --emerald-600: 158 64% 30%;
+  --emerald-700: 158 61% 24%;
+  --emerald-950: 156 70% 8%;
+
+  /* Accent — teal. Sparingly, for non-status categorical emphasis (e.g. lab vs design later). */
+  --teal-500: 174 72% 40%;
+  --teal-600: 175 77% 30%;
+  --teal-700: 175 70% 24%;
+
+  /* Dimension primitives */
+  --radius-0: 0px;
+  --radius-1: 0.25rem;
+  --radius-2: 0.375rem;
+  --radius-3: 0.5rem;
+  --radius-4: 0.75rem;
+
+  /* ---------------------------------------------------------------------------
+   * LAYER 2 — SEMANTIC (light theme)
+   * ------------------------------------------------------------------------- */
+
+  --color-canvas: var(--slate-100);          /* app background behind cards */
+  --color-surface: var(--slate-0);           /* card / panel background */
+  --color-surface-raised: var(--slate-50);   /* nested / hovered surface */
+  --color-surface-sunken: var(--slate-150);  /* wells, table header strip */
+
+  --color-border: var(--slate-200);
+  --color-border-strong: var(--slate-300);
+
+  --color-text: var(--slate-900);
+  /* P4-T11: was --slate-500 (4.14:1 on --color-surface-sunken, e.g. the "In Queue"
+   * status badge at 2xs) — below WCAG AA 4.5:1. --slate-600 clears 4.5:1 against
+   * every current text-muted background (white 7.71:1, canvas 7.02:1, sunken 6.52:1). */
+  --color-text-muted: var(--slate-600);
+  /* P4-T11: was --slate-400 (2.72:1 on white, e.g. the AppHeader wordmark) — well
+   * below WCAG AA 4.5:1. --slate-450 is a dedicated new step (between 400 and 500)
+   * that clears 4.5:1 against every current text-subtle background (white 5.72:1,
+   * canvas 5.22:1, sunken 4.84:1) while staying visibly lighter than text-muted. */
+  --color-text-subtle: var(--slate-450);
+  --color-text-inverse: var(--slate-0);
+
+  --color-primary: var(--blue-700);
+  --color-primary-hover: var(--blue-800);
+  --color-primary-fg: var(--slate-0);
+  --color-primary-subtle: var(--blue-50);
+  --color-primary-subtle-fg: var(--blue-800);
+
+  --color-ring: var(--blue-600);
+
+  --color-danger: var(--red-600);
+  --color-danger-fg: var(--slate-0);
+  --color-danger-subtle: var(--red-50);
+  --color-danger-subtle-fg: var(--red-700);
+
+  --color-warning: var(--amber-600);
+  --color-warning-fg: var(--slate-900);
+  --color-warning-subtle: var(--amber-50);
+  --color-warning-subtle-fg: var(--amber-700);
+
+  --color-success: var(--emerald-600);
+  --color-success-fg: var(--slate-0);
+  --color-success-subtle: var(--emerald-50);
+  --color-success-subtle-fg: var(--emerald-700);
+
+  --color-accent: var(--teal-600);
+  --color-accent-subtle-fg: var(--teal-700);
+
+  /* Priority band accents (P1 highest urgency → Q lowest). Distinct hues, each still paired
+   * with a text label in <PriorityBandPill>; colour is never the sole signal. */
+  --color-band-p1: var(--red-600);
+  --color-band-p2: var(--amber-600);
+  --color-band-p3: var(--blue-600);
+  --color-band-p4: var(--slate-500);
+  --color-band-q: var(--slate-400);
+
+  /* Gantt timeline. Solid = planned (brand blue); hatched = actual + delay (amber);
+   * connector = delay magnitude (red — the one place red shows a magnitude, not a status,
+   * per the dataviz-gantt SKILL). Grid + markers are neutral structure. */
+  --color-gantt-planned: var(--blue-600);
+  --color-gantt-planned-frozen: var(--blue-800);
+  --color-gantt-actual: var(--amber-500);
+  --color-gantt-actual-hatch: var(--amber-700);
+  --color-gantt-delay: var(--red-600);
+  --color-gantt-grid: var(--slate-200);
+  --color-gantt-grid-strong: var(--slate-300);
+  --color-gantt-marker-year: var(--amber-600);
+  --color-gantt-marker-now: var(--blue-500);
+
+  /* ---------------------------------------------------------------------------
+   * LAYER 3 — COMPONENT
+   * ------------------------------------------------------------------------- */
+
+  --radius-sm: var(--radius-1);
+  --radius: var(--radius-2);
+  --radius-lg: var(--radius-3);
+  --radius-xl: var(--radius-4);
+
+  --app-header-h: 3.25rem;
+  --app-sidebar-w: 14.5rem;
+  --app-sidebar-w-collapsed: 3.25rem;
+
+  color-scheme: light;
+}
+
+.dark {
+  /* ---------------------------------------------------------------------------
+   * LAYER 2 — SEMANTIC (dark theme). Only the semantic layer is re-pointed.
+   * ------------------------------------------------------------------------- */
+
+  --color-canvas: var(--slate-950);
+  --color-surface: var(--slate-900);
+  --color-surface-raised: var(--slate-850);
+  --color-surface-sunken: var(--slate-850);
+
+  --color-border: var(--slate-800);
+  --color-border-strong: var(--slate-700);
+
+  --color-text: var(--slate-100);
+  --color-text-muted: var(--slate-400);
+  /* P4-T11: was --slate-500 (3.54:1 on --color-surface-sunken / 4.01:1 on canvas) —
+   * below WCAG AA 4.5:1 in dark mode. --slate-550 is a dedicated new step (between
+   * 500 and 400) that clears 4.5:1 against every current text-subtle background
+   * (surface 5.34:1, canvas 5.65:1, sunken 4.98:1) while staying visibly darker/
+   * less prominent than --color-text-muted (--slate-400), preserving the same
+   * subtle < muted hierarchy as the light theme. */
+  --color-text-subtle: var(--slate-550);
+  --color-text-inverse: var(--slate-900);
+
+  --color-primary: var(--blue-500);
+  --color-primary-hover: var(--blue-400);
+  --color-primary-fg: var(--slate-950);
+  --color-primary-subtle: var(--blue-950);
+  --color-primary-subtle-fg: var(--blue-200);
+
+  --color-ring: var(--blue-500);
+
+  --color-danger: var(--red-500);
+  --color-danger-fg: var(--slate-950);
+  --color-danger-subtle: var(--red-950);
+  --color-danger-subtle-fg: var(--red-100);
+
+  --color-warning: var(--amber-500);
+  --color-warning-fg: var(--slate-950);
+  --color-warning-subtle: var(--amber-950);
+  --color-warning-subtle-fg: var(--amber-100);
+
+  --color-success: var(--emerald-500);
+  --color-success-fg: var(--slate-950);
+  --color-success-subtle: var(--emerald-950);
+  --color-success-subtle-fg: var(--emerald-100);
+
+  --color-accent: var(--teal-500);
+  --color-accent-subtle-fg: var(--teal-500);
+
+  --color-band-p1: var(--red-500);
+  --color-band-p2: var(--amber-500);
+  --color-band-p3: var(--blue-400);
+  --color-band-p4: var(--slate-400);
+  --color-band-q: var(--slate-500);
+
+  --color-gantt-planned: var(--blue-500);
+  --color-gantt-planned-frozen: var(--blue-300);
+  --color-gantt-actual: var(--amber-500);
+  --color-gantt-actual-hatch: var(--amber-100);
+  --color-gantt-delay: var(--red-500);
+  --color-gantt-grid: var(--slate-800);
+  --color-gantt-grid-strong: var(--slate-700);
+  --color-gantt-marker-year: var(--amber-500);
+  --color-gantt-marker-now: var(--blue-400);
+
+  color-scheme: dark;
+}
+
+/* ===========================================================================
+ * LAYER 1b — RAMP COMPLETION
+ *
+ * The original palette carried only the steps in active use (50/100/500/600/700/950
+ * for the status hues). Charts and tinted badges need intermediate steps, and every
+ * time one was missing a developer had a reason to write a raw hex inline. Filling
+ * the ramps out to a full 50→950 removes that incentive.
+ *
+ * Values are Tailwind's, EXCEPT where a step already existed here — those are left
+ * byte-identical so no shipped colour shifts. The emerald and teal 600/700 steps were
+ * deliberately desaturated by an earlier pass; their new neighbours are interpolated
+ * toward those custom values rather than snapped back to Tailwind, so the ramp reads
+ * as one continuous scale instead of a scale with two dents in it.
+ * ======================================================================== */
+
+:root {
+  /* Red — blocking status */
+  --red-200: 0 96% 89%;
+  --red-300: 0 94% 82%;
+  --red-400: 0 91% 71%;
+  --red-800: 0 70% 35%;
+  --red-900: 0 63% 31%;
+
+  /* Amber — warning status */
+  --amber-200: 48 97% 77%;
+  --amber-300: 46 97% 65%;
+  --amber-400: 43 96% 56%;
+  --amber-800: 23 83% 31%;
+  --amber-900: 22 78% 26%;
+
+  /* Emerald — positive status */
+  --emerald-200: 152 76% 80%;
+  --emerald-300: 156 72% 67%;
+  --emerald-400: 158 64% 52%;
+  --emerald-800: 156 66% 20%;
+  --emerald-900: 156 64% 17%;
+
+  /* Teal — non-status categorical accent */
+  --teal-50: 166 76% 97%;
+  --teal-100: 167 85% 89%;
+  --teal-200: 168 84% 78%;
+  --teal-300: 171 77% 64%;
+  --teal-400: 172 66% 50%;
+  --teal-800: 176 69% 20%;
+  --teal-900: 176 61% 17%;
+  --teal-950: 178 75% 8%;
+}
+
+/* ===========================================================================
+ * LAYER 2b — DENSITY ZONES
+ *
+ * THE governing decision of this design system.
+ *
+ * The visual references that inspired this work are consumer dashboards. Their
+ * spacing discipline is worth stealing; their density is not. A banking app shows
+ * six numbers per screen. The Prioritization Matrix shows 236 rows x 30 columns and
+ * the Gantt renders ~3,300 bars. A planner comparing 236 projects needs to see 40
+ * rows at once, not 8 — scrolling is not a substitute for comparison, because two
+ * projects a screen apart cannot be compared at all.
+ *
+ * So: ONE system, TWO densities. Same colours, same families, same components.
+ * Only the type scale and the spacing scale change, selected by a single attribute
+ * on the layout container:
+ *
+ *   <div data-density="overview">   Dashboard, Project Workspace
+ *   <div data-density="working">    Matrix, Gantt, Capacity, Planning
+ *
+ * Every primitive reads these variables instead of hard-coding a size, so a
+ * component moved between zones re-tunes itself with no prop and no variant.
+ *
+ * Defaults live on :root as `overview` so a component rendered outside any zone
+ * (a Storybook cell, a modal portalled to document.body, a test) is always legible
+ * rather than collapsing to 0.
+ * ======================================================================== */
+
+:root,
+[data-density='overview'] {
+  /* Type — generous, confident, presentable to a board */
+  --text-display: 2.125rem;   /* 34px */
+  --text-h1: 1.25rem;         /* 20px */
+  --text-h2: 1rem;            /* 16px */
+  --text-body: 0.875rem;      /* 14px */
+  --text-mono: 0.875rem;      /* 14px */
+
+  /* Display face: Space Grotesk earns its keep only at 34px (see fonts.css) */
+  --font-display: 'Space Grotesk', 'Inter Variable', ui-sans-serif, system-ui, sans-serif;
+
+  /* Rhythm */
+  --card-pad: 1.375rem;       /* 22px — midpoint of the 20-24px band */
+  --card-pad-tight: 1rem;
+  --grid-gutter: 1.25rem;     /* 20px */
+  --row-h: 2.75rem;           /* 44px — comfortable, not used for bulk data */
+  --row-h-compact: 2.25rem;
+  --stack: 1rem;              /* default vertical gap between sibling blocks */
+  --content-max: 105rem;      /* 1680px */
+}
+
+[data-density='working'] {
+  /* Type — dense, scannable, maximum data per screen.
+   * 12.5px body is deliberate and is the smallest size in the system that carries
+   * running text. Nothing a user must READ goes below 11px; the 11px label token is
+   * uppercase and tracked, which buys back the legibility that size loses. */
+  --text-display: 1.5rem;     /* 24px */
+  --text-h1: 1.0625rem;       /* 17px */
+  --text-h2: 0.875rem;        /* 14px */
+  --text-body: 0.78125rem;    /* 12.5px */
+  --text-mono: 0.75rem;       /* 12px */
+
+  /* Working zone drops Space Grotesk. Below ~24px its wide apertures stop reading as
+   * "instrument" and start reading as "slightly wrong Inter", so the display token
+   * simply points at the UI face. One less font to load on the heaviest screens. */
+  --font-display: 'Inter Variable', ui-sans-serif, system-ui, sans-serif;
+
+  --card-pad: 0.875rem;       /* 14px — midpoint of the 12-16px band */
+  --card-pad-tight: 0.625rem;
+  --grid-gutter: 0.75rem;     /* 12px */
+  --row-h: 2rem;              /* 32px — the number that makes 40 rows fit */
+  --row-h-compact: 1.75rem;   /* 28px */
+  --stack: 0.625rem;
+  --content-max: none;        /* full-bleed: the Gantt and Matrix need every pixel */
+}
+
+:root {
+  /* Density-invariant type. The label token is identical in both zones on purpose —
+   * it is already at the floor, and a label that changed size between zones would
+   * make the two densities look like two products. */
+  --text-label: 0.6875rem;    /* 11px */
+  --tracking-label: 0.06em;
+  --leading-body: 1.45;
+  --leading-heading: 1.2;
+
+  /* ---------------------------------------------------------------------------
+   * SPACING — 4px base grid
+   * ------------------------------------------------------------------------- */
+  --s1: 0.25rem;   /*  4px */
+  --s2: 0.5rem;    /*  8px */
+  --s3: 0.75rem;   /* 12px */
+  --s4: 1rem;      /* 16px */
+  --s5: 1.25rem;   /* 20px */
+  --s6: 1.5rem;    /* 24px */
+  --s7: 1.75rem;   /* 28px */
+  --s8: 2rem;      /* 32px */
+  --s9: 2.5rem;    /* 40px */
+  --s10: 3rem;     /* 48px */
+
+  /* ---------------------------------------------------------------------------
+   * ELEVATION — one level, not four
+   *
+   * A resting card is defined by its 1px border alone. Shadow is reserved for things
+   * that are genuinely floating above the page (menus, dialogs, drag ghosts) and for
+   * hover, where it signals "this responds". Putting a drop shadow on every card —
+   * as the healthcare reference does — makes a dense screen read as noise, because
+   * 30 shadows are indistinguishable from a texture.
+   * ------------------------------------------------------------------------- */
+  --shadow-hover: 0 1px 2px -1px hsl(var(--slate-900) / 0.08), 0 2px 6px -1px hsl(var(--slate-900) / 0.07);
+  --shadow-overlay: 0 4px 12px -2px hsl(var(--slate-900) / 0.12), 0 12px 32px -8px hsl(var(--slate-900) / 0.16);
+
+  /* ---------------------------------------------------------------------------
+   * MOTION
+   *
+   * Durations are tokens so `prefers-reduced-motion` can zero all of them in one
+   * place (see index.css) instead of each component testing the media query itself.
+   * This is a tool people use six hours a day: motion exists to make a state change
+   * legible, never to decorate. Anything that delights on first view irritates on
+   * the two-hundredth.
+   * ------------------------------------------------------------------------- */
+  --dur-instant: 80ms;
+  --dur-fast: 120ms;    /* hover, focus, small state flips */
+  --dur-base: 180ms;    /* route transitions */
+  --dur-slow: 220ms;    /* drawers, modals */
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+
+  /* ---------------------------------------------------------------------------
+   * CHART SERIES RAMP
+   *
+   * Categorical series are assigned from this ramp ORDERED BY VALUE, never by
+   * category index — so the largest series is always the darkest and the eye finds
+   * the ranking without reading the axis. Built from the brand blue with two teal
+   * steps at the tail, because a 6-step single-hue ramp loses separation at the
+   * light end. These are chart-only: they carry no status meaning.
+   * ------------------------------------------------------------------------- */
+  --chart-1: var(--blue-800);
+  --chart-2: var(--blue-600);
+  --chart-3: var(--blue-400);
+  --chart-4: var(--teal-600);
+  --chart-5: var(--teal-400);
+  --chart-6: var(--slate-400);
+
+  /* Chart structure */
+  --chart-grid: var(--color-border);
+  --chart-axis-text: var(--color-text-subtle);
+  --chart-tooltip-bg: var(--slate-850);
+  --chart-tooltip-text: var(--slate-50);
+}
+
+.dark {
+  /* Elevation reads differently on a dark canvas: a shadow against near-black is
+   * nearly invisible, so dark mode leans harder on the border and uses shadow only
+   * to separate true overlays from the page behind them. */
+  --shadow-hover: 0 1px 2px -1px hsl(0 0% 0% / 0.5), 0 2px 6px -1px hsl(0 0% 0% / 0.4);
+  --shadow-overlay: 0 4px 12px -2px hsl(0 0% 0% / 0.6), 0 12px 32px -8px hsl(0 0% 0% / 0.5);
+
+  --chart-1: var(--blue-300);
+  --chart-2: var(--blue-500);
+  --chart-3: var(--blue-700);
+  --chart-4: var(--teal-400);
+  --chart-5: var(--teal-600);
+  --chart-6: var(--slate-500);
+
+  --chart-tooltip-bg: var(--slate-800);
+  --chart-tooltip-text: var(--slate-50);
+}
+
+/* ===========================================================================
+ * SOFT SURFACE LAYER  (2026-09-08 — visual direction change, client-directed)
+ *
+ * The earlier pass optimised for a dense instrument: small radii, border-only
+ * cards, no resting shadow. The client reviewed it against the reference
+ * dashboards and asked for their look instead — bigger radii, floating cards,
+ * generous rounding, soft depth.
+ *
+ * This block is appended LAST so it wins the cascade without editing the layers
+ * above. Reverting the visual direction is deleting this block, nothing more.
+ *
+ * WHAT CHANGED AND WHY IT IS SAFE
+ *   - Radii roughly double. Purely cosmetic; no layout maths depends on them.
+ *   - Cards gain a soft resting shadow. This reverses the "border only" rule.
+ *     Kept genuinely soft (large blur, very low alpha) so 30 cards on a dense
+ *     screen still read as a field of cards rather than a field of shadows.
+ *   - Canvas warms very slightly and drops in saturation, so white cards read as
+ *     lifted rather than merely lighter. This is the single trick that makes the
+ *     reference dashboards look "expensive" — the ground is never pure grey.
+ *
+ * The brand stays Frigoglass blue. The references' sage/cream and lime are not
+ * adopted: image 2, the closer structural match, is blue-accented anyway.
+ * ======================================================================== */
+
+:root {
+  /* Rounding — the most visible half of the reference look */
+  --radius-1: 0.375rem;   /*  6px  chips, tiny controls */
+  --radius-2: 0.5rem;     /*  8px  inputs, small buttons */
+  --radius-3: 0.75rem;    /* 12px  buttons, menu items */
+  --radius-4: 1rem;       /* 16px  cards */
+  --radius-5: 1.25rem;    /* 20px  feature cards, panels */
+  --radius-pill: 9999px;  /*       search field, nav pills, avatars */
+
+  --radius-card: var(--radius-4);
+  --radius-panel: var(--radius-5);
+  --radius-control: var(--radius-3);
+
+  /* Ground. A hair of warmth and low saturation, and clearly DARKER than the white
+   * card — that gap is what makes a card read as lifted rather than as a slightly
+   * brighter rectangle. At 96% the separation was invisible; 94% is the point where
+   * the card edge stops depending on the border to be seen. */
+  --slate-100: 220 20% 94%;
+  --slate-150: 220 20% 91%;
+
+  /* Depth. Three very soft steps — resting, hover, overlay. Layered large-blur
+   * shadows at low alpha, never a single hard drop shadow. */
+  --shadow-card:
+    0 1px 2px hsl(var(--slate-900) / 0.04),
+    0 4px 12px -2px hsl(var(--slate-900) / 0.05);
+  --shadow-hover:
+    0 2px 4px hsl(var(--slate-900) / 0.05),
+    0 12px 24px -6px hsl(var(--slate-900) / 0.10);
+  --shadow-overlay:
+    0 8px 20px -4px hsl(var(--slate-900) / 0.12),
+    0 24px 48px -12px hsl(var(--slate-900) / 0.18);
+
+  /* The emphasised "feature" card — the one dark tile in the references.
+   * Exactly one per screen; a second one means neither is emphasised. */
+  --color-feature: var(--blue-800);
+  --color-feature-fg: var(--slate-0);
+  --color-feature-muted: var(--blue-200);
+}
+
+.dark {
+  /* On a dark ground a shadow is nearly invisible, so depth comes from the
+   * surface step instead and shadow only separates true overlays. */
+  --shadow-card: 0 1px 2px hsl(0 0% 0% / 0.4);
+  --shadow-hover: 0 2px 4px hsl(0 0% 0% / 0.5), 0 12px 24px -6px hsl(0 0% 0% / 0.45);
+
+  --color-feature: var(--blue-900);
+  --color-feature-fg: var(--slate-50);
+  --color-feature-muted: var(--blue-300);
+}
+
+/* ===========================================================================
+ * TWO-COLOUR SYSTEM + DARK CHROME  (2026-09-08, client-directed)
+ *
+ * The app now runs on two professional hues that contrast rather than blend:
+ *
+ *   BLUE   (--blue-700)   ACTION.    Buttons, links, active nav, primary series.
+ *                                    Everything the user can DO is blue.
+ *   PETROL (--petrol-*)   STRUCTURE. The sidebar rail and its furniture.
+ *                                    Everything that IS the app is petrol.
+ *
+ * Splitting the two by ROLE rather than by taste is what keeps a two-colour system
+ * from turning into a two-colour mess: a reader never has to ask what a colour means,
+ * because petrol is never clickable and blue is never decorative.
+ *
+ * Petrol is a deep desaturated teal — the reference's sidebar hue. It sits far enough
+ * from Frigoglass blue in hue (~196 vs ~224) to read as a deliberate second colour,
+ * and far enough in lightness (~26% vs ~45%) that a blue pill on a petrol rail is
+ * unmistakably a foreground object.
+ * ======================================================================== */
+
+:root {
+  /* Petrol ramp — the structural hue */
+  --petrol-50: 195 45% 96%;
+  --petrol-100: 195 44% 90%;
+  --petrol-200: 194 42% 80%;
+  --petrol-300: 194 38% 66%;
+  --petrol-400: 195 34% 50%;
+  --petrol-500: 196 42% 38%;
+  --petrol-600: 197 46% 30%;
+  --petrol-700: 198 48% 24%;
+  --petrol-800: 200 46% 19%;
+  --petrol-900: 202 44% 15%;
+  --petrol-950: 205 44% 11%;
+
+  /* ---- Sidebar / chrome surface -------------------------------------------
+   * A dedicated token block rather than reusing the semantic layer, because the
+   * rail is a dark island inside a light app: `--color-text` on `--color-surface`
+   * is correct everywhere EXCEPT here, and letting the rail borrow those tokens is
+   * how a dark sidebar ends up with unreadable dark text. */
+  --color-sidebar: var(--petrol-800);
+  --color-sidebar-raised: var(--petrol-700);
+  --color-sidebar-border: 200 40% 26%;
+  --color-sidebar-text: var(--petrol-100);
+  --color-sidebar-text-muted: var(--petrol-300);
+  --color-sidebar-active: var(--blue-600);
+  --color-sidebar-active-fg: 0 0% 100%;
+
+  /* ---- Bigger chrome ------------------------------------------------------- */
+  --app-header-h: 4rem;              /* 64px, was 52px */
+  --app-sidebar-w: 16rem;            /* 256px, was 232px */
+  --app-sidebar-w-collapsed: 4.5rem; /* 72px, was 52px */
+
+  /* ---- Borders that are actually visible -----------------------------------
+   * The old --line at 11% alpha vanished against a white card on a light ground,
+   * which is why every card was leaning on its shadow to be seen. These read as a
+   * deliberate hairline while staying under the 3:1 UI-boundary threshold's need
+   * for contrast on the STRONG variant. */
+  --color-border: 214 26% 86%;
+  --color-border-strong: 214 24% 76%;
+}
+
+.dark {
+  --color-sidebar: var(--petrol-950);
+  --color-sidebar-raised: var(--petrol-900);
+  --color-sidebar-border: 205 40% 20%;
+  --color-sidebar-text: var(--petrol-100);
+  --color-sidebar-text-muted: var(--petrol-400);
+  --color-sidebar-active: var(--blue-600);
+  --color-sidebar-active-fg: 0 0% 100%;
+
+  --color-border: 217 28% 22%;
+  --color-border-strong: 215 24% 32%;
+}

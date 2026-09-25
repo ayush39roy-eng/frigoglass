@@ -1,0 +1,254 @@
+name: Security scans
+
+# P6-T05 — dependency and container scanning wired into CI.
+#
+# No CI vendor is specified anywhere in docs/PROJECT_AND_STACK.md or
+# CLAUDE.md, and there is no git remote/host configured for this repo yet
+# (unconfirmed with the client). This workflow is the orchestrator's
+# documented assumption for P6-T05 (docs/IMPLEMENTATION_PLAN.md): GitHub
+# Actions, chosen for portability, easy to re-target at a different CI
+# vendor later if the client's actual tooling differs.
+#
+# Three scanners, three jobs:
+#   - pip-audit        -> backend/ Python dependencies (pyproject.toml, no
+#                          lockfile — this project installs via `pip install .`,
+#                          not poetry/pip-tools/uv; see backend/pyproject.toml
+#                          and docs/MEMORY.md P6-T01/P1-T06).
+#   - npm-audit         -> frontend/ dependencies via `pnpm audit` (this repo
+#                          uses pnpm — see frontend/pnpm-lock.yaml + .npmrc —
+#                          not npm/yarn).
+#   - trivy-images      -> the two container images this repo actually
+#                          builds and controls: rpd-backend (backend/Dockerfile,
+#                          shared by api/worker/solver-worker) and
+#                          rpd-frontend (frontend/Dockerfile).
+#   - trivy-third-party-images -> a lighter, non-blocking, weekly-only pass
+#                          over the pulled/pinned third-party images already
+#                          in docker-compose.yml (postgres, redis, minio, the
+#                          owasp/modsecurity-crs WAF image) — see that job's
+#                          own comment for why this one doesn't block PRs.
+#
+# Trigger policy: push + pull_request on every change (standard CI hygiene —
+# catches a newly-introduced vulnerable dependency/base-image bump at review
+# time) PLUS a weekly schedule, so a CVE disclosed *after* a dependency/image
+# was already approved and merged still gets caught without waiting for the
+# next unrelated commit. `workflow_dispatch` for on-demand manual runs.
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  schedule:
+    # Monday 06:00 UTC — arbitrary but fixed, off business hours for a
+    # Greece/India/Romania-hub audience.
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+
+jobs:
+  pip-audit:
+    name: pip-audit (backend Python dependencies)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          # Matches backend/Dockerfile's runtime base (python:3.13-slim) and
+          # backend/pyproject.toml's `requires-python = ">=3.13"` — audit the
+          # same interpreter line that actually ships.
+          python-version: "3.13"
+
+      - name: Install backend runtime dependencies
+        working-directory: backend
+        run: |
+          python -m pip install --upgrade pip
+          # `pip install .` only — NOT `.[dev]`. Mirrors backend/Dockerfile's
+          # own builder stage exactly: audit what actually ships in the
+          # `rpd-backend` image, not test/lint tooling that never reaches
+          # production. Never touches backend/scheduling/ as a package to
+          # modify — this only installs it as a dependency-resolution target,
+          # same as the production Dockerfile does.
+          pip install .
+
+      - name: Install pip-audit
+        run: pip install pip-audit
+
+      - name: Run pip-audit
+        run: pip-audit --progress-spinner off
+        # --- Failure policy ---------------------------------------------
+        # Fail on ANY known vulnerability reported against the installed
+        # dependency graph (no severity filter, no --ignore-vuln by
+        # default). Unlike OS/container advisories, PyPI/OSV advisories for
+        # Python packages don't carry a uniform CVSS severity, so a
+        # "severity threshold" the way Trivy has one isn't meaningfully
+        # available here — and per the `security-review` skill
+        # (.claude/skills/security-review/SKILL.md, "Dependency and
+        # container scanning" section), the bar for this scanner is
+        # "pip-audit on every backend dependency change" with no stated
+        # tolerance. Verified live (2026-09-05 baseline, this task): a clean
+        # `pip install .` + `pip-audit` run today reports zero known
+        # vulnerabilities (the ecdsa/PYSEC-2026-1325 finding recorded in
+        # docs/MEMORY.md's P1-T06/P3-T09 entries was resolved by dropping
+        # python-jose in favor of pyjwt[crypto] — confirmed still true).
+        #
+        # If a future finding has no fix version available and is assessed
+        # as low real-world risk (the documented pattern this repo already
+        # used once for the ecdsa case), the escape hatch is an explicit
+        # `--ignore-vuln <ID>` flag added to the command above, with an
+        # inline comment citing the docs/MEMORY.md finding and a review
+        # date — never a silent skip, and never a blanket
+        # `--ignore-vuln`-everything policy.
+
+  npm-audit:
+    name: pnpm audit (frontend dependencies)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          # Matches frontend/Dockerfile's builder stage
+          # (`corepack prepare pnpm@9 --activate`) and pnpm-lock.yaml's
+          # `lockfileVersion: '9.0'` — this repo uses pnpm, not npm/yarn
+          # (confirmed via frontend/.npmrc + frontend/pnpm-lock.yaml).
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: pnpm install --frozen-lockfile
+
+      - name: Run pnpm audit (fails only on High/Critical)
+        working-directory: frontend
+        run: pnpm audit --audit-level=high
+        # --- Failure policy ---------------------------------------------
+        # Fail the build only on High or Critical advisories. This app's
+        # frontend dependency tree (Radix UI, TanStack, Framer Motion, etc.)
+        # is large enough that Low/Moderate transitive advisories are
+        # routine noise, and many don't apply to this app's actual usage
+        # (verified live, 2026-09-05 baseline: the current Moderate finding,
+        # a `react-router` SSR-hydration/open-redirect advisory pulled in
+        # transitively via `react-router-dom@6.30.6`, does not apply here —
+        # this is a client-only SPA with no SSR). Gating every PR on every
+        # Low/Moderate transitive advisory in a tree this size would make
+        # the check permanently red and get muted/ignored, which is not a
+        # usable gate — the same "don't invent an unusable policy" concern
+        # the Trivy job below documents for --ignore-unfixed. Moderate/Low
+        # findings still print in this step's own log for visibility even
+        # though they don't fail the build; see docs/MEMORY.md's P6-T05
+        # entry for the exact advisory recorded at this baseline and why it
+        # was left as a documented finding rather than silently fixed here
+        # (the real fix, react-router-dom v6 -> v7, is a major-version
+        # bump with breaking API changes — out of scope for a scanning-only
+        # task).
+
+  trivy-images:
+    name: Trivy — rpd-backend / rpd-frontend (owned images)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build backend image (rpd-backend)
+        run: docker build -t rpd-backend:ci -f backend/Dockerfile backend
+
+      - name: Build frontend image (rpd-frontend)
+        run: docker build -t rpd-frontend:ci -f frontend/Dockerfile frontend
+
+      - name: Trivy scan — rpd-backend
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: rpd-backend:ci
+          format: table
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          exit-code: "1"
+
+      - name: Trivy scan — rpd-frontend
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: rpd-frontend:ci
+          format: table
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          exit-code: "1"
+        # --- Failure policy (applies to both scans above) ----------------
+        # CRITICAL + HIGH severity, `ignore-unfixed: true`. Verified live
+        # (2026-09-05 baseline, this task): scanning the actual built
+        # `rpd-backend` image WITHOUT --ignore-unfixed turned up 3 CRITICAL
+        # + 60 HIGH OS-package findings on the `python:3.13-slim` (Debian
+        # 13/trixie) base alone, every single one with NO fix version
+        # published yet anywhere upstream — a policy that blocks on those
+        # would be permanently red with nothing an engineer here could do
+        # about it, which is not a usable gate (the task's own stated
+        # failure mode to avoid). With --ignore-unfixed, that baseline drops
+        # to 2 HIGH findings (msgpack, setuptools), both of which were
+        # further confirmed to be Trivy false positives — neither package is
+        # actually installed anywhere in the built image (verified via
+        # `find` inside the running container); msgpack is an *unmet*
+        # optional `kombu[msgpack]` extra declared in kombu's own METADATA
+        # but never installed, since `celery[redis]` doesn't request that
+        # extra. Real, actionable baseline for rpd-backend: zero.
+        #
+        # The `rpd-frontend` image's baseline was NOT zero: the pulled
+        # `nginx:1.27-alpine` base (last published 2025-04-16, a stale tag)
+        # carried 34 real CRITICAL/HIGH OS-package CVEs (libssl3/libcrypto3,
+        # libxml2, libpng, libexpat, c-ares, musl, nghttp2, zlib) with fixes
+        # already available in Alpine's own package repo. Fixed in this same
+        # task by adding `RUN apk update && apk upgrade --no-cache` to
+        # frontend/Dockerfile's runtime stage (same Alpine 3.21 release
+        # line, same nginx version, no behavior change — verified via
+        # `nginx -t` and a live container serving `/` -> 200 after the
+        # change) — re-scanned clean at zero afterward. See docs/MEMORY.md's
+        # P6-T05 entry for the full before/after.
+
+  trivy-third-party-images:
+    name: Trivy — pulled third-party images (report-only, weekly)
+    runs-on: ubuntu-latest
+    # Report-only, and only runs on the weekly schedule or a manual dispatch
+    # — never blocks a push/PR. These are third-party images this repo pins
+    # in docker-compose.yml but does not build (postgres, redis, minio, the
+    # owasp/modsecurity-crs WAF image from P6-T02). Blocking every PR on an
+    # upstream base image's own CVEs — which this repo can only remediate by
+    # bumping the pinned tag and re-testing the whole compose stack, not by
+    # editing a lockfile — isn't proportionate to "did this PR introduce a
+    # new risk". This job exists so those CVEs still get surfaced
+    # periodically for a deliberate remediation decision, rather than never
+    # being looked at again after P6-T01/T02 pinned them.
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    strategy:
+      fail-fast: false
+      matrix:
+        image:
+          - "postgres:17-alpine"
+          - "redis:7-alpine"
+          - "minio/minio:latest"
+          - "owasp/modsecurity-crs:4.28.0-nginx-alpine-202608131208"
+    steps:
+      - name: Pull image
+        run: docker pull "${{ matrix.image }}"
+
+      - name: Trivy scan (report-only)
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: ${{ matrix.image }}
+          format: table
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          exit-code: "0"
+        # Verified live (2026-09-05 baseline, this task) — real, fixed-
+        # available findings exist today: `redis:7-alpine` is clean (zero);
+        # `postgres:17-alpine` has 9 HIGH (libcrypto3/libssl3/libuuid);
+        # `owasp/modsecurity-crs:...` has 11 OS-package findings; and
+        # `minio/minio:latest` is the standout — dozens of HIGH and several
+        # CRITICAL findings across its bundled Go stdlib, golang.org/x/crypto,
+        # golang.org/x/net, and grpc, consistent with docs/MEMORY.md's
+        # existing P6-T01 flag that `minio/minio:latest` was "intentionally
+        # left floating" pending this task's pin-discipline pass. This job
+        # deliberately does NOT pin/bump those images itself (a version bump
+        # here needs a full compose-stack re-verification pass, which is a
+        # remediation task of its own, not a scanning-wiring task) — see
+        # docs/MEMORY.md's P6-T05 entry for the full findings and the
+        # recommendation left for the orchestrator.

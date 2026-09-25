@@ -1,0 +1,16 @@
+node_modules
+dist
+dist-ssr
+dist-e2e
+coverage
+playwright-report
+test-results
+e2e
+.git
+.DS_Store
+.vite
+stats.html
+*.local
+.env
+.env.*
+!.env.example

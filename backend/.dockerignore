@@ -1,0 +1,19 @@
+# Keeps the build context (and, transitively, anything an errant `COPY .`
+# might pick up) free of dev-only artefacts. `Dockerfile` itself only `COPY`s
+# named source directories (not `COPY . .`), so this is defense-in-depth,
+# not the only thing preventing dev cruft from reaching the image.
+.venv/
+__pycache__/
+*.pyc
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+.env
+.env.*
+!.env.example
+tests/
+.git/
+.DS_Store
+htmlcov/
+.coverage

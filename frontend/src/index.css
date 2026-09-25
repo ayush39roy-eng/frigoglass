@@ -1,0 +1,107 @@
+/* Fonts first: @font-face must be registered before the first rule that uses a
+ * family name, or the initial paint falls back and then reflows. */
+@import './styles/fonts.css';
+@import './styles/tokens.css';
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  html,
+  body,
+  #root {
+    @apply h-full;
+  }
+
+  body {
+    @apply bg-canvas text-text font-sans antialiased;
+    /* cv11 = single-storey 'a' in Inter's alternates; ss01 = disambiguated glyphs.
+     * Both make small UI text at 12.5px measurably easier to scan. */
+    font-feature-settings: 'cv11', 'ss01';
+    text-rendering: optimizeLegibility;
+    /* Body text follows the active density zone. Set here rather than on a wrapper
+     * so text in a portalled overlay still inherits a sane size. */
+    font-size: var(--text-body);
+    line-height: var(--leading-body);
+  }
+
+  /* Every figure that lines up in a column gets tabular numerals (rpd-visual-bar SKILL).
+   *
+   * `tabular-nums` alone is not enough: Inter's proportional digits are also its
+   * default, so a figure inside a <div> in a virtualized cell — which is what the
+   * Matrix and Gantt actually render, not a <td> — would still wobble. `[data-numeric]`
+   * is the escape hatch for those, and `.tnum` for one-off spans. */
+  table,
+  .tnum,
+  [data-numeric] {
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: 'tnum';
+  }
+
+  /* Headings inherit the zone's scale. A component that wants a specific step asks
+   * for it by token (text-h1/text-h2); these defaults keep unstyled semantic markup
+   * from falling back to the browser's own scale, which ignores density entirely. */
+  h1 {
+    font-size: var(--text-h1);
+    line-height: var(--leading-heading);
+    font-weight: 600;
+  }
+
+  h2 {
+    font-size: var(--text-h2);
+    line-height: var(--leading-heading);
+    font-weight: 600;
+  }
+
+  /* Focus ring: 2px brand at 40% opacity, offset 2px. Visible against every surface
+   * token in both themes, and never removed — including on mouse users, because
+   * :focus-visible already excludes them. */
+  :focus-visible {
+    @apply outline-none ring-2 ring-ring/40 ring-offset-2 ring-offset-canvas;
+  }
+
+  /* Reduced motion is handled in ONE place, by zeroing the duration tokens, rather
+   * than by each component testing the media query. Any component that animates via
+   * `var(--dur-*)` is covered automatically; Framer Motion components additionally
+   * read the same preference through useMotionTokens() (src/lib/motion.ts) because
+   * JS-driven springs never touch CSS custom properties. */
+  @media (prefers-reduced-motion: reduce) {
+    :root {
+      --dur-instant: 0ms;
+      --dur-fast: 0ms;
+      --dur-base: 0ms;
+      --dur-slow: 0ms;
+    }
+
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
+}
+
+@layer utilities {
+  .scrollbar-thin {
+    scrollbar-width: thin;
+    scrollbar-color: hsl(var(--color-border-strong)) transparent;
+  }
+
+  /* The uppercase micro-label used for section headers, table column heads and card
+   * eyebrows. Identical in both density zones on purpose — see tokens.css. */
+  .label-caps {
+    font-size: var(--text-label);
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: var(--tracking-label);
+    line-height: 1.3;
+  }
+}

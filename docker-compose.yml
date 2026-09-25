@@ -1,0 +1,496 @@
+# RPD Web Application — production Docker Compose stack (P6-T01, TLS/WAF
+# added in P6-T02, structured logging/metrics/nightly backup added in
+# P6-T06).
+# Service graph per docs/PROJECT_AND_STACK.md §6 ("Deployment topology"):
+#
+#   nginx (reverse proxy; TLS 1.2/1.3 termination, HSTS + baseline security
+#          headers, HTTP->HTTPS redirect — P6-T02)
+#     -> waf-api      (ModSecurity + OWASP CRS, P6-T02) -> api (FastAPI,
+#                       Gunicorn+Uvicorn workers)
+#     -> waf-frontend (ModSecurity + OWASP CRS, P6-T02) -> frontend (built
+#                       static SPA, served by its own nginx container)
+#     -> api directly, for /healthz only (bypasses the WAF hop — see
+#        deploy/nginx/default.conf's comment on why)
+#
+#   worker         (Celery — general background jobs: exports, notifications,
+#                   nightly Postgres backup-to-MinIO — P6-T06)
+#   solver-worker  (Celery — CP-SAT and greedy scheduler runs, isolated for
+#                   resource limits)
+#   beat           (Celery beat — P6-T06; schedules the nightly backup task
+#                   onto `worker`'s own queue, executes nothing itself)
+#
+#   postgres, redis, minio — primary datastore / cache+broker+SSE pub-sub /
+#   S3-compatible object storage.
+#
+# `waf-api`/`waf-frontend` (P6-T02) are one dedicated `owasp/modsecurity-crs`
+# container per upstream, each in that image's default single-BACKEND
+# reverse-proxy mode — not part of §6's original topology diagram, but the
+# natural way to add a maintained ModSecurity+CRS hop in front of two
+# distinct backends without hand-building a custom ModSecurity-nginx image.
+# Neither is published to the host; only `nginx` (the edge) is internet-
+# facing, matching P6-T01's "nginx is the ONLY container that publishes a
+# port to the host" invariant, now on both 80 (redirect-only) and 443.
+#
+# This is the PRODUCTION stack. It is entirely separate from, and does not
+# reference, `docker-compose.auth.dev.yml` (a narrow dev-only Keycloak IdP
+# for local OIDC testing, P3-T02) — do not run both against the same env
+# expecting them to interconnect; production OIDC cutover against a real
+# IdP is P6-T03.
+#
+# Usage: `make dev` (see root Makefile), or directly:
+#   cp .env.example .env       # fill in CONFIG values — see .env.example's comments
+#   # populate secrets/*.txt   # see secrets/README.md (P6-T04) — NOT set via .env
+#   docker compose up -d --build
+#
+# Non-negotiable this file structurally enforces (CLAUDE.md): "Never run
+# CP-SAT inside the FastAPI process." `api` runs Gunicorn/Uvicorn only (see
+# `backend/Dockerfile`'s CMD); CP-SAT is only ever invoked by
+# `workers/schedule_tasks.py`, which only `solver-worker`'s `command:` below
+# actually executes, in its own container with its own resource limits.
+#
+# `api`, `worker`, and `solver-worker` all build from the SAME
+# `backend/Dockerfile` image (one build, three commands/containers) — the
+# image contains no service-specific code path; what each container DOES is
+# entirely determined by its `command:` below. This keeps the three
+# processes trivially guaranteed to be running identical application code
+# (no drift between an "API build" and a "worker build" of the same
+# release) while still being genuinely separate containers/processes with
+# genuinely separate Celery queues (`worker` vs `solver`, see
+# `backend/workers/worker_app.py` / `backend/workers/celery_app.py`'s
+# `task_default_queue` settings) and, for `solver-worker`, its own resource
+# ceiling.
+
+volumes:
+  postgres-data:
+  redis-data:
+  minio-data:
+  # P6-T06: Celery beat's own schedule-state file (`beat` service) — see
+  # that service's comment for why this needs to be a named volume rather
+  # than the container's writable layer.
+  celerybeat-data:
+
+networks:
+  rpd-internal:
+    driver: bridge
+
+# Docker Compose native secrets (P6-T04). Each file is mounted read-only at
+# `/run/secrets/<name>` inside any service that lists it under its own
+# `secrets:` key. Real files live under `./secrets/` on the deploying host —
+# gitignored, populated by an operator (or, for local dev only,
+# `deploy/secrets/generate-dev-secrets.sh`, wired into `make dev`) — see
+# `secrets/README.md` for the config-vs-secret line this app draws and what
+# to generate. This is a plain-Compose deployment (no Swarm), so these are
+# simple host-file bind mounts, not Swarm's Raft-encrypted secret store —
+# still strictly better than a plain-env-var secret: it never appears in
+# `docker inspect`'s `Config.Env`, a process `/proc/<pid>/environ` dump, or
+# shell history, and isn't captured by `docker compose config` output either.
+# Vault was considered and deliberately not used here — see
+# `secrets/README.md`'s "Why Docker Compose secrets and not Vault" section.
+secrets:
+  postgres_password:
+    file: ./secrets/postgres_password.txt
+  field_encryption_key:
+    file: ./secrets/field_encryption_key.txt
+  minio_access_key:
+    file: ./secrets/minio_access_key.txt
+  minio_secret_key:
+    file: ./secrets/minio_secret_key.txt
+
+# Pinned to a specific dated stable-tag build (P6-T02), not the floating
+# `nginx-alpine` rolling tag (README.md's own advice: "Rolling Tags can be
+# practical but should not be used in production") — `4.28.0` is the
+# current latest stable CRS release as of this task; alpine variant for a
+# smaller image. Re-pin discipline going forward (digest pinning, renovate/
+# dependabot, etc.) is P6-T05's job, same precedent as `minio:latest` in
+# P6-T01 — this one just starts pinned rather than floating, since it's
+# being introduced fresh here.
+x-waf-image: &waf-image owasp/modsecurity-crs:4.28.0-nginx-alpine-202608131208
+
+# Tuning shared by both `waf-api`/`waf-frontend` (see each service's own
+# comment for the per-service overrides layered on top via `<<: *waf-common-env`).
+x-waf-common-env: &waf-common-env
+  SERVER_NAME: rpd.internal
+  # CRS's own documented guidance: start production deployments at paranoia
+  # level 1 (lowest false-positive rate) — see the `waf-api` service's own
+  # comment for why this app specifically (free-text fields) makes that
+  # more than a generic default here.
+  BLOCKING_PARANOIA: "1"
+  ANOMALY_INBOUND: "5"
+  ANOMALY_OUTBOUND: "4"
+
+x-backend-image: &backend-image
+  build:
+    context: ./backend
+    dockerfile: Dockerfile
+  image: rpd-backend:latest
+  restart: unless-stopped
+  networks:
+    - rpd-internal
+  depends_on:
+    postgres:
+      condition: service_healthy
+    redis:
+      condition: service_healthy
+    minio:
+      condition: service_healthy
+  # Secrets (P6-T04): mounted read-only at /run/secrets/<name>; resolved into
+  # the plain env vars below (RPD_FIELD_ENCRYPTION_KEY, RPD_MINIO_ACCESS_KEY,
+  # RPD_MINIO_SECRET_KEY, POSTGRES_PASSWORD -> RPD_DATABASE_URL) by
+  # `backend/docker-entrypoint.sh`'s `resolve_secret` shim BEFORE Python ever
+  # starts — no `os.environ`/`pydantic-settings` code changes needed. See
+  # that script's header comment and `secrets/README.md`.
+  secrets:
+    - postgres_password
+    - field_encryption_key
+    - minio_access_key
+    - minio_secret_key
+  environment: &backend-env
+    # --- config (plain env vars are fine — see secrets/README.md's table) ---
+    POSTGRES_USER: ${POSTGRES_USER:-rpd}
+    POSTGRES_DB: ${POSTGRES_DB:-rpd}
+    POSTGRES_HOST: postgres
+    POSTGRES_PORT: "5432"
+    RPD_REDIS_URL: redis://redis:6379/0
+    RPD_OIDC_ISSUER: ${RPD_OIDC_ISSUER:?RPD_OIDC_ISSUER must be set — see .env.example and docs/OPEN_QUESTIONS.md item 9}
+    RPD_OIDC_AUDIENCE: ${RPD_OIDC_AUDIENCE:?RPD_OIDC_AUDIENCE must be set — see .env.example and docs/OPEN_QUESTIONS.md item 9}
+    RPD_OIDC_CLIENT_ID: ${RPD_OIDC_CLIENT_ID:-}
+    RPD_OIDC_JWKS_URL: ${RPD_OIDC_JWKS_URL:-}
+    RPD_MINIO_ENDPOINT: minio:9000
+    RPD_MINIO_SECURE: "false"
+    RPD_MINIO_EXPORTS_BUCKET: ${RPD_MINIO_EXPORTS_BUCKET:-rpd-exports}
+    # P6-T06: nightly pg_dump-to-MinIO backups (`workers/backup_tasks.py`)
+    # land in their OWN bucket, separate from `RPD_MINIO_EXPORTS_BUCKET`
+    # above, per docs/PROJECT_AND_STACK.md §6's "separate bucket,
+    # lifecycle-policy retained" wording.
+    RPD_MINIO_BACKUPS_BUCKET: ${RPD_MINIO_BACKUPS_BUCKET:-rpd-backups}
+    RPD_MINIO_BACKUP_RETENTION_DAYS: ${RPD_MINIO_BACKUP_RETENTION_DAYS:-30}
+    # P7-T06: off-host mirror of the `rpd-backups` bucket
+    # (`backend/workers/backup_mirror_tasks.py`). All three default to empty
+    # (unconfigured) — `core/backup_mirror_config.py::BackupMirrorSettings.
+    # is_configured` is `False` until an operator sets a real destination,
+    # in which case `mirror_backups_offhost` deliberately no-ops rather than
+    # failing the nightly beat schedule (see that module's own docstring).
+    # The destination host/bucket is Frigoglass's own infrastructure
+    # decision — see `docs/HANDOVER/BACKUP_RESTORE.md` §4 and
+    # `.env.example` for how to turn this on.
+    RPD_BACKUP_MIRROR_ENDPOINT: ${RPD_BACKUP_MIRROR_ENDPOINT:-}
+    RPD_BACKUP_MIRROR_BUCKET: ${RPD_BACKUP_MIRROR_BUCKET:-}
+    RPD_BACKUP_MIRROR_SECURE: ${RPD_BACKUP_MIRROR_SECURE:-true}
+    RPD_CELERY_TASK_TIME_LIMIT_SECONDS: ${RPD_CELERY_TASK_TIME_LIMIT_SECONDS:-900}
+    RPD_CELERY_CP_SAT_MAX_TIME_IN_SECONDS: ${RPD_CELERY_CP_SAT_MAX_TIME_IN_SECONDS:-60}
+    # P6-T06: structured-logging verbosity (core/logging_config.py's
+    # LoggingSettings). Has a code-side default (INFO) — this is here so an
+    # operator can raise verbosity for one deployment without a code change.
+    RPD_LOG_LEVEL: ${RPD_LOG_LEVEL:-INFO}
+    # --- secrets (P6-T04): _FILE-suffixed paths into the Compose secrets
+    # mounted above, resolved by backend/docker-entrypoint.sh. NEVER the
+    # plain value — that's the entire point of this task. ---
+    POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
+    RPD_FIELD_ENCRYPTION_KEY_FILE: /run/secrets/field_encryption_key
+    RPD_MINIO_ACCESS_KEY_FILE: /run/secrets/minio_access_key
+    RPD_MINIO_SECRET_KEY_FILE: /run/secrets/minio_secret_key
+    # Future slot (P6-T03, currently BLOCKED — docs/OPEN_QUESTIONS.md #9):
+    # once a confidential OIDC client secret exists, uncomment this line,
+    # add `oidc_client_secret` to both the top-level `secrets:` map and this
+    # block's `secrets:` list above, and add a `client_secret` field to
+    # `OIDCSettings` (backend/core/oidc.py) that reads
+    # `RPD_OIDC_CLIENT_SECRET`. `backend/docker-entrypoint.sh`'s generic
+    # `_FILE` shim already resolves it — no shim changes needed.
+    # RPD_OIDC_CLIENT_SECRET_FILE: /run/secrets/oidc_client_secret
+    #
+    # Future slot (P7-T06, off-host backup mirror — destination not yet
+    # decided by Frigoglass): once a real off-host target exists, uncomment
+    # this line, add `backup_mirror_access_key`/`backup_mirror_secret_key`
+    # to both the top-level `secrets:` map above and this block's `secrets:`
+    # list, and populate
+    # `secrets/backup_mirror_access_key.txt`/`secrets/backup_mirror_secret_key.txt`
+    # per `secrets/README.md`. `backend/docker-entrypoint.sh`'s generic
+    # `_FILE` shim already resolves both — no shim changes needed, same as
+    # the OIDC slot immediately above. Deliberately NOT added to the
+    # top-level `secrets:`/this block's `secrets:` list yet: Compose refuses
+    # to start ANY service if a listed secret's `file:` doesn't exist on the
+    # deploying host, and forcing every current deployment to create two
+    # placeholder credential files for a destination that doesn't exist yet
+    # would be a needless new precondition for `docker compose up` — see
+    # `docs/MEMORY.md`'s P7-T06 entry for the full reasoning.
+    # RPD_BACKUP_MIRROR_ACCESS_KEY_FILE: /run/secrets/backup_mirror_access_key
+    # RPD_BACKUP_MIRROR_SECRET_KEY_FILE: /run/secrets/backup_mirror_secret_key
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-rpd}
+      # `POSTGRES_PASSWORD_FILE` (P6-T04) is natively supported by the
+      # official postgres image's own entrypoint (docker-library's `file_env`
+      # helper) — no custom shim needed for this container. Never
+      # `POSTGRES_PASSWORD` directly; see secrets/README.md.
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
+      POSTGRES_DB: ${POSTGRES_DB:-rpd}
+    secrets:
+      - postgres_password
+    volumes:
+      # Named volume only — no bind mount — per §6's "portability across the
+      # client's on-premise hosts" requirement. Automated nightly backup-to-
+      # MinIO (P6-T06) reads FROM this database over the network
+      # (`workers/backup_tasks.py`'s `pg_dump -h postgres ...`), not from
+      # this volume directly — a manual `pg_dump`/`pg_restore` against the
+      # volume itself remains possible too.
+      - postgres-data:/var/lib/postgresql/data
+    networks:
+      - rpd-internal
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-rpd} -d ${POSTGRES_DB:-rpd}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    # `--appendonly yes`: §6's volumes note ("redis-data ... if persistence
+    # enabled for pub/sub durability") — enabled here since Redis backs the
+    # Celery broker/result-backend AND `workers/progress.py`'s solver-progress
+    # pub/sub (`core/celery_config.py`'s module docstring: "one Redis
+    # instance backs three distinct uses"); an unplanned Redis restart losing
+    # queued-but-unstarted Celery tasks would silently drop a dispatched
+    # CP-SAT run with no user-visible error.
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis-data:/data
+    networks:
+      - rpd-internal
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  minio:
+    # Pinned to a floating `latest` tag deliberately for now — exact digest
+    # pinning is P6-T05's concern (dependency/container scanning wired into
+    # CI is where image-pin discipline belongs), not invented ad hoc here.
+    image: minio/minio:latest
+    restart: unless-stopped
+    command: ["server", "/data", "--console-address", ":9001"]
+    environment:
+      # Same credential pair as `RPD_MINIO_ACCESS_KEY`/`RPD_MINIO_SECRET_KEY`
+      # in `x-backend-image` below — one secret pair for both the server and
+      # its clients, not two to keep in sync. `MINIO_ROOT_USER_FILE`/
+      # `MINIO_ROOT_PASSWORD_FILE` (P6-T04) are natively supported by the
+      # `minio` binary itself (confirmed via `strings` on the actual image
+      # binary — both symbols present) — no custom shim needed for this
+      # container, same as postgres's `POSTGRES_PASSWORD_FILE` above. Never
+      # `MINIO_ROOT_USER`/`MINIO_ROOT_PASSWORD` directly; see
+      # secrets/README.md.
+      MINIO_ROOT_USER_FILE: /run/secrets/minio_access_key
+      MINIO_ROOT_PASSWORD_FILE: /run/secrets/minio_secret_key
+    secrets:
+      - minio_access_key
+      - minio_secret_key
+    volumes:
+      - minio-data:/data
+    networks:
+      - rpd-internal
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    # No host port published: MinIO is an internal-only object store for
+    # this on-premise deployment (exports/attachments are downloaded via the
+    # `api` service, which proxies/signs URLs — the browser never talks to
+    # MinIO directly). Uncomment below only if an operator needs direct
+    # console access outside the app for troubleshooting.
+    # ports:
+    #   - "9001:9001"
+
+  api:
+    <<: *backend-image
+    # `--config gunicorn_conf.py` (P6-T06): structured JSON logging for
+    # Gunicorn/Uvicorn's own access+error logs, replacing the old plain
+    # `--access-logfile -`/`--error-logfile -` flags (that config file sets
+    # the same accesslog/errorlog destination, plus a JSON `logconfig_dict`
+    # — see `backend/gunicorn_conf.py`).
+    command: ["gunicorn", "api.main:app",
+      "--config", "gunicorn_conf.py",
+      "--worker-class", "uvicorn.workers.UvicornWorker",
+      "--bind", "0.0.0.0:8000",
+      "--workers", "4"]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/healthz"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+  worker:
+    <<: *backend-image
+    # Runs `backend/Dockerfile`'s ENTRYPOINT-wrapped `alembic upgrade head`
+    # too (harmless/idempotent if `api` already migrated — Alembic no-ops on
+    # an up-to-date schema) UNLESS overridden; kept as-is rather than adding
+    # an `entrypoint: []` override, since a `worker`/`solver-worker` started
+    # before `api` (e.g. a partial restart) should not have to wait on `api`
+    # specifically to guarantee the schema is current.
+    command: ["celery", "-A", "workers.worker_app", "worker",
+      "--loglevel=info", "--queues=worker", "--concurrency=2"]
+
+  solver-worker:
+    <<: *backend-image
+    command: ["celery", "-A", "workers.celery_app", "worker",
+      "--loglevel=info", "--queues=solver", "--concurrency=1"]
+    # Resource isolation per §6 ("solver-worker ... isolated for resource
+    # limits"). Plain Compose-spec `mem_limit`/`cpus` keys (NOT
+    # `deploy.resources.limits`, which Compose V2 only reliably applies
+    # under Swarm's `docker stack deploy` — these top-level keys are honored
+    # by plain `docker compose up` directly, confirmed via `docker compose
+    # config` below, which resolves them unchanged into the rendered
+    # config). One CP-SAT solve is single-threaded by this project's own
+    # determinism default (`scheduling.cp_sat.DEFAULT`'s
+    # `num_search_workers=1`) and `--concurrency=1` above matches that — 2
+    # CPUs gives OR-Tools some headroom without letting a solve starve the
+    # rest of the host.
+    mem_limit: 4g
+    mem_reservation: 1g
+    cpus: 2.0
+
+  # P6-T06: Celery beat — the scheduler process that periodically enqueues
+  # `workers.backup_tasks.nightly_pg_dump_backup` (schedule defined in
+  # `workers/worker_app.py`'s `beat_schedule`, not here) onto the SAME
+  # `worker` app/queue `worker` (above) already consumes. A separate
+  # container is required because Celery's beat scheduler and a task-
+  # executing worker are two different processes/roles even when they share
+  # one app object (`celery -A workers.worker_app beat` vs.
+  # `celery -A workers.worker_app worker`) — beat only ever enqueues tasks,
+  # it never executes them itself, so `worker` (already running
+  # `--queues=worker`) is what actually runs the nightly backup job.
+  # `celerybeat-data` persists beat's own schedule-state file across
+  # container restarts so a mid-window restart doesn't reset "when did this
+  # last run" bookkeeping (Celery's default `PersistentScheduler` uses a
+  # local shelve file for this — without a named volume it would live in
+  # the container's writable layer and be lost on recreate, which is
+  # harmless for correctness — beat just re-derives next-run-time from wall
+  # clock — but would cost the one debugging signal of "when did this last
+  # actually fire").
+  beat:
+    <<: *backend-image
+    command: ["celery", "-A", "workers.worker_app", "beat",
+      "--loglevel=info",
+      "--schedule=/var/lib/celery-beat/celerybeat-schedule"]
+    volumes:
+      - celerybeat-data:/var/lib/celery-beat
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        # See `frontend/Dockerfile`'s own comment: this must match the
+        # `/api/` prefix `deploy/nginx/default.conf` strips before
+        # forwarding to `api`.
+        VITE_API_BASE_URL: /api
+    image: rpd-frontend:latest
+    restart: unless-stopped
+    networks:
+      - rpd-internal
+
+  # ModSecurity + OWASP CRS in front of `frontend` (P6-T02). One dedicated
+  # WAF instance per upstream — the official image's default reverse-proxy
+  # mode proxies to exactly one `BACKEND`. Static-asset traffic only (GET/
+  # HEAD/OPTIONS), so this instance keeps every ModSecurity/CRS tuning
+  # variable at the image's own (already production-sane) defaults:
+  # BLOCKING_PARANOIA=1, standard body-size/argument limits — none of which
+  # this surface can ever exercise. Not published to the host; only reached
+  # from the `nginx` edge container over `rpd-internal`.
+  waf-frontend:
+    image: *waf-image
+    restart: unless-stopped
+    environment:
+      <<: *waf-common-env
+      BACKEND: http://frontend:80
+    networks:
+      - rpd-internal
+    depends_on:
+      - frontend
+
+  # ModSecurity + OWASP CRS in front of `api` (P6-T02). Same image/mode as
+  # `waf-frontend`, but with three narrowly-scoped tuning overrides, each
+  # justified against a concrete, real endpoint in `backend/api/routers/`
+  # rather than a blanket paranoia-level drop:
+  #
+  #   - ALLOWED_METHODS: the image's own default is "GET HEAD POST OPTIONS"
+  #     (a static-site default). This API genuinely uses PUT/PATCH/DELETE
+  #     too (confirmed via `grep -rhoE '@router\.(get|post|put|patch|delete)'
+  #     backend/api/routers/*.py`: 37 GET, 11 POST, 3 PATCH, 2 PUT,
+  #     2 DELETE) — without this override, CRS's own method-allowlist rule
+  #     (911100) would 403 every legitimate PUT/PATCH/DELETE call (e.g. the
+  #     currency-rate update endpoint, engineer/chamber CRUD), which is not
+  #     an attack, just this task's own default being wrong for this app.
+  #   - MODSEC_REQ_BODY_NOFILES_LIMIT: raised from the image's 128 KiB
+  #     default to 5 MiB. `POST /scenarios/apply`
+  #     (`backend/schemas/scenario.py::ScenarioApplyRequest`) accepts a
+  #     `priority_scores: list[ScenarioPriorityScoreChange]` bulk-edit
+  #     array that can legitimately span every active project's every
+  #     priority dimension at once (~236 projects x 13 dimensions per
+  #     DOMAIN_RULES.md) — comfortably past 128 KiB as plain JSON, well
+  #     under 5 MiB. Still far inside nginx's own 25 MiB
+  #     `client_max_body_size` ceiling at the edge.
+  #   - MODSEC_ARGUMENTS_LIMIT: raised from 1000 to 10000. ModSecurity's
+  #     JSON body processor flattens a JSON body into individually-named
+  #     ARGS; the same bulk `priority_scores` array can flatten to several
+  #     thousand argument entries. Exceeding SecArgumentsLimit sets
+  #     REQBODY_ERROR, which CRS's own initialization rule (200002) then
+  #     rejects on — a real false-positive risk for this specific endpoint's
+  #     real shape, not a hypothetical one.
+  #
+  # BLOCKING_PARANOIA is left at the image default (1) for both WAF
+  # instances: CRS's own guidance is to start production deployments at
+  # PL1 (lowest false-positive rate) and only raise it after a monitoring
+  # period against real traffic — this app has free-text fields (scenario
+  # `notes`, priority-score justification text) that are exactly the kind
+  # of input PL2+'s more aggressive generic-attack heuristics tend to flag.
+  # Raising it is a P6-T07/ops decision made after observing real audit-log
+  # data, not a one-shot guess made here.
+  waf-api:
+    image: *waf-image
+    restart: unless-stopped
+    environment:
+      <<: *waf-common-env
+      BACKEND: http://api:8000
+      ALLOWED_METHODS: "GET HEAD POST PUT PATCH DELETE OPTIONS"
+      MODSEC_REQ_BODY_NOFILES_LIMIT: "5242880"
+      MODSEC_ARGUMENTS_LIMIT: "10000"
+    networks:
+      - rpd-internal
+    depends_on:
+      - api
+
+  nginx:
+    image: nginx:1.27-alpine
+    restart: unless-stopped
+    ports:
+      - "${HTTP_PORT:-80}:80"
+      - "${HTTPS_PORT:-443}:443"
+    volumes:
+      - ./deploy/nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+      # Real cert/key at deploy time; a throwaway self-signed dev pair for
+      # `make dev` (see deploy/tls/generate-dev-cert.sh and .env.example's
+      # RPD_TLS_CERT_PATH/RPD_TLS_KEY_PATH comments) — never the same thing.
+      - ${RPD_TLS_CERT_PATH:?RPD_TLS_CERT_PATH must be set — see .env.example}:/etc/nginx/tls/server.crt:ro
+      - ${RPD_TLS_KEY_PATH:?RPD_TLS_KEY_PATH must be set — see .env.example}:/etc/nginx/tls/server.key:ro
+    depends_on:
+      - api
+      - waf-api
+      - waf-frontend
+    networks:
+      - rpd-internal
+    healthcheck:
+      # Hits the internal-only :8080 listener (see deploy/nginx/default.conf),
+      # not :80 — :80 is redirect-only as of P6-T02 and would 301, not 200,
+      # which `wget` would treat as a healthcheck failure.
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:8080/healthz"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 10s

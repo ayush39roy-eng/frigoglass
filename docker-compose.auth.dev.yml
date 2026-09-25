@@ -1,0 +1,58 @@
+# Dev-only OIDC IdP for P3-T02 (OIDC auth integration).
+#
+# This is NOT the production Docker Compose stack (that arrives in P6-T01,
+# per the Makefile's own note) — it is a narrow, single-purpose compose file
+# so P3-T02's OIDC integration is testable end-to-end locally against a real
+# IdP, not just unit-tested against mocked tokens.
+#
+# Per docs/OPEN_QUESTIONS.md #9 (still OPEN, not yet answered by the client):
+# docs/PROJECT_AND_STACK.md assumes Microsoft Entra ID as the primary target
+# with Keycloak as local/dev fallback. No real Entra app registration exists
+# yet, so Keycloak is what this file stands up as the concrete, testable IdP
+# — the backend's OIDC integration itself (backend/core/oidc.py,
+# backend/core/config.py) is written against the standard OIDC/OAuth2
+# contract (issuer discovery, JWKS validation, standard claims) and contains
+# nothing Keycloak-specific, so swapping to a real Entra tenant later is a
+# config change (RPD_OIDC_ISSUER/RPD_OIDC_AUDIENCE), not a code change.
+#
+# Usage (from the repo root):
+#   docker compose -f docker-compose.auth.dev.yml up -d
+#   # Keycloak admin console: http://localhost:8080  (admin / admin)
+#   # Realm "rpd" is auto-imported from dev/keycloak/rpd-realm.json on first
+#   # boot — client "rpd-backend" (public, direct-access-grants enabled, so
+#   # a plain `curl`/`httpx` password-grant request can fetch a real token
+#   # without a browser) and six test users (one per RBAC role, see that
+#   # file's comments) are already provisioned.
+#   #
+#   # Then, in backend/.env (see backend/.env.example):
+#   #   RPD_OIDC_ISSUER=http://localhost:8080/realms/rpd
+#   #   RPD_OIDC_AUDIENCE=rpd-backend
+#   #
+#   docker compose -f docker-compose.auth.dev.yml down -v   # teardown
+#
+# Uses Keycloak's built-in dev-mode (`start-dev`), which persists to an
+# embedded H2 database inside the container — acceptable for a throwaway
+# local dev IdP, not for anything resembling production (production Keycloak,
+# if it's ever the client's chosen IdP over Entra, is a P6 concern with its
+# own Postgres backing store).
+services:
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.0
+    command: ["start-dev", "--import-realm"]
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: admin
+      KC_BOOTSTRAP_ADMIN_PASSWORD: admin
+      KC_HEALTH_ENABLED: "true"
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./dev/keycloak/rpd-realm.json:/opt/keycloak/data/import/rpd-realm.json:ro
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "exec 3<>/dev/tcp/localhost/8080 && echo -e 'GET /health/ready HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n' >&3 && grep -q '\"status\": \"UP\"' <&3",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 30

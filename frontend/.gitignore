@@ -1,0 +1,18 @@
+node_modules
+dist
+dist-ssr
+dist-e2e
+coverage
+*.local
+.env
+.env.*
+!.env.example
+.DS_Store
+.vite
+stats.html
+*.tsbuildinfo
+
+# P4-T09 (qa-inspector) Playwright E2E harness
+playwright-report
+test-results
+e2e/.tokens.json

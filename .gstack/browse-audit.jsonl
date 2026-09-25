@@ -1,0 +1,4 @@
+{"ts":"2026-09-01T17:19:46.879Z","cmd":"newtab","args":"--json","origin":"about:blank","durationMs":28,"status":"ok","hasCookies":false,"mode":"launched"}
+{"ts":"2026-09-01T17:19:46.920Z","cmd":"load-html","args":"--from-file /tmp/make-pdf-browse-25133-1cc2ae894993.json","origin":"about:blank","durationMs":10,"status":"ok","hasCookies":false,"mode":"launched"}
+{"ts":"2026-09-01T17:19:50.049Z","cmd":"pdf","args":"/Users/ayushroy/frigoglass/docs/CLIENT_QUESTIONS.pdf --format letter --margin-top 1in --margin-right 1in --margin-bottom 1in --margin-left 1in --tagged --outline --toc","origin":"about:blank","durationMs":3090,"status":"ok","hasCookies":false,"mode":"launched"}
+{"ts":"2026-09-01T17:19:50.078Z","cmd":"closetab","args":"2","origin":"about:blank","durationMs":2,"status":"ok","hasCookies":false,"mode":"launched"}

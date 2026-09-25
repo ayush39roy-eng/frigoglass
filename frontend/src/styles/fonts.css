@@ -1,0 +1,42 @@
+/*
+ * Self-hosted typefaces. Three families, three jobs — no decorative fourth.
+ *
+ *   Inter            all UI text
+ *   Space Grotesk    display figures on Overview KPI cards ONLY (600 weight, latin)
+ *   JetBrains Mono   every figure that appears in a table, ever
+ *
+ * WHY SELF-HOSTED, NOT GOOGLE FONTS CDN
+ * -------------------------------------
+ * This application is delivered to Frigoglass and runs on-premise, behind their
+ * corporate network (CLAUDE.md, §1). A `fonts.googleapis.com` @import would be
+ * blocked by egress policy on the customer's own servers — the app would silently
+ * fall back to system-ui in production while looking correct on every developer
+ * machine. That failure mode is invisible until a board demo. Bundling the woff2
+ * files removes the network dependency entirely.
+ *
+ * Each fontsource stylesheet declares one @font-face per unicode subset. The
+ * browser fetches only the subsets it actually needs to render, so importing the
+ * full sheet costs a handful of bytes of CSS, not the cyrillic/greek/vietnamese
+ * woff2 payloads. Latin-only pages download latin only.
+ *
+ * Weight strategy: Inter and JetBrains Mono are variable fonts (100–900 in one
+ * file), so the entire weight range costs one request each. Space Grotesk is
+ * static and appears in exactly one place, so we take the single weight we use.
+ */
+
+/* Inter — variable weight axis, upright only. No italic: this is a planning tool,
+ * and nothing in the surface inventory calls for an italic UI face. */
+@import '@fontsource-variable/inter/wght.css';
+
+/* JetBrains Mono — variable weight axis. Chosen over a proportional face for
+ * figures because its digits are fixed-advance AND visually disambiguated
+ * (slashed zero, distinct 1/l/I), which matters when a planner is reconciling
+ * week indices and project IDs across a 30-column matrix. */
+@import '@fontsource-variable/jetbrains-mono/wght.css';
+
+/* Space Grotesk — 600 only, latin only. Used exclusively for the large figure on
+ * Overview KPI cards. Its wide apertures and slightly mechanical geometry read as
+ * "instrument panel" at 34px, where Inter reads as "web app". At any size below
+ * ~24px the distinction disappears and Inter is the better face, which is why the
+ * Working density zone drops back to Inter for display text. */
+@import '@fontsource/space-grotesk/latin-600.css';

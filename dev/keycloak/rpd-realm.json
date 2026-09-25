@@ -1,0 +1,97 @@
+{
+  "realm": "rpd",
+  "enabled": true,
+  "sslRequired": "none",
+  "registrationAllowed": false,
+  "clients": [
+    {
+      "clientId": "rpd-backend",
+      "enabled": true,
+      "publicClient": true,
+      "protocol": "openid-connect",
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": true,
+      "serviceAccountsEnabled": false,
+      "redirectUris": ["http://localhost:5173/*", "http://localhost:8000/*"],
+      "webOrigins": ["*"],
+      "protocolMappers": [
+        {
+          "name": "rpd-backend-audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.client.audience": "rpd-backend",
+            "id.token.claim": "false",
+            "access.token.claim": "true"
+          }
+        }
+      ]
+    }
+  ],
+  "users": [
+    {
+      "username": "alice.pm",
+      "email": "alice.pm@example.com",
+      "emailVerified": true,
+      "enabled": true,
+      "firstName": "Alice",
+      "lastName": "PortfolioManager",
+      "credentials": [{ "type": "password", "value": "TestPass123!", "temporary": false }]
+    },
+    {
+      "username": "bob.hub",
+      "email": "bob.hub@example.com",
+      "emailVerified": true,
+      "enabled": true,
+      "firstName": "Bob",
+      "lastName": "HubPlanner",
+      "credentials": [{ "type": "password", "value": "TestPass123!", "temporary": false }]
+    },
+    {
+      "username": "carol.eng",
+      "email": "carol.eng@example.com",
+      "emailVerified": true,
+      "enabled": true,
+      "firstName": "Carol",
+      "lastName": "Engineer",
+      "credentials": [{ "type": "password", "value": "TestPass123!", "temporary": false }]
+    },
+    {
+      "username": "dave.exec",
+      "email": "dave.exec@example.com",
+      "emailVerified": true,
+      "enabled": true,
+      "firstName": "Dave",
+      "lastName": "ExecutiveViewer",
+      "credentials": [{ "type": "password", "value": "TestPass123!", "temporary": false }]
+    },
+    {
+      "username": "erin.audit",
+      "email": "erin.audit@example.com",
+      "emailVerified": true,
+      "enabled": true,
+      "firstName": "Erin",
+      "lastName": "Auditor",
+      "credentials": [{ "type": "password", "value": "TestPass123!", "temporary": false }]
+    },
+    {
+      "username": "frank.admin",
+      "email": "frank.admin@example.com",
+      "emailVerified": true,
+      "enabled": true,
+      "firstName": "Frank",
+      "lastName": "Admin",
+      "credentials": [{ "type": "password", "value": "TestPass123!", "temporary": false }]
+    },
+    {
+      "username": "nobody.unprovisioned",
+      "email": "nobody.unprovisioned@example.com",
+      "emailVerified": true,
+      "enabled": true,
+      "firstName": "Nobody",
+      "lastName": "Unprovisioned",
+      "credentials": [{ "type": "password", "value": "TestPass123!", "temporary": false }]
+    }
+  ]
+}
