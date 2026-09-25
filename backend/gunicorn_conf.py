@@ -26,7 +26,8 @@ from __future__ import annotations
 
 import os
 
-bind = "0.0.0.0:8000"
+_port = os.environ.get("PORT", "8000")
+bind = f"0.0.0.0:{_port}"
 workers = 4
 worker_class = "uvicorn.workers.UvicornWorker"
 
