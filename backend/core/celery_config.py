@@ -43,6 +43,7 @@ class RedisSettings(BaseSettings):
     #: (`workers/celery_app.py`), and as the connection this process's
     #: `workers.progress.publish_progress` / (P3-T05's) SSE subscriber use.
     redis_url: str = Field(
+        default="redis://localhost:6379/0",
         validation_alias=AliasChoices("RPD_REDIS_URL", "REDIS_URL"),
     )
 

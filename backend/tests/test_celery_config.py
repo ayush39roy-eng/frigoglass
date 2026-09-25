@@ -19,10 +19,11 @@ from core.celery_config import (
 )
 
 
-def test_redis_settings_requires_redis_url(monkeypatch):
+def test_redis_settings_default_fallback(monkeypatch):
     monkeypatch.delenv("RPD_REDIS_URL", raising=False)
-    with pytest.raises(pydantic.ValidationError):
-        RedisSettings()
+    monkeypatch.delenv("REDIS_URL", raising=False)
+    settings = RedisSettings()
+    assert settings.redis_url == "redis://localhost:6379/0"
 
 
 def test_redis_settings_reads_env_var(monkeypatch):
