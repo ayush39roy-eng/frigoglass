@@ -28,7 +28,19 @@ import os
 
 _port = os.environ.get("PORT", "8000")
 bind = f"0.0.0.0:{_port}"
-workers = 4
+# Render (and similarly small single-CPU/low-memory hosts) inject
+# WEB_CONCURRENCY based on the instance's actual CPU/memory budget (see its
+# boot log: "Setting WEB_CONCURRENCY=1 by default..."). This process also
+# imports `scheduling.cp_sat` transitively (`api/routers/schedule_runs.py`
+# -> `workers.schedule_tasks` -> `scheduling.cp_sat`, for dispatch only —
+# CP-SAT itself never runs here, per CLAUDE.md), which pulls the ortools
+# C++ extension into every worker's memory footprint. 4 such workers on a
+# small instance was OOM-killing workers mid-request, which the client sees
+# as a bare 502 (no CORS headers, since the process died before the ASGI
+# app/CORSMiddleware ever produced a response) rather than an application
+# error. Default of 2 is safe headroom on a 512MB instance; override via
+# WEB_CONCURRENCY for a bigger box.
+workers = int(os.environ.get("WEB_CONCURRENCY", "2"))
 worker_class = "uvicorn.workers.UvicornWorker"
 
 accesslog = "-"

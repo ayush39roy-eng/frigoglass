@@ -100,6 +100,11 @@ cors_origins = [
     "http://127.0.0.1:3000",
     "http://127.0.0.1:5173",
     "http://127.0.0.1:5183",
+    # Ad hoc Render/Vercel demo deployment (not the client's on-prem
+    # target topology — see docs/MEMORY.md). Hardcoded in addition to the
+    # `allow_origin_regex` below as a quick, explicit fallback.
+    "https://frontend-rosy-mu-51.vercel.app",
+    "https://frigoglass-hu6f.onrender.com",
 ]
 extra_origins = os.environ.get("RPD_CORS_ORIGINS", "")
 if extra_origins:

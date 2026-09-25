@@ -126,17 +126,17 @@ ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
 
 # Gunicorn + Uvicorn workers, per `docs/PROJECT_AND_STACK.md` §3
 # ("Gunicorn + Uvicorn") / §6 ("api (FastAPI, Gunicorn+Uvicorn workers)").
-# `--workers 4` is a reasonable on-premise default (CLAUDE.md/§6 sizing is
-# not specified further); operators can override via `docker-compose.yml`'s
-# `command:` or a `GUNICORN_WORKERS` env-driven wrapper in a later task if
-# needed — not built here to avoid inventing an unrequested knob.
 #
 # `--config gunicorn_conf.py` (P6-T06): structured JSON logging for
-# Gunicorn/Uvicorn's own access+error logs (bind/workers/accesslog/errorlog
-# are also set there; the flags below are kept explicit anyway so this CMD
-# is self-describing even if someone reads it without opening that file).
+# Gunicorn/Uvicorn's own access+error logs (bind/accesslog/errorlog are also
+# set there; bind/worker-class are kept explicit here too so this CMD is
+# self-describing even if someone reads it without opening that file).
+#
+# Deliberately NOT passing `--workers` here: a CLI `--workers` flag
+# overrides `gunicorn_conf.py`'s `workers` setting, which defeats that
+# file's env-driven `WEB_CONCURRENCY` sizing (needed on small hosts — see
+# its comment for the OOM/502 failure mode this fixed on a 512MB instance).
 CMD ["gunicorn", "api.main:app", \
      "--config", "gunicorn_conf.py", \
      "--worker-class", "uvicorn.workers.UvicornWorker", \
-     "--bind", "0.0.0.0:8000", \
-     "--workers", "4"]
+     "--bind", "0.0.0.0:8000"]
