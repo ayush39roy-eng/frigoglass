@@ -31,6 +31,13 @@ def test_redis_settings_reads_env_var(monkeypatch):
     assert settings.redis_url == "redis://example.test:6379/2"
 
 
+def test_redis_settings_reads_plain_redis_url(monkeypatch):
+    monkeypatch.delenv("RPD_REDIS_URL", raising=False)
+    monkeypatch.setenv("REDIS_URL", "redis://render.test:6379/0")
+    settings = RedisSettings()
+    assert settings.redis_url == "redis://render.test:6379/0"
+
+
 def test_get_redis_settings_is_cached_singleton(monkeypatch):
     monkeypatch.setenv("RPD_REDIS_URL", "redis://a.test:6379/0")
     get_redis_settings.cache_clear()

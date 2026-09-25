@@ -27,14 +27,13 @@ from __future__ import annotations
 
 from functools import lru_cache
 
-from pydantic import Field
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class RedisSettings(BaseSettings):
-    """No default `redis_url` — must be explicitly configured (env or
-    `.env`), mirroring `RPD_DATABASE_URL`'s "fail loudly at first use, not
-    silently default to localhost" convention (`api/db.py::_database_url`).
+    """Mirroring RPD_DATABASE_URL convention, accepts RPD_REDIS_URL or REDIS_URL,
+    defaulting to redis://localhost:6379/0 if unspecified.
     """
 
     model_config = SettingsConfigDict(env_prefix="RPD_", extra="ignore")
@@ -43,7 +42,9 @@ class RedisSettings(BaseSettings):
     #: DSN in production. Used as both the Celery broker and result backend
     #: (`workers/celery_app.py`), and as the connection this process's
     #: `workers.progress.publish_progress` / (P3-T05's) SSE subscriber use.
-    redis_url: str
+    redis_url: str = Field(
+        validation_alias=AliasChoices("RPD_REDIS_URL", "REDIS_URL"),
+    )
 
 
 @lru_cache
