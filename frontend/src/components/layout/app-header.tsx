@@ -164,7 +164,7 @@ function WeekPill(): React.JSX.Element {
     <Tooltip>
       <TooltipTrigger asChild>
         <span
-          className="flex items-center gap-1.5 rounded-pill px-s3 py-1.5 text-2xs font-medium text-text-muted"
+          className="flex items-center gap-1.5 whitespace-nowrap rounded-pill px-s3 py-1.5 text-2xs font-medium text-text-muted"
           data-testid="week-indicator"
         >
           <CalendarClock className="size-3.5 shrink-0 text-text-subtle" aria-hidden="true" />

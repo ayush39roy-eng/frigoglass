@@ -20412,3 +20412,247 @@ wrong password refused → test login → `/` → account menu → profile → p
 
 **Gate result:** N/A. A security-auditor review is advisable before any environment with
 `RPD_DEV_MODE=true` is exposed beyond developers.
+
+---
+
+## [2026-10-01] Suite-flake root cause, Capacity headline correctness, component de-duplication — frontend-builder
+
+Five bundled asks from the project owner, in priority order. Presentation / test-layer only:
+no served value, API shape, calculation or `backend/` file was changed. The three files the
+owner flagged as in-flight in another tool (`src/pages/login.tsx`,
+`src/components/session/user-avatar.tsx`, `src/lib/initials.ts`) were not touched; the owner
+committed mid-session (`b4cdf0c`, `a04a4e5`), which swept up some of this task's in-progress
+files — nothing was lost or clobbered.
+
+### 1. The 8 failing tests — verified root cause, and what actually fixed it
+
+**The forwarded diagnosis was half right.** It was indeed a timeout/load problem, not a logic
+break — but the stated mechanism ("`findByRole` default 1000ms") is wrong and would have led a
+future session astray: `src/test/setup.ts` has set `configure({ asyncUtilTimeout: 8_000 })`
+since P4-T09. The real ceiling is `vite.config.ts`'s `testTimeout: 10_000`. Measured directly:
+`session-gate.test.tsx`'s first test takes **1.5s alone and >10s under full parallelism**;
+`project-form.test.tsx`'s longest case takes **1.3s alone and >10s contended** — a ~7x
+inflation. The failures were never the same two files twice (observed across runs:
+app.test, session-gate, engineer-form, ProjectWorkspacePage, project-form, RegistrationPage),
+which is the signature of contention rather than a broken assertion. **Baseline measured
+before touching anything: 3 full runs → pass / 3 fails / pass.** So "it fails" was itself
+probabilistic.
+
+Two distinct causes, both fixed:
+
+**(a) The Dashboard eagerly imported Recharts into the app-shell render path.** `DashboardPage`
+statically imported `completion-profile-card` and `portfolio-analytics`, and
+`hub-type-pipeline-table` statically imported `hub-type-pipeline-chart` — the surface's three
+Recharts consumers. Recharts is ~353 KB raw / ~103 KB gzip, by far the largest third-party
+module in the app. Consequence: **every** test that merely rendered the app at `/`
+(`app.test.tsx` renders it 11 times, `session-gate.test.tsx` 6) evaluated all of Recharts even
+though, with fetch stubbed to reject, not one chart ever reaches the screen. Separately,
+`project-breakdown` statically imported `project-card-grid`, the Dashboard's only CROSS-SURFACE
+import (it embeds `@/surfaces/project-workspace/components/ask-agent-panel`, pulling the
+Workspace's hooks and API types in), for a Cards view that is not even the default tab.
+
+Fixed with `React.lazy` + `<React.Suspense>` behind a new shared
+`components/ui/panel-skeleton.tsx` (card-shaped skeleton, sized per call site; the shared
+`<Skeleton>` primitive is unmodified, so the reduced-motion-safe shimmer and the "Loading"
+announcement come along unchanged). Five deferred boundaries:
+`CompletionProfileCard`, `PortfolioAnalytics`, `ProjectSpotlight` (DashboardPage),
+`HubTypePipelineChart` (hub-type-pipeline-table), `ProjectCardGrid` (project-breakdown).
+`DeliveryGaugeCard` and `PlanningClockCard` were deliberately left EAGER — hand-built SVG/CSS,
+~5 KB and ~4 KB of source, no dependency not already in the chunk, and one or the other is on
+screen in every state of the page; splitting them buys nothing and costs a request on the
+common path.
+
+**This is a real user-facing win, not a test trick.** Dashboard route first-paint JS went from
+**~135.6 KB gzip** (`DashboardPage` 32.82 + the statically-imported Recharts `BarChart` chunk
+102.83) to **13.89 KB gzip** — an ~89% cut in what must download and parse before the surface
+paints. Recharts now arrives only once data that needs a chart has.
+
+**(b) Vitest oversubscribed the machine.** The default is one worker per logical core; every
+worker builds its own jsdom. ~132 jsdom environments plus React/Radix/TanStack graphs on a
+10-core / 16 GB dev box that is *also* running the Vite dev server, FastAPI and Postgres
+(observed load average 35-56) is thrashing, not working. Set `maxWorkers: '50%'` in
+`vite.config.ts` (a percentage, not a literal, so CI hardware scales with it). Measured on
+identical hardware: cumulative `tests` time **274-429s → 70-124s**, `environment` **294-360s →
+92-145s**, for the same or better total duration (**92-120s → 49-84s**). `testTimeout` was NOT
+raised — the margin now comes from doing less work, not from hiding the symptom.
+
+**Verification: 4 consecutive full runs green after the fix, plus 2 more at the end** (the
+instruction was explicit that an isolation-only fix is not a fix). No `vi.mock` of Dashboard
+children was needed in the shell tests in the end — (a) removed the cost at source, so
+`app.test.tsx` and `session-gate.test.tsx` still exercise the REAL Dashboard, which is what
+they are for.
+
+**A third, genuine gap found while writing tests (§5): jsdom has no `IntersectionObserver`.**
+`portfolio-analytics.tsx` uses framer-motion `whileInView`, which calls it during commit, so
+the component threw `ReferenceError: IntersectionObserver is not defined` in any jsdom test —
+which is very likely *why* the interrupted task never managed to write tests for it. Added a
+stub to `src/test/setup.ts` next to the existing `ResizeObserver` one. A stub that never fires
+an intersection is the right shape: `whileInView` animations stay at their `initial` value.
+Browser behaviour is untouched.
+
+### 2. Capacity headline figures — a rounding problem, and a much worse one underneath
+
+**Rounding: confirmed, and worse than stated.** `stat-variants.tsx`'s `MeterCard` printed both
+figures through `formatInteger`, so the `Math.round(...)` at the call site was belt-and-braces —
+an unrounded decimal would have rendered rounded anyway. Supply figures are specified to two
+decimals (ADR 0008 / Invariant I17) and every card and table *beneath* that row prints them
+with `formatDecimal`, so the headline disagreed with the rows a user sums by eye. This is the
+same frontend-side distortion the 2026-10-01 Capacity reskin declined `useCountUp` over (§2 of
+that entry); re-introducing it through `formatInteger` would have undone that decision. Fixed
+by giving `MeterCard` an optional `formatValue` prop (defaults to `formatInteger`, so
+Registration / Timeline / Planning / Users are byte-unchanged) and passing `formatDecimal` from
+Capacity — the same prop name and rationale `capacity-stat.tsx` already uses.
+
+**Recompute: the aggregation is legitimate; the way it was done was a correctness bug.**
+Checked `api/types.ts` and the live `GET /capacity/hub-load` response: `HubCapacitySummary`
+carries `rows[]` only, no server-computed total. A portfolio total therefore has to be summed
+client-side. That is permitted — it is a **table-footer aggregate of figures the API already
+computed**, not a re-derivation of an ADR 0008 formula or an I6/I7 load sum. No
+`working_weeks × fte`, no `capacity / load`, no scheduling: every term is a field the server
+sent verbatim. Direct precedent: `surfaces/dashboard/lib/hub-geo.ts`'s `buildHubTotals()`,
+`hub-type-pipeline-table.tsx`'s row/column/grand totals, the Capacity `StatStrip`'s own
+deliverable/left-out sums, and the "Bold Blocks pass 2" entry's explicit I9 note ("counts or
+sums over rows the endpoints already return"). **So: yes, the recompute is legitimate
+precedent.**
+
+**But `rows.reduce()` over LAB figures was double-counting, badly.** `api/types.ts` says it and
+`hub-supply-breakdown.tsx` says it on screen: lab figures are REGION-level and repeat on every
+hub of that region. Live data: four of the six hubs (R&D-India, PD-India, OEM-HCK, OEM-Seltek)
+are in the India lab region and each row carries `lab_load_weeks: 122.0` /
+`lab_capacity_year: 188.3`. The Lab load card was therefore showing:
+
+|  | was shown | correct |
+|---|---|---|
+| Lab load | 558 | **192** (34 Greece + 122 India + 36 Romania) |
+| Lab capacity | 1043 | **477.94** |
+| % used | 54% | **40%** |
+| Design load | 375 | 375 (per-hub; Σ was already right) |
+| Design capacity | 579 | **579.33** (rounding only) |
+
+i.e. lab load overstated by **2.9×**. Fixed in a new, heavily documented
+`surfaces/capacity/lib/portfolio-totals.ts` (+ `.test.ts`, 4 cases incl. the real six-row live
+shape): design figures summed over every row, lab figures summed over each DISTINCT
+`lab_region`. De-duping by region is not new business logic — it is reading the row set for
+what the contract says it is (one record per hub, carrying a per-region lab figure) before
+adding anything up. Nothing is rounded in that module.
+
+The `% used` pill keeps `Math.round((value / capacity) * 100)`: a display ratio of two figures
+already on screen, the same kind the Pipeline donut and the Delivery gauge already print.
+
+**BACKEND FOLLOW-UP OWED (not actionable in a presentation-only task):** add a server-computed
+`totals` object to `HubCapacitySummary`. That would delete `portfolio-totals.ts` outright and
+remove the frontend's need to know that lab rows repeat per region. Recorded here for the
+orchestrator.
+
+### 3. De-duplication (the debt the Capacity text-cleanup entry explicitly asked for)
+
+- `surfaces/dashboard/components/card-info.tsx` and
+  `surfaces/capacity/components/capacity-info.tsx` were byte-identical implementations. Promoted
+  to **`components/ui/card-info.tsx`** as `CardInfo`; both originals deleted; 9 Dashboard and 5
+  Capacity call sites repointed (Capacity's `<CapacityInfo>` → `<CardInfo>`, same props). Its
+  test moved to `components/ui/card-info.test.tsx` (`git mv`, assertions unchanged).
+- `surfaces/capacity/components/run-provenance-chips.tsx` and
+  `surfaces/dashboard/components/schedule-run-provenance.tsx` shared the version/solver/
+  timestamp derivation, the chip markup and the `sr-only` sentence line-for-line; only the
+  lead-in wording, the trailing invariant citation (I9 vs. I17) and the Dashboard's embedded
+  counting-rule popover differed. Those three are now props (`leadIn`, `srTail`, `children`) on
+  a new **`components/ui/run-provenance-chips.tsx`**. The Capacity copy is deleted and its call
+  site repointed (passing its original `srTail` verbatim, so the sr-only sentence is unchanged);
+  the Dashboard copy is reduced to a ~40-line wrapper that keeps the exported name
+  `ScheduleRunProvenance` and the within-year counting prose next to the surface it describes.
+  It was not deleted outright because that prose is Dashboard-specific and does not belong in a
+  shared primitive — the duplication, which was the actual debt, is gone.
+- **`data-testid="schedule-run-provenance"` and every `aria-label` are preserved**, as
+  instructed. `RunProvenanceRun` is structurally typed so neither surface has to import the
+  other's hand-authored `ScheduleRunSummary` mirror.
+- The THIRD, older `components/shared/schedule-run-provenance.tsx` (full-sentence body copy) is
+  deliberately untouched — the Gantt still renders it and has not had the text cleanup.
+
+### 4. Dead code
+
+- **`components/ui/demo.tsx` deleted** — confirmed zero importers; a leftover scaffold from a
+  pasted third-party snippet.
+- Scripted a repo-wide zero-importer scan. The only other hits are
+  `src/types/{capacity,priority,project,schedule}.ts`. **Not deleted, deliberately**: these are
+  the P4-T01 hand-authored PLACEHOLDER types, each carrying the `// PLACEHOLDER` header, with a
+  documented reconciliation plan in `src/types/README.md` (regenerate from the P3 OpenAPI
+  schema, then delete). They are type-only — zero runtime bytes — and tracked debt, not litter.
+  Reported rather than removed.
+
+### 5. The interrupted Dashboard work — tests added
+
+`completion-profile-card.test.tsx`, `project-spotlight.test.tsx`, `project-card-grid.test.tsx`
+and `card-info.test.tsx` already existed; the three genuinely missing ones were written, to the
+conventions of the existing tests on that surface (local `row()`/`payload()` fixture builders,
+assertions on served fields rather than derived ones, an explicit
+no-engineer/no-avatar check per OPEN_QUESTIONS #8): **`delivery-gauge-card.test.tsx` (6),
+`planning-clock-card.test.tsx` (5), `portfolio-analytics.test.tsx` (8)** — +19 tests, 675 → 698.
+Notable coverage: the gauge's denominator includes blocked (the four buckets are exclusive,
+P9-F02) and shows 0% not NaN on an empty run; the clock reads the mirrored `CURRENT_WEEK`
+constant, never the wall clock; the analytics hub stack files a `blocked + within_year` row
+under *blocked*, mirroring `outcomeOf`'s backend-matching precedence so the chart cannot
+disagree with the KPI tiles above it.
+
+**Design-direction sanity check (per the brief).** The six components match
+`stat-variants.tsx`'s header comment: the Dashboard keeps the bold feature treatment
+(`kpi-card.tsx` gradient/ink tiles, the ink `PlanningClockCard`, the `BoltCard` analytics
+panels) while Capacity/Registration/Timeline/Planning/Users use the lighter
+`StatStrip`/`MeterCard`/`TileStat` shapes. That is the client's "don't make the cards look the
+same everywhere" asked-for differentiation, not drift. `DeliveryGaugeCard`'s `useCountUp` is
+fine despite the Capacity reskin's §2 warning: it animates an already-`Math.round`ed integer
+percentage, where the hook's rounding is a no-op.
+
+### Verification
+
+- `npx tsc -b --noEmit`: clean, zero errors.
+- `npx eslint .`: **0 errors**, the same 6 pre-existing warnings as every entry above
+  (`routes.tsx`, `density-zone.tsx` ×3, `audit-log-table.tsx`, `project-list.tsx` — none
+  touched), zero new.
+- `npx vitest run` (FULL suite, unscoped): **132 files / 698 tests, 6 consecutive green runs.**
+  Before: 675 tests with an intermittent 3-8 failures per run.
+- Bundle: **177.3 KB gzip → 177.7 KB gzip of 400 KB (44.4% used, 222.3 KB headroom), PASS.**
+  The initial-load total is essentially flat (+0.4 KB, the two new shared `components/ui`
+  modules and chunk-split bookkeeping) because the Dashboard was already a lazy route, so
+  Recharts was never in the initial budget to begin with. The win is in the Dashboard ROUTE
+  payload: first-paint JS 135.6 KB gzip → 13.89 KB gzip (see §1a).
+- **Live browser verification** against the running dev server on :5173 and the real backend on
+  :8001, as `frank.admin@example.com` (Admin), light AND dark, via Playwright (already a
+  devDependency; script run from inside `frontend/` for module resolution, deleted after use).
+  Confirmed: Capacity's headline cards now read **375 / 579.33 engineer-wks (65% used)** and
+  **192 / 477.94 chamber-wks (40% used)**, agreeing exactly with the per-hub table beneath —
+  which visibly repeats `122` on four hub rows, making the de-duplication self-evident.
+  Dashboard renders every lazily-loaded section (Completion profile, Delivery rate, Portfolio
+  analytics ×3 charts, Project spotlight, Hub × type pipeline, Project breakdown) with **zero
+  skeletons left pending** and the Cards tab lazily loading its 75-card grid on click.
+  **Zero console errors in either mode, on either surface.** Screenshots ephemeral (scratchpad
+  only). Nothing was started or stopped on the dev/backend stack.
+
+**Files touched.** New: `frontend/src/components/ui/{card-info.tsx,run-provenance-chips.tsx,
+panel-skeleton.tsx}`, `frontend/src/components/ui/card-info.test.tsx` (moved),
+`frontend/src/surfaces/capacity/lib/portfolio-totals.ts`+`.test.ts`,
+`frontend/src/surfaces/dashboard/components/{delivery-gauge-card,planning-clock-card,
+portfolio-analytics}.test.tsx`. Deleted: `frontend/src/components/ui/demo.tsx`,
+`frontend/src/surfaces/dashboard/components/card-info.tsx`,
+`frontend/src/surfaces/capacity/components/{capacity-info.tsx,run-provenance-chips.tsx}`.
+Modified: `frontend/vite.config.ts` (`maxWorkers`), `frontend/src/test/setup.ts`
+(`IntersectionObserver` stub), `frontend/src/components/ui/stat-variants.tsx` (`formatValue`),
+`frontend/src/surfaces/capacity/CapacityPage.tsx`,
+`frontend/src/surfaces/capacity/components/{hub-load-panel,capacity-reporting-notice,
+chamber-utilization-panel,class-breakdown-panel,hub-supply-breakdown}.tsx` (+ one test comment),
+`frontend/src/surfaces/dashboard/DashboardPage.tsx`,
+`frontend/src/surfaces/dashboard/components/{hub-type-pipeline-table,project-breakdown,
+schedule-run-provenance,completion-profile-card,delivery-gauge-card,hub-rank-list,
+pipeline-panel,portfolio-analytics,project-spotlight,status-overview-cards}.tsx` (the last
+seven: `CardInfo` import path only). No `backend/` file. None of the three owner-flagged
+in-flight files.
+
+**Gate result:** N/A — maintenance/correctness follow-up, not a phase task or gate. CLAUDE.md
+non-negotiables re-checked: no `dangerouslySetInnerHTML`, no three.js import anywhere in
+`frontend/src`, no client-side scheduling/scoring added (§2 is the opposite — a display
+aggregate corrected, with the formula work left server-side), virtualization untouched, bundle
+budget passes, no named-engineer data, `prefers-reduced-motion` respected (the new Suspense
+fallbacks reuse the shared `<Skeleton>`, already zeroed by the global rule).
+
+**Next:** (1) the backend `totals` field on `HubCapacitySummary` described in §2; (2) if other
+surfaces grow headline aggregates, check whether their rows repeat a dimension the way
+Capacity's lab figures do before reaching for `rows.reduce()`.

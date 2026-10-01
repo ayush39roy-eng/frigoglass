@@ -2,7 +2,6 @@ import * as React from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { FlaskConical } from 'lucide-react';
 
-import { Label } from '@/components/ui/label';
 import {
   Select,
   SelectContent,
@@ -63,25 +62,23 @@ export function DevRoleSwitcher(): React.JSX.Element | null {
 
   return (
     <div
-      className="hidden items-center gap-s2 rounded-pill border border-warning/50 bg-warning-subtle px-s3 py-1 md:flex"
+      className="hidden items-center gap-1.5 whitespace-nowrap rounded-pill border border-warning/40 bg-warning-subtle/60 px-2.5 py-1 text-2xs font-medium text-warning-subtle-fg md:flex"
       data-testid="dev-role-switcher"
     >
       <FlaskConical className="size-3.5 shrink-0 text-warning-subtle-fg" aria-hidden="true" />
-      <Label htmlFor="dev-role-switcher" className="text-2xs font-semibold text-warning-subtle-fg">
-        Dev: act as
-      </Label>
+      <span className="font-semibold">Dev:</span>
       <Select value={current} onValueChange={(v) => void handleSwitch(v)} disabled={switching}>
         <SelectTrigger
           id="dev-role-switcher"
-          className="h-7 w-56 border-transparent bg-transparent text-2xs"
+          className="h-6 max-w-44 border-transparent bg-transparent p-0 text-2xs font-medium focus:ring-0"
           aria-label="Dev mode: act as user"
         >
-          <SelectValue placeholder={devUsers.isPending ? 'Loading users…' : me.email} />
+          <SelectValue placeholder={devUsers.isPending ? 'Loading…' : me.full_name || me.email} />
         </SelectTrigger>
         <SelectContent>
           {options.map((u) => (
             <SelectItem key={u.email} value={u.email}>
-              {u.full_name} — {u.roles.join(', ')}
+              {u.full_name} ({u.roles.join(', ')})
             </SelectItem>
           ))}
         </SelectContent>
