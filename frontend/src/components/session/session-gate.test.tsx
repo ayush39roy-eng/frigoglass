@@ -40,7 +40,7 @@ describe('SessionGate (boot on GET /me)', () => {
   it('a 401 redirects to /login instead of showing a dead-end card', async () => {
     api.fetchMe.mockRejectedValue(new ApiError(401, 'unauthorized'));
     renderApp('/', { session: null });
-    expect(await screen.findByRole('heading', { name: 'Sign in to RPD' })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: 'Welcome back' })).toBeInTheDocument();
     expect(screen.queryByRole('navigation', { name: 'Surfaces' })).not.toBeInTheDocument();
   });
 
@@ -69,6 +69,7 @@ describe('DevRoleSwitcher (ADR 0010 §4)', () => {
     api.fetchMe.mockResolvedValue(
       makeMe({ email: 'ellie.exec@example.com', full_name: 'Ellie Exec', roles: ['Executive Viewer'], dev_mode: true }),
     );
+    setDevUserEmail('sam.super@example.com');
     renderApp('/', { session: { dev_mode: true } });
     await screen.findByRole('heading', { name: 'Global RPD Dashboard' });
     expect(screen.getByTestId('dev-role-switcher')).toBeInTheDocument();
@@ -79,5 +80,11 @@ describe('DevRoleSwitcher (ADR 0010 §4)', () => {
     await waitFor(() => expect(getDevUserEmail()).toBe('ellie.exec@example.com'));
     await waitFor(() => expect(api.fetchMe).toHaveBeenCalled());
     expect(await screen.findByText('Ellie Exec')).toBeInTheDocument();
+  });
+
+  it('dev mode with no signed-in test user sends you to the login page first', async () => {
+    renderApp('/', { session: { dev_mode: true } });
+    expect(await screen.findByRole('heading', { name: 'Welcome back' })).toBeInTheDocument();
+    expect(screen.queryByRole('navigation', { name: 'Surfaces' })).not.toBeInTheDocument();
   });
 });

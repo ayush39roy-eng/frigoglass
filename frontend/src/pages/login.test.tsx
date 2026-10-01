@@ -3,7 +3,8 @@ import { screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
 import { ApiError } from '@/lib/api/client';
-import { getDevUserEmail } from '@/lib/api/dev-user';
+import { getDevUserEmail, setDevUserEmail } from '@/lib/api/dev-user';
+import { TEST_LOGIN_PASSWORD } from '@/lib/auth/test-logins';
 import { seriousAxeViolations } from '@/test/axe';
 import { renderWithProviders } from '@/test/render';
 import { makeMe } from '@/test/session';
@@ -20,6 +21,7 @@ import LoginPage from './login';
 beforeEach(() => {
   vi.clearAllMocks();
   useSessionStore.getState().reset();
+  setDevUserEmail(null);
 });
 
 afterEach(() => {
@@ -27,7 +29,7 @@ afterEach(() => {
 });
 
 describe('LoginPage (ADR 0013)', () => {
-  it('dev mode: lists seeded users grouped by role, Super Admin first, and picking one signs in', async () => {
+  it('dev mode: test logins fill the form, and the right password signs in', async () => {
     const user = userEvent.setup();
     api.fetchDevUsers.mockResolvedValue([
       { email: 'alex.admin@example.com', full_name: 'Alex Admin', roles: ['Admin'] },
@@ -39,14 +41,34 @@ describe('LoginPage (ADR 0013)', () => {
     renderWithProviders(<LoginPage />, { session: null });
 
     expect(await screen.findByTestId('login-dev-picker')).toBeInTheDocument();
-    const legends = screen.getAllByRole('group');
-    expect(legends[0]).toHaveTextContent('Super Admin');
-    expect(legends[0]).toHaveTextContent('Start here');
+    const accounts = screen.getAllByRole('button', { name: /^Use / });
+    // One account per role, Super Admin first.
+    expect(accounts[0]).toHaveAccessibleName(/Sam Super/);
 
-    await user.click(screen.getByRole('button', { name: /Sam Super — sam.super@example.com/ }));
+    await user.click(accounts[0] as HTMLElement);
+    expect(screen.getByLabelText('Email')).toHaveValue('sam.super@example.com');
+    expect(screen.getByLabelText('Password')).toHaveValue(TEST_LOGIN_PASSWORD);
+
+    await user.click(screen.getByRole('button', { name: 'Sign in' }));
 
     await waitFor(() => expect(getDevUserEmail()).toBe('sam.super@example.com'));
     await waitFor(() => expect(useSessionStore.getState().status).toBe('ready'));
+  });
+
+  it('dev mode: a wrong password is refused without signing in', async () => {
+    const user = userEvent.setup();
+    api.fetchDevUsers.mockResolvedValue([
+      { email: 'sam.super@example.com', full_name: 'Sam Super', roles: ['Super Admin'] },
+    ]);
+    renderWithProviders(<LoginPage />, { session: null });
+
+    await user.type(await screen.findByLabelText('Email'), 'sam.super@example.com');
+    await user.type(screen.getByLabelText('Password'), 'not-the-password');
+    await user.click(screen.getByRole('button', { name: 'Sign in' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(/not recognised/);
+    expect(getDevUserEmail()).toBeNull();
+    expect(api.fetchMe).not.toHaveBeenCalled();
   });
 
   it('production path: a 404 probe (no dev mode) shows the SSO button, disabled when unconfigured', async () => {
