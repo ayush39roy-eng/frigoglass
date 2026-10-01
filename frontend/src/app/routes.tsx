@@ -14,6 +14,7 @@ import {
   CapacityPage,
   DashboardPage,
   DesignSystemPage,
+  ProfilePage,
   GanttPage,
   LoginPage,
   MatrixPage,
@@ -135,6 +136,8 @@ export const routeObjects: RouteObject[] = [
       // Developer route, deliberately absent from SURFACES (and therefore from the
       // sidebar): every primitive in both density zones. See pages/design-system.tsx.
       { path: 'design-system', element: lazyElement(<DesignSystemPage />) },
+      // Profile & settings (2026-10-01): every signed-in user, no surface permission needed.
+      { path: 'profile', element: lazyElement(<ProfilePage />) },
       { path: '*', element: <NotFound /> },
     ],
   },

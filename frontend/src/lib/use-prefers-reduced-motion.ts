@@ -1,5 +1,7 @@
 import * as React from 'react';
 
+import { usePreferencesStore } from '@/stores/preferences';
+
 const QUERY = '(prefers-reduced-motion: reduce)';
 
 /**
@@ -15,9 +17,12 @@ export function usePrefersReducedMotion(): boolean {
     return () => mql.removeEventListener('change', onChange);
   }, []);
 
-  return React.useSyncExternalStore(
+  const system = React.useSyncExternalStore(
     subscribe,
     () => window.matchMedia(QUERY).matches,
     () => false,
   );
+  // Profile & settings "Reduce motion" (stores/preferences.ts) forces it on.
+  const preferred = usePreferencesStore((s) => s.reduceMotion);
+  return system || preferred;
 }

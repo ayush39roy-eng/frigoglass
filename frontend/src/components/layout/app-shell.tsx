@@ -5,6 +5,7 @@ import { SURFACES } from '@/app/nav';
 import { SessionGate } from '@/components/session/session-gate';
 import { GlowOverlay } from '@/components/ui/background-components';
 import { TooltipProvider } from '@/components/ui/tooltip';
+import { usePreferencesStore } from '@/stores/preferences';
 
 import { AppHeader } from './app-header';
 import { AppSidebar } from './app-sidebar';
@@ -45,6 +46,11 @@ function densityForPath(pathname: string): Density {
 export function AppShell(): React.JSX.Element {
   const { pathname } = useLocation();
   const density = React.useMemo(() => densityForPath(pathname), [pathname]);
+  const reduceMotion = usePreferencesStore((st) => st.reduceMotion);
+
+  React.useEffect(() => {
+    document.documentElement.toggleAttribute('data-reduce-motion', reduceMotion);
+  }, [reduceMotion]);
 
   return (
     <TooltipProvider delayDuration={200}>

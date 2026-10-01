@@ -87,6 +87,24 @@
       scroll-behavior: auto !important;
     }
   }
+
+  /* Same zeroing when the user turns on "Reduce motion" in Profile & settings
+   * (stores/preferences.ts; AppShell mirrors it onto <html data-reduce-motion>). */
+  :root[data-reduce-motion] {
+    --dur-instant: 0ms;
+    --dur-fast: 0ms;
+    --dur-base: 0ms;
+    --dur-slow: 0ms;
+  }
+
+  :root[data-reduce-motion] *,
+  :root[data-reduce-motion] *::before,
+  :root[data-reduce-motion] *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }
 
 @layer utilities {

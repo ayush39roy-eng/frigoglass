@@ -14,17 +14,26 @@
 
 const STORAGE_KEY = 'rpd-dev-user-email';
 
+/**
+ * 2026-10-01 (test-login sign-in): "Remember me" on the login page keeps the
+ * choice in `localStorage` so it survives closing the tab; otherwise it stays
+ * per-tab in `sessionStorage` as before. Still not a credential — it only
+ * selects a seeded user on a backend that runs with RPD_DEV_MODE on.
+ */
 export function getDevUserEmail(): string | null {
   try {
-    return window.sessionStorage.getItem(STORAGE_KEY);
+    return window.sessionStorage.getItem(STORAGE_KEY) ?? window.localStorage.getItem(STORAGE_KEY);
   } catch {
     return null;
   }
 }
 
-export function setDevUserEmail(email: string | null): void {
+export function setDevUserEmail(email: string | null, options: { remember?: boolean } = {}): void {
   try {
-    if (email === null) window.sessionStorage.removeItem(STORAGE_KEY);
+    window.sessionStorage.removeItem(STORAGE_KEY);
+    window.localStorage.removeItem(STORAGE_KEY);
+    if (email === null) return;
+    if (options.remember) window.localStorage.setItem(STORAGE_KEY, email);
     else window.sessionStorage.setItem(STORAGE_KEY, email);
   } catch {
     // storage unavailable (privacy mode) — the switch just does not persist

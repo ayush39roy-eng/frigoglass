@@ -1,10 +1,20 @@
 import * as React from 'react';
-import { Building2, CalendarClock, LogOut } from 'lucide-react';
+import { Building2, CalendarClock, ChevronDown, LogOut, UserCog } from 'lucide-react';
+import { Link } from 'react-router-dom';
 
 import { NotificationBell } from '@/components/notifications/notification-bell';
 import { DevRoleSwitcher } from '@/components/session/dev-role-switcher';
 import { ThemeToggle } from '@/components/theme/theme-toggle';
 import { Button } from '@/components/ui/button';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
+import { UserAvatar } from '@/components/session/user-avatar';
+import { useSignOut } from '@/lib/auth/use-sign-out';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { useHubs } from '@/lib/api/reference';
 import { CURRENT_WEEK, HORIZON_WEEKS, WITHIN_YEAR_WEEK } from '@/lib/domain-constants';
@@ -175,46 +185,62 @@ function WeekPill(): React.JSX.Element {
 }
 
 /**
- * Boltshift spec §4's "avatar/name stack" — the signed-in identity that used to live
- * in the rail's header block (`SidebarIdentity`, 2026-09-08), with sign-out alongside
- * it exactly as the spec places it. Still deliberately a monogram, not a photo — see
- * the original component's doc comment (no Entra ID photo until P6; personal data on
- * every screen for no functional gain even once there is one).
+ * Identity: avatar + name opens the account menu (Profile & settings, Sign
+ * out). The standalone sign-out icon stays beside it. Both now actually sign
+ * out (`lib/auth/use-sign-out.ts`); before 2026-10-01 the button had no handler.
  */
 function IdentityStack(): React.JSX.Element {
   const me = useSessionStore((s) => s.me);
+  const signOut = useSignOut();
 
   return (
     <div className="flex items-center gap-s2 border-l border-border pl-s3">
-      <span
-        className="grid size-9 shrink-0 place-items-center rounded-full bg-primary-subtle text-2xs font-bold text-primary-subtle-fg"
-        aria-hidden="true"
-      >
-        {initialsOf(me?.full_name)}
-      </span>
-      <span className="hidden min-w-0 lg:block">
-        <span
-          className="block max-w-32 truncate text-body font-semibold text-text"
-          title={me?.email}
-          data-testid="session-identity"
+      <DropdownMenu>
+        <DropdownMenuTrigger
+          className="flex items-center gap-s2 rounded-pill py-1 pl-1 pr-s2 text-left transition-colors hover:bg-surface-sunken focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+          aria-label="Account menu"
         >
-          {me?.full_name ?? 'Frigoglass'}
-        </span>
-        <span className="block max-w-32 truncate text-2xs text-text-subtle">
-          {me && me.roles.length > 0 ? me.roles.join(' · ') : 'R&D Portfolio'}
-        </span>
-      </span>
-      <Button variant="ghost" size="icon" aria-label="Sign out" className="rounded-full">
+          <UserAvatar email={me?.email} name={me?.full_name} />
+          <span className="hidden min-w-0 lg:block">
+            <span
+              className="block max-w-32 truncate text-body font-semibold text-text"
+              title={me?.email}
+              data-testid="session-identity"
+            >
+              {me?.full_name ?? 'Frigoglass'}
+            </span>
+            <span className="block max-w-32 truncate text-2xs text-text-subtle">
+              {me && me.roles.length > 0 ? me.roles.join(' · ') : 'R&D Portfolio'}
+            </span>
+          </span>
+          <ChevronDown className="hidden size-4 text-text-subtle lg:block" aria-hidden="true" />
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" className="w-64">
+          <div className="flex items-center gap-s3 px-2 py-2">
+            <UserAvatar email={me?.email} name={me?.full_name} className="size-10" />
+            <span className="min-w-0">
+              <span className="block truncate text-sm font-bold text-text">{me?.full_name}</span>
+              <span className="block truncate text-xs text-text-subtle">{me?.email}</span>
+            </span>
+          </div>
+          <DropdownMenuSeparator />
+          <DropdownMenuItem asChild className="gap-s3">
+            <Link to="/profile">
+              <UserCog className="size-4" aria-hidden="true" />
+              Profile &amp; settings
+            </Link>
+          </DropdownMenuItem>
+          <DropdownMenuSeparator />
+          <DropdownMenuItem className="gap-s3 text-danger focus:text-danger" onSelect={signOut}>
+            <LogOut className="size-4" aria-hidden="true" />
+            Sign out
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+      <Button variant="ghost" size="icon" aria-label="Sign out" className="rounded-full" onClick={signOut}>
         <LogOut />
       </Button>
     </div>
   );
 }
 
-function initialsOf(name: string | undefined): string {
-  if (!name) return 'RPD';
-  const parts = name.trim().split(/\s+/);
-  const first = parts[0]?.[0] ?? '';
-  const last = parts.length > 1 ? (parts[parts.length - 1]?.[0] ?? '') : '';
-  return (first + last).toUpperCase() || 'RPD';
-}

@@ -3,6 +3,7 @@ import { Navigate } from 'react-router-dom';
 
 import { ErrorState } from '@/components/shared/error-state';
 import { Skeleton } from '@/components/ui/skeleton';
+import { getDevUserEmail } from '@/lib/api/dev-user';
 import { useSessionStore } from '@/stores/session';
 
 /**
@@ -23,12 +24,19 @@ export function SessionGate({ children }: { children: React.ReactNode }): React.
   const status = useSessionStore((s) => s.status);
   const errorKind = useSessionStore((s) => s.errorKind);
   const load = useSessionStore((s) => s.load);
+  const me = useSessionStore((s) => s.me);
 
   React.useEffect(() => {
     if (status === 'idle') void load();
   }, [status, load]);
 
-  if (status === 'ready') return <>{children}</>;
+  if (status === 'ready') {
+    // Test-login sign-in (2026-10-01): a dev-mode backend would otherwise run
+    // every request as the default seeded Admin, so the app never asked anyone
+    // to sign in. In dev mode, require an explicit sign-in first.
+    if (me?.dev_mode && getDevUserEmail() === null) return <Navigate to="/login" replace />;
+    return <>{children}</>;
+  }
 
   if (status === 'error') {
     if (errorKind === 'unauthorized') {

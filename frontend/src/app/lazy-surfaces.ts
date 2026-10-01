@@ -36,3 +36,4 @@ export const DesignSystemPage = React.lazy(() => import('@/pages/design-system')
 /** `/login` (ADR 0013, P10-T03) — rendered OUTSIDE `<AppShell>`/`<SessionGate>`;
  *  see `routes.tsx`. */
 export const LoginPage = React.lazy(() => import('@/pages/login'));
+export const ProfilePage = React.lazy(() => import('@/pages/profile'));
