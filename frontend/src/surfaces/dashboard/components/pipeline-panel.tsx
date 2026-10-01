@@ -2,13 +2,14 @@ import * as React from 'react';
 
 import { Badge } from '@/components/ui/badge';
 import { CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { GlassPanel } from '@/components/ui/glass-panel';
 import { formatInteger } from '@/lib/format';
 
 import { DonutChart } from '@/components/ui/donut-chart';
 
 import type { CompletingWithinYear, PipelineTotals } from '../api/types';
 import { BarChart, type BarDatum } from './bar-chart';
+import { BoltCard } from '@/components/ui/bolt-card';
+import { CardInfo } from './card-info';
 
 /**
  * Pipeline totals (spillover / newly registered / total) + the pipeline-vs-
@@ -79,10 +80,7 @@ export function PipelinePanel({ totals, withinYear }: PipelinePanelProps): React
     : [];
 
   return (
-    // Glass treatment (Dashboard polish, 2026-09-30): hero opacity (60%) — this
-    // card holds the composition bars + outcome donut, not a dense data table,
-    // so it gets the same translucent tint as the KPI stat tiles.
-    <GlassPanel opacity="hero">
+    <BoltCard>
       <CardHeader>
         <CardTitle>Pipeline &amp; completion</CardTitle>
         <Badge tone="neutral" data-numeric="">
@@ -91,10 +89,32 @@ export function PipelinePanel({ totals, withinYear }: PipelinePanelProps): React
       </CardHeader>
       <CardContent className="space-y-5">
         <section className="space-y-2">
-          <h3 className="label-caps text-text-subtle">Pipeline composition</h3>
-          <p className="text-2xs text-text-muted">
+          {/* Client text cleanup, 2026-10-01: the two captions that used to sit
+              under these sub-headings as loose body copy ("Every project except
+              Commercialized. Source: live project registry." and the schedule-run
+              / Invariant I9 line) are now info popovers on the sub-heading rows.
+              Nothing was deleted — and because the "live project registry" vs
+              "active schedule run" distinction is the one that keeps the two
+              senses of the word "spillover" from blurring (see this file's own
+              doc comment), each section ALSO keeps its source statement as
+              `sr-only` text so it stays in the accessibility tree verbatim. */}
+          <div className="flex items-center justify-between gap-s2">
+            <h3 className="label-caps text-text-subtle">Pipeline composition</h3>
+            <CardInfo label="Pipeline composition source">
+              <p>
+                Every project except <strong className="text-text">Commercialized</strong>. Source:
+                the live project registry, not a schedule run.
+              </p>
+              <p>
+                &quot;Carried over&quot; here means a project registered in a prior planning year —
+                it is NOT the scheduling <strong className="text-text">Spillover</strong> outcome
+                shown below, which is a property of the active schedule run.
+              </p>
+            </CardInfo>
+          </div>
+          <span className="sr-only">
             Every project except Commercialized. Source: live project registry.
-          </p>
+          </span>
           <BarChart
             data={compositionBars}
             max={totals.total_count}
@@ -102,19 +122,41 @@ export function PipelinePanel({ totals, withinYear }: PipelinePanelProps): React
           />
         </section>
 
-        <section className="space-y-2 border-t border-border pt-4">
-          <h3 className="label-caps text-text-subtle">Active schedule run outcome</h3>
+        <section className="space-y-2 border-t border-dash-hairline pt-4">
+          <div className="flex items-center justify-between gap-s2">
+            <h3 className="label-caps text-text-subtle">Active schedule run outcome</h3>
+            <div className="flex items-center gap-s2">
+              {withinYear?.has_active_schedule_run && withinYear.schedule_run_version !== null ? (
+                <span
+                  className="inline-flex items-center rounded-pill bg-primary-subtle px-2.5 py-1 text-2xs font-medium text-primary-subtle-fg"
+                  data-numeric=""
+                >
+                  Run v{withinYear.schedule_run_version}
+                </span>
+              ) : null}
+              <CardInfo label="Schedule outcome source">
+                <p>
+                  These four figures are read from the active schedule run snapshot, one field
+                  each. Not recomputed in the browser (Invariant I9).
+                </p>
+                <p>
+                  They are mutually exclusive and sum to the scheduled total, which is why they are
+                  drawn as a donut rather than bars.
+                </p>
+              </CardInfo>
+            </div>
+          </div>
           {withinYear === null ? (
             <p className="text-xs text-text-muted">Loading completion figures…</p>
           ) : withinYear.has_active_schedule_run ? (
             <>
-              <p className="text-2xs text-text-muted">
+              <span className="sr-only">
                 Source: active schedule run
                 {withinYear.schedule_run_version === null
                   ? ''
                   : ` v${String(withinYear.schedule_run_version)}`}{' '}
                 (Invariant I9). Not recomputed in the browser.
-              </p>
+              </span>
               {/* A donut, not bars: within-year / spillover / left-out are mutually
                   exclusive and sum to the scheduled total, which is the one condition
                   that makes a donut the right chart. Three segments, well under the
@@ -137,6 +179,6 @@ export function PipelinePanel({ totals, withinYear }: PipelinePanelProps): React
           )}
         </section>
       </CardContent>
-    </GlassPanel>
+    </BoltCard>
   );
 }

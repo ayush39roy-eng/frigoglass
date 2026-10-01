@@ -31,6 +31,8 @@ import {
  */
 
 export const GANTT_HATCH_PATTERN_ID = 'gantt-hatch-pattern';
+/** Vertical sheen on planned bars (2026-10-01 Gantt polish) — lighter top edge. */
+export const GANTT_PLANNED_GRADIENT_ID = 'gantt-planned-gradient';
 
 export function GanttHatchDefs(): React.JSX.Element {
   return (
@@ -52,6 +54,10 @@ export function GanttHatchDefs(): React.JSX.Element {
           strokeWidth={1.4}
         />
       </pattern>
+      <linearGradient id={GANTT_PLANNED_GRADIENT_ID} x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0%" stopColor="hsl(var(--color-gantt-planned) / 0.78)" />
+        <stop offset="100%" stopColor="hsl(var(--color-gantt-planned))" />
+      </linearGradient>
     </defs>
   );
 }
@@ -100,7 +106,10 @@ export function GanttBarGroup({
 
   if (!plannedGeom && !actualGeom) return null;
 
-  const barH = compact ? 10 : 16;
+  const barH = compact ? 10 : 18;
+  const radius = barH / 2;
+  // Week-range label inside wide planned bars (project rows only).
+  const showLabel = !compact && !elapsed && plannedGeom !== null && plannedGeom.width >= 96 && planned !== null;
   const plannedY = y + (rowHeight - barH) / 2 - (actualGeom ? 3 : 0);
   const actualY = y + (rowHeight - barH) / 2 + (plannedGeom ? 4 : 0);
   const connectorY = y + rowHeight / 2;
@@ -114,14 +123,15 @@ export function GanttBarGroup({
           y={plannedY}
           width={plannedGeom.width}
           height={barH}
-          rx={2}
+          rx={radius}
           data-bar={elapsed ? 'elapsed' : 'planned'}
+          className="gantt-bar-grow"
           fill={
             elapsed
               ? 'hsl(var(--color-gantt-planned) / 0.12)'
               : frozen
                 ? 'hsl(var(--color-gantt-planned-frozen))'
-                : 'hsl(var(--color-gantt-planned))'
+                : `url(#${GANTT_PLANNED_GRADIENT_ID})`
           }
           stroke={
             elapsed
@@ -140,11 +150,26 @@ export function GanttBarGroup({
           y={actualY}
           width={actualGeom.width}
           height={barH}
-          rx={2}
+          rx={radius}
+          className="gantt-bar-grow"
           fill={`url(#${GANTT_HATCH_PATTERN_ID})`}
           stroke="hsl(var(--color-gantt-actual-hatch))"
           strokeWidth={1}
         />
+      ) : null}
+      {showLabel && plannedGeom && planned ? (
+        <text
+          x={plannedGeom.x + 10}
+          y={plannedY + barH / 2}
+          dominantBaseline="central"
+          fontSize={10}
+          fontWeight={700}
+          fill="white"
+          pointerEvents="none"
+          className="gantt-bar-label tabular-nums"
+        >
+          {`W${String(planned.startWeek)} – W${String(planned.endWeek)}`}
+        </text>
       ) : null}
       {connector ? (
         <g>

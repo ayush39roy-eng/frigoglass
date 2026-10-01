@@ -109,7 +109,7 @@ export function GanttChart({
   const contentWidth = LEFT_COL_WIDTH + scale.totalWidthPx + BADGE_COL_WIDTH;
 
   return (
-    <div className="overflow-hidden rounded-lg border border-border bg-surface">
+    <div className="overflow-hidden rounded-dash border-[1.5px] border-border bg-surface">
       <div
         ref={scrollRef}
         className="overflow-auto scrollbar-thin"
@@ -123,7 +123,7 @@ export function GanttChart({
             style={{ height: AXIS_HEIGHT }}
           >
             <div
-              className="sticky left-0 z-10 flex shrink-0 items-center border-r border-border bg-surface-sunken px-3 text-2xs font-semibold text-text-muted"
+              className="sticky left-0 z-10 flex shrink-0 items-center border-r border-border bg-surface-sunken px-4 text-2xs font-bold uppercase tracking-wider text-text-subtle"
               style={{ width: LEFT_COL_WIDTH }}
             >
               Project / step
@@ -132,7 +132,7 @@ export function GanttChart({
               <GanttWeekAxis scale={scale} />
             </div>
             <div
-              className="sticky right-0 z-10 flex shrink-0 items-center justify-end border-l border-border bg-surface-sunken px-3 text-2xs font-semibold text-text-muted"
+              className="sticky right-0 z-10 flex shrink-0 items-center justify-end border-l border-border bg-surface-sunken px-4 text-2xs font-bold uppercase tracking-wider text-text-subtle"
               style={{ width: BADGE_COL_WIDTH }}
             >
               Status
@@ -159,7 +159,7 @@ export function GanttChart({
                 return (
                   <div
                     key={vr.key}
-                    className="absolute left-0 flex"
+                    className="group/row absolute left-0 flex"
                     style={{ top, height, width: contentWidth }}
                     data-testid={vr.kind === 'project' ? 'gantt-project-row' : 'gantt-step-row'}
                     data-project-id={vr.project.project_id}
@@ -195,7 +195,10 @@ export function GanttChart({
                     </div>
 
                     {/* timeline column */}
-                    <div className="relative shrink-0 border-b border-border" style={{ width: scale.totalWidthPx }}>
+                    <div
+                      className="relative shrink-0 border-b border-border/70 transition-colors group-hover/row:bg-primary-subtle/30"
+                      style={{ width: scale.totalWidthPx }}
+                    >
                       <BarLayer row={vr} scale={scale} height={height} animate={animate} />
                     </div>
 
@@ -415,7 +418,7 @@ function ProjectLeftCell({
           </span>
         )}
         <span className="min-w-0 flex-1">
-          <span className="block truncate text-xs font-medium text-text" title={project.project_name}>
+          <span className="block truncate text-xs font-bold text-text" title={project.project_name}>
             {project.project_name}
           </span>
           <span className="block truncate text-2xs text-text-muted">{project.hub}</span>

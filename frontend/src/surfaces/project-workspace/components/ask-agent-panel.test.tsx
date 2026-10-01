@@ -19,7 +19,7 @@ beforeEach(() => {
 
 async function ask(user: ReturnType<typeof userEvent.setup>, question = 'Which stages are behind?') {
   await user.type(screen.getByLabelText('Question for the agent'), question);
-  await user.click(screen.getByRole('button', { name: 'Ask' }));
+  await user.click(screen.getByRole('button', { name: 'Ask the agent' }));
 }
 
 describe('AskAgentPanel (ADR 0014)', () => {

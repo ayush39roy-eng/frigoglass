@@ -26,9 +26,11 @@ const Card = React.forwardRef<HTMLDivElement, CardProps>(
     <div
       ref={ref}
       className={cn(
-        'rounded-card border border-border bg-surface text-text shadow-card',
+        // Bold Blocks (2026-10-01): a visible 1.5px border plus the solid 3px
+        // bottom lip baked into --shadow-card, so each card reads as its own box.
+        'rounded-card border-2 border-border-strong/60 bg-surface text-text shadow-card',
         interactive &&
-          'cursor-pointer transition-[box-shadow,transform,border-color] duration-fast ease-ease-out-expo hover:-translate-y-px hover:border-border-strong hover:shadow-hover',
+          'cursor-pointer transition-[box-shadow,transform,border-color] duration-fast ease-ease-out-expo hover:-translate-y-0.5 hover:border-border-strong hover:shadow-pop',
         className,
       )}
       {...props}
@@ -43,7 +45,7 @@ const CardHeader = React.forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDiv
     <div
       ref={ref}
       className={cn(
-        'flex min-h-11 items-center justify-between gap-s3 border-b border-border px-card py-s2',
+        'flex min-h-12 items-center justify-between gap-s3 border-b-2 border-border px-card py-s3',
         className,
       )}
       {...props}
@@ -54,7 +56,11 @@ CardHeader.displayName = 'CardHeader';
 
 const CardTitle = React.forwardRef<HTMLHeadingElement, React.HTMLAttributes<HTMLHeadingElement>>(
   ({ className, ...props }, ref) => (
-    <h3 ref={ref} className={cn('text-h2 leading-none', className)} {...props} />
+    <h3
+      ref={ref}
+      className={cn('font-display text-h2 font-bold leading-tight tracking-tight text-text', className)}
+      {...props}
+    />
   ),
 );
 CardTitle.displayName = 'CardTitle';

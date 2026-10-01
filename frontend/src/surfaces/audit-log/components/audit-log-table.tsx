@@ -1,6 +1,15 @@
 import * as React from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { ChevronDown, ChevronRight } from 'lucide-react';
+import {
+  Box,
+  CalendarClock,
+  FolderKanban,
+  KeyRound,
+  UserRound,
+  Wrench,
+  type LucideIcon,
+} from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
@@ -77,7 +86,7 @@ export function AuditLogTable({
   const items = virtualizer.getVirtualItems();
 
   return (
-    <div className="overflow-hidden rounded-lg border border-border">
+    <div className="overflow-hidden rounded-dash border-[1.5px] border-border bg-surface">
       <div
         ref={scrollRef}
         className="overflow-auto scrollbar-thin"
@@ -87,7 +96,7 @@ export function AuditLogTable({
         <div role="table" aria-label="Audit log entries" aria-rowcount={rows.length}>
           <div
             role="row"
-            className="sticky top-0 z-10 flex border-b border-border bg-surface-sunken px-2 py-2 text-2xs font-semibold text-text-muted"
+            className="sticky top-0 z-10 flex gap-3 border-b-[1.5px] border-border bg-surface-sunken px-4 py-3 text-2xs font-bold uppercase tracking-wider text-text-subtle"
           >
             <div role="columnheader" className="w-6 shrink-0" />
             <div role="columnheader" className="w-40 shrink-0">
@@ -117,14 +126,14 @@ export function AuditLogTable({
                   key={row.id}
                   ref={virtualizer.measureElement}
                   data-index={item.index}
-                  className="absolute left-0 top-0 w-full border-b border-border text-xs last:border-0"
+                  className="absolute left-0 top-0 w-full border-b border-border/70 text-sm last:border-0"
                   style={{ transform: `translateY(${String(item.start)}px)` }}
                 >
-                  <div role="row" className="flex items-center px-2 py-2 hover:bg-surface-raised">
+                  <div role="row" className="flex items-center gap-3 px-4 py-3 transition-colors hover:bg-primary-subtle/40">
                     <div role="cell" className="flex w-6 shrink-0 items-center justify-center">
                       <button
                         type="button"
-                        className="flex items-center justify-center text-text-muted"
+                        className="grid size-6 place-items-center rounded-full text-text-muted transition-colors hover:bg-surface-sunken hover:text-text"
                         onClick={() => onToggleExpand(row.id)}
                         aria-expanded={expanded}
                         aria-label={expanded ? `Collapse entry ${row.id}` : `Expand entry ${row.id}`}
@@ -145,9 +154,12 @@ export function AuditLogTable({
                     <div role="cell" className="min-w-0 flex-1">
                       <Badge tone={actionTone(row.action)}>{row.action}</Badge>
                     </div>
-                    <div role="cell" className="min-w-0 flex-[1.5] truncate" title={row.entity_id}>
-                      <span className="text-text-muted">{row.entity_type}</span>{' '}
-                      <span className="font-mono text-text">{shortId(row.entity_id)}</span>
+                    <div role="cell" className="flex min-w-0 flex-[1.5] items-center gap-3" title={row.entity_id}>
+                      <EntityIcon type={row.entity_type} />
+                      <span className="min-w-0">
+                        <span className="block truncate font-semibold text-text">{row.entity_type}</span>
+                        <span className="block truncate font-mono text-xs text-text-subtle">{shortId(row.entity_id)}</span>
+                      </span>
                     </div>
                     <div role="cell" className="w-32 shrink-0 truncate text-text-muted">
                       {row.hubName ?? (row.hub_id ? shortId(row.hub_id) : '—')}
@@ -215,5 +227,23 @@ function JsonPanel({ label, value }: { label: string; value: unknown }): React.J
         </pre>
       )}
     </div>
+  );
+}
+
+const ENTITY_ICON: Record<string, { icon: LucideIcon; tone: string }> = {
+  Project: { icon: FolderKanban, tone: 'bg-primary-subtle text-primary-subtle-fg' },
+  ProjectAccessGrant: { icon: KeyRound, tone: 'bg-warning-subtle text-warning-subtle-fg' },
+  User: { icon: UserRound, tone: 'bg-success-subtle text-success-subtle-fg' },
+  Engineer: { icon: Wrench, tone: 'bg-surface-sunken text-text' },
+  ScheduleRun: { icon: CalendarClock, tone: 'bg-ink text-ink-fg' },
+};
+
+function EntityIcon({ type }: { type: string }): React.JSX.Element {
+  const meta = ENTITY_ICON[type] ?? { icon: Box, tone: 'bg-surface-sunken text-text-muted' };
+  const Icon = meta.icon;
+  return (
+    <span aria-hidden="true" className={cn('grid size-9 shrink-0 place-items-center rounded-full', meta.tone)}>
+      <Icon className="size-[18px]" />
+    </span>
   );
 }

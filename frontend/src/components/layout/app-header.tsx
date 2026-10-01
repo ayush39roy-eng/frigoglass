@@ -1,121 +1,170 @@
 import * as React from 'react';
-import { CalendarClock, PanelLeft, Search } from 'lucide-react';
+import { Building2, CalendarClock, LogOut } from 'lucide-react';
 
 import { NotificationBell } from '@/components/notifications/notification-bell';
 import { DevRoleSwitcher } from '@/components/session/dev-role-switcher';
 import { ThemeToggle } from '@/components/theme/theme-toggle';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import { useHubs } from '@/lib/api/reference';
 import { CURRENT_WEEK, HORIZON_WEEKS, WITHIN_YEAR_WEEK } from '@/lib/domain-constants';
 import { formatWeek } from '@/lib/format';
-import { useUiStore } from '@/stores/ui';
+import { useSessionStore } from '@/stores/session';
 
 /**
- * The top bar, restyled to the reference look (2026-09-08): a pill search field as
- * the centre of gravity, circular icon buttons, and no bottom border.
+ * TopNav — Boltshift spec §4: "minimal. Left: blue circular logo chip (gradient) +
+ * wordmark. Right: grouped pill holding icon buttons + avatar/name stack. No
+ * breadcrumbs, no search bar here."
  *
- * The bar is 64px and sits on a white surface with a hairline border under it. It no
- * longer needs to recede into the canvas: the petrol rail beside it now carries the
- * "this is chrome" signal on its own, and a light bar against a dark rail gives the
- * top-left corner the contrast the reference has. Its controls are therefore sunken
- * canvas-coloured wells rather than raised white pills.
+ * 2026-10-01: REPLACES the previous light bar (2026-09-08 client direction). Lives
+ * INSIDE the Shell now, not spanning the full viewport width above the sidebar — the
+ * rail sits outside the Shell entirely (see app-shell.tsx).
  *
- * The separators that used to divide the right-hand controls are gone. Circular
- * buttons on a plain ground already read as discrete objects, and vertical rules
- * between them added a second, competing grouping signal.
+ * WHAT MOVED, AND WHY
+ *  - The disabled, wired-to-nothing `<GlobalSearch>` placeholder is REMOVED outright,
+ *    not relocated — Boltshift's own geometry is explicit ("no search bar here"), and
+ *    removing a control with zero existing functionality (it was `disabled`, bound to
+ *    no handler) drops nothing a user could previously do. A future ⌘K command palette
+ *    (spec §9, not commissioned by this task) is the natural home for real search.
+ *  - The sidebar's old "Hub scope" footer block (SidebarFooter, 2026-09-08) has no
+ *    home in an icon-only rail with no visible text — it becomes a read-only pill
+ *    here, carrying over its EXACT derivation logic (id→name join against
+ *    `useHubs()`, falling back to a count rather than a fabricated name while the
+ *    lookup is in flight). It was never an editable "selector" (no such capability
+ *    exists in this app — hub scope is a property of the signed-in principal's role,
+ *    per ADR 0010) and still is not; it is called a "selector" in the forwarded brief
+ *    loosely, and this stays a glanceable, read-only indicator, not a new control.
+ *  - The sidebar's old "Sign out" button (also SidebarFooter) relocates next to the
+ *    avatar/name stack, which is exactly where Boltshift's own spec places it
+ *    ("avatar/name stack"). Its behaviour is unchanged — it was, and remains, a plain
+ *    button with no wired handler (no sign-out endpoint exists yet in this app).
+ *  - The sidebar collapse/expand toggle (`<PanelLeft>` button + `useUiStore`) is
+ *    REMOVED, not relocated — the rail has no expanded state any more (Boltshift spec
+ *    §4, "ICON ONLY", no exception), so a toggle between two states that no longer
+ *    both exist has nothing left to do. `app.test.tsx`'s one test asserting this
+ *    control is updated accordingly.
+ *  - Dev: act-as, the week pill and the theme toggle keep their EXACT existing
+ *    components and behaviour, just regrouped into the new pill chrome.
  */
 export function AppHeader(): React.JSX.Element {
-  const toggleSidebar = useUiStore((s) => s.toggleSidebar);
-  const collapsed = useUiStore((s) => s.sidebarCollapsed);
-
   return (
-    <header className="flex h-header shrink-0 items-center gap-s3 border-b border-border bg-surface px-s4">
-      <Button
-        variant="ghost"
-        size="icon"
-        onClick={toggleSidebar}
-        aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-        aria-pressed={collapsed}
-        className="rounded-pill"
-      >
-        <PanelLeft />
-      </Button>
+    <header className="mx-s4 mt-s4 flex h-header shrink-0 items-center gap-s4 rounded-dash border-[1.5px] border-border bg-surface px-s5 shadow-card">
+      <LogoChip />
 
-      {/* The wordmark moved into the rail's identity block — showing it twice made
-          the top-left corner read as two competing headers. */}
-      <span className="hidden text-h2 tracking-tight text-text sm:inline">
-        RPD Web Application
-      </span>
-
-      <GlobalSearch />
-
-      <div className="ml-auto flex items-center gap-s2">
-        {/* Renders only when the SERVER says dev_mode is on — see the component. */}
+      <div className="ml-auto flex items-center gap-s3">
+        {/* Renders only when the SERVER says dev_mode is on — see the component.
+            Kept as its own pill (not folded into the neutral control group below) so
+            its warning colour — "this session can impersonate anyone" — stays a
+            distinct, un-missable signal rather than one more item in a calm row. */}
         <DevRoleSwitcher />
-        <WeekIndicator />
-        <NotificationBell />
-        <ThemeToggle />
+
+        <div className="hidden items-center gap-1 rounded-pill border-[1.5px] border-border bg-shell p-1 lg:flex">
+          <HubScopePill />
+          <Divider />
+          <WeekPill />
+          <Divider />
+          <NotificationBell />
+          <ThemeToggle />
+        </div>
+
+        <IdentityStack />
       </div>
     </header>
   );
 }
 
-/**
- * Global search.
- *
- * Presentational for now — it is wired to nothing, and deliberately so: a search box
- * that accepts a query and silently returns nothing is worse than no search box,
- * because the user concludes the data is missing rather than that the feature is.
- * It is `disabled` with an honest placeholder until the search endpoint lands, which
- * also keeps it out of the tab order rather than offering a dead stop.
- */
-function GlobalSearch(): React.JSX.Element {
+function Divider(): React.JSX.Element {
+  return <span aria-hidden="true" className="h-5 w-px bg-border" />;
+}
+
+/** Boltshift spec §4: "blue circular logo chip (gradient) + wordmark 18px/700." */
+function LogoChip(): React.JSX.Element {
   return (
-    <div className="relative ml-s4 hidden max-w-md flex-1 md:block">
-      <Search
-        className="pointer-events-none absolute left-s3 top-1/2 size-4 -translate-y-1/2 text-text-subtle"
+    <div className="flex items-center gap-s3">
+      <span
+        className="grid size-10 shrink-0 place-items-center rounded-xl text-base font-extrabold text-primary-fg shadow-feature"
+        // Boltshift §2 `--grad-primary`, reproduced from the EXISTING --blue-700/
+        // --blue-400 primitives (tokens.css) rather than Tailwind's implicit
+        // default blue scale, so this stays a token reference, not a raw hex.
+        style={{ backgroundImage: 'linear-gradient(135deg, hsl(var(--blue-700)), hsl(var(--blue-400)))' }}
         aria-hidden="true"
-      />
-      <input
-        type="search"
-        disabled
-        aria-label="Search projects (not yet available)"
-        placeholder="Search projects…"
-        className="h-10 w-full rounded-pill border border-border bg-canvas pl-9 pr-s3 text-body text-text placeholder:text-text-subtle focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40 disabled:cursor-not-allowed"
-      />
+      >
+        R
+      </span>
+      <span className="hidden leading-tight sm:block">
+        <span className="block font-display text-lg font-extrabold tracking-tight text-text">
+          RPD Portfolio
+        </span>
+        <span className="block text-2xs font-semibold uppercase tracking-wider text-text-subtle">
+          Frigoglass · R&amp;D Planning
+        </span>
+      </span>
     </div>
   );
 }
 
 /**
- * The planning week, always visible.
- *
- * Every date in this application is a week index, not a calendar date — the
- * scheduler assigns steps to weeks, the Gantt axis is weeks, "within year" means
- * "completes by W52". A user reading "W31" in a table has to hold the current week
- * in their head to know whether that is past or future, and they will get it wrong.
- * Pinning it to the header makes every relative week judgement on every surface a
- * glance instead of a calculation.
- *
- * Values come from src/lib/domain-constants.ts (DOMAIN_RULES.md horizon constants),
- * not from the wall clock — the planning week is a property of the active schedule
- * run, and must never silently disagree with the data on screen.
+ * Read-only hub-scope indicator — the exact derivation `SidebarFooter` used to run,
+ * relocated here now the rail has no room for visible text. See this file's header
+ * comment for why this is a glance, not a selector.
  */
-function WeekIndicator(): React.JSX.Element {
+function HubScopePill(): React.JSX.Element {
+  const me = useSessionStore((s) => s.me);
+  const hubsQuery = useHubs();
+
+  const scopeLabel = React.useMemo(() => {
+    if (!me) return 'All hubs';
+    if (me.hub_scope_all) return 'All hubs';
+    if (me.hub_ids.length === 0) return 'No hubs';
+    const names: string[] = [];
+    for (const id of me.hub_ids) {
+      const name = hubsQuery.data?.find((h) => h.id === id)?.name;
+      if (name) names.push(name);
+    }
+    if (names.length === me.hub_ids.length) return names.join(', ');
+    return `${String(me.hub_ids.length)} ${me.hub_ids.length === 1 ? 'hub' : 'hubs'}`;
+  }, [me, hubsQuery.data]);
+
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <span
+          className="flex max-w-40 items-center gap-1.5 rounded-pill px-s3 py-1.5 text-2xs font-medium text-text-muted"
+          data-testid="hub-scope"
+        >
+          <Building2 className="size-3.5 shrink-0" aria-hidden="true" />
+          <span className="truncate">{scopeLabel}</span>
+        </span>
+      </TooltipTrigger>
+      <TooltipContent side="bottom">Your hub scope: {scopeLabel}</TooltipContent>
+    </Tooltip>
+  );
+}
+
+/**
+ * The planning week, unchanged in substance from the previous header (see the
+ * original's doc comment: every date in this app is a week index, not a calendar
+ * date, so pinning CURRENT_WEEK here makes every relative-week judgement a glance).
+ * Values come from src/lib/domain-constants.ts (DOMAIN_RULES.md), never the wall clock.
+ */
+function WeekPill(): React.JSX.Element {
   const remaining = WITHIN_YEAR_WEEK - CURRENT_WEEK;
 
   return (
     <Tooltip>
       <TooltipTrigger asChild>
-        <div className="hidden items-center gap-s2 rounded-pill border border-border bg-canvas px-s3 py-1.5 lg:flex">
+        <span
+          className="flex items-center gap-1.5 rounded-pill px-s3 py-1.5 text-2xs font-medium text-text-muted"
+          data-testid="week-indicator"
+        >
           <CalendarClock className="size-3.5 shrink-0 text-text-subtle" aria-hidden="true" />
-          <span className="font-mono text-2xs font-semibold tabular-nums text-text">
-            {formatWeek(CURRENT_WEEK)}
-          </span>
-          <span className="text-2xs text-text-subtle">
-            {remaining > 0 ? `${remaining} to W${WITHIN_YEAR_WEEK}` : 'past W52'}
-          </span>
-        </div>
+          <span className="font-semibold text-text">{formatWeek(CURRENT_WEEK)}</span>
+          {remaining > 0 ? (
+            <span className="text-text-subtle">· {remaining}w to W52</span>
+          ) : (
+            <span className="text-text-subtle">· past W52</span>
+          )}
+        </span>
       </TooltipTrigger>
       <TooltipContent side="bottom">
         Planning week {CURRENT_WEEK} of a {HORIZON_WEEKS}-week horizon. Projects completing by week{' '}
@@ -123,4 +172,49 @@ function WeekIndicator(): React.JSX.Element {
       </TooltipContent>
     </Tooltip>
   );
+}
+
+/**
+ * Boltshift spec §4's "avatar/name stack" — the signed-in identity that used to live
+ * in the rail's header block (`SidebarIdentity`, 2026-09-08), with sign-out alongside
+ * it exactly as the spec places it. Still deliberately a monogram, not a photo — see
+ * the original component's doc comment (no Entra ID photo until P6; personal data on
+ * every screen for no functional gain even once there is one).
+ */
+function IdentityStack(): React.JSX.Element {
+  const me = useSessionStore((s) => s.me);
+
+  return (
+    <div className="flex items-center gap-s2 border-l border-border pl-s3">
+      <span
+        className="grid size-9 shrink-0 place-items-center rounded-full bg-primary-subtle text-2xs font-bold text-primary-subtle-fg"
+        aria-hidden="true"
+      >
+        {initialsOf(me?.full_name)}
+      </span>
+      <span className="hidden min-w-0 lg:block">
+        <span
+          className="block max-w-32 truncate text-body font-semibold text-text"
+          title={me?.email}
+          data-testid="session-identity"
+        >
+          {me?.full_name ?? 'Frigoglass'}
+        </span>
+        <span className="block max-w-32 truncate text-2xs text-text-subtle">
+          {me && me.roles.length > 0 ? me.roles.join(' · ') : 'R&D Portfolio'}
+        </span>
+      </span>
+      <Button variant="ghost" size="icon" aria-label="Sign out" className="rounded-full">
+        <LogOut />
+      </Button>
+    </div>
+  );
+}
+
+function initialsOf(name: string | undefined): string {
+  if (!name) return 'RPD';
+  const parts = name.trim().split(/\s+/);
+  const first = parts[0]?.[0] ?? '';
+  const last = parts.length > 1 ? (parts[parts.length - 1]?.[0] ?? '') : '';
+  return (first + last).toUpperCase() || 'RPD';
 }

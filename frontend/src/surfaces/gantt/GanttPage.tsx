@@ -2,6 +2,7 @@ import * as React from 'react';
 import { ChevronsDownUp, ChevronsUpDown, FilterX, Info, RefreshCw } from 'lucide-react';
 
 import { PageHeader } from '@/components/layout/page-header';
+import { StatStrip } from '@/components/ui/stat-variants';
 import { SectionBoundary } from '@/components/shared/section-boundary';
 import { ScheduleRunProvenance } from '@/components/shared/schedule-run-provenance';
 import { DownloadButton } from '@/components/shared/download-button';
@@ -123,6 +124,17 @@ export default function GanttPage(): React.JSX.Element {
         <AccessNotice kind={denied} />
       ) : (
         <div className="flex flex-col gap-4">
+          {ganttQuery.data ? (
+            <StatStrip
+              ariaLabel="Timeline summary"
+              segments={[
+                { label: 'On the timeline', value: rows.length, accent: 'primary', hint: hubId === ALL ? 'All hubs' : 'Selected hub' },
+                { label: 'Spilling past W52', value: rows.filter((r) => r.spillover).length, accent: 'warning' },
+                { label: 'Left out of plan', value: rows.filter((r) => r.left_out).length, accent: 'danger' },
+                { label: 'Frozen in place', value: rows.filter((r) => r.frozen).length, accent: 'neutral' },
+              ]}
+            />
+          ) : null}
           <Card>
             <CardHeader>
               <CardTitle>View</CardTitle>

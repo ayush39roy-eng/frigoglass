@@ -171,8 +171,8 @@ function WorkflowStepsEditor({
           </p>
         ) : null}
 
-        <div role="table" aria-label={`${workflow.id} steps`} className="overflow-x-auto rounded-lg border border-border">
-          <div role="row" className="grid grid-cols-[3rem_minmax(12rem,2fr)_5rem_minmax(10rem,1.3fr)_minmax(10rem,1.5fr)] items-center gap-3 border-b border-border bg-surface-sunken px-3 py-2 text-2xs font-semibold text-text-muted">
+        <div role="table" aria-label={`${workflow.id} steps`} className="overflow-x-auto rounded-dash border-[1.5px] border-border bg-surface">
+          <div role="row" className="grid grid-cols-[3rem_minmax(12rem,2fr)_5rem_minmax(10rem,1.3fr)_minmax(10rem,1.5fr)] items-center gap-3 border-b-[1.5px] border-border bg-surface-sunken px-4 py-3 text-2xs font-bold uppercase tracking-wider text-text-subtle">
             <div role="columnheader">Step</div>
             <div role="columnheader">Name</div>
             <div role="columnheader">Kind</div>
@@ -187,7 +187,7 @@ function WorkflowStepsEditor({
                 key={s.step_id}
                 role="row"
                 data-testid={`step-row-${s.step_id}`}
-                className="grid grid-cols-[3rem_minmax(12rem,2fr)_5rem_minmax(10rem,1.3fr)_minmax(10rem,1.5fr)] items-center gap-3 border-b border-border px-3 py-1.5 text-xs last:border-0"
+                className="grid grid-cols-[3rem_minmax(12rem,2fr)_5rem_minmax(10rem,1.3fr)_minmax(10rem,1.5fr)] items-center gap-3 border-b border-border/70 px-4 py-3 text-sm transition-colors last:border-0 hover:bg-primary-subtle/30"
               >
                 <div role="cell" className="font-mono text-2xs text-text-muted">
                   {s.step_id}

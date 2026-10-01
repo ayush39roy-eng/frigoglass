@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Pencil, Trash2 } from 'lucide-react';
+import { Pencil, Thermometer, Trash2 } from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -46,7 +46,14 @@ export function ChamberTable({ rows, canEdit, onEdit, onDelete }: ChamberTablePr
       <TableBody>
         {rows.map((row) => (
           <TableRow key={row.id}>
-            <TableCell className="font-medium text-text">{row.code}</TableCell>
+            <TableCell>
+              <span className="flex items-center gap-3">
+                <span aria-hidden="true" className="grid size-9 shrink-0 place-items-center rounded-full bg-success-subtle text-success-subtle-fg">
+                  <Thermometer className="size-[18px]" />
+                </span>
+                <span className="font-semibold text-text">{row.code}</span>
+              </span>
+            </TableCell>
             <TableCell>{row.lab_region}</TableCell>
             <TableCell className="text-right tnum" data-numeric="">
               {formatInteger(row.max_concurrent)}

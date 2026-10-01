@@ -4,6 +4,7 @@ import { useNavigate } from 'react-router-dom';
 import { FlaskConical, LogIn, ShieldCheck } from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
+import { Component as GlowPage } from '@/components/ui/background-components';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -83,7 +84,7 @@ export default function LoginPage(): React.JSX.Element {
   const devUsersFailed = devUsers.isError && !(devUsers.error instanceof ApiError && devUsers.error.status === 404);
 
   return (
-    <div className="grid min-h-full place-items-center p-s6">
+    <GlowPage className="grid place-items-center p-s6">
       <div className="w-full max-w-md space-y-s4">
         <div className="space-y-1 text-center">
           <h1 className="text-lg font-semibold text-text">Sign in to RPD</h1>
@@ -110,7 +111,7 @@ export default function LoginPage(): React.JSX.Element {
           <SsoCard failedProbe={devUsersFailed} />
         )}
       </div>
-    </div>
+    </GlowPage>
   );
 }
 

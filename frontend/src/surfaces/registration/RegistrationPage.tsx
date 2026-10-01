@@ -2,6 +2,7 @@ import * as React from 'react';
 import { FilterX, Plus } from 'lucide-react';
 
 import { PageHeader } from '@/components/layout/page-header';
+import { StatStrip } from '@/components/ui/stat-variants';
 import { SectionBoundary } from '@/components/shared/section-boundary';
 import { DownloadButton } from '@/components/shared/download-button';
 import { EmptyState } from '@/components/shared/empty-state';
@@ -168,7 +169,22 @@ export default function RegistrationPage(): React.JSX.Element {
       {denied ? (
         <AccessNotice kind={denied} />
       ) : (
-        <div className="flex flex-col gap-4">
+        <div className="flex flex-col gap-s6">
+          {listQuery.data ? (
+            <StatStrip
+              ariaLabel="Registration summary"
+              segments={[
+                { label: 'Projects shown', value: rows.length, accent: 'primary', hint: 'Matching the filters' },
+                {
+                  label: 'In development',
+                  value: rows.filter((r) => r.status === 'In Development').length,
+                  accent: 'success',
+                },
+                { label: 'In queue', value: rows.filter((r) => r.status === 'In Queue').length, accent: 'warning' },
+                { label: 'Drafts', value: rows.filter((r) => r.status === 'Draft').length, accent: 'neutral' },
+              ]}
+            />
+          ) : null}
           <Card>
             <CardHeader>
               <CardTitle>Filters</CardTitle>

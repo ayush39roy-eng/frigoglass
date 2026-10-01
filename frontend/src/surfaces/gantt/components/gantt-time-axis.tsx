@@ -57,7 +57,8 @@ export function GanttWeekAxis({ scale }: GanttWeekAxisProps): React.JSX.Element 
               <text
                 x={x + 2}
                 y={12}
-                fontSize={9}
+                fontSize={10}
+                fontWeight={600}
                 fill="hsl(var(--color-text-muted))"
                 className="tabular-nums"
               >
@@ -77,12 +78,15 @@ export function GanttWeekAxis({ scale }: GanttWeekAxisProps): React.JSX.Element 
         stroke="hsl(var(--color-gantt-marker-now))"
         strokeWidth={1.5}
       />
+      <rect x={nowX - 26} y={17} width={52} height={15} rx={7.5} fill="hsl(var(--color-gantt-marker-now))" />
       <text
-        x={nowX + 3}
-        y={26}
+        x={nowX}
+        y={24.5}
         fontSize={9}
-        fill="hsl(var(--color-gantt-marker-now))"
-        fontWeight={600}
+        fill="white"
+        fontWeight={700}
+        textAnchor="middle"
+        dominantBaseline="central"
       >
         W{CURRENT_WEEK} now
       </text>
@@ -132,13 +136,16 @@ export function GanttGridLines({ scale, height }: GanttGridLinesProps): React.JS
       aria-hidden="true"
       className="absolute inset-0 block"
     >
+      {/* elapsed weeks (before "now") sit on a faint wash so the eye reads the
+          live part of the plan first */}
+      <rect x={0} y={0} width={Math.max(0, nowX)} height={height} fill="hsl(var(--color-surface-sunken) / 0.6)" />
       {/* shaded region after year-end so spillover is visible at a glance */}
       <rect
         x={yearX}
         y={0}
         width={Math.max(0, scale.totalWidthPx - yearX)}
         height={height}
-        fill="hsl(var(--color-gantt-marker-year) / 0.05)"
+        fill="hsl(var(--color-gantt-marker-year) / 0.07)"
       />
       {lines.map((w) => {
         const x = weekToX(w, scale);
@@ -165,7 +172,7 @@ export function GanttGridLines({ scale, height }: GanttGridLinesProps): React.JS
         x2={nowX}
         y2={height}
         stroke="hsl(var(--color-gantt-marker-now))"
-        strokeWidth={1.5}
+        strokeWidth={2}
       />
       <line
         x1={yearX}

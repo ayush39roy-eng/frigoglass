@@ -1,14 +1,25 @@
 import * as React from 'react';
-import { CalendarCheck, CircleOff, CirclePause, Clock } from 'lucide-react';
+import {
+  CalendarCheck,
+  CircleOff,
+  CirclePause,
+  Clock,
+  FolderOpen,
+  GanttChartSquare,
+  type LucideIcon,
+} from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { EmptyState } from '@/components/shared/empty-state';
 import { PriorityBandPill } from '@/components/shared/priority-band-pill';
 import { ScheduleOutcomeBadge } from '@/components/shared/schedule-outcome-badge';
 import { formatWeek } from '@/lib/format';
+import { HORIZON_WEEKS } from '@/lib/domain-constants';
+import { EntityCell, ProgressCell, RowActions } from '@/components/ui/table-cells';
+import { outcomeOf, OUTCOME_STYLE, type OutcomeBucket } from '../lib/outcome';
 
 import type { CompletingWithinYear, CompletingWithinYearRow, ScheduleRunSummary } from '../api/types';
+import { CategoryTag } from '@/components/ui/category-tag';
 import { ScheduleRunProvenance } from './schedule-run-provenance';
 import { StatCard } from './stat-card';
 import { VirtualDataTable, type VirtualColumn } from './virtual-data-table';
@@ -46,31 +57,50 @@ function OutcomeCell({ row }: { row: CompletingWithinYearRow }): React.JSX.Eleme
   );
 }
 
+/** Icon disc per outcome — the coloured circle the reference table leads each row with. */
+const OUTCOME_DISC: Record<OutcomeBucket, string> = {
+  within_year: 'bg-success-subtle text-success-subtle-fg',
+  spillover: 'bg-warning-subtle text-warning-subtle-fg',
+  left_out: 'bg-danger-subtle text-danger-subtle-fg',
+  blocked: 'bg-surface-sunken text-text',
+  unresolved: 'bg-surface-sunken text-text-muted',
+};
+
+const OUTCOME_FILL: Record<OutcomeBucket, string> = {
+  within_year: 'bg-success',
+  spillover: 'bg-warning',
+  left_out: 'bg-danger',
+  blocked: 'bg-text-muted',
+  unresolved: 'bg-border-strong',
+};
+
 const COLUMNS: VirtualColumn<CompletingWithinYearRow>[] = [
   {
     id: 'project',
     header: 'Project',
-    width: 'minmax(12rem, 1.6fr)',
-    cell: (row) => (
-      <span className="truncate font-medium text-text" title={row.project_name}>
-        {row.project_name}
-      </span>
-    ),
-  },
-  {
-    id: 'hub',
-    header: 'Hub',
-    width: 'minmax(7rem, 1fr)',
-    cell: (row) => <span className="truncate text-text-muted">{row.hub}</span>,
+    width: 'minmax(11rem, 2fr)',
+    cell: (row) => {
+      const bucket = outcomeOf(row);
+      return (
+        <EntityCell
+          icon={OUTCOME_STYLE[bucket].Icon as LucideIcon}
+          iconClassName={OUTCOME_DISC[bucket]}
+          title={row.project_name}
+          titleAttr={row.project_name}
+          to={`/projects/${row.project_id}`}
+          subtitle={row.hub}
+        />
+      );
+    },
   },
   {
     id: 'category',
     header: 'Cat.',
-    width: '4rem',
+    width: '3.5rem',
     align: 'center',
     cell: (row) =>
       row.category ? (
-        <Badge tone="outline">{row.category}</Badge>
+        <CategoryTag category={row.category} />
       ) : (
         <span className="text-text-subtle">—</span>
       ),
@@ -78,7 +108,7 @@ const COLUMNS: VirtualColumn<CompletingWithinYearRow>[] = [
   {
     id: 'priority',
     header: 'Priority',
-    width: '5rem',
+    width: '4rem',
     align: 'center',
     cell: (row) =>
       row.priority ? (
@@ -90,19 +120,39 @@ const COLUMNS: VirtualColumn<CompletingWithinYearRow>[] = [
   {
     id: 'end',
     header: 'Last step ends',
-    width: '7rem',
-    align: 'right',
-    cell: (row) => (
-      <span className="tnum text-text-muted" data-numeric="">
-        {row.last_step_end_week === null ? '—' : formatWeek(row.last_step_end_week)}
-      </span>
-    ),
+    width: 'minmax(7rem, 1.2fr)',
+    cell: (row) =>
+      row.last_step_end_week === null ? (
+        <span className="text-text-subtle">—</span>
+      ) : (
+        <ProgressCell
+          value={(row.last_step_end_week / HORIZON_WEEKS) * 100}
+          fillClassName={OUTCOME_FILL[outcomeOf(row)]}
+          label={formatWeek(row.last_step_end_week)}
+          ariaLabel={`Last step ends ${formatWeek(row.last_step_end_week)} of ${formatWeek(HORIZON_WEEKS)}`}
+        />
+      ),
   },
   {
     id: 'outcome',
     header: 'Outcome',
-    width: 'minmax(9rem, 1.2fr)',
+    width: 'minmax(6.5rem, 1fr)',
     cell: (row) => <OutcomeCell row={row} />,
+  },
+  {
+    id: 'actions',
+    header: <span className="sr-only">Actions</span>,
+    width: '2.5rem',
+    align: 'right',
+    cell: (row) => (
+      <RowActions
+        label={`Actions for ${row.project_name}`}
+        actions={[
+          { label: 'Open workspace', icon: FolderOpen, to: `/projects/${row.project_id}` },
+          { label: 'View on timeline', icon: GanttChartSquare, to: '/timeline' },
+        ]}
+      />
+    ),
   },
 ];
 
@@ -111,102 +161,129 @@ export interface WithinYearPanelProps {
   activeRun: ScheduleRunSummary | null | undefined;
 }
 
-export function WithinYearPanel({ data, activeRun }: WithinYearPanelProps): React.JSX.Element {
-  const runBadge =
-    data.schedule_run_version === null
-      ? null
-      : `Run v${String(data.schedule_run_version)}`;
+/** Share of the run's four outcome buckets, as a display label ("29%"). */
+function shareLabel(count: number, data: CompletingWithinYear): string {
+  const total = data.within_year_count + data.spillover_count + data.left_out_count + data.blocked_count;
+  if (total === 0) return '0%';
+  return `${String(Math.round((count / total) * 100))}%`;
+}
 
+/**
+ * Section heading + provenance chips + the four outcome KPI cards. Exported on
+ * its own so the Dashboard can lay the KPI row and the outcome table out as two
+ * separate boxes (Bold Blocks, 2026-10-01); `WithinYearPanel` below still
+ * composes both for any caller that wants the original single block.
+ */
+export function WithinYearKpis({ data, activeRun }: WithinYearPanelProps): React.JSX.Element {
   return (
-    /* SECTION, not a card.
-     *
-     * The KPI tiles and the outcome table are each already a card. Wrapping them in
-     * a third card put white on white and cost the tiles their lift — the reference
-     * dashboards never nest a card inside a card, they let tiles sit directly on the
-     * ground. So the section keeps its heading and badge but drops its background,
-     * border and shadow, and becomes pure structure. */
-    <Card className="border-0 bg-transparent shadow-none">
-      <CardHeader className="border-0 px-0">
-        <CardTitle className="text-h1">Completing within the year</CardTitle>
-        {runBadge ? <Badge tone="neutral">{runBadge}</Badge> : null}
-      </CardHeader>
-      <CardContent className="space-y-s4 px-0 pb-0">
-        {!data.has_active_schedule_run ? (
-          <EmptyState
-            title="No schedule computed yet"
-            description="No active schedule run exists. Once the schedule is calculated, the within-year, spillover and left-out counts will appear here — sourced directly from that run (Invariant I9)."
+    <section className="space-y-s4">
+      <div className="flex flex-wrap items-end justify-between gap-s3">
+        <div>
+          <h2 className="font-display text-h1 font-extrabold tracking-tight text-text">
+            Completing within the year
+          </h2>
+          <p className="text-sm font-medium text-text-muted">
+            Outcome of every project in the active schedule run
+          </p>
+        </div>
+        {data.has_active_schedule_run ? (
+          <ScheduleRunProvenance scheduleRunVersion={data.schedule_run_version} activeRun={activeRun} />
+        ) : null}
+      </div>
+
+      {!data.has_active_schedule_run ? (
+        <EmptyState
+          title="No schedule computed yet"
+          description="Counts appear here once the schedule is calculated."
+        />
+      ) : (
+        <div className="grid gap-gutter sm:grid-cols-2 xl:grid-cols-4">
+          {/* The one blue tile. "Within year" earns it: it is the number the whole
+              application exists to produce. */}
+          <StatCard
+            variant="feature"
+            label="Within year"
+            value={data.within_year_count}
+            icon={CalendarCheck}
+            badge={{ label: `${shareLabel(data.within_year_count, data)} of run`, tone: 'pop' }}
+            caption={`Complete by ${formatWeek(52)}`}
           />
-        ) : (
-          <>
-            <ScheduleRunProvenance
-              scheduleRunVersion={data.schedule_run_version}
-              activeRun={activeRun}
-            />
+          <StatCard
+            label="Spillover"
+            value={data.spillover_count}
+            tone="warning"
+            icon={Clock}
+            badge={{ label: shareLabel(data.spillover_count, data), tone: 'neutral' }}
+            caption={`Scheduled, finishing after ${formatWeek(52)}`}
+          />
+          <StatCard
+            label="Left out"
+            value={data.left_out_count}
+            tone="danger"
+            icon={CircleOff}
+            badge={
+              data.left_out_count > 0
+                ? { label: shareLabel(data.left_out_count, data), tone: 'drop' }
+                : null
+            }
+            caption="No feasible window in the 78-week horizon"
+          />
+          {/* P9-F02: mutually exclusive with the three counts above — Blocked
+              wins outright, so a project is never double-counted across tiles.
+              The ink tile is the contrasting second accent of the row. */}
+          <StatCard
+            variant="ink"
+            label="Blocked"
+            value={data.blocked_count}
+            icon={CirclePause}
+            badge={{ label: shareLabel(data.blocked_count, data), tone: data.blocked_count > 0 ? 'drop' : 'pop' }}
+            caption="Held at a Blocked stage until it clears"
+          />
+        </div>
+      )}
+    </section>
+  );
+}
 
-            <div className="grid gap-gutter sm:grid-cols-2 lg:grid-cols-4">
-              {/* The one emphasised tile on the Dashboard. "Within year" earns it:
-                  it is the number the whole application exists to produce, and the
-                  question every portfolio review opens with. */}
-              <StatCard
-                feature
-                label="Within year"
-                value={data.within_year_count}
-                icon={CalendarCheck}
-                caption={`Complete by ${formatWeek(52)}`}
-              />
-              <StatCard
-                label="Spillover"
-                value={data.spillover_count}
-                tone="warning"
-                icon={Clock}
-                caption={`Scheduled, finishing after ${formatWeek(52)}`}
-              />
-              <StatCard
-                label="Left out"
-                value={data.left_out_count}
-                tone="warning"
-                icon={CircleOff}
-                caption="No feasible window in the 78-week horizon"
-              />
-              {/* P9-F02: mutually exclusive with the three counts above — Blocked
-                  wins outright (backend CompletingWithinYear.blocked_count docstring),
-                  so a project is never double-counted across these four tiles. */}
-              <StatCard
-                label="Blocked"
-                value={data.blocked_count}
-                tone="warning"
-                icon={CirclePause}
-                caption="Held at a Blocked stage until it clears"
-              />
-            </div>
+/** The per-project outcome table, in its own card. */
+export function WithinYearTable({ data }: { data: CompletingWithinYear }): React.JSX.Element | null {
+  if (!data.has_active_schedule_run) return null;
+  if (data.rows.length === 0) {
+    return (
+      <EmptyState title="No projects in this run" description="No project outcomes in your hub scope." />
+    );
+  }
+  return (
+    <div className="flex h-full flex-col overflow-hidden rounded-dash border-[1.5px] border-dash-hairline bg-surface shadow-dashCard">
+      <div className="flex items-center justify-between gap-s3 border-b-[1.5px] border-dash-hairline px-card py-s4">
+        <div>
+          <h3 className="font-display text-h2 font-bold tracking-tight text-text">Project outcomes</h3>
+          <p className="text-xs font-medium text-text-subtle">Per-project result from the active run</p>
+        </div>
+        <span className="rounded-pill bg-text px-2.5 py-1 text-2xs font-bold text-text-inverse" data-numeric="">
+          {data.rows.length} projects
+        </span>
+      </div>
+      <div className="min-h-0 flex-1">
+        <VirtualDataTable
+          rows={data.rows}
+          columns={COLUMNS}
+          rowKey={(row) => row.project_id}
+          caption="Per-project outcome from the active schedule run"
+          estimateRowHeight={64}
+          maxHeight={660}
+          className="rounded-none border-0"
+        />
+      </div>
+    </div>
+  );
+}
 
-            {data.rows.length === 0 ? (
-              <EmptyState
-                title="No projects in this run"
-                description="The active schedule run produced no project outcomes in your hub scope."
-              />
-            ) : (
-              /* The table carries its own card now that the section wrapper is
-               * transparent. `overflow-hidden` clips the sticky header's top corners
-               * to the card radius — without it the header paints square corners over
-               * the rounded card and the join is visible on scroll.
-               *
-               * Glass treatment (2026-09-30): the same "content" 90%-opacity glass
-               * tint as `HubTypePipelineTable`/`ProjectBreakdown` — dense virtualized
-               * table, so the tint stays opaque enough that P4-T11's WCAG contrast
-               * work on the row text is never put at risk. */
-              <div className="overflow-hidden rounded-panel border border-glass-border/30 bg-glass/90 shadow-glass backdrop-blur-xl backdrop-saturate-150">
-                <VirtualDataTable
-                  rows={data.rows}
-                  columns={COLUMNS}
-                  rowKey={(row) => row.project_id}
-                  caption="Per-project outcome from the active schedule run"
-                />
-              </div>
-            )}
-          </>
-        )}
-      </CardContent>
-    </Card>
+export function WithinYearPanel({ data, activeRun }: WithinYearPanelProps): React.JSX.Element {
+  return (
+    <div className="space-y-s4">
+      <WithinYearKpis data={data} activeRun={activeRun} />
+      <WithinYearTable data={data} />
+    </div>
   );
 }

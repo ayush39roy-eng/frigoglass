@@ -1,6 +1,5 @@
 import * as React from 'react';
 
-import { GlassPanel } from '@/components/ui/glass-panel';
 import { CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import {
   Table,
@@ -14,6 +13,8 @@ import { formatInteger } from '@/lib/format';
 import { PROJECT_TYPE_LABELS, type ProjectType } from '@/types/enums';
 
 import type { HubTypePipelineRow } from '../api/types';
+import { BoltCard } from '@/components/ui/bolt-card';
+import { CardInfo } from './card-info';
 import { HubTypePipelineChart } from './hub-type-pipeline-chart';
 
 /**
@@ -22,13 +23,15 @@ import { HubTypePipelineChart } from './hub-type-pipeline-chart';
  * schedule outcome. A Hub Planner only sees rows for their own hub(s) (the API
  * hub-scopes the query).
  *
- * Glass treatment (Dashboard polish, 2026-09-30): `<GlassPanel opacity="content">`
- * (90% tint, not the hero tiles' 60%) — this card holds dense pivoted numbers, so
- * the blur/border/shadow chrome is the same "glass" identity as the rest of the
- * page, but the tint stays opaque enough that P4-T11's WCAG contrast work on the
- * table's text tokens is never put at risk. A `<HubTypePipelineChart>` (Recharts,
- * real data, same rows) sits above the pivot table as the chart-shaped read of
- * the identical numbers the table states verbatim.
+ * `<BoltCard>` (2026-10-01, Boltshift — replaces the 2026-09-30 `<GlassPanel
+ * opacity="content">`) for the outer chrome. The pivot TABLE itself keeps using
+ * the shared `<Table>` primitive (`@/components/ui/table`) unchanged — it is also
+ * used by Capacity/Matrix/Planning/Admin, out of scope this task, so its header
+ * strip background/row height/hover tint are not restyled here; only this card's
+ * own border/shadow/radius and the chart above it carry the new look. A
+ * `<HubTypePipelineChart>` (Recharts, real data, same rows) sits above the pivot
+ * table as the chart-shaped read of the identical numbers the table states
+ * verbatim.
  */
 
 const UNTYPED = '—';
@@ -73,9 +76,20 @@ export function HubTypePipelineTable({ rows }: HubTypePipelineTableProps): React
   }, [rows]);
 
   return (
-    <GlassPanel opacity="content">
+    <BoltCard>
       <CardHeader>
         <CardTitle>Hub × type pipeline</CardTitle>
+        <CardInfo label="Hub × type pipeline source">
+          <p>
+            One project count per (hub, project type) from{' '}
+            <code>GET /dashboard/hub-type-pipeline</code>, pivoted into this table. The chart above
+            draws the identical numbers the table states.
+          </p>
+          <p>
+            Portfolio composition off the live project registry — not a schedule outcome. A Hub
+            Planner only sees rows for their own hub(s); the API scopes the query.
+          </p>
+        </CardInfo>
       </CardHeader>
       <CardContent className="space-y-4">
         {rows.length === 0 ? (
@@ -144,6 +158,6 @@ export function HubTypePipelineTable({ rows }: HubTypePipelineTableProps): React
           </>
         )}
       </CardContent>
-    </GlassPanel>
+    </BoltCard>
   );
 }

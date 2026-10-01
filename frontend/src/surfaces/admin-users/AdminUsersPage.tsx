@@ -1,7 +1,8 @@
 import * as React from 'react';
-import { ChevronLeft, ChevronRight, Plus, Search } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Plus, Search, ShieldCheck, Users } from 'lucide-react';
 
 import { PageHeader } from '@/components/layout/page-header';
+import { TileStat } from '@/components/ui/stat-variants';
 import { SectionBoundary } from '@/components/shared/section-boundary';
 import { EmptyState } from '@/components/shared/empty-state';
 import { ReadOnlyNotice, WriteGate } from '@/components/session/write-gate';
@@ -121,6 +122,24 @@ export default function AdminUsersPage(): React.JSX.Element {
           delegation rights on the Project Access tab's per-project
           `GET .../access` — see `routes.tsx`'s note on why `/admin/users`
           is not wrapped in `<RequireRead>` like every other surface. */}
+      {usersQuery.data ? (
+        <div className="mb-s6 grid gap-gutter sm:grid-cols-2 xl:max-w-3xl">
+          <TileStat
+            label="Users"
+            value={usersQuery.data.total_count}
+            icon={Users}
+            accent="primary"
+            hint={q ? 'Matching your search' : 'Accounts in the system'}
+          />
+          <TileStat
+            label="Admins on this page"
+            value={usersQuery.data.items.filter((u) => u.roles.includes('Admin') || u.roles.includes('Super Admin')).length}
+            icon={ShieldCheck}
+            accent="neutral"
+            hint="Admin or Super Admin"
+          />
+        </div>
+      ) : null}
       <Tabs defaultValue="users">
         <TabsList>
           <TabsTrigger value="users">Users</TabsTrigger>

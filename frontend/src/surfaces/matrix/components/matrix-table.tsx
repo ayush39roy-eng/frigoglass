@@ -1,11 +1,14 @@
 import * as React from 'react';
 import { Link } from 'react-router-dom';
-import { Layers, Pencil } from 'lucide-react';
+import { FolderKanban, Layers, Pencil } from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { PriorityBandPill } from '@/components/shared/priority-band-pill';
+import { CategoryTag } from '@/components/ui/category-tag';
+import { categoricalRankSoftBg, categoricalRankText, categoryRank } from '@/lib/categorical-palette';
+import { cn } from '@/lib/utils';
 import { SCORING_ANCHORS } from '@/lib/domain-constants';
 import { formatCurrency, formatDecimal } from '@/lib/format';
 import { PROJECT_TYPE_LABELS, type CurrencyCode } from '@/types/enums';
@@ -90,16 +93,29 @@ export function MatrixTable({
       {
         id: 'project',
         header: 'Project',
-        width: 200,
+        width: 240,
         sticky: true,
         cell: (row) => (
-          <Link
-            to={`/projects/${row.project_id}`}
-            className="truncate font-medium text-text underline-offset-2 hover:text-primary hover:underline"
-            title={`${row.project_name} — open in Project Workspace`}
-          >
-            {row.project_name}
-          </Link>
+          <span className="flex min-w-0 items-center gap-2.5">
+            <span
+              aria-hidden="true"
+              className={cn(
+                'grid size-7 shrink-0 place-items-center rounded-full',
+                row.category
+                  ? cn(categoricalRankSoftBg(categoryRank(row.category)), categoricalRankText(categoryRank(row.category)))
+                  : 'bg-surface-sunken text-text-muted',
+              )}
+            >
+              <FolderKanban className="size-3.5" />
+            </span>
+            <Link
+              to={`/projects/${row.project_id}`}
+              className="truncate font-semibold text-text underline-offset-2 hover:text-primary hover:underline"
+              title={`${row.project_name} — open in Project Workspace`}
+            >
+              {row.project_name}
+            </Link>
+          </span>
         ),
       },
       {
@@ -111,10 +127,10 @@ export function MatrixTable({
       {
         id: 'category',
         header: 'Cat.',
-        width: 56,
+        width: 76,
         align: 'center',
         cell: (row) =>
-          row.category ? <Badge tone="outline">{row.category}</Badge> : <span className="text-text-subtle">–</span>,
+          row.category ? <CategoryTag category={row.category} /> : <span className="text-text-subtle">–</span>,
       },
       {
         id: 'type',

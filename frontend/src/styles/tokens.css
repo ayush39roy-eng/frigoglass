@@ -344,8 +344,10 @@
   --text-body: 0.875rem;      /* 14px */
   --text-mono: 0.875rem;      /* 14px */
 
-  /* Display face: Space Grotesk earns its keep only at 34px (see fonts.css) */
-  --font-display: 'Space Grotesk', 'Inter Variable', ui-sans-serif, system-ui, sans-serif;
+  /* Display face (2026-10-01, Boltshift): Plus Jakarta Sans, 700 weight by
+   * convention at call sites — see fonts.css's header comment for why it
+   * replaced Space Grotesk in both density zones, not just this one. */
+  --font-display: 'Plus Jakarta Sans Variable', 'Inter Variable', ui-sans-serif, system-ui, sans-serif;
 
   /* Rhythm */
   --card-pad: 1.375rem;       /* 22px — midpoint of the 20-24px band */
@@ -368,10 +370,10 @@
   --text-body: 0.78125rem;    /* 12.5px */
   --text-mono: 0.75rem;       /* 12px */
 
-  /* Working zone drops Space Grotesk. Below ~24px its wide apertures stop reading as
-   * "instrument" and start reading as "slightly wrong Inter", so the display token
-   * simply points at the UI face. One less font to load on the heaviest screens. */
-  --font-display: 'Inter Variable', ui-sans-serif, system-ui, sans-serif;
+  /* Plus Jakarta Sans is a general UI face, not an exotic display-only one (unlike
+   * the Space Grotesk it replaced here on 2026-10-01), so the Working zone no
+   * longer needs to drop back to Inter at small sizes — same face as Overview. */
+  --font-display: 'Plus Jakarta Sans Variable', 'Inter Variable', ui-sans-serif, system-ui, sans-serif;
 
   --card-pad: 0.875rem;       /* 14px — midpoint of the 12-16px band */
   --card-pad-tight: 0.625rem;
@@ -601,9 +603,15 @@
   --color-sidebar-active-fg: 0 0% 100%;
 
   /* ---- Bigger chrome ------------------------------------------------------- */
-  --app-header-h: 4rem;              /* 64px, was 52px */
-  --app-sidebar-w: 16rem;            /* 256px, was 232px */
-  --app-sidebar-w-collapsed: 4.5rem; /* 72px, was 52px */
+  /* 2026-10-01 (Boltshift): the TopNav is 72px tall per spec §4. The rail is now
+   * PERMANENTLY icon-only at `--app-sidebar-w-collapsed` (already exactly 72px,
+   * unchanged) — `--app-sidebar-w` (the old 256px expanded width) is no longer
+   * read by `app-sidebar.tsx` (there is no expanded state any more) but is left
+   * defined, unused, rather than removed, since nothing depends on its absence
+   * either; see docs/MEMORY.md "[2026-10-01] Boltshift shell + Dashboard rebuild". */
+  --app-header-h: 4.5rem;            /* 72px, was 64px */
+  --app-sidebar-w: 16rem;            /* 256px — unused since the Boltshift rail */
+  --app-sidebar-w-collapsed: 4.5rem; /* 72px — the rail's one, permanent width */
 
   /* ---- Borders that are actually visible -----------------------------------
    * The old --line at 11% alpha vanished against a white card on a light ground,
@@ -630,51 +638,249 @@
 }
 
 /* ===========================================================================
- * GLASS SURFACE LAYER  (2026-09-30 — Dashboard "crazy-charts" polish, task-scoped
- * to frontend/src/surfaces/dashboard/)
+ * The GLASS SURFACE LAYER that used to live here (2026-09-30, Dashboard
+ * "crazy-charts" polish: `--color-glass-bg`/`--color-glass-border`/
+ * `--shadow-glass`, `GlassPanel`) is DELETED, not just superseded — the
+ * Boltshift rebuild below (2026-10-01) removed `glass-panel.tsx` outright and
+ * every one of its four call sites, so nothing in the app reads those three
+ * tokens any more (confirmed: `grep -rn "bg-glass\|shadow-glass\|border-glass\|
+ * color-glass" frontend/src` → no matches outside doc comments). Removed
+ * here rather than left inert, unlike a couple of smaller unused tokens this
+ * same task left in place (`--app-sidebar-w`, `--color-sidebar-*`) — a whole
+ * dead token FAMILY with zero consumers is worth deleting outright; a single
+ * already-pre-existing unused dimension token is not worth the extra churn.
  *
- * PALETTE RECONCILIATION DECISION: the client's reference dashboards specified a
- * standalone hex palette (--bg-app, --brand-500 #5B3DF5, a --s-blue/--s-green/...
- * series ramp). That palette is NOT adopted wholesale — Frigoglass's blue/petrol
- * two-colour system (above, "TWO-COLOUR SYSTEM + DARK CHROME") is already
- * shipped, gate-passed and client-approved (see the 2026-09-08 MEMORY.md entries:
- * "Rejected from the references... the sage/cream palette and the lime/periwinkle
- * accents. Frigoglass is a blue-and-navy industrial brand"). Introducing a second,
- * competing hue system for one surface would fork the design system CLAUDE.md
- * says this role owns end-to-end. Instead, "glass" is expressed as TRANSLUCENCY +
- * BLUR of the tokens that already exist: --color-surface for the tint,
- * --color-border for the hairline, --slate-900 for the shadow tint (already the
- * shadow colour every other card in the app uses — functionally the same role as
- * the client's --ink-900 shadow spec, no new hue introduced). The chart series
- * ramp is unchanged (--chart-1..6); the Hub globe legend and the pipeline chart
- * both consume it via assignSeriesColors(), same as every other chart in the app.
+ * ===========================================================================
+ * BOLTSHIFT LAYER  (2026-10-01 — client's final visual direction, SUPERSEDES
+ * the "GLASS SURFACE LAYER" block above and the 2026-09-30 glass + hub-globe
+ * Dashboard polish. See docs/MEMORY.md "[2026-10-01] Boltshift shell +
+ * Dashboard rebuild" for the full task record; the GLASS SURFACE LAYER block
+ * above is dead CSS once this ships (nothing imports `glass-panel.tsx` or the
+ * hub globe anymore) and is deleted in the same change, not left to rot.
  *
- * Two opacity steps, not one, because a fully translucent card over dense,
- * virtualized, WCAG-contrast-verified table text (P4-T11) would cost legibility
- * the "glass" effect isn't worth: --color-glass-bg is used at /60 alpha for
- * hero/KPI surfaces (the stat tiles, the hub globe panel) and at /90 for cards
- * that hold a dense data table (Hub × type pipeline, Project breakdown) — glass
- * chrome (border, blur, shadow) is identical either way; only the tint's opacity
- * changes, and 90% still clears every P4-T11 contrast ratio because the
- * underlying text colour tokens are untouched.
- * ======================================================================== */
+ * SCOPE DISCIPLINE — two token families, two different blast radii:
+ *
+ *   1. SHELL geometry (--radius-shell/--radius-rail/--shadow-shell/--shadow-pop/
+ *      --shadow-cta-blue). Consumed ONLY by `components/layout/{app-shell,
+ *      app-sidebar,app-header}.tsx` — the shared chrome every surface already
+ *      renders inside, so this is the one part of this layer that visually
+ *      touches every surface. It deliberately does NOT repoint
+ *      `--radius-card`/`--shadow-card`/`--color-surface`/`--color-border` —
+ *      those remain exactly as the 2026-09-08 "soft surface" pass left them,
+ *      so Capacity/Matrix/Gantt/Planning/Registration/Workspace/Settings/Admin
+ *      render their own cards byte-identically to before this task (explicitly
+ *      out of scope — a later task reskins each of those surfaces in turn).
+ *      The shell/rail backgrounds reuse the EXISTING `--color-surface` (white
+ *      in light, slate-900 in dark) and the page ground behind them reuses the
+ *      EXISTING `--color-canvas` — both already match Boltshift's spec values
+ *      closely enough (its `--page`/`--card` hexes are within a point or two
+ *      of this app's existing `--slate-100`/`--slate-0`) that no new colour
+ *      token was needed for either, only new radius/shadow geometry.
+ *
+ *   2. Boltshift CONTENT tokens (--radius-dash/--shadow-dash-card/
+ *      --color-dash-hairline/--color-dash-alt/--gradient-dash-primary/
+ *      --dash-cat-1..10). Named "dash" for where they were born (the Dashboard
+ *      rebuild, this same day) but, as of the SAME day's Capacity reskin
+ *      follow-up task, consumed by `components/ui/bolt-card.tsx` and
+ *      `components/ui/category-tag.tsx` (both promoted out of
+ *      `surfaces/dashboard/components/*` once Capacity needed the identical
+ *      card chrome and category pill) plus `surfaces/capacity/components/*`
+ *      directly — i.e. every surface that has been reskinned to Boltshift so
+ *      far. Matrix/Gantt/Planning/Registration/Workspace/Settings/Admin are
+ *      NOT reskinned yet and still render their cards from the untouched
+ *      --radius-card/--shadow-card/--color-border tokens above; a future task
+ *      reskinning one of them is expected to become a third consumer of this
+ *      block, not to fork a third token family. The 10-hue categorical ramp is
+ *      still distinct from the older, more restrained sitewide --chart-1..6
+ *      ramp (chart-theme.ts, assignSeriesColors()) that `components/ui/
+ *      bar-chart.tsx` draws from (RANKED BY VALUE, a different job from this
+ *      ramp's DETERMINISTIC BY CATEGORY assignment) — reusing/repointing
+ *      --chart-1..6 itself would still reskin Matrix/Gantt's own
+ *      not-yet-touched charts. See `@/lib/categorical-palette.ts`'s own doc
+ *      comment for the full history of this token family's consumers.
+ * ========================================================================= */
 
 :root {
-  --color-glass-bg: var(--slate-0);
-  --color-glass-border: var(--slate-0);
-  /* Client spec: 0 6px 24px -8px rgb(21 29 72 / 0.10) — rgb(21,29,72) is a dark
-   * ink-navy, the same role --slate-900 already plays for --shadow-card/-hover
-   * above (a warm-neutral navy used only as a shadow tint). Reusing it here
-   * rather than adding a literal --ink-900 keeps one shadow-tint token, not two. */
-  --shadow-glass:
-    0 1px 1px hsl(var(--slate-900) / 0.03),
-    0 6px 24px -8px hsl(var(--slate-900) / 0.10);
+  /* ---- Shell geometry — app-shell.tsx / app-sidebar.tsx / app-header.tsx only --- */
+  --radius-shell: 2rem;     /* 32px — the floating white app-shell */
+  --radius-rail: 1.75rem;   /* 28px — the icon-only sidebar rail */
+  --shadow-shell: 0 24px 60px -20px hsl(var(--slate-900) / 0.14);
+  --shadow-pop: 0 12px 32px -8px hsl(var(--slate-900) / 0.18);
+  --shadow-cta-blue: 0 8px 24px -8px hsl(var(--blue-600) / 0.45);
+
+  /* ---- Dashboard-only content geometry + palette --------------------------- */
+  --radius-dash: 1.5rem;    /* 24px — Dashboard KPI/chart/table cards */
+  --color-dash-hairline: 220 24% 93%;
+  --color-dash-alt: 220 33% 98%;
+  --shadow-dash-card:
+    0 1px 2px hsl(var(--slate-900) / 0.04),
+    0 8px 24px -12px hsl(var(--slate-900) / 0.10);
+  --gradient-dash-primary: linear-gradient(
+    135deg,
+    hsl(var(--blue-700)) 0%,
+    hsl(var(--blue-500)) 55%,
+    hsl(var(--blue-300)) 100%
+  );
+
+  /* Dashboard categorical ramp — 10 hues, never repeated within one chart
+   * (Boltshift spec §2). Assigned BY VALUE via assignSeriesColors()'s own
+   * rule, same discipline as the sitewide --chart-1..6 ramp. */
+  --dash-cat-1: 221 83% 53%;   /* blue */
+  --dash-cat-2: 262 83% 58%;   /* violet */
+  --dash-cat-3: 189 94% 43%;   /* cyan */
+  --dash-cat-4: 160 84% 39%;   /* emerald */
+  --dash-cat-5: 38 92% 50%;    /* amber */
+  --dash-cat-6: 350 89% 60%;   /* rose */
+  --dash-cat-7: 243 75% 59%;   /* indigo */
+  --dash-cat-8: 175 77% 40%;   /* teal */
+  --dash-cat-9: 288 83% 61%;   /* fuchsia */
+  --dash-cat-10: 82 78% 42%;   /* lime */
 }
 
 .dark {
-  --color-glass-bg: var(--slate-800);
-  --color-glass-border: var(--slate-0);
-  --shadow-glass:
-    0 1px 1px hsl(0 0% 0% / 0.3),
-    0 6px 24px -8px hsl(0 0% 0% / 0.45);
+  --shadow-shell: 0 24px 60px -20px hsl(0 0% 0% / 0.55);
+  --shadow-pop: 0 12px 32px -8px hsl(0 0% 0% / 0.5);
+  --shadow-cta-blue: 0 8px 24px -8px hsl(var(--blue-500) / 0.5);
+
+  --color-dash-hairline: 220 20% 22%;
+  --color-dash-alt: 222 26% 15%;
+  --shadow-dash-card:
+    0 1px 2px hsl(0 0% 0% / 0.4),
+    0 8px 24px -12px hsl(0 0% 0% / 0.5);
+  --gradient-dash-primary: linear-gradient(
+    135deg,
+    hsl(var(--blue-600)) 0%,
+    hsl(var(--blue-400)) 55%,
+    hsl(var(--blue-300)) 100%
+  );
+
+  /* Brighter variants for dark backgrounds — same hues, lifted lightness so
+   * each still clears ~3:1 against the dark card for the bars/dots they fill. */
+  --dash-cat-1: 217 91% 65%;
+  --dash-cat-2: 258 90% 70%;
+  --dash-cat-3: 189 85% 58%;
+  --dash-cat-4: 158 64% 52%;
+  --dash-cat-5: 43 96% 56%;
+  --dash-cat-6: 351 89% 68%;
+  --dash-cat-7: 243 80% 72%;
+  --dash-cat-8: 172 66% 52%;
+  --dash-cat-9: 288 80% 70%;
+  --dash-cat-10: 82 70% 54%;
+}
+
+/* ===========================================================================
+ * BOLD BLOCKS LAYER  (2026-10-01, client direction: "clear, spaced, bold
+ * headings, separate boxes, contrasting colour, thicker sides, cards that pop").
+ *
+ * Declared LAST so it wins over the Boltshift and soft-surface values above
+ * without editing them. Three moves, applied app-wide:
+ *   1. Ground contrast — a darker page canvas and a light-grey SHELL, so every
+ *      white card reads as its own box instead of white-on-white.
+ *   2. Tactile edges — a visible 1.5px border plus a solid 3px bottom "lip"
+ *      (--shadow-dash-card / --shadow-card), the "thicker sides" the client asked for.
+ *   3. One contrasting accent — lime (--color-pop) for positive delta pills,
+ *      plus a near-black INK feature card, alongside the Frigoglass blue.
+ * ========================================================================= */
+
+:root {
+  --color-canvas: 225 14% 86%;
+  --color-shell: 220 20% 95%;
+  --color-border: 220 16% 84%;
+  --color-border-strong: 220 14% 72%;
+  --color-dash-hairline: 220 16% 86%;
+  --color-dash-edge: 220 16% 80%;
+  --color-dash-alt: 220 25% 97%;
+
+  --color-ink: 224 30% 11%;
+  --color-ink-raised: 224 24% 18%;
+  --color-ink-fg: 0 0% 100%;
+
+  --color-pop: 84 81% 44%;       /* lime — positive delta pills */
+  --color-pop-fg: 90 60% 10%;
+  --color-drop: 0 84% 56%;       /* red — negative delta pills */
+  --color-drop-fg: 0 0% 100%;
+
+  --shadow-dash-card:
+    0 3px 0 0 hsl(var(--color-dash-edge)),
+    0 18px 36px -22px hsl(var(--slate-900) / 0.28);
+  --shadow-card:
+    0 3px 0 0 hsl(var(--color-dash-edge)),
+    0 14px 30px -22px hsl(var(--slate-900) / 0.24);
+  --shadow-pop:
+    0 5px 0 0 hsl(var(--color-dash-edge)),
+    0 24px 44px -20px hsl(var(--slate-900) / 0.32);
+  --shadow-feature:
+    0 4px 0 0 hsl(var(--blue-900)),
+    0 22px 40px -18px hsl(var(--blue-700) / 0.55);
+  --shadow-ink:
+    0 4px 0 0 hsl(0 0% 0%),
+    0 22px 40px -18px hsl(var(--slate-900) / 0.6);
+
+  --gradient-dash-primary: linear-gradient(
+    140deg,
+    hsl(var(--blue-800)) 0%,
+    hsl(var(--blue-700)) 45%,
+    hsl(var(--blue-500)) 100%
+  );
+  --gradient-ink: linear-gradient(150deg, hsl(224 30% 16%) 0%, hsl(224 34% 8%) 100%);
+
+  --radius-dash: 1.375rem;
+}
+
+:root,
+[data-density='overview'] {
+  --text-display: 2.5rem;    /* 40px — KPI figures read across the room */
+  --text-h1: 1.375rem;       /* 22px section headings */
+  --text-h2: 1.0625rem;      /* 17px card titles */
+  --text-page: 2rem;         /* 32px page title */
+  --card-pad: 1.5rem;
+  --grid-gutter: 1.25rem;
+  --stack: 1.25rem;
+}
+
+[data-density='working'] {
+  --text-page: 1.5rem;
+}
+
+.dark {
+  --color-canvas: 228 30% 4%;
+  --color-shell: 226 32% 7%;
+  --color-border: 220 18% 22%;
+  --color-border-strong: 218 16% 32%;
+  --color-dash-hairline: 220 18% 20%;
+  --color-dash-edge: 222 30% 3%;
+  --color-dash-alt: 222 26% 13%;
+
+  --color-ink: 222 20% 94%;
+  --color-ink-raised: 222 16% 86%;
+  --color-ink-fg: 224 30% 10%;
+
+  --color-pop: 84 75% 52%;
+  --color-pop-fg: 90 60% 8%;
+  --color-drop: 0 80% 62%;
+  --color-drop-fg: 0 0% 100%;
+
+  --shadow-dash-card:
+    0 3px 0 0 hsl(var(--color-dash-edge)),
+    0 18px 36px -20px hsl(0 0% 0% / 0.7);
+  --shadow-card:
+    0 3px 0 0 hsl(var(--color-dash-edge)),
+    0 14px 30px -20px hsl(0 0% 0% / 0.6);
+  --shadow-pop:
+    0 5px 0 0 hsl(var(--color-dash-edge)),
+    0 24px 44px -18px hsl(0 0% 0% / 0.75);
+  --shadow-feature:
+    0 4px 0 0 hsl(var(--blue-950)),
+    0 22px 40px -18px hsl(var(--blue-500) / 0.45);
+  --shadow-ink:
+    0 4px 0 0 hsl(222 14% 64%),
+    0 22px 40px -18px hsl(0 0% 0% / 0.6);
+
+  --gradient-dash-primary: linear-gradient(
+    140deg,
+    hsl(var(--blue-700)) 0%,
+    hsl(var(--blue-600)) 45%,
+    hsl(var(--blue-400)) 100%
+  );
+  --gradient-ink: linear-gradient(150deg, hsl(222 22% 97%) 0%, hsl(222 16% 84%) 100%);
 }

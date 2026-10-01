@@ -39,3 +39,8 @@ deploy/tls/dev/
 secrets/*
 !secrets/.gitkeep
 !secrets/README.md
+
+# Scratch / screenshots / local tools
+.playwright-mcp/
+*.png
+frontend/shot-tmp.mjs

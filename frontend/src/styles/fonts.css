@@ -1,9 +1,25 @@
 /*
  * Self-hosted typefaces. Three families, three jobs — no decorative fourth.
  *
- *   Inter            all UI text
- *   Space Grotesk    display figures on Overview KPI cards ONLY (600 weight, latin)
- *   JetBrains Mono   every figure that appears in a table, ever
+ *   Plus Jakarta Sans   all UI text + headings + display figures (500/600/700)
+ *   Inter               fallback face (kept loaded; see below)
+ *   JetBrains Mono      every figure that appears in a table, ever
+ *
+ * 2026-10-01 (Boltshift, client's final visual direction): Plus Jakarta Sans
+ * replaces Space Grotesk as the display face AND becomes the primary UI
+ * sans-serif, app-wide — Boltshift spec §3 calls for it at weights 500/600/700
+ * for "UI + headings" with no surface carve-out, unlike the shell-chrome and
+ * Dashboard-content items in the same task, which ARE explicitly scoped. Inter
+ * Variable stays installed and first in the fallback chain (not removed) —
+ * every font-family stack in tailwind.config.ts / tokens.css lists Plus
+ * Jakarta Sans first and Inter Variable second, so a page that has not
+ * finished downloading the new face (or a component that still names 'Inter
+ * Variable' explicitly somewhere) never falls back past a self-hosted face to
+ * system-ui. Space Grotesk is fully retired: `--font-display` was its only
+ * consumer (tokens.css), and that token now points at Plus Jakarta Sans in
+ * both density zones — unlike Space Grotesk, Jakarta Sans is a general UI
+ * face, not an exotic display-only one, so the Working zone no longer needs
+ * to drop back to Inter at small sizes.
  *
  * WHY SELF-HOSTED, NOT GOOGLE FONTS CDN
  * -------------------------------------
@@ -19,13 +35,19 @@
  * full sheet costs a handful of bytes of CSS, not the cyrillic/greek/vietnamese
  * woff2 payloads. Latin-only pages download latin only.
  *
- * Weight strategy: Inter and JetBrains Mono are variable fonts (100–900 in one
- * file), so the entire weight range costs one request each. Space Grotesk is
- * static and appears in exactly one place, so we take the single weight we use.
+ * Weight strategy: Plus Jakarta Sans, Inter and JetBrains Mono are all variable
+ * fonts (one file covers their full weight axis), so the entire weight range
+ * costs one request each — components still only ever ASK for 500/600/700 on
+ * Plus Jakarta Sans (the brief's own restriction), the variable file simply
+ * makes all three available from the one download.
  */
 
-/* Inter — variable weight axis, upright only. No italic: this is a planning tool,
- * and nothing in the surface inventory calls for an italic UI face. */
+/* Plus Jakarta Sans — variable weight axis, upright only. The primary UI +
+ * heading face app-wide (Boltshift spec §3). */
+@import '@fontsource-variable/plus-jakarta-sans/wght.css';
+
+/* Inter — variable weight axis, upright only. Kept as the fallback face (see
+ * the file header) rather than removed outright. */
 @import '@fontsource-variable/inter/wght.css';
 
 /* JetBrains Mono — variable weight axis. Chosen over a proportional face for
@@ -33,10 +55,3 @@
  * (slashed zero, distinct 1/l/I), which matters when a planner is reconciling
  * week indices and project IDs across a 30-column matrix. */
 @import '@fontsource-variable/jetbrains-mono/wght.css';
-
-/* Space Grotesk — 600 only, latin only. Used exclusively for the large figure on
- * Overview KPI cards. Its wide apertures and slightly mechanical geometry read as
- * "instrument panel" at 34px, where Inter reads as "web app". At any size below
- * ~24px the distinction disappears and Inter is the better face, which is why the
- * Working density zone drops back to Inter for display text. */
-@import '@fontsource/space-grotesk/latin-600.css';

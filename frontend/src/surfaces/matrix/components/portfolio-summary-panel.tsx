@@ -46,7 +46,7 @@ export function PortfolioSummaryPanel({
           {formatInteger(summary.scored_projects)} / {formatInteger(summary.total_projects)} scored
         </Badge>
       </CardHeader>
-      <CardContent className="space-y-4">
+      <CardContent className="space-y-6">
         <p className="text-2xs text-text-muted">
           Counts are for projects in your hub scope. All figures come straight from{' '}
           <code>GET /priorities/summary</code> — none is recomputed in your browser.
@@ -64,7 +64,7 @@ export function PortfolioSummaryPanel({
 
         <div className="grid gap-4 lg:grid-cols-2">
           <section className="space-y-2">
-            <h3 className="text-xs font-semibold uppercase tracking-wide text-text-muted">
+            <h3 className="font-display text-h2 font-bold tracking-tight text-text">
               Computed band (from current score)
             </h3>
             <Table>
@@ -91,7 +91,7 @@ export function PortfolioSummaryPanel({
           </section>
 
           <section className="space-y-2">
-            <h3 className="text-xs font-semibold uppercase tracking-wide text-text-muted">
+            <h3 className="font-display text-h2 font-bold tracking-tight text-text">
               Committed priority (Project.priority)
             </h3>
             <Table>
@@ -114,6 +114,11 @@ export function PortfolioSummaryPanel({
                 ))}
               </TableBody>
             </Table>
+            <BandDistributionChart
+              data={PROJECT_PRIORITIES.map((p) => ({ band: p, count: summary.set_priority_counts[p] ?? 0 }))}
+              ariaLabel="Number of projects at each committed priority"
+              name="Projects"
+            />
             <p className="text-2xs text-text-subtle">
               &ldquo;Committed&rdquo; is today&rsquo;s assigned priority. Editing a score here changes
               only the computed band — applying priorities portfolio-wide is a separate action.
@@ -135,12 +140,12 @@ function Stat({
   hint?: string;
 }): React.JSX.Element {
   return (
-    <div className="rounded-lg border border-border bg-surface-raised px-3 py-2">
-      <p className="text-2xs text-text-muted">{label}</p>
-      <p className="tnum text-lg font-semibold text-text" data-numeric="">
+    <div className="rounded-xl border-2 border-border-strong/60 bg-surface px-4 py-3">
+      <p className="text-xs font-bold uppercase tracking-wider text-text-subtle">{label}</p>
+      <p className="tnum font-display text-2xl font-extrabold text-text" data-numeric="">
         {formatInteger(value)}
       </p>
-      {hint ? <p className="mt-0.5 text-2xs text-text-subtle">{hint}</p> : null}
+      {hint ? <p className="mt-0.5 text-2xs text-text-muted">{hint}</p> : null}
     </div>
   );
 }

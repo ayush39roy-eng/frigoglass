@@ -1,7 +1,9 @@
 import * as React from 'react';
 
 import { Badge } from '@/components/ui/badge';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { BoltCard } from '@/components/ui/bolt-card';
+import { CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { CategoryTag } from '@/components/ui/category-tag';
 import { EmptyState } from '@/components/shared/empty-state';
 import {
   Table,
@@ -14,6 +16,7 @@ import {
 import { formatInteger } from '@/lib/format';
 
 import type { ClassBreakdown, ClassBreakdownRow } from '../api/types';
+import { CapacityInfo } from './capacity-info';
 import { ClassBreakdownChart } from './class-breakdown-chart';
 
 /**
@@ -34,28 +37,40 @@ export function ClassBreakdownPanel({ data }: ClassBreakdownPanelProps): React.J
   const hasAny = data.rows.some((r) => r.deliverable_count + r.left_out_count > 0);
 
   return (
-    <Card>
-      <CardHeader>
+    <BoltCard>
+      <CardHeader className="flex-wrap gap-y-s2">
         <CardTitle>Class breakdown — deliverable vs. left out</CardTitle>
-        {runBadge ? <Badge tone="neutral">{runBadge}</Badge> : null}
+        <div className="flex flex-wrap items-center gap-s2">
+          {runBadge ? (
+            <Badge tone="neutral" className="rounded-pill">
+              {runBadge}
+            </Badge>
+          ) : null}
+          <CapacityInfo label="How deliverable and left out are defined">
+            <p>
+              <strong className="text-text">Deliverable</strong> = scheduled and not left out.{' '}
+              <strong className="text-text">Left out</strong> = no feasible window before the
+              78-week horizon.
+            </p>
+            <p>
+              Source: active schedule run
+              {data.schedule_run_version === null
+                ? ''
+                : ` v${String(data.schedule_run_version)}`}
+              . Not recomputed in the browser.
+            </p>
+          </CapacityInfo>
+        </div>
       </CardHeader>
       <CardContent className="space-y-4">
         {!data.has_active_schedule_run ? (
           <EmptyState
             title="No schedule computed yet"
             description="No active schedule run exists. The A+/A/B/C deliverable vs. left-out split appears once the schedule is calculated."
+            className="rounded-dash border-solid border-dash-hairline bg-dash-alt"
           />
         ) : (
           <>
-            <p className="text-2xs text-text-muted">
-              Deliverable = scheduled and not left out. Left out = no feasible window before the
-              78-week horizon. Source: active schedule run
-              {data.schedule_run_version === null
-                ? ''
-                : ` v${String(data.schedule_run_version)}`}
-              . Not recomputed in the browser.
-            </p>
-
             <div className="overflow-x-auto">
               <Table>
                 <TableHeader>
@@ -69,7 +84,7 @@ export function ClassBreakdownPanel({ data }: ClassBreakdownPanelProps): React.J
                   {data.rows.map((row: ClassBreakdownRow) => (
                     <TableRow key={row.category}>
                       <TableCell>
-                        <Badge tone="outline">{row.category}</Badge>
+                        <CategoryTag category={row.category} />
                       </TableCell>
                       <TableCell className="text-right tnum text-text" data-numeric="">
                         {formatInteger(row.deliverable_count)}
@@ -89,11 +104,12 @@ export function ClassBreakdownPanel({ data }: ClassBreakdownPanelProps): React.J
               <EmptyState
                 title="No categorised projects in this run"
                 description="The active schedule run produced no A+/A/B/C project outcomes in your hub scope."
+                className="rounded-dash border-solid border-dash-hairline bg-dash-alt"
               />
             )}
           </>
         )}
       </CardContent>
-    </Card>
+    </BoltCard>
   );
 }

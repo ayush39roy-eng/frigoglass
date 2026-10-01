@@ -91,7 +91,7 @@ export function VirtualMatrixGrid<Row>({
 
   return (
     <div
-      className={cn('overflow-hidden rounded-lg border border-border', className)}
+      className={cn('overflow-hidden rounded-dash border-[1.5px] border-border bg-surface', className)}
     >
       <div
         ref={scrollRef}
@@ -102,14 +102,14 @@ export function VirtualMatrixGrid<Row>({
         <div role="table" aria-label={caption} aria-rowcount={rows.length} style={{ minWidth: totalWidth }}>
           <div
             role="row"
-            className="sticky top-0 z-10 flex border-b border-border bg-surface-sunken text-2xs font-semibold text-text-muted"
+            className="sticky top-0 z-10 flex border-b-[1.5px] border-border bg-surface-sunken text-2xs font-bold uppercase tracking-wider text-text-subtle"
           >
             {columns.map((col, i) => (
               <div
                 key={col.id}
                 role="columnheader"
                 className={cn(
-                  'flex items-center px-2 py-2',
+                  'flex items-center px-3 py-3',
                   ALIGN[col.align ?? 'left'],
                   col.sticky && 'bg-surface-sunken',
                   col.headerClassName,
@@ -131,7 +131,7 @@ export function VirtualMatrixGrid<Row>({
                   role="row"
                   data-index={item.index}
                   ref={virtualizer.measureElement}
-                  className="absolute left-0 top-0 flex w-full border-b border-border text-xs last:border-0 hover:bg-surface-raised"
+                  className="absolute left-0 top-0 flex w-full border-b border-border/70 text-xs transition-colors last:border-0 hover:bg-primary-subtle/40"
                   style={{ transform: `translateY(${String(item.start)}px)` }}
                 >
                   {columns.map((col, i) => (
@@ -139,7 +139,7 @@ export function VirtualMatrixGrid<Row>({
                       key={col.id}
                       role="cell"
                       className={cn(
-                        'flex min-w-0 items-center px-2 py-2',
+                        'flex min-w-0 items-center px-3 py-2.5',
                         ALIGN[col.align ?? 'left'],
                         col.sticky && 'bg-surface',
                       )}

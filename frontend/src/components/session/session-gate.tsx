@@ -57,7 +57,13 @@ export function SessionGate({ children }: { children: React.ReactNode }): React.
       aria-label="Signing you in"
       data-testid="session-gate-loading"
     >
-      <div className="hidden w-sidebar shrink-0 bg-sidebar sm:block" aria-hidden="true" />
+      {/* Matches the Boltshift rail's one, permanent width (app-sidebar.tsx) —
+          2026-10-01: the rail is no longer petrol, so this placeholder now
+          reuses `bg-surface`, the same token the real rail renders on. */}
+      <div
+        className="hidden w-sidebar-collapsed shrink-0 rounded-rail border border-border bg-surface sm:block"
+        aria-hidden="true"
+      />
       <div className="flex-1 space-y-s4 p-gutter" aria-hidden="true">
         <Skeleton className="h-8 w-64" />
         <Skeleton className="h-4 w-96" />

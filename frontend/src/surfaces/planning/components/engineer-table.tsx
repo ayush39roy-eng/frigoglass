@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Pencil, Trash2 } from 'lucide-react';
+import { HardHat, Pencil, Trash2 } from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -43,7 +43,14 @@ export function EngineerTable({ rows, canEdit, onEdit, onDelete }: EngineerTable
       <TableBody>
         {rows.map((row) => (
           <TableRow key={row.id}>
-            <TableCell className="font-medium text-text">{row.name}</TableCell>
+            <TableCell>
+              <span className="flex items-center gap-3">
+                <span aria-hidden="true" className="grid size-9 shrink-0 place-items-center rounded-full bg-primary-subtle text-primary-subtle-fg">
+                  <HardHat className="size-[18px]" />
+                </span>
+                <span className="font-semibold text-text">{row.name}</span>
+              </span>
+            </TableCell>
             <TableCell>{row.hubName}</TableCell>
             <TableCell className="text-right tnum" data-numeric="">
               {formatDecimal(row.fte)}

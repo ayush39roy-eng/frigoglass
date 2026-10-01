@@ -1,10 +1,13 @@
 import * as React from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
-import { ChevronDown, ChevronRight, Pencil } from 'lucide-react';
+import { ChevronDown, ChevronRight, FolderKanban, Pencil } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { ProjectStatusBadge } from '@/components/shared/project-status-badge';
+import { PriorityBandPill } from '@/components/shared/priority-band-pill';
+import { CategoryTag } from '@/components/ui/category-tag';
+import { categoricalRankSoftBg, categoricalRankText, categoryRank } from '@/lib/categorical-palette';
 import { cn } from '@/lib/utils';
 import { PROJECT_TYPE_LABELS } from '@/types/enums';
 
@@ -68,7 +71,7 @@ export function ProjectList({
   const items = virtualizer.getVirtualItems();
 
   return (
-    <div className="overflow-hidden rounded-lg border border-border">
+    <div className="overflow-hidden rounded-dash border-[1.5px] border-border bg-surface">
       <div
         ref={scrollRef}
         className="overflow-auto scrollbar-thin"
@@ -78,7 +81,7 @@ export function ProjectList({
         <div role="table" aria-label="Projects" aria-rowcount={rows.length}>
           <div
             role="row"
-            className="sticky top-0 z-10 flex border-b border-border bg-surface-sunken px-2 py-2 text-2xs font-semibold text-text-muted"
+            className="sticky top-0 z-10 flex gap-3 border-b-[1.5px] border-border bg-surface-sunken px-4 py-3 text-2xs font-bold uppercase tracking-wider text-text-subtle"
           >
             <div role="columnheader" className="w-6 shrink-0" />
             <div role="columnheader" className="min-w-0 flex-[2]">
@@ -112,17 +115,17 @@ export function ProjectList({
                   key={row.id}
                   ref={virtualizer.measureElement}
                   data-index={item.index}
-                  className="absolute left-0 top-0 w-full border-b border-border text-xs last:border-0"
+                  className="absolute left-0 top-0 w-full border-b border-border/70 text-sm last:border-0"
                   style={{ transform: `translateY(${String(item.start)}px)` }}
                 >
                   <div
                     role="row"
-                    className="flex items-center px-2 py-2 hover:bg-surface-raised"
+                    className="flex items-center gap-3 px-4 py-3 transition-colors hover:bg-primary-subtle/40"
                   >
                     <div role="cell" className="flex w-6 shrink-0 items-center justify-center">
                       <button
                         type="button"
-                        className="flex items-center justify-center text-text-muted"
+                        className="grid size-6 place-items-center rounded-full text-text-muted transition-colors hover:bg-surface-sunken hover:text-text"
                         onClick={() => onToggleExpand(row.id)}
                         aria-expanded={expanded}
                         aria-label={expanded ? `Collapse ${row.name}` : `Expand ${row.name}`}
@@ -130,8 +133,24 @@ export function ProjectList({
                         {expanded ? <ChevronDown className="size-3.5" /> : <ChevronRight className="size-3.5" />}
                       </button>
                     </div>
-                    <div role="cell" className="min-w-0 flex-[2] truncate font-medium text-text" title={row.name}>
-                      {row.name}
+                    <div role="cell" className="flex min-w-0 flex-[2] items-center gap-3" title={row.name}>
+                      <span
+                        aria-hidden="true"
+                        className={cn(
+                          'grid size-9 shrink-0 place-items-center rounded-full',
+                          row.category
+                            ? cn(categoricalRankSoftBg(categoryRank(row.category)), categoricalRankText(categoryRank(row.category)))
+                            : 'bg-surface-sunken text-text-muted',
+                        )}
+                      >
+                        <FolderKanban className="size-[18px]" />
+                      </span>
+                      <span className="min-w-0">
+                        <span className="block truncate font-semibold text-text">{row.name}</span>
+                        <span className="block truncate text-xs font-medium text-text-subtle">
+                          {row.type ? PROJECT_TYPE_LABELS[row.type] : 'No type'} · {row.workflow_id}
+                        </span>
+                      </span>
                       {row.frozen ? (
                         <Badge tone="outline" className="ml-1.5 align-middle">
                           Frozen
@@ -151,7 +170,7 @@ export function ProjectList({
                       {row.hubName}
                     </div>
                     <div role="cell" className="w-16 shrink-0 text-text-muted">
-                      {row.category ?? '—'}
+                      {row.category ? <CategoryTag category={row.category} /> : '—'}
                     </div>
                     <div role="cell" className="w-20 shrink-0 text-text-muted">
                       {row.type ? PROJECT_TYPE_LABELS[row.type] : '—'}
@@ -160,7 +179,7 @@ export function ProjectList({
                       <ProjectStatusBadge status={row.status} />
                     </div>
                     <div role="cell" className="w-16 shrink-0 text-text-muted">
-                      {row.priority ?? '—'}
+                      {row.priority ? <PriorityBandPill priority={row.priority} /> : '—'}
                     </div>
                     <div role="cell" className="flex w-10 shrink-0 justify-end">
                       {canEdit ? (
@@ -168,7 +187,7 @@ export function ProjectList({
                           type="button"
                           variant="ghost"
                           size="icon"
-                          className="size-7"
+                          className="size-8 rounded-full"
                           onClick={() => onEdit(row)}
                           aria-label={`Edit ${row.name}`}
                         >

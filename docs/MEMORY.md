@@ -19434,3 +19434,926 @@ owner's call, same standing note as every other phase.
 **Next:** nothing outstanding from this request. Open items across the whole project remain: OQ
 #8/#9/#10/#11-22/#23 (all client-blocked), P6-T03 (SSO cutover), P7-T01/T02/T04 (UAT, data
 migration, final go-live gate) — none of which P10 changes.
+
+---
+
+### [2026-10-01] Boltshift shell + Dashboard rebuild — frontend-builder
+
+**Task.** The client chose a new, final visual direction ("Boltshift": light floating
+white app-shell, icon-only sidebar rail, pill-shaped top nav, colourful chart/table
+accents against restrained blue-and-white chrome), explicitly REPLACING the
+2026-09-30 "Dashboard 'crazy-charts' visual polish (glass, count-up, Recharts,
+hub globe)" entry above — **this entry supersedes that one**. Scope: (1) the shared
+shell chrome (`app-shell.tsx`, `app-sidebar.tsx`, `app-header.tsx` — affects every
+surface, which the task itself called "expected and fine"); (2) the Dashboard's own
+content; (3) a sitewide font swap (Plus Jakarta Sans); (4) a derived dark palette.
+Explicitly out of scope: Capacity/Matrix/Gantt/Planning/Registration/Project
+Workspace/Workflow Settings/Admin *content* (their own cards/charts/tables) — only
+the shell chrome around them changes, unavoidably. No `backend/` file touched.
+
+**A hard-rule deviation from the forwarded client spec, and why.** The spec's §7
+("Three.js — exactly two places") asks for an R3F ambient gradient-mesh plane fixed
+behind the page (i.e. rendered by the shared shell, visible on EVERY route) and an
+R3F logo shard in the TopNav (also shared chrome, visible everywhere). CLAUDE.md's
+non-negotiable is unambiguous: "three.js is forbidden in v1... never on Dashboard,
+Capacity, Matrix, Gantt or Planning." A page-wide ambient plane and a TopNav logo
+shard sit in the AppShell/AppHeader, which render on literally every one of those
+surfaces — there is no reading of "never on Dashboard/Capacity/Matrix/Gantt/
+Planning" under which installing a WebGL scene behind all of them satisfies it. A
+task's own forwarded instructions cannot authorize overriding CLAUDE.md (this
+session's system instructions are explicit that no agent message is the user's own
+consent to change a hard constraint). **Neither three.js moment was built.**
+Substituted instead, at zero bundle cost and zero new dependency: the ambient plane
+became a pure CSS background on the Page wrapper (reusing the existing `bg-canvas`
+token, no gradient-mesh shader) and the logo chip became a CSS `linear-gradient`
+circle (`hsl(var(--blue-700))` → `hsl(var(--blue-400))`) with the "R" monogram —
+visually in the spirit of a "blue gradient logo chip," with no WebGL anywhere.
+`three`/`@react-three/*` remain installed-but-unused exactly as before this task
+(confirmed: `grep -rn "from 'three'\|@react-three" frontend/src` → no matches outside
+`node_modules`) — the ban is undisturbed. `cobe` (the hub globe's WebGL dependency)
+is uninstalled outright (see below), so if anything the app now imports LESS WebGL
+than before this task, not more.
+
+**1. Shell chrome rebuild.**
+- **`app-shell.tsx`** — new Boltshift layout: an outer grey "Page" (`bg-canvas`,
+  `p-5`) holding two floating white siblings 20px apart — the icon rail (unchanged
+  position, sticky, to the left, OUTSIDE the Shell) and the Shell itself, a single
+  `rounded-shell`/`shadow-shell`/`bg-surface` container that now owns the TopNav
+  (AppHeader) at its top and the scrollable density region below it. The header no
+  longer spans the full viewport width above the sidebar — it lives inside the
+  Shell now, per spec §4.
+- **`app-sidebar.tsx`** — full rewrite. The rail is now PERMANENTLY icon-only (no
+  expand/collapse state at all — Boltshift spec §4's "ICON ONLY, no permanent text"
+  is treated as a hard rule, not an optional density): 44×44 (`size-11`) icon
+  buttons, tooltip-on-hover is the only place the label text exists (re-using the
+  existing accessible Radix `<Tooltip>` restyled as a flying pill via
+  `data-[state=delayed-open]:slide-in-from-left-1`, NOT a bespoke
+  AnimatePresence tooltip — keeps the existing keyboard/focus/Escape semantics
+  and `app-sidebar.test.tsx`'s a11y scan unchanged). **IA decision — 4 real nav
+  groups → 3 visual clusters**: `nav.ts`'s `SURFACES`/`NAV_GROUP_ORDER` and
+  `nav-visibility.ts`'s `visibleNavGroups()` (100% of the RBAC filtering) are
+  BYTE-UNCHANGED; only `app-sidebar.tsx`'s own presentation groups the 4 RBAC
+  groups into 3 visual clusters, merging **Configure** (Workflow Settings, Users &
+  roles) and **Data** (Audit Log) into one — both are "configure the system /
+  inspect its record" actions reached for far less often than Plan or Execute, and
+  4 clusters at 72px width read as cramped once a role can see all 9 surfaces.
+  Plan and Execute each keep their own cluster. The rail is now WHITE (reuses
+  `--color-surface`/`--color-border`/`--color-primary`/`--color-primary-subtle` —
+  no new colour token), replacing the 2026-09-08 petrol "dark island" rail
+  direction. `--color-sidebar-*` and the `petrol` Tailwind ramp are consequently
+  UNUSED by any component now; left defined rather than deleted (same "inert,
+  documented, not churned" treatment as the pre-existing unused `--app-sidebar-w`,
+  256px) because `styles/sidebar-contrast.test.ts` still exercises those tokens in
+  isolation (pure token-math, independent of what renders) and is still green.
+- **A real bug found and fixed along the way, not a style choice**: an early
+  version of the active-indicator bar used `ref={(el) => ...}` on `<NavLink>`
+  alongside its existing function-`className` prop
+  (`className={({isActive}) => cn(...)}`). In a REAL PRODUCTION BUILD (not dev —
+  this did not reproduce under `vite dev`, only `vite build`/`vite preview`) this
+  left the raw, uninvoked function serialized straight into the DOM `class`
+  attribute (`class="({isActive:e})=>f(...) active"`), rendering every rail icon
+  invisible (icons present in the DOM, `class` corrupted). Removing the `ref` prop
+  did NOT fix it — the corruption persisted even with no ref at all, pointing at
+  something in this exact React 19 + react-router-dom 6.30.6 + this project's React
+  Compiler pass's interaction with `<NavLink>`'s function-`className` special case
+  specifically, not at `ref` as the root cause. Fixed by not using the function-
+  `className` form at all: `isActive` is computed once per item in the parent via
+  a small `isItemActive()` helper (the same match rule `<NavLink>` uses
+  internally) and passed down as a plain boolean, so `className` is an ordinary
+  string. `<NavLink>`'s own internal `aria-current="page"` computation was
+  confirmed correct even in the broken build (only the function-className path
+  misbehaved), so the active-indicator bar's position is measured via
+  `nav.querySelector('a[aria-current="page"]')` rather than manual refs. This was
+  caught ONLY by building for production and screenshotting with Playwright
+  (`vite dev` masked it) — recorded here so a future session hitting "icons
+  present in the DOM but invisible, only in a built/preview bundle" does not
+  re-diagnose it as a CSS/colour bug.
+- **A real bundle-discipline bug found and fixed**: the first working draft of the
+  active-indicator bar used a `framer-motion` `layoutId`-shared spring
+  (`{stiffness:420, damping:34}`, literally what Boltshift spec §4 asks for).
+  Because `app-sidebar.tsx` is part of the ALWAYS-loaded `AppShell` (not a lazy
+  surface route), this pulled `framer-motion` into the critical initial bundle for
+  the first time — measured regression: 204.9 KB gzip vs. the ~165-167 KB gzip
+  baseline. `lib/motion.ts`'s own standing rule ("Framer stays a per-surface LAZY
+  dependency") exists precisely to prevent this. Fixed by dropping framer-motion
+  from this file entirely: the active bar is a single absolutely-positioned `<span>`
+  whose `top` is measured via `offsetTop` of the `aria-current="page"` anchor and
+  animated with a plain CSS `transition-[top]` (the sitewide `--dur-base`/
+  `ease-out-expo` tokens, already zeroed under `prefers-reduced-motion` by the
+  existing global rule in `index.css` — no extra reduced-motion gating code
+  needed). Visually close to the spec's spring, zero extra bytes. Final bundle
+  (below) is flat against the pre-task baseline.
+- **`app-header.tsx`** — full rewrite to the Boltshift TopNav: a gradient logo chip
+  (see the three.js substitution above) + wordmark on the left; on the right, a
+  single neutral pill housing the hub-scope indicator, the week pill, the
+  notification bell and the theme toggle, with the Dev-act-as control kept as ITS
+  OWN separate warning-tinted pill (not folded into the neutral group, so its "this
+  session can impersonate anyone" signal stays distinct), then an avatar/name/role
+  stack with sign-out beside it (Boltshift spec §4's own "avatar/name stack"
+  placement). **What moved and why**: the old sidebar footer's hub-scope indicator
+  (SidebarFooter, 2026-09-08) has no home in an icon-only rail with no visible text,
+  so it is now a read-only pill in the header, carrying over its EXACT derivation
+  logic unchanged (id→name join against `useHubs()`, falls back to a count rather
+  than a fabricated name while loading) — it was never an editable "selector" (no
+  such capability exists anywhere in this app; hub scope is a property of the
+  signed-in principal's role, ADR 0010) and still is not, despite the forwarded
+  brief's loose use of that word. The old sidebar identity block (name/roles
+  monogram) moves to the header's new avatar/name stack, same reasoning (deliberately
+  a monogram, not a photo — no Entra ID photo until P6, and personal data on every
+  screen for no functional gain even once there is one). The old disabled,
+  wired-to-nothing `<GlobalSearch>` placeholder is REMOVED, not relocated — spec §4
+  is explicit ("no search bar here") and it had zero existing functionality to
+  preserve (disabled, no handler); a future ⌘K palette (spec §9, not commissioned
+  by this task) is the natural home for real search. The old sidebar
+  collapse/expand toggle button is REMOVED, not relocated — the rail has no
+  expanded state any more, so a toggle between two states that no longer both
+  exist has nothing left to do. `app.test.tsx`'s "collapses the sidebar via the
+  header toggle" test is replaced with one asserting the new permanent icon-only
+  state and that every nav item still resolves `getByRole('link', {name})`.
+  `session-gate.tsx`'s loading skeleton updated to match the rail's new width/
+  colour (`w-sidebar-collapsed`, `bg-surface`) so there is no layout jump once the
+  real shell mounts.
+- `--app-header-h` bumped 64px → 72px (tokens.css) to match spec §4's TopNav
+  height exactly; `--app-sidebar-w-collapsed` (already exactly 72px) becomes the
+  rail's one, permanent width — `--app-sidebar-w` (256px) is now unused, left
+  defined (see above).
+
+**2. Dashboard content rebuild** (`frontend/src/surfaces/dashboard/`), same real-data
+discipline as the superseded entry — every number still traced to one of the five
+existing `use-dashboard.ts` hooks, nothing recomputed:
+- **KPI row** — `stat-card.tsx` restyled: the `feature` tile (Within year) is now
+  the Boltshift GRADIENT tile (`--gradient-dash-primary`, a new Dashboard-only
+  token built from the EXISTING `--blue-700`/`--blue-400` primitives — NOT a
+  repoint of the sitewide `--color-feature`, which still backs `FeatureCard`/
+  `MetricCard` on other, out-of-scope surfaces) with a translucent circular icon
+  chip and a radial highlight; non-feature tiles (Spillover/Left out/Blocked,
+  Status overview's four cards) are plain opaque white Boltshift cards. **Adapted,
+  not copied, from the generic brief**: Boltshift's example cycles icon-chip colour
+  by card POSITION (ink-900/blue/violet, meaningless on fabricated demo data);
+  this app's `tone` prop instead still encodes real status semantics (warning for
+  "needs attention", etc.) — preserved deliberately, since colour here is never
+  decorative. `useCountUp` kept (Boltshift wants count-up KPIs too, matches the
+  rule already in place: animate on value CHANGE, never from 0 on mount).
+- **Hatch-highlight bar chart** — `hub-type-pipeline-chart.tsx` restyled in place
+  (not rebuilt): gradient fills from a NEW Dashboard-only 10-hue categorical ramp
+  (`--dash-cat-1..10`, `dash-chart-theme.ts`'s `assignDashSeriesColors()` —
+  deliberately separate from the sitewide `--chart-1..6` ramp Capacity/Matrix's own
+  charts still read, out of scope this task), a 45° diagonal SVG hatch pattern +
+  floating dot on the hovered bar (Recharts' `activeBar` prop, passed as a
+  ReactElement rather than a function-shape to avoid a `BarShapeProps`/
+  `exactOptionalPropertyTypes` type conflict), a floating WHITE tooltip card
+  (not the sitewide dark-navy `rechartsTheme()` tooltip), faint DASHED Y gridlines,
+  no axis lines. The exact same `<dl>` sr-only accessible fallback text format is
+  preserved verbatim (asserted by the pre-existing `hub-type-pipeline-chart.test.tsx`,
+  unchanged and still green).
+- **Segmented radial gauge — deliberately NOT built.** Checked `use-dashboard.ts`'s
+  entire API surface (`api/types.ts`) for any ready-made single completion-rate
+  percentage field: none exists. Computing one client-side (e.g.
+  `within_year_count / total`) would be an independent calculation the frontend is
+  never allowed to perform (Invariant I9 / CLAUDE.md). Per the task's own explicit
+  instruction ("if nothing fits honestly, don't force one — say so and skip it"),
+  no gauge was added.
+- **Donut — unchanged, not duplicated.** `pipeline-panel.tsx`'s existing
+  within-year/spillover/left-out/blocked donut already covers a DIFFERENT
+  breakdown than the hub×type bar chart (schedule outcome vs. portfolio
+  composition by hub/type), so it stays as-is — no second donut was added, per
+  the task's own "don't duplicate the same breakdown twice" instruction.
+- **Ranked-list-with-coloured-progress-track — replaces the hub globe.**
+  `hub-rank-list.tsx` (new) — "Top hubs by project count", built on
+  `hub-geo.ts`'s simplified `buildHubTotals()` (lat/lng `HUB_ANCHORS`/`HUB_COUNTRY`-
+  per-marker geocoding retired along with the globe; only a real per-hub count +
+  real country label remain, per the task's own "it no longer needs lat/lon
+  anchors" note). Bars animate width 0→value with a stagger, gated by
+  `useMotionTokens()`. Replaces `hub-globe.tsx`/`hub-globe-panel.tsx`/`cobe`
+  entirely (deleted, see below) — Boltshift explicitly bans 3D globes (spec §5).
+- **Table** — `project-breakdown.tsx`/`within-year-panel.tsx`'s existing real
+  virtualized tables (`VirtualDataTable`) keep their real columns; category cells
+  now render `category-tag.tsx` (new) — a pill tinted by the project's category,
+  coloured DETERMINISTICALLY by the category's fixed position in
+  `PROJECT_CATEGORIES` (`dashCategoryRank()`), not by per-table count, so "A+" is
+  the same hue everywhere it appears. Row height bumped to 64px (spec §5) via
+  `VirtualDataTable`'s existing `estimateRowHeight` prop — no change to the shared
+  primitive itself. Filter `<Select>` triggers gained `rounded-pill`. **Literal
+  "Sort by"/pagination pills were NOT added** — this table is already virtualized
+  (TanStack Virtual, the CLAUDE.md-mandated approach for >100 rows) and has no
+  backend pagination parameter; inventing a fake client-side page count would
+  itself be a fabricated number this role is barred from introducing. The
+  server-side filters already present are the "search/filter" affordance.
+  `HubTypePipelineTable`'s own pivot TABLE keeps the shared `@/components/ui/table`
+  primitive (also used by Capacity/Matrix/Planning/Admin, out of scope) completely
+  unstyled by this task — only its outer card chrome changed.
+- **`bolt-card.tsx`** (new, `@/components/ui/` — moved there from
+  `surfaces/dashboard/components/` after a `react-refresh/only-export-components`
+  lint warning showed that folder's lint config doesn't exempt multi-export files
+  the way `components/ui/**` does, same precedent `GlassPanel` itself set) replaces
+  `GlassPanel` at all four of its former call sites
+  (`pipeline-panel.tsx`/`hub-type-pipeline-table.tsx`/`project-breakdown.tsx`/
+  `within-year-panel.tsx`'s table wrapper). Opaque white, Dashboard-only
+  radius/shadow/hairline tokens (`--radius-dash`/`--shadow-dash-card`/
+  `--color-dash-hairline`) — deliberately NOT the sitewide `--radius-card`/
+  `--shadow-card`/`--color-border` every other surface's `<Card>` still reads,
+  so Capacity/Matrix/Gantt/Planning/Registration/Workspace/Settings/Admin render
+  byte-identically to before this task.
+- **No named-engineer data anywhere** — confirmed: no new component in this task
+  references an engineer name, utilization, or load figure (`docs/OPEN_QUESTIONS.md`
+  #8 stays respected); every figure traces to `use-dashboard.ts`'s five existing
+  hooks, same as before.
+- **Removed, no dead code**: `glass-panel.tsx`+`.test.tsx`, `hub-globe.tsx`,
+  `hub-globe-panel.tsx`+`.test.tsx` deleted outright (confirmed zero remaining
+  references via grep before deletion). `cobe` had zero remaining imports once
+  the globe was gone, so `pnpm remove cobe` was run (package.json/pnpm-lock.yaml
+  updated). The tokens.css "GLASS SURFACE LAYER" block
+  (`--color-glass-bg`/`--color-glass-border`/`--shadow-glass`) and its
+  `tailwind.config.ts` `colors.glass` entry are DELETED too (confirmed zero
+  remaining references anywhere, including comments, before removal) — unlike the
+  smaller already-pre-existing unused tokens this task left in place
+  (`--app-sidebar-w`, `--color-sidebar-*`), a whole dead token FAMILY introduced
+  and retired within two consecutive tasks was judged worth deleting outright
+  rather than accumulating.
+
+**3. Fonts — sitewide swap, not Dashboard-scoped.** Plus Jakarta Sans
+(`@fontsource-variable/plus-jakarta-sans`, added) replaces Inter as the PRIMARY
+sans-serif app-wide (`tailwind.config.ts`'s `fontFamily.sans`, Inter Variable kept
+second in the fallback chain, not removed) and replaces Space Grotesk as the
+`--font-display` face in BOTH density zones (tokens.css) — unlike shell-chrome/
+Dashboard-content, which the task scoped explicitly to specific files, the fonts
+instruction carried no surface qualifier, so this was read as intentionally global;
+flagged here as a judgement call, not hidden. Space Grotesk's only consumer was
+`--font-display`, so `@fontsource/space-grotesk` is now fully unused and was
+removed (`pnpm remove @fontsource/space-grotesk`) — no dead font left installed.
+Stray doc-comment references to "Space Grotesk" in `metric-card.tsx`/
+`components/ui/stat-card.tsx` (unrelated shared components, untouched otherwise)
+updated for accuracy since they were now wrong, not because those components
+themselves needed any behaviour change.
+
+**4. Dark mode — derived, not bolted on.** Every new Boltshift token
+(`--radius-shell`/`--radius-rail`/`--shadow-shell`/`--shadow-pop`/
+`--shadow-cta-blue`/`--radius-dash`/`--shadow-dash-card`/`--color-dash-hairline`/
+`--color-dash-alt`/`--gradient-dash-primary`/`--dash-cat-1..10`) has a `.dark`
+counterpart in the same tokens.css "BOLTSHIFT LAYER" block — shadows swap to
+black-tinted (a dark ground makes a light-tinted shadow invisible, same reasoning
+the pre-existing "soft surface layer" dark block already uses), the 10-hue
+categorical ramp is lifted in lightness (not just reused at the same values) so
+each hue still clears roughly the same visual separation against a dark card. The
+existing `ThemeProvider`/`ThemeToggle`/localStorage-preference mechanism is
+completely unchanged — this task found no existing View-Transition "circular wipe"
+behaviour anywhere in the codebase to preserve (grepped `startViewTransition`:
+zero matches) despite one forwarded instruction phrasing implying one already
+existed; none was added, since building new interactivity (spec §9) was not
+commissioned by this task's own numbered scope list.
+
+**Verification.**
+- `npx tsc --noEmit -p tsconfig.app.json` and `npx tsc -b` (the real `pnpm run
+  build` first step): clean, zero errors.
+- `npx eslint .`: 0 errors. Same 6 pre-existing warnings as the prior session
+  (`routes.tsx`, `density-zone.tsx` ×3, `audit-log-table.tsx`,
+  `project-list.tsx` — none touched by this task) plus zero new ones.
+- `npx vitest run`: **122 files / 646 tests, all passing** (down from 123/649 —
+  net of deleting `glass-panel.test.tsx` + `hub-globe-panel.test.tsx` and adding
+  `hub-rank-list.test.tsx`, plus `hub-geo.test.ts`/`app-sidebar.test.tsx`/
+  `app.test.tsx`/`DashboardPage.test.tsx` rewritten in place for the restructure,
+  not weakened — same assertions, new component shapes).
+- `npx vite build` + `node scripts/check-bundle-size.mjs`: **PASS — 167.0 KB gzip
+  of 400 KB (41.7% used, 233.0 KB headroom)**, essentially FLAT against the
+  pre-task baseline (165.8 KB / 41.5%, the superseded entry's own number) — the
+  framer-motion regression described above was caught and fixed before this
+  final figure. `cobe`'s old 14.90 KB gzip lazy sub-chunk no longer exists.
+- **Live browser verification**, both modes, against a REAL backend: reused the
+  already-running dev `uvicorn` process on port 8010 (pre-existing from an earlier
+  session — this task started and stopped nothing on that stack, confirmed via
+  `ps`/`lsof` before and after) and its seeded dev-mode data. Built
+  `vite build --mode e2e`, served via `vite preview --mode e2e` on a scratch port
+  (5199, not the e2e suite's usual 5183, to avoid colliding with any other
+  concurrent session), authenticated as `frank.admin@example.com` (Admin) via the
+  same `sessionStorage['rpd-dev-user-email']` mechanism the real `e2e/dev-session.ts`
+  helper uses, and drove Playwright (already a devDependency) to screenshot the
+  real, populated Dashboard and the Capacity surface (to confirm the shared shell
+  renders correctly around OUT-OF-SCOPE content too) in both light and dark mode.
+  Confirmed visually: the floating white Shell sits on the grey Page with the icon
+  rail beside it; the rail's active indicator (blue bar + filled icon) tracks the
+  current route and its hover tooltip flies out correctly; the TopNav's logo chip,
+  Dev-act-as pill, hub-scope/week/bell/theme control group and avatar/name/
+  sign-out stack all render and the control group's existing functionality
+  (dev role switch, theme toggle) works; the Within-year KPI renders as a real
+  blue gradient tile with a radial highlight and the other three KPIs as plain
+  white cards; the hub×type bar chart renders real colourful gradient bars with
+  dashed gridlines; "Top hubs by project count" renders the real per-hub totals
+  (PD-India 20/100%, PD-Romania 8/40%, R&D-India 6/30%, R&D-Greece 5/25%,
+  OEM-HCK 3/15%, OEM-Seltek 3/15% — matching the pivot table exactly) as ranked,
+  coloured progress bars; the project breakdown table renders real project rows
+  with category tags in distinct, consistent colours; dark mode re-points every
+  token correctly with text remaining legible throughout; Capacity (untouched
+  content) renders its own pre-existing look completely unchanged inside the new
+  shell. Screenshots are ephemeral (scratchpad only, not committed). Torn down
+  cleanly: killed only the `vite preview` process this task started; the
+  pre-existing backend/Postgres/Redis stack was left running exactly as found.
+
+**Files touched:** `frontend/src/styles/tokens.css` (GLASS layer deleted, BOLTSHIFT
+layer added, `--app-header-h` bumped, `--font-display` repointed), `frontend/
+tailwind.config.ts` (`glass` colours removed; `dash`/`dashChart` colours,
+`shell`/`rail`/`dash` radii, `shell`/`pop`/`ctaBlue`/`dashCard` shadows,
+`sans`/`display` font stacks added), `frontend/src/styles/fonts.css` (Plus Jakarta
+Sans added, Space Grotesk removed), `frontend/package.json` + `pnpm-lock.yaml`
+(`@fontsource-variable/plus-jakarta-sans` added; `@fontsource/space-grotesk`,
+`cobe` removed), `frontend/src/components/layout/{app-shell.tsx,app-sidebar.tsx,
+app-header.tsx}` (rewritten), `frontend/src/components/layout/app-sidebar.test.tsx`
+(updated for the icon-only rail), `frontend/src/components/session/session-gate.tsx`
+(loading-skeleton width/colour), `frontend/src/app/app.test.tsx` (collapse-toggle
+test replaced), `frontend/src/components/ui/bolt-card.tsx` (new),
+`frontend/src/components/ui/{stat-card.tsx,metric-card.tsx}` (doc-comment only,
+Space Grotesk → Plus Jakarta Sans wording), `frontend/src/components/ui/
+glass-panel.tsx`+`.test.tsx` (deleted), `frontend/src/surfaces/dashboard/
+components/{stat-card.tsx,hub-type-pipeline-chart.tsx,hub-type-pipeline-table.tsx,
+pipeline-panel.tsx,project-breakdown.tsx,within-year-panel.tsx}` (restyled),
+`frontend/src/surfaces/dashboard/components/{hub-rank-list.tsx+.test.tsx,
+category-tag.tsx}` (new), `frontend/src/surfaces/dashboard/components/
+{hub-globe.tsx,hub-globe-panel.tsx+.test.tsx}` (deleted),
+`frontend/src/surfaces/dashboard/lib/{hub-geo.ts,hub-geo.test.ts}` (simplified,
+anchors retired), `frontend/src/surfaces/dashboard/lib/dash-chart-theme.ts` (new),
+`frontend/src/surfaces/dashboard/DashboardPage.tsx`+`.test.tsx` (HubGlobePanel →
+HubRankList). No `backend/` file touched. No other surface's own content touched.
+
+**Gate result:** N/A — design-direction replacement, not a phase task or phase
+gate. CLAUDE.md's non-negotiables re-read and confirmed honoured: no
+`dangerouslySetInnerHTML`, no three.js import anywhere in `frontend/src` (the two
+spec-requested R3F moments were deliberately NOT built — see above), no client-side
+scheduling/scoring/percentage computation added, virtualization preserved and one
+table's row height increased (not removed), bundle budget passes with headroom,
+no named-engineer data anywhere.
+
+**Next:** orchestrator to decide whether/when to commission the per-surface
+Boltshift reskin of Capacity/Matrix/Gantt/Planning/Registration/Project Workspace/
+Workflow Settings/Admin content (explicitly out of scope this task). If a future
+task wants the two three.js moments after all, it would need to either narrow them
+to a surface CLAUDE.md actually permits (Project Registration's future-flagged 3D
+viewer) or amend CLAUDE.md itself first — this task could not do either unilaterally.
+
+---
+
+### [2026-10-01] Capacity surface reskinned to Boltshift — frontend-builder
+
+**Task.** Reskin `frontend/src/surfaces/capacity/` (`CapacityPage.tsx` + its ten
+components) to the same Boltshift visual language the previous task built for
+the shared shell and the Dashboard — white `BoltCard` panels, radius-24 hairline
+cards, the categorical chart palette, pill controls, count-up headline figures
+where that is honest, page-mount stagger and card hover-lift motion — WITHOUT
+changing any number, calculation, or domain meaning. Scope was presentation
+only; the surface carries real, in-flight business logic (ADR 0007/0008,
+`docs/CLIENT_FORMULAS.md`, Invariants I6/I7/I17) that this task did not touch.
+No `backend/` file touched. Matrix/Gantt/Planning/Registration/Project
+Workspace/Workflow Settings/Admin remain untouched, per the task's own scope.
+
+**1. Shared-primitive decisions — what got promoted, what got built local.**
+
+- **Categorical palette extracted to `src/lib/categorical-palette.ts`.** The
+  10-hue `--dash-cat-1..10` ramp and its by-value rank assignment + the
+  deterministic project-category rank, built the previous task as
+  `surfaces/dashboard/lib/dash-chart-theme.ts` and documented there as
+  "Dashboard-only ... never used outside `surfaces/dashboard/components/*`",
+  moved to this new shared `src/lib/` module now that Capacity is a second,
+  legitimate consumer (its class-breakdown table needs the same seven
+  `PROJECT_CATEGORIES` pills). `dash-chart-theme.ts` is now a six-line
+  re-export of the shared module under its original function names
+  (`assignDashSeriesColors`, `dashRankBg`, etc.), so none of its five existing
+  Dashboard call sites needed an import change. The new module also replaced
+  `dash-chart-theme.ts`'s own hand-written `CATEGORY_ORDER` literal with the
+  real `PROJECT_CATEGORIES` export from `@/types/enums` — one fewer
+  hand-maintained copy of the same seven strings. The CSS custom property
+  names (`--dash-cat-1..10`) were NOT renamed, only where the TypeScript
+  reading them lives; `tokens.css`'s "BOLTSHIFT LAYER" comment block updated
+  to describe the real current consumer set (`bolt-card.tsx`,
+  `category-tag.tsx`, `surfaces/capacity/**`) instead of "Dashboard only".
+- **`CategoryTag` promoted `surfaces/dashboard/components/category-tag.tsx` →
+  `components/ui/category-tag.tsx`**, same move the previous task made for
+  `bolt-card.tsx` and for the same reason — it is a generic, reusable pill,
+  not Dashboard-specific, and Capacity's class-breakdown table needed the
+  identical component rather than a second hand-built "pill tinted by
+  category" implementation. `project-breakdown.tsx`/`within-year-panel.tsx`
+  (Dashboard) updated to import it from the new location; no behaviour change
+  there (same props, same deterministic colour-by-category-position rule).
+- **`CapacityStat` built LOCAL to Capacity** (`surfaces/capacity/components/
+  capacity-stat.tsx`), replacing `@/components/ui/metric-card.tsx`'s shared
+  `StatCard` at its one call site (`hub-supply-breakdown.tsx`). Same reasoning
+  the Dashboard task gave for building its own `stat-card.tsx` instead of
+  touching that shared file: a one-surface visual language belongs in that
+  surface's own component. `metric-card.tsx` itself is untouched.
+- **`components/ui/bar-chart.tsx` (the CSS progress-track primitive) left
+  untouched.** It already uses pill-radius tracks and the sitewide
+  `--chart-1..6` ramp (restrained blue/teal/slate), which already reads as
+  Boltshift-compatible ("restrained blue-and-white chrome") without any
+  change — reskinning it would have been invention for its own sake. It
+  remains Capacity's only real consumer (confirmed by grep before and after).
+- **`components/ui/toggle-group.tsx` (shared, also used by Gantt's zoom
+  control and Workflow Settings' steps tab) left untouched.** The "Full
+  year / Remaining year" segmented control got Boltshift's 999px pill
+  geometry via a LOCAL `className` override at its one call site in
+  `hub-load-panel.tsx` only, so Gantt/Workflow Settings keep their existing
+  square-segmented look.
+- **`Badge` (shared, used everywhere) left untouched as a component**; three
+  Capacity call sites (run-version badge, lab-region badge, Shortfall/
+  Headroom `GapBadge`) gained a local `className="rounded-pill"` override for
+  the same reason as the toggle group — Boltshift pill geometry without
+  touching the shared primitive's default (square) look for other surfaces.
+- **`EmptyState` (shared) left untouched as a component**; every Capacity
+  empty state (`HubLoadPanel`'s two, `ClassBreakdownPanel`'s two,
+  `ChamberUtilizationPanel`'s two, and `EngineerUtilizationPlaceholder`)
+  gained a local `className` override (`rounded-dash border-solid
+  border-dash-hairline bg-dash-alt`) replacing the shared component's default
+  dashed-grey well with the Boltshift card look, without touching the file
+  every other surface's empty states still render from.
+
+**2. A real bug found and NOT shipped: `useCountUp` rounds decimals.** The
+task brief asked for count-up on "headline numbers (total load, total
+capacity, etc.)". Wiring `useCountUp` into `CapacityStat`'s load/capacity/gap/
+completion figures was built first and discovered broken by
+`hub-load-panel.test.tsx`'s existing horizon-toggle test: toggling to
+"Remaining year" rendered `180` where the served figure is `179.75`. Reading
+`use-count-up.ts` explains why — its animation tick always calls
+`Math.round(...)`, including on the final frame, and `display` is never
+corrected back to the exact `value` after that; it only happens to be exact
+for Dashboard's existing consumers because those are genuine integer counts
+(within-year count, spillover count), where `Math.round` is a no-op. Every
+figure `CapacityStat` renders is specified to two-decimal precision (ADR 0008,
+Invariant I17 — "to two decimals"), so animating them through this hook would
+silently round a served figure on-screen — exactly the frontend-side
+distortion I9/I17/CLAUDE.md all forbid, not a cosmetic issue. Rather than
+patch the shared hook (a behaviour change for its one other, correctly-integer
+consumer, out of scope) or force decimals through it anyway, `CapacityStat`
+renders the served figure directly with no animation, documented in its own
+file. No other "headline number" on this surface is a bare integer count
+outside a table row (ClassBreakdownPanel's Deliverable/Left-out are per-row
+table cells, not KPI tiles — consistent with Dashboard's own precedent of not
+animating `HubRankList`'s row numbers, only its bar width), so no count-up
+ships on Capacity at all. This is the same judgement call the task brief's own
+"if nothing fits honestly, don't force one — say so and skip it" invited,
+applied to a hook rather than a chart type. Confirmed via the live browser
+check below that the horizon toggle still updates every figure correctly and
+instantly.
+
+**3. Per-component changes.**
+- **`CapacityPage.tsx`** — `Card`→n/a (page itself had none), gained the same
+  page-mount `StaggerSection`/`motion.div` pattern as `DashboardPage.tsx`
+  (`staggerChildren: 0.08`, `useMotionTokens()`-gated), wrapping the reporting
+  notice and each of the three `SectionBoundary` panels. No internal change to
+  any panel component was needed for this, so none of their existing tests
+  were touched by it.
+- **`hub-load-panel.tsx`** — `Card`→`BoltCard`; run-version `Badge` and the
+  "Full year / Remaining year" `ToggleGroup`/`ToggleGroupItem` got local pill
+  overrides (see above); both `EmptyState`s and the two per-metric `<section>`
+  wrappers around `HubLoadChart` got Boltshift radius/hairline/alt-background
+  treatment.
+- **`hub-supply-breakdown.tsx`** — the per-hub `<article>` became
+  `motion.article` (page-mount stagger + `whileHover={{y:-3}}`,
+  `useMotionTokens()`-gated, `exactOptionalPropertyTypes`-safe conditional
+  prop spread) with Boltshift radius/hairline/shadow; the lab-region `Badge`
+  got the pill override; the five `StatCard`s per resource block became
+  `CapacityStat`s (same verbatim figures, see §2 for why no count-up); the
+  "How this is calculated" `<details>` block got Boltshift radius/hairline/
+  alt-background. The long doc comment explaining "the TABLE is authoritative
+  ... load-vs-capacity vs. reporting-estimate" is unchanged in meaning,
+  updated only to describe the new chip component.
+- **`class-breakdown-panel.tsx`** — `Card`→`BoltCard`; the category `Badge`
+  in each table row replaced with `CategoryTag` (identical text, now a
+  deterministic-hue pill instead of a plain outline badge); both `EmptyState`s
+  got the Boltshift treatment.
+- **`class-breakdown-chart.tsx`** — fully restyled to the same custom-skinned-
+  Recharts language as the Dashboard's hatch chart: dashed Y gridlines only,
+  no axis lines, a floating white tooltip card (`--color-dash-hairline`
+  border, `--shadow-pop`), gradient fills via `<linearGradient>`, rounded bar
+  tops. Colour stays SEMANTIC (success=deliverable, warning=left-out) rather
+  than switching to the categorical ramp — deliverable/left-out is a status
+  pair, not a ranked series, the same distinction preserved elsewhere on this
+  surface (`GapBadge`'s tone, the heatmap's state palette). No accessible
+  `<dl>` fallback added — the real, visible `<table>` right above this chart
+  in `ClassBreakdownPanel` already serves that role; a second sr-only
+  structure would duplicate it (same reasoning the Dashboard's hatch chart
+  gives for the cases where it DOES need its own fallback).
+- **`chamber-utilization-panel.tsx`** — `Card`→`BoltCard`; run-version `Badge`
+  pill override; both `EmptyState`s got the Boltshift treatment; section
+  divider repointed from `border-border` to `border-dash-hairline`.
+- **`chamber-utilization-heatmap.tsx`** — container chrome (outer scroll
+  wrapper, sticky header background, row borders, "max N" pill, legend
+  swatches) moved to Boltshift tokens. The STATE palette itself (idle /
+  below-max / at-max / over-max) is UNCHANGED — not switched to a sequential
+  blue ramp, which the task brief itself said to skip "unless existing a11y
+  requirements argue otherwise": this heatmap already redundantly encodes
+  every state via the visible count and a full sentence `aria-label`, not hue
+  alone, and "at max" vs. "over max" are a warning and a hard constraint
+  violation respectively — two different semantic states a planner needs
+  distinguished, not two points on one magnitude gradient. Collapsing them
+  into one blue ramp would have erased a real distinction, not just reskinned
+  it, so the doc comment now explains this explicitly for the next reader.
+- **`capacity-reporting-notice.tsx`** — `<aside>` chrome moved to Boltshift
+  radius/hairline/alt-background. Text unchanged (asserted verbatim by its
+  existing test, still green).
+- **`engineer-utilization-placeholder.tsx`** — the ONE component the task
+  brief named explicitly: restyled to a proper Boltshift empty-state card via
+  a `className` override on the shared `EmptyState` (shared component itself
+  untouched). Still renders zero real per-engineer data — confirmed `data.
+  engineers` remains unread in this file, same as before. This is a restyle
+  of the WITHHELD-state messaging only, never a loosening of the GDPR gate
+  (OPEN_QUESTIONS #8 / P4-T08) it enforces.
+- **`access-notice.tsx`** — deliberately left UNTOUCHED. The Dashboard task's
+  own equivalent `access-notice.tsx` was also left on the plain `EmptyState`
+  look (confirmed by reading it); the task brief here didn't name this file
+  explicitly either, so the same precedent was followed rather than inventing
+  a new treatment for a rare degraded-state screen.
+
+**Verification.**
+- Baseline before starting: `tsc --noEmit`, `eslint .`, `vitest run` all clean
+  (122 files / 646 tests), matching the previous task's own reported baseline.
+- `npx tsc --noEmit -p tsconfig.app.json`: clean, zero errors, both before and
+  after every edit round.
+- `npx eslint .`: 0 errors, the SAME 6 pre-existing warnings as the baseline
+  (`routes.tsx`, `density-zone.tsx` ×3, `audit-log-table.tsx`,
+  `project-list.tsx` — none touched by this task), zero new ones.
+- `npx vitest run`: **122 files / 646 tests, all passing** (net zero —
+  no tests added or removed; `hub-load-panel.test.tsx`'s horizon-toggle test
+  needed no change in the end, since §2's finding meant no animation was
+  shipped for it to accommodate; it was briefly broken and reverted during
+  this task, not left patched over).
+- `npx tsc -b && npx vite build && node scripts/check-bundle-size.mjs`:
+  **PASS — 166.9 KB gzip of 400 KB (41.7% used, 233.1 KB headroom)**,
+  essentially FLAT against the pre-task baseline (167.0 KB / 41.7%, the
+  previous task's own number) — Capacity's own lazy route chunk grew to
+  accommodate `framer-motion` usage and the new `CapacityStat`/motion code
+  (41.45 KB raw / 12.22 KB gzip for `CapacityPage-*.js`), but that chunk is
+  loaded only on navigation to `/capacity` (confirmed already lazy via
+  `app/routes.tsx`'s `lazyElement(<CapacityPage />)`), so it does not touch
+  the initial-load budget. `framer-motion` was already a lazy dependency via
+  the Dashboard route; this task did not make it eager anywhere.
+- **Live browser verification**, light + dark, against the same already-
+  running dev `uvicorn` backend on port 8010 used by the previous task
+  (confirmed via `ps`; nothing started or stopped on that stack by this
+  task). Built `vite build --mode e2e`, served via `vite preview --mode e2e`
+  on the same scratch port (5199) the previous task used, authenticated as
+  `frank.admin@example.com` (Admin) via `sessionStorage['rpd-dev-user-email']`
+  (same dev-mode mechanism `e2e/dev-session.ts` uses), and drove Playwright
+  (`@playwright/test`, already a devDependency — a one-off script imported
+  from inside `frontend/` so module resolution worked, deleted after use, no
+  files left behind) to screenshot the real, seeded Capacity data. Confirmed
+  visually in BOTH modes: `BoltCard` panels render with the 24px radius and
+  hairline border throughout; the "Full year / Remaining year" control is a
+  real 999px pill with the active option filled; clicking it live-updates
+  every figure on the page correctly and instantly (no stale/rounded values,
+  confirming §2's fix); per-hub cards show the compact `CapacityStat` grid
+  with real served figures (verified against the raw numbers in the fixture/
+  response, e.g. PD-India design load 163, lab load 122, OEM-HCK/OEM-Seltek
+  correctly showing `0` yearly capacity and a `Shortfall` pill since their
+  Σ FTE is 0); the "How this is calculated" disclosure expands correctly with
+  Boltshift chrome and the real per-chamber table; the class-breakdown table
+  shows real `CategoryTag` pills (A+/A/B/C/A-OEM/B-OEM/C-OEM, each a distinct,
+  consistent hue) and its chart below renders real gradient-filled, dashed-
+  grid, rounded-top stacked bars matching the table's own counts; the
+  resource utilization heatmap renders with Boltshift container chrome and
+  its original semantic cell-state colours and per-cell counts/`aria-label`s
+  intact; the GDPR engineer-utilization placeholder renders as a proper
+  Boltshift empty-state card with no per-engineer data. Dark mode re-points
+  every token correctly (verified both the top-of-page KPI/toggle area and,
+  separately, the expanded "How this is calculated" + per-chamber table
+  further down the page) with text remaining legible throughout. No console
+  errors observed; Capacity's own endpoints (`/capacity/hub-load`,
+  `/capacity/class-breakdown`, `/capacity/utilization-matrix`) all returned
+  real data exactly as the prior session reported them working — the
+  pre-existing, unrelated backend 500/CORS issue on
+  `dashboard/completing-within-year`/`dashboard/projects`/`gantt`/
+  `priorities/*` mentioned in this task's brief was not encountered because
+  this task never calls those endpoints. Screenshots were ephemeral
+  (scratchpad only, not committed). Torn down cleanly: killed only the `vite
+  preview` process this task started (confirmed via `lsof -i :5199` showing
+  nothing after); the pre-existing backend/Postgres stack was left running
+  exactly as found.
+
+**Files touched:** `frontend/src/surfaces/capacity/CapacityPage.tsx`,
+`frontend/src/surfaces/capacity/components/{hub-load-panel.tsx,
+hub-supply-breakdown.tsx,class-breakdown-panel.tsx,class-breakdown-chart.tsx,
+chamber-utilization-panel.tsx,chamber-utilization-heatmap.tsx,
+capacity-reporting-notice.tsx,engineer-utilization-placeholder.tsx}`
+(restyled); `frontend/src/surfaces/capacity/components/capacity-stat.tsx`
+(new); `frontend/src/surfaces/capacity/components/hub-load-panel.test.tsx`
+(briefly edited for an animation that was ultimately not shipped, then
+reverted to its original assertions — net no change to what it asserts);
+`frontend/src/lib/categorical-palette.ts` (new, extracted);
+`frontend/src/surfaces/dashboard/lib/dash-chart-theme.ts` (reduced to a
+re-export of the new shared module); `frontend/src/components/ui/
+category-tag.tsx` (new, promoted); `frontend/src/surfaces/dashboard/
+components/category-tag.tsx` (deleted); `frontend/src/surfaces/dashboard/
+components/{project-breakdown.tsx,within-year-panel.tsx}` (import path only,
+no behaviour change); `frontend/src/styles/tokens.css` (BOLTSHIFT LAYER
+comment block updated to describe the real consumer set; no token values
+changed). No `backend/` file touched. Capacity's business-logic WIP already
+in the working tree (per the task's own note) was not touched — confirmed no
+edit landed inside any hook, API client, or formula/derivation file under
+`surfaces/capacity/{api,hooks,lib}/`.
+
+**Gate result:** N/A — presentation-only follow-up task, not a phase task or
+phase gate. CLAUDE.md's non-negotiables re-read and confirmed honoured: no
+`dangerouslySetInnerHTML`, no three.js import anywhere, no client-side
+scheduling/scoring/calculation added (the `useCountUp` finding in §2 is
+exactly the opposite — a potential frontend-side distortion caught and
+declined, not introduced), virtualization N/A (chamber count is ~8-12, well
+under the 100-row threshold, documented in the heatmap's own comment),
+bundle budget passes with headroom, no named-engineer data anywhere, GDPR
+placeholder still withholds real data.
+
+**Next:** orchestrator to decide whether/when to commission the Boltshift
+reskin of Matrix/Gantt/Planning/Registration/Project Workspace/Workflow
+Settings/Admin content (all still out of scope, all still on the pre-Boltshift
+`Card`/`--chart-1..6` look). Any such task should read this entry's §1 before
+deciding whether to extend `categorical-palette.ts`/`category-tag.tsx`/
+`bolt-card.tsx` again or fork a new token family, and should read §2 before
+reaching for `useCountUp` on any non-integer figure.
+
+---
+
+### [2026-10-01] Capacity text cleanup — prose into popovers and chips — frontend-builder
+
+**Task.** New client feedback arrived after the Boltshift reskin above: *"remove
+all free text, there is a lot of text — remove the unwanted explanatory text.
+Everything should be clean, no extra or unwanted text except the heading and the
+details one, and all the text should be part of something — into a card or
+box."* Capacity was the app's worst offender. Target layout: page title + one
+short subtitle line, then cards; every other string becomes a label, value,
+chip or legend row INSIDE a card. Presentation only — no served value, no
+calculation, no `backend/` file touched. **Nothing was deleted**: this copy is
+the framing that stops a planner misreading the surface, so every sentence was
+RELOCATED and is recorded below with its new home.
+
+**Concurrency constraints honoured.** A parallel task was actively editing
+`src/surfaces/dashboard/**` throughout. No Dashboard file was touched by this
+task (including the two import-path edits from the entry above — left exactly
+as they are on disk). No existing shared file under `src/components/ui/*`,
+`src/styles/tokens.css` or `tailwind.config.ts` was edited; the only shared
+file touched at all was `src/app/app.test.tsx` (see "test updates"), which is
+neither Dashboard nor a shared UI primitive, and which this task's own change
+broke and therefore had to fix.
+
+**1. Where every piece of text went — nothing lost.**
+
+| Was | Now |
+|---|---|
+| `capacity-reporting-notice.tsx`: 4-paragraph `<aside>` wall above the first card ("How to read these figures" + Load ¶ + Capacity ¶ + "load exceeding capacity does NOT mean the scheduler overbooked" ¶) | All three ¶ VERBATIM inside a `<CapacityInfo>` popover whose trigger sits in the **PageHeader actions row** beside Download. Still rendered in every query state (pending/denied included) |
+| `hub-load-panel.tsx`: provenance SENTENCE ("Load figures below are read directly from active schedule run v1 (greedy scheduler) · computed 30 Sept 2026, 18:35.") between card header and data | **Three chips in the card header** — `Run v1` / `Greedy scheduler` / `30 Sept 2026, 18:35` (`<RunProvenanceChips>`), plus the full sentence kept as `sr-only` text so a screen reader still hears it as a sentence |
+| `hub-load-panel.tsx`: "How load and capacity are defined" dotted text link + its 3-paragraph tooltip body | `<CapacityInfo label="How load and capacity are defined">` in the same card header, same three paragraphs verbatim |
+| `class-breakdown-panel.tsx`: "Deliverable = … Left out = … Source: active schedule run v3. Not recomputed in the browser." paragraph under the card title | `<CapacityInfo label="How deliverable and left out are defined">` in the card header; the run version also stays VISIBLE as the pre-existing `Run v3` chip |
+| `chamber-utilization-panel.tsx`: "Concurrent project count per chamber per week, verbatim from the active schedule run." beside the section heading | `<CapacityInfo label="What this matrix shows">` in the card header. ALSO gained the ADR 0003/0008 "only max-concurrent gates booking; efficiency and downtime are report-only" note that previously existed only as a source comment — a net INCREASE in reader-facing domain context |
+| `hub-supply-breakdown.tsx`: "Lab figures are for the {region} lab region and repeat on every hub of that region." — rendered once per hub card, i.e. **six identical sentences** on a full page | One `<CapacityInfo>` icon per lab block, same words |
+| `hub-supply-breakdown.tsx`: the `<details>` "How this is calculated" body (derivation `<dl>` + per-chamber table) | **UNCHANGED** — the client explicitly exempted "the details one" |
+| Heatmap legend row, `Σ FTE` / `Working weeks / engineer` / `Remaining fraction` header values, stat labels, section labels | **UNCHANGED** — these are already labels/values/legend inside cards, which is exactly the shape the client asked for |
+
+**Provenance specifically (the thing the brief said must not be lost).** Run
+version, solver and computed-at are all still on screen for the load card, as
+three chips instead of one sentence; the `data-testid="schedule-run-provenance"`
+hook is unchanged, so the existing assertions in `hub-load-panel.test.tsx` and
+`CapacityPage.test.tsx` still verify the exact run version reaches the screen.
+The class-breakdown and utilization cards keep their `Run vN` chip and gained
+the "source: active schedule run / not recomputed in the browser" sentence in
+their popovers. Nothing about I6/I7/I17 traceability is weaker than before — a
+reader can still name the run behind every figure without opening anything.
+
+**2. New components (both Capacity-local, deliberately).**
+- **`capacity-info.tsx`** — `Info` icon button + Radix `<Popover>` (reusing the
+  existing `components/ui/popover.tsx` primitive unmodified). Required
+  `aria-label` (the icon is `aria-hidden`), so every call site names what it
+  explains; the label also renders as the popover's visible heading.
+- **`run-provenance-chips.tsx`** — the chip row + `sr-only` sentence described
+  above. The SHARED `components/shared/schedule-run-provenance.tsx` is left
+  untouched and is still rendered by the Gantt, which is out of scope.
+
+**A duplication this task chose on purpose, and the convergence it owes.** The
+parallel Dashboard task independently built
+`surfaces/dashboard/components/card-info.tsx` and
+`surfaces/dashboard/components/schedule-run-provenance.tsx` from the same client
+instruction in the same hour. `capacity-info.tsx` is a near-copy of the former
+and `run-provenance-chips.tsx` of the latter. Promoting either into
+`components/ui/` would have meant editing Dashboard's imports (explicitly
+forbidden this task) or racing that agent for the same new file path while they
+are mid-edit — a broken build for whoever lost the race. The prop APIs were
+kept IDENTICAL (`label`/`children`/`className`) precisely so the convergence is
+mechanical. **Recommended follow-up for the orchestrator, once both tasks have
+landed and the tree is quiet: promote one copy to `components/ui/card-info.tsx`,
+delete the other, repoint four imports.** Flagged here rather than done, because
+doing it now is the unsafe order of operations.
+
+**3. Test updates — same assertions, new route to the copy.** Four tests
+asserted the relocated prose as loose body text; all four now reach the same
+words through the disclosure that holds them, so the domain copy stays
+test-protected rather than becoming untested:
+- `capacity-reporting-notice.test.tsx` — opens the popover, then asserts the
+  SAME three strings (`/client.s own supply formula/i`, the ADR 0008/0002
+  pairing, `/scheduler overbooked anyone/i`). Its old `getByRole('complementary')`
+  landmark assertion became a keyboard test: Tab reaches the trigger, Enter
+  opens a `role="dialog"` named "How to read these figures".
+- `class-breakdown-panel.test.tsx` — the counts assertion now checks the `Run v3`
+  CHIP (still visible, no disclosure needed); a new test opens the popover and
+  asserts the definitions + "Source: active schedule run v3" + "Not recomputed
+  in the browser" (net +1 test).
+- `CapacityPage.test.tsx` — "always renders … the reporting-basis notice" keeps
+  its P4-T03 intent: it still runs with all three queries PENDING, still proves
+  the callout is carried in that state, now via the affordance plus its opened
+  copy.
+- `src/app/app.test.tsx` — its Capacity routing test used "How to read these
+  figures" as the "real surface rendered, not the placeholder" landmark; now
+  asserts the same string by `role=button` + name, matching how the
+  Registration/Planning routing tests in that same file already work.
+
+**4. A11y.** The copy is *more* reachable than it was as a `<p>`, not less:
+each affordance is a real `<button>` with an accessible name, inside a Radix
+popover. Verified in a REAL browser (not just jsdom): Enter opens a
+`role="dialog"`, focus moves inside it, Escape closes it and focus returns to
+the trigger — `{"openRole":true,"focusInside":true,"closedOnEscape":true,
+"focusReturnedTo":"How to read these figures"}`. The provenance sentence
+additionally survives as `sr-only` text so screen-reader users get it without
+opening anything. Popover motion comes from the `data-[state]`
+tailwindcss-animate classes already on `popover.tsx`, which the sitewide
+`prefers-reduced-motion` rule in `index.css` already zeroes — no new motion
+code, no new reduced-motion gate needed.
+
+**One judgement call worth naming.** The three reporting-notice paragraphs were
+NOT split per-card (the brief offered that option). They frame the WHOLE
+surface — paragraph 3's "load exceeding capacity does not mean the scheduler
+overbooked anyone" is the conclusion a reader must carry to the class-breakdown
+and utilization cards too — and attaching them to the load card would have made
+the callout vanish whenever that one query failed, weakening P4-T03's "this
+surface must carry the callout". They live on the page header instead; the
+per-card popovers carry only the definitions specific to their own figures.
+
+**Verification.**
+- `npx tsc --noEmit -p tsconfig.app.json`: zero errors outside
+  `src/surfaces/dashboard/**`. The errors inside it are the parallel agent's
+  in-flight `completion-profile-card.tsx` (Recharts formatter typings) and are
+  not touched by, or related to, this task.
+- `npx eslint .`: **0 errors**, the same 6 pre-existing warnings as every
+  entry above, zero new.
+- `npx vitest run`: **126 files / 665 tests, all passing** (the growth over this
+  task's own 122/647 is the parallel Dashboard task's new files landing
+  alongside; Capacity's own suite is 9 files / 31 tests, up one test).
+- `npx vite build` + `node scripts/check-bundle-size.mjs`: **PASS — 167.2 KB
+  gzip of 400 KB (41.8% used, 232.8 KB headroom)**. The initial chunk LIST is
+  unchanged (five chunks) — the Radix popover stayed in the lazy route chunk
+  and did not enter initial load. Capacity's own lazy chunk: 41.45 → 44.19 KB
+  raw (12.22 → 12.98 KB gzip), +0.76 KB gzip for the popover wiring. The
+  +0.3 KB on the initial total vs. this task's previous 166.9 KB is the
+  parallel Dashboard work in the shared CSS/entry chunks, not Capacity.
+- **Live browser verification**, light + dark, against the same already-running
+  dev backend on :8010 (untouched; nothing on that stack started or stopped) via
+  `vite build --mode e2e` + `vite preview` on scratch port 5199, as Admin.
+  Confirmed in both modes: the surface now reads title → one subtitle line →
+  cards, with the four-paragraph wall gone; the load card header carries the
+  three provenance chips, the info icon and the Full year / Remaining year pill
+  toggle on one row; both the page-header notice popover and the load card's
+  definitions popover render the full original copy legibly (checked dark-mode
+  contrast specifically); the class-breakdown and utilization card headers each
+  show `Run v1` + an info icon with their prose behind it; the `<details>`
+  disclosure and the heatmap legend are untouched. **Zero console errors in
+  either mode.** Screenshots ephemeral (scratchpad only). The `vite preview`
+  process this task started was killed and the port confirmed free; the
+  pre-existing backend was left exactly as found.
+
+**Files touched:** `frontend/src/surfaces/capacity/components/{capacity-info.tsx,
+run-provenance-chips.tsx}` (new); `frontend/src/surfaces/capacity/components/
+{capacity-reporting-notice.tsx,hub-load-panel.tsx,class-breakdown-panel.tsx,
+chamber-utilization-panel.tsx,hub-supply-breakdown.tsx}` (prose relocated);
+`frontend/src/surfaces/capacity/CapacityPage.tsx` (notice moved into the
+PageHeader actions slot, out of the stagger column);
+`frontend/src/surfaces/capacity/{CapacityPage.test.tsx,components/
+capacity-reporting-notice.test.tsx,components/class-breakdown-panel.test.tsx}`
+and `frontend/src/app/app.test.tsx` (selector-level updates only — every
+assertion still checks the same copy/values). No `backend/` file, no
+`src/surfaces/dashboard/**` file, no shared `components/ui/*` file, no
+`tokens.css`, no `tailwind.config.ts`. Capacity's business-logic WIP
+(`surfaces/capacity/{api,hooks,lib}/`) untouched again.
+
+**Gate result:** N/A — presentation-only client-feedback follow-up, not a phase
+task or gate. CLAUDE.md non-negotiables re-checked: no `dangerouslySetInnerHTML`
+(the popovers take React children, never HTML strings), no three.js, no
+client-side calculation added, no named-engineer data, bundle budget passes,
+virtualization untouched.
+
+**Next:** the `card-info.tsx` convergence described in §2 — the only debt this
+task knowingly took on, and deliberately not actioned while a parallel agent
+holds those files.
+
+---
+
+## [2026-10-01] "Bold Blocks" visual pass — app-wide theme + Dashboard feature cards
+
+**Requested by:** project owner (direct, via ui-ux-pro-max), with explicit permission to override the
+CLAUDE.md delegation rule for this task. References: three Dribbble dashboards (PinenMFB green,
+Quixotic, Boltshift) — "bold headings, separate boxes, contrasting colour, thicker sides, more
+feature cards, Framer Motion".
+
+**What changed.**
+- `tokens.css`: new BOLD BLOCKS LAYER appended last (overrides, nothing above edited): darker
+  `--color-canvas`, new light-grey `--color-shell` (shell ground, so white cards read as separate
+  boxes), stronger `--color-border`/`--color-dash-hairline`, a solid 3px bottom "lip" baked into
+  `--shadow-card`/`--shadow-dash-card`/`--shadow-pop`, `--shadow-feature`/`--shadow-ink`, INK card
+  tokens (`--color-ink*`, `--gradient-ink`, inverts in dark), lime `--color-pop` / red `--color-drop`
+  delta-pill tokens, `--text-page` (32px), larger display/h1/h2. `tailwind.config.ts` exposes them
+  (`bg-shell`, `ink`, `pop`, `drop`, `text-page`, `shadow-feature`/`shadow-ink`); type steps now 700–800.
+  `index.css`: `.bg-dots` and `.bg-hatch` decorative utilities.
+- Shared chrome: `Card`/`BoltCard` 1.5px borders, bold `CardTitle`; `PageHeader` gains `eyebrow` and
+  a 32px extrabold title; the shell is `bg-shell` with the header as a floating white bar; the header
+  wordmark is now "RPD Portfolio · Frigoglass R&D Planning".
+- Dashboard: `StatCard` gains `variant` (`plain` | `feature` | `ink`) + `badge` (lime/red/neutral
+  share pill), dot-grid texture, tone-coloured left rail, Framer hover lift. `WithinYearPanel` is split
+  into `WithinYearKpis` + `WithinYearTable` (the composed `WithinYearPanel` is kept, and its tests are
+  unchanged). New `DeliveryGaugeCard` (segmented half-ring, animated segments) and `PlanningClockCard`
+  (ink card; W31 → W52 progress + 78-week horizon strip, from `domain-constants` only). New layout:
+  KPI row → profile + gauge → outcome table beside clock + pipeline → status overview (distinct
+  tones/captions, ink "In Buyoff") → spotlight → hub×type → breakdown. Header actions: "Capacity view",
+  "Open timeline".
+
+**I9 note:** the gauge % and KPI share pills are display ratios of counts read directly from
+`completing-within-year`, the same kind of ratio the Pipeline donut already prints; nothing is
+re-scheduled or re-derived.
+
+**Concurrency:** session `frigoglass-d9` was editing in parallel (GlowOverlay in DashboardPage/app-shell,
+login.tsx). We coordinated via cross-session message; its wrapper was kept. A stray prettier run of
+d9's had double-quoted DashboardPage.tsx; this session normalised it back to single quotes.
+
+**Verification:** `tsc` clean; eslint 0 errors (6 pre-existing warnings); vitest 126 files / 665
+tests pass (one app.test collision fixed by naming the new dashboard button "Capacity view"); bundle
+budget PASS, 169.0 KB gzip of 400 KB. Checked visually in light and dark on Dashboard, plus Capacity
+in light, against the :8010 backend via the e2e preview on :5199, with zero console errors.
+
+**Gate result:** N/A — presentation-only client-direction pass, not a phase task.
+**Next:** carry `StatCard` variants and section headings into Capacity/Matrix/Gantt/Planning;
+consider a framer `layoutId` sidebar indicator only if the bundle headroom is acceptable.
+
+---
+
+## [2026-10-01] Bold Blocks pass 2 — rich tables, Gantt polish, analytics charts, KPI rows on every surface
+
+**Requested by:** project owner (direct). Asks: tables like the "table-01" shadcn reference, a better
+Gantt, more and better graphs, and then "all pages, same theme, bold feature cards". The CLAUDE.md
+delegation rule was again overridden by the owner for this work.
+
+**What changed.**
+- **Tables.** New `components/ui/table-cells.tsx` (`EntityCell` icon-disc + title/subtitle,
+  `ProgressCell`, `RowActions` ⋮ menu). The shared `Table` primitive and every hand-built role="table"
+  grid now share one look: bold uppercase tracked headers on the sunken strip, roomier rows and a
+  primary-tint hover. Covers the Dashboard virtual table, Registration list, Users, Audit log
+  (per-entity icon), Matrix grid, Workflow steps/lead times/chambers, Workspace scoring, and the
+  Planning engineer/chamber tables. Icon discs are tinted by category, outcome or entity — never
+  stock avatars, since engineer/person data is GDPR (OPEN_QUESTIONS #8). Selection checkboxes from
+  the reference were NOT added, because no bulk action exists for them to drive.
+- **Gantt.** Pill bars with a vertical gradient + drop shadow that grow in from their start week
+  (CSS `.gantt-bar-grow`, zeroed by reduced motion), a `Wxx – Wyy` label on wide bars, a "W31 now"
+  pill on the axis, an elapsed-weeks wash, bold sticky headers and row hover. Bar geometry is untouched.
+- **Charts.** New Dashboard "Portfolio analytics" section (`portfolio-analytics.tsx`): finish-week
+  histogram (4-week buckets, ghost tracks, hatched peak with a bubble label), delivery-by-priority
+  radial rings, and outcomes-by-hub stacked bars (Framer `whileInView`). Matrix `BandDistributionChart`:
+  gradient pill bars on tracks with value labels; the committed-priority table now has its own chart.
+  The shared `components/ui/bar-chart.tsx` gets thicker animated bars (CSS `animate-grow-x`, staggered).
+  Capacity class chart gets larger, bolder ticks.
+- **KPI cards everywhere.** Dashboard `StatCard` promoted to `components/ui/kpi-card.tsx`
+  (+ `KpiRow`, Framer stagger); the dashboard file now re-exports it. One blue feature card, two plain
+  cards and one ink card per row on: Capacity, Matrix (replaces the plain Stat tiles), Registration,
+  Planning, Users, Audit log, Workflow settings and Timeline.
+
+**I9 / client-side counting note.** The new figures are counts or sums over rows the endpoints already
+return (outcome flags, finish weeks, statuses, FTE, load weeks). No schedule figure is re-derived. The
+Users/Audit "on this page" cards say so in their captions, because those lists are paginated.
+
+**Test-driven renames:** the Gantt KPI labels are "Spilling past W52" and "Frozen in place", because the
+bare "Spillover"/"Frozen" text is asserted by `GanttPage.test.tsx`.
+
+**Verification:** `tsc` clean; eslint 0 errors (the same 6 pre-existing warnings); vitest 127 files /
+668 tests pass; bundle budget PASS, 169.7 KB gzip of 400 KB. Every surface checked visually in light
+(Dashboard, Capacity, Matrix, Registration, Planning, Workflow, Users, Audit, Timeline) and Registration
++ Matrix in dark, against :8010 via the e2e preview on :5199, with zero console errors.
+
+**Gate result:** N/A — presentation-only client-direction pass.
+**Next:** Project Workspace page KPI row and charts (not reskinned beyond the shared primitives in this pass).
+
+---
+
+## [2026-10-01] Bold Blocks pass 3 — fewer feature cards, distinct stat styles per surface, bolder Card borders
+
+**Requested by:** project owner — "too many feature cards; remove from Audit, Workflow settings and
+Matrix; reduce on Users; don't make every page's cards look the same; bolder, clearer borders".
+
+**What changed.**
+- New `components/ui/stat-variants.tsx` with three stat styles, distinct from the Dashboard's
+  feature row (`kpi-card.tsx`, which now stays Dashboard-only in practice):
+  - `StatStrip`: one bordered box split into segments. Used on Registration, Timeline, and the
+    Capacity deliverable/left-out pair.
+  - `MeterCard`: load / capacity with a "% used" pill and a hatched animated meter. Used on Capacity
+    for design and lab load.
+  - `TileStat`: compact tile with a solid icon block and a coloured 4px bottom edge. Used on Planning
+    (3 tiles) and Users (2 tiles, reduced from 4).
+- Feature cards removed entirely from Audit log and Workflow settings (both pages are back to their
+  pre-pass code) and from the Matrix. The Matrix summary went back to its plain three tiles,
+  restyled with a 2px border and an extra-bold figure; there is no "Projects in scope" tile any more.
+- The shared `Card` is now `border-2 border-border-strong/60`, with a 2px header rule, so every
+  non-Dashboard surface's boxes have a clearly visible edge.
+
+**Verification:** `tsc` clean; eslint 0 errors (the 6 pre-existing warnings); vitest 127 files / 668
+pass; bundle PASS, 169.9 KB gzip. Checked visually in light mode on Capacity, Registration, Planning,
+Users, Timeline and Matrix (:5199 e2e preview against :8010), with zero console errors.
+
+**Housekeeping:** a stray `/node_modules/.vite` cache at the repo root (from a vitest run that
+mistakenly started in the repo root) could not be deleted from this session; it is untracked and safe to remove.
+
+**Gate result:** N/A — presentation-only.

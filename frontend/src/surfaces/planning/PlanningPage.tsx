@@ -1,7 +1,8 @@
 import * as React from 'react';
-import { Plus } from 'lucide-react';
+import { Gauge, HardHat, Plus, Thermometer } from 'lucide-react';
 
 import { PageHeader } from '@/components/layout/page-header';
+import { TileStat } from '@/components/ui/stat-variants';
 import { SectionBoundary } from '@/components/shared/section-boundary';
 import { DownloadButton } from '@/components/shared/download-button';
 import { EmptyState } from '@/components/shared/empty-state';
@@ -225,6 +226,31 @@ export default function PlanningPage(): React.JSX.Element {
           <ReadOnlyNotice surface="capacity_planning" what="Creating, editing or applying changes" />
           {writeForbidden ? <WriteForbiddenNotice /> : null}
 
+          {engineerListQuery.data && chamberListQuery.data ? (
+            <div className="grid gap-gutter sm:grid-cols-3">
+              <TileStat
+                label="Engineers"
+                value={engineerListQuery.data.length}
+                icon={HardHat}
+                accent="primary"
+                hint={hubId === ALL ? 'Across all hubs' : 'In the selected hub'}
+              />
+              <TileStat
+                label="Total FTE"
+                value={String(Math.round(engineerListQuery.data.reduce((sum, e) => sum + e.fte, 0) * 10) / 10)}
+                icon={Gauge}
+                accent="success"
+                hint="Sum of configured FTE"
+              />
+              <TileStat
+                label="Lab chambers"
+                value={chamberListQuery.data.length}
+                icon={Thermometer}
+                accent="warning"
+                hint="Configured test chambers"
+              />
+            </div>
+          ) : null}
           <Tabs defaultValue="engineers">
             <TabsList>
               <TabsTrigger value="engineers">Engineers</TabsTrigger>

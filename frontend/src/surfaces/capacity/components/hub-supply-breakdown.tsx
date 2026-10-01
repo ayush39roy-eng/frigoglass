@@ -1,9 +1,9 @@
 import * as React from 'react';
+import { motion } from 'framer-motion';
 import { CircleCheck, TriangleAlert } from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
 import { BarChart } from '@/components/ui/bar-chart';
-import { StatCard } from '@/components/ui/metric-card';
 import {
   Table,
   TableBody,
@@ -13,10 +13,13 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { formatDecimal, formatFraction } from '@/lib/format';
+import { useMotionTokens } from '@/lib/motion';
 import { cn } from '@/lib/utils';
 
 import type { HubCapacityRow } from '../api/types';
 import { pickFigures, type CapacityHorizon, type ResourceFigures, type ResourceKind } from '../lib/pick-figures';
+import { CapacityInfo } from './capacity-info';
+import { CapacityStat } from './capacity-stat';
 
 export type { CapacityHorizon } from '../lib/pick-figures';
 
@@ -43,12 +46,16 @@ function GapBadge({ gap, unit }: { gap: number; unit: string }): React.JSX.Eleme
   // `gap` = load − capacity, served. Positive = shortfall, ≤ 0 = headroom.
   const shortfall = gap > 0;
   return shortfall ? (
-    <Badge tone="warning" title={`Load exceeds capacity by ${formatDecimal(gap)} ${unit}`}>
+    <Badge tone="warning" className="rounded-pill" title={`Load exceeds capacity by ${formatDecimal(gap)} ${unit}`}>
       <TriangleAlert aria-hidden="true" />
       Shortfall
     </Badge>
   ) : (
-    <Badge tone="neutral" title={`Capacity covers load with ${formatDecimal(Math.abs(gap))} ${unit} to spare`}>
+    <Badge
+      tone="neutral"
+      className="rounded-pill"
+      title={`Capacity covers load with ${formatDecimal(Math.abs(gap))} ${unit} to spare`}
+    >
       <CircleCheck aria-hidden="true" />
       Headroom
     </Badge>
@@ -75,46 +82,59 @@ function ResourceBlock({
   return (
     <section
       aria-label={`${hub} ${title.toLowerCase()} load vs. capacity`}
-      className="space-y-s3 rounded-control border border-border bg-surface-raised p-card-tight"
+      className="space-y-s3 rounded-dash border border-dash-hairline bg-surface p-card-tight"
       data-testid={`capacity-${kind}`}
     >
       <header className="flex items-center justify-between gap-s2">
         <h4 className="label-caps text-text-muted">
           {title} <span className="normal-case tracking-normal text-text-subtle">· {unit}</span>
         </h4>
-        <GapBadge gap={figures.gap} unit={unit} />
+        <div className="flex items-center gap-1">
+          <GapBadge gap={figures.gap} unit={unit} />
+          {/* The lab caveat used to render as a line of prose under this block,
+              once per hub card — six identical sentences on a full page. Same
+              words, now one affordance per block (client text cleanup,
+              2026-10-01). */}
+          {note ? (
+            <CapacityInfo label={`About these ${title.toLowerCase()} figures`} className="size-6">
+              <p>{note}</p>
+            </CapacityInfo>
+          ) : null}
+        </div>
       </header>
 
       <div className="grid gap-s2 sm:grid-cols-2">
-        <StatCard
+        <CapacityStat
           label="Load (process-derived)"
-          value={formatDecimal(figures.load)}
+          value={figures.load}
           data-testid={`${kind}-load`}
         />
-        <StatCard
+        <CapacityStat
           label="Load (estimated)"
-          value={formatDecimal(figures.loadEstimated)}
-          className="[&_span]:text-text-muted"
+          value={figures.loadEstimated}
+          muted
           data-testid={`${kind}-load-estimated`}
         />
-        <StatCard
+        <CapacityStat
           label={HORIZON_LABEL[horizon]}
-          value={formatDecimal(figures.capacity)}
+          value={figures.capacity}
           data-testid={`${kind}-capacity`}
         />
-        <StatCard
+        <CapacityStat
           label="Gap (load − capacity)"
-          value={
+          value={figures.gap}
+          renderValue={(text, rawValue) => (
             <span className={cn(shortfall ? 'text-warning-subtle-fg' : 'text-text')}>
-              {figures.gap > 0 ? '+' : ''}
-              {formatDecimal(figures.gap)}
+              {rawValue > 0 ? '+' : ''}
+              {text}
             </span>
-          }
+          )}
           data-testid={`${kind}-gap`}
         />
-        <StatCard
+        <CapacityStat
           label="Completion"
-          value={figures.completionPct === null ? '—' : formatFraction(figures.completionPct)}
+          value={figures.completionPct}
+          formatValue={formatFraction}
           className="sm:col-span-2"
           data-testid={`${kind}-completion`}
         />
@@ -133,7 +153,6 @@ function ResourceBlock({
           { key: 'capacity', label: HORIZON_LABEL[horizon], value: figures.capacity, tone: 'neutral' },
         ]}
       />
-      {note ? <p className="text-2xs text-text-subtle">{note}</p> : null}
     </section>
   );
 }
@@ -144,17 +163,28 @@ export interface HubSupplyBreakdownProps {
 }
 
 export function HubSupplyBreakdown({ rows, horizon }: HubSupplyBreakdownProps): React.JSX.Element {
+  const motionTokens = useMotionTokens();
+
   return (
     <div className="space-y-s4" data-testid="hub-supply-breakdown">
-      {rows.map((row) => {
+      {rows.map((row, index) => {
         const design = pickFigures(row, 'design', horizon);
         const lab = pickFigures(row, 'lab', horizon);
         const headingId = `capacity-hub-${row.hub.replace(/[^a-z0-9]+/gi, '-')}`;
+        // `exactOptionalPropertyTypes` forbids `whileHover={undefined}` explicitly
+        // (framer-motion's prop types don't include `undefined` in their union) —
+        // build the hover prop conditionally and spread, same pattern as the
+        // Dashboard's `StatCard`.
+        const hoverProps = motionTokens.reduced ? {} : { whileHover: { y: -3 } };
         return (
-          <article
+          <motion.article
             key={row.hub}
             aria-labelledby={headingId}
-            className="space-y-s3 rounded-card border border-border bg-surface p-card shadow-card"
+            initial={motionTokens.reduced ? false : { opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ ...motionTokens.transition, delay: motionTokens.reduced ? 0 : index * 0.04 }}
+            {...hoverProps}
+            className="space-y-s3 rounded-dash border border-dash-hairline bg-surface p-card shadow-dashCard transition-shadow duration-fast ease-ease-out-expo hover:shadow-pop"
             data-testid="capacity-hub-card"
           >
             <header className="flex flex-wrap items-baseline justify-between gap-s2">
@@ -162,7 +192,9 @@ export function HubSupplyBreakdown({ rows, horizon }: HubSupplyBreakdownProps): 
                 {row.hub}
               </h3>
               <span className="flex flex-wrap items-center gap-s2 text-2xs text-text-muted">
-                <Badge tone="outline">Lab region: {row.lab_region}</Badge>
+                <Badge tone="outline" className="rounded-pill">
+                  Lab region: {row.lab_region}
+                </Badge>
                 <span data-numeric="">
                   Σ FTE <strong className="text-text">{formatDecimal(row.engineer_fte_total)}</strong>
                 </span>
@@ -189,7 +221,7 @@ export function HubSupplyBreakdown({ rows, horizon }: HubSupplyBreakdownProps): 
               />
             </div>
 
-            <details className="group rounded-control border border-border bg-surface-sunken px-s3 py-s2 text-2xs text-text-muted">
+            <details className="group rounded-dash border border-dash-hairline bg-dash-alt px-s3 py-s2 text-2xs text-text-muted">
               <summary className="cursor-pointer select-none font-semibold text-text">
                 How this is calculated
               </summary>
@@ -268,7 +300,7 @@ export function HubSupplyBreakdown({ rows, horizon }: HubSupplyBreakdownProps): 
                 )}
               </div>
             </details>
-          </article>
+          </motion.article>
         );
       })}
     </div>

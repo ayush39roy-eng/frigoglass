@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { screen, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 
 import { renderWithProviders } from '@/test/render';
 import type { ClassBreakdown } from '../api/types';
@@ -27,7 +28,23 @@ describe('ClassBreakdownPanel', () => {
     expect(aPlus).not.toBeNull();
     expect(within(aPlus as HTMLElement).getByText('7')).toBeInTheDocument();
     expect(within(aPlus as HTMLElement).getByText('2')).toBeInTheDocument();
-    expect(screen.getByText(/Source: active schedule run v3/i)).toBeInTheDocument();
+    // The run version stays visible on the card as a chip, not as a sentence.
+    expect(screen.getByText('Run v3')).toBeInTheDocument();
+  });
+
+  it('keeps the deliverable / left-out definitions and the run source reachable in the card header', async () => {
+    // Text cleanup 2026-10-01: this prose moved out of a loose paragraph under
+    // the card title and into a keyboard-reachable popover. Same words.
+    const user = userEvent.setup();
+    renderWithProviders(<ClassBreakdownPanel data={withRun} />);
+
+    await user.click(
+      screen.getByRole('button', { name: 'How deliverable and left out are defined' }),
+    );
+
+    expect(screen.getByText(/no feasible window before the/i)).toBeInTheDocument();
+    expect(screen.getByText(/Source: active schedule run/i)).toHaveTextContent(/v3/);
+    expect(screen.getByText(/Not recomputed in the browser/i)).toBeInTheDocument();
   });
 
   it('shows a non-error empty state when no schedule run is active', () => {

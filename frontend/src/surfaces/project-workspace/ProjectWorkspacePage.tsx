@@ -66,6 +66,13 @@ export default function ProjectWorkspacePage(): React.JSX.Element {
         <div data-testid="project-workspace">
           <WorkspaceHeader data={data} canRecalculate={canWrite} recalc={recalc} />
           <ReadOnlyNotice surface="project_workspace" what="Editing details, progress, files and comments" className="mb-stack" />
+          {/* Full-width and first, above the two-column body: this is the one
+              panel every project workspace shares regardless of role or write
+              access, so it gets top billing rather than sitting at the bottom
+              of a scroll column (ask-agent-panel.tsx's own bold styling). */}
+          <div className="mb-gutter">
+            <AskAgentPanel projectId={data.project.id} />
+          </div>
           <div className="grid gap-gutter xl:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
             <div className="flex min-w-0 flex-col gap-gutter">
               <DetailsPanel
@@ -85,7 +92,6 @@ export default function ProjectWorkspacePage(): React.JSX.Element {
                 currentUserId={me?.user_id ?? null}
                 canModerate={canModerate}
               />
-              <AskAgentPanel projectId={data.project.id} />
             </div>
           </div>
         </div>

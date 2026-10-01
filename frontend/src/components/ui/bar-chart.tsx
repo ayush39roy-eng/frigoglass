@@ -73,7 +73,7 @@ export function BarChart({
 
   return (
     <dl className={cn('flex flex-col gap-s2', className)} aria-label={ariaLabel}>
-      {data.map((datum) => {
+      {data.map((datum, index) => {
         const pct = Math.round((datum.value / axisMax) * 100);
         const fill = datum.tone
           ? TONE_BAR[datum.tone]
@@ -82,10 +82,10 @@ export function BarChart({
         return (
           <div
             key={datum.key}
-            className="group grid grid-cols-[10rem_1fr_auto] items-center gap-s3 rounded-control px-s2 py-1 transition-colors duration-fast hover:bg-surface-sunken"
+            className="group grid grid-cols-[10rem_1fr_auto] items-center gap-s3 rounded-xl px-s3 py-1.5 transition-colors duration-fast hover:bg-primary-subtle/40"
           >
             <dt className="min-w-0">
-              <span className="block truncate text-body font-medium text-text">{datum.label}</span>
+              <span className="block truncate text-body font-semibold text-text">{datum.label}</span>
               {datum.hint ? (
                 <span className="block truncate text-2xs text-text-subtle">{datum.hint}</span>
               ) : null}
@@ -93,14 +93,18 @@ export function BarChart({
             {/* Track + fill are both pill-radius and the track is always visible, so a
                 near-zero bar still reads as "measured and small" rather than as
                 missing data — the failure mode of a track-less bar chart. */}
-            <dd className="h-2.5 overflow-hidden rounded-pill bg-surface-sunken" aria-hidden="true">
+            <dd className="h-3.5 overflow-hidden rounded-pill bg-surface-sunken" aria-hidden="true">
               <div
-                className={cn('h-full rounded-pill transition-[width] duration-slow ease-ease-out-expo', fill)}
-                style={{ width: `${String(pct)}%` }}
+                className={cn(
+                  'relative h-full origin-left animate-grow-x rounded-pill transition-[width] duration-slow ease-ease-out-expo',
+                  'after:absolute after:inset-x-0 after:top-0 after:h-1/2 after:rounded-pill after:bg-white/20',
+                  fill,
+                )}
+                style={{ width: `${String(pct)}%`, animationDelay: `${String(index * 70)}ms` }}
               />
             </dd>
             <dd
-              className="w-14 text-right font-mono text-figure font-semibold tabular-nums text-text"
+              className="w-14 text-right font-display text-base font-extrabold tabular-nums text-text"
               data-numeric=""
             >
               {formatValue(datum.value)}

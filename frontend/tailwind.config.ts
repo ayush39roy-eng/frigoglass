@@ -68,13 +68,26 @@ export default {
           DEFAULT: withAlpha('color-accent'),
           'subtle-fg': withAlpha('color-accent-subtle-fg'),
         },
-        // Glassmorphism surface (Dashboard polish, 2026-09-30). Translucency of the
-        // EXISTING --color-surface/--color-border hues, not a new colour family — see
-        // the "GLASS SURFACE LAYER" note in tokens.css. Used via bg-glass/60,
-        // bg-glass/90, border-glass-border/40.
-        glass: {
-          DEFAULT: withAlpha('color-glass-bg'),
-          border: withAlpha('color-glass-border'),
+        // Dashboard-only content tokens (Boltshift rebuild, 2026-10-01). See the
+        // "BOLTSHIFT LAYER" note in tokens.css — consumed ONLY by
+        // surfaces/dashboard/components/*, never by the shared Card/GlassPanel
+        // used by every other surface.
+        dash: {
+          hairline: withAlpha('color-dash-hairline'),
+          edge: withAlpha('color-dash-edge'),
+          alt: withAlpha('color-dash-alt'),
+        },
+        dashChart: {
+          1: withAlpha('dash-cat-1'),
+          2: withAlpha('dash-cat-2'),
+          3: withAlpha('dash-cat-3'),
+          4: withAlpha('dash-cat-4'),
+          5: withAlpha('dash-cat-5'),
+          6: withAlpha('dash-cat-6'),
+          7: withAlpha('dash-cat-7'),
+          8: withAlpha('dash-cat-8'),
+          9: withAlpha('dash-cat-9'),
+          10: withAlpha('dash-cat-10'),
         },
         // Structural hue. The sidebar rail and its furniture — never an action.
         sidebar: {
@@ -97,6 +110,21 @@ export default {
           700: withAlpha('petrol-700'),
           800: withAlpha('petrol-800'),
           900: withAlpha('petrol-900'),
+        },
+        // Bold Blocks layer (tokens.css): shell ground, ink feature card, lime/red delta pills.
+        shell: withAlpha('color-shell'),
+        ink: {
+          DEFAULT: withAlpha('color-ink'),
+          raised: withAlpha('color-ink-raised'),
+          fg: withAlpha('color-ink-fg'),
+        },
+        pop: {
+          DEFAULT: withAlpha('color-pop'),
+          fg: withAlpha('color-pop-fg'),
+        },
+        drop: {
+          DEFAULT: withAlpha('color-drop'),
+          fg: withAlpha('color-drop-fg'),
         },
         // The single emphasised dark tile per screen.
         feature: {
@@ -149,13 +177,24 @@ export default {
         panel: 'var(--radius-panel)',
         control: 'var(--radius-control)',
         pill: 'var(--radius-pill)',
+        // Boltshift shell chrome (app-shell/app-sidebar) + Dashboard content cards.
+        shell: 'var(--radius-shell)',
+        rail: 'var(--radius-rail)',
+        dash: 'var(--radius-dash)',
       },
       fontFamily: {
-        // 'Inter Variable' / 'JetBrains Mono Variable' are the family names the
-        // fontsource packages register (src/styles/fonts.css). Before this, `Inter`
-        // was named here but never actually loaded, so every screen silently
-        // rendered in system-ui — correct-looking on a Mac, wrong everywhere else.
+        // 'Plus Jakarta Sans Variable' / 'Inter Variable' / 'JetBrains Mono Variable'
+        // are the family names the fontsource packages register
+        // (src/styles/fonts.css). Before this, `Inter` was named here but never
+        // actually loaded, so every screen silently rendered in system-ui —
+        // correct-looking on a Mac, wrong everywhere else.
+        //
+        // 2026-10-01 (Boltshift): Plus Jakarta Sans replaces Inter as the primary
+        // UI face app-wide (spec §3, "500/600/700 for UI + headings", no surface
+        // carve-out). Inter Variable stays second in the stack as the fallback
+        // face — see fonts.css's header comment.
         sans: [
+          'Plus Jakarta Sans Variable',
           'Inter Variable',
           'Inter',
           'ui-sans-serif',
@@ -191,9 +230,10 @@ export default {
         // The literal Tailwind steps (text-sm, text-xs, ...) are deliberately left
         // untouched so the 250-odd existing files keep their current sizing until
         // each is migrated deliberately.
-        display: ['var(--text-display)', { lineHeight: 'var(--leading-heading)', fontWeight: '600' }],
-        h1: ['var(--text-h1)', { lineHeight: 'var(--leading-heading)', fontWeight: '600' }],
-        h2: ['var(--text-h2)', { lineHeight: 'var(--leading-heading)', fontWeight: '600' }],
+        page: ['var(--text-page)', { lineHeight: '1.1', fontWeight: '800', letterSpacing: '-0.025em' }],
+        display: ['var(--text-display)', { lineHeight: '1', fontWeight: '800', letterSpacing: '-0.03em' }],
+        h1: ['var(--text-h1)', { lineHeight: 'var(--leading-heading)', fontWeight: '700', letterSpacing: '-0.015em' }],
+        h2: ['var(--text-h2)', { lineHeight: 'var(--leading-heading)', fontWeight: '700', letterSpacing: '-0.01em' }],
         body: ['var(--text-body)', { lineHeight: 'var(--leading-body)' }],
         label: [
           'var(--text-label)',
@@ -235,7 +275,13 @@ export default {
         card: 'var(--shadow-card)',
         hover: 'var(--shadow-hover)',
         overlay: 'var(--shadow-overlay)',
-        glass: 'var(--shadow-glass)',
+        // Boltshift shell chrome + Dashboard content cards (see tokens.css).
+        shell: 'var(--shadow-shell)',
+        pop: 'var(--shadow-pop)',
+        ctaBlue: 'var(--shadow-cta-blue)',
+        dashCard: 'var(--shadow-dash-card)',
+        feature: 'var(--shadow-feature)',
+        ink: 'var(--shadow-ink)',
       },
       transitionDuration: {
         instant: 'var(--dur-instant)',
@@ -248,6 +294,18 @@ export default {
         'ease-in-out-quint': 'var(--ease-in-out)',
       },
       keyframes: {
+        'grow-x': {
+          from: { transform: 'scaleX(0)' },
+          to: { transform: 'scaleX(1)' },
+        },
+        'grow-y': {
+          from: { transform: 'scaleY(0)' },
+          to: { transform: 'scaleY(1)' },
+        },
+        'row-in': {
+          from: { opacity: '0', transform: 'translateY(6px)' },
+          to: { opacity: '1', transform: 'translateY(0)' },
+        },
         'fade-in': {
           from: { opacity: '0' },
           to: { opacity: '1' },
@@ -258,6 +316,9 @@ export default {
       },
       animation: {
         'fade-in': 'fade-in 120ms ease-out',
+        'grow-x': 'grow-x 900ms cubic-bezier(0.16, 1, 0.3, 1) both',
+        'grow-y': 'grow-y 700ms cubic-bezier(0.16, 1, 0.3, 1) both',
+        'row-in': 'row-in 420ms cubic-bezier(0.16, 1, 0.3, 1) both',
         shimmer: 'shimmer 1.6s infinite',
       },
     },

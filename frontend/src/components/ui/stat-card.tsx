@@ -169,7 +169,7 @@ export interface KpiCardProps extends Omit<React.HTMLAttributes<HTMLDivElement>,
 /**
  * The Overview headline figure: label, big number, optional delta and trend.
  *
- * The figure uses the display face (Space Grotesk on Overview, Inter on Working —
+ * The figure uses the display face (Plus Jakarta Sans in both density zones —
  * see tokens.css) at the density's display size, with tabular numerals so a row of
  * KpiCards has its digits on a shared grid rather than each card centring its own.
  */

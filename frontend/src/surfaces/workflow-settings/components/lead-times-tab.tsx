@@ -104,11 +104,11 @@ function LeadTimeGrid({
             {error}
           </p>
         ) : null}
-        <div className="overflow-x-auto rounded-lg border border-border">
-          <table className="w-full border-collapse text-xs" aria-label={`${workflow.id} lead times`}>
-            <thead className="bg-surface-sunken text-2xs text-text-muted">
+        <div className="overflow-x-auto rounded-dash border-[1.5px] border-border bg-surface">
+          <table className="w-full border-collapse text-sm" aria-label={`${workflow.id} lead times`}>
+            <thead className="bg-surface-sunken text-2xs font-bold uppercase tracking-wider text-text-subtle">
               <tr>
-                <th scope="col" className="sticky left-0 z-10 bg-surface-sunken px-2 py-1.5 text-left">
+                <th scope="col" className="sticky left-0 z-10 bg-surface-sunken px-3 py-3 text-left">
                   Category
                 </th>
                 {steps.map((s) => (
@@ -119,16 +119,16 @@ function LeadTimeGrid({
                     </span>
                   </th>
                 ))}
-                <th scope="col" className="border-l border-border px-2 py-1.5 text-right">
+                <th scope="col" className="border-l border-border px-3 py-3 text-right">
                   Σ
                 </th>
-                <th scope="col" className="px-2 py-1.5 text-right">
+                <th scope="col" className="px-3 py-3 text-right">
                   Design
                 </th>
-                <th scope="col" className="px-2 py-1.5 text-right">
+                <th scope="col" className="px-3 py-3 text-right">
                   Lab
                 </th>
-                <th scope="col" className="px-2 py-1.5 text-right">
+                <th scope="col" className="px-3 py-3 text-right">
                   Elapsed
                 </th>
               </tr>
@@ -137,8 +137,8 @@ function LeadTimeGrid({
               {rows.map((row) => {
                 const totals = rowTotals(row.cells, kinds);
                 return (
-                  <tr key={row.category} className="border-t border-border" data-testid={`lead-row-${row.category}`}>
-                    <th scope="row" className="sticky left-0 z-10 bg-surface px-2 py-1 text-left font-semibold text-text">
+                  <tr key={row.category} className="border-t border-border/70 transition-colors hover:bg-primary-subtle/30" data-testid={`lead-row-${row.category}`}>
+                    <th scope="row" className="sticky left-0 z-10 bg-surface px-3 py-2 text-left font-bold text-text">
                       {row.category}
                     </th>
                     {stepIds.map((stepId) => {

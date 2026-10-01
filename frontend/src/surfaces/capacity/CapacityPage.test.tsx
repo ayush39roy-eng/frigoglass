@@ -1,5 +1,6 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 
 import { renderWithProviders } from '@/test/render';
 import { ApiError } from '@/lib/api/client';
@@ -60,13 +61,23 @@ beforeEach(() => {
 });
 
 describe('CapacityPage', () => {
-  it('always renders the surface heading and the reporting-basis notice', () => {
+  it('always renders the surface heading and the reporting-basis notice', async () => {
+    // P4-T03 hard constraint: the honest-framing callout is carried by this
+    // surface in EVERY query state, including while all three panels are still
+    // pending. Since the 2026-10-01 client text cleanup it is a popover in the
+    // page header rather than a four-paragraph aside, so the affordance is
+    // asserted here and its (unchanged) copy is asserted behind it.
+    const user = userEvent.setup();
     hooks.useHubLoadVsCapacity.mockReturnValue(pending);
     hooks.useClassBreakdown.mockReturnValue(pending);
     hooks.useUtilizationMatrix.mockReturnValue(pending);
     renderWithProviders(<CapacityPage />);
     expect(screen.getByRole('heading', { name: 'RPD Capacity' })).toBeInTheDocument();
-    expect(screen.getByText('How to read these figures')).toBeInTheDocument();
+
+    const notice = screen.getByRole('button', { name: 'How to read these figures' });
+    expect(notice).toBeInTheDocument();
+
+    await user.click(notice);
     expect(screen.getByText(/scheduler overbooked anyone/i)).toBeInTheDocument();
   });
 

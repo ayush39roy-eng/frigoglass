@@ -1,11 +1,9 @@
 import * as React from 'react';
-import { Link } from 'react-router-dom';
-import { FilterX } from 'lucide-react';
+import { Building2, FilterX, FolderKanban, FolderOpen, GanttChartSquare } from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { GlassPanel } from '@/components/ui/glass-panel';
 import { Label } from '@/components/ui/label';
 import {
   Select,
@@ -14,6 +12,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { DownloadButton } from '@/components/shared/download-button';
 import { EmptyState } from '@/components/shared/empty-state';
 import { ErrorState } from '@/components/shared/error-state';
@@ -33,7 +32,17 @@ import {
 
 import { useDashboardProjects } from '../hooks/use-dashboard';
 import type { ProjectFilterParams, ProjectFilterRow } from '../api/types';
+import { BoltCard } from '@/components/ui/bolt-card';
+import { CardInfo } from './card-info';
+import { CategoryTag } from '@/components/ui/category-tag';
+import { ProjectCardGrid } from './project-card-grid';
 import { VirtualDataTable, type VirtualColumn } from './virtual-data-table';
+import { EntityCell, RowActions } from '@/components/ui/table-cells';
+import { categoricalRankSoftBg, categoricalRankText, categoryRank } from '@/lib/categorical-palette';
+import { cn } from '@/lib/utils';
+import { HUB_COUNTRY } from '../lib/hub-geo';
+
+type BreakdownView = 'table' | 'cards';
 
 /**
  * "Analytics breakdown with filters (by hub, category, status, priority)"
@@ -48,23 +57,34 @@ const COLUMNS: VirtualColumn<ProjectFilterRow>[] = [
   {
     id: 'project',
     header: 'Project',
-    width: 'minmax(12rem, 2fr)',
+    width: 'minmax(14rem, 2.2fr)',
     // Click-through to the Project Workspace (Surface #7, P9).
-    cell: (row) => (
-      <Link
-        to={`/projects/${row.project_id}`}
-        className="truncate font-medium text-text underline-offset-2 hover:text-primary hover:underline"
-        title={`${row.project_name} — open in Project Workspace`}
-      >
-        {row.project_name}
-      </Link>
-    ),
+    cell: (row) => {
+      const rank = row.category ? categoryRank(row.category) : 9;
+      return (
+        <EntityCell
+          icon={FolderKanban}
+          iconClassName={cn(categoricalRankSoftBg(rank), categoricalRankText(rank))}
+          title={row.project_name}
+          titleAttr={`${row.project_name} — open in Project Workspace`}
+          to={`/projects/${row.project_id}`}
+          subtitle={row.category ? `Category ${row.category}` : 'Uncategorised'}
+        />
+      );
+    },
   },
   {
     id: 'hub',
     header: 'Hub',
-    width: 'minmax(7rem, 1fr)',
-    cell: (row) => <span className="truncate text-text-muted">{row.hub}</span>,
+    width: 'minmax(9rem, 1.2fr)',
+    cell: (row) => (
+      <EntityCell
+        icon={Building2}
+        iconClassName="bg-surface-sunken text-text-muted"
+        title={row.hub}
+        subtitle={HUB_COUNTRY[row.hub]}
+      />
+    ),
   },
   {
     id: 'category',
@@ -73,7 +93,7 @@ const COLUMNS: VirtualColumn<ProjectFilterRow>[] = [
     align: 'center',
     cell: (row) =>
       row.category ? (
-        <Badge tone="outline">{row.category}</Badge>
+        <CategoryTag category={row.category} />
       ) : (
         <span className="text-text-subtle">—</span>
       ),
@@ -95,6 +115,21 @@ const COLUMNS: VirtualColumn<ProjectFilterRow>[] = [
       ) : (
         <span className="text-text-subtle">—</span>
       ),
+  },
+  {
+    id: 'actions',
+    header: <span className="sr-only">Actions</span>,
+    width: '2.5rem',
+    align: 'right',
+    cell: (row) => (
+      <RowActions
+        label={`Actions for ${row.project_name}`}
+        actions={[
+          { label: 'Open workspace', icon: FolderOpen, to: `/projects/${row.project_id}` },
+          { label: 'View on timeline', icon: GanttChartSquare, to: '/timeline' },
+        ]}
+      />
+    ),
   },
 ];
 
@@ -125,7 +160,7 @@ function FilterSelect({
         {label}
       </Label>
       <Select value={value} onValueChange={onChange}>
-        <SelectTrigger id={id} className="h-8 w-40">
+        <SelectTrigger id={id} className="h-8 w-40 rounded-pill">
           <SelectValue />
         </SelectTrigger>
         <SelectContent>
@@ -143,6 +178,7 @@ function FilterSelect({
 
 export function ProjectBreakdown(): React.JSX.Element {
   const [filters, setFilters] = React.useState<FilterState>(EMPTY);
+  const [view, setView] = React.useState<BreakdownView>('table');
   const hubsQuery = useHubs();
 
   const params = React.useMemo<ProjectFilterParams>(
@@ -162,11 +198,10 @@ export function ProjectBreakdown(): React.JSX.Element {
     setFilters((prev) => ({ ...prev, [key]: next }));
 
   return (
-    // Glass treatment (Dashboard polish, 2026-09-30): `opacity="content"` (90%
-    // tint) — same reasoning as `HubTypePipelineTable`, this card holds a dense
-    // virtualized table, so the tint stays opaque enough that P4-T11's WCAG
-    // contrast work on the row text is never put at risk.
-    <GlassPanel opacity="content">
+    /* `id` is the "View all" target of `<ProjectSpotlight>`'s footer link — the
+       spotlight grid shows a capped handful of cards and hands off to this full,
+       virtualized, server-filtered table rather than rendering 236 cards. */
+    <BoltCard id="project-breakdown" className="scroll-mt-6">
       <CardHeader className="flex flex-row items-start justify-between gap-3">
         <div className="flex items-center gap-2">
           <CardTitle>Project breakdown</CardTitle>
@@ -176,7 +211,25 @@ export function ProjectBreakdown(): React.JSX.Element {
               {query.data.total_count === 1 ? 'project' : 'projects'}
             </Badge>
           ) : null}
+          <CardInfo label="Project breakdown source">
+            <p>
+              Every project visible in your hub scope, from{' '}
+              <code>GET /dashboard/projects</code>. Filtering is server-side — the four controls
+              are passed straight to the API, which is already hub-scoped by RBAC. Nothing is
+              filtered or counted in the browser.
+            </p>
+            <p>
+              Portfolio composition, not a schedule outcome: a project appears here whatever the
+              active schedule run did with it.
+            </p>
+          </CardInfo>
         </div>
+        <Tabs value={view} onValueChange={(v) => setView(v as BreakdownView)}>
+          <TabsList>
+            <TabsTrigger value="table">Table</TabsTrigger>
+            <TabsTrigger value="cards">Cards</TabsTrigger>
+          </TabsList>
+        </Tabs>
         <DownloadButton
           path="/exports/dashboard"
           filters={{
@@ -242,15 +295,18 @@ export function ProjectBreakdown(): React.JSX.Element {
                 : 'There are no projects visible in your hub scope.'
             }
           />
+        ) : view === 'cards' ? (
+          <ProjectCardGrid rows={query.data.rows} />
         ) : (
           <VirtualDataTable
             rows={query.data.rows}
             columns={COLUMNS}
             rowKey={(row) => row.project_id}
             caption="Filtered project breakdown"
+            estimateRowHeight={64}
           />
         )}
       </CardContent>
-    </GlassPanel>
+    </BoltCard>
   );
 }

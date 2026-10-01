@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Bot } from 'lucide-react';
+import { Bot, Sparkles } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -51,24 +51,31 @@ export function AskAgentPanel({ projectId }: { projectId: string }): React.JSX.E
   };
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="flex items-center gap-2">
-          <Bot className="size-4 text-text-muted" aria-hidden="true" />
+    <Card className="border-2 border-primary/40 bg-primary-subtle/30 shadow-feature">
+      <CardHeader className="border-b-0">
+        <CardTitle className="flex items-center gap-s2 text-h1">
+          <span className="grid size-10 shrink-0 place-items-center rounded-full bg-primary text-primary-fg">
+            <Bot className="size-5" aria-hidden="true" />
+          </span>
           Ask the agent
+          <span className="ml-auto inline-flex items-center gap-1 rounded-pill bg-primary px-2.5 py-1 text-2xs font-semibold text-primary-fg">
+            <Sparkles className="size-3" aria-hidden="true" />
+            AI
+          </span>
         </CardTitle>
       </CardHeader>
-      <CardContent className="space-y-2">
-        <p className="text-2xs text-text-muted">
-          Ask a question about this project. Answers never include financial figures, customer
-          names or engineer names — those are never sent to the agent.
+      <CardContent className="space-y-s3">
+        <p className="text-sm text-text-muted">
+          Ask a question about this project — stage status, schedule, files, anything visible on
+          this page. Answers never include financial figures, customer names or engineer names;
+          those are never sent to the agent.
         </p>
         <Label htmlFor={inputId} className="sr-only">
           Question for the agent
         </Label>
         <textarea
           id={inputId}
-          rows={2}
+          rows={3}
           value={question}
           maxLength={ASK_AGENT_QUESTION_MAX_CHARS}
           placeholder="e.g. Which stages are behind schedule?"
@@ -79,16 +86,18 @@ export function AskAgentPanel({ projectId }: { projectId: string }): React.JSX.E
               void submit();
             }
           }}
-          className="w-full rounded border border-border-strong bg-surface px-2.5 py-1.5 text-sm text-text placeholder:text-text-subtle focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className="w-full rounded-lg border-2 border-primary/30 bg-surface px-3 py-2 text-sm text-text placeholder:text-text-subtle focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         />
         <div className="flex justify-end">
           <Button
             type="button"
-            size="sm"
+            size="lg"
+            className="font-semibold shadow-feature"
             disabled={ask.isPending || question.trim() === ''}
             onClick={() => void submit()}
           >
-            {ask.isPending ? 'Asking…' : 'Ask'}
+            <Bot aria-hidden="true" />
+            {ask.isPending ? 'Asking…' : 'Ask the agent'}
           </Button>
         </div>
         {errorMessage ? (

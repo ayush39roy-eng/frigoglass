@@ -82,7 +82,7 @@ export function VirtualDataTable<Row>({
       <div role="table" aria-label={caption} aria-rowcount={rows.length}>
         <div
           role="row"
-          className="sticky top-0 z-10 grid items-center gap-3 border-b border-border bg-surface-sunken px-3 py-2 text-xs font-semibold text-text-muted"
+          className="sticky top-0 z-10 grid items-center gap-3 border-b-[1.5px] border-border bg-surface-sunken px-5 py-3 text-2xs font-bold uppercase tracking-wider text-text-subtle"
           style={{ gridTemplateColumns: gridTemplate }}
         >
           {columns.map((col) => (
@@ -106,7 +106,7 @@ export function VirtualDataTable<Row>({
                 role="row"
                 data-index={item.index}
                 ref={virtualizer.measureElement}
-                className="grid items-center gap-3 border-b border-border px-3 py-2 text-sm last:border-0 hover:bg-surface-raised"
+                className="grid items-center gap-3 border-b border-border/70 px-5 py-3 text-sm transition-colors last:border-0 hover:bg-primary-subtle/40"
                 style={{
                   gridTemplateColumns: gridTemplate,
                   position: 'absolute',

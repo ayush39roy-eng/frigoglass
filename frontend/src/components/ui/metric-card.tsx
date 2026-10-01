@@ -208,9 +208,9 @@ export const MetricCard = React.forwardRef<HTMLDivElement, MetricCardProps>(
       </div>
 
       <div className="mt-s3 flex items-end gap-s2">
-        {/* font-display follows the density zone: Space Grotesk at 34px on Overview,
-            Inter at 24px on Working (see tokens.css). tabular-nums so a KPI row does
-            not jitter when a value ticks over. */}
+        {/* font-display follows the density zone: Plus Jakarta Sans at 34px on
+            Overview, 24px on Working (see tokens.css). tabular-nums so a KPI row
+            does not jitter when a value ticks over. */}
         <span className="font-display text-display leading-none tabular-nums">{value}</span>
         {unit ? (
           <span

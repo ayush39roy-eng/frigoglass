@@ -27,8 +27,13 @@ describe('App shell + routing', () => {
     await user.click(screen.getByRole('link', { name: 'Capacity' }));
     expect(await screen.findByRole('heading', { name: 'RPD Capacity' })).toBeInTheDocument();
     // The real surface (P4-T03) renders, not the placeholder — its load/capacity
-    // reading guidance is always present.
-    expect(await screen.findByText('How to read these figures')).toBeInTheDocument();
+    // reading guidance is always present. Since the 2026-10-01 client text
+    // cleanup that guidance is a popover affordance in the page header rather
+    // than a paragraph of body copy, so this asserts it by role + name, like the
+    // Registration/Planning navigation tests below.
+    expect(
+      await screen.findByRole('button', { name: 'How to read these figures' }),
+    ).toBeInTheDocument();
   });
 
   it('navigates to the Prioritization Matrix surface on nav click', async () => {
@@ -97,17 +102,20 @@ describe('App shell + routing', () => {
     expect(await screen.findByText('Page not found')).toBeInTheDocument();
   });
 
-  it('collapses the sidebar via the header toggle', async () => {
-    const user = userEvent.setup();
+  // 2026-10-01 (Boltshift): the rail is now PERMANENTLY icon-only (spec §4) — there
+  // is no expanded state left to collapse into, so the old header toggle button
+  // (`PanelLeft`, `useUiStore.sidebarCollapsed`) was removed outright rather than
+  // relocated. This replaces the old "collapses the sidebar via the header toggle"
+  // test with an assertion of the new, permanent state instead of a no-op control.
+  it('renders the sidebar permanently icon-only, with no expand/collapse toggle', async () => {
     renderApp('/');
     await screen.findByRole('heading', { name: 'Global RPD Dashboard' });
-    const toggle = screen.getByRole('button', { name: 'Collapse sidebar' });
-    expect(toggle).toHaveAttribute('aria-pressed', 'false');
-    await user.click(toggle);
-    expect(await screen.findByRole('button', { name: 'Expand sidebar' })).toHaveAttribute(
-      'aria-pressed',
-      'true',
-    );
+    expect(screen.queryByRole('button', { name: 'Collapse sidebar' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Expand sidebar' })).not.toBeInTheDocument();
+    // Every surface link still resolves by its accessible name (sr-only label) —
+    // the rail shows icons only, see app-sidebar.tsx.
+    const nav = screen.getByRole('navigation', { name: 'Surfaces' });
+    expect(within(nav).getByRole('link', { name: 'Dashboard' })).toBeInTheDocument();
   });
 
   it('exposes a working colour-theme toggle in the header', async () => {

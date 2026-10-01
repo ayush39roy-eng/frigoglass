@@ -22,6 +22,19 @@ import type { ChamberWeekLoad, ScheduleRunSummary } from '../api/types';
  * the legend pairs each swatch with text. Chamber count is well under the
  * 100-row virtualization threshold (seed + realistic scale ≈ 8–12 chambers); if
  * that ever changes, virtualize the rows (CLAUDE.md).
+ *
+ * RESTYLED 2026-10-01 (Capacity Boltshift reskin): container chrome (border,
+ * radius, sticky-header background, legend swatches) moved to the Boltshift
+ * `--color-dash-hairline`/`rounded-dash` tokens. The STATE palette itself
+ * (idle / below-max / at-max / over-max) is left exactly as it was, not
+ * switched to a sequential blue ramp — the Boltshift spec's own instruction is
+ * to prefer a sequential blue ramp "unless existing a11y requirements argue
+ * otherwise", and this one already does: every state is redundantly encoded by
+ * the visible count and the full `aria-label` sentence, not by hue alone, and
+ * "at max" / "over max" are genuinely different semantic states (a warning and
+ * a hard constraint violation) rather than points on one magnitude scale, so
+ * collapsing them into one blue gradient would erase a real distinction a
+ * planner needs — not just reskin it.
  */
 
 type CellState = 'empty' | 'partial' | 'full' | 'over';
@@ -79,7 +92,7 @@ export function ChamberUtilizationHeatmap({
   return (
     <div className="space-y-3">
       <div
-        className="overflow-x-auto rounded-lg border border-border"
+        className="overflow-x-auto rounded-dash border border-dash-hairline"
         tabIndex={0}
         role="group"
         aria-label="Chamber utilization by week — scrollable"
@@ -87,12 +100,12 @@ export function ChamberUtilizationHeatmap({
         <div role="table" aria-label="Chamber utilization by week" className="min-w-max text-2xs">
           <div
             role="row"
-            className="grid border-b border-border bg-surface-sunken"
+            className="grid border-b border-dash-hairline bg-dash-alt"
             style={{ gridTemplateColumns: gridTemplate }}
           >
             <div
               role="columnheader"
-              className="sticky left-0 z-10 bg-surface-sunken px-2 py-1.5 font-semibold text-text-muted"
+              className="sticky left-0 z-10 bg-dash-alt px-2 py-1.5 font-semibold text-text-muted"
             >
               Chamber
             </div>
@@ -112,7 +125,7 @@ export function ChamberUtilizationHeatmap({
             <div
               key={chamber.chamber_id}
               role="row"
-              className="grid border-b border-border last:border-0"
+              className="grid border-b border-dash-hairline last:border-0"
               style={{ gridTemplateColumns: gridTemplate }}
             >
               <div
@@ -121,7 +134,7 @@ export function ChamberUtilizationHeatmap({
               >
                 <span className="font-medium text-text">{chamber.code}</span>
                 <span className="text-text-subtle">{chamber.lab_region}</span>
-                <span className="ml-auto rounded-sm border border-border-strong px-1 text-text-muted">
+                <span className="ml-auto rounded-pill border border-dash-hairline px-1.5 text-text-muted">
                   max {chamber.max_concurrent}
                 </span>
               </div>
@@ -139,7 +152,7 @@ export function ChamberUtilizationHeatmap({
                       chamber.max_concurrent,
                     )}`}
                     className={cn(
-                      'flex items-center justify-center border-l border-border/60 py-1 tabular-nums',
+                      'flex items-center justify-center border-l border-dash-hairline/60 py-1 tabular-nums',
                       CELL_CLASS[state],
                     )}
                   >
@@ -152,21 +165,21 @@ export function ChamberUtilizationHeatmap({
         </div>
       </div>
 
-      <dl className="flex flex-wrap gap-x-4 gap-y-1 text-2xs text-text-muted">
+      <dl className="flex flex-wrap gap-x-4 gap-y-1.5 text-2xs text-text-muted">
         <div className="flex items-center gap-1.5">
-          <span className="size-3 rounded-sm bg-surface-sunken ring-1 ring-inset ring-border" aria-hidden="true" />
+          <span className="size-3 rounded-full bg-surface-sunken ring-1 ring-inset ring-dash-hairline" aria-hidden="true" />
           <dt>Idle (0 booked)</dt>
         </div>
         <div className="flex items-center gap-1.5">
-          <span className="size-3 rounded-sm bg-primary/15" aria-hidden="true" />
+          <span className="size-3 rounded-full bg-primary/15" aria-hidden="true" />
           <dt>Below max concurrent</dt>
         </div>
         <div className="flex items-center gap-1.5">
-          <span className="size-3 rounded-sm bg-warning-subtle" aria-hidden="true" />
+          <span className="size-3 rounded-full bg-warning-subtle" aria-hidden="true" />
           <dt>At max concurrent</dt>
         </div>
         <div className="flex items-center gap-1.5">
-          <span className="size-3 rounded-sm bg-danger-subtle ring-1 ring-inset ring-danger" aria-hidden="true" />
+          <span className="size-3 rounded-full bg-danger-subtle ring-1 ring-inset ring-danger" aria-hidden="true" />
           <dt>Over max (booking gate breached — frozen conflict)</dt>
         </div>
       </dl>

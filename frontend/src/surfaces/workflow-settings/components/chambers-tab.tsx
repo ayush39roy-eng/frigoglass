@@ -38,20 +38,20 @@ export function ChambersTab({ chambers, canWrite, onSave, saving }: ChambersTabP
         <CardTitle>Chambers</CardTitle>
       </CardHeader>
       <CardContent>
-        <div className="overflow-x-auto rounded-lg border border-border">
-          <table className="w-full border-collapse text-xs" aria-label="Chamber supply inputs">
-            <thead className="bg-surface-sunken text-2xs text-text-muted">
+        <div className="overflow-x-auto rounded-dash border-[1.5px] border-border bg-surface">
+          <table className="w-full border-collapse text-sm" aria-label="Chamber supply inputs">
+            <thead className="bg-surface-sunken text-2xs font-bold uppercase tracking-wider text-text-subtle">
               <tr>
-                <th scope="col" className="px-2 py-1.5 text-left">Chamber</th>
-                <th scope="col" className="px-2 py-1.5 text-left">Region</th>
+                <th scope="col" className="px-3 py-3 text-left">Chamber</th>
+                <th scope="col" className="px-3 py-3 text-left">Region</th>
                 {FIELDS.map((f) => (
-                  <th key={f.key} scope="col" className="px-2 py-1.5 text-right">
+                  <th key={f.key} scope="col" className="px-3 py-3 text-right">
                     {f.label}
                   </th>
                 ))}
-                <th scope="col" className="border-l border-border px-2 py-1.5 text-right">Working weeks</th>
-                <th scope="col" className="px-2 py-1.5 text-right">Efficient lab weeks</th>
-                {canWrite ? <th scope="col" className="px-2 py-1.5"><span className="sr-only">Actions</span></th> : null}
+                <th scope="col" className="border-l border-border px-3 py-3 text-right">Working weeks</th>
+                <th scope="col" className="px-3 py-3 text-right">Efficient lab weeks</th>
+                {canWrite ? <th scope="col" className="px-3 py-3"><span className="sr-only">Actions</span></th> : null}
               </tr>
             </thead>
             <tbody>
@@ -103,11 +103,11 @@ function ChamberRow({
 
   return (
     <>
-      <tr className="border-t border-border" data-testid={`chamber-${chamber.code}`}>
-        <th scope="row" className="px-2 py-1 text-left font-medium text-text">
+      <tr className="border-t border-border/70 transition-colors hover:bg-primary-subtle/30" data-testid={`chamber-${chamber.code}`}>
+        <th scope="row" className="px-3 py-3 text-left font-bold text-text">
           {chamber.code}
         </th>
-        <td className="px-2 py-1 text-text-muted">{chamber.lab_region}</td>
+        <td className="px-3 py-3 text-text-muted">{chamber.lab_region}</td>
         {FIELDS.map((f) => (
           <td key={f.key} className="px-1 py-0.5 text-right">
             {canWrite ? (

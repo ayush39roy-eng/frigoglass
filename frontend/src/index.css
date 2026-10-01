@@ -105,3 +105,44 @@
     line-height: 1.3;
   }
 }
+
+@layer utilities {
+  /* Decorative dot grid (Bold Blocks feature cards) — the faint dot field the
+   * client's references put behind KPI tiles. Colour follows `currentColor`, so
+   * it is white-on-blue on a feature card and slate-on-white on a plain one. */
+  .bg-dots {
+    background-image: radial-gradient(currentColor 1.6px, transparent 1.8px);
+    background-size: 18px 18px;
+  }
+
+  /* Diagonal hatch, used for the highlighted gauge/bar fill. */
+  .bg-hatch {
+    background-image: repeating-linear-gradient(
+      135deg,
+      hsl(0 0% 100% / 0.22) 0 2px,
+      transparent 2px 7px
+    );
+  }
+}
+
+@layer components {
+  /* Gantt polish (2026-10-01): bars grow in from their start week, and planned
+   * bars carry a soft drop shadow. Zeroed by the global reduced-motion rule. */
+  .gantt-bar-grow {
+    transform-box: fill-box;
+    transform-origin: left center;
+    animation: gantt-grow 700ms cubic-bezier(0.16, 1, 0.3, 1) both;
+    filter: drop-shadow(0 2px 3px hsl(var(--color-gantt-planned) / 0.28));
+  }
+  .gantt-bar-label {
+    animation: gantt-fade 400ms 450ms ease-out both;
+  }
+  @keyframes gantt-grow {
+    from { transform: scaleX(0); }
+    to { transform: scaleX(1); }
+  }
+  @keyframes gantt-fade {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
+}
