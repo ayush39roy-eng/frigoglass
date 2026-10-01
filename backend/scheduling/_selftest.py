@@ -23,9 +23,9 @@ from scheduling import (
     EngineerInput,
     ProjectInput,
     ScheduleInput,
-    WorkflowStepTemplate,
     run_greedy_sgs,
 )
+from scheduling._selftest_common import LEAD_TIMES, TEMPLATE
 
 FAILURES: list[str] = []
 
@@ -37,12 +37,9 @@ def check(label: str, condition: bool) -> None:
         FAILURES.append(label)
 
 
-# A minimal 2-step template (one design, one lab step) so scenarios are easy
-# to hand-trace, per the skill's "small fixtures, one rule per fixture" guidance.
-TEMPLATE = (
-    WorkflowStepTemplate("PDD-A", "Marketing Brief", "design", base_weeks=2, sequence_order=1),
-    WorkflowStepTemplate("PDD-F", "Proof of Concept", "lab", base_weeks=3, sequence_order=2),
-)
+# A minimal 2-step template (one design step of 2 weeks, one lab step of 3
+# weeks; `scheduling._selftest_common`) so scenarios are easy to hand-trace,
+# per the skill's "small fixtures, one rule per fixture" guidance.
 
 ENGINEER_A = EngineerInput("eng-a", "Engineer A", "R&D-Greece", ("A+", "A", "B", "C"))
 ENGINEER_B = EngineerInput("eng-b", "Engineer B", "R&D-Greece", ("A+", "A", "B", "C"))
@@ -75,6 +72,7 @@ def scenario_normal_case() -> None:
             engineers=(ENGINEER_A,),
             chambers=(CHAMBER_GR1,),
             workflow_steps=TEMPLATE,
+            lead_times=LEAD_TIMES,
         )
     )
     outcome = out.project_outcomes[0]
@@ -110,6 +108,7 @@ def scenario_single_engineer_contention() -> None:
             engineers=(ENGINEER_A,),
             chambers=(CHAMBER_GR1, CHAMBER_GR2),
             workflow_steps=TEMPLATE,
+            lead_times=LEAD_TIMES,
         )
     )
     by_id = {o.project_id: o for o in out.project_outcomes}
@@ -141,6 +140,7 @@ def scenario_chamber_saturation() -> None:
             engineers=(ENGINEER_A, ENGINEER_B),
             chambers=(CHAMBER_GR1,),  # only one chamber, max_concurrent=1
             workflow_steps=TEMPLATE,
+            lead_times=LEAD_TIMES,
         )
     )
     by_id = {o.project_id: o for o in out.project_outcomes}
@@ -187,6 +187,7 @@ def scenario_frozen_conflict() -> None:
             engineers=(ENGINEER_A,),
             chambers=(CHAMBER_GR1,),
             workflow_steps=TEMPLATE,
+            lead_times=LEAD_TIMES,
         )
     )
     by_id = {o.project_id: o for o in out.project_outcomes}
@@ -200,8 +201,8 @@ def scenario_frozen_conflict() -> None:
     )
     check("frozen conflict: p2 has eng_conflict=True", by_id["p-frozen-2"].eng_conflict)
     check(
-        "frozen conflict: p1 has no eng_conflict (booked first)",
-        not by_id["p-frozen-1"].eng_conflict,
+        "frozen conflict: p1 also has eng_conflict=True (both sides flagged, P9-R01)",
+        by_id["p-frozen-1"].eng_conflict,
     )
 
 
@@ -224,6 +225,7 @@ def scenario_left_out_at_horizon() -> None:
             engineers=(ENGINEER_A,),
             chambers=(CHAMBER_GR1,),
             workflow_steps=TEMPLATE,
+            lead_times=LEAD_TIMES,
             current_week=77,  # design step duration 2 -> 77+2=79 > horizon 78
             horizon_weeks=78,
         )
@@ -254,6 +256,7 @@ def scenario_category_mismatch() -> None:
             engineers=(ENGINEER_C_NARROW,),
             chambers=(CHAMBER_GR1,),
             workflow_steps=TEMPLATE,
+            lead_times=LEAD_TIMES,
         )
     )
     outcome = out.project_outcomes[0]
@@ -286,6 +289,7 @@ def scenario_oem_hub_requires_oem_allowed_category() -> None:
             engineers=(eng_without_oem, eng_with_oem),
             chambers=(india_chamber,),
             workflow_steps=TEMPLATE,
+            lead_times=LEAD_TIMES,
         )
     )
     by_id = {o.project_id: o for o in out.project_outcomes}
@@ -321,6 +325,7 @@ def scenario_spillover_boundary() -> None:
             engineers=(ENGINEER_A,),
             chambers=(CHAMBER_GR1,),
             workflow_steps=TEMPLATE,
+            lead_times=LEAD_TIMES,
             current_week=48,
         )
     )
@@ -340,6 +345,7 @@ def scenario_spillover_boundary() -> None:
             engineers=(ENGINEER_A,),
             chambers=(CHAMBER_GR1,),
             workflow_steps=TEMPLATE,
+            lead_times=LEAD_TIMES,
             current_week=49,
         )
     )
@@ -373,6 +379,7 @@ def scenario_delay_is_terminal_not_propagated() -> None:
             engineers=(ENGINEER_A,),
             chambers=(CHAMBER_GR1,),
             workflow_steps=TEMPLATE,
+            lead_times=LEAD_TIMES,
             current_week=45,
         )
     )
@@ -400,6 +407,7 @@ def scenario_excluded_statuses() -> None:
             engineers=(ENGINEER_A,),
             chambers=(CHAMBER_GR1,),
             workflow_steps=TEMPLATE,
+            lead_times=LEAD_TIMES,
         )
     )
     by_id = {o.project_id: o for o in out.project_outcomes}
@@ -448,6 +456,7 @@ def scenario_determinism() -> None:
         engineers=(ENGINEER_A, ENGINEER_B),
         chambers=(CHAMBER_GR1, CHAMBER_GR2, romania_chamber),
         workflow_steps=TEMPLATE,
+        lead_times=LEAD_TIMES,
     )
     out1 = run_greedy_sgs(schedule_input)
     out2 = run_greedy_sgs(schedule_input)
@@ -461,6 +470,7 @@ def scenario_determinism() -> None:
         engineers=(ENGINEER_A, ENGINEER_B),
         chambers=(CHAMBER_GR1, CHAMBER_GR2, romania_chamber),
         workflow_steps=TEMPLATE,
+        lead_times=LEAD_TIMES,
     )
     out3 = run_greedy_sgs(shuffled_input)
     check("determinism: independent of ScheduleInput.projects' supplied order", out1 == out3)

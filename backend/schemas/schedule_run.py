@@ -7,8 +7,9 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
+from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from models.enums import ScheduleRunStatus, SolverType
 
@@ -24,6 +25,9 @@ class ScheduleRunSummary(BaseModel):
     horizon_weeks: int
     current_week: int
     trigger_reason: str | None
+    #: P9-R02 (ruling 6): the CP-SAT verdict, "OPTIMAL" / "FEASIBLE". Always
+    #: null for greedy runs (`solver_type` records the solver) and for older runs.
+    solver_status: str | None = None
     created_at: datetime
 
 
@@ -43,14 +47,32 @@ class CpSatDispatchRequest(BaseModel):
     with every solver default).
     """
 
-    model_config = ConfigDict(extra="forbid")
+    #: P9-F01/R04-L1: reject non-finite floats outright (was surfacing as a
+    #: 500 on `NaN`) and validate strictly (was coercing `"15"` / `true` in
+    #: lax mode).
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False, strict=True)
 
-    #: Forwarded to `scheduling.cp_sat.run_cp_sat`'s own `max_time_in_seconds`
-    #: search-budget parameter. `None` (the default) means "use
-    #: `core.celery_config.CelerySettings.cp_sat_max_time_in_seconds`" —
-    #: resolved inside the Celery task (`workers/schedule_tasks.py`), not
-    #: here, so this schema stays a pure request-shape description.
-    max_time_in_seconds: float | None = Field(default=None, gt=0)
+    @model_validator(mode="before")
+    @classmethod
+    def _ignore_legacy_max_time_in_seconds(cls, data: Any) -> Any:
+        """P9-R02b: for ONE release, silently accept and ignore a legacy
+        `max_time_in_seconds` key (same pattern as the chamber
+        `weeks_per_chamber` tolerance), so an older client does not 422.
+        DOMAIN_RULES "Gate remediation rulings" #6 retired wall-clock CP-SAT
+        limits; the value is never forwarded. Remove this hook in the release
+        after P9.
+        """
+
+        if isinstance(data, dict) and "max_time_in_seconds" in data:
+            data = {k: v for k, v in data.items() if k != "max_time_in_seconds"}
+        return data
+
+    #: Pass-1 CP-SAT budget in deterministic-time units (ruling 6), forwarded
+    #: to `scheduling.cp_sat.run_cp_sat(deterministic_time=...)`. `None` (the
+    #: default) means "use `core.celery_config.CelerySettings.
+    #: cp_sat_deterministic_time`, else the solver's own default" — resolved
+    #: inside the Celery task (`workers/schedule_tasks.py`), not here.
+    deterministic_time: float | None = Field(default=None, gt=0, le=60)
 
 
 class CpSatDispatchResponse(BaseModel):

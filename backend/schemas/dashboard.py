@@ -68,6 +68,11 @@ class CompletingWithinYearRow(BaseModel):
     within_year: bool
     spillover: bool
     left_out: bool
+    #: P9-F02: `ScheduleRunProjectOutcome.blocked` — a Blocked stage held the
+    #: project at its frontier (DOMAIN_RULES.md "Gate remediation rulings"
+    #: 5). Surfaced here so a row's `blocked_count` membership is visible on
+    #: the row itself, not just in the aggregate.
+    blocked: bool
     cat_not_allowed: bool
     last_step_end_week: int | None
 
@@ -87,6 +92,18 @@ class CompletingWithinYear(BaseModel):
     within_year_count: int
     spillover_count: int
     left_out_count: int
+    #: P9-F02 (DOMAIN_RULES "Health badge", ruling 5): a project whose
+    #: outcome has `blocked=True` (a Blocked stage held it at its frontier)
+    #: is counted here, exclusively — never also in `within_year_count`,
+    #: `spillover_count` or `left_out_count`, even if one of those raw
+    #: outcome flags happens to also be set on the same row. Same single
+    #: source of truth as the other three counts (Invariant I9's spirit): no
+    #: independent recomputation, just the mutually-exclusive bucket the
+    #: Project Workspace health badge already gives Blocked priority over
+    #: (ruling 5: "after Left Out, before the finish-week rules" for the
+    #: badge; here Blocked wins outright so the four counts partition the
+    #: schedulable, non-excluded portfolio without overlap).
+    blocked_count: int
     rows: list[CompletingWithinYearRow]
 
 

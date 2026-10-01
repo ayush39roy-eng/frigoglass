@@ -1,9 +1,11 @@
 import * as React from 'react';
+import { Link } from 'react-router-dom';
 import { FilterX } from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { GlassPanel } from '@/components/ui/glass-panel';
 import { Label } from '@/components/ui/label';
 import {
   Select,
@@ -47,10 +49,15 @@ const COLUMNS: VirtualColumn<ProjectFilterRow>[] = [
     id: 'project',
     header: 'Project',
     width: 'minmax(12rem, 2fr)',
+    // Click-through to the Project Workspace (Surface #7, P9).
     cell: (row) => (
-      <span className="truncate font-medium text-text" title={row.project_name}>
+      <Link
+        to={`/projects/${row.project_id}`}
+        className="truncate font-medium text-text underline-offset-2 hover:text-primary hover:underline"
+        title={`${row.project_name} — open in Project Workspace`}
+      >
         {row.project_name}
-      </span>
+      </Link>
     ),
   },
   {
@@ -155,7 +162,11 @@ export function ProjectBreakdown(): React.JSX.Element {
     setFilters((prev) => ({ ...prev, [key]: next }));
 
   return (
-    <Card>
+    // Glass treatment (Dashboard polish, 2026-09-30): `opacity="content"` (90%
+    // tint) — same reasoning as `HubTypePipelineTable`, this card holds a dense
+    // virtualized table, so the tint stays opaque enough that P4-T11's WCAG
+    // contrast work on the row text is never put at risk.
+    <GlassPanel opacity="content">
       <CardHeader className="flex flex-row items-start justify-between gap-3">
         <div className="flex items-center gap-2">
           <CardTitle>Project breakdown</CardTitle>
@@ -240,6 +251,6 @@ export function ProjectBreakdown(): React.JSX.Element {
           />
         )}
       </CardContent>
-    </Card>
+    </GlassPanel>
   );
 }

@@ -31,7 +31,6 @@ re-deriving the role->permission mapping.
 
 from __future__ import annotations
 
-import os
 import uuid
 from collections.abc import Awaitable, Callable
 from typing import Any
@@ -42,7 +41,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from api.db import get_db
-from core.config import get_oidc_settings
+from core.config import get_oidc_settings, is_dev_mode
 from core.oidc import TokenValidationError, verify_token
 from core.principal import Principal
 from core.rbac import Action, Surface, role_allows
@@ -184,22 +183,64 @@ def _build_principal(user: User) -> Principal:
     )
 
 
+#: The seeded Admin an unauthenticated dev-mode request runs as when no
+#: `X-Dev-User-Email` header is sent (pre-P9 behaviour, kept).
+DEV_DEFAULT_USER_EMAIL = "frank.admin@example.com"
+
+
+async def _dev_mode_principal(db: AsyncSession, dev_user_email: str | None) -> Principal | None:
+    """Dev mode only (the caller has already checked `core.config.is_dev_mode()`
+    and that there is no `Authorization` header).
+
+    - With `X-Dev-User-Email`: run as that user (ADR 0010 §4). An unknown or
+      inactive email is a 401. It never falls back to the Admin, because a
+      silent fallback would make a mistyped switcher choice look like it
+      worked with Admin rights.
+    - Without the header: run as `DEV_DEFAULT_USER_EMAIL` if that user is
+      seeded and active. Otherwise return `None` and the caller continues to
+      the normal bearer-token path, which 401s.
+    """
+
+    if dev_user_email is not None:
+        email = dev_user_email.strip()
+        user = await _load_user_with_roles_and_hubs(db, User.email == email) if email else None
+        if user is None or not user.is_active:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="X-Dev-User-Email does not name an active provisioned user",
+            )
+        return _build_principal(user)
+
+    user = await _load_user_with_roles_and_hubs(db, User.email == DEV_DEFAULT_USER_EMAIL)
+    if user is not None and user.is_active:
+        return _build_principal(user)
+    return None
+
+
 async def get_current_principal(
     authorization: str | None = Header(default=None),
+    x_dev_user_email: str | None = Header(
+        default=None, alias="X-Dev-User-Email", include_in_schema=False
+    ),
     db: AsyncSession = Depends(get_db),
 ) -> Principal:
     """Resolve the authenticated caller from a `Bearer` OIDC access token.
     Raises `HTTPException(401)` for every failure mode (missing header,
     malformed/invalid/expired token, unprovisioned or inactive account) — an
     unauthenticated request never silently proceeds as anonymous.
-    In local dev mode (RPD_DEV_MODE=true), an unauthenticated browser request falls
-    back to the local seeded Admin user (`frank.admin@example.com`).
+
+    **Dev mode (P9-T03, ADR 0010 §4).** Only when `core.config.is_dev_mode()`
+    is true (`RPD_DEV_MODE=true`, default OFF) *and* the request carries no
+    `Authorization` header, the request runs as a seeded user: the one named
+    by `X-Dev-User-Email`, else the seeded Admin. Outside dev mode, or when an
+    `Authorization` header is present, `X-Dev-User-Email` is ignored
+    completely. It is never read, never logged and never compared.
     """
 
-    if not authorization and os.environ.get("RPD_DEV_MODE", "true").lower() in ("true", "1", "yes"):
-        user = await _load_user_with_roles_and_hubs(db, User.email == "frank.admin@example.com")
-        if user is not None and user.is_active:
-            return _build_principal(user)
+    if not authorization and is_dev_mode():
+        dev_principal = await _dev_mode_principal(db, x_dev_user_email)
+        if dev_principal is not None:
+            return dev_principal
 
     token = _extract_bearer_token(authorization)
     try:
@@ -218,6 +259,14 @@ async def get_current_principal(
             detail="Account is inactive",
         )
     return _build_principal(user)
+
+
+def principal_can(principal: Principal, surface: Surface, action: Action) -> bool:
+    """Whether any of the caller's roles grants `action` on `surface`. Used for
+    in-handler checks that refine a response rather than gate the endpoint.
+    """
+
+    return any(role_allows(role, surface, action) for role in principal.roles)
 
 
 def require_permission(surface: Surface, action: Action) -> _PermissionDependency:

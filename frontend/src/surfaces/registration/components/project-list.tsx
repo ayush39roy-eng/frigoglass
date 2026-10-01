@@ -137,6 +137,15 @@ export function ProjectList({
                           Frozen
                         </Badge>
                       ) : null}
+                      {row.schedule_stale ? (
+                        <Badge
+                          tone="outline"
+                          className="ml-1.5 border-dashed align-middle text-text-muted"
+                          title="Progress or settings changed since this run"
+                        >
+                          Stale
+                        </Badge>
+                      ) : null}
                     </div>
                     <div role="cell" className="w-32 shrink-0 truncate text-text-muted" title={row.hubName}>
                       {row.hubName}
@@ -178,6 +187,19 @@ export function ProjectList({
                         <Detail label="Reg. year" value={row.reg_year?.toString() ?? '—'} />
                         <Detail label="Carried over" value={row.carry_over ? 'Yes' : 'No'} />
                         <Detail label="External code" value={row.external_code ?? '—'} />
+                        <Detail
+                          label="Expected completion (week)"
+                          value={row.target_end_week === null ? 'Process-derived' : `W${String(row.target_end_week)}`}
+                        />
+                        <Detail
+                          label="Certification testing"
+                          value={row.certification_testing_required ? 'Required' : 'Not required — lab steps skipped'}
+                        />
+                        <Detail
+                          label="Estimated design / lab weeks"
+                          value={`${row.estimated_design_weeks === null ? '—' : String(row.estimated_design_weeks)} / ${row.estimated_lab_weeks === null ? '—' : String(row.estimated_lab_weeks)}`}
+                        />
+                        <Detail label="Workflow" value={row.workflow_id} />
                       </dl>
                       {row.status === 'Draft' ? (
                         <HardGatePanel project={row} onSubmit={onSubmit} />

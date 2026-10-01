@@ -176,6 +176,23 @@ async def _resolve_recipients(
       row (`Engineer.user_id`) — Engineer is always notification-eligible on
       its own (Gantt READ is in `_NOTIFICATION_SURFACES`), independent of
       `hub_scope_all`/`hub_scoped` membership.
+
+    **P10-F01 (security remediation, High) — same "Engineer + hub_scope_all"
+    assumption checked elsewhere, per that finding's own instruction to grep
+    `services/` for every other site reading `hub_scope_all` for an
+    Engineer.** A user whose *only* notification-eligible role is Engineer
+    must never land in `hub_scope_all_ids`/`hub_scoped` just because
+    `User.hub_scope_all` happens to be `True` on the account (the real
+    `seed_dev_users.py`/`make_user` default for a pure Engineer prior to the
+    P10-F01 fix) — Engineer's own notification path is exclusively
+    `engineer_user_by_engineer_id` (own led projects only, resolved
+    separately below), matching `services.hub_scope.
+    is_engineer_self_scoped`'s "Engineer is never (all hubs), only (own
+    assignments)" rule. A multi-role account that ALSO holds a genuinely
+    `hub_scope_all`-eligible role (e.g. also Hub Planner or Portfolio
+    Manager) is unaffected — `broader_eligible` below is `True` for that
+    account, so its hub_scope_all/hub_scoped membership is unchanged from
+    before this fix.
     """
 
     users = (
@@ -201,8 +218,14 @@ async def _resolve_recipients(
     for user in users:
         role_names = {RoleName(ur.role.name) for ur in user.roles if ur.role is not None}
         eligible = any(_role_is_notification_eligible(r) for r in role_names)
+        # P10-F01: Engineer alone never grants the hub_scope_all/hub_scoped
+        # bucket — only a genuinely broader eligible role does (see this
+        # function's docstring).
+        broader_eligible = any(
+            r != RoleName.ENGINEER and _role_is_notification_eligible(r) for r in role_names
+        )
 
-        if eligible:
+        if eligible and broader_eligible:
             if user.hub_scope_all:
                 hub_scope_all_ids.add(user.id)
             else:
@@ -363,3 +386,93 @@ async def generate_schedule_change_notifications(
     db.add_all(notifications)
     await db.flush()
     return notifications
+
+
+# --- Stage blocked (P9-T03 follow-up) ---------------------------------------------
+
+#: `Notification.message` is `String(500)`; the blocked reason is cut to fit.
+_MESSAGE_MAX = 500
+
+
+def stage_blocked_message(
+    *, project_name: str, hub_name: str, step_id: str, step_name: str, reason: str
+) -> str:
+    """Project name, hub, stage and the planner's reason text. Nothing else:
+    no engineer or user name while docs/OPEN_QUESTIONS.md #8 is open, and
+    never a financial field.
+    """
+
+    head = f'Project "{project_name}" ({hub_name}): stage {step_id} {step_name} is blocked — '
+    room = max(0, _MESSAGE_MAX - len(head))
+    text = reason.strip()
+    if len(text) > room:
+        text = text[: max(0, room - 1)] + "…"
+    return (head + text)[:_MESSAGE_MAX]
+
+
+async def generate_stage_blocked_notifications(
+    db: AsyncSession,
+    *,
+    project: Project,
+    hub_name: str,
+    step_id: str,
+    step_name: str,
+    reason: str,
+    actor_user_id: uuid.UUID | None,
+) -> list[Notification]:
+    """One `STAGE_BLOCKED` notification per recipient, for a stage that has
+    just moved to Blocked. Called only by the Project Workspace stage PATCH,
+    and only on the transition into Blocked. Flushes; the caller commits.
+
+    Recipients: active Hub Planners scoped to the project's hub, plus active
+    Portfolio Managers. The actor is left out, since they already know. No
+    `schedule_run_id`: the event comes from a progress edit, not a run.
+    """
+
+    users = (
+        (
+            await db.execute(
+                select(User)
+                .where(User.is_active.is_(True))
+                .options(
+                    selectinload(User.roles).selectinload(UserRole.role),
+                    selectinload(User.hub_scopes),
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    recipients: list[uuid.UUID] = []
+    for user in users:
+        if user.id == actor_user_id:
+            continue
+        roles = {RoleName(ur.role.name) for ur in user.roles if ur.role is not None}
+        planner_here = RoleName.HUB_PLANNER in roles and (
+            user.hub_scope_all or any(hs.hub_id == project.hub_id for hs in user.hub_scopes)
+        )
+        if planner_here or RoleName.PORTFOLIO_MANAGER in roles:
+            recipients.append(user.id)
+
+    message = stage_blocked_message(
+        project_name=project.name,
+        hub_name=hub_name,
+        step_id=step_id,
+        step_name=step_name,
+        reason=reason,
+    )
+    created = [
+        Notification(
+            recipient_user_id=uid,
+            reason=NotificationReason.STAGE_BLOCKED,
+            project_id=project.id,
+            hub_id=project.hub_id,
+            message=message,
+            schedule_run_id=None,
+            previous_schedule_run_id=None,
+        )
+        for uid in sorted(recipients, key=str)
+    ]
+    db.add_all(created)
+    await db.flush()
+    return created

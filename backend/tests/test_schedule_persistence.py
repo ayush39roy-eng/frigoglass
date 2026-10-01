@@ -38,7 +38,6 @@ async def _seed_minimal_schedulable_project(db_session):
         step_id="PDD-A",
         name="Marketing Brief",
         kind="design",
-        base_weeks=2,
         sequence_order=1,
     )
     await make_workflow_step_template(
@@ -46,8 +45,7 @@ async def _seed_minimal_schedulable_project(db_session):
         step_id="PDD-F",
         name="Proof of Concept",
         kind="lab",
-        base_weeks=3,
-        sequence_order=2,
+        sequence_order=6,
     )
     engineer = await make_engineer(db_session, hub)
     await make_chamber(db_session, allowed_stages=["PDD-F"])

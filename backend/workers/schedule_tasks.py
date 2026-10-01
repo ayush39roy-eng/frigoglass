@@ -114,6 +114,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from celery import Task
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -122,9 +123,12 @@ from sqlalchemy.ext.asyncio import (
 )
 
 from core.celery_config import get_celery_settings
+from models.audit import AuditLogEntry
 from models.enums import ScheduleRunStatus, SolverType
-from models.schedule import ScheduleRun
+from models.project import Project
+from models.schedule import ScheduleRun, ScheduleRunProjectOutcome
 from scheduling.cp_sat import run_cp_sat
+from scheduling.greedy import run_greedy_sgs
 from services.schedule_persistence import build_schedule_input_from_db, persist_schedule_output
 from workers.celery_app import celery_app
 from workers.progress import publish_progress
@@ -175,14 +179,58 @@ def run_cp_sat_schedule(
     schedule_run_id: str,
     *,
     triggered_by_user_id: str | None = None,
-    max_time_in_seconds: float | None = None,
+    deterministic_time: float | None = None,
+    activate: bool = False,
+    recalc_project_id: str | None = None,
+    **legacy_kwargs: Any,
 ) -> dict[str, Any]:
     """Celery entry point (sync). `schedule_run_id` must already reference an
     existing `ScheduleRun` row in `QUEUED` status (created by
     `services.schedule_persistence.create_queued_schedule_run`, via `POST
-    /schedule-runs/cp-sat-dispatch`). `max_time_in_seconds`, if omitted,
-    falls back to `core.celery_config.CelerySettings.cp_sat_max_time_in_seconds`
-    (env-configurable, not this module's own hardcoded constant).
+    /schedule-runs/cp-sat-dispatch`). `deterministic_time` is the CP-SAT
+    pass-1 budget in deterministic-time units (DOMAIN_RULES "Gate remediation
+    rulings" #6); if omitted it falls back to
+    `core.celery_config.CelerySettings.cp_sat_deterministic_time`, then to the
+    solver's own default. P9-R02b: `**legacy_kwargs` swallows a
+    `max_time_in_seconds` kwarg on messages enqueued before this release, so
+    they still run; the wall-clock value is ignored. Remove after P9.
+    """
+
+    _ = legacy_kwargs  # deliberately unused (ruling 6)
+
+    return asyncio.run(
+        _run_cp_sat_schedule_async(
+            self,
+            schedule_run_id=schedule_run_id,
+            triggered_by_user_id=triggered_by_user_id,
+            deterministic_time=deterministic_time,
+            activate=activate,
+            recalc_project_id=recalc_project_id,
+        )
+    )
+
+
+#: P9-T03 follow-up. Explicit name, same reason as `TASK_NAME`.
+GREEDY_TASK_NAME = "workers.run_greedy_schedule"
+
+
+@celery_app.task(bind=True, name=GREEDY_TASK_NAME)
+def run_greedy_schedule(
+    self: Task,
+    schedule_run_id: str,
+    *,
+    triggered_by_user_id: str | None = None,
+    activate: bool = False,
+    recalc_project_id: str | None = None,
+) -> dict[str, Any]:
+    """The greedy scheduler on the same Celery lifecycle as
+    `run_cp_sat_schedule` (QUEUED → RUNNING → COMPLETED/FAILED, SSE progress,
+    `persist_schedule_output`). Used by the Project Workspace's "Recalculate
+    schedule" (`POST /projects/{id}/recalculate`). docs/OPEN_QUESTIONS.md #10
+    keeps CP-SAT out of user-facing actions until the client answers. Greedy
+    is allowed on either side of the API/worker boundary
+    (docs/PROJECT_AND_STACK.md §4); running it here keeps the endpoint's
+    202 + SSE contract.
     """
 
     return asyncio.run(
@@ -190,9 +238,29 @@ def run_cp_sat_schedule(
             self,
             schedule_run_id=schedule_run_id,
             triggered_by_user_id=triggered_by_user_id,
-            max_time_in_seconds=max_time_in_seconds,
+            deterministic_time=None,
+            activate=activate,
+            recalc_project_id=recalc_project_id,
+            solver=SolverType.GREEDY,
         )
     )
+
+
+async def _projected_finish(
+    db: AsyncSession, schedule_run_id: uuid.UUID | None, project_id: uuid.UUID
+) -> int | None:
+    """The project's stored `projected_end_week` in a run, or `None`."""
+
+    if schedule_run_id is None:
+        return None
+    return (
+        await db.execute(
+            select(ScheduleRunProjectOutcome.projected_end_week).where(
+                ScheduleRunProjectOutcome.schedule_run_id == schedule_run_id,
+                ScheduleRunProjectOutcome.project_id == project_id,
+            )
+        )
+    ).scalar_one_or_none()
 
 
 async def _run_cp_sat_schedule_async(
@@ -200,8 +268,22 @@ async def _run_cp_sat_schedule_async(
     *,
     schedule_run_id: str,
     triggered_by_user_id: str | None,
-    max_time_in_seconds: float | None,
+    deterministic_time: float | None,
+    activate: bool = False,
+    recalc_project_id: str | None = None,
+    solver: SolverType = SolverType.CP_SAT,
 ) -> dict[str, Any]:
+    """`activate=True` is the Project Workspace "Recalculate schedule" path
+    (P9-T03, ADR 0006): the user asked for a new live schedule, so the
+    completed run becomes active, the live step rows are synced and the
+    stale flags of its projects are cleared (inside
+    `persist_schedule_output`). `recalc_project_id` then gets a system event
+    on its activity feed, "Schedule recalculated — finish moved week X →
+    week Y" (an `AuditLogEntry`, action `project.schedule_recalculated`).
+    The admin `POST /schedule-runs/cp-sat-dispatch` path keeps the P3-T06
+    default: `activate=False`, never auto-activated.
+    """
+
     run_uuid = uuid.UUID(schedule_run_id)
 
     try:
@@ -239,31 +321,51 @@ async def _run_cp_sat_schedule_async(
             run.celery_task_id = task.request.id
             db.add(run)
             await db.commit()
-            publish_progress(schedule_run_id, status="running", message="CP-SAT solve started")
+            solver_label = "Greedy" if solver == SolverType.GREEDY else "CP-SAT"
+            publish_progress(
+                schedule_run_id, status="running", message=f"{solver_label} solve started"
+            )
 
             schedule_input = await build_schedule_input_from_db(db)
-            effective_max_time = (
-                max_time_in_seconds
-                if max_time_in_seconds is not None
-                else get_celery_settings().cp_sat_max_time_in_seconds
-            )
-            schedule_output, solve_info = run_cp_sat(
-                schedule_input, max_time_in_seconds=effective_max_time
-            )
-            # P6-T06: CP-SAT solve time is a reasonable, non-sensitive
-            # aggregate performance number to surface (an operator tuning
-            # `RPD_CELERY_CP_SAT_MAX_TIME_IN_SECONDS` needs this) — never
-            # tied to a named project/customer, just this run's own status
-            # and wall-clock duration.
-            logger.info(
-                "ScheduleRun %s: CP-SAT solve finished",
-                schedule_run_id,
-                extra={
-                    "schedule_run_id": schedule_run_id,
-                    "solver_status": solve_info.status_name,
-                    "solve_wall_time_seconds": round(solve_info.wall_time_seconds, 2),
-                },
-            )
+            objective_value: float | None = None
+            # Ruling 6: "OPTIMAL"/"FEASIBLE" for CP-SAT, None for greedy
+            # (matches `ScheduleOutput.solver_status`; `solver_type` records
+            # which solver ran).
+            solver_status: str | None = None
+            if solver == SolverType.GREEDY:
+                # P9-T03 follow-up: the workspace "Recalculate schedule" path
+                # (docs/OPEN_QUESTIONS.md #10 blocks exposing CP-SAT through a
+                # user-facing action). Same lifecycle, same persistence.
+                schedule_output = run_greedy_sgs(schedule_input)
+            else:
+                # Ruling 6: deterministic-time budget only, never wall-clock.
+                effective_dt = (
+                    deterministic_time
+                    if deterministic_time is not None
+                    else get_celery_settings().cp_sat_deterministic_time
+                )
+                if effective_dt is not None:
+                    schedule_output, solve_info = run_cp_sat(
+                        schedule_input, deterministic_time=effective_dt
+                    )
+                else:
+                    schedule_output, solve_info = run_cp_sat(schedule_input)
+                objective_value = solve_info.objective_value
+                solver_status = solve_info.status_name
+                # P6-T06: CP-SAT solve time is a reasonable, non-sensitive
+                # aggregate performance number to surface (an operator tuning
+                # `RPD_CELERY_CP_SAT_DETERMINISTIC_TIME` needs this) — never
+                # tied to a named project/customer, just this run's own
+                # status and wall-clock duration.
+                logger.info(
+                    "ScheduleRun %s: CP-SAT solve finished",
+                    schedule_run_id,
+                    extra={
+                        "schedule_run_id": schedule_run_id,
+                        "solver_status": solve_info.status_name,
+                        "solve_wall_time_seconds": round(solve_info.wall_time_seconds, 2),
+                    },
+                )
 
             # Re-check for a cancel request that landed while the (blocking,
             # un-interruptible) solve was running — see module docstring's
@@ -279,33 +381,66 @@ async def _run_cp_sat_schedule_async(
                 publish_progress(schedule_run_id, status="cancelled")
                 return {"status": "cancelled", "schedule_run_id": schedule_run_id}
 
+            actor_uuid = uuid.UUID(triggered_by_user_id) if triggered_by_user_id else None
+            recalc_uuid = uuid.UUID(recalc_project_id) if recalc_project_id else None
+            previous_active_id = (
+                await db.execute(select(ScheduleRun.id).where(ScheduleRun.is_active.is_(True)))
+            ).scalar_one_or_none()
+            previous_finish = (
+                await _projected_finish(db, previous_active_id, recalc_uuid)
+                if recalc_uuid is not None
+                else None
+            )
             await persist_schedule_output(
                 db,
                 schedule_input,
                 schedule_output,
-                solver_type=SolverType.CP_SAT,
-                trigger_reason="cp_sat_dispatch",
-                triggered_by_user_id=(
-                    uuid.UUID(triggered_by_user_id) if triggered_by_user_id else None
-                ),
-                # Decision (docs/MEMORY.md P3-T06 entry): CP-SAT runs never
-                # auto-activate. `sync_live_workflow_steps=False` is
-                # required in lockstep with `activate=False` — see
+                solver_type=solver,
+                trigger_reason=run.trigger_reason or "cp_sat_dispatch",
+                triggered_by_user_id=actor_uuid,
+                # Decision (docs/MEMORY.md P3-T06 entry): an admin CP-SAT
+                # dispatch never auto-activates (`activate=False`). The
+                # P9-T03 workspace recalculation passes `activate=True`.
+                # `sync_live_workflow_steps` must equal `activate`; see
                 # `services.schedule_persistence.persist_schedule_output`'s
-                # own "Sharp edge" docstring note (it raises ValueError
-                # otherwise).
-                activate=False,
-                sync_live_workflow_steps=False,
+                # "Sharp edge" note (it raises ValueError otherwise).
+                activate=activate,
+                sync_live_workflow_steps=activate,
                 existing_run=run,
-                objective_value=solve_info.objective_value,
+                objective_value=objective_value,
+                solver_status=solver_status,
             )
+            if activate and recalc_uuid is not None:
+                new_finish = await _projected_finish(db, run.id, recalc_uuid)
+                hub_id = (
+                    await db.execute(select(Project.hub_id).where(Project.id == recalc_uuid))
+                ).scalar_one_or_none()
+                db.add(
+                    AuditLogEntry(
+                        actor_user_id=actor_uuid,
+                        action="project.schedule_recalculated",
+                        entity_type="Project",
+                        entity_id=str(recalc_uuid),
+                        hub_id=hub_id,
+                        before_state={
+                            "project_id": str(recalc_uuid),
+                            "projected_end_week": previous_finish,
+                        },
+                        after_state={
+                            "project_id": str(recalc_uuid),
+                            "projected_end_week": new_finish,
+                            "schedule_run_id": str(run.id),
+                            "schedule_run_version": run.version,
+                        },
+                    )
+                )
             await db.commit()
             publish_progress(schedule_run_id, status="completed", percent=100.0)
             return {
                 "status": "completed",
                 "schedule_run_id": schedule_run_id,
-                "objective_value": solve_info.objective_value,
-                "solver_status": solve_info.status_name,
+                "objective_value": objective_value,
+                "solver_status": solver_status,
             }
     except Exception as exc:  # noqa: BLE001 - deliberately broad, see comment above
         # Best-effort: use a FRESH session (the one above, if any, may never

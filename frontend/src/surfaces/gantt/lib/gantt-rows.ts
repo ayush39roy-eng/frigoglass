@@ -50,6 +50,9 @@ export function visualRowHeight(row: GanttVisualRow): number {
  * schedule. The authoritative load-vs-capacity numbers live on the RPD Capacity
  * surface (Invariants I6 / I7), server-sourced. The strip only helps the eye find
  * a dense week before scrolling the rows.
+ *
+ * Steps of one project may overlap in time (ADR 0009 — the precedence DAG);
+ * nothing here assumes `start[n] > end[n-1]`, each bar is counted on its own.
  */
 export function weeklyStepDensity(
   rows: readonly GanttProjectRow[],
@@ -58,6 +61,8 @@ export function weeklyStepDensity(
   const counts = new Array<number>(horizonWeeks + 1).fill(0);
   for (const project of rows) {
     for (const step of project.steps) {
+      // A skipped step occupies no calendar time (ADR 0007) — it is not a bar.
+      if (step.skipped) continue;
       const start = step.planned_start_week;
       const end = step.planned_end_week;
       if (start == null || end == null) continue;

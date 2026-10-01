@@ -16,9 +16,23 @@ export const GanttPage = React.lazy(() => import('@/surfaces/gantt/GanttPage'));
 export const RegistrationPage = React.lazy(() => import('@/surfaces/registration/RegistrationPage'));
 export const PlanningPage = React.lazy(() => import('@/surfaces/planning/PlanningPage'));
 export const AuditLogPage = React.lazy(() => import('@/surfaces/audit-log/AuditLogPage'));
+export const WorkflowSettingsPage = React.lazy(
+  () => import('@/surfaces/workflow-settings/WorkflowSettingsPage'),
+);
+export const AdminUsersPage = React.lazy(() => import('@/surfaces/admin-users/AdminUsersPage'));
+
+/** `/projects/:id` — the Project Workspace (Surface #7, P9-T04b). Reached by
+ *  click-through from the Dashboard, Matrix and Gantt rows, not the sidebar. */
+export const ProjectWorkspacePage = React.lazy(
+  () => import('@/surfaces/project-workspace/ProjectWorkspacePage'),
+);
 
 /**
  * Not a surface — the design-system gallery (/design-system). Lazy like everything
  * else so it costs the production bundle nothing; reachable by URL only.
  */
 export const DesignSystemPage = React.lazy(() => import('@/pages/design-system'));
+
+/** `/login` (ADR 0013, P10-T03) — rendered OUTSIDE `<AppShell>`/`<SessionGate>`;
+ *  see `routes.tsx`. */
+export const LoginPage = React.lazy(() => import('@/pages/login'));

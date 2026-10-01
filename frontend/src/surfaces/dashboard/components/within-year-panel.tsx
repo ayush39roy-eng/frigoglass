@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { CalendarCheck, CircleOff, Clock } from 'lucide-react';
+import { CalendarCheck, CircleOff, CirclePause, Clock } from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -22,6 +22,17 @@ import { VirtualDataTable, type VirtualColumn } from './virtual-data-table';
 function OutcomeCell({ row }: { row: CompletingWithinYearRow }): React.JSX.Element {
   return (
     <span className="flex flex-wrap items-center gap-1">
+      {/* Blocked (P9-F02) is not one of the five ScheduleOutcomeFlag booking-rule
+       * outcomes — it is the Project Workspace health-badge concept (ruling 5),
+       * surfaced here on the same row. Same warning tone + icon as `HealthBadge`'s
+       * `blocked` entry, rendered inline like the `within_year` badge below rather
+       * than through `ScheduleOutcomeBadge`, since it isn't in that enum. */}
+      {row.blocked ? (
+        <Badge tone="warning">
+          <CirclePause className="size-3" aria-hidden="true" />
+          Blocked
+        </Badge>
+      ) : null}
       {row.within_year ? (
         <Badge tone="success">
           <CalendarCheck className="size-3" aria-hidden="true" />
@@ -132,7 +143,7 @@ export function WithinYearPanel({ data, activeRun }: WithinYearPanelProps): Reac
               activeRun={activeRun}
             />
 
-            <div className="grid gap-gutter sm:grid-cols-3">
+            <div className="grid gap-gutter sm:grid-cols-2 lg:grid-cols-4">
               {/* The one emphasised tile on the Dashboard. "Within year" earns it:
                   it is the number the whole application exists to produce, and the
                   question every portfolio review opens with. */}
@@ -157,6 +168,16 @@ export function WithinYearPanel({ data, activeRun }: WithinYearPanelProps): Reac
                 icon={CircleOff}
                 caption="No feasible window in the 78-week horizon"
               />
+              {/* P9-F02: mutually exclusive with the three counts above — Blocked
+                  wins outright (backend CompletingWithinYear.blocked_count docstring),
+                  so a project is never double-counted across these four tiles. */}
+              <StatCard
+                label="Blocked"
+                value={data.blocked_count}
+                tone="warning"
+                icon={CirclePause}
+                caption="Held at a Blocked stage until it clears"
+              />
             </div>
 
             {data.rows.length === 0 ? (
@@ -168,8 +189,13 @@ export function WithinYearPanel({ data, activeRun }: WithinYearPanelProps): Reac
               /* The table carries its own card now that the section wrapper is
                * transparent. `overflow-hidden` clips the sticky header's top corners
                * to the card radius — without it the header paints square corners over
-               * the rounded card and the join is visible on scroll. */
-              <div className="overflow-hidden rounded-card border border-border bg-surface shadow-card">
+               * the rounded card and the join is visible on scroll.
+               *
+               * Glass treatment (2026-09-30): the same "content" 90%-opacity glass
+               * tint as `HubTypePipelineTable`/`ProjectBreakdown` — dense virtualized
+               * table, so the tint stays opaque enough that P4-T11's WCAG contrast
+               * work on the row text is never put at risk. */
+              <div className="overflow-hidden rounded-panel border border-glass-border/30 bg-glass/90 shadow-glass backdrop-blur-xl backdrop-saturate-150">
                 <VirtualDataTable
                   rows={data.rows}
                   columns={COLUMNS}

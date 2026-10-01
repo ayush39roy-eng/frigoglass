@@ -27,18 +27,21 @@ What this verifies:
 
 from __future__ import annotations
 
-import json
 import time
-from pathlib import Path
 
 from scheduling import (
     ChamberInput,
     EngineerInput,
     ProjectInput,
     ScheduleInput,
-    WorkflowStepTemplate,
     compare_solvers,
     format_report,
+)
+from scheduling._selftest_common import (
+    LEAD_TIMES,
+    TEMPLATE,
+    load_seed_schedule_input,
+    seed_path,
 )
 from scheduling.solver_comparison import (
     BUCKET_DIFFERENT_PROJECT_SET,
@@ -64,11 +67,6 @@ def check(label: str, condition: bool) -> None:
 
 
 # --- Shared fixtures ---------------------------------------------------------
-
-TEMPLATE = (
-    WorkflowStepTemplate("PDD-A", "Marketing Brief", "design", base_weeks=2, sequence_order=1),
-    WorkflowStepTemplate("PDD-F", "Proof of Concept", "lab", base_weeks=3, sequence_order=2),
-)
 
 ENGINEER_A = EngineerInput("eng-a", "Engineer A", "R&D-Greece", ("A+", "A", "B", "C"))
 CHAMBER_GR1 = ChamberInput(
@@ -169,7 +167,11 @@ def scenario_solvers_agree() -> None:
         leader_engineer_id="eng-a",
     )
     si = ScheduleInput(
-        projects=(proj,), engineers=(ENGINEER_A,), chambers=(CHAMBER_GR1,), workflow_steps=TEMPLATE
+        projects=(proj,),
+        engineers=(ENGINEER_A,),
+        chambers=(CHAMBER_GR1,),
+        workflow_steps=TEMPLATE,
+        lead_times=LEAD_TIMES,
     )
     report = compare_solvers(si)
     check("agree: greedy has zero invariant violations", report.greedy_invariant_violations == ())
@@ -233,7 +235,11 @@ def scenario_classifier_buckets() -> None:
 
     # Bucket 1: both LEFT_OUT, greedy retains a partial step, CP-SAT clears it.
     g3 = _outcome(
-        "p", left_out=True, within_year=False, steps=(_design_step(31, end=32),), start_week=31,
+        "p",
+        left_out=True,
+        within_year=False,
+        steps=(_design_step(31, end=32),),
+        start_week=31,
         end_week=32,
     )
     c3 = _outcome("p", left_out=True, within_year=False, steps=(), start_week=None, end_week=None)
@@ -247,8 +253,12 @@ def scenario_classifier_buckets() -> None:
 
     # Bucket 3: solvers disagree on whether the project is LEFT_OUT.
     g4 = _outcome(
-        "p", left_out=False, within_year=True,
-        steps=(_design_step(31, end=32), _lab_step(33, end=35)), start_week=31, end_week=35,
+        "p",
+        left_out=False,
+        within_year=True,
+        steps=(_design_step(31, end=32), _lab_step(33, end=35)),
+        start_week=31,
+        end_week=35,
     )
     c4 = _outcome("p", left_out=True, within_year=False, steps=(), start_week=None, end_week=None)
     divs4 = _compare_project(NON_FROZEN, g4, c4)
@@ -283,9 +293,19 @@ def scenario_classifier_buckets() -> None:
     # cat_not_allowed is deterministic from input -> a divergence is UNEXPLAINED.
     g6 = _outcome("p")
     c6 = ProjectScheduleOutcome(
-        project_id="p", excluded=False, left_out=False, eng_conflict=False, overlap=False,
-        cat_not_allowed=True, spillover=False, within_year=True, no_leader=False,
-        no_chamber_step_id=None, steps=(), start_week=None, end_week=None,
+        project_id="p",
+        excluded=False,
+        left_out=False,
+        eng_conflict=False,
+        overlap=False,
+        cat_not_allowed=True,
+        spillover=False,
+        within_year=True,
+        no_leader=False,
+        no_chamber_step_id=None,
+        steps=(),
+        start_week=None,
+        end_week=None,
     )
     divs6 = _compare_project(NON_FROZEN, g6, c6)
     check(
@@ -298,44 +318,17 @@ def scenario_classifier_buckets() -> None:
 
 
 def _load_seed_schedule_input() -> ScheduleInput:
-    seed_path = Path(__file__).resolve().parent.parent / "seed" / "prototype_seed_data.json"
-    seed = json.loads(seed_path.read_text())
-    engineers = tuple(
-        EngineerInput(
-            engineer_id=e["name"], name=e["name"], hub=e["hub"],
-            allowed_categories=tuple(e["cats"]), fte=e["fte"],
-        )
-        for e in seed["engineers"]
-    )
-    chambers = tuple(
-        ChamberInput(
-            chamber_id=c["id"], code=c["id"], lab_region=c["labHub"], max_concurrent=c["max"],
-            allowed_stages=tuple(f"PDD-{letter}" for letter in c["stages"]),
-            efficiency=c["eff"], weeks_per_chamber=c["wksCh"],
-        )
-        for c in seed["chambers"]
-    )
-    projects = tuple(
-        ProjectInput(
-            project_id=p["id"], name=p["name"], hub=p["hub"], status=p["status"],
-            category=p["cat"], priority=p["prio"], frozen=p["frozen"],
-            leader_engineer_id=p["leader"],
-            actual_start_week=p["actualStart"] if p["frozen"] else None, delay_weeks=p["delay"],
-        )
-        for p in seed["projects"]
-    )
-    return ScheduleInput(projects=projects, engineers=engineers, chambers=chambers)
+    return load_seed_schedule_input()
 
 
 def real_seed_dataset() -> None:
-    seed_path = Path(__file__).resolve().parent.parent / "seed" / "prototype_seed_data.json"
-    if not seed_path.exists():
+    if not seed_path().exists():
         check("real_seed_dataset: seed file present (skipped, not found)", False)
         return
 
     si = _load_seed_schedule_input()
     t0 = time.time()
-    report = compare_solvers(si, cp_sat_max_time_in_seconds=60.0)
+    report = compare_solvers(si)
     wall = time.time() - t0
 
     print()
@@ -345,8 +338,9 @@ def real_seed_dataset() -> None:
     print()
 
     check(
-        f"real_seed_dataset: CP-SAT status OPTIMAL (got {report.cp_sat_status})",
-        report.cp_sat_status == "OPTIMAL",
+        # Ruling 6: deterministic budget; FEASIBLE is an accepted, recorded status.
+        f"real_seed_dataset: CP-SAT status OPTIMAL or FEASIBLE (got {report.cp_sat_status})",
+        report.cp_sat_status in ("OPTIMAL", "FEASIBLE"),
     )
     check(
         f"real_seed_dataset: greedy zero invariant violations "
@@ -380,14 +374,13 @@ def real_seed_dataset() -> None:
 
 def determinism() -> None:
     si = _load_seed_schedule_input()
-    r1 = compare_solvers(si, cp_sat_max_time_in_seconds=60.0)
-    r2 = compare_solvers(si, cp_sat_max_time_in_seconds=60.0)
+    r1 = compare_solvers(si)
+    r2 = compare_solvers(si)
     check("determinism: greedy output identical", r1.greedy_output == r2.greedy_output)
     check("determinism: cp_sat output identical", r1.cp_sat_output == r2.cp_sat_output)
     check(
         "determinism: objectives identical",
-        (r1.greedy_objective, r1.cp_sat_objective)
-        == (r2.greedy_objective, r2.cp_sat_objective),
+        (r1.greedy_objective, r1.cp_sat_objective) == (r2.greedy_objective, r2.cp_sat_objective),
     )
     check(
         "determinism: divergence set identical",

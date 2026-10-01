@@ -49,6 +49,10 @@ export interface CompletingWithinYearRow {
   within_year: boolean;
   spillover: boolean;
   left_out: boolean;
+  /** P9-F02: `ScheduleRunProjectOutcome.blocked` — a Blocked stage held the
+   *  project at its frontier. Surfaced here so a row's `blocked_count`
+   *  membership is visible on the row itself, not just in the aggregate. */
+  blocked: boolean;
   cat_not_allowed: boolean;
   last_step_end_week: WeekNumber | null;
 }
@@ -61,6 +65,12 @@ export interface CompletingWithinYear {
   within_year_count: number;
   spillover_count: number;
   left_out_count: number;
+  /** P9-F02: a project whose outcome has `blocked=true` is counted here,
+   *  exclusively — never also in `within_year_count`/`spillover_count`/
+   *  `left_out_count`, even if one of those raw outcome flags happens to
+   *  also be set on the same row. Blocked wins outright so the four counts
+   *  partition the schedulable, non-excluded portfolio without overlap. */
+  blocked_count: number;
   rows: CompletingWithinYearRow[];
 }
 
@@ -98,5 +108,8 @@ export interface ScheduleRunSummary {
   horizon_weeks: number;
   current_week: number;
   trigger_reason: string | null;
+  /** P9-R02 (ruling 6): the solver's verdict, "OPTIMAL" / "FEASIBLE" for CP-SAT;
+   *  null for greedy runs and older runs. Always present in the payload. */
+  solver_status: string | null;
   created_at: string;
 }

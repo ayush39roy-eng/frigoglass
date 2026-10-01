@@ -54,7 +54,7 @@ have been cancelled). **There is no genuine "percent complete" during the
 solve itself** — `"percent"` is only ever published as the literal value
 `100` alongside `"completed"`, never as a running estimate. A fake
 wall-clock-based percent guess was considered and rejected: `run_cp_sat`'s
-`max_time_in_seconds` is a search-time *ceiling*, not a promise of how long
+deterministic-time budget is a search *ceiling*, not a promise of how long
 the solve will actually take (OPTIMAL is frequently reached in well under a
 second on the real dataset — see `scheduling/cp_sat.py`'s own module
 docstring) — a wall-clock-fraction percent would be actively misleading

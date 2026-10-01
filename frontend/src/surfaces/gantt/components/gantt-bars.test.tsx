@@ -74,3 +74,19 @@ describe('GanttBarGroup', () => {
     expect(container.querySelectorAll('rect')).toHaveLength(1); // only the <pattern> backdrop rect
   });
 });
+
+describe('GanttBarGroup — P9 step kinds (ADR 0007)', () => {
+  it('an elapsed step is a hollow bar: outlined, light hatch-free fill', () => {
+    const { container } = renderGroup({ kind: 'elapsed', compact: true });
+    const bar = container.querySelector('rect[data-bar="elapsed"]');
+    expect(bar).toBeTruthy();
+    expect(bar?.getAttribute('fill')).toBe('hsl(var(--color-gantt-planned) / 0.12)');
+    expect(bar?.getAttribute('stroke')).toBe('hsl(var(--color-gantt-planned))');
+    expect(bar?.getAttribute('x')).toBe(String(4 * w));
+  });
+
+  it('a skipped step renders no bar at all', () => {
+    const { container } = renderGroup({ skipped: true, kind: 'lab' });
+    expect(container.querySelectorAll('rect[data-bar]')).toHaveLength(0);
+  });
+});

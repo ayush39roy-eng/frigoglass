@@ -33,11 +33,13 @@ describe('dashboard hooks', () => {
       within_year_count: 9,
       spillover_count: 4,
       left_out_count: 2,
+      blocked_count: 1,
       rows: [],
     });
     const { result } = renderHook(() => useCompletingWithinYear(), { wrapper: wrapper() });
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
     expect(result.current.data?.within_year_count).toBe(9);
+    expect(result.current.data?.blocked_count).toBe(1);
   });
 
   it('useDashboardProjects forwards its params to the fetcher', async () => {

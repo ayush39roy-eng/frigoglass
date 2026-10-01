@@ -210,7 +210,7 @@ import logging
 import time
 import uuid
 from collections.abc import AsyncIterator
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import redis.asyncio as redis_asyncio
 from fastapi import APIRouter, Depends, HTTPException, Request, status
@@ -220,6 +220,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.db import get_db
 from api.deps import require_any_permission, require_roles
+from api.errors import CodedHTTPException
 from core.celery_config import get_celery_settings, get_redis_settings
 from core.principal import Principal
 from core.rbac import Action, Surface
@@ -266,7 +267,8 @@ _read_any = require_any_permission(
     (Surface.CAPACITY, Action.READ),
     (Surface.GANTT, Action.READ),
 )
-_admin_only = require_roles(RoleName.ADMIN)
+#: P9-T03 (ADR 0010 §1): Super Admin holds every Admin right.
+_admin_only = require_roles(RoleName.ADMIN, RoleName.SUPER_ADMIN)
 
 
 @router.get("", response_model=list[ScheduleRunSummary])
@@ -399,7 +401,34 @@ async def dispatch_cp_sat_run(
     `status=FAILED` / `error_message`, and as a `"failed"` progress event —
     the natural, correct shape for a fire-and-forget background job, not a
     workaround.
+
+    P9-F01 (R04-L1): single-flight, mirroring
+    `api.routers.workspace.recalculate_project`'s `RUN_IN_PROGRESS` check —
+    a new dispatch is refused while another solver run is still queued or
+    running (recently created, within `task_time_limit_seconds + 120`s),
+    since the `solver-worker` queue has concurrency 1 and an unbounded
+    `deterministic_time` could otherwise hold that only slot for far longer
+    than intended.
     """
+
+    window = timedelta(seconds=get_celery_settings().task_time_limit_seconds + 120)
+    in_flight = (
+        await db.execute(
+            select(ScheduleRun.id)
+            .where(
+                ScheduleRun.status.in_([ScheduleRunStatus.QUEUED, ScheduleRunStatus.RUNNING]),
+                ScheduleRun.created_at > datetime.now(UTC) - window,
+            )
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    if in_flight is not None:
+        raise CodedHTTPException(
+            status.HTTP_409_CONFLICT,
+            "RUN_IN_PROGRESS",
+            f"A schedule run ({in_flight}) is already queued or running. Follow its progress "
+            "and try again when it finishes.",
+        )
 
     run = await create_queued_schedule_run(
         db,
@@ -411,7 +440,7 @@ async def dispatch_cp_sat_run(
     async_result = run_cp_sat_schedule.delay(
         str(run.id),
         triggered_by_user_id=str(current_user.user_id),
-        max_time_in_seconds=request.max_time_in_seconds,
+        deterministic_time=request.deterministic_time,
     )
     run.celery_task_id = async_result.id
     db.add(run)

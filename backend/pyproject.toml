@@ -53,6 +53,9 @@ dependencies = [
     # `prometheus_client` alone (Counter/Histogram/generate_latest) is all
     # that's actually needed.
     "prometheus-client>=0.21",
+    # P9-T03 (Project Workspace file upload): FastAPI needs it to parse
+    # `multipart/form-data` (`UploadFile` / `Form`).
+    "python-multipart>=0.0.18",
 ]
 
 [project.optional-dependencies]

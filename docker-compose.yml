@@ -177,11 +177,21 @@ x-backend-image: &backend-image
     RPD_BACKUP_MIRROR_BUCKET: ${RPD_BACKUP_MIRROR_BUCKET:-}
     RPD_BACKUP_MIRROR_SECURE: ${RPD_BACKUP_MIRROR_SECURE:-true}
     RPD_CELERY_TASK_TIME_LIMIT_SECONDS: ${RPD_CELERY_TASK_TIME_LIMIT_SECONDS:-900}
-    RPD_CELERY_CP_SAT_MAX_TIME_IN_SECONDS: ${RPD_CELERY_CP_SAT_MAX_TIME_IN_SECONDS:-60}
+    # P9-R02b: the CP-SAT budget is deterministic time (ruling 6). Set
+    # RPD_CELERY_CP_SAT_DETERMINISTIC_TIME here to override the solver default.
     # P6-T06: structured-logging verbosity (core/logging_config.py's
     # LoggingSettings). Has a code-side default (INFO) — this is here so an
     # operator can raise verbosity for one deployment without a code change.
     RPD_LOG_LEVEL: ${RPD_LOG_LEVEL:-INFO}
+    # P10-T02: "Ask the agent" (ADR 0014) — PROVISIONAL
+    # (docs/OPEN_QUESTIONS.md #23). Off by default: RPD_GROQ_API_KEY_FILE is
+    # blank until an operator points it at a real mounted secret file (not a
+    # Compose top-level `secrets:` entry, since no destination/key exists
+    # yet — same "harmless no-op today" posture as the backup-mirror keys
+    # below). `RPD_GROQ_MODEL` has a code-side default; only set it here to
+    # override.
+    RPD_GROQ_MODEL: ${RPD_GROQ_MODEL:-llama-3.3-70b-versatile}
+    RPD_GROQ_API_KEY_FILE: ${RPD_GROQ_API_KEY_FILE:-}
     # --- secrets (P6-T04): _FILE-suffixed paths into the Compose secrets
     # mounted above, resolved by backend/docker-entrypoint.sh. NEVER the
     # plain value — that's the entire point of this task. ---
@@ -461,6 +471,14 @@ services:
       ALLOWED_METHODS: "GET HEAD POST PUT PATCH DELETE OPTIONS"
       MODSEC_REQ_BODY_NOFILES_LIMIT: "5242880"
       MODSEC_ARGUMENTS_LIMIT: "10000"
+      # P9-R02 (security S-05): 51 MiB, so a 50 MB Project Workspace upload
+      # reaches the app (which returns its own JSON 413 above 50 MB) instead
+      # of the image default 12.5 MiB non-JSON reject. The image exposes this
+      # limit only globally, not per route. The practical effect is limited to
+      # file uploads: bodies WITHOUT files stay capped at 5 MiB by
+      # MODSEC_REQ_BODY_NOFILES_LIMIT just above, and nginx still caps every
+      # route except `/api/projects/{id}/files` at 25m.
+      MODSEC_REQ_BODY_LIMIT: "53477376"
     networks:
       - rpd-internal
     depends_on:

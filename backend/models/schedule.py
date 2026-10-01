@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import (
     Boolean,
@@ -15,6 +15,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
 )
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from models.base import Base, TimestampMixin, UUIDPrimaryKeyMixin
@@ -89,6 +90,20 @@ class ScheduleRun(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
 
+    #: The workflow settings in force when this run was created (ADR 0009,
+    #: Invariant I15), so a historical run stays explainable after a
+    #: Workflow Settings edit:
+    #:   {"workflows": [{"id", "steps": [{"step_id", "code", "name", "kind",
+    #:                                    "sequence_order", "predecessor_ids"}]}],
+    #:    "lead_times": [{"workflow_id", "category", "step_id", "weeks"}]}
+    #: Nullable only for runs that pre-date P9-T01.
+    workflow_snapshot: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    #: DOMAIN_RULES "Gate remediation rulings" 6 (P9-R02): the solver's own
+    #: verdict for this run, e.g. "OPTIMAL" / "FEASIBLE" for CP-SAT. NULL when
+    #: unknown (runs before migration c41f7e9a2b58, or a solver that reports
+    #: none).
+    solver_status: Mapped[str | None] = mapped_column(String(50), nullable=True)
+
     project_steps: Mapped[list[ScheduleRunProjectStep]] = relationship(
         back_populates="schedule_run"
     )
@@ -137,6 +152,12 @@ class ScheduleRunProjectStep(Base):
 
     eng_conflict: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     chamber_overlap: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    #: ADR 0007: `duration_weeks == 0` for this category, or a lab step when the
+    #: project's `certification_testing_required` is false. Occupies nothing;
+    #: `start_week == end_week == max(predecessor end)` (Invariant I5).
+    skipped: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false"
+    )
 
     schedule_run: Mapped[ScheduleRun] = relationship(back_populates="project_steps")
     project: Mapped[Project] = relationship(back_populates="schedule_run_steps")
@@ -177,6 +198,25 @@ class ScheduleRunProjectOutcome(Base):
 
     last_step_end_week: Mapped[int | None] = mapped_column(Integer, nullable=True)
     delay_weeks_applied: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+    # --- docs/DOMAIN_RULES.md "Expected vs projected completion" (I16) ------
+    #: Earliest finish assuming unlimited engineers and chambers (pure
+    #: by-product of the scheduler).
+    unconstrained_end_week: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    #: `project.target_end_week` if set, else `unconstrained_end_week`.
+    expected_end_week: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    #: `end_week + delay_weeks_applied`; null when left out / excluded.
+    projected_end_week: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    #: A Blocked stage held the project at its frontier (DOMAIN_RULES.md
+    #: "How progress feeds a schedule run").
+    blocked: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false"
+    )
+    #: Duration-weighted roll-up (Invariant I12), as computed by the run.
+    progress_pct: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    #: Non-null when the run rejected the project as a data error (e.g. an
+    #: In-Progress stage missing `actual_start_week`) instead of scheduling it.
+    data_error: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     schedule_run: Mapped[ScheduleRun] = relationship(back_populates="project_outcomes")
     project: Mapped[Project] = relationship(back_populates="schedule_run_outcomes")

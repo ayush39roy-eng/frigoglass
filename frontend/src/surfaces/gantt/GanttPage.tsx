@@ -16,11 +16,13 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { ReadOnlyNotice } from '@/components/session/write-gate';
 import { ApiError } from '@/lib/api/client';
 import { useHubs } from '@/lib/api/reference';
 import { formatInteger } from '@/lib/format';
 import { WITHIN_YEAR_WEEK } from '@/lib/domain-constants';
 import { SURFACES } from '@/app/nav';
+import { usePermission } from '@/stores/session';
 
 import { AccessNotice, FreezeForbiddenNotice } from './components/access-notice';
 import { GanttChart } from './components/gantt-chart';
@@ -70,7 +72,9 @@ export default function GanttPage(): React.JSX.Element {
     [ganttQuery.data],
   );
   const isFiltered = hubId !== ALL;
-  const canWrite = !writeForbidden;
+  // Session table first (ADR 0010), server 403 second — both withdraw the freeze control.
+  const permission = usePermission('gantt');
+  const canWrite = permission.write && !writeForbidden;
 
   const handleToggleExpand = React.useCallback((projectId: string) => {
     setExpandedIds((prev) => {
@@ -172,6 +176,7 @@ export default function GanttPage(): React.JSX.Element {
             </CardContent>
           </Card>
 
+          <ReadOnlyNotice surface="gantt" what="Freezing projects" />
           {writeForbidden ? <FreezeForbiddenNotice /> : null}
           {recalcNeeded ? (
             <div
@@ -217,6 +222,13 @@ export default function GanttPage(): React.JSX.Element {
                             week {WITHIN_YEAR_WEEK} is year-end; whether a project completes within
                             the year is the server&apos;s <code>spillover</code> / <code>left out</code>{' '}
                             flag, shown as a badge — not computed here.
+                          </span>
+                          <span className="block">
+                            <strong>Expected completion</strong> (solid violet) is the project&apos;s
+                            target week, or the process-derived finish when no target is set;{' '}
+                            <strong>will be completed</strong> (dash-dot teal) is the active run&apos;s
+                            finish plus delay. Both weeks and the slip between them are stored on
+                            the run — never computed here (Invariant I16).
                           </span>
                         </span>
                       </ScheduleRunProvenance>

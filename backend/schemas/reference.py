@@ -25,8 +25,13 @@ class HubRead(BaseModel):
 class WorkflowStepTemplateRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
+    #: 2026-09-27 (ADR 0007/0009): two workflows, client codes, three kinds,
+    #: configurable predecessors. Durations are not on the template any more —
+    #: they come from the lead-time table (Workflow Settings, P9-T03).
     id: str
+    workflow_id: str
+    code: str
     name: str
     kind: WorkflowStepKind
-    base_weeks: int
     sequence_order: int
+    predecessor_ids: list[str]

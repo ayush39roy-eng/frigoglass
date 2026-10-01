@@ -96,8 +96,14 @@ def chamber_audit_state(chamber: Chamber) -> dict[str, Any]:
         "max_concurrent": chamber.max_concurrent,
         "platforms": chamber.platforms,
         "efficiency": float(chamber.efficiency) if chamber.efficiency is not None else None,
-        "weeks_per_chamber": (
-            float(chamber.weeks_per_chamber) if chamber.weeks_per_chamber is not None else None
+        "maintenance_weeks": (
+            float(chamber.maintenance_weeks) if chamber.maintenance_weeks is not None else None
+        ),
+        "breakdown_weeks": (
+            float(chamber.breakdown_weeks) if chamber.breakdown_weeks is not None else None
+        ),
+        "calibration_weeks": (
+            float(chamber.calibration_weeks) if chamber.calibration_weeks is not None else None
         ),
         "allowed_stages": list(chamber.allowed_stages or []),
     }

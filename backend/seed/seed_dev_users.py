@@ -1,6 +1,7 @@
 """P3-T02 — seed local `User`/`Role`/`UserRole` rows matching the dev
 Keycloak realm's test users (`dev/keycloak/rpd-realm.json`, six users, one
-per RBAC role — see that file's own comments), so P3-T02's OIDC integration
+per RBAC role — see that file's own comments) plus, since P9-T01, the
+Super Admin (`sam.super@example.com`, ADR 0010), so P3-T02's OIDC integration
 is live-testable end-to-end: a real Keycloak-issued token's `email` claim
 resolves to a real, role-provisioned local account via
 `api.deps._resolve_user`'s email-lookup/JIT-link path.
@@ -15,10 +16,20 @@ Standalone script, same pattern as `seed_currency_rates.py`/`seed_demo_data.py`
 request time).
 
 Usage (from `backend/`, with a `.venv` that has this project's deps
-installed):
+installed) — run `seed_demo_data.py` FIRST so the P9-F04 Engineer/Hub
+lookups below have real rows to find (best-effort otherwise, see
+`_CAROL_ENGINEER_NAME`/`_BOB_HUB_NAME`):
 
     RPD_DATABASE_URL=postgresql+asyncpg://user:pass@localhost:5432/rpd \\
+        python -m seed.seed_demo_data
+    RPD_DATABASE_URL=postgresql+asyncpg://user:pass@localhost:5432/rpd \\
         python -m seed.seed_dev_users [--reset]
+
+P9-F04: `carol.eng` is linked to a real `Engineer` row (own-assignments view)
+and `bob.hub` gets a real, non-"all" hub scope (hub-scoped row filtering) —
+previously every dev user, Hub Planner included, saw every hub, so
+`services.hub_scope`'s row-level filtering had no Hub Planner to exercise
+against real data in dev.
 """
 
 from __future__ import annotations
@@ -28,15 +39,16 @@ import asyncio
 import json
 import os
 import sys
+import uuid
 from pathlib import Path
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from models import Role, User, UserRole  # noqa: E402
-from models.enums import RoleName  # noqa: E402
+from models import Engineer, Hub, Role, User, UserHubScope, UserRole  # noqa: E402
+from models.enums import HubName, RoleName  # noqa: E402
 
 #: (email, full_name, role) — matches dev/keycloak/rpd-realm.json's test
 #: users exactly (excluding nobody.unprovisioned@example.com — see module
@@ -48,7 +60,31 @@ DEV_USERS: tuple[tuple[str, str, RoleName], ...] = (
     ("dave.exec@example.com", "Dave ExecutiveViewer", RoleName.EXECUTIVE_VIEWER),
     ("erin.audit@example.com", "Erin Auditor", RoleName.AUDITOR),
     ("frank.admin@example.com", "Frank Admin", RoleName.ADMIN),
+    # 2026-09-27 (ADR 0010, P9-T01): the all-rights Super Admin. Not in the
+    # Keycloak dev realm yet (that file is not this task's to edit); in dev
+    # mode it is selectable via `X-Dev-User-Email` (P9-T03).
+    ("sam.super@example.com", "Sam SuperAdmin", RoleName.SUPER_ADMIN),
 )
+
+#: P9-F04: link `carol.eng` to a real `Engineer` row (the first engineer in
+#: `seed_demo_data.py`'s dataset, `prototype_seed_data.json`'s "engineers"
+#: list, R&D-Greece) so the Engineer role's "own assignments" view has real
+#: data to exercise in dev. Looked up by name at seed time, not hardcoded by
+#: id — best-effort: if `seed_demo_data` has not been run yet (e.g. this
+#: script's own isolated test), the row simply is not found and carol is
+#: seeded exactly as before (no Engineer link), never a hard failure.
+_CAROL_ENGINEER_NAME = "Dimopoulou"
+
+#: P9-F04: `bob.hub` gets a real, non-"all" hub scope (Hub Planner is the
+#: only role that carries the "(own hub)" qualifier per
+#: `docs/PROJECT_AND_STACK.md` §5) so hub-scoped row filtering
+#: (`services.hub_scope`) has a real Hub Planner to exercise in dev, instead
+#: of every dev user seeing every hub. Same best-effort lookup-by-name as
+#: `_CAROL_ENGINEER_NAME`: if the hub row is not found, bob falls back to
+#: `hub_scope_all=True` (the previous behaviour) rather than being left
+#: scoped to zero hubs, which `models.user.User.hub_scope_all`'s own
+#: docstring calls out as a misconfiguration that must never happen.
+_BOB_HUB_NAME = HubName.PD_INDIA
 
 
 def _database_url() -> str:
@@ -96,25 +132,84 @@ async def run(reset_first: bool) -> dict:
                 # silently orphan history" convention) so child rows for
                 # dev-seeded users must be removed first, in dependency
                 # order, exactly like seed_demo_data.py's own --reset does
-                # for its tables.
+                # for its tables. P9-F04: this now also has to (a) null out
+                # any `Engineer.user_id` this script previously set (a plain
+                # FK with no ON DELETE action — deleting a still-referenced
+                # User would otherwise raise), and (b) clear any
+                # `UserHubScope` rows this script previously added for
+                # `bob.hub`, both BEFORE deleting `User` rows, for the same
+                # FK reason.
+                await session.execute(
+                    update(Engineer).where(Engineer.user_id.is_not(None)).values(user_id=None)
+                )
+                await session.execute(delete(UserHubScope))
                 await session.execute(delete(UserRole))
                 await session.execute(delete(User))
                 await session.flush()
             else:
                 await _guard_against_duplicate_seed(session)
 
+            # P9-F04: best-effort lookups — `None` when `seed_demo_data` has
+            # not been run yet (e.g. this module's own isolated
+            # `test_seed_dev_users_duplicate_guard_and_reset`), in which case
+            # the two dev users below fall back to their pre-P9-F04
+            # behaviour (no Engineer link; `hub_scope_all=True`).
+            carol_engineer = (
+                await session.execute(
+                    select(Engineer).where(Engineer.name == _CAROL_ENGINEER_NAME)
+                )
+            ).scalar_one_or_none()
+            bob_hub = (
+                await session.execute(select(Hub).where(Hub.name == _BOB_HUB_NAME))
+            ).scalar_one_or_none()
+
+            # P10-T01 (ADR 0012): `bob.hub` (a Hub Planner, created before
+            # `carol.eng` in `DEV_USERS`' order) becomes `carol.eng`'s
+            # manager, so `services.project_access.can_manage_grant`'s
+            # delegation rule (I18) has a real manager -> direct-report link
+            # to exercise in dev/tests — bob's own effective access on a
+            # PD-India project is Admin (rule 3 of the resolver), so bob can
+            # grant/revoke carol's project access on that hub's projects.
+            bob_user_id: uuid.UUID | None = None
+
             for email, full_name, role_name in DEV_USERS:
                 role = await _get_or_create_role(session, role_name)
+                bob_scoped = email == "bob.hub@example.com" and bob_hub is not None
+                # P10-F01 (security remediation, High): `carol.eng` (the only
+                # Engineer in this seed) must never get `hub_scope_all=True`
+                # — that combination is exactly the live-exploited bypass the
+                # P10 gate security-auditor found (an Engineer-role account
+                # with `hub_scope_all=True` silently skips own-assignment row
+                # scoping and reads every project). Prior to this fix, the
+                # blanket `hub_scope_all=not bob_scoped` below gave every
+                # non-bob dev user (including carol) `hub_scope_all=True` by
+                # default — the real, unguarded misconfiguration the auditor
+                # flagged, not a contrived edge case. `schemas/user_admin.py`
+                # now also rejects this combination at the API layer (belt
+                # and suspenders), but the seed itself must set the correct
+                # value directly too.
+                engineer_only = role_name == RoleName.ENGINEER
                 user = User(
                     email=email,
                     full_name=full_name,
                     is_active=True,
-                    hub_scope_all=True,
+                    hub_scope_all=not bob_scoped and not engineer_only,
                     oidc_subject=None,  # JIT-linked on first login, by design
+                    manager_id=bob_user_id if email == "carol.eng@example.com" else None,
                 )
                 session.add(user)
                 await session.flush()
                 session.add(UserRole(user_id=user.id, role_id=role.id))
+                # `bob_scoped` already implies `bob_hub is not None`, but the
+                # explicit re-check (rather than trusting that boolean alone)
+                # is what lets mypy narrow `bob_hub` to `Hub` here too.
+                if bob_scoped and bob_hub is not None:
+                    session.add(UserHubScope(user_id=user.id, hub_id=bob_hub.id))
+                if email == "carol.eng@example.com" and carol_engineer is not None:
+                    carol_engineer.user_id = user.id
+                    session.add(carol_engineer)
+                if email == "bob.hub@example.com":
+                    bob_user_id = user.id
 
             await session.commit()
             verified = await _row_count(session)

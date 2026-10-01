@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Boolean, ForeignKey, String
+from sqlalchemy import Boolean, CheckConstraint, ForeignKey, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from models.base import Base, TimestampMixin, UUIDPrimaryKeyMixin
@@ -55,9 +55,27 @@ class User(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     #: "scoped to all hubs".
     hub_scope_all: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
+    #: Nullable self-FK for manager delegation (2026-09-30, ADR 0012):
+    #: `services.project_access.can_manage_grant`'s "U.manager_id == M.id"
+    #: check (I18). The trivial 1-hop self-cycle (`manager_id == id`) is
+    #: rejected by the CHECK constraint below; a longer cycle across more
+    #: than one hop (A manages B, B manages A) is NOT expressible as a
+    #: single-row CHECK and is instead rejected at the API layer
+    #: (`api/routers/users.py`'s `update_user`, P10-T02) by walking the
+    #: chain before a write — see that function's own docstring.
+    manager_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id"), nullable=True, index=True
+    )
+
     roles: Mapped[list[UserRole]] = relationship(back_populates="user")
     hub_scopes: Mapped[list[UserHubScope]] = relationship(back_populates="user")
     engineer: Mapped[Engineer | None] = relationship(back_populates="user")
+
+    __table_args__ = (
+        CheckConstraint(
+            "manager_id IS NULL OR manager_id != id", name="ck_users_manager_id_not_self"
+        ),
+    )
 
     def __repr__(self) -> str:  # pragma: no cover - debug convenience only
         return f"<User {self.email!r}>"

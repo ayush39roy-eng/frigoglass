@@ -247,14 +247,21 @@ version is queryable (Versions & History, §2).
 
 See the Infrastructure & security table in §3 for the layer list. RBAC role/permission matrix:
 
-| Role | Dashboard | Capacity | Matrix | Gantt | Project Workspace | Project Registration | Capacity Planning | Audit Log | User/Role Admin |
-|---|---|---|---|---|---|---|---|---|---|
-| Portfolio Manager | R | R | R/W | R | R/W | R/W | R | – | – |
-| Hub Planner (scoped) | R (own hub) | R/W (own hub) | R (own hub) | R/W (own hub) | R/W (own hub) | R/W (own hub) | R/W (own hub) | – | – |
-| Engineer | – | – | – | R (own assignments) | R (own assignments) | – | – | – | – |
-| Executive Viewer | R (all hubs) | R (all hubs) | R (all hubs) | R (all hubs) | R (all hubs) | – | – | – | – |
-| Auditor | – | – | – | – | – | – | – | R (all) | – |
-| Admin | R/W | R/W | R/W | R/W | R/W | R/W | R/W | R | R/W |
+| Role | Dashboard | Capacity | Matrix | Gantt | Project Workspace | Project Registration | Capacity Planning | Workflow Settings | Audit Log | User/Role Admin |
+|---|---|---|---|---|---|---|---|---|---|---|
+| Portfolio Manager | R | R | R/W | R | R/W | R/W | R | – | – | – |
+| Hub Planner (scoped) | R (own hub) | R/W (own hub) | R (own hub) | R/W (own hub) | R/W (own hub) | R/W (own hub) | R/W (own hub) | – | – | – |
+| Engineer | – | – | – | R (own assignments) | R (own assignments) | – | – | – | – | – |
+| Executive Viewer | R (all hubs) | R (all hubs) | R (all hubs) | R (all hubs) | R (all hubs) | – | – | – | – | – |
+| Auditor | – | – | – | – | – | – | – | – | R (all) | – |
+| Admin | R/W | R/W | R/W | R/W | R/W | R/W | R/W | R | R | R/W (non-admin roles) |
+| Super Admin | R/W | R/W | R/W | R/W | R/W | R/W | R/W | R/W | R | R/W (all roles) |
+
+**Super Admin** (added 2026-09-27, ADR 0010) has every right on every surface and is the only role
+that can grant or revoke Admin/Super Admin or edit Workflow Settings (lead-time table, step
+precedence, hub work calendars, chamber downtime — ADRs 0007/0008/0009). The server refuses to
+deactivate or demote the last active Super Admin. `GET /me` publishes the resolved permission table
+so the frontend can gate navigation and write controls; the server stays the enforcement point.
 
 The **Project Workspace** column is derived provisionally from the adjacent surfaces (read follows
 Dashboard/Matrix/Gantt; detail + progress writes follow Project Registration and Gantt) and is
@@ -266,6 +273,14 @@ Row-level hub scoping is enforced in the data access layer (SQLAlchemy query fil
 per-request from the authenticated user's hub claims), not just hidden in the UI — a Hub Planner's
 API calls must be rejected or filtered server-side for out-of-scope hubs, independent of what the
 frontend renders.
+
+**Project-level access grants** (added 2026-09-30, ADR 0012) sit on top of this matrix, not instead
+of it: a `ProjectAccessGrant` gives one principal Viewer/Editor/Admin on one named project,
+regardless of their role/hub scope, and a manager may grant/revoke this for their own direct
+reports (`User.manager_id`) on a project where the manager's own effective access is already
+Admin. Grants only add access; they never remove what the matrix above already grants. Full
+resolver and delegation rule: `docs/DOMAIN_RULES.md` "Project access grants and delegation", ADR
+0012.
 
 ## 6. Deployment topology
 

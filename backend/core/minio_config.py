@@ -74,6 +74,13 @@ class MinioSettings(BaseSettings):
     #: never accidentally applied to a customer-facing export instead.
     backups_bucket: str = Field(default="rpd-backups")
 
+    #: P9-T03: Project Workspace file attachments. A separate bucket again, so
+    #: neither the export lifecycle nor the backup retention rule can ever
+    #: expire a user's uploaded document. Object keys inside it are
+    #: server-generated (`projects/<project_id>/files/<uuid4>`), never derived
+    #: from a display name or an uploaded filename.
+    attachments_bucket: str = Field(default="rpd-attachments")
+
     #: Days a backup object is retained before MinIO's own lifecycle
     #: `Expiration` rule deletes it (`ensure_backups_bucket` below). §6 says
     #: "lifecycle-policy retained" without naming a number; 30 days is a

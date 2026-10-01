@@ -1,5 +1,6 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { hubRow } from '../test-fixtures';
 import { renderHook, waitFor } from '@testing-library/react';
 import * as React from 'react';
 
@@ -30,19 +31,13 @@ describe('capacity hooks', () => {
       schedule_run_version: 5,
       remaining_weeks: 47,
       rows: [
-        {
-          hub: 'R&D-Greece',
-          design_load_weeks: 120,
-          design_capacity_weeks: 94.5,
-          lab_load_units: 18.5,
-          lab_capacity_units: 47,
-        },
+        hubRow({ design_load_weeks: 120 }),
       ],
     });
     const { result } = renderHook(() => useHubLoadVsCapacity(), { wrapper: wrapper() });
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
     expect(result.current.data?.rows[0]?.design_load_weeks).toBe(120);
-    expect(result.current.data?.rows[0]?.design_capacity_weeks).toBe(94.5);
+    expect(result.current.data?.rows[0]?.design_capacity_year).toBe(252.62);
   });
 
   it('does not retry a 403 (auth failures do not self-heal)', async () => {

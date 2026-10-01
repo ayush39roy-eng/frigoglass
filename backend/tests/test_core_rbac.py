@@ -21,8 +21,10 @@ _MATRIX: dict[RoleName, dict[Surface, set[Action]]] = {
         Surface.CAPACITY: {R},
         Surface.MATRIX: {R, W},
         Surface.GANTT: {R},
+        Surface.PROJECT_WORKSPACE: {R, W},
         Surface.PROJECT_REGISTRATION: {R, W},
         Surface.CAPACITY_PLANNING: {R},
+        Surface.WORKFLOW_SETTINGS: set(),
         Surface.AUDIT_LOG: set(),
         Surface.USER_ROLE_ADMIN: set(),
     },
@@ -31,8 +33,10 @@ _MATRIX: dict[RoleName, dict[Surface, set[Action]]] = {
         Surface.CAPACITY: {R, W},
         Surface.MATRIX: {R},
         Surface.GANTT: {R, W},
+        Surface.PROJECT_WORKSPACE: {R, W},
         Surface.PROJECT_REGISTRATION: {R, W},
         Surface.CAPACITY_PLANNING: {R, W},
+        Surface.WORKFLOW_SETTINGS: set(),
         Surface.AUDIT_LOG: set(),
         Surface.USER_ROLE_ADMIN: set(),
     },
@@ -41,8 +45,10 @@ _MATRIX: dict[RoleName, dict[Surface, set[Action]]] = {
         Surface.CAPACITY: set(),
         Surface.MATRIX: set(),
         Surface.GANTT: {R},
+        Surface.PROJECT_WORKSPACE: {R},
         Surface.PROJECT_REGISTRATION: set(),
         Surface.CAPACITY_PLANNING: set(),
+        Surface.WORKFLOW_SETTINGS: set(),
         Surface.AUDIT_LOG: set(),
         Surface.USER_ROLE_ADMIN: set(),
     },
@@ -51,8 +57,10 @@ _MATRIX: dict[RoleName, dict[Surface, set[Action]]] = {
         Surface.CAPACITY: {R},
         Surface.MATRIX: {R},
         Surface.GANTT: {R},
+        Surface.PROJECT_WORKSPACE: {R},
         Surface.PROJECT_REGISTRATION: set(),
         Surface.CAPACITY_PLANNING: set(),
+        Surface.WORKFLOW_SETTINGS: set(),
         Surface.AUDIT_LOG: set(),
         Surface.USER_ROLE_ADMIN: set(),
     },
@@ -61,8 +69,10 @@ _MATRIX: dict[RoleName, dict[Surface, set[Action]]] = {
         Surface.CAPACITY: set(),
         Surface.MATRIX: set(),
         Surface.GANTT: set(),
+        Surface.PROJECT_WORKSPACE: set(),
         Surface.PROJECT_REGISTRATION: set(),
         Surface.CAPACITY_PLANNING: set(),
+        Surface.WORKFLOW_SETTINGS: set(),
         Surface.AUDIT_LOG: {R},
         Surface.USER_ROLE_ADMIN: set(),
     },
@@ -71,8 +81,24 @@ _MATRIX: dict[RoleName, dict[Surface, set[Action]]] = {
         Surface.CAPACITY: {R, W},
         Surface.MATRIX: {R, W},
         Surface.GANTT: {R, W},
+        Surface.PROJECT_WORKSPACE: {R, W},
         Surface.PROJECT_REGISTRATION: {R, W},
         Surface.CAPACITY_PLANNING: {R, W},
+        Surface.WORKFLOW_SETTINGS: {R},
+        Surface.AUDIT_LOG: {R},
+        Surface.USER_ROLE_ADMIN: {R, W},
+    },
+    # 2026-09-27 (ADR 0010): every right everywhere; Audit Log is R for every
+    # role by construction (append-only, never written through the API).
+    RoleName.SUPER_ADMIN: {
+        Surface.DASHBOARD: {R, W},
+        Surface.CAPACITY: {R, W},
+        Surface.MATRIX: {R, W},
+        Surface.GANTT: {R, W},
+        Surface.PROJECT_WORKSPACE: {R, W},
+        Surface.PROJECT_REGISTRATION: {R, W},
+        Surface.CAPACITY_PLANNING: {R, W},
+        Surface.WORKFLOW_SETTINGS: {R, W},
         Surface.AUDIT_LOG: {R},
         Surface.USER_ROLE_ADMIN: {R, W},
     },
@@ -101,3 +127,16 @@ def test_every_role_and_surface_is_covered_by_the_permissions_table() -> None:
     assert set(PERMISSIONS.keys()) == set(RoleName)
     for role, surfaces in PERMISSIONS.items():
         assert set(surfaces.keys()) == set(Surface), f"{role} missing a surface entry"
+
+
+def test_super_admin_is_the_only_role_that_writes_workflow_settings() -> None:
+    """ADR 0010: Workflow Settings (lead times, precedence, calendars, chamber
+    downtime) is Super Admin write, Admin read, nobody else."""
+    writers = {r for r in RoleName if role_allows(r, Surface.WORKFLOW_SETTINGS, W)}
+    readers = {r for r in RoleName if role_allows(r, Surface.WORKFLOW_SETTINGS, R)}
+    assert writers == {RoleName.SUPER_ADMIN}
+    assert readers == {RoleName.SUPER_ADMIN, RoleName.ADMIN}
+
+
+def test_no_role_writes_the_audit_log() -> None:
+    assert not any(role_allows(r, Surface.AUDIT_LOG, W) for r in RoleName)

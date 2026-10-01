@@ -42,6 +42,12 @@ export function formatPercent(value: number): string {
   return percentFormatter.format(value / 100);
 }
 
+/** `value` is a 0–1 FRACTION as returned by the API (e.g. the Capacity surface's
+ *  `completion_pct` = capacity / load, ADR 0008). Presentation only. */
+export function formatFraction(value: number): string {
+  return percentFormatter.format(value);
+}
+
 const integerFormatter = new Intl.NumberFormat('en-GB', { maximumFractionDigits: 0 });
 
 export function formatInteger(value: number): string {

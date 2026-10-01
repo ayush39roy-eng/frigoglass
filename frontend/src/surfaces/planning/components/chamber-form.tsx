@@ -22,12 +22,14 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { ApiError } from '@/lib/api/client';
+import { formatDecimal } from '@/lib/format';
 import { useWorkflowStepTemplates } from '@/lib/api/reference';
 import { LAB_REGIONS, type LabRegion } from '@/types/enums';
 
 import type { ChamberCreateRequest, ChamberRead } from '../api/types';
 import {
   chamberFormSchema,
+  DOWNTIME_DEFAULTS,
   parseOptionalNumber,
   type ChamberFormInput,
   type ChamberFormValues,
@@ -112,7 +114,9 @@ function ChamberForm({
       max_concurrent: numToStr(chamber?.max_concurrent) ?? '1',
       platforms: numToStr(chamber?.platforms),
       efficiency: numToStr(chamber?.efficiency),
-      weeks_per_chamber: numToStr(chamber?.weeks_per_chamber),
+      maintenance_weeks: numToStr(chamber?.maintenance_weeks ?? DOWNTIME_DEFAULTS.maintenance_weeks),
+      breakdown_weeks: numToStr(chamber?.breakdown_weeks ?? DOWNTIME_DEFAULTS.breakdown_weeks),
+      calibration_weeks: numToStr(chamber?.calibration_weeks ?? DOWNTIME_DEFAULTS.calibration_weeks),
     },
     mode: 'onChange',
   });
@@ -127,7 +131,7 @@ function ChamberForm({
       setSubmitError('Lab region is required.');
       return;
     }
-    // `platforms`/`efficiency`/`weeks_per_chamber` are optional-with-a-server-
+    // `platforms`/`efficiency`/downtime are optional-with-a-server-
     // default on the backend (`ChamberCreateRequest`), but the field TYPE
     // there is a plain `int`/`float`, not `int | None` — unlike Registration's
     // financial fields, the backend would 422 on an explicit `null`. Falling
@@ -140,7 +144,9 @@ function ChamberForm({
       max_concurrent: Number(values.max_concurrent),
       platforms: parseOptionalNumber(values.platforms) ?? 1,
       efficiency: parseOptionalNumber(values.efficiency) ?? 1.0,
-      weeks_per_chamber: parseOptionalNumber(values.weeks_per_chamber) ?? 0,
+      maintenance_weeks: parseOptionalNumber(values.maintenance_weeks) ?? DOWNTIME_DEFAULTS.maintenance_weeks,
+      breakdown_weeks: parseOptionalNumber(values.breakdown_weeks) ?? DOWNTIME_DEFAULTS.breakdown_weeks,
+      calibration_weeks: parseOptionalNumber(values.calibration_weeks) ?? DOWNTIME_DEFAULTS.calibration_weeks,
       allowed_stages: stages,
     };
     try {
@@ -162,9 +168,9 @@ function ChamberForm({
       <DialogHeader>
         <DialogTitle>{mode === 'create' ? 'Add a chamber' : `Edit ${chamber?.code}`}</DialogTitle>
         <DialogDescription>
-          A lab-step scheduling resource. Only &quot;Max concurrent&quot; gates booking (ADR 0003) —
-          efficiency and weeks-per-chamber are reporting-only figures shown on RPD Capacity (
-          <span className="italic">docs/OPEN_QUESTIONS.md #3</span>).
+          A lab-step scheduling resource. Only &quot;Max concurrent&quot; gates booking. Platforms,
+          efficiency and yearly downtime feed the capacity-supply figures on RPD Capacity
+          (ADR&nbsp;0008).
         </DialogDescription>
       </DialogHeader>
 
@@ -204,7 +210,12 @@ function ChamberForm({
               {...register('max_concurrent')}
             />
           </Field>
-          <Field label="Platforms" htmlFor="ch-platforms" error={errors.platforms?.message}>
+          <Field
+            label="Platforms"
+            htmlFor="ch-platforms"
+            error={errors.platforms?.message}
+            hint="Changing platforms also sets max concurrent (the booking gate) on save."
+          >
             <Input
               id="ch-platforms"
               type="number"
@@ -228,23 +239,50 @@ function ChamberForm({
               {...register('efficiency')}
             />
           </Field>
-          <Field
-            label="Weeks per chamber"
-            htmlFor="ch-weeks"
-            error={errors.weeks_per_chamber?.message}
-          >
-            <Input
-              id="ch-weeks"
-              type="number"
-              min={0}
-              step="0.1"
-              inputMode="decimal"
-              className="tnum"
-              aria-invalid={errors.weeks_per_chamber ? true : undefined}
-              {...register('weeks_per_chamber')}
-            />
-          </Field>
+          {(
+            [
+              ['maintenance_weeks', 'Maintenance (weeks / year)', 'ch-maint'],
+              ['breakdown_weeks', 'Breakdown (weeks / year)', 'ch-breakdown'],
+              ['calibration_weeks', 'Calibration (weeks / year)', 'ch-calib'],
+            ] as const
+          ).map(([field, label, id]) => (
+            <Field key={field} label={label} htmlFor={id} error={errors[field]?.message}>
+              <Input
+                id={id}
+                type="number"
+                min={0}
+                step="0.5"
+                inputMode="decimal"
+                className="tnum"
+                aria-invalid={errors[field] ? true : undefined}
+                {...register(field)}
+              />
+            </Field>
+          ))}
         </div>
+
+        {chamber ? (
+          <dl
+            className="grid grid-cols-2 gap-3 rounded-lg border border-border bg-surface-sunken p-3 text-2xs"
+            data-testid="chamber-derived"
+          >
+            <div>
+              <dt className="text-text-subtle">Working weeks / year (saved)</dt>
+              <dd className="font-mono text-sm font-semibold text-text">
+                {formatDecimal(chamber.working_weeks_per_chamber)}
+              </dd>
+            </div>
+            <div>
+              <dt className="text-text-subtle">Efficient lab weeks (saved)</dt>
+              <dd className="font-mono text-sm font-semibold text-text">
+                {formatDecimal(chamber.efficient_lab_weeks)}
+              </dd>
+            </div>
+            <p className="col-span-2 text-text-subtle">
+              Computed by the server from the saved values; they update after you save.
+            </p>
+          </dl>
+        ) : null}
 
         <fieldset className="space-y-2">
           <legend className="text-2xs font-semibold uppercase tracking-wide text-text-muted">
@@ -295,8 +333,10 @@ function Field({
   htmlFor,
   error,
   required,
+  hint,
   children,
 }: {
+  hint?: string;
   label: React.ReactNode;
   htmlFor: string;
   error?: string | undefined;
@@ -314,6 +354,8 @@ function Field({
         <span role="alert" className="text-2xs text-danger">
           {error}
         </span>
+      ) : hint ? (
+        <span className="text-2xs text-text-subtle">{hint}</span>
       ) : null}
     </div>
   );

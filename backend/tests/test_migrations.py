@@ -31,6 +31,22 @@ P5-T06 note: a fifth revision (`2418c6385a72`, adding `notifications` + the
 `notification_reason` enum) landed the same way —
 `EXPECTED_TABLE_COUNT`/`EXPECTED_ENUM_TYPES` below updated accordingly, same
 reasoning again.
+
+P9-T01 note: a sixth revision (`5c9e1f2a7b3d`) adds five tables, two enums,
+recreates four existing enums with new labels, seeds the workflow reference
+data and adds two triggers — `EXPECTED_TABLE_COUNT`/`EXPECTED_ENUM_TYPES`/
+`P9_TRIGGERS` updated; the cycle below additionally walks `downgrade -1`
+(just that revision) before the full `downgrade base`, since its downgrade is
+the first in this chain that has to map *data* back (OEM categories, the
+`elapsed` kind, Cancelled) before an enum can be recreated.
+
+P10-T01 note: a ninth revision (`d451acccb1ab`) adds `project_access_grants`
+(+ the `project_access_role` enum) and `users.manager_id` — one new table, no
+new triggers — `EXPECTED_TABLE_COUNT`/`EXPECTED_ENUM_TYPES` updated
+accordingly; the P9-T01 downgrade-midpoint check below (`2418c6385a72`) now
+subtracts 6, not 5, since that downgrade also undoes this revision (it is
+after `2418c6385a72` in the chain too) — the absolute table count at that
+older revision is unchanged (23), only the offset from the new head total.
 """
 
 from __future__ import annotations
@@ -42,9 +58,11 @@ from testcontainers.postgres import PostgresContainer
 
 from tests.conftest import run_alembic
 
-# All 22 app tables from backend/models/__init__.py (20 + P5-T04's
-# export_jobs + P5-T06's notifications), plus `alembic_version`.
-EXPECTED_TABLE_COUNT = 23
+# All 28 app tables from backend/models/__init__.py (20 + P5-T04's
+# export_jobs + P5-T06's notifications + P9-T01's workflows,
+# workflow_lead_times, hub_work_calendars, project_files, project_comments +
+# P10-T01's project_access_grants), plus `alembic_version`.
+EXPECTED_TABLE_COUNT = 29
 
 EXPECTED_ENUM_TYPES = {
     "lab_region",
@@ -64,7 +82,39 @@ EXPECTED_ENUM_TYPES = {
     "export_format",
     "export_job_status",
     "notification_reason",
+    # P9-T01 (`5c9e1f2a7b3d`): per-stage progress status + workspace file category.
+    "workflow_step_status",
+    "project_file_category",
+    # P10-T01 (`d451acccb1ab`): project-level access grant role.
+    "project_access_role",
 }
+
+# P9-T01: the OEM-category-matches-hub guard on `projects` and the
+# never-hard-delete guard on `project_comments`, both plain triggers like the
+# audit-log ones — must appear after upgrade and vanish after downgrade.
+P9_TRIGGERS = ("trg_projects_category_matches_hub", "trg_project_comments_no_delete")
+
+
+_STAGE_BLOCKED_SQL = (
+    "SELECT count(*) FROM pg_enum e JOIN pg_type t ON t.oid = e.enumtypid "
+    "WHERE t.typname = 'notification_reason' AND e.enumlabel = 'stage_blocked'"
+)
+_SOLVER_STATUS_SQL = (
+    "SELECT count(*) FROM information_schema.columns "
+    "WHERE table_name = 'schedule_runs' AND column_name = 'solver_status'"
+)
+_RUN_ID_NULLABLE_SQL = (
+    "SELECT is_nullable FROM information_schema.columns "
+    "WHERE table_name = 'notifications' AND column_name = 'schedule_run_id'"
+)
+_MANAGER_ID_COLUMN_SQL = (
+    "SELECT count(*) FROM information_schema.columns "
+    "WHERE table_name = 'users' AND column_name = 'manager_id'"
+)
+_ACCESS_GRANTS_TABLE_SQL = (
+    "SELECT count(*) FROM information_schema.tables "
+    "WHERE table_name = 'project_access_grants'"
+)
 
 
 def _asyncpg_dsn(url: str) -> str:
@@ -129,6 +179,66 @@ def test_migration_up_down_up_down_cycle():
         assert "ux_priority_application_runs_one_active" in _index_names(url)
         assert "trg_audit_log_entries_append_only" in _trigger_names(url)
         assert "trg_audit_log_entries_append_only_truncate" in _trigger_names(url)
+        assert set(P9_TRIGGERS) <= _trigger_names(url)
+
+        # --- P10-T01 (`d451acccb1ab`, new head): project_access_grants +
+        # users.manager_id; downgrade just it, then re-apply. This must run
+        # BEFORE the P9-R02 `downgrade -1` block below, since "-1" is
+        # chain-relative to whatever the CURRENT head is — this revision is
+        # now that head.
+        assert _query_scalar(url, _ACCESS_GRANTS_TABLE_SQL) == 1
+        assert _query_scalar(url, _MANAGER_ID_COLUMN_SQL) == 1
+        r = run_alembic(["downgrade", "-1"], url)
+        assert r.returncode == 0, f"downgrade -1 (P10-T01) failed:\n{r.stdout}\n{r.stderr}"
+        assert _query_scalar(url, _ACCESS_GRANTS_TABLE_SQL) == 0
+        assert _query_scalar(url, _MANAGER_ID_COLUMN_SQL) == 0
+        assert _table_count(url) == EXPECTED_TABLE_COUNT - 1
+        r = run_alembic(["upgrade", "head"], url)
+        assert r.returncode == 0, f"upgrade head after P10-T01 -1 failed:\n{r.stderr}"
+        assert _query_scalar(url, _ACCESS_GRANTS_TABLE_SQL) == 1
+        assert _query_scalar(url, _MANAGER_ID_COLUMN_SQL) == 1
+
+        # --- P9-R02 (`c41f7e9a2b58`, formerly head): solver_status column +
+        # comments TRUNCATE guard; downgrade just it, then re-apply.
+        # Explicit target (not "-1": that is chain-relative to head, which is
+        # now P10-T01's `d451acccb1ab`, not this revision any more).
+        assert _query_scalar(url, _SOLVER_STATUS_SQL) == 1
+        assert "trg_project_comments_no_truncate" in _trigger_names(url)
+        r = run_alembic(["downgrade", "8e2d4b6a1c90"], url)
+        assert r.returncode == 0, (
+            f"downgrade to 8e2d4b6a1c90 (P9-R02) failed:\n{r.stdout}\n{r.stderr}"
+        )
+        assert _query_scalar(url, _SOLVER_STATUS_SQL) == 0
+        assert "trg_project_comments_no_truncate" not in _trigger_names(url)
+        r = run_alembic(["upgrade", "head"], url)
+        assert r.returncode == 0, f"upgrade head after P9-R02 -1 failed:\n{r.stderr}"
+
+        # --- P9-T03 follow-up (`8e2d4b6a1c90`): downgrade to just before it
+        # (this also undoes P9-R02 AND P10-T01, both table-count-neutral
+        # except P10-T01 itself, which removes `project_access_grants`) —
+        # the `stage_blocked` label goes, schedule_run_id is NOT NULL again —
+        # then re-apply.
+        assert _query_scalar(url, _STAGE_BLOCKED_SQL) == 1
+        assert _query_scalar(url, _RUN_ID_NULLABLE_SQL) == "YES"
+        r = run_alembic(["downgrade", "5c9e1f2a7b3d"], url)
+        assert r.returncode == 0, f"downgrade to 5c9e1f2a7b3d failed:\n{r.stdout}\n{r.stderr}"
+        assert _query_scalar(url, _STAGE_BLOCKED_SQL) == 0
+        assert _query_scalar(url, _RUN_ID_NULLABLE_SQL) == "NO"
+        assert _table_count(url) == EXPECTED_TABLE_COUNT - 1
+        r = run_alembic(["upgrade", "head"], url)
+        assert r.returncode == 0, f"upgrade head after P9-T03 -1 failed:\n{r.stdout}\n{r.stderr}"
+        assert _query_scalar(url, _STAGE_BLOCKED_SQL) == 1
+
+        # --- P9-T01: downgrade to just before `5c9e1f2a7b3d`, then re-apply --
+        r = run_alembic(["downgrade", "2418c6385a72"], url)
+        assert r.returncode == 0, f"downgrade to 2418c6385a72 failed:\n{r.stdout}\n{r.stderr}"
+        assert _table_count(url) == EXPECTED_TABLE_COUNT - 6
+        assert not (set(P9_TRIGGERS) & _trigger_names(url))
+        assert "workflow_step_status" not in _enum_type_names(url)
+        r = run_alembic(["upgrade", "head"], url)
+        assert r.returncode == 0, f"upgrade head after -1 failed:\n{r.stdout}\n{r.stderr}"
+        assert _table_count(url) == EXPECTED_TABLE_COUNT
+        assert set(P9_TRIGGERS) <= _trigger_names(url)
 
         # --- downgrade #1 -----------------------------------------------------
         r = run_alembic(["downgrade", "base"], url)

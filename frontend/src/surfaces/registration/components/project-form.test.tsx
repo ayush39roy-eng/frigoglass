@@ -101,6 +101,12 @@ describe('ProjectFormDialog', () => {
           gross_margin_pct: null,
           capex_keur: null,
           rm_savings_keur: null,
+          target_end_week: null,
+          certification_testing_required: true,
+          estimated_design_weeks: null,
+          estimated_lab_weeks: null,
+          schedule_stale: false,
+          workflow_id: 'PDD',
           created_at: '2026-01-01T00:00:00Z',
           updated_at: '2026-01-01T00:00:00Z',
         }}
@@ -185,6 +191,7 @@ describe('ProjectFormDialog', () => {
         gross_margin_pct: 20,
         capex_keur: 45,
         rm_savings_keur: 12,
+        certification_testing_required: true,
         actual_start_week: 10,
         reg_year: 2026,
         comments: 'Needs a second review.',
@@ -260,5 +267,88 @@ describe('ProjectFormDialog', () => {
       expect(JSON.stringify(call)).not.toMatch(/tcogs|selling_price|gross_margin|customer_name/i);
     }
     consoleSpy.mockRestore();
+  });
+});
+
+describe('ProjectFormDialog — P9 planning fields and category-by-hub (ADR 0007)', () => {
+  const mixedHubs: Hub[] = [
+    { id: 'hub-1', name: 'R&D-Greece', lab_region: 'Greece', is_oem: false },
+    { id: 'hub-oem', name: 'OEM-HCK', lab_region: 'India', is_oem: true },
+  ];
+
+  async function pickHub(user: ReturnType<typeof userEvent.setup>, name: string) {
+    await user.click(screen.getByRole('combobox', { name: /^Hub/ }));
+    await user.click(await screen.findByRole('option', { name }));
+  }
+
+  it('offers OEM categories for an OEM hub and PDD categories for a non-OEM hub (fallback split, no server list)', async () => {
+    const user = userEvent.setup();
+    renderWithProviders(
+      <ProjectFormDialog mode="create" project={null} open onOpenChange={vi.fn()} hubs={mixedHubs} onSubmit={vi.fn()} />,
+    );
+    await pickHub(user, 'OEM-HCK');
+    await user.click(screen.getByRole('combobox', { name: /^Category/ }));
+    const oemOptions = (await screen.findAllByRole('option')).map((o) => o.textContent);
+    expect(oemOptions).toEqual(['Unset', 'A-OEM', 'B-OEM', 'C-OEM']);
+    await user.keyboard('{Escape}');
+
+    await pickHub(user, 'R&D-Greece');
+    await user.click(screen.getByRole('combobox', { name: /^Category/ }));
+    const pddOptions = (await screen.findAllByRole('option')).map((o) => o.textContent);
+    expect(pddOptions).toEqual(['Unset', 'A+', 'A', 'B', 'C']);
+  });
+
+  it('clears a category that is invalid for the newly selected hub', async () => {
+    const user = userEvent.setup();
+    const onSubmit = vi.fn().mockResolvedValue(undefined);
+    renderWithProviders(
+      <ProjectFormDialog mode="create" project={null} open onOpenChange={vi.fn()} hubs={mixedHubs} onSubmit={onSubmit} />,
+    );
+    await user.type(screen.getByLabelText(/^Name/), 'Cooler OEM');
+    await pickHub(user, 'R&D-Greece');
+    await user.click(screen.getByRole('combobox', { name: /^Category/ }));
+    await user.click(await screen.findByRole('option', { name: 'A+' }));
+    await pickHub(user, 'OEM-HCK');
+    await user.click(screen.getByRole('button', { name: 'Create draft' }));
+    expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({ hub_id: 'hub-oem', category: null }));
+  });
+
+  it('submits target_end_week, certification_testing_required (default on) and the estimated weeks', async () => {
+    const user = userEvent.setup();
+    const onSubmit = vi.fn().mockResolvedValue(undefined);
+    renderWithProviders(
+      <ProjectFormDialog mode="create" project={null} open onOpenChange={vi.fn()} hubs={mixedHubs} onSubmit={onSubmit} />,
+    );
+    await user.type(screen.getByLabelText(/^Name/), 'Cooler P');
+    await pickHub(user, 'R&D-Greece');
+    await user.type(screen.getByLabelText(/^Expected completion \(week\)/), '44');
+    await user.type(screen.getByLabelText(/^Estimated design weeks/), '18');
+    await user.type(screen.getByLabelText(/^Estimated lab weeks/), '10');
+    expect(screen.getByRole('checkbox', { name: /Certification testing required/ })).toHaveAttribute('data-state', 'checked');
+    expect(screen.getByText('Lab steps are skipped when off.')).toBeInTheDocument();
+    await user.click(screen.getByRole('checkbox', { name: /Certification testing required/ }));
+    await user.click(screen.getByRole('button', { name: 'Create draft' }));
+    expect(onSubmit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        target_end_week: 44,
+        certification_testing_required: false,
+        estimated_design_weeks: 18,
+        estimated_lab_weeks: 10,
+      }),
+    );
+  });
+
+  it('rejects an expected-completion week outside 1..78', async () => {
+    const user = userEvent.setup();
+    const onSubmit = vi.fn();
+    renderWithProviders(
+      <ProjectFormDialog mode="create" project={null} open onOpenChange={vi.fn()} hubs={mixedHubs} onSubmit={onSubmit} />,
+    );
+    await user.type(screen.getByLabelText(/^Name/), 'Cooler Q');
+    await pickHub(user, 'R&D-Greece');
+    await user.type(screen.getByLabelText(/^Expected completion \(week\)/), '90');
+    await user.click(screen.getByRole('button', { name: 'Create draft' }));
+    expect(await screen.findByText('Must be 78 or less')).toBeInTheDocument();
+    expect(onSubmit).not.toHaveBeenCalled();
   });
 });

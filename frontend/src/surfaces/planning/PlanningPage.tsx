@@ -16,9 +16,11 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { ReadOnlyNotice } from '@/components/session/write-gate';
 import { ApiError } from '@/lib/api/client';
 import { useHubs } from '@/lib/api/reference';
 import { SURFACES } from '@/app/nav';
+import { usePermission } from '@/stores/session';
 
 import { AccessNotice, WriteForbiddenNotice } from './components/access-notice';
 import { ApplyLogicCard } from './components/apply-logic-panel';
@@ -93,7 +95,9 @@ export default function PlanningPage(): React.JSX.Element {
     'Engineer and chamber configuration, Apply Logic and Auto-assign.';
 
   const denied = authKind([engineerListQuery.error, chamberListQuery.error]);
-  const canEdit = !writeForbidden;
+  // Session table first (ADR 0010), server 403 second.
+  const permission = usePermission('capacity_planning');
+  const canEdit = permission.write && !writeForbidden;
 
   const hubNameById = React.useMemo(() => {
     const map = new Map<string, string>();
@@ -218,6 +222,7 @@ export default function PlanningPage(): React.JSX.Element {
         <AccessNotice kind={denied} />
       ) : (
         <div className="flex flex-col gap-4">
+          <ReadOnlyNotice surface="capacity_planning" what="Creating, editing or applying changes" />
           {writeForbidden ? <WriteForbiddenNotice /> : null}
 
           <Tabs defaultValue="engineers">

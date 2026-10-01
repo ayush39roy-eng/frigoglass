@@ -15,7 +15,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.db import get_db
-from api.deps import require_roles
+from api.deps import get_current_principal, require_roles
 from core.principal import Principal
 from models.audit import AuditLogEntry
 from models.currency import CurrencyRate
@@ -24,16 +24,18 @@ from schemas.currency import CurrencyRateRead, CurrencyRateUpdateRequest
 
 router = APIRouter(prefix="/currency-rates", tags=["currency-rates"])
 
-_admin_only = require_roles(RoleName.ADMIN)
+#: P9-T03 (ADR 0010 §1): Super Admin holds every Admin right.
+_admin_only = require_roles(RoleName.ADMIN, RoleName.SUPER_ADMIN)
 
 
 @router.get("", response_model=list[CurrencyRateRead])
-async def list_currency_rates(db: AsyncSession = Depends(get_db)) -> list[CurrencyRate]:
-    """List all currency rates. Public within the app — reading currency
-    rates needs no auth per P1-T04's acceptance criteria (only the *update*
-    endpoint below needs an Admin-role gate, and that gate doesn't exist yet
-    either — see its docstring). Real API-wide auth (OIDC login flow) is
-    P3-T02; RBAC + hub-scoped row filtering is P3-T03.
+async def list_currency_rates(
+    db: AsyncSession = Depends(get_db),
+    current_user: Principal = Depends(get_current_principal),
+) -> list[CurrencyRate]:
+    """List all currency rates. Any authenticated principal (P9-R02, security
+    S-07, carried from P3-T08 #5); no surface permission, since every role
+    that sees money needs the rates.
     """
     result = await db.execute(select(CurrencyRate).order_by(CurrencyRate.currency_code))
     return list(result.scalars().all())

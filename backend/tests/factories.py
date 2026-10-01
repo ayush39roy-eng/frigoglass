@@ -28,6 +28,7 @@ from models import (
     User,
     UserHubScope,
     UserRole,
+    Workflow,
     WorkflowStepTemplate,
 )
 from models.enums import (
@@ -102,7 +103,9 @@ async def make_chamber(
         max_concurrent=max_concurrent,
         platforms=1,
         efficiency=1.0,
-        weeks_per_chamber=0,
+        maintenance_weeks=2,
+        breakdown_weeks=0,
+        calibration_weeks=1,
         allowed_stages=allowed_stages or ["PDD-F"],
     )
     session.add(chamber)
@@ -116,11 +119,35 @@ async def make_workflow_step_template(
     step_id: str = "PDD-A",
     name: str = "Marketing Brief",
     kind: WorkflowStepKind = WorkflowStepKind.DESIGN,
-    base_weeks: int = 2,
     sequence_order: int = 1,
+    workflow_id: str | None = None,
+    code: str | None = None,
+    predecessor_ids: list[str] | None = None,
 ) -> WorkflowStepTemplate:
+    """Get-or-create. The P9-T01 migration seeds all 28 templates on
+    `alembic upgrade head`, so a test asking for e.g. "PDD-A" gets the seeded
+    row back unchanged (the `name`/`kind`/`sequence_order` arguments are
+    ignored in that case — the contract's values win). A step ID outside the
+    seeded 28 is inserted with the given fields under the workflow implied by
+    its prefix unless `workflow_id` says otherwise.
+    """
+    from sqlalchemy import select
+
+    existing = await session.get(WorkflowStepTemplate, step_id)
+    if existing is not None:
+        return existing
+    wf = workflow_id or step_id.split("-", 1)[0]
+    if await session.scalar(select(Workflow.id).where(Workflow.id == wf)) is None:
+        session.add(Workflow(id=wf, name=f"{wf} (test)"))
+        await session.flush()
     tmpl = WorkflowStepTemplate(
-        id=step_id, name=name, kind=kind, base_weeks=base_weeks, sequence_order=sequence_order
+        id=step_id,
+        workflow_id=wf,
+        code=code or step_id.replace("-", "_"),
+        name=name,
+        kind=kind,
+        sequence_order=sequence_order,
+        predecessor_ids=predecessor_ids or [],
     )
     session.add(tmpl)
     await session.flush()
@@ -259,7 +286,7 @@ async def make_user(
     full_name: str = "Test User",
     oidc_subject: str | None = None,
     is_active: bool = True,
-    hub_scope_all: bool = True,
+    hub_scope_all: bool | None = None,
     hub_ids: list[uuid.UUID] | None = None,
 ) -> User:
     """A provisioned `User` row (per `api.deps._resolve_user`'s "no
@@ -270,7 +297,24 @@ async def make_user(
     need a *real* `User.id` satisfying `audit_log_entries.actor_user_id`'s
     foreign key (i.e. any test that exercises a full authenticated mutation
     end-to-end through the API) should use this factory instead.
+
+    **P10-F01**: `hub_scope_all` defaults to `False` for an Engineer-only
+    role set (`roles == (RoleName.ENGINEER,)`) — matching
+    `services.hub_scope.is_engineer_self_scoped`'s "a pure Engineer
+    principal has `hub_scope_all=False`" invariant and the schema-level
+    guard in `schemas/user_admin.py` that now rejects that combination at
+    the API layer — rather than this factory's general-purpose `True`
+    default used for every other role. A caller that does not pass
+    `hub_scope_all` explicitly for `make_user(session, RoleName.ENGINEER)`
+    therefore gets the correct, non-privilege-escalating default instead of
+    silently reproducing the P10-F01 bug shape. An explicit
+    `hub_scope_all=True` still overrides this (needed by
+    `tests/test_hub_scope.py`'s own P10-F01 regression test, which proves
+    the *scoping* fix holds even when this schema-guard-respecting default
+    is deliberately bypassed).
     """
+    if hub_scope_all is None:
+        hub_scope_all = set(roles) != {RoleName.ENGINEER}
     user = User(
         email=email or f"user-{uuid.uuid4().hex[:8]}@example.com",
         full_name=full_name,

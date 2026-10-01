@@ -30,9 +30,6 @@ This script verifies the validator two ways, per this task's explicit brief:
 
 from __future__ import annotations
 
-import json
-from pathlib import Path
-
 from scheduling import (
     ChamberInput,
     EngineerInput,
@@ -41,10 +38,15 @@ from scheduling import (
     ScheduleInput,
     ScheduleOutput,
     StepSchedule,
-    WorkflowStepTemplate,
     check_scheduler_determinism,
     run_greedy_sgs,
     validate_invariants,
+)
+from scheduling._selftest_common import (
+    LEAD_TIMES,
+    TEMPLATE,
+    load_seed_schedule_input,
+    seed_path,
 )
 
 FAILURES: list[str] = []
@@ -63,11 +65,6 @@ def check_violations_contain(label: str, violations: tuple, invariant: str) -> N
 
 
 # --- Shared fixtures (mirrors scheduling._selftest.py's building blocks) ------
-
-TEMPLATE = (
-    WorkflowStepTemplate("PDD-A", "Marketing Brief", "design", base_weeks=2, sequence_order=1),
-    WorkflowStepTemplate("PDD-F", "Proof of Concept", "lab", base_weeks=3, sequence_order=2),
-)
 
 ENGINEER_A = EngineerInput("eng-a", "Engineer A", "R&D-Greece", ("A+", "A", "B", "C"))
 ENGINEER_B = EngineerInput("eng-b", "Engineer B", "R&D-Greece", ("A+", "A", "B", "C"))
@@ -98,7 +95,11 @@ def direction1_normal_case() -> None:
         leader_engineer_id="eng-a",
     )
     si = ScheduleInput(
-        projects=(proj,), engineers=(ENGINEER_A,), chambers=(CHAMBER_GR1,), workflow_steps=TEMPLATE
+        projects=(proj,),
+        engineers=(ENGINEER_A,),
+        chambers=(CHAMBER_GR1,),
+        workflow_steps=TEMPLATE,
+        lead_times=LEAD_TIMES,
     )
     out = run_greedy_sgs(si)
     v = validate_invariants(si, out)
@@ -116,6 +117,7 @@ def direction1_single_engineer_contention() -> None:
         engineers=(ENGINEER_A,),
         chambers=(CHAMBER_GR1, CHAMBER_GR2),
         workflow_steps=TEMPLATE,
+        lead_times=LEAD_TIMES,
     )
     out = run_greedy_sgs(si)
     v = validate_invariants(si, out)
@@ -131,6 +133,7 @@ def direction1_chamber_saturation() -> None:
         engineers=(ENGINEER_A, ENGINEER_B),
         chambers=(CHAMBER_GR1,),
         workflow_steps=TEMPLATE,
+        lead_times=LEAD_TIMES,
     )
     out = run_greedy_sgs(si)
     v = validate_invariants(si, out)
@@ -161,7 +164,11 @@ def direction1_frozen_conflict() -> None:
         actual_start_week=10,
     )
     si = ScheduleInput(
-        projects=(p1, p2), engineers=(ENGINEER_A,), chambers=(CHAMBER_GR1,), workflow_steps=TEMPLATE
+        projects=(p1, p2),
+        engineers=(ENGINEER_A,),
+        chambers=(CHAMBER_GR1,),
+        workflow_steps=TEMPLATE,
+        lead_times=LEAD_TIMES,
     )
     out = run_greedy_sgs(si)
     v = validate_invariants(si, out)
@@ -203,12 +210,11 @@ def direction1_frozen_chamber_overlap() -> None:
         engineers=(ENGINEER_A, ENGINEER_B),
         chambers=(CHAMBER_GR1,),  # max_concurrent=1, both projects land here in the same weeks
         workflow_steps=TEMPLATE,
+        lead_times=LEAD_TIMES,
     )
     out = run_greedy_sgs(si)
     v = validate_invariants(si, out)
-    check(
-        "direction1 frozen_chamber_overlap: zero violations (OVERLAP correctly flagged)", v == ()
-    )
+    check("direction1 frozen_chamber_overlap: zero violations (OVERLAP correctly flagged)", v == ())
 
 
 def direction1_left_out_at_horizon() -> None:
@@ -227,6 +233,7 @@ def direction1_left_out_at_horizon() -> None:
         engineers=(ENGINEER_A,),
         chambers=(CHAMBER_GR1,),
         workflow_steps=TEMPLATE,
+        lead_times=LEAD_TIMES,
         current_week=77,
         horizon_weeks=78,
     )
@@ -251,6 +258,7 @@ def direction1_category_mismatch_and_oem() -> None:
         engineers=(ENGINEER_C_NARROW,),
         chambers=(CHAMBER_GR1,),
         workflow_steps=TEMPLATE,
+        lead_times=LEAD_TIMES,
     )
     out = run_greedy_sgs(si)
     v = validate_invariants(si, out)
@@ -272,6 +280,7 @@ def direction1_spillover_boundary_and_delay() -> None:
         engineers=(ENGINEER_A,),
         chambers=(CHAMBER_GR1,),
         workflow_steps=TEMPLATE,
+        lead_times=LEAD_TIMES,
         current_week=48,
     )
     check(
@@ -285,6 +294,7 @@ def direction1_spillover_boundary_and_delay() -> None:
         engineers=(ENGINEER_A,),
         chambers=(CHAMBER_GR1,),
         workflow_steps=TEMPLATE,
+        lead_times=LEAD_TIMES,
         current_week=49,
     )
     check(
@@ -308,6 +318,7 @@ def direction1_spillover_boundary_and_delay() -> None:
         engineers=(ENGINEER_A,),
         chambers=(CHAMBER_GR1,),
         workflow_steps=TEMPLATE,
+        lead_times=LEAD_TIMES,
         current_week=45,
     )
     check(
@@ -330,6 +341,7 @@ def direction1_excluded_statuses() -> None:
         engineers=(ENGINEER_A,),
         chambers=(CHAMBER_GR1,),
         workflow_steps=TEMPLATE,
+        lead_times=LEAD_TIMES,
     )
     out = run_greedy_sgs(si)
     v = validate_invariants(si, out)
@@ -356,21 +368,21 @@ def direction1_full_14_step_multi_hub() -> None:
             "GR-A",
             "Greece",
             max_concurrent=2,
-            allowed_stages=("PDD-F", "PDD-H", "PDD-J", "PDD-L"),
+            allowed_stages=("PDD-F", "PDD-H"),
         ),
         ChamberInput(
             "ch-ro-a",
             "RO-A",
             "Romania",
             max_concurrent=1,
-            allowed_stages=("PDD-F", "PDD-H", "PDD-J", "PDD-L"),
+            allowed_stages=("PDD-F", "PDD-H"),
         ),
         ChamberInput(
             "ch-in-a",
             "IN-A",
             "India",
             max_concurrent=1,
-            allowed_stages=("PDD-F", "PDD-H", "PDD-J", "PDD-L"),
+            allowed_stages=("PDD-F", "PDD-H", "OEM-E", "OEM-H"),
         ),
     )
     projects = (
@@ -420,20 +432,22 @@ def direction1_full_14_step_multi_hub() -> None:
             name="OEM",
             hub="OEM-HCK",
             status="In Queue",
-            category="A",
+            category="A-OEM",
             priority="P1",
             frozen=False,
             leader_engineer_id="eng-oem1",
+            workflow_id="OEM",
         ),
         ProjectInput(
             project_id="p-full-catmismatch",
             name="Cat mismatch",
             hub="OEM-HCK",
             status="In Queue",
-            category="A",
+            category="B-OEM",
             priority="P4",
             frozen=False,
             leader_engineer_id="eng-gr2",  # not OEM-eligible
+            workflow_id="OEM",
         ),
     )
     si = ScheduleInput(projects=projects, engineers=engineers, chambers=chambers)
@@ -453,51 +467,11 @@ def direction1_real_seed_dataset() -> None:
     self-test should not depend on it).
     """
 
-    seed_path = Path(__file__).resolve().parent.parent / "seed" / "prototype_seed_data.json"
-    if not seed_path.exists():
+    if not seed_path().exists():
         check("direction1 real_seed_dataset: seed file present (skipped, not found)", False)
         return
 
-    seed = json.loads(seed_path.read_text())
-
-    engineers = tuple(
-        EngineerInput(
-            engineer_id=e["name"],
-            name=e["name"],
-            hub=e["hub"],
-            allowed_categories=tuple(e["cats"]),
-            fte=e["fte"],
-        )
-        for e in seed["engineers"]
-    )
-    chambers = tuple(
-        ChamberInput(
-            chamber_id=c["id"],
-            code=c["id"],
-            lab_region=c["labHub"],
-            max_concurrent=c["max"],
-            allowed_stages=tuple(f"PDD-{letter}" for letter in c["stages"]),
-            efficiency=c["eff"],
-            weeks_per_chamber=c["wksCh"],
-        )
-        for c in seed["chambers"]
-    )
-    projects = tuple(
-        ProjectInput(
-            project_id=p["id"],
-            name=p["name"],
-            hub=p["hub"],
-            status=p["status"],
-            category=p["cat"],
-            priority=p["prio"],
-            frozen=p["frozen"],
-            leader_engineer_id=p["leader"],
-            actual_start_week=p["actualStart"] if p["frozen"] else None,
-            delay_weeks=p["delay"],
-        )
-        for p in seed["projects"]
-    )
-    si = ScheduleInput(projects=projects, engineers=engineers, chambers=chambers)
+    si = load_seed_schedule_input()
     out = run_greedy_sgs(si)
     v = validate_invariants(si, out)
     check(f"direction1 real_seed_dataset (46 projects): zero violations (got {len(v)})", v == ())
@@ -535,7 +509,11 @@ def direction2_i1_engineer_double_booked_non_frozen() -> None:
     p1 = _base_project(project_id="p-i1-a")
     p2 = _base_project(project_id="p-i1-b")
     si = ScheduleInput(
-        projects=(p1, p2), engineers=(ENGINEER_A,), chambers=(CHAMBER_GR1,), workflow_steps=TEMPLATE
+        projects=(p1, p2),
+        engineers=(ENGINEER_A,),
+        chambers=(CHAMBER_GR1,),
+        workflow_steps=TEMPLATE,
+        lead_times=LEAD_TIMES,
     )
     step_a = StepSchedule("PDD-A", 1, "design", 31, 32, 2, "eng-a", None)
     step_b = StepSchedule("PDD-A", 1, "design", 32, 33, 2, "eng-a", None)  # overlaps week 32
@@ -588,6 +566,7 @@ def direction2_i2_chamber_over_capacity_no_frozen() -> None:
         engineers=(ENGINEER_A, ENGINEER_B),
         chambers=(CHAMBER_GR1,),  # max_concurrent=1
         workflow_steps=TEMPLATE,
+        lead_times=LEAD_TIMES,
     )
     lab_a = StepSchedule("PDD-F", 2, "lab", 40, 42, 3, None, "ch-gr1")
     lab_b = StepSchedule("PDD-F", 2, "lab", 40, 42, 3, None, "ch-gr1")  # same chamber, same weeks
@@ -633,7 +612,11 @@ def direction2_i3_steps_overlap_within_project() -> None:
 
     p1 = _base_project(project_id="p-i3-a")
     si = ScheduleInput(
-        projects=(p1,), engineers=(ENGINEER_A,), chambers=(CHAMBER_GR1,), workflow_steps=TEMPLATE
+        projects=(p1,),
+        engineers=(ENGINEER_A,),
+        chambers=(CHAMBER_GR1,),
+        workflow_steps=TEMPLATE,
+        lead_times=LEAD_TIMES,
     )
     step1 = StepSchedule("PDD-A", 1, "design", 31, 32, 2, "eng-a", None)
     step2 = StepSchedule("PDD-F", 2, "lab", 32, 34, 3, None, "ch-gr1")  # starts before step1 ends
@@ -664,13 +647,18 @@ def direction2_i4_wrong_lab_region_and_stage() -> None:
 
     p1 = _base_project(project_id="p-i4-a", hub="R&D-Greece")
     romania_chamber = ChamberInput(
-        "ch-ro-x", "RO-X", "Romania", max_concurrent=1, allowed_stages=("PDD-H",)  # not PDD-F
+        "ch-ro-x",
+        "RO-X",
+        "Romania",
+        max_concurrent=1,
+        allowed_stages=("PDD-H",),  # not PDD-F
     )
     si = ScheduleInput(
         projects=(p1,),
         engineers=(ENGINEER_A,),
         chambers=(CHAMBER_GR1, romania_chamber),
         workflow_steps=TEMPLATE,
+        lead_times=LEAD_TIMES,
     )
     step1 = StepSchedule("PDD-A", 1, "design", 31, 32, 2, "eng-a", None)
     # wrong region + wrong stage
@@ -700,7 +688,11 @@ def direction2_i5_incomplete_not_flagged_left_out() -> None:
 
     p1 = _base_project(project_id="p-i5-a")
     si = ScheduleInput(
-        projects=(p1,), engineers=(ENGINEER_A,), chambers=(CHAMBER_GR1,), workflow_steps=TEMPLATE
+        projects=(p1,),
+        engineers=(ENGINEER_A,),
+        chambers=(CHAMBER_GR1,),
+        workflow_steps=TEMPLATE,
+        lead_times=LEAD_TIMES,
     )
     step1 = StepSchedule("PDD-A", 1, "design", 31, 32, 2, "eng-a", None)
     outcome = ProjectScheduleOutcome(
@@ -730,7 +722,11 @@ def direction2_i6_negative_design_duration() -> None:
 
     p1 = _base_project(project_id="p-i6-a")
     si = ScheduleInput(
-        projects=(p1,), engineers=(ENGINEER_A,), chambers=(CHAMBER_GR1,), workflow_steps=TEMPLATE
+        projects=(p1,),
+        engineers=(ENGINEER_A,),
+        chambers=(CHAMBER_GR1,),
+        workflow_steps=TEMPLATE,
+        lead_times=LEAD_TIMES,
     )
     step1 = StepSchedule("PDD-A", 1, "design", 31, 30, -2, "eng-a", None)  # negative duration
     step2 = StepSchedule("PDD-F", 2, "lab", 31, 33, 3, None, "ch-gr1")
@@ -761,7 +757,11 @@ def direction2_i7_negative_lab_duration() -> None:
 
     p1 = _base_project(project_id="p-i7-a")
     si = ScheduleInput(
-        projects=(p1,), engineers=(ENGINEER_A,), chambers=(CHAMBER_GR1,), workflow_steps=TEMPLATE
+        projects=(p1,),
+        engineers=(ENGINEER_A,),
+        chambers=(CHAMBER_GR1,),
+        workflow_steps=TEMPLATE,
+        lead_times=LEAD_TIMES,
     )
     step1 = StepSchedule("PDD-A", 1, "design", 31, 32, 2, "eng-a", None)
     step2 = StepSchedule("PDD-F", 2, "lab", 33, 32, -1, None, "ch-gr1")  # negative duration
@@ -797,7 +797,11 @@ def direction2_i8_nondeterministic_input_rejected() -> None:
 
     p1 = _base_project(project_id="p-i8-a")
     si = ScheduleInput(
-        projects=(p1,), engineers=(ENGINEER_A,), chambers=(CHAMBER_GR1,), workflow_steps=TEMPLATE
+        projects=(p1,),
+        engineers=(ENGINEER_A,),
+        chambers=(CHAMBER_GR1,),
+        workflow_steps=TEMPLATE,
+        lead_times=LEAD_TIMES,
     )
     v = check_scheduler_determinism(si, runs=3)
     check("direction2 I8 (real scheduler input has zero determinism violations)", v == ())
@@ -821,7 +825,11 @@ def direction2_i9_within_year_flag_wrong() -> None:
 
     p1 = _base_project(project_id="p-i9-a", delay_weeks=0)
     si = ScheduleInput(
-        projects=(p1,), engineers=(ENGINEER_A,), chambers=(CHAMBER_GR1,), workflow_steps=TEMPLATE
+        projects=(p1,),
+        engineers=(ENGINEER_A,),
+        chambers=(CHAMBER_GR1,),
+        workflow_steps=TEMPLATE,
+        lead_times=LEAD_TIMES,
     )
     step1 = StepSchedule("PDD-A", 1, "design", 60, 61, 2, "eng-a", None)
     step2 = StepSchedule("PDD-F", 2, "lab", 62, 64, 3, None, "ch-gr1")  # end_week=64 > 52
@@ -854,7 +862,11 @@ def direction2_i10_frozen_dates_mutated() -> None:
         project_id="p-i10-a", frozen=True, actual_start_week=10, status="In Development"
     )
     si = ScheduleInput(
-        projects=(p1,), engineers=(ENGINEER_A,), chambers=(CHAMBER_GR1,), workflow_steps=TEMPLATE
+        projects=(p1,),
+        engineers=(ENGINEER_A,),
+        chambers=(CHAMBER_GR1,),
+        workflow_steps=TEMPLATE,
+        lead_times=LEAD_TIMES,
     )
     step1 = StepSchedule("PDD-A", 1, "design", 15, 16, 2, "eng-a", None)  # should be 10, not 15
     step2 = StepSchedule("PDD-F", 2, "lab", 17, 19, 3, None, "ch-gr1")

@@ -13,6 +13,7 @@ const activeRun: ScheduleRunSummary = {
   horizon_weeks: 34,
   current_week: 31,
   trigger_reason: null,
+  solver_status: null,
   created_at: '2026-08-31T09:00:00Z',
 };
 

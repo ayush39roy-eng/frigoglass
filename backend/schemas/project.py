@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -54,6 +55,15 @@ class ProjectCreateRequest(BaseModel):
     gross_margin_pct: float | None = None
     capex_keur: float | None = Field(default=None, ge=0)
     rm_savings_keur: float | None = Field(default=None, ge=0)
+    # --- P9 (docs/API_CONTRACT_P9.md §6) ---------------------------------
+    #: Charter "Project End Date - LATEST" as a week number (DOMAIN_RULES
+    #: "Expected vs projected completion").
+    target_end_week: int | None = Field(default=None, ge=1, le=520)
+    #: When false, every lab-kind step is skipped (ADR 0007).
+    certification_testing_required: bool = True
+    #: Capacity "Estimated" column only; never a schedule input (OQ #12).
+    estimated_design_weeks: float | None = Field(default=None, ge=0, le=9999.99)
+    estimated_lab_weeks: float | None = Field(default=None, ge=0, le=9999.99)
 
 
 class ProjectUpdateRequest(BaseModel):
@@ -91,6 +101,10 @@ class ProjectUpdateRequest(BaseModel):
     gross_margin_pct: float | None = None
     capex_keur: float | None = Field(default=None, ge=0)
     rm_savings_keur: float | None = Field(default=None, ge=0)
+    target_end_week: int | None = Field(default=None, ge=1, le=520)
+    certification_testing_required: bool | None = None
+    estimated_design_weeks: float | None = Field(default=None, ge=0, le=9999.99)
+    estimated_lab_weeks: float | None = Field(default=None, ge=0, le=9999.99)
 
 
 class ProjectRead(BaseModel):
@@ -117,6 +131,14 @@ class ProjectRead(BaseModel):
     gross_margin_pct: float | None
     capex_keur: float | None
     rm_savings_keur: float | None
+    target_end_week: int | None
+    certification_testing_required: bool
+    estimated_design_weeks: float | None
+    estimated_lab_weeks: float | None
+    #: Progress or settings changed since the active run (ADR 0006).
+    schedule_stale: bool
+    #: "PDD" | "OEM", a function of the hub (ADR 0007).
+    workflow_id: Literal["PDD", "OEM"]
     created_at: datetime
     updated_at: datetime
 
@@ -148,7 +170,8 @@ class ProjectSubmitRequest(BaseModel):
     further along (e.g. data migration from the spreadsheet process, P7).
     Setting it to `Draft`/`Commercialized`/`On Hold` is rejected (400) — this
     endpoint's entire purpose is leaving Draft, not re-entering it or
-    jumping straight to a terminal status.
+    jumping straight to a terminal status. `Cancelled` (P9) is rejected the
+    same way.
     """
 
     model_config = ConfigDict(extra="forbid")

@@ -18,6 +18,7 @@ the real end-to-end worker pipeline).
 
 from __future__ import annotations
 
+import json
 import uuid
 
 import pytest
@@ -127,7 +128,8 @@ async def test_dispatch_as_admin_creates_queued_run_and_enqueues_task(
         args, kwargs = fake_task.calls[0]
         assert args[0] == body["schedule_run"]["id"]
         assert kwargs["triggered_by_user_id"] == str(user_id)
-        assert kwargs["max_time_in_seconds"] is None
+        assert kwargs["deterministic_time"] is None
+        assert "max_time_in_seconds" not in kwargs
 
         # A "queued" progress event was published.
         assert any(p["status"] == "queued" for p in published)
@@ -135,7 +137,21 @@ async def test_dispatch_as_admin_creates_queued_run_and_enqueues_task(
         _teardown()
 
 
-async def test_dispatch_accepts_max_time_in_seconds_override(db_session, fake_task, published):
+async def test_dispatch_accepts_deterministic_time_override(db_session, fake_task, published):
+    client, _ = await _client(db_session, RoleName.ADMIN)
+    try:
+        resp = await client.post(
+            "/schedule-runs/cp-sat-dispatch", json={"deterministic_time": 12.5}
+        )
+        assert resp.status_code == 202
+        _, kwargs = fake_task.calls[0]
+        assert kwargs["deterministic_time"] == 12.5
+    finally:
+        _teardown()
+
+
+async def test_dispatch_ignores_legacy_max_time_in_seconds(db_session, fake_task, published):
+    # P9-R02b: one-release tolerance; the wall-clock value is dropped (ruling 6).
     client, _ = await _client(db_session, RoleName.ADMIN)
     try:
         resp = await client.post(
@@ -143,7 +159,99 @@ async def test_dispatch_accepts_max_time_in_seconds_override(db_session, fake_ta
         )
         assert resp.status_code == 202
         _, kwargs = fake_task.calls[0]
-        assert kwargs["max_time_in_seconds"] == 12.5
+        assert "max_time_in_seconds" not in kwargs
+        assert kwargs["deterministic_time"] is None
+    finally:
+        _teardown()
+
+
+async def test_dispatch_rejects_non_positive_deterministic_time(db_session, fake_task, published):
+    client, _ = await _client(db_session, RoleName.ADMIN)
+    try:
+        resp = await client.post("/schedule-runs/cp-sat-dispatch", json={"deterministic_time": 0})
+        assert resp.status_code == 422
+        assert fake_task.calls == []
+    finally:
+        _teardown()
+
+
+async def test_dispatch_rejects_deterministic_time_above_ceiling(db_session, fake_task, published):
+    # P9-F01 (R04-L1): `le=60` — the security-auditor's live pentest sent
+    # 1e12 and held the only solver slot for 900s instead of ~53s.
+    client, _ = await _client(db_session, RoleName.ADMIN)
+    try:
+        resp = await client.post(
+            "/schedule-runs/cp-sat-dispatch", json={"deterministic_time": 61}
+        )
+        assert resp.status_code == 422
+        assert fake_task.calls == []
+    finally:
+        _teardown()
+
+
+@pytest.mark.parametrize("bad_value", [float("inf"), float("-inf")])
+async def test_dispatch_rejects_non_finite_deterministic_time(
+    db_session, fake_task, published, bad_value
+):
+    # P9-F01 (R04-L1): `allow_inf_nan=False` — `inf`/`-inf` used to reach the
+    # Celery task and hold the solver slot forever; `NaN` used to 500 (an
+    # unrenderable 422 body) rather than 422. httpx's own `json=` kwarg
+    # refuses to serialize inf/nan client-side (`allow_nan=False`), unlike
+    # the real P9-R04 pentest's raw `curl` body — encode it ourselves with
+    # Python's default `allow_nan=True` to reproduce the same wire bytes.
+    client, _ = await _client(db_session, RoleName.ADMIN)
+    try:
+        resp = await client.post(
+            "/schedule-runs/cp-sat-dispatch",
+            content=json.dumps({"deterministic_time": bad_value}).encode(),
+            headers={"Content-Type": "application/json"},
+        )
+        assert resp.status_code == 422
+        assert fake_task.calls == []
+    finally:
+        _teardown()
+
+
+async def test_dispatch_rejects_string_deterministic_time_in_strict_mode(
+    db_session, fake_task, published
+):
+    # P9-F01 (R04-L1): `strict=True` — lax mode used to coerce `"15"`/`true`.
+    client, _ = await _client(db_session, RoleName.ADMIN)
+    try:
+        resp = await client.post(
+            "/schedule-runs/cp-sat-dispatch", json={"deterministic_time": "15"}
+        )
+        assert resp.status_code == 422
+        assert fake_task.calls == []
+    finally:
+        _teardown()
+
+
+async def test_dispatch_refused_while_a_run_is_already_in_flight(db_session, fake_task, published):
+    # P9-F01 (R04-L1): single-flight, mirroring the Project Workspace
+    # `RUN_IN_PROGRESS` recalculate check — the pentest's own finding was
+    # that this dispatch endpoint had none.
+    await make_schedule_run(db_session, status=ScheduleRunStatus.RUNNING)
+    client, _ = await _client(db_session, RoleName.ADMIN)
+    try:
+        resp = await client.post("/schedule-runs/cp-sat-dispatch", json={})
+        assert resp.status_code == 409
+        assert resp.json()["code"] == "RUN_IN_PROGRESS"
+        assert fake_task.calls == []
+    finally:
+        _teardown()
+
+
+async def test_dispatch_allowed_once_the_in_flight_run_is_terminal(
+    db_session, fake_task, published
+):
+    # A COMPLETED run (not QUEUED/RUNNING) never blocks a new dispatch.
+    await make_schedule_run(db_session, status=ScheduleRunStatus.COMPLETED)
+    client, _ = await _client(db_session, RoleName.ADMIN)
+    try:
+        resp = await client.post("/schedule-runs/cp-sat-dispatch", json={})
+        assert resp.status_code == 202
+        assert len(fake_task.calls) == 1
     finally:
         _teardown()
 

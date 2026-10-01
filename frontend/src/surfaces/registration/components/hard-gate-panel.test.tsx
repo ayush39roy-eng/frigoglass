@@ -35,6 +35,12 @@ const project: ProjectRead = {
   gross_margin_pct: null,
   capex_keur: null,
   rm_savings_keur: null,
+  target_end_week: null,
+  certification_testing_required: true,
+  estimated_design_weeks: null,
+  estimated_lab_weeks: null,
+  schedule_stale: false,
+  workflow_id: 'PDD',
   created_at: '2026-01-01T00:00:00Z',
   updated_at: '2026-01-01T00:00:00Z',
 };

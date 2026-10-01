@@ -1,5 +1,6 @@
 import * as React from 'react';
-import { Bell, Check, CheckCheck } from 'lucide-react';
+import { Link } from 'react-router-dom';
+import { ArrowUpRight, Bell, Check, CheckCheck } from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -85,6 +86,7 @@ export function NotificationBell(): React.JSX.Element {
         </div>
         <div className="max-h-96 overflow-y-auto p-2">
           <NotificationListBody
+            onNavigate={() => setOpen(false)}
             query={notificationsQuery}
             onMarkRead={(id) => markReadMutation.mutate(id)}
             pendingMarkReadId={
@@ -98,10 +100,12 @@ export function NotificationBell(): React.JSX.Element {
 }
 
 function NotificationListBody({
+  onNavigate,
   query,
   onMarkRead,
   pendingMarkReadId,
 }: {
+  onNavigate: () => void;
   query: ReturnType<typeof useNotifications>;
   onMarkRead: (id: string) => void;
   pendingMarkReadId: string | null;
@@ -142,6 +146,7 @@ function NotificationListBody({
       {items.map((notification) => (
         <NotificationRow
           key={notification.id}
+          onNavigate={onNavigate}
           notification={notification}
           onMarkRead={onMarkRead}
           pending={pendingMarkReadId === notification.id}
@@ -155,7 +160,9 @@ function NotificationRow({
   notification,
   onMarkRead,
   pending,
+  onNavigate,
 }: {
+  onNavigate: () => void;
   notification: NotificationRead;
   onMarkRead: (id: string) => void;
   pending: boolean;
@@ -186,6 +193,19 @@ function NotificationRow({
             >
               {formatTimestamp(notification.created_at)}
             </time>
+            {/* Deep link to the project (every notification names one). Never to a
+                schedule run: `schedule_run_id` is null for stage_blocked. */}
+            {notification.project_id ? (
+              <Link
+                to={`/projects/${notification.project_id}`}
+                onClick={onNavigate}
+                className="ml-auto inline-flex items-center gap-0.5 text-2xs font-medium text-primary hover:underline"
+                data-testid="notification-project-link"
+              >
+                Open project
+                <ArrowUpRight className="size-3" aria-hidden="true" />
+              </Link>
+            ) : null}
           </div>
         </div>
         {unread ? (

@@ -25,6 +25,7 @@ const withRun: CompletingWithinYear = {
   within_year_count: 9,
   spillover_count: 4,
   left_out_count: 2,
+  blocked_count: 1,
   rows: [
     {
       project_id: 'p1',
@@ -35,6 +36,7 @@ const withRun: CompletingWithinYear = {
       within_year: true,
       spillover: false,
       left_out: false,
+      blocked: false,
       cat_not_allowed: false,
       last_step_end_week: 40,
     },
@@ -42,12 +44,20 @@ const withRun: CompletingWithinYear = {
 };
 
 describe('WithinYearPanel', () => {
-  it('shows the three schedule-outcome KPIs straight from the endpoint payload', () => {
+  it('shows the four schedule-outcome KPIs straight from the endpoint payload, mutually exclusive', () => {
     renderWithProviders(<WithinYearPanel data={withRun} activeRun={undefined} />);
 
     expect(within(screen.getByRole('group', { name: 'Within year' })).getByText('9')).toBeInTheDocument();
     expect(within(screen.getByRole('group', { name: 'Spillover' })).getByText('4')).toBeInTheDocument();
     expect(within(screen.getByRole('group', { name: 'Left out' })).getByText('2')).toBeInTheDocument();
+    expect(within(screen.getByRole('group', { name: 'Blocked' })).getByText('1')).toBeInTheDocument();
+
+    // Each bucket renders exactly its own field — no bucket double-counts another's
+    // value (I9's mutual-exclusivity: 9 + 4 + 2 + 1, four distinct figures).
+    const values = ['Within year', 'Spillover', 'Left out', 'Blocked'].map(
+      (label) => within(screen.getByRole('group', { name: label })).getByText(/^\d+$/).textContent,
+    );
+    expect(values).toEqual(['9', '4', '2', '1']);
   });
 
   it('states the source run and I9 in visible copy', () => {
@@ -65,6 +75,7 @@ describe('WithinYearPanel', () => {
           within_year_count: 0,
           spillover_count: 0,
           left_out_count: 0,
+          blocked_count: 0,
           rows: [],
         }}
         activeRun={null}
@@ -83,6 +94,7 @@ describe('WithinYearPanel', () => {
           within_year_count: 0,
           spillover_count: 0,
           left_out_count: 0,
+          blocked_count: 0,
           rows: [],
         }}
         activeRun={undefined}
@@ -102,6 +114,7 @@ describe('WithinYearPanel', () => {
         within_year: true,
         spillover: false,
         left_out: false,
+        blocked: false,
         cat_not_allowed: false,
         last_step_end_week: 40,
       },
@@ -114,6 +127,7 @@ describe('WithinYearPanel', () => {
         within_year: false,
         spillover: true,
         left_out: false,
+        blocked: false,
         cat_not_allowed: true,
         last_step_end_week: 60,
       },
@@ -126,6 +140,20 @@ describe('WithinYearPanel', () => {
         within_year: false,
         spillover: false,
         left_out: true,
+        blocked: false,
+        cat_not_allowed: false,
+        last_step_end_week: null,
+      },
+      {
+        project_id: 'p-blocked',
+        project_name: 'Blocked project',
+        hub: 'PD-India',
+        category: 'A',
+        priority: 'P2',
+        within_year: false,
+        spillover: false,
+        left_out: false,
+        blocked: true,
         cat_not_allowed: false,
         last_step_end_week: null,
       },
@@ -138,6 +166,7 @@ describe('WithinYearPanel', () => {
           within_year_count: 1,
           spillover_count: 1,
           left_out_count: 1,
+          blocked_count: 1,
           rows,
         }}
         activeRun={undefined}
@@ -147,6 +176,8 @@ describe('WithinYearPanel', () => {
     const table = screen.getByRole('table', { name: 'Per-project outcome from the active schedule run' });
     expect(within(table).getByText('Within-year project')).toBeInTheDocument();
     expect(within(table).getByText('Within year')).toBeInTheDocument();
+    expect(within(table).getByText('Blocked project')).toBeInTheDocument();
+    expect(within(table).getByText('Blocked')).toBeInTheDocument();
 
     expect(within(table).getByText('Spillover project')).toBeInTheDocument();
     // null category/priority render the "—" placeholder, not a blank cell.

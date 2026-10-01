@@ -81,6 +81,42 @@ export const queryKeys = {
   // Chamber CRUD.
   chambers: () => ['chambers'] as const,
 
+  // --- session (P9 contract §1) ---
+  // `/me` itself lives in the Zustand session store (read synchronously by
+  // every guard); only the dev-user list is a query.
+  devUsers: () => ['me', 'dev-users'] as const,
+
+  // --- reference: categories valid for a hub (P9 contract §6) ---
+  categoriesForHub: (hubId?: string) => ['reference', 'categories', hubId ?? null] as const,
+
+  // --- user / role admin (P9 contract §2) ---
+  users: (params?: { q?: string | undefined; limit?: number; offset?: number }) =>
+    ['users', params ?? null] as const,
+  roles: () => ['roles'] as const,
+
+  // --- project access grants (ADR 0012, P10-T03) ---
+  // One grant list per project — there is no cross-project list endpoint
+  // (see `admin-users/api/project-access-api.ts`).
+  projectAccessGrants: (projectId: string) => ['projects', 'access', projectId] as const,
+  // The Project Access tab's project picker — a wide, unfiltered fetch
+  // (server max `limit=500` covers the ~236-project baseline) kept as its
+  // OWN key rather than reusing `projects(...)` above so it never collides
+  // with Registration's filtered/paginated list cache.
+  projectsForPicker: () => ['projects', 'picker'] as const,
+  // A wider, unpaginated user fetch for the Project Access tab's user picker
+  // and the grant table's user/granted-by name join — a DIFFERENT cache
+  // entry from the paginated `users(...)` key the Users tab's table uses, so
+  // neither view's page size forces the other's.
+  usersForPicker: () => ['users', 'picker'] as const,
+
+  // --- workflow settings (P9 contract §3) ---
+  workflowSettings: () => ['workflow-settings'] as const,
+
+  // --- project workspace (P9 contract §7) ---
+  projectWorkspace: (id: string) => ['projects', 'workspace', id] as const,
+  projectActivity: (id: string, before?: string) => ['projects', 'workspace', id, 'activity', before ?? null] as const,
+  mentionSearch: (q: string) => ['users', 'mention-search', q] as const,
+
   // --- cross-cutting ---
   // Audit Log surface (P7-T05, `GET /audit-log` — `backend/api/routers/
   // audit_log.py`, P3-T04's read side). Corrected from an earlier unused

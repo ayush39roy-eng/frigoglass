@@ -1,6 +1,7 @@
 import * as React from 'react';
 
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { GlassPanel } from '@/components/ui/glass-panel';
+import { CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import {
   Table,
   TableBody,
@@ -13,12 +14,21 @@ import { formatInteger } from '@/lib/format';
 import { PROJECT_TYPE_LABELS, type ProjectType } from '@/types/enums';
 
 import type { HubTypePipelineRow } from '../api/types';
+import { HubTypePipelineChart } from './hub-type-pipeline-chart';
 
 /**
  * Hub × type pipeline summary table (PROJECT_AND_STACK.md §2). Pivoted from the
  * flat `[{hub, type, count}]` rows the API returns. Portfolio composition — not a
  * schedule outcome. A Hub Planner only sees rows for their own hub(s) (the API
  * hub-scopes the query).
+ *
+ * Glass treatment (Dashboard polish, 2026-09-30): `<GlassPanel opacity="content">`
+ * (90% tint, not the hero tiles' 60%) — this card holds dense pivoted numbers, so
+ * the blur/border/shadow chrome is the same "glass" identity as the rest of the
+ * page, but the tint stays opaque enough that P4-T11's WCAG contrast work on the
+ * table's text tokens is never put at risk. A `<HubTypePipelineChart>` (Recharts,
+ * real data, same rows) sits above the pivot table as the chart-shaped read of
+ * the identical numbers the table states verbatim.
  */
 
 const UNTYPED = '—';
@@ -63,17 +73,19 @@ export function HubTypePipelineTable({ rows }: HubTypePipelineTableProps): React
   }, [rows]);
 
   return (
-    <Card>
+    <GlassPanel opacity="content">
       <CardHeader>
         <CardTitle>Hub × type pipeline</CardTitle>
       </CardHeader>
-      <CardContent>
+      <CardContent className="space-y-4">
         {rows.length === 0 ? (
           <p className="py-6 text-center text-sm text-text-muted">
             No projects in the pipeline for your hub scope.
           </p>
         ) : (
-          <Table>
+          <>
+            <HubTypePipelineChart rows={rows} />
+            <Table>
             <TableHeader>
               <TableRow>
                 <TableHead>Hub</TableHead>
@@ -129,8 +141,9 @@ export function HubTypePipelineTable({ rows }: HubTypePipelineTableProps): React
               </TableRow>
             </TableBody>
           </Table>
+          </>
         )}
       </CardContent>
-    </Card>
+    </GlassPanel>
   );
 }

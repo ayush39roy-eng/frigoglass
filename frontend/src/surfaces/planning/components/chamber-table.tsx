@@ -34,7 +34,11 @@ export function ChamberTable({ rows, canEdit, onEdit, onDelete }: ChamberTablePr
           <TableHead className="text-right">Max concurrent</TableHead>
           <TableHead className="text-right">Platforms</TableHead>
           <TableHead className="text-right">Efficiency</TableHead>
-          <TableHead className="text-right">Weeks/chamber</TableHead>
+          <TableHead className="text-right" title="Maintenance / breakdown / calibration, weeks per year">
+            Downtime (M/B/C)
+          </TableHead>
+          <TableHead className="text-right">Working wks</TableHead>
+          <TableHead className="text-right">Efficient lab wks</TableHead>
           <TableHead>Allowed stages</TableHead>
           {canEdit ? <TableHead className="w-24 text-right">Actions</TableHead> : null}
         </TableRow>
@@ -54,7 +58,14 @@ export function ChamberTable({ rows, canEdit, onEdit, onDelete }: ChamberTablePr
               {formatDecimal(row.efficiency)}
             </TableCell>
             <TableCell className="text-right tnum" data-numeric="">
-              {formatDecimal(row.weeks_per_chamber)}
+              {formatDecimal(row.maintenance_weeks)} / {formatDecimal(row.breakdown_weeks)} /{' '}
+              {formatDecimal(row.calibration_weeks)}
+            </TableCell>
+            <TableCell className="text-right tnum" data-numeric="">
+              {formatDecimal(row.working_weeks_per_chamber)}
+            </TableCell>
+            <TableCell className="text-right tnum" data-numeric="">
+              {formatDecimal(row.efficient_lab_weeks)}
             </TableCell>
             <TableCell>
               <div className="flex flex-wrap gap-1">

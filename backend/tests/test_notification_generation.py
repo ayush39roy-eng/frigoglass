@@ -586,6 +586,51 @@ async def test_engineer_is_recipient_only_for_own_led_project(db_session, hub):
     assert own_user.id not in {n.recipient_user_id for n in notifications_other}
 
 
+async def test_engineer_with_hub_scope_all_is_not_recipient_of_other_hub_events(
+    db_session, hub
+):
+    """P10-F01 regression: an Engineer-only account with `hub_scope_all=True`
+    (forced explicitly here, bypassing the P10-F01 schema guard, the same
+    account shape `seed_dev_users.py`/`make_user` produced by default before
+    that fix) must NOT land in `hub_scope_all_ids` and therefore must not
+    receive a notification about a project they neither lead nor are
+    assigned to — only their own-led project's events, exactly like an
+    Engineer with `hub_scope_all=False`. See `services.notifications
+    ._resolve_recipients`'s P10-F01 docstring note.
+    """
+
+    other_hub = await make_hub(db_session, name=HubName.PD_ROMANIA, lab_region=LabRegion.ROMANIA)
+    own_engineer = await make_engineer(
+        db_session, hub, name="Bypass Engineer", allowed_categories=[EngineerAllowedCategory.A]
+    )
+    own_user = await make_user(
+        db_session,
+        RoleName.ENGINEER,
+        full_name="Bypass Engineer User",
+        hub_scope_all=True,  # forced — the exact P10-F01 bug shape
+    )
+    own_engineer.user_id = own_user.id
+    db_session.add(own_engineer)
+    await db_session.flush()
+
+    own_project = await make_project(db_session, hub, leader=own_engineer, name="Own Project")
+    other_project = await make_project(db_session, other_hub, name="Unrelated Project")
+
+    await _make_previous_run_outcome(db_session, own_project, last_step_end_week=35)
+    other_previous_run = await _make_previous_run_outcome(
+        db_session, other_project, last_step_end_week=35
+    )
+    new_run = await make_schedule_run(db_session, is_active=True)
+
+    notifications_other = await generate_schedule_change_notifications(
+        db_session,
+        new_run=new_run,
+        previous_active_run_id=other_previous_run.id,
+        project_outcomes=(_outcome(other_project, end_week=40),),
+    )
+    assert own_user.id not in {n.recipient_user_id for n in notifications_other}
+
+
 async def test_dedup_when_user_matches_hub_scope_and_engineer_path(db_session, hub):
     """A user who is BOTH Hub-Planner-scoped to the project's hub AND the
     Engineer leading that same project gets exactly one Notification row,

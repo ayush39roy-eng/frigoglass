@@ -82,6 +82,14 @@
   --teal-600: 175 77% 30%;
   --teal-700: 175 70% 24%;
 
+  /* Violet — reserved for the Gantt's EXPECTED-completion line (P9). Deliberately a
+   * hue nothing else in the app uses: not brand blue (planned bars), not amber
+   * (actual/year-end), not red (delay magnitude), not teal (projected line). */
+  --violet-400: 258 90% 66%;
+  --violet-500: 262 83% 58%;
+  --violet-600: 263 70% 50%;
+  --violet-700: 262 68% 42%;
+
   /* Dimension primitives */
   --radius-0: 0px;
   --radius-1: 0.25rem;
@@ -159,6 +167,11 @@
   --color-gantt-grid-strong: var(--slate-300);
   --color-gantt-marker-year: var(--amber-600);
   --color-gantt-marker-now: var(--blue-500);
+  /* P9 — the two per-project completion lines (DOMAIN_RULES "Expected vs projected
+   * completion"). Two hues that are NOT red and not the bar colours; each line also
+   * has its own dash pattern and end-cap, so colour is never the only signal. */
+  --color-gantt-expected: var(--violet-600);   /* solid line, flag cap: "expected completion" */
+  --color-gantt-projected: var(--teal-600);    /* dash-dot line, dot cap: "will be completed" */
 
   /* ---------------------------------------------------------------------------
    * LAYER 3 — COMPONENT
@@ -241,6 +254,8 @@
   --color-gantt-grid-strong: var(--slate-700);
   --color-gantt-marker-year: var(--amber-500);
   --color-gantt-marker-now: var(--blue-400);
+  --color-gantt-expected: var(--violet-400);
+  --color-gantt-projected: var(--teal-400);
 
   color-scheme: dark;
 }
@@ -576,7 +591,12 @@
   --color-sidebar-raised: var(--petrol-700);
   --color-sidebar-border: 200 40% 26%;
   --color-sidebar-text: var(--petrol-100);
-  --color-sidebar-text-muted: var(--petrol-300);
+  /* P9-R03 (qa Q-F1): was petrol-300, rendered at /70 alpha for section labels —
+   * 3.68:1 on the rail and 3.06:1 on the raised footer. A dedicated a11y step,
+   * used at FULL alpha everywhere, measures 6.46:1 on --color-sidebar and
+   * 5.07:1 on --color-sidebar-raised (WCAG AA ≥ 4.5:1), and stays visibly dimmer
+   * than --color-sidebar-text (petrol-100). */
+  --color-sidebar-text-muted: 194 40% 70%;
   --color-sidebar-active: var(--blue-600);
   --color-sidebar-active-fg: 0 0% 100%;
 
@@ -599,10 +619,62 @@
   --color-sidebar-raised: var(--petrol-900);
   --color-sidebar-border: 205 40% 20%;
   --color-sidebar-text: var(--petrol-100);
-  --color-sidebar-text-muted: var(--petrol-400);
+  /* P9-R03 (qa Q-F1): was petrol-400 (4.39:1 on the raised footer even without
+   * alpha). Now 5.99:1 on --color-sidebar and 5.19:1 on --color-sidebar-raised. */
+  --color-sidebar-text-muted: 195 34% 56%;
   --color-sidebar-active: var(--blue-600);
   --color-sidebar-active-fg: 0 0% 100%;
 
   --color-border: 217 28% 22%;
   --color-border-strong: 215 24% 32%;
+}
+
+/* ===========================================================================
+ * GLASS SURFACE LAYER  (2026-09-30 — Dashboard "crazy-charts" polish, task-scoped
+ * to frontend/src/surfaces/dashboard/)
+ *
+ * PALETTE RECONCILIATION DECISION: the client's reference dashboards specified a
+ * standalone hex palette (--bg-app, --brand-500 #5B3DF5, a --s-blue/--s-green/...
+ * series ramp). That palette is NOT adopted wholesale — Frigoglass's blue/petrol
+ * two-colour system (above, "TWO-COLOUR SYSTEM + DARK CHROME") is already
+ * shipped, gate-passed and client-approved (see the 2026-09-08 MEMORY.md entries:
+ * "Rejected from the references... the sage/cream palette and the lime/periwinkle
+ * accents. Frigoglass is a blue-and-navy industrial brand"). Introducing a second,
+ * competing hue system for one surface would fork the design system CLAUDE.md
+ * says this role owns end-to-end. Instead, "glass" is expressed as TRANSLUCENCY +
+ * BLUR of the tokens that already exist: --color-surface for the tint,
+ * --color-border for the hairline, --slate-900 for the shadow tint (already the
+ * shadow colour every other card in the app uses — functionally the same role as
+ * the client's --ink-900 shadow spec, no new hue introduced). The chart series
+ * ramp is unchanged (--chart-1..6); the Hub globe legend and the pipeline chart
+ * both consume it via assignSeriesColors(), same as every other chart in the app.
+ *
+ * Two opacity steps, not one, because a fully translucent card over dense,
+ * virtualized, WCAG-contrast-verified table text (P4-T11) would cost legibility
+ * the "glass" effect isn't worth: --color-glass-bg is used at /60 alpha for
+ * hero/KPI surfaces (the stat tiles, the hub globe panel) and at /90 for cards
+ * that hold a dense data table (Hub × type pipeline, Project breakdown) — glass
+ * chrome (border, blur, shadow) is identical either way; only the tint's opacity
+ * changes, and 90% still clears every P4-T11 contrast ratio because the
+ * underlying text colour tokens are untouched.
+ * ======================================================================== */
+
+:root {
+  --color-glass-bg: var(--slate-0);
+  --color-glass-border: var(--slate-0);
+  /* Client spec: 0 6px 24px -8px rgb(21 29 72 / 0.10) — rgb(21,29,72) is a dark
+   * ink-navy, the same role --slate-900 already plays for --shadow-card/-hover
+   * above (a warm-neutral navy used only as a shadow tint). Reusing it here
+   * rather than adding a literal --ink-900 keeps one shadow-tint token, not two. */
+  --shadow-glass:
+    0 1px 1px hsl(var(--slate-900) / 0.03),
+    0 6px 24px -8px hsl(var(--slate-900) / 0.10);
+}
+
+.dark {
+  --color-glass-bg: var(--slate-800);
+  --color-glass-border: var(--slate-0);
+  --shadow-glass:
+    0 1px 1px hsl(0 0% 0% / 0.3),
+    0 6px 24px -8px hsl(0 0% 0% / 0.45);
 }

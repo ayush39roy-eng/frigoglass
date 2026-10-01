@@ -21,7 +21,14 @@ from scheduling import (
     run_greedy_sgs,
     validate_invariants,
 )
-from tests.scheduling._fixtures import CHAMBER_GR1, ENGINEER_A, ENGINEER_B, TEMPLATE, base_project
+from tests.scheduling._fixtures import (
+    CHAMBER_GR1,
+    ENGINEER_A,
+    ENGINEER_B,
+    LEAD_TIMES,
+    TEMPLATE,
+    base_project,
+)
 
 
 def _violations_by_invariant(violations, invariant: str) -> bool:
@@ -37,7 +44,11 @@ def test_i1_engineer_double_booked_non_frozen_is_caught():
     p1 = base_project(project_id="p-i1-a")
     p2 = base_project(project_id="p-i1-b")
     si = ScheduleInput(
-        projects=(p1, p2), engineers=(ENGINEER_A,), chambers=(CHAMBER_GR1,), workflow_steps=TEMPLATE
+        projects=(p1, p2),
+        engineers=(ENGINEER_A,),
+        chambers=(CHAMBER_GR1,),
+        workflow_steps=TEMPLATE,
+        lead_times=LEAD_TIMES,
     )
     step_a = StepSchedule("PDD-A", 1, "design", 31, 32, 2, "eng-a", None)
     step_b = StepSchedule("PDD-A", 1, "design", 32, 33, 2, "eng-a", None)  # overlaps week 32
@@ -91,6 +102,7 @@ def test_i2_chamber_over_capacity_non_frozen_is_caught():
         engineers=(ENGINEER_A, ENGINEER_B),
         chambers=(CHAMBER_GR1,),  # max_concurrent=1
         workflow_steps=TEMPLATE,
+        lead_times=LEAD_TIMES,
     )
     lab_a = StepSchedule("PDD-F", 2, "lab", 40, 42, 3, None, "ch-gr1")
     lab_b = StepSchedule("PDD-F", 2, "lab", 40, 42, 3, None, "ch-gr1")  # same chamber, same weeks
@@ -139,7 +151,11 @@ def test_i3_steps_overlap_within_project_is_caught():
 
     p1 = base_project(project_id="p-i3-a")
     si = ScheduleInput(
-        projects=(p1,), engineers=(ENGINEER_A,), chambers=(CHAMBER_GR1,), workflow_steps=TEMPLATE
+        projects=(p1,),
+        engineers=(ENGINEER_A,),
+        chambers=(CHAMBER_GR1,),
+        workflow_steps=TEMPLATE,
+        lead_times=LEAD_TIMES,
     )
     step1 = StepSchedule("PDD-A", 1, "design", 31, 32, 2, "eng-a", None)
     step2 = StepSchedule("PDD-F", 2, "lab", 32, 34, 3, None, "ch-gr1")  # starts before step1 ends
@@ -172,13 +188,18 @@ def test_i4_wrong_lab_region_and_disallowed_stage_is_caught():
 
     p1 = base_project(project_id="p-i4-a", hub="R&D-Greece")
     romania_chamber = ChamberInput(
-        "ch-ro-x", "RO-X", "Romania", max_concurrent=1, allowed_stages=("PDD-H",)  # not PDD-F
+        "ch-ro-x",
+        "RO-X",
+        "Romania",
+        max_concurrent=1,
+        allowed_stages=("PDD-H",),  # not PDD-F
     )
     si = ScheduleInput(
         projects=(p1,),
         engineers=(ENGINEER_A,),
         chambers=(CHAMBER_GR1, romania_chamber),
         workflow_steps=TEMPLATE,
+        lead_times=LEAD_TIMES,
     )
     step1 = StepSchedule("PDD-A", 1, "design", 31, 32, 2, "eng-a", None)
     step2 = StepSchedule("PDD-F", 2, "lab", 33, 35, 3, None, "ch-ro-x")  # wrong region + stage
@@ -210,7 +231,11 @@ def test_i5_incomplete_schedule_not_flagged_left_out_is_caught():
 
     p1 = base_project(project_id="p-i5-a")
     si = ScheduleInput(
-        projects=(p1,), engineers=(ENGINEER_A,), chambers=(CHAMBER_GR1,), workflow_steps=TEMPLATE
+        projects=(p1,),
+        engineers=(ENGINEER_A,),
+        chambers=(CHAMBER_GR1,),
+        workflow_steps=TEMPLATE,
+        lead_times=LEAD_TIMES,
     )
     step1 = StepSchedule("PDD-A", 1, "design", 31, 32, 2, "eng-a", None)
     outcome = ProjectScheduleOutcome(
@@ -241,7 +266,11 @@ def test_i6_negative_design_duration_is_caught():
 
     p1 = base_project(project_id="p-i6-a")
     si = ScheduleInput(
-        projects=(p1,), engineers=(ENGINEER_A,), chambers=(CHAMBER_GR1,), workflow_steps=TEMPLATE
+        projects=(p1,),
+        engineers=(ENGINEER_A,),
+        chambers=(CHAMBER_GR1,),
+        workflow_steps=TEMPLATE,
+        lead_times=LEAD_TIMES,
     )
     step1 = StepSchedule("PDD-A", 1, "design", 31, 30, -2, "eng-a", None)  # negative duration
     step2 = StepSchedule("PDD-F", 2, "lab", 31, 33, 3, None, "ch-gr1")
@@ -272,7 +301,11 @@ def test_i7_negative_lab_duration_is_caught():
 
     p1 = base_project(project_id="p-i7-a")
     si = ScheduleInput(
-        projects=(p1,), engineers=(ENGINEER_A,), chambers=(CHAMBER_GR1,), workflow_steps=TEMPLATE
+        projects=(p1,),
+        engineers=(ENGINEER_A,),
+        chambers=(CHAMBER_GR1,),
+        workflow_steps=TEMPLATE,
+        lead_times=LEAD_TIMES,
     )
     step1 = StepSchedule("PDD-A", 1, "design", 31, 32, 2, "eng-a", None)
     step2 = StepSchedule("PDD-F", 2, "lab", 33, 32, -1, None, "ch-gr1")  # negative duration
@@ -315,7 +348,11 @@ def test_i8_determinism_has_no_broken_output_counterpart():
 
     p1 = base_project(project_id="p-i8-a")
     si = ScheduleInput(
-        projects=(p1,), engineers=(ENGINEER_A,), chambers=(CHAMBER_GR1,), workflow_steps=TEMPLATE
+        projects=(p1,),
+        engineers=(ENGINEER_A,),
+        chambers=(CHAMBER_GR1,),
+        workflow_steps=TEMPLATE,
+        lead_times=LEAD_TIMES,
     )
     assert check_scheduler_determinism(si, runs=3) == ()
 
@@ -333,7 +370,11 @@ def test_i9_within_year_flag_inconsistent_with_formula_is_caught():
 
     p1 = base_project(project_id="p-i9-a", delay_weeks=0)
     si = ScheduleInput(
-        projects=(p1,), engineers=(ENGINEER_A,), chambers=(CHAMBER_GR1,), workflow_steps=TEMPLATE
+        projects=(p1,),
+        engineers=(ENGINEER_A,),
+        chambers=(CHAMBER_GR1,),
+        workflow_steps=TEMPLATE,
+        lead_times=LEAD_TIMES,
     )
     step1 = StepSchedule("PDD-A", 1, "design", 60, 61, 2, "eng-a", None)
     step2 = StepSchedule("PDD-F", 2, "lab", 62, 64, 3, None, "ch-gr1")  # end_week=64 > 52
@@ -367,7 +408,11 @@ def test_i10_frozen_project_dates_mutated_is_caught():
         project_id="p-i10-a", frozen=True, actual_start_week=10, status="In Development"
     )
     si = ScheduleInput(
-        projects=(p1,), engineers=(ENGINEER_A,), chambers=(CHAMBER_GR1,), workflow_steps=TEMPLATE
+        projects=(p1,),
+        engineers=(ENGINEER_A,),
+        chambers=(CHAMBER_GR1,),
+        workflow_steps=TEMPLATE,
+        lead_times=LEAD_TIMES,
     )
     step1 = StepSchedule("PDD-A", 1, "design", 15, 16, 2, "eng-a", None)  # should be 10, not 15
     step2 = StepSchedule("PDD-F", 2, "lab", 17, 19, 3, None, "ch-gr1")

@@ -16,17 +16,20 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { ReadOnlyNotice } from '@/components/session/write-gate';
 import { ApiError } from '@/lib/api/client';
 import { useHubs } from '@/lib/api/reference';
 import { formatInteger } from '@/lib/format';
 import { SURFACES } from '@/app/nav';
 import { effectivePendingEdits, useScenarioStore } from '@/stores/scenario';
+import { usePermission } from '@/stores/session';
 import { PROJECT_CATEGORIES, type CurrencyCode, type ProjectCategory } from '@/types/enums';
 
 import { AccessNotice, WriteForbiddenNotice } from './components/access-notice';
 import { MatrixTable } from './components/matrix-table';
 import { PortfolioSummaryPanel } from './components/portfolio-summary-panel';
 import { ScenarioModeToggle, ScenarioPendingPanel } from './components/scenario-panel';
+import { ScoringRubricPanel } from './components/scoring-rubric-panel';
 import { liveRequestValuesFromRow } from './components/score-edit-schema';
 import { ScoreEditDialog } from './components/score-edit-dialog';
 import { VersionHistoryDialog } from './components/version-history-panel';
@@ -100,7 +103,9 @@ export default function MatrixPage(): React.JSX.Element {
 
   const denied = authKind([matrixQuery.error, summaryQuery.error]);
   const isFiltered = hubId !== ALL || category !== ALL;
-  const canEdit = !writeForbidden;
+  // Session table first (ADR 0010), server 403 second.
+  const permission = usePermission('matrix');
+  const canEdit = permission.write && !writeForbidden;
 
   const handleEdit = React.useCallback((row: PriorityMatrixRow) => {
     setEditRow(row);
@@ -198,9 +203,12 @@ export default function MatrixPage(): React.JSX.Element {
             </CardContent>
           </Card>
 
+          <ReadOnlyNotice surface="matrix" what="Score editing and scenario mode" />
           {writeForbidden ? <WriteForbiddenNotice /> : null}
 
-          <ScenarioPendingPanel writeForbidden={writeForbidden} />
+          <ScenarioPendingPanel writeForbidden={writeForbidden || !permission.write} />
+
+          <ScoringRubricPanel />
 
           <SectionBoundary
             query={summaryQuery}

@@ -123,12 +123,8 @@ def perturbation_wired() -> None:
     # Different seed -> different perturbed draws.
     a = forecast_delivery(si, iterations=60, seed=1)
     b = forecast_delivery(si, iterations=60, seed=2)
-    all_weeks_a = tuple(
-        w for pf in a.project_forecasts for w in pf.completion_weeks
-    )
-    all_weeks_b = tuple(
-        w for pf in b.project_forecasts for w in pf.completion_weeks
-    )
+    all_weeks_a = tuple(w for pf in a.project_forecasts for w in pf.completion_weeks)
+    all_weeks_b = tuple(w for pf in b.project_forecasts for w in pf.completion_weeks)
     check(
         "perturbation: different seed -> different draws",
         a.within_year_count_per_iteration != b.within_year_count_per_iteration
@@ -176,19 +172,11 @@ def perturbation_wired() -> None:
         delay_perturbation=False,
         duration_perturbation=True,
     )
-    dur_weeks = {
-        pf.project_id: pf.completion_weeks for pf in dur_only.project_forecasts
-    }
-    base_weeks = {
-        pf.project_id: pf.completion_weeks for pf in base.project_forecasts
-    }
+    dur_weeks = {pf.project_id: pf.completion_weeks for pf in dur_only.project_forecasts}
+    base_weeks = {pf.project_id: pf.completion_weeks for pf in base.project_forecasts}
     check(
         "perturbation: duration-only changes the completion-week distribution",
-        any(
-            set(dur_weeks[pid]) - set(base_weeks[pid])
-            for pid in dur_weeks
-            if base_weeks[pid]
-        ),
+        any(set(dur_weeks[pid]) - set(base_weeks[pid]) for pid in dur_weeks if base_weeks[pid]),
     )
 
     # The forecast echoes the perturbation config it ran under.
@@ -278,9 +266,7 @@ def forecast_structure() -> None:
     si = _load_seed_schedule_input()
     f = forecast_delivery(si, iterations=60, seed=424242)
 
-    excluded_ids = {
-        o.project_id for o in run_greedy_sgs(si).project_outcomes if o.excluded
-    }
+    excluded_ids = {o.project_id for o in run_greedy_sgs(si).project_outcomes if o.excluded}
 
     p50_le_p80 = True
     freqs_in_range = True
@@ -335,8 +321,7 @@ def forecast_structure() -> None:
     check("structure: min/max_completion_week match the sample tuple", minmax_consistent)
     check(
         "structure: forecast covers exactly the input projects",
-        {pf.project_id for pf in f.project_forecasts}
-        == {p.project_id for p in si.projects},
+        {pf.project_id for pf in f.project_forecasts} == {p.project_id for p in si.projects},
     )
     check(
         "structure: project_forecasts sorted by project_id",
@@ -358,9 +343,7 @@ def real_seed_headline() -> None:
     print()
 
     left_out_every_iter = sum(
-        1
-        for pf in f.project_forecasts
-        if not pf.excluded and pf.iterations_scheduled == 0
+        1 for pf in f.project_forecasts if not pf.excluded and pf.iterations_scheduled == 0
     )
     scheduled_some = [
         pf

@@ -10,6 +10,9 @@ function step(seq: number, start: number, end: number): GanttStepRow {
     step_name: `Step ${String(seq)}`,
     kind: seq % 2 === 0 ? 'lab' : 'design',
     sequence_order: seq,
+    skipped: false,
+    status: 'Not Started',
+    percent_complete: 0,
     duration_weeks: end - start + 1,
     planned_start_week: start,
     planned_end_week: end,
@@ -34,6 +37,14 @@ function project(id: string, steps: GanttStepRow[]): GanttProjectRow {
     left_out: false,
     spillover: false,
     cat_not_allowed: false,
+    target_end_week: null,
+    expected_end_week: null,
+    projected_end_week: null,
+    unconstrained_end_week: null,
+    slip_weeks: null,
+    blocked: false,
+    schedule_stale: false,
+    workflow_id: 'PDD',
     steps,
   };
 }
@@ -83,5 +94,23 @@ describe('weeklyStepDensity — view-derived scan aid', () => {
     s.planned_start_week = null;
     const density = weeklyStepDensity([project('a', [s])], 78);
     expect(density.every((c) => c === 0)).toBe(true);
+  });
+});
+
+describe('weeklyStepDensity — P9 (DAG parallelism, skipped steps)', () => {
+  it('counts overlapping steps of one project independently (no start[n] > end[n-1] assumption)', () => {
+    const rows = [project('a', [step(1, 5, 8), step(2, 6, 7)])];
+    const density = weeklyStepDensity(rows, 10);
+    expect(density[5]).toBe(1);
+    expect(density[6]).toBe(2);
+    expect(density[7]).toBe(2);
+    expect(density[8]).toBe(1);
+  });
+
+  it('ignores skipped steps entirely', () => {
+    const skipped = { ...step(2, 8, 8), skipped: true };
+    const rows = [project('a', [step(1, 5, 8), skipped])];
+    const density = weeklyStepDensity(rows, 10);
+    expect(density[8]).toBe(1);
   });
 });

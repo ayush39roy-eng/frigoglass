@@ -1,7 +1,8 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
-import { screen } from '@testing-library/react';
+import { screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
+import { seriousAxeViolations } from '@/test/axe';
 import { renderWithProviders } from '@/test/render';
 import { ApiError } from '@/lib/api/client';
 import type { ProjectListItem } from './api/types';
@@ -35,6 +36,7 @@ vi.mock('./hooks/use-registration', () => ({
 }));
 vi.mock('@/lib/api/reference', () => ({
   useHubs: () => ({ data: [{ id: 'hub-1', name: 'R&D-Greece', lab_region: 'Greece', is_oem: false }] }),
+  useCategoriesForHub: () => ({ data: undefined, options: ['A+', 'A', 'B', 'C'] }),
 }));
 
 import RegistrationPage from './RegistrationPage';
@@ -71,6 +73,12 @@ const draftProject: ProjectListItem = {
   gross_margin_pct: null,
   capex_keur: null,
   rm_savings_keur: null,
+  target_end_week: null,
+  certification_testing_required: true,
+  estimated_design_weeks: null,
+  estimated_lab_weeks: null,
+  schedule_stale: false,
+  workflow_id: 'PDD',
   created_at: '2026-01-01T00:00:00Z',
   updated_at: '2026-01-01T00:00:00Z',
 };
@@ -125,6 +133,18 @@ describe('RegistrationPage', () => {
     renderWithProviders(<RegistrationPage />);
     await user.click(screen.getAllByRole('button', { name: 'New project' })[0]!);
     expect(screen.getByRole('heading', { name: 'Register a project' })).toBeInTheDocument();
+  });
+
+  // P9-R03 (qa Q-F3, critical): the P4 axe spec never opened this dialog, so the
+  // legend-only `#reg-comments` textarea went unnoticed. Scan the dialog open.
+  it('the opened create dialog has no serious/critical axe violations; Comments is labelled', async () => {
+    const user = userEvent.setup();
+    hooks.useProjectList.mockReturnValue(ready([]));
+    renderWithProviders(<RegistrationPage />);
+    await user.click(screen.getAllByRole('button', { name: 'New project' })[0]!);
+    const dialog = await screen.findByRole('dialog');
+    expect(await seriousAxeViolations(dialog)).toEqual([]);
+    expect(within(dialog).getByLabelText('Comments')).toHaveAttribute('id', 'reg-comments');
   });
 
   it('creating a project calls useCreateProject, not useUpdateProject', async () => {

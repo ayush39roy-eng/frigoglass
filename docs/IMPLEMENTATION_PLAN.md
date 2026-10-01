@@ -1273,3 +1273,267 @@ parts behind the DPO determination.
   verified, financial fields in the Details panel still encrypted + never logged, GDPR/OQ#8 review
   of comments + mentions + named engineer, hub-scoping + RBAC negative tests for the new endpoints.
   Any High/Critical fails the gate. Depends on: all above P8 tasks.
+
+---
+
+## P9 — Client formulas, RBAC/Super Admin, Gantt completion lines, configurable precedence, Project Workspace — **GATE: PASSED (2026-09-27, re-run P9-R04; see MEMORY.md "P9 gate re-run — combined result: PASS")**
+
+**Owner:** all (backend-builder, algorithm-engineer, frontend-builder; gated by the three auditors)
+**Gate:** qa-inspector PASS + workflow-auditor PASS + security-auditor PASS
+
+Added 2026-09-27 from the client formula workbook (`docs/CLIENT_FORMULAS.md`) and the project
+owner's requests of that day. ADRs 0007–0010. P9 **absorbs P8** (P8-T01..T07 were planned but never
+started — no P8 code exists; their acceptance criteria are carried into P9-T01/T02/T03/T04 below
+and the P8 gate is folded into the P9 gate). `docs/OPEN_QUESTIONS.md` #8 (GDPR) still gates the
+comment/@mention/named-engineer parts exactly as P8 stated. "Ask the agent" on the Project
+Workspace is explicitly **out of scope** for P9 — to be specified with the client later.
+
+**P9 GATE: FAIL (2026-09-27), then PASSED on re-run (P9-R04, 2026-09-27)**. First run: workflow-auditor FAIL (F1–F3); qa-inspector FAIL (axe
+Q-F1..Q-F3, flaky Vitest, §7 nullability); security-auditor PASS with 3 Mediums. See MEMORY.md "P9 gate — combined result". The
+remediation tasks below come first. The gate is re-run after them.
+
+- **P9-R01** — (DONE, gate re-run passed) Scheduler remediation. Owner: algorithm-engineer. Status: DONE (pending gate re-run).
+  F1: anchored lab steps choose the first eligible chamber with room; overbook and raise `OVERLAP`
+  only when none has room; I2 validator updated to match (DOMAIN_RULES remediation ruling 1).
+  F2: CP-SAT always emits a progress-tracked project's anchored rows, and uses `left_out` plus
+  anchored rows when the rest is unscheduled (ruling 2). F3: `progress_pct` uses the one
+  duration-weighted formula for every project, frozen ones included (ruling 3). CP-SAT passes use
+  deterministic-time limits, with the solver status recorded (ruling 6). Regression goldens for all
+  three auditor repros.
+- **P9-R02** — (DONE, gate re-run passed) Backend remediation. Owner: backend-builder. Status: DONE (pending gate re-run) — see MEMORY.md "[2026-09-27] P9-R02 — backend-builder".
+  F3: stage PATCH on a frozen project returns 409 `PROJECT_FROZEN`; the workspace uses the shared
+  progress helper. `blocked` health state (ruling 5). Solver status column on `ScheduleRun` if
+  P9-R01 needs it. Security S-01: serialise Super Admin membership changes (advisory lock or `FOR
+  UPDATE` on the role row), map deadlocks to 409, add a threaded regression test. S-02: drop
+  `body_html_sanitized` from workspace/activity payloads or render it off the event loop with a
+  cache; cap comment length (10 000 chars); rate-limit comment creation. S-03: remove the
+  `*.vercel.app` regex, keep the two exact demo origins, and let `RPD_CORS_ORIGINS` override. S-04:
+  BEFORE TRUNCATE trigger on `project_comments`. S-05: nginx files route `client_max_body_size 51m`
+  plus the WAF body limit. S-07: authenticate the reference endpoints.
+  P9-R02b tidy-up DONE — greedy `solver_status` null; CP-SAT dispatch takes `deterministic_time`, wall-clock limit removed (see MEMORY.md "[2026-09-27] P9-R02b — backend-builder").
+- **P9-R03** — (DONE, gate re-run passed) Frontend remediation. Owner: frontend-builder. Status: DONE (pending gate re-run). Built against the
+  rulings in parallel with P9-R02. Progress panel disabled on frozen projects with the ruling-3
+  message; handle 409 `PROJECT_FROZEN`; Blocked health badge. S-06: bound the link-text quantifier in
+  the Markdown renderer. Comment length counter (10 000). qa Q-F1: sidebar muted-label contrast
+  ≥ 4.5:1. Q-F2: Details `<dl>` structure. Q-F3: label on `#reg-comments`. §7 TS nullability
+  (`progress_pct`, priority-score derived fields) with null handling in the progress and scoring
+  panels. Make the Files-panel upload test deterministic.
+- **P9-R04** — (DONE — PASS ×3) Gate re-run: workflow-auditor on F1–F3 repros plus a full invariant pass;
+  security-auditor spot-check of S-01..S-07; qa-inspector full re-run, after adding the §7 workspace,
+  notification and planning-chamber types to `CONTRACT_TABLE` so nullability is tested. Status: TODO.
+
+- **P9-T00** — Docs: `docs/CLIENT_FORMULAS.md`, ADRs 0007–0010, DOMAIN_RULES.md revision,
+  PROJECT_AND_STACK.md §5, OPEN_QUESTIONS.md #11–#22, this section. Owner: rpd-orchestrator.
+  Status: DONE (see MEMORY.md "[2026-09-27] P9-T00").
+
+- **P9-T01** — Data model + Alembic migration + seed. Owner: backend-builder. Depends on: P9-T00.
+  - Workflow: `Workflow` (`PDD`, `OEM`); `WorkflowStepTemplate` gains `workflow_id`, `code`,
+    `kind ∈ {design, lab, elapsed}`, `predecessor_ids` (JSON list), client names; `base_weeks`
+    dropped; `WorkflowLeadTime(workflow_id, category, step_id, weeks ≥ 0)` seeded from
+    `docs/CLIENT_FORMULAS.md` §1. OEM step rows OEM-A..N.
+  - `ProjectCategory` + `A-OEM/B-OEM/C-OEM`; `ProjectStatus` + `Cancelled`; `EngineerAllowedCategory`
+    accepts the OEM categories. `Project` gains `target_end_week`, `certification_testing_required`
+    (default true), `estimated_design_weeks`, `estimated_lab_weeks`, `schedule_stale` (P8-T01), and
+    a DB CHECK that OEM-hub projects carry an OEM category and vice-versa.
+  - `HubWorkCalendar` (per hub; ADR 0008 fields, seeded §2.1); `Chamber` + `maintenance_weeks`,
+    `breakdown_weeks`, `calibration_weeks`, drop `weeks_per_chamber`; seed the ten workbook chambers'
+    platforms/efficiency/breakdown (§2.2) where codes match, else add them.
+  - `ScheduleRun.workflow_snapshot` (JSON); `ScheduleRunProjectStep.skipped`;
+    `ScheduleRunProjectOutcome` + `unconstrained_end_week`, `expected_end_week`, `projected_end_week`.
+  - P8-T01 verbatim: `ProjectWorkflowStep` progress columns + CHECKs, `ProjectFile`, `ProjectComment`.
+  - `RoleName.SUPER_ADMIN`; `seed_dev_users` + `sam.super@example.com`.
+  - Acceptance: `alembic upgrade head` / `downgrade` clean on Postgres 17; CHECKs tested; seed
+    reproduces the lead-time table byte-for-byte from `docs/CLIENT_FORMULAS.md`; `backend/scheduling/`
+    untouched; orchestrator review against DOMAIN_RULES.md.
+  - Status: DONE (orchestrator-reviewed and accepted — see MEMORY.md "[2026-09-27] P9-T01/P9-T02/P9-T04a orchestrator review").
+
+- **P9-T02** — Scheduling engine: lead times, kinds, DAG, completion lines, progress. Owner:
+  algorithm-engineer. Depends on: P9-T00 (contract) — may run in parallel with P9-T01; the
+  `ScheduleInput` shape is fixed in the task brief so backend-builder's adapter matches.
+  - `types.py`: `WorkflowStepTemplate{workflow_id, step_id, code, name, kind, sequence_order,
+    predecessor_ids}`; `LeadTime{workflow_id, category, step_id, weeks}` on `ScheduleInput.lead_times`;
+    `ProjectInput` + `workflow_id`, `certification_testing_required`, `target_end_week`, and the
+    P8-T02 per-step progress tuple; `StepSchedule.skipped`; outcome + `unconstrained_end_week`,
+    `expected_end_week`, `projected_end_week`.
+  - Greedy + CP-SAT: durations from the table; skipped steps; elapsed kind books nothing; lab
+    consumption 1.0; DAG precedence with `sequence_order` as walk order; OEM workflow; progress-aware
+    rules (P8-T02 verbatim); unconstrained finish as a pure by-product.
+  - Validator: I3 (DAG form), I5, I6, I7 revised; I11–I17 added. Golden files regenerated from the
+    contract (no prototype oracle — retired at P2). `frozen` precedence (ADR 0006) tested.
+  - Acceptance: pure functions; ≥85% coverage on `backend/scheduling/`; determinism (I8) including
+    precedence + lead times + progress in the hashed input; hand-broken I15 caught.
+  - Status: DONE (orchestrator-reviewed and accepted, ADR 0011 — see MEMORY.md "[2026-09-27] P9-T01/P9-T02/P9-T04a orchestrator review").
+
+- **P9-T03** — API layer. Owner: backend-builder. Depends on: P9-T01, P9-T02.
+  - `GET /me`; `/users`, `/roles` admin endpoints (ADR 0010, last-Super-Admin guard, audit rows);
+    `X-Dev-User-Email` honoured only under `RPD_DEV_MODE`.
+  - Workflow Settings: `GET/PUT /workflow-settings` (steps, kinds, predecessors with acyclicity
+    validation, lead-time table, hub calendars, chamber downtime) — Super Admin write; every PUT
+    audit-logged and sets `schedule_stale` on all schedulable projects.
+  - DB → `ScheduleInput` adapter updated for P9-T02's shape; `workflow_snapshot` written on every run.
+  - Capacity: ADR 0008 supply figures + intermediates (working weeks/engineer, per-chamber efficient
+    weeks, remaining-year figures, "Process derived" vs "Estimated" load, gap, completion %).
+  - Gantt rows + `expected_end_week`, `projected_end_week`, `unconstrained_end_week`,
+    `target_end_week`, `slip_weeks`; step rows + `skipped`, `kind ∈ {design, lab, elapsed}`.
+  - Projects: new fields on create/update/read; OEM category validation.
+  - P8-T03 verbatim: workspace read model, progress PATCH, recalc, files (MinIO), comments (sanitised
+    Markdown, no HTML passthrough), notifications; OQ#8 withholding on names/mentions.
+  - Acceptance: live-verified on Postgres 17 + MinIO + Keycloak; ≥70% coverage outside scheduling;
+    OpenAPI regenerated; `backend/scheduling/` untouched.
+  - Status: DONE (orchestrator-reviewed and accepted with follow-up — see MEMORY.md "[2026-09-27] P9-T03 orchestrator review").
+
+- **P9-T04** — Frontend. Owner: frontend-builder. Depends on: P9-T03.
+  - `session` store from `GET /me`; nav filtered by `read`; write controls hidden/disabled by
+    `write`; read-only notices; dev-only role switcher. User/Role Admin surface (`/admin/users`).
+  - Workflow Settings surface (`/settings/workflow`): step list with kind badges, predecessor editor
+    ("can run in parallel with…" toggles rendered from the DAG), lead-time grid per workflow ×
+    category, hub calendars, chamber downtime; "Settings changed — recalculate" banner.
+  - Gantt: two vertical marker lines per project row — *Expected completion* and *Will be completed*
+    — distinct colours + legend + slip label; step rows may overlap; `elapsed` steps drawn hollow,
+    `skipped` steps omitted with a "n/a" chip when expanded.
+  - Registration + Workspace: `target_end_week`, `certification_testing_required`, estimated weeks,
+    OEM categories for OEM hubs, `Cancelled` status.
+  - Capacity: client breakdown (yearly vs remaining, process-derived vs estimated, gap, completion %).
+  - Matrix: show the deck's per-dimension scoring anchors (slide 4 "Scoring Logic") as column
+    tooltips/rubric.
+  - P8-T04 verbatim: `/projects/:id` Project Workspace (header + health badge, Details, Progress,
+    Files, Activity & Comments, stale banner + Recalculate via SSE), click-through from Dashboard,
+    Matrix and Gantt. **No "Ask the agent" UI.**
+  - Acceptance: typecheck/lint/test/build green within the 400 KB budget; axe zero serious/critical;
+    no `dangerouslySetInnerHTML`; no raw hex.
+  - Status: DONE (orchestrator-reviewed and accepted — see MEMORY.md "[2026-09-27] P9-T04b orchestrator review"; contract reconciliation at gate) — see MEMORY.md
+    "[2026-09-27] P9-T04a — frontend-builder" and "[2026-09-27] P9-T04b — frontend-builder".
+
+- **P9-T05** — `qa-inspector` gate. **P9-T06** — `workflow-auditor` gate (re-derive a schedule under
+  the lead-time table + an edited DAG + hand-set progress; assert I1–I17; reconcile Capacity to
+  ADR 0008 to two decimals; reconcile Gantt lines to I16). **P9-T07** — `security-auditor` gate
+  (Super Admin last-admin guard, dev-header ignored outside dev mode, user-admin negative tests,
+  workflow-settings write restricted to Super Admin, P8-T07 items verbatim). Depend on: P9-T01..T04.
+
+### P9 follow-ups (non-blocking, recorded at gate close 2026-09-27)
+
+- **P9-F01** — Security Lows from the P9-R04 re-run. Owner: backend-builder. Status: DONE
+  (2026-09-30, backend-builder — see `docs/MEMORY.md`).
+  - R04-L1: bound `CpDispatchRequest.deterministic_time` (`le=60`, `allow_inf_nan=False`, strict).
+    Add an in-flight check on CP-SAT dispatch and a sweeper for stuck `running` runs.
+  - R04-L2: `allow_inf_nan=False` plus `le=` bounds on the chamber float fields.
+  - R04-L3: `hide_parameters=True` on the async engine.
+- **P9-F02** — Dashboard: a fourth "Blocked" bucket alongside within-year / spillover / left-out.
+  A Blocked-held project currently counts in none of them. Owner: backend-builder +
+  frontend-builder. Status: DONE (2026-09-30, backend half — `blocked_count` field, backend-builder;
+  frontend half — Blocked tile/badge/donut segment + contract test flipped back to `"exact"`,
+  frontend-builder — see `docs/MEMORY.md`).
+- **P9-F03** — Three mypy narrowing errors in `scheduling/` (`workflow.py:309`, `greedy.py:766`,
+  `cp_sat.py:369`). Owner: algorithm-engineer. Status: DONE (2026-09-30, algorithm-engineer — see
+  `docs/MEMORY.md`).
+- **P9-F04** — Dev seed: link `carol.eng` to an Engineer and hub-scope `bob.hub`, so the
+  "own assignments" and hub-scoped views can be exercised in dev. Owner: backend-builder.
+  Status: DONE (2026-09-30, backend-builder — see `docs/MEMORY.md`).
+- **P7 carry-forward:** CP-SAT wall time rises with machine load even under a fixed deterministic
+  budget; load-test at 236 projects. The comment rate limiter counts per worker (accepted Low).
+
+## P10 — Project-level access grants (Viewer/Editor/Admin), manager delegation, explicit login page, "Ask the agent" (Groq)
+
+**Owner:** all (backend-builder, frontend-builder; gated by the three auditors)
+**Gate:** qa-inspector PASS + workflow-auditor PASS + security-auditor PASS
+
+Opened 2026-09-30 from the project owner's request. ADRs 0012 (project access grants + manager
+delegation), 0013 (explicit login page), 0014 (Ask the agent via Groq — provisional, see
+`docs/OPEN_QUESTIONS.md` #23). Extends ADR 0010's role matrix; does not replace it.
+
+- **P10-T00** — Docs: ADRs 0012–0014, `docs/DOMAIN_RULES.md` "Project access grants and
+  delegation" + "Ask the agent" sections + I18, `docs/PROJECT_AND_STACK.md` §5 addendum,
+  `docs/OPEN_QUESTIONS.md` #23, this section. Owner: rpd-orchestrator. Status: DONE (this entry).
+- **P10-T01** — Data model + migration. Owner: backend-builder. Depends on: P10-T00.
+  Status: DONE (`docs/MEMORY.md` 2026-09-30 "P10-T01/P10-T02 — backend-builder").
+  - `ProjectAccessGrant(project_id, user_id, project_role ∈ {viewer, editor, admin},
+    granted_by_user_id, created_at, revoked_at NULL)`, FKs to `projects`/`users`, indexed on
+    `(project_id, user_id)` where `revoked_at IS NULL`.
+  - `User.manager_id` (nullable self-FK to `users.id`); a CHECK or API-level guard against a
+    1-hop self-cycle (`manager_id != id`) — full cycle prevention enforced at the API layer, not
+    the DB, since a DB-level acyclicity CHECK across the whole graph isn't practical in SQL.
+  - Seed: dev seed gets at least one manager → report relationship so P10-T01..T03 are testable
+    (e.g. an existing Hub Planner as manager of `carol.eng`, building on the P9-F04 seed fix).
+  - Acceptance: `alembic upgrade head`/`downgrade` clean; audit rows on every grant write.
+- **P10-T02** — Backend API. Owner: backend-builder. Depends on: P10-T01.
+  Status: DONE (`docs/MEMORY.md` 2026-09-30 "P10-T01/P10-T02 — backend-builder").
+  - `services/project_access.py`: the single effective-access resolver (DOMAIN_RULES "Project
+    access grants and delegation", the 6-rule MAX) and the delegation-authorization check (I18).
+    Used to gate Project Workspace/Registration/Gantt-row detail reads AND writes — Editor's
+    write set is exactly {stage progress PATCH, file upload, comment post}, enforced server-side,
+    not just hidden in the UI.
+  - `GET /projects/{id}/access` (list active grants), `POST /projects/{id}/access` (grant),
+    `DELETE /projects/{id}/access/{grant_id}` (revoke) — all three run the I18 check; 403 on
+    failure, never a silent no-op. `PATCH /users/{id}` gains `manager_id` (Super Admin/global
+    Admin only, same guard as role assignment).
+  - `services/ask_agent.py` + `POST /projects/{id}/ask-agent`: assembles the redacted context per
+    ADR 0014 §2 (financial fields and real engineer names never included, unconditionally — not a
+    permission check), calls Groq via `RPD_GROQ_API_KEY`/`RPD_GROQ_MODEL`
+    (`core/config.py::GroqSettings`, blank in `.env.example`, Docker secret per the P6-T04
+    pattern). Returns `503 AGENT_UNAVAILABLE` when unconfigured. Rate-limited (reuse
+    `services/rate_limit.py`). Audit-logged (actor, project, question — never the financial/PII
+    set, so safe to log per ADR 0014 §4).
+  - Acceptance: unit tests proving the resolver's 6 rules and I18 exactly (including negative
+    cases: non-report, non-Admin manager, self-grant); an integration test capturing the actual
+    outbound Groq request payload and asserting the four financial field names and any real
+    engineer name string are absent; live-verified 503 when unconfigured; `backend/scheduling/`
+    untouched.
+- **P10-T03** — Frontend. Owner: frontend-builder. Depends on: P10-T02.
+  Status: DONE (`docs/MEMORY.md` 2026-09-30 "P10-T03 — frontend-builder"). SSO redirect built as a
+  minimal, honest, config-gated slice (disabled until `VITE_OIDC_ISSUER`/`VITE_OIDC_CLIENT_ID` are
+  set — no backend callback endpoint exists yet to complete a real round trip); the
+  Registration/Workspace "Editor-grant read-only notice on charter fields" bullet below is
+  deferred — no backend field exposes the caller's effective project-grant role to the frontend,
+  so it cannot be implemented without re-deriving the resolver client-side (see memory entry).
+  - `/login` route per ADR 0013: SSO button (prod path, unchanged OIDC redirect) or, in dev mode,
+    the seeded-user picker (reusing `fetchDevUsers`/`setDevUserEmail` verbatim) grouped by role,
+    Super Admin first. `SessionGate`'s `unauthorized` state redirects here instead of showing a
+    dead-end "try again" card. No new backend call.
+  - `/admin/users` gains a **Project Access** tab: Super Admin sees/edits every grant on every
+    project; a manager sees the same tab server-filtered to their own reports and the projects
+    they can Admin — one code path, no separate "manager mode" UI.
+  - Project Workspace gains an **Ask the agent** panel/tab: free-text question, loading state,
+    answer display, explicit error copy for `503 AGENT_UNAVAILABLE` and `429` (reuse the P9-R03
+    comment-rate-limit UI pattern).
+  - Registration/Workspace header: an Editor-level grant shows the existing read-only-notice
+    pattern (ADR 0010 §2) on the fields Editor cannot write (charter fields, freeze), exactly as a
+    role without write already does elsewhere. DEFERRED — see status note above.
+  - Acceptance: typecheck/lint/test/build green within the 400 KB budget; axe zero
+    serious/critical; no `dangerouslySetInnerHTML`.
+- **P10-T04** — `qa-inspector` gate. **P10-T05** — `workflow-auditor` gate (I18, the resolver's 6
+  rules, no double-counting/no-regression on the existing role matrix). **P10-T06** —
+  `security-auditor` gate (delegation privilege-escalation tests per ADR 0012 Consequences; the
+  Groq redaction capture test per ADR 0014; `RPD_GROQ_API_KEY` never logged; login page doesn't
+  weaken the existing dev-mode gate). Depend on: P10-T01..T03.
+
+### P10 gate findings — remediation (recorded at gate close 2026-09-30, gate itself PASSED)
+
+All three auditors PASSED P10 (see `docs/MEMORY.md`, "P10 gate — workflow-auditor/qa-inspector/
+security-auditor"). These three findings surfaced during that gate are landed now rather than
+deferred, given severity/scope:
+
+- **P10-F01** — Security High (security-auditor, pre-existing P3-T03/P9-T03 defect, not introduced
+  by P10): `services/hub_scope.py::is_engineer_self_scoped` requires `not
+  principal.hub_scope_all`; an Engineer-role account with `hub_scope_all=True` (the actual
+  seed/factory default for that role) gets its own-assignment row-scoping silently disabled in
+  `services/workspace.py::get_scoped_project_or_404`, returning any project unfiltered (financial
+  fields still withheld separately; writes still blocked — confirmed bounded blast radius). Owner:
+  backend-builder. Status: **DONE** (2026-09-30, backend-builder — see `docs/MEMORY.md`'s
+  "P10-F01/F02/F03 — backend-builder" entry; scoping fix + schema-level guard + same-assumption
+  fix in `services/notifications.py`, all with regression tests).
+- **P10-F02** — Functional gap (qa-inspector): the Project Access tab's project picker (`GET
+  /projects`) is gated by `project_registration` READ, which Engineer/Executive Viewer/Auditor all
+  lack — a manager-delegate holding one of those roles cannot use the UI to manage their reports'
+  grants at all, though the backend endpoints correctly support them. Owner: backend-builder
+  (picker data source) + frontend-builder (wire it). Status: **DONE** (2026-09-30 backend-builder
+  for `GET /users/me/manageable-projects`; 2026-09-30 frontend-builder for wiring
+  `ProjectAccessTab`'s picker to it — see `docs/MEMORY.md`'s "P10-F02/F03 — frontend-builder"
+  entry).
+- **P10-F03** — Regression (qa-inspector): P10-T03's `/admin/users` `<RequireRead>` removal
+  (needed so a non-Admin manager can reach the Project Access tab) broke
+  `frontend/e2e/p9-rbac.spec.ts`'s "unreadable routes show the 403 forbidden page" check for 5
+  roles. Fix: restore the guard, OR'd with a new `/me` signal for "has delegation rights" rather
+  than removing it outright. Owner: backend-builder (`/me` signal) + frontend-builder (route
+  guard). Status: **DONE** (2026-09-30 backend-builder for `MeResponse.is_delegate_manager`;
+  2026-09-30 frontend-builder for the route guard OR + reconciling `p9-rbac.spec.ts`/
+  `p10-gate.spec.ts` — see `docs/MEMORY.md`'s "P10-F02/F03 — frontend-builder" entry).

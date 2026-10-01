@@ -15,10 +15,12 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { ReadOnlyNotice } from '@/components/session/write-gate';
 import { ApiError } from '@/lib/api/client';
 import { useHubs } from '@/lib/api/reference';
 import { formatInteger } from '@/lib/format';
 import { SURFACES } from '@/app/nav';
+import { usePermission } from '@/stores/session';
 import { PROJECT_CATEGORIES, PROJECT_PRIORITIES, PROJECT_STATUSES, PROJECT_TYPES, PROJECT_TYPE_LABELS } from '@/types/enums';
 import type { ProjectStatus } from '@/types/enums';
 
@@ -144,7 +146,9 @@ export default function RegistrationPage(): React.JSX.Element {
     [submitMut],
   );
 
-  const canEdit = !writeForbidden;
+  // Session table first (ADR 0010), server 403 second.
+  const permission = usePermission('project_registration');
+  const canEdit = permission.write && !writeForbidden;
 
   return (
     <>
@@ -231,6 +235,7 @@ export default function RegistrationPage(): React.JSX.Element {
             </CardContent>
           </Card>
 
+          <ReadOnlyNotice surface="project_registration" what="Creating or editing projects" />
           {writeForbidden ? <WriteForbiddenNotice /> : null}
 
           <SectionBoundary

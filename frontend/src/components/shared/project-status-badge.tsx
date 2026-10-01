@@ -16,6 +16,8 @@ const STATUS_TONE: Record<ProjectStatus, NonNullable<BadgeProps['tone']>> = {
   Commercialized: 'success',
   'On Hold': 'warning',
   Draft: 'outline',
+  // P9: terminal, excluded from scheduling like Commercialized — quiet, not red.
+  Cancelled: 'neutral',
 };
 
 export interface ProjectStatusBadgeProps extends Omit<BadgeProps, 'tone' | 'children'> {

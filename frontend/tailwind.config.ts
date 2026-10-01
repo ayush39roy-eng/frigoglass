@@ -68,6 +68,14 @@ export default {
           DEFAULT: withAlpha('color-accent'),
           'subtle-fg': withAlpha('color-accent-subtle-fg'),
         },
+        // Glassmorphism surface (Dashboard polish, 2026-09-30). Translucency of the
+        // EXISTING --color-surface/--color-border hues, not a new colour family — see
+        // the "GLASS SURFACE LAYER" note in tokens.css. Used via bg-glass/60,
+        // bg-glass/90, border-glass-border/40.
+        glass: {
+          DEFAULT: withAlpha('color-glass-bg'),
+          border: withAlpha('color-glass-border'),
+        },
         // Structural hue. The sidebar rail and its furniture — never an action.
         sidebar: {
           DEFAULT: withAlpha('color-sidebar'),
@@ -126,6 +134,9 @@ export default {
           grid: withAlpha('color-gantt-grid'),
           'marker-year': withAlpha('color-gantt-marker-year'),
           'marker-now': withAlpha('color-gantt-marker-now'),
+          // P9 completion lines — see tokens.css.
+          expected: withAlpha('color-gantt-expected'),
+          projected: withAlpha('color-gantt-projected'),
         },
       },
       borderRadius: {
@@ -224,6 +235,7 @@ export default {
         card: 'var(--shadow-card)',
         hover: 'var(--shadow-hover)',
         overlay: 'var(--shadow-overlay)',
+        glass: 'var(--shadow-glass)',
       },
       transitionDuration: {
         instant: 'var(--dur-instant)',

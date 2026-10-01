@@ -112,9 +112,14 @@ def test_is_engineer_self_scoped_true_for_pure_engineer():
     assert is_engineer_self_scoped(principal) is True
 
 
-def test_is_engineer_self_scoped_false_when_hub_scope_all():
+def test_is_engineer_self_scoped_true_even_when_hub_scope_all():
+    """P10-F01 regression: `hub_scope_all=True` must never bypass Engineer's
+    own-assignment scoping — this is the exact account shape the
+    security-auditor's P10 gate finding exploited (and the real
+    `seed_dev_users.py`/`make_user` default prior to the P10-F01 fix)."""
+
     principal = make_principal(RoleName.ENGINEER, hub_scope_all=True)
-    assert is_engineer_self_scoped(principal) is False
+    assert is_engineer_self_scoped(principal) is True
 
 
 def test_is_engineer_self_scoped_false_when_also_hub_planner_with_hub_ids():
@@ -556,5 +561,68 @@ async def test_gantt_engineer_with_no_linked_engineer_row_sees_nothing(db_sessio
             resp = await client.get("/gantt")
         assert resp.status_code == 200
         assert resp.json()["rows"] == []
+    finally:
+        _teardown()
+
+
+async def test_workspace_engineer_with_hub_scope_all_cannot_read_unrelated_project(db_session):
+    """P10-F01 regression (security-auditor P10 gate finding, High):
+    reproduces the auditor's exact live repro — an Engineer-role principal
+    whose `hub_scope_all` is `True` (forced explicitly here, bypassing the
+    P10-F01 schema guard on purpose, to prove the *scoping* fix in
+    `services.hub_scope.is_engineer_self_scoped`/`services.workspace.
+    get_scoped_project_or_404` holds on its own, independent of the schema
+    guard) must NOT be able to read an unrelated project's Workspace — no
+    grant, no assignment, no hub scope in common. Before the P10-F01 fix,
+    `is_engineer_self_scoped` required `not hub_scope_all`, so this exact
+    principal fell through to the unfiltered `hub_scope_filter(...) is None`
+    branch and got a 200 with the full (non-financial) project payload
+    instead of the expected 404.
+    """
+
+    hub = await make_hub(db_session, name=HubName.RD_GREECE, lab_region=LabRegion.GREECE)
+    other_engineer = await make_engineer(db_session, hub, name="Someone Else")
+    project = await make_project(
+        db_session, hub, name="Unrelated Project", leader=other_engineer
+    )
+
+    # The exact bug shape: Engineer role, hub_scope_all=True, no linked
+    # Engineer row, no ProjectAccessGrant, no assignment to this project.
+    user = await make_user(db_session, RoleName.ENGINEER, hub_scope_all=True)
+    client = _client(db_session)
+    override_current_principal(
+        make_principal(RoleName.ENGINEER, user_id=user.id, hub_scope_all=True, hub_ids=[])
+    )
+    try:
+        async with client:
+            resp = await client.get(f"/projects/{project.id}/workspace")
+        assert resp.status_code == 404
+    finally:
+        _teardown()
+
+
+async def test_workspace_engineer_with_hub_scope_all_can_still_read_own_project(db_session):
+    """Companion to the regression above: the P10-F01 fix must not break a
+    legitimate Engineer read of their OWN project just because
+    `hub_scope_all` happens to be (mis)configured `True` on the account —
+    own-assignment scoping still finds it via `Project.leader_engineer_id`.
+    """
+
+    hub = await make_hub(db_session, name=HubName.RD_GREECE, lab_region=LabRegion.GREECE)
+    engineer = await make_engineer(db_session, hub, name="Bypass Leader")
+    project = await make_project(db_session, hub, name="Own Project", leader=engineer)
+
+    user = await make_user(db_session, RoleName.ENGINEER, hub_scope_all=True)
+    engineer.user_id = user.id
+    await db_session.flush()
+    client = _client(db_session)
+    override_current_principal(
+        make_principal(RoleName.ENGINEER, user_id=user.id, hub_scope_all=True, hub_ids=[])
+    )
+    try:
+        async with client:
+            resp = await client.get(f"/projects/{project.id}/workspace")
+        assert resp.status_code == 200
+        assert resp.json()["project"]["name"] == "Own Project"
     finally:
         _teardown()

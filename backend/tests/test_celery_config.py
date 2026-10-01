@@ -51,15 +51,18 @@ def test_get_redis_settings_is_cached_singleton(monkeypatch):
 def test_celery_settings_defaults():
     settings = CelerySettings()
     assert settings.task_time_limit_seconds == 900
-    assert settings.cp_sat_max_time_in_seconds == 60.0
+    assert settings.cp_sat_deterministic_time is None
 
 
 def test_celery_settings_env_override(monkeypatch):
     monkeypatch.setenv("RPD_CELERY_TASK_TIME_LIMIT_SECONDS", "120")
-    monkeypatch.setenv("RPD_CELERY_CP_SAT_MAX_TIME_IN_SECONDS", "5.5")
+    monkeypatch.setenv("RPD_CELERY_CP_SAT_DETERMINISTIC_TIME", "5.5")
+    # P9-R02b: the retired wall-clock variable is ignored, not an error.
+    monkeypatch.setenv("RPD_CELERY_CP_SAT_MAX_TIME_IN_SECONDS", "60")
     settings = CelerySettings()
     assert settings.task_time_limit_seconds == 120
-    assert settings.cp_sat_max_time_in_seconds == 5.5
+    assert settings.cp_sat_deterministic_time == 5.5
+    assert not hasattr(settings, "cp_sat_max_time_in_seconds")
 
 
 def test_celery_settings_rejects_non_positive_time_limit():
@@ -69,7 +72,7 @@ def test_celery_settings_rejects_non_positive_time_limit():
 
 def test_celery_settings_rejects_non_positive_cp_sat_time():
     with pytest.raises(pydantic.ValidationError):
-        CelerySettings(cp_sat_max_time_in_seconds=0)
+        CelerySettings(cp_sat_deterministic_time=0)
 
 
 def test_get_celery_settings_is_cached_singleton():

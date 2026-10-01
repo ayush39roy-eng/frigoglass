@@ -52,10 +52,9 @@ export type EngineerUpdateRequest = Partial<EngineerCreateRequest>;
 /**
  * `GET /chambers` / `GET /chambers/{id}` row (`backend/schemas/chamber.py::ChamberRead`).
  *
- * Only `max_concurrent` gates lab-step booking (Invariant I2 / ADR 0003,
- * `docs/OPEN_QUESTIONS.md` #3) — `efficiency` and `weeks_per_chamber` are
- * stored, reportable fields surfaced here and on RPD Capacity, but do NOT
- * constrain the scheduler. Never implied here to affect booking.
+ * Only `max_concurrent` gates lab-step booking (Invariant I2). `platforms`,
+ * `efficiency` and the three downtime fields feed the ADR 0008 supply
+ * formula shown on RPD Capacity; they do NOT constrain the scheduler.
  */
 export interface ChamberRead {
   id: Id;
@@ -64,7 +63,15 @@ export interface ChamberRead {
   max_concurrent: number;
   platforms: number;
   efficiency: number;
-  weeks_per_chamber: number;
+  // PLACEHOLDER (P9 contract §3 addendum, orchestrator 2026-09-27): ADR 0008
+  // downtime inputs replace the retired `weeks_per_chamber`.
+  maintenance_weeks: number;
+  breakdown_weeks: number;
+  calibration_weeks: number;
+  /** Derived server-side: 52 − region holidays − maintenance − breakdown − calibration. */
+  working_weeks_per_chamber: number;
+  /** Derived server-side: working weeks × efficiency × platforms. */
+  efficient_lab_weeks: number;
   allowed_stages: string[];
   created_at: string;
   updated_at: string;
@@ -79,7 +86,10 @@ export interface ChamberCreateRequest {
   max_concurrent: number;
   platforms?: number;
   efficiency?: number;
-  weeks_per_chamber?: number;
+  /** ≥ 0; the server defaults 2 / 0 / 1 on create when omitted. */
+  maintenance_weeks?: number;
+  breakdown_weeks?: number;
+  calibration_weeks?: number;
   allowed_stages?: string[];
 }
 
@@ -97,6 +107,8 @@ export interface ScheduleRunSummary {
   horizon_weeks: number;
   current_week: number;
   trigger_reason: string | null;
+  /** P9-R02 (ruling 6): "OPTIMAL" / "FEASIBLE" for CP-SAT; null for greedy. */
+  solver_status: string | null;
   created_at: string;
 }
 

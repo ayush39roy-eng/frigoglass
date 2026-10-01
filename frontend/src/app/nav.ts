@@ -7,7 +7,11 @@ import {
   LayoutDashboard,
   LayoutGrid,
   ScrollText,
+  UsersRound,
+  Workflow,
 } from 'lucide-react';
+
+import type { SurfaceKey } from '@/types/enums';
 
 /** lucide-react does not export its icon component type from the package entry. */
 export type IconComponent = React.ComponentType<React.SVGProps<SVGSVGElement>>;
@@ -47,6 +51,12 @@ export interface SurfaceNavItem {
   /** Sidebar section this surface belongs to. */
   group: NavGroup;
   /**
+   * The `core.rbac.Surface` value this nav item is gated on (ADR 0010). The
+   * sidebar hides the item unless `GET /me`'s `permissions[surface].read` is
+   * true, and the route guard renders a 403 page for a direct URL hit.
+   */
+  surface: SurfaceKey;
+  /**
    * Density zone this surface renders in (src/components/layout/density-zone.tsx).
    *
    * 'overview' is for screens a person READS — a board audience, a form being filled
@@ -61,6 +71,7 @@ export interface SurfaceNavItem {
 export const SURFACES: readonly SurfaceNavItem[] = [
   {
     path: '/',
+    surface: 'dashboard',
     label: 'Dashboard',
     title: 'Global RPD Dashboard',
     icon: LayoutDashboard,
@@ -72,6 +83,7 @@ export const SURFACES: readonly SurfaceNavItem[] = [
   },
   {
     path: '/capacity',
+    surface: 'capacity',
     label: 'Capacity',
     title: 'RPD Capacity',
     icon: GaugeCircle,
@@ -83,6 +95,7 @@ export const SURFACES: readonly SurfaceNavItem[] = [
   },
   {
     path: '/matrix',
+    surface: 'matrix',
     label: 'Prioritization',
     title: 'Prioritization Matrix',
     icon: LayoutGrid,
@@ -94,6 +107,7 @@ export const SURFACES: readonly SurfaceNavItem[] = [
   },
   {
     path: '/timeline',
+    surface: 'gantt',
     label: 'Timeline',
     title: 'Project Execution Timeline',
     icon: CalendarRange,
@@ -105,6 +119,7 @@ export const SURFACES: readonly SurfaceNavItem[] = [
   },
   {
     path: '/register',
+    surface: 'project_registration',
     label: 'Register',
     title: 'Project Registration',
     icon: FilePlus2,
@@ -116,6 +131,7 @@ export const SURFACES: readonly SurfaceNavItem[] = [
   },
   {
     path: '/planning',
+    surface: 'capacity_planning',
     label: 'Planning',
     title: 'Capacity Planning',
     icon: Boxes,
@@ -126,7 +142,32 @@ export const SURFACES: readonly SurfaceNavItem[] = [
     density: 'working',
   },
   {
+    path: '/settings/workflow',
+    surface: 'workflow_settings',
+    label: 'Workflow',
+    title: 'Workflow Settings',
+    icon: Workflow,
+    task: 'P9-T04',
+    summary:
+      'The two workflow templates (PDD / OEM): step kinds and precedence, the client lead-time table, hub work calendars and chamber downtime (ADRs 0007–0009). Super Admin edits; Admin reads.',
+    group: 'Configure',
+    density: 'working',
+  },
+  {
+    path: '/admin/users',
+    surface: 'user_role_admin',
+    label: 'Users & roles',
+    title: 'User / Role Admin',
+    icon: UsersRound,
+    task: 'P9-T04',
+    summary:
+      'Users, their roles, hub scope and engineer link (ADR 0010). Admins manage the non-admin roles; only a Super Admin grants or revokes Admin / Super Admin.',
+    group: 'Configure',
+    density: 'working',
+  },
+  {
     path: '/audit-log',
+    surface: 'audit_log',
     label: 'Audit Log',
     title: 'Audit Log',
     icon: ScrollText,

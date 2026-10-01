@@ -4,29 +4,73 @@
 // P4-T01 docs/MEMORY.md carry-forward note (a)). P3-T07's contract test must
 // catch drift between these shapes and the real schema.
 
-import type { HubName, ProjectCategory, ScheduleRunStatus, SolverType } from '@/types/enums';
+import type { HubName, LabRegion, ProjectCategory, ScheduleRunStatus, SolverType } from '@/types/enums';
 import type { Id } from '@/types/common';
 
 /**
- * One hub's load vs. capacity, from `GET /capacity/hub-load` (→ HubCapacitySummary).
+ * One chamber's supply inputs and derived figures (PLACEHOLDER — P9 contract §4,
+ * ADR 0008): `working_weeks_per_chamber = 52 − holidays − maintenance − breakdown −
+ * calibration`, `efficient_lab_weeks = working_weeks × efficiency × platforms`.
+ * Both derived SERVER-side; shown so the client sees the same breakdown their
+ * workbook has (Invariant I17).
+ */
+export interface CapacityChamberRow {
+  chamber_id: Id;
+  code: string;
+  platforms: number;
+  efficiency: number;
+  working_weeks_per_chamber: number;
+  efficient_lab_weeks: number;
+}
+
+/**
+ * One hub's load vs. supply, from `GET /capacity/hub-load` (→ HubCapacitySummary
+ * row; PLACEHOLDER — P9 contract §4 *extended*, ADR 0008).
  *
- * `design_load_weeks` / `lab_load_units` are the Invariant I6 / I7 figures — Σ of
- * the active schedule run's booked design-step / (lab-step × 0.5) durations for
- * this hub. Displayed verbatim; never recomputed here.
+ * LOAD (primary figures, Invariants I6 / I7): `design_load_weeks` = Σ design-kind
+ * step durations over the active run for the hub's projects; `lab_load_weeks` =
+ * Σ lab-kind durations × 1.0 for the hub's LAB REGION (repeated on every hub of
+ * that region). `*_estimated_weeks` = Σ the projects' hand-entered estimates —
+ * a secondary figure (OQ #12), never a schedule input.
  *
- * `design_capacity_weeks` / `lab_capacity_units` are the backend router's own
- * REPORTING formula: `Σ engineer.fte × remaining_weeks` and
- * `Σ chamber.max_concurrent × remaining_weeks × chamber.efficiency`. Per ADR
- * 0002 / ADR 0003 the scheduler itself applies NEITHER FTE nor efficiency
- * scaling — these are report-only supply estimates, not a statement about what
- * the scheduler did. Also displayed verbatim.
+ * SUPPLY (the client's formulas, computed server-side to 2 dp):
+ *   design_capacity_year      = working_weeks_per_engineer × engineer_fte_total
+ *   design_capacity_remaining = ((52 − CURRENT_WEEK) − deductions × remaining_fraction) × Σ fte
+ *   lab_capacity_year         = Σ chambers.efficient_lab_weeks   (region-level)
+ *   lab_capacity_remaining    = lab_capacity_year × remaining_fraction
+ *   gap = load − capacity;  completion_pct = capacity / load (null when load == 0)
+ * Every figure is displayed verbatim; nothing is recomputed here (I17).
  */
 export interface HubCapacityRow {
   hub: HubName;
+  lab_region: LabRegion;
   design_load_weeks: number;
-  design_capacity_weeks: number;
-  lab_load_units: number;
-  lab_capacity_units: number;
+  design_load_estimated_weeks: number;
+  lab_load_weeks: number;
+  lab_load_estimated_weeks: number;
+  engineer_fte_total: number;
+  working_weeks_per_engineer: number;
+  design_capacity_year: number;
+  design_capacity_remaining: number;
+  lab_capacity_year: number;
+  lab_capacity_remaining: number;
+  design_gap_year: number;
+  design_completion_pct_year: number | null;
+  design_gap_remaining: number;
+  design_completion_pct_remaining: number | null;
+  lab_gap_year: number;
+  lab_completion_pct_year: number | null;
+  lab_gap_remaining: number;
+  lab_completion_pct_remaining: number | null;
+  /** `(52 − CURRENT_WEEK) / 52`. */
+  remaining_fraction: number;
+  chambers: CapacityChamberRow[];
+  /** @deprecated P3-era alias of `design_capacity_remaining`; kept one release, not read. */
+  design_capacity_weeks?: number;
+  /** @deprecated P3-era alias of `lab_capacity_remaining`; kept one release, not read. */
+  lab_capacity_units?: number;
+  /** @deprecated P3-era lab load (× 0.5); superseded by `lab_load_weeks` (ADR 0007). */
+  lab_load_units?: number;
 }
 
 export interface HubCapacitySummary {
@@ -104,5 +148,8 @@ export interface ScheduleRunSummary {
   horizon_weeks: number;
   current_week: number;
   trigger_reason: string | null;
+  /** P9-R02 (ruling 6): the solver's verdict, "OPTIMAL" / "FEASIBLE" for CP-SAT;
+   *  null for greedy runs and older runs. Always present in the payload. */
+  solver_status: string | null;
   created_at: string;
 }

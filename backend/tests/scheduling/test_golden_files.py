@@ -34,6 +34,7 @@ from tests.scheduling._fixtures import (
     ENGINEER_A,
     ENGINEER_B,
     ENGINEER_C_NARROW,
+    LEAD_TIMES,
     TEMPLATE,
 )
 
@@ -62,7 +63,11 @@ def test_normal_case_sequential_booking():
         leader_engineer_id="eng-a",
     )
     si = ScheduleInput(
-        projects=(proj,), engineers=(ENGINEER_A,), chambers=(CHAMBER_GR1,), workflow_steps=TEMPLATE
+        projects=(proj,),
+        engineers=(ENGINEER_A,),
+        chambers=(CHAMBER_GR1,),
+        workflow_steps=TEMPLATE,
+        lead_times=LEAD_TIMES,
     )
     out = run_greedy_sgs(si)
     outcome = _outcome(out, "p-normal")
@@ -74,7 +79,7 @@ def test_normal_case_sequential_booking():
     assert len(outcome.steps) == 2
     design_step, lab_step = outcome.steps
     assert design_step.start_week == 31  # current_week default
-    assert design_step.duration_weeks == 2  # duration_weeks(2, "A") = round(2*0.8) = 2
+    assert design_step.duration_weeks == 2  # lead_time[PDD][A][PDD-A] == 2
     assert lab_step.start_week == design_step.end_week + 1  # I3, tight packing
     assert lab_step.assigned_chamber_id == "ch-gr1"
     assert outcome.within_year
@@ -102,6 +107,7 @@ def test_single_engineer_contention():
         engineers=(ENGINEER_A,),
         chambers=(CHAMBER_GR1, CHAMBER_GR2),
         workflow_steps=TEMPLATE,
+        lead_times=LEAD_TIMES,
     )
     out = run_greedy_sgs(si)
 
@@ -131,6 +137,7 @@ def test_chamber_saturation():
         engineers=(ENGINEER_A, ENGINEER_B),
         chambers=(CHAMBER_GR1,),  # only one chamber, max_concurrent=1
         workflow_steps=TEMPLATE,
+        lead_times=LEAD_TIMES,
     )
     out = run_greedy_sgs(si)
 
@@ -149,8 +156,8 @@ def test_chamber_saturation():
 
 
 def test_frozen_conflict_raises_eng_conflict():
-    """Two frozen projects sharing a leader and identical weeks -> the second
-    raises ENG_CONFLICT; BOTH projects' dates stay locked at actual_start_week
+    """Two frozen projects sharing a leader and identical weeks -> both
+    raise ENG_CONFLICT (P9-R01); both projects' dates stay locked at actual_start_week
     (Booking rules: "capacity is consumed regardless of conflict"; I10: a
     frozen project's dates are never mutated).
     """
@@ -167,7 +174,11 @@ def test_frozen_conflict_raises_eng_conflict():
     p1 = ProjectInput(project_id="p-frozen-1", name="Frozen A", **common)
     p2 = ProjectInput(project_id="p-frozen-2", name="Frozen B", **common)
     si = ScheduleInput(
-        projects=(p1, p2), engineers=(ENGINEER_A,), chambers=(CHAMBER_GR1,), workflow_steps=TEMPLATE
+        projects=(p1, p2),
+        engineers=(ENGINEER_A,),
+        chambers=(CHAMBER_GR1,),
+        workflow_steps=TEMPLATE,
+        lead_times=LEAD_TIMES,
     )
     out = run_greedy_sgs(si)
 
@@ -175,7 +186,9 @@ def test_frozen_conflict_raises_eng_conflict():
     assert o1.steps[0].start_week == 10
     assert o2.steps[0].start_week == 10  # I10: never mutated, despite the conflict
     assert o2.eng_conflict
-    assert not o1.eng_conflict  # booked first, no conflict on its own side
+    # P9-R01 (auditor D4): a double booking flags ENG_CONFLICT on *both*
+    # projects involved, not only on the second booker.
+    assert o1.eng_conflict
 
     # A real, correctly-flagged ENG_CONFLICT is VALID output, not a violation.
     assert validate_invariants(si, out) == ()
@@ -210,6 +223,7 @@ def test_frozen_chamber_overlap_raises_overlap():
         engineers=(ENGINEER_A, ENGINEER_B),
         chambers=(CHAMBER_GR1,),  # max_concurrent=1, both land here in the same weeks
         workflow_steps=TEMPLATE,
+        lead_times=LEAD_TIMES,
     )
     out = run_greedy_sgs(si)
 
@@ -244,6 +258,7 @@ def test_left_out_at_horizon():
         engineers=(ENGINEER_A,),
         chambers=(CHAMBER_GR1,),
         workflow_steps=TEMPLATE,
+        lead_times=LEAD_TIMES,
         current_week=77,  # design step duration 2 -> 77+2=79 > horizon 78
         horizon_weeks=78,
     )
@@ -282,6 +297,7 @@ def test_category_mismatch_is_warning_not_block():
         engineers=(ENGINEER_C_NARROW,),
         chambers=(CHAMBER_GR1,),
         workflow_steps=TEMPLATE,
+        lead_times=LEAD_TIMES,
     )
     out = run_greedy_sgs(si)
     outcome = _outcome(out, "p-cat")
@@ -319,6 +335,7 @@ def test_category_mismatch_oem_hub_variant():
         engineers=(eng_without_oem, eng_with_oem),
         chambers=(india_chamber,),
         workflow_steps=TEMPLATE,
+        lead_times=LEAD_TIMES,
     )
     out = run_greedy_sgs(si)
 
@@ -356,6 +373,7 @@ def test_spillover_boundary_on_time_at_week_52():
         engineers=(ENGINEER_A,),
         chambers=(CHAMBER_GR1,),
         workflow_steps=TEMPLATE,
+        lead_times=LEAD_TIMES,
         current_week=48,  # start=48 -> end = 48+5-1 = 52
     )
     out = run_greedy_sgs(si)
@@ -389,6 +407,7 @@ def test_spillover_boundary_one_week_over_at_week_53():
         engineers=(ENGINEER_A,),
         chambers=(CHAMBER_GR1,),
         workflow_steps=TEMPLATE,
+        lead_times=LEAD_TIMES,
         current_week=49,  # start=49 -> end = 49+5-1 = 53
     )
     out = run_greedy_sgs(si)
@@ -427,6 +446,7 @@ def test_delay_is_terminal_not_propagated():
         engineers=(ENGINEER_A,),
         chambers=(CHAMBER_GR1,),
         workflow_steps=TEMPLATE,
+        lead_times=LEAD_TIMES,
         current_week=45,
     )
     out = run_greedy_sgs(si)
@@ -461,7 +481,11 @@ def test_excluded_status_commercialized():
         leader_engineer_id="eng-a",
     )
     si = ScheduleInput(
-        projects=(proj,), engineers=(ENGINEER_A,), chambers=(CHAMBER_GR1,), workflow_steps=TEMPLATE
+        projects=(proj,),
+        engineers=(ENGINEER_A,),
+        chambers=(CHAMBER_GR1,),
+        workflow_steps=TEMPLATE,
+        lead_times=LEAD_TIMES,
     )
     out = run_greedy_sgs(si)
     outcome = _outcome(out, "p-comm")
@@ -508,6 +532,7 @@ def test_excluded_status_on_hold():
         engineers=(ENGINEER_A,),
         chambers=(CHAMBER_GR1,),
         workflow_steps=TEMPLATE,
+        lead_times=LEAD_TIMES,
     )
     out = run_greedy_sgs(si)
 
@@ -553,6 +578,7 @@ def test_determinism_byte_identical_rerun():
         engineers=(ENGINEER_A, ENGINEER_B),
         chambers=(CHAMBER_GR1, CHAMBER_GR2, romania_chamber),
         workflow_steps=TEMPLATE,
+        lead_times=LEAD_TIMES,
     )
     out1 = run_greedy_sgs(si)
     out2 = run_greedy_sgs(si)
@@ -564,6 +590,7 @@ def test_determinism_byte_identical_rerun():
         engineers=(ENGINEER_A, ENGINEER_B),
         chambers=(CHAMBER_GR1, CHAMBER_GR2, romania_chamber),
         workflow_steps=TEMPLATE,
+        lead_times=LEAD_TIMES,
     )
     out3 = run_greedy_sgs(shuffled)
     assert out1 == out3

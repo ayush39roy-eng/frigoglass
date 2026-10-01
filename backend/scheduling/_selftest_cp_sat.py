@@ -24,7 +24,7 @@ Three things this script verifies, per this task's explicit brief:
 
   2. **The full real 46-project seed dataset**
      (`backend/seed/prototype_seed_data.json`) — confirms the solve completes
-     within a bounded `max_time_in_seconds` and, most importantly,
+     within a bounded deterministic budget and, most importantly,
      `validate_invariants` (P2-T04) reports **zero violations** on the CP-SAT
      output. This is independent proof the CP-SAT model respects the same
      domain rules the greedy scheduler and its validator already enforce.
@@ -39,17 +39,20 @@ Three things this script verifies, per this task's explicit brief:
 
 from __future__ import annotations
 
-import json
 import time
-from pathlib import Path
 
 from scheduling import (
     ChamberInput,
     EngineerInput,
     ProjectInput,
     ScheduleInput,
-    WorkflowStepTemplate,
     validate_invariants,
+)
+from scheduling._selftest_common import (
+    LEAD_TIMES,
+    TEMPLATE,
+    load_seed_schedule_input,
+    seed_path,
 )
 from scheduling.cp_sat import run_cp_sat
 
@@ -72,11 +75,6 @@ def check_no_violations(label: str, schedule_input: ScheduleInput, out) -> None:
 
 
 # --- Shared fixtures (mirrors scheduling._selftest.py's building blocks) ------
-
-TEMPLATE = (
-    WorkflowStepTemplate("PDD-A", "Marketing Brief", "design", base_weeks=2, sequence_order=1),
-    WorkflowStepTemplate("PDD-F", "Proof of Concept", "lab", base_weeks=3, sequence_order=2),
-)
 
 ENGINEER_A = EngineerInput("eng-a", "Engineer A", "R&D-Greece", ("A+", "A", "B", "C"))
 ENGINEER_B = EngineerInput("eng-b", "Engineer B", "R&D-Greece", ("A+", "A", "B", "C"))
@@ -107,7 +105,11 @@ def scenario_normal_case() -> None:
         leader_engineer_id="eng-a",
     )
     si = ScheduleInput(
-        projects=(proj,), engineers=(ENGINEER_A,), chambers=(CHAMBER_GR1,), workflow_steps=TEMPLATE
+        projects=(proj,),
+        engineers=(ENGINEER_A,),
+        chambers=(CHAMBER_GR1,),
+        workflow_steps=TEMPLATE,
+        lead_times=LEAD_TIMES,
     )
     out, info = run_cp_sat(si)
     check("normal: OPTIMAL", info.status_name == "OPTIMAL")
@@ -146,6 +148,7 @@ def scenario_single_engineer_contention() -> None:
         engineers=(ENGINEER_A,),
         chambers=(CHAMBER_GR1, CHAMBER_GR2),
         workflow_steps=TEMPLATE,
+        lead_times=LEAD_TIMES,
     )
     out, info = run_cp_sat(si)
     check("contention: OPTIMAL", info.status_name == "OPTIMAL")
@@ -174,6 +177,7 @@ def scenario_chamber_saturation() -> None:
         engineers=(ENGINEER_A, ENGINEER_B),
         chambers=(CHAMBER_GR1,),
         workflow_steps=TEMPLATE,
+        lead_times=LEAD_TIMES,
     )
     out, info = run_cp_sat(si)
     check("saturation: OPTIMAL", info.status_name == "OPTIMAL")
@@ -211,6 +215,7 @@ def scenario_left_out_at_horizon() -> None:
         engineers=(ENGINEER_A,),
         chambers=(CHAMBER_GR1,),
         workflow_steps=TEMPLATE,
+        lead_times=LEAD_TIMES,
         current_week=77,  # design step duration 2 -> 77+2=79 > horizon 78
         horizon_weeks=78,
     )
@@ -243,6 +248,7 @@ def scenario_category_mismatch() -> None:
         engineers=(ENGINEER_C_NARROW,),
         chambers=(CHAMBER_GR1,),
         workflow_steps=TEMPLATE,
+        lead_times=LEAD_TIMES,
     )
     out, info = run_cp_sat(si)
     check("cat mismatch: OPTIMAL", info.status_name == "OPTIMAL")
@@ -277,6 +283,7 @@ def scenario_oem_hub_requires_oem_allowed_category() -> None:
         engineers=(eng_without_oem, eng_with_oem),
         chambers=(india_chamber,),
         workflow_steps=TEMPLATE,
+        lead_times=LEAD_TIMES,
     )
     out, info = run_cp_sat(si)
     check("OEM hub: OPTIMAL", info.status_name == "OPTIMAL")
@@ -313,6 +320,7 @@ def scenario_spillover_boundary() -> None:
         engineers=(ENGINEER_A,),
         chambers=(CHAMBER_GR1,),
         workflow_steps=TEMPLATE,
+        lead_times=LEAD_TIMES,
         current_week=48,
     )
     out_ok, info_ok = run_cp_sat(si_ok)
@@ -330,6 +338,7 @@ def scenario_spillover_boundary() -> None:
         engineers=(ENGINEER_A,),
         chambers=(CHAMBER_GR1,),
         workflow_steps=TEMPLATE,
+        lead_times=LEAD_TIMES,
         current_week=49,
     )
     out_late, info_late = run_cp_sat(si_late)
@@ -366,6 +375,7 @@ def scenario_delay_is_terminal_not_propagated() -> None:
         engineers=(ENGINEER_A,),
         chambers=(CHAMBER_GR1,),
         workflow_steps=TEMPLATE,
+        lead_times=LEAD_TIMES,
         current_week=45,
     )
     out, info = run_cp_sat(si)
@@ -395,6 +405,7 @@ def scenario_excluded_statuses() -> None:
         engineers=(ENGINEER_A,),
         chambers=(CHAMBER_GR1,),
         workflow_steps=TEMPLATE,
+        lead_times=LEAD_TIMES,
     )
     out, info = run_cp_sat(si)
     check("excluded: OPTIMAL", info.status_name == "OPTIMAL")
@@ -431,7 +442,11 @@ def scenario_no_leader() -> None:
         leader_engineer_id=None,
     )
     si = ScheduleInput(
-        projects=(proj,), engineers=(ENGINEER_A,), chambers=(CHAMBER_GR1,), workflow_steps=TEMPLATE
+        projects=(proj,),
+        engineers=(ENGINEER_A,),
+        chambers=(CHAMBER_GR1,),
+        workflow_steps=TEMPLATE,
+        lead_times=LEAD_TIMES,
     )
     out, info = run_cp_sat(si)
     check("no_leader: OPTIMAL", info.status_name == "OPTIMAL")
@@ -469,6 +484,7 @@ def scenario_no_eligible_chamber() -> None:
         engineers=(ENGINEER_A,),
         chambers=(india_chamber,),
         workflow_steps=TEMPLATE,
+        lead_times=LEAD_TIMES,
     )
     out, info = run_cp_sat(si)
     check("no_chamber: OPTIMAL", info.status_name == "OPTIMAL")
@@ -477,7 +493,10 @@ def scenario_no_eligible_chamber() -> None:
     outcome = out.project_outcomes[0]
     check("no_chamber: no_chamber_step_id == PDD-F", outcome.no_chamber_step_id == "PDD-F")
     check("no_chamber: left_out=True", outcome.left_out)
-    check("no_chamber: no steps", outcome.steps == ())
+    # P9-T02: such a project is now walked with the shared greedy code on the
+    # shared resource state, so (like greedy) it retains the design step it
+    # booked before the dead end -- the row set is incomplete, never complete.
+    check("no_chamber: incomplete row set (design step retained)", len(outcome.steps) == 1)
     check_no_violations("no_chamber", si, out)
 
 
@@ -516,7 +535,11 @@ def scenario_two_frozen_projects_engineer_conflict() -> None:
         actual_start_week=10,  # exact same weeks -> guaranteed conflict
     )
     si = ScheduleInput(
-        projects=(p1, p2), engineers=(ENGINEER_A,), chambers=(CHAMBER_GR1,), workflow_steps=TEMPLATE
+        projects=(p1, p2),
+        engineers=(ENGINEER_A,),
+        chambers=(CHAMBER_GR1,),
+        workflow_steps=TEMPLATE,
+        lead_times=LEAD_TIMES,
     )
     out, info = run_cp_sat(si)
     check(
@@ -557,6 +580,7 @@ def scenario_two_frozen_projects_engineer_conflict() -> None:
         engineers=(ENGINEER_A,),
         chambers=(CHAMBER_GR1,),
         workflow_steps=TEMPLATE,
+        lead_times=LEAD_TIMES,
         current_week=10,
     )
     out2, info2 = run_cp_sat(si2)
@@ -606,6 +630,7 @@ def scenario_two_frozen_projects_chamber_overlap() -> None:
         engineers=(ENGINEER_A, ENGINEER_B),
         chambers=(CHAMBER_GR1,),  # max_concurrent=1
         workflow_steps=TEMPLATE,
+        lead_times=LEAD_TIMES,
     )
     out, info = run_cp_sat(si)
     check(
@@ -626,71 +651,32 @@ def scenario_two_frozen_projects_chamber_overlap() -> None:
 
 def real_seed_dataset() -> None:
     """The full real 46-project P1-T03 seed dataset, canonical 14-step
-    template -- confirms the model solves within a bounded
-    `max_time_in_seconds` and `validate_invariants` reports zero violations at
+    template -- confirms the model solves within its deterministic budget
+    and `validate_invariants` reports zero violations at
     realistic scale, not just on small hand-traced fixtures. Self-contained
     (does not import from the now-deleted `tests/oracle/`)."""
 
-    seed_path = Path(__file__).resolve().parent.parent / "seed" / "prototype_seed_data.json"
-    if not seed_path.exists():
+    if not seed_path().exists():
         check("real_seed_dataset: seed file present (skipped, not found)", False)
         return
 
-    seed = json.loads(seed_path.read_text())
+    si = load_seed_schedule_input()
+    projects = si.projects
 
-    engineers = tuple(
-        EngineerInput(
-            engineer_id=e["name"],
-            name=e["name"],
-            hub=e["hub"],
-            allowed_categories=tuple(e["cats"]),
-            fte=e["fte"],
-        )
-        for e in seed["engineers"]
-    )
-    chambers = tuple(
-        ChamberInput(
-            chamber_id=c["id"],
-            code=c["id"],
-            lab_region=c["labHub"],
-            max_concurrent=c["max"],
-            allowed_stages=tuple(f"PDD-{letter}" for letter in c["stages"]),
-            efficiency=c["eff"],
-            weeks_per_chamber=c["wksCh"],
-        )
-        for c in seed["chambers"]
-    )
-    projects = tuple(
-        ProjectInput(
-            project_id=p["id"],
-            name=p["name"],
-            hub=p["hub"],
-            status=p["status"],
-            category=p["cat"],
-            priority=p["prio"],
-            frozen=p["frozen"],
-            leader_engineer_id=p["leader"],
-            actual_start_week=p["actualStart"] if p["frozen"] else None,
-            delay_weeks=p["delay"],
-        )
-        for p in seed["projects"]
-    )
-    si = ScheduleInput(projects=projects, engineers=engineers, chambers=chambers)
-
-    max_time = 60.0
+    # Ruling 6: deterministic-time budgets only (run_cp_sat's defaults), so no
+    # wall-clock assertion here -- wall time is machine-dependent, the result
+    # is not.
     t0 = time.time()
-    out, info = run_cp_sat(si, max_time_in_seconds=max_time)
+    out, info = run_cp_sat(si)
     wall_clock = time.time() - t0
-
+    print(f"    real_seed_dataset: wall clock {wall_clock:.2f}s, status {info.status_name}")
     check(
-        f"real_seed_dataset (46 projects): completes within bounded "
-        f"max_time_in_seconds={max_time}s (wall clock {wall_clock:.2f}s, "
-        f"solver-reported {info.wall_time_seconds:.2f}s)",
-        wall_clock <= max_time + 5.0,  # small grace for process/model-build overhead
+        f"real_seed_dataset: solver status is OPTIMAL or FEASIBLE (got {info.status_name})",
+        info.status_name in ("OPTIMAL", "FEASIBLE"),
     )
     check(
-        f"real_seed_dataset: solver status is OPTIMAL (got {info.status_name})",
-        info.status_name == "OPTIMAL",
+        "real_seed_dataset: ScheduleOutput.solver_status records the pass-1 status",
+        out.solver_status == info.status_name,
     )
     schedulable_statuses = {"In Buyoff", "Under Industrialization", "In Development", "In Queue"}
     num_excluded = sum(1 for p in projects if p.status not in schedulable_statuses)
@@ -714,10 +700,9 @@ def real_seed_dataset() -> None:
         for viol in v[:20]:
             print(f"    {viol}")
 
-    # Determinism (best-effort, single-threaded default -- see cp_sat.py's
-    # module docstring for why this is not formally guaranteed the way I8 is
-    # for the greedy scheduler, only empirically verified here).
-    out2, _info2 = run_cp_sat(si, max_time_in_seconds=max_time)
+    # Determinism: single-threaded, fixed seed and deterministic-time budgets
+    # (ruling 6), so a re-run on identical input is byte-identical.
+    out2, _info2 = run_cp_sat(si)
     check("real_seed_dataset: single-threaded re-run is structurally equal (==)", out == out2)
     check(
         "real_seed_dataset: single-threaded re-run is byte-identical (repr())",

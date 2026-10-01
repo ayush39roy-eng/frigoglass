@@ -67,21 +67,21 @@ class CelerySettings(BaseSettings):
 
     #: Hard kill ceiling for the *whole* Celery task (DB I/O + the CP-SAT
     #: solve itself + persistence) — `workers/celery_app.py`'s
-    #: `task_time_limit`. Deliberately independent of, and larger than,
-    #: `cp_sat_max_time_in_seconds` below (the solver's OWN internal search
-    #: budget), so DB round-trips before/after the solve have headroom
-    #: without Celery's own hard time limit racing the solver's soft one.
+    #: `task_time_limit`. This is the only wall-clock limit left: the solver's
+    #: own budget is deterministic time (`cp_sat_deterministic_time` below),
+    #: so this must stay comfortably above the slowest expected solve.
     task_time_limit_seconds: int = Field(default=900, ge=1)
 
-    #: Forwarded to `scheduling.cp_sat.run_cp_sat`'s own
-    #: `max_time_in_seconds` parameter (that function's own default is 60.0
-    #: — see `scheduling/cp_sat.py::DEFAULT_MAX_TIME_IN_SECONDS`) unless a
+    #: P9-R02b (DOMAIN_RULES "Gate remediation rulings" #6): the CP-SAT pass-1
+    #: budget in deterministic-time units, forwarded to
+    #: `scheduling.cp_sat.run_cp_sat(deterministic_time=...)` unless a
     #: per-dispatch override is supplied on `POST
-    #: /schedule-runs/cp-sat-dispatch`. Kept independently configurable here
-    #: so a production deployment can raise the solver's search budget (e.g.
-    #: for the real ~236-project portfolio, vs. the 46-project seed dataset)
-    #: without a code change.
-    cp_sat_max_time_in_seconds: float = Field(default=60.0, gt=0)
+    #: /schedule-runs/cp-sat-dispatch`. `None` (the default) keeps the
+    #: solver's own default (`scheduling/cp_sat.py::DEFAULT_DETERMINISTIC_TIME`).
+    #: Replaces the retired wall-clock `cp_sat_max_time_in_seconds`; a stale
+    #: `RPD_CELERY_CP_SAT_MAX_TIME_IN_SECONDS` env var is ignored
+    #: (`extra="ignore"`).
+    cp_sat_deterministic_time: float | None = Field(default=None, gt=0)
 
 
 @lru_cache

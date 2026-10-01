@@ -14,17 +14,34 @@ own "solid vs hatched" docstring.
 from __future__ import annotations
 
 import uuid
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from models.enums import HubName, ProjectCategory, ProjectPriority, WorkflowStepKind
+from models.enums import (
+    HubName,
+    ProjectCategory,
+    ProjectPriority,
+    WorkflowStepKind,
+    WorkflowStepStatus,
+)
 
 
 class GanttStepRow(BaseModel):
+    """P9 (docs/API_CONTRACT_P9.md §5): `kind` is the kind recorded on the
+    active run's `workflow_snapshot` (`design`/`lab`/`elapsed`). `skipped`
+    comes from the run's step row. `status`/`percent_complete` come from the
+    live `ProjectWorkflowStep` (ADR 0006). Step rows may overlap in time
+    (ADR 0009).
+    """
+
     step_id: str
     step_name: str
     kind: WorkflowStepKind
     sequence_order: int
+    skipped: bool
+    status: WorkflowStepStatus
+    percent_complete: int
     duration_weeks: int | None
     planned_start_week: int | None
     planned_end_week: int | None
@@ -57,6 +74,20 @@ class GanttProjectRow(BaseModel):
     left_out: bool
     spillover: bool
     cat_not_allowed: bool
+    #: docs/DOMAIN_RULES.md "Expected vs projected completion" (I16). All are
+    #: stored values, from the project row (`target_end_week`) and the active
+    #: run's outcome row (the rest). `slip_weeks = projected − expected`, null
+    #: when either is null. The browser draws these and never derives them.
+    target_end_week: int | None
+    expected_end_week: int | None
+    projected_end_week: int | None
+    unconstrained_end_week: int | None
+    slip_weeks: int | None
+    #: A Blocked stage held the project in the active run (ADR 0006).
+    blocked: bool
+    #: Progress or settings changed since the active run was computed.
+    schedule_stale: bool
+    workflow_id: Literal["PDD", "OEM"]
     steps: list[GanttStepRow]
 
 

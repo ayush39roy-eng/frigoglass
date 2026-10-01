@@ -405,7 +405,8 @@ async def export_capacity_planning(
 def _authorize_job_access(job: ExportJob | None, current_user: Principal) -> ExportJob:
     if job is None or (
         job.requested_by_user_id != current_user.user_id
-        and RoleName.ADMIN not in current_user.roles
+        # P9-T03 (ADR 0010 §1): Super Admin holds every Admin right.
+        and not ({RoleName.ADMIN, RoleName.SUPER_ADMIN} & current_user.roles)
     ):
         # 404, not 403 — never confirms a job's existence to a caller who
         # didn't dispatch it and isn't Admin. See module docstring.

@@ -62,7 +62,9 @@ caller to remember the coupling.
 from __future__ import annotations
 
 import uuid
+from collections.abc import Sequence
 from datetime import UTC, datetime
+from typing import Any
 
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -72,18 +74,101 @@ import domain_constants as dc
 from models.chamber import Chamber
 from models.engineer import Engineer
 from models.enums import ScheduleRunStatus, SolverType
-from models.project import Project
+from models.project import Project, workflow_id_for_hub
 from models.schedule import ScheduleRun, ScheduleRunProjectOutcome, ScheduleRunProjectStep
-from models.workflow import ProjectWorkflowStep, WorkflowStepTemplate
+from models.workflow import ProjectWorkflowStep, WorkflowLeadTime, WorkflowStepTemplate
 from scheduling.types import (
     ChamberInput,
     EngineerInput,
+    LeadTime,
     ProjectInput,
     ScheduleInput,
     ScheduleOutput,
+    StepProgressInput,
 )
 from scheduling.types import WorkflowStepTemplate as SchedWorkflowStepTemplate
 from services.notifications import generate_schedule_change_notifications
+from services.schedule_stale import clear_stale_for_run
+
+
+def _lead_time_sort_key(lt: WorkflowLeadTime) -> tuple[str, str, str]:
+    return (lt.workflow_id, lt.category.value, lt.step_id)
+
+
+def build_workflow_snapshot(
+    templates: Sequence[WorkflowStepTemplate], lead_times: Sequence[WorkflowLeadTime]
+) -> dict[str, Any]:
+    """`ScheduleRun.workflow_snapshot` (ADR 0009, Invariant I15): the workflow
+    settings in force when a run is created —
+
+        {"workflows": [{"id", "steps": [{"step_id", "code", "name", "kind",
+                                         "sequence_order", "predecessor_ids"}]}],
+         "lead_times": [{"workflow_id", "category", "step_id", "weeks"}]}
+
+    Deterministically ordered (workflow id, then sequence order; lead times by
+    workflow/category/step) so two runs under identical settings snapshot
+    byte-identically (I8).
+    """
+    by_workflow: dict[str, list[dict[str, Any]]] = {}
+    for t in sorted(templates, key=lambda t: (t.workflow_id, t.sequence_order)):
+        by_workflow.setdefault(t.workflow_id, []).append(
+            {
+                "step_id": t.id,
+                "code": t.code,
+                "name": t.name,
+                "kind": t.kind.value,
+                "sequence_order": t.sequence_order,
+                "predecessor_ids": list(t.predecessor_ids or []),
+            }
+        )
+    return {
+        "workflows": [{"id": wf, "steps": steps} for wf, steps in sorted(by_workflow.items())],
+        "lead_times": [
+            {
+                "workflow_id": lt.workflow_id,
+                "category": lt.category.value,
+                "step_id": lt.step_id,
+                "weeks": lt.weeks,
+            }
+            for lt in sorted(lead_times, key=_lead_time_sort_key)
+        ],
+    }
+
+
+def build_workflow_snapshot_from_input(schedule_input: ScheduleInput) -> dict[str, Any]:
+    """Same shape and ordering as `build_workflow_snapshot`, built from the
+    templates and lead times *inside the solver input*. P9-T03: this is what
+    `persist_schedule_output` stores, so the snapshot equals the settings the
+    run was actually solved with (I15), even when Workflow Settings changed
+    while a CP-SAT solve was running.
+    """
+
+    by_workflow: dict[str, list[dict[str, Any]]] = {}
+    for t in sorted(schedule_input.workflow_steps, key=lambda t: (t.workflow_id, t.sequence_order)):
+        by_workflow.setdefault(t.workflow_id, []).append(
+            {
+                "step_id": t.step_id,
+                "code": t.code,
+                "name": t.name,
+                "kind": t.kind,
+                "sequence_order": t.sequence_order,
+                "predecessor_ids": list(t.predecessor_ids),
+            }
+        )
+    return {
+        "workflows": [{"id": wf, "steps": steps} for wf, steps in sorted(by_workflow.items())],
+        "lead_times": [
+            {
+                "workflow_id": lt.workflow_id,
+                "category": lt.category,
+                "step_id": lt.step_id,
+                "weeks": lt.weeks,
+            }
+            for lt in sorted(
+                schedule_input.lead_times, key=lambda lt: (lt.workflow_id, lt.category, lt.step_id)
+            )
+        ],
+    }
 
 
 async def build_schedule_input_from_db(
@@ -109,8 +194,38 @@ async def build_schedule_input_from_db(
         (await db.execute(select(Engineer).options(selectinload(Engineer.hub)))).scalars().all()
     )
     chamber_rows = (await db.execute(select(Chamber))).scalars().all()
-    template_stmt = select(WorkflowStepTemplate).order_by(WorkflowStepTemplate.sequence_order)
+    template_stmt = select(WorkflowStepTemplate).order_by(
+        WorkflowStepTemplate.workflow_id, WorkflowStepTemplate.sequence_order
+    )
     template_rows = (await db.execute(template_stmt)).scalars().all()
+    lead_time_rows = (await db.execute(select(WorkflowLeadTime))).scalars().all()
+
+    # Per-stage progress (ADR 0006, DOMAIN_RULES.md "How progress feeds a
+    # schedule run"): the live step rows are advisory *inputs* to the solver,
+    # passed in sequence order so the hashed input (I8) is deterministic.
+    step_rows = (
+        (
+            await db.execute(
+                select(ProjectWorkflowStep).order_by(
+                    ProjectWorkflowStep.project_id, ProjectWorkflowStep.sequence_order
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    progress_by_project: dict[uuid.UUID, list[StepProgressInput]] = {}
+    for s in step_rows:
+        progress_by_project.setdefault(s.project_id, []).append(
+            StepProgressInput(
+                step_id=s.step_template_id,
+                status=s.status.value,
+                percent_complete=s.percent_complete,
+                actual_start_week=s.actual_start_week,
+                actual_end_week=s.actual_end_week,
+                remaining_weeks_override=s.remaining_weeks_override,
+            )
+        )
 
     projects = tuple(
         ProjectInput(
@@ -124,6 +239,10 @@ async def build_schedule_input_from_db(
             leader_engineer_id=str(p.leader_engineer_id) if p.leader_engineer_id else None,
             actual_start_week=p.actual_start_week,
             delay_weeks=p.delay_weeks,
+            workflow_id=workflow_id_for_hub(p.hub.is_oem),
+            certification_testing_required=p.certification_testing_required,
+            target_end_week=p.target_end_week,
+            step_progress=tuple(progress_by_project.get(p.id, ())),
         )
         for p in project_rows
     )
@@ -147,20 +266,31 @@ async def build_schedule_input_from_db(
             max_concurrent=c.max_concurrent,
             allowed_stages=tuple(c.allowed_stages or ()),
             efficiency=float(c.efficiency),
-            weeks_per_chamber=float(c.weeks_per_chamber),
         )
         for c in chamber_rows
     )
 
     workflow_steps = tuple(
         SchedWorkflowStepTemplate(
+            workflow_id=t.workflow_id,
             step_id=t.id,
+            code=t.code,
             name=t.name,
             kind=t.kind.value,
-            base_weeks=t.base_weeks,
             sequence_order=t.sequence_order,
+            predecessor_ids=tuple(t.predecessor_ids or ()),
         )
         for t in template_rows
+    )
+
+    lead_times = tuple(
+        LeadTime(
+            workflow_id=lt.workflow_id,
+            category=lt.category.value,
+            step_id=lt.step_id,
+            weeks=lt.weeks,
+        )
+        for lt in sorted(lead_time_rows, key=_lead_time_sort_key)
     )
 
     return ScheduleInput(
@@ -168,6 +298,7 @@ async def build_schedule_input_from_db(
         engineers=engineers,
         chambers=chambers,
         workflow_steps=workflow_steps,
+        lead_times=lead_times,
         current_week=current_week,
         horizon_weeks=horizon_weeks,
         within_year_week=within_year_week,
@@ -192,6 +323,7 @@ async def persist_schedule_output(
     sync_live_workflow_steps: bool = True,
     existing_run: ScheduleRun | None = None,
     objective_value: float | None = None,
+    solver_status: str | None = None,
 ) -> ScheduleRun:
     """Persist one `ScheduleOutput` as an immutable, versioned `ScheduleRun`
     snapshot — either a brand-new row (`existing_run=None`, the original
@@ -259,6 +391,18 @@ async def persist_schedule_output(
         )
         await db.execute(deactivate_stmt)
 
+    # ADR 0009 / I15: snapshot the workflow settings this run was solved
+    # with. P9-T03 changed this from a DB re-read at persist time to the
+    # templates/lead times inside `schedule_input`. The greedy path builds
+    # its input in the same transaction, so the result is the same there. On
+    # the CP-SAT path a Workflow Settings edit during the solve no longer
+    # leaks into the snapshot.
+    snapshot = build_workflow_snapshot_from_input(schedule_input)
+    # Ruling 6 (P9-R02): an explicit `solver_status` wins; otherwise take the
+    # one P9-R01 adds to `ScheduleOutput` (getattr, so this module does not
+    # depend on the landing order of that field).
+    effective_solver_status = solver_status or getattr(schedule_output, "solver_status", None)
+
     if existing_run is not None:
         run = existing_run
         run.solver_type = solver_type
@@ -269,6 +413,8 @@ async def persist_schedule_output(
         run.objective_value = objective_value
         run.trigger_reason = trigger_reason
         run.completed_at = datetime.now(UTC)
+        run.workflow_snapshot = snapshot
+        run.solver_status = effective_solver_status
         if triggered_by_user_id is not None:
             run.triggered_by_user_id = triggered_by_user_id
         db.add(run)
@@ -284,6 +430,8 @@ async def persist_schedule_output(
             objective_value=objective_value,
             triggered_by_user_id=triggered_by_user_id,
             trigger_reason=trigger_reason,
+            workflow_snapshot=snapshot,
+            solver_status=effective_solver_status,
         )
         db.add(run)
     await db.flush()  # assigns run.id (new-row case) / persists in-place edits
@@ -330,6 +478,7 @@ async def persist_schedule_output(
                     ),
                     eng_conflict=outcome.eng_conflict,
                     chamber_overlap=outcome.overlap,
+                    skipped=step.skipped,
                 )
             )
             if sync_live_workflow_steps:
@@ -357,12 +506,24 @@ async def persist_schedule_output(
                 within_year=outcome.within_year,
                 last_step_end_week=outcome.end_week,
                 delay_weeks_applied=project.delay_weeks,
+                # DOMAIN_RULES.md "Expected vs projected completion" (I16) and
+                # the progress-aware outcome fields (ADR 0006) — stored, never
+                # recomputed by a reader.
+                unconstrained_end_week=outcome.unconstrained_end_week,
+                expected_end_week=outcome.expected_end_week,
+                projected_end_week=outcome.projected_end_week,
+                blocked=outcome.blocked,
+                progress_pct=outcome.progress_pct,
+                data_error=outcome.data_error,
             )
         )
 
     await db.flush()
 
     if activate:
+        # P9-T03: activating a run clears `schedule_stale` for every project
+        # in it (ADR 0006). This function is the only activation path.
+        await clear_stale_for_run(db, run.id)
         # P5-T06: see module/function docstring — the sole trigger point for
         # in-app schedule-change notifications. Never called for
         # `activate=False` runs.
@@ -414,6 +575,14 @@ async def create_queued_schedule_run(
     """
 
     version = await _next_version(db)
+    # P9-T03 (I15): snapshot the settings in force at creation too, so even a
+    # run that later fails or is cancelled records them. On completion,
+    # `persist_schedule_output(existing_run=...)` rewrites it from the
+    # settings read when the solver input was built.
+    snapshot = build_workflow_snapshot(
+        (await db.execute(select(WorkflowStepTemplate))).scalars().all(),
+        (await db.execute(select(WorkflowLeadTime))).scalars().all(),
+    )
     run = ScheduleRun(
         version=version,
         solver_type=solver_type,
@@ -423,6 +592,7 @@ async def create_queued_schedule_run(
         current_week=current_week,
         triggered_by_user_id=triggered_by_user_id,
         trigger_reason=trigger_reason,
+        workflow_snapshot=snapshot,
     )
     db.add(run)
     await db.commit()

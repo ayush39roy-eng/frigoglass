@@ -41,7 +41,16 @@ _session_factory: async_sessionmaker[AsyncSession] | None = None
 def get_engine() -> AsyncEngine:
     global _engine
     if _engine is None:
-        _engine = create_async_engine(_database_url())
+        _engine = create_async_engine(
+            _database_url(),
+            pool_pre_ping=True,
+            pool_size=10,
+            max_overflow=20,
+            pool_recycle=300,
+            # P9-F01/R04-L3: unhandled DB errors must not log bound SQL
+            # parameters (free text / emails could leak into logs/tracebacks).
+            hide_parameters=True,
+        )
     return _engine
 
 

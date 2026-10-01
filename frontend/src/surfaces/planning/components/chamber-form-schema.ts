@@ -3,7 +3,8 @@ import { z } from 'zod';
 /**
  * Client-side mirror of `backend/schemas/chamber.py`'s field constraints
  * (`extra="forbid"`; `code` 1–50 chars; `max_concurrent` `gt=0` integer;
- * `platforms` `gt=0` integer; `efficiency` `gt=0`; `weeks_per_chamber` `ge=0`).
+ * `platforms` `gt=0` integer; `efficiency` `gt=0`; the three ADR 0008
+ * downtime fields `ge=0` — `weeks_per_chamber` is retired).
  * Numeric fields kept as strings through `react-hook-form` — see
  * `surfaces/registration/components/project-form-schema.ts`'s module
  * docstring for why (same reasoning, not re-derived per form). `lab_region`
@@ -12,6 +13,17 @@ import { z } from 'zod';
 
 const INTEGER_PATTERN = /^\d+$/;
 const NUMBER_PATTERN = /^\d+(\.\d+)?$/;
+
+function nonNegativeNumber() {
+  return z
+    .string()
+    .optional()
+    .refine((v) => v === undefined || v.trim() === '' || NUMBER_PATTERN.test(v.trim()), 'Enter a number')
+    .refine((v) => v === undefined || v.trim() === '' || Number(v) >= 0, 'Must be 0 or more');
+}
+
+/** Server defaults on create (orchestrator decision, 2026-09-27). */
+export const DOWNTIME_DEFAULTS = { maintenance_weeks: 2, breakdown_weeks: 0, calibration_weeks: 1 } as const;
 
 export const chamberFormSchema = z.object({
   code: z.string().min(1, 'Code is required').max(50, 'Max 50 characters'),
@@ -30,11 +42,9 @@ export const chamberFormSchema = z.object({
     .optional()
     .refine((v) => v === undefined || v.trim() === '' || NUMBER_PATTERN.test(v.trim()), 'Enter a number')
     .refine((v) => v === undefined || v.trim() === '' || Number(v) > 0, 'Must be greater than 0'),
-  weeks_per_chamber: z
-    .string()
-    .optional()
-    .refine((v) => v === undefined || v.trim() === '' || NUMBER_PATTERN.test(v.trim()), 'Enter a number')
-    .refine((v) => v === undefined || v.trim() === '' || Number(v) >= 0, 'Must be 0 or more'),
+  maintenance_weeks: nonNegativeNumber(),
+  breakdown_weeks: nonNegativeNumber(),
+  calibration_weeks: nonNegativeNumber(),
 });
 
 export type ChamberFormInput = z.input<typeof chamberFormSchema>;

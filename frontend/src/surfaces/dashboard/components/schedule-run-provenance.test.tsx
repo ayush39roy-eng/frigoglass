@@ -14,6 +14,7 @@ const greedyRun: ScheduleRunSummary = {
   horizon_weeks: 78,
   current_week: 31,
   trigger_reason: 'manual_recalc',
+  solver_status: null,
   created_at: '2026-08-31T09:00:00Z',
 };
 

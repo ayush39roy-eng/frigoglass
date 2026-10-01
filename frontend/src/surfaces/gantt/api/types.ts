@@ -3,7 +3,14 @@
 // P4-T01 docs/MEMORY.md carry-forward note). P3-T07's contract test must catch
 // drift between these shapes and the real schema.
 
-import type { HubName, ProjectCategory, ProjectPriority, WorkflowStepKind } from '@/types/enums';
+import type {
+  HubName,
+  ProjectCategory,
+  ProjectPriority,
+  WorkflowId,
+  WorkflowStepKind,
+  WorkflowStepStatus,
+} from '@/types/enums';
 import type { Id } from '@/types/common';
 
 /**
@@ -17,8 +24,16 @@ import type { Id } from '@/types/common';
 export interface GanttStepRow {
   step_id: string;
   step_name: string;
+  /** PLACEHOLDER (P9 contract §5): `design` | `lab` | `elapsed` (ADR 0007). */
   kind: WorkflowStepKind;
   sequence_order: number;
+  /** PLACEHOLDER (P9 contract §5): 0-week lead time, or a lab step on a project
+   *  without certification testing — occupies nothing; omitted from the bar area. */
+  skipped: boolean;
+  /** PLACEHOLDER (P9 contract §5): per-stage progress status (ADR 0006). */
+  status: WorkflowStepStatus;
+  /** PLACEHOLDER (P9 contract §5). */
+  percent_complete: number;
   duration_weeks: number | null;
   planned_start_week: number | null;
   planned_end_week: number | null;
@@ -44,6 +59,23 @@ export interface GanttProjectRow {
   left_out: boolean;
   spillover: boolean;
   cat_not_allowed: boolean;
+  /** PLACEHOLDER (P9 contract §5): the four completion weeks + slip, ALL
+   *  server-stored on the active run's outcome row / the project record
+   *  (Invariant I16 — the browser draws them, never derives them). */
+  target_end_week: number | null;
+  /** `target_end_week` if set, else `unconstrained_end_week` — decided server-side. */
+  expected_end_week: number | null;
+  /** `end_week + delay_weeks`; null when left out / excluded. */
+  projected_end_week: number | null;
+  unconstrained_end_week: number | null;
+  /** `projected − expected`, may be negative; null when either is null. */
+  slip_weeks: number | null;
+  /** PLACEHOLDER (P9 contract §5): a stage is Blocked (ADR 0006). */
+  blocked: boolean;
+  /** PLACEHOLDER (P9 contract §5): progress or settings changed since this run. */
+  schedule_stale: boolean;
+  /** PLACEHOLDER (P9 contract §5). */
+  workflow_id: WorkflowId;
   steps: GanttStepRow[];
 }
 

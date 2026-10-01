@@ -1,138 +1,68 @@
 """CP-SAT model for the same RCPSP-shaped scheduling problem `greedy.py` solves
 by construction (greedy SGS). This module solves it as a constraint-optimization
 problem instead: interval variables + `AddNoOverlap` per engineer, `AddCumulative`
-per chamber, objective = maximise weighted value of projects completing within
-year (`WITHIN_YEAR_WEEK`), subject to Invariant I3 precedence.
+per chamber, precedence per DAG edge (ADR 0009), objective = maximise weighted
+value of projects completing within year (`WITHIN_YEAR_WEEK`, ADR 0005).
 
 Speaks the exact same `ScheduleInput`/`ScheduleOutput` dataclass contract as
-`scheduling.greedy.run_greedy_sgs` (P2-T01) — same input, same output shape —
-so P2-T07's solver-comparison harness can diff the two field-by-field on
-identical input. See `docs/MEMORY.md`'s P2-T06 entry for the full design
-rationale; this docstring covers the parts a future reader needs without
-re-reading that entry.
+`scheduling.greedy.run_greedy_sgs` — same input, same output shape — so the
+solver-comparison harness can diff the two field-by-field on identical input.
 
 --------------------------------------------------------------------------
 THE HIGHEST-RISK MODELLING DECISION IN THIS MODULE, read before editing:
 --------------------------------------------------------------------------
 A naive model that feeds ALL projects (frozen and non-frozen) as peers into one
 hard `AddNoOverlap`/`AddCumulative` constraint set goes INFEASIBLE the instant
-two *frozen* projects genuinely conflict (same engineer/overlapping weeks, or
-same chamber/over capacity) -- frozen dates are fixed constants with zero
-slack, and DOMAIN_RULES.md says a frozen-vs-frozen conflict is a WARNING
-(`ENG_CONFLICT`/`OVERLAP`), never a scheduling blocker. A hard CP-SAT
-constraint has no way to "flag and continue" the way greedy.py's procedural
-walk does.
+two *fixed* placements genuinely conflict (same engineer/overlapping weeks, or
+same chamber/over capacity) -- fixed dates have zero slack, and DOMAIN_RULES.md
+says such a conflict is a WARNING (`ENG_CONFLICT`/`OVERLAP`), never a
+scheduling blocker. A hard CP-SAT constraint has no way to "flag and continue"
+the way greedy.py's procedural walk does.
 
-**Resolution: frozen projects are never CP-SAT decision variables at all.**
-Frozen projects' schedules are already fully deterministic (no search needed —
-design steps sit at `actual_start_week` sequentially; lab steps go to "the
-first eligible chamber in chamber_id-sorted order", exactly greedy.py's already
--reviewed-and-accepted logic). This module pre-resolves every frozen project's
-full schedule OUTSIDE the solver by calling `scheduling.greedy.run_greedy_sgs`
-on a `ScheduleInput` containing *only* the frozen projects (see the
-"Pre-resolve frozen projects" block inside `run_cp_sat` below for why this is
-provably identical to running the full greedy walk and taking just the
-frozen-project outcomes: greedy's sort key
-puts every frozen project before every non-frozen one, and a frozen project's
-booking never depends on anything about a *later*-processed project — only on
-previously-processed frozen projects, which are present, in the same relative
-order, in the frozen-only sub-input too).
+**Resolution: fixed placements are never CP-SAT decision variables.** Three
+kinds of placement are fixed before the model is built, using exactly the
+greedy module's own (shared) code so the two solvers agree byte-for-byte on
+them:
 
-The frozen projects' resulting resource consumption (which engineer-weeks and
-which chamber-project-weeks they occupy) is then fed into the CP-SAT model as
-**fixed background occupancy** that the non-frozen, CP-SAT-optimised projects
-must route around — mirroring exactly how greedy.py handles it (frozen
-projects go first, consuming capacity; non-frozen projects search around it).
-`ENG_CONFLICT`/`OVERLAP` for frozen projects are copied verbatim from that
-pre-resolution; no CP-SAT variable is ever created for a frozen project.
+  1. **Frozen projects** — walked first with `greedy._schedule_one_project`
+     (dates locked at `actual_start_week`, capacity consumed regardless).
+  2. **Anchored steps** (ADR 0006) — `Done` steps at their recorded actuals
+     and `In Progress` tails, pre-booked in scheduling order with
+     `greedy.prebook_anchored_steps` (capacity consumed only for weeks >=
+     CURRENT_WEEK; conflicts flagged, never resolved by moving them — I11).
+  3. **Projects that cannot be optimised** — data-error rejections, no
+     leader, a lab step with zero eligible chambers, a `Blocked` hold, an
+     anchored step behind a not-started predecessor, or a project with no
+     searchable step at all. These are resolved with the greedy walk on the
+     same shared resource state, before the model is built.
 
-Two further infeasibility traps this design specifically avoids, both regarding
-how the background occupancy is fed into the hard constraints:
+Everything consumed by 1-3 is then fed into the model as **fixed background
+occupancy** that the CP-SAT-optimised (Not Started) steps must route around:
+engineer-busy weeks are collapsed into a set and merged into disjoint ranges
+(so two conflicting fixed bookings never become two overlapping mandatory
+intervals), and per-week chamber demand is capped at `max_concurrent` (so a
+fixed OVERLAP never makes an `AddCumulative` infeasible on its own). The real
+over-booking is still reported via the flags computed outside the solver.
 
-1. **Engineer background (`AddNoOverlap`)**: if a frozen ENG_CONFLICT exists
-   (two frozen projects double-book the same engineer/week), naively adding
-   *both* frozen projects' design-step intervals as separate fixed
-   (non-optional) intervals into that engineer's `AddNoOverlap` list would
-   itself be infeasible (two mandatory, overlapping intervals can never
-   satisfy "no overlap"). Fix: the frozen-occupied weeks per engineer are
-   first collapsed into a *set* (dedup — "is this week busy at all", exactly
-   what greedy's own `eng_busy: dict[str, set[int]]` tracks), then merged into
-   disjoint contiguous ranges. Two frozen projects piling onto the same week
-   collapse into ONE occupied week in the set, so the derived background
-   intervals never overlap each other by construction, regardless of how many
-   frozen projects contributed to a given week.
-2. **Chamber background (`AddCumulative`)**: chambers have `max_concurrent`
-   potentially > 1, so naive per-week frozen demand (which CAN legitimately
-   exceed `max_concurrent` — that is exactly what an OVERLAP conflict *is*)
-   cannot be fed into `AddCumulative` unmodified: a mandatory (always-present)
-   background interval whose demand alone exceeds the chamber's capacity makes
-   that `AddCumulative` call infeasible before any non-frozen interval is even
-   considered. Fix: the background chamber demand fed into the solver is
-   capped at `chamber.max_concurrent` per week
-   (`min(actual_frozen_demand, max_concurrent)`). This guarantees the
-   mandatory portion of every `AddCumulative` call never alone exceeds its own
-   capacity ceiling, so frozen-vs-frozen chamber conflicts can never make the
-   model infeasible either — the real over-booking is still correctly reported
-   via the pre-resolved `OVERLAP` flag (computed by greedy.py's logic, outside
-   the solver), exactly matching DOMAIN_RULES.md's "warning, not a blocker"
-   semantics.
+Step kinds (ADR 0007): `design` -> optional interval on the leader's
+`AddNoOverlap`; `lab` -> one optional interval per eligible chamber (exactly
+one chosen iff present) at demand 1.0 per project-week on that chamber's
+`AddCumulative`; `elapsed` -> `end == start + duration` only, no resource;
+`skipped` -> no variables, `end = max(pred.end)` (transparent). Precedence:
+`start >= pred.end` (exclusive-end convention) per DAG edge.
 
-Both mechanisms are pure Python-level aggregation performed before the model
-is built — no CP-SAT constraint here can ever be asked to prove a frozen-vs-
-frozen conflict "doesn't happen", because DOMAIN_RULES.md says it may.
-See `_selftest_cp_sat.py::scenario_two_frozen_projects_engineer_conflict` and
-`::scenario_two_frozen_projects_chamber_overlap` for the tests that exercise
-exactly this path end-to-end (two genuinely conflicting frozen projects,
-confirmed FEASIBLE with `eng_conflict=True`/`overlap=True` raised, not
-INFEASIBLE).
+Objective weighting: ADR 0005 (documented gap-fill, not DOMAIN_RULES.md text)
+-- `PRIORITY_OBJECTIVE_WEIGHT = {P1:4, P2:3, P3:2, P4:1, Q:0}` times
+`within_year`, plus a coarse presence tie-break scaled so it can never
+override the primary term.
 
---------------------------------------------------------------------------
-Objective weighting -- a genuine DOMAIN_RULES.md gap, resolved here, flagged
-for the orchestrator/client to revisit if a real numeric scheme is specified:
---------------------------------------------------------------------------
-DOMAIN_RULES.md defines the 13-dimension *scoring formula* that produces a
-priority *band* (P1-P4/Q) and the greedy scheduler's *sort order*
-(P1->P2->P3->P4->Q) -- neither is a numeric objective weight a CP-SAT
-`Maximize()` call can use directly, and `ProjectInput` (P2-T01) only carries
-the priority band string, not the full 13-dimension weighted score. Chosen
-here: a simple ordinal weight derived from the band,
-`{"P1": 4, "P2": 3, "P3": 2, "P4": 1, "Q": 0}`, maximising
-`sum(weight[project.priority] * within_year[project] for project in solvable)`
--- i.e. maximise the priority-weighted count of projects that both get
-scheduled at all (not LEFT_OUT) AND complete within year (`WITHIN_YEAR_WEEK`).
-This is a reasonable, defensible default (higher band -> higher weight,
-matching the sort order's own relative importance) but is NOT sourced from any
-DOMAIN_RULES.md text -- it is an explicit gap-fill, not a silent invention.
-See `docs/MEMORY.md`'s P2-T06 entry for the full reasoning.
-
-A small, coarse secondary (tie-break) term is added on top of this primary
-term -- see `run_cp_sat`'s "Objective" section for the exact formula and why
-it exists (preventing CP-SAT from leaving a perfectly schedulable project
-LEFT_OUT purely because doing so scores identically under the primary term
-alone). This secondary term is this module's own addition, also not
-DOMAIN_RULES.md-sourced, and is scaled to never override the primary term's
-ranking.
-
---------------------------------------------------------------------------
-Purity / determinism
---------------------------------------------------------------------------
-Same purity contract as the rest of `backend/scheduling/`: no DB/network/
-filesystem access, no wall-clock dependence. This module does import
-`ortools.sat.python.cp_model`, a pure numerical solver library with no I/O
-of its own (same category of dependency as `domain_constants`).
-
-Determinism (Invariant I8, as literally worded in DOMAIN_RULES.md) is scoped
-to "the greedy scheduler" specifically -- it does not, on its own text,
-require CP-SAT's output to be byte-identical across runs. This module still
-makes a genuine best effort at CP-SAT determinism (`num_search_workers=1`,
-fixed `random_seed`) since the algorithm-engineer role's own "Determinism is
-mandatory" instruction reads more broadly than I8's literal text -- but a
-solver operating under a wall-clock `max_time_in_seconds` budget cannot
-formally guarantee byte-identical results across machines the way a pure,
-unbounded greedy walk can (a well-known, inherent property of time-limited
-search, not a bug in this implementation). See the P2-T06 MEMORY.md entry for
-the empirical determinism check performed on the real 46-project dataset and
-exactly what was found.
+Purity / determinism: same contract as the rest of the package (no I/O;
+`ortools.sat.python.cp_model` is a pure solver library). `num_search_workers=1`
+and a fixed `random_seed` by default. Both passes are bounded by CP-SAT
+*deterministic* time only, never wall-clock (DOMAIN_RULES "Gate remediation
+rulings" #6, ADR 0011 Amendment), so a re-run on identical input gives
+identical output on any machine. The pass-1 status ("OPTIMAL" / "FEASIBLE")
+is returned as `ScheduleOutput.solver_status`.
 """
 
 from __future__ import annotations
@@ -142,79 +72,83 @@ from dataclasses import dataclass
 
 from ortools.sat.python import cp_model
 
-import domain_constants as dc
 from scheduling.greedy import (
-    _duration_weeks,
+    RunContext,
+    _cat_not_allowed,
+    _data_error_outcome,
+    _eligible_chambers,
     _excluded_outcome,
-    _is_oem_hub,
+    _expected_end_week,
     _lab_region_for_hub,
-    _sort_key,
-    _validate_schedulable_project,
+    _no_leader_outcome,
+    _Placement,
+    _ResourceState,
+    _schedule_one_project,
+    apply_eng_conflict_flags,
+    prebook_anchored_steps,
+    prepare_run,
     run_greedy_sgs,
 )
 from scheduling.types import (
-    ChamberInput,
     EngineerInput,
     ProjectInput,
     ProjectScheduleOutcome,
     ScheduleInput,
     ScheduleOutput,
     StepSchedule,
-    WorkflowStepTemplate,
+)
+from scheduling.workflow import (
+    ProjectPlan,
+    compute_progress_pct,
+    first_step_frontier,
+    unconstrained_end_week,
 )
 
-# Ordinal objective weight derived from the priority band -- see the module
-# docstring's "Objective weighting" section for why this is a documented
-# gap-fill, not a DOMAIN_RULES.md-sourced constant.
+# Ordinal objective weight derived from the priority band -- ADR 0005.
 PRIORITY_OBJECTIVE_WEIGHT: dict[str, int] = {"P1": 4, "P2": 3, "P3": 2, "P4": 1, "Q": 0}
 
-DEFAULT_MAX_TIME_IN_SECONDS: float = 60.0
+#: Pass-1 (ADR 0005 portfolio objective) budget, in CP-SAT *deterministic*
+#: time units. Ruling 6: never a wall-clock limit. Sized in P9-R01 on the real
+#: DB seed (46 projects, 10 workbook chambers): 15 + 4 units took ~51 s wall
+#: (FEASIBLE, objective 31, bound 34). 10, 15 and 20 units all reach the same
+#: pass-1 solution there; 20 + 5 costs ~67 s for byte-identical output.
+DEFAULT_DETERMINISTIC_TIME: float = 15.0
 DEFAULT_RANDOM_SEED: int = 2026
+#: Budget for the phase-2 earliness pass, in CP-SAT *deterministic* time units
+#: (reproducible across runs and machines, unlike wall-clock seconds).
+DEFAULT_EARLINESS_DETERMINISTIC_TIME: float = 4.0
 
 
 @dataclass(frozen=True)
 class CpSatSolveInfo:
     """Solver diagnostics, returned alongside the `ScheduleOutput` by
-    `run_cp_sat` -- NOT part of the shared `ScheduleOutput` contract itself
-    (P2-T07's diff harness only needs `ScheduleOutput` to be identical-shaped
-    between solvers; these fields are CP-SAT-specific extras).
+    `run_cp_sat` -- NOT part of the shared `ScheduleOutput` contract itself.
     """
 
     status_name: str  # "OPTIMAL" | "FEASIBLE" | "INFEASIBLE" | "UNKNOWN" | ...
-    # `objective_value`/`best_objective_bound` report the PRIMARY objective
-    # term only (sum of priority weight * within_year, re-derived from the
-    # solved variable values) -- NOT the raw scaled `_TIEBREAK_SCALE *
-    # primary - secondary` value CP-SAT's own `ObjectiveValue()`/
-    # `BestObjectiveBound()` return internally, which would be a
-    # meaningless-looking large number to any caller unaware of the
-    # tie-break scaling. See `run_cp_sat`'s "Objective" section.
+    # PRIMARY objective term only (Σ priority weight × within_year over the
+    # solvable projects) -- not the raw scaled value CP-SAT reports internally.
     objective_value: float
     best_objective_bound: float
     wall_time_seconds: float
     num_solvable_projects: int
     num_frozen_projects: int
-    num_pre_resolved_left_out: int  # no_leader + no_eligible_chamber, resolved outside the solver
+    # Non-frozen projects resolved outside the solver: no_leader, no eligible
+    # chamber, data_error, Blocked hold, anchored-behind-not-started, or
+    # nothing left to search.
+    num_pre_resolved_left_out: int
 
 
-def _upper_bound_slack(steps: tuple[WorkflowStepTemplate, ...], project: ProjectInput) -> int:
-    """A generous upper-bound slack added on top of `horizon_weeks` for a
-    project's start/end IntVar domains, so the "not present" case always has
-    a valid, non-empty domain regardless of how the project's earliest-start
-    floor (`current_week`/`actual_start_week`) relates to `horizon_weeks` --
-    see the `upper_bound` comment inside `run_cp_sat` for why this matters
-    (capping the raw domain at exactly `horizon` made the whole model
-    INFEASIBLE, not just `present=False`, for a project with no room left
-    before the horizon -- a real bug caught during this task's own
-    verification). Sized to the project's own total workflow duration (sum of
-    every step's `duration_weeks`), which is always enough slack for the full
-    sequential step chain to fit even if it hypothetically started at
-    `horizon` itself.
-    """
-
-    return sum(
-        _duration_weeks(s.base_weeks, project.category)  # type: ignore[arg-type]
-        for s in steps
-    )
+@dataclass
+class _ProjectVars:
+    present: cp_model.IntVar
+    within_year: cp_model.IntVar
+    starts: dict[str, cp_model.IntVar]  # searched steps only
+    ends: dict[str, cp_model.IntVar]  # exclusive end, searched steps only
+    ends_excl: dict[str, cp_model.IntVar | int]  # every step
+    assign: dict[tuple[str, str], cp_model.IntVar]  # (step_id, chamber_id)
+    prebooked: dict[str, _Placement]
+    last_end: cp_model.IntVar
 
 
 # --- Public entry point -------------------------------------------------------
@@ -223,133 +157,76 @@ def _upper_bound_slack(steps: tuple[WorkflowStepTemplate, ...], project: Project
 def run_cp_sat(
     schedule_input: ScheduleInput,
     *,
-    max_time_in_seconds: float = DEFAULT_MAX_TIME_IN_SECONDS,
+    deterministic_time: float = DEFAULT_DETERMINISTIC_TIME,
+    max_time_in_seconds: float | None = None,
     num_search_workers: int = 1,
     random_seed: int = DEFAULT_RANDOM_SEED,
     warm_start_hint: bool = True,
+    earliness_deterministic_time: float = DEFAULT_EARLINESS_DETERMINISTIC_TIME,
 ) -> tuple[ScheduleOutput, CpSatSolveInfo]:
-    """CP-SAT solve for `schedule_input`. Returns `(ScheduleOutput,
-    CpSatSolveInfo)` -- the first element is the shared contract P2-T07's diff
-    harness compares against `run_greedy_sgs`'s output; the second is
-    solver-specific diagnostics.
+    """CP-SAT solve for `schedule_input`. Returns `(ScheduleOutput, CpSatSolveInfo)`.
 
     `num_search_workers=1` (single-threaded) is the default specifically for
-    determinism (see module docstring) -- callers who want faster wall-clock
-    solves at the cost of a weaker (empirically-observed-only, not formally
-    guaranteed) determinism claim may pass a higher value.
+    determinism. `warm_start_hint=True` feeds `run_greedy_sgs`'s result in via
+    `AddHint`. Never invoked from a request-handling process (Standing
+    Decision) -- dispatch is the Celery worker's job.
 
-    `warm_start_hint=True` (default) runs `run_greedy_sgs(schedule_input)`
-    once and feeds its result in via `AddHint` on the decision variables
-    (`scheduling-algorithms` skill's guidance) -- CP-SAT converges faster from
-    a known-feasible starting point.
-
-    Never invoked from a request-handling process (Standing Decision) -- this
-    module contains no web-framework code at all, so that constraint is
-    satisfied structurally; dispatching this function from a Celery worker is
-    P3's job, out of this task's scope.
+    `deterministic_time` bounds pass 1 and `earliness_deterministic_time`
+    bounds pass 2, both in CP-SAT deterministic-time units (ruling 6).
+    `max_time_in_seconds` is **accepted and ignored**: it is kept only so the
+    existing Celery call site keeps working; a wall-clock limit would make the
+    result depend on machine speed.
     """
 
-    if schedule_input.horizon_weeks < 1:
-        raise ValueError("horizon_weeks must be >= 1")
+    _ = max_time_in_seconds  # deliberately unused (ruling 6)
 
-    engineers_by_id: dict[str, EngineerInput] = {e.engineer_id: e for e in schedule_input.engineers}
-    chambers_by_id: dict[str, ChamberInput] = {c.chamber_id: c for c in schedule_input.chambers}
-    steps_sorted: tuple[WorkflowStepTemplate, ...] = tuple(
-        sorted(schedule_input.workflow_steps, key=lambda s: s.sequence_order)
-    )
-
-    excluded: list[ProjectInput] = []
-    schedulable: list[ProjectInput] = []
-    for project in schedule_input.projects:
-        if project.status in dc.SCHEDULABLE_STATUS_ORDER:
-            schedulable.append(project)
-        else:
-            excluded.append(project)
-    for project in schedulable:
-        _validate_schedulable_project(project)
-
-    frozen = [p for p in schedulable if p.frozen]
-    non_frozen = [p for p in schedulable if not p.frozen]
-
-    # --- Pre-resolve frozen projects entirely outside the solver ------------
-    # See module docstring: this is provably identical to the frozen-project
-    # subset of a full greedy run, since greedy processes all frozen projects
-    # strictly before all non-frozen ones and a frozen project's booking never
-    # depends on anything about a later-processed (non-frozen) project.
-    frozen_input = ScheduleInput(
-        projects=tuple(frozen),
-        engineers=schedule_input.engineers,
-        chambers=schedule_input.chambers,
-        workflow_steps=schedule_input.workflow_steps,
-        current_week=schedule_input.current_week,
-        horizon_weeks=schedule_input.horizon_weeks,
-        within_year_week=schedule_input.within_year_week,
-    )
-    frozen_output = run_greedy_sgs(frozen_input)
-    frozen_outcomes_by_id = {o.project_id: o for o in frozen_output.project_outcomes}
-
-    # --- Pre-resolve non-frozen projects that need no search at all ---------
-    # "No leader" and "some lab step has zero eligible chambers" are both
-    # unconditional, timing-independent dead ends (greedy.py hits them via an
-    # early continue/break, never attempting a booking) -- no CP-SAT variable
-    # is worth creating for these; compute their outcomes directly, mirroring
-    # greedy.py's own branches exactly (same field values it would produce).
-    pre_resolved_left_out: dict[str, ProjectScheduleOutcome] = {}
-    solvable: list[ProjectInput] = []
-    for project in non_frozen:
-        leader = (
-            engineers_by_id.get(project.leader_engineer_id) if project.leader_engineer_id else None
-        )
-        if leader is None:
-            pre_resolved_left_out[project.project_id] = _no_leader_outcome(project)
-            continue
-
-        region = _lab_region_for_hub(project.hub)
-        missing_chamber_step: str | None = None
-        for step in steps_sorted:
-            if step.kind != "lab":
-                continue
-            eligible = [
-                c
-                for c in chambers_by_id.values()
-                if c.lab_region == region and step.step_id in c.allowed_stages
-            ]
-            if not eligible:
-                missing_chamber_step = step.step_id
-                break
-        if missing_chamber_step is not None:
-            pre_resolved_left_out[project.project_id] = _no_chamber_outcome(
-                project, missing_chamber_step, leader
-            )
-            continue
-
-        solvable.append(project)
-
-    # --- Background occupancy from frozen projects ---------------------------
-    eng_busy_weeks: dict[str, set[int]] = {e.engineer_id: set() for e in schedule_input.engineers}
-    chamber_demand: dict[str, dict[int, int]] = {c.chamber_id: {} for c in schedule_input.chambers}
-    for outcome in frozen_output.project_outcomes:
-        for step in outcome.steps:
-            if step.kind == "design" and step.assigned_engineer_id is not None:
-                eng_busy_weeks.setdefault(step.assigned_engineer_id, set()).update(
-                    range(step.start_week, step.end_week + 1)
-                )
-            elif step.kind == "lab" and step.assigned_chamber_id is not None:
-                per_week = chamber_demand.setdefault(step.assigned_chamber_id, {})
-                for wk in range(step.start_week, step.end_week + 1):
-                    per_week[wk] = per_week.get(wk, 0) + 1
-
-    # --- Build the CP-SAT model ----------------------------------------------
-    model = cp_model.CpModel()
+    ctx = prepare_run(schedule_input)
+    state = _ResourceState(schedule_input)
     horizon = schedule_input.horizon_weeks
     current_week = schedule_input.current_week
 
-    present: dict[str, cp_model.IntVar] = {}
-    starts: dict[tuple[str, str], cp_model.IntVar] = {}
-    ends: dict[tuple[str, str], cp_model.IntVar] = {}
-    within_year_var: dict[str, cp_model.IntVar] = {}
-    assign: dict[tuple[str, str, str], cp_model.IntVar] = {}
+    frozen = [p for p in ctx.ordered if p.frozen]
+    non_frozen = [p for p in ctx.ordered if not p.frozen]
 
+    outcomes_by_id: dict[str, ProjectScheduleOutcome] = {}
+
+    # --- 1. Frozen projects: fixed, walked with the shared greedy code -------
+    for project in frozen:
+        outcomes_by_id[project.project_id] = _schedule_one_project(
+            ctx, state, ctx.plans[project.project_id], prebooked={}, pre_flags=(False, False)
+        )
+
+    # --- 2. Anchored steps (Done / In Progress) pre-booked in scheduling order
+    prebooked_all, pre_flags_all = prebook_anchored_steps(ctx, state, non_frozen)
+
+    # --- 3. Projects that cannot be optimised: resolved outside the solver ---
+    solvable: list[ProjectInput] = []
+    num_pre_resolved = 0
+    for project in non_frozen:
+        pid = project.project_id
+        plan = ctx.plans[pid]
+        prebooked = prebooked_all.get(pid, {})
+        pre_flags = pre_flags_all.get(pid, (False, False))
+
+        if plan.data_error is not None:
+            outcomes_by_id[pid] = _data_error_outcome(project, plan)
+            num_pre_resolved += 1
+            continue
+        leader = ctx.engineers_by_id.get(project.leader_engineer_id or "")
+        if leader is None:
+            outcomes_by_id[pid] = _no_leader_outcome(project, plan, current_week)
+            num_pre_resolved += 1
+            continue
+        if _needs_greedy(ctx, plan, prebooked):
+            outcomes_by_id[pid] = _schedule_one_project(
+                ctx, state, plan, prebooked=prebooked, pre_flags=pre_flags
+            )
+            num_pre_resolved += 1
+            continue
+        solvable.append(project)
+
+    # --- 4. Build the CP-SAT model over the searchable steps -----------------
+    model = cp_model.CpModel()
     engineer_intervals: dict[str, list[cp_model.IntervalVar]] = {
         e.engineer_id: [] for e in schedule_input.engineers
     }
@@ -357,138 +234,145 @@ def run_cp_sat(
         c.chamber_id: [] for c in schedule_input.chambers
     }
     chamber_demands: dict[str, list[int]] = {c.chamber_id: [] for c in schedule_input.chambers}
+    project_vars: dict[str, _ProjectVars] = {}
 
     for project in solvable:
         pid = project.project_id
-        present[pid] = model.NewBoolVar(f"present[{pid}]")
-
-        # Earliest-start floor: identical rule to greedy.py's non-frozen path
-        # (P2-T01 MEMORY.md's "earliest-start floor" resolution) -- search
-        # starts at current_week, honouring actual_start_week as a further
-        # lower bound only if it happens to be populated and later.
-        lower_bound = current_week
-        if project.actual_start_week is not None:
-            lower_bound = max(lower_bound, project.actual_start_week)
-
-        leader = engineers_by_id[project.leader_engineer_id]  # guaranteed resolvable (pre-filtered)
+        plan = ctx.plans[pid]
+        prebooked = prebooked_all.get(pid, {})
+        leader = ctx.engineers_by_id[project.leader_engineer_id]  # type: ignore[index]
         region = _lab_region_for_hub(project.hub)
+        frontier = first_step_frontier(project, current_week)
 
-        # Domain upper bound deliberately widened well beyond `horizon` (not
-        # capped at it) -- see the comment on `_upper_bound_slack` below for
-        # why capping the raw IntVar domain at `horizon` would silently make
-        # the "not present" case infeasible too (a real bug caught and fixed
-        # during this task's own verification: a project whose earliest
-        # possible start already leaves no room before `horizon` was making
-        # the *entire* model INFEASIBLE, not correctly resolving to
-        # `present=False`/LEFT_OUT, because the domain ceiling is an
-        # unconditional IntVar constraint that CP-SAT cannot relax based on a
-        # presence literal, unlike a `model.Add(...)` constraint). The actual
-        # "must complete within horizon" rule is instead enforced by an
-        # explicit constraint below, reified on `present[pid]` specifically.
-        upper_bound = horizon + _upper_bound_slack(steps_sorted, project)
+        # Domain upper bound deliberately widened beyond `horizon` (P2-T06:
+        # capping the raw IntVar domain at `horizon` made the whole model
+        # INFEASIBLE instead of resolving to present=False). The "must finish
+        # within horizon" rule is a reified constraint below.
+        fixed_ends = [pl.end_week + 1 for pl in prebooked.values()]
+        upper_bound = max([horizon, frontier, *fixed_ends]) + sum(
+            sp.duration for sp in plan.steps.values()
+        )
+        lower_bound = frontier
+        # Tightest valid floor for the derived max/skip vars: a fixed (Done)
+        # end may lie before the frontier. Wide domains cripple propagation
+        # (measured: a -1e6 floor took the real dataset from ~1 s to ~46 s).
+        domain_lo = min([frontier, *fixed_ends])
 
-        prev_end: cp_model.IntVar | None = None
-        for step in steps_sorted:
-            duration = _duration_weeks(step.base_weeks, project.category)  # type: ignore[arg-type]
-            key = (pid, step.step_id)
-            start_var = model.NewIntVar(lower_bound, upper_bound, f"start[{pid},{step.step_id}]")
-            end_var = model.NewIntVar(lower_bound, upper_bound, f"end[{pid},{step.step_id}]")
-            # `end == start + duration` is deliberately NOT added here as an
-            # unconditional `model.Add(...)` -- each step's
-            # `NewOptionalIntervalVar(start_var, duration, end_var, ...)`
-            # (design steps below, or per-candidate-chamber for lab steps)
-            # already enforces exactly this relationship, but ONLY while its
-            # own presence literal is true, which is precisely the
-            # "not present -> no constraint at all, free to satisfy trivially"
-            # behaviour the LEFT_OUT / optional-interval design needs.
-            starts[key] = start_var
-            ends[key] = end_var
+        present = model.NewBoolVar(f"present[{pid}]")
+        starts: dict[str, cp_model.IntVar] = {}
+        ends: dict[str, cp_model.IntVar] = {}
+        ends_excl: dict[str, cp_model.IntVar | int] = {}
+        assign: dict[tuple[str, str], cp_model.IntVar] = {}
 
-            if prev_end is not None:
-                model.Add(start_var >= prev_end)  # Invariant I3
-            prev_end = end_var
+        for sid in plan.workflow.walk_order:
+            sp = plan.steps[sid]
+            preds = sp.step.predecessor_ids
+            pred_ends: list[cp_model.IntVar | int] = [ends_excl[p] for p in preds]
 
-            if step.kind == "design":
+            if sp.skipped:
+                if not preds:
+                    ends_excl[sid] = frontier
+                elif all(isinstance(e, int) for e in pred_ends):
+                    ends_excl[sid] = max(e for e in pred_ends if isinstance(e, int))
+                else:
+                    v = model.NewIntVar(domain_lo, upper_bound, f"skip_end[{pid},{sid}]")
+                    model.AddMaxEquality(v, pred_ends)
+                    ends_excl[sid] = v
+                continue
+
+            if sid in prebooked:
+                ends_excl[sid] = prebooked[sid].end_week + 1
+                continue
+
+            duration = sp.duration
+            start_var = model.NewIntVar(lower_bound, upper_bound, f"start[{pid},{sid}]")
+            end_var = model.NewIntVar(lower_bound, upper_bound, f"end[{pid},{sid}]")
+            for pe in pred_ends:
+                model.Add(start_var >= pe)  # Invariant I3 / I15, per DAG edge
+            # `end == start + duration` is enforced by the optional interval(s)
+            # (design/lab) or an explicit reified constraint (elapsed) ONLY
+            # while present -- "not present -> no constraint at all".
+            if sp.step.kind == "design":
                 interval = model.NewOptionalIntervalVar(
-                    start_var, duration, end_var, present[pid], f"iv[{pid},{step.step_id}]"
+                    start_var, duration, end_var, present, f"iv[{pid},{sid}]"
                 )
-                engineer_intervals[leader.engineer_id].append(interval)
-            else:
-                eligible = sorted(
-                    (
-                        c
-                        for c in chambers_by_id.values()
-                        if c.lab_region == region and step.step_id in c.allowed_stages
-                    ),
-                    key=lambda c: c.chamber_id,
-                )
+                engineer_intervals.setdefault(leader.engineer_id, []).append(interval)
+            elif sp.step.kind == "lab":
                 assign_vars = []
-                for chamber in eligible:
-                    akey = (pid, step.step_id, chamber.chamber_id)
-                    a = model.NewBoolVar(f"assign[{pid},{step.step_id},{chamber.chamber_id}]")
-                    assign[akey] = a
+                for chamber in _eligible_chambers(ctx.chambers_by_id, region, sid):
+                    a = model.NewBoolVar(f"assign[{pid},{sid},{chamber.chamber_id}]")
+                    assign[(sid, chamber.chamber_id)] = a
                     interval = model.NewOptionalIntervalVar(
-                        start_var,
-                        duration,
-                        end_var,
-                        a,
-                        f"iv[{pid},{step.step_id},{chamber.chamber_id}]",
+                        start_var, duration, end_var, a, f"iv[{pid},{sid},{chamber.chamber_id}]"
                     )
-                    chamber_intervals[chamber.chamber_id].append(interval)
-                    chamber_demands[chamber.chamber_id].append(1)
+                    chamber_intervals.setdefault(chamber.chamber_id, []).append(interval)
+                    chamber_demands.setdefault(chamber.chamber_id, []).append(1)
                     assign_vars.append(a)
-                # Exactly one eligible chamber chosen if (and only if) the
-                # project is present at all -- matches Invariant I5's "fully
-                # scheduled or fully LEFT_OUT" via a single shared per-project
-                # presence literal, per the scheduling-algorithms skill.
-                model.Add(sum(assign_vars) == present[pid])
+                # Exactly one eligible chamber iff the project is present (I5).
+                model.Add(sum(assign_vars) == present)
+            else:  # elapsed
+                model.Add(end_var == start_var + duration).OnlyEnforceIf(present)
+            # Redundant when present (the intervals imply it) but it removes a
+            # free variable from the absent case and tightens propagation;
+            # always satisfiable because `upper_bound` leaves room for the
+            # whole chain even when it starts at the frontier.
+            model.Add(end_var == start_var + duration)
+            model.Add(end_var <= horizon).OnlyEnforceIf(present)
+            starts[sid] = start_var
+            ends[sid] = end_var
+            ends_excl[sid] = end_var
 
-        # `within_year[p]`: reified from the last step's completion week +
-        # delay_weeks (ADR 0004 -- delay is a terminal adjustment, applied
-        # only to this check, never propagated into step dates), forced to
-        # False whenever the project is not present (see module docstring:
-        # without this, the objective could spuriously reward
-        # within_year=True for a project that was never actually scheduled).
-        last_step_id = steps_sorted[-1].step_id
-        last_end = ends[(pid, last_step_id)]
-        # The actual "must finish within horizon_weeks" rule (greedy.py's
-        # `w + duration <= horizon_weeks` check, i.e. `end <= horizon` in this
-        # module's exclusive-end convention) -- reified on `present[pid]`
-        # specifically so an infeasible-within-horizon project resolves to
-        # `present=False` (LEFT_OUT) rather than making the whole model
-        # INFEASIBLE (see the domain-widening comment above `upper_bound`).
-        model.Add(last_end <= horizon).OnlyEnforceIf(present[pid])
+        non_skipped_ends = [ends_excl[sid] for sid, sp in plan.steps.items() if not sp.skipped]
+        last_end = model.NewIntVar(domain_lo, upper_bound, f"last_end[{pid}]")
+        model.AddMaxEquality(last_end, non_skipped_ends)
+        # within_year: reified from max end + delay_weeks (ADR 0004: delay is
+        # terminal), forced False when not present.
         completion = model.NewIntVar(
-            lower_bound - 1, upper_bound + project.delay_weeks, f"completion[{pid}]"
+            domain_lo - 1 + min(0, project.delay_weeks),
+            upper_bound + max(0, project.delay_weeks),
+            f"completion[{pid}]",
         )
         model.Add(completion == last_end - 1 + project.delay_weeks)
         wy = model.NewBoolVar(f"within_year[{pid}]")
         model.Add(completion <= schedule_input.within_year_week).OnlyEnforceIf(wy)
         model.Add(completion > schedule_input.within_year_week).OnlyEnforceIf(wy.Not())
-        model.Add(wy <= present[pid])
-        within_year_var[pid] = wy
+        model.Add(wy <= present)
+
+        project_vars[pid] = _ProjectVars(
+            present=present,
+            within_year=wy,
+            starts=starts,
+            ends=ends,
+            ends_excl=ends_excl,
+            assign=assign,
+            prebooked=prebooked,
+            last_end=last_end,
+        )
 
     # --- Background occupancy: engineers (AddNoOverlap) -----------------------
-    for engineer_id, busy_weeks in eng_busy_weeks.items():
-        for range_start, range_len in _contiguous_ranges(busy_weeks):
+    for engineer_id in sorted(state.eng_busy):
+        for range_start, range_len in _contiguous_ranges(state.eng_busy[engineer_id]):
             engineer_intervals.setdefault(engineer_id, []).append(
                 model.NewIntervalVar(
                     range_start,
                     range_len,
                     range_start + range_len,
-                    f"frozen_busy[{engineer_id},{range_start}]",
+                    f"fixed_busy[{engineer_id},{range_start}]",
                 )
             )
     for engineer_id in sorted(engineer_intervals):
         if engineer_intervals[engineer_id]:
             model.AddNoOverlap(engineer_intervals[engineer_id])
 
-    # --- Background occupancy: chambers (AddCumulative) ------------------------
-    for chamber_id, per_week in chamber_demand.items():
-        chamber = chambers_by_id.get(chamber_id)
-        max_concurrent = chamber.max_concurrent if chamber is not None else 0
-        for range_start, range_len, demand in _contiguous_demand_ranges(per_week):
-            capped = min(demand, max_concurrent) if chamber_id in chambers_by_id else 0
+    # --- Background occupancy: chambers (AddCumulative, demand capped) --------
+    for chamber_id in sorted(state.chamber_busy):
+        busy_chamber = ctx.chambers_by_id.get(chamber_id)
+        if busy_chamber is None:
+            continue
+        for range_start, range_len, demand in _contiguous_demand_ranges(
+            state.chamber_busy[chamber_id]
+        ):
+            capped = min(demand, busy_chamber.max_concurrent)
             if capped <= 0:
                 continue
             chamber_intervals.setdefault(chamber_id, []).append(
@@ -496,7 +380,7 @@ def run_cp_sat(
                     range_start,
                     range_len,
                     range_start + range_len,
-                    f"frozen_demand[{chamber_id},{range_start}]",
+                    f"fixed_demand[{chamber_id},{range_start}]",
                 )
             )
             chamber_demands.setdefault(chamber_id, []).append(capped)
@@ -505,122 +389,89 @@ def run_cp_sat(
             model.AddCumulative(
                 chamber_intervals[chamber_id],
                 chamber_demands[chamber_id],
-                chambers_by_id[chamber_id].max_concurrent,
+                ctx.chambers_by_id[chamber_id].max_concurrent,
             )
 
-    # --- Objective --------------------------------------------------------------
-    # Primary term: DOMAIN_RULES.md's stated objective, "maximise weighted
-    # value of projects completing by week 52" -- see the module docstring's
-    # "Objective weighting" section for `PRIORITY_OBJECTIVE_WEIGHT`'s
-    # provenance (a documented gap-fill, not sourced from DOMAIN_RULES.md
-    # text).
-    #
-    # Secondary term (lexicographic tie-break, this module's own addition,
-    # NOT DOMAIN_RULES.md-sourced, kept deliberately coarse): among solutions
-    # tied on the primary term, prefer actually scheduling a project
-    # (`present=True`) over leaving it LEFT_OUT for no reason. Scaled by
-    # `_TIEBREAK_SCALE` (larger than the maximum possible secondary swing,
-    # `len(solvable)`) so it can never trade off against the primary
-    # objective -- it only resolves otherwise-arbitrary ties.
-    #
-    # Without ANY secondary term, CP-SAT is free to leave a perfectly
-    # schedulable project LEFT_OUT purely because doing so scores identically
-    # to scheduling it under the primary term alone (e.g. a Q-priority project
-    # whose `within_year` contributes weight 0 either way) -- caught
-    # empirically during this task's own verification (the spillover-boundary
-    # golden-file scenario, adapted from `_selftest.py`, was spuriously
-    # resolving to LEFT_OUT instead of "scheduled but late" before this term
-    # was added). See the P2-T06 MEMORY.md entry.
-    #
-    # A finer-grained secondary term that also minimised exact completion
-    # weeks (preferring the earliest possible placement among ties) was tried
-    # first and rejected: it made the real 46-project dataset's solve
-    # timeout at 60s without proving optimality (and non-deterministic
-    # results across runs, since the time-limited search grabbed whatever
-    # feasible point it reached first) -- minimising exact timing across
-    # every tied, priority-irrelevant project is a much harder combinatorial
-    # search than simply maximising how many are present at all. This coarser
-    # `present`-count term is `O(len(solvable))`-cheap for CP-SAT to satisfy
-    # and was empirically confirmed (P2-T06 MEMORY.md entry) to keep the real
-    # dataset's solve at well under a second, reaching OPTIMAL.
+    # --- Objective (ADR 0005 + presence tie-break) ------------------------------
     _TIEBREAK_SCALE = len(solvable) + 1
     primary = sum(
-        PRIORITY_OBJECTIVE_WEIGHT.get(p.priority, 0) * within_year_var[p.project_id]
+        PRIORITY_OBJECTIVE_WEIGHT.get(p.priority or "Q", 0) * project_vars[p.project_id].within_year
         for p in solvable
     )
-    presence_tiebreak = sum(present[p.project_id] for p in solvable)
+    presence_tiebreak = sum(project_vars[p.project_id].present for p in solvable)
     model.Maximize(_TIEBREAK_SCALE * primary + presence_tiebreak)
 
     # --- Warm start -----------------------------------------------------------
     if warm_start_hint and solvable:
-        _apply_greedy_hint(
-            model=model,
-            schedule_input=schedule_input,
-            solvable_ids={p.project_id for p in solvable},
-            present=present,
-            starts=starts,
-            ends=ends,
-            assign=assign,
-        )
+        _apply_greedy_hint(model, schedule_input, project_vars)
 
     solver = cp_model.CpSolver()
-    solver.parameters.max_time_in_seconds = max_time_in_seconds
+    solver.parameters.max_deterministic_time = deterministic_time
     solver.parameters.num_search_workers = num_search_workers
     solver.parameters.random_seed = random_seed
     status = solver.Solve(model)
     status_name = solver.StatusName(status)
 
     if status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
-        # Per the scheduling-algorithms skill: INFEASIBLE should never happen
-        # for this model (every decision project has an always-valid "absent"
-        # fallback) -- if it does, that is a modelling bug, not a domain
-        # outcome, and callers should see it loudly rather than receive a
-        # silently-empty ScheduleOutput.
         raise RuntimeError(
             f"CP-SAT solve did not reach OPTIMAL/FEASIBLE (status={status_name}); "
-            "this indicates a modelling bug -- frozen-conflict handling should make "
+            "this indicates a modelling bug -- fixed-placement handling should make "
             "INFEASIBLE structurally unreachable for this model, see module docstring"
         )
 
-    outcomes_by_id: dict[str, ProjectScheduleOutcome] = {}
+    # --- Phase 2: lexicographic earliness pass --------------------------------
+    # ADR 0005's objective is indifferent to *when* a project finishes as long
+    # as its within_year / present values are unchanged, so phase 1 may return
+    # any of many equally-optimal placements (e.g. a spillover project pushed
+    # needlessly late). Fix every project's present / within_year literal to
+    # its phase-1 value (so the ADR 0005 objective cannot get worse), hint the
+    # phase-1 solution, and minimise Σ finish weeks under a *deterministic*
+    # time budget. If phase 2 finds nothing (it always has the hint), the
+    # phase-1 solution stands.
+    phase1_solver = solver
+    wall_time = solver.WallTime()
+    if solvable and earliness_deterministic_time > 0:
+        solver = _earliness_pass(
+            model,
+            solvable,
+            project_vars,
+            phase1_solver,
+            deterministic_time=earliness_deterministic_time,
+            num_search_workers=num_search_workers,
+            random_seed=random_seed,
+        )
+        if solver is not phase1_solver:
+            wall_time += solver.WallTime()
+
     for project in solvable:
-        outcomes_by_id[project.project_id] = _extract_outcome(
+        pid = project.project_id
+        outcomes_by_id[pid] = _extract_outcome(
             project=project,
-            steps=steps_sorted,
+            plan=ctx.plans[pid],
+            pv=project_vars[pid],
             solver=solver,
-            present=present[project.project_id],
-            starts=starts,
-            ends=ends,
-            within_year_var=within_year_var[project.project_id],
-            assign=assign,
-            leader=engineers_by_id[project.leader_engineer_id],
+            leader=ctx.engineers_by_id[project.leader_engineer_id],  # type: ignore[index]
+            pre_flags=pre_flags_all.get(pid, (False, False)),
+            current_week=current_week,
+            within_year_week=schedule_input.within_year_week,
         )
 
-    for pid, outcome in pre_resolved_left_out.items():
-        outcomes_by_id[pid] = outcome
-    for pid, outcome in frozen_outcomes_by_id.items():
-        outcomes_by_id[pid] = outcome
-    for project in excluded:
+    apply_eng_conflict_flags(outcomes_by_id, state)
+
+    for project in ctx.excluded:
         outcomes_by_id[project.project_id] = _excluded_outcome(project)
 
     by_project_id = sorted(schedule_input.projects, key=lambda p: p.project_id)
     project_outcomes = tuple(outcomes_by_id[p.project_id] for p in by_project_id)
-
-    # scheduling_order has no CP-SAT-native meaning (the solver has no
-    # sequential walk order the way greedy.py does) -- reported here as the
-    # same DOMAIN_RULES.md sort order greedy.py would use over every
-    # schedulable (non-excluded) project, purely so a caller comparing this
-    # field against greedy's output sees a like-for-like DOMAIN_RULES.md
-    # ordering rather than an empty/undefined value. This does NOT reflect
-    # anything about CP-SAT's actual internal solve process. See the P2-T06
-    # MEMORY.md entry.
-    scheduling_order = tuple(p.project_id for p in sorted(schedulable, key=_sort_key))
+    # scheduling_order: the DOMAIN_RULES.md sort order over every schedulable
+    # project, for like-for-like comparison with greedy (P2-T06).
+    scheduling_order = tuple(p.project_id for p in ctx.ordered)
 
     primary_value = (
         float(
             sum(
-                PRIORITY_OBJECTIVE_WEIGHT.get(p.priority, 0)
-                * solver.Value(within_year_var[p.project_id])
+                PRIORITY_OBJECTIVE_WEIGHT.get(p.priority or "Q", 0)
+                * solver.Value(project_vars[p.project_id].within_year)
                 for p in solvable
             )
         )
@@ -630,99 +481,99 @@ def run_cp_sat(
     if not solvable:
         primary_bound = 0.0
     elif status == cp_model.OPTIMAL:
-        # Proven optimal on the *scaled* objective necessarily means the
-        # primary term is optimal too: `_TIEBREAK_SCALE` is large enough that
-        # no possible change in the secondary term could make a worse-primary
-        # solution score higher overall (see the objective's own comment).
         primary_bound = primary_value
     else:
-        # FEASIBLE, not proven OPTIMAL (time limit reached): the raw solver
-        # bound is on the *scaled* objective
-        # (`_TIEBREAK_SCALE * primary + presence_tiebreak`), not the primary
-        # term alone. Since `presence_tiebreak >= 0` always,
-        # `primary <= scaled_bound / _TIEBREAK_SCALE`; flooring gives the
-        # tightest valid integer upper bound on the primary term.
-        primary_bound = math.floor(solver.BestObjectiveBound() / _TIEBREAK_SCALE)
+        primary_bound = math.floor(phase1_solver.BestObjectiveBound() / _TIEBREAK_SCALE)
 
-    output = ScheduleOutput(project_outcomes=project_outcomes, scheduling_order=scheduling_order)
+    output = ScheduleOutput(
+        project_outcomes=project_outcomes,
+        scheduling_order=scheduling_order,
+        solver_status=status_name,
+    )
     info = CpSatSolveInfo(
         status_name=status_name,
         objective_value=primary_value,
         best_objective_bound=primary_bound,
-        wall_time_seconds=solver.WallTime(),
+        wall_time_seconds=wall_time,
         num_solvable_projects=len(solvable),
         num_frozen_projects=len(frozen),
-        num_pre_resolved_left_out=len(pre_resolved_left_out),
+        num_pre_resolved_left_out=num_pre_resolved,
     )
     return output, info
 
 
-# --- Pre-resolution helpers (mirroring greedy.py's own branches exactly) -----
+# --- Phase 2 ---------------------------------------------------------------------
 
 
-def _no_leader_outcome(project: ProjectInput) -> ProjectScheduleOutcome:
-    """Mirrors `greedy._schedule_one_project`'s "no leader" branch exactly --
-    see that function's docstring / the P2-T01 MEMORY.md entry for why this is
-    an immediate LEFT_OUT with no steps attempted and CAT_NOT_ALLOWED never
-    evaluated.
-    """
+def _earliness_pass(
+    model: cp_model.CpModel,
+    solvable: list[ProjectInput],
+    project_vars: dict[str, _ProjectVars],
+    phase1: cp_model.CpSolver,
+    *,
+    deterministic_time: float,
+    num_search_workers: int,
+    random_seed: int,
+) -> cp_model.CpSolver:
+    model.ClearHints()
+    finish_terms = []
+    for project in solvable:
+        pv = project_vars[project.project_id]
+        present_val = phase1.Value(pv.present)
+        model.Add(pv.present == present_val)
+        model.Add(pv.within_year == phase1.Value(pv.within_year))
+        model.AddHint(pv.present, present_val)
+        for sid in sorted(pv.starts):
+            model.AddHint(pv.starts[sid], phase1.Value(pv.starts[sid]))
+            model.AddHint(pv.ends[sid], phase1.Value(pv.ends[sid]))
+        for akey in sorted(pv.assign):
+            model.AddHint(pv.assign[akey], phase1.Value(pv.assign[akey]))
+        if present_val:
+            finish_terms.append(pv.last_end)
+    if not finish_terms:
+        return phase1
+    model.Minimize(sum(finish_terms))
 
-    return ProjectScheduleOutcome(
-        project_id=project.project_id,
-        excluded=False,
-        left_out=True,
-        eng_conflict=False,
-        overlap=False,
-        cat_not_allowed=False,
-        spillover=False,
-        within_year=False,
-        no_leader=True,
-        no_chamber_step_id=None,
-        steps=(),
-        start_week=None,
-        end_week=None,
-    )
+    solver = cp_model.CpSolver()
+    solver.parameters.max_deterministic_time = deterministic_time
+    solver.parameters.num_search_workers = num_search_workers
+    solver.parameters.random_seed = random_seed
+    status = solver.Solve(model)
+    if status in (cp_model.OPTIMAL, cp_model.FEASIBLE):
+        return solver
+    return phase1
 
 
-def _no_chamber_outcome(
-    project: ProjectInput, missing_chamber_step: str, leader: EngineerInput
-) -> ProjectScheduleOutcome:
-    """A non-frozen project with a resolvable leader, but at least one lab
-    step has zero eligible chambers (region + allowed_stages match) -- an
-    unconditional, timing-independent LEFT_OUT (greedy.py hits the same dead
-    end via `break` the first time it reaches this step; the earlier lab/
-    design steps it might have booked before then are NOT retained here --
-    per this task's explicit instruction, CP-SAT targets I5's cleaner
-    "fully scheduled or fully LEFT_OUT" reading rather than replicating
-    greedy's partial-retention-on-LEFT_OUT quirk, which was itself an
-    artifact of the step-by-step greedy walk, not a DOMAIN_RULES.md
-    requirement). `cat_not_allowed` is still evaluated, matching greedy's
-    control flow (the leader-exists check happens before any step is walked).
-    """
+# --- Classification -------------------------------------------------------------
 
-    required_category = "OEM" if _is_oem_hub(project.hub) else project.category
-    cat_not_allowed = required_category not in leader.allowed_categories
-    return ProjectScheduleOutcome(
-        project_id=project.project_id,
-        excluded=False,
-        left_out=True,
-        eng_conflict=False,
-        overlap=False,
-        cat_not_allowed=cat_not_allowed,
-        spillover=False,
-        within_year=False,
-        no_leader=False,
-        no_chamber_step_id=missing_chamber_step,
-        steps=(),
-        start_week=None,
-        end_week=None,
-    )
+
+def _needs_greedy(ctx: RunContext, plan: ProjectPlan, prebooked: dict[str, _Placement]) -> bool:
+    """True when the project has nothing CP-SAT can usefully decide, or has a
+    fixed placement the model cannot represent as a constraint (see module
+    docstring, item 3). Such projects are walked with the greedy code on the
+    shared resource state instead."""
+
+    if plan.held_step_ids:
+        return True
+    region = _lab_region_for_hub(plan.project.hub)
+    searchable = 0
+    for sid in plan.workflow.walk_order:
+        sp = plan.steps[sid]
+        if sp.skipped or sid in prebooked:
+            continue
+        if sp.anchored:
+            return True  # anchored behind a not-started predecessor
+        if sp.step.kind == "lab" and not _eligible_chambers(ctx.chambers_by_id, region, sid):
+            return True
+        searchable += 1
+    return searchable == 0
+
+
+# --- Background helpers ---------------------------------------------------------
 
 
 def _contiguous_ranges(weeks: set[int]) -> list[tuple[int, int]]:
-    """`{10,11,12,20}` -> `[(10,3),(20,1)]` (start, length) -- merges a set of
-    individually-occupied weeks into disjoint contiguous ranges, sorted.
-    """
+    """`{10,11,12,20}` -> `[(10,3),(20,1)]` (start, length)."""
 
     if not weeks:
         return []
@@ -742,12 +593,7 @@ def _contiguous_ranges(weeks: set[int]) -> list[tuple[int, int]]:
 
 
 def _contiguous_demand_ranges(per_week: dict[int, int]) -> list[tuple[int, int, int]]:
-    """`{10:2, 11:2, 12:1}` -> `[(10,2,2),(12,1,1)]` (start, length, demand) --
-    merges consecutive weeks sharing the *same* demand value into one range,
-    so `AddCumulative` gets a compact background-interval list rather than one
-    interval per single week. Weeks with demand 0 are simply absent from
-    `per_week` and produce no interval.
-    """
+    """`{10:2, 11:2, 12:1}` -> `[(10,2,2),(12,1,1)]` (start, length, demand)."""
 
     if not per_week:
         return []
@@ -772,46 +618,29 @@ def _contiguous_demand_ranges(per_week: dict[int, int]) -> list[tuple[int, int, 
 
 
 def _apply_greedy_hint(
-    *,
-    model: cp_model.CpModel,
-    schedule_input: ScheduleInput,
-    solvable_ids: set[str],
-    present: dict[str, cp_model.IntVar],
-    starts: dict[tuple[str, str], cp_model.IntVar],
-    ends: dict[tuple[str, str], cp_model.IntVar],
-    assign: dict[tuple[str, str, str], cp_model.IntVar],
+    model: cp_model.CpModel, schedule_input: ScheduleInput, project_vars: dict[str, _ProjectVars]
 ) -> None:
-    """Warm-start CP-SAT with greedy's own output on the SAME `schedule_input`
-    (per the `scheduling-algorithms` skill's "feed the greedy SGS result in as
-    a hint" guidance) -- runs the full greedy walk once (not just the
-    `solvable` subset -- greedy needs the full picture of contention to
-    produce a meaningful hint) and hints `present`/`start`/`end`/`assign` for
-    every project this CP-SAT model actually has decision variables for.
-    """
+    """Hint every decision variable from a full greedy run on the same input
+    (the `scheduling-algorithms` skill's "feed the greedy SGS result in as a
+    hint" guidance). `AddHint` hints one variable per call."""
 
-    # `CpModel.AddHint(var, value)` hints exactly one variable per call (it is
-    # NOT a batch/list API despite superficially resembling one) -- each hint
-    # below is a separate call, accumulated in a single solution_hint proto
-    # under the hood.
     greedy_output = run_greedy_sgs(schedule_input)
-
     for outcome in greedy_output.project_outcomes:
-        if outcome.project_id not in solvable_ids:
+        pv = project_vars.get(outcome.project_id)
+        if pv is None:
             continue
         is_present = not outcome.left_out and not outcome.excluded
-        model.AddHint(present[outcome.project_id], 1 if is_present else 0)
+        model.AddHint(pv.present, 1 if is_present else 0)
         if not is_present:
             continue
         for step in outcome.steps:
-            key = (outcome.project_id, step.step_id)
-            if key in starts:
-                model.AddHint(starts[key], step.start_week)
-            if key in ends:
-                model.AddHint(ends[key], step.end_week + 1)  # exclusive end
+            if step.step_id in pv.starts:
+                model.AddHint(pv.starts[step.step_id], step.start_week)
+                model.AddHint(pv.ends[step.step_id], step.end_week + 1)
             if step.kind == "lab" and step.assigned_chamber_id is not None:
-                akey = (outcome.project_id, step.step_id, step.assigned_chamber_id)
-                if akey in assign:
-                    model.AddHint(assign[akey], 1)
+                akey = (step.step_id, step.assigned_chamber_id)
+                if akey in pv.assign:
+                    model.AddHint(pv.assign[akey], 1)
 
 
 # --- Extraction ---------------------------------------------------------------
@@ -820,80 +649,134 @@ def _apply_greedy_hint(
 def _extract_outcome(
     *,
     project: ProjectInput,
-    steps: tuple[WorkflowStepTemplate, ...],
+    plan: ProjectPlan,
+    pv: _ProjectVars,
     solver: cp_model.CpSolver,
-    present: cp_model.IntVar,
-    starts: dict[tuple[str, str], cp_model.IntVar],
-    ends: dict[tuple[str, str], cp_model.IntVar],
-    within_year_var: cp_model.IntVar,
-    assign: dict[tuple[str, str, str], cp_model.IntVar],
     leader: EngineerInput,
+    pre_flags: tuple[bool, bool],
+    current_week: int,
+    within_year_week: int,
 ) -> ProjectScheduleOutcome:
     pid = project.project_id
-    is_present = bool(solver.Value(present))
+    cat_not_allowed = _cat_not_allowed(project, leader)
+    unconstrained = unconstrained_end_week(plan, current_week)
+    progress_pct = compute_progress_pct(plan)
+    eng_conflict, overlap = pre_flags
 
-    required_category = "OEM" if _is_oem_hub(project.hub) else project.category
-    cat_not_allowed = required_category not in leader.allowed_categories
-
-    if not is_present:
+    if not solver.Value(pv.present):
+        # DOMAIN_RULES "Gate remediation rulings" #2: in-flight work is never
+        # erased. The project is LEFT_OUT, but its pre-booked Done rows and
+        # In-Progress / Blocked tails (whose capacity is already consumed) are
+        # still emitted -- the same shape greedy produces on a dead end.
+        kept = tuple(
+            StepSchedule(
+                step.step_id,
+                step.sequence_order,
+                step.kind,
+                pv.prebooked[step.step_id].start_week,
+                pv.prebooked[step.step_id].end_week,
+                plan.steps[step.step_id].duration,
+                pv.prebooked[step.step_id].engineer_id,
+                pv.prebooked[step.step_id].chamber_id,
+            )
+            for step in plan.workflow.steps
+            if step.step_id in pv.prebooked
+        )
         return ProjectScheduleOutcome(
             project_id=pid,
             excluded=False,
             left_out=True,
-            eng_conflict=False,
-            overlap=False,
+            eng_conflict=eng_conflict,
+            overlap=overlap,
             cat_not_allowed=cat_not_allowed,
             spillover=False,
             within_year=False,
             no_leader=False,
             no_chamber_step_id=None,
-            steps=(),
-            start_week=None,
-            end_week=None,
+            steps=kept,
+            start_week=min((r.start_week for r in kept), default=None),
+            end_week=max((r.end_week for r in kept), default=None),
+            unconstrained_end_week=unconstrained,
+            expected_end_week=_expected_end_week(project, unconstrained),
+            projected_end_week=None,
+            blocked=plan.blocked,
+            progress_pct=progress_pct,
         )
 
+    def value(e: cp_model.IntVar | int) -> int:
+        return e if isinstance(e, int) else solver.Value(e)
+
     steps_out: list[StepSchedule] = []
-    for step in steps:
-        key = (pid, step.step_id)
-        start_val = solver.Value(starts[key])
-        end_val_exclusive = solver.Value(ends[key])
+    for step in plan.workflow.steps:
+        sid = step.step_id
+        sp = plan.steps[sid]
+        if sp.skipped:
+            e = value(pv.ends_excl[sid]) - 1
+            steps_out.append(
+                StepSchedule(sid, step.sequence_order, step.kind, e, e, 0, None, None, True)
+            )
+            continue
+        if sid in pv.prebooked:
+            pl = pv.prebooked[sid]
+            steps_out.append(
+                StepSchedule(
+                    sid,
+                    step.sequence_order,
+                    step.kind,
+                    pl.start_week,
+                    pl.end_week,
+                    sp.duration,
+                    pl.engineer_id,
+                    pl.chamber_id,
+                )
+            )
+            continue
+        start_val = solver.Value(pv.starts[sid])
+        end_incl = solver.Value(pv.ends[sid]) - 1
         chamber_id: str | None = None
         if step.kind == "lab":
-            for (p2, s2, c2), var in assign.items():
-                if p2 == pid and s2 == step.step_id and solver.Value(var):
+            for (s2, c2), var in sorted(pv.assign.items()):
+                if s2 == sid and solver.Value(var):
                     chamber_id = c2
                     break
         steps_out.append(
             StepSchedule(
-                step_id=step.step_id,
-                sequence_order=step.sequence_order,
-                kind=step.kind,
-                start_week=start_val,
-                end_week=end_val_exclusive - 1,
-                duration_weeks=end_val_exclusive - start_val,
-                assigned_engineer_id=leader.engineer_id if step.kind == "design" else None,
-                assigned_chamber_id=chamber_id,
+                sid,
+                step.sequence_order,
+                step.kind,
+                start_val,
+                end_incl,
+                sp.duration,
+                leader.engineer_id if step.kind == "design" else None,
+                chamber_id,
             )
         )
 
     steps_tuple = tuple(steps_out)
-    start_week = steps_tuple[0].start_week
-    end_week = steps_tuple[-1].end_week
-    within_year = bool(solver.Value(within_year_var))
-    spillover = not within_year
+    non_skipped = [s for s in steps_tuple if not s.skipped]
+    start_week = min(s.start_week for s in non_skipped)
+    end_week = max(s.end_week for s in non_skipped)
+    within_year = bool(solver.Value(pv.within_year))
+    projected = end_week + project.delay_weeks
+    _ = within_year_week
 
     return ProjectScheduleOutcome(
         project_id=pid,
         excluded=False,
         left_out=False,
-        eng_conflict=False,  # never possible between two non-frozen projects (hard constraints)
-        overlap=False,
+        eng_conflict=eng_conflict,
+        overlap=overlap,
         cat_not_allowed=cat_not_allowed,
-        spillover=spillover,
+        spillover=not within_year,
         within_year=within_year,
         no_leader=False,
         no_chamber_step_id=None,
         steps=steps_tuple,
         start_week=start_week,
         end_week=end_week,
+        unconstrained_end_week=unconstrained,
+        expected_end_week=_expected_end_week(project, unconstrained),
+        projected_end_week=projected,
+        blocked=plan.blocked,
+        progress_pct=progress_pct,
     )

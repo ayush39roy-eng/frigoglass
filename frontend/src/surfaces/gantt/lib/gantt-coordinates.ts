@@ -143,3 +143,40 @@ export function actualSpan(
   if (!Number.isFinite(startWeek) || !Number.isFinite(endWeek)) return null;
   return { startWeek, endWeek };
 }
+
+/**
+ * X pixel of a per-project completion marker (P9 — DOMAIN_RULES "Expected vs
+ * projected completion"). A completion week means "done by the END of week
+ * N", so the marker sits on the end edge of that week — the same convention
+ * as the year-end marker. `week` is `expected_end_week` / `projected_end_week`
+ * exactly as the API returned it (Invariant I16).
+ */
+export function completionMarkerX(week: number, scale: WeekScale): number {
+  return weekEndToX(week, scale);
+}
+
+export interface SlipBracketGeometry {
+  /** Left edge (the earlier of the two markers). */
+  x: number;
+  /** Right edge (the later of the two markers). */
+  width: number;
+}
+
+/**
+ * Geometry for the thin bracket drawn between the expected and projected
+ * completion markers. Purely the span between the two server-provided week
+ * numbers; the LABEL on it is `slip_weeks` from the API, never
+ * `projected − expected` recomputed here. Returns `null` when either week is
+ * missing or the two coincide (nothing to bracket).
+ */
+export function slipBracketGeometry(
+  expectedEndWeek: number | null | undefined,
+  projectedEndWeek: number | null | undefined,
+  scale: WeekScale,
+): SlipBracketGeometry | null {
+  if (expectedEndWeek == null || projectedEndWeek == null) return null;
+  if (expectedEndWeek === projectedEndWeek) return null;
+  const a = completionMarkerX(expectedEndWeek, scale);
+  const b = completionMarkerX(projectedEndWeek, scale);
+  return { x: Math.min(a, b), width: Math.abs(b - a) };
+}

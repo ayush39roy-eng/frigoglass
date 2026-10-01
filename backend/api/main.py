@@ -35,6 +35,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Response
+from fastapi.exceptions import RequestValidationError
 
 # Structured logging (P6-T06) must be configured before anything else in
 # this process logs a line — including the router imports below, several of
@@ -47,6 +48,12 @@ from core.logging_config import configure_logging
 configure_logging("api")
 
 from api.db import dispose_engine  # noqa: E402 - see configure_logging() call above
+from api.errors import (  # noqa: E402
+    CodedHTTPException,
+    coded_http_exception_handler,
+    sanitizing_validation_exception_handler,
+)
+from api.routers.ask_agent import router as ask_agent_router  # noqa: E402
 from api.routers.audit_log import router as audit_log_router  # noqa: E402
 from api.routers.capacity import router as capacity_router  # noqa: E402
 from api.routers.chambers import router as chambers_router  # noqa: E402
@@ -55,12 +62,18 @@ from api.routers.dashboard import router as dashboard_router  # noqa: E402
 from api.routers.engineers import router as engineers_router  # noqa: E402
 from api.routers.exports import router as exports_router  # noqa: E402
 from api.routers.gantt import router as gantt_router  # noqa: E402
+from api.routers.me import router as me_router  # noqa: E402
 from api.routers.notifications import router as notifications_router  # noqa: E402
 from api.routers.priorities import router as priorities_router  # noqa: E402
+from api.routers.project_access import router as project_access_router  # noqa: E402
 from api.routers.projects import router as projects_router  # noqa: E402
 from api.routers.reference import router as reference_router  # noqa: E402
 from api.routers.scenarios import router as scenarios_router  # noqa: E402
 from api.routers.schedule_runs import router as schedule_runs_router  # noqa: E402
+from api.routers.users import router as users_router  # noqa: E402
+from api.routers.workflow_settings import router as workflow_settings_router  # noqa: E402
+from api.routers.workspace import router as workspace_router  # noqa: E402
+from core.config import is_dev_mode  # noqa: E402
 from core.observability import ObservabilityMiddleware, render_metrics  # noqa: E402
 
 
@@ -72,7 +85,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 app = FastAPI(
     title="RPD Web Application API",
-    version="0.3.0",
+    version="0.4.0",
     description=(
         "RPD Web Application backend. CRUD + read-model endpoints for all six "
         "surfaces, plus reference data, currency-rate config, the append-only "
@@ -93,30 +106,51 @@ app = FastAPI(
 from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
 
 app.add_middleware(ObservabilityMiddleware)
-cors_origins = [
+#: P9-R02 (security S-03): exact origins only, no wildcard regex. The two
+#: hosted-demo origins stay so the owner's Render/Vercel demo keeps working.
+#: `RPD_CORS_ORIGINS` (comma-separated) EXTENDS this list; with
+#: `RPD_CORS_ORIGINS_MODE=replace` it REPLACES it (on-prem: set it to the
+#: site's own origin, or leave it empty behind the same-origin nginx).
+DEFAULT_CORS_ORIGINS = [
     "http://localhost:3000",
     "http://localhost:5173",
     "http://localhost:5183",
     "http://127.0.0.1:3000",
     "http://127.0.0.1:5173",
     "http://127.0.0.1:5183",
-    # Ad hoc Render/Vercel demo deployment (not the client's on-prem
-    # target topology — see docs/MEMORY.md). Hardcoded in addition to the
-    # `allow_origin_regex` below as a quick, explicit fallback.
     "https://frontend-rosy-mu-51.vercel.app",
     "https://frigoglass-hu6f.onrender.com",
 ]
-extra_origins = os.environ.get("RPD_CORS_ORIGINS", "")
-if extra_origins:
-    cors_origins.extend([o.strip() for o in extra_origins.split(",") if o.strip()])
+
+
+def cors_origins_from_env() -> list[str]:
+    extra = [o.strip() for o in os.environ.get("RPD_CORS_ORIGINS", "").split(",") if o.strip()]
+    if os.environ.get("RPD_CORS_ORIGINS_MODE", "").strip().lower() == "replace":
+        return extra
+    return DEFAULT_CORS_ORIGINS + [o for o in extra if o not in DEFAULT_CORS_ORIGINS]
+
+
+def cors_allowed_headers() -> list[str]:
+    """Explicit request headers. `X-Dev-User-Email` is only allowed
+    cross-origin when dev mode is on (read once at startup).
+    """
+
+    headers = ["Authorization", "Content-Type", "Accept", "X-Request-ID"]
+    if is_dev_mode():
+        headers.append("X-Dev-User-Email")
+    return headers
+
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=cors_origins,
-    allow_origin_regex=r"https://.*\.vercel\.app",
+    allow_origins=cors_origins_from_env(),
+    # Kept: the frontend client sends `credentials: "include"`, and the hosted
+    # demo is cross-origin. Auth is bearer-only (no cookies), and with exact
+    # origins the credentialed mode no longer trusts arbitrary sites.
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=cors_allowed_headers(),
+    expose_headers=["X-Schedule-Stale-Count", "Content-Disposition", "Retry-After"],
 )
 
 app.include_router(currency_rates_router)
@@ -133,6 +167,21 @@ app.include_router(scenarios_router)
 app.include_router(exports_router)
 app.include_router(audit_log_router)
 app.include_router(notifications_router)
+# P9-T03 (docs/API_CONTRACT_P9.md §1-§3, §7).
+app.include_router(me_router)
+app.include_router(users_router)
+app.include_router(workflow_settings_router)
+app.include_router(workspace_router)
+# 2026-09-30 (ADR 0012/0014, P10-T02): project-level access grants + manager
+# delegation, and Ask-the-agent (Groq).
+app.include_router(project_access_router)
+app.include_router(ask_agent_router)
+app.add_exception_handler(CodedHTTPException, coded_http_exception_handler)
+# P9-F01 (R04-L1/R04-L2): replaces FastAPI's default `RequestValidationError`
+# handler, which crashes with a 500 (not the correct 422) when the rejected
+# body contained a non-finite float — see
+# `sanitizing_validation_exception_handler`'s own docstring.
+app.add_exception_handler(RequestValidationError, sanitizing_validation_exception_handler)
 
 
 @app.get("/healthz", tags=["meta"])

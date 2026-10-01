@@ -102,8 +102,12 @@ class Notification(UUIDPrimaryKeyMixin, TimestampMixin, Base):
 
     #: The newly-activated `ScheduleRun` this notification's event was
     #: detected on.
-    schedule_run_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("schedule_runs.id"), nullable=False
+    #: The run whose activation produced this notification. Nullable since
+    #: P9-T03 (migration `8e2d4b6a1c90`): `STAGE_BLOCKED` comes from a
+    #: progress edit and has no run. The three schedule-change reasons always
+    #: set it.
+    schedule_run_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("schedule_runs.id"), nullable=True
     )
     #: The immediately-prior active `ScheduleRun` this event was diffed
     #: against. Nullable only in the sense that the column itself allows it

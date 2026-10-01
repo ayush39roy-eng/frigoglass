@@ -3,6 +3,7 @@ import { screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
 import { renderWithProviders } from '@/test/render';
+import { fullPermissions } from '@/test/session';
 import { ApiError } from '@/lib/api/client';
 import type { GanttProjectRow, GanttStepRow } from './api/types';
 
@@ -48,6 +49,9 @@ function step(seq: number, start: number, end: number, over: Partial<GanttStepRo
     step_name: `Step ${String(seq)}`,
     kind: seq % 2 === 0 ? 'lab' : 'design',
     sequence_order: seq,
+    skipped: false,
+    status: 'Not Started',
+    percent_complete: 0,
     duration_weeks: end - start + 1,
     planned_start_week: start,
     planned_end_week: end,
@@ -74,6 +78,14 @@ function project(over: Partial<GanttProjectRow> = {}): GanttProjectRow {
     left_out: false,
     spillover: false,
     cat_not_allowed: false,
+    target_end_week: null,
+    expected_end_week: null,
+    projected_end_week: null,
+    unconstrained_end_week: null,
+    slip_weeks: null,
+    blocked: false,
+    schedule_stale: false,
+    workflow_id: 'PDD',
     steps,
     ...over,
   };
@@ -224,6 +236,96 @@ describe('GanttPage', () => {
       expect(
         screen.queryByRole('button', { name: 'Freeze Cooler Alpha' }),
       ).not.toBeInTheDocument();
+    });
+  });
+
+  describe('P9 — completion lines, step kinds, badges, gating', () => {
+    it('draws the expected and projected completion lines from the server weeks, with the slip label verbatim', () => {
+      hooks.useGantt.mockReturnValue(
+        ganttData({
+          rows: [
+            project({
+              target_end_week: 40,
+              expected_end_week: 40,
+              projected_end_week: 44,
+              unconstrained_end_week: 38,
+              slip_weeks: 4,
+            }),
+          ],
+        }),
+      );
+      renderWithProviders(<GanttPage />);
+      const expected = screen.getByTestId('gantt-marker-expected');
+      const projected = screen.getByTestId('gantt-marker-projected');
+      expect(expected).toHaveAttribute('data-week', '40');
+      expect(projected).toHaveAttribute('data-week', '44');
+      expect(screen.getByTestId('gantt-slip-bracket')).toHaveTextContent('+4 wk');
+      expect(screen.getByRole('img', { name: /Expected \(target\) W40 · will be completed W44 · slip \+4 wk/ })).toBeInTheDocument();
+    });
+
+    it('labels the expected line "process-derived" when the project has no target week', () => {
+      hooks.useGantt.mockReturnValue(
+        ganttData({
+          rows: [project({ target_end_week: null, expected_end_week: 38, projected_end_week: 36, slip_weeks: -2 })],
+        }),
+      );
+      renderWithProviders(<GanttPage />);
+      expect(screen.getByRole('img', { name: /Expected \(process-derived\) W38/ })).toBeInTheDocument();
+      expect(screen.getByTestId('gantt-slip-bracket')).toHaveTextContent('−2 wk');
+    });
+
+    it('omits the bar for a skipped step and shows the n/a chip; elapsed steps render hollow', async () => {
+      const user = userEvent.setup();
+      const steps = [
+        step(1, 1, 2, { kind: 'design' }),
+        step(2, 3, 3, { kind: 'lab', skipped: true, planned_start_week: 2, planned_end_week: 2 }),
+        step(3, 3, 6, { kind: 'elapsed' }),
+      ];
+      hooks.useGantt.mockReturnValue(ganttData({ rows: [project({ steps })] }));
+      renderWithProviders(<GanttPage />);
+      await user.click(screen.getByRole('button', { name: 'Expand steps for Cooler Alpha' }));
+      expect(screen.getByTestId('skipped-chip')).toHaveTextContent('n/a');
+      const stepRows = screen.getAllByTestId('gantt-step-row');
+      expect(stepRows).toHaveLength(3);
+      // skipped row: no bar rect at all
+      expect(stepRows[1]?.querySelectorAll('rect[data-bar]')).toHaveLength(0);
+      // elapsed row: hollow bar
+      expect(stepRows[2]?.querySelector('rect[data-bar="elapsed"]')).toBeTruthy();
+      expect(screen.getAllByText('Elp').length).toBeGreaterThan(0);
+    });
+
+    it('shows the blocked and stale chips from the server flags', () => {
+      hooks.useGantt.mockReturnValue(
+        ganttData({ rows: [project({ blocked: true, schedule_stale: true })] }),
+      );
+      renderWithProviders(<GanttPage />);
+      expect(screen.getByText('Blocked')).toBeInTheDocument();
+      expect(screen.getByTestId('stale-chip')).toHaveAttribute(
+        'title',
+        'Progress or settings changed since this run',
+      );
+    });
+
+    it('links every project row to its Project Workspace', () => {
+      renderWithProviders(<GanttPage />);
+      expect(
+        screen.getByRole('link', { name: 'Open Cooler Alpha in the Project Workspace' }),
+      ).toHaveAttribute('href', '/projects/p1');
+    });
+
+    it('a read-only role (gantt: read, no write) sees the timeline with no freeze control and a read-only notice', () => {
+      renderWithProviders(<GanttPage />, {
+        session: {
+          roles: ['Executive Viewer'],
+          permissions: {
+            ...fullPermissions(),
+            gantt: { read: true, write: false },
+          },
+        },
+      });
+      expect(screen.getByRole('button', { name: 'Expand steps for Cooler Alpha' })).toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: 'Freeze Cooler Alpha' })).not.toBeInTheDocument();
+      expect(screen.getByTestId('read-only-notice')).toHaveTextContent(/Read-only for your role/);
     });
   });
 

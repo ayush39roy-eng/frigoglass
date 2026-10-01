@@ -9,7 +9,15 @@
 import { useQuery } from '@tanstack/react-query';
 
 import { queryKeys } from '@/lib/query-keys';
-import type { CurrencyCode, HubName, LabRegion, WorkflowStepKind } from '@/types/enums';
+import {
+  NON_OEM_CATEGORIES,
+  OEM_CATEGORIES,
+  type CurrencyCode,
+  type HubName,
+  type LabRegion,
+  type ProjectCategory,
+  type WorkflowStepKind,
+} from '@/types/enums';
 import type { Id } from '@/types/common';
 
 import { apiGet, ApiError } from './client';
@@ -101,4 +109,44 @@ export function useCurrencyRates() {
     retry: retryUnlessAuth,
     staleTime: 60 * 60_000,
   });
+}
+
+/**
+ * PLACEHOLDER (P9 contract §6) — `GET /reference/categories?hub_id=` returns the
+ * project categories valid for that hub's workflow (`A+/A/B/C` for PDD hubs,
+ * `A-OEM/B-OEM/C-OEM` for OEM hubs, ADR 0007). The server is the authority
+ * (it 422s `CATEGORY_WORKFLOW_MISMATCH` on a wrong pairing); the list here only
+ * drives the picker.
+ */
+export function fetchCategoriesForHub(
+  hubId: string,
+  signal?: AbortSignal,
+): Promise<ProjectCategory[]> {
+  return apiGet<ProjectCategory[]>('/reference/categories', { signal, query: { hub_id: hubId } });
+}
+
+/**
+ * The category options the Registration form offers for a hub. Pure: the
+ * server list when we have it, else the ADR 0007 split by `Hub.is_oem` as
+ * the offline / in-flight fallback. Exported for tests.
+ */
+export function categoryOptionsForHub(
+  hub: Pick<Hub, 'is_oem'> | undefined,
+  serverList: readonly ProjectCategory[] | undefined,
+): readonly ProjectCategory[] {
+  if (serverList && serverList.length > 0) return serverList;
+  if (!hub) return [...NON_OEM_CATEGORIES, ...OEM_CATEGORIES];
+  return hub.is_oem ? OEM_CATEGORIES : NON_OEM_CATEGORIES;
+}
+
+/** Categories valid for `hub` — server list with the `is_oem` fallback (above). */
+export function useCategoriesForHub(hub: Hub | undefined) {
+  const query = useQuery({
+    queryKey: queryKeys.categoriesForHub(hub?.id),
+    queryFn: ({ signal }) => fetchCategoriesForHub(hub?.id ?? '', signal),
+    enabled: hub !== undefined,
+    retry: retryUnlessAuth,
+    staleTime: 60 * 60_000,
+  });
+  return { ...query, options: categoryOptionsForHub(hub, query.data) };
 }

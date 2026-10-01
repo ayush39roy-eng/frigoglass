@@ -26,6 +26,7 @@ describe('dashboard-api', () => {
       within_year_count: 0,
       spillover_count: 0,
       left_out_count: 0,
+      blocked_count: 0,
       rows: [],
     });
     await fetchCompletingWithinYear();

@@ -172,6 +172,7 @@ async def completing_within_year(
             within_year_count=0,
             spillover_count=0,
             left_out_count=0,
+            blocked_count=0,
             rows=[],
         )
 
@@ -186,13 +187,21 @@ async def completing_within_year(
         stmt = stmt.where(hub_filter)
     result = await db.execute(stmt)
     rows: list[CompletingWithinYearRow] = []
-    within_year_count = spillover_count = left_out_count = 0
+    within_year_count = spillover_count = left_out_count = blocked_count = 0
     for outcome, project in result.all():
-        if outcome.within_year:
+        # P9-F02: Blocked is an exclusive bucket — a project the active run
+        # marked `blocked=True` counts ONLY here, never also in
+        # within_year/spillover/left_out, even on the (currently believed
+        # impossible, but not schema-enforced) row where one of those raw
+        # flags is also set. See `schemas.dashboard.CompletingWithinYear`'s
+        # docstring on `blocked_count`.
+        if outcome.blocked:
+            blocked_count += 1
+        elif outcome.within_year:
             within_year_count += 1
-        if outcome.spillover:
+        elif outcome.spillover:
             spillover_count += 1
-        if outcome.left_out:
+        elif outcome.left_out:
             left_out_count += 1
         rows.append(
             CompletingWithinYearRow(
@@ -204,6 +213,7 @@ async def completing_within_year(
                 within_year=outcome.within_year,
                 spillover=outcome.spillover,
                 left_out=outcome.left_out,
+                blocked=outcome.blocked,
                 cat_not_allowed=outcome.cat_not_allowed,
                 last_step_end_week=outcome.last_step_end_week,
             )
@@ -215,6 +225,7 @@ async def completing_within_year(
         within_year_count=within_year_count,
         spillover_count=spillover_count,
         left_out_count=left_out_count,
+        blocked_count=blocked_count,
         rows=rows,
     )
 

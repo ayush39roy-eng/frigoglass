@@ -37,8 +37,12 @@ export interface NotificationRead {
   reason: NotificationReason;
   project_id: Id;
   hub_id: Id;
+  /** Server-built text, rendered as plain text. For `stage_blocked`:
+   *  `Project "<name>" (<hub>): stage <step_id> <step name> is blocked — <reason>`. */
   message: string;
-  schedule_run_id: Id;
+  /** Null for `stage_blocked` (raised by a progress edit, not a schedule run).
+   *  Nothing in the UI links to a run from here. */
+  schedule_run_id: Id | null;
   previous_schedule_run_id: Id | null;
   read_at: string | null;
   created_at: string;

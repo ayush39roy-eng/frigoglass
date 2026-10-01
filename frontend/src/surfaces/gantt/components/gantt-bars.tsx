@@ -1,5 +1,7 @@
 import * as React from 'react';
 
+import type { WorkflowStepKind } from '@/types/enums';
+
 import {
   barGeometry,
   delayConnectorGeometry,
@@ -16,6 +18,12 @@ import {
  *   the live `ProjectWorkflowStep`, or the delayed project span).
  * - **Red connector** = delay magnitude, drawn from the planned end edge to the
  *   delayed end edge. The one place red shows a magnitude, not a status.
+ *
+ * - **Hollow bar** (P9, ADR 0007) = an `elapsed` step: books nobody, occupies
+ *   calendar weeks. Outlined in the planned colour with a light, hatch-free
+ *   fill so it reads as "time passes here" rather than "someone is booked".
+ * - **No bar at all** = a `skipped` step (0-week lead time, or a lab step on
+ *   a project without certification testing) — it occupies nothing.
  *
  * Every x / width here is `barGeometry(...)` / `delayConnectorGeometry(...)` of
  * server week numbers mapped through the week→pixel `scale`. No position is ever
@@ -64,6 +72,10 @@ export interface GanttBarGroupProps {
   title: string;
   /** Slightly thinner bars for the compact step rows. */
   compact?: boolean;
+  /** Step kind (ADR 0007) — `elapsed` renders hollow. Project rows omit it. */
+  kind?: WorkflowStepKind | undefined;
+  /** A skipped step renders no bar at all. */
+  skipped?: boolean | undefined;
 }
 
 export function GanttBarGroup({
@@ -77,7 +89,11 @@ export function GanttBarGroup({
   frozen,
   title,
   compact = false,
+  kind,
+  skipped = false,
 }: GanttBarGroupProps): React.JSX.Element | null {
+  if (skipped) return null;
+  const elapsed = kind === 'elapsed';
   const plannedGeom = planned ? barGeometry(planned.startWeek, planned.endWeek, scale) : null;
   const actualGeom = actual ? barGeometry(actual.startWeek, actual.endWeek, scale) : null;
   const connector = delayConnectorGeometry(plannedEndWeek, delayedEndWeek, scale);
@@ -99,13 +115,22 @@ export function GanttBarGroup({
           width={plannedGeom.width}
           height={barH}
           rx={2}
+          data-bar={elapsed ? 'elapsed' : 'planned'}
           fill={
-            frozen
-              ? 'hsl(var(--color-gantt-planned-frozen))'
-              : 'hsl(var(--color-gantt-planned))'
+            elapsed
+              ? 'hsl(var(--color-gantt-planned) / 0.12)'
+              : frozen
+                ? 'hsl(var(--color-gantt-planned-frozen))'
+                : 'hsl(var(--color-gantt-planned))'
           }
-          stroke={frozen ? 'hsl(var(--color-gantt-planned))' : 'none'}
-          strokeWidth={frozen ? 1.5 : 0}
+          stroke={
+            elapsed
+              ? 'hsl(var(--color-gantt-planned))'
+              : frozen
+                ? 'hsl(var(--color-gantt-planned))'
+                : 'none'
+          }
+          strokeWidth={elapsed || frozen ? 1.5 : 0}
           strokeDasharray={frozen ? '3 2' : undefined}
         />
       ) : null}

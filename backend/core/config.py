@@ -21,6 +21,7 @@ production IdP.
 
 from __future__ import annotations
 
+import os
 from functools import lru_cache
 
 from pydantic import Field
@@ -86,3 +87,63 @@ def get_oidc_settings() -> OIDCSettings:
     """
 
     return OIDCSettings()
+
+
+class GroqSettings(BaseSettings):
+    """"Ask the agent" (ADR 0014, P10-T02) — Groq's OpenAI-compatible
+    chat-completions API. Same "unconfigured is a valid, non-fatal state"
+    posture as `core.backup_mirror_config.BackupMirrorSettings`: `api_key`
+    has no default and is `None` until an operator sets `RPD_GROQ_API_KEY`
+    (a real secret — never in the repo, resolved via the same `_FILE`-suffix
+    Docker Compose secrets shim `backend/docker-entrypoint.sh` already uses
+    for `RPD_FIELD_ENCRYPTION_KEY`/`RPD_MINIO_*` — see that script and
+    `docker-compose.yml`'s `x-backend-image` anchor). `services.ask_agent`
+    checks `api_key is None` and returns `503 AGENT_UNAVAILABLE` rather than
+    calling out with an empty key.
+    """
+
+    model_config = SettingsConfigDict(env_prefix="RPD_GROQ_", extra="ignore")
+
+    api_key: str | None = Field(default=None)
+
+    #: A current Groq-hosted model id. Configurable (not hardcoded elsewhere)
+    #: so swapping models — or, per ADR 0014's Consequences, providers
+    #: entirely — never requires a code change here.
+    model: str = Field(default="llama-3.3-70b-versatile")
+
+
+@lru_cache
+def get_groq_settings() -> GroqSettings:
+    """Cached singleton — same rationale as `get_oidc_settings`. Tests that
+    need a different value (e.g. asserting the 503-when-unconfigured path,
+    or supplying a fake key to exercise the outbound-payload-capture test)
+    call `.cache_clear()` first.
+    """
+
+    return GroqSettings()
+
+
+#: Values of `RPD_DEV_MODE` that switch dev mode ON. Anything else — including
+#: the variable being unset — is OFF.
+_DEV_MODE_TRUE_VALUES = frozenset({"true", "1", "yes"})
+
+
+def is_dev_mode() -> bool:
+    """Whether the process runs in local dev mode (`RPD_DEV_MODE`).
+
+    Dev mode lets an unauthenticated request run as a seeded user: by default
+    the Admin (`frank.admin@example.com`), or the user named by an
+    `X-Dev-User-Email` header (ADR 0010 §4). See
+    `api.deps.get_current_principal`.
+
+    **Default OFF (P9-T03).** Before P9-T03 the check in `api/deps.py` read
+    `os.environ.get("RPD_DEV_MODE", "true")`, so dev mode was on unless the
+    variable was set, and the production compose file never set it. With the
+    new `X-Dev-User-Email` header, a default-on dev mode would let any
+    caller pick any provisioned account. Dev mode is now opt-in: set
+    `RPD_DEV_MODE=true` for local development. See docs/MEMORY.md P9-T03.
+
+    Read on every call (not cached) so tests can flip it with `monkeypatch`.
+    """
+
+    return os.environ.get("RPD_DEV_MODE", "").strip().lower() in _DEV_MODE_TRUE_VALUES

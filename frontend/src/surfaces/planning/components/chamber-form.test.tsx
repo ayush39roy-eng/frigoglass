@@ -71,7 +71,9 @@ describe('ChamberFormDialog', () => {
       max_concurrent: 2,
       platforms: 1,
       efficiency: 1.0,
-      weeks_per_chamber: 0,
+      maintenance_weeks: 2,
+      breakdown_weeks: 0,
+      calibration_weeks: 1,
       allowed_stages: ['PDD-F'],
     });
   });
@@ -88,7 +90,11 @@ describe('ChamberFormDialog', () => {
           max_concurrent: 3,
           platforms: 2,
           efficiency: 0.7,
-          weeks_per_chamber: 12,
+          maintenance_weeks: 2,
+          breakdown_weeks: 11,
+          calibration_weeks: 1,
+          working_weeks_per_chamber: 35.4,
+          efficient_lab_weeks: 84.96,
           allowed_stages: ['PDD-H'],
           created_at: '2026-01-01T00:00:00Z',
           updated_at: '2026-01-01T00:00:00Z',
@@ -102,5 +108,27 @@ describe('ChamberFormDialog', () => {
     expect(screen.getByDisplayValue('3')).toBeInTheDocument();
     expect(screen.getByRole('checkbox', { name: /PDD-H/ })).toBeChecked();
     expect(screen.getByRole('checkbox', { name: /PDD-F/ })).not.toBeChecked();
+    // P9 (ADR 0008): downtime fields replace weeks_per_chamber; derived figures are read-only, from the server
+    expect(screen.getByLabelText(/^Breakdown/)).toHaveValue(11);
+    expect(screen.getByLabelText(/^Maintenance/)).toHaveValue(2);
+    expect(screen.getByLabelText(/^Calibration/)).toHaveValue(1);
+    expect(screen.queryByLabelText(/Weeks per chamber/i)).not.toBeInTheDocument();
+    const derived = screen.getByTestId('chamber-derived');
+    expect(derived).toHaveTextContent('35.4');
+    expect(derived).toHaveTextContent('84.96');
+    expect(derived.querySelector('input')).toBeNull();
+  });
+
+  it('rejects negative downtime', async () => {
+    mockStepTemplates();
+    const user = userEvent.setup();
+    const onSubmit = vi.fn();
+    renderWithProviders(
+      <ChamberFormDialog mode="create" chamber={null} open onOpenChange={() => {}} onSubmit={onSubmit} />,
+    );
+    const breakdown = screen.getByLabelText(/^Breakdown/);
+    await user.clear(breakdown);
+    await user.type(breakdown, '-1');
+    expect(await screen.findByText(/Enter a number|Must be 0 or more/)).toBeInTheDocument();
   });
 });

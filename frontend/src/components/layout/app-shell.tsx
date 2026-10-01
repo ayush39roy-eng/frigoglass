@@ -2,6 +2,7 @@ import * as React from 'react';
 import { Outlet, useLocation } from 'react-router-dom';
 
 import { SURFACES } from '@/app/nav';
+import { SessionGate } from '@/components/session/session-gate';
 import { TooltipProvider } from '@/components/ui/tooltip';
 
 import { AppHeader } from './app-header';
@@ -20,6 +21,10 @@ import { DensityRegion, type Density } from './density-zone';
 
 /** Longest-prefix match, so nested routes inherit their parent surface's density. */
 function densityForPath(pathname: string): Density {
+  // The Project Workspace is a per-project page a person READS (tokens.css
+  // names it an 'overview' zone); it is not a SURFACES entry.
+  if (pathname.startsWith('/projects/')) return 'overview';
+
   let best: Density = 'overview';
   let bestLength = -1;
 
@@ -42,6 +47,9 @@ export function AppShell(): React.JSX.Element {
 
   return (
     <TooltipProvider delayDuration={200}>
+      {/* Nothing below renders until GET /me resolves (ADR 0010): the sidebar,
+          the route guards and every write control read the permission table. */}
+      <SessionGate>
       <div className="flex h-full flex-col">
         <AppHeader />
         <div className="flex min-h-0 flex-1">
@@ -63,6 +71,7 @@ export function AppShell(): React.JSX.Element {
           </DensityRegion>
         </div>
       </div>
+      </SessionGate>
     </TooltipProvider>
   );
 }

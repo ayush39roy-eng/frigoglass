@@ -149,24 +149,47 @@ def is_lab_region_in_scope(
 
 def is_engineer_self_scoped(principal: Principal) -> bool:
     """True when the caller should be restricted to their own assignments
-    (Engineer role, `GET /gantt` only) rather than a hub-based filter or an
-    unrestricted view — i.e. not `hub_scope_all`, an EMPTY `hub_ids` (a real
-    Hub Planner always has at least one; per DOMAIN_RULES.md's matrix,
-    Engineer is never hub-scoped at all), and holds the `Engineer` role.
+    (Engineer role, `GET /gantt` and `services.workspace.
+    get_scoped_project_or_404` only) rather than a hub-based filter or an
+    unrestricted view — i.e. holds the `Engineer` role and has an EMPTY
+    `hub_ids` (a real Hub Planner always has at least one; per
+    DOMAIN_RULES.md's matrix, Engineer is never hub-scoped at all).
+
+    **2026-09-30 (P10-F01 security fix, High).** This deliberately does
+    **not** check `principal.hub_scope_all` — a prior version required `not
+    principal.hub_scope_all` before applying this narrowing, which let any
+    Engineer-role account with `hub_scope_all=True` silently skip
+    own-assignment scoping entirely and fall through to
+    `hub_scope_filter`'s "unrestricted, see every hub" branch instead. That
+    was not a contrived edge case: it is the actual `seed/seed_dev_users.py`
+    and `tests/factories.py::make_user` default for the Engineer role prior
+    to this fix (a plain `hub_scope_all=True` account with no explicit
+    override), so it was live-exploitable in dev/demo data, not just
+    theoretically possible — see `docs/MEMORY.md`'s P10 gate
+    security-auditor finding and the P10-F01 remediation entry. `hub_scope_all`
+    is an "unrestricted, all hubs" bypass that only ever made sense for
+    Hub-Planner-vs-Portfolio-Manager/Executive-Viewer/Admin (roles whose RBAC
+    matrix qualifier is genuinely "(all hubs)"); Engineer's qualifier is
+    always "(own assignments)", never "(all hubs)", so `hub_scope_all` must
+    never be read for it at all. An Engineer principal is therefore ALWAYS
+    scoped to their own assignments now, regardless of what `hub_scope_all`
+    happens to be set to on the account — defense in depth alongside the
+    schema-level guard (`schemas/user_admin.py`'s `_forbid_engineer_hub_scope_all`)
+    that now rejects setting `hub_scope_all=True` on an Engineer-only account
+    in the first place.
 
     A caller who holds `Engineer` *plus* a broader role (e.g. also Hub
-    Planner or Portfolio Manager on the same account) is scoped by that
-    broader role's rules instead, not by this narrower one — a principal
-    with a non-empty `hub_ids` or `hub_scope_all=True` never reaches this
-    branch. This is a pragmatic, explicitly-documented interpretation for a
-    multi-role account (untested in the P3-T02 seed data, where every test
-    user holds exactly one role), not something DOMAIN_RULES.md/
-    `docs/PROJECT_AND_STACK.md` §5 specifies directly — flagged in
-    `docs/MEMORY.md`'s P3-T03 entry for orchestrator review.
+    Planner or Portfolio Manager on the same account) is still scoped by
+    that broader role's rules instead, not by this narrower one — a
+    principal with a non-empty `hub_ids` never reaches this branch (unchanged
+    from before this fix; `hub_ids` is a real per-account hub assignment list,
+    not the "all hubs" bypass this fix removes). This remains a pragmatic,
+    explicitly-documented interpretation for a multi-role account (untested
+    in the P3-T02 seed data, where every test user holds exactly one role),
+    not something DOMAIN_RULES.md/`docs/PROJECT_AND_STACK.md` §5 specifies
+    directly — flagged in `docs/MEMORY.md`'s P3-T03 entry for orchestrator
+    review, and left as-is by this fix (only the `hub_scope_all` check was
+    removed, not the `hub_ids` one).
     """
 
-    return (
-        not principal.hub_scope_all
-        and not principal.hub_ids
-        and RoleName.ENGINEER in principal.roles
-    )
+    return not principal.hub_ids and RoleName.ENGINEER in principal.roles

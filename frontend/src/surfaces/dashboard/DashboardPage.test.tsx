@@ -29,6 +29,19 @@ vi.mock('./hooks/use-dashboard', () => ({
 }));
 vi.mock('@/lib/api/reference', () => ({ useHubs: () => ({ data: [] }) }));
 
+// The real `<HubGlobePanel>` lazy-loads a `cobe` WebGL canvas (`./hub-globe`),
+// which has its own dedicated test file (`hub-globe-panel.test.tsx`) covering
+// the eligibility gating, the accessible legend and the empty state. Mocked
+// here purely so this integration test isn't coupled to jsdom's lack of a
+// WebGL context (the component itself already fails open/no-throws for that
+// — see `hub-globe.tsx`'s try/catch — this mock just keeps this specific
+// test file's assertions about page composition independent of that detail).
+vi.mock('./components/hub-globe-panel', () => ({
+  HubGlobePanel: ({ rows }: { rows: { hub: string }[] }) => (
+    <div data-testid="hub-globe-panel-stub">{rows.length} hub rows</div>
+  ),
+}));
+
 import DashboardPage from './DashboardPage';
 
 const pending = { data: undefined, isPending: true, isError: false, error: null, refetch: vi.fn() };
@@ -45,6 +58,7 @@ const withinYear: CompletingWithinYear = {
   within_year_count: 9,
   spillover_count: 4,
   left_out_count: 2,
+  blocked_count: 1,
   rows: [],
 };
 const totals: PipelineTotals = { spillover_count: 30, new_count: 206, total_count: 236 };

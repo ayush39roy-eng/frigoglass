@@ -17,7 +17,7 @@ from models.chamber import Chamber
 from models.currency import CurrencyRate
 from models.engineer import Engineer
 from models.export import ExportJob
-from models.hub import Hub
+from models.hub import Hub, HubWorkCalendar
 from models.notification import Notification
 from models.priority import (
     DIMENSION_FIELD_NAMES,
@@ -26,22 +26,35 @@ from models.priority import (
     PriorityScore,
 )
 from models.project import Project
+from models.project_access import ProjectAccessGrant
 from models.scenario import ScenarioApplyChange, ScenarioApplyRun
 from models.schedule import ScheduleRun, ScheduleRunProjectOutcome, ScheduleRunProjectStep
 from models.user import Role, User, UserHubScope, UserRole
-from models.workflow import ProjectWorkflowStep, WorkflowStepTemplate
+from models.workflow import (
+    ProjectWorkflowStep,
+    Workflow,
+    WorkflowLeadTime,
+    WorkflowStepTemplate,
+)
+from models.workspace import ProjectComment, ProjectFile
 
 __all__ = [
     "Base",
     "TimestampMixin",
     "UUIDPrimaryKeyMixin",
     "Hub",
+    "HubWorkCalendar",
     "Engineer",
     "Chamber",
     "CurrencyRate",
+    "Workflow",
     "WorkflowStepTemplate",
+    "WorkflowLeadTime",
     "ProjectWorkflowStep",
     "Project",
+    "ProjectAccessGrant",
+    "ProjectFile",
+    "ProjectComment",
     "PriorityScore",
     "PriorityApplicationRun",
     "PriorityApplicationResult",

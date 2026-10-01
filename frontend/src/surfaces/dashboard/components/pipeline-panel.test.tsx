@@ -14,6 +14,7 @@ describe('PipelinePanel', () => {
       within_year_count: 9,
       spillover_count: 4,
       left_out_count: 2,
+      blocked_count: 1,
       rows: [],
     };
     render(<PipelinePanel totals={totals} withinYear={withinYear} />);
@@ -37,6 +38,7 @@ describe('PipelinePanel', () => {
           within_year_count: 0,
           spillover_count: 0,
           left_out_count: 0,
+          blocked_count: 0,
           rows: [],
         }}
       />,

@@ -1,9 +1,10 @@
 """P2-T09 port of `backend/scheduling/_selftest_cp_sat.py` (P2-T06, CP-SAT model).
 
 Drives every hand-traced scenario, the two highest-risk frozen-vs-frozen
-conflict scenarios, and the full real 46-project seed-dataset solve (bounded
-`max_time_in_seconds`, zero `validate_invariants` violations, byte-identical
-single-threaded re-run) as parametrized pytest cases.
+conflict scenarios, and the full real 46-project seed-dataset solve
+(deterministic-time budget per ruling 6, zero `validate_invariants`
+violations, byte-identical single-threaded re-run) as parametrized pytest
+cases.
 
 `backend/scheduling/cp_sat.py` had zero pytest-measured coverage before this
 (flagged in the P2-T06 review entry); this module is what brings it over the

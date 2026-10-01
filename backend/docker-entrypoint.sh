@@ -81,6 +81,13 @@ resolve_secret RPD_OIDC_CLIENT_SECRET
 # immediately above.
 resolve_secret RPD_BACKUP_MIRROR_ACCESS_KEY
 resolve_secret RPD_BACKUP_MIRROR_SECRET_KEY
+# P10-T02: "Ask the agent" (ADR 0014) — RPD_GROQ_API_KEY is PROVISIONAL
+# (docs/OPEN_QUESTIONS.md #23) and, like the two lines above, a harmless
+# no-op today unless an operator sets RPD_GROQ_API_KEY_FILE in
+# docker-compose.yml/.env. Unset/unresolved means `core/config.py::
+# GroqSettings.api_key` is `None`, and `services/ask_agent.py` returns
+# `503 AGENT_UNAVAILABLE` rather than ever dialling out.
+resolve_secret RPD_GROQ_API_KEY
 
 # Build RPD_DATABASE_URL from components if not already set directly (the
 # password never appears in `docker-compose.yml`'s `environment:` block —

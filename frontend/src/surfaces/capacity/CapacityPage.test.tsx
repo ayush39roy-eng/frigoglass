@@ -4,6 +4,7 @@ import { screen } from '@testing-library/react';
 import { renderWithProviders } from '@/test/render';
 import { ApiError } from '@/lib/api/client';
 import type { ClassBreakdown, HubCapacitySummary, UtilizationMatrix } from './api/types';
+import { hubRow } from './test-fixtures';
 
 const hooks = {
   useHubLoadVsCapacity: vi.fn(),
@@ -37,15 +38,7 @@ const hubLoad: HubCapacitySummary = {
   has_active_schedule_run: true,
   schedule_run_version: 6,
   remaining_weeks: 47,
-  rows: [
-    {
-      hub: 'R&D-Greece',
-      design_load_weeks: 120,
-      design_capacity_weeks: 94.5,
-      lab_load_units: 18.5,
-      lab_capacity_units: 47,
-    },
-  ],
+  rows: [hubRow({ hub: 'R&D-Greece', lab_region: 'Greece', design_load_weeks: 120 })],
 };
 const classBreakdown: ClassBreakdown = {
   has_active_schedule_run: true,
@@ -83,8 +76,8 @@ describe('CapacityPage', () => {
     hooks.useUtilizationMatrix.mockReturnValue(ready(utilization));
     renderWithProviders(<CapacityPage />);
 
-    // verbatim I6/I7 load figure from the hub-load endpoint
-    expect(screen.getByText('120')).toBeInTheDocument();
+    // verbatim I6/I7 load figure from the hub-load endpoint (StatCard + chart label)
+    expect(screen.getAllByText('120').length).toBeGreaterThan(0);
     expect(screen.getByText('Class breakdown — deliverable vs. left out')).toBeInTheDocument();
     expect(screen.getByText('Resource utilization matrix')).toBeInTheDocument();
     // the GDPR placeholder is always where the named-engineer view would be

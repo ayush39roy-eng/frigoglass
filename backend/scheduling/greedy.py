@@ -1,21 +1,46 @@
 """Greedy serial schedule-generation scheme (SGS), per `docs/DOMAIN_RULES.md`.
 
-Implemented directly from DOMAIN_RULES.md's "Scheduling order", "Booking
-rules", and Invariants I1-I10 — see the P2-T01 `docs/MEMORY.md` entry for
-every place `reference/rpd-platform-prototype.html`'s scheduler (function
-`qm`, read but never transliterated) was consulted to resolve a genuine
-ambiguity DOMAIN_RULES.md leaves open, and exactly what was decided and why.
+Implemented directly from DOMAIN_RULES.md's "Scheduling order", "Precedence",
+"Booking rules", "Per-stage progress capture" and Invariants I1-I17. The
+prototype oracle was retired at P2 close and was not consulted for the
+2026-09-27 revision (P9-T02); every judgement call the revised contract forced
+is recorded in that task's `docs/MEMORY.md` entry.
+
+Shape of a run (all pure, all deterministic — Invariant I8):
+
+  1. Validate input (`ValueError` on malformed configuration) and build the
+     per-project `ProjectPlan` (durations, skips, progress, holds).
+  2. Walk **frozen** projects first, in scheduling order — every step locked
+     at `actual_start_week` + precedence, capacity consumed regardless of
+     conflict (`ENG_CONFLICT` / `OVERLAP`).
+  3. **Pre-book the anchored steps** of every non-frozen, progress-tracked
+     project (in scheduling order): `Done` steps at their recorded actuals
+     (capacity consumed only for weeks >= CURRENT_WEEK) and `In Progress`
+     tails from `max(CURRENT_WEEK, pred_end + 1)` for `remaining` weeks. These
+     are facts about work already under way, so they must be on the books
+     before any *search* for a free window (otherwise a higher-priority
+     not-started project could grab the very weeks an in-progress project is
+     already occupying). Conflicts here are flagged, never resolved by moving
+     the anchored step (I11).
+  4. Walk the non-frozen projects in scheduling order: each step in the DAG's
+     deterministic walk order gets `earliest_start = max(pred.end) + 1`
+     (floored at CURRENT_WEEK); `design` searches the leader's calendar,
+     `lab` searches eligible chambers, `elapsed` books nothing, `skipped`
+     steps are transparent, held (Blocked) steps are not placed.
 
 No DB access, no network access, no filesystem access, no randomness, no
 wall-clock dependence. Every collection this module iterates is explicitly
-sorted before iteration — never relies on dict/set insertion order (Invariant
-I8's "no set-iteration-order dependence" requirement).
+sorted before iteration.
 """
 
 from __future__ import annotations
 
+from dataclasses import dataclass, replace
+
 import domain_constants as dc
 from scheduling.types import (
+    CATEGORY_RANK,
+    OEM_CATEGORIES,
     ChamberInput,
     EngineerInput,
     ProjectInput,
@@ -23,28 +48,24 @@ from scheduling.types import (
     ScheduleInput,
     ScheduleOutput,
     StepSchedule,
-    WorkflowStepTemplate,
+)
+from scheduling.workflow import (
+    STATUS_BLOCKED,
+    STATUS_DONE,
+    STATUS_IN_PROGRESS,
+    ProjectPlan,
+    StepPlan,
+    Workflow,
+    analyse_project,
+    build_lead_time_table,
+    build_workflows,
+    compute_progress_pct,
+    first_step_frontier,
+    unconstrained_end_week,
+    validate_schedulable_project,
 )
 
 # --- Small pure helpers ------------------------------------------------------
-
-
-def _duration_weeks(base_weeks: int, category: str) -> int:
-    """``max(1, round(base_weeks * multiplier))`` — DOMAIN_RULES.md "Category
-    multipliers". Delegates to `domain_constants.duration_weeks` (the same
-    formula P1's seed script and priority scoring already use) rather than
-    re-implementing it, to avoid a second, driftable copy of a one-line
-    formula. See the P2-T01 MEMORY.md entry for why importing
-    `domain_constants` from `scheduling/` does not violate the purity
-    constraint (it is pure data + this one pure helper, no DB/model/network
-    dependency of its own).
-    """
-
-    if category not in dc.CATEGORY_MULTIPLIERS:
-        raise ValueError(
-            f"unknown project category {category!r}; expected one of {dc.CATEGORY_ORDER}"
-        )
-    return dc.duration_weeks(base_weeks, category)
 
 
 def _is_oem_hub(hub: str) -> bool:
@@ -57,60 +78,185 @@ def _lab_region_for_hub(hub: str) -> str:
     return dc.HUB_LAB_REGION[hub]
 
 
-def _validate_schedulable_project(project: ProjectInput) -> None:
-    """Fail loudly on malformed input for a project whose status participates
-    in scheduling, rather than crashing deep inside the sort key (a `TypeError`/
-    `KeyError` from `PRIORITY_ORDER.index(None)` is much harder to diagnose
-    than a clear `ValueError` naming the offending project).
-    """
+def _cat_not_allowed(project: ProjectInput, leader: EngineerInput) -> bool:
+    """CAT_NOT_ALLOWED: the leader's `allowed_categories` excludes the project's
+    category, "or OEM for OEM-hub projects". An OEM-hub leader is eligible if
+    `allowed_categories` carries either the generic `"OEM"` marker or the
+    project's own `X-OEM` category (ADR 0007: engineer eligibility now accepts
+    the three OEM categories explicitly)."""
 
-    if project.priority not in dc.PRIORITY_ORDER:
-        raise ValueError(
-            f"project {project.project_id!r}: priority {project.priority!r} is not one of "
-            f"{dc.PRIORITY_ORDER} (required for any project whose status participates in "
-            "scheduling)"
-        )
-    if project.category not in dc.CATEGORY_MULTIPLIERS:
-        raise ValueError(
-            f"project {project.project_id!r}: category {project.category!r} is not one of "
-            f"{dc.CATEGORY_ORDER} (required for any project whose status participates in "
-            "scheduling)"
-        )
-    if project.hub not in dc.HUB_LAB_REGION:
-        raise ValueError(
-            f"project {project.project_id!r}: hub {project.hub!r} is not one of "
-            f"{sorted(dc.HUB_LAB_REGION)}"
-        )
-    if project.frozen and project.actual_start_week is None:
-        raise ValueError(
-            f"project {project.project_id!r}: frozen=True but actual_start_week is None "
-            "(DOMAIN_RULES.md: frozen projects' dates are locked at actual_start)"
-        )
+    allowed = leader.allowed_categories
+    if _is_oem_hub(project.hub):
+        oem_cat_ok = project.category in OEM_CATEGORIES and project.category in allowed
+        return not ("OEM" in allowed or oem_cat_ok)
+    return project.category not in allowed
 
 
 def _sort_key(project: ProjectInput) -> tuple[int, int, int, int, str]:
     """DOMAIN_RULES.md "Scheduling order": frozen desc, priority, status,
-    category, then an explicit `project_id` tiebreak.
-
-    The `project_id` tiebreak is a deliberate strengthening beyond DOMAIN_RULES.md's
-    literal four-key text: the prototype relies on JavaScript's guaranteed-stable
-    `Array.sort` to preserve the *caller-supplied array order* for ties on all
-    four keys, but nothing in DOMAIN_RULES.md or this function's contract
-    promises `ScheduleInput.projects` arrives in any particular order — a pure
-    function must not derive determinism (Invariant I8) from an unstated
-    assumption about caller ordering. Adding `project_id` as a fifth,
-    always-decisive key makes the total order well-defined (no remaining ties)
-    regardless of input order, which is strictly stronger than, and never
-    contradicts, the documented four-key order. Recorded in the P2-T01
-    MEMORY.md entry.
-    """
+    category (`A+ → A → B → C → A-OEM → B-OEM → C-OEM`), then an explicit
+    `project_id` tiebreak (P2-T01 decision: a pure function must not derive
+    determinism from caller ordering)."""
 
     return (
         0 if project.frozen else 1,
         dc.PRIORITY_ORDER.index(project.priority),
         dc.SCHEDULABLE_STATUS_ORDER[project.status],
-        dc.CATEGORY_ORDER.index(project.category),
+        CATEGORY_RANK.index(project.category),
         project.project_id,
+    )
+
+
+def _eligible_chambers(
+    chambers_by_id: dict[str, ChamberInput], region: str, step_id: str
+) -> list[ChamberInput]:
+    """Deterministic candidate order: sorted by chamber_id (P2-T01)."""
+
+    return sorted(
+        (
+            c
+            for c in chambers_by_id.values()
+            if c.lab_region == region and step_id in c.allowed_stages
+        ),
+        key=lambda c: c.chamber_id,
+    )
+
+
+# --- Run context and mutable resource state ----------------------------------
+
+
+@dataclass(frozen=True)
+class _Placement:
+    """A step placement fixed before the search phase (frozen or anchored)."""
+
+    start_week: int
+    end_week: int
+    engineer_id: str | None
+    chamber_id: str | None
+
+
+class _ResourceState:
+    """Per-run mutable booking state. Fresh on every call — no shared state
+    between calls (Invariant I8)."""
+
+    def __init__(self, schedule_input: ScheduleInput) -> None:
+        self.eng_busy: dict[str, set[int]] = {
+            e.engineer_id: set() for e in schedule_input.engineers
+        }
+        self.chamber_busy: dict[str, dict[int, int]] = {
+            c.chamber_id: {} for c in schedule_input.chambers
+        }
+        # Which projects hold each engineer-week, so a double booking can flag
+        # ENG_CONFLICT on *every* project involved (P9-R01), not only on the
+        # second booker.
+        self.eng_owners: dict[str, dict[int, set[str]]] = {}
+        self.eng_conflict_projects: set[str] = set()
+
+    def book_engineer(self, engineer_id: str, weeks: range, project_id: str) -> bool:
+        """Consume `weeks` regardless of conflict; return True if any was busy.
+        On a conflict, `project_id` and every earlier holder of the clashing
+        weeks are added to `eng_conflict_projects`."""
+
+        busy = self.eng_busy.setdefault(engineer_id, set())
+        owners = self.eng_owners.setdefault(engineer_id, {})
+        conflict = False
+        for wk in weeks:
+            holders = owners.setdefault(wk, set())
+            if wk in busy and holders - {project_id}:
+                conflict = True
+                self.eng_conflict_projects.update(holders)
+                self.eng_conflict_projects.add(project_id)
+            busy.add(wk)
+            holders.add(project_id)
+        return conflict
+
+    def engineer_free(self, engineer_id: str, weeks: range) -> bool:
+        busy = self.eng_busy.get(engineer_id, set())
+        return all(wk not in busy for wk in weeks)
+
+    def book_chamber(self, chamber: ChamberInput, weeks: range) -> bool:
+        """Consume 1.0 platform-week per project-week regardless of capacity;
+        return True if `max_concurrent` was exceeded in any week."""
+
+        per_week = self.chamber_busy.setdefault(chamber.chamber_id, {})
+        overlap = False
+        for wk in weeks:
+            per_week[wk] = per_week.get(wk, 0) + 1
+            if per_week[wk] > chamber.max_concurrent:
+                overlap = True
+        return overlap
+
+    def chamber_free(self, chamber: ChamberInput, weeks: range) -> bool:
+        per_week = self.chamber_busy.get(chamber.chamber_id, {})
+        return all(per_week.get(wk, 0) < chamber.max_concurrent for wk in weeks)
+
+
+def apply_eng_conflict_flags(
+    outcomes_by_id: dict[str, ProjectScheduleOutcome], state: _ResourceState
+) -> None:
+    """Set `eng_conflict=True` on every project involved in a fixed-placement
+    engineer double booking (both sides — P9-R01, auditor D4)."""
+
+    for pid in sorted(state.eng_conflict_projects):
+        outcome = outcomes_by_id.get(pid)
+        if outcome is not None and not outcome.eng_conflict:
+            outcomes_by_id[pid] = replace(outcome, eng_conflict=True)
+
+
+@dataclass(frozen=True)
+class RunContext:
+    """Validated, pre-analysed input shared by the greedy and CP-SAT solvers."""
+
+    schedule_input: ScheduleInput
+    workflows: dict[str, Workflow]
+    lead_time_table: dict[tuple[str, str, str], int]
+    engineers_by_id: dict[str, EngineerInput]
+    chambers_by_id: dict[str, ChamberInput]
+    plans: dict[str, ProjectPlan]
+    ordered: tuple[ProjectInput, ...]  # schedulable projects in scheduling order
+    excluded: tuple[ProjectInput, ...]
+
+
+def prepare_run(schedule_input: ScheduleInput) -> RunContext:
+    if schedule_input.horizon_weeks < 1:
+        raise ValueError("horizon_weeks must be >= 1")
+
+    workflows = build_workflows(schedule_input.workflow_steps)
+    lead_time_table = build_lead_time_table(schedule_input.lead_times)
+    engineers_by_id = {e.engineer_id: e for e in schedule_input.engineers}
+    chambers_by_id = {c.chamber_id: c for c in schedule_input.chambers}
+
+    schedulable: list[ProjectInput] = []
+    excluded: list[ProjectInput] = []
+    for project in schedule_input.projects:
+        if project.status in dc.SCHEDULABLE_STATUS_ORDER:
+            schedulable.append(project)
+        else:
+            # Commercialized / On Hold / Cancelled / Draft / anything else.
+            excluded.append(project)
+
+    plans: dict[str, ProjectPlan] = {}
+    for project in schedulable:
+        validate_schedulable_project(
+            project,
+            workflows,
+            lead_time_table,
+            hub_lab_region=dc.HUB_LAB_REGION,
+            priority_order=dc.PRIORITY_ORDER,
+        )
+        plans[project.project_id] = analyse_project(
+            project, workflows[project.workflow_id], lead_time_table
+        )
+
+    return RunContext(
+        schedule_input=schedule_input,
+        workflows=workflows,
+        lead_time_table=lead_time_table,
+        engineers_by_id=engineers_by_id,
+        chambers_by_id=chambers_by_id,
+        plans=plans,
+        ordered=tuple(sorted(schedulable, key=_sort_key)),
+        excluded=tuple(excluded),
     )
 
 
@@ -120,79 +266,50 @@ def _sort_key(project: ProjectInput) -> tuple[int, int, int, int, str]:
 def run_greedy_sgs(schedule_input: ScheduleInput) -> ScheduleOutput:
     """Pure function: `ScheduleInput -> ScheduleOutput`. See module docstring."""
 
-    if schedule_input.horizon_weeks < 1:
-        raise ValueError("horizon_weeks must be >= 1")
-
-    engineers_by_id: dict[str, EngineerInput] = {e.engineer_id: e for e in schedule_input.engineers}
-    chambers_by_id: dict[str, ChamberInput] = {c.chamber_id: c for c in schedule_input.chambers}
-    steps_sorted: tuple[WorkflowStepTemplate, ...] = tuple(
-        sorted(schedule_input.workflow_steps, key=lambda s: s.sequence_order)
-    )
-
-    # Mutable per-run resource state. Fresh on every call — no shared state
-    # between calls, which is part of what makes repeated calls on identical
-    # input deterministic (Invariant I8).
-    eng_busy: dict[str, set[int]] = {e.engineer_id: set() for e in schedule_input.engineers}
-    chamber_busy: dict[str, dict[int, int]] = {c.chamber_id: {} for c in schedule_input.chambers}
-
-    schedulable: list[ProjectInput] = []
-    excluded: list[ProjectInput] = []
-    for project in schedule_input.projects:
-        if project.status in dc.SCHEDULABLE_STATUS_ORDER:
-            schedulable.append(project)
-        else:
-            # Any status outside the four ordered statuses is excluded from
-            # scheduling entirely (DOMAIN_RULES.md booking rules) — this
-            # naturally covers "Commercialized", "On Hold", and the P1-added
-            # "Draft" status (not itself named in DOMAIN_RULES.md, per the
-            # P1-T01 MEMORY.md entry) without `scheduling/` needing to
-            # hardcode a vocabulary that belongs to `backend/models/enums.py`.
-            excluded.append(project)
-
-    for project in schedulable:
-        _validate_schedulable_project(project)
-
-    ordered = sorted(schedulable, key=_sort_key)
+    ctx = prepare_run(schedule_input)
+    state = _ResourceState(schedule_input)
+    current_week = schedule_input.current_week
 
     outcomes_by_id: dict[str, ProjectScheduleOutcome] = {}
     scheduling_order: list[str] = []
 
-    for project in ordered:
+    frozen_projects = [p for p in ctx.ordered if p.frozen]
+    non_frozen_projects = [p for p in ctx.ordered if not p.frozen]
+
+    for project in frozen_projects:
         scheduling_order.append(project.project_id)
         outcomes_by_id[project.project_id] = _schedule_one_project(
-            project=project,
-            steps=steps_sorted,
-            engineers_by_id=engineers_by_id,
-            chambers_by_id=chambers_by_id,
-            eng_busy=eng_busy,
-            chamber_busy=chamber_busy,
-            current_week=schedule_input.current_week,
-            horizon_weeks=schedule_input.horizon_weeks,
-            within_year_week=schedule_input.within_year_week,
+            ctx, state, ctx.plans[project.project_id], prebooked={}, pre_flags=(False, False)
         )
 
-    for project in excluded:
+    prebooked, pre_flags = prebook_anchored_steps(ctx, state, non_frozen_projects)
+
+    for project in non_frozen_projects:
+        scheduling_order.append(project.project_id)
+        outcomes_by_id[project.project_id] = _schedule_one_project(
+            ctx,
+            state,
+            ctx.plans[project.project_id],
+            prebooked=prebooked.get(project.project_id, {}),
+            pre_flags=pre_flags.get(project.project_id, (False, False)),
+        )
+
+    for project in ctx.excluded:
         outcomes_by_id[project.project_id] = _excluded_outcome(project)
 
-    # Sorted by project_id, independent of ScheduleInput.projects' supplied
-    # order — see ScheduleOutput.project_outcomes docstring.
+    apply_eng_conflict_flags(outcomes_by_id, state)
     by_project_id = sorted(schedule_input.projects, key=lambda p: p.project_id)
     project_outcomes = tuple(outcomes_by_id[p.project_id] for p in by_project_id)
-
+    _ = current_week
     return ScheduleOutput(
         project_outcomes=project_outcomes, scheduling_order=tuple(scheduling_order)
     )
 
 
 def _excluded_outcome(project: ProjectInput) -> ProjectScheduleOutcome:
-    """DOMAIN_RULES.md: "Status Commercialized and On Hold are excluded from
-    scheduling entirely." `within_year` for an excluded project: resolved via
-    the prototype (function `qm`) since DOMAIN_RULES.md is silent — a
-    Commercialized project is trivially "done, within year"
-    (`withinYear:true` in the prototype); an On Hold project (or any other
-    excluded status) is not counted as delivering this year
-    (`withinYear:false`). See the P2-T01 MEMORY.md entry.
-    """
+    """DOMAIN_RULES.md: excluded statuses are never scheduled. `within_year`
+    for an excluded project (P2-T01 resolution, unchanged): Commercialized is
+    trivially "done, within year"; anything else is not."""
 
     return ProjectScheduleOutcome(
         project_id=project.project_id,
@@ -211,200 +328,446 @@ def _excluded_outcome(project: ProjectInput) -> ProjectScheduleOutcome:
     )
 
 
-def _schedule_one_project(
-    *,
-    project: ProjectInput,
-    steps: tuple[WorkflowStepTemplate, ...],
-    engineers_by_id: dict[str, EngineerInput],
-    chambers_by_id: dict[str, ChamberInput],
-    eng_busy: dict[str, set[int]],
-    chamber_busy: dict[str, dict[int, int]],
-    current_week: int,
-    horizon_weeks: int,
-    within_year_week: int,
+def _no_leader_outcome(
+    project: ProjectInput, plan: ProjectPlan, current_week: int
 ) -> ProjectScheduleOutcome:
-    leader = engineers_by_id.get(project.leader_engineer_id) if project.leader_engineer_id else None
+    """P2-T01 resolution (unchanged): no resolvable leader -> immediate
+    LEFT_OUT, no step attempted, CAT_NOT_ALLOWED never evaluated."""
 
+    return ProjectScheduleOutcome(
+        project_id=project.project_id,
+        excluded=False,
+        left_out=True,
+        eng_conflict=False,
+        overlap=False,
+        cat_not_allowed=False,
+        spillover=False,
+        within_year=False,
+        no_leader=True,
+        no_chamber_step_id=None,
+        steps=(),
+        start_week=None,
+        end_week=None,
+        unconstrained_end_week=unconstrained_end_week(plan, current_week),
+        expected_end_week=_expected_end_week(project, unconstrained_end_week(plan, current_week)),
+        projected_end_week=None,
+        blocked=plan.blocked,
+        progress_pct=compute_progress_pct(plan),
+    )
+
+
+def _data_error_outcome(project: ProjectInput, plan: ProjectPlan) -> ProjectScheduleOutcome:
+    """DOMAIN_RULES.md: an In Progress / Blocked / Done step missing a required
+    actual week rejects the project as a data error — it is not silently
+    scheduled from scratch, and it consumes no capacity."""
+
+    assert plan.data_error is not None
+    return ProjectScheduleOutcome(
+        project_id=project.project_id,
+        excluded=False,
+        left_out=False,
+        eng_conflict=False,
+        overlap=False,
+        cat_not_allowed=False,
+        spillover=False,
+        within_year=False,
+        no_leader=False,
+        no_chamber_step_id=None,
+        steps=(),
+        start_week=None,
+        end_week=None,
+        unconstrained_end_week=None,
+        expected_end_week=project.target_end_week,
+        projected_end_week=None,
+        blocked=False,
+        progress_pct=None,
+        data_error=plan.data_error,
+    )
+
+
+def _expected_end_week(project: ProjectInput, unconstrained: int | None) -> int | None:
+    return project.target_end_week if project.target_end_week is not None else unconstrained
+
+
+# --- Phase 3: anchored pre-booking (Done / In Progress) --------------------------
+
+
+def prebook_anchored_steps(
+    ctx: RunContext, state: _ResourceState, projects: list[ProjectInput]
+) -> tuple[dict[str, dict[str, _Placement]], dict[str, tuple[bool, bool]]]:
+    """Book every *known* anchored step of the given non-frozen projects, in
+    scheduling order, before any search takes place (see module docstring,
+    step 3). A step is known when its placement can be computed from recorded
+    actuals alone: every `Done` step, and every `In Progress` / `Blocked`
+    (remaining == 0) step whose predecessors are all themselves known. An
+    anchored step behind a Not-Started predecessor (inconsistent data) is
+    placed during the walk instead.
+
+    Returns `(placements[project_id][step_id], (eng_conflict, overlap)[project_id])`.
+    """
+
+    current_week = ctx.schedule_input.current_week
+    placements: dict[str, dict[str, _Placement]] = {}
+    flags: dict[str, tuple[bool, bool]] = {}
+
+    for project in projects:
+        plan = ctx.plans[project.project_id]
+        if plan.data_error is not None or not plan.progress_tracked:
+            continue
+        leader = ctx.engineers_by_id.get(project.leader_engineer_id or "")
+        if leader is None:
+            continue  # no_leader -> LEFT_OUT with nothing booked (unchanged)
+        region = _lab_region_for_hub(project.hub)
+        frontier = first_step_frontier(project, current_week)
+
+        known_ends: dict[str, int] = {}
+        placed: dict[str, _Placement] = {}
+        eng_conflict = False
+        overlap = False
+        for sid in plan.workflow.walk_order:
+            sp = plan.steps[sid]
+            preds = sp.step.predecessor_ids
+            preds_known = all(p in known_ends for p in preds)
+            pred_end = (
+                (max(known_ends[p] for p in preds) if preds else frontier - 1)
+                if preds_known
+                else None
+            )
+
+            if sp.skipped:
+                if pred_end is not None:
+                    known_ends[sid] = pred_end
+                continue
+            if sid in plan.held_step_ids:
+                # Held: not placed here (see _schedule_one_project); its end is
+                # known if its predecessors are, so successors stay consistent.
+                if pred_end is not None and sp.status == STATUS_BLOCKED:
+                    assert sp.actual_start_week is not None
+                    hold_week = max(current_week, pred_end + 1, sp.actual_start_week)
+                    known_ends[sid] = max(sp.actual_start_week, hold_week - 1)
+                elif pred_end is not None:
+                    known_ends[sid] = pred_end
+                continue
+
+            if sp.status == STATUS_DONE:
+                assert sp.actual_start_week is not None and sp.actual_end_week is not None
+                placement, conflict, over = _book_anchored(
+                    ctx,
+                    state,
+                    sp,
+                    leader,
+                    region,
+                    sp.actual_start_week,
+                    sp.actual_end_week,
+                    project_id=project.project_id,
+                    consume_from=current_week,
+                )
+                if placement is None:
+                    continue  # no eligible chamber: the walk reports no_chamber / LEFT_OUT
+                eng_conflict |= conflict
+                overlap |= over
+                placed[sid] = placement
+                known_ends[sid] = placement.end_week
+                continue
+
+            if sp.status in (STATUS_IN_PROGRESS, STATUS_BLOCKED):
+                assert sp.actual_start_week is not None
+                if pred_end is None:
+                    continue  # placed during the walk
+                if sp.remaining == 0:
+                    end = max(sp.actual_start_week, pred_end)
+                    placed[sid] = _Placement(sp.actual_start_week, end, None, None)
+                    known_ends[sid] = end
+                    continue
+                tail_start = max(current_week, pred_end + 1, sp.actual_start_week)
+                tail_end = tail_start + sp.remaining - 1
+                placement, conflict, over = _book_anchored(
+                    ctx,
+                    state,
+                    sp,
+                    leader,
+                    region,
+                    tail_start,
+                    tail_end,
+                    project_id=project.project_id,
+                    consume_from=current_week,
+                    reported_start=sp.actual_start_week,
+                )
+                if placement is None:
+                    continue
+                eng_conflict |= conflict
+                overlap |= over
+                placed[sid] = placement
+                known_ends[sid] = placement.end_week
+                continue
+            # Not Started: unknown until the walk.
+
+        if placed:
+            placements[project.project_id] = placed
+            flags[project.project_id] = (eng_conflict, overlap)
+    return placements, flags
+
+
+def _book_anchored(
+    ctx: RunContext,
+    state: _ResourceState,
+    sp: StepPlan,
+    leader: EngineerInput,
+    region: str,
+    start: int,
+    end: int,
+    *,
+    project_id: str,
+    consume_from: int,
+    reported_start: int | None = None,
+) -> tuple[_Placement | None, bool, bool]:
+    """Consume capacity for `[max(start, consume_from) .. end]` regardless of
+    conflict (DOMAIN_RULES.md: capacity is only tracked for weeks >=
+    CURRENT_WEEK; anchored placements never move). Returns
+    `(placement, eng_conflict, overlap)`; `placement is None` only for a lab
+    step with zero eligible chambers.
+
+    Lab steps (DOMAIN_RULES "Gate remediation rulings" #1): the first eligible
+    chamber, in chamber_id order, with room for every consumed week; only
+    when none has room is the step booked over capacity (into the first
+    eligible chamber) and OVERLAP raised."""
+
+    weeks = range(max(start, consume_from), end + 1)
+    shown_start = reported_start if reported_start is not None else start
+    kind = sp.step.kind
+    if kind == "design":
+        conflict = state.book_engineer(leader.engineer_id, weeks, project_id)
+        return _Placement(shown_start, end, leader.engineer_id, None), conflict, False
+    if kind == "lab":
+        eligible = _eligible_chambers(ctx.chambers_by_id, region, sp.step.step_id)
+        if not eligible:
+            return None, False, False
+        chosen = next((c for c in eligible if state.chamber_free(c, weeks)), eligible[0])
+        over = state.book_chamber(chosen, weeks)
+        return _Placement(shown_start, end, None, chosen.chamber_id), False, over
+    return _Placement(shown_start, end, None, None), False, False
+
+
+# --- Phase 2 / 4: per-project walk -------------------------------------------------
+
+
+def _schedule_one_project(
+    ctx: RunContext,
+    state: _ResourceState,
+    plan: ProjectPlan,
+    *,
+    prebooked: dict[str, _Placement],
+    pre_flags: tuple[bool, bool],
+) -> ProjectScheduleOutcome:
+    project = plan.project
+    si = ctx.schedule_input
+    current_week = si.current_week
+    horizon = si.horizon_weeks
+
+    if plan.data_error is not None:
+        return _data_error_outcome(project, plan)
+
+    leader = (
+        ctx.engineers_by_id.get(project.leader_engineer_id) if project.leader_engineer_id else None
+    )
     if leader is None:
-        # DOMAIN_RULES.md's booking rules do not explicitly cover "no leader
-        # assigned" — resolved via the prototype (`m=t.find(...); if(!m){...
-        # leftOut=true, noEngineer=true ...}`, which never attempts to book a
-        # single step and never evaluates CAT_NOT_ALLOWED). See the P2-T01
-        # MEMORY.md entry.
-        return ProjectScheduleOutcome(
-            project_id=project.project_id,
-            excluded=False,
-            left_out=True,
-            eng_conflict=False,
-            overlap=False,
-            cat_not_allowed=False,
-            spillover=False,
-            within_year=False,
-            no_leader=True,
-            no_chamber_step_id=None,
-            steps=(),
-            start_week=None,
-            end_week=None,
-        )
+        return _no_leader_outcome(project, plan, current_week)
 
-    required_category = "OEM" if _is_oem_hub(project.hub) else project.category
-    cat_not_allowed = required_category not in leader.allowed_categories
+    cat_not_allowed = _cat_not_allowed(project, leader)
+    region = _lab_region_for_hub(project.hub)
+    frontier = first_step_frontier(project, current_week)
+    frozen = project.frozen
 
-    if project.frozen:
-        assert project.actual_start_week is not None  # validated by _validate_schedulable_project
-        w = project.actual_start_week
-    else:
-        # Earliest-start floor for a non-frozen project's first step.
-        #
-        # DOMAIN_RULES.md never specifies what week the forward search starts
-        # from — it only says "Non-frozen projects advance w until a free
-        # window is found." The prototype fills this gap with
-        # `h = Math.max(actualStart, CURRENT_WEEK - 6)`, treating every
-        # project's `actualStart` (even non-frozen ones) as a soft lower-bound
-        # scheduling hint.
-        #
-        # Deliberately NOT replicated here. Two independent reasons: (1) the
-        # already-reviewed-and-accepted P1 data model (`docs/MEMORY.md`
-        # P1-T03 entry, Decision #2) populates `Project.actual_start_week`
-        # ONLY for frozen projects specifically *because* a non-frozen
-        # project's `actualStart` is not a real fact worth carrying — building
-        # this scheduler around a field the accepted upstream data model
-        # deliberately leaves null would silently resurrect exactly the
-        # ambiguity P1 already closed; and (2) the "-6" offset has no textual
-        # basis anywhere in DOMAIN_RULES.md and is exactly the kind of
-        # unexplained magic constant this task's brief warns against silently
-        # transliterating. Instead: a non-frozen project's search starts at
-        # `current_week` (you cannot schedule new, non-frozen work in the
-        # past), and if `actual_start_week` happens to be populated and is
-        # later than `current_week`, it is honoured as a further lower bound.
-        # Recorded in the P2-T01 MEMORY.md entry and flagged there for
-        # P2-T02/T03's differential oracle to specifically scrutinize, since
-        # it will produce a systematic (intentional, not a port bug) start-week
-        # divergence against the prototype oracle for most non-frozen projects.
-        w = current_week
-        if project.actual_start_week is not None:
-            w = max(w, project.actual_start_week)
-
-    steps_out: list[StepSchedule] = []
-    eng_conflict = False
-    overlap = False
+    eng_conflict, overlap = pre_flags
     left_out = False
     no_chamber_step_id: str | None = None
+    ends: dict[str, int] = {}
+    steps_out: dict[str, StepSchedule] = {}
 
-    for step in steps:
-        duration = _duration_weeks(step.base_weeks, project.category)  # type: ignore[arg-type]
+    def emit(
+        sp: StepPlan,
+        start: int,
+        end: int,
+        eng: str | None,
+        ch: str | None,
+        *,
+        skipped: bool = False,
+    ) -> None:
+        ends[sp.step.step_id] = end
+        steps_out[sp.step.step_id] = StepSchedule(
+            step_id=sp.step.step_id,
+            sequence_order=sp.step.sequence_order,
+            kind=sp.step.kind,
+            start_week=start,
+            end_week=end,
+            duration_weeks=0 if skipped else sp.duration,
+            assigned_engineer_id=eng,
+            assigned_chamber_id=ch,
+            skipped=skipped,
+        )
 
-        if step.kind == "design":
-            if project.frozen:
-                # Capacity is consumed regardless of conflict; dates never move.
-                for wk in range(w, w + duration):
-                    if wk in eng_busy[leader.engineer_id]:
-                        eng_conflict = True
-                    eng_busy[leader.engineer_id].add(wk)
+    for sid in plan.workflow.walk_order:
+        sp = plan.steps[sid]
+        preds = sp.step.predecessor_ids
+        pred_end = max(ends[p] for p in preds) if preds else frontier - 1
+
+        if sp.skipped:
+            emit(sp, pred_end, pred_end, None, None, skipped=True)
+            continue
+
+        if sid in plan.held_step_ids:
+            # Blocked hold (ADR 0006 / 0009): the Blocked step keeps its fixed
+            # start and is shown up to the hold frontier; every successor is
+            # held there, transparently, and nothing is booked.
+            if sp.status == STATUS_BLOCKED:
+                assert sp.actual_start_week is not None
+                hold_week = max(current_week, pred_end + 1, sp.actual_start_week)
+                emit(sp, sp.actual_start_week, max(sp.actual_start_week, hold_week - 1), None, None)
             else:
-                while w + duration <= horizon_weeks:
-                    if all(wk not in eng_busy[leader.engineer_id] for wk in range(w, w + duration)):
-                        break
-                    w += 1
-                if w + duration > horizon_weeks:
-                    left_out = True
-                    break
-                for wk in range(w, w + duration):
-                    eng_busy[leader.engineer_id].add(wk)
+                emit(sp, pred_end, pred_end, None, None)
+            continue
 
-            steps_out.append(
-                StepSchedule(
-                    step_id=step.step_id,
-                    sequence_order=step.sequence_order,
-                    kind=step.kind,
-                    start_week=w,
-                    end_week=w + duration - 1,
-                    duration_weeks=duration,
-                    assigned_engineer_id=leader.engineer_id,
-                    assigned_chamber_id=None,
-                )
+        if sid in prebooked:
+            pl = prebooked[sid]
+            emit(sp, pl.start_week, pl.end_week, pl.engineer_id, pl.chamber_id)
+            continue
+
+        if not frozen and sp.status == STATUS_DONE:
+            # Only reachable when the Done lab step had no eligible chamber at
+            # pre-booking time — same dead end as below.
+            assert sp.actual_start_week is not None and sp.actual_end_week is not None
+            placement, conflict, over = _book_anchored(
+                ctx,
+                state,
+                sp,
+                leader,
+                region,
+                sp.actual_start_week,
+                sp.actual_end_week,
+                project_id=project.project_id,
+                consume_from=current_week,
             )
-            w += duration
-
-        else:  # lab step
-            region = _lab_region_for_hub(project.hub)
-            # Deterministic candidate order: sorted by chamber_id, independent
-            # of `ScheduleInput.chambers`' supplied order. The prototype picks
-            # among eligible chambers using raw input-array order (`n.filter(...)`,
-            # `.find(...)`) — same caller-order-dependence issue as the project
-            # sort (see `_sort_key`'s docstring); resolved the same way, for
-            # the same determinism reason (Invariant I8), and documented once
-            # in the P2-T01 MEMORY.md entry rather than repeated per call site.
-            eligible = sorted(
-                (
-                    c
-                    for c in chambers_by_id.values()
-                    if c.lab_region == region and step.step_id in c.allowed_stages
-                ),
-                key=lambda c: c.chamber_id,
-            )
-
-            if not eligible:
-                left_out = True
-                no_chamber_step_id = step.step_id
+            if placement is None:
+                left_out, no_chamber_step_id = True, sid
                 break
+            eng_conflict |= conflict
+            overlap |= over
+            emit(
+                sp,
+                placement.start_week,
+                placement.end_week,
+                placement.engineer_id,
+                placement.chamber_id,
+            )
+            continue
 
-            if project.frozen:
-                # DOMAIN_RULES.md does not specify which chamber a frozen
-                # project's lab step is assigned to when multiple are
-                # eligible. Resolved via the prototype (`Q=I[0]`, "the first
-                # eligible chamber") — here, "first" in the deterministic
-                # `chamber_id`-sorted candidate list rather than raw input
-                # order, per the same determinism reasoning as above.
-                chosen = eligible[0]
-                for wk in range(w, w + duration):
-                    busy_this_week = chamber_busy[chosen.chamber_id].get(wk, 0) + 1
-                    chamber_busy[chosen.chamber_id][wk] = busy_this_week
-                    if busy_this_week > chosen.max_concurrent:
-                        overlap = True
+        if not frozen and sp.status in (STATUS_IN_PROGRESS, STATUS_BLOCKED):
+            # Anchored step whose predecessor was not yet known at pre-booking
+            # (inconsistent data: in progress behind a not-started step) — the
+            # tail is placed now, still without a search.
+            assert sp.actual_start_week is not None
+            if sp.remaining == 0:
+                emit(sp, sp.actual_start_week, max(sp.actual_start_week, pred_end), None, None)
+                continue
+            tail_start = max(current_week, pred_end + 1, sp.actual_start_week)
+            placement, conflict, over = _book_anchored(
+                ctx,
+                state,
+                sp,
+                leader,
+                region,
+                tail_start,
+                tail_start + sp.remaining - 1,
+                project_id=project.project_id,
+                consume_from=current_week,
+                reported_start=sp.actual_start_week,
+            )
+            if placement is None:
+                left_out, no_chamber_step_id = True, sid
+                break
+            eng_conflict |= conflict
+            overlap |= over
+            emit(
+                sp,
+                placement.start_week,
+                placement.end_week,
+                placement.engineer_id,
+                placement.chamber_id,
+            )
+            continue
+
+        # --- Not Started (or frozen): place per the Booking rules -----------------
+        duration = sp.duration
+        w = pred_end + 1 if frozen else max(current_week, pred_end + 1)
+        kind = sp.step.kind
+
+        if kind == "design":
+            if frozen:
+                eng_conflict |= state.book_engineer(
+                    leader.engineer_id, range(w, w + duration), project.project_id
+                )
             else:
-                chosen = None
-                while w + duration <= horizon_weeks and chosen is None:
-                    for candidate in eligible:
-                        if all(
-                            chamber_busy[candidate.chamber_id].get(wk, 0) < candidate.max_concurrent
-                            for wk in range(w, w + duration)
-                        ):
-                            chosen = candidate
-                            break
-                    if chosen is None:
-                        w += 1
-                if chosen is None:
+                while w + duration <= horizon and not state.engineer_free(
+                    leader.engineer_id, range(w, w + duration)
+                ):
+                    w += 1
+                if w + duration > horizon:
                     left_out = True
                     break
-                for wk in range(w, w + duration):
-                    chamber_busy[chosen.chamber_id][wk] = (
-                        chamber_busy[chosen.chamber_id].get(wk, 0) + 1
-                    )
+                state.book_engineer(leader.engineer_id, range(w, w + duration), project.project_id)
+            emit(sp, w, w + duration - 1, leader.engineer_id, None)
 
-            steps_out.append(
-                StepSchedule(
-                    step_id=step.step_id,
-                    sequence_order=step.sequence_order,
-                    kind=step.kind,
-                    start_week=w,
-                    end_week=w + duration - 1,
-                    duration_weeks=duration,
-                    assigned_engineer_id=None,
-                    assigned_chamber_id=chosen.chamber_id,
-                )
-            )
-            w += duration
+        elif kind == "lab":
+            eligible = _eligible_chambers(ctx.chambers_by_id, region, sid)
+            if not eligible:
+                left_out, no_chamber_step_id = True, sid
+                break
+            if frozen:
+                chosen = eligible[0]
+                overlap |= state.book_chamber(chosen, range(w, w + duration))
+            else:
+                chosen_opt: ChamberInput | None = None
+                while w + duration <= horizon and chosen_opt is None:
+                    for candidate in eligible:
+                        if state.chamber_free(candidate, range(w, w + duration)):
+                            chosen_opt = candidate
+                            break
+                    if chosen_opt is None:
+                        w += 1
+                if chosen_opt is None:
+                    left_out = True
+                    break
+                chosen = chosen_opt
+                state.book_chamber(chosen, range(w, w + duration))
+            emit(sp, w, w + duration - 1, None, chosen.chamber_id)
 
-    steps_tuple = tuple(steps_out)
-    start_week = steps_tuple[0].start_week if steps_tuple else None
-    end_week = steps_tuple[-1].end_week if steps_tuple else None
-    completion_week = end_week + project.delay_weeks if end_week is not None else None
-    within_year = (
-        not left_out and completion_week is not None and completion_week <= within_year_week
-    )
-    spillover = not left_out and not within_year
+        else:  # elapsed: books nothing, starts at its earliest feasible start
+            if not frozen and w + duration > horizon:
+                left_out = True
+                break
+            emit(sp, w, w + duration - 1, None, None)
 
+    if left_out:
+        # DOMAIN_RULES "Gate remediation rulings" #2: in-flight work is never
+        # erased. Pre-booked anchored rows the walk did not reach are still
+        # emitted (their capacity is already consumed).
+        for sid in plan.workflow.walk_order:
+            if sid in prebooked and sid not in steps_out:
+                pl = prebooked[sid]
+                emit(plan.steps[sid], pl.start_week, pl.end_week, pl.engineer_id, pl.chamber_id)
+
+    steps_tuple = tuple(sorted(steps_out.values(), key=lambda s: (s.sequence_order, s.step_id)))
+    non_skipped = [s for s in steps_tuple if not s.skipped]
+    start_week = min((s.start_week for s in non_skipped), default=None)
+    end_week = max((s.end_week for s in non_skipped), default=None)
+    held = bool(plan.held_step_ids)
+
+    scheduled = not left_out and not held and end_week is not None
+    completion_week = end_week + project.delay_weeks if scheduled and end_week is not None else None
+    within_year = completion_week is not None and completion_week <= si.within_year_week
+    spillover = scheduled and not within_year
+
+    unconstrained = unconstrained_end_week(plan, current_week)
     return ProjectScheduleOutcome(
         project_id=project.project_id,
         excluded=False,
@@ -419,4 +782,10 @@ def _schedule_one_project(
         steps=steps_tuple,
         start_week=start_week,
         end_week=end_week,
+        unconstrained_end_week=unconstrained,
+        expected_end_week=_expected_end_week(project, unconstrained),
+        projected_end_week=completion_week,
+        blocked=plan.blocked,
+        progress_pct=compute_progress_pct(plan),
+        data_error=None,
     )

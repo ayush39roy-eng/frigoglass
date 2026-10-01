@@ -31,6 +31,14 @@ The freeze toggle's project lookup is hub-scoped the same way as
 `get_project` (Hub Planner/Admin only ever reach `GANTT`/`WRITE`, so the
 Engineer "own assignments" branch never applies there).
 
+**P9 (docs/API_CONTRACT_P9.md §5).** Rows carry the completion weeks
+(`expected_end_week`, `projected_end_week`, `unconstrained_end_week`) from the
+active run's outcome row, and `target_end_week`, `schedule_stale` and
+`workflow_id` from the project, plus `slip_weeks = projected − expected`.
+Step rows carry `kind` from the run's `workflow_snapshot`, `skipped` from
+the run step, and `status`/`percent_complete` from the live progress row.
+Nothing here is recomputed (I16).
+
 **GDPR / OQ#8 dependency (P3-T09, security remediation, finding #1 — High):**
 `GanttStepRow.assigned_engineer_name` is withheld (`None`) for every reader
 except the Engineer role viewing their own self-scoped Gantt (see
@@ -57,6 +65,7 @@ from core.rbac import Action, Surface
 from models.audit import AuditLogEntry
 from models.chamber import Chamber
 from models.engineer import Engineer
+from models.enums import WorkflowStepKind, WorkflowStepStatus
 from models.project import Project
 from models.schedule import ScheduleRun, ScheduleRunProjectOutcome, ScheduleRunProjectStep
 from models.workflow import ProjectWorkflowStep, WorkflowStepTemplate
@@ -67,10 +76,12 @@ from schemas.gantt import (
     GanttStepRow,
 )
 from schemas.project import ProjectRead
+from services.active_run import slip_weeks, step_kinds_for_run
 from services.audit_helpers import project_audit_state
 from services.hub_scope import hub_scope_filter, is_engineer_self_scoped
 
 router = APIRouter(prefix="/gantt", tags=["gantt"])
+
 
 _read = require_permission(Surface.GANTT, Action.READ)
 _write = require_permission(Surface.GANTT, Action.WRITE)
@@ -157,6 +168,7 @@ async def get_gantt(
     templates = {
         t.id: t for t in (await db.execute(select(WorkflowStepTemplate))).scalars().all()
     }
+    run_kinds = await step_kinds_for_run(db, active_run)
     engineer_names = (
         {e.id: e.name for e in (await db.execute(select(Engineer))).scalars().all()}
         if show_engineer_names
@@ -166,9 +178,9 @@ async def get_gantt(
         c.id: c.code for c in (await db.execute(select(Chamber))).scalars().all()
     }
 
-    planned_steps: dict = defaultdict(list)
+    planned_steps: dict[uuid.UUID, list[ScheduleRunProjectStep]] = defaultdict(list)
     if project_ids:
-        rows = (
+        run_rows = (
             await db.execute(
                 select(ScheduleRunProjectStep).where(
                     ScheduleRunProjectStep.schedule_run_id == active_run.id,
@@ -176,22 +188,22 @@ async def get_gantt(
                 )
             )
         ).scalars().all()
-        for step in rows:
+        for step in run_rows:
             planned_steps[step.project_id].append(step)
 
-    actual_steps: dict = {}
+    actual_steps: dict[tuple[uuid.UUID, str], ProjectWorkflowStep] = {}
     if project_ids:
-        rows = (
+        live_rows = (
             await db.execute(
                 select(ProjectWorkflowStep).where(ProjectWorkflowStep.project_id.in_(project_ids))
             )
         ).scalars().all()
-        for step in rows:
-            actual_steps[(step.project_id, step.step_template_id)] = step
+        for live in live_rows:
+            actual_steps[(live.project_id, live.step_template_id)] = live
 
-    outcomes: dict = {}
+    outcomes: dict[uuid.UUID, ScheduleRunProjectOutcome] = {}
     if project_ids:
-        rows = (
+        outcome_rows = (
             await db.execute(
                 select(ScheduleRunProjectOutcome).where(
                     ScheduleRunProjectOutcome.schedule_run_id == active_run.id,
@@ -199,11 +211,13 @@ async def get_gantt(
                 )
             )
         ).scalars().all()
-        outcomes = {o.project_id: o for o in rows}
+        outcomes = {o.project_id: o for o in outcome_rows}
 
     gantt_rows: list[GanttProjectRow] = []
     for project in projects:
         outcome = outcomes.get(project.id)
+        expected = outcome.expected_end_week if outcome else None
+        projected = outcome.projected_end_week if outcome else None
         step_rows: list[GanttStepRow] = []
         for step in sorted(planned_steps.get(project.id, []), key=lambda s: s.sequence_order):
             template = templates.get(step.step_template_id)
@@ -212,8 +226,11 @@ async def get_gantt(
                 GanttStepRow(
                     step_id=step.step_template_id,
                     step_name=template.name if template else step.step_template_id,
-                    kind=template.kind if template else "design",
+                    kind=run_kinds.get(step.step_template_id, WorkflowStepKind.DESIGN),
                     sequence_order=step.sequence_order,
+                    skipped=step.skipped,
+                    status=actual.status if actual else WorkflowStepStatus.NOT_STARTED,
+                    percent_complete=actual.percent_complete if actual else 0,
                     duration_weeks=step.duration_weeks,
                     planned_start_week=step.start_week,
                     planned_end_week=step.end_week,
@@ -246,6 +263,14 @@ async def get_gantt(
                 left_out=outcome.left_out if outcome else False,
                 spillover=outcome.spillover if outcome else False,
                 cat_not_allowed=outcome.cat_not_allowed if outcome else False,
+                target_end_week=project.target_end_week,
+                expected_end_week=expected,
+                projected_end_week=projected,
+                unconstrained_end_week=outcome.unconstrained_end_week if outcome else None,
+                slip_weeks=slip_weeks(projected, expected),
+                blocked=outcome.blocked if outcome else False,
+                schedule_stale=project.schedule_stale,
+                workflow_id=project.workflow_id,
                 steps=step_rows,
             )
         )

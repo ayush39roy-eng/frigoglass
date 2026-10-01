@@ -1,33 +1,38 @@
-"""Shared building blocks for the P2-T05 golden-file / invariant-negative
-pytest suite.
+"""Shared building blocks for the `backend/scheduling/` pytest suite.
 
 Not a test module itself (no `test_` prefix — pytest will not collect it).
-Mirrors the small, hand-traceable fixtures established by
-`scheduling/_selftest.py` (P2-T01) and `scheduling/_selftest_invariants.py`
-(P2-T04): a minimal 2-step (one design, one lab) workflow template so each
-golden-file scenario stays a 2-3 project, 1-2 step fixture that exercises
-exactly one named rule, per the `scheduling-algorithms` skill's "one rule per
-fixture" guidance, rather than paying for the full 14-step template in every
-test.
+
+`TEMPLATE` / `LEAD_TIMES` (re-exported from `scheduling._selftest_common`) are
+the minimal two-step PDD workflow the P2 hand-traced scenarios were written
+against: `PDD-A` design 2 weeks, `PDD-F` lab 3 weeks, strict chain, identical
+lead times for every PDD category. Under ADR 0007 durations come from the
+lead-time table, so the table — not a `base_weeks` × multiplier — carries the
+2/3-week arithmetic those scenarios rely on.
+
+`progress(...)` is a keyword-friendly `StepProgressInput` builder for the
+P9-T02 progress-aware golden files.
 
 All objects here are `@dataclass(frozen=True)` instances (immutable) so
 sharing them by reference across many independent test functions is safe —
-`run_greedy_sgs` never mutates its input (see `scheduling/greedy.py`'s purity
-contract), confirmed by every P2-T01/T04 self-test scenario that reuses
-`ENGINEER_A`/`CHAMBER_GR1` etc. across multiple calls.
+`run_greedy_sgs` never mutates its input.
 """
 
 from __future__ import annotations
 
-from scheduling import ChamberInput, EngineerInput, ProjectInput, WorkflowStepTemplate
+from scheduling import ChamberInput, EngineerInput, ProjectInput, StepProgressInput
+from scheduling._selftest_common import LEAD_TIMES, TEMPLATE
 
-# A minimal 2-step template (one design, one lab step), matching
-# `scheduling/_selftest.py`'s TEMPLATE exactly, so behaviour cross-checked
-# against that informal self-test is directly comparable.
-TEMPLATE: tuple[WorkflowStepTemplate, ...] = (
-    WorkflowStepTemplate("PDD-A", "Marketing Brief", "design", base_weeks=2, sequence_order=1),
-    WorkflowStepTemplate("PDD-F", "Proof of Concept", "lab", base_weeks=3, sequence_order=2),
-)
+__all__ = [
+    "CHAMBER_GR1",
+    "CHAMBER_GR2",
+    "ENGINEER_A",
+    "ENGINEER_B",
+    "ENGINEER_C_NARROW",
+    "LEAD_TIMES",
+    "TEMPLATE",
+    "base_project",
+    "progress",
+]
 
 ENGINEER_A = EngineerInput("eng-a", "Engineer A", "R&D-Greece", ("A+", "A", "B", "C"))
 ENGINEER_B = EngineerInput("eng-b", "Engineer B", "R&D-Greece", ("A+", "A", "B", "C"))
@@ -46,7 +51,6 @@ def base_project(**overrides: object) -> ProjectInput:
     """A well-formed, schedulable, non-frozen `ProjectInput` with sensible
     defaults, for negative-path (invariant-violation) fixtures where only the
     hand-crafted `ScheduleOutput` matters, not the specific project fields.
-    Mirrors `_selftest_invariants.py::_base_project`.
     """
 
     defaults: dict[str, object] = dict(
@@ -61,3 +65,22 @@ def base_project(**overrides: object) -> ProjectInput:
     )
     defaults.update(overrides)
     return ProjectInput(**defaults)  # type: ignore[arg-type]
+
+
+def progress(
+    step_id: str,
+    status: str,
+    *,
+    percent_complete: int = 0,
+    actual_start_week: int | None = None,
+    actual_end_week: int | None = None,
+    remaining_weeks_override: int | None = None,
+) -> StepProgressInput:
+    return StepProgressInput(
+        step_id=step_id,
+        status=status,
+        percent_complete=percent_complete,
+        actual_start_week=actual_start_week,
+        actual_end_week=actual_end_week,
+        remaining_weeks_override=remaining_weeks_override,
+    )

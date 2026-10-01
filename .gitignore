@@ -14,6 +14,9 @@
 
 .DS_Store
 
+# Local OAuth/credential dump from an ad-hoc session — never commit this.
+claude_grant_resp.json
+
 # Local overrides some operators may create alongside docker-compose.yml
 # (e.g. `docker-compose.override.yml` for a per-host TLS cert mount path) —
 # not part of this task's scope to define, but ignored by default so one

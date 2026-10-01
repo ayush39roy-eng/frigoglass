@@ -16,18 +16,32 @@
  *   so hooks can special-case 401/403 (RBAC) without string-matching messages.
  */
 
+import { getDevUserEmail } from './dev-user';
+
 const RAW_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '';
 const BASE_URL = RAW_BASE_URL.replace(/\/+$/, '');
 
 export class ApiError extends Error {
   readonly status: number;
   readonly detail: string | undefined;
+  /**
+   * The optional machine-readable `code` of the P3 error envelope
+   * (`{"detail": …, "code"?: str}`, P9 contract §9) — e.g. `LAST_SUPER_ADMIN`
+   * (409), `CYCLE` / `BAD_PREDECESSOR` (422), `CATEGORY_WORKFLOW_MISMATCH`
+   * (422). Surfaces branch on this, never on the human-readable `detail`.
+   */
+  readonly code: string | undefined;
+  /** Whole seconds from a `Retry-After` header (429 `RATE_LIMITED`, P9-R02),
+   *  when the server sent one as a number. Undefined otherwise. */
+  readonly retryAfterSeconds: number | undefined;
 
-  constructor(status: number, message: string, detail?: string) {
+  constructor(status: number, message: string, detail?: string, code?: string, retryAfterSeconds?: number) {
     super(message);
     this.name = 'ApiError';
     this.status = status;
     this.detail = detail;
+    this.code = code;
+    this.retryAfterSeconds = retryAfterSeconds;
   }
 
   get isUnauthorized(): boolean {
@@ -64,24 +78,48 @@ function buildUrl(path: string, query: ApiRequestOptions['query']): string {
 
 async function parseError(response: Response): Promise<ApiError> {
   let detail: string | undefined;
+  let code: string | undefined;
   try {
     const body: unknown = await response.json();
-    if (body && typeof body === 'object' && 'detail' in body) {
-      const raw = (body as { detail: unknown }).detail;
-      detail = typeof raw === 'string' ? raw : JSON.stringify(raw);
+    if (body && typeof body === 'object') {
+      if ('detail' in body) {
+        const raw = (body as { detail: unknown }).detail;
+        detail = typeof raw === 'string' ? raw : JSON.stringify(raw);
+      }
+      if ('code' in body) {
+        const rawCode = (body as { code: unknown }).code;
+        if (typeof rawCode === 'string') code = rawCode;
+      }
     }
   } catch {
     // non-JSON error body — leave detail undefined
   }
+  // Only the delta-seconds form of Retry-After is used by our API; an HTTP-date
+  // (or garbage) is ignored rather than guessed at.
+  const retryRaw = response.headers.get('Retry-After')?.trim();
+  const retryAfterSeconds = retryRaw && /^\d+$/.test(retryRaw) ? Number(retryRaw) : undefined;
   return new ApiError(
     response.status,
     `Request failed (${String(response.status)} ${response.statusText})`,
     detail,
+    code,
+    retryAfterSeconds,
   );
 }
 
+/**
+ * Dev-mode identity header (ADR 0010 §4). Attached to every request ONLY when a
+ * dev user has been selected via the header switcher (`lib/api/dev-user.ts`).
+ * Outside dev mode the backend ignores the header and the switcher never
+ * renders, so this is inert in production; it is still never sent unless set.
+ */
+export function devUserHeader(): Record<string, string> {
+  const email = getDevUserEmail();
+  return email ? { 'X-Dev-User-Email': email } : {};
+}
+
 export async function apiGet<T>(path: string, options: ApiRequestOptions = {}): Promise<T> {
-  const headers: Record<string, string> = { Accept: 'application/json' };
+  const headers: Record<string, string> = { Accept: 'application/json', ...devUserHeader() };
   if (options.bearerToken) headers.Authorization = `Bearer ${options.bearerToken}`;
 
   let response: Response;
@@ -100,6 +138,37 @@ export async function apiGet<T>(path: string, options: ApiRequestOptions = {}): 
   if (!response.ok) throw await parseError(response);
 
   if (response.status === 204) return undefined as T;
+  return (await response.json()) as T;
+}
+
+/** Absolute URL for an API path — exported for the streaming SSE reader. */
+export function apiUrl(path: string, query?: ApiRequestOptions['query']): string {
+  return buildUrl(path, query);
+}
+
+/** Re-exported for sibling transports (`sse.ts`) so they share one error parser. */
+export { parseError as parseApiError };
+
+/**
+ * Multipart upload (`POST /projects/{id}/files`, P9 contract §7). The browser
+ * sets the multipart boundary, so no `Content-Type` is set here. Same error
+ * contract as `apiSend`. The `FormData` is passed through untouched.
+ */
+export async function apiUpload<T>(path: string, form: FormData, options: ApiRequestOptions = {}): Promise<T> {
+  let response: Response;
+  try {
+    response = await fetch(buildUrl(path, options.query), {
+      method: 'POST',
+      headers: { Accept: 'application/json', ...devUserHeader() },
+      credentials: 'include',
+      signal: options.signal ?? null,
+      body: form,
+    });
+  } catch (cause) {
+    if (cause instanceof DOMException && cause.name === 'AbortError') throw cause;
+    throw new ApiError(0, 'Network request failed — the API is unreachable.');
+  }
+  if (!response.ok) throw await parseError(response);
   return (await response.json()) as T;
 }
 
@@ -132,7 +201,7 @@ export async function apiDownload(
   try {
     response = await fetch(buildUrl(path, options.query), {
       method: 'GET',
-      headers: { Accept: '*/*' },
+      headers: { Accept: '*/*', ...devUserHeader() },
       credentials: 'include',
       signal: options.signal ?? null,
     });
@@ -164,7 +233,28 @@ export async function apiSend<T>(
   body?: unknown,
   options: ApiRequestOptions = {},
 ): Promise<T> {
-  const headers: Record<string, string> = { Accept: 'application/json' };
+  const { data } = await apiSendWithHeaders<T>(method, path, body, options);
+  return data;
+}
+
+export interface ApiResponseWithHeaders<T> {
+  data: T;
+  /** The raw response headers — for the few endpoints that carry a signal
+   *  there (P9 contract §3: `X-Schedule-Stale-Count` on every Workflow Settings
+   *  PUT). Read verbatim; never derived. */
+  headers: Headers;
+}
+
+/**
+ * `apiSend` that also hands back the response headers. Same error contract.
+ */
+export async function apiSendWithHeaders<T>(
+  method: 'POST' | 'PUT' | 'PATCH' | 'DELETE',
+  path: string,
+  body?: unknown,
+  options: ApiRequestOptions = {},
+): Promise<ApiResponseWithHeaders<T>> {
+  const headers: Record<string, string> = { Accept: 'application/json', ...devUserHeader() };
   if (body !== undefined) headers['Content-Type'] = 'application/json';
   if (options.bearerToken) headers.Authorization = `Bearer ${options.bearerToken}`;
 
@@ -184,6 +274,6 @@ export async function apiSend<T>(
 
   if (!response.ok) throw await parseError(response);
 
-  if (response.status === 204) return undefined as T;
-  return (await response.json()) as T;
+  if (response.status === 204) return { data: undefined as T, headers: response.headers };
+  return { data: (await response.json()) as T, headers: response.headers };
 }

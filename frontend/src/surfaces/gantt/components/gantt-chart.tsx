@@ -1,12 +1,15 @@
 import * as React from 'react';
+import { Link } from 'react-router-dom';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { LayoutGroup, motion } from 'framer-motion';
-import { ChevronRight, Snowflake } from 'lucide-react';
+import { ArrowUpRight, ChevronRight, Snowflake } from 'lucide-react';
 
 import { cn } from '@/lib/utils';
 import { formatWeek } from '@/lib/format';
 import { usePrefersReducedMotion } from '@/lib/use-prefers-reduced-motion';
 import { PriorityBandPill } from '@/components/shared/priority-band-pill';
+import { StepKindBadge } from '@/components/shared/step-kind-badge';
+import type { WorkflowStepKind } from '@/types/enums';
 
 import {
   makeWeekScale,
@@ -19,6 +22,7 @@ import type { GanttProjectRow } from '../api/types';
 import { ActivityLoadStrip } from './activity-load-strip';
 import { GanttBarGroup, GanttHatchDefs } from './gantt-bars';
 import { ProjectRowBadges, StepRowBadges } from './gantt-badges';
+import { GanttCompletionMarkers } from './gantt-completion-markers';
 import { AXIS_HEIGHT, GanttGridLines, GanttWeekAxis } from './gantt-time-axis';
 
 /**
@@ -182,6 +186,7 @@ export function GanttChart({
                         <StepLeftCell
                           name={vr.step.step_name}
                           kind={vr.step.kind}
+                          skipped={vr.step.skipped}
                           sequenceOrder={vr.step.sequence_order}
                           engineer={vr.step.assigned_engineer_name}
                           chamber={vr.step.assigned_chamber_code}
@@ -293,14 +298,32 @@ function BarLayer({
         frozen={row.project.frozen}
         title={barTitle(`${s.step_name}`, planned, actual)}
         compact
+        kind={s.kind}
+        skipped={s.skipped}
       />
     );
   }
+
+  // The two completion lines are per PROJECT row (DOMAIN_RULES "Expected vs
+  // projected completion"); drawn after the bars so they sit on top.
+  const markers =
+    row.kind === 'project' ? (
+      <GanttCompletionMarkers
+        scale={scale}
+        rowHeight={height}
+        projectName={row.project.project_name}
+        targetEndWeek={row.project.target_end_week}
+        expectedEndWeek={row.project.expected_end_week}
+        projectedEndWeek={row.project.projected_end_week}
+        slipWeeks={row.project.slip_weeks}
+      />
+    ) : null;
 
   const svg = (
     <svg width={scale.totalWidthPx} height={height} className="block">
       <GanttHatchDefs />
       {group}
+      {markers}
     </svg>
   );
 
@@ -399,6 +422,16 @@ function ProjectLeftCell({
         </span>
         {project.priority ? <PriorityBandPill priority={project.priority} /> : null}
       </button>
+      {/* Click-through to the Project Workspace (Surface #7) — a real link, so
+          it works with middle-click / bookmarks. */}
+      <Link
+        to={`/projects/${project.project_id}`}
+        className="shrink-0 rounded-sm p-1 text-text-muted hover:bg-surface-raised hover:text-primary"
+        aria-label={`Open ${project.project_name} in the Project Workspace`}
+        title="Open in Project Workspace"
+      >
+        <ArrowUpRight className="size-3.5" aria-hidden="true" />
+      </Link>
       {canWrite ? (
         <button
           type="button"
@@ -417,30 +450,28 @@ function ProjectLeftCell({
 function StepLeftCell({
   name,
   kind,
+  skipped,
   sequenceOrder,
   engineer,
   chamber,
 }: {
   name: string;
-  kind: 'design' | 'lab';
+  kind: WorkflowStepKind;
+  skipped: boolean;
   sequenceOrder: number;
   engineer: string | null;
   chamber: string | null;
 }): React.JSX.Element {
-  const resource = kind === 'lab' ? chamber : engineer;
+  // An elapsed step books nobody (ADR 0007) — there is no resource to name.
+  const resource = kind === 'lab' ? chamber : kind === 'design' ? engineer : null;
   return (
-    <div className="flex min-w-0 flex-1 items-center gap-1.5 pl-4">
-      <span
-        className={cn(
-          'shrink-0 rounded-sm px-1 text-[0.625rem] font-semibold uppercase',
-          kind === 'lab' ? 'bg-accent/15 text-accent-subtle-fg' : 'bg-primary/10 text-primary-subtle-fg',
-        )}
-        title={kind === 'lab' ? 'Lab step' : 'Design step'}
-      >
-        {kind === 'lab' ? 'Lab' : 'Des'}
-      </span>
+    <div className={cn('flex min-w-0 flex-1 items-center gap-1.5 pl-4', skipped && 'opacity-60')}>
+      <StepKindBadge kind={kind} compact />
       <span className="min-w-0 flex-1">
-        <span className="block truncate text-2xs text-text" title={name}>
+        <span
+          className={cn('block truncate text-2xs text-text', skipped && 'line-through decoration-border-strong')}
+          title={skipped ? `${name} — not applicable for this project (skipped)` : name}
+        >
           {sequenceOrder}. {name}
         </span>
         {resource ? (

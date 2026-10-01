@@ -18,6 +18,8 @@ import asyncio
 import importlib
 
 import pytest
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from testcontainers.postgres import PostgresContainer
 
 from tests.conftest import run_alembic
@@ -51,8 +53,16 @@ def test_seed_demo_data_duplicate_guard_and_reset(seeded_schema_url, monkeypatch
     counts = asyncio.run(seed_demo_data.run(reset_first=False))
     assert counts["projects"] == 46
     assert counts["hubs"] == 6
-    assert counts["workflow_step_templates"] == 14
+    assert counts["hub_work_calendars"] == 6
+    assert counts["chambers"] == 10
+    # P9-T01: 28 templates (PDD + OEM) and the 98-row lead-time table — upserted
+    # over the rows the migration already inserted, so still exactly 28 / 98.
+    assert counts["workflow_step_templates"] == 28
+    assert counts["workflow_lead_times"] == 98
     assert counts["_verified_from_db"]["projects"] == 46
+    assert counts["_verified_from_db"]["workflow_step_templates"] == 28
+    assert counts["_verified_from_db"]["workflow_lead_times"] == 98
+    assert counts["_verified_from_db"]["hub_work_calendars"] == 6
 
     # Second run, no --reset: the duplicate-seed guard must fire loudly
     # (RuntimeError), not silently skip or silently duplicate rows.
@@ -94,11 +104,106 @@ def test_seed_dev_users_duplicate_guard_and_reset(seeded_schema_url, monkeypatch
     importlib.reload(seed_dev_users)
 
     counts = asyncio.run(seed_dev_users.run(reset_first=False))
-    assert counts["users"] == 6
-    assert counts["_verified_from_db"]["users"] == 6
+    assert counts["users"] == 7  # six matrix roles + Super Admin (P9-T01)
+    assert counts["_verified_from_db"]["users"] == 7
 
     with pytest.raises(RuntimeError, match="already has"):
         asyncio.run(seed_dev_users.run(reset_first=False))
 
     counts_after_reset = asyncio.run(seed_dev_users.run(reset_first=True))
-    assert counts_after_reset["_verified_from_db"]["users"] == 6
+    assert counts_after_reset["_verified_from_db"]["users"] == 7
+
+
+async def _fetch(url: str, stmt):
+    engine = create_async_engine(url)
+    try:
+        async with async_sessionmaker(engine, expire_on_commit=False)() as session:
+            return (await session.execute(stmt)).scalars().all()
+    finally:
+        await engine.dispose()
+
+
+def test_seed_dev_users_links_carol_to_engineer_and_scopes_bob_to_a_hub(
+    seeded_schema_url, monkeypatch
+):
+    """P9-F04: when `seed_demo_data` HAS already populated `Engineer`/`Hub`
+    rows (the documented, real dev workflow — `frontend/e2e/README.md`'s
+    ordering), `seed_dev_users` links `carol.eng` to the real `Engineer`
+    named `_CAROL_ENGINEER_NAME` and gives `bob.hub` a real, non-"all" hub
+    scope (`_BOB_HUB_NAME`) rather than `hub_scope_all=True`. A `--reset`
+    round-trip must not crash on the FK from `Engineer.user_id` /
+    `UserHubScope.user_id` back to `User`, and must re-link cleanly.
+    """
+    from models import Engineer, Hub, User, UserHubScope
+
+    monkeypatch.setenv("RPD_DATABASE_URL", seeded_schema_url)
+    seed_demo_data = importlib.import_module("seed.seed_demo_data")
+    importlib.reload(seed_demo_data)
+    seed_dev_users = importlib.import_module("seed.seed_dev_users")
+    importlib.reload(seed_dev_users)
+
+    # `reset_first=True` regardless of whether an earlier test in this module
+    # already seeded demo data (module-scoped `seeded_schema_url`) — this
+    # test must not depend on execution order.
+    asyncio.run(seed_demo_data.run(reset_first=True))
+    counts = asyncio.run(seed_dev_users.run(reset_first=True))
+    assert counts["users"] == 7
+
+    carol_user = asyncio.run(
+        _fetch(seeded_schema_url, select(User).where(User.email == "carol.eng@example.com"))
+    )[0]
+    bob_user = asyncio.run(
+        _fetch(seeded_schema_url, select(User).where(User.email == "bob.hub@example.com"))
+    )[0]
+    carol_engineer = asyncio.run(
+        _fetch(
+            seeded_schema_url,
+            select(Engineer).where(Engineer.name == seed_dev_users._CAROL_ENGINEER_NAME),
+        )
+    )[0]
+    bob_hub = asyncio.run(
+        _fetch(seeded_schema_url, select(Hub).where(Hub.name == seed_dev_users._BOB_HUB_NAME))
+    )[0]
+
+    assert carol_engineer.user_id == carol_user.id
+    # P10-F01: the only Engineer in this seed must never get
+    # `hub_scope_all=True` (the exact live-exploited bug shape the P10 gate
+    # security-auditor found).
+    assert carol_user.hub_scope_all is False
+    assert bob_user.hub_scope_all is False
+    bob_scopes = asyncio.run(
+        _fetch(seeded_schema_url, select(UserHubScope).where(UserHubScope.user_id == bob_user.id))
+    )
+    assert [s.hub_id for s in bob_scopes] == [bob_hub.id]
+    # Every other dev user is unaffected — still hub_scope_all=True.
+    alice = asyncio.run(
+        _fetch(seeded_schema_url, select(User).where(User.email == "alice.pm@example.com"))
+    )[0]
+    assert alice.hub_scope_all is True
+
+    # --reset must not crash on the FKs this linkage introduced, and must
+    # re-link cleanly rather than leaving the Engineer/hub-scope rows stale.
+    counts_after_reset = asyncio.run(seed_dev_users.run(reset_first=True))
+    assert counts_after_reset["_verified_from_db"]["users"] == 7
+
+    carol_user_2 = asyncio.run(
+        _fetch(seeded_schema_url, select(User).where(User.email == "carol.eng@example.com"))
+    )[0]
+    carol_engineer_2 = asyncio.run(
+        _fetch(
+            seeded_schema_url,
+            select(Engineer).where(Engineer.name == seed_dev_users._CAROL_ENGINEER_NAME),
+        )
+    )[0]
+    assert carol_engineer_2.user_id == carol_user_2.id
+    assert carol_user_2.hub_scope_all is False
+    bob_user_2 = asyncio.run(
+        _fetch(seeded_schema_url, select(User).where(User.email == "bob.hub@example.com"))
+    )[0]
+    assert bob_user_2.hub_scope_all is False
+    bob_scopes_2 = asyncio.run(
+        _fetch(
+            seeded_schema_url, select(UserHubScope).where(UserHubScope.user_id == bob_user_2.id)
+        )
+    )
+    assert [s.hub_id for s in bob_scopes_2] == [bob_hub.id]

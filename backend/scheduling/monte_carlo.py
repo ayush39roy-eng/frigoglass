@@ -49,13 +49,16 @@ docs/MEMORY.md entry for the full justification)
       project.delay_weeks) -- i.e. projects already flagged late slip more in
       expectation. Poisson is the natural non-negative integer "count of extra
       weeks" distribution and has a single parameter per project.
-   b. A per-iteration global multiplicative factor on every workflow step's
-      `base_weeks`, drawn from a triangular distribution
-      Triangular(low=0.85, high=1.30, mode=1.0) -- the classic PERT / three-point
-      project-estimate distribution, deliberately right-skewed (overruns more
-      common than underruns). This is what makes contention -- and therefore
-      `left_out` / `spillover` -- actually vary across iterations; delay
-      perturbation alone never changes feasibility.
+   b. A per-iteration global multiplicative factor on every lead-time-table
+      cell (ADR 0007: durations are `lead_time[workflow][category][step]`),
+      drawn from a triangular distribution Triangular(low=0.85, high=1.30,
+      mode=1.0) -- the classic PERT / three-point project-estimate
+      distribution, deliberately right-skewed (overruns more common than
+      underruns). A 0-week cell stays 0 (a skipped step never un-skips under
+      perturbation); every other cell is re-rounded to >= 1. This is what
+      makes contention -- and therefore `left_out` / `spillover` -- actually
+      vary across iterations; delay perturbation alone never changes
+      feasibility.
    Every distribution parameter is a function argument with a documented
    default. A real client-calibrated distribution replaces exactly those
    defaults (or the whole model, by setting both `*_perturbation` flags False
@@ -85,13 +88,12 @@ import math
 from dataclasses import dataclass, replace
 from random import Random
 
-from scheduling.cp_sat import run_cp_sat
+from scheduling.cp_sat import DEFAULT_DETERMINISTIC_TIME, run_cp_sat
 from scheduling.greedy import run_greedy_sgs
 from scheduling.types import (
-    ProjectInput,
+    LeadTime,
     ScheduleInput,
     ScheduleOutput,
-    WorkflowStepTemplate,
 )
 
 # --- Public constants -------------------------------------------------------
@@ -110,7 +112,8 @@ DEFAULT_DURATION_FACTOR_LOW = 0.85
 DEFAULT_DURATION_FACTOR_HIGH = 1.30
 DEFAULT_DURATION_FACTOR_MODE = 1.0
 
-DEFAULT_CP_SAT_MAX_TIME_IN_SECONDS = 60.0
+#: Per-iteration CP-SAT pass-1 budget in deterministic-time units (ruling 6).
+DEFAULT_CP_SAT_DETERMINISTIC_TIME = DEFAULT_DETERMINISTIC_TIME
 
 
 # --- Result dataclasses ----------------------------------------------------
@@ -215,16 +218,12 @@ def _nearest_rank(sorted_values: list[int], pct: float) -> int | None:
     return sorted_values[rank - 1]
 
 
-def _perturbed_steps(
-    base_steps: tuple[WorkflowStepTemplate, ...], factor: float
-) -> tuple[WorkflowStepTemplate, ...]:
-    """Scale every step's nominal `base_weeks` by `factor`, re-round to a
-    positive integer. The category multiplier + `max(1, round(...))` in
-    `duration_weeks` is then applied downstream by the solver as usual."""
+def _perturbed_lead_times(base: tuple[LeadTime, ...], factor: float) -> tuple[LeadTime, ...]:
+    """Scale every non-zero lead-time cell by `factor`, re-round to >= 1. A
+    0-week cell (a skipped step for that category) stays 0."""
 
     return tuple(
-        replace(s, base_weeks=max(1, round(s.base_weeks * factor)))
-        for s in base_steps
+        replace(lt, weeks=0 if lt.weeks == 0 else max(1, round(lt.weeks * factor))) for lt in base
     )
 
 
@@ -244,7 +243,7 @@ def forecast_delivery(
     duration_factor_low: float = DEFAULT_DURATION_FACTOR_LOW,
     duration_factor_high: float = DEFAULT_DURATION_FACTOR_HIGH,
     duration_factor_mode: float = DEFAULT_DURATION_FACTOR_MODE,
-    cp_sat_max_time_in_seconds: float = DEFAULT_CP_SAT_MAX_TIME_IN_SECONDS,
+    cp_sat_deterministic_time: float = DEFAULT_CP_SAT_DETERMINISTIC_TIME,
 ) -> DeliveryForecast:
     """Monte Carlo delivery forecast. Pure and deterministic given `seed`.
 
@@ -257,16 +256,13 @@ def forecast_delivery(
         raise ValueError(f"iterations must be >= 1, got {iterations}")
     if solver not in VALID_SOLVERS:
         raise ValueError(f"solver must be one of {VALID_SOLVERS}, got {solver!r}")
-    if delay_perturbation and (
-        delay_lambda_base < 0 or delay_lambda_per_current_week < 0
-    ):
+    if delay_perturbation and (delay_lambda_base < 0 or delay_lambda_per_current_week < 0):
         raise ValueError("delay lambda parameters must be >= 0")
     if duration_perturbation and not (
         0 < duration_factor_low <= duration_factor_mode <= duration_factor_high
     ):
         raise ValueError(
-            "require 0 < duration_factor_low <= duration_factor_mode "
-            "<= duration_factor_high"
+            "require 0 < duration_factor_low <= duration_factor_mode <= duration_factor_high"
         )
 
     rng = Random(seed)
@@ -281,13 +277,14 @@ def forecast_delivery(
     )
 
     projects_sorted = sorted(schedule_input.projects, key=lambda p: p.project_id)
-    base_steps = tuple(
-        sorted(schedule_input.workflow_steps, key=lambda s: s.sequence_order)
+    base_lead_times = tuple(
+        sorted(
+            schedule_input.lead_times,
+            key=lambda lt: (lt.workflow_id, lt.category, lt.step_id),
+        )
     )
 
-    completion_samples: dict[str, list[int]] = {
-        p.project_id: [] for p in projects_sorted
-    }
+    completion_samples: dict[str, list[int]] = {p.project_id: [] for p in projects_sorted}
     left_out_counts: dict[str, int] = {p.project_id: 0 for p in projects_sorted}
     within_year_counts: dict[str, int] = {p.project_id: 0 for p in projects_sorted}
     excluded_flags: dict[str, bool] = {p.project_id: False for p in projects_sorted}
@@ -297,43 +294,37 @@ def forecast_delivery(
         # 1. Duration factor -- one draw, always first, so the RNG call sequence
         #    is fixed regardless of project count.
         if duration_perturbation:
-            factor = rng.triangular(
-                duration_factor_low, duration_factor_high, duration_factor_mode
-            )
-            iter_steps = _perturbed_steps(base_steps, factor)
+            factor = rng.triangular(duration_factor_low, duration_factor_high, duration_factor_mode)
+            iter_lead_times = _perturbed_lead_times(base_lead_times, factor)
         else:
-            iter_steps = base_steps
+            iter_lead_times = base_lead_times
 
         # 2. Per-project additive delay, in project_id order.
         perturbed_delay: dict[str, int] = {}
         for p in projects_sorted:
             if delay_perturbation:
-                lam = delay_lambda_base + delay_lambda_per_current_week * max(
-                    0, p.delay_weeks
-                )
+                lam = delay_lambda_base + delay_lambda_per_current_week * max(0, p.delay_weeks)
                 extra = _poisson(rng, lam)
             else:
                 extra = 0
             perturbed_delay[p.project_id] = p.delay_weeks + extra
 
         perturbed_projects = tuple(
-            replace(p, delay_weeks=perturbed_delay[p.project_id])
-            for p in schedule_input.projects
+            replace(p, delay_weeks=perturbed_delay[p.project_id]) for p in schedule_input.projects
         )
         perturbed_input = ScheduleInput(
             projects=perturbed_projects,
             engineers=schedule_input.engineers,
             chambers=schedule_input.chambers,
-            workflow_steps=iter_steps,
+            workflow_steps=schedule_input.workflow_steps,
+            lead_times=iter_lead_times,
             current_week=schedule_input.current_week,
             horizon_weeks=schedule_input.horizon_weeks,
             within_year_week=schedule_input.within_year_week,
         )
 
         # 3. Solve.
-        output = _solve(
-            perturbed_input, solver, rng, cp_sat_max_time_in_seconds
-        )
+        output = _solve(perturbed_input, solver, rng, cp_sat_deterministic_time)
 
         # 4. Collect.
         iter_within_year = 0
@@ -389,7 +380,7 @@ def _solve(
     perturbed_input: ScheduleInput,
     solver: str,
     rng: Random,
-    cp_sat_max_time_in_seconds: float,
+    cp_sat_deterministic_time: float,
 ) -> ScheduleOutput:
     if solver == SOLVER_GREEDY:
         return run_greedy_sgs(perturbed_input)
@@ -398,7 +389,7 @@ def _solve(
     iter_seed = rng.randrange(1, 2_147_483_647)
     output, _info = run_cp_sat(
         perturbed_input,
-        max_time_in_seconds=cp_sat_max_time_in_seconds,
+        deterministic_time=cp_sat_deterministic_time,
         num_search_workers=1,
         random_seed=iter_seed,
     )
@@ -441,8 +432,7 @@ def format_forecast(forecast: DeliveryForecast, *, max_projects: int = 60) -> st
     lines.append("MONTE CARLO DELIVERY FORECAST")
     lines.append("=" * 78)
     lines.append(
-        f"iterations={forecast.iterations}  seed={forecast.seed}  "
-        f"solver={forecast.solver}"
+        f"iterations={forecast.iterations}  seed={forecast.seed}  solver={forecast.solver}"
     )
     p = forecast.perturbation
     lines.append(
@@ -463,10 +453,7 @@ def format_forecast(forecast: DeliveryForecast, *, max_projects: int = 60) -> st
         f"max={max(forecast.within_year_count_per_iteration)})"
     )
     lines.append("")
-    lines.append(
-        f"{'project':<12} {'P50':>5} {'P80':>5} {'left_out':>9} "
-        f"{'within_yr':>10}  note"
-    )
+    lines.append(f"{'project':<12} {'P50':>5} {'P80':>5} {'left_out':>9} {'within_yr':>10}  note")
     lines.append("-" * 78)
     for pf in forecast.project_forecasts[:max_projects]:
         if pf.excluded:
@@ -482,9 +469,7 @@ def format_forecast(forecast: DeliveryForecast, *, max_projects: int = 60) -> st
             f"{pf.left_out_frequency:>9.2f} {pf.within_year_frequency:>10.2f}  {note}"
         )
     if len(forecast.project_forecasts) > max_projects:
-        lines.append(
-            f"  ... {len(forecast.project_forecasts) - max_projects} more project(s)"
-        )
+        lines.append(f"  ... {len(forecast.project_forecasts) - max_projects} more project(s)")
     lines.append("=" * 78)
     return "\n".join(lines)
 
@@ -493,59 +478,13 @@ def format_forecast(forecast: DeliveryForecast, *, max_projects: int = 60) -> st
 
 
 def _load_seed_schedule_input() -> ScheduleInput:
-    """Load `backend/seed/prototype_seed_data.json` into a `ScheduleInput`,
-    byte-for-byte the same mapping the other `_selftest_*` modules use. Only
-    ever called from `__main__` / the self-test -- never from
-    `forecast_delivery`."""
+    """Load `backend/seed/prototype_seed_data.json` into a `ScheduleInput`
+    (shared mapping in `scheduling._selftest_common`). Only ever called from
+    `__main__` / the self-test -- never from `forecast_delivery`."""
 
-    import json
-    from pathlib import Path
+    from scheduling._selftest_common import load_seed_schedule_input
 
-    from scheduling.types import ChamberInput, EngineerInput
-
-    seed_path = (
-        Path(__file__).resolve().parent.parent / "seed" / "prototype_seed_data.json"
-    )
-    seed = json.loads(seed_path.read_text())
-
-    engineers = tuple(
-        EngineerInput(
-            engineer_id=e["name"],
-            name=e["name"],
-            hub=e["hub"],
-            allowed_categories=tuple(e["cats"]),
-            fte=e["fte"],
-        )
-        for e in seed["engineers"]
-    )
-    chambers = tuple(
-        ChamberInput(
-            chamber_id=c["id"],
-            code=c["id"],
-            lab_region=c["labHub"],
-            max_concurrent=c["max"],
-            allowed_stages=tuple(f"PDD-{letter}" for letter in c["stages"]),
-            efficiency=c["eff"],
-            weeks_per_chamber=c["wksCh"],
-        )
-        for c in seed["chambers"]
-    )
-    projects = tuple(
-        ProjectInput(
-            project_id=p["id"],
-            name=p["name"],
-            hub=p["hub"],
-            status=p["status"],
-            category=p["cat"],
-            priority=p["prio"],
-            frozen=p["frozen"],
-            leader_engineer_id=p["leader"],
-            actual_start_week=p["actualStart"] if p["frozen"] else None,
-            delay_weeks=p["delay"],
-        )
-        for p in seed["projects"]
-    )
-    return ScheduleInput(projects=projects, engineers=engineers, chambers=chambers)
+    return load_seed_schedule_input()
 
 
 def main() -> int:

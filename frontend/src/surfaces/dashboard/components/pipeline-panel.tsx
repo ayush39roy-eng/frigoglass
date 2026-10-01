@@ -1,7 +1,8 @@
 import * as React from 'react';
 
 import { Badge } from '@/components/ui/badge';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { GlassPanel } from '@/components/ui/glass-panel';
 import { formatInteger } from '@/lib/format';
 
 import { DonutChart } from '@/components/ui/donut-chart';
@@ -65,11 +66,23 @@ export function PipelinePanel({ totals, withinYear }: PipelinePanelProps): React
           value: withinYear.left_out_count,
           tone: 'warning',
         },
+        // P9-F02: the fourth mutually-exclusive bucket (Blocked wins outright
+        // over the other three, per CompletingWithinYear.blocked_count) — kept
+        // in the donut so "sum to the scheduled total" stays true.
+        {
+          key: 'blocked',
+          label: 'Blocked',
+          value: withinYear.blocked_count,
+          tone: 'warning',
+        },
       ]
     : [];
 
   return (
-    <Card>
+    // Glass treatment (Dashboard polish, 2026-09-30): hero opacity (60%) — this
+    // card holds the composition bars + outcome donut, not a dense data table,
+    // so it gets the same translucent tint as the KPI stat tiles.
+    <GlassPanel opacity="hero">
       <CardHeader>
         <CardTitle>Pipeline &amp; completion</CardTitle>
         <Badge tone="neutral" data-numeric="">
@@ -124,6 +137,6 @@ export function PipelinePanel({ totals, withinYear }: PipelinePanelProps): React
           )}
         </section>
       </CardContent>
-    </Card>
+    </GlassPanel>
   );
 }

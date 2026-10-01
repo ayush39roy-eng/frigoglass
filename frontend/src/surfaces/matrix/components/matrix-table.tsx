@@ -1,9 +1,12 @@
 import * as React from 'react';
+import { Link } from 'react-router-dom';
 import { Layers, Pencil } from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { PriorityBandPill } from '@/components/shared/priority-band-pill';
+import { SCORING_ANCHORS } from '@/lib/domain-constants';
 import { formatCurrency, formatDecimal } from '@/lib/format';
 import { PROJECT_TYPE_LABELS, type CurrencyCode } from '@/types/enums';
 
@@ -20,11 +23,37 @@ import { VirtualMatrixGrid, type MatrixColumn } from './virtual-matrix-grid';
  * (Invariant I9 analogue for money). `gross_margin_pct` is never converted.
  */
 
-function DimHeader({ short, label, pillar, weight }: (typeof DIMENSIONS)[number]): React.JSX.Element {
+/**
+ * Dimension column header with the scoring anchors as a tooltip (P9 contract
+ * §8): what a 1 and a 5 mean, plus pillar and weight. A real button so the
+ * tooltip is reachable by keyboard; the visible text stays the short label.
+ */
+function DimHeader({ field, short, label, pillar, weight }: (typeof DIMENSIONS)[number]): React.JSX.Element {
+  const anchor = SCORING_ANCHORS[field];
   return (
-    <abbr title={`${label} · ${pillar} · weight ${String(weight)}`} className="no-underline">
-      {short}
-    </abbr>
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <button
+          type="button"
+          className="cursor-help rounded-sm underline decoration-dotted underline-offset-2"
+          aria-label={`${label}: 1 = ${anchor.low}, 5 = ${anchor.high} (${pillar}, weight ${String(weight)})`}
+        >
+          {short}
+        </button>
+      </TooltipTrigger>
+      <TooltipContent className="max-w-xs text-left">
+        <span className="block font-semibold">{label}</span>
+        <span className="block text-text-inverse/80">
+          {pillar} · weight {weight}
+        </span>
+        <span className="mt-1 block">
+          <strong>1</strong> — {anchor.low}
+        </span>
+        <span className="block">
+          <strong>5</strong> — {anchor.high}
+        </span>
+      </TooltipContent>
+    </Tooltip>
   );
 }
 
@@ -64,9 +93,13 @@ export function MatrixTable({
         width: 200,
         sticky: true,
         cell: (row) => (
-          <span className="truncate font-medium text-text" title={row.project_name}>
+          <Link
+            to={`/projects/${row.project_id}`}
+            className="truncate font-medium text-text underline-offset-2 hover:text-primary hover:underline"
+            title={`${row.project_name} — open in Project Workspace`}
+          >
             {row.project_name}
-          </span>
+          </Link>
         ),
       },
       {

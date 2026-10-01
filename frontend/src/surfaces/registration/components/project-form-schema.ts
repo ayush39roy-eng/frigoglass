@@ -24,6 +24,7 @@ const INTEGER_PATTERN = /^-?\d+$/;
 function optionalNumericString(opts: {
   integer?: boolean;
   min?: number;
+  max?: number;
   message?: string;
 }): z.ZodType<string | undefined, z.ZodTypeDef, string | undefined> {
   const pattern = opts.integer ? INTEGER_PATTERN : NUMBER_PATTERN;
@@ -36,7 +37,12 @@ function optionalNumericString(opts: {
       if (opts.min === undefined) return true;
       if (v === undefined || v.trim() === '') return true;
       return Number(v) >= opts.min;
-    }, `Must be ${String(opts.min ?? 0)} or more`);
+    }, `Must be ${String(opts.min ?? 0)} or more`)
+    .refine((v) => {
+      if (opts.max === undefined) return true;
+      if (v === undefined || v.trim() === '') return true;
+      return Number(v) <= opts.max;
+    }, `Must be ${String(opts.max ?? 0)} or less`);
 }
 
 export const projectFormSchema = z.object({
@@ -54,6 +60,10 @@ export const projectFormSchema = z.object({
   gross_margin_pct: optionalNumericString({}),
   capex_keur: optionalNumericString({ min: 0 }),
   rm_savings_keur: optionalNumericString({ min: 0 }),
+  // P9 (contract §6): week numbers live on the app's 1..78 axis.
+  target_end_week: optionalNumericString({ integer: true, min: 1, max: 78 }),
+  estimated_design_weeks: optionalNumericString({ min: 0 }),
+  estimated_lab_weeks: optionalNumericString({ min: 0 }),
 });
 
 export type ProjectFormInput = z.input<typeof projectFormSchema>;

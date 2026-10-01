@@ -38,6 +38,12 @@ from models.enums import WorkflowStepKind
 from models.workflow import WorkflowStepTemplate
 from schemas.chamber import ChamberCreateRequest, ChamberRead, ChamberUpdateRequest
 from services.audit_helpers import chamber_audit_state
+from services.capacity_supply import (
+    chamber_figures,
+    load_calendars_by_region,
+    region_holiday_weeks,
+    round2,
+)
 from services.hub_scope import is_lab_region_in_scope, scoped_lab_regions
 
 router = APIRouter(prefix="/chambers", tags=["capacity-planning", "chambers"])
@@ -58,6 +64,34 @@ async def _get_chamber_or_404(
     if chamber is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Chamber not found")
     return chamber
+
+
+async def _chamber_reads(db: AsyncSession, chambers: list[Chamber]) -> list[ChamberRead]:
+    """`ChamberRead` plus the ADR 0008 derived figures (P9-T03)."""
+
+    calendars = await load_calendars_by_region(db)
+    out: list[ChamberRead] = []
+    for c in chambers:
+        figures = chamber_figures(c, region_holiday_weeks(calendars, c.lab_region))
+        out.append(
+            ChamberRead(
+                id=c.id,
+                code=c.code,
+                lab_region=c.lab_region,
+                max_concurrent=c.max_concurrent,
+                platforms=c.platforms,
+                efficiency=float(c.efficiency),
+                maintenance_weeks=float(c.maintenance_weeks),
+                breakdown_weeks=float(c.breakdown_weeks),
+                calibration_weeks=float(c.calibration_weeks),
+                allowed_stages=list(c.allowed_stages or []),
+                working_weeks_per_chamber=round2(figures.working_weeks_per_chamber),
+                efficient_lab_weeks=round2(figures.efficient_lab_weeks),
+                created_at=c.created_at,
+                updated_at=c.updated_at,
+            )
+        )
+    return out
 
 
 async def _validate_allowed_stages(db: AsyncSession, allowed_stages: list[str]) -> None:
@@ -92,7 +126,7 @@ async def _validate_allowed_stages(db: AsyncSession, allowed_stages: list[str]) 
 async def list_chambers(
     db: AsyncSession = Depends(get_db),
     current_user: Principal = Depends(_read),
-) -> list[Chamber]:
+) -> list[ChamberRead]:
     """List chambers, hub-scoped (P3-T03) via lab region: a Hub Planner sees
     every chamber in their hub(s)' lab region(s) (`services.hub_scope.
     scoped_lab_regions`), not just chambers named after their own hub (there
@@ -104,7 +138,7 @@ async def list_chambers(
     if regions is not None:
         stmt = stmt.where(Chamber.lab_region.in_(regions))
     result = await db.execute(stmt.order_by(Chamber.code))
-    return list(result.scalars().all())
+    return await _chamber_reads(db, list(result.scalars().all()))
 
 
 @router.get("/{chamber_id}", response_model=ChamberRead)
@@ -112,8 +146,9 @@ async def get_chamber(
     chamber_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
     current_user: Principal = Depends(_read),
-) -> Chamber:
-    return await _get_chamber_or_404(db, chamber_id, current_user)
+) -> ChamberRead:
+    chamber = await _get_chamber_or_404(db, chamber_id, current_user)
+    return (await _chamber_reads(db, [chamber]))[0]
 
 
 @router.post("", response_model=ChamberRead, status_code=status.HTTP_201_CREATED)
@@ -121,7 +156,7 @@ async def create_chamber(
     body: ChamberCreateRequest,
     db: AsyncSession = Depends(get_db),
     current_user: Principal = Depends(_write),
-) -> Chamber:
+) -> ChamberRead:
     await _validate_allowed_stages(db, body.allowed_stages)
 
     regions = await scoped_lab_regions(db, current_user)
@@ -154,7 +189,7 @@ async def create_chamber(
     )
     await db.commit()
     await db.refresh(chamber)
-    return chamber
+    return (await _chamber_reads(db, [chamber]))[0]
 
 
 @router.patch("/{chamber_id}", response_model=ChamberRead)
@@ -163,7 +198,7 @@ async def update_chamber(
     body: ChamberUpdateRequest,
     db: AsyncSession = Depends(get_db),
     current_user: Principal = Depends(_write),
-) -> Chamber:
+) -> ChamberRead:
     chamber = await _get_chamber_or_404(db, chamber_id, current_user)
 
     if body.allowed_stages is not None:
@@ -205,7 +240,7 @@ async def update_chamber(
     )
     await db.commit()
     await db.refresh(chamber)
-    return chamber
+    return (await _chamber_reads(db, [chamber]))[0]
 
 
 @router.delete("/{chamber_id}", status_code=status.HTTP_204_NO_CONTENT)

@@ -27,7 +27,9 @@ class NotificationRead(BaseModel):
     project_id: uuid.UUID
     hub_id: uuid.UUID
     message: str
-    schedule_run_id: uuid.UUID
+    #: Null for `stage_blocked` (P9-T03 follow-up): it comes from a progress
+    #: edit, not from a schedule run.
+    schedule_run_id: uuid.UUID | None
     previous_schedule_run_id: uuid.UUID | None
     read_at: datetime | None
     created_at: datetime

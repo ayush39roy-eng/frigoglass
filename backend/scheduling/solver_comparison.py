@@ -121,6 +121,14 @@ _OUTCOME_FIELDS: tuple[str, ...] = (
     "no_chamber_step_id",
     "start_week",
     "end_week",
+    # 2026-09-27 (P9-T02): `projected_end_week` follows `end_week`; the rest
+    # are pure functions of the input and must agree on both sides.
+    "unconstrained_end_week",
+    "expected_end_week",
+    "projected_end_week",
+    "blocked",
+    "progress_pct",
+    "data_error",
 )
 
 _STEP_FIELDS: tuple[str, ...] = (
@@ -131,6 +139,7 @@ _STEP_FIELDS: tuple[str, ...] = (
     "duration_weeks",
     "assigned_engineer_id",
     "assigned_chamber_id",
+    "skipped",
 )
 
 
@@ -288,13 +297,15 @@ def _classify(
     # project-level start/end week).
     if is_step and field_name in ("start_week", "end_week", "assigned_chamber_id"):
         return BUCKET_OPEN_CHOICE_WEEK_CHAMBER
-    if field_name in ("start_week", "end_week"):
+    if field_name in ("start_week", "end_week", "projected_end_week"):
         return BUCKET_OPEN_CHOICE_WEEK_CHAMBER
 
     # assigned_engineer_id (fixed = project leader), duration_weeks, kind,
-    # sequence_order, cat_not_allowed, no_leader, eng_conflict, overlap, excluded
-    # -- all deterministic from the input and identical-by-construction on both
-    # sides. A divergence here is a real signal.
+    # sequence_order, skipped, cat_not_allowed, no_leader, eng_conflict,
+    # overlap, excluded, unconstrained_end_week, expected_end_week, blocked,
+    # progress_pct, data_error -- all deterministic from the input and
+    # identical-by-construction on both sides. A divergence here is a real
+    # signal.
     return BUCKET_UNEXPLAINED
 
 
@@ -366,27 +377,26 @@ def _compare_project(
 def compare_solvers(
     schedule_input: ScheduleInput,
     *,
-    cp_sat_max_time_in_seconds: float | None = None,
+    cp_sat_deterministic_time: float | None = None,
 ) -> SolverComparisonReport:
     """Run both solvers on `schedule_input` and return a structured diff report.
 
     Pure: no DB / network / filesystem access. `run_cp_sat` is always called
     single-threaded (`num_search_workers=1`) for determinism.
 
-    `cp_sat_max_time_in_seconds` is forwarded to `run_cp_sat` when set; left at
-    `run_cp_sat`'s own default otherwise.
+    `cp_sat_deterministic_time` (pass-1 budget, deterministic-time units,
+    ruling 6) is forwarded to `run_cp_sat` when set; left at `run_cp_sat`'s
+    own default otherwise.
     """
 
     greedy_output = run_greedy_sgs(schedule_input)
 
     cp_sat_kwargs: dict[str, object] = {"num_search_workers": 1}
-    if cp_sat_max_time_in_seconds is not None:
-        cp_sat_kwargs["max_time_in_seconds"] = cp_sat_max_time_in_seconds
+    if cp_sat_deterministic_time is not None:
+        cp_sat_kwargs["deterministic_time"] = cp_sat_deterministic_time
     cp_sat_output, cp_sat_info = run_cp_sat(schedule_input, **cp_sat_kwargs)  # type: ignore[arg-type]
 
-    projects_by_id: dict[str, ProjectInput] = {
-        p.project_id: p for p in schedule_input.projects
-    }
+    projects_by_id: dict[str, ProjectInput] = {p.project_id: p for p in schedule_input.projects}
     priority_by_id: dict[str, str | None] = {
         p.project_id: p.priority for p in schedule_input.projects
     }
@@ -395,9 +405,7 @@ def compare_solvers(
     # I8 (determinism) re-runs the greedy scheduler internally and is not a
     # meaningful check against the CP-SAT output -- skip it on that side. Every
     # other invariant (I1-I7, I9, I10) is the real point of validating CP-SAT.
-    cp_sat_violations = validate_invariants(
-        schedule_input, cp_sat_output, check_determinism=False
-    )
+    cp_sat_violations = validate_invariants(schedule_input, cp_sat_output, check_determinism=False)
 
     greedy_by_id = {o.project_id: o for o in greedy_output.project_outcomes}
     cp_sat_by_id = {o.project_id: o for o in cp_sat_output.project_outcomes}
@@ -482,9 +490,7 @@ def format_report(report: SolverComparisonReport, *, max_projects: int = 60) -> 
     lines.append("-- OBJECTIVE (ADR 0005 band weights x within_year, applied to both) --")
     lines.append(f"  greedy objective ............... {report.greedy_objective}")
     lines.append(f"  CP-SAT objective .............. {report.cp_sat_objective}")
-    lines.append(
-        f"  CP-SAT internal (solvable only)  {report.cp_sat_internal_objective:.0f}"
-    )
+    lines.append(f"  CP-SAT internal (solvable only)  {report.cp_sat_internal_objective:.0f}")
     lines.append(
         f"  delta (CP-SAT - greedy) ....... {report.cp_sat_objective - report.greedy_objective:+d}"
     )
@@ -546,13 +552,10 @@ def format_report(report: SolverComparisonReport, *, max_projects: int = 60) -> 
         if pd.frozen:
             flags.append("FROZEN")
         if pd.greedy_left_out != pd.cp_sat_left_out:
-            flags.append(
-                f"left_out greedy={pd.greedy_left_out} cp_sat={pd.cp_sat_left_out}"
-            )
+            flags.append(f"left_out greedy={pd.greedy_left_out} cp_sat={pd.cp_sat_left_out}")
         flag_str = f"  ({'; '.join(flags)})" if flags else ""
         lines.append(
-            f"  {pd.project_id}  prio={pd.priority}  "
-            f"{len(pd.field_divergences)} field(s){flag_str}"
+            f"  {pd.project_id}  prio={pd.priority}  {len(pd.field_divergences)} field(s){flag_str}"
         )
         for d in pd.field_divergences:
             lines.append(
@@ -573,62 +576,18 @@ def format_report(report: SolverComparisonReport, *, max_projects: int = 60) -> 
 
 
 def _load_seed_schedule_input() -> ScheduleInput:
-    """Load `backend/seed/prototype_seed_data.json` into a `ScheduleInput`,
-    byte-for-byte the same mapping `scheduling._selftest_cp_sat` and
-    `scheduling._selftest_invariants` use. Only ever called from `__main__` /
-    the self-test -- never from `compare_solvers`."""
+    """Load `backend/seed/prototype_seed_data.json` into a `ScheduleInput`
+    (shared mapping in `scheduling._selftest_common`). Only ever called from
+    `__main__` / the self-test -- never from `compare_solvers`."""
 
-    import json
-    from pathlib import Path
+    from scheduling._selftest_common import load_seed_schedule_input
 
-    from scheduling.types import ChamberInput, EngineerInput
-
-    seed_path = Path(__file__).resolve().parent.parent / "seed" / "prototype_seed_data.json"
-    seed = json.loads(seed_path.read_text())
-
-    engineers = tuple(
-        EngineerInput(
-            engineer_id=e["name"],
-            name=e["name"],
-            hub=e["hub"],
-            allowed_categories=tuple(e["cats"]),
-            fte=e["fte"],
-        )
-        for e in seed["engineers"]
-    )
-    chambers = tuple(
-        ChamberInput(
-            chamber_id=c["id"],
-            code=c["id"],
-            lab_region=c["labHub"],
-            max_concurrent=c["max"],
-            allowed_stages=tuple(f"PDD-{letter}" for letter in c["stages"]),
-            efficiency=c["eff"],
-            weeks_per_chamber=c["wksCh"],
-        )
-        for c in seed["chambers"]
-    )
-    projects = tuple(
-        ProjectInput(
-            project_id=p["id"],
-            name=p["name"],
-            hub=p["hub"],
-            status=p["status"],
-            category=p["cat"],
-            priority=p["prio"],
-            frozen=p["frozen"],
-            leader_engineer_id=p["leader"],
-            actual_start_week=p["actualStart"] if p["frozen"] else None,
-            delay_weeks=p["delay"],
-        )
-        for p in seed["projects"]
-    )
-    return ScheduleInput(projects=projects, engineers=engineers, chambers=chambers)
+    return load_seed_schedule_input()
 
 
 def main() -> int:
     schedule_input = _load_seed_schedule_input()
-    report = compare_solvers(schedule_input, cp_sat_max_time_in_seconds=60.0)
+    report = compare_solvers(schedule_input)
     print(format_report(report))
     return 0 if report.clean else 1
 

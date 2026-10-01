@@ -13,7 +13,13 @@
 // `@/types/enums`'s `HardGateReason`). Do not conflate the two — this module
 // never imports `HardGateReason`.
 
-import type { ProjectCategory, ProjectPriority, ProjectStatus, ProjectType } from '@/types/enums';
+import type {
+  ProjectCategory,
+  ProjectPriority,
+  ProjectStatus,
+  ProjectType,
+  WorkflowId,
+} from '@/types/enums';
 import type { Id } from '@/types/common';
 
 /** `POST /projects` request body (→ `backend/schemas/project.py::ProjectCreateRequest`).
@@ -46,6 +52,16 @@ export interface ProjectCreateRequest {
   gross_margin_pct?: number | null;
   capex_keur?: number | null;
   rm_savings_keur?: number | null;
+  // PLACEHOLDER (P9 contract §6) — the four new project fields.
+  /** "Expected completion (week)" — charter column "Project End Date - LATEST".
+   *  Feeds `expected_end_week` on the Gantt (DOMAIN_RULES "Expected vs projected
+   *  completion"); null → the process-derived unconstrained finish is used. */
+  target_end_week?: number | null;
+  /** Default true. When false the workflow's lab steps are skipped (ADR 0007 §5). */
+  certification_testing_required?: boolean;
+  /** Capacity surface "Estimated" column only — never affects the schedule (OQ #12). */
+  estimated_design_weeks?: number | null;
+  estimated_lab_weeks?: number | null;
 }
 
 /** `PATCH /projects/{id}` request body (→ `ProjectUpdateRequest`). Partial —
@@ -85,6 +101,15 @@ export interface ProjectRead {
   gross_margin_pct: number | null;
   capex_keur: number | null;
   rm_savings_keur: number | null;
+  // PLACEHOLDER (P9 contract §6).
+  target_end_week: number | null;
+  certification_testing_required: boolean;
+  estimated_design_weeks: number | null;
+  estimated_lab_weeks: number | null;
+  /** Progress or settings changed since the active run (ADR 0006 / P9). */
+  schedule_stale: boolean;
+  /** `PDD` | `OEM`, a function of the hub (ADR 0007). */
+  workflow_id: WorkflowId;
   created_at: string;
   updated_at: string;
 }

@@ -59,6 +59,7 @@ export default tseslint.config(
     files: [
       'src/**/virtual-data-table.tsx',
       'src/**/virtual-matrix-grid.tsx',
+      'src/**/users-table.tsx',
       'src/**/*gantt*/**/*.{ts,tsx}',
     ],
     rules: {

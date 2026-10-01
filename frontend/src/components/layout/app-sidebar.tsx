@@ -2,9 +2,12 @@ import * as React from 'react';
 import { NavLink } from 'react-router-dom';
 import { Building2, LogOut } from 'lucide-react';
 
-import { NAV_GROUP_ORDER, SURFACES, type NavGroup, type SurfaceNavItem } from '@/app/nav';
+import { type SurfaceNavItem } from '@/app/nav';
+import { visibleNavGroups } from '@/app/nav-visibility';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import { useHubs } from '@/lib/api/reference';
 import { cn } from '@/lib/utils';
+import { useSessionStore } from '@/stores/session';
 import { useUiStore } from '@/stores/ui';
 
 /**
@@ -26,10 +29,6 @@ import { useUiStore } from '@/stores/ui';
  * Section labels remain structure, not navigation: no path, no hover state, no tab
  * stop. A heading that looks clickable and isn't is worse than no heading.
  */
-
-const GROUPED: ReadonlyArray<readonly [NavGroup, readonly SurfaceNavItem[]]> = NAV_GROUP_ORDER.map(
-  (group) => [group, SURFACES.filter((s) => s.group === group)] as const,
-).filter(([, items]) => items.length > 0);
 
 function NavItem({ item, collapsed }: { item: SurfaceNavItem; collapsed: boolean }) {
   const link = (
@@ -68,6 +67,8 @@ function NavItem({ item, collapsed }: { item: SurfaceNavItem; collapsed: boolean
 
 export function AppSidebar(): React.JSX.Element {
   const collapsed = useUiStore((s) => s.sidebarCollapsed);
+  const me = useSessionStore((s) => s.me);
+  const grouped = React.useMemo(() => visibleNavGroups(me), [me]);
 
   return (
     <nav
@@ -81,7 +82,7 @@ export function AppSidebar(): React.JSX.Element {
       <SidebarIdentity collapsed={collapsed} />
 
       <div className="flex-1 overflow-y-auto overflow-x-hidden px-s3 py-s3 scrollbar-thin">
-        {GROUPED.map(([group, items], groupIndex) => (
+        {grouped.map(([group, items], groupIndex) => (
           <div key={group} className={cn(groupIndex > 0 && 'mt-s5')}>
             {/* In collapsed mode the label would truncate to nonsense, so it becomes a
                 hairline rule instead — the grouping survives, the text does not. */}
@@ -90,7 +91,7 @@ export function AppSidebar(): React.JSX.Element {
                 <div aria-hidden="true" className="mx-auto mb-s3 h-px w-7 bg-sidebar-border" />
               ) : null
             ) : (
-              <div className="label-caps px-s3 pb-s2 pt-s1 text-sidebar-text-muted/70">{group}</div>
+              <div className="label-caps px-s3 pb-s2 pt-s1 text-sidebar-text-muted">{group}</div>
             )}
             <div className="flex flex-col gap-s1">
               {items.map((item) => (
@@ -116,6 +117,7 @@ export function AppSidebar(): React.JSX.Element {
  * carries the same "you are signed in, here" signal at a fraction of the cost.
  */
 function SidebarIdentity({ collapsed }: { collapsed: boolean }) {
+  const me = useSessionStore((s) => s.me);
   return (
     <div
       className={cn(
@@ -134,11 +136,17 @@ function SidebarIdentity({ collapsed }: { collapsed: boolean }) {
       </span>
       {!collapsed && (
         <span className="min-w-0">
-          <span className="block truncate text-body font-semibold text-sidebar-text">
-            Frigoglass
+          {/* The signed-in principal from GET /me (ADR 0010) — name, then roles. */}
+          <span
+            className="block truncate text-body font-semibold text-sidebar-text"
+            title={me?.email}
+            data-testid="session-identity"
+          >
+            {me?.full_name ?? 'Frigoglass'}
           </span>
-          {/* TODO(P6-SSO): replace with the authenticated user's display name. */}
-          <span className="block truncate text-2xs text-sidebar-text-muted">R&amp;D Portfolio</span>
+          <span className="block truncate text-2xs text-sidebar-text-muted">
+            {me && me.roles.length > 0 ? me.roles.join(' · ') : 'R&D Portfolio'}
+          </span>
         </span>
       )}
     </div>
@@ -155,18 +163,35 @@ function SidebarIdentity({ collapsed }: { collapsed: boolean }) {
  * with a tool they believe is losing records is stop trusting it.
  */
 function SidebarFooter({ collapsed }: { collapsed: boolean }) {
+  const me = useSessionStore((s) => s.me);
+  const hubsQuery = useHubs();
+  // id→name display join against reference data; falls back to a count rather
+  // than fabricating a hub name while the lookup is in flight.
+  const scopeLabel = React.useMemo(() => {
+    if (!me) return 'All hubs';
+    if (me.hub_scope_all) return 'All hubs';
+    if (me.hub_ids.length === 0) return 'No hubs';
+    const names: string[] = [];
+    for (const id of me.hub_ids) {
+      const name = hubsQuery.data?.find((h) => h.id === id)?.name;
+      if (name) names.push(name);
+    }
+    if (names.length === me.hub_ids.length) return names.join(', ');
+    return `${String(me.hub_ids.length)} ${me.hub_ids.length === 1 ? 'hub' : 'hubs'}`;
+  }, [me, hubsQuery.data]);
   return (
     <div className="border-t border-sidebar-border p-s3">
       {!collapsed && (
         <div className="mb-s2 flex items-center gap-s3 rounded-control bg-sidebar-raised px-s3 py-s3">
           <Building2 className="size-4 shrink-0 text-sidebar-text-muted" aria-hidden="true" />
           <span className="min-w-0">
-            <span className="label-caps block text-sidebar-text-muted/70">Hub scope</span>
-            {/* TODO(P6-SSO): bind to the authenticated session's hub scope. Rendering a
-                placeholder rather than a fabricated hub name — a wrong scope indicator
-                is strictly worse than an obviously-unbound one. */}
-            <span className="mt-0.5 block truncate text-body font-medium text-sidebar-text">
-              All hubs
+            <span className="label-caps block text-sidebar-text-muted">Hub scope</span>
+            <span
+              className="mt-0.5 block truncate text-body font-medium text-sidebar-text"
+              title={scopeLabel}
+              data-testid="hub-scope"
+            >
+              {scopeLabel}
             </span>
           </span>
         </div>

@@ -96,4 +96,14 @@ describe('MatrixTable', () => {
     expect(screen.getByText('Cooler B')).toBeInTheDocument();
     expect(screen.getByTestId('score-cell-unscored')).toBeInTheDocument();
   });
+
+  it('P9: links each project to its workspace and exposes the scoring anchors on the dimension headers', () => {
+    renderWithProviders(<MatrixTable rows={[row()]} currency="USD" canEdit={false} onEdit={vi.fn()} />);
+    expect(screen.getByRole('link', { name: 'Cooler A' })).toHaveAttribute('href', '/projects/p1');
+    expect(
+      screen.getByRole('button', {
+        name: 'CAPEX Investment (inverted): 1 = > €500K, 5 = < €10K (Investment & Feasibility, weight 10)',
+      }),
+    ).toBeInTheDocument();
+  });
 });

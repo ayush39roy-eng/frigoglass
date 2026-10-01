@@ -36,6 +36,8 @@ same resource-isolation reasoning above.
 
 from __future__ import annotations
 
+from datetime import timedelta
+
 from celery import Celery
 from celery.schedules import crontab
 
@@ -71,7 +73,16 @@ def _build_worker_app() -> Celery:
         # `rpd-backups` bucket, see that module's own docstring) added for
         # the exact same reasoning as `workers.backup_tasks` above — same
         # queue, same "not CP-SAT-scale" classification.
-        include=["workers.export_tasks", "workers.backup_tasks", "workers.backup_mirror_tasks"],
+        # P9-F01 (R04-L1, security-auditor P9-R04): `workers.schedule_run_sweeper`
+        # (a stale `QUEUED`/`RUNNING` `ScheduleRun` cleanup, same "not
+        # CP-SAT-scale" classification as the backup tasks above) added to
+        # this app's `include` list.
+        include=[
+            "workers.export_tasks",
+            "workers.backup_tasks",
+            "workers.backup_mirror_tasks",
+            "workers.schedule_run_sweeper",
+        ],
     )
     app.conf.update(
         task_serializer="json",
@@ -129,6 +140,17 @@ def _build_worker_app() -> Celery:
             "nightly-backup-offhost-mirror": {
                 "task": "workers.backup_mirror_tasks.mirror_backups_offhost",
                 "schedule": crontab(hour=3, minute=0),
+            },
+            # P9-F01 (R04-L1): every 5 minutes, not a nightly crontab — a
+            # stuck `ScheduleRun` should clear shortly after its staleness
+            # window closes, not wait for the next quiet-hours slot. Kept as
+            # a plain literal (not imported from `workers.schedule_run_
+            # sweeper`) to avoid a circular import — that module itself
+            # imports `worker_app` to register its `@worker_app.task`. See
+            # that module's own docstring for the staleness-window math.
+            "sweep-stuck-schedule-runs": {
+                "task": "workers.schedule_run_sweeper.sweep_stuck_schedule_runs",
+                "schedule": timedelta(minutes=5),
             },
         },
     )

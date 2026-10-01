@@ -2,6 +2,7 @@ import * as React from 'react';
 import { CalendarClock, PanelLeft, Search } from 'lucide-react';
 
 import { NotificationBell } from '@/components/notifications/notification-bell';
+import { DevRoleSwitcher } from '@/components/session/dev-role-switcher';
 import { ThemeToggle } from '@/components/theme/theme-toggle';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
@@ -49,6 +50,8 @@ export function AppHeader(): React.JSX.Element {
       <GlobalSearch />
 
       <div className="ml-auto flex items-center gap-s2">
+        {/* Renders only when the SERVER says dev_mode is on — see the component. */}
+        <DevRoleSwitcher />
         <WeekIndicator />
         <NotificationBell />
         <ThemeToggle />

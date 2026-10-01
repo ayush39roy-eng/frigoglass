@@ -85,6 +85,15 @@
       "credentials": [{ "type": "password", "value": "TestPass123!", "temporary": false }]
     },
     {
+      "username": "sam.super",
+      "email": "sam.super@example.com",
+      "emailVerified": true,
+      "enabled": true,
+      "firstName": "Sam",
+      "lastName": "SuperAdmin",
+      "credentials": [{ "type": "password", "value": "TestPass123!", "temporary": false }]
+    },
+    {
       "username": "nobody.unprovisioned",
       "email": "nobody.unprovisioned@example.com",
       "emailVerified": true,

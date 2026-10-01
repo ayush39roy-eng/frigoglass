@@ -16,6 +16,7 @@ const RESULT = {
     horizon_weeks: 78,
     current_week: 31,
     trigger_reason: 'manual_recalc',
+    solver_status: null,
     created_at: '2026-01-01T00:00:00Z',
   },
   project_count: 46,

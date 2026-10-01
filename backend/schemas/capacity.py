@@ -1,42 +1,82 @@
 """Read models for the RPD Capacity surface (`docs/PROJECT_AND_STACK.md` §2).
 
-Load figures (`design_load_weeks`/`lab_load_units`) are sourced from the
-active `ScheduleRun`'s snapshot (`ScheduleRunProjectStep`), per Invariants
-I6/I7 ("must reconcile with the Capacity surface"). Capacity *supply*
-figures (`design_capacity_weeks`/`lab_capacity_units`) have no
-`docs/DOMAIN_RULES.md` formula to reconcile against — I6/I7 only define the
-*load* side — so their formula is this task's own documented judgement call;
-see `api/routers/capacity.py`'s module docstring for exactly what they mean
-and why. Per ADR 0002/0003, both are reporting-only figures that do NOT
-imply the scheduler itself applies FTE/efficiency scaling.
+Load figures are sourced from the active `ScheduleRun`'s snapshot
+(`ScheduleRunProjectStep`), per Invariants I6/I7 ("must reconcile with the
+Capacity surface"). Since P9-T03 the *supply* figures are the client's
+formulas (docs/DOMAIN_RULES.md "Capacity supply", ADR 0008), computed by
+`services.capacity_supply` (I17). Per ADR 0002 they are reporting figures:
+FTE and downtime still do not gate week-level booking.
 """
 
 from __future__ import annotations
 
 import uuid
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
-from models.enums import HubName, ProjectCategory
+from models.enums import HubName, LabRegion, ProjectCategory
+
+
+class CapacityChamberRow(BaseModel):
+    """One chamber's supply inputs and derived figures (ADR 0008), 2 dp."""
+
+    chamber_id: uuid.UUID
+    code: str
+    platforms: int
+    efficiency: float
+    working_weeks_per_chamber: float
+    efficient_lab_weeks: float
 
 
 class HubCapacityRow(BaseModel):
+    """One hub's load vs. supply (docs/API_CONTRACT_P9.md §4, ADR 0008).
+
+    Load (Invariants I6/I7), from the active `ScheduleRun`:
+    - `design_load_weeks`: Σ design-kind step durations of this hub's projects.
+    - `lab_load_weeks`: Σ lab-kind step durations × 1.0 over every project of
+      this hub's *lab region*. Region-level, repeated on each hub of the region.
+    - `*_estimated_weeks`: Σ the projects' hand-entered estimates
+      (`Project.estimated_*_weeks`, docs/OPEN_QUESTIONS.md #12). Taken over
+      schedulable projects; lab estimates only count projects with
+      `certification_testing_required`, like the process-derived lab load.
+
+    Supply (DOMAIN_RULES "Capacity supply", `services.capacity_supply`): the
+    `design_*` figures are per hub and the `lab_*` figures are per region.
+    `gap = load − capacity` and `completion_pct = capacity / load`, `None`
+    when load is 0. Year and remaining-year variants both use the
+    process-derived load. Floats are rounded to 2 dp, `remaining_fraction`
+    to 4 dp.
+    """
+
     hub: HubName
-    #: Sum of design-step durations booked to this hub's projects in the
-    #: active ScheduleRun (Invariant I6).
+    lab_region: LabRegion
     design_load_weeks: int
-    #: Sum of `engineer.fte * remaining_weeks` for this hub's engineers
-    #: (FTE-scaled reporting figure, ADR 0002). `remaining_weeks =
-    #: horizon_weeks - current_week`, per the active ScheduleRun's own
-    #: snapshotted horizon.
-    design_capacity_weeks: float
-    #: Sum of (lab-step durations × 0.5) for this hub's lab-region projects
-    #: in the active ScheduleRun (Invariant I7).
-    lab_load_units: float
-    #: Sum of `chamber.max_concurrent * remaining_weeks * chamber.efficiency`
-    #: for chambers in this hub's lab region (efficiency-scaled reporting
-    #: figure, ADR 0003).
-    lab_capacity_units: float
+    design_load_estimated_weeks: float
+    lab_load_weeks: float
+    lab_load_estimated_weeks: float
+    engineer_fte_total: float
+    working_weeks_per_engineer: float
+    design_capacity_year: float
+    design_capacity_remaining: float
+    lab_capacity_year: float
+    lab_capacity_remaining: float
+    design_gap_year: float
+    design_completion_pct_year: float | None
+    design_gap_remaining: float
+    design_completion_pct_remaining: float | None
+    lab_gap_year: float
+    lab_completion_pct_year: float | None
+    lab_gap_remaining: float
+    lab_completion_pct_remaining: float | None
+    remaining_fraction: float
+    chambers: list[CapacityChamberRow]
+    #: Deprecated alias of `design_capacity_remaining`, kept for one release.
+    design_capacity_weeks: float | None = Field(default=None, deprecated=True)
+    #: Deprecated alias of `lab_capacity_remaining`, kept for one release.
+    lab_capacity_units: float | None = Field(default=None, deprecated=True)
+    #: Deprecated. This hub's *own* lab load (× 1.0, ADR 0007). The
+    #: region-level `lab_load_weeks` supersedes it. Kept for one release.
+    lab_load_units: float | None = Field(default=None, deprecated=True)
 
 
 class HubCapacitySummary(BaseModel):
