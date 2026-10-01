@@ -15,7 +15,7 @@ import { PROJECT_TYPE_LABELS, type ProjectType } from '@/types/enums';
 import type { HubTypePipelineRow } from '../api/types';
 import { BoltCard } from '@/components/ui/bolt-card';
 import { PanelSkeleton } from '@/components/ui/panel-skeleton';
-import { CardInfo } from './card-info';
+import { CardInfo } from '@/components/ui/card-info';
 
 /**
  * Deferred chart (2026-10-01). See the matching note in `DashboardPage.tsx`:

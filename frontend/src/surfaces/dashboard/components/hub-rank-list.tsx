@@ -12,7 +12,7 @@ import type { HubTypePipelineRow } from '../api/types';
 import { buildHubTotals } from '../lib/hub-geo';
 import { dashRankBg, dashRankSoftBg, dashRankText } from '../lib/dash-chart-theme';
 import { BoltCard } from '@/components/ui/bolt-card';
-import { CardInfo } from './card-info';
+import { CardInfo } from '@/components/ui/card-info';
 
 /**
  * "Top hubs by project count" — Boltshift spec §5's ranked-list-with-coloured-

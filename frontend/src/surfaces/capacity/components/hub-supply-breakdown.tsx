@@ -18,7 +18,7 @@ import { cn } from '@/lib/utils';
 
 import type { HubCapacityRow } from '../api/types';
 import { pickFigures, type CapacityHorizon, type ResourceFigures, type ResourceKind } from '../lib/pick-figures';
-import { CapacityInfo } from './capacity-info';
+import { CardInfo } from '@/components/ui/card-info';
 import { CapacityStat } from './capacity-stat';
 
 export type { CapacityHorizon } from '../lib/pick-figures';
@@ -96,9 +96,9 @@ function ResourceBlock({
               words, now one affordance per block (client text cleanup,
               2026-10-01). */}
           {note ? (
-            <CapacityInfo label={`About these ${title.toLowerCase()} figures`} className="size-6">
+            <CardInfo label={`About these ${title.toLowerCase()} figures`} className="size-6">
               <p>{note}</p>
-            </CapacityInfo>
+            </CardInfo>
           ) : null}
         </div>
       </header>

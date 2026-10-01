@@ -13,7 +13,7 @@ import { CapacityReportingNotice } from './capacity-reporting-notice';
  *
  * What changed 2026-10-01 (client text cleanup) is only HOW the copy is reached:
  * it moved from a permanently-rendered four-paragraph `<aside>` landmark into a
- * keyboard-reachable `<CapacityInfo>` popover, so each assertion now opens the
+ * keyboard-reachable `<CardInfo>` popover, so each assertion now opens the
  * disclosure first. The asserted words are unchanged.
  */
 describe('CapacityReportingNotice', () => {

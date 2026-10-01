@@ -23,7 +23,7 @@ import { PROJECT_PRIORITIES, type ProjectPriority } from '@/types/enums';
 
 import type { CompletingWithinYearRow } from '../api/types';
 import { outcomeOf, type OutcomeBucket } from '../lib/outcome';
-import { CardInfo } from './card-info';
+import { CardInfo } from '@/components/ui/card-info';
 
 /**
  * Portfolio analytics (2026-10-01, client ask: "lots of graphs, fascinating").

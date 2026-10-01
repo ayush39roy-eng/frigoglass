@@ -34,7 +34,7 @@ import {
 import { useDashboardProjects } from '../hooks/use-dashboard';
 import type { ProjectFilterParams, ProjectFilterRow } from '../api/types';
 import { BoltCard } from '@/components/ui/bolt-card';
-import { CardInfo } from './card-info';
+import { CardInfo } from '@/components/ui/card-info';
 import { CategoryTag } from '@/components/ui/category-tag';
 /**
  * Deferred card view (2026-10-01). `project-card-grid.tsx` is the Dashboard's one

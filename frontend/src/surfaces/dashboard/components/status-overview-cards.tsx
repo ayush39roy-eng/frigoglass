@@ -5,7 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { formatInteger } from '@/lib/format';
 
 import type { StatusOverview } from '../api/types';
-import { CardInfo } from './card-info';
+import { CardInfo } from '@/components/ui/card-info';
 import { StatCard } from './stat-card';
 
 /**

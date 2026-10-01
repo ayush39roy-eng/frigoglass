@@ -8,7 +8,7 @@ import { useCountUp } from '@/lib/use-count-up';
 import { useMotionTokens } from '@/lib/motion';
 
 import type { CompletingWithinYear } from '../api/types';
-import { CardInfo } from './card-info';
+import { CardInfo } from '@/components/ui/card-info';
 
 /**
  * Delivery-rate gauge (Bold Blocks, 2026-10-01) — the segmented half-ring from

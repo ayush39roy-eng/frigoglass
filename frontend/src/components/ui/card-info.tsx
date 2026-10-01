@@ -5,23 +5,38 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { cn } from '@/lib/utils';
 
 /**
- * THE INFO AFFORDANCE — where the Dashboard's explanatory prose now lives.
+ * THE INFO AFFORDANCE — where a surface's explanatory prose lives.
  *
  * Client feedback, 2026-10-01: "remove all free text… everything should be
  * clean, no extra or unwanted text except the heading and the details one, and
- * all text should be part of something — into a card or box." The Dashboard had
- * ~6 paragraphs of `<p className="text-2xs text-text-muted">` body copy sitting
- * loose under card titles and chart figures.
+ * all text should be part of something — into a card or box." Both the Dashboard
+ * and Capacity carried paragraphs of loose `<p className="text-2xs">` body copy
+ * under card titles and between card headers and their figures.
  *
  * None of that copy could simply be DELETED: most of it is domain-critical
- * provenance — the Invariant I9 "not recomputed in your browser" statement, the
- * "source: live project registry vs. active schedule run" distinction (the two
- * senses of "spillover" collide if that distinction is lost, see
- * `pipeline-panel.tsx`), and the counting-rule definitions straight out of
- * `DOMAIN_RULES.md`. So it moved HERE: a 24px icon button in the owning card's
- * header, opening a popover that holds the same words verbatim.
+ * provenance and framing — the Invariant I9 "not recomputed in your browser"
+ * statement, the "source: live project registry vs. active schedule run"
+ * distinction (the two senses of "spillover" collide if that is lost, see
+ * `pipeline-panel.tsx`), the Load-vs-Capacity distinction (I6 / I7, ADR 0007 /
+ * 0008) and the "the scheduler applies NEITHER FTE NOR chamber downtime when it
+ * books" caveat (ADR 0002 / 0008 — without it, "load > capacity" misreads as "the
+ * scheduler overbooked someone", which is false). So it moved HERE: an icon
+ * button in the owning card's header, opening a popover holding the same words
+ * verbatim.
  *
- * Design rules this encodes:
+ * ## Provenance of this file (2026-10-01)
+ *
+ * Two parallel tasks built this component independently in the same hour, from
+ * the same client instruction, with deliberately identical prop APIs:
+ * `surfaces/dashboard/components/card-info.tsx` and
+ * `surfaces/capacity/components/capacity-info.tsx` (the latter's own doc comment
+ * recorded the duplication as knowing debt and asked for exactly this
+ * convergence once both tasks had landed). Both have now been deleted in favour
+ * of this shared module; the Capacity call sites' `<CapacityInfo>` is this
+ * component under its original name. Behaviour, markup and class list are
+ * byte-identical to both originals — this is a move, not a redesign.
+ *
+ * ## Design rules this encodes
  *  - It is a real `<button>` inside a Radix `<Popover>`, so it is keyboard
  *    reachable (Tab), dismissible (Escape), focus-managed, and announced as a
  *    dialog with an accessible name — the prose is still fully reachable by
@@ -35,8 +50,8 @@ import { cn } from '@/lib/utils';
  *    CSS durations. Same reasoning as `app-sidebar.tsx`'s CSS-transition active
  *    bar (docs/MEMORY.md 2026-10-01).
  *  - Anything that is a short, stable FACT (run version, solver, computed-at)
- *    does NOT belong in here — that became a chip
- *    (`schedule-run-provenance.tsx`). This is for sentences only.
+ *    does NOT belong in here — that is a chip (`run-provenance-chips.tsx`).
+ *    This is for sentences only.
  */
 
 export interface CardInfoProps {

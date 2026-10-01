@@ -3,7 +3,7 @@ import { screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
 import { renderWithProviders } from '@/test/render';
-import { CardInfo } from './card-info';
+import { CardInfo } from '@/components/ui/card-info';
 
 describe('CardInfo', () => {
   it('exposes the prose behind a named, keyboard-reachable button', async () => {

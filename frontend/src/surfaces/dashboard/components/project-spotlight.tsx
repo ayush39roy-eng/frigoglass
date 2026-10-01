@@ -13,7 +13,7 @@ import { cn } from '@/lib/utils';
 
 import type { CompletingWithinYearRow } from '../api/types';
 import { OUTCOME_STYLE, outcomeOf } from '../lib/outcome';
-import { CardInfo } from './card-info';
+import { CardInfo } from '@/components/ui/card-info';
 
 /**
  * PROJECT SPOTLIGHT — the client's "course-design-cards" reference pattern,

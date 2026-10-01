@@ -21,7 +21,7 @@ import { cn } from '@/lib/utils';
 import type { CompletingWithinYear } from '../api/types';
 import { OUTCOME_STYLE, outcomeOf, type OutcomeBucket } from '../lib/outcome';
 import { useRevealOnce } from '../lib/use-reveal-once';
-import { CardInfo } from './card-info';
+import { CardInfo } from '@/components/ui/card-info';
 
 /**
  * COMPLETION PROFILE — the client's "Incident Report" reference card (multi-series

@@ -6,7 +6,7 @@ import { CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { EmptyState } from '@/components/shared/empty-state';
 
 import type { ScheduleRunSummary, UtilizationMatrix } from '../api/types';
-import { CapacityInfo } from './capacity-info';
+import { CardInfo } from '@/components/ui/card-info';
 import { ChamberUtilizationHeatmap } from './chamber-utilization-heatmap';
 import { EngineerUtilizationPlaceholder } from './engineer-utilization-placeholder';
 
@@ -41,7 +41,7 @@ export function ChamberUtilizationPanel({
               {runBadge}
             </Badge>
           ) : null}
-          <CapacityInfo label="What this matrix shows">
+          <CardInfo label="What this matrix shows">
             <p>
               Concurrent project count per chamber per week, verbatim from the active schedule run.
             </p>
@@ -51,7 +51,7 @@ export function ChamberUtilizationPanel({
               supply-reporting inputs and do not appear here. A cell over max means the booking
               gate was breached by a frozen or anchored step &mdash; see the legend.
             </p>
-          </CapacityInfo>
+          </CardInfo>
         </div>
       </CardHeader>
       <CardContent className="space-y-5">

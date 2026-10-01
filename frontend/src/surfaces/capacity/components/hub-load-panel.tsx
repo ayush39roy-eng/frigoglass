@@ -7,10 +7,10 @@ import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { CURRENT_WEEK, WITHIN_YEAR_WEEK } from '@/lib/domain-constants';
 
 import type { HubCapacitySummary, ScheduleRunSummary } from '../api/types';
-import { CapacityInfo } from './capacity-info';
+import { CardInfo } from '@/components/ui/card-info';
 import { HubLoadChart } from './hub-load-chart';
 import { HubSupplyBreakdown, type CapacityHorizon } from './hub-supply-breakdown';
-import { RunProvenanceChips } from './run-provenance-chips';
+import { RunProvenanceChips } from '@/components/ui/run-provenance-chips';
 
 /**
  * "Load-vs-capacity per hub" (`docs/PROJECT_AND_STACK.md` §2), presented the way
@@ -31,7 +31,7 @@ import { RunProvenanceChips } from './run-provenance-chips';
  * card's header and its first figure are gone from the body. The three facts
  * they carried are now chips in the header (`<RunProvenanceChips>`, which keeps
  * the full sentence as `sr-only` text) and the definitions are in a
- * `<CapacityInfo>` popover under the same accessible name. No copy was deleted.
+ * `<CardInfo>` popover under the same accessible name. No copy was deleted.
  */
 export interface HubLoadPanelProps {
   data: HubCapacitySummary;
@@ -54,9 +54,10 @@ export function HubLoadPanel({ data, activeRun }: HubLoadPanelProps): React.JSX.
               scheduleRunVersion={data.schedule_run_version}
               activeRun={activeRun}
               leadIn="Load figures in this card are read directly from"
+              srTail="Computed server-side and shown to two decimals (Invariant I17); none of it is recalculated in your browser."
             />
           ) : null}
-          <CapacityInfo label="How load and capacity are defined">
+          <CardInfo label="How load and capacity are defined">
             <p>
               <strong className="text-text">Design load</strong> = Σ design-step lead times for
               the hub&rsquo;s projects; <strong className="text-text">lab load</strong> = Σ
@@ -76,7 +77,7 @@ export function HubLoadPanel({ data, activeRun }: HubLoadPanelProps): React.JSX.
               All of it is computed server-side and shown to two decimals (Invariant I17); none of
               it is recalculated in your browser.
             </p>
-          </CapacityInfo>
+          </CardInfo>
           {data.has_active_schedule_run ? (
             <ToggleGroup
               type="single"

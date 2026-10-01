@@ -54,6 +54,27 @@ if (!window.ResizeObserver) {
     disconnect() {}
   };
 }
+// jsdom has no IntersectionObserver either, and framer-motion's `whileInView`
+// (`portfolio-analytics.tsx`'s hub-outcome bars) calls it on mount — without this
+// stub the component throws `ReferenceError: IntersectionObserver is not defined`
+// during commit, which is what blocked that component from ever getting tests.
+// A stub that never fires an intersection is the right shape here: `whileInView`
+// animations simply stay at their `initial` value, which is what a non-visual
+// assertion wants anyway. Added 2026-10-01 alongside the first tests for that
+// component.
+if (!window.IntersectionObserver) {
+  window.IntersectionObserver = class {
+    readonly root = null;
+    readonly rootMargin = '';
+    readonly thresholds: readonly number[] = [];
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+    takeRecords(): IntersectionObserverEntry[] {
+      return [];
+    }
+  } as unknown as typeof IntersectionObserver;
+}
 
 
 // No unit test should hit the network. Surfaces that fetch mock `@/lib/api/*`

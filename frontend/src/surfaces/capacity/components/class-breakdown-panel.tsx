@@ -16,7 +16,7 @@ import {
 import { formatInteger } from '@/lib/format';
 
 import type { ClassBreakdown, ClassBreakdownRow } from '../api/types';
-import { CapacityInfo } from './capacity-info';
+import { CardInfo } from '@/components/ui/card-info';
 import { ClassBreakdownChart } from './class-breakdown-chart';
 
 /**
@@ -46,7 +46,7 @@ export function ClassBreakdownPanel({ data }: ClassBreakdownPanelProps): React.J
               {runBadge}
             </Badge>
           ) : null}
-          <CapacityInfo label="How deliverable and left out are defined">
+          <CardInfo label="How deliverable and left out are defined">
             <p>
               <strong className="text-text">Deliverable</strong> = scheduled and not left out.{' '}
               <strong className="text-text">Left out</strong> = no feasible window before the
@@ -59,7 +59,7 @@ export function ClassBreakdownPanel({ data }: ClassBreakdownPanelProps): React.J
                 : ` v${String(data.schedule_run_version)}`}
               . Not recomputed in the browser.
             </p>
-          </CapacityInfo>
+          </CardInfo>
         </div>
       </CardHeader>
       <CardContent className="space-y-4">

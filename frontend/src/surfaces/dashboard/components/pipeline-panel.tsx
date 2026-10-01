@@ -9,7 +9,7 @@ import { DonutChart } from '@/components/ui/donut-chart';
 import type { CompletingWithinYear, PipelineTotals } from '../api/types';
 import { BarChart, type BarDatum } from './bar-chart';
 import { BoltCard } from '@/components/ui/bolt-card';
-import { CardInfo } from './card-info';
+import { CardInfo } from '@/components/ui/card-info';
 
 /**
  * Pipeline totals (spillover / newly registered / total) + the pipeline-vs-

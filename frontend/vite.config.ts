@@ -64,6 +64,29 @@ export default defineConfig({
     // rather than leaving every future session to keep rediscovering and manually
     // working around the same flake.
     testTimeout: 10_000,
+    // 2026-10-01 (flaky-suite root cause). Vitest's default is one worker per
+    // logical core. That is the wrong default for THIS suite: every worker builds
+    // its own jsdom, and ~130 jsdom environments plus React/Radix/TanStack module
+    // graphs on a 10-core / 16 GB dev box — which is also running the Vite dev
+    // server, the FastAPI backend and Postgres — oversubscribes CPU and memory
+    // badly enough that individual tests inflate ~7x. Measured: a
+    // `project-form.test.tsx` case that takes 1.3s alone blew past the 10s
+    // `testTimeout` under full parallelism, and `session-gate.test.tsx`'s first
+    // test went 1.5s → >10s. That is contention, not a hang or a bad assertion,
+    // which is why it never reproduced for a single file in isolation and hit a
+    // different, unrelated file on every run.
+    //
+    // Capping at half the cores roughly HALVES cumulative per-test wall time
+    // (`tests` 274-429s → 209s, `environment` 294-360s → 135s on identical
+    // hardware) for essentially the same total duration (~92-120s → ~102s),
+    // because the suite was thrashing rather than working. A percentage, not a
+    // literal, so CI hardware with a different core count scales with it.
+    //
+    // This is a complement to, not a substitute for, the real fix on the app
+    // side: the Dashboard's Recharts/analytics panels are now `React.lazy` (see
+    // `surfaces/dashboard/DashboardPage.tsx`), so rendering the app shell no
+    // longer evaluates ~353 KB of charting code that nothing on screen needs.
+    maxWorkers: '50%',
     // P4-T09 (qa-inspector): Playwright's own E2E specs live under `e2e/*.spec.ts`
     // (its default `testDir`) — Vitest's default include glob would otherwise also
     // pick them up (both use `*.spec.ts`) and fail to import `@playwright/test`

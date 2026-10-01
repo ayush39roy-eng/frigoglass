@@ -1,6 +1,6 @@
 import * as React from 'react';
 
-import { CapacityInfo } from './capacity-info';
+import { CardInfo } from '@/components/ui/card-info';
 
 /**
  * The honest-framing callout the Capacity surface must carry (P4-T03 hard
@@ -19,7 +19,7 @@ import { CapacityInfo } from './capacity-info';
  * block of body copy in the app, sitting between the page title and any data.
  * The client asked for "page title, one subtitle line, then cards", with every
  * other piece of text "part of something". All three paragraphs survive
- * VERBATIM, now inside a `<CapacityInfo>` popover whose trigger lives in the
+ * VERBATIM, now inside a `<CardInfo>` popover whose trigger lives in the
  * PageHeader's actions row beside the Download button — i.e. still on the page
  * unconditionally (P4-T03's "must carry" is about the surface always offering
  * this framing, and the affordance renders for every query state, including
@@ -38,7 +38,7 @@ import { CapacityInfo } from './capacity-info';
  */
 export function CapacityReportingNotice(): React.JSX.Element {
   return (
-    <CapacityInfo label="How to read these figures">
+    <CardInfo label="How to read these figures">
       <p>
         <span className="font-medium text-text">Load</span> (engineer-weeks, chamber-weeks) is
         taken verbatim from the active schedule run&rsquo;s booked steps &mdash; the sum of
@@ -63,6 +63,6 @@ export function CapacityReportingNotice(): React.JSX.Element {
         scheduler will use it. The two figures are computed different ways and are shown side by
         side for planning context, exactly as in the client&rsquo;s workbook.
       </p>
-    </CapacityInfo>
+    </CardInfo>
   );
 }

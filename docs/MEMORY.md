@@ -20357,3 +20357,58 @@ Users, Timeline and Matrix (:5199 e2e preview against :8010), with zero console 
 mistakenly started in the repo root) could not be deleted from this session; it is untracked and safe to remove.
 
 **Gate result:** N/A — presentation-only.
+
+---
+
+## [2026-10-01] Sign-in with test logins, real sign-out, Profile & settings page
+
+**Requested by:** project owner — "make the login page and login logic for now, provide test logins,
+add images and settings options on profile".
+
+**Login logic (frontend only — no backend change).**
+- Dev mode now REQUIRES an explicit sign-in. Before this, a dev-mode backend ran every header-less
+  request as `frank.admin@example.com`, so `/login` was never shown. `SessionGate` now redirects to
+  `/login` when `/me` says `dev_mode` and no test user has been chosen. Production (OIDC) is unchanged.
+- `/login` dev path: an email + password form checked by `lib/auth/test-logins.ts` against
+  `GET /me/dev-users` and the shared test password **`rpd-test-2026`**. The error message is the same
+  for an unknown email and a wrong password. A "Test logins" panel lists one account per role and
+  fills the form on click, with a copy-password chip. "Remember me" keeps the choice in `localStorage`
+  instead of `sessionStorage` (`lib/api/dev-user.ts`).
+- **This is not security and is documented as such:** dev mode already lets any request act as any
+  seeded user via `X-Dev-User-Email`, the password never leaves the browser, and none of this runs
+  outside dev mode. Real authentication remains OIDC (ADR 0013). If the client wants real local
+  passwords, that is a backend task (hashing, sessions/tokens, lockout), not this.
+- Sign-out works (`lib/auth/use-sign-out.ts`): it clears the stored user and the query cache, resets
+  the session and goes to `/login`. Before this the header sign-out button had no handler.
+- After sign-in the user lands on their chosen start page if their role can read it, otherwise the
+  Dashboard (`resolveStartPage`).
+
+**Login page design.** A split layout: a sticky blue brand panel with a bundled SVG cooler illustration
+(`components/brand/cooler-illustration.tsx`; no external images, since the app is on-prem and CDNs
+are blocked) and three animated highlight chips; the form on the right. This replaced the other
+session's `GlowPage` wrapper on this page only.
+
+**Profile & settings (`/profile`, any signed-in user; header avatar → account menu).**
+- Profile photo: upload, then centre-crop and downscale to 256px JPEG in the browser. It is stored
+  in `localStorage` per email (`stores/preferences.ts`) and NEVER sent to the server (GDPR, OQ #8). It
+  replaces the initials in the header (`components/session/user-avatar.tsx`).
+- Appearance: theme (Light / Dark / System via ThemeProvider) and Reduce motion. Reduce motion feeds
+  `usePrefersReducedMotion` and sets `<html data-reduce-motion>`, which zeroes the CSS durations.
+- Preferences: start page after sign-in.
+- Read-only identity, hub scope and engineer link, plus a per-surface View/Edit/No-access grid
+  from `/me` permissions, and a Session card with sign-out.
+
+**Tests:** new `lib/auth/test-logins.test.ts` (5); `login.test.tsx` rewritten for the form flow, plus a
+wrong-password case; `session-gate.test.tsx` gained a dev-mode-redirect case and sets a test user
+where needed. `asyncUtilTimeout` raised 5s → 8s (`src/test/setup.ts`), because the grown Dashboard
+chunk's cold lazy-load crossed 5s under full parallelism (machine load average was 40–67 during this
+work).
+
+**Verification:** `tsc` clean; eslint 0 errors (6 pre-existing warnings); vitest 128 files / 679 pass;
+bundle PASS, 177.7 KB gzip (+7.8 KB, mostly the Radix dropdown the account menu now pulls into the
+always-loaded header). Live flow driven in Playwright against :5199/:8010: `/` → `/login` →
+wrong password refused → test login → `/` → account menu → profile → photo upload → sign out →
+`/login`, with zero console errors. Login checked in light and dark.
+
+**Gate result:** N/A. A security-auditor review is advisable before any environment with
+`RPD_DEV_MODE=true` is exposed beyond developers.
