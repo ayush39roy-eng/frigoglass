@@ -17,9 +17,7 @@ import {
   useActiveScheduleRun,
 } from './hooks/use-dashboard';
 import { AccessNotice } from './components/access-notice';
-import { CompletionProfileCard } from './components/completion-profile-card';
 import { HubRankList } from './components/hub-rank-list';
-import { ProjectSpotlight } from './components/project-spotlight';
 import { HubTypePipelineTable } from './components/hub-type-pipeline-table';
 import { PipelinePanel } from './components/pipeline-panel';
 import { ProjectBreakdown } from './components/project-breakdown';
@@ -28,8 +26,42 @@ import { StatusOverviewCards } from './components/status-overview-cards';
 import { WithinYearKpis, WithinYearTable } from './components/within-year-panel';
 import { DeliveryGaugeCard } from './components/delivery-gauge-card';
 import { PlanningClockCard } from './components/planning-clock-card';
-import { PortfolioAnalytics } from './components/portfolio-analytics';
 import { Button } from '@/components/ui/button';
+import { PanelSkeleton } from '@/components/ui/panel-skeleton';
+
+/**
+ * Deferred analytics panels (2026-10-01).
+ *
+ * `completion-profile-card.tsx` and `portfolio-analytics.tsx` are the Dashboard's
+ * only two Recharts consumers, and `project-spotlight.tsx` is its largest
+ * non-chart panel. Importing them at module scope made Recharts (≈353 KB raw /
+ * ≈103 KB gzip — by far the biggest third-party module in the app) a STATIC
+ * import of the Dashboard route chunk, so the browser downloaded and executed all
+ * of it before the page could paint, and so did every test that merely renders the
+ * app shell at "/" — even when no chart ends up on screen at all (no active
+ * schedule run, a 403, or an unresolved query all render zero charts).
+ *
+ * `React.lazy` moves each one behind its own `import()`, so the chart code is
+ * fetched only once the data that needs it has actually arrived. The fallback is
+ * the shared skeleton (`ui-ux-pro-max`: skeletons, never spinners, for
+ * above-the-fold regions), sized to the panel it replaces so the layout does not
+ * jolt when the real panel swaps in.
+ *
+ * `DeliveryGaugeCard` and `PlanningClockCard` stay EAGER on purpose: they are
+ * hand-built SVG/CSS, ~5 KB and ~4 KB of source with no dependency beyond
+ * framer-motion and lucide (both already in the chunk), and one or the other is on
+ * screen in every state of this page. Splitting them would buy nothing and cost an
+ * extra request on the common path.
+ */
+const CompletionProfileCard = React.lazy(async () => ({
+  default: (await import('./components/completion-profile-card')).CompletionProfileCard,
+}));
+const PortfolioAnalytics = React.lazy(async () => ({
+  default: (await import('./components/portfolio-analytics')).PortfolioAnalytics,
+}));
+const ProjectSpotlight = React.lazy(async () => ({
+  default: (await import('./components/project-spotlight')).ProjectSpotlight,
+}));
 
 const DASHBOARD_SURFACE = SURFACES.find((s) => s.path === '/');
 
@@ -173,10 +205,12 @@ export default function DashboardPage(): React.JSX.Element {
               <div className="grid gap-gutter xl:grid-cols-12">
                 <div className="min-w-0 xl:col-span-8 [&>*]:h-full">
                   {withinYear.data?.has_active_schedule_run ? (
-                    <CompletionProfileCard
-                      data={withinYear.data}
-                      horizonWeeks={activeRun.data?.horizon_weeks ?? null}
-                    />
+                    <React.Suspense fallback={<PanelSkeleton height="h-[22rem]" />}>
+                      <CompletionProfileCard
+                        data={withinYear.data}
+                        horizonWeeks={activeRun.data?.horizon_weeks ?? null}
+                      />
+                    </React.Suspense>
                   ) : null}
                 </div>
                 <div className="min-w-0 xl:col-span-4 [&>*]:h-full">
@@ -220,7 +254,9 @@ export default function DashboardPage(): React.JSX.Element {
 
             {withinYear.data?.has_active_schedule_run && withinYear.data.rows.length > 0 ? (
               <StaggerSection>
-                <PortfolioAnalytics rows={withinYear.data.rows} />
+                <React.Suspense fallback={<PanelSkeleton height="h-[24rem]" />}>
+                  <PortfolioAnalytics rows={withinYear.data.rows} />
+                </React.Suspense>
               </StaggerSection>
             ) : null}
 
@@ -236,10 +272,12 @@ export default function DashboardPage(): React.JSX.Element {
 
             {withinYear.data && withinYear.data.rows.length > 0 ? (
               <StaggerSection>
-                <ProjectSpotlight
-                  rows={withinYear.data.rows}
-                  horizonWeeks={activeRun.data?.horizon_weeks ?? null}
-                />
+                <React.Suspense fallback={<PanelSkeleton height="h-[20rem]" />}>
+                  <ProjectSpotlight
+                    rows={withinYear.data.rows}
+                    horizonWeeks={activeRun.data?.horizon_weeks ?? null}
+                  />
+                </React.Suspense>
               </StaggerSection>
             ) : null}
 

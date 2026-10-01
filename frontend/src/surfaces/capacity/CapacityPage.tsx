@@ -8,8 +8,10 @@ import { DownloadButton } from '@/components/shared/download-button';
 import { SectionBoundary } from '@/components/shared/section-boundary';
 import { SURFACES } from '@/app/nav';
 import { ApiError } from '@/lib/api/client';
+import { formatDecimal } from '@/lib/format';
 import { useMotionTokens } from '@/lib/motion';
 
+import { portfolioTotals } from './lib/portfolio-totals';
 import { AccessNotice } from './components/access-notice';
 import { CapacityReportingNotice } from './components/capacity-reporting-notice';
 import { ChamberUtilizationPanel } from './components/chamber-utilization-panel';
@@ -76,6 +78,19 @@ export default function CapacityPage(): React.JSX.Element {
   const denied = authKind([hubLoad.error, classBreakdown.error, utilization.error]);
   const motionTokens = useMotionTokens();
 
+  /**
+   * Headline totals for the KPI row. Aggregation only — every term is a field
+   * the API already computed, nothing is rounded, and lab figures are counted
+   * once per LAB REGION rather than once per hub row (they repeat across hubs of
+   * the same region; a naive `rows.reduce` nearly triples them). See
+   * `lib/portfolio-totals.ts` for the full reasoning and the I17 note.
+   */
+  const hubLoadRows = hubLoad.data?.rows;
+  const totals = React.useMemo(
+    () => (hubLoadRows ? portfolioTotals(hubLoadRows) : null),
+    [hubLoadRows],
+  );
+
   return (
     <>
       <PageHeader
@@ -112,24 +127,26 @@ export default function CapacityPage(): React.JSX.Element {
                 variants: { show: { transition: { staggerChildren: 0.08 } } },
               })}
         >
-          {hubLoad.data?.has_active_schedule_run && classBreakdown.data ? (
+          {hubLoad.data?.has_active_schedule_run && classBreakdown.data && totals ? (
             <StaggerSection>
               <div className="grid gap-gutter lg:grid-cols-[1fr_1fr_1.1fr]">
                 <MeterCard
                   label="Design load"
-                  value={Math.round(hubLoad.data.rows.reduce((n, r) => n + r.design_load_weeks, 0))}
-                  capacity={Math.round(hubLoad.data.rows.reduce((n, r) => n + r.design_capacity_year, 0))}
+                  value={totals.designLoad}
+                  capacity={totals.designCapacity}
                   unit="engineer-wks"
                   icon={PenTool}
                   accent="primary"
+                  formatValue={formatDecimal}
                 />
                 <MeterCard
                   label="Lab load"
-                  value={Math.round(hubLoad.data.rows.reduce((n, r) => n + r.lab_load_weeks, 0))}
-                  capacity={Math.round(hubLoad.data.rows.reduce((n, r) => n + r.lab_capacity_year, 0))}
+                  value={totals.labLoad}
+                  capacity={totals.labCapacity}
                   unit="chamber-wks"
                   icon={FlaskConical}
                   accent="success"
+                  formatValue={formatDecimal}
                 />
                 <StatStrip
                   ariaLabel="Deliverable versus left-out projects"

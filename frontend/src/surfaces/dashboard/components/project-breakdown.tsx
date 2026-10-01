@@ -19,6 +19,7 @@ import { ErrorState } from '@/components/shared/error-state';
 import { PriorityBandPill } from '@/components/shared/priority-band-pill';
 import { ProjectStatusBadge } from '@/components/shared/project-status-badge';
 import { Skeleton } from '@/components/ui/skeleton';
+import { PanelSkeleton } from '@/components/ui/panel-skeleton';
 import { formatInteger } from '@/lib/format';
 import { useHubs } from '@/lib/api/reference';
 import {
@@ -35,7 +36,17 @@ import type { ProjectFilterParams, ProjectFilterRow } from '../api/types';
 import { BoltCard } from '@/components/ui/bolt-card';
 import { CardInfo } from './card-info';
 import { CategoryTag } from '@/components/ui/category-tag';
-import { ProjectCardGrid } from './project-card-grid';
+/**
+ * Deferred card view (2026-10-01). `project-card-grid.tsx` is the Dashboard's one
+ * CROSS-SURFACE import — it embeds `@/surfaces/project-workspace/components/
+ * ask-agent-panel`, which drags the Project Workspace's hooks and API types into
+ * the Dashboard chunk. The table is the default view (`useState('table')` below),
+ * so a static import made every Dashboard visitor pay for a panel most of them
+ * never open. `React.lazy` defers it to the moment the Cards tab is chosen.
+ */
+const ProjectCardGrid = React.lazy(async () => ({
+  default: (await import('./project-card-grid')).ProjectCardGrid,
+}));
 import { VirtualDataTable, type VirtualColumn } from './virtual-data-table';
 import { EntityCell, RowActions } from '@/components/ui/table-cells';
 import { categoricalRankSoftBg, categoricalRankText, categoryRank } from '@/lib/categorical-palette';
@@ -296,7 +307,9 @@ export function ProjectBreakdown(): React.JSX.Element {
             }
           />
         ) : view === 'cards' ? (
-          <ProjectCardGrid rows={query.data.rows} />
+          <React.Suspense fallback={<PanelSkeleton height="h-[28rem]" />}>
+            <ProjectCardGrid rows={query.data.rows} />
+          </React.Suspense>
         ) : (
           <VirtualDataTable
             rows={query.data.rows}

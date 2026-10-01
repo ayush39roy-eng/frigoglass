@@ -102,6 +102,17 @@ export interface MeterCardProps {
   unit: string;
   icon: React.ComponentType<{ className?: string }>;
   accent?: StatAccent;
+  /**
+   * Formats `value` and `capacity`. Defaults to `formatInteger`, which is right
+   * for counts — but NOT for the Capacity surface, whose supply figures are
+   * specified to two decimals (ADR 0008 / Invariant I17) and are printed with
+   * `formatDecimal` by every card and table beneath this row. Rounding here
+   * would make the headline silently disagree with the rows a user sums by eye,
+   * which is the same frontend-side distortion the 2026-10-01 Capacity reskin
+   * declined `useCountUp` over. Same prop name and default rationale as
+   * `surfaces/capacity/components/capacity-stat.tsx`'s own `formatValue`.
+   */
+  formatValue?: (value: number) => string;
 }
 
 /** A load figure against its capacity, with a thick animated meter. */
@@ -112,6 +123,7 @@ export function MeterCard({
   unit,
   icon: Icon,
   accent = 'primary',
+  formatValue = formatInteger,
 }: MeterCardProps): React.JSX.Element {
   const { reduced } = useMotionTokens();
   const pct = capacity > 0 ? Math.round((value / capacity) * 100) : 0;
@@ -138,9 +150,9 @@ export function MeterCard({
         </span>
       </div>
       <p className="flex items-baseline gap-s2" data-numeric="">
-        <span className="font-display text-4xl font-extrabold tabular-nums text-text">{formatInteger(value)}</span>
+        <span className="font-display text-4xl font-extrabold tabular-nums text-text">{formatValue(value)}</span>
         <span className="text-sm font-semibold text-text-muted">
-          / {formatInteger(capacity)} {unit}
+          / {formatValue(capacity)} {unit}
         </span>
       </p>
       <div className="relative h-4 overflow-hidden rounded-full border-2 border-border bg-surface-sunken">

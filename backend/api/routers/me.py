@@ -93,8 +93,14 @@ async def get_me(
 @router.get("/dev-users", response_model=list[DevUser])
 async def list_dev_users(
     db: AsyncSession = Depends(get_db),
-    principal: Principal = Depends(get_current_principal),
 ) -> list[DevUser]:
+    # Deliberately no `get_current_principal` dependency: this is the one
+    # endpoint the login page calls BEFORE any session exists, to decide
+    # whether to show the dev picker or the SSO button (module docstring).
+    # Requiring a principal here would 401 on a request with no Authorization
+    # header before this line ever ran — which is exactly the frontend's
+    # actual unauthenticated call — masking the intended "404 outside dev
+    # mode" behaviour.
     if not is_dev_mode():
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not Found")
 

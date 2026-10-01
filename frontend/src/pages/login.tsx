@@ -90,7 +90,7 @@ export default function LoginPage(): React.JSX.Element {
 
   return (
     <div className="min-h-screen bg-canvas p-s4 lg:p-s6">
-      <div className="mx-auto grid min-h-[calc(100vh-3rem)] max-w-7xl gap-s6 lg:grid-cols-[1.05fr_1fr]">
+      <div className="mx-auto grid min-h-[calc(100vh-3rem)] max-w-7xl items-start gap-s6 lg:grid-cols-[1.05fr_1fr]">
         <BrandPanel />
         <main className="flex items-center justify-center py-s6">
           <div className="w-full max-w-md space-y-s6">
@@ -134,7 +134,7 @@ function BrandPanel(): React.JSX.Element {
   const { reduced } = useMotionTokens();
   return (
     <aside
-      className="relative hidden overflow-hidden rounded-[2rem] p-s8 text-white shadow-feature lg:flex lg:flex-col"
+      className="relative hidden overflow-hidden rounded-[2rem] p-s8 text-white shadow-feature lg:sticky lg:top-6 lg:flex lg:h-[calc(100vh-3rem)] lg:flex-col"
       style={{ backgroundImage: 'var(--gradient-dash-primary)' }}
     >
       <span aria-hidden="true" className="bg-dots pointer-events-none absolute inset-0 text-white/[0.12]" />
@@ -147,9 +147,9 @@ function BrandPanel(): React.JSX.Element {
         </h2>
       </div>
 
-      <div className="relative mt-s6 flex flex-1 items-end justify-center gap-s6">
+      <div className="relative mt-s6 flex min-h-0 flex-1 items-center justify-center gap-s8">
         <motion.div
-          className="w-56 xl:w-64"
+          className="w-52 shrink-0 xl:w-60 [&_svg]:max-h-[60vh]"
           {...(reduced
             ? {}
             : {
@@ -160,7 +160,7 @@ function BrandPanel(): React.JSX.Element {
         >
           <CoolerIllustration />
         </motion.div>
-        <ul className="mb-s8 space-y-s3">
+        <ul className="space-y-s3">
           {HIGHLIGHTS.map((h, i) => (
             <motion.li
               key={h.label}

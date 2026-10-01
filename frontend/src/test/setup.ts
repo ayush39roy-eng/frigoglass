@@ -17,7 +17,10 @@ import '@testing-library/jest-dom/vitest';
 // contention alone — not a real hang, not a broken assertion. Widening this
 // globally (test-infra-only) is the correct fix so `pnpm test` is reliably green
 // unscoped, matching this task's acceptance criterion.
-configure({ asyncUtilTimeout: 5_000 });
+// 2026-10-01: raised 5s → 8s. The Dashboard route chunk grew (portfolio analytics,
+// KPI cards), so its first cold transform under full parallelism now lands just
+// past 5s. Still below `testTimeout` (10s), so a real hang still fails.
+configure({ asyncUtilTimeout: 8_000 });
 
 // jsdom has no matchMedia — the theme provider and Framer Motion's useReducedMotion both use it.
 if (!window.matchMedia) {

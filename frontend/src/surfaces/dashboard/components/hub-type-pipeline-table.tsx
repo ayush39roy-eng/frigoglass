@@ -14,8 +14,20 @@ import { PROJECT_TYPE_LABELS, type ProjectType } from '@/types/enums';
 
 import type { HubTypePipelineRow } from '../api/types';
 import { BoltCard } from '@/components/ui/bolt-card';
+import { PanelSkeleton } from '@/components/ui/panel-skeleton';
 import { CardInfo } from './card-info';
-import { HubTypePipelineChart } from './hub-type-pipeline-chart';
+
+/**
+ * Deferred chart (2026-10-01). See the matching note in `DashboardPage.tsx`:
+ * the chart is this file's only Recharts dependency, and a static import here
+ * pulled all of Recharts into the Dashboard route chunk — and into every test
+ * that renders the app shell at "/" — before the surface could paint. The table
+ * below states the identical numbers, so it renders immediately and the chart
+ * swaps in over a skeleton of its own height.
+ */
+const HubTypePipelineChart = React.lazy(async () => ({
+  default: (await import('./hub-type-pipeline-chart')).HubTypePipelineChart,
+}));
 
 /**
  * Hub × type pipeline summary table (PROJECT_AND_STACK.md §2). Pivoted from the
@@ -98,7 +110,9 @@ export function HubTypePipelineTable({ rows }: HubTypePipelineTableProps): React
           </p>
         ) : (
           <>
-            <HubTypePipelineChart rows={rows} />
+            <React.Suspense fallback={<PanelSkeleton height="h-64" />}>
+              <HubTypePipelineChart rows={rows} />
+            </React.Suspense>
             <Table>
             <TableHeader>
               <TableRow>

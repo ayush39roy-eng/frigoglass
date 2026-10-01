@@ -195,6 +195,18 @@ async def test_dev_users_404_outside_dev_mode(db_session, idp):
     assert resp.status_code == 404
 
 
+async def test_dev_users_404_outside_dev_mode_with_no_authorization_header(db_session):
+    """Regression: this is the ACTUAL call the login page makes — no session
+    exists yet, so there is no Authorization header at all. Requiring a
+    principal here previously 401'd before the route's own dev-mode check
+    ever ran, which the frontend doesn't treat as "outside dev mode" (only a
+    clean 404 means that) — it showed a "could not reach the server" fallback
+    on every production login instead of a quiet SSO-only screen."""
+    async with _client(db_session) as client:
+        resp = await client.get("/me/dev-users")
+    assert resp.status_code == 404
+
+
 async def test_dev_users_lists_active_users_with_roles(db_session, monkeypatch):
     monkeypatch.setenv("RPD_DEV_MODE", "true")
     await make_user(db_session, RoleName.ADMIN, email="frank.admin@example.com", full_name="F A")
