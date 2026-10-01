@@ -19,7 +19,7 @@ import {
 } from 'lucide-react';
 
 import { CoolerIllustration } from '@/components/brand/cooler-illustration';
-import { initialsOf } from '@/components/session/user-avatar';
+import { initialsOf } from '@/lib/initials';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
