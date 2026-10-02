@@ -55,8 +55,9 @@ function LogoChip(): React.JSX.Element {
   return (
     <div className="flex items-center gap-s3">
       <span
-        className="grid size-10 shrink-0 place-items-center rounded-xl text-base font-extrabold text-primary-fg shadow-feature"
-        style={{ backgroundImage: 'linear-gradient(135deg, hsl(var(--blue-700)), hsl(var(--blue-400)))' }}
+        className="grid size-10 shrink-0 place-items-center rounded-xl text-base font-extrabold text-on-feature shadow-feature"
+        // The theme's feature gradient: Frigoglass blue in light mode, lime in graphite dark.
+        style={{ backgroundImage: 'var(--gradient-dash-primary)' }}
         aria-hidden="true"
       >
         R

@@ -134,14 +134,14 @@ function BrandPanel(): React.JSX.Element {
   const { reduced } = useMotionTokens();
   return (
     <aside
-      className="relative hidden overflow-hidden rounded-[2rem] p-s8 text-white shadow-feature lg:sticky lg:top-6 lg:flex lg:h-[calc(100vh-3rem)] lg:flex-col"
+      className="relative hidden overflow-hidden rounded-[2rem] p-s8 text-on-feature shadow-feature lg:sticky lg:top-6 lg:flex lg:h-[calc(100vh-3rem)] lg:flex-col"
       style={{ backgroundImage: 'var(--gradient-dash-primary)' }}
     >
-      <span aria-hidden="true" className="bg-dots pointer-events-none absolute inset-0 text-white/[0.12]" />
+      <span aria-hidden="true" className="bg-dots pointer-events-none absolute inset-0 text-on-feature/[0.12]" />
       <span aria-hidden="true" className="pointer-events-none absolute -right-24 -top-24 size-96 rounded-full bg-white/10 blur-3xl" />
 
       <div className="relative space-y-s3">
-        <p className="label-caps text-white/75">Frigoglass · RPD Portfolio</p>
+        <p className="label-caps text-on-feature/75">Frigoglass · RPD Portfolio</p>
         <h2 className="max-w-md font-display text-4xl font-extrabold leading-tight tracking-tight">
           Plan the R&amp;D portfolio with confidence.
         </h2>
@@ -164,7 +164,7 @@ function BrandPanel(): React.JSX.Element {
           {HIGHLIGHTS.map((h, i) => (
             <motion.li
               key={h.label}
-              className="flex items-center gap-s3 rounded-2xl border border-white/25 bg-white/15 px-s4 py-s3 text-sm font-semibold backdrop-blur"
+              className="flex items-center gap-s3 rounded-2xl border border-on-feature/20 bg-on-feature/10 px-s4 py-s3 text-sm font-semibold backdrop-blur"
               {...(reduced
                 ? {}
                 : {
@@ -173,7 +173,7 @@ function BrandPanel(): React.JSX.Element {
                     transition: { delay: 0.25 + i * 0.12, type: 'spring', stiffness: 200, damping: 22 },
                   })}
             >
-              <span className="grid size-8 place-items-center rounded-xl bg-white text-primary">
+              <span className="grid size-8 place-items-center rounded-xl bg-surface text-text">
                 <h.icon className="size-4" aria-hidden="true" />
               </span>
               {h.label}

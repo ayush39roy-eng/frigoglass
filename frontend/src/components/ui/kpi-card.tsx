@@ -133,7 +133,7 @@ export function StatCard({
         : {};
 
   const mutedText =
-    kind === 'feature' ? 'text-white/80' : kind === 'ink' ? 'text-ink-fg/70' : 'text-text-muted';
+    kind === 'feature' ? 'text-on-feature/80' : kind === 'ink' ? 'text-ink-fg/70' : 'text-text-muted';
 
   return (
     <motion.div
@@ -145,7 +145,7 @@ export function StatCard({
       className={cn(
         'group relative flex min-h-[10.5rem] flex-col gap-s3 overflow-hidden rounded-dash p-card',
         'transition-shadow duration-base ease-ease-out-expo',
-        kind === 'feature' && 'border-[1.5px] border-blue-900/40 text-white shadow-feature hover:shadow-feature',
+        kind === 'feature' && 'border-[1.5px] border-on-feature/15 text-on-feature shadow-feature hover:shadow-feature',
         kind === 'ink' && 'border-[1.5px] border-transparent text-ink-fg shadow-ink',
         kind === 'plain' &&
           'border-[1.5px] border-dash-hairline bg-surface text-text shadow-dashCard hover:shadow-pop',
@@ -158,7 +158,7 @@ export function StatCard({
         className={cn(
           'bg-dots pointer-events-none absolute inset-y-0 right-0 w-3/5',
           '[mask-image:linear-gradient(to_left,black_30%,transparent)]',
-          kind === 'plain' ? 'text-text/[0.07]' : 'text-white/[0.14]',
+          kind === 'plain' ? 'text-text/[0.07]' : kind === 'feature' ? 'text-on-feature/[0.14]' : 'text-white/[0.14]',
         )}
       />
       {kind === 'plain' ? (
@@ -175,7 +175,7 @@ export function StatCard({
           <span
             className={cn(
               'grid size-12 shrink-0 place-items-center rounded-2xl transition-transform duration-base ease-ease-out-expo group-hover:-rotate-6 group-hover:scale-105',
-              kind === 'feature' && 'bg-white text-primary shadow-card',
+              kind === 'feature' && 'bg-surface text-text shadow-card',
               kind === 'ink' && 'bg-ink-fg/10 text-ink-fg ring-1 ring-ink-fg/20',
               kind === 'plain' && TONE_PILL[tone],
             )}
@@ -189,7 +189,7 @@ export function StatCard({
           <span
             className={cn(
               'inline-flex items-center rounded-pill px-2.5 py-1 text-2xs font-bold tabular-nums',
-              BADGE_TONE[badge.tone ?? 'neutral'],
+              kind === 'feature' ? 'bg-surface text-text' : BADGE_TONE[badge.tone ?? 'neutral'],
             )}
             data-numeric=""
           >
@@ -217,7 +217,7 @@ export function StatCard({
           className={cn(
             'relative border-t-[1.5px] pt-s2 text-xs font-medium',
             kind === 'plain' && 'border-dash-hairline',
-            kind === 'feature' && 'border-white/20',
+            kind === 'feature' && 'border-on-feature/20',
             kind === 'ink' && 'border-ink-fg/15',
             mutedText,
           )}

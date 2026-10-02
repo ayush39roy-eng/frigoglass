@@ -20656,3 +20656,53 @@ fallbacks reuse the shared `<Skeleton>`, already zeroed by the global rule).
 **Next:** (1) the backend `totals` field on `HubCapacitySummary` described in §2; (2) if other
 surfaces grow headline aggregates, check whether their rows repeat a dimension the way
 Capacity's lab figures do before reaching for `rows.reduce()`.
+
+---
+
+## [2026-10-01] Graphite dark theme (replaces blue-on-blue dark)
+
+**Requested by:** project owner — "dark theme looks blue on blue / vibe-coded; make it black or follow the
+graphite + lime reference".
+
+**What changed.** A new GRAPHITE DARK LAYER, appended last in `tokens.css` (it overrides every earlier
+`.dark` block; light mode is untouched):
+- Neutral graphite at 240° hue and 3–5 % saturation: canvas 3 % L, shell 6.5 %, cards 10 %, raised 13 %,
+  borders 18 % / 28 %. Text is neutral grey, not slate-blue.
+- Dark-mode primary is lime (82 84 % 56 %) with near-black text on it. That covers buttons, the active
+  nav item, the focus ring, the Gantt "now" marker and the dashboard feature card (lime gradient). Blue
+  remains only as a data colour (chart series, Gantt bars).
+- New `--color-on-feature` token / `text-on-feature` utility: white on the light blue gradient,
+  near-black on the dark lime one. Used by `kpi-card` (feature variant), the login brand panel, the
+  profile header band and the header logo chip, which was hard-coded blue before. Badges on the
+  feature card use a neutral surface pill, to avoid lime on lime.
+- The ink card stays the inverted light panel in dark mode, like the reference's white card.
+- `GlowOverlay` is faint in dark mode (it read as an olive haze over near-black).
+
+**Verification:** visual check in dark (Dashboard, analytics, Timeline, Registration, Capacity, login) and
+light (Dashboard), with zero console errors. vitest 702/703. The one failure is `session-gate.test.tsx`'s
+DevRoleSwitcher test, broken by commit `c074e62` ("remove dev switcher dropdown from header"), not by
+this change. `tsc` shows one error in the in-progress `surfaces/projects/ProjectsPage.test.tsx`, also
+not from this change.
+
+### [2026-10-01] Graphite dark — accent switched from lime to Frigoglass blue
+
+Client follow-up: "in place of lime green use the blue that is on light mode". In the GRAPHITE DARK
+LAYER, `--color-primary` is now 221 83 % 55 % with white text, and `--gradient-dash-primary` /
+`--shadow-feature` reuse light mode's blue-800 → 700 → 500 gradient. `--color-on-feature` is white,
+and the Gantt "now" marker is blue. The neutral graphite ground is unchanged; that, not the accent,
+is the fix for "blue on blue". Lime remains only on the positive delta pills (`--color-pop`), as in
+light mode.
+
+### [2026-10-01] Cobalt brand ramp (both themes)
+
+Client: "use a different blue for light and dark that doesn't look vibe-coded". The stock Tailwind blue
+ramp (blue-600 #2563eb) in a three-stop glow gradient was the tell. A new COBALT BRAND RAMP block,
+appended last in `tokens.css`, redefines `--blue-50…950` as a deeper, less saturated cobalt (hue ~213,
+saturation 52–72 %). Everything reading the ramp follows: primary, Gantt, charts, ring, shadows.
+- Light: primary = blue-700, 214 70 % 35 % (white text ≈ 7:1).
+- Dark: primary = 213 62 % 52 % (≈ 4.5:1 against both white text and the graphite ground).
+- `--gradient-dash-primary` is now two close stops (blue-800 → blue-600; a muted pair in dark), so it
+  reads as a material rather than a neon glow.
+- `--dash-cat-1` and the dark Gantt bar / "now" colours were moved onto the same hue.
+Verified visually on Dashboard and Timeline in both themes. vitest 702/703; the one failure is the
+DevRoleSwitcher test orphaned by commit `c074e62`, as before.

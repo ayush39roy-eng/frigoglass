@@ -113,6 +113,7 @@ export default {
         },
         // Bold Blocks layer (tokens.css): shell ground, ink feature card, lime/red delta pills.
         shell: withAlpha('color-shell'),
+        'on-feature': withAlpha('color-on-feature'),
         ink: {
           DEFAULT: withAlpha('color-ink'),
           raised: withAlpha('color-ink-raised'),

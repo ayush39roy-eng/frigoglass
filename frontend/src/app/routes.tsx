@@ -19,6 +19,7 @@ import {
   LoginPage,
   MatrixPage,
   PlanningPage,
+  ProjectsPage,
   ProjectWorkspacePage,
   RegistrationPage,
   WorkflowSettingsPage,
@@ -65,6 +66,7 @@ function AdminUsersRoute({
 
 const SURFACE_ELEMENTS: Partial<Record<string, React.ReactNode>> = {
   '/': lazyElement(<DashboardPage />),
+  '/projects': lazyElement(<ProjectsPage />),
   '/capacity': lazyElement(<CapacityPage />),
   '/matrix': lazyElement(<MatrixPage />),
   '/timeline': lazyElement(<GanttPage />),

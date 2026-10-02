@@ -211,7 +211,7 @@ function IdentityCard(): React.JSX.Element {
   return (
     <Card className="overflow-hidden">
       <div className="relative h-24" style={{ backgroundImage: 'var(--gradient-dash-primary)' }}>
-        <span aria-hidden="true" className="bg-dots absolute inset-0 text-white/[0.14]" />
+        <span aria-hidden="true" className="bg-dots absolute inset-0 text-on-feature/[0.14]" />
       </div>
       <CardContent className="-mt-12 space-y-s4">
         <div className="relative w-fit">

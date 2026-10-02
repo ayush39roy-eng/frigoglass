@@ -42,5 +42,6 @@ secrets/*
 
 # Scratch / screenshots / local tools
 .playwright-mcp/
+.scratch/
 *.png
 frontend/shot-tmp.mjs

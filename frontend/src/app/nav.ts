@@ -3,6 +3,7 @@ import {
   Boxes,
   CalendarRange,
   FilePlus2,
+  FolderKanban,
   GaugeCircle,
   LayoutDashboard,
   LayoutGrid,
@@ -78,6 +79,24 @@ export const SURFACES: readonly SurfaceNavItem[] = [
     task: 'P4-T02',
     summary:
       'Portfolio-wide view: within-year completion count, spillover and left-out totals, per-hub rollups — all sourced from the active schedule run (Invariant I9).',
+    group: 'Plan',
+    density: 'overview',
+  },
+  {
+    path: '/projects',
+    // Reuses the `dashboard` permission rather than a new RBAC column: this
+    // page reads the exact same `GET /dashboard/projects` rows as the
+    // Dashboard's own "Project breakdown" card, just as a dedicated,
+    // full-page card gallery — not a new capability, so it does not need one
+    // of the ten spec-defined Surface columns (PROJECT_AND_STACK.md §5).
+    // Added 2026-10-01 from a project-owner request, ad hoc (no IMPLEMENTATION_PLAN.md task).
+    surface: 'dashboard',
+    label: 'Projects',
+    title: 'All Projects',
+    icon: FolderKanban,
+    task: 'Ad hoc — 2026-10-01 (reuses P4-T02\'s GET /dashboard/projects)',
+    summary:
+      'Every project visible in your hub scope as a feature card, with an "Ask the agent" question box on each — the same filtered rows as the Dashboard\'s Project breakdown, laid out for browsing instead of comparing.',
     group: 'Plan',
     density: 'overview',
   },

@@ -20,6 +20,7 @@ export const WorkflowSettingsPage = React.lazy(
   () => import('@/surfaces/workflow-settings/WorkflowSettingsPage'),
 );
 export const AdminUsersPage = React.lazy(() => import('@/surfaces/admin-users/AdminUsersPage'));
+export const ProjectsPage = React.lazy(() => import('@/surfaces/projects/ProjectsPage'));
 
 /** `/projects/:id` — the Project Workspace (Surface #7, P9-T04b). Reached by
  *  click-through from the Dashboard, Matrix and Gantt rows, not the sidebar. */

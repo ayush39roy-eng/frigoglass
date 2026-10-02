@@ -884,3 +884,139 @@
   );
   --gradient-ink: linear-gradient(150deg, hsl(222 22% 97%) 0%, hsl(222 16% 84%) 100%);
 }
+
+/* ===========================================================================
+ * GRAPHITE DARK LAYER  (2026-10-01, client: "dark theme looks blue on blue,
+ * vibe-coded — make it black, or like the graphite/lime reference").
+ *
+ * Declared LAST, so it overrides every earlier `.dark` block without editing
+ * them. Light mode is untouched.
+ *   - Neutral graphite ground (hue ~240 at 3–5 % saturation, so effectively no
+ *     blue cast): near-black page, charcoal shell, lifted charcoal cards.
+ *   - The action colour is the SAME Frigoglass blue as light mode (an earlier
+ *     lime accent from the reference was replaced at the client's request). The
+ *     fix for "blue on blue" is the neutral ground, not a different accent.
+ *   - `--color-on-feature` is the text colour on the feature gradient (white).
+ * ========================================================================= */
+
+:root {
+  --color-on-feature: 0 0% 100%;
+}
+
+.dark {
+  /* Ground + surfaces */
+  --color-canvas: 0 0% 3%;
+  --color-shell: 240 4% 6.5%;
+  --color-surface: 240 4% 10%;
+  --color-surface-raised: 240 4% 13%;
+  --color-surface-sunken: 240 4% 7.5%;
+
+  --color-border: 240 4% 18%;
+  --color-border-strong: 240 3% 28%;
+  --color-dash-hairline: 240 4% 16%;
+  --color-dash-edge: 0 0% 0%;
+  --color-dash-alt: 240 4% 12.5%;
+
+  /* Text — neutral greys, no slate-blue */
+  --color-text: 0 0% 96%;
+  --color-text-muted: 240 5% 70%;
+  --color-text-subtle: 240 4% 58%;
+  --color-text-inverse: 240 6% 8%;
+
+  /* Action colour: the same Frigoglass blue as light mode (client, 2026-10-01:
+   * "in place of lime use the blue from light mode"). Fills use it as-is with
+   * white text; a slightly lifted step keeps blue TEXT legible on graphite. */
+  --color-primary: 221 83% 55%;
+  --color-primary-hover: 217 91% 62%;
+  --color-primary-fg: 0 0% 100%;
+  --color-primary-subtle: 224 45% 17%;
+  --color-primary-subtle-fg: 214 95% 82%;
+  --color-ring: 217 91% 60%;
+
+  --color-on-feature: 0 0% 100%;
+  --gradient-dash-primary: linear-gradient(
+    140deg,
+    hsl(var(--blue-800)) 0%,
+    hsl(var(--blue-700)) 45%,
+    hsl(var(--blue-500)) 100%
+  );
+  --shadow-feature:
+    0 4px 0 0 hsl(var(--blue-950)),
+    0 22px 40px -18px hsl(var(--blue-600) / 0.45);
+  --shadow-cta-blue: 0 8px 24px -8px hsl(var(--blue-600) / 0.45);
+
+  /* Sitewide FeatureCard / MetricCard tile: lifted charcoal, not navy */
+  --color-feature: 240 4% 15%;
+  --color-feature-fg: 0 0% 98%;
+  --color-feature-muted: 214 95% 80%;
+
+  /* Ink card stays the inverted light panel (the reference's white card) */
+  --gradient-ink: linear-gradient(150deg, hsl(0 0% 98%) 0%, hsl(240 5% 86%) 100%);
+  --shadow-ink:
+    0 4px 0 0 hsl(240 4% 55%),
+    0 22px 40px -18px hsl(0 0% 0% / 0.7);
+
+  /* Deeper, neutral shadows */
+  --shadow-shell: 0 24px 60px -20px hsl(0 0% 0% / 0.8);
+  --shadow-pop:
+    0 5px 0 0 hsl(0 0% 0%),
+    0 24px 44px -18px hsl(0 0% 0% / 0.8);
+
+  /* Gantt chrome: neutral grid, blue "now" marker */
+  --color-gantt-grid: 240 4% 15%;
+  --color-gantt-grid-strong: 240 4% 22%;
+  --color-gantt-marker-now: 217 91% 62%;
+
+  --chart-tooltip-bg: 240 4% 14%;
+  --chart-tooltip-text: 0 0% 96%;
+}
+
+/* ===========================================================================
+ * COBALT BRAND RAMP  (2026-10-01, client: "use a different blue for light and
+ * dark that doesn't look vibe-coded").
+ *
+ * The previous blues were Tailwind's stock ramp (blue-600 #2563eb, the most
+ * recognisable default in generated UIs), pushed through a three-stop glow
+ * gradient. This replaces the whole --blue-* primitive ramp with a deeper,
+ * less saturated cobalt (hue ~213, saturation 52–72 %). Every token that reads
+ * the ramp (primary, feature gradient, Gantt bars, charts, focus ring) follows
+ * in both themes. Declared LAST, so it wins over every earlier block.
+ *
+ *   light  primary = blue-700 (214 70% 35%) — white text ≈ 7:1
+ *   dark   primary = 213 62% 52% — white text and graphite ground both ≈ 4.5:1
+ * ========================================================================= */
+
+:root {
+  --blue-50: 213 60% 97%;
+  --blue-100: 213 58% 93%;
+  --blue-200: 213 56% 85%;
+  --blue-300: 213 54% 74%;
+  --blue-400: 213 52% 62%;
+  --blue-500: 213 56% 50%;
+  --blue-600: 213 64% 42%;
+  --blue-700: 214 70% 35%;
+  --blue-800: 215 72% 28%;
+  --blue-900: 216 70% 22%;
+  --blue-950: 218 66% 15%;
+
+  --dash-cat-1: 213 64% 44%;
+
+  /* Two stops, close in value: reads as a material, not a neon glow. */
+  --gradient-dash-primary: linear-gradient(150deg, hsl(var(--blue-800)) 0%, hsl(var(--blue-600)) 100%);
+}
+
+.dark {
+  --color-primary: 213 62% 52%;
+  --color-primary-hover: 213 66% 58%;
+  --color-primary-fg: 0 0% 100%;
+  --color-primary-subtle: 215 38% 16%;
+  --color-primary-subtle-fg: 213 75% 80%;
+  --color-ring: 213 70% 60%;
+
+  --dash-cat-1: 213 68% 64%;
+  --color-gantt-planned: 213 60% 55%;
+  --color-gantt-marker-now: 213 70% 64%;
+  --color-feature-muted: 213 75% 80%;
+
+  --gradient-dash-primary: linear-gradient(150deg, hsl(215 60% 30%) 0%, hsl(213 58% 44%) 100%);
+}

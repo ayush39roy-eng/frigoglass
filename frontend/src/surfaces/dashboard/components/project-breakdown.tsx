@@ -62,7 +62,10 @@ type BreakdownView = 'table' | 'cards';
  * RBAC. Nothing is computed here.
  */
 
-const ALL = '__all__';
+/** Shared with `surfaces/projects/ProjectsPage.tsx` — the dedicated "all
+ *  projects as cards" page filters the same `GET /dashboard/projects` rows
+ *  with the same four controls, so it reuses these rather than forking them. */
+export const ALL = '__all__';
 
 const COLUMNS: VirtualColumn<ProjectFilterRow>[] = [
   {
@@ -144,16 +147,16 @@ const COLUMNS: VirtualColumn<ProjectFilterRow>[] = [
   },
 ];
 
-interface FilterState {
+export interface FilterState {
   hub_id: string;
   category: string;
   status_: string;
   priority: string;
 }
 
-const EMPTY: FilterState = { hub_id: ALL, category: ALL, status_: ALL, priority: ALL };
+export const EMPTY: FilterState = { hub_id: ALL, category: ALL, status_: ALL, priority: ALL };
 
-function FilterSelect({
+export function FilterSelect({
   label,
   value,
   onChange,

@@ -25,7 +25,7 @@ export function GlowOverlay({
       aria-hidden="true"
       className={cn(
         "pointer-events-none absolute inset-0 z-0 bg-[radial-gradient(circle_at_center,hsl(var(--color-primary))_0%,transparent_70%)] mix-blend-multiply dark:mix-blend-screen",
-        light ? "opacity-20" : "opacity-60",
+        light ? "opacity-20 dark:opacity-[0.04]" : "opacity-60 dark:opacity-10",
         className,
       )}
     />
