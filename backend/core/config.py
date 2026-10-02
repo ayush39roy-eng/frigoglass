@@ -24,7 +24,7 @@ from __future__ import annotations
 import os
 from functools import lru_cache
 
-from pydantic import Field
+from pydantic import AliasChoices, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -104,12 +104,36 @@ class GroqSettings(BaseSettings):
 
     model_config = SettingsConfigDict(env_prefix="RPD_GROQ_", extra="ignore")
 
-    api_key: str | None = Field(default=None)
+    #: Also accepts the bare `GROQ_API_KEY` (the name Groq's own docs use and
+    #: the one a Render dashboard operator is likely to type), mirroring
+    #: `RedisSettings`' `REDIS_URL` alias.
+    api_key: str | None = Field(
+        default=None, validation_alias=AliasChoices("RPD_GROQ_API_KEY", "GROQ_API_KEY")
+    )
 
     #: A current Groq-hosted model id. Configurable (not hardcoded elsewhere)
     #: so swapping models — or, per ADR 0014's Consequences, providers
-    #: entirely — never requires a code change here.
-    model: str = Field(default="llama-3.3-70b-versatile")
+    #: entirely — never requires a code change here. `llama-3.3-70b-versatile`
+    #: (the original default) was shut down by Groq on 2026-08-16; Groq's
+    #: recommended replacement is `openai/gpt-oss-120b`.
+    model: str | None = Field(
+        default="openai/gpt-oss-120b", validation_alias=AliasChoices("RPD_GROQ_MODEL", "GROQ_MODEL")
+    )
+
+    @field_validator("api_key", "model", mode="before")
+    @classmethod
+    def _strip(cls, v: object) -> object:
+        # Dashboard-pasted secrets often carry stray whitespace or quotes,
+        # which Groq rejects as 401. Blank after stripping means unset.
+        if isinstance(v, str):
+            v = v.strip().strip("\"'").strip()
+            return v or None
+        return v
+
+    @field_validator("model", mode="after")
+    @classmethod
+    def _default_model(cls, v: str | None) -> str:
+        return v or "openai/gpt-oss-120b"
 
 
 @lru_cache

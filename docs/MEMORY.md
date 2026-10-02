@@ -20706,3 +20706,54 @@ saturation 52–72 %). Everything reading the ramp follows: primary, Gantt, char
 - `--dash-cat-1` and the dark Gantt bar / "now" colours were moved onto the same hue.
 Verified visually on Dashboard and Timeline in both themes. vitest 702/703; the one failure is the
 DevRoleSwitcher test orphaned by commit `c074e62`, as before.
+
+---
+
+## [2026-10-02] Walkthrough / demo script
+
+**Requested by:** project owner — a spoken script explaining the project, covering the
+Prioritization Matrix, Capacity, Dashboard, projects and Ask the agent.
+
+**What changed.** New `docs/HANDOVER/WALKTHROUGH_SCRIPT.md`: a ~15-minute presenter script with
+screen cues. Sections: problem, engine in one minute, Dashboard (+ All Projects), Prioritization
+Matrix (13 dimensions, weights, bands, hard gates, currency, scenario mode, Apply Priorities),
+RPD Capacity (ADR 0008 supply formulas, ADR 0002 caveat, OQ #8 GDPR hold), Capacity Planning,
+Gantt, Project Workspace + Ask the agent (ADR 0014 redaction, off by default, OQ #23), security,
+close, and likely Q&A. All facts are taken from DOMAIN_RULES/ADRs. Live figures are left as
+`[bracketed]` placeholders to be read off the screen. No code touched.
+
+**Gate result:** N/A, documentation only.
+
+### [2026-10-02] Explainer video prompt
+
+Follow-up from the project owner: a more detailed version to use as a prompt for generating a
+video. New `docs/HANDOVER/VIDEO_PROMPT.md`:
+- (A) a global style brief: palette taken from the cobalt/graphite tokens, Plus Jakarta Sans and
+  Inter, motion, voice, music, and the app shell's real nav labels from `frontend/src/app/nav.ts`
+- (B) a single-paragraph master prompt
+- (C) 12 timed scenes (~6:30) with visuals, on-screen text and voiceover
+- (D) hard rules: no real people, financials, customer names or third-party logos, the on-premise
+  message, and consistent sample numbers
+
+All figures are labelled illustrative sample data. No code touched.
+
+### [2026-10-02] Fix: "Ask the agent" 502 on Render (decommissioned Groq model)
+
+**Requested by:** project owner — Ask the agent failed in the Render deployment after the Groq key
+was added to the Render env.
+
+**Diagnosis.** Live probe of `POST /projects/{id}/ask-agent` on `frigoglass-hu6f.onrender.com`
+returned `502 "The agent's upstream provider failed to answer."` — so the key *was* read (not
+503), but Groq rejected the call. The code-side default model `llama-3.3-70b-versatile` was shut
+down by Groq on 2026-08-16 (console.groq.com/docs/deprecations); replacement `openai/gpt-oss-120b`.
+
+**What changed.**
+- `core/config.py::GroqSettings`: default model → `openai/gpt-oss-120b`; `api_key` also accepts
+  bare `GROQ_API_KEY`, `model` also `GROQ_MODEL` (same alias pattern as `REDIS_URL`); values are
+  stripped of whitespace/quotes, blank model falls back to the default.
+- `services/ask_agent.py`: logs Groq's error envelope (status/type/code/model/message, never the
+  payload) on non-2xx; empty `content` maps to the existing 502 path.
+- `docker-compose.yml`, `.env.example`: model default updated.
+- `tests/test_ask_agent.py`: fake response gains `is_error`; new alias/strip test. 6/6 pass.
+
+**Gate result:** N/A, deployment fix. ADR 0014 redaction allowlist untouched.

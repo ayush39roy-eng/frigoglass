@@ -190,7 +190,7 @@ x-backend-image: &backend-image
     # yet — same "harmless no-op today" posture as the backup-mirror keys
     # below). `RPD_GROQ_MODEL` has a code-side default; only set it here to
     # override.
-    RPD_GROQ_MODEL: ${RPD_GROQ_MODEL:-llama-3.3-70b-versatile}
+    RPD_GROQ_MODEL: ${RPD_GROQ_MODEL:-openai/gpt-oss-120b}
     RPD_GROQ_API_KEY_FILE: ${RPD_GROQ_API_KEY_FILE:-}
     # --- secrets (P6-T04): _FILE-suffixed paths into the Compose secrets
     # mounted above, resolved by backend/docker-entrypoint.sh. NEVER the

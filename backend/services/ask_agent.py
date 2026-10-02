@@ -20,6 +20,7 @@ Two responsibilities, deliberately kept apart:
 from __future__ import annotations
 
 import json
+import logging
 from typing import Any
 
 import httpx
@@ -37,6 +38,8 @@ from scheduling.workflow import derive_remaining
 from services.active_run import get_active_run
 from services.progress import project_progress_pct
 from services.workspace import health_badge, is_step_skipped
+
+logger = logging.getLogger(__name__)
 
 _GROQ_CHAT_COMPLETIONS_URL = "https://api.groq.com/openai/v1/chat/completions"
 _HTTP_TIMEOUT_SECONDS = 30.0
@@ -278,6 +281,24 @@ async def ask_about_project(context: dict[str, Any], question: str) -> str:
             headers={"Authorization": f"Bearer {settings.api_key}"},
             json=payload,
         )
+        if response.is_error:
+            # Log only Groq's own error envelope (status/type/code/message) —
+            # never the request payload, which carries the project context.
+            try:
+                err = response.json().get("error", {})
+            except ValueError:
+                err = {}
+            logger.warning(
+                "groq chat-completions failed: status=%s type=%s code=%s model=%s message=%s",
+                response.status_code,
+                err.get("type"),
+                err.get("code"),
+                settings.model,
+                str(err.get("message", ""))[:300],
+            )
         response.raise_for_status()
         data = response.json()
-    return str(data["choices"][0]["message"]["content"])
+    content = data["choices"][0]["message"].get("content")
+    if not content:
+        raise httpx.HTTPError("Groq returned an empty answer")
+    return str(content)

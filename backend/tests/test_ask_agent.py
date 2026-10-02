@@ -67,6 +67,8 @@ async def _project(db_session):
 
 
 class _FakeResponse:
+    is_error = False
+
     def __init__(self, payload: dict) -> None:
         self._payload = payload
 
@@ -236,3 +238,16 @@ async def test_ask_agent_outbound_payload_excludes_financial_fields_and_engineer
     # Positive control: the payload DOES carry non-sensitive project data,
     # so this test is exercising a real, populated context — not an empty one.
     assert "Ask Agent Project" in outbound
+
+
+def test_groq_settings_accept_bare_alias_and_strip(monkeypatch) -> None:
+    from core.config import GroqSettings
+
+    monkeypatch.delenv("RPD_GROQ_API_KEY", raising=False)
+    monkeypatch.delenv("RPD_GROQ_MODEL", raising=False)
+    monkeypatch.setenv("GROQ_API_KEY", '  "gsk_test"\n')
+    monkeypatch.setenv("RPD_GROQ_MODEL", "  ")
+    settings = GroqSettings()
+    assert settings.api_key == "gsk_test"
+    # Blank model falls back to a model Groq still serves.
+    assert settings.model == "openai/gpt-oss-120b"
