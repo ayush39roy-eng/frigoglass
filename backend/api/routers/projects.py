@@ -465,6 +465,13 @@ async def submit_project(
     """
 
     project = await _get_project_or_404(db, project_id, current_user)
+    # P12-R01: the lookup admits an out-of-scope project on any grant, so the
+    # role-level `_write` alone is not enough; the project must be in the
+    # caller's hub scope or carry an Admin-level grant.
+    await authorize_project_action(
+        db, current_user, project,
+        surface=Surface.PROJECT_REGISTRATION, action=Action.WRITE, min_grant_role="admin",
+    )
     if project.status != ProjectStatus.DRAFT:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,

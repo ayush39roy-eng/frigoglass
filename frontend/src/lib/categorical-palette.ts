@@ -96,17 +96,23 @@ export function categoricalRankBg(rank: number): string {
   return CATEGORICAL_RANK_BG[Math.min(Math.max(rank, 0), CATEGORICAL_RANK_BG.length - 1)];
 }
 
+/**
+ * Text/icon classes for the ramp, by rank. P12-R04: these read the INK
+ * companion tokens (`--dash-cat-ink-N`), not the chart fill (`--dash-cat-N`):
+ * the fill hue on its own 15 % tint failed WCAG AA (B-OEM 3.02:1). Chart fills
+ * and `CATEGORICAL_RANK_BG` are unchanged.
+ */
 export const CATEGORICAL_RANK_TEXT = [
-  'text-dashChart-1',
-  'text-dashChart-2',
-  'text-dashChart-3',
-  'text-dashChart-4',
-  'text-dashChart-5',
-  'text-dashChart-6',
-  'text-dashChart-7',
-  'text-dashChart-8',
-  'text-dashChart-9',
-  'text-dashChart-10',
+  'text-dashChartInk-1',
+  'text-dashChartInk-2',
+  'text-dashChartInk-3',
+  'text-dashChartInk-4',
+  'text-dashChartInk-5',
+  'text-dashChartInk-6',
+  'text-dashChartInk-7',
+  'text-dashChartInk-8',
+  'text-dashChartInk-9',
+  'text-dashChartInk-10',
 ] as const;
 
 export function categoricalRankText(rank: number): string {

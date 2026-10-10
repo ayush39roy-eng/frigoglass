@@ -21972,3 +21972,626 @@ since `c074e62`, plus A's Matrix test mid-edit during B's run); bundle 181.0 KB 
 
 **Next:** P12-T06..T08 gate for P11 + P12 (qa-inspector, workflow-auditor, security-auditor) in
 parallel.
+
+### [2026-10-10] P12 gate (P11 + P12) — security-auditor
+
+**Result: FAIL** (one High, which blocks the gate). Scope: `git diff 24cab45..HEAD` (e1cb2c4 = P11,
+5e49c13 = P12), OWASP ASVS L2, P11-T05 + P12-T08 checklists. I read DOMAIN_RULES (Roles, grants,
+2026-10-09/10 sections), the P11/P12 builder entries and both orchestrator reviews. Method: builder
+suites re-run (P11/P12 test files, 201 passed), then my own probe tests (scratchpad only, never in the
+repo). They drove the real ASGI app against testcontainers Postgres: one shared-savepoint DB, plus a
+dedicated container for the true-concurrency probes. No code was edited.
+
+**HIGH (H-1): a Hub Planner holding only a Viewer (or Editor) grant on another hub's project gets full write on it.**
+`services/project_access.py:273` `authorize_project_action` returns as soon as
+`principal_can(principal, surface, action)` is true. That check is role-level and ignores hub scope.
+Meanwhile `api/routers/projects.py::_get_project_or_404` (lines 145-159) and
+`services/workspace.py::get_scoped_project_or_404` let an out-of-scope project through on ANY grant
+role. Result: a Hub Planner scoped to hub A with a **Viewer** grant on a hub-B project passes both checks.
+Live-verified:
+- `POST /projects/{B}/priority` → 200 `queued` (P11, and it dispatches a solver run);
+- `PUT /projects/{B}/vip` → 200 (P12);
+- `PATCH /projects/{B}` rename → 200;
+- `PATCH /projects/{B}` with `hub_id` = A → 200 (the project is **moved into the attacker's hub**,
+  after which it is fully in their scope);
+- Workspace stage PATCH 200, Recalculate 202, comment 201.
+Control: the same user without the grant gets 404. Editor grant: identical. Not affected:
+`PATCH …/timing` (hub-scoped lookup only → 404) and `POST /check-ins` (FORBIDDEN_STAGE; its
+`services/checkin.py` scopes the role write by hub correctly).
+The root cause is P10 (ADR 0012 composition), but P11's priority move and P12's VIP pin are new
+endpoints built on it. The P11-T05 check "priority move RBAC incl. grant roles" fails on it. The
+builder tests only used Engineer grantees, so the Hub Planner + grant combination was never tested.
+Remediation (P12-R01, backend-builder):
+- in `authorize_project_action`, the role short-circuit must also require the project to be inside
+  the role's row scope: `principal_can(...) and is_hub_in_scope(principal, project.hub_id) and not
+  is_engineer_self_scoped(principal)`; otherwise fall through to the grant check (`min_grant_role`);
+- add regression tests for a Hub Planner with a Viewer, Editor and Admin grant on an out-of-hub
+  project, across PATCH project (incl. `hub_id` move), priority, VIP, stage PATCH, file upload,
+  comment and recalc. Expected: Viewer → 403 on every write, Editor → only the Editor write set,
+  Admin → allowed.
+
+**MEDIUM (M-1, pre-existing, not introduced by P11/P12):** `pnpm audit --prod` finds 2 moderate
+`react-router` advisories (backslash open redirect in `<Link>`, constructor injection; fixed in
+>=7.18.0). `pnpm-lock.yaml` did not change in this range. Remediation: bump react-router (P12-R02,
+frontend-builder; does not block on its own).
+
+**LOW:**
+- L-1: the check-in rate limiter is in-process (`services/rate_limit.py`, documented S-02 limitation),
+  so the effective burst is `WEB_CONCURRENCY` × 10 (default 2 workers → 20). It is keyed on the
+  authenticated user_id. `X-Forwarded-For` does not bypass it (probe: 10 × 422 then 429 with
+  `Retry-After: 6`; a second user is unaffected).
+- L-2: priority moves and VIP pins have no per-user rate limit. Solver load stays bounded
+  (see below), but each move adds audit rows and a run. Consider the same limiter.
+
+**INFO:**
+- I-1: an Engineer assigned only through the live column can check in a stage but gets 404 on
+  `/check-ins/history` and the Workspace, because `get_scoped_project_or_404` uses active-run
+  assignments only. This is more restrictive, so it is not a security issue, just a consistency gap.
+- I-2: the `rpd-hub-filter` localStorage key is per browser, not per user. It is harmless because the
+  server scopes everything.
+- I-3: `backend/.coverage` is committed (hygiene).
+
+**PASS items (verified, not taken from builder claims):**
+- **Check-in write scope.** Engineer on an own live-column stage → 200. These all return
+  `FORBIDDEN_STAGE` with **byte-identical bodies** (no existence oracle): another engineer's live
+  stage, another engineer's run-assigned stage, an out-of-hub stage, a non-existent project, a
+  non-existent step, a Viewer grant, Executive Viewer, Auditor, and an other-hub Hub Planner.
+  Portfolio Manager → 200.
+- **Batch atomicity.** A mixed good+forbidden batch → 422, and the good stage is unchanged.
+- **Engineers did not gain general write.** Engineer Workspace stage PATCH → 404. The router diff
+  leaves the stage PATCH auth unchanged. No API writes the live `assigned_engineer_id`, and
+  `engineers.user_id` is unique.
+- **Due list.** Auditor → 403. Engineer never sees other-hub project names.
+- **Immutability at the DB.** UPDATE, DELETE, TRUNCATE and TRUNCATE CASCADE on `stage_checkins`, and
+  UPDATE/DELETE on `audit_log_entries` (project.* rows), are all rejected by the triggers (23001).
+  No new code path deletes or updates either table. The `project.check_in` audit stores only note
+  and reason *lengths*.
+- **Hub filter never widens.** 16 endpoints checked as a Hub Planner scoped to A: priority-board,
+  vip plan/next, check-ins/due, gantt, dashboard ×5, capacity ×4, priorities ×2. Out-of-scope
+  `hub_id` and a random `hub_id` give the same status and an identical normalised body, with no
+  name or id of the other hub's project or engineer. A malformed `hub_id` → 422. Utilization-matrix
+  chambers are narrowed only when `is_hub_in_scope`.
+- **P11 changes endpoint.** It is scoped as `hub_scope_filter`, or own run-assignments for an
+  Engineer. Out-of-scope rows are reported only in `hidden_count`. New headers carry a status word
+  and run UUIDs only. `expose_headers` grows by exactly those 3 headers.
+- **Flood bound.** 20 truly concurrent priority moves (separate sessions) → 1 queued and 19 deferred,
+  with 1 Celery `delay` and the flag pending. 6 racing finishers → exactly 1 `follow_up` run. A
+  second burst while that run is in flight → all deferred.
+- **Step timing.** GANTT write plus a hub-scoped lookup, exactly like freeze. Having no grant route is
+  stricter and consistent, not a gap. The 409s are fixed strings on an already-authorised project.
+- **Input validation.** Rejected with 422: entries 0 and 101; extra keys at top level and in an entry
+  (including `actual_start_week` / `user_id` injection); note 1001; hold reason 2001; % 101, bool or
+  string; step_id 11 chars; a bad status; bad priority bodies; non-bool VIP; timing 0/105/79, float,
+  string, extra or empty; VIP limit 9/16; a bad year. A long step_id path is not echoed.
+- **Code hygiene.**
+  - No raw SQL interpolation: only migration DDL built from fixed module constants.
+  - No secrets in the diff.
+  - No `dangerouslySetInnerHTML` (only in comments).
+  - No new npm or Python dependency (package.json, pnpm-lock, pyproject and uv.lock unchanged).
+  - pip-audit is clean.
+- **GDPR.** Board and VIP cards carry no TCOGS, margin, price or customer fields. Check-in and tracking
+  payloads carry no engineer ids, names or per-engineer aggregates. The submitter name (`by`) appears
+  only in `/check-ins/history`, behind Workspace read of that project, and in the history drawer.
+- **TLS, CSP and proxy.** No infra files changed in the range, so the prior gate's results stand.
+
+**Remediation items:** P12-R01 (H-1, blocking), then re-run security-auditor on H-1. P12-R02 (M-1),
+L-2 and I-1 are optional / non-blocking.
+
+### [2026-10-10] P12-R01 — backend-builder
+
+**Task:** remediate security-auditor H-1 (P12 gate). A Hub Planner with only a Viewer/Editor grant on
+another hub's project had full write on it.
+
+**Fix (`backend/services/project_access.py::authorize_project_action`):** the role path now passes
+only when `principal_can(principal, surface, action) and is_hub_in_scope(principal, project.hub_id)
+and not is_engineer_self_scoped(principal)`. Otherwise it falls through to the existing grant check
+(`effective_project_access` >= `min_grant_role`). Rules 1-2 (Super Admin, global Admin, Portfolio
+Manager) still resolve to Admin there, so unconditional roles are unaffected even with
+`hub_scope_all=False`. Every caller benefits with no per-endpoint change: project PATCH, priority,
+VIP, stage PATCH, recalc, file upload/PATCH, comment post/PATCH/DELETE.
+
+**Second hole found by the same grep (same shape, not in the audit):** `POST /projects/{id}/submit`
+used the role-only `_write` dependency on top of the grant-admitting `_get_project_or_404`, so an
+out-of-hub Hub Planner with a Viewer grant could submit the project out of Draft. It now also calls
+`authorize_project_action(..., PROJECT_REGISTRATION, WRITE, min_grant_role="admin")`. I kept `_write`
+on purpose, so an Engineer with an Admin grant still cannot submit (same as before). Switching to
+`get_current_principal`, as PATCH does, would widen that, so it is left as an orchestrator decision.
+
+**Other `principal_can(` sites checked, all fine:** `gantt.py:230` already ANDs with
+`is_hub_in_scope`. `services/checkin.py` scopes by hub (auditor PASS). `workflow_settings.py` has no
+project. `services/workspace.py:673` is a read.
+
+**Tests:** new `backend/tests/test_p12_r01_grant_hub_scope.py`, 53 tests. The setup is a Hub Planner
+scoped to hub A, and a project in hub B. Celery, SSE and MinIO are faked.
+- A Viewer, Editor or Admin grant is tried against 8 writes: rename, hub move to A, priority, VIP,
+  stage PATCH, upload, comment, recalc. Viewer → 403 on all of them, with no audit row and the
+  charter unchanged. Editor → only stage/upload/comment pass. Admin → all of them pass.
+- Viewer hub-move escalation; Viewer can still read.
+- No grant → 404.
+- Planner with both hubs in scope, and Portfolio Manager, can still do every write.
+- Submit: Viewer and Editor → 403, Admin is authorized.
+
+Without the fix, 16 of the tests fail. Full backend suite: **1185 passed, 2 xfailed**, coverage 96.02%.
+`ruff check .` is clean. mypy shows no errors in the touched modules (61 before and after, all from
+celery stubs elsewhere). The repo-wide mypy debt in `tests/` was already there. I restored
+`backend/.coverage`, which the run had rewritten.
+
+**Follow-up:** security-auditor re-runs H-1.
+
+### [2026-10-10] P12 gate (P11 + P12) — workflow-auditor
+
+**Verdict: PASS.** P12-T07 covers P11-T04 too. I10, I12, I14, I19–I24 hold on live runs. I1–I5,
+I6/I7 and I17 also hold under my own checker. Every greedy run equals my independent derivation.
+No unexplained greedy/CP-SAT divergence. The three known prototype defects are untouched.
+
+**Method.**
+- Throwaway Postgres 17 and Redis 7 (`wa-p12-*`), migrated to `p12b_vip_checkins` and seeded with
+  the real seed scripts (46 projects).
+- Uvicorn with `RPD_DEV_MODE=true`, and a real Celery solver worker.
+  - The worker needs `--pool=solo` on macOS/Py3.14; the spawn pool fails at `_loc`.
+  - This is an environment issue only. I redelivered the one task it dropped (v2).
+- My own scripts import nothing from `backend/scheduling/`:
+  - a greedy derivation written from DOMAIN_RULES that reads raw tables;
+  - an invariant checker;
+  - checks for capacity, hub filter, tracking and VIP.
+- 16 runs in total: v1 manual, v2 priority_move, v3–v9 step_timing, v10/v15 manual, v11 CP-SAT,
+  v12/v16 check_in, v13 priority_move, v14 follow_up.
+- Every greedy run gives **0 diffs** against my derivation, across all 44 schedulable projects:
+  outcome fields, plus each step's start, end, duration, skipped flag, engineer and chamber.
+  The stored within-year count (13) is one higher than mine (12) because of the known
+  Commercialized row (D2).
+
+**1. Priority move (P11).**
+- 13150fa9 moved P4 → P1 via `POST …/priority` and got `queued`, which produced v2.
+- v2 equals my derivation with the new sort order: it lands 6th, after the P1s that rank ahead
+  on status. Its finish moved 74 → 54.
+- I20: the `/changes` endpoint served 4 rows, equal to my diff of stored fields:
+  13150fa9 −20, 1dc944e4 +14, 46e5ebd5 +3, 7784dc3e +2. No unchanged project was listed, and
+  `hidden_count` was 0.
+- I10: frozen 4b1eeee6 is identical across runs.
+- I14: v1's SHA-256 (`373e525c…`) is unchanged after 15 later runs.
+- A hard-gated project moved to P2 got 409 `HARD_GATE_FORCES_P1`.
+
+**2. Booked % (I19).**
+- Every hub row and both areas reconcile to 2 dp for year and remaining, with statuses per the
+  85/100 thresholds. OEM rows have capacity 0 and load > 0, so pct is null and status `full`.
+- Examples on v2:
+  - Europe design 128 / 248.08 = 51.6 %; lab 70 / 289.64 = 24.17 %.
+  - India design 251 / 287.08 = 87.43 % (`near_full`); lab 116 / 188.3 = 61.6 %. The India
+    region is counted once, not 4×.
+- I6/I7 loads equal the stored run sums; I17 design supply equals the ADR 0008 formula. This
+  re-reconciled after every timing change (v7: Europe design 134, lab 67).
+- On Hold: an On Hold check-in gave v16, where `blocked_count` = 1 = stored blocked outcomes,
+  and the Dashboard tile reads `blocked_count`.
+
+**3. Step timing (P12) — every hand check matches.**
+
+| Change | Result |
+|---|---|
+| 7784dc3e PDD-E override 8 | span 54–61 (8 weeks); unconstrained 48 → 52 |
+| 0680b276 lab PDD-H override 3 | 37–39; unconstrained 48 → 45 |
+| 21accb8c elapsed PDD-C override 2 | 36–37 |
+| 60a9c414 PDD-D floor 40 | D at 40 (I22); expected/unconstrained 38 → 46 (floor honoured, no target) |
+| 6e13111e In Progress 50 %, override 10 | remaining ceil(10 × 0.5) = 5, tail 31–35; roll-up round(600/44) = 14 |
+
+- 6e13111e: the Workspace serves progress 14, duration 10 and remaining 5 (I12, effective
+  weights).
+- Frozen 1e6a256b (override 5 on E, floor 45 on D, then frozen at 33):
+  - E 35–39 uses the override; D at 34 ignores the floor;
+  - unconstrained 43 is walked from the locked start (ruling 8).
+- Cert-off f9b3941a PDD-H with override 2 → `not_needed`; the run keeps H skipped (0 weeks).
+- Every 409/422 path wrote nothing and created no run:
+  - `STEP_DONE`, `STEP_STARTED`, `STEP_SKIPPED`, `PROJECT_FROZEN`, `NOT_SCHEDULABLE`;
+  - range errors 105 / 79, wrong-workflow step;
+  - Engineer 403.
+- I21: 307–326 rows checked per run, 0 violations. I22: 0 violations.
+
+**Greedy vs CP-SAT.**
+- Small offline case: 4 projects, 1 leader, 1 chamber, overrides, floors and an In Progress step.
+  - CP-SAT is OPTIMAL and both solvers pass `validate_invariants`.
+  - Placements differ only by the ADR 0005 objective. The P1 that its floor makes spill over
+    either way is moved late, so two others land within the year. Greedy: 0 within year;
+    CP-SAT: 2.
+  - Both honour every override and floor.
+- Live CP-SAT v11 (FEASIBLE, not activated): I21/I22/I1–I5 hold, 18 within year / 5 left out
+  vs greedy 13 / 10. P1 630ebf83 spills over: known OQ #10 class, as at P9-R04.
+
+**4. Hub filter (I23).**
+- For all 6 hubs, the filtered within-year counts and rows equal the unfiltered per-hub figures.
+- The filtered capacity row equals the unfiltered row, with `areas[]` cut to the hub's area and
+  lab figures region-wide.
+- Gantt design load equals Capacity design load per hub: 64 / 65 / 174 / 70 / 7 / 14.
+- The only Gantt-derived within-year gap (R&D-Greece 1 vs 2) is the D2 Commercialized row.
+- A Hub Planner scoped to R&D-Greece:
+  - an out-of-scope `hub_id` gets zero rows and zero totals on the Dashboard and Capacity;
+  - their own hub filtered equals their unfiltered view (2 / 4 / 0 / 6).
+
+**5. Check-in and tracking.**
+- My tracking status (from raw tables) equals the served value on all 46 projects at three
+  points:
+  - 31 idle / 13 due / 2 overdue;
+  - after check-ins: 2 live;
+  - after a last-week check-in (inserted directly): overdue → due.
+- `plan_percent` checks: 30–35 at week 31 gives 33; 31–31 gives 100.
+- Server fills:
+  - first move out of Not Started → `actual_start_week` 31;
+  - an existing start (30) is kept;
+  - Done → 31/31 and 100 % (30 % was submitted).
+- A bad batch was atomic: 422 with per-entry codes, nothing written.
+- One batch produced exactly one `check_in` run, equal to my derivation.
+- Only reported stages carry progress; "per plan" is never written.
+- UPDATE on `stage_checkins` is rejected by the trigger.
+
+**6. I24.**
+- With the worker stopped, I fired 5 auto-triggers: priority queued (v13), then priority,
+  timing, check-in and priority all `deferred`.
+- Bound held: 1 in flight + flag `pending` (count 4).
+- Workspace Recalculate answered 409 `RUN_IN_PROGRESS` without touching the flag.
+- After the worker resumed: exactly one `follow_up` run (v14) and one audit row; the flag
+  cleared; no further run.
+- v14 equals my derivation from the final state: last priority P2, override 7, check-in 50 %.
+
+**7. VIP.**
+- My ranking (pins, then P1→Q, score desc, name; year by any non-skipped step overlapping 1–52 /
+  53–78) equals the served list for every hub, both years, limits 15 and 10.
+- With 17 PD-India pins and limit 10: all 17 shown, `over_limit=true`.
+- Pins created no run.
+- A greedy recalc after pinning (v15) equals v14 step for step (0 rows differ).
+
+**8. Determinism and goldens.**
+- I8 on greedy and CP-SAT holds with `step_timing`, with shuffled timing/project order, and with
+  all-null timing rows equal to `()`.
+- `git diff 24cab45..HEAD -- backend/tests/scheduling/` only adds `test_p12_step_timing.py`; no
+  golden changed.
+- `pytest -c pytest-scheduling.ini`: **168 passed**, 93.96 %.
+
+**Non-blocking observations (no remediation required for this gate):**
+- **W-1.** A frozen project can show tracking `due`/`overdue`, yet check-ins on it are refused
+  with `PROJECT_FROZEN`. Seen live: 4b1eeee6 was overdue until a check-in was inserted directly.
+  The ADR 0021 due-stage definition has no frozen exemption. Suggest the orchestrator either
+  exempts frozen projects (→ `idle`) or records it as intended.
+- **W-2.** On a cert-off lab step, the timing PATCH's `effective_duration_weeks` reports the lead
+  time (6), while the run treats the step as skipped (0). Display-only; the scheduler is correct.
+- **W-3 (environment).** The Celery prefork/spawn pool fails on macOS + Python 3.14; local runs
+  need `--pool=solo`. Not a deployment issue (Linux containers).
+- The working tree held uncommitted `api/routers/projects.py` / `services/project_access.py`
+  edits (the parallel H-1 security fix). They are outside scheduling and do not affect these
+  checks.
+
+**Gate result: PASS** (workflow-auditor, P11 + P12).
+
+### [2026-10-10] P12 gate re-check (H-1) — security-auditor
+
+**Result: PASS.** H-1 is closed. No High or Critical remains, so security-auditor records **PASS for
+P12 (covering P11)**.
+
+**Fix reviewed** (P12-R01, uncommitted working tree):
+- `backend/services/project_access.py::authorize_project_action`: the role path now requires
+  `is_hub_in_scope(principal, project.hub_id) and not is_engineer_self_scoped(principal)`.
+  Otherwise it falls through to the grant check (`min_grant_role`).
+- `POST /projects/{id}/submit` (`api/routers/projects.py`) now also calls `authorize_project_action`
+  with `min_grant_role="admin"`. This closes a second hole of the same kind.
+- The fix is minimal and correct. Super Admin, global Admin and Portfolio Manager still pass through
+  `effective_project_access` rules 1-2.
+
+**Re-verified with my own probes**, not the builder's tests. Setup: a Hub Planner scoped to hub A,
+acting on a hub-B project. I tried 8 writes: priority, VIP, rename, stage PATCH, comment, recalc,
+submit (Draft project) and hub move to A.
+- No grant → 404 on all 8.
+- **Viewer grant → 403 on all 8.** DB state is unchanged: no hub move, priority, VIP or name change.
+- Editor grant → only stage PATCH (200) and comment (201) succeed. The other 6 return 403.
+- Admin grant → all allowed, as ADR 0012 intends.
+- Step timing → 404 for every grant level (hub-scoped lookup).
+- My original H-1 probe file now passes, including the extent checks: stage, recalc, comment and
+  hub move all 403.
+
+**No regression found.**
+- In-hub Hub Planner, Portfolio Manager with `hub_scope_all=false`, and Admin can still move
+  priority and PATCH stages (200). An Engineer is still refused (404).
+- My check-in scope, hub-filter non-widening (16 endpoints, `LEAKS []`) and validation probes are
+  still green.
+- Builder and adjacent suites, 291 passed: `test_p12_r01_grant_hub_scope.py` (53),
+  `test_p11_priority_move`, `test_p12_{checkins,board_vip,step_timing,hub_filter}`,
+  `test_project_access_{api,delegation,resolver}`, `test_workspace_api`.
+
+**Still open, non-blocking:**
+- M-1: react-router advisories, tracked as P12-R02.
+- L-1: the check-in rate limiter is per process. L-2: priority/VIP moves have no rate limit.
+- I-1, I-3 from the gate entry. Submit still needs the role-level `_write` dependency, so an
+  Engineer with an Admin grant cannot submit. That is stricter, not a gap; it is the orchestrator's
+  call (see P12-R01).
+
+### [2026-10-10] P12 gate (P11 + P12) — qa-inspector
+
+**Verdict: FAIL** (2 blocking items, below). Everything else passes on numbers re-run by me. I did
+not reuse any builder's figures. Scope: `git diff 24cab45..HEAD` (`e1cb2c4` P11, `5e49c13` P12)
+plus the uncommitted `docs/IMPLEMENTATION_PLAN.md` edit, which only moves P12 "Status:" lines.
+Coverage files went to the scratchpad (`COVERAGE_FILE`), so the tracked `backend/.coverage` was not
+touched. The base comparisons ran in a throwaway `git worktree` at `24cab45`, since removed. All
+infrastructure was disposable and is now removed: `qa-p12gate-pg` (Postgres 17), `qa-p12gate-redis`,
+uvicorn on :8031 with `RPD_DEV_MODE=true`, and `vite preview --mode e2e` on :5193. Note: the
+parallel security H-1 fix (`services/project_access.py`, `api/routers/projects.py`,
+`tests/test_p12_r01_grant_hub_scope.py`) landed after these runs and is **not** covered by them.
+
+**1. Backend: PASS.**
+- `cd backend && .venv/bin/python -m pytest -q` (default addopts): **1130 passed, 0 failed**,
+  coverage **96.54 %** (gate 70 %).
+- Every touched non-scheduling module is at or above 85 %. Lowest: `api/routers/priorities.py` 85,
+  `workers/schedule_tasks.py` 86, `workers/schedule_run_sweeper.py` 88, `api/routers/projects.py` 90.
+  New P11/P12 services, schemas and routers are 98–100 % (`priority_move`, `run_dispatch`,
+  `step_timing`, `project_cards`, `priority_board`, `vip` 100; `checkins` 99, `tracking` 98).
+- `ruff check .`: all checks passed (ruff 0.16.5).
+- `mypy .` HEAD vs `24cab45`, compared line-agnostically: **product code 92 = 92, an identical
+  set** (38 OR-Tools stub errors in `scheduling/cp_sat.py`, plus pre-existing celery, models,
+  `priorities.py` and `capacity.py` errors). All new errors are in `tests/` (1648 vs 1149 total).
+  That is the untyped-test debt accepted since P1-T08, so it does not block, but P11/P12 added
+  about 500 of them.
+- Alembic: a single head, `p12b_vip_checkins`. On an empty PG17, `upgrade head` gives 31 tables,
+  both stage_checkins triggers, and the follow-up row seeded `pending=f`. `downgrade -1` →
+  `p12a_step_timing`, 29 tables, `is_vip`, `stage_checkins` and `schedule_run_follow_ups` gone.
+  `downgrade -1` again → `d451acccb1ab`, timing columns gone. `upgrade head` again is clean. The
+  trigger function raises 23001 for every operation, with no role carve-out.
+- `tests/test_openapi_frontend_contract.py`: **122 passed**. The P11/P12 rows
+  (`PriorityMove*`, `ScheduleRunChange*`, `CapacityArea`, `StepTiming*`, `CheckIn*`,
+  `PriorityBoard*`, `Vip*`) and the extended `HubCapacityRow/Summary`, `GanttStepRow/ProjectRow`
+  and `ProjectFilterRow` are all pinned `exact`.
+
+**2. Scheduling: PASS.**
+- `python -m pytest -c pytest-scheduling.ini`: **168 passed** (126 pre-existing + 42 in
+  `test_p12_step_timing.py`), coverage **93.96 %** (gate 85 %).
+- `git diff --name-only 24cab45 -- backend/tests/scheduling` lists only the new file. The golden
+  files (`test_golden_files.py`, `test_p9_golden.py`, `_fixtures.py`, 38 cases) are byte-unchanged
+  and green.
+
+**3. Frontend: PASS** (unit level).
+- `tsc -b --noEmit`: clean.
+- eslint: 0 errors and 7 warnings, the same 5 files and 7 warnings as on `24cab45`.
+- `vitest run`: **883 / 884** across 149 files. The single failure is
+  `session-gate.test.tsx > DevRoleSwitcher`, which **also fails on `24cab45`** (verified there:
+  1 failed / 5 passed), so it predates P11/P12 (commit `c074e62`).
+- `npm run build`: **181.0 KB gzip of 400 KB** (45.3 %).
+
+**4. Contract conformance, error bodies: PASS.** Bodies captured live:
+- the hard-gate 409: `{"detail":"This project has hard gates (…)…","code":"HARD_GATE_FORCES_P1"}`;
+- timing 409 `PROJECT_FROZEN` / `NOT_SCHEDULABLE`;
+- the timing 422 `VALIDATION_ERROR`, whose `detail` is a `[{loc,msg,type}]` list;
+- check-in 422 as carol.eng:
+  `{"detail":{"code":"CHECKIN_INVALID","message":…,"errors":[{index,code,message}…]},"code":"CHECKIN_INVALID"}`,
+  with `PROJECT_FROZEN`, `DUPLICATE_STAGE`, `FORBIDDEN_STAGE` and `INCONSISTENT_PROGRESS`.
+
+Every UI test hand-built its `ApiError`, so the real wire shape had never gone through
+`parseError`. **New** `frontend/src/lib/api/p11-p12-error-wire.test.ts` (9 tests, green) pushes
+these exact bodies through the real fetch → `ApiError` path. It covers the move flow's `code`
+check plus the copy, all five timing 409 codes to `TIMING_ERROR_COPY` ("Nothing was saved."), the
+flattened 422 list, `checkInEntryErrors` including `DUPLICATE_STAGE`, and 429 `Retry-After`.
+
+**5. Acceptance-list coverage: PASS except finding A.** Read in the test files:
+- every `recalc_status`: priority move (POST and PATCH), step timing, check-in;
+- every timing 409;
+- hub filter never widens: 12 endpoints, zeros for an out-of-scope hub, plus board, VIP and due
+  list;
+- Engineer check-in negatives;
+- DB-level UPDATE/DELETE/TRUNCATE rejection;
+- VIP pins first and `over_limit`;
+- I24 burst of 5 ⇒ one follow-up; hand-over after failure, success and sweep;
+- On Hold labels.
+
+**New** `backend/tests/test_p12_gate_qa.py` (2 passed, 2 xfail strict):
+- six **concurrent** `dispatch_follow_up_if_requested` callers on separate connections create
+  exactly **one** follow-up run (I24 under a race);
+- two **concurrent** priority moves with nothing in flight give exactly one `queued`, one
+  `deferred`, one QUEUED run, and the flag set (the P11-T05 anti-flood rule under a race).
+
+On Hold: the only "Blocked" left in `frontend/src` is wire comparisons, comments and the
+`types/enums.ts` label map. Two prose hits are unrelated: `project-spotlight.tsx:246` "blocked
+pending the GDPR determination" and the placeholder page.
+
+**6. Live axe** (new `frontend/e2e/p12-gate.spec.ts`; 13 scans as Super Admin and Engineer on
+/priority-board, /vip, /check-in, /, /capacity and /gantt, plus the header hub filter open and
+filtered):
+- clean: check-in, capacity, gantt (both roles), and every Engineer view;
+- violations: see B, plus the pre-existing items in the follow-ups.
+
+**BLOCKING remediation items:**
+- **A. QA-P12-1: frozen projects in the weekly check-in.**
+  - `services/checkin.py:179` `visible_stages` (and `api/routers/checkins.py` `/check-ins/due`)
+    ignore `project.frozen`. A due stage of a frozen project is therefore served
+    `can_check_in: true`, while `POST /check-ins` always rejects it with `PROJECT_FROZEN` (ruling 3).
+    Because the batch is atomic, one such row fails the whole submit.
+  - `services/tracking.py` (`stage_is_due` / `tracking_status_for`) counts the project's stages as
+    due, so it shows **`overdue` forever** on the board, VIP, Gantt and Projects chips and in
+    `summary.projects_overdue`. Seen live: the frozen project was the portfolio's only "overdue"
+    project.
+  - Fix: treat frozen like non-schedulable for due/tracking (no due stages ⇒ `idle`), the same
+    reasoning as P12-T03 decision 1. At minimum, serve `can_check_in=false`.
+  - Pinned by `tests/test_p12_gate_qa.py::test_frozen_project_stage_is_never_offered_for_check_in`
+    and `::test_frozen_project_is_idle_not_overdue`. Both are `xfail(strict=True)`, so remove the
+    markers when fixed. Owner: backend-builder.
+- **B. axe serious `color-contrast` on two new P12 surfaces** (the unit axe misses it because
+  jsdom computes no contrast):
+  - /priority-board (1 node) and /vip (3 nodes): the `B-OEM` category chip renders
+    `text-dashChart-6` on `bg-dashChart-6/15`, which is #f43e5c on #fde2e7 = **3.02:1** at 11px
+    bold (needs 4.5:1).
+  - The source is the pre-existing `lib/categorical-palette.ts` via `components/ui/category-tag.tsx`
+    (untouched since `24cab45`), so the Matrix and Registration lists carry it too. The P12-T05
+    acceptance "axe zero serious/critical" is still not met on the new surfaces.
+  - Fix: darken the chip text tokens (check every categorical slot, not just 6) or use a dark text
+    on the tint. Owner: frontend-builder.
+
+**Non-blocking follow-ups:**
+- **C.** Dashboard (pre-existing, files untouched by P11/P12):
+  - critical `aria-valid-attr-value`: a Radix tab's `aria-controls` points at unmounted content,
+    in the project-breakdown view tabs;
+  - serious `color-contrast` 4.13:1 on the KPI `bg-drop`/`text-drop-fg` delta pill
+    (`components/ui/kpi-card.tsx`).
+- **D.** Header hub filter (new P12 control): `aria-hidden-focus` (serious) on `nav` and `header`
+  while the Radix Select listbox is open. This is Radix's modal `hideOthers` with focus trapped in
+  the listbox. It is transient and shared with every Radix Select. Consider a non-modal listbox.
+- **E.** The check-in 429 shows "You're commenting too fast…", because
+  `lib/api/error-messages.ts::rateLimitedMessage` is comment-specific and
+  `use-check-in-submit.ts` uses it. Needs check-in copy.
+- **F.** The Gantt timing dialog was not scanned live: the expand-row selector did not resolve on
+  this stack. It keeps its unit-level axe test (`step-timing.test.tsx`).
+
+**Files added (tests only, not committed):** `backend/tests/test_p12_gate_qa.py`,
+`frontend/src/lib/api/p11-p12-error-wire.test.ts`, `frontend/e2e/p12-gate.spec.ts`.
+**Next:** remediate A and B, then a qa-inspector re-check: drop the xfails and re-run the live axe
+on /priority-board and /vip.
+
+### [2026-10-10] P12-R04 — frontend-builder
+
+**Task:** P12-R04 (blocking remediation of qa-inspector P12 gate items B and E); P12-R02 checked and skipped.
+
+**B. Categorical chip contrast: fixed.**
+- New text-only tokens `--dash-cat-ink-1..10` (light and dark) in a new block appended last in
+  `frontend/src/styles/tokens.css` ("CATEGORICAL CHIP INK"). They keep each slot's hue: darker in light
+  mode (L 22–44 %), lighter in dark mode (L 66–84 %). The chart fills `--dash-cat-N` are unchanged, and
+  so are `CATEGORICAL_RANK_BG` and the soft tints.
+- Tailwind colour `dashChartInk.1..10` (`frontend/tailwind.config.ts`).
+- `CATEGORICAL_RANK_TEXT` in `frontend/src/lib/categorical-palette.ts` now gives `text-dashChartInk-N`.
+  No component changed: CategoryTag, Matrix, Registration list, Dashboard spotlight/breakdown and the
+  hub-rank-list % pill and icon all get the new ink through `categoricalRankText`. No raw hex anywhere.
+- Worst-case ratio, measured on the tint composited over surface, surface-raised, dash-alt and shell,
+  and on the bare surface: **light ≥ 5.25:1** (slot 6 B-OEM, was 3.02 live) and **dark ≥ 6.4:1**.
+- New `frontend/src/lib/categorical-palette-contrast.test.ts` (24 tests):
+  - It parses `tokens.css?raw` in cascade order (`:root`, then `.dark` over it).
+  - It parses the slot's text and tint classes, so a re-pointed token or alpha is measured again.
+  - It asserts ≥ 4.5:1 for all 10 slots × both themes × 4 surfaces, both on the tint and on the bare
+    surface.
+  - It also reproduces the original failure: fill on its own 15 % tint is < 4.5.
+
+**E. Check-in 429 copy: fixed.**
+- `lib/api/error-messages.ts` adds `CHECK_IN_RATE_LIMITED_MESSAGE` ("Too many check-ins in a row —
+  wait a few seconds and submit again.") and `checkInRateLimitedMessage(retryAfter)` ("…wait N s and
+  submit again.").
+- `surfaces/check-in/hooks/use-check-in-submit.ts` uses it for any `ApiError` with status 429. Every
+  other error still goes through `apiErrorMessage`, and the comment copy is unchanged.
+- Tests: a unit test in `error-messages.test.ts`, plus a `CheckInPage.test.tsx` test that a 429 with
+  `Retry-After: 6` renders the check-in copy and contains no "commenting".
+
+**P12-R02: skipped, still OPEN.** The app is on `react-router-dom@6.30.6`. Getting `react-router`
+≥ 7.18.0 means a v6→v7 major migration with API changes, which is not a patch or minor bump. The plan
+line is annotated.
+
+**Verification:**
+- `tsc -b --noEmit`: clean.
+- eslint: 0 errors, 7 warnings (unchanged baseline).
+- `vitest run`: 917/918 across 151 files. The only failure is the pre-existing
+  `session-gate.test.tsx > DevRoleSwitcher`.
+- `npm run build`: bundle budget PASS at 181.2 KB gzip of 400 KB (45.3 %).
+- The built CSS contains the `text-dashChartInk-*` utilities.
+- Live axe was not re-run here. Next step: qa-inspector re-runs `e2e/p12-gate.spec.ts` on
+  /priority-board and /vip.
+- No backend files touched; nothing committed.
+
+### [2026-10-10] P12-R03 — backend-builder
+
+**Task:** P12-R03 (blocking, qa-inspector QA-P12-1): frozen projects in the weekly check-in and
+tracking status. Also closes P12-F03 (same defect) and P12-F04 (timing response for a cert-off lab step).
+
+**Changes (uncommitted):**
+- `backend/services/tracking.py` `due_stages_for`: the project query now also reads `Project.frozen`.
+  A frozen project is excluded exactly like a non-schedulable one, so it has **no due stages**.
+  As a result, `tracking_status_for` / `status_from_due_stages` answer `idle` for it on every
+  reader (board, VIP, Gantt, `/dashboard/projects`, `/check-ins/due` and its summary counts). The
+  module docstring records the rule.
+- `backend/services/checkin.py` `visible_stages`: returns `[]` for a frozen project. This is a
+  defence-in-depth guard so `can_check_in` can never be `true` there; GET `/check-ins/due` drops
+  projects with no visible stages.
+- POST `/check-ins` is unchanged: a frozen project still answers `PROJECT_FROZEN`. That check runs
+  before the `NOT_DUE` check, so the error code did not change.
+- `backend/services/step_timing.py`: new `_served_effective(...)`. The response's
+  `effective_duration_weeks` is now **0** for a lab step skipped because certification testing is
+  off, on both the changed and the `unchanged` paths. The shared
+  `services/workflow_durations.effective_duration_weeks` is **unchanged**, because workspace,
+  project_cards and ask_agent use it as a roll-up weight (where it answers the lead time).
+- Tests:
+  - `backend/tests/test_p12_gate_qa.py`: removed both `xfail(strict=True)` markers and the unused
+    `pytest` import. `test_frozen_project_stage_is_never_offered_for_check_in` and
+    `test_frozen_project_is_idle_not_overdue` now pass.
+  - `backend/tests/test_p12_step_timing.py`: the cert-off assertion changed from 4 to 0, and there
+    is a new `test_cert_off_lab_step_reports_zero_effective_duration_when_unchanged`.
+
+**Contract note for the orchestrator:** the DOMAIN_RULES "Due stage" definition does not mention
+frozen projects. The new behaviour (frozen ⇒ nothing due ⇒ `idle`) extends the "non-schedulable ⇒
+idle" decision recorded at P12-T03. A one-line DOMAIN_RULES clarification would make it part of the
+contract. I did not edit DOMAIN_RULES.
+
+**Verification:**
+- Affected files (`test_p12_gate_qa`, `test_p12_step_timing`, `test_p12_checkins`,
+  `test_p12_tracking`): 120 passed.
+- Full backend suite: **1188 passed, 0 failed**, coverage 96.60 %.
+- Scheduling suite (`-c pytest-scheduling.ini`): 168 passed.
+- `ruff check .`: clean.
+
+`backend/scheduling/` and `frontend/` were not touched.
+
+### [2026-10-10] P12 gate re-check — qa-inspector
+
+**Verdict: PASS.** Both blocking items from "P12 gate (P11 + P12) — qa-inspector" are fixed and
+verified on the working tree (uncommitted P12-R01, R03 and R04). Everything was re-run by me. The
+infrastructure was disposable (`qa-p12rc-pg`, `qa-p12rc-redis`, uvicorn :8031 in dev mode, preview
+:5193) and has been removed. The tracked `backend/.coverage` is untouched.
+
+**A. QA-P12-1, frozen projects in the check-in: FIXED.**
+- `tests/test_p12_gate_qa.py` has no xfail markers left, and all 4 of its tests pass.
+- Live, on a seeded DB with an active greedy run, I froze the first due project:
+  - it disappeared from `GET /check-ins/due` (due_stages 14 → 13, projects_due 14 → 13);
+  - `/dashboard/projects` serves it as `tracking_status: "idle"`;
+  - `POST /check-ins` on it still answers 422 `CHECKIN_INVALID` / `PROJECT_FROZEN`.
+- Recommend the orchestrator adds "frozen ⇒ no due stage" to the DOMAIN_RULES "Due stage" line, as
+  P12-R03 asked.
+
+**B. axe colour-contrast on the new surfaces: FIXED.** Re-ran `frontend/e2e/p12-gate.spec.ts`
+against a fresh `vite build --mode e2e` of the current tree (the CSS contains the
+`text-dashChartInk-*` utilities):
+- **/priority-board and /vip: 0 serious/critical** for both Super Admin and Engineer. Before the fix
+  they had 1 and 3 nodes at 3.02:1.
+- /check-in, /capacity and /gantt: 0 for both roles. Every Engineer view: 0.
+- The spec ran 13 tests: 11 passed and 2 failed. Both failures are known, non-blocking items from
+  my first entry:
+  - **C** (pre-existing, Dashboard files untouched by P11/P12): Radix tab `aria-controls` (critical)
+    and the KPI `bg-drop` pill at 4.13:1 (serious), on `/` and `/` filtered to a hub;
+  - **D**: `aria-hidden-focus` while the Radix hub-filter listbox is open.
+- New `src/lib/categorical-palette-contrast.test.ts` (24 tests) is green, inside the full run below.
+
+**E** (check-in 429 copy) is also fixed by R04 and covered by its tests.
+
+**Suites (current tree, including H-1 fix P12-R01):**
+- Backend `pytest -q` (default addopts): **1188 passed, 0 failed, 0 xfail**, coverage **96.60 %**.
+  That includes the 53 tests in `tests/test_p12_r01_grant_hub_scope.py` and the 4 in
+  `test_p12_gate_qa.py`.
+  - Remediated modules: `services/step_timing.py` 100 %; `checkin.py`, `tracking.py` and
+    `project_access.py` 99 %; `api/routers/projects.py` 91 %.
+  - `ruff check .` is clean.
+- Frontend:
+  - `tsc -b --noEmit`: clean.
+  - eslint: 0 errors, 7 warnings (the base set).
+  - `vitest run`: **917 / 918** across 151 files. The only failure is the tolerated, pre-existing
+    `session-gate.test.tsx > DevRoleSwitcher`.
+
+**Still open, non-blocking:**
+- C and D above;
+- F: the Gantt timing dialog was scanned at unit level only;
+- P12-R02 (react-router v6→v7), deferred by the orchestrator;
+- P12-F01 and P12-F02.
+
+### [2026-10-10] P11 + P12 closed — gate PASS — rpd-orchestrator
+
+**Gate:** qa-inspector PASS (re-check after P12-R03/R04), workflow-auditor PASS, security-auditor
+PASS (re-check after P12-R01). First runs: security FAIL (H-1, grant hub-scope bypass — fixed by
+P12-R01, which also closed the same hole on `POST /projects/{id}/submit`); qa FAIL (frozen projects
+in check-in — P12-R03; B-OEM chip contrast — P12-R04). Final numbers: backend 1188 passed, 96.60 %;
+scheduling 168 passed, golden files unchanged; frontend 917/918 (pre-existing DevRoleSwitcher only);
+bundle 181.2 KB / 400 KB; axe 0 serious/critical on the new surfaces.
+
+**DOMAIN_RULES:** "Due stage" now excludes non-schedulable and frozen projects (P12-T03/R03 rulings).
+
+**Rulings:** an Engineer with an Admin grant still cannot submit from Draft (stricter, kept).
+
+**Open, non-blocking:** P12-R02 (react-router v6→v7, M-1), P12-F01 (touch drag), P12-F02 (grant-only
+users see read-only board/VIP/check-in), QA C (Dashboard tab aria / KPI pill contrast, pre-existing),
+QA D (Radix Select aria-hidden-focus), QA F (timing dialog live axe), security L-1/L-2 (per-process
+check-in limiter; no limit on priority/VIP), OQ #32 (VIP curation) with the client.
+
+P11 and P12 are complete. Pushed to origin/main.

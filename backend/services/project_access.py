@@ -37,7 +37,7 @@ from models.project_access import ProjectAccessGrant
 from models.schedule import ScheduleRunProjectStep
 from models.user import User
 from services.active_run import get_active_run
-from services.hub_scope import is_hub_in_scope
+from services.hub_scope import is_engineer_self_scoped, is_hub_in_scope
 
 #: A project-scoped role, per `models.enums.ProjectAccessRole` — kept as a
 #: plain `Literal[str]` here (rather than importing the DB enum type) since
@@ -261,8 +261,10 @@ async def authorize_project_action(
     """The single composition point for gating a project-scoped mutation:
     403s unless EITHER the caller's global role already grants `action` on
     `surface` (the unchanged ADR 0010 matrix, via `api.deps.principal_can`)
-    OR their resolved project-grain access (`effective_project_access`) is
-    at least `min_grant_role`. Callers pass `min_grant_role="editor"` for
+    AND the project is inside that role's row scope (P12-R01: in the
+    caller's hub scope, never for an own-assignment-scoped Engineer) OR
+    their resolved project-grain access (`effective_project_access`) is at
+    least `min_grant_role`. Callers pass `min_grant_role="editor"` for
     the three actions ADR 0012 lets an Editor grant perform (stage-progress
     PATCH, file upload, comment post) and `"admin"` for everything else a
     project-scoped Admin grant should unlock (Registration writes, and every
@@ -270,7 +272,19 @@ async def authorize_project_action(
     which never authorizes a write.
     """
 
-    if principal_can(principal, surface, action):
+    # P12-R01 (security-auditor H-1): the role path is row-scoped. The
+    # surface matrix says what a role may do, not where; a role WRITE only
+    # counts on a project inside the caller's own hub scope (respecting
+    # `hub_scope_all`) and never for an own-assignment-scoped Engineer. A
+    # project reached through a grant (the lookups admit it on ANY grant
+    # role) is authorized by that grant's level alone, below. Roles whose
+    # access is unconditional (Super Admin, global Admin, Portfolio
+    # Manager) still pass there via `effective_project_access` rules 1-2.
+    if (
+        principal_can(principal, surface, action)
+        and is_hub_in_scope(principal, project.hub_id)
+        and not is_engineer_self_scoped(principal)
+    ):
         return
     role = await effective_project_access(db, principal, project)
     if meets_minimum(role, min_grant_role):

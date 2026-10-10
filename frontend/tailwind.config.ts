@@ -89,6 +89,20 @@ export default {
           9: withAlpha('dash-cat-9'),
           10: withAlpha('dash-cat-10'),
         },
+        // P12-R04: text-only companion of dashChart for chips on its 15 % tint
+        // (>= 4.5:1 in both themes, pinned by categorical-palette-contrast.test.ts).
+        dashChartInk: {
+          1: withAlpha('dash-cat-ink-1'),
+          2: withAlpha('dash-cat-ink-2'),
+          3: withAlpha('dash-cat-ink-3'),
+          4: withAlpha('dash-cat-ink-4'),
+          5: withAlpha('dash-cat-ink-5'),
+          6: withAlpha('dash-cat-ink-6'),
+          7: withAlpha('dash-cat-ink-7'),
+          8: withAlpha('dash-cat-ink-8'),
+          9: withAlpha('dash-cat-ink-9'),
+          10: withAlpha('dash-cat-ink-10'),
+        },
         // Structural hue. The sidebar rail and its furniture — never an action.
         sidebar: {
           DEFAULT: withAlpha('color-sidebar'),

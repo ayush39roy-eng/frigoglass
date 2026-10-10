@@ -248,6 +248,19 @@ describe('CheckInPage — form validation and batch submit', () => {
     expect(within(stageEl('Design Detailing')).getByTestId('confirm-unchanged')).toHaveAttribute('aria-pressed', 'true');
   });
 
+  it('429 RATE_LIMITED (P12-R04): shows check-in copy, never the comment copy', async () => {
+    client.apiSend.mockRejectedValue(new ApiError(429, 'Too Many Requests', 'slow down', 'RATE_LIMITED', 6));
+    const { user } = await renderPage();
+    await user.click(within(stageEl('Design Detailing')).getByRole('button', { name: 'Confirm Design Detailing unchanged' }));
+    await user.click(screen.getByTestId('check-in-submit'));
+
+    const panel = await screen.findByTestId('check-in-result');
+    expect(within(panel).getByTestId('check-in-result-body')).toHaveTextContent(
+      'Too many check-ins in a row — wait 6 s and submit again.',
+    );
+    expect(document.body).not.toHaveTextContent(/commenting/i);
+  });
+
   it('deferred (ADR 0023): says the timeline updates automatically and starts the follow-up watcher', async () => {
     client.apiSend.mockResolvedValue(submitResponse({ recalc_status: 'deferred' }));
     const { user } = await renderPage();

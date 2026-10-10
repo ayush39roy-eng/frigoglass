@@ -179,8 +179,16 @@ def candidate_filter(
 def visible_stages(
     access: CheckInAccess, project: Project, stages: list[DueStage]
 ) -> list[tuple[DueStage, bool]]:
-    """`[(stage, can_check_in)]` the caller sees for one project."""
+    """`[(stage, can_check_in)]` the caller sees for one project.
 
+    A frozen project offers nothing: `POST /check-ins` always refuses it with
+    `PROJECT_FROZEN`, so no stage of it may be served `can_check_in=true`
+    (P12-R03). `due_stages_for` already returns no stages for it; this guard
+    keeps the two rules from drifting apart.
+    """
+
+    if project.frozen:
+        return []
     if access.project_wide_write(project):
         return [(s, True) for s in stages]
     if access.role_reads(project):

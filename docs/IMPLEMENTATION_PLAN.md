@@ -1664,10 +1664,27 @@ Opened 2026-10-10 from Frigoglass's requests, relayed by the project owner:
 ADRs 0018–0022. Contract: `docs/API_CONTRACT_P12.md`. DOMAIN_RULES *(2026-10-10)* sections and
 I21–I23. Open questions #28–#33.
 
+- **P12-R01** (DONE —, blocking — security-auditor H-1, 2026-10-10): `authorize_project_action`
+  (`backend/services/project_access.py:273`) lets the role permission pass without checking the
+  project is in the caller's hub scope, and the project lookups admit out-of-hub projects on any grant.
+  A Hub Planner with a Viewer/Editor grant on another hub's project can PATCH it (incl. moving its hub),
+  move priority, pin VIP, edit stages, upload, comment, recalc. Fix: role path requires
+  `is_hub_in_scope(principal, project.hub_id) and not is_engineer_self_scoped(principal)`, else fall
+  through to the grant check; regression tests for Viewer/Editor/Admin grants on every write.
+  Owner: backend-builder. Status: DONE (2026-10-10; `docs/MEMORY.md` "P12-R01 — backend-builder").
+- **P12-R03** (REMEDIATION, blocking — qa-inspector QA-P12-1): frozen projects have no due stages
+  (tracking `idle`, `can_check_in=false`), supersedes P12-F03. Owner: backend-builder. Status: DONE
+  (2026-10-10; `docs/MEMORY.md` "P12-R03 — backend-builder").
+- **P12-R04** (REMEDIATION, blocking — qa-inspector B): categorical chip text contrast ≥ 4.5:1 for
+  every slot in `categorical-palette.ts` (B-OEM 3.02:1 today); also fix the check-in 429 copy.
+  Owner: frontend-builder. Status: DONE (2026-10-10; `docs/MEMORY.md` "P12-R04 — frontend-builder").
+- **P12-R02** (non-blocking, M-1): bump `react-router` to ≥ 7.18.0. Owner: frontend-builder. Status: OPEN
+  (2026-10-10, P12-R04: skipped — the app is on `react-router-dom@6.30.6`; ≥ 7.18.0 is a v6→v7 major
+  migration with API changes, not a patch/minor bump; needs its own task).
 - **P12-T00**: Docs. Owner: rpd-orchestrator. Status: DONE (2026-10-10).
 - **P12-T01**: Scheduler step timing (ADR 0019, contract §1). Owner: algorithm-engineer. Depends
-  Status: DONE (2026-10-10; `docs/MEMORY.md` "P12-T01 — algorithm-engineer").
   on: P12-T00.
+  Status: DONE (2026-10-10; `docs/MEMORY.md` "P12-T01 — algorithm-engineer").
   - `StepTimingInput`, `ProjectInput.step_timing`; effective duration in greedy, CP-SAT,
     unconstrained finish, remaining-duration derivation, roll-up weights; floor for Not Started.
   - I21 and I22 in `invariants.py`; hashed input includes `step_timing`.
@@ -1675,8 +1692,8 @@ I21–I23. Open questions #28–#33.
     override longer, override shorter, floor later than precedence, floor earlier than precedence
     (no effect), In Progress resize, skipped step with override (stays skipped); self-tests green.
 - **P12-T02**: Backend A — step timing endpoint + hub filter (contract §0 p12a, §3, §4). Owner:
-  Status: DONE (2026-10-10; `docs/MEMORY.md` "P12-T02 — backend-builder (A)").
   backend-builder. Depends on: P12-T00; the input wiring depends on P12-T01.
+  Status: DONE (2026-10-10; `docs/MEMORY.md` "P12-T02 — backend-builder (A)").
   - Migration `p12a_step_timing`; model columns; `PATCH …/steps/{step_id}/timing` with every 409;
     dispatch via `run_dispatch`; Gantt step row and project row extensions; schedule input build
     passes `step_timing`; capacity load uses the effective duration; `hub_id` on every endpoint
@@ -1696,24 +1713,24 @@ I21–I23. Open questions #28–#33.
     `FORBIDDEN_STAGE` otherwise), batch atomicity, server-filled actual weeks, VIP ranking and
     `over_limit`, check-in rows immutable.
 - **P12-T04**: Frontend A — global hub filter + Gantt drag (ADR 0019, 0020). Owner:
-  Status: DONE (2026-10-10; `docs/MEMORY.md` "P12-T04 — frontend-builder (A)").
   frontend-builder. Depends on: P12-T00.
+  Status: DONE (2026-10-10; `docs/MEMORY.md` "P12-T04 — frontend-builder (A)").
   - `stores/hub-filter.ts`, header hub select, every portfolio surface wired (query keys + params),
     Gantt local select removed, "Hub: X" chip; Gantt bar move + right-edge resize with week snapping,
     honouring `timing_editable`, keyboard alternative (a timing dialog), optimistic ghost then the
     P11 run-follow + "Timeline updated" panel, "Reset timing"; VIP badge and tracking chip on rows.
 - **P12-T05**: Frontend B — Priority board, VIP projects, Weekly check-in surfaces (ADR 0018, 0021,
-  Status: DONE (2026-10-10; `docs/MEMORY.md` "P12-T05 — frontend-builder (B)").
   0022). Owner: frontend-builder. Depends on: P12-T00.
+  Status: DONE (2026-10-10; `docs/MEMORY.md` "P12-T05 — frontend-builder (B)").
   - Three nav entries and routes; Kanban with accessible drag (pointer + keyboard) calling the P11
     move flow; VIP page with year toggle and pin control; check-in page with batch form, "per plan"
     progress, history drawer, due-count badge in the sidebar; `TrackingStatusChip`, `VipBadge`.
 - Acceptance for P12-T04/T05: typecheck, lint, test and build green within the 400 KB initial
   budget; axe zero serious/critical; no `dangerouslySetInnerHTML`, no raw hex; every figure served.
-- **P12-T06**: `qa-inspector` gate (P11 + P12).
-- **P12-T07**: `workflow-auditor` gate (P11 + P12): I10, I14, I19–I23 on a live run; a drag and a
+- **P12-T06**: `qa-inspector` gate (P11 + P12). Status: PASS (2026-10-10; see MEMORY.md gate entries).
+- **P12-T07**: `workflow-auditor` gate (P11 + P12): I10, I14, I19–I23 on a live run; a drag and a Status: PASS (2026-10-10; see MEMORY.md gate entries).
   priority move re-derived independently; hub-filtered reconciliation.
-- **P12-T08**: `security-auditor` gate (P11 + P12): Engineer check-in write scope, hub-filter
+- **P12-T08**: `security-auditor` gate (P11 + P12): Engineer check-in write scope, hub-filter Status: PASS (2026-10-10; see MEMORY.md gate entries).
   non-widening, timing/VIP/board RBAC incl. grants, check-in immutability, rate limiting, no
   per-engineer ranking (GDPR).
 
@@ -1738,3 +1755,10 @@ I21–I23. Open questions #28–#33.
 - **P12-F02**: Extend P11-F01 (per-project effective role) to the board drag, VIP pin and check-in
   for users whose only write route is an Admin-level grant. Owner: backend-builder +
   frontend-builder. Status: OPEN.
+- **P12-F03** (workflow-auditor W-1): a frozen project can show tracking "due"/"overdue" while
+  check-ins on it are refused (`PROJECT_FROZEN`). Treat frozen projects as `idle` in
+  `services/tracking.py`. Owner: backend-builder. Status: DONE (2026-10-10, via P12-R03;
+  `docs/MEMORY.md` "P12-R03 — backend-builder").
+- **P12-F04** (workflow-auditor W-2): the timing response reports `effective_duration_weeks` = lead
+  time for a cert-off (skipped) lab step; should report 0. Display only. Owner: backend-builder.
+  Status: DONE (2026-10-10, with P12-R03; `docs/MEMORY.md` "P12-R03 — backend-builder").

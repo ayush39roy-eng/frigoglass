@@ -29,8 +29,8 @@ allowed: the floor only applies to Not Started steps, so clearing it is the
 `certification_testing_required` is false (DOMAIN_RULES "Lead times"), and the
 scheduler ignores timing on skipped steps, so the run would not change. The
 values are kept for when certification testing is turned back on; until then
-`effective_duration_weeks` answers the lead time (an override never revives a
-skipped step).
+`effective_duration_weeks` answers 0, because the step books no weeks (an
+override never revives a skipped step; P12-F04).
 
 The queued path is the priority move's lifecycle
 (`services/priority_move.py`, ADR 0015): `find_in_flight_run` (which takes the
@@ -148,6 +148,21 @@ def validate_timing_changes(changes: dict[str, Any]) -> None:
         raise CodedHTTPException(HTTP_422, "VALIDATION_ERROR", errors)
 
 
+def _served_effective(
+    lead_time_weeks: int, duration_override_weeks: int | None, cert_skipped: bool
+) -> int:
+    """The response's `effective_duration_weeks`: 0 for a step skipped because
+    certification testing is off (it books no weeks; P12-F04), else
+    `services.workflow_durations.effective_duration_weeks`. The shared helper
+    keeps answering the lead time for skipped steps, since its other callers
+    use it as a roll-up weight.
+    """
+
+    if cert_skipped:
+        return 0
+    return effective_duration_weeks(lead_time_weeks, duration_override_weeks)
+
+
 def _conflict(code: str, message: str) -> CodedHTTPException:
     return CodedHTTPException(status.HTTP_409_CONFLICT, code, message)
 
@@ -225,8 +240,8 @@ async def apply_step_timing(
             step_id=step_id,
             duration_override_weeks=before["duration_override_weeks"],
             start_not_before_week=before["start_not_before_week"],
-            effective_duration_weeks=effective_duration_weeks(
-                row.duration_weeks, before["duration_override_weeks"], skipped=cert_skipped
+            effective_duration_weeks=_served_effective(
+                row.duration_weeks, before["duration_override_weeks"], cert_skipped
             ),
             recalc_status="unchanged",
         )
@@ -274,8 +289,8 @@ async def apply_step_timing(
             },
         )
     )
-    effective = effective_duration_weeks(
-        row.duration_weeks, after["duration_override_weeks"], skipped=cert_skipped
+    effective = _served_effective(
+        row.duration_weeks, after["duration_override_weeks"], cert_skipped
     )
 
     if recalc != "queued":

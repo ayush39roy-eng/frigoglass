@@ -640,7 +640,8 @@ capacity stays region-wide under a hub filter (chambers are shared per region).
 
 ## Weekly check-in and tracking status *(2026-10-10, ADR 0021)*
 
-- **Due stage** (for the current week): not skipped, not `Done`, and either `status ∈ {In Progress,
+- **Due stage** (for the current week): the project is schedulable and not `frozen` (P12-T03 / P12-R03
+  rulings — such projects are `idle`); the stage is not skipped, not `Done`, and either `status ∈ {In Progress,
   Blocked}` or the active run's planned window for the stage contains `CURRENT_WEEK`.
 - **Who may check in:** an Engineer for stages of projects they lead or stages assigned to them
   (their engineer = `Engineer.user_id`); Hub Planner (own hub), Portfolio Manager, Admin, Super Admin

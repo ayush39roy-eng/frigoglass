@@ -18,6 +18,11 @@ have due stages. A Draft, On Hold, Commercialized or Cancelled project is out
 of the plan, so it is `idle` and nothing on it is due (otherwise a cancelled
 project with a stage left `In Progress` would show as overdue forever).
 
+**P12-R03 (qa-inspector QA-P12-1):** a *frozen* project has no due stages
+either, so it is `idle`. Its dates are locked (I10) and `POST /check-ins`
+always refuses it with `PROJECT_FROZEN` (ADR 0006 "frozen wins"), so a due
+stage on it could never be checked in and would read `overdue` forever.
+
 **Tracking status** (per project):
 - `idle`: no due stage;
 - `live`: every due stage has a check-in with `week == CURRENT_WEEK`;
@@ -106,7 +111,9 @@ def stage_is_due(
     cert_required: bool,
     current_week: int = dc.CURRENT_WEEK,
 ) -> bool:
-    """ADR 0021 §1 for one stage of a schedulable project."""
+    """ADR 0021 §1 for one stage of a schedulable, non-frozen project (the
+    project-level exclusions live in `due_stages_for`).
+    """
 
     if live.status == WorkflowStepStatus.DONE:
         return False
@@ -227,17 +234,24 @@ async def due_stages_for(
         active_run = await get_active_run(db)
 
     projects = {
-        pid: (status, cert)
-        for pid, status, cert in (
+        pid: (status, cert, frozen)
+        for pid, status, cert, frozen in (
             await db.execute(
-                select(Project.id, Project.status, Project.certification_testing_required).where(
-                    Project.id.in_(ids)
-                )
+                select(
+                    Project.id,
+                    Project.status,
+                    Project.certification_testing_required,
+                    Project.frozen,
+                ).where(Project.id.in_(ids))
             )
         ).all()
     }
+    # Frozen projects are treated like non-schedulable ones: nothing is due
+    # (P12-R03; see module docstring).
     schedulable = [
-        pid for pid, (status, _cert) in projects.items() if status not in NON_SCHEDULABLE_STATUSES
+        pid
+        for pid, (status, _cert, frozen) in projects.items()
+        if status not in NON_SCHEDULABLE_STATUSES and not frozen
     ]
     if not schedulable:
         return result

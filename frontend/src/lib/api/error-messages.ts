@@ -17,6 +17,17 @@ export function rateLimitedMessage(retryAfterSeconds: number | undefined): strin
     : `You're commenting too fast. Try again in ${String(Math.max(1, retryAfterSeconds))} s.`;
 }
 
+/** 429 copy for the weekly check-in (P12-R04, qa-inspector P12 gate item E):
+ *  `POST /check-ins` is rate-limited too, and the comment copy above was
+ *  wrong there. Same `Retry-After` rule as `rateLimitedMessage`. */
+export const CHECK_IN_RATE_LIMITED_MESSAGE = 'Too many check-ins in a row — wait a few seconds and submit again.';
+
+export function checkInRateLimitedMessage(retryAfterSeconds: number | undefined): string {
+  return retryAfterSeconds === undefined
+    ? CHECK_IN_RATE_LIMITED_MESSAGE
+    : `Too many check-ins in a row — wait ${String(Math.max(1, retryAfterSeconds))} s and submit again.`;
+}
+
 export const API_ERROR_MESSAGES: Record<string, string> = {
   // Session / users (ADR 0010)
   LAST_SUPER_ADMIN: 'This change would leave no active Super Admin. Promote another user to Super Admin first.',

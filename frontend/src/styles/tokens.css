@@ -1020,3 +1020,42 @@
 
   --gradient-dash-primary: linear-gradient(150deg, hsl(215 60% 30%) 0%, hsl(213 58% 44%) 100%);
 }
+
+/* ===========================================================================
+ * CATEGORICAL CHIP INK  (2026-10-10, P12-R04 — qa-inspector P12 gate item B).
+ *
+ * The category chip / "% pill" (`components/ui/category-tag.tsx` and every
+ * `categoricalRankText()` caller) used to draw its TEXT in the chart fill hue
+ * `--dash-cat-N` on a 15 % tint of the same hue: B-OEM measured 3.02:1 live
+ * (needs 4.5:1 at 11px bold). `--dash-cat-ink-N` is a text-only companion per
+ * slot: same hue, darker in light mode, lighter in dark mode. The chart fills
+ * (`--dash-cat-N`) are deliberately unchanged. Every slot is pinned >= 4.5:1
+ * against its tint (and the bare surface) in BOTH themes by
+ * `src/lib/categorical-palette-contrast.test.ts`. Declared LAST.
+ * ========================================================================= */
+
+:root {
+  --dash-cat-ink-1: 213 70% 32%;
+  --dash-cat-ink-2: 262 70% 42%;
+  --dash-cat-ink-3: 192 90% 24%;
+  --dash-cat-ink-4: 162 84% 22%;
+  --dash-cat-ink-5: 30 90% 28%;
+  --dash-cat-ink-6: 350 80% 38%;
+  --dash-cat-ink-7: 243 62% 44%;
+  --dash-cat-ink-8: 176 80% 22%;
+  --dash-cat-ink-9: 288 70% 36%;
+  --dash-cat-ink-10: 86 80% 22%;
+}
+
+.dark {
+  --dash-cat-ink-1: 213 80% 80%;
+  --dash-cat-ink-2: 258 90% 84%;
+  --dash-cat-ink-3: 189 80% 74%;
+  --dash-cat-ink-4: 158 64% 70%;
+  --dash-cat-ink-5: 43 96% 70%;
+  --dash-cat-ink-6: 351 90% 82%;
+  --dash-cat-ink-7: 243 85% 84%;
+  --dash-cat-ink-8: 172 66% 68%;
+  --dash-cat-ink-9: 288 80% 82%;
+  --dash-cat-ink-10: 82 70% 66%;
+}

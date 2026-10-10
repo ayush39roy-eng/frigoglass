@@ -1,7 +1,8 @@
 import * as React from 'react';
 import { useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
 
-import { apiErrorMessage } from '@/lib/api/error-messages';
+import { ApiError } from '@/lib/api/client';
+import { apiErrorMessage, checkInRateLimitedMessage } from '@/lib/api/error-messages';
 import { checkInEntryErrors, submitCheckIns, type CheckInEntry, type CheckInEntryError } from '@/lib/api/check-ins';
 import { fetchScheduleRunChanges } from '@/lib/api/priority-move';
 import { queryKeys } from '@/lib/query-keys';
@@ -71,7 +72,12 @@ export function useCheckInSubmit() {
         res = await submitCheckIns(entries);
       } catch (err) {
         const entryErrors = checkInEntryErrors(err);
-        const message = entryErrors.length > 0 ? null : apiErrorMessage(err, 'The check-in could not be saved.');
+        const message =
+          entryErrors.length > 0
+            ? null
+            : err instanceof ApiError && err.status === 429
+              ? checkInRateLimitedMessage(err.retryAfterSeconds)
+              : apiErrorMessage(err, 'The check-in could not be saved.');
         setFlow({
           kind: 'notice',
           tone: 'danger',

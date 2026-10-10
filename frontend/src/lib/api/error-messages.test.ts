@@ -1,7 +1,12 @@
 import { describe, expect, it } from 'vitest';
 
 import { ApiError, parseApiError } from './client';
-import { apiErrorMessage, flattenDetail } from './error-messages';
+import {
+  apiErrorMessage,
+  CHECK_IN_RATE_LIMITED_MESSAGE,
+  checkInRateLimitedMessage,
+  flattenDetail,
+} from './error-messages';
 
 describe('apiErrorMessage — codes, not detail text', () => {
   it('maps every P9-T03 code to readable copy', () => {
@@ -32,6 +37,14 @@ describe('P9-R02 codes (P9-R03)', () => {
     expect(apiErrorMessage(new ApiError(409, 'x', 'frozen', 'PROJECT_FROZEN'), 'f')).toBe(
       'This project is frozen. Unfreeze on the Gantt to record stage progress.',
     );
+  });
+
+  it('check-in 429 (P12-R04) has its own copy, Retry-After-aware, never the comment copy', () => {
+    expect(checkInRateLimitedMessage(4)).toBe('Too many check-ins in a row — wait 4 s and submit again.');
+    expect(checkInRateLimitedMessage(0)).toBe('Too many check-ins in a row — wait 1 s and submit again.');
+    expect(checkInRateLimitedMessage(undefined)).toBe(CHECK_IN_RATE_LIMITED_MESSAGE);
+    expect(CHECK_IN_RATE_LIMITED_MESSAGE).toBe('Too many check-ins in a row — wait a few seconds and submit again.');
+    expect(checkInRateLimitedMessage(4)).not.toMatch(/comment/i);
   });
 
   it('429 reads "Try again in N s" from Retry-After, and degrades without it', () => {

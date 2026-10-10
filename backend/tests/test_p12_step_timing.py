@@ -308,15 +308,34 @@ async def test_not_needed_for_a_lab_step_without_certification_testing(db_sessio
     body = resp.json()
     assert body["recalc_status"] == "not_needed"
     # Skipped while certification testing is off: the override is kept for
-    # later but never revives the step, so the effective value is the lead time.
+    # later but never revives the step, so it books 0 weeks (P12-F04).
     assert body["duration_override_weeks"] == 8
-    assert body["effective_duration_weeks"] == 4
+    assert body["effective_duration_weeks"] == 0
     assert body["schedule_run_id"] is None and body["task_id"] is None
     assert dispatch.calls == []
     row = await _step(db_session, w.project, "PDD-F")
     assert row.duration_override_weeks == 8
     (audit,) = await _audits(db_session, "project.step_timing", w.project)
     assert audit.after_state["recalc_status"] == "not_needed"
+
+
+async def test_cert_off_lab_step_reports_zero_effective_duration_when_unchanged(
+    db_session, dispatch
+):
+    """P12-F04: the unchanged path answers 0 for a cert-off lab step too, and
+    a design step on the same project keeps its effective duration.
+    """
+
+    w = await _world(db_session, cert=False)
+    await _act_as(db_session, RoleName.ADMIN)
+    async with _client(db_session) as client:
+        first = await client.patch(_url(w.project, "PDD-F"), json={"duration_override_weeks": 8})
+        again = await client.patch(_url(w.project, "PDD-F"), json={"duration_override_weeks": 8})
+    assert first.json()["effective_duration_weeks"] == 0
+    assert again.status_code == 200, again.text
+    assert again.json()["recalc_status"] == "unchanged"
+    assert again.json()["effective_duration_weeks"] == 0
+    assert dispatch.calls == []
 
 
 async def test_unchanged_writes_nothing(db_session, dispatch):
