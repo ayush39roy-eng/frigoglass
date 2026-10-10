@@ -39,9 +39,9 @@ function OutcomeCell({ row }: { row: CompletingWithinYearRow }): React.JSX.Eleme
        * `blocked` entry, rendered inline like the `within_year` badge below rather
        * than through `ScheduleOutcomeBadge`, since it isn't in that enum. */}
       {row.blocked ? (
-        <Badge tone="warning">
+        <Badge tone="warning" title="A stage is on hold — the project stays in the plan, waiting at that stage">
           <CirclePause className="size-3" aria-hidden="true" />
-          Blocked
+          On Hold
         </Badge>
       ) : null}
       {row.within_year ? (
@@ -233,11 +233,11 @@ export function WithinYearKpis({ data, activeRun }: WithinYearPanelProps): React
               The ink tile is the contrasting second accent of the row. */}
           <StatCard
             variant="ink"
-            label="Blocked"
+            label="On Hold"
             value={data.blocked_count}
             icon={CirclePause}
             badge={{ label: shareLabel(data.blocked_count, data), tone: data.blocked_count > 0 ? 'drop' : 'pop' }}
-            caption="Held at a Blocked stage until it clears"
+            caption="In the plan, waiting at a stage"
           />
         </div>
       )}

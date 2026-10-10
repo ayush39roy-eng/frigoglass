@@ -47,6 +47,10 @@ export const API_ERROR_MESSAGES: Record<string, string> = {
   STAGE_INCONSISTENT: 'These progress values contradict each other.',
   STAGE_SKIPPED: 'This stage is skipped for the project and has no progress of its own.',
   RUN_IN_PROGRESS: 'A recalculation is already running. Wait for it to finish, then try again.',
+  // Priority move (ADR 0015 §2, P11 contract §1/§2): hard gates pin P1.
+  HARD_GATE_FORCES_P1: 'This project has a hard gate (regulatory / certification / safety), so it must stay P1.',
+  // Run-to-run changes (P11 contract §3).
+  RUN_NOT_COMPLETED: 'That schedule run has not finished yet, so its changes are not available.',
   FILE_TOO_LARGE: 'Files are limited to 50 MB.',
   UNSUPPORTED_FILE_TYPE: "That file type isn't allowed, or its contents don't match its extension.",
   NOT_AUTHOR: 'Only the author can edit this comment.',

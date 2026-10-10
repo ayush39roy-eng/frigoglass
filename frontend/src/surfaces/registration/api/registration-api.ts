@@ -6,7 +6,8 @@
  * `backend/api/routers/projects.py`.
  */
 
-import { apiGet, apiSend, type ApiRequestOptions } from '@/lib/api/client';
+import { apiGet, apiSend, apiSendWithHeaders, type ApiRequestOptions } from '@/lib/api/client';
+import { readRecalcHeaders, type PatchRecalcSignal } from '@/lib/api/priority-move';
 
 import type {
   HardGateStatus,
@@ -64,13 +65,24 @@ export function createProject(body: ProjectCreateRequest): Promise<ProjectRead> 
   return apiSend<ProjectRead>('POST', '/projects', body);
 }
 
+/** A PATCH's body plus the P11 recalc signal from its response headers. */
+export interface ProjectUpdateResult {
+  project: ProjectRead;
+  /** Set only when the PATCH changed priority (P11 contract §2, ADR 0015). */
+  recalc: PatchRecalcSignal | null;
+}
+
 /** `PATCH /projects/{id}` — partial update. Never send `status` here to leave
- *  Draft; use `submitProject`, which runs the hard-gate check. */
-export function updateProject(
+ *  Draft; use `submitProject`, which runs the hard-gate check. A priority
+ *  change schedules by itself (ADR 0015): the server says so in the
+ *  `X-Schedule-Recalc` / `X-Schedule-Run-Id` / `X-Schedule-Baseline-Run-Id`
+ *  headers, read verbatim here. */
+export async function updateProject(
   projectId: string,
   body: ProjectUpdateRequest,
-): Promise<ProjectRead> {
-  return apiSend<ProjectRead>('PATCH', `/projects/${projectId}`, body);
+): Promise<ProjectUpdateResult> {
+  const { data, headers } = await apiSendWithHeaders<ProjectRead>('PATCH', `/projects/${projectId}`, body);
+  return { project: data, recalc: readRecalcHeaders(headers) };
 }
 
 /** `POST /projects/{id}/submit` — leave `Draft`. 422s with `missing_fields` if

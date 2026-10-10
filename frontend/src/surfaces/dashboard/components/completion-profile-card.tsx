@@ -198,7 +198,7 @@ export function CompletionProfileCard({
             drawn. No sample or illustrative data appears on this card.
           </p>
           <p>
-            Blocked and left-out projects have no scheduled finish week, so they do not appear in
+            On-hold and left-out projects have no scheduled finish week, so they do not appear in
             the chart; their counts are listed beside it.
           </p>
         </CardInfo>

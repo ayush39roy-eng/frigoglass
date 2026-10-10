@@ -16,7 +16,7 @@ import { apiErrorMessage } from '@/lib/api/error-messages';
 import { HORIZON_WEEKS } from '@/lib/domain-constants';
 import { formatWeek } from '@/lib/format';
 import { cn } from '@/lib/utils';
-import { WORKFLOW_STEP_STATUSES, type WorkflowStepStatus } from '@/types/enums';
+import { stageStatusLabel, WORKFLOW_STEP_STATUSES, type WorkflowStepStatus } from '@/types/enums';
 
 import type { StagePatchRequest, WorkspaceStage } from '../api/types';
 import { applyStatus, validateStage, type StageDraft, type StageErrors } from '../lib/stage-validation';
@@ -24,7 +24,7 @@ import { applyStatus, validateStage, type StageDraft, type StageErrors } from '.
 /**
  * One stage of the Progress panel (DOMAIN_RULES "Per-stage progress fields").
  * Editable: status, percent (slider + number), actual start/end, remaining
- * override, blocked reason. Read-only: planned weeks, kind, resource, the
+ * override, hold reason (wire `blocked_reason`, ADR 0017). Read-only: planned weeks, kind, resource, the
  * server-derived remaining weeks, and `overrun_weeks`. Validation mirrors the
  * server's rules; the row saves with one PATCH carrying all six fields.
  * Skipped stages have no progress state of their own and show "n/a".
@@ -170,9 +170,10 @@ export function StageRow({ stage, canWrite, onSave }: StageRowProps): React.JSX.
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
+                {/* ADR 0017: the wire value stays `Blocked`; it is SHOWN as "On Hold". */}
                 {WORKFLOW_STEP_STATUSES.map((s) => (
                   <SelectItem key={s} value={s}>
-                    {s}
+                    {stageStatusLabel(s)}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -248,7 +249,7 @@ export function StageRow({ stage, canWrite, onSave }: StageRowProps): React.JSX.
           {draft.status === 'Blocked' ? (
             <div className="flex flex-col gap-0.5 sm:col-span-5">
               <label htmlFor={`${idBase}-reason`} className="text-2xs text-text-muted">
-                Blocked reason <span className="text-danger">*</span>
+                Hold reason <span className="text-danger">*</span>
               </label>
               <textarea
                 id={`${idBase}-reason`}
@@ -269,11 +270,11 @@ export function StageRow({ stage, canWrite, onSave }: StageRowProps): React.JSX.
           className="grid grid-cols-2 gap-x-4 gap-y-1 rounded-md bg-surface-sunken/70 p-2 text-2xs text-text-muted sm:grid-cols-5"
           data-testid={`stage-readonly-${stage.step_id}`}
         >
-          <ReadField label="Status" value={stage.status} />
+          <ReadField label="Status" value={stageStatusLabel(stage.status)} />
           <ReadField label="Complete" value={`${String(stage.percent_complete)}%`} />
           <ReadField label="Actual" value={stage.actual_start_week === null ? '—' : `${formatWeek(stage.actual_start_week)}–${stage.actual_end_week === null ? '…' : formatWeek(stage.actual_end_week)}`} />
           <ReadField label="Remaining" value={stage.remaining_weeks === null ? '—' : `${String(stage.remaining_weeks)} wk${stage.remaining_weeks_override === null ? '' : ' (override)'}`} />
-          {stage.status === 'Blocked' ? <ReadField label="Blocked" value={stage.blocked_reason ?? '—'} /> : null}
+          {stage.status === 'Blocked' ? <ReadField label="Hold reason" value={stage.blocked_reason ?? '—'} /> : null}
         </dl>
       )}
 

@@ -1,6 +1,6 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { hubRow } from '../test-fixtures';
+import { hubRow, SUMMARY_P11 } from '../test-fixtures';
 import { renderHook, waitFor } from '@testing-library/react';
 import * as React from 'react';
 
@@ -29,6 +29,7 @@ describe('capacity hooks', () => {
     vi.mocked(api.fetchHubLoadVsCapacity).mockResolvedValue({
       has_active_schedule_run: true,
       schedule_run_version: 5,
+      ...SUMMARY_P11,
       remaining_weeks: 47,
       rows: [
         hubRow({ design_load_weeks: 120 }),

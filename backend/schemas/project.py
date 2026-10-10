@@ -177,3 +177,43 @@ class ProjectSubmitRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     target_status: ProjectStatus = ProjectStatus.IN_QUEUE
+
+
+#: ADR 0015: what a priority move did to the schedule.
+#: - `queued`: a greedy run was dispatched (follow it on the SSE stream);
+#: - `deferred`: another run was queued or running; the project stays stale;
+#: - `not_needed`: the project's status is not schedulable;
+#: - `unchanged`: the requested priority equals the current one; nothing written.
+RecalcStatus = Literal["queued", "deferred", "not_needed", "unchanged"]
+
+
+class PriorityMoveRequest(BaseModel):
+    """Body for `POST /projects/{id}/priority` (docs/API_CONTRACT_P11.md §1).
+
+    Strict, unknown keys rejected. `priority` alone opts out of strict mode
+    because a strict enum field only accepts an enum *instance*, never its
+    JSON string. Lax enum validation still accepts only the five values
+    (P1–P4, Q); `null`, numbers and other strings are a 422.
+    """
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    priority: ProjectPriority = Field(strict=False)
+
+
+class PriorityMoveResponse(BaseModel):
+    """Always 200; `recalc_status` says what happened (ADR 0015).
+
+    `schedule_run_id` and `task_id` are set only when `queued`.
+    `baseline_run_id` is the run that was active before the move, set only
+    when `queued` and a run was active; pass it as `against` to
+    `GET /schedule-runs/{schedule_run_id}/changes` once the run completes.
+    """
+
+    project_id: uuid.UUID
+    priority_before: ProjectPriority | None
+    priority_after: ProjectPriority
+    recalc_status: RecalcStatus
+    schedule_run_id: uuid.UUID | None
+    baseline_run_id: uuid.UUID | None
+    task_id: str | None

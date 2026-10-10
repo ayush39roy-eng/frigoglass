@@ -21,6 +21,13 @@ downtime (I17). They are reporting figures: per ADR 0002, FTE and downtime
 still do not gate week-level booking. The *load* figures come from the
 active `ScheduleRun` snapshot and reconcile with Invariants I6/I7. Step
 kinds are read from that run's `workflow_snapshot` (`services.active_run`).
+
+**Booked % and areas (P11, ADR 0016).** Every hub row also carries
+`booked_pct = load / capacity × 100` and an `available` / `near_full` /
+`full` status, for year and remaining, design and lab, plus its `area`. The
+summary adds the Europe / India roll-up (`areas`), built from the in-scope
+hub rows only, with each lab region counted once (I19). Reporting figures:
+they never gate booking.
 """
 
 from __future__ import annotations
@@ -45,6 +52,7 @@ from models.hub import Hub, HubWorkCalendar
 from models.project import Project
 from models.schedule import ScheduleRun, ScheduleRunProjectOutcome, ScheduleRunProjectStep
 from schemas.capacity import (
+    CapacityArea,
     CapacityChamberRow,
     ChamberWeekLoad,
     ClassBreakdown,
@@ -56,6 +64,8 @@ from schemas.capacity import (
 )
 from services.active_run import get_active_run, step_kinds_for_run
 from services.capacity_supply import (
+    area_for_region,
+    booking,
     calendar_figures,
     chamber_figures,
     gap_and_completion,
@@ -194,6 +204,11 @@ async def hub_load_vs_capacity(
         d_gap_r, d_pct_r = gap_and_completion(d_load, design_remaining)
         l_gap_y, l_pct_y = gap_and_completion(l_load, lab_year)
         l_gap_r, l_pct_r = gap_and_completion(l_load, lab_remaining)
+        # ADR 0016 / I19: booked % on the row's *served* (2 dp) figures.
+        d_book_y = booking(d_load, round2(design_year))
+        d_book_r = booking(d_load, round2(design_remaining))
+        l_book_y = booking(round2(l_load), round2(lab_year))
+        l_book_r = booking(round2(l_load), round2(lab_remaining))
         rows.append(
             HubCapacityRow(
                 hub=h.name,
@@ -221,6 +236,15 @@ async def hub_load_vs_capacity(
                 design_capacity_weeks=round2(design_remaining),
                 lab_capacity_units=round2(lab_remaining),
                 lab_load_units=round2(lab_load_by_hub.get(h.id, 0.0)),
+                design_booked_pct_year=d_book_y[0],
+                design_booked_pct_remaining=d_book_r[0],
+                lab_booked_pct_year=l_book_y[0],
+                lab_booked_pct_remaining=l_book_r[0],
+                design_booking_status_year=d_book_y[1],
+                design_booking_status_remaining=d_book_r[1],
+                lab_booking_status_year=l_book_y[1],
+                lab_booking_status_remaining=l_book_r[1],
+                area=area_for_region(h.lab_region),
             )
         )
 
@@ -234,11 +258,70 @@ async def hub_load_vs_capacity(
         schedule_run_version=active_run.version if active_run is not None else None,
         remaining_weeks=remaining_weeks,
         rows=rows,
+        near_full_threshold_pct=dc.BOOKING_NEAR_FULL_PCT,
+        full_threshold_pct=dc.BOOKING_FULL_PCT,
+        areas=_area_rows(rows),
     )
 
 
 def _pct(value: float | None) -> float | None:
     return None if value is None else round2(value)
+
+
+def _area_rows(rows: list[HubCapacityRow]) -> list[CapacityArea]:
+    """ADR 0016 §3: roll the in-scope hub rows up into Europe and India.
+
+    Design figures are summed over the area's hub rows. Lab figures are
+    region-level and repeated on every hub row of the region, so they are
+    taken from ONE row per region and summed over distinct regions. Every
+    input is the row's served (2 dp) figure, so an area equals the sum of
+    what the client sees on the hub rows. Areas are ordered Europe, then
+    India; an area with no in-scope hub is omitted.
+    """
+
+    by_area: dict[str, list[HubCapacityRow]] = defaultdict(list)
+    for row in rows:
+        by_area[row.area].append(row)
+
+    areas: list[CapacityArea] = []
+    for area in dc.AREA_ORDER:
+        hub_rows = by_area.get(area)
+        if not hub_rows:
+            continue
+        region_rows: dict[LabRegion, HubCapacityRow] = {}
+        for row in hub_rows:
+            region_rows.setdefault(row.lab_region, row)
+        regions = sorted(region_rows, key=lambda r: r.value)
+        d_load = sum(r.design_load_weeks for r in hub_rows)
+        d_year = round2(sum(r.design_capacity_year for r in hub_rows))
+        d_rem = round2(sum(r.design_capacity_remaining for r in hub_rows))
+        l_load = round2(sum(region_rows[r].lab_load_weeks for r in regions))
+        l_year = round2(sum(region_rows[r].lab_capacity_year for r in regions))
+        l_rem = round2(sum(region_rows[r].lab_capacity_remaining for r in regions))
+        d_book_y, d_book_r = booking(d_load, d_year), booking(d_load, d_rem)
+        l_book_y, l_book_r = booking(l_load, l_year), booking(l_load, l_rem)
+        areas.append(
+            CapacityArea(
+                area=hub_rows[0].area,
+                hubs=[r.hub for r in hub_rows],
+                lab_regions=regions,
+                design_load_weeks=d_load,
+                design_capacity_year=d_year,
+                design_capacity_remaining=d_rem,
+                lab_load_weeks=l_load,
+                lab_capacity_year=l_year,
+                lab_capacity_remaining=l_rem,
+                design_booked_pct_year=d_book_y[0],
+                design_booked_pct_remaining=d_book_r[0],
+                lab_booked_pct_year=l_book_y[0],
+                lab_booked_pct_remaining=l_book_r[0],
+                design_booking_status_year=d_book_y[1],
+                design_booking_status_remaining=d_book_r[1],
+                lab_booking_status_year=l_book_y[1],
+                lab_booking_status_remaining=l_book_r[1],
+            )
+        )
+    return areas
 
 
 @router.get("/class-breakdown", response_model=ClassBreakdown)

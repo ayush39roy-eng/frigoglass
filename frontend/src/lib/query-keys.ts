@@ -50,6 +50,10 @@ export const queryKeys = {
   scheduleRuns: () => ['schedule-runs'] as const,
   scheduleRun: (versionId: string) => ['schedule-runs', versionId] as const,
   activeScheduleRun: () => ['schedule-runs', 'active'] as const,
+  // P11 contract §3: `GET /schedule-runs/{run}/changes?against={baseline}`. Both
+  // runs are immutable (I14), so the result never changes once fetched.
+  scheduleRunChanges: (runId: string, againstRunId: string) =>
+    ['schedule-runs', runId, 'changes', againstRunId] as const,
   dashboard: (versionId?: string) => ['dashboard', versionId ?? 'active'] as const,
   dashboardPipelineTotals: () => ['dashboard', 'pipeline-totals'] as const,
   dashboardStatusOverview: () => ['dashboard', 'status-overview'] as const,

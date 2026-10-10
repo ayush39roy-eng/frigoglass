@@ -11,10 +11,17 @@ FTE and downtime still do not gate week-level booking.
 from __future__ import annotations
 
 import uuid
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
 from models.enums import HubName, LabRegion, ProjectCategory
+
+#: ADR 0016 §2. Server-derived; the browser renders it and never re-derives it.
+BookingStatus = Literal["available", "near_full", "full"]
+#: ADR 0016 §3. A function of the lab region: Greece and Romania → Europe,
+#: India → India (OEM hubs included, docs/OPEN_QUESTIONS.md #26).
+CapacityAreaName = Literal["Europe", "India"]
 
 
 class CapacityChamberRow(BaseModel):
@@ -77,6 +84,49 @@ class HubCapacityRow(BaseModel):
     #: Deprecated. This hub's *own* lab load (× 1.0, ADR 0007). The
     #: region-level `lab_load_weeks` supersedes it. Kept for one release.
     lab_load_units: float | None = Field(default=None, deprecated=True)
+    # --- P11 (docs/API_CONTRACT_P11.md §4, ADR 0016) ----------------------
+    #: `load / capacity × 100` on this row's served figures, 2 dp; `None`
+    #: when that capacity is 0 (I19).
+    design_booked_pct_year: float | None
+    design_booked_pct_remaining: float | None
+    lab_booked_pct_year: float | None
+    lab_booked_pct_remaining: float | None
+    design_booking_status_year: BookingStatus
+    design_booking_status_remaining: BookingStatus
+    lab_booking_status_year: BookingStatus
+    lab_booking_status_remaining: BookingStatus
+    area: CapacityAreaName
+
+
+class CapacityArea(BaseModel):
+    """One area's roll-up (ADR 0016 §3), built only from the caller's
+    in-scope hubs. `hubs` and `lab_regions` say exactly what it covers, so a
+    partial area is never presented as the whole of Europe.
+
+    Design figures are Σ over `hubs`. Lab figures are Σ over `lab_regions`,
+    each region counted once (the hub rows repeat the region figure on every
+    hub of the region, so they are never summed). Every figure is the sum of
+    the served 2 dp row figures, rounded to 2 dp; `booked_pct` and status
+    follow the same rule as the hub rows (I19).
+    """
+
+    area: CapacityAreaName
+    hubs: list[HubName]
+    lab_regions: list[LabRegion]
+    design_load_weeks: int
+    design_capacity_year: float
+    design_capacity_remaining: float
+    lab_load_weeks: float
+    lab_capacity_year: float
+    lab_capacity_remaining: float
+    design_booked_pct_year: float | None
+    design_booked_pct_remaining: float | None
+    lab_booked_pct_year: float | None
+    lab_booked_pct_remaining: float | None
+    design_booking_status_year: BookingStatus
+    design_booking_status_remaining: BookingStatus
+    lab_booking_status_year: BookingStatus
+    lab_booking_status_remaining: BookingStatus
 
 
 class HubCapacitySummary(BaseModel):
@@ -84,6 +134,12 @@ class HubCapacitySummary(BaseModel):
     schedule_run_version: int | None
     remaining_weeks: int
     rows: list[HubCapacityRow]
+    #: ADR 0016 thresholds (`domain_constants.BOOKING_*_PCT`), served so the
+    #: UI can explain the chips without hard-coding them.
+    near_full_threshold_pct: int
+    full_threshold_pct: int
+    #: Europe first, then India. An area with no in-scope hub is omitted.
+    areas: list[CapacityArea]
 
 
 class ClassBreakdownRow(BaseModel):

@@ -210,10 +210,10 @@ import logging
 import time
 import uuid
 from collections.abc import AsyncIterator
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 
 import redis.asyncio as redis_asyncio
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -232,8 +232,11 @@ from schemas.schedule_run import (
     CpSatDispatchRequest,
     CpSatDispatchResponse,
     GreedyRecalcResponse,
+    ScheduleRunChanges,
     ScheduleRunSummary,
 )
+from services.run_changes import compute_run_changes
+from services.run_dispatch import find_in_flight_run
 from services.schedule_persistence import (
     build_schedule_input_from_db,
     create_queued_schedule_run,
@@ -301,6 +304,37 @@ async def get_active_schedule_run(
             detail="No active ScheduleRun yet — trigger one via POST /schedule-runs/greedy-recalc.",
         )
     return run
+
+
+@router.get("/{run_id}/changes", response_model=ScheduleRunChanges)
+async def get_schedule_run_changes(
+    run_id: uuid.UUID,
+    against: uuid.UUID = Query(description="The baseline run to compare `run_id` against."),
+    db: AsyncSession = Depends(get_db),
+    current_user: Principal = Depends(_read_any),
+) -> ScheduleRunChanges:
+    """What moved between two runs (ADR 0015 §4, docs/API_CONTRACT_P11.md
+    §3, I20): the projects whose stored `projected_end_week`, `within_year`,
+    `left_out` or `blocked` differ, or that exist in only one run.
+
+    404 when either run does not exist; 409 `RUN_NOT_COMPLETED` when
+    `run_id` is not `COMPLETED`. Unlike the rest of this router, the rows
+    are per-project data, so they are scoped (`services.run_changes`):
+    out-of-scope changes are counted in `hidden_count`, never named.
+    """
+
+    run = await db.get(ScheduleRun, run_id)
+    baseline = await db.get(ScheduleRun, against)
+    if run is None or baseline is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Schedule run not found")
+    if run.status != ScheduleRunStatus.COMPLETED:
+        raise CodedHTTPException(
+            status.HTTP_409_CONFLICT,
+            "RUN_NOT_COMPLETED",
+            f"Schedule run {run.id} is {run.status.value}; its changes are available once it "
+            "has completed.",
+        )
+    return await compute_run_changes(db, run, baseline, current_user)
 
 
 @router.post(
@@ -411,17 +445,7 @@ async def dispatch_cp_sat_run(
     than intended.
     """
 
-    window = timedelta(seconds=get_celery_settings().task_time_limit_seconds + 120)
-    in_flight = (
-        await db.execute(
-            select(ScheduleRun.id)
-            .where(
-                ScheduleRun.status.in_([ScheduleRunStatus.QUEUED, ScheduleRunStatus.RUNNING]),
-                ScheduleRun.created_at > datetime.now(UTC) - window,
-            )
-            .limit(1)
-        )
-    ).scalar_one_or_none()
+    in_flight = await find_in_flight_run(db)
     if in_flight is not None:
         raise CodedHTTPException(
             status.HTTP_409_CONFLICT,

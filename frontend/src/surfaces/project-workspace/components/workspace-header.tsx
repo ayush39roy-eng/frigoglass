@@ -2,7 +2,7 @@ import * as React from 'react';
 import { Link } from 'react-router-dom';
 import { ArrowLeft, Info, RefreshCw } from 'lucide-react';
 
-import { PriorityBandPill } from '@/components/shared/priority-band-pill';
+import { PriorityMoveControl } from '@/components/shared/priority-move/priority-move-control';
 import { Badge } from '@/components/ui/badge';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { PROJECT_TYPE_LABELS } from '@/types/enums';
@@ -67,7 +67,8 @@ export function WorkspaceHeader({
             <span>{p.hub}</span>
             {p.category ? <Badge tone="outline">{p.category}</Badge> : null}
             {p.type ? <Badge tone="neutral">{PROJECT_TYPE_LABELS[p.type]}</Badge> : null}
-            {p.priority ? <PriorityBandPill priority={p.priority} /> : null}
+            {/* P11 (ADR 0015): a dropdown with Registration write, else the read-only pill. */}
+            <PriorityMoveControl projectId={p.id} projectName={p.name} priority={p.priority} status={p.status} />
             <span aria-hidden="true">·</span>
             <span>
               Leader:{' '}

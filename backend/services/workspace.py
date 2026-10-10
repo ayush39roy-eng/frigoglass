@@ -66,6 +66,7 @@ from schemas.workspace import (
     WorkspaceStage,
 )
 from services.active_run import get_active_run, slip_weeks
+from services.display_labels import stage_status_label
 from services.hub_scope import hub_scope_filter, is_engineer_self_scoped
 from services.progress import project_progress_pct
 from services.project_access import effective_project_access
@@ -295,6 +296,14 @@ _FIELD_LABELS: dict[str, str] = {
 }
 
 
+#: ADR 0015: what a priority move did to the schedule, by `recalc_status`.
+_PRIORITY_MOVE_CONSEQUENCE: dict[str, str] = {
+    "queued": "timeline recalculation queued",
+    "deferred": "recalculation deferred, another run was in progress",
+    "not_needed": "not in the plan, no recalculation",
+}
+
+
 def _fmt(value: Any) -> str:
     return "—" if value is None else str(value)
 
@@ -334,8 +343,13 @@ def event_summary(entry: AuditLogEntry) -> str:
     if action == "project_stage.update":
         step = after.get("step_id", "Stage")
         if before.get("status") != after.get("status"):
-            return f"{step} marked {after.get('status')}"
+            # ADR 0017: a Blocked stage reads "On Hold"; the stored value is unchanged.
+            return f"{step} marked {stage_status_label(after.get('status'))}"
         return f"{step} progress updated ({after.get('percent_complete')}%)"
+    if action == "project.priority_move":
+        moved = f"Priority moved {_fmt(before.get('priority'))} → {_fmt(after.get('priority'))}"
+        consequence = _PRIORITY_MOVE_CONSEQUENCE.get(str(after.get("recalc_status")))
+        return f"{moved} — {consequence}" if consequence else moved
     if action == "project_file.upload":
         return f"{after.get('display_name')} uploaded (v{after.get('version')})"
     if action == "project_file.update":
@@ -711,16 +725,19 @@ def merge_stage_update(
         if end is None:
             errors.append(("actual_end_week", "is required when status is Done"))
     else:  # In Progress / Blocked
+        label = stage_status_label(new_status)
         if start is None:
-            errors.append(("actual_start_week", f"is required when status is {new_status.value}"))
+            errors.append(("actual_start_week", f"is required when status is {label}"))
         if end is not None:
-            errors.append(("actual_end_week", f"must be null when status is {new_status.value}"))
+            errors.append(("actual_end_week", f"must be null when status is {label}"))
     if start is not None and end is not None and end < start:
         errors.append(("actual_end_week", "must be >= actual_start_week"))
     reason = merged["blocked_reason"]
+    # ADR 0017: the messages name the stage status as users see it ("On Hold").
+    on_hold = stage_status_label(WorkflowStepStatus.BLOCKED)
     if new_status == WorkflowStepStatus.BLOCKED:
         if not reason:
-            errors.append(("blocked_reason", "is required when status is Blocked"))
+            errors.append(("blocked_reason", f"is required when status is {on_hold}"))
     elif reason is not None:
-        errors.append(("blocked_reason", "must be null unless status is Blocked"))
+        errors.append(("blocked_reason", f"must be null unless status is {on_hold}"))
     return merged, errors

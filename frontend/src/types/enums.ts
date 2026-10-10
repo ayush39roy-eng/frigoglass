@@ -88,6 +88,29 @@ export type WorkflowStepKind = (typeof WORKFLOW_STEP_KINDS)[number];
 export const WORKFLOW_STEP_STATUSES = ['Not Started', 'In Progress', 'Blocked', 'Done'] as const;
 export type WorkflowStepStatus = (typeof WORKFLOW_STEP_STATUSES)[number];
 
+/**
+ * Display labels for the stage statuses (ADR 0017, 2026-10-09): the wire value
+ * `Blocked` is SHOWN as "On Hold". The stored and API values are unchanged.
+ * A stage on hold is not the project status `On Hold` (which takes the whole
+ * project out of the plan): the project stays in the plan, waiting at a stage.
+ */
+export const WORKFLOW_STEP_STATUS_LABELS: Record<WorkflowStepStatus, string> = {
+  'Not Started': 'Not Started',
+  'In Progress': 'In Progress',
+  Blocked: 'On Hold',
+  Done: 'Done',
+};
+
+/** The label for a stage status (ADR 0017). Never use it to build an API value. */
+export function stageStatusLabel(status: WorkflowStepStatus): string {
+  return WORKFLOW_STEP_STATUS_LABELS[status];
+}
+
+// Capacity booking status (ADR 0016, P11 contract §4) — server-derived from
+// booked % (full ≥ 100, near_full 85–<100, else available). Never re-derived.
+export const BOOKING_STATUSES = ['available', 'near_full', 'full'] as const;
+export type BookingStatus = (typeof BOOKING_STATUSES)[number];
+
 export const HARD_GATE_REASONS = [
   'Regulatory deadline within 6 months',
   'Customer certification at risk (Coke/Pepsi)',

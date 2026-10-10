@@ -16,7 +16,7 @@ import type { NotificationReason } from '@/types/enums';
  * - `conflict_raised` covers both `eng_conflict`/`chamber_overlap`
  *   (`services/notifications.py`'s own `bool_or` over both columns) → danger,
  *   same as `ENG_CONFLICT`/`OVERLAP`.
- * - `stage_blocked` (P9) — a stage set to Blocked on the Project Workspace →
+ * - `stage_blocked` (P9) — a stage set to Blocked (shown "On Hold", ADR 0017) on the Project Workspace →
  *   warning (an obstacle to act on), deliberately NOT the red delay/conflict tone.
  * Every reason still pairs colour with an icon AND a text label (ui-ux-pro-max
  * SKILL — colour is never the sole carrier of meaning).
@@ -31,5 +31,6 @@ export const NOTIFICATION_REASON_META: Record<NotificationReason, NotificationRe
   delay_introduced: { tone: 'warning', label: 'Delay introduced', Icon: Clock },
   project_left_out: { tone: 'warning', label: 'Project left out', Icon: CircleOff },
   conflict_raised: { tone: 'danger', label: 'Conflict raised', Icon: CircleAlert },
-  stage_blocked: { tone: 'warning', label: 'Stage blocked', Icon: OctagonPause },
+  // ADR 0017: the reason value stays `stage_blocked`; shown as "Stage on hold".
+  stage_blocked: { tone: 'warning', label: 'Stage on hold', Icon: OctagonPause },
 };

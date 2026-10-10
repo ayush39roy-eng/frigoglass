@@ -299,7 +299,8 @@ describe('GanttPage', () => {
         ganttData({ rows: [project({ blocked: true, schedule_stale: true })] }),
       );
       renderWithProviders(<GanttPage />);
-      expect(screen.getByText('Blocked')).toBeInTheDocument();
+      // ADR 0017: `row.blocked` is shown as "On Hold".
+      expect(screen.getByText('On Hold')).toBeInTheDocument();
       expect(screen.getByTestId('stale-chip')).toHaveAttribute(
         'title',
         'Progress or settings changed since this run',
@@ -311,6 +312,21 @@ describe('GanttPage', () => {
       expect(
         screen.getByRole('link', { name: 'Open Cooler Alpha in the Project Workspace' }),
       ).toHaveAttribute('href', '/projects/p1');
+    });
+
+    it('P11: with Registration write the project row priority is a move dropdown (ADR 0015)', () => {
+      renderWithProviders(<GanttPage />);
+      expect(
+        screen.getByRole('button', { name: 'Priority P1 for Cooler Alpha. Change priority' }),
+      ).toBeInTheDocument();
+    });
+
+    it('P11: without Registration write the row keeps the read-only priority pill', () => {
+      renderWithProviders(<GanttPage />, {
+        session: { permissions: { ...fullPermissions(), project_registration: { read: true, write: false } } },
+      });
+      expect(screen.queryByTestId('priority-move-trigger')).not.toBeInTheDocument();
+      expect(screen.getByTitle('Priority band P1 — highest')).toHaveTextContent('P1');
     });
 
     it('a read-only role (gantt: read, no write) sees the timeline with no freeze control and a read-only notice', () => {

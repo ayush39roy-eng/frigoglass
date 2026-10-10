@@ -26,11 +26,15 @@ function retryUnlessAuth(failureCount: number, error: Error): boolean {
   return failureCount < 1;
 }
 
-export function useHubLoadVsCapacity() {
+/** `enabled` (default true) lets the Dashboard's "Capacity booked" card (P11)
+ *  share this exact query and cache entry without fetching for a role that
+ *  cannot read Capacity. */
+export function useHubLoadVsCapacity({ enabled = true }: { enabled?: boolean } = {}) {
   return useQuery({
     queryKey: queryKeys.capacityHubLoad(),
     queryFn: ({ signal }) => fetchHubLoadVsCapacity({ signal }),
     retry: retryUnlessAuth,
+    enabled,
   });
 }
 

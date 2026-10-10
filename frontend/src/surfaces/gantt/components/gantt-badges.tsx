@@ -17,7 +17,8 @@ import type { GanttProjectRow, GanttStepRow } from '../api/types';
  * - `ENG_CONFLICT` / `OVERLAP` ← `step.eng_conflict` / `step.chamber_overlap`
  *   (the active run's step snapshot).
  * The `frozen` pill and the `+Nw` delay pill read `row.frozen` / `row.delay_weeks`.
- * - `Blocked` ← `row.blocked` (a stage is Blocked, ADR 0006); `Stale` ←
+ * - "On Hold" ← `row.blocked` (a stage is Blocked, ADR 0006; shown as On Hold,
+ *   ADR 0017); `Stale` ←
  *   `row.schedule_stale` (progress or settings changed since this run, P9).
  * - `n/a` on a step row ← `step.skipped` (ADR 0007).
  */
@@ -44,9 +45,9 @@ export function ProjectRowBadges({ project }: { project: GanttProjectRow }): Rea
       {project.spillover ? <ScheduleOutcomeBadge flag="SPILLOVER" /> : null}
       {project.cat_not_allowed ? <ScheduleOutcomeBadge flag="CAT_NOT_ALLOWED" iconOnly /> : null}
       {project.blocked ? (
-        <Badge tone="danger" title="A stage is blocked — the project is held at its earliest feasible frontier until the block clears">
+        <Badge tone="danger" title="A stage is on hold — the project stays in the plan, held at its earliest feasible frontier until the hold is lifted">
           <OctagonAlert className="size-3" aria-hidden="true" />
-          Blocked
+          On Hold
         </Badge>
       ) : null}
       {project.schedule_stale ? (
@@ -83,9 +84,9 @@ export function StepRowBadges({ step }: { step: GanttStepRow }): React.JSX.Eleme
   return (
     <div className="flex flex-wrap items-center justify-end gap-1">
       {step.status === 'Blocked' ? (
-        <Badge tone="danger" title="Stage is blocked">
+        <Badge tone="danger" title="Stage is on hold">
           <OctagonAlert className="size-3" aria-hidden="true" />
-          Blocked
+          On Hold
         </Badge>
       ) : null}
       {step.eng_conflict ? <ScheduleOutcomeBadge flag="ENG_CONFLICT" iconOnly /> : null}

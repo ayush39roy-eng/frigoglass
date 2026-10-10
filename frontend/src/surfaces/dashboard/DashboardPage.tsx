@@ -8,6 +8,7 @@ import { SURFACES } from '@/app/nav';
 import { GlowOverlay } from '@/components/ui/background-components';
 import { ApiError } from '@/lib/api/client';
 import { useMotionTokens } from '@/lib/motion';
+import { usePermission } from '@/stores/session';
 
 import {
   useCompletingWithinYear,
@@ -26,6 +27,7 @@ import { StatusOverviewCards } from './components/status-overview-cards';
 import { WithinYearKpis, WithinYearTable } from './components/within-year-panel';
 import { DeliveryGaugeCard } from './components/delivery-gauge-card';
 import { PlanningClockCard } from './components/planning-clock-card';
+import { CapacityBookedCard } from './components/capacity-booked-card';
 import { Button } from '@/components/ui/button';
 import { PanelSkeleton } from '@/components/ui/panel-skeleton';
 
@@ -116,6 +118,7 @@ export default function DashboardPage(): React.JSX.Element {
   const hubTypePipeline = useHubTypePipeline();
   const activeRun = useActiveScheduleRun(withinYear.data?.has_active_schedule_run === true);
   const motionTokens = useMotionTokens();
+  const canReadCapacity = usePermission('capacity').read;
 
   const title = DASHBOARD_SURFACE?.title ?? 'Global RPD Dashboard';
   /**
@@ -248,6 +251,9 @@ export default function DashboardPage(): React.JSX.Element {
                       <PipelinePanel totals={totals} withinYear={withinYear.data ?? null} />
                     )}
                   </SectionBoundary>
+                  {/* P11 (ADR 0016): compact Europe / India booked %, only for a
+                      session that can read Capacity (no fetch otherwise). */}
+                  {canReadCapacity ? <CapacityBookedCard /> : null}
                 </div>
               </div>
             </StaggerSection>

@@ -400,7 +400,7 @@ const STACK_ORDER: { bucket: OutcomeBucket; label: string; fill: string; dot: st
   { bucket: 'within_year', label: 'Within year', fill: 'bg-success', dot: 'bg-success' },
   { bucket: 'spillover', label: 'Spillover', fill: 'bg-warning', dot: 'bg-warning' },
   { bucket: 'left_out', label: 'Left out', fill: 'bg-danger', dot: 'bg-danger' },
-  { bucket: 'blocked', label: 'Blocked', fill: 'bg-text-muted', dot: 'bg-text-muted' },
+  { bucket: 'blocked', label: 'On Hold', fill: 'bg-text-muted', dot: 'bg-text-muted' },
 ];
 
 function HubOutcomeStack({ rows }: { rows: CompletingWithinYearRow[] }): React.JSX.Element {

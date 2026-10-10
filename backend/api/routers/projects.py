@@ -30,13 +30,25 @@ Creating a project also creates its 14 live stage rows
 lead-time durations. Editing a scheduler input sets `schedule_stale`.
 `Cancelled` is a valid status and, like On Hold, is excluded from
 scheduling.
+
+**P11 (ADR 0015, docs/API_CONTRACT_P11.md §1–§2).** A priority change is a
+*priority move*: `services.priority_move.apply_priority_change` writes it,
+audits `project.priority_move`, sets `schedule_stale` and, when the project
+is schedulable and no run is in flight, dispatches a greedy recalculation
+through the Workspace recalc's Celery lifecycle. It is reached through the
+new `POST /projects/{id}/priority` and through `PATCH /projects/{id}` when
+the PATCH changes `priority`; the PATCH reports the outcome in the
+`X-Schedule-Recalc` / `X-Schedule-Run-Id` / `X-Schedule-Baseline-Run-Id`
+response headers. Hard gates pin P1 on both paths (409
+`HARD_GATE_FORCES_P1`). Every other field edit still only sets
+`schedule_stale` (ADR 0006).
 """
 
 from __future__ import annotations
 
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -46,11 +58,19 @@ from api.errors import HTTP_422, CodedHTTPException
 from core.principal import Principal
 from core.rbac import Action, Surface
 from models.audit import AuditLogEntry
-from models.enums import ProjectCategory, ProjectPriority, ProjectStatus, ProjectType
+from models.enums import (
+    NON_SCHEDULABLE_STATUSES,
+    ProjectCategory,
+    ProjectPriority,
+    ProjectStatus,
+    ProjectType,
+)
 from models.hub import Hub
 from models.project import Project, category_allowed_for_hub
 from schemas.project import (
     HardGateStatus,
+    PriorityMoveRequest,
+    PriorityMoveResponse,
     ProjectCreateRequest,
     ProjectListItem,
     ProjectRead,
@@ -59,6 +79,7 @@ from schemas.project import (
 )
 from services.audit_helpers import project_audit_state
 from services.hub_scope import hub_scope_filter, is_hub_in_scope
+from services.priority_move import apply_priority_change, ensure_priority_move_allowed
 from services.project_access import authorize_project_action, effective_project_access
 from services.project_hard_gates import missing_hard_gate_fields
 from services.project_steps import WorkflowChangeWithProgress, sync_project_steps
@@ -260,6 +281,7 @@ async def create_project(
 async def update_project(
     project_id: uuid.UUID,
     body: ProjectUpdateRequest,
+    response: Response,
     db: AsyncSession = Depends(get_db),
     current_user: Principal = Depends(get_current_principal),
 ) -> Project:
@@ -272,6 +294,14 @@ async def update_project(
     Admin-grain-only — an Editor-level `ProjectAccessGrant` may NEVER write
     here (its write set is exactly stage-progress PATCH, file upload and
     comment post, all on the Workspace surface, none of them this one).
+
+    2026-10-09 (ADR 0015): a `priority` change is a priority move, applied
+    last by `services.priority_move.apply_priority_change` after every other
+    field, so the recalculation reads the final state. Its hard-gate check
+    runs first, before anything is written. A priority-only PATCH is
+    audited by the `project.priority_move` row alone; a PATCH that also
+    changes other fields writes `project.update` for those as well. The
+    response headers report the recalc outcome (contract §2).
     """
 
     project = await _get_project_or_404(db, project_id, current_user)
@@ -298,6 +328,21 @@ async def update_project(
             raise CodedHTTPException(
                 HTTP_422, "NULL_NOT_ALLOWED", f"{key} may not be null"
             )
+
+    # ADR 0015: the priority is applied last, as a priority move.
+    new_priority: ProjectPriority | None = updates.pop("priority", project.priority)
+    priority_moves = new_priority != project.priority
+    if priority_moves:
+        target_status = updates.get("status", project.status)
+        if new_priority is None and target_status not in NON_SCHEDULABLE_STATUSES:
+            # The scheduler needs a priority for every schedulable project;
+            # clearing it would queue a run that can only fail.
+            raise CodedHTTPException(
+                HTTP_422,
+                "NULL_NOT_ALLOWED",
+                "priority may not be null while the project's status is schedulable",
+            )
+        await ensure_priority_move_allowed(db, project, new_priority)
 
     current_hub = (await db.execute(select(Hub).where(Hub.id == project.hub_id))).scalar_one()
     target_hub = current_hub
@@ -343,21 +388,66 @@ async def update_project(
                 HTTP_422, "WORKFLOW_CHANGE_WITH_PROGRESS", str(exc)
             ) from exc
     after_state = project_audit_state(project)
+    if priority_moves:
+        # The move is applied below, in the same commit; the snapshot shows
+        # the project as it will be stored.
+        after_state["priority"] = new_priority.value if new_priority is not None else None
 
-    db.add(
-        AuditLogEntry(
-            actor_user_id=current_user.user_id,
-            action="project.update",
-            entity_type="Project",
-            entity_id=str(project.id),
-            hub_id=project.hub_id,
-            before_state=before_state,
-            after_state=after_state,
+    if updates or not priority_moves:
+        db.add(
+            AuditLogEntry(
+                actor_user_id=current_user.user_id,
+                action="project.update",
+                entity_type="Project",
+                entity_id=str(project.id),
+                hub_id=project.hub_id,
+                before_state=before_state,
+                after_state=after_state,
+            )
         )
-    )
-    await db.commit()
+    if priority_moves:
+        # Commits everything above together with the move.
+        move = await apply_priority_change(db, project, new_priority, current_user)
+        response.headers.update(move.response_headers())
+    else:
+        await db.commit()
     await db.refresh(project)
     return project
+
+
+@router.post("/{project_id}/priority", response_model=PriorityMoveResponse)
+async def move_project_priority(
+    project_id: uuid.UUID,
+    body: PriorityMoveRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: Principal = Depends(get_current_principal),
+) -> PriorityMoveResponse:
+    """ADR 0015 priority move (docs/API_CONTRACT_P11.md §1). Always 200;
+    `recalc_status` says what happened. 409 `HARD_GATE_FORCES_P1` when the
+    project has hard gates and the target is not P1.
+
+    Permission is exactly the PATCH's: the hub-scoped lookup (404 out of
+    scope) and Registration WRITE or an Admin-level project grant (403
+    otherwise). The recalculation is a consequence of the write, not a
+    separate permission.
+    """
+
+    project = await _get_project_or_404(db, project_id, current_user)
+    await authorize_project_action(
+        db, current_user, project,
+        surface=Surface.PROJECT_REGISTRATION, action=Action.WRITE, min_grant_role="admin",
+    )
+    move = await apply_priority_change(db, project, body.priority, current_user)
+    assert move.priority_after is not None  # the request schema forbids null
+    return PriorityMoveResponse(
+        project_id=move.project_id,
+        priority_before=move.priority_before,
+        priority_after=move.priority_after,
+        recalc_status=move.recalc_status,
+        schedule_run_id=move.schedule_run_id,
+        baseline_run_id=move.baseline_run_id,
+        task_id=move.task_id,
+    )
 
 
 @router.post("/{project_id}/submit", response_model=ProjectRead)

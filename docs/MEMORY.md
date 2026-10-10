@@ -20757,3 +20757,474 @@ down by Groq on 2026-08-16 (console.groq.com/docs/deprecations); replacement `op
 - `tests/test_ask_agent.py`: fake response gains `is_error`; new alias/strip test. 6/6 pass.
 
 **Gate result:** N/A, deployment fix. ADR 0014 redaction allowlist untouched.
+
+### [2026-10-02] Voiceover script for screen recording `new.mov`
+
+**Requested by:** project owner — a full video script for a 7:07 silent screen recording of the
+deployed app.
+
+**What changed.** New `docs/HANDOVER/VIDEO_SCRIPT_NEW_MOV.md`: 15 timed segments matched to the
+recording (login → Dashboard → analytics → All Projects + Ask the agent → Workspace → Capacity →
+Matrix → Gantt → Registration → Capacity Planning → Workflow Settings → User/Role Admin + Audit
+Log → profile → role switch Bob/Erin/Alice). Each segment has on-screen notes and a voiceover
+line. Figures are read off the recording. About 930 words. Production notes flag two on-screen
+issues: the agent panel renders raw markdown and says "the JSON", and the Dave ExecutiveViewer
+login card is labelled "Engineer". No code touched.
+
+**Gate result:** N/A, documentation only.
+
+### [2026-10-05] Video script: Project Prioritisation & Dynamic Planning (infographic)
+
+**Requested by:** project owner (client asked for a video on prioritisation and the dynamic
+planning process, preferably infographic-style).
+
+**What changed.** New folder `docs/HANDOVER/prioritisation-video/`:
+- `article.md`: fact base drawn only from DOMAIN_RULES (13 dimensions/weights/bands/hard gates,
+  scheduling order, lead-time totals, design/lab/elapsed booking, outcomes, progress capture,
+  stale → Recalculate → immutable run versions, health badges). Demo figures from the 2026-10-02
+  run are marked *(demo)*.
+- `script.md`: narration only, 707 words in 35 beats.
+- `outline.md`: 8 chapters / 35 infographic steps, about 5:28, with an information pool per
+  chapter.
+
+These follow the `web-video-presentation` skill's Phase 1. The checkpoint (theme, assets, build
+mode, audio) is pending with the owner. The CP-SAT optimiser is deliberately left out of the
+script, because OQ #10 is open. No code touched.
+
+**Gate result:** N/A, documentation only.
+
+### [2026-10-09] P11 opened — priority move auto-recalc, capacity booked %, "On Hold" — rpd-orchestrator
+
+**Requested by:** the project owner, relaying Frigoglass:
+- "P1 to P2 can be moved and it decide timeline automatically";
+- "Lab and design capacity. Design and chamber full. Europe design booked 90 percent and lab 50
+  percent book";
+- "Instead of blocked it should be on hold".
+
+**What was found first.**
+- Priority could already change, but only through Registration `PATCH /projects/{id}`. That set
+  `schedule_stale` and nothing else.
+- Recalculate lived only on the Workspace, and no view showed which other projects moved.
+- The PATCH did not enforce DOMAIN_RULES' "hard gates force P1", although
+  `models/priority.py` says the API layer should.
+- Capacity served `completion_pct = capacity / load` (the workbook's), but no "booked %" and no
+  Europe/India grouping.
+- "Blocked" is a wire value in several places: the stage status, `outcome.blocked`,
+  `blocked_count`, `stage_blocked` and the health value. A project-level status `On Hold` already
+  exists and means something different: the project is out of the plan.
+
+**Decisions** (ADRs 0015–0017, contract `docs/API_CONTRACT_P11.md`):
+- **ADR 0015, priority move.**
+  - A priority change auto-dispatches a **greedy** run (OQ #10 keeps CP-SAT out), from both a new
+    `POST /projects/{id}/priority` and the PATCH.
+  - If a run is in flight, the result is `deferred`, not a 409.
+  - Hard gates now pin P1 on both paths (409 `HARD_GATE_FORCES_P1`).
+  - A new `GET /schedule-runs/{run}/changes?against=` lists what moved, compares stored fields
+    only, and gives a hidden count for out-of-scope rows.
+  - This narrows ADR 0006's "explicit only" rule for priority alone (OQ #24).
+- **ADR 0016, booked %.**
+  - `booked_pct = load / capacity × 100`, the reciprocal of `completion_pct`, so the two cannot
+    disagree.
+  - Status: full ≥ 100, near_full ≥ 85.
+  - Areas come from the lab region: Europe = Greece + Romania; India = India, including OEM
+    (OQ #26).
+  - Area lab sums count each region once.
+  - "Booked" is ambiguous: a reading, a calendar fill, or a reservation input. Asked as OQ #25.
+- **ADR 0017, On Hold.** The change is label-only; wire values are unchanged. The stage-level hold
+  is qualified "waiting at a stage" against the status On Hold. The Dashboard tile scope is OQ #27.
+
+**Docs changed:**
+- ADR 0015, 0016 and 0017;
+- `docs/API_CONTRACT_P11.md`;
+- DOMAIN_RULES: header revision, "Priority moves", "Booked % and areas", the On Hold note, the
+  health badge label, I19 and I20;
+- OPEN_QUESTIONS #24–#27;
+- IMPLEMENTATION_PLAN P11 (and the phase table, which had stopped at P8).
+
+`backend/scheduling/` needs no change, so algorithm-engineer is not involved.
+
+**Next:** P11-T01 (backend-builder) and P11-T02 (frontend-builder) in parallel against the
+contract, then the P11-T03..T05 gate.
+
+**Gate result:** N/A, docs only.
+
+### [2026-10-09] P11-T02 — frontend-builder
+
+**Did:** the frontend half of P11, built against `docs/API_CONTRACT_P11.md` with `// PLACEHOLDER`
+mirrors, then reconciled with the P11-T01 backend, which landed during the task.
+
+**A. Priority move (ADR 0015).**
+- **One shared module** in `src/components/shared/priority-move/`:
+  - `priority-move-control.tsx`: the priority pill as a Radix dropdown (P1–P4, Q). It is shown only
+    with `project_registration.write`. Otherwise, or outside a provider, it renders the existing
+    read-only `PriorityBandPill`.
+  - `use-priority-move-flow.tsx` + `priority-move-provider.tsx`: the flow state lives with the
+    page, not the row. A virtualized Gantt row scrolling away therefore never cancels a run being
+    followed.
+  - `move-flow-panel.tsx`: a light confirm dialog ("Move to P2? … The timeline will be
+    recalculated."), then a **non-modal** floating panel (bottom-right) with the solver progress and
+    the result. The panel has no close button while the run is followed, so the result is never
+    silently lost.
+  - `timeline-updated-panel.tsx`: renders the served `GET /schedule-runs/{run}/changes` rows. It
+    shows this project's finish week from → to plus the served `delta_weeks`; the other projects
+    (name, hub, weeks, before → after flag flips for within-year, left-out and on hold); and
+    "+N more in hubs outside your scope" from `hidden_count`. Nothing is diffed in the browser
+    (I20); a flip chip prints only when the two served booleans differ. The list virtualizes over
+    100 rows.
+  - `move-copy.ts` holds every outcome's copy:
+    - `deferred`;
+    - `not_needed` ("status X", when the caller knows the status);
+    - 409 `HARD_GATE_FORCES_P1`;
+    - SSE/run failure ("…the timeline is marked stale. Press Recalculate…"; only project-level
+      queries are invalidated, so the stale chip/banner stays);
+    - `unchanged`: a silent no-op.
+- **Placement:**
+  - the Gantt project row, moved OUT of the expand `<button>`, since a menu trigger cannot nest in
+    a button. `GanttPage` wraps in `<PriorityMoveProvider>`;
+  - the Workspace header. `ProjectWorkspacePage` wraps in the provider.
+- **Generalised `use-recalc-flow.ts`, not duplicated.** The SSE watcher is now
+  `src/lib/use-schedule-run-follow.ts` (`begin` / `follow` / `fail` / `reset`).
+  - Workspace "Recalculate schedule" and the priority move both use it.
+  - `invalidateRunDerivedQueries` covers gantt, dashboard, capacity, schedule-runs, notifications,
+    projects (which includes every workspace) and priority-matrix.
+  - `RecalcStatus` moved to `components/shared/run-progress-status.tsx` and is re-exported under
+    the old name, so the existing Workspace tests are unchanged.
+- **PATCH path.**
+  - `registration-api.ts::updateProject` now returns `{ project, recalc }`. It uses the existing
+    `apiSendWithHeaders` (no client change was needed) and the new `readRecalcHeaders` in
+    `lib/api/priority-move.ts`.
+  - The Registration page and the Workspace Details panel call the flow's `followPatch`, which
+    shows the same progress and panel.
+  - The form's Priority field has the hint "Changing priority recalculates the timeline." in edit
+    mode only. A new project is a Draft and never schedules.
+- `error-messages.ts` gains `HARD_GATE_FORCES_P1` and `RUN_NOT_COMPLETED`, so the form's own save
+  error also shows the hard-gate copy.
+- `query-keys.ts` gains `scheduleRunChanges(run, against)`. Both runs are immutable, so the query
+  uses `staleTime: Infinity`.
+
+**B. Capacity booked % (ADR 0016).**
+- Mirrors: `HubCapacityRow` gains the 8 booked fields plus `area`; `HubCapacitySummary` gains the
+  thresholds and `areas[]`; `CapacityArea` is new. `BookingStatus` lives in `types/enums.ts`, so
+  the shared chip can import it.
+- `pickFigures` also picks `bookedPct` / `bookingStatus`. A new `pickAreaFigures` selects area
+  fields. Both select only.
+- `components/shared/booking-status-chip.tsx` (meta in `booking-status-meta.ts`):
+  - Full → danger, Near full → warning, Available → success, always icon + text;
+  - `BookedFigure` prints the served % to 2 dp (`formatBookedPct`, never integer-rounded, so it
+    reconciles with I19);
+  - an "Over-booked" hint when the served % is > 100;
+  - "—" plus "No capacity in scope" when the % is null.
+- Capacity surface:
+  - New `area-booking-strip.tsx` at the top: one card per served area, Design and Lab booked % with
+    chips, "x of y" served load/capacity, the hubs and lab regions covered, and a "Your hubs only"
+    chip when `me.hub_scope_all` is false.
+  - The horizon state was lifted from `HubLoadPanel` to `CapacityPage` (optional controlled props;
+    the panel stays uncontrolled when they are omitted), so the strip follows the existing toggle.
+  - Each hub row's Design/Lab block gains a "Booked" figure with its chip.
+- Dashboard: new `capacity-booked-card.tsx` ("Europe — Design 90 % · Lab 50 %", full-year
+  figures). It sits in the row-3 right column under Pipeline. It is rendered only with
+  `capacity.read`, so there is no fetch otherwise. It reuses `useHubLoadVsCapacity`, which gained an
+  optional `enabled`, with the same key and cache as Capacity. On error, no run or no area it
+  renders nothing.
+
+**C. "Blocked" → "On Hold" (ADR 0017), labels only.**
+- `types/enums.ts`: `WORKFLOW_STEP_STATUS_LABELS` + `stageStatusLabel()` (`Blocked` → "On Hold").
+- Relabelled:
+  - the stage select options and read-only status;
+  - "Blocked reason" → "Hold reason";
+  - the validation copy;
+  - `HEALTH_META.blocked`;
+  - the Gantt project and step badges;
+  - the Dashboard tile ("On Hold", caption "In the plan, waiting at a stage"), the outcome-table
+    badge, the donut, the analytics stack, `OUTCOME_STYLE`, and the provenance / completion /
+    gauge copy;
+  - the notification meta ("Stage on hold").
+- The status overview chip for the project status reads "Paused (status On Hold)", and its info
+  note says so.
+- Wire values are untouched everywhere.
+
+**Contract deviations:** none. Reconciled against `backend/schemas/{capacity,project,
+schedule_run}.py`, `services/priority_move.py` (header names, `unchanged` → no headers),
+`api/main.py` (CORS `expose_headers` includes all three) and `api/routers/schedule_runs.py`
+(`?against=`, 409 `RUN_NOT_COMPLETED`). All match field for field. The backend's
+`test_openapi_frontend_contract.py` reads `lib/api/priority-move.ts` and the capacity mirrors:
+**103 passed** against them. **No unreconciled placeholder.**
+
+**Known limitation (not a deviation):** the control gates on `project_registration.write`, as
+briefed. ADR 0015 §3 also lets an Admin-level project grant move priority. A user whose only route
+is such a grant (for example an Engineer with an Admin grant) sees the read-only pill, because no
+payload exposes the caller's effective project role. The server would accept the move. A follow-up
+is needed only if the client wants that path in the UI.
+
+**Tests.**
+- New files:
+  - `priority-move.test.tsx` (15): gating ×4, each `recalc_status`, the 409, SSE failure, cancel,
+    axe, and `followPatch` queued / not_needed / no-baseline;
+  - `timeline-updated-panel.test.tsx` (7);
+  - `area-booking-strip.test.tsx` (8, including over 100 %, null %, horizon, partial scope, axe);
+  - `capacity-booked-card.test.tsx` (4, including axe);
+  - `on-hold-labels.test.ts` (4).
+- Added to existing files:
+  - `registration-api` +1, `pick-figures` +3, `hub-load-panel` +2, `CapacityPage` +1;
+  - `DashboardPage` +2 (shown with capacity read; hidden and never fetched without);
+  - `GanttPage` +2, `ProjectWorkspacePage` +2 (header gating; Details PATCH → follow → panel),
+    `project-form` +2, `RegistrationPage` +1.
+- Updated for the new labels: notification-bell, ProjectWorkspacePage, stage-validation, GanttPage,
+  within-year-panel, portfolio-analytics, status-overview-cards, and `e2e/p9-r04-remediation.spec.ts`
+  (badge text).
+
+**Verification:**
+- `tsc -b --noEmit` is clean.
+- eslint: 0 errors and 7 warnings, all in untouched files: the 6 known ones plus
+  `project-breakdown.tsx`'s fast-refresh warning, also pre-existing.
+- Full vitest: **756 / 757**. The single failure is the DevRoleSwitcher test orphaned by commit
+  `c074e62`, as recorded before; it was 702/703 before this task, so this task added 54 tests.
+- Axe checks are at zero serious/critical.
+- `npm run build`: **PASS, 172.8 KB gzip of 400 KB** (227.2 KB headroom).
+- No `dangerouslySetInnerHTML`, raw hex or three.js in new code. No backend file touched.
+
+**Gate result:** N/A. P11-T03..T05 are next.
+
+### [2026-10-09] P11-T01 — backend-builder
+
+**Did:** Built the P11 backend against `docs/API_CONTRACT_P11.md`, ADRs 0015–0017 and the
+2026-10-09 DOMAIN_RULES ("Priority moves", "Booked % and areas", the On Hold note, I19/I20).
+`backend/scheduling/` was not touched (`git diff -- backend/scheduling/` is empty); the new code
+only calls the existing Celery greedy task.
+
+**A. Priority move (ADR 0015, contract §1–§2).**
+- `services/priority_move.py::apply_priority_change(db, project, new_priority, principal) ->
+  PriorityMoveResult` is the one implementation. Order: same value → `unchanged` (nothing written,
+  nothing committed); hard gates non-empty and target ≠ P1 → 409 `HARD_GATE_FORCES_P1`
+  (`CodedHTTPException`, before any write); else write priority + `schedule_stale` + audit
+  `project.priority_move` (before `{priority}`, after `{priority, recalc_status, baseline_run_id}`);
+  status in `NON_SCHEDULABLE_STATUSES` → `not_needed`; a run in flight → `deferred` (priority still
+  committed, no second run); else `queued`.
+- `queued` repeats `workspace.py::recalculate` exactly: `create_queued_schedule_run(GREEDY,
+  trigger_reason="priority_move")` (its commit lands the priority, stale flag, move audit row and
+  QUEUED run together, so the worker's input carries the new priority, I20),
+  `run_greedy_schedule.delay(..., activate=True, recalc_project_id=...)`, `celery_task_id`, a
+  `project.recalculate_requested` audit row (as on the Workspace path, plus `trigger_reason`),
+  commit, `publish_progress(..., status="queued")`. `baseline_run_id` = the run `is_active` before
+  dispatch (null when none).
+- New `POST /projects/{project_id}/priority` (`api/routers/projects.py::move_project_priority`):
+  `_get_project_or_404` + `authorize_project_action(PROJECT_REGISTRATION, WRITE,
+  min_grant_role="admin")`, identical to PATCH. Request `PriorityMoveRequest` is `extra="forbid",
+  strict=True`; the `priority` field alone is `Field(strict=False)` because a strict enum accepts
+  only an enum instance, never the JSON string (verified: strict gives 422 for `"P2"`; lax still
+  rejects `"P9"`, `"p2"`, `2`, `null`). Response `PriorityMoveResponse` as the contract.
+- `PATCH /projects/{project_id}`: a changed `priority` is popped from the update set, its hard-gate
+  check runs before anything is written, the other fields are applied as before, and the move is
+  applied last through `apply_priority_change` (one commit for everything). Body stays
+  `ProjectRead`; headers `X-Schedule-Recalc` (queued|deferred|not_needed), `X-Schedule-Run-Id`
+  (queued only), `X-Schedule-Baseline-Run-Id` (queued with an active run only); no headers when the
+  priority did not change. A priority-only PATCH is audited by the `project.priority_move` row
+  alone; a PATCH that also changes other fields also writes `project.update`, whose after-snapshot
+  shows the stored (moved) priority.
+- CORS `expose_headers` (`api/main.py`) gains the three headers next to `X-Schedule-Stale-Count`.
+- In-flight check extracted to `services/run_dispatch.py::find_in_flight_run` (same
+  `task_time_limit_seconds + 120` window) and now used by Workspace recalc, admin CP-SAT dispatch
+  and the priority move. It first takes a transaction-scoped advisory lock
+  (`pg_advisory_xact_lock(0x52504452554E)`, "RPDRUN", same convention as `users.py`'s "RPDSA"), so
+  two concurrent dispatchers cannot both see "nothing in flight" and queue two runs; the lock is
+  released by the caller's next commit/rollback (`create_queued_schedule_run` commits at once).
+  The sweeper keeps its own copy of the window (its tests patch its module), unchanged.
+- Workspace activity: `project.priority_move` reads "Priority moved P1 → P2 — timeline
+  recalculation queued" / "— recalculation deferred, another run was in progress" / "— not in the
+  plan, no recalculation".
+
+**B. Run-to-run changes (contract §3, I20).** `GET /schedule-runs/{run_id}/changes?against=` in
+`api/routers/schedule_runs.py` (`_read_any`); logic in `services/run_changes.py`. 404 when either
+run is missing, 409 `RUN_NOT_COMPLETED` when `run_id` is not COMPLETED, 422 without `against`.
+Compares only the stored `projected_end_week`, `within_year`, `left_out`, `blocked`; rows differ
+on one of them or exist in one run only (`is_new` / `is_removed`). Scoping: `hub_scope_filter(
+principal, Project.hub_id)`; out-of-scope changed rows only counted in `hidden_count`. Sorted by
+|delta| desc, null last, then name (then id, for determinism only). Schemas
+`ScheduleRunChangeRow`, `ScheduleRunChanges` in `schemas/schedule_run.py`.
+
+**C. Booked % and areas (ADR 0016, contract §4, I19).**
+- `domain_constants`: `BOOKING_NEAR_FULL_PCT = 85`, `BOOKING_FULL_PCT = 100`, `LAB_REGION_AREA`
+  (Greece/Romania → Europe, India → India), `AREA_ORDER = ("Europe", "India")`.
+- `services/capacity_supply.py`: `booked_pct`, `booking_status`, `booking`, `area_for_region`
+  (pure, `round2`).
+- `GET /capacity/hubs` (and `/capacity/hub-load`): each row gains the 8 booked/status fields and
+  `area`; the summary gains `near_full_threshold_pct`, `full_threshold_pct`, `areas[]`
+  (`schemas/capacity.py::CapacityArea`, named to match the frontend's `CapacityArea` interface).
+- Area design = Σ over the area's in-scope hub rows; area lab = Σ over the in-scope lab regions,
+  one row per region (never the hub rows' repeated region figure). Europe then India; an area with
+  no in-scope hub is omitted; `hubs` / `lab_regions` list exactly what is covered.
+
+**D. On Hold label (ADR 0017, contract §5).** New `services/display_labels.py`
+(`stage_status_label`, `STAGE_ON_HOLD_PHRASE`, `agent_health_label`) is the single backend label
+map. Used in: the `stage_blocked` notification ("…is on hold — <reason>"); activity summaries
+("PDD-F marked On Hold"); the stage-PATCH 422 messages ("is required when status is On Hold" —
+the field name `blocked_reason` stays); the Ask-the-agent context (stage `status` "On Hold", key
+`hold_reason`, health `blocked` → `on_hold`). Wire values unchanged everywhere. Grep of every
+"blocked" in `backend/` outside `scheduling/`: the rest are wire names, docstrings or comments.
+Exports: no export writes stage status (Gantt export has no status column); the Dashboard export's
+`blocked` column is a wire field name like every other header there, so it stays (ADR 0017
+Consequences: exports read by code see the old token). Stored notifications keep their old text.
+
+**Decisions / deviations from the contract.** No shape deviates: the regenerated OpenAPI matches
+§1–§4 field for field, and the frontend's `// PLACEHOLDER` mirrors (`lib/api/priority-move.ts`,
+`surfaces/capacity/api/types.ts`) already match and are now pinned `exact` in the contract test.
+Behaviour choices the contract did not spell out (stated plainly for the orchestrator):
+1. **PATCH `priority: null` on a schedulable project → 422 `NULL_NOT_ALLOWED`** (existing code).
+   Every schedulable project needs a priority (`scheduling.types.ProjectInput`), so the automatic
+   recalc would only queue a run that fails. On a non-schedulable status (e.g. Draft) clearing is
+   allowed and answers `not_needed`.
+2. **For `is_new` / `is_removed` rows the empty side is `null` week and `false` flags.** The
+   contract types the `before_*`/`after_*` booleans as non-null, so the missing side reads as
+   `false`; `is_new`/`is_removed` say which side is absent.
+3. **Booked % uses the row's served (2 dp) load and capacity**, and the status uses the served
+   percentage, so I19 holds exactly on what the client receives (99.996 → 100.0 → `full`). Area
+   figures are sums of the served row figures, re-rounded to 2 dp.
+4. **Changes endpoint for an Engineer**: scoped to own assignments in the new run (the Gantt rule,
+   P10-F01), not `hub_scope_filter` alone, because an Engineer with `hub_scope_all=True` would
+   otherwise see every hub. Everyone else is hub-scoped exactly as the contract says.
+5. **Ask-the-agent health `blocked` reads `on_hold`** in the context, in addition to the contract's
+   stage status / `hold_reason`, so the agent says "on hold" (ADR 0017 §1). Context only; the
+   Workspace API still serves `"blocked"`.
+6. **Advisory lock in the shared in-flight check** (see A). Not asked for; closes the race in which
+   two simultaneous moves both queue a run (I20, P11-T05's flood check). It also serialises the
+   Workspace recalc and CP-SAT dispatch checks, which only removes the same race there.
+
+**Tests.** New: `tests/test_p11_priority_move.py` (35: every `recalc_status` on POST and PATCH,
+back-to-back queued→deferred, hard-gate 409 on both paths with nothing written, non-gated P1→P2,
+gated →P1 allowed, empty gates, bad bodies, audit rows and none on `unchanged`, I20 input carries
+the new priority, PATCH headers, CORS exposure, RBAC: unassigned Engineer 404, leader-Engineer
+403, Executive Viewer 403, Auditor denied, other-hub Hub Planner 404, Viewer/Editor grant 403,
+Admin grant 200, Editor grant 403 on PATCH), `tests/test_p11_run_changes.py` (9: diff, sort,
+flags, I20 row check, hub scoping + `hidden_count` with no out-of-scope names or ids, Engineer
+own-assignment scoping with `hub_scope_all=True`, same-run empty, 409 for QUEUED/RUNNING/FAILED,
+404 either side, 422 without `against`, Auditor 403), `tests/test_p11_capacity_booked.py` (18:
+thresholds 84.99/85/99.99/100, capacity 0 with/without load, rounding, I19 on every row and area,
+India region counted once, Europe sum of two regions, Hub-Planner-scoped partial areas with the
+other area omitted, no active run), `tests/test_p11_on_hold_labels.py` (15: label map, wire values,
+notification text, activity summaries, stage 422 messages). Updated: `test_workspace_api.py`
+(notification text now "is on hold"), `test_ask_agent.py` (+1: the ADR 0014 allowlist pinned key
+by key, `hold_reason`, "On Hold", `on_hold`, no financial values),
+`test_openapi_frontend_contract.py` (+5 rows: `CapacityArea`, `PriorityMoveRequest`,
+`PriorityMoveResponse`, `ScheduleRunChangeRow`, `ScheduleRunChanges`; `PatchRecalcSignal`
+allowlisted as header-derived; 103 cases pass).
+
+**Verification.**
+- Full backend suite `python -m pytest` (backend-wide, includes `tests/scheduling/`): **912
+  passed**, coverage **95.19%** (gate ≥70%). Touched modules: `services/priority_move.py`,
+  `run_dispatch.py`, `display_labels.py`, `capacity_supply.py`, `notifications.py`,
+  `schemas/{capacity,project,schedule_run}.py`, `api/main.py`, `domain_constants.py` 100%;
+  `run_changes.py` 98%; `workspace.py` (router) 95%; `schedule_runs.py` 94%;
+  `services/workspace.py` 93%; `ask_agent.py` 91%; `projects.py` 90%; `capacity.py` 88%.
+- `ruff check .`: clean. `mypy` on the 17 touched/new non-test modules: no new errors. The 3 left
+  in those files are on lines unchanged from HEAD (`capacity.py::class_breakdown` category index,
+  2×; the SSE `aclose` call). Repo-wide mypy debt in `tests/` and `scheduling/` is pre-existing
+  and untouched.
+- OpenAPI regenerated in-process (`app.openapi()`, as the contract test does): new paths
+  `POST /projects/{project_id}/priority` and `GET /schedule-runs/{run_id}/changes`, new
+  components `PriorityMoveRequest`, `PriorityMoveResponse`, `ScheduleRunChangeRow`,
+  `ScheduleRunChanges`, `CapacityArea`, and the extended `HubCapacityRow` / `HubCapacitySummary`.
+- `git diff -- backend/scheduling/`: empty.
+
+**Files.** New: `backend/services/{priority_move,run_changes,run_dispatch,display_labels}.py`,
+`backend/tests/test_p11_{priority_move,run_changes,capacity_booked,on_hold_labels}.py`. Changed:
+`backend/api/main.py`, `backend/api/routers/{projects,schedule_runs,workspace,capacity}.py`,
+`backend/domain_constants.py`, `backend/schemas/{project,schedule_run,capacity}.py`,
+`backend/services/{capacity_supply,notifications,workspace,ask_agent}.py`,
+`backend/tests/{test_workspace_api,test_ask_agent,test_openapi_frontend_contract}.py`,
+`docs/IMPLEMENTATION_PLAN.md` (P11-T01 DONE), this entry. Not committed.
+
+**For frontend-builder (P11-T02).**
+- Shapes are as the contract; your placeholders match.
+- `CapacityArea.design_load_weeks` is an integer, as on the hub rows.
+- PATCH headers are present only when the priority changed. `deferred` and `not_needed` carry
+  `X-Schedule-Recalc` alone.
+- PATCH `priority: null` on a schedulable project is now 422 `NULL_NOT_ALLOWED`.
+- Stage-PATCH 422 messages now say "On Hold". The field loc is still `blocked_reason`.
+- A queued move publishes on the existing SSE stream. When the run completes, call
+  `GET /schedule-runs/{schedule_run_id}/changes?against={baseline_run_id}`. With no baseline (no
+  active run before), there is nothing to diff against.
+
+**Gate result:** N/A, build task. **Next:** orchestrator review, P11-T02 reconcile, then the
+P11-T03..T05 gate.
+
+### [2026-10-09] P11-T01 / P11-T02 orchestrator review — rpd-orchestrator
+
+**Verdict: both accepted.**
+
+**Checks run:**
+- The `backend/scheduling/` diff is empty.
+- `services/priority_move.py::apply_priority_change`:
+  - `unchanged` returns before any write;
+  - the hard-gate check runs before any write;
+  - the order is non-schedulable → `not_needed`, then in-flight → `deferred`, else `queued`;
+  - when queued, the baseline is the active run read before dispatch;
+  - the priority, stale flag, audit row and QUEUED run commit together before the worker reads.
+- `services/run_dispatch.py` adds a transaction-level advisory lock on one fixed key, applied
+  through a SQLAlchemy `func`, so there is no string SQL.
+- Frontend:
+  - the only "Blocked" left in `src/` is the wire-value → label map in `types/enums.ts`;
+  - booked %, statuses and run diffs are rendered as served (I19/I20), not computed;
+  - the contract matched both ways (`test_openapi_frontend_contract.py`, 103/103, pinned `exact`).
+
+**Accepted backend decisions beyond the contract** (detail in the P11-T01 entry):
+1. PATCH `priority: null` on a schedulable project → 422 `NULL_NOT_ALLOWED`.
+2. Missing-side flags on `is_new` / `is_removed` rows are `false`.
+3. Booked % is computed from the rounded served load and capacity, so I19 holds exactly.
+4. On the changes endpoint, Engineers see only their own assigned projects.
+5. The agent context says `on_hold` for the health value.
+6. The advisory lock now also serialises Workspace recalc and CP-SAT dispatch. This closes a
+   race that existed before P11.
+
+**Follow-up recorded (non-blocking):** P11-F01. A user whose only write route is an Admin-level
+project grant sees a read-only priority pill, because no payload exposes the caller's per-project
+role. This is the same root cause as the P10-T03 deferred "Editor-grant read-only notice". The
+server accepts the move.
+
+**Known pre-existing failure:** `DevRoleSwitcher` test, broken by commit `c074e62`. It is not
+P11's.
+
+**Next:** P11-T03..T05 gate (qa-inspector, workflow-auditor, security-auditor) in parallel.
+
+### [2026-10-10] P12 opened — Priority board, Gantt drag timing, global hub filter, weekly check-in, VIP — rpd-orchestrator
+
+**Requested by:** the project owner, relaying Frigoglass (2026-10-10): a drag-and-drop Kanban to
+change P1/P2…; drag Gantt bars to change the 14 steps' timing; a hub dropdown everywhere incl. the
+header; lab/design booked % (Europe design 90 %, lab 50 %); "On Hold" instead of "Blocked"; live
+weekly tracking by engineers; a VIP projects tab (top 10–15 per hub per year). "Do fast and push
+everything."
+
+**What was found first.**
+- Booked % / areas and "On Hold" are **already built** (P11, ADR 0016/0017), uncommitted. Nothing new.
+- The P11 gate (P11-T03..T05) was launched on 2026-10-09 but **no PASS/FAIL was recorded** — the
+  session ended. Decision: the P12 gate covers P11 + P12 together.
+- Priority moves already recalc (ADR 0015) → the Kanban is a new view over the existing write.
+- Step durations come only from the shared lead-time table (`ProjectInput` has no per-step timing),
+  so a Gantt drag needs a **scheduler input change** → algorithm-engineer (ADR 0019, I21/I22).
+- Only `/gantt`, `/priorities` and `/dashboard/projects` accepted `hub_id`; Dashboard aggregates and
+  Capacity did not.
+- Engineers had read-only Workspace access; no check-in history table; `Engineer.user_id` links users
+  to engineers; `/me` already serves `hub_scope_all`, `hub_ids`, `engineer_id`.
+- No drag-and-drop library in the frontend.
+
+**Decisions** (ADRs 0018–0022, contract `docs/API_CONTRACT_P12.md`):
+- 0018 Priority board: `/priority-board`, matrix read, drop = existing `POST …/priority`; in-column
+  order by score (OQ #28).
+- 0019 Gantt drag: `duration_override_weeks` + `start_not_before_week` per step; auto greedy recalc
+  like a priority move (OQ #29); Done never, In Progress resize only.
+- 0020 Global hub filter: header select, persisted per viewer; server-side `hub_id` ANDed with scope,
+  never widens; lab stays regional.
+- 0021 Weekly check-in: `/check-in`, Engineer may write own/led stages only; append-only
+  `stage_checkins`; tracking status live/due/overdue/idle; "per plan" progress display-only (OQ #31);
+  check-in marks stale, no run (OQ #30); no per-engineer ranking (GDPR).
+- 0022 VIP: `/vip`, pins first then auto-fill by priority/score to 10–15 per hub per year (OQ #32).
+
+**Parallel build plan:** algorithm-engineer (P12-T01), backend A (P12-T02), backend B (P12-T03),
+frontend A (P12-T04), frontend B (P12-T05). Migration chain pre-assigned (`p12a_step_timing` →
+`p12b_vip_checkins`) so the two backend builders don't create two heads. File ownership split in the
+contract §7.
+
+**Docs changed:** ADR 0018–0022; `docs/API_CONTRACT_P12.md`; DOMAIN_RULES (header, lead-time
+override note, four *(2026-10-10)* sections, I21–I23); OPEN_QUESTIONS #28–#33; IMPLEMENTATION_PLAN
+phase table + P12 section.
+
+**Gate result:** N/A, docs only.

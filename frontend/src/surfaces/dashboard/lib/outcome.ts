@@ -77,7 +77,8 @@ export const OUTCOME_STYLE: Record<OutcomeBucket, OutcomeStyle> = {
     colorToken: '--color-warning',
   },
   blocked: {
-    label: 'Blocked',
+    // ADR 0017: bucket key stays `blocked`; shown as "On Hold".
+    label: 'On Hold',
     Icon: CirclePause,
     track: 'bg-warning',
     chip: 'bg-warning-subtle text-warning-subtle-fg',

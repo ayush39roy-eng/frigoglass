@@ -57,8 +57,9 @@ export function ScheduleRunProvenance({
           <strong className="text-text">Spillover</strong> = scheduled but not completing by{' '}
           {formatWeek(WITHIN_YEAR_WEEK)}. <strong className="text-text">Left out</strong> = no
           feasible window before the 78-week horizon.{' '}
-          <strong className="text-text">Blocked</strong> = held at a Blocked stage; it wins outright
-          over the other three, so the four counts never overlap.
+          <strong className="text-text">On Hold</strong> = in the plan, waiting at a stage that is on
+          hold (a paused project with status On Hold is not scheduled at all); it wins outright over
+          the other three, so the four counts never overlap.
         </p>
         <p>
           Every number on this surface traces to a single field on the schedule-run response. None

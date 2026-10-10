@@ -2,6 +2,7 @@ import * as React from 'react';
 import { motion } from 'framer-motion';
 import { CircleCheck, TriangleAlert } from 'lucide-react';
 
+import { BookedFigure } from '@/components/shared/booking-status-chip';
 import { Badge } from '@/components/ui/badge';
 import { BarChart } from '@/components/ui/bar-chart';
 import {
@@ -135,8 +136,17 @@ function ResourceBlock({
           label="Completion"
           value={figures.completionPct}
           formatValue={formatFraction}
-          className="sm:col-span-2"
           data-testid={`${kind}-completion`}
+        />
+        {/* P11 (ADR 0016): booked % = load / capacity × 100 and its Full / Near
+            full / Available status, both served for this horizon (I19). */}
+        <BookedFigure
+          label="Booked"
+          bookedPct={figures.bookedPct}
+          status={figures.bookingStatus}
+          size="sm"
+          className="rounded-dash border border-dash-hairline bg-dash-alt px-s3 py-s2"
+          data-testid={`${kind}-booked`}
         />
       </div>
 

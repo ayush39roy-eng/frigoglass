@@ -208,7 +208,7 @@ describe('NotificationBell', () => {
     expect(await screen.findByText('No notifications')).toBeInTheDocument();
   });
 
-  it('stage_blocked (P9): warning "Stage blocked" badge, plain-text message, no run link, deep link to the project', async () => {
+  it('stage_blocked (P9): warning "Stage on hold" badge (ADR 0017 label), plain-text message, no run link, deep link to the project', async () => {
     const user = userEvent.setup();
     const message = 'Project "Cooler <b>Alpha</b>" (PD-India): stage PDD-H Certification Testing & Compliance is blocked — lab closed';
     hooks.useNotifications.mockReturnValue(
@@ -227,7 +227,7 @@ describe('NotificationBell', () => {
     await user.click(screen.getByRole('button', { name: /Notifications/ }));
 
     const row = await screen.findByTestId('notification-row');
-    expect(within(row).getByText('Stage blocked').closest('span')).toHaveClass('bg-warning-subtle');
+    expect(within(row).getByText('Stage on hold').closest('span')).toHaveClass('bg-warning-subtle');
     // server text rendered verbatim as text — the <b> is not an element
     expect(within(row).getByText(message)).toBeInTheDocument();
     expect(row.querySelector('b')).toBeNull();

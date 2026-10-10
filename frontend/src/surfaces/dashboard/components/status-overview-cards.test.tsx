@@ -21,7 +21,8 @@ describe('StatusOverviewCards', () => {
       within(screen.getByRole('group', { name: 'In Queue' })).getByText('100'),
     ).toBeInTheDocument();
     expect(screen.getByText(/Draft: 3/)).toBeInTheDocument();
-    expect(screen.getByText(/On Hold: 1/)).toBeInTheDocument();
+    // ADR 0017: the project status On Hold reads as "paused", distinct from a stage hold.
+    expect(screen.getByText(/Paused \(status On Hold\): 1/)).toBeInTheDocument();
   });
 
   it('omits the "not shown as cards" line when there is nothing extra', () => {

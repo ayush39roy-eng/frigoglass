@@ -4,7 +4,7 @@
 // P4-T01 docs/MEMORY.md carry-forward note (a)). P3-T07's contract test must
 // catch drift between these shapes and the real schema.
 
-import type { HubName, LabRegion, ProjectCategory, ScheduleRunStatus, SolverType } from '@/types/enums';
+import type { BookingStatus, HubName, LabRegion, ProjectCategory, ScheduleRunStatus, SolverType } from '@/types/enums';
 import type { Id } from '@/types/common';
 
 /**
@@ -65,6 +65,18 @@ export interface HubCapacityRow {
   /** `(52 − CURRENT_WEEK) / 52`. */
   remaining_fraction: number;
   chambers: CapacityChamberRow[];
+  // PLACEHOLDER (P11 contract §4, ADR 0016): booked % = load / capacity × 100
+  // (2 dp, null when capacity == 0) and its status, both SERVER-derived (I19).
+  design_booked_pct_year: number | null;
+  design_booked_pct_remaining: number | null;
+  lab_booked_pct_year: number | null;
+  lab_booked_pct_remaining: number | null;
+  design_booking_status_year: BookingStatus;
+  design_booking_status_remaining: BookingStatus;
+  lab_booking_status_year: BookingStatus;
+  lab_booking_status_remaining: BookingStatus;
+  /** From the hub's lab region: Greece/Romania → Europe, India → India. */
+  area: CapacityAreaName;
   /** @deprecated P3-era alias of `design_capacity_remaining`; kept one release, not read. */
   design_capacity_weeks?: number;
   /** @deprecated P3-era alias of `lab_capacity_remaining`; kept one release, not read. */
@@ -73,12 +85,53 @@ export interface HubCapacityRow {
   lab_load_units?: number;
 }
 
+/** PLACEHOLDER (P11 contract §4, ADR 0016 §2). `full` ≥ 100 % (or capacity 0
+ *  with load), `near_full` 85–<100 %, else `available`. Never re-derived here.
+ *  Declared in `types/enums.ts` so the shared chip can use it. */
+export type { BookingStatus } from '@/types/enums';
+
+/** PLACEHOLDER (P11 contract §4, ADR 0016 §3). */
+export type CapacityAreaName = 'Europe' | 'India';
+
+/**
+ * PLACEHOLDER (P11 contract §4): one area's roll-up over the caller's IN-SCOPE
+ * hubs and lab regions (each lab region counted once, server-side). `hubs` and
+ * `lab_regions` say exactly what the figures cover, so a hub-scoped user's
+ * partial area is never presented as the whole area.
+ */
+export interface CapacityArea {
+  area: CapacityAreaName;
+  hubs: HubName[];
+  lab_regions: LabRegion[];
+  design_load_weeks: number;
+  design_capacity_year: number;
+  design_capacity_remaining: number;
+  lab_load_weeks: number;
+  lab_capacity_year: number;
+  lab_capacity_remaining: number;
+  design_booked_pct_year: number | null;
+  design_booked_pct_remaining: number | null;
+  lab_booked_pct_year: number | null;
+  lab_booked_pct_remaining: number | null;
+  design_booking_status_year: BookingStatus;
+  design_booking_status_remaining: BookingStatus;
+  lab_booking_status_year: BookingStatus;
+  lab_booking_status_remaining: BookingStatus;
+}
+
 export interface HubCapacitySummary {
   has_active_schedule_run: boolean;
   schedule_run_version: number | null;
   /** `horizon_weeks - current_week` from the active run's snapshotted horizon. */
   remaining_weeks: number;
   rows: HubCapacityRow[];
+  /** PLACEHOLDER (P11 contract §4): `BOOKING_NEAR_FULL_PCT` (85). */
+  near_full_threshold_pct: number;
+  /** PLACEHOLDER (P11 contract §4): `BOOKING_FULL_PCT` (100). */
+  full_threshold_pct: number;
+  /** PLACEHOLDER (P11 contract §4): Europe then India; an area with no
+   *  in-scope hub is omitted. */
+  areas: CapacityArea[];
 }
 
 /** One category's deliverable vs. left-out counts, from `GET /capacity/class-breakdown`. */

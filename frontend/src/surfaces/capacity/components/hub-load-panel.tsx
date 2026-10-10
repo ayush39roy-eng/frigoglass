@@ -36,10 +36,24 @@ import { RunProvenanceChips } from '@/components/ui/run-provenance-chips';
 export interface HubLoadPanelProps {
   data: HubCapacitySummary;
   activeRun: ScheduleRunSummary | null | undefined;
+  /** Controlled horizon (P11): CapacityPage lifts it so the area strip at the
+   *  top follows this card's toggle. Uncontrolled when omitted. */
+  horizon?: CapacityHorizon;
+  onHorizonChange?: (horizon: CapacityHorizon) => void;
 }
 
-export function HubLoadPanel({ data, activeRun }: HubLoadPanelProps): React.JSX.Element {
-  const [horizon, setHorizon] = React.useState<CapacityHorizon>('year');
+export function HubLoadPanel({
+  data,
+  activeRun,
+  horizon: controlledHorizon,
+  onHorizonChange,
+}: HubLoadPanelProps): React.JSX.Element {
+  const [localHorizon, setLocalHorizon] = React.useState<CapacityHorizon>('year');
+  const horizon = controlledHorizon ?? localHorizon;
+  const setHorizon = (next: CapacityHorizon) => {
+    setLocalHorizon(next);
+    onHorizonChange?.(next);
+  };
 
   return (
     <BoltCard>

@@ -17,6 +17,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { ReadOnlyNotice } from '@/components/session/write-gate';
+import { usePriorityMoveFlow } from '@/components/shared/priority-move/use-priority-move-flow';
 import { ApiError } from '@/lib/api/client';
 import { useHubs } from '@/lib/api/reference';
 import { formatInteger } from '@/lib/format';
@@ -71,6 +72,7 @@ export default function RegistrationPage(): React.JSX.Element {
   const createMut = useCreateProject();
   const updateMut = useUpdateProject();
   const submitMut = useSubmitProject();
+  const moveFlow = usePriorityMoveFlow();
 
   const title = REGISTRATION_SURFACE?.title ?? 'Project Registration';
   const description =
@@ -120,7 +122,23 @@ export default function RegistrationPage(): React.JSX.Element {
         if (formMode === 'create') {
           await createMut.mutateAsync(body);
         } else if (editProject) {
-          await updateMut.mutateAsync({ projectId: editProject.id, body });
+          const result = await updateMut.mutateAsync({ projectId: editProject.id, body });
+          // P11 (ADR 0015): a priority change schedules by itself. The server
+          // says what happened in the PATCH's X-Schedule-* headers; show the
+          // same progress and "Timeline updated" panel as the Gantt dropdown.
+          if (result?.recalc) {
+            moveFlow.api.followPatch(
+              {
+                projectId: editProject.id,
+                projectName: result.project.name,
+                priority: editProject.priority,
+                status: result.project.status,
+              },
+              result.recalc,
+              editProject.priority,
+              result.project.priority,
+            );
+          }
         }
       } catch (err) {
         if (err instanceof ApiError && err.isForbidden) {
@@ -130,7 +148,7 @@ export default function RegistrationPage(): React.JSX.Element {
         throw err;
       }
     },
-    [formMode, editProject, createMut, updateMut],
+    [formMode, editProject, createMut, updateMut, moveFlow.api],
   );
 
   const handleGateSubmit = React.useCallback(
@@ -310,6 +328,7 @@ export default function RegistrationPage(): React.JSX.Element {
         hubs={hubsQuery.data ?? []}
         onSubmit={handleFormSubmit}
       />
+      {moveFlow.element}
     </>
   );
 }

@@ -3,6 +3,7 @@ import { Pencil } from 'lucide-react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 
 import { ProjectStatusBadge } from '@/components/shared/project-status-badge';
+import { usePriorityMoveHost } from '@/components/shared/priority-move/priority-move-context';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { useHubs } from '@/lib/api/reference';
@@ -42,11 +43,22 @@ export function DetailsPanel({
   const [editing, setEditing] = React.useState(false);
   const queryClient = useQueryClient();
   const hubsQuery = useHubs();
+  const moveHost = usePriorityMoveHost();
   const update = useMutation({
     mutationFn: (body: ProjectCreateRequest) => updateProject(p.id, body),
-    onSuccess: () => {
+    onSuccess: (result) => {
       void queryClient.invalidateQueries({ queryKey: queryKeys.projectWorkspace(p.id) });
       void queryClient.invalidateQueries({ queryKey: ['projects'] });
+      // P11 (ADR 0015): a priority change in this form schedules by itself; the
+      // page's priority-move flow shows the progress and what moved.
+      if (result.recalc && moveHost) {
+        moveHost.followPatch(
+          { projectId: p.id, projectName: result.project.name, priority: p.priority, status: result.project.status },
+          result.recalc,
+          p.priority,
+          result.project.priority,
+        );
+      }
     },
   });
 

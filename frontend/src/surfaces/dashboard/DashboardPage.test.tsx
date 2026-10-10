@@ -3,6 +3,8 @@ import { screen } from '@testing-library/react';
 
 import { renderWithProviders } from '@/test/render';
 import { ApiError } from '@/lib/api/client';
+import { ROLE_MATRIX } from '@/test/roles';
+import { areaRow, SUMMARY_P11 } from '@/surfaces/capacity/test-fixtures';
 import type {
   CompletingWithinYear,
   HubTypePipelineRow,
@@ -28,6 +30,11 @@ vi.mock('./hooks/use-dashboard', () => ({
   useDashboardProjects: () => hooks.useDashboardProjects(),
 }));
 vi.mock('@/lib/api/reference', () => ({ useHubs: () => ({ data: [] }) }));
+// P11: the "Capacity booked" card shares the Capacity surface's hook.
+const capacityHook = { useHubLoadVsCapacity: vi.fn() };
+vi.mock('@/surfaces/capacity/hooks/use-capacity', () => ({
+  useHubLoadVsCapacity: () => capacityHook.useHubLoadVsCapacity(),
+}));
 
 import DashboardPage from './DashboardPage';
 
@@ -62,6 +69,9 @@ beforeEach(() => {
   vi.clearAllMocks();
   hooks.useActiveScheduleRun.mockReturnValue(ready(null));
   hooks.useDashboardProjects.mockReturnValue(ready({ total_count: 0, rows: [] }));
+  capacityHook.useHubLoadVsCapacity.mockReturnValue(
+    ready({ has_active_schedule_run: true, schedule_run_version: 4, remaining_weeks: 47, rows: [], ...SUMMARY_P11, areas: [areaRow()] }),
+  );
 });
 
 describe('DashboardPage', () => {
@@ -87,6 +97,29 @@ describe('DashboardPage', () => {
     expect(screen.getByText('Project breakdown')).toBeInTheDocument();
     // headline within-year figure comes from the I9 endpoint
     expect(screen.getByTestId('schedule-run-provenance')).toHaveTextContent(/v4/);
+  });
+
+  it('P11: shows the "Capacity booked" card for a session that can read Capacity', () => {
+    hooks.useCompletingWithinYear.mockReturnValue(ready(withinYear));
+    hooks.usePipelineTotals.mockReturnValue(ready(totals));
+    hooks.useStatusOverview.mockReturnValue(ready(status));
+    hooks.useHubTypePipeline.mockReturnValue(ready(hubType));
+    renderWithProviders(<DashboardPage />);
+    expect(screen.getByTestId('capacity-booked-card')).toBeInTheDocument();
+    expect(screen.getByTestId('dash-booked-Europe-design')).toHaveTextContent('72.44 %');
+  });
+
+  it('P11: hides the "Capacity booked" card (and never asks for it) without Capacity read', () => {
+    hooks.useCompletingWithinYear.mockReturnValue(ready(withinYear));
+    hooks.usePipelineTotals.mockReturnValue(ready(totals));
+    hooks.useStatusOverview.mockReturnValue(ready(status));
+    hooks.useHubTypePipeline.mockReturnValue(ready(hubType));
+    // Dashboard read, Capacity none.
+    renderWithProviders(<DashboardPage />, {
+      session: { roles: ['Engineer'], permissions: { ...ROLE_MATRIX.Engineer, dashboard: { read: true, write: false } } },
+    });
+    expect(screen.queryByTestId('capacity-booked-card')).not.toBeInTheDocument();
+    expect(capacityHook.useHubLoadVsCapacity).not.toHaveBeenCalled();
   });
 
   it('degrades to an access notice (not a wall of errors) on a 403', () => {

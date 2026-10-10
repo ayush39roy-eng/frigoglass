@@ -72,7 +72,8 @@ export function PipelinePanel({ totals, withinYear }: PipelinePanelProps): React
         // in the donut so "sum to the scheduled total" stays true.
         {
           key: 'blocked',
-          label: 'Blocked',
+          // ADR 0017: bucket key stays `blocked`; shown as "On Hold".
+          label: 'On Hold',
           value: withinYear.blocked_count,
           tone: 'warning',
         },

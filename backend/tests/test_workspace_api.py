@@ -709,8 +709,9 @@ async def test_blocked_transition_notifies_planners_and_pms_without_names(db_ses
     assert actor.id not in {n.recipient_user_id for n in rows}
     n = rows[0]
     assert n.schedule_run_id is None and n.project_id == w.project.id and n.hub_id == w.hub.id
+    # ADR 0017 (P11): the text says "on hold"; the reason value stays stage_blocked.
     assert n.message == (
-        'Project "Workspace P" (R&D-Greece): stage PDD-F Proof of Concept is blocked — ' + reason
+        'Project "Workspace P" (R&D-Greece): stage PDD-F Proof of Concept is on hold — ' + reason
     )
     # No engineer or actor name was added by the server (the reason text is the planner's own).
     assert "Lena Leader" not in n.message and "Test User" not in n.message

@@ -243,6 +243,8 @@ _REGISTRATION_TS = FRONTEND_SRC / "surfaces" / "registration" / "api" / "types.t
 _WORKSPACE_TS = FRONTEND_SRC / "surfaces" / "project-workspace" / "api" / "types.ts"
 _NOTIFICATIONS_TS = FRONTEND_SRC / "lib" / "api" / "notifications.ts"
 _PLANNING_TS = FRONTEND_SRC / "surfaces" / "planning" / "api" / "types.ts"
+# P11 (docs/API_CONTRACT_P11.md §1–§3): priority move and the run change list.
+_PRIORITY_MOVE_TS = FRONTEND_SRC / "lib" / "api" / "priority-move.ts"
 
 # (frontend file, ts interface name, backend openapi schema name, mode)
 CONTRACT_TABLE: list[tuple[Path, str, str, str]] = [
@@ -263,6 +265,8 @@ CONTRACT_TABLE: list[tuple[Path, str, str, str]] = [
     (_CAPACITY_TS, "HubCapacityRow", "HubCapacityRow", "exact"),
     (_CAPACITY_TS, "CapacityChamberRow", "CapacityChamberRow", "exact"),
     (_CAPACITY_TS, "HubCapacitySummary", "HubCapacitySummary", "exact"),
+    # P11 (docs/API_CONTRACT_P11.md §4, ADR 0016): the Europe / India roll-up.
+    (_CAPACITY_TS, "CapacityArea", "CapacityArea", "exact"),
     (_CAPACITY_TS, "ClassBreakdownRow", "ClassBreakdownRow", "exact"),
     (_CAPACITY_TS, "ClassBreakdown", "ClassBreakdown", "exact"),
     # This is the known P3-T09 GDPR-remediation drift this task exists to
@@ -418,6 +422,11 @@ CONTRACT_TABLE: list[tuple[Path, str, str, str]] = [
     (_PLANNING_TS, "EngineerCreateRequest", "EngineerCreateRequest", "exact"),
     (_PLANNING_TS, "ScheduleRunSummary", "ScheduleRunSummary", "exact"),
     (_PLANNING_TS, "GreedyRecalcResponse", "GreedyRecalcResponse", "exact"),
+    # --- P11: priority move + run changes (backend/schemas/{project,schedule_run}.py) ---
+    (_PRIORITY_MOVE_TS, "PriorityMoveRequest", "PriorityMoveRequest", "exact"),
+    (_PRIORITY_MOVE_TS, "PriorityMoveResponse", "PriorityMoveResponse", "exact"),
+    (_PRIORITY_MOVE_TS, "ScheduleRunChangeRow", "ScheduleRunChangeRow", "exact"),
+    (_PRIORITY_MOVE_TS, "ScheduleRunChanges", "ScheduleRunChanges", "exact"),
 ]
 
 
@@ -606,6 +615,12 @@ class TestOpenApiFrontendContract:
                 # `POST /projects/{id}/files`; FastAPI takes these as `Form`/
                 # `UploadFile` args, so there is no component schema.
                 "FileUploadInput",
+            },
+            _PRIORITY_MOVE_TS: {
+                # Parsed from the PATCH response headers (contract §2:
+                # X-Schedule-Recalc / -Run-Id / -Baseline-Run-Id); no body
+                # schema.
+                "PatchRecalcSignal",
             },
         }
 

@@ -2,10 +2,10 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('@/lib/api/client', async () => {
   const actual = await vi.importActual<typeof import('@/lib/api/client')>('@/lib/api/client');
-  return { ...actual, apiGet: vi.fn(), apiSend: vi.fn() };
+  return { ...actual, apiGet: vi.fn(), apiSend: vi.fn(), apiSendWithHeaders: vi.fn() };
 });
 
-import { apiGet, apiSend } from '@/lib/api/client';
+import { apiGet, apiSend, apiSendWithHeaders } from '@/lib/api/client';
 import {
   createProject,
   fetchHardGateStatus,
@@ -18,6 +18,7 @@ import type { ProjectCreateRequest, ProjectRead } from './types';
 
 const mockApiGet = vi.mocked(apiGet);
 const mockApiSend = vi.mocked(apiSend);
+const mockApiSendWithHeaders = vi.mocked(apiSendWithHeaders);
 
 afterEach(() => vi.clearAllMocks());
 
@@ -83,9 +84,27 @@ describe('registration-api', () => {
 
   it('PATCHes the update body to /projects/{id}', async () => {
     const body = { name: 'Cooler B' };
-    mockApiSend.mockResolvedValueOnce({ id: 'p1', ...body } as unknown as ProjectRead);
-    await updateProject('p1', body);
-    expect(mockApiSend).toHaveBeenCalledWith('PATCH', '/projects/p1', body);
+    mockApiSendWithHeaders.mockResolvedValueOnce({
+      data: { id: 'p1', ...body } as unknown as ProjectRead,
+      headers: new Headers(),
+    });
+    const result = await updateProject('p1', body);
+    expect(mockApiSendWithHeaders).toHaveBeenCalledWith('PATCH', '/projects/p1', body);
+    // No priority change → no X-Schedule-Recalc header → no recalc signal.
+    expect(result).toEqual({ project: { id: 'p1', name: 'Cooler B' }, recalc: null });
+  });
+
+  it('reads the P11 recalc headers verbatim when a PATCH changed priority', async () => {
+    mockApiSendWithHeaders.mockResolvedValueOnce({
+      data: { id: 'p1' } as unknown as ProjectRead,
+      headers: new Headers({
+        'X-Schedule-Recalc': 'queued',
+        'X-Schedule-Run-Id': 'run-43',
+        'X-Schedule-Baseline-Run-Id': 'run-42',
+      }),
+    });
+    const result = await updateProject('p1', { priority: 'P2' });
+    expect(result.recalc).toEqual({ recalc_status: 'queued', schedule_run_id: 'run-43', baseline_run_id: 'run-42' });
   });
 
   it('POSTs the submit body to /projects/{id}/submit', async () => {

@@ -50,11 +50,13 @@ describe('WithinYearPanel', () => {
     expect(within(screen.getByRole('group', { name: 'Within year' })).getByText('9')).toBeInTheDocument();
     expect(within(screen.getByRole('group', { name: 'Spillover' })).getByText('4')).toBeInTheDocument();
     expect(within(screen.getByRole('group', { name: 'Left out' })).getByText('2')).toBeInTheDocument();
-    expect(within(screen.getByRole('group', { name: 'Blocked' })).getByText('1')).toBeInTheDocument();
+    // ADR 0017: the `blocked_count` tile reads "On Hold".
+    expect(within(screen.getByRole('group', { name: 'On Hold' })).getByText('1')).toBeInTheDocument();
+    expect(screen.getByText('In the plan, waiting at a stage')).toBeInTheDocument();
 
     // Each bucket renders exactly its own field — no bucket double-counts another's
     // value (I9's mutual-exclusivity: 9 + 4 + 2 + 1, four distinct figures).
-    const values = ['Within year', 'Spillover', 'Left out', 'Blocked'].map(
+    const values = ['Within year', 'Spillover', 'Left out', 'On Hold'].map(
       (label) => within(screen.getByRole('group', { name: label })).getByText(/^\d+$/).textContent,
     );
     expect(values).toEqual(['9', '4', '2', '1']);
@@ -177,7 +179,7 @@ describe('WithinYearPanel', () => {
     expect(within(table).getByText('Within-year project')).toBeInTheDocument();
     expect(within(table).getByText('Within year')).toBeInTheDocument();
     expect(within(table).getByText('Blocked project')).toBeInTheDocument();
-    expect(within(table).getByText('Blocked')).toBeInTheDocument();
+    expect(within(table).getByText('On Hold')).toBeInTheDocument();
 
     expect(within(table).getByText('Spillover project')).toBeInTheDocument();
     // null category/priority render the "—" placeholder, not a blank cell.

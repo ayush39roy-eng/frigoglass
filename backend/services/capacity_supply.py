@@ -35,12 +35,19 @@ numeric effect. Tracked under docs/OPEN_QUESTIONS.md #16.
 
 Rounding happens only at the API boundary (`round2`). Intermediate values
 are kept at full precision.
+
+**Booked % (P11, ADR 0016).** `booked_pct = load / capacity × 100` and its
+`available` / `near_full` / `full` status are reporting figures on top of the
+above; they never gate booking. They are computed from the *served* (2 dp)
+load and capacity of the same row, so I19 holds exactly on what the client
+receives.
 """
 
 from __future__ import annotations
 
 from collections.abc import Iterable
 from dataclasses import dataclass
+from typing import Literal
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -140,6 +147,50 @@ def gap_and_completion(load: float, capacity: float) -> tuple[float, float | Non
 
     completion = None if load == 0 else capacity / load
     return load - capacity, completion
+
+
+BookingStatus = Literal["available", "near_full", "full"]
+
+
+def booked_pct(load: float, capacity: float) -> float | None:
+    """ADR 0016: `load / capacity × 100`, rounded to 2 dp; `None` when
+    `capacity == 0`. Callers pass the row's *served* (already rounded) load
+    and capacity, so the served percentage is exactly I19's
+    `load / capacity × 100` of the same row.
+    """
+
+    if capacity == 0:
+        return None
+    return round2(load / capacity * 100)
+
+
+def booking_status(load: float, capacity: float, pct: float | None) -> BookingStatus:
+    """ADR 0016 §2, on the served `pct`:
+    `full` when pct ≥ BOOKING_FULL_PCT, or when capacity == 0 and load > 0;
+    `near_full` when BOOKING_NEAR_FULL_PCT ≤ pct < BOOKING_FULL_PCT;
+    `available` otherwise (including load == 0 and capacity == 0).
+    """
+
+    if pct is None:
+        return "full" if capacity == 0 and load > 0 else "available"
+    if pct >= dc.BOOKING_FULL_PCT:
+        return "full"
+    if pct >= dc.BOOKING_NEAR_FULL_PCT:
+        return "near_full"
+    return "available"
+
+
+def booking(load: float, capacity: float) -> tuple[float | None, BookingStatus]:
+    """`(booked_pct, booking_status)` for one load/capacity pair."""
+
+    pct = booked_pct(load, capacity)
+    return pct, booking_status(load, capacity, pct)
+
+
+def area_for_region(region: LabRegion) -> str:
+    """ADR 0016 §3: Europe for Greece and Romania, India for India."""
+
+    return dc.LAB_REGION_AREA[region.value]
 
 
 def calendars_by_region(

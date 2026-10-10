@@ -104,6 +104,7 @@ from models.project import Project
 from models.schedule import ScheduleRun, ScheduleRunProjectOutcome, ScheduleRunProjectStep
 from models.user import User, UserRole
 from scheduling.types import ProjectScheduleOutcome
+from services.display_labels import STAGE_ON_HOLD_PHRASE
 
 #: Same (DASHBOARD, CAPACITY, GANTT) triple `api/routers/schedule_runs.py`'s
 #: `_read_any` uses — reused, not re-derived. See module docstring.
@@ -400,9 +401,15 @@ def stage_blocked_message(
     """Project name, hub, stage and the planner's reason text. Nothing else:
     no engineer or user name while docs/OPEN_QUESTIONS.md #8 is open, and
     never a financial field.
+
+    ADR 0017 (P11): the stage reads "is on hold". The notification reason
+    stays `stage_blocked`. Messages stored before P11 keep their old text.
     """
 
-    head = f'Project "{project_name}" ({hub_name}): stage {step_id} {step_name} is blocked — '
+    head = (
+        f'Project "{project_name}" ({hub_name}): stage {step_id} {step_name} '
+        f"is {STAGE_ON_HOLD_PHRASE} — "
+    )
     room = max(0, _MESSAGE_MAX - len(head))
     text = reason.strip()
     if len(text) > room:

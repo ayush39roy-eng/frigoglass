@@ -155,7 +155,8 @@ test.describe('P9-R04 remediation flows', () => {
     await expect(page.getByRole('heading', { level: 1, name })).toBeVisible();
     const badge = page.getByTestId('health-badge');
     await expect(badge).toHaveAttribute('data-health', 'blocked');
-    await expect(badge).toContainText('Blocked');
+    // ADR 0017: health value stays `blocked`; the badge reads "On Hold".
+    await expect(badge).toContainText('On Hold');
     await checkAxe(page, 'Workspace: Blocked health badge');
   });
 

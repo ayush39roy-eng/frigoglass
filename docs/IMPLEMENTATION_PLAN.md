@@ -20,6 +20,10 @@ creates a remediation task at the top of the current phase.
 | P6 | Security hardening, SSO, Docker Compose, observability | security-auditor + backend | security |
 | P7 | UAT, data migration, handover docs | all | all three |
 | P8 | Project Workspace (Surface #7) — per-stage progress capture | all | qa + workflow + security |
+| P9 | Client formulas, RBAC/Super Admin, completion lines, precedence | all | all three |
+| P10 | Project access grants, delegation, login page, Ask the agent | all | all three |
+| P11 | Client change requests: priority move auto-recalc, capacity booked %, On Hold label | backend + frontend | all three |
+| P12 | Client change requests 2: Priority board (Kanban), Gantt drag timing, global hub filter, weekly check-in, VIP projects | all | all three |
 
 ---
 
@@ -1537,3 +1541,172 @@ deferred, given severity/scope:
   guard). Status: **DONE** (2026-09-30 backend-builder for `MeResponse.is_delegate_manager`;
   2026-09-30 frontend-builder for the route guard OR + reconciling `p9-rbac.spec.ts`/
   `p10-gate.spec.ts` — see `docs/MEMORY.md`'s "P10-F02/F03 — frontend-builder" entry).
+
+## P11 — Client change requests: priority move auto-recalculates, capacity booked %, "On Hold"
+
+**Owner:** backend-builder, frontend-builder. Gated by the three auditors.
+**Gate:** qa-inspector PASS + workflow-auditor PASS + security-auditor PASS.
+
+Opened 2026-10-09 from Frigoglass's requests, relayed by the project owner:
+- "P1 to P2 can be moved and it decide timeline automatically";
+- "Lab and design capacity. Design and chamber full. Europe design booked 90 percent and lab 50
+  percent book";
+- "Instead of blocked it should be on hold".
+
+ADRs: 0015 (priority move), 0016 (booked % and areas), 0017 (On Hold label). Contract:
+`docs/API_CONTRACT_P11.md`. Open questions: #24–#27. **`backend/scheduling/` is not touched**,
+because no scheduler rule changes.
+
+- **P11-T00**: Docs. Owner: rpd-orchestrator. Status: DONE (2026-10-09).
+  - ADRs 0015–0017.
+  - `docs/API_CONTRACT_P11.md`.
+  - DOMAIN_RULES: "Priority moves", "Booked % and areas", the On Hold label note, I19 and I20.
+  - OQ #24–#27, and this section.
+- **P11-T01**: Backend. Owner: backend-builder. Depends on: P11-T00.
+  Status: DONE (`docs/MEMORY.md` 2026-10-09 "P11-T01 — backend-builder").
+  - Priority move: one service function used by both `POST /projects/{id}/priority` (new) and
+    `PATCH /projects/{id}` when priority changes.
+    - 409 `HARD_GATE_FORCES_P1` when hard gates are set.
+    - The audit row is `project.priority_move`.
+    - Greedy dispatch reuses the Workspace recalc lifecycle, with the same in-flight check, but a
+      run in flight gives `deferred`, not 409.
+    - PATCH returns the three response headers, which are also added to CORS `expose_headers`.
+  - `GET /schedule-runs/{run_id}/changes?against=`: compares stored fields only, is hub-scoped,
+    and returns `hidden_count`.
+  - Capacity: `booked_pct` and `booking_status` for year and remaining, on both design and lab, on
+    every hub row. Also `area` and the `areas[]` roll-up (lab regions counted once). Thresholds in
+    `domain_constants`.
+  - On Hold label (ADR 0017): add a single display-label helper and use it in:
+    - notification text;
+    - Workspace activity summaries;
+    - Ask-the-agent context;
+    - exports, if they carry stage status.
+    Wire values stay unchanged.
+  - Acceptance:
+    - pytest green;
+    - ruff and mypy clean;
+    - at least 70 % coverage on touched modules;
+    - OpenAPI regenerated;
+    - tests cover each `recalc_status` branch, the hard-gate 409 on both paths, the RBAC negatives
+      (Engineer, Executive Viewer, out-of-hub Hub Planner, Viewer/Editor grant), I19 to two
+      decimals, the area region-once rule, the changes endpoint's hub scoping, and `hidden_count`;
+    - `backend/scheduling/` diff is empty.
+- **P11-T02**: Frontend. Owner: frontend-builder. Depends on: P11-T00. It builds against the
+  contract in parallel with P11-T01 and reconciles before close. Status: DONE (2026-10-09; see
+  MEMORY.md "[2026-10-09] P11-T02 — frontend-builder").
+  - **Priority move control** (one shared component):
+    - Placement: on the Gantt project row and the Project Workspace header. Shown only with
+      Registration write; otherwise the existing read-only chip.
+    - Flow: choose P1–P4 or Q, call `POST …/priority`, then follow the SSE run.
+    - When the run completes: show a "Timeline updated" panel from `GET …/changes`: this project's
+      finish week from → to, the other projects that moved, and "+N in hubs you can't see"; then
+      invalidate Gantt, Dashboard, Capacity and Workspace queries.
+    - `deferred`, `not_needed` and `HARD_GATE_FORCES_P1` each get honest copy.
+    - Registration edit form: a note under Priority, "Changing priority recalculates the
+      timeline". It reads the `X-Schedule-Recalc` header after save and shows the same panel.
+  - **Capacity booked %:**
+    - An area strip at the top of the Capacity surface: Europe and India, design and lab booked %,
+      with a Full / Near full / Available chip. It follows the existing year/remaining toggle.
+    - A booked % with a status chip on each hub row.
+    - A Dashboard "Capacity booked" card, shown only with capacity read.
+    - Every figure and status is served (I19), never computed in the browser.
+  - **On Hold:** every user-facing "Blocked" becomes "On Hold" and "Blocked reason" becomes "Hold
+    reason":
+    - stage select and chips;
+    - health badge;
+    - Dashboard tile, donut and provenance copy (caption "In the plan, waiting at a stage");
+    - Gantt badge;
+    - notification meta.
+    Wire values stay unchanged. Status-On-Hold projects stay listed as "paused (status On Hold)".
+  - Acceptance:
+    - typecheck, lint, test and build green within the 400 KB budget;
+    - axe zero serious or critical;
+    - no `dangerouslySetInnerHTML`, no raw hex;
+    - existing tests updated for the new labels, plus new tests for the move flow (each
+      `recalc_status`, 409), the changes panel and the booked % chips.
+- **P11-T03**: `qa-inspector` gate.
+- **P11-T04**: `workflow-auditor` gate.
+  - Do a priority move on a live stack and re-derive that the new run reflects the new sort order.
+  - Assert I10 (frozen dates unchanged), I14, I19 and I20.
+  - Reconcile Capacity booked % and area sums to two decimals.
+  - Confirm Dashboard On Hold count equals `blocked_count`.
+- **P11-T05**: `security-auditor` gate.
+  - Check the priority move RBAC and hub scope, including grant roles.
+  - Check that the changes endpoint does not leak out-of-scope project names (count only).
+  - Check that recalc dispatch cannot be used to flood the solver: deferred, not queued, when in
+    flight.
+  - Check that the new response headers carry no sensitive data.
+- P11-T03 to P11-T05 depend on P11-T01 and P11-T02.
+
+### P11 follow-ups (non-blocking, recorded at orchestrator review 2026-10-09)
+
+- **P11-F01**: Show the priority move control to a user whose only write route is an
+  Admin-level project grant (ADR 0012). It needs a served per-project effective role. That shares
+  a root cause with P10-T03's deferred Editor-grant notice, so build both together. Owner:
+  backend-builder + frontend-builder. Status: OPEN.
+
+## P12 — Client change requests 2: Priority board, Gantt drag timing, hub filter, live tracking, VIP
+
+**Owner:** algorithm-engineer, backend-builder (×2: A and B), frontend-builder (×2: A and B).
+**Gate:** qa-inspector PASS + workflow-auditor PASS + security-auditor PASS. Because the P11 gate
+(P11-T03..T05) was launched on 2026-10-09 but never recorded, **this gate covers P11 and P12
+together**; P11 is not closed separately.
+
+Opened 2026-10-10 from Frigoglass's requests, relayed by the project owner:
+- "a drag and drop … Kanban chart that allows to change the priority P1, P2 …";
+- "change the time of the 14 work steps by moving the Gantt chart … decrease or increase it";
+- "a dropdown for all the hubs everywhere … in the main top … to see the stats for a particular hub";
+- "Lab and design capacity … Europe design booked 90 % and lab 50 %" and "Instead of blocked it
+  should be on hold" — **already delivered by P11** (ADR 0016, ADR 0017); nothing new to build;
+- "Project tracking should be LIVE … engineers fill it weekly, or the project itself moves";
+- "VIP Projects: critical projects per hub per year, top 10–15, an additional tab on the left".
+
+ADRs 0018–0022. Contract: `docs/API_CONTRACT_P12.md`. DOMAIN_RULES *(2026-10-10)* sections and
+I21–I23. Open questions #28–#33.
+
+- **P12-T00**: Docs. Owner: rpd-orchestrator. Status: DONE (2026-10-10).
+- **P12-T01**: Scheduler step timing (ADR 0019, contract §1). Owner: algorithm-engineer. Depends
+  on: P12-T00.
+  - `StepTimingInput`, `ProjectInput.step_timing`; effective duration in greedy, CP-SAT,
+    unconstrained finish, remaining-duration derivation, roll-up weights; floor for Not Started.
+  - I21 and I22 in `invariants.py`; hashed input includes `step_timing`.
+  - Acceptance: every existing golden file unchanged (default `()`); new golden/property tests for
+    override longer, override shorter, floor later than precedence, floor earlier than precedence
+    (no effect), In Progress resize, skipped step with override (stays skipped); self-tests green.
+- **P12-T02**: Backend A — step timing endpoint + hub filter (contract §0 p12a, §3, §4). Owner:
+  backend-builder. Depends on: P12-T00; the input wiring depends on P12-T01.
+  - Migration `p12a_step_timing`; model columns; `PATCH …/steps/{step_id}/timing` with every 409;
+    dispatch via `run_dispatch`; Gantt step row and project row extensions; schedule input build
+    passes `step_timing`; capacity load uses the effective duration; `hub_id` on every endpoint
+    listed in §4.
+  - Acceptance: pytest green, ruff + mypy clean, ≥ 70 % on touched modules, OpenAPI regenerated,
+    RBAC negatives (Engineer, Executive Viewer, PM — Gantt read only, out-of-hub Planner), each
+    `recalc_status`, hub filter never widens scope (out-of-scope `hub_id` ⇒ zeros), I23 on a seed.
+- **P12-T03**: Backend B — Priority board, VIP, check-ins, tracking status (contract §0 p12b, §2,
+  §5, §6). Owner: backend-builder. Depends on: P12-T00.
+  - Migration `p12b_vip_checkins` (down_revision `p12a_step_timing`); `StageCheckin` model with
+    UPDATE/DELETE protection; `services/tracking.py`; `GET /priority-board`; `GET /check-ins/due`,
+    `POST /check-ins`, `GET /check-ins/history`; `GET /vip-projects`, `PUT /projects/{id}/vip`;
+    `is_vip` + `tracking_status` on `/dashboard/projects` rows.
+  - Acceptance: as P12-T02, plus Engineer can check in only own/led stages (403/422
+    `FORBIDDEN_STAGE` otherwise), batch atomicity, server-filled actual weeks, VIP ranking and
+    `over_limit`, check-in rows immutable.
+- **P12-T04**: Frontend A — global hub filter + Gantt drag (ADR 0019, 0020). Owner:
+  frontend-builder. Depends on: P12-T00.
+  - `stores/hub-filter.ts`, header hub select, every portfolio surface wired (query keys + params),
+    Gantt local select removed, "Hub: X" chip; Gantt bar move + right-edge resize with week snapping,
+    honouring `timing_editable`, keyboard alternative (a timing dialog), optimistic ghost then the
+    P11 run-follow + "Timeline updated" panel, "Reset timing"; VIP badge and tracking chip on rows.
+- **P12-T05**: Frontend B — Priority board, VIP projects, Weekly check-in surfaces (ADR 0018, 0021,
+  0022). Owner: frontend-builder. Depends on: P12-T00.
+  - Three nav entries and routes; Kanban with accessible drag (pointer + keyboard) calling the P11
+    move flow; VIP page with year toggle and pin control; check-in page with batch form, "per plan"
+    progress, history drawer, due-count badge in the sidebar; `TrackingStatusChip`, `VipBadge`.
+- Acceptance for P12-T04/T05: typecheck, lint, test and build green within the 400 KB initial
+  budget; axe zero serious/critical; no `dangerouslySetInnerHTML`, no raw hex; every figure served.
+- **P12-T06**: `qa-inspector` gate (P11 + P12).
+- **P12-T07**: `workflow-auditor` gate (P11 + P12): I10, I14, I19–I23 on a live run; a drag and a
+  priority move re-derived independently; hub-filtered reconciliation.
+- **P12-T08**: `security-auditor` gate (P11 + P12): Engineer check-in write scope, hub-filter
+  non-widening, timing/VIP/board RBAC incl. grants, check-in immutability, rate limiting, no
+  per-engineer ranking (GDPR).

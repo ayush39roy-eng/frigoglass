@@ -2,6 +2,7 @@ import * as React from 'react';
 import { useParams } from 'react-router-dom';
 
 import { SectionBoundary } from '@/components/shared/section-boundary';
+import { PriorityMoveProvider } from '@/components/shared/priority-move/priority-move-provider';
 import { ReadOnlyNotice } from '@/components/session/write-gate';
 import { ApiError } from '@/lib/api/client';
 import { usePermission, useSessionStore } from '@/stores/session';
@@ -60,42 +61,46 @@ export default function ProjectWorkspacePage(): React.JSX.Element {
 
   const saveStage = (stepId: string, body: StagePatchRequest) => stagePatch.mutateAsync({ stepId, body });
 
+  // P11 (ADR 0015): the header's priority dropdown and the Details form's PATCH
+  // share one priority-move flow (confirm, progress, "Timeline updated").
   return (
-    <SectionBoundary query={workspace} title="Project Workspace" errorDescription="This project's workspace could not be loaded.">
-      {(data) => (
-        <div data-testid="project-workspace">
-          <WorkspaceHeader data={data} canRecalculate={canWrite} recalc={recalc} />
-          <ReadOnlyNotice surface="project_workspace" what="Editing details, progress, files and comments" className="mb-stack" />
-          {/* Full-width and first, above the two-column body: this is the one
-              panel every project workspace shares regardless of role or write
-              access, so it gets top billing rather than sitting at the bottom
-              of a scroll column (ask-agent-panel.tsx's own bold styling). */}
-          <div className="mb-gutter">
-            <AskAgentPanel projectId={data.project.id} />
-          </div>
-          <div className="grid gap-gutter xl:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
-            <div className="flex min-w-0 flex-col gap-gutter">
-              <DetailsPanel
-                data={data}
-                canEditDetails={canWrite && reg.write}
-                canEditScores={canWrite && matrix.write}
-                financialsVisible={reg.read}
-              />
-              <ProgressPanel data={data} canWrite={canWrite} onSaveStage={saveStage} recalc={recalc} />
+    <PriorityMoveProvider>
+      <SectionBoundary query={workspace} title="Project Workspace" errorDescription="This project's workspace could not be loaded.">
+        {(data) => (
+          <div data-testid="project-workspace">
+            <WorkspaceHeader data={data} canRecalculate={canWrite} recalc={recalc} />
+            <ReadOnlyNotice surface="project_workspace" what="Editing details, progress, files and comments" className="mb-stack" />
+            {/* Full-width and first, above the two-column body: this is the one
+                panel every project workspace shares regardless of role or write
+                access, so it gets top billing rather than sitting at the bottom
+                of a scroll column (ask-agent-panel.tsx's own bold styling). */}
+            <div className="mb-gutter">
+              <AskAgentPanel projectId={data.project.id} />
             </div>
-            <div className="flex min-w-0 flex-col gap-gutter">
-              <FilesPanel projectId={data.project.id} files={data.files} canWrite={canWrite} />
-              <ActivityPanel
-                projectId={data.project.id}
-                initial={data.activity}
-                canWrite={canWrite}
-                currentUserId={me?.user_id ?? null}
-                canModerate={canModerate}
-              />
+            <div className="grid gap-gutter xl:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
+              <div className="flex min-w-0 flex-col gap-gutter">
+                <DetailsPanel
+                  data={data}
+                  canEditDetails={canWrite && reg.write}
+                  canEditScores={canWrite && matrix.write}
+                  financialsVisible={reg.read}
+                />
+                <ProgressPanel data={data} canWrite={canWrite} onSaveStage={saveStage} recalc={recalc} />
+              </div>
+              <div className="flex min-w-0 flex-col gap-gutter">
+                <FilesPanel projectId={data.project.id} files={data.files} canWrite={canWrite} />
+                <ActivityPanel
+                  projectId={data.project.id}
+                  initial={data.activity}
+                  canWrite={canWrite}
+                  currentUserId={me?.user_id ?? null}
+                  canModerate={canModerate}
+                />
+              </div>
             </div>
           </div>
-        </div>
-      )}
-    </SectionBoundary>
+        )}
+      </SectionBoundary>
+    </PriorityMoveProvider>
   );
 }

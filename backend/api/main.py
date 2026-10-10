@@ -150,7 +150,15 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=cors_allowed_headers(),
-    expose_headers=["X-Schedule-Stale-Count", "Content-Disposition", "Retry-After"],
+    # P11 (ADR 0015): the three priority-move headers on `PATCH /projects/{id}`.
+    expose_headers=[
+        "X-Schedule-Stale-Count",
+        "X-Schedule-Recalc",
+        "X-Schedule-Run-Id",
+        "X-Schedule-Baseline-Run-Id",
+        "Content-Disposition",
+        "Retry-After",
+    ],
 )
 
 app.include_router(currency_rates_router)

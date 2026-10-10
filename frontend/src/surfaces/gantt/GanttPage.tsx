@@ -18,6 +18,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { ReadOnlyNotice } from '@/components/session/write-gate';
+import { PriorityMoveProvider } from '@/components/shared/priority-move/priority-move-provider';
 import { ApiError } from '@/lib/api/client';
 import { useHubs } from '@/lib/api/reference';
 import { formatInteger } from '@/lib/format';
@@ -112,8 +113,10 @@ export default function GanttPage(): React.JSX.Element {
     [freezeMut],
   );
 
+  // P11 (ADR 0015): one priority-move flow for the page; each row's
+  // <PriorityMoveControl> uses it.
   return (
-    <>
+    <PriorityMoveProvider>
       <PageHeader
         title={title}
         description={description}
@@ -293,6 +296,6 @@ export default function GanttPage(): React.JSX.Element {
         onOpenChange={setFreezeOpen}
         onSubmit={handleFreezeSubmit}
       />
-    </>
+    </PriorityMoveProvider>
   );
 }

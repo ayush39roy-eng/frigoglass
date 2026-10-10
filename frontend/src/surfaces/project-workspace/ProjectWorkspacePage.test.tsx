@@ -51,6 +51,21 @@ vi.mock('@/lib/api/reference', () => ({
 vi.mock('@/surfaces/registration/hooks/use-registration', () => ({
   useEngineerOptions: () => ({ data: [] }),
 }));
+// P11: the Details form's PATCH (now carrying the X-Schedule-* recalc signal)
+// and the run-to-run change list.
+const reg = { updateProject: vi.fn() };
+vi.mock('@/surfaces/registration/api/registration-api', () => ({
+  updateProject: (...a: unknown[]) => reg.updateProject(...a),
+}));
+const moveApi = { fetchScheduleRunChanges: vi.fn(), moveProjectPriority: vi.fn() };
+vi.mock('@/lib/api/priority-move', async () => {
+  const actual = await vi.importActual<typeof import('@/lib/api/priority-move')>('@/lib/api/priority-move');
+  return {
+    ...actual,
+    fetchScheduleRunChanges: (...a: unknown[]) => moveApi.fetchScheduleRunChanges(...a),
+    moveProjectPriority: (...a: unknown[]) => moveApi.moveProjectPriority(...a),
+  };
+});
 
 import ProjectWorkspacePage from './ProjectWorkspacePage';
 
@@ -75,7 +90,7 @@ describe('ProjectWorkspacePage — header and health (I13)', () => {
     ['at_risk', 'At risk'],
     ['off_track', 'Off track'],
     ['left_out', 'Left out'],
-    ['blocked', 'Blocked'], // remediation ruling 5
+    ['blocked', 'On Hold'], // remediation ruling 5; labelled On Hold since ADR 0017
     ['unscheduled', 'Not scheduled'],
   ])('renders the server health %s as "%s" (icon + label, never derived)', async (health, label) => {
     api.fetchWorkspace.mockResolvedValue(workspaceFixture({ health }));
@@ -129,12 +144,13 @@ describe('Progress panel — stages', () => {
     renderPage();
     const row = await screen.findByTestId('stage-PDD-B');
     await user.click(within(row).getByRole('combobox', { name: 'Status — Feasibility Study (Conceptual Design)' }));
-    await user.click(await screen.findByRole('option', { name: 'Blocked' }));
-    expect(within(row).getByTestId('stage-errors-PDD-B')).toHaveTextContent('A blocked stage needs a reason.');
+    // ADR 0017: the option reads "On Hold"; the value sent stays `Blocked`.
+    await user.click(await screen.findByRole('option', { name: 'On Hold' }));
+    expect(within(row).getByTestId('stage-errors-PDD-B')).toHaveTextContent('A stage on hold needs a hold reason.');
     const save = within(row).getByRole('button', { name: /Save progress/ });
     expect(save).toBeDisabled();
 
-    await user.type(within(row).getByLabelText(/Blocked reason/), 'Waiting on supplier drawings');
+    await user.type(within(row).getByLabelText(/Hold reason/), 'Waiting on supplier drawings');
     expect(save).toBeEnabled();
     await user.click(save);
     // MemoryRouter starts at "/", so the route param is '' here; the API is mocked.
@@ -368,12 +384,46 @@ describe('Details panel', () => {
   });
 });
 
+describe('P11 — priority move (ADR 0015)', () => {
+  it('the header priority is a move dropdown with Registration write, read-only for an Engineer', async () => {
+    const { unmount } = renderPage();
+    const header = await screen.findByTestId('workspace-header');
+    expect(within(header).getByTestId('priority-move-trigger')).toHaveTextContent('P2');
+    unmount();
+    renderPage({ session: { roles: ['Engineer'], permissions: ROLE_MATRIX.Engineer } });
+    const roHeader = await screen.findByTestId('workspace-header');
+    expect(within(roHeader).queryByTestId('priority-move-trigger')).not.toBeInTheDocument();
+    expect(within(roHeader).getByText('P2')).toBeInTheDocument();
+  });
+
+  it('a Details-form PATCH that changed priority follows the queued run and shows "Timeline updated"', async () => {
+    const fixture = workspaceFixture();
+    reg.updateProject.mockResolvedValue({
+      project: { ...fixture.project, priority: 'P3' },
+      recalc: { recalc_status: 'queued', schedule_run_id: 'run-50', baseline_run_id: 'run-49' },
+    });
+    moveApi.fetchScheduleRunChanges.mockResolvedValue({
+      run_id: 'run-50', run_version: 50, against_run_id: 'run-49', against_run_version: 49, hidden_count: 2, rows: [],
+    });
+    sse.streamSolverProgress.mockResolvedValue({ schedule_run_id: 'run-50', status: 'completed' });
+    const user = userEvent.setup();
+    renderPage();
+    const panel = within(await screen.findByTestId('details-panel'));
+    await user.click(panel.getByRole('button', { name: 'Edit details' }));
+    await user.click(panel.getByRole('button', { name: 'Save changes' }));
+    await waitFor(() => expect(reg.updateProject).toHaveBeenCalled());
+    await waitFor(() => expect(sse.streamSolverProgress).toHaveBeenCalledWith('run-50', expect.any(Function), expect.any(AbortSignal)));
+    expect(await screen.findByRole('heading', { name: 'Timeline updated' })).toBeInTheDocument();
+    expect(await screen.findByTestId('timeline-hidden-count')).toHaveTextContent('+2 more in hubs outside your scope');
+  });
+});
+
 describe('P9-R03 remediation', () => {
   it('the Blocked health badge uses the warning tone with a pause icon (ruling 5)', async () => {
     api.fetchWorkspace.mockResolvedValue(workspaceFixture({ health: 'blocked' }));
     renderPage();
     const badge = await screen.findByTestId('health-badge');
-    expect(badge).toHaveAccessibleName(/^Health: Blocked\./);
+    expect(badge).toHaveAccessibleName(/^Health: On Hold\./);
     expect(badge.querySelector('svg.lucide-circle-pause')).not.toBeNull();
   });
 

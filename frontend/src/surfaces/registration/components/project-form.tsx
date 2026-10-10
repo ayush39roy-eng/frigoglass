@@ -21,6 +21,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { MOVE_COPY } from '@/components/shared/priority-move/move-copy';
 import { ApiError } from '@/lib/api/client';
 import { apiErrorMessage } from '@/lib/api/error-messages';
 import { useCategoriesForHub, type Hub } from '@/lib/api/reference';
@@ -332,7 +333,14 @@ export function ProjectForm({
                 </SelectContent>
               </Select>
             </Field>
-            <Field label="Priority" htmlFor="reg-priority">
+            <Field
+              label="Priority"
+              htmlFor="reg-priority"
+              // P11 (ADR 0015): on an existing project a priority change
+              // recalculates the timeline by itself. A new project is created
+              // in Draft and is never scheduled, so the note is edit-only.
+              hint={mode === 'edit' ? MOVE_COPY.formHint : undefined}
+            >
               <Select value={priority} onValueChange={setPriority}>
                 <SelectTrigger id="reg-priority" className="h-8">
                   <SelectValue />

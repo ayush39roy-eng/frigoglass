@@ -71,7 +71,7 @@ describe('PortfolioAnalytics', () => {
     );
     const list = screen.getByRole('list', { name: 'Outcome counts per hub' });
     expect(within(list).getByText('PD-India')).toBeInTheDocument();
-    expect(within(list).getByTitle('PD-India: 1 blocked')).toBeInTheDocument();
+    expect(within(list).getByTitle('PD-India: 1 on hold')).toBeInTheDocument();
     expect(within(list).getByTitle('PD-India: 1 within year')).toBeInTheDocument();
   });
 

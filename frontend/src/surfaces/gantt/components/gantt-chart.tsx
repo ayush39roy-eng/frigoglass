@@ -7,7 +7,7 @@ import { ArrowUpRight, ChevronRight, Snowflake } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { formatWeek } from '@/lib/format';
 import { usePrefersReducedMotion } from '@/lib/use-prefers-reduced-motion';
-import { PriorityBandPill } from '@/components/shared/priority-band-pill';
+import { PriorityMoveControl } from '@/components/shared/priority-move/priority-move-control';
 import { StepKindBadge } from '@/components/shared/step-kind-badge';
 import type { WorkflowStepKind } from '@/types/enums';
 
@@ -423,8 +423,13 @@ function ProjectLeftCell({
           </span>
           <span className="block truncate text-2xs text-text-muted">{project.hub}</span>
         </span>
-        {project.priority ? <PriorityBandPill priority={project.priority} /> : null}
       </button>
+      {/* P11 (ADR 0015): with Registration write this is a dropdown that moves the
+          priority and recalculates; otherwise the read-only pill. It sits outside
+          the expand button because a menu trigger cannot nest in a button. The
+          flow itself is hosted by GanttPage's <PriorityMoveProvider>, so scrolling
+          this virtualized row away never cancels a run being followed. */}
+      <PriorityMoveControl projectId={project.project_id} projectName={project.project_name} priority={project.priority} />
       {/* Click-through to the Project Workspace (Surface #7) — a real link, so
           it works with middle-click / bookmarks. */}
       <Link

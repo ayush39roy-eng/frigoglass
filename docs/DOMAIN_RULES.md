@@ -15,6 +15,15 @@ ADRs 0007 (lead times, step kinds, OEM workflow), 0008 (capacity supply), 0009 (
 Where the workbook is inconsistent with itself the assumption taken is stated and the question is
 in `docs/OPEN_QUESTIONS.md` #11–#22 — no agent picks a side silently.
 
+**Revised 2026-10-09** from the client's change requests of that day: ADR 0015 (a priority move
+recalculates automatically), ADR 0016 (capacity booked % and Europe/India areas) and ADR 0017
+("Blocked" is shown as "On Hold"). Sections marked *(2026-10-09)* changed. Open questions #24–#27.
+
+**Revised 2026-10-10** from the client's second batch of change requests: ADR 0018 (Priority board),
+ADR 0019 (Gantt drag sets a per-project step duration and an earliest start — a scheduler input
+change), ADR 0020 (global hub filter), ADR 0021 (weekly check-in / live tracking) and ADR 0022 (VIP
+projects). Sections marked *(2026-10-10)* changed. Invariants I21–I23. Open questions #28–#33.
+
 ---
 
 ## Workflow templates — two workflows, 14 steps each *(2026-09-27, ADR 0007)*
@@ -95,6 +104,11 @@ duration_weeks = lead_time[workflow][category][step_id]      # integer weeks, ma
   "Estimated" column only; they never affect the schedule (`docs/OPEN_QUESTIONS.md` #12).
 - The table is edited only on Workflow Settings (Super Admin). Every edit is audit-logged and sets
   `schedule_stale` on every schedulable project; it never triggers a solve.
+- *(2026-10-10, ADR 0019)* **Per-project override.** A project's step may carry
+  `duration_override_weeks` (1..104). Then `duration_weeks = duration_override_weeks` for that
+  project's step, everywhere the table duration was used (booking, remaining duration, capacity
+  load, progress weights, the unconstrained finish). A step whose table duration is 0 stays skipped;
+  an override never revives it. A table edit never clears an override.
 
 Categories: non-OEM hubs use `A+ / A / B / C`; OEM hubs use `A-OEM / B-OEM / C-OEM`. The
 prototype-era multipliers (`A+ 1.0, A 0.8, B 0.5, C 0.25`) are retired and must not be reintroduced.
@@ -169,6 +183,27 @@ deterministic walk/tie-break order; it is not a dependency.
 - **Completing within year**: `!left_out AND (last_step_end + delay <= WITHIN_YEAR_WEEK)`. Otherwise
   `SPILLOVER`.
 - Status `Commercialized`, `On Hold`, `Cancelled` and `Draft` are excluded from scheduling entirely.
+
+## Priority moves *(2026-10-09, ADR 0015)*
+
+Changing a project's `priority` to a different value is the one edit that schedules by itself.
+Every other input edit still only sets `schedule_stale` (ADR 0006). This holds whether the change
+comes through `POST /projects/{id}/priority` or `PATCH /projects/{id}`.
+
+```
+if new == old:                        no-op (unchanged)
+if hard_gates non-empty and new != P1: reject 409 HARD_GATE_FORCES_P1
+write priority, audit project.priority_move, set schedule_stale
+if status not schedulable:            not_needed (no run)
+elif a run is queued/running:         deferred   (stays stale; no second run)
+else:                                 queued — greedy run, activate=True, trigger_reason="priority_move"
+```
+
+- Greedy only (OQ #10). The run is a new immutable `ScheduleRun` (I14). Frozen dates never move
+  (I10).
+- What moved is served by `GET /schedule-runs/{run}/changes?against={baseline}`. It compares the
+  stored `projected_end_week`, `within_year`, `left_out` and `blocked` of the two runs. It is
+  hub-scoped and its rows are never recomputed (I20).
 
 ## Expected vs projected completion *(2026-09-27)*
 
@@ -298,6 +333,12 @@ Project Workspace:
 | `remaining_weeks_override` | int `>= 0` or null | when null, remaining is derived (below) |
 | `blocked_reason` | text or null | required (non-empty) when `status == Blocked`; null otherwise |
 
+*(2026-10-09, ADR 0017)* The `Blocked` status is **shown to users as "On Hold"**, and
+`blocked_reason` is shown as "Hold reason". The stored and wire values stay `Blocked` /
+`blocked_reason`, and the rules below are unchanged. A stage on hold is not the project-level status
+`On Hold`. That status takes the whole project out of the plan. A stage hold keeps the project in
+the plan, waiting at that stage.
+
 A project is **progress-tracked** once any one of its 14 stages has `status != Not Started`.
 `percent_complete` and `remaining_weeks_override` are advisory inputs to the scheduler, not stored
 schedule output — they are never overwritten by a schedule run.
@@ -390,7 +431,7 @@ A pure function of the **active `ScheduleRun`'s stored outcome** for the project
 | Badge | Condition |
 |---|---|
 | ⚫ Left Out | `left_out == true` |
-| ⏸ Blocked | `blocked == true` (added 2026-09-27, remediation ruling 5) |
+| ⏸ On Hold | `blocked == true` (added 2026-09-27, remediation ruling 5; labelled "On Hold" since 2026-10-09, ADR 0017 — health value stays `"blocked"`) |
 | 🔴 Off Track | projected finish week `> WITHIN_YEAR_WEEK` |
 | 🟡 At Risk | projected finish `<= WITHIN_YEAR_WEEK` **and** some stage's `(actual_end_week or projected end) - (planned end)` `> 0` (running over planned duration) |
 | 🟢 On Track | projected finish `<= WITHIN_YEAR_WEEK` and no stage overrunning and no overdue stage |
@@ -442,6 +483,20 @@ Seed values: `docs/CLIENT_FORMULAS.md` §2.1–2.2. Editable on Capacity Plannin
 hub) and Workflow Settings (Super Admin); audit-logged. FTE still does not gate week-level booking
 (ADR 0002) and downtime does not gate chamber booking; both are supply-reporting inputs.
 
+### Booked % and areas *(2026-10-09, ADR 0016)*
+
+```
+booked_pct   = load / capacity × 100            (2 dp; null when capacity == 0)   — year and remaining
+status       = full       if booked_pct >= 100 (or capacity == 0 and load > 0)
+               near_full  if 85 <= booked_pct < 100
+               available  otherwise
+area         = Europe for lab regions Greece, Romania; India for lab region India
+area figures = Σ over the area's in-scope hubs (design) and in-scope lab regions, each region once (lab)
+```
+
+These are reporting figures. They never gate booking. The thresholds are
+`BOOKING_NEAR_FULL_PCT = 85` and `BOOKING_FULL_PCT = 100` (OQ #25).
+
 ## Roles *(2026-09-27, ADR 0010)*
 
 `Super Admin` has read + write on every surface and is the only role that may grant/revoke
@@ -489,6 +544,15 @@ AGENT_UNAVAILABLE` when `RPD_GROQ_API_KEY` is unset. Provisional pending `docs/O
   project role to themselves, to a non-report, or on a project they cannot themselves administer.
   Revoking a grant never reduces a principal's effective access below what rules (1)-(4)/(6) of the
   resolver above already give them.
+- **I19** *(2026-10-09, ADR 0016)*: Every served `booked_pct` equals `load / capacity × 100` of the
+  same row's served load and capacity, to two decimals. Its status follows the threshold rule. An
+  area's lab load and lab capacity count each lab region exactly once. No booked figure or status
+  is computed in the browser.
+- **I20** *(2026-10-09, ADR 0015)*: A priority move that returns `queued` creates exactly one new
+  `ScheduleRun`, and that run's input carries the new priority. Frozen projects' dates are identical
+  across the baseline and the new run (I10). Every row of `GET /schedule-runs/{run}/changes` equals
+  the difference of the two runs' stored outcome fields. A project whose compared fields did not
+  change never appears.
 
 ## Gate remediation rulings *(2026-09-27, P9-T06 FAIL)*
 
@@ -543,3 +607,70 @@ These close the ambiguities the workflow-auditor found in the P9 gate. Recorded 
 10. **In-Progress tail start (D8).** An In-Progress or Blocked tail starts at
     `max(CURRENT_WEEK, actual_start_week, predecessor_end + 1)`. `actual_start_week` is included so
     a stage recorded as started in the future (after `CURRENT_WEEK`) keeps its recorded start.
+
+---
+
+## Step timing from the Gantt *(2026-10-10, ADR 0019)*
+
+Two planner inputs per `ProjectWorkflowStep`, never overwritten by a run:
+
+| Field | Domain | Effect |
+|---|---|---|
+| `duration_override_weeks` | int 1..104 or null | the step's effective duration for this project (see Lead times) |
+| `start_not_before_week` | int 1..HORIZON_WEEKS or null | a `Not Started` step's search floor becomes `max(CURRENT_WEEK, predecessors' end + 1, start_not_before_week)` |
+
+- Editable from the Gantt: drag the right edge → duration; drag the bar → earliest start; "Reset
+  timing" clears both. Done steps never; In Progress / Blocked steps resize only; skipped steps and
+  frozen or non-schedulable projects never.
+- A timing change **recalculates automatically**, exactly like a priority move (same lifecycle,
+  greedy only, `trigger_reason="step_timing"`). This is the second exception to "Rescheduling is
+  explicit" (OQ #29).
+
+## Global hub filter *(2026-10-10, ADR 0020)*
+
+Every portfolio read endpoint takes an optional `hub_id` that is **ANDed with the RBAC hub scope and
+never widens it**; an out-of-scope `hub_id` returns empty rows and zero totals. Every total, count
+and percentage under a filter is computed by the server for the filtered set (I9, I19, I23). Lab
+capacity stays region-wide under a hub filter (chambers are shared per region).
+
+## Weekly check-in and tracking status *(2026-10-10, ADR 0021)*
+
+- **Due stage** (for the current week): not skipped, not `Done`, and either `status ∈ {In Progress,
+  Blocked}` or the active run's planned window for the stage contains `CURRENT_WEEK`.
+- **Who may check in:** an Engineer for stages of projects they lead or stages assigned to them
+  (their engineer = `Engineer.user_id`); Hub Planner (own hub), Portfolio Manager, Admin, Super Admin
+  for any due stage in scope; an Editor-or-higher project grant for that project.
+- A check-in writes the per-stage progress fields under the existing consistency rules and appends an
+  immutable `stage_checkins` row. The server fills `actual_start_week = CURRENT_WEEK` on the first
+  move out of `Not Started`, and `actual_end_week = CURRENT_WEEK` on `Done`. It sets
+  `schedule_stale`; it never dispatches a run.
+- **Tracking status** (per project, served):
+  - `idle` — no due stage;
+  - `live` — every due stage has a check-in with `week == CURRENT_WEEK`;
+  - `overdue` — some due stage has had no check-in in `CURRENT_WEEK` or `CURRENT_WEEK − 1` and has been
+    due since at least `CURRENT_WEEK − 1`;
+  - `due` — otherwise.
+- **Plan-based progress** ("per plan"): `plan_percent = clamp(round((CURRENT_WEEK − planned_start_week
+  + 1) / (planned_end_week − planned_start_week + 1) × 100), 0, 100)`. It is displayed next to the
+  reported %, and is never written into progress fields (OQ #31).
+- Compliance is shown per project and per stage, never ranked per engineer (GDPR, OQ #8).
+
+## VIP projects *(2026-10-10, ADR 0022)*
+
+- Per hub and year (`plan` = weeks 1–52, `next` = weeks 53–78), at most `limit` (10..15, default
+  15) projects. A project is in a year if any of its scheduled step weeks in the active run fall in
+  that range; a pipeline project not yet in the run belongs to `plan`.
+- Order: pinned projects (`projects.is_vip`) first, then automatic fill; within each group by
+  priority `P1 → P4 → Q`, then weighted score descending, then name. More pins than `limit` are all
+  shown and the hub is flagged `over_limit`.
+- VIP never changes scheduling order and a pin never recalculates.
+
+## P12 invariants *(2026-10-10)*
+
+- **I21** (ADR 0019): every scheduled step that is not skipped, not `Done` and not in a frozen project
+  books a span equal to its effective duration (for `In Progress`/`Blocked`, the tail equals the
+  remaining duration derived from the effective duration).
+- **I22** (ADR 0019): every `Not Started` step with `start_not_before_week` set starts at or after it.
+- **I23** (ADR 0020): for any hub `h` in scope, each hub-filtered Dashboard total equals the
+  corresponding unfiltered per-hub figure for `h`, and the Gantt, Capacity and Dashboard agree for `h`
+  to two decimals.

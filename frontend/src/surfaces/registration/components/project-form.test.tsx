@@ -119,6 +119,31 @@ describe('ProjectFormDialog', () => {
     expect(screen.getByRole('heading', { name: 'Edit Cooler A' })).toBeInTheDocument();
     expect(screen.getByLabelText(/^Name/)).toHaveValue('Cooler A');
     expect(screen.getByLabelText(/TCOGS/)).toHaveValue(1000);
+    // P11 (ADR 0015): an existing project's priority change recalculates.
+    expect(screen.getByText('Changing priority recalculates the timeline.')).toBeInTheDocument();
+  });
+
+  it('create mode has no recalculation note (a new project is a Draft and never scheduled)', () => {
+    renderWithProviders(
+      <ProjectFormDialog mode="create" project={null} open onOpenChange={vi.fn()} hubs={hubs} onSubmit={vi.fn()} />,
+    );
+    expect(screen.queryByText('Changing priority recalculates the timeline.')).not.toBeInTheDocument();
+  });
+
+  it('P11: a 409 HARD_GATE_FORCES_P1 on save shows the hard-gate copy', async () => {
+    const user = userEvent.setup();
+    const { ApiError } = await import('@/lib/api/client');
+    const onSubmit = vi.fn().mockRejectedValue(new ApiError(409, 'conflict', 'hard gates', 'HARD_GATE_FORCES_P1'));
+    renderWithProviders(
+      <ProjectFormDialog mode="create" project={null} open onOpenChange={vi.fn()} hubs={hubs} onSubmit={onSubmit} />,
+    );
+    await user.type(screen.getByLabelText(/^Name/), 'Cooler G');
+    await user.click(screen.getByRole('combobox', { name: /^Hub/ }));
+    await user.click(await screen.findByRole('option', { name: 'R&D-Greece' }));
+    await user.click(screen.getByRole('button', { name: 'Create draft' }));
+    expect(
+      await screen.findByText('This project has a hard gate (regulatory / certification / safety), so it must stay P1.'),
+    ).toBeInTheDocument();
   });
 
   it('submits every financial field, the leader/category/type/priority selects, the carry-over checkbox, and comments', async () => {

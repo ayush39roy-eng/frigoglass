@@ -183,6 +183,25 @@ describe('RegistrationPage', () => {
     expect(screen.queryByRole('button', { name: 'New project' })).not.toBeInTheDocument();
   });
 
+  it('P11: an edit whose PATCH reports X-Schedule-Recalc shows the same honest outcome (deferred here)', async () => {
+    const user = userEvent.setup();
+    const project = { ...draftProject, status: 'In Queue' as const, priority: 'P1' as const };
+    hooks.useProjectList.mockReturnValue(ready([project]));
+    hooks.useUpdateProject.mockReturnValue({
+      mutateAsync: vi.fn().mockResolvedValue({
+        project: { ...project, priority: 'P2' },
+        recalc: { recalc_status: 'deferred', schedule_run_id: null, baseline_run_id: null },
+      }),
+    });
+    renderWithProviders(<RegistrationPage />);
+    await user.click(screen.getByRole('button', { name: 'Edit Cooler A' }));
+    expect(await screen.findByText('Changing priority recalculates the timeline.')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Save changes' }));
+    expect(await screen.findByTestId('priority-move-notice')).toHaveTextContent(
+      'Saved. Another recalculation is running — press Recalculate when it finishes.',
+    );
+  });
+
   it('expanding a Draft row shows the hard-gate panel', async () => {
     const user = userEvent.setup();
     hooks.useProjectList.mockReturnValue(ready([draftProject]));

@@ -15,6 +15,12 @@ import { StatCard } from './stat-card';
  * (see the backend `dashboard.py` module docstring).
  */
 
+/** ADR 0017: the project STATUS On Hold (paused, out of the plan) is labelled
+ *  so it is never confused with the stage-level "On Hold" schedule outcome. */
+function otherStatusLabel(status: string): string {
+  return status === 'On Hold' ? 'Paused (status On Hold)' : status;
+}
+
 export interface StatusOverviewCardsProps {
   data: StatusOverview;
 }
@@ -41,8 +47,14 @@ export function StatusOverviewCards({ data }: StatusOverviewCardsProps): React.J
             not a schedule outcome, so Invariant I9 does not apply to these four figures.
           </p>
           <p>
-            Four statuses get their own card. Every remaining status (Draft, Commercialized, On
-            Hold) is listed as a chip beside them rather than a fifth, sixth and seventh card.
+            Four statuses get their own card. Every remaining status (Draft, Commercialized, and
+            projects paused (status On Hold)) is listed as a chip beside them rather than a fifth,
+            sixth and seventh card.
+          </p>
+          <p>
+            A paused project (status On Hold) is out of the plan entirely. It is not the same as the
+            schedule outcome &ldquo;On Hold&rdquo;, where a project stays in the plan and waits at a
+            stage.
           </p>
         </CardInfo>
       </CardHeader>
@@ -85,7 +97,7 @@ export function StatusOverviewCards({ data }: StatusOverviewCardsProps): React.J
                 className="inline-flex items-center rounded-pill border-[1.5px] border-dash-hairline bg-dash-alt px-2.5 py-1 text-2xs font-bold text-text"
                 data-numeric=""
               >
-                {status}: {formatInteger(count)}
+                {otherStatusLabel(status)}: {formatInteger(count)}
               </span>
             ))}
           </div>

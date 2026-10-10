@@ -251,3 +251,76 @@ def test_groq_settings_accept_bare_alias_and_strip(monkeypatch) -> None:
     assert settings.api_key == "gsk_test"
     # Blank model falls back to a model Groq still serves.
     assert settings.model == "openai/gpt-oss-120b"
+
+
+# --- ADR 0014 allowlist, with the ADR 0017 On Hold label (P11-T01) -----------
+
+
+async def test_agent_context_allowlist_and_on_hold_label(db_session):
+    """The context's keys are an explicit allowlist (ADR 0014 §2). P11 renames
+    one stage key, `blocked_reason` → `hold_reason`, and shows a Blocked stage
+    as "On Hold" and the health value `blocked` as `on_hold` (ADR 0017). No
+    financial or person field is added by the rename.
+    """
+
+    from sqlalchemy import select
+
+    from models.enums import WorkflowStepStatus
+    from models.schedule import ScheduleRunProjectOutcome
+    from models.workflow import ProjectWorkflowStep
+    from services.ask_agent import build_agent_context
+
+    hub, project = await _project(db_session)
+    project.customer_name = "Zzyzx Hold Customer"
+    project.tcogs_eur = 777123
+    stage = (
+        await db_session.execute(
+            select(ProjectWorkflowStep).where(
+                ProjectWorkflowStep.project_id == project.id,
+                ProjectWorkflowStep.step_template_id == "PDD-B",
+            )
+        )
+    ).scalar_one()
+    stage.status = WorkflowStepStatus.BLOCKED
+    stage.actual_start_week = 30
+    stage.percent_complete = 20
+    stage.blocked_reason = "Waiting for supplier samples"
+    run = await make_schedule_run(db_session, is_active=True)
+    db_session.add(
+        ScheduleRunProjectOutcome(
+            schedule_run_id=run.id, project_id=project.id, within_year=True,
+            last_step_end_week=50, delay_weeks_applied=0, projected_end_week=50, blocked=True,
+        )
+    )
+    await db_session.flush()
+    # Load `workflow_id` (a column_property) as the router's lookup would.
+    await db_session.refresh(project)
+
+    context = await build_agent_context(db_session, project)
+
+    assert set(context) == {
+        "project", "health", "schedule", "progress_pct", "stages", "files", "comments",
+    }
+    assert set(context["project"]) == {
+        "name", "external_code", "category", "type", "status", "priority", "frozen",
+        "actual_start_week", "target_end_week", "reg_year", "carry_over",
+        "certification_testing_required", "estimated_design_weeks", "estimated_lab_weeks",
+        "notes",
+    }
+    stage_keys = {
+        "code", "name", "kind", "sequence_order", "duration_weeks", "skipped",
+        "planned_start_week", "planned_end_week", "actual_start_week", "actual_end_week",
+        "status", "percent_complete", "remaining_weeks", "hold_reason",
+        "design_engineer_assigned", "lab_chamber_assigned",
+    }
+    for s in context["stages"]:
+        assert set(s) == stage_keys
+        assert s["status"] in {"Not Started", "In Progress", "On Hold", "Done"}
+    held = next(s for s in context["stages"] if s["code"] == "FEAS_STD")
+    assert held["status"] == "On Hold"
+    assert held["hold_reason"] == "Waiting for supplier samples"
+    assert context["health"] == "on_hold"
+
+    dumped = json.dumps(context)
+    assert "Blocked" not in dumped and "blocked_reason" not in dumped
+    assert "Zzyzx Hold Customer" not in dumped and "777123" not in dumped

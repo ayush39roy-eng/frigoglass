@@ -11,7 +11,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from models.enums import ScheduleRunStatus, SolverType
+from models.enums import HubName, ProjectPriority, ScheduleRunStatus, SolverType
 
 
 class ScheduleRunSummary(BaseModel):
@@ -85,3 +85,52 @@ class CpSatDispatchResponse(BaseModel):
 
     schedule_run: ScheduleRunSummary
     celery_task_id: str
+
+
+class ScheduleRunChangeRow(BaseModel):
+    """One project whose stored outcome differs between the two runs
+    (docs/API_CONTRACT_P11.md §3, I20). Every value is read from the two
+    runs' `ScheduleRunProjectOutcome` rows; nothing is recomputed.
+
+    `is_new`: no outcome row in the baseline run, so the `before_*` side is
+    empty (`before_projected_end_week` null, `before_*` flags false).
+    `is_removed`: no outcome row in the new run, so the `after_*` side is
+    empty the same way.
+    """
+
+    project_id: uuid.UUID
+    project_name: str
+    hub: HubName
+    #: The project's live priority now (not part of the comparison).
+    priority: ProjectPriority | None
+    before_projected_end_week: int | None
+    after_projected_end_week: int | None
+    #: `after − before`; null if either side is null.
+    delta_weeks: int | None
+    before_within_year: bool
+    after_within_year: bool
+    before_left_out: bool
+    after_left_out: bool
+    before_blocked: bool
+    after_blocked: bool
+    is_new: bool
+    is_removed: bool
+
+
+class ScheduleRunChanges(BaseModel):
+    """`GET /schedule-runs/{run_id}/changes?against={baseline_run_id}`.
+
+    `rows` holds only in-scope projects whose compared fields
+    (`projected_end_week`, `within_year`, `left_out`, `blocked`) differ, or
+    that are present in only one of the runs. They are sorted by
+    `|delta_weeks|` descending (null last), then `project_name`.
+    `hidden_count` counts the changed projects outside the caller's scope;
+    their names and ids are never returned.
+    """
+
+    run_id: uuid.UUID
+    run_version: int
+    against_run_id: uuid.UUID
+    against_run_version: int
+    hidden_count: int
+    rows: list[ScheduleRunChangeRow]

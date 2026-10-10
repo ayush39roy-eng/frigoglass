@@ -29,13 +29,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 import domain_constants as dc
 from core.config import get_groq_settings
-from models.enums import WorkflowStepKind
+from models.enums import WorkflowStepKind, WorkflowStepStatus
 from models.project import Project
 from models.schedule import ScheduleRunProjectOutcome, ScheduleRunProjectStep
 from models.workflow import ProjectWorkflowStep, WorkflowStepTemplate
 from models.workspace import ProjectComment, ProjectFile
 from scheduling.workflow import derive_remaining
 from services.active_run import get_active_run
+from services.display_labels import agent_health_label, stage_status_label
 from services.progress import project_progress_pct
 from services.workspace import health_badge, is_step_skipped
 
@@ -120,7 +121,11 @@ async def build_agent_context(db: AsyncSession, project: Project) -> dict[str, A
         run_step = run_by_step.get(t.id)
         duration = live.duration_weeks if live is not None else 0
         percent = live.percent_complete if live is not None else 0
-        status_ = live.status.value if live is not None else "Not Started"
+        # ADR 0017: the agent sees the stage status as users do ("On Hold",
+        # not "Blocked") and the reason as `hold_reason`.
+        status_ = stage_status_label(
+            live.status if live is not None else WorkflowStepStatus.NOT_STARTED
+        )
         skipped = (
             run_step.skipped
             if run_step is not None
@@ -147,7 +152,7 @@ async def build_agent_context(db: AsyncSession, project: Project) -> dict[str, A
                         duration, percent, live.remaining_weeks_override if live else None
                     )
                 ),
-                "blocked_reason": live.blocked_reason if live is not None else None,
+                "hold_reason": live.blocked_reason if live is not None else None,
                 # Never a name (ADR 0014 §2) — role/step only, and only a
                 # boolean "is someone assigned", never who.
                 "design_engineer_assigned": (
@@ -225,7 +230,7 @@ async def build_agent_context(db: AsyncSession, project: Project) -> dict[str, A
             ),
             "notes": project.comments,
         },
-        "health": health,
+        "health": agent_health_label(health),
         "schedule": {
             "expected_end_week": outcome.expected_end_week if outcome is not None else None,
             "projected_end_week": outcome.projected_end_week if outcome is not None else None,

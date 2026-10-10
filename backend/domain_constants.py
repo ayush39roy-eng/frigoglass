@@ -203,6 +203,24 @@ HUB_WORK_CALENDAR_SEED: Final[tuple[tuple[str, int, int, int, int, int], ...]] =
 
 WEEKS_IN_YEAR: Final[int] = 52
 
+# --- Booked % and areas (docs/DOMAIN_RULES.md "Booked % and areas", ADR 0016) ---
+
+#: `booked_pct = load / capacity × 100`. Reporting thresholds only; they never
+#: gate booking. Configurability is docs/OPEN_QUESTIONS.md #25.
+BOOKING_NEAR_FULL_PCT: Final[int] = 85
+BOOKING_FULL_PCT: Final[int] = 100
+
+#: Area of each lab region. OEM hubs fall under India through their lab region
+#: (docs/OPEN_QUESTIONS.md #26).
+LAB_REGION_AREA: Final[Mapping[str, str]] = {
+    "Greece": "Europe",
+    "Romania": "Europe",
+    "India": "India",
+}
+
+#: Areas in the order the Capacity surface serves them.
+AREA_ORDER: Final[tuple[str, ...]] = ("Europe", "India")
+
 # --- Prioritization scoring — 13 dimensions ---
 # (pillar, dimension_name, snake_case_field, weight)
 PRIORITIZATION_DIMENSIONS: Final[tuple[tuple[str, str, str, int], ...]] = (

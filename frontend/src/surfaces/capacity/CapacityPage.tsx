@@ -12,6 +12,8 @@ import { formatDecimal } from '@/lib/format';
 import { useMotionTokens } from '@/lib/motion';
 
 import { portfolioTotals } from './lib/portfolio-totals';
+import type { CapacityHorizon } from './lib/pick-figures';
+import { AreaBookingStrip } from './components/area-booking-strip';
 import { AccessNotice } from './components/access-notice';
 import { CapacityReportingNotice } from './components/capacity-reporting-notice';
 import { ChamberUtilizationPanel } from './components/chamber-utilization-panel';
@@ -85,6 +87,10 @@ export default function CapacityPage(): React.JSX.Element {
    * the same region; a naive `rows.reduce` nearly triples them). See
    * `lib/portfolio-totals.ts` for the full reasoning and the I17 note.
    */
+  /** Full year / Remaining year (ADR 0008). Lifted here so the P11 area strip
+   *  and the per-hub card show the same served horizon. */
+  const [horizon, setHorizon] = React.useState<CapacityHorizon>('year');
+
   const hubLoadRows = hubLoad.data?.rows;
   const totals = React.useMemo(
     () => (hubLoadRows ? portfolioTotals(hubLoadRows) : null),
@@ -127,6 +133,13 @@ export default function CapacityPage(): React.JSX.Element {
                 variants: { show: { transition: { staggerChildren: 0.08 } } },
               })}
         >
+          {/* P11 (ADR 0016): Europe / India booked % — served figures only (I19). */}
+          {hubLoad.data?.has_active_schedule_run && hubLoad.data.areas.length > 0 ? (
+            <StaggerSection>
+              <AreaBookingStrip areas={hubLoad.data.areas} horizon={horizon} />
+            </StaggerSection>
+          ) : null}
+
           {hubLoad.data?.has_active_schedule_run && classBreakdown.data && totals ? (
             <StaggerSection>
               <div className="grid gap-gutter lg:grid-cols-[1fr_1fr_1.1fr]">
@@ -176,7 +189,9 @@ export default function CapacityPage(): React.JSX.Element {
               title="Load vs. capacity per hub"
               errorDescription="Per-hub load and capacity could not be loaded from the active schedule run."
             >
-              {(data) => <HubLoadPanel data={data} activeRun={activeRun.data} />}
+              {(data) => (
+                <HubLoadPanel data={data} activeRun={activeRun.data} horizon={horizon} onHorizonChange={setHorizon} />
+              )}
             </SectionBoundary>
           </StaggerSection>
 

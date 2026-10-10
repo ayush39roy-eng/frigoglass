@@ -63,9 +63,9 @@ export function validateStage(d: StageDraft): StageErrors {
   }
 
   if (d.status === 'Blocked') {
-    if (!d.blocked_reason || d.blocked_reason.trim() === '') e.blocked_reason = 'A blocked stage needs a reason.';
+    if (!d.blocked_reason || d.blocked_reason.trim() === '') e.blocked_reason = 'A stage on hold needs a hold reason.';
   } else if (d.blocked_reason !== null && d.blocked_reason !== '') {
-    e.blocked_reason = 'Only a blocked stage has a blocked reason.';
+    e.blocked_reason = 'Only a stage on hold has a hold reason.';
   }
   return e;
 }

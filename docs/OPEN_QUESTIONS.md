@@ -333,3 +333,130 @@ out to Groq unless someone deliberately turns it on. Not assumed to be the produ
 **Who must answer:** the client (whoever owns the on-premise/data-residency posture — likely IT
 security, the same audience as OQ #9). Is Groq (or any third-party API) acceptable for production,
 or does "Ask the agent" need a self-hosted/on-premise model instead once it ships for real users.
+
+## Added 2026-10-09 — from the client's change requests (priority move, booked %, On Hold)
+
+### 24. Should edits other than priority also recalculate automatically?
+
+**Why it matters:** ADR 0015 makes a priority move recalculate the timeline at once, as asked.
+Every other input edit still only marks the plan stale until someone presses Recalculate (ADR
+0006). That covers stage progress, status, category, leader and Workflow Settings. Two rules for
+similar edits may surprise users.
+
+**Assuming until answered:** only priority recalculates by itself.
+
+**Who must answer:** the client (portfolio owner). Should status, category or leader changes also
+recalculate by themselves? Stage progress is updated often, so it would trigger many runs.
+
+### 25. What does "booked %" mean, and are 85 % / 100 % the right "near full" / "full" lines?
+
+**Why it matters:** "Europe design booked 90 percent and lab 50 percent" can be read three ways:
+- (a) **Planned work ÷ capacity** — what ADR 0016 builds. It is the inverse of the workbook's
+  completion %, and can go above 100 % when over-booked.
+- (b) **Share of the calendar the scheduler has already filled** — engineer-weeks and
+  chamber-weeks booked in the active plan ÷ weeks available. This cannot go above 100 %.
+- (c) **An input**: only 90 % of Europe's design time and 50 % of its lab time is available to
+  R&D, because the rest is reserved for other work. The planner should then treat that capacity as
+  full at those levels.
+
+Reading (c) would change capacity, and possibly booking. (a) and (b) are reporting only.
+
+**Assuming until answered:** (a), with near full from 85 % and full from 100 %. Thresholds are
+constants (`domain_constants.BOOKING_NEAR_FULL_PCT`, `BOOKING_FULL_PCT`).
+
+**Who must answer:** the client (whoever sent the 90 % / 50 % example). Is it a reading or a
+setting? If a setting, is it per area or per hub, and should the scheduler respect it?
+
+### 26. Area grouping — is OEM part of India?
+
+**Why it matters:** ADR 0016 groups hubs by lab region:
+- **Europe:** R&D-Greece and PD-Romania.
+- **India:** R&D-India, PD-India, OEM-HCK and OEM-Seltek.
+
+The OEM hubs land in India only because their testing uses India's chambers (DOMAIN_RULES lab-
+region table). The workbook gives OEM hubs no design capacity. Their design load would therefore
+raise India's design booked % with no matching capacity.
+
+**Assuming until answered:** OEM is part of India.
+
+**Who must answer:** the client. Should OEM be its own area, or be left out of the design figure?
+Are there more areas coming (China, Indonesia, …)?
+
+### 27. Dashboard "On Hold" tile — stage holds only, or also projects with status On Hold?
+
+**Why it matters:** ADR 0017 relabels "Blocked" as "On Hold". The app already has a project
+*status* "On Hold", which takes the whole project out of the plan. The Dashboard tile, formerly
+"Blocked", counts projects held at a stage that are still in the plan. Projects with status On Hold
+are listed separately as paused.
+
+**Assuming until answered:** the tile counts stage holds only. Its caption reads "In the plan,
+waiting at a stage".
+
+**Who must answer:** the client. Should one "On Hold" number include both?
+
+## Added 2026-10-10 — from the client's second change batch (Kanban, Gantt drag, hub filter, live tracking, VIP)
+
+### 28. Priority board — does order *inside* a column matter?
+
+**Why it matters:** ADR 0018 lets a planner drag a card between P1/P2/P3/P4/Q. Inside a column,
+cards are sorted by weighted score. The scheduler has no manual rank within a priority, so dragging
+a card up inside P2 would mean nothing.
+
+**Assuming until answered:** column = priority only; order inside a column is by score.
+
+**Who must answer:** the client. Do they want to rank projects inside P1 by hand (which would make
+that rank a new scheduling input)?
+
+### 29. Gantt drag — should it recalculate immediately?
+
+**Why it matters:** ADR 0019 makes a dragged step duration or start recalculate the whole timeline
+straight away (like a priority move), so other projects can shift. The alternative is to drag
+several steps and press "Recalculate" once.
+
+**Assuming until answered:** recalculate on each drop (greedy), with "deferred" when a run is
+already in flight.
+
+**Who must answer:** the client. Also: should a dragged duration be visible to the hub that owns
+the lead-time table as a deviation report?
+
+### 30. Weekly check-in — a fixed weekly recalculation?
+
+**Why it matters:** ADR 0021 keeps a check-in as "mark stale" (no run per submission). Planners
+press Recalculate. A fixed weekly run (e.g. Monday 12:00 after check-ins close) would keep the
+plan live without anyone pressing a button.
+
+**Assuming until answered:** no automatic weekly run.
+
+**Who must answer:** the client — and which weekday/time the check-in window closes.
+
+### 31. "The project itself should move through it" — auto-advance?
+
+**Why it matters:** we show "per plan" progress next to the reported % when nobody has checked in,
+but we never write it into the stage, because a stage marked Done becomes fixed history (I11). The
+other reading is that stages should auto-advance (start / complete) at week close when no engineer
+reports.
+
+**Assuming until answered:** display only; no auto-advance.
+
+**Who must answer:** the client. If auto-advance is wanted: after how many missed weeks, and should
+it ever mark a stage Done on its own?
+
+### 32. VIP projects — curated, automatic, or both?
+
+**Why it matters:** ADR 0022 shows pinned projects first, then fills to 15 by priority and score.
+"Critical" might instead be a list leadership picks by hand, per year.
+
+**Assuming until answered:** pins plus automatic fill; any Hub Planner (own hub) or Portfolio
+Manager may pin; a pin is not per year.
+
+**Who must answer:** the client. Who decides a VIP, is the list per year, 10 or 15, and should VIP
+projects be scheduled ahead of others in the same priority?
+
+### 33. Check-in reminders — in-app only, or email too?
+
+**Why it matters:** the app shows a due count and Overdue chips. Email reminders need the
+corporate SMTP relay (not configured on-premise yet).
+
+**Assuming until answered:** in-app only.
+
+**Who must answer:** Frigoglass IT (SMTP relay) and the client (reminder day/time).

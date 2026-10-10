@@ -52,7 +52,7 @@ export function DeliveryGaugeCard({ data }: DeliveryGaugeCardProps): React.JSX.E
         <CardInfo label="How the delivery rate is read">
           <p>
             Within-year projects divided by every project the active schedule run placed in one of
-            its four outcomes (within year, spillover, left out, blocked). The counts come straight
+            its four outcomes (within year, spillover, left out, on hold at a stage). The counts come straight
             from the run; nothing is re-scheduled in your browser.
           </p>
         </CardInfo>

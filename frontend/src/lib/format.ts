@@ -67,6 +67,16 @@ export function formatDecimal(value: number): string {
   return decimalFormatter.format(value);
 }
 
+/**
+ * A served booked % (ADR 0016: load / capacity × 100, already rounded to 2 dp
+ * by the server, I19). Printed to the same two decimals, never re-rounded to
+ * an integer, so it reconciles with the server figure. `null` (capacity 0)
+ * prints as "—".
+ */
+export function formatBookedPct(value: number | null): string {
+  return value === null ? '—' : `${decimalFormatter.format(value)} %`;
+}
+
 /** Horizon weeks are 1-indexed absolute week numbers (DOMAIN_RULES.md horizon constants). */
 export function formatWeek(week: number): string {
   return `W${week}`;

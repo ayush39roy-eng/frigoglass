@@ -84,7 +84,7 @@ import math
 import re
 import uuid
 from collections.abc import Iterator
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from typing import Any
 from urllib.parse import quote
 
@@ -99,7 +99,6 @@ from starlette.concurrency import run_in_threadpool
 from api.db import get_db
 from api.deps import get_current_principal, require_permission
 from api.errors import HTTP_413, HTTP_422, CodedHTTPException, field_error
-from core.celery_config import get_celery_settings
 from core.minio_config import ensure_bucket, get_minio_client, get_minio_settings
 from core.principal import Principal
 from core.rbac import Action, Surface
@@ -107,12 +106,10 @@ from models.audit import AuditLogEntry
 from models.enums import (
     ProjectFileCategory,
     RoleName,
-    ScheduleRunStatus,
     SolverType,
     WorkflowStepStatus,
 )
 from models.project import Project
-from models.schedule import ScheduleRun
 from models.workflow import ProjectWorkflowStep, WorkflowStepTemplate
 from models.workspace import ProjectComment, ProjectFile
 from schemas.workspace import (
@@ -131,6 +128,7 @@ from services.notifications import generate_stage_blocked_notifications
 from services.project_access import authorize_project_action
 from services.project_steps import WorkflowChangeWithProgress, sync_project_steps
 from services.rate_limit import TokenBucketLimiter
+from services.run_dispatch import find_in_flight_run
 from services.schedule_persistence import create_queued_schedule_run
 from services.schedule_stale import mark_projects_stale
 from services.workspace import (
@@ -353,17 +351,7 @@ async def recalculate(
         surface=Surface.PROJECT_WORKSPACE, action=Action.WRITE, min_grant_role="admin",
     )
 
-    window = timedelta(seconds=get_celery_settings().task_time_limit_seconds + 120)
-    in_flight = (
-        await db.execute(
-            select(ScheduleRun.id)
-            .where(
-                ScheduleRun.status.in_([ScheduleRunStatus.QUEUED, ScheduleRunStatus.RUNNING]),
-                ScheduleRun.created_at > datetime.now(UTC) - window,
-            )
-            .limit(1)
-        )
-    ).scalar_one_or_none()
+    in_flight = await find_in_flight_run(db)
     if in_flight is not None:
         raise CodedHTTPException(
             status.HTTP_409_CONFLICT,

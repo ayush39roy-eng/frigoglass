@@ -5,7 +5,7 @@ import userEvent from '@testing-library/user-event';
 import { renderWithProviders } from '@/test/render';
 import { ApiError } from '@/lib/api/client';
 import type { ClassBreakdown, HubCapacitySummary, UtilizationMatrix } from './api/types';
-import { hubRow } from './test-fixtures';
+import { areaRow, hubRow, SUMMARY_P11 } from './test-fixtures';
 
 const hooks = {
   useHubLoadVsCapacity: vi.fn(),
@@ -38,6 +38,7 @@ function failed(error: Error) {
 const hubLoad: HubCapacitySummary = {
   has_active_schedule_run: true,
   schedule_run_version: 6,
+  ...SUMMARY_P11,
   remaining_weeks: 47,
   rows: [hubRow({ hub: 'R&D-Greece', lab_region: 'Greece', design_load_weeks: 120 })],
 };
@@ -79,6 +80,21 @@ describe('CapacityPage', () => {
 
     await user.click(notice);
     expect(screen.getByText(/scheduler overbooked anyone/i)).toBeInTheDocument();
+  });
+
+  it('P11: leads with the served Europe / India area strip, which follows the horizon toggle', async () => {
+    const user = userEvent.setup();
+    hooks.useHubLoadVsCapacity.mockReturnValue(
+      ready({ ...hubLoad, areas: [areaRow(), areaRow({ area: 'India', hubs: ['PD-India'], lab_regions: ['India'] })] }),
+    );
+    hooks.useClassBreakdown.mockReturnValue(ready(classBreakdown));
+    hooks.useUtilizationMatrix.mockReturnValue(ready(utilization));
+    renderWithProviders(<CapacityPage />);
+    expect(screen.getAllByTestId('capacity-area-card')).toHaveLength(2);
+    expect(screen.getByTestId('area-Europe-design')).toHaveTextContent('72.44 %');
+    await user.click(screen.getByRole('radio', { name: 'Remaining year' }));
+    expect(screen.getByTestId('area-strip-horizon')).toHaveTextContent(/Remaining year/);
+    expect(screen.getByTestId('area-Europe-design')).toHaveTextContent('108.7 %');
   });
 
   it('renders every panel from its own schedule-run-sourced payload on success', () => {
@@ -124,6 +140,7 @@ describe('CapacityPage', () => {
     const noRun: HubCapacitySummary = {
       has_active_schedule_run: false,
       schedule_run_version: null,
+      ...SUMMARY_P11,
       remaining_weeks: 47,
       rows: [],
     };
