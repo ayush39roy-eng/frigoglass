@@ -21,7 +21,7 @@ import { ProjectStatusBadge } from '@/components/shared/project-status-badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { PanelSkeleton } from '@/components/ui/panel-skeleton';
 import { formatInteger } from '@/lib/format';
-import { useHubs } from '@/lib/api/reference';
+import { useHubFilter } from '@/stores/hub-filter';
 import {
   PROJECT_CATEGORIES,
   PROJECT_PRIORITIES,
@@ -147,14 +147,15 @@ const COLUMNS: VirtualColumn<ProjectFilterRow>[] = [
   },
 ];
 
+/** The local filters. The hub is NOT here: since P12 (ADR 0020) it is the
+ *  global header hub filter (`stores/hub-filter.ts`), shared by every surface. */
 export interface FilterState {
-  hub_id: string;
   category: string;
   status_: string;
   priority: string;
 }
 
-export const EMPTY: FilterState = { hub_id: ALL, category: ALL, status_: ALL, priority: ALL };
+export const EMPTY: FilterState = { category: ALL, status_: ALL, priority: ALL };
 
 export function FilterSelect({
   label,
@@ -193,20 +194,21 @@ export function FilterSelect({
 export function ProjectBreakdown(): React.JSX.Element {
   const [filters, setFilters] = React.useState<FilterState>(EMPTY);
   const [view, setView] = React.useState<BreakdownView>('table');
-  const hubsQuery = useHubs();
+  const { hubId } = useHubFilter();
 
   const params = React.useMemo<ProjectFilterParams>(
     () => ({
-      hub_id: filters.hub_id === ALL ? undefined : filters.hub_id,
+      hub_id: hubId ?? undefined,
       category: filters.category === ALL ? undefined : (filters.category as ProjectCategory),
       status_: filters.status_ === ALL ? undefined : (filters.status_ as ProjectStatus),
       priority: filters.priority === ALL ? undefined : (filters.priority as ProjectPriority),
     }),
-    [filters],
+    [filters, hubId],
   );
 
   const query = useDashboardProjects(params);
-  const isFiltered = filters !== EMPTY && Object.values(filters).some((v) => v !== ALL);
+  const hasLocalFilter = filters !== EMPTY && Object.values(filters).some((v) => v !== ALL);
+  const isFiltered = hasLocalFilter || hubId !== null;
 
   const set = (key: keyof FilterState) => (next: string) =>
     setFilters((prev) => ({ ...prev, [key]: next }));
@@ -228,9 +230,9 @@ export function ProjectBreakdown(): React.JSX.Element {
           <CardInfo label="Project breakdown source">
             <p>
               Every project visible in your hub scope, from{' '}
-              <code>GET /dashboard/projects</code>. Filtering is server-side — the four controls
-              are passed straight to the API, which is already hub-scoped by RBAC. Nothing is
-              filtered or counted in the browser.
+              <code>GET /dashboard/projects</code>. Filtering is server-side — the header hub
+              filter and the three controls are passed straight to the API, which is already
+              hub-scoped by RBAC. Nothing is filtered or counted in the browser.
             </p>
             <p>
               Portfolio composition, not a schedule outcome: a project appears here whatever the
@@ -258,12 +260,6 @@ export function ProjectBreakdown(): React.JSX.Element {
       <CardContent className="space-y-3">
         <div className="flex flex-wrap items-end gap-3">
           <FilterSelect
-            label="Hub"
-            value={filters.hub_id}
-            onChange={set('hub_id')}
-            options={(hubsQuery.data ?? []).map((hub) => ({ value: hub.id, label: hub.name }))}
-          />
-          <FilterSelect
             label="Category"
             value={filters.category}
             onChange={set('category')}
@@ -281,7 +277,7 @@ export function ProjectBreakdown(): React.JSX.Element {
             onChange={set('priority')}
             options={PROJECT_PRIORITIES.map((p) => ({ value: p, label: p }))}
           />
-          {isFiltered ? (
+          {hasLocalFilter ? (
             <Button variant="ghost" size="sm" onClick={() => setFilters(EMPTY)}>
               <FilterX />
               Clear

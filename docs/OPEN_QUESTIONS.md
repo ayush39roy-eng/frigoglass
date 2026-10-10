@@ -398,6 +398,8 @@ waiting at a stage".
 
 ### 28. Priority board — does order *inside* a column matter?
 
+**Answered 2026-10-10 by the project owner:** "do whatever suits" → column = priority, order inside a column by score (ADR 0018 as written).
+
 **Why it matters:** ADR 0018 lets a planner drag a card between P1/P2/P3/P4/Q. Inside a column,
 cards are sorted by weighted score. The scheduler has no manual rank within a priority, so dragging
 a card up inside P2 would mean nothing.
@@ -408,6 +410,8 @@ a card up inside P2 would mean nothing.
 that rank a new scheduling input)?
 
 ### 29. Gantt drag — should it recalculate immediately?
+
+**Answered 2026-10-10 by the project owner:** "calculate straight away" → ADR 0019 as written; rapid drags coalesce into one follow-up run (ADR 0023).
 
 **Why it matters:** ADR 0019 makes a dragged step duration or start recalculate the whole timeline
 straight away (like a priority move), so other projects can shift. The alternative is to drag
@@ -421,6 +425,8 @@ the lead-time table as a deviation report?
 
 ### 30. Weekly check-in — a fixed weekly recalculation?
 
+**Answered 2026-10-10 by the project owner:** "recalculate and do whatever you think is best" → each check-in batch recalculates, with one coalesced follow-up run (ADR 0023); no fixed weekly cron needed.
+
 **Why it matters:** ADR 0021 keeps a check-in as "mark stale" (no run per submission). Planners
 press Recalculate. A fixed weekly run (e.g. Monday 12:00 after check-ins close) would keep the
 plan live without anyone pressing a button.
@@ -430,6 +436,8 @@ plan live without anyone pressing a button.
 **Who must answer:** the client — and which weekday/time the check-in window closes.
 
 ### 31. "The project itself should move through it" — auto-advance?
+
+**Answered 2026-10-10 (owner delegated):** no automatic stage advance; the plan itself moves forward on every run and missed reports show as Due/Overdue with "per plan" progress (ADR 0023 §5). Reopen if the client wants auto-advance.
 
 **Why it matters:** we show "per plan" progress next to the reported % when nobody has checked in,
 but we never write it into the stage, because a stage marked Done becomes fixed history (I11). The
@@ -453,6 +461,8 @@ Manager may pin; a pin is not per year.
 projects be scheduled ahead of others in the same priority?
 
 ### 33. Check-in reminders — in-app only, or email too?
+
+**Answered 2026-10-10 (owner delegated):** in-app only for now (ADR 0023 §6); email still needs Frigoglass IT's SMTP relay.
 
 **Why it matters:** the app shows a due count and Overdue chips. Email reminders need the
 corporate SMTP relay (not configured on-premise yet).

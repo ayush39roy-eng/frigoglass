@@ -127,11 +127,14 @@ export function MoveFlowPanel({
   runState,
   changes,
   onClose,
+  followUpWatching = false,
 }: {
   flow: MoveFlowState;
   runState: RunFollowState;
   changes: UseQueryResult<ScheduleRunChanges>;
   onClose: () => void;
+  /** ADR 0023: a `deferred` answer is waiting for the coalesced follow-up run. */
+  followUpWatching?: boolean;
 }): React.JSX.Element | null {
   const headingId = React.useId();
   if (flow.kind !== 'running' && flow.kind !== 'updated' && flow.kind !== 'notice') return null;
@@ -185,9 +188,17 @@ export function MoveFlowPanel({
       ) : flow.kind === 'updated' ? (
         <ChangesBody flow={flow} changes={changes} />
       ) : (
-        <p role={flow.tone === 'danger' ? 'alert' : 'status'} className="text-xs text-text" data-testid="priority-move-notice">
-          {flow.body}
-        </p>
+        <>
+          <p role={flow.tone === 'danger' ? 'alert' : 'status'} className="text-xs text-text" data-testid="priority-move-notice">
+            {flow.body}
+          </p>
+          {followUpWatching ? (
+            <p role="status" className="flex items-center gap-1.5 text-2xs text-text-muted" data-testid="follow-up-watching">
+              <span className="size-1.5 shrink-0 rounded-full bg-primary motion-safe:animate-pulse" aria-hidden="true" />
+              {MOVE_COPY.followUpWatching}
+            </p>
+          ) : null}
+        </>
       )}
     </section>
   );

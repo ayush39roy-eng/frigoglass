@@ -18,7 +18,8 @@ import {
 } from '@/components/ui/select';
 import { ReadOnlyNotice } from '@/components/session/write-gate';
 import { ApiError } from '@/lib/api/client';
-import { useHubs } from '@/lib/api/reference';
+import { useHubFilter } from '@/stores/hub-filter';
+import { HubFilterChip } from '@/components/shared/hub-filter/hub-filter-chip';
 import { formatInteger } from '@/lib/format';
 import { SURFACES } from '@/app/nav';
 import { effectivePendingEdits, useScenarioStore } from '@/stores/scenario';
@@ -56,18 +57,18 @@ function authKind(errors: unknown[]): 'forbidden' | 'unauthorized' | null {
 
 export default function MatrixPage(): React.JSX.Element {
   const [currency, setCurrency] = React.useState<CurrencyCode>('EUR');
-  const [hubId, setHubId] = React.useState<string>(ALL);
+  // P12 (ADR 0020): the hub is the global header filter (was a local select).
+  const { hubId } = useHubFilter();
   const [category, setCategory] = React.useState<string>(ALL);
   const [editRow, setEditRow] = React.useState<PriorityMatrixRow | null>(null);
   const [dialogOpen, setDialogOpen] = React.useState(false);
   const [writeForbidden, setWriteForbidden] = React.useState(false);
 
   const ratesQuery = useCurrencyRates();
-  const hubsQuery = useHubs();
-  const summaryQuery = usePrioritySummary();
+  const summaryQuery = usePrioritySummary(hubId);
   const matrixQuery = usePriorityMatrix({
     currency,
-    hubId: hubId === ALL ? undefined : hubId,
+    hubId: hubId ?? undefined,
     category: category === ALL ? undefined : (category as ProjectCategory),
   });
   const updateScore = useUpdatePriorityScore();
@@ -102,7 +103,7 @@ export default function MatrixPage(): React.JSX.Element {
     '13 scoring dimensions per project, weighted score and band, with a server-driven currency toggle.';
 
   const denied = authKind([matrixQuery.error, summaryQuery.error]);
-  const isFiltered = hubId !== ALL || category !== ALL;
+  const isFiltered = hubId !== null || category !== ALL;
   // Session table first (ADR 0010), server 403 second.
   const permission = usePermission('matrix');
   const canEdit = permission.write && !writeForbidden;
@@ -151,7 +152,7 @@ export default function MatrixPage(): React.JSX.Element {
 
   return (
     <>
-      <PageHeader title={title} description={description} />
+      <PageHeader title={title} description={description} actions={<HubFilterChip />} />
 
       {denied ? (
         <AccessNotice kind={denied} />
@@ -164,26 +165,13 @@ export default function MatrixPage(): React.JSX.Element {
             <CardContent className="flex flex-wrap items-end gap-4">
               <CurrencyToggle value={currency} onChange={setCurrency} rates={ratesQuery.data} />
               <FilterSelect
-                label="Hub"
-                value={hubId}
-                onChange={setHubId}
-                options={(hubsQuery.data ?? []).map((h) => ({ value: h.id, label: h.name }))}
-              />
-              <FilterSelect
                 label="Category"
                 value={category}
                 onChange={setCategory}
                 options={PROJECT_CATEGORIES.map((c) => ({ value: c, label: c }))}
               />
-              {isFiltered ? (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => {
-                    setHubId(ALL);
-                    setCategory(ALL);
-                  }}
-                >
+              {category !== ALL ? (
+                <Button variant="ghost" size="sm" onClick={() => setCategory(ALL)}>
                   <FilterX />
                   Clear
                 </Button>
@@ -194,7 +182,7 @@ export default function MatrixPage(): React.JSX.Element {
                 path="/exports/matrix"
                 filters={{
                   currency,
-                  hub_id: hubId === ALL ? undefined : hubId,
+                  hub_id: hubId ?? undefined,
                   category: category === ALL ? undefined : category,
                 }}
                 fallbackFilename="matrix-export"

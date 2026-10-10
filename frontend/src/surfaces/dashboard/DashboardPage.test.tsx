@@ -2,6 +2,7 @@ import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { screen } from '@testing-library/react';
 
 import { renderWithProviders } from '@/test/render';
+import { useHubFilterStore } from '@/stores/hub-filter';
 import { ApiError } from '@/lib/api/client';
 import { ROLE_MATRIX } from '@/test/roles';
 import { areaRow, SUMMARY_P11 } from '@/surfaces/capacity/test-fixtures';
@@ -22,18 +23,18 @@ const hooks = {
 };
 
 vi.mock('./hooks/use-dashboard', () => ({
-  useCompletingWithinYear: () => hooks.useCompletingWithinYear(),
-  usePipelineTotals: () => hooks.usePipelineTotals(),
-  useStatusOverview: () => hooks.useStatusOverview(),
-  useHubTypePipeline: () => hooks.useHubTypePipeline(),
-  useActiveScheduleRun: () => hooks.useActiveScheduleRun(),
-  useDashboardProjects: () => hooks.useDashboardProjects(),
+  useCompletingWithinYear: (...a: unknown[]) => hooks.useCompletingWithinYear(...a),
+  usePipelineTotals: (...a: unknown[]) => hooks.usePipelineTotals(...a),
+  useStatusOverview: (...a: unknown[]) => hooks.useStatusOverview(...a),
+  useHubTypePipeline: (...a: unknown[]) => hooks.useHubTypePipeline(...a),
+  useActiveScheduleRun: (...a: unknown[]) => hooks.useActiveScheduleRun(...a),
+  useDashboardProjects: (...a: unknown[]) => hooks.useDashboardProjects(...a),
 }));
 vi.mock('@/lib/api/reference', () => ({ useHubs: () => ({ data: [] }) }));
 // P11: the "Capacity booked" card shares the Capacity surface's hook.
 const capacityHook = { useHubLoadVsCapacity: vi.fn() };
 vi.mock('@/surfaces/capacity/hooks/use-capacity', () => ({
-  useHubLoadVsCapacity: () => capacityHook.useHubLoadVsCapacity(),
+  useHubLoadVsCapacity: (...a: unknown[]) => capacityHook.useHubLoadVsCapacity(...a),
 }));
 
 import DashboardPage from './DashboardPage';
@@ -67,6 +68,7 @@ const hubType: HubTypePipelineRow[] = [{ hub: 'R&D-Greece', type: 'NM', count: 3
 
 beforeEach(() => {
   vi.clearAllMocks();
+  useHubFilterStore.setState({ hubId: null });
   hooks.useActiveScheduleRun.mockReturnValue(ready(null));
   hooks.useDashboardProjects.mockReturnValue(ready({ total_count: 0, rows: [] }));
   capacityHook.useHubLoadVsCapacity.mockReturnValue(
@@ -75,6 +77,22 @@ beforeEach(() => {
 });
 
 describe('DashboardPage', () => {
+  it('P12 (ADR 0020): every card follows the global hub filter and the header shows "Hub: <name>"', () => {
+    useHubFilterStore.setState({ hubId: 'hub-greece' });
+    hooks.useCompletingWithinYear.mockReturnValue(ready(withinYear));
+    hooks.usePipelineTotals.mockReturnValue(ready(totals));
+    hooks.useStatusOverview.mockReturnValue(ready(status));
+    hooks.useHubTypePipeline.mockReturnValue(ready(hubType));
+    renderWithProviders(<DashboardPage />);
+    expect(hooks.useCompletingWithinYear).toHaveBeenLastCalledWith('hub-greece');
+    expect(hooks.usePipelineTotals).toHaveBeenLastCalledWith('hub-greece');
+    expect(hooks.useStatusOverview).toHaveBeenLastCalledWith('hub-greece');
+    expect(hooks.useHubTypePipeline).toHaveBeenLastCalledWith('hub-greece');
+    expect(hooks.useDashboardProjects).toHaveBeenLastCalledWith(expect.objectContaining({ hub_id: 'hub-greece' }));
+    expect(capacityHook.useHubLoadVsCapacity).toHaveBeenLastCalledWith({ hubId: 'hub-greece' });
+    expect(screen.getByTestId('hub-filter-chip')).toBeInTheDocument();
+  });
+
   it('always renders the surface heading', () => {
     hooks.useCompletingWithinYear.mockReturnValue(pending);
     hooks.usePipelineTotals.mockReturnValue(pending);

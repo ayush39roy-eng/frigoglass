@@ -14,6 +14,9 @@ exactly one row per step of its workflow:
   their progress across would be wrong;
 - `duration_weeks` is rewritten from the lead-time table for the project's
   current `(workflow, category)` (ADR 0007), 0 when there is no category yet.
+- a re-pointed row loses its Gantt-set timing (`duration_override_weeks`,
+  `start_not_before_week`, ADR 0019); every other row keeps it, since a
+  lead-time change never clears an override.
 
 Planned weeks are not touched here. They belong to schedule runs.
 """
@@ -79,6 +82,10 @@ async def sync_project_steps(db: AsyncSession, project: Project, hub_is_oem: boo
                 await db.delete(row)
                 continue
             row.step_template_id = target.id
+            # ADR 0019: Gantt-set timing belonged to the old workflow's
+            # activity (PDD-E is not OEM-E), so it does not carry across.
+            row.duration_override_weeks = None
+            row.start_not_before_week = None
 
     present = {row.sequence_order for row in existing}
     for t in templates:

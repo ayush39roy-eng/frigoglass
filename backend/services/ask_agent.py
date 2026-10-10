@@ -38,6 +38,7 @@ from scheduling.workflow import derive_remaining
 from services.active_run import get_active_run
 from services.display_labels import agent_health_label, stage_status_label
 from services.progress import project_progress_pct
+from services.workflow_durations import effective_duration_weeks
 from services.workspace import health_badge, is_step_skipped
 
 logger = logging.getLogger(__name__)
@@ -119,7 +120,18 @@ async def build_agent_context(db: AsyncSession, project: Project) -> dict[str, A
     for t in templates:
         live = live_by_step.get(t.id)
         run_step = run_by_step.get(t.id)
-        duration = live.duration_weeks if live is not None else 0
+        # ADR 0019: the effective duration (override ?? lead time) everywhere
+        # the lead-time duration was used (remaining duration, roll-up weight).
+        # An override never revives a skipped step (lead time 0, or a lab
+        # step without certification testing).
+        lead_time = live.duration_weeks if live is not None else 0
+        duration = effective_duration_weeks(
+            lead_time,
+            live.duration_override_weeks if live is not None else None,
+            skipped=is_step_skipped(
+                lead_time, t.kind, project.certification_testing_required
+            ),
+        )
         percent = live.percent_complete if live is not None else 0
         # ADR 0017: the agent sees the stage status as users do ("On Hold",
         # not "Blocked") and the reason as `hold_reason`.
@@ -178,7 +190,7 @@ async def build_agent_context(db: AsyncSession, project: Project) -> dict[str, A
                 kind_by_step.get(r.step_template_id, WorkflowStepKind.DESIGN),
                 project.certification_testing_required,
             )
-            else r.duration_weeks,
+            else effective_duration_weeks(r.duration_weeks, r.duration_override_weeks),
         )
         for r in live_rows
     )

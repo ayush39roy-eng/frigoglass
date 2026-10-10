@@ -70,6 +70,7 @@ from services.display_labels import stage_status_label
 from services.hub_scope import hub_scope_filter, is_engineer_self_scoped
 from services.progress import project_progress_pct
 from services.project_access import effective_project_access
+from services.workflow_durations import effective_duration_weeks
 
 COMMENT_EDIT_WINDOW = timedelta(minutes=15)
 ACTIVITY_DEFAULT_LIMIT = 50
@@ -350,6 +351,15 @@ def event_summary(entry: AuditLogEntry) -> str:
         moved = f"Priority moved {_fmt(before.get('priority'))} → {_fmt(after.get('priority'))}"
         consequence = _PRIORITY_MOVE_CONSEQUENCE.get(str(after.get("recalc_status")))
         return f"{moved} — {consequence}" if consequence else moved
+    if action == "project.check_in":
+        # P12 (ADR 0021): one row per project per weekly check-in batch.
+        count = len(after.get("stages") or [])
+        noun = "stage" if count == 1 else "stages"
+        return f"Weekly check-in — {count} {noun} reported ({_week(after.get('week'))})"
+    if action == "project.vip_pin":
+        return "Pinned as a VIP project"
+    if action == "project.vip_unpin":
+        return "VIP pin removed"
     if action == "project_file.upload":
         return f"{after.get('display_name')} uploaded (v{after.get('version')})"
     if action == "project_file.update":
@@ -516,7 +526,18 @@ async def build_workspace(
     for t in templates:
         live = live_by_step.get(t.id)
         run_step = run_by_step.get(t.id)
-        duration = live.duration_weeks if live is not None else 0
+        # ADR 0019: the effective duration (override ?? lead time) everywhere
+        # the lead-time duration was used (remaining duration, roll-up weight).
+        # An override never revives a skipped step (lead time 0, or a lab
+        # step without certification testing).
+        lead_time = live.duration_weeks if live is not None else 0
+        duration = effective_duration_weeks(
+            lead_time,
+            live.duration_override_weeks if live is not None else None,
+            skipped=is_step_skipped(
+                lead_time, t.kind, project.certification_testing_required
+            ),
+        )
         status_ = live.status if live is not None else WorkflowStepStatus.NOT_STARTED
         percent = live.percent_complete if live is not None else 0
         override = live.remaining_weeks_override if live is not None else None
@@ -571,7 +592,7 @@ async def build_workspace(
                 kind_by_step.get(r.step_template_id, WorkflowStepKind.DESIGN),
                 project.certification_testing_required,
             )
-            else r.duration_weeks,
+            else effective_duration_weeks(r.duration_weeks, r.duration_override_weeks),
         )
         for r in live_rows
     )

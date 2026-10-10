@@ -1,4 +1,4 @@
-"""Reusable invariant validator — Invariants I1-I17, per `docs/DOMAIN_RULES.md`.
+"""Reusable invariant validator — Invariants I1-I17 and I21-I22, per `docs/DOMAIN_RULES.md`.
 
 This is **the permanent correctness contract** for `backend/scheduling/`.
 `workflow-auditor` calls `validate_invariants()` on every solver-touching
@@ -9,7 +9,7 @@ Design:
       and returns *all* violations found in one pass (never raises on a
       violation, never stops at the first) — an empty tuple means every
       assertable invariant holds.
-    - Each `InvariantViolation` names which invariant (`"I1"`..`"I17"`), a
+    - Each `InvariantViolation` names which invariant (`"I1"`..`"I22"`), a
       human-readable description, and whichever of project_id / step_id /
       engineer_id / chamber_id / hub / week locates the problem.
     - `check_scheduler_determinism(schedule_input)` is I8's check, exposed as
@@ -29,8 +29,9 @@ What is assertable at the pure-function level (2026-09-27 revision):
     I5  14-row shape: skipped rows present with skipped=true and zero
         duration, or LEFT_OUT (a LEFT_OUT progress-tracked project still
         carries its anchored rows, ruling 2); data-error projects carry no rows
-    I6  design load = Σ design-kind lead-time durations (each row's duration
-        equals the lead-time table; elapsed/skipped contribute 0)
+    I6  design load = Σ design-kind effective durations (each row's duration
+        equals `duration_override_weeks ?? lead time`, ADR 0019;
+        elapsed/skipped contribute 0)
     I7  lab load = Σ lab-kind durations × 1.0
     I8  determinism (re-run byte-identical)
     I9  within_year / spillover re-derived from end_week + delay_weeks
@@ -43,6 +44,11 @@ What is assertable at the pure-function level (2026-09-27 revision):
     I16 expected / projected / unconstrained end weeks are the stored
         by-products of the run (consistent with target_end_week, end_week +
         delay, and a recomputed unconstrained walk)
+    I21 (ADR 0019) every non-skipped, non-Done step of a non-frozen project
+        books a span equal to its effective duration; an In Progress /
+        Blocked tail equals the remaining derived from the effective duration
+    I22 (ADR 0019) every Not Started step with `start_not_before_week` set
+        starts at or after it (frozen projects and held steps exempt)
     I13 (health badge), I14 (run immutability) and I17 (capacity supply) are
     API/DB-side invariants with nothing to assert on a `ScheduleOutput`; they
     are the workflow-auditor's to check against the live API (P9-T06).
@@ -71,11 +77,13 @@ from scheduling.workflow import (
     STATUS_BLOCKED,
     STATUS_DONE,
     STATUS_IN_PROGRESS,
+    STATUS_NOT_STARTED,
     ProjectPlan,
     analyse_project,
     build_lead_time_table,
     build_workflows,
     compute_progress_pct,
+    first_step_frontier,
     unconstrained_end_week,
 )
 
@@ -84,7 +92,7 @@ from scheduling.workflow import (
 
 @dataclass(frozen=True)
 class InvariantViolation:
-    """One concrete failure of one of Invariants I1-I17."""
+    """One concrete failure of one of Invariants I1-I17, I21-I22."""
 
     invariant: str
     description: str
@@ -240,6 +248,8 @@ def validate_invariants(
     violations.extend(_check_i12_progress_pct(ctx))
     violations.extend(_check_i15_dag(ctx))
     violations.extend(_check_i16_completion_lines(ctx))
+    violations.extend(_check_i21_effective_duration_span(ctx))
+    violations.extend(_check_i22_start_not_before(ctx))
     return tuple(violations)
 
 
@@ -771,8 +781,9 @@ def _check_durations_match_table(ctx: _Ctx, kind: str, tag: str) -> list[Invaria
                         invariant=tag,
                         description=(
                             f"project {pid!r} {kind} step {step.step_id!r} has duration_weeks="
-                            f"{step.duration_weeks} but the lead-time table gives {expected} — "
-                            "the load aggregate would not reconcile with the Capacity surface"
+                            f"{step.duration_weeks} but its effective duration (override or "
+                            f"lead time) is {expected} — the load aggregate would not reconcile "
+                            "with the Capacity surface"
                         ),
                         project_id=pid,
                         step_id=step.step_id,
@@ -1150,4 +1161,143 @@ def _check_i16_completion_lines(ctx: _Ctx) -> list[InvariantViolation]:
                 )
         elif outcome.projected_end_week is not None:
             bad("projected_end_week must be None when left_out / blocked / data_error")
+    return violations
+
+
+# --- I21 / I22: Gantt step timing (ADR 0019) ------------------------------------
+
+
+def _check_i21_effective_duration_span(ctx: _Ctx) -> list[InvariantViolation]:
+    """I21 (ADR 0019): every scheduled step that is not skipped, not `Done` and
+    not in a frozen project books a span equal to its effective duration
+    (`duration_override_weeks ?? lead time`), and carries that value as
+    `duration_weeks`. For an `In Progress` / `Blocked` step the booked tail
+    `[max(CURRENT_WEEK, pred_end + 1, actual_start) .. end]` equals the
+    remaining duration derived from the effective duration (ADR 0006); with
+    `remaining == 0` the row ends at `max(actual_start, pred_end)` and books
+    nothing. Held steps (a Blocked hold) book nothing and are exempt; a
+    missing predecessor row is I5's to report."""
+
+    violations: list[InvariantViolation] = []
+    cw = ctx.schedule_input.current_week
+    for outcome in sorted(ctx.schedule_output.project_outcomes, key=lambda o: o.project_id):
+        pid = outcome.project_id
+        project = ctx.projects.get(pid)
+        plan = ctx.plan(pid)
+        if (
+            outcome.excluded
+            or outcome.data_error is not None
+            or project is None
+            or plan is None
+            or project.frozen
+        ):
+            continue
+        by_id = {s.step_id: s for s in outcome.steps}
+        frontier = first_step_frontier(project, cw)
+        for step in sorted(outcome.steps, key=lambda s: (s.sequence_order, s.step_id)):
+            sp = plan.steps.get(step.step_id)
+            if (
+                sp is None
+                or sp.skipped
+                or step.skipped
+                or sp.status == STATUS_DONE
+                or step.step_id in plan.held_step_ids
+            ):
+                continue
+
+            def bad(msg: str, pid: str = pid, sid: str = step.step_id) -> None:
+                violations.append(
+                    InvariantViolation(
+                        invariant="I21",
+                        description=f"project {pid!r} step {sid!r}: {msg}",
+                        project_id=pid,
+                        step_id=sid,
+                    )
+                )
+
+            if step.duration_weeks != sp.duration:
+                bad(
+                    f"duration_weeks={step.duration_weeks} but its effective duration "
+                    f"(override or lead time) is {sp.duration}"
+                )
+            if sp.status == STATUS_NOT_STARTED:
+                span = step.end_week - step.start_week + 1
+                if span != sp.duration:
+                    bad(
+                        f"books weeks {step.start_week}..{step.end_week} ({span} weeks) but "
+                        f"its effective duration is {sp.duration}"
+                    )
+                continue
+
+            # In Progress / Blocked (not held): the anchored tail.
+            assert sp.actual_start_week is not None
+            preds = [by_id.get(p) for p in sorted(sp.step.predecessor_ids)]
+            if any(r is None for r in preds):
+                continue  # I5 reports the missing row
+            pred_end = max(r.end_week for r in preds if r is not None) if preds else frontier - 1
+            if sp.remaining == 0:
+                expected_end = max(sp.actual_start_week, pred_end)
+                if step.end_week != expected_end:
+                    bad(
+                        f"remaining is 0 so the row must end at {expected_end}, "
+                        f"got end_week={step.end_week}"
+                    )
+                continue
+            tail_start = max(cw, pred_end + 1, sp.actual_start_week)
+            tail = step.end_week - tail_start + 1
+            if tail != sp.remaining:
+                bad(
+                    f"{sp.status} tail {tail_start}..{step.end_week} is {tail} weeks but the "
+                    f"remaining derived from the effective duration {sp.duration} is "
+                    f"{sp.remaining}"
+                )
+    return violations
+
+
+def _check_i22_start_not_before(ctx: _Ctx) -> list[InvariantViolation]:
+    """I22 (ADR 0019): every `Not Started` step with `start_not_before_week`
+    set starts at or after that week. Exempt, by the same rules the
+    schedulers follow: frozen projects ("frozen wins", ADR 0006 — their dates
+    are locked at `actual_start_week`, I10), held steps (a Blocked hold places
+    nothing), skipped steps, and In Progress / Blocked / Done steps (the
+    floor does not apply to them)."""
+
+    violations: list[InvariantViolation] = []
+    for outcome in sorted(ctx.schedule_output.project_outcomes, key=lambda o: o.project_id):
+        pid = outcome.project_id
+        project = ctx.projects.get(pid)
+        plan = ctx.plan(pid)
+        if (
+            outcome.excluded
+            or outcome.data_error is not None
+            or project is None
+            or plan is None
+            or project.frozen
+        ):
+            continue
+        for step in sorted(outcome.steps, key=lambda s: (s.sequence_order, s.step_id)):
+            sp = plan.steps.get(step.step_id)
+            if (
+                sp is None
+                or sp.skipped
+                or step.skipped
+                or sp.status != STATUS_NOT_STARTED
+                or sp.start_not_before_week is None
+                or step.step_id in plan.held_step_ids
+            ):
+                continue
+            if step.start_week < sp.start_not_before_week:
+                violations.append(
+                    InvariantViolation(
+                        invariant="I22",
+                        description=(
+                            f"project {pid!r} step {step.step_id!r} starts at week "
+                            f"{step.start_week}, before its start_not_before_week "
+                            f"{sp.start_not_before_week}"
+                        ),
+                        project_id=pid,
+                        step_id=step.step_id,
+                        week=step.start_week,
+                    )
+                )
     return violations

@@ -57,6 +57,7 @@ from api.routers.ask_agent import router as ask_agent_router  # noqa: E402
 from api.routers.audit_log import router as audit_log_router  # noqa: E402
 from api.routers.capacity import router as capacity_router  # noqa: E402
 from api.routers.chambers import router as chambers_router  # noqa: E402
+from api.routers.checkins import router as checkins_router  # noqa: E402
 from api.routers.currency_rates import router as currency_rates_router  # noqa: E402
 from api.routers.dashboard import router as dashboard_router  # noqa: E402
 from api.routers.engineers import router as engineers_router  # noqa: E402
@@ -65,12 +66,16 @@ from api.routers.gantt import router as gantt_router  # noqa: E402
 from api.routers.me import router as me_router  # noqa: E402
 from api.routers.notifications import router as notifications_router  # noqa: E402
 from api.routers.priorities import router as priorities_router  # noqa: E402
+from api.routers.priority_board import router as priority_board_router  # noqa: E402
 from api.routers.project_access import router as project_access_router  # noqa: E402
 from api.routers.projects import router as projects_router  # noqa: E402
 from api.routers.reference import router as reference_router  # noqa: E402
 from api.routers.scenarios import router as scenarios_router  # noqa: E402
 from api.routers.schedule_runs import router as schedule_runs_router  # noqa: E402
+from api.routers.step_timing import router as step_timing_router  # noqa: E402
 from api.routers.users import router as users_router  # noqa: E402
+from api.routers.vip import pin_router as vip_pin_router  # noqa: E402
+from api.routers.vip import router as vip_router  # noqa: E402
 from api.routers.workflow_settings import router as workflow_settings_router  # noqa: E402
 from api.routers.workspace import router as workspace_router  # noqa: E402
 from core.config import is_dev_mode  # noqa: E402
@@ -167,9 +172,14 @@ app.include_router(projects_router)
 app.include_router(engineers_router)
 app.include_router(chambers_router)
 app.include_router(priorities_router)
+app.include_router(priority_board_router)
+app.include_router(vip_router)
+app.include_router(vip_pin_router)
+app.include_router(checkins_router)
 app.include_router(dashboard_router)
 app.include_router(capacity_router)
 app.include_router(gantt_router)
+app.include_router(step_timing_router)
 app.include_router(schedule_runs_router)
 app.include_router(scenarios_router)
 app.include_router(exports_router)

@@ -14,6 +14,8 @@ import {
 import { CategoryTag } from '@/components/ui/category-tag';
 import { PriorityBandPill } from '@/components/shared/priority-band-pill';
 import { ProjectStatusBadge } from '@/components/shared/project-status-badge';
+import { TrackingStatusChip } from '@/components/shared/tracking-status-chip';
+import { VipBadge } from '@/components/shared/vip-badge';
 import { AskAgentPanel } from '@/surfaces/project-workspace/components/ask-agent-panel';
 
 import type { ProjectFilterRow } from '../api/types';
@@ -44,7 +46,10 @@ function ProjectFeatureCard({ row }: { row: ProjectFilterRow }): React.JSX.Eleme
   return (
     <BoltCard className="flex h-full flex-col gap-s3 p-card">
       <div className="flex items-center justify-between gap-s2">
-        <ProjectStatusBadge status={row.status} />
+        <span className="flex min-w-0 items-center gap-s2">
+          <ProjectStatusBadge status={row.status} />
+          {row.is_vip ? <VipBadge /> : null}
+        </span>
         {row.category ? <CategoryTag category={row.category} /> : null}
       </div>
 
@@ -63,6 +68,8 @@ function ProjectFeatureCard({ row }: { row: ProjectFilterRow }): React.JSX.Eleme
           {row.hub}
           {HUB_COUNTRY[row.hub] ? ` — ${HUB_COUNTRY[row.hub]}` : ''}
         </p>
+        {/* P12 (ADR 0021): the served tracking status. */}
+        <TrackingStatusChip status={row.tracking_status} />
       </div>
 
       <div className="mt-auto flex items-center justify-between gap-s2 border-t border-dash-hairline pt-s3">

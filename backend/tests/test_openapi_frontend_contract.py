@@ -245,6 +245,10 @@ _NOTIFICATIONS_TS = FRONTEND_SRC / "lib" / "api" / "notifications.ts"
 _PLANNING_TS = FRONTEND_SRC / "surfaces" / "planning" / "api" / "types.ts"
 # P11 (docs/API_CONTRACT_P11.md §1–§3): priority move and the run change list.
 _PRIORITY_MOVE_TS = FRONTEND_SRC / "lib" / "api" / "priority-move.ts"
+# P12-T03 / P12-T05 (docs/API_CONTRACT_P12.md §2, §5, §6).
+_CHECKINS_TS = FRONTEND_SRC / "lib" / "api" / "check-ins.ts"
+_PRIORITY_BOARD_TS = FRONTEND_SRC / "surfaces" / "priority-board" / "api.ts"
+_VIP_TS = FRONTEND_SRC / "surfaces" / "vip" / "api.ts"
 
 # (frontend file, ts interface name, backend openapi schema name, mode)
 CONTRACT_TABLE: list[tuple[Path, str, str, str]] = [
@@ -311,6 +315,10 @@ CONTRACT_TABLE: list[tuple[Path, str, str, str]] = [
     (_GANTT_TS, "GanttProjectRow", "GanttProjectRow", "exact"),
     (_GANTT_TS, "GanttResponse", "GanttResponse", "exact"),
     (_GANTT_TS, "FreezeToggleRequest", "FreezeToggleRequest", "exact"),
+    # P12 (docs/API_CONTRACT_P12.md §3): Gantt drag step timing
+    # (backend/schemas/step_timing.py).
+    (_GANTT_TS, "StepTimingRequest", "StepTimingRequest", "exact"),
+    (_GANTT_TS, "StepTimingResponse", "StepTimingResponse", "exact"),
     # Deliberate partial mirrors — see each interface's own docstring in
     # `frontend/src/surfaces/gantt/api/types.ts`.
     (_GANTT_TS, "FreezeToggleResponse", "ProjectRead", "subset"),
@@ -427,6 +435,26 @@ CONTRACT_TABLE: list[tuple[Path, str, str, str]] = [
     (_PRIORITY_MOVE_TS, "PriorityMoveResponse", "PriorityMoveResponse", "exact"),
     (_PRIORITY_MOVE_TS, "ScheduleRunChangeRow", "ScheduleRunChangeRow", "exact"),
     (_PRIORITY_MOVE_TS, "ScheduleRunChanges", "ScheduleRunChanges", "exact"),
+    # --- P12-T03: weekly check-in (backend/schemas/checkin.py) ---
+    (_CHECKINS_TS, "CheckInDueStage", "CheckInDueStage", "exact"),
+    (_CHECKINS_TS, "CheckInDueProject", "CheckInDueProject", "exact"),
+    (_CHECKINS_TS, "CheckInDueSummary", "CheckInDueSummary", "exact"),
+    (_CHECKINS_TS, "CheckInDueResponse", "CheckInDueResponse", "exact"),
+    (_CHECKINS_TS, "CheckInEntry", "CheckInEntry", "exact"),
+    (_CHECKINS_TS, "CheckInSubmitRequest", "CheckInRequest", "exact"),
+    (_CHECKINS_TS, "CheckInSubmitResponse", "CheckInResponse", "exact"),
+    (_CHECKINS_TS, "CheckInHistoryRow", "CheckInHistoryRow", "exact"),
+    # --- P12-T03: priority board (backend/schemas/priority_board.py) ---
+    (_PRIORITY_BOARD_TS, "PriorityBoardCard", "PriorityBoardCard", "exact"),
+    (_PRIORITY_BOARD_TS, "PriorityBoardColumn", "PriorityBoardColumn", "exact"),
+    (_PRIORITY_BOARD_TS, "PriorityBoardResponse", "PriorityBoardResponse", "exact"),
+    # --- P12-T03: VIP projects (backend/schemas/vip.py) ---
+    (_VIP_TS, "VipCurrentStage", "VipCurrentStage", "exact"),
+    (_VIP_TS, "VipProject", "VipProject", "exact"),
+    (_VIP_TS, "VipHub", "VipHub", "exact"),
+    (_VIP_TS, "VipProjectsResponse", "VipProjectsResponse", "exact"),
+    (_VIP_TS, "VipPinRequest", "VipPinRequest", "exact"),
+    (_VIP_TS, "VipPinResponse", "VipPinResponse", "exact"),
 ]
 
 
@@ -621,6 +649,13 @@ class TestOpenApiFrontendContract:
                 # X-Schedule-Recalc / -Run-Id / -Baseline-Run-Id); no body
                 # schema.
                 "PatchRecalcSignal",
+            },
+            _CHECKINS_TS: {
+                # One element of the 422 `CHECKIN_INVALID` body's
+                # `detail.errors` (error bodies are not OpenAPI components).
+                # Backend side: `schemas.checkin.CheckInEntryError`, pinned by
+                # `tests/test_p12_checkins.py` (`{index, code, message}`).
+                "CheckInEntryError",
             },
         }
 

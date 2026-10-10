@@ -4,8 +4,10 @@ import { NavLink, useLocation } from 'react-router-dom';
 import { type NavGroup, type SurfaceNavItem } from '@/app/nav';
 import { visibleNavGroups } from '@/app/nav-visibility';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import { useCheckInsDue } from '@/lib/api/check-ins';
 import { cn } from '@/lib/utils';
-import { useSessionStore } from '@/stores/session';
+import { useHubFilter } from '@/stores/hub-filter';
+import { permissionFor, useSessionStore } from '@/stores/session';
 
 /**
  * The rail — Boltshift spec §4 ("Sidebar rail — ICON ONLY, no permanent text").
@@ -97,43 +99,89 @@ function isItemActive(item: SurfaceNavItem, pathname: string): boolean {
  * regardless (confirmed in that same broken build — only its function-className
  * special-case misbehaved), which is what this file's active-indicator
  * measurement below relies on. */
-function NavItem({ item, isActive }: { item: SurfaceNavItem; isActive: boolean }): React.JSX.Element {
+function NavItem({
+  item,
+  isActive,
+  badge,
+}: {
+  item: SurfaceNavItem;
+  isActive: boolean;
+  /** P12: a count shown on the icon (the Weekly check-in due count). */
+  badge?: { count: number; description: string } | undefined;
+}): React.JSX.Element {
+  const badgeId = React.useId();
+  const showBadge = badge !== undefined && badge.count > 0;
   return (
-    <Tooltip delayDuration={200}>
-      <TooltipTrigger asChild>
-        <NavLink
-          to={item.path}
-          end={item.path === '/'}
-          className={cn(
-            'group relative grid size-11 shrink-0 place-items-center rounded-control',
-            'transition-colors duration-fast ease-ease-out-expo',
-            'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40 focus-visible:ring-offset-2 focus-visible:ring-offset-surface',
-            isActive
-              ? 'bg-primary text-primary-fg shadow-feature'
-              : 'text-text-muted hover:bg-primary-subtle hover:text-primary',
-          )}
+    <>
+      <Tooltip delayDuration={200}>
+        <TooltipTrigger asChild>
+          <NavLink
+            to={item.path}
+            end={item.path === '/'}
+            aria-describedby={showBadge ? badgeId : undefined}
+            className={cn(
+              'group relative grid size-11 shrink-0 place-items-center rounded-control',
+              'transition-colors duration-fast ease-ease-out-expo',
+              'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40 focus-visible:ring-offset-2 focus-visible:ring-offset-surface',
+              isActive
+                ? 'bg-primary text-primary-fg shadow-feature'
+                : 'text-text-muted hover:bg-primary-subtle hover:text-primary',
+            )}
+          >
+            <item.icon className="size-[18px] shrink-0" aria-hidden="true" />
+            {/* The ONLY place this label exists outside the tooltip — an sr-only
+                accessible name, so `getByRole('link', { name: item.label })`
+                (app.test.tsx, e2e/p9-rbac.spec.ts) keeps resolving every item
+                exactly as it did in the old "collapsed" rail mode. */}
+            <span className="sr-only">{item.label}</span>
+            {showBadge ? (
+              <span
+                className="absolute -right-1 -top-1 grid h-[1.125rem] min-w-[1.125rem] place-items-center rounded-pill bg-danger px-1 font-mono text-2xs font-bold leading-none tabular-nums text-danger-fg ring-2 ring-surface"
+                data-testid={`nav-badge-${item.path}`}
+                data-numeric=""
+              >
+                <span aria-hidden="true">{badge.count > 99 ? '99+' : badge.count}</span>
+              </span>
+            ) : null}
+          </NavLink>
+        </TooltipTrigger>
+        <TooltipContent
+          side="right"
+          sideOffset={10}
+          className="rounded-pill border-transparent bg-text px-s3 py-1.5 text-2xs font-semibold text-text-inverse shadow-pop data-[state=delayed-open]:slide-in-from-left-1"
         >
-          <item.icon className="size-[18px] shrink-0" aria-hidden="true" />
-          {/* The ONLY place this label exists outside the tooltip — an sr-only
-              accessible name, so `getByRole('link', { name: item.label })`
-              (app.test.tsx, e2e/p9-rbac.spec.ts) keeps resolving every item
-              exactly as it did in the old "collapsed" rail mode. */}
-          <span className="sr-only">{item.label}</span>
-        </NavLink>
-      </TooltipTrigger>
-      <TooltipContent
-        side="right"
-        sideOffset={10}
-        className="rounded-pill border-transparent bg-text px-s3 py-1.5 text-2xs font-semibold text-text-inverse shadow-pop data-[state=delayed-open]:slide-in-from-left-1"
-      >
-        {item.title}
-      </TooltipContent>
-    </Tooltip>
+          {item.title}
+        </TooltipContent>
+      </Tooltip>
+      {/* The badge's description lives OUTSIDE the link (a `hidden` node is still
+          readable through aria-describedby), so the link's accessible name stays
+          exactly the item label. */}
+      {showBadge ? (
+        <span id={badgeId} hidden>
+          {badge.description}
+        </span>
+      ) : null}
+    </>
   );
+}
+
+/**
+ * The Weekly check-in due count (P12, ADR 0021 / 0023 §6, contract §7): served
+ * `due_stages − checked_in_stages` from `GET /check-ins/due`, for the current
+ * hub filter. Fetched only when the session can read the check-in surface; it
+ * shares the page's query key, so visiting the page costs no second request.
+ */
+function useCheckInDueBadge(enabled: boolean): { count: number; description: string } | undefined {
+  const { hubId } = useHubFilter();
+  const due = useCheckInsDue(hubId, enabled);
+  if (!enabled || !due.data) return undefined;
+  const count = Math.max(0, due.data.summary.due_stages - due.data.summary.checked_in_stages);
+  return { count, description: `${String(count)} ${count === 1 ? 'stage' : 'stages'} still to check in this week` };
 }
 
 export function AppSidebar(): React.JSX.Element {
   const me = useSessionStore((s) => s.me);
+  const checkInBadge = useCheckInDueBadge(me !== null && permissionFor(me, 'project_workspace').read);
   const { pathname } = useLocation();
   const clusters = React.useMemo(() => buildClusters(visibleNavGroups(me)), [me]);
   const activeItem = React.useMemo(
@@ -189,7 +237,12 @@ export function AppSidebar(): React.JSX.Element {
           )}
         >
           {items.map((item) => (
-            <NavItem key={item.path} item={item} isActive={isItemActive(item, pathname)} />
+            <NavItem
+              key={item.path}
+              item={item}
+              isActive={isItemActive(item, pathname)}
+              badge={item.path === '/check-in' ? checkInBadge : undefined}
+            />
           ))}
         </div>
       ))}

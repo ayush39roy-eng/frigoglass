@@ -1,8 +1,9 @@
 import * as React from 'react';
-import { Building2, CalendarClock, ChevronDown, LogOut, UserCog } from 'lucide-react';
+import { CalendarClock, ChevronDown, LogOut, UserCog } from 'lucide-react';
 import { Link } from 'react-router-dom';
 
 import { NotificationBell } from '@/components/notifications/notification-bell';
+import { HubFilterSelect } from '@/components/shared/hub-filter/hub-filter-select';
 import { ThemeToggle } from '@/components/theme/theme-toggle';
 import { Button } from '@/components/ui/button';
 import {
@@ -15,7 +16,6 @@ import {
 import { UserAvatar } from '@/components/session/user-avatar';
 import { useSignOut } from '@/lib/auth/use-sign-out';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
-import { useHubs } from '@/lib/api/reference';
 import { CURRENT_WEEK, HORIZON_WEEKS, WITHIN_YEAR_WEEK } from '@/lib/domain-constants';
 import { formatWeek } from '@/lib/format';
 import { useSessionStore } from '@/stores/session';
@@ -30,14 +30,18 @@ export function AppHeader(): React.JSX.Element {
     <header className="mx-s4 mt-s4 flex h-header shrink-0 items-center gap-s4 rounded-dash border-[1.5px] border-border bg-surface px-s5 shadow-card">
       <LogoChip />
 
-      <div className="ml-auto flex items-center gap-s3">
-        <div className="hidden items-center gap-1 rounded-pill border-[1.5px] border-border bg-shell p-1 lg:flex">
-          <HubScopePill />
-          <Divider />
-          <WeekPill />
-          <Divider />
-          <NotificationBell />
-          <ThemeToggle />
+      <div className="ml-auto flex min-w-0 items-center gap-s3">
+        {/* The global hub filter (ADR 0020) stays visible at every width; the
+            week, notifications and theme join it from `lg` up. */}
+        <div className="flex min-w-0 items-center gap-1 rounded-pill border-[1.5px] border-border bg-shell p-1">
+          <HubFilterSelect />
+          <span className="hidden items-center gap-1 lg:flex">
+            <Divider />
+            <WeekPill />
+            <Divider />
+            <NotificationBell />
+            <ThemeToggle />
+          </span>
         </div>
 
         <IdentityStack />
@@ -71,39 +75,6 @@ function LogoChip(): React.JSX.Element {
         </span>
       </span>
     </div>
-  );
-}
-
-function HubScopePill(): React.JSX.Element {
-  const me = useSessionStore((s) => s.me);
-  const hubsQuery = useHubs();
-
-  const scopeLabel = React.useMemo(() => {
-    if (!me) return 'All hubs';
-    if (me.hub_scope_all) return 'All hubs';
-    if (me.hub_ids.length === 0) return 'No hubs';
-    const names: string[] = [];
-    for (const id of me.hub_ids) {
-      const name = hubsQuery.data?.find((h) => h.id === id)?.name;
-      if (name) names.push(name);
-    }
-    if (names.length === me.hub_ids.length) return names.join(', ');
-    return `${String(me.hub_ids.length)} ${me.hub_ids.length === 1 ? 'hub' : 'hubs'}`;
-  }, [me, hubsQuery.data]);
-
-  return (
-    <Tooltip>
-      <TooltipTrigger asChild>
-        <span
-          className="flex max-w-40 items-center gap-1.5 rounded-pill px-s3 py-1.5 text-2xs font-medium text-text-muted"
-          data-testid="hub-scope"
-        >
-          <Building2 className="size-3.5 shrink-0" aria-hidden="true" />
-          <span className="truncate">{scopeLabel}</span>
-        </span>
-      </TooltipTrigger>
-      <TooltipContent side="bottom">Your hub scope: {scopeLabel}</TooltipContent>
-    </Tooltip>
   );
 }
 

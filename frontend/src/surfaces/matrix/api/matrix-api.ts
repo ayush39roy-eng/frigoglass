@@ -46,8 +46,9 @@ export function fetchPriorityMatrix(
   });
 }
 
-export function fetchPrioritySummary(ctx: FetchCtx = {}): Promise<PriorityPortfolioSummary> {
-  return apiGet<PriorityPortfolioSummary>('/priorities/summary', ctx);
+export function fetchPrioritySummary(ctx: FetchCtx = {}, hubId?: string | null): Promise<PriorityPortfolioSummary> {
+  // P12 (ADR 0020): the global hub filter, ANDed server-side with the scope.
+  return apiGet<PriorityPortfolioSummary>('/priorities/summary', hubId ? { ...ctx, query: { hub_id: hubId } } : ctx);
 }
 
 /**

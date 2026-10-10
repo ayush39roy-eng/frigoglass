@@ -11,6 +11,10 @@ construction, on:
     ADR 0007 — no multiplier, no `max(1, …)`), and whether it is *skipped*
     (`duration == 0`, or a `lab` step when `certification_testing_required`
     is false);
+  - the per-project step timing set from the Gantt (ADR 0019): the
+    *effective* duration `duration_override_weeks ?? lead time` (never
+    reviving a skipped step) and a Not Started step's `start_not_before_week`
+    search floor;
   - the per-step progress state (DOMAIN_RULES.md "Per-stage progress
     capture"): normalised status, derived `remaining`, the `data_error` that
     rejects a project with inconsistent actuals, the `Blocked` hold set;
@@ -34,6 +38,7 @@ from scheduling.types import (
     LeadTime,
     ProjectInput,
     StepProgressInput,
+    StepTimingInput,
     WorkflowStepTemplate,
 )
 
@@ -47,6 +52,12 @@ STATUS_DONE = "Done"
 #: rule (In Progress / Blocked), never searched for. Capacity is consumed
 #: regardless of conflict, so an ENG_CONFLICT / OVERLAP may be raised.
 ANCHORED_STATUSES: frozenset[str] = frozenset({STATUS_IN_PROGRESS, STATUS_BLOCKED, STATUS_DONE})
+
+#: ADR 0019: domain of `StepTimingInput.duration_override_weeks` (the DB CHECK
+#: `duration_override_range` mirrors it). The floor's domain is
+#: `1..ScheduleInput.horizon_weeks`.
+DURATION_OVERRIDE_MIN_WEEKS = 1
+DURATION_OVERRIDE_MAX_WEEKS = 104
 
 
 # --- Workflow (DAG) -------------------------------------------------------------
@@ -189,13 +200,18 @@ class StepPlan:
     *before* any capacity is consulted."""
 
     step: WorkflowStepTemplate
-    duration: int  # lead-time weeks (0 when skipped)
+    # Effective duration (ADR 0019): `duration_override_weeks ?? lead time`;
+    # 0 when skipped (an override never revives a skipped step).
+    duration: int
     skipped: bool
     status: str  # normalised; skipped steps are always "Done" (treated as complete)
     percent_complete: int
     actual_start_week: int | None
     actual_end_week: int | None
     remaining: int  # derived per DOMAIN_RULES.md (0 when skipped / Done / Not Started)
+    # ADR 0019 earliest start: set only for a non-skipped `Not Started` step of
+    # a non-frozen project (In Progress / Blocked / Done and frozen ignore it).
+    start_not_before_week: int | None = None
 
     @property
     def anchored(self) -> bool:
@@ -223,6 +239,7 @@ def validate_schedulable_project(
     *,
     hub_lab_region: Mapping[str, str],
     priority_order: tuple[str, ...],
+    horizon_weeks: int,
 ) -> None:
     """Fail loudly (`ValueError`) on malformed *configuration-level* input for a
     project whose status participates in scheduling. Inconsistent *progress
@@ -262,6 +279,70 @@ def validate_schedulable_project(
                 f"project {project.project_id!r}: no lead-time row for "
                 f"({project.workflow_id!r}, {project.category!r}, {s.step_id!r})"
             )
+    validate_step_timing(project, wf, horizon_weeks=horizon_weeks)
+
+
+def validate_step_timing(project: ProjectInput, workflow: Workflow, *, horizon_weeks: int) -> None:
+    """ADR 0019 / API contract P12 §1 input validation for `project.step_timing`
+    (`ValueError`, never a silent default): a duplicate `step_id`, a `step_id`
+    that is not a step of the project's workflow, an override outside
+    1..104, or a floor outside 1..`horizon_weeks`."""
+
+    seen: set[str] = set()
+    for row in sorted(project.step_timing, key=_step_timing_sort_key):
+        where = f"project {project.project_id!r}: step_timing for step {row.step_id!r}"
+        if row.step_id in seen:
+            raise ValueError(f"{where} appears more than once")
+        seen.add(row.step_id)
+        if row.step_id not in workflow.steps_by_id:
+            raise ValueError(f"{where}: not a step of workflow {workflow.workflow_id!r}")
+        override = row.duration_override_weeks
+        if override is not None and not (
+            DURATION_OVERRIDE_MIN_WEEKS <= override <= DURATION_OVERRIDE_MAX_WEEKS
+        ):
+            raise ValueError(
+                f"{where}: duration_override_weeks={override} is outside "
+                f"{DURATION_OVERRIDE_MIN_WEEKS}..{DURATION_OVERRIDE_MAX_WEEKS}"
+            )
+        floor = row.start_not_before_week
+        if floor is not None and not 1 <= floor <= horizon_weeks:
+            raise ValueError(
+                f"{where}: start_not_before_week={floor} is outside 1..{horizon_weeks}"
+            )
+
+
+def _step_timing_sort_key(row: StepTimingInput) -> tuple[str, int, int]:
+    """Total, deterministic order over timing rows (I8): by `step_id`, then the
+    values (None sorts first), so even duplicate rows order identically."""
+
+    return (
+        row.step_id,
+        -1 if row.duration_override_weeks is None else row.duration_override_weeks,
+        -1 if row.start_not_before_week is None else row.start_not_before_week,
+    )
+
+
+def canonical_step_timing(rows: Iterable[StepTimingInput]) -> tuple[StepTimingInput, ...]:
+    """The canonical form of a project's `step_timing` for the hashed /
+    snapshotted solver input (I8, contract P12 §1): rows with neither field
+    set are dropped and the rest are sorted by `step_id`. A project with no
+    timing therefore canonicalises to `()`, exactly the pre-P12 input, so
+    every existing input hash and golden file stays byte-identical.
+
+    The scheduler itself does not require canonical input: it sorts the rows
+    by `step_id` before use, so their supplied order never affects output.
+    """
+
+    return tuple(
+        sorted(
+            (
+                r
+                for r in rows
+                if r.duration_override_weeks is not None or r.start_not_before_week is not None
+            ),
+            key=_step_timing_sort_key,
+        )
+    )
 
 
 def derive_remaining(
@@ -300,12 +381,37 @@ def analyse_project(
             continue
         progress_by_step[pr.step_id] = pr
 
+    # ADR 0019 step timing, sorted by step_id (I8). `validate_step_timing`
+    # rejects bad rows before a run; this stays tolerant (first row per step
+    # wins, unknown steps ignored) so the invariant validator can analyse any
+    # input without raising.
+    timing_by_step: dict[str, StepTimingInput] = {}
+    for row in sorted(project.step_timing, key=_step_timing_sort_key):
+        if row.step_id in workflow.steps_by_id:
+            timing_by_step.setdefault(row.step_id, row)
+
+    def effective_duration(step_id: str, lead_weeks: int) -> int:
+        """`duration_override_weeks ?? lead time`; a 0-week (skipped) lead
+        time stays 0 even when an override exists (ADR 0019)."""
+
+        row = timing_by_step.get(step_id)
+        if lead_weeks == 0 or row is None or row.duration_override_weeks is None:
+            return lead_weeks
+        return row.duration_override_weeks
+
+    def start_floor(step_id: str) -> int | None:
+        """The Not Started search floor; frozen projects ignore it (frozen wins)."""
+
+        row = timing_by_step.get(step_id)
+        if project.frozen or row is None:
+            return None
+        return row.start_not_before_week
+
     plans: dict[str, StepPlan] = {}
     for step in workflow.steps:
-        duration = lead_time_table[(project.workflow_id, project.category, step.step_id)]  # type: ignore[index]
-        skipped = duration == 0 or (
-            step.kind == "lab" and not project.certification_testing_required
-        )
+        lead = lead_time_table[(project.workflow_id, project.category, step.step_id)]  # type: ignore[index]
+        skipped = lead == 0 or (step.kind == "lab" and not project.certification_testing_required)
+        duration = effective_duration(step.step_id, lead)
         progress = None if project.frozen else progress_by_step.get(step.step_id)
 
         if skipped:
@@ -332,6 +438,7 @@ def analyse_project(
                 actual_start_week=None,
                 actual_end_week=None,
                 remaining=duration,
+                start_not_before_week=start_floor(step.step_id),
             )
             continue
 
@@ -393,6 +500,9 @@ def analyse_project(
             actual_start_week=progress.actual_start_week if status != STATUS_NOT_STARTED else None,
             actual_end_week=progress.actual_end_week if status == STATUS_DONE else None,
             remaining=remaining,
+            start_not_before_week=(
+                start_floor(step.step_id) if status == STATUS_NOT_STARTED else None
+            ),
         )
 
     data_error = "; ".join(errors) if errors else None
@@ -401,7 +511,8 @@ def analyse_project(
         # complete for callers that still want durations (progress_pct etc.).
         for step in workflow.steps:
             if step.step_id not in plans:
-                duration = lead_time_table[(project.workflow_id, project.category, step.step_id)]  # type: ignore[index]
+                lead = lead_time_table[(project.workflow_id, project.category, step.step_id)]  # type: ignore[index]
+                duration = effective_duration(step.step_id, lead)
                 plans[step.step_id] = StepPlan(
                     step=step,
                     duration=duration,
@@ -411,6 +522,7 @@ def analyse_project(
                     actual_start_week=None,
                     actual_end_week=None,
                     remaining=duration,
+                    start_not_before_week=start_floor(step.step_id),
                 )
 
     tracked = any(not sp.skipped and sp.status != STATUS_NOT_STARTED for sp in plans.values())
@@ -456,7 +568,9 @@ def first_step_frontier(project: ProjectInput, current_week: int) -> int:
 def unconstrained_end_week(plan: ProjectPlan, current_week: int) -> int | None:
     """DOMAIN_RULES.md "Expected vs projected completion": the earliest finish
     assuming unlimited engineers and chambers — walk the DAG with the
-    lead-time durations only. Done / In Progress stages keep their actual
+    effective durations only (ADR 0019: `duration_override_weeks ?? lead
+    time`), honouring a Not Started step's `start_not_before_week` (a plan
+    input, not a resource). Done / In Progress stages keep their actual
     start and their derived `remaining` (progress rules); a Blocked stage is
     treated as In Progress (unlimited resources cannot unblock it, but the
     *unconstrained* figure deliberately assumes the block clears now — the
@@ -484,6 +598,11 @@ def unconstrained_end_week(plan: ProjectPlan, current_week: int) -> int | None:
                 ends[sid] = tail_start + sp.remaining - 1
         else:
             start = pred_end + 1 if plan.project.frozen else max(current_week, pred_end + 1)
+            if sp.start_not_before_week is not None:
+                # ADR 0019: a planner-set earliest start is a plan input, not a
+                # resource limit, so unlimited resources do not lift it (keeps
+                # unconstrained <= constrained, I16).
+                start = max(start, sp.start_not_before_week)
             ends[sid] = start + sp.duration - 1
     non_skipped = [ends[sid] for sid, sp in plan.steps.items() if not sp.skipped]
     return max(non_skipped) if non_skipped else None
@@ -496,9 +615,10 @@ def project_progress_pct(steps: Iterable[tuple[int, int]]) -> int | None:
 
     `steps` is one `(percent_complete, effective_duration_weeks)` pair per
     workflow step, where `percent_complete` is the **stored** value (0 for a
-    step with no progress row) and `effective_duration_weeks` is the lead-time
-    duration, or 0 when the step is skipped (duration 0, or a lab step with
-    certification testing off). Returns
+    step with no progress row) and `effective_duration_weeks` is the step's
+    effective duration (ADR 0019: `duration_override_weeks ?? lead time`), or
+    0 when the step is skipped (lead time 0, or a lab step with certification
+    testing off; an override never un-skips a step). Returns
     `round(Σ(percent × duration) / Σ duration)` (Python `round`, i.e.
     half-to-even), or `None` when Σ duration == 0. Duration-weighted, never a
     14-way mean. Applies to every project, frozen ones included.

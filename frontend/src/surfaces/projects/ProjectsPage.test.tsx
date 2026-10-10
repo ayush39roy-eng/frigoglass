@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event';
 import type { UseQueryResult } from '@tanstack/react-query';
 
 import { renderWithProviders } from '@/test/render';
+import { useHubFilterStore } from '@/stores/hub-filter';
 import { seriousAxeViolations } from '@/test/axe';
 import type { ProjectFilterParams, ProjectFilterResult } from '@/surfaces/dashboard/api/types';
 
@@ -39,6 +40,8 @@ function row(id: string, overrides: Partial<ProjectFilterResult['rows'][number]>
     category: 'A+' as const,
     status: 'In Development' as const,
     priority: 'P1' as const,
+    is_vip: false,
+    tracking_status: 'idle' as const,
     ...overrides,
   };
 }
@@ -49,6 +52,20 @@ beforeEach(() => {
 });
 
 describe('ProjectsPage', () => {
+  it('P12 (ADR 0020): the hub comes from the global header filter, not a local select', () => {
+    useHubFilterStore.setState({ hubId: 'hub-greece' });
+    try {
+      useDashboardProjects.mockReturnValue(ok([]));
+      renderWithProviders(<ProjectsPage />);
+      expect(useDashboardProjects).toHaveBeenLastCalledWith(expect.objectContaining({ hub_id: 'hub-greece' }));
+      expect(screen.queryByRole('combobox', { name: 'Hub' })).not.toBeInTheDocument();
+      expect(screen.getByTestId('hub-filter-chip')).toHaveTextContent('Hub: R&D-Greece');
+      expect(screen.getByText('No projects match these filters')).toBeInTheDocument();
+    } finally {
+      useHubFilterStore.setState({ hubId: null });
+    }
+  });
+
   it('requests the unfiltered list and renders one feature card per row, with Ask the agent on each', () => {
     useDashboardProjects.mockReturnValue(
       ok([row('a', { project_name: 'Alpha cooler refresh' }), row('b', { project_name: 'Beta chest freezer' })]),

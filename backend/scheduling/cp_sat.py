@@ -284,8 +284,14 @@ def run_cp_sat(
                 ends_excl[sid] = prebooked[sid].end_week + 1
                 continue
 
-            duration = sp.duration
-            start_var = model.NewIntVar(lower_bound, upper_bound, f"start[{pid},{sid}]")
+            duration = sp.duration  # effective duration (ADR 0019)
+            # ADR 0019 earliest start: a Not Started step may not start before
+            # its `start_not_before_week` (<= horizon, so `upper_bound` still
+            # leaves room for the whole chain and the absent case stays SAT).
+            step_lo = lower_bound
+            if sp.start_not_before_week is not None:
+                step_lo = max(step_lo, sp.start_not_before_week)
+            start_var = model.NewIntVar(step_lo, upper_bound, f"start[{pid},{sid}]")
             end_var = model.NewIntVar(lower_bound, upper_bound, f"end[{pid},{sid}]")
             for pe in pred_ends:
                 model.Add(start_var >= pe)  # Invariant I3 / I15, per DAG edge

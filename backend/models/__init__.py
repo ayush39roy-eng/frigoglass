@@ -14,6 +14,7 @@ be pure dataclasses with no DB dependency at all.
 from models.audit import AuditLogEntry
 from models.base import Base, TimestampMixin, UUIDPrimaryKeyMixin
 from models.chamber import Chamber
+from models.checkin import ScheduleRunFollowUp, StageCheckin
 from models.currency import CurrencyRate
 from models.engineer import Engineer
 from models.export import ExportJob
@@ -55,6 +56,8 @@ __all__ = [
     "ProjectAccessGrant",
     "ProjectFile",
     "ProjectComment",
+    "StageCheckin",
+    "ScheduleRunFollowUp",
     "PriorityScore",
     "PriorityApplicationRun",
     "PriorityApplicationResult",

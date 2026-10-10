@@ -17,6 +17,8 @@ import type {
   FreezeToggleResponse,
   GanttActiveRun,
   GanttResponse,
+  StepTimingRequest,
+  StepTimingResponse,
 } from './types';
 
 type FetchCtx = Pick<ApiRequestOptions, 'signal'>;
@@ -49,6 +51,24 @@ export function toggleFreeze(
   body: FreezeToggleRequest,
 ): Promise<FreezeToggleResponse> {
   return apiSend<FreezeToggleResponse>('POST', `/gantt/projects/${projectId}/freeze`, body);
+}
+
+/**
+ * `PATCH /projects/{projectId}/steps/{stepId}/timing` (ADR 0019, P12 contract
+ * §3). Always 200 on success; `recalc_status` says whether a run was started.
+ * 409 `PROJECT_FROZEN` / `NOT_SCHEDULABLE` / `STEP_DONE` / `STEP_STARTED` /
+ * `STEP_SKIPPED`, 422 `VALIDATION_ERROR`. The server decides every outcome.
+ */
+export function setStepTiming(
+  projectId: string,
+  stepId: string,
+  body: StepTimingRequest,
+): Promise<StepTimingResponse> {
+  return apiSend<StepTimingResponse>(
+    'PATCH',
+    `/projects/${projectId}/steps/${encodeURIComponent(stepId)}/timing`,
+    body,
+  );
 }
 
 function retryUnlessAuth(failureCount: number, error: Error): boolean {

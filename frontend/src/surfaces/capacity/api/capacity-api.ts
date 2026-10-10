@@ -20,16 +20,23 @@ import type {
 
 type FetchCtx = Pick<ApiRequestOptions, 'signal'>;
 
-export function fetchHubLoadVsCapacity(ctx: FetchCtx = {}): Promise<HubCapacitySummary> {
-  return apiGet<HubCapacitySummary>('/capacity/hub-load', ctx);
+/** P12 (ADR 0020): the global hub filter as `hub_id`, ANDed server-side with the
+ *  caller's scope. With a hub, `rows` holds that hub and `areas[]` the area
+ *  containing it; lab figures stay region-wide (ADR 0020 §4). */
+function withHubQuery(ctx: FetchCtx, hubId: string | null | undefined): ApiRequestOptions {
+  return hubId ? { ...ctx, query: { hub_id: hubId } } : ctx;
 }
 
-export function fetchClassBreakdown(ctx: FetchCtx = {}): Promise<ClassBreakdown> {
-  return apiGet<ClassBreakdown>('/capacity/class-breakdown', ctx);
+export function fetchHubLoadVsCapacity(ctx: FetchCtx = {}, hubId?: string | null): Promise<HubCapacitySummary> {
+  return apiGet<HubCapacitySummary>('/capacity/hub-load', withHubQuery(ctx, hubId));
 }
 
-export function fetchUtilizationMatrix(ctx: FetchCtx = {}): Promise<UtilizationMatrix> {
-  return apiGet<UtilizationMatrix>('/capacity/utilization-matrix', ctx);
+export function fetchClassBreakdown(ctx: FetchCtx = {}, hubId?: string | null): Promise<ClassBreakdown> {
+  return apiGet<ClassBreakdown>('/capacity/class-breakdown', withHubQuery(ctx, hubId));
+}
+
+export function fetchUtilizationMatrix(ctx: FetchCtx = {}, hubId?: string | null): Promise<UtilizationMatrix> {
+  return apiGet<UtilizationMatrix>('/capacity/utilization-matrix', withHubQuery(ctx, hubId));
 }
 
 /**

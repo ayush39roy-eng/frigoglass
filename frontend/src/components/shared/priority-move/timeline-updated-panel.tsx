@@ -135,16 +135,20 @@ export interface TimelineUpdatedPanelProps {
   /** The moved project. Its own row, if served, is shown first. */
   projectId: string;
   projectName: string;
-  priorityBefore: ProjectPriority | null;
-  priorityAfter: ProjectPriority | null;
+  priorityBefore?: ProjectPriority | null;
+  priorityAfter?: ProjectPriority | null;
+  /** P12 (ADR 0019): replaces the priority before → after line, for a change
+   *  that was not a priority move (a Gantt step timing drag). */
+  summary?: React.ReactNode;
 }
 
 export function TimelineUpdatedPanel({
   changes,
   projectId,
   projectName,
-  priorityBefore,
-  priorityAfter,
+  priorityBefore = null,
+  priorityAfter = null,
+  summary,
 }: TimelineUpdatedPanelProps): React.JSX.Element {
   const own = changes.rows.find((r) => r.project_id === projectId) ?? null;
   const others = changes.rows.filter((r) => r.project_id !== projectId);
@@ -153,10 +157,14 @@ export function TimelineUpdatedPanel({
     <div className="space-y-3" data-testid="timeline-updated">
       <p className="flex flex-wrap items-center gap-1.5 text-2xs text-text-muted">
         <span className="font-semibold text-text">{projectName}</span>
-        {priorityBefore ? <PriorityBandPill priority={priorityBefore} /> : <span>no priority</span>}
-        <ArrowRight className="size-3" aria-hidden="true" />
-        <span className="sr-only">to</span>
-        {priorityAfter ? <PriorityBandPill priority={priorityAfter} /> : <span>no priority</span>}
+        {summary ?? (
+          <>
+            {priorityBefore ? <PriorityBandPill priority={priorityBefore} /> : <span>no priority</span>}
+            <ArrowRight className="size-3" aria-hidden="true" />
+            <span className="sr-only">to</span>
+            {priorityAfter ? <PriorityBandPill priority={priorityAfter} /> : <span>no priority</span>}
+          </>
+        )}
         <span aria-hidden="true">·</span>
         <span data-numeric="">
           Run v{changes.run_version} compared with v{changes.against_run_version}
@@ -202,5 +210,44 @@ export function TimelineUpdatedPanel({
         ) : null}
       </section>
     </div>
+  );
+}
+
+/**
+ * The served change list on its own, with no "this project" section — for a
+ * recalculation that was not caused by one project (the P12 weekly check-in
+ * batch, ADR 0023). Same rows, same rendering, same virtualization rule.
+ */
+export function ChangedProjectsList({ changes }: { changes: ScheduleRunChanges }): React.JSX.Element {
+  const rows = changes.rows;
+  return (
+    <section aria-label="Projects that moved" className="space-y-1" data-testid="changed-projects-list">
+      <p className="text-2xs text-text-muted" data-numeric="">
+        Run v{changes.run_version} compared with v{changes.against_run_version}
+      </p>
+      <h3 className="label-caps text-text-subtle">
+        Projects that moved <span className="normal-case tracking-normal">({rows.length})</span>
+      </h3>
+      {rows.length === 0 ? (
+        <p className="text-xs text-text-muted">No project you can see moved.</p>
+      ) : rows.length > VIRTUALIZE_OVER ? (
+        <VirtualChangeList rows={rows} />
+      ) : (
+        <div className="max-h-72 overflow-y-auto pr-1" data-testid="timeline-change-list" data-virtualized="false">
+          <ul aria-label="Projects that moved">
+            {rows.map((row) => (
+              <li key={row.project_id}>
+                <ChangeRowItem row={row} />
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+      {changes.hidden_count > 0 ? (
+        <p className="flex items-center gap-1.5 text-2xs font-semibold text-text-muted" data-testid="timeline-hidden-count">
+          <EyeOff className="size-3.5" aria-hidden="true" />+{changes.hidden_count} more in hubs outside your scope
+        </p>
+      ) : null}
+    </section>
   );
 }

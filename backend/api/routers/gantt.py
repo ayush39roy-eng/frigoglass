@@ -39,6 +39,15 @@ Step rows carry `kind` from the run's `workflow_snapshot`, `skipped` from
 the run step, and `status`/`percent_complete` from the live progress row.
 Nothing here is recomputed (I16).
 
+**P12 (ADR 0019/0020, docs/API_CONTRACT_P12.md §3–§4).** Step rows also
+carry `lead_time_weeks` (live lead-time value), the live planner inputs
+`duration_override_weeks` / `start_not_before_week`, and `timing_editable`
+(`services.step_timing.timing_editable`: ADR 0019 §4 AND GANTT write with the
+project's hub in scope, the freeze toggle's check). `duration_weeks` is the
+effective duration the active run booked. The drag itself is
+`PATCH /projects/{id}/steps/{step_id}/timing` (`api/routers/step_timing.py`).
+`hub_id` is ANDed with the scope / own-assignment filter and never widens it.
+
 **GDPR / OQ#8 dependency (P3-T09, security remediation, finding #1 — High):**
 `GanttStepRow.assigned_engineer_name` is withheld (`None`) for every reader
 except the Engineer role viewing their own self-scoped Gantt (see
@@ -59,13 +68,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from api.db import get_db
-from api.deps import require_permission
+from api.deps import principal_can, require_permission
 from core.principal import Principal
 from core.rbac import Action, Surface
 from models.audit import AuditLogEntry
 from models.chamber import Chamber
 from models.engineer import Engineer
-from models.enums import WorkflowStepKind, WorkflowStepStatus
+from models.enums import NON_SCHEDULABLE_STATUSES, WorkflowStepKind, WorkflowStepStatus
 from models.project import Project
 from models.schedule import ScheduleRun, ScheduleRunProjectOutcome, ScheduleRunProjectStep
 from models.workflow import ProjectWorkflowStep, WorkflowStepTemplate
@@ -78,7 +87,9 @@ from schemas.gantt import (
 from schemas.project import ProjectRead
 from services.active_run import slip_weeks, step_kinds_for_run
 from services.audit_helpers import project_audit_state
-from services.hub_scope import hub_scope_filter, is_engineer_self_scoped
+from services.hub_scope import hub_scope_filter, is_engineer_self_scoped, is_hub_in_scope
+from services.step_timing import timing_editable
+from services.tracking import tracking_status_for
 
 router = APIRouter(prefix="/gantt", tags=["gantt"])
 
@@ -213,9 +224,19 @@ async def get_gantt(
         ).scalars().all()
         outcomes = {o.project_id: o for o in outcome_rows}
 
+    # P12 (ADR 0019 §4): `timing_editable` also needs the caller's GANTT
+    # write permission on the project, the same check as the freeze toggle
+    # (GANTT/WRITE and the project's hub in scope).
+    gantt_writer = principal_can(current_user, Surface.GANTT, Action.WRITE)
+
+    # P12 (ADR 0021 §4): the one tracking-status implementation.
+    tracking = await tracking_status_for(db, project_ids, active_run=active_run)
+
     gantt_rows: list[GanttProjectRow] = []
     for project in projects:
         outcome = outcomes.get(project.id)
+        can_write_timing = gantt_writer and is_hub_in_scope(current_user, project.hub_id)
+        schedulable = project.status not in NON_SCHEDULABLE_STATUSES
         expected = outcome.expected_end_week if outcome else None
         projected = outcome.projected_end_week if outcome else None
         step_rows: list[GanttStepRow] = []
@@ -248,6 +269,20 @@ async def get_gantt(
                     ),
                     eng_conflict=step.eng_conflict,
                     chamber_overlap=step.chamber_overlap,
+                    lead_time_weeks=(
+                        actual.duration_weeks if actual else step.duration_weeks
+                    ),
+                    duration_override_weeks=(
+                        actual.duration_override_weeks if actual else None
+                    ),
+                    start_not_before_week=actual.start_not_before_week if actual else None,
+                    timing_editable=timing_editable(
+                        can_write=can_write_timing,
+                        frozen=project.frozen,
+                        schedulable=schedulable,
+                        skipped=step.skipped or actual is None or actual.duration_weeks == 0,
+                        step_status=actual.status if actual else WorkflowStepStatus.NOT_STARTED,
+                    ),
                 )
             )
 
@@ -271,6 +306,8 @@ async def get_gantt(
                 blocked=outcome.blocked if outcome else False,
                 schedule_stale=project.schedule_stale,
                 workflow_id=project.workflow_id,
+                is_vip=project.is_vip,
+                tracking_status=tracking.get(project.id, "idle"),
                 steps=step_rows,
             )
         )

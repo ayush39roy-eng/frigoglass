@@ -8,7 +8,8 @@ PATCH changes `priority` (docs/DOMAIN_RULES.md "Priority moves"):
     if hard_gates non-empty and new != P1: 409 HARD_GATE_FORCES_P1
     write priority, audit project.priority_move, set schedule_stale
     if status not schedulable:            not_needed (no run)
-    elif a run is queued/running:         deferred   (stays stale; no second run)
+    elif a run is queued/running:         deferred   (stays stale; registers the one
+                                                      coalesced follow-up run, ADR 0023)
     else:                                 queued     (greedy, activate=True,
                                                       trigger_reason="priority_move")
 
@@ -157,7 +158,7 @@ async def apply_priority_change(
     recalc: RecalcStatus
     if project.status in NON_SCHEDULABLE_STATUSES:
         recalc = "not_needed"
-    elif await find_in_flight_run(db) is not None:
+    elif await find_in_flight_run(db, trigger_reason=TRIGGER_REASON) is not None:
         recalc = "deferred"
     else:
         recalc = "queued"

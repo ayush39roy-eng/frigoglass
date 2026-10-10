@@ -20,20 +20,27 @@ import type {
 
 type FetchCtx = Pick<ApiRequestOptions, 'signal'>;
 
-export function fetchPipelineTotals(ctx: FetchCtx = {}): Promise<PipelineTotals> {
-  return apiGet<PipelineTotals>('/dashboard/pipeline-totals', ctx);
+/** P12 (ADR 0020): the global hub filter as `hub_id`. The server ANDs it with
+ *  the caller's scope and computes every total for the filtered set (I9/I19);
+ *  "All hubs" sends no param at all. */
+function withHubQuery(ctx: FetchCtx, hubId: string | null | undefined): ApiRequestOptions {
+  return hubId ? { ...ctx, query: { hub_id: hubId } } : ctx;
 }
 
-export function fetchStatusOverview(ctx: FetchCtx = {}): Promise<StatusOverview> {
-  return apiGet<StatusOverview>('/dashboard/status-overview', ctx);
+export function fetchPipelineTotals(ctx: FetchCtx = {}, hubId?: string | null): Promise<PipelineTotals> {
+  return apiGet<PipelineTotals>('/dashboard/pipeline-totals', withHubQuery(ctx, hubId));
 }
 
-export function fetchHubTypePipeline(ctx: FetchCtx = {}): Promise<HubTypePipelineRow[]> {
-  return apiGet<HubTypePipelineRow[]>('/dashboard/hub-type-pipeline', ctx);
+export function fetchStatusOverview(ctx: FetchCtx = {}, hubId?: string | null): Promise<StatusOverview> {
+  return apiGet<StatusOverview>('/dashboard/status-overview', withHubQuery(ctx, hubId));
 }
 
-export function fetchCompletingWithinYear(ctx: FetchCtx = {}): Promise<CompletingWithinYear> {
-  return apiGet<CompletingWithinYear>('/dashboard/completing-within-year', ctx);
+export function fetchHubTypePipeline(ctx: FetchCtx = {}, hubId?: string | null): Promise<HubTypePipelineRow[]> {
+  return apiGet<HubTypePipelineRow[]>('/dashboard/hub-type-pipeline', withHubQuery(ctx, hubId));
+}
+
+export function fetchCompletingWithinYear(ctx: FetchCtx = {}, hubId?: string | null): Promise<CompletingWithinYear> {
+  return apiGet<CompletingWithinYear>('/dashboard/completing-within-year', withHubQuery(ctx, hubId));
 }
 
 export function fetchDashboardProjects(

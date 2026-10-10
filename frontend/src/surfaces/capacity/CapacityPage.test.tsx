@@ -3,6 +3,7 @@ import { screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
 import { renderWithProviders } from '@/test/render';
+import { useHubFilterStore } from '@/stores/hub-filter';
 import { ApiError } from '@/lib/api/client';
 import type { ClassBreakdown, HubCapacitySummary, UtilizationMatrix } from './api/types';
 import { areaRow, hubRow, SUMMARY_P11 } from './test-fixtures';
@@ -15,9 +16,9 @@ const hooks = {
 };
 
 vi.mock('./hooks/use-capacity', () => ({
-  useHubLoadVsCapacity: () => hooks.useHubLoadVsCapacity(),
-  useClassBreakdown: () => hooks.useClassBreakdown(),
-  useUtilizationMatrix: () => hooks.useUtilizationMatrix(),
+  useHubLoadVsCapacity: (...a: unknown[]) => hooks.useHubLoadVsCapacity(...a),
+  useClassBreakdown: (...a: unknown[]) => hooks.useClassBreakdown(...a),
+  useUtilizationMatrix: (...a: unknown[]) => hooks.useUtilizationMatrix(...a),
   useActiveScheduleRun: () => hooks.useActiveScheduleRun(),
 }));
 vi.mock('./components/hub-load-chart', () => ({ HubLoadChart: () => <div data-testid="hub-load-chart" /> }));
@@ -58,10 +59,23 @@ const utilization: UtilizationMatrix = {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  useHubFilterStore.setState({ hubId: null });
   hooks.useActiveScheduleRun.mockReturnValue(ready(null));
 });
 
 describe('CapacityPage', () => {
+  it('P12 (ADR 0020): every panel (incl. the area strip source) follows the global hub filter, with the "Hub:" chip', () => {
+    useHubFilterStore.setState({ hubId: 'hub-india' });
+    hooks.useHubLoadVsCapacity.mockReturnValue(pending);
+    hooks.useClassBreakdown.mockReturnValue(pending);
+    hooks.useUtilizationMatrix.mockReturnValue(pending);
+    renderWithProviders(<CapacityPage />);
+    expect(hooks.useHubLoadVsCapacity).toHaveBeenLastCalledWith({ hubId: 'hub-india' });
+    expect(hooks.useClassBreakdown).toHaveBeenLastCalledWith('hub-india');
+    expect(hooks.useUtilizationMatrix).toHaveBeenLastCalledWith('hub-india');
+    expect(screen.getByTestId('hub-filter-chip')).toBeInTheDocument();
+  });
+
   it('always renders the surface heading and the reporting-basis notice', async () => {
     // P4-T03 hard constraint: the honest-framing callout is carried by this
     // surface in EVERY query state, including while all three panels are still

@@ -2,14 +2,15 @@ import * as React from 'react';
 import { Link } from 'react-router-dom';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { LayoutGroup, motion } from 'framer-motion';
-import { ArrowUpRight, ChevronRight, Snowflake } from 'lucide-react';
+import { ArrowUpRight, ChevronRight, PencilLine, SlidersHorizontal, Snowflake } from 'lucide-react';
 
 import { cn } from '@/lib/utils';
 import { formatWeek } from '@/lib/format';
 import { usePrefersReducedMotion } from '@/lib/use-prefers-reduced-motion';
 import { PriorityMoveControl } from '@/components/shared/priority-move/priority-move-control';
 import { StepKindBadge } from '@/components/shared/step-kind-badge';
-import type { WorkflowStepKind } from '@/types/enums';
+import { TrackingStatusChip } from '@/components/shared/tracking-status-chip';
+import { VipBadge } from '@/components/shared/vip-badge';
 
 import {
   makeWeekScale,
@@ -18,12 +19,14 @@ import {
   type GanttZoom,
 } from '../lib/gantt-coordinates';
 import { buildVisualRows, visualRowHeight } from '../lib/gantt-rows';
-import type { GanttProjectRow } from '../api/types';
+import type { GanttProjectRow, GanttStepRow } from '../api/types';
 import { ActivityLoadStrip } from './activity-load-strip';
 import { GanttBarGroup, GanttHatchDefs } from './gantt-bars';
 import { ProjectRowBadges, StepRowBadges } from './gantt-badges';
 import { GanttCompletionMarkers } from './gantt-completion-markers';
 import { AXIS_HEIGHT, GanttGridLines, GanttWeekAxis } from './gantt-time-axis';
+import { StepDragOverlay } from './step-timing/step-drag-overlay';
+import { hasTimingEdit, stepTimingTarget, useStepTimingHost } from './step-timing/step-timing-context';
 
 /**
  * The hand-built virtualized Gantt renderer (`dataviz-gantt` SKILL + Standing
@@ -183,14 +186,7 @@ export function GanttChart({
                           onFreezeClick={onFreezeClick}
                         />
                       ) : (
-                        <StepLeftCell
-                          name={vr.step.step_name}
-                          kind={vr.step.kind}
-                          skipped={vr.step.skipped}
-                          sequenceOrder={vr.step.sequence_order}
-                          engineer={vr.step.assigned_engineer_name}
-                          chamber={vr.step.assigned_chamber_code}
-                        />
+                        <StepLeftCell project={vr.project} step={vr.step} />
                       )}
                     </div>
 
@@ -200,6 +196,11 @@ export function GanttChart({
                       style={{ width: scale.totalWidthPx }}
                     >
                       <BarLayer row={vr} scale={scale} height={height} animate={animate} />
+                      {/* P12 (ADR 0019): drag handles, only where the server says
+                          `timing_editable` allows it (none → nothing rendered). */}
+                      {vr.kind === 'step' && !vr.step.skipped ? (
+                        <StepDragOverlay target={stepTimingTarget(vr.project, vr.step)} scale={scale} rowHeight={height} />
+                      ) : null}
                     </div>
 
                     {/* badge column (sticky) */}
@@ -421,7 +422,12 @@ function ProjectLeftCell({
           <span className="block truncate text-xs font-bold text-text" title={project.project_name}>
             {project.project_name}
           </span>
-          <span className="block truncate text-2xs text-text-muted">{project.hub}</span>
+          {/* P12: VIP pin (ADR 0022) and the served tracking status (ADR 0021). */}
+          <span className="flex min-w-0 items-center gap-1 text-2xs text-text-muted">
+            <span className="truncate">{project.hub}</span>
+            {project.is_vip ? <VipBadge className="px-1 py-px" /> : null}
+            <TrackingStatusChip status={project.tracking_status} className="px-1 py-px" />
+          </span>
         </span>
       </button>
       {/* P11 (ADR 0015): with Registration write this is a dropdown that moves the
@@ -456,22 +462,29 @@ function ProjectLeftCell({
 }
 
 function StepLeftCell({
-  name,
-  kind,
-  skipped,
-  sequenceOrder,
-  engineer,
-  chamber,
+  project,
+  step,
 }: {
-  name: string;
-  kind: WorkflowStepKind;
-  skipped: boolean;
-  sequenceOrder: number;
-  engineer: string | null;
-  chamber: string | null;
+  project: GanttProjectRow;
+  step: GanttStepRow;
 }): React.JSX.Element {
+  const { step_name: name, kind, skipped, sequence_order: sequenceOrder } = step;
   // An elapsed step books nobody (ADR 0007) — there is no resource to name.
-  const resource = kind === 'lab' ? chamber : kind === 'design' ? engineer : null;
+  const resource =
+    kind === 'lab' ? step.assigned_chamber_code : kind === 'design' ? step.assigned_engineer_name : null;
+  const host = useStepTimingHost();
+  const editable = host !== null && step.timing_editable !== 'none' && !skipped;
+  const edited = hasTimingEdit(step);
+  const editedTitle = edited
+    ? [
+        step.duration_override_weeks !== null
+          ? `duration ${String(step.duration_override_weeks)} wks (table ${String(step.lead_time_weeks)})`
+          : null,
+        step.start_not_before_week !== null ? `earliest start ${formatWeek(step.start_not_before_week)}` : null,
+      ]
+        .filter(Boolean)
+        .join(' · ')
+    : '';
   return (
     <div className={cn('flex min-w-0 flex-1 items-center gap-1.5 pl-4', skipped && 'opacity-60')}>
       <StepKindBadge kind={kind} compact />
@@ -488,6 +501,30 @@ function StepLeftCell({
           </span>
         ) : null}
       </span>
+      {/* P12 (ADR 0019): a planner override or start floor is set on this step. */}
+      {edited ? (
+        <span
+          className="inline-flex shrink-0 items-center gap-0.5 rounded-sm bg-primary-subtle px-1 text-[0.625rem] font-semibold leading-4 text-primary-subtle-fg"
+          title={`Timing edited: ${editedTitle}`}
+          data-testid="step-timing-edited"
+        >
+          <PencilLine className="size-2.5" aria-hidden="true" />
+          edited
+          <span className="sr-only">{`: ${editedTitle}`}</span>
+        </span>
+      ) : null}
+      {/* The keyboard alternative to dragging the bar. */}
+      {editable ? (
+        <button
+          type="button"
+          className="shrink-0 rounded-sm p-0.5 text-text-muted hover:bg-surface-sunken hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          aria-label={`Edit timing for ${name} (${project.project_name})`}
+          title="Edit timing"
+          onClick={() => host.openDialog(stepTimingTarget(project, step))}
+        >
+          <SlidersHorizontal className="size-3" aria-hidden="true" />
+        </button>
+      ) : null}
     </div>
   );
 }

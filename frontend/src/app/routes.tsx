@@ -12,6 +12,7 @@ import {
   AdminUsersPage,
   AuditLogPage,
   CapacityPage,
+  CheckInPage,
   DashboardPage,
   DesignSystemPage,
   ProfilePage,
@@ -19,9 +20,11 @@ import {
   LoginPage,
   MatrixPage,
   PlanningPage,
+  PriorityBoardPage,
   ProjectsPage,
   ProjectWorkspacePage,
   RegistrationPage,
+  VipProjectsPage,
   WorkflowSettingsPage,
 } from './lazy-surfaces';
 import { SURFACES } from './nav';
@@ -66,10 +69,13 @@ function AdminUsersRoute({
 
 const SURFACE_ELEMENTS: Partial<Record<string, React.ReactNode>> = {
   '/': lazyElement(<DashboardPage />),
+  '/vip': lazyElement(<VipProjectsPage />),
   '/projects': lazyElement(<ProjectsPage />),
   '/capacity': lazyElement(<CapacityPage />),
   '/matrix': lazyElement(<MatrixPage />),
+  '/priority-board': lazyElement(<PriorityBoardPage />),
   '/timeline': lazyElement(<GanttPage />),
+  '/check-in': lazyElement(<CheckInPage />),
   '/register': lazyElement(<RegistrationPage />),
   '/planning': lazyElement(<PlanningPage />),
   '/audit-log': lazyElement(<AuditLogPage />),

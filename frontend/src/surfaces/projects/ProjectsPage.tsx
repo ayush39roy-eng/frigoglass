@@ -9,7 +9,8 @@ import { EmptyState } from '@/components/shared/empty-state';
 import { ErrorState } from '@/components/shared/error-state';
 import { Skeleton } from '@/components/ui/skeleton';
 import { formatInteger } from '@/lib/format';
-import { useHubs } from '@/lib/api/reference';
+import { useHubFilter } from '@/stores/hub-filter';
+import { HubFilterChip } from '@/components/shared/hub-filter/hub-filter-chip';
 import { SURFACES } from '@/app/nav';
 import {
   PROJECT_CATEGORIES,
@@ -44,20 +45,22 @@ const PROJECTS_SURFACE = SURFACES.find((s) => s.path === '/projects');
  */
 export default function ProjectsPage(): React.JSX.Element {
   const [filters, setFilters] = React.useState<FilterState>(EMPTY);
-  const hubsQuery = useHubs();
+  // P12 (ADR 0020): the hub is the global header filter, not a local select.
+  const { hubId } = useHubFilter();
 
   const params = React.useMemo<ProjectFilterParams>(
     () => ({
-      hub_id: filters.hub_id === ALL ? undefined : filters.hub_id,
+      hub_id: hubId ?? undefined,
       category: filters.category === ALL ? undefined : (filters.category as ProjectCategory),
       status_: filters.status_ === ALL ? undefined : (filters.status_ as ProjectStatus),
       priority: filters.priority === ALL ? undefined : (filters.priority as ProjectPriority),
     }),
-    [filters],
+    [filters, hubId],
   );
 
   const query = useDashboardProjects(params);
-  const isFiltered = filters !== EMPTY && Object.values(filters).some((v) => v !== ALL);
+  const hasLocalFilter = filters !== EMPTY && Object.values(filters).some((v) => v !== ALL);
+  const isFiltered = hasLocalFilter || hubId !== null;
 
   const set = (key: keyof FilterState) => (next: string) =>
     setFilters((prev) => ({ ...prev, [key]: next }));
@@ -73,6 +76,7 @@ export default function ProjectsPage(): React.JSX.Element {
         description={description}
         actions={
           <>
+            <HubFilterChip />
             {query.data ? (
               <Badge tone="neutral" data-numeric="">
                 {formatInteger(query.data.total_count)}{' '}
@@ -95,12 +99,6 @@ export default function ProjectsPage(): React.JSX.Element {
 
       <div className="flex flex-wrap items-end gap-3 mb-gutter">
         <FilterSelect
-          label="Hub"
-          value={filters.hub_id}
-          onChange={set('hub_id')}
-          options={(hubsQuery.data ?? []).map((hub) => ({ value: hub.id, label: hub.name }))}
-        />
-        <FilterSelect
           label="Category"
           value={filters.category}
           onChange={set('category')}
@@ -118,7 +116,7 @@ export default function ProjectsPage(): React.JSX.Element {
           onChange={set('priority')}
           options={PROJECT_PRIORITIES.map((p) => ({ value: p, label: p }))}
         />
-        {isFiltered ? (
+        {hasLocalFilter ? (
           <Button variant="ghost" size="sm" onClick={() => setFilters(EMPTY)}>
             <FilterX />
             Clear

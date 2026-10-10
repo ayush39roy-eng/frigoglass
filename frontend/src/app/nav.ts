@@ -2,12 +2,15 @@ import * as React from 'react';
 import {
   Boxes,
   CalendarRange,
+  ClipboardCheck,
   FilePlus2,
   FolderKanban,
   GaugeCircle,
   LayoutDashboard,
   LayoutGrid,
   ScrollText,
+  SquareKanban,
+  Star,
   UsersRound,
   Workflow,
 } from 'lucide-react';
@@ -83,6 +86,21 @@ export const SURFACES: readonly SurfaceNavItem[] = [
     density: 'overview',
   },
   {
+    path: '/vip',
+    // P12 (ADR 0022 §1): reuses the `dashboard` permission, the same reasoning
+    // as the Projects page — a ranked view of facts the Dashboard already
+    // serves, not a new capability. Placed directly after Dashboard.
+    surface: 'dashboard',
+    label: 'VIP projects',
+    title: 'VIP Projects',
+    icon: Star,
+    task: 'P12-T05',
+    summary:
+      'The critical 10–15 projects per hub for the plan year or the next: pinned projects first, then ranked by priority and score, each with served finish, health, progress and tracking status.',
+    group: 'Plan',
+    density: 'overview',
+  },
+  {
     path: '/projects',
     // Reuses the `dashboard` permission rather than a new RBAC column: this
     // page reads the exact same `GET /dashboard/projects` rows as the
@@ -125,6 +143,21 @@ export const SURFACES: readonly SurfaceNavItem[] = [
     density: 'working',
   },
   {
+    path: '/priority-board',
+    // P12 (ADR 0018 §4): read reuses `matrix` (a new layout of the same
+    // facts); a drop is the existing priority move, gated on Registration
+    // write exactly like the P11 move control.
+    surface: 'matrix',
+    label: 'Priority board',
+    title: 'Priority Board',
+    icon: SquareKanban,
+    task: 'P12-T05',
+    summary:
+      'Every project in five columns (P1, P2, P3, P4, Q). Drag a card, or use its priority control, to move it; the timeline recalculates as for any priority move.',
+    group: 'Plan',
+    density: 'working',
+  },
+  {
     path: '/timeline',
     surface: 'gantt',
     label: 'Timeline',
@@ -133,6 +166,21 @@ export const SURFACES: readonly SurfaceNavItem[] = [
     task: 'P4-T05',
     summary:
       'Hand-built virtualized Gantt: 14 workflow steps per project across the 78-week horizon, engineer and chamber assignments, conflict and spillover markers.',
+    group: 'Execute',
+    density: 'working',
+  },
+  {
+    path: '/check-in',
+    // P12 (ADR 0021 §1): read on `project_workspace`. Who may WRITE a stage is
+    // decided per stage by the server (`can_check_in`), including the narrow
+    // Engineer own-stage right.
+    surface: 'project_workspace',
+    label: 'Weekly check-in',
+    title: 'Weekly Check-in',
+    icon: ClipboardCheck,
+    task: 'P12-T05',
+    summary:
+      'The stages due this week: report status, % complete and any hold reason in one batch, so project tracking stays live.',
     group: 'Execute',
     density: 'working',
   },

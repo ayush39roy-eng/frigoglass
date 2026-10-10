@@ -9,6 +9,7 @@ this.
 from __future__ import annotations
 
 import uuid
+from typing import Literal
 
 from pydantic import BaseModel
 
@@ -118,6 +119,10 @@ class ProjectFilterRow(BaseModel):
     category: ProjectCategory | None
     status: ProjectStatus
     priority: ProjectPriority | None
+    #: P12 (docs/API_CONTRACT_P12.md §5/§6): pinned as VIP (ADR 0022).
+    is_vip: bool
+    #: P12 (ADR 0021 §4), from `services.tracking.tracking_status_for`.
+    tracking_status: Literal["live", "due", "overdue", "idle"]
 
 
 class ProjectFilterResult(BaseModel):

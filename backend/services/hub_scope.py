@@ -65,7 +65,7 @@ from __future__ import annotations
 import uuid
 from typing import Any
 
-from sqlalchemy import ColumnElement, select
+from sqlalchemy import ColumnElement, and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import InstrumentedAttribute
 
@@ -193,3 +193,23 @@ def is_engineer_self_scoped(principal: Principal) -> bool:
     """
 
     return not principal.hub_ids and RoleName.ENGINEER in principal.roles
+
+
+def narrowed_hub_filter(
+    principal: Principal,
+    hub_id_column: InstrumentedAttribute[Any],
+    hub_id: uuid.UUID | None,
+) -> ColumnElement[bool] | None:
+    """ADR 0020: the RBAC scope (`hub_scope_filter`) AND the optional global
+    hub filter (`hub_id` query parameter). The filter only ever narrows: a
+    `hub_id` outside the caller's scope gives an always-empty predicate
+    (scope AND `column == hub_id`), so the endpoint answers with empty rows
+    and zero totals rather than a 403 that would reveal the hub has data.
+    `None` means no predicate at all (unrestricted caller, no filter).
+    """
+
+    scope = hub_scope_filter(principal, hub_id_column)
+    if hub_id is None:
+        return scope
+    chosen = hub_id_column == hub_id
+    return chosen if scope is None else and_(scope, chosen)

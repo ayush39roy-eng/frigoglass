@@ -213,6 +213,15 @@ class ProjectWorkflowStep(TimestampMixin, Base):
     remaining_weeks_override: Mapped[int | None] = mapped_column(Integer, nullable=True)
     blocked_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
 
+    # --- Step timing from the Gantt (docs/DOMAIN_RULES.md, ADR 0019) ---------
+    #: This project's duration for this step (1..104). Null = the lead-time
+    #: table (`duration_weeks`) applies. Never revives a skipped step (table
+    #: duration 0). A planner input: a schedule run never overwrites it.
+    duration_override_weeks: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    #: A `Not Started` step may not start before this week (1..HORIZON_WEEKS).
+    #: Null = no floor. A planner input: a schedule run never overwrites it.
+    start_not_before_week: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
     #: Design steps only (docs/DOMAIN_RULES.md booking rules).
     assigned_engineer_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("engineers.id"), nullable=True
@@ -266,6 +275,15 @@ class ProjectWorkflowStep(TimestampMixin, Base):
             "AND length(btrim(blocked_reason)) > 0) "
             "OR (status <> 'Blocked' AND blocked_reason IS NULL)",
             name="status_blocked_reason_consistency",
+        ),
+        # ADR 0019 (migration p12a_step_timing).
+        CheckConstraint(
+            "duration_override_weeks IS NULL OR duration_override_weeks BETWEEN 1 AND 104",
+            name="duration_override_range",
+        ),
+        CheckConstraint(
+            "start_not_before_week IS NULL OR start_not_before_week BETWEEN 1 AND 78",
+            name="start_not_before_range",
         ),
     )
 

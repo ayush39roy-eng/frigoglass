@@ -85,6 +85,7 @@ from scheduling.types import (
     ScheduleInput,
     ScheduleOutput,
     StepProgressInput,
+    StepTimingInput,
 )
 from scheduling.types import WorkflowStepTemplate as SchedWorkflowStepTemplate
 from services.notifications import generate_schedule_change_notifications
@@ -137,7 +138,8 @@ def build_workflow_snapshot(
 
 def build_workflow_snapshot_from_input(schedule_input: ScheduleInput) -> dict[str, Any]:
     """Same shape and ordering as `build_workflow_snapshot`, built from the
-    templates and lead times *inside the solver input*. P9-T03: this is what
+    templates and lead times *inside the solver input*, plus (P12, ADR 0019)
+    a `step_timing` list of the per-project step timing inputs. P9-T03: this is what
     `persist_schedule_output` stores, so the snapshot equals the settings the
     run was actually solved with (I15), even when Workflow Settings changed
     while a CP-SAT solve was running.
@@ -168,7 +170,42 @@ def build_workflow_snapshot_from_input(schedule_input: ScheduleInput) -> dict[st
                 schedule_input.lead_times, key=lambda lt: (lt.workflow_id, lt.category, lt.step_id)
             )
         ],
+        # ADR 0019 (P12): the Gantt-set step timing the run was solved with,
+        # so a run can be replayed. One row per (project, step) carrying any
+        # timing, ordered by project id then step id.
+        "step_timing": [
+            {
+                "project_id": p.project_id,
+                "step_id": t.step_id,
+                "duration_override_weeks": t.duration_override_weeks,
+                "start_not_before_week": t.start_not_before_week,
+            }
+            for p in sorted(schedule_input.projects, key=lambda p: p.project_id)
+            for t in sorted(p.step_timing, key=lambda t: t.step_id)
+        ],
     }
+
+
+def _project_step_timing(
+    rows: Sequence[StepTimingInput],
+    workflow_id: str,
+    template_workflow: dict[str, str],
+) -> tuple[StepTimingInput, ...]:
+    """ADR 0019: a project's `ProjectInput.step_timing`. Only rows that carry
+    a value (the caller already drops rows with both fields null) and only
+    steps of the project's *current* workflow: the scheduler rejects an
+    unknown step id with `ValueError`, which would fail the whole run, so a
+    row left behind by a PDD↔OEM hub change never reaches it
+    (`services.project_steps` also clears timing on a re-point). Sorted by
+    step id, so the hashed input is deterministic (I8).
+    """
+
+    return tuple(
+        sorted(
+            (t for t in rows if template_workflow.get(t.step_id) == workflow_id),
+            key=lambda t: t.step_id,
+        )
+    )
 
 
 async def build_schedule_input_from_db(
@@ -215,6 +252,8 @@ async def build_schedule_input_from_db(
         .all()
     )
     progress_by_project: dict[uuid.UUID, list[StepProgressInput]] = {}
+    timing_by_project: dict[uuid.UUID, list[StepTimingInput]] = {}
+    template_workflow = {t.id: t.workflow_id for t in template_rows}
     for s in step_rows:
         progress_by_project.setdefault(s.project_id, []).append(
             StepProgressInput(
@@ -226,6 +265,16 @@ async def build_schedule_input_from_db(
                 remaining_weeks_override=s.remaining_weeks_override,
             )
         )
+        # ADR 0019 (P12): Gantt-set timing, only for steps that carry any.
+        # Sorted by step_id so the hashed input is deterministic (I8).
+        if s.duration_override_weeks is not None or s.start_not_before_week is not None:
+            timing_by_project.setdefault(s.project_id, []).append(
+                StepTimingInput(
+                    step_id=s.step_template_id,
+                    duration_override_weeks=s.duration_override_weeks,
+                    start_not_before_week=s.start_not_before_week,
+                )
+            )
 
     projects = tuple(
         ProjectInput(
@@ -243,6 +292,11 @@ async def build_schedule_input_from_db(
             certification_testing_required=p.certification_testing_required,
             target_end_week=p.target_end_week,
             step_progress=tuple(progress_by_project.get(p.id, ())),
+            step_timing=_project_step_timing(
+                timing_by_project.get(p.id, ()),
+                workflow_id_for_hub(p.hub.is_oem),
+                template_workflow,
+            ),
         )
         for p in project_rows
     )

@@ -22,6 +22,10 @@ function step(seq: number, start: number, end: number): GanttStepRow {
     assigned_chamber_code: null,
     eng_conflict: false,
     chamber_overlap: false,
+    lead_time_weeks: 2,
+    duration_override_weeks: null,
+    start_not_before_week: null,
+    timing_editable: 'none',
   };
 }
 
@@ -45,6 +49,8 @@ function project(id: string, steps: GanttStepRow[]): GanttProjectRow {
     blocked: false,
     schedule_stale: false,
     workflow_id: 'PDD',
+    is_vip: false,
+    tracking_status: 'idle',
     steps,
   };
 }

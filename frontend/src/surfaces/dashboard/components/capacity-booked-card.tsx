@@ -9,6 +9,7 @@ import { CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { CardInfo } from '@/components/ui/card-info';
 import { PanelSkeleton } from '@/components/ui/panel-skeleton';
 import { formatBookedPct } from '@/lib/format';
+import { useHubFilter } from '@/stores/hub-filter';
 import { useHubLoadVsCapacity } from '@/surfaces/capacity/hooks/use-capacity';
 import type { CapacityArea } from '@/surfaces/capacity/api/types';
 import type { BookingStatus } from '@/types/enums';
@@ -72,7 +73,10 @@ function AreaLine({ area }: { area: CapacityArea }): React.JSX.Element {
 }
 
 export function CapacityBookedCard(): React.JSX.Element | null {
-  const query = useHubLoadVsCapacity();
+  // Same key + cache as the Capacity page, under the same global hub filter
+  // (P12, ADR 0020): with a hub, the server serves only the area containing it.
+  const { hubId } = useHubFilter();
+  const query = useHubLoadVsCapacity({ hubId });
   if (query.isPending) return <PanelSkeleton height="h-40" />;
   const data = query.data;
   // A read error (e.g. a stale permission table) or no run / no area in scope:

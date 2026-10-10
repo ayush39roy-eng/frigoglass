@@ -1,10 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { screen, within } from '@testing-library/react';
+import { act, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
 import { renderWithProviders } from '@/test/render';
 import { fullPermissions } from '@/test/session';
 import { ApiError } from '@/lib/api/client';
+import { useHubFilterStore } from '@/stores/hub-filter';
 import type { GanttProjectRow, GanttStepRow } from './api/types';
 
 // Deterministic virtualization: render every visual row.
@@ -61,6 +62,10 @@ function step(seq: number, start: number, end: number, over: Partial<GanttStepRo
     assigned_chamber_code: null,
     eng_conflict: false,
     chamber_overlap: false,
+    lead_time_weeks: 2,
+    duration_override_weeks: null,
+    start_not_before_week: null,
+    timing_editable: 'none',
     ...over,
   };
 }
@@ -86,6 +91,8 @@ function project(over: Partial<GanttProjectRow> = {}): GanttProjectRow {
     blocked: false,
     schedule_stale: false,
     workflow_id: 'PDD',
+    is_vip: false,
+    tracking_status: 'idle',
     steps,
     ...over,
   };
@@ -109,6 +116,7 @@ function ganttData(over: Record<string, unknown> = {}) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  useHubFilterStore.setState({ hubId: null });
   hooks.useActiveScheduleRun.mockReturnValue({ data: null });
   hooks.useToggleFreeze.mockReturnValue({ mutateAsync: vi.fn().mockResolvedValue({}) });
   hooks.useGantt.mockReturnValue(ganttData());
@@ -156,13 +164,20 @@ describe('GanttPage', () => {
     expect(screen.queryByText('Execution timeline')).not.toBeInTheDocument();
   });
 
-  it('changing the hub filter re-requests the Gantt with the new hub id (query key input)', async () => {
+  it('follows the global header hub filter (P12, ADR 0020): no page-local select, hub id passed, chip clears it', async () => {
     const user = userEvent.setup();
     renderWithProviders(<GanttPage />);
     expect(hooks.useGantt).toHaveBeenLastCalledWith({ hubId: undefined });
-    await user.click(screen.getByRole('combobox', { name: 'Hub' }));
-    await user.click(screen.getByRole('option', { name: 'R&D-India' }));
+    expect(screen.queryByRole('combobox', { name: 'Hub' })).not.toBeInTheDocument();
+    expect(screen.queryByTestId('hub-filter-chip')).not.toBeInTheDocument();
+
+    act(() => useHubFilterStore.getState().setHubId('hub-india'));
     expect(hooks.useGantt).toHaveBeenLastCalledWith({ hubId: 'hub-india' });
+    expect(screen.getByTestId('hub-filter-chip')).toHaveTextContent('Hub: R&D-India');
+
+    await user.click(screen.getByRole('button', { name: 'Clear hub filter (R&D-India)' }));
+    expect(useHubFilterStore.getState().hubId).toBeNull();
+    expect(hooks.useGantt).toHaveBeenLastCalledWith({ hubId: undefined });
   });
 
   it('renders the outcome badges from the server flags', () => {

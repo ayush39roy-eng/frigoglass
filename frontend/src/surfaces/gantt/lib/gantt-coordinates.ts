@@ -180,3 +180,85 @@ export function slipBracketGeometry(
   const b = completionMarkerX(projectedEndWeek, scale);
   return { x: Math.min(a, b), width: Math.abs(b - a) };
 }
+
+// ---------------------------------------------------------------------------
+// P12 (ADR 0019): drag a step bar. Pure pointer-pixels → whole-weeks maths for
+// the gesture only. The result is a REQUEST (`start_not_before_week` or
+// `duration_override_weeks`); where the bar really lands is decided by the next
+// schedule run (precedence and capacity still apply), never by this module.
+// ---------------------------------------------------------------------------
+
+/** Upper bound of `duration_override_weeks` (ADR 0019, `backend/schemas/step_timing.py`). */
+export const DURATION_OVERRIDE_MAX_WEEKS = 104;
+
+export type StepDragMode = 'move' | 'resize';
+
+/** A pointer offset in px, snapped to whole weeks (round half away from zero). */
+export function snapWeekDelta(dxPx: number, scale: WeekScale): number {
+  if (!Number.isFinite(dxPx) || scale.weekWidthPx <= 0) return 0;
+  const weeks = dxPx / scale.weekWidthPx;
+  const snapped = Math.sign(weeks) * Math.round(Math.abs(weeks));
+  return snapped === 0 ? 0 : snapped; // never -0
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value));
+}
+
+/** Body drag: the requested earliest start week, clamped to `1..horizonWeeks`. */
+export function dragMoveStartWeek(originStartWeek: number, deltaWeeks: number, scale: WeekScale): number {
+  return clamp(originStartWeek + deltaWeeks, scale.originWeek, scale.originWeek + scale.horizonWeeks - 1);
+}
+
+/** Right-edge drag: the requested duration, clamped to `1..104` weeks. */
+export function dragResizeDuration(originDurationWeeks: number, deltaWeeks: number): number {
+  return clamp(originDurationWeeks + deltaWeeks, 1, DURATION_OVERRIDE_MAX_WEEKS);
+}
+
+export interface StepDragOrigin {
+  /** The bar as served: `planned_start_week..planned_end_week` (inclusive). */
+  startWeek: number;
+  endWeek: number;
+  /** The served effective duration (`duration_weeks`). */
+  durationWeeks: number;
+}
+
+export interface StepDragResult {
+  /** The ghost bar's span, inclusive, for display while dragging. */
+  ghost: { startWeek: number; endWeek: number };
+  /** The value the drop would send, or `null` when the drop changes nothing. */
+  request: { start_not_before_week: number } | { duration_override_weeks: number } | null;
+}
+
+/**
+ * The ghost and request for a drag of `dxPx` from `origin`.
+ * - `move`: the whole bar shifts; the request is the new start week as a floor.
+ * - `resize`: the end edge moves; the request is the new duration
+ *   (`durationWeeks + Δ`). For a started step the server derives the remaining
+ *   tail from it, so the ghost is indicative only.
+ * The ghost never extends past the horizon's last week.
+ */
+export function stepDragResult(
+  mode: StepDragMode,
+  origin: StepDragOrigin,
+  dxPx: number,
+  scale: WeekScale,
+): StepDragResult {
+  const delta = snapWeekDelta(dxPx, scale);
+  const lastWeek = scale.originWeek + scale.horizonWeeks - 1;
+  if (mode === 'move') {
+    const start = dragMoveStartWeek(origin.startWeek, delta, scale);
+    const shift = start - origin.startWeek;
+    return {
+      ghost: { startWeek: start, endWeek: Math.min(lastWeek, origin.endWeek + shift) },
+      request: shift === 0 ? null : { start_not_before_week: start },
+    };
+  }
+  const duration = dragResizeDuration(origin.durationWeeks, delta);
+  const change = duration - origin.durationWeeks;
+  const end = Math.min(lastWeek, Math.max(origin.startWeek, origin.endWeek + change));
+  return {
+    ghost: { startWeek: origin.startWeek, endWeek: end },
+    request: change === 0 ? null : { duration_override_weeks: duration },
+  };
+}

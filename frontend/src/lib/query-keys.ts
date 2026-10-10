@@ -14,6 +14,19 @@
 
 import type { CurrencyCode, HubName, ProjectCategory } from '@/types/enums';
 
+/**
+ * P12 (ADR 0020): append the global hub filter to a key. `undefined` returns
+ * the bare prefix, so `invalidateQueries({ queryKey: k() })` still matches every
+ * hub's entry; `null` ("All hubs") and a hub uuid are distinct cache entries,
+ * so switching hubs refetches instead of serving another hub's figures.
+ */
+function withHub<const K extends readonly string[]>(
+  base: K,
+  hubId: string | null | undefined,
+): K | readonly [...K, { hubId: string | null }] {
+  return hubId === undefined ? base : ([...base, { hubId }] as const);
+}
+
 export const queryKeys = {
   // --- reference / config ---
   hubs: () => ['hubs'] as const,
@@ -34,7 +47,7 @@ export const queryKeys = {
     currency?: CurrencyCode | undefined;
     category?: ProjectCategory | undefined;
   }) => ['priority-matrix', params ?? null] as const,
-  prioritySummary: () => ['priority-matrix', 'summary'] as const,
+  prioritySummary: (hubId?: string | null) => withHub(['priority-matrix', 'summary'], hubId),
   priorityRow: (id: string, currency?: CurrencyCode) =>
     ['priority-matrix', 'detail', id, currency ?? null] as const,
   priorityApplicationRuns: () => ['priority-application-runs'] as const,
@@ -55,10 +68,13 @@ export const queryKeys = {
   scheduleRunChanges: (runId: string, againstRunId: string) =>
     ['schedule-runs', runId, 'changes', againstRunId] as const,
   dashboard: (versionId?: string) => ['dashboard', versionId ?? 'active'] as const,
-  dashboardPipelineTotals: () => ['dashboard', 'pipeline-totals'] as const,
-  dashboardStatusOverview: () => ['dashboard', 'status-overview'] as const,
-  dashboardHubTypePipeline: () => ['dashboard', 'hub-type-pipeline'] as const,
-  dashboardCompletingWithinYear: () => ['dashboard', 'completing-within-year'] as const,
+  // P12 (ADR 0020): `hubId` is the global header hub filter. `undefined` gives
+  // the prefix (for invalidation); `null` is "All hubs"; a uuid is one hub.
+  dashboardPipelineTotals: (hubId?: string | null) => withHub(['dashboard', 'pipeline-totals'], hubId),
+  dashboardStatusOverview: (hubId?: string | null) => withHub(['dashboard', 'status-overview'], hubId),
+  dashboardHubTypePipeline: (hubId?: string | null) => withHub(['dashboard', 'hub-type-pipeline'], hubId),
+  dashboardCompletingWithinYear: (hubId?: string | null) =>
+    withHub(['dashboard', 'completing-within-year'], hubId),
   dashboardProjects: (filters?: DashboardProjectFilters) =>
     ['dashboard', 'projects', filters ?? null] as const,
   // Every changeable Gantt filter input goes in the key (P4-T04 review blocker:
@@ -69,9 +85,10 @@ export const queryKeys = {
 
   // --- capacity ---
   capacity: (params?: { hub?: HubName; versionId?: string }) => ['capacity', params ?? null] as const,
-  capacityHubLoad: () => ['capacity', 'hub-load'] as const,
-  capacityClassBreakdown: () => ['capacity', 'class-breakdown'] as const,
-  capacityUtilizationMatrix: () => ['capacity', 'utilization-matrix'] as const,
+  // P12 (ADR 0020): same `withHub` convention as the dashboard keys above.
+  capacityHubLoad: (hubId?: string | null) => withHub(['capacity', 'hub-load'], hubId),
+  capacityClassBreakdown: (hubId?: string | null) => withHub(['capacity', 'class-breakdown'], hubId),
+  capacityUtilizationMatrix: (hubId?: string | null) => withHub(['capacity', 'utilization-matrix'], hubId),
   capacityPlanning: (hub?: HubName) => ['capacity-planning', hub ?? null] as const,
   // `hubId` (uuid, `GET /engineers?hub_id=`) — corrected from an earlier
   // `HubName` typing (P4-T01 placeholder, never exercised until P4-T06's
@@ -120,6 +137,14 @@ export const queryKeys = {
   projectWorkspace: (id: string) => ['projects', 'workspace', id] as const,
   projectActivity: (id: string, before?: string) => ['projects', 'workspace', id, 'activity', before ?? null] as const,
   mentionSearch: (q: string) => ['users', 'mention-search', q] as const,
+
+  // --- P12 (frontend B): Priority board, VIP projects, weekly check-in ---
+  // `hubId` is the global hub filter (ADR 0020), sent as `hub_id`.
+  priorityBoard: (hubId: string | null) => ['priority-board', hubId] as const,
+  vipProjects: (params: { year: 'plan' | 'next'; hubId: string | null; limit: number }) =>
+    ['vip-projects', params] as const,
+  checkInsDue: (hubId: string | null) => ['check-ins', 'due', hubId] as const,
+  checkInHistory: (projectId: string, stepId: string) => ['check-ins', 'history', projectId, stepId] as const,
 
   // --- cross-cutting ---
   // Audit Log surface (P7-T05, `GET /audit-log` — `backend/api/routers/

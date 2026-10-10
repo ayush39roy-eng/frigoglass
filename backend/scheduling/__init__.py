@@ -2,8 +2,9 @@
 
 Owned exclusively by `algorithm-engineer`. Rules enforced here are exactly
 `docs/DOMAIN_RULES.md`'s "Scheduling order", "Precedence", "Booking rules",
-"Per-stage progress capture", "Expected vs projected completion" and
-Invariants I1-I17 — implemented from that document directly. The prototype
+"Per-stage progress capture", "Expected vs projected completion", "Step
+timing from the Gantt" and Invariants I1-I17, I21-I22 — implemented from that
+document directly. The prototype
 oracle was retired at P2 close.
 
 Purity contract:
@@ -60,6 +61,7 @@ from scheduling.types import (
     ScheduleOutput,
     StepProgressInput,
     StepSchedule,
+    StepTimingInput,
     WorkflowStepTemplate,
     default_lead_times,
     default_workflow_templates,
@@ -69,6 +71,7 @@ from scheduling.workflow import (
     analyse_project,
     build_lead_time_table,
     build_workflows,
+    canonical_step_timing,
     compute_progress_pct,
     derive_remaining,
     project_progress_pct,
@@ -96,10 +99,12 @@ __all__ = [
     "SolverComparisonReport",
     "StepProgressInput",
     "StepSchedule",
+    "StepTimingInput",
     "WorkflowStepTemplate",
     "analyse_project",
     "build_lead_time_table",
     "build_workflows",
+    "canonical_step_timing",
     "check_scheduler_determinism",
     "compare_solvers",
     "compute_design_load_by_hub",

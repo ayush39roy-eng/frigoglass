@@ -177,6 +177,11 @@ class Project(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     schedule_stale: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=False, server_default="false"
     )
+    #: ADR 0022 (P12): a planner pinned this project as VIP. A project flag,
+    #: not per year; never changes scheduling order and never recalculates.
+    is_vip: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false"
+    )
     #: "PDD" or "OEM": the project's workflow, a function of its hub
     #: (`workflow_id_for_hub`, DOMAIN_RULES "A project's workflow is a
     #: function of its hub"). A read-only correlated subquery, not a stored

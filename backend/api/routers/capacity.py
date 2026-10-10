@@ -28,6 +28,12 @@ kinds are read from that run's `workflow_snapshot` (`services.active_run`).
 summary adds the Europe / India roll-up (`areas`), built from the in-scope
 hub rows only, with each lab region counted once (I19). Reporting figures:
 they never gate booking.
+
+**Global hub filter (P12, ADR 0020).** Every GET here takes an optional
+`hub_id`, ANDed with the RBAC scope (never widening; out of scope → empty
+rows / zero totals, not 403). `/capacity/hubs` then serves only that hub's
+row, and `areas[]` only the area containing it (its design figures are that
+hub's; its lab figures stay region-wide, ADR 0020 §4).
 """
 
 from __future__ import annotations
@@ -74,7 +80,7 @@ from services.capacity_supply import (
     region_holiday_weeks,
     round2,
 )
-from services.hub_scope import hub_scope_filter, scoped_lab_regions
+from services.hub_scope import is_hub_in_scope, narrowed_hub_filter, scoped_lab_regions
 
 router = APIRouter(prefix="/capacity", tags=["capacity"])
 
@@ -88,6 +94,7 @@ async def _active_run(db: AsyncSession) -> ScheduleRun | None:
 @router.get("/hub-load", response_model=HubCapacitySummary)
 @router.get("/hubs", response_model=HubCapacitySummary)
 async def hub_load_vs_capacity(
+    hub_id: uuid.UUID | None = None,
     db: AsyncSession = Depends(get_db),
     current_user: Principal = Depends(_read),
 ) -> HubCapacitySummary:
@@ -103,7 +110,7 @@ async def hub_load_vs_capacity(
     """
 
     hub_stmt = select(Hub).order_by(Hub.name)
-    hub_filter = hub_scope_filter(current_user, Hub.id)
+    hub_filter = narrowed_hub_filter(current_user, Hub.id, hub_id)
     if hub_filter is not None:
         hub_stmt = hub_stmt.where(hub_filter)
     hubs = (await db.execute(hub_stmt)).scalars().all()
@@ -326,6 +333,7 @@ def _area_rows(rows: list[HubCapacityRow]) -> list[CapacityArea]:
 
 @router.get("/class-breakdown", response_model=ClassBreakdown)
 async def class_breakdown(
+    hub_id: uuid.UUID | None = None,
     db: AsyncSession = Depends(get_db),
     current_user: Principal = Depends(_read),
 ) -> ClassBreakdown:
@@ -349,7 +357,7 @@ async def class_breakdown(
         .where(ScheduleRunProjectOutcome.schedule_run_id == active_run.id)
         .where(Project.category.is_not(None))
     )
-    hub_filter = hub_scope_filter(current_user, Project.hub_id)
+    hub_filter = narrowed_hub_filter(current_user, Project.hub_id, hub_id)
     if hub_filter is not None:
         stmt = stmt.where(hub_filter)
     result = (await db.execute(stmt)).all()
@@ -377,6 +385,7 @@ async def class_breakdown(
 
 @router.get("/utilization-matrix", response_model=UtilizationMatrix)
 async def utilization_matrix(
+    hub_id: uuid.UUID | None = None,
     db: AsyncSession = Depends(get_db),
     current_user: Principal = Depends(_read),
 ) -> UtilizationMatrix:
@@ -392,13 +401,26 @@ async def utilization_matrix(
         )
 
     eng_stmt = select(Engineer).options(selectinload(Engineer.hub))
-    eng_hub_filter = hub_scope_filter(current_user, Engineer.hub_id)
+    eng_hub_filter = narrowed_hub_filter(current_user, Engineer.hub_id, hub_id)
     if eng_hub_filter is not None:
         eng_stmt = eng_stmt.where(eng_hub_filter)
     engineers = (await db.execute(eng_stmt)).scalars().all()
 
     chamber_stmt = select(Chamber)
     regions = await scoped_lab_regions(db, current_user)
+    if hub_id is not None:
+        # ADR 0020 §4: a hub narrows the chambers to its own lab region (the
+        # week counts stay region-wide: chambers are shared across a region).
+        # Out of scope → no chambers, like every other filtered row.
+        hub_region = (
+            await db.execute(select(Hub.lab_region).where(Hub.id == hub_id))
+        ).scalar_one_or_none()
+        chosen = (
+            {hub_region}
+            if hub_region is not None and is_hub_in_scope(current_user, hub_id)
+            else set()
+        )
+        regions = chosen if regions is None else regions & chosen
     if regions is not None:
         chamber_stmt = chamber_stmt.where(Chamber.lab_region.in_(regions))
     chambers = (await db.execute(chamber_stmt)).scalars().all()

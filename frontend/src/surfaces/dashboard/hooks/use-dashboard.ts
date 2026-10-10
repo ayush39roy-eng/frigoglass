@@ -1,7 +1,9 @@
 /**
  * TanStack Query hooks for the Global RPD Dashboard surface (P4-T02).
  *
- * Keys come from `lib/query-keys.ts` (single source of truth). Nothing here
+ * Keys come from `lib/query-keys.ts` (single source of truth). P12 (ADR 0020):
+ * each aggregate hook takes the global hub filter (`stores/hub-filter.ts`) and
+ * puts it in its key, so switching hubs refetches. Nothing here
  * derives a number — hooks return raw API payloads and the components format
  * them (Invariant I9 — no independent calculation, including in the frontend).
  */
@@ -28,34 +30,34 @@ function retryUnlessAuth(failureCount: number, error: Error): boolean {
   return failureCount < 1;
 }
 
-export function useCompletingWithinYear() {
+export function useCompletingWithinYear(hubId: string | null = null) {
   return useQuery({
-    queryKey: queryKeys.dashboardCompletingWithinYear(),
-    queryFn: ({ signal }) => fetchCompletingWithinYear({ signal }),
+    queryKey: queryKeys.dashboardCompletingWithinYear(hubId),
+    queryFn: ({ signal }) => fetchCompletingWithinYear({ signal }, hubId),
     retry: retryUnlessAuth,
   });
 }
 
-export function usePipelineTotals() {
+export function usePipelineTotals(hubId: string | null = null) {
   return useQuery({
-    queryKey: queryKeys.dashboardPipelineTotals(),
-    queryFn: ({ signal }) => fetchPipelineTotals({ signal }),
+    queryKey: queryKeys.dashboardPipelineTotals(hubId),
+    queryFn: ({ signal }) => fetchPipelineTotals({ signal }, hubId),
     retry: retryUnlessAuth,
   });
 }
 
-export function useStatusOverview() {
+export function useStatusOverview(hubId: string | null = null) {
   return useQuery({
-    queryKey: queryKeys.dashboardStatusOverview(),
-    queryFn: ({ signal }) => fetchStatusOverview({ signal }),
+    queryKey: queryKeys.dashboardStatusOverview(hubId),
+    queryFn: ({ signal }) => fetchStatusOverview({ signal }, hubId),
     retry: retryUnlessAuth,
   });
 }
 
-export function useHubTypePipeline() {
+export function useHubTypePipeline(hubId: string | null = null) {
   return useQuery({
-    queryKey: queryKeys.dashboardHubTypePipeline(),
-    queryFn: ({ signal }) => fetchHubTypePipeline({ signal }),
+    queryKey: queryKeys.dashboardHubTypePipeline(hubId),
+    queryFn: ({ signal }) => fetchHubTypePipeline({ signal }, hubId),
     retry: retryUnlessAuth,
   });
 }

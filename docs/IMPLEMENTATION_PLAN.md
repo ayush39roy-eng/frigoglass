@@ -1666,6 +1666,7 @@ I21–I23. Open questions #28–#33.
 
 - **P12-T00**: Docs. Owner: rpd-orchestrator. Status: DONE (2026-10-10).
 - **P12-T01**: Scheduler step timing (ADR 0019, contract §1). Owner: algorithm-engineer. Depends
+  Status: DONE (2026-10-10; `docs/MEMORY.md` "P12-T01 — algorithm-engineer").
   on: P12-T00.
   - `StepTimingInput`, `ProjectInput.step_timing`; effective duration in greedy, CP-SAT,
     unconstrained finish, remaining-duration derivation, roll-up weights; floor for Not Started.
@@ -1674,6 +1675,7 @@ I21–I23. Open questions #28–#33.
     override longer, override shorter, floor later than precedence, floor earlier than precedence
     (no effect), In Progress resize, skipped step with override (stays skipped); self-tests green.
 - **P12-T02**: Backend A — step timing endpoint + hub filter (contract §0 p12a, §3, §4). Owner:
+  Status: DONE (2026-10-10; `docs/MEMORY.md` "P12-T02 — backend-builder (A)").
   backend-builder. Depends on: P12-T00; the input wiring depends on P12-T01.
   - Migration `p12a_step_timing`; model columns; `PATCH …/steps/{step_id}/timing` with every 409;
     dispatch via `run_dispatch`; Gantt step row and project row extensions; schedule input build
@@ -1684,6 +1686,8 @@ I21–I23. Open questions #28–#33.
     `recalc_status`, hub filter never widens scope (out-of-scope `hub_id` ⇒ zeros), I23 on a seed.
 - **P12-T03**: Backend B — Priority board, VIP, check-ins, tracking status (contract §0 p12b, §2,
   §5, §6). Owner: backend-builder. Depends on: P12-T00.
+  Status: DONE (`docs/MEMORY.md` 2026-10-10 "P12-T03 — backend-builder (B)"; includes the ADR 0023
+  amendment).
   - Migration `p12b_vip_checkins` (down_revision `p12a_step_timing`); `StageCheckin` model with
     UPDATE/DELETE protection; `services/tracking.py`; `GET /priority-board`; `GET /check-ins/due`,
     `POST /check-ins`, `GET /check-ins/history`; `GET /vip-projects`, `PUT /projects/{id}/vip`;
@@ -1692,12 +1696,14 @@ I21–I23. Open questions #28–#33.
     `FORBIDDEN_STAGE` otherwise), batch atomicity, server-filled actual weeks, VIP ranking and
     `over_limit`, check-in rows immutable.
 - **P12-T04**: Frontend A — global hub filter + Gantt drag (ADR 0019, 0020). Owner:
+  Status: DONE (2026-10-10; `docs/MEMORY.md` "P12-T04 — frontend-builder (A)").
   frontend-builder. Depends on: P12-T00.
   - `stores/hub-filter.ts`, header hub select, every portfolio surface wired (query keys + params),
     Gantt local select removed, "Hub: X" chip; Gantt bar move + right-edge resize with week snapping,
     honouring `timing_editable`, keyboard alternative (a timing dialog), optimistic ghost then the
     P11 run-follow + "Timeline updated" panel, "Reset timing"; VIP badge and tracking chip on rows.
 - **P12-T05**: Frontend B — Priority board, VIP projects, Weekly check-in surfaces (ADR 0018, 0021,
+  Status: DONE (2026-10-10; `docs/MEMORY.md` "P12-T05 — frontend-builder (B)").
   0022). Owner: frontend-builder. Depends on: P12-T00.
   - Three nav entries and routes; Kanban with accessible drag (pointer + keyboard) calling the P11
     move flow; VIP page with year toggle and pin control; check-in page with batch form, "per plan"
@@ -1710,3 +1716,25 @@ I21–I23. Open questions #28–#33.
 - **P12-T08**: `security-auditor` gate (P11 + P12): Engineer check-in write scope, hub-filter
   non-widening, timing/VIP/board RBAC incl. grants, check-in immutability, rate limiting, no
   per-engineer ranking (GDPR).
+
+### P12 amendment (2026-10-10, after the owner's answers to OQ #28–#33) — ADR 0023
+
+- **P12-T03 (backend B) extended:** `POST /check-ins` dispatches one greedy run per batch
+  (`trigger_reason="check_in"`, priority-move lifecycle; response gains `recalc_status`,
+  `schedule_run_id`, `baseline_run_id`, `task_id`). Coalesced follow-up run in
+  `services/run_dispatch.py` + worker completion + `schedule_run_sweeper` (durable flag in Postgres,
+  added to migration `p12b_vip_checkins`), honoured by `priority_move`, `step_timing`, `check_in`.
+  Tests: burst of N deferred ⇒ exactly one follow-up (I24); follow-up on failure/sweep; Workspace
+  Recalculate unchanged.
+- **P12-T04 / P12-T05 (frontend) extended:** `deferred` copy becomes "Saved — the timeline updates
+  automatically after the current recalculation"; the UI watches for the next active run and
+  refreshes; check-in submit follows a `queued` run and shows the "Timeline updated" panel.
+- **P12-T07 (workflow-auditor) extended:** I24.
+
+### P12 follow-ups (non-blocking, recorded at orchestrator review 2026-10-10)
+
+- **P12-F01**: Touch drag on the Priority board (pointer events or a library); the per-card move
+  control is the touch path until then. Owner: frontend-builder. Status: OPEN.
+- **P12-F02**: Extend P11-F01 (per-project effective role) to the board drag, VIP pin and check-in
+  for users whose only write route is an Admin-level grant. Owner: backend-builder +
+  frontend-builder. Status: OPEN.

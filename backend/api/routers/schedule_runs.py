@@ -445,7 +445,9 @@ async def dispatch_cp_sat_run(
     than intended.
     """
 
-    in_flight = await find_in_flight_run(db)
+    # ADR 0023 §4: an explicit dispatch never registers or consumes the
+    # coalesced follow-up run.
+    in_flight = await find_in_flight_run(db, request_follow_up=False)
     if in_flight is not None:
         raise CodedHTTPException(
             status.HTTP_409_CONFLICT,

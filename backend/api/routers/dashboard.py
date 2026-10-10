@@ -12,6 +12,11 @@ qualifier on Dashboard; Portfolio Manager/Executive Viewer/Admin are
 unrestricted (`hub_scope_all=True`) and continue to see portfolio-wide
 totals unchanged.
 
+**Global hub filter (P12, ADR 0020).** Every GET here takes an optional
+`hub_id`, ANDed with the RBAC scope (`services.hub_scope.narrowed_hub_filter`)
+so it never widens it: an out-of-scope `hub_id` answers empty rows and zero
+totals, not 403. Totals are computed here for the filtered set (I9, I23).
+
 Per Invariant I9 ("`within_year` count on the Dashboard equals the count of
 projects satisfying the within-year rule in the current schedule run. No
 independent calculation anywhere"): `completing_within_year` below is the only
@@ -49,7 +54,8 @@ from schemas.dashboard import (
     ProjectFilterRow,
     StatusOverview,
 )
-from services.hub_scope import hub_scope_filter
+from services.hub_scope import hub_scope_filter, narrowed_hub_filter
+from services.tracking import tracking_status_for
 
 router = APIRouter(prefix="/dashboard", tags=["dashboard"])
 
@@ -65,6 +71,7 @@ _FOUR_SCHEDULABLE_STATUSES = (
 
 @router.get("/pipeline-totals", response_model=PipelineTotals)
 async def pipeline_totals(
+    hub_id: uuid.UUID | None = None,
     db: AsyncSession = Depends(get_db),
     current_user: Principal = Depends(_read),
 ) -> PipelineTotals:
@@ -74,7 +81,7 @@ async def pipeline_totals(
     """
 
     base = select(Project).where(Project.status != ProjectStatus.COMMERCIALIZED)
-    hub_filter = hub_scope_filter(current_user, Project.hub_id)
+    hub_filter = narrowed_hub_filter(current_user, Project.hub_id, hub_id)
     if hub_filter is not None:
         base = base.where(hub_filter)
     spillover_count = (
@@ -98,11 +105,12 @@ async def pipeline_totals(
 
 @router.get("/status-overview", response_model=StatusOverview)
 async def status_overview(
+    hub_id: uuid.UUID | None = None,
     db: AsyncSession = Depends(get_db),
     current_user: Principal = Depends(_read),
 ) -> StatusOverview:
     stmt = select(Project.status, func.count())
-    hub_filter = hub_scope_filter(current_user, Project.hub_id)
+    hub_filter = narrowed_hub_filter(current_user, Project.hub_id, hub_id)
     if hub_filter is not None:
         stmt = stmt.where(hub_filter)
     result = await db.execute(stmt.group_by(Project.status))
@@ -123,6 +131,7 @@ async def status_overview(
 
 @router.get("/hub-type-pipeline", response_model=list[HubTypePipelineRow])
 async def hub_type_pipeline(
+    hub_id: uuid.UUID | None = None,
     db: AsyncSession = Depends(get_db),
     current_user: Principal = Depends(_read),
 ) -> list[HubTypePipelineRow]:
@@ -137,7 +146,7 @@ async def hub_type_pipeline(
         .join(Project, Project.hub_id == Hub.id)
         .where(Project.status != ProjectStatus.COMMERCIALIZED)
     )
-    hub_filter = hub_scope_filter(current_user, Project.hub_id)
+    hub_filter = narrowed_hub_filter(current_user, Project.hub_id, hub_id)
     if hub_filter is not None:
         stmt = stmt.where(hub_filter)
     result = await db.execute(
@@ -152,6 +161,7 @@ async def hub_type_pipeline(
 
 @router.get("/completing-within-year", response_model=CompletingWithinYear)
 async def completing_within_year(
+    hub_id: uuid.UUID | None = None,
     db: AsyncSession = Depends(get_db),
     current_user: Principal = Depends(_read),
 ) -> CompletingWithinYear:
@@ -182,7 +192,7 @@ async def completing_within_year(
         .options(selectinload(Project.hub))
         .where(ScheduleRunProjectOutcome.schedule_run_id == active_run.id)
     )
-    hub_filter = hub_scope_filter(current_user, Project.hub_id)
+    hub_filter = narrowed_hub_filter(current_user, Project.hub_id, hub_id)
     if hub_filter is not None:
         stmt = stmt.where(hub_filter)
     result = await db.execute(stmt)
@@ -257,6 +267,8 @@ async def analytics_projects(
         stmt = stmt.where(Project.priority == priority)
 
     projects = (await db.execute(stmt.order_by(Project.name))).scalars().all()
+    # P12 (ADR 0021 §4): the one tracking-status implementation.
+    tracking = await tracking_status_for(db, [p.id for p in projects])
     rows = [
         ProjectFilterRow(
             project_id=p.id,
@@ -265,6 +277,8 @@ async def analytics_projects(
             category=p.category,
             status=p.status,
             priority=p.priority,
+            is_vip=p.is_vip,
+            tracking_status=tracking.get(p.id, "idle"),
         )
         for p in projects
     ]

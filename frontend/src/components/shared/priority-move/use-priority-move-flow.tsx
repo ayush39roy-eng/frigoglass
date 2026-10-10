@@ -11,11 +11,17 @@ import {
 } from '@/lib/api/priority-move';
 import { queryKeys } from '@/lib/query-keys';
 import { invalidateRunDerivedQueries, useScheduleRunFollow } from '@/lib/use-schedule-run-follow';
+import { useFollowUpRunWatcher } from '@/lib/use-follow-up-run';
 import type { ProjectPriority } from '@/types/enums';
 
 import { MOVE_COPY, notNeededCopy } from './move-copy';
 import { MoveConfirmDialog, MoveFlowPanel } from './move-flow-panel';
-import type { PriorityMoveApi, PriorityMoveTarget } from './priority-move-context';
+import type {
+  PriorityMoveApi,
+  PriorityMoveOutcome,
+  PriorityMoveRequestOptions,
+  PriorityMoveTarget,
+} from './priority-move-context';
 
 /**
  * The priority-move flow (ADR 0015, P11-T02), shared by the Gantt, the Project
@@ -23,7 +29,7 @@ import type { PriorityMoveApi, PriorityMoveTarget } from './priority-move-contex
  *
  *   confirm → POST /projects/{id}/priority → recalc_status
  *     queued     → follow the run's SSE progress → GET …/changes → "Timeline updated"
- *     deferred   → honest "another run is going" copy
+ *     deferred   → "updates automatically" copy + watch for the follow-up run (ADR 0023)
  *     not_needed → honest "not in the plan" copy
  *     unchanged  → nothing
  *     409 HARD_GATE_FORCES_P1 → the hard-gate copy
@@ -58,7 +64,7 @@ interface RecalcSignal {
 /** The priority itself changed and the project is now `schedule_stale`, so
  *  every view showing priority or the stale flag refetches. */
 function invalidatePriorityWrite(queryClient: QueryClient): void {
-  for (const key of [['projects'], ['gantt'], ['dashboard'], ['priority-matrix']]) {
+  for (const key of [['projects'], ['gantt'], ['dashboard'], ['priority-matrix'], ['priority-board'], ['vip-projects']]) {
     void queryClient.invalidateQueries({ queryKey: key });
   }
 }
@@ -68,6 +74,7 @@ export function usePriorityMoveFlow(): { api: PriorityMoveApi; element: React.JS
   const run = useScheduleRunFollow();
   const { begin, follow, reset } = run;
   const [flow, setFlow] = React.useState<MoveFlowState>({ kind: 'idle' });
+  const followUp = useFollowUpRunWatcher();
 
   const handleSignal = React.useCallback(
     async (
@@ -82,7 +89,9 @@ export function usePriorityMoveFlow(): { api: PriorityMoveApi; element: React.JS
       }
       if (signal.recalc_status === 'deferred') {
         invalidatePriorityWrite(queryClient);
-        setFlow({ kind: 'notice', target, tone: 'warning', title: 'Priority saved', body: MOVE_COPY.deferred });
+        setFlow({ kind: 'notice', target, tone: 'success', title: 'Priority saved', body: MOVE_COPY.deferred });
+        // ADR 0023: the server runs one follow-up after the current run; refresh when it lands.
+        followUp.start();
         return;
       }
       if (signal.recalc_status === 'not_needed') {
@@ -117,13 +126,35 @@ export function usePriorityMoveFlow(): { api: PriorityMoveApi; element: React.JS
         body: `${result.message ?? 'The recalculation did not complete.'} ${MOVE_COPY.staleAfterFailure}`,
       });
     },
-    [begin, follow, queryClient],
+    [begin, follow, followUp, queryClient],
   );
 
-  const requestMove = React.useCallback((target: PriorityMoveTarget, next: ProjectPriority) => {
-    if (next === target.priority) return;
-    setFlow((cur) => (cur.kind === 'submitting' || cur.kind === 'running' ? cur : { kind: 'confirm', target, next }));
+  // P12 (ADR 0018): the Priority board shows a drop optimistically and needs to
+  // know how the move ended so it can roll back. One pending callback at most:
+  // only one move is ever being confirmed or submitted.
+  const settleRef = React.useRef<((outcome: PriorityMoveOutcome) => void) | null>(null);
+  const settle = React.useCallback((outcome: PriorityMoveOutcome) => {
+    const cb = settleRef.current;
+    settleRef.current = null;
+    cb?.(outcome);
   }, []);
+  const busyRef = React.useRef(false);
+  React.useEffect(() => {
+    busyRef.current = flow.kind === 'submitting' || flow.kind === 'running';
+  }, [flow.kind]);
+
+  const requestMove = React.useCallback(
+    (target: PriorityMoveTarget, next: ProjectPriority, options?: PriorityMoveRequestOptions) => {
+      if (next === target.priority || busyRef.current) {
+        options?.onSettled?.('cancelled');
+        return;
+      }
+      settle('cancelled'); // an earlier, unconfirmed request is superseded
+      settleRef.current = options?.onSettled ?? null;
+      setFlow((cur) => (cur.kind === 'submitting' || cur.kind === 'running' ? cur : { kind: 'confirm', target, next }));
+    },
+    [settle],
+  );
 
   const confirm = React.useCallback(async () => {
     if (flow.kind !== 'confirm') return;
@@ -131,15 +162,17 @@ export function usePriorityMoveFlow(): { api: PriorityMoveApi; element: React.JS
     setFlow({ kind: 'submitting', target, next });
     try {
       const res = await moveProjectPriority(target.projectId, next);
+      settle('accepted');
       await handleSignal(target, res, res.priority_before, res.priority_after);
     } catch (err) {
+      settle('rejected');
       const body =
         err instanceof ApiError && err.code === HARD_GATE_FORCES_P1
           ? MOVE_COPY.hardGate
           : apiErrorMessage(err, 'The priority could not be changed.');
       setFlow({ kind: 'notice', target, tone: 'danger', title: 'Priority not changed', body });
     }
-  }, [flow, handleSignal]);
+  }, [flow, handleSignal, settle]);
 
   const followPatch = React.useCallback<PriorityMoveApi['followPatch']>(
     (target, signal, before, after) => {
@@ -149,9 +182,10 @@ export function usePriorityMoveFlow(): { api: PriorityMoveApi; element: React.JS
   );
 
   const close = React.useCallback(() => {
+    settle('cancelled'); // no-op unless a request was never confirmed
     reset();
     setFlow({ kind: 'idle' });
-  }, [reset]);
+  }, [reset, settle]);
 
   const changesRunId = flow.kind === 'updated' ? flow.runId : null;
   const changesAgainst = flow.kind === 'updated' ? flow.baselineRunId : null;
@@ -170,7 +204,7 @@ export function usePriorityMoveFlow(): { api: PriorityMoveApi; element: React.JS
   const element = (
     <>
       <MoveConfirmDialog flow={flow} onConfirm={() => void confirm()} onCancel={close} />
-      <MoveFlowPanel flow={flow} runState={run.state} changes={changes} onClose={close} />
+      <MoveFlowPanel flow={flow} runState={run.state} changes={changes} onClose={close} followUpWatching={followUp.watching} />
     </>
   );
 

@@ -5,7 +5,10 @@
 
 export const MOVE_COPY = {
   confirmBody: 'The timeline will be recalculated.',
-  deferred: 'Saved. Another recalculation is running — press Recalculate when it finishes.',
+  // ADR 0023: a deferred auto-recalc gets one coalesced follow-up run; the
+  // browser watches for it (`lib/use-follow-up-run.ts`) and refreshes.
+  deferred: 'Saved — the timeline updates automatically after the current recalculation',
+  followUpWatching: 'Waiting for the follow-up recalculation…',
   hardGate: 'This project has a hard gate (regulatory / certification / safety), so it must stay P1.',
   queuedWithoutRun: 'Saved. The recalculation was queued but no run was reported back — press Recalculate on the project.',
   staleAfterFailure: 'The priority is saved and the timeline is marked stale. Press Recalculate on the project to try again.',

@@ -21228,3 +21228,747 @@ override note, four *(2026-10-10)* sections, I21–I23); OPEN_QUESTIONS #28–#3
 phase table + P12 section.
 
 **Gate result:** N/A, docs only.
+
+### [2026-10-10] P12 amended — owner's answers to OQ #28–#33, ADR 0023 — rpd-orchestrator
+
+**Owner's answers (2026-10-10):** Kanban "do whatever suits"; Gantt drag "calculate straight away";
+live tracking "recalculate and do whatever you think is best".
+
+**Decisions:**
+- OQ #28 → column = priority, in-column order by score (ADR 0018 unchanged).
+- OQ #29 → ADR 0019 unchanged (auto-recalc on drop).
+- OQ #30 → ADR 0023: a check-in batch dispatches one greedy run (`check_in`). To stop a Monday burst
+  from leaving projects stale behind `deferred`, every auto-trigger (`priority_move`, `step_timing`,
+  `check_in`) that answers `deferred` registers one durable **coalesced follow-up run**, dispatched
+  when the in-flight run ends (incl. failure/sweep). Bound: one in flight + one pending (keeps the
+  P11-T05 anti-flood property). New invariant I24. Workspace Recalculate unchanged.
+- OQ #31 → no automatic stage advance (would fabricate history frozen by I11); the plan already moves
+  on every run; missed reports show Due/Overdue + "per plan".
+- OQ #33 → in-app reminders only. OQ #32 (VIP curation) still open.
+
+**Docs changed:** ADR 0023; DOMAIN_RULES (priority-move pseudo-code, check-in section, I24);
+API_CONTRACT_P12 §5 response + new §8; OPEN_QUESTIONS #28–#31, #33 answered; IMPLEMENTATION_PLAN
+"P12 amendment". Running builders informed by message (backend B owns §8).
+
+**Gate result:** N/A, docs only.
+
+### [2026-10-10] P12-T01 — algorithm-engineer
+
+**Did:** Scheduler step timing from the Gantt (ADR 0019, contract P12 §1, DOMAIN_RULES "Step timing
+from the Gantt", I21/I22). Only `backend/scheduling/` plus one new test file were touched.
+
+**Changed:**
+- `scheduling/types.py`: new frozen `StepTimingInput(step_id, duration_override_weeks: int | None,
+  start_not_before_week: int | None)`; `ProjectInput.step_timing: tuple[StepTimingInput, ...] = ()`
+  (last field, default `()`); the `StepSchedule.duration_weeks` docstring now says *effective*
+  duration. Landed first so backend A's import worked.
+- `scheduling/workflow.py`:
+  - `analyse_project` computes `StepPlan.duration = override ?? lead_time`. It is the single source
+    for greedy, CP-SAT, the unconstrained finish, `derive_remaining` (ADR 0006) and the I12 roll-up
+    weights.
+  - Skipped steps stay skipped with duration 0 (lead time 0, or a lab step with certification
+    testing off).
+  - New `StepPlan.start_not_before_week`, set only for a non-skipped Not Started step of a
+    non-frozen project.
+  - New `validate_step_timing` (called from `validate_schedulable_project`, which gained a required
+    keyword `horizon_weeks`), `canonical_step_timing`, and `DURATION_OVERRIDE_MIN_WEEKS/MAX_WEEKS`
+    (1/104).
+  - `unconstrained_end_week` honours the floor.
+- `scheduling/greedy.py`: the Not Started search floor is `max(CURRENT_WEEK, pred_end + 1,
+  start_not_before_week)`. `prepare_run` passes `horizon_weeks`.
+- `scheduling/cp_sat.py`: the floor is the domain lower bound of the step's start variable. The
+  duration comes from `sp.duration`, so the model and the absent case are otherwise unchanged.
+- `scheduling/invariants.py`:
+  - `_check_i21_effective_duration_span` covers non-skipped, non-Done, non-held steps of non-frozen
+    projects. Not Started: span == effective duration. In Progress / Blocked: tail `[max(CW,
+    pred_end + 1, actual_start) .. end]` == remaining derived from the effective duration, and with
+    remaining 0 the row ends at `max(actual_start, pred_end)`. Every row in scope must also have
+    `duration_weeks` == effective duration, which covers elapsed rows that I6/I7 miss.
+  - `_check_i22_start_not_before`: Not Started steps with a floor start at or after it.
+  - Both are wired into `validate_invariants`. The I6/I7 message now says "effective duration".
+- `scheduling/monte_carlo.py`: an override is scaled by the same per-iteration duration factor as
+  the lead-time cells, re-rounded and clamped to 1..104. Floors are not perturbed. No extra RNG
+  draw, so pre-P12 forecasts are unchanged.
+- `scheduling/__init__.py`: exports `StepTimingInput` and `canonical_step_timing`.
+- New `backend/tests/scheduling/test_p12_step_timing.py` (42 tests).
+
+**Decisions beyond the contract (please confirm or amend DOMAIN_RULES):**
+1. **Frozen projects use the override but ignore the floor.**
+   - The brief says frozen rules win unchanged. A frozen project never searches, so its floor is
+     ignored (I10).
+   - Its duration is still the effective one ("everywhere", ADR 0019 §1). Otherwise freezing a
+     project that was dragged first would snap its bars back to the table durations. I6/I7 would
+     then disagree with backend A's capacity load, which uses the effective duration for every
+     project.
+   - **I22 exempts frozen projects** (and held, skipped, In Progress/Blocked/Done steps). The
+     DOMAIN_RULES I22 sentence has no frozen carve-out, but without one it would contradict
+     I10 / "frozen wins". Suggest the orchestrator adds "(frozen projects exempt)" to I22.
+2. **The unconstrained finish honours the floor.** The floor is a plan input, not a resource, so
+   unlimited resources do not lift it. This keeps I16's "end_week >= unconstrained" meaningful
+   and makes `slip_weeks` measure resource-induced slip only. Consequence: with no
+   `target_end_week`, `expected_end_week` moves when a bar is dragged later.
+3. **Hash / canonical input.**
+   - Nothing in `backend/` hashes the solver input: grep for `hashlib`, `input_hash` and
+     `input_snapshot` is empty. I8 is defined on dataclass input → output `repr`.
+   - Chosen canonical form: drop rows with neither field set, then sort by step_id. A project with
+     no timing therefore canonicalises to `()`, byte-identical to the pre-P12 input.
+     `canonical_step_timing()` implements this.
+   - The scheduler also sorts internally, so supplied order never affects output (tested).
+   - Backend A's `schedule_persistence` already builds exactly this form.
+4. **Validation scope.**
+   - `ValueError` on: unknown step_id, override outside 1..104, floor outside
+     1..`horizon_weeks`, duplicate step_id. This applies to schedulable projects only, like every
+     existing configuration check. Excluded projects' rows are not validated (the DB CHECKs cover
+     ranges).
+   - An unknown step_id aborts the whole run (contract), whereas an unknown *progress* row only
+     gives a per-project `data_error`.
+   - `analyse_project` itself is tolerant (first row per step wins, unknown ignored), so the
+     invariant validator never raises.
+
+**Tests:**
+- `python -m pytest -c pytest-scheduling.ini` (from `backend/`): **168 passed, 0 failed**. That is
+  126 pre-existing (identical to the baseline taken before this change: 126 passed, 93.40%) plus
+  42 new. Coverage **93.96%** (gate 85%).
+- Every existing golden file and self-test passes. No existing test file was modified.
+- New coverage:
+  - durations: override longer, shorter and on an elapsed step;
+  - floors: later than precedence (moves), earlier than precedence (byte-identical steps), first
+    step, floor + override, a floor that still waits for capacity, a floor past reach (LEFT_OUT);
+  - progress: In Progress resize (tail = ceil(8 × 0.5) = 4, progress_pct = 27 from effective
+    weights), `remaining_weeks_override` still wins, Done ignores timing, Blocked hold with a
+    floored successor (I22 exempt, unconstrained honours the floor), floor on a Not Started step of
+    a tracked project;
+  - skipping and freezing: a skipped step with an override stays skipped (lead 0 and cert-off),
+    frozen uses the override and ignores the floor;
+  - capacity: consumption and I6/I7 loads reflect the effective duration, a shorter lab override
+    frees the chamber;
+  - validation: 7 cases on both solvers, inclusive bounds, horizon-relative floor, excluded
+    projects not validated;
+  - determinism and form: order independence, `canonical_step_timing`, empty rows identical to
+    `()`;
+  - CP-SAT == greedy on a small case (OPTIMAL, identical steps), CP-SAT with contention;
+  - I21 negatives: span, `duration_weeks` on an elapsed row, In Progress tail, remaining-0 end.
+    I22 negative. Frozen exemption;
+  - Monte Carlo: scale and clamp, unperturbed forecast equals greedy, seeded determinism.
+- Ruff check and ruff format: clean on `scheduling/` and the new test.
+- mypy (explicit-file invocation over all 8 modules, as in P9-F03): 38 errors in `cp_sat.py`. These
+  are the same pre-existing ortools CamelCase stub noise, zero new. The new test file has no errors
+  of its own.
+
+**For backend A (P12-T02):**
+- `StepSchedule.duration_weeks` is now the effective duration.
+- The Workspace / ask-agent remaining and roll-up code outside `scheduling/` must use the same
+  effective duration.
+- A certification-off lab step stays skipped even with an override. `effective_duration_weeks`
+  only checks lead == 0, so the cert flag must still be applied separately.
+- A step_timing row whose step is not in the project's workflow (for example after a PDD↔OEM hub
+  change) fails the whole run with `ValueError`.
+
+**Process note:** a parallel agent shares this session's scratchpad and overwrote a log file I was
+writing (`run1.txt`). I re-ran with a uniquely named path. Builders should use unique log names.
+
+**Not committed.** IMPLEMENTATION_PLAN not edited (per the brief). **Gate result:** N/A, build task.
+**Next:** orchestrator review; backend A wiring (P12-T02); workflow-auditor I21/I22 on a live run
+(P12-T07).
+
+### [2026-10-10] P12-T01 orchestrator review — rpd-orchestrator
+
+**Verdict: accepted.** 168/168 scheduling tests (126 existing + 42 new), 93.96 % coverage, no golden
+or existing test file changed, ruff clean, mypy = the known 38 OR-Tools stub errors in `cp_sat.py`.
+
+**Rulings on the four decisions beyond the contract:**
+1. Frozen projects use the duration override but ignore the floor — accepted; DOMAIN_RULES I22 now
+   says "(frozen projects exempt)" so it cannot contradict I10.
+2. Unconstrained finish honours the floor — accepted (keeps I16 valid); the `expected_end_week`
+   side effect is documented in DOMAIN_RULES "Step timing from the Gantt".
+3. Canonical form (drop empty rows, sort by step_id; empty ⇒ `()`) — accepted.
+4. Validation for schedulable projects only — accepted. Note: an unknown step_id fails the whole run,
+   so backend A must send only rows for the project's current workflow (relayed).
+
+**Relayed to backend A:** send only current-workflow rows; certification-off lab steps stay skipped;
+the Workspace and Ask-the-agent remaining-weeks / roll-up code must use the effective duration (I12);
+use unique scratchpad log names.
+
+### [2026-10-10] P12-T05 — frontend-builder (B)
+
+**Did:** the three new P12 surfaces, the shared tracking chip and VIP badge, the nav entries and
+the sidebar due badge, against `docs/API_CONTRACT_P12.md` §2, §5–§8 and ADRs 0018, 0021, 0022
+and 0023. I wrote the mirrors as PLACEHOLDERs, then **reconciled them with backend B's schemas**,
+which landed during the task (`schemas/{priority_board,vip,checkin,dashboard}.py`). They match
+field for field, and no PLACEHOLDER is left in my files.
+
+**Shared pieces (contract §7), built first for frontend A:**
+- `components/shared/tracking-status-chip.tsx` (+ `tracking-status-meta.ts`):
+  `TrackingStatusChip({status, className})`. Labels are Live, Due this week, Overdue and No
+  active stage. Each is icon + text with an sr-only "Tracking:" prefix.
+- `components/shared/vip-badge.tsx`: `VipBadge({className})`. A star plus "VIP", using the teal
+  `accent` token.
+- `components/shared/project-outcome-chips.tsx`: `HealthChip` (reuses `HEALTH_META`, so `blocked`
+  reads "On Hold") and `ProjectedFinishChip` (served week + within-year). Both are
+  non-interactive. Unlike the Workspace `HealthBadge`, which is a tooltip button, they never nest
+  a button inside a card.
+
+**Nav and routes.**
+- `/vip` "VIP projects": Plan, `dashboard`, Star icon, directly after Dashboard.
+- `/priority-board` "Priority board": Plan, `matrix`, SquareKanban icon, after Prioritization.
+- `/check-in` "Weekly check-in": Execute, `project_workspace`, ClipboardCheck icon, after Timeline.
+- Each page is lazy-loaded as its own chunk: board 4.7 KB, VIP 3.5 KB, check-in 7.7 KB gzip.
+- Sidebar badge on Weekly check-in shows `due_stages − checked_in_stages` from
+  `GET /check-ins/due?hub_id=` (`useCheckInsDue` in `lib/api/check-ins.ts`). It shares the page's
+  query key, so there is one fetch. It is fetched only with `project_workspace.read`.
+- The badge's description is a `hidden` node outside the link, referenced by `aria-describedby`.
+  The link's accessible name therefore stays exactly "Weekly check-in", and every existing
+  `getByRole('link', {name})` keeps resolving.
+
+**Priority board (`surfaces/priority-board/`).**
+- Five served columns with served counts and served order. The browser never recounts or re-sorts.
+- **The drag is hand-built, with no new dependency.** I chose this over `@dnd-kit/core`:
+  - zero bytes;
+  - tests are deterministic in jsdom, where dnd-kit's collision detection needs real rects;
+  - the board only moves cards between columns (no ordering within a column, ADR 0018 §3), so a
+    sortable library's machinery is unused.
+- Pointer: native HTML drag events on the card (`draggable`).
+- Keyboard: on the card's grip handle, Space/Enter picks up, arrows choose a column, Space/Enter
+  drops and Escape cancels. Moves are announced through an `aria-live` region, with instructions
+  linked by `aria-describedby`.
+- Every card also carries the P11 `PriorityMoveControl`.
+- Known limit: HTML5 drag does not work on touch; there the move control is the path.
+- Drag is enabled only with `project_registration.write`, a move host, and the flow not busy.
+- A hard-gated card in P1 shows a lock and no handle. A hard-gated card elsewhere may go only to
+  P1 (`allowedTargets`).
+- **The drop goes through the shared P11 flow.** `PriorityMoveApi.requestMove` gained an optional
+  third argument `{ onSettled(outcome) }` with outcomes `accepted | rejected | cancelled` (an
+  additive change to `priority-move-context.ts` and `use-priority-move-flow.tsx`):
+  - the board shows the drop optimistically (card first in the target column, "Moving from P1…");
+  - on `rejected` (including 409 `HARD_GATE_FORCES_P1`) or `cancelled` it rolls back;
+  - on `accepted` it invalidates `['priority-board']` and clears the override once the refetch
+    lands.
+- The confirm dialog, run follow, "Timeline updated" panel and the `deferred` copy are the
+  shared flow, unchanged. A's ADR 0023 copy shows through.
+- A column with more than 100 cards is virtualized (TanStack Virtual + `measureElement`).
+
+**VIP projects (`surfaces/vip/`).**
+- Year toggle (plan / next) and list size (Top 10 / Top 15) go into the request.
+- One section per served hub. Each card shows the served rank and fields:
+  - the Pinned/Auto marker;
+  - priority and score;
+  - "Expected W44 · Projected W47";
+  - finish/within-year, health and tracking chips;
+  - the progress % and a progressbar;
+  - the current stage with the On Hold label.
+- An `over_limit` notice is shown per hub.
+- The pin/unpin button (`PUT /projects/{id}/vip`) is shown only with Registration write. Errors
+  show on the card. A pin invalidates vip, board, gantt, dashboard/projects and projects, and does
+  not recalculate (ADR 0022 §4).
+
+**Weekly check-in (`surfaces/check-in/`).**
+- Served summary strip: week, stages due, checked in, and projects live/due/overdue. No
+  per-engineer anything (GDPR, OQ #8).
+- One group per project with its tracking chip. Per stage:
+  - status as a native `<select>` showing "On Hold" for `Blocked`;
+  - % complete with the served "per plan X %" beside it;
+  - hold reason, required when On Hold, at most 2000 characters (server schema);
+  - an optional note, at most 1000 characters;
+  - last check-in week or a "Checked in this week" badge;
+  - a "Confirm unchanged" toggle and a History drawer (`GET /check-ins/history`, the only place
+    the submitter's name appears).
+- Drafts live at page level, so virtualized groups (more than 100 projects) never lose input.
+- The batch holds the edited plus the confirmed-unchanged stages, in display order. The client
+  mirror (`lib/check-in-draft.ts`) refuses inconsistent rows before sending.
+- 422 `CHECKIN_INVALID` `detail.errors[{index, code, message}]` is mapped through the submitted
+  key order onto the right row. Drafts are kept. The parser accepts `{errors:[…]}` (the real
+  shape) and a bare list.
+- When no stage has `can_check_in`, the page is read-only: summaries only, no submit.
+- **ADR 0023 handling** (from the coordinator's mid-task change):
+  - `queued`: the shared `useScheduleRunFollow`, then `GET …/changes`, then a new exported
+    `ChangedProjectsList` in `timeline-updated-panel.tsx` (additive, no "this project" section);
+  - `deferred`: the copy "Saved — the timeline updates automatically after the current
+    recalculation", and A's `useFollowUpRunWatcher().start()`;
+  - `not_needed`: a plain success message.
+- The planner "N projects changed → Recalculate" hint was dropped, as instructed.
+- Results appear in a non-modal bottom-right panel. There is no toast system in the app.
+
+**Projects page.** `ProjectFilterRow` gains `is_vip` and `tracking_status` (backend
+`schemas/dashboard.py`). `ProjectCardGrid` shows `VipBadge` and `TrackingStatusChip`.
+
+**Shared files touched (small edits):**
+- `lib/query-keys.ts`: `priorityBoard`, `vipProjects`, `checkInsDue`, `checkInHistory`.
+- `lib/use-schedule-run-follow.ts`: `invalidateRunDerivedQueries` now also covers
+  `priority-board`, `vip-projects` and `check-ins`.
+- The move flow's `invalidatePriorityWrite` now also covers `priority-board` and `vip-projects`.
+
+**Contract deviations:** none.
+- Backend extra: the 422 code `DUPLICATE_STAGE`, which has copy here.
+- `band` is `ProjectPriority | null` and `week_range` is `number[]`, as in the backend.
+
+**Tests.** 83 in the 10 P12-T05 files, all green:
+- `PriorityBoardPage.test.tsx` (13):
+  - grouping, order and counts;
+  - card facts;
+  - `hub_id`;
+  - axe;
+  - hard-gated lock;
+  - no drag without write;
+  - drag with write;
+  - queued → Timeline updated + refetch;
+  - deferred copy;
+  - 409 rollback;
+  - cancel rollback;
+  - keyboard pick-up/arrow/drop;
+  - keyboard Escape.
+- `VipProjectsPage.test.tsx` (8): ranking display, every served field, `over_limit` on one hub
+  only, year + hub in the request, axe, pin gating, pin/unpin PUT, pin error.
+- `check-in-draft.test.ts` (9): On Hold needs a reason, percent rules, note length, `withStatus`,
+  batch inclusion and order, read-only exclusion, `toEntry`.
+- `CheckInPage.test.tsx` (10):
+  - served display and "On Hold" option;
+  - `hub_id`;
+  - history drawer;
+  - axe;
+  - On Hold validation then submit;
+  - batch of edited + confirmed with `not_needed`;
+  - 422 per-entry mapping;
+  - `deferred` + watcher;
+  - `queued` + Timeline updated;
+  - read-only;
+  - empty.
+- `p12-nav.test.tsx` (4): order, labels and groups; role gating (Engineer, Executive Viewer,
+  Auditor); the sidebar badge count, `hub_id` and accessible description; no fetch without the
+  surface.
+- `tracking-status-chip.test.tsx` (7).
+- `project-card-grid` (+1).
+- Existing fixtures updated: `ProjectsPage.test.tsx`, `project-card-grid.test.tsx`.
+
+**Verification:**
+- `npm run build` (tsc -b + vite + budget): **PASS, 181.0 KB gzip initial of 400 KB**, 219.0 KB
+  headroom. It was 172.8 KB at P11; the increase includes A's header hub filter.
+- eslint: 0 errors, the 7 known warnings.
+- Full vitest: 882/884.
+  - One failure is the known `session-gate` DevRoleSwitcher test (commit `c074e62`).
+  - The other was A's in-progress `MatrixPage` hub-filter test mid-edit. It passes alone on
+    re-run (14/14).
+- axe: zero serious/critical on all three surfaces and the sidebar.
+- No `dangerouslySetInnerHTML`, raw hex or three.js in new code. No `backend/` file touched. Not
+  committed.
+
+**Follow-ups (non-blocking):**
+1. Touch drag on the board would need pointer events or a library. The move control covers it
+   today.
+2. The board's served count can briefly lag an optimistic card by one until the refetch, which is
+   correct under I9.
+3. P11-F01 still applies to the board drag and the VIP pin: an Admin-level project grant alone
+   shows read-only.
+
+**Gate result:** N/A, build task. **Next:** orchestrator review, then P12-T06..T08.
+
+*Correction to the P12-T05 entry above (2026-10-10, frontend-builder B):* `check-in-draft.test.ts`
+has **8** tests and `CheckInPage.test.tsx` has **11**. The combined 19, and the 83 total across the
+10 files, are unchanged.
+
+### [2026-10-10] P12-T04 — frontend-builder (A)
+
+**Did:** the global hub filter (ADR 0020) and Gantt drag step timing (ADR 0019), plus the ADR 0023
+follow-up-run watcher requested mid-task by the orchestrator. Built against `docs/API_CONTRACT_P12.md`
+§3/§4/§7/§8; reconciled with backend A's `schemas/gantt.py` + `schemas/step_timing.py`, which
+landed during the task.
+
+**A. Global hub filter (ADR 0020).**
+- `src/stores/hub-filter.ts` exactly per contract §7 (zustand + persist `rpd-hub-filter`,
+  `useHubFilterStore`, `useHubFilter()`), created first so frontend B could import it.
+- `components/shared/hub-filter/`:
+  - `hub-scope.ts`: `hubsInScope(me, hubs)` (`hub_scope_all` or no hub ids, i.e. an Engineer,
+    → all six; else `/me.hub_ids` in `GET /hubs` order; `null` while loading) and `shouldResetHub`.
+  - `hub-filter-select.tsx`: the header select ("All hubs" + in-scope hubs, sr-only label "Hub
+    filter", explicit trigger text so a persisted id never shows blank while `/hubs` loads). A
+    persisted hub out of scope resets to null; never resets against a half-loaded list.
+  - `hub-filter-chip.tsx`: one shared "Hub: <name>" chip with a clear button, in the PageHeader
+    actions of Dashboard, Projects, Capacity, Matrix and Timeline. Renders nothing under All hubs.
+- `app-header.tsx`: the old read-only `HubScopePill` is replaced by the select. The pill group is
+  now visible at every width with only the hub select below `lg` (week, bell, theme join from `lg`
+  up), so the filter is reachable on a phone.
+- `query-keys.ts`: a `withHub(base, hubId)` helper. `undefined` = bare prefix (so existing
+  `invalidateQueries(k())` calls, e.g. Planning's `capacityHubLoad()`, still hit every hub's
+  entry), `null` = All hubs, uuid = one hub. Applied to the 4 dashboard aggregates, the 3 capacity
+  keys and `prioritySummary`. `gantt`, `priorityMatrix`, `dashboardProjects` already carried it.
+- Fetchers gained an optional trailing `hubId` (no `hub_id` param at all for All hubs, so existing
+  `toHaveBeenCalledWith(path, {})` tests are unchanged); hooks take `hubId`.
+- Surfaces wired: Dashboard (all four aggregates + Project breakdown + the P11 capacity-booked
+  card, which shares the Capacity key/cache), Projects, Capacity (hub load incl. area strip,
+  class breakdown, utilization), Matrix (grid + summary), Timeline. **Removed page-local hub
+  selects** on Gantt, Matrix, Projects and the Dashboard Project breakdown (their `FilterState` no
+  longer has `hub_id`; the local "Clear" now clears only category/status/priority).
+- Nothing is computed per hub in the browser. Pre-existing display aggregates of served rows
+  (Capacity `portfolioTotals`, the Gantt StatStrip counts) now run over the server-filtered rows;
+  they are not new and were not changed.
+
+**B. Gantt drag step timing (ADR 0019).**
+- `lib/gantt-coordinates.ts`: pure `snapWeekDelta` (half away from zero, never -0),
+  `dragMoveStartWeek` (1..78), `dragResizeDuration` (1..104), `stepDragResult(mode, origin, dx,
+  scale)` → ghost span + request (`null` when the drop changes nothing). Resize uses the served
+  effective `duration_weeks`, not the drawn tail, so a started step's override is right.
+- `surfaces/gantt/components/step-timing/`:
+  - `step-drag-overlay.tsx`: an HTML layer over the step bar. Body drag (only `move_resize`) →
+    `start_not_before_week`; right-edge handle (`move_resize` | `resize`) → `duration_override_
+    weeks`; `none` renders nothing. Pointer capture, `touch-none`, a dashed ghost + week label
+    ("Start ≥ W13 · W13–W16" / "6 wks · W10–W15"), Escape cancels, ghost kept as "Saving…" while
+    the PATCH is in flight and removed when it settles (roll back on error). aria-hidden, never
+    focusable: the keyboard path is the dialog. Reduced motion: transitions are `motion-safe:` only.
+  - `use-step-timing-flow.tsx` + `step-timing-provider.tsx` (page-level, so a virtualized row
+    never cancels a followed run): `PATCH` → `queued` follows the SSE via the shared
+    `useScheduleRunFollow`, then the served changes in the shared `TimelineUpdatedPanel` (new
+    optional `summary` prop replaces the priority pills: "Step: 6 wks · earliest start W40", served
+    values only); `deferred` → ADR 0023 copy + follow-up watcher; `not_needed` (skipped lab step) /
+    `unchanged` / run failure / each 409 (`PROJECT_FROZEN`, `NOT_SCHEDULABLE`, `STEP_DONE`,
+    `STEP_STARTED`, `STEP_SKIPPED`) → honest copy in `timing-copy.ts`, every 409 ending "Nothing
+    was saved.". `step-timing-panel.tsx` is the same non-modal shell as the P11 panel.
+  - `step-timing-dialog.tsx` + `step-timing-schema.ts` (RHF + zod): "Edit timing" per step
+    (duration, earliest start; blank = no floor; start disabled for `resize`), sends only changed
+    fields, "Reset timing" sends both nulls (disabled with no edit). The resolver is cast because
+    @hookform/resolvers v3 types output = input with a zod transform.
+- `gantt-chart.tsx`: step rows get the overlay, an "edited" marker (title lists the served
+  override/table/floor), and the "Edit timing" button; project rows show `VipBadge` +
+  `TrackingStatusChip` (frontend B's components already existed, used as-is). The provenance
+  popover explains the gestures. Virtualization untouched (overlay is per visible row only).
+
+**C. ADR 0023 follow-up watcher (orchestrator request).**
+- `src/lib/use-follow-up-run.ts`: `useFollowUpRunWatcher(): { start, watching }` — polls
+  `GET /schedule-runs/active` every 5 s for up to 3 min; each change of the active run id calls
+  `invalidateRunDerivedQueries` (gantt, dashboard, capacity, schedule-runs, notifications, projects
+  incl. Workspace, matrix, priority-board, vip-projects, check-ins — B had already added the last
+  three); stops early when the active run's `trigger_reason === "follow_up"`; 404 = no run; poll
+  errors retried until the deadline; cleaned up on unmount. Frontend B imports it for check-in.
+- P11 priority move: `MOVE_COPY.deferred` is now "Saved — the timeline updates automatically after
+  the current recalculation" (tone success), the flow starts the watcher, and the panel shows
+  "Waiting for the follow-up recalculation…" while watching. Tests updated: `priority-move.test`
+  and `RegistrationPage.test` (old copy).
+
+**Contract deviations:** none. Reconciled field for field with `backend/schemas/gantt.py`
+(`lead_time_weeks`, `duration_override_weeks`, `start_not_before_week`, `timing_editable`,
+`is_vip`, `tracking_status`) and `schemas/step_timing.py`; backend `test_openapi_frontend_
+contract.py` (which pins `StepTimingRequest`/`StepTimingResponse` and the Gantt rows `exact`)
+**105 passed** against these mirrors. P12 `// PLACEHOLDER` markers replaced with "reconciled";
+older P9 markers untouched. Backend `hub_id` params confirmed on dashboard, capacity and
+priorities routers. Running that pytest rewrote the tracked `backend/.coverage` artifact (already
+modified by the backend builders); no backend source touched.
+
+**Tests (new ≈75):** `stores/hub-filter.test.ts` (4: default, persistence, rehydrate, hook);
+`components/shared/hub-filter/hub-filter.test.tsx` (11: scope rules incl. Engineer, header
+options/label, select/clear, out-of-scope reset, no reset while loading, chip, axe ×2);
+`surfaces/hub-filter-wiring.test.tsx` (13: key + `hub_id` for every surface hook, All hubs = no
+param + own entry, prefix invalidation); `gantt-coordinates.test.ts` +7 (snapping maths);
+`step-timing.test.tsx` (31: gating ×5, move/resize/started-resize/Escape/sub-week/rollback,
+queued→panel, run failure, deferred, not_needed, unchanged, each 409 ×5, dialog ×6 incl. axe,
+markers, VIP/tracking, chart axe); `use-follow-up-run.test.tsx` (5, fake timers); page tests +1 each
+on Dashboard, Capacity, Matrix, Projects; GanttPage hub test rewritten for the global filter; Gantt
+fixtures gained the P12 fields.
+
+**Verification:** `tsc -b --noEmit` clean; eslint 0 errors, 7 warnings all in untouched files;
+full vitest **883 / 884** (the single failure is the known `DevRoleSwitcher` test orphaned by
+`c074e62`; the count includes frontend B's in-progress tests); `npm run build` **PASS, 181.0 KB
+gzip of 400 KB** (219.0 KB headroom); axe zero serious/critical on the header select, chip, Gantt
+chart with handles and the timing dialog. No `dangerouslySetInnerHTML`, raw hex or three.js in new
+code. Not committed.
+
+**Gate result:** N/A. P12-T06..T08 gate after T05 closes.
+
+### [2026-10-10] P12-T02 — backend-builder (A)
+
+**Did:** Built contract §0 (`p12a_step_timing`), §3 (Gantt drag step timing) and §4 (global hub
+filter) against ADR 0019/0020/0023 and the 2026-10-10 DOMAIN_RULES sections. `backend/scheduling/`
+untouched by me (its diff is algorithm-engineer's P12-T01). Per the coordinator, I did not edit
+`services/run_dispatch.py`, `services/priority_move.py` or `workers/` (backend B owns ADR 0023).
+
+**A. Schema.** `alembic/versions/p12a_step_timing.py` (`revision="p12a_step_timing"`,
+`down_revision="d451acccb1ab"`): nullable `duration_override_weeks` / `start_not_before_week` on
+`project_workflow_steps`, CHECKs `ck_project_workflow_steps_duration_override_range` (1..104) and
+`..._start_not_before_range` (1..78). Mirrored on `models.workflow.ProjectWorkflowStep`. No
+backfill. B's `p12b_vip_checkins` chains on it; `test_migrations.py` up/down/up passes.
+
+**B. `PATCH /projects/{project_id}/steps/{step_id}/timing`.** New `api/routers/step_timing.py`
+(tag `gantt`, own module to avoid file contention), logic in `services/step_timing.py`
+(`apply_step_timing`, `timing_editable`), schemas in `schemas/step_timing.py`
+(`StepTimingRequest` strict + `extra="forbid"`, `StepTimingResponse`, `TimingEditable`).
+Authorization = the freeze toggle's: `GANTT`/`WRITE` dependency (PM, Executive Viewer, Engineer,
+Auditor → 403) + hub-scoped project lookup (other-hub planner → 404). Order: 422
+`VALIDATION_ERROR` (empty body, range, step not in the project's workflow) → 409 `PROJECT_FROZEN` →
+`NOT_SCHEDULABLE` → `STEP_SKIPPED` (lead time 0) → `unchanged` (returns before any write) →
+`STEP_DONE` → `STEP_STARTED` → write fields + `schedule_stale` + audit `project.step_timing`
+(before `{project_id, step_id, duration_override_weeks, start_not_before_week}`, after the same +
+`recalc_status`, `baseline_run_id`) → `not_needed` / `deferred` / `queued`. Queued mirrors the
+priority move exactly: `find_in_flight_run(db, trigger_reason="step_timing")` (advisory lock; on
+`deferred` B's code registers the ADR 0023 follow-up), `create_queued_schedule_run(GREEDY,
+trigger_reason="step_timing")`, `run_greedy_schedule.delay(..., activate=True,
+recalc_project_id=...)`, `project.recalculate_requested` audit, commit, SSE "queued".
+
+**C. Scheduler input + snapshot.** `services/schedule_persistence.py` builds
+`ProjectInput.step_timing` (`scheduling.types.StepTimingInput`): only rows with a value, only steps
+of the project's *current* workflow (a stale PDD row on an OEM project would make the scheduler
+raise and fail the whole run), sorted by step id (= `canonical_step_timing`). The run's
+`workflow_snapshot` (there is no separate input-snapshot column) gains `step_timing:
+[{project_id, step_id, duration_override_weeks, start_not_before_week}]`, ordered by project then
+step, written at persist time from the solver input.
+
+**D. Effective duration.** `services.workflow_durations.effective_duration_weeks(lead, override,
+*, skipped=False)`: override ignored when lead is 0 or the step is skipped (cert-off lab step).
+Used by the Workspace stage `duration_weeks`/`remaining_weeks` and roll-up weights (I12) and the
+Ask-the-agent context. Capacity load needed no code change: it already sums the active run's
+`ScheduleRunProjectStep.duration_weeks`, which P12-T01 made the effective duration, so I6/I7
+reconcile; no other load is derived from live step durations (the Gantt export reads Gantt rows).
+`services/project_steps.py`: a PDD↔OEM re-point clears both timing fields (different activity).
+
+**E. Gantt.** Step rows gain `lead_time_weeks` (live `ProjectWorkflowStep.duration_weeks`, kept in
+sync with the lead-time table), `duration_override_weeks`, `start_not_before_week` (live planner
+inputs) and `timing_editable` (ADR 0019 §4 AND `GANTT` write AND project hub in scope).
+`duration_weeks` stays the run's booked value = effective duration. B added `is_vip` /
+`tracking_status` to the project row in the same files; both sets co-exist.
+
+**F. Hub filter (§4).** `services.hub_scope.narrowed_hub_filter(principal, column, hub_id)` = scope
+AND `column == hub_id`; never widens. Added `hub_id` to `/dashboard/pipeline-totals`,
+`/status-overview`, `/hub-type-pipeline`, `/completing-within-year`, `/capacity/hubs` +
+`/hub-load`, `/capacity/class-breakdown`, `/capacity/utilization-matrix`, `/priorities/summary`
+(`/dashboard/projects`, `/priorities`, `/gantt` already ANDed it). There is no
+`/dashboard/capacity-booked` (the P11 card reads `/capacity/hubs`). Capacity: one hub row, `areas[]`
+reduced automatically to that hub's area (design = the hub, lab region-wide). Utilization matrix:
+engineers by hub; chambers narrowed to the hub's lab region with region-wide week counts;
+out-of-scope → empty.
+
+**Decisions beyond the contract (for the orchestrator / frontend).**
+1. Error envelope is the *existing* `CodedHTTPException` shape `{"detail": …, "code": "…"}` (the
+   contract header's `{detail:{code,message}}` misdescribes it). Coded 422 `detail` is a
+   `[{loc,msg,type}]` list. Type errors (string, float, bool, extra field) stay FastAPI's uncoded
+   422.
+2. Ranges are checked in the service (so they are coded `VALIDATION_ERROR`); OpenAPI still
+   publishes `minimum`/`maximum` via `json_schema_extra`.
+3. `unchanged` is checked after the project/skip 409s but before `STEP_DONE`/`STEP_STARTED`: a
+   request equal to the stored values on a Done step answers `unchanged` ("any change").
+4. `STEP_STARTED` only for a non-null `start_not_before_week` that differs from the stored one on an
+   In Progress/Blocked step. Clearing it (Reset timing) is allowed.
+5. `not_needed` = a lab step of a project with `certification_testing_required=false` (the scheduler
+   skips it). Values saved, stale set, audited, no run; `effective_duration_weeks` answers the lead
+   time. Non-schedulable status is 409 per the contract, so this is the only `not_needed` source.
+6. No project-grant write path (the freeze toggle has none): an Admin-level project grant without
+   `GANTT` write cannot drag (security-auditor may want to confirm).
+7. `timing_editable` is also `none` for steps the run marks skipped and when no live row exists.
+
+**Tests.** New `tests/test_p12_step_timing.py` (57: queued with full audit/run/input assertions,
+null baseline, deferred + follow-up flag, back-to-back queued→deferred, not_needed, unchanged,
+explicit-null clear, every 409 with nothing written, coded 422s incl. bounds and unknown steps, bad
+bodies, 404, RBAC Engineer/Executive Viewer/PM/Auditor/leader-Engineer 403, other-hub planner 404,
+Admin/Super Admin 200, Gantt fields + `timing_editable` per rule and per reader, real greedy run
+I21/I22 + snapshot, workflow filter, Workspace + Ask-the-agent effective duration, cert-skipped
+override ignored, re-point clears, DB CHECKs). New `tests/test_p12_hub_filter.py` (7, on the demo
+seed with a real greedy run: out-of-scope hub ⇒ zeros/empty on all 12 endpoints, own hub ⇒ equals
+unfiltered, unknown hub ⇒ zeros for a PM, 422 malformed, 403 kept, I23 per hub across Dashboard /
+Capacity / Gantt / priorities, lab region-wide under a filter, predicate unit test).
+`test_openapi_frontend_contract.py` +2 exact rows (`StepTimingRequest`, `StepTimingResponse`):
+105 pass.
+
+**Verification.** Full backend suite: 1019 passed, 1 failed (`test_migrations.py` table count;
+backend B was editing that file mid-run for their new tables; re-run alone: passed). Coverage
+91.65% (gate ≥70%). Touched modules (targeted run): `services/step_timing.py`,
+`api/routers/step_timing.py`, `schemas/step_timing.py`, `schemas/gantt.py`,
+`services/project_steps.py` 100%, `capacity.py` 98%, `hub_scope.py` 98%, `dashboard.py` 97%,
+`gantt.py` 95%, `ask_agent.py` 92%, `workspace.py` 90%, `schedule_persistence.py` 87%,
+`priorities.py` 85%, `workflow_durations.py` 100% (full run). `ruff check .` clean. mypy: no new
+errors in touched files (remaining ones are on unchanged lines: `priorities.py` scoring/summary,
+`capacity.py::class_breakdown`). OpenAPI regenerated in-process (`app.openapi()`): new path
+`PATCH /projects/{project_id}/steps/{step_id}/timing`, components `StepTimingRequest` /
+`StepTimingResponse`, extended `GanttStepRow`, `hub_id` on all 12 §4 endpoints.
+
+**Files.** New: `backend/alembic/versions/p12a_step_timing.py`, `backend/api/routers/step_timing.py`,
+`backend/schemas/step_timing.py`, `backend/services/step_timing.py`,
+`backend/tests/test_p12_{step_timing,hub_filter}.py`. Changed: `backend/models/workflow.py`,
+`backend/api/main.py`, `backend/api/routers/{gantt,dashboard,capacity,priorities}.py`,
+`backend/schemas/gantt.py`, `backend/services/{schedule_persistence,workflow_durations,hub_scope,
+workspace,ask_agent,project_steps}.py`, `backend/tests/test_openapi_frontend_contract.py`, this
+entry. Not committed. IMPLEMENTATION_PLAN status left to the orchestrator.
+
+**Gate result:** N/A, build task. **Next:** orchestrator review, P12-T04 reconcile, P12 gate.
+
+### [2026-10-10] P12-T03 — backend-builder (B)
+
+**Did:** Built backend B of P12 against `docs/API_CONTRACT_P12.md` §0 (p12b), §2, §5, §6 and §8,
+ADRs 0018/0021/0022/0023, and the 2026-10-10 DOMAIN_RULES sections. Includes the mid-task ADR 0023
+scope change (check-ins recalculate; coalesced follow-up run). `backend/scheduling/` and
+`frontend/` not touched by this task.
+
+**Schema.** Migration `alembic/versions/p12b_vip_checkins.py` (`revision="p12b_vip_checkins"`,
+`down_revision="p12a_step_timing"`, single head): `projects.is_vip BOOLEAN NOT NULL DEFAULT false`;
+`stage_checkins` exactly per §0 (index `(project_id, step_template_id, week)`, CHECKs percent 0..100
+and `char_length(note) <= 1000`) protected like `audit_log_entries`: row trigger
+`trg_stage_checkins_append_only` (BEFORE UPDATE OR DELETE) + statement trigger
+`trg_stage_checkins_append_only_truncate`, both raising `23001` for any role, no escape hatch;
+`schedule_run_follow_ups` (single row, `CHECK id = 1`, seeded `pending=false`) for ADR 0023. Models
+`models/checkin.py::StageCheckin`, `ScheduleRunFollowUp` (registered in `models/__init__.py`),
+`Project.is_vip`. `tests/test_migrations.py` updated for both P12 revisions (31 tables; p12b and
+p12a down/up blocks; the P10 block now targets `c41f7e9a2b58` explicitly).
+
+**Services.**
+- `services/tracking.py`: `tracking_status_for(db, project_ids, *, active_run=None) ->
+  dict[uuid, "live"|"due"|"overdue"|"idle"]`, `due_stages_for` (DueStage rows with planned window,
+  `plan_percent`, `due_since_week`, check-in this/last week, last check-in week, assignees),
+  `plan_percent`, `stage_is_due`, `due_since_week`, `status_from_due_stages`. Skipped = the
+  Workspace rule (run step flag, else lead time 0 / lab without certification).
+- `services/project_cards.py::build_project_cards` (board + VIP): score/band/hard gates from the
+  cached `PriorityScore`, finish/within-year/expected from the active run's outcome, health via
+  `services.workspace.health_badge` (`unscheduled` → null), progress via `project_progress_pct`
+  exactly as the Workspace (effective durations, skipped weight 0), current stage, tracking.
+- `services/checkin.py`: `CheckInAccess` / `resolve_access` / `candidate_filter` /
+  `visible_stages` (who may write, who sees what; see decisions).
+- `services/run_dispatch.py` (ADR 0023): `find_in_flight_run(db, *, request_follow_up=True,
+  trigger_reason=None)`. With the default, a run in flight sets the follow-up flag in the same locked
+  transaction (caller answers `deferred`), and "nothing in flight" clears a pending flag (the caller
+  is about to queue a run that reads every saved input). Workspace Recalculate and admin CP-SAT
+  dispatch now pass `request_follow_up=False` (unchanged 409, never touch the flag).
+  `dispatch_follow_up_if_requested(db)`: under the lock, another run in flight → nothing; flag set →
+  clear it, `create_queued_schedule_run(GREEDY, "follow_up")`, `run_greedy_schedule.delay(...,
+  activate=True)`, audit `schedule_run.follow_up_dispatched` (actor null), SSE queued.
+  `workers/schedule_tasks.py`: `_run_cp_sat_schedule_async` now wraps the old body
+  (`_run_schedule_body`) in `try/finally` calling it after every run end (completed, cancelled,
+  failed; any run, activated or not, so a deferral during an admin CP-SAT run is not stranded).
+  `workers/schedule_run_sweeper.py`: every tick calls it after the sweep (covers swept runs and a
+  worker that died between its terminal commit and the hand-over); result gains `follow_up_run_id`.
+  `services/priority_move.py` passes `trigger_reason="priority_move"`. **Backend A's
+  `services/step_timing.py` already calls `find_in_flight_run(db, trigger_reason=...)`, so it gets
+  the follow-up with no further change.**
+
+**Endpoints.** `GET /priority-board?hub_id=` (MATRIX read); `GET /check-ins/due?hub_id=`,
+`POST /check-ins`, `GET /check-ins/history?project_id=&step_id=`; `GET
+/vip-projects?year=plan|next&hub_id=&limit=` (DASHBOARD read, limit 10..15 else 422);
+`PUT /projects/{project_id}/vip` (same permission as the priority move; audit
+`project.vip_pin`/`project.vip_unpin`, none when unchanged; no recalc). Every `hub_id` is ANDed with
+the RBAC scope (out of scope ⇒ empty). Row extensions: `is_vip` + `tracking_status` on
+`/dashboard/projects` rows (`ProjectFilterRow`) and the `/gantt` project row (`GanttProjectRow`).
+Activity feed summaries for `project.check_in`, `project.vip_pin`, `project.vip_unpin`.
+`CodedHTTPException.detail` now also accepts a dict (for `CHECKIN_INVALID`).
+
+**Decisions beyond the contract (for orchestrator/auditors):**
+1. **Only schedulable projects have due stages** (Draft/On Hold/Commercialized/Cancelled → `idle`,
+   check-in → `NOT_DUE`); otherwise a cancelled project with a stage left In Progress would be
+   overdue forever. Same filter for VIP candidates (non-schedulable projects are in no year, pinned
+   or not).
+2. **"Due since"** (for `overdue`) = earliest of the planned start (window contains CW, or the stage
+   is active and its planned start is past) and an active stage's `actual_start_week`; otherwise CW.
+3. **Engineer "assigned" stage** = live `ProjectWorkflowStep.assigned_engineer_id` OR the active
+   run's assignment for that stage (the live column is never populated by runs; the run assignment
+   is the existing "own assignments" notion). Leader ⇒ every stage of the project.
+4. **Due list visibility:** role readers (Workspace READ, not Engineer-self-scoped: HP own hubs, PM,
+   Admin, SA, Executive Viewer) see every due stage in scope; Editor/Admin grantees and leaders see
+   the project's due stages; an Engineer otherwise only their assigned stages. A **Viewer grant adds
+   nothing** to the due list. 403 only when the caller has neither Workspace READ nor an
+   Editor/Admin grant (e.g. a bare Auditor); an unlinked Engineer gets an empty list. Projects are
+   ordered overdue → due → live, then name. `tracking_status` on a due-list project is the
+   project-level status over all its due stages, not just the caller's.
+5. **POST never 403s up front**: every unauthorised entry (another engineer's stage, other hub,
+   Viewer grant, Executive Viewer, Auditor, nonexistent project) is `FORBIDDEN_STAGE` inside 422
+   `CHECKIN_INVALID`. Check order per entry: `DUPLICATE_STAGE` (**new code**, same stage twice in a
+   batch), `FORBIDDEN_STAGE`, `PROJECT_FROZEN`, `STEP_DONE_IMMUTABLE`, `NOT_DUE` (also an unknown
+   step on a project the caller may write), `INCONSISTENT_PROGRESS` (the Workspace's
+   `merge_stage_update` messages, "On Hold" wording). Error body: `{"detail": {"code":
+   "CHECKIN_INVALID", "message", "errors": [{index, code, message}]}, "code": "CHECKIN_INVALID"}`.
+6. Server fills: first move out of Not Started → `actual_start_week = 31` (an existing start is
+   kept); Done → `actual_end_week = 31` and `percent_complete = 100` regardless of the submitted %.
+   Blank hold reason / note → null. A move into On Hold sends the existing `stage_blocked`
+   notification (as the Workspace PATCH). The `stage_checkins` row stores the final (server-filled)
+   status/percent/reason.
+7. Recalc: `not_needed` iff no progress field changed (an all-unchanged batch still writes check-in
+   rows and audit rows, never touches the flag); else `find_in_flight_run(trigger_reason="check_in")`
+   → `deferred` (flag set) or `queued` (one greedy run; `recalc_project_id` = the project when the
+   batch changed exactly one, else null; one `project.recalculate_requested` row per changed
+   project). `project.check_in` audit: one row per project, stage states with
+   `blocked_reason_length` and `note_length` only, plus `changed`, `recalc_status`,
+   `baseline_run_id`.
+8. Rate limit: `CHECKIN_RATE_LIMIT` token bucket per user (burst 10, then 1 per 6 s), 429
+   `RATE_LIMITED` + `Retry-After`.
+9. Board/VIP `score` = `PriorityScore.weighted_score` (the Matrix's "weighted score", e.g. 1015.0,
+   not the 0–100 `normalized_pct`); `band` = `suggested_band`. VIP rank key: priority P1..P4, Q,
+   none; score desc (nulls last); name; id. Year membership: any non-skipped run step range
+   overlapping the year; a project with nothing placed in the active run (not in it, or in it with no
+   placed step, e.g. left out) belongs to `plan`.
+10. `plan_percent` is nullable (no planned window, e.g. an In Progress stage of a project not in the
+    run).
+
+**Tests** (new, 93): `tests/test_p12_tracking.py` (18: plan %, due rules, due-since, each status
+live/due/overdue/idle incl. non-schedulable and Done, no-run case, activity summaries),
+`tests/test_p12_checkins.py` (40: Engineer led/assigned OK; another engineer's stage, other hub,
+nonexistent project ⇒ `FORBIDDEN_STAGE`; unlinked Engineer; no general Workspace write; Viewer grant
+⇒ `FORBIDDEN_STAGE`, Editor/Admin grant OK; HP own hub only; Executive Viewer/Auditor; atomicity;
+server-filled weeks + Done 100; Done immutable; every code; request validation and the 100-entry
+cap; queued/deferred(+flag)/not_needed; rate limit; due list per role, summary, order, hub filter
+never widens; history order/name/404/403; UPDATE/DELETE/TRUNCATE rejected at DB level),
+`tests/test_p12_board_vip.py` (26: board grouping/sort/hard-gated/health/VIP, no run, Engineer and
+Auditor 403, hub scope + filter never widens; VIP pins-first ranking, auto fill to `limit`,
+`over_limit` keeps every pin, limit bounds, year membership plan/next, card fields, RBAC, hub filter;
+pin/unpin audit once, strict body, RBAC negatives incl. Editor grant 403 / Admin grant 200; row
+extensions on `/dashboard/projects` and `/gantt`), `tests/test_p12_follow_up.py` (9, dedicated
+container for the worker/sweeper: **I24** burst of 5 deferred (3 priority moves + step_timing +
+check_in) ⇒ exactly one `follow_up` run whose input has the last priority; nothing while in flight;
+bound one in flight + one pending; hand-over after worker failure, success, sweep; cancelled run with
+no request dispatches nothing; via the API: priority move deferred sets the flag, a queued check-in
+clears it, Workspace Recalculate and admin CP-SAT dispatch 409 without touching it). Updated:
+`test_migrations.py`, `test_openapi_frontend_contract.py` (+17 exact rows pinning frontend B's
+mirrors in `lib/api/check-ins.ts`, `surfaces/priority-board/api.ts`, `surfaces/vip/api.ts`;
+`CheckInEntryError` allowlisted as a 422-body type; 122 pass).
+
+**Verification.** Full backend suite (`pytest`, excluding `tests/scheduling/`): **958 passed**,
+coverage **96.48 %**. Touched modules: `priority_board.py`, `vip.py`, `run_dispatch.py`,
+`project_cards.py`, `priority_move.py`, `models/checkin.py`, all new schemas 100 %; `checkins.py`
+99 %, `services/checkin.py` 99 %, `tracking.py` 98 %, `dashboard.py` 97 %, `gantt.py` 95 %,
+sweeper 88 %, `schedule_tasks.py` 86 %. `ruff check .` clean. mypy on every new/touched module: no
+new errors (only the pre-existing celery stub / untyped-decorator gaps). OpenAPI regenerated
+in-process (`app.openapi()`): new paths `/priority-board`, `/check-ins`, `/check-ins/due`,
+`/check-ins/history`, `/vip-projects`, `/projects/{project_id}/vip`.
+
+**Contract deviations:** none in shapes. Additions: per-entry code `DUPLICATE_STAGE`;
+`plan_percent` nullable; error body also carries top-level `code` (existing envelope).
+
+**Files.** New: `backend/alembic/versions/p12b_vip_checkins.py`, `backend/models/checkin.py`,
+`backend/services/{tracking,project_cards,checkin}.py`, `backend/schemas/{checkin,priority_board,
+vip}.py`, `backend/api/routers/{checkins,priority_board,vip}.py`,
+`backend/tests/{p12_helpers,test_p12_tracking,test_p12_checkins,test_p12_board_vip,
+test_p12_follow_up}.py`. Changed: `backend/models/{__init__,project}.py`, `backend/api/main.py`,
+`backend/api/errors.py`, `backend/api/routers/{dashboard,gantt,workspace,schedule_runs}.py`,
+`backend/schemas/{dashboard,gantt}.py`, `backend/services/{run_dispatch,priority_move,workspace}.py`,
+`backend/workers/{schedule_tasks,schedule_run_sweeper}.py`,
+`backend/tests/{test_migrations,test_openapi_frontend_contract}.py`, `docs/IMPLEMENTATION_PLAN.md`
+(P12-T03 status), this entry. Not committed.
+
+**Gate result:** N/A, build task. **Next:** orchestrator review, then the P11+P12 gate (P12-T06..T08).
+
+### [2026-10-10] P12-T02..T05 orchestrator review — rpd-orchestrator
+
+**Verdict: all four accepted.** Alembic has a single head (`d451acccb1ab → p12a_step_timing →
+p12b_vip_checkins`). `backend/scheduling/` changed only by P12-T01. No `dangerouslySetInnerHTML`
+in code (comment mentions only).
+
+**Reported results (to be re-verified by qa-inspector at the gate):** backend A 1019/1020 in a run
+overlapping B's edits (the one failure, `test_migrations.py`, passes alone); backend B 958 pass,
+96.48 % coverage; frontend A 883/884 and frontend B 882/884 (the known `DevRoleSwitcher` failure
+since `c074e62`, plus A's Matrix test mid-edit during B's run); bundle 181.0 KB gzip / 400 KB.
+
+**Accepted decisions beyond the contract:**
+- Backend A: errors keep the existing `CodedHTTPException` shape (`{"detail", "code"}`), not the
+  contract header's `{detail:{code,message}}` — the contract header was wrong, the app shape wins;
+  `unchanged` checked before `STEP_DONE`; Reset timing allowed on started steps; a cert-off lab step
+  stores timing and answers `not_needed`; timing has no project-grant route (same as freeze — the
+  security-auditor should confirm); a PDD↔OEM hub move clears timing; timing recorded in
+  `workflow_snapshot.step_timing` (no separate input-snapshot column).
+- Backend B: only schedulable projects have due stages / VIP candidacy; Engineer "assigned" includes
+  the active run's assignment (runs never fill the live column); POST /check-ins never 403s up front
+  (`FORBIDDEN_STAGE` per entry); board/VIP `score` = Matrix `weighted_score`, `band` = `suggested_band`;
+  follow-up dispatched after every run end (any kind) and on every sweeper tick, under the lock;
+  `find_in_flight_run(..., request_follow_up=True)` is the single hook; Workspace Recalculate and
+  CP-SAT pass `False`; new 422 code `DUPLICATE_STAGE`; `plan_percent` nullable.
+- Frontend A: `withHub()` query-key helper ("All hubs" sends no `hub_id`); local hub selects removed
+  on Gantt, Matrix, Projects and Dashboard breakdown; follow-up watcher polls `/schedule-runs/active`.
+- Frontend B: hand-built drag (native DnD + keyboard grip, no dependency); a drop still confirms via
+  the P11 dialog; `requestMove(..., { onSettled })` additive.
+
+**Follow-ups recorded (non-blocking):**
+- **P12-F01**: touch drag on the Priority board (pointer events or a library). Owner: frontend-builder.
+- **P12-F02**: P11-F01 also covers the board drag, the VIP pin and the check-in for a user whose only
+  write route is an Admin-level project grant (no per-project effective role served).
+- OQ #32 (VIP curation) still open with the client.
+
+**Next:** P12-T06..T08 gate for P11 + P12 (qa-inspector, workflow-auditor, security-auditor) in
+parallel.

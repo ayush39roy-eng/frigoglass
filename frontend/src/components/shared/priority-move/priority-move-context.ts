@@ -15,9 +15,22 @@ export interface PriorityMoveTarget {
   status?: string | null | undefined;
 }
 
+/**
+ * How a requested move ended, for callers that show it optimistically (the
+ * P12 Priority board, ADR 0018): `accepted` once the POST returned 200 (any
+ * `recalc_status`), `rejected` on any error (incl. 409 `HARD_GATE_FORCES_P1`),
+ * `cancelled` when the confirm step was dismissed or the request was ignored.
+ */
+export type PriorityMoveOutcome = 'accepted' | 'rejected' | 'cancelled';
+
+export interface PriorityMoveRequestOptions {
+  onSettled?: (outcome: PriorityMoveOutcome) => void;
+}
+
 export interface PriorityMoveApi {
-  /** Open the confirm step for a move to `next` (no-op if busy or unchanged). */
-  requestMove: (target: PriorityMoveTarget, next: ProjectPriority) => void;
+  /** Open the confirm step for a move to `next` (no-op if busy or unchanged;
+   *  `options.onSettled` then reports `cancelled`). */
+  requestMove: (target: PriorityMoveTarget, next: ProjectPriority, options?: PriorityMoveRequestOptions) => void;
   /**
    * Report a `PATCH /projects/{id}` that changed priority (contract §2). The
    * caller read the `X-Schedule-*` headers; this shows the same progress and

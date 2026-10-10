@@ -351,7 +351,9 @@ async def recalculate(
         surface=Surface.PROJECT_WORKSPACE, action=Action.WRITE, min_grant_role="admin",
     )
 
-    in_flight = await find_in_flight_run(db)
+    # ADR 0023 §4: an explicit dispatch never registers or consumes the
+    # coalesced follow-up run.
+    in_flight = await find_in_flight_run(db, request_follow_up=False)
     if in_flight is not None:
         raise CodedHTTPException(
             status.HTTP_409_CONFLICT,

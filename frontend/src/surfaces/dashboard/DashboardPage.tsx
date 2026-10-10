@@ -9,6 +9,8 @@ import { GlowOverlay } from '@/components/ui/background-components';
 import { ApiError } from '@/lib/api/client';
 import { useMotionTokens } from '@/lib/motion';
 import { usePermission } from '@/stores/session';
+import { useHubFilter } from '@/stores/hub-filter';
+import { HubFilterChip } from '@/components/shared/hub-filter/hub-filter-chip';
 
 import {
   useCompletingWithinYear,
@@ -112,10 +114,13 @@ function StaggerSection({ children }: { children: React.ReactNode }): React.JSX.
 }
 
 export default function DashboardPage(): React.JSX.Element {
-  const withinYear = useCompletingWithinYear();
-  const pipelineTotals = usePipelineTotals();
-  const statusOverview = useStatusOverview();
-  const hubTypePipeline = useHubTypePipeline();
+  // P12 (ADR 0020): every Dashboard figure follows the global header hub filter;
+  // the server filters and totals (I9/I19/I23), the browser only renders.
+  const { hubId } = useHubFilter();
+  const withinYear = useCompletingWithinYear(hubId);
+  const pipelineTotals = usePipelineTotals(hubId);
+  const statusOverview = useStatusOverview(hubId);
+  const hubTypePipeline = useHubTypePipeline(hubId);
   const activeRun = useActiveScheduleRun(withinYear.data?.has_active_schedule_run === true);
   const motionTokens = useMotionTokens();
   const canReadCapacity = usePermission('capacity').read;
@@ -151,6 +156,7 @@ export default function DashboardPage(): React.JSX.Element {
           description={description}
           actions={
             <>
+              <HubFilterChip />
               <Button
                 asChild
                 variant="secondary"

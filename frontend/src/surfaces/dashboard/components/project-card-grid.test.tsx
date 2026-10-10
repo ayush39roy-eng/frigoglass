@@ -20,6 +20,8 @@ function row(id: string, overrides: Partial<ProjectFilterRow> = {}): ProjectFilt
     category: 'A+',
     status: 'In Development',
     priority: 'P1',
+    is_vip: false,
+    tracking_status: 'idle',
     ...overrides,
   };
 }
@@ -58,5 +60,25 @@ describe('ProjectCardGrid', () => {
       <ProjectCardGrid rows={[row('a'), row('b', { priority: null, category: null })]} />,
     );
     expect(await seriousAxeViolations(container)).toEqual([]);
+  });
+});
+
+describe('ProjectCardGrid — P12 VIP badge and tracking status', () => {
+  it('shows the VIP badge only on pinned projects and the served tracking chip on every card', () => {
+    renderWithProviders(
+      <ProjectCardGrid
+        rows={[
+          row('a', { project_name: 'Pinned one', is_vip: true, tracking_status: 'overdue' }),
+          row('b', { project_name: 'Plain one', is_vip: false, tracking_status: 'live' }),
+        ]}
+      />,
+    );
+    const pinned = screen.getByRole('link', { name: 'Pinned one' }).closest('div.flex.h-full');
+    const plain = screen.getByRole('link', { name: 'Plain one' }).closest('div.flex.h-full');
+    if (!(pinned instanceof HTMLElement) || !(plain instanceof HTMLElement)) throw new Error('no cards');
+    expect(pinned.querySelector('[data-testid="vip-badge"]')).not.toBeNull();
+    expect(plain.querySelector('[data-testid="vip-badge"]')).toBeNull();
+    expect(pinned.querySelector('[data-testid="tracking-status-chip"]')).toHaveTextContent('Overdue');
+    expect(plain.querySelector('[data-testid="tracking-status-chip"]')).toHaveTextContent('Live');
   });
 });

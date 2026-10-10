@@ -22,6 +22,13 @@ vi.mock('@/lib/api/sse', () => ({
   streamSolverProgress: (...a: unknown[]) => sse.streamSolverProgress(...a),
 }));
 
+// ADR 0023: `deferred` starts the shared follow-up watcher (tested on its own
+// in lib/use-follow-up-run.test.tsx); here only that it is started.
+const followUp = { start: vi.fn() };
+vi.mock('@/lib/use-follow-up-run', () => ({
+  useFollowUpRunWatcher: () => ({ start: followUp.start, watching: followUp.start.mock.calls.length > 0 }),
+}));
+
 import { PriorityMoveControl } from './priority-move-control';
 import { usePriorityMoveHost } from './priority-move-context';
 import { PriorityMoveProvider } from './priority-move-provider';
@@ -135,14 +142,16 @@ describe('PriorityMoveControl — recalc_status outcomes', () => {
     expect(within(panel).getByTestId('timeline-hidden-count')).toHaveTextContent('+3 more in hubs outside your scope');
   });
 
-  it('deferred: says the priority is saved and another run is going', async () => {
+  it('deferred: says the timeline updates automatically and watches for the follow-up run (ADR 0023)', async () => {
+    followUp.start.mockClear();
     api.moveProjectPriority.mockResolvedValue(response({ recalc_status: 'deferred', schedule_run_id: null, baseline_run_id: null, task_id: null }));
     const user = userEvent.setup();
     renderControl();
     await chooseP2(user);
     expect(await screen.findByTestId('priority-move-notice')).toHaveTextContent(
-      'Saved. Another recalculation is running — press Recalculate when it finishes.',
+      'Saved — the timeline updates automatically after the current recalculation',
     );
+    expect(followUp.start).toHaveBeenCalledTimes(1);
     expect(sse.streamSolverProgress).not.toHaveBeenCalled();
   });
 

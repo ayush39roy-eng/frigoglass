@@ -263,7 +263,54 @@ async def _projected_finish(
     ).scalar_one_or_none()
 
 
+async def _dispatch_follow_up_best_effort() -> uuid.UUID | None:
+    """ADR 0023 §2: after a run has ended (its terminal status committed),
+    dispatch the one coalesced follow-up run if an auto-trigger asked for it
+    while this run was in flight. Fresh session, same reason as the "mark
+    FAILED" cleanup below. Never raises: a failure here must not mask the
+    run's own outcome, and the sweeper retries on its next tick.
+    """
+
+    from services.run_dispatch import dispatch_follow_up_if_requested
+
+    try:
+        async with _open_session_factory() as session_factory, session_factory() as db:
+            return await dispatch_follow_up_if_requested(db)
+    except Exception:  # noqa: BLE001 - best effort, see docstring
+        logger.exception("Coalesced follow-up run: dispatch failed; the sweeper will retry")
+        return None
+
+
 async def _run_cp_sat_schedule_async(
+    task: Task,
+    *,
+    schedule_run_id: str,
+    triggered_by_user_id: str | None,
+    deterministic_time: float | None,
+    activate: bool = False,
+    recalc_project_id: str | None = None,
+    solver: SolverType = SolverType.CP_SAT,
+) -> dict[str, Any]:
+    """Run one solve (`_run_schedule_body`), then, however it ended
+    (completed, cancelled or failed), hand over to the coalesced follow-up
+    run of ADR 0023 if one was requested meanwhile.
+    """
+
+    try:
+        return await _run_schedule_body(
+            task,
+            schedule_run_id=schedule_run_id,
+            triggered_by_user_id=triggered_by_user_id,
+            deterministic_time=deterministic_time,
+            activate=activate,
+            recalc_project_id=recalc_project_id,
+            solver=solver,
+        )
+    finally:
+        await _dispatch_follow_up_best_effort()
+
+
+async def _run_schedule_body(
     task: Task,
     *,
     schedule_run_id: str,

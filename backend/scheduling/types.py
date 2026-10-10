@@ -234,6 +234,28 @@ class StepProgressInput:
 
 
 @dataclass(frozen=True)
+class StepTimingInput:
+    """Per-project step timing set from the Gantt (ADR 0019, P12).
+
+    One row per step that has a planner-set duration and/or earliest start;
+    steps absent from `ProjectInput.step_timing` use the lead-time table and
+    have no floor. Mirrors `ProjectWorkflowStep.duration_override_weeks` /
+    `.start_not_before_week`.
+
+    - `duration_override_weeks` (1..104 or None): this project's effective
+      duration for the step (`override ?? lead_time[...]`). Ignored for a step
+      whose lead time is 0 (the step stays skipped).
+    - `start_not_before_week` (1..HORIZON_WEEKS or None): a `Not Started`
+      step may not start before this week. Ignored for In Progress / Blocked /
+      Done steps and for frozen projects.
+    """
+
+    step_id: str
+    duration_override_weeks: int | None  # 1..104, None = lead-time table
+    start_not_before_week: int | None  # 1..HORIZON_WEEKS, None = no floor
+
+
+@dataclass(frozen=True)
 class ProjectInput:
     """One project to be scheduled (or excluded/left out).
 
@@ -266,6 +288,9 @@ class ProjectInput:
     certification_testing_required: bool = True
     target_end_week: int | None = None
     step_progress: tuple[StepProgressInput, ...] = ()
+    # ADR 0019 (P12): Gantt-set per-step duration override / earliest start.
+    # The default `()` keeps every pre-P12 caller and golden file byte-identical.
+    step_timing: tuple[StepTimingInput, ...] = ()
 
 
 # --- Output --------------------------------------------------------------
@@ -275,9 +300,11 @@ class ProjectInput:
 class StepSchedule:
     """One step row of a project's schedule.
 
-    `duration_weeks` is always the lead-time-table duration for the step (0
-    when `skipped`), so that Σ over design/lab kinds reconciles with the
-    Capacity surface's process-derived load (I6/I7). For a `Done` / `In
+    `duration_weeks` is always the step's *effective* duration (ADR 0019:
+    the project's `duration_override_weeks` if set, else the lead-time-table
+    duration; 0 when `skipped`), so that Σ over design/lab kinds reconciles
+    with the Capacity surface's process-derived load (I6/I7) when that side
+    uses the same effective duration. For a `Done` / `In
     Progress` step `start_week`/`end_week` reflect the recorded actuals plus
     the booked tail, so the span may differ from `duration_weeks`.
 

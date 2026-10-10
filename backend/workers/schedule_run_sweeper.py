@@ -21,6 +21,10 @@ is only ever swept once BOTH of those checks would already consider it long
 gone, so this task can never race a genuinely still-running solve into a
 false FAILED.
 
+**ADR 0023 (P12-T03).** Each tick also hands over to the coalesced
+follow-up run (`services.run_dispatch.dispatch_follow_up_if_requested`):
+a swept run never reached its own worker's hand-over, so the sweeper does it.
+
 **Never re-implements scheduling logic** — this task only flips a
 `ScheduleRun.status`/`error_message`/`completed_at` and publishes a terminal
 SSE event; it does not touch `backend/scheduling/`, `ScheduleRunProjectStep`
@@ -32,6 +36,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
@@ -50,6 +55,7 @@ from core.celery_config import get_celery_settings
 from models.audit import AuditLogEntry
 from models.enums import ScheduleRunStatus
 from models.schedule import ScheduleRun
+from services.run_dispatch import dispatch_follow_up_if_requested
 from workers.progress import publish_progress
 from workers.worker_app import worker_app
 
@@ -154,5 +160,27 @@ async def _sweep_stuck_schedule_runs_async() -> dict[str, Any]:
     if swept:
         logger.warning("Swept %d stuck ScheduleRun row(s): %s", len(swept), swept)
 
-    return {"swept_count": len(swept), "schedule_run_ids": swept}
+    follow_up_run_id = await _dispatch_follow_up_best_effort()
+
+    return {
+        "swept_count": len(swept),
+        "schedule_run_ids": swept,
+        "follow_up_run_id": str(follow_up_run_id) if follow_up_run_id else None,
+    }
+
+
+async def _dispatch_follow_up_best_effort() -> uuid.UUID | None:
+    """ADR 0023 §2: every tick, after any sweep has been committed, dispatch
+    the coalesced follow-up run if one is pending and nothing is in flight.
+    This covers a swept run (its worker never reached its own follow-up
+    hand-over) and a worker that died between committing a run's terminal
+    status and dispatching the follow-up. Never raises.
+    """
+
+    try:
+        async with _open_session_factory() as session_factory, session_factory() as db:
+            return await dispatch_follow_up_if_requested(db)
+    except Exception:  # noqa: BLE001 - best effort; retried on the next tick
+        logger.exception("Coalesced follow-up run: dispatch from the sweeper failed")
+        return None
 

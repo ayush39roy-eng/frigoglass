@@ -58,7 +58,7 @@ from schemas.priority import (
     PriorityScoreUpdateRequest,
 )
 from services.audit_helpers import priority_score_audit_state
-from services.hub_scope import hub_scope_filter
+from services.hub_scope import hub_scope_filter, narrowed_hub_filter
 from services.priority_scoring import compute_priority_score
 
 router = APIRouter(prefix="/priorities", tags=["prioritization-matrix"])
@@ -170,6 +170,7 @@ async def list_priority_matrix(
 
 @router.get("/summary", response_model=PriorityPortfolioSummary)
 async def priority_portfolio_summary(
+    hub_id: uuid.UUID | None = None,
     db: AsyncSession = Depends(get_db),
     current_user: Principal = Depends(_read),
 ) -> PriorityPortfolioSummary:
@@ -179,7 +180,8 @@ async def priority_portfolio_summary(
     every other read on this router."""
 
     stmt = select(Project).options(selectinload(Project.priority_score))
-    hub_filter = hub_scope_filter(current_user, Project.hub_id)
+    # P12 (ADR 0020): optional `hub_id`, ANDed with the scope, never widening.
+    hub_filter = narrowed_hub_filter(current_user, Project.hub_id, hub_id)
     if hub_filter is not None:
         stmt = stmt.where(hub_filter)
     projects = (await db.execute(stmt)).scalars().all()

@@ -29,27 +29,28 @@ function retryUnlessAuth(failureCount: number, error: Error): boolean {
 /** `enabled` (default true) lets the Dashboard's "Capacity booked" card (P11)
  *  share this exact query and cache entry without fetching for a role that
  *  cannot read Capacity. */
-export function useHubLoadVsCapacity({ enabled = true }: { enabled?: boolean } = {}) {
+export function useHubLoadVsCapacity({ enabled = true, hubId = null }: { enabled?: boolean; hubId?: string | null } = {}) {
   return useQuery({
-    queryKey: queryKeys.capacityHubLoad(),
-    queryFn: ({ signal }) => fetchHubLoadVsCapacity({ signal }),
+    // P12 (ADR 0020): the global hub filter is in the key and the request.
+    queryKey: queryKeys.capacityHubLoad(hubId),
+    queryFn: ({ signal }) => fetchHubLoadVsCapacity({ signal }, hubId),
     retry: retryUnlessAuth,
     enabled,
   });
 }
 
-export function useClassBreakdown() {
+export function useClassBreakdown(hubId: string | null = null) {
   return useQuery({
-    queryKey: queryKeys.capacityClassBreakdown(),
-    queryFn: ({ signal }) => fetchClassBreakdown({ signal }),
+    queryKey: queryKeys.capacityClassBreakdown(hubId),
+    queryFn: ({ signal }) => fetchClassBreakdown({ signal }, hubId),
     retry: retryUnlessAuth,
   });
 }
 
-export function useUtilizationMatrix() {
+export function useUtilizationMatrix(hubId: string | null = null) {
   return useQuery({
-    queryKey: queryKeys.capacityUtilizationMatrix(),
-    queryFn: ({ signal }) => fetchUtilizationMatrix({ signal }),
+    queryKey: queryKeys.capacityUtilizationMatrix(hubId),
+    queryFn: ({ signal }) => fetchUtilizationMatrix({ signal }, hubId),
     retry: retryUnlessAuth,
   });
 }

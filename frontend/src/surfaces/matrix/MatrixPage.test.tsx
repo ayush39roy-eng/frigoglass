@@ -5,6 +5,7 @@ import userEvent from '@testing-library/user-event';
 import { renderWithProviders } from '@/test/render';
 import { ApiError } from '@/lib/api/client';
 import { useScenarioStore } from '@/stores/scenario';
+import { useHubFilterStore } from '@/stores/hub-filter';
 import type { PriorityMatrixRow, PriorityPortfolioSummary } from './api/types';
 
 vi.mock('@tanstack/react-virtual', () => ({
@@ -32,7 +33,7 @@ const hooks = {
 };
 vi.mock('./hooks/use-matrix', () => ({
   usePriorityMatrix: (args: unknown) => hooks.usePriorityMatrix(args),
-  usePrioritySummary: () => hooks.usePrioritySummary(),
+  usePrioritySummary: (...a: unknown[]) => hooks.usePrioritySummary(...a),
   useCurrencyRates: () => hooks.useCurrencyRates(),
   useUpdatePriorityScore: () => hooks.useUpdatePriorityScore(),
   useApplyScenario: () => hooks.useApplyScenario(),
@@ -85,6 +86,21 @@ beforeEach(() => {
 });
 
 describe('MatrixPage', () => {
+  it('P12 (ADR 0020): grid and summary follow the global hub filter; no page-local Hub select', () => {
+    useHubFilterStore.setState({ hubId: 'hub-romania' });
+    hooks.usePriorityMatrix.mockReturnValue(pending);
+    hooks.usePrioritySummary.mockReturnValue(pending);
+    try {
+      renderWithProviders(<MatrixPage />);
+      expect(hooks.usePriorityMatrix).toHaveBeenLastCalledWith(expect.objectContaining({ hubId: 'hub-romania' }));
+      expect(hooks.usePrioritySummary).toHaveBeenLastCalledWith('hub-romania');
+      expect(screen.queryByRole('combobox', { name: 'Hub' })).not.toBeInTheDocument();
+      expect(screen.getByTestId('hub-filter-chip')).toBeInTheDocument();
+    } finally {
+      useHubFilterStore.setState({ hubId: null });
+    }
+  });
+
   it('always renders the heading and the currency toggle', () => {
     hooks.usePriorityMatrix.mockReturnValue(pending);
     hooks.usePrioritySummary.mockReturnValue(pending);

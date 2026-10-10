@@ -36,7 +36,7 @@ class CodedHTTPException(HTTPException):
         self,
         status_code: int,
         code: str,
-        detail: str | list[dict[str, Any]],
+        detail: str | list[dict[str, Any]] | dict[str, Any],
         headers: dict[str, str] | None = None,
     ) -> None:
         super().__init__(status_code=status_code, detail=detail, headers=headers)

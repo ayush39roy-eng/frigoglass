@@ -10,6 +10,8 @@ import { SURFACES } from '@/app/nav';
 import { ApiError } from '@/lib/api/client';
 import { formatDecimal } from '@/lib/format';
 import { useMotionTokens } from '@/lib/motion';
+import { useHubFilter } from '@/stores/hub-filter';
+import { HubFilterChip } from '@/components/shared/hub-filter/hub-filter-chip';
 
 import { portfolioTotals } from './lib/portfolio-totals';
 import type { CapacityHorizon } from './lib/pick-figures';
@@ -62,9 +64,13 @@ function authKind(errors: unknown[]): 'forbidden' | 'unauthorized' | null {
 }
 
 export default function CapacityPage(): React.JSX.Element {
-  const hubLoad = useHubLoadVsCapacity();
-  const classBreakdown = useClassBreakdown();
-  const utilization = useUtilizationMatrix();
+  // P12 (ADR 0020): the global header hub filter. The server filters hub rows
+  // and narrows `areas[]` to the area containing the hub; lab figures stay
+  // region-wide (§4). Nothing is re-derived here.
+  const { hubId } = useHubFilter();
+  const hubLoad = useHubLoadVsCapacity({ hubId });
+  const classBreakdown = useClassBreakdown(hubId);
+  const utilization = useUtilizationMatrix(hubId);
 
   const hasRun =
     hubLoad.data?.has_active_schedule_run === true ||
@@ -109,6 +115,7 @@ export default function CapacityPage(): React.JSX.Element {
                 and `pending`, which is what keeps "the surface always carries
                 this framing" true. It used to be a four-paragraph aside below
                 this header; see `capacity-reporting-notice.tsx`. */}
+            <HubFilterChip />
             <CapacityReportingNotice />
             {denied ? null : (
               <DownloadButton path="/exports/capacity" fallbackFilename="capacity-export" />

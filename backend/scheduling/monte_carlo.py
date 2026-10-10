@@ -55,7 +55,10 @@ docs/MEMORY.md entry for the full justification)
       mode=1.0) -- the classic PERT / three-point project-estimate
       distribution, deliberately right-skewed (overruns more common than
       underruns). A 0-week cell stays 0 (a skipped step never un-skips under
-      perturbation); every other cell is re-rounded to >= 1. This is what
+      perturbation); every other cell is re-rounded to >= 1. A project's ADR
+      0019 `duration_override_weeks` (its effective duration) is scaled by the
+      same factor, re-rounded and clamped to 1..104; floors are not perturbed
+      and no extra RNG draw is made, so pre-P12 forecasts are unchanged. This is what
       makes contention -- and therefore `left_out` / `spillover` -- actually
       vary across iterations; delay perturbation alone never changes
       feasibility.
@@ -92,9 +95,12 @@ from scheduling.cp_sat import DEFAULT_DETERMINISTIC_TIME, run_cp_sat
 from scheduling.greedy import run_greedy_sgs
 from scheduling.types import (
     LeadTime,
+    ProjectInput,
     ScheduleInput,
     ScheduleOutput,
+    StepTimingInput,
 )
+from scheduling.workflow import DURATION_OVERRIDE_MAX_WEEKS, DURATION_OVERRIDE_MIN_WEEKS
 
 # --- Public constants -------------------------------------------------------
 
@@ -227,6 +233,41 @@ def _perturbed_lead_times(base: tuple[LeadTime, ...], factor: float) -> tuple[Le
     )
 
 
+def _perturbed_step_timing(
+    rows: tuple[StepTimingInput, ...], factor: float
+) -> tuple[StepTimingInput, ...]:
+    """ADR 0019: a per-project `duration_override_weeks` is the step's
+    effective duration, so it is perturbed by the same per-iteration factor
+    as the lead-time cells (re-rounded, clamped to the override domain
+    1..104 so the perturbed input stays valid). Floors are plan inputs and
+    are not perturbed. `()` stays `()`, so pre-P12 forecasts are unchanged."""
+
+    return tuple(
+        r
+        if r.duration_override_weeks is None
+        else replace(
+            r,
+            duration_override_weeks=max(
+                DURATION_OVERRIDE_MIN_WEEKS,
+                min(DURATION_OVERRIDE_MAX_WEEKS, round(r.duration_override_weeks * factor)),
+            ),
+        )
+        for r in rows
+    )
+
+
+def _perturbed_project(
+    p: ProjectInput, delay_weeks: int, duration_factor: float | None
+) -> ProjectInput:
+    if duration_factor is None or not p.step_timing:
+        return replace(p, delay_weeks=delay_weeks)
+    return replace(
+        p,
+        delay_weeks=delay_weeks,
+        step_timing=_perturbed_step_timing(p.step_timing, duration_factor),
+    )
+
+
 # --- Core entry point ------------------------------------------------------
 
 
@@ -293,9 +334,11 @@ def forecast_delivery(
     for _ in range(iterations):
         # 1. Duration factor -- one draw, always first, so the RNG call sequence
         #    is fixed regardless of project count.
+        iter_factor: float | None = None
         if duration_perturbation:
             factor = rng.triangular(duration_factor_low, duration_factor_high, duration_factor_mode)
             iter_lead_times = _perturbed_lead_times(base_lead_times, factor)
+            iter_factor = factor
         else:
             iter_lead_times = base_lead_times
 
@@ -310,7 +353,8 @@ def forecast_delivery(
             perturbed_delay[p.project_id] = p.delay_weeks + extra
 
         perturbed_projects = tuple(
-            replace(p, delay_weeks=perturbed_delay[p.project_id]) for p in schedule_input.projects
+            _perturbed_project(p, perturbed_delay[p.project_id], iter_factor)
+            for p in schedule_input.projects
         )
         perturbed_input = ScheduleInput(
             projects=perturbed_projects,

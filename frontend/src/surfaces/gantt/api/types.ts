@@ -43,7 +43,25 @@ export interface GanttStepRow {
   assigned_chamber_code: string | null;
   eng_conflict: boolean;
   chamber_overlap: boolean;
+  /** P12 contract §3 (reconciled with `backend/schemas/gantt.py`): the lead-time table value. */
+  lead_time_weeks: number;
+  /** P12 contract §3, ADR 0019 (reconciled): this project's duration for the
+   *  step; null = the lead-time table applies. `duration_weeks` above is the
+   *  effective duration. */
+  duration_override_weeks: number | null;
+  /** P12 contract §3, ADR 0019 (reconciled): earliest start floor; null = none. */
+  start_not_before_week: number | null;
+  /** P12 contract §3 (reconciled): what the Gantt may do with this bar for the
+   *  caller, decided server-side (ADR 0019 §4 + GANTT write on the project). */
+  timing_editable: TimingEditable;
 }
+
+/** ADR 0019 §4: `move_resize` (Not Started), `resize` (In Progress / On Hold),
+ *  `none` (Done, skipped, frozen / non-schedulable project, or no write). */
+export type TimingEditable = 'move_resize' | 'resize' | 'none';
+
+/** ADR 0021: per-project live tracking status, served. */
+export type TrackingStatus = 'live' | 'due' | 'overdue' | 'idle';
 
 /** One project row (`GanttProjectRow`). Project-level flags are from the active
  *  run's outcome snapshot — `left_out` / `spillover` / `cat_not_allowed` are the
@@ -76,6 +94,10 @@ export interface GanttProjectRow {
   schedule_stale: boolean;
   /** PLACEHOLDER (P9 contract §5). */
   workflow_id: WorkflowId;
+  /** P12 contract §3, ADR 0022 (reconciled): pinned VIP project. */
+  is_vip: boolean;
+  /** P12 contract §3, ADR 0021 (reconciled): served by `services.tracking`. */
+  tracking_status: TrackingStatus;
   steps: GanttStepRow[];
 }
 
@@ -109,4 +131,27 @@ export interface GanttActiveRun {
   version: number;
   solver_type: 'greedy' | 'cp_sat';
   created_at: string;
+}
+
+/** P12 contract §3 (reconciled with `backend/schemas/step_timing.py`, pinned
+ *  `exact` by `test_openapi_frontend_contract.py`): `PATCH …/steps/{step_id}/timing`
+ *  body (`extra="forbid"`). Send either field or both; an absent field is left
+ *  as it is and an explicit `null` clears it. */
+export interface StepTimingRequest {
+  duration_override_weeks?: number | null;
+  start_not_before_week?: number | null;
+}
+
+/** P12 contract §3 (reconciled, pinned `exact`): the 200 response. */
+export interface StepTimingResponse {
+  project_id: Id;
+  step_id: string;
+  duration_override_weeks: number | null;
+  start_not_before_week: number | null;
+  /** `duration_override_weeks ?? lead time`, served. */
+  effective_duration_weeks: number;
+  recalc_status: 'queued' | 'deferred' | 'not_needed' | 'unchanged';
+  schedule_run_id: Id | null;
+  baseline_run_id: Id | null;
+  task_id: string | null;
 }

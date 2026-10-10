@@ -60,10 +60,10 @@ export function usePriorityMatrix(params: UseMatrixParams) {
   });
 }
 
-export function usePrioritySummary() {
+export function usePrioritySummary(hubId: string | null = null) {
   return useQuery({
-    queryKey: queryKeys.prioritySummary(),
-    queryFn: ({ signal }) => fetchPrioritySummary({ signal }),
+    queryKey: queryKeys.prioritySummary(hubId),
+    queryFn: ({ signal }) => fetchPrioritySummary({ signal }, hubId),
     retry: retryUnlessAuth,
   });
 }

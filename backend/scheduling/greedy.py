@@ -24,7 +24,8 @@ Shape of a run (all pure, all deterministic — Invariant I8):
      the anchored step (I11).
   4. Walk the non-frozen projects in scheduling order: each step in the DAG's
      deterministic walk order gets `earliest_start = max(pred.end) + 1`
-     (floored at CURRENT_WEEK); `design` searches the leader's calendar,
+     (floored at CURRENT_WEEK and, for a Not Started step, at its ADR 0019
+     `start_not_before_week`); `design` searches the leader's calendar,
      `lab` searches eligible chambers, `elapsed` books nothing, `skipped`
      steps are transparent, held (Blocked) steps are not placed.
 
@@ -243,6 +244,7 @@ def prepare_run(schedule_input: ScheduleInput) -> RunContext:
             lead_time_table,
             hub_lab_region=dc.HUB_LAB_REGION,
             priority_order=dc.PRIORITY_ORDER,
+            horizon_weeks=schedule_input.horizon_weeks,
         )
         plans[project.project_id] = analyse_project(
             project, workflows[project.workflow_id], lead_time_table
@@ -697,8 +699,12 @@ def _schedule_one_project(
             continue
 
         # --- Not Started (or frozen): place per the Booking rules -----------------
-        duration = sp.duration
+        duration = sp.duration  # effective duration (ADR 0019)
         w = pred_end + 1 if frozen else max(current_week, pred_end + 1)
+        if sp.start_not_before_week is not None:
+            # ADR 0019 earliest start (never set for a frozen project): the
+            # search floor is max(CURRENT_WEEK, preds' end + 1, floor).
+            w = max(w, sp.start_not_before_week)
         kind = sp.step.kind
 
         if kind == "design":

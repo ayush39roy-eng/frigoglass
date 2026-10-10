@@ -125,3 +125,18 @@ def duration_for(
     if category is None:
         return 0
     return lookup.get((workflow_id, category, step_id), 0)
+
+
+def effective_duration_weeks(
+    lead_time_weeks: int, duration_override_weeks: int | None, *, skipped: bool = False
+) -> int:
+    """ADR 0019 §1: `duration_override_weeks ?? lead_time`, used everywhere the
+    lead-time duration was used (remaining duration, progress roll-up
+    weights). An override never revives a skipped step: a step whose table
+    duration is 0, or one the caller says is `skipped` (a lab step while the
+    project's `certification_testing_required` is false), keeps its
+    lead-time value and the override is ignored, as the scheduler does.
+    """
+    if skipped or lead_time_weeks == 0 or duration_override_weeks is None:
+        return lead_time_weeks
+    return duration_override_weeks

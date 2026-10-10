@@ -13,6 +13,7 @@ import type {
   SolverType,
   ScheduleRunStatus,
 } from '@/types/enums';
+import type { TrackingStatus } from '@/components/shared/tracking-status-meta';
 import type { Id, WeekNumber } from '@/types/common';
 
 /** GET /dashboard/pipeline-totals — portfolio *composition* (carry_over vs new),
@@ -82,6 +83,11 @@ export interface ProjectFilterRow {
   category: ProjectCategory | null;
   status: ProjectStatus;
   priority: ProjectPriority | null;
+  // P12 contract §5: `/dashboard/projects` rows extended for the Projects cards (schemas/dashboard.py).
+  /** Pinned as VIP (ADR 0022). */
+  is_vip: boolean;
+  /** Served tracking status (ADR 0021 §4). */
+  tracking_status: TrackingStatus;
 }
 
 export interface ProjectFilterResult {

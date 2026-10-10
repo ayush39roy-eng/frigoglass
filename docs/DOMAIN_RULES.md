@@ -22,7 +22,7 @@ recalculates automatically), ADR 0016 (capacity booked % and Europe/India areas)
 **Revised 2026-10-10** from the client's second batch of change requests: ADR 0018 (Priority board),
 ADR 0019 (Gantt drag sets a per-project step duration and an earliest start — a scheduler input
 change), ADR 0020 (global hub filter), ADR 0021 (weekly check-in / live tracking) and ADR 0022 (VIP
-projects). Sections marked *(2026-10-10)* changed. Invariants I21–I23. Open questions #28–#33.
+projects). Sections marked *(2026-10-10)* changed. Invariants I21–I24. Open questions #28–#33. ADR 0023 (check-ins recalculate; coalesced follow-up run) amends 0015/0019/0021 the same day after the owner's answers.
 
 ---
 
@@ -195,7 +195,7 @@ if new == old:                        no-op (unchanged)
 if hard_gates non-empty and new != P1: reject 409 HARD_GATE_FORCES_P1
 write priority, audit project.priority_move, set schedule_stale
 if status not schedulable:            not_needed (no run)
-elif a run is queued/running:         deferred   (stays stale; no second run)
+elif a run is queued/running:         deferred   (stays stale; registers the one coalesced follow-up run — ADR 0023)
 else:                                 queued — greedy run, activate=True, trigger_reason="priority_move"
 ```
 
@@ -625,6 +625,11 @@ Two planner inputs per `ProjectWorkflowStep`, never overwritten by a run:
 - A timing change **recalculates automatically**, exactly like a priority move (same lifecycle,
   greedy only, `trigger_reason="step_timing"`). This is the second exception to "Rescheduling is
   explicit" (OQ #29).
+- *(P12-T01 review rulings, 2026-10-10)* A **frozen** project uses its duration overrides (so its bars
+  and its capacity load keep matching) but ignores `start_not_before_week`. The **unconstrained
+  finish** honours the floor (a floor is a plan input like precedence, not a resource limit), so with
+  no `target_end_week` a later floor moves `expected_end_week` later too. A lab step skipped because
+  certification testing is off stays skipped regardless of any override.
 
 ## Global hub filter *(2026-10-10, ADR 0020)*
 
@@ -643,7 +648,14 @@ capacity stays region-wide under a hub filter (chambers are shared per region).
 - A check-in writes the per-stage progress fields under the existing consistency rules and appends an
   immutable `stage_checkins` row. The server fills `actual_start_week = CURRENT_WEEK` on the first
   move out of `Not Started`, and `actual_end_week = CURRENT_WEEK` on `Done`. It sets
-  `schedule_stale`; it never dispatches a run.
+  `schedule_stale` and *(ADR 0023)* dispatches one greedy run per batch (`trigger_reason="check_in"`)
+  with the priority-move lifecycle (`queued` / `deferred` / `not_needed`).
+- **Coalesced follow-up run** *(ADR 0023)*: any auto-trigger (`priority_move`, `step_timing`,
+  `check_in`) that answers `deferred` records one durable follow-up request; when the in-flight run
+  ends (success, failure or sweep) exactly one greedy run (`trigger_reason="follow_up"`) is
+  dispatched and the request cleared, under the dispatch advisory lock. At most one run in flight
+  plus one pending. The explicit Workspace Recalculate is unchanged (409 in flight, no follow-up).
+- **No automatic stage advance** *(ADR 0023)*: a stage is never started or completed without a report.
 - **Tracking status** (per project, served):
   - `idle` — no due stage;
   - `live` — every due stage has a check-in with `week == CURRENT_WEEK`;
@@ -670,7 +682,11 @@ capacity stays region-wide under a hub filter (chambers are shared per region).
 - **I21** (ADR 0019): every scheduled step that is not skipped, not `Done` and not in a frozen project
   books a span equal to its effective duration (for `In Progress`/`Blocked`, the tail equals the
   remaining duration derived from the effective duration).
-- **I22** (ADR 0019): every `Not Started` step with `start_not_before_week` set starts at or after it.
+- **I22** (ADR 0019): every `Not Started` step with `start_not_before_week` set starts at or after it
+  (frozen projects exempt — their dates are locked, I10; ruled 2026-10-10 at P12-T01 review).
+- **I24** (ADR 0023): for any burst of auto-triggers answering `deferred` during one in-flight run,
+  exactly one `follow_up` run is created after it, and its input snapshot reflects every change saved
+  before it was dispatched.
 - **I23** (ADR 0020): for any hub `h` in scope, each hub-filtered Dashboard total equals the
   corresponding unfiltered per-hub figure for `h`, and the Gantt, Capacity and Dashboard agree for `h`
   to two decimals.

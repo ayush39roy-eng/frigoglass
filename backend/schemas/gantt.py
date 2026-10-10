@@ -25,6 +25,7 @@ from models.enums import (
     WorkflowStepKind,
     WorkflowStepStatus,
 )
+from schemas.step_timing import TimingEditable
 
 
 class GanttStepRow(BaseModel):
@@ -60,6 +61,17 @@ class GanttStepRow(BaseModel):
     assigned_chamber_code: str | None
     eng_conflict: bool
     chamber_overlap: bool
+    #: P12 (ADR 0019, docs/API_CONTRACT_P12.md §3). `duration_weeks` above is
+    #: the effective duration the active run booked (`override ?? lead
+    #: time`). `lead_time_weeks` is the lead-time table value for the
+    #: project's workflow/category; the two timing fields are the live
+    #: planner inputs (they may be newer than the run while it recalculates).
+    lead_time_weeks: int
+    duration_override_weeks: int | None
+    start_not_before_week: int | None
+    #: Computed server-side from ADR 0019 §4 and the caller's GANTT write
+    #: permission on the project; the browser never derives it.
+    timing_editable: TimingEditable
 
 
 class GanttProjectRow(BaseModel):
@@ -88,6 +100,10 @@ class GanttProjectRow(BaseModel):
     #: Progress or settings changed since the active run was computed.
     schedule_stale: bool
     workflow_id: Literal["PDD", "OEM"]
+    #: P12 (docs/API_CONTRACT_P12.md §3/§6, ADR 0022): pinned as VIP.
+    is_vip: bool
+    #: P12 (ADR 0021 §4): served by `services.tracking.tracking_status_for`.
+    tracking_status: Literal["live", "due", "overdue", "idle"]
     steps: list[GanttStepRow]
 
 

@@ -198,7 +198,7 @@ describe('RegistrationPage', () => {
     expect(await screen.findByText('Changing priority recalculates the timeline.')).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'Save changes' }));
     expect(await screen.findByTestId('priority-move-notice')).toHaveTextContent(
-      'Saved. Another recalculation is running — press Recalculate when it finishes.',
+      'Saved — the timeline updates automatically after the current recalculation',
     );
   });
 

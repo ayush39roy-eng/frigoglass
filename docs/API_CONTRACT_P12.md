@@ -241,8 +241,10 @@ Engineers see only their own stages.
       "note": "str|null (≤1000)" }
   ]
 }
-// 200 response
-{ "week": 31, "accepted": 3, "projects_marked_stale": ["uuid", …] }
+// 200 response  (recalc fields added 2026-10-10, ADR 0023)
+{ "week": 31, "accepted": 3, "projects_marked_stale": ["uuid", …],
+  "recalc_status": "queued" | "deferred" | "not_needed",
+  "schedule_run_id": "uuid|null", "baseline_run_id": "uuid|null", "task_id": "str|null" }
 ```
 
 - The batch is atomic. Any invalid entry fails the whole batch with 422 `CHECKIN_INVALID` and
@@ -262,7 +264,8 @@ Engineers see only their own stages.
   - appends a `stage_checkins` row for each entry;
   - sets `schedule_stale` on each changed project;
   - writes one audit row per project (`project.check_in`).
-- No run is dispatched (ADR 0021 §6).
+- *(Amended by ADR 0023)* One greedy run per batch is dispatched through `services/run_dispatch.py`
+  (`trigger_reason="check_in"`), `not_needed` when no progress field of a schedulable project changed.
 - Rate limit: reuse `services/rate_limit.py`.
 
 ### `GET /check-ins/history?project_id=&step_id=`
@@ -359,3 +362,19 @@ Permission: Registration WRITE, hub-scoped (same as the priority move), or an Ad
   Labels: Live, Due this week, Overdue, No active stage.
 - **The VIP badge** `src/components/shared/vip-badge.tsx` (B creates it; A uses it on the Gantt row):
   `export function VipBadge(props: { className?: string }): JSX.Element`.
+
+## 8. Coalesced follow-up run (ADR 0023, added 2026-10-10 — backend B owns it)
+
+- `services/run_dispatch.py` gains a durable follow-up request (one row/flag in Postgres, created in
+  migration `p12b_vip_checkins`; never Redis-only). Setting and clearing happen under the existing
+  dispatch advisory lock.
+- `priority_move`, `step_timing` and `check_in` set it whenever they answer `deferred`. Response shapes
+  are unchanged.
+- When an activated run finishes (success, failure) and when `workers/schedule_run_sweeper.py` sweeps a
+  stuck run, the worker clears the flag and, if it was set, dispatches exactly one greedy run with
+  `trigger_reason="follow_up"`, `activate=True`.
+- The explicit Workspace Recalculate is unchanged (409 in flight, no follow-up).
+- Frontend: on `deferred`, show "Saved — the timeline updates automatically after the current
+  recalculation", poll the existing endpoint that serves the active run id (every 5 s, give up after
+  3 min) and invalidate the active-run-backed queries when it changes. The P11 move control's
+  `deferred` copy changes the same way.
