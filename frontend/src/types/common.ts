@@ -4,7 +4,9 @@
 /** UUID string, as the backend uses `uuid.uuid4()` PKs (backend/models/base.py). */
 export type Id = string;
 
-/** 1-indexed absolute week number within the 78-week horizon (DOMAIN_RULES.md). */
+/** 1-indexed absolute week number (DOMAIN_RULES.md). The UI presents the 52-week plan
+ *  year (W1–W52, `DISPLAY_HORIZON_WEEKS`); a served week past 52 is spillover and is
+ *  shown as "After W52" (`formatPlanWeek`), never as W53+. */
 export type WeekNumber = number;
 
 export interface Paginated<T> {

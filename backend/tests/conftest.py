@@ -18,6 +18,14 @@ rather than using these session fixtures. See `tests/test_migrations.py` and
 from __future__ import annotations
 
 import os
+
+# ADR 0024: `domain_constants.CURRENT_WEEK` defaults to 42 and reads
+# `RPD_CURRENT_WEEK` once, at import. Every test and golden file in this suite
+# was built at week 31, so pin it here, before anything below imports
+# `domain_constants` (directly or through `models` / `api`). Forced, not
+# `setdefault`: a developer shell exporting another week must not change
+# test results.
+os.environ["RPD_CURRENT_WEEK"] = "31"
 import subprocess
 import sys
 from pathlib import Path

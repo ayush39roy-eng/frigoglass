@@ -54,7 +54,8 @@ const baseStep: GanttStepRow = {
 describe('ProjectRowBadges — each chip is a server flag rendered verbatim', () => {
   it('LEFT_OUT badge renders from row.left_out', () => {
     render(<ProjectRowBadges project={{ ...baseProject, left_out: true }} />);
-    expect(screen.getByText('Left out')).toBeInTheDocument();
+    // ADR 0024: the LEFT_OUT flag is presented inside the spillover framing.
+    expect(screen.getByText('Spillover · unplaced')).toBeInTheDocument();
   });
 
   it('SPILLOVER badge renders from row.spillover', () => {
@@ -75,7 +76,7 @@ describe('ProjectRowBadges — each chip is a server flag rendered verbatim', ()
 
   it('renders no outcome chips when every flag is false', () => {
     render(<ProjectRowBadges project={baseProject} />);
-    expect(screen.queryByText('Left out')).not.toBeInTheDocument();
+    expect(screen.queryByText('Spillover · unplaced')).not.toBeInTheDocument();
     expect(screen.queryByText('Spillover')).not.toBeInTheDocument();
     expect(screen.queryByText('Frozen')).not.toBeInTheDocument();
   });

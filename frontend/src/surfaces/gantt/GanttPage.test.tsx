@@ -254,6 +254,71 @@ describe('GanttPage', () => {
     });
   });
 
+  describe('ADR 0024 — 52-week display horizon (client ask 2026-10-13)', () => {
+    // 15 px per week at the default "weeks" zoom → the axis is 52 × 15 = 780 px.
+    const W = 15;
+
+    it('the week axis ends at W52 — no week columns past 52', () => {
+      renderWithProviders(<GanttPage />);
+      const axis = screen.getByRole('img', { name: 'Week axis, week 1 to week 52' });
+      expect(axis).toHaveAttribute('width', String(52 * W));
+      expect(within(axis).queryByText('53')).not.toBeInTheDocument();
+      expect(within(axis).getByText('W52 year-end')).toBeInTheDocument();
+    });
+
+    it('clips a project and a step that run past W52 at the W52 edge and marks them "Spillover → 2027"', async () => {
+      const steps = Array.from({ length: 14 }, (_, i) => step(i + 1, 30 + i * 2, 31 + i * 2));
+      // Step 14 runs W56–W57 (wholly in 2027); step 12 runs W52–W53 (straddles).
+      hooks.useGantt.mockReturnValue(
+        ganttData({
+          rows: [
+            project({ spillover: true, projected_end_week: 57, expected_end_week: 50, slip_weeks: 7, steps }),
+          ],
+        }),
+      );
+      const user = userEvent.setup();
+      renderWithProviders(<GanttPage />);
+
+      const row = screen.getByTestId('gantt-project-row');
+      // The planned bar W30–W57 is cut at the W52 end edge: x = 29 × 15, width = 23 weeks.
+      const bar = row.querySelector('rect[data-bar="planned"]');
+      expect(bar).toHaveAttribute('x', String(29 * W));
+      expect(bar).toHaveAttribute('width', String(23 * W));
+      expect(Number(bar?.getAttribute('x')) + Number(bar?.getAttribute('width'))).toBe(52 * W);
+      // The spillover marker sits on the row; the projected line (W57) is not drawn past the axis.
+      const marker = within(row).getByTestId('gantt-spillover-marker');
+      expect(marker).toHaveTextContent('Spillover → 2027');
+      expect(within(row).queryByTestId('gantt-marker-projected')).not.toBeInTheDocument();
+      expect(within(row).getByTestId('gantt-marker-expected')).toHaveAttribute('data-week', '50');
+      // No title or label on the row prints a W53+ week.
+      expect(row.textContent).not.toMatch(/W5[3-9]/);
+      expect(within(row).getByRole('img', { name: /will be completed After W52/ })).toBeInTheDocument();
+
+      await user.click(screen.getByRole('button', { name: 'Expand steps for Cooler Alpha' }));
+      const stepRows = screen.getAllByTestId('gantt-step-row');
+      // Step 12 (W52–W53) is clipped to one week and flagged; step 14 (W56–W57) has no bar but is flagged.
+      expect(within(stepRows[11]).getByTestId('gantt-step-spillover')).toBeInTheDocument();
+      expect(stepRows[11].querySelector('rect[data-bar]')).toHaveAttribute('width', String(1 * W));
+      expect(within(stepRows[13]).getByTestId('gantt-step-spillover')).toBeInTheDocument();
+      expect(stepRows[13].querySelector('rect[data-bar]')).toBeNull();
+      // Steps inside the year carry no marker.
+      expect(within(stepRows[0]).queryByTestId('gantt-step-spillover')).not.toBeInTheDocument();
+    });
+
+    it('a server left-out project is shown inside the spillover framing', () => {
+      hooks.useGantt.mockReturnValue(ganttData({ rows: [project({ left_out: true, steps: [] })] }));
+      renderWithProviders(<GanttPage />);
+      const row = screen.getByTestId('gantt-project-row');
+      expect(within(row).getByTestId('gantt-spillover-marker')).toHaveTextContent('Spillover → 2027');
+      expect(within(row).getByText('Spillover · unplaced')).toBeInTheDocument();
+    });
+
+    it('a project finishing inside the year carries no spillover marker', () => {
+      renderWithProviders(<GanttPage />);
+      expect(within(screen.getByTestId('gantt-project-row')).queryByTestId('gantt-spillover-marker')).not.toBeInTheDocument();
+    });
+  });
+
   describe('P9 — completion lines, step kinds, badges, gating', () => {
     it('draws the expected and projected completion lines from the server weeks, with the slip label verbatim', () => {
       hooks.useGantt.mockReturnValue(

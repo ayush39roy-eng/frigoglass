@@ -7,11 +7,17 @@
  * scale — no bar position is ever computed by summing `duration_weeks`, and no
  * `Date` object is involved (the domain model is week-granular everywhere).
  *
+ * The axis is the 52-week plan year (`DISPLAY_HORIZON_WEEKS`, ADR 0024): W1–W52
+ * and nothing after. A bar that runs past W52 is CLIPPED at the W52 end edge and
+ * reports `continuesPastEnd` so the row can show its "Spillover → 2027" marker;
+ * one that starts after W52 is not drawn at all. Clipping is geometry only — the
+ * project's spillover verdict is still the server's `row.spillover` flag (I9).
+ *
  * This module contains no business logic: it maps week numbers the API already
  * computed to pixels. It is unit-tested (`gantt-coordinates.test.ts`).
  */
 
-import { HORIZON_WEEKS } from '@/lib/domain-constants';
+import { DISPLAY_HORIZON_WEEKS } from '@/lib/domain-constants';
 
 /** Two zoom levels (`dataviz-gantt` SKILL): weeks (default, full horizon roughly
  *  fits) and days (wider, for inspecting step boundaries). Zoom changes only
@@ -31,7 +37,7 @@ export const STEP_ROW_HEIGHT = 28;
 export interface WeekScale {
   /** First week rendered (1-indexed, absolute). */
   readonly originWeek: number;
-  /** Weeks in the horizon (78 per DOMAIN_RULES). */
+  /** Weeks on the axis: the 52-week plan year (`DISPLAY_HORIZON_WEEKS`). */
   readonly horizonWeeks: number;
   /** Pixels per one-week bucket. */
   readonly weekWidthPx: number;
@@ -39,7 +45,7 @@ export interface WeekScale {
   readonly totalWidthPx: number;
 }
 
-export function makeWeekScale(zoom: GanttZoom, horizonWeeks: number = HORIZON_WEEKS): WeekScale {
+export function makeWeekScale(zoom: GanttZoom, horizonWeeks: number = DISPLAY_HORIZON_WEEKS): WeekScale {
   const weekWidthPx = WEEK_WIDTH_PX[zoom];
   return {
     originWeek: 1,
@@ -65,11 +71,25 @@ export function weekEndToX(week: number, scale: WeekScale): number {
   return weekToX(week + 1, scale);
 }
 
+/** The last week drawn on the axis (W52 on the plan-year scale). */
+export function lastScaleWeek(scale: WeekScale): number {
+  return scale.originWeek + scale.horizonWeeks - 1;
+}
+
+/** True when a served week falls after the axis' last week — i.e. it would sit
+ *  in the spillover year, which the timeline does not draw. Geometry only. */
+export function isPastScaleEnd(week: number | null | undefined, scale: WeekScale): boolean {
+  return week != null && week > lastScaleWeek(scale);
+}
+
 export interface BarGeometry {
   /** Left edge in px. */
   x: number;
   /** Width in px. Always ≥ `weekWidthPx` (a step occupies whole weeks, inclusive). */
   width: number;
+  /** Present (and `true`) only when the span ran past the axis' last week and
+   *  was clipped at its end edge — the row then shows a spillover marker. */
+  continuesPastEnd?: true;
 }
 
 /**
@@ -79,6 +99,10 @@ export interface BarGeometry {
  *
  * NOTE: width comes from `(endWeek - startWeek + 1)`, i.e. the two server week
  * numbers — never from `duration_weeks`. Callers pass API fields directly.
+ *
+ * Clipped to the axis (ADR 0024): a span ending after the last week is cut at
+ * the last week's end edge (`continuesPastEnd: true`); a span starting after
+ * the last week returns `null` (nothing on W1–W52 to draw).
  */
 export function barGeometry(
   startWeek: number | null | undefined,
@@ -86,9 +110,14 @@ export function barGeometry(
   scale: WeekScale,
 ): BarGeometry | null {
   if (startWeek == null || endWeek == null) return null;
+  const last = lastScaleWeek(scale);
+  if (startWeek > last) return null;
   const x = weekToX(startWeek, scale);
-  const spanWeeks = Math.max(1, endWeek - startWeek + 1);
-  return { x, width: spanWeeks * scale.weekWidthPx };
+  const clippedEnd = Math.min(endWeek, last);
+  const spanWeeks = Math.max(1, clippedEnd - startWeek + 1);
+  const geom: BarGeometry = { x, width: spanWeeks * scale.weekWidthPx };
+  if (endWeek > last) geom.continuesPastEnd = true;
+  return geom;
 }
 
 /**
@@ -105,9 +134,14 @@ export function delayConnectorGeometry(
 ): BarGeometry | null {
   if (plannedEndWeek == null || delayedEndWeek == null) return null;
   if (delayedEndWeek <= plannedEndWeek) return null;
+  const last = lastScaleWeek(scale);
+  // Planned end already past the axis: the whole delay is in the spillover year.
+  if (plannedEndWeek >= last) return null;
   const x = weekEndToX(plannedEndWeek, scale);
-  const width = (delayedEndWeek - plannedEndWeek) * scale.weekWidthPx;
-  return { x, width };
+  const width = (Math.min(delayedEndWeek, last) - plannedEndWeek) * scale.weekWidthPx;
+  const geom: BarGeometry = { x, width };
+  if (delayedEndWeek > last) geom.continuesPastEnd = true;
+  return geom;
 }
 
 /**
@@ -155,6 +189,12 @@ export function completionMarkerX(week: number, scale: WeekScale): number {
   return weekEndToX(week, scale);
 }
 
+/** As `completionMarkerX`, but a week past the axis is pinned to the axis' end
+ *  edge (where the spillover marker sits) instead of being drawn off-canvas. */
+export function clippedCompletionMarkerX(week: number, scale: WeekScale): number {
+  return weekEndToX(Math.min(week, lastScaleWeek(scale)), scale);
+}
+
 export interface SlipBracketGeometry {
   /** Left edge (the earlier of the two markers). */
   x: number;
@@ -176,8 +216,10 @@ export function slipBracketGeometry(
 ): SlipBracketGeometry | null {
   if (expectedEndWeek == null || projectedEndWeek == null) return null;
   if (expectedEndWeek === projectedEndWeek) return null;
-  const a = completionMarkerX(expectedEndWeek, scale);
-  const b = completionMarkerX(projectedEndWeek, scale);
+  const a = clippedCompletionMarkerX(expectedEndWeek, scale);
+  const b = clippedCompletionMarkerX(projectedEndWeek, scale);
+  // Both past the axis: nothing on W1–W52 to bracket.
+  if (a === b) return null;
   return { x: Math.min(a, b), width: Math.abs(b - a) };
 }
 
@@ -205,7 +247,7 @@ function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
 }
 
-/** Body drag: the requested earliest start week, clamped to `1..horizonWeeks`. */
+/** Body drag: the requested earliest start week, clamped to the axis (`1..52`). */
 export function dragMoveStartWeek(originStartWeek: number, deltaWeeks: number, scale: WeekScale): number {
   return clamp(originStartWeek + deltaWeeks, scale.originWeek, scale.originWeek + scale.horizonWeeks - 1);
 }

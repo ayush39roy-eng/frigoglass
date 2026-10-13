@@ -1,4 +1,4 @@
-import { formatWeek } from '@/lib/format';
+import { formatPlanWeek } from '@/lib/format';
 
 import type { PendingGhost, StepTimingTarget } from './step-timing-context';
 
@@ -28,7 +28,7 @@ export type StepTimingFlowState =
 /** "6 wks (lead-time table) · earliest start W40" — served values only. */
 export function timingChangeSummary(change: TimingChange): string {
   const duration = `${String(change.effectiveDurationWeeks)} wks${change.durationOverrideWeeks === null ? ' (lead-time table)' : ''}`;
-  const floor = change.startNotBeforeWeek === null ? 'no start floor' : `earliest start ${formatWeek(change.startNotBeforeWeek)}`;
+  const floor = change.startNotBeforeWeek === null ? 'no start floor' : `earliest start ${formatPlanWeek(change.startNotBeforeWeek)}`;
   return `${change.stepName}: ${duration} · ${floor}`;
 }
 

@@ -51,7 +51,7 @@ import { VirtualDataTable, type VirtualColumn } from './virtual-data-table';
 import { EntityCell, RowActions } from '@/components/ui/table-cells';
 import { categoricalRankSoftBg, categoricalRankText, categoryRank } from '@/lib/categorical-palette';
 import { cn } from '@/lib/utils';
-import { HUB_COUNTRY } from '../lib/hub-geo';
+import { useHubCountry } from '../lib/hub-geo';
 
 type BreakdownView = 'table' | 'cards';
 
@@ -66,6 +66,20 @@ type BreakdownView = 'table' | 'cards';
  *  projects as cards" page filters the same `GET /dashboard/projects` rows
  *  with the same four controls, so it reuses these rather than forking them. */
 export const ALL = '__all__';
+
+/** Hub name + its region, read from the served `GET /hubs` `lab_region`
+ *  (OEM hubs are Greece / Europe — client correction 2026-10-13). */
+function HubCell({ hub }: { hub: ProjectFilterRow['hub'] }): React.JSX.Element {
+  const country = useHubCountry();
+  return (
+    <EntityCell
+      icon={Building2}
+      iconClassName="bg-surface-sunken text-text-muted"
+      title={hub}
+      subtitle={country[hub]}
+    />
+  );
+}
 
 const COLUMNS: VirtualColumn<ProjectFilterRow>[] = [
   {
@@ -91,14 +105,7 @@ const COLUMNS: VirtualColumn<ProjectFilterRow>[] = [
     id: 'hub',
     header: 'Hub',
     width: 'minmax(9rem, 1.2fr)',
-    cell: (row) => (
-      <EntityCell
-        icon={Building2}
-        iconClassName="bg-surface-sunken text-text-muted"
-        title={row.hub}
-        subtitle={HUB_COUNTRY[row.hub]}
-      />
-    ),
+    cell: (row) => <HubCell hub={row.hub} />,
   },
   {
     id: 'category',

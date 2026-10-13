@@ -13,19 +13,26 @@ import {
   weekEndToX,
   weekToX,
   WEEK_WIDTH_PX,
+  clippedCompletionMarkerX,
+  isPastScaleEnd,
+  lastScaleWeek,
+  slipBracketGeometry,
 } from './gantt-coordinates';
 
 describe('gantt-coordinates — week→pixel scale', () => {
   it('maps week numbers to x with a linear, origin-1 scale', () => {
     const scale = makeWeekScale('weeks');
     expect(scale.weekWidthPx).toBe(WEEK_WIDTH_PX.weeks);
-    expect(scale.totalWidthPx).toBe(78 * WEEK_WIDTH_PX.weeks);
+    // ADR 0024: the axis is the 52-week plan year — W1..W52, no W53+ columns.
+    expect(scale.horizonWeeks).toBe(52);
+    expect(scale.totalWidthPx).toBe(52 * WEEK_WIDTH_PX.weeks);
     // week 1 (origin) is at x = 0
     expect(weekToX(1, scale)).toBe(0);
-    // week 31 (CURRENT_WEEK) start edge
-    expect(weekToX(31, scale)).toBe(30 * WEEK_WIDTH_PX.weeks);
-    // year-end marker = END edge of week 52 = start of week 53
+    // week 42 (CURRENT_WEEK) start edge
+    expect(weekToX(42, scale)).toBe(41 * WEEK_WIDTH_PX.weeks);
+    // year-end marker = END edge of week 52 = the axis' right edge
     expect(weekEndToX(52, scale)).toBe(52 * WEEK_WIDTH_PX.weeks);
+    expect(weekEndToX(52, scale)).toBe(scale.totalWidthPx);
   });
 
   it('days zoom widens weekWidthPx without changing the coordinate model', () => {
@@ -101,7 +108,7 @@ describe('gantt-coordinates — plannedSpan / actualSpan (min/max over server fi
 });
 
 describe('step drag snapping (P12, ADR 0019)', () => {
-  const weeks = makeWeekScale('weeks'); // 15 px / week, 78 weeks
+  const weeks = makeWeekScale('weeks'); // 15 px / week, 52 weeks
 
   it('snaps a pointer offset to whole weeks, half away from zero, never -0', () => {
     expect(snapWeekDelta(0, weeks)).toBe(0);
@@ -121,7 +128,7 @@ describe('step drag snapping (P12, ADR 0019)', () => {
     expect(snapWeekDelta(23, days)).toBe(0);
   });
 
-  it('move: shifts the whole ghost and requests the new start as a floor, clamped to 1..78', () => {
+  it('move: shifts the whole ghost and requests the new start as a floor, clamped to 1..52', () => {
     const origin = { startWeek: 10, endWeek: 13, durationWeeks: 4 };
     expect(stepDragResult('move', origin, 45, weeks)).toEqual({
       ghost: { startWeek: 13, endWeek: 16 },
@@ -132,9 +139,9 @@ describe('step drag snapping (P12, ADR 0019)', () => {
       request: { start_not_before_week: 1 },
     });
     const late = stepDragResult('move', origin, 15 * 100, weeks);
-    expect(late.request).toEqual({ start_not_before_week: 78 });
-    expect(late.ghost).toEqual({ startWeek: 78, endWeek: 78 });
-    expect(dragMoveStartWeek(40, 50, weeks)).toBe(78);
+    expect(late.request).toEqual({ start_not_before_week: 52 });
+    expect(late.ghost).toEqual({ startWeek: 52, endWeek: 52 });
+    expect(dragMoveStartWeek(40, 50, weeks)).toBe(52);
   });
 
   it('move/resize below one snapped week sends nothing', () => {
@@ -165,9 +172,50 @@ describe('step drag snapping (P12, ADR 0019)', () => {
     expect(r.ghost).toEqual({ startWeek: 30, endWeek: 33 });
   });
 
-  it('the ghost never runs past the horizon', () => {
-    const origin = { startWeek: 70, endWeek: 77, durationWeeks: 8 };
-    expect(stepDragResult('resize', origin, 15 * 10, weeks).ghost.endWeek).toBe(78);
-    expect(stepDragResult('move', origin, 15 * 5, weeks).ghost.endWeek).toBe(78);
+  it('the ghost never runs past W52 (the end of the plan-year axis)', () => {
+    const origin = { startWeek: 44, endWeek: 51, durationWeeks: 8 };
+    expect(stepDragResult('resize', origin, 15 * 10, weeks).ghost.endWeek).toBe(52);
+    expect(stepDragResult('move', origin, 15 * 5, weeks).ghost.endWeek).toBe(52);
+  });
+});
+
+describe('W52 clipping (ADR 0024 — 52-week display horizon)', () => {
+  const scale = makeWeekScale('weeks');
+  const w = WEEK_WIDTH_PX.weeks;
+
+  it('reports the axis end as W52 and flags weeks past it', () => {
+    expect(lastScaleWeek(scale)).toBe(52);
+    expect(isPastScaleEnd(52, scale)).toBe(false);
+    expect(isPastScaleEnd(53, scale)).toBe(true);
+    expect(isPastScaleEnd(null, scale)).toBe(false);
+  });
+
+  it('a bar inside the year is unchanged and carries no clip flag', () => {
+    expect(barGeometry(40, 52, scale)).toEqual({ x: 39 * w, width: 13 * w });
+    expect(barGeometry(40, 52, scale)?.continuesPastEnd).toBeUndefined();
+  });
+
+  it('a bar running past W52 is clipped at the W52 end edge and flagged', () => {
+    const geom = barGeometry(45, 70, scale);
+    expect(geom).toEqual({ x: 44 * w, width: 8 * w, continuesPastEnd: true });
+    // Its right edge is exactly the axis' right edge — nothing drawn on W53+.
+    expect(geom!.x + geom!.width).toBe(scale.totalWidthPx);
+  });
+
+  it('a bar that starts after W52 is not drawn at all', () => {
+    expect(barGeometry(53, 60, scale)).toBeNull();
+  });
+
+  it('the delay connector is clipped at W52 too, and dropped when wholly past it', () => {
+    expect(delayConnectorGeometry(50, 58, scale)).toEqual({ x: 50 * w, width: 2 * w, continuesPastEnd: true });
+    expect(delayConnectorGeometry(52, 58, scale)).toBeNull();
+    expect(delayConnectorGeometry(55, 58, scale)).toBeNull();
+  });
+
+  it('completion markers past W52 pin to the axis edge; a slip bracket between two is dropped', () => {
+    expect(clippedCompletionMarkerX(60, scale)).toBe(scale.totalWidthPx);
+    expect(clippedCompletionMarkerX(40, scale)).toBe(40 * w);
+    expect(slipBracketGeometry(48, 60, scale)).toEqual({ x: 48 * w, width: 4 * w });
+    expect(slipBracketGeometry(55, 60, scale)).toBeNull();
   });
 });

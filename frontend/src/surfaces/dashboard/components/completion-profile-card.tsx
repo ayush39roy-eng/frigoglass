@@ -13,13 +13,14 @@ import {
 import { BoltCard } from '@/components/ui/bolt-card';
 import { CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { EmptyState } from '@/components/shared/empty-state';
+import { DISPLAY_HORIZON_WEEKS, SPILLOVER_YEAR, WITHIN_YEAR_WEEK } from '@/lib/domain-constants';
 import { formatInteger, formatWeek } from '@/lib/format';
 import { useCountUp } from '@/lib/use-count-up';
 import { usePrefersReducedMotion } from '@/lib/use-prefers-reduced-motion';
 import { cn } from '@/lib/utils';
 
 import type { CompletingWithinYear } from '../api/types';
-import { OUTCOME_STYLE, outcomeOf, type OutcomeBucket } from '../lib/outcome';
+import { OUTCOME_STYLE, outcomeOf, spilloverPastYearCount, type OutcomeBucket } from '../lib/outcome';
 import { useRevealOnce } from '../lib/use-reveal-once';
 import { CardInfo } from '@/components/ui/card-info';
 
@@ -50,8 +51,11 @@ import { CardInfo } from '@/components/ui/card-info';
  *    What DOES exist, and is genuinely week-indexed, is
  *    `CompletingWithinYear.rows[].last_step_end_week` — the week each project's
  *    last scheduled step ends in the active run. So this card charts the
- *    CUMULATIVE COMPLETION PROFILE across the run's own 78-week horizon: how many
- *    projects have finished by week W. That is real data, drawn from fields the
+ *    CUMULATIVE COMPLETION PROFILE across the 52-week plan year (W1–W52, ADR
+ *    0024 — the server's internal 78-week search horizon is never drawn): how
+ *    many projects have finished by week W. Spillover projects finish after W52
+ *    by definition, so they are counted in the totals beside the chart, not
+ *    plotted on W53+ columns. That is real data, drawn from fields the
  *    schedule run stored, and it answers a question a portfolio review actually
  *    asks ("where does the work land relative to year end?"). It is explicitly
  *    NOT labelled as a trend over time, and no sample/illustrative data is used
@@ -69,31 +73,23 @@ import { CardInfo } from '@/components/ui/card-info';
  * and a share bar instead.
  */
 
-const DEFAULT_HORIZON_WEEKS = 78;
-const YEAR_END_WEEK = 52;
-
 export interface CompletionProfileCardProps {
   data: CompletingWithinYear;
-  /** `ScheduleRunSummary.horizon_weeks` from the active run, when loaded. */
-  horizonWeeks: number | null | undefined;
 }
 
 interface ProfilePoint {
   week: number;
   within_year: number;
-  spillover: number;
 }
 
-const SERIES: { key: 'within_year' | 'spillover'; bucket: OutcomeBucket }[] = [
-  { key: 'within_year', bucket: 'within_year' },
-  { key: 'spillover', bucket: 'spillover' },
-];
+const SERIES: { key: 'within_year'; bucket: OutcomeBucket }[] = [{ key: 'within_year', bucket: 'within_year' }];
 
-const METRIC_ROWS: { bucket: OutcomeBucket; field: keyof CompletingWithinYear }[] = [
-  { bucket: 'within_year', field: 'within_year_count' },
-  { bucket: 'spillover', field: 'spillover_count' },
-  { bucket: 'left_out', field: 'left_out_count' },
-  { bucket: 'blocked', field: 'blocked_count' },
+/** The three outcomes on the 52-week year. Spillover (past W52) is the served
+ *  spillover count plus the served left-out count (ADR 0024). */
+const METRIC_ROWS: { bucket: OutcomeBucket; value: (d: CompletingWithinYear) => number }[] = [
+  { bucket: 'within_year', value: (d) => d.within_year_count },
+  { bucket: 'spillover', value: spilloverPastYearCount },
+  { bucket: 'blocked', value: (d) => d.blocked_count },
 ];
 
 function MetricRow({
@@ -132,41 +128,33 @@ function MetricRow({
   );
 }
 
-export function CompletionProfileCard({
-  data,
-  horizonWeeks,
-}: CompletionProfileCardProps): React.JSX.Element {
+export function CompletionProfileCard({ data }: CompletionProfileCardProps): React.JSX.Element {
   const reducedMotion = usePrefersReducedMotion();
   const [chartRef, revealed] = useRevealOnce<HTMLDivElement>();
-  const horizon = horizonWeeks ?? DEFAULT_HORIZON_WEEKS;
+  const horizon = DISPLAY_HORIZON_WEEKS;
 
   const { points, hasSeries } = React.useMemo(() => {
-    const perWeek = { within_year: new Map<number, number>(), spillover: new Map<number, number>() };
+    const perWeek = new Map<number, number>();
     for (const row of data.rows) {
-      const bucket = outcomeOf(row);
-      if (bucket !== 'within_year' && bucket !== 'spillover') continue;
+      // The server's within-year flag decides membership (I9); its finish week
+      // only positions it on the W1–W52 axis.
+      if (outcomeOf(row) !== 'within_year') continue;
       const week = row.last_step_end_week;
       if (week === null) continue;
       const clamped = Math.min(Math.max(week, 1), horizon);
-      const map = perWeek[bucket];
-      map.set(clamped, (map.get(clamped) ?? 0) + 1);
+      perWeek.set(clamped, (perWeek.get(clamped) ?? 0) + 1);
     }
 
     let cumulativeWithin = 0;
-    let cumulativeSpill = 0;
     const out: ProfilePoint[] = [];
     for (let week = 1; week <= horizon; week += 1) {
-      cumulativeWithin += perWeek.within_year.get(week) ?? 0;
-      cumulativeSpill += perWeek.spillover.get(week) ?? 0;
-      out.push({ week, within_year: cumulativeWithin, spillover: cumulativeSpill });
+      cumulativeWithin += perWeek.get(week) ?? 0;
+      out.push({ week, within_year: cumulativeWithin });
     }
-    return { points: out, hasSeries: cumulativeWithin + cumulativeSpill > 0 };
+    return { points: out, hasSeries: cumulativeWithin > 0 };
   }, [data.rows, horizon]);
 
-  const metricMax = METRIC_ROWS.reduce(
-    (max, row) => Math.max(max, Number(data[row.field]) || 0),
-    0,
-  );
+  const metricMax = METRIC_ROWS.reduce((max, row) => Math.max(max, row.value(data)), 0);
 
   const ticks = React.useMemo(() => {
     const step = 13;
@@ -183,23 +171,24 @@ export function CompletionProfileCard({
       <CardHeader className="flex-wrap">
         <CardTitle>Completion profile</CardTitle>
         <span className="inline-flex items-center rounded-pill bg-dash-alt px-2.5 py-1 text-2xs font-medium text-text-muted">
-          Active run · {formatInteger(horizon)}-week horizon
+          Active run · {formatInteger(horizon)}-week year
         </span>
         <CardInfo label="Completion profile source">
           <p>
-            Cumulative count of projects whose last scheduled step ends on or before each week of
-            the active run&apos;s horizon, split by schedule outcome. Every point is counted from
+            Cumulative count of within-year projects whose last scheduled step ends on or before
+            each week of the {formatInteger(horizon)}-week plan year. Every point is counted from
             the <code>last_step_end_week</code> and outcome flags on the run&apos;s own project
             rows (<code>GET /dashboard/completing-within-year</code>).
           </p>
           <p>
-            This is a profile ACROSS ONE RUN&apos;S HORIZON, not a history across runs. The API
+            This is a profile ACROSS ONE RUN&apos;S PLAN YEAR, not a history across runs. The API
             exposes no per-run outcome counts, so no cross-run trend is available and none is
             drawn. No sample or illustrative data appears on this card.
           </p>
           <p>
-            On-hold and left-out projects have no scheduled finish week, so they do not appear in
-            the chart; their counts are listed beside it.
+            Spillover projects are not done by {formatWeek(WITHIN_YEAR_WEEK)} (they carry into{' '}
+            {SPILLOVER_YEAR}, including any not yet placed), and on-hold projects have no finish
+            week, so neither is plotted; their counts are listed beside the chart.
           </p>
         </CardInfo>
       </CardHeader>
@@ -220,15 +209,15 @@ export function CompletionProfileCard({
             ))}
             <li className="flex items-center gap-1.5 text-2xs text-text-subtle">
               <span className="h-0 w-4 border-t border-dashed border-border-strong" aria-hidden="true" />
-              Year end ({formatWeek(YEAR_END_WEEK)})
+              Year end ({formatWeek(WITHIN_YEAR_WEEK)})
             </li>
           </ul>
 
           <div ref={chartRef} className="h-[240px] w-full">
             {!hasSeries ? (
               <EmptyState
-                title="No scheduled finish weeks"
-                description="No project in this run has a scheduled last step."
+                title="No finishes by W52"
+                description="No project in this run is scheduled to finish within the year."
               />
             ) : revealed ? (
               <ResponsiveContainer width="100%" height={240}>
@@ -278,7 +267,7 @@ export function CompletionProfileCard({
                     axisLine={false}
                   />
                   <ReferenceLine
-                    x={YEAR_END_WEEK}
+                    x={WITHIN_YEAR_WEEK}
                     stroke="hsl(var(--color-border-strong))"
                     strokeDasharray="4 4"
                   />
@@ -290,12 +279,10 @@ export function CompletionProfileCard({
                     labelFormatter={(label: React.ReactNode) =>
                       typeof label === 'number' ? formatWeek(label) : String(label ?? '')
                     }
-                    formatter={(value: unknown, name: unknown) =>
+                    formatter={(value: unknown) =>
                       [
                         typeof value === 'number' ? formatInteger(value) : String(value ?? ''),
-                        name === 'within_year'
-                          ? OUTCOME_STYLE.within_year.label
-                          : OUTCOME_STYLE.spillover.label,
+                        OUTCOME_STYLE.within_year.label,
                       ] as [string, string]
                     }
                     contentStyle={{
@@ -332,27 +319,23 @@ export function CompletionProfileCard({
 
           {/* Accessible fallback — a `<dl>`, this surface's established pattern for
               a chart summary (see `hub-type-pipeline-chart.tsx`). Quarter marks
-              only: 78 weekly entries would be unreadable as speech. */}
+              only: 52 weekly entries would be unreadable as speech. */}
           {hasSeries ? (
             <dl className="sr-only">
-              <dt>
-                Cumulative projects completing by week, from the active schedule run, split by
-                outcome
-              </dt>
+              <dt>Cumulative within-year projects completing by week, from the active schedule run</dt>
               {ticks.map((week) => {
                 const point = points[week - 1];
                 if (!point) return null;
                 return (
                   <dd key={week}>
-                    By {formatWeek(week)}: within year {point.within_year}, spillover{' '}
-                    {point.spillover}
+                    By {formatWeek(week)}: within year {point.within_year}
                   </dd>
                 );
               })}
               {finalPoint ? (
                 <dd>
-                  End of horizon {formatWeek(horizon)}: within year {finalPoint.within_year},
-                  spillover {finalPoint.spillover}
+                  End of year {formatWeek(horizon)}: within year {finalPoint.within_year}; spillover
+                  past {formatWeek(horizon)}: {spilloverPastYearCount(data)}
                 </dd>
               ) : null}
             </dl>
@@ -366,7 +349,7 @@ export function CompletionProfileCard({
               <MetricRow
                 key={row.bucket}
                 bucket={row.bucket}
-                value={Number(data[row.field]) || 0}
+                value={row.value(data)}
                 max={metricMax}
               />
             ))}

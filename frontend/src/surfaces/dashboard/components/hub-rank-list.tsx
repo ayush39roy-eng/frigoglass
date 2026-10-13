@@ -9,7 +9,7 @@ import { formatInteger } from '@/lib/format';
 import { cn } from '@/lib/utils';
 
 import type { HubTypePipelineRow } from '../api/types';
-import { buildHubTotals } from '../lib/hub-geo';
+import { buildHubTotals, useHubCountry } from '../lib/hub-geo';
 import { dashRankBg, dashRankSoftBg, dashRankText } from '../lib/dash-chart-theme';
 import { BoltCard } from '@/components/ui/bolt-card';
 import { CardInfo } from '@/components/ui/card-info';
@@ -36,7 +36,8 @@ export interface HubRankListProps {
 
 export function HubRankList({ rows }: HubRankListProps): React.JSX.Element {
   const motionTokens = useMotionTokens();
-  const totals = React.useMemo(() => buildHubTotals(rows), [rows]);
+  const country = useHubCountry();
+  const totals = React.useMemo(() => buildHubTotals(rows, country), [rows, country]);
   const maxCount = totals.reduce((max, t) => Math.max(max, t.count), 0);
 
   return (

@@ -1,8 +1,8 @@
 import * as React from 'react';
 
-import { formatWeek } from '@/lib/format';
+import { formatPlanWeek } from '@/lib/format';
 
-import { completionMarkerX, slipBracketGeometry, type WeekScale } from '../lib/gantt-coordinates';
+import { completionMarkerX, isPastScaleEnd, slipBracketGeometry, type WeekScale } from '../lib/gantt-coordinates';
 import { GANTT_MARKER_TEST_IDS, expectedLabel, slipLabel } from '../lib/completion-labels';
 
 /**
@@ -20,6 +20,10 @@ import { GANTT_MARKER_TEST_IDS, expectedLabel, slipLabel } from '../lib/completi
  * two end-caps, so colour is never the only signal. When both exist a thin
  * bracket joins them, labelled with the API's `slip_weeks` (`+N wk` late /
  * `−N wk` early), tinted by sign — text carries the sign too.
+ *
+ * The axis ends at W52 (ADR 0024): a completion week past it is not drawn as a
+ * line (the row's "Spillover → 2027" marker stands for it) and is described as
+ * "after W52"; a slip bracket reaching past W52 is clipped at the axis edge.
  *
  * Every x here is `completionMarkerX(week)` of a server week number. Nothing
  * is computed from durations, and the slip label is never `projected −
@@ -50,15 +54,17 @@ export function GanttCompletionMarkers({
 }: GanttCompletionMarkersProps): React.JSX.Element | null {
   if (expectedEndWeek === null && projectedEndWeek === null) return null;
 
-  const expectedX = expectedEndWeek === null ? null : completionMarkerX(expectedEndWeek, scale);
-  const projectedX = projectedEndWeek === null ? null : completionMarkerX(projectedEndWeek, scale);
+  const expectedX =
+    expectedEndWeek === null || isPastScaleEnd(expectedEndWeek, scale) ? null : completionMarkerX(expectedEndWeek, scale);
+  const projectedX =
+    projectedEndWeek === null || isPastScaleEnd(projectedEndWeek, scale) ? null : completionMarkerX(projectedEndWeek, scale);
   const bracket = slipBracketGeometry(expectedEndWeek, projectedEndWeek, scale);
 
   const parts: string[] = [projectName];
   if (expectedEndWeek !== null) {
-    parts.push(`${expectedLabel(targetEndWeek)} ${formatWeek(expectedEndWeek)}`);
+    parts.push(`${expectedLabel(targetEndWeek)} ${formatPlanWeek(expectedEndWeek)}`);
   }
-  if (projectedEndWeek !== null) parts.push(`will be completed ${formatWeek(projectedEndWeek)}`);
+  if (projectedEndWeek !== null) parts.push(`will be completed ${formatPlanWeek(projectedEndWeek)}`);
   if (slipWeeks !== null) parts.push(`slip ${slipLabel(slipWeeks)}`);
   const description = parts.join(' · ');
 

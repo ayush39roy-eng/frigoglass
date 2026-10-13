@@ -4,7 +4,7 @@ import { ArrowRight, EyeOff } from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
 import type { ScheduleRunChangeRow, ScheduleRunChanges } from '@/lib/api/priority-move';
-import { formatWeek } from '@/lib/format';
+import { formatPlanWeek } from '@/lib/format';
 import { cn } from '@/lib/utils';
 import type { ProjectPriority } from '@/types/enums';
 
@@ -23,8 +23,10 @@ import { MOVE_COPY } from './move-copy';
 const VIRTUALIZE_OVER = 100;
 const ROW_HEIGHT = 60;
 
+/** Framed on the 52-week year: a finish past W52 prints "After W52" (client ask
+ *  2026-10-13), never W53+. */
 function week(value: number | null): string {
-  return value === null ? '—' : formatWeek(value);
+  return value === null ? '—' : formatPlanWeek(value);
 }
 
 function DeltaChip({ delta }: { delta: number | null }): React.JSX.Element | null {
@@ -62,7 +64,7 @@ function Flips({ row }: { row: ScheduleRunChangeRow }): React.JSX.Element {
       {row.is_new ? <Badge tone="primary" className="rounded-pill">New in this run</Badge> : null}
       {row.is_removed ? <Badge tone="neutral" className="rounded-pill">Not in this run</Badge> : null}
       <FlagFlip before={row.before_within_year} after={row.after_within_year} yes="Within year" no="Past W52" />
-      <FlagFlip before={row.before_left_out} after={row.after_left_out} yes="Left out" no="In the plan" />
+      <FlagFlip before={row.before_left_out} after={row.after_left_out} yes="Spillover · unplaced" no="In the plan" />
       <FlagFlip before={row.before_blocked} after={row.after_blocked} yes="On hold at a stage" no="Not on hold" />
     </span>
   );

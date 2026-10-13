@@ -5,7 +5,7 @@ import { StepKindBadge } from '@/components/shared/step-kind-badge';
 import { Badge } from '@/components/ui/badge';
 import type { CheckInDueStage } from '@/lib/api/check-ins';
 import { CHECKIN_NOTE_MAX, CHECKIN_REASON_MAX } from '@/lib/api/check-ins';
-import { formatWeek } from '@/lib/format';
+import { formatPlanWeek, formatWeek } from '@/lib/format';
 import { cn } from '@/lib/utils';
 import { stageStatusLabel, WORKFLOW_STEP_STATUSES, type WorkflowStepStatus } from '@/types/enums';
 
@@ -30,7 +30,7 @@ const INPUT =
 
 function weeks(stage: CheckInDueStage): string {
   if (stage.planned_start_week === null || stage.planned_end_week === null) return '—';
-  return `${formatWeek(stage.planned_start_week)}–${formatWeek(stage.planned_end_week)}`;
+  return `${formatPlanWeek(stage.planned_start_week)}–${formatPlanWeek(stage.planned_end_week)}`;
 }
 
 /** "per plan X %": the served share of the planned window elapsed (ADR 0021 §5). Display only. */

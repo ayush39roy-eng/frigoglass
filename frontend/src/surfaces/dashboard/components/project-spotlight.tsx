@@ -7,7 +7,8 @@ import { BoltCard } from '@/components/ui/bolt-card';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { EmptyState } from '@/components/shared/empty-state';
 import { categoricalRankSoftBg, categoricalRankText, categoryRank } from '@/lib/categorical-palette';
-import { formatInteger, formatWeek } from '@/lib/format';
+import { DISPLAY_HORIZON_WEEKS, SPILLOVER_YEAR } from '@/lib/domain-constants';
+import { formatInteger, formatPlanWeek, formatWeek } from '@/lib/format';
 import { useMotionTokens } from '@/lib/motion';
 import { cn } from '@/lib/utils';
 
@@ -33,8 +34,10 @@ import { CardInfo } from '@/components/ui/card-info';
  *  - title → `project_name`, linking into the Project Workspace, same target
  *    the Project breakdown table's name column already uses.
  *  - subtitle → hub + category + priority, as chips.
- *  - progress bar → how far into the 78-week horizon the project's last step
- *    lands, with the real figure (`W47 of 78 weeks`) beside it. The bar's
+ *  - progress bar → how far into the 52-week plan year the project's last step
+ *    lands, with the real figure (`W47 of 52 weeks`) beside it; a finish past
+ *    W52 reads "After W52 · spillover" with a full bar (ADR 0024 — the client
+ *    saw "W72 of 78 weeks" here and asked for a 52-week year only). The bar's
  *    LENGTH is a ratio used for drawing only; the number a reader takes away is
  *    the raw week, straight off the row.
  *  - bar colour → the project's schedule outcome, using the EXISTING outcome
@@ -58,15 +61,8 @@ import { CardInfo } from '@/components/ui/card-info';
 
 const MAX_CARDS = 6;
 
-/** Fallback when `/schedule-runs/active` has not resolved — the horizon is a
- *  DOMAIN_RULES.md constant, and the run's own `horizon_weeks` is preferred
- *  whenever it is available. */
-const DEFAULT_HORIZON_WEEKS = 78;
-
 export interface ProjectSpotlightProps {
   rows: CompletingWithinYearRow[];
-  /** `ScheduleRunSummary.horizon_weeks` from the active run, when loaded. */
-  horizonWeeks: number | null | undefined;
 }
 
 interface SpotlightCardProps {
@@ -80,6 +76,7 @@ function SpotlightCard({ row, horizonWeeks, index }: SpotlightCardProps): React.
   const bucket = outcomeOf(row);
   const style = OUTCOME_STYLE[bucket];
   const week = row.last_step_end_week;
+  const pastYear = week !== null && week > horizonWeeks;
   const pct =
     week === null || horizonWeeks <= 0 ? 0 : Math.min(100, Math.round((week / horizonWeeks) * 100));
 
@@ -105,7 +102,7 @@ function SpotlightCard({ row, horizonWeeks, index }: SpotlightCardProps): React.
             className="inline-flex items-center rounded-pill bg-dash-alt px-2.5 py-1 text-2xs font-semibold tabular-nums text-text-muted"
             data-numeric=""
           >
-            {week === null ? 'Not scheduled' : formatWeek(week)}
+            {week === null ? 'Not scheduled' : formatPlanWeek(week)}
           </span>
           <span
             className={cn(
@@ -140,7 +137,9 @@ function SpotlightCard({ row, horizonWeeks, index }: SpotlightCardProps): React.
             <span className="tnum text-2xs font-semibold text-text" data-numeric="">
               {week === null
                 ? '—'
-                : `${formatWeek(week)} of ${formatInteger(horizonWeeks)} weeks`}
+                : pastYear
+                  ? `${formatPlanWeek(week)} · spillover → ${String(SPILLOVER_YEAR)}`
+                  : `${formatWeek(week)} of ${formatInteger(horizonWeeks)} weeks`}
             </span>
           </div>
           <div className="h-2 overflow-hidden rounded-pill bg-dash-alt">
@@ -210,11 +209,8 @@ function SpotlightCard({ row, horizonWeeks, index }: SpotlightCardProps): React.
   );
 }
 
-export function ProjectSpotlight({
-  rows,
-  horizonWeeks,
-}: ProjectSpotlightProps): React.JSX.Element {
-  const horizon = horizonWeeks ?? DEFAULT_HORIZON_WEEKS;
+export function ProjectSpotlight({ rows }: ProjectSpotlightProps): React.JSX.Element {
+  const horizon = DISPLAY_HORIZON_WEEKS;
   const shown = rows.slice(0, MAX_CARDS);
 
   return (
@@ -238,7 +234,8 @@ export function ProjectSpotlight({
           <p>
             Each card&apos;s week, outcome, hub, category and priority are fields on that
             project&apos;s own row. The bar shows where its last scheduled step lands inside the{' '}
-            {formatInteger(horizon)}-week horizon; no remaining-time countdown is shown, because
+            {formatInteger(horizon)}-week plan year (a finish after week {horizon} is shown as
+            spillover); no remaining-time countdown is shown, because
             that figure is not one the API provides (Invariant I9).
           </p>
           <p>

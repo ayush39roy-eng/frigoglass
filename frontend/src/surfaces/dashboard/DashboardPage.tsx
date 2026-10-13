@@ -215,10 +215,7 @@ export default function DashboardPage(): React.JSX.Element {
                 <div className="min-w-0 xl:col-span-8 [&>*]:h-full">
                   {withinYear.data?.has_active_schedule_run ? (
                     <React.Suspense fallback={<PanelSkeleton height="h-[22rem]" />}>
-                      <CompletionProfileCard
-                        data={withinYear.data}
-                        horizonWeeks={activeRun.data?.horizon_weeks ?? null}
-                      />
+                      <CompletionProfileCard data={withinYear.data} />
                     </React.Suspense>
                   ) : null}
                 </div>
@@ -285,10 +282,7 @@ export default function DashboardPage(): React.JSX.Element {
             {withinYear.data && withinYear.data.rows.length > 0 ? (
               <StaggerSection>
                 <React.Suspense fallback={<PanelSkeleton height="h-[20rem]" />}>
-                  <ProjectSpotlight
-                    rows={withinYear.data.rows}
-                    horizonWeeks={activeRun.data?.horizon_weeks ?? null}
-                  />
+                  <ProjectSpotlight rows={withinYear.data.rows} />
                 </React.Suspense>
               </StaggerSection>
             ) : null}

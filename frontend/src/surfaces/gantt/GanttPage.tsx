@@ -16,7 +16,7 @@ import { ApiError } from '@/lib/api/client';
 import { useHubFilter } from '@/stores/hub-filter';
 import { HubFilterChip } from '@/components/shared/hub-filter/hub-filter-chip';
 import { formatInteger } from '@/lib/format';
-import { WITHIN_YEAR_WEEK } from '@/lib/domain-constants';
+import { SPILLOVER_YEAR, WITHIN_YEAR_WEEK } from '@/lib/domain-constants';
 import { SURFACES } from '@/app/nav';
 import { usePermission } from '@/stores/session';
 
@@ -59,7 +59,7 @@ export default function GanttPage(): React.JSX.Element {
   const title = TIMELINE_SURFACE?.title ?? 'Project Execution Timeline';
   const description =
     TIMELINE_SURFACE?.summary ??
-    'Hand-built virtualized Gantt: 14 workflow steps per project across the 78-week horizon.';
+    'Hand-built virtualized Gantt: 14 workflow steps per project across the 52-week plan year.';
 
   const denied = authKind([ganttQuery.error]);
   const rows = React.useMemo<GanttProjectRow[]>(
@@ -133,8 +133,14 @@ export default function GanttPage(): React.JSX.Element {
                 ariaLabel="Timeline summary"
                 segments={[
                   { label: 'On the timeline', value: rows.length, accent: 'primary', hint: hubId === null ? 'All hubs' : 'Selected hub' },
-                  { label: 'Spilling past W52', value: rows.filter((r) => r.spillover).length, accent: 'warning' },
-                  { label: 'Left out of plan', value: rows.filter((r) => r.left_out).length, accent: 'danger' },
+                  // ADR 0024: a left-out project is not done by W52 either, so it is
+                  // counted inside spillover (server flags, counted — not recomputed).
+                  {
+                    label: 'Spilling past W52',
+                    value: rows.filter((r) => r.spillover || r.left_out).length,
+                    accent: 'warning',
+                    hint: `→ ${String(SPILLOVER_YEAR)} · ${String(rows.filter((r) => r.left_out).length)} not yet placed`,
+                  },
                   { label: 'Frozen in place', value: rows.filter((r) => r.frozen).length, accent: 'neutral' },
                 ]}
               />
@@ -210,10 +216,12 @@ export default function GanttPage(): React.JSX.Element {
                               data).
                             </span>
                             <span className="block">
-                              <strong>Red connector</strong> = delay magnitude. The dashed line at
-                              week {WITHIN_YEAR_WEEK} is year-end; whether a project completes within
-                              the year is the server&apos;s <code>spillover</code> / <code>left out</code>{' '}
-                              flag, shown as a badge — not computed here.
+                              <strong>Red connector</strong> = delay magnitude. The timeline shows
+                              the plan year, week 1 to week {WITHIN_YEAR_WEEK}; work that runs past
+                              it is cut at the dashed year-end line and marked{' '}
+                              <strong>Spillover → {SPILLOVER_YEAR}</strong>. Whether a project
+                              completes within the year is the server&apos;s <code>spillover</code>{' '}
+                              / <code>left out</code> flag, shown as a badge — not computed here.
                             </span>
                             <span className="block">
                               <strong>Expected completion</strong> (solid violet) is the project&apos;s

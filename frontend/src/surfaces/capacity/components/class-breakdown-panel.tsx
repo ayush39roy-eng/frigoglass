@@ -48,9 +48,10 @@ export function ClassBreakdownPanel({ data }: ClassBreakdownPanelProps): React.J
           ) : null}
           <CardInfo label="How deliverable and left out are defined">
             <p>
-              <strong className="text-text">Deliverable</strong> = scheduled and not left out.{' '}
-              <strong className="text-text">Left out</strong> = no feasible window before the
-              78-week horizon.
+              <strong className="text-text">Deliverable</strong> = placed in the schedule (finishing
+              within the year or as spillover past W52).{' '}
+              <strong className="text-text">Left out</strong> = not placed yet, so not done by W52 —
+              it spills over unscheduled.
             </p>
             <p>
               Source: active schedule run

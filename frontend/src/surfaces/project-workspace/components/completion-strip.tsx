@@ -1,7 +1,7 @@
 import * as React from 'react';
 
-import { CURRENT_WEEK, HORIZON_WEEKS, WITHIN_YEAR_WEEK } from '@/lib/domain-constants';
-import { formatWeek } from '@/lib/format';
+import { CURRENT_WEEK, DISPLAY_HORIZON_WEEKS, WITHIN_YEAR_WEEK } from '@/lib/domain-constants';
+import { formatPlanWeek, formatWeek } from '@/lib/format';
 import { GanttCompletionMarkers } from '@/surfaces/gantt/components/gantt-completion-markers';
 import { expectedLabel, slipLabel } from '@/surfaces/gantt/lib/completion-labels';
 import { weekEndToX, weekToX, type WeekScale } from '@/surfaces/gantt/lib/gantt-coordinates';
@@ -11,8 +11,9 @@ import type { WorkspaceSchedule } from '../api/types';
 /**
  * Mini completion strip — the Gantt's expected / will-be-completed / slip
  * language at a glance, drawn by the SAME `<GanttCompletionMarkers>` (same
- * tokens, dash patterns and caps) on a compact 1..78 week scale. Every week is
- * a server field (I16).
+ * tokens, dash patterns and caps) on a compact W1–W52 plan-year scale (ADR
+ * 0024). A completion week past W52 is not drawn on the strip and reads "After
+ * W52" in the legend. Every week is a server field (I16).
  */
 const WEEK_PX = 5;
 const HEIGHT = 34;
@@ -26,7 +27,12 @@ export function CompletionStrip({
   targetEndWeek: number | null;
   projectName: string;
 }): React.JSX.Element {
-  const scale: WeekScale = { originWeek: 1, horizonWeeks: HORIZON_WEEKS, weekWidthPx: WEEK_PX, totalWidthPx: HORIZON_WEEKS * WEEK_PX };
+  const scale: WeekScale = {
+    originWeek: 1,
+    horizonWeeks: DISPLAY_HORIZON_WEEKS,
+    weekWidthPx: WEEK_PX,
+    totalWidthPx: DISPLAY_HORIZON_WEEKS * WEEK_PX,
+  };
   const nowX = weekToX(CURRENT_WEEK, scale);
   const yearX = weekEndToX(WITHIN_YEAR_WEEK, scale);
 
@@ -52,14 +58,18 @@ export function CompletionStrip({
           <span className="inline-block h-3 w-0.5 bg-gantt-expected" aria-hidden="true" />
           <dt>{expectedLabel(targetEndWeek)}</dt>
           <dd className="font-mono font-semibold text-text" data-testid="strip-expected">
-            {schedule.expected_end_week === null ? '—' : formatWeek(schedule.expected_end_week)}
+            {schedule.expected_end_week === null ? '—' : formatPlanWeek(schedule.expected_end_week)}
           </dd>
         </div>
         <div className="flex items-center gap-1">
           <span className="inline-block h-3 w-0.5 border-l-2 border-dashed border-gantt-projected" aria-hidden="true" />
           <dt>Will be completed</dt>
           <dd className="font-mono font-semibold text-text" data-testid="strip-projected">
-            {schedule.projected_end_week === null ? (schedule.left_out ? 'Left out' : '—') : formatWeek(schedule.projected_end_week)}
+            {schedule.projected_end_week === null
+              ? schedule.left_out
+                ? 'Spillover · unplaced'
+                : '—'
+              : formatPlanWeek(schedule.projected_end_week)}
           </dd>
         </div>
         <div className="flex items-center gap-1">

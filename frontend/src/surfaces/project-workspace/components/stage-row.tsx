@@ -13,8 +13,8 @@ import {
 } from '@/components/ui/select';
 import { ApiError } from '@/lib/api/client';
 import { apiErrorMessage } from '@/lib/api/error-messages';
-import { HORIZON_WEEKS } from '@/lib/domain-constants';
-import { formatWeek } from '@/lib/format';
+import { DISPLAY_HORIZON_WEEKS } from '@/lib/domain-constants';
+import { formatPlanWeek } from '@/lib/format';
 import { cn } from '@/lib/utils';
 import { stageStatusLabel, WORKFLOW_STEP_STATUSES, type WorkflowStepStatus } from '@/types/enums';
 
@@ -110,7 +110,7 @@ export function StageRow({ stage, canWrite, onSave }: StageRowProps): React.JSX.
 
   const planned =
     stage.planned_start_week !== null && stage.planned_end_week !== null
-      ? `${formatWeek(stage.planned_start_week)}–${formatWeek(stage.planned_end_week)}`
+      ? `${formatPlanWeek(stage.planned_start_week)}–${formatPlanWeek(stage.planned_end_week)}`
       : 'Not scheduled';
   // A non-null engineer name is always the caller (OQ#8, P9-T03).
   const resource =
@@ -272,7 +272,7 @@ export function StageRow({ stage, canWrite, onSave }: StageRowProps): React.JSX.
         >
           <ReadField label="Status" value={stageStatusLabel(stage.status)} />
           <ReadField label="Complete" value={`${String(stage.percent_complete)}%`} />
-          <ReadField label="Actual" value={stage.actual_start_week === null ? '—' : `${formatWeek(stage.actual_start_week)}–${stage.actual_end_week === null ? '…' : formatWeek(stage.actual_end_week)}`} />
+          <ReadField label="Actual" value={stage.actual_start_week === null ? '—' : `${formatPlanWeek(stage.actual_start_week)}–${stage.actual_end_week === null ? '…' : formatPlanWeek(stage.actual_end_week)}`} />
           <ReadField label="Remaining" value={stage.remaining_weeks === null ? '—' : `${String(stage.remaining_weeks)} wk${stage.remaining_weeks_override === null ? '' : ' (override)'}`} />
           {stage.status === 'Blocked' ? <ReadField label="Hold reason" value={stage.blocked_reason ?? '—'} /> : null}
         </dl>
@@ -341,7 +341,7 @@ function WeekInput({
         id={id}
         type="number"
         min={1}
-        max={HORIZON_WEEKS}
+        max={DISPLAY_HORIZON_WEEKS}
         inputMode="numeric"
         placeholder="W"
         value={value === null ? '' : String(value)}

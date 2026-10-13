@@ -8,6 +8,7 @@ import { useCountUp } from '@/lib/use-count-up';
 import { useMotionTokens } from '@/lib/motion';
 
 import type { CompletingWithinYear } from '../api/types';
+import { outcomeTotal, withinYearSharePct } from '../lib/outcome';
 import { CardInfo } from '@/components/ui/card-info';
 
 /**
@@ -31,10 +32,12 @@ export interface DeliveryGaugeCardProps {
 
 export function DeliveryGaugeCard({ data }: DeliveryGaugeCardProps): React.JSX.Element {
   const { reduced } = useMotionTokens();
-  const total = data.within_year_count + data.spillover_count + data.left_out_count + data.blocked_count;
-  const share = total > 0 ? data.within_year_count / total : 0;
-  const pct = Math.round(share * 100);
-  const lit = Math.round(share * SEGMENTS);
+  // The SAME within-year share as the KPI tile's "% of run" badge and the
+  // outcome donut (`lib/outcome.ts::withinYearSharePct`) — one formula, one
+  // source (`GET /dashboard/completing-within-year`), so the figures never drift.
+  const total = outcomeTotal(data);
+  const pct = withinYearSharePct(data);
+  const lit = total > 0 ? Math.round((data.within_year_count / total) * SEGMENTS) : 0;
   const shownPct = useCountUp(pct);
 
   return (
@@ -51,9 +54,10 @@ export function DeliveryGaugeCard({ data }: DeliveryGaugeCardProps): React.JSX.E
         </div>
         <CardInfo label="How the delivery rate is read">
           <p>
-            Within-year projects divided by every project the active schedule run placed in one of
-            its four outcomes (within year, spillover, left out, on hold at a stage). The counts come straight
-            from the run; nothing is re-scheduled in your browser.
+            Within-year projects (done by W52) divided by every project in the active schedule
+            run: within year, spillover past W52 (including any not yet placed) and on hold at a
+            stage. The counts come straight from the run; nothing is re-scheduled in your browser.
+            The same share appears on the Within year tile.
           </p>
         </CardInfo>
       </div>

@@ -1,7 +1,6 @@
 import * as React from 'react';
 import {
   CalendarCheck,
-  CircleOff,
   CirclePause,
   Clock,
   FolderOpen,
@@ -13,10 +12,17 @@ import { Badge } from '@/components/ui/badge';
 import { EmptyState } from '@/components/shared/empty-state';
 import { PriorityBandPill } from '@/components/shared/priority-band-pill';
 import { ScheduleOutcomeBadge } from '@/components/shared/schedule-outcome-badge';
-import { formatWeek } from '@/lib/format';
-import { HORIZON_WEEKS } from '@/lib/domain-constants';
+import { formatPlanWeek, formatWeek } from '@/lib/format';
+import { DISPLAY_HORIZON_WEEKS, SPILLOVER_YEAR, WITHIN_YEAR_WEEK } from '@/lib/domain-constants';
 import { EntityCell, ProgressCell, RowActions } from '@/components/ui/table-cells';
-import { outcomeOf, OUTCOME_STYLE, type OutcomeBucket } from '../lib/outcome';
+import {
+  outcomeOf,
+  OUTCOME_STYLE,
+  sharePct,
+  spilloverPastYearCount,
+  withinYearSharePct,
+  type OutcomeBucket,
+} from '../lib/outcome';
 
 import type { CompletingWithinYear, CompletingWithinYearRow, ScheduleRunSummary } from '../api/types';
 import { CategoryTag } from '@/components/ui/category-tag';
@@ -61,7 +67,8 @@ function OutcomeCell({ row }: { row: CompletingWithinYearRow }): React.JSX.Eleme
 const OUTCOME_DISC: Record<OutcomeBucket, string> = {
   within_year: 'bg-success-subtle text-success-subtle-fg',
   spillover: 'bg-warning-subtle text-warning-subtle-fg',
-  left_out: 'bg-danger-subtle text-danger-subtle-fg',
+  // ADR 0024: shown as spillover (not done by W52), so the spillover tone.
+  left_out: 'bg-warning-subtle text-warning-subtle-fg',
   blocked: 'bg-surface-sunken text-text',
   unresolved: 'bg-surface-sunken text-text-muted',
 };
@@ -69,7 +76,7 @@ const OUTCOME_DISC: Record<OutcomeBucket, string> = {
 const OUTCOME_FILL: Record<OutcomeBucket, string> = {
   within_year: 'bg-success',
   spillover: 'bg-warning',
-  left_out: 'bg-danger',
+  left_out: 'bg-warning',
   blocked: 'bg-text-muted',
   unresolved: 'bg-border-strong',
 };
@@ -125,11 +132,13 @@ const COLUMNS: VirtualColumn<CompletingWithinYearRow>[] = [
       row.last_step_end_week === null ? (
         <span className="text-text-subtle">—</span>
       ) : (
+        // The bar is the position inside the 52-week plan year (ADR 0024); a
+        // finish past W52 fills it and reads "After W52" — never W53+.
         <ProgressCell
-          value={(row.last_step_end_week / HORIZON_WEEKS) * 100}
+          value={(Math.min(row.last_step_end_week, DISPLAY_HORIZON_WEEKS) / DISPLAY_HORIZON_WEEKS) * 100}
           fillClassName={OUTCOME_FILL[outcomeOf(row)]}
-          label={formatWeek(row.last_step_end_week)}
-          ariaLabel={`Last step ends ${formatWeek(row.last_step_end_week)} of ${formatWeek(HORIZON_WEEKS)}`}
+          label={formatPlanWeek(row.last_step_end_week)}
+          ariaLabel={`Last step ends ${formatPlanWeek(row.last_step_end_week)} of the ${String(DISPLAY_HORIZON_WEEKS)}-week year`}
         />
       ),
   },
@@ -161,11 +170,10 @@ export interface WithinYearPanelProps {
   activeRun: ScheduleRunSummary | null | undefined;
 }
 
-/** Share of the run's four outcome buckets, as a display label ("29%"). */
+/** Share of the run's four served outcome buckets, as a display label ("51%").
+ *  Same formula as the delivery gauge (`lib/outcome.ts::sharePct`). */
 function shareLabel(count: number, data: CompletingWithinYear): string {
-  const total = data.within_year_count + data.spillover_count + data.left_out_count + data.blocked_count;
-  if (total === 0) return '0%';
-  return `${String(Math.round((count / total) * 100))}%`;
+  return `${String(sharePct(count, data))}%`;
 }
 
 /**
@@ -197,7 +205,7 @@ export function WithinYearKpis({ data, activeRun }: WithinYearPanelProps): React
           description="Counts appear here once the schedule is calculated."
         />
       ) : (
-        <div className="grid gap-gutter sm:grid-cols-2 xl:grid-cols-4">
+        <div className="grid gap-gutter sm:grid-cols-2 xl:grid-cols-3">
           {/* The one blue tile. "Within year" earns it: it is the number the whole
               application exists to produce. */}
           <StatCard
@@ -205,32 +213,28 @@ export function WithinYearKpis({ data, activeRun }: WithinYearPanelProps): React
             label="Within year"
             value={data.within_year_count}
             icon={CalendarCheck}
-            badge={{ label: `${shareLabel(data.within_year_count, data)} of run`, tone: 'pop' }}
-            caption={`Complete by ${formatWeek(52)}`}
+            badge={{ label: `${String(withinYearSharePct(data))}% of run`, tone: 'pop' }}
+            caption={`Complete by ${formatWeek(WITHIN_YEAR_WEEK)}`}
           />
+          {/* ADR 0024 (client ask 2026-10-13): a 52-week year only. Everything not
+              done by W52 is spillover — the served spillover count plus the served
+              left-out count (no slot found yet), summed for display; never framed
+              as "beyond the 78-week horizon". */}
           <StatCard
-            label="Spillover"
-            value={data.spillover_count}
+            label="Spillover (past W52)"
+            value={spilloverPastYearCount(data)}
             tone="warning"
             icon={Clock}
-            badge={{ label: shareLabel(data.spillover_count, data), tone: 'neutral' }}
-            caption={`Scheduled, finishing after ${formatWeek(52)}`}
-          />
-          <StatCard
-            label="Left out"
-            value={data.left_out_count}
-            tone="danger"
-            icon={CircleOff}
-            badge={
+            badge={{ label: shareLabel(spilloverPastYearCount(data), data), tone: 'neutral' }}
+            caption={
               data.left_out_count > 0
-                ? { label: shareLabel(data.left_out_count, data), tone: 'drop' }
-                : null
+                ? `Not done by ${formatWeek(WITHIN_YEAR_WEEK)} → ${String(SPILLOVER_YEAR)} · ${String(data.left_out_count)} not yet placed`
+                : `Not done by ${formatWeek(WITHIN_YEAR_WEEK)} → ${String(SPILLOVER_YEAR)}`
             }
-            caption="No feasible window in the 78-week horizon"
           />
-          {/* P9-F02: mutually exclusive with the three counts above — Blocked
-              wins outright, so a project is never double-counted across tiles.
-              The ink tile is the contrasting second accent of the row. */}
+          {/* P9-F02: mutually exclusive with the counts above — Blocked wins
+              outright, so a project is never double-counted across tiles. The ink
+              tile is the contrasting second accent of the row. */}
           <StatCard
             variant="ink"
             label="On Hold"

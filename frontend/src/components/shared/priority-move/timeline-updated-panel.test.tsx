@@ -58,14 +58,16 @@ describe('TimelineUpdatedPanel', () => {
     const rows = screen.getAllByTestId('timeline-change-row');
     expect(rows).toHaveLength(3);
     expect(rows[0]).toHaveTextContent('W50');
-    expect(rows[0]).toHaveTextContent('W54');
+    // ADR 0024: a week past W52 prints "After W52", never W54.
+    expect(rows[0]).toHaveTextContent('After W52');
+    expect(rows[0]).not.toHaveTextContent('W54');
     expect(rows[0]).toHaveTextContent('+4 wk');
     expect(rows[0]).toHaveTextContent('Within year');
     expect(rows[0]).toHaveTextContent('Past W52');
     // A null projected week prints as "—", and a null delta prints no chip.
     expect(rows[1]).toHaveTextContent('—');
     expect(rows[1]).not.toHaveTextContent(/wk/);
-    expect(rows[1]).toHaveTextContent('Left out');
+    expect(rows[1]).toHaveTextContent('Spillover · unplaced');
     expect(rows[2]).toHaveTextContent('−2 wk');
     expect(rows[2]).toHaveTextContent('On hold at a stage');
     expect(screen.getByText(/Run v8 compared with v7/)).toBeInTheDocument();

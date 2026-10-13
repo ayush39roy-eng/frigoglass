@@ -17,6 +17,8 @@ vi.mock('@tanstack/react-virtual', () => ({
 
 import { renderWithProviders } from '@/test/render';
 import type { CompletingWithinYear, CompletingWithinYearRow } from '../api/types';
+import { withinYearSharePct } from '../lib/outcome';
+import { DeliveryGaugeCard } from './delivery-gauge-card';
 import { WithinYearPanel } from './within-year-panel';
 
 const withRun: CompletingWithinYear = {
@@ -44,22 +46,39 @@ const withRun: CompletingWithinYear = {
 };
 
 describe('WithinYearPanel', () => {
-  it('shows the four schedule-outcome KPIs straight from the endpoint payload, mutually exclusive', () => {
+  it('shows the 52-week outcome KPIs from the endpoint payload, left out inside spillover (ADR 0024)', () => {
     renderWithProviders(<WithinYearPanel data={withRun} activeRun={undefined} />);
 
     expect(within(screen.getByRole('group', { name: 'Within year' })).getByText('9')).toBeInTheDocument();
-    expect(within(screen.getByRole('group', { name: 'Spillover' })).getByText('4')).toBeInTheDocument();
-    expect(within(screen.getByRole('group', { name: 'Left out' })).getByText('2')).toBeInTheDocument();
+    // Spillover past W52 = served spillover_count 4 + served left_out_count 2.
+    const spill = screen.getByRole('group', { name: 'Spillover (past W52)' });
+    expect(within(spill).getByText('6')).toBeInTheDocument();
+    expect(spill).toHaveTextContent('Not done by W52 → 2027 · 2 not yet placed');
+    // No separate "left out / beyond the 78-week horizon" tile any more.
+    expect(screen.queryByRole('group', { name: 'Left out' })).not.toBeInTheDocument();
+    expect(screen.queryByText(/78-week/)).not.toBeInTheDocument();
     // ADR 0017: the `blocked_count` tile reads "On Hold".
     expect(within(screen.getByRole('group', { name: 'On Hold' })).getByText('1')).toBeInTheDocument();
     expect(screen.getByText('In the plan, waiting at a stage')).toBeInTheDocument();
 
-    // Each bucket renders exactly its own field — no bucket double-counts another's
-    // value (I9's mutual-exclusivity: 9 + 4 + 2 + 1, four distinct figures).
-    const values = ['Within year', 'Spillover', 'Left out', 'On Hold'].map(
+    // Three mutually exclusive figures that still sum to the run (9 + 6 + 1 = 16).
+    const values = ['Within year', 'Spillover (past W52)', 'On Hold'].map(
       (label) => within(screen.getByRole('group', { name: label })).getByText(/^\d+$/).textContent,
     );
-    expect(values).toEqual(['9', '4', '2', '1']);
+    expect(values).toEqual(['9', '6', '1']);
+  });
+
+  it('prints the same within-year share as the delivery gauge (one formula, one source)', () => {
+    renderWithProviders(
+      <>
+        <WithinYearPanel data={withRun} activeRun={undefined} />
+        <DeliveryGaugeCard data={withRun} />
+      </>,
+    );
+    // 9 / (9 + 4 + 2 + 1) = 56.25% → 56% on both.
+    expect(withinYearSharePct(withRun)).toBe(56);
+    expect(within(screen.getByRole('group', { name: 'Within year' })).getByText('56% of run')).toBeInTheDocument();
+    expect(screen.getByRole('img', { name: '56% delivered within the year' })).toBeInTheDocument();
   });
 
   it('states the source run and I9 in visible copy', () => {

@@ -65,7 +65,7 @@ export interface SurfaceNavItem {
    *
    * 'overview' is for screens a person READS — a board audience, a form being filled
    * in. 'working' is for screens a person WORKS — comparing 236 rows, dragging bars
-   * across 78 weeks. The distinction is about the task, not the amount of data: the
+   * across the 52-week year. The distinction is about the task, not the amount of data: the
    * Dashboard aggregates far more rows than the Registration form, and both are
    * 'overview' because neither is scanned.
    */
@@ -165,7 +165,7 @@ export const SURFACES: readonly SurfaceNavItem[] = [
     icon: CalendarRange,
     task: 'P4-T05',
     summary:
-      'Hand-built virtualized Gantt: 14 workflow steps per project across the 78-week horizon, engineer and chamber assignments, conflict and spillover markers.',
+      'Hand-built virtualized Gantt: 14 workflow steps per project across the 52-week plan year (W1–W52, later work shown as spillover), engineer and chamber assignments, conflict and spillover markers.',
     group: 'Execute',
     density: 'working',
   },

@@ -7,6 +7,7 @@ import { formatInteger } from '@/lib/format';
 import { DonutChart } from '@/components/ui/donut-chart';
 
 import type { CompletingWithinYear, PipelineTotals } from '../api/types';
+import { spilloverPastYearCount } from '../lib/outcome';
 import { BarChart, type BarDatum } from './bar-chart';
 import { BoltCard } from '@/components/ui/bolt-card';
 import { CardInfo } from '@/components/ui/card-info';
@@ -55,16 +56,12 @@ export function PipelinePanel({ totals, withinYear }: PipelinePanelProps): React
           value: withinYear.within_year_count,
           tone: 'success',
         },
+        // ADR 0024: one spillover slice on the 52-week year — the served
+        // spillover count plus the served left-out count (not done by W52).
         {
           key: 'spillover',
-          label: 'Spillover',
-          value: withinYear.spillover_count,
-          tone: 'warning',
-        },
-        {
-          key: 'left-out',
-          label: 'Left out',
-          value: withinYear.left_out_count,
+          label: 'Spillover (past W52)',
+          value: spilloverPastYearCount(withinYear),
           tone: 'warning',
         },
         // P9-F02: the fourth mutually-exclusive bucket (Blocked wins outright
@@ -137,8 +134,9 @@ export function PipelinePanel({ totals, withinYear }: PipelinePanelProps): React
               ) : null}
               <CardInfo label="Schedule outcome source">
                 <p>
-                  These four figures are read from the active schedule run snapshot, one field
-                  each. Not recomputed in the browser (Invariant I9).
+                  These figures are read from the active schedule run snapshot. Spillover (past
+                  W52) is the run&apos;s spillover count plus its not-yet-placed count — both are
+                  projects not done by week 52. Not recomputed in the browser (Invariant I9).
                 </p>
                 <p>
                   They are mutually exclusive and sum to the scheduled total, which is why they are
@@ -170,7 +168,7 @@ export function PipelinePanel({ totals, withinYear }: PipelinePanelProps): React
                   value: bar.value,
                 }))}
                 totalLabel="scheduled"
-                ariaLabel="Active schedule run outcome: within year, spillover, left out"
+                ariaLabel="Active schedule run outcome: within year, spillover past week 52, on hold"
               />
             </>
           ) : (

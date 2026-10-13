@@ -25,7 +25,7 @@ import { MOVE_COPY } from '@/components/shared/priority-move/move-copy';
 import { ApiError } from '@/lib/api/client';
 import { apiErrorMessage } from '@/lib/api/error-messages';
 import { useCategoriesForHub, type Hub } from '@/lib/api/reference';
-import { HORIZON_WEEKS } from '@/lib/domain-constants';
+import { DISPLAY_HORIZON_WEEKS } from '@/lib/domain-constants';
 import {
   PROJECT_PRIORITIES,
   PROJECT_TYPES,
@@ -364,7 +364,7 @@ export function ProjectForm({
                 id="reg-start-week"
                 type="number"
                 min={1}
-                max={78}
+                max={DISPLAY_HORIZON_WEEKS}
                 inputMode="numeric"
                 className="tnum"
                 aria-invalid={errors.actual_start_week ? true : undefined}
@@ -413,13 +413,13 @@ export function ProjectForm({
               label="Expected completion (week)"
               htmlFor="reg-target-end-week"
               error={errors.target_end_week?.message}
-              hint={`Week 1–${String(HORIZON_WEEKS)}. Drawn as the "Expected completion" line on the timeline; leave empty to use the process-derived finish.`}
+              hint={`Week 1–${String(DISPLAY_HORIZON_WEEKS)}. Drawn as the "Expected completion" line on the timeline; leave empty to use the process-derived finish.`}
             >
               <Input
                 id="reg-target-end-week"
                 type="number"
                 min={1}
-                max={HORIZON_WEEKS}
+                max={DISPLAY_HORIZON_WEEKS}
                 inputMode="numeric"
                 className="tnum"
                 aria-invalid={errors.target_end_week ? true : undefined}

@@ -8,6 +8,7 @@ import { ErrorState } from '@/components/shared/error-state';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
+import { DISPLAY_HORIZON_WEEKS, PLAN_YEAR, SPILLOVER_YEAR } from '@/lib/domain-constants';
 import { formatInteger } from '@/lib/format';
 import { useHubFilter } from '@/stores/hub-filter';
 import { usePermission } from '@/stores/session';
@@ -73,7 +74,8 @@ function HubSection({
 
 /**
  * `/vip` (ADR 0022, P12-T05): the critical 10–15 projects per hub for the plan
- * year (W1–52) or the next (W53–78), from `GET /vip-projects`. Pinned projects
+ * year (W1–52) or the spillover past W52 into the next year, from
+ * `GET /vip-projects` (the server's `next` range; ADR 0024 never prints W53+). Pinned projects
  * come first, then the automatic fill — selected and ranked by the server. A
  * planner with Registration write can pin or unpin (`PUT /projects/{id}/vip`);
  * a pin never recalculates the schedule.
@@ -127,8 +129,8 @@ export default function VipProjectsPage(): React.JSX.Element {
                 <ToggleGroupItem value="plan" aria-label="Plan year, weeks 1 to 52">
                   Plan year
                 </ToggleGroupItem>
-                <ToggleGroupItem value="next" aria-label="Next year, weeks 53 to 78">
-                  Next year
+                <ToggleGroupItem value="next" aria-label={`Spillover into ${String(SPILLOVER_YEAR)}, after week 52`}>
+                  Spillover {SPILLOVER_YEAR}
                 </ToggleGroupItem>
               </ToggleGroup>
             </div>
@@ -159,8 +161,10 @@ export default function VipProjectsPage(): React.JSX.Element {
 
       {range ? (
         <p className="-mt-s4 mb-s4 text-xs text-text-muted" data-testid="vip-week-range">
-          Weeks {range[0]}–{range[1]} of the horizon. A project is in this year when any of its scheduled weeks fall in
-          it.
+          {year === 'plan'
+            ? `Weeks ${String(range[0])}–${String(Math.min(range[1], DISPLAY_HORIZON_WEEKS))} of the ${String(PLAN_YEAR)} plan year.`
+            : `Work scheduled after week ${String(DISPLAY_HORIZON_WEEKS)} — spillover into ${String(SPILLOVER_YEAR)}.`}{' '}
+          A project is in this list when any of its scheduled weeks fall in it.
         </p>
       ) : null}
       {query.data && query.data.run_id === null ? (

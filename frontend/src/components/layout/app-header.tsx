@@ -16,7 +16,12 @@ import {
 import { UserAvatar } from '@/components/session/user-avatar';
 import { useSignOut } from '@/lib/auth/use-sign-out';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
-import { CURRENT_WEEK, HORIZON_WEEKS, WITHIN_YEAR_WEEK } from '@/lib/domain-constants';
+import {
+  CURRENT_WEEK,
+  DISPLAY_HORIZON_WEEKS,
+  SPILLOVER_YEAR,
+  WITHIN_YEAR_WEEK,
+} from '@/lib/domain-constants';
 import { formatWeek } from '@/lib/format';
 import { useSessionStore } from '@/stores/session';
 
@@ -79,9 +84,9 @@ function LogoChip(): React.JSX.Element {
 }
 
 /**
- * The planning week indicator (W31).
+ * The planning week indicator ("W42 of 52" — the 52-week plan year).
  */
-function WeekPill(): React.JSX.Element {
+export function WeekPill(): React.JSX.Element {
   return (
     <Tooltip>
       <TooltipTrigger asChild>
@@ -90,12 +95,18 @@ function WeekPill(): React.JSX.Element {
           data-testid="week-indicator"
         >
           <CalendarClock className="size-3.5 shrink-0 text-text-subtle" aria-hidden="true" />
-          <span>{formatWeek(CURRENT_WEEK)}</span>
+          <span>
+            {formatWeek(CURRENT_WEEK)}
+            <span className="font-medium text-text-muted"> of {DISPLAY_HORIZON_WEEKS}</span>
+          </span>
         </span>
       </TooltipTrigger>
-      <TooltipContent side="bottom">
-        Planning week {CURRENT_WEEK} of a {HORIZON_WEEKS}-week horizon. Projects completing by week{' '}
-        {WITHIN_YEAR_WEEK} count as within-year.
+      {/* Client ask 2026-10-13: a 52-week year only — the server's internal
+          78-week search horizon is never presented. */}
+      <TooltipContent side="bottom" data-testid="week-indicator-tooltip">
+        Planning week {CURRENT_WEEK} of {DISPLAY_HORIZON_WEEKS}. Projects completing by week{' '}
+        {WITHIN_YEAR_WEEK} count as within-year; anything not done by then is spillover into{' '}
+        {SPILLOVER_YEAR}.
       </TooltipContent>
     </Tooltip>
   );

@@ -1,7 +1,7 @@
 import type * as React from 'react';
 import { CalendarCheck, CircleOff, CirclePause, Clock, HelpCircle } from 'lucide-react';
 
-import type { CompletingWithinYearRow } from '../api/types';
+import type { CompletingWithinYear, CompletingWithinYearRow } from '../api/types';
 
 /**
  * ONE place that resolves a `CompletingWithinYearRow`'s raw outcome booleans into
@@ -63,14 +63,17 @@ export const OUTCOME_STYLE: Record<OutcomeBucket, OutcomeStyle> = {
     colorToken: '--color-success',
   },
   spillover: {
-    label: 'Spillover',
+    label: 'Spillover (past W52)',
     Icon: Clock,
     track: 'bg-warning',
     chip: 'bg-warning-subtle text-warning-subtle-fg',
     colorToken: '--color-warning',
   },
+  // ADR 0024: a project the server could not place is presented inside the
+  // spillover framing (it is certainly not done by W52); the bucket key and the
+  // served `left_out_count` are unchanged.
   left_out: {
-    label: 'Left out',
+    label: 'Spillover · unplaced',
     Icon: CircleOff,
     track: 'bg-warning',
     chip: 'bg-warning-subtle text-warning-subtle-fg',
@@ -92,3 +95,50 @@ export const OUTCOME_STYLE: Record<OutcomeBucket, OutcomeStyle> = {
     colorToken: '--color-border-strong',
   },
 };
+
+/* -------------------------------------------------------------------------- */
+/* 52-week display framing (ADR 0024, client ask 2026-10-13)                  */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * The Dashboard presents three outcomes on the 52-week year: within year,
+ * spillover (not done by W52) and on hold. The server's `left_out` bucket is
+ * shown INSIDE spillover — a project with no slot is certainly not done by W52 —
+ * never as a separate "beyond the 78-week horizon" concept. This is a display
+ * grouping of the server's buckets, not a new verdict.
+ */
+export type DisplayOutcome = Exclude<OutcomeBucket, 'left_out'>;
+
+export function displayOutcomeOf(row: CompletingWithinYearRow): DisplayOutcome {
+  const bucket = outcomeOf(row);
+  return bucket === 'left_out' ? 'spillover' : bucket;
+}
+
+/** Spillover past W52 for display: the served `spillover_count` plus the served
+ *  `left_out_count` (both "not done by W52"). A sum of two server counts. */
+export function spilloverPastYearCount(data: CompletingWithinYear): number {
+  return data.spillover_count + data.left_out_count;
+}
+
+/** Every project the active run placed in one of its four mutually exclusive
+ *  served buckets — the denominator of every within-year share on the page. */
+export function outcomeTotal(data: CompletingWithinYear): number {
+  return data.within_year_count + data.spillover_count + data.left_out_count + data.blocked_count;
+}
+
+/**
+ * THE within-year share of the active run, as a whole percent. The one formula
+ * every "x% within year" figure on the Dashboard uses (KPI tile badge, delivery
+ * gauge, donut), so they can never disagree: `within_year_count / outcomeTotal`,
+ * both read straight off `GET /dashboard/completing-within-year` (I9).
+ */
+export function withinYearSharePct(data: CompletingWithinYear): number {
+  return sharePct(data.within_year_count, data);
+}
+
+/** A served bucket count as a whole-percent share of `outcomeTotal`. 0 when the
+ *  run placed nothing (never NaN). */
+export function sharePct(count: number, data: CompletingWithinYear): number {
+  const total = outcomeTotal(data);
+  return total === 0 ? 0 : Math.round((count / total) * 100);
+}

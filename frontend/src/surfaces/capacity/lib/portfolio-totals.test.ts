@@ -5,8 +5,9 @@ import { portfolioTotals } from './portfolio-totals';
 
 /**
  * The live `GET /capacity/hub-load` shape as of 2026-10-01: six hubs, three lab
- * regions, with India repeated on four of them carrying one identical lab figure.
- * Values are the real served ones, so the double-count this module exists to
+ * regions. Since 2026-10-13 (client correction) the OEM hubs are in the Greece lab
+ * region (Europe), so Greece repeats on three rows and India on two, each carrying
+ * one identical lab figure. Values are the served ones, so the double-count this module exists to
  * prevent is asserted against reality rather than a contrived fixture.
  */
 const LIVE_ROWS = [
@@ -14,8 +15,8 @@ const LIVE_ROWS = [
   hubRow({ hub: 'R&D-India', lab_region: 'India', design_load_weeks: 66, design_capacity_year: 132.5, lab_load_weeks: 122, lab_capacity_year: 188.3 }),
   hubRow({ hub: 'PD-India', lab_region: 'India', design_load_weeks: 163, design_capacity_year: 198.75, lab_load_weeks: 122, lab_capacity_year: 188.3 }),
   hubRow({ hub: 'PD-Romania', lab_region: 'Romania', design_load_weeks: 70, design_capacity_year: 123.2, lab_load_weeks: 36, lab_capacity_year: 216.3 }),
-  hubRow({ hub: 'OEM-HCK', lab_region: 'India', design_load_weeks: 7, design_capacity_year: 0, lab_load_weeks: 122, lab_capacity_year: 188.3 }),
-  hubRow({ hub: 'OEM-Seltek', lab_region: 'India', design_load_weeks: 14, design_capacity_year: 0, lab_load_weeks: 122, lab_capacity_year: 188.3 }),
+  hubRow({ hub: 'OEM-HCK', lab_region: 'Greece', design_load_weeks: 7, design_capacity_year: 0, lab_load_weeks: 34, lab_capacity_year: 73.34 }),
+  hubRow({ hub: 'OEM-Seltek', lab_region: 'Greece', design_load_weeks: 14, design_capacity_year: 0, lab_load_weeks: 34, lab_capacity_year: 73.34 }),
 ];
 
 describe('portfolioTotals', () => {
@@ -28,7 +29,7 @@ describe('portfolioTotals', () => {
   it('counts each lab region ONCE, however many hubs repeat it', () => {
     const totals = portfolioTotals(LIVE_ROWS);
     expect(totals.labRegionCount).toBe(3);
-    // Greece 34 + India 122 (not 4x122) + Romania 36
+    // Greece 34 (not 3x34) + India 122 (not 2x122) + Romania 36
     expect(totals.labLoad).toBe(192);
     expect(totals.labCapacity).toBeCloseTo(73.34 + 188.3 + 216.3, 2);
   });

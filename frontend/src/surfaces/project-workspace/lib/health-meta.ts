@@ -27,12 +27,14 @@ export const HEALTH_META: Record<
   off_track: {
     label: 'Off track',
     tone: 'danger',
-    description: 'Projected finish is after week 52.',
+    description: 'Projected finish is after week 52 (spillover).',
   },
+  // Client ask 2026-10-13: presented inside the spillover framing (52-week year
+  // only). The served health value stays `left_out`.
   left_out: {
-    label: 'Left out',
+    label: 'Spillover · unplaced',
     tone: 'neutral',
-    description: 'No feasible slot inside the 78-week horizon in the active schedule run.',
+    description: 'Not done by week 52 — the active schedule run found no slot for it yet, so it spills over unscheduled.',
   },
   unscheduled: {
     label: 'Not scheduled',

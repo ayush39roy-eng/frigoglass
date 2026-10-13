@@ -5,7 +5,8 @@ import { LayoutGroup, motion } from 'framer-motion';
 import { ArrowUpRight, ChevronRight, PencilLine, SlidersHorizontal, Snowflake } from 'lucide-react';
 
 import { cn } from '@/lib/utils';
-import { formatWeek } from '@/lib/format';
+import { formatPlanWeek } from '@/lib/format';
+import { SPILLOVER_YEAR } from '@/lib/domain-constants';
 import { usePrefersReducedMotion } from '@/lib/use-prefers-reduced-motion';
 import { PriorityMoveControl } from '@/components/shared/priority-move/priority-move-control';
 import { StepKindBadge } from '@/components/shared/step-kind-badge';
@@ -13,6 +14,7 @@ import { TrackingStatusChip } from '@/components/shared/tracking-status-chip';
 import { VipBadge } from '@/components/shared/vip-badge';
 
 import {
+  isPastScaleEnd,
   makeWeekScale,
   plannedSpan,
   actualSpan,
@@ -21,7 +23,7 @@ import {
 import { buildVisualRows, visualRowHeight } from '../lib/gantt-rows';
 import type { GanttProjectRow, GanttStepRow } from '../api/types';
 import { ActivityLoadStrip } from './activity-load-strip';
-import { GanttBarGroup, GanttHatchDefs } from './gantt-bars';
+import { GanttBarGroup, GanttHatchDefs, GanttSpilloverMarker } from './gantt-bars';
 import { ProjectRowBadges, StepRowBadges } from './gantt-badges';
 import { GanttCompletionMarkers } from './gantt-completion-markers';
 import { AXIS_HEIGHT, GanttGridLines, GanttWeekAxis } from './gantt-time-axis';
@@ -257,6 +259,10 @@ function BarLayer({
   animate: boolean;
 }): React.JSX.Element {
   let group: React.ReactNode;
+  // ADR 0024: the axis ends at W52. A row whose work runs past it (clipped
+  // geometry), or that the server flags spillover / left out, gets the
+  // "Spillover → 2027" marker at the right edge instead of W53+ columns.
+  let spilloverMarker: React.ReactNode = null;
   if (row.kind === 'project') {
     const planned = plannedSpan(row.project.steps);
     const actual = actualSpan(row.project.steps);
@@ -280,6 +286,26 @@ function BarLayer({
         title={barTitle(row.project.project_name, planned, actual)}
       />
     );
+    const p = row.project;
+    const runsPastAxis =
+      isPastScaleEnd(planned?.endWeek, scale) ||
+      isPastScaleEnd(actual?.endWeek, scale) ||
+      isPastScaleEnd(delayedEndWeek, scale) ||
+      isPastScaleEnd(p.projected_end_week, scale);
+    if (p.spillover || p.left_out || runsPastAxis) {
+      spilloverMarker = (
+        <GanttSpilloverMarker
+          scale={scale}
+          rowHeight={height}
+          variant="label"
+          title={
+            p.left_out
+              ? `${p.project_name}: not done by W52 — no slot found yet, spills over to ${String(SPILLOVER_YEAR)} unscheduled`
+              : `${p.project_name}: not done by W52 — spillover to ${String(SPILLOVER_YEAR)}`
+          }
+        />
+      );
+    }
   } else {
     const s = row.step;
     const planned =
@@ -306,6 +332,16 @@ function BarLayer({
         skipped={s.skipped}
       />
     );
+    if (!s.skipped && (isPastScaleEnd(planned?.endWeek, scale) || isPastScaleEnd(actual?.endWeek, scale))) {
+      spilloverMarker = (
+        <GanttSpilloverMarker
+          scale={scale}
+          rowHeight={height}
+          variant="chevron"
+          title={`${s.step_name} continues past W52 — spillover to ${String(SPILLOVER_YEAR)}`}
+        />
+      );
+    }
   }
 
   // The two completion lines are per PROJECT row (DOMAIN_RULES "Expected vs
@@ -328,6 +364,7 @@ function BarLayer({
       <GanttHatchDefs />
       {group}
       {markers}
+      {spilloverMarker}
     </svg>
   );
 
@@ -352,8 +389,8 @@ function barTitle(
   actual: { startWeek: number; endWeek: number } | null,
 ): string {
   const parts = [label];
-  if (planned) parts.push(`planned ${formatWeek(planned.startWeek)}–${formatWeek(planned.endWeek)}`);
-  if (actual) parts.push(`actual ${formatWeek(actual.startWeek)}–${formatWeek(actual.endWeek)}`);
+  if (planned) parts.push(`planned ${formatPlanWeek(planned.startWeek)}–${formatPlanWeek(planned.endWeek)}`);
+  if (actual) parts.push(`actual ${formatPlanWeek(actual.startWeek)}–${formatPlanWeek(actual.endWeek)}`);
   return parts.join(' · ');
 }
 
@@ -480,7 +517,7 @@ function StepLeftCell({
         step.duration_override_weeks !== null
           ? `duration ${String(step.duration_override_weeks)} wks (table ${String(step.lead_time_weeks)})`
           : null,
-        step.start_not_before_week !== null ? `earliest start ${formatWeek(step.start_not_before_week)}` : null,
+        step.start_not_before_week !== null ? `earliest start ${formatPlanWeek(step.start_not_before_week)}` : null,
       ]
         .filter(Boolean)
         .join(' · ')

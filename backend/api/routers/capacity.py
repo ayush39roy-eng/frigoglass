@@ -255,10 +255,12 @@ async def hub_load_vs_capacity(
             )
         )
 
-    remaining_weeks = (
-        active_run.horizon_weeks - active_run.current_week
-        if active_run is not None
-        else dc.HORIZON_WEEKS - dc.CURRENT_WEEK
+    # ADR 0024: weeks left in the 52-week planning year (the same basis as
+    # the "remaining" capacity figures), not the scheduler's internal horizon.
+    remaining_weeks = max(
+        0,
+        dc.WITHIN_YEAR_WEEK
+        - (active_run.current_week if active_run is not None else dc.CURRENT_WEEK),
     )
     return HubCapacitySummary(
         has_active_schedule_run=active_run is not None,

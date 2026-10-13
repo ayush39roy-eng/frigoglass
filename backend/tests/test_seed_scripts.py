@@ -50,7 +50,7 @@ def test_seed_demo_data_duplicate_guard_and_reset(seeded_schema_url, monkeypatch
     importlib.reload(seed_demo_data)
 
     # First run: table is empty, should succeed and load the full dataset.
-    counts = asyncio.run(seed_demo_data.run(reset_first=False))
+    counts = asyncio.run(seed_demo_data.run(reset_first=False, dataset="prototype"))
     assert counts["projects"] == 46
     assert counts["hubs"] == 6
     assert counts["hub_work_calendars"] == 6
@@ -67,11 +67,11 @@ def test_seed_demo_data_duplicate_guard_and_reset(seeded_schema_url, monkeypatch
     # Second run, no --reset: the duplicate-seed guard must fire loudly
     # (RuntimeError), not silently skip or silently duplicate rows.
     with pytest.raises(RuntimeError, match="already has"):
-        asyncio.run(seed_demo_data.run(reset_first=False))
+        asyncio.run(seed_demo_data.run(reset_first=False, dataset="prototype"))
 
     # --reset: truncates every seeded table (children-first) and reseeds
     # cleanly back to the same row counts, not doubled/duplicated.
-    counts_after_reset = asyncio.run(seed_demo_data.run(reset_first=True))
+    counts_after_reset = asyncio.run(seed_demo_data.run(reset_first=True, dataset="prototype"))
     assert counts_after_reset["projects"] == 46
     assert counts_after_reset["_verified_from_db"]["projects"] == 46
     assert counts_after_reset["_verified_from_db"]["project_workflow_steps"] == 46 * 14
@@ -79,7 +79,9 @@ def test_seed_demo_data_duplicate_guard_and_reset(seeded_schema_url, monkeypatch
 
     # --reset must have actually reset, not appended: re-running --reset a
     # second time in a row should give the identical counts again, not 92.
-    counts_after_second_reset = asyncio.run(seed_demo_data.run(reset_first=True))
+    counts_after_second_reset = asyncio.run(
+        seed_demo_data.run(reset_first=True, dataset="prototype")
+    )
     assert counts_after_second_reset["_verified_from_db"]["projects"] == 46
 
 
@@ -145,7 +147,7 @@ def test_seed_dev_users_links_carol_to_engineer_and_scopes_bob_to_a_hub(
     # `reset_first=True` regardless of whether an earlier test in this module
     # already seeded demo data (module-scoped `seeded_schema_url`) — this
     # test must not depend on execution order.
-    asyncio.run(seed_demo_data.run(reset_first=True))
+    asyncio.run(seed_demo_data.run(reset_first=True, dataset="prototype"))
     counts = asyncio.run(seed_dev_users.run(reset_first=True))
     assert counts["users"] == 7
 
@@ -207,3 +209,48 @@ def test_seed_dev_users_links_carol_to_engineer_and_scopes_bob_to_a_hub(
         )
     )
     assert [s.hub_id for s in bob_scopes_2] == [bob_hub.id]
+
+
+def test_seed_demo_data_default_is_the_client_2026_dataset(seeded_schema_url, monkeypatch):
+    """ADR 0024: the default dataset is the client's 253 real 2026 projects.
+    Every project has a leader, every step row is present, the tuning pass
+    leaves FTE and efficiency in range, and a reseed is byte-stable."""
+
+    from models import Chamber, Engineer, Project, ProjectWorkflowStep
+    from models.enums import WorkflowStepStatus
+
+    monkeypatch.setenv("RPD_DATABASE_URL", seeded_schema_url)
+    seed_demo_data = importlib.import_module("seed.seed_demo_data")
+    importlib.reload(seed_demo_data)
+
+    counts = asyncio.run(seed_demo_data.run(reset_first=True))
+    assert counts["dataset"] == "client_2026"
+    assert counts["projects"] == 253
+    assert counts["_verified_from_db"]["projects"] == 253
+    assert counts["_verified_from_db"]["project_workflow_steps"] == 253 * 14
+    assert counts["_verified_from_db"]["priority_scores"] == 253
+    run = counts["tuning_run"]
+    assert run["within_year"] + run["spillover"] + run["left_out"] + run["blocked"] == 192
+
+    projects = asyncio.run(_fetch(seeded_schema_url, select(Project)))
+    engineers = asyncio.run(_fetch(seeded_schema_url, select(Engineer)))
+    engineer_ids = {e.id for e in engineers}
+    assert all(p.leader_engineer_id in engineer_ids for p in projects)
+    assert all(0 < float(e.fte) <= 1.0 for e in engineers)
+    chambers = asyncio.run(_fetch(seeded_schema_url, select(Chamber)))
+    assert all(0 < float(c.efficiency) <= 1.0 for c in chambers)
+    done = asyncio.run(
+        _fetch(
+            seeded_schema_url,
+            select(ProjectWorkflowStep).where(
+                ProjectWorkflowStep.status == WorkflowStepStatus.DONE
+            ),
+        )
+    )
+    assert done and all(s.actual_end_week < seed_demo_data.dc.CURRENT_WEEK for s in done)
+
+    again = asyncio.run(seed_demo_data.run(reset_first=True))
+    assert again["tuning_run"] == run
+    assert {p.id for p in asyncio.run(_fetch(seeded_schema_url, select(Project)))} == {
+        p.id for p in projects
+    }

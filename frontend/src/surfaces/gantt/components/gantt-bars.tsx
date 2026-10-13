@@ -1,5 +1,7 @@
 import * as React from 'react';
 
+import { SPILLOVER_YEAR } from '@/lib/domain-constants';
+import { formatPlanWeek } from '@/lib/format';
 import type { WorkflowStepKind } from '@/types/enums';
 
 import {
@@ -109,7 +111,10 @@ export function GanttBarGroup({
   const barH = compact ? 10 : 18;
   const radius = barH / 2;
   // Week-range label inside wide planned bars (project rows only).
-  const showLabel = !compact && !elapsed && plannedGeom !== null && plannedGeom.width >= 96 && planned !== null;
+  // A clipped bar also carries the spillover pill at its right end, so it needs
+  // room for both before the label is drawn.
+  const labelRoom = 96 + (plannedGeom?.continuesPastEnd ? SPILLOVER_PILL_WIDTH + 8 : 0);
+  const showLabel = !compact && !elapsed && plannedGeom !== null && plannedGeom.width >= labelRoom && planned !== null;
   const plannedY = y + (rowHeight - barH) / 2 - (actualGeom ? 3 : 0);
   const actualY = y + (rowHeight - barH) / 2 + (plannedGeom ? 4 : 0);
   const connectorY = y + rowHeight / 2;
@@ -168,7 +173,7 @@ export function GanttBarGroup({
           pointerEvents="none"
           className="gantt-bar-label tabular-nums"
         >
-          {`W${String(planned.startWeek)} – W${String(planned.endWeek)}`}
+          {`${formatPlanWeek(planned.startWeek)} – ${formatPlanWeek(planned.endWeek)}`}
         </text>
       ) : null}
       {connector ? (
@@ -191,6 +196,76 @@ export function GanttBarGroup({
           />
         </g>
       ) : null}
+    </g>
+  );
+}
+
+/** Width of the project-row "Spillover → 2027" pill, in px. */
+export const SPILLOVER_PILL_WIDTH = 92;
+
+export interface GanttSpilloverMarkerProps {
+  scale: WeekScale;
+  rowHeight: number;
+  /** `label` = project row pill ("Spillover → 2027"); `chevron` = compact step-row cue. */
+  variant: 'label' | 'chevron';
+  /** Accessible description (SVG `<title>`). */
+  title: string;
+}
+
+/**
+ * The spillover indicator at the axis' right edge (ADR 0024, client ask
+ * 2026-10-13): the timeline ends at W52, and a row whose work continues past it
+ * — or which the server flags `spillover` / `left_out` — carries this marker
+ * instead of W53+ columns. Warning-subtle token pair (contrast-checked), amber
+ * year-end stroke, text + shape so colour is never the only signal.
+ */
+export function GanttSpilloverMarker({
+  scale,
+  rowHeight,
+  variant,
+  title,
+}: GanttSpilloverMarkerProps): React.JSX.Element {
+  const edge = scale.totalWidthPx;
+  if (variant === 'chevron') {
+    const cy = rowHeight / 2;
+    return (
+      <g data-testid="gantt-step-spillover" role="img" aria-label={title}>
+        <title>{title}</title>
+        <path
+          d={`M ${String(edge - 9)} ${String(cy - 5)} L ${String(edge - 2)} ${String(cy)} L ${String(edge - 9)} ${String(cy + 5)} Z`}
+          fill="hsl(var(--color-gantt-marker-year))"
+        />
+      </g>
+    );
+  }
+  const h = 16;
+  const x = edge - SPILLOVER_PILL_WIDTH - 2;
+  const y = (rowHeight - h) / 2;
+  return (
+    <g data-testid="gantt-spillover-marker" role="img" aria-label={title}>
+      <title>{title}</title>
+      <rect
+        x={x}
+        y={y}
+        width={SPILLOVER_PILL_WIDTH}
+        height={h}
+        rx={h / 2}
+        fill="hsl(var(--color-warning-subtle))"
+        stroke="hsl(var(--color-gantt-marker-year))"
+        strokeWidth={1}
+      />
+      <text
+        x={x + SPILLOVER_PILL_WIDTH / 2}
+        y={y + h / 2}
+        textAnchor="middle"
+        dominantBaseline="central"
+        fontSize={9}
+        fontWeight={700}
+        fill="hsl(var(--color-warning-subtle-fg))"
+        pointerEvents="none"
+      >
+        {`Spillover → ${String(SPILLOVER_YEAR)}`}
+      </text>
     </g>
   );
 }

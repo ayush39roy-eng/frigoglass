@@ -15,14 +15,14 @@ import {
 } from 'recharts';
 
 import { BoltCard } from '@/components/ui/bolt-card';
-import { HORIZON_WEEKS, WITHIN_YEAR_WEEK } from '@/lib/domain-constants';
+import { DISPLAY_HORIZON_WEEKS, SPILLOVER_YEAR, WITHIN_YEAR_WEEK } from '@/lib/domain-constants';
 import { formatInteger, formatWeek } from '@/lib/format';
 import { useMotionTokens } from '@/lib/motion';
 import { cn } from '@/lib/utils';
 import { PROJECT_PRIORITIES, type ProjectPriority } from '@/types/enums';
 
 import type { CompletingWithinYearRow } from '../api/types';
-import { outcomeOf, type OutcomeBucket } from '../lib/outcome';
+import { displayOutcomeOf, outcomeOf, type DisplayOutcome } from '../lib/outcome';
 import { CardInfo } from '@/components/ui/card-info';
 
 /**
@@ -112,6 +112,10 @@ interface Bucket {
   afterCutoff: boolean;
 }
 
+/**
+ * 4-week buckets across the 52-week plan year, then ONE "Spillover" bucket for
+ * every finish week after W52 (ADR 0024: no W53+ columns are drawn).
+ */
 function buildBuckets(rows: CompletingWithinYearRow[]): Bucket[] {
   const weeks = rows
     .map((r) => r.last_step_end_week)
@@ -119,14 +123,24 @@ function buildBuckets(rows: CompletingWithinYearRow[]): Bucket[] {
   if (weeks.length === 0) return [];
   const first = Math.floor((Math.min(...weeks) - 1) / BUCKET) * BUCKET + 1;
   const buckets: Bucket[] = [];
-  for (let from = first; from <= HORIZON_WEEKS; from += BUCKET) {
-    const to = Math.min(from + BUCKET - 1, HORIZON_WEEKS);
+  for (let from = first; from <= DISPLAY_HORIZON_WEEKS; from += BUCKET) {
+    const to = Math.min(from + BUCKET - 1, DISPLAY_HORIZON_WEEKS);
     buckets.push({
       label: `W${String(from)}`,
       from,
       to,
       count: weeks.filter((w) => w >= from && w <= to).length,
-      afterCutoff: from > WITHIN_YEAR_WEEK,
+      afterCutoff: false,
+    });
+  }
+  const spill = weeks.filter((w) => w > DISPLAY_HORIZON_WEEKS).length;
+  if (spill > 0) {
+    buckets.push({
+      label: `→${String(SPILLOVER_YEAR)}`,
+      from: DISPLAY_HORIZON_WEEKS + 1,
+      to: Number.POSITIVE_INFINITY,
+      count: spill,
+      afterCutoff: true,
     });
   }
   return buckets;
@@ -144,7 +158,9 @@ function HistogramTooltip({
   return (
     <div className="rounded-xl border-[1.5px] border-border bg-surface px-s3 py-s2 text-xs shadow-pop">
       <p className="font-bold text-text">
-        {formatWeek(b.from)} – {formatWeek(b.to)}
+        {b.afterCutoff
+          ? `After ${formatWeek(WITHIN_YEAR_WEEK)} — spillover into ${String(SPILLOVER_YEAR)}`
+          : `${formatWeek(b.from)} – ${formatWeek(b.to)}`}
       </p>
       <p className="mt-0.5 flex items-center gap-1.5 text-text-muted">
         <span
@@ -174,8 +190,9 @@ function FinishWeekHistogram({ rows }: { rows: CompletingWithinYearRow[] }): Rea
         info={
           <p>
             Each bar counts the projects whose last scheduled step ends in that 4-week window
-            (the run&apos;s own end week). Blue bars finish by {formatWeek(WITHIN_YEAR_WEEK)}; amber
-            bars spill into next year.
+            (the run&apos;s own end week), across the 52-week plan year. Blue bars finish by{' '}
+            {formatWeek(WITHIN_YEAR_WEEK)}; the amber bar collects every project finishing after it
+            (spillover into {SPILLOVER_YEAR}).
           </p>
         }
         right={
@@ -186,7 +203,7 @@ function FinishWeekHistogram({ rows }: { rows: CompletingWithinYearRow[] }): Rea
             </span>
             <span className="flex items-center gap-1.5">
               <span className="size-2.5 rounded-full bg-warning" aria-hidden="true" />
-              After
+              Spillover
             </span>
           </span>
         }
@@ -318,7 +335,9 @@ function PriorityDeliveryRings({ rows }: { rows: CompletingWithinYearRow[] }): R
     () =>
       PROJECT_PRIORITIES.map((priority) => {
         const ofP = rows.filter((r) => r.priority === priority);
-        const within = ofP.filter((r) => r.within_year).length;
+        // Same bucket precedence as the KPI tiles (`outcomeOf`: on hold wins), so a
+        // band's within-year count never disagrees with `within_year_count`.
+        const within = ofP.filter((r) => outcomeOf(r) === 'within_year').length;
         return {
           priority,
           total: ofP.length,
@@ -396,22 +415,23 @@ function PriorityDeliveryRings({ rows }: { rows: CompletingWithinYearRow[] }): R
 
 /* ---------------------------- outcomes by hub ------------------------------ */
 
-const STACK_ORDER: { bucket: OutcomeBucket; label: string; fill: string; dot: string }[] = [
+// ADR 0024: three outcomes on the 52-week year; a left-out project sits in the
+// spillover segment (not done by W52), never in a separate "left out" one.
+const STACK_ORDER: { bucket: DisplayOutcome; label: string; fill: string; dot: string }[] = [
   { bucket: 'within_year', label: 'Within year', fill: 'bg-success', dot: 'bg-success' },
-  { bucket: 'spillover', label: 'Spillover', fill: 'bg-warning', dot: 'bg-warning' },
-  { bucket: 'left_out', label: 'Left out', fill: 'bg-danger', dot: 'bg-danger' },
+  { bucket: 'spillover', label: 'Spillover (past W52)', fill: 'bg-warning', dot: 'bg-warning' },
   { bucket: 'blocked', label: 'On Hold', fill: 'bg-text-muted', dot: 'bg-text-muted' },
 ];
 
 function HubOutcomeStack({ rows }: { rows: CompletingWithinYearRow[] }): React.JSX.Element {
   const { reduced } = useMotionTokens();
   const hubs = React.useMemo(() => {
-    const map = new Map<string, Record<OutcomeBucket, number>>();
+    const map = new Map<string, Record<DisplayOutcome, number>>();
     for (const row of rows) {
       const entry =
         map.get(row.hub) ??
-        ({ within_year: 0, spillover: 0, left_out: 0, blocked: 0, unresolved: 0 } as Record<OutcomeBucket, number>);
-      entry[outcomeOf(row)] += 1;
+        ({ within_year: 0, spillover: 0, blocked: 0, unresolved: 0 } as Record<DisplayOutcome, number>);
+      entry[displayOutcomeOf(row)] += 1;
       map.set(row.hub, entry);
     }
     return [...map.entries()]

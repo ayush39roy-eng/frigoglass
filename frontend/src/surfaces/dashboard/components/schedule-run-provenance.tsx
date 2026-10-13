@@ -2,6 +2,7 @@ import * as React from 'react';
 
 import { CardInfo } from '@/components/ui/card-info';
 import { RunProvenanceChips } from '@/components/ui/run-provenance-chips';
+import { SPILLOVER_YEAR, WITHIN_YEAR_WEEK } from '@/lib/domain-constants';
 import { formatWeek } from '@/lib/format';
 
 import type { ScheduleRunSummary } from '../api/types';
@@ -27,7 +28,6 @@ import type { ScheduleRunSummary } from '../api/types';
  * Gantt still renders it, and that surface has not had the text cleanup.
  */
 
-const WITHIN_YEAR_WEEK = 52;
 
 export interface ScheduleRunProvenanceProps {
   scheduleRunVersion: number | null;
@@ -54,12 +54,12 @@ export function ScheduleRunProvenance({
           delivered this year.
         </p>
         <p>
-          <strong className="text-text">Spillover</strong> = scheduled but not completing by{' '}
-          {formatWeek(WITHIN_YEAR_WEEK)}. <strong className="text-text">Left out</strong> = no
-          feasible window before the 78-week horizon.{' '}
+          <strong className="text-text">Spillover (past {formatWeek(WITHIN_YEAR_WEEK)})</strong> = not
+          done by {formatWeek(WITHIN_YEAR_WEEK)}, carried into {SPILLOVER_YEAR}. It includes any
+          project the run could not place yet (shown as &quot;not yet placed&quot;).{' '}
           <strong className="text-text">On Hold</strong> = in the plan, waiting at a stage that is on
           hold (a paused project with status On Hold is not scheduled at all); it wins outright over
-          the other three, so the four counts never overlap.
+          the others, so the counts never overlap.
         </p>
         <p>
           Every number on this surface traces to a single field on the schedule-run response. None

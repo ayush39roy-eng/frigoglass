@@ -2,6 +2,7 @@ import * as React from 'react';
 
 import { cn } from '@/lib/utils';
 import { formatWeek } from '@/lib/format';
+import { DISPLAY_HORIZON_WEEKS } from '@/lib/domain-constants';
 
 import type { ChamberWeekLoad, ScheduleRunSummary } from '../api/types';
 
@@ -62,9 +63,12 @@ function weekRange(
   chambers: ChamberWeekLoad[],
   activeRun: ScheduleRunSummary | null | undefined,
 ): number[] {
-  if (activeRun && activeRun.horizon_weeks > activeRun.current_week) {
+  // ADR 0024: columns run from the run's current week to W52 — the 52-week plan
+  // year — never to the run's internal 78-week search horizon.
+  const lastWeek = activeRun ? Math.min(activeRun.horizon_weeks, DISPLAY_HORIZON_WEEKS) : DISPLAY_HORIZON_WEEKS;
+  if (activeRun && lastWeek > activeRun.current_week) {
     return Array.from(
-      { length: activeRun.horizon_weeks - activeRun.current_week + 1 },
+      { length: lastWeek - activeRun.current_week + 1 },
       (_, i) => activeRun.current_week + i,
     );
   }
@@ -79,6 +83,8 @@ function weekRange(
     }
   }
   if (!Number.isFinite(min) || !Number.isFinite(max)) return [];
+  max = Math.min(max, lastWeek);
+  if (max < min) return [];
   return Array.from({ length: max - min + 1 }, (_, i) => min + i);
 }
 

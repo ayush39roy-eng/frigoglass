@@ -117,8 +117,9 @@ export function ApplyLogicCard({
           <dl className="grid grid-cols-2 gap-x-4 gap-y-1 rounded-lg border border-border bg-surface-sunken p-3 text-2xs sm:grid-cols-4">
             <ResultStat label="Projects" value={lastResult.project_count} />
             <ResultStat label="Within year" value={lastResult.within_year_count} />
-            <ResultStat label="Spillover" value={lastResult.spillover_count} />
-            <ResultStat label="Left out" value={lastResult.left_out_count} />
+            {/* ADR 0024: both are "not done by W52" on the 52-week year. */}
+            <ResultStat label="Spillover (past W52)" value={lastResult.spillover_count} />
+            <ResultStat label="Spillover · unplaced" value={lastResult.left_out_count} />
           </dl>
         ) : null}
       </CardContent>

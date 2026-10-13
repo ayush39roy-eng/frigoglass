@@ -19,7 +19,7 @@ import { VipBadge } from '@/components/shared/vip-badge';
 import { AskAgentPanel } from '@/surfaces/project-workspace/components/ask-agent-panel';
 
 import type { ProjectFilterRow } from '../api/types';
-import { HUB_COUNTRY } from '../lib/hub-geo';
+import { useHubCountry } from '../lib/hub-geo';
 
 /**
  * The "all projects, as feature cards" view the project owner asked for
@@ -43,6 +43,8 @@ export function ProjectCardGrid({ rows }: { rows: ProjectFilterRow[] }): React.J
 }
 
 function ProjectFeatureCard({ row }: { row: ProjectFilterRow }): React.JSX.Element {
+  // Region from the served `GET /hubs` `lab_region` (OEM hubs = Greece / Europe).
+  const country = useHubCountry();
   return (
     <BoltCard className="flex h-full flex-col gap-s3 p-card">
       <div className="flex items-center justify-between gap-s2">
@@ -66,7 +68,7 @@ function ProjectFeatureCard({ row }: { row: ProjectFilterRow }): React.JSX.Eleme
         <p className="flex items-center gap-1 truncate text-2xs text-text-muted">
           <Building2 className="size-3 shrink-0" aria-hidden="true" />
           {row.hub}
-          {HUB_COUNTRY[row.hub] ? ` — ${HUB_COUNTRY[row.hub]}` : ''}
+          {country[row.hub] ? ` — ${country[row.hub]}` : ''}
         </p>
         {/* P12 (ADR 0021): the served tracking status. */}
         <TrackingStatusChip status={row.tracking_status} />

@@ -18,6 +18,7 @@ describe('ScheduleOutcomeBadge', () => {
 
   it('exposes the label to assistive tech even in icon-only mode', () => {
     render(<ScheduleOutcomeBadge flag="LEFT_OUT" iconOnly />);
-    expect(screen.getByText('Left out')).toHaveClass('sr-only');
+    // ADR 0024: LEFT_OUT is presented inside the spillover framing.
+    expect(screen.getByText('Spillover · unplaced')).toHaveClass('sr-only');
   });
 });

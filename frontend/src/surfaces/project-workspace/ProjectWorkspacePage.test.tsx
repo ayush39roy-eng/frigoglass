@@ -89,7 +89,7 @@ describe('ProjectWorkspacePage — header and health (I13)', () => {
     ['on_track', 'On track'],
     ['at_risk', 'At risk'],
     ['off_track', 'Off track'],
-    ['left_out', 'Left out'],
+    ['left_out', 'Spillover · unplaced'], // ADR 0024: shown inside the spillover framing
     ['blocked', 'On Hold'], // remediation ruling 5; labelled On Hold since ADR 0017
     ['unscheduled', 'Not scheduled'],
   ])('renders the server health %s as "%s" (icon + label, never derived)', async (health, label) => {

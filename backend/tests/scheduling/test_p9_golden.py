@@ -35,10 +35,13 @@ from tests.scheduling._fixtures import progress
 ENG_A = EngineerInput("eng-a", "A", "R&D-Greece", ("A+", "A", "B", "C"))
 ENG_B = EngineerInput("eng-b", "B", "R&D-Greece", ("A+", "A", "B", "C"))
 ENG_OEM = EngineerInput("eng-oem", "OEM lead", "OEM-HCK", ("B-OEM",))
-CH_GR = ChamberInput("ch-gr", "GR", "Greece", max_concurrent=1, allowed_stages=("PDD-F", "PDD-H"))
-CH_IN = ChamberInput(
-    "ch-in", "IN", "India", max_concurrent=1, allowed_stages=("OEM-E", "OEM-H", "PDD-F", "PDD-H")
+# 2026-10-13 client correction (migration p13a_oem_lab_region): the OEM hubs'
+# lab region is Greece, so the Greece chamber hosts the OEM lab steps (it was
+# the India chamber before).
+CH_GR = ChamberInput(
+    "ch-gr", "GR", "Greece", max_concurrent=1, allowed_stages=("OEM-E", "OEM-H", "PDD-F", "PDD-H")
 )
+CH_IN = ChamberInput("ch-in", "IN", "India", max_concurrent=1, allowed_stages=("PDD-F", "PDD-H"))
 
 
 def _project(pid: str = "p", **kw: object) -> ProjectInput:
@@ -162,7 +165,7 @@ def test_oem_b_oem_workflow():
     assert w["OEM-J"] == (44, 44, False)
     assert w["OEM-N"] == (44, 44, True)
     assert o.end_week == 44  # 31 + 14 - 1
-    assert {s.assigned_chamber_id for s in o.steps if s.step_id == "OEM-H"} == {"ch-in"}
+    assert {s.assigned_chamber_id for s in o.steps if s.step_id == "OEM-H"} == {"ch-gr"}
     # Leader lists the project's own OEM category -> eligible (ADR 0007).
     assert not o.cat_not_allowed
 

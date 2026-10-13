@@ -182,7 +182,10 @@ export default function CapacityPage(): React.JSX.Element {
                       label: 'Left out',
                       value: classBreakdown.data.rows.reduce((n, r) => n + r.left_out_count, 0),
                       accent: 'danger',
-                      hint: `${String(hubLoad.data.remaining_weeks)} wks left`,
+                      // ADR 0024: not done by W52 — spillover, framed on the 52-week year
+                      // (the served `remaining_weeks` counts to the scheduler's internal
+                      // 78-week search horizon, which the UI never presents).
+                      hint: 'Not placed — spillover past W52',
                     },
                   ]}
                 />

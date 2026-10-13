@@ -2,6 +2,7 @@ import type * as React from 'react';
 import { CircleAlert, CircleOff, Clock, TriangleAlert, UserX } from 'lucide-react';
 
 import type { BadgeProps } from '@/components/ui/badge';
+import { SPILLOVER_YEAR } from '@/lib/domain-constants';
 import type { ScheduleOutcomeFlag } from '@/types/enums';
 
 /**
@@ -34,15 +35,18 @@ export const SCHEDULE_OUTCOME_META: Record<ScheduleOutcomeFlag, OutcomeMeta> = {
   },
   LEFT_OUT: {
     tone: 'warning',
-    label: 'Left out',
+    // Client ask 2026-10-13: the UI frames a 52-week year only, so a project the
+    // server could not place is presented as spillover (it is certainly not done
+    // by W52), not as a separate "beyond the horizon" concept. Flag unchanged.
+    label: 'Spillover · unplaced',
     Icon: CircleOff,
-    description: 'No feasible window before the 78-week horizon — not scheduled.',
+    description: `Not done by week 52 — no slot found in the plan yet, so it spills over to ${String(SPILLOVER_YEAR)} unscheduled.`,
   },
   SPILLOVER: {
     tone: 'warning',
     label: 'Spillover',
     Icon: Clock,
-    description: 'Completes after week 52 — will not finish inside the calendar year.',
+    description: `Not done by week 52 — finishes after the plan year and spills over to ${String(SPILLOVER_YEAR)}.`,
   },
   CAT_NOT_ALLOWED: {
     tone: 'warning',

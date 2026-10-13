@@ -146,8 +146,9 @@ describe('PriorityBoardPage — served grouping', () => {
     expect(within(gated).getByTestId('vip-badge')).toBeInTheDocument();
     expect(within(gated).getByTestId('tracking-status-chip')).toHaveAttribute('data-tracking', 'overdue');
     const beta = cardEl('Beta Freezer');
-    expect(within(beta).getByTestId('finish-chip')).toHaveTextContent('W60');
-    expect(within(beta).getByTestId('finish-chip')).toHaveTextContent('Past W52');
+    // ADR 0024: a finish past W52 is never printed as W60 — it reads as spillover.
+    expect(within(beta).getByTestId('finish-chip')).not.toHaveTextContent('W60');
+    expect(within(beta).getByTestId('finish-chip')).toHaveTextContent('Past W52 → 2027');
     expect(within(beta).getByTestId('health-chip')).toHaveTextContent('Off track');
     expect(within(beta).queryByTestId('vip-badge')).not.toBeInTheDocument();
     const gamma = cardEl('Gamma Queue');

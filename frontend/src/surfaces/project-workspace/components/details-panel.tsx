@@ -7,7 +7,7 @@ import { usePriorityMoveHost } from '@/components/shared/priority-move/priority-
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { useHubs } from '@/lib/api/reference';
-import { formatCurrency, formatDecimal, formatWeek } from '@/lib/format';
+import { formatCurrency, formatDecimal, formatPlanWeek } from '@/lib/format';
 import { queryKeys } from '@/lib/query-keys';
 import { PROJECT_TYPE_LABELS } from '@/types/enums';
 import { updateProject } from '@/surfaces/registration/api/registration-api';
@@ -95,9 +95,9 @@ export function DetailsPanel({
               <Field label="Category" value={p.category ?? '—'} />
               <Field label="Type" value={p.type ? PROJECT_TYPE_LABELS[p.type] : '—'} />
               <Field label="Priority" value={p.priority ?? '—'} />
-              <Field label="Actual start week" value={p.actual_start_week === null ? '—' : formatWeek(p.actual_start_week)} />
+              <Field label="Actual start week" value={p.actual_start_week === null ? '—' : formatPlanWeek(p.actual_start_week)} />
               <Field label="Delay (weeks)" value={String(p.delay_weeks)} />
-              <Field label="Expected completion (week)" value={p.target_end_week === null ? 'Process-derived' : formatWeek(p.target_end_week)} />
+              <Field label="Expected completion (week)" value={p.target_end_week === null ? 'Process-derived' : formatPlanWeek(p.target_end_week)} />
               <Field label="Certification testing" value={p.certification_testing_required ? 'Required' : 'Not required — lab steps skipped'} />
               <Field label="Estimated design weeks" value={p.estimated_design_weeks === null ? '—' : formatDecimal(p.estimated_design_weeks)} />
               <Field label="Estimated lab weeks" value={p.estimated_lab_weeks === null ? '—' : formatDecimal(p.estimated_lab_weeks)} />

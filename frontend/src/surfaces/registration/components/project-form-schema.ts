@@ -1,5 +1,7 @@
 import { z } from 'zod';
 
+import { DISPLAY_HORIZON_WEEKS } from '@/lib/domain-constants';
+
 /**
  * Client-side mirror of `backend/schemas/project.py`'s field constraints
  * (`extra="forbid"`; `name` 1–300 chars; non-negative money fields; etc).
@@ -48,7 +50,7 @@ function optionalNumericString(opts: {
 export const projectFormSchema = z.object({
   name: z.string().min(1, 'Name is required').max(300, 'Max 300 characters'),
   external_code: z.string().max(100, 'Max 100 characters').optional(),
-  actual_start_week: optionalNumericString({ integer: true, min: 1 }),
+  actual_start_week: optionalNumericString({ integer: true, min: 1, max: DISPLAY_HORIZON_WEEKS }),
   delay_weeks: optionalNumericString({ integer: true, min: 0 }),
   reg_year: optionalNumericString({ integer: true }),
   comments: z.string().max(10_000, 'Max 10,000 characters').optional(),
@@ -60,8 +62,9 @@ export const projectFormSchema = z.object({
   gross_margin_pct: optionalNumericString({}),
   capex_keur: optionalNumericString({ min: 0 }),
   rm_savings_keur: optionalNumericString({ min: 0 }),
-  // P9 (contract §6): week numbers live on the app's 1..78 axis.
-  target_end_week: optionalNumericString({ integer: true, min: 1, max: 78 }),
+  // P9 (contract §6); ADR 0024 (2026-10-13): a week the user enters lives on the
+  // 52-week plan year, W1–W52 (the server's 78-week search horizon is internal).
+  target_end_week: optionalNumericString({ integer: true, min: 1, max: DISPLAY_HORIZON_WEEKS }),
   estimated_design_weeks: optionalNumericString({ min: 0 }),
   estimated_lab_weeks: optionalNumericString({ min: 0 }),
 });

@@ -9,6 +9,10 @@ import { weekToX, weekEndToX, type WeekScale } from '../lib/gantt-coordinates';
  * constants (`CURRENT_WEEK`, `WITHIN_YEAR_WEEK`) — a fixed position, not a
  * calculation. The per-project "completing within year" verdict is still the
  * server's `row.spillover` / `row.left_out` flag.
+ *
+ * The axis is the 52-week plan year (ADR 0024): W1–W52, no W53+ columns. The
+ * year-end marker therefore sits on the axis' right edge; its label is anchored
+ * to the left of the line so it stays on-canvas.
  */
 
 export const AXIS_HEIGHT = 34;
@@ -102,11 +106,13 @@ export function GanttWeekAxis({ scale }: GanttWeekAxisProps): React.JSX.Element 
         strokeDasharray="4 3"
       />
       <text
-        x={yearX + 3}
+        x={yearX - 3}
         y={26}
         fontSize={9}
         fill="hsl(var(--color-gantt-marker-year))"
         fontWeight={600}
+        textAnchor="end"
+        data-testid="gantt-year-end-label"
       >
         W{WITHIN_YEAR_WEEK} year-end
       </text>

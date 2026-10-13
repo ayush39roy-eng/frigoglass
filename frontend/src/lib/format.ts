@@ -9,6 +9,7 @@
  * just format what the API already computed.
  */
 
+import { DISPLAY_HORIZON_WEEKS } from '@/lib/domain-constants';
 import type { CurrencyCode } from '@/types/enums';
 
 const currencyFormatters = new Map<string, Intl.NumberFormat>();
@@ -80,6 +81,17 @@ export function formatBookedPct(value: number | null): string {
 /** Horizon weeks are 1-indexed absolute week numbers (DOMAIN_RULES.md horizon constants). */
 export function formatWeek(week: number): string {
   return `W${week}`;
+}
+
+/**
+ * A served week number framed on the 52-week plan year the UI presents
+ * (`DISPLAY_HORIZON_WEEKS`, client ask 2026-10-13). Weeks inside the year print
+ * as `W47`; a week past W52 (spillover) prints as "After W52" instead of
+ * W53–W78, which the UI never shows. Formatting only — the week itself is the
+ * server's field, and the spillover verdict stays the server's flag (I9/I16).
+ */
+export function formatPlanWeek(week: number): string {
+  return week > DISPLAY_HORIZON_WEEKS ? `After ${formatWeek(DISPLAY_HORIZON_WEEKS)}` : formatWeek(week);
 }
 
 /**

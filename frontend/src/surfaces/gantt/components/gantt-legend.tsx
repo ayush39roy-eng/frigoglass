@@ -1,6 +1,6 @@
 import * as React from 'react';
 
-import { CURRENT_WEEK, WITHIN_YEAR_WEEK } from '@/lib/domain-constants';
+import { CURRENT_WEEK, SPILLOVER_YEAR, WITHIN_YEAR_WEEK } from '@/lib/domain-constants';
 
 /**
  * Legend for the timeline marks. Every colour is paired with text — colour is
@@ -65,7 +65,16 @@ export function GanttLegend(): React.JSX.Element {
           className="h-3 w-0.5 border-l-2 border-dashed border-gantt-marker-year"
           aria-hidden="true"
         />
-        <dt>Week {WITHIN_YEAR_WEEK} — year-end</dt>
+        <dt>Week {WITHIN_YEAR_WEEK} — year-end (the timeline ends here)</dt>
+      </div>
+      <div className="flex items-center gap-1.5">
+        <span
+          className="inline-flex h-3.5 items-center rounded-pill border border-gantt-marker-year bg-warning-subtle px-1.5 text-[0.625rem] font-bold leading-none text-warning-subtle-fg"
+          aria-hidden="true"
+        >
+          → {SPILLOVER_YEAR}
+        </span>
+        <dt>Spillover — not done by week {WITHIN_YEAR_WEEK}, bar cut at year-end</dt>
       </div>
       <div className="flex items-center gap-1.5">
         <span className="h-3 w-0.5 border-l-2 border-gantt-marker-now" aria-hidden="true" />

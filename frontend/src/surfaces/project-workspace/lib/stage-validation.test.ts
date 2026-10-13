@@ -41,9 +41,10 @@ describe('validateStage — DOMAIN_RULES per-stage consistency rules', () => {
     expect(validateStage({ ...base, status: 'Blocked', percent_complete: 40, actual_start_week: 8, blocked_reason: '  ' }).blocked_reason).toMatch(/needs a hold reason/);
     expect(validateStage({ ...base, blocked_reason: 'supplier' }).blocked_reason).toMatch(/Only a stage on hold/);
   });
-  it('remaining override is a non-negative integer or null; weeks stay on 1..78', () => {
+  it('remaining override is a non-negative integer or null; weeks stay on the 1..52 plan year', () => {
     expect(validateStage({ ...base, status: 'In Progress', percent_complete: 10, actual_start_week: 5, remaining_weeks_override: -1 }).remaining_weeks_override).toBeTruthy();
-    expect(validateStage({ ...base, status: 'In Progress', percent_complete: 10, actual_start_week: 90 }).actual_start_week).toMatch(/1–78/);
+    expect(validateStage({ ...base, status: 'In Progress', percent_complete: 10, actual_start_week: 53 }).actual_start_week).toMatch(/1–52/);
+    expect(validateStage({ ...base, status: 'In Progress', percent_complete: 10, actual_start_week: 52 }).actual_start_week).toBeUndefined();
   });
 });
 

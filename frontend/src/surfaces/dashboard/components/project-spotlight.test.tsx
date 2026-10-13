@@ -41,7 +41,7 @@ describe('ProjectSpotlight', () => {
             last_step_end_week: 61,
           }),
         ]}
-        horizonWeeks={78}
+       
       />,
     );
 
@@ -51,17 +51,19 @@ describe('ProjectSpotlight', () => {
     );
     // The week comes straight off `last_step_end_week` — W47, not a derived countdown.
     expect(screen.getByText('W47')).toBeInTheDocument();
-    expect(screen.getByText('W47 of 78 weeks')).toBeInTheDocument();
-    expect(screen.getByText('W61 of 78 weeks')).toBeInTheDocument();
+    expect(screen.getByText('W47 of 52 weeks')).toBeInTheDocument();
+    // ADR 0024: a finish past W52 is never printed as W61 "of 78 weeks".
+    expect(screen.getByText('After W52 · spillover → 2027')).toBeInTheDocument();
+    expect(screen.queryByText(/W61|of 78/)).not.toBeInTheDocument();
 
     // The outcome chip uses the row's own flags, with the shared precedence.
     expect(screen.getByText('Within year')).toBeInTheDocument();
-    expect(screen.getByText('Spillover')).toBeInTheDocument();
+    expect(screen.getByText('Spillover (past W52)')).toBeInTheDocument();
   });
 
   it('never fabricates a remaining-time countdown or a person', () => {
     renderWithProviders(
-      <ProjectSpotlight rows={[row('a', { last_step_end_week: 47 })]} horizonWeeks={78} />,
+      <ProjectSpotlight rows={[row('a', { last_step_end_week: 47 })]} />,
     );
     // No "N weeks left" style figure anywhere: 52 − 47 is arithmetic this surface
     // is not allowed to perform (Invariant I9).
@@ -74,7 +76,7 @@ describe('ProjectSpotlight', () => {
 
   it('caps the grid and hands off to the full project table instead of rendering every project', () => {
     const rows = Array.from({ length: 12 }, (_, i) => row(`p${String(i)}`));
-    renderWithProviders(<ProjectSpotlight rows={rows} horizonWeeks={78} />);
+    renderWithProviders(<ProjectSpotlight rows={rows} />);
 
     expect(screen.getAllByRole('link', { name: /^Project p/ })).toHaveLength(6);
     expect(screen.getByText('6 of 12')).toBeInTheDocument();
@@ -88,22 +90,22 @@ describe('ProjectSpotlight', () => {
     renderWithProviders(
       <ProjectSpotlight
         rows={[row('a', { within_year: false, left_out: true, last_step_end_week: null })]}
-        horizonWeeks={78}
+       
       />,
     );
     expect(screen.getByText('Not scheduled')).toBeInTheDocument();
-    expect(screen.getByText('Left out')).toBeInTheDocument();
+    expect(screen.getByText('Spillover · unplaced')).toBeInTheDocument();
   });
 
-  it('falls back to the DOMAIN_RULES horizon constant when the active run has not loaded', () => {
+  it('frames every card on the 52-week plan year (DISPLAY_HORIZON_WEEKS), not the run horizon', () => {
     renderWithProviders(
-      <ProjectSpotlight rows={[row('a', { last_step_end_week: 40 })]} horizonWeeks={null} />,
+      <ProjectSpotlight rows={[row('a', { last_step_end_week: 40 })]} />,
     );
-    expect(screen.getByText('W40 of 78 weeks')).toBeInTheDocument();
+    expect(screen.getByText('W40 of 52 weeks')).toBeInTheDocument();
   });
 
   it('shows an empty state, not an error, when the run has no rows', () => {
-    renderWithProviders(<ProjectSpotlight rows={[]} horizonWeeks={78} />);
+    renderWithProviders(<ProjectSpotlight rows={[]} />);
     expect(screen.getByText('No projects in this run')).toBeInTheDocument();
   });
 
@@ -111,7 +113,7 @@ describe('ProjectSpotlight', () => {
     renderWithProviders(
       <ProjectSpotlight
         rows={[row('a', { hub: 'PD-Romania', category: 'B', priority: 'P2' })]}
-        horizonWeeks={78}
+       
       />,
     );
     expect(

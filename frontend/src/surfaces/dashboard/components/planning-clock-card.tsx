@@ -2,22 +2,22 @@ import * as React from 'react';
 import { motion } from 'framer-motion';
 import { CalendarClock } from 'lucide-react';
 
-import { CURRENT_WEEK, HORIZON_WEEKS, WITHIN_YEAR_WEEK } from '@/lib/domain-constants';
+import { CURRENT_WEEK, DISPLAY_HORIZON_WEEKS, SPILLOVER_YEAR, WITHIN_YEAR_WEEK } from '@/lib/domain-constants';
 import { formatWeek } from '@/lib/format';
 import { useMotionTokens } from '@/lib/motion';
 
 /**
  * Planning clock (Bold Blocks, 2026-10-01) — the dark INK feature card. Shows
- * where the planning week sits against the W52 within-year cut-off and the
- * 78-week horizon. Every number is a DOMAIN_RULES constant
+ * where the planning week sits in the 52-week plan year (ADR 0024: the UI
+ * presents W1–W52 only; work past W52 is spillover into the next year). Every
+ * number is a DOMAIN_RULES constant
  * (`lib/domain-constants.ts`), never the wall clock.
  */
 export function PlanningClockCard(): React.JSX.Element {
   const { reduced } = useMotionTokens();
   const remaining = Math.max(0, WITHIN_YEAR_WEEK - CURRENT_WEEK);
   const yearPct = Math.min(100, (CURRENT_WEEK / WITHIN_YEAR_WEEK) * 100);
-  const cutoffPct = (WITHIN_YEAR_WEEK / HORIZON_WEEKS) * 100;
-  const nowPct = (CURRENT_WEEK / HORIZON_WEEKS) * 100;
+  const nowPct = Math.min(100, (CURRENT_WEEK / DISPLAY_HORIZON_WEEKS) * 100);
 
   return (
     <div
@@ -59,10 +59,11 @@ export function PlanningClockCard(): React.JSX.Element {
         {Math.round(yearPct)}% of the planning year elapsed
       </p>
 
-      {/* Horizon strip — where the cut-off and "now" fall in the 78-week window */}
+      {/* Year strip — where "now" falls in the 52-week plan year; the year ends at
+          the W52 cut-off and anything later is spillover. */}
       <div className="relative mt-s4 border-t-[1.5px] border-ink-fg/15 pt-s3">
         <div className="relative h-1.5 rounded-full bg-ink-fg/15">
-          <span className="absolute inset-y-0 left-0 rounded-full bg-ink-fg/40" style={{ width: `${String(cutoffPct)}%` }} />
+          <span className="absolute inset-y-0 left-0 rounded-full bg-ink-fg/40" style={{ width: `${String(nowPct)}%` }} />
           <span
             className="absolute top-1/2 size-3 -translate-x-1/2 -translate-y-1/2 rounded-full bg-pop ring-2 ring-ink"
             style={{ left: `${String(nowPct)}%` }}
@@ -72,7 +73,7 @@ export function PlanningClockCard(): React.JSX.Element {
         <div className="mt-s2 flex justify-between text-2xs font-semibold text-ink-fg/60" data-numeric="">
           <span>W1</span>
           <span>Cut-off {formatWeek(WITHIN_YEAR_WEEK)}</span>
-          <span>{formatWeek(HORIZON_WEEKS)}</span>
+          <span>Spillover → {SPILLOVER_YEAR}</span>
         </div>
       </div>
     </div>

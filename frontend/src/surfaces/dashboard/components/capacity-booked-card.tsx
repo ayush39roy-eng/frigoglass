@@ -98,8 +98,8 @@ export function CapacityBookedCard(): React.JSX.Element | null {
               is planned than the capacity can deliver.
             </p>
             <p>
-              Europe = the Greece and Romania lab regions; India = the India lab region, including the OEM
-              hubs. Only the hubs in your scope are counted. Reporting figures only: they never stop the
+              Europe = the Greece and Romania lab regions, including the OEM hubs; India = the India lab
+              region (R&amp;D-India and PD-India). Only the hubs in your scope are counted. Reporting figures only: they never stop the
               scheduler booking work.
             </p>
           </CardInfo>

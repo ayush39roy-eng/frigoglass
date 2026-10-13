@@ -1,8 +1,28 @@
-"""P1-T03 (revised P9-T01) — seed the ~46-project synthetic demo dataset
-extracted from `reference/rpd-platform-prototype.html` (see
-`prototype_seed_data.json` / `extract_prototype_data.cjs` for provenance)
-into the schema, plus the reference/lookup data sourced from
-`backend/domain_constants.py`:
+"""Seed the demo dataset plus the reference/lookup data sourced from
+`backend/domain_constants.py`.
+
+Two datasets (`--dataset`):
+
+  - `client_2026` (**default**, ADR 0024): the client's real 2026 pipeline.
+    These are the 253 projects of their workbook whose Project Request falls in
+    2026, extracted by `extract_client_2026.py` into
+    `client_2026_seed_data.json`. The workbook carries no engineers, step
+    progress, prioritization scores, FTE or tuned lab supply. These inputs are
+    derived deterministically by `seed/client_2026.py`, whose docstring holds
+    every rule. In short:
+    - engineers come from the workbook's project leaders, plus named
+      "<hub> Engineer <n>" capacity engineers;
+    - step progress comes from Project Status and Development Step;
+    - FTE and chamber efficiency are tuned on an in-memory greedy run toward
+      the booked % the client asked for. The scheduler ignores both.
+    Row ids are deterministic (`uuid5`), so every reseed produces the same
+    schedule run.
+  - `prototype`: the ~46-project synthetic set extracted from
+    `reference/rpd-platform-prototype.html` (`prototype_seed_data.json` /
+    `extract_prototype_data.cjs`). It is kept for the tests and e2e that
+    depend on it. Every step is seeded `Not Started` and ids are random.
+
+Both datasets seed:
 
   - `workflows`, `workflow_step_templates` (28 rows: PDD-A..N, OEM-A..N) and
     `workflow_lead_times` (98 rows) — the 2026-09-27 contract (ADR 0007/0009).
@@ -13,13 +33,12 @@ into the schema, plus the reference/lookup data sourced from
   - `hubs` + one `hub_work_calendars` row per hub (ADR 0008,
     docs/CLIENT_FORMULAS.md §2.1).
   - `chambers` from the client workbook's ten chambers (ADR 0008,
-    docs/CLIENT_FORMULAS.md §2.2; `domain_constants.CHAMBER_SEED`) — the
-    prototype's eight chambers are mapped onto the workbook rows by region and
-    number, and Romania CH-3/CH-4 are added (see docs/MEMORY.md P9-T01).
+    docs/CLIENT_FORMULAS.md §2.2; `domain_constants.CHAMBER_SEED`). For
+    `client_2026` the efficiencies are then tuned as described above.
   - `engineers`, `projects` (+ 14 `project_workflow_steps` and 1
-    `priority_scores` row each). OEM-hub projects are given the OEM workflow
-    and an OEM category (A+/A → A-OEM, B → B-OEM, C → C-OEM); every step's
-    `duration_weeks` comes from the lead-time table (no multipliers).
+    `priority_scores` row each). OEM-hub projects follow the OEM workflow and
+    carry an OEM category. Every step's `duration_weeks` comes from the
+    lead-time table (no multipliers).
 
 IMPORTANT — what this script does NOT seed:
   - `currency_rates` — `seed_currency_rates.py`.
@@ -27,10 +46,11 @@ IMPORTANT — what this script does NOT seed:
     is inserted by the P9-T01 migration).
   - `planned_*_week` / `ScheduleRun*` rows — only the "live, unscheduled"
     state is seeded; run the scheduler to populate them.
-  - Per-step `actual_*_week` / progress fields — the prototype only carries one
-    project-level "actualStart" hint, not real per-step progress, so every step
-    is seeded `Not Started` (see docs/MEMORY.md P1-T03 for the reasoning). Only
-    `Project.actual_start_week` is populated, and only for `frozen` projects.
+  - For `prototype` only: per-step `actual_*_week` / progress fields. The
+    prototype carries only one project-level "actualStart" hint, not real
+    per-step progress, so every step is seeded `Not Started` (see
+    docs/MEMORY.md P1-T03 for the reasoning). Only `Project.actual_start_week`
+    is populated, and only for `frozen` projects.
   - `project_files` / `project_comments` — nothing to seed; `--reset` clears
     them (comments via the `rpd.allow_comment_delete` escape hatch, see the
     P9-T01 migration) so the projects they reference can be deleted.
@@ -39,7 +59,7 @@ Usage (from `backend/`, with a `.venv` that has this project's deps installed):
 
     RPD_DATABASE_URL=postgresql+asyncpg://user:pass@localhost:5432/rpd \\
     RPD_FIELD_ENCRYPTION_KEY=<urlsafe-base64 32-byte Fernet key> \\
-        python -m seed.seed_demo_data [--reset]
+        python -m seed.seed_demo_data [--reset] [--dataset client_2026|prototype]
 
 `--reset` deletes existing rows from every *demo-data* table this script
 writes to (in FK-safe order) before reseeding — without it, the script
@@ -54,6 +74,8 @@ import asyncio
 import json
 import os
 import sys
+from collections import Counter
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
@@ -90,12 +112,20 @@ from models.enums import (  # noqa: E402
     ProjectStatus,
     ProjectType,
     WorkflowStepKind,
+    WorkflowStepStatus,
 )
 from models.priority import DIMENSION_FIELD_NAMES  # noqa: E402
 from models.project import category_allowed_for_hub, workflow_id_for_hub  # noqa: E402
+from seed import client_2026 as c26  # noqa: E402
 from services.workflow_durations import duration_for, lead_time_lookup  # noqa: E402
 
 DATA_PATH = Path(__file__).resolve().parent / "prototype_seed_data.json"
+CLIENT_2026_DATA_PATH = Path(__file__).resolve().parent / "client_2026_seed_data.json"
+
+DATASET_CLIENT_2026 = "client_2026"
+DATASET_PROTOTYPE = "prototype"
+DATASETS = (DATASET_CLIENT_2026, DATASET_PROTOTYPE)
+DEFAULT_DATASET = DATASET_CLIENT_2026
 
 # Children-first order, safe for both DELETE (this order) and the
 # post-seed row-count report. Reference tables owned by the migration
@@ -138,6 +168,12 @@ def _database_url() -> str:
 def _load_prototype_data() -> dict:
     with open(DATA_PATH, encoding="utf-8") as f:
         return json.load(f)
+
+
+def _load_client_2026_data() -> dict[str, Any]:
+    with open(CLIENT_2026_DATA_PATH, encoding="utf-8") as f:
+        loaded: dict[str, Any] = json.load(f)
+    return loaded
 
 
 async def _table_row_count(session: AsyncSession, model) -> int:
@@ -268,7 +304,9 @@ async def seed_engineers(
     return engineers_by_name
 
 
-async def seed_chambers(session: AsyncSession) -> dict[str, Chamber]:
+async def seed_chambers(
+    session: AsyncSession, *, deterministic_ids: bool = False
+) -> dict[str, Chamber]:
     """10 rows, from `domain_constants.CHAMBER_SEED` (the client workbook's
     chambers, docs/CLIENT_FORMULAS.md §2.2). `max_concurrent = platforms`
     (ADR 0007). The prototype's chamber list in `prototype_seed_data.json` is
@@ -277,7 +315,9 @@ async def seed_chambers(session: AsyncSession) -> dict[str, Chamber]:
     """
     chambers_by_code: dict[str, Chamber] = {}
     for code, region, platforms, eff, maint, breakdown, calib, stages in dc.CHAMBER_SEED:
+        ids = {"id": c26.chamber_uuid(code)} if deterministic_ids else {}
         chamber = Chamber(
+            **ids,
             code=code,
             lab_region=LabRegion(region),
             max_concurrent=platforms,
@@ -404,7 +444,227 @@ async def seed_projects(
     return count
 
 
-async def run(reset_first: bool) -> dict[str, Any]:
+def client_2026_step_specs(
+    project: dict[str, Any], workflow_id: str, lead_times: Mapping[tuple[str, str, str], int]
+) -> list[c26.StepSpec]:
+    """The project's 14 steps in sequence order, with the duration the
+    scheduler uses (0 = skipped: a 0-week lead time, or a lab step when
+    certification testing is off)."""
+
+    specs: list[c26.StepSpec] = []
+    for wf, step_id, _code, _name, kind, _seq, _preds in dc.WORKFLOW_STEP_TEMPLATE_SEED:
+        if wf != workflow_id:
+            continue
+        weeks = duration_for(lead_times, workflow_id, project["category"], step_id)
+        if kind == WorkflowStepKind.LAB.value and not project["certification_testing_required"]:
+            weeks = 0
+        specs.append(c26.StepSpec(step_id, kind, weeks))
+    return specs
+
+
+async def seed_client_2026(
+    session: AsyncSession,
+    data: dict[str, Any],
+    hubs_by_name: dict[str, Hub],
+    chambers_by_code: dict[str, Chamber],
+) -> dict[str, Any]:
+    """The client's 2026 pipeline (ADR 0024): engineers, projects, their 14
+    steps with derived progress and one `PriorityScore` each. Then FTE and
+    chamber efficiency are tuned on an in-memory greedy run. Every derivation
+    rule lives in `seed/client_2026.py`.
+
+    `customer_name` is an encrypted column. It is assigned as a plain value
+    (the ORM type encrypts it) and is never logged or returned in the counts.
+    """
+
+    # Imported here: the scheduler is only needed for the client dataset's
+    # tuning pass (it is a pure function; nothing is persisted from it).
+    from scheduling.greedy import run_greedy_sgs
+    from services.capacity_supply import (
+        chamber_figures,
+        load_calendars_by_region,
+        region_holiday_weeks,
+    )
+    from services.schedule_persistence import build_schedule_input_from_db
+
+    projects: list[dict[str, Any]] = data["projects"]
+    lead_times = lead_time_lookup(dc.LEAD_TIME_SEED)
+    current_week = dc.CURRENT_WEEK
+
+    project_ids = [c26.project_uuid(p["external_code"]) for p in projects]
+    order = sorted(
+        range(len(projects)),
+        key=lambda i: c26.scheduling_order_key(projects[i], str(project_ids[i])),
+    )
+    leader_names, roster = c26.assign_leaders(projects, data["leaders"], order)
+
+    engineers_by_name: dict[str, Engineer] = {}
+
+    def add_engineer(e: c26.EngineerSeed) -> None:
+        eng = Engineer(
+            id=c26.engineer_uuid(e.name),
+            name=e.name,
+            hub_id=hubs_by_name[e.hub].id,
+            fte=e.fte,
+            allowed_categories=[EngineerAllowedCategory(c) for c in e.allowed_categories],
+        )
+        session.add(eng)
+        engineers_by_name[e.name] = eng
+
+    for e in roster:
+        add_engineer(e)
+    await session.flush()
+
+    # Progress, in scheduling order, so the higher-priority project gets the
+    # free leader / chamber platform at CURRENT_WEEK (client_2026 docstring).
+    specs: dict[int, list[c26.StepSpec]] = {}
+    progress: dict[int, list[c26.StepProgress]] = {}
+    ledger = c26.ResourceLedger()
+    for i in order:
+        p = projects[i]
+        hub = hubs_by_name[p["hub"]]
+        specs[i] = client_2026_step_specs(p, workflow_id_for_hub(hub.is_oem), lead_times)
+        progress[i] = c26.derive_progress(
+            p,
+            specs[i],
+            leader=leader_names[i],
+            lab_region=hub.lab_region.value,
+            current_week=current_week,
+            ledger=ledger if c26.is_open(p) else c26.ResourceLedger(),
+        )
+
+    templates = {
+        step_id: seq for _wf, step_id, _c, _n, _k, seq, _p in dc.WORKFLOW_STEP_TEMPLATE_SEED
+    }
+    for i, p in enumerate(projects):
+        hub = hubs_by_name[p["hub"]]
+        category = ProjectCategory(p["category"])
+        if not category_allowed_for_hub(hub.is_oem, category):
+            raise ValueError(f"{p['external_code']}: category {category.value} vs hub {hub.name}")
+        project = Project(
+            id=project_ids[i],
+            name=p["name"],
+            external_code=p["external_code"],
+            hub_id=hub.id,
+            leader_engineer_id=engineers_by_name[leader_names[i]].id,
+            category=category,
+            type=ProjectType(p["type"]) if p["type"] else None,
+            status=ProjectStatus(p["status"]),
+            priority=ProjectPriority(p["priority"]),
+            frozen=False,
+            delay_weeks=0,
+            reg_year=2026,
+            carry_over=False,
+            comments=p["comments"],
+            certification_testing_required=p["certification_testing_required"],
+            customer_name=p["customer"],
+        )
+        session.add(project)
+        workflow_id = workflow_id_for_hub(hub.is_oem)
+        for spec, prog in zip(specs[i], progress[i], strict=True):
+            session.add(
+                ProjectWorkflowStep(
+                    project_id=project.id,
+                    step_template_id=spec.step_id,
+                    sequence_order=templates[spec.step_id],
+                    duration_weeks=duration_for(
+                        lead_times, workflow_id, category.value, spec.step_id
+                    ),
+                    status=WorkflowStepStatus(prog.status),
+                    percent_complete=prog.percent_complete,
+                    actual_start_week=prog.actual_start_week,
+                    actual_end_week=prog.actual_end_week,
+                )
+            )
+        dims = c26.derive_dims(p["external_code"], p["priority"], p["marketing_priority"])
+        weighted_score, normalized_pct, suggested_band = _priority_score_fields(dims)
+        session.add(
+            PriorityScore(
+                project_id=project.id,
+                **dict(zip(DIMENSION_FIELD_NAMES, dims, strict=True)),
+                hard_gates=[],
+                weighted_score=weighted_score,
+                normalized_pct=normalized_pct,
+                suggested_band=ProjectPriority(suggested_band),
+            )
+        )
+    await session.flush()
+
+    # --- Tuning pass: one in-memory greedy run (nothing persisted) ----------
+    schedule_input = await build_schedule_input_from_db(session, current_week=current_week)
+    output = run_greedy_sgs(schedule_input)
+    kinds = {t.step_id: t.kind for t in schedule_input.workflow_steps}
+    hub_of = {str(project_ids[i]): p["hub"] for i, p in enumerate(projects)}
+    design_load: Counter[str] = Counter()
+    lab_load: dict[str, float] = {}
+    for outcome in output.project_outcomes:
+        hub_name = hub_of[outcome.project_id]
+        for step in outcome.steps:
+            if step.skipped:
+                continue
+            if kinds[step.step_id] == WorkflowStepKind.DESIGN.value:
+                design_load[hub_name] += step.duration_weeks
+            elif kinds[step.step_id] == WorkflowStepKind.LAB.value:
+                region = dc.HUB_LAB_REGION[hub_name]
+                lab_load[region] = lab_load.get(region, 0.0) + (
+                    step.duration_weeks * dc.LAB_STEP_CONSUMPTION_PER_PROJECT_WEEK
+                )
+
+    before = {e.name for e in roster}
+    c26.tune_fte(roster, design_load)
+    for e in roster:
+        if e.name in before:
+            engineers_by_name[e.name].fte = e.fte
+        else:
+            add_engineer(e)
+
+    calendars = await load_calendars_by_region(session)
+    chamber_rows = []
+    for code, chamber in sorted(chambers_by_code.items()):
+        figures = chamber_figures(chamber, region_holiday_weeks(calendars, chamber.lab_region))
+        chamber_rows.append(
+            (
+                code,
+                chamber.lab_region.value,
+                float(chamber.efficiency),
+                figures.working_weeks_per_chamber,
+                chamber.platforms,
+            )
+        )
+    for code, efficiency in c26.tune_efficiency(chamber_rows, lab_load).items():
+        chambers_by_code[code].efficiency = efficiency
+    await session.flush()
+
+    # Dashboard classification (I9): excluded and data-error projects are not
+    # counted; then left out, on hold (blocked), within year, else spillover.
+    verdicts: Counter[str] = Counter()
+    for o in output.project_outcomes:
+        if o.excluded or o.data_error is not None:
+            continue
+        if o.left_out:
+            verdicts["left_out"] += 1
+        elif o.blocked:
+            verdicts["blocked"] += 1
+        elif o.within_year:
+            verdicts["within_year"] += 1
+        else:
+            verdicts["spillover"] += 1
+    return {
+        "engineers": len(engineers_by_name),
+        "capacity_engineers": sum(1 for e in roster if not e.from_workbook),
+        "projects": len(projects),
+        "tuning_run": {
+            "current_week": current_week,
+            **{k: verdicts[k] for k in ("within_year", "spillover", "left_out", "blocked")},
+            "design_load_by_hub": dict(sorted(design_load.items())),
+            "lab_load_by_region": dict(sorted(lab_load.items())),
+        },
+    }
+
+
+async def run(
+    reset_first: bool, dataset: str = DEFAULT_DATASET
+) -> dict[str, Any]:
     engine = create_async_engine(_database_url())
     session_factory = async_sessionmaker(engine, expire_on_commit=False)
     counts: dict[str, Any] = {}
@@ -415,17 +675,31 @@ async def run(reset_first: bool) -> dict[str, Any]:
             else:
                 await _guard_against_duplicate_seed(session)
 
-            data = _load_prototype_data()
+            if dataset not in DATASETS:
+                raise ValueError(f"unknown dataset {dataset!r}; expected one of {DATASETS}")
+            counts["dataset"] = dataset
 
             counts.update(await seed_workflows(session))
             hubs_by_name = await seed_hubs(session)
             counts["hubs"] = len(hubs_by_name)
             counts["hub_work_calendars"] = len(dc.HUB_WORK_CALENDAR_SEED)
-            engineers_by_name = await seed_engineers(session, data, hubs_by_name)
-            counts["engineers"] = len(engineers_by_name)
-            chambers_by_code = await seed_chambers(session)
-            counts["chambers"] = len(chambers_by_code)
-            counts["projects"] = await seed_projects(session, data, hubs_by_name, engineers_by_name)
+            if dataset == DATASET_CLIENT_2026:
+                chambers_by_code = await seed_chambers(session, deterministic_ids=True)
+                counts["chambers"] = len(chambers_by_code)
+                counts.update(
+                    await seed_client_2026(
+                        session, _load_client_2026_data(), hubs_by_name, chambers_by_code
+                    )
+                )
+            else:
+                data = _load_prototype_data()
+                engineers_by_name = await seed_engineers(session, data, hubs_by_name)
+                counts["engineers"] = len(engineers_by_name)
+                chambers_by_code = await seed_chambers(session)
+                counts["chambers"] = len(chambers_by_code)
+                counts["projects"] = await seed_projects(
+                    session, data, hubs_by_name, engineers_by_name
+                )
             counts["project_workflow_steps"] = counts["projects"] * dc.STEPS_PER_WORKFLOW
             counts["priority_scores"] = counts["projects"]
 
@@ -449,8 +723,14 @@ def main() -> None:
         action="store_true",
         help="Delete existing rows from every seeded demo-data table before reseeding.",
     )
+    parser.add_argument(
+        "--dataset",
+        choices=DATASETS,
+        default=DEFAULT_DATASET,
+        help="client_2026 (default: the client's real 2026 pipeline) or prototype.",
+    )
     args = parser.parse_args()
-    counts = asyncio.run(run(reset_first=args.reset))
+    counts = asyncio.run(run(reset_first=args.reset, dataset=args.dataset))
     print(json.dumps(counts, indent=2, default=str))
 
 

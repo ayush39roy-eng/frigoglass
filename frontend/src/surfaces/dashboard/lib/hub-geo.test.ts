@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import type { HubTypePipelineRow } from '../api/types';
-import { buildHubTotals, HUB_COUNTRY } from './hub-geo';
+import { buildHubTotals, HUB_COUNTRY, hubCountryMap } from './hub-geo';
 
 describe('buildHubTotals', () => {
   it('sums real per-(hub,type) counts down to one total per hub, ranked by count', () => {
@@ -37,5 +37,23 @@ describe('buildHubTotals', () => {
 
   it('returns an empty list for an empty response', () => {
     expect(buildHubTotals([])).toEqual([]);
+  });
+
+  it('places the OEM hubs in Europe (Greece), not India — client correction 2026-10-13', () => {
+    expect(HUB_COUNTRY['OEM-HCK']).toBe('Greece');
+    expect(HUB_COUNTRY['OEM-Seltek']).toBe('Greece');
+  });
+
+  it('prefers the served GET /hubs lab_region over the fallback map', () => {
+    const map = hubCountryMap([
+      { name: 'OEM-HCK', lab_region: 'Greece' },
+      { name: 'PD-Romania', lab_region: 'Romania' },
+      { name: 'R&D-India', lab_region: 'India' },
+    ]);
+    expect(map['OEM-HCK']).toBe('Greece');
+    expect(map['OEM-Seltek']).toBe('Greece'); // fallback, not served here
+    expect(hubCountryMap([{ name: 'R&D-Greece', lab_region: 'Romania' }])['R&D-Greece']).toBe('Romania');
+    expect(hubCountryMap(undefined)).toEqual(HUB_COUNTRY);
+    expect(buildHubTotals([{ hub: 'OEM-Seltek', type: 'NM', count: 2 }], map)[0]?.country).toBe('Greece');
   });
 });

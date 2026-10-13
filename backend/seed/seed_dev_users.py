@@ -75,6 +75,11 @@ DEV_USERS: tuple[tuple[str, str, RoleName], ...] = (
 #: seeded exactly as before (no Engineer link), never a hard failure.
 _CAROL_ENGINEER_NAME = "Dimopoulou"
 
+#: ADR 0024: with the default `client_2026` dataset there is no "Dimopoulou",
+#: so carol links to this PD-India workbook leader instead (bob.hub, carol's
+#: manager, is scoped to PD-India). First name found wins.
+_CAROL_ENGINEER_FALLBACK_NAME = "Pawan"
+
 #: P9-F04: `bob.hub` gets a real, non-"all" hub scope (Hub Planner is the
 #: only role that carries the "(own hub)" qualifier per
 #: `docs/PROJECT_AND_STACK.md` §5) so hub-scoped row filtering
@@ -154,11 +159,13 @@ async def run(reset_first: bool) -> dict:
             # `test_seed_dev_users_duplicate_guard_and_reset`), in which case
             # the two dev users below fall back to their pre-P9-F04
             # behaviour (no Engineer link; `hub_scope_all=True`).
-            carol_engineer = (
-                await session.execute(
-                    select(Engineer).where(Engineer.name == _CAROL_ENGINEER_NAME)
-                )
-            ).scalar_one_or_none()
+            carol_engineer = None
+            for engineer_name in (_CAROL_ENGINEER_NAME, _CAROL_ENGINEER_FALLBACK_NAME):
+                carol_engineer = (
+                    await session.execute(select(Engineer).where(Engineer.name == engineer_name))
+                ).scalar_one_or_none()
+                if carol_engineer is not None:
+                    break
             bob_hub = (
                 await session.execute(select(Hub).where(Hub.name == _BOB_HUB_NAME))
             ).scalar_one_or_none()

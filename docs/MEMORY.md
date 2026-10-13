@@ -22595,3 +22595,325 @@ QA D (Radix Select aria-hidden-focus), QA F (timing dialog live axe), security L
 check-in limiter; no limit on priority/VIP), OQ #32 (VIP curation) with the client.
 
 P11 and P12 are complete. Pushed to origin/main.
+
+### [2026-10-10] Voiceover script for `21.mov` — rpd-orchestrator
+
+`docs/HANDOVER/VIDEO_SCRIPT_21_MOV.md`: about 625-word narration timed to the 4:51 recording,
+featuring the P11/P12 asks the owner named:
+- the Priority board (Kanban, P1 → P2);
+- live weekly check-in;
+- VIP projects;
+- capacity booked % (Europe/India, design/lab, Near full/Full);
+- On Hold;
+- the header hub filter;
+- Gantt timing edit.
+
+On-screen figures are from the demo set: Europe design 51.19 % and lab 30.9 %, India design 94.4 %
+Near full. The client's "90 % / 50 %" is described as an example, not claimed on screen. In this
+take the VIP page is still loading (1:06–1:30); this is noted in the script.
+
+### [2026-10-13] ADR 0024 display — 52-week horizon, CURRENT_WEEK 42, one within-year share — frontend-builder
+
+**Task:** client demo-video display asks (ADR 0024). Scope was `frontend/` only. No backend files
+were touched and nothing was committed.
+
+**Constants (`frontend/src/lib/domain-constants.ts`):**
+- `CURRENT_WEEK = 42`.
+- New `DISPLAY_HORIZON_WEEKS = WITHIN_YEAR_WEEK` (52), `PLAN_YEAR = 2026` and `SPILLOVER_YEAR = 2027`.
+- `HORIZON_WEEKS` is **no longer exported** from the frontend, so any new attempt to present 78
+  fails to compile. A comment records that the server's internal search horizon stays 78.
+- New `formatPlanWeek(week)` (`lib/format.ts`) prints `W47`, or "After W52" for any week past 52.
+  The UI never prints W53+.
+
+**Where the horizon changed:**
+- **Header:** the week pill reads "W42 of 52". Its tooltip reads "Planning week 42 of 52 … spillover
+  into 2027". `WeekPill` is exported for its new test.
+- **Gantt:**
+  - `makeWeekScale` defaults to 52 columns.
+  - `barGeometry` and `delayConnectorGeometry` clip at the W52 end edge and set
+    `continuesPastEnd: true`. A bar starting after W52 returns null.
+  - New `lastScaleWeek`, `isPastScaleEnd` and `clippedCompletionMarkerX`. A slip bracket between two
+    weeks that are both past W52 is dropped.
+  - New `GanttSpilloverMarker` in `gantt-bars.tsx`:
+    - project rows get a "Spillover → 2027" pill (warning-subtle token pair, amber stroke) when the
+      server flags `spillover`/`left_out`, or when any planned, actual, delay or projected week
+      falls past W52;
+    - step rows get an amber chevron.
+  - Completion lines past W52 are not drawn, and their titles read "After W52".
+  - The year-end label is anchored left of the edge.
+  - The legend gains a Spillover entry.
+  - Page copy and the stat strip changed: "Spilling past W52" now counts `spillover || left_out`,
+    with "N not yet placed" as a hint.
+  - The drag move clamps to 1..52.
+- **Week inputs bounded to 1–52:**
+  - Registration `target_end_week` and `actual_start_week` (schema and input `max`);
+  - freeze dialog and schema;
+  - step-timing dialog and schema;
+  - workspace stage-row and `stage-validation`.
+- **Dashboard (left out shown inside spillover):**
+  - KPI row is now 3 tiles: Within year, "Spillover (past W52)" (= `spillover_count +
+    left_out_count`, caption "N not yet placed") and On Hold.
+  - The donut has one spillover slice.
+  - Completion profile: within-year cumulative series over W1–W52 only, 3 metric rows, "52-week
+    year". The `horizonWeeks` prop was removed.
+  - Spotlight: "W47 of 52 weeks" / "After W52 · spillover → 2027". The `horizonWeeks` prop was
+    removed. This card was the source of the client's "72/78".
+  - Finish-week histogram: buckets to W52, plus one "→2027" bucket.
+  - Hub stack: 3 segments.
+  - The planning-clock strip ends "Spillover → 2027".
+  - Provenance copy updated.
+  - Table "Last step ends" uses `formatPlanWeek`.
+- **Labels and copy elsewhere:**
+  - `LEFT_OUT` badge, health `left_out` and the `OUTCOME_STYLE.left_out` label all read
+    "Spillover · unplaced";
+  - VIP: the "Next year" toggle is now "Spillover 2027", and the range copy changed;
+  - Capacity: class-breakdown copy, the Left-out hint, and the chamber heatmap columns are capped
+    at W52;
+  - Workflow Settings caption ("W42 of 52");
+  - login feature line; nav descriptions; `types/common.ts`;
+  - week displays in the priority-move changes panel, the projected-finish chip, the workspace
+    completion strip / stage-row / details, the VIP card and the check-in row.
+
+**Within-year %:** one formula in `surfaces/dashboard/lib/outcome.ts`:
+- `withinYearSharePct` = `within_year_count / (within + spillover + left_out + blocked)`, all from
+  `GET /dashboard/completing-within-year`;
+- the KPI "% of run" badge and the Delivery gauge both use it;
+- the donut's legend % uses the same denominator.
+
+Fixed an inconsistency: "Delivery by priority" counted the raw `within_year` flag. It now uses
+`outcomeOf` (on hold wins), so it matches `within_year_count`. The API has no served share field and
+there is no Monte Carlo / forecast surface.
+
+**Tests:**
+- New `components/layout/app-header.test.tsx`.
+- New GanttPage "ADR 0024" block: axis ends at W52; project and step clipped with markers; left-out
+  framed as spillover; in-year rows get no marker.
+- New W52-clipping block in `gantt-coordinates.test.ts`.
+- New KPI/gauge same-share test.
+- Updated the tests that hard-coded 31, 78 or "Left out".
+
+**Verification:**
+- `tsc -b --noEmit`: clean.
+- eslint: 0 errors, 7 warnings (baseline).
+- `vitest run`: 929/930. The only failure is the tolerated `session-gate.test.tsx > DevRoleSwitcher`.
+- `step-timing.test.tsx > queued` flaked once under full-suite load and passed 31/31 in isolation.
+- Bundle: 181.3 KB / 400 KB gzip.
+
+**Notes for the orchestrator / backend:**
+- (a) `/capacity/hub-load` `remaining_weeks` is still `horizon_weeks − current_week` (78 − 42 = 36).
+  The UI no longer shows it. The backend may want 52 − current_week.
+- (b) Existing projects with `target_end_week` or `start_not_before_week` above 52 will fail the new
+  1–52 client validation when edited. The reseed should keep those weeks ≤ 52.
+- (c) The VIP `next` range ([53, 78]) is still served. It is presented as "spillover 2027" without
+  numbers.
+
+### [2026-10-13] OEM hubs are Europe (Greece lab region) — frontend-builder
+
+**Task:** client correction: OEM projects are Europe, not India. The backend moves OEM-HCK and
+OEM-Seltek to the Greece lab region, which is in the Europe area. Scope was `frontend/` only, and
+nothing was committed.
+
+**Changes:**
+- `surfaces/dashboard/lib/hub-geo.ts`:
+  - the region label now comes from the served `GET /hubs` `lab_region`, through the new
+    `useHubCountry()` / `hubCountryMap()`;
+  - `HUB_COUNTRY` is only a fallback, and it now maps both OEM hubs to `Greece`;
+  - `buildHubTotals` takes the map as a parameter.
+- The served map is used by `hub-rank-list.tsx`, by `project-card-grid.tsx`, and by
+  `project-breakdown.tsx` (new `HubCell` component).
+- Info-popover copy in `capacity/components/area-booking-strip.tsx` and
+  `dashboard/components/capacity-booked-card.tsx` now says Europe = Greece and Romania lab regions,
+  including the OEM hubs, and India = R&D-India and PD-India.
+- The `capacity/lib/portfolio-totals.ts` comment was updated. The logic already de-dupes by the
+  served `lab_region`.
+- Capacity areas and booked % were already served by the API (ADR 0016). No other static
+  hub→region map exists. `types/enums.ts` holds only the region list.
+
+**Tests:**
+- New OEM→Greece and served-wins tests in `hub-geo.test.ts`.
+- Test fixtures updated so the OEM hubs use `lab_region: 'Greece'`: portfolio-totals, hub-filter,
+  project-form.
+
+**Verification:**
+- `tsc -b --noEmit`: clean.
+- eslint: 0 errors, 7 warnings (baseline).
+- `vitest run`: 931/932. The only failure is the tolerated `session-gate.test.tsx > DevRoleSwitcher`.
+
+### [2026-10-13] Client 2026 dataset, CURRENT_WEEK 42, demo targets, OEM → Greece — backend-builder
+
+**Task:** ADR 0024. The default seed is now the client's real 2026 pipeline, `CURRENT_WEEK` is 42,
+and the seed inputs are tuned so the live app shows the figures the client asked for. Mid-task
+additions from the orchestrator:
+- lab Full in every region and area;
+- user-entered weeks must be ≤ 52;
+- `remaining_weeks` uses the 52-week basis;
+- OEM hubs move to the Greece lab region.
+
+Nothing under `backend/scheduling/` or `frontend/` was touched, and no formula was changed.
+
+**Dataset.** The source is sheet `2024-25-26 Projects` (header row 5). The seed takes the rows whose
+`Project Request` is in 2026: **253 projects**, closed statuses included.
+- `backend/seed/extract_client_2026.py`: a stdlib + openpyxl extractor. Run it with
+  `uv run --no-project --with openpyxl python -I backend/seed/extract_client_2026.py <xlsx>`.
+  It writes `backend/seed/client_2026_seed_data.json` (committed; re-running gives a
+  byte-identical file). The xlsx is never committed.
+- Mapping rules (full list in the extractor docstring):
+  - **Hub:** `OEM-Seitek`/`OEM-SEITEK` → `OEM-Seltek`.
+  - **OEM category rule:** an OEM hub gets X-OEM; X-OEM on a non-OEM hub becomes X.
+  - **Status:** In Que / Development / Industrialization → In Queue / In Development /
+    Under Industrialization.
+  - **Priority:** Marketing Priority 1–5 → P1, 6–13 → P2. Unranked In Dev / Under Ind. → P3.
+    Unranked In Queue and closed statuses → P4.
+  - **Certification testing:** true only for "Yes". Blank → false, matching the client's
+    lab pivot, which counts only "Yes".
+  - **Leader:** "A/B" keeps A.
+  - **external_code:** the PD code `NN-NNNNN`, else the RM-saving code, else `26-S{S.No:04d}`
+    (suffixed when it repeats; S.No. is not unique). 39 / 65 / 149 rows respectively.
+  - **Customer:** upper-cased (encrypted column).
+  - **Comments:** the review remarks, trimmed.
+  - **Development Step:** kept only when it is a step id.
+- Counts:
+  - status: In Queue 85, In Development 83, Under Ind. 24, Cancelled 29, Commercialized 17,
+    On Hold 15;
+  - priority: P1 25, P2 6, P3 94, P4 128.
+
+**Derived inputs** (`backend/seed/client_2026.py`, pure functions; rules in its docstring):
+- **Engineers.**
+  - The 18 workbook leaders, each in the hub where they lead the most projects (tie → first hub
+    alphabetically).
+  - Booked as single people, the real leaders cannot carry their load: Dipak leads 52 open
+    projects, Pawan 29. A first run had 109 left out and 16.7 % within year.
+  - So an engineer leads at most **4 open projects**, in scheduling order. Overflow goes to the
+    least-loaded named capacity engineer of the project's hub ("<hub> Engineer <n>").
+  - A blank leader → the least-loaded engineer of the project's own hub.
+  - Closed projects keep their workbook leader. The JSON still holds the workbook leader of
+    every project.
+  - Result: 59 engineers (41 capacity). R&D-Greece 1, R&D-India 11, PD-India 35, PD-Romania 6,
+    OEM-HCK 4, OEM-Seltek 2. All categories are allowed, so no project gets CAT_NOT_ALLOWED.
+- **FTE and chamber efficiency are demo tuning.** These two are supply-only knobs: the scheduler
+  ignores both (ADR 0002). The seed writes the projects, runs `run_greedy_sgs` once in memory, and
+  reads the I6/I7 loads. Then:
+  - hub FTE = `load / (target × working weeks)`, rounded down to 0.01 and spread evenly over the
+    hub's engineers. Target: R&D-India 60 %, every other hub 100 %.
+  - each region's chamber efficiencies are scaled by `lab load / lab supply`, rounded down to
+    0.001 and capped at 1.0. Target 100 %.
+  - Resulting efficiencies: India 1.000 / 0.898 / 0.898 / 0.748 (raised from 0.7 / 0.6 / 0.6 /
+    0.5), Greece 0.209 / 0.179, Romania 0.077 / 0.066 / 0.066 / 0.077.
+  - Platforms, downtime and allowed stages keep the client's values. **These are not client data
+    and must be replaced by the real roster and lab figures.**
+- **Ids** are `uuid5` (project code / engineer name / chamber code), so every reseed gives the
+  same run. The scheduler breaks ties by project id and walks chambers in id order.
+- **Dimensions:** 13 deterministic scores in the project's band (targets: P1 90−3·(rank−1),
+  P2 66−(rank−6), P3 45..52, P4 25..36). No hard gates.
+- **Progress** (no per-step data in the workbook). Skipped steps stay Not Started. The current
+  step is chosen by status:
+  - Under Industrialization → the first live step after H; everything before it Done.
+  - In Development with a Development Step → that step (or the next live one).
+  - In Development without one → a code-hashed pick from (J, K, K).
+  - In Queue, On Hold, Cancelled → nothing started.
+  - Commercialized → all Done.
+- The current step is **In Progress at 50 %**, unless:
+  - it is a design step and its leader already has one in progress, or
+  - it is a lab step and no chamber in the region has a free platform at `CURRENT_WEEK`.
+  In either case it stays **Not Started**. Projects are visited in scheduling order. This keeps
+  anchored tails free of I1/I2 conflicts.
+- **Weeks.** In Progress: `actual_start = CW − (d − ceil(d/2))`. Done steps run back to back and
+  end before the current step. When the history would start before the request week, each step
+  is compressed, but never below 1 week. Every Done step ends below `CURRENT_WEEK`, and every
+  seeded week is ≤ 42, so it is valid for the UI's 1–52 inputs. No target_end / start_not_before
+  / freeze weeks are seeded.
+
+**`CURRENT_WEEK`.** `domain_constants.CURRENT_WEEK = int(os.environ.get("RPD_CURRENT_WEEK", "42"))`.
+`tests/conftest.py` and `tests/scheduling/conftest.py` force `RPD_CURRENT_WEEK=31` before anything
+imports `domain_constants`. `HORIZON_WEEKS` stays 78.
+
+**`/capacity/hub-load` `remaining_weeks`** is now `52 − run.current_week` (10). It was
+`horizon − current_week` (36). No test or frontend logic depended on the old value.
+
+**OEM hubs → Greece** (client correction).
+- `HUB_LAB_REGION`: OEM-HCK and OEM-Seltek → Greece. The OEM calendars stay India's, which was
+  not asked; flagged.
+- `CHAMBER_SEED`: OEM-E/OEM-H moved from IN-CH1..3 to GR-CH1 (+OEM-E, +OEM-H) and GR-CH2
+  (+OEM-E). Without the move, OEM lab steps would have no chamber.
+- New data migration `p13a_oem_lab_region` (down_revision `p12b_vip_checkins`):
+  - sets hubs.lab_region;
+  - moves OEM-E/OEM-H in chambers by the PDD-F/PDD-H analogy;
+  - marks schedulable OEM projects `schedule_stale`;
+  - downgrade reverses it. Round-trip tested on the dev DB.
+- `tests/scheduling/test_p9_golden.py`: the fixture's OEM stages moved from `ch-in` to `ch-gr`,
+  and the expected OEM-H chamber is now `ch-gr`. The golden JSON files are unchanged.
+- In this dataset no OEM project needs certification testing, so the schedule did not change.
+
+**seed_demo_data.** `--dataset client_2026` (default) | `prototype`, and `run(reset_first,
+dataset=...)`. The prototype path is unchanged, and `test_seed_scripts` pins it. `seed_dev_users`
+links carol.eng to "Dimopoulou", or to "Pawan" (PD-India, bob's hub) when that engineer is absent.
+
+**Measured on the live dev stack** (active greedy run v2, CW 42):
+- **Dashboard:** within 107 (90 scheduled + 17 Commercialized, which count as within year per
+  P2-T01), spillover 68, left out 34, blocked 0. Share 107/209 = **51.20 %**.
+- **Design booked % (year / remaining):**
+
+  | Hub | Year | Remaining |
+  |---|---|---|
+  | R&D-Greece | 100.9 | 524.48 |
+  | R&D-India | **60.01** | 312.05 |
+  | PD-India | 100.02 | 520.12 |
+  | PD-Romania | 100.2 | 521.15 |
+  | OEM-HCK | 100.42 | 522.32 |
+  | OEM-Seltek | 100.64 | 523.19 |
+
+  Areas: Europe 100.42 / 522.22. India 86.93 (near_full) / 452.06. India's area figure is below
+  100 % because R&D-India is held at 60 %.
+- **Lab booked % (year / remaining):**
+
+  | Lab | Year | Remaining |
+  |---|---|---|
+  | Greece | 100.5 | 522.57 |
+  | India | 100.85 | 524.46 |
+  | Romania | 100.88 | 524.02 |
+  | Europe area | 100.7 | 523.32 |
+  | India area | 100.85 | 524.46 |
+
+  Every one is `full`.
+- **Validation:** `validate_invariants` on the live input finds 0 violations, 0 ENG_CONFLICT, 0
+  OVERLAP, and the run is deterministic.
+
+**Not met: left_out ≈ 0.** 34 projects are left out:
+- 30 are PD-India / R&D-India In Queue B projects that need certification. India runs CERT on
+  only 3 platforms (IN-CH1, IN-CH3), and those 30 do not fit by W78.
+- 3 are PD-India In Queue B projects whose leader lanes are full.
+- 1 is an R&D-Greece In Queue A project: its 38-week workflow cannot end by W78 from W42.
+
+A grid search of the documented knobs found no setting with 51 % and fewer than ~31 left out. The
+floor comes from the client's real certification flags and chamber stages. ADR 0024 presents
+LEFT_OUT as spillover past W52.
+
+**Not mapped:**
+- Project Type BC (59), AC (6), SER (2) → `type` null; no enum value (raw code kept in the JSON).
+- "Project to be considered for Capacity Calculation" (30 open rows blank) is not modelled.
+- Plant is not stored.
+- Development Step "Not Started" (15 rows) is ignored.
+- Workbook resources with no 2026 projects (Sachin, Ritu, Kamal, Catalin) are unused.
+
+**Verification:**
+- Backend `pytest -q`: see the report.
+- Scheduling suite: 168 passed (golden files unchanged).
+- New `tests/test_client_2026_seed.py` (15 tests) plus a DB-backed client-seed test in
+  `tests/test_seed_scripts.py`.
+- ruff clean.
+
+**Follow-ups for others:**
+- `frontend/e2e/README.md` must now run `seed_demo_data --dataset prototype` (46 projects).
+- `make dev` needs a root `.env`, which does not exist. The live demo stack is described in the
+  report.
+
+### [2026-10-13] Client 2026 dataset — final test results — backend-builder
+
+These are the final-tree results for the entry above:
+- **Backend:** `pytest -q` gives **1204 passed**, coverage 96.09 %.
+- **Scheduling:** `-c pytest-scheduling.ini` gives **168 passed**, coverage 93.91 %. The golden
+  JSON files are unchanged.
+- **Lint:** `ruff check .` is clean.
+- **mypy:** clean on the new modules (`seed/client_2026.py`, `seed/extract_client_2026.py`,
+  `tests/test_client_2026_seed.py`). `seed/seed_demo_data.py` has the same 5 errors it had before.
+- **`.coverage`:** the tracked `backend/.coverage` was restored.

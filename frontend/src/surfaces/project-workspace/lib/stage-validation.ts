@@ -1,4 +1,4 @@
-import { HORIZON_WEEKS } from '@/lib/domain-constants';
+import { DISPLAY_HORIZON_WEEKS } from '@/lib/domain-constants';
 import type { WorkflowStepStatus } from '@/types/enums';
 
 /**
@@ -12,7 +12,7 @@ import type { WorkflowStepStatus } from '@/types/enums';
  *   actual_end_week       required when Done; null otherwise; ≥ actual_start_week
  *   remaining override    integer ≥ 0, or null
  *   blocked_reason        non-empty when Blocked; null otherwise
- *   weeks                 on the 1..78 axis
+ *   weeks                 on the 1..52 plan year (ADR 0024)
  */
 
 export interface StageDraft {
@@ -30,7 +30,7 @@ export type StageErrors = Partial<Record<StageField, string>>;
 const needsStart: ReadonlySet<WorkflowStepStatus> = new Set(['In Progress', 'Blocked', 'Done']);
 
 function inHorizon(week: number): boolean {
-  return Number.isInteger(week) && week >= 1 && week <= HORIZON_WEEKS;
+  return Number.isInteger(week) && week >= 1 && week <= DISPLAY_HORIZON_WEEKS;
 }
 
 export function validateStage(d: StageDraft): StageErrors {
@@ -46,12 +46,12 @@ export function validateStage(d: StageDraft): StageErrors {
   if (needsStart.has(d.status) && d.actual_start_week === null) {
     e.actual_start_week = `Actual start week is required when the stage is ${d.status}.`;
   } else if (d.actual_start_week !== null && !inHorizon(d.actual_start_week)) {
-    e.actual_start_week = `Week must be 1–${String(HORIZON_WEEKS)}.`;
+    e.actual_start_week = `Week must be 1–${String(DISPLAY_HORIZON_WEEKS)}.`;
   }
 
   if (d.status === 'Done') {
     if (d.actual_end_week === null) e.actual_end_week = 'Actual end week is required when the stage is Done.';
-    else if (!inHorizon(d.actual_end_week)) e.actual_end_week = `Week must be 1–${String(HORIZON_WEEKS)}.`;
+    else if (!inHorizon(d.actual_end_week)) e.actual_end_week = `Week must be 1–${String(DISPLAY_HORIZON_WEEKS)}.`;
     else if (d.actual_start_week !== null && d.actual_end_week < d.actual_start_week)
       e.actual_end_week = 'Actual end week cannot be before the actual start week.';
   } else if (d.actual_end_week !== null) {

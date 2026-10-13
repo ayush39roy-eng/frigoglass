@@ -13,8 +13,8 @@ const HUBS: Hub[] = [
   { id: 'h-in', name: 'R&D-India', lab_region: 'India', is_oem: false },
   { id: 'h-pdin', name: 'PD-India', lab_region: 'India', is_oem: false },
   { id: 'h-ro', name: 'PD-Romania', lab_region: 'Greece', is_oem: false },
-  { id: 'h-hck', name: 'OEM-HCK', lab_region: 'India', is_oem: true },
-  { id: 'h-sel', name: 'OEM-Seltek', lab_region: 'India', is_oem: true },
+  { id: 'h-hck', name: 'OEM-HCK', lab_region: 'Greece', is_oem: true },
+  { id: 'h-sel', name: 'OEM-Seltek', lab_region: 'Greece', is_oem: true },
 ] as Hub[];
 
 const hubs = { data: HUBS as Hub[] | undefined };

@@ -42,7 +42,9 @@ describe('ClassBreakdownPanel', () => {
       screen.getByRole('button', { name: 'How deliverable and left out are defined' }),
     );
 
-    expect(screen.getByText(/no feasible window before the/i)).toBeInTheDocument();
+    // ADR 0024: framed on the 52-week year, never "the 78-week horizon".
+    expect(screen.getByText(/not placed yet, so not done by W52/i)).toBeInTheDocument();
+    expect(screen.queryByText(/78-week/i)).not.toBeInTheDocument();
     expect(screen.getByText(/Source: active schedule run/i)).toHaveTextContent(/v3/);
     expect(screen.getByText(/Not recomputed in the browser/i)).toBeInTheDocument();
   });

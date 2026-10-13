@@ -1,3 +1,6 @@
+import * as React from 'react';
+
+import { useHubs } from '@/lib/api/reference';
 import type { HubName } from '@/types/enums';
 
 import type { HubTypePipelineRow } from '../api/types';
@@ -17,14 +20,38 @@ import type { HubTypePipelineRow } from '../api/types';
  * docs/MEMORY.md "[2026-10-01] Boltshift shell + Dashboard rebuild" for the
  * superseded entry this one documents.
  */
+/**
+ * FALLBACK only — used until `GET /hubs` resolves (or when it is unavailable).
+ * The label shown is the hub's SERVED `lab_region` (`useHubCountry`). Client
+ * correction 2026-10-13: the OEM hubs (OEM-HCK, OEM-Seltek) are Europe — lab
+ * region Greece — not India, so this fallback agrees with the served value.
+ */
 export const HUB_COUNTRY: Record<HubName, string> = {
   'R&D-Greece': 'Greece',
   'R&D-India': 'India',
   'PD-India': 'India',
   'PD-Romania': 'Romania',
-  'OEM-HCK': 'India',
-  'OEM-Seltek': 'India',
+  'OEM-HCK': 'Greece',
+  'OEM-Seltek': 'Greece',
 };
+
+/** hub name → served `lab_region` from `GET /hubs`, falling back to
+ *  `HUB_COUNTRY` for any hub the response does not (yet) carry. */
+export function hubCountryMap(
+  served: readonly { name: string; lab_region?: string | null }[] | undefined,
+): Record<HubName, string> {
+  const out: Record<HubName, string> = { ...HUB_COUNTRY };
+  for (const hub of served ?? []) {
+    if (hub.lab_region && hub.name in out) out[hub.name as HubName] = hub.lab_region;
+  }
+  return out;
+}
+
+/** The hub → country/region label the Dashboard shows, read from the API. */
+export function useHubCountry(): Record<HubName, string> {
+  const hubs = useHubs();
+  return React.useMemo(() => hubCountryMap(hubs.data), [hubs.data]);
+}
 
 export interface HubTotal {
   hub: HubName;
@@ -42,13 +69,16 @@ export interface HubTotal {
  * fabricated zero-count row. Ranked largest-first, same discipline as
  * `assignSeriesColors`/`assignDashSeriesColors`.
  */
-export function buildHubTotals(rows: HubTypePipelineRow[]): HubTotal[] {
+export function buildHubTotals(
+  rows: HubTypePipelineRow[],
+  country: Record<HubName, string> = HUB_COUNTRY,
+): HubTotal[] {
   const totals = new Map<HubName, number>();
   for (const row of rows) {
     totals.set(row.hub, (totals.get(row.hub) ?? 0) + row.count);
   }
 
   return [...totals.entries()]
-    .map(([hub, count]) => ({ hub, country: HUB_COUNTRY[hub], count }))
+    .map(([hub, count]) => ({ hub, country: country[hub], count }))
     .sort((a, b) => b.count - a.count);
 }

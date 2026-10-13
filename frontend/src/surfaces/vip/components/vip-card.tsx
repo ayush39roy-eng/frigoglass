@@ -9,7 +9,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { CategoryTag } from '@/components/ui/category-tag';
 import { apiErrorMessage } from '@/lib/api/error-messages';
-import { formatDecimal, formatWeek } from '@/lib/format';
+import { formatDecimal, formatPlanWeek } from '@/lib/format';
 import { cn } from '@/lib/utils';
 import { stageStatusLabel } from '@/types/enums';
 
@@ -25,7 +25,7 @@ export interface VipCardProps {
 }
 
 function week(value: number | null): string {
-  return value === null ? '—' : formatWeek(value);
+  return value === null ? '—' : formatPlanWeek(value);
 }
 
 /**

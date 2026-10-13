@@ -24,6 +24,9 @@ ADR 0019 (Gantt drag sets a per-project step duration and an earliest start — 
 change), ADR 0020 (global hub filter), ADR 0021 (weekly check-in / live tracking) and ADR 0022 (VIP
 projects). Sections marked *(2026-10-10)* changed. Invariants I21–I24. Open questions #28–#33. ADR 0023 (check-ins recalculate; coalesced follow-up run) amends 0015/0019/0021 the same day after the owner's answers.
 
+**Revised 2026-10-13** (ADR 0024): the demo dataset is now the client's real 2026 pipeline, `CURRENT_WEEK` is
+42, and every surface shows a 52-week year. Work past W52 is shown as spillover.
+
 ---
 
 ## Workflow templates — two workflows, 14 steps each *(2026-09-27, ADR 0007)*
@@ -125,16 +128,22 @@ Lab region mapping:
 | R&D-India | India |
 | PD-India | India |
 | PD-Romania | Romania |
-| OEM-HCK | India |
-| OEM-Seltek | India |
+| OEM-HCK | Greece |
+| OEM-Seltek | Greece |
 
-## Horizon constants
+## Horizon constants *(revised 2026-10-13, ADR 0024)*
 
 ```
-CURRENT_WEEK      = 31
+CURRENT_WEEK      = 42      (env RPD_CURRENT_WEEK; test suites pin 31)
 WITHIN_YEAR_WEEK   = 52
-HORIZON_WEEKS      = 78
+DISPLAY_HORIZON    = 52      every surface shows W1–W52 only
+HORIZON_WEEKS      = 78      the scheduler's internal search limit, never displayed
 ```
+
+The planning year is 52 weeks. No surface shows a week past W52; work that runs past W52 is
+shown as **spillover**. `HORIZON_WEEKS` is still the scheduler's search limit, so it can tell
+spillover (it fits by W78) apart from `LEFT_OUT`. Surfaces present any `LEFT_OUT` project
+inside the spillover framing ("past W52"). The server still decides each verdict (I9).
 
 ## Scheduling order (serial schedule-generation scheme)
 

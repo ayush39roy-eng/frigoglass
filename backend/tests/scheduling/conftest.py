@@ -28,10 +28,18 @@ Two things happen here:
 
 from __future__ import annotations
 
-from collections.abc import Callable
-from types import ModuleType
+import os
 
-import pytest
+# ADR 0024: pin CURRENT_WEEK to 31 for the scheduling suite too (golden files).
+# `tests/conftest.py` already does this when pytest loads it first (it is a
+# parent conftest); this repeats it so the pin holds even if this directory is
+# collected on its own with a different rootdir/confcutdir.
+os.environ["RPD_CURRENT_WEEK"] = "31"
+
+from collections.abc import Callable  # noqa: E402
+from types import ModuleType  # noqa: E402
+
+import pytest  # noqa: E402
 
 
 @pytest.fixture(scope="session", autouse=True)

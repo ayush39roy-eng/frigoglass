@@ -125,7 +125,7 @@ export default function LoginPage(): React.JSX.Element {
 /* -------------------------------------------------------------------------- */
 
 const HIGHLIGHTS = [
-  { icon: CalendarRange, label: '78-week resource-constrained schedule' },
+  { icon: CalendarRange, label: '52-week resource-constrained plan year' },
   { icon: Layers, label: '14 workflow steps across 6 hubs' },
   { icon: Sparkles, label: 'Within-year delivery at a glance' },
 ];

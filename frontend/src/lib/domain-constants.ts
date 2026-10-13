@@ -1,5 +1,7 @@
 /**
- * Horizon constants from `docs/DOMAIN_RULES.md` ("Horizon constants").
+ * Horizon constants from `docs/DOMAIN_RULES.md` ("Horizon constants"). The
+ * server's internal 78-week search horizon is deliberately NOT exported here —
+ * the UI presents a 52-week year only (see `DISPLAY_HORIZON_WEEKS`).
  *
  * These are the DOMAIN_RULES contract, mirrored verbatim from the backend
  * (`backend/scheduling/domain_constants.py` / `backend/models` week fields) — they
@@ -9,16 +11,35 @@
  * flag, never a client comparison (Invariant I9).
  */
 
-/** 1-indexed absolute week number that "now" falls in. */
-export const CURRENT_WEEK = 31;
+/** 1-indexed absolute week number that "now" falls in. Matches the backend's
+ *  `CURRENT_WEEK` default (42 since the 2026-10-13 reseed with the client's real
+ *  2026 data). */
+export const CURRENT_WEEK = 42;
 
 /** A project completes "within the year" iff its last step ends (plus delay) by
  *  this week. The per-project verdict is `row.spillover` / `row.left_out` from the
  *  API — this constant only positions the year-end marker line. */
 export const WITHIN_YEAR_WEEK = 52;
 
-/** Total scheduling horizon. No feasible window before this week ⇒ `LEFT_OUT`. */
-export const HORIZON_WEEKS = 78;
+/**
+ * The planning horizon the UI PRESENTS: one 52-week year, W1–W52 (client ask,
+ * 2026-10-13: "keep the 52-week horizon only, show till week 52, and projects
+ * not done by then show as spillover"). Every axis, label, tooltip and week
+ * input in the app is framed on this. Work past W52 is drawn clipped at W52 and
+ * labelled "Spillover → {SPILLOVER_YEAR}"; it is never drawn on W53+ columns.
+ *
+ * NOT the scheduler's horizon: the server still searches up to its internal
+ * 78-week horizon (`HORIZON_WEEKS` in `backend/scheduling/domain_constants.py`,
+ * served as `ScheduleRunSummary.horizon_weeks`) so it can tell a spillover
+ * project (placed, finishing after W52) from a left-out one (not placed at all).
+ * The frontend never displays that 78; it only shows the server's verdicts.
+ */
+export const DISPLAY_HORIZON_WEEKS = WITHIN_YEAR_WEEK;
+
+/** The calendar year the 52-week plan covers, and the year work past W52 spills
+ *  into. Display copy only. */
+export const PLAN_YEAR = 2026;
+export const SPILLOVER_YEAR = PLAN_YEAR + 1;
 
 /**
  * Prioritization scoring anchors (P9 contract §8; deck slide 4 "Scoring Logic").

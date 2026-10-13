@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { screen, within } from '@testing-library/react';
 
 import { renderWithProviders } from '@/test/render';
-import { CURRENT_WEEK, HORIZON_WEEKS, WITHIN_YEAR_WEEK } from '@/lib/domain-constants';
+import { CURRENT_WEEK, WITHIN_YEAR_WEEK } from '@/lib/domain-constants';
 import { PlanningClockCard } from './planning-clock-card';
 
 describe('PlanningClockCard', () => {
@@ -13,8 +13,10 @@ describe('PlanningClockCard', () => {
     expect(within(card).getByText(`W${String(CURRENT_WEEK)}`)).toBeInTheDocument();
     expect(within(card).getByText(`/ W${String(WITHIN_YEAR_WEEK)}`)).toBeInTheDocument();
     expect(within(card).getByText(`Cut-off W${String(WITHIN_YEAR_WEEK)}`)).toBeInTheDocument();
-    expect(within(card).getByText(`W${String(HORIZON_WEEKS)}`)).toBeInTheDocument();
     expect(within(card).getByText('W1')).toBeInTheDocument();
+    // ADR 0024: a 52-week year only — the strip ends at W52 then "spillover", no W78.
+    expect(within(card).getByText('Spillover → 2027')).toBeInTheDocument();
+    expect(card.textContent).not.toMatch(/W78/);
   });
 
   it('never reads the wall clock — the week is the mirrored backend constant', () => {
@@ -22,8 +24,8 @@ describe('PlanningClockCard', () => {
     // verbatim. If this card ever derived "now" from `new Date()` it would drift
     // away from the week every scheduled figure on the surface is expressed in.
     renderWithProviders(<PlanningClockCard />);
-    expect(screen.getByText('W31')).toBeInTheDocument();
-    expect(CURRENT_WEEK).toBe(31);
+    expect(screen.getByText('W42')).toBeInTheDocument();
+    expect(CURRENT_WEEK).toBe(42);
   });
 
   it('shows the weeks remaining to the cut-off, consistent with those same constants', () => {

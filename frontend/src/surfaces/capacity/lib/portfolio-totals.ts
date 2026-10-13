@@ -22,8 +22,8 @@ import type { HubCapacityRow } from '../api/types';
  * "Lab figures are for the {region} lab region and repeat on every hub of that
  * region." `lab_load_weeks`, `lab_capacity_year` and `lab_capacity_remaining` are
  * the SAME region figure stamped onto every hub row sharing that region. Live
- * data makes the consequence concrete — four of the six hubs (R&D-India,
- * PD-India, OEM-HCK, OEM-Seltek) are in the India lab region and each carries
+ * data made the consequence concrete — at the time, four of the six hubs (R&D-India,
+ * PD-India, OEM-HCK, OEM-Seltek) were in the India lab region and each carried
  * `lab_load_weeks: 122.0` / `lab_capacity_year: 188.3`:
  *
  *   naive Σ over rows   →  558 load / 1042.84 capacity   (India counted 4×)
@@ -32,7 +32,9 @@ import type { HubCapacityRow } from '../api/types';
  * So a plain `rows.reduce(...)` nearly triples the portfolio lab load. De-duping
  * by `lab_region` is not new business logic — it is reading the row set for what
  * the contract says it is (one record per hub, carrying a per-region lab figure)
- * before adding anything up.
+ * before adding anything up. (2026-10-13: the OEM hubs moved to the Greece lab
+ * region — Europe — per a client correction; the region is read from each row's
+ * served `lab_region`, so nothing here is hub-specific.)
  *
  * DESIGN figures (`design_load_weeks`, `design_capacity_*`) are genuinely
  * per-hub, so those are summed over every row.

@@ -298,7 +298,7 @@ describe('ProjectFormDialog', () => {
 describe('ProjectFormDialog — P9 planning fields and category-by-hub (ADR 0007)', () => {
   const mixedHubs: Hub[] = [
     { id: 'hub-1', name: 'R&D-Greece', lab_region: 'Greece', is_oem: false },
-    { id: 'hub-oem', name: 'OEM-HCK', lab_region: 'India', is_oem: true },
+    { id: 'hub-oem', name: 'OEM-HCK', lab_region: 'Greece', is_oem: true },
   ];
 
   async function pickHub(user: ReturnType<typeof userEvent.setup>, name: string) {
@@ -363,7 +363,7 @@ describe('ProjectFormDialog — P9 planning fields and category-by-hub (ADR 0007
     );
   });
 
-  it('rejects an expected-completion week outside 1..78', async () => {
+  it('rejects an expected-completion week outside the 52-week plan year (ADR 0024)', async () => {
     const user = userEvent.setup();
     const onSubmit = vi.fn();
     renderWithProviders(
@@ -371,9 +371,9 @@ describe('ProjectFormDialog — P9 planning fields and category-by-hub (ADR 0007
     );
     await user.type(screen.getByLabelText(/^Name/), 'Cooler Q');
     await pickHub(user, 'R&D-Greece');
-    await user.type(screen.getByLabelText(/^Expected completion \(week\)/), '90');
+    await user.type(screen.getByLabelText(/^Expected completion \(week\)/), '53');
     await user.click(screen.getByRole('button', { name: 'Create draft' }));
-    expect(await screen.findByText('Must be 78 or less')).toBeInTheDocument();
+    expect(await screen.findByText('Must be 52 or less')).toBeInTheDocument();
     expect(onSubmit).not.toHaveBeenCalled();
   });
 });

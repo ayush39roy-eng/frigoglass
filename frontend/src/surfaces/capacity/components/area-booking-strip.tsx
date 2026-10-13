@@ -86,8 +86,9 @@ export function AreaBookingStrip({
               figures: they never stop the scheduler booking work.
             </p>
             <p>
-              Europe = the Greece and Romania lab regions; India = the India lab region, including the
-              OEM hubs. Each lab region is counted once per area. The Full year / Remaining year toggle
+              Europe = the Greece and Romania lab regions, including the OEM hubs (OEM-HCK and
+              OEM-Seltek use the Greece lab region); India = the India lab region (R&amp;D-India and
+              PD-India). Each lab region is counted once per area. The Full year / Remaining year toggle
               on the per-hub card below picks which figures are shown here.
             </p>
           </CardInfo>

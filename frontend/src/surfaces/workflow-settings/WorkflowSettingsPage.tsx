@@ -74,8 +74,10 @@ export default function WorkflowSettingsPage(): React.JSX.Element {
             {(data) => (
               <>
                 <p className="text-2xs text-text-muted" data-numeric="">
-                  Planning week W{data.current_week} · horizon {data.horizon_weeks} weeks · within-year by W
-                  {data.within_year_week} · last changed {formatTimestamp(data.updated_at)}
+                  {/* ADR 0024: a 52-week year is presented; the served internal
+                      search horizon (`horizon_weeks`) is not shown. */}
+                  Planning week W{data.current_week} of {data.within_year_week} · within-year by W
+                  {data.within_year_week}, later work is spillover · last changed {formatTimestamp(data.updated_at)}
                   {data.updated_by ? ` by ${data.updated_by}` : ''}
                 </p>
                 <Tabs defaultValue="steps">

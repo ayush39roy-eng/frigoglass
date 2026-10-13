@@ -20,6 +20,7 @@ three-way `kind` (design | lab | elapsed) and the seeded strict-chain
 
 from __future__ import annotations
 
+import os
 from collections.abc import Mapping
 from typing import Final
 
@@ -139,8 +140,11 @@ HUB_LAB_REGION: Final[Mapping[str, str]] = {
     "R&D-India": "India",
     "PD-India": "India",
     "PD-Romania": "Romania",
-    "OEM-HCK": "India",
-    "OEM-Seltek": "India",
+    # 2026-10-13 (client correction, migration p13a_oem_lab_region): OEM work
+    # is run from Greece, so both OEM hubs use the Greece chambers and count
+    # in the Europe area. They were "India" before.
+    "OEM-HCK": "Greece",
+    "OEM-Seltek": "Greece",
 }
 
 OEM_HUBS: Final[frozenset[str]] = frozenset({"OEM-HCK", "OEM-Seltek"})
@@ -158,8 +162,14 @@ NON_OEM_CATEGORIES: Final[frozenset[str]] = frozenset({"A+", "A", "B", "C"})
 
 # --- Horizon constants ---
 
-CURRENT_WEEK: Final[int] = 31
+#: ADR 0024 (2026-10-13): 42 is the demo's "today" (ISO week 42 of 2026).
+#: `RPD_CURRENT_WEEK` overrides it; both test suites pin it to 31 (their
+#: golden files and fixtures were built at week 31) in their conftest files,
+#: before this module is first imported. Read once, at import time.
+CURRENT_WEEK: Final[int] = int(os.environ.get("RPD_CURRENT_WEEK", "42"))
 WITHIN_YEAR_WEEK: Final[int] = 52
+#: The scheduler's internal search limit (tells spillover from LEFT_OUT).
+#: No surface displays a week past WITHIN_YEAR_WEEK (ADR 0024).
 HORIZON_WEEKS: Final[int] = 78
 
 # --- Scheduling order (docs/DOMAIN_RULES.md "Scheduling order") ---
@@ -190,8 +200,10 @@ LAB_STEP_CONSUMPTION_PER_PROJECT_WEEK: Final[float] = 1.0
 #: (hub_name, weekdays_per_week, national_holiday_days, medical_leave_days,
 #:  casual_leave_days, annual_leave_days) — docs/CLIENT_FORMULAS.md §2.1. The
 #: two OEM hubs are not in the workbook; they are seeded with India's calendar
-#: (they share the India lab region and are administered from India) — see
-#: docs/MEMORY.md P9-T01.
+#: (P9-T01: they were then in the India lab region). Their lab region is
+#: Greece since 2026-10-13; the calendar was deliberately left unchanged
+#: (only the lab region was corrected) — see docs/MEMORY.md P9-T01 and the
+#: 2026-10-13 client-data entry.
 HUB_WORK_CALENDAR_SEED: Final[tuple[tuple[str, int, int, int, int, int], ...]] = (
     ("R&D-Greece", 5, 12, 0, 0, 25),
     ("R&D-India", 6, 13, 7, 7, 20),
@@ -210,8 +222,8 @@ WEEKS_IN_YEAR: Final[int] = 52
 BOOKING_NEAR_FULL_PCT: Final[int] = 85
 BOOKING_FULL_PCT: Final[int] = 100
 
-#: Area of each lab region. OEM hubs fall under India through their lab region
-#: (docs/OPEN_QUESTIONS.md #26).
+#: Area of each lab region. OEM hubs fall under Europe through their lab
+#: region, Greece (2026-10-13 client correction; was India, OQ #26).
 LAB_REGION_AREA: Final[Mapping[str, str]] = {
     "Greece": "Europe",
     "Romania": "Europe",
@@ -285,19 +297,21 @@ SCHEDULE_OUTCOME_FLAGS: Final[tuple[str, ...]] = (
 # `platforms` (ADR 0007). Codes keep the prototype-era `<REGION>-CH<n>` form
 # and are mapped onto the workbook's per-region CH-1..CH-n rows (the mapping
 # is recorded in docs/MEMORY.md P9-T01). `allowed_stages` carries only lab-kind
-# step IDs (PDD-F/PDD-H; plus OEM-E/OEM-H for the India region, which serves the
-# two OEM hubs). India CH-4 is "only for industrialization / reliability —
-# non-calibrated" in the workbook, so it books no POC/CERT step but still
-# contributes its efficient lab weeks to supply, exactly as the workbook does.
+# step IDs: PDD-F/PDD-H, plus OEM-E/OEM-H on the Greece chambers, because the
+# Greece region serves the two OEM hubs. That changed with the 2026-10-13 client
+# correction; before it the India chambers carried them. India CH-4 is "only
+# for industrialization / reliability — non-calibrated" in the workbook, so it
+# books no POC/CERT step but still contributes its efficient lab weeks to
+# supply, exactly as the workbook does.
 CHAMBER_SEED: Final[
     tuple[tuple[str, str, int, float, float, float, float, tuple[str, ...]], ...]
 ] = (
-    ("IN-CH1", "India", 1, 0.7, 2, 1, 1, ("PDD-F", "PDD-H", "OEM-E", "OEM-H")),
-    ("IN-CH2", "India", 4, 0.6, 2, 11, 1, ("PDD-F", "OEM-E")),
-    ("IN-CH3", "India", 2, 0.6, 2, 7, 1, ("PDD-F", "PDD-H", "OEM-E", "OEM-H")),
+    ("IN-CH1", "India", 1, 0.7, 2, 1, 1, ("PDD-F", "PDD-H")),
+    ("IN-CH2", "India", 4, 0.6, 2, 11, 1, ("PDD-F",)),
+    ("IN-CH3", "India", 2, 0.6, 2, 7, 1, ("PDD-F", "PDD-H")),
     ("IN-CH4", "India", 1, 0.5, 2, 2, 1, ()),
-    ("GR-CH1", "Greece", 1, 0.7, 2, 8, 1, ("PDD-F", "PDD-H")),
-    ("GR-CH2", "Greece", 2, 0.6, 2, 8, 1, ("PDD-F",)),
+    ("GR-CH1", "Greece", 1, 0.7, 2, 8, 1, ("PDD-F", "PDD-H", "OEM-E", "OEM-H")),
+    ("GR-CH2", "Greece", 2, 0.6, 2, 8, 1, ("PDD-F", "OEM-E")),
     ("RO-CH1", "Romania", 1, 0.7, 2, 3, 1, ("PDD-F", "PDD-H")),
     ("RO-CH2", "Romania", 4, 0.6, 2, 3, 1, ("PDD-F",)),
     ("RO-CH3", "Romania", 2, 0.6, 2, 3, 1, ("PDD-F", "PDD-H")),

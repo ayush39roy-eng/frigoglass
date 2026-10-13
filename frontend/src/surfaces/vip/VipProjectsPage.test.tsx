@@ -134,7 +134,7 @@ describe('VipProjectsPage — served ranking display', () => {
     const user = userEvent.setup();
     renderWithProviders(<VipProjectsPage />);
     await screen.findByRole('link', { name: 'Pinned Cooler' });
-    await user.click(screen.getByRole('radio', { name: 'Next year, weeks 53 to 78' }));
+    await user.click(screen.getByRole('radio', { name: 'Spillover into 2027, after week 52' }));
     await waitFor(() =>
       expect(client.apiGet).toHaveBeenCalledWith('/vip-projects', expect.objectContaining({ query: { year: 'next', hub_id: 'hub-gr', limit: 15 } })),
     );
