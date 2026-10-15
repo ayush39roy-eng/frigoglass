@@ -1,0 +1,15 @@
+services:
+  - type: static
+    name: frigoglass-frontend
+    rootDir: frontend
+    buildCommand: corepack enable && pnpm install && pnpm run build
+    staticPublishPath: dist
+    envVars:
+      - key: NODE_VERSION
+        value: 20.20.2
+      - key: VITE_API_BASE_URL
+        value: https://frigoglass-hu6f.onrender.com
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
