@@ -88,15 +88,27 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import domain_constants as dc  # noqa: E402
 from models import (  # noqa: E402
+    AuditLogEntry,
     Chamber,
     Engineer,
     Hub,
     HubWorkCalendar,
+    Notification,
+    PriorityApplicationResult,
+    PriorityApplicationRun,
     PriorityScore,
     Project,
+    ProjectAccessGrant,
     ProjectComment,
     ProjectFile,
     ProjectWorkflowStep,
+    ScenarioApplyChange,
+    ScenarioApplyRun,
+    ScheduleRun,
+    ScheduleRunFollowUp,
+    ScheduleRunProjectOutcome,
+    ScheduleRunProjectStep,
+    StageCheckin,
     UserHubScope,
     Workflow,
     WorkflowLeadTime,
@@ -126,6 +138,22 @@ DATASET_CLIENT_2026 = "client_2026"
 DATASET_PROTOTYPE = "prototype"
 DATASETS = (DATASET_CLIENT_2026, DATASET_PROTOTYPE)
 DEFAULT_DATASET = DATASET_CLIENT_2026
+
+# Dependent child tables that reference projects / schedule runs, deleted
+# during --reset before the primary demo-data tables.
+_DEPENDENT_TABLES_CHILD_FIRST = (
+    ScheduleRunProjectStep,
+    ScheduleRunProjectOutcome,
+    ScheduleRunFollowUp,
+    ScheduleRun,
+    PriorityApplicationResult,
+    PriorityApplicationRun,
+    ScenarioApplyChange,
+    ScenarioApplyRun,
+    StageCheckin,
+    Notification,
+    ProjectAccessGrant,
+)
 
 # Children-first order, safe for both DELETE (this order) and the
 # post-seed row-count report. Reference tables owned by the migration
@@ -196,7 +224,13 @@ async def _reset(session: AsyncSession) -> None:
     # keeps this script's `--reset` safe to re-run at any point in that
     # documented ordering, in either direction.
     await session.execute(delete(UserHubScope))
+    for model in _DEPENDENT_TABLES_CHILD_FIRST:
+        await session.execute(delete(model))
     for model in _TABLES_CHILD_FIRST:
+        if model in (Hub, HubWorkCalendar):
+            has_audit = await session.scalar(select(func.count()).select_from(AuditLogEntry)) or 0
+            if has_audit:
+                continue
         await session.execute(delete(model))
     await session.flush()
 
@@ -261,27 +295,50 @@ async def seed_hubs(session: AsyncSession) -> dict[str, Hub]:
     its `HubWorkCalendar` from `HUB_WORK_CALENDAR_SEED` (ADR 0008).
     """
     hubs_by_name: dict[str, Hub] = {}
+    existing_hubs = {
+        h.name.value if hasattr(h.name, "value") else str(h.name): h
+        for h in (await session.execute(select(Hub))).scalars().all()
+    }
     for hub_name, lab_region in dc.HUB_LAB_REGION.items():
-        hub = Hub(
-            name=HubName(hub_name),
-            lab_region=LabRegion(lab_region),
-            is_oem=hub_name in dc.OEM_HUBS,
-        )
-        session.add(hub)
+        if hub_name in existing_hubs:
+            hub = existing_hubs[hub_name]
+            hub.lab_region = LabRegion(lab_region)
+            hub.is_oem = hub_name in dc.OEM_HUBS
+        else:
+            hub = Hub(
+                name=HubName(hub_name),
+                lab_region=LabRegion(lab_region),
+                is_oem=hub_name in dc.OEM_HUBS,
+            )
+            session.add(hub)
         hubs_by_name[hub_name] = hub
     await session.flush()
+
+    existing_calendars = {
+        c.hub_id: c for c in (await session.execute(select(HubWorkCalendar))).scalars().all()
+    }
     for hub_name, weekdays, holidays, medical, casual, annual in dc.HUB_WORK_CALENDAR_SEED:
-        session.add(
-            HubWorkCalendar(
-                hub_id=hubs_by_name[hub_name].id,
-                weekdays_per_week=weekdays,
-                national_holiday_days=holidays,
-                medical_leave_days=medical,
-                casual_leave_days=casual,
-                annual_leave_days=annual,
-                weeks_in_year=dc.WEEKS_IN_YEAR,
+        hub_id = hubs_by_name[hub_name].id
+        if hub_id in existing_calendars:
+            cal = existing_calendars[hub_id]
+            cal.weekdays_per_week = weekdays
+            cal.national_holiday_days = holidays
+            cal.medical_leave_days = medical
+            cal.casual_leave_days = casual
+            cal.annual_leave_days = annual
+            cal.weeks_in_year = dc.WEEKS_IN_YEAR
+        else:
+            session.add(
+                HubWorkCalendar(
+                    hub_id=hub_id,
+                    weekdays_per_week=weekdays,
+                    national_holiday_days=holidays,
+                    medical_leave_days=medical,
+                    casual_leave_days=casual,
+                    annual_leave_days=annual,
+                    weeks_in_year=dc.WEEKS_IN_YEAR,
+                )
             )
-        )
     await session.flush()
     return hubs_by_name
 
