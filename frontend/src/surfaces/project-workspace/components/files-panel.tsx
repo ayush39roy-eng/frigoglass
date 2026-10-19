@@ -307,7 +307,7 @@ function FileRow({ projectId, group, canWrite }: { projectId: string; group: Fil
       )}
       <p className="text-2xs text-text-subtle">
         {file.description ? `${file.description} · ` : ''}
-        {file.uploaded_by_name === null ? 'Uploader withheld (GDPR pending)' : `Uploaded by ${personLabel(file.uploaded_by_name)}`} ·{' '}
+        {`Uploaded by ${personLabel(file.uploaded_by_name)}`} ·{' '}
         {formatTimestamp(file.created_at)}
       </p>
       {older.length > 0 ? (

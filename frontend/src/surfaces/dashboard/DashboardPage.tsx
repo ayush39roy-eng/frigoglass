@@ -1,23 +1,28 @@
 import * as React from 'react';
 import { motion } from 'framer-motion';
 import { Link } from 'react-router-dom';
-import { ArrowUpRight, GanttChartSquare, Gauge as GaugeIcon } from 'lucide-react';
+import { ArrowUpRight, FolderKanban, GanttChartSquare, Gauge as GaugeIcon, List } from 'lucide-react';
 
 import { PageHeader } from '@/components/layout/page-header';
 import { SURFACES } from '@/app/nav';
 import { GlowOverlay } from '@/components/ui/background-components';
+import { Badge } from '@/components/ui/badge';
+import { formatInteger } from '@/lib/format';
 import { ApiError } from '@/lib/api/client';
 import { useMotionTokens } from '@/lib/motion';
 import { usePermission } from '@/stores/session';
 import { useHubFilter } from '@/stores/hub-filter';
 import { HubFilterChip } from '@/components/shared/hub-filter/hub-filter-chip';
+import { CountrySegmented } from '@/components/shared/hub-filter/country-segmented';
 
 import {
   useCompletingWithinYear,
+  useDashboardAnalytics,
   useHubTypePipeline,
   usePipelineTotals,
   useStatusOverview,
   useActiveScheduleRun,
+  useRegionSummary,
 } from './hooks/use-dashboard';
 import { AccessNotice } from './components/access-notice';
 import { HubRankList } from './components/hub-rank-list';
@@ -30,6 +35,7 @@ import { WithinYearKpis, WithinYearTable } from './components/within-year-panel'
 import { DeliveryGaugeCard } from './components/delivery-gauge-card';
 import { PlanningClockCard } from './components/planning-clock-card';
 import { CapacityBookedCard } from './components/capacity-booked-card';
+import { VipProjectsCard } from './components/vip/vip-projects-card';
 import { Button } from '@/components/ui/button';
 import { PanelSkeleton } from '@/components/ui/panel-skeleton';
 
@@ -66,8 +72,22 @@ const PortfolioAnalytics = React.lazy(async () => ({
 const ProjectSpotlight = React.lazy(async () => ({
   default: (await import('./components/project-spotlight')).ProjectSpotlight,
 }));
+// P13-T10: the "Analytics & breakdown" section is a Recharts consumer too.
+const AnalyticsBreakdown = React.lazy(async () => ({
+  default: (await import('./components/analytics-breakdown')).AnalyticsBreakdown,
+}));
 
 const DASHBOARD_SURFACE = SURFACES.find((s) => s.path === '/');
+
+/** The header's "All projects" button (ADR 0025 §5): scroll to the register
+ *  and move focus there, instantly under reduced motion. */
+function scrollToRegister(reduced: boolean): void {
+  const target = document.getElementById('all-projects');
+  if (!target) return;
+  target.scrollIntoView({ behavior: reduced ? 'auto' : 'smooth', block: 'start' });
+  if (!target.hasAttribute('tabindex')) target.setAttribute('tabindex', '-1');
+  target.focus({ preventScroll: true });
+}
 
 function authKind(errors: unknown[]): 'forbidden' | 'unauthorized' | null {
   for (const err of errors) {
@@ -116,11 +136,17 @@ function StaggerSection({ children }: { children: React.ReactNode }): React.JSX.
 export default function DashboardPage(): React.JSX.Element {
   // P12 (ADR 0020): every Dashboard figure follows the global header hub filter;
   // the server filters and totals (I9/I19/I23), the browser only renders.
-  const { hubId } = useHubFilter();
-  const withinYear = useCompletingWithinYear(hubId);
-  const pipelineTotals = usePipelineTotals(hubId);
-  const statusOverview = useStatusOverview(hubId);
-  const hubTypePipeline = useHubTypePipeline(hubId);
+  // P13 (ADR 0025): and the country filter beside it.
+  const { hubId, region } = useHubFilter();
+  const withinYear = useCompletingWithinYear(hubId, region);
+  const pipelineTotals = usePipelineTotals(hubId, region);
+  const statusOverview = useStatusOverview(hubId, region);
+  const hubTypePipeline = useHubTypePipeline(hubId, region);
+  // Per-country chips under the KPI cards (contract §2). Optional enrichment:
+  // the cards render without it, so its error never blanks a card.
+  const regionSummary = useRegionSummary(hubId, region);
+  // P13-T10 (API_CONTRACT_P13 §5): served breakdowns + completing Hub × Type.
+  const analytics = useDashboardAnalytics(hubId, region);
   const activeRun = useActiveScheduleRun(withinYear.data?.has_active_schedule_run === true);
   const motionTokens = useMotionTokens();
   const canReadCapacity = usePermission('capacity').read;
@@ -139,6 +165,13 @@ export default function DashboardPage(): React.JSX.Element {
    */
   const description = 'Portfolio status for the active schedule run.';
 
+  const totalProjectsCount = withinYear.data?.has_active_schedule_run
+    ? withinYear.data.within_year_count +
+      withinYear.data.spillover_count +
+      withinYear.data.left_out_count +
+      withinYear.data.blocked_count
+    : (pipelineTotals.data?.total_count ?? null);
+
   const denied = authKind([
     withinYear.error,
     pipelineTotals.error,
@@ -156,7 +189,33 @@ export default function DashboardPage(): React.JSX.Element {
           description={description}
           actions={
             <>
+              <CountrySegmented />
               <HubFilterChip />
+              {totalProjectsCount !== null ? (
+                <Badge
+                  tone="neutral"
+                  data-numeric=""
+                  data-testid="dashboard-total-projects"
+                  className="h-9 px-3.5 text-xs font-semibold rounded-pill border-[1.5px] border-dash-hairline bg-surface shadow-dashCard flex items-center gap-1.5"
+                >
+                  <FolderKanban className="size-3.5 text-primary" aria-hidden="true" />
+                  <span>
+                    <strong className="text-text font-bold">
+                      {formatInteger(totalProjectsCount)}
+                    </strong>{' '}
+                    {totalProjectsCount === 1 ? 'project' : 'projects'}
+                  </span>
+                </Badge>
+              ) : null}
+              <Button
+                type="button"
+                variant="secondary"
+                className="rounded-pill border-[1.5px] font-semibold"
+                onClick={() => scrollToRegister(motionTokens.reduced)}
+              >
+                <List aria-hidden="true" />
+                All projects
+              </Button>
               <Button
                 asChild
                 variant="secondary"
@@ -206,6 +265,11 @@ export default function DashboardPage(): React.JSX.Element {
               </SectionBoundary>
             </StaggerSection>
 
+            {/* P14 (ADR 0027 §6): VIP projects per country, after the KPI cards. */}
+            <StaggerSection>
+              <VipProjectsCard />
+            </StaggerSection>
+
             {/* Row 2 — completion curve beside the two feature cards. Profile and
                 gauge read the SAME completing-within-year payload (one fetch,
                 several reads), so they render only once it has resolved; the
@@ -251,7 +315,11 @@ export default function DashboardPage(): React.JSX.Element {
                     errorDescription="Pipeline totals could not be loaded."
                   >
                     {(totals) => (
-                      <PipelinePanel totals={totals} withinYear={withinYear.data ?? null} />
+                      <PipelinePanel
+                        totals={totals}
+                        withinYear={withinYear.data ?? null}
+                        regionSummary={regionSummary.data ?? null}
+                      />
                     )}
                   </SectionBoundary>
                   {/* P11 (ADR 0016): compact Europe / India booked %, only for a
@@ -275,8 +343,14 @@ export default function DashboardPage(): React.JSX.Element {
                 title="Status overview"
                 errorDescription="Status overview counts could not be loaded."
               >
-                {(data) => <StatusOverviewCards data={data} />}
+                {(data) => <StatusOverviewCards data={data} regionSummary={regionSummary.data ?? null} />}
               </SectionBoundary>
+            </StaggerSection>
+
+            {/* P13 (ADR 0025 §5): the full-width all-projects register sits
+                directly after the status overview. */}
+            <StaggerSection>
+              <ProjectBreakdown />
             </StaggerSection>
 
             {withinYear.data && withinYear.data.rows.length > 0 ? (
@@ -302,8 +376,19 @@ export default function DashboardPage(): React.JSX.Element {
               </SectionBoundary>
             </StaggerSection>
 
+            {/* P13-T10: "Analytics & breakdown" after the hub × type pipeline. */}
             <StaggerSection>
-              <ProjectBreakdown />
+              <SectionBoundary
+                query={analytics}
+                title="Analytics & breakdown"
+                errorDescription="The analytics breakdown could not be loaded."
+              >
+                {(data) => (
+                  <React.Suspense fallback={<PanelSkeleton height="h-[40rem]" />}>
+                    <AnalyticsBreakdown data={data} pipelineTotal={pipelineTotals.data?.total_count} />
+                  </React.Suspense>
+                )}
+              </SectionBoundary>
             </StaggerSection>
           </motion.div>
         )}

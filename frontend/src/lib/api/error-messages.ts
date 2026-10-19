@@ -62,6 +62,13 @@ export const API_ERROR_MESSAGES: Record<string, string> = {
   HARD_GATE_FORCES_P1: 'This project has a hard gate (regulatory / certification / safety), so it must stay P1.',
   // Run-to-run changes (P11 contract §3).
   RUN_NOT_COMPLETED: 'That schedule run has not finished yet, so its changes are not available.',
+  // Priority move preview / confirm (P14, ADR 0026).
+  PREVIEW_STALE: 'The plan changed since this preview was calculated, so nothing was applied. Review the refreshed preview.',
+  PREVIEW_TIMEOUT: 'The preview took too long to calculate. Nothing was changed — try again in a moment.',
+  // Workspace Recalculate (P14): no solver worker/broker reachable; nothing was started.
+  SOLVER_UNAVAILABLE: 'The scheduler is unavailable right now, so the recalculation was not started. Try again in a moment.',
+  // VIP board (P14, ADR 0027 §5).
+  VIP_PROJECT_AREA_MISMATCH: "A linked project must be in your scope and in one of this area's hubs.",
   FILE_TOO_LARGE: 'Files are limited to 50 MB.',
   UNSUPPORTED_FILE_TYPE: "That file type isn't allowed, or its contents don't match its extension.",
   NOT_AUTHOR: 'Only the author can edit this comment.',

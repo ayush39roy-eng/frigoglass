@@ -9,27 +9,42 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { queryKeys } from '@/lib/query-keys';
+import type { LabRegion } from '@/types/enums';
 
 import {
   fetchActiveScheduleRun,
   fetchGantt,
+  fetchGanttFacets,
   retryUnlessAuth,
   toggleFreeze,
+  type GanttQueryParams,
 } from '../api/gantt-api';
 import type { FreezeToggleRequest } from '../api/types';
 
-export interface UseGanttParams {
-  hubId?: string | undefined;
-}
+/** P13-T13: every toolbar filter is a server param (API_CONTRACT_P13 §7). */
+export type UseGanttParams = GanttQueryParams;
 
 export function useGantt(params: UseGanttParams) {
   return useQuery({
-    // `hubId` is a user-facing filter on a hub-scoped surface — it must be in the
-    // key or a filter change would serve the previous hub's rows (P4-T04 review).
-    queryKey: queryKeys.gantt({ hubId: params.hubId }),
-    queryFn: ({ signal }) => fetchGantt({ hubId: params.hubId }, { signal }),
+    // Every user-facing filter must be in the key or a filter change would
+    // serve the previous filter's rows (P4-T04 review). The whole params
+    // object is the key, so a new filter can never be forgotten here.
+    queryKey: queryKeys.gantt(params),
+    queryFn: ({ signal }) => fetchGantt(params, { signal }),
     retry: retryUnlessAuth,
     placeholderData: (prev) => prev,
+  });
+}
+
+/** Leader / Step filter options (P13 §3 facets), keyed like the Dashboard's so
+ *  the cache is shared. `enabled` is the caller's `dashboard` read. */
+export function useGanttFacets(hubId: string | null, region: LabRegion | null, enabled: boolean) {
+  return useQuery({
+    queryKey: queryKeys.dashboardProjectFacets(hubId, region),
+    queryFn: ({ signal }) => fetchGanttFacets(hubId, region, { signal }),
+    retry: retryUnlessAuth,
+    enabled,
+    staleTime: 60_000,
   });
 }
 

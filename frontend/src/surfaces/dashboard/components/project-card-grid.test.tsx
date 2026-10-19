@@ -10,6 +10,7 @@ vi.mock('@/surfaces/project-workspace/api/workspace-api', () => ({
 }));
 
 import type { ProjectFilterRow } from '../api/types';
+import { P13_ROW_DEFAULTS } from '../test-fixtures';
 import { ProjectCardGrid } from './project-card-grid';
 
 function row(id: string, overrides: Partial<ProjectFilterRow> = {}): ProjectFilterRow {
@@ -22,6 +23,7 @@ function row(id: string, overrides: Partial<ProjectFilterRow> = {}): ProjectFilt
     priority: 'P1',
     is_vip: false,
     tracking_status: 'idle',
+    ...P13_ROW_DEFAULTS,
     ...overrides,
   };
 }

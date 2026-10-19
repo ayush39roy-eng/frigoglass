@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { setDevUserEmail } from '@/lib/api/dev-user';
 
-import { saveLeadTimes } from './workflow-settings-api';
+import { fetchBEquivalent, fetchCategoryTimelines, saveLeadTimes } from './workflow-settings-api';
 
 afterEach(() => {
   setDevUserEmail(null);
@@ -44,5 +44,18 @@ describe('workflow-settings API (contract §3)', () => {
       new Response(JSON.stringify({ detail: 'cycle', code: 'CYCLE' }), { status: 422 }),
     );
     await expect(saveLeadTimes({ lead_times: [] })).rejects.toMatchObject({ status: 422, code: 'CYCLE', detail: 'cycle' });
+  });
+});
+
+describe('workflow-settings previews (P13-T16, contract §5)', () => {
+  it('GETs category-timelines and b-equivalent with the workflow param', async () => {
+    const fetchSpy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockImplementation(() => Promise.resolve(new Response('[]', { status: 200, headers: { 'Content-Type': 'application/json' } })));
+    fetchSpy.mockClear();
+    await fetchCategoryTimelines('OEM');
+    await fetchBEquivalent('PDD');
+    expect(String(fetchSpy.mock.calls[0]![0])).toMatch(/\/workflow-settings\/category-timelines\?workflow=OEM$/);
+    expect(String(fetchSpy.mock.calls[1]![0])).toMatch(/\/workflow-settings\/b-equivalent\?workflow=PDD$/);
   });
 });

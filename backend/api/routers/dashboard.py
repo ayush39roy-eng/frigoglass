@@ -17,6 +17,11 @@ totals unchanged.
 so it never widens it: an out-of-scope `hub_id` answers empty rows and zero
 totals, not 403. Totals are computed here for the filtered set (I9, I23).
 
+**Country filter (P13, ADR 0025).** Every GET here also takes an optional
+`region` (`LabRegion`), ANDed with the scope and `hub_id` the same way.
+`/region-summary` serves the per-country KPI chips; `/projects` is the
+"All registered projects" register and `/projects/facets` its dropdowns.
+
 Per Invariant I9 ("`within_year` count on the Dashboard equals the count of
 projects satisfying the within-year rule in the current schedule run. No
 independent calculation anywhere"): `completing_within_year` below is the only
@@ -25,15 +30,18 @@ endpoint in this file whose numbers come from a `ScheduleRun` snapshot table
 Every other endpoint here (pipeline totals, status overview, hub×type
 summary, filtered project list) is portfolio-*composition* data straight off
 the live `Project` table, not a scheduling outcome, so I9 does not apply to
-them.
+them. P13-T10: `/analytics`'s `completing_*` lists read the same snapshot
+rows (the exclusive `WITHIN_YEAR` bucket); its composition lists are live
+`Project` data like pipeline totals.
 """
 
 from __future__ import annotations
 
 import uuid
+from typing import Annotated, Literal
 
-from fastapi import APIRouter, Depends
-from sqlalchemy import func, select
+from fastapi import APIRouter, Depends, Query
+from sqlalchemy import Select, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -41,25 +49,50 @@ from api.db import get_db
 from api.deps import require_permission
 from core.principal import Principal
 from core.rbac import Action, Surface
-from models.enums import ProjectCategory, ProjectPriority, ProjectStatus
+from models.enums import (
+    HubName,
+    LabRegion,
+    ProjectCategory,
+    ProjectPriority,
+    ProjectStatus,
+    ProjectType,
+)
 from models.hub import Hub
 from models.project import Project
 from models.schedule import ScheduleRun, ScheduleRunProjectOutcome
+from models.workflow import WorkflowStepTemplate
 from schemas.dashboard import (
+    AnalyticsBucket,
+    CompletingByHubRow,
+    CompletingByTypeRow,
+    CompletingHubTypeRow,
     CompletingWithinYear,
     CompletingWithinYearRow,
+    DashboardAnalytics,
     HubTypePipelineRow,
+    NamedId,
     PipelineTotals,
+    ProjectFacets,
     ProjectFilterResult,
     ProjectFilterRow,
+    RegionSummary,
+    RegionSummaryRow,
+    ScheduleOutcome,
     StatusOverview,
+    StepFacet,
 )
-from services.hub_scope import hub_scope_filter, narrowed_hub_filter
-from services.tracking import tracking_status_for
+from services.active_run import get_active_run
+from services.capacity_supply import round2
+from services.hub_scope import narrowed_hub_filter
+from services.project_cards import build_project_cards
+from services.text_search import project_search_filter
 
 router = APIRouter(prefix="/dashboard", tags=["dashboard"])
 
 _read = require_permission(Surface.DASHBOARD, Action.READ)
+
+#: ADR 0025 / contract §2: the chips' fixed order.
+_REGION_ORDER = (LabRegion.GREECE, LabRegion.INDIA, LabRegion.ROMANIA)
 
 _FOUR_SCHEDULABLE_STATUSES = (
     ProjectStatus.IN_BUYOFF,
@@ -72,6 +105,7 @@ _FOUR_SCHEDULABLE_STATUSES = (
 @router.get("/pipeline-totals", response_model=PipelineTotals)
 async def pipeline_totals(
     hub_id: uuid.UUID | None = None,
+    region: LabRegion | None = None,
     db: AsyncSession = Depends(get_db),
     current_user: Principal = Depends(_read),
 ) -> PipelineTotals:
@@ -81,7 +115,7 @@ async def pipeline_totals(
     """
 
     base = select(Project).where(Project.status != ProjectStatus.COMMERCIALIZED)
-    hub_filter = narrowed_hub_filter(current_user, Project.hub_id, hub_id)
+    hub_filter = narrowed_hub_filter(current_user, Project.hub_id, hub_id, region)
     if hub_filter is not None:
         base = base.where(hub_filter)
     spillover_count = (
@@ -106,11 +140,12 @@ async def pipeline_totals(
 @router.get("/status-overview", response_model=StatusOverview)
 async def status_overview(
     hub_id: uuid.UUID | None = None,
+    region: LabRegion | None = None,
     db: AsyncSession = Depends(get_db),
     current_user: Principal = Depends(_read),
 ) -> StatusOverview:
     stmt = select(Project.status, func.count())
-    hub_filter = narrowed_hub_filter(current_user, Project.hub_id, hub_id)
+    hub_filter = narrowed_hub_filter(current_user, Project.hub_id, hub_id, region)
     if hub_filter is not None:
         stmt = stmt.where(hub_filter)
     result = await db.execute(stmt.group_by(Project.status))
@@ -132,6 +167,7 @@ async def status_overview(
 @router.get("/hub-type-pipeline", response_model=list[HubTypePipelineRow])
 async def hub_type_pipeline(
     hub_id: uuid.UUID | None = None,
+    region: LabRegion | None = None,
     db: AsyncSession = Depends(get_db),
     current_user: Principal = Depends(_read),
 ) -> list[HubTypePipelineRow]:
@@ -146,7 +182,7 @@ async def hub_type_pipeline(
         .join(Project, Project.hub_id == Hub.id)
         .where(Project.status != ProjectStatus.COMMERCIALIZED)
     )
-    hub_filter = narrowed_hub_filter(current_user, Project.hub_id, hub_id)
+    hub_filter = narrowed_hub_filter(current_user, Project.hub_id, hub_id, region)
     if hub_filter is not None:
         stmt = stmt.where(hub_filter)
     result = await db.execute(
@@ -162,6 +198,7 @@ async def hub_type_pipeline(
 @router.get("/completing-within-year", response_model=CompletingWithinYear)
 async def completing_within_year(
     hub_id: uuid.UUID | None = None,
+    region: LabRegion | None = None,
     db: AsyncSession = Depends(get_db),
     current_user: Principal = Depends(_read),
 ) -> CompletingWithinYear:
@@ -192,7 +229,7 @@ async def completing_within_year(
         .options(selectinload(Project.hub))
         .where(ScheduleRunProjectOutcome.schedule_run_id == active_run.id)
     )
-    hub_filter = narrowed_hub_filter(current_user, Project.hub_id, hub_id)
+    hub_filter = narrowed_hub_filter(current_user, Project.hub_id, hub_id, region)
     if hub_filter is not None:
         stmt = stmt.where(hub_filter)
     result = await db.execute(stmt)
@@ -220,6 +257,7 @@ async def completing_within_year(
                 hub=project.hub.name,
                 category=project.category,
                 priority=project.priority,
+                type=project.type,
                 within_year=outcome.within_year,
                 spillover=outcome.spillover,
                 left_out=outcome.left_out,
@@ -240,46 +278,432 @@ async def completing_within_year(
     )
 
 
-@router.get("/projects", response_model=ProjectFilterResult)
-async def analytics_projects(
+@router.get("/region-summary", response_model=RegionSummary)
+async def region_summary(
     hub_id: uuid.UUID | None = None,
+    region: LabRegion | None = None,
+    db: AsyncSession = Depends(get_db),
+    current_user: Principal = Depends(_read),
+) -> RegionSummary:
+    """P13 (ADR 0025 §4): per-country counts for the KPI-card chips. Same
+    scope and filter as `/pipeline-totals` and `/status-overview`; the
+    pipeline figures use `PipelineTotals`' basis (Commercialized excluded)
+    and `status_counts` the `StatusOverview` basis (every status), so each
+    chip row reconciles with the card it sits under. The browser never sums.
+    """
+
+    stmt = select(Hub.lab_region, Project.status, Project.carry_over, func.count()).join(
+        Hub, Project.hub_id == Hub.id
+    )
+    hub_filter = narrowed_hub_filter(current_user, Project.hub_id, hub_id, region)
+    if hub_filter is not None:
+        stmt = stmt.where(hub_filter)
+    result = await db.execute(
+        stmt.group_by(Hub.lab_region, Project.status, Project.carry_over)
+    )
+
+    status_counts: dict[LabRegion, dict[str, int]] = {
+        r: {s.value: 0 for s in ProjectStatus} for r in LabRegion
+    }
+    spillover: dict[LabRegion, int] = dict.fromkeys(LabRegion, 0)
+    new: dict[LabRegion, int] = dict.fromkeys(LabRegion, 0)
+    for lab_region, status, carry_over, count in result.all():
+        status_counts[lab_region][status.value] += count
+        if status == ProjectStatus.COMMERCIALIZED:
+            continue
+        if carry_over:
+            spillover[lab_region] += count
+        else:
+            new[lab_region] += count
+
+    total = sum(spillover.values()) + sum(new.values())
+    status_totals = {
+        s.value: sum(status_counts[r][s.value] for r in LabRegion) for s in ProjectStatus
+    }
+    rows = [
+        RegionSummaryRow(
+            region=r,
+            total_count=spillover[r] + new[r],
+            share_pct=_share(spillover[r] + new[r], total),
+            spillover_count=spillover[r],
+            newly_registered_count=new[r],
+            status_counts=status_counts[r],
+            status_share_pct={
+                key: _share(count, status_totals[key])
+                for key, count in status_counts[r].items()
+            },
+        )
+        for r in _REGION_ORDER
+    ]
+    return RegionSummary(total_count=total, regions=rows)
+
+
+#: P13-T10: bucket key for a null type / category, and for a null reg_year.
+_UNMAPPED = "Unmapped"
+_UNKNOWN_YEAR = "Unknown"
+
+
+@router.get("/analytics", response_model=DashboardAnalytics)
+async def dashboard_analytics(
+    hub_id: uuid.UUID | None = None,
+    region: LabRegion | None = None,
+    db: AsyncSession = Depends(get_db),
+    current_user: Principal = Depends(_read),
+) -> DashboardAnalytics:
+    """P13-T10 (`docs/API_CONTRACT_P13.md` §5): the composition charts (by
+    type, category, hub, registration year) and the "completing within
+    year" Hub × Type cross-tab.
+
+    Basis: the `/pipeline-totals` basis (Commercialized excluded), scoped and
+    filtered by `narrowed_hub_filter`, so every list sums to that card's
+    `total_count`. "Completing" is the active run's exclusive `WITHIN_YEAR`
+    bucket (`within_year AND NOT blocked`, as `/completing-within-year`
+    counts it), read from the run's snapshot rows (I9), never recomputed.
+    Two grouped aggregate queries plus one hub query; every share is computed
+    here (I19).
+    """
+
+    hub_filter = narrowed_hub_filter(current_user, Project.hub_id, hub_id, region)
+    pipeline_stmt = (
+        select(Hub.name, Project.type, Project.category, Project.reg_year, func.count())
+        .join(Hub, Project.hub_id == Hub.id)
+        .where(Project.status != ProjectStatus.COMMERCIALIZED)
+    )
+    if hub_filter is not None:
+        pipeline_stmt = pipeline_stmt.where(hub_filter)
+    grouped = (
+        await db.execute(
+            pipeline_stmt.group_by(Hub.name, Project.type, Project.category, Project.reg_year)
+        )
+    ).all()
+
+    hub_names_filter = narrowed_hub_filter(current_user, Hub.id, hub_id, region)
+    hubs_stmt = select(Hub.name).order_by(Hub.name)
+    if hub_names_filter is not None:
+        hubs_stmt = hubs_stmt.where(hub_names_filter)
+    hub_names = list((await db.execute(hubs_stmt)).scalars().all())
+
+    by_type: dict[ProjectType | None, int] = dict.fromkeys(ProjectType, 0)
+    by_category: dict[ProjectCategory | None, int] = dict.fromkeys(ProjectCategory, 0)
+    by_hub: dict[str, int] = {h.value: 0 for h in hub_names}
+    by_year: dict[int | None, int] = {}
+    hub_type: dict[tuple[str, ProjectType | None], int] = {}
+    total = 0
+    for hub_name, type_, category, reg_year, count in grouped:
+        total += count
+        by_type[type_] = by_type.get(type_, 0) + count
+        by_category[category] = by_category.get(category, 0) + count
+        by_hub[hub_name.value] = by_hub.get(hub_name.value, 0) + count
+        by_year[reg_year] = by_year.get(reg_year, 0) + count
+        key = (hub_name.value, type_)
+        hub_type[key] = hub_type.get(key, 0) + count
+
+    def _buckets(counts: dict[str, int]) -> list[AnalyticsBucket]:
+        return [
+            AnalyticsBucket(key=k, count=c, share_pct=_share(c, total)) for k, c in counts.items()
+        ]
+
+    type_counts = {t.value: by_type[t] for t in ProjectType}
+    if by_type.get(None):
+        type_counts[_UNMAPPED] = by_type[None]
+    category_counts = {c.value: by_category[c] for c in ProjectCategory}
+    if by_category.get(None):
+        category_counts[_UNMAPPED] = by_category[None]
+    year_counts = {str(y): by_year[y] for y in sorted(y for y in by_year if y is not None)}
+    if by_year.get(None):
+        year_counts[_UNKNOWN_YEAR] = by_year[None]
+
+    active_run = await get_active_run(db)
+    completing_hub_type: list[CompletingHubTypeRow] = []
+    completing_by_type: list[CompletingByTypeRow] = []
+    completing_by_hub: list[CompletingByHubRow] = []
+    if active_run is not None:
+        completing_stmt = (
+            select(Hub.name, Project.type, func.count())
+            .select_from(ScheduleRunProjectOutcome)
+            .join(Project, ScheduleRunProjectOutcome.project_id == Project.id)
+            .join(Hub, Project.hub_id == Hub.id)
+            .where(
+                ScheduleRunProjectOutcome.schedule_run_id == active_run.id,
+                ScheduleRunProjectOutcome.within_year.is_(True),
+                ScheduleRunProjectOutcome.blocked.is_(False),
+                Project.status != ProjectStatus.COMMERCIALIZED,
+            )
+        )
+        if hub_filter is not None:
+            completing_stmt = completing_stmt.where(hub_filter)
+        completing: dict[tuple[str, ProjectType | None], int] = {
+            (done_hub.value, done_type): done_count
+            for done_hub, done_type, done_count in (
+                await db.execute(completing_stmt.group_by(Hub.name, Project.type))
+            ).all()
+        }
+        type_order: dict[ProjectType | None, int] = {t: i for i, t in enumerate(ProjectType)}
+        type_order[None] = len(type_order)
+        hub_order = {h: i for i, h in enumerate(by_hub)}
+        for cell in sorted(
+            hub_type, key=lambda k: (hub_order.get(k[0], len(hub_order)), type_order[k[1]])
+        ):
+            pipeline = hub_type[cell]
+            done = completing.get(cell, 0)
+            completing_hub_type.append(
+                CompletingHubTypeRow(
+                    hub=HubName(cell[0]),
+                    type=cell[1],
+                    pipeline_count=pipeline,
+                    completing_count=done,
+                    completing_pct=_share(done, pipeline),
+                )
+            )
+        done_by_type: dict[str, int] = {}
+        for (_, done_type), done_count in completing.items():
+            type_key = done_type.value if done_type is not None else _UNMAPPED
+            done_by_type[type_key] = done_by_type.get(type_key, 0) + done_count
+        completing_by_type = [
+            CompletingByTypeRow(
+                key=type_key,
+                pipeline_count=type_pipeline,
+                completing_count=done_by_type.get(type_key, 0),
+                completing_pct=_share(done_by_type.get(type_key, 0), type_pipeline),
+            )
+            for type_key, type_pipeline in type_counts.items()
+        ]
+        # The per-hub Total column: the sum of each hub's cells above.
+        hub_totals: dict[str, list[int]] = {}
+        for cell_row in completing_hub_type:
+            totals = hub_totals.setdefault(cell_row.hub.value, [0, 0])
+            totals[0] += cell_row.pipeline_count
+            totals[1] += cell_row.completing_count
+        completing_by_hub = [
+            CompletingByHubRow(
+                key=HubName(hub_key),
+                pipeline_count=hub_pipeline,
+                completing_count=hub_done,
+                completing_pct=_share(hub_done, hub_pipeline),
+            )
+            for hub_key, (hub_pipeline, hub_done) in hub_totals.items()
+        ]
+
+    return DashboardAnalytics(
+        by_type=_buckets(type_counts),
+        by_category=_buckets(category_counts),
+        by_hub=_buckets(by_hub),
+        by_reg_year=_buckets(year_counts),
+        completing_hub_type=completing_hub_type,
+        completing_by_type=completing_by_type,
+        completing_by_hub=completing_by_hub,
+        has_active_schedule_run=active_run is not None,
+    )
+
+
+def _share(part: int, whole: int) -> float:
+    return round2(part / whole * 100) if whole else 0.0
+
+
+def _register_stmt(
+    current_user: Principal,
+    *,
+    hub_id: uuid.UUID | None,
+    region: LabRegion | None,
     category: ProjectCategory | None = None,
     status_: ProjectStatus | None = None,
     priority: ProjectPriority | None = None,
-    db: AsyncSession = Depends(get_db),
-    current_user: Principal = Depends(_read),
-) -> ProjectFilterResult:
-    """"An analytics breakdown with filters (by hub, category, status,
-    priority)" (`docs/PROJECT_AND_STACK.md` §2), hub-scoped (P3-T03).
-    """
+    q: str | None = None,
+    type_: ProjectType | None = None,
+    leader_engineer_id: uuid.UUID | None = None,
+) -> Select[Project]:
+    """The register's scoped, filtered project set. Every predicate is a
+    SQLAlchemy expression with bound parameters; nothing is interpolated."""
 
-    stmt = select(Project).options(selectinload(Project.hub))
-    hub_filter = hub_scope_filter(current_user, Project.hub_id)
+    stmt = select(Project).options(
+        selectinload(Project.hub), selectinload(Project.leader_engineer)
+    )
+    hub_filter = narrowed_hub_filter(current_user, Project.hub_id, hub_id, region)
     if hub_filter is not None:
         stmt = stmt.where(hub_filter)
-    if hub_id is not None:
-        stmt = stmt.where(Project.hub_id == hub_id)
     if category is not None:
         stmt = stmt.where(Project.category == category)
     if status_ is not None:
         stmt = stmt.where(Project.status == status_)
     if priority is not None:
         stmt = stmt.where(Project.priority == priority)
+    if type_ is not None:
+        stmt = stmt.where(Project.type == type_)
+    if leader_engineer_id is not None:
+        stmt = stmt.where(Project.leader_engineer_id == leader_engineer_id)
+    search = project_search_filter(q)
+    if search is not None:
+        stmt = stmt.where(search)
+    return stmt
 
-    projects = (await db.execute(stmt.order_by(Project.name))).scalars().all()
-    # P12 (ADR 0021 §4): the one tracking-status implementation.
-    tracking = await tracking_status_for(db, [p.id for p in projects])
-    rows = [
-        ProjectFilterRow(
-            project_id=p.id,
-            project_name=p.name,
-            hub=p.hub.name,
-            category=p.category,
-            status=p.status,
-            priority=p.priority,
-            is_vip=p.is_vip,
-            tracking_status=tracking.get(p.id, "idle"),
+
+def _leader_name_if_self(project: Project, current_user: Principal) -> str | None:
+    """ADR 0028: the leader's name is served to any caller who can read the project."""
+
+    leader = project.leader_engineer
+    return leader.name if leader is not None else None
+
+
+def _outcome_bucket(outcome: ScheduleRunProjectOutcome | None) -> ScheduleOutcome | None:
+    """The exclusive bucket `/completing-within-year` counts (P9-F02)."""
+
+    if outcome is None:
+        return None
+    if outcome.blocked:
+        return "BLOCKED"
+    if outcome.within_year:
+        return "WITHIN_YEAR"
+    if outcome.spillover:
+        return "SPILLOVER"
+    if outcome.left_out:
+        return "LEFT_OUT"
+    return None
+
+
+@router.get("/projects", response_model=ProjectFilterResult)
+async def analytics_projects(
+    hub_id: uuid.UUID | None = None,
+    category: ProjectCategory | None = None,
+    status_: ProjectStatus | None = None,
+    priority: ProjectPriority | None = None,
+    region: LabRegion | None = None,
+    q: Annotated[str | None, Query(max_length=100)] = None,
+    type_: Annotated[ProjectType | None, Query(alias="type")] = None,
+    leader_engineer_id: uuid.UUID | None = None,
+    current_step: Annotated[str | None, Query(max_length=10)] = None,
+    sort: Literal["name", "priority"] = "name",
+    db: AsyncSession = Depends(get_db),
+    current_user: Principal = Depends(_read),
+) -> ProjectFilterResult:
+    """"An analytics breakdown with filters (by hub, category, status,
+    priority)" (`docs/PROJECT_AND_STACK.md` §2), hub-scoped (P3-T03), upgraded
+    to the "All registered projects" register in P13 (ADR 0025 §5,
+    `docs/API_CONTRACT_P13.md` §3). Every filter is ANDed server-side.
+
+    Bulk loads only: hub and leader by `selectinload`, then one
+    `build_project_cards` pass (scores, live steps, run steps, outcomes,
+    due stages) and one outcome query for the whole set. No financial field
+    is read into the row.
+    """
+
+    stmt = _register_stmt(
+        current_user,
+        hub_id=hub_id,
+        region=region,
+        category=category,
+        status_=status_,
+        priority=priority,
+        q=q,
+        type_=type_,
+        leader_engineer_id=leader_engineer_id,
+    )
+    projects = list((await db.execute(stmt.order_by(Project.name, Project.id))).scalars().all())
+    active_run = await get_active_run(db)
+    # P12 (ADR 0021 §4): tracking status comes from the card builder, which
+    # calls the one tracking-status implementation (`services.tracking`).
+    cards = await build_project_cards(db, projects, active_run)
+    if current_step is not None:
+        projects = [
+            p
+            for p in projects
+            if (stage := cards[p.id].current_stage) is not None and stage.step_id == current_step
+        ]
+
+    outcomes: dict[uuid.UUID, ScheduleRunProjectOutcome] = {}
+    if active_run is not None and projects:
+        outcomes = {
+            o.project_id: o
+            for o in (
+                await db.execute(
+                    select(ScheduleRunProjectOutcome).where(
+                        ScheduleRunProjectOutcome.schedule_run_id == active_run.id,
+                        ScheduleRunProjectOutcome.project_id.in_([p.id for p in projects]),
+                    )
+                )
+            ).scalars()
+        }
+
+    scored = sorted(
+        (p for p in projects if cards[p.id].score is not None),
+        key=lambda p: (-(cards[p.id].score or 0.0), p.name, str(p.id)),
+    )
+    rank = {p.id: i for i, p in enumerate(scored, start=1)}
+    if sort == "priority":
+        projects.sort(key=lambda p: (rank.get(p.id, len(rank) + 1), p.name, str(p.id)))
+
+    rows: list[ProjectFilterRow] = []
+    for p in projects:
+        card = cards[p.id]
+        outcome = outcomes.get(p.id)
+        stage = card.current_stage
+        rows.append(
+            ProjectFilterRow(
+                project_id=p.id,
+                project_name=p.name,
+                hub=p.hub.name,
+                category=p.category,
+                status=p.status,
+                priority=p.priority,
+                is_vip=p.is_vip,
+                tracking_status=card.tracking_status,
+                external_code=p.external_code,
+                type=p.type,
+                region=p.hub.lab_region,
+                leader_name=_leader_name_if_self(p, current_user),
+                leader_engineer_id=p.leader_engineer_id,
+                current_step_code=stage.step_id if stage is not None else None,
+                current_step_name=stage.step_name if stage is not None else None,
+                end_week=outcome.projected_end_week if outcome is not None else None,
+                outcome=_outcome_bucket(outcome),
+                reg_year=p.reg_year,
+                carry_over=p.carry_over,
+                priority_rank=rank.get(p.id),
+            )
         )
-        for p in projects
-    ]
     return ProjectFilterResult(total_count=len(rows), rows=rows)
+
+
+@router.get("/projects/facets", response_model=ProjectFacets)
+async def analytics_project_facets(
+    hub_id: uuid.UUID | None = None,
+    region: LabRegion | None = None,
+    db: AsyncSession = Depends(get_db),
+    current_user: Principal = Depends(_read),
+) -> ProjectFacets:
+    """P13 §3: the leader and current-step values present in the caller's
+    scoped, hub/region-filtered set, so the register's dropdowns only offer
+    values that exist. Leader names follow OQ#8 (null unless the caller)."""
+
+    stmt = _register_stmt(current_user, hub_id=hub_id, region=region)
+    projects = list((await db.execute(stmt)).scalars().all())
+    cards = await build_project_cards(db, projects, await get_active_run(db))
+
+    leaders: dict[uuid.UUID, NamedId] = {}
+    for p in projects:
+        if p.leader_engineer_id is not None and p.leader_engineer_id not in leaders:
+            leaders[p.leader_engineer_id] = NamedId(
+                id=p.leader_engineer_id, name=_leader_name_if_self(p, current_user)
+            )
+
+    step_ids = {
+        stage.step_id for c in cards.values() if (stage := c.current_stage) is not None
+    }
+    templates = (
+        (
+            await db.execute(
+                select(WorkflowStepTemplate)
+                .where(WorkflowStepTemplate.id.in_(step_ids))
+                .order_by(WorkflowStepTemplate.workflow_id, WorkflowStepTemplate.sequence_order)
+            )
+        )
+        .scalars()
+        .all()
+        if step_ids
+        else []
+    )
+    return ProjectFacets(
+        # Ordered by id, not by name: a withheld name must not leak through
+        # the ordering either (OQ#8).
+        leaders=sorted(leaders.values(), key=lambda n: str(n.id)),
+        steps=[StepFacet(code=t.id, name=t.name) for t in templates],
+    )

@@ -14,6 +14,8 @@ const hooks = {
   saveLeadTimes: vi.fn(),
   saveCalendar: vi.fn(),
   saveChamber: vi.fn(),
+  useCategoryTimelines: vi.fn(),
+  useBEquivalent: vi.fn(),
 };
 const mut = (fn: ReturnType<typeof vi.fn>) => ({ mutateAsync: fn, isPending: false });
 vi.mock('./hooks/use-workflow-settings', () => ({
@@ -22,6 +24,8 @@ vi.mock('./hooks/use-workflow-settings', () => ({
   useSaveLeadTimes: () => mut(hooks.saveLeadTimes),
   useSaveHubCalendar: () => mut(hooks.saveCalendar),
   useSaveChamber: () => mut(hooks.saveChamber),
+  useCategoryTimelines: (...a: unknown[]) => hooks.useCategoryTimelines(...a),
+  useBEquivalent: (...a: unknown[]) => hooks.useBEquivalent(...a),
 }));
 
 import WorkflowSettingsPage from './WorkflowSettingsPage';
@@ -34,6 +38,8 @@ const saved = (staleCount: number) => Promise.resolve({ settings: settingsFixtur
 beforeEach(() => {
   vi.clearAllMocks();
   hooks.useWorkflowSettings.mockReturnValue(ready());
+  hooks.useCategoryTimelines.mockReturnValue({ data: undefined, isPending: true, isError: false, error: null, refetch: vi.fn() });
+  hooks.useBEquivalent.mockReturnValue({ data: undefined, isPending: true, isError: false, error: null, refetch: vi.fn() });
   for (const k of ['saveSteps', 'saveLeadTimes', 'saveCalendar', 'saveChamber'] as const) {
     hooks[k].mockImplementation(() => saved(236));
   }
@@ -218,5 +224,41 @@ describe('WorkflowSettingsPage — RBAC (Admin reads, Super Admin writes)', () =
     hooks.useWorkflowSettings.mockReturnValue({ data: undefined, isPending: false, isError: true, error: new ApiError(403, 'no'), refetch: vi.fn() });
     renderWithProviders(<WorkflowSettingsPage />);
     expect(screen.getByText('Your role does not have access to Workflow Settings')).toBeInTheDocument();
+  });
+});
+
+describe('WorkflowSettingsPage — timeline previews (P13-T16)', () => {
+  const served = <T,>(data: T) => ({ data, isPending: false, isError: false, error: null, refetch: vi.fn() });
+
+  it('shows the served PDD previews, then switches both reads to OEM', async () => {
+    const user = userEvent.setup();
+    hooks.useCategoryTimelines.mockImplementation((wf: string) =>
+      served([
+        {
+          category: wf === 'OEM' ? 'A-OEM' : 'A+',
+          total_weeks: wf === 'OEM' ? 21 : 44,
+          design_weeks: 20,
+          lab_weeks: 12,
+          steps: [{ code: `${wf}-A`, name: 'Marketing Brief', resource_kind: 'design', start_week: 1, duration_weeks: 1 }],
+        },
+      ]),
+    );
+    hooks.useBEquivalent.mockImplementation((wf: string) =>
+      served([
+        { category: wf === 'OEM' ? 'B-OEM' : 'B', design_weeks: 7, lab_weeks: 6, design_ratio: 1, lab_ratio: 1 },
+      ]),
+    );
+    renderWithProviders(<WorkflowSettingsPage />);
+    await user.click(screen.getByRole('tab', { name: 'Timeline previews' }));
+    expect(hooks.useCategoryTimelines).toHaveBeenLastCalledWith('PDD');
+    expect(hooks.useBEquivalent).toHaveBeenLastCalledWith('PDD');
+    expect(screen.getByTestId('timeline-A+')).toHaveTextContent('(44w total)');
+    expect(screen.getByTestId('beq-B')).toHaveTextContent('1.00×');
+
+    await user.click(screen.getByRole('radio', { name: 'OEM' }));
+    expect(hooks.useCategoryTimelines).toHaveBeenLastCalledWith('OEM');
+    expect(hooks.useBEquivalent).toHaveBeenLastCalledWith('OEM');
+    expect(screen.getByTestId('timeline-A-OEM')).toHaveTextContent('(21w total)');
+    expect(screen.getByText(/against B-OEM/)).toBeInTheDocument();
   });
 });

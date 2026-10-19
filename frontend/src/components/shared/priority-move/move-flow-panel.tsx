@@ -2,15 +2,6 @@ import * as React from 'react';
 import type { UseQueryResult } from '@tanstack/react-query';
 import { CircleCheck, Info, TriangleAlert, X } from 'lucide-react';
 
-import { Button } from '@/components/ui/button';
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog';
 import { Skeleton } from '@/components/ui/skeleton';
 import { apiErrorMessage } from '@/lib/api/error-messages';
 import type { ScheduleRunChanges } from '@/lib/api/priority-move';
@@ -21,50 +12,6 @@ import { RunProgressStatus } from '../run-progress-status';
 import { MOVE_COPY } from './move-copy';
 import { TimelineUpdatedPanel } from './timeline-updated-panel';
 import type { MoveFlowState } from './use-priority-move-flow';
-
-/** The light confirm step: "Move to P2? The timeline will be recalculated." */
-export function MoveConfirmDialog({
-  flow,
-  onConfirm,
-  onCancel,
-}: {
-  flow: MoveFlowState;
-  onConfirm: () => void;
-  onCancel: () => void;
-}): React.JSX.Element {
-  const open = flow.kind === 'confirm' || flow.kind === 'submitting';
-  const submitting = flow.kind === 'submitting';
-  return (
-    <Dialog
-      open={open}
-      onOpenChange={(next) => {
-        if (!next && flow.kind === 'confirm') onCancel();
-      }}
-    >
-      <DialogContent className="max-w-sm" data-testid="priority-move-confirm">
-        {open ? (
-          <>
-            <DialogHeader>
-              <DialogTitle>Move to {flow.next}?</DialogTitle>
-              <DialogDescription>
-                {flow.target.projectName} moves from {flow.target.priority ?? 'no priority'} to {flow.next}.{' '}
-                {MOVE_COPY.confirmBody}
-              </DialogDescription>
-            </DialogHeader>
-            <DialogFooter>
-              <Button type="button" variant="secondary" onClick={onCancel} disabled={submitting}>
-                Cancel
-              </Button>
-              <Button type="button" onClick={onConfirm} disabled={submitting}>
-                {submitting ? 'Moving…' : `Move to ${flow.next}`}
-              </Button>
-            </DialogFooter>
-          </>
-        ) : null}
-      </DialogContent>
-    </Dialog>
-  );
-}
 
 const NOTICE_ICON = {
   success: { Icon: CircleCheck, className: 'text-success' },
@@ -116,7 +63,9 @@ function ChangesBody({
 }
 
 /**
- * Non-modal floating panel (bottom-right) for everything after the confirm:
+ * Non-modal floating panel (bottom-right) for what follows a confirm that did
+ * not apply in-process (a `queued` run, `deferred`, `not_needed`) and for the
+ * Registration form's PATCH path:
  * solver progress, the "Timeline updated" list, or the honest outcome copy.
  * Non-modal on purpose: a greedy run over 236 projects can take a while, and
  * the user can keep reading the Gantt underneath. It has no close button while

@@ -114,7 +114,6 @@ from datetime import UTC, datetime
 from typing import Any
 
 from celery import Task
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -123,13 +122,13 @@ from sqlalchemy.ext.asyncio import (
 )
 
 from core.celery_config import get_celery_settings
-from models.audit import AuditLogEntry
 from models.enums import ScheduleRunStatus, SolverType
-from models.project import Project
-from models.schedule import ScheduleRun, ScheduleRunProjectOutcome
+from models.schedule import ScheduleRun
 from scheduling.cp_sat import run_cp_sat
 from scheduling.greedy import run_greedy_sgs
-from services.schedule_persistence import build_schedule_input_from_db, persist_schedule_output
+from services.run_dispatch import in_flight_window
+from services.schedule_apply import persist_solved_run
+from services.schedule_persistence import build_schedule_input_from_db
 from workers.celery_app import celery_app
 from workers.progress import publish_progress
 
@@ -173,7 +172,15 @@ async def _open_session_factory() -> AsyncIterator[async_sessionmaker[AsyncSessi
         await engine.dispose()
 
 
-@celery_app.task(bind=True, name=TASK_NAME)
+#: P14-T01 (M1): a queued message older than the in-flight window is never
+#: executed. By then `services.run_dispatch.reap_abandoned_runs` treats its
+#: row as abandoned, so running it would only complete (and activate) a run
+#: the system has already failed. Set on the task so every `.delay()` call
+#: site gets it (Celery's per-task `expires` exec option).
+MESSAGE_EXPIRES_SECONDS = in_flight_window().total_seconds()
+
+
+@celery_app.task(bind=True, name=TASK_NAME, expires=MESSAGE_EXPIRES_SECONDS)
 def run_cp_sat_schedule(
     self: Task,
     schedule_run_id: str,
@@ -214,7 +221,7 @@ def run_cp_sat_schedule(
 GREEDY_TASK_NAME = "workers.run_greedy_schedule"
 
 
-@celery_app.task(bind=True, name=GREEDY_TASK_NAME)
+@celery_app.task(bind=True, name=GREEDY_TASK_NAME, expires=MESSAGE_EXPIRES_SECONDS)
 def run_greedy_schedule(
     self: Task,
     schedule_run_id: str,
@@ -244,23 +251,6 @@ def run_greedy_schedule(
             solver=SolverType.GREEDY,
         )
     )
-
-
-async def _projected_finish(
-    db: AsyncSession, schedule_run_id: uuid.UUID | None, project_id: uuid.UUID
-) -> int | None:
-    """The project's stored `projected_end_week` in a run, or `None`."""
-
-    if schedule_run_id is None:
-        return None
-    return (
-        await db.execute(
-            select(ScheduleRunProjectOutcome.projected_end_week).where(
-                ScheduleRunProjectOutcome.schedule_run_id == schedule_run_id,
-                ScheduleRunProjectOutcome.project_id == project_id,
-            )
-        )
-    ).scalar_one_or_none()
 
 
 async def _dispatch_follow_up_best_effort() -> uuid.UUID | None:
@@ -349,7 +339,8 @@ async def _run_schedule_body(
         # exception raised anywhere in its body, not just ones raised after
         # the DB session was already open.
         async with _open_session_factory() as session_factory, session_factory() as db:
-            run = await db.get(ScheduleRun, run_uuid)
+            # Row lock: the reaper cannot flip it while we decide to start.
+            run = await db.get(ScheduleRun, run_uuid, with_for_update=True)
             if run is None:
                 raise RuntimeError(
                     f"ScheduleRun {schedule_run_id} not found — deleted before the task started?"
@@ -362,6 +353,21 @@ async def _run_schedule_body(
                 )
                 publish_progress(schedule_run_id, status="cancelled")
                 return {"status": "cancelled", "schedule_run_id": schedule_run_id}
+            if run.status != ScheduleRunStatus.QUEUED:
+                # P14-T01 (M1): only a still-QUEUED run may start. A row the
+                # reaper or sweeper already FAILED (`ABANDONED`), or one some
+                # other delivery already ran, is left exactly as it is: it
+                # must never complete, and never become active.
+                logger.warning(
+                    "ScheduleRun %s is %s, not queued; skipping this delivery.",
+                    schedule_run_id,
+                    run.status.value,
+                )
+                return {
+                    "status": "skipped",
+                    "schedule_run_id": schedule_run_id,
+                    "run_status": run.status.value,
+                }
 
             run.status = ScheduleRunStatus.RUNNING
             run.started_at = datetime.now(UTC)
@@ -427,60 +433,38 @@ async def _run_schedule_body(
                 )
                 publish_progress(schedule_run_id, status="cancelled")
                 return {"status": "cancelled", "schedule_run_id": schedule_run_id}
+            if run.status != ScheduleRunStatus.RUNNING:
+                # P14-T01 (M1): reaped/swept while solving; discard.
+                logger.warning(
+                    "ScheduleRun %s became %s mid-solve; discarding computed output.",
+                    schedule_run_id,
+                    run.status.value,
+                )
+                return {
+                    "status": "skipped",
+                    "schedule_run_id": schedule_run_id,
+                    "run_status": run.status.value,
+                }
 
             actor_uuid = uuid.UUID(triggered_by_user_id) if triggered_by_user_id else None
             recalc_uuid = uuid.UUID(recalc_project_id) if recalc_project_id else None
-            previous_active_id = (
-                await db.execute(select(ScheduleRun.id).where(ScheduleRun.is_active.is_(True)))
-            ).scalar_one_or_none()
-            previous_finish = (
-                await _projected_finish(db, previous_active_id, recalc_uuid)
-                if recalc_uuid is not None
-                else None
-            )
-            await persist_schedule_output(
+            # P14-T01: shared with the in-process priority-move confirm
+            # (`services.priority_preview`), so both persist a run the same
+            # way (the baseline finish, `persist_schedule_output`, and the
+            # `project.schedule_recalculated` audit row).
+            await persist_solved_run(
                 db,
                 schedule_input,
                 schedule_output,
-                solver_type=solver,
+                solver=solver,
                 trigger_reason=run.trigger_reason or "cp_sat_dispatch",
-                triggered_by_user_id=actor_uuid,
-                # Decision (docs/MEMORY.md P3-T06 entry): an admin CP-SAT
-                # dispatch never auto-activates (`activate=False`). The
-                # P9-T03 workspace recalculation passes `activate=True`.
-                # `sync_live_workflow_steps` must equal `activate`; see
-                # `services.schedule_persistence.persist_schedule_output`'s
-                # "Sharp edge" note (it raises ValueError otherwise).
+                actor_user_id=actor_uuid,
                 activate=activate,
-                sync_live_workflow_steps=activate,
                 existing_run=run,
+                recalc_project_id=recalc_uuid,
                 objective_value=objective_value,
                 solver_status=solver_status,
             )
-            if activate and recalc_uuid is not None:
-                new_finish = await _projected_finish(db, run.id, recalc_uuid)
-                hub_id = (
-                    await db.execute(select(Project.hub_id).where(Project.id == recalc_uuid))
-                ).scalar_one_or_none()
-                db.add(
-                    AuditLogEntry(
-                        actor_user_id=actor_uuid,
-                        action="project.schedule_recalculated",
-                        entity_type="Project",
-                        entity_id=str(recalc_uuid),
-                        hub_id=hub_id,
-                        before_state={
-                            "project_id": str(recalc_uuid),
-                            "projected_end_week": previous_finish,
-                        },
-                        after_state={
-                            "project_id": str(recalc_uuid),
-                            "projected_end_week": new_finish,
-                            "schedule_run_id": str(run.id),
-                            "schedule_run_version": run.version,
-                        },
-                    )
-                )
             await db.commit()
             publish_progress(schedule_run_id, status="completed", percent=100.0)
             return {

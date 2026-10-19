@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { FilterX } from 'lucide-react';
+import { RotateCcw, TableProperties } from 'lucide-react';
 
 import { PageHeader } from '@/components/layout/page-header';
 import { SectionBoundary } from '@/components/shared/section-boundary';
@@ -8,25 +8,30 @@ import { DownloadButton } from '@/components/shared/download-button';
 import { EmptyState } from '@/components/shared/empty-state';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Label } from '@/components/ui/label';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
 import { ReadOnlyNotice } from '@/components/session/write-gate';
 import { ApiError } from '@/lib/api/client';
 import { useHubFilter } from '@/stores/hub-filter';
 import { HubFilterChip } from '@/components/shared/hub-filter/hub-filter-chip';
+import { CountrySegmented } from '@/components/shared/hub-filter/country-segmented';
+import { useDebouncedValue } from '@/lib/use-debounced-value';
 import { formatInteger } from '@/lib/format';
 import { SURFACES } from '@/app/nav';
 import { effectivePendingEdits, useScenarioStore } from '@/stores/scenario';
-import { usePermission } from '@/stores/session';
-import { PROJECT_CATEGORIES, type CurrencyCode, type ProjectCategory } from '@/types/enums';
+import { usePermission, useSessionStore } from '@/stores/session';
+import type { CurrencyCode } from '@/types/enums';
 
 import { AccessNotice, WriteForbiddenNotice } from './components/access-notice';
+import { FxRateEditor } from './components/fx-rate-editor';
+import { ChipFilter, ColumnFilterInput } from './components/matrix-toolbar';
+import {
+  CATEGORY_CHIPS,
+  DEFAULT_MATRIX_VIEW,
+  STATUS_CHIPS,
+  TYPE_CHIPS,
+  canEditFxRate,
+  isDefaultView,
+  type MatrixViewState,
+} from './lib/matrix-view';
 import { MatrixTable } from './components/matrix-table';
 import { PortfolioSummaryPanel } from './components/portfolio-summary-panel';
 import { ScenarioModeToggle, ScenarioPendingPanel } from './components/scenario-panel';
@@ -43,7 +48,24 @@ import {
 import type { PriorityMatrixRow, PriorityScoreUpdateRequest } from './api/types';
 
 const MATRIX_SURFACE = SURFACES.find((s) => s.path === '/matrix');
-const ALL = '__all__';
+const SEARCH_MAX_LENGTH = 100;
+
+/** P13-T14: the Hub / Leader column inputs narrow the SERVED rows in view
+ *  (text match only — ranks and figures stay as served). An id with no
+ *  name matches "unavailable". */
+function narrowInView(rows: PriorityMatrixRow[], hubText: string, leaderText: string): PriorityMatrixRow[] {
+  const hub = hubText.trim().toLowerCase();
+  const leader = leaderText.trim().toLowerCase();
+  if (hub === '' && leader === '') return rows;
+  return rows.filter((r) => {
+    if (hub !== '' && !r.hub.toLowerCase().includes(hub)) return false;
+    if (leader !== '') {
+      const shown = r.leader_name ?? (r.leader_engineer_id ? 'unavailable' : '');
+      if (!shown.toLowerCase().includes(leader)) return false;
+    }
+    return true;
+  });
+}
 
 function authKind(errors: unknown[]): 'forbidden' | 'unauthorized' | null {
   for (const err of errors) {
@@ -58,18 +80,29 @@ function authKind(errors: unknown[]): 'forbidden' | 'unauthorized' | null {
 export default function MatrixPage(): React.JSX.Element {
   const [currency, setCurrency] = React.useState<CurrencyCode>('EUR');
   // P12 (ADR 0020): the hub is the global header filter (was a local select).
-  const { hubId } = useHubFilter();
-  const [category, setCategory] = React.useState<string>(ALL);
+  const { hubId, region } = useHubFilter();
+  const [view, setView] = React.useState<MatrixViewState>(DEFAULT_MATRIX_VIEW);
+  const debouncedQ = useDebouncedValue(view.q, 300).trim();
+  const setViewField = React.useCallback(
+    <K extends keyof MatrixViewState>(key: K, value: MatrixViewState[K]) =>
+      setView((v) => ({ ...v, [key]: value })),
+    [],
+  );
+  const isAdmin = canEditFxRate(useSessionStore((s) => s.me?.roles));
   const [editRow, setEditRow] = React.useState<PriorityMatrixRow | null>(null);
   const [dialogOpen, setDialogOpen] = React.useState(false);
   const [writeForbidden, setWriteForbidden] = React.useState(false);
 
   const ratesQuery = useCurrencyRates();
-  const summaryQuery = usePrioritySummary(hubId);
+  const summaryQuery = usePrioritySummary(hubId, region);
   const matrixQuery = usePriorityMatrix({
     currency,
     hubId: hubId ?? undefined,
-    category: category === ALL ? undefined : (category as ProjectCategory),
+    region: region ?? undefined,
+    category: view.category ?? undefined,
+    type: view.type ?? undefined,
+    status: view.status ?? undefined,
+    q: debouncedQ === '' ? undefined : debouncedQ,
   });
   const updateScore = useUpdatePriorityScore();
 
@@ -103,7 +136,39 @@ export default function MatrixPage(): React.JSX.Element {
     '13 scoring dimensions per project, weighted score and band, with a server-driven currency toggle.';
 
   const denied = authKind([matrixQuery.error, summaryQuery.error]);
-  const isFiltered = hubId !== null || category !== ALL;
+  const isFiltered =
+    hubId !== null ||
+    region !== null ||
+    view.category !== null ||
+    view.type !== null ||
+    view.status !== null ||
+    debouncedQ !== '' ||
+    view.hubText.trim() !== '' ||
+    view.leaderText.trim() !== '';
+
+  const columnFilters = React.useMemo(
+    () => ({
+      project: (
+        <ColumnFilterInput
+          column="project name or code"
+          placeholder="Search…"
+          maxLength={SEARCH_MAX_LENGTH}
+          value={view.q}
+          onChange={(v) => setViewField('q', v)}
+        />
+      ),
+      hub: <ColumnFilterInput column="hub" value={view.hubText} onChange={(v) => setViewField('hubText', v)} />,
+      leader: (
+        <ColumnFilterInput column="leader" value={view.leaderText} onChange={(v) => setViewField('leaderText', v)} />
+      ),
+    }),
+    [view.q, view.hubText, view.leaderText, setViewField],
+  );
+
+  const resetView = React.useCallback(() => {
+    setView(DEFAULT_MATRIX_VIEW);
+    setCurrency('EUR');
+  }, []);
   // Session table first (ADR 0010), server 403 second.
   const permission = usePermission('matrix');
   const canEdit = permission.write && !writeForbidden;
@@ -152,7 +217,16 @@ export default function MatrixPage(): React.JSX.Element {
 
   return (
     <>
-      <PageHeader title={title} description={description} actions={<HubFilterChip />} />
+      <PageHeader
+        title={title}
+        description={description}
+        actions={
+          <>
+            <CountrySegmented />
+            <HubFilterChip />
+          </>
+        }
+      />
 
       {denied ? (
         <AccessNotice kind={denied} />
@@ -162,32 +236,54 @@ export default function MatrixPage(): React.JSX.Element {
             <CardHeader>
               <CardTitle>View</CardTitle>
             </CardHeader>
-            <CardContent className="flex flex-wrap items-end gap-4">
-              <CurrencyToggle value={currency} onChange={setCurrency} rates={ratesQuery.data} />
-              <FilterSelect
-                label="Category"
-                value={category}
-                onChange={setCategory}
-                options={PROJECT_CATEGORIES.map((c) => ({ value: c, label: c }))}
-              />
-              {category !== ALL ? (
-                <Button variant="ghost" size="sm" onClick={() => setCategory(ALL)}>
-                  <FilterX />
-                  Clear
-                </Button>
-              ) : null}
-              <ScenarioModeToggle disabled={!canEdit} />
-              <VersionHistoryDialog projectLookup={projectLookup} />
-              <DownloadButton
-                path="/exports/matrix"
-                filters={{
-                  currency,
-                  hub_id: hubId ?? undefined,
-                  category: category === ALL ? undefined : category,
-                }}
-                fallbackFilename="matrix-export"
-                className="ml-auto"
-              />
+            <CardContent className="flex flex-col gap-4">
+              <div className="flex flex-wrap items-end gap-4">
+                <CurrencyToggle value={currency} onChange={setCurrency} rates={ratesQuery.data} />
+                {/* P13-T14: editable FX rate, Admin / Super Admin only (PUT /currency-rates). */}
+                {isAdmin && currency !== 'EUR' ? <FxRateEditor currency={currency} rates={ratesQuery.data} /> : null}
+                <ScenarioModeToggle disabled={!canEdit} />
+                <VersionHistoryDialog projectLookup={projectLookup} />
+                <div className="ml-auto flex flex-wrap items-end gap-2">
+                  <Button
+                    variant={view.detailed ? 'primary' : 'secondary'}
+                    size="sm"
+                    aria-pressed={view.detailed}
+                    onClick={() => setViewField('detailed', !view.detailed)}
+                    title="Show the 13 score-dimension columns"
+                  >
+                    <TableProperties aria-hidden="true" />
+                    Detailed view
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={resetView}
+                    disabled={isDefaultView(view) && currency === 'EUR'}
+                  >
+                    <RotateCcw aria-hidden="true" />
+                    Reset view
+                  </Button>
+                  <DownloadButton
+                    path="/exports/matrix"
+                    filters={{
+                      currency,
+                      hub_id: hubId ?? undefined,
+                      region: region ?? undefined,
+                      category: view.category ?? undefined,
+                    }}
+                    fallbackFilename="matrix-export"
+                  />
+                </div>
+              </div>
+              <div className="flex flex-wrap items-center gap-x-6 gap-y-3 border-t border-border pt-3">
+                <ChipFilter label="Cat" value={view.category} options={CATEGORY_CHIPS} onChange={(v) => setViewField('category', v)} />
+                <ChipFilter label="Type" value={view.type} options={TYPE_CHIPS} onChange={(v) => setViewField('type', v)} />
+                <div className="flex items-center gap-2">
+                  <span className="text-2xs font-bold uppercase tracking-wider text-text-subtle">Hub</span>
+                  <CountrySegmented />
+                </div>
+                <ChipFilter label="Status" value={view.status} options={STATUS_CHIPS} onChange={(v) => setViewField('status', v)} />
+              </div>
             </CardContent>
           </Card>
 
@@ -211,37 +307,49 @@ export default function MatrixPage(): React.JSX.Element {
             title="Scoring grid"
             errorDescription="The prioritization scoring grid could not be loaded."
           >
-            {(rows) => (
+            {(served) => {
+              const rows = narrowInView(served, view.hubText, view.leaderText);
+              return (
               <Card>
                 <CardHeader>
                   <CardTitle>Scoring grid</CardTitle>
-                  <span className="text-2xs text-text-muted" data-numeric="">
-                    {formatInteger(rows.length)} {rows.length === 1 ? 'project' : 'projects'} ·{' '}
-                    financial columns in {currency} (converted server-side)
+                  <span className="text-2xs text-text-muted" data-numeric="" data-testid="matrix-row-count">
+                    {rows.length === served.length
+                      ? `${formatInteger(served.length)} ${served.length === 1 ? 'project' : 'projects'}`
+                      : `${formatInteger(rows.length)} of ${formatInteger(served.length)} projects shown`}{' '}
+                    · ranked by score · financial columns in {currency} (converted server-side)
                   </span>
                 </CardHeader>
                 <CardContent>
-                  {rows.length === 0 ? (
+                  {rows.length === 0 && !isFiltered ? (
                     <EmptyState
-                      title={isFiltered ? 'No projects match these filters' : 'No projects in scope'}
-                      description={
-                        isFiltered
-                          ? 'Try widening or clearing the hub / category filters.'
-                          : 'There are no projects visible in your hub scope.'
-                      }
+                      title="No projects in scope"
+                      description="There are no projects visible in your hub scope."
                     />
                   ) : (
-                    <MatrixTable
-                      rows={rows}
-                      currency={currency}
-                      canEdit={canEdit}
-                      onEdit={handleEdit}
-                      scenarioStagedProjectIds={scenarioActive ? scenarioStagedProjectIds : undefined}
-                    />
+                    <div className="flex flex-col gap-3">
+                      {/* Kept while filtered, so the column filter inputs stay reachable. */}
+                      <MatrixTable
+                        rows={rows}
+                        currency={currency}
+                        canEdit={canEdit}
+                        onEdit={handleEdit}
+                        scenarioStagedProjectIds={scenarioActive ? scenarioStagedProjectIds : undefined}
+                        detailed={view.detailed}
+                        columnFilters={columnFilters}
+                      />
+                      {rows.length === 0 ? (
+                        <EmptyState
+                          title="No projects match these filters"
+                          description="Try widening or clearing the filters, or use Reset view."
+                        />
+                      ) : null}
+                    </div>
                   )}
                 </CardContent>
               </Card>
-            )}
+              );
+            }}
           </SectionBoundary>
         </div>
       )}
@@ -254,39 +362,5 @@ export default function MatrixPage(): React.JSX.Element {
         mode={scenarioActive ? 'scenario' : 'immediate'}
       />
     </>
-  );
-}
-
-function FilterSelect({
-  label,
-  value,
-  onChange,
-  options,
-}: {
-  label: string;
-  value: string;
-  onChange: (next: string) => void;
-  options: { value: string; label: string }[];
-}): React.JSX.Element {
-  const id = React.useId();
-  return (
-    <div className="flex flex-col gap-1">
-      <Label htmlFor={id} className="text-2xs text-text-muted">
-        {label}
-      </Label>
-      <Select value={value} onValueChange={onChange}>
-        <SelectTrigger id={id} className="h-8 w-40">
-          <SelectValue />
-        </SelectTrigger>
-        <SelectContent>
-          <SelectItem value={ALL}>All</SelectItem>
-          {options.map((opt) => (
-            <SelectItem key={opt.value} value={opt.value}>
-              {opt.label}
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
-    </div>
   );
 }

@@ -172,8 +172,8 @@ function NavItem({
  * shares the page's query key, so visiting the page costs no second request.
  */
 function useCheckInDueBadge(enabled: boolean): { count: number; description: string } | undefined {
-  const { hubId } = useHubFilter();
-  const due = useCheckInsDue(hubId, enabled);
+  const { hubId, region } = useHubFilter();
+  const due = useCheckInsDue(hubId, enabled, region);
   if (!enabled || !due.data) return undefined;
   const count = Math.max(0, due.data.summary.due_stages - due.data.summary.checked_in_stages);
   return { count, description: `${String(count)} ${count === 1 ? 'stage' : 'stages'} still to check in this week` };

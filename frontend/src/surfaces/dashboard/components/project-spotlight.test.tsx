@@ -21,6 +21,7 @@ function row(
     blocked: false,
     cat_not_allowed: false,
     last_step_end_week: 40,
+    type: null,
     ...overrides,
   };
 }
@@ -39,6 +40,7 @@ describe('ProjectSpotlight', () => {
             within_year: false,
             spillover: true,
             last_step_end_week: 61,
+            type: null,
           }),
         ]}
        
@@ -82,7 +84,7 @@ describe('ProjectSpotlight', () => {
     expect(screen.getByText('6 of 12')).toBeInTheDocument();
     expect(screen.getByRole('link', { name: /View all projects/ })).toHaveAttribute(
       'href',
-      '#project-breakdown',
+      '#all-projects',
     );
   });
 

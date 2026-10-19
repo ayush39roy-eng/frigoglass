@@ -83,10 +83,23 @@ function LogoChip(): React.JSX.Element {
   );
 }
 
+/** Today's date for the header ("18 Oct 2026"), from the browser clock. */
+function formatToday(date: Date): string {
+  return new Intl.DateTimeFormat('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }).format(date);
+}
+
 /**
- * The planning week indicator ("W42 of 52" — the 52-week plan year).
+ * The planning week indicator, P13-T15 (API_CONTRACT_P13 §7; mock-up "Week 31 |
+ * 21 Wks Left" + date): "Week 42 · 10 wks left" from the SERVED
+ * `GET /me` `current_week` / `weeks_left_in_year` (52-week year, ADR 0024) —
+ * the header never subtracts. Before `/me` resolves it falls back to the
+ * build-time `CURRENT_WEEK` and the old "of 52" framing.
  */
 export function WeekPill(): React.JSX.Element {
+  const me = useSessionStore((s) => s.me);
+  const week = me?.current_week ?? CURRENT_WEEK;
+  const weeksLeft = me?.weeks_left_in_year;
+  const today = React.useMemo(() => new Date(), []);
   return (
     <Tooltip>
       <TooltipTrigger asChild>
@@ -95,17 +108,36 @@ export function WeekPill(): React.JSX.Element {
           data-testid="week-indicator"
         >
           <CalendarClock className="size-3.5 shrink-0 text-text-subtle" aria-hidden="true" />
-          <span>
-            {formatWeek(CURRENT_WEEK)}
-            <span className="font-medium text-text-muted"> of {DISPLAY_HORIZON_WEEKS}</span>
-          </span>
+          {weeksLeft === undefined ? (
+            <span>
+              {formatWeek(week)}
+              <span className="font-medium text-text-muted"> of {DISPLAY_HORIZON_WEEKS}</span>
+            </span>
+          ) : (
+            <span>
+              Week {week}
+              <span className="font-medium text-text-muted">
+                {' · '}
+                {weeksLeft} {weeksLeft === 1 ? 'wk' : 'wks'} left
+              </span>
+            </span>
+          )}
+          <span aria-hidden="true" className="h-3.5 w-px bg-border" />
+          <time
+            dateTime={today.toISOString().slice(0, 10)}
+            className="tnum font-medium text-text-muted"
+            data-testid="header-today"
+          >
+            {formatToday(today)}
+          </time>
         </span>
       </TooltipTrigger>
       {/* Client ask 2026-10-13: a 52-week year only — the server's internal
           78-week search horizon is never presented. */}
       <TooltipContent side="bottom" data-testid="week-indicator-tooltip">
-        Planning week {CURRENT_WEEK} of {DISPLAY_HORIZON_WEEKS}. Projects completing by week{' '}
-        {WITHIN_YEAR_WEEK} count as within-year; anything not done by then is spillover into{' '}
+        Planning week {week} of {DISPLAY_HORIZON_WEEKS}
+        {weeksLeft === undefined ? '' : `, ${String(weeksLeft)} left in the year`}. Projects completing by
+        week {WITHIN_YEAR_WEEK} count as within-year; anything not done by then is spillover into{' '}
         {SPILLOVER_YEAR}.
       </TooltipContent>
     </Tooltip>

@@ -15,15 +15,27 @@ import type { HubName, ProjectPriority } from '@/types/enums';
 
 import { apiGet, apiSend, type ApiRequestOptions } from './client';
 
-/** What a priority change did (contract §1). `unchanged` only on the POST. */
-export type RecalcStatus = 'queued' | 'deferred' | 'not_needed' | 'unchanged';
+/** What a priority change did (contract §1). `unchanged` only on the POST.
+ *  P14 (ADR 0026): `applied` — a confirm with a current `preview_token`; the
+ *  run was computed in-process and is already active. `dispatch_failed`: the
+ *  change is saved and the project stays stale, but the recalculation could
+ *  not be started (broker refused) — the user presses Recalculate. */
+export type RecalcStatus = 'queued' | 'deferred' | 'not_needed' | 'unchanged' | 'applied' | 'dispatch_failed';
 
 /** 409 code: the project has hard gates, so it must stay P1 (ADR 0015 §2). */
 export const HARD_GATE_FORCES_P1 = 'HARD_GATE_FORCES_P1';
 
-// PLACEHOLDER (P11 contract §1)
+/** 409 code (P14, ADR 0026 §2): the inputs changed since the preview; nothing was written. */
+export const PREVIEW_STALE = 'PREVIEW_STALE';
+/** 503 code (P14 contract §1): the in-process preview exceeded its time cap. */
+export const PREVIEW_TIMEOUT = 'PREVIEW_TIMEOUT';
+
+// P11 contract §1; P14 contract §1 adds the optional `preview_token`.
 export interface PriorityMoveRequest {
   priority: ProjectPriority;
+  /** From `POST …/priority/preview`. With it the move is applied in-process
+   *  (`recalc_status: "applied"`); without it, ADR 0015 behaviour. */
+  preview_token?: string | null;
 }
 
 // PLACEHOLDER (P11 contract §1)
@@ -38,6 +50,92 @@ export interface PriorityMoveResponse {
   baseline_run_id: Id | null;
   /** Celery task id, set only when `queued`. */
   task_id: string | null;
+  // PLACEHOLDER (P14 contract §1) — present on `applied`; the same shapes as the preview.
+  moved?: PriorityPreviewMoved | null;
+  summary?: PriorityPreviewSummary | null;
+  changes?: PriorityPreviewChange[];
+  hidden_count?: number;
+}
+
+// ---------------------------------------------------------------------------
+// P14 (ADR 0026, docs/API_CONTRACT_P14.md §1): preview, then confirm.
+// PLACEHOLDER — written against the contract while backend A builds it.
+// ---------------------------------------------------------------------------
+
+export type PriorityPreviewResult = 'preview' | 'unchanged' | 'not_needed';
+
+export interface PriorityPreviewRequest {
+  priority: ProjectPriority;
+}
+
+/** The moved project's own finish, before (active run) → after (preview). */
+export interface PriorityPreviewMoved {
+  end_week_before: number | null;
+  end_week_after: number | null;
+  within_year_before: boolean | null;
+  within_year_after: boolean | null;
+  left_out_before: boolean | null;
+  left_out_after: boolean | null;
+}
+
+/** Served counts over the other affected projects in the caller's scope. */
+export interface PriorityPreviewSummary {
+  affected: number;
+  delayed: number;
+  earlier: number;
+  pushed_out_of_year: number;
+  pulled_into_year: number;
+}
+
+/** One other project whose finish / within-year / left-out / on-hold would
+ *  change. Ordered by the server (pushed out of year first). */
+export interface PriorityPreviewChange {
+  project_id: Id;
+  name: string;
+  hub: HubName;
+  priority: ProjectPriority | null;
+  end_week_before: number | null;
+  end_week_after: number | null;
+  within_year_before: boolean | null;
+  within_year_after: boolean | null;
+  left_out_before: boolean | null;
+  left_out_after: boolean | null;
+  blocked_before: boolean | null;
+  blocked_after: boolean | null;
+}
+
+export interface PriorityPreviewResponse {
+  result: PriorityPreviewResult;
+  project_id: Id;
+  from_priority: ProjectPriority | null;
+  to_priority: ProjectPriority;
+  /** The active run the preview is compared against. */
+  baseline_run_id: Id | null;
+  /** Opaque hash of the input snapshot + target priority; sent back on confirm. */
+  preview_token: string | null;
+  moved: PriorityPreviewMoved | null;
+  summary: PriorityPreviewSummary;
+  changes: PriorityPreviewChange[];
+  /** Affected projects outside the caller's hub scope — a count only. */
+  hidden_count: number;
+  elapsed_ms: number | null;
+  /** E.g. "no active run to compare against". */
+  note?: string | null;
+}
+
+/** `POST /projects/{id}/priority/preview`. Writes nothing (ADR 0026 §1). */
+export function previewProjectPriority(
+  projectId: string,
+  priority: ProjectPriority,
+  options: Pick<ApiRequestOptions, 'signal'> = {},
+): Promise<PriorityPreviewResponse> {
+  const body: PriorityPreviewRequest = { priority };
+  return apiSend<PriorityPreviewResponse>(
+    'POST',
+    `/projects/${encodeURIComponent(projectId)}/priority/preview`,
+    body,
+    { signal: options.signal },
+  );
 }
 
 // PLACEHOLDER (P11 contract §3)
@@ -75,10 +173,16 @@ export interface ScheduleRunChanges {
   rows: ScheduleRunChangeRow[];
 }
 
-/** `POST /projects/{id}/priority`. Always 200; `recalc_status` says what happened. */
-export function moveProjectPriority(projectId: string, priority: ProjectPriority): Promise<PriorityMoveResponse> {
-  const body: PriorityMoveRequest = { priority };
-  return apiSend<PriorityMoveResponse>('POST', `/projects/${projectId}/priority`, body);
+/** `POST /projects/{id}/priority`. Always 200; `recalc_status` says what happened.
+ *  With `previewToken` (P14) it is the confirm of a preview: 409 `PREVIEW_STALE`
+ *  if the inputs changed since. */
+export function moveProjectPriority(
+  projectId: string,
+  priority: ProjectPriority,
+  previewToken?: string | null,
+): Promise<PriorityMoveResponse> {
+  const body: PriorityMoveRequest = previewToken ? { priority, preview_token: previewToken } : { priority };
+  return apiSend<PriorityMoveResponse>('POST', `/projects/${encodeURIComponent(projectId)}/priority`, body);
 }
 
 /** `GET /schedule-runs/{run}/changes?against={baseline}`. 409 `RUN_NOT_COMPLETED`
@@ -99,7 +203,7 @@ export function fetchScheduleRunChanges(
  * when the priority changed (contract §2). Header names are case-insensitive.
  */
 export interface PatchRecalcSignal {
-  recalc_status: Exclude<RecalcStatus, 'unchanged'>;
+  recalc_status: Exclude<RecalcStatus, 'unchanged' | 'applied' | 'dispatch_failed'>;
   schedule_run_id: Id | null;
   baseline_run_id: Id | null;
 }

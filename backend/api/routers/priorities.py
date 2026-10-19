@@ -36,8 +36,9 @@ from __future__ import annotations
 import uuid
 from collections import Counter
 from decimal import Decimal
+from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -48,7 +49,14 @@ from core.principal import Principal
 from core.rbac import Action, Surface
 from models.audit import AuditLogEntry
 from models.currency import CurrencyRate
-from models.enums import CurrencyCode, ProjectCategory, ProjectPriority, ProjectType
+from models.enums import (
+    CurrencyCode,
+    LabRegion,
+    ProjectCategory,
+    ProjectPriority,
+    ProjectStatus,
+    ProjectType,
+)
 from models.priority import DIMENSION_FIELD_NAMES, PriorityScore
 from models.project import Project
 from schemas.priority import (
@@ -58,8 +66,14 @@ from schemas.priority import (
     PriorityScoreUpdateRequest,
 )
 from services.audit_helpers import priority_score_audit_state
-from services.hub_scope import hub_scope_filter, narrowed_hub_filter
+from services.hub_scope import global_hub_filter, hub_scope_filter, narrowed_hub_filter
 from services.priority_scoring import compute_priority_score
+from services.project_filters import (
+    Q_MAX_LENGTH,
+    leader_name_if_self,
+    score_ranks,
+    search_predicate,
+)
 
 router = APIRouter(prefix="/priorities", tags=["prioritization-matrix"])
 
@@ -91,6 +105,9 @@ def _build_row(
     score: PriorityScore | None,
     currency: CurrencyCode,
     rate: Decimal,
+    *,
+    current_user: Principal,
+    rank: int | None,
 ) -> PriorityMatrixRow:
     return PriorityMatrixRow(
         project_id=project.id,
@@ -99,6 +116,10 @@ def _build_row(
         category=project.category,
         type=project.type,
         set_priority=project.priority,
+        status=project.status,
+        leader_name=leader_name_if_self(project, current_user),
+        leader_engineer_id=project.leader_engineer_id,
+        rank=rank,
         has_score=score is not None,
         strategic_project=getattr(score, "strategic_project", None),
         new_customer=getattr(score, "new_customer", None),
@@ -145,32 +166,68 @@ def _build_row(
 async def list_priority_matrix(
     currency: CurrencyCode = CurrencyCode.EUR,
     hub_id: uuid.UUID | None = None,
+    region: LabRegion | None = None,
     category: ProjectCategory | None = None,
+    type_: Annotated[ProjectType | None, Query(alias="type")] = None,
+    status_: ProjectStatus | None = None,
+    q: Annotated[str | None, Query(max_length=Q_MAX_LENGTH)] = None,
     db: AsyncSession = Depends(get_db),
     current_user: Principal = Depends(_read),
 ) -> list[PriorityMatrixRow]:
     """The scoring grid, one row per project (left-joined to `PriorityScore`
     so projects not yet scored still appear, with `has_score=False`).
+
+    P13-T14 (docs/API_CONTRACT_P13.md §7): `type`, `status_` and `q` (name
+    or external code, §3 semantics) are ANDed with the scope and the other
+    filters. `rank` is computed within the final filtered set. Financial
+    columns are unchanged and never logged.
     """
 
-    stmt = select(Project).options(selectinload(Project.hub), selectinload(Project.priority_score))
+    stmt = select(Project).options(
+        selectinload(Project.hub),
+        selectinload(Project.priority_score),
+        selectinload(Project.leader_engineer),
+    )
     hub_filter = hub_scope_filter(current_user, Project.hub_id)
     if hub_filter is not None:
         stmt = stmt.where(hub_filter)
-    if hub_id is not None:
-        stmt = stmt.where(Project.hub_id == hub_id)
+    # ADR 0020 hub / ADR 0025 country, ANDed with the scope above.
+    global_filter = global_hub_filter(Project.hub_id, hub_id, region)
+    if global_filter is not None:
+        stmt = stmt.where(global_filter)
     if category is not None:
         stmt = stmt.where(Project.category == category)
+    if type_ is not None:
+        stmt = stmt.where(Project.type == type_)
+    if status_ is not None:
+        stmt = stmt.where(Project.status == status_)
+    search = search_predicate(q)
+    if search is not None:
+        stmt = stmt.where(search)
     stmt = stmt.order_by(Project.name)
 
     projects = (await db.execute(stmt)).scalars().all()
     rate = await _rate_to_eur(db, currency)
-    return [_build_row(p, p.priority_score, currency, rate) for p in projects]
+    ranks = score_ranks(projects, _score_value)
+    return [
+        _build_row(
+            p, p.priority_score, currency, rate, current_user=current_user, rank=ranks.get(p.id)
+        )
+        for p in projects
+    ]
+
+
+def _score_value(project: Project) -> float | None:
+    score = project.priority_score
+    if score is None or score.weighted_score is None:
+        return None
+    return float(score.weighted_score)
 
 
 @router.get("/summary", response_model=PriorityPortfolioSummary)
 async def priority_portfolio_summary(
     hub_id: uuid.UUID | None = None,
+    region: LabRegion | None = None,
     db: AsyncSession = Depends(get_db),
     current_user: Principal = Depends(_read),
 ) -> PriorityPortfolioSummary:
@@ -181,7 +238,7 @@ async def priority_portfolio_summary(
 
     stmt = select(Project).options(selectinload(Project.priority_score))
     # P12 (ADR 0020): optional `hub_id`, ANDed with the scope, never widening.
-    hub_filter = narrowed_hub_filter(current_user, Project.hub_id, hub_id)
+    hub_filter = narrowed_hub_filter(current_user, Project.hub_id, hub_id, region)
     if hub_filter is not None:
         stmt = stmt.where(hub_filter)
     projects = (await db.execute(stmt)).scalars().all()
@@ -214,7 +271,11 @@ async def get_priority_row(
 ) -> PriorityMatrixRow:
     stmt = (
         select(Project)
-        .options(selectinload(Project.hub), selectinload(Project.priority_score))
+        .options(
+            selectinload(Project.hub),
+            selectinload(Project.priority_score),
+            selectinload(Project.leader_engineer),
+        )
         .where(Project.id == project_id)
     )
     hub_filter = hub_scope_filter(current_user, Project.hub_id)
@@ -225,7 +286,9 @@ async def get_priority_row(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found")
 
     rate = await _rate_to_eur(db, currency)
-    return _build_row(project, project.priority_score, currency, rate)
+    return _build_row(
+        project, project.priority_score, currency, rate, current_user=current_user, rank=None
+    )
 
 
 @router.put("/{project_id}", response_model=PriorityScoreRead)

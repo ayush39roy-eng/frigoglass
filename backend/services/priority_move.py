@@ -50,7 +50,7 @@ from models.priority import PriorityScore
 from models.project import Project
 from schemas.project import RecalcStatus
 from services.active_run import get_active_run
-from services.run_dispatch import find_in_flight_run
+from services.run_dispatch import enqueue_or_fail, find_in_flight_run
 from services.schedule_persistence import create_queued_schedule_run
 from workers.progress import publish_progress
 from workers.schedule_tasks import run_greedy_schedule
@@ -128,6 +128,43 @@ def _priority_value(priority: ProjectPriority | None) -> str | None:
     return priority.value if priority is not None else None
 
 
+def add_priority_move_audit(
+    db: AsyncSession,
+    project: Project,
+    before: ProjectPriority | None,
+    new_priority: ProjectPriority | None,
+    principal: Principal,
+    *,
+    recalc: RecalcStatus,
+    baseline_id: uuid.UUID | None,
+    schedule_run_id: uuid.UUID | None = None,
+) -> None:
+    """The one `project.priority_move` audit row. `schedule_run_id` is only
+    passed by the P14 in-process confirm (`applied`), whose run exists by the
+    time the row is written; the ADR 0015 paths keep their exact shape.
+    """
+
+    after_state: dict[str, str | None] = {
+        "project_id": str(project.id),
+        "priority": _priority_value(new_priority),
+        "recalc_status": recalc,
+        "baseline_run_id": str(baseline_id) if baseline_id is not None else None,
+    }
+    if schedule_run_id is not None:
+        after_state["schedule_run_id"] = str(schedule_run_id)
+    db.add(
+        AuditLogEntry(
+            actor_user_id=principal.user_id,
+            action=AUDIT_ACTION,
+            entity_type="Project",
+            entity_id=str(project.id),
+            hub_id=project.hub_id,
+            before_state={"project_id": str(project.id), "priority": _priority_value(before)},
+            after_state=after_state,
+        )
+    )
+
+
 async def apply_priority_change(
     db: AsyncSession,
     project: Project,
@@ -167,21 +204,8 @@ async def apply_priority_change(
         active = await get_active_run(db)
         baseline_id = active.id if active is not None else None
 
-    db.add(
-        AuditLogEntry(
-            actor_user_id=principal.user_id,
-            action=AUDIT_ACTION,
-            entity_type="Project",
-            entity_id=str(project.id),
-            hub_id=project.hub_id,
-            before_state={"project_id": str(project.id), "priority": _priority_value(before)},
-            after_state={
-                "project_id": str(project.id),
-                "priority": _priority_value(new_priority),
-                "recalc_status": recalc,
-                "baseline_run_id": str(baseline_id) if baseline_id is not None else None,
-            },
-        )
+    add_priority_move_audit(
+        db, project, before, new_priority, principal, recalc=recalc, baseline_id=baseline_id
     )
 
     if recalc != "queued":
@@ -201,13 +225,28 @@ async def apply_priority_change(
         trigger_reason=TRIGGER_REASON,
         triggered_by_user_id=principal.user_id,
     )
-    async_result = run_greedy_schedule.delay(
-        str(run.id),
-        triggered_by_user_id=str(principal.user_id),
-        activate=True,
-        recalc_project_id=str(project.id),
+    task_id = await enqueue_or_fail(
+        db,
+        run,
+        lambda: run_greedy_schedule.delay(
+            str(run.id),
+            triggered_by_user_id=str(principal.user_id),
+            activate=True,
+            recalc_project_id=str(project.id),
+        ),
+        actor_user_id=principal.user_id,
     )
-    run.celery_task_id = async_result.id
+    if task_id is None:
+        # P14-T01 (M3): the move is saved and the project stays stale; the
+        # run row is FAILED (`DISPATCH_FAILED`), audited, committed.
+        return PriorityMoveResult(
+            project_id=project.id,
+            priority_before=before,
+            priority_after=new_priority,
+            recalc_status="dispatch_failed",
+            baseline_run_id=baseline_id,
+        )
+    run.celery_task_id = task_id
     db.add(run)
     db.add(
         AuditLogEntry(
@@ -235,5 +274,5 @@ async def apply_priority_change(
         recalc_status="queued",
         schedule_run_id=run.id,
         baseline_run_id=baseline_id,
-        task_id=str(async_result.id),
+        task_id=task_id,
     )

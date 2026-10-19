@@ -173,6 +173,15 @@ def _engineer_name_if_self(
     return engineer.name
 
 
+def _engineer_name(
+    engineer_id: uuid.UUID | None, engineers: dict[uuid.UUID, Engineer]
+) -> str | None:
+    """ADR 0028: the project leader's name is served to any reader."""
+
+    engineer = engineers.get(engineer_id) if engineer_id is not None else None
+    return engineer.name if engineer is not None else None
+
+
 # --- Scoping --------------------------------------------------------------------------
 
 
@@ -302,6 +311,10 @@ _PRIORITY_MOVE_CONSEQUENCE: dict[str, str] = {
     "queued": "timeline recalculation queued",
     "deferred": "recalculation deferred, another run was in progress",
     "not_needed": "not in the plan, no recalculation",
+    # P14 (ADR 0026): confirmed from the preview, run in-process.
+    "applied": "timeline recalculated",
+    # P14-T01 (M3): the broker refused the run.
+    "dispatch_failed": "recalculation could not be started; press Recalculate",
 }
 
 
@@ -646,9 +659,7 @@ async def build_workspace(
             "hub": (
                 await db.execute(select(Hub.name).where(Hub.id == project.hub_id))
             ).scalar_one(),
-            "leader_engineer_name": _engineer_name_if_self(
-                project.leader_engineer_id, engineers, principal
-            ),
+            "leader_engineer_name": _engineer_name(project.leader_engineer_id, engineers),
         }
     )
 

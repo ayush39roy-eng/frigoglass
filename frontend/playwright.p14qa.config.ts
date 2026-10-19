@@ -1,0 +1,15 @@
+import { defineConfig, devices } from '@playwright/test';
+
+/** P14 gate (qa-inspector): runs `e2e/p14-gate.spec.ts` against an already-running disposable stack. */
+export default defineConfig({
+  testDir: './e2e',
+  testMatch: /p14-gate\.spec\.ts/,
+  timeout: 60_000,
+  expect: { timeout: 10_000 },
+  fullyParallel: false,
+  workers: 1,
+  retries: 0,
+  reporter: [['list']],
+  use: { baseURL: process.env.RPD_E2E_BASE_URL ?? 'http://localhost:5261', screenshot: 'only-on-failure' },
+  projects: [{ name: 'chromium', use: { ...devices['Desktop Chrome'] } }],
+});

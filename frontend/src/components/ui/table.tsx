@@ -13,9 +13,21 @@ import { cn } from '@/lib/utils';
 
 const Table = React.forwardRef<
   HTMLTableElement,
-  React.HTMLAttributes<HTMLTableElement> & { stickyHeader?: boolean }
->(({ className, stickyHeader, ...props }, ref) => (
-  <div className="relative w-full overflow-auto">
+  React.HTMLAttributes<HTMLTableElement> & {
+    stickyHeader?: boolean;
+    /**
+     * Opt-in: when the table can scroll inside its wrapper, label the wrapper so it becomes a
+     * keyboard-focusable named region (axe `scrollable-region-focusable`).
+     */
+    scrollLabel?: string | undefined;
+  }
+>(({ className, stickyHeader, scrollLabel, ...props }, ref) => (
+  <div
+    className="relative w-full overflow-auto"
+    tabIndex={scrollLabel === undefined ? undefined : 0}
+    role={scrollLabel === undefined ? undefined : 'region'}
+    aria-label={scrollLabel}
+  >
     <table
       ref={ref}
       data-sticky-header={stickyHeader ? '' : undefined}

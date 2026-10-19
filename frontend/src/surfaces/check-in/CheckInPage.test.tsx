@@ -115,7 +115,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   watcher.watching = true;
   dueBody = due();
-  useHubFilterStore.setState({ hubId: null });
+  useHubFilterStore.setState({ hubId: null, region: null });
   client.apiGet.mockImplementation((path: string) => {
     if (path === '/check-ins/due') return Promise.resolve(dueBody);
     if (path === '/check-ins/history') {
@@ -272,6 +272,16 @@ describe('CheckInPage — form validation and batch submit', () => {
     );
     expect(watcher.start).toHaveBeenCalledTimes(1);
     expect(within(panel).getByTestId('check-in-follow-up')).toHaveTextContent('Waiting for the follow-up recalculation');
+  });
+
+  it('dispatch_failed (P14): saved, marked stale, tells the user to press Recalculate', async () => {
+    client.apiSend.mockResolvedValue(submitResponse({ recalc_status: 'dispatch_failed' }));
+    const { user } = await renderPage();
+    await user.click(within(stageEl('Design Detailing')).getByRole('button', { name: 'Confirm Design Detailing unchanged' }));
+    await user.click(screen.getByTestId('check-in-submit'));
+    const panel = await screen.findByTestId('check-in-result');
+    expect(within(panel).getByTestId('check-in-result-body')).toHaveTextContent('Press Recalculate on a project');
+    expect(watcher.start).not.toHaveBeenCalled();
   });
 
   it('queued (ADR 0023): follows the run, then shows "Timeline updated" from the served changes', async () => {

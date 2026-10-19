@@ -61,7 +61,7 @@ describe('useFollowUpRunWatcher (ADR 0023)', () => {
 
     await advance(FOLLOW_UP_POLL_MS); // the follow-up landed
     const roots = invalidatedRoots(invalidate);
-    for (const root of ['gantt', 'dashboard', 'capacity', 'schedule-runs', 'projects', 'priority-board', 'vip-projects', 'check-ins']) {
+    for (const root of ['gantt', 'dashboard', 'capacity', 'schedule-runs', 'projects', 'priority-board', 'vip-board', 'check-ins']) {
       expect(roots).toContain(root);
     }
     expect(hook.result.current.watching).toBe(false);

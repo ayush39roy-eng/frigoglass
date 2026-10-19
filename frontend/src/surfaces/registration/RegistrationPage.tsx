@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { FilterX, Plus } from 'lucide-react';
+import { FilterX, Plus, Search } from 'lucide-react';
 
 import { PageHeader } from '@/components/layout/page-header';
 import { StatStrip } from '@/components/ui/stat-variants';
@@ -8,6 +8,7 @@ import { DownloadButton } from '@/components/shared/download-button';
 import { EmptyState } from '@/components/shared/empty-state';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import {
   Select,
@@ -18,9 +19,11 @@ import {
 } from '@/components/ui/select';
 import { ReadOnlyNotice } from '@/components/session/write-gate';
 import { usePriorityMoveFlow } from '@/components/shared/priority-move/use-priority-move-flow';
+import { applyFormPriorityMove } from '@/components/shared/priority-move/form-priority-move';
 import { ApiError } from '@/lib/api/client';
 import { useHubs } from '@/lib/api/reference';
 import { formatInteger } from '@/lib/format';
+import { useDebouncedValue } from '@/lib/use-debounced-value';
 import { SURFACES } from '@/app/nav';
 import { usePermission } from '@/stores/session';
 import { PROJECT_CATEGORIES, PROJECT_PRIORITIES, PROJECT_STATUSES, PROJECT_TYPES, PROJECT_TYPE_LABELS } from '@/types/enums';
@@ -30,10 +33,13 @@ import { AccessNotice, WriteForbiddenNotice } from './components/access-notice';
 import { ProjectFormDialog } from './components/project-form';
 import { ProjectList, type ProjectRow } from './components/project-list';
 import { useEngineerOptions, useProjectList, useCreateProject, useSubmitProject, useUpdateProject } from './hooks/use-registration';
+import { useEditDeepLink } from './hooks/use-edit-deep-link';
 import type { ProjectCreateRequest, ProjectRead } from './api/types';
 
 const REGISTRATION_SURFACE = SURFACES.find((s) => s.path === '/register');
 const ALL = '__all__';
+/** P13-T17: the server caps `q` at 100 characters (API_CONTRACT_P13 §3). */
+const SEARCH_MAX = 100;
 
 function authKind(errors: unknown[]): 'forbidden' | 'unauthorized' | null {
   for (const err of errors) {
@@ -51,6 +57,9 @@ export default function RegistrationPage(): React.JSX.Element {
   const [status, setStatus] = React.useState<string>(ALL);
   const [priority, setPriority] = React.useState<string>(ALL);
   const [type, setType] = React.useState<string>(ALL);
+  // P13-T17: free-text search, debounced, filtered by the server (`q`).
+  const [search, setSearch] = React.useState('');
+  const debouncedSearch = useDebouncedValue(search.trim(), 300);
   const [expandedId, setExpandedId] = React.useState<string | null>(null);
   const [formOpen, setFormOpen] = React.useState(false);
   const [formMode, setFormMode] = React.useState<'create' | 'edit'>('create');
@@ -64,6 +73,7 @@ export default function RegistrationPage(): React.JSX.Element {
   const engineersQuery = useEngineerOptions(undefined);
   const listQuery = useProjectList({
     hubId: hubId === ALL ? undefined : hubId,
+    q: debouncedSearch === '' ? undefined : debouncedSearch,
     category: category === ALL ? undefined : category,
     status: status === ALL ? undefined : status,
     priority: priority === ALL ? undefined : priority,
@@ -81,7 +91,12 @@ export default function RegistrationPage(): React.JSX.Element {
 
   const denied = authKind([listQuery.error]);
   const isFiltered =
-    hubId !== ALL || category !== ALL || status !== ALL || priority !== ALL || type !== ALL;
+    hubId !== ALL ||
+    category !== ALL ||
+    status !== ALL ||
+    priority !== ALL ||
+    type !== ALL ||
+    debouncedSearch !== '';
 
   const hubNameById = React.useMemo(() => {
     const map = new Map<string, string>();
@@ -122,7 +137,20 @@ export default function RegistrationPage(): React.JSX.Element {
         if (formMode === 'create') {
           await createMut.mutateAsync(body);
         } else if (editProject) {
-          const result = await updateMut.mutateAsync({ projectId: editProject.id, body });
+          // P14 (ADR 0026): a changed priority goes through the preview dialog
+          // first; Yes applies it, then the rest of the form is PATCHed as
+          // before. No leaves the form open and saves nothing.
+          const rest = await applyFormPriorityMove(
+            moveFlow.api,
+            {
+              projectId: editProject.id,
+              projectName: editProject.name,
+              priority: editProject.priority,
+              status: editProject.status,
+            },
+            body,
+          );
+          const result = await updateMut.mutateAsync({ projectId: editProject.id, body: rest });
           // P11 (ADR 0015): a priority change schedules by itself. The server
           // says what happened in the PATCH's X-Schedule-* headers; show the
           // same progress and "Timeline updated" panel as the Gantt dropdown.
@@ -168,6 +196,12 @@ export default function RegistrationPage(): React.JSX.Element {
   // Session table first (ADR 0010), server 403 second.
   const permission = usePermission('project_registration');
   const canEdit = permission.write && !writeForbidden;
+  // P13 (ADR 0025 §5): the Dashboard register's "Edit" links to `?edit=<id>`.
+  useEditDeepLink(permission.write, (project) => {
+    setFormMode('edit');
+    setEditProject(project);
+    setFormOpen(true);
+  });
 
   return (
     <>
@@ -208,6 +242,26 @@ export default function RegistrationPage(): React.JSX.Element {
               <CardTitle>Filters</CardTitle>
             </CardHeader>
             <CardContent className="flex flex-wrap items-end gap-4">
+              <div className="flex flex-col gap-1">
+                <Label htmlFor="registration-search" className="text-2xs text-text-muted">
+                  Search
+                </Label>
+                <div className="relative">
+                  <Search
+                    aria-hidden="true"
+                    className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-text-subtle"
+                  />
+                  <Input
+                    id="registration-search"
+                    type="search"
+                    value={search}
+                    maxLength={SEARCH_MAX}
+                    placeholder="Name or code…"
+                    onChange={(e) => setSearch(e.target.value)}
+                    className="h-8 w-56 pl-8"
+                  />
+                </div>
+              </div>
               <FilterSelect
                 label="Hub"
                 value={hubId}
@@ -248,6 +302,7 @@ export default function RegistrationPage(): React.JSX.Element {
                     setStatus(ALL);
                     setPriority(ALL);
                     setType(ALL);
+                    setSearch('');
                   }}
                 >
                   <FilterX />
@@ -258,6 +313,8 @@ export default function RegistrationPage(): React.JSX.Element {
                 path="/exports/project-registration"
                 filters={{
                   hub_id: hubId === ALL ? undefined : hubId,
+                  // P13 follow-up: the export takes the same search (`q`, ≤ 100).
+                  q: debouncedSearch === '' ? undefined : debouncedSearch,
                   category: category === ALL ? undefined : category,
                   status_: status === ALL ? undefined : status,
                   priority: priority === ALL ? undefined : priority,

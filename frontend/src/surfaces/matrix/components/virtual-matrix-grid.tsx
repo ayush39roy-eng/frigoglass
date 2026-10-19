@@ -27,6 +27,9 @@ export interface MatrixColumn<Row> {
   headerClassName?: string;
   /** Sticky to the left edge (identity columns). */
   sticky?: boolean;
+  /** P13-T14: an optional per-column filter control (the mock-up's "Filter…"
+   *  inputs), rendered in a second sticky header row. */
+  filter?: React.ReactNode;
 }
 
 export interface VirtualMatrixGridProps<Row> {
@@ -75,6 +78,7 @@ export function VirtualMatrixGrid<Row>({
   });
 
   const items = virtualizer.getVirtualItems();
+  const hasFilters = columns.some((c) => c.filter !== undefined);
 
   function cellStyle(col: MatrixColumn<Row>, index: number): React.CSSProperties {
     const base: React.CSSProperties = { width: col.width, flex: `0 0 ${String(col.width)}px` };
@@ -100,9 +104,10 @@ export function VirtualMatrixGrid<Row>({
         data-testid="matrix-grid-scroll"
       >
         <div role="table" aria-label={caption} aria-rowcount={rows.length} style={{ minWidth: totalWidth }}>
+          <div className="sticky top-0 z-10">
           <div
             role="row"
-            className="sticky top-0 z-10 flex border-b-[1.5px] border-border bg-surface-sunken text-2xs font-bold uppercase tracking-wider text-text-subtle"
+            className="flex border-b-[1.5px] border-border bg-surface-sunken text-2xs font-bold uppercase tracking-wider text-text-subtle"
           >
             {columns.map((col, i) => (
               <div
@@ -119,6 +124,25 @@ export function VirtualMatrixGrid<Row>({
                 {col.header}
               </div>
             ))}
+          </div>
+          {hasFilters ? (
+            <div
+              role="row"
+              className="flex border-b border-border bg-surface-sunken"
+              data-testid="matrix-filter-row"
+            >
+              {columns.map((col, i) => (
+                <div
+                  key={col.id}
+                  role="cell"
+                  className={cn('flex items-center px-2 py-1.5', col.sticky && 'bg-surface-sunken')}
+                  style={cellStyle(col, i)}
+                >
+                  {col.filter ?? null}
+                </div>
+              ))}
+            </div>
+          ) : null}
           </div>
 
           <div style={{ height: virtualizer.getTotalSize(), position: 'relative' }}>

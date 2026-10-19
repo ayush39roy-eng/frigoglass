@@ -129,6 +129,7 @@ from models.enums import (  # noqa: E402
 from models.priority import DIMENSION_FIELD_NAMES  # noqa: E402
 from models.project import category_allowed_for_hub, workflow_id_for_hub  # noqa: E402
 from seed import client_2026 as c26  # noqa: E402
+from seed.seed_vip_board import seed_vip_board  # noqa: E402
 from services.workflow_durations import duration_for, lead_time_lookup  # noqa: E402
 
 DATA_PATH = Path(__file__).resolve().parent / "prototype_seed_data.json"
@@ -748,6 +749,8 @@ async def run(
                         session, _load_client_2026_data(), hubs_by_name, chambers_by_code
                     )
                 )
+                # ADR 0027: the curated VIP board (idempotent; links by name).
+                counts["vip_board"] = await seed_vip_board(session)
             else:
                 data = _load_prototype_data()
                 engineers_by_name = await seed_engineers(session, data, hubs_by_name)

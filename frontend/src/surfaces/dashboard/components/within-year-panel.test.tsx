@@ -41,6 +41,7 @@ const withRun: CompletingWithinYear = {
       blocked: false,
       cat_not_allowed: false,
       last_step_end_week: 40,
+      type: null,
     },
   ],
 };
@@ -138,6 +139,7 @@ describe('WithinYearPanel', () => {
         blocked: false,
         cat_not_allowed: false,
         last_step_end_week: 40,
+        type: null,
       },
       {
         project_id: 'p-spillover',
@@ -151,6 +153,7 @@ describe('WithinYearPanel', () => {
         blocked: false,
         cat_not_allowed: true,
         last_step_end_week: 60,
+        type: null,
       },
       {
         project_id: 'p-leftout',
@@ -164,6 +167,7 @@ describe('WithinYearPanel', () => {
         blocked: false,
         cat_not_allowed: false,
         last_step_end_week: null,
+        type: null,
       },
       {
         project_id: 'p-blocked',
@@ -177,6 +181,7 @@ describe('WithinYearPanel', () => {
         blocked: true,
         cat_not_allowed: false,
         last_step_end_week: null,
+        type: null,
       },
     ];
     renderWithProviders(

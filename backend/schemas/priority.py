@@ -24,6 +24,7 @@ from models.enums import (
     HubName,
     ProjectCategory,
     ProjectPriority,
+    ProjectStatus,
     ProjectType,
 )
 
@@ -96,6 +97,17 @@ class PriorityMatrixRow(BaseModel):
     category: ProjectCategory | None
     type: ProjectType | None
     set_priority: ProjectPriority | None
+    #: P13-T14 (docs/API_CONTRACT_P13.md §7).
+    status: ProjectStatus
+    #: OQ #8 / P3-T09: the leader's name only when the leader is the caller;
+    #: `null` for every other reader. `leader_engineer_id` is always served
+    #: (so the UI can tell "withheld" from "no leader").
+    leader_name: str | None
+    leader_engineer_id: uuid.UUID | None
+    #: 1-based, by `weighted_score` descending (then name, then id), within
+    #: the filtered set of `GET /priorities`. `null` when unscored, and always
+    #: `null` on `GET /priorities/{id}` (no list to rank within).
+    rank: int | None
 
     has_score: bool
     strategic_project: int | None

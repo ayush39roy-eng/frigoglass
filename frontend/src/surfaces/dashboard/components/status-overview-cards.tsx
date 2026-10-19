@@ -4,7 +4,11 @@ import { CheckCircle2, FlaskConical, Hammer, ListChecks } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { formatInteger } from '@/lib/format';
 
-import type { StatusOverview } from '../api/types';
+import type { ProjectStatus } from '@/types/enums';
+
+import type { RegionSummary, StatusOverview } from '../api/types';
+import { statusRegionItems } from '../lib/region-summary';
+import { RegionChips } from './region-chips';
 import { CardInfo } from '@/components/ui/card-info';
 import { StatCard } from './stat-card';
 
@@ -23,9 +27,15 @@ function otherStatusLabel(status: string): string {
 
 export interface StatusOverviewCardsProps {
   data: StatusOverview;
+  /** P13 (ADR 0025 §4): per-country chips under each card; absent while loading or on error. */
+  regionSummary?: RegionSummary | null | undefined;
 }
 
-export function StatusOverviewCards({ data }: StatusOverviewCardsProps): React.JSX.Element {
+export function StatusOverviewCards({ data, regionSummary = null }: StatusOverviewCardsProps): React.JSX.Element {
+  const chips = (status: ProjectStatus, onSolid = false): React.ReactNode =>
+    regionSummary ? (
+      <RegionChips items={statusRegionItems(regionSummary, status)} label={status} onSolid={onSolid} />
+    ) : null;
   const otherTotal = Object.values(data.other_counts).reduce((sum, n) => sum + n, 0);
   const otherEntries = Object.entries(data.other_counts).filter(([, count]) => count > 0);
 
@@ -60,13 +70,14 @@ export function StatusOverviewCards({ data }: StatusOverviewCardsProps): React.J
       </CardHeader>
       <CardContent className="space-y-s3 px-0 pb-0">
         <div className="grid gap-gutter sm:grid-cols-2 xl:grid-cols-4">
-          <StatCard label="In Buyoff" value={data.in_buyoff} variant="ink" icon={CheckCircle2} caption="Final sign-off stage" />
+          <StatCard label="In Buyoff" value={data.in_buyoff} variant="ink" icon={CheckCircle2} caption="Final sign-off stage" footer={chips('In Buyoff', true)} />
           <StatCard
             label="Under Industrialization"
             value={data.under_industrialization}
             tone="success"
             icon={Hammer}
             caption="Moving into production"
+            footer={chips('Under Industrialization')}
           />
           <StatCard
             label="In Development"
@@ -74,6 +85,7 @@ export function StatusOverviewCards({ data }: StatusOverviewCardsProps): React.J
             tone="primary"
             icon={FlaskConical}
             caption="Active engineering work"
+            footer={chips('In Development')}
           />
           <StatCard
             label="In Queue"
@@ -81,6 +93,7 @@ export function StatusOverviewCards({ data }: StatusOverviewCardsProps): React.J
             tone="warning"
             icon={ListChecks}
             caption="Waiting for capacity"
+            footer={chips('In Queue')}
           />
         </div>
         {/* Client text cleanup, 2026-10-01: this was a loose caption reading

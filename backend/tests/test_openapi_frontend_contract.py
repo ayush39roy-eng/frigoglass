@@ -248,7 +248,9 @@ _PRIORITY_MOVE_TS = FRONTEND_SRC / "lib" / "api" / "priority-move.ts"
 # P12-T03 / P12-T05 (docs/API_CONTRACT_P12.md §2, §5, §6).
 _CHECKINS_TS = FRONTEND_SRC / "lib" / "api" / "check-ins.ts"
 _PRIORITY_BOARD_TS = FRONTEND_SRC / "surfaces" / "priority-board" / "api.ts"
-_VIP_TS = FRONTEND_SRC / "surfaces" / "vip" / "api.ts"
+# P14 (ADR 0027): the `/vip` surface was deleted; the P12 mirrors moved to
+# `lib/api/vip.ts` together with the P14 VIP board types.
+_VIP_TS = FRONTEND_SRC / "lib" / "api" / "vip.ts"
 
 # (frontend file, ts interface name, backend openapi schema name, mode)
 CONTRACT_TABLE: list[tuple[Path, str, str, str]] = [
@@ -262,6 +264,16 @@ CONTRACT_TABLE: list[tuple[Path, str, str, str]] = [
     (_DASHBOARD_TS, "CompletingWithinYear", "CompletingWithinYear", "exact"),
     (_DASHBOARD_TS, "ProjectFilterRow", "ProjectFilterRow", "exact"),
     (_DASHBOARD_TS, "ProjectFilterResult", "ProjectFilterResult", "exact"),
+    # P13 (docs/API_CONTRACT_P13.md §2–§3): country chips and register facets.
+    (_DASHBOARD_TS, "RegionSummaryRow", "RegionSummaryRow", "exact"),
+    (_DASHBOARD_TS, "RegionSummary", "RegionSummary", "exact"),
+    # P13-T10 (docs/API_CONTRACT_P13.md §5): Dashboard analytics. The generic
+    # TS `AnalyticsBucket<K>` is not parsed (generic header); its backend side
+    # is pinned by `tests/test_p13_slice_a.py`.
+    (_DASHBOARD_TS, "DashboardAnalytics", "DashboardAnalytics", "exact"),
+    (_DASHBOARD_TS, "CompletingHubTypeCell", "CompletingHubTypeRow", "exact"),
+    (_DASHBOARD_TS, "CompletingByTypeRow", "CompletingByTypeRow", "exact"),
+    (_DASHBOARD_TS, "CompletingByHubRow", "CompletingByHubRow", "exact"),
     # P9-R04: back to "exact" (the P9-R02 temporary "subset" is over; the TS
     # mirror now carries `solver_status: string | null`).
     (_DASHBOARD_TS, "ScheduleRunSummary", "ScheduleRunSummary", "exact"),
@@ -273,6 +285,12 @@ CONTRACT_TABLE: list[tuple[Path, str, str, str]] = [
     (_CAPACITY_TS, "CapacityArea", "CapacityArea", "exact"),
     (_CAPACITY_TS, "ClassBreakdownRow", "ClassBreakdownRow", "exact"),
     (_CAPACITY_TS, "ClassBreakdown", "ClassBreakdown", "exact"),
+    # P13-T11 (docs/API_CONTRACT_P13.md §6): the priority and per-hub splits.
+    (_CAPACITY_TS, "PriorityLoadSplit", "PriorityLoadSplit", "exact"),
+    (_CAPACITY_TS, "PriorityCountSplit", "PriorityCountSplit", "exact"),
+    (_CAPACITY_TS, "ClassHubSplit", "ClassBreakdownHubRow", "exact"),
+    # P13-T11 addendum: served portfolio totals (design per hub, lab per region once).
+    (_CAPACITY_TS, "CapacityTotals", "CapacityTotals", "exact"),
     # This is the known P3-T09 GDPR-remediation drift this task exists to
     # catch: `EngineerWeekLoad.name` was removed server-side; the frontend
     # type was fixed in this same task to match. `mode="exact"` here is
@@ -280,6 +298,10 @@ CONTRACT_TABLE: list[tuple[Path, str, str, str]] = [
     (_CAPACITY_TS, "EngineerWeekLoad", "EngineerWeekLoad", "exact"),
     (_CAPACITY_TS, "ChamberWeekLoad", "ChamberWeekLoad", "exact"),
     (_CAPACITY_TS, "UtilizationMatrix", "UtilizationMatrix", "exact"),
+    # P15-T01 (ADR 0028): the Engineers x Weeks mirrors are added by
+    # frontend-builder in parallel; each row below is appended after the table
+    # (`_P15_PENDING`) only once the TS interface exists, so this does not
+    # break the build while the mirror is in flight. Once declared, it is held "exact".
     # P9-R04: back to "exact" (the P9-R02 temporary "subset" is over; the TS
     # mirror now carries `solver_status: string | null`).
     (_CAPACITY_TS, "ScheduleRunSummary", "ScheduleRunSummary", "exact"),
@@ -314,6 +336,8 @@ CONTRACT_TABLE: list[tuple[Path, str, str, str]] = [
     (_GANTT_TS, "GanttStepRow", "GanttStepRow", "exact"),
     (_GANTT_TS, "GanttProjectRow", "GanttProjectRow", "exact"),
     (_GANTT_TS, "GanttResponse", "GanttResponse", "exact"),
+    # P13-T13 (docs/API_CONTRACT_P13.md §7).
+    (_GANTT_TS, "GanttWeeklyActiveCount", "GanttWeeklyActiveCount", "exact"),
     (_GANTT_TS, "FreezeToggleRequest", "FreezeToggleRequest", "exact"),
     # P12 (docs/API_CONTRACT_P12.md §3): Gantt drag step timing
     # (backend/schemas/step_timing.py).
@@ -372,6 +396,10 @@ CONTRACT_TABLE: list[tuple[Path, str, str, str]] = [
     (_WORKFLOW_SETTINGS_TS, "HubCalendarSetting", "HubCalendarSetting", "exact"),
     (_WORKFLOW_SETTINGS_TS, "ChamberSetting", "ChamberSetting", "exact"),
     (_WORKFLOW_SETTINGS_TS, "WorkflowSettings", "WorkflowSettings", "exact"),
+    # P13-T16 (docs/API_CONTRACT_P13.md §5): workflow previews.
+    (_WORKFLOW_SETTINGS_TS, "TimelineStep", "TimelineStep", "exact"),
+    (_WORKFLOW_SETTINGS_TS, "CategoryTimeline", "CategoryTimeline", "exact"),
+    (_WORKFLOW_SETTINGS_TS, "BEquivalentRow", "BEquivalentRow", "exact"),
     (_WORKFLOW_SETTINGS_TS, "LeadTimesUpdateRequest", "LeadTimesUpdateRequest", "exact"),
     (_WORKFLOW_SETTINGS_TS, "HubCalendarUpdateRequest", "HubCalendarUpdateRequest", "exact"),
     (
@@ -455,7 +483,34 @@ CONTRACT_TABLE: list[tuple[Path, str, str, str]] = [
     (_VIP_TS, "VipProjectsResponse", "VipProjectsResponse", "exact"),
     (_VIP_TS, "VipPinRequest", "VipPinRequest", "exact"),
     (_VIP_TS, "VipPinResponse", "VipPinResponse", "exact"),
+    # --- P14-T02: VIP board (backend/schemas/vip_board.py, ADR 0027) ---
+    (_VIP_TS, "VipPillarInfo", "VipPillarRef", "exact"),
+    (_VIP_TS, "VipItemProject", "VipBoardProject", "exact"),
+    (_VIP_TS, "VipItem", "VipBoardItem", "exact"),
+    (_VIP_TS, "VipItemRef", "VipBoardVipItem", "exact"),
+    (_VIP_TS, "VipBoardArea", "VipBoardArea", "exact"),
+    (_VIP_TS, "VipBoardResponse", "VipBoardResponse", "exact"),
+    (_VIP_TS, "VipItemCreateRequest", "VipItemCreateRequest", "exact"),
+    # TS omits `area` (the Dashboard editor never moves an item between areas).
+    (_VIP_TS, "VipItemUpdateRequest", "VipItemUpdateRequest", "subset"),
+    (_VIP_TS, "VipItemLinksRequest", "VipItemLinksRequest", "exact"),
+    # --- P14-T01: priority move preview (backend/schemas/project.py, ADR 0026) ---
+    (_PRIORITY_MOVE_TS, "PriorityPreviewRequest", "PriorityPreviewRequest", "exact"),
+    (_PRIORITY_MOVE_TS, "PriorityPreviewMoved", "PriorityPreviewMoved", "exact"),
+    (_PRIORITY_MOVE_TS, "PriorityPreviewSummary", "PriorityPreviewSummary", "exact"),
+    (_PRIORITY_MOVE_TS, "PriorityPreviewChange", "PriorityPreviewChange", "exact"),
+    (_PRIORITY_MOVE_TS, "PriorityPreviewResponse", "PriorityPreviewResponse", "exact"),
 ]
+
+_P15_MIRRORS = (
+    ("EngineerWeekUtilization", "EngineerWeekUtilization"),
+    ("EngineerUtilizationRow", "EngineerUtilizationRow"),
+    ("EngineerUtilizationResponse", "EngineerUtilizationResponse"),
+)
+_capacity_ts_text = _CAPACITY_TS.read_text() if _CAPACITY_TS.exists() else ""
+for _ts_name, _be_name in _P15_MIRRORS:
+    if f"interface {_ts_name}" in _capacity_ts_text:
+        CONTRACT_TABLE.append((_CAPACITY_TS, _ts_name, _be_name, "exact"))
 
 
 @pytest.fixture(scope="module")
@@ -626,8 +681,22 @@ class TestOpenApiFrontendContract:
         # requires either adding it to CONTRACT_TABLE above or to this
         # allowlist with a one-line reason.
         frontend_only = {
-            _DASHBOARD_TS: {"ProjectFilterParams"},
+            _DASHBOARD_TS: {
+                "ProjectFilterParams",
+                # P13: declares its element types inline (`{ id; name }[]`,
+                # `{ code; name }[]`), which this parser cannot read. The
+                # backend side is pinned by
+                # `tests/test_p13_region_filter.py::test_facets_shape`.
+                "ProjectFacets",
+            },
             _MATRIX_TS: {"DimensionMeta"},
+            _GANTT_TS: {
+                # P13-T13: the Gantt's Leader / Step filter options, served by
+                # `GET /dashboard/projects/facets` (backend `ProjectFacets`).
+                # Inline element types this parser cannot read; same reason
+                # and same pin as the dashboard `ProjectFacets` entry above.
+                "GanttFacets",
+            },
             _WORKFLOW_SETTINGS_TS: {
                 # Wraps the PUT response body plus the X-Schedule-Stale-Count
                 # header; no backend schema.

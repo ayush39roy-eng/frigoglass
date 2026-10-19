@@ -33,6 +33,7 @@ describe('useGantt', () => {
       schedule_run_version: 3,
       total_count: 0,
       rows: [],
+      weekly_active_counts: [],
     });
     const { Wrapper } = makeWrapper();
     const { rerender } = renderHook(

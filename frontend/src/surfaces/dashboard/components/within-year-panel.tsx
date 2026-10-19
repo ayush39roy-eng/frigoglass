@@ -12,7 +12,7 @@ import { Badge } from '@/components/ui/badge';
 import { EmptyState } from '@/components/shared/empty-state';
 import { PriorityBandPill } from '@/components/shared/priority-band-pill';
 import { ScheduleOutcomeBadge } from '@/components/shared/schedule-outcome-badge';
-import { formatPlanWeek, formatWeek } from '@/lib/format';
+import { formatInteger, formatPlanWeek, formatWeek } from '@/lib/format';
 import { DISPLAY_HORIZON_WEEKS, SPILLOVER_YEAR, WITHIN_YEAR_WEEK } from '@/lib/domain-constants';
 import { EntityCell, ProgressCell, RowActions } from '@/components/ui/table-cells';
 import {
@@ -183,13 +183,31 @@ function shareLabel(count: number, data: CompletingWithinYear): string {
  * composes both for any caller that wants the original single block.
  */
 export function WithinYearKpis({ data, activeRun }: WithinYearPanelProps): React.JSX.Element {
+  const totalCount =
+    data.within_year_count +
+    data.spillover_count +
+    data.left_out_count +
+    data.blocked_count;
+
   return (
     <section className="space-y-s4">
       <div className="flex flex-wrap items-end justify-between gap-s3">
         <div>
-          <h2 className="font-display text-h1 font-extrabold tracking-tight text-text">
-            Completing within the year
-          </h2>
+          <div className="flex flex-wrap items-center gap-s2">
+            <h2 className="font-display text-h1 font-extrabold tracking-tight text-text">
+              Completing within the year
+            </h2>
+            {data.has_active_schedule_run ? (
+              <Badge
+                tone="neutral"
+                data-numeric=""
+                data-testid="within-year-total-projects"
+                className="rounded-pill font-bold px-2.5 py-1 text-2xs"
+              >
+                {formatInteger(totalCount)} total projects
+              </Badge>
+            ) : null}
+          </div>
           <p className="text-sm font-medium text-text-muted">
             Outcome of every project in the active schedule run
           </p>

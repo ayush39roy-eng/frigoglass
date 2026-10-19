@@ -22,6 +22,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { MOVE_COPY } from '@/components/shared/priority-move/move-copy';
+import { PriorityMoveNotAppliedError } from '@/components/shared/priority-move/form-priority-move';
 import { ApiError } from '@/lib/api/client';
 import { apiErrorMessage } from '@/lib/api/error-messages';
 import { useCategoriesForHub, type Hub } from '@/lib/api/reference';
@@ -230,7 +231,10 @@ export function ProjectForm({
     } catch (err) {
       // Never include `body` (customer_name / tcogs_eur / selling_price_eur /
       // gross_margin_pct) in an error message or log — CLAUDE.md.
-      if (err instanceof ApiError && err.isForbidden) {
+      if (err instanceof PriorityMoveNotAppliedError) {
+        // P14: the priority preview was declined or refused; nothing was saved.
+        setSubmitError(err.message);
+      } else if (err instanceof ApiError && err.isForbidden) {
         setSubmitError('Your role cannot create or edit projects.');
       } else if (err instanceof ApiError) {
         // CATEGORY_WORKFLOW_MISMATCH and other coded 422s get readable copy.

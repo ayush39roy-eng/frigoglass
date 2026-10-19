@@ -53,7 +53,7 @@ function AppliedBy({ userId }: { userId: string | null }): React.JSX.Element {
   );
 }
 
-interface ProjectLookupEntry {
+export interface ProjectLookupEntry {
   name: string;
   hub: string;
 }
@@ -169,6 +169,39 @@ export function VersionHistoryDialog({
         </div>
       </DialogContent>
     </Dialog>
+  );
+}
+
+/**
+ * P13-T15: the same scenario-version browse as the dialog above, inline, for
+ * the Versions & History page (`/history`). Read-only; the list and the diff
+ * are the served `GET /scenarios/versions[/{version}]` rows.
+ */
+export function ScenarioVersionsPanel({
+  projectLookup,
+}: {
+  projectLookup: Record<string, ProjectLookupEntry | undefined>;
+}): React.JSX.Element {
+  const [selectedVersion, setSelectedVersion] = React.useState<number | null>(null);
+  const versionsQuery = useScenarioVersions();
+  const detailQuery = useScenarioVersionDetail(selectedVersion);
+  return (
+    <div className="flex flex-col gap-3" data-testid="scenario-versions-panel">
+      {selectedVersion === null ? (
+        <VersionList query={versionsQuery} onSelect={setSelectedVersion} />
+      ) : (
+        <>
+          <div className="flex items-center gap-2">
+            <Button variant="ghost" size="sm" onClick={() => setSelectedVersion(null)} className="-ml-2">
+              <ArrowLeft />
+              All versions
+            </Button>
+            <h3 className="text-sm font-semibold text-text">Version {selectedVersion}</h3>
+          </div>
+          <VersionDetail query={detailQuery} projectLookup={projectLookup} />
+        </>
+      )}
+    </div>
   );
 }
 

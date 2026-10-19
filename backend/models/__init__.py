@@ -31,6 +31,7 @@ from models.project_access import ProjectAccessGrant
 from models.scenario import ScenarioApplyChange, ScenarioApplyRun
 from models.schedule import ScheduleRun, ScheduleRunProjectOutcome, ScheduleRunProjectStep
 from models.user import Role, User, UserHubScope, UserRole
+from models.vip import VipItem, vip_item_projects
 from models.workflow import (
     ProjectWorkflowStep,
     Workflow,
@@ -74,4 +75,6 @@ __all__ = [
     "Role",
     "UserRole",
     "UserHubScope",
+    "VipItem",
+    "vip_item_projects",
 ]

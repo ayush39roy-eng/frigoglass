@@ -77,6 +77,13 @@ export interface HubCapacityRow {
   lab_booking_status_remaining: BookingStatus;
   /** From the hub's lab region: Greece/Romania → Europe, India → India. */
   area: CapacityAreaName;
+  /** P13-T11 (API_CONTRACT_P13 §6): `design_load_weeks` split by priority
+   *  bucket, weeks, 2 dp, server-side. The buckets sum to `design_load_weeks`. */
+  design_load_by_priority: PriorityLoadSplit;
+  /** P13-T11: `lab_load_weeks` split by priority bucket, summing to it. Region-level
+   *  like `lab_load_weeks`, so it repeats on every hub row of the same lab region
+   *  and must never be added across hubs of one region. */
+  lab_load_by_priority: PriorityLoadSplit;
   /** @deprecated P3-era alias of `design_capacity_remaining`; kept one release, not read. */
   design_capacity_weeks?: number;
   /** @deprecated P3-era alias of `lab_capacity_remaining`; kept one release, not read. */
@@ -132,6 +139,62 @@ export interface HubCapacitySummary {
   /** PLACEHOLDER (P11 contract §4): Europe then India; an area with no
    *  in-scope hub is omitted. */
   areas: CapacityArea[];
+  /** P13-T11 addendum: served portfolio totals over `rows` (design per hub,
+   *  lab per lab region once). Render verbatim; never sum rows client-side. */
+  totals: CapacityTotals;
+}
+
+/** P13-T11 addendum: the total over the served hub rows (I9/I19). */
+export interface CapacityTotals {
+  hubs: HubName[];
+  lab_regions: LabRegion[];
+  design_load_weeks: number;
+  design_capacity_year: number;
+  design_capacity_remaining: number;
+  design_booked_pct_year: number | null;
+  design_booked_pct_remaining: number | null;
+  design_booking_status_year: BookingStatus;
+  design_booking_status_remaining: BookingStatus;
+  design_load_by_priority: PriorityLoadSplit;
+  lab_load_weeks: number;
+  lab_capacity_year: number;
+  lab_capacity_remaining: number;
+  lab_booked_pct_year: number | null;
+  lab_booked_pct_remaining: number | null;
+  lab_booking_status_year: BookingStatus;
+  lab_booking_status_remaining: BookingStatus;
+  lab_load_by_priority: PriorityLoadSplit;
+}
+
+/**
+ * P13-T11 (API_CONTRACT_P13 §6): one figure per priority bucket. "Queue" is a
+ * project whose priority is Q or null (P13-T11 backend decision, accepted by
+ * the orchestrator 2026-10-18 — status does not enter it). Served verbatim; the
+ * browser never re-buckets a project.
+ */
+export interface PriorityLoadSplit {
+  P1: number;
+  P2: number;
+  P3: number;
+  P4: number;
+  Queue: number;
+}
+
+/** P13-T11: project counts per priority bucket (same keys as `PriorityLoadSplit`). */
+export interface PriorityCountSplit {
+  P1: number;
+  P2: number;
+  P3: number;
+  P4: number;
+  Queue: number;
+}
+
+/** P13-T11: one hub's deliverable / left-out counts within a category (backend
+ *  `ClassBreakdownHubRow`). Only hubs with at least one project; `[]` without a run. */
+export interface ClassHubSplit {
+  hub: HubName;
+  deliverable: number;
+  left_out: number;
 }
 
 /** One category's deliverable vs. left-out counts, from `GET /capacity/class-breakdown`. */
@@ -139,6 +202,14 @@ export interface ClassBreakdownRow {
   category: ProjectCategory;
   deliverable_count: number;
   left_out_count: number;
+  /** P13-T11 addendum: `deliverable_count + left_out_count`, served. */
+  total_count: number;
+  /** P13-T11: `deliverable_count` split by priority bucket (counts). */
+  deliverable_by_priority: PriorityCountSplit;
+  /** P13-T11: `left_out_count` split by priority bucket (counts). */
+  left_out_by_priority: PriorityCountSplit;
+  /** P13-T11: per-hub deliverable / left-out counts for this category. */
+  by_hub: ClassHubSplit[];
 }
 
 export interface ClassBreakdown {
@@ -150,9 +221,9 @@ export interface ClassBreakdown {
 /**
  * Per-engineer weekly load from `GET /capacity/utilization-matrix`.
  *
- * P3-T09 (GDPR remediation, finding #1 / OPEN_QUESTIONS #8): the backend
- * `EngineerWeekLoad` schema has NO `name` field at all — it is withheld at the
- * API layer, not merely hidden by the frontend. `engineer_id`/`hub`/
+ * P3-T09: the backend `EngineerWeekLoad` schema has NO `name` field. Named
+ * per-engineer utilization is served by `GET /capacity/engineer-utilization`
+ * instead (ADR 0028, P15). `engineer_id`/`hub`/
  * `busy_weeks` are not personal data on their own and remain reportable. This
  * shape is declared only so the P3-T07 contract test covers the full endpoint
  * payload; the Capacity surface renders the CHAMBER side of the matrix
@@ -166,6 +237,33 @@ export interface EngineerWeekLoad {
   engineer_id: Id;
   hub: HubName;
   busy_weeks: number[];
+}
+
+/** One engineer-week of `GET /capacity/engineer-utilization` (P15, ADR 0028). All
+ *  figures server-computed (I9); `utilization_pct` is a 0-100 percentage. */
+export interface EngineerWeekUtilization {
+  week: number;
+  booked: number;
+  capacity: number;
+  utilization_pct: number;
+}
+
+export interface EngineerUtilizationRow {
+  id: Id;
+  name: string;
+  hub: HubName;
+  role: string;
+  total_booked: number;
+  total_capacity: number;
+  utilization_pct: number;
+  weeks: EngineerWeekUtilization[];
+}
+
+/** GET /capacity/engineer-utilization?hub_id=&region= (P15-T01, ADR 0028). */
+export interface EngineerUtilizationResponse {
+  week_range: [number, number];
+  current_week: number;
+  engineers: EngineerUtilizationRow[];
 }
 
 /**

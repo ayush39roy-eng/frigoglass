@@ -7,40 +7,95 @@
  */
 
 import { apiGet, ApiError, type ApiRequestOptions } from '@/lib/api/client';
+import type { LabRegion } from '@/types/enums';
 
 import type {
   CompletingWithinYear,
+  DashboardAnalytics,
   HubTypePipelineRow,
   PipelineTotals,
+  ProjectFacets,
   ProjectFilterParams,
   ProjectFilterResult,
+  RegionSummary,
   ScheduleRunSummary,
   StatusOverview,
 } from './types';
 
 type FetchCtx = Pick<ApiRequestOptions, 'signal'>;
 
-/** P12 (ADR 0020): the global hub filter as `hub_id`. The server ANDs it with
- *  the caller's scope and computes every total for the filtered set (I9/I19);
- *  "All hubs" sends no param at all. */
-function withHubQuery(ctx: FetchCtx, hubId: string | null | undefined): ApiRequestOptions {
-  return hubId ? { ...ctx, query: { hub_id: hubId } } : ctx;
+/** P12 (ADR 0020) + P13 (ADR 0025): the global hub / country filter as
+ *  `hub_id` / `region`. The server ANDs them with the caller's scope and
+ *  computes every total for the filtered set (I9/I19/I23); "All hubs" sends no
+ *  param at all. */
+function withHubQuery(
+  ctx: FetchCtx,
+  hubId: string | null | undefined,
+  region?: LabRegion | null,
+): ApiRequestOptions {
+  if (!hubId && !region) return ctx;
+  return { ...ctx, query: { hub_id: hubId ?? undefined, region: region ?? undefined } };
 }
 
-export function fetchPipelineTotals(ctx: FetchCtx = {}, hubId?: string | null): Promise<PipelineTotals> {
-  return apiGet<PipelineTotals>('/dashboard/pipeline-totals', withHubQuery(ctx, hubId));
+export function fetchPipelineTotals(
+  ctx: FetchCtx = {},
+  hubId?: string | null,
+  region?: LabRegion | null,
+): Promise<PipelineTotals> {
+  return apiGet<PipelineTotals>('/dashboard/pipeline-totals', withHubQuery(ctx, hubId, region));
 }
 
-export function fetchStatusOverview(ctx: FetchCtx = {}, hubId?: string | null): Promise<StatusOverview> {
-  return apiGet<StatusOverview>('/dashboard/status-overview', withHubQuery(ctx, hubId));
+export function fetchStatusOverview(
+  ctx: FetchCtx = {},
+  hubId?: string | null,
+  region?: LabRegion | null,
+): Promise<StatusOverview> {
+  return apiGet<StatusOverview>('/dashboard/status-overview', withHubQuery(ctx, hubId, region));
 }
 
-export function fetchHubTypePipeline(ctx: FetchCtx = {}, hubId?: string | null): Promise<HubTypePipelineRow[]> {
-  return apiGet<HubTypePipelineRow[]>('/dashboard/hub-type-pipeline', withHubQuery(ctx, hubId));
+export function fetchHubTypePipeline(
+  ctx: FetchCtx = {},
+  hubId?: string | null,
+  region?: LabRegion | null,
+): Promise<HubTypePipelineRow[]> {
+  return apiGet<HubTypePipelineRow[]>('/dashboard/hub-type-pipeline', withHubQuery(ctx, hubId, region));
 }
 
-export function fetchCompletingWithinYear(ctx: FetchCtx = {}, hubId?: string | null): Promise<CompletingWithinYear> {
-  return apiGet<CompletingWithinYear>('/dashboard/completing-within-year', withHubQuery(ctx, hubId));
+export function fetchCompletingWithinYear(
+  ctx: FetchCtx = {},
+  hubId?: string | null,
+  region?: LabRegion | null,
+): Promise<CompletingWithinYear> {
+  return apiGet<CompletingWithinYear>('/dashboard/completing-within-year', withHubQuery(ctx, hubId, region));
+}
+
+/** P13 (API_CONTRACT_P13 §2): per-country counts and served shares. */
+export function fetchRegionSummary(
+  ctx: FetchCtx = {},
+  hubId?: string | null,
+  region?: LabRegion | null,
+): Promise<RegionSummary> {
+  return apiGet<RegionSummary>('/dashboard/region-summary', withHubQuery(ctx, hubId, region));
+}
+
+/** P13-T10 (API_CONTRACT_P13 §5): served breakdowns and the completing
+ *  Hub × Type cross-tab, for the "Analytics & breakdown" section. */
+export function fetchDashboardAnalytics(
+  ctx: FetchCtx = {},
+  hubId?: string | null,
+  region?: LabRegion | null,
+): Promise<DashboardAnalytics> {
+  return apiGet<DashboardAnalytics>('/dashboard/analytics', withHubQuery(ctx, hubId, region));
+}
+
+/** P13 (API_CONTRACT_P13 §3): leaders and current steps present in the scoped,
+ *  filtered set, for the register's dropdowns. */
+export function fetchProjectFacets(
+  ctx: FetchCtx = {},
+  hubId?: string | null,
+  region?: LabRegion | null,
+): Promise<ProjectFacets> {
+  return apiGet<ProjectFacets>('/dashboard/projects/facets', withHubQuery(ctx, hubId, region));
 }
 
 export function fetchDashboardProjects(
@@ -54,6 +109,12 @@ export function fetchDashboardProjects(
       category: params.category,
       status_: params.status_,
       priority: params.priority,
+      region: params.region,
+      q: params.q,
+      type: params.type,
+      leader_engineer_id: params.leader_engineer_id,
+      current_step: params.current_step,
+      sort: params.sort,
     },
   });
 }

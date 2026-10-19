@@ -1,0 +1,1 @@
+import{n as e,r as t}from"./clsx-S8xFBMgc.js";import{kt as n}from"./index-Bu7XosZo.js";t();var r=e(),i={"In Buyoff":`primary`,"Under Industrialization":`neutral`,"In Development":`neutral`,"In Queue":`neutral`,Commercialized:`success`,"On Hold":`warning`,Draft:`outline`,Cancelled:`neutral`};function a({status:e,...t}){return(0,r.jsx)(n,{tone:i[e],...t,children:e})}export{a as t};

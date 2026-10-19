@@ -17,6 +17,7 @@ Their names, ids and figures never leave this function.
 from __future__ import annotations
 
 import uuid
+from collections.abc import Awaitable, Callable
 from typing import NamedTuple
 
 from sqlalchemy import select
@@ -27,6 +28,7 @@ from models.engineer import Engineer
 from models.hub import Hub
 from models.project import Project
 from models.schedule import ScheduleRun, ScheduleRunProjectOutcome, ScheduleRunProjectStep
+from scheduling.types import ScheduleOutput
 from schemas.schedule_run import ScheduleRunChangeRow, ScheduleRunChanges
 from services.hub_scope import hub_scope_filter, is_engineer_self_scoped
 
@@ -39,6 +41,8 @@ class _Compared(NamedTuple):
 
 
 _EMPTY = _Compared(None, False, False, False)
+#: Public name for the compared-fields tuple (P14 preview).
+Compared = _Compared
 
 
 async def _outcomes(db: AsyncSession, run_id: uuid.UUID) -> dict[uuid.UUID, _Compared]:
@@ -84,15 +88,58 @@ def _sort_key(row: ScheduleRunChangeRow) -> tuple[bool, int, str, str]:
 
 
 async def compute_run_changes(
-    db: AsyncSession, run: ScheduleRun, baseline: ScheduleRun, principal: Principal
+    db: AsyncSession,
+    run: ScheduleRun,
+    baseline: ScheduleRun,
+    principal: Principal,
+    *,
+    exclude_project_ids: frozenset[uuid.UUID] = frozenset(),
 ) -> ScheduleRunChanges:
     after = await _outcomes(db, run.id)
     before = after if baseline.id == run.id else await _outcomes(db, baseline.id)
 
+    async def _own() -> set[uuid.UUID]:
+        return await _own_assignment_project_ids(db, principal, run.id)
+
+    rows, hidden = await diff_outcomes(
+        db, principal, before, after, own_project_ids=_own,
+        exclude_project_ids=exclude_project_ids,
+    )
+    return ScheduleRunChanges(
+        run_id=run.id,
+        run_version=run.version,
+        against_run_id=baseline.id,
+        against_run_version=baseline.version,
+        hidden_count=hidden,
+        rows=rows,
+    )
+
+
+async def diff_outcomes(
+    db: AsyncSession,
+    principal: Principal,
+    before: dict[uuid.UUID, _Compared],
+    after: dict[uuid.UUID, _Compared],
+    *,
+    own_project_ids: Callable[[], Awaitable[set[uuid.UUID]]],
+    exclude_project_ids: frozenset[uuid.UUID] = frozenset(),
+) -> tuple[list[ScheduleRunChangeRow], int]:
+    """The changed rows visible to `principal`, and the count of changed
+    projects outside their scope (P14-T01 extraction of the body of
+    `compute_run_changes`). `before`/`after` map a project id to the four
+    compared fields; `after` comes either from stored outcome rows
+    (`compute_run_changes`) or from an unsaved scheduler output (the P14
+    priority-move preview, `outcomes_from_output`), so both use one
+    comparison. `own_project_ids` is awaited only for an Engineer
+    self-scoped principal (projects with a step assigned to them in the
+    `after` schedule). `exclude_project_ids` are neither listed nor counted.
+    """
+
     changed: set[uuid.UUID] = {
         pid
         for pid in after.keys() | before.keys()
-        if pid not in before or pid not in after or before[pid] != after[pid]
+        if pid not in exclude_project_ids
+        and (pid not in before or pid not in after or before[pid] != after[pid])
     }
 
     rows: list[ScheduleRunChangeRow] = []
@@ -103,7 +150,7 @@ async def compute_run_changes(
             .where(Project.id.in_(changed))
         )
         if is_engineer_self_scoped(principal):
-            own = await _own_assignment_project_ids(db, principal, run.id)
+            own = await own_project_ids()
             stmt = stmt.where(Project.id.in_(own))
         else:
             hub_filter = hub_scope_filter(principal, Project.hub_id)
@@ -137,11 +184,23 @@ async def compute_run_changes(
                 )
             )
     rows.sort(key=_sort_key)
-    return ScheduleRunChanges(
-        run_id=run.id,
-        run_version=run.version,
-        against_run_id=baseline.id,
-        against_run_version=baseline.version,
-        hidden_count=len(changed) - len(rows),
-        rows=rows,
-    )
+    return rows, len(changed) - len(rows)
+
+
+async def stored_outcomes(db: AsyncSession, run_id: uuid.UUID) -> dict[uuid.UUID, Compared]:
+    """The four compared fields of every stored outcome row of one run."""
+
+    return await _outcomes(db, run_id)
+
+
+def outcomes_from_output(output: ScheduleOutput) -> dict[uuid.UUID, Compared]:
+    """The same four fields from an unsaved `ScheduleOutput`, exactly as
+    `persist_schedule_output` stores them (it copies each one verbatim).
+    """
+
+    return {
+        uuid.UUID(o.project_id): _Compared(
+            o.projected_end_week, o.within_year, o.left_out, o.blocked
+        )
+        for o in output.project_outcomes
+    }

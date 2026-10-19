@@ -1,15 +1,14 @@
 import * as React from 'react';
 import { Link } from 'react-router-dom';
-import { ArrowLeft, Info, RefreshCw } from 'lucide-react';
+import { ArrowLeft, RefreshCw } from 'lucide-react';
 
 import { PriorityMoveControl } from '@/components/shared/priority-move/priority-move-control';
 import { Badge } from '@/components/ui/badge';
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { PROJECT_TYPE_LABELS } from '@/types/enums';
 
 import type { WorkspaceResponse } from '../api/types';
 import type { RecalcState } from '../hooks/use-recalc-flow';
-import { personLabel, WITHHELD } from '../lib/people';
+import { NAME_UNAVAILABLE } from '../lib/people';
 import { HealthBadge } from './health-badge';
 import { RecalcStatus, RecalculateButton } from './recalc-status';
 
@@ -72,19 +71,7 @@ export function WorkspaceHeader({
             <span aria-hidden="true">·</span>
             <span>
               Leader:{' '}
-              {p.leader_engineer_name !== null ? personLabel(p.leader_engineer_name) : (
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <button type="button" className="inline-flex items-center gap-0.5 underline decoration-dotted underline-offset-2" data-testid="leader-withheld">
-                      {WITHHELD}
-                      <Info className="size-3" aria-hidden="true" />
-                    </button>
-                  </TooltipTrigger>
-                  <TooltipContent className="max-w-xs">
-                    Named engineer data is withheld until the data-protection review (OPEN_QUESTIONS #8) is resolved.
-                  </TooltipContent>
-                </Tooltip>
-              )}
+              {p.leader_engineer_name !== null ? p.leader_engineer_name : p.leader_engineer_id ? NAME_UNAVAILABLE : '—'}
             </span>
           </div>
         </div>

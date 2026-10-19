@@ -11,6 +11,13 @@ describe('App shell + routing', () => {
     expect(await screen.findByRole('heading', { name: 'Global RPD Dashboard' })).toBeInTheDocument();
   });
 
+  it('P14 (ADR 0027): /vip redirects to the Dashboard and "VIP projects" is not in the nav', async () => {
+    renderApp('/vip');
+    expect(await screen.findByRole('heading', { name: 'Global RPD Dashboard' })).toBeInTheDocument();
+    const nav = screen.getByRole('navigation', { name: 'Surfaces' });
+    expect(within(nav).queryByRole('link', { name: 'VIP projects' })).not.toBeInTheDocument();
+  });
+
   it('lists every surface (the original six plus the Audit Log) in the sidebar nav', async () => {
     renderApp('/');
     await screen.findByRole('heading', { name: 'Global RPD Dashboard' });
@@ -59,7 +66,7 @@ describe('App shell + routing', () => {
     ).toBeInTheDocument();
     // The real surface (P4-T05) renders, not the placeholder — its zoom control
     // is always present.
-    expect(await screen.findByRole('radio', { name: 'Weeks zoom' })).toBeInTheDocument();
+    expect(await screen.findByRole('slider', { name: 'Zoom' })).toBeInTheDocument();
   });
 
   it('navigates to the Project Registration surface on nav click', async () => {

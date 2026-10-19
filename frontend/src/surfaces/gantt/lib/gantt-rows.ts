@@ -6,7 +6,7 @@
  * rows when expanded. Row heights are fixed and known ahead of layout.
  */
 
-import { PROJECT_ROW_HEIGHT, STEP_ROW_HEIGHT } from './gantt-coordinates';
+import { PROJECT_ROW_HEIGHT, ROW_HEIGHTS, STEP_ROW_HEIGHT, type GanttDensity } from './gantt-coordinates';
 import type { GanttProjectRow, GanttStepRow } from '../api/types';
 
 export type GanttVisualRow =
@@ -36,40 +36,11 @@ export function buildVisualRows(
   return out;
 }
 
-export function visualRowHeight(row: GanttVisualRow): number {
-  return row.kind === 'project' ? PROJECT_ROW_HEIGHT : STEP_ROW_HEIGHT;
-}
-
-/**
- * View-derived scan aid for the activity-load bottleneck strip: for each week in
- * the horizon, how many scheduled workflow-step bars (across the currently shown
- * projects) intersect that week.
- *
- * This is a histogram of what is already rendered — the same class of operation as
- * `rows.length` — NOT a resource/capacity figure and NOT a recomputation of the
- * schedule. The authoritative load-vs-capacity numbers live on the RPD Capacity
- * surface (Invariants I6 / I7), server-sourced. The strip only helps the eye find
- * a dense week before scrolling the rows.
- *
- * Steps of one project may overlap in time (ADR 0009 — the precedence DAG);
- * nothing here assumes `start[n] > end[n-1]`, each bar is counted on its own.
- */
-export function weeklyStepDensity(
-  rows: readonly GanttProjectRow[],
-  horizonWeeks: number,
-): number[] {
-  const counts = new Array<number>(horizonWeeks + 1).fill(0);
-  for (const project of rows) {
-    for (const step of project.steps) {
-      // A skipped step occupies no calendar time (ADR 0007) — it is not a bar.
-      if (step.skipped) continue;
-      const start = step.planned_start_week;
-      const end = step.planned_end_week;
-      if (start == null || end == null) continue;
-      const lo = Math.max(1, Math.min(start, end));
-      const hi = Math.min(horizonWeeks, Math.max(start, end));
-      for (let w = lo; w <= hi; w += 1) counts[w] = (counts[w] ?? 0) + 1;
-    }
-  }
-  return counts;
+/** Without a density, the original fixed heights (40 / 28). With one (P13-T13),
+ *  the toolbar's comfortable / forest heights. Still fixed and known ahead of
+ *  layout, which keeps row virtualization tractable. */
+export function visualRowHeight(row: GanttVisualRow | undefined, density?: GanttDensity): number {
+  const kind = row?.kind ?? 'project';
+  if (density === undefined) return kind === 'project' ? PROJECT_ROW_HEIGHT : STEP_ROW_HEIGHT;
+  return ROW_HEIGHTS[density][kind];
 }

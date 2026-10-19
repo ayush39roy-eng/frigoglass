@@ -15,13 +15,14 @@ vi.mock('@/lib/api/client', async () => {
   const actual = await vi.importActual<typeof import('@/lib/api/client')>('@/lib/api/client');
   return { ...actual, apiGet: (...a: unknown[]) => client.apiGet(...a) };
 });
-const move = { moveProjectPriority: vi.fn(), fetchScheduleRunChanges: vi.fn() };
+const move = { moveProjectPriority: vi.fn(), fetchScheduleRunChanges: vi.fn(), previewProjectPriority: vi.fn() };
 vi.mock('@/lib/api/priority-move', async () => {
   const actual = await vi.importActual<typeof import('@/lib/api/priority-move')>('@/lib/api/priority-move');
   return {
     ...actual,
     moveProjectPriority: (...a: unknown[]) => move.moveProjectPriority(...a),
     fetchScheduleRunChanges: (...a: unknown[]) => move.fetchScheduleRunChanges(...a),
+    previewProjectPriority: (...a: unknown[]) => move.previewProjectPriority(...a),
   };
 });
 const sse = { streamSolverProgress: vi.fn() };
@@ -32,7 +33,34 @@ vi.mock('@/lib/use-follow-up-run', () => ({
   useFollowUpRunWatcher: () => ({ start: vi.fn(), watching: false }),
 }));
 
+import { hubRow } from '@/surfaces/capacity/test-fixtures';
+
+import type { PriorityPreviewResponse } from '@/lib/api/priority-move';
+
 import type { PriorityBoardCard, PriorityBoardResponse } from './api';
+
+/** P14 (ADR 0026): every drop previews first; Yes confirms with the token. */
+function boardPreview(to: ProjectPriority): PriorityPreviewResponse {
+  return {
+    result: 'preview',
+    project_id: 'alpha',
+    from_priority: 'P1',
+    to_priority: to,
+    baseline_run_id: 'run-42',
+    preview_token: 'tok-b',
+    moved: { end_week_before: 40, end_week_after: 44, within_year_before: true, within_year_after: true, left_out_before: false, left_out_after: false },
+    summary: { affected: 1, delayed: 1, earlier: 0, pushed_out_of_year: 0, pulled_into_year: 0 },
+    changes: [],
+    hidden_count: 0,
+    elapsed_ms: 5,
+  };
+}
+
+async function clickYes(user: ReturnType<typeof userEvent.setup>, dialog: HTMLElement): Promise<void> {
+  const yes = within(dialog).getByRole('button', { name: 'Yes, apply' });
+  await waitFor(() => expect(yes).toBeEnabled());
+  await user.click(yes);
+}
 import PriorityBoardPage from './PriorityBoardPage';
 
 function card(id: string, overrides: Partial<PriorityBoardCard> = {}): PriorityBoardCard {
@@ -61,6 +89,9 @@ function board(cols: Partial<Record<ProjectPriority, PriorityBoardCard[]>>): Pri
     columns: (['P1', 'P2', 'P3', 'P4', 'Q'] as const).map((p) => ({
       priority: p,
       count: cols[p]?.length ?? 0,
+      // P13-T12: served per-column remaining weeks (illustrative values).
+      design_weeks: p === 'P1' ? 926 : p === 'Q' ? 310.5 : 0,
+      lab_weeks: p === 'P1' ? 907 : p === 'Q' ? 308 : 0,
       cards: cols[p] ?? [],
     })),
   };
@@ -74,6 +105,15 @@ const DEFAULT_BOARD = board({
   P2: [card('beta', { name: 'Beta Freezer', score: 50, within_year: false, projected_end_week: 60, health: 'off_track' })],
   Q: [card('gamma', { name: 'Gamma Queue', score: null, health: null, projected_end_week: null, within_year: null, tracking_status: 'idle' })],
 });
+
+/** GDPR (OQ #8): only the caller's own name is served. */
+const FACETS = {
+  leaders: [
+    { id: 'eng-self-0001', name: 'Rishi' },
+    { id: 'eng-other-9f3c', name: null },
+  ],
+  steps: [],
+};
 
 function response(overrides: Partial<PriorityMoveResponse> = {}): PriorityMoveResponse {
   return {
@@ -116,15 +156,17 @@ function pointerDrop(name: string, to: ProjectPriority): void {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  useHubFilterStore.setState({ hubId: null });
+  useHubFilterStore.setState({ hubId: null, region: null });
   client.apiGet.mockImplementation((path: string) => {
     if (path === '/priority-board') return Promise.resolve(DEFAULT_BOARD);
+    if (path === '/dashboard/projects/facets') return Promise.resolve(FACETS);
     return Promise.reject(new Error(`unexpected GET ${path}`));
   });
   sse.streamSolverProgress.mockImplementation(async (id: string) => ({ schedule_run_id: id, status: 'completed' }));
   move.fetchScheduleRunChanges.mockResolvedValue({
     run_id: 'run-43', run_version: 43, against_run_id: 'run-42', against_run_version: 42, hidden_count: 0, rows: [],
   });
+  move.previewProjectPriority.mockImplementation((_id: string, to: ProjectPriority) => Promise.resolve(boardPreview(to)));
 });
 
 describe('PriorityBoardPage — served grouping', () => {
@@ -167,6 +209,108 @@ describe('PriorityBoardPage — served grouping', () => {
     const { container } = renderWithProviders(<PriorityBoardPage />);
     await screen.findByRole('link', { name: 'Alpha Cooler' });
     expect(await seriousAxeViolations(container)).toEqual([]);
+  });
+});
+
+describe('PriorityBoardPage — P13-T12 weeks and toolbar', () => {
+  it('each column header shows the served remaining design / lab weeks', async () => {
+    renderWithProviders(<PriorityBoardPage />);
+    await screen.findByRole('link', { name: 'Alpha Cooler' });
+    expect(within(column('P1')).getByTestId('board-column-weeks')).toHaveTextContent('Remaining D 926 w · L 907 w');
+    expect(within(column('Q')).getByTestId('board-column-weeks')).toHaveTextContent('Remaining D 310.5 w · L 308 w');
+  });
+
+  it('debounces the search and sends it to the server as q', async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<PriorityBoardPage />);
+    await screen.findByRole('link', { name: 'Alpha Cooler' });
+    await user.type(screen.getByRole('searchbox', { name: 'Search' }), 'cooler');
+    await waitFor(() =>
+      expect(client.apiGet).toHaveBeenCalledWith('/priority-board', expect.objectContaining({ query: expect.objectContaining({ q: 'cooler' }) })),
+    );
+    // No intermediate keystroke reached the server.
+    expect(client.apiGet).not.toHaveBeenCalledWith('/priority-board', expect.objectContaining({ query: expect.objectContaining({ q: 'coo' }) }));
+  });
+
+  it('sends Category / Type / Status / Leader as server-side filters, with the country', async () => {
+    useHubFilterStore.setState({ hubId: null, region: 'India' });
+    const user = userEvent.setup();
+    renderWithProviders(<PriorityBoardPage />);
+    await screen.findByRole('link', { name: 'Alpha Cooler' });
+    await user.click(screen.getByRole('combobox', { name: 'Category' }));
+    await user.click(await screen.findByRole('option', { name: 'B' }));
+    await user.click(screen.getByRole('combobox', { name: 'Type' }));
+    await user.click(await screen.findByRole('option', { name: /^CO ·/ }));
+    await user.click(screen.getByRole('combobox', { name: 'Status' }));
+    await user.click(await screen.findByRole('option', { name: 'In Queue' }));
+    await user.click(screen.getByRole('combobox', { name: 'Leader' }));
+    await user.click(await screen.findByRole('option', { name: 'Rishi' }));
+    // The last BOARD request carries every filter. (Not the last GET of any
+    // path: under a loaded runner a facets fetch can land after it.)
+    await waitFor(
+      () => {
+        const boardCalls = client.apiGet.mock.calls.filter(([p]) => p === '/priority-board');
+        expect(boardCalls[boardCalls.length - 1]?.[1]).toEqual(
+          expect.objectContaining({
+            query: expect.objectContaining({
+              region: 'India',
+              category: 'B',
+              type: 'CO',
+              status_: 'In Queue',
+              leader_engineer_id: 'eng-self-0001',
+            }),
+          }),
+        );
+      },
+      { timeout: 5_000 },
+    );
+    expect(client.apiGet).toHaveBeenCalledWith('/dashboard/projects/facets', expect.objectContaining({ query: { hub_id: undefined, region: 'India' } }));
+    // Four Radix selects: allow for a loaded runner.
+  }, 15_000);
+
+  it('shows each hub\'s served design / lab load, capacity and booked % above the board', async () => {
+    client.apiGet.mockImplementation((path: string) => {
+      if (path === '/priority-board') return Promise.resolve(DEFAULT_BOARD);
+      if (path === '/dashboard/projects/facets') return Promise.resolve(FACETS);
+      if (path === '/capacity/hub-load') {
+        return Promise.resolve({
+          has_active_schedule_run: true,
+          schedule_run_version: 4,
+          remaining_weeks: 10,
+          near_full_threshold_pct: 85,
+          full_threshold_pct: 100,
+          areas: [],
+          rows: [hubRow({ hub: 'PD-India' })],
+        });
+      }
+      return Promise.reject(new Error(`unexpected GET ${path}`));
+    });
+    renderWithProviders(<PriorityBoardPage />);
+    const design = await screen.findByTestId('hub-load-PD-India-design');
+    expect(design).toHaveTextContent('587 / 252.62 wks (232.36 %)');
+    expect(screen.getByTestId('hub-load-PD-India-lab')).toHaveTextContent('496.5 / 186.22 wks (266.62 %)');
+  });
+
+  it('ADR 0028: a leader id with no name is offered as "Name unavailable"', async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<PriorityBoardPage />);
+    await screen.findByRole('link', { name: 'Alpha Cooler' });
+    await user.click(screen.getByRole('combobox', { name: 'Leader' }));
+    const options = (await screen.findAllByRole('option')).map((o) => o.textContent);
+    expect(options).toEqual(['All', 'Rishi', 'Name unavailable · 9f3c']);
+  });
+
+  it('a filtered empty board says no project matches, and Clear filters resets the toolbar', async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<PriorityBoardPage />);
+    await screen.findByRole('link', { name: 'Alpha Cooler' });
+    client.apiGet.mockImplementation((path: string) =>
+      path === '/priority-board' ? Promise.resolve(board({})) : Promise.resolve(FACETS),
+    );
+    await user.type(screen.getByRole('searchbox', { name: 'Search' }), 'zzz');
+    expect(await screen.findByText('No projects match these filters')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Clear filters' }));
+    expect(screen.getByRole('searchbox', { name: 'Search' })).toHaveValue('');
   });
 });
 
@@ -214,11 +358,14 @@ describe('PriorityBoardPage — a drop is the P11 priority move', () => {
     // optimistic: the card is already in P2, marked pending; served counts unchanged
     expect(within(column('P2')).getByRole('link', { name: 'Alpha Cooler', hidden: true })).toBeInTheDocument();
     expect(cardEl('Alpha Cooler')).toHaveAttribute('data-pending', 'true');
+    // QA-P14-1: pending cue is a dashed border, never opacity (AA contrast)
+    expect(cardEl('Alpha Cooler')).not.toHaveClass('opacity-70');
+    expect(cardEl('Alpha Cooler')).toHaveClass('border-dashed');
     expect(within(column('P1')).getByTestId('board-column-count')).toHaveTextContent('2');
 
     const dialog = await screen.findByRole('dialog', { name: 'Move to P2?' });
-    await user.click(within(dialog).getByRole('button', { name: 'Move to P2' }));
-    expect(move.moveProjectPriority).toHaveBeenCalledWith('alpha', 'P2');
+    await clickYes(user, dialog);
+    expect(move.moveProjectPriority).toHaveBeenCalledWith('alpha', 'P2', 'tok-b');
     await waitFor(() => expect(sse.streamSolverProgress).toHaveBeenCalledWith('run-43', expect.any(Function), expect.any(AbortSignal)));
     const panel = await screen.findByTestId('priority-move-panel');
     expect(await within(panel).findByRole('heading', { name: 'Timeline updated' })).toBeInTheDocument();
@@ -235,7 +382,7 @@ describe('PriorityBoardPage — a drop is the P11 priority move', () => {
     await screen.findByRole('link', { name: 'Alpha Cooler' });
     pointerDrop('Alpha Cooler', 'P3');
     const dialog = await screen.findByRole('dialog', { name: 'Move to P3?' });
-    await user.click(within(dialog).getByRole('button', { name: 'Move to P3' }));
+    await clickYes(user, dialog);
     const notice = await screen.findByTestId('priority-move-notice');
     expect(notice).toHaveTextContent(/timeline updates automatically after the current recalculation/);
     expect(sse.streamSolverProgress).not.toHaveBeenCalled();
@@ -249,20 +396,42 @@ describe('PriorityBoardPage — a drop is the P11 priority move', () => {
     pointerDrop('Alpha Cooler', 'P4');
     expect(within(column('P4')).getByRole('link', { name: 'Alpha Cooler', hidden: true })).toBeInTheDocument();
     const dialog = await screen.findByRole('dialog', { name: 'Move to P4?' });
-    await user.click(within(dialog).getByRole('button', { name: 'Move to P4' }));
-    expect(await screen.findByTestId('priority-move-notice')).toHaveTextContent(/hard gate/);
+    await clickYes(user, dialog);
+    expect(await screen.findByTestId('preview-error')).toHaveTextContent(/hard gate/);
+    await user.click(screen.getByRole('button', { name: 'Done' }));
     await waitFor(() => expect(within(column('P1')).getByRole('link', { name: 'Alpha Cooler' })).toBeInTheDocument());
     expect(within(column('P4')).queryByRole('link', { name: 'Alpha Cooler' })).not.toBeInTheDocument();
     expect(screen.getByTestId('board-announcer')).toHaveTextContent('Alpha Cooler was not moved. It is back in P1.');
   });
 
-  it('cancelling the confirm rolls the card back without a POST', async () => {
+  it('P14: the drop stays pending through the preview; Yes applies in-process and the board refetches', async () => {
+    move.moveProjectPriority.mockResolvedValue(
+      response({ recalc_status: 'applied', schedule_run_id: 'run-43', baseline_run_id: 'run-42', task_id: null }),
+    );
     const user = userEvent.setup();
     renderWithProviders(<PriorityBoardPage />);
     await screen.findByRole('link', { name: 'Alpha Cooler' });
     pointerDrop('Alpha Cooler', 'P2');
     const dialog = await screen.findByRole('dialog', { name: 'Move to P2?' });
-    await user.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+    expect(move.previewProjectPriority).toHaveBeenCalledWith('alpha', 'P2', expect.anything());
+    // Pending: shown in P2, nothing written yet.
+    expect(cardEl('Alpha Cooler')).toHaveAttribute('data-pending', 'true');
+    expect(move.moveProjectPriority).not.toHaveBeenCalled();
+    await clickYes(user, dialog);
+    expect(move.moveProjectPriority).toHaveBeenCalledWith('alpha', 'P2', 'tok-b');
+    expect(await screen.findByRole('dialog', { name: 'Moved to P2' })).toBeInTheDocument();
+    expect(sse.streamSolverProgress).not.toHaveBeenCalled();
+    await waitFor(() => expect(client.apiGet.mock.calls.filter(([p]) => p === '/priority-board').length).toBeGreaterThan(1));
+    expect(screen.getByTestId('board-announcer')).toHaveTextContent('Alpha Cooler moved to P2.');
+  });
+
+  it('No on the preview rolls the card back (snap back) without a POST', async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<PriorityBoardPage />);
+    await screen.findByRole('link', { name: 'Alpha Cooler' });
+    pointerDrop('Alpha Cooler', 'P2');
+    const dialog = await screen.findByRole('dialog', { name: 'Move to P2?' });
+    await user.click(within(dialog).getByRole('button', { name: 'No, cancel' }));
     await waitFor(() => expect(within(column('P1')).getByRole('link', { name: 'Alpha Cooler' })).toBeInTheDocument());
     expect(move.moveProjectPriority).not.toHaveBeenCalled();
   });
@@ -282,8 +451,8 @@ describe('PriorityBoardPage — a drop is the P11 priority move', () => {
     expect(screen.getByTestId('board-announcer')).toHaveTextContent('Over P3.');
     await user.keyboard(' ');
     const dialog = await screen.findByRole('dialog', { name: 'Move to P3?' });
-    await user.click(within(dialog).getByRole('button', { name: 'Move to P3' }));
-    expect(move.moveProjectPriority).toHaveBeenCalledWith('alpha', 'P3');
+    await clickYes(user, dialog);
+    expect(move.moveProjectPriority).toHaveBeenCalledWith('alpha', 'P3', 'tok-b');
   });
 
   it('keyboard: Escape cancels a pick-up without moving', async () => {

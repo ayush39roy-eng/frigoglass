@@ -281,6 +281,11 @@ async def test_post_unchanged_writes_nothing(db_session, dispatch):
         "schedule_run_id": None,
         "baseline_run_id": None,
         "task_id": None,
+        # P14 (ADR 0026): set only on `applied`.
+        "moved": None,
+        "summary": None,
+        "changes": [],
+        "hidden_count": 0,
     }
     assert dispatch.calls == []
     assert await _audits(db_session, "project.priority_move", w.project) == []

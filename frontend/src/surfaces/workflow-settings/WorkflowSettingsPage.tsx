@@ -16,6 +16,7 @@ import { ChambersTab } from './components/chambers-tab';
 import { LeadTimesTab } from './components/lead-times-tab';
 import { StaleBanner } from './components/stale-banner';
 import { StepsTab } from './components/steps-tab';
+import { TimelinesTab } from './components/timelines-tab';
 import {
   useSaveChamber,
   useSaveHubCalendar,
@@ -84,6 +85,7 @@ export default function WorkflowSettingsPage(): React.JSX.Element {
                   <TabsList>
                     <TabsTrigger value="steps">Steps &amp; precedence</TabsTrigger>
                     <TabsTrigger value="lead-times">Lead times</TabsTrigger>
+                    <TabsTrigger value="timelines">Timeline previews</TabsTrigger>
                     <TabsTrigger value="calendars">Hub calendars</TabsTrigger>
                     <TabsTrigger value="chambers">Chambers</TabsTrigger>
                   </TabsList>
@@ -103,6 +105,10 @@ export default function WorkflowSettingsPage(): React.JSX.Element {
                       saving={saveLeadTimes.isPending}
                       onSave={(body) => track(saveLeadTimes.mutateAsync(body))}
                     />
+                  </TabsContent>
+                  <TabsContent value="timelines">
+                    {/* P13-T16: served per-category previews + B-equivalent. */}
+                    <TimelinesTab />
                   </TabsContent>
                   <TabsContent value="calendars">
                     <CalendarsTab

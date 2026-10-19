@@ -51,7 +51,7 @@ from core.principal import Principal
 from core.rbac import Action, Surface
 from models.audit import AuditLogEntry
 from models.checkin import StageCheckin
-from models.enums import NON_SCHEDULABLE_STATUSES, SolverType, WorkflowStepStatus
+from models.enums import NON_SCHEDULABLE_STATUSES, LabRegion, SolverType, WorkflowStepStatus
 from models.project import Project
 from models.schedule import ScheduleRunProjectStep
 from models.user import User
@@ -71,9 +71,10 @@ from schemas.checkin import (
 )
 from services.active_run import get_active_run
 from services.checkin import CheckInAccess, candidate_filter, resolve_access, visible_stages
+from services.hub_scope import global_hub_filter
 from services.notifications import generate_stage_blocked_notifications
 from services.rate_limit import TokenBucketLimiter
-from services.run_dispatch import find_in_flight_run
+from services.run_dispatch import enqueue_or_fail, find_in_flight_run
 from services.schedule_persistence import create_queued_schedule_run
 from services.schedule_stale import mark_projects_stale
 from services.tracking import DueStage, due_stages_for, status_from_due_stages
@@ -112,6 +113,7 @@ _PROGRESS_FIELDS = (
 @router.get("/due", response_model=CheckInDueResponse)
 async def get_due_check_ins(
     hub_id: uuid.UUID | None = None,
+    region: LabRegion | None = None,
     db: AsyncSession = Depends(get_db),
     current_user: Principal = Depends(get_current_principal),
 ) -> CheckInDueResponse:
@@ -128,8 +130,10 @@ async def get_due_check_ins(
         .where(candidate_filter(access, active_run))
         .where(Project.status.not_in(list(NON_SCHEDULABLE_STATUSES)))
     )
-    if hub_id is not None:
-        stmt = stmt.where(Project.hub_id == hub_id)
+    # ADR 0020 hub / ADR 0025 country, ANDed with the scope above.
+    global_filter = global_hub_filter(Project.hub_id, hub_id, region)
+    if global_filter is not None:
+        stmt = stmt.where(global_filter)
     projects = (await db.execute(stmt)).scalars().all()
     due = await due_stages_for(db, [p.id for p in projects], active_run=active_run)
 
@@ -477,14 +481,24 @@ async def submit_check_ins(
         trigger_reason=TRIGGER_REASON,
         triggered_by_user_id=current_user.user_id,
     )
-    async_result = run_greedy_schedule.delay(
-        str(run.id),
-        triggered_by_user_id=str(current_user.user_id),
-        activate=True,
-        # The worker's "finish moved" activity event names one project.
-        recalc_project_id=str(changed_ids[0]) if len(changed_ids) == 1 else None,
+    task_id = await enqueue_or_fail(
+        db,
+        run,
+        lambda: run_greedy_schedule.delay(
+            str(run.id),
+            triggered_by_user_id=str(current_user.user_id),
+            activate=True,
+            # The worker's "finish moved" activity event names one project.
+            recalc_project_id=str(changed_ids[0]) if len(changed_ids) == 1 else None,
+        ),
+        actor_user_id=current_user.user_id,
     )
-    run.celery_task_id = async_result.id
+    if task_id is None:
+        # P14-T01 (M3): the check-in is saved and stays stale; no run.
+        return response.model_copy(
+            update={"recalc_status": "dispatch_failed", "baseline_run_id": baseline_id}
+        )
+    run.celery_task_id = task_id
     db.add(run)
     for pid in changed_ids:
         db.add(
@@ -510,7 +524,7 @@ async def submit_check_ins(
         update={
             "schedule_run_id": run.id,
             "baseline_run_id": baseline_id,
-            "task_id": str(async_result.id),
+            "task_id": task_id,
         }
     )
 

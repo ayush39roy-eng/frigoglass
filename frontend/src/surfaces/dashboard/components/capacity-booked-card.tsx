@@ -75,8 +75,8 @@ function AreaLine({ area }: { area: CapacityArea }): React.JSX.Element {
 export function CapacityBookedCard(): React.JSX.Element | null {
   // Same key + cache as the Capacity page, under the same global hub filter
   // (P12, ADR 0020): with a hub, the server serves only the area containing it.
-  const { hubId } = useHubFilter();
-  const query = useHubLoadVsCapacity({ hubId });
+  const { hubId, region } = useHubFilter();
+  const query = useHubLoadVsCapacity({ hubId, region });
   if (query.isPending) return <PanelSkeleton height="h-40" />;
   const data = query.data;
   // A read error (e.g. a stale permission table) or no run / no area in scope:

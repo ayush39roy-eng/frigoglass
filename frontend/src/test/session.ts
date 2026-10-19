@@ -43,6 +43,9 @@ export function makeMe(overrides: Partial<MeResponse> = {}): MeResponse {
     permissions: fullPermissions(),
     dev_mode: false,
     is_delegate_manager: false,
+    // P13-T15: served planning week (tests pin 31, like the backend suites).
+    current_week: 31,
+    weeks_left_in_year: 21,
     ...overrides,
   };
 }

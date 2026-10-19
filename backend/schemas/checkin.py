@@ -24,7 +24,8 @@ CHECKIN_MAX_ENTRIES = 100
 #: here so one request cannot carry megabytes of free text.
 BLOCKED_REASON_MAX_LENGTH = 2000
 
-CheckInRecalcStatus = Literal["queued", "deferred", "not_needed"]
+#: P14-T01 (M3): `dispatch_failed` = saved, but the broker refused the run.
+CheckInRecalcStatus = Literal["queued", "deferred", "not_needed", "dispatch_failed"]
 CheckInErrorCode = Literal[
     "NOT_DUE",
     "FORBIDDEN_STAGE",

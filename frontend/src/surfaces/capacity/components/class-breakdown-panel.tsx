@@ -3,21 +3,12 @@ import * as React from 'react';
 import { Badge } from '@/components/ui/badge';
 import { BoltCard } from '@/components/ui/bolt-card';
 import { CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { CategoryTag } from '@/components/ui/category-tag';
 import { EmptyState } from '@/components/shared/empty-state';
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table';
-import { formatInteger } from '@/lib/format';
 
 import type { ClassBreakdown, ClassBreakdownRow } from '../api/types';
 import { CardInfo } from '@/components/ui/card-info';
 import { ClassBreakdownChart } from './class-breakdown-chart';
+import { ClassCard } from './class-card';
 
 /**
  * "A class breakdown (A+/A/B/C) of deliverable vs. left-out projects"
@@ -72,31 +63,13 @@ export function ClassBreakdownPanel({ data }: ClassBreakdownPanelProps): React.J
           />
         ) : (
           <>
-            <div className="overflow-x-auto">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Category</TableHead>
-                    <TableHead className="text-right">Deliverable</TableHead>
-                    <TableHead className="text-right">Left out</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {data.rows.map((row: ClassBreakdownRow) => (
-                    <TableRow key={row.category}>
-                      <TableCell>
-                        <CategoryTag category={row.category} />
-                      </TableCell>
-                      <TableCell className="text-right tnum text-text" data-numeric="">
-                        {formatInteger(row.deliverable_count)}
-                      </TableCell>
-                      <TableCell className="text-right tnum text-text" data-numeric="">
-                        {formatInteger(row.left_out_count)}
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
+            {/* P13-T11: one card per category (mock-up), with the served priority
+                split and per-hub ✓/✗ counts. Replaces the plain table; the same
+                served counts are shown. */}
+            <div className="grid gap-gutter sm:grid-cols-2 xl:grid-cols-4" data-testid="class-cards">
+              {data.rows.map((row: ClassBreakdownRow) => (
+                <ClassCard key={row.category} row={row} />
+              ))}
             </div>
 
             {hasAny ? (

@@ -21,6 +21,7 @@ function row(
     blocked: false,
     cat_not_allowed: false,
     last_step_end_week: 40,
+    type: null,
     ...overrides,
   };
 }

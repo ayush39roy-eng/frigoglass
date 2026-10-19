@@ -6,9 +6,10 @@ import { formatInteger } from '@/lib/format';
 
 import { DonutChart } from '@/components/ui/donut-chart';
 
-import type { CompletingWithinYear, PipelineTotals } from '../api/types';
+import type { CompletingWithinYear, PipelineTotals, RegionSummary, RegionSummaryRow } from '../api/types';
 import { spilloverPastYearCount } from '../lib/outcome';
 import { BarChart, type BarDatum } from './bar-chart';
+import { RegionChips } from './region-chips';
 import { BoltCard } from '@/components/ui/bolt-card';
 import { CardInfo } from '@/components/ui/card-info';
 
@@ -28,9 +29,12 @@ export interface PipelinePanelProps {
   totals: PipelineTotals;
   /** `null` = the schedule-run figures are still loading or unavailable. */
   withinYear: CompletingWithinYear | null;
+  /** P13 (ADR 0025 §4): per-country chips under the composition figures.
+   *  Same scope, filter and basis as `totals` (contract §2), so they reconcile. */
+  regionSummary?: RegionSummary | null | undefined;
 }
 
-export function PipelinePanel({ totals, withinYear }: PipelinePanelProps): React.JSX.Element {
+export function PipelinePanel({ totals, withinYear, regionSummary = null }: PipelinePanelProps): React.JSX.Element {
   const compositionBars: BarDatum[] = [
     {
       key: 'new',
@@ -118,6 +122,27 @@ export function PipelinePanel({ totals, withinYear }: PipelinePanelProps): React
             max={totals.total_count}
             ariaLabel="Pipeline composition: newly registered versus carried over"
           />
+          {regionSummary ? (
+            <dl className="grid gap-1.5 pt-1" data-testid="pipeline-region-chips">
+              {(
+                [
+                  ['Active', (r: RegionSummaryRow) => ({ count: r.total_count, sharePct: r.share_pct })],
+                  ['Newly registered', (r: RegionSummaryRow) => ({ count: r.newly_registered_count })],
+                  ['Carried over', (r: RegionSummaryRow) => ({ count: r.spillover_count })],
+                ] as const
+              ).map(([label, pick]) => (
+                <div key={label} className="flex flex-wrap items-center gap-x-s2 gap-y-1">
+                  <dt className="w-28 shrink-0 text-2xs font-semibold text-text-muted">{label}</dt>
+                  <dd className="min-w-0">
+                    <RegionChips
+                      label={label}
+                      items={regionSummary.regions.map((r) => ({ region: r.region, ...pick(r) }))}
+                    />
+                  </dd>
+                </div>
+              ))}
+            </dl>
+          ) : null}
         </section>
 
         <section className="space-y-2 border-t border-dash-hairline pt-4">

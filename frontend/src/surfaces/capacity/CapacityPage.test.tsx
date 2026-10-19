@@ -5,14 +5,15 @@ import userEvent from '@testing-library/user-event';
 import { renderWithProviders } from '@/test/render';
 import { useHubFilterStore } from '@/stores/hub-filter';
 import { ApiError } from '@/lib/api/client';
-import type { ClassBreakdown, HubCapacitySummary, UtilizationMatrix } from './api/types';
-import { areaRow, hubRow, SUMMARY_P11 } from './test-fixtures';
+import type { ClassBreakdown, EngineerUtilizationResponse, HubCapacitySummary, UtilizationMatrix } from './api/types';
+import { areaRow, classRow, hubRow, SUMMARY_P11, totalsRow } from './test-fixtures';
 
 const hooks = {
   useHubLoadVsCapacity: vi.fn(),
   useClassBreakdown: vi.fn(),
   useUtilizationMatrix: vi.fn(),
   useActiveScheduleRun: vi.fn(),
+  useEngineerUtilization: vi.fn(),
 };
 
 vi.mock('./hooks/use-capacity', () => ({
@@ -20,6 +21,7 @@ vi.mock('./hooks/use-capacity', () => ({
   useClassBreakdown: (...a: unknown[]) => hooks.useClassBreakdown(...a),
   useUtilizationMatrix: (...a: unknown[]) => hooks.useUtilizationMatrix(...a),
   useActiveScheduleRun: () => hooks.useActiveScheduleRun(),
+  useEngineerUtilization: () => hooks.useEngineerUtilization(),
 }));
 vi.mock('./components/hub-load-chart', () => ({ HubLoadChart: () => <div data-testid="hub-load-chart" /> }));
 vi.mock('./components/class-breakdown-chart', () => ({
@@ -46,7 +48,7 @@ const hubLoad: HubCapacitySummary = {
 const classBreakdown: ClassBreakdown = {
   has_active_schedule_run: true,
   schedule_run_version: 6,
-  rows: [{ category: 'A+', deliverable_count: 4, left_out_count: 1 }],
+  rows: [classRow({ category: 'A+', deliverable_count: 4, left_out_count: 1, total_count: 5 })],
 };
 const utilization: UtilizationMatrix = {
   has_active_schedule_run: true,
@@ -57,10 +59,22 @@ const utilization: UtilizationMatrix = {
   ],
 };
 
+const engUtil: EngineerUtilizationResponse = {
+  week_range: [1, 4],
+  current_week: 2,
+  engineers: [
+    {
+      id: 'e1', name: 'Priya N', hub: 'R&D-Greece', role: 'Designer', total_booked: 3.5, total_capacity: 4, utilization_pct: 87.5,
+      weeks: [1, 2, 3, 4].map((week) => ({ week, booked: 0.5 + week * 0.1, capacity: 1, utilization_pct: 60 + week * 10 })),
+    },
+  ],
+};
+
 beforeEach(() => {
   vi.clearAllMocks();
-  useHubFilterStore.setState({ hubId: null });
+  useHubFilterStore.setState({ hubId: null, region: null });
   hooks.useActiveScheduleRun.mockReturnValue(ready(null));
+  hooks.useEngineerUtilization.mockReturnValue(pending);
 });
 
 describe('CapacityPage', () => {
@@ -70,10 +84,22 @@ describe('CapacityPage', () => {
     hooks.useClassBreakdown.mockReturnValue(pending);
     hooks.useUtilizationMatrix.mockReturnValue(pending);
     renderWithProviders(<CapacityPage />);
-    expect(hooks.useHubLoadVsCapacity).toHaveBeenLastCalledWith({ hubId: 'hub-india' });
-    expect(hooks.useClassBreakdown).toHaveBeenLastCalledWith('hub-india');
-    expect(hooks.useUtilizationMatrix).toHaveBeenLastCalledWith('hub-india');
+    expect(hooks.useHubLoadVsCapacity).toHaveBeenLastCalledWith({ hubId: 'hub-india', region: null });
+    expect(hooks.useClassBreakdown).toHaveBeenLastCalledWith('hub-india', null);
+    expect(hooks.useUtilizationMatrix).toHaveBeenLastCalledWith('hub-india', null);
     expect(screen.getByTestId('hub-filter-chip')).toBeInTheDocument();
+  });
+
+  it('P13 (ADR 0025): every panel follows the country filter, with the "Country:" chip', () => {
+    useHubFilterStore.setState({ hubId: null, region: 'Romania' });
+    hooks.useHubLoadVsCapacity.mockReturnValue(pending);
+    hooks.useClassBreakdown.mockReturnValue(pending);
+    hooks.useUtilizationMatrix.mockReturnValue(pending);
+    renderWithProviders(<CapacityPage />);
+    expect(hooks.useHubLoadVsCapacity).toHaveBeenLastCalledWith({ hubId: null, region: 'Romania' });
+    expect(hooks.useClassBreakdown).toHaveBeenLastCalledWith(null, 'Romania');
+    expect(hooks.useUtilizationMatrix).toHaveBeenLastCalledWith(null, 'Romania');
+    expect(screen.getByTestId('hub-filter-chip')).toHaveTextContent('Country: Romania');
   });
 
   it('always renders the surface heading and the reporting-basis notice', async () => {
@@ -111,18 +137,64 @@ describe('CapacityPage', () => {
     expect(screen.getByTestId('area-Europe-design')).toHaveTextContent('108.7 %');
   });
 
+  it('P13-T11: KPI cards and the matrix TOTAL row render the served totals verbatim, following the horizon', async () => {
+    const user = userEvent.setup();
+    const rows = [
+      hubRow({ hub: 'PD-India' }),
+      hubRow({
+        hub: 'R&D-India',
+        design_load_weeks: 16,
+        design_load_by_priority: { P1: 16, P2: 0, P3: 0, P4: 0, Queue: 0 },
+      }),
+    ];
+    // Served totals (illustrative, deliberately not the rows' sum: the page must not add rows up).
+    const totals = totalsRow({
+      hubs: ['PD-India', 'R&D-India'],
+      design_load_weeks: 603,
+      design_capacity_year: 290.1,
+      design_booked_pct_year: 207.86,
+      design_booked_pct_remaining: 299.5,
+      design_load_by_priority: { P1: 416, P2: 100, P3: 50, P4: 0, Queue: 37 },
+    });
+    hooks.useHubLoadVsCapacity.mockReturnValue(ready({ ...hubLoad, rows, totals }));
+    hooks.useClassBreakdown.mockReturnValue(ready(classBreakdown));
+    hooks.useUtilizationMatrix.mockReturnValue(ready(utilization));
+    renderWithProviders(<CapacityPage />);
+
+    expect(screen.getByRole('group', { name: 'Design load' })).toHaveTextContent('207.86 % used');
+    expect(screen.getByRole('group', { name: 'Design load' })).toHaveTextContent('/ 290.1');
+    expect(screen.getByTestId('kpi-Design load-P1')).toHaveTextContent('416');
+    expect(screen.getByTestId('kpi-Lab load-P1')).toHaveTextContent('300');
+    expect(screen.getByLabelText('Lab load by lab region')).toHaveTextContent('India: 496.5');
+
+    // Matrix: one row per hub, served buckets verbatim, served booked % as Util.
+    expect(screen.getByTestId('util-PD-India-P2-D')).toHaveTextContent('100');
+    expect(screen.getByTestId('util-PD-India-Queue-L')).toHaveTextContent('100');
+    expect(screen.getByTestId('util-row-PD-India')).toHaveTextContent('232.36 %');
+    const total = screen.getByTestId('util-row-total');
+    expect(total).toHaveTextContent('603');
+    expect(total).toHaveTextContent('207.86 %');
+
+    await user.click(screen.getByRole('radio', { name: 'Remaining year' }));
+    expect(screen.getByTestId('util-row-total')).toHaveTextContent('299.5 %');
+    expect(screen.getByRole('group', { name: 'Design load' })).toHaveTextContent('299.5 % used');
+  });
+
   it('renders every panel from its own schedule-run-sourced payload on success', () => {
     hooks.useHubLoadVsCapacity.mockReturnValue(ready(hubLoad));
     hooks.useClassBreakdown.mockReturnValue(ready(classBreakdown));
     hooks.useUtilizationMatrix.mockReturnValue(ready(utilization));
+    hooks.useEngineerUtilization.mockReturnValue(ready(engUtil));
     renderWithProviders(<CapacityPage />);
 
     // verbatim I6/I7 load figure from the hub-load endpoint (StatCard + chart label)
     expect(screen.getAllByText('120').length).toBeGreaterThan(0);
     expect(screen.getByText('Class breakdown — deliverable vs. left out')).toBeInTheDocument();
     expect(screen.getByText('Resource utilization matrix')).toBeInTheDocument();
-    // the GDPR placeholder is always where the named-engineer view would be
-    expect(screen.getByText(/pending GDPR sign-off/i)).toBeInTheDocument();
+    // ADR 0028: the Engineers x weeks heatmap replaces the old GDPR placeholder
+    expect(screen.queryByText(/pending GDPR sign-off/i)).not.toBeInTheDocument();
+    expect(screen.getByRole('table', { name: 'Engineer utilization by week' })).toBeInTheDocument();
+    expect(screen.getByText('Priya N')).toBeInTheDocument();
     // provenance names the exact active run version
     expect(screen.getAllByTestId('schedule-run-provenance')[0]).toHaveTextContent(/v6/);
   });

@@ -13,7 +13,14 @@ from typing import Literal
 
 from pydantic import BaseModel
 
-from models.enums import HubName, ProjectCategory, ProjectPriority, ProjectStatus, ProjectType
+from models.enums import (
+    HubName,
+    LabRegion,
+    ProjectCategory,
+    ProjectPriority,
+    ProjectStatus,
+    ProjectType,
+)
 
 
 class PipelineTotals(BaseModel):
@@ -66,6 +73,9 @@ class CompletingWithinYearRow(BaseModel):
     hub: HubName
     category: ProjectCategory | None
     priority: ProjectPriority | None
+    #: P13-T10 (docs/API_CONTRACT_P13.md §5): the project's type; null when
+    #: unmapped.
+    type: ProjectType | None
     within_year: bool
     spillover: bool
     left_out: bool
@@ -108,6 +118,10 @@ class CompletingWithinYear(BaseModel):
     rows: list[CompletingWithinYearRow]
 
 
+#: The active run's per-project outcome bucket (P13 register column).
+ScheduleOutcome = Literal["WITHIN_YEAR", "SPILLOVER", "LEFT_OUT", "BLOCKED"]
+
+
 class ProjectFilterRow(BaseModel):
     """One row of the "analytics breakdown with filters" endpoint — a light
     projection, not the full `ProjectRead` (Project Registration's job).
@@ -123,8 +137,171 @@ class ProjectFilterRow(BaseModel):
     is_vip: bool
     #: P12 (ADR 0021 §4), from `services.tracking.tracking_status_for`.
     tracking_status: Literal["live", "due", "overdue", "idle"]
+    # --- P13 (ADR 0025, docs/API_CONTRACT_P13.md §3): register columns. All
+    # additive. No financial field (TCOGS, gross margin, selling price,
+    # customer name) is ever part of this projection.
+    external_code: str | None
+    type: ProjectType | None
+    #: The hub's served lab region ("country").
+    region: LabRegion
+    #: OQ#8 (P3-T09 pattern, as on the Workspace): null unless the leader is
+    #: the caller. `leader_engineer_id` is an id, not a name, and is served.
+    leader_name: str | None
+    leader_engineer_id: uuid.UUID | None
+    #: First workflow step that is neither Done nor skipped (the active run's
+    #: skipped flag, else the ADR 0007 rule) — `services.project_cards`.
+    current_step_code: str | None
+    current_step_name: str | None
+    #: The active run's projected finish week (`projected_end_week`); null
+    #: with no active run or when the project is not scheduled in it.
+    end_week: int | None
+    #: The active run's exclusive outcome bucket, same precedence as
+    #: `/dashboard/completing-within-year` (Blocked first); null if none.
+    outcome: ScheduleOutcome | None
+    reg_year: int | None
+    carry_over: bool
+    #: 1-based rank by weighted score (descending, then name) within the
+    #: filtered set; null when the project has no score.
+    priority_rank: int | None
 
 
 class ProjectFilterResult(BaseModel):
     total_count: int
     rows: list[ProjectFilterRow]
+
+
+class NamedId(BaseModel):
+    """A leader option for the register's filter. `name` is null unless the
+    engineer is the caller (OQ#8, P3-T09 pattern)."""
+
+    id: uuid.UUID
+    name: str | None
+
+
+class StepFacet(BaseModel):
+    code: str
+    name: str
+
+
+class ProjectFacets(BaseModel):
+    """`GET /dashboard/projects/facets` (P13 §3): only values present in the
+    caller's scoped, filtered set."""
+
+    leaders: list[NamedId]
+    steps: list[StepFacet]
+
+
+class RegionSummaryRow(BaseModel):
+    """One country of `GET /dashboard/region-summary` (ADR 0025 §4).
+
+    `total_count`, `spillover_count` and `newly_registered_count` use the
+    `PipelineTotals` basis (every project except Commercialized), so the
+    chips under the pipeline cards reconcile with them. `status_counts` uses
+    the `StatusOverview` basis (every status, Commercialized included), so
+    the chips under each status card reconcile with it. Every share is
+    computed here, 2 dp; a zero denominator gives 0.0.
+    """
+
+    region: LabRegion
+    total_count: int
+    #: `total_count` / the portfolio `total_count` × 100.
+    share_pct: float
+    spillover_count: int
+    newly_registered_count: int
+    #: Every `ProjectStatus` wire value, 0 if none.
+    status_counts: dict[str, int]
+    #: Per status: this region's count / that status's count across the
+    #: filtered portfolio × 100.
+    status_share_pct: dict[str, float]
+
+
+class RegionSummary(BaseModel):
+    #: Equals `PipelineTotals.total_count` for the same filter.
+    total_count: int
+    #: Always Greece, India, Romania, in that order, zero rows included.
+    regions: list[RegionSummaryRow]
+
+
+# --- P13-T10: Dashboard analytics (docs/API_CONTRACT_P13.md §5) ---------------
+
+
+class AnalyticsBucket(BaseModel):
+    """One slice of a composition chart. `key` is the type / category / hub
+    / registration-year value as a string, or the sentinel `"Unmapped"`
+    (null type or category) / `"Unknown"` (null `reg_year`)."""
+
+    key: str
+    count: int
+    #: `count` / the filtered pipeline total × 100, 2 dp; 0.0 when the total
+    #: is 0. Computed here, never in the browser (I19).
+    share_pct: float
+
+
+class CompletingHubTypeRow(BaseModel):
+    """"Completing within year: Hub × Type" — one (hub, type) cell present in
+    the filtered pipeline."""
+
+    hub: HubName
+    #: Null when the project's type is unmapped.
+    type: ProjectType | None
+    pipeline_count: int
+    #: Projects of this cell whose active-run bucket is `WITHIN_YEAR` (the
+    #: `/completing-within-year` exclusive bucket: Blocked wins).
+    completing_count: int
+    #: `completing_count` / `pipeline_count` × 100, 2 dp; 0.0 when 0.
+    completing_pct: float
+
+
+class CompletingByTypeRow(BaseModel):
+    """Pipeline vs completing, per type (`key` as in `AnalyticsBucket`)."""
+
+    key: str
+    pipeline_count: int
+    completing_count: int
+    completing_pct: float
+
+
+class CompletingByHubRow(BaseModel):
+    """The cross-tab's per-hub Total column: the sum of that hub's
+    `completing_hub_type` cells, same basis."""
+
+    key: HubName
+    pipeline_count: int
+    completing_count: int
+    #: `completing_count` / `pipeline_count` × 100, 2 dp.
+    completing_pct: float
+
+
+class DashboardAnalytics(BaseModel):
+    """`GET /dashboard/analytics`.
+
+    **Basis**: the `PipelineTotals` basis — every project except
+    Commercialized — in the caller's scope, ANDed with `hub_id` / `region`.
+    Each list's counts therefore sum to `PipelineTotals.total_count` for the
+    same filter.
+
+    **Completing** is the active run's exclusive `WITHIN_YEAR` bucket (as on
+    `/completing-within-year`), counted inside the same basis. Without an
+    active run both `completing_*` lists are empty and
+    `has_active_schedule_run` is false.
+    """
+
+    #: Every `ProjectType` in enum order (zeros included), then `"Unmapped"`
+    #: if any project has no type.
+    by_type: list[AnalyticsBucket]
+    #: Every `ProjectCategory` in enum order (zeros included), then
+    #: `"Unmapped"` if any project has no category.
+    by_category: list[AnalyticsBucket]
+    #: Every hub in the caller's scope and filter, by name (zeros included).
+    by_hub: list[AnalyticsBucket]
+    #: Registration years ascending, then `"Unknown"` if any are null.
+    by_reg_year: list[AnalyticsBucket]
+    #: (hub, type) cells with `pipeline_count > 0`; hub name, then type enum
+    #: order, unmapped last.
+    completing_hub_type: list[CompletingHubTypeRow]
+    #: Same keys and order as `by_type`.
+    completing_by_type: list[CompletingByTypeRow]
+    #: Hubs with `pipeline_count > 0`, in `by_hub` order; each row sums that
+    #: hub's `completing_hub_type` cells. Empty without an active run.
+    completing_by_hub: list[CompletingByHubRow]
+    has_active_schedule_run: bool

@@ -44,8 +44,11 @@ flight and queued its own run).
 
 from __future__ import annotations
 
+import logging
 import uuid
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 from sqlalchemy import func, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
@@ -81,6 +84,130 @@ def in_flight_window() -> timedelta:
     )
 
 
+logger = logging.getLogger(__name__)
+
+#: ADR 0026 §4: `ScheduleRun.error_message` of a reaped run.
+ABANDONED_ERROR = "ABANDONED"
+#: Audit action written once per reaped run.
+ABANDONED_AUDIT_ACTION = "schedule_run.abandoned"
+
+
+async def reap_abandoned_runs(db: AsyncSession) -> list[uuid.UUID]:
+    """ADR 0026 §4 (P14-T01): mark every `QUEUED`/`RUNNING` run created
+    before the in-flight window as `FAILED` with error `ABANDONED`, with one
+    `schedule_run.abandoned` audit row each (actor null: the system did it).
+
+    Called by `find_in_flight_run` with the dispatch lock held, so it runs
+    wherever dispatch is decided, not only when the beat sweeper happens to
+    be deployed (the owner's dev stack runs no worker at all). It only
+    flushes: the rows commit with the caller's transaction, and a caller
+    that rolls back (a 409) leaves them for the next decision. Such a row is
+    already outside the in-flight check, so it never blocks anything and
+    never becomes active; reaping just makes that visible. The sweeper keeps
+    its own tick for deployments with a worker.
+    """
+
+    cutoff = datetime.now(UTC) - in_flight_window()
+    stale = (
+        (
+            await db.execute(
+                select(ScheduleRun)
+                .where(
+                    ScheduleRun.status.in_(
+                        [ScheduleRunStatus.QUEUED, ScheduleRunStatus.RUNNING]
+                    ),
+                    ScheduleRun.created_at <= cutoff,
+                )
+                .order_by(ScheduleRun.version)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    now = datetime.now(UTC)
+    for run in stale:
+        previous = run.status.value
+        run.status = ScheduleRunStatus.FAILED
+        run.error_message = ABANDONED_ERROR
+        run.completed_at = now
+        db.add(run)
+        db.add(
+            AuditLogEntry(
+                actor_user_id=None,
+                action=ABANDONED_AUDIT_ACTION,
+                entity_type="ScheduleRun",
+                entity_id=str(run.id),
+                hub_id=None,
+                before_state={"status": previous},
+                after_state={
+                    "status": ScheduleRunStatus.FAILED.value,
+                    "error": ABANDONED_ERROR,
+                    "schedule_run_version": run.version,
+                    "trigger_reason": run.trigger_reason,
+                },
+            )
+        )
+    if stale:
+        await db.flush()
+    return [run.id for run in stale]
+
+
+
+#: P14-T01 (M3): `ScheduleRun.error_message` when the broker refused the message.
+DISPATCH_FAILED_ERROR = "DISPATCH_FAILED"
+DISPATCH_FAILED_AUDIT_ACTION = "schedule_run.dispatch_failed"
+
+
+async def enqueue_or_fail(
+    db: AsyncSession,
+    run: ScheduleRun,
+    send: Callable[[], Any],
+    *,
+    actor_user_id: uuid.UUID | None,
+) -> str | None:
+    """Enqueue the Celery message for an already-committed QUEUED `run`.
+
+    `send()` is the `.delay(...)` call; its result's id is returned. P14-T01
+    (M3): if the broker refuses (Redis down, misconfigured), the QUEUED row
+    would otherwise sit there until reaped and the request would 500 after
+    its inputs were already committed. Instead the row is marked `FAILED`
+    with error `DISPATCH_FAILED`, one `schedule_run.dispatch_failed` audit
+    row is written, it is committed, and `None` is returned so the caller
+    can answer a defined status. Only the exception *type* is logged: a
+    broker error message can carry the broker URL.
+    """
+
+    try:
+        return str(send().id)
+    except Exception as exc:  # noqa: BLE001 - any broker failure, see docstring
+        logger.warning(
+            "ScheduleRun %s: could not enqueue the solver message (%s)",
+            run.id,
+            type(exc).__name__,
+        )
+    run.status = ScheduleRunStatus.FAILED
+    run.error_message = DISPATCH_FAILED_ERROR
+    run.completed_at = datetime.now(UTC)
+    db.add(run)
+    db.add(
+        AuditLogEntry(
+            actor_user_id=actor_user_id,
+            action=DISPATCH_FAILED_AUDIT_ACTION,
+            entity_type="ScheduleRun",
+            entity_id=str(run.id),
+            hub_id=None,
+            before_state={"status": ScheduleRunStatus.QUEUED.value},
+            after_state={
+                "status": ScheduleRunStatus.FAILED.value,
+                "error": DISPATCH_FAILED_ERROR,
+                "schedule_run_version": run.version,
+                "trigger_reason": run.trigger_reason,
+            },
+        )
+    )
+    await db.commit()
+    return None
+
 
 async def find_in_flight_run(
     db: AsyncSession,
@@ -104,6 +231,8 @@ async def find_in_flight_run(
     """
 
     await db.execute(select(func.pg_advisory_xact_lock(DISPATCH_LOCK_KEY)))
+    # ADR 0026 §4: rows past the window are reaped where dispatch is decided.
+    await reap_abandoned_runs(db)
     cutoff = datetime.now(UTC) - in_flight_window()
     in_flight = (
         await db.execute(
@@ -212,10 +341,21 @@ async def dispatch_follow_up_if_requested(db: AsyncSession) -> uuid.UUID | None:
         trigger_reason=FOLLOW_UP_TRIGGER_REASON,
         triggered_by_user_id=None,
     )
-    async_result = run_greedy_schedule.delay(
-        str(run.id), triggered_by_user_id=None, activate=True, recalc_project_id=None
+    task_id = await enqueue_or_fail(
+        db,
+        run,
+        lambda: run_greedy_schedule.delay(
+            str(run.id), triggered_by_user_id=None, activate=True, recalc_project_id=None
+        ),
+        actor_user_id=None,
     )
-    run.celery_task_id = async_result.id
+    if task_id is None:
+        # M3: keep the request alive for the next sweeper tick or run end.
+        await db.execute(select(func.pg_advisory_xact_lock(DISPATCH_LOCK_KEY)))
+        await _set_follow_up(db, FOLLOW_UP_TRIGGER_REASON)
+        await db.commit()
+        return None
+    run.celery_task_id = task_id
     db.add(run)
     db.add(
         AuditLogEntry(

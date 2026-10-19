@@ -11,7 +11,14 @@
  */
 
 import { apiGet, apiSend, type ApiRequestOptions } from '@/lib/api/client';
-import type { CurrencyCode, ProjectCategory } from '@/types/enums';
+import type { CurrencyRate } from '@/lib/api/reference';
+import type {
+  CurrencyCode,
+  LabRegion,
+  ProjectCategory,
+  ProjectStatus,
+  ProjectType,
+} from '@/types/enums';
 
 import type {
   PriorityMatrixRow,
@@ -29,7 +36,15 @@ type FetchCtx = Pick<ApiRequestOptions, 'signal'>;
 export interface MatrixQueryParams {
   currency: CurrencyCode;
   hubId?: string | undefined;
+  /** P13 (ADR 0025): the country filter, sent as `region`. */
+  region?: LabRegion | undefined;
   category?: ProjectCategory | undefined;
+  /** P13-T14 (API_CONTRACT_P13 §7): the Type chip. */
+  type?: ProjectType | undefined;
+  /** P13-T14: the Status chip, sent as `status_`. */
+  status?: ProjectStatus | undefined;
+  /** P13-T14: the Project column search — name or code substring, ≤ 100 chars. */
+  q?: string | undefined;
 }
 
 export function fetchPriorityMatrix(
@@ -41,14 +56,35 @@ export function fetchPriorityMatrix(
     query: {
       currency: params.currency,
       hub_id: params.hubId,
+      region: params.region,
       category: params.category,
+      type: params.type,
+      status_: params.status,
+      q: params.q,
     },
   });
 }
 
-export function fetchPrioritySummary(ctx: FetchCtx = {}, hubId?: string | null): Promise<PriorityPortfolioSummary> {
-  // P12 (ADR 0020): the global hub filter, ANDed server-side with the scope.
-  return apiGet<PriorityPortfolioSummary>('/priorities/summary', hubId ? { ...ctx, query: { hub_id: hubId } } : ctx);
+/**
+ * `PUT /currency-rates/{code}` (P13-T14, existing endpoint) — Admin / Super
+ * Admin only; the server 403s anyone else. The body is exactly
+ * `{rate_to_eur}` (`extra="forbid"`). The server then converts every
+ * financial column with the new rate; the browser never applies it.
+ */
+export function updateCurrencyRate(code: CurrencyCode, rateToEur: number): Promise<CurrencyRate> {
+  return apiSend<CurrencyRate>('PUT', `/currency-rates/${code}`, { rate_to_eur: rateToEur });
+}
+
+export function fetchPrioritySummary(
+  ctx: FetchCtx = {},
+  hubId?: string | null,
+  region?: LabRegion | null,
+): Promise<PriorityPortfolioSummary> {
+  // P12 (ADR 0020) + P13 (ADR 0025): the global hub / country filter, ANDed server-side with the scope.
+  return apiGet<PriorityPortfolioSummary>(
+    '/priorities/summary',
+    hubId || region ? { ...ctx, query: { hub_id: hubId ?? undefined, region: region ?? undefined } } : ctx,
+  );
 }
 
 /**

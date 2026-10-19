@@ -7,6 +7,10 @@ import {
   fetchScheduleRunChanges,
   HARD_GATE_FORCES_P1,
   moveProjectPriority,
+  PREVIEW_STALE,
+  previewProjectPriority,
+  type PriorityMoveResponse,
+  type PriorityPreviewResponse,
   type RecalcStatus,
 } from '@/lib/api/priority-move';
 import { queryKeys } from '@/lib/query-keys';
@@ -15,7 +19,8 @@ import { useFollowUpRunWatcher } from '@/lib/use-follow-up-run';
 import type { ProjectPriority } from '@/types/enums';
 
 import { MOVE_COPY, notNeededCopy } from './move-copy';
-import { MoveConfirmDialog, MoveFlowPanel } from './move-flow-panel';
+import { MoveFlowPanel } from './move-flow-panel';
+import { PriorityPreviewDialog } from './priority-preview-dialog';
 import type {
   PriorityMoveApi,
   PriorityMoveOutcome,
@@ -24,10 +29,20 @@ import type {
 } from './priority-move-context';
 
 /**
- * The priority-move flow (ADR 0015, P11-T02), shared by the Gantt, the Project
- * Workspace header and the Registration / Workspace edit form.
+ * The priority-move flow (ADR 0015, P11-T02; preview first since P14, ADR 0026),
+ * shared by the Priority board, the Gantt, the Project Workspace header and the
+ * Registration / Workspace edit form.
  *
- *   confirm → POST /projects/{id}/priority → recalc_status
+ *   POST …/priority/preview → the preview dialog (nothing written yet)
+ *     unchanged  → nothing
+ *     not_needed → "not in the plan" note, Yes still saves the priority
+ *     409 HARD_GATE_FORCES_P1 → the hard-gate copy
+ *   Yes → POST /projects/{id}/priority {preview_token} → recalc_status
+ *     applied    → the applied result in the dialog (run already active)
+ *     409 PREVIEW_STALE → re-preview automatically, once
+ *   No → nothing is written (a board drop snaps back)
+ *
+ * The confirm (and the form's PATCH path) can still answer:
  *     queued     → follow the run's SSE progress → GET …/changes → "Timeline updated"
  *     deferred   → "updates automatically" copy + watch for the follow-up run (ADR 0023)
  *     not_needed → honest "not in the plan" copy
@@ -49,8 +64,18 @@ interface RunMoveFields {
 
 export type MoveFlowState =
   | { kind: 'idle' }
-  | { kind: 'confirm'; target: PriorityMoveTarget; next: ProjectPriority }
-  | { kind: 'submitting'; target: PriorityMoveTarget; next: ProjectPriority }
+  // P14 (ADR 0026): the modal preview dialog.
+  | { kind: 'previewing'; target: PriorityMoveTarget; next: ProjectPriority; refreshed: boolean }
+  | {
+      kind: 'preview' | 'applying';
+      target: PriorityMoveTarget;
+      next: ProjectPriority;
+      preview: PriorityPreviewResponse;
+      /** This preview replaced one that went stale before Yes (PREVIEW_STALE). */
+      refreshed: boolean;
+    }
+  | { kind: 'applied'; target: PriorityMoveTarget; next: ProjectPriority; result: PriorityMoveResponse }
+  | { kind: 'previewError'; target: PriorityMoveTarget; next: ProjectPriority; body: string }
   | ({ kind: 'running' } & RunMoveFields)
   | ({ kind: 'updated' } & RunMoveFields)
   | { kind: 'notice'; target: PriorityMoveTarget; tone: 'success' | 'warning' | 'danger'; title: string; body: string };
@@ -64,9 +89,14 @@ interface RecalcSignal {
 /** The priority itself changed and the project is now `schedule_stale`, so
  *  every view showing priority or the stale flag refetches. */
 function invalidatePriorityWrite(queryClient: QueryClient): void {
-  for (const key of [['projects'], ['gantt'], ['dashboard'], ['priority-matrix'], ['priority-board'], ['vip-projects']]) {
+  for (const key of [['projects'], ['gantt'], ['dashboard'], ['priority-matrix'], ['priority-board'], ['vip-board']]) {
     void queryClient.invalidateQueries({ queryKey: key });
   }
+}
+
+/** A request is in flight (preview, confirm) or a queued run is being followed. */
+function isBusy(kind: MoveFlowState['kind']): boolean {
+  return kind === 'previewing' || kind === 'applying' || kind === 'running';
 }
 
 export function usePriorityMoveFlow(): { api: PriorityMoveApi; element: React.JSX.Element } {
@@ -83,8 +113,15 @@ export function usePriorityMoveFlow(): { api: PriorityMoveApi; element: React.JS
       before: ProjectPriority | null,
       after: ProjectPriority | null,
     ): Promise<void> => {
-      if (signal.recalc_status === 'unchanged') {
+      if (signal.recalc_status === 'unchanged' || signal.recalc_status === 'applied') {
+        // `applied` is handled by `confirm` (it carries the change list); a
+        // PATCH never reports it.
         setFlow({ kind: 'idle' });
+        return;
+      }
+      if (signal.recalc_status === 'dispatch_failed') {
+        invalidatePriorityWrite(queryClient);
+        setFlow({ kind: 'notice', target, tone: 'danger', title: 'Priority saved — timeline not recalculated', body: MOVE_COPY.dispatchFailed });
         return;
       }
       if (signal.recalc_status === 'deferred') {
@@ -140,8 +177,43 @@ export function usePriorityMoveFlow(): { api: PriorityMoveApi; element: React.JS
   }, []);
   const busyRef = React.useRef(false);
   React.useEffect(() => {
-    busyRef.current = flow.kind === 'submitting' || flow.kind === 'running';
+    busyRef.current = isBusy(flow.kind);
   }, [flow.kind]);
+
+  // One preview request at a time; a newer one (or No) aborts the older.
+  const previewAbortRef = React.useRef<AbortController | null>(null);
+  React.useEffect(() => () => previewAbortRef.current?.abort(), []);
+
+  const runPreview = React.useCallback(
+    async (target: PriorityMoveTarget, next: ProjectPriority, refreshed: boolean): Promise<void> => {
+      previewAbortRef.current?.abort();
+      const controller = new AbortController();
+      previewAbortRef.current = controller;
+      setFlow({ kind: 'previewing', target, next, refreshed });
+      try {
+        const preview = await previewProjectPriority(target.projectId, next, { signal: controller.signal });
+        if (controller.signal.aborted) return;
+        if (preview.result === 'unchanged') {
+          settle('cancelled');
+          setFlow({ kind: 'idle' });
+          return;
+        }
+        setFlow({ kind: 'preview', target, next, preview, refreshed });
+      } catch (err) {
+        if (controller.signal.aborted || (err instanceof DOMException && err.name === 'AbortError')) return;
+        settle('rejected');
+        // 429 gets move-specific copy: the shared 429 text talks about comments.
+        const body =
+          err instanceof ApiError && err.code === HARD_GATE_FORCES_P1
+            ? MOVE_COPY.hardGate
+            : err instanceof ApiError && err.status === 429
+              ? MOVE_COPY.previewRateLimited
+              : apiErrorMessage(err, MOVE_COPY.previewFailed);
+        setFlow({ kind: 'previewError', target, next, body });
+      }
+    },
+    [settle],
+  );
 
   const requestMove = React.useCallback(
     (target: PriorityMoveTarget, next: ProjectPriority, options?: PriorityMoveRequestOptions) => {
@@ -151,28 +223,41 @@ export function usePriorityMoveFlow(): { api: PriorityMoveApi; element: React.JS
       }
       settle('cancelled'); // an earlier, unconfirmed request is superseded
       settleRef.current = options?.onSettled ?? null;
-      setFlow((cur) => (cur.kind === 'submitting' || cur.kind === 'running' ? cur : { kind: 'confirm', target, next }));
+      void runPreview(target, next, false);
     },
-    [settle],
+    [runPreview, settle],
   );
 
+  /** "Yes, apply": confirm the previewed move with its token (ADR 0026 §2). */
   const confirm = React.useCallback(async () => {
-    if (flow.kind !== 'confirm') return;
-    const { target, next } = flow;
-    setFlow({ kind: 'submitting', target, next });
+    if (flow.kind !== 'preview') return;
+    const { target, next, preview, refreshed } = flow;
+    setFlow({ kind: 'applying', target, next, preview, refreshed });
     try {
-      const res = await moveProjectPriority(target.projectId, next);
+      const res = await moveProjectPriority(target.projectId, next, preview.preview_token);
       settle('accepted');
+      if (res.recalc_status === 'applied') {
+        // The new run is already active: every view reading it refetches.
+        invalidateRunDerivedQueries(queryClient);
+        setFlow({ kind: 'applied', target, next, result: res });
+        return;
+      }
       await handleSignal(target, res, res.priority_before, res.priority_after);
     } catch (err) {
+      if (err instanceof ApiError && err.code === PREVIEW_STALE && !refreshed) {
+        // Something changed since the preview; nothing was written. Show the
+        // fresh preview once — the user decides again on what will happen now.
+        await runPreview(target, next, true);
+        return;
+      }
       settle('rejected');
       const body =
         err instanceof ApiError && err.code === HARD_GATE_FORCES_P1
           ? MOVE_COPY.hardGate
           : apiErrorMessage(err, 'The priority could not be changed.');
-      setFlow({ kind: 'notice', target, tone: 'danger', title: 'Priority not changed', body });
+      setFlow({ kind: 'previewError', target, next, body });
     }
-  }, [flow, handleSignal, settle]);
+  }, [flow, handleSignal, queryClient, runPreview, settle]);
 
   const followPatch = React.useCallback<PriorityMoveApi['followPatch']>(
     (target, signal, before, after) => {
@@ -182,10 +267,19 @@ export function usePriorityMoveFlow(): { api: PriorityMoveApi; element: React.JS
   );
 
   const close = React.useCallback(() => {
+    previewAbortRef.current?.abort();
     settle('cancelled'); // no-op unless a request was never confirmed
     reset();
     setFlow({ kind: 'idle' });
   }, [reset, settle]);
+
+  /** "No, cancel" (or Escape) on the preview dialog. Never while applying. */
+  const cancelPreview = React.useCallback(() => {
+    if (flow.kind === 'applying') return;
+    previewAbortRef.current?.abort();
+    settle('cancelled'); // no-op once the move was accepted or rejected
+    setFlow({ kind: 'idle' });
+  }, [flow.kind, settle]);
 
   const changesRunId = flow.kind === 'updated' ? flow.runId : null;
   const changesAgainst = flow.kind === 'updated' ? flow.baselineRunId : null;
@@ -198,12 +292,12 @@ export function usePriorityMoveFlow(): { api: PriorityMoveApi; element: React.JS
     retry: 1,
   });
 
-  const busy = flow.kind === 'submitting' || flow.kind === 'running';
+  const busy = isBusy(flow.kind);
   const api = React.useMemo<PriorityMoveApi>(() => ({ requestMove, followPatch, busy }), [requestMove, followPatch, busy]);
 
   const element = (
     <>
-      <MoveConfirmDialog flow={flow} onConfirm={() => void confirm()} onCancel={close} />
+      <PriorityPreviewDialog flow={flow} onConfirm={() => void confirm()} onCancel={cancelPreview} />
       <MoveFlowPanel flow={flow} runState={run.state} changes={changes} onClose={close} followUpWatching={followUp.watching} />
     </>
   );

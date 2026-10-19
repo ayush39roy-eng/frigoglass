@@ -2,7 +2,7 @@ import * as React from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 
 import { PRIORITY_BAND_STYLES, PRIORITY_BAND_TITLE } from '@/components/shared/priority-band-meta';
-import { formatInteger } from '@/lib/format';
+import { formatDecimal, formatInteger } from '@/lib/format';
 import { cn } from '@/lib/utils';
 import type { ProjectPriority } from '@/types/enums';
 
@@ -114,11 +114,26 @@ export function BoardColumn(props: BoardColumnProps): React.JSX.Element {
       onDragLeave={(e) => props.onColumnDragLeave(column.priority, e)}
       onDrop={(e) => props.onColumnDrop(column.priority, e)}
     >
-      <header className="flex items-center justify-between gap-2 border-b border-dash-hairline px-3 py-2">
-        <h2 id={headingId} className="flex items-center gap-1.5 text-sm font-bold text-text" title={PRIORITY_BAND_TITLE[column.priority]}>
-          <span className={cn('size-2 rounded-full', style.dot)} aria-hidden="true" />
-          {column.priority === 'Q' ? 'Q — queue' : column.priority}
-        </h2>
+      <header className="flex items-start justify-between gap-2 border-b border-dash-hairline px-3 py-2">
+        <div className="flex min-w-0 flex-col gap-0.5">
+          <h2 id={headingId} className="flex items-center gap-1.5 text-sm font-bold text-text" title={PRIORITY_BAND_TITLE[column.priority]}>
+            <span className={cn('size-2 rounded-full', style.dot)} aria-hidden="true" />
+            {column.priority === 'Q' ? 'Q — queue' : column.priority}
+          </h2>
+          {/* P13-T12: the served REMAINING design / lab work of this column from
+              the current week (not the total planned load, so it is not the
+              Capacity surface's load figure). Never summed from the cards (I9). */}
+          <p
+            className="font-mono text-2xs tabular-nums text-text-muted"
+            data-numeric=""
+            data-testid="board-column-weeks"
+            title="Remaining design and lab work from the current week, in weeks"
+          >
+            Remaining <abbr title="design">D</abbr> {formatDecimal(column.design_weeks)} w
+            <span aria-hidden="true"> · </span>
+            <abbr title="lab">L</abbr> {formatDecimal(column.lab_weeks)} w
+          </p>
+        </div>
         <span
           className="rounded-pill bg-surface px-2 py-0.5 font-mono text-2xs font-semibold tabular-nums text-text-muted"
           data-numeric=""

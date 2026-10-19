@@ -13,7 +13,7 @@ export type WorkspaceHealth = 'on_track' | 'at_risk' | 'off_track' | 'left_out' 
 
 export interface WorkspaceProject extends ProjectRead {
   hub: HubName;
-  /** `null` while OQ#8 withholds named-engineer data. */
+  /** `null` only when the leader id has no resolvable name (ADR 0028). */
   leader_engineer_name: string | null;
 }
 

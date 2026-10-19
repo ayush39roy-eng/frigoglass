@@ -4,7 +4,8 @@ import userEvent from '@testing-library/user-event';
 
 import { ApiError } from '@/lib/api/client';
 import { getDevUserEmail, setDevUserEmail } from '@/lib/api/dev-user';
-import { renderApp } from '@/test/render';
+import { DevRoleSwitcher } from '@/components/session/dev-role-switcher';
+import { renderApp, renderWithProviders } from '@/test/render';
 import { makeMe } from '@/test/session';
 import { useSessionStore } from '@/stores/session';
 
@@ -70,16 +71,20 @@ describe('DevRoleSwitcher (ADR 0010 §4)', () => {
       makeMe({ email: 'ellie.exec@example.com', full_name: 'Ellie Exec', roles: ['Executive Viewer'], dev_mode: true }),
     );
     setDevUserEmail('sam.super@example.com');
-    renderApp('/', { session: { dev_mode: true } });
-    await screen.findByRole('heading', { name: 'Global RPD Dashboard' });
-    expect(screen.getByTestId('dev-role-switcher')).toBeInTheDocument();
+    // c074e62 (2026-10-01) unmounted the switcher from the app header; the
+    // component and its server-dev_mode-only guard remain, so test it directly.
+    const { rerender } = renderWithProviders(<DevRoleSwitcher />, { session: { dev_mode: false } });
+    expect(screen.queryByTestId('dev-role-switcher')).not.toBeInTheDocument();
+    useSessionStore.setState({ me: makeMe({ dev_mode: true }) });
+    rerender(<DevRoleSwitcher />);
+    expect(await screen.findByTestId('dev-role-switcher')).toBeInTheDocument();
 
     await user.click(await screen.findByRole('combobox', { name: 'Dev mode: act as user' }));
     await user.click(await screen.findByRole('option', { name: /Ellie Exec/ }));
 
     await waitFor(() => expect(getDevUserEmail()).toBe('ellie.exec@example.com'));
     await waitFor(() => expect(api.fetchMe).toHaveBeenCalled());
-    expect(await screen.findByText('Ellie Exec')).toBeInTheDocument();
+    await waitFor(() => expect(useSessionStore.getState().me?.full_name).toBe('Ellie Exec'));
   });
 
   it('dev mode with no signed-in test user sends you to the login page first', async () => {

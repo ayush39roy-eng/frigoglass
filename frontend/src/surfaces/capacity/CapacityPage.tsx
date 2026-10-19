@@ -12,15 +12,19 @@ import { formatDecimal } from '@/lib/format';
 import { useMotionTokens } from '@/lib/motion';
 import { useHubFilter } from '@/stores/hub-filter';
 import { HubFilterChip } from '@/components/shared/hub-filter/hub-filter-chip';
+import { CountrySegmented } from '@/components/shared/hub-filter/country-segmented';
 
-import { portfolioTotals } from './lib/portfolio-totals';
-import type { CapacityHorizon } from './lib/pick-figures';
+import { labRegionRows } from './lib/lab-region-rows';
+import { pickAreaFigures, type CapacityHorizon } from './lib/pick-figures';
 import { AreaBookingStrip } from './components/area-booking-strip';
 import { AccessNotice } from './components/access-notice';
 import { CapacityReportingNotice } from './components/capacity-reporting-notice';
 import { ChamberUtilizationPanel } from './components/chamber-utilization-panel';
 import { ClassBreakdownPanel } from './components/class-breakdown-panel';
 import { HubLoadPanel } from './components/hub-load-panel';
+import { HubUtilizationMatrix } from './components/hub-utilization-matrix';
+import { EngineerUtilizationPanel } from './components/engineer-utilization-panel';
+import { KpiCaptions } from './components/kpi-captions';
 import {
   useActiveScheduleRun,
   useClassBreakdown,
@@ -67,10 +71,10 @@ export default function CapacityPage(): React.JSX.Element {
   // P12 (ADR 0020): the global header hub filter. The server filters hub rows
   // and narrows `areas[]` to the area containing the hub; lab figures stay
   // region-wide (§4). Nothing is re-derived here.
-  const { hubId } = useHubFilter();
-  const hubLoad = useHubLoadVsCapacity({ hubId });
-  const classBreakdown = useClassBreakdown(hubId);
-  const utilization = useUtilizationMatrix(hubId);
+  const { hubId, region } = useHubFilter();
+  const hubLoad = useHubLoadVsCapacity({ hubId, region });
+  const classBreakdown = useClassBreakdown(hubId, region);
+  const utilization = useUtilizationMatrix(hubId, region);
 
   const hasRun =
     hubLoad.data?.has_active_schedule_run === true ||
@@ -86,22 +90,19 @@ export default function CapacityPage(): React.JSX.Element {
   const denied = authKind([hubLoad.error, classBreakdown.error, utilization.error]);
   const motionTokens = useMotionTokens();
 
-  /**
-   * Headline totals for the KPI row. Aggregation only — every term is a field
-   * the API already computed, nothing is rounded, and lab figures are counted
-   * once per LAB REGION rather than once per hub row (they repeat across hubs of
-   * the same region; a naive `rows.reduce` nearly triples them). See
-   * `lib/portfolio-totals.ts` for the full reasoning and the I17 note.
-   */
-  /** Full year / Remaining year (ADR 0008). Lifted here so the P11 area strip
-   *  and the per-hub card show the same served horizon. */
+  /** Full year / Remaining year (ADR 0008). Lifted here so the P11 area strip,
+   *  the KPI row, the per-hub card and the matrix show the same served horizon. */
   const [horizon, setHorizon] = React.useState<CapacityHorizon>('year');
 
+  // P13-T11 addendum: the headline totals are SERVED (`totals`: design per hub,
+  // lab once per lab region, booked % and status — I9/I19). The browser no
+  // longer sums hub rows; it only selects the horizon's fields.
+  const totals = hubLoad.data?.totals;
+  const designTotals = totals ? pickAreaFigures(totals, 'design', horizon) : null;
+  const labTotals = totals ? pickAreaFigures(totals, 'lab', horizon) : null;
   const hubLoadRows = hubLoad.data?.rows;
-  const totals = React.useMemo(
-    () => (hubLoadRows ? portfolioTotals(hubLoadRows) : null),
-    [hubLoadRows],
-  );
+  // Lab figures are region-level, so the lab caption lists regions (selection only).
+  const labRegions = React.useMemo(() => (hubLoadRows ? labRegionRows(hubLoadRows) : []), [hubLoadRows]);
 
   return (
     <>
@@ -115,6 +116,7 @@ export default function CapacityPage(): React.JSX.Element {
                 and `pending`, which is what keeps "the surface always carries
                 this framing" true. It used to be a four-paragraph aside below
                 this header; see `capacity-reporting-notice.tsx`. */}
+            <CountrySegmented />
             <HubFilterChip />
             <CapacityReportingNotice />
             {denied ? null : (
@@ -147,26 +149,44 @@ export default function CapacityPage(): React.JSX.Element {
             </StaggerSection>
           ) : null}
 
-          {hubLoad.data?.has_active_schedule_run && classBreakdown.data && totals ? (
+          {hubLoad.data?.has_active_schedule_run && classBreakdown.data && totals && designTotals && labTotals ? (
             <StaggerSection>
               <div className="grid gap-gutter lg:grid-cols-[1fr_1fr_1.1fr]">
                 <MeterCard
                   label="Design load"
-                  value={totals.designLoad}
-                  capacity={totals.designCapacity}
+                  value={designTotals.load}
+                  capacity={designTotals.capacity}
+                  servedPct={designTotals.bookedPct}
                   unit="engineer-wks"
                   icon={PenTool}
                   accent="primary"
                   formatValue={formatDecimal}
+                  footer={
+                    <KpiCaptions
+                      label="Design load"
+                      split={totals.design_load_by_priority}
+                      partsLabel="By hub"
+                      parts={hubLoad.data.rows.map((r) => ({ key: r.hub, label: r.hub, value: r.design_load_weeks }))}
+                    />
+                  }
                 />
                 <MeterCard
                   label="Lab load"
-                  value={totals.labLoad}
-                  capacity={totals.labCapacity}
+                  value={labTotals.load}
+                  capacity={labTotals.capacity}
+                  servedPct={labTotals.bookedPct}
                   unit="chamber-wks"
                   icon={FlaskConical}
                   accent="success"
                   formatValue={formatDecimal}
+                  footer={
+                    <KpiCaptions
+                      label="Lab load"
+                      split={totals.lab_load_by_priority}
+                      partsLabel="By lab region"
+                      parts={labRegions.map((l) => ({ key: l.region, label: l.region, value: l.row.lab_load_weeks }))}
+                    />
+                  }
                 />
                 <StatStrip
                   ariaLabel="Deliverable versus left-out projects"
@@ -215,6 +235,12 @@ export default function CapacityPage(): React.JSX.Element {
             </SectionBoundary>
           </StaggerSection>
 
+          {hubLoad.data?.has_active_schedule_run && hubLoad.data.rows.length > 0 ? (
+            <StaggerSection>
+              <HubUtilizationMatrix rows={hubLoad.data.rows} totals={hubLoad.data.totals} horizon={horizon} />
+            </StaggerSection>
+          ) : null}
+
           <StaggerSection>
             <SectionBoundary
               query={utilization}
@@ -223,6 +249,10 @@ export default function CapacityPage(): React.JSX.Element {
             >
               {(data) => <ChamberUtilizationPanel data={data} activeRun={activeRun.data} />}
             </SectionBoundary>
+          </StaggerSection>
+
+          <StaggerSection>
+            <EngineerUtilizationPanel />
           </StaggerSection>
         </motion.div>
       )}

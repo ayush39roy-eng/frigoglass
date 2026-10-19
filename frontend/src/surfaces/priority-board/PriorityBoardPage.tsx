@@ -11,10 +11,17 @@ import { PriorityMoveProvider } from '@/components/shared/priority-move/priority
 import { Skeleton } from '@/components/ui/skeleton';
 import { usePermission } from '@/stores/session';
 import { useHubFilter } from '@/stores/hub-filter';
+import { CountrySegmented } from '@/components/shared/hub-filter/country-segmented';
+import { HubFilterChip } from '@/components/shared/hub-filter/hub-filter-chip';
 import { PROJECT_PRIORITIES, type ProjectPriority } from '@/types/enums';
 
-import { usePriorityBoard } from './api';
+import { useDebouncedValue } from '@/lib/use-debounced-value';
+
+import { useBoardLeaderFacets, usePriorityBoard, type PriorityBoardFilters } from './api';
 import { BoardColumn } from './components/board-column';
+import { BoardToolbar } from './components/board-toolbar';
+import { ALL, EMPTY_TOOLBAR, SEARCH_MAX, type BoardToolbarState } from './lib/toolbar-state';
+import { HubLoadStrip } from './components/hub-load-strip';
 import { allowedTargets, applyOverrides, stepTarget, type BoardOverrides, type DisplayCard } from './lib/board-model';
 
 const SURFACE = SURFACES.find((s) => s.path === '/priority-board');
@@ -36,9 +43,11 @@ function columnName(p: ProjectPriority): string {
 /**
  * `/priority-board` (ADR 0018, P12-T05): every project in scope in five
  * columns, P1–P4 and Q, from `GET /priority-board` (grouped, sorted and
- * counted by the server). Dropping a card on another column is the P11
- * priority move — the same confirm, `POST /projects/{id}/priority`, run follow
- * and "Timeline updated" panel as the move control on every card.
+ * counted by the server). Dropping a card on another column is the priority
+ * move — since P14 (ADR 0026) the shared preview dialog first (what would
+ * change, Yes / No), then `POST /projects/{id}/priority` with the preview
+ * token, exactly as the move control on every card. The drop stays pending
+ * until Yes; No snaps it back.
  *
  * Drag is hand-built (no library): native HTML drag events for the pointer, and
  * a keyboard pick-up / arrow / drop on each card's handle, announced through a
@@ -54,8 +63,25 @@ export default function PriorityBoardPage(): React.JSX.Element {
 }
 
 function PriorityBoard(): React.JSX.Element {
-  const { hubId } = useHubFilter();
-  const query = usePriorityBoard(hubId);
+  const { hubId, region } = useHubFilter();
+  // P13-T12: toolbar filters, all applied server-side; the search is debounced.
+  const [toolbar, setToolbar] = React.useState<BoardToolbarState>(EMPTY_TOOLBAR);
+  const debouncedSearch = useDebouncedValue(toolbar.search.trim(), 300);
+  const filters = React.useMemo<PriorityBoardFilters>(() => {
+    const pick = (v: string) => (v === ALL ? undefined : v);
+    return {
+      q: debouncedSearch ? debouncedSearch.slice(0, SEARCH_MAX) : undefined,
+      category: pick(toolbar.category),
+      type: pick(toolbar.type),
+      status_: pick(toolbar.status_),
+      leader_engineer_id: pick(toolbar.leader),
+    };
+  }, [debouncedSearch, toolbar.category, toolbar.type, toolbar.status_, toolbar.leader]);
+  const isFiltered = Object.values(filters).some((v) => v !== undefined);
+  const query = usePriorityBoard(hubId, region, filters);
+  const canReadDashboard = usePermission('dashboard').read;
+  const canReadCapacity = usePermission('capacity').read;
+  const facets = useBoardLeaderFacets(hubId, region, canReadDashboard);
   const queryClient = useQueryClient();
   const host = usePriorityMoveHost();
   const canWrite = usePermission('project_registration').write;
@@ -236,6 +262,12 @@ function PriorityBoard(): React.JSX.Element {
       <PageHeader
         title={title}
         description="Every project by priority. Drag a card, or use its priority control, to move it. The timeline recalculates as for any priority move."
+        actions={
+          <>
+            <CountrySegmented />
+            <HubFilterChip />
+          </>
+        }
       />
 
       <p id={instructionsId} className="sr-only">
@@ -259,6 +291,14 @@ function PriorityBoard(): React.JSX.Element {
         </p>
       ) : null}
 
+      <HubLoadStrip hubId={hubId} region={region} enabled={canReadCapacity} />
+
+      <BoardToolbar
+        value={toolbar}
+        onChange={setToolbar}
+        leaders={canReadDashboard && !facets.isError ? (facets.data?.leaders ?? []) : null}
+      />
+
       {query.isPending ? (
         <div className="grid grid-cols-5 gap-3" aria-hidden="true">
           {PROJECT_PRIORITIES.map((p) => (
@@ -268,10 +308,14 @@ function PriorityBoard(): React.JSX.Element {
       ) : query.isError ? (
         <ErrorState description="The priority board could not be loaded." onRetry={() => void query.refetch()} />
       ) : columns.every((c) => c.cards.length === 0) ? (
-        <EmptyState
-          title="No prioritised projects"
-          description={hubId ? 'No project in this hub has a priority yet.' : 'No project in your scope has a priority yet.'}
-        />
+        isFiltered ? (
+          <EmptyState title="No projects match these filters" description="Clear a filter or change the search to see more projects." />
+        ) : (
+          <EmptyState
+            title="No prioritised projects"
+            description={hubId || region ? 'No project in this selection has a priority yet.' : 'No project in your scope has a priority yet.'}
+          />
+        )
       ) : (
         <div className="grid auto-cols-[minmax(15rem,1fr)] grid-flow-col gap-3 overflow-x-auto pb-2" data-testid="priority-board">
           {columns.map((column) => (

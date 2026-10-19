@@ -4,6 +4,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 
 import { ProjectStatusBadge } from '@/components/shared/project-status-badge';
 import { usePriorityMoveHost } from '@/components/shared/priority-move/priority-move-context';
+import { applyFormPriorityMove } from '@/components/shared/priority-move/form-priority-move';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { useHubs } from '@/lib/api/reference';
@@ -45,7 +46,16 @@ export function DetailsPanel({
   const hubsQuery = useHubs();
   const moveHost = usePriorityMoveHost();
   const update = useMutation({
-    mutationFn: (body: ProjectCreateRequest) => updateProject(p.id, body),
+    // P14 (ADR 0026): a changed priority is previewed and confirmed first; the
+    // rest of the form is then PATCHed without it.
+    mutationFn: async (body: ProjectCreateRequest) => {
+      const rest = await applyFormPriorityMove(
+        moveHost,
+        { projectId: p.id, projectName: p.name, priority: p.priority, status: p.status },
+        body,
+      );
+      return updateProject(p.id, rest);
+    },
     onSuccess: (result) => {
       void queryClient.invalidateQueries({ queryKey: queryKeys.projectWorkspace(p.id) });
       void queryClient.invalidateQueries({ queryKey: ['projects'] });

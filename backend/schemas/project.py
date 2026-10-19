@@ -19,7 +19,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from models.enums import ProjectCategory, ProjectPriority, ProjectStatus, ProjectType
+from models.enums import HubName, ProjectCategory, ProjectPriority, ProjectStatus, ProjectType
 
 
 class ProjectCreateRequest(BaseModel):
@@ -184,7 +184,13 @@ class ProjectSubmitRequest(BaseModel):
 #: - `deferred`: another run was queued or running; the project stays stale;
 #: - `not_needed`: the project's status is not schedulable;
 #: - `unchanged`: the requested priority equals the current one; nothing written.
-RecalcStatus = Literal["queued", "deferred", "not_needed", "unchanged"]
+#: P14 (ADR 0026): `applied` = a confirm with a current `preview_token`; the
+#: greedy run was computed in-process and is already active.
+#: P14-T01 (M3): `dispatch_failed` = the change is saved and the project stays
+#: stale, but the broker refused the run (row FAILED, `DISPATCH_FAILED`).
+RecalcStatus = Literal[
+    "queued", "deferred", "not_needed", "unchanged", "applied", "dispatch_failed"
+]
 
 
 class PriorityMoveRequest(BaseModel):
@@ -199,6 +205,94 @@ class PriorityMoveRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
 
     priority: ProjectPriority = Field(strict=False)
+    #: P14 (ADR 0026 §2): from `POST /projects/{id}/priority/preview`. With
+    #: a current token the move is applied in-process (`applied`); a stale
+    #: one is 409 `PREVIEW_STALE`. Absent: ADR 0015 behaviour, unchanged.
+    preview_token: str | None = Field(default=None, min_length=16, max_length=128)
+
+
+class PriorityPreviewRequest(BaseModel):
+    """Body for `POST /projects/{id}/priority/preview` (P14 contract §1)."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    priority: ProjectPriority = Field(strict=False)
+
+
+PriorityPreviewResult = Literal["preview", "unchanged", "not_needed"]
+
+
+class PriorityPreviewMoved(BaseModel):
+    """The moved project's own outcome: `before` from the active run (null
+    when there is none, or the project has no outcome row in it), `after`
+    from the preview (or the applied run)."""
+
+    end_week_before: int | None
+    end_week_after: int | None
+    within_year_before: bool | None
+    within_year_after: bool | None
+    left_out_before: bool | None
+    left_out_after: bool | None
+
+
+class PriorityPreviewSummary(BaseModel):
+    """Counts over the listed (in-scope) `changes` rows. Out-of-scope rows
+    are only in `hidden_count`."""
+
+    affected: int
+    #: `end_week_after > end_week_before` (both set).
+    delayed: int
+    #: `end_week_after < end_week_before` (both set).
+    earlier: int
+    #: within year before, not after.
+    pushed_out_of_year: int
+    #: not within year before, within after.
+    pulled_into_year: int
+
+
+class PriorityPreviewChange(BaseModel):
+    """One *other* project whose `projected_end_week`, `within_year`,
+    `left_out` or `blocked` differs (the ADR 0015 §4 comparison,
+    `services.run_changes`). A side with no outcome row reads null/false."""
+
+    project_id: uuid.UUID
+    name: str
+    hub: HubName
+    priority: ProjectPriority | None
+    end_week_before: int | None
+    end_week_after: int | None
+    within_year_before: bool
+    within_year_after: bool
+    left_out_before: bool
+    left_out_after: bool
+    blocked_before: bool
+    blocked_after: bool
+
+
+class PriorityPreviewResponse(BaseModel):
+    """P14 contract §1. Writes nothing. `changes` ordered: pushed out of the
+    year first, then the largest delay, then name.
+
+    - `unchanged`: same priority; `preview_token`, `moved` null.
+    - `not_needed`: non-schedulable status; no greedy pass, `changes` empty,
+      `moved` null, but `preview_token` is set (the confirm checks it).
+    - no active run: `baseline_run_id` null, `changes` empty, `note` set.
+    """
+
+    result: PriorityPreviewResult
+    project_id: uuid.UUID
+    from_priority: ProjectPriority | None
+    to_priority: ProjectPriority
+    baseline_run_id: uuid.UUID | None
+    preview_token: str | None
+    moved: PriorityPreviewMoved | None
+    summary: PriorityPreviewSummary
+    changes: list[PriorityPreviewChange]
+    hidden_count: int
+    #: Wall time of the snapshot build plus the greedy pass; null when no
+    #: pass ran.
+    elapsed_ms: int | None
+    note: str | None = None
 
 
 class PriorityMoveResponse(BaseModel):
@@ -217,3 +311,9 @@ class PriorityMoveResponse(BaseModel):
     schedule_run_id: uuid.UUID | None
     baseline_run_id: uuid.UUID | None
     task_id: str | None
+    #: P14 (ADR 0026): set on `applied` only, computed from the two persisted
+    #: runs through `services.run_changes`; the same shapes as the preview.
+    moved: PriorityPreviewMoved | None = None
+    summary: PriorityPreviewSummary | None = None
+    changes: list[PriorityPreviewChange] = Field(default_factory=list)
+    hidden_count: int = 0

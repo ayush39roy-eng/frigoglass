@@ -10,9 +10,11 @@
  */
 
 import { apiGet, ApiError, type ApiRequestOptions } from '@/lib/api/client';
+import type { LabRegion } from '@/types/enums';
 
 import type {
   ClassBreakdown,
+  EngineerUtilizationResponse,
   HubCapacitySummary,
   ScheduleRunSummary,
   UtilizationMatrix,
@@ -23,20 +25,47 @@ type FetchCtx = Pick<ApiRequestOptions, 'signal'>;
 /** P12 (ADR 0020): the global hub filter as `hub_id`, ANDed server-side with the
  *  caller's scope. With a hub, `rows` holds that hub and `areas[]` the area
  *  containing it; lab figures stay region-wide (ADR 0020 §4). */
-function withHubQuery(ctx: FetchCtx, hubId: string | null | undefined): ApiRequestOptions {
-  return hubId ? { ...ctx, query: { hub_id: hubId } } : ctx;
+function withHubQuery(
+  ctx: FetchCtx,
+  hubId: string | null | undefined,
+  region?: LabRegion | null,
+): ApiRequestOptions {
+  // P13 (ADR 0025): with a country, hub rows are that country's hubs, `areas[]`
+  // the containing area, and lab rows that lab region — all server-side.
+  if (!hubId && !region) return ctx;
+  return { ...ctx, query: { hub_id: hubId ?? undefined, region: region ?? undefined } };
 }
 
-export function fetchHubLoadVsCapacity(ctx: FetchCtx = {}, hubId?: string | null): Promise<HubCapacitySummary> {
-  return apiGet<HubCapacitySummary>('/capacity/hub-load', withHubQuery(ctx, hubId));
+export function fetchHubLoadVsCapacity(
+  ctx: FetchCtx = {},
+  hubId?: string | null,
+  region?: LabRegion | null,
+): Promise<HubCapacitySummary> {
+  return apiGet<HubCapacitySummary>('/capacity/hub-load', withHubQuery(ctx, hubId, region));
 }
 
-export function fetchClassBreakdown(ctx: FetchCtx = {}, hubId?: string | null): Promise<ClassBreakdown> {
-  return apiGet<ClassBreakdown>('/capacity/class-breakdown', withHubQuery(ctx, hubId));
+export function fetchClassBreakdown(
+  ctx: FetchCtx = {},
+  hubId?: string | null,
+  region?: LabRegion | null,
+): Promise<ClassBreakdown> {
+  return apiGet<ClassBreakdown>('/capacity/class-breakdown', withHubQuery(ctx, hubId, region));
 }
 
-export function fetchUtilizationMatrix(ctx: FetchCtx = {}, hubId?: string | null): Promise<UtilizationMatrix> {
-  return apiGet<UtilizationMatrix>('/capacity/utilization-matrix', withHubQuery(ctx, hubId));
+export function fetchUtilizationMatrix(
+  ctx: FetchCtx = {},
+  hubId?: string | null,
+  region?: LabRegion | null,
+): Promise<UtilizationMatrix> {
+  return apiGet<UtilizationMatrix>('/capacity/utilization-matrix', withHubQuery(ctx, hubId, region));
+}
+
+export function fetchEngineerUtilization(
+  ctx: FetchCtx = {},
+  hubId?: string | null,
+  region?: LabRegion | null,
+): Promise<EngineerUtilizationResponse> {
+  return apiGet<EngineerUtilizationResponse>('/capacity/engineer-utilization', withHubQuery(ctx, hubId, region));
 }
 
 /**

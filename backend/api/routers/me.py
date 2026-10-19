@@ -17,6 +17,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+import domain_constants as dc
 from api.db import get_db
 from api.deps import get_current_principal
 from core.config import is_dev_mode
@@ -87,6 +88,8 @@ async def get_me(
         permissions=resolve_permissions(principal.roles),
         dev_mode=is_dev_mode(),
         is_delegate_manager=await _is_delegate_manager(db, principal),
+        current_week=dc.CURRENT_WEEK,
+        weeks_left_in_year=max(0, dc.WITHIN_YEAR_WEEK - dc.CURRENT_WEEK),
     )
 
 

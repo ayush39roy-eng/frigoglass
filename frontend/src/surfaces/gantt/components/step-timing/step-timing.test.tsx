@@ -40,6 +40,7 @@ vi.mock('@/lib/use-follow-up-run', () => ({
 
 import { GanttChart } from '../gantt-chart';
 import { StepTimingProvider } from './step-timing-provider';
+import { P13_GANTT_ROW_DEFAULTS } from '../../test-fixtures';
 
 // weeks zoom: 15 px per week, week 1 at x = 0.
 const WEEK_PX = 15;
@@ -92,6 +93,7 @@ function project(stepOver: Partial<GanttStepRow> = {}, over: Partial<GanttProjec
     workflow_id: 'PDD',
     is_vip: false,
     tracking_status: 'idle',
+    ...P13_GANTT_ROW_DEFAULTS,
     steps: [step(stepOver)],
     ...over,
   };
@@ -250,8 +252,8 @@ describe('recalc_status outcomes', () => {
     expect(sse.streamSolverProgress).toHaveBeenCalledWith('run-2', expect.any(Function), expect.anything());
     expect(changesApi.fetchScheduleRunChanges).toHaveBeenCalledWith('run-2', 'run-1', expect.anything());
     expect(within(panel).getByText('Timeline updated')).toBeInTheDocument();
-    expect(within(panel).getByText(/Prototype build: 4 wks \(lead-time table\) · earliest start W13/)).toBeInTheDocument();
-    expect(within(panel).getByTestId('timeline-own-change')).toHaveTextContent('+3 wk');
+    expect(await within(panel).findByText(/Prototype build: 4 wks \(lead-time table\) · earliest start W13/)).toBeInTheDocument();
+    expect(await within(panel).findByTestId('timeline-own-change')).toHaveTextContent('+3 wk');
   });
 
   it('queued but the run fails: says the timing is saved and the timeline is stale', async () => {

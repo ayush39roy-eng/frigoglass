@@ -59,7 +59,8 @@ describe.each(ROLE_NAMES)('gating for role: %s', (role: RoleName) => {
       .flatMap(([, items]) => items)
       .map((i) => i.path)
       .sort();
-    const expected = SURFACES.filter((s) => permissions[s.surface].read)
+    // `surface: null` (P13-T15 Downloads) = any authenticated user.
+    const expected = SURFACES.filter((s) => (s.surface === null ? true : permissions[s.surface].read))
       .map((s) => s.path)
       .sort();
     expect(visiblePaths).toEqual(expected);

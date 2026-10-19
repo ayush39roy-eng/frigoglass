@@ -72,11 +72,31 @@ export interface AreaBookingFigures {
   bookingStatus: BookingStatus;
 }
 
-/** Selects one served area figure set (P11 contract §4, ADR 0016). Selection
- *  only: the area sums, the booked % and the status all come from the server
- *  (I19), with each lab region counted once there. */
+/** The served roll-up fields shared by an area (`CapacityArea`) and the
+ *  portfolio totals (`CapacityTotals`, P13-T11 addendum). */
+export type RollupFigures = Pick<
+  CapacityArea,
+  | 'design_load_weeks'
+  | 'design_capacity_year'
+  | 'design_capacity_remaining'
+  | 'design_booked_pct_year'
+  | 'design_booked_pct_remaining'
+  | 'design_booking_status_year'
+  | 'design_booking_status_remaining'
+  | 'lab_load_weeks'
+  | 'lab_capacity_year'
+  | 'lab_capacity_remaining'
+  | 'lab_booked_pct_year'
+  | 'lab_booked_pct_remaining'
+  | 'lab_booking_status_year'
+  | 'lab_booking_status_remaining'
+>;
+
+/** Selects one served area (or portfolio-total) figure set (P11 contract §4,
+ *  ADR 0016). Selection only: the sums, the booked % and the status all come
+ *  from the server (I19), with each lab region counted once there. */
 export function pickAreaFigures(
-  area: CapacityArea,
+  area: RollupFigures,
   kind: ResourceKind,
   horizon: CapacityHorizon,
 ): AreaBookingFigures {

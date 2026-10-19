@@ -22,6 +22,8 @@ type FetchCtx = Pick<ApiRequestOptions, 'signal'>;
 
 export interface ProjectListParams {
   hubId?: string | undefined;
+  /** P13-T17: case-insensitive substring of name or external code (≤ 100), server-side. */
+  q?: string | undefined;
   category?: string | undefined;
   status?: string | undefined;
   priority?: string | undefined;
@@ -38,6 +40,7 @@ export function fetchProjects(
     ...ctx,
     query: {
       hub_id: params.hubId,
+      q: params.q,
       category: params.category,
       status_: params.status,
       priority: params.priority,
@@ -49,14 +52,14 @@ export function fetchProjects(
 }
 
 export function fetchProject(projectId: string, ctx: FetchCtx = {}): Promise<ProjectRead> {
-  return apiGet<ProjectRead>(`/projects/${projectId}`, ctx);
+  return apiGet<ProjectRead>(`/projects/${encodeURIComponent(projectId)}`, ctx);
 }
 
 export function fetchHardGateStatus(
   projectId: string,
   ctx: FetchCtx = {},
 ): Promise<HardGateStatus> {
-  return apiGet<HardGateStatus>(`/projects/${projectId}/hard-gate-status`, ctx);
+  return apiGet<HardGateStatus>(`/projects/${encodeURIComponent(projectId)}/hard-gate-status`, ctx);
 }
 
 /** `POST /projects` — always created in `Draft`, regardless of how much of the
@@ -81,7 +84,7 @@ export async function updateProject(
   projectId: string,
   body: ProjectUpdateRequest,
 ): Promise<ProjectUpdateResult> {
-  const { data, headers } = await apiSendWithHeaders<ProjectRead>('PATCH', `/projects/${projectId}`, body);
+  const { data, headers } = await apiSendWithHeaders<ProjectRead>('PATCH', `/projects/${encodeURIComponent(projectId)}`, body);
   return { project: data, recalc: readRecalcHeaders(headers) };
 }
 
@@ -93,5 +96,5 @@ export function submitProject(
   projectId: string,
   body: ProjectSubmitRequest,
 ): Promise<ProjectRead> {
-  return apiSend<ProjectRead>('POST', `/projects/${projectId}/submit`, body);
+  return apiSend<ProjectRead>('POST', `/projects/${encodeURIComponent(projectId)}/submit`, body);
 }

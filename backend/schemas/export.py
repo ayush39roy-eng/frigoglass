@@ -41,3 +41,22 @@ class ExportJobStatusResponse(BaseModel):
     error_message: str | None
     created_at: datetime
     completed_at: datetime | None
+
+
+class ExportJobListItem(BaseModel):
+    """One row of `GET /export-jobs` (P13-T15, docs/API_CONTRACT_P13.md §7):
+    the caller's own async export jobs (Admin / Super Admin: every job),
+    newest first. `kind` is the exported surface. `file_name` is exactly the
+    name `GET /exports/jobs/{id}/download` serves; the file is fetched only
+    through that route (owner-or-Admin, 409 until `completed`). No filter
+    values, no object key and no requester identity are listed.
+    """
+
+    id: uuid.UUID
+    kind: ExportSurface
+    format: ExportFormat
+    status: ExportJobStatus
+    created_at: datetime
+    completed_at: datetime | None
+    row_count: int | None
+    file_name: str

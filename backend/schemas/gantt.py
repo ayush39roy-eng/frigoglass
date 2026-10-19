@@ -22,6 +22,7 @@ from models.enums import (
     HubName,
     ProjectCategory,
     ProjectPriority,
+    ProjectType,
     WorkflowStepKind,
     WorkflowStepStatus,
 )
@@ -104,7 +105,35 @@ class GanttProjectRow(BaseModel):
     is_vip: bool
     #: P12 (ADR 0021 §4): served by `services.tracking.tracking_status_for`.
     tracking_status: Literal["live", "due", "overdue", "idle"]
+    #: P13-T13 (docs/API_CONTRACT_P13.md §7) row meta.
+    external_code: str | None
+    type: ProjectType | None
+    #: OQ #8 / P3-T09: the leader's name only when the leader is the caller;
+    #: `null` for every other reader. `leader_engineer_id` is always served
+    #: (so the UI can tell "withheld" from "no leader").
+    leader_name: str | None
+    leader_engineer_id: uuid.UUID | None
+    #: Σ of the active run's booked effective durations (`override ?? lead
+    #: time`, ADR 0019) over the project's non-skipped steps of that kind —
+    #: the same basis as the Capacity design/lab load (I6/I7). `total_weeks`
+    #: sums every non-skipped step (design + lab + elapsed). All `null` when
+    #: the project has no step in the active run.
+    design_weeks: int | None
+    lab_weeks: int | None
+    total_weeks: int | None
     steps: list[GanttStepRow]
+
+
+class GanttWeeklyActiveCount(BaseModel):
+    """P13-T13: active steps in one display week (W1–W52, ADR 0024) over the
+    whole filtered set, not just the returned page. A step is active in week
+    `w` when it is not skipped and `start_week <= w <= end_week` in the
+    active run (the bar the Gantt draws). Split by the project's workflow.
+    """
+
+    week: int
+    pdd: int
+    oem: int
 
 
 class GanttResponse(BaseModel):
@@ -112,6 +141,9 @@ class GanttResponse(BaseModel):
     schedule_run_version: int | None
     total_count: int
     rows: list[GanttProjectRow]
+    #: P13-T13: one entry per week 1..52 while an active run exists; `[]`
+    #: without one.
+    weekly_active_counts: list[GanttWeeklyActiveCount]
 
 
 class FreezeToggleRequest(BaseModel):

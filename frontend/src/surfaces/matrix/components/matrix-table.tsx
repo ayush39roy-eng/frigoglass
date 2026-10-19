@@ -6,6 +6,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { PriorityBandPill } from '@/components/shared/priority-band-pill';
+import { ProjectStatusBadge } from '@/components/shared/project-status-badge';
 import { CategoryTag } from '@/components/ui/category-tag';
 import { categoricalRankSoftBg, categoricalRankText, categoryRank } from '@/lib/categorical-palette';
 import { cn } from '@/lib/utils';
@@ -79,6 +80,36 @@ export interface MatrixTableProps {
    *  (P5-T01) — purely a visual "staged, not yet live" indicator next to the
    *  edit affordance. `undefined`/empty outside scenario mode. */
   scenarioStagedProjectIds?: ReadonlySet<string> | undefined;
+  /** P13-T14 "Detailed view": show the 13 score-dimension columns. Default
+   *  `true` (the pre-P13 grid); the Matrix page starts compact. */
+  detailed?: boolean;
+  /** P13-T14: per-column filter controls, keyed by column id (`project`,
+   *  `hub`, `leader`, …), rendered under the headers. */
+  columnFilters?: Partial<Record<string, React.ReactNode>>;
+}
+
+/** P13-T14 / ADR 0028: the API serves the leader's name. An id with no name
+ *  reads "Name unavailable"; no leader reads "—". */
+function leaderCell(row: PriorityMatrixRow): React.ReactNode {
+  if (row.leader_name) {
+    return (
+      <span className="truncate text-text" title={row.leader_name}>
+        {row.leader_name}
+      </span>
+    );
+  }
+  if (row.leader_engineer_id) {
+    return (
+      <span className="italic text-text-subtle" title="Leader name unavailable">
+        Name unavailable
+      </span>
+    );
+  }
+  return (
+    <span className="text-text-subtle" title="No leader assigned">
+      –
+    </span>
+  );
 }
 
 export function MatrixTable({
@@ -87,9 +118,29 @@ export function MatrixTable({
   canEdit,
   onEdit,
   scenarioStagedProjectIds,
+  detailed = true,
+  columnFilters,
 }: MatrixTableProps): React.JSX.Element {
   const columns = React.useMemo<MatrixColumn<PriorityMatrixRow>[]>(() => {
     const cols: MatrixColumn<PriorityMatrixRow>[] = [
+      {
+        // P13-T14: served rank by score within the filtered set (1-based).
+        id: 'rank',
+        header: 'Rank',
+        width: 64,
+        sticky: true,
+        align: 'center',
+        cell: (row) =>
+          row.rank === null ? (
+            <span className="text-text-subtle" title="Not scored — no rank">
+              –
+            </span>
+          ) : (
+            <span className="tnum font-semibold text-text" data-numeric="">
+              {row.rank}
+            </span>
+          ),
+      },
       {
         id: 'project',
         header: 'Project',
@@ -123,6 +174,18 @@ export function MatrixTable({
         header: 'Hub',
         width: 104,
         cell: (row) => <span className="truncate text-text-muted">{row.hub}</span>,
+      },
+      {
+        id: 'leader',
+        header: 'Leader',
+        width: 120,
+        cell: leaderCell,
+      },
+      {
+        id: 'status',
+        header: 'Status',
+        width: 160,
+        cell: (row) => <ProjectStatusBadge status={row.status} />,
       },
       {
         id: 'category',
@@ -166,7 +229,7 @@ export function MatrixTable({
       },
     ];
 
-    for (const dim of DIMENSIONS) {
+    for (const dim of detailed ? DIMENSIONS : []) {
       cols.push({
         id: `dim-${dim.field}`,
         header: <DimHeader {...dim} />,
@@ -275,8 +338,11 @@ export function MatrixTable({
       });
     }
 
+    if (columnFilters) {
+      return cols.map((c) => (columnFilters[c.id] === undefined ? c : { ...c, filter: columnFilters[c.id] }));
+    }
     return cols;
-  }, [currency, canEdit, onEdit, scenarioStagedProjectIds]);
+  }, [currency, canEdit, onEdit, scenarioStagedProjectIds, detailed, columnFilters]);
 
   return (
     <VirtualMatrixGrid

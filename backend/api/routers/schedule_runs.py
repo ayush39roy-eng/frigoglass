@@ -236,7 +236,7 @@ from schemas.schedule_run import (
     ScheduleRunSummary,
 )
 from services.run_changes import compute_run_changes
-from services.run_dispatch import find_in_flight_run
+from services.run_dispatch import enqueue_or_fail, find_in_flight_run
 from services.schedule_persistence import (
     build_schedule_input_from_db,
     create_queued_schedule_run,
@@ -463,12 +463,25 @@ async def dispatch_cp_sat_run(
         triggered_by_user_id=current_user.user_id,
     )
 
-    async_result = run_cp_sat_schedule.delay(
-        str(run.id),
-        triggered_by_user_id=str(current_user.user_id),
-        deterministic_time=request.deterministic_time,
+    task_id = await enqueue_or_fail(
+        db,
+        run,
+        lambda: run_cp_sat_schedule.delay(
+            str(run.id),
+            triggered_by_user_id=str(current_user.user_id),
+            deterministic_time=request.deterministic_time,
+        ),
+        actor_user_id=current_user.user_id,
     )
-    run.celery_task_id = async_result.id
+    if task_id is None:
+        # P14-T01 (M3): the broker refused the message. The QUEUED row is
+        # already FAILED (`DISPATCH_FAILED`) and audited by `enqueue_or_fail`.
+        raise CodedHTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "SOLVER_UNAVAILABLE",
+            "The scheduling service is unavailable right now. Please try again shortly.",
+        )
+    run.celery_task_id = task_id
     db.add(run)
 
     db.add(

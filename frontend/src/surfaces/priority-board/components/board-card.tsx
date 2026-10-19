@@ -52,7 +52,7 @@ export const BoardCard = React.memo(function BoardCard({
         'flex flex-col gap-2 rounded-dash border-[1.5px] border-dash-hairline bg-surface p-3 shadow-dashCard',
         draggable && 'cursor-grab active:cursor-grabbing',
         lifted && 'ring-2 ring-primary ring-offset-1 ring-offset-surface',
-        pending && 'opacity-70',
+        pending && 'border-dashed border-primary',
       )}
       draggable={draggable}
       onDragStart={draggable ? (e) => onPointerDragStart(item, e) : undefined}

@@ -67,7 +67,7 @@ from models.workflow import ProjectWorkflowStep, WorkflowStepTemplate
 from schemas.project import RecalcStatus
 from schemas.step_timing import DURATION_OVERRIDE_MAX_WEEKS, TimingEditable
 from services.active_run import get_active_run
-from services.run_dispatch import find_in_flight_run
+from services.run_dispatch import enqueue_or_fail, find_in_flight_run
 from services.schedule_persistence import create_queued_schedule_run
 from services.workflow_durations import effective_duration_weeks
 from workers.progress import publish_progress
@@ -312,13 +312,29 @@ async def apply_step_timing(
         trigger_reason=TRIGGER_REASON,
         triggered_by_user_id=principal.user_id,
     )
-    async_result = run_greedy_schedule.delay(
-        str(run.id),
-        triggered_by_user_id=str(principal.user_id),
-        activate=True,
-        recalc_project_id=str(project.id),
+    task_id = await enqueue_or_fail(
+        db,
+        run,
+        lambda: run_greedy_schedule.delay(
+            str(run.id),
+            triggered_by_user_id=str(principal.user_id),
+            activate=True,
+            recalc_project_id=str(project.id),
+        ),
+        actor_user_id=principal.user_id,
     )
-    run.celery_task_id = async_result.id
+    if task_id is None:
+        # P14-T01 (M3): the timing is saved and stays stale; no run.
+        return StepTimingResult(
+            project_id=project.id,
+            step_id=step_id,
+            duration_override_weeks=after["duration_override_weeks"],
+            start_not_before_week=after["start_not_before_week"],
+            effective_duration_weeks=effective,
+            recalc_status="dispatch_failed",
+            baseline_run_id=baseline_id,
+        )
+    run.celery_task_id = task_id
     db.add(run)
     db.add(
         AuditLogEntry(
@@ -348,5 +364,5 @@ async def apply_step_timing(
         recalc_status="queued",
         schedule_run_id=run.id,
         baseline_run_id=baseline_id,
-        task_id=str(async_result.id),
+        task_id=task_id,
     )

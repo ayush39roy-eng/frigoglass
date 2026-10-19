@@ -38,7 +38,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy import any_, or_, select
@@ -60,6 +60,8 @@ from models.workflow import Workflow, WorkflowLeadTime, WorkflowStepTemplate
 from scheduling.types import WorkflowStepTemplate as SchedWorkflowStepTemplate
 from scheduling.workflow import build_workflows
 from schemas.workflow_settings import (
+    BEquivalentRow,
+    CategoryTimeline,
     ChamberSetting,
     ChamberSettingUpdateRequest,
     HubCalendarSetting,
@@ -67,6 +69,7 @@ from schemas.workflow_settings import (
     LeadTimeSetting,
     LeadTimesUpdateRequest,
     StepsUpdateRequest,
+    TimelineStep,
     WorkflowSetting,
     WorkflowSettings,
     WorkflowStepSetting,
@@ -82,6 +85,7 @@ from services.capacity_supply import (
 from services.hub_scope import hub_scope_filter, scoped_lab_regions
 from services.schedule_stale import mark_all_schedulable_stale
 from services.workflow_durations import recompute_step_durations
+from services.workflow_previews import REFERENCE_CATEGORY, load_category_previews, ratio
 
 router = APIRouter(prefix="/workflow-settings", tags=["workflow-settings"])
 
@@ -291,6 +295,67 @@ async def get_workflow_settings(
     current_user: Principal = Depends(_read),
 ) -> WorkflowSettings:
     return await build_settings_payload(db, current_user, full=True)
+
+
+# --- Previews (P13-T16, docs/API_CONTRACT_P13.md §5) -------------------------------
+
+WorkflowParam = Literal["PDD", "OEM"]
+
+
+@router.get("/category-timelines", response_model=list[CategoryTimeline])
+async def get_category_timelines(
+    workflow: WorkflowParam = "PDD",
+    db: AsyncSession = Depends(get_db),
+    current_user: Principal = Depends(_read),
+) -> list[CategoryTimeline]:
+    """Per category of `workflow`, each step's earliest start from the served
+    lead times and the precedence DAG, no capacity
+    (`services.workflow_previews`). Read-only, so no audit row."""
+
+    return [
+        CategoryTimeline(
+            category=p.category,
+            total_weeks=p.total_weeks,
+            design_weeks=p.design_weeks,
+            lab_weeks=p.lab_weeks,
+            steps=[
+                TimelineStep(
+                    code=s.step_id,
+                    name=s.name,
+                    resource_kind=s.kind,
+                    start_week=s.start_week,
+                    duration_weeks=s.duration_weeks,
+                )
+                for s in p.steps
+            ],
+        )
+        for p in await load_category_previews(db, workflow)
+    ]
+
+
+@router.get("/b-equivalent", response_model=list[BEquivalentRow])
+async def get_b_equivalent(
+    workflow: WorkflowParam = "PDD",
+    db: AsyncSession = Depends(get_db),
+    current_user: Principal = Depends(_read),
+) -> list[BEquivalentRow]:
+    """Per category of `workflow`, process-derived design and lab weeks and
+    their ratio to B (PDD) or B-OEM (OEM), 2 dp, computed here."""
+
+    previews = await load_category_previews(db, workflow)
+    reference = next((p for p in previews if p.category == REFERENCE_CATEGORY[workflow]), None)
+    ref_design = reference.design_weeks if reference is not None else 0
+    ref_lab = reference.lab_weeks if reference is not None else 0
+    return [
+        BEquivalentRow(
+            category=p.category,
+            design_weeks=p.design_weeks,
+            lab_weeks=p.lab_weeks,
+            design_ratio=ratio(p.design_weeks, ref_design),
+            lab_ratio=ratio(p.lab_weeks, ref_lab),
+        )
+        for p in previews
+    ]
 
 
 # --- Steps / precedence (ADR 0009) ---------------------------------------------

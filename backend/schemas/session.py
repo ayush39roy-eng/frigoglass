@@ -55,6 +55,12 @@ class MeResponse(BaseModel):
     #: manager without re-opening it for every role (P10-F03's frontend
     #: half, queued after this).
     is_delegate_manager: bool
+    #: P13-T15 (docs/API_CONTRACT_P13.md §7, ADR 0024): the planning "today"
+    #: (`domain_constants.CURRENT_WEEK`, env `RPD_CURRENT_WEEK`) and
+    #: `max(0, 52 − current_week)` — the same remaining-weeks basis as the
+    #: Capacity remaining-year figures. For the header "Week N · M wks left".
+    current_week: int
+    weeks_left_in_year: int
 
 
 class DevUser(BaseModel):

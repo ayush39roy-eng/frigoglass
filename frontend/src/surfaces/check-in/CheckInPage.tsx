@@ -13,6 +13,8 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { CHECKIN_BATCH_MAX, type CheckInDueProject, type CheckInDueSummary } from '@/lib/api/check-ins';
 import { formatInteger, formatWeek } from '@/lib/format';
 import { useHubFilter } from '@/stores/hub-filter';
+import { CountrySegmented } from '@/components/shared/hub-filter/country-segmented';
+import { HubFilterChip } from '@/components/shared/hub-filter/hub-filter-chip';
 
 import { useCheckInsDue } from './api';
 import { CheckInResultPanel } from './components/check-in-result-panel';
@@ -160,8 +162,8 @@ function VirtualGroups({ projects, props }: { projects: CheckInDueProject[]; pro
  * tracking status and the "per plan" %, and recalculates the timeline.
  */
 export default function CheckInPage(): React.JSX.Element {
-  const { hubId } = useHubFilter();
-  const query = useCheckInsDue(hubId);
+  const { hubId, region } = useHubFilter();
+  const query = useCheckInsDue(hubId, true, region);
   const submitFlow = useCheckInSubmit();
   const [drafts, setDrafts] = React.useState<Record<string, CheckInDraft>>({});
   const [showErrors, setShowErrors] = React.useState(false);
@@ -227,6 +229,12 @@ export default function CheckInPage(): React.JSX.Element {
       <PageHeader
         title={title}
         description="Report this week's progress on the stages due. Submitting saves the whole week at once and recalculates the timeline."
+        actions={
+          <>
+            <CountrySegmented />
+            <HubFilterChip />
+          </>
+        }
       />
 
       {query.isPending ? (

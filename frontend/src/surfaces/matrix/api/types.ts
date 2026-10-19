@@ -9,6 +9,7 @@ import type {
   HubName,
   ProjectCategory,
   ProjectPriority,
+  ProjectStatus,
   ProjectType,
 } from '@/types/enums';
 import type { Id } from '@/types/common';
@@ -84,6 +85,14 @@ export interface PriorityMatrixRow {
   type: ProjectType | null;
   /** Currently committed `Project.priority` — may be null / differ from `suggested_band`. */
   set_priority: ProjectPriority | null;
+  /** P13-T14 (API_CONTRACT_P13 §7). */
+  status: ProjectStatus;
+  /** P13-T14, GDPR (OQ #8): null unless the leader is the caller. With a
+   *  `leader_engineer_id` the grid shows "Withheld" — never resolved here. */
+  leader_name: string | null;
+  leader_engineer_id: Id | null;
+  /** P13-T14: 1-based rank by score within the filtered set, served; null when unscored. */
+  rank: number | null;
 
   has_score: boolean;
   strategic_project: number | null;

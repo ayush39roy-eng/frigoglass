@@ -1,0 +1,1 @@
+var e=`edit`;function t(t){return`/register?${e}=${encodeURIComponent(t)}`}export{t as n,e as t};

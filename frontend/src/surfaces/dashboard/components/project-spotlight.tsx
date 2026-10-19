@@ -247,9 +247,9 @@ export function ProjectSpotlight({ rows }: ProjectSpotlightProps): React.JSX.Ele
         {/* A plain in-page anchor, not a react-router `<Link>`: the target is a
             section of THIS page, so the browser's native hash scroll (and the
             focus move that comes with it) is the correct behaviour — routing to
-            a path of "#project-breakdown" is not. */}
+            a path of "#all-projects" is not. */}
         <a
-          href="#project-breakdown"
+          href="#all-projects"
           className="ml-auto inline-flex items-center gap-1 rounded-pill border border-dash-hairline bg-surface px-3 py-1.5 text-2xs font-semibold text-text transition-colors duration-fast ease-ease-out-expo hover:bg-dash-alt focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
         >
           View all projects

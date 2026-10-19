@@ -66,11 +66,12 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Iterator
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from fastapi.responses import StreamingResponse
 from minio.error import S3Error
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.db import get_db
@@ -79,9 +80,16 @@ from core.minio_config import get_minio_client, get_minio_settings
 from core.principal import Principal
 from core.rbac import Action, Surface
 from models.audit import AuditLogEntry
-from models.enums import ExportFormat, ExportJobStatus, ExportSurface, RoleName
+from models.enums import (
+    ExportFormat,
+    ExportJobStatus,
+    ExportSurface,
+    LabRegion,
+    ProjectType,
+    RoleName,
+)
 from models.export import ExportJob
-from schemas.export import ExportJobAccepted, ExportJobStatusResponse
+from schemas.export import ExportJobAccepted, ExportJobListItem, ExportJobStatusResponse
 from services.export_builder import ExportFilters, build_export_sheets, csv_bytes, xlsx_bytes
 
 router = APIRouter(prefix="/exports", tags=["exports"])
@@ -219,6 +227,12 @@ async def export_dashboard(
     category: str | None = None,
     status_: str | None = None,
     priority: str | None = None,
+    region: LabRegion | None = None,
+    q: Annotated[str | None, Query(max_length=100)] = None,
+    type_: Annotated[ProjectType | None, Query(alias="type")] = None,
+    leader_engineer_id: uuid.UUID | None = None,
+    current_step: Annotated[str | None, Query(max_length=10)] = None,
+    sort: Literal["name", "priority"] = "name",
     async_export: bool = False,
     db: AsyncSession = Depends(get_db),
     current_user: Principal = Depends(_read_dashboard),
@@ -234,6 +248,17 @@ async def export_dashboard(
         "status_": status_,
         "priority": priority,
     }
+    # P13 (ADR 0025): the register's filters, stored only when set so the
+    # persisted filter shape of pre-P13 jobs is unchanged.
+    p13_filters: ExportFilters = {
+        "region": region.value if region else None,
+        "q": q,
+        "type_": type_.value if type_ else None,
+        "leader_engineer_id": str(leader_engineer_id) if leader_engineer_id else None,
+        "current_step": current_step,
+        "sort": sort if sort != "name" else None,
+    }
+    filters.update({k: v for k, v in p13_filters.items() if v is not None})
     return await _respond(
         db,
         current_user,
@@ -276,6 +301,7 @@ async def export_matrix(
     currency: str | None = None,
     hub_id: uuid.UUID | None = None,
     category: str | None = None,
+    region: LabRegion | None = None,
     async_export: bool = False,
     db: AsyncSession = Depends(get_db),
     current_user: Principal = Depends(_read_matrix),
@@ -290,6 +316,8 @@ async def export_matrix(
         "hub_id": str(hub_id) if hub_id else None,
         "category": category,
     }
+    if region is not None:
+        filters["region"] = region.value
     return await _respond(
         db,
         current_user,
@@ -307,6 +335,7 @@ async def export_gantt(
     response: Response,
     format: ExportFormat = ExportFormat.CSV,
     hub_id: uuid.UUID | None = None,
+    region: LabRegion | None = None,
     project_id: uuid.UUID | None = None,
     async_export: bool = False,
     db: AsyncSession = Depends(get_db),
@@ -323,6 +352,8 @@ async def export_gantt(
         "hub_id": str(hub_id) if hub_id else None,
         "project_id": str(project_id) if project_id else None,
     }
+    if region is not None:
+        filters["region"] = region.value
     return await _respond(
         db,
         current_user,
@@ -344,6 +375,7 @@ async def export_project_registration(
     status_: str | None = None,
     priority: str | None = None,
     type_: str | None = None,
+    q: Annotated[str | None, Query(max_length=100)] = None,
     async_export: bool = False,
     db: AsyncSession = Depends(get_db),
     current_user: Principal = Depends(_read_registration),
@@ -360,6 +392,10 @@ async def export_project_registration(
         "priority": priority,
         "type_": type_,
     }
+    # P13-T17: the Registration search box (`GET /projects` `q`), stored only
+    # when set so the persisted filter shape of older jobs is unchanged.
+    if q is not None and q.strip():
+        filters["q"] = q
     return await _respond(
         db,
         current_user,
@@ -402,11 +438,21 @@ async def export_capacity_planning(
     )
 
 
+#: P9-T03 (ADR 0010 §1): Super Admin holds every Admin right.
+_JOB_ADMIN_ROLES = frozenset({RoleName.ADMIN, RoleName.SUPER_ADMIN})
+
+
+def _job_file_name(job: ExportJob) -> str:
+    """The download name, shared by the download route and the job list."""
+
+    extension = "xlsx" if job.format == ExportFormat.XLSX else "csv"
+    return f"{job.surface.value}-export.{extension}"
+
+
 def _authorize_job_access(job: ExportJob | None, current_user: Principal) -> ExportJob:
     if job is None or (
         job.requested_by_user_id != current_user.user_id
-        # P9-T03 (ADR 0010 §1): Super Admin holds every Admin right.
-        and not ({RoleName.ADMIN, RoleName.SUPER_ADMIN} & current_user.roles)
+        and not (_JOB_ADMIN_ROLES & current_user.roles)
     ):
         # 404, not 403 — never confirms a job's existence to a caller who
         # didn't dispatch it and isn't Admin. See module docstring.
@@ -464,10 +510,51 @@ async def download_export_job(
             minio_response.release_conn()
 
     media_type = _XLSX_CONTENT_TYPE if job.format == ExportFormat.XLSX else "text/csv"
-    extension = "xlsx" if job.format == ExportFormat.XLSX else "csv"
-    filename = f"{job.surface.value}-export.{extension}"
+    filename = _job_file_name(job)
     return StreamingResponse(
         _iter_object_bytes(),
         media_type=media_type,
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
+
+
+# --- P13-T15: Downloads page list (docs/API_CONTRACT_P13.md §7) ---------------
+
+#: `GET /export-jobs` lives on its own prefix, as the contract names it; the
+#: per-job status and download routes stay under `/exports/jobs/{job_id}`.
+jobs_router = APIRouter(prefix="/export-jobs", tags=["exports"])
+
+
+@jobs_router.get("", response_model=list[ExportJobListItem])
+async def list_export_jobs(
+    limit: Annotated[int, Query(ge=1, le=200)] = 50,
+    db: AsyncSession = Depends(get_db),
+    current_user: Principal = Depends(get_current_principal),
+) -> list[ExportJobListItem]:
+    """The caller's own export jobs, newest first (`created_at`, then id).
+    Admin / Super Admin see every job, the same rule as
+    `_authorize_job_access`. Any authenticated user may call it; the scope is
+    the requester column, a bound parameter. Read-only: no audit row.
+    """
+
+    stmt = select(ExportJob)
+    if not (_JOB_ADMIN_ROLES & current_user.roles):
+        stmt = stmt.where(ExportJob.requested_by_user_id == current_user.user_id)
+    jobs = (
+        await db.execute(
+            stmt.order_by(ExportJob.created_at.desc(), ExportJob.id.desc()).limit(limit)
+        )
+    ).scalars()
+    return [
+        ExportJobListItem(
+            id=job.id,
+            kind=job.surface,
+            format=job.format,
+            status=job.status,
+            created_at=job.created_at,
+            completed_at=job.completed_at,
+            row_count=job.row_count,
+            file_name=_job_file_name(job),
+        )
+        for job in jobs
+    ]

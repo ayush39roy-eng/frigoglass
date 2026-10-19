@@ -223,3 +223,56 @@ async def test_admin_dispatch_path_still_never_activates(postgres_url):
     assert run.solver_status in ("OPTIMAL", "FEASIBLE")
     assert run.is_active is False and previous.is_active is True
     assert project.schedule_stale is True
+
+
+@pytest.mark.parametrize("terminal", [ScheduleRunStatus.FAILED, ScheduleRunStatus.COMPLETED])
+async def test_worker_skips_a_run_that_is_no_longer_queued(postgres_url, terminal):
+    """P14-T01 (M1): a late delivery for a row the reaper already failed
+    (`ABANDONED`), or one that already ran, must not complete or activate it.
+    """
+
+    hub = HubName.RD_INDIA if terminal == ScheduleRunStatus.FAILED else HubName.PD_INDIA
+    version = 7001 if terminal == ScheduleRunStatus.FAILED else 8001
+    project_id, previous_id, run_id = await _seed(postgres_url, hub, version, SolverType.GREEDY)
+
+    async def _mark(db):
+        run = await db.get(ScheduleRun, run_id)
+        run.status = terminal
+        run.error_message = "ABANDONED" if terminal == ScheduleRunStatus.FAILED else None
+        await db.commit()
+
+    await _read(postgres_url, _mark)
+    result = await schedule_tasks._run_cp_sat_schedule_async(
+        _FakeTask(), schedule_run_id=str(run_id), triggered_by_user_id=None,
+        deterministic_time=None, activate=True, recalc_project_id=str(project_id),
+        solver=SolverType.GREEDY,
+    )
+    assert result == {
+        "status": "skipped", "schedule_run_id": str(run_id), "run_status": terminal.value,
+    }
+
+    async def _check(db):
+        outcomes = (
+            await db.execute(
+                select(ScheduleRunProjectOutcome).where(
+                    ScheduleRunProjectOutcome.schedule_run_id == run_id
+                )
+            )
+        ).scalars().all()
+        return await db.get(ScheduleRun, run_id), await db.get(ScheduleRun, previous_id), outcomes
+
+    run, previous, outcomes = await _read(postgres_url, _check)
+    assert run.status == terminal and run.is_active is False
+    assert previous.is_active is True
+    assert outcomes == []
+
+
+def test_solver_messages_expire_with_the_in_flight_window():
+    """P14-T01 (M1): every `.delay()` inherits the task-level `expires`."""
+
+    from services.run_dispatch import in_flight_window
+
+    window = in_flight_window().total_seconds()
+    for task in (schedule_tasks.run_greedy_schedule, schedule_tasks.run_cp_sat_schedule):
+        assert task.expires == window
+        assert task._get_exec_options()["expires"] == window

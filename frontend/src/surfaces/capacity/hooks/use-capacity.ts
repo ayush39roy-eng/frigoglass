@@ -11,10 +11,13 @@ import { useQuery } from '@tanstack/react-query';
 
 import { ApiError } from '@/lib/api/client';
 import { queryKeys } from '@/lib/query-keys';
+import { useHubFilterParams } from '@/stores/hub-filter';
+import type { LabRegion } from '@/types/enums';
 
 import {
   fetchActiveScheduleRun,
   fetchClassBreakdown,
+  fetchEngineerUtilization,
   fetchHubLoadVsCapacity,
   fetchUtilizationMatrix,
 } from '../api/capacity-api';
@@ -29,28 +32,45 @@ function retryUnlessAuth(failureCount: number, error: Error): boolean {
 /** `enabled` (default true) lets the Dashboard's "Capacity booked" card (P11)
  *  share this exact query and cache entry without fetching for a role that
  *  cannot read Capacity. */
-export function useHubLoadVsCapacity({ enabled = true, hubId = null }: { enabled?: boolean; hubId?: string | null } = {}) {
+export function useHubLoadVsCapacity({
+  enabled = true,
+  hubId = null,
+  region = null,
+}: { enabled?: boolean; hubId?: string | null; region?: LabRegion | null } = {}) {
   return useQuery({
-    // P12 (ADR 0020): the global hub filter is in the key and the request.
-    queryKey: queryKeys.capacityHubLoad(hubId),
-    queryFn: ({ signal }) => fetchHubLoadVsCapacity({ signal }, hubId),
+    // P12 (ADR 0020) + P13 (ADR 0025): the hub and country filters are in the key and the request.
+    queryKey: queryKeys.capacityHubLoad(hubId, region),
+    queryFn: ({ signal }) => fetchHubLoadVsCapacity({ signal }, hubId, region),
     retry: retryUnlessAuth,
     enabled,
   });
 }
 
-export function useClassBreakdown(hubId: string | null = null) {
+export function useClassBreakdown(hubId: string | null = null, region: LabRegion | null = null) {
   return useQuery({
-    queryKey: queryKeys.capacityClassBreakdown(hubId),
-    queryFn: ({ signal }) => fetchClassBreakdown({ signal }, hubId),
+    queryKey: queryKeys.capacityClassBreakdown(hubId, region),
+    queryFn: ({ signal }) => fetchClassBreakdown({ signal }, hubId, region),
     retry: retryUnlessAuth,
   });
 }
 
-export function useUtilizationMatrix(hubId: string | null = null) {
+export function useUtilizationMatrix(hubId: string | null = null, region: LabRegion | null = null) {
   return useQuery({
-    queryKey: queryKeys.capacityUtilizationMatrix(hubId),
-    queryFn: ({ signal }) => fetchUtilizationMatrix({ signal }, hubId),
+    queryKey: queryKeys.capacityUtilizationMatrix(hubId, region),
+    queryFn: ({ signal }) => fetchUtilizationMatrix({ signal }, hubId, region),
+    retry: retryUnlessAuth,
+  });
+}
+
+/** P15 (ADR 0028): named per-engineer weekly utilization. The global hub and
+ *  country filters (`useHubFilterParams`) are both in the key and the request. */
+export function useEngineerUtilization() {
+  const { hub_id, region } = useHubFilterParams();
+  const hubId = hub_id ?? null;
+  const reg = region ?? null;
+  return useQuery({
+    queryKey: queryKeys.capacityEngineerUtilization(hubId, reg),
+    queryFn: ({ signal }) => fetchEngineerUtilization({ signal }, hubId, reg),
     retry: retryUnlessAuth,
   });
 }

@@ -1,5 +1,5 @@
 import * as React from 'react';
-import type { RouteObject } from 'react-router-dom';
+import { Navigate, type RouteObject } from 'react-router-dom';
 
 import { AppShell } from '@/components/layout/app-shell';
 import { SurfaceFallback } from '@/components/layout/surface-fallback';
@@ -15,6 +15,8 @@ import {
   CheckInPage,
   DashboardPage,
   DesignSystemPage,
+  DownloadsPage,
+  HistoryPage,
   ProfilePage,
   GanttPage,
   LoginPage,
@@ -24,7 +26,6 @@ import {
   ProjectsPage,
   ProjectWorkspacePage,
   RegistrationPage,
-  VipProjectsPage,
   WorkflowSettingsPage,
 } from './lazy-surfaces';
 import { SURFACES } from './nav';
@@ -69,7 +70,6 @@ function AdminUsersRoute({
 
 const SURFACE_ELEMENTS: Partial<Record<string, React.ReactNode>> = {
   '/': lazyElement(<DashboardPage />),
-  '/vip': lazyElement(<VipProjectsPage />),
   '/projects': lazyElement(<ProjectsPage />),
   '/capacity': lazyElement(<CapacityPage />),
   '/matrix': lazyElement(<MatrixPage />),
@@ -81,6 +81,8 @@ const SURFACE_ELEMENTS: Partial<Record<string, React.ReactNode>> = {
   '/audit-log': lazyElement(<AuditLogPage />),
   '/settings/workflow': lazyElement(<WorkflowSettingsPage />),
   '/admin/users': lazyElement(<AdminUsersPage />),
+  '/history': lazyElement(<HistoryPage />),
+  '/downloads': lazyElement(<DownloadsPage />),
 };
 
 /**
@@ -110,11 +112,16 @@ const surfaceRoutes: RouteObject[] = SURFACES.map((surface) => {
   const inner = SURFACE_ELEMENTS[surface.path] ?? <PlaceholderPage surface={surface} />;
   const path = surface.path.replace(/^\//, '');
   const Guard = surface.path === '/admin/users' ? AdminUsersRoute : RequireRead;
-  const element = (
-    <Guard surface={surface.surface} title={surface.title}>
-      {inner}
-    </Guard>
-  );
+  // `surface: null` (P13-T15 Downloads): any signed-in user — the AppShell's
+  // session gate is the only guard; the endpoint scopes rows to the caller.
+  const element =
+    surface.surface === null ? (
+      inner
+    ) : (
+      <Guard surface={surface.surface} title={surface.title}>
+        {inner}
+      </Guard>
+    );
   return surface.path === '/' ? { index: true, element } : { path, element };
 });
 
@@ -141,6 +148,9 @@ export const routeObjects: RouteObject[] = [
           </RequireRead>
         ),
       },
+      // P14 (ADR 0027 §1): the VIP page left the nav; VIP is a Dashboard card.
+      // Old bookmarks land on the Dashboard.
+      { path: 'vip', element: <Navigate to="/" replace /> },
       // Developer route, deliberately absent from SURFACES (and therefore from the
       // sidebar): every primitive in both density zones. See pages/design-system.tsx.
       { path: 'design-system', element: lazyElement(<DesignSystemPage />) },

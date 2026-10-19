@@ -27,11 +27,13 @@ const hooks = {
   useGantt: vi.fn(),
   useActiveScheduleRun: vi.fn(),
   useToggleFreeze: vi.fn(),
+  useGanttFacets: vi.fn(),
 };
 vi.mock('./hooks/use-gantt', () => ({
   useGantt: (args: unknown) => hooks.useGantt(args),
   useActiveScheduleRun: (enabled: boolean) => hooks.useActiveScheduleRun(enabled),
   useToggleFreeze: () => hooks.useToggleFreeze(),
+  useGanttFacets: (...args: unknown[]) => hooks.useGanttFacets(...args),
 }));
 vi.mock('@/lib/api/reference', () => ({
   useHubs: () => ({
@@ -43,6 +45,7 @@ vi.mock('@/lib/api/reference', () => ({
 }));
 
 import GanttPage from './GanttPage';
+import { P13_GANTT_ROW_DEFAULTS } from './test-fixtures';
 
 function step(seq: number, start: number, end: number, over: Partial<GanttStepRow> = {}): GanttStepRow {
   return {
@@ -93,6 +96,7 @@ function project(over: Partial<GanttProjectRow> = {}): GanttProjectRow {
     workflow_id: 'PDD',
     is_vip: false,
     tracking_status: 'idle',
+    ...P13_GANTT_ROW_DEFAULTS,
     steps,
     ...over,
   };
@@ -105,6 +109,7 @@ function ganttData(over: Record<string, unknown> = {}) {
       schedule_run_version: 5,
       total_count: 1,
       rows: [project()],
+      weekly_active_counts: Array.from({ length: 52 }, (_, i) => ({ week: i + 1, pdd: i === 11 ? 3 : 0, oem: i === 11 ? 1 : 0 })),
       ...over,
     },
     isPending: false,
@@ -116,10 +121,20 @@ function ganttData(over: Record<string, unknown> = {}) {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  useHubFilterStore.setState({ hubId: null });
+  useHubFilterStore.setState({ hubId: null, region: null });
   hooks.useActiveScheduleRun.mockReturnValue({ data: null });
   hooks.useToggleFreeze.mockReturnValue({ mutateAsync: vi.fn().mockResolvedValue({}) });
   hooks.useGantt.mockReturnValue(ganttData());
+  hooks.useGanttFacets.mockReturnValue({
+    data: {
+      leaders: [
+        { id: 'eng-0001', name: null },
+        { id: 'eng-0002', name: 'Sam Super' },
+      ],
+      steps: [{ code: 'PDD-E', name: 'Design Detailing' }],
+    },
+    isError: false,
+  });
 });
 
 describe('GanttPage', () => {
@@ -128,7 +143,7 @@ describe('GanttPage', () => {
     expect(
       screen.getByRole('heading', { name: 'Project Execution Timeline' }),
     ).toBeInTheDocument();
-    expect(screen.getByRole('radio', { name: 'Weeks zoom' })).toBeInTheDocument();
+    expect(screen.getByRole('slider', { name: 'Zoom' })).toBeInTheDocument();
   });
 
   it('shows the no-schedule empty state (not an error) when has_active_schedule_run is false', () => {
@@ -160,24 +175,24 @@ describe('GanttPage', () => {
     expect(
       screen.getByText(/does not have access to the Project Execution Timeline/i),
     ).toBeInTheDocument();
-    expect(screen.queryByRole('radio', { name: 'Weeks zoom' })).toBeInTheDocument(); // header stays
+    expect(screen.queryByRole('slider', { name: 'Zoom' })).toBeInTheDocument(); // header stays
     expect(screen.queryByText('Execution timeline')).not.toBeInTheDocument();
   });
 
   it('follows the global header hub filter (P12, ADR 0020): no page-local select, hub id passed, chip clears it', async () => {
     const user = userEvent.setup();
     renderWithProviders(<GanttPage />);
-    expect(hooks.useGantt).toHaveBeenLastCalledWith({ hubId: undefined });
+    expect(hooks.useGantt).toHaveBeenLastCalledWith({ hubId: undefined, sort: 'priority' });
     expect(screen.queryByRole('combobox', { name: 'Hub' })).not.toBeInTheDocument();
     expect(screen.queryByTestId('hub-filter-chip')).not.toBeInTheDocument();
 
     act(() => useHubFilterStore.getState().setHubId('hub-india'));
-    expect(hooks.useGantt).toHaveBeenLastCalledWith({ hubId: 'hub-india' });
+    expect(hooks.useGantt).toHaveBeenLastCalledWith({ hubId: 'hub-india', sort: 'priority' });
     expect(screen.getByTestId('hub-filter-chip')).toHaveTextContent('Hub: R&D-India');
 
     await user.click(screen.getByRole('button', { name: 'Clear hub filter (R&D-India)' }));
     expect(useHubFilterStore.getState().hubId).toBeNull();
-    expect(hooks.useGantt).toHaveBeenLastCalledWith({ hubId: undefined });
+    expect(hooks.useGantt).toHaveBeenLastCalledWith({ hubId: undefined, sort: 'priority' });
   });
 
   it('renders the outcome badges from the server flags', () => {
@@ -255,8 +270,8 @@ describe('GanttPage', () => {
   });
 
   describe('ADR 0024 — 52-week display horizon (client ask 2026-10-13)', () => {
-    // 15 px per week at the default "weeks" zoom → the axis is 52 × 15 = 780 px.
-    const W = 15;
+    // 16 px per week at the default zoom (P13-T13 slider minimum) → 52 × 16 = 832 px.
+    const W = 16;
 
     it('the week axis ends at W52 — no week columns past 52', () => {
       renderWithProviders(<GanttPage />);
@@ -280,7 +295,7 @@ describe('GanttPage', () => {
       renderWithProviders(<GanttPage />);
 
       const row = screen.getByTestId('gantt-project-row');
-      // The planned bar W30–W57 is cut at the W52 end edge: x = 29 × 15, width = 23 weeks.
+      // The planned bar W30–W57 is cut at the W52 end edge: x = 29 × W, width = 23 weeks.
       const bar = row.querySelector('rect[data-bar="planned"]');
       expect(bar).toHaveAttribute('x', String(29 * W));
       expect(bar).toHaveAttribute('width', String(23 * W));
@@ -457,6 +472,118 @@ describe('GanttPage', () => {
       await user.click(screen.getByRole('button', { name: 'Expand steps for Cooler Alpha' }));
       const accent = await screen.findByTestId('gantt-focus-accent');
       expect(accent).toHaveAttribute('data-motion', 'true');
+    });
+  });
+
+  describe('P13-T13 toolbar (API_CONTRACT_P13 §7)', () => {
+    it('sends Type, Status, Leader, Step, Category, sort and the priority tab to the server', async () => {
+      const user = userEvent.setup();
+      renderWithProviders(<GanttPage />);
+      await user.click(screen.getByRole('combobox', { name: 'Type' }));
+      await user.click(await screen.findByRole('option', { name: /^CO —/ }));
+      await user.click(screen.getByRole('combobox', { name: 'Status' }));
+      await user.click(await screen.findByRole('option', { name: 'In Queue' }));
+      await user.click(screen.getByRole('combobox', { name: 'Leader' }));
+      await user.click(await screen.findByRole('option', { name: 'Sam Super' }));
+      await user.click(screen.getByRole('combobox', { name: 'Current step' }));
+      await user.click(await screen.findByRole('option', { name: 'PDD-E · Design Detailing' }));
+      await user.click(screen.getByRole('combobox', { name: 'Category' }));
+      await user.click(await screen.findByRole('option', { name: 'A+' }));
+      await user.click(screen.getByRole('combobox', { name: 'Sort' }));
+      await user.click(await screen.findByRole('option', { name: 'End week' }));
+      await user.click(screen.getByRole('radio', { name: 'In Queue' }));
+      expect(hooks.useGantt).toHaveBeenLastCalledWith({
+        type: 'CO',
+        status: 'In Queue',
+        leaderEngineerId: 'eng-0002',
+        currentStep: 'PDD-E',
+        category: 'A+',
+        sort: 'end',
+        priority: 'Q',
+      });
+      // "Clear filters" resets every filter but keeps the chosen sort.
+      await user.click(screen.getByRole('button', { name: 'Clear filters' }));
+      expect(hooks.useGantt).toHaveBeenLastCalledWith({ sort: 'end' });
+    });
+
+    it('debounces the search and sends it as q (max 100 chars)', async () => {
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      try {
+        const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime.bind(vi) });
+        renderWithProviders(<GanttPage />);
+        const box = screen.getByRole('searchbox', { name: 'Search' });
+        expect(box).toHaveAttribute('maxLength', '100');
+        await user.type(box, '24-002');
+        expect(hooks.useGantt).not.toHaveBeenCalledWith(expect.objectContaining({ q: '24-0' }));
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(400);
+        });
+        expect(hooks.useGantt).toHaveBeenLastCalledWith({ q: '24-002', sort: 'priority' });
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('labels a leader with no name, and hides Leader / Step without dashboard read', async () => {
+      const user = userEvent.setup();
+      const { unmount } = renderWithProviders(<GanttPage />);
+      await user.click(screen.getByRole('combobox', { name: 'Leader' }));
+      expect(await screen.findByRole('option', { name: 'Leader (name unavailable) · 0001' })).toBeInTheDocument();
+      await user.keyboard('{Escape}');
+      unmount();
+
+      renderWithProviders(<GanttPage />, { session: { permissions: { ...fullPermissions(), dashboard: { read: false, write: false } } } });
+      expect(hooks.useGanttFacets).toHaveBeenLastCalledWith(null, null, false);
+      expect(screen.queryByRole('combobox', { name: 'Leader' })).not.toBeInTheDocument();
+      expect(screen.queryByRole('combobox', { name: 'Current step' })).not.toBeInTheDocument();
+    });
+
+    it('renders the row meta: leader or "Name unavailable", code, type and the served weeks', () => {
+      hooks.useGantt.mockReturnValue(
+        ganttData({
+          rows: [
+            project({ leader_name: 'Rishi', leader_engineer_id: 'eng-1', external_code: '24-00221_1', type: 'CO', total_weeks: 17, design_weeks: 5, lab_weeks: 0 }),
+            project({ project_id: 'p2', project_name: 'Cooler Beta', leader_engineer_id: 'eng-2' }),
+            project({ project_id: 'p3', project_name: 'Cooler Gamma' }),
+          ],
+        }),
+      );
+      renderWithProviders(<GanttPage />);
+      const [a, b, c] = screen.getAllByTestId('gantt-project-row');
+      expect(within(a).getByTestId('gantt-row-meta')).toHaveTextContent('Rishi·24-00221_1·CO·R&D-Greece');
+      expect(within(a).getByTestId('gantt-row-weeks')).toHaveTextContent('Total 17W · 5 DW / 0 LW');
+      expect(within(b).getByTestId('gantt-row-meta')).toHaveTextContent('Name unavailable');
+      expect(within(b).getByTestId('gantt-row-weeks')).toHaveTextContent('Not in the active run');
+      expect(within(c).getByTestId('gantt-row-meta')).toHaveTextContent(/^—No leader/);
+    });
+
+    it('draws the served weekly PDD / OEM counts; Hide stats hides them and the summary', async () => {
+      const user = userEvent.setup();
+      renderWithProviders(<GanttPage />);
+      const pdd = screen.getByTestId('gantt-count-row-pdd');
+      const w12 = pdd.querySelector('[data-week="12"]');
+      expect(w12).toHaveTextContent('3');
+      expect(screen.getByTestId('gantt-count-row-oem').querySelector('[data-week="12"]')).toHaveTextContent('1');
+      expect(screen.getByRole('group', { name: 'Timeline summary' })).toBeInTheDocument();
+
+      await user.click(screen.getByRole('button', { name: 'Hide stats' }));
+      expect(screen.getByRole('button', { name: 'Hide stats' })).toHaveAttribute('aria-pressed', 'true');
+      expect(screen.queryByTestId('gantt-weekly-stats')).not.toBeInTheDocument();
+      expect(screen.queryByRole('group', { name: 'Timeline summary' })).not.toBeInTheDocument();
+    });
+
+    it('Forest view drops the row meta; the px zoom resizes the axis only', async () => {
+      const user = userEvent.setup();
+      renderWithProviders(<GanttPage />);
+      expect(screen.getByTestId('gantt-row-meta')).toBeInTheDocument();
+      await user.click(screen.getByRole('button', { name: 'Forest view' }));
+      expect(screen.queryByTestId('gantt-row-meta')).not.toBeInTheDocument();
+
+      await user.click(screen.getByRole('button', { name: 'Zoom in' }));
+      expect(screen.getByRole('img', { name: 'Week axis, week 1 to week 52' })).toHaveAttribute('width', String(52 * 20));
+      expect(screen.getByRole('slider', { name: 'Zoom' })).toHaveValue('20');
+      // Zoom is a rendering concern: the query params are unchanged.
+      expect(hooks.useGantt).toHaveBeenLastCalledWith({ sort: 'priority' });
     });
   });
 });

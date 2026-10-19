@@ -22,6 +22,7 @@ vi.mock('@/surfaces/project-workspace/api/workspace-api', () => ({
 }));
 
 import ProjectsPage from './ProjectsPage';
+import { P13_ROW_DEFAULTS } from '@/surfaces/dashboard/test-fixtures';
 
 function ok(rows: ProjectFilterResult['rows']): UseQueryResult<ProjectFilterResult> {
   return {
@@ -42,6 +43,7 @@ function row(id: string, overrides: Partial<ProjectFilterResult['rows'][number]>
     priority: 'P1' as const,
     is_vip: false,
     tracking_status: 'idle' as const,
+    ...P13_ROW_DEFAULTS,
     ...overrides,
   };
 }
@@ -62,7 +64,7 @@ describe('ProjectsPage', () => {
       expect(screen.getByTestId('hub-filter-chip')).toHaveTextContent('Hub: R&D-Greece');
       expect(screen.getByText('No projects match these filters')).toBeInTheDocument();
     } finally {
-      useHubFilterStore.setState({ hubId: null });
+      useHubFilterStore.setState({ hubId: null, region: null });
     }
   });
 

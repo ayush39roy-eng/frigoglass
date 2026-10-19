@@ -12,13 +12,17 @@ import { useQuery } from '@tanstack/react-query';
 
 import { ApiError } from '@/lib/api/client';
 import { queryKeys, type DashboardProjectFilters } from '@/lib/query-keys';
+import type { LabRegion } from '@/types/enums';
 
 import {
   fetchActiveScheduleRun,
   fetchCompletingWithinYear,
+  fetchDashboardAnalytics,
   fetchDashboardProjects,
   fetchHubTypePipeline,
   fetchPipelineTotals,
+  fetchProjectFacets,
+  fetchRegionSummary,
   fetchStatusOverview,
 } from '../api/dashboard-api';
 import type { ProjectFilterParams } from '../api/types';
@@ -30,44 +34,79 @@ function retryUnlessAuth(failureCount: number, error: Error): boolean {
   return failureCount < 1;
 }
 
-export function useCompletingWithinYear(hubId: string | null = null) {
+export function useCompletingWithinYear(hubId: string | null = null, region: LabRegion | null = null) {
   return useQuery({
-    queryKey: queryKeys.dashboardCompletingWithinYear(hubId),
-    queryFn: ({ signal }) => fetchCompletingWithinYear({ signal }, hubId),
+    queryKey: queryKeys.dashboardCompletingWithinYear(hubId, region),
+    queryFn: ({ signal }) => fetchCompletingWithinYear({ signal }, hubId, region),
     retry: retryUnlessAuth,
   });
 }
 
-export function usePipelineTotals(hubId: string | null = null) {
+export function usePipelineTotals(hubId: string | null = null, region: LabRegion | null = null) {
   return useQuery({
-    queryKey: queryKeys.dashboardPipelineTotals(hubId),
-    queryFn: ({ signal }) => fetchPipelineTotals({ signal }, hubId),
+    queryKey: queryKeys.dashboardPipelineTotals(hubId, region),
+    queryFn: ({ signal }) => fetchPipelineTotals({ signal }, hubId, region),
     retry: retryUnlessAuth,
   });
 }
 
-export function useStatusOverview(hubId: string | null = null) {
+export function useStatusOverview(hubId: string | null = null, region: LabRegion | null = null) {
   return useQuery({
-    queryKey: queryKeys.dashboardStatusOverview(hubId),
-    queryFn: ({ signal }) => fetchStatusOverview({ signal }, hubId),
+    queryKey: queryKeys.dashboardStatusOverview(hubId, region),
+    queryFn: ({ signal }) => fetchStatusOverview({ signal }, hubId, region),
     retry: retryUnlessAuth,
   });
 }
 
-export function useHubTypePipeline(hubId: string | null = null) {
+export function useHubTypePipeline(hubId: string | null = null, region: LabRegion | null = null) {
   return useQuery({
-    queryKey: queryKeys.dashboardHubTypePipeline(hubId),
-    queryFn: ({ signal }) => fetchHubTypePipeline({ signal }, hubId),
+    queryKey: queryKeys.dashboardHubTypePipeline(hubId, region),
+    queryFn: ({ signal }) => fetchHubTypePipeline({ signal }, hubId, region),
     retry: retryUnlessAuth,
+  });
+}
+
+/** P13 (API_CONTRACT_P13 §2): per-country chips under the KPI cards. */
+export function useRegionSummary(hubId: string | null = null, region: LabRegion | null = null) {
+  return useQuery({
+    queryKey: queryKeys.dashboardRegionSummary(hubId, region),
+    queryFn: ({ signal }) => fetchRegionSummary({ signal }, hubId, region),
+    retry: retryUnlessAuth,
+  });
+}
+
+/** P13-T10 (API_CONTRACT_P13 §5): the "Analytics & breakdown" section. */
+export function useDashboardAnalytics(hubId: string | null = null, region: LabRegion | null = null) {
+  return useQuery({
+    queryKey: queryKeys.dashboardAnalytics(hubId, region),
+    queryFn: ({ signal }) => fetchDashboardAnalytics({ signal }, hubId, region),
+    retry: retryUnlessAuth,
+  });
+}
+
+/** P13 (API_CONTRACT_P13 §3): the register's leader / current-step options. */
+export function useProjectFacets(hubId: string | null = null, region: LabRegion | null = null) {
+  return useQuery({
+    queryKey: queryKeys.dashboardProjectFacets(hubId, region),
+    queryFn: ({ signal }) => fetchProjectFacets({ signal }, hubId, region),
+    retry: retryUnlessAuth,
+    staleTime: 60_000,
   });
 }
 
 export function useDashboardProjects(params: ProjectFilterParams) {
+  // Every changeable filter is in the key (P4-T04 review lesson).
   const filters: DashboardProjectFilters = {
     hub_id: params.hub_id,
     category: params.category,
     status_: params.status_,
     priority: params.priority,
+    ...(params.region !== undefined ? { region: params.region } : {}),
+    ...(params.q !== undefined ? { q: params.q } : {}),
+    ...(params.type !== undefined ? { type: params.type } : {}),
+    ...(params.leader_engineer_id !== undefined ? { leader_engineer_id: params.leader_engineer_id } : {}),
+    ...(params.current_step !== undefined ? { current_step: params.current_step } : {}),
+    ...(params.sort !== undefined ? { sort: params.sort } : {}),
   };
   return useQuery({
     queryKey: queryKeys.dashboardProjects(filters),

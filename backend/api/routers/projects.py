@@ -42,13 +42,21 @@ the PATCH changes `priority`; the PATCH reports the outcome in the
 response headers. Hard gates pin P1 on both paths (409
 `HARD_GATE_FORCES_P1`). Every other field edit still only sets
 `schedule_stale` (ADR 0006).
+
+**P14 (ADR 0026, docs/API_CONTRACT_P14.md §1).** `POST
+/projects/{id}/priority/preview` runs greedy in-process and returns the
+knock-on changes without writing anything; `POST /projects/{id}/priority`
+with that `preview_token` applies the move and its run in-process
+(`recalc_status: "applied"`). Both live in `services.priority_preview`.
 """
 
 from __future__ import annotations
 
+import math
 import uuid
+from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -71,6 +79,8 @@ from schemas.project import (
     HardGateStatus,
     PriorityMoveRequest,
     PriorityMoveResponse,
+    PriorityPreviewRequest,
+    PriorityPreviewResponse,
     ProjectCreateRequest,
     ProjectListItem,
     ProjectRead,
@@ -80,14 +90,28 @@ from schemas.project import (
 from services.audit_helpers import project_audit_state
 from services.hub_scope import hub_scope_filter, is_hub_in_scope
 from services.priority_move import apply_priority_change, ensure_priority_move_allowed
+from services.priority_preview import confirm_priority_move, preview_priority_move
 from services.project_access import authorize_project_action, effective_project_access
 from services.project_hard_gates import missing_hard_gate_fields
 from services.project_steps import WorkflowChangeWithProgress, sync_project_steps
+from services.rate_limit import TokenBucketLimiter
+from services.text_search import Q_MAX_LENGTH, project_search_filter
 
 router = APIRouter(prefix="/projects", tags=["projects"])
 
 _read = require_permission(Surface.PROJECT_REGISTRATION, Action.READ)
 _write = require_permission(Surface.PROJECT_REGISTRATION, Action.WRITE)
+
+#: P14 contract §1: each preview is one in-process greedy pass. Per user: a
+#: burst of 6, then one every 5 seconds. Per API process (see
+#: `services.rate_limit` for the documented limitation). A confirm needs a
+#: token from a preview, so this also bounds in-process confirms.
+PRIORITY_PREVIEW_RATE_LIMIT = TokenBucketLimiter(capacity=6, refill_per_second=1 / 5)
+
+#: P14-R01 (S1): a confirm takes the global dispatch lock and builds a full
+#: snapshot before its token is checked, so it is limited per user too, and
+#: BEFORE the lock. Generous: a burst of 6, then one every 2 seconds.
+PRIORITY_CONFIRM_RATE_LIMIT = TokenBucketLimiter(capacity=6, refill_per_second=1 / 2)
 
 #: Project fields that are scheduler inputs. Changing any of them sets
 #: `schedule_stale` (P9-T03), the same banner a progress edit raises. A
@@ -166,6 +190,7 @@ async def list_projects(
     status_: ProjectStatus | None = None,
     priority: ProjectPriority | None = None,
     type_: ProjectType | None = None,
+    q: Annotated[str | None, Query(max_length=Q_MAX_LENGTH)] = None,
     limit: int = 100,
     offset: int = 0,
     db: AsyncSession = Depends(get_db),
@@ -179,6 +204,10 @@ async def list_projects(
     param simply yields an empty list (the AND of both filters), not a 403,
     matching this endpoint's existing "filter narrows silently" convention
     for its other query params.
+
+    P13-T17: `q` is a case-insensitive substring of name or `external_code`
+    (at most 100 characters, wildcards literal, bound parameter —
+    `services.text_search`), ANDed like the other filters.
     """
 
     if limit < 1 or limit > 500:
@@ -200,6 +229,9 @@ async def list_projects(
         stmt = stmt.where(Project.priority == priority)
     if type_ is not None:
         stmt = stmt.where(Project.type == type_)
+    search = project_search_filter(q)
+    if search is not None:
+        stmt = stmt.where(search)
     stmt = stmt.order_by(Project.name).limit(limit).offset(offset)
 
     result = await db.execute(stmt)
@@ -437,6 +469,21 @@ async def move_project_priority(
         db, current_user, project,
         surface=Surface.PROJECT_REGISTRATION, action=Action.WRITE, min_grant_role="admin",
     )
+    if body.preview_token is not None:
+        # P14 (ADR 0026 §2): confirm a preview, applied in-process.
+        allowed, retry_after = PRIORITY_CONFIRM_RATE_LIMIT.allow(
+            f"priority-confirm:{current_user.user_id}"
+        )
+        if not allowed:
+            raise CodedHTTPException(
+                status.HTTP_429_TOO_MANY_REQUESTS,
+                "RATE_LIMITED",
+                "Too many timeline confirmations. Please wait a moment and try again.",
+                headers={"Retry-After": str(max(1, math.ceil(retry_after)))},
+            )
+        return await confirm_priority_move(
+            db, project, body.priority, current_user, body.preview_token
+        )
     move = await apply_priority_change(db, project, body.priority, current_user)
     assert move.priority_after is not None  # the request schema forbids null
     return PriorityMoveResponse(
@@ -448,6 +495,41 @@ async def move_project_priority(
         baseline_run_id=move.baseline_run_id,
         task_id=move.task_id,
     )
+
+
+@router.post("/{project_id}/priority/preview", response_model=PriorityPreviewResponse)
+async def preview_project_priority(
+    project_id: uuid.UUID,
+    body: PriorityPreviewRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: Principal = Depends(get_current_principal),
+) -> PriorityPreviewResponse:
+    """P14 (ADR 0026 §1, docs/API_CONTRACT_P14.md §1): what a priority move
+    would change, computed by an in-process greedy pass. Writes nothing.
+
+    Permission is identical to `POST /projects/{id}/priority` (404 out of
+    scope, 403 without Registration WRITE or an Admin-level grant). 409
+    `HARD_GATE_FORCES_P1`, 429 `RATE_LIMITED`, 503 `PREVIEW_TIMEOUT`.
+    Changed projects outside the caller's scope are only counted
+    (`hidden_count`).
+    """
+
+    project = await _get_project_or_404(db, project_id, current_user)
+    await authorize_project_action(
+        db, current_user, project,
+        surface=Surface.PROJECT_REGISTRATION, action=Action.WRITE, min_grant_role="admin",
+    )
+    allowed, retry_after = PRIORITY_PREVIEW_RATE_LIMIT.allow(
+        f"priority-preview:{current_user.user_id}"
+    )
+    if not allowed:
+        raise CodedHTTPException(
+            status.HTTP_429_TOO_MANY_REQUESTS,
+            "RATE_LIMITED",
+            "Too many timeline previews. Please wait a moment and try again.",
+            headers={"Retry-After": str(max(1, math.ceil(retry_after)))},
+        )
+    return await preview_priority_move(db, project, body.priority, current_user)
 
 
 @router.post("/{project_id}/submit", response_model=ProjectRead)

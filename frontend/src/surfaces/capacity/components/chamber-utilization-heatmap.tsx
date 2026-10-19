@@ -10,8 +10,7 @@ import type { ChamberWeekLoad, ScheduleRunSummary } from '../api/types';
  * Chamber × week utilization heatmap — the equipment half of the "global
  * resource utilization matrix (engineers × weeks, chambers × weeks)"
  * (`docs/PROJECT_AND_STACK.md` §2). Chambers are equipment, not personal data,
- * so this side renders in full; the engineer half is withheld pending GDPR
- * sign-off (see `<EngineerUtilizationPlaceholder>` / OPEN_QUESTIONS #8 / P4-T08).
+ * so this side renders in full; the engineer half is `<EngineerUtilizationHeatmap>`.
  *
  * Every cell value is the per-week concurrent-project `count` taken verbatim
  * from `GET /capacity/utilization-matrix` — nothing is recomputed. Per ADR 0003

@@ -27,6 +27,7 @@ describe('registration-api', () => {
     mockApiGet.mockResolvedValueOnce([]);
     await fetchProjects({
       hubId: 'hub-1',
+      q: 'tauras',
       category: 'A+',
       status: 'Draft',
       priority: 'P1',
@@ -37,6 +38,7 @@ describe('registration-api', () => {
     expect(mockApiGet).toHaveBeenCalledWith('/projects', {
       query: {
         hub_id: 'hub-1',
+        q: 'tauras',
         category: 'A+',
         status_: 'Draft',
         priority: 'P1',
@@ -67,6 +69,12 @@ describe('registration-api', () => {
     mockApiGet.mockResolvedValueOnce({ id: 'p1' } as ProjectRead);
     await fetchProject('p1');
     expect(mockApiGet).toHaveBeenCalledWith('/projects/p1', {});
+  });
+
+  it('percent-encodes the project id into the path (P13-F11)', async () => {
+    mockApiGet.mockResolvedValueOnce({ id: 'x' } as ProjectRead);
+    await fetchProject('../me?x=1#y');
+    expect(mockApiGet).toHaveBeenCalledWith('/projects/..%2Fme%3Fx%3D1%23y', {});
   });
 
   it('requests the hard-gate status endpoint verbatim', async () => {

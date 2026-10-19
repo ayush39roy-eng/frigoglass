@@ -56,12 +56,14 @@ from collections.abc import Awaitable, Callable, Sequence
 from typing import TYPE_CHECKING, Any
 
 from openpyxl import Workbook
+from openpyxl.cell import WriteOnlyCell
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.principal import Principal
 from models.enums import (
     CurrencyCode,
+    LabRegion,
     ProjectCategory,
     ProjectPriority,
     ProjectStatus,
@@ -94,6 +96,20 @@ ExportFilters = dict[str, str | None]
 # --------------------------------------------------------------------------
 
 
+#: P13-F10 (CWE-1236): a text cell starting with one of these is read as a
+#: formula (or a DDE payload) by Excel/LibreOffice when the CSV is opened.
+_FORMULA_TRIGGERS: tuple[str, ...] = ("=", "+", "-", "@", "\t", "\r")
+
+
+def _neutralise_formula(text: str) -> str:
+    """Prefix `'` to a string that a spreadsheet would treat as a formula.
+    Only ever applied to `str` values: a negative number stays a number."""
+
+    if text.startswith(_FORMULA_TRIGGERS):
+        return "'" + text
+    return text
+
+
 def _stringify(value: Any) -> Any:
     """Render one cell value for CSV/XLSX: `None` -> empty string, a list
     (e.g. `PriorityMatrixRow.hard_gates`, `EngineerRead.allowed_categories`,
@@ -102,13 +118,25 @@ def _stringify(value: Any) -> Any:
     are left as native Python types — both the stdlib `csv` module and
     `openpyxl` render them sensibly (`csv` via `str()`, `openpyxl` writes a
     real numeric/boolean cell type) without help.
+
+    P13-F10: every resulting string that starts with `= + - @ \\t \\r` gets a
+    leading `'` (formula-injection guard). Numbers (including negative ones)
+    are never prefixed, since they are not strings.
     """
 
     if value is None:
         return ""
     if isinstance(value, (list, tuple, frozenset, set)):
-        return ", ".join(str(v) for v in value)
+        return _neutralise_formula(", ".join(str(v) for v in value))
+    if isinstance(value, str):
+        return _neutralise_formula(value)
     return value
+
+
+#: ADR 0028 lifted the P13-F12 leader_name withholding; the set is kept (empty)
+#: as the switch to withhold export fields again. Text cells still pass
+#: through `_neutralise_formula`.
+_EXPORT_WITHHELD_FIELDS: frozenset[str] = frozenset()
 
 
 def rows_from_models(
@@ -147,6 +175,21 @@ def csv_bytes(headers: list[str], rows: list[dict[str, Any]]) -> bytes:
     return buffer.getvalue().encode("utf-8-sig")
 
 
+def _text_cell(worksheet: Any, text: str) -> WriteOnlyCell:
+    """P13-F10: a string cell forced to the text type. `openpyxl` otherwise
+    stores any string starting with `=` as a live formula."""
+
+    cell = WriteOnlyCell(worksheet, value=text)
+    cell.data_type = "s"
+    return cell
+
+
+def _xlsx_cell(worksheet: Any, value: Any) -> Any:
+    if isinstance(value, str):
+        return _text_cell(worksheet, value)
+    return value
+
+
 def xlsx_bytes(sheets: ExportSheets) -> bytes:
     """One workbook, one sheet per `sheets` entry — `write_only=True` keeps
     memory bounded (streams rows to disk-backed temp storage internally
@@ -160,9 +203,9 @@ def xlsx_bytes(sheets: ExportSheets) -> bytes:
     workbook = Workbook(write_only=True)
     for sheet_name, (headers, rows) in sheets.items():
         worksheet = workbook.create_sheet(title=sheet_name[:31])
-        worksheet.append(headers)
+        worksheet.append([_text_cell(worksheet, h) for h in headers])
         for row in rows:
-            worksheet.append([_stringify(row.get(h)) for h in headers])
+            worksheet.append([_xlsx_cell(worksheet, _stringify(row.get(h))) for h in headers])
     buffer = io.BytesIO()
     workbook.save(buffer)
     return buffer.getvalue()
@@ -182,6 +225,12 @@ async def build_dashboard_sheets(
     category: str | None = None,
     status_: str | None = None,
     priority: str | None = None,
+    region: str | None = None,
+    q: str | None = None,
+    type_: str | None = None,
+    leader_engineer_id: str | None = None,
+    current_step: str | None = None,
+    sort: str | None = None,
 ) -> ExportSheets:
     """The Dashboard's own filterable "analytics breakdown" table
     (`docs/PROJECT_AND_STACK.md` §2: "An analytics breakdown with filters (by
@@ -198,6 +247,12 @@ async def build_dashboard_sheets(
         category=ProjectCategory(category) if category else None,
         status_=ProjectStatus(status_) if status_ else None,
         priority=ProjectPriority(priority) if priority else None,
+        region=LabRegion(region) if region else None,
+        q=q,
+        type_=ProjectType(type_) if type_ else None,
+        leader_engineer_id=uuid.UUID(leader_engineer_id) if leader_engineer_id else None,
+        current_step=current_step,
+        sort="priority" if sort == "priority" else "name",
         db=db,
         current_user=principal,
     )
@@ -226,6 +281,7 @@ async def build_matrix_sheets(
     currency: str | None = None,
     hub_id: str | None = None,
     category: str | None = None,
+    region: str | None = None,
 ) -> ExportSheets:
     """The 13-dimension scoring grid, one row per project — Matrix's only
     tabular view.
@@ -237,6 +293,7 @@ async def build_matrix_sheets(
         currency=CurrencyCode(currency) if currency else CurrencyCode.EUR,
         hub_id=uuid.UUID(hub_id) if hub_id else None,
         category=ProjectCategory(category) if category else None,
+        region=LabRegion(region) if region else None,
         db=db,
         current_user=principal,
     )
@@ -250,6 +307,7 @@ async def _fetch_all_gantt_rows(
     *,
     hub_id: uuid.UUID | None,
     project_id: uuid.UUID | None,
+    region: LabRegion | None = None,
 ) -> list[GanttProjectRow]:
     """`GET /gantt` paginates (`limit`/`offset`, max page size 500,
     `api/routers/gantt.py`) — an export of the "current view" must never
@@ -270,6 +328,7 @@ async def _fetch_all_gantt_rows(
     while True:
         response = await get_gantt(
             hub_id=hub_id,
+            region=region,
             project_id=project_id,
             limit=page_size,
             offset=offset,
@@ -289,6 +348,7 @@ async def build_gantt_sheets(
     *,
     hub_id: str | None = None,
     project_id: str | None = None,
+    region: str | None = None,
 ) -> ExportSheets:
     """Flattened project x step rows — one row per workflow step (project-
     level fields repeated on every one of its steps), the natural tabular
@@ -304,6 +364,7 @@ async def build_gantt_sheets(
         principal,
         hub_id=uuid.UUID(hub_id) if hub_id else None,
         project_id=uuid.UUID(project_id) if project_id else None,
+        region=LabRegion(region) if region else None,
     )
 
     headers = [
@@ -388,6 +449,7 @@ async def _fetch_all_projects(
     status_: ProjectStatus | None,
     priority: ProjectPriority | None,
     type_: ProjectType | None,
+    q: str | None = None,
 ) -> list[Project]:
     """Same "never silently truncate at one page" pagination loop as
     `_fetch_all_gantt_rows`, for `GET /projects`'s own `limit`/`offset` (max
@@ -406,6 +468,7 @@ async def _fetch_all_projects(
             status_=status_,
             priority=priority,
             type_=type_,
+            q=q,
             limit=page_size,
             offset=offset,
             db=db,
@@ -427,6 +490,7 @@ async def build_project_registration_sheets(
     status_: str | None = None,
     priority: str | None = None,
     type_: str | None = None,
+    q: str | None = None,
 ) -> ExportSheets:
     from schemas.project import ProjectListItem
 
@@ -438,6 +502,7 @@ async def build_project_registration_sheets(
         status_=ProjectStatus(status_) if status_ else None,
         priority=ProjectPriority(priority) if priority else None,
         type_=ProjectType(type_) if type_ else None,
+        q=q,
     )
     headers, rows = rows_from_models([ProjectListItem.model_validate(p) for p in projects])
     return {"Projects": (headers, rows)}

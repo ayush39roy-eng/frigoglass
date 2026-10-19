@@ -1,0 +1,1 @@
+import{o as e,r as t}from"./clsx-S8xFBMgc.js";var n=e(t(),1);function r(e,t=350){let[r,i]=n.useState(e);return n.useEffect(()=>{let n=window.setTimeout(()=>i(e),t);return()=>window.clearTimeout(n)},[e,t]),r}export{r as t};

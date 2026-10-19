@@ -8,7 +8,9 @@ import { CURRENT_WEEK, WITHIN_YEAR_WEEK } from '@/lib/domain-constants';
 
 import type { HubCapacitySummary, ScheduleRunSummary } from '../api/types';
 import { CardInfo } from '@/components/ui/card-info';
-import { HubLoadChart } from './hub-load-chart';
+import { labRegionRows } from '../lib/lab-region-rows';
+import { pickFigures } from '../lib/pick-figures';
+import { PriorityLoadChart } from './priority-load-chart';
 import { HubSupplyBreakdown, type CapacityHorizon } from './hub-supply-breakdown';
 import { RunProvenanceChips } from '@/components/ui/run-provenance-chips';
 
@@ -54,6 +56,8 @@ export function HubLoadPanel({
     setLocalHorizon(next);
     onHorizonChange?.(next);
   };
+
+  const capacityLabel = horizon === 'year' ? 'Yearly capacity' : 'Remaining capacity';
 
   return (
     <BoltCard>
@@ -144,12 +148,38 @@ export function HubLoadPanel({
               <>
                 <div className="grid gap-4 lg:grid-cols-2">
                   <section className="space-y-2 rounded-dash border border-dash-hairline bg-dash-alt p-card-tight">
-                    <h3 className="label-caps text-text-muted">Design load per hub — engineer-weeks</h3>
-                    <HubLoadChart rows={data.rows} metric="design" horizon={horizon} />
+                    <h3 className="label-caps text-text-muted">Design load vs capacity by hub — engineer-weeks</h3>
+                    {/* P13-T11: served per-priority segments + the served capacity outline. */}
+                    <PriorityLoadChart
+                      ariaLabel="Design load by priority versus capacity, per hub"
+                      unit="engineer-weeks"
+                      capacityLabel={capacityLabel}
+                      bars={data.rows.map((r) => ({
+                        key: r.hub,
+                        label: r.hub,
+                        split: r.design_load_by_priority,
+                        load: r.design_load_weeks,
+                        capacity: pickFigures(r, 'design', horizon).capacity,
+                      }))}
+                    />
                   </section>
                   <section className="space-y-2 rounded-dash border border-dash-hairline bg-dash-alt p-card-tight">
-                    <h3 className="label-caps text-text-muted">Lab load per hub — chamber-weeks</h3>
-                    <HubLoadChart rows={data.rows} metric="lab" horizon={horizon} />
+                    <h3 className="label-caps text-text-muted">Lab load vs capacity by lab region — chamber-weeks</h3>
+                    {/* Lab load and capacity are region-level (shared chambers), so one
+                        column per lab region, naming the in-scope hubs that share it. */}
+                    <PriorityLoadChart
+                      ariaLabel="Lab load by priority versus capacity, per lab region"
+                      unit="chamber-weeks"
+                      capacityLabel={capacityLabel}
+                      bars={labRegionRows(data.rows).map((l) => ({
+                        key: l.region,
+                        label: l.region,
+                        sublabel: l.hubs.join(', '),
+                        split: l.row.lab_load_by_priority,
+                        load: l.row.lab_load_weeks,
+                        capacity: pickFigures(l.row, 'lab', horizon).capacity,
+                      }))}
+                    />
                   </section>
                 </div>
                 <HubSupplyBreakdown rows={data.rows} horizon={horizon} />

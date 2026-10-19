@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event';
 
 import { renderWithProviders } from '@/test/render';
 import type { ClassBreakdown } from '../api/types';
+import { classRow } from '../test-fixtures';
 import { ClassBreakdownPanel } from './class-breakdown-panel';
 
 vi.mock('./class-breakdown-chart', () => ({
@@ -14,22 +15,36 @@ const withRun: ClassBreakdown = {
   has_active_schedule_run: true,
   schedule_run_version: 3,
   rows: [
-    { category: 'A+', deliverable_count: 7, left_out_count: 2 },
-    { category: 'A', deliverable_count: 10, left_out_count: 0 },
-    { category: 'B', deliverable_count: 4, left_out_count: 5 },
-    { category: 'C', deliverable_count: 1, left_out_count: 9 },
+    classRow({ category: 'A+', deliverable_count: 7, left_out_count: 2, total_count: 9 }),
+    classRow({ category: 'A', deliverable_count: 10, left_out_count: 0, total_count: 10 }),
+    classRow({ category: 'B', deliverable_count: 4, left_out_count: 5, total_count: 9 }),
+    classRow({ category: 'C', deliverable_count: 1, left_out_count: 9, total_count: 10 }),
   ],
 };
 
 describe('ClassBreakdownPanel', () => {
   it('renders the per-category deliverable and left-out counts verbatim', () => {
     renderWithProviders(<ClassBreakdownPanel data={withRun} />);
-    const aPlus = screen.getByRole('cell', { name: 'A+' }).closest('tr');
-    expect(aPlus).not.toBeNull();
-    expect(within(aPlus as HTMLElement).getByText('7')).toBeInTheDocument();
-    expect(within(aPlus as HTMLElement).getByText('2')).toBeInTheDocument();
+    const aPlus = screen.getByRole('region', { name: /Class A\+/ });
+    expect(within(aPlus).getByTestId('class-A+-deliverable')).toHaveTextContent('7');
+    expect(within(aPlus).getByTestId('class-A+-left-out')).toHaveTextContent('2');
     // The run version stays visible on the card as a chip, not as a sentence.
     expect(screen.getByText('Run v3')).toBeInTheDocument();
+  });
+
+  it('P13-T11: each class card shows the served total, priority split and per-hub ✓/✗ counts', () => {
+    renderWithProviders(
+      <ClassBreakdownPanel data={{ has_active_schedule_run: true, schedule_run_version: 3, rows: [classRow()] }} />,
+    );
+    const card = screen.getByTestId('class-card-B');
+    // Only the non-zero buckets, as served.
+    expect(within(card).getByLabelText('Deliverable by priority')).toHaveTextContent('(P1: 32, Q: 5)');
+    expect(within(card).getByLabelText('Left out by priority')).toHaveTextContent('(P1: 87, P2: 1, Q: 37)');
+    const india = within(card).getByTestId('class-B-hub-PD-India');
+    expect(india).toHaveTextContent('Deliverable 21');
+    expect(india).toHaveTextContent('Left out 120');
+    // The served total_count, verbatim.
+    expect(within(card).getByTestId('class-B-total')).toHaveTextContent('Total: 162');
   });
 
   it('keeps the deliverable / left-out definitions and the run source reachable in the card header', async () => {

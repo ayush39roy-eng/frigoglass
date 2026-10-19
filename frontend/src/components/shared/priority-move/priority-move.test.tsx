@@ -3,18 +3,19 @@ import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
 import { ApiError } from '@/lib/api/client';
-import type { PriorityMoveResponse, ScheduleRunChanges } from '@/lib/api/priority-move';
+import type { PriorityMoveResponse, PriorityPreviewResponse, ScheduleRunChanges } from '@/lib/api/priority-move';
 import { renderWithProviders } from '@/test/render';
 import { ROLE_MATRIX } from '@/test/roles';
 import { seriousAxeViolations } from '@/test/axe';
 
-const api = { moveProjectPriority: vi.fn(), fetchScheduleRunChanges: vi.fn() };
+const api = { moveProjectPriority: vi.fn(), fetchScheduleRunChanges: vi.fn(), previewProjectPriority: vi.fn() };
 vi.mock('@/lib/api/priority-move', async () => {
   const actual = await vi.importActual<typeof import('@/lib/api/priority-move')>('@/lib/api/priority-move');
   return {
     ...actual,
     moveProjectPriority: (...a: unknown[]) => api.moveProjectPriority(...a),
     fetchScheduleRunChanges: (...a: unknown[]) => api.fetchScheduleRunChanges(...a),
+    previewProjectPriority: (...a: unknown[]) => api.previewProjectPriority(...a),
   };
 });
 const sse = { streamSolverProgress: vi.fn() };
@@ -45,6 +46,21 @@ function response(overrides: Partial<PriorityMoveResponse> = {}): PriorityMoveRe
     ...overrides,
   };
 }
+
+/** P14: every move previews first (ADR 0026); these P11 tests confirm it. */
+const emptyPreview: PriorityPreviewResponse = {
+  result: 'preview',
+  project_id: 'p1',
+  from_priority: 'P1',
+  to_priority: 'P2',
+  baseline_run_id: 'run-42',
+  preview_token: 'tok-1',
+  moved: { end_week_before: 40, end_week_after: 46, within_year_before: true, within_year_after: true, left_out_before: false, left_out_after: false },
+  summary: { affected: 0, delayed: 0, earlier: 0, pushed_out_of_year: 0, pulled_into_year: 0 },
+  changes: [],
+  hidden_count: 0,
+  elapsed_ms: 12,
+};
 
 const changes: ScheduleRunChanges = {
   run_id: 'run-43',
@@ -81,8 +97,10 @@ async function chooseP2(user: ReturnType<typeof userEvent.setup>) {
   await user.click(screen.getByRole('button', { name: /Priority P1 for Cooler One\. Change priority/ }));
   await user.click(await screen.findByRole('menuitemradio', { name: /Priority band P2/ }));
   const dialog = await screen.findByRole('dialog', { name: 'Move to P2?' });
-  expect(within(dialog).getByText(/The timeline will be recalculated/)).toBeInTheDocument();
-  await user.click(within(dialog).getByRole('button', { name: 'Move to P2' }));
+  expect(within(dialog).getByText(/Nothing is saved until you choose Yes/)).toBeInTheDocument();
+  const yes = within(dialog).getByRole('button', { name: 'Yes, apply' });
+  await waitFor(() => expect(yes).toBeEnabled());
+  await user.click(yes);
 }
 
 beforeEach(() => {
@@ -92,6 +110,7 @@ beforeEach(() => {
     return { schedule_run_id: id, status: 'completed' };
   });
   api.fetchScheduleRunChanges.mockResolvedValue(changes);
+  api.previewProjectPriority.mockResolvedValue(emptyPreview);
 });
 
 describe('PriorityMoveControl — gating', () => {
@@ -125,7 +144,7 @@ describe('PriorityMoveControl — recalc_status outcomes', () => {
     renderControl();
     await chooseP2(user);
 
-    expect(api.moveProjectPriority).toHaveBeenCalledWith('p1', 'P2');
+    expect(api.moveProjectPriority).toHaveBeenCalledWith('p1', 'P2', 'tok-1');
     await waitFor(() => expect(sse.streamSolverProgress).toHaveBeenCalledWith('run-43', expect.any(Function), expect.any(AbortSignal)));
     const panel = await screen.findByTestId('priority-move-panel');
     expect(await within(panel).findByRole('heading', { name: 'Timeline updated' })).toBeInTheDocument();
@@ -171,20 +190,20 @@ describe('PriorityMoveControl — recalc_status outcomes', () => {
     const user = userEvent.setup();
     renderControl();
     await chooseP2(user);
-    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Move to P2?' })).not.toBeInTheDocument());
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
     expect(screen.queryByTestId('priority-move-panel')).not.toBeInTheDocument();
     expect(sse.streamSolverProgress).not.toHaveBeenCalled();
   });
 
-  it('409 HARD_GATE_FORCES_P1: explains the hard gate', async () => {
+  it('409 HARD_GATE_FORCES_P1 on the confirm: explains the hard gate in the dialog', async () => {
     api.moveProjectPriority.mockRejectedValue(new ApiError(409, 'conflict', 'hard gates', 'HARD_GATE_FORCES_P1'));
     const user = userEvent.setup();
     renderControl();
     await chooseP2(user);
-    expect(await screen.findByTestId('priority-move-notice')).toHaveTextContent(
+    expect(await screen.findByTestId('preview-error')).toHaveTextContent(
       'This project has a hard gate (regulatory / certification / safety), so it must stay P1.',
     );
-    expect(screen.getByRole('heading', { name: 'Priority not changed' })).toBeInTheDocument();
+    expect(screen.getByRole('dialog', { name: 'Priority not changed' })).toBeInTheDocument();
   });
 
   it('SSE failure: shows it and says the timeline stays stale', async () => {
@@ -199,13 +218,14 @@ describe('PriorityMoveControl — recalc_status outcomes', () => {
     expect(api.fetchScheduleRunChanges).not.toHaveBeenCalled();
   });
 
-  it('cancel on the confirm step sends nothing', async () => {
+  it('No on the preview sends nothing', async () => {
     const user = userEvent.setup();
     renderControl();
     await user.click(screen.getByTestId('priority-move-trigger'));
     await user.click(await screen.findByRole('menuitemradio', { name: /Priority band P3/ }));
-    await user.click(await screen.findByRole('button', { name: 'Cancel' }));
+    await user.click(await screen.findByRole('button', { name: 'No, cancel' }));
     expect(api.moveProjectPriority).not.toHaveBeenCalled();
+    expect(api.previewProjectPriority).toHaveBeenCalledWith('p1', 'P3', expect.objectContaining({ signal: expect.any(AbortSignal) }));
   });
 
   it('the "Timeline updated" panel has no serious/critical axe violations', async () => {

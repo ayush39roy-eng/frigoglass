@@ -195,10 +195,35 @@ def is_engineer_self_scoped(principal: Principal) -> bool:
     return not principal.hub_ids and RoleName.ENGINEER in principal.roles
 
 
+def global_hub_filter(
+    hub_id_column: InstrumentedAttribute[Any],
+    hub_id: uuid.UUID | None,
+    region: LabRegion | None = None,
+) -> ColumnElement[bool] | None:
+    """The global filter alone (ADR 0020 hub, ADR 0025 country), without the
+    RBAC scope: `column == hub_id` AND `column IN (hubs of region)`. `None`
+    when neither is given. Callers that scope by something other than
+    `hub_scope_filter` (the Gantt's own-assignment Engineer path) AND this
+    with their own scope; everyone else uses `narrowed_hub_filter`.
+    """
+
+    parts: list[ColumnElement[bool]] = []
+    if hub_id is not None:
+        parts.append(hub_id_column == hub_id)
+    if region is not None:
+        # ADR 0025: "country" is the hub's served lab region. Bound parameter,
+        # never interpolated.
+        parts.append(hub_id_column.in_(select(Hub.id).where(Hub.lab_region == region)))
+    if not parts:
+        return None
+    return parts[0] if len(parts) == 1 else and_(*parts)
+
+
 def narrowed_hub_filter(
     principal: Principal,
     hub_id_column: InstrumentedAttribute[Any],
     hub_id: uuid.UUID | None,
+    region: LabRegion | None = None,
 ) -> ColumnElement[bool] | None:
     """ADR 0020: the RBAC scope (`hub_scope_filter`) AND the optional global
     hub filter (`hub_id` query parameter). The filter only ever narrows: a
@@ -206,10 +231,42 @@ def narrowed_hub_filter(
     (scope AND `column == hub_id`), so the endpoint answers with empty rows
     and zero totals rather than a 403 that would reveal the hub has data.
     `None` means no predicate at all (unrestricted caller, no filter).
+
+    ADR 0025: `region` (a `LabRegion`, "country") is ANDed the same way:
+    scope AND (`hub_id`) AND (hub in `region`). A region with no hub in the
+    caller's scope gives empty rows, never a 403 and never a wider scope.
     """
 
     scope = hub_scope_filter(principal, hub_id_column)
-    if hub_id is None:
+    chosen = global_hub_filter(hub_id_column, hub_id, region)
+    if chosen is None:
         return scope
-    chosen = hub_id_column == hub_id
     return chosen if scope is None else and_(scope, chosen)
+
+
+async def narrowed_lab_regions(
+    db: AsyncSession,
+    principal: Principal,
+    hub_id: uuid.UUID | None,
+    region: LabRegion | None = None,
+) -> set[LabRegion] | None:
+    """The lab regions whose chambers a filtered Capacity view shows: the
+    caller's scoped regions (`scoped_lab_regions`), narrowed to the chosen
+    hub's region (ADR 0020 §4; an out-of-scope or unknown hub gives none) and
+    to `region` (ADR 0025). `None` = unrestricted, no filter.
+    """
+
+    regions = await scoped_lab_regions(db, principal)
+    if hub_id is not None:
+        hub_region = (
+            await db.execute(select(Hub.lab_region).where(Hub.id == hub_id))
+        ).scalar_one_or_none()
+        chosen = (
+            {hub_region}
+            if hub_region is not None and is_hub_in_scope(principal, hub_id)
+            else set()
+        )
+        regions = chosen if regions is None else regions & chosen
+    if region is not None:
+        regions = {region} if regions is None else regions & {region}
+    return regions

@@ -8,7 +8,11 @@
 
 import { apiGet, apiSendWithHeaders, ApiError, type ApiRequestOptions } from '@/lib/api/client';
 
+import type { WorkflowId } from '@/types/enums';
+
 import type {
+  BEquivalentRow,
+  CategoryTimeline,
   ChamberSettingUpdateRequest,
   HubCalendarUpdateRequest,
   LeadTimesUpdateRequest,
@@ -23,6 +27,16 @@ export const STALE_COUNT_HEADER = 'X-Schedule-Stale-Count';
 
 export function fetchWorkflowSettings(ctx: FetchCtx = {}): Promise<WorkflowSettings> {
   return apiGet<WorkflowSettings>('/workflow-settings', ctx);
+}
+
+/** P13-T16: per-category earliest-start timelines (API_CONTRACT_P13 §5). */
+export function fetchCategoryTimelines(workflow: WorkflowId, ctx: FetchCtx = {}): Promise<CategoryTimeline[]> {
+  return apiGet<CategoryTimeline[]>('/workflow-settings/category-timelines', { ...ctx, query: { workflow } });
+}
+
+/** P13-T16: B-equivalent design / lab ratios (API_CONTRACT_P13 §5). */
+export function fetchBEquivalent(workflow: WorkflowId, ctx: FetchCtx = {}): Promise<BEquivalentRow[]> {
+  return apiGet<BEquivalentRow[]>('/workflow-settings/b-equivalent', { ...ctx, query: { workflow } });
 }
 
 async function put(path: string, body: unknown): Promise<WorkflowSettingsSaveResult> {

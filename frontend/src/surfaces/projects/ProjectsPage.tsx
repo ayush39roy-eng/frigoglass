@@ -11,6 +11,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { formatInteger } from '@/lib/format';
 import { useHubFilter } from '@/stores/hub-filter';
 import { HubFilterChip } from '@/components/shared/hub-filter/hub-filter-chip';
+import { CountrySegmented } from '@/components/shared/hub-filter/country-segmented';
 import { SURFACES } from '@/app/nav';
 import {
   PROJECT_CATEGORIES,
@@ -46,21 +47,22 @@ const PROJECTS_SURFACE = SURFACES.find((s) => s.path === '/projects');
 export default function ProjectsPage(): React.JSX.Element {
   const [filters, setFilters] = React.useState<FilterState>(EMPTY);
   // P12 (ADR 0020): the hub is the global header filter, not a local select.
-  const { hubId } = useHubFilter();
+  const { hubId, region } = useHubFilter();
 
   const params = React.useMemo<ProjectFilterParams>(
     () => ({
       hub_id: hubId ?? undefined,
+      region: region ?? undefined,
       category: filters.category === ALL ? undefined : (filters.category as ProjectCategory),
       status_: filters.status_ === ALL ? undefined : (filters.status_ as ProjectStatus),
       priority: filters.priority === ALL ? undefined : (filters.priority as ProjectPriority),
     }),
-    [filters, hubId],
+    [filters, hubId, region],
   );
 
   const query = useDashboardProjects(params);
   const hasLocalFilter = filters !== EMPTY && Object.values(filters).some((v) => v !== ALL);
-  const isFiltered = hasLocalFilter || hubId !== null;
+  const isFiltered = hasLocalFilter || hubId !== null || region !== null;
 
   const set = (key: keyof FilterState) => (next: string) =>
     setFilters((prev) => ({ ...prev, [key]: next }));
@@ -76,6 +78,7 @@ export default function ProjectsPage(): React.JSX.Element {
         description={description}
         actions={
           <>
+            <CountrySegmented />
             <HubFilterChip />
             {query.data ? (
               <Badge tone="neutral" data-numeric="">

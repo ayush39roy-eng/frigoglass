@@ -23,9 +23,11 @@ export const AdminUsersPage = React.lazy(() => import('@/surfaces/admin-users/Ad
 export const ProjectsPage = React.lazy(() => import('@/surfaces/projects/ProjectsPage'));
 // P12-T05 (ADR 0018 / 0021 / 0022): one chunk each, so the board's drag code
 // and the check-in form cost the initial bundle nothing.
-export const VipProjectsPage = React.lazy(() => import('@/surfaces/vip/VipProjectsPage'));
 export const PriorityBoardPage = React.lazy(() => import('@/surfaces/priority-board/PriorityBoardPage'));
 export const CheckInPage = React.lazy(() => import('@/surfaces/check-in/CheckInPage'));
+// P13-T15: Versions & History and Downloads (Data group).
+export const HistoryPage = React.lazy(() => import('@/surfaces/history/HistoryPage'));
+export const DownloadsPage = React.lazy(() => import('@/surfaces/downloads/DownloadsPage'));
 
 /** `/projects/:id` — the Project Workspace (Surface #7, P9-T04b). Reached by
  *  click-through from the Dashboard, Matrix and Gantt rows, not the sidebar. */

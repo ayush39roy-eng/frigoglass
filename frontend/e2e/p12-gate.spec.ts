@@ -3,8 +3,8 @@ import { actAs, checkAxe } from './dev-session';
 
 /**
  * P12-T06 gate (qa-inspector): live-stack axe scan (serious/critical) of the
- * surfaces P11 and P12 added or changed: the Priority board, VIP projects,
- * Weekly check-in (new), and Dashboard, Capacity, Gantt with drag handles
+ * surfaces P11 and P12 added or changed: the Priority board,
+ * Weekly check-in (new; the VIP page was removed in P14, ADR 0027), and Dashboard, Capacity, Gantt with drag handles
  * and the timing dialog, and the header hub filter (changed).
  *
  * Runs against a disposable stack: a dev-mode backend (`RPD_DEV_MODE=true`)
@@ -15,7 +15,6 @@ import { actAs, checkAxe } from './dev-session';
 
 const SURFACES: { path: string; label: string }[] = [
   { path: '/priority-board', label: 'Priority board' },
-  { path: '/vip', label: 'VIP projects' },
   { path: '/check-in', label: 'Weekly check-in' },
   { path: '/', label: 'Dashboard (capacity booked card)' },
   { path: '/capacity', label: 'Capacity (area booking strip)' },

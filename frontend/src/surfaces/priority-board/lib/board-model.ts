@@ -24,6 +24,9 @@ export interface DisplayColumn {
   priority: ProjectPriority;
   /** The served count — never recounted in the browser (I9). */
   count: number;
+  /** P13-T12: served remaining design / lab weeks — never summed from cards. */
+  design_weeks: number;
+  lab_weeks: number;
   cards: DisplayCard[];
 }
 
@@ -49,7 +52,13 @@ export function applyOverrides(columns: readonly PriorityBoardColumn[], override
       if (to && to !== column.priority) continue;
       kept.push({ card, servedPriority: column.priority, pending: false });
     }
-    return { priority: column.priority, count: column.count, cards: [...(moved[column.priority] ?? []), ...kept] };
+    return {
+      priority: column.priority,
+      count: column.count,
+      design_weeks: column.design_weeks,
+      lab_weeks: column.lab_weeks,
+      cards: [...(moved[column.priority] ?? []), ...kept],
+    };
   });
 }
 

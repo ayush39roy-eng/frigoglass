@@ -12,7 +12,7 @@
  * when the generated client lands, only the fetchers behind them.
  */
 
-import type { CurrencyCode, HubName, ProjectCategory } from '@/types/enums';
+import type { CurrencyCode, HubName, LabRegion, ProjectCategory, WorkflowId } from '@/types/enums';
 
 /**
  * P12 (ADR 0020): append the global hub filter to a key. `undefined` returns
@@ -23,8 +23,11 @@ import type { CurrencyCode, HubName, ProjectCategory } from '@/types/enums';
 function withHub<const K extends readonly string[]>(
   base: K,
   hubId: string | null | undefined,
-): K | readonly [...K, { hubId: string | null }] {
-  return hubId === undefined ? base : ([...base, { hubId }] as const);
+  region?: LabRegion | null,
+): K | readonly [...K, { hubId: string | null; region: LabRegion | null }] {
+  // P13 (ADR 0025): the country filter is keyed beside the hub, so switching
+  // country refetches instead of serving another country's figures.
+  return hubId === undefined ? base : ([...base, { hubId, region: region ?? null }] as const);
 }
 
 export const queryKeys = {
@@ -44,10 +47,16 @@ export const queryKeys = {
   // --- prioritization matrix ---
   priorityMatrix: (params?: {
     hubId?: string | undefined;
+    region?: LabRegion | undefined;
     currency?: CurrencyCode | undefined;
     category?: ProjectCategory | undefined;
+    // P13-T14 (API_CONTRACT_P13 §7): Type / Status chips and the Project search.
+    type?: string | undefined;
+    status?: string | undefined;
+    q?: string | undefined;
   }) => ['priority-matrix', params ?? null] as const,
-  prioritySummary: (hubId?: string | null) => withHub(['priority-matrix', 'summary'], hubId),
+  prioritySummary: (hubId?: string | null, region?: LabRegion | null) =>
+    withHub(['priority-matrix', 'summary'], hubId, region),
   priorityRow: (id: string, currency?: CurrencyCode) =>
     ['priority-matrix', 'detail', id, currency ?? null] as const,
   priorityApplicationRuns: () => ['priority-application-runs'] as const,
@@ -67,28 +76,59 @@ export const queryKeys = {
   // runs are immutable (I14), so the result never changes once fetched.
   scheduleRunChanges: (runId: string, againstRunId: string) =>
     ['schedule-runs', runId, 'changes', againstRunId] as const,
+  // P13-T15 (API_CONTRACT_P13 §7): the Downloads page's own export jobs.
+  exportJobs: (limit: number) => ['export-jobs', limit] as const,
+  // P13-T15: the Versions & History page's name lookup for scenario changes.
+  historyProjectNames: () => ['history', 'project-names'] as const,
   dashboard: (versionId?: string) => ['dashboard', versionId ?? 'active'] as const,
   // P12 (ADR 0020): `hubId` is the global header hub filter. `undefined` gives
   // the prefix (for invalidation); `null` is "All hubs"; a uuid is one hub.
-  dashboardPipelineTotals: (hubId?: string | null) => withHub(['dashboard', 'pipeline-totals'], hubId),
-  dashboardStatusOverview: (hubId?: string | null) => withHub(['dashboard', 'status-overview'], hubId),
-  dashboardHubTypePipeline: (hubId?: string | null) => withHub(['dashboard', 'hub-type-pipeline'], hubId),
-  dashboardCompletingWithinYear: (hubId?: string | null) =>
-    withHub(['dashboard', 'completing-within-year'], hubId),
+  dashboardPipelineTotals: (hubId?: string | null, region?: LabRegion | null) =>
+    withHub(['dashboard', 'pipeline-totals'], hubId, region),
+  dashboardStatusOverview: (hubId?: string | null, region?: LabRegion | null) =>
+    withHub(['dashboard', 'status-overview'], hubId, region),
+  dashboardHubTypePipeline: (hubId?: string | null, region?: LabRegion | null) =>
+    withHub(['dashboard', 'hub-type-pipeline'], hubId, region),
+  dashboardCompletingWithinYear: (hubId?: string | null, region?: LabRegion | null) =>
+    withHub(['dashboard', 'completing-within-year'], hubId, region),
+  // P13 (API_CONTRACT_P13 §2/§3): per-country summary and the register's facets.
+  dashboardRegionSummary: (hubId?: string | null, region?: LabRegion | null) =>
+    withHub(['dashboard', 'region-summary'], hubId, region),
+  dashboardProjectFacets: (hubId?: string | null, region?: LabRegion | null) =>
+    withHub(['dashboard', 'projects-facets'], hubId, region),
+  // P13-T10 (API_CONTRACT_P13 §5): served analytics + completing Hub × Type.
+  dashboardAnalytics: (hubId?: string | null, region?: LabRegion | null) =>
+    withHub(['dashboard', 'analytics'], hubId, region),
   dashboardProjects: (filters?: DashboardProjectFilters) =>
     ['dashboard', 'projects', filters ?? null] as const,
   // Every changeable Gantt filter input goes in the key (P4-T04 review blocker:
   // a user-facing filter omitted from the key serves stale cache). `hubId` is the
   // API's `hub_id` uuid param.
-  gantt: (params?: { versionId?: string | undefined; hubId?: string | undefined }) =>
-    ['gantt', params ?? null] as const,
+  // P13-T13 (API_CONTRACT_P13 §7): the toolbar filters join the key as plain strings.
+  gantt: (params?: {
+    versionId?: string | undefined;
+    hubId?: string | undefined;
+    region?: LabRegion | undefined;
+    q?: string | undefined;
+    category?: string | undefined;
+    type?: string | undefined;
+    status?: string | undefined;
+    leaderEngineerId?: string | undefined;
+    currentStep?: string | undefined;
+    priority?: string | undefined;
+    sort?: string | undefined;
+  }) => ['gantt', params ?? null] as const,
 
   // --- capacity ---
   capacity: (params?: { hub?: HubName; versionId?: string }) => ['capacity', params ?? null] as const,
   // P12 (ADR 0020): same `withHub` convention as the dashboard keys above.
-  capacityHubLoad: (hubId?: string | null) => withHub(['capacity', 'hub-load'], hubId),
-  capacityClassBreakdown: (hubId?: string | null) => withHub(['capacity', 'class-breakdown'], hubId),
-  capacityUtilizationMatrix: (hubId?: string | null) => withHub(['capacity', 'utilization-matrix'], hubId),
+  capacityHubLoad: (hubId?: string | null, region?: LabRegion | null) => withHub(['capacity', 'hub-load'], hubId, region),
+  capacityClassBreakdown: (hubId?: string | null, region?: LabRegion | null) =>
+    withHub(['capacity', 'class-breakdown'], hubId, region),
+  capacityUtilizationMatrix: (hubId?: string | null, region?: LabRegion | null) =>
+    withHub(['capacity', 'utilization-matrix'], hubId, region),
+  capacityEngineerUtilization: (hubId?: string | null, region?: LabRegion | null) =>
+    withHub(['capacity', 'engineer-utilization'], hubId, region),
   capacityPlanning: (hub?: HubName) => ['capacity-planning', hub ?? null] as const,
   // `hubId` (uuid, `GET /engineers?hub_id=`) — corrected from an earlier
   // `HubName` typing (P4-T01 placeholder, never exercised until P4-T06's
@@ -132,18 +172,39 @@ export const queryKeys = {
 
   // --- workflow settings (P9 contract §3) ---
   workflowSettings: () => ['workflow-settings'] as const,
+  // P13-T16 (API_CONTRACT_P13 §5): served per-category timelines / B-equivalent.
+  workflowCategoryTimelines: (workflow?: WorkflowId) =>
+    workflow === undefined
+      ? (['workflow-settings', 'category-timelines'] as const)
+      : (['workflow-settings', 'category-timelines', workflow] as const),
+  workflowBEquivalent: (workflow?: WorkflowId) =>
+    workflow === undefined
+      ? (['workflow-settings', 'b-equivalent'] as const)
+      : (['workflow-settings', 'b-equivalent', workflow] as const),
 
   // --- project workspace (P9 contract §7) ---
   projectWorkspace: (id: string) => ['projects', 'workspace', id] as const,
   projectActivity: (id: string, before?: string) => ['projects', 'workspace', id, 'activity', before ?? null] as const,
   mentionSearch: (q: string) => ['users', 'mention-search', q] as const,
 
-  // --- P12 (frontend B): Priority board, VIP projects, weekly check-in ---
+  // --- P12 (frontend B): Priority board, weekly check-in; P14: VIP board ---
   // `hubId` is the global hub filter (ADR 0020), sent as `hub_id`.
-  priorityBoard: (hubId: string | null) => ['priority-board', hubId] as const,
-  vipProjects: (params: { year: 'plan' | 'next'; hubId: string | null; limit: number }) =>
-    ['vip-projects', params] as const,
-  checkInsDue: (hubId: string | null) => ['check-ins', 'due', hubId] as const,
+  // P13-T12: the board's toolbar filters are appended only when set, so the P12
+  // key shape (and every test asserting it) is unchanged without them.
+  priorityBoard: (hubId: string | null, region: LabRegion | null = null, filters?: PriorityBoardFilters) =>
+    filters === undefined
+      ? (['priority-board', hubId, region] as const)
+      : (['priority-board', hubId, region, filters] as const),
+  // P14 (ADR 0027): the curated VIP board on the Dashboard. Both filter params
+  // (`hub_id`, `region`) are in the key; `vipBoard()` is the bare prefix.
+  vipBoard: (params?: { hub_id?: string; region?: LabRegion }) =>
+    params === undefined
+      ? (['vip-board'] as const)
+      : (['vip-board', { hubId: params.hub_id ?? null, region: params.region ?? null }] as const),
+  // P14: the VIP item editor's project-link search (`GET /dashboard/projects?q=`).
+  vipLinkSearch: (q: string, hubId: string | null, region: LabRegion | null) =>
+    ['dashboard', 'projects', 'vip-link-search', { q, hubId, region }] as const,
+  checkInsDue: (hubId: string | null, region: LabRegion | null = null) => ['check-ins', 'due', hubId, region] as const,
   checkInHistory: (projectId: string, stepId: string) => ['check-ins', 'history', projectId, stepId] as const,
 
   // --- cross-cutting ---
@@ -183,6 +244,8 @@ export interface AuditLogQueryFilters {
  *  the real `hub_id` uuid param — never exercised until this task. */
 export interface ProjectListFilters {
   hubId?: string | undefined;
+  /** P13-T17: server-side search (name / external code, ≤ 100 chars). */
+  q?: string | undefined;
   category?: string | undefined;
   status?: string | undefined;
   priority?: string | undefined;
@@ -190,9 +253,26 @@ export interface ProjectListFilters {
 }
 
 /** Filters for the Dashboard's "analytics breakdown" list (GET /dashboard/projects). */
+/** P13-T12 (API_CONTRACT_P13 §6): `GET /priority-board` toolbar filters, sent
+ *  as-is (snake_case query params, server-side filtering). */
+export interface PriorityBoardFilters {
+  q?: string | undefined;
+  category?: string | undefined;
+  type?: string | undefined;
+  status_?: string | undefined;
+  leader_engineer_id?: string | undefined;
+}
+
 export interface DashboardProjectFilters {
   hub_id?: string | undefined;
   category?: string | undefined;
   status_?: string | undefined;
   priority?: string | undefined;
+  // P13 (API_CONTRACT_P13 §3) — all server-side.
+  region?: LabRegion | undefined;
+  q?: string | undefined;
+  type?: string | undefined;
+  leader_engineer_id?: string | undefined;
+  current_step?: string | undefined;
+  sort?: 'name' | 'priority' | undefined;
 }

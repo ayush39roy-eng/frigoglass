@@ -1762,3 +1762,152 @@ I21–I23. Open questions #28–#33.
 - **P12-F04** (workflow-auditor W-2): the timing response reports `effective_duration_weeks` = lead
   time for a cert-off (skipped) lab step; should report 0. Display only. Owner: backend-builder.
   Status: DONE (2026-10-10, with P12-R03; `docs/MEMORY.md` "P12-R03 — backend-builder").
+
+## P13 — Client change requests 3: country filter, all-projects register, mock-up parity
+
+**Owner:** backend-builder, frontend-builder. **Gate:** qa-inspector PASS + workflow-auditor PASS +
+security-auditor PASS.
+
+Opened 2026-10-18 from Frigoglass's requests, relayed by the project owner, with their earlier web
+app (github.com/ultimatechin/RPDCHARTERV1del) and the mock-up deck (15-09):
+- "in the main dashboard there are India, Romania and Greece options and All Hubs — we want that";
+- "whatever is in their website and mock-up, everything should be in ours too";
+- "on dashboard add a place that displays all the projects".
+
+ADR 0025. Contract: `docs/API_CONTRACT_P13.md`. Open question #34.
+
+- **P13-R01** (REMEDIATION, blocking — qa-inspector QA-P13-1/2/3):
+  - Fix the serious `aria-hidden-focus` on the analytics charts (`analytics-breakdown.tsx:257/339/495`).
+  - Fix `scrollable-region-focusable` on `completing-hub-type-table.tsx:66`,
+    `hub-utilization-matrix.tsx:91` / `ui/table.tsx:18` and `category-timeline.tsx:136`.
+  - Fix the register's Table/Cards tabs (`aria-valid-attr-value`) and the `bg-drop` pill
+    contrast (4.13:1).
+  - Also P13-F11: validate the `?edit=` UUID and use `encodeURIComponent`.
+  - Owner: frontend-builder. Status: DONE (2026-10-19).
+- **P13-R02** (REMEDIATION, gate-adjacent):
+  - P13-F10: CSV/XLSX formula injection.
+  - P13-F06: "Deliverable" counts schedulable statuses only.
+  - P13-F12: withhold `leader_name` in exports; Gantt `offset` `ge=0`; Engineer `engineer_names`
+    limited to the caller.
+  - Owner: backend-builder. Status: DONE (2026-10-19, P13-R02).
+
+- **P13-T00**: Docs (ADR 0025, contract, OQ #34). Owner: orchestrator. Status: DONE (2026-10-18).
+- **P13-T01**: Backend — `region` on every hub-filtered endpoint (contract §1),
+  `GET /dashboard/region-summary` (§2), the enriched `/dashboard/projects` and its facets (§3).
+  Owner: backend-builder. Depends on: P13-T00. Status: DONE (2026-10-18).
+- **P13-T02**: Frontend — country filter store, header and Dashboard segmented buttons, chip,
+  country chips on the KPI cards, and the all-projects register (contract §4). Owner:
+  frontend-builder. Depends on: P13-T00; the types follow P13-T01. Status: DONE (2026-10-18).
+- **P13-T03**: Mock-up parity gap list → follow-up tasks (P13-T1x). Owner: orchestrator. Status:
+  DONE (2026-10-18; gap analysis summarised in `docs/MEMORY.md` "P13-T03 — orchestrator").
+
+Wave 2 (starts after P13-T01/T02 land, so that no two builders edit the same files):
+- **P13-T10**: Dashboard analytics.
+  - Charts: By Hub donut, By Category donut, a flat By Type bar, and Registered by Year (a
+    server-side aggregate on `reg_year`).
+  - "Completing within year: Hub × Type" table and a Pipeline-vs-Completing-by-type chart. Add
+    `type` to `CompletingWithinYearRow` and serve the cross-tab server-side.
+  - Owner: backend-builder + frontend-builder. Status: DONE (2026-10-19; `docs/MEMORY.md` P13 slice entries).
+- **P13-T11**: Capacity priority split.
+  - Load by priority bucket (P1/P2/P3/Queue) per hub.
+  - Stacked load-vs-capacity charts.
+  - Priority columns on the utilization matrix.
+  - KPI caption lines.
+  - Class cards with a per-hub ✓/✗ split and a P split.
+  - Owner: backend-builder + frontend-builder. Status: DONE (2026-10-19; `docs/MEMORY.md` P13 slice entries).
+- **P13-T12**: Priority board. Design and lab weeks per column (server-side), search, and Category /
+  Type / Status / Leader filters. Owner: backend-builder + frontend-builder. Status: DONE (2026-10-19; `docs/MEMORY.md` P13 slice entries).
+- **P13-T13**: Gantt toolbar.
+  - Search, Category / Type / Status / Leader / Step filters, a sort select, P1–P4/Queue tabs, a px
+    zoom, a Forest (compact) view, and Hide stats.
+  - Row meta: leader, code, type, D/L weeks.
+  - A weekly PDD/OEM active-step count row.
+  - Owner: backend-builder + frontend-builder. Status: DONE (2026-10-19; `docs/MEMORY.md` P13 slice entries).
+- **P13-T14**: Matrix toolbar.
+  - Type and Status chips, per-column filters, a Rank column, and Leader and Status columns.
+  - Reset view and Detailed view.
+  - An editable FX rate, Admin only, through the existing `PUT /currency-rates/{code}`.
+  - Owner: backend-builder + frontend-builder. Status: DONE (2026-10-19; `docs/MEMORY.md` P13 slice entries).
+- **P13-T15**: Shell.
+  - Header "Week N · M wks left" and today's date.
+  - A Versions & History page listing schedule runs, with their change lists, and scenario
+    versions.
+  - A Downloads page listing export jobs (needs a list endpoint).
+  - Owner: backend-builder + frontend-builder. Status: DONE (2026-10-19; `docs/MEMORY.md` P13 slice entries).
+- **P13-T16**: Workflow settings. Per-category timeline previews derived from served lead times and
+  the DAG, and a B-equivalent workload panel with server-side ratios. Owner: backend-builder +
+  frontend-builder. Status: DONE (2026-10-19; `docs/MEMORY.md` P13 slice entries).
+- **P13-T17**: Registration search, and Engineers and Chambers grouped by hub / lab region on
+  Capacity Planning. Owner: frontend-builder. Status: DONE (2026-10-19; `docs/MEMORY.md` slice A
+  entries).
+- **P13-T20**: Gate: qa-inspector, workflow-auditor and security-auditor for all of P13. Status:
+  PASSED (2026-10-19). The first QA run failed; it passed on re-run after P13-R01/R02.
+
+P13 follow-ups (non-blocking, recorded at orchestrator review 2026-10-19):
+- **P13-F01**: The Capacity KPI Deliverable / Left-out strip still sums `classBreakdown.rows` in the
+  browser. This predates P13. Serve `ClassBreakdown.totals`. Owner: backend-builder +
+  frontend-builder. Status: OPEN.
+- **P13-F02**: The Matrix Hub and Leader column filters only narrow the rows on screen. Make them
+  server params. Owner: backend-builder + frontend-builder. Status: OPEN.
+- **P13-F03**: The Gantt and Matrix exports ignore the new toolbar filters. `/priorities/summary`
+  ignores them too. Owner: backend-builder + frontend-builder. Status: OPEN.
+- **P13-F04**: Merge `services/project_filters.py` with the private helpers in `dashboard.py`. The
+  priority board has its own LIKE-escape. Owner: backend-builder. Status: OPEN.
+- **P13-F05**: The Downloads page lists only async export jobs, and the page Download buttons are
+  synchronous, so the list is usually empty. Decide whether to log the synchronous downloads too.
+  Owner: backend-builder. Status: OPEN.
+- **P13-F06** (workflow-auditor): the Capacity class breakdown counts every active-run project that
+  is not left out as "Deliverable", including Commercialized, On Hold and Cancelled projects. That
+  is 61 projects in the live data. This predates P13; P13 carries it into the priority splits, the
+  by-hub split and the total badge. Count schedulable statuses only, or define "deliverable" in
+  DOMAIN_RULES. Owner: backend-builder (client wording check). Status: DONE (2026-10-19, P13-R02).
+- **P13-F07** (workflow-auditor): the Board never shows projects with no priority (ADR 0018), so
+  its Q column is Q only. This corrects the 2026-10-19 ruling text; see the MEMORY correction
+  entry. Decide whether no-priority projects belong in the Board's Queue column. Owner:
+  orchestrator + backend-builder. Status: OPEN.
+- **P13-F08** (workflow-auditor): Board remaining weeks come from the stored step window and can
+  overcount when a predecessor runs past the current week. There is no live divergence. Use the
+  progress-derived remaining figure instead. Owner: backend-builder. Status: OPEN.
+- **P13-F09** (workflow-auditor): `gantt.py::_kind_weeks` treats a step kind missing from the
+  snapshot as design, while Capacity ignores it. Align the two. Owner: backend-builder. Status:
+  OPEN.
+- **P13-F10** (security-auditor M-1; dates from P5): CSV/XLSX formula injection in
+  `export_builder._stringify` and `xlsx_bytes`. Prefix `'` to strings that start with
+  `= + - @ \t \r`, and force XLSX cells to text. Owner: backend-builder. Status: DONE (2026-10-19, P13-R02).
+- **P13-F11** (security-auditor L-3): validate that `?edit=` is a UUID before fetching, and use
+  `encodeURIComponent` (`registration-api.ts:55`). Owner: frontend-builder. Status: DONE (2026-10-19, via P13-R01).
+- **P13-F12** (security-auditor L-4, Info-5, Info-6): withhold `leader_name` in exports; add
+  `ge=0` to the Gantt `offset`; limit the Gantt `engineer_names` map to the caller for Engineers.
+  Owner: backend-builder. Status: DONE (2026-10-19, P13-R02).
+- **P13-F14** (qa-inspector QA-P13-4/5/6): the Radix Select fails axe while open; `/exports/capacity`
+  has no hub/region filter; per-file coverage gaps; `dev-role-switcher.tsx` is unused. Owner:
+  frontend-builder + backend-builder. Status: OPEN.
+- **P13-F13** (security-auditor L-2): the withheld leader name can be re-identified through
+  `leader_engineer_id` and `GET /engineers` by roles that can already read engineers. Added to OQ #8
+  for the DPO. Owner: orchestrator. Status: OPEN.
+
+Blocked on client answers (OQ #34–#38), not built: Plant and Req. dept fields and their charts;
+ROI, payback and RM-savings formulas; bulk Apply Priorities and exclude; Apply & Save All and global
+undo; the 2026–2027 Gantt horizon; project delete and Excel import with merge; saved baselines;
+Weeks/Days man-day conversion; Manage Tabs; the portfolio-wide AI question bar.
+
+## P14 — Client change requests 4: priority-move preview, scheduler check, VIP on Dashboard
+
+Opened 2026-10-19. ADR 0026 and ADR 0027. Contract: `docs/API_CONTRACT_P14.md`. The gate covers
+all of P14.
+
+| ID | Task | Owner | Depends | Status |
+|---|---|---|---|---|
+| P14-T01 | Priority move preview and confirm: in-process greedy, preview token, abandoned-run reaper (contract §1) | backend-builder A | — | DONE (MEMORY 2026-10-19; gate pending) |
+| P14-T02 | VIP board: migration, seed, `GET /vip-board`, item writes (contract §2) | backend-builder B | — | OPEN |
+| P14-T03 | Scheduler and calculation re-derivation on the live DB: invariants I1–I24, dashboard, capacity and Gantt reconciliation, and the root cause of "priority board not working" | workflow-auditor | — | OPEN |
+| P14-T04 | Frontend: priority move dialog on every move entry point; Dashboard VIP card and dialogs; remove the `/vip` nav (contract §3) | frontend-builder | T01, T02 shapes | OPEN |
+| P14-T20 | Gate: qa-inspector, workflow-auditor and security-auditor | — | T01–T04 | OPEN |
+
+## P15 — Per-engineer utilization and leader names (ADR 0028)
+
+| ID | Task | Owner | Status |
+|---|---|---|---|
+| P15-T01 | Backend: `GET /capacity/engineer-utilization`, audit, leader_name un-withheld everywhere incl. exports | backend-builder | OPEN |
+| P15-T02 | Frontend: Engineers × Weeks heatmap replaces the placeholder; leader names displayed ("Withheld" removed) | frontend-builder | OPEN |
+| P15-T20 | Gate: qa, workflow, security | — | OPEN |

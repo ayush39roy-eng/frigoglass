@@ -9,6 +9,7 @@ import { ApiError, apiGet } from '@/lib/api/client';
 import {
   fetchActiveScheduleRun,
   fetchCompletingWithinYear,
+  fetchDashboardAnalytics,
   fetchDashboardProjects,
 } from './dashboard-api';
 
@@ -54,5 +55,21 @@ describe('dashboard-api', () => {
   it('rethrows a non-404 error from /schedule-runs/active', async () => {
     mockApiGet.mockRejectedValueOnce(new ApiError(403, 'forbidden'));
     await expect(fetchActiveScheduleRun()).rejects.toBeInstanceOf(ApiError);
+  });
+});
+
+describe('fetchDashboardAnalytics (P13-T10)', () => {
+  it('sends no filter params for "All hubs"', async () => {
+    mockApiGet.mockResolvedValueOnce({});
+    await fetchDashboardAnalytics();
+    expect(mockApiGet).toHaveBeenCalledWith('/dashboard/analytics', {});
+  });
+
+  it('forwards the global hub / country filter as hub_id / region', async () => {
+    mockApiGet.mockResolvedValueOnce({});
+    await fetchDashboardAnalytics({}, null, 'India');
+    expect(mockApiGet).toHaveBeenCalledWith('/dashboard/analytics', {
+      query: { hub_id: undefined, region: 'India' },
+    });
   });
 });

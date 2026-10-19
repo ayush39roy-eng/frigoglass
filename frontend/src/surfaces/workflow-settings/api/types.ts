@@ -115,3 +115,39 @@ export interface WorkflowSettingsSaveResult {
 
 /** The 422 codes the steps endpoint can return (`{code, detail}` envelope). */
 export const STEP_VALIDATION_CODES = ['CYCLE', 'SELF_REFERENCE', 'BAD_PREDECESSOR', 'EMPTY_PREDECESSORS'] as const;
+
+// --- P13-T16 (API_CONTRACT_P13 §5): served previews. Every figure is computed
+// server-side from the lead-time table and the precedence DAG (earliest start,
+// no capacity, no per-project overrides); the browser only draws them.
+
+/** One step of a category's preview timeline. */
+export interface TimelineStep {
+  /** Step id, e.g. `PDD-E` (the contract's step "code"). */
+  code: string;
+  name: string;
+  resource_kind: WorkflowStepKind;
+  /** Earliest start week from the DAG walk, 0-based (week 0 = project start). */
+  start_week: number;
+  /** 0 = skipped for this category. */
+  duration_weeks: number;
+}
+
+/** `GET /workflow-settings/category-timelines?workflow=` — one per category. */
+export interface CategoryTimeline {
+  category: ProjectCategory;
+  total_weeks: number;
+  design_weeks: number;
+  lab_weeks: number;
+  steps: TimelineStep[];
+}
+
+/** `GET /workflow-settings/b-equivalent?workflow=` — one row per category.
+ *  Ratios are relative to B (PDD) or B-OEM (OEM), 2 dp; null when the
+ *  reference column is 0 weeks (rendered "—"). */
+export interface BEquivalentRow {
+  category: ProjectCategory;
+  design_weeks: number;
+  lab_weeks: number;
+  design_ratio: number | null;
+  lab_ratio: number | null;
+}

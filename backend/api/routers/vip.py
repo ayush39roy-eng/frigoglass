@@ -48,7 +48,7 @@ from api.routers.projects import _get_project_or_404
 from core.principal import Principal
 from core.rbac import Action, Surface
 from models.audit import AuditLogEntry
-from models.enums import NON_SCHEDULABLE_STATUSES, ProjectPriority
+from models.enums import NON_SCHEDULABLE_STATUSES, LabRegion, ProjectPriority
 from models.project import Project
 from schemas.vip import (
     VipCurrentStage,
@@ -60,7 +60,7 @@ from schemas.vip import (
     VipYear,
 )
 from services.active_run import get_active_run
-from services.hub_scope import hub_scope_filter
+from services.hub_scope import global_hub_filter, hub_scope_filter
 from services.project_access import authorize_project_action
 from services.project_cards import ProjectCard, build_project_cards
 
@@ -123,6 +123,7 @@ def select_vip(
 async def get_vip_projects(
     year: VipYear = "plan",
     hub_id: uuid.UUID | None = None,
+    region: LabRegion | None = None,
     limit: int = Query(default=VIP_LIMIT_DEFAULT, ge=VIP_LIMIT_MIN, le=VIP_LIMIT_MAX),
     db: AsyncSession = Depends(get_db),
     current_user: Principal = Depends(_read),
@@ -135,8 +136,10 @@ async def get_vip_projects(
     hub_filter = hub_scope_filter(current_user, Project.hub_id)
     if hub_filter is not None:
         stmt = stmt.where(hub_filter)
-    if hub_id is not None:
-        stmt = stmt.where(Project.hub_id == hub_id)
+    # ADR 0020 hub / ADR 0025 country, ANDed with the scope above.
+    global_filter = global_hub_filter(Project.hub_id, hub_id, region)
+    if global_filter is not None:
+        stmt = stmt.where(global_filter)
     projects = list((await db.execute(stmt)).scalars().all())
 
     active_run = await get_active_run(db)

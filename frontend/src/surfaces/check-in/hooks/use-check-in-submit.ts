@@ -26,6 +26,7 @@ export const CHECK_IN_COPY = {
   deferred: 'Saved — the timeline updates automatically after the current recalculation',
   notNeeded: 'Saved. No schedulable progress changed, so the timeline did not need recalculating.',
   noBaseline: 'There was no earlier schedule to compare against, so no list of moves is available.',
+  dispatchFailed: 'The recalculation could not be started, so the projects are marked stale. Press Recalculate on a project.',
   failedRun: 'Your check-in is saved and the projects are marked stale. Press Recalculate on a project to try again.',
   invalid: 'Nothing was saved. Fix the highlighted stages and submit again.',
 } as const;
@@ -47,7 +48,7 @@ export interface SubmitResult {
 
 /** A check-in changes progress, tracking status and (after a run) every run-derived view. */
 function invalidateCheckInWrite(queryClient: QueryClient): void {
-  for (const key of [['check-ins'], ['gantt'], ['dashboard'], ['projects'], ['priority-board'], ['vip-projects']]) {
+  for (const key of [['check-ins'], ['gantt'], ['dashboard'], ['projects'], ['priority-board'], ['vip-board']]) {
     void queryClient.invalidateQueries({ queryKey: key });
   }
 }
@@ -93,6 +94,10 @@ export function useCheckInSubmit() {
 
       if (res.recalc_status === 'not_needed') {
         setFlow({ kind: 'notice', tone: 'success', title: 'Check-in saved', body: `${saved} ${CHECK_IN_COPY.notNeeded}`, followUp: false });
+        return { ok: true, entryErrors: [], message: null };
+      }
+      if (res.recalc_status === 'dispatch_failed') {
+        setFlow({ kind: 'notice', tone: 'danger', title: 'Check-in saved', body: `${saved} ${CHECK_IN_COPY.dispatchFailed}`, followUp: false });
         return { ok: true, entryErrors: [], message: null };
       }
       if (res.recalc_status === 'deferred') {

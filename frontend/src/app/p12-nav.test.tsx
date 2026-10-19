@@ -24,7 +24,7 @@ function pathsFor(role: keyof typeof ROLE_MATRIX): string[] {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  useHubFilterStore.setState({ hubId: null });
+  useHubFilterStore.setState({ hubId: null, region: null });
   client.apiGet.mockImplementation((path: string) => {
     if (path === '/check-ins/due') {
       return Promise.resolve({
@@ -38,13 +38,13 @@ beforeEach(() => {
 });
 
 describe('P12 nav entries (API_CONTRACT_P12 §7)', () => {
-  it('places VIP after Dashboard, Priority board after Prioritization, Weekly check-in after Timeline', () => {
+  it('places Priority board after Prioritization, Weekly check-in after Timeline; no VIP page (P14, ADR 0027)', () => {
     const paths = SURFACES.map((s) => s.path);
-    expect(paths.indexOf('/vip')).toBe(paths.indexOf('/') + 1);
+    expect(paths).not.toContain('/vip');
+    expect(SURFACES.map((s) => s.label)).not.toContain('VIP projects');
     expect(paths.indexOf('/priority-board')).toBe(paths.indexOf('/matrix') + 1);
     expect(paths.indexOf('/check-in')).toBe(paths.indexOf('/timeline') + 1);
     const byPath = Object.fromEntries(SURFACES.map((s) => [s.path, s]));
-    expect(byPath['/vip']).toMatchObject({ label: 'VIP projects', group: 'Plan', surface: 'dashboard' });
     expect(byPath['/priority-board']).toMatchObject({ label: 'Priority board', group: 'Plan', surface: 'matrix' });
     expect(byPath['/check-in']).toMatchObject({ label: 'Weekly check-in', group: 'Execute', surface: 'project_workspace' });
   });
@@ -52,12 +52,11 @@ describe('P12 nav entries (API_CONTRACT_P12 §7)', () => {
   it('gates each entry on its surface read permission', () => {
     // Engineer: project_workspace read only among the three.
     expect(pathsFor('Engineer')).toContain('/check-in');
-    expect(pathsFor('Engineer')).not.toContain('/vip');
     expect(pathsFor('Engineer')).not.toContain('/priority-board');
     // Executive Viewer reads dashboard, matrix and project_workspace.
-    expect(pathsFor('Executive Viewer')).toEqual(expect.arrayContaining(['/vip', '/priority-board', '/check-in']));
+    expect(pathsFor('Executive Viewer')).toEqual(expect.arrayContaining(['/priority-board', '/check-in']));
     // Auditor reads none of them.
-    for (const p of ['/vip', '/priority-board', '/check-in']) expect(pathsFor('Auditor')).not.toContain(p);
+    for (const p of ['/priority-board', '/check-in']) expect(pathsFor('Auditor')).not.toContain(p);
   });
 });
 

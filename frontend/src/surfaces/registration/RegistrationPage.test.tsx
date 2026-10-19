@@ -16,6 +16,15 @@ vi.mock('@tanstack/react-virtual', () => ({
     measure: () => undefined,
   }),
 }));
+// P13 follow-up: record the export button's filters (the real button is
+// covered by `components/shared/download-button.test.tsx`).
+const downloadProps = vi.hoisted(() => ({ last: null as null | { filters?: Record<string, string | undefined> } }));
+vi.mock('@/components/shared/download-button', () => ({
+  DownloadButton: (props: { filters?: Record<string, string | undefined> }) => {
+    downloadProps.last = props;
+    return null;
+  },
+}));
 vi.mock('./components/hard-gate-panel', () => ({
   HardGatePanel: () => <div data-testid="hard-gate-panel" />,
 }));
@@ -38,6 +47,17 @@ vi.mock('@/lib/api/reference', () => ({
   useHubs: () => ({ data: [{ id: 'hub-1', name: 'R&D-Greece', lab_region: 'Greece', is_oem: false }] }),
   useCategoriesForHub: () => ({ data: undefined, options: ['A+', 'A', 'B', 'C'] }),
 }));
+
+// P14 (ADR 0026): a changed priority previews, then confirms with the token.
+const moveApi = { previewProjectPriority: vi.fn(), moveProjectPriority: vi.fn() };
+vi.mock('@/lib/api/priority-move', async () => {
+  const actual = await vi.importActual<typeof import('@/lib/api/priority-move')>('@/lib/api/priority-move');
+  return {
+    ...actual,
+    previewProjectPriority: (...a: unknown[]) => moveApi.previewProjectPriority(...a),
+    moveProjectPriority: (...a: unknown[]) => moveApi.moveProjectPriority(...a),
+  };
+});
 
 import RegistrationPage from './RegistrationPage';
 
@@ -202,11 +222,94 @@ describe('RegistrationPage', () => {
     );
   });
 
+  it('P14: a priority change previews first; Yes applies it with the token, then PATCHes the rest without priority', async () => {
+    const user = userEvent.setup();
+    const project = { ...draftProject, status: 'In Queue' as const, priority: 'P1' as const };
+    hooks.useProjectList.mockReturnValue(ready([project]));
+    const mutateAsync = vi.fn().mockResolvedValue({ project: { ...project, priority: 'P2' }, recalc: null });
+    hooks.useUpdateProject.mockReturnValue({ mutateAsync });
+    moveApi.previewProjectPriority.mockResolvedValue({
+      result: 'preview', project_id: 'p1', from_priority: 'P1', to_priority: 'P2', baseline_run_id: 'run-1',
+      preview_token: 'tok-r', moved: null,
+      summary: { affected: 0, delayed: 0, earlier: 0, pushed_out_of_year: 0, pulled_into_year: 0 },
+      changes: [], hidden_count: 0, elapsed_ms: 3,
+    });
+    moveApi.moveProjectPriority.mockResolvedValue({
+      project_id: 'p1', priority_before: 'P1', priority_after: 'P2', recalc_status: 'applied',
+      schedule_run_id: 'run-2', baseline_run_id: 'run-1', task_id: null, changes: [], hidden_count: 0,
+    });
+    renderWithProviders(<RegistrationPage />);
+    await user.click(screen.getByRole('button', { name: 'Edit Cooler A' }));
+    await user.click(screen.getByRole('combobox', { name: /^Priority/ }));
+    await user.click(await screen.findByRole('option', { name: 'P2' }));
+    await user.click(screen.getByRole('button', { name: 'Save changes' }));
+
+    const preview = await screen.findByRole('dialog', { name: 'Move to P2?' });
+    expect(moveApi.previewProjectPriority).toHaveBeenCalledWith('p1', 'P2', expect.anything());
+    expect(mutateAsync).not.toHaveBeenCalled();
+    const yes = within(preview).getByRole('button', { name: 'Yes, apply' });
+    await vi.waitFor(() => expect(yes).toBeEnabled());
+    await user.click(yes);
+    expect(moveApi.moveProjectPriority).toHaveBeenCalledWith('p1', 'P2', 'tok-r');
+    await vi.waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(1));
+    const body = (mutateAsync.mock.calls[0]![0] as { body: Record<string, unknown> }).body;
+    expect(body).not.toHaveProperty('priority');
+    expect(body).toHaveProperty('name', 'Cooler A');
+    expect(await screen.findByRole('dialog', { name: 'Moved to P2' })).toBeInTheDocument();
+  });
+
+  it('P14: No on the priority preview saves nothing and keeps the form open with an explanation', async () => {
+    const user = userEvent.setup();
+    const project = { ...draftProject, status: 'In Queue' as const, priority: 'P1' as const };
+    hooks.useProjectList.mockReturnValue(ready([project]));
+    const mutateAsync = vi.fn();
+    hooks.useUpdateProject.mockReturnValue({ mutateAsync });
+    moveApi.previewProjectPriority.mockResolvedValue({
+      result: 'preview', project_id: 'p1', from_priority: 'P1', to_priority: 'P3', baseline_run_id: 'run-1',
+      preview_token: 'tok-r', moved: null,
+      summary: { affected: 0, delayed: 0, earlier: 0, pushed_out_of_year: 0, pulled_into_year: 0 },
+      changes: [], hidden_count: 0, elapsed_ms: 3,
+    });
+    renderWithProviders(<RegistrationPage />);
+    await user.click(screen.getByRole('button', { name: 'Edit Cooler A' }));
+    await user.click(screen.getByRole('combobox', { name: /^Priority/ }));
+    await user.click(await screen.findByRole('option', { name: 'P3' }));
+    await user.click(screen.getByRole('button', { name: 'Save changes' }));
+    const preview = await screen.findByRole('dialog', { name: 'Move to P3?' });
+    await user.click(within(preview).getByRole('button', { name: 'No, cancel' }));
+    expect(await screen.findByText(/The priority move was not applied, so nothing was saved/)).toBeInTheDocument();
+    expect(mutateAsync).not.toHaveBeenCalled();
+    expect(moveApi.moveProjectPriority).not.toHaveBeenCalled();
+    expect(screen.getByRole('button', { name: 'Save changes' })).toBeInTheDocument();
+  });
+
   it('expanding a Draft row shows the hard-gate panel', async () => {
     const user = userEvent.setup();
     hooks.useProjectList.mockReturnValue(ready([draftProject]));
     renderWithProviders(<RegistrationPage />);
     await user.click(screen.getByRole('button', { name: 'Expand Cooler A' }));
     expect(screen.getByTestId('hard-gate-panel')).toBeInTheDocument();
+  });
+});
+
+describe('RegistrationPage — search (P13-T17)', () => {
+  it('sends the trimmed, debounced search to the server as q (≤ 100 chars) and Clear resets it', async () => {
+    const user = userEvent.setup();
+    hooks.useProjectList.mockReturnValue(ready([draftProject]));
+    renderWithProviders(<RegistrationPage />);
+    const box = screen.getByRole('searchbox', { name: 'Search' });
+    expect(box).toHaveAttribute('maxLength', '100');
+    await user.type(box, '  tauras ');
+    await vi.waitFor(() =>
+      expect(hooks.useProjectList).toHaveBeenLastCalledWith(expect.objectContaining({ q: 'tauras' })),
+    );
+    // The export downloads the same searched set.
+    expect(downloadProps.last?.filters?.q).toBe('tauras');
+    await user.click(screen.getByRole('button', { name: 'Clear' }));
+    expect(box).toHaveValue('');
+    await vi.waitFor(() =>
+      expect(hooks.useProjectList).toHaveBeenLastCalledWith(expect.objectContaining({ q: undefined })),
+    );
+    expect(downloadProps.last?.filters?.q).toBeUndefined();
   });
 });

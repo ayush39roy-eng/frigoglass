@@ -58,9 +58,10 @@ export function invalidateRunDerivedQueries(queryClient: QueryClient): void {
     ['notifications'],
     ['projects'],
     ['priority-matrix'],
-    // P12: board cards, VIP ranking and check-in due-ness read the active run.
+    // P12: board cards and check-in due-ness read the active run; P14: the VIP
+    // board's linked-project facts (ADR 0027 §6).
     ['priority-board'],
-    ['vip-projects'],
+    ['vip-board'],
     ['check-ins'],
   ]) {
     void queryClient.invalidateQueries({ queryKey: key });

@@ -1,18 +1,16 @@
 /**
- * OQ#8 (GDPR) name rendering, per the P9-T03 behaviour: every person name on
- * the workspace (`author_name`, `uploaded_by_name`, `actor_name`,
- * `leader_engineer_name`, `assigned_engineer_name`) is `null` unless that
- * person IS the caller. So a non-null name is always the caller's own, and is
- * labelled as such; a null is "Withheld (GDPR pending)", never guessed.
+ * Person-name rendering (ADR 0028 lifted the OQ#8 withholding): the API serves
+ * names to every caller who can read the project. A `null` name is shown as
+ * "Name unavailable" only as a fallback (an id with no resolvable name) and
+ * is never guessed.
  */
-export const WITHHELD = 'Withheld (GDPR pending)';
+export const NAME_UNAVAILABLE = 'Name unavailable';
 
 export function personLabel(name: string | null): string {
-  return name === null ? WITHHELD : `${name} (you)`;
+  return name === null ? NAME_UNAVAILABLE : name;
 }
 
-/** Comment author: we also know the author's user id, so the caller's own
- *  comments read "You" even if the name were ever withheld. */
+/** Comment author: the caller's own comments read "You". */
 export function authorLabel(name: string | null, authorUserId: string, currentUserId: string | null): string {
   if (currentUserId !== null && authorUserId === currentUserId) return 'You';
   return personLabel(name);

@@ -3,6 +3,7 @@ import { render, screen } from '@testing-library/react';
 
 import { ProjectRowBadges, StepRowBadges } from './gantt-badges';
 import type { GanttProjectRow, GanttStepRow } from '../api/types';
+import { P13_GANTT_ROW_DEFAULTS } from '../test-fixtures';
 
 const baseProject: GanttProjectRow = {
   project_id: 'p1',
@@ -25,6 +26,7 @@ const baseProject: GanttProjectRow = {
   workflow_id: 'PDD',
     is_vip: false,
     tracking_status: 'idle',
+    ...P13_GANTT_ROW_DEFAULTS,
   steps: [],
 };
 

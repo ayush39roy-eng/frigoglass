@@ -22,6 +22,7 @@ import { ApiError } from '@/lib/api/client';
 import { useHubs } from '@/lib/api/reference';
 import { SURFACES } from '@/app/nav';
 import { usePermission } from '@/stores/session';
+import type { LabRegion } from '@/types/enums';
 
 import { AccessNotice, WriteForbiddenNotice } from './components/access-notice';
 import { ApplyLogicCard } from './components/apply-logic-panel';
@@ -30,7 +31,7 @@ import { ChamberFormDialog } from './components/chamber-form';
 import { ChamberTable } from './components/chamber-table';
 import { ConfirmDialog } from './components/confirm-dialog';
 import { EngineerFormDialog } from './components/engineer-form';
-import { EngineerTable } from './components/engineer-table';
+import { EngineerTable, type EngineerTableRow } from './components/engineer-table';
 import type { ChamberCreateRequest, ChamberRead, EngineerCreateRequest, EngineerRead } from './api/types';
 import {
   useActiveScheduleRun,
@@ -100,19 +101,21 @@ export default function PlanningPage(): React.JSX.Element {
   const permission = usePermission('capacity_planning');
   const canEdit = permission.write && !writeForbidden;
 
-  const hubNameById = React.useMemo(() => {
-    const map = new Map<string, string>();
-    for (const h of hubsQuery.data ?? []) map.set(h.id, h.name);
+  const hubById = React.useMemo(() => {
+    const map = new Map<string, { name: string; lab_region: LabRegion }>();
+    for (const h of hubsQuery.data ?? []) map.set(h.id, { name: h.name, lab_region: h.lab_region });
     return map;
   }, [hubsQuery.data]);
 
-  const engineerRows = React.useMemo(
+  // P13-T17: the hub's served lab region feeds the group header's flag.
+  const engineerRows = React.useMemo<EngineerTableRow[]>(
     () =>
       (engineerListQuery.data ?? []).map((e) => ({
         ...e,
-        hubName: hubNameById.get(e.hub_id) ?? e.hub_id,
+        hubName: hubById.get(e.hub_id)?.name ?? e.hub_id,
+        hubRegion: hubById.get(e.hub_id)?.lab_region,
       })),
-    [engineerListQuery.data, hubNameById],
+    [engineerListQuery.data, hubById],
   );
 
   const handleForbidden = React.useCallback(() => setWriteForbidden(true), []);

@@ -1,4 +1,4 @@
-import type { CapacityArea, HubCapacityRow, HubCapacitySummary } from './api/types';
+import type { CapacityArea, CapacityTotals, ClassBreakdownRow, HubCapacityRow, HubCapacitySummary } from './api/types';
 
 /** Shared P9 fixture: PD-India from `docs/CLIENT_FORMULAS.md` §2 (values as the
  *  server would serve them; nothing here is computed by the tests). */
@@ -39,6 +39,27 @@ export function hubRow(overrides: Partial<HubCapacityRow> = {}): HubCapacityRow 
     lab_booking_status_year: 'full',
     lab_booking_status_remaining: 'full',
     area: 'India',
+    // P13-T11 (API_CONTRACT_P13 §6): served priority buckets; they sum to the loads above.
+    design_load_by_priority: { P1: 400, P2: 100, P3: 50, P4: 0, Queue: 37 },
+    lab_load_by_priority: { P1: 300, P2: 96.5, P3: 0, P4: 0, Queue: 100 },
+    ...overrides,
+  };
+}
+
+/** P13-T11: one served class-breakdown row (counts as the server would serve them). */
+export function classRow(overrides: Partial<ClassBreakdownRow> = {}): ClassBreakdownRow {
+  return {
+    category: 'B',
+    deliverable_count: 37,
+    left_out_count: 125,
+    total_count: 162,
+    deliverable_by_priority: { P1: 32, P2: 0, P3: 0, P4: 0, Queue: 5 },
+    left_out_by_priority: { P1: 87, P2: 1, P3: 0, P4: 0, Queue: 37 },
+    by_hub: [
+      { hub: 'R&D-Greece', deliverable: 0, left_out: 2 },
+      { hub: 'PD-Romania', deliverable: 16, left_out: 3 },
+      { hub: 'PD-India', deliverable: 21, left_out: 120 },
+    ],
     ...overrides,
   };
 }
@@ -68,9 +89,37 @@ export function areaRow(overrides: Partial<CapacityArea> = {}): CapacityArea {
   };
 }
 
-/** P11 contract §4 summary fields, for tests that build a `HubCapacitySummary`. */
-export const SUMMARY_P11: Pick<HubCapacitySummary, 'near_full_threshold_pct' | 'full_threshold_pct' | 'areas'> = {
+/** P13-T11 addendum: the served portfolio totals (as the server would serve
+ *  them for the single `hubRow()` PD-India row; nothing is computed by tests). */
+export function totalsRow(overrides: Partial<CapacityTotals> = {}): CapacityTotals {
+  return {
+    hubs: ['PD-India'],
+    lab_regions: ['India'],
+    design_load_weeks: 587,
+    design_capacity_year: 252.62,
+    design_capacity_remaining: 179.75,
+    design_booked_pct_year: 232.36,
+    design_booked_pct_remaining: 326.56,
+    design_booking_status_year: 'full',
+    design_booking_status_remaining: 'full',
+    design_load_by_priority: { P1: 400, P2: 100, P3: 50, P4: 0, Queue: 37 },
+    lab_load_weeks: 496.5,
+    lab_capacity_year: 186.22,
+    lab_capacity_remaining: 132.5,
+    lab_booked_pct_year: 266.62,
+    lab_booked_pct_remaining: 374.72,
+    lab_booking_status_year: 'full',
+    lab_booking_status_remaining: 'full',
+    lab_load_by_priority: { P1: 300, P2: 96.5, P3: 0, P4: 0, Queue: 100 },
+    ...overrides,
+  };
+}
+
+/** P11 contract §4 summary fields (+ the P13-T11 served `totals`), for tests
+ *  that build a `HubCapacitySummary`. */
+export const SUMMARY_P11: Pick<HubCapacitySummary, 'near_full_threshold_pct' | 'full_threshold_pct' | 'areas' | 'totals'> = {
   near_full_threshold_pct: 85,
   full_threshold_pct: 100,
   areas: [],
+  totals: totalsRow(),
 };

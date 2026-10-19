@@ -63,6 +63,10 @@ export function useStepTimingFlow(): { api: StepTimingApi; element: React.JSX.El
         return;
       }
       invalidateTimingWrite(queryClient);
+      if (res.recalc_status === 'dispatch_failed') {
+        setFlow({ kind: 'notice', target, tone: 'danger', title: TIMING_COPY.savedTitle, body: TIMING_COPY.dispatchFailed });
+        return;
+      }
       if (res.recalc_status === 'deferred') {
         setFlow({ kind: 'notice', target, tone: 'success', title: TIMING_COPY.savedTitle, body: TIMING_COPY.deferred });
         followUp.start();

@@ -37,6 +37,14 @@ class PriorityBoardColumn(BaseModel):
     priority: ProjectPriority
     count: int
     cards: list[PriorityBoardCard]
+    #: P13 (docs/API_CONTRACT_P13.md §6): the column's remaining design load
+    #: in weeks, 2 dp, over its (filtered) cards, from the active run's stored
+    #: step windows at or after the run's current week
+    #: (`services.capacity_priority.remaining_run_load_by_project`). 0 with no
+    #: active run; a card not in the run adds 0.
+    design_weeks: float
+    #: As `design_weeks`, for lab-kind steps (× the lab consumption factor).
+    lab_weeks: float
 
 
 class PriorityBoardResponse(BaseModel):

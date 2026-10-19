@@ -69,6 +69,9 @@ export interface RunProvenanceChipsProps {
   /** Rendered after the chips: the surface's own `<CardInfo>`, if it has one. */
   children?: React.ReactNode;
   className?: string;
+  showVersionChip?: boolean;
+  showSolverChip?: boolean;
+  showTimestampChip?: boolean;
 }
 
 const DEFAULT_LEAD_IN = 'Figures in this card are read directly from';
@@ -90,6 +93,9 @@ export function RunProvenanceChips({
   srTail = DEFAULT_SR_TAIL,
   children,
   className,
+  showVersionChip = true,
+  showSolverChip = true,
+  showTimestampChip = true,
 }: RunProvenanceChipsProps): React.JSX.Element {
   const version = activeRun?.version ?? scheduleRunVersion;
   const versionLabel = version === null || version === undefined ? '—' : `v${String(version)}`;
@@ -117,17 +123,19 @@ export function RunProvenanceChips({
         {computedAt ? `, computed ${computedAt}` : ''}. {srTail}
       </span>
 
-      <span className={cn(CHIP, 'bg-primary-subtle text-primary-subtle-fg')} data-numeric="">
-        <GitBranch className="size-3" aria-hidden="true" />
-        Run {versionLabel}
-      </span>
-      {solverLabel ? (
+      {showVersionChip ? (
+        <span className={cn(CHIP, 'bg-primary-subtle text-primary-subtle-fg')} data-numeric="">
+          <GitBranch className="size-3" aria-hidden="true" />
+          Run {versionLabel}
+        </span>
+      ) : null}
+      {showSolverChip && solverLabel ? (
         <span className={CHIP}>
           <Cpu className="size-3" aria-hidden="true" />
           {solverLabel}
         </span>
       ) : null}
-      {computedAt ? (
+      {showTimestampChip && computedAt ? (
         <span className={CHIP}>
           <Clock3 className="size-3" aria-hidden="true" />
           {computedAt}

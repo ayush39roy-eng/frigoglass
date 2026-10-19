@@ -11,7 +11,13 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ApiError } from '@/lib/api/client';
 import { queryKeys } from '@/lib/query-keys';
 import { useCurrencyRates } from '@/lib/api/reference';
-import type { CurrencyCode, ProjectCategory } from '@/types/enums';
+import type {
+  CurrencyCode,
+  LabRegion,
+  ProjectCategory,
+  ProjectStatus,
+  ProjectType,
+} from '@/types/enums';
 
 import {
   applyScenario,
@@ -19,6 +25,7 @@ import {
   fetchPrioritySummary,
   fetchScenarioVersionDetail,
   fetchScenarioVersions,
+  updateCurrencyRate,
   updatePriorityScore,
   type MatrixQueryParams,
 } from '../api/matrix-api';
@@ -36,14 +43,22 @@ export { useCurrencyRates };
 export interface UseMatrixParams {
   currency: CurrencyCode;
   hubId?: string | undefined;
+  region?: LabRegion | undefined;
   category?: ProjectCategory | undefined;
+  type?: ProjectType | undefined;
+  status?: ProjectStatus | undefined;
+  q?: string | undefined;
 }
 
 export function usePriorityMatrix(params: UseMatrixParams) {
   const query: MatrixQueryParams = {
     currency: params.currency,
     hubId: params.hubId,
+    region: params.region,
     category: params.category,
+    type: params.type,
+    status: params.status,
+    q: params.q,
   };
   return useQuery({
     // Every changeable input to `queryFn` must be in the key — `hubId` and
@@ -52,7 +67,11 @@ export function usePriorityMatrix(params: UseMatrixParams) {
     queryKey: queryKeys.priorityMatrix({
       currency: params.currency,
       hubId: params.hubId,
+      region: params.region,
       category: params.category,
+      type: params.type,
+      status: params.status,
+      q: params.q,
     }),
     queryFn: ({ signal }) => fetchPriorityMatrix(query, { signal }),
     retry: retryUnlessAuth,
@@ -60,10 +79,10 @@ export function usePriorityMatrix(params: UseMatrixParams) {
   });
 }
 
-export function usePrioritySummary(hubId: string | null = null) {
+export function usePrioritySummary(hubId: string | null = null, region: LabRegion | null = null) {
   return useQuery({
-    queryKey: queryKeys.prioritySummary(hubId),
-    queryFn: ({ signal }) => fetchPrioritySummary({ signal }, hubId),
+    queryKey: queryKeys.prioritySummary(hubId, region),
+    queryFn: ({ signal }) => fetchPrioritySummary({ signal }, hubId, region),
     retry: retryUnlessAuth,
   });
 }
@@ -134,5 +153,21 @@ export function useScenarioVersionDetail(version: number | null) {
     queryFn: ({ signal }) => fetchScenarioVersionDetail(version as number, { signal }),
     enabled: version !== null,
     retry: retryUnlessAuth,
+  });
+}
+
+/**
+ * `PUT /currency-rates/{code}` (P13-T14). On success the rate list and every
+ * Matrix entry are re-read: the converted columns change server-side.
+ */
+export function useUpdateCurrencyRate() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ code, rateToEur }: { code: CurrencyCode; rateToEur: number }) =>
+      updateCurrencyRate(code, rateToEur),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: queryKeys.currencyRates() });
+      void queryClient.invalidateQueries({ queryKey: ['priority-matrix'] });
+    },
   });
 }

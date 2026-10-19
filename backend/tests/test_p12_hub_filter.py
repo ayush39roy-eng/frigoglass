@@ -25,6 +25,7 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import select
 
+import domain_constants as dc
 from api.db import get_db
 from api.main import app
 from core.principal import Principal
@@ -240,10 +241,16 @@ async def test_i23_filtered_figures_equal_unfiltered_per_hub_figures(db_session)
             assert within["spillover_count"] == buckets["spillover"]
             assert within["left_out_count"] == buckets["left_out"]
 
-            # Class breakdown: the hub's categorised outcome rows.
+            # Class breakdown: the hub's categorised outcome rows of schedulable
+            # projects only (P13-F06, 2026-10-19).
             klass = await _get(client, "/capacity/class-breakdown", hub_id=hub.id)
             assert sum(r["deliverable_count"] + r["left_out_count"] for r in klass["rows"]) == (
-                sum(1 for r in rows_h if r["category"] is not None)
+                sum(
+                    1
+                    for r in rows_h
+                    if r["category"] is not None
+                    and statuses[uuid.UUID(r["project_id"])] in dc.SCHEDULABLE_STATUS_ORDER
+                )
             )
 
             # Priorities summary and the filtered project list count the same projects.
@@ -281,7 +288,12 @@ async def test_i23_filtered_figures_equal_unfiltered_per_hub_figures(db_session)
         # The class breakdown sums over hubs to the unfiltered one.
         assert sum(
             r["deliverable_count"] + r["left_out_count"] for r in all_class["rows"]
-        ) == sum(1 for r in all_within["rows"] if r["category"] is not None)
+        ) == sum(
+            1
+            for r in all_within["rows"]
+            if r["category"] is not None
+            and statuses[uuid.UUID(r["project_id"])] in dc.SCHEDULABLE_STATUS_ORDER
+        )
     assert checked_hubs >= 2  # the seed spreads projects over several hubs
 
 

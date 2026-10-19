@@ -22917,3 +22917,2405 @@ These are the final-tree results for the entry above:
 - **mypy:** clean on the new modules (`seed/client_2026.py`, `seed/extract_client_2026.py`,
   `tests/test_client_2026_seed.py`). `seed/seed_demo_data.py` has the same 5 errors it had before.
 - **`.coverage`:** the tracked `backend/.coverage` was restored.
+
+### [2026-10-18] P13-T03 — orchestrator: mock-up / old-app parity gap analysis
+
+A read-only comparison of the client's old React app (github.com/ultimatechin/RPDCHARTERV1del)
+plus mock-up images 6–17 against our surfaces.
+
+**Already present:**
+- Pipeline spillover / new / total.
+- The Hub × Type table.
+- The 13-dimension scoring and hard gates.
+- The currency toggle.
+- Class cards.
+- The Gantt Freeze, conflict badges and expand-all.
+- The effort matrix (lead times).
+- Apply Logic.
+- Notifications. In their app, Downloads and Notifications are only stubs.
+
+**Missing, and turned into P13-T10..T17 (wave 2, after T01/T02):**
+- Dashboard: donuts, By Type, By Year, and completing Hub × Type.
+- Capacity: the P1/P2/P3/Queue split.
+- Priority board: D/L weeks and filters.
+- Gantt: toolbar and row meta.
+- Matrix: toolbar.
+- Shell: weeks left and date, Versions & History, and a Downloads page.
+- Workflow settings: category timeline previews and B-equivalent.
+- Registration: search and grouping.
+
+**Blocked on the client:** OQ #34–#38 (Plant / Req dept, ROI / payback / RM formulas, batch save
+and baselines, the two-year Gantt, delete / import / days / manage tabs / AI bar).
+
+### [2026-10-18] P13-T01 — backend-builder
+
+Built `docs/API_CONTRACT_P13.md` §1–§3 (ADR 0025). No migration, no scheduler change, nothing under
+`backend/scheduling/` touched. Not committed.
+
+**Files changed:**
+- `backend/services/hub_scope.py`:
+  - new `global_hub_filter(column, hub_id, region)`, the filter alone, without the scope;
+  - `narrowed_hub_filter(principal, column, hub_id, region=None)`, where region is
+    `column.in_(select(Hub.id).where(Hub.lab_region == region))`;
+  - new `narrowed_lab_regions(db, principal, hub_id, region)`, the chamber regions for Capacity.
+- `backend/api/routers/dashboard.py`:
+  - `region` on pipeline-totals, status-overview, hub-type-pipeline and completing-within-year;
+  - new `GET /dashboard/region-summary`;
+  - `/dashboard/projects` enriched;
+  - new `GET /dashboard/projects/facets`.
+- `backend/schemas/dashboard.py`:
+  - `ProjectFilterRow` gets 12 additive fields;
+  - new `ScheduleOutcome`, `RegionSummary`, `RegionSummaryRow`, `ProjectFacets`, `NamedId` and
+    `StepFacet`.
+- `backend/api/routers/capacity.py`: `region` on hubs/hub-load, class-breakdown and
+  utilization-matrix. Loop variables in hub-load were renamed so they no longer shadow `region`.
+- `region` was also added, through `global_hub_filter`, to:
+  - `backend/api/routers/gantt.py` (it also applies on the Engineer own-assignment path);
+  - `priorities.py` (`GET /priorities` and `/priorities/summary`);
+  - `priority_board.py`, `vip.py` and `checkins.py` (`/check-ins/due`).
+- `backend/api/routers/exports.py` and `backend/services/export_builder.py`:
+  - `region` on `/exports/dashboard`, `/exports/matrix` and `/exports/gantt`;
+  - the register filters (q, type, leader_engineer_id, current_step, sort) on `/exports/dashboard`;
+  - new keys are stored in the job filters only when set, so pre-P13 job filter shapes are
+    unchanged.
+- `backend/tests/test_p13_region_filter.py` (new, 19 tests).
+- `backend/tests/test_openapi_frontend_contract.py`:
+  - `RegionSummaryRow` and `RegionSummary` added to CONTRACT_TABLE as exact;
+  - `ProjectFacets` added to the dashboard frontend_only allowlist, because its TS element types
+    are inline and the parser cannot read them (same precedent as `StepsUpdateRequest`). It is
+    pinned by `test_facets_shape`.
+
+**Judgement calls (for orchestrator review):**
+1. **OQ#8 overrides the contract's `leader_name: "Rishi"`.** `leader_name` and the facet leader
+   `name` are null unless the leader is the caller. This is the Workspace/Gantt P3-T09 rule.
+   `leader_engineer_id` is served. The facet leaders are ordered by id, not by name, so a withheld
+   name cannot leak through the ordering. Facet `name` is therefore `str | null`.
+2. **Region-summary basis.**
+   - `total_count`, `spillover_count`, `newly_registered_count` and `share_pct` use the
+     PipelineTotals basis (Commercialized excluded).
+   - `status_counts` and `status_share_pct` use the StatusOverview basis (every status, including
+     Commercialized). Each chip row then reconciles with the card it sits under, and "Comm." is
+     not always 0.
+   - Keys are the `ProjectStatus` wire values. The contract example's "Blocked" is not a status.
+   - A zero denominator gives a share of 0.0.
+3. **`end_week`** is the active run's `projected_end_week` (end + delay; null when left out or not
+   scheduled), the same finish the Board and VIP cards serve.
+4. **`outcome`** is the exclusive bucket used by `/completing-within-year`: BLOCKED, then
+   WITHIN_YEAR, then SPILLOVER, then LEFT_OUT, else null. The test reconciles the counts.
+5. **`current_step_code`** is the step template id (for example `PDD-E`), from
+   `services.project_cards.build_project_cards`. It is the first step that is not Done and not
+   skipped, using the run's skipped flag or else the ADR 0007 rule. `current_step` is filtered in
+   Python after that pass, because the current step is derived.
+6. **`priority_rank`**: by `weighted_score` descending, then name, then id, within the final
+   filtered set (current_step included). `sort=priority` puts unranked rows last. The default
+   order is unchanged (`Project.name`, plus id as a tiebreak).
+7. **`q`**:
+   - stripped, at most 100 characters (422 above that);
+   - `%`, `_` and `\` are escaped;
+   - matched with `ilike(..., escape="\\")` on name OR external_code, as a bound parameter.
+   `current_step` is at most 10 characters.
+8. **Excluded:** `/projects` and `/engineers` were not in API_CONTRACT_P12 §4, so they did not
+   get `region`.
+
+**N+1:** hub and leader are loaded by `selectinload`, then one `build_project_cards` pass (scores,
+templates, live steps, run steps, outcomes, due stages), then one outcome query.
+`tracking_status` now comes from the card, which uses the same `due_stages_for` and
+`status_from_due_stages` as `tracking_status_for`.
+
+**Tests:**
+- `tests/test_p13_region_filter.py`: 19 passed. It covers:
+  - an out-of-scope region gives zeros (16 paths plus check-ins/due), and the planner's own region
+    equals the unfiltered answer;
+  - hub_id + region are ANDed;
+  - a bad region gives 422, and a missing permission gives 403;
+  - the region's rows are exactly the region's hubs;
+  - Capacity rows, area and chambers per region;
+  - region-summary reconciles with pipeline-totals and status-overview, and the Commercialized
+    basis;
+  - no financial value in the projects JSON or the dashboard CSV;
+  - outcome reconciles with completing-within-year;
+  - q, including literal %/_ and the 422 above 100 characters;
+  - type, leader, current_step, rank and sort;
+  - OQ#8 leader name;
+  - facets equal the values present in the filtered set;
+  - the export follows the region;
+  - the predicate keeps region as a bound parameter.
+- Related suites (P12 hub filter, hub_scope, board/vip, checkins, export, P11 capacity, blocked
+  count) all pass.
+- `ruff check .` is clean. mypy shows no new errors in the changed application modules. The
+  remaining errors in priorities/capacity were there before.
+- **Full `pytest -q`: 1224 passed, 1 failed, coverage 96.01 %.** The one failure is
+  `test_openapi_frontend_contract::test_field_sets_match[ProjectFilterRow]`. The frontend's
+  `frontend/src/surfaces/dashboard/api/types.ts` marks the 12 new fields optional (`?`), but the
+  backend always serves them. **P13-T02 must drop the `?` on those fields.** `region` is
+  `LabRegion` (not null). `carry_over` is `boolean`. The others are `T | null`. P13-T02 must also
+  make `ProjectFacets.leaders[].name` `string | null` (OQ#8).
+- The tracked `backend/.coverage` was restored.
+
+### [2026-10-18] P13-T02 — frontend-builder
+
+Country filter, Dashboard segmented buttons, country chips and the all-projects register
+(ADR 0025, `API_CONTRACT_P13.md` §4). No commit.
+
+**Store (`frontend/src/stores/hub-filter.ts`).**
+- The state is now `{ hubId, region, setHubId, setRegion, clear }`. `setRegion` clears `hubId`,
+  `setHubId` clears `region`, and `clear()` resets both.
+- It persists under `rpd-hub-filter` at **version 1**. `migrateHubFilter` loads v0 `{hubId}`
+  payloads and drops malformed values. If a payload carries both, it keeps the hub.
+- Also exported: `HubFilterParams`, `toHubFilterParams`, `useHubFilterParams()` (a memoised
+  `{hub_id?, region?}`, keys absent when unset) and `isLabRegion`.
+- **Convention:** the existing hooks were not converted to take the params object. They gained a
+  trailing `region` argument instead:
+  - positional hooks: `usePipelineTotals(hubId, region)` and the like;
+  - object hooks: `useGantt({hubId, region})`, `usePriorityMatrix({..., region})`,
+    `useHubLoadVsCapacity({hubId, region})`, `useVipProjects({..., region})`;
+  - `useCheckInsDue(hubId, enabled, region)`, `usePriorityBoard(hubId, region)`.
+  `useHubFilterParams()` exists and is tested, but no surface uses it yet. Converting all hooks to
+  it would be a follow-up refactor.
+- **Query keys (`lib/query-keys.ts`):**
+  - `withHub(base, hubId, region)` now gives `[...base, {hubId, region: region ?? null}]`. The
+    prefix (`hubId === undefined`) still invalidates every entry.
+  - `priorityBoard` / `checkInsDue` keys gained a trailing `region`.
+  - The gantt / matrix / vip param objects gained `region`.
+  - New keys: `dashboardRegionSummary` and `dashboardProjectFacets`.
+  - `DashboardProjectFilters` gained `region, q, type, leader_engineer_id, current_step, sort`.
+- **Wired surfaces:** Dashboard (all cards, booked card, register), Capacity, Matrix (grid, summary,
+  export), Gantt (data, export), Projects, VIP, Priority board, Check-in, and the sidebar check-in
+  badge. Every one passes both params and keys on both.
+
+**Header controls (`components/shared/hub-filter/`).**
+- `hub-filter-select.tsx` lists "All hubs", then a "Countries" group, then a "Hubs" group.
+  - Item values are prefixed `region:` / `hub:` so a hub id can never collide with a country.
+  - The countries come from the new `regionsInScope(hubsInScope(me, hubs))` in `hub-scope.ts`: the
+    served `lab_region`s of in-scope hubs, in Greece / India / Romania order.
+  - A persisted country that is out of scope resets, through the new `shouldResetRegion`.
+- `HubFilterChip` reads "Country: X" or "Hub: Y". Its clear button calls `clear()`.
+- New `country-flag.tsx`: pure CSS-gradient flags (Greece canton cross, India chakra ring, Romania
+  tricolour). `aria-hidden`, no emoji, no injected markup. National colours are kept in light and
+  dark mode, with a hairline ring.
+- New `country-segmented.tsx`: Radix ToggleGroup `single`, so the roles are
+  `radiogroup` / `radio`.
+  - Buttons: All Hubs plus the in-scope countries. All three show until `/me` and `/hubs` load.
+  - Re-clicking the active button is a no-op.
+  - With a hub selected, no button is on.
+
+**Dashboard.**
+- The header gains `<CountrySegmented/>`, the chip, and an "All projects" button. The button
+  scrolls to `#all-projects` (instantly under reduced motion) and focuses it.
+- `useRegionSummary(hubId, region)` feeds:
+  - `PipelinePanel`: an "Active / Newly registered / Carried over" per-country chip grid under
+    the composition bars;
+  - `StatusOverviewCards`: chips in a new optional `footer` slot on the shared `StatCard`
+    (`components/ui/kpi-card.tsx`, additive).
+- Chips are `RegionChips` (`surfaces/dashboard/components/region-chips.tsx`). Each shows the flag,
+  the served count and (served share, 2 dp, via `formatDecimal`). Shares are shown only where the
+  server serves them: Active (`share_pct`) and the status cards (`status_share_pct`). Newly
+  registered and carried-over chips are count only, because no per-region share is served for them.
+  `lib/region-summary.ts::statusRegionItems` reads the maps verbatim.
+- **Register (`project-breakdown.tsx`, still exported as `ProjectBreakdown`).**
+  - Now "All registered projects", `id="all-projects"`, full width, directly after the status
+    overview. The Spotlight "View all" link moved from `#project-breakdown` to `#all-projects`.
+  - `RegisterRegionSummary` shows the per-country Comm. / Ind. / Dev. / Que row.
+  - Filters, all sent to the server:
+    - search (debounced 300 ms, `maxLength` 100, sent as `q`);
+    - Hub, which writes the global store and lists in-scope hubs narrowed to the current country;
+    - Category, Type, Status;
+    - Leader and Current step, with options from `/dashboard/projects/facets`.
+  - The P12 Priority filter is dropped from the register. It stays on `/projects`, and
+    `ALL / EMPTY / FilterState / FilterSelect` are still exported for `ProjectsPage`.
+  - Columns are in `register-columns.tsx`: #, Hub (+flag), Cat, Type, Status, Project (+external
+    code), Leader, End wk (`formatPlanWeek`, so "After W52"), Current step (code + name), Priority
+    (band + served `#rank`), and Actions.
+  - Actions: Open → `/projects/:id`. Edit → `/register?edit=:id`, only when
+    `usePermission('project_registration').write`. **The contract's `'registration'` key does not
+    exist; the real `SurfaceKey` is `project_registration`.**
+  - No Plant, no Req. dept, no Delete.
+  - `#` is the served-order ordinal. The badge shows the served `total_count`.
+  - `VirtualDataTable` gained `headerTone="ink"` for the mock-up's dark header.
+  - The Cards view and the CSV download stay. The download passes region and all register filters,
+    which the backend accepts per P13-T01.
+- **GDPR (OQ #8), per the coordinator after P13-T01:**
+  - `leader_name` and facet `name` are null unless the leader is the caller.
+  - The Leader cell shows "Withheld" (italic) when a leader id exists but no name, and "—" when
+    there is no leader.
+  - Facet options with a null name read `Leader (name withheld) · <last 4 of id>`.
+  - Nothing is resolved client-side.
+- **Types (`surfaces/dashboard/api/types.ts`), per the coordinator:**
+  - the 12 `ProjectFilterRow` fields are required (`region: LabRegion`, `carry_over: boolean`, the
+    rest nullable);
+  - `ProjectRunOutcome = WITHIN_YEAR | SPILLOVER | LEFT_OUT | BLOCKED`;
+  - `sort?: 'name' | 'priority'`;
+  - new `ProjectFacets`, `RegionSummary` and `RegionSummaryRow`.
+  `surfaces/dashboard/test-fixtures.ts::P13_ROW_DEFAULTS` was added for test row builders.
+
+**Registration deep link.**
+- New `surfaces/registration/hooks/use-edit-deep-link.ts`. On `?edit=<id>` it fetches
+  `GET /projects/{id}`, opens the existing edit dialog, then drops the param.
+- It only fetches when `permission.write`. Without write it just drops the param.
+- New `lib/registration-links.ts::registrationEditHref`, so the Dashboard does not import the
+  Registration surface.
+
+**Tests (Vitest).**
+- `stores/hub-filter.test.ts` (+7): mutual exclusion, v1 persist, v0 migration, malformed payloads,
+  `useHubFilterParams`.
+- `hub-filter.test.tsx` (+9): `regionsInScope` / `shouldResetRegion`, the select groups and
+  exclusivity, out-of-scope country reset, the country chip, the segmented control (binding,
+  no-op re-click, hub → none on, scope hiding, axe).
+  - The fixture's PD-Romania `lab_region` was corrected from Greece to Romania.
+- `hub-filter-wiring.test.tsx`: P12 keys now carry `region: null`, plus 14 new region cases
+  (key and `region` sent, no `hub_id`).
+- `DashboardPage.test.tsx` (+3): country passthrough on every hook, chips verbatim, register
+  placement.
+- Register (`project-breakdown.test.tsx`, rewritten, 11): params sent, debounced `q`, columns,
+  "After W52", Edit gating, summary row, country-narrowed Hub select writing the global store,
+  GDPR withheld leader.
+- `region-chips.test.tsx` and `use-edit-deep-link.test.tsx` are new.
+- Capacity, Matrix, Projects and card-grid tests were updated. Every test reset is now
+  `setState({hubId: null, region: null})`.
+- Touched suites: 109 files / 682 tests. The only failure,
+  `components/session/session-gate.test.tsx > DevRoleSwitcher ... renders only in dev mode`, also
+  fails on a clean HEAD worktree. **Pre-existing, not P13.**
+- `tsc -p tsconfig.app.json` clean. ESLint clean on the changed files, except the pre-existing
+  `react-refresh/only-export-components` warning for `ALL` in `project-breakdown.tsx`.
+- **Full frontend suite** (`npx vitest run`): 154 files, 977 tests. 976 passed. The 1 failure is the
+  same pre-existing `session-gate.test.tsx` DevRoleSwitcher test, which also fails on HEAD.
+- **Build:** `vite build` succeeds. Entry JS is 146.26 KB gzip, plus 22.43 KB CSS. The
+  `DashboardPage` chunk is 13.00 KB gzip. That is well inside the 400 KB initial budget.
+
+### [2026-10-18] P13-T11/T12 backend — backend-builder (slice B)
+
+Built `docs/API_CONTRACT_P13.md` §6 (capacity priority split, priority board weeks and filters). No
+migration, nothing under `backend/scheduling/` touched (run rows are read only). Not committed.
+
+**Files:**
+- `backend/services/capacity_priority.py` (new):
+  - `priority_bucket(priority)`: `P1`..`P4` map to themselves; `Q` and null map to `"Queue"`;
+  - `split_to_total(parts, total)`: 2 dp per bucket, any rounding residual put on the largest
+    bucket, so the five values always sum to `round2(total)`;
+  - `count_split(counts)`;
+  - `remaining_run_load_by_project(db, run, ids)` gives `{project_id: (design, lab)}` remaining
+    weeks (see ruling 3).
+- `backend/schemas/capacity.py`: new `PriorityLoadSplit` (floats) and `PriorityCountSplit` (ints),
+  both `{P1, P2, P3, P4, Queue}`, plus `ClassBreakdownHubRow {hub: HubName, deliverable, left_out}`.
+  - `HubCapacityRow` gains `design_load_by_priority` and `lab_load_by_priority`.
+  - `ClassBreakdownRow` gains `deliverable_by_priority`, `left_out_by_priority` and `by_hub`.
+- `backend/api/routers/capacity.py`: the split is built in the same loop as `design_load_weeks` /
+  `lab_load_weeks`, from the same rows (`Project.priority` added to the select).
+  - Lab stays region-level, like `lab_load_weeks`.
+  - `class-breakdown` joins `Hub` for `by_hub`.
+  - With no active run, the splits are all zero and `by_hub` is `[]`.
+- `backend/schemas/priority_board.py`: `PriorityBoardColumn` gains `design_weeks` and `lab_weeks`
+  (float, 2 dp).
+- `backend/api/routers/priority_board.py`: new filters `q` (at most 100 characters; stripped; `%`,
+  `_` and `\` escaped; `ilike` on name OR external_code as a bound parameter), `category`, `type`
+  (alias of `type_`), `status_` and `leader_engineer_id`.
+  - All filters are ANDed with the scope, `hub_id` and `region`.
+  - `count` and the weeks follow the filtered set.
+  - `_escape_like` is a local copy of dashboard.py's (another slice owns that router).
+- `backend/tests/test_p13_capacity_priority_board.py` (new, 11 tests).
+- `backend/tests/test_openapi_frontend_contract.py`: three CONTRACT_TABLE rows added, all exact:
+  `PriorityLoadSplit`, `PriorityCountSplit`, and `ClassHubSplit` ↔ `ClassBreakdownHubRow`. The
+  frontend had already declared those interfaces.
+
+**Rulings (for orchestrator review):**
+1. **"Queue" bucket = priority `Q` or null.** It is NOT driven by the `In Queue` status. The
+   scheduler orders by the priority band (DOMAIN_RULES "Scheduling order"). A P1 project with
+   status `In Queue` is P1 to the scheduler, and the prototype's "Queue" is its label for `Q`. The
+   contract's "or In Queue status" wording conflicts with "as the scheduler classifies it", and I
+   followed the latter. The frontend `PriorityLoadSplit` doc comment repeats the contract wording.
+   The values are served verbatim, so no code change is needed there, but the comment is
+   inaccurate. The orchestrator should confirm this.
+2. **Live `Project.priority` is used.** The run stores no priority snapshot. This is the same basis
+   as the class breakdown's live `category`, and a priority move recalculates anyway (ADR 0015).
+3. **Board weeks are "remaining", which is a different basis from Capacity load.** For each
+   non-skipped run step whose live status is not `Done`, the weeks counted are those of the stored
+   window `start..end` at or after `run.current_week`. Lab weeks are multiplied by
+   `LAB_STEP_CONSUMPTION_PER_PROJECT_WEEK`.
+   - A `Not Started` window equals its effective duration, and an `In Progress`/`Blocked` tail is
+     the derived remaining duration (I21). So this is the run's remaining work, read from stored
+     rows only.
+   - A `Done` step adds 0 even when its window reaches the current week.
+   - A card not in the active run adds 0. Without an active run, every column is 0.
+   - Capacity `*_load_by_priority` is total planned work (ADR 0016's load basis), so it sums to
+     `design_load_weeks`. The board weeks are deliberately not expected to equal it.
+4. **Utilization matrix is unchanged.** It is engineer × week and chamber × week, not the hub
+   table, so per §6 ("otherwise reuse the HubCapacityRow fields") it gains nothing. A
+   per-engineer priority split would also be engineer-level data (OQ #8).
+5. **`by_hub` lists only hubs with at least one project of that category in the run.** The list is
+   ordered by hub name and narrowed by scope, `hub_id` and region.
+
+**Tests:**
+- `tests/test_p13_capacity_priority_board.py`, 11 passed. It covers:
+  - bucket mapping and residual rounding;
+  - exact per-hub design/lab splits, including skipped steps, null priority → Queue, and the India
+    lab split repeated on both India hubs;
+  - Σ split == `design_load_weeks` / `lab_load_weeks` on every row, on the real-greedy seed,
+    unfiltered and per region;
+  - class splits and `by_hub` exact, Σ == counts, and each `by_hub` entry equal to the
+    hub-filtered breakdown;
+  - Σ over the three regions == unfiltered, per category and bucket;
+  - an out-of-scope region zeroes capacity, class and board (weeks included);
+  - board column weeks (Done → 0, In Progress tail, skipped → 0, not in run → 0, no run → 0);
+  - every filter, literal `%`/`_`, the AND with region, totals following the filter, and 422 on
+    over-long `q` and bad `type`/`status_`/`category`;
+  - the filters never widen a Hub Planner's scope.
+- Related suites (capacity_supply, gdpr withholding, export_api, hub_scope, p11 capacity booked,
+  p12 board/vip, p12 hub filter, p13 region filter, rbac, openapi contract): 299 passed, 4 failed.
+  - All 4 failures are in `test_openapi_frontend_contract` and come from other slices'
+    in-progress work: `PriorityMatrixRow`, `GanttProjectRow`, `MeResponse`, and the coverage test
+    on gantt `GanttFacets`/`GanttWeeklyActiveCount`.
+  - `HubCapacityRow`, `ClassBreakdownRow`, `PriorityBoardColumn` and the three new rows pass.
+  - The coverage test stops at the first file, so the capacity file's coverage is only confirmed
+    once slice C adds its gantt rows.
+- `ruff check .` is clean. mypy is clean on the five changed application modules. A `category is
+  None` guard narrows the type in class-breakdown, and the query already excludes nulls.
+- The full suite was not run, per the brief. `backend/.coverage` is untouched (runs used
+  `--no-cov`).
+
+### [2026-10-18] P13-T10/T16/T17 backend — backend-builder (slice A)
+
+Built `docs/API_CONTRACT_P13.md` §5 backend: `type` on `CompletingWithinYearRow`,
+`GET /dashboard/analytics`, `GET /workflow-settings/category-timelines` and `/b-equivalent`, and
+`q` on `GET /projects`. No migration, no scheduler change, nothing under `backend/scheduling/`
+edited (it is called: `scheduling.workflow.build_workflows`). Not committed.
+
+**Files:**
+- `backend/schemas/dashboard.py`: `CompletingWithinYearRow.type: ProjectType | None`; new
+  `AnalyticsBucket`, `CompletingHubTypeRow`, `CompletingByTypeRow`, `DashboardAnalytics`.
+- `backend/api/routers/dashboard.py`: `type` filled on completing rows; new `/analytics`; the
+  register's `q` predicate now comes from `services.text_search` (same semantics as P13-T01).
+- `backend/schemas/workflow_settings.py`: new `TimelineStep`, `CategoryTimeline`, `BEquivalentRow`.
+- `backend/api/routers/workflow_settings.py`: two GETs, `_read` (Workflow Settings READ: Admin,
+  Super Admin). Read-only, no audit row.
+- `backend/services/workflow_previews.py` (new): pure `category_preview(workflow, category, weeks)`,
+  `ratio`, and the loader `load_category_previews` (two queries).
+- `backend/services/text_search.py` (new): `escape_like`, `project_search_filter(q)`,
+  `Q_MAX_LENGTH = 100`.
+- `backend/api/routers/projects.py`: `q` on `GET /projects` (max 100, 422 above; blank = no filter;
+  ANDed with scope and other filters).
+- `backend/tests/test_p13_slice_a.py` (new, 19 tests).
+- `backend/tests/test_openapi_frontend_contract.py`: three CONTRACT_TABLE rows (exact):
+  `DashboardAnalytics`, `CompletingHubTypeCell`↔`CompletingHubTypeRow`, `CompletingByTypeRow`.
+
+**Response shapes:**
+- `/dashboard/analytics?hub_id=&region=` → `{by_type, by_category, by_hub, by_reg_year:
+  [{key, count, share_pct}], completing_hub_type: [{hub, type|null, pipeline_count,
+  completing_count, completing_pct}], completing_by_type: [{key, pipeline_count, completing_count,
+  completing_pct}], has_active_schedule_run}`.
+  - by_type: every ProjectType in enum order (zeros kept), then `"Unmapped"` only if any null.
+  - by_category: every ProjectCategory (all 7, zeros kept), then `"Unmapped"` only if any null.
+  - by_hub: every hub in scope + filter, ordered by `Hub.name` (zeros kept; empty when the
+    filter leaves no hub).
+  - by_reg_year: years ascending as strings, then `"Unknown"` if any null.
+  - completing_hub_type: one row per (hub, type) cell with pipeline_count > 0, hub order then
+    type enum order, null type last. completing_by_type: same keys/order as by_type.
+  - Shares 2 dp, server-side; zero denominator → 0.0.
+- `/workflow-settings/category-timelines?workflow=PDD|OEM` (default PDD; other → 422) →
+  `[{category, total_weeks, design_weeks, lab_weeks, steps: [{code, name, resource_kind,
+  start_week, duration_weeks}]}]`. `code` is the step id (`PDD-E`), as in the P13 register.
+  `start_week` is a 0-based offset, end-exclusive; skipped (0-week) steps sit at
+  `start = max(pred end)`. `total_weeks` = critical path. Steps in sequence_order.
+- `/workflow-settings/b-equivalent?workflow=PDD|OEM` → `[{category, design_weeks, lab_weeks,
+  design_ratio, lab_ratio}]`, ratios vs B / B-OEM, 2 dp.
+
+**Judgement calls (for orchestrator review):**
+1. **Completing excludes Commercialized.** The scheduler marks an excluded Commercialized
+   project `within_year=True` (`scheduling.greedy._excluded_outcome`), so
+   `/completing-within-year.within_year_count` counts them. The contract fixes the analytics basis
+   to pipeline-totals (Commercialized excluded) and `completing_pct = completing / pipeline`, so
+   completing is counted inside that basis (otherwise a cell could exceed 100 %). Hence
+   Σ completing_count = within_year_count − (Commercialized WITHIN_YEAR rows); the test asserts this
+   exact identity (the demo seed has such rows). The frontend must not present the cross-tab total
+   as equal to the within-year KPI card.
+2. **`design_ratio` / `lab_ratio` are `float | null`**: null when the reference category's weeks
+   are 0 (no ratio exists; 0.0 would be misleading). With the seeded table no ratio is null.
+3. Previews use the table as served: per-project `duration_override_weeks` and
+   `certification_testing_required=false` are project inputs and are not applied.
+4. Missing lead-time cells count as 0 (skipped) in the preview rather than erroring.
+5. Null category bucket uses the same `"Unmapped"` sentinel as type (the contract names none).
+
+**Tests:** `tests/test_p13_slice_a.py` 19 passed (analytics shape, reconciliation with
+pipeline-totals / hub-type-pipeline / completing-within-year, Commercialized exclusion, no active
+run → empty completing lists, region and hub_id narrowing, Hub Planner never widened, 403/422,
+no financial keys; timelines vs the DOMAIN_RULES table for all 7 categories, a parallel DAG via the
+steps PUT (A+ total 42), b-equivalent ratios, a lead-time edit giving a null ratio, RBAC matrix,
+pure function; `q` on `/projects` incl. literal `%`/`_`, scope, 422). Related suites (12 files incl.
+dashboard, region filter, P12 hub filter, workflow settings, P9, RBAC, hub scope): 219 passed.
+Contract test: all slice A rows pass; 4 failures there belong to slices B/C mid-edit
+(PriorityMatrixRow, GanttProjectRow, PriorityBoardColumn, Capacity split interfaces unaccounted).
+ruff clean; mypy clean on the changed modules. Full suite not run (other builders mid-edit).
+`backend/.coverage` untouched (`--no-cov`).
+
+### [2026-10-18] P13-T13/T14/T15 backend — backend-builder (slice C)
+
+Built `docs/API_CONTRACT_P13.md` §7 backend. No migration, no scheduler change, nothing under
+`backend/scheduling/` touched. Not committed.
+
+**Files:**
+- New `backend/services/project_filters.py`: `escape_like`, `search_predicate(q)` (name OR
+  external_code, `ilike` with escape, bound parameter), `leader_name_if_self` (OQ #8),
+  `score_ranks` (score desc, name, id; unscored absent), and `Q_MAX_LENGTH=100` /
+  `STEP_CODE_MAX_LENGTH=10`. These are the same rules as the private helpers in `dashboard.py`.
+  That file was left alone because another builder was editing it. Deduping is a follow-up.
+- `backend/schemas/gantt.py` + `backend/api/routers/gantt.py` (T13).
+- `backend/schemas/priority.py` + `backend/api/routers/priorities.py` (T14).
+- `backend/schemas/export.py` + `backend/api/routers/exports.py` (new `jobs_router`, prefix
+  `/export-jobs`) + `backend/api/main.py` (two lines: import + `include_router`) (T15).
+- `backend/schemas/session.py` + `backend/api/routers/me.py` (T15).
+- New `backend/tests/test_p13_slice_c.py` (19 tests).
+- `backend/tests/test_openapi_frontend_contract.py`: `GanttWeeklyActiveCount` was added as exact.
+  `GanttFacets` was added to the `_GANTT_TS` frontend_only allowlist. The frontend reuses
+  `/dashboard/projects/facets` (`ProjectFacets`). Its inline element types can't be parsed, the
+  same precedent as the dashboard entry.
+
+**Shapes:**
+- `GanttProjectRow` gains:
+  - `external_code: str|null`;
+  - `type: ProjectType|null`;
+  - `leader_name: str|null` (OQ #8: the name only when the leader is the caller);
+  - `leader_engineer_id: uuid|null`;
+  - `design_weeks`, `lab_weeks`, `total_weeks: int|null`.
+- `GanttResponse` gains `weekly_active_counts: [{week, pdd, oem}]`. It has 52 entries (W1..W52)
+  when an active run exists, and `[]` when none does.
+- `GET /gantt` gains these params, all ANDed with the scope / own-assignment path and with
+  hub/region:
+  - `q` (≤100);
+  - `category`, `type`, `status_`, `leader_engineer_id`, `priority`;
+  - `current_step` (≤10);
+  - `sort=name|priority|start|end` (default `name`).
+- `PriorityMatrixRow` gains:
+  - `status: ProjectStatus`;
+  - `leader_name: str|null`;
+  - `leader_engineer_id: uuid|null`;
+  - `rank: int|null`.
+  `type` already existed.
+- `GET /priorities` gains `type`, `status_` and `q`.
+- `GET /export-jobs?limit=50` (1..200) returns `list[ExportJobListItem]`. Each item is
+  `{id, kind (ExportSurface), format, status, created_at, completed_at, row_count, file_name}`.
+- `MeResponse` gains `current_week: int` and `weeks_left_in_year: int`.
+
+**Judgement calls (for orchestrator review):**
+1. **`design_weeks`, `lab_weeks`, `total_weeks`.**
+   - Each is a Σ of the active run's booked effective `duration_weeks` (`override ?? lead time`)
+     over non-skipped steps, split by the run's `workflow_snapshot` kind. This is the same basis
+     as the Capacity design/lab load (I6/I7). A test checks that per-hub Σ `design_weeks` ==
+     `/capacity/hub-load` `design_load_weeks`.
+   - `total_weeks` is Σ over every non-skipped step, elapsed included. It is not the critical
+     path, because steps overlap under ADR 0009.
+   - All three are null when the project has no step in the active run.
+2. **`weekly_active_counts`.**
+   - A step is active in week w when it is not skipped and `start_week ≤ w ≤ end_week` (the bar
+     the Gantt draws; `end_week` is inclusive).
+   - Counts are split by `Project.workflow_id`, and clipped to 1..52 (ADR 0024).
+   - They cover the whole filtered set, not the `limit`/`offset` page.
+3. **Sort and pagination.**
+   - The set is loaded unpaged. Derived filters and sorts run in Python, then the result is
+     paged. `total_count` = len(filtered).
+   - `sort=priority` orders by the band P1→P4→Q→none, then weighted score desc, then name. This
+     is the VIP order rule, so the P1–P4/Queue tabs and the sort agree.
+   - `start` is the earliest non-skipped planned start. `end` is `projected_end_week`.
+   - Missing values sort last. Ties go to name, then id.
+   - `build_project_cards` (current step, score) runs only when `current_step` or
+     `sort=priority` is requested.
+4. **`priority` filter** is exact equality on `Project.priority`, so the Queue tab is
+   `priority=Q`. Projects with a null priority match no tab.
+5. **Matrix `rank`** is computed within the filtered set. It is always null on
+   `GET /priorities/{id}`, which has no list to rank within. `/priorities/summary` did not gain
+   the new filters. Financial columns are unchanged, and nothing is logged. The Matrix CSV export
+   picks up the 4 new columns automatically (`rows_from_models`).
+6. **`/export-jobs`.**
+   - It uses its own prefix, as the contract names it.
+   - Callers see their own jobs. ADMIN / SUPER_ADMIN see all jobs, the same rule as
+     `_authorize_job_access`.
+   - Ordered by `created_at` desc, then id desc.
+   - No filters, no object key and no requester are listed.
+   - `file_name` comes from the new `_job_file_name`, which the download route now uses too, so
+     the two always agree. It is `{surface}-export.{csv|xlsx}`.
+   - It is a read, so no audit row is written.
+7. **`/me`** had no served source for the week that every role can reach: workflow-settings is
+   gated, and the header used the frontend constant. It now serves `current_week =
+   dc.CURRENT_WEEK` and `weeks_left_in_year = max(0, 52 − CURRENT_WEEK)`. This is the same basis
+   as `calendar_figures` / `lab_remaining_fraction`, so W42 gives 10.
+
+**Field-set churn:** I briefly dropped `leader_engineer_id` and made the weeks non-null to match an
+earlier TS draft. I restored both once the frontend slice C added `leader_engineer_id: Id|null`
+and `number|null` weeks. The final shapes are the ones above.
+
+**Tests:**
+- `test_p13_slice_c.py`: 19 passed.
+- Run together with the contract test and the related suites (export_api, export_worker_task,
+  gdpr withholding, hub_scope, p12_hub_filter, p13_region_filter, p9_api_extensions,
+  p12_step_timing, rbac_enforcement, session_api, priority_scoring): 356 passed, 1 failed. The
+  one failure is `test_every_p4_surface_types_file_is_covered`, because of slice B's
+  `BoardLeaderFacets` in `priority-board/api.ts`, which is not slice C.
+- Every slice C contract row passes: `GanttProjectRow`, `GanttResponse`,
+  `GanttWeeklyActiveCount`, `PriorityMatrixRow` and `MeResponse`.
+- `ruff check .` is clean. mypy shows no new errors in the changed modules (the priorities
+  errors were already there).
+- Full suite not run. `backend/.coverage` untouched (`--no-cov`).
+
+### [2026-10-18] P13-T11/T12 frontend — frontend-builder (slice B)
+
+Capacity priority split (T11) and Priority board weeks + toolbar (T12), against `API_CONTRACT_P13.md`
+§6 and the slice B backend's final shapes (relayed by the coordinator). No commit. Only
+`surfaces/capacity`, `surfaces/priority-board`, plus two minimal additive shared edits.
+
+**Types.**
+- `surfaces/capacity/api/types.ts`:
+  - `HubCapacityRow` gains `design_load_by_priority` / `lab_load_by_priority: PriorityLoadSplit`
+    (`{P1,P2,P3,P4,Queue}`, weeks). The lab split is region-level (it repeats on every hub of a
+    region) and is never added across hubs of one region.
+  - `ClassBreakdownRow` gains `deliverable_by_priority` / `left_out_by_priority:
+    PriorityCountSplit` and `by_hub: ClassHubSplit[]`. The backend maps `ClassHubSplit` to
+    `ClassBreakdownHubRow` in the contract test.
+  - "Queue" = priority Q or null (backend decision, accepted). Status does not enter it.
+- `surfaces/priority-board/api.ts`: `PriorityBoardColumn` gains `design_weeks` / `lab_weeks`. These
+  are the REMAINING work from the current week, not the total planned load, so they are labelled
+  "Remaining D x w · L y w" and never compared with Capacity load.
+- `backend/tests/test_openapi_frontend_contract.py`: 130 checks pass for these files. The only
+  failure is the slice A `workflow-settings` coverage check (not slice B).
+
+**Capacity (T11).**
+- KPI meters (Design load, Lab load) gained caption lines (`components/kpi-captions.tsx`): P1…Queue,
+  then "By hub" (design) or "By lab region" (lab).
+  - Totals extend the existing `lib/portfolio-totals.ts` display aggregate: design buckets summed
+    per hub, lab buckets once per region. This is the same precedent and caveat as the existing
+    headline totals. **A server-side `totals` on `HubCapacitySummary` would delete it (follow-up
+    recommended).**
+- `MeterCard` (`components/ui/stat-variants.tsx`) gained an optional `footer` slot. This is
+  additive, and Capacity is the only consumer.
+- The Load-vs-capacity card's two horizontal strips (`hub-load-chart.tsx`, now deleted) were
+  replaced by `components/priority-load-chart.tsx`.
+  - It is hand-built CSS, with no library, and draws stacked served P1/P2/P3/P4/Queue segments
+    inside a dashed outline at the served capacity for the selected horizon.
+  - The design chart is per hub. The lab chart is per lab region (`labRegionRows`, selection
+    only), with the hubs listed, so a repeated region figure is never drawn three times.
+  - It includes an sr-only data table.
+- New `components/hub-utilization-matrix.tsx` "Global resource utilization matrix", built from the
+  hub-load rows (the `/utilization-matrix` endpoint is the engineer/chamber grid and is unchanged,
+  for GDPR).
+  - Columns: Hub, Design cap, Design load, D. util., P1-D…Q-D, Lab cap, Lab load, L. util.,
+    P1-L…Q-L.
+  - Util. is the served `*_booked_pct_*` plus the status chip, and follows the horizon toggle.
+  - The ink TOTAL row uses portfolio totals (full year) and shows "—" for util., because no
+    portfolio booked % is served.
+- Class panel: the plain table is replaced by `components/class-card.tsx`, one card per category.
+  - Each card shows served deliverable / left-out counts with non-zero P-split captions ("(P1: 32,
+    Q: 5)") and a per-hub ✓/✗ list from `by_hub`.
+  - **There is no "Total" badge**, because deliverable + left out is not served (mock-up gap,
+    deliberate). The Recharts chart stays.
+
+**Priority board (T12).**
+- Column header: "Remaining D … w · L … w" from the served `design_weeks` / `lab_weeks`, carried
+  through `applyOverrides` and never summed from cards.
+- Toolbar (`components/board-toolbar.tsx`, state in `lib/toolbar-state.ts`):
+  - Search, debounced 300 ms, at most 100 characters, sent as `q`.
+  - Category, Type, Status (`status_`) and Leader (`leader_engineer_id`) selects, with a Clear
+    filters button. Everything is server-side.
+  - Leader options come from `GET /dashboard/projects/facets`, with the same key and cache as the
+    Dashboard register, typed via `Pick<ProjectFacets,'leaders'>`. This is gated on
+    `dashboard.read` (every `matrix` reader has it). The select is hidden if the facets request
+    errors.
+  - GDPR: a null name reads "Withheld · <last 4 of id>".
+- Query key: `queryKeys.priorityBoard(hubId, region, filters?)`. The filters object is appended
+  **only when a filter is set**, so the P12 key shape and its tests are unchanged.
+  - New `PriorityBoardFilters` in `lib/query-keys.ts`.
+  - `placeholderData` keeps the board while filters change, but only for the same hub and country.
+- A filtered empty board says "No projects match these filters".
+- `components/hub-load-strip.tsx` adds the mock-up's per-hub Design / Lab load bars above the board.
+  - Each bar shows the served full-year load / capacity (booked %), with width = served booked %
+    capped at 100 and the tone from the served status.
+  - It reuses `useHubLoadVsCapacity` (shared cache) and is shown only with `capacity.read`.
+
+**Tests.**
+- New: `priority-load-chart.test.tsx` (2).
+- Extended:
+  - `CapacityPage.test.tsx` (+1: captions, lab once per region, matrix cells, total "—");
+  - `class-breakdown-panel.test.tsx` (+1, plus the table assertion moved to cards);
+  - `portfolio-totals.test.ts` (+1, plus the empty case);
+  - `PriorityBoardPage.test.tsx` (+6: weeks, debounced `q`, four filters + region + facets call,
+    the Withheld option, the filtered empty state + Clear, and the hub load strip).
+- Fixtures: `hubRow` has served splits, and there is a new `classRow`.
+- Runs: capacity + priority-board give 75/75 (run twice). Also passing: hub-filter-wiring,
+  p12-nav and use-follow-up-run.
+- The filter test drives four Radix selects, so it has a 15 s timeout. It timed out once under load
+  at the 5 s default.
+- `tsc -p tsconfig.app.json`: no errors in slice B files. The remaining errors are in slice A
+  dashboard files.
+- ESLint is clean on the changed files.
+
+### [2026-10-18] P13-T10/T16/T17 frontend — frontend-builder (slice A)
+
+Dashboard analytics, Workflow Settings timeline previews and B-equivalent, Registration search,
+and Capacity Planning grouping (`API_CONTRACT_P13.md` §5, with the final backend shapes the
+coordinator relayed). No commit. The plan's task status is left for the orchestrator.
+
+**Shared files (additive edits only).**
+- `lib/query-keys.ts` gained three keys:
+  - `dashboardAnalytics(hubId, region)`, which uses `withHub`;
+  - `workflowCategoryTimelines(workflow?)` and `workflowBEquivalent(workflow?)`. With no
+    argument each one returns its prefix, so it can be invalidated.
+- `ProjectListFilters.q` was added.
+
+**T10 Dashboard.**
+- Types (`surfaces/dashboard/api/types.ts`):
+  - `CompletingWithinYearRow.type: ProjectType | null` is now required. The Dashboard test row
+    fixtures gained `type: null`.
+  - New types: `AnalyticsTypeKey`, `AnalyticsBucket<K>`, `CompletingHubTypeCell` (the backend's
+    `CompletingHubTypeRow`, already pinned in CONTRACT_TABLE), `CompletingByTypeRow` and
+    `DashboardAnalytics`.
+- Data: `fetchDashboardAnalytics` and `useDashboardAnalytics(hubId, region)`. These follow the
+  trailing-`region` pattern from P13-T02.
+- `DashboardPage` puts a `SectionBoundary` after the Hub × type pipeline section. It lazy-loads
+  `components/analytics-breakdown.tsx`, a Recharts chunk. The section shows:
+  - a "Completing within year: Hub × Type" table (`completing-hub-type-table.tsx`, no Recharts);
+  - Pipeline vs completing, as grouped bars;
+  - By project type and Registered by year, as bars labelled "count (share%)";
+  - By hub and By category, as Recharts donuts with a served count + share legend.
+- I9 rules for these charts:
+  - The donut centre is the served `PipelineTotals.total_count`. If that query has not resolved,
+    the centre is omitted. It is never a client sum.
+  - The cross-tab has **no per-hub Total column**, because the contract serves none. The Total
+    row is the served `completing_by_type`.
+  - The table is captioned "Excludes Commercialized projects, so the total is lower than the
+    within-year KPI", as the coordinator asked.
+  - Without an active run, a notice replaces the completion half.
+- Plant and Requested-by charts are not built (OQ #34).
+- `lib/analytics.ts` holds the label and pivot helpers only. It does no arithmetic on figures.
+
+**T16 Workflow Settings.**
+- New tab "Timeline previews" (`components/timelines-tab.tsx`):
+  - a PDD/OEM ToggleGroup, which switches both reads;
+  - collapsible hand-built mini-Gantts per category (`category-timeline.tsx`). Each header shows
+    the served total, D and L weeks. The first category is open. The axis shows the served
+    0-based week numbers;
+  - a 0-week step is drawn as a "0w" skipped marker, not a bar;
+  - the `BEquivalentPanel` (a semantic table). A null ratio prints "—". Each bar is scaled to its
+    column's max served ratio, for display only;
+  - a caption saying the previews use the lead-time table only, with no per-project overrides
+    and no capacity.
+- TS names match the backend schemas: `CategoryTimeline`, `TimelineStep` and `BEquivalentRow`.
+  **The coordinator adds their CONTRACT_TABLE rows.**
+- `afterSave` now also invalidates both preview prefixes.
+- Helpers are in `lib/b-equivalent.ts`: `referenceCategory` and `formatRatio`.
+
+**T17.**
+- Registration:
+  - a Search input, debounced 300 ms, trimmed, `maxLength` 100;
+  - it is sent as `q` on `GET /projects`, is in the query key, and is reset by Clear;
+  - it is not sent to the export endpoint (unverified whether that endpoint takes `q`).
+- Capacity Planning:
+  - `EngineerTable` groups by hub (HUB_NAMES order). The header shows the flag, the hub and
+    "N engineers". The Hub column is removed.
+  - `ChamberTable` groups by lab region (Greece / India / Romania). The header shows the flag,
+    "<region> labs" and "N chambers". The Lab region column is removed.
+  - There are no per-group sums. Group headers show the row count only.
+  - The helper is `planning/lib/group-rows.ts`.
+  - `PlanningPage` passes the hub's served `lab_region` as `hubRegion`.
+
+**Tests.**
+- New:
+  - `analytics.test.ts`, `completing-hub-type-table.test.tsx` and
+    `analytics-breakdown.test.tsx` (served values verbatim, and axe);
+  - `category-timeline.test.tsx` and `b-equivalent-panel.test.tsx`;
+  - `group-rows.test.ts`.
+- Extended:
+  - `DashboardPage.test.tsx` (filter passthrough, placement, served donut total, section error);
+  - `WorkflowSettingsPage.test.tsx` (tab + workflow switch);
+  - `RegistrationPage.test.tsx` (debounced `q` + Clear);
+  - the dashboard, workflow-settings and registration api tests;
+  - the engineer and chamber table tests.
+- Results:
+  - vitest on dashboard, workflow-settings, registration and planning: 52 files / 270 tests pass.
+  - `tsc -p tsconfig.app.json` is clean.
+  - eslint shows 0 errors. The one remaining warning is the existing `react-hooks/incompatible-library` warning in
+    `registration/components/project-list.tsx`.
+  - The full suite and `vite build` were not run, because other builders are mid-edit.
+
+### [2026-10-18] P13-T13 addendum — Queue bucket
+
+`GET /gantt?priority=Q` now matches `priority == Q OR priority IS NULL`, the Queue bucket that
+Capacity and the Priority board use (slice B). P1..P4 stay exact matches. `sort=priority` puts
+null-priority projects in the Q band. The param description and the `get_gantt` docstring say so.
+New test: `test_p13_slice_c.py::test_gantt_queue_tab_is_q_or_no_priority`, and the filter-loop
+and sort expectations were updated. Results: 20 passed, `ruff check .` clean. This supersedes
+judgement call 4 of the slice C entry above.
+
+### [2026-10-18] P13 slice A backend follow-ups
+
+Coordinator follow-ups to "P13-T10/T16/T17 backend — backend-builder (slice A)". All additive.
+Not committed.
+
+1. **Contract table** (`backend/tests/test_openapi_frontend_contract.py`): exact rows
+   `TimelineStep`, `CategoryTimeline`, `BEquivalentRow` (workflow-settings types.ts ↔ the same
+   backend names) and `CompletingByHubRow` (dashboard).
+2. **`completing_by_hub`** on `GET /dashboard/analytics`:
+   `[{key: HubName, pipeline_count, completing_count, completing_pct}]`.
+   - The per-hub Total column: the sum of that hub's `completing_hub_type` cells, on the same
+     basis (Commercialized excluded; completing = exclusive WITHIN_YEAR).
+   - Hubs with pipeline_count > 0 only, in `by_hub` order (`Hub.name`). It is `[]` without an
+     active run. Pct is 2 dp, and 0.0 on a zero denominator.
+   - New schema `CompletingByHubRow` in `backend/schemas/dashboard.py`.
+   - TS: added `CompletingByHubRow` and `DashboardAnalytics.completing_by_hub` in
+     `frontend/src/surfaces/dashboard/api/types.ts`. It is a named interface rather than an
+     inline type, because the contract-test parser cannot read inline object types.
+   - **Frontend follow-up:** the typed fixtures `analytics-breakdown.test.tsx:10` and
+     `DashboardPage.test.tsx:268` need `completing_by_hub` added (tsc TS2741 until then).
+3. **`q` on `GET /exports/project-registration`** (it did not have it).
+   - `Query(max_length=100)`, with the `services.text_search` semantics via `GET /projects`.
+   - Threaded through `export_builder._fetch_all_projects` and
+     `build_project_registration_sheets` as an optional kwarg.
+   - Stored in the job filters only when non-blank, so older job filter shapes are unchanged.
+
+**Tests:** `tests/test_p13_slice_a.py` now has 20 tests.
+- The by-hub reconciliation was added to the shape test, plus the no-run, region and
+  Hub-Planner cases.
+- New `test_registration_export_follows_q_sync_and_job_path` covers the CSV with q, literal
+  `_`/`%`, the 422 above 100 characters, and `build_export_sheets` with a stored `q` filter.
+
+Results:
+- `test_p13_slice_a.py` + `test_export_api.py` + `test_openapi_frontend_contract.py`: 173 passed,
+  0 failed. The whole contract test is green at this moment.
+- ruff is clean, and mypy shows no errors in the changed modules.
+- Run with `--no-cov`, so `backend/.coverage` is untouched.
+
+### [2026-10-18] P13-T11 addendum — served capacity totals
+
+On the coordinator's follow-up. The slice B frontend was summing the per-priority loads and the
+matrix TOTAL row in the browser (`lib/portfolio-totals.ts`), which risks breaking I9/I19. These
+figures are now served. Not committed.
+
+- **`HubCapacitySummary.totals: CapacityTotals`** (new schema in `backend/schemas/capacity.py`).
+  It is built by `_totals(rows)` in `backend/api/routers/capacity.py`, by the same rule as
+  `_area_rows`:
+  - design figures are Σ over every served hub row;
+  - lab figures are Σ over ONE row per distinct lab region, never per hub;
+  - inputs are the rows' served 2 dp figures;
+  - `*_load_by_priority` is Σ of the rows' splits, using the same per-hub / per-region rule and
+    passed through `split_to_total`, so it sums to the load.
+  - Both bases are served: `_year` and `_remaining`. `booked_pct` and status follow ADR 0016.
+  - With no rows (out of scope): `[]`, 0, null and `available`.
+- **`ClassBreakdownRow.total_count`** = `deliverable_count + left_out_count`, served (0 without a
+  run).
+- **Frontend:** `frontend/src/surfaces/capacity/api/types.ts` gets an additive `CapacityTotals`,
+  `HubCapacitySummary.totals` and `ClassBreakdownRow.total_count`.
+- **CONTRACT_TABLE:** new row `CapacityTotals` (exact).
+- **Tests** (`tests/test_p13_capacity_priority_board.py`, still 11 tests, now with stronger
+  assertions):
+  - exact totals on the hand-built fixture: design 27 = 15 + 9 + 3; lab 14 = Greece 4 + India 10,
+    not 24;
+  - `_assert_totals_reconcile` on the seed, unfiltered, per region and per hub;
+  - seeded `totals.lab_load_weeks` is less than the naive row sum, so once-per-region is
+    exercised;
+  - out-of-scope totals are zeroed;
+  - `total_count` equals the sum on every class row.
+- **Results:** my file, the contract test, p11 capacity, p12 board/vip, p13 region filter and p12
+  hub filter: 216 passed, 1 failed. The failure was
+  `test_p12_hub_filter::test_i23_filtered_figures_equal_unfiltered_per_hub_figures`. It passed
+  when rerun alone and when `test_p12_hub_filter` + `test_p13_region_filter` were rerun together
+  (26 passed), so it was transient, most likely another slice's concurrent edit landing during
+  the run. The contract test was all green in that run. `ruff check .` is clean, and mypy is
+  clean on the changed modules.
+- **`tsc` is now red in frontend test fixtures only,** which the frontend builder must update. The
+  fixtures that lack `totals` are:
+  - `surfaces/capacity/CapacityPage.test.tsx` lines 39 and 194;
+  - `components/hub-load-panel.test.tsx` lines 12 and 135;
+  - `hooks/use-capacity.test.tsx` line 29;
+  - `dashboard/components/capacity-booked-card.test.tsx` line 21.
+
+  Separately, `surfaces/capacity/test-fixtures.ts` line 51 declares `total_count?` as optional and
+  needs it required. The `completing_by_hub` errors in the dashboard tests belong to slice A, not
+  this change.
+
+### [2026-10-18] P13 slice A frontend follow-ups
+
+These follow-ups come from the coordinator after the slice A backend landed. No commit.
+
+1. **Per-hub Total column.**
+   - The "Completing within year: Hub × Type" table now has a Total column. Each cell is
+     `DashboardAnalytics.completing_by_hub` printed as served, "n (pct%)".
+   - `pivotCompleting(cells, byType, byHub)` gained `hubTotal(hub)`. A hub that appears only in
+     `byHub` still gets a row.
+   - A hub with no served total shows "–". No grand total is served, so the corner cell is "–"
+     and labelled "No grand total served". It is not a client sum (I9).
+   - The column is hidden when `completing_by_hub` is `[]` (no active run).
+   - The `analytics-breakdown.test.tsx` and `DashboardPage.test.tsx` fixtures gained
+     `completing_by_hub`.
+2. **Registration export search.** The Registration export now sends the debounced search as `q`
+   to `GET /exports/project-registration`. `RegistrationPage.test.tsx` stubs `DownloadButton` to
+   check its `filters.q`.
+
+**Verification.**
+- Vitest on dashboard, workflow-settings, registration and planning: 52 files, 272 tests pass.
+- The run used a temporary vitest config that aliased the missing slice C module
+  `@/surfaces/history/HistoryPage` to a scratchpad stub. That config was deleted after the run.
+  Without the alias, every test that renders the app routes fails at import resolution. That
+  failure belongs to slice C's in-progress `app/lazy-surfaces.ts`, not to slice A.
+- `tsc -p tsconfig.app.json` shows no errors in slice A's areas or in `lib/query-keys.ts`. The
+  remaining errors belong to the other slices.
+- ESLint is clean on the changed files.
+
+### [2026-10-18] P13-T11 frontend addendum — served totals
+
+The Capacity page now takes its totals from the server, using the backend's new
+`HubCapacitySummary.totals: CapacityTotals` and `ClassBreakdownRow.total_count`. No commit.
+
+**Browser sums removed.**
+- `surfaces/capacity/lib/portfolio-totals.ts` and its test are deleted.
+- They are replaced by `lib/lab-region-rows.ts`. It is selection only: one served row per lab
+  region, plus that region's hubs. It feeds the lab chart and the lab caption. It has a new test.
+- `pickAreaFigures` now accepts any `RollupFigures`, which covers both `CapacityArea` and
+  `CapacityTotals`. It selects the horizon's served fields.
+- KPI meters:
+  - load, capacity and "% used" come from the served totals for the active Full year / Remaining
+    year basis;
+  - the KPIs now follow the horizon toggle (they were year-only before);
+  - priority captions come from `totals.*_load_by_priority`.
+- `MeterCard` gains an optional `servedPct` prop. When it is set, the card prints the served
+  booked % (`formatBookedPct`) and computes nothing. When it is omitted, the old behaviour stays.
+- Matrix TOTAL row: served totals for the horizon, with the served booked % and status chip. The
+  earlier "—" is gone.
+- Class cards gain a "Total: N" badge from the served `total_count`.
+
+**Remaining browser sum (pre-existing).** The KPI row's Deliverable / Left out `StatStrip` still
+adds `classBreakdown.rows`. No portfolio deliverable / left-out total is served. That needs a
+backend follow-up if it must go.
+
+**Fixtures.**
+- `test-fixtures.ts` gains `totalsRow()`.
+- `SUMMARY_P11` now includes `totals`. This fixes every `HubCapacitySummary` fixture that spreads
+  it: CapacityPage, hub-load-panel, use-capacity, and the dashboard `capacity-booked-card`. The
+  dashboard test file needed no edit.
+- `classRow` has `total_count`.
+
+**Results.**
+- Vitest: 103/103 across capacity, priority-board, capacity-booked-card and hub-filter-wiring.
+- tsc: no slice B errors.
+- ESLint is clean on the changed files.
+- `test_openapi_frontend_contract.py`: 136 passed.
+
+### [2026-10-18] P13-T13/T14/T15 frontend — frontend-builder (slice C)
+
+Gantt toolbar, Matrix toolbar, and the shell (header week/date, Versions & History, Downloads),
+per `API_CONTRACT_P13.md` §7. Types mirror the backend's final schemas field for field: the
+contract test pairs `GanttProjectRow`, `GanttResponse`, `PriorityMatrixRow` and `MeResponse`
+"exact". No commit.
+
+**Contract reconciliations (the backend serves more than §7 lists):**
+- `GanttProjectRow` and `PriorityMatrixRow` also carry `leader_engineer_id`.
+- `design_weeks`, `lab_weeks` and `total_weeks` are `number | null`.
+- `ExportJobListItem` adds `completed_at` and `row_count`.
+- `MeResponse` gains required `current_week` and `weeks_left_in_year`. `test/session.ts::makeMe`
+  pins them to 31 and 21.
+
+**Gantt (T13, `surfaces/gantt/`).**
+- Toolbar (`components/gantt-toolbar.tsx`, state in `lib/gantt-filters.ts`):
+  - Inputs: a search box (debounced 300 ms, `maxLength` 100, sent as `q`), Category / Type / Status
+    selects, Leader / Current step selects, a Sort select, and P1–P4 / In Queue tabs.
+  - Every input is a server param: `q`, `category`, `type`, `status_`, `leader_engineer_id`,
+    `current_step`, `priority`, `sort`.
+  - The Queue tab sends `priority=Q`. Per the coordinator, the backend also matches projects
+    with a null priority on that value.
+  - Sort defaults to `priority` and is always sent. Unset filters are `undefined`, so they are
+    neither sent nor part of the key.
+  - Leader / Step options come from `GET /dashboard/projects/facets`, through `useGanttFacets`.
+    It uses the same `dashboardProjectFacets` key as the register. It is fetched only with
+    `dashboard` read; without it (an Engineer) the two selects are hidden.
+  - A facet leader with a withheld name reads `Leader (name withheld) · <last 4>`.
+- Zoom:
+  - `ZoomControl` is now a px slider (16–48, step 4, ± buttons). It replaces Weeks / Days, and the
+    default is 16.
+  - `makeWeekScale` accepts `GanttZoom | number`.
+- Forest view (`density='forest'`): 26 / 22 px rows with no meta. The comfortable view uses 58 px
+  project rows (`ROW_HEIGHTS`, `visualRowHeight(row, density)`).
+- Hide stats hides the `StatStrip` and the weekly band.
+- Row meta:
+  - Leader: the name, "Withheld" when there is an id but no name (OQ #8), "—" when there is no
+    leader.
+  - Then the code, type and hub, and "Total {t}W · {d} DW / {l} LW", verbatim. When total is null
+    it reads "Not in the active run".
+- Weekly band:
+  - It sits in the sticky header under the axis: PDD row, OEM row, then the activity strip.
+  - All three read the served `weekly_active_counts`.
+  - **The client-side `weeklyStepDensity` histogram and its tests were deleted** (I9: no
+    independent counting).
+- Export download filters are unchanged (hub / region only). The export endpoints were not given
+  the new filters.
+
+**Matrix (T14, `surfaces/matrix/`).**
+- New columns: Rank (served `rank`, sticky, "–" when unscored), Leader (same GDPR rendering as the
+  Gantt), Status.
+- `MatrixTable` gained `detailed` (default `true` for older callers) and `columnFilters`.
+  `VirtualMatrixGrid` gained `MatrixColumn.filter`, a second sticky header row.
+- The page starts compact (`detailed=false`). "Detailed view" (aria-pressed) shows the 13
+  dimension columns.
+- Chips: Cat / Type / Status (`ChipFilter`, Radix single → `radiogroup`) and the shared
+  `CountrySegmented` for Hub. Category, type and status are server params.
+- Column filters:
+  - Project → server `q` (debounced, max 100).
+  - Hub / Leader → **view-only narrowing of the served rows**. The rank stays as served, the count
+    reads "x of N projects shown", and a withheld leader matches "withheld".
+  - The grid stays mounted while filtered, so the inputs never disappear on 0 rows.
+- "Reset view" restores the default view state and EUR. It does not touch the global header
+  hub / country filter.
+- FX rate (`components/fx-rate-editor.tsx`):
+  - Shown only when `me.roles` has Admin or Super Admin (`canEditFxRate`, which mirrors
+    `require_roles` on `PUT /currency-rates/{code}`) and the currency is not EUR.
+  - It PUTs `{rate_to_eur}` and invalidates `currency-rates` and `priority-matrix`. Nothing is
+    converted client-side, and nothing is logged.
+  - The draft resets through a `key` remount, not an effect.
+- The superseded Category `FilterSelect` was removed.
+
+**Shell (T15).**
+- Header `WeekPill`:
+  - Shows "Week {current_week} · {weeks_left_in_year} wks left", served from `/me`, plus today's
+    date in a `<time>` ("18 Oct 2026", browser clock).
+  - Before `/me` loads it falls back to the old "W42 of 52" from the constant. 78 is never shown.
+- `SurfaceNavItem.surface` is now `SurfaceKey | null`. `null` means any authenticated user, used
+  by Downloads. `nav-visibility.ts` and `routes.tsx` handle it: no `RequireRead`, the session gate
+  only.
+- `/history` "Versions & History" (Data group):
+  - Gated on `matrix` read. That is the permission that gates `/scenarios/versions`, and every
+    matrix reader also reads `/schedule-runs`.
+  - Schedule runs tab: `GET /schedule-runs`. The list is virtualized over 100.
+  - Selecting a run shows the served `ChangedProjectsList` from
+    `GET /schedule-runs/{id}/changes?against=<next older completed run>` (`baselineFor`, a list
+    lookup). There are explanatory notes for a not-completed run and for the earliest run.
+  - `horizon_weeks` is never shown.
+  - Scenario versions tab: the new inline `ScenarioVersionsPanel` from the Matrix's
+    `version-history-panel.tsx` (a cross-surface import). Names come from `GET /dashboard/projects`
+    (`historyProjectNames` key, dashboard read only).
+- `/downloads`:
+  - `GET /export-jobs?limit=50`. It polls every 5 s while a job is queued or running.
+  - Download goes through `GET /exports/jobs/{id}/download` via `apiDownload` + `saveBlob`, and
+    only when the job is completed.
+  - Empty state copy explains that the sync Download buttons create no jobs.
+- New query keys: `exportJobs(limit)` and `historyProjectNames()`. The `gantt` / `priorityMatrix`
+  param types were widened, additively.
+
+**Tests.**
+- New: `app/p13-nav.test.tsx`, `surfaces/history/HistoryPage.test.tsx`,
+  `surfaces/downloads/DownloadsPage.test.tsx`, a rewritten `components/layout/app-header.test.tsx`.
+- Gantt page: +6 P13 cases. Matrix page: +6 P13 cases.
+- Fixtures: `surfaces/gantt/test-fixtures.ts::P13_GANTT_ROW_DEFAULTS` and
+  `surfaces/matrix/test-fixtures.ts::P13_MATRIX_ROW_DEFAULTS`, spread into existing builders.
+- `app.test.tsx` and `stores/session.test.tsx` were updated for the zoom slider and the nullable
+  `surface`.
+- Results:
+  - Slice C suites: 27 files / 267 tests pass.
+  - `src/app` + `src/lib` + `src/stores` + layout: everything passes except
+    `app.test.tsx > navigates to the Capacity surface`. It fails on slice B's in-progress import
+    `./lib/portfolio-totals` in `CapacityPage.tsx`, **not slice C**.
+- `tsc -p tsconfig.app.json`: clean for slice C. The remaining errors are slice A / B in-flight
+  test fixtures (`DashboardAnalytics.completing_by_hub`, `HubCapacitySummary.totals`).
+- ESLint clean on the changed files.
+- `vite build` not run: the tree does not compile until slices A and B land.
+
+**Addendum (same task, after slices A and B landed):** `tsc -p tsconfig.app.json` now has 0 errors, and
+`app.test.tsx` passes 11/11, including the Capacity navigation case.
+
+### [2026-10-19] P13 wave 2 — orchestrator review
+
+All six slice builders reported. Their individual entries are above. The spend-limit interruption
+on 2026-10-18 was resumed without any loss of work.
+
+**Decisions accepted:**
+- **Queue bucket.** "Queue" means priority Q or no priority, never the In Queue status. This
+  applies everywhere: the Capacity split, the class cards, the Board, and the Gantt
+  `priority=Q` tab and its sort.
+- **Leader names.** They are withheld unless the leader is the caller (OQ #8). The UI shows
+  "Withheld" when an id exists without a name, and "—" when there is no leader.
+- **Board weeks.** The Board's column D/L weeks are remaining work, labelled "Remaining". They are
+  not the Capacity planned load.
+- **Completing cross-tab.** The analytics "Completing within year" cross-tab excludes Commercialized
+  projects and is captioned as such. It does not equal the within-year KPI.
+- **Capacity totals.** These are served as `HubCapacitySummary.totals`, with lab counted once per
+  region. The browser `portfolio-totals.ts` sum was deleted.
+- **Version history baseline.** Versions & History compares each run's change list against the
+  next older completed run.
+
+Follow-ups P13-F01..F05 are recorded in the plan.
+
+### [2026-10-19] P13 gate — workflow-auditor: PASS
+
+P13-T20, domain dimension. I reviewed the working tree against HEAD `1c0290a`. Nothing is
+committed. Non-blocking findings are listed below.
+
+**Scheduler untouched.** `git diff HEAD -- backend/scheduling/` is empty, and there are no
+untracked files under it. I8 and I10 therefore carry over from P12 unchanged.
+
+**Independent reconciliation.** I wrote a throwaway script in the session scratchpad. It ran
+against the live dev DB: 253 real 2026 projects, active run v2, CW 42. It made GET requests only,
+through the ASGI app, inside a `READ ONLY` transaction that was rolled back. Every figure was
+re-derived from the raw `projects`, `hubs`, `schedule_run_project_*`, templates and lead-time
+rows, not from endpoint helpers. All checks passed:
+- **Region partition.** For each of Greece, India and Romania I summed the region-filtered result
+  and compared it with the unfiltered result. They are equal for:
+  - `/pipeline-totals`, `/status-overview` (including `other_counts`), `/hub-type-pipeline` and
+    `/completing-within-year` (all 4 buckets);
+  - the register `total_count` and the 4 analytics lists;
+  - the Capacity totals (design and lab load, plus year and remaining capacity) and the
+    class-breakdown totals;
+  - the Board column counts and D weeks;
+  - the Gantt `total_count` and `weekly_active_counts`.
+
+  OEM-HCK and OEM-Seltek both have `lab_region = Greece`. A Hub Planner scoped to R&D-Greece gets
+  the unfiltered result for region=Greece and zeros for region=India (I23 extended).
+- **I9.** The `within_year_count` of 107 equals my count over the run rows (within_year AND NOT
+  blocked), and the per-region counts match too. The register's `end_week` equals the stored
+  `projected_end_week` on every row.
+- **`/region-summary`.**
+  - Rows sum to `/pipeline-totals`: total, spillover and new.
+  - Each row equals the region-filtered pipeline card.
+  - Σ over regions of `status_counts[s]` equals the status-overview card for every status.
+  - `share_pct` and `status_share_pct` are correct to 2 dp.
+  - A filtered call does not leak other regions.
+- **`/analytics`.**
+  - Every list sums to the pipeline total of 253 − Commercialized, and the shares are correct.
+  - `completing_hub_type` equals my independent (hub, type) cross-tab.
+  - `completing_by_hub` equals the sum of its cells, and Σ `completing_by_type` equals Σ cells.
+  - Documented exclusion: the cross-tab total is 90. Adding the 17 Commercialized projects gives
+    the KPI of 107 exactly. Excluded projects get `within_year = (status == Commercialized)`, a P2
+    decision (`greedy.py:324`).
+- **Capacity.**
+  - I6 per hub and I7 per region equal my sums over the run steps.
+  - The priority splits equal my per-bucket sums and add up to the load.
+  - `totals` design is Σ over hubs. `totals` lab is Σ over distinct regions (once per region). The
+    areas count each region once.
+  - I19: `booked_pct` equals load / capacity × 100, and the status follows the 85/100 thresholds.
+    This holds on every row and on `totals`, for both year and remaining.
+  - Region filter: the rows are that region's hubs, and the area is Europe or India accordingly.
+  - Class rows: `total_count` = deliverable + left_out; the priority splits and `by_hub` each sum
+    to the counts; my independent counts match.
+- **Board.**
+  - Each column's members have exactly that priority, and `count` equals the number of cards.
+  - The D/L weeks equal my window-based remaining, and also my I21 remaining from the progress
+    fields (override, or ceil(d × (1 − pct))): 0 of 253 projects diverge.
+  - Live totals (D/L weeks): P1 156/14, P2 36/0, P3 222/3, P4 482/65.
+- **Gantt.**
+  - Per-row `design_weeks`, `lab_weeks` and `total_weeks` equal my sums over the run steps.
+    `total_weeks` includes elapsed steps.
+  - `weekly_active_counts` equals my per-week PDD/OEM recount, for weeks 1..52.
+  - I23: Σ Gantt design weeks per hub equals the Capacity `design_load_weeks`.
+  - `priority=Q` returns exactly the projects with priority Q or null.
+  - The register and Matrix ranks run contiguously from 1 to n, ordered by `weighted_score`
+    descending.
+- **Workflow previews.** I recomputed the longest path over the DB DAG and lead times (PDD
+  A+/A/B/C = 44/38/18/8; OEM = 21/14/4), the design/lab sums (PDD 22/12, 18/10, 10/6, 6/1; OEM
+  9/8, 5/6, 2/2), every step's start offset, and the B-equivalent ratios (PDD design 2.2/1.8/1/0.6,
+  lab 2/1.67/1/0.17; OEM vs B-OEM). All match the served values.
+- **Builder tests.** The P13 backend suites plus `test_p12_hub_filter`: 77 passed.
+
+**Frontend (I9/I19).** I grepped the 107 changed or new non-test files. P13 adds no browser-side
+hub, region or portfolio figure. The region chips, the register summary and count, the analytics
+shares, the KPI meters and booked %, the matrix TOTAL row, and the D/L strips are all served values.
+The browser computations still present are all pre-P13 and none of them recomputes a verdict:
+- P13-F01: `CapacityPage.tsx:194/200`, the Deliverable / Left-out sum, confirmed still present;
+- the Gantt KPI strip counts served flags over the full (limit 500) rows;
+- the status-overview `otherTotal` sum;
+- the Planning FTE sum;
+- the Registration status counts.
+
+**Non-blocking findings (proposed follow-ups):**
+- **F06: the Capacity class-breakdown counts non-schedulable projects as "Deliverable".**
+  - This is pre-existing, but P13 propagates it into `deliverable_by_priority`, `by_hub` and
+    `total_count`.
+  - The query counts every active-run outcome row with `left_out = false`. That includes 61 live
+    rows: 17 Commercialized, 15 On Hold and 29 Cancelled.
+  - Proposed fix: restrict the query to schedulable statuses, or define "deliverable" explicitly
+    in DOMAIN_RULES.
+- **F07: the Board's Q column is Q only, not the Queue bucket.** Null-priority projects never
+  appear on the Board (ADR 0018, and the `priority_board.py` docstring). The 2026-10-19 ruling
+  says Queue (Q or null) applies "everywhere … the Board", but that is true only of Capacity and
+  the Gantt. Live impact is zero (0 null, 0 Q). Proposed fix: either correct the ruling text, or
+  amend ADR 0018 to show null-priority cards in Q.
+- **F08: Board remaining weeks can overcount in an edge case.** The remaining weeks are
+  `end − max(start, CW) + 1` over the stored window. An In-Progress or Blocked step is stored as
+  `[actual_start, tail_end]`, so the count overstates I21 remaining in two cases:
+  - a predecessor ending after CW pushes the tail later;
+  - a step with `remaining == 0` has a predecessor ending at or after CW.
+
+  There is no live divergence. Proposed fix: derive the figure from the progress remaining instead.
+- **F09: Gantt and Capacity treat an unknown step kind differently.** Gantt `_kind_weeks` treats
+  a step kind missing from the run snapshot as design, while Capacity ignores it. They cannot
+  diverge while the snapshot covers every step, which it does live. Proposed fix: align them.
+
+### [2026-10-19] P13 gate — security-auditor: PASS
+
+OWASP ASVS L2 review of the P13 working tree against HEAD 1c0290a (nothing committed). No High or
+Critical finding. The gate passes on the security dimension.
+
+**Verified (code read plus live negative probes against a testcontainers Postgres; the probe file
+was kept in the session scratchpad, not in the repo):**
+- **Hub scope.** `region` and `hub_id` only narrow, never widen. A Hub Planner scoped to R&D-Greece
+  was probed with `hub_id`=PD-India, `region`=India/Romania, both together, and `q=%`. Every endpoint
+  returned only in-scope rows: `/dashboard/projects`, `/facets`, `/region-summary`, `/analytics`
+  (by_hub), `/gantt`, `/priorities`, `/priority-board`, `/vip-projects`, `/capacity/hubs` and
+  `/utilization-matrix`. Out-of-scope filters return empty results, not 403.
+- **Engineer self-scope.** The `/gantt` self-scope path ANDs `global_hub_filter` with the
+  own-assignment set. Probed with every hub, every region, 10 leader ids, `q`, `priority=Q`,
+  `sort`, `current_step` and `offset=-50`: rows, `total_count` and `weekly_active_counts` stayed
+  within the caller's own projects. An Engineer with no Engineer row sees zero. An Engineer gets
+  403 on every Dashboard, Board, Matrix, Capacity and workflow-preview endpoint.
+- **GDPR (OQ #8).** `leader_name` is null unless the caller is the leader on all of these:
+  `/dashboard/projects`, facets, `/gantt`, `/priorities`, and the Matrix and Dashboard CSV exports.
+  It is served to the leader once their Engineer row is linked to them. Facets are ordered by id,
+  never by name. No engineer-level figure was added: Capacity changes are hub and region only.
+- **Financial fields.** None appear in the new projections or the Dashboard export. The FX editor
+  goes through the existing `PUT /currency-rates/{code}`, which is
+  `require_roles(ADMIN, SUPER_ADMIN)` server-side; a Hub Planner gets 403. Nothing is logged.
+- **Export jobs.** `GET /export-jobs` lists own jobs only (Admin and Super Admin see all). It
+  returns 401 unauthenticated and caps `limit` at 200 (422 above). Download and status of another
+  user's job return 404. `file_name` is derived from the server enums, not from user input.
+- **Search and SQL.** `q` uses bound `ilike(..., escape="\\")` with `%`, `_` and `\` escaped in
+  `services/text_search.py`, `services/project_filters.py` and `priority_board.py`. It is capped
+  at 100 characters (422 at 101). There is no raw SQL interpolation, and `current_step` is compared
+  in Python only.
+- **Routes.** `/history` is gated on matrix read, and its endpoints are `_read_any` and MATRIX read.
+  Run changes are scoped with `hidden_count`. `/downloads` is open to any authenticated user. `/me`
+  adds only `current_week` and `weeks_left_in_year`. The `?edit=` deep link relies on server authz
+  through `_get_project_or_404` and the PATCH path.
+- **Frontend.** No `dangerouslySetInnerHTML`, no secrets, no new external URLs. There is no
+  package.json or lockfile change and no infra, proxy, CSP or TLS change in P13. The P13 backend
+  suites pass (70).
+
+**Findings (none gate-blocking):**
+1. **Medium — CSV/XLSX formula injection (CWE-1236). Pre-existing since P5; widened by P13.**
+   - `services/export_builder.py::_stringify` passes strings through unchanged. A cell starting
+     with `=` is written as a live formula: `openpyxl` stores such strings as formulas, and Excel
+     evaluates them in the CSV.
+   - P13 adds more exported text columns: `external_code`, `current_step_name` and `leader_name`.
+   - Fix: prefix `'` to any string starting with `= + - @ \t \r`, and force string type for XLSX
+     cells.
+2. **Low — pseudonymisation linkability (OQ #8).**
+   - `leader_engineer_id` is now served on four endpoints and the exports, and is a filter.
+   - Roles with Capacity Planning read (PM, Hub Planner, Admin, Super Admin) can map the id to a
+     name through `GET /engineers`, as Registration already does. "Withheld" is therefore
+     pseudonymisation, not anonymity.
+   - This is not a new data class: engineer_id × busy_weeks is already served.
+   - Record it for the DPO under OQ #8.
+3. **Low — client-side path traversal in the edit deep link.**
+   - `frontend/src/surfaces/registration/api/registration-api.ts:55` builds
+     `/projects/${projectId}` from an unvalidated, unencoded `?edit=` value.
+   - Impact is limited to a same-origin GET with no state change.
+   - Fix: check the value against a UUID regex before enabling the query, and use
+     `encodeURIComponent`.
+4. **Low — Admin can read export files built for someone else.**
+   - Export files carry the requester's own `leader_name` and live on after the request.
+   - Admin can now find them through the `/export-jobs` all-jobs list.
+   - Fix: drop `leader_name` from the export projections, or withhold it in the export path.
+5. **Info.**
+   - `/gantt` `offset` has no `ge=0`. A negative value slices the tail of the already-scoped list,
+     with no leak. Add `Query(ge=0)`.
+   - The export job `filters` JSONB persists the free-text `q`, but never logs it.
+   - Three copies of the LIKE escape exist, all correct (P13-F04).
+   - Capacity `lab_load_by_priority` is region-wide, which includes out-of-scope hubs in the same
+     lab region. This is an aggregate only, per ADR 0020 §4.
+   - A latent, pre-existing issue in `api/routers/gantt.py`: `engineer_names` maps every
+     engineer, so an Engineer would see a colleague's name on a shared project.
+     - Not reachable with today's data: the probe found 0 of 43 projects with more than one
+       assigned engineer.
+     - Fix: restrict the map to the caller's own engineer id.
+
+Suggested non-blocking follow-ups: finding 1 (Medium) and findings 3, 4 and 5 as P13-F06..F09, or
+carried into the next phase.
+
+### [2026-10-19] Correction to "P13 wave 2 — orchestrator review" — orchestrator
+
+The Queue-bucket ruling above says "Q or no priority … the Board". That is wrong for the Board.
+Per ADR 0018 the Priority board never shows projects that have no priority, so its Q column is Q
+only. The ruling holds for the Capacity split, the class cards, and the Gantt `priority=Q` tab and
+its sort. Follow-up P13-F07 decides whether no-priority projects should join the Board's Queue
+column. The workflow-auditor found this at the P13 gate.
+
+### [2026-10-19] P13 gate — qa-inspector: FAIL
+
+P13-T20, QA dimension. Scope: the uncommitted working tree against HEAD `1c0290a`. I re-ran every
+number below myself. The disposable infra is removed: `qa-p13gate-pg` (Postgres 17, :55443),
+`qa-p13gate-redis` (:56390), dev-mode uvicorn on :8031 and `vite preview --mode e2e` on :5183. The
+temporary HEAD `git worktree` is removed. Coverage data went to the scratchpad, and the tracked
+`backend/.coverage` was restored with `git checkout`.
+
+**Verdict: FAIL.** Two blocking a11y items (QA-P13-1 and QA-P13-2). Both are serious axe
+violations that P13 introduced on changed surfaces, the same class as P12 gate item B. Every other
+dimension passes.
+
+**1. Backend: PASS.**
+- `uv run pytest -q`: **1290 passed, 0 failed**, coverage **96.34 %** (gate 70 %). That is the
+  orchestrator's 1288 plus my 2 new tests.
+- Scheduling gate (`pytest -c pytest-scheduling.ini`): 168 passed, **93.91 %** (gate 85 %). Nothing
+  under `backend/scheduling/` changed.
+- Lowest P13-touched modules: `api/routers/projects.py` 92 %, `priorities.py` 93 %,
+  `dashboard.py` 97 %, `gantt.py` 97 %, `exports.py` 98 %, `hub_scope.py` 98 %,
+  `workflow_previews.py` 98 %. `capacity_priority.py`, `project_filters.py`, `text_search.py`,
+  `priority_board.py`, `vip.py`, `checkins.py` and `me.py` are at 100 %.
+- `ruff check .`: clean.
+- mypy on the 26 changed or new application modules: **0 new errors**. There are 77 errors now
+  against 79 on HEAD over the same files, all pre-existing (priorities, capacity, untyped Celery
+  decorator).
+- The contract test (`test_openapi_frontend_contract.py`) is green inside the full run.
+
+**2. Frontend: PASS (after one test-only fix, below).**
+- `npx vitest run --coverage`: **164 files, 1037/1037 passed**. Statements 85.95 %, branches
+  77.7 %, functions 83.62 %, lines 87.78 % (gate 70 %).
+- Low per-file statement coverage on P13-touched files (Low severity, aggregate gate met):
+  - `priority-board/components/board-column.tsx` 52 %;
+  - `workflow-settings/api/workflow-settings-api.ts` 53 %;
+  - `dashboard/components/analytics-breakdown.tsx` 64 %;
+  - `planning/PlanningPage.tsx` 64 %;
+  - `workflow-settings/hooks/use-workflow-settings.ts` 0 %, because it is mocked in every page
+    test.
+- ESLint on the 155 changed or new TS/TSX files: **0 errors, 2 warnings**. Both are
+  `react-refresh/only-export-components`, in `app/routes.tsx:55` and
+  `dashboard/components/project-breakdown.tsx:74`, and both are identical on HEAD.
+- tsc and the vite build were per the orchestrator. I did not re-run them, but the e2e
+  `vite build --mode e2e` succeeded.
+
+**3. The `session-gate.test.tsx:75` failure: pre-existing, root-caused and fixed (test-only).**
+- **Root cause:** commit `c074e62` (2026-10-01, "remove dev switcher dropdown from header")
+  deleted the `<DevRoleSwitcher/>` mount from `components/layout/app-header.tsx`, but left the
+  component and this app-level test in place. No other file mounts the component. No P13 file is
+  involved. It fails identically in a HEAD worktree.
+- **Fix:** `src/components/session/session-gate.test.tsx` now renders `<DevRoleSwitcher/>`
+  directly. It asserts the component:
+  - returns nothing with `dev_mode: false`;
+  - renders with `dev_mode: true`;
+  - on switching, writes the dev email and reloads `/me` (the session store now holds Ellie Exec).
+  This keeps the ADR 0010 §4 guard tested. 6/6 pass.
+- **Open (Low):** `components/session/dev-role-switcher.tsx` is now unmounted dead code. The owner
+  should either delete it or re-mount it.
+
+**4. Flaky test found and hardened (test-only).**
+- `surfaces/gantt/components/step-timing/step-timing.test.tsx` "queued: follows the run…" failed
+  once in the full suite, and once in 3 isolated runs while the backend suite was loading the CPU.
+- Cause: after waiting only for `data-kind="updated"`, it read the step line and the
+  `timeline-own-change` badge synchronously.
+- Fix: both are now `findBy*`. 31/31 pass, and the full suite passes.
+
+**5. Acceptance spot-checks (T01, T02, T10–T17): PASS.** Each endpoint, param and field in
+`API_CONTRACT_P13.md` §1–§7 exists, and the riskiest logic has direct tests:
+- **Region never widens:** `test_p13_region_filter.py` covers 16 paths plus `/check-ins/due`.
+  `test_analytics_never_widens…`, `test_board_filters_never_widen_scope`,
+  `test_gantt_filters_never_widen_the_scope` and `test_matrix_hub_planner_filters_never_widen`
+  cover the rest.
+  - **Gap closed:** the Gantt **Engineer own-assignment path** ANDs `global_hub_filter` itself,
+    instead of using `narrowed_hub_filter`, and no test covered it with `region`. Likewise
+    `/exports/gantt` and `/exports/matrix` with an out-of-scope region. New file
+    `backend/tests/test_p13_gate_qa.py` (2 tests, both pass and both non-vacuous):
+    - the Engineer gets only their own projects per region (Greece, Romania, India = ∅, and hub
+      AND region);
+    - a Hub Planner's out-of-scope region export is header-only, the own region equals the
+      unfiltered export, and a bad region is 422.
+- **Region-summary reconciliation:** checked against pipeline-totals and status-overview, plus the
+  Commercialized basis. Live: total 236, with Greece 26 / 11.02 %.
+- **Capacity totals, lab once per region:** checked exactly (lab 14 = 4 + 10, not 24), and the
+  seed's totals are below the naive row sum.
+- **Queue = Q or null:** checked on capacity, class, board and the Gantt `priority=Q` tab
+  (`test_gantt_queue_tab_is_q_or_no_priority`).
+- **Gantt `weekly_active_counts`:** reconciles with the step rows, follows the filters, and is
+  empty without a run.
+- **Rank:** 1..n contiguous inside the filtered set (register and matrix).
+- **`q` escaping:** literal `%` and `_`, plus 422 above 100 characters, on the register, `/projects`,
+  `/gantt`, `/priorities`, the board and the registration export.
+- **`/export-jobs` scoping:** own jobs, Admin sees all, others see none, 401, and the file name
+  matches the download route.
+- **FX editor Admin-only:** `canEditFxRate` mirrors `require_roles(ADMIN, SUPER_ADMIN)`.
+  `MatrixPage.test` covers both the Admin PUT path and a Portfolio Manager who never sees it.
+- **Edit deep link:** `use-edit-deep-link.test` never fetches without Registration write, and the
+  register test shows Edit only with `project_registration.write`.
+
+**6. Live axe (new `frontend/e2e/p13-gate.spec.ts`, 25 scans): FAIL on two P13-introduced items.**
+- **Setup:** seeded client 2026 data, an active greedy run (253 projects), roles superAdmin and
+  hubPlanner.
+- **Scans:** the 10 surfaces (Dashboard, Capacity, Matrix, Priority board, Gantt, Workflow
+  settings, Registration, Planning, History, Downloads), plus Dashboard → India + register, the
+  header select open → Romania, Matrix Detailed + USD (FX editor), Gantt Forest, and Workflow
+  Timeline previews.
+- **Clean:** Matrix (including Detailed + FX editor), Priority board, Gantt (including Forest),
+  Registration, Planning, History and Downloads, for both roles. The country flags and region
+  chips have no contrast hit.
+
+**BLOCKING remediation (owner: frontend-builder; add the tests named):**
+- **QA-P13-1: serious `aria-hidden-focus` ×5 on the Dashboard** (both roles, and with a country
+  chosen).
+  - Source: `surfaces/dashboard/components/analytics-breakdown.tsx:257`, `:339` and `:495`. Each
+    wraps a Recharts chart in `<figure aria-hidden="true">`, but Recharts 3's SVG surface is
+    focusable (`accessibilityLayer`).
+  - Fix: follow the `portfolio-analytics.tsx:214` precedent (`<figure aria-label=…>` without
+    `aria-hidden`). Or keep `aria-hidden` and pass `accessibilityLayer={false}`, so that nothing
+    inside is focusable.
+  - The unit axe in `analytics-breakdown.test.tsx` cannot see this, because
+    `ResponsiveContainer` renders no SVG at 0×0 in jsdom. Re-run `e2e/p13-gate.spec.ts`.
+- **QA-P13-2: serious `scrollable-region-focusable` on three new scroll containers:**
+  - `dashboard/components/completing-hub-type-table.tsx:66`;
+  - `capacity/components/hub-utilization-matrix.tsx:91`, where the inner `components/ui/table.tsx:18`
+    `overflow-auto` wrapper is the one flagged;
+  - `workflow-settings/components/category-timeline.tsx:136`.
+  - Fix: `tabIndex={0}` + `role="region"` + `aria-label` on the scrolling element (the
+    `virtual-data-table.tsx:83` precedent). For the hub matrix, drop the double wrapper or put
+    these on the inner one.
+
+**Non-blocking:**
+- **QA-P13-3 (Medium, pre-existing; was P12 follow-up C, still open):**
+  - critical `aria-valid-attr-value`: the register's Table/Cards Radix tabs
+    (`project-breakdown.tsx:228-229`) set `aria-controls` to TabsContent that is never mounted;
+  - serious `color-contrast` 4.13:1 on `bg-drop`/`text-drop-fg`. It now also shows on the
+    Capacity KPI "% used" pill (`components/ui/stat-variants.tsx:159`), because the served booked %
+    is above 100 on the client data.
+  P13 rewrote `project-breakdown.tsx` and changed the meter without fixing either. I recommend
+  bundling both with QA-P13-1/2.
+- **QA-P13-4 (Low, pre-existing; P12 item D):** the header select open gives `aria-hidden-focus`
+  on nav/header (Radix modal `hideOthers`). Now that the countries are added, it also gives
+  `scrollable-region-focusable` on the Radix Select viewport.
+- **QA-P13-5 (Low):** `/exports/capacity` takes neither `hub_id` nor `region` (unchanged since
+  P12, and consistent with API_CONTRACT_P12 §4). It is worth folding into P13-F03.
+- **QA-P13-6 (Low):** the per-file coverage gaps listed in §2.
+
+**Files I added or changed (tests only):**
+- `backend/tests/test_p13_gate_qa.py` (new);
+- `frontend/e2e/p13-gate.spec.ts` (new);
+- `frontend/src/components/session/session-gate.test.tsx`;
+- `frontend/src/surfaces/gantt/components/step-timing/step-timing.test.tsx`.
+
+**Re-check:** once QA-P13-1/2 land, re-run `e2e/p13-gate.spec.ts` against the same disposable
+harness (`e2e/README.md` plus `RPD_DEV_MODE=true`, and greedy-recalc via
+`X-Dev-User-Email: frank.admin@example.com`). The remaining failures should then be only the
+QA-P13-3/4 pre-existing items, unless those are fixed too.
+
+### [2026-10-19] P13-R01 — frontend-builder
+
+Remediation for the P13 qa-inspector FAIL (QA-P13-1/2/3) plus security P13-F11. Frontend only;
+no business logic touched; not committed.
+
+- **QA-P13-1 (`aria-hidden-focus`):** `surfaces/dashboard/components/analytics-breakdown.tsx` keeps
+  the three `<figure aria-hidden="true">` (the sr-only lists carry the data) and makes nothing inside
+  tabbable: `accessibilityLayer={false}` on both `RechartsBarChart`s and the `PieChart`, and
+  `rootTabIndex={-1}` on the `Pie` (Recharts 3.10 defaults `Pie.rootTabIndex` to 0 — the
+  accessibilityLayer switch alone would not have cleared the donut). New
+  `analytics-breakdown.a11y.test.tsx` mocks `ResponsiveContainer` to a fixed-size passthrough so the
+  real SVGs render in jsdom, asserts no `tabindex>=0` inside any aria-hidden figure, and runs axe.
+  Verified non-vacuous: it fails with the fix reverted.
+- **QA-P13-2 (`scrollable-region-focusable`):** `tabIndex={0}` + `role="region"` + `aria-label` on
+  the scroller in `completing-hub-type-table.tsx` and the mini-Gantt in `category-timeline.tsx`
+  (`"<category> timeline chart"`). Shared `components/ui/table.tsx` gains an opt-in
+  `scrollLabel?: string` prop that does the same on its inner `overflow-auto` wrapper; other tables
+  are unaffected. `hub-utilization-matrix.tsx` passes `scrollLabel="Hub utilization matrix"` and its
+  outer wrapper went from `overflow-x-auto` to `overflow-hidden` (it only clips the rounded border
+  now, so there is a single scroller).
+- **QA-P13-3:** `project-breakdown.tsx` register tabs — one always-mounted
+  `<div role="tabpanel" id={panelId} aria-labelledby={activeTabId}>` wraps the view; the active
+  `TabsTrigger` overrides Radix's `aria-controls` to that id, the inactive one gets none (Radix
+  spreads trigger props after its own, so the override is honoured). Contrast: `--color-drop` light
+  `0 84% 56%` → `0 74% 45%` (5.75:1 vs white); dark keeps `0 80% 62%` and `--color-drop-fg`
+  `#fff` → `0 60% 8%` (5.1:1). Only consumers: the `kpi-card` `drop` tone and the
+  `stat-variants.tsx` "% used" pill.
+- **P13-F11:** `registration-api.ts` now `encodeURIComponent`s the project id in all four
+  `/projects/{id}` paths. `use-edit-deep-link.ts` only fetches a UUID `?edit=` value; any other value
+  is never fetched and is dropped from the URL.
+- **Tests added/extended:** `table.test.tsx`, `completing-hub-type-table.test.tsx`,
+  `category-timeline.test.tsx`, `project-breakdown.test.tsx`, `registration-api.test.ts`,
+  `use-edit-deep-link.test.tsx` (fixture id now a UUID; 4 non-UUID cases), and the new a11y test.
+- **Verification:** vitest on `components/ui` + dashboard, capacity, workflow-settings and
+  registration surfaces: 72 files, 316/316 pass. `npx tsc -p tsconfig.app.json --noEmit` clean.
+  ESLint on the 16 touched files incl. `e2e/p13-gate.spec.ts`: 0 errors, 1 pre-existing warning
+  (`project-breakdown.tsx:74` react-refresh). `e2e/p13-gate.spec.ts` not run (needs the seeded
+  stack); untouched and still lints.
+- **Not addressed (out of scope, still open):** QA-P13-4 (Radix Select `hideOthers` /
+  viewport scroll), QA-P13-5, QA-P13-6, dead `dev-role-switcher.tsx`. Re-check: re-run
+  `e2e/p13-gate.spec.ts` on the disposable harness.
+
+### [2026-10-19] P13-R02 — backend-builder
+
+Remediation for P13-F06, P13-F10 and P13-F12. Not committed.
+
+- **P13-F10, formula injection (CWE-1236).** `services/export_builder.py`:
+  - `_stringify` prefixes `'` to any string, including a comma-joined list cell, that starts
+    with `= + - @ \t \r`. Only `str` values are touched, so numbers stay numeric and negative
+    numbers are never prefixed.
+  - `xlsx_bytes` writes every string, headers included, as a `WriteOnlyCell` with
+    `data_type = "s"`. No cell is ever a formula.
+- **P13-F06, the definition of "Deliverable" (standing decision).** DOMAIN_RULES has no
+  class-breakdown section, so the definition is recorded here.
+  - (2026-10-19) The Capacity class breakdown counts only projects whose live status is
+    schedulable. Those are `In Buyoff`, `Under Industrialization`, `In Development` and
+    `In Queue` (`dc.SCHEDULABLE_STATUS_ORDER`, DOMAIN_RULES "excluded from scheduling
+    entirely").
+  - Deliverable = schedulable and not `left_out`. Left out = schedulable and `left_out`.
+  - Commercialized, On Hold, Cancelled and Draft projects are in neither column. They are also
+    out of `deliverable_by_priority`, `left_out_by_priority`, `by_hub` and `total_count`.
+  - Implementation: `services/capacity_priority.SCHEDULABLE_STATUSES`, applied as a
+    `Project.status.in_(...)` filter in `api/routers/capacity.py::class_breakdown`. The
+    definition is documented in the `ClassBreakdownRow` docstring (`schemas/capacity.py`).
+  - Reconciliation is unchanged: total = deliverable + left_out, and the splits and `by_hub`
+    sum to it.
+  - `tests/test_p12_hub_filter.py` (I23) assumed the old counting. Its two class-breakdown sums
+    now count schedulable outcome rows only.
+  - Client wording check still open: does the client's "Deliverable" mean the same thing?
+- **P13-F12, hardening.**
+  - Exports withhold `leader_name` even when the requester is the leader.
+    `rows_from_models` blanks every field in `_EXPORT_WITHHELD_FIELDS`. The column stays, empty,
+    and `leader_engineer_id` is still exported. This covers the Dashboard and Matrix exports;
+    Gantt export has no `leader_name` column.
+  - `/gantt` `offset` is now `Annotated[int, Query(ge=0)]`, so a negative value gets 422.
+  - For an Engineer, the Gantt `engineer_names` map is loaded for the caller's own engineer id
+    only. A colleague on a shared project stays `null`.
+- **Tests.**
+  - New: `tests/test_p13_r02_hardening.py`, 6 tests. CSV and XLSX unit tests cover
+    neutralisation, text type and numeric negatives. An end-to-end dashboard CSV/XLSX test
+    exports a formula project name. Further tests cover `leader_name` withheld for the leader
+    (live read still names them), negative `offset` returning 422, and an Engineer not seeing a
+    colleague's name.
+  - New in `tests/test_p13_capacity_priority_board.py`:
+    `test_class_breakdown_excludes_non_schedulable_statuses` (Commercialized, On Hold and
+    Cancelled, both deliverable and left-out outcomes).
+  - Results: related suites (export, capacity, gantt, GDPR, contract) 208 passed. Full
+    `uv run pytest -q`: 1295 passed, 0 failed. The 2 errors came from my `-p no:logging` flag
+    (no `caplog`); those 2 files pass when rerun normally (7 passed). Coverage 96.35%.
+    `ruff check .` is clean. `backend/.coverage` was restored.
+- **Note.** `ruff format --check` flags existing drift in `api/routers/capacity.py`,
+  `api/routers/gantt.py` and some tests. It was already there and I left it alone.
+
+### [2026-10-19] P13 gate re-run — qa-inspector: PASS
+
+P13-T20, QA dimension, re-run after P13-R01 (frontend-builder) and P13-R02 (backend-builder).
+Scope: the uncommitted working tree against HEAD `1c0290a`. I re-ran every number below myself.
+Disposable infra, now removed: `qa-p13rr-pg` (Postgres 17, :55453), `qa-p13rr-redis` (:56391),
+dev-mode uvicorn on :8041 (`RPD_DEV_MODE=true`), `vite preview --mode e2e` on :5197 (bundle built
+into the scratchpad), and a temporary Playwright config without the Keycloak global setup (deleted).
+The tracked `backend/.coverage` was restored with `git checkout`.
+
+**Verdict: PASS.** QA-P13-1, -2 and -3 are fixed and verified live; the R02 changes are tested and
+behave correctly; all suites are green. No new findings block.
+
+**1. Live axe, `frontend/e2e/p13-gate.spec.ts` (25 scans, unchanged spec): 24 passed, 1 failed.**
+- Setup: `seed_dev_users` + `seed_demo_data` (client 2026) + `seed_currency_rates`, then an active
+  greedy run via `X-Dev-User-Email: frank.admin@example.com` (253 projects, current week 42).
+- **QA-P13-1 fixed:** 0 `aria-hidden-focus` on the Dashboard for superAdmin, hubPlanner and with
+  India chosen (was ×5). Source: `accessibilityLayer={false}` on the 3 charts + `rootTabIndex={-1}` on
+  the Pie (`analytics-breakdown.tsx:262/344/346/501`).
+- **QA-P13-2 fixed:** 0 `scrollable-region-focusable` on Dashboard, Capacity and Workflow settings
+  Timeline previews (was 3 containers).
+- **QA-P13-3 fixed:** 0 `aria-valid-attr-value` on the register tabs (critical) and 0 `color-contrast`
+  on the `bg-drop` KPI / "% used" pill, on `/`, `/capacity` and Dashboard → India.
+- **The only failure is QA-P13-4 (Low, pre-existing, P12 item D, non-blocking):** with the header
+  country/hub select open, serious `aria-hidden-focus` ×9 (nav, header; Radix `hideOthers`) and
+  `scrollable-region-focusable` ×1 on the Radix Select viewport. P13 introduced no serious or
+  critical violation.
+
+**2. R02 behaviour: PASS.**
+- **Formula injection (F10):** `_stringify` prefixes `'` to `str` and joined-list cells that start
+  with `= + - @ \t \r`; `xlsx_bytes` forces every string cell (headers too) to `data_type="s"`.
+  `tests/test_p13_r02_hardening.py` covers CSV, XLSX (no cell is `f`; numbers and negatives stay `n`)
+  and an end-to-end dashboard CSV/XLSX export of a `=HYPERLINK(...)` project name.
+- **Deliverable (F06):** `class_breakdown` filters `Project.status.in_(SCHEDULABLE_STATUSES)`.
+  `test_class_breakdown_excludes_non_schedulable_statuses` asserts exact counts plus
+  `_assert_class_reconciles`. Live: the class totals sum to **192 = 253 − 61** non-schedulable (the
+  workflow-auditor's F06 figure), and deliverable + left_out = total on every row.
+- **leader_name (F12):** live `/exports/dashboard?format=csv` gives 253 rows, the column is present
+  and 0 values are non-blank. A test covers the leader requesting their own export (CSV, XLSX,
+  matrix).
+- **Gantt `offset` ge=0:** live `/gantt?offset=-1` gives 422. Tested.
+- **Engineer `engineer_names`:** loaded for `own_engineer_id` only (`gantt.py:391-401`). A test
+  checks that a colleague on a shared project is `null` and their name is absent from the response.
+  Non-Engineer roles were already nameless (`is_engineer_self_scoped`), so nothing regresses.
+
+**3. Suites: PASS.**
+- Backend `uv run pytest -q` (logging plugin on): **1297 passed, 0 failed**, coverage **96.35 %**
+  (gate 70 %). Touched by R02: `export_builder.py` 99 %, `routers/capacity.py` 99 %, `gantt.py`
+  97 %, `exports.py` 98 %, `capacity_priority.py` 100 %. `backend/scheduling/` untouched (93.91 % at
+  the first run). `ruff check .`: all checks passed.
+- Frontend `npx vitest run`: **165 files, 1047/1047 passed** (was 164/1037; +R01 tests).
+  `npx tsc -p tsconfig.app.json --noEmit`: clean. `npx vite build`: success.
+- ESLint on the 160 changed or new TS/TSX files: **0 errors, 2 warnings**. Both are the
+  pre-existing `react-refresh/only-export-components` at `app/routes.tsx:55` and
+  `project-breakdown.tsx:74`.
+
+**Still open (non-blocking):**
+- QA-P13-4 (above), QA-P13-5 (`/exports/capacity` has no hub/region), QA-P13-6 (per-file coverage
+  gaps), and the dead `dev-role-switcher.tsx`.
+- **Doc drift:** `IMPLEMENTATION_PLAN.md` still marks **P13-F11** as `OPEN`, although the P13-R01
+  entry and code (UUID check in `use-edit-deep-link.ts`, `encodeURIComponent` in
+  `registration-api.ts`) show it done. The orchestrator should update the status line.
+
+**Files changed by me:** none (no test edits needed). This entry only.
+
+### [2026-10-19] P13 gate — PASSED — orchestrator
+
+- **Gate result.** All three gates have a PASS recorded:
+  - qa-inspector: PASS on the re-run, after the first run's FAIL was remediated by P13-R01 and
+    P13-R02.
+  - workflow-auditor: PASS.
+  - security-auditor: PASS.
+- **P13 is closed for build.**
+- **Final verification:**
+  - Backend: 1297 passed, coverage 96.35 %.
+  - Frontend: 1047/1047; tsc clean; build OK.
+  - Live axe: P13 introduced no serious or critical violations.
+- **Open, non-blocking:** P13-F01..F05, F07..F09, F13 and F14.
+- **Waiting on the client:** OQ #34–#38, plus the OQ #8 addendum.
+
+## [2026-10-19] P14 opened — orchestrator
+
+The owner relayed a fourth batch of client asks:
+1. The Priority board move must show a confirmation popup listing the knock-on changes (Yes/No)
+   before applying.
+2. "The priority board function is not working".
+3. "Check the scheduler and the calculations are right".
+4. VIP is no longer a separate page. It moves to a Dashboard pop-up per area, opening onto the
+   project folder. The client sent three VIP slides (OEM, Europe, India).
+
+**Root cause of (2), found by the orchestrator.** The owner's dev stack runs uvicorn :8001 with no
+Celery worker. `schedule_runs` holds one `priority_move` run that has been `queued` since
+2026-10-18 09:29 and has never executed. The latest completed run is from 2026-10-13. A move saves
+the priority but never recalculates, and later moves answer `deferred` inside the in-flight window.
+
+**Decisions:**
+- ADR 0026: a preview endpoint runs greedy in-process, writing nothing. Confirm uses the preview
+  token, runs greedy in-process, and activates the run synchronously, so it no longer depends on a
+  worker. Abandoned queued or running rows are reaped as `failed`/`ABANDONED`.
+- ADR 0027: a curated `vip_items` board per area (OEM / Europe / India) with three pillars. It is
+  seeded verbatim from the slides, and projects are linked only where the name clearly matches. The
+  `/vip` page leaves the nav. OQ #32 is answered (curated only). OQ #39 is opened.
+
+P13 is still uncommitted, awaiting the owner's OK.
+
+### [2026-10-19] P14-T03 — workflow-auditor: scheduler and calculation re-derivation on the live DB
+
+**Verdict: scheduler and every served figure PASS. The move path FAILs on four defects plus the
+missing worker. Two staleness defects.** Read-only throughout. Every DB session ran with
+`default_transaction_read_only=on`; nothing was written to the live DB or to Redis. Scripts are in
+the session scratchpad: `dump.py`, `derive.py` (an independent greedy written from DOMAIN_RULES that
+imports nothing from `backend/`), `cmp_v2.py`, `inv.py`, `current.py`, `cmp_cur.py`, `recon.py`,
+`i23.py` and `move_sim.py`.
+
+**Live state.**
+- Runs: v1 and v2 are completed `manual_recalc` runs from 2026-10-13; v2 is active. v3 is the
+  `priority_move` run, `queued` since 2026-10-18 09:29. Its Celery message `d6ba6bfa…` is still in
+  Redis list `solver` (LLEN 1). The follow-up flag is not pending.
+- The audit log holds 10 rows, because the re-seed wiped the older ones. Three input edits came
+  after v2:
+  - the freeze of 680f0e38 (In Queue, P4) at W3;
+  - an `allowed_categories` edit on engineer Antonis;
+  - the move of 4a1542a4 from P3 to P1.
+
+  A priority-score edit also came after v2 but is not a scheduler input.
+- The API on :8001 is pid 3294, started 2026-10-18 14:30 with no `--reload`. It serves HEAD
+  `1c0290a` code, not the P13 working tree.
+
+**1. Active run v2: PASS.**
+- I reconstructed v2's inputs from current data by reverting the three edits.
+  - The independent derivation equals the stored rows: **0 diffs over 253 projects**, every
+    outcome field and every step's start, end, duration, engineer, chamber and skipped flag.
+  - Stored counts: within-year 107 (90 scheduled + 17 Commercialized, D2), spillover 68, left out
+    34, blocked 0.
+- I8: v1 equals v2 row for row, and their workflow snapshots are equal.
+- Invariants that hold with 0 violations: I1, I2 (weeks ≥ CW), I3/I15, I4, I5, I11, I12, I21, I22
+  (no floors set), ruling 9 nulls, `projected = last_end + delay`, the within-year/spillover rule,
+  `expected = target ?? unconstrained`, and the left_out/within/spillover partition.
+- The derivation recomputes `unconstrained_end_week` and `progress_pct` exactly.
+- Not exercisable on this DB: I20 and I24, because no priority-move run has completed and no worker
+  is running.
+
+**2. Greedy on current inputs: PASS.** I used the repo snapshot builder and `run_greedy_sgs`
+in-memory.
+- Timing: snapshot build 0.23–0.28 s, greedy 0.020 s per pass. Five passes were identical (I8).
+  Simulated moves took at most 0.03 s each.
+- My derivation on the current inputs: 0 diffs.
+- Against active v2, **4 projects change**, and all four come from the freeze, not from the move:
+
+  | Project | Code | Projected finish | Within year |
+  |---|---|---|---|
+  | 680f0e38 | 26INN004 | 48 → 9 | stays within |
+  | 6dabbb2b | 26INN010 | 54 → 48 | becomes within |
+  | 8284654d | 26INN006 | 60 → 54 | stays spillover |
+  | 8b463a14 | 26INN013 | 66 → 60 | stays spillover |
+
+  Totals become within 108, spillover 67, left out 34.
+- The client's own move changes nothing. 4a1542a4 finishes W45 either way, with 0 knock-on rows,
+  because ruling 4 pre-books other projects' in-flight tails at W42.
+- `schedule_stale` is set on **1** project (4a1542a4). The freeze set no stale flag.
+
+**3. Served figures: PASS** in-process on the working tree, with 0 discrepancies. The live :8001
+server matches except where noted.
+- **Dashboard.**
+  - Completing-within-year: 107/68/34/0, and every row equals the stored values.
+  - Pipeline 236, status overview, hub×type, and the register `end_week`.
+  - `/region-summary`: Greece 26, India 188, Romania 22, with status counts.
+  - `/analytics`: the by-hub, by-category and by-type lists, and the completing hub×type cross-tab.
+  - Live: `/dashboard/region-summary` and `/dashboard/analytics` return **404** (stale process).
+- **Capacity.**
+  - I6 design load per hub: R&D-Greece 45, R&D-India 282, PD-India 967, PD-Romania 138,
+    OEM-HCK 55, OEM-Seltek 44.
+  - I7 lab load per region: Greece 22, India 282, Romania 24.
+  - The per-priority splits sum to the loads; lab splits are region-wide.
+  - I17 supply formulas and I19 booked %/status hold on every row.
+  - Class cards: deliverable is schedulable and not left out. Live, the stale process still shows
+    the F06 overcount of +61 (A 8 vs 5, B 105 vs 80, C 83 vs 54, A-OEM 2 vs 1, B-OEM 21 vs 18).
+    The working tree is correct.
+- **Gantt.**
+  - `weekly_active_counts` equals my recount for W1–52 (missing on live).
+  - Row design and lab weeks match, and I16 holds on every row.
+  - I23: for each hub, the Gantt design weeks equal the Capacity load, and the hub-filtered
+    within-year counts are 3/12/55/18/10/9, summing to 107.
+- **Board.**
+  - Counts: P1 26, P2 6, P3 93, P4 128, Q 0.
+  - D/L weeks: P1 156/14, P2 36/0, P3 222/3, P4 482/65.
+  - Card projected finish, within-year and health equal the stored values.
+
+**4. Move path: FAIL.** Defects other than the missing worker:
+- **M1, a reaped run is resurrected.** The worker no-ops only on `CANCELLED`
+  (`workers/schedule_tasks.py:358` HEAD, `:339` working tree). The 10-18 Celery message is still in
+  Redis and has no `expires`. Any worker started later will set the ADR 0026-reaped
+  `FAILED/ABANDONED` v3 back to RUNNING, then complete and **activate** it, which breaks ADR 0026
+  §4 ("never becomes active"). Fix: no-op unless the row is QUEUED, and/or set `expires` on
+  `.delay`.
+- **M2, preview misattribution.** The P14 contract (`docs/API_CONTRACT_P14.md:21`) compares the
+  preview against the *active run*, so every stale difference is reported as the move's knock-on.
+  Live, a preview of 4a1542a4→P1 would list 4 "affected" projects, all caused by the freeze, while
+  the real knock-on is 0. Fix: compare greedy(current inputs) against greedy(current inputs + move).
+  Also, `moved.*_before` should come from the same baseline.
+- **M3, stuck QUEUED row on broker failure.** `services/priority_move.py:198-204` (HEAD) commits
+  the QUEUED row before `.delay()`. A broker error then leaves the row stuck and returns 500,
+  although the priority has been saved.
+- **M4, Board scope.** The Board lists all 253 projects, including 17 Commercialized and 29
+  Cancelled cards (`api/routers/priority_board.py:97` filters only on non-null priority). ADR 0018
+  says "schedulable or pipeline". Moving those cards answers `not_needed`.
+- **S1, freeze sets no stale flag.** The freeze toggle never sets `schedule_stale`
+  (`api/routers/gantt.py:558`), although a freeze is a scheduler input. Live, it moved 4 outcomes
+  and flagged none of them. (The engineer `allowed_categories` edit is not stale either. It affects
+  only the CAT_NOT_ALLOWED warning and had no live effect.)
+- **S2, a never-started project can be frozen in the past.** Freezing an In Queue project at W3
+  (user-entered) makes it "finish" at W9, in the past, and count within the year. No rule forbids
+  this. This needs a client ruling.
+- Observation: "remaining" booked % divides the full-year load, history and post-W52 work included,
+  by the 10-week remaining capacity, which gives about 520 %. This is the literal ADR 0016 formula,
+  and the client should know it.
+
+## [2026-10-19] P14-T03 review — orchestrator
+
+Workflow-auditor: the scheduler and every served figure PASS (v2 re-derived with 0 differences on
+253 projects; greedy pass 0.02 s). The move path FAILs on four defects:
+- **M1:** the worker resurrects reaped runs;
+- **M2:** the preview must diff greedy against greedy, not against the stale stored run. Contract
+  §1 amended;
+- **M3:** a broker error leaves a stuck QUEUED row;
+- **M4:** the board lists non-schedulable cards.
+
+Staleness: **S1**, a freeze does not set `schedule_stale`. M1–M4 and S1 are relayed to P14-T01.
+S2 (freezing an unstarted project in the past) is a client ruling → OQ #40.
+
+Also: the owner's uvicorn :8001 runs without `--reload` and serves HEAD, not the working tree. It
+needs a restart to show P13 and P14.
+
+## [2026-10-19] OQ #39 answered — orchestrator
+
+The client says yellow highlight = VIP, and the areas are Greece, India and Romania. VIP area =
+the hub's `lab_region` (OEM hubs → Greece).
+- The seed maps the OEM slide → Greece, the Europe slide → Romania, and the India slide → India.
+- `is_vip` comes only from highlighted-item links.
+
+ADR 0027 is amended and contract §2 updated. Relayed to P14-T02 and P14-T04.
+
+### [2026-10-19] P14-T01 — priority move preview and confirm, abandoned-run reaper, auditor fixes M1–M4 and S1 — backend-builder A
+
+**Did:** Built contract §1 (ADR 0026), as amended by the orchestrator for P14-T03 finding M2. Folded in workflow-auditor findings M1, M3, M4 and S1. `git diff -- backend/scheduling/` is empty. `api/main.py` is untouched.
+
+**Preview: `POST /projects/{id}/priority/preview`** (`services/priority_preview.py::preview_priority_move`)
+- **Permission:** identical to the move: `_get_project_or_404` (hub-scoped, 404) plus `authorize_project_action(PROJECT_REGISTRATION, WRITE, min_grant_role="admin")` (403).
+- **Rate limit:** `api/routers/projects.py::PRIORITY_PREVIEW_RATE_LIMIT`, a `TokenBucketLimiter(capacity=6, refill 1/5 s)` per user. Over the limit → 429 `RATE_LIMITED` with `Retry-After`.
+- **Results:**
+  - same priority → `unchanged` (token and `moved` are null);
+  - hard gate → 409 `HARD_GATE_FORCES_P1`;
+  - non-schedulable status → `not_needed` (no greedy pass; the token is set, because the confirm checks it);
+  - otherwise `preview`.
+- **Writes nothing.** The test asserts priority, stale flag, run count, audit count and the follow-up flag are all unchanged.
+- **M2 baseline.** One snapshot is built with `build_schedule_input_from_db` (the worker's builder). Greedy runs twice on it: once as-is (baseline) and once with only the target priority replaced. The two in-memory outcome sets are diffed with `services.run_changes.diff_outcomes`.
+  - `baseline_run_id` (the active run) is informational only.
+  - With no active run, the changes are still listed, and `note` explains that the comparison is against a fresh calculation. This is a deliberate deviation from the contract's older "no active run → empty list", which M2 made obsolete.
+- **Thread pool and cap.** Both passes run as one job on a dedicated `ThreadPoolExecutor(max_workers=2)`, through `asyncio.wait_for`, with `PREVIEW_TIME_CAP_SECONDS = 20`. Over the cap → 503 `PREVIEW_TIMEOUT`. A thread cannot be killed: an overrun finishes in the background and its result is discarded.
+  - Starlette's `run_in_threadpool` was not used. It is anyio, which by default waits for the thread when the caller is cancelled, so it would defeat the cap.
+- **Order and counts.** `changes` excludes the moved project and is ordered: pushed out of year first, then delay descending (null last), then name, then id. `summary` counts the visible rows only. Rows outside the caller's scope are only counted, in `hidden_count`. The Engineer self-scope uses that engineer's assignments in the "after" schedule.
+
+**Token** (`snapshot_token`)
+- sha256 of canonical JSON (`sort_keys`, compact separators). The JSON covers the `ScheduleInput` with the target substituted (projects, engineers and chambers sorted by id), plus `project_id`, `from_priority` and `target_priority`.
+- The active run id is not hashed (it is informational since M2), so a worker run activating in between does not make the token stale.
+- The token is never logged.
+
+**Confirm: `POST /projects/{id}/priority` with `preview_token`** (`confirm_priority_move`)
+- **Order:**
+  1. `unchanged` → ADR 0015 path.
+  2. Hard gate → 409.
+  3. Non-schedulable → token check, then the ADR 0015 `not_needed` path.
+  4. Otherwise `find_in_flight_run(trigger_reason="priority_move")`. It takes `DISPATCH_LOCK_KEY` and reaps abandoned runs.
+  5. Rebuild the snapshot. A mismatch → 409 `PREVIEW_STALE`. Nothing is committed: the request session's close rolls back, which releases the lock and drops any follow-up flag. There is no explicit `rollback()`, because one breaks the savepoint test fixture.
+  6. In flight → write the priority, stale flag and audit (`deferred`), then commit. The follow-up flag is set (ADR 0023).
+  7. Otherwise run both greedy passes. `persist_solved_run(..., GREEDY, "priority_move", activate=True, recalc_project_id=...)` persists a new COMPLETED active run (with `started_at`/`completed_at`), plus the `project.priority_move` audit (`recalc_status: "applied"`, `baseline_run_id`, `schedule_run_id`) and `project.schedule_recalculated`.
+  8. Changes are computed as the in-memory baseline against the new run's **stored** outcomes (`run_changes.stored_outcomes` + `diff_outcomes`).
+  9. Commit, then a best-effort SSE `completed`.
+- **Preview = confirm** is asserted in tests: identical `changes`, `summary`, `moved` and `hidden_count`.
+- **Shared persistence.** `services/schedule_apply.py::persist_solved_run` and `projected_finish` were factored out of `workers/schedule_tasks.py::_run_schedule_body`. The worker now calls them.
+  - The input builder was already shared: `services.schedule_persistence.build_schedule_input_from_db`.
+
+**Reaper** (`services/run_dispatch.py::reap_abandoned_runs`)
+- Called inside `find_in_flight_run` right after the lock.
+- QUEUED or RUNNING rows with `created_at <= now - in_flight_window()` are marked FAILED, with `error_message="ABANDONED"` and `completed_at` set. Each gets one audit row `schedule_run.abandoned` (actor null; before `{status}`; after `{status, error, schedule_run_version, trigger_reason}`).
+- It only flushes, so it commits with the caller. A caller that 409s rolls it back, and the row is reaped at the next decision. Such a row is already outside the in-flight check.
+- The sweeper is unchanged.
+
+**M1 (worker).**
+- `_run_schedule_body` loads the row `with_for_update`. Any status other than QUEUED (after the existing CANCELLED branch) → returns `{"status": "skipped", ...}` and leaves the row as is. After the solve, any status other than RUNNING → discard. So a reaped or completed row is never completed or activated.
+- Both tasks are declared with `expires=MESSAGE_EXPIRES_SECONDS` (= `in_flight_window()`, 1020 s). This is Celery's per-task exec option, so every existing `.delay()` call site inherits it with no call-site or test-patch change.
+- The stuck 2026-10-18 message in the Redis `solver` list expires on delivery. Its row is reaped at the next dispatch decision.
+- **Accepted edge:** a RUNNING row redelivered after a worker crash is now skipped rather than re-run. It stays RUNNING until reaped or swept.
+
+**M3 (broker failure).**
+- New `run_dispatch.enqueue_or_fail(db, run, send, actor_user_id)`. On any exception from `.delay()` it marks the committed QUEUED row FAILED (`error_message="DISPATCH_FAILED"`), audits `schedule_run.dispatch_failed`, commits and returns None.
+- Only the exception type is logged, because a broker error can carry its URL.
+- **Call sites:**
+  - priority move → `recalc_status: "dispatch_failed"` (a new `RecalcStatus` value; it also appears in the PATCH `X-Schedule-Recalc` header);
+  - step timing → same;
+  - check-ins → `CheckInRecalcStatus` gains `dispatch_failed`;
+  - Workspace Recalculate and the admin CP-SAT dispatch → 503 `SOLVER_UNAVAILABLE`;
+  - follow-up dispatcher → re-sets the follow-up flag under the lock, so the next tick retries.
+- The Workspace activity label is "recalculation could not be started; press Recalculate".
+
+**M4.** `GET /priority-board` adds `Project.status.not_in(NON_SCHEDULABLE_STATUSES)`. Column counts and weeks follow. A `status_=On Hold` filter gives empty columns.
+
+**S1.** `POST /gantt/projects/{id}/freeze` calls `services.schedule_stale.mark_projects_stale` when `frozen` or `actual_start_week` actually changes, then refreshes `schedule_stale` before the audit after-snapshot.
+
+**Schemas** (`schemas/project.py`), mirroring the frontend's existing TS types exactly:
+- `PriorityPreviewRequest`, `PriorityPreviewMoved`, `PriorityPreviewSummary`, `PriorityPreviewChange` and `PriorityPreviewResponse`. In the response, `moved` and `preview_token` are nullable, `elapsed_ms` is nullable, and `note` is optional.
+- `PriorityMoveRequest.preview_token` is optional (16–128 characters).
+- `PriorityMoveResponse` gains `moved`, `summary` (default null), `changes` (default `[]`) and `hidden_count` (default 0).
+- Five rows are appended to `tests/test_openapi_frontend_contract.py` CONTRACT_TABLE, all `exact`.
+- `RecalcStatus` gains `applied` and `dispatch_failed`.
+
+**Frontend notes (P14-T04):**
+- TS `RecalcStatus` (`lib/api/priority-move.ts`) and the check-in `recalc_status` union (`lib/api/check-ins.ts`) need `'dispatch_failed'`.
+- Workspace Recalculate can now answer 503 `SOLVER_UNAVAILABLE`.
+- With no active run, the preview now lists changes, with a `note`.
+
+**Measured (live dev DB, :5433, read-only transaction, 253 projects).** Snapshot build 0.40 s. Both greedy passes 0.066 s. Whole preview 0.27–0.43 s (three runs, `elapsed_ms` 271–429). This is far inside the ADR 0026 limit of 10 s.
+
+**Tests.**
+- New: `tests/test_p14_priority_preview.py` (22 tests). It covers:
+  - writes nothing;
+  - preview = confirm;
+  - a stale token (input changed / wrong token / other target);
+  - hard gate;
+  - `unchanged` and `not_needed`;
+  - no active run;
+  - M2 drift not blamed on the move;
+  - `hidden_count`;
+  - 404/403;
+  - reaper then applied;
+  - deferred on a fresh queued row;
+  - ADR 0015 path unchanged without a token;
+  - 503 time cap;
+  - 429;
+  - token determinism;
+  - M3 (move, Workspace 503, follow-up);
+  - M4;
+  - S1.
+- Added to `tests/test_workspace_recalc_worker.py` (M1): the worker skips FAILED and COMPLETED rows (parametrised), and both tasks carry `expires`.
+- Updated: `tests/test_p11_priority_move.py::test_post_unchanged_writes_nothing` (the response gained four defaulted fields).
+
+**Files.**
+- New: `backend/services/{priority_preview,schedule_apply}.py`, `backend/tests/test_p14_priority_preview.py`.
+- Changed: `backend/api/routers/{projects,priority_board,gantt,workspace,schedule_runs,checkins}.py`, `backend/services/{run_changes,run_dispatch,priority_move,step_timing,workspace}.py`, `backend/schemas/{project,checkin}.py`, `backend/workers/schedule_tasks.py`, `backend/tests/{test_openapi_frontend_contract,test_p11_priority_move,test_workspace_recalc_worker}.py`.
+
+### [2026-10-19] P14-T02 — backend-builder B: VIP board (ADR 0027 + OQ #39 amendment)
+
+**Built.** Migrations `p14a_vip_items` (tables `vip_items`, `vip_item_projects`; `area`, `pillar`,
+`status_tag` are VARCHAR + CHECK, no native enums) and `p14b_vip_areas` (follow-up, because p14a
+was already applied to the live dev DB). Single head `p14b_vip_areas`, chained from
+`p13a_oem_lab_region`.
+
+**OQ #39 amendment applied.**
+- `area` = Greece | India | Romania, i.e. the hub's `lab_region`, with `Hub.is_oem` hubs forced to
+  Greece (`services/vip_board.py::vip_area_for_hub`, the one derivation function). Area order in
+  the response: Greece, India, Romania. `region` filtering is `area == region`.
+- p14b remaps data OEM → Greece, Europe → Romania and swaps the CHECK. Downgrade reverses it.
+- Seed: OEM slide → Greece, Europe slide → Romania, India slide → India.
+- Yellow highlight = VIP. `recompute_is_vip` sets `projects.is_vip` = "linked to a highlighted
+  item". It runs on seed, link, unlink, delete and highlight toggle (PATCH). Audit rows
+  `project.vip_pin` / `project.vip_unpin` on real changes (the seed writes none).
+- Each area also returns `vip_items: [{id, title}]` (highlighted, board order, sub-items after
+  their parent).
+- The area-mismatch 422 `VIP_PROJECT_AREA_MISMATCH` compares the project's hub area (lab region)
+  with the item's area.
+
+**Endpoints.** `GET /vip-board?hub_id=&region=` (DASHBOARD READ); `POST /vip-items`,
+`PATCH /vip-items/{id}`, `DELETE /vip-items/{id}`, `PUT /vip-items/{id}/projects` (MATRIX WRITE).
+Audit actions `vip_item.create|update|delete|link|unlink`. Router `api/routers/vip_board.py`
+(registered in `api/main.py`), schemas `schemas/vip_board.py`, model `models/vip.py`.
+
+**Decisions beyond the contract.**
+- Response additions: `VipBoardArea.vip_items`; link/delete responses report
+  added/removed/pinned/unpinned ids.
+- A hub-scoped writer can touch only areas containing one of their hubs (403 on create, 404 on
+  item paths).
+- `PUT .../projects` replaces only the links the caller can see; out-of-scope links are kept.
+- An unknown or out-of-scope project id is 422 `VIP_PROJECT_NOT_FOUND`.
+- Parent rule: 422 `VIP_PARENT_INVALID` (one level, same area and pillar). Changing a parent's
+  area or pillar moves its children.
+- An area change on an item is refused (422 mismatch) while its links would not fit.
+- `PATCH`: `status_tag`, `status_note` and `parent_id` may be null; `area`, `pillar`, `title`,
+  `highlighted` and `sort_order` may not.
+
+**Seed.** `backend/seed/seed_vip_board.py` (`uv run python -m seed.seed_vip_board`). It matches
+items by area + pillar + title (+ parent) and inserts only the missing ones, so in-app edits
+survive a re-run. Links are only added. Names are matched exactly within the item's area;
+"BEE star labelling" is a prefix match within R&D-India only. `seed_demo_data` (client_2026
+dataset) calls it too. The re-run also clears `is_vip` on projects linked only to plain items.
+
+**Live dev DB (localhost:5433).** Migrated to `p14b_vip_areas` and seeded.
+- 49 items (Greece 14, India 16, Romania 19), 43 links, all 16 link specs resolved, 0 unresolved.
+- "BEE star labelling" matched 28 R&D-India projects.
+- Area mismatches: 0. A second run changes nothing (items_created 0, links_added 0).
+- `is_vip`: 39 projects in total. 37 come from highlighted links and 2 are pre-existing pins.
+  The 2 pre-existing pins are not linked to any item: "IC2-40 ECO with FDEx3" (OEM-HCK) and
+  "Frameless Lookalike Door Coolers Development S-500 cabins & their Variants.)" (PD-India).
+  They are left as they are. The first seed (pre-amendment rule) pinned all 43 linked projects,
+  and the re-seed cleared 6 that are linked only to plain items.
+- **The owner's uvicorn on :8001 has no `--reload`. It needs a restart to serve the new routes.**
+- Smoke: alice.pm sees 3 areas (Greece 6 VIP items, India 8, Romania 6). bob.hub (PD-India) sees
+  India only, with 0 visible linked projects and 28 hidden. bob POST /vip-items gives 403.
+
+**Tests.** New `tests/test_p14_vip_board.py` (25): area derivation, seed idempotency and link
+rules, board shape and order, scope, `hub_id` and `region` filters, `hidden_project_count`, RBAC
+(Hub Planner and Executive Viewer 403 on all four writes, Auditor 403 on read), CRUD with audit,
+link/unlink/delete/highlight-toggle `is_vip` recompute, area-mismatch and not-found 422s, parent
+rules, bad-enum and bad-body 422s. Also updated `tests/test_migrations.py` (33 tables, p14 and
+p14b round trip) and `tests/test_openapi_frontend_contract.py` (`_VIP_TS` now
+`frontend/src/lib/api/vip.ts`, which replaces the deleted `surfaces/vip/api.ts`; rows for the
+board types, `VipItemUpdateRequest` as subset because the TS omits `area`, `VipItemRef` ↔
+`VipBoardVipItem`).
+Results: `ruff check .` clean; mypy clean on the new modules; full backend suite **1356 passed,
+coverage 96.20 %**. An earlier run (before the amendment) had 3 failures. The seed-script failure
+was mine (the demo seed ran the old OEM area values) and is fixed. The other two,
+`test_p11_priority_move::test_post_unchanged_writes_nothing` and
+`test_p14_priority_preview`, were P14-T01 work in progress and pass in the final run.
+
+**Files.** New: `backend/models/vip.py`, `backend/schemas/vip_board.py`,
+`backend/services/vip_board.py`, `backend/api/routers/vip_board.py`,
+`backend/seed/seed_vip_board.py`, `backend/alembic/versions/p14a_vip_items.py`,
+`backend/alembic/versions/p14b_vip_areas.py`, `backend/tests/test_p14_vip_board.py`.
+Edited: `backend/models/__init__.py`, `backend/api/main.py`, `backend/seed/seed_demo_data.py`,
+`backend/tests/test_migrations.py`, `backend/tests/test_openapi_frontend_contract.py`.
+Not touched: the projects router, the priority-move services, `backend/scheduling/`.
+Nothing marked complete in IMPLEMENTATION_PLAN.md (the orchestrator does that at the gate).
+
+### [2026-10-19] P14-T04 — frontend-builder
+
+Priority move preview dialog on every move entry point, the Dashboard "VIP projects" card, `/vip`
+removed. Built against `API_CONTRACT_P14.md` §1–§3 and ADRs 0026/0027 including the OQ #39
+amendment (areas Greece / India / Romania; yellow highlight = VIP). Not committed.
+
+**A. Priority move preview (ADR 0026).**
+- New `components/shared/priority-move/priority-preview-dialog.tsx` (Radix Dialog): loading skeleton,
+  moved project finish before to after plus within-year chip, five served counts, `hidden_count` when
+  non-zero, the served `note`, and an affected-projects `Table` with `scrollLabel`. Pushed-out-of-year
+  rows get a danger tint and chip with icon and text. The body virtualizes over 100 rows. Buttons are
+  "Yes, apply" / "No, cancel"; focus starts on No; after settling, focus moves to "Done". Escape and
+  outside clicks are ignored only while the confirm is in flight.
+- `use-priority-move-flow.tsx` is now: `requestMove` -> `POST …/priority/preview` -> dialog -> Yes ->
+  `POST …/priority {preview_token}`.
+  - `applied`: shows the applied result and calls `invalidateRunDerivedQueries` (the existing
+    post-move/recalc invalidation).
+  - `PREVIEW_STALE`: one automatic re-preview, with a notice. A second stale shows the error.
+  - preview `unchanged`: closes silently. `not_needed`: explains, Yes still saves, then the existing
+    not-needed copy. `deferred`: the existing message and follow-up watcher.
+  - `HARD_GATE_FORCES_P1`: the existing copy, shown in the dialog.
+  - `dispatch_failed`: "saved, but the recalculation could not be started; press Recalculate".
+  - preview 429: move-specific copy (the shared 429 text talks about comments).
+  - 503 `PREVIEW_TIMEOUT`, 409 `PREVIEW_STALE`, 503 `SOLVER_UNAVAILABLE`: added to `error-messages.ts`.
+- The old `MoveConfirmDialog` is removed. `MoveFlowPanel` stays for the queued / PATCH-header paths.
+- Priority board: the drop stays pending through the preview; No / rejection snaps back (existing
+  `onSettled` contract unchanged).
+- Registration form and Workspace Details form: new `form-priority-move.ts::applyFormPriorityMove`.
+  Both forms save via PATCH today, so a changed priority is previewed and confirmed first. The
+  remaining fields are then PATCHed **without** `priority`, so it is never moved twice. No (or a
+  refusal) throws `PriorityMoveNotAppliedError`, which keeps the form open with an explanation and
+  saves nothing. Clearing a priority (null) keeps the ADR 0015 PATCH path.
+- `check-ins.ts` and `gantt/api/types.ts` unions gain `dispatch_failed`; check-in and step-timing
+  flows show the message.
+
+**B. VIP card (ADR 0027 + amendment).**
+- `surfaces/dashboard/components/vip/`: `vip-projects-card.tsx` (after the KPI cards in
+  `DashboardPage`), `vip-board-dialog.tsx` (slide layout), `vip-item-link.tsx`, `vip-item-editor.tsx`,
+  `vip-meta.ts`.
+- Tiles: one per served area (Greece, India, Romania), with `CountryFlag`, hubs, the VIP / high-risk /
+  linked counts, the area's `vip_items` by name (clickable), and "View all".
+- Item click: one project -> `/projects/:id`; several -> a popover picker (name, hub, priority, finish,
+  health); none -> plain text. `hidden_project_count` is printed.
+- Slide: three pillar columns (number, label, headline, items, IMPACT footer). VIP items get the pillar
+  accent background **and** a "VIP" marker; status tags are chips (HIGH_RISK in the danger tone);
+  sub-items are indented.
+- Edit mode only with `usePermission('matrix').write`: add / edit / delete (with confirm), VIP toggle,
+  status tag and note, reorder up/down (swaps the two served `sort_order` values), sub-items, and
+  project links through `GET /dashboard/projects?q=&region=<area>`.
+- `useVipBoard(params)` uses `useHubFilterParams()`; the key carries both `hubId` and `region`.
+- Tokens: `--vip-{innovation,market,performance}[-fg|-subtle|-ink]` in `tokens.css` (amber/ochre,
+  blue, teal), Tailwind `vip.*` colours. AA pinned in both themes by `styles/vip-pillar-contrast.test.ts`
+  (18 tests).
+
+**C. Nav.** "VIP projects" removed from `nav.ts`; `/vip` redirects to `/`. Deleted
+`surfaces/vip/{api.ts,VipProjectsPage.tsx,VipProjectsPage.test.tsx,components/vip-card.tsx}`. The P12
+`/vip-projects` type mirrors moved to `lib/api/vip.ts` (still paired by the backend contract test).
+VIP badges on Gantt, Projects and the board are unchanged. `['vip-projects']` invalidation keys became
+`['vip-board']`. `e2e/p12-gate.spec.ts` no longer scans `/vip`.
+
+**TS interface names (for the contract test).**
+`lib/api/priority-move.ts`: `PriorityPreviewRequest`, `PriorityPreviewMoved`, `PriorityPreviewSummary`,
+`PriorityPreviewChange`, `PriorityPreviewResponse`; extended `PriorityMoveRequest` (`preview_token?`) and
+`PriorityMoveResponse` (`moved?`, `summary?`, `changes?`, `hidden_count?`).
+`lib/api/vip.ts`: `VipPillarInfo`, `VipItemProject`, `VipItem`, `VipItemRef`, `VipBoardArea`,
+`VipBoardResponse`, `VipItemCreateRequest`, `VipItemUpdateRequest`, `VipItemLinksRequest`, plus the
+unchanged P12 `VipCurrentStage/VipProject/VipHub/VipProjectsResponse/VipPinRequest/VipPinResponse`.
+`VipArea = LabRegion`.
+
+**Board test that failed under load (investigated, not dismissed).** `PriorityBoardPage.test.tsx >
+sends Category / Type / Status / Leader…` asserted `toHaveBeenLastCalledWith('/priority-board', …)` over
+**all** GETs. A `/dashboard/projects/facets` refetch could land after the last board request and become
+"the last call" on a loaded runner, so the failure depended on request interleaving, not on the app.
+Fixed by asserting the last `/priority-board` call. It passed alone before and after; the full suite
+is now green.
+
+**Tests.** New: `priority-preview-dialog.test.tsx` (17: loading, summary, hidden count, Yes with token,
+No, Escape, stale once and no loop, deferred, not_needed, unchanged, hard gate, dispatch_failed, 429 and
+503, no-run note, virtualization, axe), `vip-projects-card.test.tsx` (10: tiles, filter params, one
+project -> Workspace, picker -> Workspace, slide layout, axe, edit gated for Executive Viewer and Hub
+Planner, toggle/reorder/delete, add with link search), `vip-pillar-contrast.test.ts` (18). Added:
+board (+1 pending-until-Yes), Registration (+2), Dashboard (+1 placement/filter), app (+1 `/vip`
+redirect), check-in (+1), error-messages (+1). Updated: `priority-move.test.tsx`,
+`PriorityBoardPage.test.tsx`, `p12-nav.test.tsx`, `use-follow-up-run.test.tsx`.
+
+**Verification.** `tsc` clean; eslint 0 errors (7 pre-existing warnings); `npm run build` PASS, 185.0 KB
+gzip of 400 KB; full vitest **167 files, 1092/1092**; backend `test_openapi_frontend_contract.py`
+**150 passed** against these mirrors. No `dangerouslySetInnerHTML`, raw hex or three.js in new code. No
+backend file touched.
+
+**Notes.** The preview's `*_before` values (in-memory baseline, M2) need no frontend change: the shape is
+unchanged and nulls print as a dash. The board's non-schedulable exclusion needed no test change (board
+tests use mocked, schedulable cards). Not run: Playwright e2e (needs the seeded stack).
+
+**Gate result:** N/A, build task.
+
+### [2026-10-19] P14 gate — security-auditor (OWASP ASVS L2)
+
+**Verdict: PASS.** No Critical or High finding. Scope: static review of the P14 working tree
+(priority_preview, schedule_apply, run_dispatch reaper and enqueue_or_fail, projects router, worker
+M1 guard, VIP model/service/router/schemas, p14a/p14b migrations, VIP seed, frontend dialog and VIP
+card/editor). Test suites were not re-run by this agent.
+
+| # | Sev | Where | Finding |
+|---|-----|-------|---------|
+| S1 | Medium | services/priority_preview.py:423-424 (confirm), routers/projects.py (no limiter on the confirm) | Confirm takes the global dispatch advisory lock, then builds the snapshot (about 0.4 s of DB reads) and only then checks the token. A Registration-WRITE user can loop confirms with a garbage token (16-128 chars) and hold the lock repeatedly. The preview is rate-limited (6 burst, 1 per 5 s) but the confirm is not, and the limiter is per process. Fix: rate-limit confirms with a token, or check token shape first. |
+| S2 | Medium | api/routers/vip_board.py:176 (`_item_response`), :498, :583 | `project_ids` on item create/PATCH/PUT and `unpinned_project_ids` on DELETE are not scope-filtered. A hub-scoped MATRIX writer sees ids of out-of-scope linked projects (UUIDs only, no names). PATCH `highlighted` (line 470) and DELETE also flip `is_vip` on out-of-scope linked projects. This is bounded because the writer needs a hub in the item's area and the seeded Hub Planner has no MATRIX write. Fix: filter the response ids with `hub_scope_filter`; restrict the recompute to visible projects. |
+| S3 | Medium | seed/seed_vip_board.py:96,153,167 (vip_items.title, plaintext) | Customer or brand names (Heineken, Pepsi, CC, Hell, HNKN) are stored unencrypted in `vip_items.title` and served to every DASHBOARD READ user. They are client-authored slide text, and the area scope does not hide items. CLAUDE.md says customer name is encrypted at rest. Needs a written client or orchestrator acceptance (add to ADR 0027) or a redaction decision. No dedicated customer field is involved. |
+| S4 | Low | workers/schedule_tasks.py:428-460, run_dispatch.py reap | The worker's RUNNING check and the persist are not under a row lock, so a reap landing between them could be overwritten (very narrow window). Also a run queued about 16 min then started can be reaped while legitimately running (reap uses `created_at`) and its output is discarded: availability only, no resurrection except that narrow race. |
+| S5 | Low | priority_preview.py:114,203 | A timed-out job keeps its thread (cannot be killed). Two pathological overruns occupy the whole pool of 2 and later previews/confirms queue and time out at 20 s. Bounded by the preview limiter and measured 0.07 s greedy, so theoretical. |
+| S6 | Info | preview_token | Unsalted sha256 of the whole snapshot, not bound to user. Not an authorisation token (the confirm re-authorises and re-hashes). A different priority or project changes the hash, so it cannot be substituted. It is one-way and not logged; reveals nothing but a change-detection oracle over out-of-scope data. |
+| S7 | Info | hidden_count / hidden_project_count | Counts only; ids and names are scope-filtered in SQL (diff_outcomes, vip board). Matches the P13 precedent. |
+| S8 | Info | migrations p14a/p14b | Reversible, additive, no data loss (p14b remaps by value and swaps the CHECK; the downgrade merges back). No audit rows by convention. |
+
+Verified clean: preview and confirm authorisation equals the existing move (hub-scoped 404, Registration
+WRITE, admin grant); preview writes nothing; priority/confirm all audited (`project.priority_move`,
+`schedule_run.abandoned`, `schedule_run.dispatch_failed`, `vip_item.*`, `project.vip_pin|unpin`); worker
+discards non-QUEUED and non-RUNNING rows; VIP schemas strict, extra forbidden, enums and lengths bounded
+(title 200, note 200, links 500); SQL parameterised; no `dangerouslySetInnerHTML` in the P14 frontend; no
+financial or engineer fields in the preview or VIP payloads; leader names not exposed; logs carry ids and
+counts only, and the token and broker URL are never logged; no secrets found in P14 files. CSRF, TLS and
+CSP are unchanged by P14 (inherited from earlier gates).
+
+### [2026-10-19] P14 gate — workflow-auditor: PASS
+
+**Verdict: PASS.** The five P14-T03 defects (M1–M4, S1) and the reaper are fixed. A confirmed
+move re-derives with 0 differences. VIP board, Dashboard, Capacity, Gantt and Priority board
+reconcile to one run. Scoping holds. No defect to remediate. Two observations, neither blocking,
+are listed at the end.
+
+**Method.** The owner's dev DB on :5433 was read-only (psql `default_transaction_read_only=on`,
+used for the VIP-pin check only). The first scratch copy (pg_dump) could not be decrypted: the dev
+Fernet key lives in `secrets/` and I did not read it. So I built a fresh scratch Postgres (:55444)
+with migrations to `p14b_vip_areas` and `seed_demo_data` (client_2026). I recreated the dev state:
+two identical `manual_recalc` runs, a freeze of 680f0e38 at W3 through the API (after v2), and a
+`queued` `priority_move` v3 aged one day. The API was the working-tree code on :8044 (not the stale
+:8001). The scratch containers were removed. Scripts are in the session scratchpad: `e2e14.py`,
+`post14.py`, `m1.py`, `vipchk.py`, `scope14.py`, `recon14.py`, `fetch14.py`, `cand.py`. They reuse
+`derive.py`, the independent greedy that imports nothing from `backend/`.
+
+**Re-verification of the T03 defects.**
+- **M1.** `_run_schedule_body` was called directly on the reaped FAILED v3. It returned `skipped`
+  (`run_status: failed`), and the row stayed FAILED with no activation. Both Celery tasks carry
+  `expires=1020`.
+- **M2.** Stored v2 differs from greedy on current inputs for 4 projects, because the freeze came
+  after v2. The preview of fab3c282 P4→P1 still returned 0 changes, so the stale drift is not
+  blamed on the move. Every non-empty preview matched the independent greedy diff (below).
+- **M3.** Covered by `test_p14_priority_preview` (move, Workspace 503, follow-up retry). Re-run:
+  `test_p14_priority_preview` and `test_p14_vip_board`, 47 passed. I did not kill the live broker.
+- **M4.** The Board excludes non-schedulable statuses. Counts: P1 26, P2 5, P3 94, P4 67, Q 0.
+  Member sets equal "priority = X and status not in (Commercialized, On Hold, Cancelled, Draft)"
+  exactly, and no non-schedulable card appears.
+- **S1.** The freeze set `schedule_stale` on the project (stale count 1 afterwards).
+- **Reaper.** The confirm reaped the day-old QUEUED v3 to FAILED / ABANDONED and wrote one
+  `schedule_run.abandoned` audit row. The confirm then proceeded.
+
+**1. Confirmed move, end to end: PASS.** The comparison is preview vs independent derive (current
+inputs vs current inputs plus the move), over (end week, within year, left out, blocked), before
+and after.
+
+| Move | Result |
+|---|---|
+| 2e75d87b P4→P1 (the largest displacer) | 6 changes, EQUAL |
+| fdcc11f3 P4→P1 | 4 changes, EQUAL |
+| fab3c282 P4→P1 | 0 changes, EQUAL |
+| 1cf9e29c P3→P1 | 2 changes, 1 pushed out of the year, EQUAL |
+
+- Each moved project's own before/after matched.
+- Hard gate: a gate was set on a P3 project in the scratch DB. Preview to P2 and the POST to P2
+  both gave 409 `HARD_GATE_FORCES_P1`. Preview to P1 gave 200.
+- The previews wrote nothing: counts of runs, audit rows and outcome/step rows are identical, and
+  priorities are unchanged. Previews took 109–148 ms.
+- A bad token gave 409 `PREVIEW_STALE`. A confirm with the real token gave 200 `applied`. Its
+  `changes`, `summary` and `moved` equal the preview's exactly, with `hidden_count` 0 (I20).
+- A repeat confirm returned `unchanged`.
+- The applied run (v4) is COMPLETED and active, with `started_at` and `completed_at`.
+  - Against derive(move), its outcomes differ in **0 of 253** projects, and its steps in **0 of
+    2477** rows (start, end, duration, engineer, chamber, skipped).
+  - The invariant script reports no violations on it (I1–I5, I11, I21, I22 and the outcome rules).
+- I14: the hashes of the v1 and v2 outcome and step rows are unchanged after the apply. Exactly one
+  run is active.
+- I10: the frozen project's step dates in v4 equal the pre-move schedule, and `frozen=true`,
+  `actual_start_week=3` are unchanged. The apply cleared the stale flags (0 left).
+- The audit trail holds `project.priority_move`, `project.schedule_recalculated`,
+  `schedule_run.abandoned` and `project.freeze`.
+
+**2. VIP board: PASS.** In the scratch DB I pinned the same 2 projects the dev DB has (checked
+read-only on :5433: `is_vip` 39 = 37 linked to a highlighted item + 2 unlinked pins).
+- The pins are "IC2-40 ECO with FDEx3" and the S-500 frameless project.
+- `run_id` equals the active run.
+- Counts (item, highlighted, high-risk, linked project) match the DB per area:
+
+| Area | Items | Highlighted | High-risk | Linked projects |
+|---|---|---|---|---|
+| Greece | 14 | 6 | 0 | 7 |
+| India | 16 | 8 | 3 | 28 |
+| Romania | 19 | 6 | 1 | 8 |
+
+- Totals: 49 items, 20 highlighted, 43 links to 43 distinct projects.
+- Item area equals the project's hub area for every link (0 mismatches). The hub-to-area mapping
+  has the OEM hubs and R&D-Greece in Greece, PD-India and R&D-India in India, and PD-Romania in
+  Romania.
+- The live facts (projected end week, within year, priority, status, name) of all 43 projects equal
+  the active run and `projects` rows. Health equals the Priority board card health where a project
+  is on both.
+- There are no financial, engineer or utilization fields. The only "customer" in the response is
+  the pillar impact label.
+
+**3. Re-reconciliation, working-tree code: PASS, no regression.** `recon14.py` ran against the
+active v4, covering Dashboard (pipeline totals, completing-within-year, status overview,
+hub-type, region summary, analytics, register), Capacity (hub load, class breakdown, lab priority
+load) and Gantt.
+- Every figure equals the stored outcomes. The Dashboard ties to the run.
+- The only 4 discrepancies are the Board's P2 and P4 counts and member lists. They are the
+  intended M4 exclusion: the recon's old expectation included non-schedulable cards.
+- Against the M4-corrected expectation the Board is exact. The Board's projected finish, within
+  year and health equal the stored values.
+- The per-hub I23 check (Dashboard within-year, Capacity row and Gantt design weeks) shows no
+  discrepancies. Example: OEM-HCK within year 10, design 55 on both Capacity and Gantt.
+
+**4. Scoping: PASS.** User bob.hub (Hub Planner, PD-India) was checked.
+- Preview of the in-scope 4e8aa4e2: admin sees 7 changes. bob sees 6, all in PD-India, with
+  `hidden_count` 1. The summary counts the visible rows only. The ids are a subset of the admin's.
+  `hidden_count` equals the difference.
+- A preview or move of the PD-Romania project returns 404.
+- VIP board for bob: India only (item_count 16, linked_project_count 0). It shows zero linked
+  projects, with 28 counted in `hidden_project_count`. The `hub_id` of another hub returns no
+  areas.
+- No financial, engineer-level or utilization fields appear in any preview or board response.
+  The substring hits were `after` and the pillar label.
+
+**Observations (non-blocking, for the orchestrator).**
+1. A fresh `seed_demo_data` has no schedule run. The first Recalculate or move creates one. A
+   preview before any run is the covered no-run path.
+2. S2 (freezing a never-started project in the past) is still OQ #40. The "remaining" booked %
+   (about 520 %) is still the literal ADR 0016 formula and still needs the client to know.
+
+## [2026-10-19] P14 gate — orchestrator interim
+
+The security-auditor and workflow-auditor recorded PASS (no Critical or High findings; 0
+scheduling or figure defects). The security-auditor's Mediums:
+- **S1:** the confirm is not rate-limited.
+- **S2:** VIP writer responses leak out-of-scope project ids.
+- **S3:** customer and brand names appear in the VIP slide titles.
+
+S1 and S2 go to the P14-R01 remediation. S3 is accepted (ADR 0027 acceptance note).
+S4 (a narrow reaper race) and S5 are Low and are logged as follow-ups. qa-inspector is still
+running.
+
+## [2026-10-19] P14-R01 — confirm rate limit (S1) and VIP writer response scoping (S2) — backend-engineer
+
+- **S1.** `api/routers/projects.py`: new `PRIORITY_CONFIRM_RATE_LIMIT` (token bucket, burst 6, one per
+  2 s, per user, per process). It is checked in the move handler when `preview_token` is present,
+  BEFORE `confirm_priority_move` (so before the dispatch lock and the snapshot). It returns 429
+  `RATE_LIMITED` with `Retry-After`. The stale-token path in `services/priority_preview.py` raises
+  at once, and the request session's rollback releases the lock. I did not add an explicit
+  `db.rollback()` there, because it expires the caller's loaded objects. This is only a comment
+  change.
+- **S2.** `api/routers/vip_board.py`: new `_in_scope_ids` (uses `hub_scope_filter`).
+  `_item_response` now takes the principal and returns only in-scope `project_ids`. The delete
+  response `unpinned_project_ids` and the `PUT` links response `added/removed/pinned/unpinned`
+  lists are filtered the same way. The writes and the `is_vip` recompute still use ALL linked
+  projects. No hidden-count field was added (it would change the OpenAPI contract). The VIP seed
+  was not touched.
+- **Tests.** `tests/test_p14_priority_preview.py::test_confirm_is_rate_limited_before_the_lock`
+  (the 7th confirm is 429 and the handler ran 6 times). `tests/test_p14_vip_board.py::
+  test_writer_responses_hide_out_of_scope_project_ids`. Updated
+  `test_scoped_writer_keeps_out_of_scope_links` (the kept hidden link is no longer in the response;
+  it is checked in the DB). The P14 files pass (49). ruff is clean.
+
+### [2026-10-19] P14 gate — qa-inspector: FAIL (2 minor a11y defects, no functional defects)
+
+Scope: the uncommitted working tree against HEAD `1c0290a` (P14-T01..T04). I re-ran every number
+myself. Disposable infra: Postgres 17 `qa-p14qa-pg` (:55461), Redis `qa-p14qa-redis` (:56461),
+dev-mode uvicorn :8061 and `vite preview --mode e2e` :5261, seeded `client_2026` (253 projects,
+greedy run active). **No Celery worker was started.** All of it is removed. The owner's :5433 DB and
+:8001 uvicorn were not touched. (Two other containers named `qa-p14gate-*` appeared on the host while
+I worked; they belong to another agent and I left them alone.)
+
+**Verdict: FAIL.** The priority-move preview/confirm flow and the VIP card work end to end. The FAIL is
+two serious axe violations on the new UI.
+
+**1. Backend: PASS.**
+- `uv run pytest -q`: **1361 passed, 0 failed**, coverage **96.42 %** (gate 70 %).
+- Scheduling gate (`pytest-scheduling.ini`): 168 passed, **93.91 %** (gate 85 %). `git diff -- backend/scheduling/` is empty.
+- New modules: `priority_preview.py` 95 % (uncovered 305-311, 417, 478-479), `run_dispatch.py` 100 %,
+  `priority_move.py` 100 %, `vip_board.py` 100 %, `api/routers/vip_board.py` 99 %, `schedule_apply.py` 100 %.
+- `ruff check .`: clean. Contract test green inside the full run.
+
+**2. Frontend: PASS.**
+- `tsc --noEmit`: clean. ESLint: 0 errors, 7 warnings (all pre-existing kinds). `pnpm build`: OK, bundle 185.0 KB gzip of 400 KB.
+- Full vitest with coverage: **167 files, 1092/1092**. Statements 86.3 %, branches 78.38 %, functions 84.04 %, lines 88.16 %.
+
+**3. Live checks (new `frontend/e2e/p14-gate.spec.ts`, run through the new
+`frontend/playwright.p14qa.config.ts` against an already-running stack; 12 tests): functional PASS.**
+- **Board:** keyboard drag P4 to P1 shows the preview dialog. **No** snaps the card back, and priority
+  and active run id are unchanged. **Yes** gives the "applied" state, priority P1, a new active run with
+  `trigger_reason=priority_move`, completed, with no worker.
+- **Gantt move control:** same flow, PASS (P1 to P2).
+- **Registration form:** `?edit=<id>`, a priority change opens the preview. No keeps the form open and
+  saves nothing. Yes applies and activates a new run. PASS.
+- **Dashboard VIP card:** 3 tiles (Greece, India, Romania), VIP items listed on each tile, "View all"
+  opens the 3-pillar slide, an item opens its project (single link) or a picker (several), and the
+  picker links to `/projects/<id>`. PASS.
+- **Edit toggle:** visible for superAdmin, admin and portfolioManager. Absent for hubPlanner and
+  executiveViewer. Engineer gets no VIP card at all (Dashboard card absent). PASS.
+- **`/vip`** redirects to `/` and the card renders. PASS.
+- **Hub-scoped user (bob.hub):** sees 1 VIP tile (India).
+- **Timing:** preview 0.12 to 0.43 s. **Confirm 3.2 to 3.6 s** unloaded, and 14 s while vitest ran in
+  parallel (the dialog sat on "Applying…" for that long). Not a defect, but worth noting.
+
+**4. API edge cases (scripted against the live stack; all PASS).**
+- **Stale token:** a move of another project between preview and confirm gives 409 `PREVIEW_STALE`. The
+  priority, active run and audit count are unchanged. A garbage token gives the same 409.
+- **Hard gate:** I set a hard gate on a P1 project in the disposable DB (the client data has none). Preview P2 gives 409
+  `HARD_GATE_FORCES_P1`. A confirm without a token gives the same 409, and the priority stays P1.
+- **Hub-scoped (bob.hub, PD-India):** preview and confirm on a foreign-hub project give 404. Preview
+  on his own project gives 200. dave.exec and erin.audit get 403. carol.eng gets 404.
+- **Run already queued:** `POST /projects/{id}/recalculate` leaves a QUEUED row (no worker). A move then returns
+  `deferred`, with the priority and stale flag written and no new active run. PASS.
+- **Old queued row:** I aged the row by 40 minutes. The next move returns `applied`, the row becomes `failed` / `ABANDONED`,
+  and one `schedule_run.abandoned` audit row is written. PASS.
+- **Preview writes nothing:** priority, run count and audit count are all unchanged. Preview and confirm return
+  identical `changes` and `summary`. Rate limit: a burst over 6 previews gives 429.
+
+**5. Axe (serious/critical), live.**
+- Dashboard with the VIP card: **0**. Dashboard with the VIP slide dialog open: **0**.
+- Board preview dialog open: **FAIL, `color-contrast` serious x5-7**. The nodes are inside the dimmed pending board card behind
+  the dialog (`.opacity-70`), not inside the dialog. Contrast 3.74:1 for #778190 on #f8f9fb at 11 px.
+- VIP item picker popover open: **FAIL, `aria-dialog-name` serious x1** (`role="dialog"` with no name).
+- The known Radix Select issue QA-P13-4 was not re-scanned and is excluded.
+
+**DEFECTS (both minor; owner frontend-builder; add an axe assertion for each):**
+- **QA-P14-1:** `frontend/src/surfaces/priority-board/components/board-card.tsx:55`. `pending && 'opacity-70'`
+  drops the card's text below AA. P14 keeps the card pending for the whole time the preview dialog is open,
+  so it is now always visible to axe. Fix: use a non-opacity pending cue (for example a dashed border or an
+  italic status line), or keep contrast at or above 4.5:1 when dimmed.
+- **QA-P14-2:** `frontend/src/surfaces/dashboard/components/vip/vip-item-link.tsx:47`. The `PopoverContent`
+  (`data-testid="vip-item-picker"`) has no accessible name. Fix: add `aria-label={\`Projects for ${item.title}\`}`
+  or `aria-labelledby` pointing at the "Open a project" `<p>`.
+
+**Non-blocking notes:**
+- The Gantt tab shows only P1 rows first, so a live spec must pick a trigger from what is rendered.
+- The `redundant client_2026 hard-gate` check: the seeded data has no hard-gated project, so only the injected case was tested live.
+  The unit test covers the same path.
+
+**Files I added (tests only):** `frontend/e2e/p14-gate.spec.ts`, `frontend/playwright.p14qa.config.ts`.
+Re-run: `RPD_E2E_BACKEND_URL=http://localhost:<api> RPD_E2E_BASE_URL=http://localhost:<web> pnpm exec playwright test -c playwright.p14qa.config.ts`
+(dev-mode backend, seeded, greedy-recalc run active, no worker). Re-check once QA-P14-1/2 land; the spec's two
+axe soft-assertions will go green.
+
+## [2026-10-19] P15 opened — orchestrator
+
+The owner, relaying the client, said personal data may be used: "it is not a problem, start this
+now". ADR 0028 enables:
+- the Capacity Engineers × Weeks heatmap (P4-T08), and
+- leader names everywhere (the P13 withholding is lifted).
+
+The DPO and works council confirmation is recorded as an accepted residual risk. OQ #8 is no
+longer blocking. The safeguards stay: RBAC and hub scope, Engineer role sees only their own row,
+reads are audited, and there are no financial fields.
+- P14-R01 results: full backend suite 1362 passed, 1 failed (`test_super_admin_race` `[roles-pm]`, a
+  concurrency test in code this task does not touch). It passed on an isolated re-run (3 passed),
+  so it is treated as load-related flakiness. ruff is clean.
+
+## P15-T02 — Engineers × Weeks heatmap, leader names on, QA-P14 axe fixes (frontend-builder, 2026-10-19)
+
+**Built.** Capacity "Engineers × weeks" heatmap (ADR 0028) replaces the GDPR placeholder (placeholder component + test deleted). New: `capacity/components/engineer-utilization-heatmap.tsx` (hub-grouped rows, W1–52 columns, current week marked via header aria-current + outline, totals column, legend, % text in each cell plus aria-label/title with band, bands under <70 / well 70–100 / over >100 using AA `*-subtle` token pairs; rows windowed with TanStack Virtual above 100 rows; scroll region with label + tabindex 0) and `engineer-utilization-panel.tsx` (loading/empty/403 in-card notice/error+retry). Hook `useEngineerUtilization()` reads `useHubFilterParams()`, both params in query key (`queryKeys.capacityEngineerUtilization`) and request; `fetchEngineerUtilization` -> `GET /capacity/engineer-utilization`. TS types in `capacity/api/types.ts`: `EngineerUtilizationResponse`, `EngineerUtilizationRow`, `EngineerWeekUtilization` (coded against the contract in the task; utilization_pct assumed 0–100). Band thresholds are presentation-only colour choices applied to served pct.
+**Leader names.** Fallback now only for an id with no name, copy "Name unavailable" (was "Withheld"): Dashboard register + leader facet, Gantt row meta + toolbar, Matrix cell + view filter, Priority board facet, Workspace (header, activity actor, files uploader; "(you)" suffix dropped since names are served to all). Tests updated.
+**QA-P14 fixes.** QA-P14-1: `board-card.tsx` pending cue is now `border-dashed border-primary` instead of `opacity-70` (test asserts). QA-P14-2: VIP picker `PopoverContent` has `aria-label="Open a project: <title>"` (test asserts accessible name). `e2e/p14-gate.spec.ts` and `playwright.p14qa.config.ts` untouched.
+**Verify.** vite build OK (index chunk 138.7 KB gzip). Full vitest: 1098/1099 first run, the one failure was my own test ordering assertion, fixed; capacity suite 60/60 green after. tsc currently reports one error not mine: `ProjectsPage.tsx` unused `CountrySegmented` import (another in-flight edit). Not re-run full suite after that final test fix.
+
+## [2026-10-19] P15-T01 — Per-engineer utilization endpoint, leader names un-withheld — backend-builder
+
+**Built (ADR 0028).**
+- `GET /capacity/engineer-utilization?hub_id=&region=` (CAPACITY READ), in `backend/api/routers/capacity.py`.
+  Response `EngineerUtilizationResponse {week_range: [1,52], current_week, engineers[]}`. Each row is
+  `EngineerUtilizationRow {id, name, hub, role (allowed categories, comma-joined), total_booked,
+  total_capacity, utilization_pct, weeks[52] of {week, booked, capacity, utilization_pct}}`. The shape
+  matches the frontend mirror already in `frontend/src/surfaces/capacity/api/types.ts`.
+- Booked = the active run's non-skipped design-kind steps on the assigned engineer, one booked week for
+  each week of `[start_week, start_week + duration_weeks - 1]`. `total_booked` covers the whole horizon,
+  including weeks past 52, so the sums reconcile with I6. Capacity per week =
+  `working_weeks_per_engineer x fte / 52` from the existing calendar supply formulas (ADR 0008).
+  `utilization_pct` is never null: zero capacity gives 100.0 when anything is booked, else 0.0 (ADR 0016 "full" rule).
+- Scope: `narrowed_hub_filter` (hub scope ANDed with hub_id and region). A caller who is self-scoped
+  (`is_engineer_self_scoped`) also gets only `Engineer.user_id == caller`.
+- Each read writes audit row `capacity.engineer_utilization.read` with after_state
+  `{hub_id, region, row_count}` and no figures.
+- `leader_name` un-withheld: `services/project_filters.leader_name_if_self` (Gantt, Matrix),
+  `api/routers/dashboard.py::_leader_name_if_self` (register and facets), workspace
+  `leader_engineer_name`, and `export_builder` (the withhold set is now empty; the `_neutralise_formula`
+  protection still applies). The Priority board has no leader_name field, so it was unchanged.
+  `leader_engineer_id` is kept everywhere. Other person names (`assigned_engineer_name`, authors,
+  uploaders, actors) stay withheld because ADR 0028 only names the leader.
+- Tests: `backend/tests/test_p15_engineer_utilization.py` (new). Updated `test_p13_slice_c.py`,
+  `test_p13_region_filter.py`, `test_p13_r02_hardening.py` and `test_workspace_api.py`.
+  `test_openapi_frontend_contract.py` adds CONTRACT_TABLE rows for the three P15 mirrors, appended only once
+  the TS interface exists (they do now, held "exact").
+
+**Findings to note.**
+- RBAC: a plain Engineer-role user has no CAPACITY READ and gets 403 (core/rbac unchanged). The own-row
+  scope is defence in depth for an Engineer who also holds a role that can read Capacity. Granting
+  Engineer CAPACITY READ is an RBAC decision I did not make. The Engineer-role "own row only" in the UI
+  therefore needs the orchestrator's ruling.
+- I6 reconciliation: OEM hubs (OEM-HCK, OEM-Seltek) have no engineers, so their design steps are booked
+  to PD engineers. Summed by engineer hub, the OEM load shows up under the lending PD hubs. The portfolio
+  total reconciles exactly, and R&D hubs are exact per hub. Summed by the project's hub it is exact for all hubs.
+
+**Results.** Full backend suite: 1371 collected, last full run 2 failures, both fixed and re-run green
+(25 passed in the two files); ruff clean. mypy shows pre-existing unrelated errors.
+
+## [2026-10-19] P14-R01 + P15 gate — security-auditor (OWASP ASVS L2)
+
+**Verdict: PASS.** No Critical or High finding. Static review of the working tree plus the tests named below; I did not re-run the suite.
+
+- P14-R01 S1 closed: `api/routers/projects.py:472-484` takes `PRIORITY_CONFIRM_RATE_LIMIT` (per user) and answers 429 before `confirm_priority_move`, which is where the dispatch lock is taken (`services/priority_preview.py`). S2 closed: `api/routers/vip_board.py:165-179,518,598-603` filters every response id list through `hub_scope_filter`. Writes and the `is_vip` recompute still use all linked ids.
+- `GET /capacity/engineer-utilization` (`api/routers/capacity.py:626-727`): CAPACITY READ via `_read`. The plain Engineer role has `_NONE` (`core/rbac.py`) and gets 403 (test line 125). The own-row filter (`Engineer.user_id == caller`) applies when `is_engineer_self_scoped` holds (Engineer role and empty `hub_ids`). `hub_id` and `region` go through `narrowed_hub_filter` (AND with scope), so an out-of-scope hub or region gives empty rows, not an IDOR. Audit row carries `{hub_id, region, row_count}` only. No financial fields; the response model is a typed Pydantic model. The payload is not logged.
+- Leader name is served by `services/project_filters.py:55`, `api/routers/dashboard.py:540`, the workspace `leader_engineer_name` and the export builder. `assigned_engineer_name` (`api/routers/gantt.py:451`), `author_name`, `actor_name` and the uploader name stay withheld (`services/workspace.py:263,450,581`). `_EXPORT_WITHHELD_FIELDS` is empty (`services/export_builder.py:136-139`) and `_stringify` still applies `_neutralise_formula` to every string cell (CSV and XLSX text-typed). No financial field is in the export schemas that carry the leader name.
+- Frontend: no `dangerouslySetInnerHTML` or `innerHTML` under `frontend/src/surfaces/capacity`. Names render as React text.
+
+| # | Sev | Where | Finding |
+|---|-----|-------|---------|
+| 1 | Low | `api/routers/capacity.py:710-725` | Each GET writes an audit row and commits, with no rate limit. A reader can grow the audit table by looping. Add a limiter or coalesce per user per minute. |
+| 2 | Low | `api/routers/capacity.py:719` | The audit row has `hub_id=None`, so a hub-scoped auditor filter may not show it. Consider recording the caller's hub. |
+| 3 | Info | `services/hub_scope.py:150-197` | Self-scope depends on `hub_ids` being empty. An Engineer plus Hub Planner with hub_ids sees the whole hub's engineers, consistent with the broader role. No change needed. |
+| 4 | Info | ADR 0028 consequence | Anyone who can read a project in scope can map leader to project. This matches the owner decision (item 2 of the ADR). The engineer endpoint also names every in-scope engineer for any Capacity reader, which makes the remaining assigned-engineer withholding on Gantt and Workspace largely cosmetic for those users. |
+
+**Residual GDPR (informational, not gating).** (a) No lawful-basis record (legitimate interest assessment or equivalent) or DPIA exists; ADR 0028 records the DPO and works-council steps as accepted risk. (b) Audit rows `capacity.engineer_utilization.read` have no retention period; an append-only table means they are never erased. Set a retention rule and document it. (c) There is no data-subject access path (a subject cannot see what was recorded about them or who read their row). (d) No per-engineer export was added, which is the right state; any future export needs the same audit action. OQ #8 stays open as a confirmation.
+
+### [2026-10-19] P15 gate — workflow-auditor: PASS
+
+**Verdict: PASS.** `GET /capacity/engineer-utilization` (ADR 0028) re-derives exactly. No defect to
+remediate. Three observations are listed at the end. None blocks.
+
+**Method.** I used a disposable Postgres (:55445) and Redis (:56392), migrated to head and seeded with
+`seed_demo_data` (client_2026) and `seed_dev_users`, with two greedy runs. The API was the working-tree
+code on :8045. The owner's dev DB on :5433 was not touched. The containers were removed afterwards.
+Scripts are in the session scratchpad: `v15.py`, `v15b.py` to `v15f.py`, `recon15.py`. The booked check
+reads raw `schedule_run_project_steps` and `workflow_step_templates`, and imports nothing from `backend/`.
+
+**1. Booked.** All 59 engineers x 52 weeks match the independent derivation (non-skipped design steps,
+one week per week of `[start, start+duration-1]`): 0 mismatches. `total_booked` also matches for every
+engineer. Summed over all engineers it is 1531, which equals the sum of hub design loads and the
+`/capacity/hub-load` `totals.design_load_weeks` (I6). Unassigned design weeks: 0. Hub filter and region
+filter match the full list exactly for every hub and region. The audit row
+`capacity.engineer_utilization.read` is written with `{hub_id, region, row_count}` only.
+
+**2. Capacity.** Every week's `capacity` equals `(52 - sum(days)/weekdays_per_week) x fte / 52` from the
+hub calendar, and `total_capacity` equals the same x 52 (0 mismatches). Summed per engineer hub it
+equals `design_capacity_year` per hub to within 2 dp rounding (for example PD-India 966.66 against 966.81,
+which is 21.89 FTE rounded per engineer). I17 holds.
+
+**3. utilization_pct.** Each week and each total equals `round(booked/capacity x 100, 2)`. The
+zero-capacity rule (100 if anything is booked, else 0) is applied. It is consistent with the Capacity
+page's `booked_pct` (same formula, 2 dp, not capped). One difference: the page serves `null` plus a
+`full` status when capacity is 0 and load > 0, while this endpoint serves 100.0 (never null, as
+documented in the T01 entry). No engineer has zero capacity in the seed (min FTE 0.31). This is
+representational only.
+
+**4. Scope.**
+- Hub Planner `bob.hub` sees exactly the 35 PD-India engineers. His rows are identical to the admin
+  rows. Asking for another hub or region returns 0 rows with status 200, with no leakage.
+- Role access: Engineer-role `carol.eng` gets 403. `alice.pm` gets 59 rows.
+- The payload keys are `{hub, id, name, role, total_booked, total_capacity, utilization_pct, weeks}`.
+  No financial fields.
+
+**5. Leader names.** Dashboard register (253), Gantt (253), Priorities matrix (253), the Matrix, Dashboard
+and Gantt CSV exports, and Workspace `project.leader_engineer_name` all equal the engineer table
+name. That holds for admin and for the hub-scoped bob (165 rows). `leader_engineer_id` is still present.
+`stages[].assigned_engineer_name` is still null, and the Gantt export `assigned_engineer_name` is empty
+on all 2534 rows. The Priority board has no leader field (id filter only). The ADR 0028 text says the
+Priority board shows leader names, so the ADR wording and the build differ. The frontend facet there
+can only be fed from the register.
+
+**6. No regression.** I re-ran the Dashboard, Capacity (hub-load, class-breakdown, priority splits,
+areas), Gantt and board reconciliation against the raw run: 0 discrepancies, except that the board
+check script (`recon14.py`) still expected all statuses. That script is stale, not the product.
+Compared against the M4 rule, the board is exact: P1 25, P2 5, P3 94, P4 68, Q 0, and the member sets
+are equal. `test_p15_engineer_utilization.py` and `test_openapi_frontend_contract.py`: 158 passed.
+
+**Observations (non-blocking).**
+- **O1. The T01 claim is wrong; the code is right.** The entry says OEM hubs have no engineers and that
+  R&D-Greece and R&D-India reconcile exactly per hub. In the seed OEM-HCK has 4 engineers and
+  OEM-Seltek 2. The loads differ per hub because 6 projects are led by an engineer of another hub (for
+  example 2 R&D-Greece projects are led by OEM-HCK engineers). Summed by engineer hub: R&D-Greece 25
+  against 45, R&D-India 270 against 282, PD-India 979 against 967, OEM-HCK 75 against 55. By project hub
+  every hub is exact, and the portfolio total is exact. Booking the leader is the DOMAIN_RULES booking
+  rule, so the endpoint is correct. The test comment at `backend/tests/test_p15_engineer_utilization.py:75-78`
+  repeats the wrong premise. UI consequence: the heatmap can show OEM-HCK at 137% while the Capacity
+  hub table shows 100.4%. A footnote is advisable.
+- **O2. ADR/implementation gap.** ADR 0028 says an Engineer-role user sees only their own row, but that
+  role has no CAPACITY READ and gets 403, so the own-row scope is unreachable. This is safe (fails
+  closed). It needs an orchestrator ruling or an ADR amendment.
+- **O3. Inconsistent naming.** A design step's assignee is the project leader, so the leader's name is
+  now served while `assigned_engineer_name` (stages, Gantt export) stays withheld for the same person.
+  I recommend the orchestrator decide whether to lift it, since ADR 0028 names only the leader.
+
+## [2026-10-19] P15 gate — orchestrator interim
+
+The security-auditor and workflow-auditor recorded PASS for P14-R01 and P15 (no Critical or High
+findings). 59 engineers × 52 weeks match an independent derivation, with 0 mismatches.
+
+Observations:
+- **O1:** engineer-hub vs project-hub totals differ because 6 projects are led by an engineer from
+  another hub (the auditor corrected the builder's OEM explanation). A heatmap footnote is needed.
+  The comment at `test_p15_engineer_utilization.py:75-78` is wrong.
+- **O2:** the Engineer-role own-row scope is unreachable. ADR 0028 amended.
+- **O3:** `assigned_engineer_name` is still withheld although the leader name is served for the same
+  person. It is to be un-withheld, consistent with the owner's "use the personal data".
+
+The Low audit-rate-limit and `hub_id` findings are logged as follow-ups. qa-inspector is still
+running. These fixes follow after the QA report, to avoid changing the code under it.

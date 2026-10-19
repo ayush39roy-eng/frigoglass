@@ -15,19 +15,47 @@ import { StepTimingProvider } from './components/step-timing/step-timing-provide
 import { ApiError } from '@/lib/api/client';
 import { useHubFilter } from '@/stores/hub-filter';
 import { HubFilterChip } from '@/components/shared/hub-filter/hub-filter-chip';
+import { CountrySegmented } from '@/components/shared/hub-filter/country-segmented';
 import { formatInteger } from '@/lib/format';
 import { SPILLOVER_YEAR, WITHIN_YEAR_WEEK } from '@/lib/domain-constants';
 import { SURFACES } from '@/app/nav';
 import { usePermission } from '@/stores/session';
+import { useDebouncedValue } from '@/lib/use-debounced-value';
 
 import { AccessNotice, FreezeForbiddenNotice } from './components/access-notice';
 import { GanttChart } from './components/gantt-chart';
 import { GanttLegend } from './components/gantt-legend';
 import { FreezeDialog } from './components/freeze-dialog';
 import { ZoomControl } from './components/zoom-control';
-import { useActiveScheduleRun, useGantt, useToggleFreeze } from './hooks/use-gantt';
+import { GanttFilterBar, PriorityTabs, ViewToggles } from './components/gantt-toolbar';
+import { DEFAULT_GANTT_FILTERS, hasActiveFilters, type GanttFilterState } from './lib/gantt-filters';
+import { useActiveScheduleRun, useGantt, useGanttFacets, useToggleFreeze } from './hooks/use-gantt';
+import type { GanttQueryParams } from './api/gantt-api';
 import type { FreezeToggleRequest, GanttProjectRow } from './api/types';
-import type { GanttZoom } from './lib/gantt-coordinates';
+import { ZOOM_DEFAULT_PX } from './lib/gantt-coordinates';
+
+/** P13-T13: the toolbar state as server params; unset filters are left out
+ *  (`undefined`), so they are neither sent nor distinct in the cache key. */
+function toQueryParams(
+  hubId: string | null,
+  region: GanttQueryParams['region'] | null,
+  f: GanttFilterState,
+  q: string,
+): GanttQueryParams {
+  const trimmed = q.trim();
+  return {
+    hubId: hubId ?? undefined,
+    region: region ?? undefined,
+    q: trimmed === '' ? undefined : trimmed,
+    category: f.category ?? undefined,
+    type: f.type ?? undefined,
+    status: f.status ?? undefined,
+    leaderEngineerId: f.leaderEngineerId ?? undefined,
+    currentStep: f.currentStep ?? undefined,
+    priority: f.priority ?? undefined,
+    sort: f.sort,
+  };
+}
 
 const TIMELINE_SURFACE = SURFACES.find((s) => s.path === '/timeline');
 
@@ -43,15 +71,27 @@ function authKind(errors: unknown[]): 'forbidden' | 'unauthorized' | null {
 
 export default function GanttPage(): React.JSX.Element {
   // P12 (ADR 0020): the global header hub filter replaces the page-local select.
-  const { hubId } = useHubFilter();
-  const [zoom, setZoom] = React.useState<GanttZoom>('weeks');
+  const { hubId, region } = useHubFilter();
+  const [zoomPx, setZoomPx] = React.useState<number>(ZOOM_DEFAULT_PX);
+  const [filters, setFilters] = React.useState<GanttFilterState>(DEFAULT_GANTT_FILTERS);
+  const [forest, setForest] = React.useState(false);
+  const [hideStats, setHideStats] = React.useState(false);
+  const debouncedQ = useDebouncedValue(filters.q, 300);
   const [expandedIds, setExpandedIds] = React.useState<ReadonlySet<string>>(new Set());
   const [freezeProject, setFreezeProject] = React.useState<GanttProjectRow | null>(null);
   const [freezeOpen, setFreezeOpen] = React.useState(false);
   const [writeForbidden, setWriteForbidden] = React.useState(false);
   const [recalcNeeded, setRecalcNeeded] = React.useState(false);
 
-  const ganttQuery = useGantt({ hubId: hubId ?? undefined });
+  const queryParams = React.useMemo(
+    () => toQueryParams(hubId, region, filters, debouncedQ),
+    [hubId, region, filters, debouncedQ],
+  );
+  const ganttQuery = useGantt(queryParams);
+  // Leader / Step options need `dashboard` read (the facets endpoint); without
+  // it (an Engineer) those two filters are simply not offered.
+  const canReadFacets = usePermission('dashboard').read;
+  const facetsQuery = useGanttFacets(hubId, region, canReadFacets);
   const hasRun = ganttQuery.data?.has_active_schedule_run === true;
   const activeRun = useActiveScheduleRun(hasRun);
   const freezeMut = useToggleFreeze();
@@ -66,7 +106,7 @@ export default function GanttPage(): React.JSX.Element {
     () => ganttQuery.data?.rows ?? [],
     [ganttQuery.data],
   );
-  const isFiltered = hubId !== null;
+  const isFiltered = hubId !== null || region !== null || hasActiveFilters(filters);
   // Session table first (ADR 0010), server 403 second — both withdraw the freeze control.
   const permission = usePermission('gantt');
   const canWrite = permission.write && !writeForbidden;
@@ -118,8 +158,9 @@ export default function GanttPage(): React.JSX.Element {
           description={description}
           actions={
             <>
+              <CountrySegmented />
               <HubFilterChip />
-              <ZoomControl value={zoom} onChange={setZoom} />
+              <ZoomControl value={zoomPx} onChange={setZoomPx} />
             </>
           }
         />
@@ -128,11 +169,11 @@ export default function GanttPage(): React.JSX.Element {
           <AccessNotice kind={denied} />
         ) : (
           <div className="flex flex-col gap-4">
-            {ganttQuery.data ? (
+            {ganttQuery.data && !hideStats ? (
               <StatStrip
                 ariaLabel="Timeline summary"
                 segments={[
-                  { label: 'On the timeline', value: rows.length, accent: 'primary', hint: hubId === null ? 'All hubs' : 'Selected hub' },
+                  { label: 'On the timeline', value: rows.length, accent: 'primary', hint: hubId !== null ? 'Selected hub' : region !== null ? region : 'All hubs' },
                   // ADR 0024: a left-out project is not done by W52 either, so it is
                   // counted inside spillover (server flags, counted — not recomputed).
                   {
@@ -149,7 +190,23 @@ export default function GanttPage(): React.JSX.Element {
               <CardHeader>
                 <CardTitle>View</CardTitle>
               </CardHeader>
-              <CardContent className="flex flex-wrap items-end gap-4">
+              <CardContent className="flex flex-col gap-3">
+                <GanttFilterBar
+                  filters={filters}
+                  onChange={setFilters}
+                  facets={canReadFacets && !facetsQuery.isError ? facetsQuery.data : undefined}
+                />
+                <div className="flex flex-wrap items-end gap-4">
+                  <PriorityTabs
+                    value={filters.priority}
+                    onChange={(priority) => setFilters((f) => ({ ...f, priority }))}
+                  />
+                  <ViewToggles
+                    forest={forest}
+                    onForestChange={setForest}
+                    hideStats={hideStats}
+                    onHideStatsChange={setHideStats}
+                  />
                 <div className="flex items-end gap-1">
                   <Button variant="secondary" size="sm" onClick={expandAll} disabled={rows.length === 0}>
                     <ChevronsUpDown />
@@ -167,10 +224,11 @@ export default function GanttPage(): React.JSX.Element {
                 </div>
                 <DownloadButton
                   path="/exports/gantt"
-                  filters={{ hub_id: hubId ?? undefined }}
+                  filters={{ hub_id: hubId ?? undefined, region: region ?? undefined }}
                   fallbackFilename="gantt-export"
                   className="ml-auto"
                 />
+                </div>
               </CardContent>
             </Card>
 
@@ -254,10 +312,10 @@ export default function GanttPage(): React.JSX.Element {
                       />
                     ) : data.rows.length === 0 ? (
                       <EmptyState
-                        title={isFiltered ? 'No projects match this hub filter' : 'No projects in scope'}
+                        title={isFiltered ? 'No projects match these filters' : 'No projects in scope'}
                         description={
                           isFiltered
-                            ? 'Try clearing the hub filter in the header.'
+                            ? 'Try clearing the toolbar filters or the hub filter in the header.'
                             : 'There are no projects visible in your hub scope.'
                         }
                       />
@@ -266,7 +324,10 @@ export default function GanttPage(): React.JSX.Element {
                         <GanttLegend />
                         <GanttChart
                           rows={data.rows}
-                          zoom={zoom}
+                          zoom={zoomPx}
+                          density={forest ? 'forest' : 'comfortable'}
+                          weeklyCounts={data.weekly_active_counts}
+                          showStats={!hideStats}
                           expandedIds={expandedIds}
                           onToggleExpand={handleToggleExpand}
                           onFreezeClick={handleFreezeClick}

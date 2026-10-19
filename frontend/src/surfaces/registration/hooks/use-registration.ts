@@ -34,6 +34,8 @@ function retryUnlessAuth(failureCount: number, error: Error): boolean {
 
 export interface UseProjectListParams {
   hubId?: string | undefined;
+  /** P13-T17: server-side search; already debounced by the caller. */
+  q?: string | undefined;
   category?: string | undefined;
   status?: string | undefined;
   priority?: string | undefined;

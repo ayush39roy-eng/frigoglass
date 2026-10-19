@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { screen } from '@testing-library/react';
+import { screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
 import { renderWithProviders } from '@/test/render';
@@ -29,7 +29,8 @@ describe('ChamberTable', () => {
   it('renders every field verbatim from the API row', () => {
     renderWithProviders(<ChamberTable rows={ROWS} canEdit onEdit={vi.fn()} onDelete={vi.fn()} />);
     expect(screen.getByText('GR-CH1')).toBeInTheDocument();
-    expect(screen.getByText('Greece')).toBeInTheDocument();
+    // P13-T17: the lab region is the group header, not a column.
+    expect(screen.getByText('Greece labs')).toBeInTheDocument();
     expect(screen.getByText('2')).toBeInTheDocument();
     expect(screen.getByText('PDD-F')).toBeInTheDocument();
   });
@@ -49,5 +50,21 @@ describe('ChamberTable', () => {
     expect(onEdit).toHaveBeenCalledWith(ROWS[0]);
     await user.click(screen.getByRole('button', { name: 'Delete GR-CH1' }));
     expect(onDelete).toHaveBeenCalledWith(ROWS[0]);
+  });
+
+  it('P13-T17: groups chambers by lab region in Greece / India / Romania order', () => {
+    const rows = [
+      { ...ROWS[0]!, id: 'c2', code: 'RO-CH1', lab_region: 'Romania' as const },
+      { ...ROWS[0]!, id: 'c3', code: 'IN-CH1', lab_region: 'India' as const },
+      ROWS[0]!,
+    ];
+    renderWithProviders(<ChamberTable rows={rows} canEdit={false} onEdit={vi.fn()} onDelete={vi.fn()} />);
+    expect(screen.getAllByRole('rowheader').map((h) => h.textContent)).toEqual([
+      'Greece labs1 chamber',
+      'India labs1 chamber',
+      'Romania labs1 chamber',
+    ]);
+    expect(within(screen.getByTestId('chamber-group-India')).getByText('IN-CH1')).toBeInTheDocument();
+    expect(within(screen.getByTestId('chamber-group-India')).getByTestId('flag-India')).toBeInTheDocument();
   });
 });

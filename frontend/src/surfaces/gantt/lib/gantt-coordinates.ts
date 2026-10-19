@@ -34,6 +34,15 @@ export const WEEK_WIDTH_PX: Record<GanttZoom, number> = {
 export const PROJECT_ROW_HEIGHT = 40;
 export const STEP_ROW_HEIGHT = 28;
 
+/** P13-T13: row density. `comfortable` shows the row meta (leader, code, type,
+ *  D/L weeks) on a taller project row; `forest` is the compact overview — one
+ *  line per project, so many more rows fit on screen. */
+export type GanttDensity = 'comfortable' | 'forest';
+export const ROW_HEIGHTS: Record<GanttDensity, { project: number; step: number }> = {
+  comfortable: { project: 58, step: STEP_ROW_HEIGHT },
+  forest: { project: 26, step: 22 },
+};
+
 export interface WeekScale {
   /** First week rendered (1-indexed, absolute). */
   readonly originWeek: number;
@@ -45,8 +54,24 @@ export interface WeekScale {
   readonly totalWidthPx: number;
 }
 
-export function makeWeekScale(zoom: GanttZoom, horizonWeeks: number = DISPLAY_HORIZON_WEEKS): WeekScale {
-  const weekWidthPx = WEEK_WIDTH_PX[zoom];
+/** P13-T13 (API_CONTRACT_P13 §7): the toolbar's px zoom slider, 16–48 px per
+ *  week. 16 keeps the whole 52-week year roughly in view (the old "weeks"
+ *  level); 48 is the old "days" level. */
+export const ZOOM_MIN_PX = 16;
+export const ZOOM_MAX_PX = 48;
+export const ZOOM_STEP_PX = 4;
+export const ZOOM_DEFAULT_PX = ZOOM_MIN_PX;
+
+/** Clamp a slider value into the 16–48 px range, rounding to whole pixels. */
+export function clampZoomPx(px: number): number {
+  if (!Number.isFinite(px)) return ZOOM_DEFAULT_PX;
+  return Math.min(ZOOM_MAX_PX, Math.max(ZOOM_MIN_PX, Math.round(px)));
+}
+
+/** `zoom` is a named level or, since P13-T13, a px-per-week value (clamped
+ *  16–48). Either way it changes only `weekWidthPx`, never the data query. */
+export function makeWeekScale(zoom: GanttZoom | number, horizonWeeks: number = DISPLAY_HORIZON_WEEKS): WeekScale {
+  const weekWidthPx = typeof zoom === 'number' ? clampZoomPx(zoom) : WEEK_WIDTH_PX[zoom];
   return {
     originWeek: 1,
     horizonWeeks,

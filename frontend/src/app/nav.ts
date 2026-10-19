@@ -3,14 +3,15 @@ import {
   Boxes,
   CalendarRange,
   ClipboardCheck,
+  Download,
   FilePlus2,
   FolderKanban,
   GaugeCircle,
+  History,
   LayoutDashboard,
   LayoutGrid,
   ScrollText,
   SquareKanban,
-  Star,
   UsersRound,
   Workflow,
 } from 'lucide-react';
@@ -58,8 +59,11 @@ export interface SurfaceNavItem {
    * The `core.rbac.Surface` value this nav item is gated on (ADR 0010). The
    * sidebar hides the item unless `GET /me`'s `permissions[surface].read` is
    * true, and the route guard renders a 403 page for a direct URL hit.
+   *
+   * `null` (P13-T15, `/downloads`): any authenticated user — the page has no
+   * surface permission of its own; its endpoint scopes rows to the caller.
    */
-  surface: SurfaceKey;
+  surface: SurfaceKey | null;
   /**
    * Density zone this surface renders in (src/components/layout/density-zone.tsx).
    *
@@ -82,21 +86,6 @@ export const SURFACES: readonly SurfaceNavItem[] = [
     task: 'P4-T02',
     summary:
       'Portfolio-wide view: within-year completion count, spillover and left-out totals, per-hub rollups — all sourced from the active schedule run (Invariant I9).',
-    group: 'Plan',
-    density: 'overview',
-  },
-  {
-    path: '/vip',
-    // P12 (ADR 0022 §1): reuses the `dashboard` permission, the same reasoning
-    // as the Projects page — a ranked view of facts the Dashboard already
-    // serves, not a new capability. Placed directly after Dashboard.
-    surface: 'dashboard',
-    label: 'VIP projects',
-    title: 'VIP Projects',
-    icon: Star,
-    task: 'P12-T05',
-    summary:
-      'The critical 10–15 projects per hub for the plan year or the next: pinned projects first, then ranked by priority and score, each with served finish, health, progress and tracking status.',
     group: 'Plan',
     density: 'overview',
   },
@@ -243,5 +232,34 @@ export const SURFACES: readonly SurfaceNavItem[] = [
       'Read-only, filterable view of every mutation recorded in the immutable append-only audit log — Auditor and Admin roles only.',
     group: 'Data',
     density: 'working',
+  },
+  {
+    path: '/history',
+    // P13-T15 (API_CONTRACT_P13 §7): gated on `matrix` read — the permission
+    // that already gates the scenario version list (`GET /scenarios/versions`).
+    // Every role with matrix read also reads the schedule-run list
+    // (`GET /schedule-runs`: dashboard / capacity / gantt read).
+    surface: 'matrix',
+    label: 'Versions & History',
+    title: 'Versions & History',
+    icon: History,
+    task: 'P13-T15',
+    summary:
+      'Read-only history: every schedule run with the projects whose finish or within-year outcome changed against the run before it, and every applied prioritization scenario version.',
+    group: 'Data',
+    density: 'working',
+  },
+  {
+    path: '/downloads',
+    // P13-T15: any signed-in user; `GET /export-jobs` returns the caller's own
+    // jobs (Admin: all).
+    surface: null,
+    label: 'Downloads',
+    title: 'Downloads',
+    icon: Download,
+    task: 'P13-T15',
+    summary: 'Your recent export jobs (CSV / XLSX), with a download link once each is ready.',
+    group: 'Data',
+    density: 'overview',
   },
 ] as const;

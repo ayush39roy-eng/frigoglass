@@ -62,8 +62,9 @@ from tests.conftest import run_alembic
 # export_jobs + P5-T06's notifications + P9-T01's workflows,
 # workflow_lead_times, hub_work_calendars, project_files, project_comments +
 # P10-T01's project_access_grants + P12-T03's stage_checkins and
-# schedule_run_follow_ups), plus `alembic_version`.
-EXPECTED_TABLE_COUNT = 31
+# schedule_run_follow_ups + P14-T02's vip_items and vip_item_projects), plus
+# `alembic_version`.
+EXPECTED_TABLE_COUNT = 33
 
 EXPECTED_ENUM_TYPES = {
     "lab_region",
@@ -121,6 +122,10 @@ _STEP_TIMING_COLUMNS_SQL = (
 _IS_VIP_COLUMN_SQL = (
     "SELECT count(*) FROM information_schema.columns "
     "WHERE table_name = 'projects' AND column_name = 'is_vip'"
+)
+_VIP_TABLES_SQL = (
+    "SELECT count(*) FROM information_schema.tables "
+    "WHERE table_name IN ('vip_items', 'vip_item_projects')"
 )
 _FOLLOW_UP_SEED_SQL = "SELECT count(*) FROM schedule_run_follow_ups WHERE id = 1 AND NOT pending"
 P12_TRIGGERS = ("trg_stage_checkins_append_only", "trg_stage_checkins_append_only_truncate")
@@ -198,12 +203,24 @@ def test_migration_up_down_up_down_cycle():
         assert _query_scalar(url, _FOLLOW_UP_SEED_SQL) == 1
         assert _query_scalar(url, _STEP_TIMING_COLUMNS_SQL) == 2
 
+        # --- P14-T02 (`p14a_vip_items`, head): the two VIP board tables;
+        # downgrade just it, then re-apply. Every older target below also
+        # undoes it, so their offsets include these two tables.
+        assert _query_scalar(url, _VIP_TABLES_SQL) == 2
+        r = run_alembic(["downgrade", "p13a_oem_lab_region"], url)
+        assert r.returncode == 0, f"downgrade to p13a (P14-T02) failed:\n{r.stdout}\n{r.stderr}"
+        assert _table_count(url) == EXPECTED_TABLE_COUNT - 2
+        assert _query_scalar(url, _VIP_TABLES_SQL) == 0
+        r = run_alembic(["upgrade", "head"], url)
+        assert r.returncode == 0, f"upgrade head after P14-T02 downgrade failed:\n{r.stderr}"
+        assert _query_scalar(url, _VIP_TABLES_SQL) == 2
+
         # --- P12-T03 (`p12b_vip_checkins`, head): stage_checkins + its
         # append-only triggers, schedule_run_follow_ups, projects.is_vip;
         # downgrade just it, then re-apply.
         r = run_alembic(["downgrade", "p12a_step_timing"], url)
         assert r.returncode == 0, f"downgrade to p12a (P12-T03) failed:\n{r.stdout}\n{r.stderr}"
-        assert _table_count(url) == EXPECTED_TABLE_COUNT - 2
+        assert _table_count(url) == EXPECTED_TABLE_COUNT - 4
         assert not (set(P12_TRIGGERS) & _trigger_names(url))
         assert _query_scalar(url, _IS_VIP_COLUMN_SQL) == 0
         assert _query_scalar(url, _STEP_TIMING_COLUMNS_SQL) == 2
@@ -216,7 +233,7 @@ def test_migration_up_down_up_down_cycle():
         r = run_alembic(["downgrade", "d451acccb1ab"], url)
         assert r.returncode == 0, f"downgrade to d451acccb1ab (P12) failed:\n{r.stdout}\n{r.stderr}"
         assert _query_scalar(url, _STEP_TIMING_COLUMNS_SQL) == 0
-        assert _table_count(url) == EXPECTED_TABLE_COUNT - 2
+        assert _table_count(url) == EXPECTED_TABLE_COUNT - 4
         r = run_alembic(["upgrade", "head"], url)
         assert r.returncode == 0, f"upgrade head after P12 downgrade failed:\n{r.stderr}"
         assert _query_scalar(url, _STEP_TIMING_COLUMNS_SQL) == 2
@@ -234,7 +251,7 @@ def test_migration_up_down_up_down_cycle():
         assert r.returncode == 0, f"downgrade -1 (P10-T01) failed:\n{r.stdout}\n{r.stderr}"
         assert _query_scalar(url, _ACCESS_GRANTS_TABLE_SQL) == 0
         assert _query_scalar(url, _MANAGER_ID_COLUMN_SQL) == 0
-        assert _table_count(url) == EXPECTED_TABLE_COUNT - 3
+        assert _table_count(url) == EXPECTED_TABLE_COUNT - 5
         r = run_alembic(["upgrade", "head"], url)
         assert r.returncode == 0, f"upgrade head after P10-T01 -1 failed:\n{r.stderr}"
         assert _query_scalar(url, _ACCESS_GRANTS_TABLE_SQL) == 1
@@ -266,7 +283,7 @@ def test_migration_up_down_up_down_cycle():
         assert r.returncode == 0, f"downgrade to 5c9e1f2a7b3d failed:\n{r.stdout}\n{r.stderr}"
         assert _query_scalar(url, _STAGE_BLOCKED_SQL) == 0
         assert _query_scalar(url, _RUN_ID_NULLABLE_SQL) == "NO"
-        assert _table_count(url) == EXPECTED_TABLE_COUNT - 3
+        assert _table_count(url) == EXPECTED_TABLE_COUNT - 5
         r = run_alembic(["upgrade", "head"], url)
         assert r.returncode == 0, f"upgrade head after P9-T03 -1 failed:\n{r.stdout}\n{r.stderr}"
         assert _query_scalar(url, _STAGE_BLOCKED_SQL) == 1
@@ -274,7 +291,7 @@ def test_migration_up_down_up_down_cycle():
         # --- P9-T01: downgrade to just before `5c9e1f2a7b3d`, then re-apply --
         r = run_alembic(["downgrade", "2418c6385a72"], url)
         assert r.returncode == 0, f"downgrade to 2418c6385a72 failed:\n{r.stdout}\n{r.stderr}"
-        assert _table_count(url) == EXPECTED_TABLE_COUNT - 8
+        assert _table_count(url) == EXPECTED_TABLE_COUNT - 10
         assert not (set(P9_TRIGGERS) & _trigger_names(url))
         assert "workflow_step_status" not in _enum_type_names(url)
         r = run_alembic(["upgrade", "head"], url)

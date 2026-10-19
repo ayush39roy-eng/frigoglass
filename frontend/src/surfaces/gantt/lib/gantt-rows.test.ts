@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
-import { buildVisualRows, visualRowHeight, weeklyStepDensity } from './gantt-rows';
+import { buildVisualRows, visualRowHeight } from './gantt-rows';
 import { PROJECT_ROW_HEIGHT, STEP_ROW_HEIGHT } from './gantt-coordinates';
 import type { GanttProjectRow, GanttStepRow } from '../api/types';
+import { P13_GANTT_ROW_DEFAULTS } from '../test-fixtures';
 
 function step(seq: number, start: number, end: number): GanttStepRow {
   return {
@@ -51,6 +52,7 @@ function project(id: string, steps: GanttStepRow[]): GanttProjectRow {
     workflow_id: 'PDD',
     is_vip: false,
     tracking_status: 'idle',
+    ...P13_GANTT_ROW_DEFAULTS,
     steps,
   };
 }
@@ -78,45 +80,5 @@ describe('buildVisualRows', () => {
     const visual = buildVisualRows(rows, new Set(['a']));
     expect(visualRowHeight(visual[0])).toBe(PROJECT_ROW_HEIGHT);
     expect(visualRowHeight(visual[1])).toBe(STEP_ROW_HEIGHT);
-  });
-});
-
-describe('weeklyStepDensity — view-derived scan aid', () => {
-  it('counts step bars intersecting each week across the shown projects', () => {
-    const rows = [
-      project('a', [step(1, 1, 2), step(2, 2, 3)]),
-      project('b', [step(1, 2, 2)]),
-    ];
-    const density = weeklyStepDensity(rows, 78);
-    expect(density[1]).toBe(1); // only a.step1
-    expect(density[2]).toBe(3); // a.step1 + a.step2 + b.step1
-    expect(density[3]).toBe(1); // a.step2
-    expect(density[4]).toBe(0);
-    expect(density).toHaveLength(79);
-  });
-
-  it('ignores unscheduled steps', () => {
-    const s = step(1, 1, 2);
-    s.planned_start_week = null;
-    const density = weeklyStepDensity([project('a', [s])], 78);
-    expect(density.every((c) => c === 0)).toBe(true);
-  });
-});
-
-describe('weeklyStepDensity — P9 (DAG parallelism, skipped steps)', () => {
-  it('counts overlapping steps of one project independently (no start[n] > end[n-1] assumption)', () => {
-    const rows = [project('a', [step(1, 5, 8), step(2, 6, 7)])];
-    const density = weeklyStepDensity(rows, 10);
-    expect(density[5]).toBe(1);
-    expect(density[6]).toBe(2);
-    expect(density[7]).toBe(2);
-    expect(density[8]).toBe(1);
-  });
-
-  it('ignores skipped steps entirely', () => {
-    const skipped = { ...step(2, 8, 8), skipped: true };
-    const rows = [project('a', [step(1, 5, 8), skipped])];
-    const density = weeklyStepDensity(rows, 10);
-    expect(density[8]).toBe(1);
   });
 });

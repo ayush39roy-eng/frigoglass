@@ -14,6 +14,7 @@ import { renderWithProviders } from '@/test/render';
 
 import type { PriorityMatrixRow } from '../api/types';
 import { MatrixTable } from './matrix-table';
+import { P13_MATRIX_ROW_DEFAULTS } from '../test-fixtures';
 
 function row(overrides: Partial<PriorityMatrixRow> = {}): PriorityMatrixRow {
   return {
@@ -39,6 +40,7 @@ function row(overrides: Partial<PriorityMatrixRow> = {}): PriorityMatrixRow {
     tcogs_eur: 5400,
     selling_price_eur: 8640,
     gross_margin_pct: 37.5,
+    ...P13_MATRIX_ROW_DEFAULTS,
     ...overrides,
   };
 }

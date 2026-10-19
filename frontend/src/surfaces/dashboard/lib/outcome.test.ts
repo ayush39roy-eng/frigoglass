@@ -16,6 +16,7 @@ function row(overrides: Partial<CompletingWithinYearRow>): CompletingWithinYearR
     blocked: false,
     cat_not_allowed: false,
     last_step_end_week: null,
+    type: null,
     ...overrides,
   };
 }

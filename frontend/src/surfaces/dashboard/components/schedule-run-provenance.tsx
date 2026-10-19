@@ -32,16 +32,25 @@ import type { ScheduleRunSummary } from '../api/types';
 export interface ScheduleRunProvenanceProps {
   scheduleRunVersion: number | null;
   activeRun: ScheduleRunSummary | null | undefined;
+  showVersionChip?: boolean;
+  showSolverChip?: boolean;
+  showTimestampChip?: boolean;
 }
 
 export function ScheduleRunProvenance({
   scheduleRunVersion,
   activeRun,
+  showVersionChip = false,
+  showSolverChip = false,
+  showTimestampChip = false,
 }: ScheduleRunProvenanceProps): React.JSX.Element {
   return (
     <RunProvenanceChips
       scheduleRunVersion={scheduleRunVersion}
       activeRun={activeRun}
+      showVersionChip={showVersionChip}
+      showSolverChip={showSolverChip}
+      showTimestampChip={showTimestampChip}
       leadIn="Schedule-outcome figures below are read directly from"
       srTail="Not recalculated in your browser (Invariant I9)."
     >

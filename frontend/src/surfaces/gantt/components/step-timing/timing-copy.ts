@@ -15,6 +15,7 @@ export const TIMING_COPY = {
   notNeeded:
     "Saved. This lab step is skipped while the project needs no certification testing, so the timeline doesn't change. The timing is kept for when testing is turned back on.",
   unchanged: 'Nothing changed — the step already has this timing.',
+  dispatchFailed: 'The timing is saved, but the recalculation could not be started. Press Recalculate on the project.',
   queuedWithoutRun:
     'Saved. The recalculation was queued but no run was reported back — press Recalculate on the project.',
   staleAfterFailure:

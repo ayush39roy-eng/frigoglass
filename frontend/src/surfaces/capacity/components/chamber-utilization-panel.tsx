@@ -8,15 +8,13 @@ import { EmptyState } from '@/components/shared/empty-state';
 import type { ScheduleRunSummary, UtilizationMatrix } from '../api/types';
 import { CardInfo } from '@/components/ui/card-info';
 import { ChamberUtilizationHeatmap } from './chamber-utilization-heatmap';
-import { EngineerUtilizationPlaceholder } from './engineer-utilization-placeholder';
 
 /**
  * "A global resource utilization matrix (engineers × weeks, chambers × weeks)"
  * (`docs/PROJECT_AND_STACK.md` §2).
  *
- * Only the CHAMBER side renders (equipment — not personal data). The engineer
- * side is withheld pending GDPR sign-off; `data.engineers` is intentionally not
- * read here (OPEN_QUESTIONS #8 / P4-T08).
+ * Only the CHAMBER side renders here. The Engineers × weeks heatmap (ADR 0028,
+ * P15) is its own panel, `<EngineerUtilizationPanel>`, fed by its own endpoint.
  */
 
 export interface ChamberUtilizationPanelProps {
@@ -65,21 +63,17 @@ export function ChamberUtilizationPanel({
               description="Chamber utilization by week appears once the schedule is calculated."
               className="rounded-dash border-solid border-dash-hairline bg-dash-alt"
             />
-          ) : data.chambers.length === 0 ? (
+          ) : (!data.chambers || data.chambers.length === 0) ? (
             <EmptyState
               title="No chambers in scope"
               description="There are no lab chambers in your hub scope's lab region(s)."
               className="rounded-dash border-solid border-dash-hairline bg-dash-alt"
             />
           ) : (
-            <ChamberUtilizationHeatmap chambers={data.chambers} activeRun={activeRun} />
+            <ChamberUtilizationHeatmap chambers={data.chambers ?? []} activeRun={activeRun} />
           )}
         </section>
 
-        <section className="space-y-2 border-t border-dash-hairline pt-4">
-          <h3 className="label-caps text-text-muted">Engineers × weeks</h3>
-          <EngineerUtilizationPlaceholder />
-        </section>
       </CardContent>
     </BoltCard>
   );

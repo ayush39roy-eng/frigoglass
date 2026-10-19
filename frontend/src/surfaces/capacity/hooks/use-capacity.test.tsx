@@ -8,6 +8,7 @@ vi.mock('../api/capacity-api', () => ({
   fetchHubLoadVsCapacity: vi.fn(),
   fetchClassBreakdown: vi.fn(),
   fetchUtilizationMatrix: vi.fn(),
+  fetchEngineerUtilization: vi.fn(),
   fetchActiveScheduleRun: vi.fn(),
 }));
 
@@ -50,5 +51,18 @@ describe('capacity hooks', () => {
     const { result } = renderHook(() => useUtilizationMatrix(), { wrapper: Wrapper });
     await waitFor(() => expect(result.current.isError).toBe(true));
     expect(vi.mocked(api.fetchUtilizationMatrix)).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('useEngineerUtilization (P15)', () => {
+  it('sends hub_id and region from the global filter and keys on both', async () => {
+    const { useHubFilterStore } = await import('@/stores/hub-filter');
+    const { useEngineerUtilization } = await import('./use-capacity');
+    useHubFilterStore.setState({ hubId: 'hub-1', region: 'Greece' });
+    vi.mocked(api.fetchEngineerUtilization).mockResolvedValue({ week_range: [1, 52], current_week: 3, engineers: [] });
+    const { result } = renderHook(() => useEngineerUtilization(), { wrapper: wrapper() });
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(vi.mocked(api.fetchEngineerUtilization).mock.calls[0]?.slice(1)).toEqual(['hub-1', 'Greece']);
+    useHubFilterStore.setState({ hubId: null, region: null });
   });
 });

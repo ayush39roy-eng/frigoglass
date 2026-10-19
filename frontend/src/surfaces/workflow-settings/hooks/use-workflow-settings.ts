@@ -10,8 +10,11 @@
 import { useMutation, useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
 
 import { queryKeys } from '@/lib/query-keys';
+import type { WorkflowId } from '@/types/enums';
 
 import {
+  fetchBEquivalent,
+  fetchCategoryTimelines,
   fetchWorkflowSettings,
   retryUnlessAuth,
   saveChamber,
@@ -35,8 +38,29 @@ export function useWorkflowSettings() {
   });
 }
 
+/** P13-T16: served per-category preview timelines for one workflow. */
+export function useCategoryTimelines(workflow: WorkflowId) {
+  return useQuery({
+    queryKey: queryKeys.workflowCategoryTimelines(workflow),
+    queryFn: ({ signal }) => fetchCategoryTimelines(workflow, { signal }),
+    retry: retryUnlessAuth,
+  });
+}
+
+/** P13-T16: served B-equivalent ratios for one workflow. */
+export function useBEquivalent(workflow: WorkflowId) {
+  return useQuery({
+    queryKey: queryKeys.workflowBEquivalent(workflow),
+    queryFn: ({ signal }) => fetchBEquivalent(workflow, { signal }),
+    retry: retryUnlessAuth,
+  });
+}
+
 function afterSave(queryClient: QueryClient, result: WorkflowSettingsSaveResult): void {
   queryClient.setQueryData(queryKeys.workflowSettings(), result.settings);
+  // P13-T16: the previews derive from lead times and the DAG; refetch them.
+  void queryClient.invalidateQueries({ queryKey: queryKeys.workflowCategoryTimelines() });
+  void queryClient.invalidateQueries({ queryKey: queryKeys.workflowBEquivalent() });
   for (const key of [['gantt'], ['capacity'], ['projects'], ['dashboard'], ['workflow-template'], ['chambers']]) {
     void queryClient.invalidateQueries({ queryKey: key });
   }

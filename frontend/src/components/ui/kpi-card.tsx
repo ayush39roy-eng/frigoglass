@@ -97,6 +97,8 @@ export interface StatCardProps {
   feature?: boolean;
   variant?: StatVariant;
   badge?: StatBadge | null;
+  /** Optional block under the caption (P13: the per-country chips). */
+  footer?: React.ReactNode;
   className?: string;
 }
 
@@ -109,6 +111,7 @@ export function StatCard({
   feature = false,
   variant,
   badge,
+  footer,
   className,
 }: StatCardProps): React.JSX.Element {
   const motionTokens = useMotionTokens();
@@ -225,6 +228,7 @@ export function StatCard({
           {caption}
         </span>
       ) : null}
+      {footer ? <div className="relative">{footer}</div> : null}
     </motion.div>
   );
 }

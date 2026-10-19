@@ -40,7 +40,7 @@ class WorkspaceProject(ProjectRead):
     """
 
     hub: HubName
-    #: OQ#8: null unless the leader is the caller.
+    #: ADR 0028: the leader's name, served to any reader of the project.
     leader_engineer_name: str | None
 
 

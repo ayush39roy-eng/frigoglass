@@ -24,6 +24,30 @@ BookingStatus = Literal["available", "near_full", "full"]
 CapacityAreaName = Literal["Europe", "India"]
 
 
+class PriorityLoadSplit(BaseModel):
+    """P13 (docs/API_CONTRACT_P13.md §6): a load split by priority bucket, in
+    weeks, 2 dp. `P1`..`P4` are the project's priority band; `Queue` is band
+    `Q` or a null priority (`services.capacity_priority.priority_bucket`).
+    The five values sum to the load they split (to 2 dp)."""
+
+    P1: float
+    P2: float
+    P3: float
+    P4: float
+    Queue: float
+
+
+class PriorityCountSplit(BaseModel):
+    """P13 (§6): a project count split by the same priority buckets as
+    `PriorityLoadSplit`. The five values sum to the count they split."""
+
+    P1: int
+    P2: int
+    P3: int
+    P4: int
+    Queue: int
+
+
 class CapacityChamberRow(BaseModel):
     """One chamber's supply inputs and derived figures (ADR 0008), 2 dp."""
 
@@ -96,6 +120,14 @@ class HubCapacityRow(BaseModel):
     lab_booking_status_year: BookingStatus
     lab_booking_status_remaining: BookingStatus
     area: CapacityAreaName
+    # --- P13 (docs/API_CONTRACT_P13.md §6) --------------------------------
+    #: `design_load_weeks` split by the priority bucket of the hub's projects.
+    #: Same basis (active run, non-skipped design-kind steps); sums to it.
+    design_load_by_priority: PriorityLoadSplit
+    #: `lab_load_weeks` split by priority bucket. Same region-level basis
+    #: (every project of the row's lab region, repeated on each hub of the
+    #: region); sums to it.
+    lab_load_by_priority: PriorityLoadSplit
 
 
 class CapacityArea(BaseModel):
@@ -129,6 +161,40 @@ class CapacityArea(BaseModel):
     lab_booking_status_remaining: BookingStatus
 
 
+class CapacityTotals(BaseModel):
+    """P13-T11 addendum: the portfolio total over the served (filtered,
+    scoped) hub rows, so the browser never sums rows (I9/I19).
+
+    Same rule as `CapacityArea`: design figures are Σ over `hubs` (one per
+    hub row); lab figures are Σ over `lab_regions`, each region counted ONCE
+    (the hub rows repeat the region figure on every hub of the region).
+    Every input is the row's served 2 dp figure, rounded to 2 dp.
+    `*_load_by_priority` is the same Σ of the rows' splits and sums to the
+    load. `booked_pct = load / capacity × 100` (2 dp, null when capacity is
+    0) and the status follow ADR 0016. With no row everything is 0 / null /
+    `available`.
+    """
+
+    hubs: list[HubName]
+    lab_regions: list[LabRegion]
+    design_load_weeks: int
+    design_capacity_year: float
+    design_capacity_remaining: float
+    design_booked_pct_year: float | None
+    design_booked_pct_remaining: float | None
+    design_booking_status_year: BookingStatus
+    design_booking_status_remaining: BookingStatus
+    design_load_by_priority: PriorityLoadSplit
+    lab_load_weeks: float
+    lab_capacity_year: float
+    lab_capacity_remaining: float
+    lab_booked_pct_year: float | None
+    lab_booked_pct_remaining: float | None
+    lab_booking_status_year: BookingStatus
+    lab_booking_status_remaining: BookingStatus
+    lab_load_by_priority: PriorityLoadSplit
+
+
 class HubCapacitySummary(BaseModel):
     has_active_schedule_run: bool
     schedule_run_version: int | None
@@ -140,12 +206,43 @@ class HubCapacitySummary(BaseModel):
     full_threshold_pct: int
     #: Europe first, then India. An area with no in-scope hub is omitted.
     areas: list[CapacityArea]
+    #: P13-T11 addendum: the total over `rows` (design per hub, lab per region once).
+    totals: CapacityTotals
+
+
+class ClassBreakdownHubRow(BaseModel):
+    """P13 (§6): one hub's share of a category row. Only hubs with at least
+    one project of the category in the active run are listed, by hub name."""
+
+    hub: HubName
+    deliverable: int
+    left_out: int
 
 
 class ClassBreakdownRow(BaseModel):
+    """One category of the Capacity class breakdown (active run).
+
+    P13-F06 (2026-10-19): **Deliverable** = a project in the active run whose
+    live status is schedulable (`In Buyoff`, `Under Industrialization`,
+    `In Development`, `In Queue`) and that is not `left_out`. **Left out** =
+    a schedulable project the run marked `left_out`. Commercialized, On Hold,
+    Cancelled and Draft projects are not planned by the scheduler and are
+    counted in neither column, nor in the priority splits, `by_hub` or
+    `total_count`.
+    """
+
     category: ProjectCategory
     deliverable_count: int
     left_out_count: int
+    # --- P13 (docs/API_CONTRACT_P13.md §6) --------------------------------
+    #: `deliverable_count + left_out_count`, served (P13-T11 addendum).
+    total_count: int
+    #: `deliverable_count` split by priority bucket; sums to it.
+    deliverable_by_priority: PriorityCountSplit
+    #: `left_out_count` split by priority bucket; sums to it.
+    left_out_by_priority: PriorityCountSplit
+    #: Per hub; Σ deliverable = `deliverable_count`, Σ left_out = `left_out_count`.
+    by_hub: list[ClassBreakdownHubRow]
 
 
 class ClassBreakdown(BaseModel):
@@ -198,3 +295,40 @@ class UtilizationMatrix(BaseModel):
     schedule_run_version: int | None
     engineers: list[EngineerWeekLoad]
     chambers: list[ChamberWeekLoad]
+
+
+class EngineerWeekUtilization(BaseModel):
+    """One week of one engineer (ADR 0028). `capacity` is the engineer's
+    FTE-weighted working weeks spread evenly over the year (ADR 0008)."""
+
+    week: int
+    booked: float
+    capacity: float
+    #: `booked / capacity * 100` (2 dp). With zero capacity: 100.0 when
+    #: anything is booked (the ADR 0016 "full" rule), else 0.0. Never null.
+    utilization_pct: float
+
+
+class EngineerUtilizationRow(BaseModel):
+    """One engineer's Engineers x Weeks row (ADR 0028). No financial fields."""
+
+    id: uuid.UUID
+    name: str
+    hub: HubName
+    #: The categories the engineer may lead, comma-joined (e.g. "A, B, OEM").
+    role: str
+    #: Design-step weeks booked over the whole run horizon (incl. weeks > 52).
+    #: Summed over a hub's engineers this equals the hub design load (I6).
+    total_booked: float
+    #: FTE-weighted working weeks in the 52-week year (the sum of `weeks[].capacity`).
+    total_capacity: float
+    #: `total_booked / total_capacity * 100` (same zero-capacity rule as a week).
+    utilization_pct: float
+    #: Exactly W1..W52, in order.
+    weeks: list[EngineerWeekUtilization]
+
+
+class EngineerUtilizationResponse(BaseModel):
+    week_range: tuple[int, int]
+    current_week: int
+    engineers: list[EngineerUtilizationRow]

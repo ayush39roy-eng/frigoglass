@@ -5,6 +5,7 @@ import { renderWithProviders } from '@/test/render';
 
 import type { PriorityMatrixRow } from '../api/types';
 import { ScoreCell } from './score-cell';
+import { P13_MATRIX_ROW_DEFAULTS } from '../test-fixtures';
 
 function row(overrides: Partial<PriorityMatrixRow> = {}): PriorityMatrixRow {
   return {
@@ -30,6 +31,7 @@ function row(overrides: Partial<PriorityMatrixRow> = {}): PriorityMatrixRow {
     tcogs_eur: 5000,
     selling_price_eur: 8000,
     gross_margin_pct: 37.5,
+    ...P13_MATRIX_ROW_DEFAULTS,
     ...overrides,
   };
 }

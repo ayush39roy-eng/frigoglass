@@ -32,6 +32,8 @@ export interface VirtualDataTableProps<Row> {
   estimateRowHeight?: number;
   /** Max viewport height for the scroll area. */
   maxHeight?: number;
+  /** `ink`: the client mock-up's dark header row (P13 all-projects register). */
+  headerTone?: 'default' | 'ink';
   className?: string;
 }
 
@@ -48,6 +50,7 @@ export function VirtualDataTable<Row>({
   caption,
   estimateRowHeight = 40,
   maxHeight = 440,
+  headerTone = 'default',
   className,
 }: VirtualDataTableProps<Row>): React.JSX.Element {
   const scrollRef = React.useRef<HTMLDivElement>(null);
@@ -82,7 +85,12 @@ export function VirtualDataTable<Row>({
       <div role="table" aria-label={caption} aria-rowcount={rows.length}>
         <div
           role="row"
-          className="sticky top-0 z-10 grid items-center gap-3 border-b-[1.5px] border-border bg-surface-sunken px-5 py-3 text-2xs font-bold uppercase tracking-wider text-text-subtle"
+          className={cn(
+            'sticky top-0 z-10 grid items-center gap-3 border-b-[1.5px] px-5 py-3 text-2xs font-bold uppercase tracking-wider',
+            headerTone === 'ink'
+              ? 'border-transparent bg-ink text-ink-fg'
+              : 'border-border bg-surface-sunken text-text-subtle',
+          )}
           style={{ gridTemplateColumns: gridTemplate }}
         >
           {columns.map((col) => (

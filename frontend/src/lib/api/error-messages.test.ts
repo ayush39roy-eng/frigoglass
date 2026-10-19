@@ -18,6 +18,11 @@ describe('apiErrorMessage — codes, not detail text', () => {
     }
     expect(apiErrorMessage(new ApiError(409, 'x', undefined, 'RUN_IN_PROGRESS'), 'f')).toMatch(/already running/);
   });
+  it('P14 codes read as clear messages: PREVIEW_STALE, PREVIEW_TIMEOUT, SOLVER_UNAVAILABLE', () => {
+    expect(apiErrorMessage(new ApiError(409, 'x', 'raw', 'PREVIEW_STALE'), 'f')).toMatch(/nothing was applied/);
+    expect(apiErrorMessage(new ApiError(503, 'x', 'raw', 'PREVIEW_TIMEOUT'), 'f')).toMatch(/took too long/);
+    expect(apiErrorMessage(new ApiError(503, 'x', 'raw', 'SOLVER_UNAVAILABLE'), 'f')).toMatch(/scheduler is unavailable/);
+  });
   it('appends field errors for STAGE_INCONSISTENT', () => {
     const detail = JSON.stringify([{ loc: ['body', 'actual_end_week'], msg: 'required when Done', type: 'value_error' }]);
     expect(apiErrorMessage(new ApiError(422, 'x', detail, 'STAGE_INCONSISTENT'), 'f')).toBe(

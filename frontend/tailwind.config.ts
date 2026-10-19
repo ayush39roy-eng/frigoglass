@@ -103,6 +103,21 @@ export default {
           9: withAlpha('dash-cat-ink-9'),
           10: withAlpha('dash-cat-ink-10'),
         },
+        // P14 (ADR 0027 §6): VIP pillar accents (tokens.css "VIP PILLAR ACCENTS").
+        vip: {
+          innovation: withAlpha('vip-innovation'),
+          'innovation-fg': withAlpha('vip-innovation-fg'),
+          'innovation-subtle': withAlpha('vip-innovation-subtle'),
+          'innovation-ink': withAlpha('vip-innovation-ink'),
+          market: withAlpha('vip-market'),
+          'market-fg': withAlpha('vip-market-fg'),
+          'market-subtle': withAlpha('vip-market-subtle'),
+          'market-ink': withAlpha('vip-market-ink'),
+          performance: withAlpha('vip-performance'),
+          'performance-fg': withAlpha('vip-performance-fg'),
+          'performance-subtle': withAlpha('vip-performance-subtle'),
+          'performance-ink': withAlpha('vip-performance-ink'),
+        },
         // Structural hue. The sidebar rail and its furniture — never an action.
         sidebar: {
           DEFAULT: withAlpha('color-sidebar'),

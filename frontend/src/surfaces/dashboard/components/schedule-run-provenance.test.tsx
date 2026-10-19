@@ -19,14 +19,30 @@ const greedyRun: ScheduleRunSummary = {
 };
 
 describe('ScheduleRunProvenance', () => {
-  it('names the exact active schedule run version the figures come from', () => {
+  it('names the exact active schedule run version in screen-reader text while omitting visible badges by default', () => {
     renderWithProviders(
       <ScheduleRunProvenance scheduleRunVersion={7} activeRun={greedyRun} />,
     );
     expect(screen.getByTestId('schedule-run-provenance')).toHaveTextContent(
       /active schedule run\s+v7/i,
     );
+    expect(screen.queryByText(/greedy scheduler/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/^Run v7$/i)).not.toBeInTheDocument();
+  });
+
+  it('renders visible badges when explicitly enabled', () => {
+    renderWithProviders(
+      <ScheduleRunProvenance
+        scheduleRunVersion={7}
+        activeRun={greedyRun}
+        showVersionChip={true}
+        showSolverChip={true}
+      />,
+    );
     expect(screen.getByText(/greedy scheduler/i)).toBeInTheDocument();
+    expect(
+      screen.getByText((_, el) => el?.textContent?.trim() === 'Run v7'),
+    ).toBeInTheDocument();
   });
 
   it('falls back to the version from the I9 endpoint when /schedule-runs/active is unavailable', () => {

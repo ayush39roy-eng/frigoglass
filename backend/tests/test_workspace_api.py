@@ -236,7 +236,7 @@ async def test_workspace_read_model(db_session):
     assert a["assigned_engineer_name"] is None  # OQ#8: not the caller
     assert stages[2]["kind"] == "elapsed"
     assert body["project"]["hub"] == "R&D-Greece"
-    assert body["project"]["leader_engineer_name"] is None  # OQ#8
+    assert body["project"]["leader_engineer_name"] == "Lena Leader"  # ADR 0028
     assert body["project"]["customer_name"] == "Secret Customer"  # PM reads Registration
     assert body["priority_score"]["normalized_pct"] == 60
     assert body["files"] == [] and isinstance(body["activity"], list)

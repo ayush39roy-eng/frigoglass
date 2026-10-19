@@ -15,7 +15,7 @@ import { useQuery } from '@tanstack/react-query';
 import type { TrackingStatus } from '@/components/shared/tracking-status-meta';
 import { queryKeys } from '@/lib/query-keys';
 import type { Id } from '@/types/common';
-import type { HubName, WorkflowStepKind, WorkflowStepStatus } from '@/types/enums';
+import type { HubName, LabRegion, WorkflowStepKind, WorkflowStepStatus } from '@/types/enums';
 
 import { ApiError, apiGet, apiSend, type ApiRequestOptions } from './client';
 
@@ -80,7 +80,7 @@ export interface CheckInSubmitResponse {
   accepted: number;
   projects_marked_stale: Id[];
   /** One greedy run per batch (ADR 0023 §1). `deferred` ⇒ a coalesced follow-up run is recorded. */
-  recalc_status: 'queued' | 'deferred' | 'not_needed';
+  recalc_status: 'queued' | 'deferred' | 'not_needed' | 'dispatch_failed';
   /** Set only when `queued`. */
   schedule_run_id: Id | null;
   /** The run active before the batch; null if none / not queued. */
@@ -119,9 +119,10 @@ export const CHECKIN_REASON_MAX = 2000;
 export function fetchCheckInsDue(
   hubId: string | null,
   options: Pick<ApiRequestOptions, 'signal'> = {},
+  region: LabRegion | null = null,
 ): Promise<CheckInDueResponse> {
   return apiGet<CheckInDueResponse>('/check-ins/due', {
-    query: { hub_id: hubId ?? undefined },
+    query: { hub_id: hubId ?? undefined, region: region ?? undefined },
     signal: options.signal,
   });
 }
@@ -169,10 +170,11 @@ export function checkInEntryErrors(err: unknown): CheckInEntryError[] {
 
 /** `GET /check-ins/due?hub_id=`. The sidebar badge and the check-in page share
  *  this key, so one fetch serves both. */
-export function useCheckInsDue(hubId: string | null, enabled = true) {
+export function useCheckInsDue(hubId: string | null, enabled = true, region: LabRegion | null = null) {
   return useQuery({
-    queryKey: queryKeys.checkInsDue(hubId),
-    queryFn: ({ signal }) => fetchCheckInsDue(hubId, { signal }),
+    // P13 (ADR 0025): the country filter is keyed and sent beside the hub.
+    queryKey: queryKeys.checkInsDue(hubId, region),
+    queryFn: ({ signal }) => fetchCheckInsDue(hubId, { signal }, region),
     enabled,
   });
 }

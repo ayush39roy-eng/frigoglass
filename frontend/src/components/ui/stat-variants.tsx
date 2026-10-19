@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { motion } from 'framer-motion';
 
-import { formatInteger } from '@/lib/format';
+import { formatBookedPct, formatInteger } from '@/lib/format';
 import { useMotionTokens } from '@/lib/motion';
 import { cn } from '@/lib/utils';
 
@@ -113,6 +113,16 @@ export interface MeterCardProps {
    * `surfaces/capacity/components/capacity-stat.tsx`'s own `formatValue`.
    */
   formatValue?: (value: number) => string;
+  /** Optional caption block under the meter (P13-T11: the Capacity KPI's
+   *  per-priority and per-hub lines). Additive; omitted renders as before. */
+  footer?: React.ReactNode;
+  /**
+   * A served "% used" figure (P13-T11 addendum: Capacity's served booked %,
+   * I19). When given (a number or `null` for "no capacity"), it is printed to
+   * the served two decimals and drives the meter, and the card computes
+   * nothing. Omitted → the previous value / capacity behaviour.
+   */
+  servedPct?: number | null;
 }
 
 /** A load figure against its capacity, with a thick animated meter. */
@@ -124,10 +134,14 @@ export function MeterCard({
   icon: Icon,
   accent = 'primary',
   formatValue = formatInteger,
+  footer,
+  servedPct,
 }: MeterCardProps): React.JSX.Element {
   const { reduced } = useMotionTokens();
-  const pct = capacity > 0 ? Math.round((value / capacity) * 100) : 0;
-  const over = pct > 100;
+  const hasServed = servedPct !== undefined;
+  const pct = hasServed ? (servedPct ?? 0) : capacity > 0 ? Math.round((value / capacity) * 100) : 0;
+  const over = hasServed ? servedPct !== null && servedPct > 100 : pct > 100;
+  const pctLabel = hasServed ? formatBookedPct(servedPct) : `${String(pct)}%`;
   return (
     <div
       role="group"
@@ -146,7 +160,7 @@ export function MeterCard({
           )}
           data-numeric=""
         >
-          {pct}% used
+          {pctLabel} used
         </span>
       </div>
       <p className="flex items-baseline gap-s2" data-numeric="">
@@ -164,6 +178,7 @@ export function MeterCard({
             : { initial: { scaleX: 0 }, animate: { scaleX: 1 }, transition: { duration: 0.9, ease: [0.16, 1, 0.3, 1] } })}
         />
       </div>
+      {footer}
     </div>
   );
 }

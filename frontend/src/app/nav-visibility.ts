@@ -14,7 +14,12 @@ export function visibleNavGroups(
     (group) =>
       [
         group,
-        SURFACES.filter((s) => s.group === group && permissionFor(me, s.surface).read),
+        SURFACES.filter(
+          (s) =>
+            s.group === group &&
+            // `surface: null` = any authenticated user (P13-T15 Downloads).
+            (s.surface === null ? me !== null : permissionFor(me, s.surface).read),
+        ),
       ] as const,
   ).filter(([, items]) => items.length > 0);
 }

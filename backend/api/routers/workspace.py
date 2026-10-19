@@ -128,7 +128,7 @@ from services.notifications import generate_stage_blocked_notifications
 from services.project_access import authorize_project_action
 from services.project_steps import WorkflowChangeWithProgress, sync_project_steps
 from services.rate_limit import TokenBucketLimiter
-from services.run_dispatch import find_in_flight_run
+from services.run_dispatch import enqueue_or_fail, find_in_flight_run
 from services.schedule_persistence import create_queued_schedule_run
 from services.schedule_stale import mark_projects_stale
 from services.workspace import (
@@ -370,13 +370,26 @@ async def recalculate(
         trigger_reason="workspace_recalc",
         triggered_by_user_id=current_user.user_id,
     )
-    async_result = run_greedy_schedule.delay(
-        str(run.id),
-        triggered_by_user_id=str(current_user.user_id),
-        activate=True,
-        recalc_project_id=str(project.id),
+    task_id = await enqueue_or_fail(
+        db,
+        run,
+        lambda: run_greedy_schedule.delay(
+            str(run.id),
+            triggered_by_user_id=str(current_user.user_id),
+            activate=True,
+            recalc_project_id=str(project.id),
+        ),
+        actor_user_id=current_user.user_id,
     )
-    run.celery_task_id = async_result.id
+    if task_id is None:
+        # P14-T01 (M3): the broker refused the message. The QUEUED row is
+        # already FAILED (`DISPATCH_FAILED`) and audited by `enqueue_or_fail`.
+        raise CodedHTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "SOLVER_UNAVAILABLE",
+            "The scheduling service is unavailable right now. Please try again shortly.",
+        )
+    run.celery_task_id = task_id
     db.add(run)
     db.add(
         AuditLogEntry(
@@ -396,7 +409,7 @@ async def recalculate(
     )
     await db.commit()
     publish_progress(str(run.id), status="queued")
-    return RecalculateResponse(schedule_run_id=run.id, task_id=str(async_result.id))
+    return RecalculateResponse(schedule_run_id=run.id, task_id=task_id)
 
 
 # --- Files (MinIO) --------------------------------------------------------------------

@@ -12,9 +12,10 @@ import { useQuery } from '@tanstack/react-query';
 import type { ServedHealth } from '@/components/shared/project-outcome-chips';
 import type { TrackingStatus } from '@/components/shared/tracking-status-meta';
 import { apiGet } from '@/lib/api/client';
-import { queryKeys } from '@/lib/query-keys';
+import { queryKeys, type PriorityBoardFilters } from '@/lib/query-keys';
+import type { ProjectFacets } from '@/surfaces/dashboard/api/types';
 import type { Id } from '@/types/common';
-import type { HubName, ProjectCategory, ProjectPriority, ProjectStatus } from '@/types/enums';
+import type { HubName, LabRegion, ProjectCategory, ProjectPriority, ProjectStatus } from '@/types/enums';
 
 export interface PriorityBoardCard {
   project_id: Id;
@@ -40,6 +41,13 @@ export interface PriorityBoardColumn {
   priority: ProjectPriority;
   /** Served; equals `cards.length`. */
   count: number;
+  /** P13-T12 (API_CONTRACT_P13 §6): the column's REMAINING design work from
+   *  the current week, in weeks (2 dp), server-side, for the filtered set. Not
+   *  the total planned load, so it differs from Capacity's load. Never summed
+   *  from the cards. */
+  design_weeks: number;
+  /** P13-T12: the column's remaining lab work from the current week, in weeks. */
+  lab_weeks: number;
   /** Sorted by score descending (nulls last), then name — by the server. */
   cards: PriorityBoardCard[];
 }
@@ -51,13 +59,71 @@ export interface PriorityBoardResponse {
   columns: PriorityBoardColumn[];
 }
 
-export function fetchPriorityBoard(hubId: string | null, signal?: AbortSignal): Promise<PriorityBoardResponse> {
-  return apiGet<PriorityBoardResponse>('/priority-board', { query: { hub_id: hubId ?? undefined }, signal });
+export type { PriorityBoardFilters } from '@/lib/query-keys';
+
+/** True when no toolbar filter is set (the key then keeps its P12 shape). */
+export function isEmptyBoardFilters(filters: PriorityBoardFilters | undefined): boolean {
+  return !filters || Object.values(filters).every((v) => v === undefined || v === '');
 }
 
-export function usePriorityBoard(hubId: string | null) {
+export function fetchPriorityBoard(
+  hubId: string | null,
+  signal?: AbortSignal,
+  region: LabRegion | null = null,
+  filters?: PriorityBoardFilters,
+): Promise<PriorityBoardResponse> {
+  return apiGet<PriorityBoardResponse>('/priority-board', {
+    query: {
+      hub_id: hubId ?? undefined,
+      region: region ?? undefined,
+      // P13-T12: every filter is applied by the server (§3 semantics); the
+      // column counts and D/L weeks follow the filtered set.
+      q: filters?.q || undefined,
+      category: filters?.category || undefined,
+      type: filters?.type || undefined,
+      status_: filters?.status_ || undefined,
+      leader_engineer_id: filters?.leader_engineer_id || undefined,
+    },
+    signal,
+  });
+}
+
+/** P13 (ADR 0025): `region` is the global country filter, keyed beside the hub.
+ *  P13-T12: `filters` are the toolbar's server-side filters. */
+export function usePriorityBoard(
+  hubId: string | null,
+  region: LabRegion | null = null,
+  filters?: PriorityBoardFilters,
+) {
+  const keyFilters = isEmptyBoardFilters(filters) ? undefined : filters;
   return useQuery({
-    queryKey: queryKeys.priorityBoard(hubId),
-    queryFn: ({ signal }) => fetchPriorityBoard(hubId, signal),
+    queryKey: queryKeys.priorityBoard(hubId, region, keyFilters),
+    queryFn: ({ signal }) => fetchPriorityBoard(hubId, signal, region, keyFilters),
+    // Keep the board on screen while a new search / filter loads — but only
+    // for the same hub and country, never another selection's columns.
+    placeholderData: (previous, previousQuery) =>
+      previousQuery?.queryKey[1] === hubId && previousQuery.queryKey[2] === region ? previous : undefined,
+  });
+}
+
+/** The leader list of `GET /dashboard/projects/facets` (API_CONTRACT_P13 §3) —
+ *  the same endpoint, type and cache entry as the Dashboard register's filters
+ *  (`ProjectFacets`, already pinned by the backend contract test).
+ *  GDPR (OQ #8): `name` is null unless the leader is the caller. */
+type BoardLeaderFacets = Pick<ProjectFacets, 'leaders'>;
+
+/** P13-T12: Leader filter options. Every role that can read the board
+ *  (`matrix`) can read the Dashboard; `enabled` still guards it. */
+export function useBoardLeaderFacets(hubId: string | null, region: LabRegion | null, enabled: boolean) {
+  return useQuery({
+    queryKey: queryKeys.dashboardProjectFacets(hubId, region),
+    queryFn: ({ signal }) =>
+      apiGet<BoardLeaderFacets>('/dashboard/projects/facets', {
+        query: { hub_id: hubId ?? undefined, region: region ?? undefined },
+        signal,
+      }),
+    enabled,
+    staleTime: 60_000,
+    retry: false,
   });
 }

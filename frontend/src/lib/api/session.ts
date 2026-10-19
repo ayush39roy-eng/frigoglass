@@ -40,6 +40,11 @@ export interface MeResponse {
    *  route guard OR (`routes.tsx`) for a manager-delegate who holds no
    *  `user_role_admin` surface permission at all. */
   is_delegate_manager: boolean;
+  /** P13-T15 (API_CONTRACT_P13 §7, ADR 0024): the planning week, served. */
+  current_week: number;
+  /** P13-T15: weeks left in the 52-week year (`max(0, 52 − current_week)`),
+   *  served — the header never subtracts. */
+  weeks_left_in_year: number;
 }
 
 /** One row of `GET /me/dev-users` (dev mode only; 404 otherwise). */

@@ -797,7 +797,7 @@
 
   --color-pop: 84 81% 44%;       /* lime — positive delta pills */
   --color-pop-fg: 90 60% 10%;
-  --color-drop: 0 84% 56%;       /* red — negative delta pills */
+  --color-drop: 0 74% 45%;       /* red — negative delta pills; 5.75:1 with white (WCAG AA, P13-R01) */
   --color-drop-fg: 0 0% 100%;
 
   --shadow-dash-card:
@@ -858,7 +858,7 @@
   --color-pop: 84 75% 52%;
   --color-pop-fg: 90 60% 8%;
   --color-drop: 0 80% 62%;
-  --color-drop-fg: 0 0% 100%;
+  --color-drop-fg: 0 60% 8%;     /* dark text on the bright red: >= 5.1:1 (P13-R01) */
 
   --shadow-dash-card:
     0 3px 0 0 hsl(var(--color-dash-edge)),
@@ -1058,4 +1058,48 @@
   --dash-cat-ink-8: 172 66% 68%;
   --dash-cat-ink-9: 288 80% 82%;
   --dash-cat-ink-10: 82 70% 66%;
+}
+
+/* =========================================================================
+ * VIP PILLAR ACCENTS (P14, ADR 0027 §6) — the client's VIP slides colour the
+ * three pillars: Innovation amber/ochre, Market Expansion blue, Performance
+ * teal. Consumed only by `surfaces/dashboard/components/vip/*`.
+ *
+ *   --vip-<p>          the pillar band / number disc (solid)
+ *   --vip-<p>-fg       text on the solid band
+ *   --vip-<p>-subtle   a highlighted item's background
+ *   --vip-<p>-ink      text on the subtle background and on the bare surface
+ *
+ * Every fg/solid and ink/subtle (and ink/surface) pair is pinned >= 4.5:1 in
+ * BOTH themes by `src/styles/vip-pillar-contrast.test.ts`. Declared LAST.
+ * ========================================================================= */
+
+:root {
+  --vip-innovation: 28 88% 32%;
+  --vip-innovation-fg: 0 0% 100%;
+  --vip-innovation-subtle: 45 100% 93%;
+  --vip-innovation-ink: 26 85% 27%;
+  --vip-market: 224 76% 40%;
+  --vip-market-fg: 0 0% 100%;
+  --vip-market-subtle: 214 100% 95%;
+  --vip-market-ink: 226 71% 33%;
+  --vip-performance: 175 77% 24%;
+  --vip-performance-fg: 0 0% 100%;
+  --vip-performance-subtle: 168 70% 93%;
+  --vip-performance-ink: 175 75% 20%;
+}
+
+.dark {
+  --vip-innovation: 38 92% 55%;
+  --vip-innovation-fg: 229 45% 6%;
+  --vip-innovation-subtle: 30 70% 15%;
+  --vip-innovation-ink: 43 96% 72%;
+  --vip-market: 213 94% 68%;
+  --vip-market-fg: 229 45% 6%;
+  --vip-market-subtle: 226 57% 19%;
+  --vip-market-ink: 213 97% 85%;
+  --vip-performance: 172 66% 50%;
+  --vip-performance-fg: 229 45% 6%;
+  --vip-performance-subtle: 176 60% 12%;
+  --vip-performance-ink: 170 70% 72%;
 }

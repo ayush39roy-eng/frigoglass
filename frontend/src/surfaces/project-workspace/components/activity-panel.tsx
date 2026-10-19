@@ -12,7 +12,7 @@ import { fetchActivity } from '../api/workspace-api';
 import { useCommentMutations } from '../hooks/use-workspace';
 import { activityKey, activityTime, canStillEdit, commentErrorMessage } from '../lib/comments';
 import { MarkdownText } from '../lib/markdown';
-import { authorLabel, WITHHELD } from '../lib/people';
+import { authorLabel, personLabel } from '../lib/people';
 import { CommentComposer } from './comment-composer';
 
 /**
@@ -109,7 +109,7 @@ export function ActivityPanel({
                   <span>
                     <span className="text-text">{item.summary}</span>
                     {' · '}
-                    {item.actor_name === null ? `Actor ${WITHHELD.charAt(0).toLowerCase()}${WITHHELD.slice(1)}` : `${item.actor_name} (you)`} · <time dateTime={item.occurred_at}>{formatTimestamp(item.occurred_at)}</time>
+                    {personLabel(item.actor_name)} · <time dateTime={item.occurred_at}>{formatTimestamp(item.occurred_at)}</time>
                   </span>
                 </li>
               ) : (

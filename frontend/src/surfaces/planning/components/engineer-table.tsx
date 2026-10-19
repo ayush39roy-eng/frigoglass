@@ -11,9 +11,12 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-import { formatDecimal } from '@/lib/format';
+import { CountryFlag } from '@/components/shared/hub-filter/country-flag';
+import { formatDecimal, formatInteger } from '@/lib/format';
+import { HUB_NAMES, type LabRegion } from '@/types/enums';
 
 import type { EngineerRead } from '../api/types';
+import { groupRows } from '../lib/group-rows';
 
 /**
  * Plain (non-virtualized) table — engineer rows number in the tens per hub in
@@ -21,27 +24,48 @@ import type { EngineerRead } from '../api/types';
  * rows" threshold (that's the 236-project baseline the Matrix/Gantt/
  * Registration lists are built for).
  */
+export type EngineerTableRow = EngineerRead & { hubName: string; hubRegion?: LabRegion | undefined };
+
+/**
+ * P13-T17 (mock-up image 13): rows are grouped under a header per hub
+ * (canonical hub order) — display grouping only; no per-hub figure is derived.
+ */
 export interface EngineerTableProps {
-  rows: (EngineerRead & { hubName: string })[];
+  rows: EngineerTableRow[];
   canEdit: boolean;
   onEdit: (row: EngineerRead) => void;
   onDelete: (row: EngineerRead) => void;
 }
 
 export function EngineerTable({ rows, canEdit, onEdit, onDelete }: EngineerTableProps): React.JSX.Element {
+  const groups = React.useMemo(() => groupRows(rows, (r) => r.hubName, HUB_NAMES), [rows]);
+  const columns = canEdit ? 4 : 3;
   return (
     <Table>
       <TableHeader>
         <TableRow>
           <TableHead>Name</TableHead>
-          <TableHead>Hub</TableHead>
           <TableHead className="text-right">FTE</TableHead>
           <TableHead>Allowed categories</TableHead>
           {canEdit ? <TableHead className="w-24 text-right">Actions</TableHead> : null}
         </TableRow>
       </TableHeader>
-      <TableBody>
-        {rows.map((row) => (
+      {groups.map((group) => {
+        const region = group.rows[0]?.hubRegion;
+        return (
+      <TableBody key={group.key} data-testid={`engineer-group-${group.key}`}>
+        <tr className="border-t-[1.5px] border-border bg-primary-subtle/40">
+          <th scope="rowgroup" colSpan={columns} className="px-4 py-2 text-left">
+            <span className="flex items-center gap-2">
+              {region ? <CountryFlag region={region} /> : null}
+              <span className="font-display text-sm font-bold text-primary-subtle-fg">{group.key} Hub</span>
+              <span className="text-2xs font-medium text-text-muted" data-numeric="">
+                {formatInteger(group.rows.length)} {group.rows.length === 1 ? 'engineer' : 'engineers'}
+              </span>
+            </span>
+          </th>
+        </tr>
+        {group.rows.map((row) => (
           <TableRow key={row.id}>
             <TableCell>
               <span className="flex items-center gap-3">
@@ -51,7 +75,6 @@ export function EngineerTable({ rows, canEdit, onEdit, onDelete }: EngineerTable
                 <span className="font-semibold text-text">{row.name}</span>
               </span>
             </TableCell>
-            <TableCell>{row.hubName}</TableCell>
             <TableCell className="text-right tnum" data-numeric="">
               {formatDecimal(row.fte)}
             </TableCell>
@@ -95,6 +118,8 @@ export function EngineerTable({ rows, canEdit, onEdit, onDelete }: EngineerTable
           </TableRow>
         ))}
       </TableBody>
+        );
+      })}
     </Table>
   );
 }

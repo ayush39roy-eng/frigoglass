@@ -100,13 +100,13 @@ describe('ProjectWorkspacePage — header and health (I13)', () => {
     expect(badge).toHaveTextContent(label);
   });
 
-  it('shows name, ID, hub, category, priority; a withheld leader reads "Withheld (GDPR pending)"', async () => {
+  it('shows name, ID, hub, category, priority; a leader id with no name reads "Name unavailable"', async () => {
     renderPage();
     const header = await screen.findByTestId('workspace-header');
     expect(within(header).getByRole('heading', { name: 'Cooler Alpha' })).toBeInTheDocument();
     expect(header).toHaveTextContent('ID RPD-0042');
     expect(header).toHaveTextContent('PD-India');
-    expect(within(header).getByTestId('leader-withheld')).toHaveTextContent('Withheld (GDPR pending)');
+    expect(header).toHaveTextContent('Leader: Name unavailable');
   });
 
   it('renders the roll-up bar from the server progress_pct and the completion strip from server weeks', async () => {
@@ -218,13 +218,13 @@ describe('Progress panel — stages', () => {
 });
 
 describe('Files panel', () => {
-  it('groups versions under the newest one; older versions stay downloadable; uploader withheld unless it is you', async () => {
+  it('groups versions under the newest one; older versions stay downloadable; an unnamed uploader falls back', async () => {
     renderPage();
     const row = await screen.findByTestId('file-f-1');
     expect(screen.queryByTestId('file-f-0')).not.toBeInTheDocument();
     expect(row).toHaveTextContent('v2');
     expect(row).toHaveTextContent('Certification');
-    expect(row).toHaveTextContent('Uploader withheld (GDPR pending)');
+    expect(row).toHaveTextContent('Uploaded by Name unavailable');
     expect(within(row).getByRole('button', { name: 'Download Certification report v2' })).toBeInTheDocument();
     const older = within(row).getByTestId('older-versions-f-1');
     expect(older).toHaveTextContent('Older versions (1)');
@@ -274,18 +274,18 @@ describe('Files panel', () => {
 });
 
 describe('Activity & comments', () => {
-  it('renders Markdown as elements with script text inert, interleaves system events, withholds names', async () => {
+  it('renders Markdown as elements with script text inert, interleaves system events, falls back for unnamed actors', async () => {
     renderPage();
     const comments = await screen.findAllByTestId('activity-comment');
     expect(comments[0]?.querySelector('strong')).toHaveTextContent('confirmed');
     expect(comments[0]?.querySelector('script')).toBeNull();
     expect(comments[0]).toHaveTextContent('<script>alert(1)</script>');
     expect(screen.getByTestId('activity-event')).toHaveTextContent(
-      'Schedule recalculated — finish moved week 49 → week 50 · Actor withheld (GDPR pending)',
+      'Schedule recalculated — finish moved week 49 → week 50 · Name unavailable',
     );
-    // OQ#8: the caller's own comment reads "You"; anyone else's name is withheld
+    // ADR 0028: the caller's own comment reads "You"; an unnamed author falls back
     expect(comments[0]).toHaveTextContent('You');
-    expect(comments[1]).toHaveTextContent('Withheld (GDPR pending)');
+    expect(comments[1]).toHaveTextContent('Name unavailable');
   });
 
   it('edit lock: only an editable comment offers Edit; a server EDIT_LOCKED is explained', async () => {
@@ -347,11 +347,11 @@ describe('Read-only role (Engineer: project_workspace read only)', () => {
   });
 });
 
-describe('OQ#8 and financial visibility', () => {
-  it('a non-null leader name is the caller and is labelled as such', async () => {
+describe('Leader names (ADR 0028) and financial visibility', () => {
+  it('a served leader name is shown as is', async () => {
     api.fetchWorkspace.mockResolvedValue(workspaceFixture({ project: { ...workspaceFixture().project, leader_engineer_name: 'Sam Super' } }));
     renderPage();
-    expect(await screen.findByTestId('workspace-header')).toHaveTextContent('Leader: Sam Super (you)');
+    expect(await screen.findByTestId('workspace-header')).toHaveTextContent('Leader: Sam Super');
   });
 
   it('a role without Project Registration read sees "Restricted" financials, not "—"', async () => {

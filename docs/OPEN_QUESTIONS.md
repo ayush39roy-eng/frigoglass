@@ -470,3 +470,97 @@ corporate SMTP relay (not configured on-premise yet).
 **Assuming until answered:** in-app only.
 
 **Who must answer:** Frigoglass IT (SMTP relay) and the client (reminder day/time).
+
+### 34. Plant and Requesting Department — where does the data come from?
+
+**Why it matters:** the client's mock-up "All active registered projects" table and its
+"Project Registered By Plant" and "Requested By" charts use a project's **Plant** (Multiplant, SAF,
+IND, ROM, OEM, Egypt…) and its **Requesting Department** (Central Procurement Group, Marketing/Sales,
+Central R&D…). Neither is in our model, and the 2026 workbook import does not store Plant (MEMORY
+2026-10-13 "Not mapped").
+
+**Assuming until answered:** both columns are hidden. We do not invent values.
+
+**Who must answer:** the client. Is Plant the workbook's "Plant" column, and is Requesting Dept a
+fixed list? Should both become required fields on Project Registration?
+
+### 35. Matrix financial columns — ROI, payback, annual RM savings: which formulas?
+
+**Why it matters:** the mock-up Matrix shows ROI `(Margin 3Y − CapEx) / CapEx`, Payback
+`CapEx / avg annual margin` and Annual RM savings `Vol × RM/unit`. We store `capex_keur` and
+`rm_savings_keur`, but not volume, RM/unit or a 3-year margin. RM Category and Component Group are
+not stored either.
+
+**Assuming until answered:** columns not shown.
+
+**Who must answer:** the client. Confirm the formulas and the source columns (the
+"RM Saving.xlsx" in their old app).
+
+### 36. "Apply & Save All", global undo, and saved baselines
+
+**Why it matters:** their old app staged every edit in the browser and saved in one batch, with
+named baselines to revert to. Ours saves each change on the server immediately, with an audit
+record, and recalculates.
+
+**Assuming until answered:** keep immediate saves. Versions & History lists schedule runs and
+scenario versions read-only.
+
+**Who must answer:** the client. Do they need named baselines with a one-click revert of the whole
+portfolio?
+
+### 37. Gantt 2026–2027 two-year view
+
+**Why it matters:** the mock-up has a "2026-2027" toggle. On 2026-10-13 the client asked for the
+52-week year only (ADR 0024).
+
+**Assuming until answered:** 52 weeks only.
+
+**Who must answer:** the client.
+
+### 38. Delete project, Excel import with merge, Weeks/Days, Manage Tabs, AI question bar
+
+**Why it matters:** these all appear in the old app.
+- **Deletion:** destroys audit history.
+- **Import:** needs a merge policy.
+- **Days:** needs the man-days-per-week factor. The mock-up implies about 5.0, for example
+  291 wks ≈ 1457 days.
+- **Manage Tabs:** per-user tab renaming conflicts with RBAC-driven navigation.
+- **AI question bar:** portfolio-wide questions go beyond the per-project "Ask the agent".
+
+**Assuming until answered:** none built. "Days" uses 5 days/week once confirmed.
+
+**Who must answer:** the client.
+
+**OQ #8 addendum (2026-10-19, P13 gate):** P13 withholds leader names unless the viewer is the
+leader. It still serves `leader_engineer_id`, so Portfolio Manager, Hub Planner and Admin can map
+an id to a name through `GET /engineers`. Registration already allows this. The DPO should confirm
+whether showing leader names to these roles, as the client's mock-up does, is acceptable. If it is,
+withholding can be relaxed for them.
+
+### 39. VIP board: areas and meaning of highlights *(2026-10-19, P14, ADR 0027) — ANSWERED 2026-10-19: yellow = VIP; areas are Greece / India / Romania (ADR 0027 amendment)*
+
+We built VIP as three areas, one per slide sent: **OEM** (OEM-HCK, OEM-Seltek), **Europe**
+(R&D-Greece, PD-Romania) and **India** (PD-India, R&D-India). Please confirm:
+
+1. Is that the grouping you mean by "2–3 VIP per hub", or do you want one tile per hub (six)?
+2. Does a yellow highlight on the slide mean "VIP"? We show highlighted items with an accent and
+   all other items plainly.
+3. Many items are themes, not one project. Examples are "IC2-40 Coke Certification", "Family
+   Fridge" and "ERX 3.0". We linked an item to a project only where the name clearly matched. Who
+   should maintain these links? Today that is Portfolio Manager and Admin.
+
+### 40. Freezing a project that never started *(2026-10-19, P14-T03 finding S2, non-blocking)*
+
+Freeze locks a project's dates from a user-entered start week. Today an **In Queue** project can be
+frozen at a week in the past. 26INN004 was frozen at W3, which makes it "finish" at W9 and count
+as completing within the year, although no work has started. Should freezing be allowed only for
+projects that have actually started (In Development or later), or should a past start week be
+rejected?
+
+**Also for the client, an observation:** the Capacity "remaining" booked % divides the full-year
+load by the remaining weeks' capacity only (ADR 0016). At W42 this reads about 520 %. That is the
+agreed formula. Please confirm this is how you want to read it.
+
+**OQ #8 — RESOLVED FOR BUILDING (2026-10-19):** the owner, relaying the client, confirmed per-engineer
+utilization and leader names may be used ("it is not a problem"). ADR 0028 enables them. The
+DPO / works council confirmation is kept as an accepted residual risk and is no longer blocking.

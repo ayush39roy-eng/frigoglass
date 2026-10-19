@@ -10,6 +10,7 @@ import type {
   ProjectStatus,
   ProjectType,
   HubName,
+  LabRegion,
   SolverType,
   ScheduleRunStatus,
 } from '@/types/enums';
@@ -56,6 +57,8 @@ export interface CompletingWithinYearRow {
   blocked: boolean;
   cat_not_allowed: boolean;
   last_step_end_week: WeekNumber | null;
+  /** P13-T10 (API_CONTRACT_P13 §5): the project's type; null if unmapped. */
+  type: ProjectType | null;
 }
 
 /** GET /dashboard/completing-within-year — the Invariant I9 endpoint. Every
@@ -88,7 +91,28 @@ export interface ProjectFilterRow {
   is_vip: boolean;
   /** Served tracking status (ADR 0021 §4). */
   tracking_status: TrackingStatus;
+  // P13 (API_CONTRACT_P13 §3): register fields, always sent. No financial fields.
+  external_code: string | null;
+  type: ProjectType | null;
+  /** The hub's served `lab_region` (the country, ADR 0025). */
+  region: LabRegion;
+  /** GDPR (OQ #8): null unless the leader is the caller — never resolved client-side. */
+  leader_name: string | null;
+  leader_engineer_id: Id | null;
+  /** First workflow step not Completed/Skipped; null when all are done. */
+  current_step_code: string | null;
+  current_step_name: string | null;
+  /** Active schedule run finish week; null if no run or not scheduled. */
+  end_week: WeekNumber | null;
+  outcome: ProjectRunOutcome | null;
+  reg_year: number | null;
+  carry_over: boolean;
+  /** Rank by score within the filtered set, 1-based; null when unscored. */
+  priority_rank: number | null;
 }
+
+/** The active run's outcome for a project (P13 contract §3). */
+export type ProjectRunOutcome = 'WITHIN_YEAR' | 'SPILLOVER' | 'LEFT_OUT' | 'BLOCKED';
 
 export interface ProjectFilterResult {
   total_count: number;
@@ -100,6 +124,104 @@ export interface ProjectFilterParams {
   category?: ProjectCategory | undefined;
   status_?: ProjectStatus | undefined;
   priority?: ProjectPriority | undefined;
+  // P13 (API_CONTRACT_P13 §3) — every filter is applied server-side.
+  region?: LabRegion | undefined;
+  /** Case-insensitive substring of name or external_code, ≤ 100 chars. */
+  q?: string | undefined;
+  type?: ProjectType | undefined;
+  leader_engineer_id?: Id | undefined;
+  /** Step code, e.g. `PDD-E`. */
+  current_step?: string | undefined;
+  sort?: 'name' | 'priority' | undefined;
+}
+
+/** GET /dashboard/projects/facets — leaders and current steps present in the
+ *  caller's scoped, hub/country-filtered set (API_CONTRACT_P13 §3). */
+export interface ProjectFacets {
+  /** GDPR (OQ #8): `name` is null unless the leader is the caller. */
+  leaders: { id: Id; name: string | null }[];
+  steps: { code: string; name: string }[];
+}
+
+/** One country row of GET /dashboard/region-summary (API_CONTRACT_P13 §2).
+ *  Every count and share is served; the browser never sums rows. */
+export interface RegionSummaryRow {
+  region: LabRegion;
+  total_count: number;
+  /** Of the response's `total_count`, 2 dp. */
+  share_pct: number;
+  spillover_count: number;
+  newly_registered_count: number;
+  /** Every ProjectStatus wire value, 0 if none. `total_count`, `share_pct`,
+   *  `spillover_count` and `newly_registered_count` exclude Commercialized
+   *  (same basis as PipelineTotals); `status_counts` includes it. */
+  status_counts: Partial<Record<ProjectStatus, number>>;
+  /** Share of that status's portfolio count held by this region. */
+  status_share_pct: Partial<Record<ProjectStatus, number>>;
+}
+
+export interface RegionSummary {
+  total_count: number;
+  /** Always Greece, India, Romania in that order (zero rows included). */
+  regions: RegionSummaryRow[];
+}
+
+/** A `GET /dashboard/analytics` bucket key for project type: every
+ *  `ProjectType`, plus `Unmapped` when some project has no type. */
+export type AnalyticsTypeKey = ProjectType | 'Unmapped';
+
+/** One served bucket (count + share of the pipeline-totals basis, 2 dp).
+ *  Keys may be the sentinels "Unmapped" (type) / "Unknown" (reg year). */
+export interface AnalyticsBucket<K extends string = string> {
+  key: K;
+  count: number;
+  share_pct: number;
+}
+
+/** One served Hub × Type cell of the completing-within-year cross-tab. */
+export interface CompletingHubTypeCell {
+  hub: HubName;
+  /** null for untyped projects (shown under "Unmapped"). */
+  type: ProjectType | null;
+  pipeline_count: number;
+  completing_count: number;
+  /** completing / pipeline × 100, 2 dp, server-side. */
+  completing_pct: number;
+}
+
+/** One served per-type pipeline-vs-completing row (the cross-tab's Total row). */
+export interface CompletingByTypeRow {
+  key: AnalyticsTypeKey;
+  pipeline_count: number;
+  completing_count: number;
+  completing_pct: number;
+}
+
+/** The cross-tab's per-hub Total column (served sum of that hub's cells). */
+export interface CompletingByHubRow {
+  key: HubName;
+  pipeline_count: number;
+  completing_count: number;
+  completing_pct: number;
+}
+
+/** GET /dashboard/analytics (API_CONTRACT_P13 §5, P13-T10). Pipeline-totals
+ *  basis; "completing" = the active run's WITHIN_YEAR outcome. Every figure is
+ *  served — the browser only lays them out (I9). */
+export interface DashboardAnalytics {
+  by_type: AnalyticsBucket<AnalyticsTypeKey>[];
+  /** Category key; the contract does not name a bucket for a null category. */
+  by_category: AnalyticsBucket[];
+  by_hub: AnalyticsBucket[];
+  /** Year as a string, plus `Unknown` for a null `reg_year`. */
+  by_reg_year: AnalyticsBucket[];
+  /** Empty without an active schedule run. */
+  completing_hub_type: CompletingHubTypeCell[];
+  /** Empty without an active schedule run. */
+  completing_by_type: CompletingByTypeRow[];
+  /** Hubs with pipeline > 0, by hub. Empty without an active schedule run. */
+  completing_by_hub: CompletingByHubRow[];
+  has_active_schedule_run: boolean;
 }
 
 /** GET /schedule-runs/active — used only to enrich the provenance caption

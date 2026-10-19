@@ -1,8 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
-import { screen } from '@testing-library/react';
+import { screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
 import { renderWithProviders } from '@/test/render';
+import { seriousAxeViolations } from '@/test/axe';
 
 import { EngineerTable } from './engineer-table';
 
@@ -24,7 +25,8 @@ describe('EngineerTable', () => {
   it('renders name, hub, FTE and allowed categories verbatim from the API row', () => {
     renderWithProviders(<EngineerTable rows={ROWS} canEdit onEdit={vi.fn()} onDelete={vi.fn()} />);
     expect(screen.getByText('Ada Lovelace')).toBeInTheDocument();
-    expect(screen.getByText('R&D-Greece')).toBeInTheDocument();
+    // P13-T17: the hub is the group header, not a column.
+    expect(screen.getByText('R&D-Greece Hub')).toBeInTheDocument();
     expect(screen.getByText('1')).toBeInTheDocument();
     expect(screen.getByText('A+')).toBeInTheDocument();
   });
@@ -44,5 +46,21 @@ describe('EngineerTable', () => {
     expect(onEdit).toHaveBeenCalledWith(ROWS[0]);
     await user.click(screen.getByRole('button', { name: 'Delete Ada Lovelace' }));
     expect(onDelete).toHaveBeenCalledWith(ROWS[0]);
+  });
+
+  it('P13-T17: groups engineers under a header per hub, in canonical hub order, with the country flag', async () => {
+    const rows = [
+      { ...ROWS[0]!, id: 'e2', name: 'Rishi', hub_id: 'hub-2', hubName: 'PD-India', hubRegion: 'India' as const },
+      { ...ROWS[0]!, hubRegion: 'Greece' as const },
+      { ...ROWS[0]!, id: 'e3', name: 'Pawan', hub_id: 'hub-2', hubName: 'PD-India', hubRegion: 'India' as const },
+    ];
+    const { container } = renderWithProviders(<EngineerTable rows={rows} canEdit onEdit={vi.fn()} onDelete={vi.fn()} />);
+    const headers = screen.getAllByRole('rowheader').map((h) => h.textContent);
+    expect(headers).toEqual(['R&D-Greece Hub1 engineer', 'PD-India Hub2 engineers']);
+    const india = screen.getByTestId('engineer-group-PD-India');
+    expect(within(india).getByText('Rishi')).toBeInTheDocument();
+    expect(within(india).getByText('Pawan')).toBeInTheDocument();
+    expect(within(india).getByTestId('flag-India')).toBeInTheDocument();
+    expect(await seriousAxeViolations(container)).toEqual([]);
   });
 });

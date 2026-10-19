@@ -7,6 +7,7 @@ import type {
   HubName,
   ProjectCategory,
   ProjectPriority,
+  ProjectType,
   WorkflowId,
   WorkflowStepKind,
   WorkflowStepStatus,
@@ -98,8 +99,44 @@ export interface GanttProjectRow {
   is_vip: boolean;
   /** P12 contract §3, ADR 0021 (reconciled): served by `services.tracking`. */
   tracking_status: TrackingStatus;
+  /** P13 contract §7 (T13): the project's external code, e.g. `24-00221_1`; null if absent. */
+  external_code: string | null;
+  /** P13 contract §7: null if unmapped. */
+  type: ProjectType | null;
+  /** P13 contract §7, GDPR rule as in §3 (OQ #8): null unless the leader is the
+   *  caller. With a `leader_engineer_id` it is rendered "Withheld" — never
+   *  resolved here. */
+  leader_name: string | null;
+  /** Always served (reconciled with `backend/schemas/gantt.py`); null = no leader. */
+  leader_engineer_id: Id | null;
+  /** P13 contract §7: served effective design / lab / total weeks (the
+   *  mock-up's "Total 17W · 5 DW / 0 LW"). Displayed verbatim, never summed
+   *  here. All null when the project has no step in the active run. */
+  design_weeks: number | null;
+  lab_weeks: number | null;
+  total_weeks: number | null;
   steps: GanttStepRow[];
 }
+
+/** P13 contract §7: active steps per week for the filtered set, per workflow,
+ *  counted server-side. */
+export interface GanttWeeklyActiveCount {
+  week: number;
+  pdd: number;
+  oem: number;
+}
+
+/** `GET /dashboard/projects/facets` (P13 contract §3), reused for the Gantt's
+ *  Leader / Step filter options. GDPR (OQ #8): `name` is null unless the
+ *  leader is the caller. */
+export interface GanttFacets {
+  leaders: { id: Id; name: string | null }[];
+  steps: { code: string; name: string }[];
+}
+
+/** P13 contract §7: `GET /gantt?sort=`. */
+export type GanttSort = 'priority' | 'name' | 'start' | 'end';
+export const GANTT_SORTS: readonly GanttSort[] = ['priority', 'name', 'start', 'end'];
 
 /** `GET /gantt` (`GanttResponse`). */
 export interface GanttResponse {
@@ -107,6 +144,8 @@ export interface GanttResponse {
   schedule_run_version: number | null;
   total_count: number;
   rows: GanttProjectRow[];
+  /** P13 contract §7 (T13): one entry per week; drives the PDD / OEM count row. */
+  weekly_active_counts: GanttWeeklyActiveCount[];
 }
 
 /** `POST /gantt/projects/{project_id}/freeze` body (`FreezeToggleRequest`,
@@ -150,7 +189,7 @@ export interface StepTimingResponse {
   start_not_before_week: number | null;
   /** `duration_override_weeks ?? lead time`, served. */
   effective_duration_weeks: number;
-  recalc_status: 'queued' | 'deferred' | 'not_needed' | 'unchanged';
+  recalc_status: 'queued' | 'deferred' | 'not_needed' | 'unchanged' | 'applied' | 'dispatch_failed';
   schedule_run_id: Id | null;
   baseline_run_id: Id | null;
   task_id: string | null;

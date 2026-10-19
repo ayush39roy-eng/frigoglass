@@ -139,3 +139,46 @@ class ChamberSettingUpdateRequest(BaseModel):
     maintenance_weeks: float | None = Field(default=None, ge=0, le=52)
     breakdown_weeks: float | None = Field(default=None, ge=0, le=52)
     calibration_weeks: float | None = Field(default=None, ge=0, le=52)
+
+
+# --- P13-T16: previews (docs/API_CONTRACT_P13.md §5) ---------------------------
+
+
+class TimelineStep(BaseModel):
+    """One step of a category timeline. Weeks are 0-based offsets from the
+    project's start (end-exclusive: the step occupies
+    `[start_week, start_week + duration_weeks)`). `duration_weeks == 0` means
+    the step is skipped for that category."""
+
+    #: The step id, e.g. `PDD-E` (the same "step code" as the P13 register).
+    code: str
+    name: str
+    resource_kind: WorkflowStepKind
+    start_week: int
+    duration_weeks: int
+
+
+class CategoryTimeline(BaseModel):
+    """`GET /workflow-settings/category-timelines`: earliest start per step
+    from the served lead times and precedence DAG, no capacity."""
+
+    category: ProjectCategory
+    #: The critical path (longest path through the DAG), in weeks.
+    total_weeks: int
+    #: Σ duration over design steps; Σ duration over lab steps.
+    design_weeks: int
+    lab_weeks: int
+    #: In the workflow's display (`sequence_order`) order.
+    steps: list[TimelineStep]
+
+
+class BEquivalentRow(BaseModel):
+    """`GET /workflow-settings/b-equivalent`: process-derived design and lab
+    weeks, and their ratio to category B (PDD) or B-OEM (OEM), 2 dp. A ratio
+    is null when the reference category's weeks are 0 (no ratio exists)."""
+
+    category: ProjectCategory
+    design_weeks: int
+    lab_weeks: int
+    design_ratio: float | None
+    lab_ratio: float | None
