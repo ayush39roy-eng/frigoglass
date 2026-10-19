@@ -62,8 +62,8 @@ class PriorityScore(TimestampMixin, Base):
 
     `weighted_score` / `normalized_pct` / `suggested_band` are cached results of
     the deterministic formula in DOMAIN_RULES.md
-    (`weighted_score = sum(dimension_score * weight)`,
-    `normalised_pct = round(weighted_score / (280*5) * 100)`, banded per the
+    (`weighted_score = sum(dimension_score / 5 * weight)`,
+    `normalised_pct = round(weighted_score / TOTAL_WEIGHT * 100)`, ADR 0029, banded per the
     thresholds table) — recomputed by the service layer (P3) whenever a
     dimension score changes, not an independent calculation. `suggested_band`
     may differ from `Project.priority` ("set_priority") if a Portfolio Manager

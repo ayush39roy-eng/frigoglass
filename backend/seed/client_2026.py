@@ -350,10 +350,12 @@ def _target_pct(code: str, priority: str, marketing_priority: int | None) -> int
 def band_for(dims: Sequence[int]) -> tuple[int, int, str]:
     """(weighted_score, normalised_pct, band), DOMAIN_RULES "Prioritization scoring"."""
 
+    # ADR 0029: points = score / 5 * weight; pct = round(sum / TOTAL_WEIGHT * 100).
     weighted = sum(
-        s * w for s, (*_r, w) in zip(dims, dc.PRIORITIZATION_DIMENSIONS, strict=True)
+        s * w / dc.DIMENSION_SCORE_MAX
+        for s, (*_r, w) in zip(dims, dc.PRIORITIZATION_DIMENSIONS, strict=True)
     )
-    pct = round(weighted / (dc.TOTAL_WEIGHT * dc.DIMENSION_SCORE_MAX) * 100)
+    pct = round(weighted / dc.TOTAL_WEIGHT * 100)
     band = next(label for threshold, label in dc.PRIORITY_BAND_THRESHOLDS if pct >= threshold)
     return weighted, pct, band
 

@@ -59,7 +59,7 @@ Usage (from `backend/`, with a `.venv` that has this project's deps installed):
 
     RPD_DATABASE_URL=postgresql+asyncpg://user:pass@localhost:5432/rpd \\
     RPD_FIELD_ENCRYPTION_KEY=<urlsafe-base64 32-byte Fernet key> \\
-        python -m seed.seed_demo_data [--reset] [--dataset client_2026|prototype]
+        python -m seed.seed_demo_data [--reset] [--schedule] [--dataset client_2026|prototype]
 
 `--reset` deletes existing rows from every *demo-data* table this script
 writes to (in FK-safe order) before reseeding — without it, the script
@@ -74,6 +74,7 @@ import asyncio
 import json
 import os
 import sys
+import time
 from collections import Counter
 from collections.abc import Mapping
 from pathlib import Path
@@ -123,13 +124,19 @@ from models.enums import (  # noqa: E402
     ProjectPriority,
     ProjectStatus,
     ProjectType,
+    SolverType,  # noqa: E402
     WorkflowStepKind,
     WorkflowStepStatus,
 )
 from models.priority import DIMENSION_FIELD_NAMES  # noqa: E402
 from models.project import category_allowed_for_hub, workflow_id_for_hub  # noqa: E402
+from scheduling.greedy import run_greedy_sgs  # noqa: E402
 from seed import client_2026 as c26  # noqa: E402
 from seed.seed_vip_board import seed_vip_board  # noqa: E402
+from services.schedule_persistence import (  # noqa: E402
+    build_schedule_input_from_db,
+    persist_schedule_output,
+)
 from services.workflow_durations import duration_for, lead_time_lookup  # noqa: E402
 
 DATA_PATH = Path(__file__).resolve().parent / "prototype_seed_data.json"
@@ -398,11 +405,12 @@ def _priority_score_fields(dims: list[int]) -> tuple[float, int, str]:
     `domain_constants.PRIORITIZATION_DIMENSIONS`'s weights (same 13-dimension
     order the prototype's `dims` arrays are already in).
     """
+    # ADR 0029: points = score / 5 * weight; pct = round(sum / TOTAL_WEIGHT * 100).
     weighted_score = sum(
-        score * weight
+        score * weight / dc.DIMENSION_SCORE_MAX
         for score, (*_rest, weight) in zip(dims, dc.PRIORITIZATION_DIMENSIONS, strict=True)
     )
-    normalized_pct = round(weighted_score / (dc.TOTAL_WEIGHT * dc.DIMENSION_SCORE_MAX) * 100)
+    normalized_pct = round(weighted_score / dc.TOTAL_WEIGHT * 100)
     suggested_band = next(
         label for threshold, label in dc.PRIORITY_BAND_THRESHOLDS if normalized_pct >= threshold
     )
@@ -720,16 +728,74 @@ async def seed_client_2026(
     }
 
 
+_T0 = time.monotonic()
+
+
+def _step(message: str) -> None:
+    """Progress line on stderr (stdout stays the final JSON), with elapsed seconds."""
+
+    print(f"[{time.monotonic() - _T0:6.1f}s] {message}", file=sys.stderr, flush=True)
+
+
+async def _check_connection(engine: Any) -> None:
+    _step("connecting to database (30s timeout)...")
+    try:
+        async with asyncio.timeout(30):
+            async with engine.connect() as conn:
+                await conn.execute(text("SELECT 1"))
+    except TimeoutError:
+        raise SystemExit(
+            "Could not connect within 30s. Check the host/URL, that the database allows "
+            "your IP (Render > Database > Access Control), and ?ssl=require."
+        ) from None
+    _step("connected")
+
+
+async def schedule_after_seed(session_factory: async_sessionmaker[AsyncSession]) -> dict[str, Any]:
+    """Compute and activate the first greedy `ScheduleRun` over the seeded rows.
+
+    Same path as `POST /schedule-runs/greedy-recalc` but without an API user or
+    a Celery worker, so a freshly seeded hosted database shows the Dashboard
+    straight away instead of "No schedule computed yet".
+    """
+
+    async with session_factory() as session:
+        _step("scheduling: reading projects/engineers/chambers...")
+        schedule_input = await build_schedule_input_from_db(session)
+        _step("scheduling: running greedy scheduler...")
+        schedule_output = run_greedy_sgs(schedule_input)
+        _step("scheduling: saving the schedule run (slowest step on a remote DB)...")
+        run = await persist_schedule_output(
+            session,
+            schedule_input,
+            schedule_output,
+            solver_type=SolverType.GREEDY,
+            trigger_reason="seed",
+            triggered_by_user_id=None,
+            activate=True,
+        )
+        await session.commit()
+        _step("scheduling: done")
+        return {
+            "version": run.version,
+            "projects": len(schedule_output.project_outcomes),
+            "within_year": sum(1 for o in schedule_output.project_outcomes if o.within_year),
+        }
+
+
 async def run(
-    reset_first: bool, dataset: str = DEFAULT_DATASET
+    reset_first: bool, dataset: str = DEFAULT_DATASET, schedule: bool = False
 ) -> dict[str, Any]:
     engine = create_async_engine(_database_url())
     session_factory = async_sessionmaker(engine, expire_on_commit=False)
     counts: dict[str, Any] = {}
     try:
+        await _check_connection(engine)
         async with session_factory() as session:
             if reset_first:
+                _step("reset: deleting existing demo rows...")
                 await _reset(session)
+                _step("reset: done")
             else:
                 await _guard_against_duplicate_seed(session)
 
@@ -737,6 +803,7 @@ async def run(
                 raise ValueError(f"unknown dataset {dataset!r}; expected one of {DATASETS}")
             counts["dataset"] = dataset
 
+            _step("seeding workflows, hubs, chambers...")
             counts.update(await seed_workflows(session))
             hubs_by_name = await seed_hubs(session)
             counts["hubs"] = len(hubs_by_name)
@@ -744,6 +811,7 @@ async def run(
             if dataset == DATASET_CLIENT_2026:
                 chambers_by_code = await seed_chambers(session, deterministic_ids=True)
                 counts["chambers"] = len(chambers_by_code)
+                _step("seeding 253 client projects, engineers, steps...")
                 counts.update(
                     await seed_client_2026(
                         session, _load_client_2026_data(), hubs_by_name, chambers_by_code
@@ -763,7 +831,9 @@ async def run(
             counts["project_workflow_steps"] = counts["projects"] * dc.STEPS_PER_WORKFLOW
             counts["priority_scores"] = counts["projects"]
 
+            _step("committing seed data...")
             await session.commit()
+            _step("seed committed")
 
             # Post-commit verification: re-query actual row counts from the DB
             # rather than trusting the in-memory tallies above.
@@ -771,6 +841,9 @@ async def run(
             for model in _TABLES_CHILD_FIRST + _REFERENCE_TABLES:
                 verified[model.__tablename__] = await _table_row_count(session, model)
             counts["_verified_from_db"] = verified
+
+        if schedule:
+            counts["schedule_run"] = await schedule_after_seed(session_factory)
     finally:
         await engine.dispose()
     return counts
@@ -789,8 +862,16 @@ def main() -> None:
         default=DEFAULT_DATASET,
         help="client_2026 (default: the client's real 2026 pipeline) or prototype.",
     )
+    parser.add_argument(
+        "--schedule",
+        action="store_true",
+        help="After seeding, compute and activate the first greedy schedule run "
+        "(no worker needed), so the Dashboard has data.",
+    )
     args = parser.parse_args()
-    counts = asyncio.run(run(reset_first=args.reset, dataset=args.dataset))
+    counts = asyncio.run(
+        run(reset_first=args.reset, dataset=args.dataset, schedule=args.schedule)
+    )
     print(json.dumps(counts, indent=2, default=str))
 
 

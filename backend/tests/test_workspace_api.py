@@ -233,7 +233,7 @@ async def test_workspace_read_model(db_session):
     a = stages[0]
     assert a["planned_start_week"] == 31 and a["planned_end_week"] == 31
     assert a["remaining_weeks"] == 1 and a["overrun_weeks"] == 0
-    assert a["assigned_engineer_name"] is None  # OQ#8: not the caller
+    assert a["assigned_engineer_name"] == "Lena Leader"  # ADR 0028 amendment
     assert stages[2]["kind"] == "elapsed"
     assert body["project"]["hub"] == "R&D-Greece"
     assert body["project"]["leader_engineer_name"] == "Lena Leader"  # ADR 0028
@@ -514,14 +514,14 @@ async def test_comment_lifecycle(db_session):
     assert too_long.status_code == 422
     assert at_cap.status_code == 201
 
-    # Another planner sees the comment, but not the author's name (OQ#8), and cannot edit.
+    # Another planner sees the comment, but the author name (ADR 0028 amendment), and cannot edit.
     await _act_as(db_session, RoleName.HUB_PLANNER, hub_ids=[w.hub.id])
     async with _client(db_session) as client:
         ws = (await client.get(f"/projects/{w.project.id}/workspace")).json()
         foreign_edit = await client.patch(f"{url}/{cid}", json={"body_md": "hijack"})
         foreign_delete = await client.delete(f"{url}/{cid}")
     item = next(i for i in ws["activity"] if i["kind"] == "comment")
-    assert item["comment"]["author_name"] is None
+    assert item["comment"]["author_name"] == "Ann Author"
     assert item["comment"]["can_edit"] is False
     assert foreign_edit.status_code == 403 and foreign_edit.json()["code"] == "NOT_AUTHOR"
     assert foreign_delete.status_code == 403

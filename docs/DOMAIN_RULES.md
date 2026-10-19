@@ -246,18 +246,28 @@ slip_weeks           = projected_end_week − expected_end_week               (m
 | Regulatory & Quality | Quality Improvements | 25 |
 | Financial Return | RM Savings | 25 |
 | Financial Return | Total RM Savings | 25 |
-| Financial Return | Gross Margins | 25 |
-| Financial Return | Profitability | 25 |
+| Financial Return | Gross Profitability *(was "Gross Margins")* | 25 |
 | Market & Volume | Annual Volume | 15 |
-| Market & Volume | 3-Year Volume | 15 |
+| Market & Volume | 3-Year Volume | 25 |
 | Market & Volume | New Models | 15 |
-| Investment & Feasibility | CAPEX Investment (inverted) | 10 |
+| Investment & Feasibility | CAPEX Investment (inverted) | 15 |
+| Investment & Feasibility | ROI *(was "Profitability", moved from Financial Return)* | 25 |
+
+*(Amended 2026-10-19, ADR 0029.)* Wire and DB keys are unchanged (`gross_margins`, `profitability`).
 
 ```
-TOTAL_WEIGHT = 280
-weighted_score = Σ(dimension_score × weight)   where each score ∈ [1..5]
-normalised_pct = round(weighted_score / (280 × 5) × 100)
+TOTAL_WEIGHT = Σ weights = 295            (derived, never hard-coded; the client said "300", see OQ #41)
+points(d)    = score(d) / 5 × weight(d)   a dimension contributes its weight at score 5 and weight/5 at
+                                          score 1 (not score × weight)
+raw          = Σ points(d)                out of TOTAL_WEIGHT
+normalised_pct = round(raw / TOTAL_WEIGHT × 100)      shown out of 100
+displayed points(d) = points(d) × 100 / TOTAL_WEIGHT  (the scaled-to-100 view)
+```
 
+The percentage is mathematically the same as the old `Σ(score × weight) / (280 × 5)`, but with the
+new weights. Bands are unchanged.
+
+```
 Bands:
   >= 70 → P1
   >= 55 → P2

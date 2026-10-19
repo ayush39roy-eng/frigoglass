@@ -6,7 +6,6 @@ import { ArrowUpRight, FolderKanban, GanttChartSquare, Gauge as GaugeIcon, List 
 import { PageHeader } from '@/components/layout/page-header';
 import { SURFACES } from '@/app/nav';
 import { GlowOverlay } from '@/components/ui/background-components';
-import { Badge } from '@/components/ui/badge';
 import { formatInteger } from '@/lib/format';
 import { ApiError } from '@/lib/api/client';
 import { useMotionTokens } from '@/lib/motion';
@@ -68,9 +67,6 @@ const CompletionProfileCard = React.lazy(async () => ({
 }));
 const PortfolioAnalytics = React.lazy(async () => ({
   default: (await import('./components/portfolio-analytics')).PortfolioAnalytics,
-}));
-const ProjectSpotlight = React.lazy(async () => ({
-  default: (await import('./components/project-spotlight')).ProjectSpotlight,
 }));
 // P13-T10: the "Analytics & breakdown" section is a Recharts consumer too.
 const AnalyticsBreakdown = React.lazy(async () => ({
@@ -192,20 +188,23 @@ export default function DashboardPage(): React.JSX.Element {
               <CountrySegmented />
               <HubFilterChip />
               {totalProjectsCount !== null ? (
-                <Badge
-                  tone="neutral"
+                <div
                   data-numeric=""
                   data-testid="dashboard-total-projects"
-                  className="h-9 px-3.5 text-xs font-semibold rounded-pill border-[1.5px] border-dash-hairline bg-surface shadow-dashCard flex items-center gap-1.5"
+                  className="flex items-center gap-2.5 rounded-pill border-2 border-primary/25 bg-surface px-4 py-1.5 shadow-dashCard transition-all hover:border-primary/50"
                 >
-                  <FolderKanban className="size-3.5 text-primary" aria-hidden="true" />
-                  <span>
-                    <strong className="text-text font-bold">
-                      {formatInteger(totalProjectsCount)}
-                    </strong>{' '}
-                    {totalProjectsCount === 1 ? 'project' : 'projects'}
+                  <span className="grid size-8 shrink-0 place-items-center rounded-full bg-primary/10 text-primary">
+                    <FolderKanban className="size-4.5" aria-hidden="true" />
                   </span>
-                </Badge>
+                  <span className="flex items-baseline gap-1.5 leading-none">
+                    <span className="font-display text-2xl sm:text-3xl font-black tracking-tight text-text tabular-nums">
+                      {formatInteger(totalProjectsCount)}
+                    </span>
+                    <span className="text-xs font-bold uppercase tracking-wider text-text-muted">
+                      {totalProjectsCount === 1 ? 'project' : 'projects'}
+                    </span>
+                  </span>
+                </div>
               ) : null}
               <Button
                 type="button"
@@ -353,13 +352,6 @@ export default function DashboardPage(): React.JSX.Element {
               <ProjectBreakdown />
             </StaggerSection>
 
-            {withinYear.data && withinYear.data.rows.length > 0 ? (
-              <StaggerSection>
-                <React.Suspense fallback={<PanelSkeleton height="h-[20rem]" />}>
-                  <ProjectSpotlight rows={withinYear.data.rows} />
-                </React.Suspense>
-              </StaggerSection>
-            ) : null}
 
             <StaggerSection>
               <SectionBoundary

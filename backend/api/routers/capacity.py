@@ -54,6 +54,7 @@ from __future__ import annotations
 
 import uuid
 from collections import defaultdict
+from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Depends
 from sqlalchemy import select
@@ -706,21 +707,39 @@ async def engineer_utilization(
             )
         )
 
-    db.add(
-        AuditLogEntry(
-            actor_user_id=current_user.user_id,
-            action="capacity.engineer_utilization.read",
-            entity_type="EngineerUtilization",
-            entity_id="engineer-utilization",
-            hub_id=None,
-            before_state=None,
-            after_state={
-                "hub_id": str(hub_id) if hub_id else None,
-                "region": region.value if region else None,
-                "row_count": len(rows),
-            },
+    # Coalesce: one audit row per user per filter set per minute (a burst of reloads
+    # must not grow the append-only table without bound).
+    hub_text = str(hub_id) if hub_id else None
+    region_text = region.value if region else None
+    recent = (
+        await db.execute(
+            select(AuditLogEntry.id)
+            .where(
+                AuditLogEntry.actor_user_id == current_user.user_id,
+                AuditLogEntry.action == "capacity.engineer_utilization.read",
+                AuditLogEntry.occurred_at >= datetime.now(UTC) - timedelta(minutes=1),
+                AuditLogEntry.after_state["hub_id"].astext.is_not_distinct_from(hub_text),
+                AuditLogEntry.after_state["region"].astext.is_not_distinct_from(region_text),
+            )
+            .limit(1)
         )
-    )
+    ).first()
+    if recent is None:
+        db.add(
+            AuditLogEntry(
+                actor_user_id=current_user.user_id,
+                action="capacity.engineer_utilization.read",
+                entity_type="EngineerUtilization",
+                entity_id="engineer-utilization",
+                hub_id=hub_id,
+                before_state=None,
+                after_state={
+                    "hub_id": hub_text,
+                    "region": region_text,
+                    "row_count": len(rows),
+                },
+            )
+        )
     await db.commit()
     return EngineerUtilizationResponse(
         week_range=(1, dc.WITHIN_YEAR_WEEK),

@@ -14,7 +14,8 @@ import { SCORING_ANCHORS } from '@/lib/domain-constants';
 import { formatCurrency, formatDecimal } from '@/lib/format';
 import { PROJECT_TYPE_LABELS, type CurrencyCode } from '@/types/enums';
 
-import { DIMENSIONS, type PriorityMatrixRow } from '../api/types';
+import { POINTS_RULE_COPY, type DimensionPoints, type PriorityMatrixRow } from '../api/types';
+import { formatWeight, useScoringModel, type ScoringModelEntry } from '../scoring-model';
 import { ScoreCell } from './score-cell';
 import { VirtualMatrixGrid, type MatrixColumn } from './virtual-matrix-grid';
 
@@ -32,7 +33,8 @@ import { VirtualMatrixGrid, type MatrixColumn } from './virtual-matrix-grid';
  * §8): what a 1 and a 5 mean, plus pillar and weight. A real button so the
  * tooltip is reachable by keyboard; the visible text stays the short label.
  */
-function DimHeader({ field, short, label, pillar, weight }: (typeof DIMENSIONS)[number]): React.JSX.Element {
+function DimHeader({ dim }: { dim: ScoringModelEntry }): React.JSX.Element {
+  const { key: field, short, label, pillar, weight, scaled_weight: scaled } = dim;
   const anchor = SCORING_ANCHORS[field];
   return (
     <Tooltip>
@@ -40,7 +42,7 @@ function DimHeader({ field, short, label, pillar, weight }: (typeof DIMENSIONS)[
         <button
           type="button"
           className="cursor-help rounded-sm underline decoration-dotted underline-offset-2"
-          aria-label={`${label}: 1 = ${anchor.low}, 5 = ${anchor.high} (${pillar}, weight ${String(weight)})`}
+          aria-label={`${label}: 1 = ${anchor.low}, 5 = ${anchor.high} (${pillar}, weight ${formatWeight(weight, scaled)})`}
         >
           {short}
         </button>
@@ -48,8 +50,9 @@ function DimHeader({ field, short, label, pillar, weight }: (typeof DIMENSIONS)[
       <TooltipContent className="max-w-xs text-left">
         <span className="block font-semibold">{label}</span>
         <span className="block text-text-inverse/80">
-          {pillar} · weight {weight}
+          {pillar} · weight {formatWeight(weight, scaled)}
         </span>
+        <span className="block text-text-inverse/80">{POINTS_RULE_COPY}</span>
         <span className="mt-1 block">
           <strong>1</strong> — {anchor.low}
         </span>
@@ -61,12 +64,24 @@ function DimHeader({ field, short, label, pillar, weight }: (typeof DIMENSIONS)[
   );
 }
 
-function dimCell(value: number | null): React.ReactNode {
-  return value === null ? (
-    <span className="text-text-subtle">–</span>
-  ) : (
-    <span className="tnum text-text" data-numeric="">
+function dimCell(
+  value: number | null,
+  pts: DimensionPoints | undefined,
+  weight: number,
+): React.ReactNode {
+  if (value === null) return <span className="text-text-subtle">–</span>;
+  return (
+    <span
+      className="tnum text-text"
+      data-numeric=""
+      title={pts ? `${String(pts.points)} / ${String(weight)} points (${pts.scaled_points.toFixed(1)} of 100 scale)` : undefined}
+    >
       {value}
+      {pts ? (
+        <span className="ml-1 text-2xs text-text-muted">
+          {pts.points}/{weight}
+        </span>
+      ) : null}
     </span>
   );
 }
@@ -121,6 +136,7 @@ export function MatrixTable({
   detailed = true,
   columnFilters,
 }: MatrixTableProps): React.JSX.Element {
+  const model = useScoringModel();
   const columns = React.useMemo<MatrixColumn<PriorityMatrixRow>[]>(() => {
     const cols: MatrixColumn<PriorityMatrixRow>[] = [
       {
@@ -229,13 +245,13 @@ export function MatrixTable({
       },
     ];
 
-    for (const dim of detailed ? DIMENSIONS : []) {
+    for (const dim of detailed ? model.dimensions : []) {
       cols.push({
-        id: `dim-${dim.field}`,
-        header: <DimHeader {...dim} />,
-        width: 60,
+        id: `dim-${dim.key}`,
+        header: <DimHeader dim={dim} />,
+        width: 76,
         align: 'center',
-        cell: (row) => dimCell(row[dim.field]),
+        cell: (row) => dimCell(row[dim.key], row.dimension_points?.[dim.key], dim.weight),
       });
     }
 
@@ -342,11 +358,31 @@ export function MatrixTable({
       return cols.map((c) => (columnFilters[c.id] === undefined ? c : { ...c, filter: columnFilters[c.id] }));
     }
     return cols;
-  }, [currency, canEdit, onEdit, scenarioStagedProjectIds, detailed, columnFilters]);
+  }, [currency, canEdit, onEdit, scenarioStagedProjectIds, detailed, columnFilters, model]);
+
+  const sortedRows = React.useMemo(() => {
+    return [...rows].sort((a, b) => {
+      if (a.rank !== null && b.rank !== null) {
+        if (a.rank !== b.rank) return a.rank - b.rank;
+        return a.project_name.localeCompare(b.project_name);
+      }
+      if (a.rank !== null) return -1;
+      if (b.rank !== null) return 1;
+
+      if (a.weighted_score !== null && b.weighted_score !== null) {
+        if (b.weighted_score !== a.weighted_score) return b.weighted_score - a.weighted_score;
+        return a.project_name.localeCompare(b.project_name);
+      }
+      if (a.weighted_score !== null) return -1;
+      if (b.weighted_score !== null) return 1;
+
+      return a.project_name.localeCompare(b.project_name);
+    });
+  }, [rows]);
 
   return (
     <VirtualMatrixGrid
-      rows={rows}
+      rows={sortedRows}
       columns={columns}
       rowKey={(row) => row.project_id}
       caption="Prioritization scoring grid"

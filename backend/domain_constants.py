@@ -243,21 +243,23 @@ PRIORITIZATION_DIMENSIONS: Final[tuple[tuple[str, str, str, int], ...]] = (
     ("Regulatory & Quality", "Quality Improvements", "quality_improvements", 25),
     ("Financial Return", "RM Savings", "rm_savings", 25),
     ("Financial Return", "Total RM Savings", "total_rm_savings", 25),
-    ("Financial Return", "Gross Margins", "gross_margins", 25),
-    ("Financial Return", "Profitability", "profitability", 25),
+    ("Financial Return", "Gross Profitability", "gross_margins", 25),
+    # ROI keeps the DB/API key `profitability` and its positional slot (ADR 0029);
+    # only its label and pillar change.
+    ("Investment & Feasibility", "ROI", "profitability", 25),
     ("Market & Volume", "Annual Volume", "annual_volume", 15),
-    ("Market & Volume", "3-Year Volume", "three_year_volume", 15),
+    ("Market & Volume", "3-Year Volume", "three_year_volume", 25),
     ("Market & Volume", "New Models", "new_models", 15),
-    ("Investment & Feasibility", "CAPEX Investment (inverted)", "capex_investment", 10),
+    ("Investment & Feasibility", "CAPEX Investment (inverted)", "capex_investment", 15),
 )
 
 TOTAL_WEIGHT: Final[int] = sum(w for *_rest, w in PRIORITIZATION_DIMENSIONS)
-assert TOTAL_WEIGHT == 280, "PRIORITIZATION_DIMENSIONS weights must sum to 280 per DOMAIN_RULES.md"
 
 DIMENSION_SCORE_MIN: Final[int] = 1
 DIMENSION_SCORE_MAX: Final[int] = 5
 
-# Band thresholds on normalised_pct = round(weighted_score / (280 * 5) * 100)
+# Band thresholds on normalised_pct = round(Σ points / TOTAL_WEIGHT * 100),
+# points = score / 5 * weight (ADR 0029).
 PRIORITY_BAND_THRESHOLDS: Final[tuple[tuple[int, str], ...]] = (
     (70, "P1"),
     (55, "P2"),

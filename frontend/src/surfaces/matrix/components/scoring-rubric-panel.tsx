@@ -14,7 +14,8 @@ import {
 import { SCORING_ANCHORS, SCORING_SCALE } from '@/lib/domain-constants';
 import { cn } from '@/lib/utils';
 
-import { DIMENSIONS } from '../api/types';
+import { POINTS_RULE_COPY } from '../api/types';
+import { formatWeight, useScoringModel } from '../scoring-model';
 
 /**
  * Collapsible "Scoring rubric" (P9 contract §8): the 1..5 scale and, per
@@ -23,6 +24,7 @@ import { DIMENSIONS } from '../api/types';
  * score is derived from it (Invariant I9).
  */
 export function ScoringRubricPanel(): React.JSX.Element {
+  const model = useScoringModel();
   const [open, setOpen] = React.useState(false);
   const bodyId = React.useId();
 
@@ -68,14 +70,14 @@ export function ScoringRubricPanel(): React.JSX.Element {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {DIMENSIONS.map((dim) => {
-                const anchor = SCORING_ANCHORS[dim.field];
+              {model.dimensions.map((dim) => {
+                const anchor = SCORING_ANCHORS[dim.key];
                 return (
-                  <TableRow key={dim.field}>
+                  <TableRow key={dim.key}>
                     <TableCell className="font-medium text-text">{dim.label}</TableCell>
                     <TableCell className="text-text-muted">{dim.pillar}</TableCell>
                     <TableCell className="text-right" data-numeric="">
-                      {dim.weight}
+                      {formatWeight(dim.weight, dim.scaled_weight)}
                     </TableCell>
                     <TableCell>{anchor.low}</TableCell>
                     <TableCell>{anchor.high}</TableCell>
@@ -85,7 +87,8 @@ export function ScoringRubricPanel(): React.JSX.Element {
             </TableBody>
           </Table>
           <p className="text-2xs text-text-subtle">
-            Weights total 280; the weighted score, normalised percentage and band are computed by
+            {POINTS_RULE_COPY}{' '}
+            {model.total_weight === null ? '' : `Weights total ${String(model.total_weight)}, shown scaled to 100. `}The weighted score, normalised percentage and band are computed by
             the server (DOMAIN_RULES.md) — this rubric only explains the inputs.
           </p>
         </CardContent>

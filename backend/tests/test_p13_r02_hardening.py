@@ -147,6 +147,25 @@ async def test_exports_include_leader_name_and_neutralise_formulas(db_session):
     assert rows[0]["leader_name"].startswith("'=SUM")
 
 
+async def test_gantt_and_registration_exports_carry_leader_name(db_session):
+    """P15-R01 (QA-P15-2, ADR 0028): both exports carry leader_name, formula-safe."""
+
+    hub = await make_hub(db_session, name=HubName.RD_GREECE, lab_region=LabRegion.GREECE)
+    user = await make_user(db_session, RoleName.PORTFOLIO_MANAGER)
+    leader = await make_engineer(db_session, hub, name="=SUM(1+1)")
+    await make_schedule_run(db_session, is_active=True)
+    await make_project(db_session, hub, name="Led Project", leader=leader)
+    await db_session.flush()
+    override_current_principal(make_principal(RoleName.PORTFOLIO_MANAGER, user_id=user.id))
+    async with _client(db_session) as client:
+        gantt = await client.get("/exports/gantt", params={"format": "csv"})
+        reg = await client.get("/exports/project-registration", params={"format": "csv"})
+    for resp in (gantt, reg):
+        assert resp.status_code == 200, resp.text
+        rows = list(csv.DictReader(io.StringIO(resp.content.decode("utf-8-sig"))))
+        assert rows and rows[0]["leader_name"].startswith("'=SUM")
+
+
 # --- F12: Gantt offset and Engineer engineer_names ------------------------------------------
 
 
@@ -193,5 +212,5 @@ async def test_gantt_engineer_never_sees_a_colleagues_name(db_session):
     assert resp.status_code == 200, resp.text
     steps = {s["step_id"]: s for s in resp.json()["rows"][0]["steps"]}
     assert steps["PDD-A"]["assigned_engineer_name"] == "Me Myself"
-    assert steps["PDD-B"]["assigned_engineer_name"] is None
-    assert "Colleague Secret" not in resp.text
+    assert steps["PDD-B"]["assigned_engineer_name"] == "Colleague Secret"  # ADR 0028 amendment
+    assert "Colleague Secret" in resp.text

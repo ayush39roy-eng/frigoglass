@@ -265,7 +265,7 @@ async def test_files_rbac_and_scope(db_session):
         patch = await client.patch(
             f"/projects/{project.id}/files/{f['id']}", json={"description": "x"}
         )
-    assert listed.status_code == 200 and listed.json()[0]["uploaded_by_name"] is None
+    assert listed.status_code == 200 and listed.json()[0]["uploaded_by_name"] == "Test User"
     assert dl.status_code == 200
     assert up.status_code == 403 and patch.status_code == 403
     # Hub Planner of another hub: 404, and a file id of another project: 404.

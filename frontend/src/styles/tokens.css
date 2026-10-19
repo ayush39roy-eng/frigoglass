@@ -137,7 +137,7 @@
   --color-warning: var(--amber-600);
   --color-warning-fg: var(--slate-900);
   --color-warning-subtle: var(--amber-50);
-  --color-warning-subtle-fg: var(--amber-700);
+  --color-warning-subtle-fg: var(--amber-800);
 
   --color-success: var(--emerald-600);
   --color-success-fg: var(--slate-0);

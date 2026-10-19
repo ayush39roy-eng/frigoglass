@@ -49,3 +49,18 @@ pending GDPR sign-off" in view.
   Six projects are led by an engineer from another hub. So by engineer hub the heatmap differs
   from the Capacity hub table (for example OEM-HCK about 137 % against 100.4 %). By project hub
   every figure reconciles, and so does the portfolio total. The heatmap carries a footnote saying so.
+
+## Amendment (2026-10-19, P15-R01): assignee and project-context names are served
+
+On the owner's decision to "use the personal data" (O3), the remaining P3-T09 own-name-only
+withholding is lifted for named employees attached to project records. Same mechanism
+(`is_engineer_self_scoped` / `_name_if_self` / `_engineer_name_if_self`); row scoping is unchanged.
+Fields now served to every reader who can read the project:
+
+- `assigned_engineer_name` on `GET /gantt` steps, on Workspace `stages[]`, and in the Gantt export.
+- Workspace `comments` / activity `author_name`, Workspace and `GET /projects/{id}/files`
+  `uploaded_by_name`, and activity event `actor_name`.
+- `leader_name` in the Gantt and Project Registration exports (formula-injection protected).
+
+The `capacity.engineer_utilization.read` audit row is now coalesced to one per user per filter set
+per minute and carries `hub_id` when a hub filter is used.

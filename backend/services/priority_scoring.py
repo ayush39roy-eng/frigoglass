@@ -36,14 +36,61 @@ def compute_priority_score(dimension_scores: list[int]) -> tuple[float, int, str
             f"expected {len(dc.PRIORITIZATION_DIMENSIONS)} dimension scores, "
             f"got {len(dimension_scores)}"
         )
-    weighted_score = sum(
-        score * weight
-        for score, (*_rest, weight) in zip(
-            dimension_scores, dc.PRIORITIZATION_DIMENSIONS, strict=True
-        )
-    )
-    normalized_pct = round(weighted_score / (dc.TOTAL_WEIGHT * dc.DIMENSION_SCORE_MAX) * 100)
+    weighted_score = sum(_points(score, weight) for score, weight in _pairs(dimension_scores))
+    normalized_pct = round(weighted_score / dc.TOTAL_WEIGHT * 100)
     suggested_band = next(
         label for threshold, label in dc.PRIORITY_BAND_THRESHOLDS if normalized_pct >= threshold
     )
     return float(weighted_score), normalized_pct, suggested_band
+
+
+def _points(score: int, weight: int) -> float:
+    """ADR 0029: a dimension contributes `score / 5 * weight` (weight at score 5)."""
+
+    return score * weight / dc.DIMENSION_SCORE_MAX
+
+
+def _pairs(dimension_scores: list[int]) -> list[tuple[int, int]]:
+    return [
+        (score, weight)
+        for score, (*_rest, weight) in zip(
+            dimension_scores, dc.PRIORITIZATION_DIMENSIONS, strict=True
+        )
+    ]
+
+
+def scaled_weight(weight: int) -> float:
+    """A weight shown out of 100: `weight * 100 / TOTAL_WEIGHT`, 2 dp (I9: server-side)."""
+
+    return round(weight * 100 / dc.TOTAL_WEIGHT, 2)
+
+
+def dimension_table() -> list[dict[str, object]]:
+    """The served dimension table, in positional (DB column) order."""
+
+    return [
+        {
+            "key": key,
+            "label": label,
+            "pillar": pillar,
+            "weight": weight,
+            "scaled_weight": scaled_weight(weight),
+        }
+        for pillar, label, key, weight in dc.PRIORITIZATION_DIMENSIONS
+    ]
+
+
+def dimension_points(dimension_scores: list[int]) -> dict[str, dict[str, float]]:
+    """Per-dimension `{points, scaled_points}` (2 dp), keyed by dimension key.
+    `scaled_points = points * 100 / TOTAL_WEIGHT`."""
+
+    out: dict[str, dict[str, float]] = {}
+    for (*_r, key, weight), score in zip(
+        dc.PRIORITIZATION_DIMENSIONS, dimension_scores, strict=True
+    ):
+        pts = _points(score, weight)
+        out[key] = {
+            "points": round(pts, 2),
+            "scaled_points": round(pts * 100 / dc.TOTAL_WEIGHT, 2),
+        }
+    return out

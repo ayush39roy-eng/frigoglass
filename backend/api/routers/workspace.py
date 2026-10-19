@@ -141,6 +141,7 @@ from services.workspace import (
     get_scoped_project_or_404,
     list_activity,
     merge_stage_update,
+    user_names,
 )
 from workers.progress import publish_progress
 from workers.schedule_tasks import run_greedy_schedule
@@ -462,7 +463,8 @@ async def list_files(
         .scalars()
         .all()
     )
-    return [file_read(f, current_user) for f in files]
+    file_names = await user_names(db, [f.uploaded_by_user_id for f in files])
+    return [file_read(f, current_user, file_names) for f in files]
 
 
 @router.post(

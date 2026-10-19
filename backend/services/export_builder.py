@@ -58,9 +58,11 @@ from typing import TYPE_CHECKING, Any
 from openpyxl import Workbook
 from openpyxl.cell import WriteOnlyCell
 from pydantic import BaseModel
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.principal import Principal
+from models.engineer import Engineer
 from models.enums import (
     CurrencyCode,
     LabRegion,
@@ -138,6 +140,11 @@ def _stringify(value: Any) -> Any:
 #: through `_neutralise_formula`.
 _EXPORT_WITHHELD_FIELDS: frozenset[str] = frozenset()
 
+#: Nested (non-scalar) fields that exports skip: spreadsheet cells are scalar.
+#: `dimension_points` is the served per-dimension points map (ADR 0029); the 13
+#: dimension scores and the weighted score are already exported flat.
+_EXPORT_NESTED_FIELDS: frozenset[str] = frozenset({"dimension_points"})
+
 
 def rows_from_models(
     models_list: Sequence[BaseModel],
@@ -154,8 +161,10 @@ def rows_from_models(
 
     if not models_list:
         return [], []
-    headers = list(type(models_list[0]).model_fields.keys())
-    rows = [m.model_dump(mode="json") for m in models_list]
+    headers = [
+        h for h in type(models_list[0]).model_fields if h not in _EXPORT_NESTED_FIELDS
+    ]
+    rows = [m.model_dump(mode="json", exclude=set(_EXPORT_NESTED_FIELDS)) for m in models_list]
     return headers, rows
 
 
@@ -373,6 +382,7 @@ async def build_gantt_sheets(
         "hub",
         "category",
         "priority",
+        "leader_name",
         "frozen",
         "delay_weeks",
         "left_out",
@@ -400,6 +410,7 @@ async def build_gantt_sheets(
             "hub": project.hub.value if hasattr(project.hub, "value") else project.hub,
             "category": project.category.value if project.category else None,
             "priority": project.priority.value if project.priority else None,
+            "leader_name": project.leader_name,
             "frozen": project.frozen,
             "delay_weeks": project.delay_weeks,
             "left_out": project.left_out,
@@ -505,6 +516,20 @@ async def build_project_registration_sheets(
         q=q,
     )
     headers, rows = rows_from_models([ProjectListItem.model_validate(p) for p in projects])
+    # ADR 0028: the leader name is exported (text cells pass `_neutralise_formula`).
+    leader_ids = {p.leader_engineer_id for p in projects if p.leader_engineer_id}
+    names: dict[uuid.UUID, str] = {}
+    if leader_ids:
+        names = {
+            e.id: e.name
+            for e in (
+                await db.execute(select(Engineer).where(Engineer.id.in_(leader_ids)))
+            ).scalars()
+        }
+    headers = [*headers, "leader_name"]
+    for row in rows:
+        lid = row.get("leader_engineer_id")
+        row["leader_name"] = names.get(uuid.UUID(str(lid))) if lid else None
     return {"Projects": (headers, rows)}
 
 

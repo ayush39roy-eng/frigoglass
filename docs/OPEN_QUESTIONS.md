@@ -564,3 +564,10 @@ agreed formula. Please confirm this is how you want to read it.
 **OQ #8 — RESOLVED FOR BUILDING (2026-10-19):** the owner, relaying the client, confirmed per-engineer
 utilization and leader names may be used ("it is not a problem"). ADR 0028 enables them. The
 DPO / works council confirmation is kept as an accepted residual risk and is no longer blocking.
+
+### 41. Prioritization weights total 295, not 300 *(2026-10-19, P16, ADR 0029, non-blocking)*
+
+With 3-Year Volume at 25 and CAPEX at 15, and every other weight unchanged (ROI keeps 25), the total
+is **295**, not the 300 the client expects. The scoring is scaled to 100 whatever the total, so
+nothing breaks. Which dimension should carry the missing 5 points (for example New Models 15 → 20,
+or ROI 25 → 30)? Or is 295 acceptable?

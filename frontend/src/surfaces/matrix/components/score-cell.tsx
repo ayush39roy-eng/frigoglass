@@ -4,7 +4,7 @@ import { PriorityBandPill } from '@/components/shared/priority-band-pill';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { formatInteger } from '@/lib/format';
 
-import { BAND_THRESHOLDS, type PriorityMatrixRow } from '../api/types';
+import { BAND_THRESHOLDS, POINTS_RULE_COPY, type PriorityMatrixRow } from '../api/types';
 import { HardGateBadge } from './hard-gate-badge';
 
 /**
@@ -12,8 +12,8 @@ import { HardGateBadge } from './hard-gate-badge';
  * explicitly domain-specific component — built here, not sourced).
  *
  * Every value shown is read verbatim from one `PriorityMatrixRow` field:
- *   - `normalized_pct`  — backend: round(weighted_score / (280 × 5) × 100)
- *   - `weighted_score`  — backend: Σ(dimension_score × weight)
+ *   - `normalized_pct`  — backend: round(weighted_score / total_weight × 100)
+ *   - `weighted_score`  — backend: Σ points (score/5 × weight)
  *   - `suggested_band`  — backend: banded from `normalized_pct`
  * Nothing is recomputed here (Invariant I9). The threshold table is shown as
  * static rule copy so the band is *legible*, not to derive it.
@@ -32,6 +32,7 @@ function BandDerivationTooltip({
         Weighted score <strong>{weighted === null ? '—' : formatInteger(weighted)}</strong> ·
         normalized <strong>{pct}%</strong> (both computed server-side).
       </span>
+      <span className="mt-1 block">{POINTS_RULE_COPY}</span>
       <span className="mt-1 block font-semibold">Band thresholds (DOMAIN_RULES.md)</span>
       <ul className="mt-0.5">
         {BAND_THRESHOLDS.map((t, i) => {

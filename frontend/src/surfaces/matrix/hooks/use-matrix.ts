@@ -22,6 +22,7 @@ import type {
 import {
   applyScenario,
   fetchPriorityMatrix,
+  fetchScoringDimensions,
   fetchPrioritySummary,
   fetchScenarioVersionDetail,
   fetchScenarioVersions,
@@ -169,5 +170,16 @@ export function useUpdateCurrencyRate() {
       void queryClient.invalidateQueries({ queryKey: queryKeys.currencyRates() });
       void queryClient.invalidateQueries({ queryKey: ['priority-matrix'] });
     },
+  });
+}
+
+/** The served dimension table (weights, scaled weights, total). Static for a
+ *  session in practice; failure leaves the static fallback in place. */
+export function useScoringDimensions() {
+  return useQuery({
+    queryKey: queryKeys.priorityDimensions(),
+    queryFn: ({ signal }) => fetchScoringDimensions({ signal }),
+    staleTime: 5 * 60_000,
+    retry: retryUnlessAuth,
   });
 }

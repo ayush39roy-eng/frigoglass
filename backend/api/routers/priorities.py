@@ -43,6 +43,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+import domain_constants as dc
 from api.db import get_db
 from api.deps import require_permission
 from core.principal import Principal
@@ -60,6 +61,9 @@ from models.enums import (
 from models.priority import DIMENSION_FIELD_NAMES, PriorityScore
 from models.project import Project
 from schemas.priority import (
+    DimensionInfo,
+    DimensionPoints,
+    PriorityDimensionsResponse,
     PriorityMatrixRow,
     PriorityPortfolioSummary,
     PriorityScoreRead,
@@ -67,7 +71,11 @@ from schemas.priority import (
 )
 from services.audit_helpers import priority_score_audit_state
 from services.hub_scope import global_hub_filter, hub_scope_filter, narrowed_hub_filter
-from services.priority_scoring import compute_priority_score
+from services.priority_scoring import (
+    compute_priority_score,
+    dimension_points,
+    dimension_table,
+)
 from services.project_filters import (
     Q_MAX_LENGTH,
     leader_name_if_self,
@@ -98,6 +106,13 @@ def _convert(amount: float | None, rate: Decimal) -> float | None:
     if amount is None:
         return None
     return float(Decimal(str(amount)) * rate)
+
+
+def _dimension_points(score: PriorityScore | None) -> dict[str, DimensionPoints] | None:
+    if score is None:
+        return None
+    pts = dimension_points([getattr(score, f) for f in DIMENSION_FIELD_NAMES])
+    return {k: DimensionPoints(**v) for k, v in pts.items()}
 
 
 def _build_row(
@@ -140,6 +155,7 @@ def _build_row(
         ),
         normalized_pct=score.normalized_pct if score else None,
         suggested_band=score.suggested_band if score else None,
+        dimension_points=_dimension_points(score),
         is_new_model=project.type == ProjectType.NM,
         is_rm_saving_project=project.rm_savings_keur is not None,
         currency=currency,
@@ -209,12 +225,20 @@ async def list_priority_matrix(
     projects = (await db.execute(stmt)).scalars().all()
     rate = await _rate_to_eur(db, currency)
     ranks = score_ranks(projects, _score_value)
-    return [
+    rows = [
         _build_row(
             p, p.priority_score, currency, rate, current_user=current_user, rank=ranks.get(p.id)
         )
         for p in projects
     ]
+    rows.sort(
+        key=lambda r: (
+            0 if r.rank is not None else 1,
+            r.rank if r.rank is not None else 0,
+            r.project_name.lower(),
+        )
+    )
+    return rows
 
 
 def _score_value(project: Project) -> float | None:
@@ -222,6 +246,19 @@ def _score_value(project: Project) -> float | None:
     if score is None or score.weighted_score is None:
         return None
     return float(score.weighted_score)
+
+
+@router.get("/dimensions", response_model=PriorityDimensionsResponse)
+async def priority_dimensions(
+    current_user: Principal = Depends(_read),
+) -> PriorityDimensionsResponse:
+    """The dimension table (labels, pillars, weights, weights scaled to 100) and
+    `total_weight`, served so the browser never computes them (ADR 0029, I9)."""
+
+    return PriorityDimensionsResponse(
+        dimensions=[DimensionInfo(**d) for d in dimension_table()],  # type: ignore[arg-type]
+        total_weight=dc.TOTAL_WEIGHT,
+    )
 
 
 @router.get("/summary", response_model=PriorityPortfolioSummary)

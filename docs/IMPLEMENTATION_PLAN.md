@@ -1911,3 +1911,11 @@ all of P14.
 | P15-T01 | Backend: `GET /capacity/engineer-utilization`, audit, leader_name un-withheld everywhere incl. exports | backend-builder | OPEN |
 | P15-T02 | Frontend: Engineers × Weeks heatmap replaces the placeholder; leader names displayed ("Withheld" removed) | frontend-builder | OPEN |
 | P15-T20 | Gate: qa, workflow, security | — | OPEN |
+
+## P16 — Prioritization matrix: Gross Profitability, ROI, new weights (ADR 0029)
+
+| ID | Task | Owner | Status |
+|---|---|---|---|
+| P16-T01 | Backend: constants, scoring, served scaled weights and points, recompute stored scores, mark stale | backend-builder | OPEN |
+| P16-T02 | Frontend: labels, pillar move, weights and points scaled to 100 in the Matrix, Registration, Workspace | frontend-builder | OPEN |
+| P16-T20 | Gate | qa / workflow / security | OPEN |

@@ -72,15 +72,10 @@ async def test_engineer_sums_equal_hub_design_load(db_session):
     loads = {r["hub"]: r["design_load_weeks"] for r in cap["rows"]}
     # I6 across the whole portfolio: every design week is booked to some engineer.
     assert sum(by_hub.values()) == sum(loads.values())
-    # OEM hubs have no engineers of their own; their design steps are booked
-    # to PD engineers, so the per-hub identity is exact for every other hub
-    # that is not lending engineers, and the lenders only exceed their load.
-    oem = {"OEM-HCK", "OEM-Seltek"}
-    for hub, load in loads.items():
-        if hub in oem:
-            assert by_hub.get(hub, 0) == 0
-        else:
-            assert by_hub.get(hub, 0) >= load, hub
+    # The OEM hubs DO have engineers. By-engineer-hub totals differ from the Capacity
+    # hub table because 6 projects are led by an engineer from a different hub (the
+    # leader is the booked resource, DOMAIN_RULES). By PROJECT hub every figure
+    # reconciles (the portfolio total above); by engineer hub we only assert that.
     assert by_hub["R&D-Greece"] == loads["R&D-Greece"]
     assert by_hub["R&D-India"] == loads["R&D-India"]
 
@@ -170,3 +165,29 @@ async def test_leader_name_returned_on_every_surface_and_exported(db_session):
     }
     assert all(names[__import__("uuid").UUID(r["leader_engineer_id"])] == r["leader_name"]
                for r in dash if r["leader_engineer_id"])
+
+
+async def test_audit_is_coalesced_per_user_per_filter_set_and_carries_hub_id(db_session):
+    hub = await make_hub(db_session, name=HubName.RD_GREECE, lab_region=LabRegion.GREECE)
+    other = await make_hub(db_session, name=HubName.RD_INDIA, lab_region=LabRegion.INDIA)
+    await make_schedule_run(db_session, is_active=True)
+    await make_engineer(db_session, hub, name="A")
+    await act_as(db_session, RoleName.PORTFOLIO_MANAGER)
+
+    async def rows():
+        return (
+            await db_session.execute(
+                select(AuditLogEntry.hub_id).where(AuditLogEntry.action == ACTION)
+            )
+        ).all()
+
+    async with client_for(db_session) as client:
+        for _ in range(5):
+            await _get(client)
+        assert len(await rows()) == 1  # burst of reloads: one row
+        for _ in range(3):
+            await _get(client, hub_id=hub.id)
+        await _get(client, hub_id=other.id)
+    entries = await rows()
+    assert len(entries) == 3  # one per distinct filter set
+    assert {e[0] for e in entries} == {None, hub.id, other.id}

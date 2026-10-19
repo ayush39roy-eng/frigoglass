@@ -17,7 +17,8 @@ import { Label } from '@/components/ui/label';
 import { ApiError } from '@/lib/api/client';
 import { HARD_GATE_REASONS, type HardGateReason } from '@/types/enums';
 
-import { DIMENSIONS, type PriorityMatrixRow, type PriorityScoreUpdateRequest } from '../api/types';
+import { POINTS_RULE_COPY, type PriorityMatrixRow, type PriorityScoreUpdateRequest } from '../api/types';
+import { formatWeight, useScoringModel } from '../scoring-model';
 import {
   dimensionDefaultsFromRow,
   scoreDimensionsSchema,
@@ -51,7 +52,6 @@ export interface ScoreEditDialogProps {
   mode?: 'immediate' | 'scenario';
 }
 
-const PILLARS = [...new Set(DIMENSIONS.map((d) => d.pillar))];
 
 export function ScoreEditDialog({
   row,
@@ -88,6 +88,8 @@ function ScoreEditForm({
   onSubmit: ScoreEditDialogProps['onSubmit'];
   mode: 'immediate' | 'scenario';
 }): React.JSX.Element {
+  const model = useScoringModel();
+  const pillars = [...new Set(model.dimensions.map((d) => d.pillar))];
   const [submitError, setSubmitError] = React.useState<string | null>(null);
   const [gates, setGates] = React.useState<HardGateReason[]>([...row.hard_gates]);
 
@@ -144,7 +146,7 @@ function ScoreEditForm({
             </>
           ) : (
             <>
-              {row.project_name} — 13 dimensions, each 1–5. The weighted score and band are
+              {row.project_name} — 13 dimensions, each 1–5. {POINTS_RULE_COPY} The weighted score and band are
               recomputed by the server on save. This does not apply priorities or re-run the
               schedule.
             </>
@@ -153,26 +155,26 @@ function ScoreEditForm({
       </DialogHeader>
 
       <div className="my-4 max-h-[52vh] space-y-4 overflow-y-auto pr-1">
-        {PILLARS.map((pillar) => (
+        {pillars.map((pillar) => (
           <fieldset key={pillar} className="space-y-2">
             <legend className="text-2xs font-semibold uppercase tracking-wide text-text-muted">
               {pillar}
             </legend>
             <div className="grid gap-2 sm:grid-cols-2">
-              {DIMENSIONS.filter((d) => d.pillar === pillar).map((dim) => {
-                const err = errors[dim.field];
+              {model.dimensions.filter((d) => d.pillar === pillar).map((dim) => {
+                const err = errors[dim.key];
                 return (
-                  <div key={dim.field} className="flex items-center justify-between gap-2">
+                  <div key={dim.key} className="flex items-center justify-between gap-2">
                     <Label
-                      htmlFor={dim.field}
+                      htmlFor={dim.key}
                       className="text-xs"
-                      title={`weight ${String(dim.weight)}`}
+                      title={`weight ${formatWeight(dim.weight, dim.scaled_weight)}`}
                     >
                       {dim.label}
                     </Label>
                     <div className="flex flex-col items-end">
                       <Input
-                        id={dim.field}
+                        id={dim.key}
                         type="number"
                         min={1}
                         max={5}
@@ -180,7 +182,7 @@ function ScoreEditForm({
                         inputMode="numeric"
                         className="h-8 w-16 text-right tnum"
                         aria-invalid={err ? true : undefined}
-                        {...register(dim.field)}
+                        {...register(dim.key)}
                       />
                       {err ? (
                         <span role="alert" className="text-2xs text-danger">

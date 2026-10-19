@@ -11,7 +11,8 @@ import { formatInteger } from '@/lib/format';
 import { queryKeys } from '@/lib/query-keys';
 import { HARD_GATE_REASONS, type HardGateReason } from '@/types/enums';
 import { updatePriorityScore } from '@/surfaces/matrix/api/matrix-api';
-import { DIMENSIONS, type DimensionField, type PriorityScoreUpdateRequest } from '@/surfaces/matrix/api/types';
+import { DIMENSIONS, POINTS_RULE_COPY, type DimensionField, type PriorityScoreUpdateRequest } from '@/surfaces/matrix/api/types';
+import { FetchedScoringModelProvider, formatWeight, useScoringModel } from '@/surfaces/matrix/scoring-model';
 
 import type { WorkspacePriorityScore } from '../api/types';
 
@@ -27,7 +28,19 @@ function scoresOf(ps: WorkspacePriorityScore | null): Scores {
   return Object.fromEntries(DIMENSIONS.map((d) => [d.field, ps ? ps[d.field] : 3])) as Scores;
 }
 
-export function ScoringSection({
+export function ScoringSection(props: {
+  projectId: string;
+  score: WorkspacePriorityScore | null;
+  canWrite: boolean;
+}): React.JSX.Element {
+  return (
+    <FetchedScoringModelProvider>
+      <ScoringSectionInner {...props} />
+    </FetchedScoringModelProvider>
+  );
+}
+
+function ScoringSectionInner({
   projectId,
   score,
   canWrite,
@@ -37,6 +50,7 @@ export function ScoringSection({
   canWrite: boolean;
 }): React.JSX.Element {
   const queryClient = useQueryClient();
+  const model = useScoringModel();
   const [editing, setEditing] = React.useState(false);
   const [scores, setScores] = React.useState<Scores>(() => scoresOf(score));
   const [gates, setGates] = React.useState<HardGateReason[]>(score?.hard_gates ?? []);
@@ -118,23 +132,23 @@ export function ScoringSection({
             </tr>
           </thead>
           <tbody>
-            {DIMENSIONS.map((d) => {
-              const anchor = SCORING_ANCHORS[d.field];
-              const id = `ws-score-${d.field}`;
+            {model.dimensions.map((d) => {
+              const anchor = SCORING_ANCHORS[d.key];
+              const id = `ws-score-${d.key}`;
               return (
-                <tr key={d.field} className="border-t border-border/70 transition-colors hover:bg-primary-subtle/30">
+                <tr key={d.key} className="border-t border-border/70 transition-colors hover:bg-primary-subtle/30">
                   <th scope="row" className="px-3 py-2.5 text-left font-bold text-text">
                     {editing ? <label htmlFor={id}>{d.label}</label> : d.label}
                   </th>
                   <td className="px-2 py-1 text-right text-text-muted" data-numeric="">
-                    {d.weight}
+                    {formatWeight(d.weight, d.scaled_weight)}
                   </td>
                   <td className="px-2 py-1 text-center" data-numeric="">
                     {editing ? (
                       <select
                         id={id}
-                        value={scores[d.field]}
-                        onChange={(e) => setScores((prev) => ({ ...prev, [d.field]: Number(e.target.value) }))}
+                        value={scores[d.key]}
+                        onChange={(e) => setScores((prev) => ({ ...prev, [d.key]: Number(e.target.value) }))}
                         className="h-7 rounded border border-border-strong bg-surface px-1 text-xs text-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                       >
                         {SCORING_SCALE.map((s) => (
@@ -144,7 +158,7 @@ export function ScoringSection({
                         ))}
                       </select>
                     ) : score ? (
-                      <span className="font-mono font-semibold text-text">{score[d.field]}</span>
+                      <span className="font-mono font-semibold text-text">{score[d.key]}</span>
                     ) : (
                       <span className="text-text-subtle">–</span>
                     )}
@@ -158,6 +172,7 @@ export function ScoringSection({
           </tbody>
         </table>
       </div>
+      <p className="text-2xs text-text-subtle">{POINTS_RULE_COPY}</p>
 
       <fieldset className="space-y-1">
         <legend className="text-2xs font-semibold text-text-muted">Hard gates (force P1)</legend>

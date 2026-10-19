@@ -25319,3 +25319,186 @@ Observations:
 
 The Low audit-rate-limit and `hub_id` findings are logged as follow-ups. qa-inspector is still
 running. These fixes follow after the QA report, to avoid changing the code under it.
+
+## [2026-10-19] P16 opened — orchestrator
+
+The client asked for:
+- Gross Margins → Gross Profitability;
+- Profitability → ROI, under Investment & Feasibility;
+- weights 3-Year Volume 25 and CAPEX 15;
+- points = score/5 × weight, scaled to 100.
+
+Decisions (ADR 0029):
+- The wire and DB keys are unchanged.
+- The total comes out at 295, not the client's 300 (OQ #41).
+- Stored scores are recomputed and projects are marked `schedule_stale`.
+
+Also checked: "RPD Capacity page not coming". It loads cleanly on the current backend with no
+console errors. The earlier failure was most likely the stale pre-P13 uvicorn, which has since been
+restarted.
+
+## [2026-10-19] Hosted DB shows "No schedule computed yet" after real-data reseed — seed `--schedule` flag
+
+**Cause.** `seed_demo_data` seeds only the "live, unscheduled" state (documented in its docstring), so a
+reseeded hosted database (Render) has 253 projects but no active `ScheduleRun`, and the Dashboard shows
+the empty state. The hosted stack has no Celery worker, so the async recalc paths are not an option there.
+
+**Change.** `backend/seed/seed_demo_data.py` gains `--schedule`: after the seed commits it builds the
+schedule input from the DB, runs the greedy SGS in-process and persists + activates a run
+(`trigger_reason="seed"`), the same path as `POST /schedule-runs/greedy-recalc`. No CP-SAT, nothing
+inside the FastAPI process. Default behaviour is unchanged.
+
+**Not verified.** The change was not run against the hosted DB: the sandbox denied the connection, so
+the owner runs it. Import and ruff pass only.
+
+## [2026-10-19] P16-T01 — scoring constants, served dimension table and points, rescore migration — backend-builder
+
+**Built.**
+- `domain_constants.PRIORITIZATION_DIMENSIONS`: Gross Margins is now "Gross Profitability"; Profitability is now "ROI" in "Investment & Feasibility". Keys (`gross_margins`, `profitability`), positional order and DB columns are unchanged. 3-Year Volume is 25, CAPEX is 15. `TOTAL_WEIGHT` is derived (295); the `== 280` assert and the "280" comments are gone.
+- `services/priority_scoring.py` and the seed copies (`seed_demo_data._priority_score_fields`, `client_2026.band_for`): `points = score/5 × weight`, `normalized_pct = round(Σ points / TOTAL_WEIGHT × 100)`. Signatures are unchanged. New pure helpers `dimension_table()`, `dimension_points()` and `scaled_weight()`.
+- API (additive): new `GET /priorities/dimensions` returns `{dimensions: [{key, label, pillar, weight, scaled_weight}], total_weight}` (`PriorityDimensionsResponse`/`DimensionInfo`). `PriorityMatrixRow` gains `dimension_points: {key: {points, scaled_points}} | null` (null when unscored; 2 dp). `GET /priorities` stays a bare list, so the table could not ride on it. This matches the shapes the frontend was coding to.
+- Data migration `p16a_rescore_adr0029` (head): recomputes `weighted_score`, `normalized_pct` and `suggested_band` for every `priority_scores` row (weights frozen in the migration) and sets `schedule_stale` on every schedulable project. It does not recalculate and does not touch `Project.priority`. Idempotent (verified by downgrade then upgrade with identical output). Applied to the live dev DB.
+
+**Finding on scheduling inputs.** `backend/scheduling/greedy.py::_sort_key` is `(frozen, priority, status, category, project_id)` and nothing under `scheduling/` reads `weighted_score`. The scoring change therefore does not change the schedule. The ADR's premise (score is a scheduling tiebreak) does not hold. The stored `weighted_score` is read only for the Matrix rank, `services/project_cards.py` (board card ordering and fields) and `services/project_filters.score_ranks`. The stale marking was done as instructed; 192 of 253 projects are stale, 61 non-schedulable are not. The owner may wish to clear them or reword ADR 0029 point 5.
+
+**Band change matrix (live dev DB, 253 scored; before rows, after columns).** All 253 stayed in their band: P1 26→26, P2 6→6, P3 95→95, P4 126→126. 85 normalised percentages changed. (The seed derives its dims from the target band, which keeps most rows well inside a band.)
+
+**Tests.** `tests/test_priority_scoring.py` rewritten for the new weights: threshold goldens at 70/69/55/54, uniform cases, a dimension table golden, score 1 and score 5 points, scaled weights, and a check that the migration's frozen weights and arithmetic equal the service. `tests/test_p13_slice_c.py` gains the `GET /priorities/dimensions` and per-row `dimension_points` shape test. `tests/test_openapi_frontend_contract.py` gains exact rows for `ScoringDimension`, `ScoringDimensionTable` and `DimensionPoints`; `PriorityMatrixRow` stays "exact" (the TS already declares `dimension_points?`). `ruff check` is clean.
+
+## P16-T02 — Matrix/Registration/Workspace labels, weights and points (frontend) — 2026-10-19
+- Labels: gross_margins -> "Gross Profitability", profitability -> "ROI" under Investment & Feasibility (keys unchanged); static fallback in `surfaces/matrix/api/types.ts::DIMENSIONS` (3-Year Volume 25, CAPEX 15). Project financial "Gross margin" untouched.
+- New TS types (api/types.ts): `ScoringDimension {key,label,pillar,weight,scaled_weight}`, `ScoringDimensionTable {dimensions,total_weight}`, `DimensionPoints {points,scaled_points}`, optional `PriorityMatrixRow.dimension_points`; `POINTS_RULE_COPY` constant.
+- New `surfaces/matrix/scoring-model.tsx`: `ScoringModelProvider`/`useScoringModel` (served table wins, static fallback, scaled/total null -> not shown, never computed). Used by matrix headers, rubric panel, score-edit dialog, workspace scoring section. Per-cell `points/weight` shown in Detailed view when served.
+- PENDING: provider is not yet fed (served endpoint/response name for the dimension table to be confirmed by backend); wire `<ScoringModelProvider table=...>` in MatrixPage + Workspace once known.
+- Verify: tsc -b clean, eslint 0 errors, vite build OK; vitest full run green except one stale weight assertion (fixed to 15, matrix suite rerun).
+
+P16-T01 addendum (same date): the first full run had 2 failures, `test_export_api::test_matrix_export_xlsx_includes_financial_columns` and `test_export_worker_task::test_generate_export_uploads_to_minio_and_completes`. Cause: the Matrix export dumps every `PriorityMatrixRow` field into a cell and the new nested `dimension_points` map cannot be written to Excel. Fix: `services/export_builder.rows_from_models` skips `_EXPORT_NESTED_FIELDS = {"dimension_points"}` (the flat scores and weighted score are still exported). Both tests pass; the rest of the suite passed in the first run (1378 passed, 96% coverage).
+
+## [2026-10-19] P16-T01 review — orchestrator
+
+P16-T01 is built (`GET /priorities/dimensions`, `dimension_points`, migration `p16a`). 253 projects
+were rescored, with 85 normalised percentages changed and **0 suggested bands changed**.
+
+**Orchestrator error corrected.** My ADR 0029 said the weighted score is a scheduling tiebreak, so
+the first draft marked 192 projects stale. The builder verified that `scheduling/greedy.py` never
+reads `weighted_score` (the sort key is frozen/priority/status/category/id). ADR amended. P16-R01
+removes the stale marking from the migration and repairs the flags on the live dev DB. The VIP
+automatic fill (ADR 0022) is no longer shown, so no ordering uses the score except the Matrix rank
+and the board card.
+
+## P16-T02 (addendum) — served dimension table wired — 2026-10-19
+- `GET /priorities/dimensions` via `fetchScoringDimensions` (matrix-api.ts), `useScoringDimensions` (use-matrix.ts), key `queryKeys.priorityDimensions()`. `FetchedScoringModelProvider` wraps MatrixPage and the Workspace `ScoringSection`; fetch failure keeps the static fallback.
+- `ScoringTotalLine` in the Matrix grid card header: "Total: 100 (scaled from {served total_weight})"; hidden if not served (no hard-coded 295/300).
+- Tests added: points display (matrix-table), explanation line (score-cell), total line served/unserved (MatrixPage), scoring-model unit tests. MatrixPage test mock extended with `useScoringDimensions`.
+- Results: tsc -b clean, eslint 0 errors, vite build OK, full vitest 168 files / 1106 tests green.
+
+## P16-R01 — Remove stale marking from p16a; repair dev DB flags — 2026-10-19
+- `alembic/versions/p16a_rescore_adr0029.py` no longer touches `projects.schedule_stale` (scheduler never reads `weighted_score`); still rescoring `weighted_score`/`normalized_pct`/`suggested_band`, idempotent, still head. No test expected stale marking, so no test changes.
+- Live dev DB repaired with a one-off script in the session scratchpad (`stale_repair.py`), single transaction. Before: 253 projects, 192 stale. Cleared 190, after: 2 stale. Rule: keep stale only where a Project audit row of an input edit (priority_move, freeze/unfreeze, project.update, step timing, check-in) is newer than the latest completed schedule run (v2, 2026-10-13 06:24:47Z).
+- Left stale: `4a1542a4-...` (project.priority_move 2026-10-18, recalculation requested; queued run v3 never completed) and `680f0e38-...` "Alternate sourcing of cable harness" (project.freeze 2026-10-13 06:47, after run v2; `gantt.py` marks stale on freeze). The two `project.vip_pin` rows (874e0dac..., 0e38cc53...) were treated as non-inputs (VIP routes never set stale) and cleared.
+- Full backend suite: 1380 passed, 96.31% coverage; `ruff check` clean.
+
+### [2026-10-19] P14 + P15 final gate re-run — qa-inspector: FAIL (1 serious axe defect, 1 minor export gap; everything else PASS)
+
+Scope: the uncommitted working tree (P14 incl. P14-R01, and P15-T01/T02). Disposable infra: Postgres
+`qa-p15-pg` (:55471), Redis `qa-p15-redis` (:56471), dev-mode uvicorn :8071 and `vite preview --mode e2e`
+:5271, seeded `client_2026` (253 projects, greedy run, no Celery worker). All removed except the untracked
+build dir `frontend/dist-qa15/` (rm -rf was denied by the sandbox; the owner can delete it). The owner's :5433
+DB and :8001 API were not touched. Note: another agent started P16 (ADR 0029 re-score, `alembic/versions/p16a_rescore_adr0029.py`,
+`priority_scoring.py`, `export_builder.py`) while I ran, so the tree moved under the second backend run.
+
+**1. Backend: PASS.**
+- Run 1 (`pytest -q --cov`, with Playwright running in parallel): **1371 passed, 0 failed, 95.90 %** (gate 70 %).
+- Run 2: 2 failed, 1378 passed (`test_export_api::test_matrix_export_xlsx_includes_financial_columns`,
+  `test_export_worker_task::test_generate_export_uploads_to_minio_and_completes`, `ValueError: Cannot convert {'strategic_project': {'points': ...}}`
+  in the XLSX writer). Both pass in isolation (19 passed) and the cause is the in-flight P16 edit to `priority_scoring.py` / `export_builder.py`
+  (a dict-valued score cell), not P14/P15. Run 3 of the later tree: **1380 passed, 0 failed**.
+- An earlier tail-only run under heavy parallel load (vitest coverage + pytest) showed 5 failures including
+  `test_priority_scoring...[dims2-70-P1]`; I did not get that log. Not reproduced in runs 2 and 3.
+- **`test_super_admin_race` did NOT reproduce** in any of the three full runs.
+- Scheduling gate (`pytest-scheduling.ini`): 168 passed, **93.91 %** (gate 85 %). `ruff check .`: clean. Contract test green inside the full runs.
+- Watch item for P16: the matrix XLSX export breaks when a score cell is a dict. P16's owner must re-run `test_export_api` / `test_export_worker_task` after the re-score lands.
+
+**2. Frontend: PASS.** `tsc -b` clean. ESLint 0 errors, 9 warnings. `vite build` OK (index chunk 138.7 KB gzip).
+Full vitest with coverage: **168 files, 1106/1106**, statements 86.24 %, branches 78.27 %, functions 84.26 %, lines 88.11 %.
+(One run under load showed `matrix-table.test.tsx` "links each project to its workspace" failing on a missing role-button
+name; it passes alone and in the clean full run, so it is load flakiness, noted as QA-P15-3.)
+
+**3. Live P14 flows (`e2e/p14-gate.spec.ts`, 12 tests): 11 pass, 1 fails only on axe.**
+- Board keyboard drag P4 to P1: preview, No (nothing written), Yes (applied, new active run, `priority_move`): PASS.
+- Gantt move control, Registration form, VIP card (3 tiles, View all, item link/picker), Edit toggle by role, `/vip` redirect, hub-scoped user: PASS.
+- **Spec fix by me:** lines 68 and 116 asserted `'P2'` after a move to P1 (the file had been edited since my first run; the UI action and the
+  app were right). Now `'P1'`. Line 96 (Gantt P1 to P2) is unchanged.
+- The failing test is the VIP picker axe step (below).
+
+**4. P15 live checks (`e2e/p15-gate.spec.ts`, new, with `playwright.p15qa.config.ts`): 4/4 pass.**
+- Heatmap renders 59 engineer rows (matches the API). 15 spot-checked cells (5 engineers x W1, current week, W52): the aria-label percent and
+  booked figure match the API and the band is right.
+- **Independent SQL cross-check** of the whole endpoint: all 3,068 engineer-week cells equal the count of non-skipped design steps whose
+  `[start_week, start_week + duration_weeks - 1]` covers the week, per assigned engineer. All per-engineer totals equal SQL. Portfolio total 1,531 both ways.
+- Observation: 15 stored steps have `end_week != start_week + duration_weeks - 1` (for example design 28-30 with duration 4). The heatmap books by
+  duration (effort, I6), the Gantt draws by stored weeks. Consistent with ADR 0028; not a defect.
+- Leader names: Dashboard register (15 distinct names visible), Gantt (9), Matrix (16), Workspace (the project's leader shown). No "Withheld" or "Name
+  unavailable" text on any. `dashboard` and `matrix` CSV exports: `leader_name` non-empty on 253/253 rows.
+- The plain Engineer role gets 403 on `/capacity/engineer-utilization` (per the ADR 0028 amendment).
+
+**5. Axe (serious/critical), live, 7 scans.**
+- Dashboard (full): 0. Dashboard with the VIP card: 0. Dashboard with the VIP dialog open: 0. Board with the preview dialog open: 0
+  (**QA-P14-1 fixed**). Capacity with the heatmap: 0. Register, Gantt, Matrix, Workspace: 0 each.
+- VIP picker popover open: the `aria-dialog-name` violation is gone (**QA-P14-2 fixed**), but there is a **new `color-contrast` serious x4** (below).
+- QA-P13-4 (Radix Select) was not scanned (excluded).
+
+**6. Heatmap keyboard and non-colour cues: PASS.** The scroll region is `role="region"`, `tabIndex=0`, labelled; focus works and
+ArrowRight scrolls it (scrollLeft 0 to 240; scrolling is smooth so it needs about 0.5 s). Table/row/cell/columnheader roles with a full aria-label per cell
+("name, W42: 446% (2 of 0.45), over-utilized"). Each cell with capacity prints its percent as text. Over-utilized cells add a ring; the current week has an
+outline and `aria-current="date"`; the legend spells out the thresholds. Under versus well is told apart by the printed number and the aria-label (and colour).
+
+**DEFECTS**
+- **QA-P15-1 (serious axe, owner frontend-builder):** `color-contrast` x4 in the VIP item picker popover on the Dashboard. The `finish-chip` with
+  `data-within-year="false"` (warning tone) is #b9611c on #fefaec at 11 px = **4.19:1** (need 4.5). Source: `frontend/src/components/shared/project-outcome-chips.tsx:68-70`
+  (`tone='warning'`) with the token pair `frontend/src/styles/tokens.css:139-140` (`--color-warning-subtle` amber-50 / `--color-warning-subtle-fg` amber-700). The pair is unchanged by P14/P15, so
+  every warning Badge at small size is exposed, not only the picker. Fix: darken `--color-warning-subtle-fg` (amber-800) or use `text-text` on that chip. Repro: `e2e/p14-gate.spec.ts`, test "Dashboard VIP card", step "VIP item picker open".
+- **QA-P15-2 (minor, owner backend-builder):** ADR 0028 says "Exports include the leader name". Dashboard and Matrix CSVs do. The **Gantt export** (columns at
+  `backend/services/export_builder.py:383-437`) has neither `leader_name` nor `leader_engineer_id`, and the **project-registration export** has only `leader_engineer_id`. Add `leader_name` to both, or record that they are out of scope.
+- **QA-P15-3 (note, owner frontend-builder):** `matrix-table.test.tsx` "P9: links each project to its workspace..." is load-sensitive (fails when CPU is saturated).
+
+**Re-check needed:** QA-P15-1 (re-run `p14-gate.spec.ts`, its axe soft assertion will go green) and QA-P15-2. No other defects; P14 functional behaviour is unchanged and healthy.
+Files added (tests only): `frontend/e2e/p15-gate.spec.ts`, `frontend/playwright.p15qa.config.ts`; edited `frontend/e2e/p14-gate.spec.ts` (lines 68, 116).
+Re-run: `RPD_E2E_BACKEND_URL=http://localhost:<api> RPD_E2E_BASE_URL=http://localhost:<web> pnpm exec playwright test -c playwright.p15qa.config.ts` (the web server must be a `vite preview --mode e2e` started with the same `RPD_E2E_BACKEND_URL`).
+
+## P15-R01 frontend: QA-P15-1 contrast, heatmap footnote, matrix test robustness (frontend-builder)
+- QA-P15-1: `--color-warning-subtle-fg` light changed amber-700 to amber-800 in `frontend/src/styles/tokens.css` (dark pair amber-100 on amber-950 already passes). Same token used by all warning badges, banners and chips; only gets darker text, no layout change. Test added to `styles/vip-pillar-contrast.test.ts` pinning the pair at >= 4.5:1 in both themes (on subtle bg, surface, canvas).
+- Heatmap footnote added under the Engineers x weeks heatmap in `capacity/components/engineer-utilization-panel.tsx` (plain text paragraph, `text-text-muted`, testid `engineer-heatmap-footnote`; no colour-only meaning).
+- QA-P15-3: `matrix-table.test.tsx` "P9: links each project..." is fully synchronous (virtualizer mocked), so the flake was the default 5 s timeout under CPU load; set an explicit 20 s timeout.
+- Not touched: QA-P15-2 (backend). Results: see the report returned to the orchestrator.
+- P15-R01 results: tsc clean, eslint clean, vite build OK, full vitest 1107/1108 before the token line landed (the one failure was the new contrast test, fixed by the amber-800 edit); targeted re-run of styles/capacity/matrix 166/166 pass. (Note: the first token sed missed its line; corrected to line 140.)
+
+## P15-R01 backend follow-ups (backend-engineer) — 2026-10-19
+
+- **Item 1 (QA-P15-2):** `leader_name` added to the Gantt export (`services/export_builder.py`, after `priority`) and Registration export (resolved from `Engineer` by `leader_engineer_id`, last column). Both pass the existing `_stringify` formula neutralisation. Financial-field rules of each export unchanged.
+- **Item 2 (O3):** un-withheld `assigned_engineer_name` (Gantt `api/routers/gantt.py`, Workspace stages, Gantt export), and via the same `_name_if_self` mechanism, comment `author_name`, file `uploaded_by_name`, activity `actor_name` (`services/workspace.py`: new `user_names()` batch resolver, `names` params; `api/routers/workspace.py` file list). `GET /users` mention search left withheld (a different mechanism, OQ #8 test untouched). ADR 0028 amended. Tests updated: test_gdpr_engineer_name_withholding, test_workspace_api, test_workspace_files, test_p13_r02_hardening (+ new export leader_name test).
+- **Item 3:** `GET /capacity/engineer-utilization` audit row coalesced per user + hub_id + region within 60 s (DB lookup on the audit table); `AuditLogEntry.hub_id` set from the hub filter. New test in test_p15_engineer_utilization.py.
+- **Item 4:** wrong comment in test_p15_engineer_utilization.py corrected; the old `by_hub == 0 for OEM` assertion removed (premise was wrong).
+- Note: a comment/file/event whose author user row is missing from `users` falls back to the caller's own name only.
+
+## [2026-10-19] P15-R01 + P16 gate — security-auditor (OWASP ASVS L2): PASS
+
+Scope: uncommitted working tree. Method: code review of diffs plus targeted tests (test_gdpr_engineer_name_withholding, test_p15_engineer_utilization: 10 passed).
+
+Findings (no Critical, no High):
+- Low (L1) `api/routers/capacity.py` ~710-735: audit coalescing is select-then-insert without a lock. Concurrent requests inside the same minute can write 2 rows (over-logging only). It cannot suppress a first read in a window, and the window key includes user, hub and region, so a different filter always logs. The query is bounded (`.limit(1)`, one minute). Accept.
+- Low (L2) `services/workspace.py:175` `user_names()` is an unscoped `User.id IN (...)` lookup. Its only inputs are user ids taken from rows already fetched under project row scope (comments, events, files); it accepts no caller-supplied id and returns only `full_name`, so it cannot enumerate. Accept. Keep it that way: never feed it request parameters.
+- Info (I1) The engineer name map in `api/routers/gantt.py` (~371) loads all `Engineer` rows into memory. Lookups happen only for assignees of in-scope steps, so nothing extra is exposed. Efficiency only.
+- Info (I2) Gantt/Registration export `leader_name` is neutralised: both go through `_stringify` then `_neutralise_formula`. No financial or customer fields added to any payload or export.
+- Info (I3) `GET /users` stays under USER_ROLE_ADMIN READ (admin only); `/users/mention-search` still returns `[]`.
+- Info (I4) `GET /priorities/dimensions` uses the MATRIX READ permission (`_read`), has strict response models, and returns static constants only. `dimension_points` is derived from the 13 dimension scores and has no financial fields. It is skipped in CSV/XLSX via `_EXPORT_NESTED_FIELDS`. Labels are static server text.
+- Info (I5) The `p16a` migration is data-only and idempotent (pure function of the 13 score columns). Its f-string SQL interpolates hard-coded column names only (noqa S608 is justified). It does not touch financial data, `Project.priority` or `schedule_stale`, and writes no audit rows (consistent with the earlier data migrations).
+- Info (I6) The frontend has no `dangerouslySetInnerHTML` (only comments mention it). The grep for secrets in changed files found nothing.
+- Route order: `/dimensions` is declared before `/{project_id}`, so there is no shadowing.
+
+Residual GDPR (informational, not gating; OQ #8 and ADR 0028 amendments), still required before go-live:
+1. Written lawful-basis record (legitimate interest assessment or DPIA) for named engineer, comment-author, uploader, activity-actor and leader data being shown to all project readers.
+2. Retention schedule for audit rows (including the `capacity.engineer_utilization.read` rows) and for the comments, files and activity that carry user ids.
+3. Data-subject access, erasure and rectification path: none exists. Names are live-joined from `users`/`engineers`, so erasure means anonymising the user row.
+4. Privacy notice or in-app disclosure to engineers that their name and utilization are visible to all readers.
+5. Confirm that the per-engineer utilization read-audit meets the accountability requirement.

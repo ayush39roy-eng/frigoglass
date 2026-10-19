@@ -14,7 +14,7 @@ Covers:
 - `GET /capacity/utilization-matrix`: `EngineerWeekLoad` rows never carry a
   `name` key, for any role; `engineer_id`/`hub`/`busy_weeks` still populate
   correctly; chamber-side rows are completely unaffected.
-- `GET /gantt`: `assigned_engineer_name` is `None` for every non-self reader
+- `GET /gantt`: `assigned_engineer_name` is served to every reader (ADR 0028 amendment);
   (Portfolio Manager/hub_scope_all, Hub Planner/hub-scoped) even though a
   real engineer is assigned to the step; the Engineer role viewing their own
   self-scoped Gantt still receives their own name.
@@ -166,10 +166,10 @@ async def test_utilization_matrix_never_returns_engineer_name_for_any_role(db_se
         _teardown()
 
 
-async def test_gantt_withholds_engineer_name_for_portfolio_manager(db_session, idp):
+async def test_gantt_serves_engineer_name_for_portfolio_manager(db_session, idp):
     """A `hub_scope_all` reader (Portfolio Manager) — the exact reader called
-    out in security-auditor's finding #1 evidence — must never see
-    `assigned_engineer_name`, even though a real engineer is assigned.
+    out in security-auditor's finding #1 evidence — now sees
+    `assigned_engineer_name` (ADR 0028 amendment, P15-R01).
     """
     _hub, _engineer, _chamber, project, _run = await _scenario(db_session)
     user = await make_user(
@@ -190,7 +190,7 @@ async def test_gantt_withholds_engineer_name_for_portfolio_manager(db_session, i
         row = body["rows"][0]
         design_steps = [s for s in row["steps"] if s["step_id"] == "PDD-A"]
         assert design_steps, "expected the design step to be present"
-        assert design_steps[0]["assigned_engineer_name"] is None
+        assert design_steps[0]["assigned_engineer_name"] == "Secret Engineer Name"
         # Chamber assignment on the lab step is unaffected.
         lab_steps = [s for s in row["steps"] if s["step_id"] == "PDD-F"]
         assert lab_steps[0]["assigned_chamber_code"] == "CH-GDPR-1"
@@ -198,7 +198,7 @@ async def test_gantt_withholds_engineer_name_for_portfolio_manager(db_session, i
         _teardown()
 
 
-async def test_gantt_withholds_engineer_name_for_hub_planner(db_session, idp):
+async def test_gantt_serves_engineer_name_for_hub_planner(db_session, idp):
     hub, _engineer, _chamber, project, _run = await _scenario(db_session)
     user = await make_user(
         db_session,
@@ -220,7 +220,7 @@ async def test_gantt_withholds_engineer_name_for_hub_planner(db_session, idp):
         body = resp.json()
         row = body["rows"][0]
         design_steps = [s for s in row["steps"] if s["step_id"] == "PDD-A"]
-        assert design_steps[0]["assigned_engineer_name"] is None
+        assert design_steps[0]["assigned_engineer_name"] == "Secret Engineer Name"
     finally:
         _teardown()
 

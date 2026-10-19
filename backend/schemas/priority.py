@@ -77,6 +77,32 @@ class PriorityScoreRead(BaseModel):
     suggested_band: ProjectPriority | None
 
 
+class DimensionPoints(BaseModel):
+    """One dimension's contribution to a project's score (ADR 0029).
+    `points = score / 5 * weight`; `scaled_points = points * 100 / total_weight`."""
+
+    points: float
+    scaled_points: float
+
+
+class DimensionInfo(BaseModel):
+    """One row of the served dimension table (ADR 0029, I9)."""
+
+    key: str
+    label: str
+    pillar: str
+    weight: int
+    #: `weight * 100 / total_weight`, 2 dp.
+    scaled_weight: float
+
+
+class PriorityDimensionsResponse(BaseModel):
+    """`GET /priorities/dimensions`: the dimension table in positional order."""
+
+    dimensions: list[DimensionInfo]
+    total_weight: int
+
+
 class PriorityMatrixRow(BaseModel):
     """One row of the scoring grid: project identity + score (nullable —
     a project with no `PriorityScore` row yet shows `has_score=False` and
@@ -127,6 +153,8 @@ class PriorityMatrixRow(BaseModel):
     weighted_score: float | None
     normalized_pct: int | None
     suggested_band: ProjectPriority | None
+    #: ADR 0029: per-dimension points keyed by dimension key; `null` when unscored.
+    dimension_points: dict[str, DimensionPoints] | None = None
 
     is_new_model: bool
     is_rm_saving_project: bool

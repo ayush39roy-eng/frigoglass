@@ -308,6 +308,10 @@ CONTRACT_TABLE: list[tuple[Path, str, str, str]] = [
     # --- Matrix (backend/schemas/priority.py) ---
     (_MATRIX_TS, "PriorityMatrixRow", "PriorityMatrixRow", "exact"),
     (_MATRIX_TS, "PriorityPortfolioSummary", "PriorityPortfolioSummary", "exact"),
+    # P16-T01 (ADR 0029): the served dimension table and per-row points.
+    (_MATRIX_TS, "ScoringDimension", "DimensionInfo", "exact"),
+    (_MATRIX_TS, "ScoringDimensionTable", "PriorityDimensionsResponse", "exact"),
+    (_MATRIX_TS, "DimensionPoints", "DimensionPoints", "exact"),
     (_MATRIX_TS, "PriorityScoreUpdateRequest", "PriorityScoreUpdateRequest", "exact"),
     (_MATRIX_TS, "PriorityScoreRead", "PriorityScoreRead", "exact"),
     # --- Matrix: Scenario Apply + Versions & History (backend/schemas/scenario.py,

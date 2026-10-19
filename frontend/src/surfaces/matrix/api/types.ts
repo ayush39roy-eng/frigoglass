@@ -41,10 +41,37 @@ export interface DimensionMeta {
   /** Full display name from `docs/DOMAIN_RULES.md`. */
   label: string;
   pillar: string;
-  /** Weight from `docs/DOMAIN_RULES.md` — display / documentation only, never
-   *  used in a client-side calculation (weighted_score comes from the API). */
+  /** Weight from `docs/DOMAIN_RULES.md` (ADR 0029) — display fallback only, never
+   *  used in a client-side calculation. Prefer the served `ScoringDimension`. */
   weight: number;
 }
+
+/** One entry of the SERVED dimension table (P16, ADR 0029): `dimensions[]`.
+ *  `scaled_weight` = weight x 100 / total_weight, computed by the server (I9). */
+export interface ScoringDimension {
+  key: DimensionField;
+  label: string;
+  pillar: string;
+  weight: number;
+  scaled_weight: number;
+}
+
+/** The served table plus `total_weight` (295 today; derived server-side). */
+export interface ScoringDimensionTable {
+  dimensions: ScoringDimension[];
+  total_weight: number;
+}
+
+/** Per-row, per-dimension served points: `points` out of `weight`,
+ *  `scaled_points` out of `scaled_weight` (the scaled-to-100 view). */
+export interface DimensionPoints {
+  points: number;
+  scaled_points: number;
+}
+
+/** Display copy for the points rule (ADR 0029). Static text, no arithmetic. */
+export const POINTS_RULE_COPY =
+  'Score 1 gives 1/5 of the weight, score 5 the full weight; the total is scaled to 100.';
 
 /** `docs/DOMAIN_RULES.md` "Prioritization scoring — 13 dimensions". */
 export const DIMENSIONS: readonly DimensionMeta[] = [
@@ -55,12 +82,12 @@ export const DIMENSIONS: readonly DimensionMeta[] = [
   { field: 'quality_improvements', short: 'Quality', label: 'Quality Improvements', pillar: 'Regulatory & Quality', weight: 25 },
   { field: 'rm_savings', short: 'RM sav.', label: 'RM Savings', pillar: 'Financial Return', weight: 25 },
   { field: 'total_rm_savings', short: 'Tot. RM', label: 'Total RM Savings', pillar: 'Financial Return', weight: 25 },
-  { field: 'gross_margins', short: 'GM', label: 'Gross Margins', pillar: 'Financial Return', weight: 25 },
-  { field: 'profitability', short: 'Profit.', label: 'Profitability', pillar: 'Financial Return', weight: 25 },
+  { field: 'gross_margins', short: 'Gross prof.', label: 'Gross Profitability', pillar: 'Financial Return', weight: 25 },
+  { field: 'profitability', short: 'ROI', label: 'ROI', pillar: 'Investment & Feasibility', weight: 25 },
   { field: 'annual_volume', short: 'Ann. vol.', label: 'Annual Volume', pillar: 'Market & Volume', weight: 15 },
-  { field: 'three_year_volume', short: '3yr vol.', label: '3-Year Volume', pillar: 'Market & Volume', weight: 15 },
+  { field: 'three_year_volume', short: '3yr vol.', label: '3-Year Volume', pillar: 'Market & Volume', weight: 25 },
   { field: 'new_models', short: 'New mdl.', label: 'New Models', pillar: 'Market & Volume', weight: 15 },
-  { field: 'capex_investment', short: 'CAPEX', label: 'CAPEX Investment (inverted)', pillar: 'Investment & Feasibility', weight: 10 },
+  { field: 'capex_investment', short: 'CAPEX', label: 'CAPEX Investment (inverted)', pillar: 'Investment & Feasibility', weight: 15 },
 ] as const;
 
 /** `docs/DOMAIN_RULES.md` band thresholds — display copy of a fixed rule, used
@@ -109,9 +136,11 @@ export interface PriorityMatrixRow {
   new_models: number | null;
   capex_investment: number | null;
   hard_gates: HardGateReason[];
-  /** Backend-computed: Σ(dimension_score × weight). Displayed verbatim. */
+  /** Backend-computed: Σ points (score/5 × weight), out of `total_weight`. Displayed verbatim. */
   weighted_score: number | null;
-  /** Backend-computed: round(weighted_score / (280 × 5) × 100). Displayed verbatim. */
+  /** Served per-dimension points (P16, ADR 0029); absent/null when unscored. */
+  dimension_points?: Partial<Record<DimensionField, DimensionPoints>> | null;
+  /** Backend-computed: round(weighted_score / total_weight × 100). Displayed verbatim. */
   normalized_pct: number | null;
   /** Backend-computed band from `normalized_pct`. Does NOT itself reflect the
    *  hard-gate → P1 override (that is applied by "Apply Priorities", deferred) —

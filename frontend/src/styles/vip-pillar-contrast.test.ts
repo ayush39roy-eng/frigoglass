@@ -79,3 +79,16 @@ describe('VIP pillar accent contrast (WCAG AA 4.5:1, P14)', () => {
     });
   });
 });
+
+describe('Warning subtle pair contrast (WCAG AA 4.5:1, QA-P15-1)', () => {
+  it.each([
+    ['light', light],
+    ['dark', dark],
+  ] as const)('%s: warning-subtle-fg on warning-subtle and on the surfaces', (_m, vars) => {
+    const c = (name: string) => toRgb(resolve(vars, name));
+    expect(ratio(c('--color-warning-subtle-fg'), c('--color-warning-subtle'))).toBeGreaterThanOrEqual(4.5);
+    for (const s of ['--color-surface', '--color-canvas']) {
+      expect(ratio(c('--color-warning-subtle-fg'), c(s))).toBeGreaterThanOrEqual(4.5);
+    }
+  });
+});

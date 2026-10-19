@@ -35,6 +35,7 @@ import {
 import { MatrixTable } from './components/matrix-table';
 import { PortfolioSummaryPanel } from './components/portfolio-summary-panel';
 import { ScenarioModeToggle, ScenarioPendingPanel } from './components/scenario-panel';
+import { FetchedScoringModelProvider, ScoringTotalLine } from './scoring-model';
 import { ScoringRubricPanel } from './components/scoring-rubric-panel';
 import { liveRequestValuesFromRow } from './components/score-edit-schema';
 import { ScoreEditDialog } from './components/score-edit-dialog';
@@ -216,7 +217,7 @@ export default function MatrixPage(): React.JSX.Element {
   );
 
   return (
-    <>
+    <FetchedScoringModelProvider>
       <PageHeader
         title={title}
         description={description}
@@ -308,7 +309,24 @@ export default function MatrixPage(): React.JSX.Element {
             errorDescription="The prioritization scoring grid could not be loaded."
           >
             {(served) => {
-              const rows = narrowInView(served, view.hubText, view.leaderText);
+              const narrowed = narrowInView(served, view.hubText, view.leaderText);
+              const rows = [...narrowed].sort((a, b) => {
+                if (a.rank !== null && b.rank !== null) {
+                  if (a.rank !== b.rank) return a.rank - b.rank;
+                  return a.project_name.localeCompare(b.project_name);
+                }
+                if (a.rank !== null) return -1;
+                if (b.rank !== null) return 1;
+
+                if (a.weighted_score !== null && b.weighted_score !== null) {
+                  if (b.weighted_score !== a.weighted_score) return b.weighted_score - a.weighted_score;
+                  return a.project_name.localeCompare(b.project_name);
+                }
+                if (a.weighted_score !== null) return -1;
+                if (b.weighted_score !== null) return 1;
+
+                return a.project_name.localeCompare(b.project_name);
+              });
               return (
               <Card>
                 <CardHeader>
@@ -319,6 +337,7 @@ export default function MatrixPage(): React.JSX.Element {
                       : `${formatInteger(rows.length)} of ${formatInteger(served.length)} projects shown`}{' '}
                     · ranked by score · financial columns in {currency} (converted server-side)
                   </span>
+                  <ScoringTotalLine />
                 </CardHeader>
                 <CardContent>
                   {rows.length === 0 && !isFiltered ? (
@@ -361,6 +380,6 @@ export default function MatrixPage(): React.JSX.Element {
         onSubmit={handleSubmit}
         mode={scenarioActive ? 'scenario' : 'immediate'}
       />
-    </>
+    </FetchedScoringModelProvider>
   );
 }

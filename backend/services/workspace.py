@@ -22,15 +22,15 @@ Engineer (`services.hub_scope.is_engineer_self_scoped`). An Engineer's own
 assignments are the projects they lead, plus the projects where the active
 run assigns them a step. Out of scope and nonexistent both give 404.
 
-**OQ#8 (docs/OPEN_QUESTIONS.md #8).** `_name_if_self` /
-`_engineer_name_if_self` implement the P3-T09 rule for every person name
-this surface returns: the name is returned only when it is the caller's own.
+**Names (ADR 0028 amendment, P15-R01).** Every person name this surface returns
+(stage assignees, comment authors, uploaders, activity actors) is served to any
+reader who can read the project; the P3-T09 own-name-only rule is lifted.
 """
 
 from __future__ import annotations
 
 import uuid
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -50,6 +50,7 @@ from models.hub import Hub
 from models.priority import PriorityScore
 from models.project import Project
 from models.schedule import ScheduleRun, ScheduleRunProjectOutcome, ScheduleRunProjectStep
+from models.user import User
 from models.workflow import ProjectWorkflowStep, WorkflowStepTemplate
 from models.workspace import ProjectComment, ProjectFile
 from scheduling.workflow import derive_remaining
@@ -156,10 +157,29 @@ def health_badge(
     return "on_track"
 
 
-def _name_if_self(principal: Principal, user_id: uuid.UUID | None) -> str | None:
-    """OQ#8 / P3-T09: a person's name is shown only to that person."""
+def _name_if_self(
+    principal: Principal,
+    user_id: uuid.UUID | None,
+    names: dict[uuid.UUID, str] | None = None,
+) -> str | None:
+    """ADR 0028 amendment: any reader sees the name. `names` is the batch-resolved
+    map; the caller's own name is the fallback (their own just-written row)."""
 
-    return principal.full_name if user_id is not None and user_id == principal.user_id else None
+    if user_id is None:
+        return None
+    if names is not None and user_id in names:
+        return names[user_id]
+    return principal.full_name if user_id == principal.user_id else None
+
+
+async def user_names(
+    db: AsyncSession, user_ids: Iterable[uuid.UUID | None]
+) -> dict[uuid.UUID, str]:
+    ids = {i for i in user_ids if i is not None}
+    if not ids:
+        return {}
+    rows = await db.execute(select(User.id, User.full_name).where(User.id.in_(ids)))
+    return {uid: name for uid, name in rows.all()}
 
 
 def _engineer_name_if_self(
@@ -168,9 +188,7 @@ def _engineer_name_if_self(
     if engineer_id is None:
         return None
     engineer = engineers.get(engineer_id)
-    if engineer is None or engineer.user_id != principal.user_id:
-        return None
-    return engineer.name
+    return engineer.name if engineer is not None else None
 
 
 def _engineer_name(
@@ -251,7 +269,12 @@ async def get_scoped_project_or_404(
 # --- Serialisers ----------------------------------------------------------------------
 
 
-def comment_read(comment: ProjectComment, principal: Principal, now: datetime) -> CommentRead:
+def comment_read(
+    comment: ProjectComment,
+    principal: Principal,
+    now: datetime,
+    names: dict[uuid.UUID, str] | None = None,
+) -> CommentRead:
     can_edit = (
         comment.author_user_id == principal.user_id
         and comment.soft_deleted_at is None
@@ -260,7 +283,7 @@ def comment_read(comment: ProjectComment, principal: Principal, now: datetime) -
     return CommentRead(
         id=comment.id,
         body_md=comment.body_md,
-        author_name=_name_if_self(principal, comment.author_user_id),
+        author_name=_name_if_self(principal, comment.author_user_id, names),
         author_user_id=comment.author_user_id,
         created_at=comment.created_at,
         edited_at=comment.edited_at,
@@ -269,7 +292,9 @@ def comment_read(comment: ProjectComment, principal: Principal, now: datetime) -
     )
 
 
-def file_read(f: ProjectFile, principal: Principal) -> FileRead:
+def file_read(
+    f: ProjectFile, principal: Principal, names: dict[uuid.UUID, str] | None = None
+) -> FileRead:
     return FileRead(
         id=f.id,
         display_name=f.display_name,
@@ -278,7 +303,7 @@ def file_read(f: ProjectFile, principal: Principal) -> FileRead:
         version=f.version,
         size_bytes=f.size_bytes,
         content_type=f.content_type,
-        uploaded_by_name=_name_if_self(principal, f.uploaded_by_user_id),
+        uploaded_by_name=_name_if_self(principal, f.uploaded_by_user_id, names),
         created_at=f.created_at,
     )
 
@@ -437,9 +462,13 @@ async def list_activity(
     )
 
     now = datetime.now(UTC)
+    names = await user_names(
+        db, [*(c.author_user_id for c in comments), *(e.actor_user_id for e in events)]
+    )
     items: list[tuple[datetime, ActivityComment | ActivityEvent]] = []
     for c in comments:
-        items.append((c.created_at, ActivityComment(comment=comment_read(c, principal, now))))
+        read = comment_read(c, principal, now, names)
+        items.append((c.created_at, ActivityComment(comment=read)))
     for e in events:
         items.append(
             (
@@ -447,7 +476,7 @@ async def list_activity(
                 ActivityEvent(
                     id=e.id,
                     occurred_at=e.occurred_at,
-                    actor_name=_name_if_self(principal, e.actor_user_id),
+                    actor_name=_name_if_self(principal, e.actor_user_id, names),
                     summary=event_summary(e),
                     audit_entry_id=e.id,
                 ),
@@ -663,6 +692,7 @@ async def build_workspace(
         }
     )
 
+    file_names = await user_names(db, [f.uploaded_by_user_id for f in files])
     return WorkspaceRead(
         project=project_payload,
         health=health,
@@ -670,7 +700,7 @@ async def build_workspace(
         progress_pct=progress,
         stages=stages,
         priority_score=priority_score,
-        files=[file_read(f, principal) for f in files],
+        files=[file_read(f, principal, file_names) for f in files],
         activity=await list_activity(db, project, principal),
     )
 

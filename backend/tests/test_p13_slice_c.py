@@ -638,3 +638,38 @@ async def test_me_serves_current_week_and_weeks_left(db_session):
     assert body["current_week"] == dc.CURRENT_WEEK
     assert body["weeks_left_in_year"] == max(0, 52 - dc.CURRENT_WEEK)
     assert body["weeks_left_in_year"] == dc.WITHIN_YEAR_WEEK - body["current_week"]
+
+
+# --- P16-T01 (ADR 0029): served dimension table and per-row points -----------------------
+
+
+async def test_priorities_dimensions_endpoint_and_row_points(db_session):
+    await _seeded(db_session)
+    await _act_as(db_session, RoleName.PORTFOLIO_MANAGER)
+    async with _client(db_session) as client:
+        table = await _get(client, "/priorities/dimensions")
+        rows = await _get(client, "/priorities")
+    assert table["total_weight"] == dc.TOTAL_WEIGHT == 295
+    dims = table["dimensions"]
+    assert [d["key"] for d in dims] == [k for _p, _l, k, _w in dc.PRIORITIZATION_DIMENSIONS]
+    by_key = {d["key"]: d for d in dims}
+    assert by_key["gross_margins"]["label"] == "Gross Profitability"
+    assert by_key["profitability"]["label"] == "ROI"
+    assert by_key["profitability"]["pillar"] == "Investment & Feasibility"
+    assert by_key["three_year_volume"]["weight"] == 25
+    assert by_key["capex_investment"]["scaled_weight"] == round(15 * 100 / 295, 2)
+    assert set(by_key["strategic_project"]) == {"key", "label", "pillar", "weight", "scaled_weight"}
+
+    scored = [r for r in rows if r["has_score"]]
+    assert scored
+    for r in scored:
+        pts = r["dimension_points"]
+        assert list(pts) == list(by_key)
+        for k, d in by_key.items():
+            assert pts[k]["points"] == round(r[k] * d["weight"] / 5, 2)
+            assert pts[k]["scaled_points"] == round(r[k] * d["weight"] / 5 * 100 / 295, 2)
+        assert round(sum(v["points"] for v in pts.values()), 1) == round(r["weighted_score"], 1)
+        assert r["normalized_pct"] == round(r["weighted_score"] / 295 * 100)
+    for r in rows:
+        if not r["has_score"]:
+            assert r["dimension_points"] is None

@@ -52,7 +52,14 @@ export function EngineerUtilizationPanel(): React.JSX.Element {
                 className="rounded-dash border-solid border-dash-hairline bg-dash-alt"
               />
             ) : (
+              <>
               <EngineerUtilizationHeatmap data={data} />
+              <p className="mt-s3 text-xs text-text-muted" data-testid="engineer-heatmap-footnote">
+                <span className="font-semibold">Note:</span> Load is booked to the engineer who leads each project. An
+                engineer can lead projects from another hub, so a hub&apos;s figures here can differ from the Capacity hub
+                table above, which counts load by project hub.
+              </p>
+              </>
             )}
           </CardContent>
         </BoltCard>

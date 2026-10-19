@@ -31,6 +31,7 @@ const hooks = {
   useScenarioVersions: vi.fn(),
   useScenarioVersionDetail: vi.fn(),
   useUpdateCurrencyRate: vi.fn(),
+  useScoringDimensions: vi.fn<() => { data: unknown }>(() => ({ data: undefined })),
 };
 vi.mock('./hooks/use-matrix', () => ({
   usePriorityMatrix: (args: unknown) => hooks.usePriorityMatrix(args),
@@ -41,6 +42,7 @@ vi.mock('./hooks/use-matrix', () => ({
   useScenarioVersions: (args: unknown) => hooks.useScenarioVersions(args),
   useScenarioVersionDetail: (version: number | null) => hooks.useScenarioVersionDetail(version),
   useUpdateCurrencyRate: () => hooks.useUpdateCurrencyRate(),
+  useScoringDimensions: () => hooks.useScoringDimensions(),
 }));
 vi.mock('@/lib/api/reference', () => ({ useHubs: () => ({ data: [] }) }));
 
@@ -88,6 +90,7 @@ beforeEach(() => {
   hooks.useScenarioVersions.mockReturnValue({ data: undefined, isPending: true, isError: false, error: null, refetch: vi.fn() });
   hooks.useScenarioVersionDetail.mockReturnValue({ data: undefined, isPending: true, isError: false, error: null, refetch: vi.fn() });
   hooks.useUpdateCurrencyRate.mockReturnValue({ mutateAsync: vi.fn().mockResolvedValue({}), isPending: false });
+  hooks.useScoringDimensions.mockReturnValue({ data: undefined });
 });
 
 describe('MatrixPage', () => {
@@ -112,6 +115,21 @@ describe('MatrixPage', () => {
     renderWithProviders(<MatrixPage />);
     expect(screen.getByRole('heading', { name: 'Prioritization Matrix' })).toBeInTheDocument();
     expect(screen.getByText('Display currency')).toBeInTheDocument();
+  });
+
+  it('P16: shows the served total line and omits it when the table is not served', () => {
+    hooks.usePriorityMatrix.mockReturnValue(ready([scoredRow]));
+    hooks.usePrioritySummary.mockReturnValue(ready(summary));
+    renderWithProviders(<MatrixPage />);
+    expect(screen.queryByTestId('scoring-total-line')).not.toBeInTheDocument();
+  });
+
+  it('P16: renders Total: 100 (scaled from <served total_weight>)', () => {
+    hooks.useScoringDimensions.mockReturnValue({ data: { total_weight: 295, dimensions: [] } });
+    hooks.usePriorityMatrix.mockReturnValue(ready([scoredRow]));
+    hooks.usePrioritySummary.mockReturnValue(ready(summary));
+    renderWithProviders(<MatrixPage />);
+    expect(screen.getByTestId('scoring-total-line')).toHaveTextContent('Total: 100 (scaled from 295)');
   });
 
   it('changing the currency toggle re-requests the matrix with the new currency param (no client math)', async () => {

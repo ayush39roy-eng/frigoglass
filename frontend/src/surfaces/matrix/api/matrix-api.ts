@@ -25,6 +25,7 @@ import type {
   PriorityPortfolioSummary,
   PriorityScoreRead,
   PriorityScoreUpdateRequest,
+  ScoringDimensionTable,
   ScenarioApplyRequest,
   ScenarioApplyResponse,
   ScenarioApplyRunDetail,
@@ -138,4 +139,9 @@ export function fetchScenarioVersionDetail(
   ctx: FetchCtx = {},
 ): Promise<ScenarioApplyRunDetail> {
   return apiGet<ScenarioApplyRunDetail>(`/scenarios/versions/${String(version)}`, ctx);
+}
+
+/** `GET /priorities/dimensions` (P16, ADR 0029) — the served weight table. */
+export function fetchScoringDimensions(ctx: FetchCtx = {}): Promise<ScoringDimensionTable> {
+  return apiGet<ScoringDimensionTable>('/priorities/dimensions', ctx);
 }

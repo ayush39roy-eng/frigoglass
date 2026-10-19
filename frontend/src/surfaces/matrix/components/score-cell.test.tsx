@@ -1,3 +1,4 @@
+import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
 import { screen } from '@testing-library/react';
 
@@ -66,5 +67,12 @@ describe('ScoreCell', () => {
     );
     expect(screen.getByTestId('score-cell-unscored')).toHaveTextContent('Not scored');
     expect(screen.queryByTestId('score-cell')).not.toBeInTheDocument();
+  });
+
+  it('P16: the tooltip explains the points rule', async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<ScoreCell row={row()} />);
+    await user.hover(screen.getByRole('button'));
+    expect((await screen.findAllByText(/Score 1 gives 1\/5 of the weight/)).length).toBeGreaterThan(0);
   });
 });

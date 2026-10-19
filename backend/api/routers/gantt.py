@@ -54,13 +54,8 @@ effective duration the active run booked. The drag itself is
 `type`, `leader_name` under the OQ #8 rule, booked `design/lab/total_weeks`);
 and `weekly_active_counts` over the whole filtered set (see `get_gantt`).
 
-**GDPR / OQ#8 dependency (P3-T09, security remediation, finding #1 — High):**
-`GanttStepRow.assigned_engineer_name` is withheld (`None`) for every reader
-except the Engineer role viewing their own self-scoped Gantt (see
-`get_gantt`'s `show_engineer_names` gate). `docs/OPEN_QUESTIONS.md` #8 (GDPR
-lawful basis for named-engineer utilization) is unresolved and hard-blocking.
-Consciously reversible once the DPO signs off — see the gate's own comment
-for exactly what to change and not change.
+**ADR 0028 / P15-R01.** `GanttStepRow.assigned_engineer_name` is served to every reader
+(the owner decided to use the personal data); row scoping is unchanged.
 """
 
 from __future__ import annotations
@@ -367,40 +362,16 @@ async def get_gantt(
     projects = filtered[offset : offset + limit]
     project_ids = [p.id for p in projects]
 
-    # P3-T09 (security remediation, finding #1 / OQ#8 dependency — GDPR):
-    # `assigned_engineer_name` is only populated for a reader viewing their
-    # OWN self-scoped Gantt (the Engineer role, per
-    # `services.hub_scope.is_engineer_self_scoped` — every project in that
-    # branch's result set is already restricted to the caller's own
-    # assignments, so the name shown is always the caller's own name). Every
-    # other reader (Hub Planner, Portfolio Manager, Executive Viewer, Admin)
-    # never gets a name, regardless of who is actually assigned, pending DPO
-    # sign-off on `docs/OPEN_QUESTIONS.md` #8. This mirrors the P4-T03
-    # frontend decision but is now enforced server-side (security-auditor
-    # P3-T08 finding #1, High). Reversible: once OQ#8 resolves, set this to
-    # `True` unconditionally (or per whatever the DPO/ADR decides) — do not
-    # do so before then.
-    show_engineer_names = is_engineer_self_scoped(current_user)
+    # ADR 0028 / P15-R01 (O3): the assignee name is served to every reader (the owner
+    # decided to use the personal data); the scope of the rows is unchanged.
 
     templates = {
         t.id: t for t in (await db.execute(select(WorkflowStepTemplate))).scalars().all()
     }
     run_kinds = await step_kinds_for_run(db, active_run)
-    # P13-F12 (security-auditor Info-6): an Engineer sees only their OWN
-    # name. A colleague assigned to another step of a shared project stays
-    # unnamed (OQ #8), so the map holds the caller's engineer id only.
-    engineer_names: dict[uuid.UUID, str] = (
-        {
-            e.id: e.name
-            for e in (
-                await db.execute(select(Engineer).where(Engineer.id == own_engineer_id))
-            )
-            .scalars()
-            .all()
-        }
-        if show_engineer_names and own_engineer_id is not None
-        else {}
-    )
+    engineer_names: dict[uuid.UUID, str] = {
+        e.id: e.name for e in (await db.execute(select(Engineer))).scalars().all()
+    }
     chamber_codes = {
         c.id: c.code for c in (await db.execute(select(Chamber))).scalars().all()
     }

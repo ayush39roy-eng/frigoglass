@@ -55,6 +55,7 @@ export const queryKeys = {
     status?: string | undefined;
     q?: string | undefined;
   }) => ['priority-matrix', params ?? null] as const,
+  priorityDimensions: () => ['priority-matrix', 'dimensions'] as const,
   prioritySummary: (hubId?: string | null, region?: LabRegion | null) =>
     withHub(['priority-matrix', 'summary'], hubId, region),
   priorityRow: (id: string, currency?: CurrencyCode) =>
