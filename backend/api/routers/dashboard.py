@@ -94,6 +94,12 @@ _read = require_permission(Surface.DASHBOARD, Action.READ)
 #: ADR 0025 / contract §2: the chips' fixed order.
 _REGION_ORDER = (LabRegion.GREECE, LabRegion.INDIA, LabRegion.ROMANIA)
 
+#: P17-T03: statuses with no card of their own in the five-card overview.
+_STATUS_CARD_REMAINDER = (
+    ProjectStatus.IN_BUYOFF,
+    ProjectStatus.DRAFT,
+    ProjectStatus.CANCELLED,
+)
 _FOUR_SCHEDULABLE_STATUSES = (
     ProjectStatus.IN_BUYOFF,
     ProjectStatus.UNDER_INDUSTRIALIZATION,
@@ -109,31 +115,34 @@ async def pipeline_totals(
     db: AsyncSession = Depends(get_db),
     current_user: Principal = Depends(_read),
 ) -> PipelineTotals:
-    """See `schemas.dashboard.PipelineTotals`'s docstring for the
-    spillover/new interpretation. Scope: all projects except Commercialized,
-    hub-scoped (P3-T03) to the caller's own hub(s) unless `hub_scope_all`.
+    """See `schemas.dashboard.PipelineTotals` (ADR 0030). Scope: every
+    project (Commercialized included), hub-scoped (P3-T03) to the caller's own
+    hub(s) unless `hub_scope_all`. One grouped query; the three buckets are
+    mutually exclusive by construction.
     """
 
-    base = select(Project).where(Project.status != ProjectStatus.COMMERCIALIZED)
+    stmt = select(Project.carry_over, Project.reg_year.is_(None), func.count())
     hub_filter = narrowed_hub_filter(current_user, Project.hub_id, hub_id, region)
     if hub_filter is not None:
-        base = base.where(hub_filter)
-    spillover_count = (
-        await db.execute(
-            select(func.count()).select_from(
-                base.where(Project.carry_over.is_(True)).subquery()
-            )
-        )
-    ).scalar_one()
-    new_count = (
-        await db.execute(
-            select(func.count()).select_from(base.where(Project.carry_over.is_(False)).subquery())
-        )
-    ).scalar_one()
+        stmt = stmt.where(hub_filter)
+    result = await db.execute(stmt.group_by(Project.carry_over, Project.reg_year.is_(None)))
+    spillover_count = new_count = unregistered_count = 0
+    for carry_over, no_reg_year, count in result.all():
+        if carry_over:
+            spillover_count += count
+        elif no_reg_year:
+            unregistered_count += count
+        else:
+            new_count += count
+    total = spillover_count + new_count + unregistered_count
     return PipelineTotals(
         spillover_count=spillover_count,
         new_count=new_count,
-        total_count=spillover_count + new_count,
+        unregistered_count=unregistered_count,
+        total_count=total,
+        spillover_share_pct=_share(spillover_count, total),
+        new_share_pct=_share(new_count, total),
+        unregistered_share_pct=_share(unregistered_count, total),
     )
 
 
@@ -155,12 +164,37 @@ async def status_overview(
         for status, count in counts_by_status.items()
         if status not in _FOUR_SCHEDULABLE_STATUSES
     }
+    in_development = counts_by_status.get(ProjectStatus.IN_DEVELOPMENT, 0)
+    under_industrialization = counts_by_status.get(ProjectStatus.UNDER_INDUSTRIALIZATION, 0)
+    in_queue = counts_by_status.get(ProjectStatus.IN_QUEUE, 0)
+    commercialized = counts_by_status.get(ProjectStatus.COMMERCIALIZED, 0)
+    on_hold = counts_by_status.get(ProjectStatus.ON_HOLD, 0)
+    total = sum(counts_by_status.values())
+    # Remainder = every status without a card (In Buyoff, Draft, Cancelled),
+    # so the five cards + remainder == total exactly.
+    remainder = {
+        status.value: counts_by_status.get(status, 0)
+        for status in _STATUS_CARD_REMAINDER
+        if counts_by_status.get(status, 0)
+    }
+    other_statuses = sum(remainder.values())
     return StatusOverview(
         in_buyoff=counts_by_status.get(ProjectStatus.IN_BUYOFF, 0),
-        under_industrialization=counts_by_status.get(ProjectStatus.UNDER_INDUSTRIALIZATION, 0),
-        in_development=counts_by_status.get(ProjectStatus.IN_DEVELOPMENT, 0),
-        in_queue=counts_by_status.get(ProjectStatus.IN_QUEUE, 0),
+        under_industrialization=under_industrialization,
+        in_development=in_development,
+        in_queue=in_queue,
         other_counts=other_counts,
+        commercialized_count=commercialized,
+        on_hold_count=on_hold,
+        total_count=total,
+        in_development_share_pct=_share(in_development, total),
+        under_industrialization_share_pct=_share(under_industrialization, total),
+        in_queue_share_pct=_share(in_queue, total),
+        commercialized_share_pct=_share(commercialized, total),
+        on_hold_share_pct=_share(on_hold, total),
+        other_statuses_count=other_statuses,
+        other_statuses_counts=remainder,
+        other_statuses_share_pct=_share(other_statuses, total),
     )
 
 
@@ -171,24 +205,17 @@ async def hub_type_pipeline(
     db: AsyncSession = Depends(get_db),
     current_user: Principal = Depends(_read),
 ) -> list[HubTypePipelineRow]:
-    """Hub × type cross-tab, scope: all projects except Commercialized (same
-    "pipeline" scope as `pipeline_totals` above), hub-scoped (P3-T03) — a
+    """Hub × type cross-tab, scope: every project (same "pipeline" scope as
+    `pipeline_totals` above, ADR 0030), hub-scoped (P3-T03) — a
     Hub Planner's cross-tab naturally only shows rows for their own hub(s),
     since the query is driven off `Project.hub_id`.
     """
 
-    stmt = (
-        select(Hub.name, Project.type, func.count())
-        .join(Project, Project.hub_id == Hub.id)
-        .where(Project.status != ProjectStatus.COMMERCIALIZED)
-    )
+    stmt = select(Hub.name, Project.type, func.count()).join(Project, Project.hub_id == Hub.id)
     hub_filter = narrowed_hub_filter(current_user, Project.hub_id, hub_id, region)
     if hub_filter is not None:
         stmt = stmt.where(hub_filter)
-    result = await db.execute(
-        stmt.group_by(Hub.name, Project.type)
-        .order_by(Hub.name)
-    )
+    result = await db.execute(stmt.group_by(Hub.name, Project.type).order_by(Hub.name))
     return [
         HubTypePipelineRow(hub=hub_name, type=project_type, count=count)
         for hub_name, project_type, count in result.all()
@@ -287,19 +314,20 @@ async def region_summary(
 ) -> RegionSummary:
     """P13 (ADR 0025 §4): per-country counts for the KPI-card chips. Same
     scope and filter as `/pipeline-totals` and `/status-overview`; the
-    pipeline figures use `PipelineTotals`' basis (Commercialized excluded)
+    pipeline figures use `PipelineTotals`' basis (every project, ADR 0030)
     and `status_counts` the `StatusOverview` basis (every status), so each
     chip row reconciles with the card it sits under. The browser never sums.
     """
 
-    stmt = select(Hub.lab_region, Project.status, Project.carry_over, func.count()).join(
-        Hub, Project.hub_id == Hub.id
-    )
+    no_reg_year = Project.reg_year.is_(None)
+    stmt = select(
+        Hub.lab_region, Project.status, Project.carry_over, no_reg_year, func.count()
+    ).join(Hub, Project.hub_id == Hub.id)
     hub_filter = narrowed_hub_filter(current_user, Project.hub_id, hub_id, region)
     if hub_filter is not None:
         stmt = stmt.where(hub_filter)
     result = await db.execute(
-        stmt.group_by(Hub.lab_region, Project.status, Project.carry_over)
+        stmt.group_by(Hub.lab_region, Project.status, Project.carry_over, no_reg_year)
     )
 
     status_counts: dict[LabRegion, dict[str, int]] = {
@@ -307,30 +335,37 @@ async def region_summary(
     }
     spillover: dict[LabRegion, int] = dict.fromkeys(LabRegion, 0)
     new: dict[LabRegion, int] = dict.fromkeys(LabRegion, 0)
-    for lab_region, status, carry_over, count in result.all():
+    unregistered: dict[LabRegion, int] = dict.fromkeys(LabRegion, 0)
+    for lab_region, status, carry_over, is_unregistered, count in result.all():
         status_counts[lab_region][status.value] += count
-        if status == ProjectStatus.COMMERCIALIZED:
-            continue
         if carry_over:
             spillover[lab_region] += count
+        elif is_unregistered:
+            unregistered[lab_region] += count
         else:
             new[lab_region] += count
 
-    total = sum(spillover.values()) + sum(new.values())
+    spillover_total = sum(spillover.values())
+    new_total = sum(new.values())
+    unregistered_total = sum(unregistered.values())
+    total = spillover_total + new_total + unregistered_total
     status_totals = {
         s.value: sum(status_counts[r][s.value] for r in LabRegion) for s in ProjectStatus
     }
     rows = [
         RegionSummaryRow(
             region=r,
-            total_count=spillover[r] + new[r],
-            share_pct=_share(spillover[r] + new[r], total),
+            total_count=spillover[r] + new[r] + unregistered[r],
+            share_pct=_share(spillover[r] + new[r] + unregistered[r], total),
             spillover_count=spillover[r],
             newly_registered_count=new[r],
+            unregistered_count=unregistered[r],
+            spillover_share_pct=_share(spillover[r], spillover_total),
+            newly_registered_share_pct=_share(new[r], new_total),
+            unregistered_share_pct=_share(unregistered[r], unregistered_total),
             status_counts=status_counts[r],
             status_share_pct={
-                key: _share(count, status_totals[key])
-                for key, count in status_counts[r].items()
+                key: _share(count, status_totals[key]) for key, count in status_counts[r].items()
             },
         )
         for r in _REGION_ORDER
@@ -354,7 +389,7 @@ async def dashboard_analytics(
     type, category, hub, registration year) and the "completing within
     year" Hub × Type cross-tab.
 
-    Basis: the `/pipeline-totals` basis (Commercialized excluded), scoped and
+    Basis: the `/pipeline-totals` basis (every project, ADR 0030), scoped and
     filtered by `narrowed_hub_filter`, so every list sums to that card's
     `total_count`. "Completing" is the active run's exclusive `WITHIN_YEAR`
     bucket (`within_year AND NOT blocked`, as `/completing-within-year`
@@ -364,11 +399,9 @@ async def dashboard_analytics(
     """
 
     hub_filter = narrowed_hub_filter(current_user, Project.hub_id, hub_id, region)
-    pipeline_stmt = (
-        select(Hub.name, Project.type, Project.category, Project.reg_year, func.count())
-        .join(Hub, Project.hub_id == Hub.id)
-        .where(Project.status != ProjectStatus.COMMERCIALIZED)
-    )
+    pipeline_stmt = select(
+        Hub.name, Project.type, Project.category, Project.reg_year, func.count()
+    ).join(Hub, Project.hub_id == Hub.id)
     if hub_filter is not None:
         pipeline_stmt = pipeline_stmt.where(hub_filter)
     grouped = (
@@ -427,7 +460,6 @@ async def dashboard_analytics(
                 ScheduleRunProjectOutcome.schedule_run_id == active_run.id,
                 ScheduleRunProjectOutcome.within_year.is_(True),
                 ScheduleRunProjectOutcome.blocked.is_(False),
-                Project.status != ProjectStatus.COMMERCIALIZED,
             )
         )
         if hub_filter is not None:
@@ -515,9 +547,7 @@ def _register_stmt(
     """The register's scoped, filtered project set. Every predicate is a
     SQLAlchemy expression with bound parameters; nothing is interpolated."""
 
-    stmt = select(Project).options(
-        selectinload(Project.hub), selectinload(Project.leader_engineer)
-    )
+    stmt = select(Project).options(selectinload(Project.hub), selectinload(Project.leader_engineer))
     hub_filter = narrowed_hub_filter(current_user, Project.hub_id, hub_id, region)
     if hub_filter is not None:
         stmt = stmt.where(hub_filter)
@@ -575,7 +605,7 @@ async def analytics_projects(
     db: AsyncSession = Depends(get_db),
     current_user: Principal = Depends(_read),
 ) -> ProjectFilterResult:
-    """"An analytics breakdown with filters (by hub, category, status,
+    """ "An analytics breakdown with filters (by hub, category, status,
     priority)" (`docs/PROJECT_AND_STACK.md` §2), hub-scoped (P3-T03), upgraded
     to the "All registered projects" register in P13 (ADR 0025 §5,
     `docs/API_CONTRACT_P13.md` §3). Every filter is ANDed server-side.
@@ -685,9 +715,7 @@ async def analytics_project_facets(
                 id=p.leader_engineer_id, name=_leader_name_if_self(p, current_user)
             )
 
-    step_ids = {
-        stage.step_id for c in cards.values() if (stage := c.current_stage) is not None
-    }
+    step_ids = {stage.step_id for c in cards.values() if (stage := c.current_stage) is not None}
     templates = (
         (
             await db.execute(

@@ -16,3 +16,26 @@ export function statusRegionItems(summary: RegionSummary, status: ProjectStatus)
     sharePct: row.status_share_pct[status] ?? null,
   }));
 }
+
+/** The four Project Pipeline row cards (ADR 0030). */
+export type PipelineBucket = 'spillover' | 'new' | 'unregistered' | 'total';
+
+/**
+ * Per-country chips for one Project Pipeline card, read verbatim from the
+ * served `GET /dashboard/region-summary` rows (count + the bucket's own
+ * server-computed share; I19, no browser arithmetic).
+ */
+export function pipelineRegionItems(summary: RegionSummary, bucket: PipelineBucket): RegionChipItem[] {
+  return summary.regions.map((row) => {
+    switch (bucket) {
+      case 'spillover':
+        return { region: row.region, count: row.spillover_count, sharePct: row.spillover_share_pct };
+      case 'new':
+        return { region: row.region, count: row.newly_registered_count, sharePct: row.newly_registered_share_pct };
+      case 'unregistered':
+        return { region: row.region, count: row.unregistered_count, sharePct: row.unregistered_share_pct };
+      case 'total':
+        return { region: row.region, count: row.total_count, sharePct: row.share_pct };
+    }
+  });
+}

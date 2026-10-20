@@ -42,7 +42,7 @@ export function CompletingHubTypeTable({ cells, byType, byHub = [] }: Completing
             </h3>
             <p className="text-xs font-medium text-text-subtle">
               Projects the active run finishes by W52, with their share of each cell&apos;s pipeline.
-              Excludes Commercialized projects, so the total is lower than the within-year KPI.
+              Counts every project in the pipeline, so the total equals the within-year KPI.
             </p>
           </div>
         </div>
@@ -53,8 +53,8 @@ export function CompletingHubTypeTable({ cells, byType, byHub = [] }: Completing
             pipeline. The Total row is the per-type figure across the hubs in view.
           </p>
           <p>
-            The pipeline basis excludes Commercialized projects, so these totals do not equal the
-            &quot;Completing within the year&quot; KPI card. All figures are served by the API for the
+            The pipeline basis counts every project, Commercialized included, so these totals equal the
+            &quot;Completing within the year&quot; KPI card (Invariant I9). All figures are served by the API for the
             current hub / country filter.
           </p>
         </CardInfo>

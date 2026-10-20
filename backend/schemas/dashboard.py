@@ -24,22 +24,30 @@ from models.enums import (
 
 
 class PipelineTotals(BaseModel):
-    """`docs/PROJECT_AND_STACK.md` §2: "pipeline totals split by spillover /
-    newly registered / total." Interpreted here as `Project.carry_over`
-    (spillover = carried over from a prior year's registration) vs newly
-    registered (`carry_over=False`) — a portfolio-*composition* metric,
-    distinct from the schedule-outcome `SPILLOVER` flag (a project not
-    completing within the current scheduling year; see
-    `CompletingWithinYearRow`/`CompletingWithinYear` below). Both concepts are
-    legitimately called "spillover" in the source docs but are NOT the same
-    number — flagged as a judgement call since DOMAIN_RULES.md does not
-    define "pipeline totals" itself. Scope: every project except
-    `Commercialized` (no longer "in the pipeline").
+    """`Spillover + Newly registered + Unregistered date = Total projects`
+    (ADR 0030, `docs/API_CONTRACT_P17.md`).
+
+    Portfolio *composition* by registration, not the schedule-outcome
+    `SPILLOVER` flag (see `CompletingWithinYear`). Scope: EVERY project in the
+    caller's scope and filter, Commercialized included (P17; before P17 it
+    was excluded).
+
+    * `spillover_count`   - `carry_over` is true.
+    * `new_count`         - `carry_over` is false AND `reg_year` is not null.
+    * `unregistered_count` - `carry_over` is false AND `reg_year` is null.
+
+    The three are mutually exclusive and `total_count` is their sum. Each
+    `*_share_pct` is count / `total_count` x 100, 2 dp, computed here (I19);
+    0.0 when `total_count` is 0.
     """
 
     spillover_count: int
     new_count: int
+    unregistered_count: int
     total_count: int
+    spillover_share_pct: float
+    new_share_pct: float
+    unregistered_share_pct: float
 
 
 class StatusOverview(BaseModel):
@@ -55,6 +63,20 @@ class StatusOverview(BaseModel):
     in_development: int
     in_queue: int
     other_counts: dict[str, int]
+    # P17-T03 (ADR 0030, docs/API_CONTRACT_P17.md): five-card status overview.
+    # Project STATUS `On Hold` (ADR 0017) is distinct from the stage-level
+    # "On Hold" (stored `Blocked`) outcome; this field is the project status.
+    commercialized_count: int
+    on_hold_count: int
+    total_count: int
+    in_development_share_pct: float
+    under_industrialization_share_pct: float
+    in_queue_share_pct: float
+    commercialized_share_pct: float
+    on_hold_share_pct: float
+    other_statuses_count: int
+    other_statuses_counts: dict[str, int]
+    other_statuses_share_pct: float
 
 
 class HubTypePipelineRow(BaseModel):
@@ -194,9 +216,9 @@ class ProjectFacets(BaseModel):
 class RegionSummaryRow(BaseModel):
     """One country of `GET /dashboard/region-summary` (ADR 0025 §4).
 
-    `total_count`, `spillover_count` and `newly_registered_count` use the
-    `PipelineTotals` basis (every project except Commercialized), so the
-    chips under the pipeline cards reconcile with them. `status_counts` uses
+    `total_count`, `spillover_count`, `newly_registered_count` and
+    `unregistered_count` use the `PipelineTotals` basis (every project,
+    ADR 0030), so the chips under the pipeline cards reconcile with them. `status_counts` uses
     the `StatusOverview` basis (every status, Commercialized included), so
     the chips under each status card reconcile with it. Every share is
     computed here, 2 dp; a zero denominator gives 0.0.
@@ -208,6 +230,14 @@ class RegionSummaryRow(BaseModel):
     share_pct: float
     spillover_count: int
     newly_registered_count: int
+    #: P17: carry_over false AND reg_year null.
+    unregistered_count: int
+    #: P17: each count / the portfolio's matching `PipelineTotals` count x 100
+    #: (so the regions' shares of one card sum to ~100); 0.0 on a zero
+    #: denominator.
+    spillover_share_pct: float
+    newly_registered_share_pct: float
+    unregistered_share_pct: float
     #: Every `ProjectStatus` wire value, 0 if none.
     status_counts: dict[str, int]
     #: Per status: this region's count / that status's count across the
@@ -275,8 +305,8 @@ class CompletingByHubRow(BaseModel):
 class DashboardAnalytics(BaseModel):
     """`GET /dashboard/analytics`.
 
-    **Basis**: the `PipelineTotals` basis — every project except
-    Commercialized — in the caller's scope, ANDed with `hub_id` / `region`.
+    **Basis**: the `PipelineTotals` basis — every project (ADR 0030;
+    Commercialized included since P17) — in the caller's scope, ANDed with `hub_id` / `region`.
     Each list's counts therefore sum to `PipelineTotals.total_count` for the
     same filter.
 

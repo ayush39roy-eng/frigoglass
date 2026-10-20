@@ -175,8 +175,7 @@ async def test_analytics_shape_and_reconciliation(db_session):
 
     # by_reg_year against the live table (pipeline basis), "Unknown" last.
     years = Counter(
-        y for y, s in (await db_session.execute(select(Project.reg_year, Project.status))).all()
-        if s != ProjectStatus.COMMERCIALIZED
+        y for (y,) in (await db_session.execute(select(Project.reg_year))).all()
     )
     expected_years = {str(y): c for y, c in years.items() if y is not None}
     if years.get(None):
@@ -195,25 +194,23 @@ async def test_analytics_shape_and_reconciliation(db_session):
     within = Counter(
         (r["hub"], r["type"]) for r in cwy["rows"]
         if r["within_year"] and not r["blocked"]
-        and statuses[uuid.UUID(r["project_id"])] != ProjectStatus.COMMERCIALIZED
     )
     for r in body["completing_hub_type"]:
         assert r["completing_count"] == within.get((r["hub"], r["type"]), 0), r
         assert r["completing_pct"] == _share(r["completing_count"], r["pipeline_count"])
     completing_total = sum(r["completing_count"] for r in body["completing_hub_type"])
     assert completing_total == sum(within.values())
-    # Reconciliation with the Dashboard's within-year card (I9): the run marks
-    # an excluded Commercialized project `within_year` ("trivially done",
-    # scheduling.greedy._excluded_outcome), and the card counts it; the
-    # analytics basis excludes Commercialized, so the cross-tab total is the
-    # card minus exactly those rows.
+    # Reconciliation with the Dashboard's within-year card (I9): since P17
+    # (ADR 0030) the analytics basis includes Commercialized, which the run
+    # marks `within_year` ("trivially done"), so the cross-tab total equals the
+    # card exactly.
     commercialized_within = sum(
         1 for r in cwy["rows"]
         if r["within_year"] and not r["blocked"]
         and statuses[uuid.UUID(r["project_id"])] == ProjectStatus.COMMERCIALIZED
     )
     assert commercialized_within > 0  # the demo seed exercises the difference
-    assert completing_total == cwy["within_year_count"] - commercialized_within
+    assert completing_total == cwy["within_year_count"]
     assert completing_total > 0
 
     # completing_by_type: same keys and order as by_type, sums per type.
@@ -248,7 +245,7 @@ async def test_analytics_shape_and_reconciliation(db_session):
         assert field not in text
 
 
-async def test_analytics_excludes_commercialized(db_session):
+async def test_analytics_includes_commercialized(db_session):
     await _seeded(db_session)
     await _act_as(db_session, RoleName.PORTFOLIO_MANAGER)
     async with _client(db_session) as client:
@@ -262,8 +259,9 @@ async def test_analytics_excludes_commercialized(db_session):
         await db_session.flush()
         after = await _get(client, "/dashboard/analytics")
         totals = await _get(client, "/dashboard/pipeline-totals")
+    # ADR 0030: the status change moves nothing out of the basis.
     assert sum(b["count"] for b in after["by_hub"]) == (
-        sum(b["count"] for b in before["by_hub"]) - 1
+        sum(b["count"] for b in before["by_hub"])
     ) == totals["total_count"]
     for r in after["completing_hub_type"]:
         assert r["completing_count"] <= r["pipeline_count"]

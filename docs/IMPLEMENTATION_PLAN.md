@@ -1899,23 +1899,54 @@ all of P14.
 | ID | Task | Owner | Depends | Status |
 |---|---|---|---|---|
 | P14-T01 | Priority move preview and confirm: in-process greedy, preview token, abandoned-run reaper (contract §1) | backend-builder A | — | DONE (MEMORY 2026-10-19; gate pending) |
-| P14-T02 | VIP board: migration, seed, `GET /vip-board`, item writes (contract §2) | backend-builder B | — | OPEN |
-| P14-T03 | Scheduler and calculation re-derivation on the live DB: invariants I1–I24, dashboard, capacity and Gantt reconciliation, and the root cause of "priority board not working" | workflow-auditor | — | OPEN |
-| P14-T04 | Frontend: priority move dialog on every move entry point; Dashboard VIP card and dialogs; remove the `/vip` nav (contract §3) | frontend-builder | T01, T02 shapes | OPEN |
-| P14-T20 | Gate: qa-inspector, workflow-auditor and security-auditor | — | T01–T04 | OPEN |
+| P14-T02 | VIP board: migration, seed, `GET /vip-board`, item writes (contract §2) | backend-builder B | — | DONE |
+| P14-T03 | Scheduler and calculation re-derivation on the live DB: invariants I1–I24, dashboard, capacity and Gantt reconciliation, and the root cause of "priority board not working" | workflow-auditor | — | DONE |
+| P14-T04 | Frontend: priority move dialog on every move entry point; Dashboard VIP card and dialogs; remove the `/vip` nav (contract §3) | frontend-builder | T01, T02 shapes | DONE |
+| P14-T20 | Gate: qa-inspector, workflow-auditor and security-auditor | — | T01–T04 | DONE |
 
 ## P15 — Per-engineer utilization and leader names (ADR 0028)
 
 | ID | Task | Owner | Status |
 |---|---|---|---|
-| P15-T01 | Backend: `GET /capacity/engineer-utilization`, audit, leader_name un-withheld everywhere incl. exports | backend-builder | OPEN |
-| P15-T02 | Frontend: Engineers × Weeks heatmap replaces the placeholder; leader names displayed ("Withheld" removed) | frontend-builder | OPEN |
-| P15-T20 | Gate: qa, workflow, security | — | OPEN |
+| P15-T01 | Backend: `GET /capacity/engineer-utilization`, audit, leader_name un-withheld everywhere incl. exports | backend-builder | DONE |
+| P15-T02 | Frontend: Engineers × Weeks heatmap replaces the placeholder; leader names displayed ("Withheld" removed) | frontend-builder | DONE |
+| P15-T20 | Gate: qa, workflow, security | — | DONE |
 
 ## P16 — Prioritization matrix: Gross Profitability, ROI, new weights (ADR 0029)
 
 | ID | Task | Owner | Status |
 |---|---|---|---|
-| P16-T01 | Backend: constants, scoring, served scaled weights and points, recompute stored scores, mark stale | backend-builder | OPEN |
-| P16-T02 | Frontend: labels, pillar move, weights and points scaled to 100 in the Matrix, Registration, Workspace | frontend-builder | OPEN |
-| P16-T20 | Gate | qa / workflow / security | OPEN |
+| P16-T01 | Backend: constants, scoring, served scaled weights and points, recompute stored scores, mark stale | backend-builder | DONE |
+| P16-T02 | Frontend: labels, pillar move, weights and points scaled to 100 in the Matrix, Registration, Workspace | frontend-builder | DONE |
+| P16-T20 | Gate | qa / workflow / security | DONE |
+
+## P17 — Dashboard parity with the client's older app (ADR 0030)
+
+Opened 2026-10-20. Contract: `docs/API_CONTRACT_P17.md`. The Project Pipeline row becomes
+`Spillover + Newly registered + Unregistered date = Total projects` (total includes Commercialized).
+
+| ID | Task | Owner | Status |
+|---|---|---|---|
+| P17-R01 | Gate remediation: update `_zeroed` in test_p12_hub_filter.py to the new StatusOverview shape; correct the "lower completing %" claim in ADR 0030; add hub-restricted Hub Planner test on pipeline-totals / status-overview / region-summary | backend-builder | DONE (MEMORY 2026-10-20) |
+| P17-T01 | Backend: `unregistered_count`, server-side shares, all-projects pipeline basis across totals / region summary / hub-type / analytics | backend-builder | DONE (MEMORY 2026-10-20) |
+| P17-T02 | Frontend: pipeline row (three cards + total, shares, per-country chips); update hand-mirrored types | frontend-builder | DONE (MEMORY 2026-10-20) |
+| P17-T03 | Backend: five-card status overview (`commercialized_count`, `on_hold_count`, `total_count`, shares, `other_statuses_*`) on `/dashboard/status-overview` | backend-builder | DONE (MEMORY 2026-10-20) |
+| P17-T04 | Frontend: five status cards (count, % of total, per-country chips from `region-summary.status_counts`, progress bar), "Other statuses: n"; mirror the new `StatusOverview` fields | frontend-builder | DONE (MEMORY 2026-10-20) |
+| P17-T20 | Gate: qa, workflow, security | — | DONE (MEMORY 2026-10-20; qa PASS, security PASS, workflow FAIL then PASS on re-gate) |
+
+## P18 — What-if planner: scenario engine, tool API, chat (ADR 0031)
+
+Opened 2026-10-20. Contract: `docs/API_CONTRACT_P18.md` (the pure-Python interface of
+`backend/scheduling/whatif.py`). A planner (or the chat assistant, through the same tools) describes
+a scenario (more projects, more or fewer designers, more chambers, downtime changes, priority
+moves). The engine answers instantly with formulas (extra design and lab weeks, booked % per hub and
+lab region, the minimum extra designers and chambers) and exactly by re-running the real greedy
+scheduler on a copy of the plan (who slips, who finishes, utilization, a diff against today's plan).
+No LLM and no CP-SAT inside the engine. Nothing is persisted by a what-if.
+
+| ID | Task | Owner | Status |
+|---|---|---|---|
+| P18-T01 | Scheduling: pure what-if engine `scheduling/whatif.py` (`Scenario`, `analytic_requirements`, `simulate`, `solve_minimum_additions`), tests, ADR 0031, contract | algorithm-engineer | DONE (MEMORY 2026-10-20) |
+| P18-T02 | Backend: build `WhatIfBaseline` from the DB (hub-scoped), scenario API, tool layer, chat endpoint (LLM only translates text to `Scenario` and explains results; never computes) | backend-builder | TODO (depends on P18-T01) |
+| P18-T03 | Frontend: What-if UI and chat panel on Capacity Planning | frontend-builder | TODO (depends on P18-T02) |
+| P18-T20 | Gate: qa, workflow, security | — | TODO |

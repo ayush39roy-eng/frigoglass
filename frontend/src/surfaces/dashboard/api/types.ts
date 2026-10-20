@@ -22,7 +22,14 @@ import type { Id, WeekNumber } from '@/types/common';
 export interface PipelineTotals {
   spillover_count: number;
   new_count: number;
+  /** Not carry_over and no registration year (ADR 0030). */
+  unregistered_count: number;
+  /** Every project, Commercialized included; = spillover + new + unregistered. */
   total_count: number;
+  /** Server-computed count / total_count x 100, 2 dp, 0 on a zero total (I19). */
+  spillover_share_pct: number;
+  new_share_pct: number;
+  unregistered_share_pct: number;
 }
 
 /** GET /dashboard/status-overview */
@@ -32,6 +39,22 @@ export interface StatusOverview {
   in_development: number;
   in_queue: number;
   other_counts: Record<string, number>;
+  /** P17 (ADR 0030): the two new card counts; every figure below is served, never derived here (I19). */
+  commercialized_count: number;
+  /** PROJECT status On Hold (ADR 0017) - not the stage-level On Hold outcome. */
+  on_hold_count: number;
+  /** Every project in scope/filter; equals PipelineTotals.total_count. */
+  total_count: number;
+  /** Card share of total, 2 dp; also the progress-bar width. */
+  in_development_share_pct: number;
+  under_industrialization_share_pct: number;
+  in_queue_share_pct: number;
+  commercialized_share_pct: number;
+  on_hold_share_pct: number;
+  /** Remainder (In Buyoff + Draft + Cancelled) so five cards + other == total_count. */
+  other_statuses_count: number;
+  other_statuses_counts: Record<string, number>;
+  other_statuses_share_pct: number;
 }
 
 /** GET /dashboard/hub-type-pipeline — one row per (hub, type) with a project count. */
@@ -152,9 +175,16 @@ export interface RegionSummaryRow {
   share_pct: number;
   spillover_count: number;
   newly_registered_count: number;
-  /** Every ProjectStatus wire value, 0 if none. `total_count`, `share_pct`,
-   *  `spillover_count` and `newly_registered_count` exclude Commercialized
-   *  (same basis as PipelineTotals); `status_counts` includes it. */
+  /** Not carry_over and no registration year (ADR 0030). */
+  unregistered_count: number;
+  /** This region's count over the portfolio's count for the same bucket, 2 dp
+   *  (server-side; the three regions of one card sum to about 100). */
+  spillover_share_pct: number;
+  newly_registered_share_pct: number;
+  unregistered_share_pct: number;
+  /** Every ProjectStatus wire value, 0 if none. All counts here cover every
+   *  project, Commercialized included (ADR 0030): `total_count` =
+   *  spillover + newly registered + unregistered = sum of `status_counts`. */
   status_counts: Partial<Record<ProjectStatus, number>>;
   /** Share of that status's portfolio count held by this region. */
   status_share_pct: Partial<Record<ProjectStatus, number>>;

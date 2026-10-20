@@ -51,9 +51,9 @@ describe('CompletingHubTypeTable (P13-T10)', () => {
     expect(within(table).getByLabelText('No grand total served')).toBeInTheDocument();
   });
 
-  it('captions that the cross-tab excludes Commercialized (it is not the within-year KPI)', () => {
+  it('captions that the cross-tab counts every project (its total equals the within-year KPI)', () => {
     renderWithProviders(<CompletingHubTypeTable cells={cells} byType={byType} />);
-    expect(screen.getByText(/Excludes Commercialized projects/)).toBeInTheDocument();
+    expect(screen.getByText(/Counts every project in the pipeline/)).toBeInTheDocument();
   });
 
   it('shows an empty state when the server sends no cells', () => {

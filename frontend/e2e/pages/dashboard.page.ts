@@ -16,7 +16,7 @@ export class DashboardPage {
   }
 
   pipelineSection() {
-    return this.page.getByRole('heading', { name: 'Pipeline & completion' });
+    return this.page.getByRole('heading', { name: 'Completion outcome' });
   }
 
   statusOverviewSection() {

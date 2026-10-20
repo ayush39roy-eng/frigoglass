@@ -571,3 +571,62 @@ With 3-Year Volume at 25 and CAPEX at 15, and every other weight unchanged (ROI 
 is **295**, not the 300 the client expects. The scoring is scaled to 100 whatever the total, so
 nothing breaks. Which dimension should carry the missing 5 points (for example New Models 15 → 20,
 or ROI 25 → 30)? Or is 295 acceptable?
+
+### 42. Pipeline total: Cancelled projects, and where Spillover / Unregistered come from *(2026-10-20, P17, ADR 0030, non-blocking)*
+
+The Dashboard total now counts every project. Two things the client should confirm.
+(a) Should `Cancelled` projects count in the total? The client's 239 lists no cancelled projects;
+our real-2026 seed has 29, so the total is 253.
+(b) The client workbook we seeded has no carry-over or registration-date column, so the seed sets
+`reg_year = 2026`, `carry_over = false` for every project and the row shows Spillover 0 / New 253 /
+Unregistered 0. Where do their 76 spillover and 3 unregistered come from (a column in their
+workbook, or a rule such as "request date before the plan year")? Until answered the owner can
+set `carry_over` and `reg_year` on Project Registration.
+
+### 43. What-if planner: how a hypothetical project gets a leader, and whether added designers take over existing work *(2026-10-20, P18, ADR 0031, non-blocking)*
+
+The scheduler needs a leader per project. For a hypothetical project (and for the projects of a
+removed designer) the engine picks, deterministically, the eligible designer of the hub with the
+fewest led design-weeks per FTE (ties by id). Added designers start at zero, so they absorb the new
+projects. Existing projects are not rebalanced onto added designers. Should "add a designer" also
+take some existing projects off an overloaded leader? Until answered it does not (the effect of a
+designer is then a lower bound for the existing portfolio).
+
+### 44. What-if planner: defaults for a hypothetical project *(2026-10-20, P18, ADR 0031, non-blocking)*
+
+A hypothetical project defaults to status `In Queue` and priority `P3` when the caller gives neither
+a priority nor a score. A score (0..100) maps to a priority with the DOMAIN_RULES bands. Hard gates
+are not modelled, so a hypothetical project is never forced to P1. Is `P3` the right default, and
+should what-if projects be able to carry hard gates?
+
+### 45. What-if planner: which capacity basis and what "below full" means *(2026-10-20, P18, ADR 0031, non-blocking)*
+
+The instant formulas compare the lead-time demand of every schedulable project (the same Sum of
+durations as I6/I7, including work already done) with year capacity (or remaining capacity, a
+parameter), exactly as the Capacity surface does. "Stays below BOOKING_FULL_PCT" means the served
+booked % is strictly less than 100 (status not `full`). Is year or remaining the basis the client
+wants the headline recommendation on, and should the target be configurable (for example below 85)?
+Both are parameters of the engine; the default is year and 100.
+
+### 46. What-if planner: chamber downtime and the new-chamber norm *(2026-10-20, P18, ADR 0031, non-blocking)*
+
+Downtime does not gate chamber booking (DOMAIN_RULES "Capacity supply"), so a what-if downtime change
+moves supply and booked % but not the schedule. An added chamber with no explicit values takes the
+region's norm: platforms = lower median, efficiency and the three downtime figures = mean, allowed
+stages = union of the region's chambers. Should downtime instead reduce bookable platforms in the
+simulation (a heavier model than the rules ask for)?
+
+### 47. What-if planner: the 52-week year makes most new projects unreachable *(2026-10-20, P18, ADR 0031, non-blocking)*
+
+With `CURRENT_WEEK = 42` and a 52-week year, a new project can only finish in the plan year if its
+critical path is 11 weeks or less (PDD/C is 8, OEM/C-OEM is 4; PDD/B is 18, PDD/A 38). No amount of
+added capacity changes that. The engine reports these as `unattainable` (and excludes them from the
+minimum-additions search) rather than recommending impossible numbers. Should the planner offer a
+"finish by W78 / next year" target as well?
+
+### 48. What-if planner: cost of a designer versus a chamber, and search limits *(2026-10-20, P18, ADR 0031, non-blocking)*
+
+"Smallest additions" counts a designer and a chamber as one unit each (ties prefer fewer chambers,
+the dearer unit). Added designers are 1.0 FTE (a parameter). The search is capped at 60 greedy runs
+and 25 additions per pool, and reports `capped` when that stops it. Does the client want weighted
+costs (a chamber is worth several designers) or different limits?

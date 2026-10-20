@@ -60,6 +60,7 @@ vi.mock('@/lib/api/vip', async () => {
 });
 
 import DashboardPage from './DashboardPage';
+import { CARRY_OVER_YEAR } from '@/lib/domain-constants';
 
 const pending = { data: undefined, isPending: true, isError: false, error: null, refetch: vi.fn() };
 function ready<T>(data: T) {
@@ -78,13 +79,32 @@ const withinYear: CompletingWithinYear = {
   blocked_count: 1,
   rows: [],
 };
-const totals: PipelineTotals = { spillover_count: 30, new_count: 206, total_count: 236 };
+const totals: PipelineTotals = {
+  spillover_count: 76,
+  new_count: 160,
+  unregistered_count: 3,
+  total_count: 239,
+  spillover_share_pct: 31.8,
+  new_share_pct: 66.95,
+  unregistered_share_pct: 1.26,
+};
 const status: StatusOverview = {
   in_buyoff: 5,
   under_industrialization: 12,
   in_development: 40,
   in_queue: 100,
   other_counts: {},
+  commercialized_count: 8,
+  on_hold_count: 2,
+  total_count: 239,
+  in_development_share_pct: 16.74,
+  under_industrialization_share_pct: 5.02,
+  in_queue_share_pct: 41.84,
+  commercialized_share_pct: 3.35,
+  on_hold_share_pct: 0.84,
+  other_statuses_count: 5,
+  other_statuses_counts: { 'In Buyoff': 5 },
+  other_statuses_share_pct: 2.09,
 };
 const hubType: HubTypePipelineRow[] = [{ hub: 'R&D-Greece', type: 'NM', count: 3 }];
 
@@ -203,7 +223,11 @@ describe('DashboardPage — P13 country filter (ADR 0025)', () => {
         share_pct: 12.71,
         spillover_count: 9,
         newly_registered_count: 21,
-        status_counts: { 'In Buyoff': 1, 'Under Industrialization': 4, 'In Development': 10, 'In Queue': 15, Commercialized: 2 },
+        unregistered_count: 0,
+        spillover_share_pct: 0,
+        newly_registered_share_pct: 0,
+        unregistered_share_pct: 0,
+        status_counts: { 'In Buyoff': 1, 'Under Industrialization': 4, 'In Development': 10, 'In Queue': 15, Commercialized: 2, 'On Hold': 0 },
         status_share_pct: { 'In Buyoff': 20, 'Under Industrialization': 33.33, 'In Development': 25, 'In Queue': 15 },
       },
       {
@@ -212,6 +236,10 @@ describe('DashboardPage — P13 country filter (ADR 0025)', () => {
         share_pct: 77.12,
         spillover_count: 59,
         newly_registered_count: 123,
+        unregistered_count: 0,
+        spillover_share_pct: 77.63,
+        newly_registered_share_pct: 0,
+        unregistered_share_pct: 0,
         status_counts: { 'In Buyoff': 3, 'Under Industrialization': 7, 'In Development': 27, 'In Queue': 80, Commercialized: 5 },
         status_share_pct: { 'In Buyoff': 60, 'Under Industrialization': 58.33, 'In Development': 67.5, 'In Queue': 80 },
       },
@@ -221,6 +249,10 @@ describe('DashboardPage — P13 country filter (ADR 0025)', () => {
         share_pct: 10.17,
         spillover_count: 4,
         newly_registered_count: 20,
+        unregistered_count: 0,
+        spillover_share_pct: 0,
+        newly_registered_share_pct: 0,
+        unregistered_share_pct: 0,
         status_counts: { 'In Buyoff': 1, 'Under Industrialization': 1, 'In Development': 3, 'In Queue': 5, Commercialized: 0 },
         status_share_pct: { 'In Buyoff': 20, 'Under Industrialization': 8.33, 'In Development': 7.5, 'In Queue': 5 },
       },
@@ -257,8 +289,10 @@ describe('DashboardPage — P13 country filter (ADR 0025)', () => {
     // Served count + served share, verbatim (no browser arithmetic).
     expect(inQueue).toHaveTextContent('80');
     expect(inQueue).toHaveTextContent('(80%)');
-    expect(screen.getByRole('list', { name: 'Active by country' })).toHaveTextContent('(77.12%)');
-    expect(screen.getByRole('list', { name: 'Carried over by country' })).toHaveTextContent('59');
+    expect(screen.getByRole('list', { name: 'Total projects by country' })).toHaveTextContent('(77.12%)');
+    const spill = screen.getByRole('list', { name: `Spillover ${String(CARRY_OVER_YEAR)} by country` });
+    expect(spill).toHaveTextContent('59');
+    expect(spill).toHaveTextContent('(77.63%)');
   });
 
   it('places the all-projects register directly after the status overview and links to it', () => {
@@ -284,7 +318,7 @@ describe('DashboardPage — P14 VIP projects card', () => {
     expect(vipHook.useVipBoard).toHaveBeenCalledWith({ region: 'India' });
     const register = screen.getByTestId('all-projects-register');
     expect(vip.compareDocumentPosition(register) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    const pipeline = screen.getAllByText('Pipeline & completion')[0]!;
+    const pipeline = screen.getAllByText('Project pipeline')[0]!;
     // After the row-1 KPI cards, before the row-2/3 panels.
     expect(vip.compareDocumentPosition(pipeline) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
@@ -331,8 +365,8 @@ describe('DashboardPage — P13-T10 analytics & breakdown', () => {
     expect(screen.getByRole('table', { name: /completing within the year/i })).toHaveTextContent('7 (8.54%)');
     // Per-hub Total column = served completing_by_hub.
     expect(screen.getByRole('row', { name: /PD-India/ })).toHaveTextContent('14 (7.78%)');
-    // Donut centres show the served PipelineTotals.total_count (236), not a client sum.
-    expect(screen.getAllByText('236').length).toBeGreaterThanOrEqual(2);
+    // Donut centres show the served PipelineTotals.total_count (239), not a client sum.
+    expect(screen.getAllByText('239').length).toBeGreaterThanOrEqual(2);
   });
 
   it('shows a per-section error without blanking the page', () => {

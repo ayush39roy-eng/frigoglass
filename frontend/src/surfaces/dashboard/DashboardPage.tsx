@@ -27,6 +27,7 @@ import { AccessNotice } from './components/access-notice';
 import { HubRankList } from './components/hub-rank-list';
 import { HubTypePipelineTable } from './components/hub-type-pipeline-table';
 import { PipelinePanel } from './components/pipeline-panel';
+import { PipelineRow } from './components/pipeline-row';
 import { ProjectBreakdown } from './components/project-breakdown';
 import { SectionBoundary } from '@/components/shared/section-boundary';
 import { StatusOverviewCards } from './components/status-overview-cards';
@@ -269,6 +270,17 @@ export default function DashboardPage(): React.JSX.Element {
               <VipProjectsCard />
             </StaggerSection>
 
+            {/* P17 (ADR 0030): Spillover + Newly registered + Unregistered = Total. */}
+            <StaggerSection>
+              <SectionBoundary
+                query={pipelineTotals}
+                title="Project pipeline"
+                errorDescription="Pipeline totals could not be loaded."
+              >
+                {(totals) => <PipelineRow totals={totals} regionSummary={regionSummary.data ?? null} />}
+              </SectionBoundary>
+            </StaggerSection>
+
             {/* Row 2 — completion curve beside the two feature cards. Profile and
                 gauge read the SAME completing-within-year payload (one fetch,
                 several reads), so they render only once it has resolved; the
@@ -308,19 +320,7 @@ export default function DashboardPage(): React.JSX.Element {
                   }
                 >
                   {withinYear.data?.has_active_schedule_run ? <PlanningClockCard /> : null}
-                  <SectionBoundary
-                    query={pipelineTotals}
-                    title="Pipeline & completion"
-                    errorDescription="Pipeline totals could not be loaded."
-                  >
-                    {(totals) => (
-                      <PipelinePanel
-                        totals={totals}
-                        withinYear={withinYear.data ?? null}
-                        regionSummary={regionSummary.data ?? null}
-                      />
-                    )}
-                  </SectionBoundary>
+                  <PipelinePanel withinYear={withinYear.data ?? null} />
                   {/* P11 (ADR 0016): compact Europe / India booked %, only for a
                       session that can read Capacity (no fetch otherwise). */}
                   {canReadCapacity ? <CapacityBookedCard /> : null}

@@ -116,7 +116,10 @@ async def _get(client: AsyncClient, path: str, **params):
 
 def _zeroed(path: str, body) -> None:
     if path == "/dashboard/pipeline-totals":
-        assert body == {"spillover_count": 0, "new_count": 0, "total_count": 0}
+        assert body == {
+            "spillover_count": 0, "new_count": 0, "unregistered_count": 0, "total_count": 0,
+            "spillover_share_pct": 0.0, "new_share_pct": 0.0, "unregistered_share_pct": 0.0,
+        }
     elif path == "/dashboard/status-overview":
         assert (body["in_buyoff"], body["under_industrialization"], body["in_development"],
                 body["in_queue"], body["other_counts"]) == (0, 0, 0, 0, {})
@@ -134,6 +137,9 @@ def _zeroed(path: str, body) -> None:
         assert [r["region"] for r in body["regions"]] == list(REGIONS)
         for r in body["regions"]:
             assert r["total_count"] == r["spillover_count"] == r["newly_registered_count"] == 0
+            assert r["unregistered_count"] == 0
+            assert (r["spillover_share_pct"], r["newly_registered_share_pct"],
+                    r["unregistered_share_pct"]) == (0.0, 0.0, 0.0)
             assert set(r["status_counts"].values()) == {0}
             assert r["share_pct"] == 0.0
     elif path in ("/capacity/hubs", "/capacity/hub-load"):
@@ -283,8 +289,13 @@ async def test_region_summary_reconciles_with_pipeline_and_status_cards(db_sessi
         assert summary["total_count"] == totals["total_count"]
         assert sum(r["spillover_count"] for r in regions) == totals["spillover_count"]
         assert sum(r["newly_registered_count"] for r in regions) == totals["new_count"]
+        assert sum(r["unregistered_count"] for r in regions) == totals["unregistered_count"]
         for r in regions:
-            assert r["total_count"] == r["spillover_count"] + r["newly_registered_count"]
+            assert r["total_count"] == (
+                r["spillover_count"] + r["newly_registered_count"] + r["unregistered_count"]
+            )
+            # ADR 0030: the pipeline basis is every status.
+            assert r["total_count"] == sum(r["status_counts"].values())
             assert set(r["status_counts"]) == {s.value for s in ProjectStatus}
             # The region's own pipeline-totals card equals its chip.
             own = await _get(client, "/dashboard/pipeline-totals", region=r["region"])
@@ -321,7 +332,7 @@ async def test_region_summary_reconciles_with_pipeline_and_status_cards(db_sessi
         )
 
 
-async def test_region_summary_excludes_commercialized_from_pipeline_only(db_session):
+async def test_region_summary_includes_commercialized_in_pipeline(db_session):
     w = await _seeded(db_session)
     project = (
         await db_session.execute(
@@ -337,9 +348,7 @@ async def test_region_summary_excludes_commercialized_from_pipeline_only(db_sess
     romania = next(r for r in summary["regions"] if r["region"] == "Romania")
     assert romania["status_counts"]["Commercialized"] >= 1
     assert summary["total_count"] == totals["total_count"]
-    assert romania["total_count"] == sum(
-        c for s, c in romania["status_counts"].items() if s != "Commercialized"
-    )
+    assert romania["total_count"] == sum(romania["status_counts"].values())
 
 
 # --- §3: the register ---------------------------------------------------------------------

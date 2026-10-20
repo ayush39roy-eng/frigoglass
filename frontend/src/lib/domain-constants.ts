@@ -40,6 +40,9 @@ export const DISPLAY_HORIZON_WEEKS = WITHIN_YEAR_WEEK;
  *  into. Display copy only. */
 export const PLAN_YEAR = 2026;
 export const SPILLOVER_YEAR = PLAN_YEAR + 1;
+/** The year whose unfinished projects are carried over INTO the plan year
+ *  (Dashboard pipeline "Spillover" composition card, ADR 0030). Label only. */
+export const CARRY_OVER_YEAR = PLAN_YEAR - 1;
 
 /**
  * Prioritization scoring anchors (P9 contract §8; deck slide 4 "Scoring Logic").

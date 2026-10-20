@@ -105,11 +105,19 @@ def _zeroed(path: str, body) -> None:
     """Assert `body` is the empty/zero answer of `path`."""
 
     if path == "/dashboard/pipeline-totals":
-        assert body == {"spillover_count": 0, "new_count": 0, "total_count": 0}
+        assert body == {
+            "spillover_count": 0, "new_count": 0, "unregistered_count": 0, "total_count": 0,
+            "spillover_share_pct": 0.0, "new_share_pct": 0.0, "unregistered_share_pct": 0.0,
+        }
     elif path == "/dashboard/status-overview":
         assert body == {
             "in_buyoff": 0, "under_industrialization": 0, "in_development": 0, "in_queue": 0,
             "other_counts": {},
+            "commercialized_count": 0, "on_hold_count": 0, "total_count": 0,
+            "in_development_share_pct": 0.0, "under_industrialization_share_pct": 0.0,
+            "in_queue_share_pct": 0.0, "commercialized_share_pct": 0.0, "on_hold_share_pct": 0.0,
+            "other_statuses_count": 0, "other_statuses_counts": {},
+            "other_statuses_share_pct": 0.0,
         }
     elif path == "/dashboard/hub-type-pipeline":
         assert body == []

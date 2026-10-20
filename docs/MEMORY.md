@@ -25502,3 +25502,284 @@ Residual GDPR (informational, not gating; OQ #8 and ADR 0028 amendments), still 
 3. Data-subject access, erasure and rectification path: none exists. Names are live-joined from `users`/`engineers`, so erasure means anonymising the user row.
 4. Privacy notice or in-app disclosure to engineers that their name and utilization are visible to all readers.
 5. Confirm that the per-engineer utilization read-audit meets the accountability requirement.
+
+## [2026-10-19] P16 final combined gate + P14/P15 regression — workflow-auditor — PASS
+
+Method: disposable DB (own container, port 55497; a first DB on 55481 was abandoned because another agent's uvicorn was pointed at the same port), independent re-derivation from DOMAIN_RULES, dev DB :5433 read-only.
+
+**P16 scoring (ADR 0029).**
+- Re-derived `weighted_score`, `normalized_pct`, `suggested_band` for all 253 scored rows from the raw 13 scores (weights 25x9 + 15/25/15 + CAPEX 15, TOTAL 295, bands 70/55/40). Fresh seeded+migrated DB: 0 mismatches. Live dev DB (read-only): 0 mismatches. No half-way ties exist (raw is an integer; 40*raw = 59*(2k+1) has no solution), so round() vs half-up cannot differ.
+- Migration p16a tested on scratch: scores corrupted to the old 280 formula, downgrade (no-op) then upgrade restored all 253 rows; second cycle identical (idempotent). projects table (priority, schedule_stale, updated_at, status, frozen) byte-identical before/after. `p16a` contains no `schedule_stale` write (only the docstring mention).
+- Claim "no suggested band changed; 85 percentages changed": reproduced on the dev DB (old float round() on 280 vs new: 85 changed, 0 band changes). Fresh seed gives 87-88 changed, 0 band changes.
+- `GET /priorities/dimensions`: weights, labels, pillars (Gross Profitability under Financial Return; ROI and CAPEX under Investment & Feasibility), scaled_weight = weight*100/295, total_weight 295 all match; scaled weights sum 99.94 (rounding). All 253 rows: `dimension_points` points and scaled_points match own computation; scaled points sum to raw/295*100 within rounding.
+- OQ #41: +5 on one weight gives TOTAL 300; 5000 random score vectors: weighted score, pct, band, scaled_weight and scaled-point sums all correct (scratch only, nothing persisted).
+
+**Scheduler independence.** `ProjectInput` has no score field; `grep` of `scheduling/` finds no `weighted_score`/`normalized_pct`. Empirically on the scratch DB: all scores set to old-280 values vs new-295 values, `ScheduleInput`, greedy output and CP-SAT output hashes are identical. Dev DB stale flags: exactly 2 (4a1542a4..., 680f0e38...).
+(Note: `GET /gantt?sort=priority` and the Matrix rank / board card order do read the stored score, which is by design and not a scheduling input.)
+
+**Regression (scratch DB, greedy v1).** Full Dashboard/Capacity/Gantt/Board reconciliation script: 0 discrepancies (completing-within-year, status, hub-type, region, analytics, register, I6/I7/I17/I19 capacity, class breakdown, Gantt weekly counts, Gantt design weeks vs hub load, board counts/members/weeks/cards). Priority board correctly excludes non-schedulable statuses (documented in the router; my old recon script was updated). Engineer heatmap total_booked = 1,531 = hub design load; 0 per-engineer/week mismatches. Names: Gantt assigned_engineer_name per project equals the active-run engineer assignment for all roles with Gantt access; comment author_name, activity actor_name and workspace leader name match users/engineers; Gantt, Registration, Matrix, Dashboard exports leader_name matches engineers (0 bad); Gantt export and Gantt/workspace JSON carry no financial values (workspace project financial keys are null for every role in the test, including admin). Uploader name not exercised live (MinIO not configured in scratch; 500 from MinioSettings is environmental) but covered by tests/test_workspace_files.py. Targeted pytest (scoring, slice C, GDPR names, workspace api/files, P15 utilization, OpenAPI contract, R02 hardening, export api): 290 passed.
+
+**Non-blocking notes (no gate effect).**
+1. Stale docstring: `backend/schemas/workspace.py:4-9` still says every person-name field is null unless it is the caller (OQ#8 withholding), contradicting ADR 0028 as amended; `backend/services/workspace.py` docstring at `_name_if_self` is correct.
+2. Matrix and Registration exports carry financial columns for admin roles as before (role-gated, pre-existing).
+3. Dev DB and a fresh seed have slightly different band counts (126/95/26 vs 128/94/25 P4/P3/P1); seed is not byte-reproducible against the dev DB. Not a P16 defect.
+
+### [2026-10-19] P14 + P15 + P16 combined final gate — qa-inspector: PASS (one unconfirmed axe flake noted)
+
+Scope: the working tree at gate time. Disposable stack: Postgres `qa-p16-pg` (:55481), Redis `qa-p16-redis` (:56481), dev-mode uvicorn :8081, `vite preview --mode e2e` :5281 (built into the session scratchpad, no build output left in the repo), seeded `client_2026 --schedule` (253 projects). The owner's :5433 DB and :8001 API were not touched. All gate containers and processes removed.
+
+**1. Backend: PASS.** `pytest -q --cov`: **1382 passed, 0 failed, 95.85 %** (gate 70 %). `ruff check .`: clean. (A single run, no failures, so no isolation re-run was needed.)
+**1b. Frontend: PASS.** `tsc -b` exit 0. ESLint 0 errors, 11 warnings (all react-hooks/incompatible-library on TanStack Virtual, pre-existing class). `vite build` OK. `vitest run --coverage`: **168 files, 1108/1108**; statements 86.24 %, branches 78.27 %, functions 84.26 %, lines 88.11 %.
+
+**2. Earlier defects: both FIXED.**
+- QA-P15-1 (warning contrast): the VIP item picker popover axe scan is 0 serious/critical; `p14-gate.spec.ts` passes 12/12.
+- QA-P15-2 (exports): `GET /exports/gantt?format=csv` has `leader_name` on 2534/2534 rows; `/exports/project-registration` on 253/253.
+- Axe 0 serious/critical on: VIP picker popover, Dashboard, board with the preview dialog open, Capacity with the heatmap, Matrix, Workspace, Gantt (p14 + p15 specs).
+- E2E: `p14-gate` 12, `p15-gate` 4, new `p16-gate` 3 = **19/19** on the last full run.
+
+**3. P16 live: PASS.**
+- Migration chain: fresh DB `alembic upgrade head` ends at `p16a_rescore_adr0029` (single head).
+- Matrix (Detailed view + rubric): "Gross Profitability" (Financial Return), "ROI" (Investment & Feasibility, with CAPEX Investment 15); 3-Year Volume 25 (8.5 of 100), CAPEX 15 (5.1 of 100); line "Total: 100 (scaled from 295)"; explanation "Score 1 gives 1/5 of the weight, score 5 the full weight; the total is scaled to 100."; cells show "91% (269) P1". No "Gross Margins" text.
+- Edit dialog: pillars Strategic Alignment, Regulatory & Quality, Financial Return (incl. Gross Profitability), Investment & Feasibility (ROI, CAPEX), Market & Volume. Workspace scoring section: new labels and weights with scaled weights; it shows no pillar column (by design as built, not a defect against any rule I could find).
+- Hand check: server rows `15706752-...` scores 4,4,4,5,5,4,5,5,5,4,5,4,5 give 269 points, 269/295 = 91 %, matching served 269/91. After `PUT /priorities/{id}` with scores 3,1,2,5,4,2,3,4,2,3,2,5,1: by hand 167 points, 167/295 x 100 = 56.6, rounds to 57 %, band P2; server returned weighted 167, normalized 57, P2; dimension_points 3-year 10.0, CAPEX 3.0.
+- Financial "Gross margin %" field (`gross_margin_pct`, Matrix "GROSS MARGIN %" column) untouched.
+
+**4. P15-R01: PASS.**
+- Names: Workspace stages `assigned_engineer_name` (e.g. Nikhil), Gantt steps (414 of 1050 steps assigned and named), activity `actor_name` ("Frank Admin", "Alice PortfolioManager"), comment `author_name` ("Frank Admin") all populated; no "Withheld" text on the Gantt. Uploader name: not exercised live (no MinIO in the disposable stack); covered by `test_workspace_files.py` (`uploaded_by_name`, passing).
+- Audit coalescing: 5 rapid reloads of `/capacity/engineer-utilization` wrote 0 new `capacity.engineer_utilization.read` rows; 3 calls after 65 s wrote 1 (one row per user/minute).
+
+**5. Heatmap footnote visible** (`engineer-heatmap-footnote`, text "Note: Load is booked to the engineer who leads each project..."); warning chips pass AA (axe 0).
+
+**Note, not a defect (QA-P16-1):** one full e2e run showed `color-contrast (serious) x6` on the Matrix edit dialog scan (`p16-gate`); it passed in 1 isolated run, 4 repeats and the next full run, so it is unconfirmed and probably a dialog open-animation transient. Owner frontend-builder to watch; if it recurs, add a wait for the dialog's animation end.
+Side effect: my first reseed with `--reset` dropped Bob's hub scope (the `seed_dev_users --reset` fails on audit FKs, an existing seed limitation); I restored it by SQL on the disposable DB.
+Files added (tests only): `frontend/e2e/p16-gate.spec.ts`, `frontend/playwright.p16qa.config.ts`. To delete if unwanted: nothing else; `frontend/dist-qa15/` from the earlier gate is still untracked build output (owner can delete). `backend/.coverage` is a pytest artifact.
+
+## [2026-10-19] P14 + P15 + P16 gate — PASSED — orchestrator
+
+All three gates have a PASS on record for P14 (move preview/confirm, VIP on the Dashboard), P15
+(Engineers × Weeks heatmap, leader and engineer names; ADR 0028) and P16 (Gross Profitability and
+ROI, new weights; ADR 0029).
+
+- **qa-inspector:** backend 1382 passed, coverage 95.85 %, ruff clean. Frontend 1108/1108, tsc,
+  eslint (0 errors) and build clean. e2e 19/19 (p14 12, p15 4, p16 3). Axe has 0 serious or critical
+  violations.
+- **workflow-auditor:** all 253 scores re-derived with 0 mismatches, 0 bands changed, and the scheduler
+  output is identical under the old and new weights. Heatmap, Dashboard, Capacity, Gantt and board
+  figures reconcile.
+- **security-auditor:** no Critical or High findings.
+
+**Open follow-ups (none blocking):**
+- Low L1: a duplicate audit row is possible under concurrent heatmap reads.
+- Low L2: `user_names()` must never be fed request ids.
+- Low S4/S5: a reaper race and thread-pool exhaustion.
+- QA-P16-1: a possible axe flake in the Matrix edit dialog, from its open animation.
+- Docstring `backend/schemas/workspace.py:4-9` is outdated.
+- Residual GDPR: lawful-basis record, retention schedule, data-subject path and privacy notice.
+- OQ #39 is answered. OQ #40 and #41 are open.
+- Untracked leftovers: `frontend/dist-qa15/` (to delete) and `backend/.coverage`.
+
+Nothing is committed; the owner's OK to commit and push is awaited.
+
+## [2026-10-20] P17-T01 — Dashboard pipeline row: Spillover + New + Unregistered = Total — backend-builder
+
+**Built (ADR 0030, `docs/API_CONTRACT_P17.md`, OQ #42).**
+- `PipelineTotals` gains `unregistered_count` and 2 dp `spillover_share_pct`, `new_share_pct`, `unregistered_share_pct`. Buckets: spillover = `carry_over`; new = not carry_over and `reg_year` set; unregistered = not carry_over and `reg_year` null. Exclusive; sum to `total_count`. One grouped query.
+- The pipeline basis is now EVERY project (Commercialized included) in `/pipeline-totals`, `/region-summary`, `/hub-type-pipeline` and `/dashboard/analytics`. No table keeps the old basis.
+- `RegionSummaryRow` gains `unregistered_count` plus per-bucket shares (region count over the portfolio's count for that bucket).
+- Analytics `completing_*`: the Commercialized exclusion is dropped, so the cross-tab completing total now equals the card's `within_year_count` exactly; completing percentages have a larger denominator.
+- Files: `backend/schemas/dashboard.py`, `backend/api/routers/dashboard.py`, `backend/tests/test_p17_pipeline.py` (new), `test_p13_slice_a.py`, `test_p13_region_filter.py`, `test_p12_hub_filter.py`, docs (ADR 0030, API_CONTRACT_P17, OQ #42, plan P17). Nothing under `backend/scheduling/`; schedules unchanged; no migration.
+
+**Tests.** Updated for the basis change: `test_p13_slice_a` (analytics reg-year and completing reconciliation, "excludes" test now "includes Commercialized"), `test_p13_region_filter` (zero-shape, region-chip sum now includes unregistered, "excludes Commercialized" test inverted), `test_p12_hub_filter` (zero shape). New `test_p17_pipeline.py`: sum invariant, Commercialized included, null reg_year, carry_over wins over null year, hub and country filters, region chips, zero denominator. 51 passed; ruff clean on touched files.
+**Known failing until P17-T02:** `test_openapi_frontend_contract.py::test_field_sets_match[PipelineTotals]` and `[RegionSummaryRow]` (exact-match against the hand-mirrored frontend types, which frontend-builder owns).
+
+**Seed numbers (client_2026, reg_year 2026 and carry_over false on all 253).** Total 236 to 253 (17 Commercialized return; 29 Cancelled were and remain inside). Spillover 0, New 236 to 253, Unregistered 0. The client's 76/160/3 cannot come from this seed (OQ #42).
+
+**For workflow-auditor to re-reconcile.** Dashboard pipeline total vs status-overview total vs region chips vs hub-type vs analytics (all 253 now); analytics completing total vs the within-year card (now equal); dashboard cross-tab percentages (denominators moved); I9/I19/I23 under hub and country filters.
+
+## [2026-10-20] P17-T02 — Dashboard Project Pipeline row — frontend-builder
+
+**Built (ADR 0030, `docs/API_CONTRACT_P17.md`).**
+- New `surfaces/dashboard/components/pipeline-row.tsx`: four cards joined by "+", "+", "=" glyphs (hidden below `lg`, where the cards stack): Spillover {CARRY_OVER_YEAR} (amber top border), Newly registered {PLAN_YEAR} (blue), Unregistered date (grey; always shown, muted at 0, no chips at 0), Total projects (near-black ink border, bigger number, "Full {PLAN_YEAR} pipeline"). Caption "{pct}% of total" and flag + count + (pct%) chips (Greece, India, Romania) are served fields only: `*_share_pct` from `/pipeline-totals`, per-region counts/shares from `/region-summary` (I19, no browser maths). Reuses `RegionChips`, `CardInfo`, `Card`; design tokens only.
+- `lib/region-summary.ts`: `pipelineRegionItems(summary, bucket)`. `lib/domain-constants.ts`: added `CARRY_OVER_YEAR = PLAN_YEAR - 1` (label only; no hardcoded years).
+- `api/types.ts`: `PipelineTotals` (+`unregistered_count`, 3 shares) and `RegionSummaryRow` (+`unregistered_count`, 3 shares) updated; comments now say every project is counted.
+- `pipeline-panel.tsx` reduced to the schedule-run outcome donut, retitled "Completion outcome" (props: `withinYear` only), so composition spillover (carry-over) and outcome spillover (past W52) never share a card; the row's info popover states the distinction. `DashboardPage.tsx` renders the row (own `SectionBoundary` on pipeline-totals, so a failure there no longer hides the outcome donut) after the VIP card. E2E page object heading updated to "Completion outcome". The old composition bar chart and "Active / Newly registered / Carried over" chip rows were removed (superseded).
+- Hub and country filters: unchanged hooks already pass `hubId`/`region` to both queries; verified by existing DashboardPage filter tests.
+
+**Tests.** New `pipeline-row.test.tsx` (4 cards, served counts and shares, year labels from constants, glyphs, chips order, 0-unregistered muted, no region summary). `pipeline-panel.test.tsx` rewritten; `DashboardPage.test.tsx`, `project-breakdown.test.tsx`, `region-chips.test.tsx` fixtures updated. `tsc -b` clean; eslint on `src/surfaces/dashboard`: 0 errors (1 pre-existing warning); vitest `src/surfaces/dashboard`: 29 files, 141 passed; `pytest tests/test_openapi_frontend_contract.py`: 156 passed (PipelineTotals and RegionSummaryRow green).
+
+**Visual.** Screenshots taken with vite dev + Playwright route-mocked `/me`, pipeline-totals and region-summary (no database, owner's :5433/:8001 untouched): wide, 390 px stacked, and zero-unregistered. axe on the row: 0 violations. NOT verified: against real seeded data, other Dashboard rows with the new basis, dark mode, full-page axe, e2e specs (p13/p16 gate specs not re-run).
+
+## [2026-10-20] P17-T03 - Status overview, five cards - backend-builder
+
+**Built (ADR 0030, `docs/API_CONTRACT_P17.md` new section).** `GET /dashboard/status-overview` keeps its fields and adds `commercialized_count`, `on_hold_count`, `total_count`, 2 dp `in_development_share_pct`, `under_industrialization_share_pct`, `in_queue_share_pct`, `commercialized_share_pct`, `on_hold_share_pct`, plus the remainder `other_statuses_count` / `other_statuses_counts` / `other_statuses_share_pct` (In Buyoff + Draft + Cancelled), so five cards + remainder == `total_count` for every hub and country filter; `total_count` equals `PipelineTotals.total_count`. Zero denominator gives 0.0. Per-country chips needed nothing new: `region-summary.status_counts` / `status_share_pct` already carry Commercialized and On Hold under every filter (verified by test). ADR 0017 wording (project status On Hold vs stage-level On Hold) is in the contract. No migration; nothing under `backend/scheduling/`.
+**Files:** `backend/schemas/dashboard.py`, `backend/api/routers/dashboard.py`, `backend/tests/test_p17_status.py` (new), `docs/API_CONTRACT_P17.md`, `docs/IMPLEMENTATION_PLAN.md` (P17-T03 DONE, P17-T04 TODO).
+**Tests.** New `test_p17_status.py` (2): reconciliation to total, each hub and each country, unfiltered, chips vs cards, zero denominator / out-of-scope hub. With test_p17_pipeline.py: pytest 162 passed in the three files below; ruff clean on touched files. **Known failing until P17-T04:** `test_openapi_frontend_contract.py::test_field_sets_match[StatusOverview]` (frontend-owned hand-mirrored type).
+**Seed (client_2026, from the seed JSON; 253 projects).** Before: the endpoint served the same counts (in_dev 83, under_ind 24, queue 85, other_counts Commercialized 17, On Hold 15, Cancelled 29) but no total or shares. After: total 253; In Development 83 (32.81 %), Under Industrialization 24 (9.49 %), In Queue 85 (33.6 %), Commercialized 17 (6.72 %), On Hold 15 (5.93 %), other 29 (11.46 %; all Cancelled, 0 In Buyoff, 0 Draft). The client's 8/22/199/8/2 of 239 cannot come from this seed.
+
+## [2026-10-20] P17-T04 - Status overview, five cards - frontend-builder
+
+**Built (ADR 0030, `docs/API_CONTRACT_P17.md`).** `status-overview-cards.tsx` rewritten: In Development (green), Under Industrialization (blue), In Queue (grey), Commercialized (green), On Hold (red). Each card: small-caps label, big count, "{pct}% of total", per-country flag chips (reused `RegionChips` / `statusRegionItems` from `region-summary.status_counts` / `status_share_pct`), and a thin `role=progressbar` whose width is the served `*_share_pct`. Below the row: "Other statuses: n (pct% of total)" from `other_statuses_count` / `_share_pct`, with a CardInfo listing `other_statuses_counts` (In Buyoff / Draft / Cancelled). Same card family as `pipeline-row.tsx`. Grid: 1 col, `sm` 2, `lg` 3, `xl` 5. The header CardInfo keeps the ADR 0017 copy (status On Hold is the whole project paused, not the stage-level On Hold outcome). No browser arithmetic (I19); design tokens only; no dangerouslySetInnerHTML. `api/types.ts` `StatusOverview` gains the 11 contract fields. The old In Buyoff StatCard and the "Paused (status On Hold)" chip box are gone (In Buyoff moves into "Other statuses").
+**Tests.** Rewrote `status-overview-cards.test.tsx` (5 cards, counts, %, bar width = served share and aria-valuenow, chips, no chips without region summary, other-statuses line, zero state); `DashboardPage.test.tsx` fixtures updated (existing loading/error/forbidden and hub/country filter tests still cover the section). Results: `tsc -b` clean; eslint on `src/surfaces/dashboard` 0 errors (1 pre-existing warning); vitest `src/surfaces/dashboard` 29 files, 145 passed; `pytest tests/test_openapi_frontend_contract.py` 156 passed (StatusOverview green; the 70 % coverage gate message is only because one file was run).
+**Visual.** Vite dev + Playwright-mocked `/me`, `/dashboard/status-overview`, `/dashboard/region-summary` (no DB; :5433/:8001 untouched). Wide 1440 px: five cards in one row; 390 px stacked (chips wrap). axe on the section: 0 violations.
+**NOT verified:** Playwright e2e specs not run (no disposable stack stood up). Grep shows no e2e page object or spec references the old "In Buyoff" card (`dashboard.page.ts` only uses the "Status overview" heading, unchanged), so none needed editing. Not checked against real seeded data (expected 83/24/85/17/15, other 29), dark mode, or full-page axe.
+
+## [2026-10-20] P17 gate — security-auditor
+
+**Verdict: PASS (no Critical or High).** OWASP ASVS L2 review, read-only; no code changed.
+
+| # | Sev | Finding |
+|---|---|---|
+| S1 | Low | `backend/tests/test_p12_hub_filter.py::_zeroed` (status-overview branch) was not updated for the 11 new StatusOverview fields, so `test_out_of_scope_hub_gives_zeros_not_403_and_own_hub_equals_unfiltered` and `test_unknown_hub_gives_zeros_for_an_all_hubs_reader` FAIL. The endpoint behaviour is correct (zeros, no 403); the test is stale. qa-inspector must fix before merge. |
+| S2 | Low | `test_p17_*` has no test with a hub-restricted Hub Planner on the new fields (only out-of-scope hub_id as Portfolio Manager). Scoping is covered for these endpoints in `test_p13_region_filter.py` (HUB_PLANNER, passing); same `narrowed_hub_filter` is used. |
+| S3 | Info | New response models are plain `BaseModel` (not strict/extra-forbid), consistent with every other read model in `schemas/dashboard.py`; response-only, so no input risk. |
+| S4 | Info | "Project-access grants" are not part of `hub_scope_filter` (hub_ids / hub_scope_all only); unchanged by P17. |
+
+**Verified.** All new counts (pipeline-totals, status-overview, region-summary, hub-type, analytics) are built from one `narrowed_hub_filter(scope AND hub_id AND region)` predicate; the filter only narrows, out-of-scope hub gives zeros (no 403, no existence leak). Shares use denominators from the scoped query, so no totals or shares leak out-of-scope data; region-summary shares are over the scoped portfolio. Commercialized/Cancelled inclusion only widens the basis inside the caller's scope. No raw SQL (SQLAlchemy Core, bound params; `reg_year.is_(None)` grouping). No financial fields, customer names or engineer data added to schemas, UI or logs; no logging added in the router. Audit behaviour untouched (reads only, no new write paths). Frontend: no `dangerouslySetInnerHTML`, `innerHTML` or console use under `surfaces/dashboard`; no secrets. Tests run: test_p17_pipeline, test_p17_status, test_p13_region_filter pass (31 passed); the 2 failures are S1. Not run: pip-audit/npm audit/Trivy (no dependency changes in scope).
+
+## [2026-10-20] P17 gate — workflow-auditor — FAIL (all numeric invariants hold; 3 small remediation items: stale false copy, wrong "lower percentages" claim, 2 red tests)
+
+Method: disposable Postgres (own container, port 55617; :5433/:8001 not touched), `alembic upgrade head`, `seed_demo_data --reset --schedule` (client_2026), then an independent script that reads the projects and active-run outcome rows by SQL and compares them with the served JSON (ASGI client, real DB, Portfolio Manager principal) over 49 scopes: unfiltered, each of 6 hubs, each of 3 countries, and each hub x country (the P17 endpoints plus `/completing-within-year` and `/dashboard/projects`). Re-run after mutating the scratch DB to 60 carry-over (25 of them with null reg_year), 15 non-carry-over with null reg_year, 178 new (seed alone has 0 spillover/0 unregistered, so it cannot test the buckets). Also a Hub Planner principal.
+
+**Numbers (seed, 253 projects).** Pipeline: Spillover 0, New 253, Unregistered 0, Total 253. Mutated DB: 60 + 178 + 15 = 253, shares exact. Statuses: In Development 83, Under Industrialization 24, In Queue 85, Commercialized 17, On Hold 15 = 224, Other 29 (all Cancelled; In Buyoff 0, Draft 0) = 253. Within-year (I9) 107 = card = sum of analytics `completing_hub_type` = `completing_by_type` = `completing_by_hub` (all 49 scopes). Per hub total / within year: R&D-Greece 4/3, R&D-India 29/12, PD-India 165/55, PD-Romania 32/18, OEM-HCK 13/10, OEM-Seltek 10/9. By country: Greece 27 (wy 22), India 194 (67), Romania 32 (18).
+
+**PASS items.**
+- total = spillover + new + unregistered, and total = five cards + other statuses, in every scope; both equal the independent SQL count. 0 mismatches in 49 scopes.
+- Region chips: per-bucket and per-status sums equal the pipeline and card counts; each region row total = its three buckets = sum of its status_counts; every `*_share_pct` (pipeline, status cards, other, region bucket, region status, analytics lists, completing_pct) equals count/denominator to 2 dp (I19). No browser maths seen in the new components.
+- `/hub-type-pipeline`, `/analytics` (by_type, by_category, by_hub, by_reg_year, completing pipeline denominators) each sum to the pipeline total, every scope. `/dashboard/projects` register `total_count` = pipeline total in every scope.
+- I9: card within_year_count = independent count of `within_year AND NOT blocked` rows = analytics completing totals. I23: each hub-filtered figure equals the unfiltered subset for that hub. Out-of-scope `hub_id` for a Hub Planner returns 0 and 0.0 shares; Hub Planner's own scope = its hub (4 for R&D-Greece).
+- Scheduler unchanged: `git diff HEAD -- backend/scheduling` empty (no change to models, alembic or services either; only dashboard router/schema changed). `validate_invariants` on the fresh seeded input and a fresh greedy run: 0 violations (I1-I7, I8 determinism, I9, I10-I12, I15, I16, I21, I22). Stored active-run outcomes equal a fresh greedy re-run for 253/253 projects (within_year, spillover, left_out, blocked); within_year 107 as at the P16 gate; outcome hash identical across two reseeds (63cdfea9...). Schedule outcomes are unchanged.
+- ADR 0017: the status card is labelled "On Hold" with the info popover stating it is the whole-project status, not the stage-level outcome, and the outcome panel separately labels "On Hold" "In the plan, waiting at a stage". Counts are never summed (status On Hold 15 vs stage-level 0 in the seed run). Advisory: both widgets carry the same visible word "On Hold" and the distinction sits in a popover / sub-caption; consider "On Hold (project)" on the card face.
+
+**DEFECTS (blocking until fixed; none touches a number).**
+1. Stale, now-false UI copy in `frontend/src/surfaces/dashboard/components/completing-hub-type-table.tsx` line 45 ("Excludes Commercialized projects, so the total is lower than the within-year KPI") and line 56 ("The pipeline basis excludes Commercialized projects, so these totals do not equal the 'Completing within the year' KPI card"). Since ADR 0030 the table includes them and its total EQUALS the KPI (107 = 107). The matching test `completing-hub-type-table.test.tsx:54-56` asserts the stale sentence. Reconciliation claim on a surface contradicts the reconciled data.
+2. The claim "completing percentages are lower / have a larger denominator, so lower" (ADR 0030 Consequences, MEMORY P17-T01) is wrong in direction. Old basis (excl. Commercialized, numerator also excl.): 90/236 = 38.14 %. New: 107/253 = 42.29 %. Per hub old to new: PD-India 49/159 = 30.82 % to 55/165 = 33.33 %; PD-Romania 8/22 = 36.36 % to 18/32 = 56.25 %; OEM-Seltek 8/9 = 88.9 % to 9/10 = 90 %; R&D-Greece, R&D-India, OEM-HCK unchanged. Percentages went UP because all 17 Commercialized rows are counted done by the run (17/17 within_year) while 29 Cancelled and 15 On Hold sit in the denominator and never complete (0/44). ADR 0030 and the plan text need correcting (docs only; ADR append/amend is the owner's call).
+3. Two red tests: `tests/test_p12_hub_filter.py::test_out_of_scope_hub_gives_zeros_not_403_and_own_hub_equals_unfiltered` and `::test_unknown_hub_gives_zeros_for_an_all_hubs_reader` fail because `_zeroed()` still expects the pre-P17-T03 five-field `status-overview` body (the endpoint now correctly returns the 11 extra zero fields; my out-of-scope check confirmed total 0). Test not updated by P17-T03. The other 207 selected tests pass (P17 pipeline/status, p13 slice A, p13 region filter, p12 hub filter other tests, OpenAPI contract).
+
+**Adjudications / for the owner.**
+- Cancelled in the total (OQ #42): the client's reference row, 8 + 22 + 199 + 8 + 2 = 239, has no Cancelled and no Draft/In Buyoff status, so the client's total most likely excludes Cancelled. "Every project" is internally consistent and reconciles, so I accept it as built, but with the seed it puts 29 Cancelled + 15 On Hold (17 % of the 253) in every completing-% denominator where they can never complete. Recommend the owner confirm with the client; excluding Cancelled alone would give 253 to 224 and 107/224 = 47.77 %. Cancelled sits in "Other statuses", so the cards still reconcile either way.
+- unregistered = carry_over false AND reg_year null: accepted. Exclusive and exhaustive (60/178/15 mutated test sums to 253), carry_over wins over a null year, ADR-documented. Advisory: "Newly registered" is simply not carry_over with any non-null reg_year, so a project with reg_year 2025 and carry_over false would show as New; the seed has none (all 2026). Owner may want the rule tied to the plan year.
+- Completing percentages are higher, not lower (above); the owner should know Commercialized now inflates them as the card already did. Not a defect in the numbers.
+- Visual/e2e not re-run by me (backend/data audit only; frontend-builder's own screenshots and vitest results not re-verified).
+
+Re-gate needs: fix copy and its test (item 1), correct the ADR/plan claim (item 2), update `_zeroed` (item 3); I expect a PASS on a re-check of those three plus a re-run of the same script. Scratch container `p17wf` and script in the session scratchpad only.
+
+## [2026-10-20] P17-R02 — frontend-builder — workflow-auditor copy remediation (DONE)
+
+- `completing-hub-type-table.tsx`: subtitle now "Counts every project in the pipeline, so the total equals the within-year KPI."; info popover says the pipeline basis counts every project, Commercialized included, so totals equal the "Completing within the year" KPI (Invariant I9). Test updated to the new copy. Grep of `src/surfaces/dashboard` found no other copy claiming Commercialized is excluded.
+- `status-overview-cards.tsx`: On Hold card face label is now "On Hold (project)" (ADR 0017 advisory); popover explaining the difference from the stage-level outcome kept. No existing test matched the old label text.
+- Verified: `tsc -b` clean; eslint src/surfaces/dashboard 0 errors (1 pre-existing warning in project-breakdown.tsx); vitest src/surfaces/dashboard 29 files / 145 tests pass. backend/ and the :5433/:8001/:5183 servers untouched.
+
+## [2026-10-20] P17-R01 - Gate remediation (workflow-auditor FAIL, security S1/S2) - backend-builder
+
+**Fixed.**
+1. `backend/tests/test_p12_hub_filter.py::_zeroed` status-overview branch now expects the full StatusOverview body (the 5 old fields plus the 11 P17-T03 fields, all zero). Endpoint untouched. `test_out_of_scope_hub_gives_zeros_not_403_and_own_hub_equals_unfiltered` and `test_unknown_hub_gives_zeros_for_an_all_hubs_reader` pass.
+2. ADR 0030 corrected in place: the "lower percentages" sentence now states the percentages went UP (portfolio 90/236 = 38.14 % to 107/253 = 42.29 %; PD-India 30.82 to 33.33; PD-Romania 36.36 to 56.25; OEM-Seltek 88.9 to 90; other hubs unchanged), because all 17 Commercialized count within-year while 29 Cancelled + 15 On Hold sit in the denominator and never complete. `docs/API_CONTRACT_P17.md` had no such claim (grep for "lower": none).
+3. S2: new `test_hub_planner_sees_only_own_hub_on_p17_endpoints` in `backend/tests/test_p17_status.py`: a Hub Planner scoped to PD-India gets only own-hub counts on status-overview, pipeline-totals and region-summary; cards + other == total, spillover + new + unregistered == total, region buckets and status_counts sum to the pipeline/card counts; an out-of-scope hub_id gives zeros (200, not 403).
+
+**CORRECTION NOTE (MEMORY is append-only).** The P17-T01 entry and the ADR 0030 Consequences text claimed completing percentages become LOWER with the larger denominator. That was wrong in direction: they went UP (figures above). Read the P17-T01 claim as superseded by this note.
+
+**Files:** `backend/tests/test_p12_hub_filter.py`, `backend/tests/test_p17_status.py`, `docs/ADR/0030-dashboard-pipeline-spillover-new-unregistered.md`, `docs/IMPLEMENTATION_PLAN.md` (P17-R01 row added at top of the P17 table, DONE).
+**Results (testcontainers disposable Postgres; :5433/:8001 untouched):** pytest test_p12_hub_filter, test_p13_region_filter, test_p13_slice_a, test_p17_pipeline, test_p17_status, test_openapi_frontend_contract: 210 passed. ruff clean on touched files. Not touched: frontend/, backend/scheduling/. Workflow-auditor defect 1 (stale copy in completing-hub-type-table.tsx and its test) is frontend-owned and NOT fixed here.
+
+## [2026-10-20] P17 gate — workflow-auditor (re-gate) — PASS
+
+Scope: re-check of the three FAIL defects. Read-only; no code changed by me.
+
+1. **Stale copy: fixed.** `completing-hub-type-table.tsx` subtitle now "Counts every project in the pipeline, so the total equals the within-year KPI."; the info popover says Commercialized is included and totals equal the "Completing within the year" KPI (I9). Test updated. Grep of `frontend/src/surfaces/dashboard` for exclud*/"lower than"/"do not equal": no remaining claim that Commercialized is excluded. `schedule-run-provenance.tsx` (Commercialized counted as already delivered) and `pipeline-row.tsx` ("Commercialized too") are consistent with ADR 0030. Advisory from last time taken: status card face now reads "On Hold (project)".
+2. **ADR 0030: fixed.** Consequences text now says percentages went UP, with the figures. Recomputed: 90/236 = 38.14 %, 107/253 = 42.29 %; PD-India 49/159 = 30.82 to 55/165 = 33.33; PD-Romania 8/22 = 36.36 to 18/32 = 56.25; OEM-Seltek 8/9 = 88.9 to 9/10 = 90; 17/17 Commercialized within-year, 0/44 for 29 Cancelled + 15 On Hold. All match my earlier derivation. The P17-T01 MEMORY claim is superseded by the P17-R01 correction note (append-only; acceptable).
+3. **Red tests: fixed.** `_zeroed` in test_p12_hub_filter.py expects the full StatusOverview body; both named tests pass. New Hub Planner test in test_p17_status.py passes (S2 closed).
+
+Runs (testcontainers disposable Postgres; :5433/:8001/:5183 not touched): pytest test_p12_hub_filter, test_p13_region_filter, test_p13_slice_a, test_p17_pipeline, test_p17_status, test_openapi_frontend_contract = 210 passed (the 70 % coverage gate message is an artefact of running a subset). Vitest src/surfaces/dashboard: 29 files / 145 tests pass.
+
+Numeric reconciliation not redone: backend/api/routers/dashboard.py and backend/schemas/dashboard.py were last modified 22:44, before the remediation files (22:5x to 23:01), P17-R01 states the endpoint was untouched, and `git status` shows no other change under backend/api or backend/schemas; backend/scheduling untouched. My 49-scope result (107 = card = analytics; total = 253 = buckets = five cards + other) stands.
+
+Open, non-blocking: OQ #42 (Cancelled in the total; seed cannot reproduce 76/160/3). Visual/e2e not re-run by me.
+
+Verdict: PASS for workflow-auditor on P17.
+
+## [2026-10-20] P17 gate — qa-inspector: PASS (one dark-mode defect carried, pre-existing, outside P17 files)
+
+Scope: the working tree at gate time (P17-T01..T04). Disposable stack: Postgres `qa-p17-pg` (:55491), Redis `qa-p17-redis` (:56491), dev-mode uvicorn :8091, `vite preview --mode e2e` :5291, build output in the session scratchpad (no build output left in the repo), seeded `client_2026 --schedule` (253 projects, within-year run 107). The owner's :5433 DB and :8001 API were not touched. Containers and processes removed. Note: the tree was edited while I ran (completing-hub-type-table caption, test_p12_hub_filter zero shape, test_p17_status), so my first backend/vitest runs saw 2 + 1 failures that are fixed in the tree; all numbers below are from the final re-run.
+
+**1. Backend: PASS.** `pytest -q --cov`: **1390 passed, 0 failed, 95.87 %** (gate 70 %; scheduling files 93-100 %, none changed). `ruff check .`: all checks passed. `test_openapi_frontend_contract.py` green (PipelineTotals, RegionSummaryRow, StatusOverview exact-match). First (stale-tree) run: 1387 passed, 2 failed (`test_p12_hub_filter` zero-shape of status-overview, missing the 11 new fields); fixed in the tree before the re-run. One isolated flake of `test_p17_status` during a concurrent edit; 3/3 passed on 3 later runs.
+**2. Frontend: PASS.** `tsc -b` exit 0. ESLint 0 errors, 11 warnings (react-hooks/incompatible-library, pre-existing). `vite build` (e2e and prod mode) OK. `vitest run --coverage`: **169 files, 1119/1119**; statements 86.25 %, branches 78.27 %, functions 84.26 %, lines 88.12 % (gate 70 %). First run had 1 failure (`completing-hub-type-table` caption said "Excludes Commercialized", stale after the basis change); fixed in the tree.
+**3. Live vs seed: PASS.** API: pipeline-totals 0 / 253 / 0 / 253 (shares 0 / 100 / 0); status-overview 83 / 24 / 85 / 17 / 15, other 29 (all Cancelled; 0 In Buyoff, 0 Draft); percentages 32.81 / 9.49 / 33.6 / 6.72 / 5.93, other 11.46. Reconciliation script over unfiltered + 6 hubs + 3 countries (10 filter states): pipeline sum = total; region-summary total = totals total = status total; per-bucket sum over regions = totals; row total = three buckets = sum(status_counts); five cards + other = total; per-status region sum = card count; hub-type-pipeline sums to 253; all OK, 0 failures. Totals per filter: Greece 27, India 194, Romania 32 (sum 253); hubs 4/29/165/32/13/10 = 253.
+UI (p17-gate.spec.ts, real browser): pipeline cards and five cards and "Other statuses" read exactly the API under All, India (0/194/0/194; 57/22/77/6/7 other 25), Romania (32; 8/2/3/10/7 other 2), Greece (27; 18/0/5/1/1 other 2) and back to All; captions equal the served shares; chips: pipeline-new Greece 27 (10.67 %), India 194 (76.68 %), Romania 32 (12.65 %); On Hold chips 1 (6.67 %) / 7 (46.67 %) / 7 (46.67 %).
+**4. E2E: PASS for P17 and carried specs.** New `p17-gate` 2 of 3 pass (numbers and chips); the third (axe light + dark) passes light, fails dark (below). Re-ran p12/p13/p14/p9-surfaces/p10 against the stack: 55 passed, 8 failed, none caused by P17: p10 `/login` x5 and the Ask-agent 503 test (the disposable backend config; login picker/dev flow, not the Dashboard), p12 `header hub filter` and p13 `header select open` (axe `aria-hidden-focus` serious x10 on the Radix Select option list when open; header select, untouched by P17). All Dashboard axe specs in p12/p13/p14 passed (superAdmin and hubPlanner).
+**5. Axe on the full Dashboard.** Light 1440 px: **0 serious/critical**. Light 390 px: 0. Dark: **FAIL** (see D1). No dark-mode e2e existed before; `p17-gate.spec.ts` adds one.
+**6. Visual.** 1440 px: four pipeline cards joined by + + = (Spillover 2025 amber, Newly registered 2026, Unregistered date muted grey, Total projects with ink border), chips on three of four (none on the 0 Unregistered), five status cards in one row, bars proportional, "Other statuses: 29 (11.46% of total)". 390 px: cards stack, no horizontal overflow (scrollWidth - clientWidth = 0), chips wrap. Observation (not a P17 defect): at 390 px the permanent icon rail leaves about 216 px of content width; readable but narrow.
+
+**Defects.**
+- **D1 (dark mode, pre-existing, not introduced by P17; severity serious, carried).** Dashboard in dark theme: `color-contrast` serious. (a) Selected primary buttons white on #397dd0 = 4.18:1 (needs 4.5): the "All" country toggle, and the same token fails on Capacity, Matrix (EUR toggle etc.) and the "Open timeline" link; a global `--primary` dark token. (b) Hub-rank chart segment labels white on #10b77f = 2.59:1 (6 nodes: PD-India, PD-Romania, R&D-India...). No P17 card (pipeline row, status cards, chips) is flagged in dark. Owner: frontend-builder; dark mode was never gated before, so I do not block P17 on it, but orchestrator may elevate.
+- D2 (carried, not P17): axe `aria-hidden-focus` x10 on the open header Radix Select (p12/p13 header-select specs). 
+- D3 (copy, informational): the header "209 projects" chip and "Completing within the year: 209 total" differ from the pipeline Total 253 by design (the run excludes Cancelled and On Hold); the pipeline row info popover explains composition vs outcome but not that gap. Possible client confusion; no rule broken.
+No P17 functional defects. Files added (tests only): `frontend/e2e/p17-gate.spec.ts`, `frontend/playwright.p17qa.config.ts`. `backend/.coverage` is a pytest artifact (pre-existing untracked).
+
+## [2026-10-20] P17 gate — PASSED — orchestrator
+
+All three gates have a PASS on record for P17 (Dashboard pipeline row `Spillover + Newly registered + Unregistered = Total`, five status cards; ADR 0030).
+
+- **qa-inspector:** PASS. Backend 1390 passed, coverage 95.87 %, ruff clean. Frontend 1119/1119, tsc, eslint (0 errors), build clean. p17-gate e2e numbers and chips pass; axe on the Dashboard 0 serious/critical in light mode at 1440 and 390 px. Seed live: row 0 / 253 / 0 / 253, cards 83 / 24 / 85 / 17 / 15, other statuses 29; browser matches API under every hub and country filter.
+- **workflow-auditor:** FAIL first (stale "Excludes Commercialized" copy, wrong "lower %" claim in ADR 0030, two stale tests), all remediated under P17-R01 / P17-R02, then PASS on re-gate. 49 scopes reconcile with 0 mismatches; scheduler untouched.
+- **security-auditor:** PASS, no Critical or High.
+
+**Open follow-ups (none blocking):**
+- QA D1: dark mode fails `color-contrast` (primary token #397dd0 with white text, 4.18:1; hub-rank chart #10b77f, 2.59:1). Pre-existing, not on P17 cards; dark mode was never gated. Owner frontend-builder.
+- QA D2: header Radix Select `aria-hidden-focus` in p12/p13 specs, pre-existing.
+- QA D3: header "209 projects" and "Completing within the year: 209" differ from the pipeline Total 253 by design (run excludes Cancelled and On Hold); the pipeline row's popover does not explain the gap.
+- OQ #42: Cancelled in the total, and the seed cannot reproduce the client's 76 / 160 / 3. The unregistered rule is `carry_over` false AND `reg_year` null; "New" does not test against the plan year.
+- Untracked leftovers: `frontend/e2e/p17-gate.spec.ts`, `frontend/playwright.p17qa.config.ts`, `backend/.coverage`.
+
+Nothing is committed; the owner's OK to commit and push is awaited.
+
+## [2026-10-20] P18-T01 — What-if planning engine (algorithm-engineer): DONE
+
+Scope: `backend/scheduling/whatif.py` (new, pure), `backend/scheduling/__init__.py` (exports),
+`backend/tests/scheduling/test_whatif.py` and `_whatif_fixtures.py` (new), `docs/ADR/0031-what-if-planner.md`,
+`docs/API_CONTRACT_P18.md`, P18 section in `docs/IMPLEMENTATION_PLAN.md` (T01 DONE; T02, T03, T20 TODO),
+OQ #43 to #48 in `docs/OPEN_QUESTIONS.md`. No other directory touched; no dev server, DB or port used.
+
+What was built (full interface: `docs/API_CONTRACT_P18.md`):
+- `Scenario` (frozen): add_projects, add_engineers, remove_engineers (ids) / remove_engineer_counts, add_chambers,
+  chamber_downtime, priority_overrides. `WhatIfBaseline` = `ScheduleInput` + hub calendars + chamber supply rows.
+- `analytic_requirements`: extra design / lab weeks from the lead-time plan, load vs capacity and booked % per
+  hub and lab region (ADR 0016, served 2 dp rule), integer ceilings of extra designers and chambers so booked % is
+  strictly below `BOOKING_FULL_PCT` (parameter `target_below_pct`, `basis` year|remaining), `workings` lines.
+- `simulate`: imports and calls `run_greedy_sgs` (no fork) on the baseline and on a scenario copy; per-project
+  outcome class and finish week, utilization rows (hubs, lab regions), diff (newly_slipping, recovered, moved,
+  within-year delta). Baseline untouched.
+- `solve_minimum_additions` (`all_new_within_year`, `no_existing_slips`): regions solved independently (a project
+  only uses its hub's designers and its region's chambers); 1 pool bisection, 2 pools staircase, 3+ exhaustive
+  levels then climb-from-analytic-estimate and prune. Hard cap 60 runs (`capped`), `exact` flag, monotonicity audit
+  of every evaluated pair, `workings`.
+
+Decisions taken (each also an open question):
+- Lead-time unattainable projects: at CURRENT_WEEK 31 a PDD/A project (38 wk) or at W42 anything over 11 wk
+  cannot finish by W52 whatever is added. First solver draft chased these and burned the whole run cap. They are now
+  reported as `unattainable_project_ids` (excluded from the search; `met` false, `met_attainable` true). OQ #47.
+- Hypothetical project leader = eligible hub designer with fewest led design-weeks per FTE; removed designers'
+  projects reassigned the same way; existing projects NOT rebalanced onto added designers. OQ #43.
+- New project defaults In Queue / P3; score maps to bands; no hard gates. OQ #44.
+- Year vs remaining basis; strict < 100. OQ #45. Downtime does not move the schedule; new-chamber norm. OQ #46.
+  Designer = chamber = 1 unit, tie prefers fewer chambers, 25 per pool, 60 runs. OQ #48.
+- Analytic baseline load is the lead-time demand of every schedulable project (I6/I7 without running the scheduler),
+  which equals the Capacity surface load except for left-out partial schedules; the simulated utilization uses the
+  run's I6/I7 sums exactly.
+
+Verification (disposable, in-process; no DB; `.venv/bin/python -m pytest -c pytest-scheduling.ini`):
+- `tests/scheduling/test_whatif.py`: 76 passed (hand-worked sums and ceilings: 10 x A gives 180 design / 100 lab
+  weeks, 3 extra designers, 1 extra chamber; 30 x A gives 10 and 4; exact-100 % boundary needs one more unit;
+  remaining basis; downtime; norm chamber; OEM lead times; validation errors; zero scenario == baseline;
+  baseline immutability by deep snapshot; byte-identical JSON on re-run and under input shuffling; invariants
+  I1-I17, I21-I22 on 6 scenarios plus a progress/frozen baseline; no engineer names or financial words in any
+  output; monotone within-year count for 0..5 added designers and 0..4 chambers; solver minimum equals a brute-force
+  grid minimum; independent regions add up; cap honoured and clamped to 60; unattainable reporting).
+- Whole scheduling suite: 244 passed, coverage 93.78 % (gate 85 %), `whatif.py` 94 %. `ruff check` and
+  `ruff format` clean on the new and edited files; mypy clean for `whatif.py` (the 38 pre-existing errors are all in
+  `cp_sat.py`, untouched).
+- Speed: one greedy run on a 250-project fixture is about 20 ms; `solve_minimum_additions` finished in 0.2 s.
+
+Notes for P18-T02 (backend-builder): build the baseline with `build_schedule_input_from_db` plus `HubWorkCalendar`
+and `Chamber` rows, include the whole plan (not only the caller's hub) because lab capacity is regional, run in a
+thread with a time cap, map `ValueError` to 422, and give the chat only engine outputs (never the baseline).
+Nothing is committed.

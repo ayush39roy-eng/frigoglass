@@ -1,13 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import { render, screen } from '@testing-library/react';
 
-import type { CompletingWithinYear, PipelineTotals } from '../api/types';
+import type { CompletingWithinYear } from '../api/types';
 import { PipelinePanel } from './pipeline-panel';
 
-const totals: PipelineTotals = { spillover_count: 30, new_count: 206, total_count: 236 };
-
-describe('PipelinePanel', () => {
-  it('keeps pipeline "spillover" (carry-over) separate from the schedule SPILLOVER outcome', () => {
+describe('PipelinePanel (schedule-run outcome only)', () => {
+  it('shows the schedule outcome and carries no composition figures', () => {
     const withinYear: CompletingWithinYear = {
       has_active_schedule_run: true,
       schedule_run_version: 2,
@@ -17,21 +15,20 @@ describe('PipelinePanel', () => {
       blocked_count: 1,
       rows: [],
     };
-    render(<PipelinePanel totals={totals} withinYear={withinYear} />);
+    render(<PipelinePanel withinYear={withinYear} />);
 
-    // composition section labels carry-over explicitly, not "spillover"
-    expect(screen.getByText('Carried over')).toBeInTheDocument();
-    expect(screen.getByText('Newly registered')).toBeInTheDocument();
-    // schedule-outcome section cites the run + I9
+    expect(screen.getByText('Completion outcome')).toBeInTheDocument();
     expect(screen.getByText(/active schedule run v2/i)).toBeInTheDocument();
     expect(screen.getByText(/Invariant I9/i)).toBeInTheDocument();
     expect(screen.getByText('Completing within year')).toBeInTheDocument();
+    // composition spillover lives in the pipeline row, not here
+    expect(screen.queryByText('Carried over')).not.toBeInTheDocument();
+    expect(screen.queryByText('Newly registered')).not.toBeInTheDocument();
   });
 
-  it('degrades to composition-only when no schedule run is active', () => {
+  it('degrades gracefully when no schedule run is active', () => {
     render(
       <PipelinePanel
-        totals={totals}
         withinYear={{
           has_active_schedule_run: false,
           schedule_run_version: null,
@@ -44,5 +41,10 @@ describe('PipelinePanel', () => {
       />,
     );
     expect(screen.getByText(/No active schedule run/i)).toBeInTheDocument();
+  });
+
+  it('shows a loading line while the schedule-run figures are pending', () => {
+    render(<PipelinePanel withinYear={null} />);
+    expect(screen.getByText(/Loading completion figures/i)).toBeInTheDocument();
   });
 });
