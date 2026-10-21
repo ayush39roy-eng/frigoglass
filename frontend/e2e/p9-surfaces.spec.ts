@@ -57,11 +57,13 @@ test.describe('Capacity supply breakdown (P9, ADR 0008)', () => {
     await actAs(page, 'superAdmin');
     await page.goto('/capacity');
     await expect(page.getByRole('heading', { name: 'RPD Capacity', exact: true })).toBeVisible();
-    const how = page.getByText('How this is calculated').first();
+    // P19: the per-hub detail lives in a Details dialog on the summary table.
+    await page.getByRole('radio', { name: 'YTD 2026' }).click();
+    await page.getByRole('button', { name: /^Details for / }).first().click();
+    const how = page.getByRole('dialog').getByText('How this is calculated');
     await expect(how).toBeVisible();
     await how.click();
-    await page.getByRole('radio', { name: 'Remaining year' }).click();
-    await expect(page.getByRole('radio', { name: 'Remaining year' })).toHaveAttribute(
+    await expect(page.getByRole('radio', { name: 'YTD 2026' })).toHaveAttribute(
       'aria-checked',
       'true',
     );

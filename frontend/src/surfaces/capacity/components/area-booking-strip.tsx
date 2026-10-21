@@ -1,15 +1,16 @@
 import * as React from 'react';
 import { MapPin } from 'lucide-react';
 
-import { BookedFigure } from '@/components/shared/booking-status-chip';
+import { BookedFigure, BookingStatusChip } from '@/components/shared/booking-status-chip';
 import { Badge } from '@/components/ui/badge';
 import { CardInfo } from '@/components/ui/card-info';
 import { CURRENT_WEEK, WITHIN_YEAR_WEEK } from '@/lib/domain-constants';
-import { formatDecimal } from '@/lib/format';
+import { formatBookedPct, formatDecimal } from '@/lib/format';
 import { useSessionStore } from '@/stores/session';
 
-import type { CapacityArea } from '../api/types';
-import { pickAreaFigures, type CapacityHorizon, type ResourceKind } from '../lib/pick-figures';
+import type { CapacityArea, HubCapacityRow } from '../api/types';
+import { labRegionRows } from '../lib/lab-region-rows';
+import { pickAreaFigures, pickFigures, type CapacityHorizon, type ResourceFigures, type ResourceKind } from '../lib/pick-figures';
 
 /**
  * Europe / India "booked %" strip at the top of the Capacity surface
@@ -55,12 +56,90 @@ function AreaResource({
   );
 }
 
+/** One compact tile: the served booked % + status chip and "load of capacity". */
+function BookedTile({
+  name,
+  sub,
+  figures,
+  unit,
+  testId,
+}: {
+  name: string;
+  sub?: string;
+  figures: Pick<ResourceFigures, 'load' | 'capacity' | 'bookedPct' | 'bookingStatus'>;
+  unit: string;
+  testId: string;
+}): React.JSX.Element {
+  return (
+    <li
+      className="flex min-w-0 flex-col gap-1 rounded-dash border border-dash-hairline bg-dash-alt px-s3 py-s2"
+      data-testid={testId}
+    >
+      <span className="truncate text-xs font-bold text-text" title={sub ? `${name} (${sub})` : name}>
+        {name}
+        {sub ? <span className="font-medium text-text-subtle"> · {sub}</span> : null}
+      </span>
+      <span className="flex flex-wrap items-center gap-1.5">
+        <span className="font-mono text-sm font-bold tabular-nums text-text" data-numeric="">
+          {formatBookedPct(figures.bookedPct)}
+        </span>
+        <BookingStatusChip status={figures.bookingStatus} />
+      </span>
+      {figures.bookedPct === null ? <span className="text-2xs text-text-muted">No capacity in scope</span> : null}
+      <span className="text-2xs text-text-muted" data-numeric="">
+        {formatDecimal(figures.load)} of {formatDecimal(figures.capacity)} {unit}
+      </span>
+    </li>
+  );
+}
+
+/** Every in-scope hub (design) and lab region (lab): served rows only, never summed here. */
+function PerResourceTiles({ rows, horizon }: { rows: HubCapacityRow[]; horizon: CapacityHorizon }): React.JSX.Element {
+  const regions = labRegionRows(rows);
+  return (
+    <div className="grid gap-s3 lg:grid-cols-2" data-testid="booked-tiles">
+      <div className="space-y-s2">
+        <h3 className="label-caps text-text-muted">Design booked, per hub</h3>
+        <ul className="grid gap-s2 sm:grid-cols-2 xl:grid-cols-3">
+          {rows.map((r) => (
+            <BookedTile
+              key={r.hub}
+              name={r.hub}
+              figures={pickFigures(r, 'design', horizon)}
+              unit="engineer-wks"
+              testId={`booked-design-${r.hub}`}
+            />
+          ))}
+        </ul>
+      </div>
+      <div className="space-y-s2">
+        <h3 className="label-caps text-text-muted">Lab booked, per lab region</h3>
+        <ul className="grid gap-s2 sm:grid-cols-2 xl:grid-cols-3">
+          {regions.map((l) => (
+            <BookedTile
+              key={l.region}
+              name={l.region}
+              sub={l.hubs.join(', ')}
+              figures={pickFigures(l.row, 'lab', horizon)}
+              unit="chamber-wks"
+              testId={`booked-lab-${l.region}`}
+            />
+          ))}
+        </ul>
+      </div>
+    </div>
+  );
+}
+
 export function AreaBookingStrip({
   areas,
   horizon,
+  rows,
 }: {
   areas: CapacityArea[];
   horizon: CapacityHorizon;
+  /** P19: the served hub rows; when given, a tile per hub and per lab region is shown too. */
+  rows?: HubCapacityRow[];
 }): React.JSX.Element | null {
   const scopedToHubs = useSessionStore((s) => (s.me ? !s.me.hub_scope_all : false));
   if (areas.length === 0) return null;
@@ -68,7 +147,7 @@ export function AreaBookingStrip({
     <section aria-labelledby="capacity-area-strip-heading" className="space-y-s2" data-testid="area-booking-strip">
       <div className="flex flex-wrap items-center justify-between gap-s2">
         <h2 id="capacity-area-strip-heading" className="text-h2 text-text">
-          Capacity booked by area
+          Capacity booked
         </h2>
         <div className="flex items-center gap-s2">
           <Badge tone="outline" className="rounded-pill" data-testid="area-strip-horizon">
@@ -88,8 +167,7 @@ export function AreaBookingStrip({
             <p>
               Europe = the Greece and Romania lab regions, including the OEM hubs (OEM-HCK and
               OEM-Seltek use the Greece lab region); India = the India lab region (R&amp;D-India and
-              PD-India). Each lab region is counted once per area. The Full year / Remaining year toggle
-              on the per-hub card below picks which figures are shown here.
+              PD-India). Each lab region is counted once per area. The YTD 2026 / Full year toggle in the page header picks which figures are shown here.
             </p>
           </CardInfo>
         </div>
@@ -127,6 +205,7 @@ export function AreaBookingStrip({
           </article>
         ))}
       </div>
+      {rows && rows.length > 0 ? <PerResourceTiles rows={rows} horizon={horizon} /> : null}
     </section>
   );
 }

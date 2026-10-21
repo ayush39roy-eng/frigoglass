@@ -73,4 +73,35 @@ describe('ClassBreakdownPanel', () => {
     expect(screen.getByText('No schedule computed yet')).toBeInTheDocument();
     expect(screen.queryByTestId('class-breakdown-chart')).not.toBeInTheDocument();
   });
+
+  it('P19: seven equal-weight cards (A+, A, B, C and the OEM classes), per-hub rows kept, chart collapsed until asked', async () => {
+    const user = userEvent.setup();
+    const cats = ['A+', 'A', 'B', 'C', 'A-OEM', 'B-OEM', 'C-OEM'] as const;
+    renderWithProviders(
+      <ClassBreakdownPanel
+        data={{
+          has_active_schedule_run: true,
+          schedule_run_version: 3,
+          rows: cats.map((category) =>
+            classRow({
+              category,
+              by_hub: [
+                { hub: 'OEM-HCK', deliverable: 2, left_out: 1 },
+                { hub: 'PD-India', deliverable: 3, left_out: 4 },
+              ],
+            }),
+          ),
+        }}
+      />,
+    );
+    expect(screen.getByTestId('class-cards').children).toHaveLength(7);
+    for (const c of cats) {
+      expect(screen.getByTestId(`class-card-${c}`)).toBeInTheDocument();
+      expect(screen.getByTestId(`class-${c}-hub-OEM-HCK`)).toBeInTheDocument();
+    }
+    expect(screen.getByText('Run v3')).toBeInTheDocument();
+    expect(screen.queryByTestId('class-breakdown-chart')).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Show class chart' }));
+    expect(screen.getByTestId('class-breakdown-chart')).toBeInTheDocument();
+  });
 });

@@ -43,9 +43,23 @@ function pct(value: number, max: number): string {
   return `${String(Math.min(100, (value / max) * 100))}%`;
 }
 
+/** Display scale only (not a figure): a round axis step so gridlines land on nice values. */
+function axisScale(max: number): { top: number; ticks: number[] } {
+  if (max <= 0) return { top: 1, ticks: [0, 1] };
+  const raw = max / 4;
+  const exp = 10 ** Math.floor(Math.log10(raw));
+  const step = ([1, 2, 2.5, 5, 10].map((m) => m * exp).find((c) => c >= raw) ?? 10 * exp);
+  const top = Math.ceil(max / step) * step;
+  const ticks: number[] = [];
+  for (let t = 0; t <= top + step / 2; t += step) ticks.push(t);
+  return { top, ticks };
+}
+
+const PLOT_INSET = 'absolute inset-x-0 bottom-0 top-5';
+
 export function PriorityLoadChart({ bars, ariaLabel, unit, capacityLabel }: PriorityLoadChartProps): React.JSX.Element {
-  // Display scale only: the tallest load or capacity outline fills the plot.
-  const max = bars.reduce((m, b) => Math.max(m, b.load, b.capacity), 0);
+  // Display scale only: the tallest load or capacity outline sets the axis.
+  const { top: max, ticks } = axisScale(bars.reduce((m, b) => Math.max(m, b.load, b.capacity), 0));
   const captionId = React.useId();
 
   return (
@@ -54,9 +68,9 @@ export function PriorityLoadChart({ bars, ariaLabel, unit, capacityLabel }: Prio
         {ariaLabel}, in {unit}
       </figcaption>
 
-      <ul className="flex flex-wrap items-center gap-x-s3 gap-y-1 text-2xs text-text-muted" aria-hidden="true">
+      <ul className="flex flex-wrap items-center justify-center gap-x-s3 gap-y-1 text-2xs text-text-muted" aria-hidden="true">
         <li className="flex items-center gap-1">
-          <span className="inline-block size-2.5 rounded-sm border-[1.5px] border-dashed border-text-muted" />
+          <span className="inline-block size-2.5 rounded-sm border-[1.5px] border-text-muted" />
           {capacityLabel}
         </li>
         {PRIORITY_BUCKETS.map((b) => (
@@ -67,50 +81,86 @@ export function PriorityLoadChart({ bars, ariaLabel, unit, capacityLabel }: Prio
         ))}
       </ul>
 
-      <div className="flex h-56 items-end gap-s3 border-b border-dash-hairline pt-5" aria-hidden="true">
-        {bars.map((bar) => (
-          <div key={bar.key} className="relative flex h-full min-w-[2.5rem] flex-1 flex-col justify-end" data-testid={`load-bar-${bar.key}`}>
-            {/* Capacity outline, behind the stack. */}
-            <div
-              className="absolute inset-x-0 bottom-0 rounded-t-sm border-[1.5px] border-b-0 border-dashed border-text-muted/80"
-              style={{ height: pct(bar.capacity, max) }}
-              title={`${capacityLabel} ${formatDecimal(bar.capacity)}`}
-            />
-            <div className="relative mx-[18%] flex flex-col-reverse overflow-hidden rounded-t-sm" style={{ height: pct(bar.load, max) }}>
-              {PRIORITY_BUCKETS.map((b) =>
-                bar.split[b] > 0 ? (
-                  <div
-                    key={b}
-                    className={cn('w-full shrink-0', BUCKET_BG[b])}
-                    style={{ height: pct(bar.split[b], bar.load) }}
-                    title={`${BUCKET_SHORT[b]} ${formatDecimal(bar.split[b])}`}
-                  />
-                ) : null,
-              )}
-            </div>
-            <span
-              className="absolute inset-x-0 pb-0.5 text-center font-mono text-2xs font-semibold tabular-nums text-text"
-              style={{ bottom: pct(bar.load, max) }}
-            >
-              {formatDecimal(bar.load)}
-            </span>
+      {/* Narrow screens: the columns keep a readable width and the plot scrolls
+          sideways inside a focusable, named region instead of squeezing or clipping. */}
+      <div
+        className="overflow-x-auto"
+        role="region"
+        tabIndex={0}
+        aria-label={`${ariaLabel}, scrollable`}
+      >
+        <div className="flex flex-col gap-s3" aria-hidden="true" style={{ minWidth: `${String(bars.length * 3.5 + 3)}rem` }}>
+      <div className="flex gap-s2">
+        <div className="relative h-56 w-10 shrink-0">
+          <div className={PLOT_INSET}>
+            {ticks.map((t) => (
+              <span
+                key={t}
+                className="absolute right-0 translate-y-1/2 font-mono text-[0.625rem] tabular-nums text-text-subtle"
+                style={{ bottom: pct(t, max) }}
+              >
+                {formatDecimal(t)}
+              </span>
+            ))}
           </div>
-        ))}
+        </div>
+        <div className="relative h-56 min-w-0 flex-1 border-b border-l border-dash-hairline">
+          <div className={PLOT_INSET}>
+            {ticks.slice(1).map((t) => (
+              <div key={t} className="absolute inset-x-0 border-t border-dashed border-dash-hairline" style={{ bottom: pct(t, max) }} />
+            ))}
+          </div>
+          <div className={cn(PLOT_INSET, 'flex items-end gap-s3')}>
+            {bars.map((bar) => (
+              <div key={bar.key} className="relative flex h-full min-w-[2.5rem] flex-1 flex-col justify-end" data-testid={`load-bar-${bar.key}`}>
+                {/* Capacity outline, behind the stack. */}
+                <div
+                  className="absolute inset-x-[8%] bottom-0 rounded-t-sm border-2 border-b-0 border-text-muted/80"
+                  style={{ height: pct(bar.capacity, max) }}
+                  title={`${capacityLabel} ${formatDecimal(bar.capacity)}`}
+                />
+                <div className="relative mx-[18%] flex flex-col-reverse overflow-hidden rounded-t-sm" style={{ height: pct(bar.load, max) }}>
+                  {PRIORITY_BUCKETS.map((b) =>
+                    bar.split[b] > 0 ? (
+                      <div
+                        key={b}
+                        className={cn('w-full shrink-0', BUCKET_BG[b])}
+                        style={{ height: pct(bar.split[b], bar.load) }}
+                        title={`${BUCKET_SHORT[b]} ${formatDecimal(bar.split[b])}`}
+                      />
+                    ) : null,
+                  )}
+                </div>
+                <span
+                  className="absolute inset-x-0 pb-0.5 text-center font-mono text-2xs font-semibold tabular-nums text-text"
+                  style={{ bottom: pct(bar.load, max) }}
+                >
+                  {formatDecimal(bar.load)}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
       </div>
 
-      <div className="flex gap-s3" aria-hidden="true">
-        {bars.map((bar) => (
-          <div key={bar.key} className="min-w-[2.5rem] flex-1 text-center">
-            <p className="truncate text-2xs font-semibold text-text" title={bar.label}>
-              {bar.label}
-            </p>
-            {bar.sublabel ? (
-              <p className="truncate text-[0.625rem] text-text-subtle" title={bar.sublabel}>
-                {bar.sublabel}
+      <div className="flex gap-s2">
+        <div className="w-10 shrink-0" />
+        <div className="flex min-w-0 flex-1 gap-s3">
+          {bars.map((bar) => (
+            <div key={bar.key} className="min-w-[2.5rem] flex-1 text-center">
+              <p className="truncate text-2xs font-semibold text-text" title={bar.label}>
+                {bar.label}
               </p>
-            ) : null}
-          </div>
-        ))}
+              {bar.sublabel ? (
+                <p className="truncate text-[0.625rem] text-text-subtle" title={bar.sublabel}>
+                  {bar.sublabel}
+                </p>
+              ) : null}
+            </div>
+          ))}
+        </div>
+      </div>
+        </div>
       </div>
 
       <table className="sr-only">

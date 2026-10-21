@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { screen, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 
 import { renderWithProviders } from '@/test/render';
 import type { CompletingWithinYear } from '../api/types';
@@ -47,12 +48,14 @@ describe('WithinYearKpis', () => {
     // No separate "left out / beyond the 78-week horizon" tile any more.
     expect(screen.queryByRole('group', { name: 'Left out' })).not.toBeInTheDocument();
     expect(screen.queryByText(/78-week/)).not.toBeInTheDocument();
-    // ADR 0017: the `blocked_count` tile reads "On Hold".
-    expect(within(screen.getByRole('group', { name: 'On Hold' })).getByText('1')).toBeInTheDocument();
+    // ADR 0017 + P17-R07: the `blocked_count` tile reads "On Hold at a stage",
+    // never a bare "On Hold" (that word is also a project status).
+    expect(within(screen.getByRole('group', { name: 'On Hold at a stage' })).getByText('1')).toBeInTheDocument();
+    expect(screen.queryByRole('group', { name: 'On Hold' })).not.toBeInTheDocument();
     expect(screen.getByText('In the plan, waiting at a stage')).toBeInTheDocument();
 
     // Three mutually exclusive figures that still sum to the run (9 + 6 + 1 = 16).
-    const values = ['Within year', 'Spillover (past W52)', 'On Hold'].map(
+    const values = ['Within year', 'Spillover (past W52)', 'On Hold at a stage'].map(
       (label) => within(screen.getByRole('group', { name: label })).getByText(/^\d+$/).textContent,
     );
     expect(values).toEqual(['9', '6', '1']);
@@ -95,6 +98,40 @@ describe('WithinYearKpis', () => {
     );
     expect(screen.getByText('No schedule computed yet')).toBeInTheDocument();
     expect(screen.queryByTestId('schedule-run-provenance')).not.toBeInTheDocument();
+  });
+
+  it('adds a muted line quoting the served project-status On Hold count (P17-R07)', () => {
+    renderWithProviders(<WithinYearKpis data={withRun} activeRun={undefined} onHold={15} />);
+    const tile = screen.getByRole('group', { name: 'On Hold at a stage' });
+    // The tile's own figure is still the served blocked_count; 15 is only quoted.
+    expect(within(tile).getByText(/^\d+$/).textContent).toBe('1');
+    expect(within(tile).getByTestId('paused-projects-note')).toHaveTextContent(
+      'Separately, 15 projects are paused (status On Hold) and are not in the plan.',
+    );
+  });
+
+  it('uses the singular for one paused project', () => {
+    renderWithProviders(<WithinYearKpis data={withRun} activeRun={undefined} onHold={1} />);
+    expect(screen.getByTestId('paused-projects-note')).toHaveTextContent(
+      'Separately, 1 project is paused (status On Hold) and is not in the plan.',
+    );
+  });
+
+  it('omits the paused line when the status overview is not loaded or the count is 0', () => {
+    const { unmount } = renderWithProviders(<WithinYearKpis data={withRun} activeRun={undefined} />);
+    expect(screen.queryByTestId('paused-projects-note')).not.toBeInTheDocument();
+    unmount();
+    renderWithProviders(<WithinYearKpis data={withRun} activeRun={undefined} onHold={0} />);
+    expect(screen.queryByTestId('paused-projects-note')).not.toBeInTheDocument();
+  });
+
+  it('the outcome info popover names the "On Hold (project)" status card', async () => {
+    renderWithProviders(<WithinYearKpis data={withRun} activeRun={undefined} />);
+    await userEvent.click(screen.getByRole('button', { name: 'How the count is defined' }));
+    const dialog = await screen.findByRole('dialog');
+    expect(dialog).toHaveTextContent('On Hold at a stage');
+    expect(dialog).toHaveTextContent('On Hold (project)');
+    expect(dialog).toHaveTextContent(/paused \(status On Hold\)/);
   });
 
   it('does not render a per-project outcome table (P17-R06)', () => {

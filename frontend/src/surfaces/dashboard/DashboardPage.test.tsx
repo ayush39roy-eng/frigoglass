@@ -344,8 +344,20 @@ describe('DashboardPage — P17-R05 layout and scheduled-count labelling', () =>
     expect(chip).not.toHaveTextContent(/projects/i);
     await userEvent.click(within(chip).getByRole('button', { name: /scheduled project count/i }));
     expect(await screen.findByTestId('scheduled-count-note')).toHaveTextContent(
-      '16 projects are planned in the active schedule run. The pipeline total is 239. Cancelled (29) and On Hold (2) projects are not scheduled.',
+      '16 projects are planned in the active schedule run. The pipeline total is 239. Cancelled (29) and paused (status On Hold) (2) projects are not scheduled.',
     );
+  });
+
+  it('keeps the two On Hold figures apart: outcome tile vs served project-status count (P17-R07)', () => {
+    readyAll();
+    renderWithProviders(<DashboardPage />);
+    const tile = screen.getByRole('group', { name: 'On Hold at a stage' });
+    expect(within(tile).getByText(/^\d+$/).textContent).toBe('1');
+    expect(within(tile).getByTestId('paused-projects-note')).toHaveTextContent(
+      'Separately, 2 projects are paused (status On Hold) and are not in the plan.',
+    );
+    expect(screen.getByRole('region', { name: 'On Hold (project)' })).toBeInTheDocument();
+    expect(screen.queryByRole('group', { name: 'On Hold' })).not.toBeInTheDocument();
   });
 
   it('labels the Completing-within-the-year badge "N scheduled of <pipeline total>" and the pipeline Total separately', () => {

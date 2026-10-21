@@ -23,7 +23,6 @@ vi.mock('./hooks/use-capacity', () => ({
   useActiveScheduleRun: () => hooks.useActiveScheduleRun(),
   useEngineerUtilization: () => hooks.useEngineerUtilization(),
 }));
-vi.mock('./components/hub-load-chart', () => ({ HubLoadChart: () => <div data-testid="hub-load-chart" /> }));
 vi.mock('./components/class-breakdown-chart', () => ({
   ClassBreakdownChart: () => <div data-testid="class-breakdown-chart" />,
 }));
@@ -86,7 +85,6 @@ describe('CapacityPage', () => {
     renderWithProviders(<CapacityPage />);
     expect(hooks.useHubLoadVsCapacity).toHaveBeenLastCalledWith({ hubId: 'hub-india', region: null });
     expect(hooks.useClassBreakdown).toHaveBeenLastCalledWith('hub-india', null);
-    expect(hooks.useUtilizationMatrix).toHaveBeenLastCalledWith('hub-india', null);
     expect(screen.getByTestId('hub-filter-chip')).toBeInTheDocument();
   });
 
@@ -98,7 +96,6 @@ describe('CapacityPage', () => {
     renderWithProviders(<CapacityPage />);
     expect(hooks.useHubLoadVsCapacity).toHaveBeenLastCalledWith({ hubId: null, region: 'Romania' });
     expect(hooks.useClassBreakdown).toHaveBeenLastCalledWith(null, 'Romania');
-    expect(hooks.useUtilizationMatrix).toHaveBeenLastCalledWith(null, 'Romania');
     expect(screen.getByTestId('hub-filter-chip')).toHaveTextContent('Country: Romania');
   });
 
@@ -132,7 +129,7 @@ describe('CapacityPage', () => {
     renderWithProviders(<CapacityPage />);
     expect(screen.getAllByTestId('capacity-area-card')).toHaveLength(2);
     expect(screen.getByTestId('area-Europe-design')).toHaveTextContent('72.44 %');
-    await user.click(screen.getByRole('radio', { name: 'Remaining year' }));
+    await user.click(screen.getByRole('radio', { name: 'YTD 2026' }));
     expect(screen.getByTestId('area-strip-horizon')).toHaveTextContent(/Remaining year/);
     expect(screen.getByTestId('area-Europe-design')).toHaveTextContent('108.7 %');
   });
@@ -161,13 +158,14 @@ describe('CapacityPage', () => {
     hooks.useUtilizationMatrix.mockReturnValue(ready(utilization));
     renderWithProviders(<CapacityPage />);
 
-    expect(screen.getByRole('group', { name: 'Design load' })).toHaveTextContent('207.86 % used');
-    expect(screen.getByRole('group', { name: 'Design load' })).toHaveTextContent('/ 290.1');
+    expect(screen.getByRole('group', { name: 'Design load' })).toHaveTextContent('207.86 %');
+    expect(screen.getByTestId('kpi-design-capacity-value')).toHaveTextContent('290.1');
     expect(screen.getByTestId('kpi-Design load-P1')).toHaveTextContent('416');
     expect(screen.getByTestId('kpi-Lab load-P1')).toHaveTextContent('300');
     expect(screen.getByLabelText('Lab load by lab region')).toHaveTextContent('India: 496.5');
 
-    // Matrix: one row per hub, served buckets verbatim, served booked % as Util.
+    // Matrix (behind its disclosure): one row per hub, served buckets verbatim, served booked % as Util.
+    await user.click(screen.getByRole('button', { name: 'Show hub utilization matrix' }));
     expect(screen.getByTestId('util-PD-India-P2-D')).toHaveTextContent('100');
     expect(screen.getByTestId('util-PD-India-Queue-L')).toHaveTextContent('100');
     expect(screen.getByTestId('util-row-PD-India')).toHaveTextContent('232.36 %');
@@ -175,28 +173,95 @@ describe('CapacityPage', () => {
     expect(total).toHaveTextContent('603');
     expect(total).toHaveTextContent('207.86 %');
 
-    await user.click(screen.getByRole('radio', { name: 'Remaining year' }));
+    await user.click(screen.getByRole('radio', { name: 'YTD 2026' }));
     expect(screen.getByTestId('util-row-total')).toHaveTextContent('299.5 %');
-    expect(screen.getByRole('group', { name: 'Design load' })).toHaveTextContent('299.5 % used');
+    expect(screen.getByRole('group', { name: 'Design load' })).toHaveTextContent('299.5 %');
   });
 
-  it('renders every panel from its own schedule-run-sourced payload on success', () => {
+  it('renders the client layout in order: KPI cards, class cards, charts, booked tiles, summary table, then the collapsed sections', () => {
+    hooks.useHubLoadVsCapacity.mockReturnValue(ready({ ...hubLoad, areas: [areaRow()] }));
+    hooks.useClassBreakdown.mockReturnValue(ready(classBreakdown));
+    renderWithProviders(<CapacityPage />);
+
+    const order = [
+      screen.getByTestId('capacity-kpi-row'),
+      screen.getByTestId('class-breakdown-panel'),
+      screen.getByTestId('load-capacity-charts'),
+      screen.getByTestId('area-booking-strip'),
+      screen.getByTestId('hub-summary-table'),
+      screen.getByTestId('capacity-more-detail'),
+    ];
+    for (let i = 1; i < order.length; i++) {
+      const prev = order[i - 1];
+      const next = order[i];
+      expect(prev && next && prev.compareDocumentPosition(next) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    }
+    // four KPI cards with the served totals
+    expect(screen.getByRole('group', { name: 'Design capacity' })).toBeInTheDocument();
+    expect(screen.getByRole('group', { name: 'Design load' })).toBeInTheDocument();
+    expect(screen.getByRole('group', { name: 'Lab capacity' })).toBeInTheDocument();
+    expect(screen.getByRole('group', { name: 'Lab load' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Class breakdown — deliverable vs. left out' })).toBeInTheDocument();
+    expect(screen.getByText('Design Load vs Capacity by Hub')).toBeInTheDocument();
+    // provenance names the exact active run version
+    expect(screen.getAllByTestId('schedule-run-provenance')[0]).toHaveTextContent(/v6/);
+  });
+
+  it('collapsed sections render and fetch nothing until opened (engineer utilization is audited per read)', async () => {
+    const user = userEvent.setup();
     hooks.useHubLoadVsCapacity.mockReturnValue(ready(hubLoad));
     hooks.useClassBreakdown.mockReturnValue(ready(classBreakdown));
     hooks.useUtilizationMatrix.mockReturnValue(ready(utilization));
     hooks.useEngineerUtilization.mockReturnValue(ready(engUtil));
     renderWithProviders(<CapacityPage />);
 
-    // verbatim I6/I7 load figure from the hub-load endpoint (StatCard + chart label)
-    expect(screen.getAllByText('120').length).toBeGreaterThan(0);
-    expect(screen.getByText('Class breakdown — deliverable vs. left out')).toBeInTheDocument();
+    expect(hooks.useUtilizationMatrix).not.toHaveBeenCalled();
+    expect(hooks.useEngineerUtilization).not.toHaveBeenCalled();
+    expect(screen.queryByText('Resource utilization matrix')).not.toBeInTheDocument();
+    expect(screen.queryByRole('table', { name: 'Engineer utilization by week' })).not.toBeInTheDocument();
+    expect(screen.queryByText('Priya N')).not.toBeInTheDocument();
+
+    const chambers = screen.getByRole('button', { name: 'Show chamber utilization' });
+    expect(chambers).toHaveAttribute('aria-expanded', 'false');
+    await user.click(chambers);
+    expect(hooks.useUtilizationMatrix).toHaveBeenLastCalledWith(null, null);
     expect(screen.getByText('Resource utilization matrix')).toBeInTheDocument();
+    expect(hooks.useEngineerUtilization).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole('button', { name: 'Show engineer utilization' }));
+    expect(hooks.useEngineerUtilization).toHaveBeenCalled();
     // ADR 0028: the Engineers x weeks heatmap replaces the old GDPR placeholder
-    expect(screen.queryByText(/pending GDPR sign-off/i)).not.toBeInTheDocument();
     expect(screen.getByRole('table', { name: 'Engineer utilization by week' })).toBeInTheDocument();
     expect(screen.getByText('Priya N')).toBeInTheDocument();
-    // provenance names the exact active run version
-    expect(screen.getAllByTestId('schedule-run-provenance')[0]).toHaveTextContent(/v6/);
+
+    // closing hides it again
+    await user.click(screen.getByRole('button', { name: 'Hide engineer utilization' }));
+    expect(screen.queryByText('Priya N')).not.toBeInTheDocument();
+  });
+
+  it('header toggles: YTD 2026 / Full year is the one horizon; Days is disabled (no served weekdays_per_week)', async () => {
+    const user = userEvent.setup();
+    hooks.useHubLoadVsCapacity.mockReturnValue(ready(hubLoad));
+    hooks.useClassBreakdown.mockReturnValue(ready(classBreakdown));
+    renderWithProviders(<CapacityPage />);
+    expect(screen.getByRole('radio', { name: 'Full year' })).toHaveAttribute('aria-checked', 'true');
+    expect(screen.getByRole('radio', { name: 'Weeks' })).toHaveAttribute('aria-checked', 'true');
+    const days = screen.getByRole('radio', { name: 'Days' });
+    expect(days).toHaveAttribute('aria-disabled', 'true');
+    await user.click(days);
+    expect(screen.getByRole('radio', { name: 'Weeks' })).toHaveAttribute('aria-checked', 'true');
+    expect(screen.getByRole('radio', { name: 'Days' })).toHaveAttribute('aria-checked', 'false');
+    await user.click(screen.getByRole('radio', { name: 'YTD 2026' }));
+    expect(screen.getByRole('radio', { name: 'YTD 2026' })).toHaveAttribute('aria-checked', 'true');
+    // the one state drives the KPI card too
+    expect(screen.getByTestId('kpi-design-capacity-value')).toHaveTextContent('179.75');
+  });
+
+  it('keeps the exports reachable', () => {
+    hooks.useHubLoadVsCapacity.mockReturnValue(ready(hubLoad));
+    hooks.useClassBreakdown.mockReturnValue(ready(classBreakdown));
+    renderWithProviders(<CapacityPage />);
+    expect(screen.getByRole('button', { name: /download/i })).toBeInTheDocument();
   });
 
   it('degrades to an access notice (not a wall of errors) on a 403', () => {
@@ -207,7 +272,7 @@ describe('CapacityPage', () => {
     renderWithProviders(<CapacityPage />);
 
     expect(screen.getByText(/does not have access to RPD Capacity/i)).toBeInTheDocument();
-    expect(screen.queryByText('Resource utilization matrix')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('capacity-kpi-row')).not.toBeInTheDocument();
   });
 
   it('shows a per-section error with the rest of the surface intact on a non-auth failure', () => {
@@ -219,7 +284,7 @@ describe('CapacityPage', () => {
     expect(screen.getByRole('alert')).toHaveTextContent(
       /deliverable vs. left-out breakdown could not be loaded/i,
     );
-    expect(screen.getByText('Resource utilization matrix')).toBeInTheDocument();
+    expect(screen.getByTestId('hub-summary-table')).toBeInTheDocument();
   });
 
   it('shows the no-schedule-run empty state without erroring', () => {

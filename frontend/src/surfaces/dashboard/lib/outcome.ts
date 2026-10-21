@@ -45,6 +45,10 @@ export function outcomeOf(row: CompletingWithinYearRow): OutcomeBucket {
 
 export interface OutcomeStyle {
   label: string;
+  /** P17-R07: the label qualified wherever it could be confused with a
+   *  same-worded project status (only `blocked`: "On Hold at a stage" vs the
+   *  project status On Hold, ADR 0017 §3). Falls back to `label`. */
+  qualifiedLabel?: string;
   Icon: React.ComponentType<{ className?: string }>;
   /** Solid fill for a progress track / chart series. */
   track: string;
@@ -82,6 +86,7 @@ export const OUTCOME_STYLE: Record<OutcomeBucket, OutcomeStyle> = {
   blocked: {
     // ADR 0017: bucket key stays `blocked`; shown as "On Hold".
     label: 'On Hold',
+    qualifiedLabel: 'On Hold at a stage',
     Icon: CirclePause,
     track: 'bg-warning',
     chip: 'bg-warning-subtle text-warning-subtle-fg',
@@ -118,6 +123,12 @@ export function displayOutcomeOf(row: CompletingWithinYearRow): DisplayOutcome {
  *  `left_out_count` (both "not done by W52"). A sum of two server counts. */
 export function spilloverPastYearCount(data: CompletingWithinYear): number {
   return data.spillover_count + data.left_out_count;
+}
+
+/** The Dashboard display label for an outcome bucket (qualified where needed). */
+export function outcomeLabel(bucket: OutcomeBucket): string {
+  const style = OUTCOME_STYLE[bucket];
+  return style.qualifiedLabel ?? style.label;
 }
 
 /** Every project the active run placed in one of its four mutually exclusive

@@ -122,14 +122,25 @@ export function WithinYearKpis({
           />
           {/* P9-F02: mutually exclusive with the counts above — Blocked wins
               outright, so a project is never double-counted across tiles. The ink
-              tile is the contrasting second accent of the row. */}
+              tile is the contrasting second accent of the row.
+              P17-R07: "at a stage" keeps this schedule OUTCOME apart from the
+              project STATUS On Hold (paused, not in the plan, ADR 0017 §3); the
+              muted line quotes the served status count verbatim. */}
           <StatCard
             variant="ink"
-            label="On Hold"
+            label="On Hold at a stage"
             value={data.blocked_count}
             icon={CirclePause}
             badge={{ label: shareLabel(data.blocked_count, data), tone: data.blocked_count > 0 ? 'drop' : 'pop' }}
             caption="In the plan, waiting at a stage"
+            footer={
+              onHold !== null && onHold > 0 ? (
+                <p className="text-2xs font-medium text-ink-fg/70" data-testid="paused-projects-note">
+                  Separately, {formatInteger(onHold)} {onHold === 1 ? 'project is' : 'projects are'} paused
+                  (status On Hold) and {onHold === 1 ? 'is' : 'are'} not in the plan.
+                </p>
+              ) : null
+            }
           />
         </div>
       )}

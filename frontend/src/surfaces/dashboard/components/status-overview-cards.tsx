@@ -115,9 +115,10 @@ export function StatusOverviewCards({ data, regionSummary = null }: StatusOvervi
             the total.
           </p>
           <p>
-            <strong className="text-text">On Hold</strong> here is the project status: the whole
-            project is paused and out of the plan. It is not the schedule outcome &ldquo;On
-            Hold&rdquo;, where a project stays in the plan and waits at a stage.
+            <strong className="text-text">On Hold (project)</strong> is the project status: the
+            whole project is paused and out of the plan. It is not the &ldquo;On Hold at a
+            stage&rdquo; card under Completing within the year, where a project stays in the plan
+            and waits at a stage.
           </p>
         </CardInfo>
       </CardHeader>

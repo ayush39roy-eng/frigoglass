@@ -30,7 +30,7 @@ export function ClassCard({ row }: { row: ClassBreakdownRow }): React.JSX.Elemen
   return (
     <section
       aria-labelledby={titleId}
-      className="flex flex-col gap-s3 rounded-dash border border-dash-hairline bg-surface p-card-tight"
+      className="flex min-w-0 flex-col gap-s3 rounded-dash border border-dash-hairline bg-surface p-card-tight shadow-dashCard"
       data-testid={`class-card-${row.category}`}
     >
       <div className="flex items-center justify-between gap-s2">

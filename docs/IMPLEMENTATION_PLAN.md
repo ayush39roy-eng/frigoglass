@@ -1937,6 +1937,7 @@ Opened 2026-10-20. Contract: `docs/API_CONTRACT_P17.md`. The Project Pipeline ro
 | P17-R04 | Frontend: "Delivery by priority" card split into in flight vs not started, Commercialized set apart; mirror `status`, `not_started`, `PriorityDeliveryBand`, `priority_delivery` | frontend-builder | DONE |
 | P17-R05 | Frontend: Dashboard layout (Project pipeline row, then Status overview, at the top) and scheduled-vs-pipeline count labelling ("209 scheduled" chip/badge + info popover from served figures) | frontend-builder | DONE (MEMORY 2026-10-21) |
 | P17-R06 | Frontend: Dashboard rearrangement (remove Project outcomes table, Planning week card, Finish-week chart; Hub x Type pipeline summary + compact VIP side column directly below Completing within the year); dead-code removal | frontend-builder | DONE (MEMORY 2026-10-21) |
+| P17-R07 | Frontend: disambiguate the two Dashboard "On Hold" figures (outcome tile "On Hold at a stage" + served paused-status line; scheduled-count popover "paused (status On Hold)"; outcome and status info popovers name each other; donut / hub-stack / completion-profile labels qualified) | frontend-builder | DONE (MEMORY 2026-10-21) |
 
 ## P18 — What-if planner: scenario engine, tool API, chat (ADR 0031)
 
@@ -1957,3 +1958,15 @@ No LLM and no CP-SAT inside the engine. Nothing is persisted by a what-if.
 | P18-T03 | Frontend: What-if UI and chat panel on Capacity Planning | frontend-builder | DONE (MEMORY 2026-10-21) |
 | P18-R03 | Frontend follow-ups after the P18 gate: mirror `touched_*`, touched-first estimate rows and headline label, `diff.within_year_*` headline, `exact` wording, zod caps and running totals, 429/503 handling and disabled Run buttons, chat egress hint, 390 px scrollable tables, stale p9-rbac sidebar spec (contract sections 10-11) | frontend-builder | DONE (MEMORY 2026-10-21) |
 | P18-T20 | Gate: qa, workflow, security | — | DONE (MEMORY 2026-10-21; qa PASS, security PASS, workflow PASS on re-gate; first gate FAILED on D1/D2/D3, fixed in P18-R01..R03) |
+
+## P19 — Capacity page redesign (client mock-up parity)
+
+Opened 2026-10-21. Owner request: the RPD Capacity surface follows the client's older app (KPI cards,
+class cards, load-vs-capacity charts first), shows "capacity booked" for every hub and lab region,
+and collapses the verbose per-hub detail behind a summary table + Details dialog and disclosures.
+Frontend only; every number stays a served field (I9/I19).
+
+| ID | Task | Owner | Status |
+|---|---|---|---|
+| P19-T01 | Frontend: Capacity page redesign (header toggles Weeks/Days + YTD/Full year; 4 KPI cards; class cards; two load-vs-capacity charts; booked tiles for all hubs and lab regions; compact hub summary table + Details dialog; collapsed utilization sections, lazy-fetched) | frontend-builder | DONE (MEMORY 2026-10-21) |
+| P19-T20 | Gate: qa, workflow, security | — | TODO |

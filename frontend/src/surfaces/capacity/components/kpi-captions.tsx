@@ -15,7 +15,8 @@ import { BUCKET_SHORT, PRIORITY_BUCKETS } from '../lib/priority-split';
 export interface KpiCaptionsProps {
   /** Accessible name prefix, e.g. "Design load". */
   label: string;
-  split: PriorityLoadSplit;
+  /** Omitted for the capacity cards, which have a per-hub line but no priority split. */
+  split?: PriorityLoadSplit;
   parts: { key: string; label: string; value: number }[];
   /** Says what `parts` are, e.g. "By hub" or "By lab region". */
   partsLabel: string;
@@ -23,20 +24,22 @@ export interface KpiCaptionsProps {
 
 export function KpiCaptions({ label, split, parts, partsLabel }: KpiCaptionsProps): React.JSX.Element {
   return (
-    <div className="flex flex-col gap-1 border-t border-dash-hairline pt-s2 text-2xs text-text-muted" data-testid={`kpi-captions-${label}`}>
-      <p aria-label={`${label} by priority`} data-numeric="">
-        {PRIORITY_BUCKETS.map((bucket, i) => (
-          <React.Fragment key={bucket}>
-            {i > 0 ? <span aria-hidden="true"> · </span> : null}
-            <span className="whitespace-nowrap">
-              <span className="font-semibold text-text">{BUCKET_SHORT[bucket]}:</span>{' '}
-              <span className="tabular-nums" data-testid={`kpi-${label}-${bucket}`}>
-                {formatDecimal(split[bucket])}
+    <div className="flex flex-col gap-1 text-2xs text-text-muted" data-testid={`kpi-captions-${label}`}>
+      {split ? (
+        <p aria-label={`${label} by priority`} data-numeric="">
+          {PRIORITY_BUCKETS.map((bucket, i) => (
+            <React.Fragment key={bucket}>
+              {i > 0 ? <span aria-hidden="true"> · </span> : null}
+              <span className="whitespace-nowrap">
+                <span className="font-semibold text-text">{BUCKET_SHORT[bucket]}:</span>{' '}
+                <span className="tabular-nums" data-testid={`kpi-${label}-${bucket}`}>
+                  {formatDecimal(split[bucket])}
+                </span>
               </span>
-            </span>
-          </React.Fragment>
-        ))}
-      </p>
+            </React.Fragment>
+          ))}
+        </p>
+      ) : null}
       {parts.length > 0 ? (
         <p aria-label={`${label} ${partsLabel.toLowerCase()}`} data-numeric="">
           <span className="sr-only">{partsLabel}: </span>

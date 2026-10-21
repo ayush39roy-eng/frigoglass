@@ -10,11 +10,12 @@ test.describe('Capacity surface (P4-T03)', () => {
     await expect(capacity.heading()).toBeVisible();
     await expect(capacity.hubLoadPanel()).toBeVisible();
     await expect(capacity.classBreakdownPanel()).toBeVisible();
-    await expect(capacity.utilizationPanel()).toBeVisible();
 
-    // GDPR placeholder (OPEN_QUESTIONS #8 / P4-T08): the engineer side of the
-    // utilization matrix must stay withheld, not silently start rendering names.
-    await expect(page.getByText(/GDPR|withheld|pending/i).first()).toBeVisible();
+    // P19: the chamber and engineer sections are collapsed until asked for.
+    await expect(capacity.utilizationPanel()).toHaveCount(0);
+    await capacity.openChamberUtilization();
+    await expect(capacity.utilizationPanel()).toBeVisible();
+    await expect(page.getByRole('table', { name: 'Engineer utilization by week' })).toHaveCount(0);
   });
 
   test('has no serious/critical axe violations', async ({ page }) => {

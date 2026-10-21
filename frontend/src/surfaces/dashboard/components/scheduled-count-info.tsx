@@ -37,8 +37,8 @@ export function ScheduledCountInfo({
 }: ScheduledCountInfoProps): React.JSX.Element {
   const excluded =
     cancelled !== null && onHold !== null
-      ? `Cancelled (${formatInteger(cancelled)}) and On Hold (${formatInteger(onHold)}) projects are not scheduled.`
-      : 'Cancelled and On Hold projects are not scheduled.';
+      ? `Cancelled (${formatInteger(cancelled)}) and paused (status On Hold) (${formatInteger(onHold)}) projects are not scheduled.`
+      : 'Cancelled and paused (status On Hold) projects are not scheduled.';
   return (
     <CardInfo label={label} {...(className ? { className } : {})}>
       <p data-testid="scheduled-count-note">

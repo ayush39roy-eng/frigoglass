@@ -66,9 +66,10 @@ export function ScheduleRunProvenance({
           <strong className="text-text">Spillover (past {formatWeek(WITHIN_YEAR_WEEK)})</strong> = not
           done by {formatWeek(WITHIN_YEAR_WEEK)}, carried into {SPILLOVER_YEAR}. It includes any
           project the run could not place yet (shown as &quot;not yet placed&quot;).{' '}
-          <strong className="text-text">On Hold</strong> = in the plan, waiting at a stage that is on
-          hold (a paused project with status On Hold is not scheduled at all); it wins outright over
-          the others, so the counts never overlap.
+          <strong className="text-text">On Hold at a stage</strong> = in the plan, waiting at a stage
+          that is on hold; it wins outright over the others, so the counts never overlap. It is not
+          the &ldquo;On Hold (project)&rdquo; card in Status overview: those projects are paused
+          (status On Hold) and are not scheduled at all.
         </p>
         <p>
           Every number on this surface traces to a single field on the schedule-run response. None

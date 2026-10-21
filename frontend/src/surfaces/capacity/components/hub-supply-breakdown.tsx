@@ -1,5 +1,4 @@
 import * as React from 'react';
-import { motion } from 'framer-motion';
 import { CircleCheck, TriangleAlert } from 'lucide-react';
 
 import { BookedFigure } from '@/components/shared/booking-status-chip';
@@ -14,7 +13,6 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { formatDecimal, formatFraction } from '@/lib/format';
-import { useMotionTokens } from '@/lib/motion';
 import { cn } from '@/lib/utils';
 
 import type { HubCapacityRow } from '../api/types';
@@ -167,40 +165,22 @@ function ResourceBlock({
   );
 }
 
-export interface HubSupplyBreakdownProps {
-  rows: HubCapacityRow[];
+export interface HubSupplyDetailProps {
+  row: HubCapacityRow;
   horizon: CapacityHorizon;
 }
 
-export function HubSupplyBreakdown({ rows, horizon }: HubSupplyBreakdownProps): React.JSX.Element {
-  const motionTokens = useMotionTokens();
-
+/**
+ * ONE hub's full figures (the old per-hub card, P19-T01): the hub facts, the Design
+ * and Lab blocks with their bars, and "How this is calculated". Rendered inside the
+ * summary table's Details dialog, so it exists in the DOM only while the dialog is open.
+ */
+export function HubSupplyDetail({ row, horizon }: HubSupplyDetailProps): React.JSX.Element {
+  const design = pickFigures(row, 'design', horizon);
+  const lab = pickFigures(row, 'lab', horizon);
   return (
-    <div className="space-y-s4" data-testid="hub-supply-breakdown">
-      {rows.map((row, index) => {
-        const design = pickFigures(row, 'design', horizon);
-        const lab = pickFigures(row, 'lab', horizon);
-        const headingId = `capacity-hub-${row.hub.replace(/[^a-z0-9]+/gi, '-')}`;
-        // `exactOptionalPropertyTypes` forbids `whileHover={undefined}` explicitly
-        // (framer-motion's prop types don't include `undefined` in their union) —
-        // build the hover prop conditionally and spread, same pattern as the
-        // Dashboard's `StatCard`.
-        const hoverProps = motionTokens.reduced ? {} : { whileHover: { y: -3 } };
-        return (
-          <motion.article
-            key={row.hub}
-            aria-labelledby={headingId}
-            initial={motionTokens.reduced ? false : { opacity: 0, y: 8 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ ...motionTokens.transition, delay: motionTokens.reduced ? 0 : index * 0.04 }}
-            {...hoverProps}
-            className="space-y-s3 rounded-dash border border-dash-hairline bg-surface p-card shadow-dashCard transition-shadow duration-fast ease-ease-out-expo hover:shadow-pop"
-            data-testid="capacity-hub-card"
-          >
+    <div className="space-y-s3" data-testid="capacity-hub-card">
             <header className="flex flex-wrap items-baseline justify-between gap-s2">
-              <h3 id={headingId} className="text-h2 text-text">
-                {row.hub}
-              </h3>
               <span className="flex flex-wrap items-center gap-s2 text-2xs text-text-muted">
                 <Badge tone="outline" className="rounded-pill">
                   Lab region: {row.lab_region}
@@ -310,9 +290,6 @@ export function HubSupplyBreakdown({ rows, horizon }: HubSupplyBreakdownProps): 
                 )}
               </div>
             </details>
-          </motion.article>
-        );
-      })}
     </div>
   );
 }

@@ -135,7 +135,8 @@ function PriorityDeliveryRings({ bands }: { bands: PriorityDeliveryBand[] }): Re
               Each ring is one priority band: the filled arc is the share of that band&apos;s
               in-flight projects the active run flags as within-year. Not-started projects have
               their own bar, and Commercialized projects are listed as already delivered, outside
-              the rings. On Hold, Cancelled and Draft projects are listed as not in plan.
+              the rings. Paused (status On Hold), Cancelled and Draft projects are listed as not in
+              plan.
             </p>
             <p className="mt-s2">{PRIORITY_NOTE}</p>
           </>
@@ -249,7 +250,7 @@ function PriorityBandItem({ band: b }: { band: PriorityDeliveryBand }): React.JS
 const STACK_ORDER: { bucket: DisplayOutcome; label: string; fill: string; dot: string }[] = [
   { bucket: 'within_year', label: 'Within year', fill: 'bg-success', dot: 'bg-success' },
   { bucket: 'spillover', label: 'Spillover (past W52)', fill: 'bg-warning', dot: 'bg-warning' },
-  { bucket: 'blocked', label: 'On Hold', fill: 'bg-text-muted', dot: 'bg-text-muted' },
+  { bucket: 'blocked', label: 'On Hold at a stage', fill: 'bg-text-muted', dot: 'bg-text-muted' },
 ];
 
 function HubOutcomeStack({ rows }: { rows: CompletingWithinYearRow[] }): React.JSX.Element {

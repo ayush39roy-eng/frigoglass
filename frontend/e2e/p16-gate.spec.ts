@@ -63,6 +63,7 @@ test('Capacity heatmap footnote visible; Gantt shows engineer names', async ({ p
   await actAs(page, 'admin');
   await page.goto('/capacity');
   await settle(page);
+  await page.getByRole('button', { name: 'Show engineer utilization' }).click();
   const fn = page.getByTestId('engineer-heatmap-footnote');
   await fn.scrollIntoViewIfNeeded();
   await expect(fn).toBeVisible();

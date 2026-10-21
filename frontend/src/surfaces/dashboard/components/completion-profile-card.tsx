@@ -20,7 +20,7 @@ import { usePrefersReducedMotion } from '@/lib/use-prefers-reduced-motion';
 import { cn } from '@/lib/utils';
 
 import type { CompletingWithinYear } from '../api/types';
-import { OUTCOME_STYLE, outcomeOf, spilloverPastYearCount, type OutcomeBucket } from '../lib/outcome';
+import { OUTCOME_STYLE, outcomeLabel, outcomeOf, spilloverPastYearCount, type OutcomeBucket } from '../lib/outcome';
 import { useRevealOnce } from '../lib/use-reveal-once';
 import { CardInfo } from '@/components/ui/card-info';
 
@@ -112,7 +112,7 @@ function MetricRow({
       </span>
       <span className="min-w-0 flex-1">
         <span className="flex items-baseline justify-between gap-s2">
-          <span className="truncate text-2xs font-medium text-text">{style.label}</span>
+          <span className="truncate text-2xs font-medium text-text">{outcomeLabel(bucket)}</span>
           <span className="tnum text-body font-semibold tabular-nums text-text" data-numeric="">
             {formatInteger(counted)}
           </span>
@@ -204,7 +204,7 @@ export function CompletionProfileCard({ data }: CompletionProfileCardProps): Rea
                   className={cn('size-2.5 rounded-full', OUTCOME_STYLE[series.bucket].track)}
                   aria-hidden="true"
                 />
-                {OUTCOME_STYLE[series.bucket].label}
+                {outcomeLabel(series.bucket)}
               </li>
             ))}
             <li className="flex items-center gap-1.5 text-2xs text-text-subtle">

@@ -34,7 +34,7 @@ export function PageHeader({
         <h1 className="font-display text-page text-text">{title}</h1>
         {description ? <p className="text-body font-medium text-text-muted">{description}</p> : null}
       </div>
-      {actions ? <div className="flex flex-wrap shrink-0 items-center gap-s2">{actions}</div> : null}
+      {actions ? <div className="flex max-w-full flex-wrap shrink-0 items-center gap-s2">{actions}</div> : null}
     </div>
   );
 }

@@ -1,3 +1,4 @@
+import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
 import { render, screen, within } from '@testing-library/react';
 
@@ -84,6 +85,15 @@ describe('StatusOverviewCards', () => {
     expect(screen.getByTestId('status-other')).toHaveTextContent('Other statuses: 8 (4.7% of total)');
     // ADR 0017: the status On Hold is explained apart from the stage-level outcome.
     expect(screen.getByRole('button', { name: 'Status overview source' })).toBeInTheDocument();
+  });
+
+  it('the source popover names the "On Hold at a stage" outcome card (P17-R07)', async () => {
+    render(<StatusOverviewCards data={DATA} />);
+    expect(screen.getByRole('region', { name: 'On Hold (project)' })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Status overview source' }));
+    const dialog = await screen.findByRole('dialog');
+    expect(dialog).toHaveTextContent('On Hold (project)');
+    expect(dialog).toHaveTextContent('On Hold at a stage');
   });
 
   it('zero state renders zeros, empty bars and no percentage on the other line', () => {

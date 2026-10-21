@@ -19,6 +19,7 @@ test('Capacity heatmap: renders, matches API, keyboard + non-colour cues, axe', 
   await actAs(page, 'portfolioManager');
   await page.goto('/capacity');
   await settle(page);
+  await page.getByRole('button', { name: 'Show engineer utilization' }).click();
   const table = page.getByRole('table', { name: 'Engineer utilization by week' });
   await table.scrollIntoViewIfNeeded();
   await expect(table).toBeVisible();

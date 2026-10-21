@@ -46,8 +46,9 @@ export function PipelinePanel({ withinYear }: PipelinePanelProps): React.JSX.Ele
         // in the donut so "sum to the scheduled total" stays true.
         {
           key: 'blocked',
-          // ADR 0017: bucket key stays `blocked`; shown as "On Hold".
-          label: 'On Hold',
+          // ADR 0017: bucket key stays `blocked`; shown as "On Hold", qualified
+          // "at a stage" (P17-R07) so it is not read as the project status.
+          label: 'On Hold at a stage',
           value: withinYear.blocked_count,
           tone: 'warning',
         },
@@ -108,7 +109,7 @@ export function PipelinePanel({ withinYear }: PipelinePanelProps): React.JSX.Ele
                   value: bar.value,
                 }))}
                 totalLabel="scheduled"
-                ariaLabel="Active schedule run outcome: within year, spillover past week 52, on hold"
+                ariaLabel="Active schedule run outcome: within year, spillover past week 52, on hold at a stage"
               />
             </>
           ) : (
