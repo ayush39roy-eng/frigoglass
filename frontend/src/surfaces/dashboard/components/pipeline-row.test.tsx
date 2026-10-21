@@ -50,7 +50,7 @@ describe('PipelineRow', () => {
     expect(screen.getByTestId('pipeline-caption-spillover')).toHaveTextContent('31.8% of total');
     expect(screen.getByTestId('pipeline-caption-new')).toHaveTextContent('66.95% of total');
     expect(screen.getByTestId('pipeline-caption-unregistered')).toHaveTextContent('1.26% of total');
-    expect(screen.getByTestId('pipeline-caption-total')).toHaveTextContent(`Full ${String(PLAN_YEAR)} pipeline`);
+    expect(screen.getByTestId('pipeline-caption-total')).toHaveTextContent(`All statuses · full ${String(PLAN_YEAR)} pipeline`);
   });
 
   it('labels the years from the domain constants and reads as an equation', () => {
@@ -61,10 +61,10 @@ describe('PipelineRow', () => {
     expect(screen.getByRole('region', { name: 'Total projects' })).toBeInTheDocument();
     const glyphs = screen.getAllByTestId('pipeline-glyph').map((g) => g.textContent);
     expect(glyphs).toEqual(['+', '+', '=']);
-    // decorative, and hidden when stacked on narrow screens
+    // decorative; kept visible when the cards stack so the equation still reads
     for (const g of screen.getAllByTestId('pipeline-glyph')) {
       expect(g).toHaveAttribute('aria-hidden', 'true');
-      expect(g.className).toContain('hidden');
+      expect(g.className).not.toContain('hidden');
     }
   });
 

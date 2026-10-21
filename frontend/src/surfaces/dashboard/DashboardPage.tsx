@@ -27,6 +27,7 @@ import { AccessNotice } from './components/access-notice';
 import { HubRankList } from './components/hub-rank-list';
 import { HubTypePipelineTable } from './components/hub-type-pipeline-table';
 import { PipelinePanel } from './components/pipeline-panel';
+import { ScheduledCountInfo } from './components/scheduled-count-info';
 import { PipelineRow } from './components/pipeline-row';
 import { ProjectBreakdown } from './components/project-breakdown';
 import { SectionBoundary } from '@/components/shared/section-boundary';
@@ -169,6 +170,15 @@ export default function DashboardPage(): React.JSX.Element {
       withinYear.data.blocked_count
     : (pipelineTotals.data?.total_count ?? null);
 
+  // The chip counts the schedule run's projects only when a run is active; then it
+  // is a subset of the pipeline and must say "scheduled" (P17-R05). Cancelled /
+  // On Hold are served status-overview counts, shown verbatim in the popover.
+  const scheduledSubset = withinYear.data?.has_active_schedule_run === true;
+  const cancelledCount = statusOverview.data
+    ? (statusOverview.data.other_statuses_counts['Cancelled'] ?? 0)
+    : null;
+  const onHoldCount = statusOverview.data?.on_hold_count ?? null;
+
   const denied = authKind([
     withinYear.error,
     pipelineTotals.error,
@@ -192,7 +202,7 @@ export default function DashboardPage(): React.JSX.Element {
                 <div
                   data-numeric=""
                   data-testid="dashboard-total-projects"
-                  className="flex items-center gap-2.5 rounded-pill border-2 border-primary/25 bg-surface px-4 py-1.5 shadow-dashCard transition-all hover:border-primary/50"
+                  className="flex items-center gap-2.5 rounded-pill border-2 border-primary/25 bg-surface py-1.5 pl-4 pr-2 shadow-dashCard transition-all hover:border-primary/50"
                 >
                   <span className="grid size-8 shrink-0 place-items-center rounded-full bg-primary/10 text-primary">
                     <FolderKanban className="size-4.5" aria-hidden="true" />
@@ -202,9 +212,20 @@ export default function DashboardPage(): React.JSX.Element {
                       {formatInteger(totalProjectsCount)}
                     </span>
                     <span className="text-xs font-bold uppercase tracking-wider text-text-muted">
-                      {totalProjectsCount === 1 ? 'project' : 'projects'}
+                      {scheduledSubset ? 'scheduled' : totalProjectsCount === 1 ? 'project' : 'projects'}
                     </span>
                   </span>
+                  {scheduledSubset ? (
+                    <ScheduledCountInfo
+                      scheduled={totalProjectsCount}
+                      pipelineTotal={pipelineTotals.data?.total_count ?? null}
+                      cancelled={cancelledCount}
+                      onHold={onHoldCount}
+                      label="About the scheduled project count (header)"
+                    />
+                  ) : (
+                    <span className="w-2" aria-hidden="true" />
+                  )}
                 </div>
               ) : null}
               <Button
@@ -254,22 +275,6 @@ export default function DashboardPage(): React.JSX.Element {
                   variants: { show: { transition: { staggerChildren: 0.08 } } },
                 })}
           >
-            {/* Row 1 — the four outcome KPI cards, full width. */}
-            <StaggerSection>
-              <SectionBoundary
-                query={withinYear}
-                title="Completing within the year"
-                errorDescription="The within-year completion figures could not be loaded from the active schedule run."
-              >
-                {(data) => <WithinYearKpis data={data} activeRun={activeRun.data} />}
-              </SectionBoundary>
-            </StaggerSection>
-
-            {/* P14 (ADR 0027 §6): VIP projects per country, after the KPI cards. */}
-            <StaggerSection>
-              <VipProjectsCard />
-            </StaggerSection>
-
             {/* P17 (ADR 0030): Spillover + Newly registered + Unregistered = Total. */}
             <StaggerSection>
               <SectionBoundary
@@ -279,6 +284,40 @@ export default function DashboardPage(): React.JSX.Element {
               >
                 {(totals) => <PipelineRow totals={totals} regionSummary={regionSummary.data ?? null} />}
               </SectionBoundary>
+            </StaggerSection>
+
+            <StaggerSection>
+              <SectionBoundary
+                query={statusOverview}
+                title="Status overview"
+                errorDescription="Status overview counts could not be loaded."
+              >
+                {(data) => <StatusOverviewCards data={data} regionSummary={regionSummary.data ?? null} />}
+              </SectionBoundary>
+            </StaggerSection>
+
+            {/* Row 1 — the four outcome KPI cards, full width. */}
+            <StaggerSection>
+              <SectionBoundary
+                query={withinYear}
+                title="Completing within the year"
+                errorDescription="The within-year completion figures could not be loaded from the active schedule run."
+              >
+                {(data) => (
+                  <WithinYearKpis
+                    data={data}
+                    activeRun={activeRun.data}
+                    pipelineTotal={pipelineTotals.data?.total_count ?? null}
+                    cancelled={cancelledCount}
+                    onHold={onHoldCount}
+                  />
+                )}
+              </SectionBoundary>
+            </StaggerSection>
+
+            {/* P14 (ADR 0027 §6): VIP projects per country, after the KPI cards. */}
+            <StaggerSection>
+              <VipProjectsCard />
             </StaggerSection>
 
             {/* Row 2 — completion curve beside the two feature cards. Profile and
@@ -338,16 +377,6 @@ export default function DashboardPage(): React.JSX.Element {
                 </React.Suspense>
               </StaggerSection>
             ) : null}
-
-            <StaggerSection>
-              <SectionBoundary
-                query={statusOverview}
-                title="Status overview"
-                errorDescription="Status overview counts could not be loaded."
-              >
-                {(data) => <StatusOverviewCards data={data} regionSummary={regionSummary.data ?? null} />}
-              </SectionBoundary>
-            </StaggerSection>
 
             {/* P13 (ADR 0025 §5): the full-width all-projects register sits
                 directly after the status overview. */}

@@ -1,5 +1,6 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
-import { screen } from '@testing-library/react';
+import { screen, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 
 import { renderWithProviders } from '@/test/render';
 import { useHubFilterStore } from '@/stores/hub-filter';
@@ -307,8 +308,68 @@ describe('DashboardPage — P13 country filter (ADR 0025)', () => {
   });
 });
 
+describe('DashboardPage — P17-R05 layout and scheduled-count labelling', () => {
+  function readyAll() {
+    hooks.useCompletingWithinYear.mockReturnValue(ready(withinYear));
+    hooks.usePipelineTotals.mockReturnValue(ready(totals));
+    hooks.useStatusOverview.mockReturnValue(
+      ready({ ...status, other_statuses_counts: { 'In Buyoff': 5, Cancelled: 29 } }),
+    );
+    hooks.useHubTypePipeline.mockReturnValue(ready(hubType));
+  }
+  const follows = (a: Node, b: Node): boolean => Boolean(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING);
+
+  it('puts the pipeline row first, the status overview second, then everything else', () => {
+    readyAll();
+    renderWithProviders(<DashboardPage />);
+    const pipeline = screen.getByTestId('pipeline-row');
+    const statusHeading = screen.getByRole('heading', { name: 'Status overview' });
+    const completing = screen.getByRole('heading', { name: 'Completing within the year' });
+    const vip = screen.getByTestId('vip-projects-card');
+    const header = screen.getByTestId('dashboard-total-projects');
+    expect(follows(header, pipeline)).toBe(true);
+    expect(follows(pipeline, statusHeading)).toBe(true);
+    expect(follows(statusHeading, completing)).toBe(true);
+    expect(follows(pipeline, vip)).toBe(true);
+    expect(follows(statusHeading, vip)).toBe(true);
+    expect(follows(statusHeading, screen.getByText('Hub × type pipeline'))).toBe(true);
+  });
+
+  it('labels the header chip "scheduled", never "projects", and explains the gap from the served figures', async () => {
+    readyAll();
+    renderWithProviders(<DashboardPage />);
+    const chip = screen.getByTestId('dashboard-total-projects');
+    expect(chip).toHaveTextContent('16');
+    expect(chip).toHaveTextContent(/scheduled/i);
+    expect(chip).not.toHaveTextContent(/projects/i);
+    await userEvent.click(within(chip).getByRole('button', { name: /scheduled project count/i }));
+    expect(await screen.findByTestId('scheduled-count-note')).toHaveTextContent(
+      '16 projects are planned in the active schedule run. The pipeline total is 239. Cancelled (29) and On Hold (2) projects are not scheduled.',
+    );
+  });
+
+  it('labels the Completing-within-the-year badge "N scheduled of <pipeline total>" and the pipeline Total separately', () => {
+    readyAll();
+    renderWithProviders(<DashboardPage />);
+    expect(screen.getByTestId('within-year-total-projects')).toHaveTextContent('16 scheduled of 239');
+    expect(screen.queryByText(/\d total projects$/)).not.toBeInTheDocument();
+    const total = screen.getByRole('region', { name: 'Total projects' });
+    expect(within(total).getByTestId('pipeline-count-total')).toHaveTextContent('239');
+    expect(within(total).getByTestId('pipeline-caption-total')).toHaveTextContent(/All statuses/);
+  });
+
+  it('falls back to "projects" on the chip when no schedule run is active', () => {
+    readyAll();
+    hooks.useCompletingWithinYear.mockReturnValue(
+      ready({ ...withinYear, has_active_schedule_run: false, rows: [] }),
+    );
+    renderWithProviders(<DashboardPage />);
+    expect(screen.getByTestId('dashboard-total-projects')).toHaveTextContent('239projects');
+  });
+});
+
 describe('DashboardPage — P14 VIP projects card', () => {
-  it('sits after the KPI cards and before the register, and passes the global filter params', () => {
+  it('sits after the pipeline / KPI cards and before the register, and passes the global filter params', () => {
     hooks.useCompletingWithinYear.mockReturnValue(ready(withinYear));
     hooks.usePipelineTotals.mockReturnValue(ready(totals));
     hooks.useStatusOverview.mockReturnValue(ready(status));
@@ -320,8 +381,8 @@ describe('DashboardPage — P14 VIP projects card', () => {
     const register = screen.getByTestId('all-projects-register');
     expect(vip.compareDocumentPosition(register) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     const pipeline = screen.getAllByText('Project pipeline')[0]!;
-    // After the row-1 KPI cards, before the row-2/3 panels.
-    expect(vip.compareDocumentPosition(pipeline) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    // P17-R05: the pipeline row and status overview now lead the page, ahead of the VIP card.
+    expect(pipeline.compareDocumentPosition(vip) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 });
 

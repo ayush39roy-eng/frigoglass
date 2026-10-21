@@ -1935,6 +1935,7 @@ Opened 2026-10-20. Contract: `docs/API_CONTRACT_P17.md`. The Project Pipeline ro
 | P17-T20 | Gate: qa, workflow, security | — | DONE (MEMORY 2026-10-20; qa PASS, security PASS, workflow FAIL then PASS on re-gate) |
 | P17-R03 | Backend: `status` + `not_started` on `CompletingWithinYearRow`; server-side `priority_delivery` bands (in flight / not started / delivered / other) on `/dashboard/completing-within-year` | backend-builder | DONE (MEMORY 2026-10-21) |
 | P17-R04 | Frontend: "Delivery by priority" card split into in flight vs not started, Commercialized set apart; mirror `status`, `not_started`, `PriorityDeliveryBand`, `priority_delivery` | frontend-builder | DONE |
+| P17-R05 | Frontend: Dashboard layout (Project pipeline row, then Status overview, at the top) and scheduled-vs-pipeline count labelling ("209 scheduled" chip/badge + info popover from served figures) | frontend-builder | DONE (MEMORY 2026-10-21) |
 
 ## P18 — What-if planner: scenario engine, tool API, chat (ADR 0031)
 

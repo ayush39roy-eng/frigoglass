@@ -43,7 +43,7 @@ function Glyph({ children }: { children: string }): React.JSX.Element {
     <span
       aria-hidden="true"
       data-testid="pipeline-glyph"
-      className="hidden select-none place-items-center font-display text-3xl font-bold text-text-muted lg:grid"
+      className="grid select-none place-items-center font-display text-xl font-bold leading-none text-text-muted lg:text-3xl"
     >
       {children}
     </span>
@@ -84,7 +84,7 @@ export function PipelineRow({ totals, regionSummary = null }: PipelineRowProps):
       bucket: 'total',
       label: 'Total projects',
       count: totals.total_count,
-      caption: `Full ${String(PLAN_YEAR)} pipeline`,
+      caption: `All statuses · full ${String(PLAN_YEAR)} pipeline`,
       rail: 'border-t-ink',
       muted: false,
       big: true,
@@ -94,10 +94,10 @@ export function PipelineRow({ totals, regionSummary = null }: PipelineRowProps):
 
   return (
     <Card className="border-0 bg-transparent shadow-none" data-testid="pipeline-row">
-      <CardHeader className="items-end border-0 px-0 pt-0">
+      <CardHeader className="items-end border-0 px-0 pb-s3 pt-0">
         <div>
-          <CardTitle className="text-h1 font-extrabold">Project pipeline</CardTitle>
-          <p className="mt-1 text-sm font-medium text-text-muted">
+          <CardTitle className="text-h2 font-extrabold">Project pipeline</CardTitle>
+          <p className="mt-0.5 text-sm font-medium text-text-muted">
             Spillover + newly registered + unregistered date = total projects
           </p>
         </div>
@@ -114,14 +114,14 @@ export function PipelineRow({ totals, regionSummary = null }: PipelineRowProps):
           </p>
         </CardInfo>
       </CardHeader>
-      <div className="grid gap-s3 lg:grid-cols-[1fr_auto_1fr_auto_1fr_auto_1fr] lg:gap-s2">
+      <div className="grid gap-s1 lg:grid-cols-[1fr_auto_1fr_auto_1fr_auto_1fr] lg:gap-s2">
         {cards.map((card, i) => (
           <React.Fragment key={card.bucket}>
             <section
               aria-label={card.label}
               data-testid={`pipeline-card-${card.bucket}`}
               className={cn(
-                'flex min-w-0 flex-col gap-s2 rounded-dash border-[1.5px] border-t-4 border-dash-hairline bg-surface p-card shadow-dashCard',
+                'flex min-w-0 flex-col gap-s1 rounded-dash border-[1.5px] border-t-4 border-dash-hairline bg-surface px-card py-s3 shadow-dashCard',
                 card.rail,
               )}
             >
@@ -129,7 +129,7 @@ export function PipelineRow({ totals, regionSummary = null }: PipelineRowProps):
               <span
                 className={cn(
                   'block font-display font-extrabold tabular-nums',
-                  card.big ? 'text-5xl text-ink' : 'text-4xl',
+                  card.big ? 'text-4xl text-ink' : 'text-3xl',
                   card.muted ? 'text-text-muted' : card.big ? '' : 'text-text',
                 )}
                 data-numeric=""

@@ -26,6 +26,7 @@ import {
 
 import type { CompletingWithinYear, CompletingWithinYearRow, ScheduleRunSummary } from '../api/types';
 import { CategoryTag } from '@/components/ui/category-tag';
+import { ScheduledCountInfo, type ScheduledCountFigures } from './scheduled-count-info';
 import { ScheduleRunProvenance } from './schedule-run-provenance';
 import { StatCard } from './stat-card';
 import { VirtualDataTable, type VirtualColumn } from './virtual-data-table';
@@ -182,7 +183,13 @@ function shareLabel(count: number, data: CompletingWithinYear): string {
  * separate boxes (Bold Blocks, 2026-10-01); `WithinYearPanel` below still
  * composes both for any caller that wants the original single block.
  */
-export function WithinYearKpis({ data, activeRun }: WithinYearPanelProps): React.JSX.Element {
+export function WithinYearKpis({
+  data,
+  activeRun,
+  pipelineTotal = null,
+  cancelled = null,
+  onHold = null,
+}: WithinYearPanelProps & ScheduledCountFigures): React.JSX.Element {
   const totalCount =
     data.within_year_count +
     data.spillover_count +
@@ -204,12 +211,23 @@ export function WithinYearKpis({ data, activeRun }: WithinYearPanelProps): React
                 data-testid="within-year-total-projects"
                 className="rounded-pill font-bold px-2.5 py-1 text-2xs"
               >
-                {formatInteger(totalCount)} total projects
+                {pipelineTotal !== null
+                  ? `${formatInteger(totalCount)} scheduled of ${formatInteger(pipelineTotal)}`
+                  : `${formatInteger(totalCount)} scheduled`}
               </Badge>
+            ) : null}
+            {data.has_active_schedule_run ? (
+              <ScheduledCountInfo
+                scheduled={totalCount}
+                pipelineTotal={pipelineTotal}
+                cancelled={cancelled}
+                onHold={onHold}
+                label="About the scheduled project count"
+              />
             ) : null}
           </div>
           <p className="text-sm font-medium text-text-muted">
-            Outcome of every project in the active schedule run
+            Outcome of the scheduled projects in the active schedule run
           </p>
         </div>
         {data.has_active_schedule_run ? (
@@ -283,7 +301,7 @@ export function WithinYearTable({ data }: { data: CompletingWithinYear }): React
           <p className="text-xs font-medium text-text-subtle">Per-project result from the active run</p>
         </div>
         <span className="rounded-pill bg-text px-2.5 py-1 text-2xs font-bold text-text-inverse" data-numeric="">
-          {data.rows.length} projects
+          {data.rows.length} scheduled
         </span>
       </div>
       <div className="min-h-0 flex-1">
