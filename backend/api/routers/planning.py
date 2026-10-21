@@ -30,7 +30,7 @@ from collections import defaultdict
 from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import ColumnElement, and_, false, select
+from sqlalchemy import ColumnElement, and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -269,8 +269,9 @@ def _project_predicate(
 ) -> ColumnElement[bool] | None:
     """The project filters, ANDed. Bound parameters only.
 
-    - `requesting_department`: projects have no department (OQ #34), so any
-      value matches no project.
+    - `requesting_department`: exact match on `Project.requesting_department`
+      (ADR 0035; the client workbook's value as written). A project with no
+      department never matches a department filter.
     - `engineer_id`: projects with at least one step of the active run booked
       on one of the engineers. Callers pass only in-scope ids
       (`_in_scope_engineer_ids`, P19-R01), never the raw query values.
@@ -284,7 +285,7 @@ def _project_predicate(
     if category:
         parts.append(Project.category.in_(category))
     if requesting_department:
-        parts.append(false())
+        parts.append(Project.requesting_department.in_(requesting_department))
     if engineer_id:
         parts.append(
             Project.id.in_(
@@ -565,7 +566,9 @@ async def resource_load_options(
     optional `hub_id` / `region`): hubs, their lab regions, the distinct
     project types / statuses / categories of visible projects, and the
     visible engineers. Names only, no load figure, so not audit-logged
-    (the same names `GET /engineers` serves)."""
+    (the same names `GET /engineers` serves). ADR 0035: the distinct
+    requesting departments of the visible projects, sorted;
+    `requesting_department_available` is true when there is at least one."""
 
     hub_stmt = select(Hub).order_by(Hub.name)
     hub_filter = narrowed_hub_filter(current_user, Hub.id, hub_id, region)
@@ -573,19 +576,24 @@ async def resource_load_options(
         hub_stmt = hub_stmt.where(hub_filter)
     hubs = (await db.execute(hub_stmt)).scalars().all()
 
-    proj_stmt = select(Project.type, Project.status, Project.category).distinct()
+    proj_stmt = select(
+        Project.type, Project.status, Project.category, Project.requesting_department
+    ).distinct()
     proj_filter = narrowed_hub_filter(current_user, Project.hub_id, hub_id, region)
     if proj_filter is not None:
         proj_stmt = proj_stmt.where(proj_filter)
     types: set[ProjectType] = set()
     statuses: set[ProjectStatus] = set()
     categories: set[ProjectCategory] = set()
-    for p_type, p_status, p_category in (await db.execute(proj_stmt)).all():
+    departments: set[str] = set()
+    for p_type, p_status, p_category, p_department in (await db.execute(proj_stmt)).all():
         if p_type is not None:
             types.add(p_type)
         statuses.add(p_status)
         if p_category is not None:
             categories.add(p_category)
+        if p_department is not None and p_department.strip():
+            departments.add(p_department)
 
     eng_stmt = (
         select(Engineer.id, Engineer.name, Hub.name)
@@ -605,7 +613,7 @@ async def resource_load_options(
         project_types=[t for t in ProjectType if t in types],
         project_statuses=[s for s in ProjectStatus if s in statuses],
         categories=[c for c in ProjectCategory if c in categories],
-        requesting_departments=[],
-        requesting_department_available=False,
+        requesting_departments=sorted(departments),
+        requesting_department_available=bool(departments),
         engineers=engineers,
     )

@@ -19,7 +19,7 @@ const SURFACES: { path: string; label: string }[] = [
   { path: '/', label: 'Dashboard' },
   { path: '/capacity', label: 'Capacity' },
   { path: '/matrix', label: 'Matrix' },
-  { path: '/priority-board', label: 'Priority board' },
+  { path: '/matrix?view=board', label: 'Priority board (Matrix tab, P21-T05)' },
   { path: '/timeline', label: 'Gantt' },
   { path: '/settings/workflow', label: 'Workflow settings' },
   // P22-T01: Project Registration merged into Projects.

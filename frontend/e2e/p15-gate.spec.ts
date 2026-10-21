@@ -8,6 +8,23 @@ interface Cell { week: number; booked: number; capacity: number; utilization_pct
 interface Eng { id: string; name: string; hub: string; weeks: Cell[]; total_booked: number; utilization_pct: number }
 interface Util { engineers: Eng[]; current_week: number }
 
+function esc(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function pickEngineers(engineers: Eng[]): Eng[] {
+  const byId = new Map<string, Eng>();
+  const add = (e: Eng | undefined): void => {
+    if (e) byId.set(e.id, e);
+  };
+  for (const hub of new Set(engineers.map((e) => e.hub))) add(engineers.find((e) => e.hub === hub));
+  const byUtil = [...engineers].sort((a, b) => b.utilization_pct - a.utilization_pct);
+  add(byUtil[0]);
+  add(byUtil.at(-1));
+  add(engineers.at(-1));
+  return [...byId.values()];
+}
+
 async function settle(page: Page): Promise<void> {
   await expect(page.getByRole('navigation', { name: 'Surfaces' })).toBeVisible({ timeout: 15_000 });
   await page.waitForLoadState('networkidle');
@@ -26,14 +43,19 @@ test('Capacity heatmap: renders, matches API, keyboard + non-colour cues, axe', 
   const rows = page.getByTestId('engineer-row');
   expect(await rows.count()).toBe(util.engineers.length);
   await expect(page.getByTestId('engineer-util-legend')).toBeVisible();
-  // spot check 5 engineers, 3 weeks each: aria-label carries the API percent and band
-  const picks = [0, 7, 20, 40, util.engineers.length - 1].map((i) => util.engineers[i]!);
+  // Spot check, 3 weeks each: aria-label carries the API percent and band.
+  // P24-T02: picked by role, not by index (the real roster has 23 engineers,
+  // and that number will change): the first served engineer of every hub, the
+  // most and the least utilized, and the last row. Deduplicated by id.
+  const picks = pickEngineers(util.engineers);
+  expect(picks.length).toBeGreaterThan(0);
   let checked = 0;
   for (const e of picks) {
-    const row = rows.filter({ hasText: e.name }).first();
+    // Exact name match (a substring filter could pick e.g. "Rahul-Contractual" for "Rahul").
+    const row = rows.filter({ has: page.getByRole('cell', { name: new RegExp(`^${esc(e.name)}, W`) }) }).first();
     for (const w of [1, util.current_week, 52]) {
       const c = e.weeks.find((x) => x.week === w)!;
-      const cell = row.getByRole('cell', { name: new RegExp(`^${e.name}, W0*${String(w)}:`) }).first();
+      const cell = row.getByRole('cell', { name: new RegExp(`^${esc(e.name)}, W0*${String(w)}:`) }).first();
       const label = (await cell.getAttribute('aria-label')) ?? '';
       const m = label.match(/: ([\d.,]+)% \(([\d.,]+) of ([\d.,]+)\)/);
       expect(m, label).not.toBeNull();

@@ -2,6 +2,11 @@
 
 **Date:** 2026-10-13 · **Status:** Accepted · **Source:** client request via project owner
 
+> **Amended 2026-10-21 by ADR 0035.** The seed tuning described below is retired. That covers the
+> 4-open-projects cap, the named capacity engineers, the blank-leader fill and the FTE and chamber
+> efficiency tuning. The seed now uses the client's real roster and the workbook's efficiencies.
+> The dataset, `CURRENT_WEEK = 42` and the 52-week display are unchanged.
+
 ## Context
 
 Frigoglass wants the demo video to show their real portfolio instead of the prototype's

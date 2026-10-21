@@ -1,5 +1,6 @@
-"""ADR 0024: the client's real 2026 dataset (`seed/extract_client_2026.py` →
-`seed/client_2026_seed_data.json`) and its derived seed inputs
+"""ADR 0024 / ADR 0035: the client's real 2026 dataset
+(`seed/extract_client_2026.py` → `seed/client_2026_seed_data.json`), the
+formula workbook's roster, and the derived seed inputs
 (`seed/client_2026.py`). Pure tests: no database. The DB-backed seed run is in
 `tests/test_seed_scripts.py`.
 """
@@ -61,21 +62,56 @@ def _specs(project: dict[str, Any]) -> list[c26.StepSpec]:
 
 
 def _derive_all(
-    projects: list[dict[str, Any]], leaders: list[str], current_week: int
+    projects: list[dict[str, Any]], leaders: list[str | None], current_week: int
 ) -> dict[int, list[c26.StepProgress]]:
+    """As `seed_demo_data.seed_client_2026`: a project with no leader books
+    nothing, so it uses a private ledger."""
+
     ledger = c26.ResourceLedger()
     progress: dict[int, list[c26.StepProgress]] = {}
     for i in _order(projects):
         p = projects[i]
+        shared = c26.is_open(p) and leaders[i] is not None
         progress[i] = c26.derive_progress(
             p,
             _specs(p),
             leader=leaders[i],
             lab_region=dc.HUB_LAB_REGION[p["hub"]],
             current_week=current_week,
-            ledger=ledger if c26.is_open(p) else c26.ResourceLedger(),
+            ledger=ledger if shared else c26.ResourceLedger(),
         )
     return progress
+
+
+#: ADR 0035: the formula workbook's roster (`RPD Capacity!I42:T50`).
+WORKBOOK_ROSTER = {
+    "Rishi": ("PD-India", 1.0),
+    "Lokesh": ("PD-India", 1.0),
+    "Zakir": ("PD-India", 1.0),
+    "Pawan": ("PD-India", 1.0),
+    "Nikhil": ("PD-India", 0.75),
+    "Atul": ("PD-India", 0.5),
+    "Rahul-Contractual": ("PD-India", 0.5),
+    "Ashish": ("R&D-India", 1.0),
+    "Praveer Kumar Singh": ("R&D-India", 0.5),
+    "Ayush Kumar": ("R&D-India", 0.5),
+    "Dimopoulou": ("R&D-Greece", 1.0),
+    "Lioumis": ("R&D-Greece", 1.0),
+    "Kanarios": ("R&D-Greece", 0.8),
+    "Stef Marius": ("PD-Romania", 1.0),
+    "Alin Boboc": ("PD-Romania", 1.0),
+    "Adrian Bortoc": ("PD-Romania", 1.0),
+    "Bianca": ("PD-Romania", 0.75),
+}
+#: ADR 0035: workbook project leaders who are not on the roster.
+PROVISIONAL = {
+    "Dipak": "R&D-India",
+    "Elena Micu": "PD-Romania",
+    "Theoni": "OEM-HCK",
+    "Marian": "PD-Romania",
+    "Sailesh": "PD-India",
+    "Antonis": "PD-India",
+}
 
 
 # --- The committed JSON ------------------------------------------------------
@@ -123,6 +159,46 @@ def test_priority_follows_marketing_rank_then_status(data: dict[str, Any]) -> No
             assert p["priority"] == "P4"
 
 
+def test_charter_fields_spillover_and_end_dates(data: dict[str, Any]) -> None:
+    """ADR 0035: plant (253), requesting department (237), product type (250),
+    `Spillover '25` (17) and the end dates (22, of which 15 are in the plan)."""
+
+    projects = data["projects"]
+    assert sum(p["plant"] is not None for p in projects) == 253
+    assert sum(p["requesting_department"] is not None for p in projects) == 237
+    assert sum(p["product_type"] is not None for p in projects) == 250
+    assert sum(p["spillover_2025"] for p in projects) == 17
+    assert sum(p["end_date"] is not None for p in projects) == 22
+    weeks = [p["target_end_week"] for p in projects if p["target_end_week"] is not None]
+    assert len(weeks) == 15 and all(1 <= w <= dc.WITHIN_YEAR_WEEK for w in weeks)
+    for p in projects:
+        if p["end_date"] is not None:
+            assert p["target_end_week"] == ex.plan_week(dt.date.fromisoformat(p["end_date"]))
+    # Vocabulary: the workbook lists, plus the one department it does not list.
+    assert {p["plant"] for p in projects} <= set(dc.PLANT_OPTIONS)
+    assert {p["product_type"] for p in projects} - {None} <= set(dc.PRODUCT_TYPE_OPTIONS)
+    departments = {p["requesting_department"] for p in projects} - {None}
+    assert departments - set(dc.REQUESTING_DEPARTMENT_OPTIONS) == {"Development"}
+
+
+def test_committed_roster_is_the_formula_workbook_roster(data: dict[str, Any]) -> None:
+    roster = data["roster"]
+    assert len(roster) == 19
+    real = {r["name"]: (r["hub"], r["fte"]) for r in roster if r["fte"] > 0}
+    assert real == WORKBOOK_ROSTER
+    zero = sorted(r["name"] for r in roster if r["fte"] == 0)
+    assert zero == ["New Hiring", "New engineer-Contractual"]
+    totals: Counter[str] = Counter()
+    for r in roster:
+        totals[r["hub"]] += r["fte"]
+    assert {h: round(v, 2) for h, v in totals.items()} == {
+        "PD-India": 5.75,
+        "R&D-India": 2.0,
+        "R&D-Greece": 2.8,
+        "PD-Romania": 3.75,
+    }
+
+
 def test_leaders_are_assigned_to_their_majority_hub(data: dict[str, Any]) -> None:
     for leader in data["leaders"]:
         counts = leader["hub_counts"]
@@ -135,7 +211,7 @@ def test_leaders_are_assigned_to_their_majority_hub(data: dict[str, Any]) -> Non
 
 
 def _row(**cells: object) -> tuple[object, ...]:
-    row: list[object] = [None] * (ex.COL_DEV_STEP + 1)
+    row: list[object] = [None] * (ex.COL_LAST + 1)
     defaults = {
         ex.COL_SNO: 7,
         ex.COL_REQUEST: dt.datetime(2026, 3, 1),
@@ -176,6 +252,71 @@ def test_extract_maps_hubs_categories_statuses_and_leaders() -> None:
     assert out[0]["name"] == "A project" and out[0]["priority"] == "P4"
 
 
+def test_extract_charter_fields_end_date_and_spillover() -> None:
+    rows = [
+        (6, _row(c9=" OEM-Seitek ", c11="ICM", c12="Marketing/Sales", c45=dt.datetime(2026, 8, 1))),
+        (7, _row(c45=45992, c56="Yes")),  # Excel serial 2025-12-01: not imported
+        (8, _row(c45=dt.datetime(2025, 12, 30), c56="y")),  # ISO 2026-W01
+        (9, _row(c56="No")),
+    ]
+    out = ex.extract(rows)["projects"]
+    assert out[0]["plant"] == "OEM-Seitek" and out[0]["product_type"] == "ICM"
+    assert out[0]["requesting_department"] == "Marketing/Sales"
+    assert out[0]["end_date"] == "2026-08-01" and out[0]["target_end_week"] == 31
+    assert out[0]["spillover_2025"] is False
+    assert out[1]["end_date"] == "2025-12-01" and out[1]["target_end_week"] is None
+    assert out[1]["spillover_2025"] is True
+    assert out[2]["target_end_week"] == 1 and out[2]["spillover_2025"] is True
+    assert out[3]["end_date"] is None and out[3]["spillover_2025"] is False
+    assert out[3]["plant"] is None and out[3]["requesting_department"] is None
+
+
+def test_plan_week_rule() -> None:
+    assert ex.plan_week(dt.date(2026, 1, 5)) == 2
+    assert ex.plan_week(dt.date(2026, 12, 31)) == 52  # ISO 2026-W53 → 52
+    assert ex.plan_week(dt.date(2027, 3, 1)) == 52 + 9
+    assert ex.plan_week(dt.date(2027, 9, 1)) is None  # past W78
+    assert ex.plan_week(dt.date(2025, 6, 1)) is None  # before the plan year
+    assert ex.plan_week(None) is None
+
+
+def test_extract_roster_reads_the_four_blocks() -> None:
+    def row(**cells: object) -> tuple[object, ...]:
+        values: list[object] = [None] * 20
+        for letter, value in cells.items():
+            values[ord(letter) - ord("A")] = value
+        return tuple(values)
+
+    rows = {
+        39: row(I="India (PD)", L="India (R&D)", O="Greece (R&D)", R="Romania (PD)"),
+        41: row(
+            **{
+                col: text
+                for start in "ILOR"
+                for col, text in zip(
+                    (start, chr(ord(start) + 1), chr(ord(start) + 2)),
+                    ("Engineer Name", "Resource Count", "Remarks"),
+                    strict=True,
+                )
+            }
+        ),
+        42: row(I="Rishi", J=1, L="Ashish", M=1.0, O="Kanarios", P=0.8, Q="Sourcing "),
+        43: row(I="New Hiring", J=0, K="To be hired"),
+    }
+    out = ex.extract_roster(rows)
+    assert [(r["name"], r["hub"], r["fte"]) for r in out] == [
+        ("Rishi", "PD-India", 1.0),
+        ("New Hiring", "PD-India", 0.0),
+        ("Ashish", "R&D-India", 1.0),
+        ("Kanarios", "R&D-Greece", 0.8),
+    ]
+    assert out[3]["remark"] == "Sourcing" and out[0]["cell"] == "I42:J42"
+    with pytest.raises(ValueError, match="roster block"):
+        ex.extract_roster({**rows, 39: row(I="Somewhere")})
+    with pytest.raises(ValueError, match="Resource Count"):
+        ex.extract_roster({**rows, 42: row(I="Rishi", J="one")})
+
+
 def test_extract_external_codes_are_unique_and_fall_back() -> None:
     rows = [
         (6, _row(c6="26-00412")),
@@ -203,28 +344,54 @@ def test_extract_rejects_unknown_hub_and_status() -> None:
 # --- Derived seed inputs -----------------------------------------------------
 
 
-def test_every_project_gets_a_valid_leader_within_the_cap(data: dict[str, Any]) -> None:
+def test_roster_is_the_workbook_roster_plus_provisional_leaders(data: dict[str, Any]) -> None:
+    """ADR 0035: the 17 roster people with the workbook's hub and FTE, the two
+    0-FTE placeholders not created, and the 6 workbook leaders who are not on
+    the roster added as provisional engineers at FTE 1.0. No synthetic one."""
+
+    build = c26.build_roster(data)
+    by_name = {e.name: e for e in build.engineers}
+    assert len(by_name) == len(build.engineers) == 23
+    real = {n: (e.hub, e.fte) for n, e in by_name.items() if not e.provisional}
+    assert real == WORKBOOK_ROSTER
+    provisional = {n: e.hub for n, e in by_name.items() if e.provisional}
+    assert provisional == PROVISIONAL
+    assert all(by_name[n].fte == c26.PROVISIONAL_LEADER_FTE for n in PROVISIONAL)
+    assert sorted(str(r["name"]) for r in build.placeholders) == [
+        "New Hiring",
+        "New engineer-Contractual",
+    ]
+    assert all(e.fte >= c26.MIN_FTE for e in build.engineers)
+    assert not any("Engineer " in n for n in by_name)
+    for name in WORKBOOK_ROSTER:
+        assert by_name[name].allowed_categories == c26.CLIENT_APP_ALLOWED_CATEGORIES[name]
+    # A provisional leader may lead every category of the projects they lead.
+    for name in PROVISIONAL:
+        led = {p["category"] for p in data["projects"] if c26.canonical_leader(p["leader"]) == name}
+        assert set(by_name[name].allowed_categories) == led
+
+
+def test_leaders_are_the_workbook_leaders_never_reassigned(data: dict[str, Any]) -> None:
     projects = data["projects"]
-    leaders, roster = c26.assign_leaders(projects, data["leaders"], _order(projects))
-    by_name = {e.name: e for e in roster}
-    assert len(by_name) == len(roster)
-    assert all(name in by_name for name in leaders)
-    open_load = Counter(leaders[i] for i, p in enumerate(projects) if c26.is_open(p))
-    assert max(open_load.values()) <= c26.MAX_OPEN_PROJECTS_PER_ENGINEER
-    for hub in dc.HUB_LAB_REGION:
-        assert any(e.hub == hub for e in roster), hub
-    for i, p in enumerate(projects):
-        if p["leader"] and not c26.is_open(p):
-            assert leaders[i] == p["leader"]
-        if not p["leader"]:
-            assert by_name[leaders[i]].hub == p["hub"]
-        if leaders[i] != p["leader"] and p["leader"]:
-            # Delegated overflow: a capacity engineer of the project's own hub.
-            assert not by_name[leaders[i]].from_workbook
-            assert by_name[leaders[i]].hub == p["hub"]
-    workbook = {str(lead["name"]): str(lead["hub"]) for lead in data["leaders"]}
-    for name, hub in workbook.items():
-        assert by_name[name].hub == hub and by_name[name].from_workbook
+    build = c26.build_roster(data)
+    leaders = c26.project_leaders(projects, build.engineers)
+    for p, leader in zip(projects, leaders, strict=True):
+        assert leader == c26.LEADER_ALIASES.get(p["leader"], p["leader"])
+    blank = [p for p, leader in zip(projects, leaders, strict=True) if leader is None]
+    assert len(blank) == 20
+    assert Counter(p["hub"] for p in blank) == {
+        "OEM-HCK": 9,
+        "OEM-Seltek": 8,
+        "PD-India": 1,
+        "PD-Romania": 1,
+        "R&D-Greece": 1,
+    }
+    assert sum(c26.is_open(p) for p in blank) == 18
+
+
+def test_carry_over_and_reg_year(data: dict[str, Any]) -> None:
+    pairs = [c26.carry_over_and_reg_year(p) for p in data["projects"]]
+    assert Counter(pairs) == {(True, 2025): 17, (False, 2026): 236}
 
 
 def test_derived_dims_land_in_the_projects_band(data: dict[str, Any]) -> None:
@@ -238,7 +405,7 @@ def test_derived_dims_land_in_the_projects_band(data: dict[str, Any]) -> None:
 @pytest.mark.parametrize("current_week", [31, 42])
 def test_derived_progress_is_consistent(data: dict[str, Any], current_week: int) -> None:
     projects = data["projects"]
-    leaders, _roster = c26.assign_leaders(projects, data["leaders"], _order(projects))
+    leaders = c26.project_leaders(projects, c26.build_roster(data).engineers)
     progress = _derive_all(projects, leaders, current_week)
     busy_design: Counter[str] = Counter()
     lab_tails: Counter[str] = Counter()
@@ -263,9 +430,9 @@ def test_derived_progress_is_consistent(data: dict[str, Any], current_week: int)
                 assert sp.actual_start_week is not None
                 assert previous_end < sp.actual_start_week <= current_week
                 previous_end = current_week
-                if spec.kind == "design":
-                    busy_design[leaders[i]] += 1
-                elif spec.kind == "lab":
+                if spec.kind == "design" and leaders[i] is not None:
+                    busy_design[str(leaders[i])] += 1
+                elif spec.kind == "lab" and leaders[i] is not None:
                     lab_tails[dc.HUB_LAB_REGION[p["hub"]]] += 1
             else:
                 assert sp == c26.NOT_STARTED
@@ -285,47 +452,17 @@ def test_derived_progress_is_consistent(data: dict[str, Any], current_week: int)
     assert all(lab_tails[r] <= platforms[r] for r in lab_tails)
 
 
-def test_tune_fte_books_each_hub_at_or_just_above_its_target() -> None:
-    roster = [
-        c26.EngineerSeed("A", "R&D-India", 1.0, c26.ALL_CATEGORIES, True),
-        c26.EngineerSeed("B", "R&D-India", 1.0, c26.ALL_CATEGORIES, False),
-        c26.EngineerSeed("C", "PD-Romania", 1.0, c26.ALL_CATEGORIES, True),
-    ]
-    load = {"R&D-India": 40, "PD-Romania": 130}
-    c26.tune_fte(roster, load)
-    for hub, target in (("R&D-India", 60.0), ("PD-Romania", 100.0)):
-        fte = sum(e.fte for e in roster if e.hub == hub)
-        booked = load[hub] / (c26.working_weeks_per_engineer(hub) * fte) * 100
-        assert target <= booked < target + 2, (hub, booked)
-    # PD-Romania needed ~2.95 FTE: capacity-only engineers were added.
-    assert sum(1 for e in roster if e.hub == "PD-Romania") == 3
-    assert all(0 < e.fte <= c26.MAX_FTE for e in roster)
-
-
-def test_tune_efficiency_books_each_region_at_or_just_above_100() -> None:
-    chambers = [
-        ("G1", "Greece", 0.7, 38.6, 1),
-        ("G2", "Greece", 0.6, 38.6, 2),
-        ("I1", "India", 0.7, 45.0, 1),
-    ]
-    load = {"Greece": 22.0, "India": 40.0}
-    eff = c26.tune_efficiency(chambers, load)
-    for region in ("Greece", "India"):
-        supply = sum(w * eff[c] * pl for c, r, _e, w, pl in chambers if r == region)
-        assert 100 <= load[region] / supply * 100 < 101, region
-    assert all(0 < e <= c26.MAX_EFFICIENCY for e in eff.values())
-    # Never above 1.0: a region whose load exceeds the maximum supply stays capped.
-    capped = c26.tune_efficiency([("X", "India", 0.5, 10.0, 1)], {"India": 100.0})
-    assert capped == {"X": 1.0}
-
-
 def test_seed_inputs_schedule_without_invariant_violations(data: dict[str, Any]) -> None:
     """The derived inputs are a valid scheduler input at the pinned test week:
-    no data errors, no engineer/chamber conflicts, every invariant holds."""
+    no data errors, no engineer/chamber conflicts, every invariant holds. The
+    18 open projects with a blank leader are left out with `no_leader`
+    (ADR 0035). CAT_NOT_ALLOWED may be raised now (the client app's
+    categories); it is a warning, not a block."""
 
     projects = data["projects"]
     current_week = dc.CURRENT_WEEK
-    leaders, roster = c26.assign_leaders(projects, data["leaders"], _order(projects))
+    roster = c26.build_roster(data).engineers
+    leaders = c26.project_leaders(projects, roster)
     progress = _derive_all(projects, leaders, current_week)
     ids = _project_ids(projects)
     schedule_input = ScheduleInput(
@@ -338,7 +475,9 @@ def test_seed_inputs_schedule_without_invariant_violations(data: dict[str, Any])
                 category=p["category"],
                 priority=p["priority"],
                 frozen=False,
-                leader_engineer_id=str(c26.engineer_uuid(leaders[i])),
+                leader_engineer_id=(
+                    str(c26.engineer_uuid(leaders[i])) if leaders[i] is not None else None
+                ),
                 workflow_id="OEM" if p["hub"] in dc.OEM_HUBS else "PDD",
                 certification_testing_required=p["certification_testing_required"],
                 step_progress=tuple(
@@ -381,6 +520,12 @@ def test_seed_inputs_schedule_without_invariant_violations(data: dict[str, Any])
     output = run_greedy_sgs(schedule_input)
     assert not any(o.data_error for o in output.project_outcomes)
     outcomes = output.project_outcomes
-    assert not any(o.eng_conflict or o.overlap or o.cat_not_allowed for o in outcomes)
+    assert not any(o.eng_conflict or o.overlap for o in outcomes)
     assert sum(o.excluded for o in output.project_outcomes) == 61
+    no_leader = {o.project_id for o in outcomes if o.no_leader}
+    assert len(no_leader) == 18
+    assert all(o.left_out for o in outcomes if o.no_leader)
+    assert no_leader == {
+        ids[i] for i, p in enumerate(projects) if leaders[i] is None and c26.is_open(p)
+    }
     assert validate_invariants(schedule_input, output, check_determinism=False) == ()

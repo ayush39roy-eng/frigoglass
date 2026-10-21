@@ -3,7 +3,8 @@
   "workbook": "24-25-26 Global RPD Project Pipeline.xlsx (client; not committed)",
   "sheet": "2024-25-26 Projects",
   "selection": "Project Request (MM/YY) in 2026",
-  "extractor": "backend/seed/extract_client_2026.py"
+  "extractor": "backend/seed/extract_client_2026.py",
+  "roster": "Formula-2025-26 Global RPD Project Pipeline.xlsx (client; reference/), RPD Capacity!I39:T50"
  },
  "project_count": 253,
  "leaders": [
@@ -181,6 +182,11 @@
    "request_date": "2026-01-01",
    "request_week": 1,
    "plant": "IND",
+   "product_type": "ICM",
+   "requesting_department": "Central Procurement Group",
+   "end_date": "2026-08-01",
+   "target_end_week": 31,
+   "spillover_2025": true,
    "capacity_flag": null
   },
   {
@@ -207,6 +213,11 @@
    "request_date": "2026-01-01",
    "request_week": 1,
    "plant": "IND",
+   "product_type": "ICM",
+   "requesting_department": "Central Procurement Group",
+   "end_date": "2026-08-01",
+   "target_end_week": 31,
+   "spillover_2025": true,
    "capacity_flag": "Y"
   },
   {
@@ -233,6 +244,11 @@
    "request_date": "2026-01-01",
    "request_week": 1,
    "plant": "IND",
+   "product_type": "ICM",
+   "requesting_department": "Central Procurement Group",
+   "end_date": "2026-08-01",
+   "target_end_week": 31,
+   "spillover_2025": true,
    "capacity_flag": "Y"
   },
   {
@@ -259,6 +275,11 @@
    "request_date": "2026-01-01",
    "request_week": 1,
    "plant": "IND",
+   "product_type": "ICM",
+   "requesting_department": "Central Procurement Group",
+   "end_date": "2026-08-01",
+   "target_end_week": 31,
+   "spillover_2025": true,
    "capacity_flag": "Y"
   },
   {
@@ -285,6 +306,11 @@
    "request_date": "2026-01-01",
    "request_week": 1,
    "plant": "Multiplant",
+   "product_type": "ICM",
+   "requesting_department": "Marketing/Sales",
+   "end_date": "2026-07-31",
+   "target_end_week": 31,
+   "spillover_2025": false,
    "capacity_flag": null
   },
   {
@@ -311,6 +337,11 @@
    "request_date": "2026-01-01",
    "request_week": 1,
    "plant": "IND",
+   "product_type": "ICM",
+   "requesting_department": "Marketing/Sales",
+   "end_date": "2026-03-31",
+   "target_end_week": 14,
+   "spillover_2025": false,
    "capacity_flag": "Y"
   },
   {
@@ -337,6 +368,11 @@
    "request_date": "2026-01-01",
    "request_week": 1,
    "plant": "Egypt",
+   "product_type": "ICM",
+   "requesting_department": "Marketing/Sales",
+   "end_date": "2026-03-31",
+   "target_end_week": 14,
+   "spillover_2025": false,
    "capacity_flag": null
   },
   {
@@ -363,6 +399,11 @@
    "request_date": "2026-01-01",
    "request_week": 1,
    "plant": "SAF",
+   "product_type": "ICM",
+   "requesting_department": "Marketing/Sales",
+   "end_date": "2026-03-31",
+   "target_end_week": 14,
+   "spillover_2025": false,
    "capacity_flag": null
   },
   {
@@ -389,6 +430,11 @@
    "request_date": "2026-01-01",
    "request_week": 1,
    "plant": "IND",
+   "product_type": "ICM",
+   "requesting_department": "Marketing/Sales",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": "Y"
   },
   {
@@ -415,6 +461,11 @@
    "request_date": "2026-01-01",
    "request_week": 1,
    "plant": "IND",
+   "product_type": "ICM",
+   "requesting_department": "Marketing/Sales",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": null
   },
   {
@@ -441,6 +492,11 @@
    "request_date": "2026-01-01",
    "request_week": 1,
    "plant": "IND",
+   "product_type": "ICM",
+   "requesting_department": "Marketing/Sales",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": "Y"
   },
   {
@@ -467,6 +523,11 @@
    "request_date": "2026-01-01",
    "request_week": 1,
    "plant": "IND",
+   "product_type": "ICM",
+   "requesting_department": "Marketing/Sales",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": null
   },
   {
@@ -493,6 +554,11 @@
    "request_date": "2026-01-01",
    "request_week": 1,
    "plant": "SAF",
+   "product_type": "ICM",
+   "requesting_department": "Marketing/Sales",
+   "end_date": "2026-12-01",
+   "target_end_week": 49,
+   "spillover_2025": false,
    "capacity_flag": "Y"
   },
   {
@@ -519,6 +585,11 @@
    "request_date": "2026-01-01",
    "request_week": 1,
    "plant": "SAF",
+   "product_type": "ICM",
+   "requesting_department": "Marketing/Sales",
+   "end_date": "2026-12-01",
+   "target_end_week": 49,
+   "spillover_2025": false,
    "capacity_flag": null
   },
   {
@@ -545,6 +616,11 @@
    "request_date": "2026-01-01",
    "request_week": 1,
    "plant": "Egypt",
+   "product_type": "ICM",
+   "requesting_department": "Marketing/Sales",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": null
   },
   {
@@ -571,6 +647,11 @@
    "request_date": "2026-01-01",
    "request_week": 1,
    "plant": "Egypt",
+   "product_type": "ICM",
+   "requesting_department": "Marketing/Sales",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": null
   },
   {
@@ -597,6 +678,11 @@
    "request_date": "2026-01-01",
    "request_week": 1,
    "plant": "IND",
+   "product_type": "ICM",
+   "requesting_department": "Marketing/Sales",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": "Y"
   },
   {
@@ -623,6 +709,11 @@
    "request_date": "2026-01-01",
    "request_week": 1,
    "plant": "IND",
+   "product_type": "ICM",
+   "requesting_department": "Marketing/Sales",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": "Y"
   },
   {
@@ -649,6 +740,11 @@
    "request_date": "2026-01-01",
    "request_week": 1,
    "plant": "Egypt",
+   "product_type": "ICM",
+   "requesting_department": "Marketing/Sales",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": null
   },
   {
@@ -675,6 +771,11 @@
    "request_date": "2026-01-01",
    "request_week": 1,
    "plant": "Egypt",
+   "product_type": "ICM",
+   "requesting_department": "Marketing/Sales",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": null
   },
   {
@@ -701,6 +802,11 @@
    "request_date": "2026-01-01",
    "request_week": 1,
    "plant": "Egypt",
+   "product_type": "ICM",
+   "requesting_department": null,
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": null
   },
   {
@@ -727,6 +833,11 @@
    "request_date": "2026-01-01",
    "request_week": 1,
    "plant": "Egypt",
+   "product_type": "ICM",
+   "requesting_department": null,
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": null
   },
   {
@@ -753,6 +864,11 @@
    "request_date": "2026-01-01",
    "request_week": 1,
    "plant": "Egypt",
+   "product_type": "ICM",
+   "requesting_department": null,
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": null
   },
   {
@@ -779,6 +895,11 @@
    "request_date": "2026-01-01",
    "request_week": 1,
    "plant": "IND",
+   "product_type": "ICM",
+   "requesting_department": "Central R&PD",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": "Y"
   },
   {
@@ -805,6 +926,11 @@
    "request_date": "2026-01-01",
    "request_week": 1,
    "plant": "IND",
+   "product_type": "ICM",
+   "requesting_department": "Central R&PD",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": "Y"
   },
   {
@@ -831,6 +957,11 @@
    "request_date": "2026-01-01",
    "request_week": 1,
    "plant": "IND",
+   "product_type": "ICM",
+   "requesting_department": "Central R&PD",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": "Y"
   },
   {
@@ -857,6 +988,11 @@
    "request_date": "2026-01-01",
    "request_week": 1,
    "plant": "IND",
+   "product_type": "ICM",
+   "requesting_department": "Central R&PD",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": "Y"
   },
   {
@@ -883,6 +1019,11 @@
    "request_date": "2026-01-01",
    "request_week": 1,
    "plant": "IND",
+   "product_type": "ICM",
+   "requesting_department": "Central R&PD",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": "Y"
   },
   {
@@ -909,6 +1050,11 @@
    "request_date": "2026-01-01",
    "request_week": 1,
    "plant": "IND",
+   "product_type": "ICM",
+   "requesting_department": "Central R&PD",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": "Y"
   },
   {
@@ -935,6 +1081,11 @@
    "request_date": "2026-01-01",
    "request_week": 1,
    "plant": "IND",
+   "product_type": "ICM",
+   "requesting_department": "Central R&PD",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": "Y"
   },
   {
@@ -961,6 +1112,11 @@
    "request_date": "2026-01-01",
    "request_week": 1,
    "plant": "IND",
+   "product_type": "ICM",
+   "requesting_department": "Central R&PD",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": "Y"
   },
   {
@@ -987,6 +1143,11 @@
    "request_date": "2026-01-01",
    "request_week": 1,
    "plant": "IND",
+   "product_type": "ICM",
+   "requesting_department": "Central R&PD",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": "Y"
   },
   {
@@ -1013,6 +1174,11 @@
    "request_date": "2026-01-01",
    "request_week": 1,
    "plant": "IND",
+   "product_type": "ICM",
+   "requesting_department": "Central R&PD",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": "Y"
   },
   {
@@ -1039,6 +1205,11 @@
    "request_date": "2026-01-01",
    "request_week": 1,
    "plant": "IND",
+   "product_type": "ICM",
+   "requesting_department": "Central R&PD",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": "Y"
   },
   {
@@ -1065,6 +1236,11 @@
    "request_date": "2026-01-01",
    "request_week": 1,
    "plant": "IND",
+   "product_type": "ICM",
+   "requesting_department": "Central R&PD",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": "Y"
   },
   {
@@ -1091,6 +1267,11 @@
    "request_date": "2026-01-01",
    "request_week": 1,
    "plant": "IND",
+   "product_type": "ICM",
+   "requesting_department": "Central R&PD",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": "Y"
   },
   {
@@ -1117,6 +1298,11 @@
    "request_date": "2026-01-01",
    "request_week": 1,
    "plant": "INN",
+   "product_type": "ICM",
+   "requesting_department": "Central Supply Chain",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": "Y"
   },
   {
@@ -1143,6 +1329,11 @@
    "request_date": "2026-01-01",
    "request_week": 1,
    "plant": "IND",
+   "product_type": "ICM",
+   "requesting_department": "Central Supply Chain",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": "Y"
   },
   {
@@ -1169,6 +1360,11 @@
    "request_date": "2026-01-01",
    "request_week": 1,
    "plant": "INN",
+   "product_type": "ICM",
+   "requesting_department": "Central Supply Chain",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": "Y"
   },
   {
@@ -1195,6 +1391,11 @@
    "request_date": "2026-01-01",
    "request_week": 1,
    "plant": "INN",
+   "product_type": "ICM",
+   "requesting_department": "Central R&PD",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": "Y"
   },
   {
@@ -1221,6 +1422,11 @@
    "request_date": "2026-01-01",
    "request_week": 1,
    "plant": "INN",
+   "product_type": "ICM",
+   "requesting_department": "Local Supply Chain",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": "Y"
   },
   {
@@ -1247,6 +1453,11 @@
    "request_date": "2026-01-01",
    "request_week": 1,
    "plant": "INN",
+   "product_type": "ICM",
+   "requesting_department": "Local Supply Chain",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": "Y"
   },
   {
@@ -1273,6 +1484,11 @@
    "request_date": "2026-01-01",
    "request_week": 1,
    "plant": "INN",
+   "product_type": "ICM",
+   "requesting_department": "Local Supply Chain",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": "Y"
   },
   {
@@ -1299,6 +1515,11 @@
    "request_date": "2026-01-01",
    "request_week": 1,
    "plant": "INN",
+   "product_type": "ICM",
+   "requesting_department": "Local Supply Chain",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": "Y"
   },
   {
@@ -1325,6 +1546,11 @@
    "request_date": "2026-01-01",
    "request_week": 1,
    "plant": "INN",
+   "product_type": "ICM",
+   "requesting_department": "Central R&PD",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": "Y"
   },
   {
@@ -1351,6 +1577,11 @@
    "request_date": "2026-01-01",
    "request_week": 1,
    "plant": "INN",
+   "product_type": "ICM",
+   "requesting_department": "Central R&PD",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": "Y"
   },
   {
@@ -1377,6 +1608,11 @@
    "request_date": "2026-01-01",
    "request_week": 1,
    "plant": "INN",
+   "product_type": "ICM",
+   "requesting_department": "Central R&PD",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": "Y"
   },
   {
@@ -1403,6 +1639,11 @@
    "request_date": "2026-01-01",
    "request_week": 1,
    "plant": "INN",
+   "product_type": "ICM",
+   "requesting_department": "Central R&PD",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": "Y"
   },
   {
@@ -1429,6 +1670,11 @@
    "request_date": "2026-01-01",
    "request_week": 1,
    "plant": "INN",
+   "product_type": "ICM",
+   "requesting_department": "Central R&PD",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": "Y"
   },
   {
@@ -1455,6 +1701,11 @@
    "request_date": "2026-01-01",
    "request_week": 1,
    "plant": "INN",
+   "product_type": "ICM",
+   "requesting_department": "Central R&PD",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": "Y"
   },
   {
@@ -1481,6 +1732,11 @@
    "request_date": "2026-01-01",
    "request_week": 1,
    "plant": "INN",
+   "product_type": "ICM",
+   "requesting_department": "Central R&PD",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": "Y"
   },
   {
@@ -1507,6 +1763,11 @@
    "request_date": "2026-01-01",
    "request_week": 1,
    "plant": "SAF",
+   "product_type": "ICM",
+   "requesting_department": "Central R&PD",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": "Y"
   },
   {
@@ -1533,6 +1794,11 @@
    "request_date": "2026-01-01",
    "request_week": 1,
    "plant": "SAF",
+   "product_type": "ICM",
+   "requesting_department": "Central R&PD",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": "Y"
   },
   {
@@ -1559,6 +1825,11 @@
    "request_date": "2026-01-01",
    "request_week": 1,
    "plant": "SAF",
+   "product_type": "ICM",
+   "requesting_department": "Central R&PD",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": "Y"
   },
   {
@@ -1585,6 +1856,11 @@
    "request_date": "2026-01-01",
    "request_week": 1,
    "plant": "SAF",
+   "product_type": "ICM",
+   "requesting_department": "Central R&PD",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": "Y"
   },
   {
@@ -1611,6 +1887,11 @@
    "request_date": "2026-01-01",
    "request_week": 1,
    "plant": "SAF",
+   "product_type": "ICM",
+   "requesting_department": "Central R&PD",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": "Y"
   },
   {
@@ -1637,6 +1918,11 @@
    "request_date": "2026-01-01",
    "request_week": 1,
    "plant": "SAF",
+   "product_type": "ICM",
+   "requesting_department": "Central R&PD",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": "Y"
   },
   {
@@ -1663,6 +1949,11 @@
    "request_date": "2026-01-01",
    "request_week": 1,
    "plant": "SAF",
+   "product_type": "ICM",
+   "requesting_department": "Central Procurement Group",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": "Y"
   },
   {
@@ -1689,6 +1980,11 @@
    "request_date": "2026-01-01",
    "request_week": 1,
    "plant": "SAF",
+   "product_type": "ICM",
+   "requesting_department": "Central R&PD",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": "Y"
   },
   {
@@ -1715,6 +2011,11 @@
    "request_date": "2026-01-01",
    "request_week": 1,
    "plant": "SAF",
+   "product_type": "ICM",
+   "requesting_department": "Central R&PD",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": "Y"
   },
   {
@@ -1741,6 +2042,11 @@
    "request_date": "2026-01-01",
    "request_week": 1,
    "plant": "SAF",
+   "product_type": "ICM",
+   "requesting_department": "Central Procurement Group",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": "Y"
   },
   {
@@ -1767,6 +2073,11 @@
    "request_date": "2026-01-01",
    "request_week": 1,
    "plant": "SAF",
+   "product_type": "ICM",
+   "requesting_department": "Central Procurement Group",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": "Y"
   },
   {
@@ -1793,6 +2104,11 @@
    "request_date": "2026-01-01",
    "request_week": 1,
    "plant": "SAF",
+   "product_type": "ICM",
+   "requesting_department": "Central Procurement Group",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": "Y"
   },
   {
@@ -1819,6 +2135,11 @@
    "request_date": "2026-01-01",
    "request_week": 1,
    "plant": "SAF",
+   "product_type": "ICM",
+   "requesting_department": "Central Procurement Group",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": "Y"
   },
   {
@@ -1845,6 +2166,11 @@
    "request_date": "2026-01-01",
    "request_week": 1,
    "plant": "SAF",
+   "product_type": "ICM",
+   "requesting_department": "Central Procurement Group",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": "Y"
   },
   {
@@ -1871,6 +2197,11 @@
    "request_date": "2026-01-01",
    "request_week": 1,
    "plant": "SAF",
+   "product_type": "ICM",
+   "requesting_department": "Central Procurement Group",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": "Y"
   },
   {
@@ -1897,6 +2228,11 @@
    "request_date": "2026-01-01",
    "request_week": 1,
    "plant": "SAF",
+   "product_type": "ICM",
+   "requesting_department": "Central Procurement Group",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": "Y"
   },
   {
@@ -1923,6 +2259,11 @@
    "request_date": "2026-01-01",
    "request_week": 1,
    "plant": "SAF",
+   "product_type": "ICM",
+   "requesting_department": "Central Procurement Group",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": "Y"
   },
   {
@@ -1949,6 +2290,11 @@
    "request_date": "2026-01-01",
    "request_week": 1,
    "plant": "SAF",
+   "product_type": "ICM",
+   "requesting_department": "Central Procurement Group",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": "Y"
   },
   {
@@ -1975,6 +2321,11 @@
    "request_date": "2026-01-01",
    "request_week": 1,
    "plant": "SAF",
+   "product_type": "ICM",
+   "requesting_department": "Central Procurement Group",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": "Y"
   },
   {
@@ -2001,6 +2352,11 @@
    "request_date": "2026-01-01",
    "request_week": 1,
    "plant": "SAF",
+   "product_type": "ICM",
+   "requesting_department": null,
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": null
   },
   {
@@ -2027,6 +2383,11 @@
    "request_date": "2026-01-01",
    "request_week": 1,
    "plant": "SAF",
+   "product_type": "ICM",
+   "requesting_department": null,
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": null
   },
   {
@@ -2053,6 +2414,11 @@
    "request_date": "2026-01-01",
    "request_week": 1,
    "plant": "SAF",
+   "product_type": "ICM",
+   "requesting_department": null,
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": null
   },
   {
@@ -2079,6 +2445,11 @@
    "request_date": "2026-01-01",
    "request_week": 1,
    "plant": "SAF",
+   "product_type": "ICM",
+   "requesting_department": null,
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": null
   },
   {
@@ -2105,6 +2476,11 @@
    "request_date": "2026-01-01",
    "request_week": 1,
    "plant": "SAF",
+   "product_type": "ICM",
+   "requesting_department": null,
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": null
   },
   {
@@ -2131,6 +2507,11 @@
    "request_date": "2026-01-01",
    "request_week": 1,
    "plant": "SAF",
+   "product_type": "ICM",
+   "requesting_department": null,
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": null
   },
   {
@@ -2157,6 +2538,11 @@
    "request_date": "2026-01-01",
    "request_week": 1,
    "plant": "SAF",
+   "product_type": "ICM",
+   "requesting_department": null,
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": null
   },
   {
@@ -2183,6 +2569,11 @@
    "request_date": "2026-01-01",
    "request_week": 1,
    "plant": "SAF",
+   "product_type": "ICM",
+   "requesting_department": null,
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": null
   },
   {
@@ -2209,6 +2600,11 @@
    "request_date": "2026-01-01",
    "request_week": 1,
    "plant": "SAF",
+   "product_type": "ICM",
+   "requesting_department": null,
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": null
   },
   {
@@ -2235,6 +2631,11 @@
    "request_date": "2026-01-01",
    "request_week": 1,
    "plant": "SAF",
+   "product_type": "ICM",
+   "requesting_department": null,
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": null
   },
   {
@@ -2261,6 +2662,11 @@
    "request_date": "2026-01-01",
    "request_week": 1,
    "plant": "SAF",
+   "product_type": "ICM",
+   "requesting_department": null,
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": null
   },
   {
@@ -2287,6 +2693,11 @@
    "request_date": "2026-01-01",
    "request_week": 1,
    "plant": "SAF",
+   "product_type": "ICM",
+   "requesting_department": "Central Procurement Group",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": "Y"
   },
   {
@@ -2313,6 +2724,11 @@
    "request_date": "2026-01-01",
    "request_week": 1,
    "plant": "IND",
+   "product_type": "ICM",
+   "requesting_department": "Service",
+   "end_date": "2026-03-01",
+   "target_end_week": 9,
+   "spillover_2025": false,
    "capacity_flag": "Y"
   },
   {
@@ -2339,6 +2755,11 @@
    "request_date": "2026-01-01",
    "request_week": 1,
    "plant": "IND",
+   "product_type": "ICM",
+   "requesting_department": "Service",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": null
   },
   {
@@ -2365,6 +2786,11 @@
    "request_date": "2026-01-01",
    "request_week": 1,
    "plant": "Multiplant",
+   "product_type": "ICM",
+   "requesting_department": "PD",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": "Y"
   },
   {
@@ -2391,6 +2817,11 @@
    "request_date": "2026-01-01",
    "request_week": 1,
    "plant": "Multiplant",
+   "product_type": "ICM",
+   "requesting_department": "Marketing/Sales",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": "Y"
   },
   {
@@ -2417,6 +2848,11 @@
    "request_date": "2026-01-01",
    "request_week": 1,
    "plant": "Multiplant",
+   "product_type": "ICM",
+   "requesting_department": "Marketing/Sales",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": "Y"
   },
   {
@@ -2443,6 +2879,11 @@
    "request_date": "2026-01-01",
    "request_week": 1,
    "plant": "Multiplant",
+   "product_type": "ICM",
+   "requesting_department": "Marketing/Sales",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": "Y"
   },
   {
@@ -2469,6 +2910,11 @@
    "request_date": "2026-01-01",
    "request_week": 1,
    "plant": "Multiplant",
+   "product_type": "ICM",
+   "requesting_department": "Marketing/Sales",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": "Y"
   },
   {
@@ -2495,6 +2941,11 @@
    "request_date": "2026-01-01",
    "request_week": 1,
    "plant": "Multiplant",
+   "product_type": "ICM",
+   "requesting_department": "Marketing/Sales",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": "Y"
   },
   {
@@ -2521,6 +2972,11 @@
    "request_date": "2026-01-01",
    "request_week": 1,
    "plant": "IND",
+   "product_type": "ICM",
+   "requesting_department": "Marketing/Sales",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": "Y"
   },
   {
@@ -2547,6 +3003,11 @@
    "request_date": "2026-01-01",
    "request_week": 1,
    "plant": "Multiplant",
+   "product_type": "ICM",
+   "requesting_department": "Marketing/Sales",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": "Y"
   },
   {
@@ -2573,6 +3034,11 @@
    "request_date": "2026-01-01",
    "request_week": 1,
    "plant": "Multiplant",
+   "product_type": "ICM",
+   "requesting_department": "Marketing/Sales",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": "Y"
   },
   {
@@ -2599,6 +3065,11 @@
    "request_date": "2026-01-01",
    "request_week": 1,
    "plant": "Multiplant",
+   "product_type": "ICM",
+   "requesting_department": "Marketing/Sales",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": "Y"
   },
   {
@@ -2625,6 +3096,11 @@
    "request_date": "2026-01-01",
    "request_week": 1,
    "plant": "Multiplant",
+   "product_type": "ICM",
+   "requesting_department": "Marketing/Sales",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": "Y"
   },
   {
@@ -2651,6 +3127,11 @@
    "request_date": "2026-01-01",
    "request_week": 1,
    "plant": "Multiplant",
+   "product_type": "ICM",
+   "requesting_department": "Marketing/Sales",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": "Y"
   },
   {
@@ -2677,6 +3158,11 @@
    "request_date": "2026-01-01",
    "request_week": 1,
    "plant": "Multiplant",
+   "product_type": "ICM",
+   "requesting_department": "Marketing/Sales",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": "Y"
   },
   {
@@ -2703,6 +3189,11 @@
    "request_date": "2026-02-27",
    "request_week": 9,
    "plant": "IND",
+   "product_type": "ICM",
+   "requesting_department": "Marketing/Sales",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": "Y"
   },
   {
@@ -2729,6 +3220,11 @@
    "request_date": "2026-01-01",
    "request_week": 1,
    "plant": "SAF",
+   "product_type": "ICM",
+   "requesting_department": "Marketing/Sales",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": "Y"
   },
   {
@@ -2755,6 +3251,11 @@
    "request_date": "2026-02-18",
    "request_week": 8,
    "plant": "Egypt",
+   "product_type": "ICM",
+   "requesting_department": "Marketing/Sales",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": "Y"
   },
   {
@@ -2781,6 +3282,11 @@
    "request_date": "2026-02-18",
    "request_week": 8,
    "plant": "Egypt",
+   "product_type": "ICM",
+   "requesting_department": "Marketing/Sales",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": "Y"
   },
   {
@@ -2807,6 +3313,11 @@
    "request_date": "2026-01-01",
    "request_week": 1,
    "plant": "Egypt",
+   "product_type": "ICM",
+   "requesting_department": "Marketing/Sales",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": "Y"
   },
   {
@@ -2833,6 +3344,11 @@
    "request_date": "2026-01-01",
    "request_week": 1,
    "plant": "Egypt",
+   "product_type": "ICM",
+   "requesting_department": "Marketing/Sales",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": "Y"
   },
   {
@@ -2859,6 +3375,11 @@
    "request_date": "2026-01-05",
    "request_week": 2,
    "plant": "IND",
+   "product_type": "ICM",
+   "requesting_department": "Marketing/Sales",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": true,
    "capacity_flag": "Y"
   },
   {
@@ -2885,6 +3406,11 @@
    "request_date": "2026-01-01",
    "request_week": 1,
    "plant": "IND",
+   "product_type": "ICM",
+   "requesting_department": null,
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": "Y"
   },
   {
@@ -2911,6 +3437,11 @@
    "request_date": "2026-01-01",
    "request_week": 1,
    "plant": "IND",
+   "product_type": "ICM",
+   "requesting_department": "Marketing/Sales",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": "Y"
   },
   {
@@ -2937,6 +3468,11 @@
    "request_date": "2026-01-01",
    "request_week": 1,
    "plant": "IND",
+   "product_type": "ICM",
+   "requesting_department": "Marketing/Sales",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": "Y"
   },
   {
@@ -2963,6 +3499,11 @@
    "request_date": "2026-01-01",
    "request_week": 1,
    "plant": "IND",
+   "product_type": "ICM",
+   "requesting_department": "Local Supply Chain",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": "Y"
   },
   {
@@ -2989,6 +3530,11 @@
    "request_date": "2026-01-01",
    "request_week": 1,
    "plant": "IND",
+   "product_type": "ICM",
+   "requesting_department": "Marketing/Sales",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": "Y"
   },
   {
@@ -3015,6 +3561,11 @@
    "request_date": "2026-01-01",
    "request_week": 1,
    "plant": "Egypt",
+   "product_type": "ICM",
+   "requesting_department": "Central Procurement Group",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": "Y"
   },
   {
@@ -3041,6 +3592,11 @@
    "request_date": "2026-01-01",
    "request_week": 1,
    "plant": "Egypt",
+   "product_type": "ICM",
+   "requesting_department": "Central Procurement Group",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": "Y"
   },
   {
@@ -3067,6 +3623,11 @@
    "request_date": "2026-03-26",
    "request_week": 13,
    "plant": "SAF",
+   "product_type": "ICM",
+   "requesting_department": "Marketing/Sales",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": "Y"
   },
   {
@@ -3093,6 +3654,11 @@
    "request_date": "2026-03-26",
    "request_week": 13,
    "plant": "SAF",
+   "product_type": "ICM",
+   "requesting_department": "Marketing/Sales",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": "Y"
   },
   {
@@ -3119,6 +3685,11 @@
    "request_date": "2026-03-26",
    "request_week": 13,
    "plant": "SAF",
+   "product_type": "ICM",
+   "requesting_department": null,
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": "Y"
   },
   {
@@ -3145,6 +3716,11 @@
    "request_date": "2026-03-26",
    "request_week": 13,
    "plant": "Multiplant",
+   "product_type": "ICM",
+   "requesting_department": "Marketing/Sales",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": "Y"
   },
   {
@@ -3171,6 +3747,11 @@
    "request_date": "2026-03-26",
    "request_week": 13,
    "plant": "SAF",
+   "product_type": "ICM",
+   "requesting_department": "Marketing/Sales",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": null
   },
   {
@@ -3197,6 +3778,11 @@
    "request_date": "2026-03-26",
    "request_week": 13,
    "plant": "IND",
+   "product_type": "ICM",
+   "requesting_department": "Marketing/Sales",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": "Y"
   },
   {
@@ -3223,6 +3809,11 @@
    "request_date": "2026-03-26",
    "request_week": 13,
    "plant": "IND",
+   "product_type": "ICM",
+   "requesting_department": "Marketing/Sales",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": "Y"
   },
   {
@@ -3249,6 +3840,11 @@
    "request_date": "2026-03-26",
    "request_week": 13,
    "plant": "IND",
+   "product_type": "ICM",
+   "requesting_department": "Marketing/Sales",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": "Y"
   },
   {
@@ -3275,6 +3871,11 @@
    "request_date": "2026-03-26",
    "request_week": 13,
    "plant": "IND",
+   "product_type": "ICM",
+   "requesting_department": "Marketing/Sales",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": "Y"
   },
   {
@@ -3301,6 +3902,11 @@
    "request_date": "2026-03-26",
    "request_week": 13,
    "plant": "IND",
+   "product_type": "ICM",
+   "requesting_department": "Marketing/Sales",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": "Y"
   },
   {
@@ -3327,6 +3933,11 @@
    "request_date": "2026-03-26",
    "request_week": 13,
    "plant": "IND",
+   "product_type": "ICM",
+   "requesting_department": "Marketing/Sales",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": "Y"
   },
   {
@@ -3353,6 +3964,11 @@
    "request_date": "2026-03-26",
    "request_week": 13,
    "plant": "IND",
+   "product_type": "ICM",
+   "requesting_department": "Marketing/Sales",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": "Y"
   },
   {
@@ -3379,6 +3995,11 @@
    "request_date": "2026-03-26",
    "request_week": 13,
    "plant": "IND",
+   "product_type": "ICM",
+   "requesting_department": "Marketing/Sales",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": "Y"
   },
   {
@@ -3405,6 +4026,11 @@
    "request_date": "2026-03-26",
    "request_week": 13,
    "plant": "IND",
+   "product_type": "ICM",
+   "requesting_department": "Marketing/Sales",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": "Y"
   },
   {
@@ -3431,6 +4057,11 @@
    "request_date": "2026-03-26",
    "request_week": 13,
    "plant": "IND",
+   "product_type": "ICM",
+   "requesting_department": "Marketing/Sales",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": "Y"
   },
   {
@@ -3457,6 +4088,11 @@
    "request_date": "2026-03-26",
    "request_week": 13,
    "plant": "IND",
+   "product_type": "ICM",
+   "requesting_department": "Marketing/Sales",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": "Y"
   },
   {
@@ -3483,6 +4119,11 @@
    "request_date": "2026-03-26",
    "request_week": 13,
    "plant": "IND",
+   "product_type": "ICM",
+   "requesting_department": "Marketing/Sales",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": "Y"
   },
   {
@@ -3509,6 +4150,11 @@
    "request_date": "2026-03-26",
    "request_week": 13,
    "plant": "IND",
+   "product_type": "ICM",
+   "requesting_department": "Marketing/Sales",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": "Y"
   },
   {
@@ -3535,6 +4181,11 @@
    "request_date": "2026-03-26",
    "request_week": 13,
    "plant": "IND",
+   "product_type": "ICM",
+   "requesting_department": "Marketing/Sales",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": "Y"
   },
   {
@@ -3561,6 +4212,11 @@
    "request_date": "2026-03-26",
    "request_week": 13,
    "plant": "IND",
+   "product_type": "ICM",
+   "requesting_department": "Marketing/Sales",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": "Y"
   },
   {
@@ -3587,6 +4243,11 @@
    "request_date": "2026-03-26",
    "request_week": 13,
    "plant": "IND",
+   "product_type": "ICM",
+   "requesting_department": "Marketing/Sales",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": "Y"
   },
   {
@@ -3613,6 +4274,11 @@
    "request_date": "2026-03-26",
    "request_week": 13,
    "plant": "IND",
+   "product_type": "ICM",
+   "requesting_department": "Marketing/Sales",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": "Y"
   },
   {
@@ -3639,6 +4305,11 @@
    "request_date": "2026-03-26",
    "request_week": 13,
    "plant": "IND",
+   "product_type": "ICM",
+   "requesting_department": "Marketing/Sales",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": "Y"
   },
   {
@@ -3665,6 +4336,11 @@
    "request_date": "2026-03-26",
    "request_week": 13,
    "plant": "IND",
+   "product_type": "ICM",
+   "requesting_department": "Marketing/Sales",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": "Y"
   },
   {
@@ -3691,6 +4367,11 @@
    "request_date": "2026-03-26",
    "request_week": 13,
    "plant": "IND",
+   "product_type": "ICM",
+   "requesting_department": "Marketing/Sales",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": "Y"
   },
   {
@@ -3717,6 +4398,11 @@
    "request_date": "2026-03-26",
    "request_week": 13,
    "plant": "IND",
+   "product_type": "ICM",
+   "requesting_department": "Marketing/Sales",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": "Y"
   },
   {
@@ -3743,6 +4429,11 @@
    "request_date": "2026-03-26",
    "request_week": 13,
    "plant": "IND",
+   "product_type": "ICM",
+   "requesting_department": "Marketing/Sales",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": "Y"
   },
   {
@@ -3769,6 +4460,11 @@
    "request_date": "2026-03-26",
    "request_week": 13,
    "plant": "IND",
+   "product_type": "ICM",
+   "requesting_department": "Marketing/Sales",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": "Y"
   },
   {
@@ -3795,6 +4491,11 @@
    "request_date": "2026-03-26",
    "request_week": 13,
    "plant": "IND",
+   "product_type": "ICM",
+   "requesting_department": "Marketing/Sales",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": "Y"
   },
   {
@@ -3821,6 +4522,11 @@
    "request_date": "2026-03-26",
    "request_week": 13,
    "plant": "IND",
+   "product_type": "ICM",
+   "requesting_department": "Marketing/Sales",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": "Y"
   },
   {
@@ -3847,6 +4553,11 @@
    "request_date": "2026-03-26",
    "request_week": 13,
    "plant": "IND",
+   "product_type": "ICM",
+   "requesting_department": "Marketing/Sales",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": "Y"
   },
   {
@@ -3873,6 +4584,11 @@
    "request_date": "2026-03-26",
    "request_week": 13,
    "plant": "IND",
+   "product_type": "ICM",
+   "requesting_department": "Marketing/Sales",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": "Y"
   },
   {
@@ -3899,6 +4615,11 @@
    "request_date": "2026-03-26",
    "request_week": 13,
    "plant": "IND",
+   "product_type": "ICM",
+   "requesting_department": "Marketing/Sales",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": "Y"
   },
   {
@@ -3925,6 +4646,11 @@
    "request_date": "2026-03-26",
    "request_week": 13,
    "plant": "SAF",
+   "product_type": "ICM",
+   "requesting_department": "Marketing/Sales",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": "Y"
   },
   {
@@ -3951,6 +4677,11 @@
    "request_date": "2026-03-26",
    "request_week": 13,
    "plant": "IND",
+   "product_type": "ICM",
+   "requesting_department": "Marketing/Sales",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": "Y"
   },
   {
@@ -3977,6 +4708,11 @@
    "request_date": "2026-03-26",
    "request_week": 13,
    "plant": "IND",
+   "product_type": "ICM",
+   "requesting_department": "Marketing/Sales",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": "Y"
   },
   {
@@ -4003,6 +4739,11 @@
    "request_date": "2026-04-26",
    "request_week": 17,
    "plant": "IND",
+   "product_type": "ICM",
+   "requesting_department": "Marketing/Sales",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": "Y"
   },
   {
@@ -4029,6 +4770,11 @@
    "request_date": "2026-04-26",
    "request_week": 17,
    "plant": "IND",
+   "product_type": "ICM",
+   "requesting_department": "Marketing/Sales",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": "Y"
   },
   {
@@ -4055,6 +4801,11 @@
    "request_date": "2026-04-26",
    "request_week": 17,
    "plant": "IND",
+   "product_type": "ICM",
+   "requesting_department": "Marketing/Sales",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": "Y"
   },
   {
@@ -4081,6 +4832,11 @@
    "request_date": "2026-04-26",
    "request_week": 17,
    "plant": "IND",
+   "product_type": "ICM",
+   "requesting_department": "Marketing/Sales",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": "Y"
   },
   {
@@ -4107,6 +4863,11 @@
    "request_date": "2026-04-26",
    "request_week": 17,
    "plant": "IND",
+   "product_type": "ICM",
+   "requesting_department": "Marketing/Sales",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": "Y"
   },
   {
@@ -4133,6 +4894,11 @@
    "request_date": "2026-04-26",
    "request_week": 17,
    "plant": "IND",
+   "product_type": "ICM",
+   "requesting_department": "Marketing/Sales",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": "Y"
   },
   {
@@ -4159,6 +4925,11 @@
    "request_date": "2026-04-26",
    "request_week": 17,
    "plant": "IND",
+   "product_type": "ICM",
+   "requesting_department": "Marketing/Sales",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": "Y"
   },
   {
@@ -4185,6 +4956,11 @@
    "request_date": "2026-04-26",
    "request_week": 17,
    "plant": "IND",
+   "product_type": "ICM",
+   "requesting_department": "Marketing/Sales",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": "Y"
   },
   {
@@ -4211,6 +4987,11 @@
    "request_date": "2026-04-26",
    "request_week": 17,
    "plant": "IND",
+   "product_type": "ICM",
+   "requesting_department": "Marketing/Sales",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": "Y"
   },
   {
@@ -4237,6 +5018,11 @@
    "request_date": "2026-04-26",
    "request_week": 17,
    "plant": "IND",
+   "product_type": "ICM",
+   "requesting_department": "Marketing/Sales",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": "Y"
   },
   {
@@ -4263,6 +5049,11 @@
    "request_date": "2026-04-26",
    "request_week": 17,
    "plant": "IND",
+   "product_type": "ICM",
+   "requesting_department": "Marketing/Sales",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": "Y"
   },
   {
@@ -4289,6 +5080,11 @@
    "request_date": "2026-04-26",
    "request_week": 17,
    "plant": "IND",
+   "product_type": "ICM",
+   "requesting_department": "Marketing/Sales",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": "Y"
   },
   {
@@ -4315,6 +5111,11 @@
    "request_date": "2026-04-26",
    "request_week": 17,
    "plant": "IND",
+   "product_type": "ICM",
+   "requesting_department": "Marketing/Sales",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": "Y"
   },
   {
@@ -4341,6 +5142,11 @@
    "request_date": "2026-04-26",
    "request_week": 17,
    "plant": "IND",
+   "product_type": "ICM",
+   "requesting_department": "Marketing/Sales",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": "Y"
   },
   {
@@ -4367,6 +5173,11 @@
    "request_date": "2026-04-26",
    "request_week": 17,
    "plant": "IND",
+   "product_type": "ICM",
+   "requesting_department": "Marketing/Sales",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": "Y"
   },
   {
@@ -4393,6 +5204,11 @@
    "request_date": "2026-04-26",
    "request_week": 17,
    "plant": "IND",
+   "product_type": "ICM",
+   "requesting_department": "Marketing/Sales",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": "Y"
   },
   {
@@ -4419,6 +5235,11 @@
    "request_date": "2026-04-26",
    "request_week": 17,
    "plant": "IND",
+   "product_type": "ICM",
+   "requesting_department": "Marketing/Sales",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": "Y"
   },
   {
@@ -4445,6 +5266,11 @@
    "request_date": "2026-04-26",
    "request_week": 17,
    "plant": "IND",
+   "product_type": "ICM",
+   "requesting_department": "Marketing/Sales",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": "Y"
   },
   {
@@ -4471,6 +5297,11 @@
    "request_date": "2026-04-26",
    "request_week": 17,
    "plant": "IND",
+   "product_type": "ICM",
+   "requesting_department": "Marketing/Sales",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": "Y"
   },
   {
@@ -4497,6 +5328,11 @@
    "request_date": "2026-04-26",
    "request_week": 17,
    "plant": "IND",
+   "product_type": "ICM",
+   "requesting_department": "Marketing/Sales",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": "Y"
   },
   {
@@ -4523,6 +5359,11 @@
    "request_date": "2026-04-26",
    "request_week": 17,
    "plant": "IND",
+   "product_type": "ICM",
+   "requesting_department": "Marketing/Sales",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": "Y"
   },
   {
@@ -4549,6 +5390,11 @@
    "request_date": "2026-04-26",
    "request_week": 17,
    "plant": "IND",
+   "product_type": "ICM",
+   "requesting_department": "Marketing/Sales",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": "Y"
   },
   {
@@ -4575,6 +5421,11 @@
    "request_date": "2026-03-26",
    "request_week": 13,
    "plant": "IND",
+   "product_type": "ICM",
+   "requesting_department": "PD",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": null
   },
   {
@@ -4601,6 +5452,11 @@
    "request_date": "2026-06-01",
    "request_week": 23,
    "plant": "INN",
+   "product_type": "ICM",
+   "requesting_department": "Marketing/Sales",
+   "end_date": "2025-12-01",
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": "Y"
   },
   {
@@ -4627,6 +5483,11 @@
    "request_date": "2026-06-01",
    "request_week": 23,
    "plant": "INN",
+   "product_type": "ICM",
+   "requesting_department": "Marketing/Sales",
+   "end_date": "2025-12-01",
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": "Y"
   },
   {
@@ -4653,6 +5514,11 @@
    "request_date": "2026-06-01",
    "request_week": 23,
    "plant": "INN",
+   "product_type": "ICM",
+   "requesting_department": "Marketing/Sales",
+   "end_date": "2025-12-01",
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": "Y"
   },
   {
@@ -4679,6 +5545,11 @@
    "request_date": "2026-06-01",
    "request_week": 23,
    "plant": "Egypt",
+   "product_type": "ICM",
+   "requesting_department": "Marketing/Sales",
+   "end_date": "2025-12-01",
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": "Y"
   },
   {
@@ -4705,6 +5576,11 @@
    "request_date": "2026-06-01",
    "request_week": 23,
    "plant": "Egypt",
+   "product_type": "ICM",
+   "requesting_department": "Marketing/Sales",
+   "end_date": "2025-12-01",
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": "Y"
   },
   {
@@ -4731,6 +5607,11 @@
    "request_date": "2026-06-01",
    "request_week": 23,
    "plant": "IND",
+   "product_type": "ICM",
+   "requesting_department": "Marketing/Sales",
+   "end_date": "2025-12-01",
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": "Y"
   },
   {
@@ -4757,6 +5638,11 @@
    "request_date": "2026-06-01",
    "request_week": 23,
    "plant": "SAF",
+   "product_type": "ICM",
+   "requesting_department": "Marketing/Sales",
+   "end_date": "2025-12-01",
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": "Y"
   },
   {
@@ -4783,6 +5669,11 @@
    "request_date": "2026-06-16",
    "request_week": 25,
    "plant": "IND",
+   "product_type": "ICM",
+   "requesting_department": "Marketing/Sales",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": "Y"
   },
   {
@@ -4809,6 +5700,11 @@
    "request_date": "2026-07-05",
    "request_week": 27,
    "plant": "IND",
+   "product_type": "ICM",
+   "requesting_department": "PD",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": true,
    "capacity_flag": null
   },
   {
@@ -4835,6 +5731,11 @@
    "request_date": "2026-07-15",
    "request_week": 29,
    "plant": "IND",
+   "product_type": "ICM",
+   "requesting_department": "PD",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": true,
    "capacity_flag": null
   },
   {
@@ -4861,6 +5762,11 @@
    "request_date": "2026-07-15",
    "request_week": 29,
    "plant": "IND",
+   "product_type": "ICM",
+   "requesting_department": "PD",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": true,
    "capacity_flag": null
   },
   {
@@ -4887,6 +5793,11 @@
    "request_date": "2026-07-15",
    "request_week": 29,
    "plant": "IND",
+   "product_type": "ICM",
+   "requesting_department": "PD",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": true,
    "capacity_flag": null
   },
   {
@@ -4913,6 +5824,11 @@
    "request_date": "2026-08-07",
    "request_week": 32,
    "plant": "INN",
+   "product_type": "ICM",
+   "requesting_department": "Marketing/Sales",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": null
   },
   {
@@ -4939,6 +5855,11 @@
    "request_date": "2026-08-07",
    "request_week": 32,
    "plant": "INN",
+   "product_type": "ICM",
+   "requesting_department": "Marketing/Sales",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": null
   },
   {
@@ -4965,6 +5886,11 @@
    "request_date": "2026-09-01",
    "request_week": 36,
    "plant": "IND",
+   "product_type": "ICM",
+   "requesting_department": "Central Procurement Group",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": true,
    "capacity_flag": null
   },
   {
@@ -4991,6 +5917,11 @@
    "request_date": "2026-09-01",
    "request_week": 36,
    "plant": "IND",
+   "product_type": "ICM",
+   "requesting_department": "Central Procurement Group",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": true,
    "capacity_flag": null
   },
   {
@@ -5017,6 +5948,11 @@
    "request_date": "2026-09-01",
    "request_week": 36,
    "plant": "SAF",
+   "product_type": "ICM",
+   "requesting_department": "Central Procurement Group",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": null
   },
   {
@@ -5043,6 +5979,11 @@
    "request_date": "2026-09-01",
    "request_week": 36,
    "plant": "IND",
+   "product_type": "ICM",
+   "requesting_department": "Central Procurement Group",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": null
   },
   {
@@ -5069,6 +6010,11 @@
    "request_date": "2026-09-01",
    "request_week": 36,
    "plant": "IND",
+   "product_type": "ICM",
+   "requesting_department": "Central Procurement Group",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": true,
    "capacity_flag": null
   },
   {
@@ -5095,6 +6041,11 @@
    "request_date": "2026-09-18",
    "request_week": 38,
    "plant": "IND",
+   "product_type": "ICM",
+   "requesting_department": "Marketing/Sales",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": "Y"
   },
   {
@@ -5121,6 +6072,11 @@
    "request_date": "2026-09-15",
    "request_week": 38,
    "plant": "IND",
+   "product_type": "ICM",
+   "requesting_department": "Central Procurement Group",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": true,
    "capacity_flag": null
   },
   {
@@ -5147,6 +6103,11 @@
    "request_date": "2026-09-15",
    "request_week": 38,
    "plant": "IND",
+   "product_type": "ICM",
+   "requesting_department": "PD",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": true,
    "capacity_flag": null
   },
   {
@@ -5173,6 +6134,11 @@
    "request_date": "2026-09-18",
    "request_week": 38,
    "plant": "IND",
+   "product_type": "ICM",
+   "requesting_department": "Marketing/Sales",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": "Y"
   },
   {
@@ -5199,6 +6165,11 @@
    "request_date": "2026-09-15",
    "request_week": 38,
    "plant": "IND",
+   "product_type": "ICM",
+   "requesting_department": "PD",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": true,
    "capacity_flag": null
   },
   {
@@ -5225,6 +6196,11 @@
    "request_date": "2026-02-01",
    "request_week": 5,
    "plant": "ROM",
+   "product_type": "ICM",
+   "requesting_department": "Marketing/Sales",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": null
   },
   {
@@ -5251,6 +6227,11 @@
    "request_date": "2026-02-01",
    "request_week": 5,
    "plant": "ROM",
+   "product_type": "ICM",
+   "requesting_department": "Marketing/Sales",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": null
   },
   {
@@ -5277,6 +6258,11 @@
    "request_date": "2026-02-01",
    "request_week": 5,
    "plant": "ROM",
+   "product_type": "ICM",
+   "requesting_department": "Marketing/Sales",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": null
   },
   {
@@ -5303,6 +6289,11 @@
    "request_date": "2026-01-01",
    "request_week": 1,
    "plant": "ROM",
+   "product_type": "ICM",
+   "requesting_department": "Marketing/Sales",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": "Y"
   },
   {
@@ -5329,6 +6320,11 @@
    "request_date": "2026-01-01",
    "request_week": 1,
    "plant": "ROM",
+   "product_type": "ICM",
+   "requesting_department": "Marketing/Sales",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": "Y"
   },
   {
@@ -5355,6 +6351,11 @@
    "request_date": "2026-01-01",
    "request_week": 1,
    "plant": "ROM",
+   "product_type": "ICM",
+   "requesting_department": "Marketing/Sales",
+   "end_date": "2025-12-30",
+   "target_end_week": 1,
+   "spillover_2025": false,
    "capacity_flag": "Y"
   },
   {
@@ -5381,6 +6382,11 @@
    "request_date": "2026-01-01",
    "request_week": 1,
    "plant": "OEM-HCK",
+   "product_type": "ICM",
+   "requesting_department": "Marketing/Sales",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": null
   },
   {
@@ -5407,6 +6413,11 @@
    "request_date": "2026-01-01",
    "request_week": 1,
    "plant": "OEM-Seitek",
+   "product_type": "ICM",
+   "requesting_department": "Marketing/Sales",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": null
   },
   {
@@ -5433,6 +6444,11 @@
    "request_date": "2026-01-01",
    "request_week": 1,
    "plant": "OEM-Seitek",
+   "product_type": "ICM",
+   "requesting_department": "Marketing/Sales",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": null
   },
   {
@@ -5459,6 +6475,11 @@
    "request_date": "2026-01-01",
    "request_week": 1,
    "plant": "OEM-HCK",
+   "product_type": "ICM",
+   "requesting_department": "Marketing/Sales",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": null
   },
   {
@@ -5485,6 +6506,11 @@
    "request_date": "2026-01-01",
    "request_week": 1,
    "plant": "OEM-HCK",
+   "product_type": "ICM",
+   "requesting_department": "Marketing/Sales",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": "Y"
   },
   {
@@ -5511,6 +6537,11 @@
    "request_date": "2026-01-01",
    "request_week": 1,
    "plant": "OEM-HCK",
+   "product_type": "ICM",
+   "requesting_department": "Marketing/Sales",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": "Y"
   },
   {
@@ -5537,6 +6568,11 @@
    "request_date": "2026-01-09",
    "request_week": 2,
    "plant": "OEM-NEW STAR",
+   "product_type": "ICM",
+   "requesting_department": "Marketing/Sales",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": "Y"
   },
   {
@@ -5563,6 +6599,11 @@
    "request_date": "2026-01-01",
    "request_week": 1,
    "plant": "OEM-HCK",
+   "product_type": "ICM",
+   "requesting_department": "Marketing/Sales",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": "Y"
   },
   {
@@ -5589,6 +6630,11 @@
    "request_date": "2026-01-01",
    "request_week": 1,
    "plant": "OEM-HCK",
+   "product_type": "ICM",
+   "requesting_department": "Marketing/Sales",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": "Y"
   },
   {
@@ -5615,6 +6661,11 @@
    "request_date": "2026-01-01",
    "request_week": 1,
    "plant": "OEM-Seitek",
+   "product_type": "ICM",
+   "requesting_department": "Marketing/Sales",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": "Y"
   },
   {
@@ -5641,6 +6692,11 @@
    "request_date": "2026-02-24",
    "request_week": 9,
    "plant": "OEM-HCK",
+   "product_type": "ICM",
+   "requesting_department": "Marketing/Sales",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": "Y"
   },
   {
@@ -5667,6 +6723,11 @@
    "request_date": "2026-02-24",
    "request_week": 9,
    "plant": "OEM-HCK",
+   "product_type": "ICM",
+   "requesting_department": "Marketing/Sales",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": "Y"
   },
   {
@@ -5693,6 +6754,11 @@
    "request_date": "2026-02-24",
    "request_week": 9,
    "plant": "OEM-Seitek",
+   "product_type": "ICM",
+   "requesting_department": "Marketing/Sales",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": "Y"
   },
   {
@@ -5719,6 +6785,11 @@
    "request_date": "2026-02-24",
    "request_week": 9,
    "plant": "OEM-Seitek",
+   "product_type": "ICM",
+   "requesting_department": "Marketing/Sales",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": "Y"
   },
   {
@@ -5745,6 +6816,11 @@
    "request_date": "2026-01-01",
    "request_week": 1,
    "plant": "OEM-Seitek",
+   "product_type": "ICM",
+   "requesting_department": "Marketing/Sales",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": "Y"
   },
   {
@@ -5771,6 +6847,11 @@
    "request_date": "2026-01-01",
    "request_week": 1,
    "plant": "OEM-HCK",
+   "product_type": "ICM",
+   "requesting_department": "Marketing/Sales",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": "Y"
   },
   {
@@ -5797,6 +6878,11 @@
    "request_date": "2026-01-01",
    "request_week": 1,
    "plant": "OEM-HCK",
+   "product_type": "ICM",
+   "requesting_department": "Marketing/Sales",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": "Y"
   },
   {
@@ -5823,6 +6909,11 @@
    "request_date": "2026-02-02",
    "request_week": 6,
    "plant": "OEM-Seitek",
+   "product_type": "ICM",
+   "requesting_department": "Marketing/Sales",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": "Y"
   },
   {
@@ -5849,6 +6940,11 @@
    "request_date": "2026-02-02",
    "request_week": 6,
    "plant": "OEM-HCK",
+   "product_type": "ICM",
+   "requesting_department": "Marketing/Sales",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": "Y"
   },
   {
@@ -5875,6 +6971,11 @@
    "request_date": "2026-02-10",
    "request_week": 7,
    "plant": "OEM-Seitek",
+   "product_type": "HA",
+   "requesting_department": "Marketing/Sales",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": "Y"
   },
   {
@@ -5901,6 +7002,11 @@
    "request_date": "2026-03-26",
    "request_week": 13,
    "plant": "ROM",
+   "product_type": "ICM",
+   "requesting_department": "Development",
+   "end_date": "2026-04-25",
+   "target_end_week": 17,
+   "spillover_2025": false,
    "capacity_flag": null
   },
   {
@@ -5927,6 +7033,11 @@
    "request_date": "2026-11-25",
    "request_week": 48,
    "plant": "ROM",
+   "product_type": "ICM",
+   "requesting_department": "Development",
+   "end_date": "2026-04-25",
+   "target_end_week": 17,
+   "spillover_2025": false,
    "capacity_flag": null
   },
   {
@@ -5953,6 +7064,11 @@
    "request_date": "2026-01-26",
    "request_week": 5,
    "plant": "ROM",
+   "product_type": "ICM",
+   "requesting_department": "Development",
+   "end_date": "2026-03-26",
+   "target_end_week": 13,
+   "spillover_2025": false,
    "capacity_flag": null
   },
   {
@@ -5979,6 +7095,11 @@
    "request_date": "2026-01-26",
    "request_week": 5,
    "plant": "ROM",
+   "product_type": "ICM",
+   "requesting_department": "Marketing/Sales",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": "Y"
   },
   {
@@ -6005,6 +7126,11 @@
    "request_date": "2026-03-26",
    "request_week": 13,
    "plant": "ROM",
+   "product_type": "ICM",
+   "requesting_department": "Service",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": true,
    "capacity_flag": "Y"
   },
   {
@@ -6031,6 +7157,11 @@
    "request_date": "2026-03-26",
    "request_week": 13,
    "plant": "ROM",
+   "product_type": "ICM",
+   "requesting_department": "Marketing/Sales",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": "Y"
   },
   {
@@ -6057,6 +7188,11 @@
    "request_date": "2026-04-26",
    "request_week": 17,
    "plant": "ROM",
+   "product_type": "ICM",
+   "requesting_department": "Quality",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": "Y"
   },
   {
@@ -6083,6 +7219,11 @@
    "request_date": "2026-01-26",
    "request_week": 5,
    "plant": "ROM",
+   "product_type": "ICM",
+   "requesting_department": "Central Procurement Group",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": "Y"
   },
   {
@@ -6109,6 +7250,11 @@
    "request_date": "2026-01-26",
    "request_week": 5,
    "plant": "ROM",
+   "product_type": "ICM",
+   "requesting_department": "Central Procurement Group",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": "Y"
   },
   {
@@ -6135,6 +7281,11 @@
    "request_date": "2026-01-26",
    "request_week": 5,
    "plant": "ROM",
+   "product_type": "ICM",
+   "requesting_department": "Marketing/Sales",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": true,
    "capacity_flag": "Y"
   },
   {
@@ -6161,6 +7312,11 @@
    "request_date": "2026-01-26",
    "request_week": 5,
    "plant": "ROM",
+   "product_type": "ICM",
+   "requesting_department": "Development",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": null
   },
   {
@@ -6187,6 +7343,11 @@
    "request_date": "2026-01-26",
    "request_week": 5,
    "plant": "ROM",
+   "product_type": "ICM",
+   "requesting_department": "Central Procurement Group",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": "Y"
   },
   {
@@ -6213,6 +7374,11 @@
    "request_date": "2026-01-26",
    "request_week": 5,
    "plant": "ROM",
+   "product_type": "ICM",
+   "requesting_department": "Central Procurement Group",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": "Y"
   },
   {
@@ -6239,6 +7405,11 @@
    "request_date": "2026-01-26",
    "request_week": 5,
    "plant": "ROM",
+   "product_type": "ICM",
+   "requesting_department": "Central Procurement Group",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": "Y"
   },
   {
@@ -6265,6 +7436,11 @@
    "request_date": "2026-04-09",
    "request_week": 15,
    "plant": "OEM-Seitek",
+   "product_type": null,
+   "requesting_department": "Central Procurement Group",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": "Y"
   },
   {
@@ -6291,6 +7467,11 @@
    "request_date": "2026-04-09",
    "request_week": 15,
    "plant": "OEM-Seitek",
+   "product_type": null,
+   "requesting_department": "Central Procurement Group",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": "Y"
   },
   {
@@ -6317,6 +7498,11 @@
    "request_date": "2026-04-09",
    "request_week": 15,
    "plant": "OEM-HCK",
+   "product_type": null,
+   "requesting_department": "Central Procurement Group",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": "Y"
   },
   {
@@ -6343,6 +7529,11 @@
    "request_date": "2026-01-26",
    "request_week": 5,
    "plant": "ROM",
+   "product_type": "ICM",
+   "requesting_department": "Central Procurement Group",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": null
   },
   {
@@ -6369,6 +7560,11 @@
    "request_date": "2026-06-26",
    "request_week": 26,
    "plant": "ROM",
+   "product_type": "ICM",
+   "requesting_department": "Marketing/Sales",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": null
   },
   {
@@ -6395,6 +7591,11 @@
    "request_date": "2026-06-26",
    "request_week": 26,
    "plant": "ROM",
+   "product_type": "ICM",
+   "requesting_department": "Marketing/Sales",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": null
   },
   {
@@ -6421,6 +7622,11 @@
    "request_date": "2026-06-26",
    "request_week": 26,
    "plant": "ROM",
+   "product_type": "ICM",
+   "requesting_department": "Marketing/Sales",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": null
   },
   {
@@ -6447,6 +7653,11 @@
    "request_date": "2026-05-26",
    "request_week": 22,
    "plant": "ROM",
+   "product_type": "ICM",
+   "requesting_department": "Marketing/Sales",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": null
   },
   {
@@ -6473,6 +7684,11 @@
    "request_date": "2026-05-26",
    "request_week": 22,
    "plant": "ROM",
+   "product_type": "ICM",
+   "requesting_department": "Marketing/Sales",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": null
   },
   {
@@ -6499,6 +7715,11 @@
    "request_date": "2026-03-26",
    "request_week": 13,
    "plant": "ROM",
+   "product_type": "ICM",
+   "requesting_department": "Marketing/Sales",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": null
   },
   {
@@ -6525,6 +7746,11 @@
    "request_date": "2026-03-03",
    "request_week": 10,
    "plant": "ROM",
+   "product_type": "ICM",
+   "requesting_department": "Marketing/Sales",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": null
   },
   {
@@ -6551,6 +7777,11 @@
    "request_date": "2026-02-26",
    "request_week": 9,
    "plant": "ROM",
+   "product_type": "ICM",
+   "requesting_department": "Marketing/Sales",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": null
   },
   {
@@ -6577,6 +7808,11 @@
    "request_date": "2026-10-26",
    "request_week": 44,
    "plant": "ROM",
+   "product_type": "ICM",
+   "requesting_department": "Marketing/Sales",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": null
   },
   {
@@ -6603,6 +7839,11 @@
    "request_date": "2026-09-26",
    "request_week": 39,
    "plant": "ROM",
+   "product_type": "ICM",
+   "requesting_department": "Development",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": null
   },
   {
@@ -6629,6 +7870,11 @@
    "request_date": "2026-10-26",
    "request_week": 44,
    "plant": "ROM",
+   "product_type": "ICM",
+   "requesting_department": "Marketing/Sales",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": null
   },
   {
@@ -6655,6 +7901,11 @@
    "request_date": "2026-09-26",
    "request_week": 39,
    "plant": "ROM",
+   "product_type": "ICM",
+   "requesting_department": "Marketing/Sales",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": null
   },
   {
@@ -6681,6 +7932,11 @@
    "request_date": "2026-06-26",
    "request_week": 26,
    "plant": "ROM",
+   "product_type": "ICM",
+   "requesting_department": "Marketing/Sales",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": null
   },
   {
@@ -6707,6 +7963,11 @@
    "request_date": "2026-06-26",
    "request_week": 26,
    "plant": "ROM",
+   "product_type": "ICM",
+   "requesting_department": "PD",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": "Y"
   },
   {
@@ -6733,7 +7994,147 @@
    "request_date": "2026-02-10",
    "request_week": 7,
    "plant": "ROM",
+   "product_type": "ICM",
+   "requesting_department": "Marketing/Sales",
+   "end_date": null,
+   "target_end_week": null,
+   "spillover_2025": false,
    "capacity_flag": null
+  }
+ ],
+ "roster": [
+  {
+   "name": "Rishi",
+   "hub": "PD-India",
+   "fte": 1.0,
+   "remark": null,
+   "cell": "I42:J42"
+  },
+  {
+   "name": "New Hiring",
+   "hub": "PD-India",
+   "fte": 0.0,
+   "remark": "To be hired",
+   "cell": "I43:J43"
+  },
+  {
+   "name": "Lokesh",
+   "hub": "PD-India",
+   "fte": 1.0,
+   "remark": null,
+   "cell": "I44:J44"
+  },
+  {
+   "name": "Zakir",
+   "hub": "PD-India",
+   "fte": 1.0,
+   "remark": null,
+   "cell": "I45:J45"
+  },
+  {
+   "name": "Pawan",
+   "hub": "PD-India",
+   "fte": 1.0,
+   "remark": null,
+   "cell": "I46:J46"
+  },
+  {
+   "name": "Nikhil",
+   "hub": "PD-India",
+   "fte": 0.75,
+   "remark": null,
+   "cell": "I47:J47"
+  },
+  {
+   "name": "Atul",
+   "hub": "PD-India",
+   "fte": 0.5,
+   "remark": null,
+   "cell": "I48:J48"
+  },
+  {
+   "name": "Rahul-Contractual",
+   "hub": "PD-India",
+   "fte": 0.5,
+   "remark": "3rd Party",
+   "cell": "I49:J49"
+  },
+  {
+   "name": "New engineer-Contractual",
+   "hub": "PD-India",
+   "fte": 0.0,
+   "remark": "3rd Party",
+   "cell": "I50:J50"
+  },
+  {
+   "name": "Ashish",
+   "hub": "R&D-India",
+   "fte": 1.0,
+   "remark": null,
+   "cell": "L42:M42"
+  },
+  {
+   "name": "Praveer Kumar Singh",
+   "hub": "R&D-India",
+   "fte": 0.5,
+   "remark": null,
+   "cell": "L43:M43"
+  },
+  {
+   "name": "Ayush Kumar",
+   "hub": "R&D-India",
+   "fte": 0.5,
+   "remark": "3rd Party",
+   "cell": "L44:M44"
+  },
+  {
+   "name": "Dimopoulou",
+   "hub": "R&D-Greece",
+   "fte": 1.0,
+   "remark": "R&D resource",
+   "cell": "O42:P42"
+  },
+  {
+   "name": "Lioumis",
+   "hub": "R&D-Greece",
+   "fte": 1.0,
+   "remark": "R&D resource",
+   "cell": "O43:P43"
+  },
+  {
+   "name": "Kanarios",
+   "hub": "R&D-Greece",
+   "fte": 0.8,
+   "remark": "Sourcing",
+   "cell": "O44:P44"
+  },
+  {
+   "name": "Stef Marius",
+   "hub": "PD-Romania",
+   "fte": 1.0,
+   "remark": null,
+   "cell": "R42:S42"
+  },
+  {
+   "name": "Alin Boboc",
+   "hub": "PD-Romania",
+   "fte": 1.0,
+   "remark": null,
+   "cell": "R43:S43"
+  },
+  {
+   "name": "Adrian Bortoc",
+   "hub": "PD-Romania",
+   "fte": 1.0,
+   "remark": null,
+   "cell": "R44:S44"
+  },
+  {
+   "name": "Bianca",
+   "hub": "PD-Romania",
+   "fte": 0.75,
+   "remark": null,
+   "cell": "R45:S45"
   }
  ]
 }

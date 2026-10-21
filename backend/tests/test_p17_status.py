@@ -96,7 +96,9 @@ async def test_five_cards_reconcile_unfiltered_and_hub_and_country(db_session):
         for key, status in CARDS.items():
             card = body[f"{key}_count"] if key in ("commercialized", "on_hold") else body[key]
             assert sum(r["status_counts"][status.value] for r in summary["regions"]) == card
-            assert sum(r["status_share_pct"][status.value] for r in summary["regions"]) in (
+            # P23-T02: rounded, the float sum of two-decimal shares can be 99.99000000000001.
+            share = round(sum(r["status_share_pct"][status.value] for r in summary["regions"]), 2)
+            assert share in (
                 0.0, *[x / 100 for x in range(9990, 10011)]
             ) or card == 0
         # Filtered region-summary still carries the chip for the filtered country.

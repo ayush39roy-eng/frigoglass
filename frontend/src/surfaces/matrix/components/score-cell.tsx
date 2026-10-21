@@ -1,12 +1,12 @@
 import * as React from 'react';
 
-import { PriorityBandPill } from '@/components/shared/priority-band-pill';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { formatInteger } from '@/lib/format';
 
 import { BAND_THRESHOLDS, POINTS_RULE_COPY, type PriorityMatrixRow } from '../api/types';
 import { formatOutOf100, rowBand, rowNormalizedScore } from '../lib/row-scores';
 import { HardGateBadge } from './hard-gate-badge';
+import { SuggestedBandChip } from './suggested-band-chip';
 
 /**
  * The prioritization score cell (`frontend-builder` SKILL names this as an
@@ -80,7 +80,12 @@ export function ScoreCell({ row }: { row: PriorityMatrixRow }): React.JSX.Elemen
         </TooltipTrigger>
         <BandDerivationTooltip pct={score} weighted={row.weighted_score} />
       </Tooltip>
-      <PriorityBandPill priority={band} />
+      <SuggestedBandChip
+        band={band}
+        capacityFill={row.capacity_fill}
+        reason={row.capacity_fill_reason}
+        scoreBand={row.score_band}
+      />
       <HardGateBadge gates={row.hard_gates} />
     </span>
   );

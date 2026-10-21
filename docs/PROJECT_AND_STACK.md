@@ -43,12 +43,11 @@ chart; and an analytics breakdown with filters (by hub, category, status, priori
 ### RPD Capacity
 
 Design and lab capacity vs. load per hub. A class breakdown (A+/A/B/C) of deliverable vs. left-out
-projects. Load-vs-capacity charts per hub. A global resource utilization matrix (engineers × weeks,
-chambers × weeks). Per `docs/DOMAIN_RULES.md`, FTE scaling and chamber efficiency currently do not
-affect scheduling itself (known prototype defects, pending ADR) — this surface's capacity
-*reporting* must still show FTE-scaled and efficiency-scaled figures where the source data provides
-them, but must not silently imply the scheduler already accounts for them until an ADR says
-otherwise.
+projects. Load-vs-capacity charts per hub, one "Load vs. capacity by hub" table grouped by hub
+family, and an engineers × weeks utilization heatmap on request (the chamber × weeks matrix was
+removed in P19-T07). Since ADR 0032 (2026-10-21) engineer FTE sets a leader's design speed in the
+scheduler; chamber efficiency is still capacity-reporting only (ADR 0003). Load is shown in work
+weeks, so booked % stays comparable with FTE-scaled capacity.
 
 ### Prioritization Matrix
 
@@ -71,6 +70,9 @@ activity-load bottleneck strip beneath the timeline. A freeze toggle per project
 Create/edit projects: assign leader, category (A+/A/B/C), type, hub, actual start date, financial
 fields (TCOGS, gross margin, selling price — commercially sensitive, encrypted at rest, never
 logged). Hard gates enforce required fields before a project can leave draft status.
+*(2026-10-21, ADR 0034: Draft is retired. Registration checks the required fields up front, which
+now include priority, and creates the project `In Queue`. The Draft-leaving path remains only for
+historic Draft rows.)*
 
 ### Capacity Planning
 

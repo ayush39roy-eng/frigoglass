@@ -6,6 +6,7 @@ import { X } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
+import { CharterFieldList } from '@/components/shared/charter-fields';
 import { ErrorState } from '@/components/shared/error-state';
 import { ProjectStatusBadge } from '@/components/shared/project-status-badge';
 import { applyFormPriorityMove } from '@/components/shared/priority-move/form-priority-move';
@@ -61,7 +62,7 @@ export interface RegistrationDrawerProps {
   moveApi: PriorityMoveApi;
   /** A write came back 403: the page downgrades to read-only. */
   onForbidden: () => void;
-  /** The project left Draft (the list refreshes; the drawer stays open). */
+  /** A legacy Draft project left Draft (the list refreshes; the drawer stays open). */
   onSubmitted: () => void;
   /** The control that opened the drawer; focus returns to it on close when it
    *  is still on the page (Radix's own return covers the rest). */
@@ -211,7 +212,8 @@ function CreateBody({
   const createMut = useCreateProject();
   const handleSubmit = async (body: ProjectCreateRequest): Promise<void> => {
     try {
-      // `POST /projects` always creates a Draft, however much is filled in.
+      // P23-T02: `POST /projects` requires the hard-gate fields and creates the
+      // project In Queue (no Draft). A 422 maps onto the fields in the form.
       const created: unknown = await createMut.mutateAsync(body);
       onSaved({ mode: 'create', project: isProject(created) ? created : undefined });
     } catch (err) {
@@ -372,7 +374,9 @@ function EditBody({
 }
 
 /** The registration facts the old list's expanded row showed that the form
- *  does not (workflow, frozen, stale), and the leave-Draft hard gate. */
+ *  does not (workflow, frozen, stale), and — only for a legacy project that is
+ *  still Draft (none today; P23 creates projects In Queue) — the leave-Draft
+ *  hard gate. */
 function RegistrationSummary({
   project,
   dirty,
@@ -400,6 +404,7 @@ function RegistrationSummary({
           </Badge>
         ) : null}
       </div>
+      <CharterBlock project={project} />
       {submitted ? (
         <p role="status" className="text-2xs font-medium text-success">
           Submitted. The project left Draft for {submitted}.
@@ -418,6 +423,27 @@ function RegistrationSummary({
         </div>
       ) : null}
     </section>
+  );
+}
+
+/** P24-T02 (ADR 0035): the client workbook's charter fields. Served read-only
+ *  (a write is rejected with 422), so they are shown here and are not in the
+ *  form. */
+function CharterBlock({ project }: { project: ProjectRead }): React.JSX.Element {
+  const headingId = React.useId();
+  return (
+    <div
+      className="space-y-2 rounded-lg border border-dashed border-border bg-surface-sunken/60 px-3 py-2.5"
+      role="group"
+      aria-labelledby={headingId}
+      data-testid="registration-charter-block"
+    >
+      <h3 id={headingId} className="text-2xs font-semibold uppercase tracking-wide text-text-muted">
+        From the client workbook
+      </h3>
+      <CharterFieldList project={project} />
+      <p className="text-2xs text-text-subtle">Read-only. These values come from the client workbook and cannot be edited here.</p>
+    </div>
   );
 }
 

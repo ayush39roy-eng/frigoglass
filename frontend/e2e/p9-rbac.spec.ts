@@ -39,14 +39,13 @@ const perm = (role: DevRole, s: SurfaceKey): Perm => MATRIX[role][SURFACE_KEYS.i
 
 // Sidebar entries in sidebar order (frontend/src/app/nav.ts: Plan, Execute, Configure, Data).
 // Project Workspace has no nav item of its own. `surface: null` (Downloads) is open to any
-// signed-in user. Projects reuses `dashboard`; Priority board and Versions & History reuse `matrix`;
+// signed-in user. Projects reuses `dashboard`; Versions & History reuses `matrix` (the Priority board is a Matrix tab since P21-T05);
 // Weekly check-in reads `project_workspace`.
 const NAV: { surface: SurfaceKey | null; label: string; path: string }[] = [
   { surface: 'dashboard', label: 'Dashboard', path: '/' },
   { surface: 'dashboard', label: 'Projects', path: '/projects' },
   { surface: 'capacity', label: 'Capacity', path: '/capacity' },
   { surface: 'matrix', label: 'Prioritization', path: '/matrix' },
-  { surface: 'matrix', label: 'Priority board', path: '/priority-board' },
   { surface: 'gantt', label: 'Timeline', path: '/timeline' },
   { surface: 'project_workspace', label: 'Weekly check-in', path: '/check-in' },
   { surface: 'capacity_planning', label: 'Planning', path: '/planning' },

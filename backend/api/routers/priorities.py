@@ -53,12 +53,14 @@ from core.rbac import Action, Surface
 from models.audit import AuditLogEntry
 from models.enums import (
     CurrencyCode,
+    HubName,
     LabRegion,
     ProjectCategory,
     ProjectPriority,
     ProjectStatus,
     ProjectType,
 )
+from models.hub import Hub
 from models.priority import DIMENSION_FIELD_NAMES, PriorityScore
 from models.project import Project
 from schemas.priority import (
@@ -66,6 +68,8 @@ from schemas.priority import (
     DimensionInfo,
     DimensionPoints,
     DimensionScore,
+    HubP1Fill,
+    PriorityCapacityFill,
     PriorityCompareItem,
     PriorityCompareResponse,
     PriorityDimensionsResponse,
@@ -79,6 +83,7 @@ from schemas.priority import (
 from services.audit_helpers import priority_score_audit_state
 from services.currency import rate_to_eur as _currency_rate_to_eur
 from services.hub_scope import global_hub_filter, hub_scope_filter, narrowed_hub_filter
+from services.priority_capacity_fill import CapacityFill, RowFill, compute_capacity_fill
 from services.priority_scoring import (
     compute_priority_score,
     dimension_points,
@@ -130,6 +135,7 @@ def _build_row(
     *,
     current_user: Principal,
     rank: int | None,
+    fill: RowFill,
 ) -> PriorityMatrixRow:
     return PriorityMatrixRow(
         project_id=project.id,
@@ -161,7 +167,10 @@ def _build_row(
             float(score.weighted_score) if score and score.weighted_score is not None else None
         ),
         normalized_pct=score.normalized_pct if score else None,
-        suggested_band=score.suggested_band if score else None,
+        suggested_band=fill.suggested_band,
+        score_band=fill.score_band,
+        capacity_fill=fill.capacity_fill,
+        capacity_fill_reason=fill.capacity_fill_reason,
         dimension_points=_dimension_points(score),
         dimension_scores=_dimension_scores(score),
         is_new_model=project.type == ProjectType.NM,
@@ -221,9 +230,16 @@ async def list_priority_matrix(
         q=q,
     )
     ranks = score_ranks(projects, _score_value)
+    fill = await compute_capacity_fill(db, {p.hub_id for p in projects})
     rows = [
         _build_row(
-            p, p.priority_score, currency, rate, current_user=current_user, rank=ranks.get(p.id)
+            p,
+            p.priority_score,
+            currency,
+            rate,
+            current_user=current_user,
+            rank=ranks.get(p.id),
+            fill=_row_fill(fill, p),
         )
         for p in projects
     ]
@@ -277,6 +293,13 @@ async def _matrix_projects(
     return (await db.execute(stmt)).scalars().all()
 
 
+def _row_fill(fill: CapacityFill, project: Project) -> RowFill:
+    """ADR 0036: the row's promoted / score band from the hub's capacity fill."""
+
+    score = project.priority_score
+    return fill.for_row(project.id, project.hub_id, score.suggested_band if score else None)
+
+
 def _score_value(project: Project) -> float | None:
     score = project.priority_score
     if score is None or score.weighted_score is None:
@@ -317,11 +340,14 @@ async def priority_portfolio_summary(
     projects = (await db.execute(stmt)).scalars().all()
 
     scored = [p for p in projects if p.priority_score is not None]
+    # ADR 0036: `suggested_band_counts` follow the promoted band, the score
+    # band is counted separately.
+    fill = await compute_capacity_fill(db, {p.hub_id for p in projects})
+    row_fills = [_row_fill(fill, p) for p in scored]
     suggested_band_counts = Counter(
-        p.priority_score.suggested_band.value
-        for p in scored
-        if p.priority_score.suggested_band is not None
+        f.suggested_band.value for f in row_fills if f.suggested_band is not None
     )
+    score_band_counts = Counter(f.score_band.value for f in row_fills if f.score_band is not None)
     set_priority_counts = Counter(p.priority.value for p in projects if p.priority is not None)
     hard_gate_forced = sum(1 for p in scored if p.priority_score.hard_gates)
 
@@ -331,6 +357,8 @@ async def priority_portfolio_summary(
         unscored_projects=len(projects) - len(scored),
         hard_gate_forced_count=hard_gate_forced,
         suggested_band_counts=dict(suggested_band_counts),
+        score_band_counts=dict(score_band_counts),
+        capacity_fill_count=sum(1 for f in row_fills if f.capacity_fill),
         set_priority_counts=dict(set_priority_counts),
     )
 
@@ -367,9 +395,10 @@ async def priority_distribution(
 ) -> PriorityDistribution:
     """P21-T01 (docs/API_CONTRACT_P21.md §4): band distribution and a 10-point
     histogram of `normalized_pct` over exactly the rows `GET /priorities`
-    returns for the same filters and scope. A band is the stored
-    `suggested_band`; a project without a score is "Unscored". No financial
-    field is read."""
+    returns for the same filters and scope. A band is the row's served
+    `suggested_band`, i.e. after the P1 capacity fill (ADR 0036); promoted
+    rows are also counted in `capacity_fill_count`. A project without a score
+    is "Unscored". No financial field is read."""
 
     projects = await _matrix_projects(
         db,
@@ -382,21 +411,26 @@ async def priority_distribution(
         q=q,
     )
     total = len(projects)
+    fill = await compute_capacity_fill(db, {p.hub_id for p in projects})
     counts: Counter[str] = Counter()
     histogram = [0] * (100 // _HISTOGRAM_WIDTH)
     scored = 0
+    filled = 0
     for p in projects:
         score = p.priority_score
-        if score is None or score.suggested_band is None:
+        row_fill = _row_fill(fill, p)
+        if score is None or row_fill.suggested_band is None:
             counts["Unscored"] += 1
             continue
         scored += 1
-        counts[score.suggested_band.value] += 1
+        filled += row_fill.capacity_fill
+        counts[row_fill.suggested_band.value] += 1
         if score.normalized_pct is not None:
             histogram[_histogram_bucket(score.normalized_pct)] += 1
     return PriorityDistribution(
         total_projects=total,
         scored_projects=scored,
+        capacity_fill_count=filled,
         band_distribution=[
             BandShare(band=band, count=counts[band], share_pct=_share(counts[band], total))
             for band in _DISTRIBUTION_BANDS
@@ -409,6 +443,45 @@ async def priority_distribution(
             )
             for i, n in enumerate(histogram)
         ],
+    )
+
+
+@router.get("/capacity-fill", response_model=PriorityCapacityFill)
+async def priority_capacity_fill(
+    hub_id: uuid.UUID | None = None,
+    region: LabRegion | None = None,
+    db: AsyncSession = Depends(get_db),
+    current_user: Principal = Depends(_read),
+) -> PriorityCapacityFill:
+    """P25-T01 (ADR 0036, docs/API_CONTRACT_P25.md §2): the P1 capacity fill of
+    every hub in the caller's scope, narrowed by the global `hub_id` /
+    `region` filter (never widened; out of scope → `hubs: []`). Read only:
+    never writes a committed priority or a score."""
+
+    hub_stmt = select(Hub.id, Hub.name).order_by(Hub.name)
+    hub_filter = narrowed_hub_filter(current_user, Hub.id, hub_id, region)
+    if hub_filter is not None:
+        hub_stmt = hub_stmt.where(hub_filter)
+    hubs: list[tuple[uuid.UUID, HubName]] = [
+        (h_id, name) for h_id, name in (await db.execute(hub_stmt)).all()
+    ]
+    fill = await compute_capacity_fill(db, [h_id for h_id, _ in hubs])
+    out: list[HubP1Fill] = []
+    for h_id, name in hubs:
+        hub_fill = fill.hubs[h_id]
+        out.append(
+            HubP1Fill(
+                hub=name,
+                capacity_weeks=float(hub_fill.capacity_weeks),
+                base_load_weeks=float(hub_fill.base_load_weeks),
+                filled_load_weeks=float(hub_fill.filled_load_weeks),
+                promoted_count=len(hub_fill.promoted_ids),
+            )
+        )
+    return PriorityCapacityFill(
+        has_active_schedule_run=fill.run is not None,
+        schedule_run_version=fill.run.version if fill.run is not None else None,
+        hubs=out,
     )
 
 
@@ -451,10 +524,12 @@ async def compare_priorities(
             "One or more projects cannot be compared.",
         )
 
+    fill = await compute_capacity_fill(db, {p.hub_id for p in found.values()})
     items: list[PriorityCompareItem] = []
     for pid in project_id:
         p = found[pid]
         score = p.priority_score
+        row_fill = _row_fill(fill, p)
         items.append(
             PriorityCompareItem(
                 project_id=p.id,
@@ -468,7 +543,10 @@ async def compare_priorities(
                     else None
                 ),
                 normalized_pct=score.normalized_pct if score is not None else None,
-                suggested_band=score.suggested_band if score is not None else None,
+                suggested_band=row_fill.suggested_band,
+                score_band=row_fill.score_band,
+                capacity_fill=row_fill.capacity_fill,
+                capacity_fill_reason=row_fill.capacity_fill_reason,
                 dimension_scores=_dimension_scores(score),
             )
         )
@@ -499,8 +577,15 @@ async def get_priority_row(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found")
 
     rate = await _rate_to_eur(db, currency)
+    fill = await compute_capacity_fill(db, {project.hub_id})
     return _build_row(
-        project, project.priority_score, currency, rate, current_user=current_user, rank=None
+        project,
+        project.priority_score,
+        currency,
+        rate,
+        current_user=current_user,
+        rank=None,
+        fill=_row_fill(fill, project),
     )
 
 

@@ -135,6 +135,26 @@ describe('ResourceLoadSection', () => {
     expect(screen.queryByRole('checkbox')).not.toBeInTheDocument();
   });
 
+  it('enables Dept over the served departments when the server says they are available (P24-T02)', async () => {
+    const user = userEvent.setup();
+    hooks.useResourceLoadOptions.mockReturnValue({
+      data: { ...options, requesting_departments: ['Marketing', 'Sales'], requesting_department_available: true },
+      isPending: false,
+    });
+    renderWithProviders(<ResourceLoadSection basis="remaining" unit="weeks" hubs={HUBS} />);
+    reveal();
+    expect(screen.queryByRole('button', { name: /Dept filter: All, unavailable/ })).not.toBeInTheDocument();
+    const dept = screen.getByRole('button', { name: 'Dept filter: All' });
+    expect(dept).not.toHaveAttribute('aria-disabled');
+    await user.hover(dept);
+    expect(screen.queryByText('No department data yet')).not.toBeInTheDocument();
+    await user.click(dept);
+    expect(await screen.findByRole('checkbox', { name: 'Marketing' })).toBeInTheDocument();
+    await user.click(screen.getByRole('checkbox', { name: 'Sales' }));
+    await user.keyboard('{Escape}');
+    await waitFor(() => expect(hooks.useResourceLoad).toHaveBeenLastCalledWith('remaining', { ...EMPTY, departments: ['Sales'] }, true), { timeout: 2000 });
+  });
+
   it('charts and tables show the served fields in the page unit, labelled "<name> (<hub>)"', () => {
     const { rerender } = renderWithProviders(<ResourceLoadSection basis="remaining" unit="weeks" hubs={HUBS} />);
     reveal();

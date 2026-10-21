@@ -91,3 +91,26 @@ export function useGridMaxHeight(
   if (scrollportH === null || scrollportH === 0) return '560px';
   return `${String(Math.max(320, scrollportH - panelH - reserveBelow))}px`;
 }
+
+/**
+ * P21-T05: the scroll content below the bottom of `ref` (page padding, gutters), in px, so a
+ * fixed-height block can end exactly at the bottom of the scroll region when scrolled to the
+ * end. Re-measured on resize. Layout only.
+ */
+export function useSpaceBelow(ref: React.RefObject<HTMLElement | null>, active: boolean): number {
+  const [below, setBelow] = React.useState(0);
+  React.useEffect(() => {
+    const el = ref.current;
+    if (!active || !el) return undefined;
+    const parent = scrollParentOf(el);
+    const read = () => {
+      if (!parent) return;
+      const bottom = el.getBoundingClientRect().bottom - parent.getBoundingClientRect().top + parent.scrollTop;
+      setBelow(Math.max(0, Math.round(parent.scrollHeight - bottom)));
+    };
+    read();
+    window.addEventListener('resize', read);
+    return () => window.removeEventListener('resize', read);
+  }, [ref, active]);
+  return below;
+}

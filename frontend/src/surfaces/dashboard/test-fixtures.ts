@@ -16,6 +16,9 @@ export const P13_ROW_DEFAULTS: Pick<
   | 'reg_year'
   | 'carry_over'
   | 'priority_rank'
+  | 'plant'
+  | 'requesting_department'
+  | 'product_type'
 > = {
   external_code: null,
   type: null,
@@ -29,4 +32,7 @@ export const P13_ROW_DEFAULTS: Pick<
   reg_year: 2026,
   carry_over: false,
   priority_rank: null,
+  plant: null,
+  requesting_department: null,
+  product_type: null,
 };

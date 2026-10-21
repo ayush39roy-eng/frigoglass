@@ -4,6 +4,7 @@ import { cn } from '@/lib/utils';
 
 import {
   barGeometry,
+  stepDragCalendar,
   stepDragResult,
   type StepDragMode,
   type StepDragOrigin,
@@ -134,6 +135,9 @@ export function StepDragOverlay({
 
   const canMove = target.timingEditable === 'move_resize';
   const handlePx = touch ? HANDLE_PX_TOUCH : HANDLE_PX;
+  // Centred on the bar's end edge, but never past the axis end: a bar ending
+  // at W52 would otherwise put half the handle under the sticky status column.
+  const handleLeft = Math.min(geom.x + geom.width - handlePx / 2, scale.totalWidthPx - handlePx);
   const top = (rowHeight - BODY_H) / 2;
 
   const begin = (mode: StepDragMode) => (e: React.PointerEvent<HTMLDivElement>) => {
@@ -169,6 +173,9 @@ export function StepDragOverlay({
           kind: target.kind,
           workWeeks: live.workWeeks,
           fte: target.spanFte,
+          // QA-P19-4: the calendar figure is the unclipped span, not the ghost
+          // (which stops at W52).
+          calendar: live.workWeeks === null ? null : stepDragCalendar(origin, live.workWeeks, scale),
         }),
       }
     : pending
@@ -223,7 +230,7 @@ export function StepDragOverlay({
           'group/handle pointer-events-auto absolute flex touch-none items-center justify-center',
           host.busy ? 'cursor-not-allowed' : 'cursor-ew-resize',
         )}
-        style={{ left: geom.x + geom.width - handlePx / 2, width: handlePx, top: top - 2, height: BODY_H + 4 }}
+        style={{ left: handleLeft, width: handlePx, top: top - 2, height: BODY_H + 4 }}
         data-testid="step-drag-handle"
         title={`Drag to change the duration of ${target.stepName}. ${target.kind === 'design' ? WORK_WEEKS_HELP : 'Lab and elapsed steps are not stretched by FTE.'}`}
         onPointerDown={begin('resize')}

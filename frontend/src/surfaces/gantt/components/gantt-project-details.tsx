@@ -26,17 +26,24 @@ export function GanttProjectDetailsDialog({
   onOpenChange,
   canWrite,
   onFreezeClick,
+  onCloseAutoFocus,
 }: {
   project: GanttProjectRow | null;
   open: boolean;
   onOpenChange: (open: boolean) => void;
   canWrite: boolean;
   onFreezeClick: (project: GanttProjectRow) => void;
+  /** QA-P19-3: the dialog is controlled (no Radix trigger), so the host returns focus to the Details button. */
+  onCloseAutoFocus?: (event: Event) => void;
 }): React.JSX.Element {
   const statuses = project ? projectStatusLabels(project) : [];
   return (
     <Dialog open={open && project !== null} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-[calc(100vw-2rem)] sm:max-w-md" data-testid="gantt-project-details">
+      <DialogContent
+        className="max-w-[calc(100vw-2rem)] sm:max-w-md"
+        data-testid="gantt-project-details"
+        onCloseAutoFocus={onCloseAutoFocus}
+      >
         {project ? (
           <>
             <DialogHeader>

@@ -258,7 +258,7 @@ export function ScenarioBuilder({ validation, chambers }: ScenarioBuilderProps):
                 <Field id={id('status')} label="Status">
                   {(p) => (
                     <NativeSelect {...p} value={l.status} onChange={(e) => set({ status: e.target.value as typeof l.status })}>
-                      {WHATIF_STATUSES.map((s) => (
+                      {(WHATIF_STATUSES.includes(l.status) ? WHATIF_STATUSES : [...WHATIF_STATUSES, l.status]).map((s) => (
                         <option key={s} value={s}>
                           {s}
                         </option>

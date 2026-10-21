@@ -30,7 +30,7 @@ export const TIMING_COPY = {
 export const TIMING_ERROR_COPY: Record<string, string> = {
   PROJECT_FROZEN: 'This project is frozen, so its step timing cannot change. Unfreeze it on the timeline first. Nothing was saved.',
   NOT_SCHEDULABLE:
-    "This project's status is not scheduled (for example Draft, On Hold, Commercialized or Cancelled), so its step timing cannot change. Nothing was saved.",
+    "This project's status is not scheduled (for example On Hold, Commercialized or Cancelled), so its step timing cannot change. Nothing was saved.",
   STEP_DONE: 'This step is Done. Its timing is history and cannot change. Nothing was saved.',
   STEP_STARTED: `${TIMING_COPY.startedNote} Nothing was saved.`,
   STEP_SKIPPED: 'This step is skipped for the project (0 weeks), so it has no timing to change. Nothing was saved.',

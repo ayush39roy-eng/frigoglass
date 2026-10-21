@@ -3,6 +3,8 @@ import { FolderKanban, FolderOpen, Pencil } from 'lucide-react';
 
 import { CountryFlag } from '@/components/shared/hub-filter/country-flag';
 import { PriorityBandPill } from '@/components/shared/priority-band-pill';
+import { CHARTER_FIELDS, CharterCell } from '@/components/shared/charter-fields';
+import { NoLeaderLabel } from '@/components/shared/no-leader-label';
 import { ProjectStatusBadge } from '@/components/shared/project-status-badge';
 import { CategoryTag } from '@/components/ui/category-tag';
 import { EntityCell } from '@/components/ui/table-cells';
@@ -20,8 +22,9 @@ import type { VirtualColumn } from './virtual-data-table';
  * contract §4): #, Hub, Cat, Type, Status, Project, Leader, End wk, Current
  * step, Priority, Actions. Every cell prints one served field of
  * `GET /dashboard/projects` (I9). `#` is the row's position in the served
- * order, a display ordinal only. Plant and Requesting department are not
- * modelled (OQ #34) and are not shown; there is no Delete here.
+ * order, a display ordinal only. P24-T02 (ADR 0035): Plant, Requesting
+ * department and Product type are served read-only and shown as optional
+ * columns (`showCharter`). There is no Delete here.
  */
 
 export type RegisterRow = ProjectFilterRow & { ordinal: number };
@@ -32,7 +35,13 @@ const ACTION_LINK =
   'inline-flex h-7 items-center gap-1 rounded-pill border-[1.5px] px-2 text-2xs font-semibold transition-colors ' +
   'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring [&_svg]:size-3.5';
 
-export function registerColumns({ canEdit }: { canEdit: boolean }): VirtualColumn<RegisterRow>[] {
+export function registerColumns({
+  canEdit,
+  showCharter = false,
+}: {
+  canEdit: boolean;
+  showCharter?: boolean;
+}): VirtualColumn<RegisterRow>[] {
   return [
     {
       id: 'ordinal',
@@ -114,9 +123,18 @@ export function registerColumns({ canEdit }: { canEdit: boolean }): VirtualColum
             Name unavailable
           </span>
         ) : (
-          DASH
+          <NoLeaderLabel leftOut={row.outcome === 'LEFT_OUT'} className="text-xs" />
         ),
     },
+    // P24-T02 (ADR 0035): the served charter fields, verbatim, when asked for.
+    ...(showCharter
+      ? CHARTER_FIELDS.map<VirtualColumn<RegisterRow>>(({ key, short }) => ({
+          id: `charter-${key}`,
+          header: short,
+          width: 'minmax(6.5rem, 0.9fr)',
+          cell: (row) => <CharterCell value={row[key]} />,
+        }))
+      : []),
     {
       id: 'end-week',
       header: 'End wk',

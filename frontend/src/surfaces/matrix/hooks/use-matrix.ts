@@ -6,7 +6,7 @@
  * (Invariant I9 — no independent calculation, including in the frontend).
  */
 
-import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQueries, useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
 
 import { ApiError } from '@/lib/api/client';
 import { queryKeys } from '@/lib/query-keys';
@@ -21,6 +21,7 @@ import type {
 import {
   applyScenario,
   fetchMatrixCurrencies,
+  fetchPriorityCapacityFill,
   fetchPriorityCompare,
   fetchPriorityDistribution,
   fetchPriorityMatrix,
@@ -99,6 +100,21 @@ export function usePrioritySummary(hubId: string | null = null, region: LabRegio
 }
 
 /**
+ * P21-T05: every query that shows a served score or band. `priority-matrix`
+ * covers the grid, the distribution, compare and the edit rows; the Priority
+ * board's cards show the weighted score and band; the Project Workspace has a
+ * scoring section. A score write changes none of the run-derived views
+ * (Gantt, Dashboard, Capacity): the scheduler never reads the score.
+ */
+export function invalidateScoreReaders(queryClient: QueryClient, projectId: string | null): void {
+  void queryClient.invalidateQueries({ queryKey: ['priority-matrix'] });
+  void queryClient.invalidateQueries({ queryKey: ['priority-board'] });
+  void queryClient.invalidateQueries({
+    queryKey: projectId === null ? ['projects', 'workspace'] : queryKeys.projectWorkspace(projectId),
+  });
+}
+
+/**
  * `PUT /priorities/{id}` inline edit. On success, invalidate every
  * `['priority-matrix', …]` key (grid + summary + detail) so the recomputed
  * band/score/hard-gate-count are re-read from the server. Deliberately does
@@ -110,8 +126,8 @@ export function useUpdatePriorityScore() {
   return useMutation({
     mutationFn: ({ projectId, body }: { projectId: string; body: PriorityScoreUpdateRequest }) =>
       updatePriorityScore(projectId, body),
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ['priority-matrix'] });
+    onSuccess: (_data, { projectId }) => {
+      invalidateScoreReaders(queryClient, projectId);
     },
   });
 }
@@ -134,7 +150,7 @@ export function useApplyScenario() {
   return useMutation({
     mutationFn: (body: ScenarioApplyRequest) => applyScenario(body),
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ['priority-matrix'] });
+      invalidateScoreReaders(queryClient, null);
     },
   });
 }
@@ -251,5 +267,17 @@ export function usePriorityEditRows(projectIds: readonly string[], enabled: bool
       enabled,
       retry: retryUnlessAuth,
     })),
+  });
+}
+
+/** P25: per-hub P1 capacity fill for the global hub / country filter. Under `priority-matrix`,
+ *  so a score save or a priority move re-reads it with the grid. */
+export function usePriorityCapacityFill(hubId: string | null, region: LabRegion | null) {
+  const params = { hubId: hubId ?? undefined, region: region ?? undefined };
+  return useQuery({
+    queryKey: ['priority-matrix', 'capacity-fill', params] as const,
+    queryFn: ({ signal }) => fetchPriorityCapacityFill(params, { signal }),
+    retry: retryUnlessAuth,
+    placeholderData: (prev) => prev,
   });
 }

@@ -11,6 +11,7 @@ import { formatDecimal } from '@/lib/format';
 import { cn } from '@/lib/utils';
 
 import type { DisplayCard } from '../lib/board-model';
+import { BoardScenarioContext } from '../lib/board-scenario';
 
 export interface BoardCardProps {
   item: DisplayCard;
@@ -45,6 +46,7 @@ export const BoardCard = React.memo(function BoardCard({
 }: BoardCardProps): React.JSX.Element {
   const { card, servedPriority, pending } = item;
   const locked = card.hard_gated && servedPriority === 'P1';
+  const staged = React.useContext(BoardScenarioContext).has(card.project_id);
 
   return (
     <div
@@ -102,13 +104,23 @@ export const BoardCard = React.memo(function BoardCard({
         <span>{card.hub}</span>
         {card.category ? <CategoryTag category={card.category} /> : null}
         <span aria-hidden="true">·</span>
-        <span>
-          Score{' '}
-          <span className="font-mono font-semibold tabular-nums text-text" data-numeric="">
+        <span title="Weighted score: raw points out of the total weight, as the Matrix serves it. The scoring grid shows the same score out of 100.">
+          Weighted score{' '}
+          <span className="font-mono font-semibold tabular-nums text-text" data-numeric="" data-testid="board-card-score">
             {card.score === null ? '—' : formatDecimal(card.score)}
           </span>
         </span>
+        {card.band ? (
+          <span className="text-text-muted" data-testid="board-card-band">
+            · score band <span className="font-semibold text-text">{card.band}</span>
+          </span>
+        ) : null}
       </p>
+      {staged ? (
+        <p className="text-2xs font-medium text-warning-subtle-fg" data-testid="board-card-staged">
+          <span className="rounded-sm bg-warning-subtle px-1.5 py-0.5">Score change staged in scenario — not applied</span>
+        </p>
+      ) : null}
 
       <div className="flex flex-wrap items-center gap-1">
         <ProjectedFinishChip projectedEndWeek={card.projected_end_week} withinYear={card.within_year} />

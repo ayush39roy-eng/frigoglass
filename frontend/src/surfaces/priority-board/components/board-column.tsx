@@ -7,12 +7,18 @@ import { cn } from '@/lib/utils';
 import type { ProjectPriority } from '@/types/enums';
 
 import type { DisplayCard, DisplayColumn } from '../lib/board-model';
+import type { BoardLayout } from '../lib/board-layout';
 import { BoardCard, type BoardCardProps } from './board-card';
+import { BoardListRow } from './board-list-row';
 
 /** Above this many cards a column is virtualized (CLAUDE.md: any list over 100). */
 export const VIRTUALIZE_OVER = 100;
 const ESTIMATED_CARD_HEIGHT = 150;
 const CARD_GAP = 8;
+/** P21-T05 list layout: fixed 46 px two-line rows, 2 px apart (fixed, so the virtualizer's
+ *  estimate is exact and nothing is measured). */
+const LIST_ROW_HEIGHT = 46;
+const LIST_GAP = 2;
 
 type CardHandlers = Pick<
   BoardCardProps,
@@ -32,15 +38,36 @@ export interface BoardColumnProps extends CardHandlers {
   onColumnDragOver: (priority: ProjectPriority, event: React.DragEvent<HTMLElement>) => void;
   onColumnDragLeave: (priority: ProjectPriority, event: React.DragEvent<HTMLElement>) => void;
   onColumnDrop: (priority: ProjectPriority, event: React.DragEvent<HTMLElement>) => void;
+  /** P21-T05: cards (default) or the compact name list. */
+  layout?: BoardLayout;
+  /** The board has a fixed height (inside the Matrix): the column fills it and its body scrolls. */
+  fit?: boolean;
 }
 
 function CardSlot({
   item,
   props,
+  position,
 }: {
   item: DisplayCard;
   props: BoardColumnProps;
+  position: number;
 }): React.JSX.Element {
+  if (props.layout === 'list') {
+    return (
+      <BoardListRow
+        item={item}
+        position={position}
+        draggable={props.canDragCard(item)}
+        lifted={props.liftedId === item.card.project_id}
+        instructionsId={props.instructionsId}
+        onPointerDragStart={props.onPointerDragStart}
+        onPointerDragEnd={props.onPointerDragEnd}
+        onHandleKeyDown={props.onHandleKeyDown}
+        onHandleBlur={props.onHandleBlur}
+      />
+    );
+  }
   return (
     <BoardCard
       item={item}
@@ -57,11 +84,13 @@ function CardSlot({
 
 function VirtualCards({ props, scrollRef }: { props: BoardColumnProps; scrollRef: React.RefObject<HTMLDivElement | null> }): React.JSX.Element {
   const cards = props.column.cards;
+  const list = props.layout === 'list';
+  const gap = list ? LIST_GAP : CARD_GAP;
   // eslint-disable-next-line react-hooks/incompatible-library -- TanStack Virtual is the mandated virtualizer (see eslint.config.js).
   const virtualizer = useVirtualizer({
     count: cards.length,
     getScrollElement: () => scrollRef.current,
-    estimateSize: () => ESTIMATED_CARD_HEIGHT + CARD_GAP,
+    estimateSize: () => (list ? LIST_ROW_HEIGHT : ESTIMATED_CARD_HEIGHT) + gap,
     getItemKey: (index) => cards[index]?.card.project_id ?? index,
     overscan: 6,
   });
@@ -79,9 +108,9 @@ function VirtualCards({ props, scrollRef }: { props: BoardColumnProps; scrollRef
             key={item.card.project_id}
             data-index={v.index}
             ref={virtualizer.measureElement}
-            style={{ position: 'absolute', top: 0, left: 0, right: 0, transform: `translateY(${String(v.start)}px)`, paddingBottom: CARD_GAP }}
+            style={{ position: 'absolute', top: 0, left: 0, right: 0, transform: `translateY(${String(v.start)}px)`, paddingBottom: gap }}
           >
-            <CardSlot item={item} props={props} />
+            <CardSlot item={item} props={props} position={v.index + 1} />
           </li>
         );
       })}
@@ -105,6 +134,7 @@ export function BoardColumn(props: BoardColumnProps): React.JSX.Element {
       aria-labelledby={headingId}
       className={cn(
         'flex min-w-[15rem] flex-col rounded-dash border-[1.5px] bg-surface-sunken/60 transition-colors',
+        props.fit && 'h-full min-h-0',
         isDropTarget ? 'border-primary bg-primary-subtle/40' : acceptsDrop ? 'border-dashed border-primary/50' : 'border-dash-hairline',
       )}
       data-testid="board-column"
@@ -114,7 +144,11 @@ export function BoardColumn(props: BoardColumnProps): React.JSX.Element {
       onDragLeave={(e) => props.onColumnDragLeave(column.priority, e)}
       onDrop={(e) => props.onColumnDrop(column.priority, e)}
     >
-      <header className="flex items-start justify-between gap-2 border-b border-dash-hairline px-3 py-2">
+      {/* The header sits outside the scrolling body, so it stays visible while the column scrolls. */}
+      <header
+        className="sticky top-0 z-[1] flex shrink-0 items-start justify-between gap-2 rounded-t-dash border-b border-dash-hairline bg-surface-sunken px-3 py-2"
+        data-testid="board-column-header"
+      >
         <div className="flex min-w-0 flex-col gap-0.5">
           <h2 id={headingId} className="flex items-center gap-1.5 text-sm font-bold text-text" title={PRIORITY_BAND_TITLE[column.priority]}>
             <span className={cn('size-2 rounded-full', style.dot)} aria-hidden="true" />
@@ -143,16 +177,25 @@ export function BoardColumn(props: BoardColumnProps): React.JSX.Element {
           {formatInteger(column.count)}
         </span>
       </header>
-      <div ref={scrollRef} className="max-h-[calc(100vh-15rem)] min-h-[8rem] flex-1 overflow-y-auto p-2 scrollbar-thin">
+      <div ref={scrollRef} className={cn(
+          'flex-1 overflow-y-auto scrollbar-thin',
+          props.fit ? 'min-h-0' : 'max-h-[calc(100vh-15rem)] min-h-[8rem]',
+          props.layout === 'list' ? 'p-1' : 'p-2',
+        )}
+        data-testid="board-column-body">
         {column.cards.length === 0 ? (
           <p className="px-1 py-6 text-center text-2xs text-text-subtle">No projects</p>
         ) : column.cards.length > VIRTUALIZE_OVER ? (
           <VirtualCards props={props} scrollRef={scrollRef} />
         ) : (
-          <ul aria-label={`${column.priority} projects`} className="flex flex-col gap-2" data-virtualized="false">
-            {column.cards.map((item) => (
+          <ul
+            aria-label={`${column.priority} projects`}
+            className={cn('flex flex-col', props.layout === 'list' ? 'gap-0.5' : 'gap-2')}
+            data-virtualized="false"
+          >
+            {column.cards.map((item, i) => (
               <li key={item.card.project_id}>
-                <CardSlot item={item} props={props} />
+                <CardSlot item={item} props={props} position={i + 1} />
               </li>
             ))}
           </ul>

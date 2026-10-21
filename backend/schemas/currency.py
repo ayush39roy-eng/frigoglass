@@ -50,7 +50,14 @@ class CurrencyRateUpdateRequest(BaseModel):
     # now a 422 rather than a silent no-op. No behavioural change for any
     # current caller — the router reads `body.rate_to_eur` explicitly and
     # every test sends only that field (security finding #8, P3-T08).
-    model_config = ConfigDict(extra="forbid")
+    #
+    # P21-R01 (security S21-L1): `strict=True` as well, so a JSON boolean
+    # (`true` used to store 1.0) or a numeric string (`"17000"`) is a 422
+    # instead of a silently coerced rate. A strict `float` still accepts a
+    # JSON integer (`{"rate_to_eur": 17}`), and the Matrix FX editor sends a
+    # JSON number, so no current caller changes. Kept as `float` (not
+    # `Decimal`): a strict `Decimal` would reject a JSON float.
+    model_config = ConfigDict(extra="forbid", strict=True)
 
     #: P21-T01: positive, bounded to the column (`Numeric(10, 4)`: at least
     #: 0.0001 so it never rounds to 0, below 1,000,000) and finite, so an

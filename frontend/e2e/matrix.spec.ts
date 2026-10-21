@@ -71,6 +71,17 @@ test.describe('Prioritization Matrix surface (P4-T04)', () => {
     await expect(dialog).toBeHidden();
   });
 
+  test('P21-T05: the Priority board is a Matrix tab; /priority-board redirects there', async ({ page }) => {
+    const matrix = new MatrixPage(page);
+    await page.goto('/priority-board');
+    await expect(page).toHaveURL(/\/matrix\?view=board$/);
+    await expect(matrix.tab('Priority board')).toHaveAttribute('aria-selected', 'true');
+    await expect(matrix.boardColumns()).toHaveCount(5);
+    await matrix.tab('Scoring grid').click();
+    await expect(page).toHaveURL(/\/matrix$/);
+    await expect(matrix.currencyToggleGroup()).toBeVisible();
+  });
+
   test('has no serious/critical axe violations', async ({ page }) => {
     await loginAs(page, 'portfolioManager');
     await new MatrixPage(page).goto();

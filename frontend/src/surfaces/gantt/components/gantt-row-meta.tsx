@@ -1,13 +1,15 @@
 import * as React from 'react';
 import { UserRound } from 'lucide-react';
 
+import { NoLeaderLabel } from '@/components/shared/no-leader-label';
 import { PROJECT_TYPE_LABELS } from '@/types/enums';
 
 import type { GanttProjectRow } from '../api/types';
 
 /**
  * P13-T13 row meta: leader · external code · type · hub. The leader name is
- * served by the API (ADR 0028); a leader id with no name reads "Name unavailable".
+ * served by the API (ADR 0028); a leader id with no name reads "Name unavailable";
+ * a null leader reads "No leader" (P24-T02).
  */
 export function ProjectMetaLine({ project }: { project: GanttProjectRow }): React.JSX.Element {
   return (
@@ -22,9 +24,8 @@ export function ProjectMetaLine({ project }: { project: GanttProjectRow }): Reac
           Name unavailable
         </span>
       ) : (
-        <span className="shrink-0 text-text-subtle" title="No leader assigned">
-          —<span className="sr-only">No leader</span>
-        </span>
+        // P24-T02: "No leader"; plus the Left Out hint from the served `left_out`.
+        <NoLeaderLabel leftOut={project.left_out} inline className="shrink" />
       )}
       {project.external_code ? (
         <>

@@ -13,8 +13,10 @@ import { RegionChips } from './region-chips';
 /**
  * Status overview, five cards (ADR 0030, P17-T04; client's older app):
  * In Development / Under Industrialization / In Queue / Commercialized / On Hold,
- * plus an "Other statuses: n" remainder (In Buyoff + Draft + Cancelled) so the
- * five cards and the remainder reconcile with the total.
+ * plus an "Other statuses: n" remainder (every other status, today Cancelled)
+ * so the five cards and the remainder reconcile with the total. P23-T01: the
+ * copy names no status that is not served; the breakdown lists only the
+ * served `other_statuses_counts` entries above zero.
  *
  * Portfolio COMPOSITION off the live project table, not a schedule outcome (I9
  * does not apply). Every count, percentage and bar width is one served field of
@@ -111,8 +113,9 @@ export function StatusOverviewCards({ data, regionSummary = null }: StatusOvervi
             Percentages and bar widths are computed by the server.
           </p>
           <p>
-            The five cards plus &quot;Other statuses&quot; (In Buyoff, Draft, Cancelled) add up to
-            the total.
+            The five cards plus &quot;Other statuses&quot;
+            {otherEntries.length > 0 ? ` (${otherEntries.map(([status]) => status).join(', ')})` : ''} add
+            up to the total.
           </p>
           <p>
             <strong className="text-text">On Hold (project)</strong> is the project status: the
@@ -175,7 +178,7 @@ export function StatusOverviewCards({ data, regionSummary = null }: StatusOvervi
           {data.other_statuses_count > 0 ? ` (${formatDecimal(data.other_statuses_share_pct)}% of total)` : ''}
         </span>
         <CardInfo label="Other statuses breakdown">
-          <p>In Buyoff, Draft and Cancelled have no card of their own.</p>
+          <p>Statuses with no card of their own:</p>
           {otherEntries.length > 0 ? (
             <ul className="mt-1 list-disc pl-4">
               {otherEntries.map(([status, n]) => (

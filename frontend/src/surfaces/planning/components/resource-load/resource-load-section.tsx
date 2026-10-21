@@ -142,6 +142,9 @@ export function ResourceLoadSection({
     [data?.chambers, unit],
   );
 
+  // P24-T02 (ADR 0035): the server serves the departments it holds and
+  // `requesting_department_available`. True → a normal, enabled filter over the
+  // served list. False → disabled with the tooltip. Never decided here.
   const deptUnavailable = options !== undefined && !options.requesting_department_available;
 
   return (
@@ -183,8 +186,7 @@ export function ResourceLoadSection({
           options={plain(options?.requesting_departments)}
           value={filters.departments}
           onChange={set('departments')}
-          disabled={deptUnavailable}
-          disabledReason="No department data yet"
+          {...(deptUnavailable ? { disabled: true, disabledReason: 'No department data yet' } : {})}
         />
         <MultiSelectFilter label="Cat" options={plain(options?.categories)} value={filters.categories} onChange={set('categories')} />
         <MultiSelectFilter label="Engineer" options={engineerOptions} value={filters.engineerIds} onChange={set('engineerIds')} />

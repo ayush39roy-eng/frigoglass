@@ -1,13 +1,19 @@
 import * as React from 'react';
-import { RotateCcw, TableProperties } from 'lucide-react';
+import { ArrowUpFromLine, RotateCcw, TableProperties } from 'lucide-react';
+import { useSearchParams } from 'react-router-dom';
 
 import { PageHeader } from '@/components/layout/page-header';
 import { SectionBoundary } from '@/components/shared/section-boundary';
 import { DownloadButton } from '@/components/shared/download-button';
 import { EmptyState } from '@/components/shared/empty-state';
 import { Button } from '@/components/ui/button';
+import { cn } from '@/lib/utils';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { PriorityMoveProvider } from '@/components/shared/priority-move/priority-move-provider';
+import { PriorityBoardView, type SharedBoardFilters } from '@/surfaces/priority-board/PriorityBoardPage';
+import { BOARD_LAYOUT_PARAM } from '@/surfaces/priority-board/lib/board-layout';
 import { ReadOnlyNotice } from '@/components/session/write-gate';
 import { ApiError } from '@/lib/api/client';
 import { useHubFilter } from '@/stores/hub-filter';
@@ -25,6 +31,7 @@ import { ChipFilter, ColumnFilterInput } from './components/matrix-toolbar';
 import { MatrixCurrencyControl } from './components/matrix-currency-control';
 import { MatrixViewPanel } from './components/matrix-view-panel';
 import { ScoreChartsRow } from './components/score-charts';
+import { CapacityFillPanel } from './components/capacity-fill-panel';
 import { CompareBar, CompareDialog } from './components/compare-dialog';
 import {
   CATEGORY_CHIPS,
@@ -38,7 +45,7 @@ import {
 } from './lib/matrix-view';
 import { useCompareSelection } from './lib/compare-selection';
 import { rowBand } from './lib/row-scores';
-import { useGridMaxHeight, useStuck } from './lib/use-stuck';
+import { useGridMaxHeight, useSpaceBelow, useStuck } from './lib/use-stuck';
 import { NARROW_QUERY, useMediaQuery } from './lib/use-media-query';
 import { MatrixTable } from './components/matrix-table';
 import { PortfolioSummaryPanel } from './components/portfolio-summary-panel';
@@ -50,6 +57,7 @@ import { ScoreEditDialog } from './components/score-edit-dialog';
 import { VersionHistoryDialog } from './components/version-history-panel';
 import {
   useMatrixCurrencies,
+  usePriorityCapacityFill,
   usePriorityDistribution,
   usePriorityMatrix,
   usePrioritySummary,
@@ -67,9 +75,10 @@ const SEARCH_MAX_LENGTH = 100;
 function narrowInView(rows: PriorityMatrixRow[], view: MatrixViewState): PriorityMatrixRow[] {
   const hub = view.hubText.trim().toLowerCase();
   const leader = view.leaderText.trim().toLowerCase();
-  if (hub === '' && leader === '' && view.band === null) return rows;
+  if (hub === '' && leader === '' && view.band === null && !view.capacityFill) return rows;
   return rows.filter((r) => {
     if (view.band !== null && rowBand(r) !== view.band) return false;
+    if (view.capacityFill && r.capacity_fill !== true) return false;
     if (hub !== '' && !r.hub.toLowerCase().includes(hub)) return false;
     if (leader !== '') {
       const shown = r.leader_name ?? (r.leader_engineer_id ? 'unavailable' : '');
@@ -89,7 +98,82 @@ function authKind(errors: unknown[]): 'forbidden' | 'unauthorized' | null {
   return null;
 }
 
+/**
+ * P21-T05: a grid-only View panel control (currency, FX rate, Detailed view,
+ * Download). On the board tab it keeps its place but is hidden
+ * (`visibility: hidden`: not shown, not focusable, not announced), so the
+ * sticky panel keeps its height and nothing jumps when switching tabs. In the
+ * narrow bottom sheet it is simply left out.
+ */
+function GridOnly({
+  onBoard,
+  narrow,
+  compact,
+  children,
+}: {
+  onBoard: boolean;
+  narrow: boolean;
+  compact: boolean;
+  children: React.ReactNode;
+}): React.JSX.Element | null {
+  if (!onBoard) return <>{children}</>;
+  // Narrow sheet, or the one-line stuck panel: left out, so the board toolbar fits on that line.
+  if (narrow || compact) return null;
+  return (
+    <div className="contents [&>*]:invisible" data-grid-only="hidden">
+      {children}
+    </div>
+  );
+}
+
+/** P21-T05: the two views of the page, reflected in `?view=` (grid is the default, no param). */
+export type MatrixTab = 'grid' | 'board';
+export const MATRIX_VIEW_PARAM = 'view';
+
+function useMatrixTab(): [MatrixTab, (next: string) => void] {
+  const [params, setParams] = useSearchParams();
+  const tab: MatrixTab = params.get(MATRIX_VIEW_PARAM) === 'board' ? 'board' : 'grid';
+  const setTab = React.useCallback(
+    (next: string) => {
+      setParams(
+        (prev) => {
+          const out = new URLSearchParams(prev);
+          if (next === 'board') out.set(MATRIX_VIEW_PARAM, 'board');
+          else {
+            out.delete(MATRIX_VIEW_PARAM);
+            // The board's `layout` means nothing on the grid; the board restores it from storage.
+            out.delete(BOARD_LAYOUT_PARAM);
+          }
+          return out;
+        },
+        { replace: true },
+      );
+    },
+    [setParams],
+  );
+  return [tab, setTab];
+}
+
+/**
+ * `/matrix`: the Prioritization Matrix with two tabs (P21-T05) — "Scoring grid"
+ * (grid, charts, compare) and "Priority board" (the P12 Kanban, moved here from
+ * `/priority-board`, which redirects to `?view=board`). The sticky View panel's
+ * Category / Type / Status filters, the project search and the global hub /
+ * country filter apply to both; currency, charts and compare are grid-only.
+ * The move-flow host wraps both tabs so a running recalculation survives a
+ * tab switch.
+ */
 export default function MatrixPage(): React.JSX.Element {
+  return (
+    <PriorityMoveProvider>
+      <MatrixSurface />
+    </PriorityMoveProvider>
+  );
+}
+
+function MatrixSurface(): React.JSX.Element {
+  const [tab, setTab] = useMatrixTab();
+  const onBoard = tab === 'board';
   const [currency, setCurrency] = React.useState<MatrixCurrencyCode>('EUR');
   // P12 (ADR 0020): the hub is the global header filter (was a local select).
   const { hubId, region } = useHubFilter();
@@ -119,6 +203,8 @@ export default function MatrixPage(): React.JSX.Element {
   };
   const matrixQuery = usePriorityMatrix({ currency, ...serverFilters });
   const distributionQuery = usePriorityDistribution(serverFilters);
+  // P25: per-hub P1 capacity fill (global hub / country filter only; the fill ignores row filters).
+  const capacityFillQuery = usePriorityCapacityFill(hubId, region);
 
   // P21 §1: a currency whose rate was removed meanwhile answers 422
   // CURRENCY_NOT_CONFIGURED. Fall back to EUR, say why, and re-read the list.
@@ -151,6 +237,14 @@ export default function MatrixPage(): React.JSX.Element {
   const [compareOpen, setCompareOpen] = React.useState(false);
   // Below the grid: card padding + page gutter (+ the Compare bar when shown).
   const gridMaxHeight = useGridMaxHeight(sentinelRef, panelRef, stuck, compareItems.length > 0 ? 176 : 112);
+  // P21-T05 fix: the board uses the same offset as the grid, so once scrolled to, its column
+  // headers sit below the stuck View panel; the columns scroll inside that height.
+  // The reserve is the measured space below the board, so at the bottom of the page the
+  // board's top meets the stuck panel's bottom exactly: nothing above it (the hub load strip)
+  // is left as a cut-off sliver between them.
+  const boardWrapRef = React.useRef<HTMLDivElement>(null);
+  const boardBelow = useSpaceBelow(boardWrapRef, onBoard);
+  const boardHeight = useGridMaxHeight(sentinelRef, panelRef, stuck, boardBelow);
   const updateScore = useUpdatePriorityScore();
 
   // Scenario mode (P5-T01) — a genuinely different interaction model from the
@@ -183,6 +277,16 @@ export default function MatrixPage(): React.JSX.Element {
     '13 scoring dimensions per project, weighted score and band, with a server-driven currency toggle.';
 
   const denied = authKind([matrixQuery.error, summaryQuery.error]);
+  const setSearch = React.useCallback((next: string) => setViewField('q', next), [setViewField]);
+  const sharedBoardFilters = React.useMemo<SharedBoardFilters>(
+    () => ({ category: view.category, type: view.type, status: view.status, search: view.q, onSearchChange: setSearch }),
+    [view.category, view.type, view.status, view.q, setSearch],
+  );
+  // On the board only the shared filters count (the band and the Hub / Leader text narrow the grid only).
+  const sharedFilterCount = [view.category, view.type, view.status].filter((v) => v !== null).length + (view.q.trim() !== '' ? 1 : 0);
+  const panelFilterCount = onBoard ? sharedFilterCount : activeFilterCount(view);
+  // P21-T05 fix: the board's toolbar lives in the View panel on wide screens.
+  const [boardToolbarSlot, setBoardToolbarSlot] = React.useState<HTMLDivElement | null>(null);
   const isFiltered =
     hubId !== null ||
     region !== null ||
@@ -190,6 +294,7 @@ export default function MatrixPage(): React.JSX.Element {
     view.type !== null ||
     view.status !== null ||
     view.band !== null ||
+    view.capacityFill ||
     debouncedQ !== '' ||
     view.hubText.trim() !== '' ||
     view.leaderText.trim() !== '';
@@ -276,6 +381,11 @@ export default function MatrixPage(): React.JSX.Element {
         }
       />
 
+      <Tabs value={tab} onValueChange={setTab}>
+      <TabsList aria-label="Prioritization views" className="mb-4" data-testid="matrix-tabs">
+        <TabsTrigger value="grid">Scoring grid</TabsTrigger>
+        <TabsTrigger value="board">Priority board</TabsTrigger>
+      </TabsList>
       {denied ? (
         <AccessNotice kind={denied} />
       ) : (
@@ -285,10 +395,17 @@ export default function MatrixPage(): React.JSX.Element {
             panelRef={panelRef}
             stuck={stuck}
             narrow={narrow}
-            filterCount={activeFilterCount(view)}
-            summary={`${currency} · ${activeFilterCount(view) === 0 ? 'no filters' : `${String(activeFilterCount(view))} filters`}`}
+            filterCount={panelFilterCount}
+            summary={`${onBoard ? 'Board' : currency} · ${panelFilterCount === 0 ? 'no filters' : `${String(panelFilterCount)} filters`}`}
             renderControls={(compact) => (
               <>
+                {/* P21-T05 fix: one stacked cell. The currency control keeps the cell's size on
+                    both tabs (hidden on the board), and on the board the board's own toolbar
+                    (Search, Leader, Cards | List) is portalled on top of it, so the panel keeps
+                    its height and the space is used. */}
+                <div className="grid [&>*]:[grid-area:1/1]" data-testid="matrix-controls-stack">
+                <div className={cn('flex flex-wrap items-end gap-4', onBoard && !narrow && 'invisible')} data-grid-only={onBoard && !narrow ? 'hidden' : undefined}>
+                {onBoard && narrow ? null : (
                 <MatrixCurrencyControl
                   value={currency}
                   onChange={(next) => {
@@ -298,11 +415,18 @@ export default function MatrixPage(): React.JSX.Element {
                   currencies={currencies}
                   compact={compact}
                 />
+                )}
                 {/* P13-T14: editable FX rate, Admin / Super Admin only (PUT /currency-rates). */}
-                {isAdmin && currency !== 'EUR' && !compact ? <FxRateEditor currency={currency} rate={selectedRate} /> : null}
+                {isAdmin && currency !== 'EUR' && !compact && !onBoard ? <FxRateEditor currency={currency} rate={selectedRate} /> : null}
+                </div>
+                {onBoard && !narrow ? (
+                  <div ref={setBoardToolbarSlot} className="flex items-end" data-testid="board-toolbar-slot" />
+                ) : null}
+                </div>
                 <ScenarioModeToggle disabled={!canEdit} />
                 <VersionHistoryDialog projectLookup={projectLookup} />
                 <div className="ml-auto flex flex-wrap items-end gap-2">
+                  <GridOnly onBoard={onBoard} narrow={narrow} compact={compact}>
                   <Button
                     variant={view.detailed ? 'primary' : 'secondary'}
                     size="sm"
@@ -313,6 +437,7 @@ export default function MatrixPage(): React.JSX.Element {
                     <TableProperties aria-hidden="true" />
                     Detailed view
                   </Button>
+                  </GridOnly>
                   <Button
                     variant="secondary"
                     size="sm"
@@ -322,6 +447,7 @@ export default function MatrixPage(): React.JSX.Element {
                     <RotateCcw aria-hidden="true" />
                     Reset view
                   </Button>
+                  <GridOnly onBoard={onBoard} narrow={narrow} compact={compact}>
                   <DownloadButton
                     path="/exports/matrix"
                     filters={{
@@ -332,6 +458,7 @@ export default function MatrixPage(): React.JSX.Element {
                     }}
                     fallbackFilename="matrix-export"
                   />
+                  </GridOnly>
                 </div>
               </>
             )}
@@ -344,11 +471,24 @@ export default function MatrixPage(): React.JSX.Element {
                   <CountrySegmented />
                 </div>
                 <ChipFilter label="Status" value={view.status} options={STATUS_CHIPS} onChange={(v) => setViewField('status', v)} />
+                <GridOnly onBoard={onBoard} narrow={narrow} compact={false}>
+                  <Button
+                    variant={view.capacityFill ? 'primary' : 'secondary'}
+                    size="sm"
+                    aria-pressed={view.capacityFill}
+                    onClick={() => setViewField('capacityFill', !view.capacityFill)}
+                    title="Show only projects promoted to P1 by their hub's capacity fill (served)"
+                    data-testid="capacity-fill-filter"
+                  >
+                    <ArrowUpFromLine aria-hidden="true" />
+                    Capacity fill
+                  </Button>
+                </GridOnly>
               </>
             }
           />
 
-          {unconfigured ? (
+          {unconfigured && !onBoard ? (
             <p role="status" className="rounded border border-warning/40 bg-warning-subtle px-3 py-2 text-xs text-text" data-testid="currency-not-configured">
               No exchange rate is configured for {unconfigured}, so figures are shown in EUR. An Admin can set the rate.
             </p>
@@ -359,6 +499,7 @@ export default function MatrixPage(): React.JSX.Element {
 
           <ScenarioPendingPanel writeForbidden={writeForbidden || !permission.write} />
 
+          <TabsContent value="grid" className="mt-0 flex flex-col gap-4">
           <ScoringRubricPanel />
 
           <SectionBoundary
@@ -382,6 +523,12 @@ export default function MatrixPage(): React.JSX.Element {
               The score overview could not be loaded; the table below is unaffected.
             </p>
           )}
+
+          <CapacityFillPanel
+            data={capacityFillQuery.data}
+            isPending={capacityFillQuery.isPending}
+            isError={capacityFillQuery.isError}
+          />
 
           <SectionBoundary
             query={matrixQuery}
@@ -455,10 +602,28 @@ export default function MatrixPage(): React.JSX.Element {
           </SectionBoundary>
 
           <CompareBar onOpen={() => setCompareOpen(true)} />
+          </TabsContent>
+          <TabsContent value="board" className="mt-0" ref={boardWrapRef}>
+            <PriorityBoardView
+              shared={sharedBoardFilters}
+              toolbarSlot={narrow ? null : boardToolbarSlot}
+              compactToolbar={stuck}
+              height={boardHeight}
+              scenarioActive={scenarioActive}
+              scenarioStagedIds={scenarioStagedProjectIds}
+            />
+          </TabsContent>
         </div>
       )}
+      </Tabs>
 
-      <CompareDialog open={compareOpen} onOpenChange={setCompareOpen} />
+      <CompareDialog
+        open={compareOpen}
+        onOpenChange={setCompareOpen}
+        canEdit={canEdit}
+        scenarioActive={scenarioActive}
+        onForbidden={() => setWriteForbidden(true)}
+      />
 
       <ScoreEditDialog
         row={dialogRow}

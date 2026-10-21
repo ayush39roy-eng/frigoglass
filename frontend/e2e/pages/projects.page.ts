@@ -29,10 +29,6 @@ export class ProjectsPage {
     return this.page.getByRole('searchbox', { name: 'Search' });
   }
 
-  draftsChip() {
-    return this.page.getByRole('button', { name: 'Drafts' });
-  }
-
   exportButton() {
     return this.page.getByRole('button', { name: 'Export' });
   }

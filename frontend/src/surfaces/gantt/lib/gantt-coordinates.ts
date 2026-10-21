@@ -393,3 +393,32 @@ export function stepDragResult(
     workWeeks: work,
   };
 }
+
+export interface StepDragCalendar {
+  /** Calendar weeks the step would take with `workWeeks` — NOT clipped at W52. */
+  calendarWeeks: number;
+  /** The last calendar week of that span (may be past the axis, e.g. 53). */
+  endWeek: number;
+  /** `true` when `endWeek` is past the axis' last week (W52). */
+  pastAxis: boolean;
+}
+
+/**
+ * QA-P19-4: the calendar figure for the live resize label. The ghost bar is
+ * clipped at the axis end (W52) for drawing, so its width must never be read
+ * as the calendar span. With an FTE the span is ADR 0032's
+ * `ceil(work / fte)` (`fteSpanWeeks`); without one the mapping is 1:1, i.e. the
+ * served bar width plus the change in work. The span starts at the served
+ * start week.
+ */
+export function stepDragCalendar(origin: StepDragOrigin, workWeeks: number, scale: WeekScale): StepDragCalendar {
+  const lastWeek = scale.originWeek + scale.horizonWeeks - 1;
+  const fte = fteHundredths(origin.fte) === null ? null : (origin.fte as number);
+  const calendarWeeks =
+    fte === null
+      ? Math.max(1, origin.endWeek - origin.startWeek + 1 + (workWeeks - origin.durationWeeks))
+      : fteSpanWeeks(workWeeks, fte);
+  const endWeek = origin.startWeek + calendarWeeks - 1;
+  return { calendarWeeks, endWeek, pastAxis: endWeek > lastWeek };
+}
+

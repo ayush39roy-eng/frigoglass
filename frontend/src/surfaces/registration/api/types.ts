@@ -106,6 +106,12 @@ export interface ProjectRead {
   certification_testing_required: boolean;
   estimated_design_weeks: number | null;
   estimated_lab_weeks: number | null;
+  /** ADR 0035: the client workbook's charter fields, as written. Read-only —
+   *  not on `ProjectCreateRequest` / `ProjectUpdateRequest` (a write is 422).
+   *  Never a scheduling input. */
+  plant: string | null;
+  requesting_department: string | null;
+  product_type: string | null;
   /** Progress or settings changed since the active run (ADR 0006 / P9). */
   schedule_stale: boolean;
   /** `PDD` | `OEM`, a function of the hub (ADR 0007). */

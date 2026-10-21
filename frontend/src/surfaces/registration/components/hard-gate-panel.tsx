@@ -12,7 +12,7 @@ import {
 } from '@/components/ui/select';
 import { ApiError } from '@/lib/api/client';
 import { Skeleton } from '@/components/ui/skeleton';
-import { SCHEDULABLE_STATUSES, type ProjectStatus } from '@/types/enums';
+import { UI_SCHEDULABLE_STATUSES, type ProjectStatus } from '@/types/enums';
 
 import { useHardGateStatus } from '../hooks/use-registration';
 import type { ProjectRead } from '../api/types';
@@ -21,7 +21,8 @@ import type { ProjectRead } from '../api/types';
  * Project Registration's "leave Draft" hard gate
  * (`GET /projects/{id}/hard-gate-status` → `HardGateStatus`,
  * `POST /projects/{id}/submit`). Only rendered for a project currently in
- * `Draft` status.
+ * `Draft` status. P23: new projects are created In Queue, so this only serves a
+ * legacy Draft. The target list is `UI_SCHEDULABLE_STATUSES` (no In Buyoff).
  *
  * `missing_fields` and `can_leave_draft` are read verbatim from the API —
  * this panel never recomputes either (Invariant I9's spirit: a single
@@ -107,7 +108,7 @@ export function HardGatePanel({ project, onSubmit }: HardGatePanelProps): React.
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              {SCHEDULABLE_STATUSES.map((s) => (
+              {UI_SCHEDULABLE_STATUSES.map((s) => (
                 <SelectItem key={s} value={s}>
                   {s}
                 </SelectItem>

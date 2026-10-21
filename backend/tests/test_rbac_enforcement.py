@@ -29,7 +29,7 @@ from tests.auth_helpers import (
     make_principal,
     override_current_principal,
 )
-from tests.factories import make_hub, make_user
+from tests.factories import make_engineer, make_hub, make_user, registration_body
 
 
 def _client(db_session) -> AsyncClient:
@@ -102,9 +102,10 @@ async def test_projects_create_forbidden_for_executive_viewer(db_session):
 async def test_projects_create_allowed_for_portfolio_manager(db_session):
     hub = await make_hub(db_session)
     try:
+        leader = await make_engineer(db_session, hub)
         async with await _as(db_session, RoleName.PORTFOLIO_MANAGER) as client:
-            resp = await client.post("/projects", json={"name": "X", "hub_id": str(hub.id)})
-        assert resp.status_code == 201
+            resp = await client.post("/projects", json=registration_body(hub, leader))
+        assert resp.status_code == 201, resp.text
     finally:
         _teardown()
 

@@ -34,6 +34,18 @@ scheduling speed. A design step books `ceil(duration / fte)` weeks of its leader
 **Revised 2026-10-21** (P21, ADR 0033, owner ruling): a prioritization dimension may be scored 0
 (0 points); currencies EGP, ZAR and IDR are added with no configured rate.
 
+**Revised 2026-10-21** (P23, ADR 0034, owner ruling): Draft is retired from registration. A new
+project is created `In Queue` once its required fields are set (see "Project statuses and
+registration").
+
+**Revised 2026-10-21** (P24, ADR 0035, owner ruling): the seed uses the client's real roster and
+data; ADR 0024's seed tuning is retired. Projects gain three read-only charter fields (see "Project
+charter fields"). No scheduling or capacity rule changes.
+
+**Revised 2026-10-21** (P25, ADR 0036, owner ruling): a hub whose P1 design load is under its
+remaining-year design capacity promotes lower-scoring projects to a *suggested* "P1 (capacity fill)"
+(see "P1 capacity fill"). Scores, score bands and committed priorities are unchanged.
+
 ---
 
 ## Workflow templates — two workflows, 14 steps each *(2026-09-27, ADR 0007)*
@@ -213,6 +225,31 @@ deterministic walk/tie-break order; it is not a dependency.
   `SPILLOVER`.
 - Status `Commercialized`, `On Hold`, `Cancelled` and `Draft` are excluded from scheduling entirely.
 
+## Project statuses and registration *(2026-10-21, ADR 0034)*
+
+Statuses: the four schedulable ones (`In Buyoff`, `Under Industrialization`, `In Development`,
+`In Queue`, ordered as in "Scheduling order") and the excluded ones (`Commercialized`, `On Hold`,
+`Cancelled`, `Draft`).
+
+- **Registration creates `In Queue`.** A project is registered only when every required field is
+  set: leader, category, type, actual start week, TCOGS, selling price, gross margin and priority.
+  `name` and `hub` are always required. A missing field rejects the registration, and nothing is
+  stored. A new project is marked `schedule_stale`; registering never runs the scheduler.
+- **`Draft` is retired.** It is kept only for historic rows. Nothing creates it, and no edit may set
+  a project to `Draft`. A legacy Draft row may still leave Draft. The same required-field check
+  applies, and the default target is `In Queue`.
+- `In Buyoff` is a normal schedulable status and may be set by an edit.
+
+## Project charter fields *(2026-10-21, ADR 0035)*
+
+`plant`, `requesting_department` and `product_type` are optional text (≤ 100 characters). Each
+holds the client workbook's value as written (`Plant/OEM`, `Requesting Department`,
+`Product Type`). The workbook's lists are reference vocabularies, not a write constraint:
+`domain_constants.PLANT_OPTIONS`, `REQUESTING_DEPARTMENT_OPTIONS` and `PRODUCT_TYPE_OPTIONS`.
+These fields are served read-only and are never a scheduling input. The resource-load
+`requesting_department` filter matches the stored value exactly; a project with no department
+never matches. Not financial, so not encrypted.
+
 ## Priority moves *(2026-10-09, ADR 0015)*
 
 Changing a project's `priority` to a different value is the one edit that schedules by itself.
@@ -300,6 +337,35 @@ Bands:
   >= 40 → P3
   else  → P4
 ```
+
+### P1 capacity fill *(2026-10-21, ADR 0036)*
+
+Owner ruling: "P1 for score >= 70 is right, but if capacity is not full, add projects to P1 until
+capacity is full." This changes the **suggested** band only, computed on read, per hub:
+
+```
+C       = hub remaining-year design capacity        (= /capacity/hub-load design_capacity_remaining)
+load(p) = p's remaining design effort weeks in the active run (0 when not in the run; ADR 0032)
+base    = hub's scored projects with normalised_pct >= 70 (score band P1, any status)
+L       = Σ load(p) over base
+if no active run, or C <= 0, or L >= C:  promote nothing
+candidates = hub's scored projects with normalised_pct < 70 and a schedulable status
+             (not Commercialized / Cancelled / On Hold / Draft),
+             ordered by normalised_pct DESC, then project_id ASC (canonical UUID string)
+for p in candidates:
+    if load(p) == 0:        skip p (not promoted), continue
+    if L + load(p) <= C:    promote p to "P1 (capacity fill)"; L += load(p)
+    else:                   STOP
+```
+
+- Served as `suggested_band` (promoted band), `score_band` (pure score band), `capacity_fill` and
+  `capacity_fill_reason` on Matrix rows. Per-hub totals are served by `GET /priorities/capacity-fill`
+  (`docs/API_CONTRACT_P25.md`). Matrix band counts use the promoted band.
+- The fill never writes `Project.priority`, a score or an audit row, and it never schedules. The
+  committed priority stays a human decision (Priority board, ADR 0015/0018). Exact 2 dp arithmetic.
+- The walk for a hub uses every project of the hub, independent of row filters and of the caller.
+  Hub Planners see only their own hubs.
+- Hard gates do not enter the base set (`docs/OPEN_QUESTIONS.md` #51).
 
 ### Hard gates (override band, force P1)
 

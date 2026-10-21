@@ -13,7 +13,7 @@ import {
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import {
   PROJECT_CATEGORIES,
-  PROJECT_STATUSES,
+  UI_PROJECT_STATUSES,
   PROJECT_TYPES,
   PROJECT_TYPE_LABELS,
   type ProjectCategory,
@@ -152,7 +152,7 @@ export function GanttFilterBar({ filters, onChange, facets }: GanttToolbarProps)
         allLabel="All statuses"
         value={filters.status}
         onChange={(v) => set('status', v as ProjectStatus | null)}
-        options={PROJECT_STATUSES.map((s) => ({ value: s, label: s }))}
+        options={UI_PROJECT_STATUSES.map((s) => ({ value: s, label: s }))}
         className="h-8 w-40"
       />
       {facets ? (

@@ -4,66 +4,55 @@ import { ProjectsPage } from './pages/projects.page';
 /**
  * Project Registration (P4-T06), merged into the Projects page in P22-T01:
  * the form is a drawer opened from "Register project" / "Edit registration",
- * and the leave-Draft hard gate lives in the edit drawer.
+ * and (P23, ADR 0034) a project is registered In Queue once its hard-gate
+ * fields are set; the leave-Draft gate only remains for legacy Draft rows.
  */
 test.describe('Project Registration on the Projects page (P4-T06, P22-T01)', () => {
-  test('draft -> hard-gate-status -> submit (leave Draft) end-to-end', async ({ page }) => {
+  test('register -> required fields checked -> created In Queue (P23, no Draft step)', async ({ page }) => {
     await loginAs(page, 'portfolioManager');
     const projects = new ProjectsPage(page);
     await projects.goto();
     await expect(projects.heading()).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Drafts' })).toHaveCount(0);
 
-    const projectName = `E2E Playwright Draft ${String(Date.now())}`;
+    const projectName = `E2E Playwright Register ${String(Date.now())}`;
 
-    // 1. Create — a new project starts in Draft, only Name + Hub required to save.
+    // 1. Name + Hub alone no longer register: the eight hard-gate fields are checked first.
     await projects.registerButton().click();
-    const createDrawer = projects.drawer();
-    await expect(createDrawer).toBeVisible();
-    await createDrawer.getByLabel(/^Name/).fill(projectName);
-    await createDrawer.getByLabel(/^Hub/).click();
+    const drawer = projects.drawer();
+    await expect(drawer).toBeVisible();
+    await expect(drawer.getByRole('button', { name: 'Create draft' })).toHaveCount(0);
+    await drawer.getByLabel(/^Name/).fill(projectName);
+    await drawer.getByLabel(/^Hub/).click();
     await page.getByRole('option').first().click();
-    await createDrawer.getByRole('button', { name: 'Create draft' }).click();
-    await expect(createDrawer).toBeHidden();
+    await drawer.getByRole('button', { name: 'Register project' }).click();
+    await expect(drawer.getByText('Fill in the required fields marked * to register the project.')).toBeVisible();
+    await expect(drawer.getByText('TCOGS is required.')).toBeVisible();
 
-    // Back on the list with the new row highlighted.
-    await projects.searchBox().fill(projectName);
-    const row = projects.rowByName(projectName);
-    await expect(row).toBeVisible();
-
-    // 2. Hard-gate status BEFORE required fields are filled — served verbatim.
-    await projects.editButtonFor(projectName).click();
-    let drawer = projects.drawer();
-    await expect(drawer.getByText('Required fields missing before this project can leave Draft:')).toBeVisible();
-    await expect(drawer.getByRole('button', { name: 'Submit — leave Draft' })).toBeDisabled();
-
-    // 3. Edit — fill the 7 hard-gate fields.
+    // 2. Fill them and register — POST /projects creates the project In Queue.
     await drawer.getByLabel(/^Leader/).click();
     await page.getByRole('option').filter({ hasNotText: 'Unassigned' }).first().click();
     await drawer.getByLabel(/^Category/).click();
     await page.getByRole('option', { name: 'A', exact: true }).click();
     await drawer.getByLabel(/^Type/).click();
     await page.getByRole('option').filter({ hasNotText: 'Unset' }).first().click();
+    await drawer.getByLabel(/^Priority/).click();
+    await page.getByRole('option', { name: 'P3', exact: true }).click();
     await drawer.getByLabel(/^Actual start week/).fill('12');
     await drawer.getByLabel('TCOGS (EUR)', { exact: false }).fill('1000');
     await drawer.getByLabel('Selling price (EUR)', { exact: false }).fill('1500');
     await drawer.getByLabel('Gross margin (%)', { exact: false }).fill('20');
-    await drawer.getByRole('button', { name: 'Save changes' }).click();
+    await drawer.getByRole('button', { name: 'Register project' }).click();
     await expect(drawer).toBeHidden();
 
-    // 4. Hard-gate status AFTER — re-fetched, not recomputed.
-    await projects.editButtonFor(projectName).click();
-    drawer = projects.drawer();
-    await expect(drawer.getByText('All required fields are set — this project can leave Draft.')).toBeVisible();
-    const readySubmit = drawer.getByRole('button', { name: 'Submit — leave Draft' });
-    await expect(readySubmit).toBeEnabled();
-
-    // 5. Submit — POST /projects/{id}/submit, leaves Draft for "In Queue".
-    await readySubmit.click();
-    await expect(drawer.getByText('Submitted. The project left Draft for In Queue.')).toBeVisible();
-    await page.keyboard.press('Escape');
-    await expect(drawer).toBeHidden();
+    // 3. Back on the list: the row is In Queue, never Draft, and has no leave-Draft gate.
+    await projects.searchBox().fill(projectName);
+    const row = projects.rowByName(projectName);
+    await expect(row).toBeVisible();
     await expect(row.getByText('In Queue', { exact: true })).toBeVisible();
     await expect(row.getByText('Draft', { exact: true })).toHaveCount(0);
+    await projects.editButtonFor(projectName).click();
+    await expect(projects.drawer().getByText('Leave Draft')).toHaveCount(0);
   });
 
   test('unsaved edits are guarded; Escape asks, Discard closes without saving', async ({ page }) => {

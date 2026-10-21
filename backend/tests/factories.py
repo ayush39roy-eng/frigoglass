@@ -334,3 +334,24 @@ async def make_user(
 
     await session.flush()
     return user
+
+
+def registration_body(hub: Hub, leader: Engineer, **overrides: Any) -> dict[str, Any]:
+    """A `POST /projects` body with every hard-gate field set (ADR 0034:
+    registration creates the project In Queue, so the gate is checked up
+    front). Override or drop (`key=None`) fields per test."""
+
+    body: dict[str, Any] = {
+        "name": "Registered project",
+        "hub_id": str(hub.id),
+        "leader_engineer_id": str(leader.id),
+        "category": "A",
+        "type": "NM",
+        "priority": "P3",
+        "actual_start_week": 30,
+        "tcogs_eur": 100.0,
+        "selling_price_eur": 150.0,
+        "gross_margin_pct": 33.3,
+    }
+    body.update(overrides)
+    return body

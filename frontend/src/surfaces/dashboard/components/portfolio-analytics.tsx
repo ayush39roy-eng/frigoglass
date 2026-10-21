@@ -160,7 +160,7 @@ function PriorityDeliveryBars({ bands }: { bands: PriorityDeliveryBand[] }): Rea
               One bar per priority band, as long as the band&apos;s projects. Green parts finish within
               the year in the active run, amber parts do not; solid is work in flight, the light tint
               is work not started yet. Commercialized projects are shown as already delivered. Paused
-              (status On Hold), Cancelled and Draft projects are listed as not in plan.
+              (status On Hold) and Cancelled projects are listed as not in plan.
             </p>
             <p className="mt-s2">{PRIORITY_NOTE}</p>
           </>

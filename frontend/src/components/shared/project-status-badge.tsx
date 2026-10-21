@@ -7,6 +7,9 @@ import type { ProjectStatus } from '@/types/enums';
  * Project lifecycle status (DOMAIN_RULES.md). Status is structural, not a scheduling
  * outcome — kept visually quiet (mostly neutral) so the scheduler's outcome badges
  * (<ScheduleOutcomeBadge>) stay the load-bearing colour on a row.
+ *
+ * P23-T01: renders EVERY wire status, including "In Buyoff" and "Draft", which
+ * the UI no longer offers in any list (`UI_PROJECT_STATUSES`) but data may carry.
  */
 const STATUS_TONE: Record<ProjectStatus, NonNullable<BadgeProps['tone']>> = {
   'In Buyoff': 'primary',

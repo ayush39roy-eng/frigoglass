@@ -2,6 +2,7 @@ import * as React from 'react';
 import { Link } from 'react-router-dom';
 import { ArrowLeft, RefreshCw } from 'lucide-react';
 
+import { NoLeaderLabel } from '@/components/shared/no-leader-label';
 import { PriorityMoveControl } from '@/components/shared/priority-move/priority-move-control';
 import { Badge } from '@/components/ui/badge';
 import { PROJECT_TYPE_LABELS } from '@/types/enums';
@@ -69,10 +70,14 @@ export function WorkspaceHeader({
             {/* P11 (ADR 0015): a dropdown with Registration write, else the read-only pill. */}
             <PriorityMoveControl projectId={p.id} projectName={p.name} priority={p.priority} status={p.status} />
             <span aria-hidden="true">·</span>
-            <span>
-              Leader:{' '}
-              {p.leader_engineer_name !== null ? p.leader_engineer_name : p.leader_engineer_id ? NAME_UNAVAILABLE : '—'}
-            </span>
+            {p.leader_engineer_id === null ? (
+              // P24-T02: "No leader", plus the Left Out hint from the served `schedule.left_out`.
+              <span className="inline-flex items-center gap-1">
+                Leader: <NoLeaderLabel leftOut={data.schedule.left_out} inline />
+              </span>
+            ) : (
+              <span>Leader: {p.leader_engineer_name ?? NAME_UNAVAILABLE}</span>
+            )}
           </div>
         </div>
         {canRecalculate ? (

@@ -40,7 +40,14 @@ from tests.auth_helpers import (
     make_principal,
     override_current_principal,
 )
-from tests.factories import make_engineer, make_hub, make_project, make_schedule_run, make_user
+from tests.factories import (
+    make_engineer,
+    make_hub,
+    make_project,
+    make_schedule_run,
+    make_user,
+    registration_body,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -148,18 +155,20 @@ async def test_gantt_slip_null_when_expected_missing(db_session):
 async def test_create_project_new_fields_and_stage_rows(db_session):
     await _act_as(db_session, RoleName.PORTFOLIO_MANAGER)
     hub = await make_hub(db_session)
+    leader = await make_engineer(db_session, hub)
     async with _client(db_session) as client:
         resp = await client.post(
             "/projects",
-            json={
-                "name": "New cooler",
-                "hub_id": str(hub.id),
-                "category": "B",
-                "target_end_week": 50,
-                "certification_testing_required": False,
-                "estimated_design_weeks": 12.5,
-                "estimated_lab_weeks": 3,
-            },
+            json=registration_body(
+                hub,
+                leader,
+                name="New cooler",
+                category="B",
+                target_end_week=50,
+                certification_testing_required=False,
+                estimated_design_weeks=12.5,
+                estimated_lab_weeks=3,
+            ),
         )
     assert resp.status_code == 201, resp.text
     body = resp.json()
@@ -167,7 +176,9 @@ async def test_create_project_new_fields_and_stage_rows(db_session):
     assert body["certification_testing_required"] is False
     assert body["estimated_design_weeks"] == 12.5
     assert body["estimated_lab_weeks"] == 3.0
-    assert body["schedule_stale"] is False
+    # ADR 0034: created In Queue, so it is not in the active run yet.
+    assert body["status"] == "In Queue"
+    assert body["schedule_stale"] is True
     assert body["workflow_id"] == "PDD"
     rows = (
         (
@@ -198,9 +209,10 @@ async def test_category_workflow_mismatch_on_create(db_session, is_oem, category
         lab_region=LabRegion.INDIA if is_oem else LabRegion.ROMANIA,
         is_oem=is_oem,
     )
+    leader = await make_engineer(db_session, hub)
     async with _client(db_session) as client:
         resp = await client.post(
-            "/projects", json={"name": "X", "hub_id": str(hub.id), "category": category}
+            "/projects", json=registration_body(hub, leader, category=category)
         )
     assert resp.status_code == 422
     assert resp.json()["code"] == "CATEGORY_WORKFLOW_MISMATCH"
@@ -212,10 +224,11 @@ async def test_update_project_category_mismatch_and_hub_move(db_session):
     oem_hub = await make_hub(
         db_session, name=HubName.OEM_HCK, lab_region=LabRegion.INDIA, is_oem=True
     )
+    leader = await make_engineer(db_session, pdd_hub)
     async with _client(db_session) as client:
         created = (
             await client.post(
-                "/projects", json={"name": "Mover", "hub_id": str(pdd_hub.id), "category": "A"}
+                "/projects", json=registration_body(pdd_hub, leader, name="Mover", category="A")
             )
         ).json()
         pid = created["id"]
@@ -247,10 +260,11 @@ async def test_workflow_change_refused_once_progress_exists(db_session):
     oem_hub = await make_hub(
         db_session, name=HubName.OEM_HCK, lab_region=LabRegion.INDIA, is_oem=True
     )
+    leader = await make_engineer(db_session, pdd_hub)
     async with _client(db_session) as client:
         pid = (
             await client.post(
-                "/projects", json={"name": "P", "hub_id": str(pdd_hub.id), "category": "A"}
+                "/projects", json=registration_body(pdd_hub, leader, name="P", category="A")
             )
         ).json()["id"]
     row = (

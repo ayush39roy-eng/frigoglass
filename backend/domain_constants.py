@@ -324,7 +324,10 @@ SCHEDULE_OUTCOME_FLAGS: Final[tuple[str, ...]] = (
 # correction; before it the India chambers carried them. India CH-4 is "only
 # for industrialization / reliability — non-calibrated" in the workbook, so it
 # books no POC/CERT step but still contributes its efficient lab weeks to
-# supply, exactly as the workbook does.
+# supply, exactly as the workbook does. ADR 0035: efficiency, platforms and
+# downtime are the workbook's and are seeded untouched (ADR 0024's tuning is
+# retired). `allowed_stages` stay ours; the client's own test mapping differs
+# (docs/OPEN_QUESTIONS.md #57).
 CHAMBER_SEED: Final[
     tuple[tuple[str, str, int, float, float, float, float, tuple[str, ...]], ...]
 ] = (
@@ -339,3 +342,41 @@ CHAMBER_SEED: Final[
     ("RO-CH3", "Romania", 2, 0.6, 2, 3, 1, ("PDD-F", "PDD-H")),
     ("RO-CH4", "Romania", 1, 0.7, 2, 4, 1, ("PDD-F", "PDD-H")),
 )
+
+# --- Project charter vocabularies (ADR 0035) ----------------------------------
+#
+# The client workbook's controlled lists (`Lists & Explanations`, formula
+# workbook): Plant (column C), Requesting Department (column D) and Product
+# Type (column Q). `projects.plant`, `projects.requesting_department` and
+# `projects.product_type` store the workbook value as written; these lists
+# are reference vocabularies, not a write constraint. The 2026 pipeline uses
+# one department outside the list, "Development" (docs/OPEN_QUESTIONS.md).
+PLANT_OPTIONS: Final[tuple[str, ...]] = (
+    "IND",
+    "INN",
+    "Multiplant",
+    "ROM",
+    "SAF",
+    "OEM-HCK",
+    "OEM-Seitek",
+    "Egypt",
+    "OEM-VEELINE",
+    "OEM-NEW STAR",
+)
+REQUESTING_DEPARTMENT_OPTIONS: Final[tuple[str, ...]] = (
+    "PD",
+    "Marketing/Sales",
+    "Quality",
+    "Service",
+    "Central Procurement Group",
+    "Central Supply Chain",
+    "Local Supply Chain",
+    "Central R&PD",
+    "Local R&PD",
+    "Central Quality",
+    "Local Quality",
+    "CR&PD & CPG",
+)
+PRODUCT_TYPE_OPTIONS: Final[tuple[str, ...]] = ("ICM", "HA", "VF", "CF", "Other")
+#: Column width of the three charter fields above.
+PROJECT_LABEL_MAX_LENGTH: Final[int] = 100

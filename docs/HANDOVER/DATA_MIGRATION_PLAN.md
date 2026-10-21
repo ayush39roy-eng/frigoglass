@@ -137,7 +137,7 @@ project, (c) leave the project without a `priority_scores` row (the model allows
 |---|---|---|
 | Name (`name`) | `name` | `String(200)`, required, **must be unique within the run** (it is the join key for `projects.leader_engineer_id` and for step assignment) |
 | Hub (`hub`) | `hub_id` | FK → `hubs`; one of `enums.HubName` |
-| FTE (`fte`) | `fte` | `Numeric(3,2)`, default `1.0` | 0.5 / 1.0 typical. Note: FTE is **reporting-only**, not applied by the scheduler (ADR 0002). |
+| FTE (`fte`) | `fte` | `Numeric(3,2)`, default `1.0`, must be between 0.01 and 9.99 | 0.5 / 1.0 typical. **FTE sets the leader's design speed** (ADR 0032, supersedes ADR 0002): a design step takes ceil(work weeks / FTE) calendar weeks. A leader with FTE 0 or below makes their projects a scheduler `data_error`, so validate every row before import. |
 | Allowed categories (`cats`) | `allowed_categories` (array) | each one of `enums.EngineerAllowedCategory`: `A+`,`A`,`B`,`C`,`OEM` |
 
 ### 2.4 Chambers → `chambers`
@@ -401,5 +401,6 @@ means a backup restore (§4.4), not a `--reset`.
 `docs/HANDOVER/BACKUP_RESTORE.md` (§2–3 — the pre-migration backup and the rollback restore),
 `backend/seed/seed_demo_data.py` (the worked-example the production script is modelled on),
 `docs/DOMAIN_RULES.md` (every enum, weight, multiplier, and invariant referenced here),
-`docs/OPEN_QUESTIONS.md` (#7 / #8 / #9 — the blocking dependencies), `docs/ADR/0002`–`0004`
-(FTE / chamber efficiency / delay — why several imported fields are reporting-only).
+`docs/OPEN_QUESTIONS.md` (#7 / #8 / #9 — the blocking dependencies), `docs/ADR/0003`–`0004`
+(chamber efficiency / delay — why those imported fields are reporting-only) and `docs/ADR/0032`
+(FTE sets design speed; supersedes ADR 0002, so FTE is no longer reporting-only).

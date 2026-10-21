@@ -39,7 +39,7 @@ export RPD_DATABASE_URL="postgresql+asyncpg://rpd:rpd@localhost:55433/rpd"
 export RPD_FIELD_ENCRYPTION_KEY="$(python -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())')"
 
 python -m alembic upgrade head
-python -m seed.seed_demo_data       # 46 projects, 644 steps, 14 engineers, 8 chambers
+python -m seed.seed_demo_data       # client_2026 (ADR 0035): 253 projects, 23 engineers (real roster + provisional leaders)
 python -m seed.seed_currency_rates  # 3 currency rows (EUR/USD/INR)
 python -m seed.seed_dev_users       # 6 local User/Role rows matching the Keycloak realm's 6 test users
 ```

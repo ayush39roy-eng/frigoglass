@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { fireEvent, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { useLocation } from 'react-router-dom';
 
 import { ApiError } from '@/lib/api/client';
 import type { PriorityMoveResponse } from '@/lib/api/priority-move';
@@ -38,6 +39,7 @@ import { hubRow } from '@/surfaces/capacity/test-fixtures';
 import type { PriorityPreviewResponse } from '@/lib/api/priority-move';
 
 import type { PriorityBoardCard, PriorityBoardResponse } from './api';
+import { boardLayoutStorageKey } from './lib/board-layout';
 
 /** P14 (ADR 0026): every drop previews first; Yes confirms with the token. */
 function boardPreview(to: ProjectPriority): PriorityPreviewResponse {
@@ -195,7 +197,9 @@ describe('PriorityBoardPage — served grouping', () => {
     expect(within(beta).queryByTestId('vip-badge')).not.toBeInTheDocument();
     const gamma = cardEl('Gamma Queue');
     expect(within(gamma).getByTestId('finish-chip')).toHaveTextContent('No projected finish');
-    expect(gamma).toHaveTextContent('Score —');
+    expect(gamma).toHaveTextContent('Weighted score —');
+    // P21-T05: the served band is shown beside the served weighted score.
+    expect(within(cardEl('Alpha Cooler')).getByTestId('board-card-band')).toHaveTextContent('score band P1');
   });
 
   it('passes the global hub filter as hub_id', async () => {
@@ -465,5 +469,105 @@ describe('PriorityBoardPage — a drop is the P11 priority move', () => {
     expect(handle).toHaveAttribute('aria-pressed', 'false');
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
     expect(screen.getByTestId('board-announcer')).toHaveTextContent('Move cancelled.');
+  });
+});
+
+function LocationProbe(): React.JSX.Element {
+  const loc = useLocation();
+  return <output data-testid="location">{loc.search}</output>;
+}
+
+describe('PriorityBoardPage — P21-T05 Cards | List layout', () => {
+  beforeEach(() => {
+    localStorage.clear();
+  });
+
+  it('defaults to Cards; the toggle switches to a names-only list and back', async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<PriorityBoardPage />);
+    await screen.findByRole('link', { name: 'Alpha Cooler' });
+    const group = screen.getByRole('group', { name: 'Board layout' });
+    expect(within(group).getByRole('button', { name: 'Cards' })).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getAllByTestId('board-card').length).toBeGreaterThan(0);
+
+    await user.click(within(group).getByRole('button', { name: 'List' }));
+    expect(within(group).getByRole('button', { name: 'List' })).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.queryAllByTestId('board-card')).toHaveLength(0);
+    const rows = screen.getAllByTestId('board-list-row');
+    expect(rows).toHaveLength(4);
+    // Names only: no score, chips or status in a row; the position and the name.
+    const alpha = rows.find((r) => r.textContent?.includes('Alpha Cooler')) as HTMLElement;
+    expect(alpha).toHaveTextContent(/^2Alpha Cooler$/);
+    expect(within(alpha).getByRole('link', { name: 'Alpha Cooler' })).toHaveAttribute('title', 'Alpha Cooler');
+    // Owner feedback: the full name over up to two lines (fixed 46 px row), never one truncated line.
+    expect(within(alpha).getByRole('link', { name: 'Alpha Cooler' })).toHaveClass('line-clamp-2');
+    expect(within(alpha).getByRole('link', { name: 'Alpha Cooler' })).not.toHaveClass('truncate');
+    expect(alpha).toHaveClass('h-[46px]');
+    expect(within(alpha).getByRole('link', { name: 'Alpha Cooler' })).toHaveAttribute('href', '/projects/alpha');
+    expect(within(column('P1')).getByTestId('board-column-count')).toHaveTextContent('2');
+
+    await user.click(within(group).getByRole('button', { name: 'Cards' }));
+    expect(screen.getAllByTestId('board-card').length).toBeGreaterThan(0);
+  });
+
+  it('a keyboard move from a list row opens the same preview dialog and sends the same request', async () => {
+    move.moveProjectPriority.mockResolvedValue(response({ recalc_status: 'not_needed', schedule_run_id: null, baseline_run_id: null }));
+    const user = userEvent.setup();
+    renderWithProviders(<PriorityBoardPage />);
+    await screen.findByRole('link', { name: 'Alpha Cooler' });
+    await user.click(screen.getByRole('button', { name: 'List' }));
+    const row = screen.getAllByTestId('board-list-row').find((r) => r.textContent?.includes('Alpha Cooler')) as HTMLElement;
+    const handle = within(row).getByRole('button', { name: 'Move Alpha Cooler to another priority column' });
+    handle.focus();
+    await user.keyboard(' {ArrowRight}{ArrowRight} ');
+    const dialog = await screen.findByRole('dialog', { name: 'Move to P3?' });
+    expect(move.previewProjectPriority).toHaveBeenCalledWith('alpha', 'P3', expect.anything());
+    await clickYes(user, dialog);
+    expect(move.moveProjectPriority).toHaveBeenCalledWith('alpha', 'P3', 'tok-b');
+  });
+
+  it('a pointer drop from a list row goes through the same flow', async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<PriorityBoardPage />);
+    await screen.findByRole('link', { name: 'Alpha Cooler' });
+    await user.click(screen.getByRole('button', { name: 'List' }));
+    const row = screen.getAllByTestId('board-list-row').find((r) => r.textContent?.includes('Alpha Cooler')) as HTMLElement;
+    const dt = dataTransfer();
+    fireEvent.dragStart(row, { dataTransfer: dt });
+    fireEvent.dragOver(column('P2'), { dataTransfer: dt });
+    fireEvent.drop(column('P2'), { dataTransfer: dt });
+    expect(await screen.findByRole('dialog', { name: 'Move to P2?' })).toBeInTheDocument();
+    expect(move.previewProjectPriority).toHaveBeenCalledWith('alpha', 'P2', expect.anything());
+  });
+
+  it('remembers the choice per user in localStorage and in the URL', async () => {
+    const user = userEvent.setup();
+    const first = renderWithProviders(
+      <>
+        <PriorityBoardPage />
+        <LocationProbe />
+      </>,
+    );
+    await screen.findByRole('link', { name: 'Alpha Cooler' });
+    await user.click(screen.getByRole('button', { name: 'List' }));
+    expect(screen.getByTestId('location')).toHaveTextContent('layout=list');
+    expect(localStorage.getItem(boardLayoutStorageKey('user-super'))).toBe('list');
+    first.unmount();
+
+    // A fresh visit with no URL param restores List from storage.
+    renderWithProviders(<PriorityBoardPage />);
+    await screen.findByRole('link', { name: 'Alpha Cooler' });
+    expect(screen.getByRole('button', { name: 'List' })).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getAllByTestId('board-list-row').length).toBe(4);
+    // Another user keeps the default.
+    expect(localStorage.getItem(boardLayoutStorageKey('someone-else'))).toBeNull();
+  });
+
+  it('list layout has no serious/critical axe violations', async () => {
+    const user = userEvent.setup();
+    const { container } = renderWithProviders(<PriorityBoardPage />);
+    await screen.findByRole('link', { name: 'Alpha Cooler' });
+    await user.click(screen.getByRole('button', { name: 'List' }));
+    expect(await seriousAxeViolations(container)).toEqual([]);
   });
 });

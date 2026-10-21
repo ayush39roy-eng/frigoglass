@@ -105,10 +105,13 @@ export function BandDistributionPanel({
   entries,
   activeBand,
   onBandClick,
+  capacityFillCount,
 }: {
   entries: BandDistributionEntry[];
   activeBand: DistributionBand | null;
   onBandClick: (band: DistributionBand | null) => void;
+  /** P25: served `capacity_fill_count` (inside the P1 bucket); undefined from a pre-P25 API. */
+  capacityFillCount?: number | undefined;
 }): React.JSX.Element {
   const ordered = DISTRIBUTION_BANDS.map((band) => entries.find((e) => e.band === band)).filter(
     (e): e is BandDistributionEntry => e !== undefined,
@@ -193,6 +196,19 @@ export function BandDistributionPanel({
           );
         })}
       </ul>
+      {capacityFillCount !== undefined ? (
+        <p className="text-2xs text-text" data-testid="band-distribution-fill-note">
+          Bands are the suggested bands, after the P1 capacity fill. P1{' '}
+          <span className="tnum" data-numeric="">
+            {formatInteger(ordered.find((e) => e.band === 'P1')?.count ?? 0)}
+          </span>
+          , of which{' '}
+          <span className="tnum font-semibold" data-numeric="">
+            {formatInteger(capacityFillCount)}
+          </span>{' '}
+          by capacity fill.
+        </p>
+      ) : null}
       <p className="text-2xs text-text-subtle">Shares are served and rounded each, so they may not add up to exactly 100%.</p>
       <DataTable
         caption="Projects per band, with share of the filtered set (served)"
@@ -298,6 +314,7 @@ export function ScoreChartsRow({
           entries={distribution.band_distribution}
           activeBand={activeBand}
           onBandClick={onBandClick}
+          capacityFillCount={(distribution as Partial<PriorityDistribution>).capacity_fill_count}
         />
         <ScoreHistogramPanel buckets={distribution.score_histogram} />
       </CardContent>

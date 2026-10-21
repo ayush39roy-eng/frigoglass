@@ -484,6 +484,10 @@ async def test_compare_returns_projects_in_order_without_financials(db_session):
         "weighted_score",
         "normalized_pct",
         "suggested_band",
+        # P25-T01 (ADR 0036): the P1 capacity fill fields.
+        "score_band",
+        "capacity_fill",
+        "capacity_fill_reason",
         "dimension_scores",
     }
     for key in _FINANCIAL_KEYS:

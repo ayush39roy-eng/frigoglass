@@ -1,6 +1,6 @@
 import { appendFileSync } from 'node:fs';
 import AxeBuilder from '@axe-core/playwright';
-import type { APIRequestContext, Page, Request } from '@playwright/test';
+import type { APIRequestContext, CDPSession, Page, Request } from '@playwright/test';
 
 import { test, expect } from './fixtures';
 import { actAs, apiGet, BACKEND_URL, DEV_EMAILS, type DevRole } from './dev-session';
@@ -172,6 +172,15 @@ interface HubLoad {
   };
   rows: { hub: string }[];
 }
+interface HubRow {
+  hub: string; lab_region: string;
+  design_capacity_year: number; design_capacity_remaining: number; design_load_weeks: number;
+  design_booked_pct_year: number; design_booked_pct_remaining: number;
+  lab_capacity_year: number; lab_capacity_remaining: number; lab_load_weeks: number;
+  lab_booked_pct_year: number; lab_booked_pct_remaining: number;
+  capacity_days: { year: number; remaining: number }; load_days: { year: number; remaining: number };
+  lab_capacity_days: { year: number; remaining: number }; lab_load_days: { year: number; remaining: number };
+}
 
 test('Capacity: KPI cards, seven class cards first, two charts, hub tiles only, grouped table + Details, engineer section only (P19-T07)', async ({ page }) => {
   await setup(page, 'portfolioManager');
@@ -202,10 +211,26 @@ test('Capacity: KPI cards, seven class cards first, two charts, hub tiles only, 
   expect(strip).not.toMatch(/Europe/);
   expect(strip).not.toMatch(/India area|India \(area\)/);
   expect(await page.locator('main').getByText('Europe').count(), 'no Europe label on Capacity').toBe(0);
-  // Grouped summary table: region groups in order, lab cells once per region.
-  const groups = await page.getByTestId('hub-summary-table').locator('[data-testid^="hub-summary-region-"]').evaluateAll((els) => els.map((e) => e.getAttribute('data-testid')));
-  expect(groups).toEqual(['hub-summary-region-Greece', 'hub-summary-region-Romania', 'hub-summary-region-India']);
+  // P19-T06: booked tiles in one labelled box per hub family (R&D 3, PD 2, OEM 1), no family total.
+  const fam = async (k: string) => page.getByTestId(`booked-family-${k}`).locator('[data-testid^="booked-hub-"]').evaluateAll((els) => els.map((e) => e.getAttribute('data-testid')));
+  const famBoxes = await page.getByTestId('booked-families').locator('[data-testid^="booked-family-"]').evaluateAll((els) => els.map((e) => e.getAttribute('data-testid')));
+  console.log('booked family boxes', JSON.stringify(famBoxes), JSON.stringify(await fam('rd')), JSON.stringify(await fam('pd')), JSON.stringify(await fam('oem')));
+  expect(famBoxes).toEqual(['booked-family-rd', 'booked-family-pd', 'booked-family-oem']);
+  expect((await fam('rd')).every((t) => t!.startsWith('booked-hub-R&D-'))).toBe(true);
+  expect((await fam('pd')).every((t) => t!.startsWith('booked-hub-PD-'))).toBe(true);
+  expect((await fam('oem')).every((t) => t!.startsWith('booked-hub-OEM-'))).toBe(true);
+  expect((await fam('rd')).length + (await fam('pd')).length + (await fam('oem')).length).toBe(6);
+  for (const k of ['rd', 'pd', 'oem']) await expect(page.getByTestId(`booked-family-${k}`).getByRole('heading').first()).toBeVisible();
+  // P19-T06 merged table: family row groups, lab figures once per lab region, the other rows marked shared.
+  const groups = await page.getByTestId('hub-summary-table').locator('[data-testid^="hub-summary-family-"]').evaluateAll((els) => els.map((e) => e.getAttribute('data-testid')));
+  expect(groups).toEqual(['hub-summary-family-rd', 'hub-summary-family-pd', 'hub-summary-family-oem']);
+  await expect(page.getByRole('heading', { name: 'Load vs. capacity by hub' })).toBeVisible();
   expect(await page.getByTestId('hub-summary-table').getByTestId('lab-load').count()).toBe(3);
+  expect(await page.getByTestId('hub-summary-table').getByTestId('lab-shared').count()).toBe(3);
+  await page.getByTestId('toggle-priority-split').click();
+  await expect(page.getByTestId('toggle-priority-split')).toHaveAttribute('aria-expanded', 'true');
+  await axe(page, 'capacity merged table split open 1440');
+  await page.getByTestId('toggle-priority-split').click();
   // P19-T06 merged the hub matrix into the table; P19-T07 removed the class chart and the chamber matrix.
   await expect(page.getByTestId('hub-utilization-matrix')).toHaveCount(0);
   await expect(page.getByTestId('class-chart-section')).toHaveCount(0);
@@ -257,6 +282,32 @@ test('Capacity: Weeks/Days × YTD/Full year, every combination equals the API', 
       expect(tbl[i]!, `${c.unit}/${c.horizon} table ${String(i)}`).toBeCloseTo(c.exp[i]!, 1);
     }
     expect(booked).toBeCloseTo(c.pct, 1);
+    // Every merged-table hub row equals the served row for this unit/horizon (lab once per region).
+    const days = c.unit === 'Days';
+    const hk: 'year' | 'remaining' = c.horizon === 'Full year' ? 'year' : 'remaining';
+    let checked = 0;
+    for (const r of hl.rows as unknown as HubRow[]) {
+      const tr = page.getByTestId(`hub-summary-row-${r.hub}`);
+      const dCap = days ? r.capacity_days[hk] : hk === 'year' ? r.design_capacity_year : r.design_capacity_remaining;
+      const dLoad = days ? r.load_days[hk] : r.design_load_weeks;
+      const dPct = hk === 'year' ? r.design_booked_pct_year : r.design_booked_pct_remaining;
+      expect(num(await tr.getByTestId('design-capacity').innerText()), `${r.hub} design cap ${c.unit}/${c.horizon}`).toBeCloseTo(dCap, 1);
+      expect(num(await tr.getByTestId('design-load').first().innerText()), `${r.hub} design load`).toBeCloseTo(dLoad, 1);
+      expect(num(await tr.getByTestId('design-booked').innerText()), `${r.hub} design booked`).toBeCloseTo(dPct, 1);
+      if (await tr.getByTestId('lab-capacity').count()) {
+        const lCap = days ? r.lab_capacity_days[hk] : hk === 'year' ? r.lab_capacity_year : r.lab_capacity_remaining;
+        const lLoad = days ? r.lab_load_days[hk] : r.lab_load_weeks;
+        const lPct = hk === 'year' ? r.lab_booked_pct_year : r.lab_booked_pct_remaining;
+        expect(num(await tr.getByTestId('lab-capacity').innerText()), `${r.hub} lab cap`).toBeCloseTo(lCap, 1);
+        expect(num(await tr.getByTestId('lab-load').first().innerText()), `${r.hub} lab load`).toBeCloseTo(lLoad, 1);
+        expect(num(await tr.getByTestId('lab-booked').innerText()), `${r.hub} lab booked`).toBeCloseTo(lPct, 1);
+      } else {
+        await expect(tr.getByTestId('lab-shared')).toContainText(`shared ${r.lab_region} lab region`);
+      }
+      checked += 1;
+    }
+    expect(checked).toBe(6);
+    await axe(page, `capacity ${c.unit}/${c.horizon} 1440`);
     await shot(page, `cap-${c.unit}-${c.horizon.replace(/\s/g, '')}-1440`, false);
   }
 });
@@ -369,6 +420,64 @@ test('Capacity Planning: inline FTE edit as Frank Admin, revert, audit rows', as
   expect(rows[0]!.actor_user_id).toBe(me.user_id);
   expect(JSON.stringify(rows[0]!.after_state)).toContain(original.replace(/0+$/, ''));
   expect(JSON.stringify(rows[1]!.after_state)).toContain(target);
+});
+
+test('Capacity Planning after P19-R01 strict schemas: chamber Platforms / Efficiency, stage + category chips save (200) with audit rows', async ({ page, request }) => {
+  test.setTimeout(180_000);
+  await setup(page, 'admin');
+  const sent: { url: string; body: unknown; status: number }[] = [];
+  page.on('response', async (res) => {
+    const rq = res.request();
+    if (rq.method() === 'PATCH' && /\/api\/(chambers|engineers)\//.test(rq.url())) sent.push({ url: new URL(rq.url()).pathname, body: rq.postDataJSON(), status: res.status() });
+  });
+  await page.goto('/planning');
+  const lab = page.getByTestId('lab-card-Greece');
+  await expect(lab).toBeVisible({ timeout: 20_000 });
+  await settle(page, 600);
+  const row = lab.locator('[data-testid^="chamber-row-"]').first();
+  const chId = ((await row.getAttribute('data-testid')) ?? '').replace('chamber-row-', '');
+  const before = await api<{ code: string; platforms: number; efficiency: number | string; allowed_stages: string[] }>(request, 'admin', `/chambers/${chId}`);
+  console.log('chamber before', JSON.stringify(before));
+  const plat = row.getByRole('spinbutton', { name: /^Platforms for / });
+  const eff = row.getByRole('spinbutton', { name: /^Efficiency for / });
+  const n = () => sent.length;
+  const commit = async (input: ReturnType<typeof row.getByRole>, v: string) => { const k = n(); await input.fill(v); await input.press('Enter'); await expect.poll(n, { timeout: 10_000 }).toBe(k + 1); await settle(page, 300); };
+  await commit(plat, String(before.platforms + 1));
+  await commit(plat, String(before.platforms));
+  const effNew = Number(before.efficiency) === 0.9 ? '0.85' : '0.9';
+  await commit(eff, effNew);
+  await commit(eff, String(Number(before.efficiency)));
+  // One stage chip off and on again.
+  const chip = row.getByRole('button', { name: /^Allow stage / }).first();
+  const pressed0 = await chip.getAttribute('aria-pressed');
+  let k = n(); await chip.click(); await expect.poll(n, { timeout: 10_000 }).toBe(k + 1); await settle(page, 400);
+  k = n(); await chip.click(); await expect.poll(n, { timeout: 10_000 }).toBe(k + 1); await settle(page, 400);
+  await expect(chip).toHaveAttribute('aria-pressed', pressed0 ?? 'false');
+  // One engineer category chip off and on again (enum list items, Strict(False)).
+  const card = page.getByTestId('hub-card-R&D-Greece');
+  const engRow = card.locator('[data-testid^="engineer-row-"]').first();
+  const engId = ((await engRow.getAttribute('data-testid')) ?? '').replace('engineer-row-', '');
+  const cat = engRow.getByRole('button', { name: /^Allow category / }).first();
+  const catPressed = await cat.getAttribute('aria-pressed');
+  k = n(); await cat.click(); await expect.poll(n, { timeout: 10_000 }).toBe(k + 1); await settle(page, 400);
+  k = n(); await cat.click(); await expect.poll(n, { timeout: 10_000 }).toBe(k + 1); await settle(page, 400);
+  await expect(cat).toHaveAttribute('aria-pressed', catPressed ?? 'false');
+  console.log('PATCHes', JSON.stringify(sent));
+  expect(sent.map((x) => x.status), 'every PATCH 200').toEqual(sent.map(() => 200));
+  expect(sent[0]!.body).toEqual({ platforms: before.platforms + 1 });
+  expect(sent[2]!.body).toEqual({ efficiency: Number(effNew) });
+  for (const x of sent) for (const v of Object.values(x.body as Record<string, unknown>)) expect(typeof v === 'string', `no string-number in ${JSON.stringify(x.body)}`).toBe(false);
+  const after = await api<{ platforms: number; efficiency: number | string; allowed_stages: string[] }>(request, 'admin', `/chambers/${chId}`);
+  expect(after.platforms).toBe(before.platforms);
+  expect(Number(after.efficiency)).toBe(Number(before.efficiency));
+  expect([...after.allowed_stages].sort()).toEqual([...before.allowed_stages].sort());
+  const audit = await api<{ items: { action: string; entity_id: string }[] }>(request, 'admin', `/audit-log?entity_id=${chId}&limit=20`);
+  const chRows = audit.items.filter((a) => a.entity_id === chId);
+  const engAudit = await api<{ items: { action: string; entity_id: string }[] }>(request, 'admin', `/audit-log?entity_id=${engId}&limit=20`);
+  console.log('chamber audit actions', JSON.stringify(chRows.map((a) => a.action)), 'engineer audit actions', JSON.stringify(engAudit.items.map((a) => a.action)));
+  expect(chRows.length).toBeGreaterThanOrEqual(6);
+  expect(engAudit.items.filter((a) => a.entity_id === engId).length).toBeGreaterThanOrEqual(2);
+  await axe(page, 'planning after chamber edits 1440');
 });
 
 test('Capacity Planning roles: PM read-only, Executive Viewer no access, Hub Planner own hub only', async ({ browser, request }) => {
@@ -510,6 +619,74 @@ test('axe DARK (report only): Dashboard, Capacity, Planning at 1440 and 390', as
 
 /* ---------------------------------------------------------------------- Gantt */
 
+async function openProject(page: Page, proj: { project_name: string; external_code: string | null }): Promise<void> {
+  await page.goto('/timeline');
+  await expect(page.getByRole('heading', { name: 'Project Execution Timeline', exact: true })).toBeVisible({ timeout: 20_000 });
+  await page.getByPlaceholder('Project name or code').fill(proj.external_code ?? proj.project_name.slice(0, 30));
+  await settle(page, 600);
+  const expandBtn = page.getByRole('button', { name: `Expand steps for ${proj.project_name}` }).first();
+  await expandBtn.focus();
+  await page.keyboard.press('Enter');
+  await expect(page.getByTestId('gantt-step-row').first()).toBeVisible();
+  await settle(page, 500);
+}
+
+/** Visible timeline in client px: the scroll viewport minus both sticky columns. */
+async function timelineVisible(page: Page): Promise<{ left: number; right: number }> {
+  return page.getByTestId('gantt-scroll').evaluate((el) => {
+    const r = el.getBoundingClientRect();
+    const lh = el.querySelector('[data-testid="gantt-left-header"]')?.getBoundingClientRect().width ?? 0;
+    const sh = el.querySelector('[data-testid="gantt-status-header"]')?.getBoundingClientRect().width ?? 0;
+    return { left: r.left + lh, right: r.left + el.clientWidth - sh };
+  });
+}
+
+async function bringHandle(page: Page, handle: ReturnType<Page['getByTestId']>, targetX: number): Promise<void> {
+  const b = (await handle.boundingBox())!;
+  await page.getByTestId('gantt-scroll').evaluate((el, dx) => { el.scrollLeft += dx; }, b.x + b.width / 2 - targetX);
+  await page.waitForTimeout(300);
+}
+
+async function hitTest(page: Page, x: number, y: number, sel: string): Promise<{ ok: boolean; desc: string }> {
+  return page.evaluate(([px, py, s]) => {
+    const el = document.elementFromPoint(Number(px), Number(py));
+    if (!el) return { ok: false, desc: 'none' };
+    return { ok: !!el.closest(String(s)), desc: `${el.tagName}.${String(el.getAttribute('data-testid'))} sticky=${String(!!el.closest('.sticky'))}` };
+  }, [x, y, sel] as const);
+}
+
+async function expectLabelInside(page: Page, what: string): Promise<void> {
+  const vis = await timelineVisible(page);
+  const lb = (await page.getByTestId('step-drag-label').boundingBox())!;
+  const side = await page.getByTestId('step-drag-label').getAttribute('data-side');
+  const wrapped = await page.getByTestId('step-drag-label').getAttribute('data-wrapped');
+  console.log(`label ${what}: x ${lb.x.toFixed(1)}..${(lb.x + lb.width).toFixed(1)} visible ${vis.left.toFixed(1)}..${vis.right.toFixed(1)} side ${String(side)} wrapped ${String(wrapped)}`);
+  expect(lb.x, `${what}: label left inside timeline`).toBeGreaterThanOrEqual(vis.left - 1);
+  expect(lb.x + lb.width, `${what}: label right inside timeline`).toBeLessThanOrEqual(vis.right + 1);
+}
+
+async function touchStart(page: Page, x: number, y: number): Promise<CDPSession> {
+  const cdp = await page.context().newCDPSession(page);
+  await cdp.send('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 1 });
+  await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x, y }] });
+  return cdp;
+}
+async function touchMove(cdp: CDPSession, x: number, y: number, dx: number): Promise<void> {
+  for (let i = 1; i <= 8; i++) await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: x + (dx * i) / 8, y }] });
+}
+async function touchEnd(cdp: CDPSession): Promise<void> {
+  await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+}
+
+async function effectiveOpacity(loc: ReturnType<Page['locator']>): Promise<number> {
+  return loc.evaluate((el) => {
+    let o = 1;
+    for (let n: Element | null = el; n; n = n.parentElement) o *= Number(getComputedStyle(n).opacity);
+    return o;
+  });
+}
+
+
 interface GStep {
   step_id: string; step_name: string; kind: string; status: string; skipped: boolean;
   duration_weeks: number | null; planned_start_week: number | null; planned_end_week: number | null;
@@ -531,6 +708,152 @@ test('Gantt: Executive Viewer gets span_fte null everywhere and no drag handles'
   expect(await page.getByTestId('gantt-step-row').count()).toBeGreaterThan(0);
   expect(await page.getByTestId('step-drag-handle').count()).toBe(0);
   expect(await page.getByRole('button', { name: /^Edit timing for / }).count()).toBe(0);
+});
+
+test('Gantt QA-P19-1 re-check: project with skipped LAB steps expanded, axe 0 at 1440 / 1280 / 390, during a drag, and in the narrow details dialog', async ({ page, request }) => {
+  test.setTimeout(300_000);
+  const g = await api<{ rows: GRow[] }>(request, 'hubPlanner', '/gantt?limit=500');
+  const cands = g.rows.filter((r) => !r.frozen
+    && r.steps.filter((s) => s.kind === 'lab' && s.skipped).length >= 2
+    && r.steps.some((s) => !s.skipped && s.timing_editable !== 'none' && s.planned_start_week !== null && (s.planned_end_week ?? 99) <= 70));
+  console.log('projects with >=2 skipped LAB steps and an editable step', cands.length);
+  expect(cands.length).toBeGreaterThan(0);
+  const proj = cands[0]!;
+  const step = proj.steps.find((s) => !s.skipped && s.timing_editable !== 'none' && s.planned_start_week !== null && (s.planned_end_week ?? 99) <= 70)!;
+  console.log('target', proj.project_name, 'skipped lab', proj.steps.filter((s) => s.kind === 'lab' && s.skipped).map((s) => s.step_name).join(' | '), 'drag step', step.step_name, step.kind);
+  for (const width of WIDTHS) {
+    await setup(page, 'hubPlanner', width);
+    await openProject(page, proj);
+    const skipped = page.locator('[data-testid="gantt-step-row"] [data-skipped]');
+    const nSkipped = await skipped.count();
+    expect(nSkipped).toBeGreaterThan(0);
+    let labBadges = 0;
+    for (let i = 0; i < nSkipped; i++) {
+      const badge = skipped.nth(i).locator(':scope > *').first();
+      const txt = (await badge.innerText()).trim();
+      const op = await effectiveOpacity(badge);
+      if (/lab/i.test(txt)) labBadges += 1;
+      expect(op, `skipped badge "${txt}" opacity ${String(width)}`).toBe(1);
+    }
+    console.log(`${String(width)}: skipped rows ${String(nSkipped)}, skipped LAB badges ${String(labBadges)}`);
+    expect(labBadges).toBeGreaterThanOrEqual(1);
+    await axe(page, `gantt skipped-LAB expanded light ${String(width)}`);
+    await shot(page, `gantt-skipped-${String(width)}`, false);
+    expect(await overflow(page), `gantt overflow ${String(width)}`).toBeLessThanOrEqual(0);
+
+    // During a drag (mouse wide, touch narrow), then cancel with Escape.
+    const handle = page.locator(`[data-testid="step-drag-handle"][title*="${step.step_name}"]`).first();
+    await handle.scrollIntoViewIfNeeded();
+    const vis = await timelineVisible(page);
+    await bringHandle(page, handle, vis.left + Math.min(40, (vis.right - vis.left) / 4));
+    const hb = (await handle.boundingBox())!;
+    const sx = hb.x + hb.width / 2;
+    const sy = hb.y + hb.height / 2;
+    expect((await hitTest(page, sx, sy, '[data-testid="step-drag-handle"]')).ok, `handle reachable ${String(width)}`).toBe(true);
+    let touch: CDPSession | null = null;
+    if (width === 390) { touch = await touchStart(page, sx, sy); await touchMove(touch, sx, sy, 40); }
+    else { await page.mouse.move(sx, sy); await page.mouse.down(); await page.mouse.move(sx + 40, sy, { steps: 6 }); }
+    await expect(page.getByTestId('step-drag-label')).toBeVisible();
+    await expectLabelInside(page, `skipped-project drag ${String(width)}`);
+    await axe(page, `gantt skipped-LAB during drag light ${String(width)}`);
+    await shot(page, `gantt-skipped-drag-${String(width)}`, false);
+    await page.keyboard.press('Escape');
+    if (touch) await touchEnd(touch); else await page.mouse.up();
+    await expect(page.getByTestId('step-drag-label')).toHaveCount(0);
+
+    if (width === 390) {
+      // Narrow: status lives in the project-details dialog. Real pointer click (hit-test), axe, focus return.
+      const details = page.getByTestId('gantt-row-details').first();
+      await details.scrollIntoViewIfNeeded();
+      const db = (await details.boundingBox())!;
+      const hit = await hitTest(page, db.x + db.width / 2, db.y + db.height / 2, '[data-testid="gantt-row-details"]');
+      expect(hit.ok, `details button reachable: ${hit.desc}`).toBe(true);
+      await details.click();
+      const dlg = page.getByTestId('gantt-project-details');
+      await expect(dlg).toBeVisible();
+      const db2 = (await dlg.boundingBox())!;
+      expect(db2.x).toBeGreaterThanOrEqual(0);
+      expect(db2.x + db2.width).toBeLessThanOrEqual(390);
+      console.log('details dialog:', (await dlg.innerText()).replace(/\s+/g, ' ').slice(0, 300));
+      await axe(page, 'gantt project-details dialog light 390');
+      await shot(page, 'gantt-details-390', false);
+      await page.keyboard.press('Escape');
+      await expect(dlg).toBeHidden();
+      // QA-P19-3 (re-gate finding): focus should return to the Details button (WCAG 2.4.3). Logged + annotated,
+      // not asserted, so the serial run continues; flip to `await expect(details).toBeFocused()` once fixed.
+      const focusBack = await details.evaluate((el) => el === document.activeElement);
+      const active = await page.evaluate(() => document.activeElement?.tagName ?? 'none');
+      console.log('QA-P19-3 details dialog focus return:', focusBack, 'active element', active);
+      if (!focusBack) test.info().annotations.push({ type: 'QA-P19-3', description: `focus after closing the details dialog is on ${active}, not the Details button` });
+      // The expand chevron is reachable by pointer too.
+      const chev = page.getByRole('button', { name: `Collapse steps for ${proj.project_name}` }).first();
+      const cb = (await chev.boundingBox())!;
+      expect((await hitTest(page, cb.x + cb.width / 2, cb.y + cb.height / 2, 'button')).ok).toBe(true);
+    }
+  }
+});
+
+test('Gantt O1 re-check: drag label near W52 stays inside the visible timeline at 1440 and 1280', async ({ page, request }) => {
+  test.setTimeout(240_000);
+  const g = await api<{ rows: GRow[] }>(request, 'hubPlanner', '/gantt?limit=500');
+  const cands = g.rows.flatMap((r) => r.steps.map((s) => ({ r, s })))
+    .filter(({ r, s }) => !r.frozen && !s.skipped && s.timing_editable !== 'none' && (s.planned_end_week ?? 0) >= 49 && (s.planned_end_week ?? 99) <= 52)
+    .sort((a, b) => (b.s.planned_end_week ?? 0) - (a.s.planned_end_week ?? 0));
+  console.log('editable steps ending W49..W52', cands.length);
+  expect(cands.length).toBeGreaterThan(0);
+  const { r: proj, s: step } = cands[0]!;
+  console.log('target', proj.project_name.slice(0, 50), step.step_name, step.kind, `W${String(step.planned_start_week)}-W${String(step.planned_end_week)}`, 'span_fte', step.span_fte);
+  for (const width of [1440, 1280]) {
+    await setup(page, 'hubPlanner', width);
+    await openProject(page, proj);
+    const handle = page.locator(`[data-testid="step-drag-handle"][title*="${step.step_name}"]`).first();
+    await handle.scrollIntoViewIfNeeded();
+    let measured = 0;
+    for (const [where, dxWeeks] of [['right edge', 2], ['right edge +4', 4], ['mid', 3]] as const) {
+      const vis = await timelineVisible(page);
+      await bringHandle(page, handle, where === 'mid' ? (vis.left + vis.right) / 2 : vis.right - 30);
+      const hb = (await handle.boundingBox())!;
+      const vis2 = await timelineVisible(page);
+      const centre = await hitTest(page, hb.x + hb.width / 2, hb.y + hb.height / 2, '[data-testid="step-drag-handle"]');
+      // Grab the part of the handle that is not under the sticky status column.
+      const sx = (hb.x + Math.min(hb.x + hb.width, vis2.right - 1)) / 2;
+      const sy = hb.y + hb.height / 2;
+      const grab = await hitTest(page, sx, sy, '[data-testid="step-drag-handle"]');
+      console.log(`${String(width)} ${where}: handle x ${hb.x.toFixed(1)}..${(hb.x + hb.width).toFixed(1)} visible right ${vis2.right.toFixed(1)}; centre hit ${centre.desc} ok=${String(centre.ok)}; grab hit ${grab.desc} ok=${String(grab.ok)}`);
+      expect(grab.ok, `handle grabbable near W52 at ${String(width)}`).toBe(true);
+      const weekPx = num(await page.locator('[aria-valuetext$="pixels per week"]').first().getAttribute('aria-valuetext'));
+      await page.mouse.move(sx, sy);
+      await page.mouse.down();
+      await page.mouse.move(sx + weekPx * dxWeeks, sy, { steps: 6 });
+      await page.waitForTimeout(200);
+      if (!(await page.getByTestId('step-drag-label').isVisible())) {
+        // A drag that changes no work week sends nothing and draws no ghost (by design).
+        console.log(`${String(width)} ${where}: no label (no-op drag)`);
+        await page.keyboard.press('Escape');
+        await page.mouse.up();
+        continue;
+      }
+      measured += 1;
+      const lt = (await page.getByTestId('step-drag-label').innerText()).replace(/\s+/g, ' ');
+      console.log(`${String(width)} ${where}: "${lt}"`);
+      // ADR 0032 consistency: "C wks on the calendar · W wks of work at f FTE" must have C = ceil(W / f) (QA-P19-4).
+      const m = /^(\d+) wks on the calendar · (\d+) wks of work at ([\d.]+) FTE/.exec(lt);
+      if (m) {
+        const want = Math.ceil(Math.round((Number(m[2]) * 100) / Number(m[3])) / 100);
+        if (Number(m[1]) !== want) test.info().annotations.push({ type: 'QA-P19-4', description: `${String(width)} ${where}: "${lt}" (expected ${String(want)} calendar weeks)` });
+        expect.soft(Number(m[1]), `QA-P19-4 calendar weeks for "${lt}"`).toBe(want);
+      }
+      await expectLabelInside(page, `W52 ${where} ${String(width)}`);
+      if (where === 'right edge') {
+        await axe(page, `gantt W52 drag light ${String(width)}`);
+        await shot(page, `gantt-w52-${String(width)}`, false);
+      }
+      await page.keyboard.press('Escape');
+      await page.mouse.up();
+      await page.waitForTimeout(300);
+    }
+    expect(measured, `labels measured near W52 at ${String(width)}`).toBeGreaterThanOrEqual(2);
+  }
 });
 
 test('Gantt: Bob HubPlanner on a 0.5 FTE design step: drag label calendar vs work, PATCH sends work weeks; axe with tooltip and dialog', async ({ page, request }) => {
@@ -562,18 +885,11 @@ test('Gantt: Bob HubPlanner on a 0.5 FTE design step: drag label calendar vs wor
 
   const patches: unknown[] = [];
   page.on('request', (rq) => { if (rq.method() === 'PATCH' && rq.url().includes('/timing')) patches.push(rq.postDataJSON()); });
+  let curSpan = span;
   for (const width of [1440, 390, 1280]) {
     await setup(page, 'hubPlanner', width);
-    await page.goto('/timeline');
-    await expect(page.getByRole('heading', { name: 'Project Execution Timeline', exact: true })).toBeVisible({ timeout: 20_000 });
-    await page.getByPlaceholder('Project name or code').fill(proj.external_code ?? proj.project_name.slice(0, 30));
-    await settle(page, 600);
-    // Keyboard path (at 390 px the sticky status column covers the row controls, QA-P19-2).
-    const expandBtn = page.getByRole('button', { name: `Expand steps for ${proj.project_name}` }).first();
-    await expandBtn.focus();
-    await page.keyboard.press('Enter');
-    await settle(page, 600);
-    // Timing dialog (keyboard path).
+    await openProject(page, proj);
+    // Timing dialog (keyboard path, all widths).
     const editBtn = page.getByRole('button', { name: `Edit timing for ${step.step_name} (${proj.project_name})` });
     await editBtn.focus();
     await page.keyboard.press('Enter');
@@ -588,61 +904,77 @@ test('Gantt: Bob HubPlanner on a 0.5 FTE design step: drag label calendar vs wor
     await page.keyboard.press('Escape');
     await expect(dlg).toBeHidden();
 
-    // Drag the right edge by +2 calendar weeks; read the label with the pointer held.
     const row = page.getByTestId('gantt-step-row').filter({ has: page.locator(`[data-testid="step-drag-handle"][title*="${step.step_name}"]`) }).first();
     const handle = row.getByTestId('step-drag-handle');
     await handle.scrollIntoViewIfNeeded();
+    const vis = await timelineVisible(page);
     if (width === 390) {
-      const hbx = (await handle.boundingBox())!;
-      const hit = await page.evaluate(([x, y]) => {
-        const el = document.elementFromPoint(x!, y!);
-        return el ? `${el.tagName}.${String(el.getAttribute('data-testid'))} in sticky=${String(!!el.closest('.sticky'))}` : 'none';
-      }, [hbx.x + hbx.width / 2, hbx.y + hbx.height / 2]);
-      const cols = await page.getByTestId('gantt-scroll').evaluate((el) => ({ client: el.clientWidth }));
-      console.log('390: handle hit-test ->', hit, 'gantt viewport', JSON.stringify(cols), 'sticky cols 272 + 148');
+      // QA-P19-2: narrow layout, the timeline is usable.
+      await expect(page.getByTestId('gantt-scroll')).toHaveAttribute('data-layout', 'narrow');
+      await expect(page.getByTestId('gantt-status-header')).toHaveCount(0);
+      const leftW = (await page.getByTestId('gantt-left-header').boundingBox())!.width;
+      console.log('390 layout: name column', leftW, 'visible timeline', JSON.stringify(vis));
+      expect(leftW).toBeLessThanOrEqual(124);
+      expect(vis.right - vis.left, 'visible timeline px at 390').toBeGreaterThanOrEqual(100);
       expect(await overflow(page), 'gantt overflow 390').toBeLessThanOrEqual(0);
-      await shot(page, 'gantt-390', false);
-      continue;
     }
-    // Keep the handle clear of the sticky left/status columns on narrow viewports.
-    const hb0 = (await handle.boundingBox())!;
-    await page.getByTestId('gantt-scroll').evaluate((el, dx) => { el.scrollLeft += dx; }, hb0.x - width / 2);
-    await page.waitForTimeout(300);
+    await bringHandle(page, handle, width === 390 ? vis.left + 16 : vis.left + (vis.right - vis.left) / 3);
     const hb = (await handle.boundingBox())!;
-    const weekPx = num(await page.locator('[aria-valuetext$="pixels per week"]').first().getAttribute('aria-valuetext'));
-    expect(weekPx).toBeGreaterThanOrEqual(16);
     const sx = hb.x + hb.width / 2;
     const sy = hb.y + hb.height / 2;
-    await page.mouse.move(sx, sy);
-    await page.mouse.down();
-    await page.mouse.move(sx + weekPx, sy, { steps: 4 });
-    await page.mouse.move(sx + weekPx * 2, sy, { steps: 4 });
-    const label = page.getByTestId('step-drag-label');
-    await expect(label).toBeVisible();
-    const lt = await label.innerText();
-    const cal = span + 2;
+    // Real hit-test (QA-P19-2): the point under the handle's centre is the handle, not a sticky column.
+    const hit = await hitTest(page, sx, sy, '[data-testid="step-drag-handle"]');
+    console.log(`${String(width)}: handle hit-test ->`, hit.desc, 'handle w', hb.width);
+    expect(hit.ok, `handle hit-test ${String(width)}: ${hit.desc}`).toBe(true);
+    if (width === 390) expect(hb.width).toBeGreaterThanOrEqual(19);
+    const weekPx = num(await page.locator('[aria-valuetext$="pixels per week"]').first().getAttribute('aria-valuetext'));
+    expect(weekPx).toBeGreaterThanOrEqual(16);
+    const cal = curSpan + 2;
     const work = Math.max(1, Math.min(104, Math.floor(cal * 0.5)));
     const expectLabel = `${String(Math.ceil(work / 0.5))} wks on the calendar · ${String(work)} wks of work at 0.5 FTE`;
+    const label = page.getByTestId('step-drag-label');
+    let touch: CDPSession | null = null;
+    if (width === 390) {
+      touch = await touchStart(page, sx, sy);
+      await touchMove(touch, sx, sy, weekPx * 2);
+    } else {
+      await page.mouse.move(sx, sy);
+      await page.mouse.down();
+      await page.mouse.move(sx + weekPx, sy, { steps: 4 });
+      await page.mouse.move(sx + weekPx * 2, sy, { steps: 4 });
+    }
+    await expect(label).toBeVisible();
+    const lt = (await label.innerText()).replace(/\s+/g, ' ');
     console.log(`drag label ${String(width)}: "${lt}" expected "${expectLabel}" weekPx ${weekPx.toFixed(1)}`);
-    expect(lt).toBe(expectLabel);
+    // QA-P19-4: past W52 the ghost is clamped to the axis, so the calendar figure is the clamped span. Soft, so the
+    // PATCH (work weeks) is still checked.
+    expect.soft(lt, `drag label ${String(width)} (QA-P19-4 if the calendar figure is short)`).toBe(expectLabel);
+    await expectLabelInside(page, `drag ${String(width)}`);
     await axe(page, `gantt drag tooltip light ${String(width)}`);
     await shot(page, `gantt-drag-${String(width)}`, false);
     expect(await overflow(page), `gantt overflow ${String(width)}`).toBeLessThanOrEqual(0);
     if (width === 1440) {
       await page.keyboard.press('Escape');
       await page.mouse.up();
+      await page.waitForTimeout(500);
       expect(patches, 'Escape cancels: nothing sent').toEqual([]);
-    } else {
-      await page.mouse.up();
-      await expect.poll(() => patches.length, { timeout: 10_000 }).toBe(1);
-      console.log('PATCH body', JSON.stringify(patches[0]));
-      expect(patches[0]).toEqual({ duration_override_weeks: work });
-      await settle(page, 1500);
-      const after = await api<{ rows: GRow[] }>(request, 'hubPlanner', `/gantt?limit=500`);
-      const st = after.rows.find((x) => x.project_id === proj.project_id)!.steps.find((x) => x.step_id === step.step_id)!;
-      console.log('stored override', (st as unknown as { duration_override_weeks: number | null }).duration_override_weeks);
-      expect((st as unknown as { duration_override_weeks: number | null }).duration_override_weeks).toBe(work);
+      continue;
     }
+    const k = patches.length;
+    if (touch) await touchEnd(touch);
+    else await page.mouse.up();
+    await expect.poll(() => patches.length, { timeout: 10_000 }).toBe(k + 1);
+    console.log(`PATCH body ${String(width)} (${touch ? 'touch' : 'mouse'})`, JSON.stringify(patches[k]));
+    expect(patches[k]).toEqual({ duration_override_weeks: work });
+    // The step-timing recalc runs on the solver worker (greedy, ~7 s here): wait for the new plan.
+    const read = async () => (await api<{ rows: GRow[] }>(request, 'hubPlanner', `/gantt?limit=500`)).rows.find((x) => x.project_id === proj.project_id)!.steps.find((x) => x.step_id === step.step_id)!;
+    await expect.poll(async () => { const c = await read(); return c.status !== 'Not Started' || c.planned_end_week! - c.planned_start_week! + 1 === Math.ceil(work / 0.5); }, { timeout: 60_000, intervals: [1000] }).toBe(true);
+    const cur = await read();
+    const stored = (cur as unknown as { duration_override_weeks: number | null }).duration_override_weeks;
+    curSpan = cur.planned_end_week! - cur.planned_start_week! + 1;
+    console.log('stored override', stored, 'span_fte', cur.span_fte, 'new plan', cur.planned_start_week, cur.planned_end_week, 'span', curSpan);
+    expect(stored).toBe(work);
+    if (cur.status === 'Not Started') expect(curSpan).toBe(Math.ceil(work / 0.5));
   }
   // Restore the FTE (disposable DB anyway).
   if (originalFte !== 0.5) await request.patch(`${BACKEND_URL}/engineers/${engId}`, { headers: H(DEV_EMAILS.admin), data: { fte: originalFte } });

@@ -80,8 +80,8 @@ export function useEngineerOptions(hubId: string | undefined) {
   });
 }
 
-/** `POST /projects`. On success, invalidate the project list so the new Draft
- *  row appears. Never touches `['schedule-runs', …]` — a Draft (or any status)
+/** `POST /projects`. On success, invalidate the project list so the new
+ *  row appears. Never touches `['schedule-runs', …]` — a new (or any status)
  *  project only affects the next schedule run, not the active one. */
 export function useCreateProject() {
   const queryClient = useQueryClient();

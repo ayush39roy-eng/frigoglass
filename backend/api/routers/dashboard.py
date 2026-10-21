@@ -809,6 +809,9 @@ async def analytics_projects(
                 outcome=_outcome_bucket(outcome),
                 reg_year=p.reg_year,
                 carry_over=p.carry_over,
+                plant=p.plant,
+                requesting_department=p.requesting_department,
+                product_type=p.product_type,
                 priority_rank=rank.get(p.id),
             )
         )

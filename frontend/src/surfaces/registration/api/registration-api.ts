@@ -62,8 +62,8 @@ export function fetchHardGateStatus(
   return apiGet<HardGateStatus>(`/projects/${encodeURIComponent(projectId)}/hard-gate-status`, ctx);
 }
 
-/** `POST /projects` — always created in `Draft`, regardless of how much of the
- *  body is filled in. */
+/** `POST /projects` — P23-T02: the hard-gate fields are required up front (422
+ *  with per-field errors otherwise) and the project is created In Queue. */
 export function createProject(body: ProjectCreateRequest): Promise<ProjectRead> {
   return apiSend<ProjectRead>('POST', '/projects', body);
 }

@@ -139,6 +139,8 @@ export interface PriorityDistribution {
   scored_projects: number;
   band_distribution: BandDistributionEntry[];
   score_histogram: ScoreHistogramBucket[];
+  /** P25: rows of this filtered set promoted by capacity fill (they are inside the P1 bucket). */
+  capacity_fill_count: number;
 }
 
 /** One project of `GET /priorities/compare` (P21 §5, `PriorityCompareItem`). No financial field. */
@@ -152,6 +154,13 @@ export interface PriorityCompareProject {
   /** Served normalized score, 0..100, shown "91/100". */
   normalized_pct: number | null;
   suggested_band: ProjectPriority | null;
+  /** P25 (ADR 0036): the pure score band (≥ 70 P1, ≥ 55 P2, ≥ 40 P3, else P4); null when unscored.
+   *  `suggested_band` is now the band AFTER the hub's P1 capacity fill. */
+  score_band: ProjectPriority | null;
+  /** P25: promoted to P1 by the hub's capacity fill (label "P1 · capacity fill"). */
+  capacity_fill: boolean;
+  /** P25: the served reason for a walk decision (promoted / not promoted); shown verbatim, never parsed. */
+  capacity_fill_reason: string | null;
   dimension_scores: DimensionScore[];
 }
 
@@ -236,6 +245,13 @@ export interface PriorityMatrixRow {
    *  hard-gate → P1 override (that is applied by "Apply Priorities", deferred) —
    *  the UI annotates hard-gated rows separately. */
   suggested_band: ProjectPriority | null;
+  /** P25 (ADR 0036): the pure score band (≥ 70 P1, ≥ 55 P2, ≥ 40 P3, else P4); null when unscored.
+   *  `suggested_band` is now the band AFTER the hub's P1 capacity fill. */
+  score_band: ProjectPriority | null;
+  /** P25: promoted to P1 by the hub's capacity fill (label "P1 · capacity fill"). */
+  capacity_fill: boolean;
+  /** P25: the served reason for a walk decision (promoted / not promoted); shown verbatim, never parsed. */
+  capacity_fill_reason: string | null;
   /** P21 §3: the 13 served per-dimension scores, points and max points, in
    *  positional order. (`normalized_pct` / `suggested_band` above are the
    *  row's score out of 100 and its band.) */
@@ -264,6 +280,29 @@ export interface PriorityPortfolioSummary {
   suggested_band_counts: Record<string, number>;
   /** keyed by ProjectPriority value ("P1".."Q"). */
   set_priority_counts: Record<string, number>;
+  /** P25: counts of the pure score band (`suggested_band_counts` now follows the promoted band). */
+  score_band_counts: Record<string, number>;
+  /** P25: projects in scope promoted to P1 by capacity fill. */
+  capacity_fill_count: number;
+}
+
+/** P25 (ADR 0036): one hub's P1 capacity fill, effort weeks (2 dp), served. */
+export interface HubP1Fill {
+  hub: HubName;
+  /** Remaining-year design capacity (= `/capacity/hub-load` `design_capacity_remaining`). */
+  capacity_weeks: number;
+  /** Remaining design weeks of the hub's score-band-P1 projects. */
+  base_load_weeks: number;
+  /** Base load plus the promoted projects' weeks (= base when nothing is promoted). */
+  filled_load_weeks: number;
+  promoted_count: number;
+}
+
+/** `GET /priorities/capacity-fill` (P25). */
+export interface PriorityCapacityFill {
+  has_active_schedule_run: boolean;
+  schedule_run_version: number | null;
+  hubs: HubP1Fill[];
 }
 
 /** `PUT /priorities/{project_id}` request body (→ `PriorityScoreUpdateRequest`).

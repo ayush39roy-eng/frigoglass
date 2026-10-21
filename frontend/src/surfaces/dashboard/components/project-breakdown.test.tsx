@@ -60,6 +60,9 @@ function row(over: Partial<ProjectFilterRow> = {}): ProjectFilterRow {
     reg_year: 2026,
     carry_over: false,
     priority_rank: 1,
+    plant: null,
+    requesting_department: null,
+    product_type: null,
     ...over,
   };
 }

@@ -38,7 +38,13 @@ import {
 
 import { useEngineerOptions } from '../hooks/use-registration';
 import type { ProjectCreateRequest, ProjectRead } from '../api/types';
-import { REQUIRED_FIELD_LABELS } from './required-fields-hint';
+import {
+  REQUIRED_FIELD_LABELS,
+  missingRequiredFields,
+  requiredFieldErrorsFromApi,
+  type RequiredFieldErrors,
+  type RequiredFieldKey,
+} from './required-fields-hint';
 import {
   parseOptionalNumber,
   projectFormSchema,
@@ -53,14 +59,30 @@ import {
  * selects and the `carry_over` checkbox are local component state merged in
  * at submit — same pattern as the Matrix's `score-edit-dialog.tsx`.
  *
- * Asterisks mark the seven Project Registration "hard gate" fields (required
- * to leave Draft, `docs/PROJECT_AND_STACK.md` §2 / `required-fields-hint.ts`)
- * — a responsiveness hint only. The authoritative answer is always
- * `GET /projects/{id}/hard-gate-status`, shown separately by
- * `hard-gate-panel.tsx` on the row/edit view, not by this form.
+ * Asterisks mark the eight Project Registration "hard gate" fields (priority
+ * added by ADR 0034)
+ * (`docs/PROJECT_AND_STACK.md` §2 / `required-fields-hint.ts`). P23 (owner
+ * ruling 2026-10-21): Draft is dropped from registration — `POST /projects`
+ * requires them and creates the project In Queue. In create mode the form
+ * checks them before submit and maps the server's 422 per-field errors onto
+ * the same fields; the server stays the authority. Edit mode does not block
+ * on them (existing projects may predate the rule; a legacy Draft still
+ * leaves Draft through `hard-gate-panel.tsx`).
  */
 
 const NONE = '__none__';
+
+/** Control id per required field, to focus the first one missing. */
+const REQUIRED_FIELD_IDS: Record<RequiredFieldKey, string> = {
+  leader_engineer_id: 'reg-leader',
+  category: 'reg-category',
+  type: 'reg-type',
+  actual_start_week: 'reg-start-week',
+  tcogs_eur: 'reg-tcogs',
+  selling_price_eur: 'reg-selling-price',
+  gross_margin_pct: 'reg-gross-margin',
+  priority: 'reg-priority',
+};
 
 /** `number | null | undefined` → the string a text-mode numeric input holds
  *  (RHF form values for numeric fields are strings here — see
@@ -113,7 +135,7 @@ function normaliseText(value: unknown): string {
 
 function requiredMark(field: keyof typeof REQUIRED_FIELD_LABELS): React.ReactNode {
   return (
-    <span className="text-danger" title={`Required before leaving Draft (${REQUIRED_FIELD_LABELS[field]})`}>
+    <span className="text-danger" title={`Required to register a project (${REQUIRED_FIELD_LABELS[field]})`}>
       {' '}
       *
     </span>
@@ -152,7 +174,7 @@ export function ProjectForm({
    *  drawer can guard Escape / Cancel / overlay clicks against losing edits. */
   onDirtyChange?: (dirty: boolean) => void;
   /** P22-T01: rendered at the top of the scrolling body (the drawer puts the
-   *  project summary and the leave-Draft hard-gate panel here). */
+   *  project summary, and for a legacy Draft the leave-Draft hard gate, here). */
   prelude?: React.ReactNode;
 }): React.JSX.Element {
   const radix = variant !== 'inline';
@@ -243,6 +265,38 @@ export function ProjectForm({
     onDirtyChange?.(dirty);
   }, [dirty, onDirtyChange]);
 
+  // P23: the required (hard-gate) fields as they stand now, normalised to the
+  // string the error snapshot compares against. An inline required error shows
+  // only while its field still holds the value it had when the error was set,
+  // so it clears as soon as the user changes that field.
+  const requiredNow: Record<RequiredFieldKey, string> = {
+    leader_engineer_id: leaderId === NONE ? '' : leaderId,
+    category: category === NONE ? '' : category,
+    type: type === NONE ? '' : type,
+    actual_start_week: normaliseText(watched.actual_start_week).trim(),
+    tcogs_eur: normaliseText(watched.tcogs_eur).trim(),
+    selling_price_eur: normaliseText(watched.selling_price_eur).trim(),
+    gross_margin_pct: normaliseText(watched.gross_margin_pct).trim(),
+    priority: priority === NONE ? '' : priority,
+  };
+  const [requiredErrors, setRequiredErrors] = React.useState<{
+    errors: RequiredFieldErrors;
+    at: Record<RequiredFieldKey, string>;
+  } | null>(null);
+  const requiredError = (key: RequiredFieldKey): string | undefined => {
+    if (!requiredErrors) return undefined;
+    const msg = requiredErrors.errors[key];
+    return msg !== undefined && requiredErrors.at[key] === requiredNow[key] ? msg : undefined;
+  };
+  const showRequiredErrors = (next: RequiredFieldErrors): void => {
+    setRequiredErrors({ errors: next, at: requiredNow });
+    const first = (Object.keys(REQUIRED_FIELD_IDS) as RequiredFieldKey[]).find((k) => next[k] !== undefined);
+    if (first) {
+      // After React paints the messages; never scrolls past a visible error.
+      requestAnimationFrame(() => document.getElementById(REQUIRED_FIELD_IDS[first])?.focus());
+    }
+  };
+
   const submit = handleSubmit(async (values) => {
     setSubmitError(null);
     if (!hubId) {
@@ -273,6 +327,16 @@ export function ProjectForm({
       estimated_design_weeks: parseOptionalNumber(values.estimated_design_weeks) ?? null,
       estimated_lab_weeks: parseOptionalNumber(values.estimated_lab_weeks) ?? null,
     };
+    if (mode === 'create') {
+      // P23: `POST /projects` requires the hard-gate fields (no Draft any more).
+      const missing = missingRequiredFields(body);
+      if (Object.keys(missing).length > 0) {
+        showRequiredErrors(missing);
+        setSubmitError('Fill in the required fields marked * to register the project.');
+        return;
+      }
+    }
+    setRequiredErrors(null);
     try {
       await onSubmit(body);
       onOpenChange(false);
@@ -284,6 +348,10 @@ export function ProjectForm({
         setSubmitError(err.message);
       } else if (err instanceof ApiError && err.isForbidden) {
         setSubmitError('Your role cannot create or edit projects.');
+      } else if (requiredFieldErrorsFromApi(err)) {
+        // P23-T02: the server's per-field 422 lands on the same fields.
+        showRequiredErrors(requiredFieldErrorsFromApi(err) ?? {});
+        setSubmitError('The server needs the required fields marked below.');
       } else if (err instanceof ApiError) {
         // CATEGORY_WORKFLOW_MISMATCH and other coded 422s get readable copy.
         setSubmitError(apiErrorMessage(err, 'The project could not be saved. Please try again.'));
@@ -303,9 +371,18 @@ export function ProjectForm({
       <Header className={sheet ? 'border-b border-border px-5 pb-4 pr-12 pt-5' : undefined}>
         <Title>{mode === 'create' ? 'Register a project' : `Edit ${project?.name}`}</Title>
         <Description>
-          Every new project starts in Draft. Fields marked <span className="text-danger">*</span>{' '}
-          are required before it can leave Draft (Project Registration&apos;s hard gate) — the
-          project can be saved as a Draft without them.
+          {mode === 'create' ? (
+            <>
+              Fields marked <span className="text-danger">*</span> are required to register a
+              project. A registered project joins the queue (status In Queue) and is planned on the
+              next schedule run.
+            </>
+          ) : (
+            <>
+              Fields marked <span className="text-danger">*</span> are required for new projects
+              (Project Registration&apos;s hard gate).
+            </>
+          )}
         </Description>
       </Header>
 
@@ -345,9 +422,17 @@ export function ProjectForm({
                 </SelectContent>
               </Select>
             </Field>
-            <Field label={<>Leader{requiredMark('leader_engineer_id')}</>} htmlFor="reg-leader">
+            <Field
+              label={<>Leader{requiredMark('leader_engineer_id')}</>}
+              htmlFor="reg-leader"
+              error={requiredError('leader_engineer_id')}
+            >
               <Select value={leaderId} onValueChange={setLeaderId} disabled={!hubId}>
-                <SelectTrigger id="reg-leader" className="h-8">
+                <SelectTrigger
+                  id="reg-leader"
+                  className="h-8"
+                  aria-invalid={requiredError('leader_engineer_id') ? true : undefined}
+                >
                   <SelectValue placeholder={hubId ? 'Select a leader' : 'Select a hub first'} />
                 </SelectTrigger>
                 <SelectContent>
@@ -363,6 +448,7 @@ export function ProjectForm({
             <Field
               label={<>Category{requiredMark('category')}</>}
               htmlFor="reg-category"
+              error={requiredError('category')}
               hint={
                 selectedHub
                   ? selectedHub.is_oem
@@ -372,7 +458,11 @@ export function ProjectForm({
               }
             >
               <Select value={category} onValueChange={setCategory}>
-                <SelectTrigger id="reg-category" className="h-8">
+                <SelectTrigger
+                  id="reg-category"
+                  className="h-8"
+                  aria-invalid={requiredError('category') ? true : undefined}
+                >
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -385,9 +475,9 @@ export function ProjectForm({
                 </SelectContent>
               </Select>
             </Field>
-            <Field label={<>Type{requiredMark('type')}</>} htmlFor="reg-type">
+            <Field label={<>Type{requiredMark('type')}</>} htmlFor="reg-type" error={requiredError('type')}>
               <Select value={type} onValueChange={setType}>
-                <SelectTrigger id="reg-type" className="h-8">
+                <SelectTrigger id="reg-type" className="h-8" aria-invalid={requiredError('type') ? true : undefined}>
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -401,15 +491,20 @@ export function ProjectForm({
               </Select>
             </Field>
             <Field
-              label="Priority"
+              label={<>Priority{requiredMark('priority')}</>}
               htmlFor="reg-priority"
+              error={requiredError('priority')}
               // P11 (ADR 0015): on an existing project a priority change
-              // recalculates the timeline by itself. A new project is created
-              // in Draft and is never scheduled, so the note is edit-only.
+              // recalculates the timeline by itself. A new project waits for
+              // the next schedule run, so the note is edit-only.
               hint={mode === 'edit' ? MOVE_COPY.formHint : undefined}
             >
               <Select value={priority} onValueChange={setPriority}>
-                <SelectTrigger id="reg-priority" className="h-8">
+                <SelectTrigger
+                  id="reg-priority"
+                  className="h-8"
+                  aria-invalid={requiredError('priority') ? true : undefined}
+                >
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -425,7 +520,7 @@ export function ProjectForm({
             <Field
               label={<>Actual start week{requiredMark('actual_start_week')}</>}
               htmlFor="reg-start-week"
-              error={errors.actual_start_week?.message}
+              error={errors.actual_start_week?.message ?? requiredError('actual_start_week')}
             >
               <Input
                 id="reg-start-week"
@@ -434,7 +529,7 @@ export function ProjectForm({
                 max={DISPLAY_HORIZON_WEEKS}
                 inputMode="numeric"
                 className="tnum"
-                aria-invalid={errors.actual_start_week ? true : undefined}
+                aria-invalid={errors.actual_start_week || requiredError('actual_start_week') ? true : undefined}
                 {...register('actual_start_week')}
               />
             </Field>
@@ -563,7 +658,7 @@ export function ProjectForm({
             <Field
               label={<>TCOGS (EUR){requiredMark('tcogs_eur')}</>}
               htmlFor="reg-tcogs"
-              error={errors.tcogs_eur?.message}
+              error={errors.tcogs_eur?.message ?? requiredError('tcogs_eur')}
             >
               <Input
                 id="reg-tcogs"
@@ -572,14 +667,14 @@ export function ProjectForm({
                 step="0.01"
                 inputMode="decimal"
                 className="tnum"
-                aria-invalid={errors.tcogs_eur ? true : undefined}
+                aria-invalid={errors.tcogs_eur || requiredError('tcogs_eur') ? true : undefined}
                 {...register('tcogs_eur')}
               />
             </Field>
             <Field
               label={<>Selling price (EUR){requiredMark('selling_price_eur')}</>}
               htmlFor="reg-selling-price"
-              error={errors.selling_price_eur?.message}
+              error={errors.selling_price_eur?.message ?? requiredError('selling_price_eur')}
             >
               <Input
                 id="reg-selling-price"
@@ -588,14 +683,14 @@ export function ProjectForm({
                 step="0.01"
                 inputMode="decimal"
                 className="tnum"
-                aria-invalid={errors.selling_price_eur ? true : undefined}
+                aria-invalid={errors.selling_price_eur || requiredError('selling_price_eur') ? true : undefined}
                 {...register('selling_price_eur')}
               />
             </Field>
             <Field
               label={<>Gross margin (%){requiredMark('gross_margin_pct')}</>}
               htmlFor="reg-gross-margin"
-              error={errors.gross_margin_pct?.message}
+              error={errors.gross_margin_pct?.message ?? requiredError('gross_margin_pct')}
             >
               <Input
                 id="reg-gross-margin"
@@ -603,7 +698,7 @@ export function ProjectForm({
                 step="0.01"
                 inputMode="decimal"
                 className="tnum"
-                aria-invalid={errors.gross_margin_pct ? true : undefined}
+                aria-invalid={errors.gross_margin_pct || requiredError('gross_margin_pct') ? true : undefined}
                 {...register('gross_margin_pct')}
               />
             </Field>
@@ -668,7 +763,7 @@ export function ProjectForm({
           Cancel
         </Button>
         <Button type="submit" size="sm" disabled={isSubmitting}>
-          {isSubmitting ? 'Saving…' : mode === 'create' ? 'Create draft' : 'Save changes'}
+          {isSubmitting ? 'Saving…' : mode === 'create' ? 'Register project' : 'Save changes'}
         </Button>
       </Footer>
     </form>

@@ -33,6 +33,8 @@ export function PortfolioSummaryPanel({
 }: {
   summary: PriorityPortfolioSummary;
 }): React.JSX.Element {
+  // P25: absent from a pre-P25 API; then the table keeps its single column.
+  const hasFill = typeof (summary as Partial<PriorityPortfolioSummary>).capacity_fill_count === 'number';
   const bandData: BandDatum[] = PRIORITY_BANDS.map((band) => ({
     band,
     count: summary.suggested_band_counts[band] ?? 0,
@@ -65,13 +67,14 @@ export function PortfolioSummaryPanel({
         <div className="grid gap-4 lg:grid-cols-2">
           <section className="space-y-2">
             <h3 className="font-display text-h2 font-bold tracking-tight text-text">
-              Computed band (from current score)
+              Suggested band (score, then P1 capacity fill)
             </h3>
             <Table>
               <TableHeader>
                 <TableRow>
                   <TableHead>Band</TableHead>
-                  <TableHead className="text-right">Scored projects</TableHead>
+                  <TableHead className="text-right">Suggested</TableHead>
+                  {hasFill ? <TableHead className="text-right">Score band</TableHead> : null}
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -80,13 +83,24 @@ export function PortfolioSummaryPanel({
                     <TableCell>
                       <PriorityBandPill priority={band} />
                     </TableCell>
-                    <TableCell className="text-right tnum text-text" data-numeric="">
+                    <TableCell className="text-right tnum text-text" data-numeric="" data-testid={`summary-suggested-${band}`}>
                       {formatInteger(summary.suggested_band_counts[band] ?? 0)}
                     </TableCell>
+                    {hasFill ? (
+                      <TableCell className="text-right tnum text-text-muted" data-numeric="" data-testid={`summary-score-band-${band}`}>
+                        {formatInteger(summary.score_band_counts[band] ?? 0)}
+                      </TableCell>
+                    ) : null}
                   </TableRow>
                 ))}
               </TableBody>
             </Table>
+            {hasFill ? (
+              <p className="text-2xs text-text" data-testid="summary-fill-note">
+                P1 {formatInteger(summary.suggested_band_counts.P1 ?? 0)}, of which{' '}
+                <span className="font-semibold">{formatInteger(summary.capacity_fill_count)}</span> by capacity fill.
+              </p>
+            ) : null}
             <BandDistributionChart data={bandData} />
           </section>
 

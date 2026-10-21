@@ -6,18 +6,16 @@ Two datasets (`--dataset`):
   - `client_2026` (**default**, ADR 0024): the client's real 2026 pipeline.
     These are the 253 projects of their workbook whose Project Request falls in
     2026, extracted by `extract_client_2026.py` into
-    `client_2026_seed_data.json`. The workbook carries no engineers, step
-    progress, prioritization scores, FTE or tuned lab supply. These inputs are
-    derived deterministically by `seed/client_2026.py`, whose docstring holds
-    every rule. In short:
-    - engineers come from the workbook's project leaders, plus named
-      "<hub> Engineer <n>" capacity engineers;
+    `client_2026_seed_data.json`. ADR 0035: the engineers are the client's
+    real roster (formula workbook `RPD Capacity`, with its FTE) plus the
+    workbook project leaders who are not on it, flagged provisional; a
+    blank leader stays blank. Nothing is tuned: FTE and chamber efficiency
+    are the workbook's values. `seed/client_2026.py` holds every rule. In
+    short:
     - step progress comes from Project Status and Development Step;
-    - FTE and chamber efficiency are tuned on an in-memory greedy run toward
-      the booked % the client asked for. Since ADR 0032 FTE also sets a
-      leader's design speed (`span = ceil(duration / fte)`), so the tuned
-      FTEs change the plan; chamber efficiency is still capacity-only (it
-      never gates booking, OQ #3).
+    - the 13 rubric scores are synthetic (no client source holds them);
+    - plant, requesting department, product type, `Spillover '25`
+      (carry_over / reg_year) and the end date come from the project file.
     Row ids are deterministic (`uuid5`), so every reseed produces the same
     schedule run.
   - `prototype`: the ~46-project synthetic set extracted from
@@ -36,8 +34,8 @@ Both datasets seed:
   - `hubs` + one `hub_work_calendars` row per hub (ADR 0008,
     docs/CLIENT_FORMULAS.md §2.1).
   - `chambers` from the client workbook's ten chambers (ADR 0008,
-    docs/CLIENT_FORMULAS.md §2.2; `domain_constants.CHAMBER_SEED`). For
-    `client_2026` the efficiencies are then tuned as described above.
+    docs/CLIENT_FORMULAS.md §2.2; `domain_constants.CHAMBER_SEED`), with the
+    workbook's efficiencies (ADR 0035 retired ADR 0024's tuning).
   - `engineers`, `projects` (+ 14 `project_workflow_steps` and 1
     `priority_scores` row each). OEM-hub projects follow the OEM workflow and
     carry an OEM category. Every step's `duration_weeks` comes from the
@@ -78,12 +76,14 @@ import json
 import os
 import sys
 import time
+import uuid
 from collections import Counter
 from collections.abc import Mapping
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import delete, func, select, text
+from sqlalchemy import delete, func, insert, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 # Mirrors backend/alembic/env.py's sys.path fallback so `import domain_constants`
@@ -133,6 +133,7 @@ from models.enums import (  # noqa: E402
 )
 from models.priority import DIMENSION_FIELD_NAMES  # noqa: E402
 from models.project import category_allowed_for_hub, workflow_id_for_hub  # noqa: E402
+from models.vip import vip_item_projects  # noqa: E402
 from scheduling.greedy import run_greedy_sgs  # noqa: E402
 from seed import client_2026 as c26  # noqa: E402
 from seed.seed_vip_board import seed_vip_board  # noqa: E402
@@ -150,19 +151,37 @@ DATASET_PROTOTYPE = "prototype"
 DATASETS = (DATASET_CLIENT_2026, DATASET_PROTOTYPE)
 DEFAULT_DATASET = DATASET_CLIENT_2026
 
-# Dependent child tables that reference projects / schedule runs, deleted
-# during --reset before the primary demo-data tables.
+# Tables that reference projects / engineers / chambers / schedule runs and
+# only make sense for the data a reseed replaces. `--reset` deletes them
+# before the primary demo-data tables, in this order. A child always comes
+# before its parent: `notifications` references both `schedule_runs` (two
+# nullable FKs) and `projects` (NOT NULL), so it is deleted before either.
+# The live dev DB of 2026-10-21 failed here when notifications came after
+# schedule_runs.
+#
+# `project_access_grants` (deleted here) and `vip_item_projects` (cascades on
+# project delete) are user configuration. `_reset` snapshots them first, and
+# `_restore_user_config` re-inserts every row whose project id exists again
+# after the reseed (client_2026 ids are deterministic uuid5).
+#
+# NOT here, on purpose:
+#   - `vip_items`, `users`, `user_roles`, `export_jobs` and `currency_rates`
+#     do not reference demo rows and are left alone.
+#   - `audit_log_entries` (append-only, no escape hatch) only references
+#     `hubs`, which are therefore kept whenever audit rows exist.
+#   - `schedule_run_follow_ups` is the single row the migration inserts (ADR
+#     0023). It references no run, so it is reset to the migration's state
+#     rather than deleted.
 _DEPENDENT_TABLES_CHILD_FIRST = (
+    Notification,
     ScheduleRunProjectStep,
     ScheduleRunProjectOutcome,
-    ScheduleRunFollowUp,
     ScheduleRun,
     PriorityApplicationResult,
     PriorityApplicationRun,
     ScenarioApplyChange,
     ScenarioApplyRun,
     StageCheckin,
-    Notification,
     ProjectAccessGrant,
 )
 
@@ -219,31 +238,121 @@ async def _table_row_count(session: AsyncSession, model) -> int:
     return await session.scalar(select(func.count()).select_from(model)) or 0
 
 
-async def _reset(session: AsyncSession) -> None:
-    # `project_comments` rows are protected by a BEFORE DELETE trigger (never
-    # hard-deleted in normal operation); a full demo reset is the one
-    # sanctioned exception, opted into for this transaction only.
+@dataclass
+class _UserConfig:
+    """User configuration that references demo rows, kept across `--reset`.
+
+    It is restored by id after the reseed (`_restore_user_config`). A row
+    whose project or engineer no longer exists is dropped. With client_2026
+    (deterministic ids) nothing is dropped; with prototype (random ids) all of
+    it is.
+    """
+
+    access_grants: list[dict[str, Any]] = field(default_factory=list)
+    vip_links: list[dict[str, Any]] = field(default_factory=list)
+    vip_pinned_project_ids: set[uuid.UUID] = field(default_factory=set)
+    engineer_user_links: dict[uuid.UUID, uuid.UUID] = field(default_factory=dict)
+
+
+async def _snapshot_user_config(session: AsyncSession) -> _UserConfig:
+    grants = ProjectAccessGrant.__table__
+    return _UserConfig(
+        access_grants=[dict(r) for r in (await session.execute(select(grants))).mappings()],
+        vip_links=[
+            dict(r) for r in (await session.execute(select(vip_item_projects))).mappings()
+        ],
+        vip_pinned_project_ids=set(
+            (await session.execute(select(Project.id).where(Project.is_vip.is_(True)))).scalars()
+        ),
+        engineer_user_links={
+            eng_id: user_id
+            for eng_id, user_id in (
+                await session.execute(
+                    select(Engineer.id, Engineer.user_id).where(Engineer.user_id.is_not(None))
+                )
+            ).all()
+            if user_id is not None
+        },
+    )
+
+
+async def _reset(session: AsyncSession) -> _UserConfig:
+    """Delete the demo data in FK-safe order and return the user config that
+    referenced it, for `_restore_user_config`.
+
+    Deleted (refers only to the data being replaced): schedule runs and their
+    outcomes / steps, notifications, priority-move runs and results,
+    scenario-apply runs and changes, stage check-ins, project files and
+    comments, priority scores, workflow steps, projects, chambers and
+    engineers. Hubs and hub calendars too, and then the user hub scopes, but
+    only when no audit row exists (audit rows reference hubs and are
+    append-only).
+    """
+    # `project_comments` and `stage_checkins` rows are protected by BEFORE
+    # DELETE triggers (never hard-deleted in normal operation). A full demo
+    # reset is the one sanctioned exception, opted into for this transaction
+    # only (P9-T01 for comments, `p24b_checkin_reset_escape` for check-ins).
+    # `audit_log_entries` has no escape hatch and is never touched.
     await session.execute(text("SET LOCAL rpd.allow_comment_delete = 'on'"))
-    # P9-F04: `seed_dev_users.py` (run AFTER this script, per
-    # `frontend/e2e/README.md`'s documented order) may have linked
-    # `bob.hub` to one of the `Hub` rows below via `UserHubScope` — a plain
-    # FK with no ON DELETE action, so `DELETE FROM hubs` would otherwise
-    # raise a `ForeignKeyViolationError` on any RE-reset performed after
-    # `seed_dev_users` has already run once. `UserHubScope` is not itself
-    # "demo data", but clearing it here (never `User`/`Role`/`UserRole`
-    # themselves — those stay `seed_dev_users.py`'s own concern) is what
-    # keeps this script's `--reset` safe to re-run at any point in that
-    # documented ordering, in either direction.
-    await session.execute(delete(UserHubScope))
-    for model in _DEPENDENT_TABLES_CHILD_FIRST:
-        await session.execute(delete(model))
+    await session.execute(text("SET LOCAL rpd.allow_checkin_delete = 'on'"))
+
+    preserved = await _snapshot_user_config(session)
+    has_audit = bool(await session.scalar(select(func.count()).select_from(AuditLogEntry)))
+
+    # P9-F04: `seed_dev_users.py` may have scoped `bob.hub` to a hub. That FK
+    # has no ON DELETE action, so the scopes must go before `DELETE FROM hubs`.
+    # When audit rows exist, the hubs are kept (same ids), so the scopes are
+    # user config that stays valid and is kept too.
+    if not has_audit:
+        await session.execute(delete(UserHubScope))
+    for dependent in _DEPENDENT_TABLES_CHILD_FIRST:
+        await session.execute(delete(dependent))
+    # ADR 0023's single follow-up row: back to the state the migration inserts.
+    await session.execute(
+        update(ScheduleRunFollowUp).values(
+            pending=False, requested_at=None, last_trigger_reason=None, request_count=0
+        )
+    )
     for model in _TABLES_CHILD_FIRST:
-        if model in (Hub, HubWorkCalendar):
-            has_audit = await session.scalar(select(func.count()).select_from(AuditLogEntry)) or 0
-            if has_audit:
-                continue
+        if has_audit and model in (Hub, HubWorkCalendar):
+            continue
         await session.execute(delete(model))
     await session.flush()
+    return preserved
+
+
+async def _restore_user_config(session: AsyncSession, preserved: _UserConfig) -> dict[str, int]:
+    """Re-insert the snapshot's rows whose project / engineer exists again.
+
+    Runs before `seed_vip_board`, so the board seed sees the user's links and
+    VIP pins exactly as an un-reset database would show them.
+    """
+    await session.flush()
+    project_ids = set((await session.execute(select(Project.id))).scalars())
+    engineer_ids = set((await session.execute(select(Engineer.id))).scalars())
+
+    grants = [g for g in preserved.access_grants if g["project_id"] in project_ids]
+    if grants:
+        await session.execute(insert(ProjectAccessGrant), grants)
+    links = [lk for lk in preserved.vip_links if lk["project_id"] in project_ids]
+    if links:
+        await session.execute(insert(vip_item_projects), links)
+    pins = preserved.vip_pinned_project_ids & project_ids
+    if pins:
+        await session.execute(update(Project).where(Project.id.in_(pins)).values(is_vip=True))
+    eng_links = {e: u for e, u in preserved.engineer_user_links.items() if e in engineer_ids}
+    for eng_id, user_id in eng_links.items():
+        await session.execute(update(Engineer).where(Engineer.id == eng_id).values(user_id=user_id))
+    await session.flush()
+    return {
+        "access_grants_kept": len(grants),
+        "access_grants_dropped": len(preserved.access_grants) - len(grants),
+        "vip_links_kept": len(links),
+        "vip_links_dropped": len(preserved.vip_links) - len(links),
+        "vip_pins_kept": len(pins),
+        "engineer_user_links_kept": len(eng_links),
+        "engineer_user_links_dropped": len(preserved.engineer_user_links) - len(eng_links),
+    }
 
 
 async def _guard_against_duplicate_seed(session: AsyncSession) -> None:
@@ -420,6 +529,17 @@ def _priority_score_fields(dims: list[int]) -> tuple[float, int, str]:
     return weighted_score, normalized_pct, suggested_band
 
 
+def seed_project_status(raw: str) -> ProjectStatus:
+    """A seeded project's status. ADR 0034 (P23-T02): Draft is retired from
+    registration, so no seed may create a Draft project; a data file that
+    carries one fails the seed loudly instead of loading it."""
+
+    status = ProjectStatus(raw)
+    if status is ProjectStatus.DRAFT:
+        raise ValueError("seed data may not create Draft projects (ADR 0034)")
+    return status
+
+
 def project_category_for_hub(hub: Hub, prototype_category: ProjectCategory) -> ProjectCategory:
     """OEM-hub projects carry an OEM category (ADR 0007): A+/A → A-OEM,
     B → B-OEM, C → C-OEM. Non-OEM hubs keep the prototype's A+/A/B/C.
@@ -464,7 +584,7 @@ async def seed_projects(
             leader_engineer_id=engineers_by_name[p["leader"]].id,
             category=category,
             type=ProjectType(p["type"]),
-            status=ProjectStatus(p["status"]),
+            status=seed_project_status(p["status"]),
             priority=ProjectPriority(p["prio"]),
             frozen=p["frozen"],
             # Per DOMAIN_RULES.md booking rules, the prototype's `actualStart`
@@ -535,25 +655,23 @@ async def seed_client_2026(
     session: AsyncSession,
     data: dict[str, Any],
     hubs_by_name: dict[str, Hub],
-    chambers_by_code: dict[str, Chamber],
 ) -> dict[str, Any]:
-    """The client's 2026 pipeline (ADR 0024): engineers, projects, their 14
-    steps with derived progress and one `PriorityScore` each. Then FTE and
-    chamber efficiency are tuned on an in-memory greedy run. Every derivation
-    rule lives in `seed/client_2026.py`.
+    """The client's 2026 pipeline (ADR 0024) on the client's real roster
+    (ADR 0035): engineers, projects, their 14 steps with derived progress
+    and one `PriorityScore` each. Every derivation rule lives in
+    `seed/client_2026.py`. Nothing is tuned: FTE and chamber efficiency are
+    the formula workbook's values.
+
+    A summary greedy run (in memory, nothing persisted) reports the
+    verdict counts; `--schedule` persists and activates a real run.
 
     `customer_name` is an encrypted column. It is assigned as a plain value
     (the ORM type encrypts it) and is never logged or returned in the counts.
     """
 
-    # Imported here: the scheduler is only needed for the client dataset's
-    # tuning pass (it is a pure function; nothing is persisted from it).
+    # Imported here: the scheduler is only needed for the summary run (it is
+    # a pure function; nothing is persisted from it).
     from scheduling.greedy import run_greedy_sgs
-    from services.capacity_supply import (
-        chamber_figures,
-        load_calendars_by_region,
-        region_holiday_weeks,
-    )
     from services.schedule_persistence import build_schedule_input_from_db
 
     projects: list[dict[str, Any]] = data["projects"]
@@ -565,11 +683,13 @@ async def seed_client_2026(
         range(len(projects)),
         key=lambda i: c26.scheduling_order_key(projects[i], str(project_ids[i])),
     )
-    leader_names, roster = c26.assign_leaders(projects, data["leaders"], order)
+    roster = c26.build_roster(data)
+    leader_names = c26.project_leaders(projects, roster.engineers)
 
     engineers_by_name: dict[str, Engineer] = {}
-
-    def add_engineer(e: c26.EngineerSeed) -> None:
+    for e in roster.engineers:
+        # ADR 0035: a provisional engineer (a workbook leader who is not on the
+        # roster) is flagged in `seed/client_2026.py`; the table has no flag.
         eng = Engineer(
             id=c26.engineer_uuid(e.name),
             name=e.name,
@@ -579,13 +699,11 @@ async def seed_client_2026(
         )
         session.add(eng)
         engineers_by_name[e.name] = eng
-
-    for e in roster:
-        add_engineer(e)
     await session.flush()
 
     # Progress, in scheduling order, so the higher-priority project gets the
     # free leader / chamber platform at CURRENT_WEEK (client_2026 docstring).
+    # A project with no leader books nothing, so it uses a private ledger.
     specs: dict[int, list[c26.StepSpec]] = {}
     progress: dict[int, list[c26.StepProgress]] = {}
     ledger = c26.ResourceLedger()
@@ -593,13 +711,14 @@ async def seed_client_2026(
         p = projects[i]
         hub = hubs_by_name[p["hub"]]
         specs[i] = client_2026_step_specs(p, workflow_id_for_hub(hub.is_oem), lead_times)
+        shared = c26.is_open(p) and leader_names[i] is not None
         progress[i] = c26.derive_progress(
             p,
             specs[i],
             leader=leader_names[i],
             lab_region=hub.lab_region.value,
             current_week=current_week,
-            ledger=ledger if c26.is_open(p) else c26.ResourceLedger(),
+            ledger=ledger if shared else c26.ResourceLedger(),
         )
 
     templates = {
@@ -610,23 +729,29 @@ async def seed_client_2026(
         category = ProjectCategory(p["category"])
         if not category_allowed_for_hub(hub.is_oem, category):
             raise ValueError(f"{p['external_code']}: category {category.value} vs hub {hub.name}")
+        leader = leader_names[i]
+        carry_over, reg_year = c26.carry_over_and_reg_year(p)
         project = Project(
             id=project_ids[i],
             name=p["name"],
             external_code=p["external_code"],
             hub_id=hub.id,
-            leader_engineer_id=engineers_by_name[leader_names[i]].id,
+            leader_engineer_id=engineers_by_name[leader].id if leader is not None else None,
             category=category,
             type=ProjectType(p["type"]) if p["type"] else None,
-            status=ProjectStatus(p["status"]),
+            status=seed_project_status(p["status"]),
             priority=ProjectPriority(p["priority"]),
             frozen=False,
             delay_weeks=0,
-            reg_year=2026,
-            carry_over=False,
+            reg_year=reg_year,
+            carry_over=carry_over,
+            target_end_week=p["target_end_week"],
             comments=p["comments"],
             certification_testing_required=p["certification_testing_required"],
             customer_name=p["customer"],
+            plant=p["plant"],
+            requesting_department=p["requesting_department"],
+            product_type=p["product_type"],
         )
         session.add(project)
         workflow_id = workflow_id_for_hub(hub.is_oem)
@@ -645,6 +770,8 @@ async def seed_client_2026(
                     actual_end_week=prog.actual_end_week,
                 )
             )
+        # SYNTHETIC rubric scores (ADR 0035, c26.SYNTHETIC_DIMENSION_SCORES):
+        # no client source holds them; kept so the Matrix is not empty.
         dims = c26.derive_dims(p["external_code"], p["priority"], p["marketing_priority"])
         weighted_score, normalized_pct, suggested_band = _priority_score_fields(dims)
         session.add(
@@ -659,50 +786,9 @@ async def seed_client_2026(
         )
     await session.flush()
 
-    # --- Tuning pass: one in-memory greedy run (nothing persisted) ----------
+    # --- Summary run: one in-memory greedy run (nothing persisted) ---------
     schedule_input = await build_schedule_input_from_db(session, current_week=current_week)
     output = run_greedy_sgs(schedule_input)
-    kinds = {t.step_id: t.kind for t in schedule_input.workflow_steps}
-    hub_of = {str(project_ids[i]): p["hub"] for i, p in enumerate(projects)}
-    design_load: Counter[str] = Counter()
-    lab_load: dict[str, float] = {}
-    for outcome in output.project_outcomes:
-        hub_name = hub_of[outcome.project_id]
-        for step in outcome.steps:
-            if step.skipped:
-                continue
-            if kinds[step.step_id] == WorkflowStepKind.DESIGN.value:
-                design_load[hub_name] += step.duration_weeks
-            elif kinds[step.step_id] == WorkflowStepKind.LAB.value:
-                region = dc.HUB_LAB_REGION[hub_name]
-                lab_load[region] = lab_load.get(region, 0.0) + (
-                    step.duration_weeks * dc.LAB_STEP_CONSUMPTION_PER_PROJECT_WEEK
-                )
-
-    before = {e.name for e in roster}
-    c26.tune_fte(roster, design_load)
-    for e in roster:
-        if e.name in before:
-            engineers_by_name[e.name].fte = e.fte
-        else:
-            add_engineer(e)
-
-    calendars = await load_calendars_by_region(session)
-    chamber_rows = []
-    for code, chamber in sorted(chambers_by_code.items()):
-        figures = chamber_figures(chamber, region_holiday_weeks(calendars, chamber.lab_region))
-        chamber_rows.append(
-            (
-                code,
-                chamber.lab_region.value,
-                float(chamber.efficiency),
-                figures.working_weeks_per_chamber,
-                chamber.platforms,
-            )
-        )
-    for code, efficiency in c26.tune_efficiency(chamber_rows, lab_load).items():
-        chambers_by_code[code].efficiency = efficiency
-    await session.flush()
 
     # Dashboard classification (I9): excluded and data-error projects are not
     # counted; then left out, on hold (blocked), within year, else spillover.
@@ -712,6 +798,8 @@ async def seed_client_2026(
             continue
         if o.left_out:
             verdicts["left_out"] += 1
+            if o.no_leader:
+                verdicts["no_leader"] += 1
         elif o.blocked:
             verdicts["blocked"] += 1
         elif o.within_year:
@@ -720,13 +808,17 @@ async def seed_client_2026(
             verdicts["spillover"] += 1
     return {
         "engineers": len(engineers_by_name),
-        "capacity_engineers": sum(1 for e in roster if not e.from_workbook),
+        "provisional_engineers": sum(1 for e in roster.engineers if e.provisional),
+        "skipped_zero_fte_placeholders": len(roster.placeholders),
         "projects": len(projects),
-        "tuning_run": {
+        "projects_without_leader": sum(1 for n in leader_names if n is None),
+        "carry_over_projects": sum(1 for p in projects if c26.carry_over_and_reg_year(p)[0]),
+        "summary_run": {
             "current_week": current_week,
-            **{k: verdicts[k] for k in ("within_year", "spillover", "left_out", "blocked")},
-            "design_load_by_hub": dict(sorted(design_load.items())),
-            "lab_load_by_region": dict(sorted(lab_load.items())),
+            **{
+                k: verdicts[k]
+                for k in ("within_year", "spillover", "left_out", "no_leader", "blocked")
+            },
         },
     }
 
@@ -794,10 +886,11 @@ async def run(
     counts: dict[str, Any] = {}
     try:
         await _check_connection(engine)
+        preserved: _UserConfig | None = None
         async with session_factory() as session:
             if reset_first:
                 _step("reset: deleting existing demo rows...")
-                await _reset(session)
+                preserved = await _reset(session)
                 _step("reset: done")
             else:
                 await _guard_against_duplicate_seed(session)
@@ -816,10 +909,10 @@ async def run(
                 counts["chambers"] = len(chambers_by_code)
                 _step("seeding 253 client projects, engineers, steps...")
                 counts.update(
-                    await seed_client_2026(
-                        session, _load_client_2026_data(), hubs_by_name, chambers_by_code
-                    )
+                    await seed_client_2026(session, _load_client_2026_data(), hubs_by_name)
                 )
+                if preserved is not None:
+                    counts["reset_user_config"] = await _restore_user_config(session, preserved)
                 # ADR 0027: the curated VIP board (idempotent; links by name).
                 counts["vip_board"] = await seed_vip_board(session)
             else:
@@ -831,6 +924,8 @@ async def run(
                 counts["projects"] = await seed_projects(
                     session, data, hubs_by_name, engineers_by_name
                 )
+                if preserved is not None:
+                    counts["reset_user_config"] = await _restore_user_config(session, preserved)
             counts["project_workflow_steps"] = counts["projects"] * dc.STEPS_PER_WORKFLOW
             counts["priority_scores"] = counts["projects"]
 

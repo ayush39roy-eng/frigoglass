@@ -8,8 +8,10 @@ import {
   categoriesForHub,
   linesFromChatScenario,
   parseDesignerFte,
+  WHATIF_STATUSES,
   type ScenarioLines,
 } from './scenario-schema';
+import { SCHEDULABLE_STATUSES } from '@/types/enums';
 
 const empty = (): ScenarioLines => ({ projects: [], engineers: [], removals: [], chambers: [], downtime: [] });
 
@@ -206,5 +208,23 @@ describe('totals across lines (S18-M1 caps 200 / 50 / 50 / 20)', () => {
     const l = empty();
     l.projects.push({ ...LINE_FACTORIES.projects(), count: '100' }, { ...LINE_FACTORIES.projects(), count: '100' });
     expect(buildScenarioRequest(l).request).not.toBeNull();
+  });
+});
+
+describe('what-if statuses (P23-T01)', () => {
+  it('offers no In Buyoff; the default is In Queue, which the backend accepts', () => {
+    expect(WHATIF_STATUSES).toEqual(['Under Industrialization', 'In Development', 'In Queue']);
+    expect(LINE_FACTORIES.projects().status).toBe('In Queue');
+    // backend/schemas/whatif.py SchedulableStatusLiteral: every offered value is in it.
+    for (const s of WHATIF_STATUSES) expect(SCHEDULABLE_STATUSES).toContain(s);
+    const l = empty();
+    l.projects.push({ ...LINE_FACTORIES.projects(), hub: 'PD-India', category: 'A', count: '1' });
+    expect(buildScenarioRequest(l).request?.add_projects?.[0]?.status).toBe('In Queue');
+  });
+
+  it('a chat scenario with In Buyoff still loads and builds unchanged (backend accepts it)', () => {
+    const lines = linesFromChatScenario({ add_projects: [{ hub: 'PD-India', category: 'A', status: 'In Buyoff' }] });
+    expect(lines.projects[0]?.status).toBe('In Buyoff');
+    expect(buildScenarioRequest(lines).request?.add_projects?.[0]?.status).toBe('In Buyoff');
   });
 });

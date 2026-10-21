@@ -8,6 +8,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { CharterColumnsToggle } from '@/components/shared/charter-fields';
 import { DownloadButton } from '@/components/shared/download-button';
 import { EmptyState } from '@/components/shared/empty-state';
 import { ErrorState } from '@/components/shared/error-state';
@@ -23,7 +24,7 @@ import { useHubFilter } from '@/stores/hub-filter';
 import { usePermission, useSessionStore } from '@/stores/session';
 import {
   PROJECT_CATEGORIES,
-  PROJECT_STATUSES,
+  UI_PROJECT_STATUSES,
   PROJECT_TYPE_LABELS,
   PROJECT_TYPES,
   type ProjectCategory,
@@ -150,6 +151,7 @@ export function ProjectBreakdown(): React.JSX.Element {
   const [filters, setFilters] = React.useState<RegisterFilters>(REGISTER_EMPTY);
   const [search, setSearch] = React.useState('');
   const [view, setView] = React.useState<BreakdownView>('table');
+  const [showCharter, setShowCharter] = React.useState(false);
   // The two views share one always-mounted panel, so the active tab's aria-controls always
   // resolves (axe aria-valid-attr-value; Radix would point at TabsContent we never mount).
   const tabsId = React.useId();
@@ -194,7 +196,7 @@ export function ProjectBreakdown(): React.JSX.Element {
     () => (query.data?.rows ?? []).map((row, i) => ({ ...row, ordinal: i + 1 })),
     [query.data],
   );
-  const columns = React.useMemo(() => registerColumns({ canEdit }), [canEdit]);
+  const columns = React.useMemo(() => registerColumns({ canEdit, showCharter }), [canEdit, showCharter]);
 
   const set = (key: keyof RegisterFilters) => (next: string) => setFilters((prev) => ({ ...prev, [key]: next }));
   const clearLocal = (): void => {
@@ -224,10 +226,14 @@ export function ProjectBreakdown(): React.JSX.Element {
               End wk is the project&apos;s finish week in the active schedule run. Priority shows the
               band and the rank by score within the filtered set.
             </p>
-            <p>Plant and requesting department are not recorded yet, so they are not shown.</p>
+            <p>
+              Workbook fields adds Plant, Requesting department and Product type, as written in the
+              client workbook. They are read-only.
+            </p>
           </CardInfo>
         </div>
         <div className="flex flex-wrap items-center gap-2">
+          {view === 'table' ? <CharterColumnsToggle pressed={showCharter} onPressedChange={setShowCharter} /> : null}
           <Tabs value={view} onValueChange={(v) => setView(v as BreakdownView)}>
             <TabsList>
               <TabsTrigger value="table" id={tabId('table')} aria-controls={view === 'table' ? panelId : undefined}>
@@ -303,7 +309,7 @@ export function ProjectBreakdown(): React.JSX.Element {
             label="Status"
             value={filters.status_}
             onChange={set('status_')}
-            options={PROJECT_STATUSES.map((st) => ({ value: st, label: st }))}
+            options={UI_PROJECT_STATUSES.map((st) => ({ value: st, label: st }))}
           />
           <FilterSelect
             label="Leader"
@@ -354,6 +360,7 @@ export function ProjectBreakdown(): React.JSX.Element {
               estimateRowHeight={60}
               maxHeight={560}
               headerTone="ink"
+              tableClassName={showCharter ? 'min-w-[90rem]' : undefined}
             />
           )}
         </div>

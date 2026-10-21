@@ -35,6 +35,8 @@ export interface VirtualDataTableProps<Row> {
   /** `ink`: the client mock-up's dark header row (P13 all-projects register). */
   headerTone?: 'default' | 'ink';
   className?: string;
+  /** Class on the inner `role="table"`, e.g. a `min-w-*` so wide column sets scroll sideways. */
+  tableClassName?: string | undefined;
 }
 
 const ALIGN: Record<NonNullable<VirtualColumn<unknown>['align']>, string> = {
@@ -52,6 +54,7 @@ export function VirtualDataTable<Row>({
   maxHeight = 440,
   headerTone = 'default',
   className,
+  tableClassName,
 }: VirtualDataTableProps<Row>): React.JSX.Element {
   const scrollRef = React.useRef<HTMLDivElement>(null);
   const gridTemplate = columns.map((c) => c.width).join(' ');
@@ -82,7 +85,7 @@ export function VirtualDataTable<Row>({
       data-testid="virtual-table-scroll"
       tabIndex={0}
     >
-      <div role="table" aria-label={caption} aria-rowcount={rows.length}>
+      <div role="table" aria-label={caption} aria-rowcount={rows.length} className={tableClassName}>
         <div
           role="row"
           className={cn(

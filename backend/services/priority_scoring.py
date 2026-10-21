@@ -18,6 +18,12 @@ module instead, once someone owns editing that already-reviewed seed script.
 
 from __future__ import annotations
 
+import uuid
+from collections.abc import Iterable, Mapping
+from dataclasses import dataclass, field
+from decimal import Decimal
+from typing import Literal
+
 import domain_constants as dc
 
 
@@ -128,3 +134,137 @@ def dimension_score_rows(dimension_scores: list[int] | None) -> list[dict[str, o
             }
         )
     return rows
+
+
+# --- P1 capacity fill (ADR 0036, P25-T01) ------------------------------------------
+
+#: The P1 score threshold of the existing band rule (`>= 70 -> P1`), read from
+#: `PRIORITY_BAND_THRESHOLDS`, never hard-coded.
+P1_SCORE_THRESHOLD: int = next(t for t, label in dc.PRIORITY_BAND_THRESHOLDS if label == "P1")
+
+#: Everything below works on exact 2 dp decimals, so `L + load <= C` is never
+#: decided by a binary float rounding error.
+_CENT = Decimal("0.01")
+
+FillOutcome = Literal["promoted", "skipped_no_load", "stopped"]
+
+
+def to_weeks(value: float | Decimal | None) -> Decimal:
+    """A week figure as an exact 2 dp `Decimal` (`None` → 0)."""
+
+    if value is None:
+        return Decimal("0.00")
+    return Decimal(str(value)).quantize(_CENT)
+
+
+@dataclass(frozen=True)
+class FillProject:
+    """One project of a hub, as the P1 capacity fill sees it.
+
+    `normalized_pct` is `None` for an unscored project (never in the base set,
+    never a candidate). `schedulable` is the live status test (not
+    Commercialized / Cancelled / On Hold / Draft). `remaining_design_weeks` is
+    the project's remaining design effort in the active run, 0 when it is not
+    in the run (`services.capacity_priority.remaining_run_load_by_project`).
+    """
+
+    project_id: uuid.UUID
+    normalized_pct: int | None
+    schedulable: bool
+    remaining_design_weeks: Decimal
+
+
+@dataclass(frozen=True)
+class FillDecision:
+    """What the walk decided for one candidate. `load_after_weeks` is the
+    hub's P1 design load with this candidate's load added (for `promoted` the
+    new running total; for `stopped` the total that would have exceeded the
+    capacity; for `skipped_no_load` the unchanged total)."""
+
+    outcome: FillOutcome
+    load_after_weeks: Decimal
+
+
+@dataclass(frozen=True)
+class HubFill:
+    capacity_weeks: Decimal
+    base_load_weeks: Decimal
+    filled_load_weeks: Decimal
+    decisions: Mapping[uuid.UUID, FillDecision] = field(default_factory=dict)
+
+    @property
+    def promoted_ids(self) -> frozenset[uuid.UUID]:
+        return frozenset(pid for pid, d in self.decisions.items() if d.outcome == "promoted")
+
+
+def fill_order_key(project: FillProject) -> tuple[int, str]:
+    """ADR 0036 walk order: normalized score descending, then `project_id`
+    ascending as its canonical lowercase UUID string (deterministic)."""
+
+    return (-(project.normalized_pct or 0), str(project.project_id))
+
+
+def fill_p1_capacity(capacity_weeks: Decimal, projects: Iterable[FillProject]) -> HubFill:
+    """ADR 0036 "P1 capacity fill" for ONE hub. Pure; reads nothing else.
+
+    - Base P1 set: scored projects with `normalized_pct >= 70` (the band rule;
+      any status). Base load `L` = Σ their remaining design weeks.
+    - If `C <= 0` or `L >= C`: nothing is promoted.
+    - Otherwise walk the candidates (scored, `normalized_pct < 70`,
+      schedulable) in `fill_order_key` order. A candidate with 0 remaining
+      design weeks is skipped (it uses no capacity, so promoting it would not
+      "fill" anything) and the walk continues. Otherwise, if `L + load <= C`
+      it is promoted and `L += load`; if not, the walk STOPS there.
+    """
+
+    items = list(projects)
+    capacity = capacity_weeks.quantize(_CENT)
+    base_load = sum(
+        (
+            p.remaining_design_weeks
+            for p in items
+            if p.normalized_pct is not None and p.normalized_pct >= P1_SCORE_THRESHOLD
+        ),
+        Decimal("0.00"),
+    ).quantize(_CENT)
+    if capacity <= 0 or base_load >= capacity:
+        return HubFill(capacity, base_load, base_load, {})
+
+    candidates = sorted(
+        (
+            p
+            for p in items
+            if p.normalized_pct is not None
+            and p.normalized_pct < P1_SCORE_THRESHOLD
+            and p.schedulable
+        ),
+        key=fill_order_key,
+    )
+    load = base_load
+    decisions: dict[uuid.UUID, FillDecision] = {}
+    for p in candidates:
+        weeks = p.remaining_design_weeks.quantize(_CENT)
+        if weeks <= 0:
+            decisions[p.project_id] = FillDecision("skipped_no_load", load)
+            continue
+        after = load + weeks
+        if after > capacity:
+            decisions[p.project_id] = FillDecision("stopped", after)
+            break
+        load = after
+        decisions[p.project_id] = FillDecision("promoted", load)
+    return HubFill(capacity, base_load, load, decisions)
+
+
+def capacity_fill_reason(decision: FillDecision | None, capacity_weeks: Decimal) -> str | None:
+    """The short served `capacity_fill_reason` (ADR 0036 §5); `None` for a
+    project the walk never decided on."""
+
+    if decision is None:
+        return None
+    after, cap = f"{decision.load_after_weeks:.2f}", f"{capacity_weeks:.2f}"
+    if decision.outcome == "promoted":
+        return f"P1 (capacity fill): hub P1 design load {after} of {cap} weeks with this project"
+    if decision.outcome == "stopped":
+        return f"Not promoted: hub P1 design load would be {after} of {cap} weeks"
+    return "Not promoted: no remaining design work in the active run"

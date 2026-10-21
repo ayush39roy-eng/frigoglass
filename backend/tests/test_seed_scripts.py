@@ -212,9 +212,12 @@ def test_seed_dev_users_links_carol_to_engineer_and_scopes_bob_to_a_hub(
 
 
 def test_seed_demo_data_default_is_the_client_2026_dataset(seeded_schema_url, monkeypatch):
-    """ADR 0024: the default dataset is the client's 253 real 2026 projects.
-    Every project has a leader, every step row is present, the tuning pass
-    leaves FTE and efficiency in range, and a reseed is byte-stable."""
+    """ADR 0024 / ADR 0035: the default dataset is the client's 253 real 2026
+    projects on the client's real roster. Every step row is present, the
+    engineers are the formula workbook's roster (+ 6 provisional leaders)
+    with its FTE, the chambers keep the workbook efficiencies (no tuning), a
+    blank leader stays blank, the charter fields and `Spillover '25` are
+    stored, and a reseed is byte-stable."""
 
     from models import Chamber, Engineer, Project, ProjectWorkflowStep
     from models.enums import WorkflowStepStatus
@@ -229,16 +232,35 @@ def test_seed_demo_data_default_is_the_client_2026_dataset(seeded_schema_url, mo
     assert counts["_verified_from_db"]["projects"] == 253
     assert counts["_verified_from_db"]["project_workflow_steps"] == 253 * 14
     assert counts["_verified_from_db"]["priority_scores"] == 253
-    run = counts["tuning_run"]
+    assert counts["engineers"] == 23 and counts["provisional_engineers"] == 6
+    assert counts["skipped_zero_fte_placeholders"] == 2
+    assert counts["projects_without_leader"] == 20
+    assert counts["carry_over_projects"] == 17
+    run = counts["summary_run"]
     assert run["within_year"] + run["spillover"] + run["left_out"] + run["blocked"] == 192
+    assert run["no_leader"] == 18
 
     projects = asyncio.run(_fetch(seeded_schema_url, select(Project)))
     engineers = asyncio.run(_fetch(seeded_schema_url, select(Engineer)))
     engineer_ids = {e.id for e in engineers}
-    assert all(p.leader_engineer_id in engineer_ids for p in projects)
-    assert all(0 < float(e.fte) <= 1.0 for e in engineers)
+    assert sum(p.leader_engineer_id is None for p in projects) == 20
+    assert all(
+        p.leader_engineer_id in engineer_ids for p in projects if p.leader_engineer_id is not None
+    )
+    assert all(0.01 <= float(e.fte) <= 1.0 for e in engineers)
+    # Roster 14.3 + 6 provisional leaders at 1.0.
+    assert round(sum(float(e.fte) for e in engineers), 2) == 20.3
+    assert not any("Engineer " in e.name for e in engineers)
     chambers = asyncio.run(_fetch(seeded_schema_url, select(Chamber)))
-    assert all(0 < float(c.efficiency) <= 1.0 for c in chambers)
+    workbook_eff = {code: eff for code, _r, _p, eff, *_rest in seed_demo_data.dc.CHAMBER_SEED}
+    assert {c.code: float(c.efficiency) for c in chambers} == workbook_eff
+    assert sum(p.carry_over for p in projects) == 17
+    assert {p.reg_year for p in projects if p.carry_over} == {2025}
+    assert {p.reg_year for p in projects if not p.carry_over} == {2026}
+    assert sum(p.target_end_week is not None for p in projects) == 15
+    assert sum(p.plant is not None for p in projects) == 253
+    assert sum(p.requesting_department is not None for p in projects) == 237
+    assert sum(p.product_type is not None for p in projects) == 250
     done = asyncio.run(
         _fetch(
             seeded_schema_url,
@@ -250,7 +272,7 @@ def test_seed_demo_data_default_is_the_client_2026_dataset(seeded_schema_url, mo
     assert done and all(s.actual_end_week < seed_demo_data.dc.CURRENT_WEEK for s in done)
 
     again = asyncio.run(seed_demo_data.run(reset_first=True))
-    assert again["tuning_run"] == run
+    assert again["summary_run"] == run
     assert {p.id for p in asyncio.run(_fetch(seeded_schema_url, select(Project)))} == {
         p.id for p in projects
     }

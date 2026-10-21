@@ -8,6 +8,8 @@ import { CategoryTag } from '@/components/ui/category-tag';
 import { EntityCell } from '@/components/ui/table-cells';
 import { CountryFlag } from '@/components/shared/hub-filter/country-flag';
 import { PriorityBandPill } from '@/components/shared/priority-band-pill';
+import { CHARTER_FIELDS, CharterCell } from '@/components/shared/charter-fields';
+import { NoLeaderLabel } from '@/components/shared/no-leader-label';
 import { ProjectStatusBadge } from '@/components/shared/project-status-badge';
 import { VipBadge } from '@/components/shared/vip-badge';
 import { categoricalRankSoftBg, categoricalRankText, categoryRank } from '@/lib/categorical-palette';
@@ -38,6 +40,8 @@ export interface ProjectsTableProps {
   highlightId: string | null;
   highlightLabel?: string;
   maxHeight?: number;
+  /** P24-T02: show the optional read-only workbook columns (ADR 0035). */
+  showCharter?: boolean;
 }
 
 interface Column {
@@ -69,6 +73,7 @@ export function ProjectsTable({
   highlightId,
   highlightLabel = 'Saved',
   maxHeight = 640,
+  showCharter = false,
 }: ProjectsTableProps): React.JSX.Element {
   const scrollRef = React.useRef<HTMLDivElement>(null);
 
@@ -143,6 +148,15 @@ export function ProjectsTable({
             DASH
           ),
       },
+      // P24-T02 (ADR 0035): the served charter fields, verbatim, when asked for.
+      ...(showCharter
+        ? CHARTER_FIELDS.map<Column>(({ key, short }) => ({
+            id: `charter-${key}`,
+            header: short,
+            width: 'minmax(6.5rem, 0.9fr)',
+            cell: (row) => <CharterCell value={row[key]} />,
+          }))
+        : []),
       {
         id: 'status',
         header: 'Status',
@@ -162,7 +176,7 @@ export function ProjectsTable({
               Name unavailable
             </span>
           ) : (
-            DASH
+            <NoLeaderLabel leftOut={row.outcome === 'LEFT_OUT'} className="text-xs" />
           ),
       },
       {
@@ -251,7 +265,7 @@ export function ProjectsTable({
         ),
       },
     ],
-    [canEdit, onEdit, highlightId, highlightLabel],
+    [canEdit, onEdit, highlightId, highlightLabel, showCharter],
   );
 
   const gridTemplate = columns.map((c) => c.width).join(' ');
@@ -282,7 +296,12 @@ export function ProjectsTable({
       aria-label="Projects list, scrollable"
       role="region"
     >
-      <div role="table" aria-label="Projects" aria-rowcount={rows.length + 1} className="min-w-[75rem]">
+      <div
+        role="table"
+        aria-label="Projects"
+        aria-rowcount={rows.length + 1}
+        className={showCharter ? 'min-w-[96rem]' : 'min-w-[75rem]'}
+      >
         <div role="rowgroup">
           <div
             role="row"

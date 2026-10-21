@@ -1,14 +1,15 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { fireEvent, screen, within } from '@testing-library/react';
+import { cleanup, fireEvent, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
 import { renderWithProviders } from '@/test/render';
 import { seriousAxeViolations } from '@/test/axe';
 
 import type { GanttProjectRow, GanttStepRow } from '../api/types';
-import { makeWeekScale } from '../lib/gantt-coordinates';
+import { makeWeekScale, stepDragCalendar } from '../lib/gantt-coordinates';
 import { GANTT_NARROW_MAX_PX, ganttColumnWidths, placeDragLabel } from '../lib/gantt-layout';
 import { projectStatusLabels, stepStatusLabels } from '../lib/gantt-status-labels';
+import { resizeDragLabel, stepDragLabel } from '../lib/step-weeks-copy';
 import { P13_GANTT_ROW_DEFAULTS } from '../test-fixtures';
 import { GanttChart } from './gantt-chart';
 import { StepDragOverlay } from './step-timing/step-drag-overlay';
@@ -316,3 +317,134 @@ describe('span_fte absent from an older server', () => {
     expect(stepTimingTarget(p, legacy as GanttStepRow).spanFte).toBeNull();
   });
 });
+
+/** Drag the right-edge handle of a lone step by `weeks` (15 px/week) and return the live label text. */
+function resizeLabel(over: Partial<GanttStepRow>, weeks: number): string {
+  cleanup(); // several drags per test
+  const p = project({}, [step(over)]);
+  renderWithProviders(
+    <StepTimingContext.Provider value={HOST}>
+      <div style={{ position: 'relative' }}>
+        <StepDragOverlay target={stepTimingTarget(p, p.steps[0]!)} scale={makeWeekScale('weeks')} rowHeight={44} />
+      </div>
+    </StepTimingContext.Provider>,
+  );
+  const handle = screen.getByTestId('step-drag-handle');
+  fireEvent.pointerDown(handle, { pointerId: 1, button: 0, clientX: 500 });
+  fireEvent.pointerMove(handle, { pointerId: 1, clientX: 500 + weeks * 15 });
+  return screen.getByTestId('step-drag-label').textContent ?? '';
+}
+
+describe('QA-P19-4: the drag label calendar figure is not clipped at W52', () => {
+  const weeks = makeWeekScale('weeks');
+
+  it('stepDragCalendar: ceil(work / fte) from the served start, past the axis included', () => {
+    // 0.5 FTE, starting W48: 3 wks of work = 6 calendar weeks, W48–W53.
+    expect(stepDragCalendar({ startWeek: 48, endWeek: 49, durationWeeks: 1, fte: 0.5 }, 3, weeks)).toEqual({
+      calendarWeeks: 6,
+      endWeek: 53,
+      pastAxis: true,
+    });
+    // 0.63 FTE, starting W46: 6 wks of work = ceil(600 / 63) = 10 calendar weeks, W46–W55.
+    expect(stepDragCalendar({ startWeek: 46, endWeek: 52, durationWeeks: 4, fte: 0.63 }, 6, weeks)).toEqual({
+      calendarWeeks: 10,
+      endWeek: 55,
+      pastAxis: true,
+    });
+    // inside the axis
+    expect(stepDragCalendar({ startWeek: 10, endWeek: 17, durationWeeks: 4, fte: 0.5 }, 5, weeks)).toEqual({
+      calendarWeeks: 10,
+      endWeek: 19,
+      pastAxis: false,
+    });
+    // no FTE: 1:1 from the served bar
+    expect(stepDragCalendar({ startWeek: 49, endWeek: 52, durationWeeks: 4, fte: null }, 6, weeks)).toEqual({
+      calendarWeeks: 6,
+      endWeek: 54,
+      pastAxis: true,
+    });
+  });
+
+  it('0.5 FTE, W48–W49 dragged +4 calendar weeks: "6 wks on the calendar, to W53 · 3 wks of work at 0.5 FTE"', () => {
+    expect(resizeLabel({ planned_start_week: 48, planned_end_week: 49, duration_weeks: 1, span_fte: 0.5 }, 4)).toBe(
+      '6 wks on the calendar, to W53 · 3 wks of work at 0.5 FTE',
+    );
+  });
+
+  it('0.63 FTE, W46–W52 dragged +3: 10 calendar weeks (not the clipped 7), to W55', () => {
+    expect(resizeLabel({ planned_start_week: 46, planned_end_week: 52, duration_weeks: 4, span_fte: 0.63 }, 3)).toBe(
+      '10 wks on the calendar, to W55 · 6 wks of work at 0.63 FTE',
+    );
+  });
+
+  it('0.63 FTE inside the axis: no "to W…" suffix', () => {
+    expect(resizeLabel({ planned_start_week: 30, planned_end_week: 36, duration_weeks: 4, span_fte: 0.63 }, 3)).toBe(
+      '10 wks on the calendar · 6 wks of work at 0.63 FTE',
+    );
+  });
+
+  it('no served FTE: design says the span runs past W52; lab / elapsed give the unclipped 1:1 span', () => {
+    expect(resizeLabel({ planned_start_week: 49, planned_end_week: 52, duration_weeks: 4, span_fte: null }, 2)).toBe(
+      "6 wks of work · calendar weeks follow the leader's FTE, past W52",
+    );
+    expect(
+      resizeLabel({ kind: 'lab', planned_start_week: 49, planned_end_week: 52, duration_weeks: 4, span_fte: null }, 2),
+    ).toBe('6 wks on the calendar, to W54 · not stretched by FTE');
+    expect(resizeLabel({ planned_start_week: 40, planned_end_week: 43, duration_weeks: 4, span_fte: null }, 2)).toBe(
+      "6 wks of work · calendar weeks follow the leader's FTE",
+    );
+  });
+
+  it('pure copy helpers', () => {
+    expect(resizeDragLabel('design', 6, 3, 0.5, 53)).toBe('6 wks on the calendar, to W53 · 3 wks of work at 0.5 FTE');
+    expect(resizeDragLabel('design', 6, 3, 0.5)).toBe('6 wks on the calendar · 3 wks of work at 0.5 FTE');
+    // a caller without `calendar` still gets the ghost width (inside the axis)
+    expect(stepDragLabel('resize', { startWeek: 10, endWeek: 15 }, { kind: 'design', workWeeks: 3, fte: 0.5 })).toBe(
+      '6 wks on the calendar · 3 wks of work at 0.5 FTE',
+    );
+  });
+});
+
+describe('O-R1: the resize handle stays inside the axis', () => {
+  it('a bar ending at W52 insets the handle so none of it is past the axis end', () => {
+    const scale = makeWeekScale('weeks');
+    const p = project({}, [step({ planned_start_week: 49, planned_end_week: 52 })]);
+    renderWithProviders(
+      <StepTimingContext.Provider value={HOST}>
+        <StepDragOverlay target={stepTimingTarget(p, p.steps[0]!)} scale={scale} rowHeight={44} />
+      </StepTimingContext.Provider>,
+    );
+    const handle = screen.getByTestId('step-drag-handle');
+    expect(parseFloat(handle.style.left) + parseFloat(handle.style.width)).toBeLessThanOrEqual(scale.totalWidthPx);
+  });
+});
+
+describe('QA-P19-3: focus returns to the Details button when the dialog closes', () => {
+  it.each(['click', 'keyboard'])('opened by %s, closed with Escape', async (how) => {
+    setViewport(390);
+    const user = userEvent.setup();
+    renderChart(project({ frozen: true }));
+    const details = screen.getByTestId('gantt-row-details');
+    if (how === 'click') {
+      await user.click(details);
+    } else {
+      details.focus();
+      await user.keyboard('{Enter}');
+    }
+    expect(await screen.findByRole('dialog')).toBeInTheDocument();
+    await user.keyboard('{Escape}');
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(details).toHaveFocus();
+  });
+
+  it('closed with the Close button', async () => {
+    setViewport(390);
+    const user = userEvent.setup();
+    renderChart();
+    const details = screen.getByTestId('gantt-row-details');
+    await user.click(details);
+    await user.click(within(await screen.findByRole('dialog')).getByRole('button', { name: 'Close' }));
+    expect(details).toHaveFocus();
+  });
+});
+

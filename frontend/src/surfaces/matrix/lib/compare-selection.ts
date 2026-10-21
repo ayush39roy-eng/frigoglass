@@ -1,6 +1,8 @@
 import { create } from 'zustand';
 import { createJSONStorage, persist } from 'zustand/middleware';
 
+import { SIGNED_OUT_EVENT } from '@/lib/auth/use-sign-out';
+
 import { COMPARE_MAX } from '../api/types';
 
 /**
@@ -49,3 +51,18 @@ export const useCompareSelection = create<CompareSelectionState>()(
     },
   ),
 );
+
+/**
+ * P21-R01 (security S21-L2, second half): a same-tab sign-out clears the
+ * in-memory selection too, so the next user never sees the previous user's
+ * project names and hubs. Sign-out has already removed the `rpd-` keys; the
+ * persisted key is removed again after the reset so it is not written back.
+ */
+export function clearCompareSelectionOnSignOut(): void {
+  useCompareSelection.getState().clear();
+  useCompareSelection.persist.clearStorage();
+}
+
+if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
+  window.addEventListener(SIGNED_OUT_EVENT, clearCompareSelectionOnSignOut);
+}

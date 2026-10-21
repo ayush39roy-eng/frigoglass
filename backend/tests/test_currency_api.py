@@ -246,3 +246,85 @@ async def test_put_currency_rate_as_non_admin_role_returns_403(db_session):
         select(AuditLogEntry).where(AuditLogEntry.action == "currency_rate.update")
     )
     assert result.scalars().all() == []
+
+
+# --- P21-R01 (security S21-L1): the PUT body is strict ----------------------
+
+
+async def _assert_usd_unchanged_and_unaudited(db_session) -> None:
+    result = await db_session.execute(
+        select(CurrencyRate).where(CurrencyRate.currency_code == CurrencyCode.USD)
+    )
+    assert result.scalar_one().rate_to_eur == Decimal("1.0800")
+    audit_result = await db_session.execute(
+        select(AuditLogEntry).where(AuditLogEntry.action == "currency_rate.update")
+    )
+    assert audit_result.scalars().all() == []
+
+
+async def test_put_boolean_rate_returns_422_and_is_not_stored(db_session):
+    """S21-L1: `true` used to be coerced to 1.0, stored and audited."""
+    await _seed_eur_and_usd(db_session)
+    try:
+        async with await _client(db_session) as client:
+            for bad in (True, False):
+                resp = await client.put("/currency-rates/USD", json={"rate_to_eur": bad})
+                assert resp.status_code == 422, bad
+    finally:
+        _teardown()
+    await _assert_usd_unchanged_and_unaudited(db_session)
+
+
+async def test_put_string_rate_returns_422_and_is_not_stored(db_session):
+    """S21-L1: a numeric string (`"17000"`) used to be accepted."""
+    await _seed_eur_and_usd(db_session)
+    try:
+        async with await _client(db_session) as client:
+            for bad in ("17000", "1.5", "1e2", ""):
+                resp = await client.put("/currency-rates/USD", json={"rate_to_eur": bad})
+                assert resp.status_code == 422, bad
+    finally:
+        _teardown()
+    await _assert_usd_unchanged_and_unaudited(db_session)
+
+
+async def test_put_extra_key_returns_422_and_is_not_stored(db_session):
+    await _seed_eur_and_usd(db_session)
+    try:
+        async with await _client(db_session) as client:
+            resp = await client.put(
+                "/currency-rates/USD", json={"rate_to_eur": 1.5, "currency_code": "USD"}
+            )
+            assert resp.status_code == 422
+    finally:
+        _teardown()
+    await _assert_usd_unchanged_and_unaudited(db_session)
+
+
+async def test_put_json_integer_rate_is_accepted_and_audited(db_session):
+    """A strict float still accepts a JSON integer, and a JSON float is the
+    frontend's shape (`fx-rate-editor.tsx` sends `Number(draft)`)."""
+    await _seed_eur_and_usd(db_session)
+    try:
+        async with await _client(db_session) as client:
+            resp_int = await client.put("/currency-rates/USD", json={"rate_to_eur": 2})
+            assert resp_int.status_code == 200
+            assert resp_int.json()["rate_to_eur"] == 2.0
+            resp_float = await client.put("/currency-rates/USD", json={"rate_to_eur": 1.25})
+            assert resp_float.status_code == 200
+            assert resp_float.json()["rate_to_eur"] == 1.25
+    finally:
+        _teardown()
+
+    result = await db_session.execute(
+        select(CurrencyRate).where(CurrencyRate.currency_code == CurrencyCode.USD)
+    )
+    assert result.scalar_one().rate_to_eur == Decimal("1.2500")
+    audit_result = await db_session.execute(
+        select(AuditLogEntry).where(AuditLogEntry.action == "currency_rate.update")
+    )
+    audits = audit_result.scalars().all()
+    assert len(audits) == 2
+    afters = sorted(Decimal(a.after_state["rate_to_eur"]) for a in audits)
+    assert afters == [Decimal("1.2500"), Decimal("2.0000")]
+    assert all(a.actor_user_id is not None for a in audits)

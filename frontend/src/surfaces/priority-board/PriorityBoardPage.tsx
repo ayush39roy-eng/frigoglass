@@ -1,8 +1,8 @@
 import * as React from 'react';
+import { createPortal } from 'react-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import { Info } from 'lucide-react';
 
-import { SURFACES } from '@/app/nav';
 import { PageHeader } from '@/components/layout/page-header';
 import { EmptyState } from '@/components/shared/empty-state';
 import { ErrorState } from '@/components/shared/error-state';
@@ -13,7 +13,14 @@ import { usePermission } from '@/stores/session';
 import { useHubFilter } from '@/stores/hub-filter';
 import { CountrySegmented } from '@/components/shared/hub-filter/country-segmented';
 import { HubFilterChip } from '@/components/shared/hub-filter/hub-filter-chip';
-import { PROJECT_PRIORITIES, type ProjectPriority } from '@/types/enums';
+import { Badge } from '@/components/ui/badge';
+import {
+  PROJECT_PRIORITIES,
+  type ProjectCategory,
+  type ProjectPriority,
+  type ProjectStatus,
+  type ProjectType,
+} from '@/types/enums';
 
 import { useDebouncedValue } from '@/lib/use-debounced-value';
 
@@ -22,9 +29,12 @@ import { BoardColumn } from './components/board-column';
 import { BoardToolbar } from './components/board-toolbar';
 import { ALL, EMPTY_TOOLBAR, SEARCH_MAX, type BoardToolbarState } from './lib/toolbar-state';
 import { HubLoadStrip } from './components/hub-load-strip';
+import { BoardScenarioContext } from './lib/board-scenario';
+import { useBoardLayout } from './lib/board-layout';
+import { BoardLayoutToggle } from './components/board-layout-toggle';
 import { allowedTargets, applyOverrides, stepTarget, type BoardOverrides, type DisplayCard } from './lib/board-model';
 
-const SURFACE = SURFACES.find((s) => s.path === '/priority-board');
+const NO_STAGED: ReadonlySet<string> = new Set();
 
 interface PointerDrag {
   projectId: string;
@@ -57,16 +67,85 @@ function columnName(p: ProjectPriority): string {
 export default function PriorityBoardPage(): React.JSX.Element {
   return (
     <PriorityMoveProvider>
-      <PriorityBoard />
+      <PageHeader
+        title="Priority board"
+        description="Every project by priority. Drag a card, or use its priority control, to move it. The timeline recalculates as for any priority move."
+        actions={
+          <>
+            <CountrySegmented />
+            <HubFilterChip />
+          </>
+        }
+      />
+      <PriorityBoardView />
     </PriorityMoveProvider>
   );
 }
 
-function PriorityBoard(): React.JSX.Element {
+/** P21-T05: the Matrix View panel's filters, shared with the scoring grid. */
+export interface SharedBoardFilters {
+  category: ProjectCategory | null;
+  type: ProjectType | null;
+  status: ProjectStatus | null;
+  /** The shared project search (undebounced; debounced here like the grid). */
+  search: string;
+  onSearchChange: (next: string) => void;
+}
+
+export interface PriorityBoardViewProps {
+  /** Given inside the Prioritization Matrix: Category / Type / Status / search come from its View panel. */
+  shared?: SharedBoardFilters;
+  /** Matrix Scenario mode is on. */
+  scenarioActive?: boolean;
+  /** Projects with a staged (uncommitted) score change in the scenario. */
+  scenarioStagedIds?: ReadonlySet<string>;
+  /** Inside the Matrix on wide screens: render the toolbar into this element (the View panel). */
+  toolbarSlot?: HTMLElement | null;
+  /** The View panel is stuck (compact): the toolbar hides its visible labels. */
+  compactToolbar?: boolean;
+  /** Height of the board (the Matrix passes the same offset the grid uses, so the column
+   *  headers sit below the stuck View panel). Columns scroll inside it. */
+  height?: string;
+}
+
+/**
+ * The board itself (no page header). Since P21-T05 it is the "Priority board"
+ * tab of the Prioritization Matrix (`/matrix?view=board`); the hub / country
+ * filter is global and the move flow host is the caller's `PriorityMoveProvider`.
+ */
+export function PriorityBoardView({
+  shared,
+  scenarioActive = false,
+  scenarioStagedIds = NO_STAGED,
+  toolbarSlot = null,
+  compactToolbar = false,
+  height,
+}: PriorityBoardViewProps = {}): React.JSX.Element {
   const { hubId, region } = useHubFilter();
   // P13-T12: toolbar filters, all applied server-side; the search is debounced.
-  const [toolbar, setToolbar] = React.useState<BoardToolbarState>(EMPTY_TOOLBAR);
+  const [ownToolbar, setOwnToolbar] = React.useState<BoardToolbarState>(EMPTY_TOOLBAR);
+  const toolbar = React.useMemo<BoardToolbarState>(
+    () =>
+      shared
+        ? {
+            ...ownToolbar,
+            search: shared.search,
+            category: shared.category ?? ALL,
+            type: shared.type ?? ALL,
+            status_: shared.status ?? ALL,
+          }
+        : ownToolbar,
+    [shared, ownToolbar],
+  );
+  const setToolbar = React.useCallback(
+    (next: BoardToolbarState) => {
+      if (shared && next.search !== shared.search) shared.onSearchChange(next.search);
+      setOwnToolbar(next);
+    },
+    [shared],
+  );
   const debouncedSearch = useDebouncedValue(toolbar.search.trim(), 300);
+  const [layout, setLayout] = useBoardLayout();
   const filters = React.useMemo<PriorityBoardFilters>(() => {
     const pick = (v: string) => (v === ALL ? undefined : v);
     return {
@@ -253,23 +332,11 @@ function PriorityBoard(): React.JSX.Element {
     setLift((cur) => (cur?.projectId === item.card.project_id ? null : cur));
   }, []);
 
-  const title = SURFACE?.title ?? 'Priority Board';
   const activeDrag = pointerDrag ?? lift;
   const dropTarget = pointerDrag ? hoverColumn : lift && lift.target !== lift.from ? lift.target : null;
 
   return (
-    <>
-      <PageHeader
-        title={title}
-        description="Every project by priority. Drag a card, or use its priority control, to move it. The timeline recalculates as for any priority move."
-        actions={
-          <>
-            <CountrySegmented />
-            <HubFilterChip />
-          </>
-        }
-      />
-
+    <BoardScenarioContext.Provider value={scenarioActive ? scenarioStagedIds : NO_STAGED}>
       <p id={instructionsId} className="sr-only">
         Press Space or Enter to pick the card up, the left and right arrow keys to choose a priority column, Space or Enter
         to drop it there, and Escape to cancel. Each card also has a priority menu.
@@ -291,13 +358,36 @@ function PriorityBoard(): React.JSX.Element {
         </p>
       ) : null}
 
+      {scenarioActive ? (
+        <p className="mb-3 flex flex-wrap items-center gap-1.5 text-xs text-text-muted" role="note" data-testid="board-scenario-note">
+          <Badge tone="warning">Scenario</Badge>
+          Cards with a staged score change are marked. Scores and bands stay as saved until the scenario is applied.
+        </p>
+      ) : null}
+      {shared ? (
+        <p className="mb-3 flex items-center gap-1.5 text-xs text-text-muted" role="note" data-testid="board-scope-note">
+          <Info className="size-3.5 shrink-0" aria-hidden="true" />
+          The board lists projects with a set priority whose status can be scheduled; Cancelled, Commercialized and On
+          Hold projects appear in the scoring grid only.
+        </p>
+      ) : null}
+
       <HubLoadStrip hubId={hubId} region={region} enabled={canReadCapacity} />
 
-      <BoardToolbar
-        value={toolbar}
-        onChange={setToolbar}
-        leaders={canReadDashboard && !facets.isError ? (facets.data?.leaders ?? []) : null}
-      />
+      {(() => {
+        const bar = (
+          <BoardToolbar
+            value={toolbar}
+            onChange={setToolbar}
+            embedded={shared !== undefined}
+            inPanel={toolbarSlot !== null}
+            compact={toolbarSlot !== null && compactToolbar}
+            leaders={canReadDashboard && !facets.isError ? (facets.data?.leaders ?? []) : null}
+            layoutToggle={<BoardLayoutToggle value={layout} onChange={setLayout} />}
+          />
+        );
+        return toolbarSlot ? createPortal(bar, toolbarSlot) : bar;
+      })()}
 
       {query.isPending ? (
         <div className="grid grid-cols-5 gap-3" aria-hidden="true">
@@ -317,11 +407,19 @@ function PriorityBoard(): React.JSX.Element {
           />
         )
       ) : (
-        <div className="grid auto-cols-[minmax(15rem,1fr)] grid-flow-col gap-3 overflow-x-auto pb-2" data-testid="priority-board">
+        <div
+          className="grid auto-cols-[minmax(15rem,1fr)] grid-flow-col gap-3 overflow-x-auto pb-2"
+          style={height ? { height } : undefined}
+          data-testid="priority-board"
+          data-layout={layout}
+          data-fit={height ? 'true' : undefined}
+        >
           {columns.map((column) => (
             <BoardColumn
               key={column.priority}
               column={column}
+              layout={layout}
+              fit={height !== undefined}
               canDragCard={canDragCard}
               liftedId={lift?.projectId ?? null}
               isDropTarget={dropTarget === column.priority}
@@ -338,6 +436,6 @@ function PriorityBoard(): React.JSX.Element {
           ))}
         </div>
       )}
-    </>
+    </BoardScenarioContext.Provider>
   );
 }

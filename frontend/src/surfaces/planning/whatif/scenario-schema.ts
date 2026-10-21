@@ -7,6 +7,8 @@ import {
   OEM_CATEGORIES,
   PROJECT_PRIORITIES,
   PROJECT_TYPES,
+  SCHEDULABLE_STATUSES,
+  UI_SCHEDULABLE_STATUSES,
   type ProjectCategory,
   type ProjectPriority,
   type ProjectType,
@@ -89,12 +91,11 @@ export function scenarioTotals(lines: Pick<ScenarioLines, 'projects' | 'engineer
   }));
 }
 
-export const WHATIF_STATUSES: readonly WhatIfStatus[] = [
-  'In Buyoff',
-  'Under Industrialization',
-  'In Development',
-  'In Queue',
-];
+/** The statuses OFFERED for a hypothetical project (P23-T01: no In Buyoff). The
+ *  default is In Queue (`newProjectLine`, the backend default too). The schema
+ *  below still accepts every status the backend does (`WhatIfStatus`), so a
+ *  scenario the assistant returns with In Buyoff loads and sends unchanged. */
+export const WHATIF_STATUSES: readonly WhatIfStatus[] = UI_SCHEDULABLE_STATUSES;
 
 export const OEM_HUBS: readonly string[] = ['OEM-HCK', 'OEM-Seltek'];
 
@@ -219,7 +220,7 @@ const projectSchema = z
     hub: hubSchema,
     category: z.string(),
     count: numeric({ label: 'Count', min: 1, max: CAPS.projects, int: true }),
-    status: z.enum(['In Buyoff', 'Under Industrialization', 'In Development', 'In Queue']),
+    status: z.enum(SCHEDULABLE_STATUSES),
     priority: z.union([z.literal(''), z.enum(PROJECT_PRIORITIES)]),
     projectType: z.union([z.literal(''), z.enum(PROJECT_TYPES)]),
     score: numeric({ label: 'Score', min: 0, max: 100, optional: true }),

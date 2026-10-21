@@ -117,6 +117,10 @@ class Project(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         nullable=True,
     )
 
+    #: ADR 0034 (P23-T02): no default. The ORM used to default to `Draft`;
+    #: Draft is retired from registration, so every writer states the status
+    #: explicitly (`POST /projects` writes `In Queue`) and an omitted status
+    #: fails loudly on `NOT NULL` instead of silently creating a Draft row.
     status: Mapped[ProjectStatus] = mapped_column(
         Enum(
             ProjectStatus,
@@ -124,7 +128,6 @@ class Project(UUIDPrimaryKeyMixin, TimestampMixin, Base):
             values_callable=lambda enum_cls: [e.value for e in enum_cls],
         ),
         nullable=False,
-        default=ProjectStatus.DRAFT,
     )
     #: The committed/working priority used by the scheduler's sort order
     #: (docs/DOMAIN_RULES.md "Scheduling order"). This is the prototype's
@@ -198,6 +201,14 @@ class Project(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         .correlate_except(Hub)
         .scalar_subquery()
     )
+
+    # --- ADR 0035 (P24-T01): charter fields from the client workbook --------
+    #: The workbook's `Plant/OEM`, `Requesting Department` and `Product Type`
+    #: as written (lists: `domain_constants.PLANT_OPTIONS`,
+    #: `REQUESTING_DEPARTMENT_OPTIONS`, `PRODUCT_TYPE_OPTIONS`). Not financial.
+    plant: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    requesting_department: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    product_type: Mapped[str | None] = mapped_column(String(100), nullable=True)
 
     # --- Encrypted financial fields (CLAUDE.md non-negotiable) ---
     customer_name: Mapped[str | None] = mapped_column(EncryptedString, nullable=True)

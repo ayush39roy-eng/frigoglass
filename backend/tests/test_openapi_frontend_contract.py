@@ -332,6 +332,11 @@ CONTRACT_TABLE: list[tuple[Path, str, str, str]] = [
     # configured` of `GET /currency-rates` (deliberate partial mirror).
     (_MATRIX_TS, "CurrencyOption", "CurrencyRateRead", "subset"),
     (_MATRIX_TS, "PriorityCompareResponse", "PriorityCompareResponse", "exact"),
+    # P25-T01 (ADR 0036, docs/API_CONTRACT_P25.md): the P1 capacity fill. The
+    # row / compare / distribution / summary mirrors above gain fields, and these
+    # two are new; all red until P25-T02 mirrors them.
+    (_MATRIX_TS, "HubP1Fill", "HubP1Fill", "exact"),
+    (_MATRIX_TS, "PriorityCapacityFill", "PriorityCapacityFill", "exact"),
     # --- Matrix: Scenario Apply + Versions & History (backend/schemas/scenario.py,
     # P5-T01/P5-T02/P5-T03) ---
     (_MATRIX_TS, "ScenarioPriorityScoreChange", "ScenarioPriorityScoreChange", "exact"),

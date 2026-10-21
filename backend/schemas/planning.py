@@ -174,8 +174,9 @@ class ResourceLoadOptions(BaseModel):
     project_types: list[ProjectType]
     project_statuses: list[ProjectStatus]
     categories: list[ProjectCategory]
-    #: Always empty today: projects have no requesting department
-    #: (docs/OPEN_QUESTIONS.md #34). See `requesting_department_available`.
+    #: ADR 0035: the distinct `Project.requesting_department` values of the
+    #: visible projects, sorted (the client workbook's values as written).
     requesting_departments: list[str]
+    #: True when at least one visible project has a requesting department.
     requesting_department_available: bool
     engineers: list[EngineerOption]

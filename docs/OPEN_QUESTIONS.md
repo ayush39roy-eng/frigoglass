@@ -681,3 +681,157 @@ invented: the three are "not configured" and converting into them is refused (42
 `CURRENCY_NOT_CONFIGURED`) until a rate is set. Which rates (EUR → EGP / ZAR / IDR) should we load,
 and from which source and date? Rates can be set today by **Super Admin and Admin** (the existing
 `PUT /currency-rates/{code}` rule since P3); should it be Super Admin only?
+
+### 51. P1 capacity fill: hard gates, the load basis and spillover work *(2026-10-21, P25, ADR 0036, non-blocking)*
+
+The Matrix now promotes projects scoring below 70 to a suggested "P1 (capacity fill)" while a hub's
+P1 design load is under its remaining-year design capacity (owner ruling, 2026-10-21). Three details
+were decided by us and need confirmation:
+1. **Hard gates.** A hard-gated project (forced to P1 when committed) that scores below 70 is not in
+   the base P1 load; it is an ordinary candidate. Should hard-gated projects count as base P1 load
+   instead (which would leave less room for promotions)?
+2. **Load basis.** The P1 load is the *remaining* design work of the active schedule, including work
+   that runs past W52, compared with the *remaining-year* capacity. Should work past W52 be left out
+   (more promotions), or should the whole-year load be compared with the whole-year capacity?
+3. **Zero load.** A candidate with no remaining design work (no design step left, or not in the
+   schedule) is skipped, not promoted, and the walk continues. Is that right?
+
+## Added 2026-10-21 — from the seed data correction (P24, ADR 0035)
+
+The seed now uses the client's real roster and project data (ADR 0035). These are the points the
+owner marked "client to confirm". None blocks development: each has a stated assumption already in
+the seed.
+
+### 52. Project leaders who are not on the capacity roster, and projects with no leader *(2026-10-21, P24, ADR 0035, non-blocking)*
+
+The project file names six leaders who are not in the `RPD Capacity` roster. They lead 77 projects:
+Dipak 52, Elena Micu 12, Theoni 9, Marian 2, Sailesh 1, Antonis 1. The client's older app instead
+gives some of this work to roster engineers.
+1. Are these six design engineers, whose time the scheduler should book? Or are they responsible
+   leads only, with the design work done by roster engineers (and if so, by whom)?
+2. What is each one's FTE? What is each one's hub?
+3. Who leads the 20 projects with a blank leader? They are OEM-HCK 9, OEM-Seltek 8, PD-India 1,
+   PD-Romania 1 and R&D-Greece 1.
+
+**Assuming until answered:**
+- The six are seeded as engineers, flagged provisional, at FTE 1.0.
+- Each is in the hub where they lead the most projects: Dipak R&D-India, Elena Micu and Marian
+  PD-Romania, Theoni OEM-HCK, Sailesh and Antonis PD-India.
+- Each may lead the categories of the projects they lead.
+- The 20 blank-leader projects stay unassigned. The 18 open ones are left out with "no leader".
+
+### 53. Zero-FTE placeholders on the roster *(2026-10-21, P24, ADR 0035, non-blocking)*
+
+The roster has two rows at Resource Count 0: "New Hiring" (PD-India) and "New engineer-Contractual"
+(PD-India, 3rd party). An engineer needs FTE ≥ 0.01, and a leader at 0 FTE would make each of their
+projects a data error (ADR 0032). So these rows are **not created**. Should they be? If so, with
+what FTE, and from which week? Or should the app accept planned hires with a start week?
+
+### 54. Which categories may each engineer lead? *(2026-10-21, P24, ADR 0035, non-blocking)*
+
+The formula workbook gives no allowed categories per engineer, so the roster uses the client app's
+chips (ADR 0035 §3). The client's `data.xlsx` disagrees in places:
+- it says "A only" for Greece where the app gives A+, A;
+- it says "C only" for Nikhil, Praveer Kumar Singh and Ayush Kumar.
+
+Rishi's chip "M" has no category in this app and was dropped. Which list is right? A mismatch only
+warns (CAT_NOT_ALLOWED, 7 projects on the current seed); it never blocks scheduling. Should it block?
+
+### 55. OEM: who designs OEM work, does it count against capacity, and "Seltek" or "Seitek"? *(2026-10-21, P24, ADR 0035, non-blocking)*
+
+The workbook gives the OEM hubs (OEM-HCK, OEM-Seltek) no engineers and no capacity row. OEM work is
+therefore led only by a provisional leader named on the project (Theoni, OEM-HCK). The other 17 OEM
+projects have no leader and are left out.
+1. Who designs OEM work? Options: R&D-Greece, as the client's older app does; OEM's own people; or
+   the OEM supplier ("Steps are done by OEM" in `Final RPD`).
+2. Should OEM design and lab load count against any capacity?
+3. What work calendar applies to the OEM hubs? They use India's today.
+4. The workbook writes the hub as "Seitek" (`OEM-SEITEK`, plant `OEM-Seitek`), while the app says
+   **"OEM-Seltek"**. Which spelling is right? We kept "OEM-Seltek" and map the workbook's spelling
+   onto it.
+
+### 56. The real prioritization scores *(2026-10-21, P24, ADR 0035, non-blocking)*
+
+None of the client data we hold has the 13 dimension scores per project. The seeded scores are
+**synthetic**: derived so that each project's band matches its Marketing Priority rank, or its
+status when unranked. Leaving them blank would put every project in "Unscored" and empty the Matrix.
+Can the client send the real scores, or the inputs for them (volumes, CAPEX, ROI, savings, ...)?
+
+### 57. Which chamber may run which test *(2026-10-21, P24, ADR 0035, non-blocking)*
+
+Our chamber `allowed_stages` come from the prototype. The client's own mapping (older app
+`data.xlsx`, `Lab Capacity`) differs:
+- India CH-2 runs "ALL test", including certification. Ours allows POC only.
+- Greece CH-2 runs "POC & Certification". Ours allows POC only.
+- India CH-4: the formula workbook says "reliability / industrialization only, non-calibrated" and
+  `data.xlsx` says "POC & Industrialization". Ours books nothing on it.
+- No source covers Romania.
+
+Which tests may each chamber run? We kept our mapping. On the current seed the client's mapping does
+not change the within-year count, because design is the bottleneck.
+
+### 58. Project types BC, AC and SER *(2026-10-21, P24, ADR 0035, non-blocking)*
+
+67 of the 253 projects have a type the app does not know: BC (Business Continuity) 59, AC
+(Alternative Component) 6 and SER (Service) 2. They are stored with no type. The workbook's list
+(`Lists & Explanations` J) is NM, NO, CO, IMP, AC, SER, CER, BC, OEM and "RPD Support". The app has
+NM, NO, CO, IMP and RC, and RC is not in the client's list.
+1. Is the client's list the type list?
+2. Should RC go?
+
+**Proposal (not done):** adding the codes is small and safe. It needs:
+- a migration that adds the values to the `project_type` enum;
+- the `ProjectType` enum and its frontend mirror;
+- the extractor's type map.
+
+No scheduling rule depends on type. The Dashboard Hub × Type views would gain columns.
+
+### 59. India medical leave: divided by 5 or 6 days? *(2026-10-21, P24, ADR 0035, non-blocking)*
+
+The formula workbook divides India's 7 medical-leave days by 5 working days. It divides every other
+India deduction by 6. We divide by 6, which gives 44.17 working weeks per engineer. The workbook
+gives 43.93. Which is right? (OQ #16 item 3.) We kept 6.
+
+### 60. Projects requested before 2026 *(2026-10-21, P24, ADR 0035, non-blocking)*
+
+The seed holds only projects requested in 2026 (ADR 0024). The project file also has, from 2024–25:
+- 39 open projects: PD-India 29, R&D-Greece 3, OEM 5, R&D-India 1, PD-Romania 1;
+- 61 On Hold projects.
+
+These are not imported. Should the open ones be in the plan (as spillover)? Should the On Hold ones
+be shown? Ties to OQ #42.
+
+### 61. Who does the Marketing and OEM steps *(2026-10-21, P24, ADR 0035, non-blocking)*
+
+The client's "For Gannt — time activity wise" sheet says:
+- PDD-A (Marketing Brief) is done by Marketing;
+- PDD-J, L and N are "engineering";
+- most OEM steps are "done by OEM".
+
+Our step kinds (ADR 0007) book the project leader for PDD-A and for several OEM steps. No change was
+made. Should these steps book nobody (elapsed time only) or a different resource? (OQ #13/#14.)
+
+### 62. Dates and flags in the project file *(2026-10-21, P24, ADR 0035, non-blocking)*
+
+1. **End dates in 2025.** 7 open projects have "Project End Date - LATEST" = 2025-12-01, which is
+   already past. Week numbers start at 2026 W1, so these dates are **not imported**. Each project's
+   expected finish is the scheduler's unconstrained finish instead. Should a past end date count as
+   overdue, and how should it show? 15 dates in 2026 are imported (W1–W49).
+2. **`Spillover '25` on 2026 requests.** 17 projects requested in 2026 are flagged `Spillover '25`.
+   We set `carry_over = true` and `reg_year = 2025`, so the Dashboard shows Spillover 17. Is that the
+   intended meaning? Or should `reg_year` stay 2026?
+3. **Department "Development".** 5 projects have the requesting department "Development". It is not
+   on the workbook's own list (PD, Marketing/Sales, Quality, Service, Central Procurement Group,
+   Central / Local Supply Chain, Central / Local R&PD, Central / Local Quality, "CR&PD & CPG"). Is it
+   a list entry the client forgot, or another department written differently? It is stored as
+   written.
+
+#### Notes appended 2026-10-21 (P24, ADR 0035) to #34 and #42
+
+- **#34 (partly answered by the data).** Plant, requesting department and product type are the
+  project file's `Plant/OEM`, `Requesting Department` and `Product Type` columns. They are now
+  stored and served read-only. The question that remains is whether they should be editable, or
+  required, on Project Registration.
+- **#42 (b).** The project file has a `Spillover '25` column. The Dashboard pipeline now shows
+  Spillover 17 / New 236 / Unregistered 0 (see #62.2). The client's 76 spillover projects still
+  cannot be reproduced from the 2026 rows alone; see #60.

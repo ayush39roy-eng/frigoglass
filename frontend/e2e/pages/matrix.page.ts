@@ -7,6 +7,24 @@ export class MatrixPage {
     await this.page.goto('/matrix');
   }
 
+  /** P21-T05: the page's two tabs; `?view=board` selects the Priority board. */
+  async gotoBoard(): Promise<void> {
+    await this.page.goto('/matrix?view=board');
+  }
+
+  tab(name: 'Scoring grid' | 'Priority board'): Locator {
+    return this.page.getByRole('tablist', { name: 'Prioritization views' }).getByRole('tab', { name });
+  }
+
+  boardColumns(): Locator {
+    return this.page.getByTestId('board-column');
+  }
+
+  /** P21-T04: a Compare dialog score menu, e.g. ("Strategic Project", "Cooler A"). */
+  compareScoreSelect(dimension: string, projectName: string): Locator {
+    return this.page.getByRole('combobox', { name: `${dimension} score for ${projectName}` });
+  }
+
   heading() {
     return this.page.getByRole('heading', { name: 'Prioritization Matrix' });
   }

@@ -22,7 +22,6 @@ import {
   LoginPage,
   MatrixPage,
   PlanningPage,
-  PriorityBoardPage,
   ProjectsPage,
   ProjectWorkspacePage,
   WorkflowSettingsPage,
@@ -73,7 +72,6 @@ const SURFACE_ELEMENTS: Partial<Record<string, React.ReactNode>> = {
   '/projects': lazyElement(<ProjectsPage />),
   '/capacity': lazyElement(<CapacityPage />),
   '/matrix': lazyElement(<MatrixPage />),
-  '/priority-board': lazyElement(<PriorityBoardPage />),
   '/timeline': lazyElement(<GanttPage />),
   '/check-in': lazyElement(<CheckInPage />),
   '/planning': lazyElement(<PlanningPage />),
@@ -150,6 +148,8 @@ export const routeObjects: RouteObject[] = [
       // P14 (ADR 0027 §1): the VIP page left the nav; VIP is a Dashboard card.
       // Old bookmarks land on the Dashboard.
       { path: 'vip', element: <Navigate to="/" replace /> },
+      // P21-T05: the Priority board is the Matrix's second tab. Old links land there.
+      { path: 'priority-board', element: <Navigate to="/matrix?view=board" replace /> },
       // P22-T01: the old Project Registration route.
       { path: 'register', element: <RegisterRedirect /> },
       { path: 'register/:projectId', element: <RegisterRedirect /> },

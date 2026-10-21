@@ -227,6 +227,11 @@ class ProjectFilterRow(BaseModel):
     outcome: ScheduleOutcome | None
     reg_year: int | None
     carry_over: bool
+    #: ADR 0035: the client workbook's charter fields, as written (null when
+    #: the workbook leaves them blank). Not financial.
+    plant: str | None
+    requesting_department: str | None
+    product_type: str | None
     #: 1-based rank by weighted score (descending, then name) within the
     #: filtered set; null when the project has no score.
     priority_rank: int | None

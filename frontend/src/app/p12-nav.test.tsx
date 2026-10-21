@@ -38,25 +38,26 @@ beforeEach(() => {
 });
 
 describe('P12 nav entries (API_CONTRACT_P12 §7)', () => {
-  it('places Priority board after Prioritization, Weekly check-in after Timeline; no VIP page (P14, ADR 0027)', () => {
+  it('no separate Priority board entry (P21-T05: a Matrix tab), Weekly check-in after Timeline; no VIP page (P14, ADR 0027)', () => {
     const paths = SURFACES.map((s) => s.path);
     expect(paths).not.toContain('/vip');
     expect(SURFACES.map((s) => s.label)).not.toContain('VIP projects');
-    expect(paths.indexOf('/priority-board')).toBe(paths.indexOf('/matrix') + 1);
+    expect(paths).not.toContain('/priority-board');
+    expect(SURFACES.map((s) => s.label)).not.toContain('Priority board');
     expect(paths.indexOf('/check-in')).toBe(paths.indexOf('/timeline') + 1);
     const byPath = Object.fromEntries(SURFACES.map((s) => [s.path, s]));
-    expect(byPath['/priority-board']).toMatchObject({ label: 'Priority board', group: 'Plan', surface: 'matrix' });
+    expect(byPath['/matrix']).toMatchObject({ label: 'Prioritization', group: 'Plan', surface: 'matrix' });
     expect(byPath['/check-in']).toMatchObject({ label: 'Weekly check-in', group: 'Execute', surface: 'project_workspace' });
   });
 
   it('gates each entry on its surface read permission', () => {
     // Engineer: project_workspace read only among the three.
     expect(pathsFor('Engineer')).toContain('/check-in');
-    expect(pathsFor('Engineer')).not.toContain('/priority-board');
+    expect(pathsFor('Engineer')).not.toContain('/matrix');
     // Executive Viewer reads dashboard, matrix and project_workspace.
-    expect(pathsFor('Executive Viewer')).toEqual(expect.arrayContaining(['/priority-board', '/check-in']));
+    expect(pathsFor('Executive Viewer')).toEqual(expect.arrayContaining(['/matrix', '/check-in']));
     // Auditor reads none of them.
-    for (const p of ['/priority-board', '/check-in']) expect(pathsFor('Auditor')).not.toContain(p);
+    for (const p of ['/matrix', '/check-in']) expect(pathsFor('Auditor')).not.toContain(p);
   });
 });
 

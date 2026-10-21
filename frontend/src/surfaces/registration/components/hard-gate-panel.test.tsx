@@ -39,6 +39,9 @@ const project: ProjectRead = {
   certification_testing_required: true,
   estimated_design_weeks: null,
   estimated_lab_weeks: null,
+  plant: null,
+  requesting_department: null,
+  product_type: null,
   schedule_stale: false,
   workflow_id: 'PDD',
   created_at: '2026-01-01T00:00:00Z',
@@ -136,5 +139,16 @@ describe('HardGatePanel', () => {
     await user.click(screen.getByRole('button', { name: /submit/i }));
 
     expect(onSubmit).toHaveBeenCalledWith('p1', 'In Development');
+  });
+});
+
+describe('HardGatePanel — P23-T01 target statuses', () => {
+  it('offers Under Industrialization / In Development / In Queue as targets, not In Buyoff', async () => {
+    const user = userEvent.setup();
+    hooks.useHardGateStatus.mockReturnValue(ready({ can_leave_draft: true, missing_fields: [] }));
+    renderWithProviders(<HardGatePanel project={project} onSubmit={vi.fn()} />);
+    await user.click(screen.getByRole('combobox', { name: 'Target status' }));
+    const options = (await screen.findAllByRole('option')).map((o) => o.textContent);
+    expect(options).toEqual(['Under Industrialization', 'In Development', 'In Queue']);
   });
 });

@@ -61,7 +61,8 @@ behaviour (full detail and current defaults: `docs/OPEN_QUESTIONS.md`):
   precedence structure with parallel branches?
 - **FTE handling** — Should a 0.5 FTE engineer be treated as half-speed (steps take longer) or as
   having half the available weeks? We currently do not apply FTE to scheduling at all — confirm if
-  that matches your intent.
+  that matches your intent. *(Answered 2026-10-21 by the owner: half speed — 0.5 FTE takes twice
+  as long. Implemented in ADR 0032.)*
 - **Chamber capacity** — Should a chamber's `efficiency` and `weeks_per_chamber` fields actually
   constrain lab booking, or are they for reporting/display only?
 - **Working calendars** — Do Greek, Indian, and Romanian holiday calendars need to reduce effective

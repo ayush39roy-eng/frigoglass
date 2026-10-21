@@ -2,6 +2,7 @@ import * as React from 'react';
 import { Pencil } from 'lucide-react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 
+import { CHARTER_FIELDS, CHARTER_NOT_SET } from '@/components/shared/charter-fields';
 import { ProjectStatusBadge } from '@/components/shared/project-status-badge';
 import { usePriorityMoveHost } from '@/components/shared/priority-move/priority-move-context';
 import { applyFormPriorityMove } from '@/components/shared/priority-move/form-priority-move';
@@ -115,6 +116,19 @@ export function DetailsPanel({
               <Field label="Carried over" value={p.carry_over ? 'Yes' : 'No'} />
               <Field label="External code" value={p.external_code ?? '—'} />
               {p.comments ? <Field label="Comments" value={p.comments} wide /> : null}
+            </dl>
+            {/* P24-T02 (ADR 0035): served read-only; not part of the edit form. */}
+            <h3 id="details-charter-heading" className="label-caps mt-1 border-t border-border pt-2 text-text-muted">
+              From the client workbook
+            </h3>
+            <dl
+              className="grid grid-cols-2 gap-x-4 gap-y-2 sm:grid-cols-3"
+              aria-labelledby="details-charter-heading"
+              data-testid="details-charter"
+            >
+              {CHARTER_FIELDS.map(({ key, label }) => (
+                <Field key={key} label={label} value={p[key] || CHARTER_NOT_SET} />
+              ))}
             </dl>
             <h3 id="details-financial-heading" className="label-caps mt-1 border-t border-border pt-2 text-text-muted">
               Financial — commercially sensitive

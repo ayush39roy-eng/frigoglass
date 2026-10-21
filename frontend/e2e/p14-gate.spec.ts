@@ -39,7 +39,7 @@ test('Board: drag -> preview -> No snaps back, nothing written; Yes applies, run
   const target = await schedulable(request, 'P4', 0);
   const run0 = await activeRunId(request);
   await actAs(page, 'portfolioManager');
-  await page.goto('/priority-board');
+  await page.goto('/matrix?view=board');
   await settle(page);
   const card = page.getByTestId('board-card').filter({ hasText: target.name.slice(0, 30) }).first();
   await card.scrollIntoViewIfNeeded();

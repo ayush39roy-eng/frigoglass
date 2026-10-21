@@ -2,10 +2,11 @@ import * as React from 'react';
 import { FilterX, Search } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
+import { cn } from '@/lib/utils';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { PROJECT_CATEGORIES, PROJECT_STATUSES, PROJECT_TYPE_LABELS, PROJECT_TYPES } from '@/types/enums';
+import { PROJECT_CATEGORIES, UI_PROJECT_STATUSES, PROJECT_TYPE_LABELS, PROJECT_TYPES } from '@/types/enums';
 
 import {
   ALL,
@@ -30,17 +31,19 @@ function ToolbarSelect({
   onChange,
   options,
   disabled,
+  compact = false,
 }: {
   label: string;
   value: string;
   onChange: (next: string) => void;
   options: { value: string; label: string }[];
   disabled?: boolean;
+  compact?: boolean;
 }): React.JSX.Element {
   const id = React.useId();
   return (
     <div className="flex flex-col gap-1">
-      <Label htmlFor={id} className="text-2xs text-text-muted">
+      <Label htmlFor={id} className={cn('text-2xs text-text-muted', compact && 'sr-only')}>
         {label}
       </Label>
       <Select value={value} onValueChange={onChange} disabled={disabled ?? false}>
@@ -66,22 +69,37 @@ export interface BoardToolbarProps {
   /** Leader options from the served facets; `null` hides the Leader filter
    *  (e.g. the caller cannot read the facets). */
   leaders: LeaderOption[] | null;
+  /** P21-T05: inside the Prioritization Matrix, Category / Type / Status come
+   *  from the shared View panel, so only Search and Leader are shown here. */
+  embedded?: boolean;
+  /** P21-T05: the Cards | List layout control, shown at the end of the toolbar. */
+  layoutToggle?: React.ReactNode;
+  /** Rendered inside the Matrix View panel (no bottom margin, no growth). */
+  inPanel?: boolean;
+  /** The panel is stuck: visible labels hidden (kept for screen readers). */
+  compact?: boolean;
 }
 
-export function BoardToolbar({ value, onChange, leaders }: BoardToolbarProps): React.JSX.Element {
+export function BoardToolbar({
+  value,
+  onChange,
+  leaders,
+  embedded = false,
+  layoutToggle,
+  inPanel = false,
+  compact = false,
+}: BoardToolbarProps): React.JSX.Element {
   const searchId = React.useId();
   const set = (key: keyof BoardToolbarState) => (next: string) => onChange({ ...value, [key]: next });
   const active =
     value.search.trim() !== '' ||
-    value.category !== ALL ||
-    value.type !== ALL ||
-    value.status_ !== ALL ||
+    (!embedded && (value.category !== ALL || value.type !== ALL || value.status_ !== ALL)) ||
     value.leader !== ALL;
 
   return (
-    <div role="search" aria-label="Filter the priority board" className="mb-3 flex flex-wrap items-end gap-3" data-testid="board-toolbar">
-      <div className="flex min-w-[12rem] flex-1 flex-col gap-1 sm:max-w-xs">
-        <Label htmlFor={searchId} className="text-2xs text-text-muted">
+    <div role="search" aria-label="Filter the priority board" className={cn('flex flex-wrap items-end gap-3', !inPanel && 'mb-3')} data-testid="board-toolbar" data-in-panel={inPanel ? 'true' : undefined}>
+      <div className={cn('flex flex-col gap-1', compact ? 'w-44' : 'min-w-[12rem] flex-1 sm:max-w-xs')}>
+        <Label htmlFor={searchId} className={cn('text-2xs text-text-muted', compact && 'sr-only')}>
           Search
         </Label>
         <div className="relative">
@@ -100,7 +118,9 @@ export function BoardToolbar({ value, onChange, leaders }: BoardToolbarProps): R
           />
         </div>
       </div>
-      <ToolbarSelect
+      {embedded ? null : (
+        <>
+          <ToolbarSelect
         label="Category"
         value={value.category}
         onChange={set('category')}
@@ -116,10 +136,13 @@ export function BoardToolbar({ value, onChange, leaders }: BoardToolbarProps): R
         label="Status"
         value={value.status_}
         onChange={set('status_')}
-        options={PROJECT_STATUSES.map((s) => ({ value: s, label: s }))}
-      />
+        options={UI_PROJECT_STATUSES.map((s) => ({ value: s, label: s }))}
+          />
+        </>
+      )}
       {leaders ? (
         <ToolbarSelect
+          compact={compact}
           label="Leader"
           value={value.leader}
           onChange={set('leader')}
@@ -127,11 +150,16 @@ export function BoardToolbar({ value, onChange, leaders }: BoardToolbarProps): R
         />
       ) : null}
       {active ? (
-        <Button variant="ghost" size="sm" onClick={() => onChange(EMPTY_TOOLBAR)}>
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() => onChange(embedded ? { ...value, search: '', leader: ALL } : EMPTY_TOOLBAR)}
+        >
           <FilterX />
           Clear filters
         </Button>
       ) : null}
+      {layoutToggle ? <div className={cn(!inPanel && 'ml-auto')}>{layoutToggle}</div> : null}
     </div>
   );
 }

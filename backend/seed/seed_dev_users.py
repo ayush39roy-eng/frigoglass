@@ -47,7 +47,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from models import Engineer, Hub, Role, User, UserHubScope, UserRole  # noqa: E402
+from models import Engineer, Hub, Project, Role, User, UserHubScope, UserRole  # noqa: E402
 from models.enums import HubName, RoleName  # noqa: E402
 
 #: (email, full_name, role) — matches dev/keycloak/rpd-realm.json's test
@@ -75,9 +75,10 @@ DEV_USERS: tuple[tuple[str, str, RoleName], ...] = (
 #: seeded exactly as before (no Engineer link), never a hard failure.
 _CAROL_ENGINEER_NAME = "Dimopoulou"
 
-#: ADR 0024: with the default `client_2026` dataset there is no "Dimopoulou",
-#: so carol links to this PD-India workbook leader instead (bob.hub, carol's
-#: manager, is scoped to PD-India). First name found wins.
+#: ADR 0024 / ADR 0035: in the default `client_2026` dataset "Dimopoulou" is
+#: on the roster but leads no project, so carol links to this PD-India
+#: workbook leader instead (bob.hub, carol's manager, is scoped to PD-India).
+#: The first name found that leads a project wins.
 _CAROL_ENGINEER_FALLBACK_NAME = "Pawan"
 
 #: P9-F04: `bob.hub` gets a real, non-"all" hub scope (Hub Planner is the
@@ -159,10 +160,18 @@ async def run(reset_first: bool) -> dict:
             # `test_seed_dev_users_duplicate_guard_and_reset`), in which case
             # the two dev users below fall back to their pre-P9-F04
             # behaviour (no Engineer link; `hub_scope_all=True`).
+            # ADR 0035: the first named engineer who leads a project, so
+            # carol's "own assignments" view is never empty (client_2026's
+            # roster has a Dimopoulou who leads nothing).
             carol_engineer = None
             for engineer_name in (_CAROL_ENGINEER_NAME, _CAROL_ENGINEER_FALLBACK_NAME):
                 carol_engineer = (
-                    await session.execute(select(Engineer).where(Engineer.name == engineer_name))
+                    await session.execute(
+                        select(Engineer).where(
+                            Engineer.name == engineer_name,
+                            Engineer.id.in_(select(Project.leader_engineer_id)),
+                        )
+                    )
                 ).scalar_one_or_none()
                 if carol_engineer is not None:
                     break

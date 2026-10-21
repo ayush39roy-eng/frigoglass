@@ -24,7 +24,7 @@ from tests.auth_helpers import (
     make_principal,
     override_current_principal,
 )
-from tests.factories import make_hub, make_user
+from tests.factories import make_engineer, make_hub, make_user, registration_body
 
 
 def _client(db_session) -> AsyncClient:
@@ -337,21 +337,23 @@ async def test_audit_log_never_exposes_real_financial_values_to_admin_or_auditor
     the read surface doesn't add or need any redaction step of its own.
     """
     hub = await make_hub(db_session)
+    leader = await make_engineer(db_session, hub)
     try:
         write_client, _ = await _as(db_session, RoleName.HUB_PLANNER)
         async with write_client:
             create_resp = await write_client.post(
                 "/projects",
-                json={
-                    "name": "Redaction Test Project",
-                    "hub_id": str(hub.id),
-                    "customer_name": "Coca-Cola HBC",
-                    "tcogs_eur": 12345.67,
-                    "selling_price_eur": 99999.99,
-                    "gross_margin_pct": 42.5,
-                },
+                json=registration_body(
+                    hub,
+                    leader,
+                    name="Redaction Test Project",
+                    customer_name="Coca-Cola HBC",
+                    tcogs_eur=12345.67,
+                    selling_price_eur=99999.99,
+                    gross_margin_pct=42.5,
+                ),
             )
-        assert create_resp.status_code == 201
+        assert create_resp.status_code == 201, create_resp.text
         project_id = create_resp.json()["id"]
         # Sanity check: the *authorized project-registration read* DOES show
         # the real value (financial fields are ordinary authorized-read data

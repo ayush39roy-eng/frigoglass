@@ -354,6 +354,45 @@ describe('Leader names (ADR 0028) and financial visibility', () => {
     expect(await screen.findByTestId('workspace-header')).toHaveTextContent('Leader: Sam Super');
   });
 
+  it('P24-T02: a null leader reads "No leader" (accessible "No leader assigned"); Left Out adds the hint', async () => {
+    const base = workspaceFixture();
+    api.fetchWorkspace.mockResolvedValue(
+      workspaceFixture({
+        project: { ...base.project, leader_engineer_id: null, leader_engineer_name: null },
+        schedule: { ...base.schedule, left_out: true, within_year: false },
+      }),
+    );
+    renderPage();
+    const header = await screen.findByTestId('workspace-header');
+    const label = within(header).getByTestId('no-leader');
+    expect(within(label).getByText('No leader assigned')).toHaveClass('sr-only');
+    expect(within(label).getByTestId('no-leader-left-out')).toHaveTextContent('Left out: no leader assigned');
+    expect(header).not.toHaveTextContent('Leader: —');
+  });
+
+  it('P24-T02: a null leader on a project that is not Left Out has no Left Out hint', async () => {
+    const base = workspaceFixture();
+    api.fetchWorkspace.mockResolvedValue(workspaceFixture({ project: { ...base.project, leader_engineer_id: null, leader_engineer_name: null } }));
+    renderPage();
+    const header = await screen.findByTestId('workspace-header');
+    expect(within(header).getByTestId('no-leader')).toHaveTextContent(/^No leaderNo leader assigned$/);
+    expect(within(header).queryByTestId('no-leader-left-out')).not.toBeInTheDocument();
+  });
+
+  it('P24-T02: Details shows the workbook fields read-only, "Not set" when null', async () => {
+    const base = workspaceFixture();
+    api.fetchWorkspace.mockResolvedValue(
+      workspaceFixture({ project: { ...base.project, plant: 'Kato Achaia', requesting_department: 'Marketing', product_type: null } }),
+    );
+    renderPage();
+    const details = await screen.findByTestId('details-read');
+    const charter = within(details).getByTestId('details-charter');
+    expect(charter).toHaveAccessibleName('From the client workbook');
+    expect(charter).toHaveTextContent('PlantKato Achaia');
+    expect(charter).toHaveTextContent('Requesting departmentMarketing');
+    expect(charter).toHaveTextContent('Product typeNot set');
+  });
+
   it('a role without Project Registration read sees "Restricted" financials, not "—"', async () => {
     api.fetchWorkspace.mockResolvedValue(
       workspaceFixture({

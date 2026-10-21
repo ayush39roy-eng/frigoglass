@@ -546,16 +546,24 @@ describe('GanttPage', () => {
             project({ leader_name: 'Rishi', leader_engineer_id: 'eng-1', external_code: '24-00221_1', type: 'CO', total_weeks: 17, design_weeks: 5, lab_weeks: 0 }),
             project({ project_id: 'p2', project_name: 'Cooler Beta', leader_engineer_id: 'eng-2' }),
             project({ project_id: 'p3', project_name: 'Cooler Gamma' }),
+            project({ project_id: 'p4', project_name: 'Cooler Delta', left_out: true }),
           ],
         }),
       );
       renderWithProviders(<GanttPage />);
-      const [a, b, c] = screen.getAllByTestId('gantt-project-row');
+      const [a, b, c, d] = screen.getAllByTestId('gantt-project-row');
       expect(within(a).getByTestId('gantt-row-meta')).toHaveTextContent('Rishi·24-00221_1·CO·R&D-Greece');
       expect(within(a).getByTestId('gantt-row-weeks')).toHaveTextContent('Total 17W · 5 DW / 0 LW');
       expect(within(b).getByTestId('gantt-row-meta')).toHaveTextContent('Name unavailable');
       expect(within(b).getByTestId('gantt-row-weeks')).toHaveTextContent('Not in the active run');
-      expect(within(c).getByTestId('gantt-row-meta')).toHaveTextContent(/^—No leader/);
+      // P24-T02: a null leader reads "No leader" (accessible "No leader assigned"), not a dash.
+      const noLeader = within(c).getByTestId('no-leader');
+      expect(noLeader).toHaveTextContent(/^No leaderNo leader assigned$/);
+      expect(within(noLeader).getByText('No leader assigned')).toHaveClass('sr-only');
+      expect(within(c).getByTestId('gantt-row-meta')).not.toHaveTextContent('—');
+      // Left Out (served `left_out`) + no leader adds the hint; nothing else is inferred.
+      expect(within(c).queryByTestId('no-leader-left-out')).not.toBeInTheDocument();
+      expect(within(d).getByTestId('no-leader-left-out')).toHaveTextContent('Left out: no leader assigned');
     });
 
     it('draws the served weekly PDD / OEM counts; Hide stats hides them and the summary', async () => {

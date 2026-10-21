@@ -24,6 +24,7 @@ import {
   MATRIX_CURRENCY_CODES,
   type CurrencyOption,
   type MatrixCurrencyCode,
+  type PriorityCapacityFill,
   type PriorityCompareResponse,
   type PriorityDistribution,
   type PriorityMatrixRow,
@@ -168,6 +169,7 @@ export const P21_PATHS = {
   currencies: '/currency-rates',
   distribution: '/priorities/distribution',
   compare: '/priorities/compare',
+  capacityFill: '/priorities/capacity-fill',
 } as const;
 
 function isMatrixCurrency(code: string): code is MatrixCurrencyCode {
@@ -230,4 +232,16 @@ export function fetchPriorityCompare(
   const search = new URLSearchParams();
   for (const id of projectIds) search.append('project_id', id);
   return apiGet<PriorityCompareResponse>(`${P21_PATHS.compare}?${search.toString()}`, ctx);
+}
+
+/** `GET /priorities/capacity-fill?hub_id&region` (P25, ADR 0036): per-hub P1 capacity fill,
+ *  hub-scoped by the server (an out-of-scope hub gives `hubs: []`). Served figures only. */
+export function fetchPriorityCapacityFill(
+  params: { hubId?: string | undefined; region?: LabRegion | undefined },
+  ctx: FetchCtx = {},
+): Promise<PriorityCapacityFill> {
+  return apiGet<PriorityCapacityFill>(P21_PATHS.capacityFill, {
+    ...ctx,
+    query: { hub_id: params.hubId, region: params.region },
+  });
 }

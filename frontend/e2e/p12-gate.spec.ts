@@ -14,7 +14,7 @@ import { actAs, checkAxe } from './dev-session';
  */
 
 const SURFACES: { path: string; label: string }[] = [
-  { path: '/priority-board', label: 'Priority board' },
+  { path: '/matrix?view=board', label: 'Priority board (Matrix tab, P21-T05)' },
   { path: '/check-in', label: 'Weekly check-in' },
   { path: '/', label: 'Dashboard (capacity booked card)' },
   { path: '/capacity', label: 'Capacity (area booking strip)' },

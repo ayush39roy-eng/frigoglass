@@ -1,5 +1,11 @@
 """Project Registration surface — full CRUD on `Project`
-(`docs/PROJECT_AND_STACK.md` §2), including the Draft hard-gate.
+(`docs/PROJECT_AND_STACK.md` §2), including the registration hard gate.
+
+**P23-T02 (ADR 0034, docs/API_CONTRACT_P23.md).** Draft is retired from
+registration: `POST /projects` checks the hard-gate fields up front (422
+`HARD_GATE_FIELDS_MISSING`, no row written) and creates the project
+`In Queue`, marked `schedule_stale`. `PATCH` rejects `status: "Draft"` (422
+`DRAFT_RETIRED`). `POST /{id}/submit` stays for legacy Draft rows only.
 
 **RBAC (P3-T02)**: every endpoint below requires a real, validated OIDC
 token (`api.deps.get_current_principal` — 401 if missing/invalid) and
@@ -62,10 +68,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.db import get_db
 from api.deps import get_current_principal, require_permission
-from api.errors import HTTP_422, CodedHTTPException
+from api.errors import HTTP_422, CodedHTTPException, field_error
 from core.principal import Principal
 from core.rbac import Action, Surface
 from models.audit import AuditLogEntry
+from models.engineer import Engineer
 from models.enums import (
     NON_SCHEDULABLE_STATUSES,
     ProjectCategory,
@@ -92,12 +99,19 @@ from services.hub_scope import hub_scope_filter, is_hub_in_scope
 from services.priority_move import apply_priority_change, ensure_priority_move_allowed
 from services.priority_preview import confirm_priority_move, preview_priority_move
 from services.project_access import authorize_project_action, effective_project_access
-from services.project_hard_gates import missing_hard_gate_fields
+from services.project_hard_gates import (
+    HARD_GATE_FIELDS,
+    hard_gate_error,
+    missing_hard_gate_field_names,
+    missing_hard_gate_fields,
+)
 from services.project_steps import WorkflowChangeWithProgress, sync_project_steps
 from services.rate_limit import TokenBucketLimiter
 from services.text_search import Q_MAX_LENGTH, project_search_filter
 
 router = APIRouter(prefix="/projects", tags=["projects"])
+
+_HARD_GATE_NAMES: tuple[str, ...] = tuple(name for name, _label in HARD_GATE_FIELDS)
 
 _read = require_permission(Surface.PROJECT_REGISTRATION, Action.READ)
 _write = require_permission(Surface.PROJECT_REGISTRATION, Action.WRITE)
@@ -269,8 +283,15 @@ async def create_project(
     db: AsyncSession = Depends(get_db),
     current_user: Principal = Depends(_write),
 ) -> Project:
-    """Create a new project — always starts in `Draft`
-    (`ProjectStatus.DRAFT`), regardless of how fully the body is filled in.
+    """Register a project (ADR 0034): it is created `In Queue`, never Draft.
+
+    Order: RBAC (`_write`, 401/403) → unknown hub 422 → hub outside the
+    caller's scope 403 → missing hard-gate fields 422
+    `HARD_GATE_FIELDS_MISSING` (per-field, nothing written) → category vs
+    hub workflow 422 `CATEGORY_WORKFLOW_MISMATCH` → unknown leader 422
+    `UNKNOWN_LEADER`. The new project is not in the active run, so it is
+    marked `schedule_stale` (no solve is triggered, ADR 0006). One
+    `project.create` audit row, financial fields redacted.
     """
 
     hub = (await db.execute(select(Hub).where(Hub.id == body.hub_id))).scalar_one_or_none()
@@ -283,12 +304,24 @@ async def create_project(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Cannot create a project for a hub outside your assigned hub scope.",
         )
+    data = body.model_dump()
+    missing = missing_hard_gate_field_names(data)
+    if missing:
+        raise hard_gate_error(
+            missing, "Project cannot be registered: required fields missing."
+        )
     mismatch = _category_mismatch(hub, body.category)
     if mismatch is not None:
         raise mismatch
+    leader = await db.get(Engineer, body.leader_engineer_id)
+    if leader is None:
+        raise CodedHTTPException(
+            HTTP_422,
+            "UNKNOWN_LEADER",
+            [field_error("leader_engineer_id", "Unknown leader_engineer_id")],
+        )
 
-    data = body.model_dump()
-    project = Project(**data, status=ProjectStatus.DRAFT)
+    project = Project(**data, status=ProjectStatus.IN_QUEUE, schedule_stale=True)
     db.add(project)
     await db.flush()
     await sync_project_steps(db, project, hub.is_oem)
@@ -320,7 +353,9 @@ async def update_project(
     """Partial update. See `schemas.project.ProjectUpdateRequest`'s docstring:
     `frozen` is not settable here (use the Gantt freeze toggle), and `status`
     may not be used to leave `Draft` here (use `POST /{id}/submit`, which
-    runs the hard-gate check).
+    runs the hard-gate check). ADR 0034: `status: "Draft"` is never
+    accepted (422 `DRAFT_RETIRED`), not even as a no-op on a legacy Draft
+    row. `In Buyoff` is a schedulable status and stays settable.
 
     2026-09-30 (ADR 0012): every Registration charter field here is
     Admin-grain-only — an Editor-level `ProjectAccessGrant` may NEVER write
@@ -343,6 +378,12 @@ async def update_project(
     )
     updates = body.model_dump(exclude_unset=True)
 
+    if updates.get("status") == ProjectStatus.DRAFT:
+        raise CodedHTTPException(
+            HTTP_422,
+            "DRAFT_RETIRED",
+            [field_error("status", "Draft is no longer a project status (ADR 0034).")],
+        )
     if "status" in updates and project.status == ProjectStatus.DRAFT:
         new_status = updates["status"]
         if new_status != ProjectStatus.DRAFT:
@@ -539,11 +580,11 @@ async def submit_project(
     db: AsyncSession = Depends(get_db),
     current_user: Principal = Depends(_write),
 ) -> Project:
-    """Leave `Draft` status, per `docs/PROJECT_AND_STACK.md` §2's hard gate:
-    "Hard gates enforce required fields before a project can leave draft
-    status." 422s with the list of missing fields if any hard-gate field is
-    still unset; otherwise transitions to `body.target_status` (default
-    `In Queue`).
+    """Legacy only (ADR 0034): nothing creates Draft any more, but a historic
+    Draft row still leaves it here, per `docs/PROJECT_AND_STACK.md` §2's
+    hard gate. 422 `HARD_GATE_FIELDS_MISSING` (the same shape as
+    `POST /projects`) if any hard-gate field is still unset; otherwise
+    transitions to `body.target_status` (default `In Queue`).
     """
 
     project = await _get_project_or_404(db, project_id, current_user)
@@ -575,14 +616,12 @@ async def submit_project(
             ),
         )
 
-    missing = missing_hard_gate_fields(project)
+    missing = missing_hard_gate_field_names(
+        {name: getattr(project, name) for name in _HARD_GATE_NAMES}
+    )
     if missing:
-        raise HTTPException(
-            status_code=HTTP_422,
-            detail={
-                "message": "Project cannot leave Draft status: required fields missing.",
-                "missing_fields": missing,
-            },
+        raise hard_gate_error(
+            missing, "Project cannot leave Draft status: required fields missing."
         )
 
     before_state = project_audit_state(project)

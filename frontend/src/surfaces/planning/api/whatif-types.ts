@@ -15,6 +15,8 @@ import type {
 
 export type WhatIfHub = 'R&D-Greece' | 'R&D-India' | 'PD-India' | 'PD-Romania' | 'OEM-HCK' | 'OEM-Seltek';
 export type WhatIfRegion = 'Greece' | 'India' | 'Romania';
+/** Wire mirror of `SchedulableStatusLiteral` (backend default "In Queue"). The UI
+ *  offers only `WHATIF_STATUSES` (P23-T01, no In Buyoff); the type stays complete. */
 export type WhatIfStatus = 'In Buyoff' | 'Under Industrialization' | 'In Development' | 'In Queue';
 export type WhatIfBasis = 'year' | 'remaining';
 export type WhatIfTarget = 'all_new_within_year' | 'no_existing_slips';

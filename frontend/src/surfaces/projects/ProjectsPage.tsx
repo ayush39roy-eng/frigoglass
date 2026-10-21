@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { FilePenLine, FilterX, Plus, Search, SlidersHorizontal } from 'lucide-react';
+import { FilterX, Plus, Search, SlidersHorizontal } from 'lucide-react';
 
 import { PageHeader } from '@/components/layout/page-header';
 import { Badge } from '@/components/ui/badge';
@@ -11,6 +11,7 @@ import { PanelSkeleton } from '@/components/ui/panel-skeleton';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { CharterColumnsToggle } from '@/components/shared/charter-fields';
 import { EmptyState } from '@/components/shared/empty-state';
 import { ErrorState } from '@/components/shared/error-state';
 import { CountrySegmented } from '@/components/shared/hub-filter/country-segmented';
@@ -27,7 +28,7 @@ import { usePermission, useSessionStore } from '@/stores/session';
 import {
   PROJECT_CATEGORIES,
   PROJECT_PRIORITIES,
-  PROJECT_STATUSES,
+  UI_PROJECT_STATUSES,
   PROJECT_TYPE_LABELS,
   PROJECT_TYPES,
   type ProjectCategory,
@@ -53,7 +54,9 @@ import type { RegistrationDrawerState, RegistrationSaved } from './components/re
  *
  * - the list / cards of every project in the caller's hub scope, from
  *   `GET /dashboard/projects` (`dashboard` read, so Executive Viewers keep it),
- *   with every filter, the Drafts chip and the sort sent to the server. The
+ *   with every filter and the sort sent to the server (P23-T01: the Status
+ *   filter offers `UI_PROJECT_STATUSES`, no In Buyoff / Draft; the Drafts chip
+ *   is gone). The
  *   count is the served `total_count`; nothing is counted in the browser (I9);
  * - "Register project" and each row's "Edit registration" open the
  *   registration form in a side drawer (`registration-drawer.tsx`), shown only
@@ -113,6 +116,8 @@ export default function ProjectsPage(): React.JSX.Element {
   const [search, setSearch] = React.useState('');
   const [sort, setSort] = React.useState<Sort>('name');
   const [view, setView] = React.useState<View>('list');
+  /** P24-T02: the optional read-only workbook columns (ADR 0035). */
+  const [showCharter, setShowCharter] = React.useState(false);
   const debouncedSearch = useDebouncedValue(search.trim(), 300);
   const { hubId, region, setHubId } = useHubFilter();
   const me = useSessionStore((st) => st.me);
@@ -167,7 +172,6 @@ export default function ProjectsPage(): React.JSX.Element {
 
   const hasLocalFilter = debouncedSearch !== '' || Object.values(filters).some((v) => v !== ALL);
   const isFiltered = hasLocalFilter || hubId !== null || region !== null;
-  const draftsOnly = filters.status_ === 'Draft';
 
   const set = (key: keyof Filters) => (next: string) => setFilters((prev) => ({ ...prev, [key]: next }));
   const clearLocal = (): void => {
@@ -375,7 +379,7 @@ export default function ProjectsPage(): React.JSX.Element {
               label="Status"
               value={filters.status_}
               onChange={set('status_')}
-              options={PROJECT_STATUSES.map((st) => ({ value: st, label: st }))}
+              options={UI_PROJECT_STATUSES.map((st) => ({ value: st, label: st }))}
             />
             <FilterSelect
               label="Priority"
@@ -413,17 +417,7 @@ export default function ProjectsPage(): React.JSX.Element {
               </Select>
             </div>
           </div>
-          <Button
-            type="button"
-            variant={draftsOnly ? 'soft' : 'secondary'}
-            size="sm"
-            aria-pressed={draftsOnly}
-            onClick={() => set('status_')(draftsOnly ? ALL : 'Draft')}
-            className={cn('rounded-pill', draftsOnly && 'ring-1 ring-primary/40')}
-          >
-            <FilePenLine aria-hidden="true" />
-            Drafts
-          </Button>
+          {view === 'list' ? <CharterColumnsToggle pressed={showCharter} onPressedChange={setShowCharter} /> : null}
           {hasLocalFilter ? (
             <Button type="button" variant="ghost" size="sm" onClick={clearLocal}>
               <FilterX aria-hidden="true" />
@@ -440,7 +434,7 @@ export default function ProjectsPage(): React.JSX.Element {
             <p className="flex flex-wrap items-center gap-2 rounded-lg border border-primary/30 bg-primary-subtle px-3 py-2 text-2xs text-primary-subtle-fg">
               <span>
                 {highlight.mode === 'create'
-                  ? `Registered “${highlight.name}” as a Draft.`
+                  ? `Registered “${highlight.name}”.`
                   : `Saved the registration of “${highlight.name}”.`}
                 {rows !== undefined && !highlightVisible ? ' It is not in the current filtered view.' : null}
               </span>
@@ -502,6 +496,7 @@ export default function ProjectsPage(): React.JSX.Element {
             onEdit={handleEdit}
             highlightId={highlight?.id ?? null}
             highlightLabel={highlight?.mode === 'create' ? 'New' : 'Updated'}
+            showCharter={showCharter}
           />
         )}
       </div>

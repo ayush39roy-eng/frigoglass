@@ -81,6 +81,9 @@ function registerRow(p: P): ProjectFilterRow {
     reg_year: 2026,
     carry_over: false,
     priority_rank: null,
+    plant: null,
+    requesting_department: null,
+    product_type: null,
   };
 }
 

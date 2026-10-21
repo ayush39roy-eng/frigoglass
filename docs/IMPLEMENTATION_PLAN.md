@@ -1970,6 +1970,7 @@ Frontend only; every number stays a served field (I9/I19).
 
 | ID | Task | Owner | Status |
 |---|---|---|---|
+| P19-R03 | Gate remediation, Gantt (P19 + P20 re-gate, qa): QA-P19-4 drag label calendar weeks from the unclipped span (`stepDragCalendar`: `fteSpanWeeks(work, fte)`, 1:1 without FTE) with ", to W53" / "past W52" past the plan year; QA-P19-3 focus returns to the narrow Details button when `GanttProjectDetailsDialog` closes (`onCloseAutoFocus`); O-R1 resize handle inset at the axis end | frontend-builder | DONE (MEMORY 2026-10-21) |
 | P19-R02 | Gate remediation, Gantt (P19 + P20 gate, qa): QA-P19-1 skipped step rows no longer dimmed with `opacity-60` (name muted token + strikethrough + "(skipped)", kind badge full contrast; activity strip `text-text-subtle/60` dot also removed); QA-P19-2 responsive fixed columns below 768 px (one name column, 40 % of the chart clamped 88..124 px, status column folded into a row icon + project details dialog, labelled focusable timeline region, 20 px touch handle; 1280+ unchanged); O1 drag label flips left of the cursor near the right edge and wraps when wider than the visible timeline | frontend-builder | DONE (MEMORY 2026-10-21) |
 | P19-R01 | Gate remediation, security (P19 + P20 gate): S19-M1 `GET /planning/resource-load` intersects `engineer_id` with the caller's hub scope before any predicate (none in scope = empty lists, zero totals; echo in-scope ids only); S19-L1/L2 explicit `null` on engineer / chamber PATCH is 422, integrity errors mapped (409 unique only) with no row values logged; S19-L3 strict engineer / chamber request models; S19-I1 note in ADR 0032 + OQ #8; add-on D2: seed docstring "scheduler ignores FTE" corrected | backend-builder | DONE (MEMORY 2026-10-21) |
 | P19-T01 | Frontend: Capacity page redesign (header toggles Weeks/Days + YTD/Full year; 4 KPI cards; class cards; two load-vs-capacity charts; booked tiles for all hubs and lab regions; compact hub summary table + Details dialog; collapsed utilization sections, lazy-fetched) | frontend-builder | DONE (MEMORY 2026-10-21) |
@@ -2020,7 +2021,56 @@ ruling, ADR 0033). Contract: `docs/API_CONTRACT_P21.md`.
 
 | ID | Task | Owner | Status |
 |---|---|---|---|
+| P21-R01 | Security remediation (P19 + P20 re-gate, security-auditor, two Lows): S21-L1 `CurrencyRateUpdateRequest` strict (`extra="forbid", strict=True`; a boolean, a string or an extra key gives 422, a JSON number gives 200 and is audited); S21-L2 `useSignOut` removes every `rpd-` sessionStorage key (incl. `rpd-matrix-compare`) and dispatches `rpd:signed-out` (no matrix import) | backend-builder | DONE (MEMORY 2026-10-21) |
 | P21-T01 | Backend: currencies EGP/ZAR/IDR with null rates + `name`/`configured` on `GET /currency-rates`, 422 `CURRENCY_NOT_CONFIGURED`, bounded rate PUT; score 0..5 (schemas, CHECK constraints, ADR 0033, DOMAIN_RULES); `dimension_scores` on matrix rows; `GET /priorities/distribution`; `GET /priorities/compare`; migration `p21a_currencies_score_zero`; contract `docs/API_CONTRACT_P21.md` | backend-builder | DONE (MEMORY 2026-10-21) |
 | P21-T02 | Frontend: Matrix currency picker on the served list (disabled when not configured, 422 handling), rubric columns from `dimension_scores`, financial columns out of the main table, distribution chart + histogram, compare dialog (2–5), score inputs 0..5; mirror the contract types (turns the P21 contract rows green) | frontend-builder | DONE (MEMORY 2026-10-21) |
 | P21-T03 | Frontend: Matrix scoring grid boxes and borders (pillar boxes with 2 px separators and alternating tint, identity / info / Score /100 blocks with 3 px separators, inner 1 px cell lines, score chips whose intensity follows the served 0..5 score, zebra + hover + selected rows across the frozen block, opaque sticky header/frozen cells, frozen-block shadow when scrolled sideways, wrapping centred dimension headers) | frontend-builder | DONE (MEMORY 2026-10-21) |
+| P21-T04 | Frontend: editable 0–5 scores in the Compare dialog (same permission rule and the same `PUT /priorities/{id}` body and mutation as the edit dialog; explicit per-project Save / Discard with dirty cells and a labelled preview; server refetch after save; Scenario mode stages; close guard; inline 403/422) + compare-selection reset on sign-out (S21-L2 second half) | frontend-builder | DONE (MEMORY 2026-10-21) |
+| P21-T05 | Frontend: Priority board moved into the Matrix as a second tab (`/matrix?view=board`, `/priority-board` redirects, nav entry removed); shared View panel filters and search; score writes also refresh the board and Workspace; Scenario marking on the board; Cards / List board layout (`layout=list`, per-user localStorage); stale links fixed in e2e | frontend-builder | DONE (MEMORY 2026-10-21) |
 | P21-T20 | Gate: qa, workflow, security | — | TODO |
+
+## P23 — UI clean-ups
+
+Opened 2026-10-21. Owner requests: "In Buyoff" and "Draft" removed from the UI (no project has either:
+In Queue 85, In Development 83, Cancelled 29, Under Industrialization 24, Commercialized 17, On Hold 15).
+Owner ruling (same day): Draft is dropped from registration; a new project is created In Queue once its
+hard-gate fields are set (ADR 0034, contract `docs/API_CONTRACT_P23.md`). The wire enum, the
+`ProjectStatus` type and the scheduler's status order (In Buyoff first) are unchanged.
+
+| ID | Task | Owner | Status |
+|---|---|---|---|
+| P23-T01 | Frontend: one shared `UI_PROJECT_STATUSES` (and `UI_SCHEDULABLE_STATUSES`) in `types/enums.ts` without In Buyoff / Draft, used by every filter, chip and select (Projects, Dashboard register, Gantt, Priority board, Matrix via `PROJECT_STATUSES`, leave-Draft target, what-if); Drafts chip removed; Dashboard "Other statuses" copy names only served statuses; badge still renders any status. Extension (owner ruling): registration drawer has one "Register project" action, client-side check of the 8 hard-gate fields (incl. priority), server 422 `HARD_GATE_FIELDS_MISSING` mapped onto the fields, Leave Draft kept only for a legacy Draft | frontend-builder | DONE (MEMORY 2026-10-21) |
+| P23-T02 | Backend: `POST /projects` validates the hard-gate fields up front (422 `HARD_GATE_FIELDS_MISSING` with `field_errors`), creates In Queue; PATCH to Draft is 422 `DRAFT_RETIRED`; priority joins the gate (ADR 0034); `UNKNOWN_LEADER` 422; legacy `/submit` shares the 422 shape; ORM Draft default removed; seed refuses Draft; contract `docs/API_CONTRACT_P23.md` | backend-builder | DONE (MEMORY 2026-10-21) |
+| P23-T20 | Gate: qa, workflow, security | — | TODO |
+
+## P24 — Real client data in the seed (ADR 0035)
+
+Opened 2026-10-21. Owner ruling: "go with your recommendations" on the workflow-auditor's seed
+data verification (MEMORY 2026-10-21). The `client_2026` seed uses the formula workbook's roster
+(17 people, real FTE), adds the 6 workbook leaders who are not on it as provisional engineers,
+leaves the 20 blank-leader projects unassigned (`no_leader`), uses the workbook chamber
+efficiencies, and stores plant / requesting department / product type, `Spillover '25` and the
+end dates. ADR 0024's tuning (leader cap, capacity engineers, FTE and efficiency tuning) is
+retired. Rubric scores stay synthetic and flagged. OQ #52–#62. The dev DB is reseeded by the owner.
+
+| ID | Task | Owner | Status |
+|---|---|---|---|
+| P24-T01 | Backend: extractor reads the roster (`RPD Capacity!I39:T50`), plant / product type / requesting department, end date (`target_end_week` rule) and `Spillover '25`; JSON regenerated; `seed/client_2026.py` real roster + provisional leaders + no invented assignment, tuning removed; `seed_demo_data` stores the new fields, `carry_over` / `reg_year`; migration `p24a_project_charter_fields`; `ProjectRead` and `ProjectFilterRow` serve the 3 fields (read-only); resource-load department filter + options; ADR 0035; OQ #52–#62; tests | backend-builder | DONE (MEMORY 2026-10-21) |
+| P24-T02 | Frontend: mirror `plant`, `requesting_department`, `product_type` (all `string \| null`) on `ProjectRead` (registration types), `WorkspaceProject` (project-workspace types) and `ProjectFilterRow` (dashboard types), turning those contract rows (and the WorkspaceProject nullability row) green; fix `e2e/p15-gate.spec.ts`, which picks engineer index 40 (the seed now has 23 engineers); show them read-only (register columns / Workspace); the Resource load analytics department filter now has served options; optionally label a no-leader left-out project ("No leader") — the reason is not served today, only `leader_engineer_id = null` + `LEFT_OUT` | frontend-builder | TODO |
+| P24-T20 | Gate: qa, workflow, security | — | TODO |
+
+## P25 — P1 capacity fill (ADR 0036)
+
+Opened 2026-10-21. Owner ruling: "P1 for score ≥ 70 is right, but if capacity is not full, add
+projects to P1 until capacity is full." Per hub, against the remaining-year design capacity (the
+Capacity page's `design_capacity_remaining`), using remaining design effort from the active run
+(ADR 0032). Candidates below 70 are walked by score descending, then `project_id`, and the walk
+stops at the first one that would exceed 100 %. Only the SUGGESTED band changes ("P1 (capacity
+fill)"); committed priorities stay a human decision. The fill is read only and never writes,
+audits or schedules. Contract: `docs/API_CONTRACT_P25.md`. OQ #51.
+
+| ID | Task | Owner | Status |
+|---|---|---|---|
+| P25-T01 | Backend: ADR 0036 + DOMAIN_RULES "P1 capacity fill"; pure walk `fill_p1_capacity` in `services/priority_scoring.py`; one-pass loader `services/priority_capacity_fill.py`; matrix rows / compare items gain `score_band`, `capacity_fill`, `capacity_fill_reason` (`suggested_band` = promoted band); `GET /priorities/capacity-fill`; distribution `capacity_fill_count` + summary `score_band_counts` / `capacity_fill_count` (promoted-band counts); contract `docs/API_CONTRACT_P25.md`; tests | backend-builder | DONE (MEMORY 2026-10-21) |
+| P25-T02 | Frontend: label promoted rows "P1 (capacity fill)" from the served `capacity_fill` (tooltip = `capacity_fill_reason`), show the per-hub fill from `GET /priorities/capacity-fill`, mirror the contract types (turns the six P25 contract rows green) | frontend-builder | DONE (MEMORY 2026-10-21) |
+| P25-T20 | Gate: qa, workflow, security | — | TODO |

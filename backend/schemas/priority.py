@@ -171,7 +171,16 @@ class PriorityMatrixRow(BaseModel):
     hard_gates: list[HardGateReason]
     weighted_score: float | None
     normalized_pct: int | None
+    #: ADR 0036 (P25): the suggested band AFTER the P1 capacity fill: `"P1"` when
+    #: `capacity_fill` is true, else `score_band`. Null when unscored.
     suggested_band: ProjectPriority | None
+    #: ADR 0036: the pure score band (>= 70 P1, >= 55 P2, >= 40 P3, else P4).
+    score_band: ProjectPriority | None
+    #: ADR 0036: promoted to P1 by the hub's P1 capacity fill (show "P1 (capacity fill)").
+    capacity_fill: bool
+    #: ADR 0036: short reason for a promoted, stopped or zero-load-skipped
+    #: candidate; null for every project the fill walk did not decide on.
+    capacity_fill_reason: str | None
     #: ADR 0029: per-dimension points keyed by dimension key; `null` when unscored.
     dimension_points: dict[str, DimensionPoints] | None = None
     #: P21-T01: the 13 dimensions in positional order (always 13 entries; the
@@ -204,7 +213,12 @@ class PriorityPortfolioSummary(BaseModel):
     scored_projects: int
     unscored_projects: int
     hard_gate_forced_count: int
+    #: ADR 0036: counts of the (capacity-fill promoted) `suggested_band`.
     suggested_band_counts: dict[str, int]
+    #: ADR 0036: counts of the pure `score_band`.
+    score_band_counts: dict[str, int]
+    #: ADR 0036: projects promoted to P1 by the capacity fill.
+    capacity_fill_count: int
     set_priority_counts: dict[str, int]
 
 
@@ -234,6 +248,9 @@ class PriorityDistribution(BaseModel):
 
     total_projects: int
     scored_projects: int
+    #: ADR 0036: rows of this set promoted to P1 by the capacity fill. They are
+    #: counted in the `"P1"` bucket of `band_distribution` (promoted band).
+    capacity_fill_count: int
     band_distribution: list[BandShare]
     score_histogram: list[ScoreHistogramBucket]
 
@@ -249,7 +266,11 @@ class PriorityCompareItem(BaseModel):
     has_score: bool
     weighted_score: float | None
     normalized_pct: int | None
+    #: ADR 0036: as on `PriorityMatrixRow` (promoted band, pure score band, flag, reason).
     suggested_band: ProjectPriority | None
+    score_band: ProjectPriority | None
+    capacity_fill: bool
+    capacity_fill_reason: str | None
     dimension_scores: list[DimensionScore]
 
 
@@ -257,3 +278,31 @@ class PriorityCompareResponse(BaseModel):
     """`GET /priorities/compare`: the projects in the order the ids were given."""
 
     projects: list[PriorityCompareItem]
+
+
+class HubP1Fill(BaseModel):
+    """ADR 0036 (docs/API_CONTRACT_P25.md §2): one hub's P1 capacity fill.
+    Effort weeks (ADR 0032), 2 dp.
+
+    - `capacity_weeks`: the hub's remaining-year design capacity, equal to
+      `GET /capacity/hub-load` `design_capacity_remaining` for the hub.
+    - `base_load_weeks`: Σ remaining design weeks (active run) of the hub's
+      projects whose score band is P1 (normalized score >= 70).
+    - `filled_load_weeks`: `base_load_weeks` + the promoted projects' weeks
+      (`<= capacity_weeks` whenever `promoted_count > 0`).
+    """
+
+    hub: HubName
+    capacity_weeks: float
+    base_load_weeks: float
+    filled_load_weeks: float
+    promoted_count: int
+
+
+class PriorityCapacityFill(BaseModel):
+    """`GET /priorities/capacity-fill`: the P1 capacity fill of every hub in the
+    caller's scope (narrowed by `hub_id` / `region`), ordered by hub name."""
+
+    has_active_schedule_run: bool
+    schedule_run_version: int | None
+    hubs: list[HubP1Fill]

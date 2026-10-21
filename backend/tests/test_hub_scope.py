@@ -46,6 +46,7 @@ from tests.factories import (
     make_schedule_run,
     make_user,
     make_workflow_step_template,
+    registration_body,
 )
 
 # --------------------------------------------------------------------------
@@ -271,9 +272,10 @@ async def test_projects_create_in_scope_hub_allowed(db_session):
     hub_a = await make_hub(db_session, name=HubName.RD_GREECE, lab_region=LabRegion.GREECE)
 
     try:
+        leader = await make_engineer(db_session, hub_a)
         async with await _as_scoped_hub_planner(db_session, [hub_a.id]) as client:
-            resp = await client.post("/projects", json={"name": "X", "hub_id": str(hub_a.id)})
-        assert resp.status_code == 201
+            resp = await client.post("/projects", json=registration_body(hub_a, leader))
+        assert resp.status_code == 201, resp.text
     finally:
         _teardown()
 

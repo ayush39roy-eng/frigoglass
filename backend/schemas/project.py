@@ -23,13 +23,15 @@ from models.enums import HubName, ProjectCategory, ProjectPriority, ProjectStatu
 
 
 class ProjectCreateRequest(BaseModel):
-    """Only `name` and `hub_id` are required — every other field may be filled
-    in later while the project sits in `Draft` (per
-    `docs/PROJECT_AND_STACK.md` §2's "Hard gates enforce required fields
-    before a project can leave draft status" — a Draft row must be creatable
-    before those gates are satisfied, per the P1-T01 `ProjectStatus.DRAFT`
-    decision). `status` is intentionally not accepted here — every new
-    project starts in `Draft`; see `POST /projects/{id}/submit` to leave it.
+    """ADR 0034 (2026-10-21): registration creates the project `In Queue`.
+
+    `name` and `hub_id` are schema-required (a missing one is FastAPI's
+    validation 422). The hard-gate fields (`services.project_hard_gates.
+    HARD_GATE_FIELDS`: leader, category, type, actual start week, TCOGS,
+    selling price, gross margin, priority) stay `Optional` in the schema so
+    that a missing one is reported by the router as one 422
+    `HARD_GATE_FIELDS_MISSING` listing every missing field
+    (docs/API_CONTRACT_P23.md §2). `status` is not accepted here.
     """
 
     #: `extra="forbid"` per `docs/PROJECT_AND_STACK.md` §3's "Pydantic v2
@@ -77,7 +79,7 @@ class ProjectUpdateRequest(BaseModel):
     `status` may be changed here EXCEPT to leave `Draft` — that transition
     must go through `POST /projects/{id}/submit`, which runs the hard-gate
     check. Attempting to set `status` away from `Draft` via this endpoint
-    raises 400.
+    raises 400. ADR 0034: `status: "Draft"` is a 422 `DRAFT_RETIRED`.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -135,6 +137,10 @@ class ProjectRead(BaseModel):
     certification_testing_required: bool
     estimated_design_weeks: float | None
     estimated_lab_weeks: float | None
+    #: ADR 0035: the client workbook's charter fields, as written (read-only).
+    plant: str | None
+    requesting_department: str | None
+    product_type: str | None
     #: Progress or settings changed since the active run (ADR 0006).
     schedule_stale: bool
     #: "PDD" | "OEM", a function of the hub (ADR 0007).
@@ -155,6 +161,7 @@ class HardGateStatus(BaseModel):
     """Response for `GET /projects/{id}/hard-gate-status` — lets the frontend
     show which fields are still missing before a Draft project can be
     submitted, without guessing at the submit endpoint's validation rules.
+    ADR 0034: only legacy Draft rows still need it.
     """
 
     can_leave_draft: bool

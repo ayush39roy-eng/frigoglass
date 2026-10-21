@@ -122,4 +122,19 @@ describe('StatusOverviewCards', () => {
     expect(screen.getByTestId('status-bar-on-hold')).toHaveStyle({ width: '0%' });
     expect(screen.getByTestId('status-other')).toHaveTextContent(/^Other statuses: 0$/);
   });
+
+  it('P23-T01: the copy names only the served "other" statuses (no hard-coded In Buyoff / Draft)', async () => {
+    render(<StatusOverviewCards data={{ ...DATA, other_statuses_count: 29, other_statuses_counts: { Cancelled: 29 } }} />);
+    await userEvent.click(screen.getByRole('button', { name: 'Status overview source' }));
+    const source = await screen.findByRole('dialog');
+    expect(source).toHaveTextContent('"Other statuses" (Cancelled) add up to the total.');
+    expect(source).not.toHaveTextContent('In Buyoff');
+    expect(source).not.toHaveTextContent('Draft');
+    await userEvent.keyboard('{Escape}');
+    await userEvent.click(screen.getByRole('button', { name: 'Other statuses breakdown' }));
+    const breakdown = await screen.findByRole('dialog');
+    expect(breakdown).toHaveTextContent('Cancelled: 29');
+    expect(breakdown).not.toHaveTextContent('In Buyoff');
+    expect(breakdown).not.toHaveTextContent('Draft');
+  });
 });

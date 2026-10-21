@@ -27575,3 +27575,928 @@ hit-test, so qa can tighten it on re-gate.
 - Restart :8001 so `span_fte` is served again (owner / infra).
 
 Nothing committed.
+
+## [2026-10-21] P19 + P20 re-gate — workflow-auditor — FAIL (D1, D2 closed; every number reconciles after P19-T06/T07/R01/R02; 3 handover/spec docs still say the scheduler ignores FTE)
+
+Method: read-only on code. I used my own disposable Postgres 17 on :55442 (container `wa-p19rg-pg`, removed afterwards). :5433, :8001, :5183 and the qa containers were not touched. Setup: `alembic upgrade head` (head `p21a_currencies_score_zero`), `seed_demo_data --dataset client_2026 --schedule` (253 projects, run v1, within-year 67, the same as my first run), `seed_dev_users`. The checks ran in-process over ASGI with principal overrides (Portfolio Manager; Hub Planner PD-India). Scripts: session scratchpad `rg/`.
+
+**Scheduler unchanged, so no re-run.** The `backend/scheduling/*` files were last modified at 14:25. My first gate run was 15:07–15:18. Commits 7e6e707 and 9dd2d72 only committed the P20 code I had already verified. `api/routers/capacity.py` was last modified at 14:39, also before my run. `planning.py` is the R01 change, reconciled below.
+
+**D1 closed.** `frontend/src/surfaces/capacity/components/hub-summary-table.tsx:241` `BOOKED_NOTE` reads: "Load counts work weeks, including work scheduled past W52, and is not capped at capacity. Part-time leaders stretch the calendar, not the load. …" This is correct under ADR 0032. Load 1338 is Σ effort `duration_weeks`, spillover included. `BOOKED_NEAR_100_NOTE` is gone, and a test asserts the old wording is absent.
+
+**D2 closed.** `backend/seed/seed_demo_data.py:16-20` now says FTE sets a leader's design speed since ADR 0032, and that chamber efficiency is capacity-only (OQ #3).
+
+**Grep sweep.** I searched for wording that says FTE does not affect scheduling, that the scheduler ignores FTE, or that load counts calendar / elapsed / every scheduled week.
+- `frontend/src` and `backend` (outside tests): clean. Every hit cites ADR 0032 correctly. The `services/step_timing.py:30,228` "ignores timing on skipped steps" hit is unrelated.
+- Already annotated as superseded, OK: DOMAIN_RULES known defect #1 (:329, "Closed 2026-10-21"), OQ #2 (Answered block), ADR 0002 (Status: Superseded), ORACLE_DIVERGENCE :168 (post-P2 note).
+
+Stale docs that are not annotated (these block the gate):
+- **D3** `docs/HANDOVER/ADMIN_GUIDE.md:158-163` says "**the scheduler itself does not apply FTE or chamber-efficiency scaling when booking**", citing ADR 0002/0003. This is the client admin guide and it states the opposite of ADR 0032. The same RPD Capacity section (:153-157) also still lists the class breakdown chart and the chamber utilization heatmap, both removed by P19-T07.
+- **D4** `docs/HANDOVER/DATA_MIGRATION_PLAN.md:140` says "FTE is **reporting-only**, not applied by the scheduler (ADR 0002)". `:403-405` cites ADR 0002 for why FTE is "reporting-only". This is material for the go-live load: FTE now sets schedule length, and FTE ≤ 0 or non-finite on a leader is a `data_error` (ADR 0032 §4). The `fte` validation row should say > 0, finite, and that it gates design speed.
+- **D5** `docs/PROJECT_AND_STACK.md:46-49` says "FTE scaling and chamber efficiency currently do not affect scheduling itself (known prototype defects, pending ADR)". This is the spec. FTE is now decided (ADR 0032). The same paragraph's "global resource utilization matrix (engineers × weeks, chambers × weeks)" is also stale after P19-T06/T07.
+
+Non-blocking:
+- **O5** `docs/CLIENT_QUESTIONS.md:62-64` says "We currently do not apply FTE to scheduling at all". This is a dated question to the client and has since been answered. It should get an "Answered 2026-10-21, ADR 0032" note like OQ #2.
+
+**Reconciliation after P19-T06 / T07 / R01 / R02. Every check passes.**
+- Merged "Load vs. capacity by hub" table against `/capacity/hub-load`. I applied the table's selection logic (`groupByHubFamily`, `firstHubPerLabRegion`, `pickFigures`) to the served payload.
+  - Family groups are correct: R&D = R&D-Greece, R&D-India; PD = PD-India, PD-Romania; OEM = OEM-HCK, OEM-Seltek. No hub falls into "Other".
+  - Lab figures show once per region, on R&D-Greece (Greece), R&D-India (India) and PD-Romania (Romania). All 13 lab fields are identical across the rows that share a region, so showing them once hides nothing.
+  - The served total counts each region once: lab load 316 (a naive per-row sum would be 630), capacity 325.3 / 62.56 (naive sum 648.7 / 124.75), and `lab_regions` = Greece, India, Romania. The lab total equals the Σ of stored-run lab `duration_weeks`.
+  - Design totals equal Σ rows: 1338 / 1717.55 / 77.9 %. Row design loads equal the stored-run Σ per project hub.
+  - Gaps equal load − capacity on both horizons.
+  - Priority splits: the design split sums to the row load; the lab total split counts each region once. The day totals do the same.
+  - Hub Planner PD-India: one PD group and one India lab row (270 / 279.62). The totals equal that row. 0 problems.
+- `/planning/resource-load` against `engineer-utilization total_booked` after the R01 scoping change:
+  - Unfiltered, Portfolio Manager: 59 engineers, Σ 1338.0 = Σ `total_booked`. Every row matches, and every row equals the independent stored-run Σ. Chambers Σ 316.
+  - Unfiltered, Hub Planner: 35 PD-India engineers, Σ 794 = Σ `total_booked`.
+  - In-scope `engineer_id`, Portfolio Manager (3 ids: PD-Romania, R&D-India, PD-India): only those 3 are listed, each load equals `total_booked`, and the total 120 equals their Σ. Chamber load (projects that touch them) is 54, independently checked at 54. The echo lists all 3.
+  - In-scope `engineer_id`, Hub Planner (3 PD-India ids): total 112 = Σ `total_booked`; chamber 24, independently 24.
+- R01 out-of-scope: Hub Planner PD-India with an R&D-Greece engineer id gets a 200 body byte-identical to an unknown uuid's: 0 engineers, 0 chambers, all totals 0.0, `utilization_pct` null. Mixed in-scope + out-of-scope ids give the same result as the in-scope id alone, and the echo contains only the in-scope id.
+- **O6 (explained, not a defect, not from R01).** The Hub Planner's resource-load engineer total (794) differs from hub-load PD-India design load (782). Hub-load counts load by project hub (I6). Resource-load counts it by assigned engineer. The cross-hub assignments: 18 weeks of R&D-India projects are led by PD-India engineers, and 6 weeks of PD-India projects by R&D-India engineers. 782 − 6 + 18 = 794. A further 20 weeks of R&D-Greece projects are led by OEM-HCK engineers. The Capacity Planning page does not show both figures (capacity-summary serves no load). On RPD Capacity, the engineer heatmap has no hub total. A footnote would help if the owner ever puts the two side by side.
+
+**Gate: workflow-auditor FAIL for P19 + P20 (+P17-R05..R09) on D3, D4, D5.** These are docs-only, in the same class as D1/D2: living handover/spec documents that contradict ADR 0032. Every invariant and reconciliation holds. To re-gate, fix D3–D5 (and ideally O5) and re-run the grep. No numeric re-run is needed unless `backend/scheduling`, `api/routers/capacity.py`, `planning.py` or `dashboard.py` changes.
+
+## [2026-10-21] P19 + P20 re-gate (+P21/P22 review) — security-auditor: PASS (0 Critical, 0 High, 0 Medium, 2 Low, 2 Info; S19-M1 and S19-L1..L3 closed, S19-I1 documented)
+
+Scope: P19-R01 (`api/routers/planning.py`, `engineers.py`, `chambers.py`, `schemas/engineer.py`, `chamber.py`, ADR 0032,
+OQ #8), P19-R02 (`surfaces/gantt`), P21-T01 (`api/routers/priorities.py`, `currency_rates.py`, `exports.py`,
+`schemas/priority.py`, `schemas/currency.py`, `services/currency.py`, migration `p21a_currencies_score_zero`), P21-T02/T03
+(`surfaces/matrix`, `lib/compare-selection.ts`), P22-T01 (`surfaces/projects`, `app/register-redirect.tsx`,
+`use-edit-deep-link.ts`, `project-form.tsx`). Read-only review. Method: code read, plus a new scratchpad probe file
+`sec/test_sec_probe3.py` (44 probes). It was copied briefly into `backend/tests/` so the conftest testcontainers Postgres
+could run it, then deleted. Also ran `pytest test_p19_r01_security test_p21_matrix test_p19_planning_capacity
+test_p20_fte_followups test_openapi_frontend_contract`: 349 passed. :5433 / :8001 / :5183 not touched.
+
+Verified closed:
+- **S19-M1 closed.** `_in_scope_engineer_ids` intersects the ids with `hub_scope_filter` before any predicate is built.
+  Probe as an OEM-HCK Hub Planner: Alpha, Beta, Alpha+Beta, Gamma (another region) and a random UUID gave
+  **byte-identical** bodies, with empty engineers and chambers, zero totals and `filters_applied.engineer_id == []`.
+  With `region=Greece` added, the out-of-scope and unknown bodies were still identical. None of these ids appears in any
+  audit `after_state` (`filter_key`) for that user. A Portfolio Manager still gets their in-scope id echoed and applied.
+- **S19-L1 / L2 closed.** Explicit null on engineer `fte` / `name` / `allowed_categories` / `hub_id`, and on all 9
+  chamber fields, gives 422. Probed the integrity paths with caplog at DEBUG:
+  - engineer POST with an unknown `user_id` gives 422;
+  - engineer POST with an already-linked `user_id` gives 409;
+  - engineer DELETE of a referenced engineer gives 409;
+  - chamber POST with a duplicate code gives 409.
+  In all four the log holds no name, no row value (`0.777` probe), no "Failing row" and no "DETAIL". Only the SQLSTATE and
+  constraint name are logged, and the exceptions are raised `from None`. The engine has `hide_parameters=True`.
+- **S19-L3 closed.** These give 422:
+  - engineer `fte` true / "0.5" / "1", `name` 5 / true, `allowed_categories` "A" / [1], `hub_id` 5;
+  - chamber `max_concurrent` true / "3", `platforms` "2" / 2.0, `efficiency` true / "0.5", `maintenance_weeks` "2",
+    `code` 7, `allowed_stages` "LAB-A";
+  - create with `fte` true / "1".
+  The frontend-shaped payloads pass: `fte: 1` with categories and `user_id: null`, and chamber create with integer
+  numbers plus the retired `weeks_per_chamber`.
+- **S19-I1 documented.** ADR 0032 has "Follow-up: `span_fte` withholding is not confidentiality", and OQ #8 has the
+  dated 2026-10-21 note.
+
+New code reviewed:
+- **P19-R02 (Gantt).** The details dialog reads only fields already on the served Gantt row (name, priority, VIP,
+  tracking, frozen, id, plus the moved meta and weeks components). Freeze is behind `canWrite`, and the server re-checks.
+  `gantt.py` is unchanged, so `span_fte` is still null for non-editors. The frontend `?? null` fallback only changes the
+  label text.
+- **P22-T01 (Projects merge).**
+  - The drawer, and so the shared form with its "Financial" fieldset, can only be opened from Register (`canWrite`),
+    from row Edit (`canEdit={canWrite}`), or from the deep link (`useEditDeepLink(registration.write)`). The deep link
+    fetches only when enabled and the id is a UUID, and it always drops the param.
+  - The server stays authoritative for the financials on `GET /projects/{id}` and the registration export (no backend
+    change).
+  - `RegisterRedirect` always navigates to a path starting with `/projects`. The `:projectId` is set via
+    `URLSearchParams`, so there is no open redirect.
+- **P21-T01.**
+  - **Currency PUT:** Admin and Super Admin only. Hub Planner, Portfolio Manager, Executive Viewer, Engineer and Auditor
+    get 403 and no audit row is written.
+  - **Currency bounds:** 0, -1, 1e6, 1e309, NaN, null, 0.00001 and an extra key all give 422.
+  - **Currency audit:** `before_state` shows null to rate, `after_state` the new rate, plus `updated_by_user_id`.
+  - **Compare:** uses `hub_scope_filter` like `GET /priorities/{id}`. A mixed in-scope + out-of-scope request, an unknown
+    id, and an all-out-of-scope request give byte-identical 422 `COMPARE_PROJECT_UNAVAILABLE` bodies that echo no id.
+    Six ids and a non-UUID give 422.
+  - **Distribution:** uses the same `_matrix_projects` scope as the list. For a Hub Planner, an out-of-scope `hub_id`, an
+    unknown `hub_id` and `region=Greece` all give 0 and identical bodies.
+  - **Roles:** Engineer and Auditor get 403 on both endpoints; Executive Viewer gets 200.
+  - **No financial fields:** compare keys are only id / name / hub / set_priority / has_score / weighted_score /
+    normalized_pct / suggested_band / dimension_scores. Neither compare nor distribution contains a financial key or
+    the leader.
+  - **Migration:** only constant DDL and bound parameters.
+- **P21-T02.** No `dangerouslySetInnerHTML` or `innerHTML` in matrix, projects, gantt or registration. No dependency,
+  compose, Nginx, CSP or TLS change in this delta, so the headers and TLS posture are unchanged.
+
+Findings:
+| ID | Sev | Finding | Fix |
+|----|-----|---------|-----|
+| S21-L1 | Low | `CurrencyRateUpdateRequest` is lax, not strict. `PUT /currency-rates/EGP {"rate_to_eur": true}` gave 200 and stored 1.0. `{"rate_to_eur": "17000"}` gave 200. Both were audited. Admin only, bounded and audited, so there is no escalation, but a typo or wrong JSON type silently misprices a currency. It is the same class as S19-L3, which CLAUDE.md requires to be strict. | `ConfigDict(extra="forbid", strict=True)` on the model (a strict float still accepts a JSON integer). Add a test. |
+| S21-L2 | Low | The Matrix compare selection (`rpd-matrix-compare` in sessionStorage) holds `{id, name, hub}`, not ids only. `useSignOut` (`lib/auth/use-sign-out.ts`) clears the query cache and the session store but not this store. The next user in the same tab sees the previous user's selected project names and hubs in the sticky compare bar, even outside their own hub scope. Project names can embed a customer name (e.g. "… Heineken …"). Compare itself then 422s, so no score leaks. | In `useSignOut`, call `useCompareSelection.getState().clear()` and `sessionStorage.removeItem('rpd-matrix-compare')`. Optionally key the store by user id, or keep ids only and resolve names from the served rows. |
+| S21-I1 | Info | `project_access.py:156` and `workspace.py:562` (pre-existing, outside this delta) still raise their 409 `from exc`. That is harmless today because FastAPI does not log handled `HTTPException`s, but it differs from the P19-R01 pattern. | Optional: `from None`. |
+| S21-I2 | Info | The deep link is gated on `registration.write`, not on `canWrite` (which also turns false after a 403 has been seen). After a 403 downgrade a deep link can still fetch `GET /projects/{id}`. The server authorises that call and serves only what the role may see, so nothing is exposed. | None needed. |
+
+Carried: S19-I3 (frontend FTE 0.01–9.99 mirror) and S19-I4 (audit `filter_key` digest) are optional; S18-L1..L4 are
+unchanged. OQ #8 / P4-T08: the ADR 0028 owner ruling stands. No new per-engineer exposure in this delta.
+**Gate result: PASS** for P19 + P20 re-gate. The P21-T01..T03 / P22-T01 / P19-R02 review has no High or Critical.
+S21-L1 and S21-L2 should ride with the next backend and frontend remediation, before production.
+
+## [2026-10-21] P19 + P20 re-gate 2 — workflow-auditor — PASS (D3, D4, D5 and O5 closed; 1 low doc observation)
+
+Method: read-only. Docs-only remediation, so no numeric re-run. The numbers from re-gate 1 stand (`git status` shows no change under `backend/scheduling`, `backend/api` or `frontend/src/surfaces/capacity`). I re-ran the grep sweep over `docs` (excluding MEMORY.md), `frontend/src` and `backend` (excluding tests) for wording that says FTE does not affect scheduling, that the scheduler ignores FTE, that FTE is reporting-only, or that load counts calendar / elapsed / every scheduled week.
+
+- **D3 closed.** `docs/HANDOVER/ADMIN_GUIDE.md:149-165`, §3.2 RPD Capacity, is rewritten. It now says:
+  - load counts work weeks, including work past W52, not capped;
+  - FTE sets a leader's design speed since ADR 0032 (0.5 FTE: 4 weeks of work take 8 calendar weeks), so part-time leaders stretch the calendar, not the load;
+  - chamber efficiency is still capacity-only (ADR 0003);
+  - the page has the family tiles and the merged table, and the class bar chart and chamber heatmap were removed (P19-T07).
+
+  Everything there matches ADR 0032 and the shipped page.
+- **D4 closed.** `docs/HANDOVER/DATA_MIGRATION_PLAN.md:140`: the `fte` row gives the 0.01–9.99 range, says FTE sets design speed (`ceil(work / FTE)`), and warns that FTE ≤ 0 makes the leader's projects a `data_error`, so every row should be validated before import. `:400-406` cites ADR 0032, which supersedes ADR 0002. The 0.01–9.99 range is the P20-T02 request bound. The scheduler rule (≤ 0 or not finite is a `data_error`) is consistent with it.
+- **D5 closed.** `docs/PROJECT_AND_STACK.md:44-49` now matches the current page: merged table by hub family, engineer heatmap on request, chamber matrix removed. It also states FTE gates design speed, efficiency is still reporting-only, and load is in work weeks.
+- **O5 closed.** `docs/CLIENT_QUESTIONS.md:64-65` has "Answered 2026-10-21 … half speed … ADR 0032" after the original question text.
+- **Remaining sweep hits, all acceptable:**
+  - These are already annotated as superseded: DOMAIN_RULES :329 (known defect #1, "Closed 2026-10-21"), OPEN_QUESTIONS #2 (:36/:39, Answered block), ADR 0002 (Status: Superseded) and ORACLE_DIVERGENCE (post-P2 note).
+  - `IMPLEMENTATION_PLAN.md:1974` quotes the old wording as a fix description.
+  - `DATA_MIGRATION_PLAN.md:406` says "no longer reporting-only", which is correct.
+  - `backend/scheduling/workflow.py:378` and `whatif.py:164` contain the phrase "scheduler itself does not" but are about canonical input and calendars, not FTE.
+  - `frontend/src` and the rest of `backend` have no hits.
+
+**Observation (non-blocking, not an ADR 0032 claim).**
+- **O7** `docs/HANDOVER/ADMIN_GUIDE.md:167-171` "Known gap, not yet enabled" still says the utilization matrix on RPD Capacity shows only chamber utilization and that per-engineer utilization is withheld behind a placeholder. That contradicts the rewritten bullets just above (:158-159: engineer heatmap on request, chamber heatmap removed in P19-T07). Suggest rewording it to say the engineer heatmap is shown to the roles that may read it, pending the OQ #8 DPO ruling. Owner of the doc: whoever maintains the handover set.
+
+**Gate: workflow-auditor PASS for P19 + P20 (+P17-R05..R09).** D1–D5 are closed. All invariant and reconciliation checks from the first gate and re-gate 1 hold. No known-defect behaviour changed without an ADR: FTE is ADR 0032; chamber efficiency and delay are untouched.
+
+## [2026-10-21] P21-R01 — Security remediation S21-L1 (strict currency PUT) + S21-L2 (sign-out clears `rpd-` sessionStorage) (backend-builder): DONE
+
+Source: the "P19 + P20 re-gate (+P21/P22 review) — security-auditor" entry above (two Lows). Nothing under
+`frontend/src/surfaces/matrix/` was edited (another agent owns it for P21-T04/T05). Disposable DB only (conftest
+testcontainers Postgres). :5433 / :8001 / :5183 not touched.
+
+- **S21-L1.** `backend/schemas/currency.py::CurrencyRateUpdateRequest` is now `ConfigDict(extra="forbid", strict=True)`.
+  The field stays `float`, with the existing bounds (`ge=0.0001`, `lt=1_000_000`, `allow_inf_nan=False`). A strict
+  `float` still accepts a JSON integer. A strict `Decimal` would reject a JSON float, so it was not used. On
+  `PUT /currency-rates/{code}`, `true`/`false`, `"17000"`/`"1.5"`/`"1e2"`/`""` and an extra key now give 422, with
+  no write and no audit row. `2` and `1.25` give 200, are stored as `Numeric(10,4)` and write one audit row each with
+  the actor set. Router unchanged. Frontend check (read only): `fx-rate-editor.tsx` sends
+  `rateToEur: Number(draft)`, and only after `Number.isFinite(parsed) && parsed > 0`. `matrix-api.ts` sends
+  `{rate_to_eur: rateToEur}` (typed `number`) through `apiSend`, which calls `JSON.stringify`. So the body holds a
+  JSON number and no caller breaks. No other PUT caller exists in `frontend/src` or `e2e`.
+  Tests: 4 new in `backend/tests/test_currency_api.py`.
+- **S21-L2.** `frontend/src/lib/auth/use-sign-out.ts`:
+  - New exported `clearAppSessionStorage()` removes every `sessionStorage` key with the `rpd-` prefix
+    (`APP_SESSION_STORAGE_PREFIX`). It collects the keys first and then removes them, inside try/catch.
+  - `useSignOut` calls it after `reset()`.
+  - `useSignOut` then dispatches the window event `SIGNED_OUT_EVENT = 'rpd:signed-out'` before navigating.
+  - The matrix store is not imported.
+  - `rpd-dev-user-email` was already cleared by `setDevUserEmail(null)`. The localStorage stores (`rpd-hub-filter`,
+    `rpd-ui`, `rpd-preferences`, theme) are untouched, since they are per-browser preferences and not per-user data.
+  - New test `frontend/src/lib/auth/use-sign-out.test.tsx` (3 tests): the `rpd-` keys are removed, unrelated keys are
+    kept, the event fires after the clear, and sign-out still works when storage throws.
+- **Open, handed to the matrix agent (P21-T04/T05).** Removing the storage key is not enough by itself.
+  - `useCompareSelection` (zustand `persist`) hydrates once, at module load. Sign-out is an SPA navigation to
+    `/login`, not a reload, so the store's in-memory `items` survive.
+  - The next user in the same tab still sees them in the compare bar.
+  - The next `set()` (any toggle) writes the old items back to `rpd-matrix-compare`.
+  - Fix inside `compare-selection.ts`: a module-level listener that clears the store,
+    `window.addEventListener('rpd:signed-out', () => useCompareSelection.getState().clear())`. Rehydrating is not
+    enough, because `persist.rehydrate()` on an empty storage keeps the current in-memory state.
+  - Until that lands, S21-L2 is closed for a reload or a new tab, but not for a same-tab SPA sign-out.
+
+Results: `pytest test_currency_api test_p21_matrix test_user_admin_api test_openapi_frontend_contract` 288 passed (the
+coverage-floor message comes only from running a subset). `ruff check` and `ruff format --check` on the touched backend
+files are clean. Frontend: `tsc -b` clean. `vitest run src/lib/auth src/components/layout/app-header.test.tsx`: 3 files,
+11 tests passed. eslint on `use-sign-out.ts` and its test: 0 problems.
+
+## [2026-10-21] Seed data verification against the client workbook (workflow-auditor) — report only, no gate verdict
+
+The owner reported "too many employees on Capacity Planning". I ran a read-only field-by-field check. Dev DB: SELECT only. Comparison seeds ran on a disposable PG17 container (removed afterwards). :8001 and :5183 were not touched. Full report: session scratchpad `data-verification.md`. It contains no financial values or customer names.
+
+**Sources.**
+- **FW**: `reference/Formula-…xlsx`, 2026-09-15. Holds the roster, calendars and chambers in `RPD Capacity`, and lead times in `Final RPD`.
+- **MW**: `~/Downloads/24-25-26 Global RPD Project Pipeline.xlsx`, 2026-10-13, the full projects sheet. `extract_client_2026.py` on MW reproduces `client_2026_seed_data.json` byte for byte.
+- **CA**: the client's older app (17 engineers, 239 projects, Apr–May).
+
+**Findings.**
+- **Engineers.** 59 = 18 workbook project leaders + **41 synthetic** "<hub> Engineer n". The synthetics come from ADR 0024: the 4-open-project cap, blank leaders, hubs without a leader, and `tune_fte`.
+  - The real roster (`RPD Capacity!I42:T50`) is 17 people + 2 zero-FTE placeholders, Σ FTE 14.3 (PD-India 5.75, R&D-India 2.0, R&D-Greece 2.8, PD-Romania 3.75, no OEM). Ours is 38.89 (21.89 / 10.64 / 1.0 / 3.13 / 1.24 / 0.99).
+  - Missing: Dimopoulou, Lioumis, Kanarios, Praveer Kumar Singh, Ayush Kumar.
+  - Not on the roster: Dipak (52 projects), Elena Micu (12), Theoni (9), Marian, Sailesh, Antonis.
+  - Ashish is in the wrong hub (PD-India; roster says R&D-India).
+  - All FTEs and the all-category eligibility are tuned or synthetic. 141 open projects are led by synthetic engineers.
+  - CA differs from FW: Rishi 0.5 (FW 1.0), Atul 0 (FW 0.5).
+- **Chambers.**
+  - Count, platforms and downtime are correct.
+  - Efficiency is tuned on all 10 chambers.
+  - `allowed_stages` come from the prototype. The client's own test mapping (CA `data.xlsx` `Lab Capacity`) says India CH-2 and CH-3 "ALL test" and Greece "POC & Certification". Ours has IN-CH2 and GR-CH2 POC-only.
+- **Calendars.** These match FW, with two exceptions: India medical leave is 7/5 in FW (ours 7/6, +0.23 working weeks), and the OEM calendars are an assumption.
+- **Capacity.** Served supply = the ADR 0008 formula on the stored inputs (verified to 2 dp). Every difference from FW is an input difference (tuned FTE/efficiency, the divisor above, chamber holiday basis) or one of FW's own errors.
+- **Lead times.** 98 cells and all 3542 step durations are correct.
+- **Step kinds.** CA's "For Gannt" responsibility row conflicts with ADR 0007 kinds (PDD-A Marketing; OEM D/E/I–N done by OEM). OQ #13/#14.
+- **Projects (253).**
+  - Name, hub, category, status and reg_year are correct.
+  - Type is null on 67 (BC/AC/SER not in the enum).
+  - 149 generated codes.
+  - Priority band synthetic on 222.
+  - Plant, requesting department and product type are available (253/237/250) but not stored.
+  - target_end is missing on 22 (15 in 2026).
+  - carry_over is false while MW `Spillover '25` = Y on 17.
+  - 39 open + 61 On Hold pre-2026 projects are not seeded.
+  - The hub spelling Seltek vs the workbook's Seitek needs confirming.
+  - R&D-India has 29 projects in MW vs 2 in the FW pivot / CA.
+- **Priority dimensions.** 253/253 are synthetic (`derive_dims`). No source holds 13-dimension scores.
+
+**Impact of the real roster** (disposable DB, CW 42, ADR 0032 active, greedy; every run I8-identical, 0 invariant violations, 0 ENG_CONFLICT):
+
+| Scenario | Within year (open) | Left out |
+|---|---|---|
+| Current seed | 67 (50) | 59 |
+| FW roster | 54 (37) | 102 |
+| CA roster | 53 (36) | 95, plus 10 data_error from Atul at FTE 0 |
+| FW roster + the 6 non-roster leaders | 53 (36) | — |
+
+- Under the FW roster, design booked % is PD-India 196 %, R&D-India 258 %, Greece 34 % and Romania 84 %. Lab booked % is India 121 %, Greece 30 % and Romania 11 %.
+- The OEM hubs keep their load with 0 capacity (status "full", null %).
+- The client chamber-stage mapping changes no within-year count.
+
+**Not a gate result** (no phase gate in progress). There are no code defects in the formulas or the scheduler. Every gap is seed data, which ADR 0024 already labels as demo tuning.
+
+**Client decisions needed:**
+1. FW or CA roster.
+2. Status of the non-roster leaders, and who takes the 97 projects with a non-roster or blank leader.
+3. OEM leaders, OEM capacity and calendar, and the hub spelling.
+4. Allowed categories (sources conflict).
+5. Zero-FTE rows: the API rejects `fte < 0.01`.
+6. Chamber test mapping.
+7. India medical leave divisor.
+8. Step responsibility.
+9. Type vocabulary, plant/department/product fields, 2025 end dates, `Spillover '25`, pre-2026 import.
+10. Real priority scores.
+
+**Side note.** My `rm` of the scratchpad data copies under `dv/` was denied by the permission system. Those files are still there and should be deleted.
+
+## [2026-10-21] P23-T01 — "In Buyoff" and "Draft" out of the UI; registration without Draft (frontend-builder): DONE
+
+Owner request: remove "In Buyoff" and "Draft" from the UI. No project has either status (live: In Queue 85, In Development 83, Cancelled 29, Under Industrialization 24, Commercialized 17, On Hold 15). Mid-task, the owner ruled that Draft is dropped from registration (ADR 0034, `docs/API_CONTRACT_P23.md`, backend P23-T02), and the task was extended to cover it. No backend change. No file under `surfaces/matrix/` was edited (another agent owns it).
+
+**Shared constants (`types/enums.ts`).**
+- `ALL_PROJECT_STATUSES` is the full wire enum, and `ProjectStatus` is derived from it. Neither changed: data may still carry In Buyoff or Draft.
+- New `UI_PROJECT_STATUSES` holds the 6 statuses the UI offers. `UI_HIDDEN_PROJECT_STATUSES` holds In Buyoff and Draft.
+- `PROJECT_STATUSES` now **aliases the UI list**. Its only importers were UI option lists, and the Matrix `STATUS_CHIPS` (`surfaces/matrix/lib/matrix-view.ts:61`) builds from it, so the Matrix picks up the change without being edited. The Matrix agent may switch that line to `UI_PROJECT_STATUSES` for clarity.
+- `SCHEDULABLE_STATUSES` is unchanged (scheduler order, In Buyoff first). New `UI_SCHEDULABLE_STATUSES` = Under Industrialization, In Development, In Queue.
+
+**Lists switched to these constants:**
+- Projects Status filter.
+- Dashboard register filter (`project-breakdown.tsx`).
+- Gantt toolbar.
+- Priority board toolbar.
+- Matrix chips (via the alias).
+- Leave-Draft target select (`hard-gate-panel.tsx`, In Buyoff removed).
+- What-if `WHATIF_STATUSES`. The default stays In Queue, which is also the backend default.
+
+What-if details:
+- The zod schema still accepts every `SchedulableStatusLiteral` value, so a chat scenario that carries In Buyoff loads and is sent unchanged.
+- The builder select appends a carried value that the UI list does not offer.
+- The `WhatIfStatus` wire type is unchanged.
+
+The Projects **Drafts chip is removed**. `ProjectStatusBadge` still renders every status.
+
+**Copy changes.**
+- Dashboard "Other statuses":
+  - The source popover now names the served `other_statuses_counts` keys (live: "(Cancelled)").
+  - The breakdown says "Statuses with no card of their own:" and lists only the served entries above zero.
+  - The "209 scheduled" popover already named only Cancelled and On Hold, so it is unchanged.
+- "Draft" was removed from:
+  - Delivery by priority (`portfolio-analytics.tsx`);
+  - the Priority board scope note;
+  - Gantt `timing-copy.ts`;
+  - the nav summary;
+  - the `dashboard/api/types.ts` comment.
+
+**Registration (owner ruling).**
+- The form (`registration/components/project-form.tsx`) has a single "Register project" action. "Create draft" is gone, and the description no longer says Draft.
+- In create mode the form checks the 8 hard-gate fields before submit: leader, category, type, actual start week, TCOGS, selling price, gross margin, and **priority** (added by ADR 0034).
+  - Each missing field gets an inline "X is required." message and `aria-invalid`.
+  - Focus moves to the first missing field.
+  - A message clears once its field changes.
+- A server 422 is mapped onto the same fields by `requiredFieldErrorsFromApi` (`required-fields-hint.ts`). It reads:
+  - the contract's `detail.field_errors` (request field names → messages);
+  - `missing_fields` labels;
+  - FastAPI `[{loc,msg}]`.
+  It never echoes a value. Other coded 422s (`CATEGORY_WORKFLOW_MISMATCH`, `UNKNOWN_LEADER`) still go through `apiErrorMessage`.
+- Edit mode does not block on these fields, because existing projects may predate the rule.
+- The drawer's Leave Draft section is unchanged. It only renders when `project.status === 'Draft'`, which is legacy and has no rows today.
+- After a create, the page says "Registered “X”." The ProjectRead `status` comes from the server.
+- There was never a status select in the form, so no Draft option needed removing there.
+
+**Tests.**
+- `types/enums.test.ts` (new, 3).
+- `project-status-badge` (+1: In Buyoff and Draft render).
+- `status-overview-cards` (+1: copy uses served statuses only).
+- `hard-gate-panel` (+1: target options).
+- `scenario-schema` (+2: no In Buyoff offered; In Queue default valid; chat In Buyoff passes through).
+- `project-form` rewritten for the required fields:
+  - blocks with all 8 messages, sets focus, clears per field;
+  - full body;
+  - contract-shaped 422 mapped to fields;
+  - edit not blocked;
+  - every create test fills the gate.
+- `ProjectsPage`:
+  - Status options exclude both statuses;
+  - no Drafts chip;
+  - rows with In Buyoff / Draft render badges;
+  - create POST body with the 8 fields;
+  - 422 → field;
+  - "Registered “X”." with no Draft.
+- Two files set a 30 s test timeout because of the Radix select fills.
+- E2E: `registration.spec.ts` first test rewritten (register → required check → In Queue, no Leave Draft); `draftsChip()` removed from `pages/projects.page.ts`. Typechecked and linted, not run (it writes).
+
+**Results.**
+- `tsc -b` 0.
+- ESLint on the touched dirs: 0 errors, 3 pre-existing warnings.
+- `vite build` OK: index 129.95 KB gzip, ProjectsPage 6.99 KB, drawer 3.27 KB.
+- Full Vitest: 181 of 182 files and 1389 of 1390 tests passed. The failures are 10 s timeouts in the Matrix agent's untracked in-progress `MatrixPage.board.test.tsx`. A different test fails on each run, and none involves the removed statuses.
+
+**Live check** (:5183 dev server, Frank Admin, read-only; every non-GET `/api` request was aborted, and none was attempted; 0 console errors):
+- Projects: Status options = All + the 6 statuses, no Drafts chip. The drawer has no "Draft" text and its buttons are Cancel / Register project. Submitting Name + Hub showed all 8 required messages. Nothing was saved.
+- Dashboard: "Other statuses: 29", breakdown "Cancelled: 29", source popover "(Cancelled)". The page text has no "In Buyoff" or "Draft".
+- What-if: the Status options are Under Industrialization / In Development / In Queue, default In Queue.
+- Matrix: the Status radios are All + the 6 statuses.
+
+**Owner / follow-ups.**
+- Radix select triggers carry `aria-invalid` but have no red border style; the inline message shows.
+- Copy for legacy Draft (hard-gate panel, `move-copy.ts` comment) is kept on purpose.
+- The registration register export hint and `GET /projects?status_=Draft` are untouched.
+- Nothing committed.
+
+## [2026-10-21] P21-T04 + P21-T05 — Compare score editing; Priority board as a Matrix tab (with Cards / List); compare reset on sign-out (frontend-builder): DONE
+
+Owner requests via the coordinator. Frontend only, existing endpoints, same payloads. No figure is computed and shown as final (I9). The only browser arithmetic is the Compare **preview**: provisional points and score out of 100 for unsaved edits. It always carries a "preview" label, uses the served weights and total weight, never shows a band, and is replaced by the server's figures after a save. `surfaces/gantt/` was not touched.
+
+**P21-T04 — Compare dialog score editing (`matrix/components/compare-dialog.tsx`).**
+- **Who can edit.** The same rule as the edit dialog: Matrix write and no 403 seen (`canEdit` from MatrixPage). Read-only users see static values, and no row reads are made for them.
+- **The control.** Each cell has a native `<select>` 0–5. Its accessible name is "<Dimension> score for <project>" and it is described by the range help. The "–" placeholder appears only for an unscored cell.
+- **Saving: explicit per project, not autosave.** Every save is an audited `PUT /priorities/{id}`, so explicit Save is the safer choice. Each project has "Save changes (n)" and "Discard". Both use `aria-disabled` rather than `disabled`, so focus survives a save.
+- **Unsaved edits.** A dirty cell gets a warning tint, a visible "edited" label and sr text. The project's points (italic) and score out of 100 show with a "preview" badge. Charts and highest-value marks stay on served values.
+- **Payload.** Exactly the edit dialog's body: the 13 scores plus the project's current `hard_gates`. `hard_gates` is read from the new `GET /priorities/{id}` fetch (`fetchPriorityRow` / `usePriorityEditRows`, under `priority-matrix`). It is validated with `scoreDimensionsSchema` and sent through the existing `useUpdatePriorityScore`.
+- **After a save.** The page waits for the compare refetch, then clears the edits. A status line quotes the PUT response's `normalized_pct` / `suggested_band`.
+- **Unscored projects.** Save stays blocked until all 13 dimensions are scored. No default 3s are invented.
+- **Errors.** 422 and 404 show inline per project and keep the edits. A 403 shows inline and keeps the edits, but the menus go read-only; the page-level `WriteForbiddenNotice` is applied on close.
+- **Scenario mode.** A "Scenario" badge shows. The button reads "Stage changes (n)" and calls `stageEdit` with the same `liveValues` / `liveHasScore` / `next` as the edit dialog. Cells then start from the staged value, and the column reads "Staged in scenario" / "scenario preview". Nothing is sent.
+- **Close guard.** Escape, the X button and an overlay click all go through one guard: an alertdialog with "Keep editing" / "Discard changes".
+- **At 390.** The table scrolls in its labelled region, with a sticky Dimension column.
+- **Note for the owner.** The request said saves "mark the schedule stale". The current backend `PUT /priorities/{id}` does not do that (the scheduler never reads the score). The copy therefore only says "recorded in the audit log".
+
+**S21-L2 (second half).** `lib/compare-selection.ts` listens at module level (guarded) for `SIGNED_OUT_EVENT` and calls `clearCompareSelectionOnSignOut()`. That empties the store and then `persist.clearStorage()`, so `rpd-matrix-compare` is not written back. Test: `lib/compare-selection.test.ts`.
+
+**P21-T05 — Priority board inside the Matrix.**
+- **Tabs and URL.**
+  - The page has Radix Tabs "Scoring grid" / "Priority board" (tablist "Prioritization views").
+  - `?view=board` selects the board. It is written with `replace`, and the grid tab also drops `layout`.
+  - The old route `/priority-board` now redirects (`<Navigate to="/matrix?view=board" replace>`, in `routes.tsx`). The `SURFACES` nav entry and the lazy `PriorityBoardPage` handle are gone.
+  - Role gating is unchanged: the board reads on `matrix` and moves need Registration write.
+  - `MatrixPage` is wrapped in `PriorityMoveProvider`, so a running recalculation survives a tab switch.
+- **The board component.**
+  - The code stays in `surfaces/priority-board/`. `PriorityBoardPage.tsx` now exports `PriorityBoardView` (no header), which the Matrix imports.
+  - The default export is kept as a self-contained page with its own header and toolbar. Its 25 tests still render it. It is not routed.
+- **Shared filters.**
+  - The View panel's Cat / Type / Status filters, the project search (`view.q`, bound to the board's Search box) and the global hub / country filter drive both views.
+  - The board toolbar keeps only Search, Leader and the layout toggle (`BoardToolbar embedded`).
+- **Grid-only controls.** Currency, the FX rate, Detailed view and Download are hidden on the board with `visibility: hidden` (`GridOnly`). They are left out entirely in the narrow sheet. The sticky panel therefore has the same height on both tabs: 271.8 px at 1440 and 60 px at 390, measured live. Charts, the rubric, the summary and compare live inside the grid tab. The board notes that Cancelled, Commercialized and On Hold projects appear in the grid only. That copy was edited by someone else mid-task to drop "Draft"; it was kept.
+- **Consistency.**
+  - The move flow already invalidates `priority-matrix` (grid rows, distribution, compare, rows), `priority-board`, `dashboard`, `projects`, `gantt` and `vip-board`, plus `capacity`, `schedule-runs`, `notifications` and `check-ins` when a run lands. This was verified, not changed.
+  - **Gap fixed:** score writes (`useUpdatePriorityScore`, `useApplyScenario`) used to refresh only `priority-matrix`. The new `invalidateScoreReaders` adds `priority-board`, because the board cards show the weighted score and band. It also adds the Workspace (`['projects','workspace',id]`, or the prefix on scenario apply). Run-derived views are deliberately not refreshed: the scheduler never reads the score.
+- **Board card.** It reads "Weighted score 267 · band P1" (both served). It used to say "Score 267", which clashed with the grid's "91/100".
+- **Scenario on the board.** A "Scenario" note appears, and cards with a staged score change get "Score change staged in scenario — not applied" (`BoardScenarioContext`). No recomputed score is shown. Discard clears both views.
+- **Cards / List layout (owner add-on).**
+  - A `role=group` "Board layout" with `aria-pressed` Cards / List buttons sits in the board toolbar.
+  - `lib/board-layout.ts`: the URL `layout=list` wins, then localStorage `rpd-board-layout:<user_id>` (try/catch), then Cards.
+  - `components/board-list-row.tsx` gives a 30 px row (measured live) with the served position, the same drag handle and handlers, the name link to `/projects/:id` (truncated, with a `title`), a pending spinner with sr text, and a staged marker.
+  - Columns scroll on their own and are virtualized over 100 rows (estimate 30 + 2).
+- **Counts.** Live, under status In Development, the grid shows 83 projects and the board total is 83 (5 + 1 + 77). Unfiltered they are 253 and 192, because the board omits the 61 non-schedulable projects. Both are served counts.
+- **Stale links fixed.** `e2e/p9-rbac.spec.ts` lost the nav row. `p12-gate`, `p13-gate` and `p14-gate` use `/matrix?view=board`. `pages/matrix.page.ts` has `gotoBoard`, `tab()`, `boardColumns` and `compareScoreSelect`, and `matrix.spec.ts` has a redirect/tab spec. The specs were typechecked, not run. No Dashboard or notification link pointed at `/priority-board`.
+
+**Tests.**
+- `components/compare-dialog.test.tsx` (12): read-only; editable plus dirty plus preview; exact PUT body, then a refetch that updates the radar, score, band and highest marker, with focus kept; score 0; Discard; close guard (keep and discard); clean close; Scenario stage; 422; 403 (downgrade on close); unscored needs all 13; axe.
+- `MatrixPage.board.test.tsx` (8, mocked server via `apiGet` / `apiSend`):
+  - tabs, keyboard and URL;
+  - (a) a keyboard move: preview, then confirm, then the exact POSTs, refetches of `/priorities`, `/priorities/distribution` and `/priority-board`, and invalidation of `priority-matrix`, `priority-board`, `dashboard`, `capacity`, `gantt`, `projects` and `vip-board`;
+  - (b) an edit-dialog save updates the grid's 20/100 and the board card's 59 / P4, with the `priority-board` and workspace keys invalidated;
+  - (c) Scenario stage, marking and Discard, with no writes;
+  - (d) the same filters reach both endpoints, and the board total equals the grid count under In Development; Cat B and search also tested;
+  - (e) Hub Planner own hub only, in both views;
+  - `layout=list` deep link;
+  - axe on both tabs.
+- `PriorityBoardPage.test.tsx`: plus 5 layout tests (toggle, names only, keyboard move from a row with the same preview and POST, pointer drop from a row, persistence in URL and per-user storage, axe). The card label assertion was updated.
+- `app.test.tsx`: plus the `/priority-board` redirect test. `p12-nav.test.tsx` was updated (no board entry).
+- `MatrixPage.test.tsx`: mocks `usePriorityEditRows`, and its compare test uses a read-only session.
+
+**Results.**
+- `tsc -b` is clean. ESLint on `surfaces/matrix`, `surfaces/priority-board`, `app` and the touched e2e has 0 errors and 3 pre-existing warnings.
+- Vitest on matrix, board and app: 179 passed.
+- Full suite: 182 files / 1396 tests. One full run hit a 10 s timeout on a whole-page axe test, now given 30 s. An earlier run had 4 ProjectsPage failures from another agent's in-flight registration edits; they pass in isolation.
+- `vite build` went to a scratch outDir. Budget PASS at 186.8 KB gzip initial. The MatrixPage chunk is 37.4 KB gzip and now includes the board.
+- **T04 live** (own vite on :5197, proxied to :8001, P21 routes mocked, PUT mocked and never sent to the dev DB): axe 0 serious/critical at 1440 and 390 at rest, dirty, saved, guard and scenario. A save sent the full body and the refetch replaced "preview 84/100" with the served 84/100, keeping focus on the Save button. :5197 has been stopped.
+- **T05 live on :5183** (P21 fields plus move preview/confirm mocked, every other non-GET aborted, so nothing was written):
+  - axe 0 on the board, grid, move dialog and list at 1440 and 390;
+  - `/priority-board` lands on `/matrix?view=board`;
+  - after Yes, `/priority-board`, `/priorities`, `/priorities/distribution`, `/priorities/summary`, `/capacity/hub-load`, `/notifications` and `/check-ins/due` were re-read;
+  - the list layout survives a reload.
+- Screenshots (reviewed) are in the session scratchpad: `t04/shots/{1440,390}-{rest,dirty,saved,guard}.png`, `t04/shots/1440-scenario.png`, `t05/shots/{1440,390}-{board,grid,list}.png`, `t05/shots/1440-move-dialog.png`, `t05/shots/1440-move-applied.png`.
+
+**Notes / follow-ups.**
+- (1) The board card score is the raw weighted score. A served `normalized_pct` on `PriorityBoardCard` would let the board read "/100" like the grid (backend).
+- (2) At 390 the app shell still leaves about 230 px for the content (carried).
+- (3) On the board tab the stuck panel shows a blank area where the hidden grid controls sit. This is the price of no layout jump.
+- (4) A `layout=list` that came only from the URL is not stored. Only a click stores the choice.
+- Nothing committed.
+
+## [2026-10-21] P19 + P20 re-gate — qa-inspector: FAIL (QA-P19-1, QA-P19-2 and O1 closed; 2 new Gantt defects in P19/P20 code: QA-P19-4 wrong calendar figure in the drag label past W52, QA-P19-3 focus lost after the narrow details dialog)
+
+Scope: working tree after P19-R02 (Gantt), P19-T06/T07 (Capacity), P19-R01 (security, strict engineer/chamber schemas) and the P20 copy fixes. Disposable stack: Postgres 17 `qa-p19r-pg` (:55921), Redis 7 `qa-p19r-redis` (:56921), Keycloak 26 `qa-p19r-kc` (:58921), uvicorn :8921 (RPD_DEV_MODE, CURRENT_WEEK 42), Celery solver worker on that Redis (`--pool=solo`; the prefork pool dies on macOS with `ValueError: not enough values to unpack`), `vite preview --mode e2e` :5921 on a scratch build. `alembic upgrade head` (head `p21a_currencies_score_zero`), `seed_demo_data --dataset client_2026 --schedule` (253 projects, run v1, API within-year 67), currency rates, dev users. The DB was dropped and reseeded twice so the final runs started clean. Everything was removed afterwards. :5433 / :8001 / :5183, `frigoglass-keycloak-1` and other agents' testcontainers were not touched. Other agents edited the tree during the gate (P21 matrix, P23 Draft retirement: `models/enums.py`, `schemas/project.py`, `seed_demo_data.py`, registration and projects UI, nav). Failures in their files are listed separately and do not count against this gate.
+
+**1. Gantt QA-P19-1: CLOSED.** Bob HubPlanner opened "300L SLIM Cooler development" (2 skipped LAB steps: Proof of Concept, Certification Testing) with the project expanded. At 1440, 1280 and 390, every skipped row's kind badge has effective opacity 1 (computed up the ancestor chain), and axe light serious/critical is **0** in three states:
+- the project expanded;
+- during a drag (mouse at 1440/1280, CDP touch at 390);
+- in the narrow project-details dialog at 390.
+Earlier runs on another project (8 facing FFD, 6 skipped rows) gave the same result.
+
+**2. QA-P19-2 at 390: CLOSED.** The p19-gate 390 hit-test is now a real assertion. Measured state at 390:
+- `gantt-scroll[data-layout=narrow]`, no status header, name column 88 px, visible timeline 110 px (230..340);
+- `elementFromPoint` at the handle centre lands on the handle (20 px wide), the Details button and the expand chevron;
+- page overflow 0.
+
+**Touch drag works.** Disposable DB, PD-India Engineer 11 set to 0.5 FTE, synchronous greedy recalc. Target "Cooling base plate…" PDD-K, 1 wk of work, W48–W49:
+- the CDP touch drag of +2 weeks shows the label "4 wks on the calendar · 2 wks of work at 0.5 FTE"; it wraps to the 110 px timeline and stays inside it;
+- the drop sends **PATCH `{"duration_override_weeks":2}`** (work weeks, ADR 0032). The server stores 2, and the step-timing recalc on the worker (about 7 to 14 s) replans W48–W51 = ceil(2/0.5);
+- the 1280 mouse drop then sends `{"duration_override_weeks":3}`, stored 3, replanned W48–W53;
+- 1440: Escape cancels and sends nothing.
+
+`span_fte` is served: 341 non-null for Bob, 0 for Executive Viewer, and the timing dialog note reads "… 1 wks of work at 0.5 FTE".
+
+**3. Drag label near W52: placement CLOSED, content defect found (QA-P19-4).** Target "8 facing FFD" Design Detailing W46–W52, 0.63 FTE. At 1440 and 1280, with the handle at the visible right edge and mid-timeline and drags of +2/+4/+3 weeks, the label always flips left and stays inside the visible timeline:
+- 1440: x 995..1236 inside 414..1242;
+- 1280: 835..1076 inside 414..1082.
+Axe was 0 during each drag.
+
+**4. Capacity after P19-T06/T07: PASS.**
+- Booked tiles sit in 3 family boxes in the order `booked-family-rd` (R&D-Greece, R&D-India), `pd` (PD-India, PD-Romania), `oem` (OEM-HCK, OEM-Seltek), each with a heading and no family total.
+- The merged "Load vs. capacity by hub" table has 3 family row groups (rd, pd, oem). Lab figures appear once per region (3 `lab-load`); the 3 other rows carry the "shared <region> lab region" marker.
+- The priority split opens with aria-expanded true and axe 0.
+- KPI cards, table totals and **every hub row** (design capacity/load/booked, lab capacity/load/booked or the shared marker) equal `/capacity/hub-load` in all 4 combinations:
+
+| Combination | Design capacity | Design load | Lab capacity | Lab load | Booked % |
+|---|---|---|---|---|---|
+| Weeks / Full year | 1717.55 | 1338 | 325.3 | 316 | 77.9 |
+| Weeks / YTD | 330.29 | 1338 | 62.56 | 316 | 405.1 |
+| Days / YTD | 1946.68 | 7846 | 366.57 | 1850 | 405.1 |
+| Days / Full year | 10122.98 | 7846 | 1906.12 | 1850 | 77.9 |
+
+- Requests: only `/capacity/hub-load` and `/capacity/class-breakdown`, plus `/capacity/engineer-utilization` after "Show engineer utilization". **No utilization-matrix or chamber request.** The only disclosure on the page is the engineer one.
+- Axe 0 in light mode for: each combination, split open, the Details dialog (focus returns), and 1440/1280/390 incl. Days/YTD.
+
+**5. Planning after P19-R01: PASS.** As Frank Admin, these inline edits all returned **200**, then reverted:
+- chamber GR-CH1: Platforms 1→2→1 and Efficiency 0.209→0.9→0.209;
+- one stage chip off and on;
+- one engineer category chip off and on;
+- the FTE edit 1→0.9→1.
+
+Bodies are JSON numbers, arrays and enum strings; no string-number. Audit rows: 6 × `chamber.update` and 4 × `engineer.update`, with the actor = Frank. The values were restored exactly. `planning.spec` (engineer and chamber create/edit/delete through the forms, Apply Logic) passed 2/2.
+
+**6. Suites.**
+- **Backend: PASS.** `pytest --cov` (testcontainers): **1923 passed, 0 failed** (8 min 6 s). Total coverage **96.17 %**; **scheduling/ 94.3 %** (cp_sat 97, greedy 91, invariants 93, monte_carlo 92, solver_comparison 93, whatif 94, workflow 98). P19 files: planning 99, capacity 98, gantt 98, step_timing 100, engineers 86, chambers 88, schemas/engineer + chamber 100. `ruff check .` clean.
+- Golden files (`test_golden_files`, `test_p9_golden`) and `test_p19_r01_security`: 83 passed on re-run.
+- Contract test: green in the full run. A later re-run has 10 failures, all in other agents' in-flight shapes: the P21 priority rows (PriorityMatrixRow, Distribution, Compare, PortfolioSummary, HubP1Fill, PriorityCapacityFill) and P23 (ProjectFilterRow, ProjectRead, WorkspaceProject gained `plant`/`product_type`/`requesting_department`). Every Gantt, capacity, planning, engineer and chamber row passes.
+- **Frontend: PASS.**
+  - `tsc -b` exit 0. eslint 0 errors / 11 warnings (pre-existing `incompatible-library`).
+  - `vitest --coverage`: 1390/1395, statements **87.38 %**, branches 79.73 %, functions 85.81 %, lines 89.31 %; gantt 93.3 %, capacity 98.4 %, planning 86.4 %.
+  - The 5 failures were timeouts while e2e ran in parallel (session-gate, DashboardPage, hub-summary-table axe, 2 × MatrixPage.board). They **pass in isolation**: 14 files / 212 tests incl. all gantt.
+  - An earlier run had 14 failures in `projects/` and `registration/` ("Create draft" / "Drafts" buttons gone: P23 Draft retirement in flight, not this gate). Matrix-only failures: the 2 MatrixPage.board timeouts, which pass in isolation.
+  - `vite build` OK; bundle budget **186.8 KB gzip of 400 KB** PASS.
+- **E2E.**
+  - p19-gate: **all 19 tests' gate checks pass except the soft QA-P19-4 label assertions** (the 0.5 FTE drag test at 1280 and the W52 test). QA-P19-3 is logged as a test annotation.
+  - capacity.spec 2/2, gantt.spec 2/2, planning.spec 2/2 (re-run with fresh tokens: the first run hit Keycloak's 5-minute token expiry after 6 min), p19-planning 5/5.
+  - p12-gate 10/11: the step-timing Gantt drag-handle axe passes for superAdmin and engineer; the hub-filter failure is the carried D2: aria-hidden-focus × 2 + scrollable-region-focusable × 1.
+  - p9-rbac 15/21: the 6 "sidebar lists exactly" failures are a stale NAV list against other agents' in-flight nav: a new "Priority board" entry (P21-T05) and a check-in count badge ("Weekly check-in58"). These are not P19/P20 changes and were not repaired, because nav.ts is still moving.
+- **Axe dark (report only):** carried D1, color-contrast on primary toggles. Dashboard ×3/×2, Capacity ×3, Planning ×13/×4, Resource load ×12/0.
+
+**Defects (frontend-builder, `surfaces/gantt/` only):**
+- **QA-P19-4 (blocking: a user-visible number contradicts ADR 0032; P20-T03 code):** past W52, `stepDragResult` (`lib/gantt-coordinates.ts`) clamps the ghost end to the 52-week axis, and `stepDragLabel` takes the calendar figure from that clamped ghost, while the work figure (and the PATCH) is unclamped. Live examples:
+  - "5 wks on the calendar · 3 wks of work at 0.5 FTE", while the server then plans W48–W53 = 6;
+  - "7 wks on the calendar · 6 wks of work at 0.63 FTE" (should be 10).
+  The PATCH value is correct. Fix: label the calendar weeks from `fteSpanWeeks(work, fte)`, not from the clamped ghost, and say that it runs past W52 (e.g. "6 wks on the calendar, to W53 · 3 wks of work at 0.5 FTE"). Check the `fte === null` path the same way. Test: the p19-gate W52 test and the 0.5 FTE drag test; the soft assertions become hard once fixed.
+- **QA-P19-3 (WCAG 2.4.3 focus order, Level A; new P19-R02 code):** closing `GanttProjectDetailsDialog` (Escape, by click or by keyboard, collapsed or expanded) leaves focus on `<body>`. The trigger stays mounted, but nothing restores it: the dialog is controlled with no `DialogTrigger`. Fix: store the Details button in `onOpenDetails` and focus it in `onCloseAutoFocus`, the pattern already used by the Capacity Details dialog and the P22 drawer. Then flip the annotation in p19-gate to `await expect(details).toBeFocused()`.
+- Observation O-R1 (low): when a bar ends exactly at W52, the 8 px handle is centred on the axis edge, so its right half sits under the sticky status column (the centre hit-test lands on `gantt-status-cell`); the left 4 px still grabs. Optional: inset the handle by half its width at the axis end.
+- Carried: D1 dark primary token, D2 header hub-filter select.
+
+**Tests changed (test code only):** `frontend/e2e/p19-gate.spec.ts`:
+- capacity: family boxes, merged-table row-by-row equality in 4 combinations, split axe;
+- new planning strict-schema test (chamber Platforms/Efficiency, stage/category chips, 200 + audit);
+- Gantt: real 390 hit-tests, touch drag via CDP, label-inside-timeline checks, recalc poll, a new skipped-LAB axe test (1440/1280/390 + drag + details dialog), a new W52 label test (with the ADR 0032 calendar = ceil(work/FTE) consistency check), mutating drag test moved last;
+- helpers `openProject`, `timelineVisible`, `bringHandle`, `hitTest`, `expectLabelInside`, touch*, `effectiveOpacity`.
+
+Run with `RPD_E2E_BASE_URL/RPD_E2E_BACKEND_URL … npx playwright test -c playwright.p19qa.config.ts`. It needs a solver worker for the step-timing recalc. Logs and screenshots are in the session scratchpad (`p19gate.log`, `p19gantt*.log`, `shots/`, `axe*.jsonl`). Nothing committed.
+
+Correction to the entry above (qa-inspector, same day): `p19-gate.spec.ts` has **18** tests (16 declarations, the axe sweep runs at 3 widths), not 19. Verdict unchanged.
+
+## [2026-10-21] P23-T02 — Registration creates In Queue projects; Draft retired (backend-builder): DONE
+
+Owner ruling 2026-10-21: Draft is dropped from registration. ADR 0034
+(`docs/ADR/0034-registration-creates-in-queue-draft-retired.md`); contract `docs/API_CONTRACT_P23.md`.
+`backend/scheduling/` untouched (Draft was already excluded). Disposable DB only (conftest testcontainers Postgres;
+`RPD_REDIS_URL` pointed at an unreachable port). :5433 / :8001 / :5183 not touched.
+
+- **`POST /projects`** (`api/routers/projects.py::create_project`). Check order: RBAC → unknown hub 422 → out-of-scope
+  hub 403 → **422 `HARD_GATE_FIELDS_MISSING`** → `CATEGORY_WORKFLOW_MISMATCH` → new **422 `UNKNOWN_LEADER`** (before
+  this, an unknown leader surfaced as a foreign-key error). A valid create writes `status = In Queue` and
+  `schedule_stale = true`. The 14 stage rows, the one redacted `project.create` audit row and the encryption are
+  unchanged. No solve is run (ADR 0006). The request schema is unchanged: the gate fields stay `Optional`, so a
+  missing field is reported in one per-field 422 instead of Pydantic's list. If the gate fails, nothing is written:
+  no project, no stage and no audit row.
+- **Error shape** (`services/project_hard_gates.py::hard_gate_error`). The create 422 and the legacy `/submit` 422
+  now share one shape:
+  `{"code": "HARD_GATE_FIELDS_MISSING", "detail": {"message", "missing_fields": [labels], "field_errors": {field_name: "X is required."}}}`.
+  `missing_fields` keeps the old leave-Draft labels. On `/submit`, `code` and `field_errors` are additive. No
+  submitted value is ever echoed.
+- **Decision: `priority` joins the gate list** (`HARD_GATE_FIELDS`, last entry). A project that is In Queue from
+  creation with no priority makes `scheduling.workflow.validate_schedulable_project` raise `ValueError` for the
+  WHOLE run. The same latent bug existed before this task, for a Draft project submitted without a priority.
+  `hard-gate-status` and `/submit` therefore also report a missing priority. The frontend mirror
+  (`required-fields-hint.ts`) needs `priority: 'priority'`; the P23-T01 plan row says that mirror holds 8 fields
+  including priority.
+- **Draft retired, not deleted.** The enum value is kept. `PATCH` with `status: "Draft"` is 422 `DRAFT_RETIRED`
+  (`detail: [{loc: ["body","status"], …}]`), including as a no-op on a legacy Draft row. `In Buyoff` is a schedulable
+  status in DOMAIN_RULES, so it is NOT blocked: a PATCH to In Buyoff gives 200 and stale. `/submit` and
+  `hard-gate-status` still work for legacy Draft rows. **The ORM `default=ProjectStatus.DRAFT` on `Project.status`
+  is removed** (the default lived only in Python, so there is no migration). Every writer (router, both seed paths,
+  every test constructor and factory) already passed a status explicitly. An omitted status now fails on NOT NULL
+  instead of silently creating Draft.
+- **Seeds.** Neither data file contains Draft (client_2026: 85 In Queue / 83 In Development / 24 Under
+  Industrialization / 17 Commercialized / 15 On Hold / 29 Cancelled; the prototype file has no Draft either).
+  `seed/seed_demo_data.py::seed_project_status` now refuses Draft in both seed paths.
+- **Docs.** DOMAIN_RULES: a revision line and a new section "Project statuses and registration". PROJECT_AND_STACK §2:
+  a note on the Draft hard gate. Docstrings updated in `schemas/project.py`, `models/enums.py` and the router.
+- **Tests.**
+  - New `tests/test_p23_registration.py` (24 tests):
+    - create with every gate field: In Queue, stale, one redacted audit row with the actor set, 14 stages;
+    - each of the 8 gate fields missing in turn: 422, a per-field error and zero rows;
+    - a name + hub body lists all 8 fields, `null` counts as missing, and no value is echoed;
+    - `status` in a create body: 422;
+    - unknown leader: 422;
+    - an out-of-scope hub gives 403 before the gate check;
+    - role matrix: PM, HP, Admin and Super Admin get 201; Engineer, Executive Viewer and Auditor get 403, and get 403
+      (not 422) on an incomplete body;
+    - PATCH to Draft: 422, including a legacy no-op, with no write and no audit row;
+    - PATCH to In Buyoff: 200;
+    - a legacy Draft row leaves Draft (200, In Queue, stale, `project.submit` audit row);
+    - the legacy submit 422 has the create shape and matches `hard-gate-status`;
+    - the ORM has no status default.
+  - Updated to full registration bodies (new `tests/factories.py::registration_body`): `test_hub_scope`,
+    `test_rbac_enforcement`, `test_audit_log_api`, and `test_p9_api_extensions` (its create test now expects In Queue
+    with `schedule_stale` true).
+  - **Fixed a pre-existing flake** in `tests/test_p17_status.py::test_five_cards_reconcile_unfiltered_and_hub_and_country`.
+    `_shape` assigns statuses in random UUID order, and the float sum of the shares can come out as
+    `99.99000000000001`, which is not in the allowed list. The sum is now rounded to 2 dp. It failed once in 6 runs
+    before the fix and passed 8 of 8 runs after it.
+
+Results: full backend `pytest` (no-cov): **1951 passed, 1 failed** (the P17 flake above, which is unrelated: it never
+creates a project through the API). Then `test_p17_status.py` passed 8 of 8 runs after the fix. The touched and new
+files: 171 passed. `ruff check .` is clean. `ruff format --check` is clean on every file I wrote. The router and
+`seed_demo_data.py` were already unformatted before this task and were left as they were, to keep the diff small.
+
+## [2026-10-21] P25-T01 — P1 capacity fill of the suggested band (backend-builder): DONE
+
+**Ruling:** owner, 2026-10-21: "P1 for score ≥ 70 is right, but if capacity is not full, add projects to P1 until
+capacity is full." Details (a)–(d) accepted. **ADR 0036** (new). **DOMAIN_RULES** gains "P1 capacity fill" under
+Prioritization scoring, plus a revision line. **Contract:** `docs/API_CONTRACT_P25.md` (new). **OQ #51** (hard
+gates in the base set, load basis incl. post-W52 work, zero-load skip). **Plan:** P25 section opened (T01 DONE,
+T02 and T20 TODO). `backend/seed/` and `backend/scheduling/` untouched. Coordination with P24-T01: I changed only
+the priorities router and schemas, `services/priority_scoring.py`, one new service and new tests (plus one key set
+in `test_p21_matrix.py` and the contract table).
+
+**Rule as built (per hub, computed on read, never stored).**
+- `C` = remaining-year design capacity. It uses the same helpers and inputs as `/capacity/hub-load`
+  `design_capacity_remaining` (`design_capacity(calendar, fte_sum(all hub engineers), CURRENT_WEEK)`, 2 dp), and
+  a test pins the two equal.
+- A project's load = remaining design effort in the active run (`remaining_run_load_by_project`, ADR 0032). It is
+  0 when the project is not in the run.
+- Base set = scored projects with `normalized_pct ≥ 70`, any status. `L` = Σ base load.
+- No run, `C ≤ 0`, or `L ≥ C` → nothing is promoted.
+- Otherwise the walk takes scored candidates with `< 70` and a schedulable live status, ordered by
+  **normalized_pct desc, then project_id asc** (canonical UUID string). For each candidate:
+  - load 0 → **skipped**, and the walk continues (decided: it uses no capacity, so promoting it would not fill
+    anything);
+  - `L + load ≤ C` → promoted (exactly 100 % allowed);
+  - otherwise → STOP.
+- Exact 2 dp `Decimal` arithmetic throughout.
+- The walk always uses every project of the hub, independent of row filters and of the caller. Callers pass only
+  in-scope hubs.
+- Pure walk: `services/priority_scoring.py::fill_p1_capacity`. Loader: new `services/priority_capacity_fill.py::
+  compute_capacity_fill`. The loader runs a constant number of queries: run, hubs, engineers, calendars,
+  projects + scores, plus `remaining_run_load_by_project`'s own. A query-count test with 3 vs 30 projects is
+  equal.
+
+**Served.**
+- `PriorityMatrixRow` (`GET /priorities`, `GET /priorities/{id}`) and `PriorityCompareItem`:
+  - `suggested_band` now = the promoted band;
+  - new `score_band`, `capacity_fill: bool`, `capacity_fill_reason: str | None`. The reason is set for promoted,
+    stopped and zero-load-skipped candidates, otherwise null.
+- New `GET /priorities/capacity-fill?hub_id&region` → `PriorityCapacityFill {has_active_schedule_run,
+  schedule_run_version, hubs: HubP1Fill[]}`, where `HubP1Fill = {hub, capacity_weeks, base_load_weeks,
+  filled_load_weeks, promoted_count}`. Hubs are narrowed by the scope (an out-of-scope `hub_id` gives `[]`).
+- `GET /priorities/distribution`: `band_distribution` counts the promoted band, and there is a new
+  `capacity_fill_count`.
+- `GET /priorities/summary`: `suggested_band_counts` follows the promoted band, plus new `score_band_counts` and
+  `capacity_fill_count` (changed so the Matrix panels agree).
+- Reads only: there is no write, no audit row and no stale mark. `Project.priority` and the stored
+  `PriorityScore.suggested_band` are unchanged (tested).
+- **Not changed (follow-up candidates):** the Priority board, project cards, the Workspace score section and
+  `GET /exports/matrix` still show the stored score band.
+
+**Tests.** New `tests/test_p25_capacity_fill.py` (21):
+- Pure tests:
+  - hand-worked C 10 / L 6 / candidates 3 → promoted (9) and 2 → stopped (11), with a later fitting candidate not
+    considered;
+  - exact fill, tie-break under three input orders, overfull and exactly full, C 0, zero-load skip;
+  - excluded and unscored never; a score of 70 counts as base; fractional effort is exact.
+- API tests on a hub with C = 10.00 (calendar `weeks_in_year = CURRENT_WEEK + 10`, no leave, 1.0 FTE):
+  - row fields and reasons, capacity-fill equals hub-load capacity;
+  - single row and compare;
+  - filter independence;
+  - distribution and summary reconcile with rows under 4 filter sets;
+  - no run, overfull, tie-break by fixed UUIDs, the four excluded statuses with fitting stale run rows;
+  - Hub Planner scoping (own hub only, other hub's `hub_id` gives `[]`, same figures as the admin's);
+  - committed priority, stored bands and the audit count are unchanged;
+  - constant query count.
+- `test_p21_matrix.py`: the compare key set gains the three fields. Contract table: two new rows, `HubP1Fill` and
+  `PriorityCapacityFill`.
+
+**Results.** Full backend suite: **1968 passed, 7 failed, 94.25 % coverage.**
+- 6 are the expected contract rows, red until P25-T02 mirrors them:
+  - `PriorityMatrixRow` and `PriorityCompareItem::PriorityCompareProject` (+ `score_band`, `capacity_fill`,
+    `capacity_fill_reason`);
+  - `PriorityDistribution` (+ `capacity_fill_count`);
+  - `PriorityPortfolioSummary` (+ `score_band_counts`, `capacity_fill_count`);
+  - `HubP1Fill` and `PriorityCapacityFill` (new interfaces).
+- 1 is `test_seed_scripts::test_seed_demo_data_default_is_the_client_2026_dataset`, which is P24-T01's in-flight
+  seed/roster change, not this task.
+- `ruff check .`: only an E501 in `tests/test_seed_scripts.py` (P24's file). My files are clean, ruff-formatted,
+  and mypy shows no new errors (the pre-existing `_build_row` / summary ones remain).
+
+**Disposable-DB study** (own PG17 container on 127.0.0.1:55925, removed afterwards; throwaway Fernet key in env
+only; :5433/:8001/:5183 untouched). Setup:
+- `alembic upgrade head`, `seed_demo_data --dataset client_2026 --schedule`, CW 42, greedy run v1 active, 253
+  projects, 67 within year.
+- The seed ran on the working tree as it was at that moment (59 engineers incl. synthetic), so it is pre-P24
+  roster. The figures will change once P24 lands.
+
+| Hub | C | base L | filled | promoted | score-P1 | candidates |
+|---|---|---|---|---|---|---|
+| R&D-Greece | 8.58 | 0.00 | 7.00 | 2 | 0 | 4 |
+| R&D-India | 90.37 | 4.00 | 89.00 | 25 | 1 | 28 |
+| PD-India | 185.92 | 102.00 | 185.00 | 27 | 24 | 103 |
+| PD-Romania | 26.48 | 0.00 | 25.00 | 8 | 0 | 13 |
+| OEM-HCK | 10.53 | 0.00 | 8.00 | 8 | 0 | 11 |
+| OEM-Seltek | 8.41 | 0.00 | 6.00 | 6 | 0 | 8 |
+
+**Total: 76 promoted.** Each hub stopped on one candidate. Zero-load skips: 1 in PD-India and 1 in OEM-Seltek.
+The study script is in the session scratchpad (`p25_fill_study.py`).
+
+## [2026-10-21] P21-T05 follow-up — board column headers under the stuck View panel (frontend-builder): DONE
+
+Bug: in the coordinator's review of `t05/shots/1440-list.png`, the stuck View panel covered the board's column headers.
+- **Fix: same offset as the grid.** The Matrix passes `height = useGridMaxHeight(sentinel, panel, stuck, 56)` to `PriorityBoardView`. The board takes that height (`data-fit`); each column fills it (`h-full min-h-0`) and only its body scrolls (`board-column-body`, `min-h-0 overflow-y-auto`). Once the board is scrolled to, its headers sit below the stuck panel. The column header (band, count, remaining D/L) sits outside the scrolling body and is also `sticky top-0` with an opaque background, so it stays visible while the column scrolls. The standalone board keeps its old `max-h` sizing.
+- **Panel space on the board tab: the board's own toolbar moved into it.** The controls row has one stacked grid cell. On the board, the currency control stays in that cell but hidden (`invisible`), so it keeps the cell's size; the board's toolbar (Search, Leader, Cards | List) is portalled on top of it (`board-toolbar-slot`, `BoardToolbar inPanel`). The panel keeps its height without a blank area.
+  - When stuck, the toolbar hides its visible labels (they stay for screen readers) and narrows the search box. The hidden Detailed view and Download controls are left out, so it stays one line.
+  - Below 768 px the toolbar stays on the board (the panel is the "View & filters" bar there).
+- **Measured live on :5183 (mocked P21 routes):**
+  - Panel height is the same on both tabs: not stuck 271.8 / 271.8 (1440) and 60 / 60 (390); stuck 72 / 72 (1440 and 1280).
+  - `elementFromPoint` at the centre of every column header in view lands on that header, with 0 covered, in Cards and List, at 1440 and 390, not stuck, stuck and after scrolling a column. Stuck at 1440 the headers are at y 226 under a panel bottom of 181; at 390, y 218 under 161.
+  - axe light: 0 serious/critical in each stuck state.
+- **Tests and checks:** `MatrixPage.board.test.tsx` now asserts the toolbar is in the panel, the board's `data-fit` and the header sitting outside the column body. The `elementFromPoint` check is a scratchpad Playwright script (`t05/overlap.mjs`), not a repo spec. Matrix, board and app Vitest: 179 passed. `tsc -b` clean. ESLint: 0 errors.
+- **Screenshots** in the session scratchpad: `t05/fix/{1440,390}-{cards,list}-{top,stuck}.png`.
+
+## [2026-10-21] P24-T01 — Seed uses the client's real roster and data; ADR 0024 tuning retired (backend-builder): DONE
+
+Owner ruling 2026-10-21, "go with your recommendations", on the seed data verification above. ADR 0035 written.
+`backend/scheduling/` was not touched. The verification used disposable PG17 and Redis 7 containers, which are now
+removed. :5433, :8001 and :5183 were not touched; the owner reseeds the dev DB. No customer name or financial value was
+printed or logged.
+
+**Extractor (`seed/extract_client_2026.py`), reproducible.**
+- New fields: col 11 → `product_type`, col 12 → `requesting_department`, col 9 → `plant` (now stored), col 45 →
+  `end_date` + `target_end_week`, col 56 → `spillover_2025`.
+- It reads the formula workbook's roster `RPD Capacity!I39:T50` into `roster` (19 rows, incl. 2 at 0 FTE). The workbook
+  path is `--formula-workbook`, defaulting to `reference/`.
+- Excel date serials are converted. End-date rule: the ISO week when the ISO year is 2026 (week 53 → 52); 52 + the ISO
+  week for 2027 up to W78; 2025 dates are not imported (null). Result: 22 dated, 15 imported (W1–W49), 7 not imported
+  (all 2025-12-01).
+- Re-running the extractor on both workbooks reproduces the committed JSON byte for byte. Every pre-existing field is
+  unchanged on all 253 rows.
+
+**Seed (`seed/client_2026.py`, `seed/seed_demo_data.py`).**
+- Removed: the leader cap, `assign_leaders`, the "<hub> Engineer n" rows, `tune_fte` and `tune_efficiency`.
+- `build_roster` creates the 17 roster people with workbook FTE and skips the 2 zero-FTE placeholders.
+- Allowed categories come from the client app's chips (`CLIENT_APP_ALLOWED_CATEGORIES`; Rishi's "M" is dropped), because
+  the workbook gives none.
+- The 6 non-roster leaders are added as provisional engineers (`EngineerSeed.provisional`; there is no DB column for it):
+  majority hub, FTE 1.0, and the categories of the projects they lead.
+- An alias map resolves Rahul, Stef, Alin and Adrian to their roster names.
+- `project_leaders` never reassigns. The 20 blank leaders stay NULL, and their progress is derived on a private ledger.
+- `carry_over_and_reg_year`: 17 projects are (True, 2025); the rest are (False, 2026).
+- The seed stores `target_end_week`, `plant`, `requesting_department` and `product_type`.
+- Chambers keep the `CHAMBER_SEED` workbook efficiencies.
+- Rubric scores stay synthetic and are flagged (`SYNTHETIC_DIMENSION_SCORES`).
+- The summary key `tuning_run` is renamed `summary_run` and gains `no_leader`. New counts: `provisional_engineers`,
+  `skipped_zero_fte_placeholders`, `projects_without_leader`, `carry_over_projects`.
+- `seed_dev_users`: carol now links to the first named engineer who *leads a project*. client_2026's Dimopoulou leads
+  none, so carol stays on Pawan, as before.
+
+**Model and API.**
+- Migration `p24a_project_charter_fields` (down `p21a_currencies_score_zero`) adds `projects.plant`,
+  `requesting_department` and `product_type`, each nullable `String(100)`, not encrypted. Up, down and up were verified.
+- The three fields are served read-only on `ProjectRead` (and so on `WorkspaceProject`) and on `ProjectFilterRow` (the
+  Dashboard register).
+- `GET /planning/resource-load?requesting_department=` is now an exact match. Before, it was `false()`.
+- `/options` returns the visible departments, sorted, with `requesting_department_available = bool(...)`.
+- `domain_constants` gains `PLANT_OPTIONS`, `REQUESTING_DEPARTMENT_OPTIONS` and `PRODUCT_TYPE_OPTIONS` (from `Lists &
+  Explanations` C, D and Q). They are reference lists, not a write constraint.
+
+**Verification.** Disposable DB, `seed_demo_data --reset --schedule`, CW 42, ADR 0032, greedy v1:
+
+| Hub | Engineers | Σ FTE | Design booked % year | Design booked % remaining |
+|---|---|---|---|---|
+| PD-India | 9 | 7.75 | 146.07 | 759.53 |
+| R&D-India | 4 | 3.0 | 151.70 | 788.85 |
+| R&D-Greece | 3 | 2.8 | 25.62 | 133.22 |
+| PD-Romania | 6 | 5.75 | 54.55 | 283.66 |
+| OEM-HCK | 1 | 1.0 | 22.64 | 117.79 |
+| OEM-Seltek | 0 | 0 | null | null |
+
+- Total: 23 engineers, Σ FTE 20.3.
+- Lab booked % (year): India 123.74, Greece 21.82, Romania 11.10.
+- Areas: Europe design 42.65 / lab 13.81; India design 147.64 / lab 123.74; total design 98.23 / lab 57.12.
+- Dashboard: within year **41** (24 open + 17 Commercialized), spillover **42**, left out **126**, of which **18**
+  `no_leader` (OEM-HCK 8, OEM-Seltek 9, R&D-Greece 1).
+- Pipeline row: Spillover 17 / New 236 / Unregistered 0 / Total 253.
+- The resource-load options list 9 departments, with `available` true.
+- Invariants: `validate_invariants` reports 0 violations (I1–I12, I15, I16, I21, I22). I8 is byte-identical. 0
+  ENG_CONFLICT, OVERLAP and data_error. 7 CAT_NOT_ALLOWED warnings.
+- I19: every served booked % equals load / capacity. I23: the per-hub filtered completing counts sum to the unfiltered
+  ones. I13, I14, I17, I18, I20 and I24 are not exercised by a seed and their code is unchanged.
+
+**Against the auditor's scenarios.**
+- Auditor R1 (54 within year, 37 open; 102 left out) and R3 (53 / 36 open; 48 spillover; 108 left out) both put every
+  blank leader on a roster engineer, with OEM going to R&D-Greece. R1 also spread the six non-roster leaders' work.
+- In memory, I filled only our 18 open blank-leader projects that way (and set Theoni to 0.8). That reproduces R3
+  exactly: 36 / 48 / 108.
+- So the whole gap to R3 is the 18 unassigned projects: −12 within year, −6 spillover, +18 left out.
+- The gap from R3 to R1 is the auditor's own: the six leaders are kept as single engineers.
+
+**UI for no leader.** The leader shows as "—": the Gantt row has sr-only "No leader"; the Projects table and the register
+show a dash. The project counts as Left Out. The `no_leader` *reason* is neither stored on the outcome nor served.
+P24-T02 may label it from `leader_engineer_id = null` + `LEFT_OUT`.
+
+**Tests.**
+- `test_client_2026_seed.py`:
+  - The cap and tuning tests are replaced by roster, provisional, never-reassigned and carry-over tests.
+  - New tests cover the extractor fields, the plan-week rule, `extract_roster` and the committed roster totals.
+  - The schedule test now expects 18 `no_leader`, allows CAT_NOT_ALLOWED and keeps 0 invariant violations.
+- `test_seed_scripts.py`: client_2026 asserts the 23 engineers, Σ FTE 20.3, the workbook efficiencies, 20 NULL leaders,
+  17 carry-overs and the field counts.
+- New `test_p24_charter_fields.py` (5 tests): options, scope, the department filter, the read and register fields, and
+  read-only writes giving 422.
+
+**Results.**
+- Full pytest without the contract file: 1775 passed (96.87 % coverage).
+- Contract file: 10 failed, 200 passed.
+  - 4 are mine and expected until P24-T02: `ProjectRead`, `ProjectFilterRow`, `WorkspaceProject` and the
+    `WorkspaceProject` nullability.
+  - 6 are P25 rows from concurrent P25-T01 work (Priority* / HubP1Fill / PriorityCapacityFill).
+- `ruff check .` is clean. Touched files are ruff-format clean, except `seed_demo_data.py` and `test_seed_scripts.py`,
+  which were already unformatted at HEAD and were left alone. mypy is clean on `client_2026.py` and
+  `extract_client_2026.py`.
+
+**Docs.**
+- ADR 0035.
+- ADR 0024: amended-by note.
+- DOMAIN_RULES: revision line + "Project charter fields".
+- OPEN_QUESTIONS #52–#62, plus notes on #34 and #42.
+- IMPLEMENTATION_PLAN P24 (T01 DONE, T02 and T20 TODO).
+
+**Follow-ups for P24-T02.** Mirror the three fields in the frontend types. `e2e/p15-gate.spec.ts` picks engineer index
+40, but there are now 23 engineers. Other live gate specs that pin old seed figures need re-checking against the new
+seed.
+
+*Correction to the P24-T01 entry above (same task):* the 18 `no_leader` projects are OEM-HCK **9**, OEM-Seltek **8**
+and R&D-Greece 1. The entry above has the two OEM hubs swapped.
+
+## [2026-10-21] P19-R03 — Gantt re-gate remediation (QA-P19-4, QA-P19-3, O-R1) (frontend-builder): DONE
+
+Scope: `frontend/src/surfaces/gantt/` only. No backend change and no change to the PATCH value. The drop still sends the
+unclipped work from `stepDragResult`, as before.
+
+**QA-P19-4 fixed (drag label calendar weeks past W52).**
+- New pure `stepDragCalendar(origin, workWeeks, scale)` in `lib/gantt-coordinates.ts`:
+  - with a served FTE, calendar weeks are `fteSpanWeeks(work, fte)` (ADR 0032 `ceil(work / fte)`);
+  - without one, they are 1:1, i.e. the served bar width plus the change in work;
+  - `endWeek = start + calendar − 1`, and `pastAxis` is set when it ends past W52.
+- `StepDragResult` is unchanged, and the ghost is still clipped at W52 for drawing only.
+- `resizeDragLabel` takes an optional `pastEndWeek`:
+  - design with FTE: "6 wks on the calendar, to W53 · 3 wks of work at 0.5 FTE";
+  - lab / elapsed: "6 wks on the calendar, to W54 · not stretched by FTE";
+  - design with no served FTE: "… · calendar weeks follow the leader's FTE, past W52".
+- `stepDragLabel` accepts `calendar` (the overlay passes `stepDragCalendar(...)`). Without it, it falls back to the
+  ghost width, which is correct only inside the axis.
+
+**QA-P19-3 fixed (WCAG 2.4.3).** `GanttChart` keeps the triggering Details button. `onOpenDetails(projectId, trigger)` is
+fed by `e.currentTarget`. `GanttProjectDetailsDialog` gains `onCloseAutoFocus`, and the host calls `preventDefault()` and
+focuses the button. If the virtualized row was unmounted, it looks the button up again by
+`[data-testid="gantt-row-details"][data-project-id=…]`.
+
+**O-R1 fixed.** The resize handle's left edge is `min(barEnd − handle/2, axisWidth − handle)`, so a bar ending at W52
+keeps the whole handle inside the timeline.
+
+**Tests** (in `components/gantt-responsive.test.tsx`, +10):
+- `stepDragCalendar` at 0.5 (W48, 3 work → 6, to W53), 0.63 (W46, 6 work → 10, to W55), inside the axis, and no FTE;
+- live overlay labels:
+  - 0.5 FTE, W48–W49 +4: "6 wks on the calendar, to W53 · 3 wks of work at 0.5 FTE";
+  - 0.63 FTE, W46–W52 +3: "10 wks …, to W55 · 6 wks of work at 0.63 FTE" (the clipped ghost said 7);
+  - 0.63 inside the axis: no suffix;
+  - no FTE, for design and lab;
+- the copy helpers;
+- the handle stays inside the axis at W52;
+- focus returns to Details after Escape (opened by click, opened by keyboard) and after the Close button.
+
+A mutation check, removing `onCloseAutoFocus`, makes the 3 focus tests fail.
+
+Results: `tsc -b` 0, `eslint src/surfaces/gantt` 0, Vitest gantt 165/165, full suite 182 files / 1406 passed,
+`vite build` OK (GanttPage 22.4 KB gzip, index 130.0 KB gzip).
+
+**Live check** (:5183, Bob HubPlanner, read-only: 0 non-GET `/api` requests sent). :8001 now sends `span_fte`, but it is
+null on every step in Bob's scope. So the target step's `span_fte` and weeks were stubbed client-side in the `/gantt`
+response (Playwright `route.fulfill`; nothing written).
+- 1440: 0.5 FTE, W51–W52, 1 work, +4: label "6 wks on the calendar, to W56 · 3 wks of work at 0.5 FTE", flipped left.
+- 390 (touch): 0.63 FTE, W46–W52, 4 work, +3: label "10 wks on the calendar, to W55 · 6 wks of work at 0.63 FTE", wrapped
+  inside the timeline.
+- Handle at a W52 bar: the right-edge pixel hit-test lands on `step-drag-handle` at both widths.
+- 390 Details: after Escape, focus is on `gantt-row-details` when opened by keyboard, opened by click, and with the
+  project collapsed.
+- Axe serious/critical 0 at both widths for the expanded view, during the drag, and on the details dialog.
+
+Screenshots: scratchpad `shots/r03-{1440,390}-drag.png`.
+
+qa can now make the soft QA-P19-4 assertions in `e2e/p19-gate.spec.ts` hard, and flip the QA-P19-3 annotation to
+`toBeFocused()`. The spec's expected label must add ", to W5x" when the span crosses W52. Nothing committed.
+
+## [2026-10-21] P21-T05 follow-up 2 — two-line list rows; no strip sliver under the stuck panel (frontend-builder): DONE
+
+Owner feedback from a live screenshot of the List layout.
+- **List rows.**
+  - Each row is a fixed 46 px (`h-[46px]`). The name uses `line-clamp-2` with `break-words` and is left-aligned; rank and handle are top-aligned. The full name stays the link text (accessible name) and the `title`.
+  - The virtualizer estimate is a fixed 46 + 2 px, so nothing is measured.
+  - `PriorityBoardCard` serves no project code or other identifier, so no second identifier is shown; nothing is invented. Long shared prefixes ("Frameless Lookalike Door Coolers Development S-4…") can still clip the suffix on line 2. That needs `external_code` on the board card (backend).
+- **Strip sliver.** The hub load strip showed as a cut-off sliver under the stuck panel. The board's reserve is now the measured space below it (`useSpaceBelow` in `lib/use-stuck.ts`, via a ref on the board tab content), not a constant 56.
+  - At max scroll the board's top meets the stuck panel's bottom exactly at 1440: gap 0, and `elementFromPoint` 3 px under the panel hits `board-column-header`.
+  - At 390 the gap is 12 px of plain surface background (the board is shorter than the space), not the strip.
+- **Capacity fill chip.** The new P25 "Capacity fill" filter chip is wrapped in `GridOnly`, so the panel stays 273.8 / 273.8 px (not stuck, 1440) on both tabs.
+- **Re-checked live on :5183** in Cards and List at 1440 and 390: 0 headers covered; axe 0 serious/critical. `PriorityBoardPage.test.tsx` asserts `line-clamp-2`, no `truncate` and the 46 px row. Screenshots: session scratchpad `t05/fix/*`.
+
+## [2026-10-21] P25-T02 — P1 capacity fill in the Matrix (frontend-builder): DONE
+
+Built against `docs/API_CONTRACT_P25.md` and ADR 0036. Every figure is a served field (I9); bar lengths are only a visual scale.
+- **Types (`matrix/api/types.ts`).**
+  - `PriorityMatrixRow` and `PriorityCompareProject` gain `score_band`, `capacity_fill` and `capacity_fill_reason`.
+  - `PriorityDistribution` gains `capacity_fill_count`; `PriorityPortfolioSummary` gains `score_band_counts` and `capacity_fill_count`.
+  - New `HubP1Fill` and `PriorityCapacityFill`.
+  - `pytest tests/test_openapi_frontend_contract.py -k "Priority or HubP1 or Capacity"`: 35 passed, so the six P25 rows are green. The file's 4 other failures are another agent's in-flight `plant` / `product_type` / `requesting_department` fields (dashboard / registration / workspace), not P25.
+  - Test fixtures: `P13_MATRIX_ROW_DEFAULTS` defaults the three fields; `P25_FILL_DEFAULTS` is new.
+- **Chip (`components/suggested-band-chip.tsx`).**
+  - `capacity_fill` gives an outlined P1 chip with an `ArrowUpFromLine` icon reading "P1 · capacity fill", plus a second line "score band P2" from the served `score_band`.
+  - It is a focusable button named "Suggested band P1 by capacity fill, score band P2"; its tooltip is the served `capacity_fill_reason`, verbatim.
+  - A non-promoted candidate with a reason keeps its normal pill; the reason appears in the tooltip only.
+  - A pre-P25 row (fields absent) shows the plain pill.
+  - Used in the grid's `ScoreCell` and in the Compare total row.
+- **Filter.** A "Capacity fill" chip (`aria-pressed`, `view.capacityFill`) narrows the served rows to `capacity_fill === true`, client-side. It is counted in "Filters (n)" and cleared by Reset.
+- **Panel (`components/capacity-fill-panel.tsx`)** sits under the score overview, from `usePriorityCapacityFill(hubId, region)`. The key is `['priority-matrix','capacity-fill',…]`, so score saves and moves re-read it.
+  - Per hub: a bar with the base P1 load solid, the filled load hatched and a capacity marker; the text "P1 load base → filled of capacity wks" (served values, no subtraction); "n promoted"; "over capacity" when base > capacity.
+  - The explainer line is as requested.
+  - `has_active_schedule_run: false` shows "No active schedule run — capacity fill is off".
+- **Charts.** The band distribution now notes "Bands are the suggested bands, after the P1 capacity fill. P1 n, of which m by capacity fill" (served `capacity_fill_count`).
+  - The summary's band table is now "Suggested band (score, then P1 capacity fill)", with Suggested (promoted) and Score band (`score_band_counts`) columns and the same note.
+  - Both come from the server's promoted counts, so they agree for the same scope.
+- **Board.** `GET /priority-board` serves `band` = the stored score band (contract §5) and no fill fields. Nothing is computed in the browser; the card now reads "score band P1" so it is not mistaken for the suggested band.
+- **Backend additions needed (follow-up):**
+  - (1) `PriorityBoardCard`: `suggested_band`, `score_band`, `capacity_fill`, `capacity_fill_reason` (and `external_code` for the list layout).
+  - (2) The Workspace score section's payload: the same three fields.
+  - (3) `GET /exports/matrix`: `score_band`, `capacity_fill` and reason columns, with `suggested_band` documented as promoted.
+- **Tests.**
+  - New `components/p25-capacity-fill.test.tsx` (7): promoted chip, score-band line and tooltip reason; not-promoted reason only in the tooltip; plain pill; panel figures, over capacity, run version and axe; no-run state; distribution note; summary columns and note.
+  - `compare-dialog.test.tsx` (+1): compare shows the chip.
+  - `MatrixPage.test.tsx` (+1): the filter chip narrows to promoted rows and the chip renders.
+  - `MatrixPage.board.test.tsx` mocks `/priorities/capacity-fill`.
+- **Results.**
+  - `tsc -b`: no errors in my files; the remaining errors are another agent's dashboard fixtures (`ProjectFilterRow` `plant` fields).
+  - ESLint `surfaces/matrix` and `surfaces/priority-board`: 0 errors.
+  - Full Vitest: 183 files / 1415 tests, 1 failure in `surfaces/gantt/GanttPage.test.tsx` (another agent's area, not touched).
+  - `vite build`: budget PASS at 186.8 KB gzip; MatrixPage chunk 39.5 KB gzip.
+- **Live on :5183** with mocked P25 routes: per hub the two highest scorers under 70 promoted, distribution `capacity_fill_count` 12, capacity-fill for 3 hubs.
+  - axe 0 serious/critical at 1440 and 390 for the panel, and for the filtered grid with the tooltip open.
+  - The filter showed "12 of 253 projects shown".
+  - Screenshots: session scratchpad `t05/p25/{1440,390}-{panel,grid-fill}.png`.
+- Nothing committed.

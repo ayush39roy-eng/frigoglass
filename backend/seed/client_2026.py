@@ -1,5 +1,5 @@
 """Seed inputs the client's 2026 workbook does not carry, derived
-deterministically from `client_2026_seed_data.json` (ADR 0024).
+deterministically from `client_2026_seed_data.json` (ADR 0024, ADR 0035).
 
 Pure functions and constants only: no database access and no I/O. Both
 `seed_demo_data.py` and the tests use them. Every rule here is a *seed
@@ -7,60 +7,61 @@ input*. No scheduling or capacity formula is changed: the figures the app
 shows are what the scheduler and the ADR 0008/0016 formulas compute from
 these inputs.
 
-Engineers and leaders (`assign_leaders`, `tune_fte`)
-----------------------------------------------------
-- Every Excel project leader becomes one engineer. Their hub is the hub where
-  they lead the most projects (computed by the extractor).
-- The scheduler books a project's leader for every week of every design
-  step (DOMAIN_RULES "Booking rules"). The workbook names a few leaders on
-  very many open projects: Dipak leads 52 and Pawan 29. Booked as one person
-  each, most of their projects could not be placed before `HORIZON_WEEKS`.
-  The workbook leader is clearly the responsible lead, not the only designer.
-  So:
-  - an engineer leads at most `MAX_OPEN_PROJECTS_PER_ENGINEER` open
-    (scheduled) projects, taken in scheduling order;
-  - a workbook leader's overflow goes to the least-loaded named capacity
-    engineer of the *project's* hub ("<hub> Engineer <n>", created when none
-    has room). These engineers are not people from the workbook;
-  - a project with a blank leader goes to the least-loaded engineer of its
-    own hub with room, workbook leaders included. Ties go to the first name
-    alphabetically;
-  - closed projects (Commercialized / On Hold / Cancelled) keep their workbook
-    leader with no cap. A blank leader goes to the hub's least-loaded engineer;
-  - a hub with no engineer at all still gets "<hub> Engineer 1". R&D-Greece
-    and OEM-Seltek have no workbook leader of their own.
-  The workbook leader of every project stays in the seed JSON (`leader`).
-- Every engineer may lead every category, OEM included, so no project raises
-  CAT_NOT_ALLOWED.
-- **FTE is demo tuning.** It is ADR 0024's target booked %, not the client's
-  roster, and must be replaced by the roster. Since ADR 0032 (supersedes
-  ADR 0002) FTE also gates design speed (`span = ceil(duration / fte)`),
-  so the tuned FTEs change the plan, not just the booked %. After the
-  seed has written the projects it runs the greedy scheduler once, in
-  memory, and reads each hub's design load the way the Capacity surface
-  does (I6). `tune_fte` then sets the hub's total FTE to
-  `load / (target × working weeks per engineer)`:
-  - the target is R&D-India 60 % and every other hub 100 %;
-  - the total is rounded down to 0.01, so the hub books at or just above
-    its target;
-  - it is spread evenly over the hub's engineers.
+ADR 0035 (2026-10-21) retires ADR 0024's demo tuning. The seed no longer
+caps a leader's projects, creates no "<hub> Engineer <n>" rows, and no
+longer tunes FTE or chamber efficiency toward a target booked %.
 
-Lab supply (`tune_efficiency`)
-------------------------------
-**Chamber efficiency is demo tuning** too (ADR 0024: lab "Full", about 100 %
-in every lab region). Efficiency only feeds the ADR 0008 supply figure, and
-booking is gated by `max_concurrent` alone. Platforms, downtime and
-allowed stages stay the client's values. Using the same in-memory run, each
-region's chamber efficiencies are scaled by one factor, `lab load / lab
-supply`. Each result is rounded down to 0.001 and capped at 1.0, so the
-region books at or just above 100 %.
+Engineers (`build_roster`)
+--------------------------
+- **Roster.** The formula workbook's engineer table (`RPD Capacity!I42:T50`,
+  extracted into the JSON's `roster`): name, hub and FTE exactly as the
+  workbook gives them (Rishi 1.0, Atul 0.5, Ashish in R&D-India, ...).
+- **Zero-FTE placeholders are not created.** The workbook's "New Hiring"
+  and "New engineer-Contractual" rows have a Resource Count of 0. An
+  engineer needs FTE >= 0.01 (the API bound; ADR 0032 makes a 0-FTE leader a
+  `data_error`), so they are skipped and listed in `RosterBuild.placeholders`
+  (docs/OPEN_QUESTIONS.md).
+- **Allowed categories.** The formula workbook gives none per engineer, so
+  every roster engineer takes the client app's chips
+  (`CLIENT_APP_ALLOWED_CATEGORIES`, from the client's older app,
+  `Engineer.allowedTypes`). Rishi's chip "M" has no app category and is
+  dropped. A mismatch only raises the CAT_NOT_ALLOWED warning; it never
+  blocks scheduling (DOMAIN_RULES "Booking rules").
+- **Leader aliases.** The project file writes some roster people by first
+  name (`LEADER_ALIASES`: Rahul, Stef, Alin, Adrian).
+- **Provisional leaders.** A workbook project leader who is not on the
+  roster (Dipak, Elena Micu, Theoni, Marian, Sailesh, Antonis) is added as
+  an engineer **flagged provisional** (`EngineerSeed.provisional`; the
+  `engineers` table has no notes or flag column, so the flag lives here and
+  in ADR 0035). Their hub is the hub where they lead the most projects of
+  the dataset (the extractor's `leaders[].hub`; ties alphabetically), FTE
+  `PROVISIONAL_LEADER_FTE` = 1.0, and their allowed categories are the
+  categories of the projects they lead. The client must confirm their FTE
+  and that they are design engineers (docs/OPEN_QUESTIONS.md).
+- **Assignments.** A project's leader is its workbook leader, through the
+  alias map. Nothing is reassigned or capped. **A blank leader stays
+  blank** (`leader_engineer_id` null): the scheduler leaves the project
+  out with `no_leader` (DOMAIN_RULES "Booking rules"). No assignment is
+  invented.
+- **OEM hubs** have no roster engineers. Their projects are led only by
+  the provisional leaders named on them (Theoni); the rest have no leader.
 
-Priority dimensions (`derive_dims`)
------------------------------------
-The workbook has no prioritization scores. Each project gets 13 scores in
-1..5 whose band (DOMAIN_RULES "Prioritization scoring") equals the project's
-`priority`. The score starts at all 1s and is raised one dimension at a time,
-in an order seeded from the project code, until the weighted score reaches the
+Chambers
+--------
+Seeded from `domain_constants.CHAMBER_SEED` exactly: the formula workbook's
+platforms, efficiency (0.7 / 0.6 / 0.6 / 0.5, ...) and downtime. Allowed
+stages stay ours (docs/OPEN_QUESTIONS.md).
+
+Priority dimensions (`derive_dims`) — SYNTHETIC
+-----------------------------------------------
+**The 13 dimension scores are synthetic** (`SYNTHETIC_DIMENSION_SCORES`).
+The workbook and every other client source hold no rubric scores; the
+real scores are asked in docs/OPEN_QUESTIONS.md. They are kept, not
+blanked, because blank scores would put every project in "Unscored" and
+empty the Matrix. Each project gets 13 scores in 1..5 whose band
+(DOMAIN_RULES "Prioritization scoring") equals the project's `priority`.
+The score starts at all 1s and is raised one dimension at a time, in an
+order seeded from the project code, until the weighted score reaches the
 band's target percentage:
 - P1: 90 − 3 × (rank − 1) for Marketing Priority rank 1..5;
 - P2: 66 − (rank − 6) for rank 6..13;
@@ -93,13 +94,15 @@ a lab step for which no chamber of the project's lab region has a free
 platform at `current_week`. Two anchored tails therefore never collide on one
 engineer (I1) or overfill a chamber (I2). Projects are visited in scheduling
 order (DOMAIN_RULES "Scheduling order"), so the higher-priority project gets
-the free resource.
+the free resource. A project with no leader books nothing in a run, so the
+seed derives its progress against a private ledger.
 
 Weeks, consistent with the progress rules (DOMAIN_RULES "Per-stage progress
 capture") and I21:
 - In Progress: `remaining = ceil(duration × (1 − pct/100))`, and
   `actual_start_week = current_week − (duration − remaining)`. The tail starts
-  at `current_week` and books exactly `remaining` weeks.
+  at `current_week` and books `remaining` weeks of effort (stretched by the
+  leader's FTE in the run, ADR 0032).
 - Done steps are laid back to back, in sequence order, ending the week before
   the current step starts. If there is no In Progress step, they end at
   `current_week − 1`. Each Done step spans its lead-time duration. When that
@@ -107,6 +110,15 @@ capture") and I21:
   shortened (never below one week) so that the history starts no earlier than
   the request week. It is never earlier than week 1. Every Done step therefore
   ends before `current_week`.
+
+Project fields (ADR 0035)
+-------------------------
+- `plant`, `requesting_department`, `product_type`: the workbook values.
+- `carry_over` / `reg_year` (`carry_over_and_reg_year`): a project the
+  project file flags `Spillover '25` is `carry_over = true`, `reg_year =
+  2025`; every other project is `carry_over = false`, `reg_year = 2026`.
+- `target_end_week`: the extractor's plan week of "Project End Date -
+  LATEST" (2025 dates are not imported; see the extractor docstring).
 """
 
 from __future__ import annotations
@@ -114,27 +126,13 @@ from __future__ import annotations
 import hashlib
 import math
 import uuid
-from collections import Counter
-from collections.abc import Iterable, Mapping, Sequence
-from dataclasses import dataclass
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, field
 
 import domain_constants as dc
 
-#: The most open (scheduled) projects one engineer leads (module docstring).
-MAX_OPEN_PROJECTS_PER_ENGINEER: int = 4
-
-#: Target design booked % (yearly) per hub; ADR 0024. FTE is derived from it.
-TARGET_DESIGN_BOOKED_PCT: Mapping[str, float] = {"R&D-India": 60.0}
-DEFAULT_TARGET_DESIGN_BOOKED_PCT: float = 100.0
-
-#: The highest FTE `tune_fte` gives one engineer.
-MAX_FTE: float = 1.0
-
-#: Target lab booked % (yearly) per lab region; ADR 0024.
-TARGET_LAB_BOOKED_PCT: float = 100.0
-
-#: The highest chamber efficiency `tune_efficiency` sets.
-MAX_EFFICIENCY: float = 1.0
+#: ADR 0035: every seeded rubric score is synthetic (module docstring).
+SYNTHETIC_DIMENSION_SCORES: bool = True
 
 #: Candidate current steps (by letter) for an In Development project without
 #: a Development Step. The project code picks one.
@@ -143,10 +141,50 @@ IN_DEVELOPMENT_POINTS: tuple[str, ...] = ("J", "K", "K")
 #: percent_complete of an In Progress current step.
 IN_PROGRESS_PERCENT: int = 50
 
-ALL_CATEGORIES: tuple[str, ...] = ("A+", "A", "B", "C", "OEM")
+#: The smallest FTE an engineer may have (the API bound, `schemas/engineer.py`).
+MIN_FTE: float = 0.01
+
+#: FTE of a provisional leader (ADR 0035; the client must confirm it).
+PROVISIONAL_LEADER_FTE: float = 1.0
+
+#: The project file writes these roster people by a short name.
+LEADER_ALIASES: Mapping[str, str] = {
+    "Rahul": "Rahul-Contractual",
+    "Stef": "Stef Marius",
+    "Alin": "Alin Boboc",
+    "Adrian": "Adrian Bortoc",
+}
+
+#: Allowed categories per roster engineer. The formula workbook gives none,
+#: so these are the client app's chips (its `Engineer.allowedTypes`, the
+#: older app's April–May 2026 data). Rishi's "M" chip is not an app category
+#: and is dropped; Dimopoulou's chip "OEM" means any OEM category.
+CLIENT_APP_ALLOWED_CATEGORIES: Mapping[str, tuple[str, ...]] = {
+    "Rishi": ("A", "B", "C"),
+    "Lokesh": ("B", "C"),
+    "Zakir": ("B", "C"),
+    "Pawan": ("B", "C"),
+    "Nikhil": ("B", "C"),
+    "Atul": ("B", "C"),
+    "Rahul-Contractual": ("B", "C"),
+    "Ashish": ("A+", "A"),
+    "Praveer Kumar Singh": ("A",),
+    "Ayush Kumar": ("A",),
+    "Dimopoulou": ("A+", "A", "OEM"),
+    "Lioumis": ("A+", "A"),
+    "Kanarios": ("A+", "A"),
+    "Stef Marius": ("B", "C"),
+    "Alin Boboc": ("B", "C"),
+    "Adrian Bortoc": ("B", "C"),
+    "Bianca": ("C",),
+}
 
 _UNSCHEDULED = frozenset({"Commercialized", "On Hold", "Cancelled", "Draft"})
 UNDER_INDUSTRIALIZATION_AFTER = "H"  # current step: the first non-skipped one after this letter
+
+#: Registration year of a project flagged `Spillover '25`, and of the rest.
+CARRY_OVER_REG_YEAR: int = 2025
+PLAN_REG_YEAR: int = 2026
 
 
 #: Namespace of the deterministic row ids (`uuid5`). The scheduler breaks
@@ -180,7 +218,17 @@ class EngineerSeed:
     hub: str
     fte: float
     allowed_categories: tuple[str, ...]
-    from_workbook: bool
+    #: True for a workbook leader who is not on the roster (ADR 0035).
+    provisional: bool = False
+    #: Where the row comes from: the roster cell, or "provisional leader".
+    source: str = ""
+
+
+@dataclass
+class RosterBuild:
+    engineers: list[EngineerSeed]
+    #: Roster rows not created because their FTE is below `MIN_FTE`.
+    placeholders: list[dict[str, object]] = field(default_factory=list)
 
 
 #: Statuses that are scheduled (DOMAIN_RULES "Scheduling order").
@@ -205,133 +253,95 @@ def scheduling_order_key(
     )
 
 
-def assign_leaders(
-    projects: Sequence[Mapping[str, object]],
-    leaders: Iterable[Mapping[str, object]],
-    order: Sequence[int],
-) -> tuple[list[str], list[EngineerSeed]]:
-    """(leader name per project in input order, engineer roster). `order` is
-    the project indexes in scheduling order (module docstring)."""
+def canonical_leader(raw: object) -> str | None:
+    """The engineer name for a workbook leader value (alias map applied)."""
 
-    roster: dict[str, EngineerSeed] = {}
+    if not raw:
+        return None
+    name = str(raw)
+    return LEADER_ALIASES.get(name, name)
+
+
+def _ordered_categories(categories: set[str]) -> tuple[str, ...]:
+    order = [*dc.CATEGORY_ORDER, "OEM"]
+    return tuple(c for c in order if c in categories)
+
+
+def build_roster(data: Mapping[str, object]) -> RosterBuild:
+    """The engineers of the seed (module docstring "Engineers")."""
+
+    roster_rows = data["roster"]
+    leaders = data["leaders"]
+    projects = data["projects"]
+    assert isinstance(roster_rows, list) and isinstance(leaders, list)
+    assert isinstance(projects, list)
+
+    out = RosterBuild(engineers=[])
+    names: set[str] = set()
+    for row in roster_rows:
+        name, hub, fte = str(row["name"]), str(row["hub"]), float(row["fte"])
+        if fte < MIN_FTE:
+            out.placeholders.append(dict(row))
+            continue
+        if name not in CLIENT_APP_ALLOWED_CATEGORIES:
+            raise ValueError(f"roster engineer {name!r} has no allowed categories")
+        if name in names:
+            raise ValueError(f"roster engineer {name!r} appears twice")
+        names.add(name)
+        out.engineers.append(
+            EngineerSeed(
+                name,
+                hub,
+                fte,
+                CLIENT_APP_ALLOWED_CATEGORIES[name],
+                provisional=False,
+                source=f"RPD Capacity!{row['cell']}",
+            )
+        )
+
     for leader in leaders:
-        name = str(leader["name"])
-        roster[name] = EngineerSeed(name, str(leader["hub"]), 1.0, ALL_CATEGORIES, True)
-    capacity_names: dict[str, list[str]] = {}
-    open_load: Counter[str] = Counter()
-
-    def new_capacity_engineer(hub: str) -> str:
-        names = capacity_names.setdefault(hub, [])
-        name = f"{hub} Engineer {len(names) + 1}"
-        if name in roster:
-            raise ValueError(f"capacity engineer {name!r} clashes with a workbook leader")
-        names.append(name)
-        roster[name] = EngineerSeed(name, hub, 1.0, ALL_CATEGORIES, False)
-        return name
-
-    def least_loaded(candidates: Iterable[str]) -> str | None:
-        room = [n for n in sorted(candidates) if open_load[n] < MAX_OPEN_PROJECTS_PER_ENGINEER]
-        return min(room, key=lambda n: open_load[n]) if room else None
-
-    out: list[str | None] = [None] * len(projects)
-    for i in order:
-        p = projects[i]
-        hub = str(p["hub"])
-        excel = p.get("leader")
-        if excel is not None and str(excel) not in roster:
-            raise ValueError(f"leader {excel!r} is not in the leaders list")
-        if not is_open(p):
+        leader_name = canonical_leader(leader["name"])
+        if leader_name is None or leader_name in names:
             continue
-        if excel and open_load[str(excel)] < MAX_OPEN_PROJECTS_PER_ENGINEER:
-            chosen = str(excel)
-        elif excel:
-            chosen = least_loaded(capacity_names.get(hub, ())) or new_capacity_engineer(hub)
-        else:
-            hub_engineers = [e.name for e in roster.values() if e.hub == hub]
-            chosen = least_loaded(hub_engineers) or new_capacity_engineer(hub)
-        open_load[chosen] += 1
-        out[i] = chosen
-
-    # Closed projects (never scheduled): the Excel leader, else the hub's
-    # least-loaded engineer, with no cap.
-    for i, p in enumerate(projects):
-        if out[i] is not None:
-            continue
-        excel = p.get("leader")
-        if excel:
-            out[i] = str(excel)
-            continue
-        hub = str(p["hub"])
-        hub_engineers = sorted(e.name for e in roster.values() if e.hub == hub)
-        if not hub_engineers:
-            hub_engineers = [new_capacity_engineer(hub)]
-        out[i] = min(hub_engineers, key=lambda n: open_load[n])
-
-    for hub in dc.HUB_LAB_REGION:
-        if not any(e.hub == hub for e in roster.values()):
-            new_capacity_engineer(hub)
-    return [str(n) for n in out], list(roster.values())
-
-
-def working_weeks_per_engineer(hub: str) -> float:
-    """ADR 0008 `52 − deduction_weeks` from `HUB_WORK_CALENDAR_SEED`."""
-
-    for name, weekdays, *days in dc.HUB_WORK_CALENDAR_SEED:
-        if name == hub:
-            return dc.WEEKS_IN_YEAR - sum(days) / weekdays
-    raise KeyError(hub)
-
-
-def tune_fte(roster: list[EngineerSeed], design_load_by_hub: Mapping[str, int]) -> None:
-    """Set FTEs so each hub's process-derived design load books its yearly
-    design capacity at `TARGET_DESIGN_BOOKED_PCT` (module docstring). The hub
-    total is rounded *down* to 0.01 FTE, so a 100 % hub is booked at or just
-    above 100 % ("full"). It is spread evenly over the hub's engineers in name
-    order. A hub that would need more than `MAX_FTE` per engineer gets
-    capacity-only engineers ("<hub> Engineer <n>", leading nothing) until it
-    does not. Mutates `roster`."""
-
-    for hub in dc.HUB_LAB_REGION:
-        load = design_load_by_hub.get(hub, 0)
-        members = sorted((e for e in roster if e.hub == hub), key=lambda e: e.name)
-        if load <= 0 or not members:
-            continue
-        target = TARGET_DESIGN_BOOKED_PCT.get(hub, DEFAULT_TARGET_DESIGN_BOOKED_PCT)
-        hundredths = math.floor(load / (target / 100 * working_weeks_per_engineer(hub)) * 100)
-        while hundredths > round(MAX_FTE * 100) * len(members):
-            n = sum(1 for e in roster if e.hub == hub and not e.from_workbook) + 1
-            extra = EngineerSeed(f"{hub} Engineer {n}", hub, 1.0, ALL_CATEGORIES, False)
-            roster.append(extra)
-            members = sorted((e for e in roster if e.hub == hub), key=lambda e: e.name)
-        base, extra_hundredths = divmod(hundredths, len(members))
-        for idx, e in enumerate(members):
-            e.fte = (base + (1 if idx < extra_hundredths else 0)) / 100
-
-
-def tune_efficiency(
-    chambers: Sequence[tuple[str, str, float, float, int]],
-    lab_load_by_region: Mapping[str, float],
-) -> dict[str, float]:
-    """New efficiency per chamber code (module docstring "Lab supply").
-
-    `chambers` rows are (code, lab_region, efficiency, working_weeks_per_chamber,
-    platforms), with working weeks as `services.capacity_supply` computes them.
-    A region with no lab load keeps its efficiencies."""
-
-    supply: dict[str, float] = {}
-    for _code, region, eff, weeks, platforms in chambers:
-        supply.setdefault(region, 0.0)
-        supply[region] += weeks * eff * platforms
-    out: dict[str, float] = {}
-    for code, region, eff, _weeks, _platforms in chambers:
-        load = lab_load_by_region.get(region, 0.0)
-        if load <= 0 or supply[region] <= 0:
-            out[code] = eff
-            continue
-        factor = load / (TARGET_LAB_BOOKED_PCT / 100) / supply[region]
-        scaled = math.floor(eff * factor * 1000) / 1000
-        out[code] = min(MAX_EFFICIENCY, max(0.001, scaled))
+        led = {
+            str(p["category"]) for p in projects if canonical_leader(p.get("leader")) == leader_name
+        }
+        names.add(leader_name)
+        out.engineers.append(
+            EngineerSeed(
+                leader_name,
+                str(leader["hub"]),
+                PROVISIONAL_LEADER_FTE,
+                _ordered_categories(led),
+                provisional=True,
+                source="provisional leader (not on the RPD Capacity roster)",
+            )
+        )
     return out
+
+
+def project_leaders(
+    projects: Sequence[Mapping[str, object]], engineers: Sequence[EngineerSeed]
+) -> list[str | None]:
+    """Each project's leader name (the workbook leader via the alias map), or
+    None when the workbook leaves it blank. Never reassigned."""
+
+    known = {e.name for e in engineers}
+    out: list[str | None] = []
+    for p in projects:
+        name = canonical_leader(p.get("leader"))
+        if name is not None and name not in known:
+            raise ValueError(f"leader {name!r} is not an engineer of the seed")
+        out.append(name)
+    return out
+
+
+def carry_over_and_reg_year(project: Mapping[str, object]) -> tuple[bool, int]:
+    """(carry_over, reg_year) for a project (module docstring, ADR 0035)."""
+
+    if project.get("spillover_2025"):
+        return True, CARRY_OVER_REG_YEAR
+    return False, PLAN_REG_YEAR
 
 
 # --- Priority dimensions ---------------------------------------------------
@@ -349,7 +359,7 @@ def _target_pct(code: str, priority: str, marketing_priority: int | None) -> int
     return 25 + _digest(code, "p4") % 12
 
 
-def band_for(dims: Sequence[int]) -> tuple[int, int, str]:
+def band_for(dims: Sequence[int]) -> tuple[float, int, str]:
     """(weighted_score, normalised_pct, band), DOMAIN_RULES "Prioritization scoring"."""
 
     # ADR 0029: points = score / 5 * weight; pct = round(sum / TOTAL_WEIGHT * 100).
@@ -418,8 +428,10 @@ class ResourceLedger:
             (code, region, stages) for code, region, _p, _e, _m, _b, _c, stages in dc.CHAMBER_SEED
         )
 
-    def take(self, kind: str, step_id: str, leader: str, region: str) -> bool:
+    def take(self, kind: str, step_id: str, leader: str | None, region: str) -> bool:
         if kind == "design":
+            if leader is None:
+                return True  # no leader: the run books nothing for this project
             if leader in self.busy_leaders:
                 return False
             self.busy_leaders.add(leader)
@@ -464,7 +476,7 @@ def derive_progress(
     project: Mapping[str, object],
     steps: Sequence[StepSpec],
     *,
-    leader: str,
+    leader: str | None,
     lab_region: str,
     current_week: int,
     ledger: ResourceLedger,

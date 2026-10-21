@@ -3,6 +3,7 @@ import { act, fireEvent, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event';
 
 import { renderWithProviders } from '@/test/render';
+import { permissionsFrom } from '@/test/session';
 import { ApiError } from '@/lib/api/client';
 import { useScenarioStore } from '@/stores/scenario';
 import { useHubFilterStore } from '@/stores/hub-filter';
@@ -42,6 +43,8 @@ const hooks = {
   useMatrixCurrencies: vi.fn(),
   usePriorityDistribution: vi.fn(),
   usePriorityCompare: vi.fn(),
+  usePriorityEditRows: vi.fn<(ids: string[], enabled: boolean) => unknown[]>(() => []),
+  usePriorityCapacityFill: vi.fn<(hubId: string | null, region: string | null) => unknown>(() => ({ data: undefined, isPending: true, isError: false })),
 };
 vi.mock('./hooks/use-matrix', () => ({
   usePriorityMatrix: (args: unknown) => hooks.usePriorityMatrix(args),
@@ -56,11 +59,13 @@ vi.mock('./hooks/use-matrix', () => ({
   useMatrixCurrencies: () => hooks.useMatrixCurrencies(),
   usePriorityDistribution: (args: unknown) => hooks.usePriorityDistribution(args),
   usePriorityCompare: (ids: string[], enabled: boolean) => hooks.usePriorityCompare(ids, enabled),
+  usePriorityEditRows: (ids: string[], enabled: boolean) => hooks.usePriorityEditRows(ids, enabled),
+  usePriorityCapacityFill: (hubId: string | null, region: string | null) => hooks.usePriorityCapacityFill(hubId, region),
 }));
 vi.mock('@/lib/api/reference', () => ({ useHubs: () => ({ data: [] }) }));
 
 import MatrixPage from './MatrixPage';
-import { P13_MATRIX_ROW_DEFAULTS } from './test-fixtures';
+import { P13_MATRIX_ROW_DEFAULTS, P25_FILL_DEFAULTS } from './test-fixtures';
 
 const pending = { data: undefined, isPending: true, isError: false, error: null, refetch: vi.fn() };
 function ready<T>(data: T) {
@@ -77,6 +82,8 @@ const summary: PriorityPortfolioSummary = {
   hard_gate_forced_count: 2,
   suggested_band_counts: { P1: 3, P2: 2, P3: 1, P4: 1 },
   set_priority_counts: { P1: 4, P2: 3 },
+  score_band_counts: { P1: 3, P2: 2, P3: 1, P4: 1 },
+  capacity_fill_count: 0,
 };
 
 const scoredRow: PriorityMatrixRow = {
@@ -117,6 +124,7 @@ const distribution: PriorityDistribution = {
     bucket_to: i * 10 + 10,
     count: i === 7 ? 3 : i === 5 ? 2 : 0,
   })),
+  capacity_fill_count: 0,
 };
 
 /** Selector for the "USD · US dollar" style option names. */
@@ -341,16 +349,16 @@ describe('MatrixPage', () => {
     const compared: PriorityCompareProject[] = [
       {
         project_id: 'c0', project_name: 'Cooler 0', hub: 'R&D-Greece', set_priority: 'P2', has_score: true,
-        weighted_score: 268, normalized_pct: 91, suggested_band: 'P1', dimension_scores: dims(5),
+        weighted_score: 268, normalized_pct: 91, suggested_band: 'P1', dimension_scores: dims(5), ...P25_FILL_DEFAULTS,
       },
       {
         project_id: 'c1', project_name: 'Cooler 1', hub: 'PD-India', set_priority: null, has_score: true,
-        weighted_score: 130, normalized_pct: 44, suggested_band: 'P3', dimension_scores: dims(0),
+        weighted_score: 130, normalized_pct: 44, suggested_band: 'P3', dimension_scores: dims(0), ...P25_FILL_DEFAULTS,
       },
       {
         project_id: 'c2', project_name: 'Cooler 2', hub: 'PD-India', set_priority: null, has_score: false,
         weighted_score: null, normalized_pct: null, suggested_band: null,
-        dimension_scores: dims(0).map((d) => ({ ...d, score: null, points: null })),
+        dimension_scores: dims(0).map((d) => ({ ...d, score: null, points: null })), ...P25_FILL_DEFAULTS,
       },
     ];
 
@@ -386,7 +394,8 @@ describe('MatrixPage', () => {
       hooks.usePriorityMatrix.mockReturnValue(ready(rows));
       hooks.usePrioritySummary.mockReturnValue(ready(summary));
       hooks.usePriorityCompare.mockReturnValue(ready({ projects: compared }));
-      renderWithProviders(<MatrixPage />);
+      // Read-only (Executive Viewer style): static values; P21-T04 editing is in compare-dialog.test.tsx.
+      renderWithProviders(<MatrixPage />, { session: { roles: ['Executive Viewer'], permissions: permissionsFrom({ matrix: 'r' }) } });
 
       await user.click(screen.getByRole('checkbox', { name: 'Select Cooler 0 to compare' }));
       await user.click(screen.getByRole('checkbox', { name: 'Select Cooler 1 to compare' }));
@@ -429,6 +438,28 @@ describe('MatrixPage', () => {
       await user.click(screen.getByRole('button', { name: 'Compare (2)' }));
       expect(screen.getByRole('alert')).toHaveTextContent('One of the selected projects is no longer available to you');
     });
+  });
+
+  it('P25: the "Capacity fill" chip narrows the served rows to those the server promoted', async () => {
+    const user = userEvent.setup();
+    hooks.usePriorityMatrix.mockReturnValue(
+      ready([
+        { ...scoredRow, project_id: 'f1', project_name: 'Filled Cooler', rank: 1, suggested_band: 'P1', score_band: 'P2', capacity_fill: true, capacity_fill_reason: 'P1 (capacity fill): hub P1 design load 9.00 of 10.00 weeks with this project' },
+        { ...scoredRow, project_id: 'n1', project_name: 'Plain Cooler', rank: 2 },
+      ]),
+    );
+    hooks.usePrioritySummary.mockReturnValue(ready(summary));
+    renderWithProviders(<MatrixPage />);
+    const chip = screen.getByRole('button', { name: 'Capacity fill' });
+    expect(chip).toHaveAttribute('aria-pressed', 'false');
+    await user.click(chip);
+    expect(chip).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByTestId('matrix-row-count')).toHaveTextContent('1 of 2 projects shown');
+    expect(screen.getByText('Filled Cooler')).toBeInTheDocument();
+    expect(screen.queryByText('Plain Cooler')).not.toBeInTheDocument();
+    expect(screen.getByTestId('band-chip-capacity-fill')).toHaveTextContent('P1 · capacity fill');
+    await user.click(chip);
+    expect(screen.getByTestId('matrix-row-count')).toHaveTextContent('2 projects');
   });
 
   it('shows the hard-gate forced-to-P1 count from the summary', () => {

@@ -98,6 +98,32 @@ export function GanttChart({
   const { left: LEFT_COL_WIDTH, status: BADGE_COL_WIDTH } = ganttColumnWidths(narrow, boxWidth);
   const hasStatusCol = BADGE_COL_WIDTH > 0;
   const [detailsId, setDetailsId] = React.useState<string | null>(null);
+  // QA-P19-3 (WCAG 2.4.3): the Details button that opened the dialog, so focus
+  // returns to it on close. The row is virtualized: if it was unmounted, the
+  // project's (re-rendered) Details button is looked up instead.
+  const detailsTriggerRef = React.useRef<HTMLElement | null>(null);
+  const lastDetailsIdRef = React.useRef<string | null>(null);
+  const openDetails = React.useCallback((projectId: string, trigger: HTMLElement | null) => {
+    detailsTriggerRef.current = trigger;
+    lastDetailsIdRef.current = projectId;
+    setDetailsId(projectId);
+  }, []);
+  const restoreDetailsFocus = React.useCallback((event: Event) => {
+    let el = detailsTriggerRef.current;
+    if (!el || !el.isConnected) {
+      const id = lastDetailsIdRef.current;
+      el =
+        id === null
+          ? null
+          : (scrollRef.current?.querySelector<HTMLElement>(
+              `[data-testid="gantt-row-details"][data-project-id="${CSS.escape(id)}"]`,
+            ) ?? null);
+    }
+    if (el) {
+      event.preventDefault();
+      el.focus();
+    }
+  }, []);
   const detailsProject = detailsId === null ? null : (rows.find((r) => r.project_id === detailsId) ?? null);
 
   // The visible timeline in client px — the scroll viewport minus both sticky
@@ -273,7 +299,7 @@ export function GanttChart({
                           onToggleExpand={onToggleExpand}
                           onFreezeClick={onFreezeClick}
                           narrow={narrow}
-                          onOpenDetails={setDetailsId}
+                          onOpenDetails={openDetails}
                         />
                       ) : (
                         <StepLeftCell project={vr.project} step={vr.step} compact={compact} narrow={narrow} />
@@ -330,6 +356,7 @@ export function GanttChart({
         }}
         canWrite={canWrite}
         onFreezeClick={onFreezeClick}
+        onCloseAutoFocus={restoreDetailsFocus}
       />
     </div>
   );
@@ -523,7 +550,7 @@ function ProjectLeftCell({
   onFreezeClick: (project: GanttProjectRow) => void;
   /** P19-R02: phone layout — name only; everything else is in the details dialog. */
   narrow?: boolean;
-  onOpenDetails?: (projectId: string) => void;
+  onOpenDetails?: (projectId: string, trigger: HTMLElement | null) => void;
 }): React.JSX.Element {
   const statuses = narrow ? projectStatusLabels(project) : [];
   return (
@@ -602,8 +629,9 @@ function ProjectLeftCell({
           className="relative shrink-0 rounded-sm p-0.5 text-text-muted hover:bg-surface-raised hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           aria-label={`Details for ${project.project_name}${statuses.length > 0 ? ` (status: ${statuses.join(', ')})` : ''}`}
           title={statuses.length > 0 ? `Details · ${statuses.join(', ')}` : 'Details'}
-          onClick={() => onOpenDetails?.(project.project_id)}
+          onClick={(e) => onOpenDetails?.(project.project_id, e.currentTarget)}
           data-testid="gantt-row-details"
+          data-project-id={project.project_id}
           data-flags={statuses.length}
         >
           <Info className="size-3.5" aria-hidden="true" />

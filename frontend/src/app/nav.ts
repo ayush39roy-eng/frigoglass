@@ -10,7 +10,6 @@ import {
   LayoutDashboard,
   LayoutGrid,
   ScrollText,
-  SquareKanban,
   UsersRound,
   Workflow,
 } from 'lucide-react';
@@ -103,7 +102,7 @@ export const SURFACES: readonly SurfaceNavItem[] = [
     icon: FolderKanban,
     task: 'P22-T01',
     summary:
-      'Every project in your hub scope, as a list or as cards, with filters, Drafts and export. Register new projects and edit their registration (hard-gated required fields, validated by the API) in a side drawer.',
+      'Every project in your hub scope, as a list or as cards, with filters and export. Register new projects and edit their registration (hard-gated required fields, validated by the API) in a side drawer.',
     group: 'Plan',
     density: 'overview',
   },
@@ -128,21 +127,6 @@ export const SURFACES: readonly SurfaceNavItem[] = [
     task: 'P4-T04',
     summary:
       '236 projects x 13 scoring dimensions, weighted score and band per project, with a server-driven currency toggle (EUR / USD / INR).',
-    group: 'Plan',
-    density: 'working',
-  },
-  {
-    path: '/priority-board',
-    // P12 (ADR 0018 §4): read reuses `matrix` (a new layout of the same
-    // facts); a drop is the existing priority move, gated on Registration
-    // write exactly like the P11 move control.
-    surface: 'matrix',
-    label: 'Priority board',
-    title: 'Priority Board',
-    icon: SquareKanban,
-    task: 'P12-T05',
-    summary:
-      'Every project in five columns (P1, P2, P3, P4, Q). Drag a card, or use its priority control, to move it; the timeline recalculates as for any priority move.',
     group: 'Plan',
     density: 'working',
   },

@@ -80,6 +80,9 @@ vi.mock('@/lib/api/priority-move', async () => {
 import { ApiError } from '@/lib/api/client';
 import ProjectsPage from './ProjectsPage';
 
+// P23: create tests fill seven required fields through Radix selects.
+vi.setConfig({ testTimeout: 30_000 });
+
 const P1 = '3f2b8c1e-9a4d-4e6f-8b2a-1c0d9e8f7a65';
 
 function ok(rows: ProjectFilterRow[]): UseQueryResult<ProjectFilterResult> {
@@ -132,6 +135,9 @@ const project: ProjectRead = {
   certification_testing_required: true,
   estimated_design_weeks: null,
   estimated_lab_weeks: null,
+  plant: null,
+  requesting_department: null,
+  product_type: null,
   schedule_stale: false,
   workflow_id: 'PDD',
   created_at: '2026-01-01T00:00:00Z',
@@ -143,9 +149,26 @@ function serveGets(detail: ProjectRead = project, gate = { can_leave_draft: fals
   http.get.mockImplementation((path: string) => {
     if (path === `/projects/${detail.id}`) return Promise.resolve(detail);
     if (path === `/projects/${detail.id}/hard-gate-status`) return Promise.resolve(gate);
-    if (path === '/engineers') return Promise.resolve([]);
+    if (path === '/engineers') return Promise.resolve([{ id: 'eng-1', name: 'Nikos Papas', hub_id: 'hub-1' }]);
     return Promise.reject(new ApiError(404, 'not found'));
   });
+}
+
+/** P23: the eight required fields `POST /projects` now demands (no Draft;
+ *  docs/API_CONTRACT_P23.md §1, priority added by ADR 0034). */
+async function fillRequired(user: ReturnType<typeof userEvent.setup>, drawer: HTMLElement): Promise<void> {
+  await user.click(within(drawer).getByRole('combobox', { name: /^Leader/ }));
+  await user.click(await screen.findByRole('option', { name: 'Nikos Papas' }));
+  await user.click(within(drawer).getByRole('combobox', { name: /^Category/ }));
+  await user.click(await screen.findByRole('option', { name: 'A' }));
+  await user.click(within(drawer).getByRole('combobox', { name: /^Type/ }));
+  await user.click(await screen.findByRole('option', { name: /New Model/i }));
+  await user.type(within(drawer).getByLabelText(/^Actual start week/), '10');
+  await user.type(within(drawer).getByLabelText(/^TCOGS/), '1000');
+  await user.type(within(drawer).getByLabelText(/^Selling price/), '1500');
+  await user.type(within(drawer).getByLabelText(/^Gross margin/), '20');
+  await user.click(within(drawer).getByRole('combobox', { name: /^Priority/ }));
+  await user.click(await screen.findByRole('option', { name: 'P2' }));
 }
 
 const READ_ONLY = { roles: ['Executive Viewer'] as RoleName[], permissions: ROLE_MATRIX['Executive Viewer'] };
@@ -229,20 +252,30 @@ describe('Projects page — list and header', () => {
     );
   });
 
-  it('the Drafts chip filters to status Draft and toggles off again', async () => {
+  it('P23-T01: the Status filter offers the UI statuses only (no In Buyoff, no Draft) and there is no Drafts chip', async () => {
     const user = userEvent.setup();
-    useDashboardProjects.mockReturnValue(ok([row('d', { status: 'Draft', project_name: 'Draft cooler' })]));
+    useDashboardProjects.mockReturnValue(ok([row('a')]));
     renderWithProviders(<ProjectsPage />);
 
-    const chip = screen.getByRole('button', { name: 'Drafts' });
-    expect(chip).toHaveAttribute('aria-pressed', 'false');
-    await user.click(chip);
-    expect(chip).toHaveAttribute('aria-pressed', 'true');
-    expect(useDashboardProjects).toHaveBeenLastCalledWith(expect.objectContaining({ status_: 'Draft' }));
-    expect(screen.getByRole('combobox', { name: 'Status' })).toHaveTextContent('Draft');
-    await user.click(chip);
-    expect(chip).toHaveAttribute('aria-pressed', 'false');
-    expect(useDashboardProjects).toHaveBeenLastCalledWith(expect.objectContaining({ status_: undefined }));
+    expect(screen.queryByRole('button', { name: 'Drafts' })).not.toBeInTheDocument();
+    await user.click(screen.getByRole('combobox', { name: 'Status' }));
+    const options = (await screen.findAllByRole('option')).map((o) => o.textContent);
+    expect(options).not.toContain('In Buyoff');
+    expect(options).not.toContain('Draft');
+    for (const st of ['Under Industrialization', 'In Development', 'In Queue', 'Commercialized', 'On Hold', 'Cancelled']) {
+      expect(options).toContain(st);
+    }
+    await user.click(screen.getByRole('option', { name: 'Cancelled' }));
+    expect(useDashboardProjects).toHaveBeenLastCalledWith(expect.objectContaining({ status_: 'Cancelled' }));
+  });
+
+  it('P23-T01: a row that still carries In Buyoff or Draft renders its status badge', () => {
+    useDashboardProjects.mockReturnValue(
+      ok([row('b', { status: 'In Buyoff', project_name: 'Buyoff cooler' }), row('d', { status: 'Draft', project_name: 'Draft cooler' })]),
+    );
+    renderWithProviders(<ProjectsPage />);
+    expect(screen.getByText('In Buyoff')).toBeInTheDocument();
+    expect(screen.getByText('Draft')).toBeInTheDocument();
   });
 
   it('switches to the card view, with Ask the agent on each card', async () => {
@@ -306,11 +339,11 @@ describe('Projects page — Export menu', () => {
 });
 
 describe('Projects page — registration drawer', () => {
-  it('Register project → Create draft POSTs /projects with the old payload, then highlights the new row', async () => {
+  it('Register project (P23: no Draft step) POSTs /projects with the required fields, then highlights the new row', async () => {
     const user = userEvent.setup();
-    const created = { ...project, id: 'new-1', name: 'Cooler B' };
+    const created = { ...project, id: 'new-1', name: 'Cooler B', status: 'In Queue' as const };
     http.send.mockResolvedValue(created);
-    useDashboardProjects.mockReturnValue(ok([row('new-1', { project_name: 'Cooler B', status: 'Draft' })]));
+    useDashboardProjects.mockReturnValue(ok([row('new-1', { project_name: 'Cooler B', status: 'In Queue' })]));
     renderWithProviders(<ProjectsPage />);
 
     const register = screen.getByRole('button', { name: 'Register project' });
@@ -319,7 +352,10 @@ describe('Projects page — registration drawer', () => {
     await user.type(within(drawer).getByLabelText(/^Name/), 'Cooler B');
     await user.click(within(drawer).getByRole('combobox', { name: /^Hub/ }));
     await user.click(await screen.findByRole('option', { name: 'R&D-Greece' }));
-    await user.click(within(drawer).getByRole('button', { name: 'Create draft' }));
+    expect(within(drawer).queryByRole('button', { name: 'Create draft' })).not.toBeInTheDocument();
+    expect(within(drawer).queryByText('Leave Draft')).not.toBeInTheDocument();
+    await fillRequired(user, drawer);
+    await user.click(within(drawer).getByRole('button', { name: 'Register project' }));
 
     await waitFor(() => expect(http.send).toHaveBeenCalledTimes(1));
     expect(http.send).toHaveBeenCalledWith('POST', '/projects', {
@@ -327,19 +363,19 @@ describe('Projects page — registration drawer', () => {
       // Untouched text fields go as '' — unchanged from the old /register form.
       external_code: '',
       hub_id: 'hub-1',
-      leader_engineer_id: null,
-      category: null,
-      type: null,
-      priority: null,
-      actual_start_week: null,
+      leader_engineer_id: 'eng-1',
+      category: 'A',
+      type: 'NM',
+      priority: 'P2',
+      actual_start_week: 10,
       delay_weeks: 0,
       reg_year: null,
       carry_over: false,
       comments: '',
       customer_name: '',
-      tcogs_eur: null,
-      selling_price_eur: null,
-      gross_margin_pct: null,
+      tcogs_eur: 1000,
+      selling_price_eur: 1500,
+      gross_margin_pct: 20,
       capex_keur: null,
       rm_savings_keur: null,
       target_end_week: null,
@@ -348,9 +384,38 @@ describe('Projects page — registration drawer', () => {
       estimated_lab_weeks: null,
     });
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
-    expect(screen.getByTestId('projects-saved-status')).toHaveTextContent('Registered “Cooler B” as a Draft.');
+    expect(screen.getByTestId('projects-saved-status')).toHaveTextContent('Registered “Cooler B”.');
+    expect(screen.getByTestId('projects-saved-status')).not.toHaveTextContent('Draft');
     expect(screen.getByTestId('row-highlight-badge')).toHaveTextContent('New');
     await waitFor(() => expect(register).toHaveFocus());
+  });
+
+  it('P23-T02: a 422 naming missing fields keeps the drawer open and marks those fields', async () => {
+    const user = userEvent.setup();
+    http.send.mockRejectedValue(
+      new ApiError(
+        422,
+        'invalid',
+        JSON.stringify({
+          message: 'Project cannot be registered: required fields missing.',
+          missing_fields: ['gross margin'],
+          field_errors: { gross_margin_pct: 'Gross margin is required.' },
+        }),
+        'HARD_GATE_FIELDS_MISSING',
+      ),
+    );
+    useDashboardProjects.mockReturnValue(ok([]));
+    renderWithProviders(<ProjectsPage />);
+    await user.click(screen.getAllByRole('button', { name: 'Register project' })[0]!);
+    const drawer = await screen.findByRole('dialog', { name: 'Register a project' });
+    await user.type(within(drawer).getByLabelText(/^Name/), 'Cooler C');
+    await user.click(within(drawer).getByRole('combobox', { name: /^Hub/ }));
+    await user.click(await screen.findByRole('option', { name: 'R&D-Greece' }));
+    await fillRequired(user, drawer);
+    await user.click(within(drawer).getByRole('button', { name: 'Register project' }));
+    expect(await within(drawer).findByText('Gross margin is required.')).toBeInTheDocument();
+    expect(within(drawer).getByLabelText(/^Gross margin/)).toHaveAttribute('aria-invalid', 'true');
+    expect(screen.getByRole('dialog', { name: 'Register a project' })).toBeInTheDocument();
   });
 
   it('validates on the client: no POST without a name', async () => {
@@ -359,7 +424,7 @@ describe('Projects page — registration drawer', () => {
     renderWithProviders(<ProjectsPage />);
     await user.click(screen.getAllByRole('button', { name: 'Register project' })[0]!);
     const drawer = await screen.findByRole('dialog', { name: 'Register a project' });
-    await user.click(within(drawer).getByRole('button', { name: 'Create draft' }));
+    await user.click(within(drawer).getByRole('button', { name: 'Register project' }));
     expect(await within(drawer).findAllByRole('alert')).not.toHaveLength(0);
     expect(http.send).not.toHaveBeenCalled();
     expect(drawer).toBeInTheDocument();
@@ -476,7 +541,8 @@ describe('Projects page — registration drawer', () => {
     await user.type(within(drawer).getByLabelText(/^Name/), 'Cooler B');
     await user.click(within(drawer).getByRole('combobox', { name: /^Hub/ }));
     await user.click(await screen.findByRole('option', { name: 'R&D-Greece' }));
-    await user.click(within(drawer).getByRole('button', { name: 'Create draft' }));
+    await fillRequired(user, drawer);
+    await user.click(within(drawer).getByRole('button', { name: 'Register project' }));
     expect(await screen.findByText(/read-only access to Project Registration/i)).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Register project' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /Edit registration/ })).not.toBeInTheDocument();
@@ -560,6 +626,77 @@ describe('Projects page — registration drawer', () => {
     expect(http.sendWithHeaders).not.toHaveBeenCalled();
     expect(moveApi.moveProjectPriority).not.toHaveBeenCalled();
     expect(screen.getByRole('button', { name: 'Save changes' })).toBeInTheDocument();
+  });
+});
+
+describe('Projects page — P24-T02 workbook fields and "No leader" (ADR 0035)', () => {
+  it('the Workbook fields toggle adds Plant / Req. dept / Product type columns with the served values', async () => {
+    const user = userEvent.setup();
+    useDashboardProjects.mockReturnValue(
+      ok([
+        row('a', { project_name: 'Alpha cooler', plant: 'Kato Achaia', requesting_department: 'Marketing', product_type: 'ICM' }),
+        row('b', { project_name: 'Beta cooler' }),
+      ]),
+    );
+    renderWithProviders(<ProjectsPage />);
+    expect(screen.queryByRole('columnheader', { name: 'Plant' })).not.toBeInTheDocument();
+    const toggle = screen.getByRole('button', { name: 'Workbook fields' });
+    expect(toggle).toHaveAttribute('aria-pressed', 'false');
+    await user.click(toggle);
+    expect(toggle).toHaveAttribute('aria-pressed', 'true');
+    for (const header of ['Plant', 'Req. dept', 'Product type']) {
+      expect(screen.getByRole('columnheader', { name: header })).toBeInTheDocument();
+    }
+    const table = screen.getByRole('table', { name: 'Projects' });
+    expect(within(table).getByText('Kato Achaia')).toBeInTheDocument();
+    expect(within(table).getByText('Marketing')).toBeInTheDocument();
+    expect(within(table).getByText('ICM')).toBeInTheDocument();
+    expect(within(table).getAllByText('Not set')).toHaveLength(3);
+  });
+
+  it('a null leader reads "No leader" (accessible "No leader assigned"); Left Out adds the hint', () => {
+    useDashboardProjects.mockReturnValue(
+      ok([
+        row('a', { project_name: 'Alpha cooler', leader_engineer_id: null, outcome: 'LEFT_OUT' }),
+        row('b', { project_name: 'Beta cooler', leader_engineer_id: null, outcome: 'SPILLOVER' }),
+        row('c', { project_name: 'Gamma cooler', leader_engineer_id: 'eng-1', leader_name: 'Nikos', outcome: 'LEFT_OUT' }),
+      ]),
+    );
+    renderWithProviders(<ProjectsPage />);
+    const labels = screen.getAllByTestId('no-leader');
+    expect(labels).toHaveLength(2);
+    for (const label of labels) {
+      expect(within(label).getByText('No leader')).toHaveAttribute('aria-hidden', 'true');
+      expect(within(label).getByText('No leader assigned')).toHaveClass('sr-only');
+    }
+    // Only the project that is both leaderless and Left Out gets the hint.
+    const hints = screen.getAllByTestId('no-leader-left-out');
+    expect(hints).toHaveLength(1);
+    expect(hints[0]).toHaveTextContent('Left out: no leader assigned');
+    expect(labels[0]).toContainElement(hints[0]!);
+    expect(screen.getByText('Nikos')).toBeInTheDocument();
+  });
+
+  it('the edit drawer shows the fields read-only and never sends them in the PATCH', async () => {
+    const user = userEvent.setup();
+    const charter = { ...project, status: 'In Queue' as const, priority: 'P1' as const, plant: 'Kato Achaia', requesting_department: 'Marketing', product_type: null };
+    serveGets(charter);
+    http.sendWithHeaders.mockResolvedValue({ data: charter, headers: new Headers() });
+    useDashboardProjects.mockReturnValue(ok([row(P1, { project_name: 'Cooler A' })]));
+    renderWithProviders(<ProjectsPage />);
+    await user.click(screen.getByRole('button', { name: 'Edit registration of Cooler A' }));
+    const drawer = await screen.findByRole('dialog', { name: 'Edit Cooler A' });
+    const block = within(drawer).getByRole('group', { name: 'From the client workbook' });
+    expect(block).toHaveTextContent('PlantKato Achaia');
+    expect(block).toHaveTextContent('Requesting departmentMarketing');
+    expect(block).toHaveTextContent('Product typeNot set');
+    expect(within(block).queryByRole('textbox')).not.toBeInTheDocument();
+    await user.click(within(drawer).getByRole('button', { name: 'Save changes' }));
+    await waitFor(() => expect(http.sendWithHeaders).toHaveBeenCalledTimes(1));
+    const body = http.sendWithHeaders.mock.calls[0]![2] as Record<string, unknown>;
+    expect(body).not.toHaveProperty('plant');
+    expect(body).not.toHaveProperty('requesting_department');
+    expect(body).not.toHaveProperty('product_type');
   });
 });
 

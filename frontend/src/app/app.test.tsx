@@ -95,6 +95,14 @@ describe('App shell + routing', () => {
     expect(await screen.findByRole('heading', { level: 1, name: 'Projects' })).toBeInTheDocument();
   });
 
+  it('P21-T05: /priority-board redirects to the Matrix with the Priority board tab selected; no nav entry', async () => {
+    renderApp('/priority-board');
+    expect(await screen.findByRole('heading', { name: 'Prioritization Matrix' })).toBeInTheDocument();
+    expect(await screen.findByRole('tab', { name: 'Priority board' })).toHaveAttribute('aria-selected', 'true');
+    const nav = screen.getByRole('navigation', { name: 'Surfaces' });
+    expect(within(nav).queryByRole('link', { name: 'Priority board' })).not.toBeInTheDocument();
+  });
+
   it('navigates to the Capacity Planning surface on nav click', async () => {
     const user = userEvent.setup();
     renderApp('/');

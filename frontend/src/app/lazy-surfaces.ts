@@ -22,7 +22,6 @@ export const AdminUsersPage = React.lazy(() => import('@/surfaces/admin-users/Ad
 export const ProjectsPage = React.lazy(() => import('@/surfaces/projects/ProjectsPage'));
 // P12-T05 (ADR 0018 / 0021 / 0022): one chunk each, so the board's drag code
 // and the check-in form cost the initial bundle nothing.
-export const PriorityBoardPage = React.lazy(() => import('@/surfaces/priority-board/PriorityBoardPage'));
 export const CheckInPage = React.lazy(() => import('@/surfaces/check-in/CheckInPage'));
 // P13-T15: Versions & History and Downloads (Data group).
 export const HistoryPage = React.lazy(() => import('@/surfaces/history/HistoryPage'));

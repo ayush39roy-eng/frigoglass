@@ -29,6 +29,8 @@ export interface MatrixViewState {
   /** P21: band picked on the distribution chart — narrows the SERVED rows in
    *  view by their served band (no score is re-banded in the browser). */
   band: DistributionBand | null;
+  /** P25: show only rows the server promoted by capacity fill (client-side over served rows). */
+  capacityFill: boolean;
   detailed: boolean;
 }
 
@@ -40,6 +42,7 @@ export const DEFAULT_MATRIX_VIEW: MatrixViewState = {
   hubText: '',
   leaderText: '',
   band: null,
+  capacityFill: false,
   detailed: false,
 };
 
@@ -52,6 +55,7 @@ export function isDefaultView(v: MatrixViewState): boolean {
     v.hubText === '' &&
     v.leaderText === '' &&
     v.band === null &&
+    !v.capacityFill &&
     !v.detailed
   );
 }
@@ -74,6 +78,7 @@ export function activeFilterCount(v: MatrixViewState): number {
     v.type !== null,
     v.status !== null,
     v.band !== null,
+    v.capacityFill,
     v.q.trim() !== '',
     v.hubText.trim() !== '',
     v.leaderText.trim() !== '',

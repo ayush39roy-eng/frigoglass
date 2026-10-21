@@ -105,6 +105,10 @@ class ProjectStatus(str, enum.Enum):
     before a project can leave draft status"). DRAFT projects are excluded from
     scheduling identically to COMMERCIALIZED/ON_HOLD. Flagged for orchestrator
     review since it is an addition beyond DOMAIN_RULES.md's literal vocabulary.
+
+    ADR 0034 (2026-10-21): DRAFT is retired from registration. The value is
+    kept for historic rows and migrations; nothing new creates it
+    (`POST /projects` writes IN_QUEUE, PATCH rejects it, seeds refuse it).
     """
 
     IN_BUYOFF = "In Buyoff"

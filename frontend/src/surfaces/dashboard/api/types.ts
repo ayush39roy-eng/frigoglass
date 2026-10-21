@@ -51,7 +51,7 @@ export interface StatusOverview {
   in_queue_share_pct: number;
   commercialized_share_pct: number;
   on_hold_share_pct: number;
-  /** Remainder (In Buyoff + Draft + Cancelled) so five cards + other == total_count. */
+  /** Remainder (every status without a card; served keys only) so five cards + other == total_count. */
   other_statuses_count: number;
   other_statuses_counts: Record<string, number>;
   other_statuses_share_pct: number;
@@ -160,6 +160,10 @@ export interface ProjectFilterRow {
   outcome: ProjectRunOutcome | null;
   reg_year: number | null;
   carry_over: boolean;
+  /** ADR 0035: the client workbook's charter fields, as written (read-only). */
+  plant: string | null;
+  requesting_department: string | null;
+  product_type: string | null;
   /** Rank by score within the filtered set, 1-based; null when unscored. */
   priority_rank: number | null;
 }

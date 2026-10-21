@@ -152,21 +152,23 @@ itself.
 capacity, per hub, for the active schedule run.
 
 **What's on it:**
-- Per-hub design-load-vs-capacity and lab-load-vs-capacity panels.
-- A class (A+/A/B/C) breakdown of what's deliverable vs. left out.
-- A chamber utilization heatmap.
-- An explicit on-screen notice explaining that the "capacity" figures are a reporting estimate
-  (scaled by engineer FTE and chamber efficiency) while the "load" figures come from what the
-  scheduler actually booked — **the scheduler itself does not apply FTE or chamber-efficiency
-  scaling when booking**, so load exceeding capacity on this screen does not mean the schedule is
-  broken, and spare capacity does not mean the scheduler will use it. This is a known, documented
-  behavior (`docs/DOMAIN_RULES.md`'s "known defects," ADR 0002/0003), not a defect in this screen.
+- KPI cards, class cards (A+, A, B, C, A-OEM, B-OEM, C-OEM) with deliverable vs. left out, and
+  design / lab load-vs-capacity charts.
+- "Capacity booked" tiles grouped by hub family (R&D, PD, OEM) and one "Load vs. capacity by hub"
+  table (Weeks/Days, YTD/Full year). An engineer utilization heatmap opens on request. The class
+  bar chart and the chamber heatmap were removed in P19-T07.
+- An on-screen notice explaining the figures: load counts **work weeks** booked by the scheduler,
+  including work past W52, and is not capped at capacity. Since ADR 0032 (2026-10-21) **engineer
+  FTE sets a leader's design speed** (0.5 FTE = half speed: 4 weeks of work take 8 calendar
+  weeks), so part-time leaders stretch the calendar, not the load. Chamber efficiency is still
+  capacity-reporting only and does not gate lab booking (ADR 0003). Load above capacity does not
+  mean the schedule is broken.
 
-**Known gap, not yet enabled:** the utilization matrix on this surface intentionally shows only
-**chamber (equipment)** utilization, not named-engineer utilization. Per-engineer utilization is
-withheld pending a Frigoglass Data Protection Officer determination on whether it constitutes GDPR
-personal data (`docs/OPEN_QUESTIONS.md` #8) — you will see a placeholder in that spot explaining
-this, not a broken or empty chart.
+**Per-engineer utilization:** the "Show engineer utilization" heatmap (engineers × weeks) is shown
+to the roles allowed to read it, under the owner's ruling in ADR 0028. Every read is audit-logged,
+and the data loads only when the section is opened. Whether per-engineer utilization is GDPR
+personal data still awaits a Frigoglass Data Protection Officer determination
+(`docs/OPEN_QUESTIONS.md` #8); until then it is an accepted owner risk.
 
 **Core workflow:** read-only review for everyone who can see it; export is available for reporting
 outside the application.

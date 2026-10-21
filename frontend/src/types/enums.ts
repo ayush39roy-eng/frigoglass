@@ -47,7 +47,14 @@ export type WorkflowId = (typeof WORKFLOW_IDS)[number];
 export const PROJECT_PRIORITIES = ['P1', 'P2', 'P3', 'P4', 'Q'] as const;
 export type ProjectPriority = (typeof PROJECT_PRIORITIES)[number];
 
-export const PROJECT_STATUSES = [
+/**
+ * Every project status the API can carry (the wire enum, `backend/models/enums.py`).
+ * `ProjectStatus` is derived from this list and stays complete: data may still hold
+ * "In Buyoff" or "Draft" (the scheduler's status order includes In Buyoff; a new
+ * project is created as Draft). Use it for typing and rendering, never as a list
+ * of choices offered to the user — that is `UI_PROJECT_STATUSES`.
+ */
+export const ALL_PROJECT_STATUSES = [
   'In Buyoff',
   'Under Industrialization',
   'In Development',
@@ -58,15 +65,49 @@ export const PROJECT_STATUSES = [
   // P9 (OPEN_QUESTIONS #22): excluded from scheduling like Commercialized / On Hold / Draft.
   'Cancelled',
 ] as const;
-export type ProjectStatus = (typeof PROJECT_STATUSES)[number];
+export type ProjectStatus = (typeof ALL_PROJECT_STATUSES)[number];
+
+/** Statuses kept in the data but never offered in the UI (P23-T01, owner request). */
+export const UI_HIDDEN_PROJECT_STATUSES: readonly ProjectStatus[] = ['In Buyoff', 'Draft'];
+
+/**
+ * The statuses OFFERED in the UI (P23-T01): every filter, chip, select and legend
+ * lists these. "In Buyoff" and "Draft" are left out (no project carries them); a
+ * project that still has one renders its badge normally (`ProjectStatusBadge`).
+ */
+export const UI_PROJECT_STATUSES: readonly ProjectStatus[] = [
+  'Under Industrialization',
+  'In Development',
+  'In Queue',
+  'Commercialized',
+  'On Hold',
+  'Cancelled',
+];
+
+/**
+ * @deprecated-name Kept for existing importers (the Matrix STATUS chips, P23-T01):
+ * it is the UI list, `UI_PROJECT_STATUSES`. For the full wire set use
+ * `ALL_PROJECT_STATUSES`.
+ */
+export const PROJECT_STATUSES: readonly ProjectStatus[] = UI_PROJECT_STATUSES;
 
 // The four statuses the scheduler orders on (DOMAIN_RULES.md "Scheduling order").
+// Scheduler semantics, not a UI list: keep In Buyoff here.
 export const SCHEDULABLE_STATUSES = [
   'In Buyoff',
   'Under Industrialization',
   'In Development',
   'In Queue',
 ] as const;
+export type SchedulableStatus = (typeof SCHEDULABLE_STATUSES)[number];
+
+/** The schedulable statuses offered in the UI (P23-T01): leave-Draft target and
+ *  the what-if hypothetical project status. In Buyoff is not offered. */
+export const UI_SCHEDULABLE_STATUSES: readonly SchedulableStatus[] = [
+  'Under Industrialization',
+  'In Development',
+  'In Queue',
+];
 
 export const PROJECT_TYPES = ['NM', 'CO', 'RC', 'NO', 'IMP'] as const;
 export type ProjectType = (typeof PROJECT_TYPES)[number];
