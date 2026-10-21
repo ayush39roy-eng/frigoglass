@@ -25783,3 +25783,702 @@ Notes for P18-T02 (backend-builder): build the baseline with `build_schedule_inp
 and `Chamber` rows, include the whole plan (not only the caller's hub) because lab capacity is regional, run in a
 thread with a time cap, map `ValueError` to 422, and give the chat only engine outputs (never the baseline).
 Nothing is committed.
+
+## [2026-10-21] P18-T02 — What-if scenario API, tool layer and chat (backend-builder): DONE
+
+Scope: `backend/api/routers/whatif.py`, `backend/schemas/whatif.py`, `backend/services/whatif.py`,
+`whatif_baseline.py`, `whatif_chat.py`, `llm_client.py`, router registration in `api/main.py`, new
+`base_url` setting in `core/config.py` (`GroqSettings`, env `RPD_GROQ_BASE_URL`), tests
+`backend/tests/test_p18_whatif_api.py` and `test_p18_whatif_chat.py`, HTTP contract appended to
+`docs/API_CONTRACT_P18.md` (section 9), follow-ups appended to ADR 0031. `backend/scheduling/` not
+touched; no migration; no new dependency; the dev API (:8001) and DB (:5433) not touched.
+
+What was built (full shapes in the contract, section 9):
+- `POST /whatif/estimate | simulate | solve | ask`. `CAPACITY_PLANNING`/read (PM, Hub Planner, Admin,
+  Super Admin). Strict request models (`extra=forbid`, literal enums, bounded lists); engine
+  `ValueError` -> `422 INVALID_SCENARIO`. The engine runs in a dedicated 2-thread pool under a
+  wall-clock cap (20 s, solve 40 s, `503 WHATIF_TIMEOUT`), the priority-preview pattern. No CP-SAT.
+- Baseline = the whole plan (`build_schedule_input_from_db` + `HubWorkCalendar` + `Chamber`), built per
+  request, never cached, serialised or sent to the model. Hub scoping is applied to what is returned:
+  design rows by hub, lab rows by the region of the caller's hubs (region-wide, as Capacity), every
+  total and count recomputed from the visible rows, workings lines filtered, simulate workings written
+  from the visible figures. A scenario naming an out-of-scope hub or region is `403
+  SCENARIO_OUT_OF_SCOPE`; an out-of-scope designer, chamber or project id is `422` "unknown id" (no
+  existence leak).
+- Pure read: the only write is one audit row (`whatif.<kind>`, coalesced per user, kind and scenario
+  digest per minute; `whatif.ask` one per message). The row holds the scenario shape (hubs, categories,
+  counts, chamber/project ids, a COUNT of removed designers), never names or financial fields, and for
+  ask never the question text (length and a 16-hex digest only). Per-user token buckets: 30 burst /
+  0.5 per s (estimate, simulate), 6 / 0.1 per s (solve), 5 / 1/12 per s (ask); 429 with `Retry-After`.
+- Solve response adds `semantics` (fixed OQ #47 sentence) and `unattainable_projects[]` next to the
+  engine's `unattainable_project_ids`, `met`, `met_attainable`.
+- Chat: `LlmClient` protocol + `OpenAICompatibleClient` (base URL, key, model from settings; a fake is
+  injected through the `get_llm_client` dependency). Four tools only (estimate, simulate, find minimum
+  additions, read-only capacity snapshot built from the Capacity router's own scoped `hub-load`
+  figures). Tool arguments are validated by the same strict models as the forms, except that the chat
+  scenario (`ChatScenario`) has no designer-id or project-id lists. What the model sees is built field
+  by field (`view_*` allowlist): no project names, no ids of existing projects or designers, no
+  financial field, no user data; chamber codes/ids are included. Question quoted as untrusted text;
+  prior scenario validated and re-serialised. Caps: 4 tool rounds, 3 calls per round, 900 tokens, 20k
+  argument chars, one tool-less final turn, one grounding retry, 90 s overall. Out-of-scope: model
+  sentinel `OUT_OF_SCOPE` or any answer with no engine result that is not a short clarifying question
+  becomes the fixed refusal text. Grounding guard: every number in the final answer must occur in an
+  engine view, the question or the scenario; else one corrective retry, then a fixed notice
+  (`grounded=false`, the figures are still returned). 503 `AGENT_UNAVAILABLE` without a key (checked
+  before anything is loaded); httpx errors -> 502.
+
+Assumptions and decisions (each for the owner to veto):
+1. Roles = `CAPACITY_PLANNING`/read, as asked. Executive Viewer can see Capacity but not this.
+2. A restricted caller with `target=no_existing_slips`: `met`, `met_attainable` and `unmet_project_ids`
+   describe their own hubs' projects only; the search still treats all hubs' projects as the target, so
+   a recommendation can be larger than their own projects need. Recorded in ADR 0031 follow-ups.
+3. Diff/outcome counts for a scoped caller are derived from the visible projects (an existing project's
+   "before" outcome is its entry in the engine diff when present, else unchanged). Asserted equal to
+   the engine's own counts for an unrestricted caller. `within_year_*` count the `within_year` outcome
+   class (I9), which excludes blocked.
+4. Project names are returned to the UI for visible projects (as the priority preview does) but never
+   to the model.
+5. The chat cannot name designers or projects by id, so "remove these designers" and "move this
+   project to P1" are form-only; chat can remove a COUNT of a hub's least-loaded designers.
+6. The question text is not audited (a typed question can contain a customer or person name); ADR 0014
+   stores it for the single-project agent, this feature stores only length and digest.
+7. Egress of aggregate scenario figures to the model endpoint is the client's decision; noted in ADR
+   0031 follow-ups (ties to OQ #23); leaving `RPD_GROQ_API_KEY` unset disables only the chat.
+8. Side effect: `ruff format api` reformatted a few lines of the owner's uncommitted
+   `api/routers/dashboard.py` (formatting only, no behaviour). All other files it touched were restored
+   with `git checkout`.
+
+Tests (disposable testcontainers Postgres; no dev DB/API): `test_p18_whatif_api.py` (58): role matrix
+(7 roles x 4 endpoints) and 401; hand-worked numbers (PDD/C = 6 design + 1 lab weeks: 2 projects give
+12 and 2.0, booked 68.18 %); simulate equals the pure engine's counts, diff, utilization and project
+list; solve and the unattainable case (met false, met_attainable true, listed); 422 matrix (engine
+rejections and 11 malformed bodies); Hub Planner sees only own-hub rows and nothing of the other hub
+in any text field, rows equal the unrestricted rows, 403/422 for out-of-scope references, shared
+region lab rows; row counts of 9 tables unchanged across all endpoints; time cap (simulate and solve);
+rate limits (per user, solve separate, Retry-After); coalesced audit with no names; OpenAPI strictness.
+`test_p18_whatif_chat.py` (34): FAKE LLM; tool loop; all four tools; transcript ids; call cap per round;
+round cap (5 model calls, last without tools, `truncated`); 503 without key while forms work; prompt
+injection (unknown tool, extra key, out-of-scope hub: nothing runs, roles and tables unchanged, nothing
+out of scope in what was sent); off-topic prose and sentinel refusal; clarification passes; grounding
+retry and fixed notice; question and list-marker numbers allowed; exact payload test for PM and scoped
+Hub Planner (no customer, cost, designer or project name, no ids, no email, no other hub; every tool
+message has exactly the allowlisted keys); prior scenario validated; request limits; bad/non-JSON/
+oversized tool arguments; 502; ask rate limit; ask audit; ask pure read; client unit tests (base URL,
+no tools -> no tool_choice, no key -> no client).
+Results: new files 92 passed; full backend suite 1558 passed, coverage 96.53 % (gate 70 %); `ruff check .`
+clean; mypy clean on the new modules (pre-existing errors elsewhere untouched). Nothing committed.
+For frontend-builder (P18-T03): contract section 9 of `docs/API_CONTRACT_P18.md`.
+
+## [2026-10-21] P17+ audit — SC-650 priority delay (workflow-auditor)
+
+Scope: read-only investigation. No code, no migration, no write to any DB. Dev DB read through
+`docker exec rpd-pg-dev psql` and one read-only session (`default_transaction_read_only=on`, financial
+columns not decrypted) feeding the repo's own `build_schedule_input_from_db` and `run_greedy_sgs` from
+scripts in the scratchpad (`audit.py`, `analyse.py`, `inv.py`, `cf.py`, `cause.py`, `lead.py`). Dev API
+:8001 and :5183 untouched. Active run = v2 greedy, CURRENT_WEEK 42, 253 projects, 2473 steps.
+
+Reproduction: the greedy rerun on the current DB inputs matches the stored active run step for step
+(week, resource) for every project except 4 P4 In Queue projects (56 steps; the DB has moved on since
+the 2026-10-13 run, 2 projects are `schedule_stale`). None is P1/P2 or involved below.
+
+VERDICT: (a) legitimate behaviour under DOMAIN_RULES, not a priority inversion. Two minor notes below
+(one documented-rule consequence, one rule gap). No remediation task to the scheduler is required.
+
+Evidence, SC-650 (P1 / In Queue / C, order index 26) vs SC-550 (identical sort keys, index 25):
+- Both want W42 start, unconstrained end 49 (design A1 D1 E2 J1 K1 = 6 leader weeks, lab H1, elapsed N1).
+  Both are led by the SAME leader (id prefix 025e, PD-India). That one leader also leads a P1 Under
+  Industrialization project (canopy, rank ahead on status) and one P2 In Development project.
+- SC-650 waits only on that leader; neither lab step waited (H at W54 straight after E; chamber IN-CH3,
+  SC-550 H at W48 on IN-CH1). Step waits: PDD-A earliest 42, placed 48 (6 wk); PDD-D earliest 49,
+  placed 51 (2 wk); every other step 0. Total 8 = 57 - 49.
+- Holders of the leader in the waited weeks: W42 canopy PDD-J (In Progress, pre-booked) and W43 canopy
+  PDD-K (P1, status rank ahead); W44-47 and W49-50 SC-550 PDD-A/D/E/J/K (same P1, same status, same
+  category; scheduled one position earlier). No P2-P4 project holds any week SC-650 waited for.
+  Leader weeks W42-W53 are 12 of 12 booked (no idle week); the P2 project's PDD-J at W54 does not
+  delay SC-650 because SC-650's PDD-J cannot start before W55 (H is in W54). Swapping SC-550 and SC-650
+  only changes which of the two is the victim (SC-550 would end 51, SC-650 49-ish with 550 at 57); the
+  pair's makespan is fixed by one person doing 12 design weeks serially.
+- Tie-break: DOMAIN_RULES lists four keys; code adds `project_id` (uuid) as fifth. 15706752 < 7e19fbe5
+  so SC-550 won. Name or external_code would give the same here; uuid is arbitrary (already raised
+  2026-09-2x, see the earlier external_code note).
+
+"P1 In Queue waits 11.2 weeks vs P3 In Development 3.5": reproduced exactly from the DB (13 vs 77
+projects, mean last_step_end - unconstrained). Cause is leader concentration, not ordering:
+- 13 P1 In Queue projects sit on 6 leaders. Two leaders (id prefixes 6583 and 74ee, PD-India, FTE 0.63)
+  each lead 4 identical-keyed P1 "Frameless Lookalike Door Coolers Development" (B) projects and nothing
+  else: 36 of the 36 weeks W42-W77 booked, 100 % P1. They finish W53, 63, 73 and the 4th of each is
+  LEFT_OUT at the 78-week horizon (2 P1 projects left out). Their end weeks pull the mean to 11.2; the
+  other 11 average 8.8. A third group (58dc, bb3f, 9bfe) holds 1 In Queue P1 behind 2-3 higher-status P1
+  projects of the same leader.
+- Design steps are serialised on the single named leader (Booking rules). Status is the third sort key,
+  so In Queue is last within P1; P3 In Development projects are spread over 25 leaders (at most 4 each)
+  and mostly wait for in-flight work. P3 being scheduled after P1 does not help P1 Q because the P1 and
+  P3 projects mostly do not share a leader.
+- By construction a serial SGS cannot let a later-sorted project take capacity unless it is pre-booked.
+  Checked rather than assumed: for every non-frozen scheduled step of every project, the holders of the
+  waited-for weeks that already existed at its turn were classified. P1: 27 waiting steps (126 wait
+  weeks), 1 step has any lower-priority holder. P2: 7 steps (32 weeks), 3 steps. P3 83 steps (383 wk),
+  P4 33 steps (228 wk). All lower-priority holders are anchored (In Progress) tails; zero are
+  un-anchored lower-priority bookings (that would be a genuine SGS defect).
+
+Inversion table (P1/P2 delayed by lower-priority holder; all four are 1-week effects of DOMAIN_RULES
+"Gate remediation rulings" #4, pre-booking in-flight work):
+| Delayed project | Step | Wait | Holder (lower priority, anchored) | Week |
+|---|---|---|---|---|
+| Condenser 4 ROW WOT... (P1 In Development) | PDD-J | 1 | P3 In Development, PDD-K In Progress, same leader | W42 |
+| Super 550 development in C class (P2 In Queue) | PDD-A | 1 | P3 Under Industrialization, PDD-J In Progress, same leader | W42 |
+| Super 550 development in D class (P2 In Queue) | PDD-A | 10 | of which 1 week P3 PDD-J In Progress (rest = its P2 sibling, same leader) | W42 |
+| Extra shelf for Coke Feasibility (P2 In Queue) | PDD-A | 1 | P3 In Development, PDD-K In Progress, same leader | W42 |
+Counterfactual (stripping all P2-P4 anchors and frozen flags): exactly 1 P1 project improves, by 1 week
+(45 to 44). Stripping P3-P4 anchors: the 3 P2 projects above improve by 1 week each. So the whole
+in-flight-over-priority effect in this plan is +1 week on 4 projects, and it is the documented rule.
+
+Rule gaps / findings for the owner (none is a scheduler defect):
+1. Documented but visible: ruling 4 lets a lower-priority in-progress tail keep its weeks against a
+   higher-priority not-started project (above). Effect today: +1 week on 4 projects.
+2. Rule gap: the fifth tie-break (`project_id`, a uuid) decides who is the victim among identical-key
+   projects led by one person; DOMAIN_RULES does not name it and uuid order is meaningless to a planner.
+   Suggest an ADR-backed deterministic business key (VIP pin, then `target_end_week`, then external_code
+   / name); changes which sibling is late, not the totals.
+3. Data/staffing, not scheduling: leader assignment is the binding constraint. There is no leader-load
+   check or rebalance (the what-if engine also does not rebalance existing projects, OQ #43). Two leaders
+   carry 8 P1 projects and 36 design weeks each against a 36-week horizon remainder; P1 projects end
+   LEFT_OUT. The right lever is reassigning leaders (or adding designers via the P18 planner), and a
+   UI warning "leader booked N weeks beyond W52 / has K P1 projects" would surface it. Not a defect.
+4. FTE 0.63 does not gate booking (ADR 0002, known defect #1): a 0.63 FTE leader is scheduled at 1.0 for
+   36 straight weeks, so the plan is optimistic for these leaders. Existing open question.
+
+Invariants: I3 (precedence), I1 (no leader double-booking in the SC-550/650/canopy weeks), I2, I4 hold
+on the reproduced output for the projects examined; nothing recomputed by any UI surface was touched
+(I9 not in scope). No test is needed to "catch" this because it is not a defect; if the owner wants a
+guard, add to `backend/tests/scheduling` a property test: for every non-frozen, non-anchored step, any
+holder of a waited-for week that was un-anchored must sort at or before the waiting project (would fail
+only if a future change reorders the SGS or lets a later project jump the queue). Fix location if rule 2
+is adopted: `_sort_key` in `backend/scheduling/greedy.py` (algorithm-engineer; needs an ADR and a
+DOMAIN_RULES edit first). cp_sat.py shares `prepare_run` ordering.
+
+Result: no phase gate affected; no FAIL recorded.
+
+## [2026-10-21] P17-R03 — Delivery-by-priority backend support (backend-builder): DONE
+
+Scope: `backend/schemas/dashboard.py` (`status`, `not_started` on `CompletingWithinYearRow`; new
+`PriorityDeliveryBand`; `priority_delivery` on `CompletingWithinYear`), `backend/api/routers/dashboard.py`
+(`_has_stage_progress`, `_is_not_started`, `_priority_delivery`), new
+`backend/tests/test_p17_priority_delivery.py` (3 tests), `docs/API_CONTRACT_P17.md`, plan rows P17-R03
+(DONE) and P17-R04 (frontend, TODO). `backend/scheduling/` untouched; no migration; dev API/DB not used.
+
+Decisions: "started" reuses the scheduler's `progress_tracked` rule (any stage `!= Not Started`), read
+from stored stage rows; `not_started = status == In Queue AND not started`. Bands are counted over every
+project in scope (LEFT JOIN to the active run), not only projects with an outcome row, so On Hold /
+Cancelled / Draft land in `other_total` and never in a within-year figure. Delivered (Commercialized) is
+separate; `delivered_within_year` added (beyond the ask) so `within_year` reconciles exactly. Null-priority
+projects are in no band. No active run: counts served, within-year 0.
+
+Seeded numbers (client_2026 seed, greedy run at the test-pinned week 31, so within-year differs from the
+live W42 figures): P1 total 25 (in flight 12/12 within year, not started 13/7, delivered 0, other 0);
+P2 6 (1/1, 4/3, 0, other 1); P3 94 (94/92, 0, 0, 0); P4 128 (in flight 0, not started 68/26, delivered
+17/17, other 43); Q 0. Sum 253. Rows not_started: 85 of 253.
+
+Tests: new file 3 passed (sums per band, each hub and country filter, hubs add up to unfiltered,
+Commercialized excluded from in flight, In Queue with a started stage is in flight, restricted Hub Planner
+and out-of-scope hub_id, zero bands). Also green: blocked_count, p17_status, p17_pipeline, p12_hub_filter,
+p13_region_filter. `ruff check .` clean. Red until P17-R04 lands the frontend types:
+`test_openapi_frontend_contract.py::test_field_sets_match[CompletingWithinYearRow]` and
+`[CompletingWithinYear]`. Nothing committed.
+
+## [2026-10-21] P18-T03 — What-if planner UI and chat panel on Capacity Planning (frontend-builder): DONE
+
+Scope: `frontend/` only, plus the type-contract rows in `backend/tests/test_openapi_frontend_contract.py` (the
+only backend file touched, as the brief asked: "add them if the pattern exists"). No application backend code, no
+dev server (:8001/:5183) or owner DB (:5433) touched. Nothing committed.
+
+What was built (route unchanged: a fifth tab "What-if planner" on `/planning`, same RBAC as Capacity Planning;
+the tab is read-only so it needs no write permission, and is `forceMount`ed so a half-built scenario, the results
+and the chat transcript survive switching tabs):
+- `surfaces/planning/api/whatif-types.ts` (hand mirror of `schemas/whatif.py`, 31 interfaces) and `whatif-api.ts`
+  (`POST /whatif/estimate|simulate|solve|ask` through `apiSend`).
+- `surfaces/planning/whatif/`: `scenario-schema.ts` (strict zod validation mirroring the server limits: count
+  1..500/100/50, FTE (0,1], platforms 1..20, efficiency 0..1.5, weeks 0..52, score 0..100, category must belong
+  to the hub's workflow, downtime needs a chamber and one value, 30 lines per list; `buildScenarioRequest` and
+  its inverse `linesFromChatScenario`, round-trip tested), `scenario-store.ts` (Zustand, scenario state only, no
+  persist, nothing server-side), `use-whatif.ts` (mutations with `retry:false`, `classifyWhatIfError`,
+  `useRetryCountdown`), `describe-scenario.ts`.
+- Components: `scenario-builder.tsx` (projects, add designers, remove designers by count, add chambers, chamber
+  downtime picked from the existing scoped `useChamberList`, year/remaining basis, FTE per added designer, clear),
+  `estimate-view.tsx`, `simulate-view.tsx`, `solve-view.tsx`, `chat-panel.tsx`, `whatif-error.tsx`,
+  `whatif-planner.tsx`, shared `result-parts.tsx` (scope note, "How this was calculated" `<details>`, booked-%
+  before/after with the existing `BookingStatusChip`, `ProjectRowsTable` virtualized over 100 rows with TanStack
+  Virtual), `form-controls.tsx` (native `<select>` in the input skin).
+- Every number shown is a response field (I9/I19): estimate totals and per-hub/region booked % with served
+  statuses and "need N more designers / M more chambers"; simulate within-year before/after/delta, outcome counts,
+  newly slipping / recovered / moved, new projects, utilization (year and remaining); solve additions, `met`,
+  `met_attainable`, `capped`, `exact`, `runs_used`/`run_cap`, `achieved`. Staleness ("scenario changed since this
+  result") compares the request JSON of the last run with the form's current request; it computes no figure.
+- OQ #47: `unattainable_projects` get their own bordered block "Cannot finish within the year whatever you add
+  (critical path too long)" with the server's `semantics` sentence and each project's earliest possible finish;
+  `met` false / `met_attainable` true reads as a calm "Everything that capacity can help finishes inside the
+  year" status (primary tone, no failure wording, asserted in a test); a genuinely unreached target is a separate
+  warning. `capped` and `exact` are badges plus a plain "might exist, treat as an upper bound" line.
+- Chat: examples (the two from the brief) only fill the box; plain-text answer (`whitespace-pre-wrap`, no HTML,
+  no markdown rendering, test proves `<img onerror>`/`<script>` stay text); beneath it the readable scenario with
+  "Edit in builder" (loads the form, focuses the builder, announces it), every `results[]` rendered with the same
+  views (`snapshot` gets a small table), tool `error` as "Could not run: ...", `grounded=false` and `truncated`
+  alerts, `refused` note, workings; follow-ups send the last answer's scenario as `prior_scenario`; transcript is
+  component memory only. 503 on ask (body is `{"error":"AGENT_UNAVAILABLE"}` with no `code`, so any ask 503 that is
+  not `WHATIF_TIMEOUT`) hides the input and says "Chat is not configured; use the forms."; 429 shows a live
+  Retry-After countdown with Retry disabled until zero; 502 and 504 give a "Retry this question" button.
+- Loading uses the existing solver-progress idiom (`RunProgressStatus` indeterminate bar + Skeleton). Lottie is not
+  used (not needed). Empty states on every pane. Design tokens only. Reduced motion is inherited (no new motion).
+
+Decisions for the owner to veto:
+1. The tab does not require `capacity_planning` write; a read-only role (Portfolio Manager) can run scenarios,
+   matching the server (`CAPACITY_PLANNING` read).
+2. The hub dropdown offers all six hubs (the existing `/hubs` list is unscoped); a Hub Planner who picks another
+   hub gets the server's 403 `SCENARIO_OUT_OF_SCOPE` as a plain message and no retry. The browser never re-scopes.
+3. Form lines for `remove_engineers` (by id) and `priority_overrides` are not built (the chat shape has none and
+   the brief listed counts); the request model accepts them, so adding them later is a UI-only task.
+4. `score` is editable per project line (used only when no priority); `workflow_id`, designer `allowed_categories`
+   and chamber `allowed_stages` are carried through from a chat scenario but not editable, so "Edit in builder" is
+   lossless.
+5. Builder and results stack vertically below 1536 px (two columns only at 2xl): the lab/design tables did not fit
+   half a 1280 px page.
+6. Native `<select>` for the many per-line selects (keyboard- and AT-complete, cheap); Radix Select kept for the
+   existing forms.
+
+Contract test: `backend/tests/test_openapi_frontend_contract.py` now has `_WHATIF_TS` and 31 "exact" rows
+(`AddProjectIn` ... `AskResponse`); all 187 tests of that file pass (field sets, required-ness and nullability).
+
+Verification:
+- `tsc -b` clean; `eslint src/surfaces/planning e2e/p18-whatif.spec.ts playwright.p18.config.ts` clean; `vite build`
+  green, initial load 185.4 KB gzip (budget 400), the What-if code is inside the lazy PlanningPage chunk (23 KB gzip).
+- Vitest: planning surface 17 files, 124 tests (new: scenario-schema 12, store 4, error classification 15,
+  result views 11 incl. unattainable, capped, virtualization over 100 rows and axe, chat 10 incl. success, plain-text
+  safety, 503, 429 countdown with fake timers, 502/504 retry, ungrounded/truncated, edit-in-builder, planner 14
+  incl. strict request body, inline validation, hub-planner scoped response, 403/422/503 handling, round trip
+  chat -> form -> same request, axe, plus a PlanningPage tab test). Whole frontend suite: 175 files, 1188 tests pass.
+  (Test-harness note: a `beforeEach(() => mock.mockReset())` arrow RETURNS the mock, which vitest then calls as a
+  teardown, and a throwing implementation then fails the test; use braces.)
+- Mocked-route Playwright, own Vite dev server on :5291 (`playwright.p18.config.ts`, `e2e/p18-whatif.spec.ts`,
+  every `/api/` call answered in the spec, reusing the vitest fixtures): 4 passed. Real Chromium + axe: 0
+  serious/critical in LIGHT mode on estimate, simulate, solve (with unattainable block) and a chat answer; DARK
+  mode at 390 px: only the known D1 filled-primary-button contrast (the three Estimate/Simulate/Fewest-additions
+  buttons) and nothing else (the spec excludes exactly that node class); no horizontal overflow at 390 px.
+- Seen visually (screenshots in the session scratchpad): builder lines, estimate, simulate, solve with the
+  unattainable block, chat answer with scenario card and engine result, mobile dark. NOT verified visually/live:
+  the real API (the :8001 dev API predates `/whatif`, so only mocked responses were exercised), real model text,
+  the Hub Planner against a real scoped response (mocked scope only), the virtualized lists in a real browser
+  (unit-tested only), keyboard/screen-reader pass beyond axe and role/label tests. The dev server on :5183 was not
+  touched.
+- Note: `git status` also shows unrelated modified `frontend/src/surfaces/dashboard/*` files that this task did
+  not touch.
+
+## [2026-10-21] P17-R04 — "Delivery by priority" card split in flight / not started (frontend-builder): DONE
+
+Why: client read P1 44% vs P3 74% as priority being ignored; audited cause is 13 not-started P1 projects,
+a P3 band that is nearly all in flight, and 17 Commercialized (all P4) counting as within-year (ADR 0030).
+
+Changed (frontend/src/surfaces/dashboard only, plus one backend test line):
+- `api/types.ts`: row `status`, `not_started`; new `PriorityDeliveryBand`; `priority_delivery` on `CompletingWithinYear`.
+- `components/portfolio-analytics.tsx`: `PortfolioAnalytics` takes a `priorityDelivery` prop (passed from
+  `DashboardPage.tsx`); `PriorityDeliveryRings` no longer counts rows, it renders the server bands (I19).
+  Ring = `in_flight_within_year_share_pct` (a band with no in-flight work has no ring and shows "–"). Per band
+  list item: total, headline %, legend "P1 · in flight 12 of 12 · not started 7 of 13", a thin bar from
+  `not_started_within_year_share_pct`, muted "Already delivered: n" (`delivered_total`) and "Not in plan: n"
+  (`other_total`) only when non-zero. Bands with `total == 0` are hidden. One-line note (exported
+  `PRIORITY_NOTE`) on the card and in the info popover. Band colour tokens, reduced motion (useMotionTokens)
+  unchanged; per-item and bar aria-labels; no dangerouslySetInnerHTML.
+- Fixtures in 9 dashboard test files got `status`, `not_started`, `priority_delivery: []`;
+  `portfolio-analytics.test.tsx` rewritten for the card: served legend text, parts sum to total, delivered
+  and not-in-plan outside rings, note on card and popover, empty band hidden, hub-filtered payload, no bands,
+  axe 0 serious/critical.
+- `backend/tests/test_openapi_frontend_contract.py`: one mapping row for `PriorityDeliveryBand` (allowed).
+
+Results: `tsc -b` clean; eslint src/surfaces/dashboard 0 errors (1 pre-existing warning in project-breakdown);
+vitest src/surfaces 111 files / 823 tests green (dashboard 29 files / 151 tests after the axe test);
+`pytest backend/tests/test_openapi_frontend_contract.py` 188 passed (its coverage-threshold line is the
+single-file run, not a failure of the tests).
+Not done: no screenshot. The dev API predates the backend change and a mocked-route Playwright run needs a
+full dashboard session mock; visual check is jsdom + axe only. Planning folder and dev servers untouched.
+Nothing committed.
+
+## [2026-10-21] P17-R + P18 gate — security-auditor: PASS (0 Critical, 0 High, 1 Medium, 4 Low, 3 Info)
+
+Scope: P18 What-if (router, schemas, services whatif/baseline/chat/llm_client, scheduling/whatif, config
+`base_url`), P17-R03 `priority_delivery` + row `status`/`not_started`, frontend planning/whatif + dashboard, ADR 0031.
+Method: code read, hub-leak trace through every scoper, timing probe of the engine (scratchpad scripts only, no repo
+change), and `pytest tests/test_p18_whatif_api.py tests/test_p18_whatif_chat.py tests/test_p17_priority_delivery.py`
+(95 passed; throwaway testcontainers DB; :5433/:8001/:5183 not touched).
+
+Verified clean:
+- Authz: CAPACITY_PLANNING READ = Portfolio Manager, Hub Planner, Admin, Super Admin only (core/rbac.py); role matrix and
+  401 tests exist. Out-of-scope hub/region = 403, out-of-scope engineer/chamber/project id = same 422 as unknown id.
+  Every total, count, workings line and share is recomputed from kept rows (scope_estimate/simulation/solution); solve
+  search dimensions derive only from in-scope scenario hubs, so `additions.total` cannot include other hubs.
+  Lab-region figures are region-wide by design (as Capacity). Dashboard bands use `narrowed_hub_filter`, ORM only.
+- Prompt injection / tools: exactly four tools looked up in `_ARG_MODELS`, args strict (`extra=forbid`) via ChatScenario
+  (no designer/project ids, no role/scope fields); principal, scope, baseline closed over in `run_chat`; 4 rounds x 3
+  calls, one tool-less final turn, one grounding retry, 900 tokens, 90 s cap; no-engine-result answers replaced by fixed
+  refusal unless a short clarifying question. Model text is rendered as plain JSX text.
+- Egress: messages built by field-by-field `view_*` allowlists; no project names, designer names, ids of projects or
+  designers, financial fields, emails, baseline dump (test_exact_payload_has_no_forbidden_field_or_name, scoped and
+  unscoped). Hub Planner payload excludes other hubs/chambers.
+- LLM client: httpx default (verify on, follow_redirects off, 3xx -> HTTPStatusError -> 502), base URL operator-only
+  (env), never request input; key only in Authorization header, not logged/returned/audited; no real key in repo
+  (`gsk_test` placeholder in a test; backend/.env gitignored, only .env.example tracked).
+- Audit: `whatif.*` rows store digest + scenario shape + counts; ask stores question length/digest, never text; designer
+  ids reduced to a count; coalesced per user/kind/digest/minute. Audit table untouched by this work.
+- Frontend: no dangerouslySetInnerHTML/innerHTML/localStorage/sessionStorage/persist in planning or dashboard; Zustand
+  scenario store not persisted; error copy is fixed text (only the server's coded 422/403 detail is echoed).
+- Deps/config: no dependency, CORS, header or compose change.
+
+Findings:
+| ID | Sev | Finding | Fix |
+|----|-----|---------|-----|
+| S18-M1 | Medium | No bound on TOTAL added units: per-line count le=500 x 30 lines = 15,000 projects (also 3,000 designers, 1,500 chambers). Measured on a 30-project baseline: simulate with 15,000 added = 3.7 s, solve with 5,000 added = 14 s / 9 runs, so a 15,000 solve is minutes. The 20 s/40 s caps only abandon the awaiting request: a Python thread cannot be killed, so the job keeps running. The shared 2-thread `_EXECUTOR` is used by ALL users and the chat tools, so two such requests (solve limit 6 burst per user) starve What-if for everyone and the CPU-bound threads contend for the GIL with the event loop. Authenticated planner roles only, on-prem. | Cap sum of counts per scenario in the schema and engine (e.g. total added projects <= 100-200, designers <= 50, chambers <= 20); optionally cooperative cancellation (deadline check inside the greedy loop / solve loop) and a per-user in-flight limit. Fix before production exposure. |
+| S18-L1 | Low | `RPD_GROQ_BASE_URL` validator accepts `http://`; the Bearer key then travels in clear. Operator config, but a typo/downgrade is silent. | Require https unless host is loopback/private and an explicit opt-in flag; ADR note. |
+| S18-L2 | Low | Provider error message (first 300 chars) is logged; some providers echo a key prefix in "invalid key" messages. | Log status/type/code only, or scrub the configured key from the message. |
+| S18-L3 | Low | A 200 with non-JSON or unexpected shape (`response.json()` ValueError, KeyError/IndexError on `choices`) is not an `httpx.HTTPError`, so it surfaces as generic 500 instead of 502. No leak (global handler), wrong class and no retry hint. | Wrap parse in `try` and raise a provider error mapped to 502. |
+| S18-L4 | Low | `/ask` holds a DB connection (open transaction after `load_context`) for up to 90 s while awaiting the LLM; pool is 10+20, ask limit is 5 burst per user, limiters are per worker. Many concurrent askers could exhaust the pool. | Commit/close the read transaction before calling the LLM (load, then release; re-acquire for audit). |
+| S18-I1 | Info | Free text typed by the user (and scenario figures, hub/region/chamber codes, aggregated load/capacity) leave the premises to the provider by default (Groq). A user may type a customer or person name; the model-side frame cannot prevent that. Not a financial field and not logged by us, but should be stated to the client; self-hosted `RPD_GROQ_BASE_URL` is the mitigation. | Record in ADR 0031/OQ; UI hint "do not type names or prices". |
+| S18-I2 | Info | Grounding guard checks numerals only (spelled-out numbers and qualitative claims pass). Acceptable given plain-text rendering and engine results shown beside the answer. | None. |
+| S18-I3 | Info | `scheduling.whatif` imports the `scheduling` package, which imports ortools at module load in the API process; CP-SAT is never run there (the engine is the greedy scheduler). CSRF: bearer-token API, no cookie auth for these POSTs (existing pattern). | None. |
+
+P4-T08 / OQ #8: no per-engineer utilization feature in this scope; what-if audit and model payload carry no engineer
+identity. Gate result for this slice: PASS. S18-M1 must be scheduled as a remediation task before any production deployment.
+
+## [2026-10-21] P17-R + P18 gate — workflow-auditor — FAIL (P17-R03/R04 PASS; P18 numbers correct but 3 defects: I9 mismatch, estimate baseline not the run, `exact` false claim)
+
+Method: own disposable Postgres 17 container on :55432 (removed afterwards; :5433/:8001/:5183 not touched), `alembic upgrade head`, `seed_demo_data --dataset client_2026 --schedule` (CURRENT_WEEK 42, 253 projects, within-year 107), `seed_dev_users`. Independent scripts in the session scratchpad: hand derivation from DOMAIN_RULES (lead-time table and kinds typed from the document, not from code), SQL by asyncpg, in-process ASGI with principal overrides for Super Admin, Portfolio Manager and the Hub Planner (bob, PD-India), engine called directly through `build_schedule_input_from_db`. The repo's own P18/P17-R tests: 171 passed (they do not catch D1-D3 below).
+
+**(6) Scheduler unchanged: PASS.** `git diff HEAD -- backend/scheduling` = `__init__.py` only (+42/-1: docstring line and the whatif export/`__all__`); `whatif.py` untracked/additive; `greedy.py` byte-identical to HEAD. A `git archive HEAD` copy of `scheduling/` (no whatif) and the working tree give the same outcome hash `faac0fd703094a36` on the seeded input (projects, steps, engineers, chambers, flags), within-year 107 at W42. Stored active run equals a fresh greedy run: 253/253 outcomes and 2473/2473 steps, 0 mismatches. DB lead-time rows (98) equal the DOMAIN_RULES table, 0 mismatches.
+
+**(1) Hand-derived numbers vs engine vs `POST /whatif/estimate`: formulas PASS.** Supply (year/remaining) agrees with my derivation for every hub and region to <= 0.005 and equals the Capacity surface to 2 dp: PD-India 21.89 FTE, deduction 7.8333, working weeks 44.1667, 966.81 / 185.92; R&D-India 469.93 / 90.37; PD-Romania 137.72 / 26.48; R&D-Greece 44.60 / 8.58; OEM-HCK 54.77 / 10.53; OEM-Seltek 43.72 / 8.41; labs Greece 21.89, India 279.62, Romania 23.79 (remaining x 10/52). Booked % is taken on the served 2 dp capacity (I19), which is why my unrounded figure differs by 0.01 on a few remaining-basis rows; engine is right. Scenarios (year basis), all matched (engine = my hand = HTTP):
+- +10 PDD/A in R&D-India: 180 design wk, 100 lab wk; R&D-India 298 -> 478, booked 63.41 -> 101.72, 1 more designer; India lab 438 -> 538, 156.64 -> 192.40, new-chamber norm 36.84 wk (platforms 1 lower median, efficiency mean, downtime mean, region holiday 2.1667), 8 more chambers. Remaining basis: 46 designers, 69 chambers (matches).
+- +5 B in PD-India: 50 design, 30 lab; 1078 -> 1128, 111.50 -> 116.67, 4 more designers; India lab 438 -> 468, 167.37, 6 chambers.
+- remove 2 designers PD-India: engine removes the two least-loaded (ids 34d9.., a5d4.., 0 and 6 led weeks, FTE 0.62 each, confirmed by SQL), FTE 21.89 -> 20.65, capacity 912.04, booked 111.50 -> 118.20, 4 more designers.
+- Chamber downtime IN-CH2 maintenance 2 -> 6: 279.62 -> 265.25 (hand 265.25); breakdown 0 and calibration 3: 311.95 (hand 311.95); added chamber (2 platforms, eff 0.5, downtime 1/2/1): 325.46 (hand 325.46).
+
+**(2) simulate: PASS (engine).** Zero scenario: diff zero, before == after counts and utilization, outcomes = stored active run (253/253). Baseline input hash unchanged after a 5-line scenario; JSON byte-identical on re-run. Frozen: 12 In Development projects frozen at W34, 5 scenarios (30 projects, P1 projects across hubs, +5 designers +3 chambers, remove 5 designers, OEM P1): 0 frozen-date changes (only an engineer id changes when a removed designer led a frozen project). Monotonicity grid designers {0,1,2,4,8} x chambers {0,1,2,4} for PD-India, R&D-India, PD-Romania: 0 violations (counts rise 109 -> 116 for PD-India). `validate_invariants` (I1-I12, I15, I16, I21, I22) on 6 scenarios x {seed, frozen baseline}: 0 violations in all 12. Pure read: across estimate/simulate/solve/ask the only table that changed is `audit_log_entries` (+4: three forms and one ask); a fingerprint of runs, outcomes, steps, projects, engineers, chambers, calendars and workflow steps is identical before and after. Audit rows hold the scenario shape and a digest; a question containing "Acme Corp ... John Smith" left no trace.
+
+**(3) solve_minimum_additions.** Unattainable rule PASS: critical path at W42 = 41 + sum of lead times (hand = engine: PDD/C 49, PDD/B 59, PDD/A 79, OEM C 45, OEM B 55); with 30 added designers and 20 added chambers per hub/region the set of new projects that finish within the year is exactly the set with `unconstrained_end_week <= 52` (18 of 27, 0 mismatches), and no project in any run is within-year with unconstrained > 52. `met` false with `met_attainable` true and an empty unmet list for mixed scenarios, `met` true on the zero scenario, only-unattainable gives met false / met_attainable true / 0 additions (vacuously true; UI wording is calm, acceptable). `capped` true and `exact` false when max_runs is tiny (6 and 5); `exact` false at the 25-per-pool limit (500 PDD/C, unmet 448). Brute force minimality (grid of designers x chambers, same rules): +12 PDD/C P1 at PD-Romania: brute 11 designers, solver 11 exact; +10 PDD/C P1 at R&D-Greece: brute 12 (10 designers + 2 chambers, tie to fewer chambers is the solver's choice too), solver the same. **FAIL case:** `no_existing_slips`, +25 PDD/C P1 at PD-India: brute minimum is 10 designers, 0 chambers; the solver returns 12 designers, 0 chambers with `exact = true`.
+
+**(4) Chat tool layer: PASS with advisories.** Four tools only: unknown tool (`run_sql`) not executed; extra keys (`hub_scope`, `remove_engineers`), unknown hub, count 501, string and bool counts, NaN FTE, OEM hub with category A, non-JSON arguments all rejected with a tool error and nothing run. Exact model payload (Super Admin and Hub Planner, three tool results, 24 kB and 12 kB): none of 253 project names, 59 engineer names, 4 customers, 253 external codes, 253 project ids, 59 engineer ids, 7 emails, nor the words tcogs, selling, margin, capex, rm_savings; the word "customers" is only the system prompt's "You cannot see ... customers". Tool-message key sets are exactly the allowlist. Hub Planner payload: only PD-India and region India data; the OEM-HCK/OEM-Seltek strings are the fixed prompt text about categories. Guard: an invented number (999) gets one corrective retry then the fixed notice with `grounded=false`; numbers copied from results pass. Advisories: (a) number words ("twelve", "thirteenfold") are not seen by the digit regex, so a model can state a number in words with `grounded=true`; (b) "1,078" splits into 1 and 078 (false positive; the model is told to copy exactly); (c) the check is set membership, not provenance: after one simulate call 17 of the integers 0-60 (and 25 of 0-120) already occur in the results, so a computed small number can pass by coincidence. The guard stops most invented figures but is not proof that the model never computes. Owner decision: accept as a documented limit, or also forbid number words in the prompt/guard.
+
+**(5) Delivery by priority (P17-R03/R04): PASS.** All 10 scopes (unfiltered, 6 hubs, 3 regions/countries): for every band total = in_flight + not_started + delivered + other, within_year = in-flight + not-started + delivered parts, every `*_share_pct` to 2 dp, and every count equals an independent SQL count (priority, status, any stage != Not Started, active-run `within_year AND NOT blocked`). 0 problems. Sum of band within-year = KPI `within_year_count` in each scope (107; 3, 12, 55, 18, 10, 9; 22, 67, 18); band totals = projects in scope (253). Unfiltered W42: P1 25 (in flight 12, not started 13, within-year 11), P2 6 (1 / 4 / other 1), P3 94 (94 / 0), P4 128 (0 / 68, delivered 17, other 43). `not_started` rows 85 = In Queue 85; Commercialized never in flight or not-started. Mutation on the scratch DB: one P1 In Queue project given an In Progress stage moves (12,13) -> (13,12) and the scheduler's `progress_tracked` is true for it; reverted. Hub Planner bands equal the PD-India SQL; an out-of-scope `hub_id` gives 0. I9/I19 hold.
+
+**DEFECTS (P18; none touches the scheduler).**
+- **D1 (High, I9): What-if "within-year" differs from the Dashboard.** `services/whatif.py` recounts `within_year_*` as the `within_year` outcome CLASS ("I9" per contract section 9.2). That class drops the 17 Commercialized projects (they are `excluded` in the run but have `within_year = true`, and ADR 0030 counts them). Unrestricted simulate: zero scenario "Finishing within the year 90 -> 90", Dashboard KPI 107; +3 PDD/C at PD-Romania: HTTP 90 -> 92, engine 107 -> 109. Hub Planner (PD-India): 49 vs Dashboard 55 (6 Commercialized). The engine's own `diff` (107) was right; the API layer overwrote it. Fix: count `within_year AND NOT blocked` (the Dashboard rule) from the engine's per-project flag; correct the contract text; test with a Commercialized project (the test world has none).
+- **D2 (High, I17/I19, single source): `/whatif/estimate` "before" figures are not the run's.** Baseline load is lead-time demand of every schedulable project including work already Done. Capacity surface and simulate `utilization_before` use the active run (they agree with each other). PD-India design 111.50 % (1078) vs 100.02 % (967); India lab 156.64 % (438) vs 100.85 % (282); R&D-India design 63.41 % vs 60.01 %; remaining basis PD-India 579.82 vs 520.12. Both numbers sit on the same tab. Remaining-basis sizing counts finished history against remaining capacity. The P18-T01 note "equals the Capacity surface except left-out partial schedules" is false on this data (differences 16 to 156 weeks), and OQ #45 describes the choice but the UI does not. All "designers/chambers needed" figures inherit it. Fix: take baseline load from the active-run sums (as `capacity_snapshot` already does) with the scenario delta added, or at minimum show Capacity's figure beside it; amend OQ #45.
+- **D2b (Medium, labelling): headline totals are portfolio-wide, not scenario-attributable.** "+10 PDD/A in R&D-India" shows "Designers needed 8 more, Chambers needed 10 more"; only 1 designer and 8 chambers relate to the scenario, the rest are existing deficits in other hubs/regions; the zero scenario shows 7 and 7. Suggest totals over the hubs/regions the scenario touches, with the portfolio total labelled.
+- **D3 (Medium, honest reporting): `exact = true` can be false.** Case above: greedy is not monotone in chambers ((10 designers, 25 chambers) leaves projects slipping, (10, 0) does not), the two-pool search starts from the 25-chamber corner, and the monotonicity audit only compares pairs it evaluated, so it cannot see the lower feasible point. Result 12 vs true 10 (20 % over-recommendation) marked proven. Fix: weaker wording (`exact` only under the monotone assumption), or a final verification of all totals below the answer when the budget allows (112 runs here, cap 60, so at least downgrade `exact`).
+
+**Hub scoping for a Hub Planner (PD-India): yes, exactly own-hub, with the stated lab exception.** Design rows, simulate project list (171 = Super's PD-India rows, rows identical), outcome counts, utilization, workings and solve additions are the PD-India values; lab rows are region-wide (India incl. R&D-India load, as Capacity); totals equal the sum of visible rows; no other hub or region string in any text field; out-of-scope hub/region = 403 `SCENARIO_OUT_OF_SCOPE`, unknown/out-of-scope ids = 422 with the same message. Caveats: the planner's scenario can move R&D-India projects (shared India chambers) and she cannot see it; her within-year figure is subject to D1.
+
+**Other notes.** Seed chamber IN-CH4 has `allowed_stages = {}` but counts in India lab supply (pre-existing, not P18). Rate limits and audit coalescing not re-tested by me (tests cover them).
+
+**Gate: workflow-auditor FAIL for P18** (D1, D2 blocking; D3 and D2b to be fixed or accepted by the owner). P17-R03/R04: PASS. Remediation tasks go to the top of P18: D1 and D2 (backend-builder, `services/whatif.py`; D2 may need an engine parameter for run-based baseline load, algorithm-engineer), D3 (algorithm-engineer, `whatif.py`), D2b and chat advisories (owner decision). Re-gate: same scripts, expect Dashboard 107 = What-if simulate zero scenario and estimate "before" = Capacity.
+
+## [2026-10-21] P17-R + P18 gate — qa-inspector: PASS (no functional defects; D1/D2 dark/select defects carried; 2 observations)
+
+Scope: working tree at gate time (P17-R03/R04 Delivery-by-priority, P18-T01..T03 What-if planner, ADR 0031, API_CONTRACT_P17/P18). Disposable stack: Postgres `qa-p18-pg` (:55618), Redis `qa-p18-redis` (:56618), uvicorn :8092 (RPD_DEV_MODE, no Groq key; backend/.env holds none), `vite preview --mode e2e` :5292, build output in the session scratchpad. Seeded `client_2026 --schedule` (253 projects, within-year run 107). Owner's :5433 DB, :8001 API and :5183 dev server not touched. Containers and processes removed; no build output left in the repo.
+
+**1. Backend: PASS.** `pytest -q --cov`: **1593 passed, 0 failed, 95.89 %** (gate 70 %). scheduling/ files: whatif.py 94 %, cp_sat 96, greedy 91, invariants 93, monte_carlo 92, solver_comparison 93, workflow 97, types 100 (all >= 85 %). routers/whatif 100, schemas/whatif 100, services/whatif 99, whatif_baseline 100, whatif_chat 99, llm_client 89 (uncovered: the real httpx branch, lines 83-87). `ruff check .` clean. `test_openapi_frontend_contract.py` green (188 rows incl. the 31 whatif and PriorityDeliveryBand).
+**2. Frontend: PASS.** `tsc -b` exit 0; eslint 0 errors, 11 warnings (react-hooks/incompatible-library, pre-existing class); `vite build` prod and e2e mode OK, bundle budget 185.4 KB gzip (400); `vitest run --coverage`: **175 files, 1194/1194**; statements 86.27 %, branches 77.92 %, functions 84.38 %, lines 88.35 % (gate 70 %); planning/whatif 86.04 / 63.71 / 98.43 / 89.67; whatif-api.ts shows 0 % (thin wrapper, exercised by component tests through mocks, not a gate issue).
+**3. No-network chat tests: PASS.** P18 chat + API + engine tests (168) re-run with `socket.connect` patched to raise on any non-loopback address and GROQ keys unset: 168 passed, 0 non-local connect attempts. Chat tests use `FakeLlm` injected through `use(...)`; `/ask` without a key is tested with the key env deleted.
+**4. Live engine numbers: PASS.** Scenario +10 PDD/A at PD-Romania against the seeded baseline (estimate): extra design weeks 180 (10 x 18), extra lab weeks 100 (10 x 10), as the engine test; PD-Romania load 138 + 180 = 318 over capacity 137.72 (3.13 FTE x 44 wk) = 230.90 % (hand-computed, equals served); need 318/44 = 7.23 FTE -> 5 more designers (3.13 + 5 = 8.13 > 7.23, 3.13 + 4 < 7.23), served 5. Lab Romania: 124/23.79 = 521.23 % (equals served); new chamber norm 43.15 wk x ~0.0715 eff x 1 platform = 3.11 wk (norm = lower-median platforms, mean efficiency of RO-CH1..4, checked in the DB) -> 33 chambers, served 33; totals 11 designers / 39 chambers. Simulate: empty scenario before = after (90 within-year), 10 new A projects -> left_out +10, within-year unchanged at 90; 3 new C PD-India projects -> 91 within (2 new within, 1 existing slips). Solve: A projects -> met false / met_attainable true, all 10 unattainable (critical path > 10 wks left), 0 additions, 2 runs; C projects -> +2 PD-India designers, met true, 6 runs. Errors: `/whatif/ask` without key -> 503 `{"error":"AGENT_UNAVAILABLE"}`; ask with wrong body -> 422; Hub Planner (scoped PD-India) naming PD-Romania -> 403 SCENARIO_OUT_OF_SCOPE; Executive Viewer -> 403; bad hub literal -> 422.
+**5. Delivery by priority card vs API: PASS** (new `e2e/p18-gate.spec.ts`, live, real browser). For All, India, Romania, Greece and the PD-India hub filter, each band's aria-label, total, headline % (rounded `in_flight_within_year_share_pct`, or the dash when no in-flight), "Already delivered: n" and "Not in plan: n" equal the API; hidden bands are those with total 0 (Romania/Greece show P3 and P4 only). Parts sum: in_flight + not_started + delivered + other = total for every band in every scope (All: P1 12+13, P2 1+4+other 1, P3 94, P4 0+68+17+43, total 253). Country totals 194 + 32 + 27 = 253; PD-India 165. P1 headline 83 % (10 of 12 in flight), P3 74 %, P2 0 %, P4 dash.
+**6. E2E.** New `p18-gate` 3/3. `p18-whatif` (mocked) 4/4. `p17-gate` 2 of 3: numbers and chips pass; the dark axe scan fails (color-contrast serious x6: D1, known). Carried p14/p15/p16 gate specs: **19/19** (after restoring Bob's PD-India hub scope by SQL; `seed_dev_users` cannot re-run on a seeded DB, existing seed limitation, my first run showed 2 failures from that stack artefact only). p12/p13/p9-surfaces/p9-rbac: failures only in p12 `header hub filter` and p13 `header select open` (D2, aria-hidden-focus on open Radix Select, carried) and `p9-rbac` "sidebar lists exactly the readable surfaces" x7 (stale expectation: the sidebar now also lists Projects, Priority board, Weekly check-in, Versions & History, Downloads since P11/P12; the spec predates them; not caused by P17/P18, needs a test update owned by whoever touches that spec). `e2e/dashboard.spec.ts` and `planning.spec.ts` (Keycloak token fixtures) not run: no Keycloak in the disposable stack.
+**7. Axe.** Light, serious/critical: Dashboard at 1440 and 390 = **0**; What-if tab after estimate, after simulate, with the chat-unavailable notice (1440) and at 390 = **0**. Dark (report only): What-if and Dashboard scans in my spec gave 0; but the p17-gate dark scan of the same Dashboard still reports 6 contrast nodes (D1), so my dark Dashboard scan is probably less settled than p17's; treat dark as not proven clean. Horizontal overflow at 390: Dashboard 0, What-if 0 (measured on documentElement, the shell scrolls internally, so this is weak evidence).
+**8. Chat, no key.** Typing a question in the live What-if tab: 503 -> input hidden and "Chat is not configured; use the forms." (`chat-unavailable`), forms still work. Live UI vs API (PD-Romania +10 A): UI "11 more" designers = API 11; design row 100.2 % -> 230.9 % Full = API; simulate "90 -> 90, Change 0" = API.
+**9. Visual** (scratchpad `shots/`): `/private/tmp/claude-501/-Users-ayushroy-frigoglass/d21d03a9-558b-41fd-a588-7244424f3a5f/scratchpad/shots/delivery-1440.png`, `delivery-390.png`, `whatif-1440*.png`, `whatif-390*.png`. Delivery card at 1440: concentric rings P1 red 83 %, P3 blue 74 %, P2 0 % no arc, P4 dash; bars for not started; "Already delivered: 17 / Not in plan: 43" on P4; note line. At 390 it stacks cleanly, labels wrap, no clipping. What-if element screenshots are poor evidence: the shell's sticky header overlays element captures, and the 390 px capture (`whatif-390-el.png`) shows the booking tables cut at the right edge (probably an inner horizontal scroller; not verified it is scrollable). Not verified: keyboard/screen-reader pass beyond axe; real model text (no key by design); Hub Planner What-if in the browser live (mocked only; API scoping verified live).
+
+**Defects / observations (no blockers):**
+- D1 (carried, dark mode primary-token and chart-label contrast; frontend-builder).
+- D2 (carried, header Radix Select aria-hidden-focus).
+- O1 (P18): in the live "estimate" the added-project count at hubs with no added projects is listed as full rows (all six hubs, OEM-HCK first); fine but the first row is not the edited hub, a reader scanning at 390 px sees unrelated hubs first. Cosmetic.
+- O2: `p9-rbac` sidebar spec stale (see 6).
+- O3: What-if 390 px tables may be clipped (see 9); frontend-builder to confirm they scroll horizontally with a visible cue.
+Tests added only: `frontend/e2e/p18-gate.spec.ts`, `frontend/playwright.p18qa.config.ts` (env `RPD_P18_MATCH` widens the spec match). No feature code touched. Nothing committed.
+
+## [2026-10-21] P18-R01 — What-if engine gate remediation (algorithm-engineer): DONE
+
+Scope: `backend/scheduling/whatif.py`, `backend/scheduling/__init__.py` (exports), `backend/tests/scheduling/test_whatif.py`,
+`docs/API_CONTRACT_P18.md` (new section 10), `docs/ADR/0031-what-if-planner.md` (follow-up), `docs/IMPLEMENTATION_PLAN.md`
+(P18-R01 DONE, P18-R02 TODO for backend-builder). `greedy.py` untouched; no dependency, no DB, no CP-SAT, no port used.
+
+What changed (full interface: `docs/API_CONTRACT_P18.md` section 10):
+- **D2 (I17/I19).** `analytic_requirements` takes its "before" load from one greedy run of the unmodified baseline (the
+  `utilization_before` I6/I7 sums that `simulate` and Capacity use) and adds lead-time demand for the new projects only.
+  Chosen over a `WhatIfBaseline.baseline_load` input because it keeps the engine pure and makes estimate "before" ==
+  simulate "before" true by construction (the stored active run equals a fresh greedy run per the workflow audit); the
+  `WhatIfBaseline` dataclass is unchanged. `min_extra_designers/chambers` and the solver seed use that load. Cost: the
+  analytic path now runs the scheduler once (was zero).
+- **D2b.** `AnalyticRequirements.touched_hubs` / `touched_lab_regions` (+ `touched_scope()`); the four headline totals sum
+  only touched rows, rows stay complete, zero scenario gives 0 for all four.
+- **D3.** `exact` is now verified: true only if met, not capped, and every smaller-total combination (within per-dimension
+  limits) was simulated and failed. Search improved: two-pool groups probe each axis from zero (the corner-first staircase
+  missed cheaper zero-chamber points), a per-region polish tries the totals just below the answer with a fair share of the
+  spare runs, and a region-level verdict memo (regions are independent) reuses evaluations. Otherwise `exact=false` and a
+  workings line says "Minimum under the assumption that more capacity never hurts ... (N smaller combination(s) not
+  simulated)". Expect `exact=false` for answers above a handful of units inside the 60-run cap (honest, not a regression).
+- **S18-M1.** Constants `MAX_ADDED_PROJECTS_TOTAL=200`, `MAX_ADDED_DESIGNERS_TOTAL=50`, `MAX_REMOVED_DESIGNERS_TOTAL=50`,
+  `MAX_ADDED_CHAMBERS_TOTAL=20` enforced by `validate_scenario_limits` in every entry point (ValueError -> 422); solver
+  additions are clamped so scenario + recommendation stays within them. `deadline_s` + injectable `clock` on `simulate`,
+  `analytic_requirements`, `solve_minimum_additions`; cooperative checks between and around greedy runs and in the
+  project-building loop; raises `WhatIfBudgetExceeded`; no clock is read when `deadline_s` is None.
+
+Verification (in-process, scheduling suite only, no DB): `pytest -c pytest-scheduling.ini` 269 passed, coverage 93.99 %
+(`whatif.py` 94 %); `ruff check/format` and `mypy scheduling/whatif.py` clean. New tests: zero-scenario estimate "before"
+equals `simulate` `utilization_before` per hub/region on both bases (portfolio and a 40-project left-out stack where
+lead-time demand is 720 wk but the run books 47); hand example (run 18 + 180 = 198 vs 50 = 396 %, 3 designers; lab 110 vs
+73.6 = 149.46 %, 1 chamber); touched sets for every scenario part; zero-scenario totals 0 even with a real deficit; caps at
+and beyond the limit in all four entry points; deadline with a fake clock for simulate/analytic/solve; no clock read
+without a deadline; D3 regression `portfolio_baseline(4)`, +30 PDD/B P1 at R&D-India, `no_existing_slips`: brute force over
+designers 0..9 x chambers 0..5 gives 4 designers 0 chambers (with 25 chambers 5 designers are needed, the exact failure shape
+of the audited PD-India case) and the solver returns 4/0; `exact` never claimed against a smaller brute-force minimum; an
+unverified answer is `exact=false` with the explanatory line. Sweep over 48 synthetic cases: solver total equals the grid
+minimum wherever the grid has a solution.
+Limitation: the audited seeded case (+25 PDD/C P1 at PD-India, 10 designers 0 chambers) needs the DB seed, which this
+task could not use; the synthetic regression has the same structure. Re-gate should rerun that case: expected 10 designers,
+0 chambers, `exact` true only if the run cap verified all smaller totals (it likely will not, so expect `exact=false`).
+
+Notes for P18-R02 (backend-builder): read section 10 of the contract. Mirror the caps in strict models; pass `deadline_s`
+and map `WhatIfBudgetExceeded` to 503 `WHATIF_TIMEOUT`; recompute totals from the visible rows intersected with
+`touched_*`; fix D1 (within-year = `within_year AND NOT blocked`, the Dashboard rule); update the `semantics` text for
+`exact`; the existing API tests that assert old estimate "before" figures or `exact=true` will need new expected values.
+Nothing committed.
+
+## [2026-10-21] P18-R02 — API-layer remediation after the P18 gate (backend-builder): DONE
+
+Scope: `backend/services/whatif.py`, `whatif_baseline.py`, `whatif_chat.py`, `llm_client.py`, `schemas/whatif.py`, `core/config.py`
+(`GroqSettings`), `api/errors.py` (additive `code` on a scenario-limit 422), tests `backend/tests/test_p18_r02.py` (new, 87) and one
+edit in `test_p18_whatif_chat.py`; docs `API_CONTRACT_P18.md` section 11, ADR 0031 follow-up, `OPEN_QUESTIONS.md` (dated note on
+#43/#45/#47 and new #49), `IMPLEMENTATION_PLAN.md` (P18-R02 DONE). `backend/scheduling/` not edited; no migration; no dependency; no frontend
+file; :5433/:8001/:5183 not touched. Nothing committed.
+
+What was done (shapes: contract section 11):
+1. **D1 (I9).** `within_year_bucket(flag, outcome)` = `within_year AND NOT blocked` (the Dashboard rule, Commercialized included) is the one
+   definition; `scope_simulation` counts `diff.within_year_*`, `existing_*`, `new_projects_within_year` and the workings line with it
+   (an existing project's "before" flag = its flag now unless it is in the engine diff, where it is `before_outcome == within_year`).
+   `outcome_counts_*` stay by class. Seeded client_2026 at W42 over HTTP: PM zero scenario 107 -> 107 = Dashboard 107; Hub Planner PD-India
+   55 -> 55 = Dashboard 55.
+2. **D2.** Verified on a disposable Postgres 17 (:55477, removed) seeded `client_2026 --schedule` (253 projects, run within-year 107):
+   estimate "before" booked % for all 6 hubs and 3 regions, on both bases, equals `GET /capacity/hub-load` and simulate
+   `utilization_before`, max abs difference 0.0 (PM: 24 figures; Hub Planner PD-India: 4). Remaining-basis PD-India design 520.12 %,
+   India lab 524.46 % (the old estimate said 579.82 / more). Shared-lab rule holds: the planner's India lab row equals the PM's and
+   Capacity's region-wide row (test with R&D-India + PD-India sharing the India lab). Test: `test_estimate_before_equals_capacity_*`.
+3. **D2b.** `EstimateResponse.touched_hubs`, `touched_lab_regions` (visible ones only); the four headline totals are recomputed from visible
+   rows that are also touched; zero scenario = 0 even with a real deficit. Seeded: +10 PDD/A at R&D-India touches R&D-India/India,
+   totals 0 designers, 3 chambers, 180 design wk, 100 lab wk; the other five hubs' deficit of 1 designer each stays a row figure.
+4. **D3.** `SOLVE_SEMANTICS` now explains `exact` ("proven minimum" only when every smaller combination was simulated, else smallest found
+   assuming more capacity never hurts). OQ #45 / #47 / #43 amended by a dated appended note (OQ file is append-only in practice).
+5. **S18-M1.** Strict models mirror the totals (200 / 50 / 50 / 20) with a `ChatScenario` model validator (also used by the chat tools and the
+   forms) and lower per-line maxima; a total over a cap is 422 with `code: INVALID_SCENARIO` before anything is loaded (the standard
+   validation envelope plus a `code` key via error type `scenario_limit`; the per-line maximum is the plain 422). Engine `deadline_s` 18 s
+   (estimate, simulate) and 38 s (solve), `WhatIfBudgetExceeded` -> 503 `WHATIF_TIMEOUT`. Per-user in-flight limit: 1 heavy job per user
+   across estimate, simulate, solve and chat tool calls (`WhatIfContext.user_key`), released when the THREAD ends (not when the request gives
+   up), a second is 429 `Retry-After: 2` (plain detail, same style as the rate limit); in chat a 429 becomes a tool error. Tests: 5 oversized
+   shapes x 3 endpoints, per-line, at-cap accepted, chat tool refused, deadlines passed (spy), budget exceeded x3, concurrent request with a
+   blocked engine thread -> 429 on all three endpoints then free, slot held after a 503 until the thread ends, per-user isolation.
+6. **S18-L1** https required unless the host is loopback/private (localhost, loopback/private/link-local IPs, single-label container names)
+   AND `RPD_GROQ_ALLOW_INSECURE_BASE_URL=true`; a public host is rejected even with the opt-in (`10.0.0.5.evil.com` too). **L2** only
+   status, type and code are logged, each scrubbed of the key (and its first 8 chars); message and request never. **L3** non-JSON or
+   wrong-shape 200 -> `LlmProviderError` (an `httpx.HTTPError`) -> the existing 502 (7 shapes + HTTP test). **L4** `await db.commit()` before
+   every model call; test asserts `session.in_transaction()` is False at all three calls of a snapshot+simulate conversation (verified the
+   test fails without the commit).
+7. **Chat advisory.** Prompt rule 1 forbids number words; the guard flags spelled-out numbers (two..nineteen, tens and compounds, hundred,
+   thousand, million, billion, dozen, "-fold", plural) unless the user typed the word; "one" is deliberately not flagged (pronoun); "1,078"
+   is one number. The corrective retry text says digits only. ADR 0031 documents that the guard stops most invented figures but cannot prove
+   the model never computes, and the egress note (S18-I1); contract 11.4 asks the frontend for a fixed "do not type names or prices" hint.
+
+Decisions for the owner to veto: (a) the 429 for a second heavy job is a plain `detail` string (no `code`), as the rate-limit 429; (b) the
+cap 422 is the standard validation envelope with an added `code`, not a CodedHTTPException; (c) "one" is not treated as a number word;
+(d) OQ #49 added for the chat egress; (e) a bad `RPD_GROQ_BASE_URL` now fails settings validation at first use (as the shape check always did).
+
+Audited case on the seeded plan, +25 PDD/C P1 at PD-India, `no_existing_slips`: solver returns **10 designers at PD-India, 0 chambers**
+(the audited brute-force minimum), `met=true`, `met_attainable=true`, **`exact=false`**, `capped=false`, 59 of 60 runs, 3.7 s, "10 smaller
+combination(s) not simulated" and the monotonicity note (2 non-monotone pairs). The Hub Planner (PD-India) gets the same answer.
+
+Verification: full backend `pytest` on the shared testcontainers DB: **1704 passed, 1 failed**, coverage 96.53 % (gate 70 %); `ruff check .`
+clean. The one failure is EXPECTED and is the frontend's to close:
+`test_openapi_frontend_contract.py::test_field_sets_match[EstimateResponse]` (the TS `EstimateResponse` in
+`frontend/src/surfaces/planning/api/whatif-types.ts` lacks `touched_hubs` and `touched_lab_regions`). P18-T03 follow-up for
+frontend-builder: add the two fields and use them in the headline label, the zod/form caps, the 429 and `exact` wording, `diff.within_year_*`
+as the within-year headline, and the chat egress hint (contract section 11). New tests are 87 in `tests/test_p18_r02.py`; the existing 92
+P18 tests pass unchanged except the base-URL test, which moved to a private IP with the opt-in.
+Housekeeping slip, fixed: an accidental `ruff format .` reformatted ~90 unrelated backend files; all were restored with `git checkout`
+(none of them had owner changes per the session-start git status; the six backend files that did, e.g. `dashboard.py`, `main.py`, `scheduling/__init__.py`, could not be restored and may have had formatting-only lines touched, no behaviour), and the one tracked file I did
+intend to change (`api/errors.py`) was re-edited after the restore. Re-gate pointers: Dashboard 107 = What-if zero scenario; estimate
+before = Capacity; touched totals; the audited solve above; `LlmProviderError`/L1-L4 tests; the in-flight 429.
+
+## [2026-10-21] P18-R03 — Frontend follow-ups after the P18 gate (frontend-builder): DONE
+
+Scope: `frontend/src/surfaces/planning/**` (api/whatif-types.ts, whatif/*), `frontend/e2e/p18-whatif.spec.ts`, `frontend/e2e/p9-rbac.spec.ts`,
+`docs/IMPLEMENTATION_PLAN.md`. No backend file touched; `test_openapi_frontend_contract.py` is green (188 passed) once `touched_hubs` and
+`touched_lab_regions` are in the TS `EstimateResponse`. :5433/:8001/:5183 not touched (mocked routes on :5291).
+
+1. Types: `EstimateResponse.touched_hubs/touched_lab_regions`; `SolveResponse` unchanged in shape (semantics/exact already mirrored).
+2. Estimate: heading "Needed for the hubs and regions this scenario touches" + the touched hubs/regions; rows sorted touched-first (display order
+   only) with a left bar and a "Changed by scenario" badge; zero scenario shows 0 and a neutral line; untouched rows keep their own `min_extra_*`.
+3. Simulate: headline was already `diff.within_year_*` (test pins 107 -> 107 against outcome_counts 90); added a note that the outcome table is by class.
+4. Solve: badge "Proven minimum" only when `exact`, else "Smallest found (assumes more capacity never hurts)" plus a not-proven line; the server
+   `semantics` sentence is shown; unattainable wording unchanged.
+5. Zod: per-line maxima 200/50/50/20 and totals across lines; `scenarioTotals` live "Total n of cap (k left)" per section; over-cap inline alert and
+   Run disabled before submit; 422 INVALID_SCENARIO list body parsed to the `msg` sentence (`scenarioLimitMessage`). Fixed a latent axe `listitem`
+   issue (`role=alert` was on the `<ul>`; now a wrapper div).
+6. Run buttons already disabled while pending (test added). 429 (plain detail, Retry-After 2) has a countdown and disabled retry on estimate, simulate,
+   solve (tests each) with "still running" wording; chat tool-error 429 shows in the "Could not run" note; 503 WHATIF_TIMEOUT copy is now
+   "This took too long; try a smaller scenario."
+7. Chat: fixed hint under the input (linked by aria-describedby): "Do not type names, customers or prices — questions are sent to the AI provider (see settings)";
+   `grounded=false` notice unchanged.
+8. 390 px: tables were already `role=region`, `tabindex=0`, `aria-label` scroll containers (shared Table `scrollLabel`); verified in a real browser
+   (Playwright, tall viewport so the shell does not clip): at 390 the two estimate tables measure scrollWidth/clientWidth 588/200 and 598/200 (scroll to the
+   last column works), page horizontal overflow 0; at 1440 1250/1250, no scroll needed. Axe light serious/critical = 0 on estimate, simulate, solve at 390
+   and 1440, and with the over-cap message. The content column at 390 is only ~200 px because of the sidebar rail (pre-existing shell layout, not changed).
+   Screenshots: scratchpad `r03/r03-estimate-{390,1440}-full.png`, `r03-solve-*-full.png`; the widened-container capture is clipped by an ancestor so the
+   scroll is proved by assertions, not that image.
+9. O2: `p9-rbac` sidebar spec updated to the current nav in sidebar order (Dashboard, Projects, Capacity, Prioritization, Priority board, Timeline, Weekly
+   check-in, Register, Planning, Workflow, Users & roles, Audit Log, Versions & History, Downloads; Downloads `surface: null` readable by all). NOT RUN: it
+   needs the live dev stack (:8001/:5183) which I was told not to touch; tsc and eslint pass.
+
+Verification: `tsc -b` clean; eslint on planning + both specs 0 errors; full vitest 175 files / 1215 passed; `vite build` OK (index 138.9 KB gzip, budget 400);
+`pytest tests/test_openapi_frontend_contract.py` 188 passed; Playwright `playwright.p18.config.ts` 7/7 (4 existing + 3 new). Nothing committed.
+
+## [2026-10-21] P18 re-gate — security-auditor: PASS (0 Critical, 0 High, 0 Medium, 3 Low, 3 Info; S18-M1 and S18-L1..L4 closed, L4 partly)
+
+Scope: verification of P18-R01 (engine caps + cooperative deadline), P18-R02 (API layer), P18-R03 (frontend hint/caps), ADR 0031 follow-ups,
+OQ #49. Method: code read of services/whatif.py, whatif_baseline.py, whatif_chat.py, llm_client.py, schemas/whatif.py, core/config.py,
+api/routers/whatif.py, scheduling/whatif.py (caps and `_Budget`); `pytest tests/test_p18_whatif_api.py test_p18_whatif_chat.py test_p18_r02.py
+test_p17_priority_delivery.py tests/scheduling/test_whatif.py` = 283 passed (throwaway testcontainers DB; :5433/:8001/:5183 not touched);
+scratchpad probes only (no repo change): base-URL validator matrix, worst-case capped-scenario timing, and a hub-leak differential test.
+
+Verified fixed:
+- S18-M1 caps: 200/50/50/20 TOTALS enforced in the schema (`ChatScenario` model validator, shared by forms, `prior_scenario` and chat tool
+  args, `extra=forbid`, 30 lines max) AND in the engine (`validate_scenario_limits` in every entry point). Many small lines cannot sum past
+  the caps; chat tools build `ChatScenario`, so no bypass via tool args; solver additions are clamped. Over-cap = 422 INVALID_SCENARIO before
+  any DB load. Cooperative deadline `_Budget.check()` runs between/around greedy runs and in the scenario-building loops; 18 s / 38 s passed
+  to estimate/simulate/solve; HTTP caps 20/40 s; `WhatIfBudgetExceeded` -> 503 WHATIF_TIMEOUT (fixed text, no internals). Probe at the caps
+  (4 x 50 projects + 50 designers + 20 chambers on an 80-project baseline): simulate 0.09 s, estimate 0.12 s, solve 0.13 s (earlier 14 s/9 runs
+  figure is gone).
+- Per-user in-flight limit: 1 per user across estimate, simulate, solve AND chat tool calls (`WhatIfContext.user_key`); second = 429
+  Retry-After 2 (plain detail). Slot is released by a done-callback on the executor future, so it frees when the THREAD ends: a cancelled
+  request (queued future is cancelled, callback fires), a client disconnect, a 503 timeout, an exception inside the engine, and a `submit`
+  failure all release it; the dict entry is popped at 0 (no growth). It cannot be held forever because the engine deadline bounds the thread.
+  Chat 90 s cap cancelling `_loop` mid-tool cannot leak either (same callback). 429 in chat becomes a tool error text.
+- S18-L1: https required; http only with `RPD_GROQ_ALLOW_INSECURE_BASE_URL=true` AND a loopback/private host. Matrix (opt-in on): rejected
+  `127.0.0.1@evil.com`, `localhost.evil.com`, `localhost%2eevil.com`, `localhost:80@evil.com`, `evil.com#@localhost`, `10.0.0.5.evil.com`,
+  `[::ffff:8.8.8.8]`, `8.8.8.8`, `100.64.0.1`, `127.1`; accepted `127.0.0.1`, `user@localhost`, `[::1]`, `[::ffff:10.0.0.1]`. Opt-in off:
+  every http:// rejected. Redirects: httpx `follow_redirects` is off (3xx -> HTTPStatusError -> 502), `verify` default. Residuals in S18R-L3.
+- S18-L2: only status/type/code/model logged, each scrubbed of the key and its 8-char prefix, truncated to 80 chars; message and request
+  never logged; httpx errors carry URL only, never headers. S18-L3: non-JSON or wrong-shape 200 -> `LlmProviderError(httpx.HTTPError)` -> 502.
+- S18-L4 (ask): `await db.commit()` before every model call (test asserts no open transaction at each call). See S18R-L2 for the other endpoints.
+- Envelopes: 422 (validation envelope + `code`), 429 (fixed sentence), 503 (fixed sentence) contain no stack, SQL, hub or id data from
+  elsewhere; engine ValueError texts echo only the caller's own input; out-of-scope engineer/chamber/project ids stay the same 422 as unknown.
+- Scoping: differential test (scratchpad `diff.py`): Hub Planner scope PD-Romania, baseline A vs baseline B where every other hub's projects
+  are 4x different, over estimate, simulate, solve (both targets) x 3 scenarios: the scoped JSON (rows, the four touched totals, shares,
+  workings, diff counts, additions total, met/unmet) is byte-identical (0 diffs); control with unrestricted scope differs in all three, so the
+  probe is sensitive. Totals are recomputed from visible rows intersected with `touched_*`; `met`/`met_attainable` are recomputed from
+  visible unmet projects for restricted callers on `no_existing_slips`.
+- Chat guard: spelled-out numbers flagged unless typed by the user ("one" exempt), digits-only retry; engine result text and numbers come
+  only from scoped views, so the guard exposes nothing beyond the caller's scope (echoed offending tokens are the model's own words). Prompt
+  injection surface unchanged: four whitelisted tools, strict args, principal/scope closed over.
+- Docs/UI: ADR 0031 egress note (lines ~75-83, ~122-126) and OQ #49 present; chat hint "Do not type names, customers or prices ..." present
+  (chat-panel.tsx, aria-described, tested); no dangerouslySetInnerHTML/innerHTML/localStorage/sessionStorage/persist in planning or
+  dashboard; no secret in repo (only the `gsk_test` test placeholder); no dependency/compose/header change.
+- Format incident: `git diff` of api/errors.py (+7/-1: the intended `code` addition only), api/main.py (+2: whatif import and include_router),
+  core/config.py (removed lines are the `import` line extended and docstring quote only), schemas/dashboard.py and routers/dashboard.py
+  (removed lines are the P17 semantic edits; hub filter `narrowed_hub_filter` still applied on both `_priority_delivery` calls),
+  scheduling/__init__.py (additive exports). No security-relevant content lost; the only tracked backend files modified are those six plus the
+  contract test.
+
+Findings:
+| ID | Sev | Finding | Fix |
+|----|-----|---------|-----|
+| S18R-L1 | Low | Shared-pool starvation is bounded, not eliminated: the limit is per user, the pool is 2 threads per worker (4 gunicorn workers, state per worker), so two users each holding one job can occupy a worker's pool for up to 18/38 s (seconds in practice) and a third user's request on that worker waits up to the 20/40 s cap, then 503 (its queued job is cancelled). A user can hold up to 4 jobs (one per worker). Rate limits (solve 6 burst, 1/10 s) prevent sustained saturation by one or two users. | Optional: a global in-flight ceiling or per-worker queue depth limit with fast 429; Redis-backed counters if per-user limit must be global. |
+| S18R-L2 | Low | Residual of S18-L4: estimate, simulate and solve still hold their DB session (read transaction) while queued for and running the engine, up to 20/40 s; only the chat commits first. Needs ~30 distinct concurrent heavy users on one worker to exhaust the 10+20 pool. | `await db.commit()` after `load_context` and before `do_*` in the three routers (re-open for the audit write). |
+| S18R-L3 | Low | Base-URL host check is a string heuristic, bypassable by an operator-supplied value when the opt-in flag is on: integer/hex IPv4 hosts (`http://134744072` = 8.8.8.8, `http://0x08080808`) and single-label names count as "private"; `http://localhost.@x/` is judged on host `x`; `a.localhost` accepted. Requires operator env access AND the explicit opt-in; defaults and the opt-in-off case are safe; no request input can reach it. | Reject all-digit/0x hosts, resolve and test the IP at connect (or allow only literal private IPs and `localhost`). |
+| S18R-I1 | Info | Shared lab regions are region-wide by design: a Hub Planner's chamber figures and the minimum chambers for `no_existing_slips` can depend on another hub's load in the SAME region (R&D-India/PD-India). Same disclosure as the Capacity surface. | None; note for the client. |
+| S18R-I2 | Info | Guard still numerals/number-words only; qualitative claims ("double", "half") pass (carries S18-I2). Egress of typed question remains by default (S18-I1), mitigated by the hint, ADR, OQ #49 and a self-hosted URL. | None. |
+| S18R-I3 | Info | `test_p18_r02` etc. assume per-worker state; the in-flight map and rate limiters are in process memory (existing pattern). `p9-rbac` sidebar spec was not run (needs the live stack). | None. |
+
+P4-T08 / OQ #8: unchanged; no per-engineer utilization feature, audit and model payload carry no engineer identity. Gate result for P18
+(security): PASS. S18R-L1..L3 are recommended before production exposure but are not blocking.
+
+## [2026-10-21] P18 re-gate — workflow-auditor — PASS (D1, D2, D2b, D3 closed; 2 low observations, 1 owner note)
+
+Method: own disposable Postgres 17 (:55433) and Redis (:56433), both removed afterwards (:5433/:8001/:5183 and the qa containers not touched). `alembic upgrade head`, `seed_demo_data --dataset client_2026 --schedule` (253 projects, W42, active run within-year 107 by SQL `within_year AND NOT blocked`), `seed_dev_users`. In-process ASGI with principal overrides (Super Admin, Portfolio Manager, Hub Planner PD-India); engine called directly through `load_context`. Read-only on code; nothing in the repo changed by me.
+
+**(1) D1: PASS.** Zero-scenario simulate within-year before/after: PM 107 -> 107 (Dashboard 107, SQL 107), Super Admin 107 -> 107, Hub Planner PD-India 55 -> 55 (Dashboard 55). `outcome_counts_after.within_year` is 90 / 49 (class, as documented in 11.1). Non-zero scenarios, HTTP vs an independent count of `within_year AND outcome != blocked` over the engine's projects: +3 PDD/C PD-Romania 109 (new 2); +8 PDD/C P1 + 2 designers PD-India 110 (PM) / 58 (HP), new 4; remove 5 designers PD-India 105 (PM) / 53 (HP): all equal. `within_year_bucket` is the only definition in `services/whatif.py`; grep finds no other recount in whatif services (chat only forwards `diff.*`).
+
+**(2) D2: PASS.** Estimate "before" booked % (and load, capacity) equals `GET /capacity/hub-load` and simulate `utilization_before`, max abs diff 0.0 on both bases: PM 6 hubs + 3 regions (24 figures vs Capacity, 18 vs simulate, zero and a non-zero scenario), Hub Planner 4 figures (PD-India, India lab region-wide incl. R&D-India load: 282 wk / 279.62 = 100.85 %, same as the PM row). Year basis: PD-India 100.02 % (967 / 966.81), R&D-India 60.01 % (282 / 469.93), India lab 100.85 %. Remaining: PD-India 520.12 %, India lab 524.46 %, R&D-India 312.05 %. Hand re-derivation from the run loads (FTE-weeks 44.1667 per designer year, 8.493 remaining, chamber norm 36.84 / 7.09), all equal to HTTP:
+- +10 PDD/A R&D-India: R&D-India 282 + 180 = 462 / 469.93 = 98.31 %, 0 designers; India lab 282 + 100 = 382 / 279.62 = 136.61 %, (382 - 279.62) / 36.84 = 2.78 -> 3 chambers. Totals 180 / 100 / 0 / 3. Remaining basis: 44 designers ((462 - 90.37) / 8.493), 47 chambers.
+- +5 B PD-India: 967 + 50 = 1017 / 966.81 = 105.19 %, 2 designers; lab 312 / 279.62 = 111.58 %, 1 chamber. Totals 50 / 30 / 2 / 1. Remaining 98 / 37.
+- remove 2 designers PD-India: FTE 21.89 -> 20.65, capacity 912.04, 967 / 912.04 = 106.03 %, 2 designers; India lab (touched through PD-India) 1 chamber (existing deficit 100.85 %). Totals 0 / 0 / 2 / 1. Remaining 94 / 33.
+(The old 1078 / 438 lead-time figures are gone; the three scenarios now show run loads only.)
+
+**(3) D2b: PASS.** Headline totals cover touched rows only; the zero scenario gives touched [] and 0 / 0 / 0 / 0 for PM and Hub Planner (also with real deficits present: five other hubs show 1 designer each as row figures). +10 A R&D-India touches R&D-India and India only. Hub Planner (PD-India) +5 B: touched [PD-India] / [India], rows only PD-India and India, totals 50 / 30 / 2 / 1 = sum of her visible touched rows = the PM's totals for the same scenario. Her scenario naming R&D-India: 403 SCENARIO_OUT_OF_SCOPE.
+
+**(4) D3: PASS.** Audited case +25 PDD/C P1 PD-India `no_existing_slips`: PM and Hub Planner both 10 designers, 0 chambers, met true, `exact=false`, capped false, 59/60 runs, 3.1 s / 2.7 s; workings carry the "assumes more capacity never hurts ... (10 smaller combination(s) not simulated)" line and the 2-non-monotone-pairs note; `semantics` explains `exact`. Brute force (designers 0..16 x chambers 0..8, real greedy) on the audited case and 3 more (+12 PDD/C P1 PD-Romania all_new: brute 11, solver 11; +15 B P1 R&D-India no_slips: 0/0; +10 C P2 R&D-Greece all_new: brute 12 = 10 designers + 2 chambers, solver the same): solver = brute everywhere. Falsification sweep, 48 scenarios (4 development hubs x C,B x counts 5,12,25 x both targets), solver vs full-grid brute: 0 cases solver above brute, 0 cases solver below brute, 0 cases `exact=true` with total != brute (36 exact true, all equal brute; 12 exact false, 8 of which equal brute and 4 have no solution inside the grid). I could not falsify `exact=true`.
+
+**(5) Caps, deadline, in-flight: PASS.** 422 `INVALID_SCENARIO` for totals 201 projects (150 + 51), 51 designers (30 + 21), 51 removed (30 + 21), 21 chambers (10 + 11) on all three endpoints; per-line 201 / 51 / 21 and count 501 are the plain 422; at-cap scenario (200 projects, 50 designers, 20 chambers, 50 removed) simulates in 0.2 s. Engine rejects 51 designers (49 + 1 test) too. Deadline: engine deadline 1.5 s / cap 30 s -> 503 `WHATIF_TIMEOUT` at 1.75 s, then 0.000 s CPU over the next 4 s and slot freed; HTTP cap 0.4 s with engine deadline 1.2 s (natural run 2.9 s) -> 503 at 0.76 s, thread ended 1.58 s after start (so it stopped at the deadline, not by finishing), 0.000 s CPU afterwards. Default deadlines are 18 / 38 s under caps 20 / 40 s. Per-user in-flight: during a running solve the same user gets 429 `Retry-After: 2` (plain detail) on simulate, estimate and solve; another user is 200; a retry right after a 503 is 429 until the thread ends, then 200.
+
+**(6) Purity and invariants: PASS.** Zero simulate == baseline == stored run: stored outcomes 253/253 and steps 2473/2473 equal a fresh greedy (0 mismatches); before == after counts and utilization; input unchanged after a scenario; deterministic. Frozen (12 In Development projects frozen at W34), 5 scenarios: 0 frozen-date changes (one frozen leader id reassigned when a removed designer led it, as before). Monotonicity grid designers {0,1,2,4,8} x chambers {0,1,2,4} at PD-India, R&D-India, PD-Romania: 0 violations (109 -> 116 at PD-India). `validate_invariants`: 0 violations for 6 scenarios x {seed, frozen} and for 4 big scenarios (453 projects: 200 added; +100 PDD/C and +100 B at two hubs with 10 removed; +60/+40/+100 across Romania, OEM and Greece with 50 designers and 20 chambers; +200 with 50 removed). DB: across estimate / simulate / solve / ask only `audit_log_entries` changed and a fingerprint of runs, outcomes, steps, projects, engineers, chambers, calendars and workflow steps is identical; audit rows hold the scenario shape and a digest, no question text or names.
+
+**(7) Chat guard and payload: PASS.** Spelled-out numbers flagged: "twelve", "thirteenfold", "twenty five", "forty-two", "dozen", "two" (not "one", by design). "1,017" (a real figure in the estimate result) is grounded; an invented "1,078" is flagged as one token. An invented 999 gets the corrective retry then the fixed notice (3 model calls, `grounded=false`). Tool payload (24.8 kB Super, 12.7 kB Hub Planner): none of 253 project names, 59 engineer names, 4 customers, 253 external codes, 253 project ids, 59 engineer ids, 7 emails, chamber codes; no tcogs / selling / margin / capex / rm_savings; the one "customer" hit is the system prompt's "You cannot see ... customers"; Hub Planner payload has no other hub or region except the fixed prompt text naming OEM-HCK / OEM-Seltek categories. Tool-message key sets are the allowlist (summary figures, hub/kind/outcome/week change rows without ids or names). The attack set (unknown tool, extra keys, id list, bad hub, count 501, string/bool count, NaN FTE, OEM category mismatch, non-JSON args) is refused with a tool error, nothing run.
+
+**(8) Scheduler unchanged: PASS.** `git diff HEAD -- backend/scheduling`: only `__init__.py` (+56/-1: one docstring line reworded, the whatif import block and `__all__`), `whatif.py` untracked/additive; `greedy.py` byte-identical to `git show HEAD:...`. Outcome hash `faac0fd703094a36`, within-year 107 at W42, identical for the working tree and the HEAD checkout.
+
+**Remaining observations (none blocking).**
+- L1 (Low, labelling): the chat `estimate_requirements` view carries the four touched-only totals but not `touched_hubs` / `touched_lab_regions`, so the model cannot tell they are not portfolio-wide; a scenario with only removals also counts the touched region's existing lab deficit (remove 2 designers at PD-India shows 1 chamber from the India lab's pre-existing 100.85 %). Both follow the contract (10.2) but the second is surprising; suggest adding the touched lists to the chat view and a one-line note.
+- L2 (Low): the number-word guard is a vocabulary list; spelled numbers outside it, or computed digits that coincide with result values (17 of 0..60 occur after one simulate), still pass. Documented in ADR 0031; owner accepted-limit decision stands.
+- Owner note: `exact=false` is now the common outcome above a handful of units (12 of 48 in the sweep, including answers that were in fact minimal); that is honest, not a defect, but the UI copy "smallest found" will be shown often.
+- Frontend R03 and qa-inspector areas were not re-run by me (outside the requested list); the openapi contract test is reported green by the builder.
+
+**Gate: workflow-auditor PASS for P18** (the earlier FAIL entry's D1, D2, D2b, D3 are closed with numbers above). qa-inspector and security-auditor results are recorded separately.
+
+## [2026-10-21] P18 re-gate — qa-inspector: PASS (P18-R01/R02/R03 verified live; no functional defects; D1 dark carried; 4 observations)
+
+Scope: working tree after P18-R01 (engine), R02 (API layer), R03 (frontend). Disposable stack: Postgres 17 `qa-p18r-pg` (:55719), Redis `qa-p18r-redis` (:56719), uvicorn :8793 (RPD_DEV_MODE, CURRENT_WEEK 42, no Groq key), `vite preview --mode e2e` :5793 proxying to :8793; seeded `client_2026 --schedule` (253 projects, within-year run 107) + `seed_dev_users`. Build output in the session scratchpad (`scratchpad/rg/dist-e2e`, `dist-prod`); coverage in `scratchpad/rg/cov`. Containers and processes removed afterwards; :5433/:8001/:5183 not touched; no build output left in the repo.
+
+**1. Backend: PASS.** `pytest -q --cov` (own testcontainers DB): **1705 passed, 0 failed, 95.93 %** (gate 70 %), 6 min 22 s. scheduling/ (gate 85 %): whatif.py 94 %, cp_sat 96, greedy 91, invariants 93, monte_carlo 92, solver_comparison 93, workflow 97, types 100, __init__ 100. api/routers/whatif 100, schemas/whatif 100, services/whatif 96 (uncovered 227, 238, 242, 268-270, 481), whatif_baseline 100, whatif_chat 99, llm_client 95. `ruff check .` clean. (Includes the 188-row `test_openapi_frontend_contract.py`, which R02 had left red for `EstimateResponse.touched_*`; now green.)
+**2. Frontend: PASS.** `tsc -b` exit 0; eslint 0 errors, 11 warnings (react-hooks/incompatible-library class, pre-existing); `vite build` prod and e2e OK, initial chunk 138.9 KB gzip (budget 400); `vitest run --coverage`: **175 files, 1215/1215**; statements 86.35 %, branches 78.08 %, functions 84.49 %, lines 88.41 % (gate 70 %). planning/whatif 86.8 / 65.13 / 98.59 / 90.18; whatif/components 89.02 / 84.51 / 84.07 / 94.58. Low files (not gate failures): `PlanningPage.tsx` 64.46 % statements (below 70 on its own), `whatif/describe-scenario.ts` 34.2 %, `api/whatif-api.ts` 0 % (thin wrapper, exercised through mocks).
+**3. E2E (live, disposable stack): 45 of 46 pass.** p14-gate 12/12, p15-gate 4/4, p16-gate 3/3, p17-gate 2 of 3 (numbers and chips pass; the dark axe scan fails: color-contrast serious x6, D1 carried), p18-gate 3/3, **p9-rbac 21/21 including the updated "sidebar lists exactly the readable surfaces" for all 7 roles (it had been written without a live run; it passes)**. Mocked `p18-whatif` (own dev server :5291, no backend): **7/7**. New live spec `frontend/e2e/p18-regate.spec.ts`: 9/9 after fixing three mistakes in my own test (see 8).
+**4. Numbers verified live (HTTP and browser).**
+- Zero scenario simulate: API `within_year_before/after` **107 -> 107** = Dashboard `within_year_count` 107; the What-if tab shows "Finishing within the year 107 -> 107, Change 0". (The form refuses an empty scenario by design, "Add at least one change"; the zero scenario was sent by rewriting the request body of a one-line scenario in the browser, response and rendering real.)
+- Estimate "before" vs `/capacity/hub-load`: both bases, 6 hubs + 3 regions, **18 figures, max abs diff 0.0**; in the browser the 6 design rows' booked % equal Capacity (6 of 6).
+- "+10 PDD/A at R&D-India": touched hubs ["R&D-India"], lab regions ["India"], **designers needed 0, chambers needed 3**, 180 design wk, 100 lab wk (HTTP and UI). Design rows flags in display order true,false,false,false,false,false; lab true,false,false; the first row is R&D-India with a "Changed by scenario" badge; exactly 2 badges. Zero scenario shows the neutral "changes nothing" line and 0 totals.
+- Oversized scenario: in the form, 120 + 100 PDD/C projects shows "Total 220 of 200 projects added: over the limit.", Estimate / Simulate / Find fewest additions all disabled, a forced click sends **0** POSTs; fixing the count re-enables. API: 201 projects (100+101), 51 designers, 21 chambers, 51 removed designers -> **422 `scenario_limit`**, per-line 501 -> 422 `less_than_equal`, on **estimate, simulate and solve** (15 of 15); exactly 200 accepted (200).
+- Double-click Run: one `POST /whatif/simulate` (1). A same-user heavy solve in flight (25 PDD/C P1, 200 OK) then Estimate in the browser: the notice "Your previous what-if calculation is still running. You can try again in 2 s." with a 2 s countdown and a disabled Try again, which enables; the retry then returns the result.
+- `/whatif/ask` without a key: **503 `{"error":"AGENT_UNAVAILABLE"}`**; in the UI the input is replaced by `chat-unavailable` "Chat is not configured; use the forms." and the forms keep working. The chat hint "Do not type names, customers or prices — questions are sent to the AI provider (see settings)" is visible at 1440 and 390 before the first question.
+- 390 px: of 8 table regions, 5 overflow and all 5 are `overflow-x:auto`, `tabindex=0`, have an aria-label, and scroll (Outcome counts 258/200, Moved 425/198, New projects 464/198, Design booking 395/200, Lab booking 392/200); document and body horizontal overflow 0, and no element past the viewport outside a scroller.
+**5. Axe (serious/critical), light: 0 everywhere.** What-if at 1440 and 390 after estimate, after simulate, after solve, with chat-unavailable, with the over-cap message, and with the 429 notice (1440); Dashboard 1440 and 390: all **0**. Dark (report only): Dashboard 1440 and 390 -> color-contrast x2 / x1 on `button[data-state="on"]`; What-if estimate 1440 and 390 -> color-contrast x3 on the primary buttons (`hover:bg-primary-hover`); that is D1 (primary token) plus the Dashboard toggle; p17-gate dark x6 as before.
+**6. Keyboard-only pass of the What-if tab: PASS.** Order: sidebar (11 links) -> header (hub filter, notifications, theme, account, sign out) -> page tablist (one roving stop; ArrowRight reaches "What-if planner"; Radix moves focus after a timeout, so a test needs a short wait) -> Clear scenario -> Full year -> FTE -> Add project line -> Hub, Category, Count, Type, Status, Priority, Score, certification checkbox, Remove -> Add designer / removal / chamber / downtime line -> Estimate -> Simulate. Native Hub select set by typing "R&D-I"; Count by typing; **Estimate and Simulate run via Enter** (POSTs `estimate,simulate` seen, results rendered); every one of the 40 stops had a visible focus indicator (outline or ring); no trap.
+**7. Visual:** scratchpad `shots/` (`regate-estimate-1440.png`, `regate-estimate-390.png`, `regate-429-1440.png`, `regate-overcap-1440.png`, `regate-chat-unavailable-*.png`, `regate-whatif-390-tall.png`).
+
+**8. Test-side corrections (mine, not product defects):** the zero scenario is not submittable from the form (above); coverage assertions needed number parsing ("100.2 %" not "100.20 %"); Dashboard has no `main` landmark in my locator; the page tabs are one roving stop.
+
+**Defects: none functional. Carried / observations:**
+- D1 (carried, dark primary-token and toggle contrast; frontend-builder), now also seen as the Dashboard `button[data-state="on"]` pair in dark.
+- O1: no "skip to content" link: 17 Tab presses (sidebar + header) before the Planning content; landmarks exist, axe passes; a keyboard user pays this on every page (moderate, WCAG 2.4.1 bypass; owner decision).
+- O2: p16-gate logs a light-mode color-contrast 4.22:1 (#616c7c on #e4e5e7, 11-14 px legends/labels) in the Prioritization score edit dialog; not asserted by that spec, outside P18; frontend-builder to look at.
+- O3: coverage on `PlanningPage.tsx` (64.5 %) and `describe-scenario.ts` (34 %) is thin for files P18 touched; overall and per-area gates are met.
+- Not covered: Hub Planner What-if in the browser (API scoping covered by tests and by the earlier gate), real model text (no key by design), `dashboard.spec.ts`/`planning.spec.ts` (Keycloak token fixtures; no Keycloak in the disposable stack), p12/p13/p9-surfaces/p9-workspace/p9-settings (not requested; D2 select aria-hidden-focus carried).
+Tests added only: `frontend/e2e/p18-regate.spec.ts` (run with `playwright.p18qa.config.ts`, `RPD_P18_MATCH='p18-regate\.spec\.ts'`). No feature code touched. Nothing committed.
+
+## [2026-10-21] P18 gate (and P17-R03/R04) — PASSED — orchestrator
+
+All three gates have a PASS on record for P18 (What-if planner: pure engine, `/whatif/*` API, "Ask the planner" chat, What-if tab; ADR 0031) and for the P17 follow-ups (Delivery-by-priority bands).
+
+- **First gate:** workflow-auditor FAIL (D1 within-year dropped Commercialized; D2 estimate "before" load != Capacity; D3 solve `exact=true` wrongly; D2b portfolio-wide headline totals); security PASS with S18-M1 (Medium, unbounded scenario size) and Lows; qa PASS. P17-R03/R04 passed.
+- **Remediation:** P18-R01 (engine: run-based load, touched-only totals, honest `exact`, caps 200/50/50/20, cooperative deadline), P18-R02 (API: Dashboard-consistent within-year, caps, deadlines, per-user in-flight 429, https-only base URL, key scrubbing, 502 on malformed provider reply, DB transaction released before model calls, number-word guard), P18-R03 (frontend: touched labels, zod caps, 429 countdown, chat hint, 390 px tables, p9-rbac sidebar spec).
+- **Re-gate:** workflow-auditor PASS (D1-D3 closed; zero-scenario 107 -> 107 and PD-India 55 -> 55; estimate before == Capacity to 0.0; audited +25 PDD/C P1 case 10 designers / 0 chambers, exact=false; scheduler outcome hash `faac0fd703094a36` unchanged). security-auditor PASS (0 Critical/High/Medium). qa-inspector PASS (backend 1705, frontend 1215, e2e 45 of 46 with the one failure being known dark-mode D1).
+
+**Open follow-ups (none blocking):**
+- Security Lows: S18R-L1 per-worker job limit (add a global ceiling), S18R-L2 release the DB read transaction before the engine in estimate/simulate/solve, S18R-L3 private-host check is a string heuristic (reject all-digit/0x hosts).
+- Workflow L1: the chat `estimate_requirements` view omits `touched_hubs` / `touched_lab_regions`; removals-only scenarios count the region's existing lab deficit (contract 10.2).
+- Known and carried: dark-mode contrast D1, header select `aria-hidden-focus` D2, no skip-to-content link, `PlanningPage.tsx` coverage 64.5 %.
+- Open questions: OQ #42 (Cancelled in the total, missing carry-over data), #43-#49 (what-if assumptions, chat egress #49).
+- Audit item for the owner (SC-650): the uuid tie-break in the sort is arbitrary; leader overload has no warning (candidate P19).
+- Untracked leftovers: `frontend/e2e/p16-gate.spec.ts`, `p18-gate.spec.ts`, `p18-regate.spec.ts`, `p18-whatif.spec.ts`, `frontend/playwright.p16qa.config.ts`, `playwright.p18.config.ts`, `playwright.p18qa.config.ts`, `backend/.coverage`.
+
+Nothing from P18 or P17-R03/R04 is committed; the owner's OK to commit is awaited.

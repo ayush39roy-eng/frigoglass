@@ -95,3 +95,62 @@ summed or shown under one label.
 Frontend (P17-T04): add the eleven fields to `StatusOverview` in
 `frontend/src/surfaces/dashboard/api/types.ts`. `test_openapi_frontend_contract.py::
 test_field_sets_match[StatusOverview]` fails until it does.
+
+## GET /dashboard/completing-within-year — delivery by priority (P17-R03)
+
+Additive; nothing removed. Same RBAC, hub scope, `hub_id` and `region` filters as before.
+
+**Row fields (new)** on `CompletingWithinYearRow`:
+
+```
+status: ProjectStatus      # wire value ("In Queue", "Commercialized", ...), non-sensitive
+not_started: bool          # status == "In Queue" AND no stage of the project has progress
+```
+
+"Started" reuses the scheduler's `progress_tracked` rule (`scheduling.workflow`): a project is
+started once any stage has `status != Not Started`. The row has no workflow plan, so the server reads
+the stored stage rows (`EXISTS project_workflow_steps.status != 'Not Started'`). `not_started` is
+true only for an In Queue project with no started stage. An In Queue project with a started stage is
+in flight; Commercialized is never `not_started`.
+
+**Response field (new)** `priority_delivery: PriorityDeliveryBand[5]`, always P1, P2, P3, P4, Q in
+that order (zeroed bands when nothing is in scope; with no active run, counts are served and every
+`*within_year*` figure is 0):
+
+```
+PriorityDeliveryBand {
+  priority: "P1"|"P2"|"P3"|"P4"|"Q"
+  total, within_year: int
+  in_flight_total, in_flight_within_year: int
+  not_started_total, not_started_within_year: int
+  delivered_total, delivered_within_year: int     # Commercialized, counted apart
+  other_total: int                                # On Hold, Cancelled, Draft
+  within_year_share_pct          # within_year / total
+  in_flight_within_year_share_pct  # in_flight_within_year / in_flight_total
+  not_started_within_year_share_pct
+  in_flight_share_pct, not_started_share_pct, delivered_share_pct, other_share_pct   # / total
+}
+```
+
+All shares 2 dp, 0.0 on a zero denominator (I19); the browser never counts or divides.
+
+- **Basis.** Every project in scope and filter (so band totals sum to `PipelineTotals.total_count`
+  for projects that have a priority), LEFT JOINed to the active run's outcome. `within_year` is the
+  same exclusive bucket as the counts (`within_year AND NOT blocked`).
+- **Exact reconciliation.** `total == in_flight_total + not_started_total + delivered_total +
+  other_total` and `within_year == in_flight_within_year + not_started_within_year +
+  delivered_within_year`.
+- **Delivered** = Commercialized only. It is EXCLUDED from the in-flight and not-started figures;
+  all its projects are within-year (ADR 0030). `delivered_within_year` is served so `within_year`
+  reconciles.
+- **Other** = On Hold, Cancelled, Draft. They never complete: they are in `other_total` and never in
+  any `*_within_year`.
+- **In flight** = every remaining project: In Buyoff, Under Industrialization, In Development, and
+  In Queue with a started stage. **Not started** = In Queue with no started stage.
+- A project with a null priority is in no band (the page has none today).
+
+**Frontend (P17-R04):** mirror in `frontend/src/surfaces/dashboard/api/types.ts` the two row fields,
+a new `PriorityDeliveryBand`, and `priority_delivery` on `CompletingWithinYear`.
+`test_openapi_frontend_contract.py::test_field_sets_match[CompletingWithinYearRow]` and
+`[CompletingWithinYear]` are red until then (`PriorityDeliveryBand` is not in that test's mapping;
+add a mapping row when the type lands).

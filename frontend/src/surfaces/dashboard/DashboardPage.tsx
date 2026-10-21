@@ -331,7 +331,10 @@ export default function DashboardPage(): React.JSX.Element {
             {withinYear.data?.has_active_schedule_run && withinYear.data.rows.length > 0 ? (
               <StaggerSection>
                 <React.Suspense fallback={<PanelSkeleton height="h-[24rem]" />}>
-                  <PortfolioAnalytics rows={withinYear.data.rows} />
+                  <PortfolioAnalytics
+                    rows={withinYear.data.rows}
+                    priorityDelivery={withinYear.data.priority_delivery}
+                  />
                 </React.Suspense>
               </StaggerSection>
             ) : null}

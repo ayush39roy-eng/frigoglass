@@ -100,4 +100,9 @@ async def sanitizing_validation_exception_handler(
 
     assert isinstance(exc, RequestValidationError)
     errors = _sanitize_non_finite(jsonable_encoder(exc.errors()))
-    return JSONResponse(status_code=HTTP_422, content={"detail": errors})
+    content: dict[str, Any] = {"detail": errors}
+    if any(e.get("type") == "scenario_limit" for e in errors):
+        # P18-R02 (S18-M1): a What-if scenario over the engine's size caps.
+        # Additive `code`, same as the engine-level INVALID_SCENARIO.
+        content["code"] = "INVALID_SCENARIO"
+    return JSONResponse(status_code=HTTP_422, content=content)

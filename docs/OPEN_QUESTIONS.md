@@ -630,3 +630,28 @@ minimum-additions search) rather than recommending impossible numbers. Should th
 the dearer unit). Added designers are 1.0 FTE (a parameter). The search is capped at 60 greedy runs
 and 25 additions per pool, and reports `capped` when that stops it. Does the client want weighted
 costs (a chamber is worth several designers) or different limits?
+
+#### Notes appended 2026-10-21 (P18-R02, ADR 0031 follow-up) to #43, #45 and #47
+
+- **#45 amended.** The text above ("the lead-time demand of every schedulable project ... including work already done")
+  is superseded. The "before" load of the instant estimate is what the ACTIVE SCHEDULE books (one greedy run of the
+  unmodified plan, the same Sum of non-skipped step durations as Capacity, I6/I7), so finished history is not counted
+  against remaining capacity and estimate "before" = simulate "before" = Capacity booked % to 2 dp (verified on the seeded
+  client_2026 plan at W42: PD-India design 520.12 % remaining basis, India lab 524.46 %). Only the work the scenario ADDS
+  is sized at its full lead-time demand. The headline totals ("designers/chambers needed") now cover only the hubs and lab
+  regions the scenario touches (`touched_hubs`, `touched_lab_regions`); a portfolio-wide deficit is the per-row
+  `min_extra_*` of untouched rows. Question for the client: is "needed for the hubs this scenario touches" the right
+  headline, or should an overall deficit also be shown?
+- **#47 amended (exactness).** `exact` on the minimum-additions result is now true only when every smaller combination of
+  designers and chambers was actually simulated and failed. Greedy scheduling is not monotone in capacity (more chambers
+  can make a schedule worse), so the search cannot prove a minimum from monotonicity; otherwise the answer is "the smallest
+  found, assuming more capacity never hurts" with an explanatory line, and the UI must not say "minimum" unqualified.
+  Audited case on the seeded plan (+25 PDD/C P1 at PD-India, `no_existing_slips`): the solver returns 10 designers and 0
+  chambers (the brute-force minimum) with `exact=false`, 59 of 60 runs, 10 smaller combinations not simulated.
+- **#43 (note).** Unchanged decision. Added: a What-if "within the year" count follows the Dashboard's rule (it includes
+  Commercialized projects), so the numbers shown beside the Dashboard agree.
+- **New, #49: egress of the chat.** The user's typed question and aggregate scenario figures go to the configured model
+  endpoint (Groq by default). A user may type a customer or person name. Mitigations in place: a UI hint "do not type names or
+  prices", question text never stored in the audit log, no financial field or name ever put in the model's context, https
+  required for the endpoint (`RPD_GROQ_ALLOW_INSECURE_BASE_URL` for a private self-hosted one). Does the client accept
+  aggregate figures leaving the network, or must the chat use a self-hosted model (ties to #23)?

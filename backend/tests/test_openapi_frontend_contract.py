@@ -251,6 +251,8 @@ _PRIORITY_BOARD_TS = FRONTEND_SRC / "surfaces" / "priority-board" / "api.ts"
 # P14 (ADR 0027): the `/vip` surface was deleted; the P12 mirrors moved to
 # `lib/api/vip.ts` together with the P14 VIP board types.
 _VIP_TS = FRONTEND_SRC / "lib" / "api" / "vip.ts"
+# P18-T03 (docs/API_CONTRACT_P18.md section 9): the What-if planner.
+_WHATIF_TS = FRONTEND_SRC / "surfaces" / "planning" / "api" / "whatif-types.ts"
 
 # (frontend file, ts interface name, backend openapi schema name, mode)
 CONTRACT_TABLE: list[tuple[Path, str, str, str]] = [
@@ -262,6 +264,7 @@ CONTRACT_TABLE: list[tuple[Path, str, str, str]] = [
     # now carries `blocked` / `blocked_count`, same as the backend schema).
     (_DASHBOARD_TS, "CompletingWithinYearRow", "CompletingWithinYearRow", "exact"),
     (_DASHBOARD_TS, "CompletingWithinYear", "CompletingWithinYear", "exact"),
+    (_DASHBOARD_TS, "PriorityDeliveryBand", "PriorityDeliveryBand", "exact"),
     (_DASHBOARD_TS, "ProjectFilterRow", "ProjectFilterRow", "exact"),
     (_DASHBOARD_TS, "ProjectFilterResult", "ProjectFilterResult", "exact"),
     # P13 (docs/API_CONTRACT_P13.md §2–§3): country chips and register facets.
@@ -504,6 +507,38 @@ CONTRACT_TABLE: list[tuple[Path, str, str, str]] = [
     (_PRIORITY_MOVE_TS, "PriorityPreviewSummary", "PriorityPreviewSummary", "exact"),
     (_PRIORITY_MOVE_TS, "PriorityPreviewChange", "PriorityPreviewChange", "exact"),
     (_PRIORITY_MOVE_TS, "PriorityPreviewResponse", "PriorityPreviewResponse", "exact"),
+    # --- P18-T03: What-if planner (backend/schemas/whatif.py, ADR 0031) ---
+    (_WHATIF_TS, "AddProjectIn", "AddProjectIn", "exact"),
+    (_WHATIF_TS, "AddEngineerIn", "AddEngineerIn", "exact"),
+    (_WHATIF_TS, "RemoveEngineerCountIn", "RemoveEngineerCountIn", "exact"),
+    (_WHATIF_TS, "AddChamberIn", "AddChamberIn", "exact"),
+    (_WHATIF_TS, "ChamberDowntimeIn", "ChamberDowntimeIn", "exact"),
+    (_WHATIF_TS, "PriorityOverrideIn", "PriorityOverrideIn", "exact"),
+    (_WHATIF_TS, "ChatScenario", "ChatScenario", "exact"),
+    (_WHATIF_TS, "ScenarioRequest", "ScenarioRequest", "exact"),
+    (_WHATIF_TS, "EstimateRequest", "EstimateRequest", "exact"),
+    (_WHATIF_TS, "SimulateRequest", "SimulateRequest", "exact"),
+    (_WHATIF_TS, "SolveRequest", "SolveRequest", "exact"),
+    (_WHATIF_TS, "AskRequest", "AskRequest", "exact"),
+    (_WHATIF_TS, "ScopeInfo", "ScopeInfo", "exact"),
+    (_WHATIF_TS, "HubDesignRequirementOut", "HubDesignRequirementOut", "exact"),
+    (_WHATIF_TS, "LabRegionRequirementOut", "LabRegionRequirementOut", "exact"),
+    (_WHATIF_TS, "EstimateResponse", "EstimateResponse", "exact"),
+    (_WHATIF_TS, "ProjectResultOut", "ProjectResultOut", "exact"),
+    (_WHATIF_TS, "UtilizationRowOut", "UtilizationRowOut", "exact"),
+    (_WHATIF_TS, "ProjectChangeOut", "ProjectChangeOut", "exact"),
+    (_WHATIF_TS, "ScenarioDiffOut", "ScenarioDiffOut", "exact"),
+    (_WHATIF_TS, "SimulateResponse", "SimulateResponse", "exact"),
+    (_WHATIF_TS, "DesignerAdditionOut", "DesignerAdditionOut", "exact"),
+    (_WHATIF_TS, "ChamberAdditionOut", "ChamberAdditionOut", "exact"),
+    (_WHATIF_TS, "AdditionsOut", "AdditionsOut", "exact"),
+    (_WHATIF_TS, "UnattainableProjectOut", "UnattainableProjectOut", "exact"),
+    (_WHATIF_TS, "SolveResponse", "SolveResponse", "exact"),
+    (_WHATIF_TS, "SnapshotChamberOut", "SnapshotChamberOut", "exact"),
+    (_WHATIF_TS, "SnapshotHubOut", "SnapshotHubOut", "exact"),
+    (_WHATIF_TS, "CapacitySnapshotResponse", "CapacitySnapshotResponse", "exact"),
+    (_WHATIF_TS, "ToolRunOut", "ToolRunOut", "exact"),
+    (_WHATIF_TS, "AskResponse", "AskResponse", "exact"),
 ]
 
 _P15_MIRRORS = (

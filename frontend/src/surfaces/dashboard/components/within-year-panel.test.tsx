@@ -28,6 +28,7 @@ const withRun: CompletingWithinYear = {
   spillover_count: 4,
   left_out_count: 2,
   blocked_count: 1,
+  priority_delivery: [],
   rows: [
     {
       project_id: 'p1',
@@ -42,6 +43,8 @@ const withRun: CompletingWithinYear = {
       cat_not_allowed: false,
       last_step_end_week: 40,
       type: null,
+      status: 'In Development',
+      not_started: false,
     },
   ],
 };
@@ -98,6 +101,7 @@ describe('WithinYearPanel', () => {
           spillover_count: 0,
           left_out_count: 0,
           blocked_count: 0,
+          priority_delivery: [],
           rows: [],
         }}
         activeRun={null}
@@ -117,6 +121,7 @@ describe('WithinYearPanel', () => {
           spillover_count: 0,
           left_out_count: 0,
           blocked_count: 0,
+          priority_delivery: [],
           rows: [],
         }}
         activeRun={undefined}
@@ -140,6 +145,8 @@ describe('WithinYearPanel', () => {
         cat_not_allowed: false,
         last_step_end_week: 40,
         type: null,
+        status: 'In Development',
+        not_started: false,
       },
       {
         project_id: 'p-spillover',
@@ -154,6 +161,8 @@ describe('WithinYearPanel', () => {
         cat_not_allowed: true,
         last_step_end_week: 60,
         type: null,
+        status: 'In Development',
+        not_started: false,
       },
       {
         project_id: 'p-leftout',
@@ -168,6 +177,8 @@ describe('WithinYearPanel', () => {
         cat_not_allowed: false,
         last_step_end_week: null,
         type: null,
+        status: 'In Development',
+        not_started: false,
       },
       {
         project_id: 'p-blocked',
@@ -182,6 +193,8 @@ describe('WithinYearPanel', () => {
         cat_not_allowed: false,
         last_step_end_week: null,
         type: null,
+        status: 'In Development',
+        not_started: false,
       },
     ];
     renderWithProviders(
@@ -193,6 +206,7 @@ describe('WithinYearPanel', () => {
           spillover_count: 1,
           left_out_count: 1,
           blocked_count: 1,
+          priority_delivery: [],
           rows,
         }}
         activeRun={undefined}

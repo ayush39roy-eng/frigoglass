@@ -41,7 +41,7 @@ import uuid
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, Query
-from sqlalchemy import Select, func, select
+from sqlalchemy import Select, exists, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -56,11 +56,12 @@ from models.enums import (
     ProjectPriority,
     ProjectStatus,
     ProjectType,
+    WorkflowStepStatus,
 )
 from models.hub import Hub
 from models.project import Project
 from models.schedule import ScheduleRun, ScheduleRunProjectOutcome
-from models.workflow import WorkflowStepTemplate
+from models.workflow import ProjectWorkflowStep, WorkflowStepTemplate
 from schemas.dashboard import (
     AnalyticsBucket,
     CompletingByHubRow,
@@ -72,6 +73,7 @@ from schemas.dashboard import (
     HubTypePipelineRow,
     NamedId,
     PipelineTotals,
+    PriorityDeliveryBand,
     ProjectFacets,
     ProjectFilterResult,
     ProjectFilterRow,
@@ -222,6 +224,113 @@ async def hub_type_pipeline(
     ]
 
 
+def _has_stage_progress():  # type: ignore[no-untyped-def]
+    """Correlated EXISTS: some stage of the project is not "Not Started". This
+    is the scheduler's `progress_tracked` rule (`scheduling.workflow`), read
+    from the stored stage rows."""
+
+    return exists().where(
+        ProjectWorkflowStep.project_id == Project.id,
+        ProjectWorkflowStep.status != WorkflowStepStatus.NOT_STARTED,
+    )
+
+
+def _is_not_started(status: ProjectStatus, has_progress: bool) -> bool:
+    return status == ProjectStatus.IN_QUEUE and not has_progress
+
+
+_DELIVERY_BANDS = (
+    ProjectPriority.P1,
+    ProjectPriority.P2,
+    ProjectPriority.P3,
+    ProjectPriority.P4,
+    ProjectPriority.Q,
+)
+_OTHER_STATUSES = {ProjectStatus.ON_HOLD, ProjectStatus.CANCELLED, ProjectStatus.DRAFT}
+
+
+async def _priority_delivery(
+    db: AsyncSession,
+    run_id: uuid.UUID | None,
+    current_user: Principal,
+    hub_id: uuid.UUID | None,
+    region: LabRegion | None,
+) -> list[PriorityDeliveryBand]:
+    """P17-R03: per-band delivery split, counted over EVERY project in scope
+    and filter (LEFT JOIN to the active run's outcome for `within_year`, the
+    same `within_year AND NOT blocked` bucket as the counts). Delivered =
+    Commercialized; other = On Hold / Cancelled / Draft (they never complete,
+    so never count as within-year); the rest is in flight or not started.
+    """
+
+    stmt = select(
+        Project.priority,
+        Project.status,
+        _has_stage_progress(),
+        func.coalesce(
+            ScheduleRunProjectOutcome.within_year & ~ScheduleRunProjectOutcome.blocked,
+            False,
+        ),
+    ).select_from(Project)
+    stmt = stmt.outerjoin(
+        ScheduleRunProjectOutcome,
+        (ScheduleRunProjectOutcome.project_id == Project.id)
+        & (ScheduleRunProjectOutcome.schedule_run_id == run_id),
+    )
+    hub_filter = narrowed_hub_filter(current_user, Project.hub_id, hub_id, region)
+    if hub_filter is not None:
+        stmt = stmt.where(hub_filter)
+    grouped = (await db.execute(stmt)).all()
+
+    acc = {
+        p: dict.fromkeys(("if", "ifw", "ns", "nsw", "dl", "dlw", "ot"), 0) for p in _DELIVERY_BANDS
+    }
+    for priority, status, has_progress, wy in grouped:
+        count = 1
+        if priority is None:
+            continue
+        a = acc[priority]
+        if status == ProjectStatus.COMMERCIALIZED:
+            a["dl"] += count
+            a["dlw"] += count if wy else 0
+        elif status in _OTHER_STATUSES:
+            a["ot"] += count
+        elif _is_not_started(status, has_progress):
+            a["ns"] += count
+            a["nsw"] += count if wy else 0
+        else:
+            a["if"] += count
+            a["ifw"] += count if wy else 0
+
+    bands: list[PriorityDeliveryBand] = []
+    for priority in _DELIVERY_BANDS:
+        a = acc[priority]
+        total = a["if"] + a["ns"] + a["dl"] + a["ot"]
+        within = a["ifw"] + a["nsw"] + a["dlw"]
+        bands.append(
+            PriorityDeliveryBand(
+                priority=priority,
+                total=total,
+                within_year=within,
+                in_flight_total=a["if"],
+                in_flight_within_year=a["ifw"],
+                not_started_total=a["ns"],
+                not_started_within_year=a["nsw"],
+                delivered_total=a["dl"],
+                delivered_within_year=a["dlw"],
+                other_total=a["ot"],
+                within_year_share_pct=_share(within, total),
+                in_flight_within_year_share_pct=_share(a["ifw"], a["if"]),
+                not_started_within_year_share_pct=_share(a["nsw"], a["ns"]),
+                in_flight_share_pct=_share(a["if"], total),
+                not_started_share_pct=_share(a["ns"], total),
+                delivered_share_pct=_share(a["dl"], total),
+                other_share_pct=_share(a["ot"], total),
+            )
+        )
+    return bands
+
+
 @router.get("/completing-within-year", response_model=CompletingWithinYear)
 async def completing_within_year(
     hub_id: uuid.UUID | None = None,
@@ -248,10 +357,11 @@ async def completing_within_year(
             left_out_count=0,
             blocked_count=0,
             rows=[],
+            priority_delivery=await _priority_delivery(db, None, current_user, hub_id, region),
         )
 
     stmt = (
-        select(ScheduleRunProjectOutcome, Project)
+        select(ScheduleRunProjectOutcome, Project, _has_stage_progress())
         .join(Project, ScheduleRunProjectOutcome.project_id == Project.id)
         .options(selectinload(Project.hub))
         .where(ScheduleRunProjectOutcome.schedule_run_id == active_run.id)
@@ -262,7 +372,7 @@ async def completing_within_year(
     result = await db.execute(stmt)
     rows: list[CompletingWithinYearRow] = []
     within_year_count = spillover_count = left_out_count = blocked_count = 0
-    for outcome, project in result.all():
+    for outcome, project, has_progress in result.all():
         # P9-F02: Blocked is an exclusive bucket — a project the active run
         # marked `blocked=True` counts ONLY here, never also in
         # within_year/spillover/left_out, even on the (currently believed
@@ -291,6 +401,8 @@ async def completing_within_year(
                 blocked=outcome.blocked,
                 cat_not_allowed=outcome.cat_not_allowed,
                 last_step_end_week=outcome.last_step_end_week,
+                status=project.status,
+                not_started=_is_not_started(project.status, has_progress),
             )
         )
 
@@ -302,6 +414,7 @@ async def completing_within_year(
         left_out_count=left_out_count,
         blocked_count=blocked_count,
         rows=rows,
+        priority_delivery=await _priority_delivery(db, active_run.id, current_user, hub_id, region),
     )
 
 

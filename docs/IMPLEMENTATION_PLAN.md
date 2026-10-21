@@ -1933,6 +1933,8 @@ Opened 2026-10-20. Contract: `docs/API_CONTRACT_P17.md`. The Project Pipeline ro
 | P17-T03 | Backend: five-card status overview (`commercialized_count`, `on_hold_count`, `total_count`, shares, `other_statuses_*`) on `/dashboard/status-overview` | backend-builder | DONE (MEMORY 2026-10-20) |
 | P17-T04 | Frontend: five status cards (count, % of total, per-country chips from `region-summary.status_counts`, progress bar), "Other statuses: n"; mirror the new `StatusOverview` fields | frontend-builder | DONE (MEMORY 2026-10-20) |
 | P17-T20 | Gate: qa, workflow, security | — | DONE (MEMORY 2026-10-20; qa PASS, security PASS, workflow FAIL then PASS on re-gate) |
+| P17-R03 | Backend: `status` + `not_started` on `CompletingWithinYearRow`; server-side `priority_delivery` bands (in flight / not started / delivered / other) on `/dashboard/completing-within-year` | backend-builder | DONE (MEMORY 2026-10-21) |
+| P17-R04 | Frontend: "Delivery by priority" card split into in flight vs not started, Commercialized set apart; mirror `status`, `not_started`, `PriorityDeliveryBand`, `priority_delivery` | frontend-builder | DONE |
 
 ## P18 — What-if planner: scenario engine, tool API, chat (ADR 0031)
 
@@ -1946,7 +1948,10 @@ No LLM and no CP-SAT inside the engine. Nothing is persisted by a what-if.
 
 | ID | Task | Owner | Status |
 |---|---|---|---|
+| P18-R01 | Gate remediation, engine (workflow D2/D2b/D3, security S18-M1): estimate "before" load = active run's I6/I7 sums; headline totals over touched hubs/regions only (+ `touched_*` fields); `exact` only when verified (probes + polish + verification); engine caps (200 projects, 50 designers, 20 chambers) and cooperative `deadline_s` / `WhatIfBudgetExceeded` | algorithm-engineer | DONE (MEMORY 2026-10-21) |
+| P18-R02 | Gate remediation, API layer: mirror the caps in strict request models (and zod), pass `deadline_s` to the engine and map `WhatIfBudgetExceeded` to 503 `WHATIF_TIMEOUT`, D1 (within-year = `within_year AND NOT blocked`), recompute totals from `touched_*`, surface `touched_*` and the new `exact` wording, amend OQ #45; see `docs/API_CONTRACT_P18.md` section 10 | backend-builder | DONE (MEMORY 2026-10-21) |
 | P18-T01 | Scheduling: pure what-if engine `scheduling/whatif.py` (`Scenario`, `analytic_requirements`, `simulate`, `solve_minimum_additions`), tests, ADR 0031, contract | algorithm-engineer | DONE (MEMORY 2026-10-20) |
-| P18-T02 | Backend: build `WhatIfBaseline` from the DB (hub-scoped), scenario API, tool layer, chat endpoint (LLM only translates text to `Scenario` and explains results; never computes) | backend-builder | TODO (depends on P18-T01) |
-| P18-T03 | Frontend: What-if UI and chat panel on Capacity Planning | frontend-builder | TODO (depends on P18-T02) |
-| P18-T20 | Gate: qa, workflow, security | — | TODO |
+| P18-T02 | Backend: build `WhatIfBaseline` from the DB (hub-scoped), scenario API, tool layer, chat endpoint (LLM only translates text to `Scenario` and explains results; never computes) | backend-builder | DONE (MEMORY 2026-10-21) |
+| P18-T03 | Frontend: What-if UI and chat panel on Capacity Planning | frontend-builder | DONE (MEMORY 2026-10-21) |
+| P18-R03 | Frontend follow-ups after the P18 gate: mirror `touched_*`, touched-first estimate rows and headline label, `diff.within_year_*` headline, `exact` wording, zod caps and running totals, 429/503 handling and disabled Run buttons, chat egress hint, 390 px scrollable tables, stale p9-rbac sidebar spec (contract sections 10-11) | frontend-builder | DONE (MEMORY 2026-10-21) |
+| P18-T20 | Gate: qa, workflow, security | — | DONE (MEMORY 2026-10-21; qa PASS, security PASS, workflow PASS on re-gate; first gate FAILED on D1/D2/D3, fixed in P18-R01..R03) |

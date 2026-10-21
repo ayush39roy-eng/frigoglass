@@ -13,6 +13,7 @@ describe('PipelinePanel (schedule-run outcome only)', () => {
       spillover_count: 4,
       left_out_count: 2,
       blocked_count: 1,
+      priority_delivery: [],
       rows: [],
     };
     render(<PipelinePanel withinYear={withinYear} />);
@@ -36,6 +37,7 @@ describe('PipelinePanel (schedule-run outcome only)', () => {
           spillover_count: 0,
           left_out_count: 0,
           blocked_count: 0,
+          priority_delivery: [],
           rows: [],
         }}
       />,

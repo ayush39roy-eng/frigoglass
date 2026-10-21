@@ -79,6 +79,7 @@ from api.routers.vip import pin_router as vip_pin_router  # noqa: E402
 from api.routers.vip import router as vip_router  # noqa: E402
 from api.routers.vip_board import board_router as vip_board_router  # noqa: E402
 from api.routers.vip_board import items_router as vip_items_router  # noqa: E402
+from api.routers.whatif import router as whatif_router  # noqa: E402
 from api.routers.workflow_settings import router as workflow_settings_router  # noqa: E402
 from api.routers.workspace import router as workspace_router  # noqa: E402
 from core.config import is_dev_mode  # noqa: E402
@@ -196,6 +197,7 @@ app.include_router(me_router)
 app.include_router(users_router)
 app.include_router(workflow_settings_router)
 app.include_router(workspace_router)
+app.include_router(whatif_router)
 # 2026-09-30 (ADR 0012/0014, P10-T02): project-level access grants + manager
 # delegation, and Ask-the-agent (Groq).
 app.include_router(project_access_router)

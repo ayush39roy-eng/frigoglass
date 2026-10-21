@@ -199,4 +199,14 @@ describe('PlanningPage', () => {
     expect(await screen.findByText(/limited to Admins/)).toBeInTheDocument();
     expect(await screen.findByText(/read-only access to Capacity Planning/i)).toBeInTheDocument();
   });
+  it('has a What-if planner tab that keeps a half-built scenario when switching tabs', async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<PlanningPage />);
+    await user.click(screen.getByRole('tab', { name: 'What-if planner' }));
+    expect(screen.getByRole('heading', { name: 'Scenario builder' })).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Add project line' }));
+    await user.click(screen.getByRole('tab', { name: 'Chambers' }));
+    await user.click(screen.getByRole('tab', { name: 'What-if planner' }));
+    expect(screen.getByRole('group', { name: /Added projects, line 1/ })).toBeInTheDocument();
+  });
 });

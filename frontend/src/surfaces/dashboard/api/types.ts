@@ -82,6 +82,34 @@ export interface CompletingWithinYearRow {
   last_step_end_week: WeekNumber | null;
   /** P13-T10 (API_CONTRACT_P13 §5): the project's type; null if unmapped. */
   type: ProjectType | null;
+  /** P17-R03: the project's status (wire value). */
+  status: ProjectStatus;
+  /** P17-R03: In Queue AND no stage has progress (server-derived). */
+  not_started: boolean;
+}
+
+/** P17-R03: one priority band of "Delivery by priority", counted server-side
+ *  (I19). total == in_flight_total + not_started_total + delivered_total +
+ *  other_total; within_year == the three *_within_year parts. Shares are
+ *  2 dp percentages, 0.0 on a zero denominator. */
+export interface PriorityDeliveryBand {
+  priority: ProjectPriority;
+  total: number;
+  within_year: number;
+  in_flight_total: number;
+  in_flight_within_year: number;
+  not_started_total: number;
+  not_started_within_year: number;
+  delivered_total: number;
+  delivered_within_year: number;
+  other_total: number;
+  within_year_share_pct: number;
+  in_flight_within_year_share_pct: number;
+  not_started_within_year_share_pct: number;
+  in_flight_share_pct: number;
+  not_started_share_pct: number;
+  delivered_share_pct: number;
+  other_share_pct: number;
 }
 
 /** GET /dashboard/completing-within-year — the Invariant I9 endpoint. Every
@@ -98,6 +126,8 @@ export interface CompletingWithinYear {
    *  also be set on the same row. Blocked wins outright so the four counts
    *  partition the schedulable, non-excluded portfolio without overlap. */
   blocked_count: number;
+  /** P17-R03: always P1, P2, P3, P4, Q in that order. */
+  priority_delivery: PriorityDeliveryBand[];
   rows: CompletingWithinYearRow[];
 }
 

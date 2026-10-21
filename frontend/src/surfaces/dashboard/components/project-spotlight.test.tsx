@@ -22,6 +22,8 @@ function row(
     cat_not_allowed: false,
     last_step_end_week: 40,
     type: null,
+    status: 'In Development',
+    not_started: false,
     ...overrides,
   };
 }
@@ -41,6 +43,8 @@ describe('ProjectSpotlight', () => {
             spillover: true,
             last_step_end_week: 61,
             type: null,
+            status: 'In Development',
+            not_started: false,
           }),
         ]}
        

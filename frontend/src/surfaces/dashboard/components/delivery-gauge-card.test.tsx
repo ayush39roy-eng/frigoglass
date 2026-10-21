@@ -13,6 +13,7 @@ function payload(overrides: Partial<CompletingWithinYear> = {}): CompletingWithi
     spillover_count: 4,
     left_out_count: 2,
     blocked_count: 1,
+    priority_delivery: [],
     rows: [],
     ...overrides,
   };

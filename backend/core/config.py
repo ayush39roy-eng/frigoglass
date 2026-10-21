@@ -21,10 +21,12 @@ production IdP.
 
 from __future__ import annotations
 
+import ipaddress
 import os
 from functools import lru_cache
+from urllib.parse import urlsplit
 
-from pydantic import AliasChoices, Field, field_validator
+from pydantic import AliasChoices, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -89,8 +91,26 @@ def get_oidc_settings() -> OIDCSettings:
     return OIDCSettings()
 
 
+def _is_private_host(host: str) -> bool:
+    """Loopback or private: `localhost`, a loopback / private / link-local IP,
+    or a single-label name (a container-network service name such as
+    `vllm`, which resolves only inside the deployment). Public names and
+    public IPs are not private."""
+
+    h = host.strip("[]").lower()
+    if not h:
+        return False
+    if h == "localhost" or h.endswith(".localhost"):
+        return True
+    try:
+        ip = ipaddress.ip_address(h)
+    except ValueError:
+        return "." not in h
+    return ip.is_loopback or ip.is_private or ip.is_link_local
+
+
 class GroqSettings(BaseSettings):
-    """"Ask the agent" (ADR 0014, P10-T02) — Groq's OpenAI-compatible
+    """ "Ask the agent" (ADR 0014, P10-T02) — Groq's OpenAI-compatible
     chat-completions API. Same "unconfigured is a valid, non-fatal state"
     posture as `core.backup_mirror_config.BackupMirrorSettings`: `api_key`
     has no default and is `None` until an operator sets `RPD_GROQ_API_KEY`
@@ -119,6 +139,43 @@ class GroqSettings(BaseSettings):
     model: str | None = Field(
         default="openai/gpt-oss-120b", validation_alias=AliasChoices("RPD_GROQ_MODEL", "GROQ_MODEL")
     )
+
+    #: OpenAI-compatible API base URL (P18-T02, ADR 0031 follow-up). Defaults
+    #: to Groq; point it at a self-hosted model (vLLM, Ollama, ...) with
+    #: `RPD_GROQ_BASE_URL` and no code change. The What-if chat appends
+    #: `/chat/completions`. Operator configuration, never request input.
+    base_url: str = Field(
+        default="https://api.groq.com/openai/v1",
+        validation_alias=AliasChoices("RPD_GROQ_BASE_URL", "RPD_LLM_BASE_URL"),
+    )
+
+    #: Explicit opt-in (S18-L1) to a plain `http://` base URL. Honoured only
+    #: when the host is loopback or private (`_is_private_host`): the Bearer
+    #: key then travels in clear on a network the operator controls. Off by
+    #: default; a public host must always be `https://`.
+    allow_insecure_base_url: bool = Field(
+        default=False, validation_alias=AliasChoices("RPD_GROQ_ALLOW_INSECURE_BASE_URL")
+    )
+
+    @field_validator("base_url", mode="after")
+    @classmethod
+    def _base_url_shape(cls, v: str) -> str:
+        v = v.strip().rstrip("/")
+        if not v.startswith(("https://", "http://")):
+            raise ValueError("RPD_GROQ_BASE_URL must start with http:// or https://")
+        return v
+
+    @model_validator(mode="after")
+    def _https_unless_private_and_opted_in(self) -> GroqSettings:
+        if self.base_url.startswith("https://"):
+            return self
+        host = urlsplit(self.base_url).hostname or ""
+        if not (self.allow_insecure_base_url and _is_private_host(host)):
+            raise ValueError(
+                "RPD_GROQ_BASE_URL must be https:// (an http:// URL is accepted only for a "
+                "loopback or private host AND RPD_GROQ_ALLOW_INSECURE_BASE_URL=true)"
+            )
+        return self
 
     @field_validator("api_key", "model", mode="before")
     @classmethod

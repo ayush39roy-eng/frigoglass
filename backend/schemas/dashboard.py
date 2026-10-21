@@ -108,6 +108,43 @@ class CompletingWithinYearRow(BaseModel):
     blocked: bool
     cat_not_allowed: bool
     last_step_end_week: int | None
+    #: P17-R03: the project's status (wire value; non-sensitive).
+    status: ProjectStatus
+    #: P17-R03: true when status is In Queue AND no stage has progress
+    #: (every stage "Not Started"). Server-computed; see API_CONTRACT_P17.
+    not_started: bool
+
+
+class PriorityDeliveryBand(BaseModel):
+    """P17-R03: one priority band's delivery figures, counted by the server
+    over every project in scope/filter (not only those with an outcome row).
+    `total == in_flight_total + not_started_total + delivered_total +
+    other_total`; `within_year == in_flight_within_year +
+    not_started_within_year + delivered_within_year`. Shares are 2 dp (I19),
+    0.0 on a zero denominator.
+    """
+
+    priority: ProjectPriority
+    total: int
+    within_year: int
+    in_flight_total: int
+    in_flight_within_year: int
+    not_started_total: int
+    not_started_within_year: int
+    delivered_total: int
+    delivered_within_year: int
+    other_total: int
+    #: within_year / total
+    within_year_share_pct: float
+    #: in_flight_within_year / in_flight_total
+    in_flight_within_year_share_pct: float
+    #: not_started_within_year / not_started_total
+    not_started_within_year_share_pct: float
+    #: shares of `total`
+    in_flight_share_pct: float
+    not_started_share_pct: float
+    delivered_share_pct: float
+    other_share_pct: float
 
 
 class CompletingWithinYear(BaseModel):
@@ -138,6 +175,8 @@ class CompletingWithinYear(BaseModel):
     #: schedulable, non-excluded portfolio without overlap).
     blocked_count: int
     rows: list[CompletingWithinYearRow]
+    #: P17-R03: always the five bands P1, P2, P3, P4, Q in that order.
+    priority_delivery: list[PriorityDeliveryBand]
 
 
 #: The active run's per-project outcome bucket (P13 register column).
@@ -268,7 +307,7 @@ class AnalyticsBucket(BaseModel):
 
 
 class CompletingHubTypeRow(BaseModel):
-    """"Completing within year: Hub × Type" — one (hub, type) cell present in
+    """ "Completing within year: Hub × Type" — one (hub, type) cell present in
     the filtered pipeline."""
 
     hub: HubName

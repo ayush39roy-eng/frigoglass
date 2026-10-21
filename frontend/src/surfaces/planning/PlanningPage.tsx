@@ -32,6 +32,7 @@ import { ChamberTable } from './components/chamber-table';
 import { ConfirmDialog } from './components/confirm-dialog';
 import { EngineerFormDialog } from './components/engineer-form';
 import { EngineerTable, type EngineerTableRow } from './components/engineer-table';
+import { WhatIfPlanner } from './whatif/components/whatif-planner';
 import type { ChamberCreateRequest, ChamberRead, EngineerCreateRequest, EngineerRead } from './api/types';
 import {
   useActiveScheduleRun,
@@ -259,6 +260,7 @@ export default function PlanningPage(): React.JSX.Element {
               <TabsTrigger value="engineers">Engineers</TabsTrigger>
               <TabsTrigger value="chambers">Chambers</TabsTrigger>
               <TabsTrigger value="apply-logic">Apply Logic &amp; Auto-assign</TabsTrigger>
+              <TabsTrigger value="what-if">What-if planner</TabsTrigger>
             </TabsList>
 
             <TabsContent value="engineers">
@@ -396,6 +398,13 @@ export default function PlanningPage(): React.JSX.Element {
                 errorMessage={applyError}
               />
               <AutoAssignPlaceholder />
+            </TabsContent>
+
+            {/* P18-T03: a read-only calculation (no write permission needed). Kept
+                mounted while hidden so a half-built scenario, its results and the
+                chat transcript survive a switch to another tab. */}
+            <TabsContent value="what-if" forceMount className="data-[state=inactive]:hidden">
+              <WhatIfPlanner chambers={chamberListQuery.data ?? []} />
             </TabsContent>
           </Tabs>
         </div>

@@ -22,6 +22,8 @@ function row(
     cat_not_allowed: false,
     last_step_end_week: null,
     type: null,
+    status: 'In Development',
+    not_started: false,
     ...overrides,
   };
 }
@@ -33,6 +35,7 @@ const payload: CompletingWithinYear = {
   spillover_count: 4,
   left_out_count: 2,
   blocked_count: 1,
+  priority_delivery: [],
   rows: [
     row('w1', { within_year: true, last_step_end_week: 10 }),
     row('w2', { within_year: true, last_step_end_week: 30 }),

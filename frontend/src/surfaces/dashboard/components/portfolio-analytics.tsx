@@ -19,10 +19,10 @@ import { DISPLAY_HORIZON_WEEKS, SPILLOVER_YEAR, WITHIN_YEAR_WEEK } from '@/lib/d
 import { formatInteger, formatWeek } from '@/lib/format';
 import { useMotionTokens } from '@/lib/motion';
 import { cn } from '@/lib/utils';
-import { PROJECT_PRIORITIES, type ProjectPriority } from '@/types/enums';
+import type { ProjectPriority } from '@/types/enums';
 
-import type { CompletingWithinYearRow } from '../api/types';
-import { displayOutcomeOf, outcomeOf, type DisplayOutcome } from '../lib/outcome';
+import type { CompletingWithinYearRow, PriorityDeliveryBand } from '../api/types';
+import { displayOutcomeOf, type DisplayOutcome } from '../lib/outcome';
 import { CardInfo } from '@/components/ui/card-info';
 
 /**
@@ -35,9 +35,11 @@ import { CardInfo } from '@/components/ui/card-info';
 
 export interface PortfolioAnalyticsProps {
   rows: CompletingWithinYearRow[];
+  /** Server-counted bands for "Delivery by priority" (P17-R03, I19). */
+  priorityDelivery: PriorityDeliveryBand[];
 }
 
-export function PortfolioAnalytics({ rows }: PortfolioAnalyticsProps): React.JSX.Element {
+export function PortfolioAnalytics({ rows, priorityDelivery }: PortfolioAnalyticsProps): React.JSX.Element {
   return (
     <section className="space-y-s4" aria-labelledby="portfolio-analytics-heading">
       <div>
@@ -56,7 +58,7 @@ export function PortfolioAnalytics({ rows }: PortfolioAnalyticsProps): React.JSX
           <FinishWeekHistogram rows={rows} />
         </div>
         <div className="min-w-0 xl:col-span-5">
-          <PriorityDeliveryRings rows={rows} />
+          <PriorityDeliveryRings bands={priorityDelivery} />
         </div>
         <div className="min-w-0 xl:col-span-12">
           <HubOutcomeStack rows={rows} />
@@ -321,32 +323,30 @@ const PRIORITY_COLOR: Record<ProjectPriority, string> = {
   Q: 'hsl(var(--color-band-q))',
 };
 
-interface PriorityDatum {
+export const PRIORITY_NOTE =
+  'Projects that have not started cannot finish within the year however high their priority; in-flight and not-started work are shown separately.';
+
+interface RingDatum {
   priority: ProjectPriority;
-  total: number;
-  within: number;
   pct: number;
   fill: string;
 }
 
-function PriorityDeliveryRings({ rows }: { rows: CompletingWithinYearRow[] }): React.JSX.Element {
+function PriorityDeliveryRings({ bands }: { bands: PriorityDeliveryBand[] }): React.JSX.Element {
   const { reduced } = useMotionTokens();
-  const data = React.useMemo<PriorityDatum[]>(
+  // Bands with no projects are hidden. Every figure is the server's (I19).
+  const shown = React.useMemo(() => bands.filter((b) => b.total > 0), [bands]);
+  // The ring is the in-flight share, so a band with nothing in flight has no ring.
+  const rings = React.useMemo<RingDatum[]>(
     () =>
-      PROJECT_PRIORITIES.map((priority) => {
-        const ofP = rows.filter((r) => r.priority === priority);
-        // Same bucket precedence as the KPI tiles (`outcomeOf`: on hold wins), so a
-        // band's within-year count never disagrees with `within_year_count`.
-        const within = ofP.filter((r) => outcomeOf(r) === 'within_year').length;
-        return {
-          priority,
-          total: ofP.length,
-          within,
-          pct: ofP.length === 0 ? 0 : Math.round((within / ofP.length) * 100),
-          fill: PRIORITY_COLOR[priority],
-        };
-      }).filter((d) => d.total > 0),
-    [rows],
+      shown
+        .filter((b) => b.in_flight_total > 0)
+        .map((b) => ({
+          priority: b.priority,
+          pct: b.in_flight_within_year_share_pct,
+          fill: PRIORITY_COLOR[b.priority],
+        })),
+    [shown],
   );
 
   return (
@@ -354,62 +354,117 @@ function PriorityDeliveryRings({ rows }: { rows: CompletingWithinYearRow[] }): R
       <CardHead
         icon={Target}
         title="Delivery by priority"
-        subtitle="Share of each priority band finishing within the year"
+        subtitle="In-flight work finishing within the year, by priority band"
         info={
-          <p>
-            Each ring is one priority band: the filled arc is the share of that band&apos;s projects
-            the active run flags as within-year. Counts come from the run&apos;s per-project outcome
-            flags.
-          </p>
+          <>
+            <p>
+              Each ring is one priority band: the filled arc is the share of that band&apos;s
+              in-flight projects the active run flags as within-year. Not-started projects have
+              their own bar, and Commercialized projects are listed as already delivered, outside
+              the rings. On Hold, Cancelled and Draft projects are listed as not in plan.
+            </p>
+            <p className="mt-s2">{PRIORITY_NOTE}</p>
+          </>
         }
       />
-      {data.length === 0 ? (
+      {shown.length === 0 ? (
         <p className="text-sm text-text-muted">No prioritised projects in this run.</p>
       ) : (
-        <div className="grid flex-1 items-center gap-s4 sm:grid-cols-[1fr_auto]">
-          <figure aria-label="Within-year share by priority band" className="mx-auto h-56 w-full max-w-[16rem]">
-            <ResponsiveContainer width="100%" height="100%">
-              <RadialBarChart
-                data={[...data].reverse()}
-                innerRadius="28%"
-                outerRadius="100%"
-                startAngle={90}
-                endAngle={-270}
-                barSize={12}
+        <>
+          <div className="grid flex-1 items-center gap-s4 sm:grid-cols-[minmax(0,12rem)_1fr]">
+            {rings.length > 0 ? (
+              <figure
+                aria-label="In-flight within-year share by priority band"
+                className="mx-auto h-48 w-full max-w-[12rem]"
               >
-                <PolarAngleAxis type="number" domain={[0, 100]} tick={false} />
-                <RadialBar
-                  dataKey="pct"
-                  cornerRadius={8}
-                  background={{ fill: 'hsl(var(--color-surface-sunken))' }}
-                  isAnimationActive={!reduced}
-                  animationDuration={1100}
-                />
-              </RadialBarChart>
-            </ResponsiveContainer>
-          </figure>
-          <ul className="space-y-s2">
-            {data.map((d) => (
-              <li
-                key={d.priority}
-                className="flex items-center gap-s3 rounded-xl border-[1.5px] border-dash-hairline bg-dash-alt px-s3 py-s2"
-              >
-                <span className="size-3 rounded-full" style={{ background: d.fill }} aria-hidden="true" />
-                <span className="w-7 text-sm font-bold text-text">{d.priority}</span>
-                <span className="ml-auto text-right">
-                  <span className="block font-display text-base font-extrabold tabular-nums text-text" data-numeric="">
-                    {d.pct}%
-                  </span>
-                  <span className="block text-2xs font-medium text-text-subtle" data-numeric="">
-                    {d.within} of {d.total}
-                  </span>
-                </span>
-              </li>
-            ))}
-          </ul>
-        </div>
+                <ResponsiveContainer width="100%" height="100%">
+                  <RadialBarChart
+                    data={[...rings].reverse()}
+                    innerRadius="28%"
+                    outerRadius="100%"
+                    startAngle={90}
+                    endAngle={-270}
+                    barSize={12}
+                  >
+                    <PolarAngleAxis type="number" domain={[0, 100]} tick={false} />
+                    <RadialBar
+                      dataKey="pct"
+                      cornerRadius={8}
+                      background={{ fill: 'hsl(var(--color-surface-sunken))' }}
+                      isAnimationActive={!reduced}
+                      animationDuration={1100}
+                    />
+                  </RadialBarChart>
+                </ResponsiveContainer>
+              </figure>
+            ) : (
+              <p className="text-sm text-text-muted">No in-flight projects in these bands.</p>
+            )}
+            <ul className="space-y-s2" aria-label="Delivery by priority band">
+              {shown.map((b) => (
+                <PriorityBandItem key={b.priority} band={b} />
+              ))}
+            </ul>
+          </div>
+          <p className="text-xs font-medium text-text-muted" data-testid="priority-delivery-note">
+            {PRIORITY_NOTE}
+          </p>
+        </>
       )}
     </BoltCard>
+  );
+}
+
+function PriorityBandItem({ band: b }: { band: PriorityDeliveryBand }): React.JSX.Element {
+  const fill = PRIORITY_COLOR[b.priority];
+  const inFlight = `in flight ${formatInteger(b.in_flight_within_year)} of ${formatInteger(b.in_flight_total)}`;
+  const notStarted = `not started ${formatInteger(b.not_started_within_year)} of ${formatInteger(b.not_started_total)}`;
+  return (
+    <li
+      className="rounded-xl border-[1.5px] border-dash-hairline bg-dash-alt px-s3 py-s2"
+      aria-label={`${b.priority}: ${inFlight}, ${notStarted}, ${formatInteger(b.total)} projects`}
+    >
+      <div className="flex items-center gap-s3">
+        <span className="size-3 shrink-0 rounded-full" style={{ background: fill }} aria-hidden="true" />
+        <span className="w-7 text-sm font-bold text-text">{b.priority}</span>
+        <span className="text-2xs font-medium text-text-subtle" data-numeric="">
+          {formatInteger(b.total)} projects
+        </span>
+        <span
+          className="ml-auto font-display text-base font-extrabold tabular-nums text-text"
+          data-numeric=""
+          title="Share of in-flight projects finishing within the year"
+        >
+          {b.in_flight_total > 0 ? `${String(Math.round(b.in_flight_within_year_share_pct))}%` : '–'}
+        </span>
+      </div>
+      <p className="mt-1 text-2xs font-medium text-text-muted" data-numeric="">
+        {b.priority} · {inFlight} · {notStarted}
+      </p>
+      {b.not_started_total > 0 ? (
+        <div
+          className="mt-1 h-1.5 overflow-hidden rounded-full bg-surface-sunken"
+          role="img"
+          aria-label={`${b.priority} not started: ${formatInteger(b.not_started_within_year)} of ${formatInteger(b.not_started_total)} finish within the year`}
+          title={`Not started: ${formatInteger(b.not_started_within_year)} of ${formatInteger(b.not_started_total)} within the year`}
+        >
+          <div
+            className="h-full rounded-full"
+            style={{ width: `${String(b.not_started_within_year_share_pct)}%`, background: fill }}
+          />
+        </div>
+      ) : null}
+      {b.delivered_total > 0 ? (
+        <p className="mt-1 text-2xs text-text-subtle" data-numeric="">
+          Already delivered: {formatInteger(b.delivered_total)}
+        </p>
+      ) : null}
+      {b.other_total > 0 ? (
+        <p className="text-2xs text-text-subtle" data-numeric="">
+          Not in plan: {formatInteger(b.other_total)}
+        </p>
+      ) : null}
+    </li>
   );
 }
 

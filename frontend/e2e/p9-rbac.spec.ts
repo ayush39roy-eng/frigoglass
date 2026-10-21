@@ -37,18 +37,30 @@ const MATRIX: Record<DevRole, Perm[]> = {
 
 const perm = (role: DevRole, s: SurfaceKey): Perm => MATRIX[role][SURFACE_KEYS.indexOf(s)];
 
-// Sidebar entries (frontend/src/app/nav.ts). Project Workspace has no nav item.
-const NAV: { surface: SurfaceKey; label: string; path: string }[] = [
+// Sidebar entries in sidebar order (frontend/src/app/nav.ts: Plan, Execute, Configure, Data).
+// Project Workspace has no nav item of its own. `surface: null` (Downloads) is open to any
+// signed-in user. Projects reuses `dashboard`; Priority board and Versions & History reuse `matrix`;
+// Weekly check-in reads `project_workspace`.
+const NAV: { surface: SurfaceKey | null; label: string; path: string }[] = [
   { surface: 'dashboard', label: 'Dashboard', path: '/' },
+  { surface: 'dashboard', label: 'Projects', path: '/projects' },
   { surface: 'capacity', label: 'Capacity', path: '/capacity' },
   { surface: 'matrix', label: 'Prioritization', path: '/matrix' },
+  { surface: 'matrix', label: 'Priority board', path: '/priority-board' },
   { surface: 'gantt', label: 'Timeline', path: '/timeline' },
+  { surface: 'project_workspace', label: 'Weekly check-in', path: '/check-in' },
   { surface: 'project_registration', label: 'Register', path: '/register' },
   { surface: 'capacity_planning', label: 'Planning', path: '/planning' },
   { surface: 'workflow_settings', label: 'Workflow', path: '/settings/workflow' },
   { surface: 'user_role_admin', label: 'Users & roles', path: '/admin/users' },
   { surface: 'audit_log', label: 'Audit Log', path: '/audit-log' },
+  { surface: 'matrix', label: 'Versions & History', path: '/history' },
+  { surface: null, label: 'Downloads', path: '/downloads' },
 ];
+
+/** True when the role may open this nav entry. */
+const canRead = (role: DevRole, n: { surface: SurfaceKey | null }): boolean =>
+  n.surface === null || perm(role, n.surface) !== '-';
 
 // Surfaces whose page renders `<ReadOnlyNotice>` when read && !write.
 const NOTICE_SURFACES: SurfaceKey[] = [
@@ -110,14 +122,14 @@ for (const role of Object.keys(MATRIX) as DevRole[]) {
       page,
     }) => {
       await actAs(page, role);
-      await page.goto(role === 'auditor' || role === 'engineer' ? NAV.find((n) => perm(role, n.surface) !== '-')!.path : '/');
+      await page.goto(role === 'auditor' || role === 'engineer' ? NAV.find((n) => canRead(role, n))!.path : '/');
       const nav = page.getByRole('navigation', { name: 'Surfaces' });
       await expect(nav).toBeVisible();
-      const expected = NAV.filter((n) => perm(role, n.surface) !== '-').map((n) => n.label);
+      const expected = NAV.filter((n) => canRead(role, n)).map((n) => n.label);
       await expect(nav.getByRole('link')).toHaveText(expected);
 
       const exempt = DELEGATE_MANAGER_EXEMPT_ROUTES[role] ?? [];
-      for (const n of NAV.filter((x) => perm(role, x.surface) === '-')) {
+      for (const n of NAV.filter((x) => !canRead(role, x))) {
         if (exempt.includes(n.path)) continue;
         await page.goto(n.path);
         await expect(page.getByTestId('forbidden-page'), `${role} -> ${n.path}`).toBeVisible();

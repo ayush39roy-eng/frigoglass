@@ -3,7 +3,8 @@
 Owned exclusively by `algorithm-engineer`. Rules enforced here are exactly
 `docs/DOMAIN_RULES.md`'s "Scheduling order", "Precedence", "Booking rules",
 "Per-stage progress capture", "Expected vs projected completion", "Step
-timing from the Gantt" and Invariants I1-I17, I21-I22 — implemented from that
+timing from the Gantt" and Invariants I1-I17, I21-I22 (`whatif.py`, P18: pure
+what-if planning on top of the greedy SGS) — implemented from that
 document directly. The prototype
 oracle was retired at P2 close.
 
@@ -66,6 +67,34 @@ from scheduling.types import (
     default_lead_times,
     default_workflow_templates,
 )
+from scheduling.whatif import (
+    MAX_ADDED_CHAMBERS_TOTAL,
+    MAX_ADDED_DESIGNERS_TOTAL,
+    MAX_ADDED_PROJECTS_TOTAL,
+    MAX_REMOVED_DESIGNERS_TOTAL,
+    AddChamber,
+    AddEngineer,
+    Additions,
+    AddProject,
+    AnalyticRequirements,
+    ChamberDowntimeChange,
+    ChamberSupplyInput,
+    HubCalendarInput,
+    MinimumAdditionsResult,
+    RemoveEngineerCount,
+    Scenario,
+    SimulationResult,
+    WhatIfBaseline,
+    WhatIfBudgetExceeded,
+    analytic_requirements,
+    apply_scenario,
+    build_scenario_input,
+    scenario_with_additions,
+    simulate,
+    solve_minimum_additions,
+    touched_scope,
+    validate_scenario_limits,
+)
 from scheduling.workflow import (
     ProjectPlan,
     analyse_project,
@@ -79,6 +108,32 @@ from scheduling.workflow import (
 )
 
 __all__ = [
+    "AddChamber",
+    "AddEngineer",
+    "AddProject",
+    "Additions",
+    "AnalyticRequirements",
+    "ChamberDowntimeChange",
+    "ChamberSupplyInput",
+    "HubCalendarInput",
+    "MAX_ADDED_CHAMBERS_TOTAL",
+    "MAX_ADDED_DESIGNERS_TOTAL",
+    "MAX_ADDED_PROJECTS_TOTAL",
+    "MAX_REMOVED_DESIGNERS_TOTAL",
+    "MinimumAdditionsResult",
+    "RemoveEngineerCount",
+    "Scenario",
+    "SimulationResult",
+    "WhatIfBaseline",
+    "WhatIfBudgetExceeded",
+    "analytic_requirements",
+    "apply_scenario",
+    "build_scenario_input",
+    "scenario_with_additions",
+    "simulate",
+    "solve_minimum_additions",
+    "touched_scope",
+    "validate_scenario_limits",
     "CATEGORY_RANK",
     "LAB_CONSUMPTION_PER_PROJECT_WEEK",
     "ChamberInput",
