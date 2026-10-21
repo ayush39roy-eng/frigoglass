@@ -1,8 +1,7 @@
 import * as React from 'react';
+import { PanelRightOpen } from 'lucide-react';
 
-import { BookingStatusChip } from '@/components/shared/booking-status-chip';
 import { EmptyState } from '@/components/shared/empty-state';
-import { Badge } from '@/components/ui/badge';
 import { BoltCard } from '@/components/ui/bolt-card';
 import { Button } from '@/components/ui/button';
 import { CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -16,46 +15,93 @@ import {
 } from '@/components/ui/dialog';
 import { RunProvenanceChips } from '@/components/ui/run-provenance-chips';
 import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { formatBookedPct, formatDecimal } from '@/lib/format';
+import { formatDecimal } from '@/lib/format';
 import { cn } from '@/lib/utils';
+import type { BookingStatus } from '@/types/enums';
 
 import type { HubCapacityRow, HubCapacitySummary, ScheduleRunSummary } from '../api/types';
 import { pickAreaFigures, pickFigures, type CapacityHorizon } from '../lib/pick-figures';
+import { groupRowsByLabRegion } from '../lib/region-groups';
 import { HubSupplyDetail } from './hub-supply-breakdown';
+import { formatPctCompact } from '../lib/status-format';
+import { StatusLegend, StatusMark } from './status-mark';
 
 /**
- * "Load vs. capacity per hub" as ONE compact table (P19-T01): a row per hub with
- * design load / capacity / booked %, lab load / capacity / booked %, and the two
- * served gaps. It replaces the long list of big per-hub cards; each row's
- * "Details" button opens a dialog with today's full figures, the two bars and
- * "How this is calculated" (`HubSupplyDetail`), rendered only while open.
+ * "Load vs. capacity per hub" as ONE compact table (P19-T01, tightened in P19-T02).
+ *
+ * Columns sit under two header bands, Design and Lab, each with Load / Cap. /
+ * Booked / Gap. Rows are grouped by LAB REGION (a `<tbody>` per region with a
+ * region sub-header row): the design figures are per hub, while the lab figures
+ * are region-level (I7, ADR 0016), so they are shown ONCE per region in cells
+ * that span the region's hub rows instead of repeating on every hub.
  *
  * Every cell is one served field (I9/I19): `pickFigures` selects the year or
- * remaining field; the footer is the served `totals`. Nothing is summed here.
- * Lab figures are region-level and repeat on every hub of the region (noted in
- * the card's info popover and under each hub's region).
+ * remaining field, the lab cells read the group's first served row (every row of
+ * a region carries the same served lab figures), and the footer is the served
+ * `totals` (each lab region counted once, server-side). Nothing is summed here.
+ *
+ * The status is a small icon (a distinct shape per status, toned) with its label
+ * as screen-reader text and a `title`; a legend under the table names the icons,
+ * so status never rests on colour alone. Each row's Details icon button
+ * ("Details for <hub>") opens the full per-hub figures in a dialog.
  */
-const NUM = 'text-right font-mono tabular-nums whitespace-nowrap';
+const NUM = 'px-2 text-right font-mono tabular-nums whitespace-nowrap';
+const HEAD = 'h-auto px-2 py-1.5';
+/** Left rule that separates the Lab band from the Design band. */
+const LAB_EDGE = 'border-l border-border';
 
-function Booked({ pct, status }: { pct: number | null; status: HubCapacityRow['design_booking_status_year'] }): React.JSX.Element {
+function BookedCell({
+  pct,
+  status,
+  className,
+  rowSpan,
+  testId,
+}: {
+  pct: number | null;
+  status: BookingStatus;
+  className?: string;
+  rowSpan?: number;
+  testId?: string;
+}): React.JSX.Element {
   return (
-    <TableCell className={NUM}>
-      <span className="inline-flex items-center justify-end gap-1.5">
-        <span>{formatBookedPct(pct)}</span>
-        <BookingStatusChip status={status} />
+    <TableCell className={cn(NUM, className)} rowSpan={rowSpan} data-testid={testId}>
+      <span className="inline-flex items-center justify-end gap-1">
+        <span>{formatPctCompact(pct)}</span>
+        <StatusMark status={status} />
       </span>
     </TableCell>
   );
 }
 
-function Gap({ value }: { value: number }): React.JSX.Element {
+function GapCell({ value, className, rowSpan }: { value: number; className?: string; rowSpan?: number }): React.JSX.Element {
   return (
-    <TableCell className={cn(NUM, value > 0 ? 'text-warning-subtle-fg' : 'text-text')}>
+    <TableCell className={cn(NUM, value > 0 ? 'text-warning-subtle-fg' : 'text-text', className)} rowSpan={rowSpan}>
       {value > 0 ? '+' : ''}
       {formatDecimal(value)}
     </TableCell>
   );
 }
+
+function SubHead({ short, full, className }: { short: string; full: string; className?: string }): React.JSX.Element {
+  return (
+    <TableHead scope="col" className={cn(HEAD, 'text-right', className)}>
+      {short === full ? (
+        short
+      ) : (
+        <>
+          <span aria-hidden="true" title={full}>
+            {short}
+          </span>
+          <span className="sr-only">{full}</span>
+        </>
+      )}
+    </TableHead>
+  );
+}
+
+/** Why booked % sits near 100 % (checked against the served definitions, P19-T02). */
+export const BOOKED_NEAR_100_NOTE =
+  'Load counts every scheduled week, including work that spills past W52, and is not capped at capacity. Most full-year figures sit near 100% because the demo data’s engineer FTE and chamber efficiency were set to fit the scheduled load (ADR 0024); real rosters will move them.';
 
 export interface HubSummaryTableProps {
   data: HubCapacitySummary;
@@ -71,10 +117,16 @@ export function HubSummaryTable({ data, activeRun, horizon }: HubSummaryTablePro
   const detailRow = data.rows.find((r) => r.hub === detailHub) ?? null;
   const totalD = pickAreaFigures(data.totals, 'design', horizon);
   const totalL = pickAreaFigures(data.totals, 'lab', horizon);
-  const capWord = horizon === 'year' ? 'cap (yr)' : 'cap (rem.)';
+  const capFull = horizon === 'year' ? 'Capacity, full year' : 'Capacity, remaining year';
+  const groups = groupRowsByLabRegion(data.rows);
+
+  const openDetails = (e: React.MouseEvent<HTMLElement>, row: HubCapacityRow): void => {
+    openerRef.current = e.currentTarget;
+    setDetailHub(row.hub);
+  };
 
   return (
-    <BoltCard>
+    <BoltCard className="min-w-0">
       <CardHeader className="flex-wrap gap-y-s2">
         <CardTitle>Load vs. capacity per hub</CardTitle>
         <div className="flex flex-wrap items-center gap-s2">
@@ -100,17 +152,21 @@ export function HubSummaryTable({ data, activeRun, horizon }: HubSummaryTablePro
               formula (ADR&nbsp;0008): working weeks per engineer &times; Σ FTE for design;
               Σ (working weeks &times; efficiency &times; platforms) over the region&rsquo;s
               chambers for lab. &ldquo;Remaining year&rdquo; (YTD 2026) scales by (52 &minus; current
-              week) / 52. Gap = load &minus; capacity; completion = capacity / load.
+              week) / 52. Booked = load / capacity; gap = load &minus; capacity.
             </p>
             <p>
-              Lab figures are for the hub&rsquo;s lab region and repeat on every hub of that region.
-              All of it is computed server-side and shown to two decimals (Invariant I17); none of
-              it is recalculated in your browser.
+              <strong className="text-text">Why booked % sits near 100&nbsp;%.</strong> {BOOKED_NEAR_100_NOTE}
+            </p>
+            <p>
+              Lab figures belong to a lab region, so the table groups hubs by region and shows each
+              region&rsquo;s lab figures once; the Total counts each lab region once. All of it is
+              computed server-side and shown to two decimals (Invariant I17); none of it is
+              recalculated in your browser.
             </p>
           </CardInfo>
         </div>
       </CardHeader>
-      <CardContent className="space-y-s3">
+      <CardContent className="min-w-0 space-y-s3">
         {!data.has_active_schedule_run ? (
           <EmptyState
             title="No schedule computed yet"
@@ -125,80 +181,142 @@ export function HubSummaryTable({ data, activeRun, horizon }: HubSummaryTablePro
           />
         ) : (
           <>
+            <p className="text-xs text-text-muted" data-testid="hub-summary-booked-note">
+              {BOOKED_NEAR_100_NOTE}
+            </p>
             <Table scrollLabel="Hub load versus capacity" data-testid="hub-summary-table">
               <TableHeader>
                 <TableRow>
-                  <TableHead>Hub</TableHead>
-                  <TableHead className="text-right">Design load</TableHead>
-                  <TableHead className="text-right">Design {capWord}</TableHead>
-                  <TableHead className="text-right">Design booked</TableHead>
-                  <TableHead className="text-right">Design gap</TableHead>
-                  <TableHead className="text-right">Lab load</TableHead>
-                  <TableHead className="text-right">Lab {capWord}</TableHead>
-                  <TableHead className="text-right">Lab booked</TableHead>
-                  <TableHead className="text-right">Lab gap</TableHead>
-                  <TableHead className="text-right">
-                    <span className="sr-only">Actions</span>
+                  <TableHead scope="col" rowSpan={2} className={cn(HEAD, 'first:ps-3')}>
+                    Hub
+                  </TableHead>
+                  <TableHead scope="colgroup" colSpan={4} className={cn(HEAD, 'text-center')}>
+                    Design
+                  </TableHead>
+                  <TableHead scope="colgroup" colSpan={4} className={cn(HEAD, LAB_EDGE, 'text-center')}>
+                    Lab <span className="font-medium normal-case tracking-normal">(per lab region)</span>
+                  </TableHead>
+                  <TableHead scope="col" rowSpan={2} className={cn(HEAD, 'last:pe-3')}>
+                    <span className="sr-only">Details</span>
                   </TableHead>
                 </TableRow>
+                <TableRow>
+                  <SubHead short="Load" full="Design load" />
+                  <SubHead short="Cap." full={`Design ${capFull.toLowerCase()}`} />
+                  <SubHead short="Booked" full="Design booked" />
+                  <SubHead short="Gap" full="Design gap" />
+                  <SubHead short="Load" full="Lab load" className={LAB_EDGE} />
+                  <SubHead short="Cap." full={`Lab ${capFull.toLowerCase()}`} />
+                  <SubHead short="Booked" full="Lab booked" />
+                  <SubHead short="Gap" full="Lab gap" />
+                </TableRow>
               </TableHeader>
-              <TableBody>
-                {data.rows.map((row) => {
-                  const d = pickFigures(row, 'design', horizon);
-                  const l = pickFigures(row, 'lab', horizon);
-                  return (
-                    <TableRow key={row.hub} data-testid={`hub-summary-row-${row.hub}`}>
-                      <TableCell className="font-semibold text-text">
-                        {row.hub}
-                        <Badge tone="outline" className="ml-2 rounded-pill align-middle">
-                          {row.lab_region}
-                        </Badge>
-                      </TableCell>
-                      <TableCell className={NUM} data-testid="design-load">{formatDecimal(d.load)}</TableCell>
-                      <TableCell className={NUM} data-testid="design-capacity">{formatDecimal(d.capacity)}</TableCell>
-                      <Booked pct={d.bookedPct} status={d.bookingStatus} />
-                      <Gap value={d.gap} />
-                      <TableCell className={NUM} data-testid="lab-load">{formatDecimal(l.load)}</TableCell>
-                      <TableCell className={NUM} data-testid="lab-capacity">{formatDecimal(l.capacity)}</TableCell>
-                      <Booked pct={l.bookedPct} status={l.bookingStatus} />
-                      <Gap value={l.gap} />
-                      <TableCell className="text-right">
-                        <Button
-                          variant="secondary"
-                          size="sm"
-                          onClick={(e) => {
-                            openerRef.current = e.currentTarget;
-                            setDetailHub(row.hub);
-                          }}
-                          aria-label={`Details for ${row.hub}`}
-                          aria-haspopup="dialog"
-                        >
-                          Details
-                        </Button>
-                      </TableCell>
+              {groups.map((group) => {
+                const lab = pickFigures(group.rows[0] as HubCapacityRow, 'lab', horizon);
+                const span = group.rows.length;
+                return (
+                  <TableBody key={group.region} data-testid={`hub-summary-region-${group.region}`}>
+                    <TableRow className="bg-surface-sunken/60 hover:bg-surface-sunken/60">
+                      <TableHead
+                        scope="rowgroup"
+                        colSpan={10}
+                        className={cn(HEAD, 'first:ps-3 text-2xs normal-case tracking-normal text-text-muted')}
+                      >
+                        <span className="font-bold text-text">{group.region} lab region</span>
+                        <span>
+                          {' '}
+                          · {span === 1 ? 'lab figures for its one hub' : `lab figures shown once for its ${String(span)} hubs`}
+                        </span>
+                      </TableHead>
                     </TableRow>
-                  );
-                })}
-              </TableBody>
+                    {group.rows.map((row, i) => {
+                      const d = pickFigures(row, 'design', horizon);
+                      return (
+                        <TableRow key={row.hub} data-testid={`hub-summary-row-${row.hub}`}>
+                          <TableHead
+                            scope="row"
+                            className="h-auto whitespace-nowrap px-2 py-2 text-sm font-semibold normal-case tracking-normal text-text first:ps-3"
+                          >
+                            {row.hub}
+                          </TableHead>
+                          <TableCell className={NUM} data-testid="design-load">{formatDecimal(d.load)}</TableCell>
+                          <TableCell className={NUM} data-testid="design-capacity">{formatDecimal(d.capacity)}</TableCell>
+                          <BookedCell pct={d.bookedPct} status={d.bookingStatus} testId="design-booked" />
+                          <GapCell value={d.gap} />
+                          {i === 0 ? (
+                            <>
+                              <TableCell
+                                rowSpan={span}
+                                className={cn(NUM, LAB_EDGE, 'bg-surface-sunken/40')}
+                                data-testid="lab-load"
+                              >
+                                {formatDecimal(lab.load)}
+                              </TableCell>
+                              <TableCell rowSpan={span} className={cn(NUM, 'bg-surface-sunken/40')} data-testid="lab-capacity">
+                                {formatDecimal(lab.capacity)}
+                              </TableCell>
+                              <BookedCell
+                                pct={lab.bookedPct}
+                                status={lab.bookingStatus}
+                                rowSpan={span}
+                                className="bg-surface-sunken/40"
+                                testId="lab-booked"
+                              />
+                              <GapCell value={lab.gap} rowSpan={span} className="bg-surface-sunken/40" />
+                            </>
+                          ) : null}
+                          <TableCell className="px-2 py-1 text-right last:pe-3">
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="size-8"
+                              onClick={(e) => {
+                                openDetails(e, row);
+                              }}
+                              aria-label={`Details for ${row.hub}`}
+                              aria-haspopup="dialog"
+                              title={`Details for ${row.hub}`}
+                            >
+                              <PanelRightOpen aria-hidden="true" />
+                            </Button>
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })}
+                  </TableBody>
+                );
+              })}
               <TableFooter>
                 <TableRow data-testid="hub-summary-total">
-                  <TableCell className="font-bold text-text">Total</TableCell>
+                  <TableHead
+                    scope="row"
+                    className="h-auto px-2 py-2 text-sm font-bold normal-case tracking-normal text-text first:ps-3"
+                  >
+                    Total
+                  </TableHead>
                   <TableCell className={NUM}>{formatDecimal(totalD.load)}</TableCell>
                   <TableCell className={NUM}>{formatDecimal(totalD.capacity)}</TableCell>
-                  <Booked pct={totalD.bookedPct} status={totalD.bookingStatus} />
-                  <TableCell className={NUM}>—</TableCell>
-                  <TableCell className={NUM}>{formatDecimal(totalL.load)}</TableCell>
+                  <BookedCell pct={totalD.bookedPct} status={totalD.bookingStatus} />
+                  <TableCell className={NUM}>
+                    <span aria-hidden="true">—</span>
+                    <span className="sr-only">not shown</span>
+                  </TableCell>
+                  <TableCell className={cn(NUM, LAB_EDGE)}>{formatDecimal(totalL.load)}</TableCell>
                   <TableCell className={NUM}>{formatDecimal(totalL.capacity)}</TableCell>
-                  <Booked pct={totalL.bookedPct} status={totalL.bookingStatus} />
-                  <TableCell className={NUM}>—</TableCell>
-                  <TableCell />
+                  <BookedCell pct={totalL.bookedPct} status={totalL.bookingStatus} />
+                  <TableCell className={NUM}>
+                    <span aria-hidden="true">—</span>
+                    <span className="sr-only">not shown</span>
+                  </TableCell>
+                  <TableCell className="last:pe-3" />
                 </TableRow>
               </TableFooter>
             </Table>
-            <p className="text-2xs text-text-muted">
-              Weeks. Lab figures are for the hub&rsquo;s lab region and repeat on every hub of that region; the Total
-              counts each lab region once.
-            </p>
+            <div data-testid="hub-summary-legend">
+              <StatusLegend fullPct={data.full_threshold_pct} nearFullPct={data.near_full_threshold_pct}>
+                <span>Weeks. Total counts each lab region once.</span>
+              </StatusLegend>
+            </div>
           </>
         )}
       </CardContent>

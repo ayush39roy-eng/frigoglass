@@ -20,7 +20,12 @@ import type {
   EngineerCreateRequest,
   EngineerRead,
   EngineerUpdateRequest,
+  CapacityBasis,
+  CapacitySummary,
   GreedyRecalcResponse,
+  ResourceLoadFilters,
+  ResourceLoadOptionsResponse,
+  ResourceLoadResponse,
   ScheduleRunSummary,
 } from './types';
 
@@ -102,4 +107,53 @@ export async function fetchActiveScheduleRun(
  *  degrades gracefully on that (see its module docstring). */
 export function triggerApplyLogic(): Promise<GreedyRecalcResponse> {
   return apiSend<GreedyRecalcResponse>('POST', '/schedule-runs/greedy-recalc');
+}
+
+// --- P19-T03: capacity summary and resource load ---
+
+/** `GET /planning/capacity-summary`: per-hub design and per-lab-region lab
+ *  capacity, both bases, weeks and days, with each group's share. Every figure
+ *  on the Overview cards is one of these fields (I9/I19). */
+export function fetchCapacitySummary(ctx: FetchCtx = {}): Promise<CapacitySummary> {
+  return apiGet<CapacitySummary>('/planning/capacity-summary', ctx);
+}
+
+/**
+ * The resource-load filters as query params. `hub_id` is single-valued; each
+ * multi-select sends its values as REPEATED params (`project_type=NM&
+ * project_type=CO`, the server's `list[...] = Query()`); "All" sends nothing.
+ * Values are sorted so equal selections give equal URLs.
+ */
+export function resourceLoadSearch(basis: CapacityBasis, filters: ResourceLoadFilters): string {
+  const params = new URLSearchParams();
+  params.append('basis', basis);
+  if (filters.hubId) params.append('hub_id', filters.hubId);
+  const pairs: [string, string[]][] = [
+    ['project_type', filters.types],
+    ['project_status', filters.statuses],
+    ['requesting_department', filters.departments],
+    ['category', filters.categories],
+    ['engineer_id', filters.engineerIds],
+  ];
+  for (const [key, values] of pairs) {
+    for (const v of [...values].sort()) params.append(key, v);
+  }
+  return params.toString();
+}
+
+/** `GET /planning/resource-load`. Per-engineer load is personal data (ADR 0028);
+ *  the server audits every read, so the page only calls this when the analytics
+ *  section is on screen and debounces filter changes. */
+export function fetchResourceLoad(
+  basis: CapacityBasis,
+  filters: ResourceLoadFilters,
+  ctx: FetchCtx = {},
+): Promise<ResourceLoadResponse> {
+  return apiGet<ResourceLoadResponse>(`/planning/resource-load?${resourceLoadSearch(basis, filters)}`, ctx);
+}
+
+/** `GET /planning/resource-load/options`: the values each filter offers, from
+ *  the caller's visible data. */
+export function fetchResourceLoadOptions(ctx: FetchCtx = {}): Promise<ResourceLoadOptionsResponse> {
+  return apiGet<ResourceLoadOptionsResponse>('/planning/resource-load/options', ctx);
 }

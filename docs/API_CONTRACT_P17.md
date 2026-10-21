@@ -154,3 +154,27 @@ a new `PriorityDeliveryBand`, and `priority_delivery` on `CompletingWithinYear`.
 `test_openapi_frontend_contract.py::test_field_sets_match[CompletingWithinYearRow]` and
 `[CompletingWithinYear]` are red until then (`PriorityDeliveryBand` is not in that test's mapping;
 add a mapping row when the type lands).
+
+## P17-R09 note (appended 2026-10-21): `type=Unmapped` on `GET /dashboard/projects`
+
+The register's `type` query parameter now accepts `ProjectType` values **or** the sentinel
+`Unmapped`, meaning `Project.type IS NULL`. It is the same sentinel as the `/dashboard/analytics`
+`by_type` bucket key (`_UNMAPPED` in `api/routers/dashboard.py`, P13-T10), so for any scope and
+filter `GET /dashboard/projects?type=Unmapped` `.total_count` equals that bucket's `count` (0 /
+absent bucket when there are none).
+
+- **Combines** with every other filter (`hub_id`, `region`, `category`, `status_`, `priority`, `q`,
+  `leader_engineer_id`, `current_step`, `sort`), ANDed server-side, inside the caller's RBAC hub
+  scope (`narrowed_hub_filter`): a Hub Planner gets only their own hubs' untyped projects; an
+  out-of-scope `hub_id` answers `{total_count: 0, rows: []}`, never 403.
+- **Single-valued**, as before: one `type` per request. The parameter is not repeatable (the
+  Dashboard drill-down sends one value per cell; a combined "typed + untyped" list was not needed).
+- **Strict:** the match is exact and case-sensitive. Any other value (`unmapped`, `UNMAPPED`,
+  `Unknown`, `null`, `None`, empty, trailing space, unknown codes) is 422.
+- Pydantic: `schemas.dashboard.RegisterTypeFilter = ProjectType | Literal["Unmapped"]`. No response
+  shape changes; rows keep `type: null` for these projects.
+- Frontend: `UNTYPED_REGISTER_FILTER_SERVED = true` in `frontend/src/surfaces/dashboard/lib/drilldown.ts`;
+  the pipeline table's untyped ("—") cells and column total are now drill-down buttons.
+- Not changed: the Dashboard export (`services/export_builder.build_dashboard_sheets`) still parses
+  `type_` with `ProjectType(...)`, so an export request with `type=Unmapped` would not be honoured
+  there; follow-up for whoever owns that file.

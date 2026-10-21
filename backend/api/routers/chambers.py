@@ -28,6 +28,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+import domain_constants as dc
 from api.db import get_db
 from api.deps import require_permission
 from core.principal import Principal
@@ -36,13 +37,17 @@ from models.audit import AuditLogEntry
 from models.chamber import Chamber
 from models.enums import WorkflowStepKind
 from models.workflow import WorkflowStepTemplate
+from schemas.capacity import YearRemaining
 from schemas.chamber import ChamberCreateRequest, ChamberRead, ChamberUpdateRequest
 from services.audit_helpers import chamber_audit_state
 from services.capacity_supply import (
     chamber_figures,
+    lab_remaining_fraction,
     load_calendars_by_region,
     region_holiday_weeks,
+    region_weekdays_per_week,
     round2,
+    to_days,
 )
 from services.hub_scope import is_lab_region_in_scope, scoped_lab_regions
 
@@ -70,9 +75,15 @@ async def _chamber_reads(db: AsyncSession, chambers: list[Chamber]) -> list[Cham
     """`ChamberRead` plus the ADR 0008 derived figures (P9-T03)."""
 
     calendars = await load_calendars_by_region(db)
+    fraction = lab_remaining_fraction(dc.CURRENT_WEEK)
     out: list[ChamberRead] = []
     for c in chambers:
         figures = chamber_figures(c, region_holiday_weeks(calendars, c.lab_region))
+        wd = region_weekdays_per_week(calendars, c.lab_region)
+        cap = YearRemaining(
+            year=round2(figures.efficient_lab_weeks),
+            remaining=round2(figures.efficient_lab_weeks * fraction),
+        )
         out.append(
             ChamberRead(
                 id=c.id,
@@ -89,6 +100,12 @@ async def _chamber_reads(db: AsyncSession, chambers: list[Chamber]) -> list[Cham
                 efficient_lab_weeks=round2(figures.efficient_lab_weeks),
                 created_at=c.created_at,
                 updated_at=c.updated_at,
+                weekdays_per_week=wd,
+                working_weeks=round2(figures.working_weeks_per_chamber),
+                capacity_weeks=cap,
+                capacity_days=YearRemaining(
+                    year=to_days(cap.year, wd), remaining=to_days(cap.remaining, wd)
+                ),
             )
         )
     return out

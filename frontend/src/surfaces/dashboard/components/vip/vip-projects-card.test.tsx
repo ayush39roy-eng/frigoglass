@@ -167,7 +167,9 @@ describe('Dashboard VIP projects card (ADR 0027, OQ #39)', () => {
     expect(within(g).getByTestId('vip-count-high-risk')).toHaveTextContent('1');
     expect(within(g).getByTestId('vip-count-linked')).toHaveTextContent('3');
     const names = within(g).getAllByTestId('vip-tile-item').map((li) => li.querySelector('a,button,span:not([data-testid])')?.textContent);
-    expect(names).toEqual(['Family Fridge for Commercial Appliances', 'Beat Box 3D Logo']);
+    // P17-R08: the slim column shows the first VIP item; the rest sit behind "+N more" (the slide).
+    expect(names).toEqual(['Family Fridge for Commercial Appliances']);
+    expect(within(g).getByRole('button', { name: 'Show all 2 VIP items for Greece' })).toHaveTextContent('+1 more');
     expect(client.apiGet).toHaveBeenCalledWith('/vip-board', expect.objectContaining({ query: { hub_id: undefined, region: undefined } }));
   });
 
@@ -192,7 +194,10 @@ describe('Dashboard VIP projects card (ADR 0027, OQ #39)', () => {
     const user = userEvent.setup();
     renderCard();
     await screen.findAllByTestId('vip-area-tile');
-    await user.click(within(greeceTile()).getByRole('button', { name: 'Beat Box 3D Logo: choose one of 2 projects' }));
+    // P17-R08: the second VIP item is reached through "+1 more" (the slide), where the same picker lives.
+    await user.click(within(greeceTile()).getByRole('button', { name: 'Show all 2 VIP items for Greece' }));
+    const slide = await screen.findByRole('dialog', { name: /VIP projects — Greece/ });
+    await user.click(within(slide).getByRole('button', { name: 'Beat Box 3D Logo: choose one of 2 projects' }));
     const picker = await screen.findByTestId('vip-item-picker');
     expect(picker).toHaveAccessibleName(/^Open a project/); // QA-P14-2
     const options = within(picker).getAllByTestId('vip-picker-project');

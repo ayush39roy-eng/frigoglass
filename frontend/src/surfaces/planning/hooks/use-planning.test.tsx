@@ -14,6 +14,9 @@ vi.mock('../api/planning-api', () => ({
   deleteChamber: vi.fn(),
   fetchActiveScheduleRun: vi.fn(),
   triggerApplyLogic: vi.fn(),
+  fetchCapacitySummary: vi.fn(),
+  fetchResourceLoad: vi.fn(),
+  fetchResourceLoadOptions: vi.fn(),
 }));
 
 import * as api from '../api/planning-api';
@@ -25,6 +28,7 @@ import {
   useDeleteChamber,
   useDeleteEngineer,
   useEngineerList,
+  useResourceLoad,
   useUpdateChamber,
   useUpdateEngineer,
 } from './use-planning';
@@ -157,5 +161,44 @@ describe('use-planning', () => {
     expect(keys).toContainEqual(['dashboard']);
     expect(keys).toContainEqual(['gantt']);
     expect(keys).toContainEqual(['capacity']);
+  });
+
+  it('P19: an engineer edit is optimistic (input fields only) and rolls back on error', async () => {
+    const { client, Wrapper } = makeWrapper();
+    const row = { id: 'e1', name: 'Ada', hub_id: 'h', fte: 1, allowed_categories: ['A' as const], user_id: null, created_at: '', updated_at: '', capacity_weeks: { year: 44, remaining: 9 } };
+    client.setQueryData(['engineers', null], [row]);
+    let reject: (e: Error) => void = () => {};
+    vi.mocked(api.updateEngineer).mockReturnValue(new Promise((_r, rej) => { reject = rej; }));
+    const { result } = renderHook(() => useUpdateEngineer(), { wrapper: Wrapper });
+    const p = result.current.mutateAsync({ engineerId: 'e1', body: { fte: 0.5 } }).catch(() => undefined);
+    await waitFor(() => expect(client.getQueryData<typeof row[]>(['engineers', null])?.[0]?.fte).toBe(0.5));
+    // The served capacity is untouched until the refetch.
+    expect(client.getQueryData<typeof row[]>(['engineers', null])?.[0]?.capacity_weeks).toEqual({ year: 44, remaining: 9 });
+    reject(new Error('422'));
+    await p;
+    await waitFor(() => expect(client.getQueryData<typeof row[]>(['engineers', null])?.[0]?.fte).toBe(1));
+  });
+
+  it('P19: a chamber edit invalidates the planning summary and resource load', async () => {
+    vi.mocked(api.updateChamber).mockResolvedValue({} as never);
+    const { client, Wrapper } = makeWrapper();
+    const spy = vi.spyOn(client, 'invalidateQueries');
+    const { result } = renderHook(() => useUpdateChamber(), { wrapper: Wrapper });
+    await result.current.mutateAsync({ chamberId: 'c1', body: { platforms: 2 } });
+    expect(spy).toHaveBeenCalledWith({ queryKey: ['planning'] });
+  });
+
+  it('P19: resource load stays idle until enabled, and keys on basis + filters', async () => {
+    vi.mocked(api.fetchResourceLoad).mockResolvedValue({} as never);
+    const { Wrapper } = makeWrapper();
+    const filters = { hubId: null, types: ['NM'], statuses: [], departments: [], categories: [], engineerIds: [] };
+    const { rerender } = renderHook(({ on }: { on: boolean }) => useResourceLoad('year', filters, on), {
+      wrapper: Wrapper,
+      initialProps: { on: false },
+    });
+    await new Promise((r) => setTimeout(r, 20));
+    expect(api.fetchResourceLoad).not.toHaveBeenCalled();
+    rerender({ on: true });
+    await waitFor(() => expect(api.fetchResourceLoad).toHaveBeenCalledWith('year', filters, expect.anything()));
   });
 });

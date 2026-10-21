@@ -15,6 +15,7 @@ test.describe('Dashboard surface (P4-T02)', () => {
     await expect(dashboard.pipelineSection()).toBeVisible();
     await expect(dashboard.statusOverviewSection()).toBeVisible();
     await expect(dashboard.hubTypePipelineSection()).toBeVisible();
+    await expect(dashboard.completingHubTypeSection()).toBeVisible();
 
     // No console errors during a normal authenticated load.
     const consoleErrors: string[] = [];
@@ -32,5 +33,23 @@ test.describe('Dashboard surface (P4-T02)', () => {
     await expect(page.getByRole('heading', { name: 'Global RPD Dashboard' })).toBeVisible();
     const violations = await seriousAxeViolations(page);
     expect(violations, JSON.stringify(violations, null, 2)).toEqual([]);
+  });
+
+  test('P17-R08: a Hub × Type figure opens exactly its projects, focus returns on close', async ({ page }) => {
+    await loginAs(page, 'portfolioManager');
+    const dashboard = new DashboardPage(page);
+    await dashboard.goto();
+    for (const pattern of [/^View \d+ .* projects? in .*$/, /^View all \d+ projects?$/, /^View all \d+ projects? completing within the year$/]) {
+      const cell = dashboard.drillCell(pattern).first();
+      await cell.scrollIntoViewIfNeeded();
+      const label = (await cell.getAttribute('aria-label')) ?? '';
+      const expected = Number(/\d+/.exec(label)?.[0]);
+      await cell.click();
+      const count = dashboard.drilldownDialog().getByTestId('drilldown-count');
+      await expect(count).toHaveAttribute('data-count', String(expected));
+      await expect(dashboard.drilldownDialog().getByTestId('drilldown-mismatch')).toHaveCount(0);
+      await page.keyboard.press('Escape');
+      await expect(cell).toBeFocused();
+    }
   });
 });

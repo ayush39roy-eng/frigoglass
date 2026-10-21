@@ -28,7 +28,7 @@
  *   is now stale.
  */
 
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { ApiError } from '@/lib/api/client';
 import { queryKeys } from '@/lib/query-keys';
@@ -39,6 +39,9 @@ import {
   deleteChamber,
   deleteEngineer,
   fetchActiveScheduleRun,
+  fetchCapacitySummary,
+  fetchResourceLoad,
+  fetchResourceLoadOptions,
   fetchChambers,
   fetchEngineers,
   triggerApplyLogic,
@@ -46,11 +49,31 @@ import {
   updateEngineer,
 } from '../api/planning-api';
 import type {
+  CapacityBasis,
   ChamberCreateRequest,
+  ChamberRead,
   ChamberUpdateRequest,
   EngineerCreateRequest,
+  EngineerRead,
   EngineerUpdateRequest,
+  ResourceLoadFilters,
 } from '../api/types';
+
+/**
+ * P19-T04: keys for the two P19-T03 planning reads. Kept here (not in the shared
+ * `lib/query-keys.ts`) because only this surface reads them and other agents were
+ * editing the shared file at the time; move them there when convenient. Every
+ * input that changes the response (basis, filters) is part of the key.
+ */
+export const planningKeys = {
+  all: () => ['planning'] as const,
+  capacitySummary: () => ['planning', 'capacity-summary'] as const,
+  resourceLoad: (basis?: CapacityBasis, filters?: ResourceLoadFilters) =>
+    basis === undefined
+      ? (['planning', 'resource-load'] as const)
+      : (['planning', 'resource-load', basis, filters ?? null] as const),
+  resourceLoadOptions: () => ['planning', 'resource-load-options'] as const,
+};
 
 /** Do not retry an auth failure — a 401/403 will not fix itself on retry. */
 function retryUnlessAuth(failureCount: number, error: Error): boolean {
@@ -73,6 +96,8 @@ export function useEngineerList(hubId: string | undefined) {
 
 function invalidateEngineerCapacityKeys(queryClient: ReturnType<typeof useQueryClient>) {
   void queryClient.invalidateQueries({ queryKey: ['engineers'] });
+  // P19-T04: the summary and the resource-load capacity read the live tables.
+  void queryClient.invalidateQueries({ queryKey: planningKeys.all() });
   void queryClient.invalidateQueries({ queryKey: queryKeys.capacityHubLoad() });
   void queryClient.invalidateQueries({ queryKey: queryKeys.capacityUtilizationMatrix() });
 }
@@ -85,13 +110,35 @@ export function useCreateEngineer() {
   });
 }
 
+/**
+ * Optimistic (P19-T04 inline edits): the edited input fields (FTE, allowed
+ * categories, ...) are patched into every cached engineer list at once and
+ * rolled back on error. Only the INPUTS the user typed are patched; served
+ * figures (capacity) are left as they are until the refetch brings the
+ * server's new values, so no number is ever computed here.
+ */
 export function useUpdateEngineer() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: ({ engineerId, body }: { engineerId: string; body: EngineerUpdateRequest }) =>
       updateEngineer(engineerId, body),
-    onSuccess: () => invalidateEngineerCapacityKeys(queryClient),
+    onMutate: async ({ engineerId, body }) => {
+      await queryClient.cancelQueries({ queryKey: ['engineers'] });
+      const previous = queryClient.getQueriesData<EngineerRead[]>({ queryKey: ['engineers'] });
+      queryClient.setQueriesData<EngineerRead[]>({ queryKey: ['engineers'] }, (rows) =>
+        rows?.map((r) => (r.id === engineerId ? { ...r, ...stripUndefined(body) } : r)),
+      );
+      return { previous };
+    },
+    onError: (_err, _vars, context) => {
+      for (const [key, data] of context?.previous ?? []) queryClient.setQueryData(key, data);
+    },
+    onSettled: () => invalidateEngineerCapacityKeys(queryClient),
   });
+}
+
+function stripUndefined<T extends object>(body: T): Partial<T> {
+  return Object.fromEntries(Object.entries(body).filter(([, v]) => v !== undefined)) as Partial<T>;
 }
 
 export function useDeleteEngineer() {
@@ -114,6 +161,7 @@ export function useChamberList() {
 
 function invalidateChamberCapacityKeys(queryClient: ReturnType<typeof useQueryClient>) {
   void queryClient.invalidateQueries({ queryKey: queryKeys.chambers() });
+  void queryClient.invalidateQueries({ queryKey: planningKeys.all() });
   void queryClient.invalidateQueries({ queryKey: queryKeys.capacityHubLoad() });
   void queryClient.invalidateQueries({ queryKey: queryKeys.capacityUtilizationMatrix() });
 }
@@ -126,12 +174,25 @@ export function useCreateChamber() {
   });
 }
 
+/** Optimistic, same rule as `useUpdateEngineer`: inputs only, figures wait
+ *  for the refetch. */
 export function useUpdateChamber() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: ({ chamberId, body }: { chamberId: string; body: ChamberUpdateRequest }) =>
       updateChamber(chamberId, body),
-    onSuccess: () => invalidateChamberCapacityKeys(queryClient),
+    onMutate: async ({ chamberId, body }) => {
+      await queryClient.cancelQueries({ queryKey: queryKeys.chambers() });
+      const previous = queryClient.getQueryData<ChamberRead[]>(queryKeys.chambers());
+      queryClient.setQueryData<ChamberRead[]>(queryKeys.chambers(), (rows) =>
+        rows?.map((r) => (r.id === chamberId ? { ...r, ...stripUndefined(body) } : r)),
+      );
+      return { previous };
+    },
+    onError: (_err, _vars, context) => {
+      if (context?.previous) queryClient.setQueryData(queryKeys.chambers(), context.previous);
+    },
+    onSettled: () => invalidateChamberCapacityKeys(queryClient),
   });
 }
 
@@ -170,6 +231,43 @@ export function useApplyLogic() {
       void queryClient.invalidateQueries({ queryKey: ['dashboard'] });
       void queryClient.invalidateQueries({ queryKey: ['gantt'] });
       void queryClient.invalidateQueries({ queryKey: ['capacity'] });
+      // P19-T04: resource load reads the active run.
+      void queryClient.invalidateQueries({ queryKey: planningKeys.all() });
     },
+  });
+}
+
+// --- P19-T03 reads ---
+
+export function useCapacitySummary() {
+  return useQuery({
+    queryKey: planningKeys.capacitySummary(),
+    queryFn: ({ signal }) => fetchCapacitySummary({ signal }),
+    retry: retryUnlessAuth,
+  });
+}
+
+/** Lazy: `enabled` is false until the analytics section has been on screen. */
+export function useResourceLoadOptions(enabled: boolean) {
+  return useQuery({
+    queryKey: planningKeys.resourceLoadOptions(),
+    queryFn: ({ signal }) => fetchResourceLoadOptions({ signal }),
+    retry: retryUnlessAuth,
+    enabled,
+    staleTime: 5 * 60_000,
+  });
+}
+
+/** Lazy and keyed on basis + (debounced) filters; keeps the previous figures
+ *  on screen while a new filter set loads. Per-engineer reads are audited
+ *  server-side (ADR 0028), so nothing here polls or refetches on focus. */
+export function useResourceLoad(basis: CapacityBasis, filters: ResourceLoadFilters, enabled: boolean) {
+  return useQuery({
+    queryKey: planningKeys.resourceLoad(basis, filters),
+    queryFn: ({ signal }) => fetchResourceLoad(basis, filters, { signal }),
+    retry: retryUnlessAuth,
+    enabled,
+    placeholderData: keepPreviousData,
+    refetchOnWindowFocus: false,
   });
 }

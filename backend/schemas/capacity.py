@@ -24,6 +24,16 @@ BookingStatus = Literal["available", "near_full", "full"]
 CapacityAreaName = Literal["Europe", "India"]
 
 
+class YearRemaining(BaseModel):
+    """P19-T03 (docs/API_CONTRACT_P19.md): one figure on both bases, 2 dp.
+    `year` = the full planning year, `remaining` = the rest of it from
+    `CURRENT_WEEK` (ADR 0008 remaining formulas). A load has no basis of its
+    own, so a load pair carries the same value twice."""
+
+    year: float
+    remaining: float
+
+
 class PriorityLoadSplit(BaseModel):
     """P13 (docs/API_CONTRACT_P13.md §6): a load split by priority bucket, in
     weeks, 2 dp. `P1`..`P4` are the project's priority band; `Queue` is band
@@ -128,6 +138,39 @@ class HubCapacityRow(BaseModel):
     #: (every project of the row's lab region, repeated on each hub of the
     #: region); sums to it.
     lab_load_by_priority: PriorityLoadSplit
+    # --- P19-T03 (docs/API_CONTRACT_P19.md §1): Weeks / Days toggle -------
+    #: The hub's `HubWorkCalendar.weekdays_per_week` (ADR 0008).
+    weekdays_per_week: float
+    #: Design capacity in days: served `design_capacity_year` / `_remaining`
+    #: × `weekdays_per_week`, 2 dp.
+    capacity_days: YearRemaining
+    #: Design load in days: `design_load_weeks × weekdays_per_week` (same on
+    #: both bases), 2 dp.
+    load_days: YearRemaining
+    #: `weekdays_per_week` of the calendar the row's lab region takes its
+    #: chambers' holiday weeks from (`services.capacity_supply.region_calendar`).
+    lab_weekdays_per_week: float
+    #: Served `lab_capacity_year` / `_remaining` × `lab_weekdays_per_week`, 2 dp.
+    lab_capacity_days: YearRemaining
+    #: Served `lab_load_weeks` × `lab_weekdays_per_week` (both bases), 2 dp.
+    lab_load_days: YearRemaining
+
+
+class LabRegionCapacityRow(BaseModel):
+    """P19-T03 (§1): one lab region's lab figures, served once per region
+    (the hub rows repeat them on every hub of the region). Built from the
+    same served values as the hub rows, so `capacity_weeks.year` equals every
+    hub row's `lab_capacity_year` of the region."""
+
+    lab_region: LabRegion
+    #: The region calendar's `weekdays_per_week` (= the hub rows'
+    #: `lab_weekdays_per_week`).
+    weekdays_per_week: float
+    chamber_count: int
+    capacity_weeks: YearRemaining
+    load_weeks: float
+    capacity_days: YearRemaining
+    load_days: YearRemaining
 
 
 class CapacityArea(BaseModel):
@@ -193,6 +236,13 @@ class CapacityTotals(BaseModel):
     lab_booking_status_year: BookingStatus
     lab_booking_status_remaining: BookingStatus
     lab_load_by_priority: PriorityLoadSplit
+    # --- P19-T03 (§1): Σ of the rows' served day figures (design per hub,
+    # lab per region once), 2 dp. Hubs may have different weekdays, so a
+    # total in days is never "total weeks × one constant".
+    design_capacity_days: YearRemaining
+    design_load_days: YearRemaining
+    lab_capacity_days: YearRemaining
+    lab_load_days: YearRemaining
 
 
 class HubCapacitySummary(BaseModel):
@@ -208,6 +258,8 @@ class HubCapacitySummary(BaseModel):
     areas: list[CapacityArea]
     #: P13-T11 addendum: the total over `rows` (design per hub, lab per region once).
     totals: CapacityTotals
+    #: P19-T03 (§1): one row per lab region of `rows`, Greece, India, Romania.
+    lab_regions: list[LabRegionCapacityRow]
 
 
 class ClassBreakdownHubRow(BaseModel):

@@ -183,6 +183,12 @@ class CompletingWithinYear(BaseModel):
 ScheduleOutcome = Literal["WITHIN_YEAR", "SPILLOVER", "LEFT_OUT", "BLOCKED"]
 
 
+#: P17-R09: the `type` filter of `GET /dashboard/projects`. A `ProjectType`
+#: value, or `"Unmapped"` meaning `Project.type IS NULL` (the same sentinel as
+#: the `/analytics` `by_type` bucket key). Anything else is rejected (422).
+RegisterTypeFilter = ProjectType | Literal["Unmapped"]
+
+
 class ProjectFilterRow(BaseModel):
     """One row of the "analytics breakdown with filters" endpoint — a light
     projection, not the full `ProjectRead` (Project Registration's job).

@@ -11,8 +11,146 @@
 // read-only id/name/hub_id lookup for the Project Registration leader picker —
 // see that file's own module docstring for why the two are not merged.
 
-import type { EngineerAllowedCategory, LabRegion, ScheduleRunStatus, SolverType } from '@/types/enums';
+import type { EngineerAllowedCategory, HubName, LabRegion, ScheduleRunStatus, SolverType } from '@/types/enums';
 import type { Id } from '@/types/common';
+
+/** P19-T03: one figure on the two bases the page toggles between. `year` is
+ *  weeks 1-52, `remaining` is the current week to W52 (shown as "YTD 2026"). */
+export interface BasisPair {
+  year: number;
+  remaining: number;
+}
+
+// --- P19-T03: GET /planning/capacity-summary -------------------------------
+
+export interface DesignHubSummary {
+  hub: HubName;
+  engineer_count: number;
+  fte_total: number;
+  weekdays_per_week: number;
+  capacity_weeks: BasisPair;
+  capacity_days: BasisPair;
+  /** This hub's share of the design total, 0-100, per basis. */
+  share_pct: BasisPair;
+}
+
+export interface DesignTotalSummary {
+  engineer_count: number;
+  fte_total: number;
+  capacity_weeks: BasisPair;
+  capacity_days: BasisPair;
+}
+
+export interface LabRegionSummary {
+  lab_region: LabRegion;
+  chamber_count: number;
+  weekdays_per_week: number;
+  capacity_weeks: BasisPair;
+  capacity_days: BasisPair;
+  share_pct: BasisPair;
+}
+
+export interface LabTotalSummary {
+  chamber_count: number;
+  capacity_weeks: BasisPair;
+  capacity_days: BasisPair;
+}
+
+export interface CapacitySummary {
+  current_week: number;
+  design: { hubs: DesignHubSummary[]; total: DesignTotalSummary };
+  lab: { regions: LabRegionSummary[]; total: LabTotalSummary };
+}
+
+// --- P19-T03: GET /planning/resource-load ----------------------------------
+
+export type CapacityBasis = 'year' | 'remaining';
+
+export interface EngineerLoadRow {
+  engineer_id: Id;
+  name: string;
+  hub: HubName;
+  weekdays_per_week: number;
+  capacity_weeks: number;
+  load_weeks: number;
+  /** load / capacity × 100, served; null when capacity is 0. */
+  utilization_pct: number | null;
+  capacity_days: number;
+  load_days: number;
+}
+
+export interface ChamberLoadRow {
+  chamber_id: Id;
+  code: string;
+  lab_region: LabRegion;
+  weekdays_per_week: number;
+  capacity_weeks: number;
+  load_weeks: number;
+  utilization_pct: number | null;
+  capacity_days: number;
+  load_days: number;
+}
+
+export interface LoadTotals {
+  capacity_weeks: number;
+  load_weeks: number;
+  utilization_pct: number | null;
+  capacity_days: number;
+  load_days: number;
+}
+
+/** The filters the server applied, echoed back (`schemas/planning.py`). */
+export interface ResourceLoadFiltersApplied {
+  hub_id: Id | null;
+  region: LabRegion | null;
+  project_type: string[];
+  project_status: string[];
+  requesting_department: string[];
+  category: string[];
+  engineer_id: Id[];
+  basis: CapacityBasis;
+}
+
+export interface ResourceLoadResponse {
+  has_active_schedule_run: boolean;
+  schedule_run_version: number | null;
+  current_week: number;
+  basis: CapacityBasis;
+  engineers: EngineerLoadRow[];
+  chambers: ChamberLoadRow[];
+  totals: { engineers: LoadTotals; chambers: LoadTotals };
+  filters_applied: ResourceLoadFiltersApplied;
+}
+
+/** `GET /planning/resource-load/options` as served (`schemas/planning.py`). */
+export interface ResourceLoadOptionsResponse {
+  hubs: HubName[];
+  lab_regions: LabRegion[];
+  project_types: string[];
+  project_statuses: string[];
+  categories: string[];
+  /** Always empty today: projects carry no requesting department (OQ #34). */
+  requesting_departments: string[];
+  requesting_department_available: boolean;
+  engineers: { engineer_id: Id; name: string; hub: HubName }[];
+}
+
+/** One option of a filter combobox. */
+export interface FilterOption {
+  value: string;
+  label: string;
+}
+
+/** The six analytics filters; an empty list / null means "All". `hub_id` is
+ *  single-valued on the server, so the hub filter is a single choice. */
+export interface ResourceLoadFilters {
+  hubId: string | null;
+  types: string[];
+  statuses: string[];
+  departments: string[];
+  categories: string[];
+  engineerIds: string[];
+}
 
 /**
  * `GET /engineers` / `GET /engineers/{id}` row (`backend/schemas/engineer.py::EngineerRead`).
@@ -32,6 +170,13 @@ export interface EngineerRead {
   user_id: Id | null;
   created_at: string;
   updated_at: string;
+  /** P19-T03 (API_CONTRACT_P19 §2): the hub calendar's working days per week. */
+  weekdays_per_week: number;
+  /** P19-T03: the engineer's own ADR 0008 design capacity (their FTE on their
+   *  hub's calendar), full year and remaining. */
+  capacity_weeks: BasisPair;
+  /** P19-T03: served `capacity_weeks × weekdays_per_week`. */
+  capacity_days: BasisPair;
 }
 
 /** `POST /engineers` body (`EngineerCreateRequest`). `fte` defaults server-side
@@ -75,6 +220,14 @@ export interface ChamberRead {
   allowed_stages: string[];
   created_at: string;
   updated_at: string;
+  /** P19-T03 (API_CONTRACT_P19 §3): the region calendar's working days per week. */
+  weekdays_per_week: number;
+  /** P19-T03: working weeks of this chamber (the "Wks/ch" column). */
+  working_weeks: number;
+  /** P19-T03: efficient lab weeks, full year and remaining (ADR 0008). */
+  capacity_weeks: BasisPair;
+  /** P19-T03: served `capacity_weeks × weekdays_per_week`. */
+  capacity_days: BasisPair;
 }
 
 /** `POST /chambers` body (`ChamberCreateRequest`). `allowed_stages` must be

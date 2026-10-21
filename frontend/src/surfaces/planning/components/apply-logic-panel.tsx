@@ -65,7 +65,10 @@ export function ApplyLogicCard({
   isApplying,
   lastResult,
   errorMessage,
+  bare = false,
 }: {
+  /** P19-T04: render without the Card chrome (inside the header's dialog). */
+  bare?: boolean;
   canEdit: boolean;
   provenance: { version: number; solverType: string } | null;
   onApply: () => Promise<void>;
@@ -75,12 +78,8 @@ export function ApplyLogicCard({
 }): React.JSX.Element {
   const [confirmOpen, setConfirmOpen] = React.useState(false);
 
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle>Apply Logic</CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-3">
+  const body = (
+    <>
         <p className="text-sm text-text-muted">
           Recomputes the schedule over every current project, engineer and chamber using the
           deterministic scheduling logic (the greedy serial schedule-generation scheme,{' '}
@@ -122,7 +121,6 @@ export function ApplyLogicCard({
             <ResultStat label="Spillover · unplaced" value={lastResult.left_out_count} />
           </dl>
         ) : null}
-      </CardContent>
 
       <ConfirmDialog
         open={confirmOpen}
@@ -136,6 +134,16 @@ export function ApplyLogicCard({
           void onApply();
         }}
       />
+    </>
+  );
+
+  if (bare) return <div className="space-y-3">{body}</div>;
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Apply Logic</CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-3">{body}</CardContent>
     </Card>
   );
 }

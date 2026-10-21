@@ -98,6 +98,7 @@ describe('ChamberFormDialog', () => {
           allowed_stages: ['PDD-H'],
           created_at: '2026-01-01T00:00:00Z',
           updated_at: '2026-01-01T00:00:00Z',
+          weekdays_per_week: 5, working_weeks: 43.4, capacity_weeks: { year: 26.04, remaining: 5.01 }, capacity_days: { year: 130.2, remaining: 25.05 },
         }}
         open
         onOpenChange={() => {}}

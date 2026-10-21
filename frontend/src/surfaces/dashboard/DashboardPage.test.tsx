@@ -159,7 +159,7 @@ describe('DashboardPage', () => {
 
     expect(screen.getByText('Completing within the year')).toBeInTheDocument();
     expect(screen.getByText('Status overview')).toBeInTheDocument();
-    expect(screen.getByText('Hub × type pipeline')).toBeInTheDocument();
+    expect(screen.getByText('Project pipeline summary: Hub × Type')).toBeInTheDocument();
     expect(screen.getByText('All registered projects')).toBeInTheDocument();
     // headline within-year figure comes from the I9 endpoint
     expect(screen.getByTestId('schedule-run-provenance')).toHaveTextContent(/v4/);
@@ -211,7 +211,7 @@ describe('DashboardPage', () => {
 
     expect(screen.getByRole('alert')).toHaveTextContent(/Status overview counts could not be loaded/i);
     // the rest of the surface still renders
-    expect(screen.getByText('Hub × type pipeline')).toBeInTheDocument();
+    expect(screen.getByText('Project pipeline summary: Hub × Type')).toBeInTheDocument();
   });
 });
 
@@ -330,9 +330,10 @@ describe('DashboardPage — P17-R05 layout and scheduled-count labelling', () =>
     expect(follows(header, pipeline)).toBe(true);
     expect(follows(pipeline, statusHeading)).toBe(true);
     expect(follows(statusHeading, completing)).toBe(true);
+    // P17-R08: VIP is a slim column beside the pipeline row, ahead of Status overview.
     expect(follows(pipeline, vip)).toBe(true);
-    expect(follows(statusHeading, vip)).toBe(true);
-    expect(follows(statusHeading, screen.getByText('Hub × type pipeline'))).toBe(true);
+    expect(follows(vip, statusHeading)).toBe(true);
+    expect(follows(statusHeading, screen.getByText('Project pipeline summary: Hub × Type'))).toBe(true);
   });
 
   it('labels the header chip "scheduled", never "projects", and explains the gap from the served figures', async () => {
@@ -380,7 +381,18 @@ describe('DashboardPage — P17-R05 layout and scheduled-count labelling', () =>
   });
 });
 
-describe('DashboardPage — P17-R06 rearrangement', () => {
+const ANALYTICS_R08: DashboardAnalytics = {
+  by_type: [{ key: 'NM', count: 3, share_pct: 100 }],
+  by_category: [],
+  by_hub: [{ key: 'R&D-Greece', count: 3, share_pct: 100 }],
+  by_reg_year: [],
+  completing_hub_type: [{ hub: 'R&D-Greece', type: 'NM', pipeline_count: 3, completing_count: 1, completing_pct: 33.33 }],
+  completing_by_type: [{ key: 'NM', pipeline_count: 3, completing_count: 1, completing_pct: 33.33 }],
+  completing_by_hub: [{ key: 'R&D-Greece', pipeline_count: 3, completing_count: 1, completing_pct: 33.33 }],
+  has_active_schedule_run: true,
+};
+
+describe('DashboardPage — P17-R06/R08 rearrangement', () => {
   const rowsRun: CompletingWithinYear = {
     ...withinYear,
     rows: [
@@ -410,24 +422,51 @@ describe('DashboardPage — P17-R06 rearrangement', () => {
   }
   const follows = (a: Node, b: Node): boolean => Boolean(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING);
 
-  it('orders the page: Completing within the year, then the Hub x Type + VIP band, then the rest', async () => {
+  it('P17-R08 order: Completing, the Hub × Type tables, the rest, and the register LAST', async () => {
     readyAll();
+    hooks.useDashboardAnalytics.mockReturnValue(ready(ANALYTICS_R08));
     renderWithProviders(<DashboardPage />);
     const completing = screen.getByRole('heading', { name: 'Completing within the year' });
-    const hubType = screen.getAllByText('Hub × type pipeline')[0]!;
-    const vip = screen.getByTestId('vip-projects-card');
+    const pipelineTable = screen.getByRole('heading', { name: 'Project pipeline summary: Hub × Type' });
+    const completingTable = screen.getByRole('heading', { name: 'Completing within year: Hub × Type' });
     const outcome = screen.getByText('Completion outcome');
     const register = screen.getByTestId('all-projects-register');
-    expect(follows(completing, hubType)).toBe(true);
-    expect(follows(hubType, vip)).toBe(true);
-    // Hub x Type and VIP share one band (a two-column grid), Hub x Type first.
-    const band = vip.closest('.grid');
-    expect(band).not.toBeNull();
-    expect(band!.contains(hubType)).toBe(true);
-    expect(follows(vip, outcome)).toBe(true);
-    expect(follows(vip, register)).toBe(true);
+    expect(follows(completing, pipelineTable)).toBe(true);
+    expect(follows(pipelineTable, completingTable)).toBe(true);
+    expect(follows(completingTable, outcome)).toBe(true);
+    // The two tables share one band; the chart follows them.
+    const band = pipelineTable.closest('.grid');
+    expect(band!.contains(completingTable)).toBe(true);
+    const chart = await screen.findByRole('heading', { name: 'Pipeline vs completing' }, { timeout: 5000 });
+    expect(follows(completingTable, chart)).toBe(true);
+    expect(follows(chart, outcome)).toBe(true);
     await screen.findByRole('heading', { name: 'Portfolio analytics' }, { timeout: 5000 });
-    expect(follows(vip, screen.getByRole('heading', { name: 'Portfolio analytics' }))).toBe(true);
+    const analytics = await screen.findByRole('heading', { name: 'Analytics & breakdown' }, { timeout: 5000 });
+    expect(follows(analytics, register)).toBe(true);
+    // Nothing after the register.
+    const sections = screen.getAllByRole('heading', { level: 2 }).concat(screen.getAllByRole('heading', { level: 3 }));
+    for (const h of sections) {
+      if (!register.contains(h)) expect(follows(h, register)).toBe(true);
+    }
+  });
+
+  it('P17-R08: the Hub × type bar chart is gone; the VIP card sits beside the pipeline row', () => {
+    readyAll();
+    renderWithProviders(<DashboardPage />);
+    expect(screen.queryByLabelText('Project count per hub, split by project type')).not.toBeInTheDocument();
+    expect(screen.queryByText('Hub × type pipeline')).not.toBeInTheDocument();
+    const vip = screen.getByTestId('vip-projects-card');
+    const pipelineBand = screen.getByTestId('pipeline-row').closest('.grid');
+    expect(pipelineBand!.contains(vip)).toBe(true);
+    expect(follows(vip, screen.getByRole('heading', { name: 'Status overview' }))).toBe(true);
+  });
+
+  it('P17-R08: a pipeline cell is a drill-down button', () => {
+    readyAll();
+    hooks.useDashboardAnalytics.mockReturnValue(ready(ANALYTICS_R08));
+    renderWithProviders(<DashboardPage />);
+    expect(screen.getByRole('button', { name: 'View 3 New Model projects in R&D-Greece' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'View all 3 projects in R&D-Greece' })).toBeInTheDocument();
   });
 
   it('no longer shows the project outcomes table, the planning clock or the finish-week chart', async () => {
@@ -504,7 +543,7 @@ describe('DashboardPage — P13-T10 analytics & breakdown', () => {
     hooks.useDashboardAnalytics.mockReturnValue(ready(analytics));
     renderWithProviders(<DashboardPage />);
     const heading = await screen.findByRole('heading', { name: 'Analytics & breakdown' }, { timeout: 5000 });
-    const hubType = screen.getAllByText('Hub × type pipeline')[0]!;
+    const hubType = screen.getAllByText('Project pipeline summary: Hub × Type')[0]!;
     expect(hubType.compareDocumentPosition(heading) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(screen.getByRole('list', { name: 'Pipeline projects by project type' })).toHaveTextContent(
       'Cost Optimization: 89 (37.71%)',

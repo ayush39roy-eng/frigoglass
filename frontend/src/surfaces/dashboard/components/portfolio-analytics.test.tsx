@@ -66,6 +66,12 @@ const BANDS: PriorityDeliveryBand[] = [
   band('Q'),
 ];
 
+// Same bands with the served within-year shares filled in.
+const BANDS_SHARED: PriorityDeliveryBand[] = BANDS.map((b) => ({
+  ...b,
+  within_year_share_pct: { P1: 76, P2: 66.67, P3: 97.87, P4: 33.59, Q: 0 }[b.priority],
+}));
+
 function bandSum(b: PriorityDeliveryBand): number {
   return b.in_flight_total + b.not_started_total + b.delivered_total + b.other_total;
 }
@@ -79,34 +85,54 @@ describe('PortfolioAnalytics', () => {
     expect(screen.getByRole('heading', { name: 'Outcomes by hub' })).toBeInTheDocument();
   });
 
-  it('shows in-flight and not-started parts per band from the served fields', () => {
-    renderWithProviders(<PortfolioAnalytics rows={[row('a')]} priorityDelivery={BANDS} />);
-    expect(screen.getByText('P1 · in flight 12 of 12 · not started 7 of 13')).toBeInTheDocument();
-    expect(screen.getByText('P3 · in flight 92 of 94 · not started 0 of 0')).toBeInTheDocument();
-    // Headline is the served in-flight share, not a browser division.
-    expect(screen.getAllByText('100%').length).toBeGreaterThan(0);
-    expect(screen.getByText('98%')).toBeInTheDocument();
+  it('headline per band is "<within_year> of <total> finishing this year" plus the served share', () => {
+    renderWithProviders(<PortfolioAnalytics rows={[row('a')]} priorityDelivery={BANDS_SHARED} />);
+    const p1 = screen.getByTestId('priority-band-P1');
+    expect(p1).toHaveTextContent('19 of 25 finishing this year');
+    expect(p1).toHaveTextContent('76%');
+    expect(p1).toHaveTextContent('In flight: 12 of 12 · Not started: 7 of 13');
+    expect(p1).toHaveAccessibleName('P1: 19 of 25 finishing this year; in flight 12 of 12; not started 7 of 13');
   });
 
-  it('band parts add up to the band total shown', () => {
-    renderWithProviders(<PortfolioAnalytics rows={[row('a')]} priorityDelivery={BANDS} />);
-    for (const b of BANDS.filter((x) => x.total > 0)) {
+  it('never prints "0 of 0" or a bare dash; omits parts whose total is 0', () => {
+    renderWithProviders(<PortfolioAnalytics rows={[row('a')]} priorityDelivery={BANDS_SHARED} />);
+    const card = screen.getByTestId('priority-delivery-card');
+    expect(card).not.toHaveTextContent('0 of 0');
+    expect(card.textContent).not.toMatch(/(^|\s)[–-](\s|$)/);
+    const p3 = screen.getByTestId('priority-band-P3');
+    expect(p3).toHaveTextContent('In flight: 92 of 94');
+    expect(p3).not.toHaveTextContent('Not started');
+    const p4 = screen.getByTestId('priority-band-P4');
+    expect(p4).not.toHaveTextContent('In flight');
+    expect(p4).toHaveTextContent('Not started: 26 of 68 · Already delivered: 17 · Not in plan: 43');
+  });
+
+  it('sizes the stacked segments from the served counts, and they add up to the band total', () => {
+    renderWithProviders(<PortfolioAnalytics rows={[row('a')]} priorityDelivery={BANDS_SHARED} />);
+    for (const b of BANDS_SHARED.filter((x) => x.total > 0)) {
       expect(bandSum(b)).toBe(b.total);
-      const item = screen.getByRole('listitem', { name: new RegExp(`^${b.priority}: `) });
-      expect(item).toHaveTextContent(`${String(b.total)} projects`);
+      const segs = [...screen.getByTestId(`priority-band-${b.priority}`).querySelectorAll<HTMLElement>('[data-segment]')];
+      const total = segs.reduce((acc, el) => acc + Number(el.dataset.count), 0);
+      expect(total).toBe(b.total);
+      for (const el of segs) expect(el.style.flexGrow).toBe(el.dataset.count);
     }
+    const p4 = screen.getByTestId('priority-band-P4');
+    const p4Segs = Object.fromEntries(
+      [...p4.querySelectorAll<HTMLElement>('[data-segment]')].map((el) => [el.dataset.segment, Number(el.dataset.count)]),
+    );
+    expect(p4Segs).toEqual({ not_started_finishing: 26, not_started_not_finishing: 42, delivered: 17, not_in_plan: 43 });
+    const p1 = screen.getByTestId('priority-band-P1');
+    expect(p1.querySelector('[data-segment="in_flight_finishing"]')).toHaveAttribute('title', 'P1 · In flight, finishing this year: 12');
+    // Zero segments are not drawn.
+    expect(p1.querySelector('[data-segment="in_flight_not_finishing"]')).toBeNull();
   });
 
-  it('keeps delivered and not-in-plan out of the rings and lists them as muted lines', () => {
-    renderWithProviders(<PortfolioAnalytics rows={[row('a')]} priorityDelivery={BANDS} />);
-    const p4 = screen.getByRole('listitem', { name: /^P4: / });
-    expect(within(p4).getByText('Already delivered: 17')).toBeInTheDocument();
-    expect(within(p4).getByText('Not in plan: 43')).toBeInTheDocument();
-    // P4 has nothing in flight: no headline percentage and no ring for it.
-    expect(within(p4).getByText('P4 · in flight 0 of 0 · not started 26 of 68')).toBeInTheDocument();
-    expect(within(p4).queryByText(/%$/)).not.toBeInTheDocument();
-    expect(screen.queryByText('Already delivered: 0')).not.toBeInTheDocument();
-    expect(screen.getAllByText(/Already delivered/)).toHaveLength(1);
+  it('uses one status colour per segment across bands; the band colour is only the dot', () => {
+    renderWithProviders(<PortfolioAnalytics rows={[row('a')]} priorityDelivery={BANDS_SHARED} />);
+    const p1 = screen.getByTestId('priority-band-P1').querySelector('[data-segment="not_started_finishing"]')!;
+    const p4 = screen.getByTestId('priority-band-P4').querySelector('[data-segment="not_started_finishing"]')!;
+    expect(p1.className).toBe(p4.className);
+    expect(screen.getByRole('list', { name: 'Bar segments' })).toHaveTextContent('In flight, finishing this year');
   });
 
   it('prints the not-started note on the card and in the info popover', async () => {
@@ -123,16 +149,17 @@ describe('PortfolioAnalytics', () => {
     expect(await seriousAxeViolations(container)).toEqual([]);
   });
 
-  it('hides empty bands rather than printing an empty ring', () => {
+  it('hides empty bands', () => {
     renderWithProviders(<PortfolioAnalytics rows={[row('a')]} priorityDelivery={BANDS} />);
     expect(screen.queryByRole('listitem', { name: /^Q: / })).not.toBeInTheDocument();
     expect(screen.getAllByRole('listitem', { name: /^P\d: / })).toHaveLength(4);
   });
 
   it('renders a hub-filtered payload (fewer bands) without the unfiltered ones', () => {
-    const filtered = [band('P1', { total: 3, within_year: 3, in_flight_total: 3, in_flight_within_year: 3, in_flight_within_year_share_pct: 100 }), band('P2'), band('P3'), band('P4'), band('Q')];
+    const filtered = [band('P1', { total: 3, within_year: 3, within_year_share_pct: 100, in_flight_total: 3, in_flight_within_year: 3, in_flight_within_year_share_pct: 100 }), band('P2'), band('P3'), band('P4'), band('Q')];
     renderWithProviders(<PortfolioAnalytics rows={[row('a')]} priorityDelivery={filtered} />);
-    expect(screen.getByText('P1 · in flight 3 of 3 · not started 0 of 0')).toBeInTheDocument();
+    expect(screen.getByTestId('priority-band-P1')).toHaveTextContent('3 of 3 finishing this year');
+    expect(screen.getByTestId('priority-band-P1')).toHaveTextContent('In flight: 3 of 3');
     expect(screen.queryByRole('listitem', { name: /^P3: / })).not.toBeInTheDocument();
   });
 

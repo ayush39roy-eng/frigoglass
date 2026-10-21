@@ -19,8 +19,46 @@ export class PlanningPage {
     return this.page.getByRole('tab', { name: 'Chambers' });
   }
 
-  applyLogicTab() {
-    return this.page.getByRole('tab', { name: 'Apply Logic & Auto-assign' });
+  overviewTab() {
+    return this.page.getByRole('tab', { name: 'Overview' });
+  }
+
+  /** P19-T04: header button opening the Apply Logic panel in a dialog. */
+  openApplyLogicButton() {
+    return this.page.getByRole('button', { name: 'Apply logic', exact: true });
+  }
+
+  applyLogicDialog() {
+    return this.page.getByRole('dialog', { name: 'Apply logic' });
+  }
+
+  /** P19-T04: header button opening the Auto-assign (OQ #10) notice. */
+  autoAssignButton() {
+    return this.page.getByRole('button', { name: 'Auto-assign projects' });
+  }
+
+  basisToggle(name: 'YTD 2026' | 'Full year') {
+    return this.page.getByTestId('planning-toolbar').getByRole('radio', { name });
+  }
+
+  unitToggle(name: 'Weeks' | 'Days') {
+    return this.page.getByTestId('planning-toolbar').getByRole('radio', { name });
+  }
+
+  hubCard(hub: string): Locator {
+    return this.page.getByTestId(`hub-card-${hub}`);
+  }
+
+  labCard(region: string): Locator {
+    return this.page.getByTestId(`lab-card-${region}`);
+  }
+
+  totalsHeadlines(): Locator {
+    return this.page.getByTestId('total-headline');
+  }
+
+  resourceLoadSection(): Locator {
+    return this.page.getByTestId('resource-load');
   }
 
   newEngineerButton() {
@@ -43,12 +81,13 @@ export class PlanningPage {
     return this.page.getByRole('row').filter({ hasText: code });
   }
 
+  /** The panel's own action, inside `applyLogicDialog()`. */
   applyLogicButton() {
-    return this.page.getByRole('button', { name: 'Apply Logic', exact: true });
+    return this.applyLogicDialog().getByRole('button', { name: 'Apply Logic', exact: true });
   }
 
   confirmDialog() {
-    return this.page.getByRole('dialog');
+    return this.page.getByRole('dialog', { name: /whole portfolio/ });
   }
 
   autoAssignPlaceholder() {

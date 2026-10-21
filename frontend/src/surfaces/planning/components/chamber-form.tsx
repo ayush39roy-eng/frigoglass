@@ -55,6 +55,8 @@ export interface ChamberFormDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onSubmit: (body: ChamberCreateRequest) => Promise<unknown>;
+  /** P19-T04: the lab region pre-selected on create (a region card's "Add"). */
+  defaultRegion?: LabRegion | undefined;
 }
 
 export function ChamberFormDialog({
@@ -63,15 +65,17 @@ export function ChamberFormDialog({
   open,
   onOpenChange,
   onSubmit,
+  defaultRegion,
 }: ChamberFormDialogProps): React.JSX.Element {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-lg">
         {mode === 'edit' && chamber === null ? null : (
           <ChamberForm
-            key={chamber?.id ?? 'new'}
+            key={chamber?.id ?? `new-${defaultRegion ?? ''}`}
             mode={mode}
             chamber={chamber}
+            defaultRegion={defaultRegion}
             onOpenChange={onOpenChange}
             onSubmit={onSubmit}
           />
@@ -90,14 +94,16 @@ function ChamberForm({
   chamber,
   onOpenChange,
   onSubmit,
+  defaultRegion,
 }: {
+  defaultRegion?: LabRegion | undefined;
   mode: 'create' | 'edit';
   chamber: ChamberRead | null;
   onOpenChange: (open: boolean) => void;
   onSubmit: ChamberFormDialogProps['onSubmit'];
 }): React.JSX.Element {
   const [submitError, setSubmitError] = React.useState<string | null>(null);
-  const [labRegion, setLabRegion] = React.useState<string>(chamber?.lab_region ?? '');
+  const [labRegion, setLabRegion] = React.useState<string>(chamber?.lab_region ?? defaultRegion ?? '');
   const [stages, setStages] = React.useState<string[]>(chamber?.allowed_stages ?? []);
 
   const stepTemplatesQuery = useWorkflowStepTemplates();

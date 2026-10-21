@@ -18,7 +18,8 @@ test.describe('Capacity Planning surface (P4-T07)', () => {
     await planning.goto();
     await expect(planning.heading()).toBeVisible();
 
-    // 1. Engineer CRUD — create.
+    // 1. Engineer CRUD — create (Engineers tab; P19-T04 made Overview the default).
+    await planning.engineersTab().click();
     const engineerName = `E2E Engineer ${String(Date.now())}`;
     await planning.newEngineerButton().click();
     const engineerDialog = planning.formDialog();
@@ -48,11 +49,14 @@ test.describe('Capacity Planning surface (P4-T07)', () => {
     const chamberRow = planning.chamberRowByCode(chamberCode);
     await expect(chamberRow).toBeVisible();
 
-    // 3. Apply Logic & Auto-assign tab — Auto-assign stays a named
-    // placeholder (OQ#10); Apply Logic (greedy recalc) actually runs.
-    await planning.applyLogicTab().click();
+    // 3. P19-T04: header buttons. Auto-assign stays a named placeholder
+    // (OQ#10); Apply Logic (greedy recalc) actually runs from its dialog.
+    await planning.autoAssignButton().click();
     await expect(planning.autoAssignPlaceholder()).toBeVisible();
+    await page.keyboard.press('Escape');
 
+    await planning.openApplyLogicButton().click();
+    await expect(planning.applyLogicDialog()).toBeVisible();
     await planning.applyLogicButton().click();
     const confirmDialog = planning.confirmDialog();
     await expect(confirmDialog).toBeVisible();

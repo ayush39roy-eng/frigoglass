@@ -181,7 +181,8 @@ export interface ProjectFilterParams {
   region?: LabRegion | undefined;
   /** Case-insensitive substring of name or external_code, ≤ 100 chars. */
   q?: string | undefined;
-  type?: ProjectType | undefined;
+  /** `Unmapped` = projects with no type (`type IS NULL`), served since P17-R09. */
+  type?: ProjectType | 'Unmapped' | undefined;
   leader_engineer_id?: Id | undefined;
   /** Step code, e.g. `PDD-E`. */
   current_step?: string | undefined;

@@ -93,9 +93,11 @@ from schemas.capacity import (
     EngineerWeekUtilization,
     HubCapacityRow,
     HubCapacitySummary,
+    LabRegionCapacityRow,
     PriorityCountSplit,
     PriorityLoadSplit,
     UtilizationMatrix,
+    YearRemaining,
 )
 from services.active_run import get_active_run, step_kinds_for_run
 from services.capacity_priority import (
@@ -110,11 +112,16 @@ from services.capacity_supply import (
     booking,
     calendar_figures,
     chamber_figures,
+    design_capacity,
+    fte_sum,
     gap_and_completion,
+    hub_weekdays_per_week,
     lab_remaining_fraction,
     load_calendars_by_region,
     region_holiday_weeks,
+    region_weekdays_per_week,
     round2,
+    to_days,
 )
 from services.hub_scope import (
     is_engineer_self_scoped,
@@ -221,9 +228,10 @@ async def hub_load_vs_capacity(
             est_lab_by_region[est_region] += float(est_l)
 
     # --- Supply (ADR 0008) ---------------------------------------------------
-    fte_by_hub: dict[uuid.UUID, float] = defaultdict(float)
-    for hub_id, fte in (await db.execute(select(Engineer.hub_id, Engineer.fte))).all():
-        fte_by_hub[hub_id] += float(fte)
+    fte_values: dict[uuid.UUID, list[object]] = defaultdict(list)
+    for eng_hub_id, fte in (await db.execute(select(Engineer.hub_id, Engineer.fte))).all():
+        fte_values[eng_hub_id].append(fte)
+    fte_by_hub = {k: fte_sum(v) for k, v in fte_values.items()}
     calendar_by_hub = {
         c.hub_id: c for c in (await db.execute(select(HubWorkCalendar))).scalars().all()
     }
@@ -249,8 +257,11 @@ async def hub_load_vs_capacity(
     for h in hubs:
         cal = calendar_figures(calendar_by_hub.get(h.id), current_week)
         fte = fte_by_hub.get(h.id, 0.0)
-        design_year = cal.working_weeks_per_engineer * fte
-        design_remaining = cal.remaining_working_weeks * fte
+        design_year, design_remaining = design_capacity(
+            calendar_by_hub.get(h.id), fte, current_week
+        )
+        wd = hub_weekdays_per_week(calendar_by_hub.get(h.id))
+        lab_wd = region_weekdays_per_week(calendars, h.lab_region)
         lab_year = lab_year_by_region.get(h.lab_region, 0.0)
         lab_remaining = lab_year * lab_fraction
         d_load = design_load.get(h.id, 0)
@@ -306,6 +317,12 @@ async def hub_load_vs_capacity(
                 lab_load_by_priority=PriorityLoadSplit(
                     **split_to_total(lab_by_priority.get(h.lab_region, {}), l_load)
                 ),
+                weekdays_per_week=wd,
+                capacity_days=_days(round2(design_year), round2(design_remaining), wd),
+                load_days=_days(d_load, d_load, wd),
+                lab_weekdays_per_week=lab_wd,
+                lab_capacity_days=_days(round2(lab_year), round2(lab_remaining), lab_wd),
+                lab_load_days=_days(round2(l_load), round2(l_load), lab_wd),
             )
         )
 
@@ -325,7 +342,51 @@ async def hub_load_vs_capacity(
         full_threshold_pct=dc.BOOKING_FULL_PCT,
         areas=_area_rows(rows),
         totals=_totals(rows),
+        lab_regions=_lab_region_rows(rows, chambers_by_region),
     )
+
+
+def _days(year_weeks: float, remaining_weeks: float, weekdays: float) -> YearRemaining:
+    """P19-T03: served weeks → days on both bases (`to_days`, 2 dp)."""
+
+    return YearRemaining(
+        year=to_days(year_weeks, weekdays), remaining=to_days(remaining_weeks, weekdays)
+    )
+
+
+def _sum_pairs(pairs: list[YearRemaining]) -> YearRemaining:
+    return YearRemaining(
+        year=round2(sum(p.year for p in pairs)),
+        remaining=round2(sum(p.remaining for p in pairs)),
+    )
+
+
+def _lab_region_rows(
+    rows: list[HubCapacityRow],
+    chambers_by_region: dict[LabRegion, list[CapacityChamberRow]],
+) -> list[LabRegionCapacityRow]:
+    """P19-T03 (§1): one row per distinct lab region of the served hub rows,
+    copied from the region's first hub row, so it equals what the hub rows
+    show (I17/I19). Ordered by region name: Greece, India, Romania."""
+
+    first: dict[LabRegion, HubCapacityRow] = {}
+    for row in rows:
+        first.setdefault(row.lab_region, row)
+    return [
+        LabRegionCapacityRow(
+            lab_region=region,
+            weekdays_per_week=first[region].lab_weekdays_per_week,
+            chamber_count=len(chambers_by_region.get(region, [])),
+            capacity_weeks=YearRemaining(
+                year=first[region].lab_capacity_year,
+                remaining=first[region].lab_capacity_remaining,
+            ),
+            load_weeks=first[region].lab_load_weeks,
+            capacity_days=first[region].lab_capacity_days,
+            load_days=first[region].lab_load_days,
+        )
+        for region in sorted(first, key=lambda r: r.value)
+    ]
 
 
 def _totals(rows: list[HubCapacityRow]) -> CapacityTotals:
@@ -375,6 +436,10 @@ def _totals(rows: list[HubCapacityRow]) -> CapacityTotals:
         lab_booking_status_year=l_book_y[1],
         lab_booking_status_remaining=l_book_r[1],
         lab_load_by_priority=PriorityLoadSplit(**split_to_total(l_split, l_load)),
+        design_capacity_days=_sum_pairs([r.capacity_days for r in rows]),
+        design_load_days=_sum_pairs([r.load_days for r in rows]),
+        lab_capacity_days=_sum_pairs([r.lab_capacity_days for r in lab_rows]),
+        lab_load_days=_sum_pairs([r.lab_load_days for r in lab_rows]),
     )
 
 

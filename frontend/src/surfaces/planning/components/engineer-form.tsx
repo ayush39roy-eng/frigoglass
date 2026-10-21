@@ -47,6 +47,8 @@ export interface EngineerFormDialogProps {
   onOpenChange: (open: boolean) => void;
   hubs: Hub[];
   onSubmit: (body: EngineerCreateRequest) => Promise<unknown>;
+  /** P19-T04: the hub pre-selected on create (a hub card's "Add" action). */
+  defaultHubId?: string | undefined;
 }
 
 export function EngineerFormDialog({
@@ -56,16 +58,18 @@ export function EngineerFormDialog({
   onOpenChange,
   hubs,
   onSubmit,
+  defaultHubId,
 }: EngineerFormDialogProps): React.JSX.Element {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-lg">
         {mode === 'edit' && engineer === null ? null : (
           <EngineerForm
-            key={engineer?.id ?? 'new'}
+            key={engineer?.id ?? `new-${defaultHubId ?? ''}`}
             mode={mode}
             engineer={engineer}
             hubs={hubs}
+            defaultHubId={defaultHubId}
             onOpenChange={onOpenChange}
             onSubmit={onSubmit}
           />
@@ -81,7 +85,9 @@ function EngineerForm({
   hubs,
   onOpenChange,
   onSubmit,
+  defaultHubId,
 }: {
+  defaultHubId?: string | undefined;
   mode: 'create' | 'edit';
   engineer: EngineerRead | null;
   hubs: Hub[];
@@ -89,7 +95,7 @@ function EngineerForm({
   onSubmit: EngineerFormDialogProps['onSubmit'];
 }): React.JSX.Element {
   const [submitError, setSubmitError] = React.useState<string | null>(null);
-  const [hubId, setHubId] = React.useState<string>(engineer?.hub_id ?? '');
+  const [hubId, setHubId] = React.useState<string>(engineer?.hub_id ?? defaultHubId ?? '');
   const [categories, setCategories] = React.useState<EngineerAllowedCategory[]>(
     engineer?.allowed_categories ?? [],
   );

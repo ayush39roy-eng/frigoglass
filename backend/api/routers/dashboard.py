@@ -79,6 +79,7 @@ from schemas.dashboard import (
     ProjectFilterRow,
     RegionSummary,
     RegionSummaryRow,
+    RegisterTypeFilter,
     ScheduleOutcome,
     StatusOverview,
     StepFacet,
@@ -654,11 +655,15 @@ def _register_stmt(
     status_: ProjectStatus | None = None,
     priority: ProjectPriority | None = None,
     q: str | None = None,
-    type_: ProjectType | None = None,
+    type_: RegisterTypeFilter | None = None,
     leader_engineer_id: uuid.UUID | None = None,
 ) -> Select[Project]:
     """The register's scoped, filtered project set. Every predicate is a
-    SQLAlchemy expression with bound parameters; nothing is interpolated."""
+    SQLAlchemy expression with bound parameters; nothing is interpolated.
+
+    P17-R09: `type_ == "Unmapped"` (the analytics bucket key, `_UNMAPPED`)
+    selects `Project.type IS NULL`, so the list equals the `/analytics`
+    `by_type` "Unmapped" bucket for the same scope and filter."""
 
     stmt = select(Project).options(selectinload(Project.hub), selectinload(Project.leader_engineer))
     hub_filter = narrowed_hub_filter(current_user, Project.hub_id, hub_id, region)
@@ -670,7 +675,9 @@ def _register_stmt(
         stmt = stmt.where(Project.status == status_)
     if priority is not None:
         stmt = stmt.where(Project.priority == priority)
-    if type_ is not None:
+    if type_ == _UNMAPPED:
+        stmt = stmt.where(Project.type.is_(None))
+    elif type_ is not None:
         stmt = stmt.where(Project.type == type_)
     if leader_engineer_id is not None:
         stmt = stmt.where(Project.leader_engineer_id == leader_engineer_id)
@@ -711,7 +718,7 @@ async def analytics_projects(
     priority: ProjectPriority | None = None,
     region: LabRegion | None = None,
     q: Annotated[str | None, Query(max_length=100)] = None,
-    type_: Annotated[ProjectType | None, Query(alias="type")] = None,
+    type_: Annotated[RegisterTypeFilter | None, Query(alias="type")] = None,
     leader_engineer_id: uuid.UUID | None = None,
     current_step: Annotated[str | None, Query(max_length=10)] = None,
     sort: Literal["name", "priority"] = "name",
@@ -722,6 +729,8 @@ async def analytics_projects(
     priority)" (`docs/PROJECT_AND_STACK.md` §2), hub-scoped (P3-T03), upgraded
     to the "All registered projects" register in P13 (ADR 0025 §5,
     `docs/API_CONTRACT_P13.md` §3). Every filter is ANDed server-side.
+    `type` is a `ProjectType` or the sentinel "Unmapped" (null type,
+    P17-R09); any other value is 422.
 
     Bulk loads only: hub and leader by `selectinload`, then one
     `build_project_cards` pass (scores, live steps, run steps, outcomes,

@@ -465,6 +465,17 @@ CONTRACT_TABLE: list[tuple[Path, str, str, str]] = [
     (_PLANNING_TS, "EngineerCreateRequest", "EngineerCreateRequest", "exact"),
     (_PLANNING_TS, "ScheduleRunSummary", "ScheduleRunSummary", "exact"),
     (_PLANNING_TS, "GreedyRecalcResponse", "GreedyRecalcResponse", "exact"),
+    # --- P19-T03: capacity summary + resource load (backend/schemas/planning.py) ---
+    (_PLANNING_TS, "BasisPair", "YearRemaining", "exact"),
+    (_PLANNING_TS, "DesignHubSummary", "DesignHubSummary", "exact"),
+    (_PLANNING_TS, "DesignTotalSummary", "DesignTotal", "exact"),
+    (_PLANNING_TS, "LabRegionSummary", "LabRegionSummary", "exact"),
+    (_PLANNING_TS, "LabTotalSummary", "LabTotal", "exact"),
+    (_PLANNING_TS, "EngineerLoadRow", "EngineerResourceLoad", "exact"),
+    (_PLANNING_TS, "ChamberLoadRow", "ChamberResourceLoad", "exact"),
+    (_PLANNING_TS, "LoadTotals", "ResourceLoadTotal", "exact"),
+    (_PLANNING_TS, "ResourceLoadFiltersApplied", "ResourceLoadFilters", "exact"),
+    (_PLANNING_TS, "ResourceLoadResponse", "ResourceLoadResponse", "exact"),
     # --- P11: priority move + run changes (backend/schemas/{project,schedule_run}.py) ---
     (_PRIORITY_MOVE_TS, "PriorityMoveRequest", "PriorityMoveRequest", "exact"),
     (_PRIORITY_MOVE_TS, "PriorityMoveResponse", "PriorityMoveResponse", "exact"),
@@ -729,6 +740,18 @@ class TestOpenApiFrontendContract:
                 "ProjectFacets",
             },
             _MATRIX_TS: {"DimensionMeta"},
+            # P19-T04: UI state for the Resource load analytics filter bar
+            # (combobox option, the six selected filters), never a response.
+            _PLANNING_TS: {
+                "FilterOption",
+                "ResourceLoadFilters",
+                # P19-T03: declare inline object types (`design: { hubs; total }`,
+                # `engineers: { engineer_id; name; hub }[]`), which this parser
+                # cannot read. The backend side is pinned by
+                # `tests/test_p19_planning_capacity.py` (summary / options tests).
+                "CapacitySummary",
+                "ResourceLoadOptionsResponse",
+            },
             _GANTT_TS: {
                 # P13-T13: the Gantt's Leader / Step filter options, served by
                 # `GET /dashboard/projects/facets` (backend `ProjectFacets`).

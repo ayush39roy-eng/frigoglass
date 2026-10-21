@@ -1,13 +1,13 @@
 import * as React from 'react';
-import { Gauge, HardHat, Plus, Thermometer } from 'lucide-react';
+import { HardHat, Plus, Thermometer } from 'lucide-react';
 
 import { PageHeader } from '@/components/layout/page-header';
-import { TileStat } from '@/components/ui/stat-variants';
 import { SectionBoundary } from '@/components/shared/section-boundary';
 import { DownloadButton } from '@/components/shared/download-button';
 import { EmptyState } from '@/components/shared/empty-state';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
 import {
   Select,
@@ -19,10 +19,10 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { ReadOnlyNotice } from '@/components/session/write-gate';
 import { ApiError } from '@/lib/api/client';
-import { useHubs } from '@/lib/api/reference';
-import { SURFACES } from '@/app/nav';
-import { usePermission } from '@/stores/session';
-import type { LabRegion } from '@/types/enums';
+import { useHubs, useWorkflowStepTemplates } from '@/lib/api/reference';
+import { hubsInScope, regionsInScope } from '@/components/shared/hub-filter/hub-scope';
+import { usePermission, useSession } from '@/stores/session';
+import { HUB_NAMES, LAB_REGIONS, type LabRegion } from '@/types/enums';
 
 import { AccessNotice, WriteForbiddenNotice } from './components/access-notice';
 import { ApplyLogicCard } from './components/apply-logic-panel';
@@ -33,10 +33,27 @@ import { ConfirmDialog } from './components/confirm-dialog';
 import { EngineerFormDialog } from './components/engineer-form';
 import { EngineerTable, type EngineerTableRow } from './components/engineer-table';
 import { WhatIfPlanner } from './whatif/components/whatif-planner';
-import type { ChamberCreateRequest, ChamberRead, EngineerCreateRequest, EngineerRead } from './api/types';
+import { CapacityTotalCards } from './components/overview/capacity-total-cards';
+import { HubEngineerCard } from './components/overview/hub-engineer-card';
+import { LabRegionCard } from './components/overview/lab-region-card';
+import { PlanningToolbar } from './components/overview/planning-toolbar';
+import { ResourceLoadSection } from './components/resource-load/resource-load-section';
+import { stageChips } from './lib/chip-options';
+import { groupRows } from './lib/group-rows';
+import type { CapacityUnit } from './lib/figures';
+import type {
+  CapacityBasis,
+  ChamberCreateRequest,
+  ChamberRead,
+  ChamberUpdateRequest,
+  EngineerCreateRequest,
+  EngineerRead,
+  EngineerUpdateRequest,
+} from './api/types';
 import {
   useActiveScheduleRun,
   useApplyLogic,
+  useCapacitySummary,
   useChamberList,
   useCreateChamber,
   useCreateEngineer,
@@ -47,8 +64,9 @@ import {
   useUpdateEngineer,
 } from './hooks/use-planning';
 
-const PLANNING_SURFACE = SURFACES.find((s) => s.path === '/planning');
 const ALL = '__all__';
+const TITLE = 'Capacity Planning';
+const DESCRIPTION = 'Configure resource mapping, availability, and capacity logic for the year.';
 
 function authKind(errors: unknown[]): 'forbidden' | 'unauthorized' | null {
   for (const err of errors) {
@@ -76,13 +94,26 @@ export default function PlanningPage(): React.JSX.Element {
   const [editChamber, setEditChamber] = React.useState<ChamberRead | null>(null);
   const [deleteChamberTarget, setDeleteChamberTarget] = React.useState<ChamberRead | null>(null);
 
-  // --- Apply Logic ---
+  // --- Apply Logic / Auto-assign (P19-T04: header buttons opening dialogs) ---
   const [applyError, setApplyError] = React.useState<string | null>(null);
+  const [applyOpen, setApplyOpen] = React.useState(false);
+  const [autoAssignOpen, setAutoAssignOpen] = React.useState(false);
+
+  // --- P19-T04 Overview: basis (YTD = remaining, the default) and unit ---
+  const [basis, setBasis] = React.useState<CapacityBasis>('remaining');
+  const [unit, setUnit] = React.useState<CapacityUnit>('weeks');
+  const [defaultHubId, setDefaultHubId] = React.useState<string | undefined>(undefined);
+  const [defaultRegion, setDefaultRegion] = React.useState<LabRegion | undefined>(undefined);
 
   const hubsQuery = useHubs();
   const engineerListQuery = useEngineerList(hubId === ALL ? undefined : hubId);
+  // The Overview always lists every visible engineer (same key as "All hubs").
+  const allEngineersQuery = useEngineerList(undefined);
   const chamberListQuery = useChamberList();
   const activeRunQuery = useActiveScheduleRun(true);
+  const summaryQuery = useCapacitySummary();
+  const templatesQuery = useWorkflowStepTemplates();
+  const { me } = useSession();
 
   const createEngineerMut = useCreateEngineer();
   const updateEngineerMut = useUpdateEngineer();
@@ -91,11 +122,6 @@ export default function PlanningPage(): React.JSX.Element {
   const updateChamberMut = useUpdateChamber();
   const deleteChamberMut = useDeleteChamber();
   const applyLogicMut = useApplyLogic();
-
-  const title = PLANNING_SURFACE?.title ?? 'Capacity Planning';
-  const description =
-    PLANNING_SURFACE?.summary ??
-    'Engineer and chamber configuration, Apply Logic and Auto-assign.';
 
   const denied = authKind([engineerListQuery.error, chamberListQuery.error]);
   // Session table first (ADR 0010), server 403 second.
@@ -121,7 +147,8 @@ export default function PlanningPage(): React.JSX.Element {
 
   const handleForbidden = React.useCallback(() => setWriteForbidden(true), []);
 
-  const handleNewEngineer = React.useCallback(() => {
+  const handleNewEngineer = React.useCallback((hub?: string) => {
+    setDefaultHubId(typeof hub === 'string' ? hub : undefined);
     setEngineerFormMode('create');
     setEditEngineer(null);
     setEngineerFormOpen(true);
@@ -161,7 +188,8 @@ export default function PlanningPage(): React.JSX.Element {
     }
   }, [deleteEngineerTarget, deleteEngineerMut, handleForbidden]);
 
-  const handleNewChamber = React.useCallback(() => {
+  const handleNewChamber = React.useCallback((region?: LabRegion) => {
+    setDefaultRegion(typeof region === 'string' ? region : undefined);
     setChamberFormMode('create');
     setEditChamber(null);
     setChamberFormOpen(true);
@@ -199,6 +227,73 @@ export default function PlanningPage(): React.JSX.Element {
     }
   }, [deleteChamberTarget, deleteChamberMut, handleForbidden]);
 
+  // P19-T04 inline edits: the same PATCH endpoints, validation and audit as the
+  // forms; a 403 downgrades the page to read-only like every other write.
+  const handleInlineEngineer = React.useCallback(
+    async (engineerId: string, body: EngineerUpdateRequest) => {
+      try {
+        return await updateEngineerMut.mutateAsync({ engineerId, body });
+      } catch (err) {
+        if (err instanceof ApiError && err.isForbidden) handleForbidden();
+        throw err;
+      }
+    },
+    [updateEngineerMut, handleForbidden],
+  );
+  const handleInlineChamber = React.useCallback(
+    async (chamberId: string, body: ChamberUpdateRequest) => {
+      try {
+        return await updateChamberMut.mutateAsync({ chamberId, body });
+      } catch (err) {
+        if (err instanceof ApiError && err.isForbidden) handleForbidden();
+        throw err;
+      }
+    },
+    [updateChamberMut, handleForbidden],
+  );
+
+  // Which cards the caller may edit: write permission AND the hub (or a hub of
+  // the lab region) in their scope. A narrowing of the UI only; the server
+  // decides (403 on anything else).
+  const scopedHubs = React.useMemo(() => hubsInScope(me, hubsQuery.data), [me, hubsQuery.data]);
+  const editableHubIds = React.useMemo(() => new Set((scopedHubs ?? []).map((h) => h.id)), [scopedHubs]);
+  const editableRegions = React.useMemo(() => new Set(regionsInScope(scopedHubs) ?? []), [scopedHubs]);
+
+  const hubIdByName = React.useMemo(() => {
+    const map = new Map<string, { id: string; lab_region: LabRegion }>();
+    for (const h of hubsQuery.data ?? []) map.set(h.name, { id: h.id, lab_region: h.lab_region });
+    return map;
+  }, [hubsQuery.data]);
+
+  const engineerGroups = React.useMemo(() => {
+    const engineers = allEngineersQuery.data ?? [];
+    const groups = groupRows(engineers, (e) => hubById.get(e.hub_id)?.name ?? e.hub_id, HUB_NAMES);
+    const byName = new Map(groups.map((g) => [g.key, g.rows]));
+    for (const h of summaryQuery.data?.design.hubs ?? []) if (!byName.has(h.hub)) byName.set(h.hub, []);
+    const rank = (k: string) => {
+      const i = (HUB_NAMES as readonly string[]).indexOf(k);
+      return i === -1 ? HUB_NAMES.length : i;
+    };
+    return [...byName.entries()].sort(([a], [b]) => rank(a) - rank(b) || a.localeCompare(b));
+  }, [allEngineersQuery.data, hubById, summaryQuery.data]);
+
+  const chamberGroups = React.useMemo(() => {
+    const chambers = chamberListQuery.data ?? [];
+    const groups = groupRows(chambers, (c) => c.lab_region, LAB_REGIONS);
+    const byRegion = new Map<string, ChamberRead[]>(groups.map((g) => [g.key, g.rows]));
+    for (const r of summaryQuery.data?.lab.regions ?? []) if (!byRegion.has(r.lab_region)) byRegion.set(r.lab_region, []);
+    const rank = (k: string) => {
+      const i = (LAB_REGIONS as readonly string[]).indexOf(k);
+      return i === -1 ? LAB_REGIONS.length : i;
+    };
+    return [...byRegion.entries()].sort(([a], [b]) => rank(a) - rank(b) || a.localeCompare(b));
+  }, [chamberListQuery.data, summaryQuery.data]);
+
+  const stages = React.useMemo(
+    () => stageChips(templatesQuery.data, (chamberListQuery.data ?? []).map((c) => c.allowed_stages)),
+    [templatesQuery.data, chamberListQuery.data],
+  );
+
   const handleApplyLogic = React.useCallback(async () => {
     setApplyError(null);
     try {
@@ -221,7 +316,22 @@ export default function PlanningPage(): React.JSX.Element {
 
   return (
     <>
-      <PageHeader title={title} description={description} />
+      <PageHeader
+        title={TITLE}
+        description={DESCRIPTION}
+        actions={
+          denied ? undefined : (
+            <PlanningToolbar
+              basis={basis}
+              onBasisChange={setBasis}
+              unit={unit}
+              onUnitChange={setUnit}
+              onApplyLogic={() => setApplyOpen(true)}
+              onAutoAssign={() => setAutoAssignOpen(true)}
+            />
+          )
+        }
+      />
 
       {denied ? (
         <AccessNotice kind={denied} />
@@ -230,38 +340,131 @@ export default function PlanningPage(): React.JSX.Element {
           <ReadOnlyNotice surface="capacity_planning" what="Creating, editing or applying changes" />
           {writeForbidden ? <WriteForbiddenNotice /> : null}
 
-          {engineerListQuery.data && chamberListQuery.data ? (
-            <div className="grid gap-gutter sm:grid-cols-3">
-              <TileStat
-                label="Engineers"
-                value={engineerListQuery.data.length}
-                icon={HardHat}
-                accent="primary"
-                hint={hubId === ALL ? 'Across all hubs' : 'In the selected hub'}
-              />
-              <TileStat
-                label="Total FTE"
-                value={String(Math.round(engineerListQuery.data.reduce((sum, e) => sum + e.fte, 0) * 10) / 10)}
-                icon={Gauge}
-                accent="success"
-                hint="Sum of configured FTE"
-              />
-              <TileStat
-                label="Lab chambers"
-                value={chamberListQuery.data.length}
-                icon={Thermometer}
-                accent="warning"
-                hint="Configured test chambers"
-              />
-            </div>
-          ) : null}
-          <Tabs defaultValue="engineers">
+          <Tabs defaultValue="overview">
             <TabsList>
+              <TabsTrigger value="overview">Overview</TabsTrigger>
               <TabsTrigger value="engineers">Engineers</TabsTrigger>
               <TabsTrigger value="chambers">Chambers</TabsTrigger>
-              <TabsTrigger value="apply-logic">Apply Logic &amp; Auto-assign</TabsTrigger>
               <TabsTrigger value="what-if">What-if planner</TabsTrigger>
             </TabsList>
+
+            <TabsContent value="overview" className="flex flex-col gap-4">
+              <CapacityTotalCards summary={summaryQuery.data} basis={basis} unit={unit} />
+              {summaryQuery.isError ? (
+                <p role="status" className="text-2xs text-text-muted">
+                  The capacity summary could not be loaded, so hub and region totals show &ldquo;—&rdquo;.
+                </p>
+              ) : null}
+
+              <div className="grid items-start gap-4 xl:grid-cols-2">
+                <section aria-labelledby="design-resources-heading" className="flex min-w-0 flex-col gap-3">
+                  <h2 id="design-resources-heading" className="flex items-center gap-2 font-display text-base font-bold text-text">
+                    <HardHat aria-hidden="true" className="size-4 text-primary" />
+                    Design resources (engineers)
+                  </h2>
+                  <SectionBoundary
+                    query={allEngineersQuery}
+                    title="Engineers"
+                    errorDescription="The engineer list could not be loaded."
+                  >
+                    {() =>
+                      engineerGroups.length === 0 ? (
+                        <EmptyState
+                          title="No engineers registered yet"
+                          description="Add an engineer to make them available as a project leader and a design-step scheduling resource."
+                          action={
+                            canEdit ? (
+                              <Button type="button" size="sm" onClick={() => handleNewEngineer()}>
+                                <Plus />
+                                New engineer
+                              </Button>
+                            ) : undefined
+                          }
+                        />
+                      ) : (
+                        <div className="flex flex-col gap-3">
+                          {engineerGroups.map(([hubName, rows]) => {
+                            const hub = hubIdByName.get(hubName);
+                            return (
+                              <HubEngineerCard
+                                key={hubName}
+                                hubName={hubName}
+                                hubId={hub?.id}
+                                region={hub?.lab_region}
+                                summary={summaryQuery.data?.design.hubs.find((h) => h.hub === hubName)}
+                                engineers={rows}
+                                basis={basis}
+                                unit={unit}
+                                canEdit={canEdit && hub !== undefined && editableHubIds.has(hub.id)}
+                                onUpdate={handleInlineEngineer}
+                                onEdit={handleEditEngineer}
+                                onDelete={setDeleteEngineerTarget}
+                                onAdd={handleNewEngineer}
+                              />
+                            );
+                          })}
+                        </div>
+                      )
+                    }
+                  </SectionBoundary>
+                </section>
+
+                <section aria-labelledby="lab-resources-heading" className="flex min-w-0 flex-col gap-3">
+                  <h2 id="lab-resources-heading" className="flex items-center gap-2 font-display text-base font-bold text-text">
+                    <Thermometer aria-hidden="true" className="size-4 text-success" />
+                    Lab &amp; chamber capacities
+                  </h2>
+                  <SectionBoundary
+                    query={chamberListQuery}
+                    title="Chambers"
+                    errorDescription="The chamber list could not be loaded."
+                  >
+                    {() =>
+                      chamberGroups.length === 0 ? (
+                        <EmptyState
+                          title="No chambers registered yet"
+                          description="Add a chamber to make it available as a lab-step scheduling resource."
+                          action={
+                            canEdit ? (
+                              <Button type="button" size="sm" onClick={() => handleNewChamber()}>
+                                <Plus />
+                                New chamber
+                              </Button>
+                            ) : undefined
+                          }
+                        />
+                      ) : (
+                        <div className="flex flex-col gap-3">
+                          {chamberGroups.map(([region, rows]) => (
+                            <LabRegionCard
+                              key={region}
+                              region={region}
+                              summary={summaryQuery.data?.lab.regions.find((r) => r.lab_region === region)}
+                              chambers={rows}
+                              stages={stages}
+                              basis={basis}
+                              unit={unit}
+                              canEdit={canEdit && editableRegions.has(region as LabRegion)}
+                              onUpdate={handleInlineChamber}
+                              onEdit={handleEditChamber}
+                              onDelete={setDeleteChamberTarget}
+                              onAdd={() => handleNewChamber(region as LabRegion)}
+                            />
+                          ))}
+                        </div>
+                      )
+                    }
+                  </SectionBoundary>
+                </section>
+              </div>
+
+              <ResourceLoadSection
+                basis={basis}
+                unit={unit}
+                hubs={scopedHubs ?? hubsQuery.data ?? []}
+                armed={allEngineersQuery.data !== undefined && chamberListQuery.data !== undefined}
+              />
+            </TabsContent>
 
             <TabsContent value="engineers">
               <Card>
@@ -277,7 +480,7 @@ export default function PlanningPage(): React.JSX.Element {
                       fallbackFilename="capacity-planning-engineers-export"
                     />
                     {canEdit ? (
-                      <Button type="button" size="sm" onClick={handleNewEngineer}>
+                      <Button type="button" size="sm" onClick={() => handleNewEngineer()}>
                         <Plus />
                         New engineer
                       </Button>
@@ -315,7 +518,7 @@ export default function PlanningPage(): React.JSX.Element {
                           description="Add an engineer to make them available as a project leader and a design-step scheduling resource."
                           action={
                             canEdit ? (
-                              <Button type="button" size="sm" onClick={handleNewEngineer}>
+                              <Button type="button" size="sm" onClick={() => handleNewEngineer()}>
                                 <Plus />
                                 New engineer
                               </Button>
@@ -347,7 +550,7 @@ export default function PlanningPage(): React.JSX.Element {
                       fallbackFilename="capacity-planning-chambers-export"
                     />
                     {canEdit ? (
-                      <Button type="button" size="sm" onClick={handleNewChamber}>
+                      <Button type="button" size="sm" onClick={() => handleNewChamber()}>
                         <Plus />
                         New chamber
                       </Button>
@@ -367,7 +570,7 @@ export default function PlanningPage(): React.JSX.Element {
                           description="Add a chamber to make it available as a lab-step scheduling resource."
                           action={
                             canEdit ? (
-                              <Button type="button" size="sm" onClick={handleNewChamber}>
+                              <Button type="button" size="sm" onClick={() => handleNewChamber()}>
                                 <Plus />
                                 New chamber
                               </Button>
@@ -388,18 +591,6 @@ export default function PlanningPage(): React.JSX.Element {
               </Card>
             </TabsContent>
 
-            <TabsContent value="apply-logic" className="flex flex-col gap-4">
-              <ApplyLogicCard
-                canEdit={canEdit}
-                provenance={provenance}
-                onApply={handleApplyLogic}
-                isApplying={applyLogicMut.isPending}
-                lastResult={applyLogicMut.data ?? null}
-                errorMessage={applyError}
-              />
-              <AutoAssignPlaceholder />
-            </TabsContent>
-
             {/* P18-T03: a read-only calculation (no write permission needed). Kept
                 mounted while hidden so a half-built scenario, its results and the
                 chat transcript survive a switch to another tab. */}
@@ -410,7 +601,35 @@ export default function PlanningPage(): React.JSX.Element {
         </div>
       )}
 
+      <Dialog open={applyOpen} onOpenChange={setApplyOpen}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Apply logic</DialogTitle>
+            <DialogDescription>Recompute the schedule with the current engineer and chamber configuration.</DialogDescription>
+          </DialogHeader>
+          <ApplyLogicCard
+            bare
+            canEdit={canEdit}
+            provenance={provenance}
+            onApply={handleApplyLogic}
+            isApplying={applyLogicMut.isPending}
+            lastResult={applyLogicMut.data ?? null}
+            errorMessage={applyError}
+          />
+        </DialogContent>
+      </Dialog>
+      <Dialog open={autoAssignOpen} onOpenChange={setAutoAssignOpen}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Auto-assign projects</DialogTitle>
+            <DialogDescription>Bulk resource assignment by the optimizer.</DialogDescription>
+          </DialogHeader>
+          <AutoAssignPlaceholder />
+        </DialogContent>
+      </Dialog>
+
       <EngineerFormDialog
+        defaultHubId={engineerFormMode === 'create' ? defaultHubId : undefined}
         mode={engineerFormMode}
         engineer={editEngineer}
         open={engineerFormOpen}
@@ -430,6 +649,7 @@ export default function PlanningPage(): React.JSX.Element {
       />
 
       <ChamberFormDialog
+        defaultRegion={chamberFormMode === 'create' ? defaultRegion : undefined}
         mode={chamberFormMode}
         chamber={editChamber}
         open={chamberFormOpen}

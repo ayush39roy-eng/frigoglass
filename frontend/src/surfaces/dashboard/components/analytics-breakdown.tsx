@@ -1,10 +1,11 @@
 import * as React from 'react';
-import { CalendarRange, PieChart as PieIcon, Shapes, Split, Tags } from 'lucide-react';
+import { CalendarRange, PieChart as PieIcon, Shapes, Tags } from 'lucide-react';
 import {
   Bar,
   BarChart as RechartsBarChart,
   CartesianGrid,
   Cell,
+  LabelList,
   Pie,
   PieChart,
   ResponsiveContainer,
@@ -20,9 +21,8 @@ import { formatInteger } from '@/lib/format';
 import { useMotionTokens } from '@/lib/motion';
 import { HUB_NAMES, PROJECT_TYPES, type ProjectType } from '@/types/enums';
 
-import type { AnalyticsBucket, CompletingByTypeRow, DashboardAnalytics } from '../api/types';
+import type { AnalyticsBucket, DashboardAnalytics } from '../api/types';
 import { formatServedPct, typeCode, typeLabel } from '../lib/analytics';
-import { CompletingHubTypeTable } from './completing-hub-type-table';
 
 /**
  * "Analytics & breakdown" (P13-T10, API_CONTRACT_P13 §5; mock-up images 7–8).
@@ -32,6 +32,10 @@ import { CompletingHubTypeTable } from './completing-hub-type-table';
  * label and percentage is one served field. Bar widths and slice angles are
  * the chart library's drawing of those served counts; no figure is derived in
  * the browser (I9). Plant and Requested-by charts are not built (OQ #34).
+ *
+ * P17-R08: the "Completing within year: Hub × Type" table and the "Pipeline vs
+ * completing" chart moved up the page, beside the pipeline summary table
+ * (`hub-type-section.tsx`); this section keeps the four composition charts.
  */
 
 export interface AnalyticsBreakdownProps {
@@ -49,30 +53,9 @@ export function AnalyticsBreakdown({ data, pipelineTotal }: AnalyticsBreakdownPr
           Analytics &amp; breakdown
         </h2>
         <p className="text-sm font-medium text-text-muted">
-          The pipeline by type, registration year, hub and category, and what completes within the year
+          The pipeline by type, registration year, hub and category
         </p>
       </div>
-
-      {data.has_active_schedule_run ? (
-        <div className="grid gap-gutter xl:grid-cols-12">
-          <div className="min-w-0 xl:col-span-7">
-            <CompletingHubTypeTable
-              cells={data.completing_hub_type}
-              byType={data.completing_by_type}
-              byHub={data.completing_by_hub}
-            />
-          </div>
-          <div className="min-w-0 xl:col-span-5">
-            <PipelineVsCompletingChart rows={data.completing_by_type} />
-          </div>
-        </div>
-      ) : (
-        <BoltCard className="p-card">
-          <p className="text-sm text-text-muted">
-            No active schedule run yet: the within-year completion breakdown appears after the first run.
-          </p>
-        </BoltCard>
-      )}
 
       <div className="grid gap-gutter lg:grid-cols-2">
         <ChartCard
@@ -204,6 +187,7 @@ interface BucketDatum {
   count: number;
   share_pct: number;
   fill: string;
+  label: string;
 }
 
 function BucketTooltip({
@@ -248,6 +232,7 @@ function BucketBars({
         count: b.count,
         share_pct: b.share_pct,
         fill: catFill(colorOf(b.key, i)),
+        label: `${formatInteger(b.count)} (${formatServedPct(b.share_pct)})`,
       })),
     [buckets, codeOf, nameOf, colorOf],
   );
@@ -280,29 +265,13 @@ function BucketBars({
               radius={[8, 8, 0, 0]}
               maxBarSize={64}
               isAnimationActive={!reduced}
-              label={(props: { x?: string | number | undefined; y?: string | number | undefined; width?: string | number | undefined; index?: number | undefined }) => {
-                const d = props.index === undefined ? undefined : data[props.index];
-                const x = Number(props.x);
-                const y = Number(props.y);
-                const w = Number(props.width);
-                if (!d || !Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(w)) return <g />;
-                return (
-                  <text
-                    x={x + w / 2}
-                    y={y - 8}
-                    textAnchor="middle"
-                    fontSize={10}
-                    fontWeight={700}
-                    fill="hsl(var(--color-text))"
-                  >
-                    {`${formatInteger(d.count)} (${formatServedPct(d.share_pct)})`}
-                  </text>
-                );
-              }}
             >
               {data.map((d) => (
                 <Cell key={d.key} fill={d.fill} />
               ))}
+              {/* P17-R08: LabelList reads each bar's own datum; the old label
+                  callback used Recharts' `index`, which skips zero bars. */}
+              <LabelList dataKey="label" position="top" offset={8} fontSize={10} fontWeight={700} fill="hsl(var(--color-text))" />
             </Bar>
           </RechartsBarChart>
         </ResponsiveContainer>
@@ -393,157 +362,3 @@ function BucketDonut({
     </div>
   );
 }
-
-/* ------------------------- pipeline vs completing -------------------------- */
-
-interface PvcDatum {
-  key: string;
-  code: string;
-  name: string;
-  pipeline: number;
-  completing: number;
-  pct: number;
-}
-
-function PvcTooltip({
-  active,
-  payload,
-}: {
-  active?: boolean;
-  payload?: Array<{ payload: PvcDatum }>;
-}): React.JSX.Element | null {
-  const d = payload?.[0]?.payload;
-  if (!active || !d) return null;
-  return (
-    <div className="rounded-xl border-[1.5px] border-border bg-surface px-s3 py-s2 text-xs shadow-pop">
-      <p className="font-bold text-text">{d.name}</p>
-      <p className="mt-0.5 flex items-center gap-1.5 text-text-muted" data-numeric="">
-        <span className="size-2 rounded-full bg-primary" aria-hidden="true" />
-        Pipeline {formatInteger(d.pipeline)}
-      </p>
-      <p className="flex items-center gap-1.5 text-text-muted" data-numeric="">
-        <span className="size-2 rounded-full bg-success" aria-hidden="true" />
-        Completing {formatInteger(d.completing)} ({formatServedPct(d.pct)})
-      </p>
-    </div>
-  );
-}
-
-function barLabel(
-  data: PvcDatum[],
-  text: (d: PvcDatum) => string,
-): (props: { x?: string | number | undefined; y?: string | number | undefined; width?: string | number | undefined; index?: number | undefined }) => React.JSX.Element {
-  return function PvcLabel(props) {
-    const d = props.index === undefined ? undefined : data[props.index];
-    const x = Number(props.x);
-    const y = Number(props.y);
-    const w = Number(props.width);
-    if (!d || !Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(w)) return <g />;
-    return (
-      <text x={x + w / 2} y={y - 6} textAnchor="middle" fontSize={9} fontWeight={700} fill="hsl(var(--color-text-muted))">
-        {text(d)}
-      </text>
-    );
-  };
-}
-
-export function PipelineVsCompletingChart({ rows }: { rows: CompletingByTypeRow[] }): React.JSX.Element {
-  const { reduced } = useMotionTokens();
-  const data = React.useMemo<PvcDatum[]>(
-    () =>
-      rows.map((r) => ({
-        key: r.key,
-        code: typeCode(r.key),
-        name: typeLabel(r.key),
-        pipeline: r.pipeline_count,
-        completing: r.completing_count,
-        pct: r.completing_pct,
-      })),
-    [rows],
-  );
-  return (
-    <BoltCard className="flex h-full flex-col gap-s4 p-card">
-      <div className="flex items-start justify-between gap-s3">
-        <div className="flex items-center gap-s3">
-          <span className="grid size-10 shrink-0 place-items-center rounded-xl bg-primary-subtle text-primary-subtle-fg">
-            <Split className="size-5" aria-hidden="true" />
-          </span>
-          <div>
-            <h3 className="font-display text-h2 font-bold tracking-tight text-text">Pipeline vs completing</h3>
-            <p className="text-xs font-medium text-text-subtle">Per project type, in the active run</p>
-          </div>
-        </div>
-        <div className="flex items-center gap-s3">
-          <span className="hidden items-center gap-s3 text-2xs font-semibold text-text-muted sm:flex">
-            <span className="flex items-center gap-1.5">
-              <span className="size-2.5 rounded-full bg-primary" aria-hidden="true" />
-              Pipeline
-            </span>
-            <span className="flex items-center gap-1.5">
-              <span className="size-2.5 rounded-full bg-success" aria-hidden="true" />
-              Completing
-            </span>
-          </span>
-          <CardInfo label="About pipeline vs completing">
-            <p>
-              For each project type: the pipeline count and how many of those projects the active
-              schedule run completes within the year, with the served completing share.
-            </p>
-          </CardInfo>
-        </div>
-      </div>
-      {data.length === 0 ? (
-        <Empty />
-      ) : (
-        <>
-          <figure aria-hidden="true" className="h-72 w-full flex-1">
-            <ResponsiveContainer width="100%" height="100%">
-              <RechartsBarChart accessibilityLayer={false} data={data} barGap={3} margin={{ top: 24, right: 4, bottom: 0, left: -20 }}>
-                <CartesianGrid vertical={false} strokeDasharray="3 4" stroke="hsl(var(--color-border))" />
-                <XAxis
-                  dataKey="code"
-                  tickLine={false}
-                  axisLine={false}
-                  interval={0}
-                  tick={{ fontSize: 11, fontWeight: 600, fill: 'hsl(var(--color-text-subtle))' }}
-                />
-                <YAxis
-                  allowDecimals={false}
-                  tickLine={false}
-                  axisLine={false}
-                  tick={{ fontSize: 10, fill: 'hsl(var(--color-text-subtle))' }}
-                />
-                <Tooltip content={<PvcTooltip />} cursor={{ fill: 'hsl(var(--color-surface-sunken))' }} />
-                <Bar
-                  dataKey="pipeline"
-                  fill="hsl(var(--color-primary))"
-                  radius={[6, 6, 0, 0]}
-                  maxBarSize={30}
-                  isAnimationActive={!reduced}
-                  label={barLabel(data, (d) => formatInteger(d.pipeline))}
-                />
-                <Bar
-                  dataKey="completing"
-                  fill="hsl(var(--color-success))"
-                  radius={[6, 6, 0, 0]}
-                  maxBarSize={30}
-                  isAnimationActive={!reduced}
-                  label={barLabel(data, (d) => `${formatInteger(d.completing)} (${formatServedPct(d.pct)})`)}
-                />
-              </RechartsBarChart>
-            </ResponsiveContainer>
-          </figure>
-          <ul aria-label="Pipeline vs completing by project type" className="sr-only">
-            {data.map((d) => (
-              <li key={d.key}>
-                {d.name}: pipeline {formatInteger(d.pipeline)}, completing {formatInteger(d.completing)} (
-                {formatServedPct(d.pct)})
-              </li>
-            ))}
-          </ul>
-        </>
-      )}
-    </BoltCard>
-  );
-}
-

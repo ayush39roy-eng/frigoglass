@@ -7,6 +7,13 @@
 import type { BookingStatus, HubName, LabRegion, ProjectCategory, ScheduleRunStatus, SolverType } from '@/types/enums';
 import type { Id } from '@/types/common';
 
+/** P19-T03 (API_CONTRACT_P19): one figure on both bases, 2 dp. A LOAD pair
+ *  carries the same value twice (load has no basis). */
+export interface YearRemaining {
+  year: number;
+  remaining: number;
+}
+
 /**
  * One chamber's supply inputs and derived figures (PLACEHOLDER — P9 contract §4,
  * ADR 0008): `working_weeks_per_chamber = 52 − holidays − maintenance − breakdown −
@@ -84,6 +91,14 @@ export interface HubCapacityRow {
    *  like `lab_load_weeks`, so it repeats on every hub row of the same lab region
    *  and must never be added across hubs of one region. */
   lab_load_by_priority: PriorityLoadSplit;
+  // P19-T03 (API_CONTRACT_P19 §1): served day figures (weeks × the served
+  // weekdays; never multiplied in the browser).
+  weekdays_per_week: number;
+  capacity_days: YearRemaining;
+  load_days: YearRemaining;
+  lab_weekdays_per_week: number;
+  lab_capacity_days: YearRemaining;
+  lab_load_days: YearRemaining;
   /** @deprecated P3-era alias of `design_capacity_remaining`; kept one release, not read. */
   design_capacity_weeks?: number;
   /** @deprecated P3-era alias of `lab_capacity_remaining`; kept one release, not read. */
@@ -142,6 +157,20 @@ export interface HubCapacitySummary {
   /** P13-T11 addendum: served portfolio totals over `rows` (design per hub,
    *  lab per lab region once). Render verbatim; never sum rows client-side. */
   totals: CapacityTotals;
+  /** P19-T03 (API_CONTRACT_P19 §1): one row per lab region, served once
+   *  (Greece, India, Romania; only regions of the served rows). */
+  lab_regions: LabRegionCapacityRow[];
+}
+
+/** P19-T03 (API_CONTRACT_P19 §1). */
+export interface LabRegionCapacityRow {
+  lab_region: LabRegion;
+  weekdays_per_week: number;
+  chamber_count: number;
+  capacity_weeks: YearRemaining;
+  load_weeks: number;
+  capacity_days: YearRemaining;
+  load_days: YearRemaining;
 }
 
 /** P13-T11 addendum: the total over the served hub rows (I9/I19). */
@@ -164,6 +193,11 @@ export interface CapacityTotals {
   lab_booking_status_year: BookingStatus;
   lab_booking_status_remaining: BookingStatus;
   lab_load_by_priority: PriorityLoadSplit;
+  // P19-T03: day totals = Σ the rows' served days (design per hub, lab per region once).
+  design_capacity_days: YearRemaining;
+  design_load_days: YearRemaining;
+  lab_capacity_days: YearRemaining;
+  lab_load_days: YearRemaining;
 }
 
 /**

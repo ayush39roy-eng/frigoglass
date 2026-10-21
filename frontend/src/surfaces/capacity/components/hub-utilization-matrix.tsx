@@ -1,16 +1,17 @@
 import * as React from 'react';
 
-import { BookingStatusChip } from '@/components/shared/booking-status-chip';
 import { BoltCard } from '@/components/ui/bolt-card';
 import { CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { CardInfo } from '@/components/ui/card-info';
 import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { formatBookedPct, formatDecimal } from '@/lib/format';
+import { formatDecimal } from '@/lib/format';
 import { cn } from '@/lib/utils';
 
 import type { CapacityTotals, HubCapacityRow } from '../api/types';
 import { pickAreaFigures, pickFigures, type CapacityHorizon } from '../lib/pick-figures';
 import { BUCKET_SHORT, PRIORITY_BUCKETS } from '../lib/priority-split';
+import { formatPctCompact } from '../lib/status-format';
+import { StatusMark } from './status-mark';
 
 /**
  * P13-T11: the mock-up's "Global Resource Utilization Matrix" — one row per hub
@@ -34,7 +35,11 @@ export interface HubUtilizationMatrixProps {
   horizon: CapacityHorizon;
 }
 
-const NUM = 'text-right font-mono tabular-nums';
+// P19-T02: tight padding and a compact status mark (no chip), so the 18 columns fit
+// the content width at 1280 px without scrolling; the labelled scroll region is
+// only the fallback at narrow widths.
+const NUM = 'px-1.5 text-right font-mono tabular-nums whitespace-nowrap';
+const HEAD = 'h-auto px-1.5 py-2 text-right';
 
 function UtilCell({
   pct,
@@ -43,20 +48,20 @@ function UtilCell({
 }: {
   pct: number | null;
   status: HubCapacityRow['design_booking_status_year'];
-  /** On the ink total row the figure keeps the ink foreground (contrast); the chip carries the status. */
+  /** On the ink total row the figure and the mark keep the ink foreground (contrast); the mark's shape carries the status. */
   onInk?: boolean;
 }): React.JSX.Element {
   return (
-    <TableCell className={cn(NUM, 'whitespace-nowrap')}>
-      <span className="inline-flex items-center justify-end gap-1.5">
+    <TableCell className={NUM}>
+      <span className="inline-flex items-center justify-end gap-1">
         <span
           className={cn(
             onInk ? 'font-bold' : status === 'full' ? 'text-danger-subtle-fg' : status === 'near_full' ? 'text-warning-subtle-fg' : 'text-text',
           )}
         >
-          {formatBookedPct(pct)}
+          {formatPctCompact(pct)}
         </span>
-        <BookingStatusChip status={status} className="hidden xl:inline-flex" />
+        <StatusMark status={status} {...(onInk ? { className: 'text-ink-fg' } : {})} />
       </span>
     </TableCell>
   );
@@ -90,28 +95,28 @@ export function HubUtilizationMatrix({ rows, totals, horizon }: HubUtilizationMa
       <CardContent>
         <div className="overflow-hidden rounded-dash border border-dash-hairline">
           <Table
-            className="min-w-[72rem] text-xs"
+            className="text-xs"
             data-testid="hub-utilization-matrix"
             scrollLabel="Hub utilization matrix"
           >
             <TableHeader className="bg-ink text-ink-fg [&_th]:text-ink-fg">
               <TableRow className="hover:bg-transparent">
-                <TableHead scope="col">Hub</TableHead>
-                <TableHead scope="col" className="text-right">Design {capHead}</TableHead>
-                <TableHead scope="col" className="text-right">Design load</TableHead>
-                <TableHead scope="col" className="text-right">D. util.</TableHead>
+                <TableHead scope="col" className="h-auto px-1.5 py-2 first:ps-3">Hub</TableHead>
+                <TableHead scope="col" className={HEAD}>Design {capHead}</TableHead>
+                <TableHead scope="col" className={HEAD}>Design load</TableHead>
+                <TableHead scope="col" className={HEAD}>D. util.</TableHead>
                 {PRIORITY_BUCKETS.map((b) => (
-                  <TableHead key={`d-${b}`} scope="col" className="text-right">
+                  <TableHead key={`d-${b}`} scope="col" className={HEAD}>
                     {BUCKET_SHORT[b]}-D
                   </TableHead>
                 ))}
-                <TableHead scope="col" className="border-l border-ink-fg/20 text-right">
+                <TableHead scope="col" className={cn(HEAD, 'border-l border-ink-fg/20')}>
                   Lab {capHead}
                 </TableHead>
-                <TableHead scope="col" className="text-right">Lab load</TableHead>
-                <TableHead scope="col" className="text-right">L. util.</TableHead>
+                <TableHead scope="col" className={HEAD}>Lab load</TableHead>
+                <TableHead scope="col" className={HEAD}>L. util.</TableHead>
                 {PRIORITY_BUCKETS.map((b) => (
-                  <TableHead key={`l-${b}`} scope="col" className="text-right">
+                  <TableHead key={`l-${b}`} scope="col" className={HEAD}>
                     {BUCKET_SHORT[b]}-L
                   </TableHead>
                 ))}
@@ -123,9 +128,9 @@ export function HubUtilizationMatrix({ rows, totals, horizon }: HubUtilizationMa
                 const l = pickFigures(row, 'lab', horizon);
                 return (
                   <TableRow key={row.hub} data-testid={`util-row-${row.hub}`}>
-                    <TableCell className="whitespace-nowrap font-semibold text-text">
+                    <TableCell className="whitespace-nowrap px-1.5 py-2 font-semibold text-text first:ps-3">
                       {row.hub}
-                      <span className="ml-1 text-2xs font-normal text-text-subtle">({row.lab_region} lab)</span>
+                      <span className="block text-2xs font-normal text-text-subtle">{row.lab_region} lab</span>
                     </TableCell>
                     <TableCell className={NUM}>{formatDecimal(d.capacity)}</TableCell>
                     <TableCell className={NUM}>{formatDecimal(d.load)}</TableCell>
@@ -149,7 +154,7 @@ export function HubUtilizationMatrix({ rows, totals, horizon }: HubUtilizationMa
             </TableBody>
             <TableFooter className="bg-ink text-ink-fg [&_td]:text-ink-fg">
               <TableRow className="hover:bg-transparent" data-testid="util-row-total">
-                <TableCell className="font-bold">Total</TableCell>
+                <TableCell className="px-1.5 font-bold first:ps-3">Total</TableCell>
                 <TableCell className={NUM}>{formatDecimal(totalD.capacity)}</TableCell>
                 <TableCell className={NUM}>{formatDecimal(totalD.load)}</TableCell>
                 <UtilCell pct={totalD.bookedPct} status={totalD.bookingStatus} onInk />

@@ -116,6 +116,26 @@ export function useDashboardProjects(params: ProjectFilterParams) {
   });
 }
 
+/**
+ * P17-R08: the Hub × Type drill-down list. Same endpoint and cache key as the
+ * register, but WITHOUT `placeholderData`: a drill-down must never show the
+ * previous cell's projects while the new cell's list loads (its count is
+ * checked against the clicked cell).
+ */
+export function useDrilldownProjects(params: ProjectFilterParams, enabled = true) {
+  const filters: DashboardProjectFilters = {
+    hub_id: params.hub_id,
+    ...(params.region !== undefined ? { region: params.region } : {}),
+    ...(params.type !== undefined ? { type: params.type } : {}),
+  };
+  return useQuery({
+    queryKey: queryKeys.dashboardProjects(filters),
+    queryFn: ({ signal }) => fetchDashboardProjects(params, { signal }),
+    retry: retryUnlessAuth,
+    enabled,
+  });
+}
+
 /** Provenance enrichment only — never a headline number. `enabled` gated so it
  *  is not fetched until we know a run exists. */
 export function useActiveScheduleRun(enabled: boolean) {

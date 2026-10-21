@@ -12,8 +12,12 @@ import {
   deleteChamber,
   deleteEngineer,
   fetchActiveScheduleRun,
+  fetchCapacitySummary,
   fetchChambers,
   fetchEngineers,
+  fetchResourceLoad,
+  fetchResourceLoadOptions,
+  resourceLoadSearch,
   triggerApplyLogic,
   updateChamber,
   updateEngineer,
@@ -114,5 +118,36 @@ describe('planning-api', () => {
     });
     await triggerApplyLogic();
     expect(mockApiSend).toHaveBeenCalledWith('POST', '/schedule-runs/greedy-recalc');
+  });
+
+  it('P19: requests the capacity summary and the resource-load options verbatim', async () => {
+    mockApiGet.mockResolvedValue({});
+    await fetchCapacitySummary();
+    expect(mockApiGet).toHaveBeenCalledWith('/planning/capacity-summary', {});
+    await fetchResourceLoadOptions();
+    expect(mockApiGet).toHaveBeenCalledWith('/planning/resource-load/options', {});
+  });
+
+  it('P19: resource-load filters map to query params (single hub_id, repeated list params, "All" sends nothing)', () => {
+    const empty = { hubId: null, types: [], statuses: [], departments: [], categories: [], engineerIds: [] };
+    expect(resourceLoadSearch('remaining', empty)).toBe('basis=remaining');
+    expect(
+      resourceLoadSearch('year', {
+        hubId: 'hub-1',
+        types: ['NM', 'CO'],
+        statuses: ['In Queue'],
+        departments: ['Sales'],
+        categories: ['B'],
+        engineerIds: ['e2', 'e1'],
+      }),
+    ).toBe(
+      'basis=year&hub_id=hub-1&project_type=CO&project_type=NM&project_status=In+Queue&requesting_department=Sales&category=B&engineer_id=e1&engineer_id=e2',
+    );
+  });
+
+  it('P19: fetchResourceLoad puts the params on the path', async () => {
+    mockApiGet.mockResolvedValueOnce({});
+    await fetchResourceLoad('remaining', { hubId: null, types: ['NM'], statuses: [], departments: [], categories: [], engineerIds: [] });
+    expect(mockApiGet).toHaveBeenCalledWith('/planning/resource-load?basis=remaining&project_type=NM', {});
   });
 });

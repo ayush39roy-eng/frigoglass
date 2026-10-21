@@ -66,6 +66,7 @@ from api.routers.exports import router as exports_router  # noqa: E402
 from api.routers.gantt import router as gantt_router  # noqa: E402
 from api.routers.me import router as me_router  # noqa: E402
 from api.routers.notifications import router as notifications_router  # noqa: E402
+from api.routers.planning import router as planning_router  # noqa: E402
 from api.routers.priorities import router as priorities_router  # noqa: E402
 from api.routers.priority_board import router as priority_board_router  # noqa: E402
 from api.routers.project_access import router as project_access_router  # noqa: E402
@@ -198,6 +199,7 @@ app.include_router(users_router)
 app.include_router(workflow_settings_router)
 app.include_router(workspace_router)
 app.include_router(whatif_router)
+app.include_router(planning_router)
 # 2026-09-30 (ADR 0012/0014, P10-T02): project-level access grants + manager
 # delegation, and Ask-the-agent (Groq).
 app.include_router(project_access_router)

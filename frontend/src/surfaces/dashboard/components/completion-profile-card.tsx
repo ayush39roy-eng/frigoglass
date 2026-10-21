@@ -32,7 +32,7 @@ import { CardInfo } from '@/components/ui/card-info';
  *
  * 1. RECHARTS, NOT `reaviz`. The reference was built on `reaviz`. This app
  *    already standardises on Recharts (CLAUDE.md stack), already skins it
- *    (`hub-type-pipeline-chart.tsx` draws its gradients, dashed gridlines and
+ *    (`pipeline-vs-completing-chart.tsx` draws its dashed gridlines and
  *    floating white tooltip from the same tokens this card uses), and a second
  *    charting library would mean two visual grammars for the same job plus a
  *    new dependency. Recharts' `<AreaChart type="monotone">` produces the same
@@ -318,7 +318,7 @@ export function CompletionProfileCard({ data }: CompletionProfileCardProps): Rea
           </div>
 
           {/* Accessible fallback — a `<dl>`, this surface's established pattern for
-              a chart summary (see `hub-type-pipeline-chart.tsx`). Quarter marks
+              a chart summary. Quarter marks
               only: 52 weekly entries would be unreadable as speech. */}
           {hasSeries ? (
             <dl className="sr-only">

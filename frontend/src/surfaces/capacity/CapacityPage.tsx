@@ -12,7 +12,6 @@ import { HubFilterChip } from '@/components/shared/hub-filter/hub-filter-chip';
 import { CountrySegmented } from '@/components/shared/hub-filter/country-segmented';
 
 import type { CapacityHorizon } from './lib/pick-figures';
-import { AreaBookingStrip } from './components/area-booking-strip';
 import { AccessNotice } from './components/access-notice';
 import { CapacityReportingNotice } from './components/capacity-reporting-notice';
 import { ChamberUtilizationPanel } from './components/chamber-utilization-panel';
@@ -21,6 +20,7 @@ import { ClassBreakdownPanel } from './components/class-breakdown-panel';
 import { CapacityKpiRow } from './components/capacity-kpi-row';
 import { CapacityToolbar } from './components/capacity-toolbar';
 import { CollapsibleSection } from './components/collapsible-section';
+import { HubBookingStrip } from './components/hub-booking-strip';
 import { HubSummaryTable } from './components/hub-summary-table';
 import { HubUtilizationMatrix } from './components/hub-utilization-matrix';
 import { EngineerUtilizationPanel } from './components/engineer-utilization-panel';
@@ -88,9 +88,9 @@ function ChamberSection({
 }
 
 export default function CapacityPage(): React.JSX.Element {
-  // P12 (ADR 0020): the global header hub filter. The server filters hub rows
-  // and narrows `areas[]` to the area containing the hub; lab figures stay
-  // region-wide (§4). Nothing is re-derived here.
+  // P12 (ADR 0020): the global header hub filter. The server filters hub rows;
+  // lab figures stay region-wide (§4). Nothing is re-derived here. (P19-T02: the
+  // served `areas[]` Europe / India roll-up is no longer shown, owner ruling.)
   const { hubId, region } = useHubFilter();
   const hubLoad = useHubLoadVsCapacity({ hubId, region });
   const classBreakdown = useClassBreakdown(hubId, region);
@@ -137,7 +137,7 @@ export default function CapacityPage(): React.JSX.Element {
         <AccessNotice kind={denied} />
       ) : (
         <motion.div
-          className="flex flex-col gap-s6"
+          className="flex min-w-0 flex-col gap-s6"
           // `exactOptionalPropertyTypes`: spread no animation props at all under
           // reduced motion rather than passing explicit `undefined` values.
           {...(motionTokens.reduced
@@ -173,10 +173,10 @@ export default function CapacityPage(): React.JSX.Element {
             </StaggerSection>
           ) : null}
 
-          {/* 4. Capacity booked: Europe / India summary + every hub and lab region (ADR 0016). */}
-          {showRun && hubData.areas.length > 0 ? (
+          {/* 4. Capacity booked: one tile per hub, design + its lab region (ADR 0016; hubs only, P19-T02). */}
+          {showRun && hubData.rows.length > 0 ? (
             <StaggerSection>
-              <AreaBookingStrip areas={hubData.areas} horizon={horizon} rows={hubData.rows} />
+              <HubBookingStrip rows={hubData.rows} horizon={horizon} />
             </StaggerSection>
           ) : null}
 
@@ -191,17 +191,18 @@ export default function CapacityPage(): React.JSX.Element {
             </SectionBoundary>
           </StaggerSection>
 
-          {/* 6. Everything big, collapsed and lazy: nothing renders or fetches until opened. */}
-          <div className="flex flex-col gap-s3" data-testid="capacity-more-detail">
-            {showRun && hubData.rows.length > 0 ? (
-              <CollapsibleSection
-                showLabel="Show hub utilization matrix"
-                hint="Per-hub design and lab capacity, load and booked %, with the per-priority split"
-                testId="section-hub-matrix"
-              >
+          {/* 6. The hub utilization matrix, inline and expanded (P19-T02, owner ruling). It is
+              built from the hub-load rows already on the page, so it fetches nothing extra. */}
+          {showRun && hubData.rows.length > 0 ? (
+            <StaggerSection>
+              <section aria-label="Global resource utilization matrix" data-testid="section-hub-matrix">
                 <HubUtilizationMatrix rows={hubData.rows} totals={hubData.totals} horizon={horizon} />
-              </CollapsibleSection>
-            ) : null}
+              </section>
+            </StaggerSection>
+          ) : null}
+
+          {/* 7. Chamber and engineer utilization: collapsed and lazy, nothing renders or fetches until opened. */}
+          <div className="flex flex-col gap-s3" data-testid="capacity-more-detail">
             <CollapsibleSection
               showLabel="Show chamber utilization"
               hint="Concurrent projects per chamber per week"

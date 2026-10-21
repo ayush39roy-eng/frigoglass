@@ -161,10 +161,23 @@ def rows_from_models(
 
     if not models_list:
         return [], []
-    headers = [
-        h for h in type(models_list[0]).model_fields if h not in _EXPORT_NESTED_FIELDS
-    ]
+    fields = [h for h in type(models_list[0]).model_fields if h not in _EXPORT_NESTED_FIELDS]
     rows = [m.model_dump(mode="json", exclude=set(_EXPORT_NESTED_FIELDS)) for m in models_list]
+    # P19-T03: a nested model field (e.g. `capacity_weeks: {year, remaining}`)
+    # becomes one scalar column per key, `capacity_weeks_year` /
+    # `capacity_weeks_remaining`, so a spreadsheet cell never holds a dict.
+    headers: list[str] = []
+    for h in fields:
+        sample = rows[0].get(h)
+        if isinstance(sample, dict):
+            subs = [f"{h}_{k}" for k in sample]
+            headers.extend(subs)
+            for row in rows:
+                nested = row.pop(h, None) or {}
+                for k in sample:
+                    row[f"{h}_{k}"] = nested.get(k)
+        else:
+            headers.append(h)
     return headers, rows
 
 

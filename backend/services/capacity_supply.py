@@ -47,6 +47,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from dataclasses import dataclass
+from decimal import Decimal
 from typing import Literal
 
 from sqlalchemy import select
@@ -113,6 +114,78 @@ def region_holiday_weeks(
 
     values = [holiday_weeks(c) for c in calendars_by_region.get(region, [])]
     return max(values) if values else 0.0
+
+
+# --- Weeks → days (P19-T03, docs/API_CONTRACT_P19.md) -------------------------------
+
+#: Used only when a hub (or a whole lab region) has no `HubWorkCalendar` row,
+#: the same data gap `calendar_figures` already treats as "no deductions".
+#: Every seeded hub has a calendar, so no served figure uses this today.
+DEFAULT_WEEKDAYS_PER_WEEK = 5.0
+
+
+def hub_weekdays_per_week(calendar: HubWorkCalendar | None) -> float:
+    """The hub's `HubWorkCalendar.weekdays_per_week` (ADR 0008)."""
+
+    if calendar is None:
+        return DEFAULT_WEEKDAYS_PER_WEEK
+    return float(calendar.weekdays_per_week)
+
+
+def region_calendar(
+    calendars_by_region: dict[LabRegion, list[HubWorkCalendar]], region: LabRegion
+) -> HubWorkCalendar | None:
+    """The calendar whose holiday weeks `region_holiday_weeks` uses: the one
+    with the largest `national_holiday_days / weekdays_per_week`. Ties (equal
+    holiday weeks, different weekdays) go to the smaller `weekdays_per_week`
+    (fewer days, the conservative supply), then the hub id, so the choice is
+    deterministic. `None` for a region with no calendar.
+    """
+
+    cals = calendars_by_region.get(region, [])
+    if not cals:
+        return None
+    return min(
+        cals, key=lambda c: (-holiday_weeks(c), float(c.weekdays_per_week), str(c.hub_id))
+    )
+
+
+def region_weekdays_per_week(
+    calendars_by_region: dict[LabRegion, list[HubWorkCalendar]], region: LabRegion
+) -> float:
+    """`weekdays_per_week` of `region_calendar` — the calendar a lab region's
+    chambers take their holiday weeks from (DOMAIN_RULES "Capacity supply")."""
+
+    return hub_weekdays_per_week(region_calendar(calendars_by_region, region))
+
+
+def to_days(served_weeks: float, weekdays_per_week: float) -> float:
+    """`served weeks × weekdays_per_week`, 2 dp. Callers pass the already
+    served (2 dp) week figure, so a served day figure is exactly the served
+    week figure times the served `weekdays_per_week`, to 2 dp."""
+
+    return round2(served_weeks * weekdays_per_week)
+
+
+def fte_sum(values: Iterable[object]) -> float:
+    """Σ fte, summed exactly (`Numeric(3, 2)` values as `Decimal`) so the total
+    does not depend on row order; every surface that sums FTE uses this."""
+
+    total = Decimal(0)
+    for v in values:
+        total += v if isinstance(v, Decimal) else Decimal(str(v))
+    return float(total)
+
+
+def design_capacity(
+    calendar: HubWorkCalendar | None, fte: float, current_week: int = dc.CURRENT_WEEK
+) -> tuple[float, float]:
+    """ADR 0008 `(yearly, remaining)` design capacity for `fte` FTE on the
+    hub's calendar, full precision. One engineer: their own fte; a hub: Σ fte.
+    """
+
+    cal = calendar_figures(calendar, current_week)
+    return cal.working_weeks_per_engineer * fte, cal.remaining_working_weeks * fte
 
 
 @dataclass(frozen=True)

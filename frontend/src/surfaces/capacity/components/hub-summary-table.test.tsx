@@ -37,7 +37,7 @@ const data: HubCapacitySummary = {
   ],
 };
 
-describe('HubSummaryTable (P19-T01)', () => {
+describe('HubSummaryTable (P19-T01, P19-T02)', () => {
   it('is one compact row per hub with served load, capacity, booked % chip and gap for design and lab', () => {
     renderWithProviders(<HubSummaryTable data={data} activeRun={undefined} horizon="year" />);
     const india = screen.getByTestId('hub-summary-row-PD-India');
@@ -45,15 +45,15 @@ describe('HubSummaryTable (P19-T01)', () => {
     expect(within(india).getByTestId('design-capacity')).toHaveTextContent('252.62');
     expect(within(india).getByTestId('lab-load')).toHaveTextContent('496.5');
     expect(within(india).getByTestId('lab-capacity')).toHaveTextContent('186.22');
-    expect(india).toHaveTextContent('232.36 %');
+    expect(india).toHaveTextContent('232.36%');
     expect(india).toHaveTextContent('+334.38');
     const greece = screen.getByTestId('hub-summary-row-R&D-Greece');
-    expect(greece).toHaveTextContent('40.03 %');
+    expect(greece).toHaveTextContent('40.03%');
     expect(greece).toHaveTextContent('-74.9');
     expect(greece).toHaveTextContent('—'); // served null lab booked %
     // the footer is the served totals, not a sum of the rows
     expect(screen.getByTestId('hub-summary-total')).toHaveTextContent('637');
-    expect(screen.getByTestId('hub-summary-total')).toHaveTextContent('168.73 %');
+    expect(screen.getByTestId('hub-summary-total')).toHaveTextContent('168.73%');
     // the long per-hub cards are gone
     expect(screen.queryByTestId('capacity-hub-card')).not.toBeInTheDocument();
     expect(screen.queryByText('Load (process-derived)')).not.toBeInTheDocument();
@@ -63,8 +63,90 @@ describe('HubSummaryTable (P19-T01)', () => {
     renderWithProviders(<HubSummaryTable data={data} activeRun={undefined} horizon="remaining" />);
     const india = screen.getByTestId('hub-summary-row-PD-India');
     expect(within(india).getByTestId('design-capacity')).toHaveTextContent('179.75');
-    expect(india).toHaveTextContent('326.56 %');
-    expect(screen.getByTestId('hub-summary-row-R&D-Greece')).toHaveTextContent('88.5 %');
+    expect(india).toHaveTextContent('326.56%');
+    expect(screen.getByTestId('hub-summary-row-R&D-Greece')).toHaveTextContent('88.5%');
+  });
+
+  it('groups hubs by lab region and shows each region\'s served lab figures ONCE, spanning its hub rows', () => {
+    const greeceLab = {
+      lab_region: 'Greece' as const,
+      lab_load_weeks: 22,
+      lab_capacity_year: 21.89,
+      lab_gap_year: 0.11,
+      lab_booked_pct_year: 100.5,
+      lab_booking_status_year: 'full' as const,
+    };
+    const grouped: HubCapacitySummary = {
+      ...data,
+      rows: [
+        hubRow({ hub: 'R&D-Greece', ...greeceLab, design_load_weeks: 45 }),
+        hubRow({ hub: 'R&D-India' }),
+        hubRow({ hub: 'PD-India' }),
+        hubRow({ hub: 'PD-Romania', lab_region: 'Romania', lab_load_weeks: 24 }),
+        hubRow({ hub: 'OEM-HCK', ...greeceLab, design_load_weeks: 55 }),
+        hubRow({ hub: 'OEM-Seltek', ...greeceLab, design_load_weeks: 44 }),
+      ],
+    };
+    renderWithProviders(<HubSummaryTable data={grouped} activeRun={undefined} horizon="year" />);
+    const table = screen.getByTestId('hub-summary-table');
+    // one lab figure per region, not per hub
+    expect(within(table).getAllByTestId('lab-load')).toHaveLength(3);
+    expect(within(table).getAllByTestId('design-load')).toHaveLength(6);
+
+    const greece = screen.getByTestId('hub-summary-region-Greece');
+    expect(within(greece).getByRole('rowheader', { name: /Greece lab region/ })).toBeInTheDocument();
+    // served order inside the region: R&D-Greece, OEM-HCK, OEM-Seltek
+    expect(within(greece).getAllByRole('row').slice(1).map((r) => r.getAttribute('data-testid'))).toEqual([
+      'hub-summary-row-R&D-Greece',
+      'hub-summary-row-OEM-HCK',
+      'hub-summary-row-OEM-Seltek',
+    ]);
+    const labCells = within(greece).getAllByTestId('lab-load');
+    expect(labCells).toHaveLength(1);
+    expect(labCells[0]).toHaveTextContent('22');
+    expect(labCells[0]).toHaveAttribute('rowspan', '3');
+    expect(within(greece).getByTestId('lab-booked')).toHaveTextContent('100.5%');
+    expect(within(screen.getByTestId('hub-summary-row-OEM-HCK')).queryByTestId('lab-load')).not.toBeInTheDocument();
+
+    // display order Greece, Romania, India
+    const bodies = [...table.querySelectorAll('tbody')].map((b) => b.getAttribute('data-testid'));
+    expect(bodies).toEqual(['hub-summary-region-Greece', 'hub-summary-region-Romania', 'hub-summary-region-India']);
+    expect(within(screen.getByTestId('hub-summary-region-India')).getAllByTestId('lab-load')).toHaveLength(1);
+  });
+
+  it('uses Design / Lab header bands with short sub-headers that keep full accessible names', () => {
+    renderWithProviders(<HubSummaryTable data={data} activeRun={undefined} horizon="year" />);
+    expect(screen.getByRole('columnheader', { name: 'Design' })).toHaveAttribute('colspan', '4');
+    expect(screen.getByRole('columnheader', { name: 'Lab (per lab region)' })).toHaveAttribute('colspan', '4');
+    expect(screen.getByRole('columnheader', { name: 'Design capacity, full year' })).toHaveTextContent('Cap.');
+    expect(screen.getByRole('columnheader', { name: 'Lab gap' })).toBeInTheDocument();
+  });
+
+  it('shows the status as an icon with its label as text for assistive tech, plus a legend with the served thresholds', () => {
+    renderWithProviders(<HubSummaryTable data={data} activeRun={undefined} horizon="year" />);
+    const india = screen.getByTestId('hub-summary-row-PD-India');
+    expect(within(india).getAllByText('Full').length).toBeGreaterThan(0);
+    expect(within(india).queryByText('Full', { selector: '.rounded-pill' })).toBeNull();
+    const legend = screen.getByTestId('hub-summary-legend');
+    expect(legend).toHaveTextContent('Full (100% or more)');
+    expect(legend).toHaveTextContent('Near full (85% to under 100%)');
+  });
+
+  it('explains why booked % sits near 100% under the header and in the info popover', async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<HubSummaryTable data={data} activeRun={undefined} horizon="year" />);
+    expect(screen.getByTestId('hub-summary-booked-note')).toHaveTextContent(/not capped at capacity/);
+    await user.click(screen.getByRole('button', { name: 'How load and capacity are defined' }));
+    expect(screen.getAllByText(/spills past W52/).length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('every Details trigger is an icon button named for its hub', () => {
+    renderWithProviders(<HubSummaryTable data={data} activeRun={undefined} horizon="year" />);
+    for (const hub of ['PD-India', 'R&D-Greece']) {
+      const b = screen.getByRole('button', { name: `Details for ${hub}` });
+      expect(b).toHaveAttribute('aria-haspopup', 'dialog');
+      expect(b).not.toHaveTextContent('Details');
+    }
   });
 
   it('Details opens a dialog with the full served figures, the bars and "How this is calculated"; Escape closes and returns focus', async () => {

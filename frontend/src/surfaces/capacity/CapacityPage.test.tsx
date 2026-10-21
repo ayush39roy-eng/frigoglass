@@ -119,19 +119,21 @@ describe('CapacityPage', () => {
     expect(screen.getByText(/scheduler overbooked anyone/i)).toBeInTheDocument();
   });
 
-  it('P11: leads with the served Europe / India area strip, which follows the horizon toggle', async () => {
+  it('P19-T02: capacity booked is per HUB only (no Europe / India areas, even though `areas` is still served), following the horizon', async () => {
     const user = userEvent.setup();
     hooks.useHubLoadVsCapacity.mockReturnValue(
       ready({ ...hubLoad, areas: [areaRow(), areaRow({ area: 'India', hubs: ['PD-India'], lab_regions: ['India'] })] }),
     );
     hooks.useClassBreakdown.mockReturnValue(ready(classBreakdown));
-    hooks.useUtilizationMatrix.mockReturnValue(ready(utilization));
     renderWithProviders(<CapacityPage />);
-    expect(screen.getAllByTestId('capacity-area-card')).toHaveLength(2);
-    expect(screen.getByTestId('area-Europe-design')).toHaveTextContent('72.44 %');
+    expect(screen.queryByTestId('capacity-area-card')).not.toBeInTheDocument();
+    expect(screen.queryByText(/Europe/)).not.toBeInTheDocument();
+    expect(screen.getAllByTestId(/^booked-hub-/)).toHaveLength(1);
+    expect(screen.getByTestId('booked-lab-R&D-Greece')).toHaveTextContent('Lab (Greece region)');
+    expect(screen.getByTestId('booked-design-R&D-Greece')).toHaveTextContent('232.36%');
     await user.click(screen.getByRole('radio', { name: 'YTD 2026' }));
-    expect(screen.getByTestId('area-strip-horizon')).toHaveTextContent(/Remaining year/);
-    expect(screen.getByTestId('area-Europe-design')).toHaveTextContent('108.7 %');
+    expect(screen.getByTestId('booked-strip-horizon')).toHaveTextContent(/Remaining year/);
+    expect(screen.getByTestId('booked-design-R&D-Greece')).toHaveTextContent('326.56%');
   });
 
   it('P13-T11: KPI cards and the matrix TOTAL row render the served totals verbatim, following the horizon', async () => {
@@ -164,21 +166,21 @@ describe('CapacityPage', () => {
     expect(screen.getByTestId('kpi-Lab load-P1')).toHaveTextContent('300');
     expect(screen.getByLabelText('Lab load by lab region')).toHaveTextContent('India: 496.5');
 
-    // Matrix (behind its disclosure): one row per hub, served buckets verbatim, served booked % as Util.
-    await user.click(screen.getByRole('button', { name: 'Show hub utilization matrix' }));
+    // Matrix (inline since P19-T02): one row per hub, served buckets verbatim, served booked % as Util.
+    expect(screen.queryByRole('button', { name: 'Show hub utilization matrix' })).not.toBeInTheDocument();
     expect(screen.getByTestId('util-PD-India-P2-D')).toHaveTextContent('100');
     expect(screen.getByTestId('util-PD-India-Queue-L')).toHaveTextContent('100');
-    expect(screen.getByTestId('util-row-PD-India')).toHaveTextContent('232.36 %');
+    expect(screen.getByTestId('util-row-PD-India')).toHaveTextContent('232.36%');
     const total = screen.getByTestId('util-row-total');
     expect(total).toHaveTextContent('603');
-    expect(total).toHaveTextContent('207.86 %');
+    expect(total).toHaveTextContent('207.86%');
 
     await user.click(screen.getByRole('radio', { name: 'YTD 2026' }));
-    expect(screen.getByTestId('util-row-total')).toHaveTextContent('299.5 %');
+    expect(screen.getByTestId('util-row-total')).toHaveTextContent('299.5%');
     expect(screen.getByRole('group', { name: 'Design load' })).toHaveTextContent('299.5 %');
   });
 
-  it('renders the client layout in order: KPI cards, class cards, charts, booked tiles, summary table, then the collapsed sections', () => {
+  it('renders the client layout in order: KPI cards, class cards, charts, booked tiles, summary table, inline hub matrix, then the collapsed sections', () => {
     hooks.useHubLoadVsCapacity.mockReturnValue(ready({ ...hubLoad, areas: [areaRow()] }));
     hooks.useClassBreakdown.mockReturnValue(ready(classBreakdown));
     renderWithProviders(<CapacityPage />);
@@ -187,8 +189,9 @@ describe('CapacityPage', () => {
       screen.getByTestId('capacity-kpi-row'),
       screen.getByTestId('class-breakdown-panel'),
       screen.getByTestId('load-capacity-charts'),
-      screen.getByTestId('area-booking-strip'),
+      screen.getByTestId('hub-booking-strip'),
       screen.getByTestId('hub-summary-table'),
+      screen.getByTestId('section-hub-matrix'),
       screen.getByTestId('capacity-more-detail'),
     ];
     for (let i = 1; i < order.length; i++) {
@@ -207,7 +210,21 @@ describe('CapacityPage', () => {
     expect(screen.getAllByTestId('schedule-run-provenance')[0]).toHaveTextContent(/v6/);
   });
 
-  it('collapsed sections render and fetch nothing until opened (engineer utilization is audited per read)', async () => {
+  it('P19-T02: the hub utilization matrix is inline and expanded (a section with a heading, no disclosure)', () => {
+    hooks.useHubLoadVsCapacity.mockReturnValue(ready(hubLoad));
+    hooks.useClassBreakdown.mockReturnValue(ready(classBreakdown));
+    renderWithProviders(<CapacityPage />);
+    const section = screen.getByRole('region', { name: 'Global resource utilization matrix' });
+    expect(section).toHaveAttribute('data-testid', 'section-hub-matrix');
+    expect(screen.getByRole('heading', { name: 'Global resource utilization matrix' })).toBeInTheDocument();
+    expect(screen.getByTestId('util-row-R&D-Greece')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /hub utilization matrix/i })).not.toBeInTheDocument();
+    // built from the hub-load rows already on the page: the chamber/engineer reads stay unfetched
+    expect(hooks.useUtilizationMatrix).not.toHaveBeenCalled();
+    expect(hooks.useEngineerUtilization).not.toHaveBeenCalled();
+  });
+
+  it('chamber and engineer sections stay collapsed and fetch nothing until opened (engineer utilization is audited per read)', async () => {
     const user = userEvent.setup();
     hooks.useHubLoadVsCapacity.mockReturnValue(ready(hubLoad));
     hooks.useClassBreakdown.mockReturnValue(ready(classBreakdown));

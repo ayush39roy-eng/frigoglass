@@ -16,6 +16,7 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from models.enums import LabRegion
+from schemas.capacity import YearRemaining
 
 
 def _drop_retired_weeks_per_chamber(data: Any) -> Any:
@@ -107,3 +108,14 @@ class ChamberRead(BaseModel):
     efficient_lab_weeks: float
     created_at: datetime
     updated_at: datetime
+    # --- P19-T03 (docs/API_CONTRACT_P19.md §3) -------------------------------
+    #: The region calendar's `weekdays_per_week` (the calendar its holiday
+    #: weeks come from).
+    weekdays_per_week: float
+    #: = `working_weeks_per_chamber` (ADR 0008), 2 dp.
+    working_weeks: float
+    #: `year` = efficient_lab_weeks (working × efficiency × platforms);
+    #: `remaining` = that × (52 − CURRENT_WEEK) / 52. 2 dp.
+    capacity_weeks: YearRemaining
+    #: served `capacity_weeks` × `weekdays_per_week`, 2 dp.
+    capacity_days: YearRemaining

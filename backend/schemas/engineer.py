@@ -11,6 +11,7 @@ from datetime import datetime
 from pydantic import BaseModel, ConfigDict, Field
 
 from models.enums import EngineerAllowedCategory
+from schemas.capacity import YearRemaining
 
 
 class EngineerCreateRequest(BaseModel):
@@ -40,6 +41,12 @@ class EngineerUpdateRequest(BaseModel):
 
 
 class EngineerRead(BaseModel):
+    """P19-T03 (docs/API_CONTRACT_P19.md §2) adds the engineer's ADR 0008
+    supply: `capacity_weeks.year = working_weeks_per_engineer(hub) × fte`,
+    `.remaining = remaining working weeks(hub) × fte`; `capacity_days` = the
+    served weeks × the hub's `weekdays_per_week`. All 2 dp.
+    """
+
     model_config = ConfigDict(from_attributes=True)
 
     id: uuid.UUID
@@ -50,3 +57,7 @@ class EngineerRead(BaseModel):
     user_id: uuid.UUID | None
     created_at: datetime
     updated_at: datetime
+    # --- P19-T03 ------------------------------------------------------------
+    weekdays_per_week: float
+    capacity_weeks: YearRemaining
+    capacity_days: YearRemaining

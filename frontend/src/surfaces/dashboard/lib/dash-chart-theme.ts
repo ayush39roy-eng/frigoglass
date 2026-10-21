@@ -11,18 +11,15 @@
  * made the ramp a genuine joint consumer rather than a Dashboard exclusive —
  * see `@/lib/categorical-palette.ts`'s own doc comment for the full move.
  *
- * Kept here, under the original names, purely so this file's five existing
- * Dashboard call sites (`hub-type-pipeline-chart.tsx`, `hub-rank-list.tsx`,
- * `project-breakdown.tsx`, `within-year-panel.tsx` via `category-tag.tsx`)
- * needed no import changes. New code should import `@/lib/categorical-palette`
+ * Kept here, under the original names, so the remaining Dashboard call site
+ * (`hub-rank-list.tsx`) needed no import change. New code should import `@/lib/categorical-palette`
  * directly rather than through this alias.
  */
 
+// P17-R08: the series-colour and category aliases lost their last consumer
+// with the Hub × type bar chart; only the rank colours (Top hubs) remain.
 export {
-  assignCategoricalColors as assignDashSeriesColors,
-  categoricalChannels as dashSeriesChannels,
   categoricalRankBg as dashRankBg,
   categoricalRankText as dashRankText,
   categoricalRankSoftBg as dashRankSoftBg,
-  categoryRank as dashCategoryRank,
 } from '@/lib/categorical-palette';

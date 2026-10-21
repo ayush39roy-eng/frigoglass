@@ -24,8 +24,7 @@ import {
   useRegionSummary,
 } from './hooks/use-dashboard';
 import { AccessNotice } from './components/access-notice';
-import { HubRankList } from './components/hub-rank-list';
-import { HubTypePipelineTable } from './components/hub-type-pipeline-table';
+import { HubTypeSection } from './components/hub-type-section';
 import { PipelinePanel } from './components/pipeline-panel';
 import { ScheduledCountInfo } from './components/scheduled-count-info';
 import { PipelineRow } from './components/pipeline-row';
@@ -272,15 +271,25 @@ export default function DashboardPage(): React.JSX.Element {
                   variants: { show: { transition: { staggerChildren: 0.08 } } },
                 })}
           >
-            {/* P17 (ADR 0030): Spillover + Newly registered + Unregistered = Total. */}
+            {/* P17 (ADR 0030): Spillover + Newly registered + Unregistered = Total.
+                P17-R08: the compact VIP column sits beside it (xl), so VIP is
+                above the fold; below xl it stacks under the pipeline row. */}
             <StaggerSection>
-              <SectionBoundary
-                query={pipelineTotals}
-                title="Project pipeline"
-                errorDescription="Pipeline totals could not be loaded."
-              >
-                {(totals) => <PipelineRow totals={totals} regionSummary={regionSummary.data ?? null} />}
-              </SectionBoundary>
+              <div className="grid grid-cols-[minmax(0,1fr)] gap-gutter xl:grid-cols-12">
+                <div className="min-w-0 xl:col-span-9">
+                  <SectionBoundary
+                    query={pipelineTotals}
+                    title="Project pipeline"
+                    errorDescription="Pipeline totals could not be loaded."
+                  >
+                    {(totals) => <PipelineRow totals={totals} regionSummary={regionSummary.data ?? null} />}
+                  </SectionBoundary>
+                </div>
+                {/* P14 (ADR 0027 §6): VIP projects per country, compact. */}
+                <div className="relative min-w-0 xl:col-span-3">
+                  <VipProjectsCard fill />
+                </div>
+              </div>
             </StaggerSection>
 
             <StaggerSection>
@@ -312,30 +321,17 @@ export default function DashboardPage(): React.JSX.Element {
               </SectionBoundary>
             </StaggerSection>
 
-            {/* P17-R06: Hub x Type pipeline summary (main column) beside the
-                compact VIP projects card (side column); stacked on narrow
-                screens, Hub x Type first. */}
+            {/* P17-R08: Project pipeline summary | Completing within year (Hub ×
+                Type tables with drill-down), then Pipeline vs completing. */}
             <StaggerSection>
-              <div className="grid grid-cols-[minmax(0,1fr)] gap-gutter xl:grid-cols-12">
-                <div className="min-w-0 xl:col-span-8">
-                  <SectionBoundary
-                    query={hubTypePipeline}
-                    title="Hub × type pipeline"
-                    errorDescription="The hub × type pipeline summary could not be loaded."
-                  >
-                    {(data) => (
-                      <div className="grid grid-cols-[minmax(0,1fr)] gap-gutter">
-                        <HubTypePipelineTable rows={data} />
-                        <HubRankList rows={data} />
-                      </div>
-                    )}
-                  </SectionBoundary>
-                </div>
-                {/* P14 (ADR 0027 §6): VIP projects per country. */}
-                <div className="relative min-w-0 xl:col-span-4">
-                  <VipProjectsCard fill />
-                </div>
-              </div>
+              <HubTypeSection
+                hubTypePipeline={hubTypePipeline}
+                analytics={analytics}
+                withinYear={withinYear.data ?? null}
+                pipelineTotal={pipelineTotals.data?.total_count ?? null}
+                hubId={hubId}
+                region={region}
+              />
             </StaggerSection>
 
             {/* Row 2 — completion curve beside the two feature cards. Profile and
@@ -386,14 +382,7 @@ export default function DashboardPage(): React.JSX.Element {
               </StaggerSection>
             ) : null}
 
-            {/* P13 (ADR 0025 §5): the full-width all-projects register sits
-                directly after the status overview. */}
-            <StaggerSection>
-              <ProjectBreakdown />
-            </StaggerSection>
-
-
-            {/* P13-T10: "Analytics & breakdown" after the all-projects register. */}
+            {/* P13-T10: "Analytics & breakdown" (the four composition charts). */}
             <StaggerSection>
               <SectionBoundary
                 query={analytics}
@@ -406,6 +395,11 @@ export default function DashboardPage(): React.JSX.Element {
                   </React.Suspense>
                 )}
               </SectionBoundary>
+            </StaggerSection>
+
+            {/* P17-R08: the all-projects register is the LAST section. */}
+            <StaggerSection>
+              <ProjectBreakdown />
             </StaggerSection>
           </motion.div>
         )}

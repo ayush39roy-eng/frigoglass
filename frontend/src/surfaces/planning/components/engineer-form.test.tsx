@@ -72,6 +72,7 @@ describe('EngineerFormDialog', () => {
           user_id: null,
           created_at: '2026-01-01T00:00:00Z',
           updated_at: '2026-01-01T00:00:00Z',
+          weekdays_per_week: 5, capacity_weeks: { year: 44, remaining: 9 }, capacity_days: { year: 220, remaining: 45 },
         }}
         open
         onOpenChange={() => {}}

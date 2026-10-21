@@ -43,9 +43,9 @@ describe('AnalyticsBreakdown (P13-T10)', () => {
     expect(byHub).toHaveTextContent('76.27%');
     const byCategory = screen.getByLabelText('Pipeline projects by category');
     expect(byCategory).toHaveTextContent('68.64%');
-    expect(screen.getByRole('list', { name: 'Pipeline vs completing by project type' })).toHaveTextContent(
-      'Cost Optimization: pipeline 89, completing 10 (11.24%)',
-    );
+    // P17-R08: the completing table and the pipeline-vs-completing chart moved to hub-type-section.
+    expect(screen.queryByRole('list', { name: 'Pipeline vs completing by project type' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('table')).not.toBeInTheDocument();
   });
 
   it('puts the served pipeline total in each donut centre, and omits it when not given', () => {
@@ -56,13 +56,12 @@ describe('AnalyticsBreakdown (P13-T10)', () => {
     expect(screen.queryByText('236')).not.toBeInTheDocument();
   });
 
-  it('without an active run, explains the missing completion breakdown and still shows the pipeline charts', () => {
+  it('without an active run still shows the pipeline charts', () => {
     renderWithProviders(
       <AnalyticsBreakdown
         data={{ ...DATA, has_active_schedule_run: false, completing_hub_type: [], completing_by_type: [], completing_by_hub: [] }}
       />,
     );
-    expect(screen.getByText(/No active schedule run yet/)).toBeInTheDocument();
     expect(screen.queryByRole('table')).not.toBeInTheDocument();
     expect(screen.getByRole('list', { name: 'Pipeline projects by project type' })).toBeInTheDocument();
   });
