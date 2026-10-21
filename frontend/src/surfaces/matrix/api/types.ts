@@ -73,6 +73,96 @@ export interface DimensionPoints {
 export const POINTS_RULE_COPY =
   'Score 1 gives 1/5 of the weight, score 5 the full weight; the total is scaled to 100.';
 
+/** P21-T02: help text for the 0..5 score inputs (0 = no contribution). */
+export const SCORE_RANGE_HELP_COPY = '0 gives no points; 1 gives 1/5 of the weight; 5 the full weight';
+
+// --- P21 (owner requests 2026-10-21; docs/API_CONTRACT_P21.md) -------------
+
+/** Display currencies offered on the Matrix (P21). Wider than the shared
+ *  `CurrencyCode` (EUR / USD / INR): the served list decides which are usable. */
+export const MATRIX_CURRENCY_CODES = ['EUR', 'USD', 'INR', 'EGP', 'ZAR', 'IDR'] as const;
+export type MatrixCurrencyCode = (typeof MATRIX_CURRENCY_CODES)[number];
+
+/** Static display names, used only when the served list has no `name`. */
+export const CURRENCY_NAMES: Record<MatrixCurrencyCode, string> = {
+  EUR: 'Euro',
+  USD: 'US dollar',
+  INR: 'Indian rupee',
+  EGP: 'Egyptian pound',
+  ZAR: 'South African rand',
+  IDR: 'Indonesian rupiah',
+};
+
+/** One `GET /currency-rates` row as the Matrix picker reads it (P21 contract §1,
+ *  a subset of `CurrencyRateRead`). `rate_to_eur` is shown verbatim; it is never
+ *  applied in the browser. `configured=false` (null rate) disables the option. */
+export interface CurrencyOption {
+  currency_code: MatrixCurrencyCode;
+  name: string;
+  rate_to_eur: number | null;
+  configured: boolean;
+}
+
+/** One served per-dimension score on a Matrix row / compare entry (P21 §3).
+ *  `points` out of `max_points` (= weight), raw scale, both served (I9). */
+export interface DimensionScore {
+  key: DimensionField;
+  label: string;
+  pillar: string;
+  score: number | null;
+  weight: number;
+  points: number | null;
+  max_points: number;
+}
+
+/** Band keys of the served distribution: the four score bands, Q and Unscored. */
+export const DISTRIBUTION_BANDS = ['P1', 'P2', 'P3', 'P4', 'Q', 'Unscored'] as const;
+export type DistributionBand = (typeof DISTRIBUTION_BANDS)[number];
+
+/** `band_distribution[]` (P21): `share_pct` is served, never computed here. */
+export interface BandDistributionEntry {
+  band: DistributionBand;
+  count: number;
+  share_pct: number;
+}
+
+/** `score_histogram[]` (P21): normalized score in 10-point buckets. */
+export interface ScoreHistogramBucket {
+  bucket_from: number;
+  bucket_to: number;
+  count: number;
+}
+
+/** `GET /priorities/distribution` (P21 §4), same filters as `GET /priorities`. */
+export interface PriorityDistribution {
+  total_projects: number;
+  scored_projects: number;
+  band_distribution: BandDistributionEntry[];
+  score_histogram: ScoreHistogramBucket[];
+}
+
+/** One project of `GET /priorities/compare` (P21 §5, `PriorityCompareItem`). No financial field. */
+export interface PriorityCompareProject {
+  project_id: Id;
+  project_name: string;
+  hub: HubName;
+  set_priority: ProjectPriority | null;
+  has_score: boolean;
+  weighted_score: number | null;
+  /** Served normalized score, 0..100, shown "91/100". */
+  normalized_pct: number | null;
+  suggested_band: ProjectPriority | null;
+  dimension_scores: DimensionScore[];
+}
+
+export interface PriorityCompareResponse {
+  projects: PriorityCompareProject[];
+}
+
+/** Compare holds 2..5 projects (owner request, P21). */
+export const COMPARE_MIN = 2;
+export const COMPARE_MAX = 5;
+
 /** `docs/DOMAIN_RULES.md` "Prioritization scoring — 13 dimensions". */
 export const DIMENSIONS: readonly DimensionMeta[] = [
   { field: 'strategic_project', short: 'Strat.', label: 'Strategic Project', pillar: 'Strategic Alignment', weight: 25 },
@@ -146,12 +236,16 @@ export interface PriorityMatrixRow {
    *  hard-gate → P1 override (that is applied by "Apply Priorities", deferred) —
    *  the UI annotates hard-gated rows separately. */
   suggested_band: ProjectPriority | null;
+  /** P21 §3: the 13 served per-dimension scores, points and max points, in
+   *  positional order. (`normalized_pct` / `suggested_band` above are the
+   *  row's score out of 100 and its band.) */
+  dimension_scores: DimensionScore[];
 
   is_new_model: boolean;
   is_rm_saving_project: boolean;
 
   /** The currency these financial columns were converted to, server-side. */
-  currency: CurrencyCode;
+  currency: CurrencyCode | MatrixCurrencyCode;
   capex_keur: number | null;
   rm_savings_keur: number | null;
   tcogs_eur: number | null;

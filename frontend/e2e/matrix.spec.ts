@@ -23,9 +23,35 @@ test.describe('Prioritization Matrix surface (P4-T04)', () => {
     await expect(matrix.rateCaption()).toContainText('Active rate: 1 EUR =');
     await expect.poll(() => sawCurrencyQuery).toBe(true);
 
-    // Financial column headers must reflect the selected currency, sourced
-    // from the server response — not recomputed in the browser.
-    await expect(page.getByText('TCOGS (USD)')).toBeVisible();
+    // P21: the financial columns left the grid; the 13 rubric columns and
+    // "Score /100" replace them.
+    await expect(page.getByText('TCOGS (USD)')).toHaveCount(0);
+    await expect(page.getByRole('columnheader', { name: 'Score /100' })).toBeVisible();
+  });
+
+  test('P21: sticky View panel, chart row, rubric columns and compare', async ({ page }) => {
+    await loginAs(page, 'portfolioManager');
+    const matrix = new MatrixPage(page);
+    await matrix.goto();
+    await expect(matrix.heading()).toBeVisible();
+
+    await expect(matrix.viewPanel()).toHaveAttribute('data-stuck', 'false');
+    await page.getByTestId('surface-region').evaluate((el) => el.scrollTo(0, 900));
+    await expect(matrix.viewPanel()).toHaveAttribute('data-stuck', 'true');
+
+    await expect(page.getByTestId('band-distribution')).toBeVisible();
+    await expect(page.getByTestId('score-histogram')).toBeVisible();
+    await expect(page.getByRole('columnheader', { name: 'Strategic Alignment' })).toBeVisible();
+
+    const boxes = matrix.compareCheckboxes();
+    await boxes.nth(0).check();
+    await boxes.nth(1).check();
+    await page.getByRole('button', { name: 'Compare (2)' }).click();
+    await expect(matrix.compareDialog()).toBeVisible();
+    await expect(matrix.compareDialog().getByTestId('compare-total-row')).toContainText('/100');
+    await page.keyboard.press('Escape');
+    await page.getByRole('button', { name: 'Clear' }).click();
+    await expect(matrix.compareBar()).toHaveCount(0);
   });
 
   test('editing a project score opens the dialog, submits, and closes it', async ({ page }) => {

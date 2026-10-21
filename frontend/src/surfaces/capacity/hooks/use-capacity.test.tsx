@@ -7,13 +7,12 @@ import * as React from 'react';
 vi.mock('../api/capacity-api', () => ({
   fetchHubLoadVsCapacity: vi.fn(),
   fetchClassBreakdown: vi.fn(),
-  fetchUtilizationMatrix: vi.fn(),
   fetchEngineerUtilization: vi.fn(),
   fetchActiveScheduleRun: vi.fn(),
 }));
 
 import * as api from '../api/capacity-api';
-import { useHubLoadVsCapacity, useUtilizationMatrix } from './use-capacity';
+import { useClassBreakdown, useHubLoadVsCapacity } from './use-capacity';
 import { ApiError } from '@/lib/api/client';
 
 function wrapper() {
@@ -43,14 +42,14 @@ describe('capacity hooks', () => {
   });
 
   it('does not retry a 403 (auth failures do not self-heal)', async () => {
-    vi.mocked(api.fetchUtilizationMatrix).mockRejectedValue(new ApiError(403, 'nope'));
+    vi.mocked(api.fetchClassBreakdown).mockRejectedValue(new ApiError(403, 'nope'));
     const client = new QueryClient();
     const Wrapper = ({ children }: { children: React.ReactNode }) => (
       <QueryClientProvider client={client}>{children}</QueryClientProvider>
     );
-    const { result } = renderHook(() => useUtilizationMatrix(), { wrapper: Wrapper });
+    const { result } = renderHook(() => useClassBreakdown(), { wrapper: Wrapper });
     await waitFor(() => expect(result.current.isError).toBe(true));
-    expect(vi.mocked(api.fetchUtilizationMatrix)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(api.fetchClassBreakdown)).toHaveBeenCalledTimes(1);
   });
 });
 

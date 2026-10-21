@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { useForm } from 'react-hook-form';
+import { useForm, useWatch } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 
 import { Button } from '@/components/ui/button';
@@ -105,6 +105,12 @@ export function ProjectFormDialog({
   );
 }
 
+/** Empty, null and undefined are the same "unset"; CRLF and LF are the same. */
+function normaliseText(value: unknown): string {
+  if (value === undefined || value === null) return '';
+  return String(value).replace(/\r\n/g, '\n');
+}
+
 function requiredMark(field: keyof typeof REQUIRED_FIELD_LABELS): React.ReactNode {
   return (
     <span className="text-danger" title={`Required before leaving Draft (${REQUIRED_FIELD_LABELS[field]})`}>
@@ -128,18 +134,33 @@ export function ProjectForm({
   onOpenChange,
   onSubmit,
   variant = 'dialog',
+  onDirtyChange,
+  prelude,
 }: {
   mode: 'create' | 'edit';
   project: ProjectRead | null;
   hubs: Hub[];
   onOpenChange: (open: boolean) => void;
   onSubmit: ProjectFormDialogProps['onSubmit'];
-  variant?: 'dialog' | 'inline';
+  /**
+   * `sheet` (P22-T01): inside the Projects page's registration drawer — Radix
+   * Dialog title/description like `dialog`, but a full-height column with a
+   * scrolling body and a pinned footer.
+   */
+  variant?: 'dialog' | 'inline' | 'sheet';
+  /** P22-T01: reports whether any field differs from the loaded values, so the
+   *  drawer can guard Escape / Cancel / overlay clicks against losing edits. */
+  onDirtyChange?: (dirty: boolean) => void;
+  /** P22-T01: rendered at the top of the scrolling body (the drawer puts the
+   *  project summary and the leave-Draft hard-gate panel here). */
+  prelude?: React.ReactNode;
 }): React.JSX.Element {
-  const Header = variant === 'dialog' ? DialogHeader : InlineHeader;
-  const Title = variant === 'dialog' ? DialogTitle : InlineTitle;
-  const Description = variant === 'dialog' ? DialogDescription : InlineDescription;
-  const Footer = variant === 'dialog' ? DialogFooter : InlineFooter;
+  const radix = variant !== 'inline';
+  const sheet = variant === 'sheet';
+  const Header = radix ? DialogHeader : InlineHeader;
+  const Title = radix ? DialogTitle : InlineTitle;
+  const Description = radix ? DialogDescription : InlineDescription;
+  const Footer = radix ? DialogFooter : InlineFooter;
   const [submitError, setSubmitError] = React.useState<string | null>(null);
   const [hubId, setHubId] = React.useState<string>(project?.hub_id ?? '');
   const [leaderId, setLeaderId] = React.useState<string>(project?.leader_engineer_id ?? NONE);
@@ -169,31 +190,58 @@ export function ProjectForm({
     }
   }
 
+  // Kept so the drawer's unsaved-changes check (P22-T01) compares against the
+  // values the form opened with.
+  const [initialValues] = React.useState<ProjectFormInput>(() => ({
+    name: project?.name ?? '',
+    external_code: project?.external_code ?? undefined,
+    actual_start_week: numToStr(project?.actual_start_week),
+    delay_weeks: numToStr(project?.delay_weeks ?? 0),
+    reg_year: numToStr(project?.reg_year),
+    comments: project?.comments ?? undefined,
+    customer_name: project?.customer_name ?? undefined,
+    tcogs_eur: numToStr(project?.tcogs_eur),
+    selling_price_eur: numToStr(project?.selling_price_eur),
+    gross_margin_pct: numToStr(project?.gross_margin_pct),
+    capex_keur: numToStr(project?.capex_keur),
+    rm_savings_keur: numToStr(project?.rm_savings_keur),
+    target_end_week: numToStr(project?.target_end_week),
+    estimated_design_weeks: numToStr(project?.estimated_design_weeks),
+    estimated_lab_weeks: numToStr(project?.estimated_lab_weeks),
+  }));
+
   const {
     register,
     handleSubmit,
+    control,
     formState: { errors, isSubmitting },
   } = useForm<ProjectFormInput, unknown, ProjectFormValues>({
     resolver: zodResolver(projectFormSchema),
-    defaultValues: {
-      name: project?.name ?? '',
-      external_code: project?.external_code ?? undefined,
-      actual_start_week: numToStr(project?.actual_start_week),
-      delay_weeks: numToStr(project?.delay_weeks ?? 0),
-      reg_year: numToStr(project?.reg_year),
-      comments: project?.comments ?? undefined,
-      customer_name: project?.customer_name ?? undefined,
-      tcogs_eur: numToStr(project?.tcogs_eur),
-      selling_price_eur: numToStr(project?.selling_price_eur),
-      gross_margin_pct: numToStr(project?.gross_margin_pct),
-      capex_keur: numToStr(project?.capex_keur),
-      rm_savings_keur: numToStr(project?.rm_savings_keur),
-      target_end_week: numToStr(project?.target_end_week),
-      estimated_design_weeks: numToStr(project?.estimated_design_weeks),
-      estimated_lab_weeks: numToStr(project?.estimated_lab_weeks),
-    },
+    defaultValues: initialValues,
     mode: 'onChange',
   });
+
+  // P22-T01: is anything different from what the form opened with? Text fields
+  // compare as strings with empty / unset treated alike (RHF's own `isDirty`
+  // reports a fresh form as dirty in a real browser, because a field with no
+  // default reads back as ''), and line endings normalised (a textarea turns
+  // CRLF into LF). The selects and checkboxes live outside RHF.
+  const watched = useWatch({ control });
+  const textDirty = (Object.keys(initialValues) as (keyof ProjectFormInput)[]).some(
+    (key) => normaliseText(watched[key]) !== normaliseText(initialValues[key]),
+  );
+  const dirty =
+    textDirty ||
+    hubId !== (project?.hub_id ?? '') ||
+    leaderId !== (project?.leader_engineer_id ?? NONE) ||
+    category !== (project?.category ?? NONE) ||
+    type !== (project?.type ?? NONE) ||
+    priority !== (project?.priority ?? NONE) ||
+    carryOver !== (project?.carry_over ?? false) ||
+    certificationTesting !== (project?.certification_testing_required ?? true);
+  React.useEffect(() => {
+    onDirtyChange?.(dirty);
+  }, [dirty, onDirtyChange]);
 
   const submit = handleSubmit(async (values) => {
     setSubmitError(null);
@@ -246,8 +294,13 @@ export function ProjectForm({
   });
 
   return (
-    <form onSubmit={submit} noValidate aria-label={mode === 'create' ? 'Register a project' : `Edit ${project?.name ?? 'project'}`}>
-      <Header>
+    <form
+      onSubmit={submit}
+      noValidate
+      aria-label={mode === 'create' ? 'Register a project' : `Edit ${project?.name ?? 'project'}`}
+      className={sheet ? 'flex h-full min-h-0 flex-col' : undefined}
+    >
+      <Header className={sheet ? 'border-b border-border px-5 pb-4 pr-12 pt-5' : undefined}>
         <Title>{mode === 'create' ? 'Register a project' : `Edit ${project?.name}`}</Title>
         <Description>
           Every new project starts in Draft. Fields marked <span className="text-danger">*</span>{' '}
@@ -256,7 +309,17 @@ export function ProjectForm({
         </Description>
       </Header>
 
-      <div className={variant === 'dialog' ? 'my-4 max-h-[60vh] space-y-5 overflow-y-auto pr-1' : 'my-4 space-y-5'}>
+      <div
+        className={
+          sheet
+            ? 'min-h-0 flex-1 space-y-5 overflow-y-auto px-5 py-4 scrollbar-thin'
+            : variant === 'dialog'
+              ? 'my-4 max-h-[60vh] space-y-5 overflow-y-auto pr-1'
+              : 'my-4 space-y-5'
+        }
+        data-testid={sheet ? 'registration-form-body' : undefined}
+      >
+        {prelude}
         <fieldset className="space-y-3">
           <legend className="text-2xs font-semibold uppercase tracking-wide text-text-muted">
             Identity
@@ -595,12 +658,12 @@ export function ProjectForm({
       </div>
 
       {submitError ? (
-        <p role="alert" className="mb-2 text-2xs text-danger">
+        <p role="alert" className={sheet ? 'px-5 pb-2 text-2xs text-danger' : 'mb-2 text-2xs text-danger'}>
           {submitError}
         </p>
       ) : null}
 
-      <Footer>
+      <Footer className={sheet ? 'border-t border-border bg-surface px-5 py-3' : undefined}>
         <Button type="button" variant="secondary" size="sm" onClick={() => onOpenChange(false)}>
           Cancel
         </Button>
@@ -612,7 +675,7 @@ export function ProjectForm({
   );
 }
 
-function InlineHeader({ children }: { children: React.ReactNode }): React.JSX.Element {
+function InlineHeader({ children }: { children: React.ReactNode; className?: string | undefined }): React.JSX.Element {
   return <div className="flex flex-col gap-1">{children}</div>;
 }
 function InlineTitle({ children }: { children: React.ReactNode }): React.JSX.Element {
@@ -621,7 +684,7 @@ function InlineTitle({ children }: { children: React.ReactNode }): React.JSX.Ele
 function InlineDescription({ children }: { children: React.ReactNode }): React.JSX.Element {
   return <p className="text-2xs text-text-muted">{children}</p>;
 }
-function InlineFooter({ children }: { children: React.ReactNode }): React.JSX.Element {
+function InlineFooter({ children }: { children: React.ReactNode; className?: string | undefined }): React.JSX.Element {
   return <div className="flex justify-end gap-2">{children}</div>;
 }
 

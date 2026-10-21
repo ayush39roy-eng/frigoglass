@@ -1970,11 +1970,15 @@ Frontend only; every number stays a served field (I9/I19).
 
 | ID | Task | Owner | Status |
 |---|---|---|---|
+| P19-R02 | Gate remediation, Gantt (P19 + P20 gate, qa): QA-P19-1 skipped step rows no longer dimmed with `opacity-60` (name muted token + strikethrough + "(skipped)", kind badge full contrast; activity strip `text-text-subtle/60` dot also removed); QA-P19-2 responsive fixed columns below 768 px (one name column, 40 % of the chart clamped 88..124 px, status column folded into a row icon + project details dialog, labelled focusable timeline region, 20 px touch handle; 1280+ unchanged); O1 drag label flips left of the cursor near the right edge and wraps when wider than the visible timeline | frontend-builder | DONE (MEMORY 2026-10-21) |
+| P19-R01 | Gate remediation, security (P19 + P20 gate): S19-M1 `GET /planning/resource-load` intersects `engineer_id` with the caller's hub scope before any predicate (none in scope = empty lists, zero totals; echo in-scope ids only); S19-L1/L2 explicit `null` on engineer / chamber PATCH is 422, integrity errors mapped (409 unique only) with no row values logged; S19-L3 strict engineer / chamber request models; S19-I1 note in ADR 0032 + OQ #8; add-on D2: seed docstring "scheduler ignores FTE" corrected | backend-builder | DONE (MEMORY 2026-10-21) |
 | P19-T01 | Frontend: Capacity page redesign (header toggles Weeks/Days + YTD/Full year; 4 KPI cards; class cards; two load-vs-capacity charts; booked tiles for all hubs and lab regions; compact hub summary table + Details dialog; collapsed utilization sections, lazy-fetched) | frontend-builder | DONE (MEMORY 2026-10-21) |
 | P19-T02 | Frontend: Capacity fixes after owner review: summary table fits 1280-1440 (Design / Lab header bands, short headers, compact % and status icons, Details icon button), lab figures once per lab region (grouped rows), accurate booked-% note, hub utilization matrix inline; Europe / India area view removed, booked % per hub only (owner ruling) | frontend-builder | DONE (MEMORY 2026-10-21) |
 | P19-T03 | Backend: capacity figures for Capacity Planning and the Weeks/Days toggle: `weekdays_per_week` + day figures on `/capacity/hub-load` rows, `lab_regions[]` and day totals; `capacity_weeks` / `capacity_days` on `/engineers` and `/chambers`; new `GET /planning/capacity-summary`; "Resource load analytics" `GET /planning/resource-load` (audited, filters, basis) and `/planning/resource-load/options`; see `docs/API_CONTRACT_P19.md` | backend-builder | DONE (MEMORY 2026-10-21) |
 | P19-T04 | Frontend: Capacity Planning page redesign against `docs/API_CONTRACT_P19.md` (capacity summary by hub and lab region with shares, engineer and chamber capacity in weeks/days, Resource load analytics filter bar + engineer and chamber load-vs-capacity charts and tables); enable the Capacity page Days toggle on the served day fields; mirror the new fields in `api/types.ts` (turns the P19 contract rows green) | frontend-builder | DONE (MEMORY 2026-10-21; Capacity-page Days toggle NOT wired: needs served day gap / priority fields or an owner ruling) |
 | P19-T05 | Frontend: RPD Capacity Weeks / Days toggle on the served day fields (`API_CONTRACT_P19` §1): KPI cards + per-hub / per-region lines, charts (axis title + value labels), booked tiles, hub summary table (lab once per region, Total), Details dialog, utilization matrix; one `CapacityView` state for unit + horizon; no browser multiplication (I19); absent day fields show "—". Owner add-on: class chart disclosure moved below the hub matrix, above chamber / engineer utilization | frontend-builder | DONE (MEMORY 2026-10-21) |
+| P19-T06 | Frontend: RPD Capacity owner changes: "Capacity booked" tiles grouped in one labelled box per hub family (R&D / PD (Product Development) / OEM; 3 / 2 / 1 per row; no family total, none served); "Load vs. capacity per hub" and "Global resource utilization matrix" merged into ONE "Load vs. capacity by hub" table (family row groups, Design and Lab bands, lab figures once per region with a shared marker, served totals, priority split mini-bar + "Show priority split" columns, status-tinted booked % with bar, signed / coloured gap); gate D1 booked-note wording (ADR 0032) | frontend-builder | DONE (MEMORY 2026-10-21) |
+| P19-T07 | Frontend: RPD Capacity owner removals: the class chart ("Show class chart" disclosure + deliverable vs. left-out bar chart; the seven class cards stay) and the chamber "Resource utilization matrix" ("Show chamber utilization" disclosure) are removed with their components, hook and fetcher; the page no longer requests `/capacity/utilization-matrix`. "Show engineer utilization" unchanged | frontend-builder | DONE (MEMORY 2026-10-21) |
 | P19-T20 | Gate: qa, workflow, security | — | TODO |
 
 ## P20 — FTE gates scheduling speed (ADR 0032)
@@ -1991,3 +1995,32 @@ their remaining effort; FTE <= 0 is a `data_error`; load stays in effort weeks. 
 | P20-T02 | Backend follow-ups to ADR 0032 §6: engineer-utilization weekly cells spread effort over the elapsed span (In Progress / Blocked: remaining effort on the booked tail), totals unchanged; `stage_overrun` / health badge against the FTE-stretched planned span; Priority board remaining design weeks in effort; engineer FTE request bounds (0.01..9.99, no NaN/inf); ADR 0002 docstrings point to ADR 0032; sweep of every backend span derivation | backend-builder | DONE (MEMORY 2026-10-21; + `GanttStepRow.span_fte`, migration `p20a_run_step_span_fte`) |
 | P20-T03 | Frontend follow-ups to ADR 0032 §6: Gantt right-edge drag converts elapsed width to effort for `duration_override_weeks` and labels effort vs elapsed; copy that cites ADR 0002 (`capacity-reporting-notice.tsx`, `engineer-form.tsx`, `planning/api/types.ts`, `card-info.tsx`) | frontend-builder | DONE (MEMORY 2026-10-21) |
 | P20-T20 | Gate: qa, workflow, security | — | TODO |
+
+## P22 — Projects and Registration merged
+
+Opened 2026-10-21. Owner request: "club the project registration and all project page". One page,
+"Projects", at `/projects`: the all-projects register (list / cards, filters, sort, export) plus a
+"Register project" button and an "Edit registration" row action that open the registration form in
+a full-height side drawer (hard gates, leave-Draft submit, financial fields, priority-move preview,
+unsaved-changes guard). `/register` redirects to `/projects`; `?edit=<id>` deep links open the
+drawer. Frontend only, existing endpoints; every number stays a served field (I9).
+
+| ID | Task | Owner | Status |
+|---|---|---|---|
+| P22-T01 | Frontend: merge Project Registration into the Projects page (header filters + Drafts chip + list/card toggle + Export menu with both exports + Register button for writers; registration drawer for create / edit with hard-gate panel; `/register` and `/register/:id` redirects, `?edit=` deep link; nav single "Projects" entry; tests and e2e page objects) | frontend-builder | DONE (MEMORY 2026-10-21) |
+| P22-T20 | Gate: qa, workflow, security | — | TODO |
+
+## P21 — Prioritization matrix: currencies, rubric columns, distribution, compare, score 0
+
+Opened 2026-10-21. Owner requests: EGP / ZAR / IDR currencies (no invented rates; 422
+`CURRENCY_NOT_CONFIGURED` until a rate is set; OQ #50); rubric scores per row (`dimension_scores`)
+with the financial columns moved out of the main table (still in the edit dialog and exports);
+band distribution and score histogram; compare 2–5 projects; a dimension may be scored 0 (owner
+ruling, ADR 0033). Contract: `docs/API_CONTRACT_P21.md`.
+
+| ID | Task | Owner | Status |
+|---|---|---|---|
+| P21-T01 | Backend: currencies EGP/ZAR/IDR with null rates + `name`/`configured` on `GET /currency-rates`, 422 `CURRENCY_NOT_CONFIGURED`, bounded rate PUT; score 0..5 (schemas, CHECK constraints, ADR 0033, DOMAIN_RULES); `dimension_scores` on matrix rows; `GET /priorities/distribution`; `GET /priorities/compare`; migration `p21a_currencies_score_zero`; contract `docs/API_CONTRACT_P21.md` | backend-builder | DONE (MEMORY 2026-10-21) |
+| P21-T02 | Frontend: Matrix currency picker on the served list (disabled when not configured, 422 handling), rubric columns from `dimension_scores`, financial columns out of the main table, distribution chart + histogram, compare dialog (2–5), score inputs 0..5; mirror the contract types (turns the P21 contract rows green) | frontend-builder | DONE (MEMORY 2026-10-21) |
+| P21-T03 | Frontend: Matrix scoring grid boxes and borders (pillar boxes with 2 px separators and alternating tint, identity / info / Score /100 blocks with 3 px separators, inner 1 px cell lines, score chips whose intensity follows the served 0..5 score, zebra + hover + selected rows across the frozen block, opaque sticky header/frozen cells, frozen-block shadow when scrolled sideways, wrapping centred dimension headers) | frontend-builder | DONE (MEMORY 2026-10-21) |
+| P21-T20 | Gate: qa, workflow, security | — | TODO |

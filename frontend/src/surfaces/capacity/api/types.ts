@@ -305,6 +305,10 @@ export interface EngineerUtilizationResponse {
  * /capacity/utilization-matrix`. `week_counts` keys are week numbers; JSON
  * object keys are strings. `count` vs `max_concurrent` shows over/under
  * utilization (only `max_concurrent` gates booking — ADR 0003).
+ *
+ * P19-T07: the Capacity page no longer renders or fetches this endpoint (owner
+ * removal of the chamber matrix). The shape stays declared because the backend
+ * contract test (`test_openapi_frontend_contract.py`) mirrors it.
  */
 export interface ChamberWeekLoad {
   chamber_id: Id;

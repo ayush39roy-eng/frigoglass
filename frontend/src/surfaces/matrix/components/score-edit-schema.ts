@@ -11,7 +11,8 @@ import {
 
 /**
  * Client-side mirror of `backend/schemas/priority.py::PriorityScoreUpdateRequest`
- * (`extra="forbid"`; 13 int dims each `ge=1 le=5`; `hard_gates` an enum array).
+ * (`extra="forbid"`; 13 int dims each `ge=0 le=5` since P21 — 0 means "no
+ * contribution"; `hard_gates` an enum array).
  *
  * Client validation is for responsiveness only — the backend is the authority
  * (`frontend-builder` SKILL). Kept deliberately close to the Pydantic
@@ -24,9 +25,9 @@ import {
  */
 
 const dimensionScore = z.coerce
-  .number({ invalid_type_error: 'Enter a whole number from 1 to 5' })
+  .number({ invalid_type_error: 'Enter a whole number from 0 to 5' })
   .int('Must be a whole number')
-  .min(1, 'Minimum score is 1')
+  .min(0, 'Minimum score is 0')
   .max(5, 'Maximum score is 5');
 
 export const scoreDimensionsSchema = z.object({

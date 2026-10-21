@@ -13,29 +13,34 @@
 import { apiGet, apiSend, type ApiRequestOptions } from '@/lib/api/client';
 import type { CurrencyRate } from '@/lib/api/reference';
 import type {
-  CurrencyCode,
   LabRegion,
   ProjectCategory,
   ProjectStatus,
   ProjectType,
 } from '@/types/enums';
 
-import type {
-  PriorityMatrixRow,
-  PriorityPortfolioSummary,
-  PriorityScoreRead,
-  PriorityScoreUpdateRequest,
-  ScoringDimensionTable,
-  ScenarioApplyRequest,
-  ScenarioApplyResponse,
-  ScenarioApplyRunDetail,
-  ScenarioApplyRunSummary,
+import {
+  CURRENCY_NAMES,
+  MATRIX_CURRENCY_CODES,
+  type CurrencyOption,
+  type MatrixCurrencyCode,
+  type PriorityCompareResponse,
+  type PriorityDistribution,
+  type PriorityMatrixRow,
+  type PriorityPortfolioSummary,
+  type PriorityScoreRead,
+  type PriorityScoreUpdateRequest,
+  type ScoringDimensionTable,
+  type ScenarioApplyRequest,
+  type ScenarioApplyResponse,
+  type ScenarioApplyRunDetail,
+  type ScenarioApplyRunSummary,
 } from './types';
 
 type FetchCtx = Pick<ApiRequestOptions, 'signal'>;
 
 export interface MatrixQueryParams {
-  currency: CurrencyCode;
+  currency: MatrixCurrencyCode;
   hubId?: string | undefined;
   /** P13 (ADR 0025): the country filter, sent as `region`. */
   region?: LabRegion | undefined;
@@ -72,7 +77,7 @@ export function fetchPriorityMatrix(
  * `{rate_to_eur}` (`extra="forbid"`). The server then converts every
  * financial column with the new rate; the browser never applies it.
  */
-export function updateCurrencyRate(code: CurrencyCode, rateToEur: number): Promise<CurrencyRate> {
+export function updateCurrencyRate(code: MatrixCurrencyCode, rateToEur: number): Promise<CurrencyRate> {
   return apiSend<CurrencyRate>('PUT', `/currency-rates/${code}`, { rate_to_eur: rateToEur });
 }
 
@@ -86,6 +91,16 @@ export function fetchPrioritySummary(
     '/priorities/summary',
     hubId || region ? { ...ctx, query: { hub_id: hubId ?? undefined, region: region ?? undefined } } : ctx,
   );
+}
+
+/**
+ * `GET /priorities/{projectId}` — one served Matrix row (hub-scoped; 404 out of
+ * scope). P21-T04: the Compare editor reads the live `hard_gates` / `has_score`
+ * from it, so a score save from Compare sends the same full body as the edit
+ * dialog. Default currency (EUR); nothing is converted here.
+ */
+export function fetchPriorityRow(projectId: string, ctx: FetchCtx = {}): Promise<PriorityMatrixRow> {
+  return apiGet<PriorityMatrixRow>(`/priorities/${projectId}`, ctx);
 }
 
 /**
@@ -144,4 +159,75 @@ export function fetchScenarioVersionDetail(
 /** `GET /priorities/dimensions` (P16, ADR 0029) — the served weight table. */
 export function fetchScoringDimensions(ctx: FetchCtx = {}): Promise<ScoringDimensionTable> {
   return apiGet<ScoringDimensionTable>('/priorities/dimensions', ctx);
+}
+
+// --- P21 (docs/API_CONTRACT_P21.md) ------------------------------------------
+
+/** P21 endpoint paths (docs/API_CONTRACT_P21.md), in one place. */
+export const P21_PATHS = {
+  currencies: '/currency-rates',
+  distribution: '/priorities/distribution',
+  compare: '/priorities/compare',
+} as const;
+
+function isMatrixCurrency(code: string): code is MatrixCurrencyCode {
+  return (MATRIX_CURRENCY_CODES as readonly string[]).includes(code);
+}
+
+/** A `GET /currency-rates` row; `name` / `configured` are P21 additions that a
+ *  pre-P21 API omits. */
+type ServedRate = Omit<CurrencyOption, 'name' | 'configured' | 'currency_code'> &
+  Partial<Pick<CurrencyOption, 'name' | 'configured'>> & { currency_code: string };
+
+/**
+ * The Matrix currency list (P21 §1): `GET /currency-rates` rows with `name`
+ * and `configured`. Every offered code is listed in enum order; a code with no
+ * served row is not configured (the server would answer 422
+ * `CURRENCY_NOT_CONFIGURED`). A pre-P21 API without `name` / `configured`
+ * gets the static name and `configured = rate !== null`. Shown verbatim only.
+ */
+export async function fetchMatrixCurrencies(ctx: FetchCtx = {}): Promise<CurrencyOption[]> {
+  const served = await apiGet<ServedRate[]>(P21_PATHS.currencies, ctx);
+  return MATRIX_CURRENCY_CODES.map((code) => {
+    const row = served.find((r) => isMatrixCurrency(r.currency_code) && r.currency_code === code);
+    if (!row) return { currency_code: code, name: CURRENCY_NAMES[code], rate_to_eur: null, configured: false };
+    return {
+      currency_code: code,
+      name: row.name ?? CURRENCY_NAMES[code],
+      rate_to_eur: row.rate_to_eur,
+      configured: row.configured ?? row.rate_to_eur !== null,
+    };
+  });
+}
+
+export type DistributionQueryParams = Omit<MatrixQueryParams, 'currency'>;
+
+/** `GET /priorities/distribution` (P21 §4): band distribution and score
+ *  histogram for the same filtered set as the grid. Shares and buckets are served. */
+export function fetchPriorityDistribution(
+  params: DistributionQueryParams,
+  ctx: FetchCtx = {},
+): Promise<PriorityDistribution> {
+  return apiGet<PriorityDistribution>(P21_PATHS.distribution, {
+    ...ctx,
+    query: {
+      hub_id: params.hubId,
+      region: params.region,
+      category: params.category,
+      type: params.type,
+      status_: params.status,
+      q: params.q,
+    },
+  });
+}
+
+/** `GET /priorities/compare?project_id=a&project_id=b…` (P21 §5): 2–5 distinct ids,
+ *  projects returned in the order given. */
+export function fetchPriorityCompare(
+  projectIds: readonly string[],
+  ctx: FetchCtx = {},
+): Promise<PriorityCompareResponse> {
+  const search = new URLSearchParams();
+  for (const id of projectIds) search.append('project_id', id);
+  return apiGet<PriorityCompareResponse>(`${P21_PATHS.compare}?${search.toString()}`, ctx);
 }

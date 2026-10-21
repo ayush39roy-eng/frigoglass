@@ -81,6 +81,7 @@ from core.principal import Principal
 from core.rbac import Action, Surface
 from models.audit import AuditLogEntry
 from models.enums import (
+    CurrencyCode,
     ExportFormat,
     ExportJobStatus,
     ExportSurface,
@@ -90,6 +91,7 @@ from models.enums import (
 )
 from models.export import ExportJob
 from schemas.export import ExportJobAccepted, ExportJobListItem, ExportJobStatusResponse
+from services.currency import rate_to_eur as currency_rate_to_eur
 from services.export_builder import ExportFilters, build_export_sheets, csv_bytes, xlsx_bytes
 
 router = APIRouter(prefix="/exports", tags=["exports"])
@@ -310,6 +312,15 @@ async def export_matrix(
     columns for whichever rows/fields the caller's role and hub scope
     already entitle them to see via `GET /priorities` (see module
     docstring)."""
+
+    if currency is not None:
+        # P21-T01: an unknown code is a 422 and an unconfigured one is a 422
+        # `CURRENCY_NOT_CONFIGURED`, before any sync build or async job.
+        try:
+            currency_code = CurrencyCode(currency)
+        except ValueError:
+            raise HTTPException(status_code=422, detail="Unknown currency code") from None
+        await currency_rate_to_eur(db, currency_code)
 
     filters: ExportFilters = {
         "currency": currency,

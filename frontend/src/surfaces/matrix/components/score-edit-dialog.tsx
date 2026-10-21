@@ -15,9 +15,14 @@ import {
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { ApiError } from '@/lib/api/client';
+import { formatDecimal } from '@/lib/format';
 import { HARD_GATE_REASONS, type HardGateReason } from '@/types/enums';
 
-import { POINTS_RULE_COPY, type PriorityMatrixRow, type PriorityScoreUpdateRequest } from '../api/types';
+import {
+  SCORE_RANGE_HELP_COPY,
+  type PriorityMatrixRow,
+  type PriorityScoreUpdateRequest,
+} from '../api/types';
 import { formatWeight, useScoringModel } from '../scoring-model';
 import {
   dimensionDefaultsFromRow,
@@ -141,18 +146,21 @@ function ScoreEditForm({
         <DialogDescription>
           {mode === 'scenario' ? (
             <>
-              {row.project_name} — 13 dimensions, each 1–5. This stages the change locally only;
+              {row.project_name} — 13 dimensions, each 0–5. This stages the change locally only;
               nothing is sent to the server until you Apply the scenario.
             </>
           ) : (
             <>
-              {row.project_name} — 13 dimensions, each 1–5. {POINTS_RULE_COPY} The weighted score and band are
-              recomputed by the server on save. This does not apply priorities or re-run the
-              schedule.
+              {row.project_name} — 13 dimensions, each 0–5. The weighted score and band are recomputed by
+              the server on save. This does not apply priorities or re-run the schedule.
             </>
           )}
         </DialogDescription>
       </DialogHeader>
+
+      <p className="mt-2 text-2xs text-text-muted" id="score-range-help" data-testid="score-range-help">
+        {SCORE_RANGE_HELP_COPY}
+      </p>
 
       <div className="my-4 max-h-[52vh] space-y-4 overflow-y-auto pr-1">
         {pillars.map((pillar) => (
@@ -176,12 +184,13 @@ function ScoreEditForm({
                       <Input
                         id={dim.key}
                         type="number"
-                        min={1}
+                        min={0}
                         max={5}
                         step={1}
                         inputMode="numeric"
                         className="h-8 w-16 text-right tnum"
                         aria-invalid={err ? true : undefined}
+                        aria-describedby="score-range-help"
                         {...register(dim.key)}
                       />
                       {err ? (
@@ -196,6 +205,8 @@ function ScoreEditForm({
             </div>
           </fieldset>
         ))}
+
+        <FinancialsReadOnly row={row} />
 
         <fieldset className="space-y-2">
           <legend className="text-2xs font-semibold uppercase tracking-wide text-text-muted">
@@ -244,5 +255,39 @@ function ScoreEditForm({
         </Button>
       </DialogFooter>
     </form>
+  );
+}
+
+/**
+ * P21: the financial figures left the grid; they stay here, read-only and
+ * unchanged, for the roles that may open this dialog. Values are the row's
+ * served fields, already converted to `row.currency` by the server
+ * (`gross_margin_pct` is never converted). Nothing is computed.
+ */
+function FinancialsReadOnly({ row }: { row: PriorityMatrixRow }): React.JSX.Element {
+  const c = row.currency;
+  const items: { label: string; value: number | null; suffix?: string }[] = [
+    { label: `CAPEX (k ${c})`, value: row.capex_keur },
+    { label: `RM savings (k ${c})`, value: row.rm_savings_keur },
+    { label: `TCOGS (${c})`, value: row.tcogs_eur },
+    { label: `Selling price (${c})`, value: row.selling_price_eur },
+    { label: 'Gross margin %', value: row.gross_margin_pct, suffix: '%' },
+  ];
+  return (
+    <section aria-labelledby="score-edit-financials" className="space-y-2" data-testid="score-edit-financials">
+      <h3 id="score-edit-financials" className="text-2xs font-semibold uppercase tracking-wide text-text-muted">
+        Financials — read only, in {c} (converted server-side)
+      </h3>
+      <dl className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs sm:grid-cols-3">
+        {items.map((it) => (
+          <div key={it.label} className="flex flex-col">
+            <dt className="text-2xs text-text-muted">{it.label}</dt>
+            <dd className="tnum text-text" data-numeric="">
+              {it.value === null ? '–' : `${formatDecimal(it.value)}${it.suffix ?? ''}`}
+            </dd>
+          </div>
+        ))}
+      </dl>
+    </section>
   );
 }

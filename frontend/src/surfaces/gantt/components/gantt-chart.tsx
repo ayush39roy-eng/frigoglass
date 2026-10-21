@@ -2,7 +2,7 @@ import * as React from 'react';
 import { Link } from 'react-router-dom';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { LayoutGroup, motion } from 'framer-motion';
-import { ArrowUpRight, ChevronRight, PencilLine, SlidersHorizontal, Snowflake, UserRound } from 'lucide-react';
+import { ArrowUpRight, ChevronRight, Info, PencilLine, SlidersHorizontal, Snowflake, TriangleAlert } from 'lucide-react';
 
 import { cn } from '@/lib/utils';
 import { formatPlanWeek } from '@/lib/format';
@@ -12,7 +12,6 @@ import { PriorityMoveControl } from '@/components/shared/priority-move/priority-
 import { StepKindBadge } from '@/components/shared/step-kind-badge';
 import { TrackingStatusChip } from '@/components/shared/tracking-status-chip';
 import { VipBadge } from '@/components/shared/vip-badge';
-import { PROJECT_TYPE_LABELS } from '@/types/enums';
 
 import {
   isPastScaleEnd,
@@ -22,6 +21,8 @@ import {
   type GanttDensity,
   type GanttZoom,
 } from '../lib/gantt-coordinates';
+import { ganttColumnWidths, useElementWidth, useNarrowGantt } from '../lib/gantt-layout';
+import { projectStatusLabels, stepStatusLabels } from '../lib/gantt-status-labels';
 import { buildVisualRows, visualRowHeight } from '../lib/gantt-rows';
 import { calendarRangePhrase, workWeeksPhrase } from '../lib/step-weeks-copy';
 import type { GanttProjectRow, GanttStepRow, GanttWeeklyActiveCount } from '../api/types';
@@ -29,6 +30,8 @@ import { ActivityLoadStrip, COUNT_ROW_HEIGHT, LOAD_STRIP_HEIGHT, WeeklyCountRow 
 import { GanttBarGroup, GanttHatchDefs, GanttSpilloverMarker } from './gantt-bars';
 import { ProjectRowBadges, StepRowBadges } from './gantt-badges';
 import { GanttCompletionMarkers } from './gantt-completion-markers';
+import { GanttProjectDetailsDialog } from './gantt-project-details';
+import { ProjectMetaLine, RowWeeks } from './gantt-row-meta';
 import { AXIS_HEIGHT, GanttGridLines, GanttWeekAxis } from './gantt-time-axis';
 import { StepDragOverlay } from './step-timing/step-drag-overlay';
 import { hasTimingEdit, stepTimingTarget, useStepTimingHost } from './step-timing/step-timing-context';
@@ -41,14 +44,17 @@ import { hasTimingEdit, stepTimingTarget, useStepTimingHost } from './step-timin
  * (badges) — so header and body share one scroll position by construction (no
  * drifting JS scroll-sync).
  *
+ * P19-R02 (QA-P19-2): below 768 px the two fixed columns collapse to one slim
+ * name column (`gantt-layout.ts`); the status chips move into a compact row
+ * icon and the project details dialog, so the timeline keeps most of the width
+ * and stays draggable on touch. 1280+ layouts are unchanged.
+ *
  * Every bar's x / width is a pure render of server week numbers through the
  * week→pixel scale (`gantt-bars.tsx` / `gantt-coordinates.ts`); every badge is a
  * server flag rendered verbatim (`gantt-badges.tsx`). Nothing here recomputes a
  * schedule, a week, or an outcome.
  */
 
-const LEFT_COL_WIDTH = 272;
-const BADGE_COL_WIDTH = 148;
 const SPRING = { type: 'spring', stiffness: 300, damping: 30 } as const;
 
 export interface GanttChartProps {
@@ -86,6 +92,22 @@ export function GanttChart({
   const animate = !usePrefersReducedMotion();
 
   const scrollRef = React.useRef<HTMLDivElement>(null);
+  const boxRef = React.useRef<HTMLDivElement>(null);
+  const narrow = useNarrowGantt();
+  const boxWidth = useElementWidth(boxRef);
+  const { left: LEFT_COL_WIDTH, status: BADGE_COL_WIDTH } = ganttColumnWidths(narrow, boxWidth);
+  const hasStatusCol = BADGE_COL_WIDTH > 0;
+  const [detailsId, setDetailsId] = React.useState<string | null>(null);
+  const detailsProject = detailsId === null ? null : (rows.find((r) => r.project_id === detailsId) ?? null);
+
+  // The visible timeline in client px — the scroll viewport minus both sticky
+  // columns — so the drag label can stay inside it (gate observation O1).
+  const timelineViewport = React.useCallback(() => {
+    const el = scrollRef.current;
+    if (!el) return null;
+    const r = el.getBoundingClientRect();
+    return { left: r.left + LEFT_COL_WIDTH, right: r.left + el.clientWidth - BADGE_COL_WIDTH };
+  }, [LEFT_COL_WIDTH, BADGE_COL_WIDTH]);
   const scale = React.useMemo(() => makeWeekScale(zoom), [zoom]);
   const visualRows = React.useMemo(
     () => buildVisualRows(rows, expandedIds),
@@ -130,12 +152,16 @@ export function GanttChart({
   const contentWidth = LEFT_COL_WIDTH + scale.totalWidthPx + BADGE_COL_WIDTH;
 
   return (
-    <div className="overflow-hidden rounded-dash border-[1.5px] border-border bg-surface">
+    <div ref={boxRef} className="overflow-hidden rounded-dash border-[1.5px] border-border bg-surface">
       <div
         ref={scrollRef}
-        className="overflow-auto scrollbar-thin"
+        className="overflow-auto scrollbar-thin focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
         style={{ maxHeight }}
+        role="region"
+        aria-label="Project timeline (scrolls horizontally through the weeks)"
+        tabIndex={0}
         data-testid="gantt-scroll"
+        data-layout={narrow ? 'narrow' : 'wide'}
       >
         <div style={{ width: contentWidth, position: 'relative' }}>
           {/* sticky header: corner + week axis + status label, then (P13-T13)
@@ -143,37 +169,47 @@ export function GanttChart({
           <div className="sticky top-0 z-30 border-b border-border bg-surface-sunken">
             <div className="flex" style={{ height: AXIS_HEIGHT }}>
               <div
-                className="sticky left-0 z-10 flex shrink-0 items-center border-r border-border bg-surface-sunken px-4 text-2xs font-bold uppercase tracking-wider text-text-subtle"
+                className={cn(
+                  'sticky left-0 z-10 flex shrink-0 items-center border-r border-border bg-surface-sunken text-2xs font-bold uppercase tracking-wider text-text-subtle',
+                  narrow ? 'px-2' : 'px-4',
+                )}
                 style={{ width: LEFT_COL_WIDTH }}
+                data-testid="gantt-left-header"
               >
-                Project / step
+                {narrow ? 'Project' : 'Project / step'}
               </div>
               <div style={{ width: scale.totalWidthPx }} className="shrink-0">
                 <GanttWeekAxis scale={scale} />
               </div>
-              <div
-                className="sticky right-0 z-10 flex shrink-0 items-center justify-end border-l border-border bg-surface-sunken px-4 text-2xs font-bold uppercase tracking-wider text-text-subtle"
-                style={{ width: BADGE_COL_WIDTH }}
-              >
-                Status
-              </div>
+              {hasStatusCol ? (
+                <div
+                  className="sticky right-0 z-10 flex shrink-0 items-center justify-end border-l border-border bg-surface-sunken px-4 text-2xs font-bold uppercase tracking-wider text-text-subtle"
+                  style={{ width: BADGE_COL_WIDTH }}
+                  data-testid="gantt-status-header"
+                >
+                  Status
+                </div>
+              ) : null}
             </div>
             {stats ? (
               <div className="flex border-t border-border/70" data-testid="gantt-weekly-stats">
                 <div
-                  className="sticky left-0 z-10 flex shrink-0 flex-col justify-center border-r border-border bg-surface-sunken px-4 text-2xs text-text-muted"
+                  className={cn(
+                    'sticky left-0 z-10 flex shrink-0 flex-col justify-center border-r border-border bg-surface-sunken text-2xs text-text-muted',
+                    narrow ? 'px-2' : 'px-4',
+                  )}
                   style={{ width: LEFT_COL_WIDTH }}
                 >
-                  <span className="flex items-center gap-1.5" style={{ height: COUNT_ROW_HEIGHT }}>
+                  <span className="flex items-center gap-1.5 whitespace-nowrap" style={{ height: COUNT_ROW_HEIGHT }}>
                     <span aria-hidden="true" className="size-1.5 rounded-full bg-gantt-planned" />
-                    <span className="font-semibold text-text">PDD</span> active steps / week
+                    <span className="font-semibold text-text">PDD</span> {narrow ? 'steps / wk' : 'active steps / week'}
                   </span>
-                  <span className="flex items-center gap-1.5" style={{ height: COUNT_ROW_HEIGHT }}>
+                  <span className="flex items-center gap-1.5 whitespace-nowrap" style={{ height: COUNT_ROW_HEIGHT }}>
                     <span aria-hidden="true" className="size-1.5 rounded-full bg-warning" />
-                    <span className="font-semibold text-text">OEM</span> active steps / week
+                    <span className="font-semibold text-text">OEM</span> {narrow ? 'steps / wk' : 'active steps / week'}
                   </span>
-                  <span className="flex items-center" style={{ height: LOAD_STRIP_HEIGHT }}>
-                    Activity load (served)
+                  <span className="flex items-center whitespace-nowrap" style={{ height: LOAD_STRIP_HEIGHT }}>
+                    {narrow ? 'Activity load' : 'Activity load (served)'}
                   </span>
                 </div>
                 <div style={{ width: scale.totalWidthPx }} className="shrink-0">
@@ -181,10 +217,12 @@ export function GanttChart({
                   <WeeklyCountRow scale={scale} counts={weeklyCounts} workflow="oem" />
                   <ActivityLoadStrip scale={scale} counts={weeklyCounts} />
                 </div>
-                <div
-                  className="sticky right-0 z-10 shrink-0 border-l border-border bg-surface-sunken"
-                  style={{ width: BADGE_COL_WIDTH }}
-                />
+                {hasStatusCol ? (
+                  <div
+                    className="sticky right-0 z-10 shrink-0 border-l border-border bg-surface-sunken"
+                    style={{ width: BADGE_COL_WIDTH }}
+                  />
+                ) : null}
               </div>
             ) : null}
           </div>
@@ -209,7 +247,7 @@ export function GanttChart({
                 return (
                   <div
                     key={vr.key}
-                    className="group/row absolute left-0 flex"
+                    className="group/row absolute left-0 flex has-[[data-dragging=true]]:z-20"
                     style={{ top, height, width: contentWidth }}
                     data-testid={vr.kind === 'project' ? 'gantt-project-row' : 'gantt-step-row'}
                     data-project-id={vr.project.project_id}
@@ -217,10 +255,12 @@ export function GanttChart({
                     {/* left column (sticky) */}
                     <div
                       className={cn(
-                        'sticky left-0 z-10 flex shrink-0 items-center gap-1 border-r border-b border-border bg-surface px-2',
+                        'sticky left-0 z-10 flex shrink-0 items-center gap-1 border-r border-b border-border bg-surface',
+                        narrow ? 'px-1' : 'px-2',
                         vr.kind === 'step' && 'bg-surface-raised',
                       )}
                       style={{ width: LEFT_COL_WIDTH }}
+                      data-testid="gantt-left-cell"
                     >
                       {vr.kind === 'project' ? (
                         <ProjectLeftCell
@@ -232,9 +272,11 @@ export function GanttChart({
                           canWrite={canWrite}
                           onToggleExpand={onToggleExpand}
                           onFreezeClick={onFreezeClick}
+                          narrow={narrow}
+                          onOpenDetails={setDetailsId}
                         />
                       ) : (
-                        <StepLeftCell project={vr.project} step={vr.step} compact={compact} />
+                        <StepLeftCell project={vr.project} step={vr.step} compact={compact} narrow={narrow} />
                       )}
                     </div>
 
@@ -247,21 +289,31 @@ export function GanttChart({
                       {/* P12 (ADR 0019): drag handles, only where the server says
                           `timing_editable` allows it (none → nothing rendered). */}
                       {vr.kind === 'step' && !vr.step.skipped ? (
-                        <StepDragOverlay target={stepTimingTarget(vr.project, vr.step)} scale={scale} rowHeight={height} />
+                        <StepDragOverlay
+                          target={stepTimingTarget(vr.project, vr.step)}
+                          scale={scale}
+                          rowHeight={height}
+                          viewport={timelineViewport}
+                          touch={narrow}
+                        />
                       ) : null}
                     </div>
 
-                    {/* badge column (sticky) */}
-                    <div
-                      className="sticky right-0 z-10 flex shrink-0 items-center justify-end border-l border-b border-border bg-surface px-2"
-                      style={{ width: BADGE_COL_WIDTH }}
-                    >
-                      {vr.kind === 'project' ? (
-                        <ProjectRowBadges project={vr.project} />
-                      ) : (
-                        <StepRowBadges step={vr.step} />
-                      )}
-                    </div>
+                    {/* badge column (sticky) — wide layout only; on the narrow
+                        layout the flags are a row icon + the details dialog */}
+                    {hasStatusCol ? (
+                      <div
+                        className="sticky right-0 z-10 flex shrink-0 items-center justify-end border-l border-b border-border bg-surface px-2"
+                        style={{ width: BADGE_COL_WIDTH }}
+                        data-testid="gantt-status-cell"
+                      >
+                        {vr.kind === 'project' ? (
+                          <ProjectRowBadges project={vr.project} />
+                        ) : (
+                          <StepRowBadges step={vr.step} />
+                        )}
+                      </div>
+                    ) : null}
                   </div>
                 );
               })}
@@ -270,6 +322,15 @@ export function GanttChart({
 
         </div>
       </div>
+      <GanttProjectDetailsDialog
+        project={detailsProject}
+        open={detailsProject !== null}
+        onOpenChange={(open) => {
+          if (!open) setDetailsId(null);
+        }}
+        canWrite={canWrite}
+        onFreezeClick={onFreezeClick}
+      />
     </div>
   );
 }
@@ -435,7 +496,7 @@ function stepBarTitle(
 ): string {
   const parts = [s.step_name];
   if (planned) parts.push(`planned ${calendarRangePhrase(planned.startWeek, planned.endWeek)}`);
-  if (s.duration_weeks !== null && !s.skipped) parts.push(workWeeksPhrase(s.kind, s.duration_weeks, s.span_fte));
+  if (s.duration_weeks !== null && !s.skipped) parts.push(workWeeksPhrase(s.kind, s.duration_weeks, s.span_fte ?? null));
   if (actual) parts.push(`actual ${formatPlanWeek(actual.startWeek)}–${formatPlanWeek(actual.endWeek)}`);
   return parts.join(' · ');
 }
@@ -449,6 +510,8 @@ function ProjectLeftCell({
   canWrite,
   onToggleExpand,
   onFreezeClick,
+  narrow = false,
+  onOpenDetails,
 }: {
   project: GanttProjectRow;
   compact: boolean;
@@ -458,7 +521,11 @@ function ProjectLeftCell({
   canWrite: boolean;
   onToggleExpand: (id: string) => void;
   onFreezeClick: (project: GanttProjectRow) => void;
+  /** P19-R02: phone layout — name only; everything else is in the details dialog. */
+  narrow?: boolean;
+  onOpenDetails?: (projectId: string) => void;
 }): React.JSX.Element {
+  const statuses = narrow ? projectStatusLabels(project) : [];
   return (
     <>
       {focused ? (
@@ -505,12 +572,16 @@ function ProjectLeftCell({
         )}
         <span className="min-w-0 flex-1">
           <span
-            className={cn('block truncate font-bold text-text', compact ? 'text-2xs' : 'text-xs')}
+            className={cn(
+              'font-bold text-text',
+              narrow ? 'line-clamp-2 break-words text-2xs leading-tight' : 'block truncate',
+              !narrow && (compact ? 'text-2xs' : 'text-xs'),
+            )}
             title={project.project_name}
           >
             {project.project_name}
           </span>
-          {compact ? null : (
+          {compact || narrow ? null : (
             <>
               {/* P13-T13: row meta — leader, external code, type, hub. */}
               <ProjectMetaLine project={project} />
@@ -525,6 +596,27 @@ function ProjectLeftCell({
           )}
         </span>
       </button>
+      {narrow ? (
+        <button
+          type="button"
+          className="relative shrink-0 rounded-sm p-0.5 text-text-muted hover:bg-surface-raised hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          aria-label={`Details for ${project.project_name}${statuses.length > 0 ? ` (status: ${statuses.join(', ')})` : ''}`}
+          title={statuses.length > 0 ? `Details · ${statuses.join(', ')}` : 'Details'}
+          onClick={() => onOpenDetails?.(project.project_id)}
+          data-testid="gantt-row-details"
+          data-flags={statuses.length}
+        >
+          <Info className="size-3.5" aria-hidden="true" />
+          {statuses.length > 0 ? (
+            <span
+              aria-hidden="true"
+              className="absolute right-0 top-0 size-1.5 rounded-full bg-warning ring-1 ring-surface"
+              data-testid="gantt-row-flag-dot"
+            />
+          ) : null}
+        </button>
+      ) : (
+        <>
       {/* P11 (ADR 0015): with Registration write this is a dropdown that moves the
           priority and recalculates; otherwise the read-only pill. It sits outside
           the expand button because a menu trigger cannot nest in a button. The
@@ -552,74 +644,9 @@ function ProjectLeftCell({
           <Snowflake className="size-3.5" aria-hidden="true" />
         </button>
       ) : null}
-    </>
-  );
-}
-
-/**
- * P13-T13 row meta: leader · external code · type · hub. The leader name is
- * served by the API (ADR 0028); a leader id with no name reads "Name unavailable".
- */
-function ProjectMetaLine({ project }: { project: GanttProjectRow }): React.JSX.Element {
-  return (
-    <span className="flex min-w-0 items-center gap-1 text-2xs text-text-muted" data-testid="gantt-row-meta">
-      <UserRound className="size-3 shrink-0 text-text-subtle" aria-hidden="true" />
-      {project.leader_name ? (
-        <span className="max-w-24 truncate font-medium text-primary" title={`Leader: ${project.leader_name}`}>
-          {project.leader_name}
-        </span>
-      ) : project.leader_engineer_id ? (
-        <span className="shrink-0 italic text-text-subtle" title="Leader name unavailable">
-          Name unavailable
-        </span>
-      ) : (
-        <span className="shrink-0 text-text-subtle" title="No leader assigned">
-          —<span className="sr-only">No leader</span>
-        </span>
+        </>
       )}
-      {project.external_code ? (
-        <>
-          <span aria-hidden="true">·</span>
-          <span className="tnum truncate" title={`Project code ${project.external_code}`}>
-            {project.external_code}
-          </span>
-        </>
-      ) : null}
-      {project.type ? (
-        <>
-          <span aria-hidden="true">·</span>
-          <abbr className="shrink-0 no-underline" title={PROJECT_TYPE_LABELS[project.type]}>
-            {project.type}
-          </abbr>
-        </>
-      ) : null}
-      <span aria-hidden="true">·</span>
-      <span className="truncate">{project.hub}</span>
-    </span>
-  );
-}
-
-/** P13-T13: the served "Total 17W · 5 DW / 0 LW" — verbatim, never summed here.
- *  The server sends nulls when the project has no step in the active run. */
-function RowWeeks({ project }: { project: GanttProjectRow }): React.JSX.Element {
-  const { total_weeks: total, design_weeks: design, lab_weeks: lab } = project;
-  if (total === null) {
-    return (
-      <span className="shrink-0 text-text-subtle" data-testid="gantt-row-weeks">
-        Not in the active run
-      </span>
-    );
-  }
-  const d = design === null ? '–' : String(design);
-  const l = lab === null ? '–' : String(lab);
-  return (
-    <span
-      className="tnum shrink-0"
-      data-testid="gantt-row-weeks"
-      title={`Total ${String(total)} weeks: ${d} design weeks, ${l} lab weeks (served)`}
-    >
-      Total {total}W · {d} DW / {l} LW
-    </span>
+    </>
   );
 }
 
@@ -627,10 +654,13 @@ function StepLeftCell({
   project,
   step,
   compact = false,
+  narrow = false,
 }: {
   project: GanttProjectRow;
   step: GanttStepRow;
   compact?: boolean;
+  /** P19-R02: phone layout — no status column, so flags show as a compact icon. */
+  narrow?: boolean;
 }): React.JSX.Element {
   const { step_name: name, kind, skipped, sequence_order: sequenceOrder } = step;
   // An elapsed step books nobody (ADR 0007) — there is no resource to name.
@@ -649,22 +679,52 @@ function StepLeftCell({
         .filter(Boolean)
         .join(' · ')
     : '';
+  const flags = narrow && !skipped ? stepStatusLabels(step) : [];
+  // QA-P19-1: a skipped row is NOT dimmed with opacity (that dimmed the kind
+  // badge below AA). Only the name is muted — a full-strength token that still
+  // clears AA — with a strikethrough and a "skipped" word; the badge stays at
+  // full contrast.
   return (
-    <div className={cn('flex min-w-0 flex-1 items-center gap-1.5 pl-4', skipped && 'opacity-60')}>
+    <div className={cn('flex min-w-0 flex-1 items-center', narrow ? 'gap-1 pl-1' : 'gap-1.5 pl-4')} data-skipped={skipped || undefined}>
       <StepKindBadge kind={kind} compact />
       <span className="min-w-0 flex-1">
         <span
-          className={cn('block truncate text-2xs text-text', skipped && 'line-through decoration-border-strong')}
+          className={cn(
+            'block truncate text-2xs',
+            skipped ? 'text-text-muted line-through decoration-text-subtle' : 'text-text',
+          )}
           title={skipped ? `${name} — not applicable for this project (skipped)` : name}
+          data-testid="gantt-step-name"
         >
           {sequenceOrder}. {name}
+          {skipped ? <span className="sr-only"> (skipped)</span> : null}
         </span>
-        {resource && !compact ? (
+        {skipped && narrow ? (
+          <span
+            className="block whitespace-nowrap text-[0.625rem] leading-3 text-text-muted"
+            title="Skipped — not applicable for this project"
+            data-testid="gantt-step-skipped"
+          >
+            n/a
+          </span>
+        ) : null}
+        {resource && !compact && !(skipped && narrow) ? (
           <span className="block truncate text-[0.625rem] text-text-muted" title={resource}>
             {resource}
           </span>
         ) : null}
       </span>
+      {flags.length > 0 ? (
+        <span
+          role="img"
+          className="inline-flex shrink-0 text-danger"
+          aria-label={`Status: ${flags.join(', ')}`}
+          title={flags.join(', ')}
+          data-testid="gantt-step-flag"
+        >
+          <TriangleAlert className="size-3" aria-hidden="true" />
+        </span>
+      ) : null}
       {/* P12 (ADR 0019): a planner override or start floor is set on this step. */}
       {edited ? (
         <span
@@ -673,7 +733,7 @@ function StepLeftCell({
           data-testid="step-timing-edited"
         >
           <PencilLine className="size-2.5" aria-hidden="true" />
-          edited
+          {narrow ? <span className="sr-only">edited</span> : 'edited'}
           <span className="sr-only">{`: ${editedTitle}`}</span>
         </span>
       ) : null}

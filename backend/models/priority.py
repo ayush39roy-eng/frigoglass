@@ -48,7 +48,7 @@ DIMENSION_FIELD_NAMES: tuple[str, ...] = (
 
 def _dimension_check_constraints() -> tuple[CheckConstraint, ...]:
     return tuple(
-        CheckConstraint(f"{name} BETWEEN 1 AND 5", name=f"{name}_score_range")
+        CheckConstraint(f"{name} BETWEEN 0 AND 5", name=f"{name}_score_range")
         for name in DIMENSION_FIELD_NAMES
     )
 

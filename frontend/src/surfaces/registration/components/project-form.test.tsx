@@ -10,7 +10,7 @@ vi.mock('../hooks/use-registration', () => ({
   useEngineerOptions: (hubId: string | undefined) => hooks.useEngineerOptions(hubId),
 }));
 
-import { ProjectFormDialog } from './project-form';
+import { ProjectForm, ProjectFormDialog } from './project-form';
 
 const hubs: Hub[] = [
   { id: 'hub-1', name: 'R&D-Greece', lab_region: 'Greece', is_oem: false },
@@ -375,5 +375,56 @@ describe('ProjectFormDialog — P9 planning fields and category-by-hub (ADR 0007
     await user.click(screen.getByRole('button', { name: 'Create draft' }));
     expect(await screen.findByText('Must be 52 or less')).toBeInTheDocument();
     expect(onSubmit).not.toHaveBeenCalled();
+  });
+});
+
+describe('ProjectForm — unsaved-changes reporting (P22-T01)', () => {
+  const existing = {
+    id: 'p-1', name: 'Cooler A', external_code: null, hub_id: 'hub-1', leader_engineer_id: null,
+    category: 'A' as const, type: null, priority: 'P2' as const, status: 'In Queue' as const, frozen: false,
+    actual_start_week: null, delay_weeks: 0, reg_year: 2026, carry_over: false, comments: 'one\r\ntwo',
+    customer_name: null, tcogs_eur: 100.5, selling_price_eur: null, gross_margin_pct: null, capex_keur: null,
+    rm_savings_keur: null, target_end_week: null, certification_testing_required: true,
+    estimated_design_weeks: null, estimated_lab_weeks: null, schedule_stale: false, workflow_id: 'PDD' as const,
+    created_at: '', updated_at: '',
+  };
+
+  it('a freshly opened edit form is clean; an edit makes it dirty; undoing the edit makes it clean again', async () => {
+    const user = userEvent.setup();
+    const onDirtyChange = vi.fn();
+    renderWithProviders(
+      <ProjectForm
+        mode="edit"
+        project={existing}
+        hubs={hubs}
+        variant="inline"
+        onOpenChange={vi.fn()}
+        onSubmit={vi.fn()}
+        onDirtyChange={onDirtyChange}
+      />,
+    );
+    expect(onDirtyChange).toHaveBeenLastCalledWith(false);
+    expect(onDirtyChange).not.toHaveBeenCalledWith(true);
+
+    const name = screen.getByLabelText(/^Name/);
+    await user.type(name, 'X');
+    expect(onDirtyChange).toHaveBeenLastCalledWith(true);
+    await user.type(name, '{Backspace}');
+    expect(onDirtyChange).toHaveBeenLastCalledWith(false);
+
+    await user.click(screen.getByRole('combobox', { name: /^Priority/ }));
+    await user.click(await screen.findByRole('option', { name: 'P3' }));
+    expect(onDirtyChange).toHaveBeenLastCalledWith(true);
+  });
+
+  it('a fresh create form is clean until something is typed', async () => {
+    const user = userEvent.setup();
+    const onDirtyChange = vi.fn();
+    renderWithProviders(
+      <ProjectForm mode="create" project={null} hubs={hubs} variant="inline" onOpenChange={vi.fn()} onSubmit={vi.fn()} onDirtyChange={onDirtyChange} />,
+    );
+    expect(onDirtyChange).not.toHaveBeenCalledWith(true);
+    await user.type(screen.getByLabelText('Comments'), 'note');
+    expect(onDirtyChange).toHaveBeenLastCalledWith(true);
   });
 });

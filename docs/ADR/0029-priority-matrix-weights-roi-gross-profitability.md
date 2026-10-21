@@ -4,6 +4,8 @@
 
 Accepted (2026-10-19). Part of P16. Amends DOMAIN_RULES "Prioritization scoring". Changes
 scheduling inputs (the weighted score orders projects within a priority band).
+*(2026-10-21: the 1..5 score range is superseded by ADR 0033, which allows 0. The points formula is
+unchanged.)*
 
 ## Context
 

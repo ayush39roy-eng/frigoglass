@@ -14,7 +14,7 @@ import { cn } from '@/lib/utils';
  * `prefers-reduced-motion` rule.
  */
 export interface CollapsibleSectionProps {
-  /** Button text when closed, e.g. "Show chamber utilization". */
+  /** Button text when closed, e.g. "Show engineer utilization". */
   showLabel: string;
   /** Button text when open; defaults to `showLabel` with "Show" -> "Hide". */
   hideLabel?: string;

@@ -38,10 +38,18 @@ function row(overrides: Partial<PriorityMatrixRow> = {}): PriorityMatrixRow {
 }
 
 describe('ScoreCell', () => {
-  it('renders the API normalized_pct and weighted_score verbatim', () => {
+  it('P21: renders the served normalized score out of 100 ("62/100"), never as a percentage', () => {
     renderWithProviders(<ScoreCell row={row({ normalized_pct: 62, weighted_score: 868 })} />);
-    expect(screen.getByText('62%')).toBeInTheDocument();
-    expect(screen.getByText('(868)')).toBeInTheDocument();
+    expect(screen.getByTestId('score-out-of-100')).toHaveTextContent('62/100');
+    expect(screen.queryByText('62%')).not.toBeInTheDocument();
+  });
+
+  it('P21: the tooltip states the weighted score and the normalized score out of 100', async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<ScoreCell row={row({ normalized_pct: 62, weighted_score: 868 })} />);
+    await user.hover(screen.getByRole('button'));
+    expect((await screen.findAllByText('868')).length).toBeGreaterThan(0);
+    expect((await screen.findAllByText('62/100')).length).toBeGreaterThan(0);
   });
 
   it('shows a band pill matching the API suggested_band (not derived from the score)', () => {

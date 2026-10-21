@@ -91,13 +91,13 @@ def test_seed_currency_rates_duplicate_guard_and_reset(seeded_schema_url, monkey
     importlib.reload(seed_currency_rates)
 
     counts = asyncio.run(seed_currency_rates.run(reset_first=False))
-    assert counts["_verified_from_db"]["currency_rates"] == 3
+    assert counts["_verified_from_db"]["currency_rates"] == 6  # P21-T01: + EGP, ZAR, IDR (no rate)
 
     with pytest.raises(RuntimeError, match="already has"):
         asyncio.run(seed_currency_rates.run(reset_first=False))
 
     counts_after_reset = asyncio.run(seed_currency_rates.run(reset_first=True))
-    assert counts_after_reset["_verified_from_db"]["currency_rates"] == 3
+    assert counts_after_reset["_verified_from_db"]["currency_rates"] == 6
 
 
 def test_seed_dev_users_duplicate_guard_and_reset(seeded_schema_url, monkeypatch):

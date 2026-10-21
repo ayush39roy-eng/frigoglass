@@ -110,7 +110,7 @@ export function WeeklyCountRow({ scale, counts, workflow }: WeeklyCountRowProps)
             className={
               value > 0
                 ? 'tnum absolute top-0 flex items-center justify-center text-[0.625rem] font-semibold text-text'
-                : 'tnum absolute top-0 flex items-center justify-center text-[0.625rem] text-text-subtle/60'
+                : 'tnum absolute top-0 flex items-center justify-center text-[0.625rem] text-text-subtle'
             }
             style={{ left: weekToX(c.week, scale), width: scale.weekWidthPx, height: COUNT_ROW_HEIGHT }}
             title={`${formatWeek(c.week)}: ${String(value)} ${label} active step${value === 1 ? '' : 's'}`}

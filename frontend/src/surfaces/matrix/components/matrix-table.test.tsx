@@ -46,19 +46,162 @@ function row(overrides: Partial<PriorityMatrixRow> = {}): PriorityMatrixRow {
 }
 
 describe('MatrixTable', () => {
-  it('renders financial figures verbatim from the row (already converted server-side)', () => {
+  it('P21: no financial columns; the 13 rubric columns under pillar bands and a final Score /100', () => {
+    renderWithProviders(<MatrixTable rows={[row()]} canEdit={false} onEdit={vi.fn()} />);
+    for (const gone of [/^CAPEX \(k/, /^RM sav\. \(k/, /^TCOGS/, /^Selling price/, /^Gross margin %/]) {
+      expect(screen.queryByRole("columnheader", { name: gone }), String(gone)).not.toBeInTheDocument();
+    }
+    expect(screen.queryByText('129.6')).not.toBeInTheDocument();
+    // 13 rubric cells for the row, one per dimension.
+    expect(screen.getAllByTestId(/^dim-/)).toHaveLength(13);
+    for (const pillar of [
+      'Strategic Alignment',
+      'Regulatory & Quality',
+      'Financial Return',
+      'Market & Volume',
+      'Investment & Feasibility',
+    ]) {
+      expect(screen.getByRole('columnheader', { name: pillar })).toBeInTheDocument();
+    }
+    const headers = screen.getAllByRole('columnheader').map((h) => h.textContent);
+    expect(headers.at(-1)).toBe('Score /100');
+    expect(screen.getByTestId('score-out-of-100')).toHaveTextContent('70/100');
+  });
+
+  it('P21: a dimension cell shows the served score 0–5 and its served points to screen readers and on hover', () => {
     renderWithProviders(
-      <MatrixTable rows={[row()]} currency="USD" canEdit={false} onEdit={vi.fn()} />,
+      <MatrixTable
+        rows={[
+          row({
+            strategic_project: 0,
+            dimension_scores: [
+              { key: 'strategic_project', label: 'Strategic Project', pillar: 'Strategic Alignment', score: 0, weight: 25, points: 0, max_points: 25 },
+              { key: 'new_customer', label: 'New Customer', pillar: 'Strategic Alignment', score: 4, weight: 25, points: 20, max_points: 25 },
+            ],
+          }),
+        ]}
+        canEdit={false}
+        onEdit={vi.fn()}
+      />,
     );
-    // 129.6 is `row.capex_keur` as-is; nothing is multiplied by a rate here
-    expect(screen.getByText('129.6')).toBeInTheDocument();
-    expect(screen.getByText('37.5%')).toBeInTheDocument();
-    expect(screen.getByRole('columnheader', { name: /CAPEX \(k USD\)/ })).toBeInTheDocument();
+    const strat = screen.getByTestId('dim-strategic_project');
+    expect(strat).toHaveAttribute('title', 'Strategic Project: 0 of 5, 0/25 pts');
+    expect(screen.getByTestId('dim-new_customer')).toHaveTextContent('New Customer: 4 of 5, 20/25 pts');
+  });
+
+  it('P21: Compare checkboxes are keyboard-reachable and call the toggle', async () => {
+    const onToggle = vi.fn();
+    const { default: userEvent } = await import('@testing-library/user-event');
+    const user = userEvent.setup();
+    renderWithProviders(
+      <MatrixTable rows={[row()]} canEdit={false} onEdit={vi.fn()} selectedIds={new Set()} onToggleSelect={onToggle} />,
+    );
+    const box = screen.getByRole('checkbox', { name: 'Select Cooler A to compare' });
+    box.focus();
+    await user.keyboard(' ');
+    expect(onToggle).toHaveBeenCalledWith(expect.objectContaining({ project_id: 'p1' }));
+  });
+
+  it('P21-T03: each pillar is one box — start/end markers, 2px pillar lines, 3px block lines, alternating tint', () => {
+    const { container } = renderWithProviders(
+      <MatrixTable rows={[row()]} canEdit={false} onEdit={vi.fn()} selectedIds={new Set()} onToggleSelect={vi.fn()} />,
+    );
+    const bodyRow = container.querySelector('.mg-row');
+    expect(bodyRow).not.toBeNull();
+    const starts = [...(bodyRow as Element).querySelectorAll('[data-pillar-start]')].map((c) =>
+      c.getAttribute('data-pillar-start'),
+    );
+    expect(starts).toEqual([
+      'pillar-Strategic Alignment',
+      'pillar-Regulatory & Quality',
+      'pillar-Financial Return',
+      'pillar-Market & Volume',
+      'pillar-Investment & Feasibility',
+    ]);
+    expect((bodyRow as Element).querySelectorAll('[data-pillar-end]')).toHaveLength(5);
+    // First pillar follows the info block (block line); later pillars get a pillar line.
+    const startCells = [...(bodyRow as Element).querySelectorAll('[data-pillar-start]')];
+    expect(startCells.map((c) => c.getAttribute('data-line'))).toEqual(['block', 'pillar', 'pillar', 'pillar', 'pillar']);
+    // Every second pillar is tinted, header band included.
+    expect(startCells.map((c) => c.getAttribute('data-tint'))).toEqual([null, 'true', null, 'true', null]);
+    const band = screen.getByRole('columnheader', { name: 'Regulatory & Quality' });
+    expect(band).toHaveAttribute('data-pillar-start', 'pillar-Regulatory & Quality');
+    expect(band).toHaveAttribute('data-pillar-end', 'pillar-Regulatory & Quality');
+    expect(band).toHaveAttribute('data-tint', 'true');
+    // Inside a pillar, cells get the lighter inner line.
+    const inner = (bodyRow as Element).querySelectorAll('[data-box-kind="pillar"][data-line="inner"]');
+    expect(inner).toHaveLength(13 - 5);
+    // Identity → info and scores → Score /100 are block separators.
+    const lines = [...(bodyRow as Element).querySelectorAll('[role="cell"]')].map((c) => [
+      c.getAttribute('data-box-kind'),
+      c.getAttribute('data-line'),
+    ]);
+    expect(lines.filter(([, l]) => l === 'block').map(([k]) => k)).toEqual(['info', 'pillar', 'score']);
+    // The last frozen column (Hub) carries the frozen-edge shadow hook.
+    expect((bodyRow as Element).querySelectorAll('.mg-frozen-edge')).toHaveLength(1);
+    expect((bodyRow as Element).querySelectorAll('.mg-cell-sticky')).toHaveLength(3);
+  });
+
+  it('P21-T03: a score chip shows the served number with an intensity that follows it (0 muted, 5 strongest)', () => {
+    const dims = [
+      ['strategic_project', 0],
+      ['new_customer', 1],
+      ['new_options', 2],
+      ['regulatory_compliance', 3],
+      ['quality_improvements', 4],
+      ['rm_savings', 5],
+    ] as const;
+    renderWithProviders(
+      <MatrixTable
+        rows={[
+          row({
+            dimension_scores: dims.map(([key, score]) => ({
+              key,
+              label: key,
+              pillar: 'Strategic Alignment',
+              score,
+              weight: 25,
+              points: score * 5,
+              max_points: 25,
+            })),
+          }),
+        ]}
+        canEdit={false}
+        onEdit={vi.fn()}
+      />,
+    );
+    for (const [key, score] of dims) {
+      const chip = screen.getByTestId(`dim-${key}`).querySelector('[data-testid="score-chip"]');
+      expect(chip, key).toHaveTextContent(String(score));
+      expect(chip, key).toHaveAttribute('data-intensity', String(score));
+      expect(chip, key).toHaveClass('mg-chip');
+    }
+    // The number and the screen-reader summary stay; colour is never alone.
+    expect(screen.getByTestId('dim-strategic_project')).toHaveTextContent('Strategic Project: 0 of 5, 0/25 pts');
+  });
+
+  it('P21-T03: rows are zebra-striped and a checked row is marked selected across the frozen block', () => {
+    const { container } = renderWithProviders(
+      <MatrixTable
+        rows={[row(), row({ project_id: 'p2', project_name: 'Cooler B', normalized_pct: 60 })]}
+        canEdit={false}
+        onEdit={vi.fn()}
+        selectedIds={new Set(['p2'])}
+        onToggleSelect={vi.fn()}
+      />,
+    );
+    const rows = [...container.querySelectorAll('.mg-row')];
+    expect(rows.map((r) => r.getAttribute('data-zebra'))).toEqual(['even', 'odd']);
+    const selected = rows.find((r) => r.getAttribute('data-selected') === 'true');
+    expect(selected).toBeDefined();
+    expect(selected).toHaveTextContent('Cooler B');
+    expect(rows.filter((r) => r.getAttribute('data-selected') === 'true')).toHaveLength(1);
+    expect(screen.getByRole('checkbox', { name: 'Select Cooler B to compare' })).toBeChecked();
   });
 
   it('shows no edit affordance for a read-only role (canEdit=false)', () => {
     renderWithProviders(
-      <MatrixTable rows={[row()]} currency="EUR" canEdit={false} onEdit={vi.fn()} />,
+      <MatrixTable rows={[row()]} canEdit={false} onEdit={vi.fn()} />,
     );
     expect(screen.queryByRole('button', { name: /Edit prioritization score/ })).not.toBeInTheDocument();
     expect(screen.queryByRole('columnheader', { name: 'Edit' })).not.toBeInTheDocument();
@@ -69,7 +212,7 @@ describe('MatrixTable', () => {
     const { default: userEvent } = await import('@testing-library/user-event');
     const user = userEvent.setup();
     renderWithProviders(
-      <MatrixTable rows={[row()]} currency="EUR" canEdit onEdit={onEdit} />,
+      <MatrixTable rows={[row()]} canEdit onEdit={onEdit} />,
     );
     await user.click(screen.getByRole('button', { name: 'Edit prioritization score for Cooler A' }));
     expect(onEdit).toHaveBeenCalledWith(expect.objectContaining({ project_id: 'p1' }));
@@ -90,7 +233,7 @@ describe('MatrixTable', () => {
             hard_gates: [],
           }),
         ]}
-        currency="EUR"
+       
         canEdit={false}
         onEdit={vi.fn()}
       />,
@@ -100,7 +243,7 @@ describe('MatrixTable', () => {
   });
 
   it('P9: links each project to its workspace and exposes the scoring anchors on the dimension headers', () => {
-    renderWithProviders(<MatrixTable rows={[row()]} currency="USD" canEdit={false} onEdit={vi.fn()} />);
+    renderWithProviders(<MatrixTable rows={[row()]} canEdit={false} onEdit={vi.fn()} />);
     expect(screen.getByRole('link', { name: 'Cooler A' })).toHaveAttribute('href', '/projects/p1');
     expect(
       screen.getByRole('button', {
@@ -109,17 +252,17 @@ describe('MatrixTable', () => {
     ).toBeInTheDocument();
   }, 20_000); // synchronous, but the first full-table render is slow when CPU is saturated (QA-P15-3)
 
-  it('P16: shows served points/weight in the dimension cells (no client maths)', () => {
+  it('P16: shows served points/weight in the dimension cells in Detailed view (no client maths)', () => {
     renderWithProviders(
       <MatrixTable
         rows={[row({ dimension_points: { gross_margins: { points: 15, scaled_points: 5.08 } } })]}
-        currency="USD"
         canEdit={false}
         onEdit={vi.fn()}
+        detailed
       />,
     );
-    expect(screen.getByText('15/25')).toBeInTheDocument();
-    expect(screen.getByTitle('15 / 25 points (5.1 of 100 scale)')).toBeInTheDocument();
+    expect(screen.getByText('15/25 pts')).toBeInTheDocument();
+    expect(screen.getByTitle('Gross Profitability: 3 of 5, 15/25 pts (5.08 of 100)')).toBeInTheDocument();
   });
 
   it('sorts projects in order of the score: rank 1 first, descending score, unscored at bottom', () => {
@@ -156,7 +299,7 @@ describe('MatrixTable', () => {
     renderWithProviders(
       <MatrixTable
         rows={[rowLow, rowUnscored, rowHigh, rowTop]}
-        currency="EUR"
+       
         canEdit={false}
         onEdit={vi.fn()}
       />,

@@ -44,10 +44,10 @@ const PHOTO_SIZE = 256;
 
 const START_PAGES: { value: StartPage; label: string }[] = [
   { value: '/', label: 'Dashboard' },
+  { value: '/projects', label: 'Projects' },
   { value: '/capacity', label: 'RPD Capacity' },
   { value: '/matrix', label: 'Prioritization Matrix' },
   { value: '/timeline', label: 'Execution Timeline' },
-  { value: '/register', label: 'Project Registration' },
   { value: '/planning', label: 'Capacity Planning' },
 ];
 

@@ -241,10 +241,12 @@ test('UI: double-click Run sends one request; a concurrent heavy job gives 429 w
   expect(sims).toHaveLength(1);
 
   // second case: another heavy job of the SAME user is in flight (solve of 25 PDD/C P1 ~ 4 s)
+  // P19/P20 gate: after ADR 0032 a 25-project solve ends in ~0.7 s, so the
+  // 300 ms window raced; 80 projects take ~1.4 s on the disposable stack.
   const heavy = post(request, '/whatif/solve', {
-    scenario: { add_projects: [{ hub: 'PD-India', category: 'C', count: 25, priority: 'P1' }] },
+    scenario: { add_projects: [{ hub: 'PD-India', category: 'C', count: 80, priority: 'P1' }] },
   });
-  await page.waitForTimeout(300);
+  await page.waitForTimeout(150);
   await page.getByRole('button', { name: 'Estimate' }).click();
   const err = page.getByTestId('whatif-error');
   await expect(err).toBeVisible({ timeout: 10_000 });

@@ -49,7 +49,6 @@ const NAV: { surface: SurfaceKey | null; label: string; path: string }[] = [
   { surface: 'matrix', label: 'Priority board', path: '/priority-board' },
   { surface: 'gantt', label: 'Timeline', path: '/timeline' },
   { surface: 'project_workspace', label: 'Weekly check-in', path: '/check-in' },
-  { surface: 'project_registration', label: 'Register', path: '/register' },
   { surface: 'capacity_planning', label: 'Planning', path: '/planning' },
   { surface: 'workflow_settings', label: 'Workflow', path: '/settings/workflow' },
   { surface: 'user_role_admin', label: 'Users & roles', path: '/admin/users' },
@@ -63,6 +62,7 @@ const canRead = (role: DevRole, n: { surface: SurfaceKey | null }): boolean =>
   n.surface === null || perm(role, n.surface) !== '-';
 
 // Surfaces whose page renders `<ReadOnlyNotice>` when read && !write.
+// P22-T01: Project Registration has no nav entry of its own; its notice is on /projects.
 const NOTICE_SURFACES: SurfaceKey[] = [
   'matrix',
   'gantt',
@@ -160,8 +160,8 @@ for (const role of Object.keys(MATRIX) as DevRole[]) {
     test('write controls follow write permission (read-only notice)', async ({ page }) => {
       await actAs(page, role);
       for (const s of NOTICE_SURFACES.filter((x) => perm(role, x) !== '-')) {
-        const n = NAV.find((x) => x.surface === s)!;
-        await page.goto(n.path);
+        const path = s === 'project_registration' ? '/projects' : NAV.find((x) => x.surface === s)!.path;
+        await page.goto(path);
         await expect(page.getByRole('navigation', { name: 'Surfaces' })).toBeVisible();
         await page.waitForLoadState('networkidle');
         const notice = page.getByTestId('read-only-notice');

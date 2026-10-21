@@ -19,7 +19,6 @@ import {
   fetchClassBreakdown,
   fetchEngineerUtilization,
   fetchHubLoadVsCapacity,
-  fetchUtilizationMatrix,
 } from '../api/capacity-api';
 
 /** Do not retry an auth failure — a 401/403 will not fix itself on retry.
@@ -50,14 +49,6 @@ export function useClassBreakdown(hubId: string | null = null, region: LabRegion
   return useQuery({
     queryKey: queryKeys.capacityClassBreakdown(hubId, region),
     queryFn: ({ signal }) => fetchClassBreakdown({ signal }, hubId, region),
-    retry: retryUnlessAuth,
-  });
-}
-
-export function useUtilizationMatrix(hubId: string | null = null, region: LabRegion | null = null) {
-  return useQuery({
-    queryKey: queryKeys.capacityUtilizationMatrix(hubId, region),
-    queryFn: ({ signal }) => fetchUtilizationMatrix({ signal }, hubId, region),
     retry: retryUnlessAuth,
   });
 }

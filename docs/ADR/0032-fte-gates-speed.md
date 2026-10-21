@@ -228,3 +228,15 @@ Follow-ups outside `backend/scheduling/`:
 Also tightened: the engineer create/update `fte` is now `0.01 ≤ fte ≤ 9.99`, with NaN and
 infinity refused. `Numeric(3, 2)` would store 0.004 as 0.00, and FTE 0 is now a scheduler
 `data_error`.
+
+### Follow-up: `span_fte` withholding is not confidentiality (2026-10-21, P19-R01, S19-I1)
+
+The security gate of P19 + P20 recorded (S19-I1, Info) that serving `GanttStepRow.span_fte` only to
+callers who may edit step timing (item 3 above) does not fully hide part-time status. Every Gantt
+reader (Executive Viewer, Portfolio Manager, an Engineer on own assignments) still gets
+`start_week`, `end_week` and `duration_weeks` of each design step, and
+`end − start + 1 = ceil(duration / fte)`, so calendar span ÷ work weeks reveals the leader's
+approximate FTE. Withholding `span_fte` is defence in depth only. This is an **accepted owner risk
+under ADR 0028** (per-engineer data is an owner residual risk until the DPO answers OQ #8), not a
+block. If the DPO rules that part-time status must be hidden from non-planners, the Gantt must also
+stop serving the calendar span or the work weeks of design steps to those roles. Recorded in OQ #8.

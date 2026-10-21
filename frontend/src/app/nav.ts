@@ -4,7 +4,6 @@ import {
   CalendarRange,
   ClipboardCheck,
   Download,
-  FilePlus2,
   FolderKanban,
   GaugeCircle,
   History,
@@ -91,19 +90,20 @@ export const SURFACES: readonly SurfaceNavItem[] = [
   },
   {
     path: '/projects',
-    // Reuses the `dashboard` permission rather than a new RBAC column: this
-    // page reads the exact same `GET /dashboard/projects` rows as the
-    // Dashboard's own "Project breakdown" card, just as a dedicated,
-    // full-page card gallery — not a new capability, so it does not need one
-    // of the ten spec-defined Surface columns (PROJECT_AND_STACK.md §5).
-    // Added 2026-10-01 from a project-owner request, ad hoc (no IMPLEMENTATION_PLAN.md task).
+    // Read reuses `dashboard`: the list is the same `GET /dashboard/projects`
+    // rows as the Dashboard register, so Executive Viewers keep it. Since
+    // P22-T01 (owner: "club the project registration and all project page")
+    // this is also Project Registration: "Register project" and "Edit
+    // registration" open the form in a drawer, gated on
+    // `project_registration` write inside the page (the server decides).
+    // `/register` redirects here (`routes.tsx`).
     surface: 'dashboard',
     label: 'Projects',
-    title: 'All Projects',
+    title: 'Projects',
     icon: FolderKanban,
-    task: 'Ad hoc — 2026-10-01 (reuses P4-T02\'s GET /dashboard/projects)',
+    task: 'P22-T01',
     summary:
-      'Every project visible in your hub scope as a feature card, with an "Ask the agent" question box on each — the same filtered rows as the Dashboard\'s Project breakdown, laid out for browsing instead of comparing.',
+      'Every project in your hub scope, as a list or as cards, with filters, Drafts and export. Register new projects and edit their registration (hard-gated required fields, validated by the API) in a side drawer.',
     group: 'Plan',
     density: 'overview',
   },
@@ -172,18 +172,6 @@ export const SURFACES: readonly SurfaceNavItem[] = [
       'The stages due this week: report status, % complete and any hold reason in one batch, so project tracking stays live.',
     group: 'Execute',
     density: 'working',
-  },
-  {
-    path: '/register',
-    surface: 'project_registration',
-    label: 'Register',
-    title: 'Project Registration',
-    icon: FilePlus2,
-    task: 'P4-T06',
-    summary:
-      'Create and edit projects with hard-gated required fields (category, financials) validated client-side and re-validated by the API.',
-    group: 'Execute',
-    density: 'overview',
   },
   {
     path: '/planning',

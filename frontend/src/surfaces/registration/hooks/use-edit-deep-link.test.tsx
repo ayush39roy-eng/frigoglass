@@ -11,7 +11,7 @@ import type { ProjectRead } from '../api/types';
 import { registrationEditHref } from '@/lib/registration-links';
 import { useEditDeepLink } from './use-edit-deep-link';
 
-/** P13 (ADR 0025 §5): the Dashboard register's Edit → `/register?edit=<id>`. */
+/** P13 (ADR 0025 §5), P22-T01: the Dashboard register's Edit → `/projects?edit=<id>`. */
 
 const ID = '3f2b8c1e-9a4d-4e6f-8b2a-1c0d9e8f7a65';
 
@@ -30,7 +30,7 @@ beforeEach(() => {
 
 describe('useEditDeepLink', () => {
   it('builds the edit href', () => {
-    expect(registrationEditHref('p 1')).toBe('/register?edit=p%201');
+    expect(registrationEditHref('p 1')).toBe('/projects?edit=p%201');
   });
 
   it('opens the edit form for ?edit=<id> once loaded, then drops the param', async () => {
@@ -42,7 +42,7 @@ describe('useEditDeepLink', () => {
         useEditDeepLink(true, open);
         return useLocation();
       },
-      { wrapper: wrapperAt(`/register?edit=${ID}`) },
+      { wrapper: wrapperAt(`/projects?edit=${ID}`) },
     );
     await waitFor(() => expect(open).toHaveBeenCalledWith(project));
     expect(fetchProject).toHaveBeenCalledWith(ID, expect.anything());
@@ -56,7 +56,7 @@ describe('useEditDeepLink', () => {
         useEditDeepLink(false, open);
         return useLocation();
       },
-      { wrapper: wrapperAt(`/register?edit=${ID}`) },
+      { wrapper: wrapperAt(`/projects?edit=${ID}`) },
     );
     await waitFor(() => expect(result.current.search).toBe(''));
     expect(fetchProject).not.toHaveBeenCalled();
@@ -70,7 +70,7 @@ describe('useEditDeepLink', () => {
         useEditDeepLink(true, open);
         return useLocation();
       },
-      { wrapper: wrapperAt(`/register?edit=${encodeURIComponent(bad)}`) },
+      { wrapper: wrapperAt(`/projects?edit=${encodeURIComponent(bad)}`) },
     );
     await waitFor(() => expect(result.current.search).toBe(''));
     expect(fetchProject).not.toHaveBeenCalled();

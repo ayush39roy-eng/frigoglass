@@ -83,4 +83,44 @@ describe('ScoreEditDialog', () => {
       ].sort(),
     );
   });
+
+  it('P21: accepts 0 ("no contribution"), rejects -1, and shows the 0–5 help text', async () => {
+    const user = userEvent.setup();
+    const onSubmit = vi.fn().mockResolvedValue(undefined);
+    renderWithProviders(<ScoreEditDialog row={row()} open onOpenChange={vi.fn()} onSubmit={onSubmit} />);
+
+    expect(screen.getByTestId('score-range-help')).toHaveTextContent(
+      '0 gives no points; 1 gives 1/5 of the weight; 5 the full weight',
+    );
+    const strategic = screen.getByLabelText('Strategic Project');
+    expect(strategic).toHaveAttribute('min', '0');
+
+    await user.clear(strategic);
+    await user.type(strategic, '-1');
+    await user.click(screen.getByRole('button', { name: 'Save score' }));
+    expect(await screen.findByText('Minimum score is 0')).toBeInTheDocument();
+    expect(onSubmit).not.toHaveBeenCalled();
+
+    await user.clear(strategic);
+    await user.type(strategic, '0');
+    await user.click(screen.getByRole('button', { name: 'Save score' }));
+    expect(onSubmit).toHaveBeenCalledTimes(1);
+    expect(onSubmit.mock.calls[0]?.[1]).toMatchObject({ strategic_project: 0 });
+  });
+
+  it('P21: shows the served financial figures read-only (converted server-side, never in the grid)', () => {
+    renderWithProviders(
+      <ScoreEditDialog
+        row={row({ currency: 'USD', capex_keur: 129.6, tcogs_eur: 5400, gross_margin_pct: 37.5 })}
+        open
+        onOpenChange={vi.fn()}
+        onSubmit={vi.fn()}
+      />,
+    );
+    const fin = screen.getByTestId('score-edit-financials');
+    expect(fin).toHaveTextContent('CAPEX (k USD)');
+    expect(fin).toHaveTextContent('129.6');
+    expect(fin).toHaveTextContent('5,400');
+    expect(fin).toHaveTextContent('37.5%');
+  });
 });

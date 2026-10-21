@@ -47,7 +47,9 @@ export function stepTimingTarget(project: GanttProjectRow, step: GanttStepRow): 
     plannedStartWeek: step.planned_start_week,
     plannedEndWeek: step.planned_end_week,
     durationWeeks: step.duration_weeks,
-    spanFte: step.span_fte,
+    // A server that predates P20-T02 omits the field: treat it as not served
+    // (null), never as `undefined` (which leaked "at undefined FTE" into labels).
+    spanFte: step.span_fte ?? null,
     leadTimeWeeks: step.lead_time_weeks,
     durationOverrideWeeks: step.duration_override_weeks,
     startNotBeforeWeek: step.start_not_before_week,

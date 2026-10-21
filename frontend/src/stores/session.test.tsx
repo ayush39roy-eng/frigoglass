@@ -105,7 +105,7 @@ describe('route guard', () => {
     );
     const nav = screen.getByRole('navigation', { name: 'Surfaces' });
     expect(within(nav).queryByRole('link', { name: 'Audit Log' })).not.toBeInTheDocument();
-    expect(within(nav).getByRole('link', { name: 'Register' })).toBeInTheDocument();
+    expect(within(nav).getByRole('link', { name: 'Projects' })).toBeInTheDocument();
   });
 
   it('the Project Workspace route is gated on project_workspace', async () => {

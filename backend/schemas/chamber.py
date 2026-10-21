@@ -13,10 +13,26 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from models.enums import LabRegion
 from schemas.capacity import YearRemaining
+from schemas.engineer import reject_explicit_null
+
+#: P19-R01 (S19-L2): every chamber column is NOT NULL, so an explicit `null`
+#: for any of these in a PATCH body is a 422 (before, the DB IntegrityError
+#: was reported as a misleading 409 "code already exists").
+NON_NULLABLE_UPDATE_FIELDS = (
+    "code",
+    "lab_region",
+    "max_concurrent",
+    "platforms",
+    "efficiency",
+    "maintenance_weeks",
+    "breakdown_weeks",
+    "calibration_weeks",
+    "allowed_stages",
+)
 
 
 def _drop_retired_weeks_per_chamber(data: Any) -> Any:
@@ -43,7 +59,12 @@ _YEARLY_WEEKS_CEILING = 104.0
 
 
 class ChamberCreateRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+    """P19-R01 (S19-L3): strict, so `true` or `"2"` for a number is a 422
+    rather than coerced (a strict float still accepts a JSON integer; a strict
+    int refuses `2.5` and `true`). `lab_region` opts out only because a strict
+    enum accepts an instance, never its JSON string."""
+
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False, strict=True)
 
     @model_validator(mode="before")
     @classmethod
@@ -51,7 +72,7 @@ class ChamberCreateRequest(BaseModel):
         return _drop_retired_weeks_per_chamber(data)
 
     code: str = Field(min_length=1, max_length=50)
-    lab_region: LabRegion
+    lab_region: LabRegion = Field(strict=False)
     max_concurrent: int = Field(gt=0, le=1000)
     platforms: int = Field(default=1, gt=0, le=1000)
     efficiency: float = Field(default=1.0, gt=0, le=1.0)
@@ -66,17 +87,24 @@ class ChamberCreateRequest(BaseModel):
 
 
 class ChamberUpdateRequest(BaseModel):
-    """All fields optional — partial update (PATCH semantics)."""
+    """All fields optional — partial update (PATCH semantics). An omitted
+    field is unchanged; an explicit `null` is a 422 (P19-R01, S19-L2).
+    Strict like the create model (S19-L3)."""
 
-    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False, strict=True)
 
     @model_validator(mode="before")
     @classmethod
     def _ignore_weeks_per_chamber(cls, data: Any) -> Any:
         return _drop_retired_weeks_per_chamber(data)
 
+    @field_validator(*NON_NULLABLE_UPDATE_FIELDS, mode="before")
+    @classmethod
+    def _no_explicit_null(cls, value: Any) -> Any:
+        return reject_explicit_null(value)
+
     code: str | None = Field(default=None, min_length=1, max_length=50)
-    lab_region: LabRegion | None = None
+    lab_region: LabRegion | None = Field(default=None, strict=False)
     max_concurrent: int | None = Field(default=None, gt=0, le=1000)
     platforms: int | None = Field(default=None, gt=0, le=1000)
     efficiency: float | None = Field(default=None, gt=0, le=1.0)

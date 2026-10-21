@@ -31,6 +31,9 @@ projects). Sections marked *(2026-10-10)* changed. Invariants I21–I24. Open qu
 scheduling speed. A design step books `ceil(duration / fte)` weeks of its leader. Sections marked
 *(2026-10-21)* changed; ADR 0002 is superseded and known defect #1 is closed.
 
+**Revised 2026-10-21** (P21, ADR 0033, owner ruling): a prioritization dimension may be scored 0
+(0 points); currencies EGP, ZAR and IDR are added with no configured rate.
+
 ---
 
 ## Workflow templates — two workflows, 14 steps each *(2026-09-27, ADR 0007)*
@@ -274,10 +277,14 @@ slip_weeks           = projected_end_week − expected_end_week               (m
 
 *(Amended 2026-10-19, ADR 0029.)* Wire and DB keys are unchanged (`gross_margins`, `profitability`).
 
+*(Amended 2026-10-21, ADR 0033.)* Each dimension score is an integer **0..5** (was 1..5). A score of
+0 ("does not apply") earns 0 points. The formula, the total and the bands below are unchanged.
+
 ```
 TOTAL_WEIGHT = Σ weights = 295            (derived, never hard-coded; the client said "300", see OQ #41)
-points(d)    = score(d) / 5 × weight(d)   a dimension contributes its weight at score 5 and weight/5 at
-                                          score 1 (not score × weight)
+score(d)     ∈ {0, 1, 2, 3, 4, 5}         (ADR 0033)
+points(d)    = score(d) / 5 × weight(d)   a dimension contributes its weight at score 5, weight/5 at
+                                          score 1 and 0 at score 0 (not score × weight)
 raw          = Σ points(d)                out of TOTAL_WEIGHT
 normalised_pct = round(raw / TOTAL_WEIGHT × 100)      shown out of 100
 displayed points(d) = points(d) × 100 / TOTAL_WEIGHT  (the scaled-to-100 view)
@@ -304,6 +311,13 @@ Bands:
 
 Base EUR. `EUR = 1.0`, `USD = 1.08`, `INR = 97`. Rates must be configurable at runtime, not
 hardcoded constants — store them in a config table, not in code.
+
+*(Amended 2026-10-21, P21.)* Currencies are `EUR`, `USD`, `INR`, `EGP` (Egyptian pound), `ZAR`
+(South African rand) and `IDR` (Indonesian rupiah). No rate is invented: `EGP`, `ZAR` and `IDR` are
+seeded with **no rate** ("not configured", `rate_to_eur = null`) until a Super Admin (or Admin) sets
+one through `PUT /currency-rates/{code}` (positive, audited). Converting into a currency with no
+configured rate is a 422 `CURRENCY_NOT_CONFIGURED`; nothing falls back to EUR silently. The rates for
+the three new currencies are asked in `docs/OPEN_QUESTIONS.md` #50.
 
 ---
 

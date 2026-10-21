@@ -6,13 +6,12 @@
  * (Invariant I9 — no independent calculation, including in the frontend).
  */
 
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { ApiError } from '@/lib/api/client';
 import { queryKeys } from '@/lib/query-keys';
 import { useCurrencyRates } from '@/lib/api/reference';
 import type {
-  CurrencyCode,
   LabRegion,
   ProjectCategory,
   ProjectStatus,
@@ -21,7 +20,11 @@ import type {
 
 import {
   applyScenario,
+  fetchMatrixCurrencies,
+  fetchPriorityCompare,
+  fetchPriorityDistribution,
   fetchPriorityMatrix,
+  fetchPriorityRow,
   fetchScoringDimensions,
   fetchPrioritySummary,
   fetchScenarioVersionDetail,
@@ -30,7 +33,7 @@ import {
   updatePriorityScore,
   type MatrixQueryParams,
 } from '../api/matrix-api';
-import type { PriorityScoreUpdateRequest, ScenarioApplyRequest } from '../api/types';
+import type { MatrixCurrencyCode, PriorityScoreUpdateRequest, ScenarioApplyRequest } from '../api/types';
 
 /** Do not retry an auth failure — a 401/403 will not fix itself on retry.
  *  Param typed `Error` so `useQuery` infers `TError = Error`. */
@@ -41,8 +44,10 @@ function retryUnlessAuth(failureCount: number, error: Error): boolean {
 
 export { useCurrencyRates };
 
+const MATRIX_CURRENCIES_KEY = ['matrix-currencies'] as const;
+
 export interface UseMatrixParams {
-  currency: CurrencyCode;
+  currency: MatrixCurrencyCode;
   hubId?: string | undefined;
   region?: LabRegion | undefined;
   category?: ProjectCategory | undefined;
@@ -65,15 +70,20 @@ export function usePriorityMatrix(params: UseMatrixParams) {
     // Every changeable input to `queryFn` must be in the key — `hubId` and
     // `category` are user-facing filters on a hub-scoped surface, so omitting
     // them would serve a stale hub's rows on filter change.
-    queryKey: queryKeys.priorityMatrix({
-      currency: params.currency,
-      hubId: params.hubId,
-      region: params.region,
-      category: params.category,
-      type: params.type,
-      status: params.status,
-      q: params.q,
-    }),
+    // Same shape as `queryKeys.priorityMatrix` (prefix `priority-matrix`), built
+    // here because the P21 currency codes are wider than the shared `CurrencyCode`.
+    queryKey: [
+      'priority-matrix',
+      {
+        currency: params.currency,
+        hubId: params.hubId,
+        region: params.region,
+        category: params.category,
+        type: params.type,
+        status: params.status,
+        q: params.q,
+      },
+    ] as const,
     queryFn: ({ signal }) => fetchPriorityMatrix(query, { signal }),
     retry: retryUnlessAuth,
     placeholderData: (prev) => prev,
@@ -164,10 +174,11 @@ export function useScenarioVersionDetail(version: number | null) {
 export function useUpdateCurrencyRate() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({ code, rateToEur }: { code: CurrencyCode; rateToEur: number }) =>
+    mutationFn: ({ code, rateToEur }: { code: MatrixCurrencyCode; rateToEur: number }) =>
       updateCurrencyRate(code, rateToEur),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: queryKeys.currencyRates() });
+      void queryClient.invalidateQueries({ queryKey: MATRIX_CURRENCIES_KEY });
       void queryClient.invalidateQueries({ queryKey: ['priority-matrix'] });
     },
   });
@@ -181,5 +192,64 @@ export function useScoringDimensions() {
     queryFn: ({ signal }) => fetchScoringDimensions({ signal }),
     staleTime: 5 * 60_000,
     retry: retryUnlessAuth,
+  });
+}
+
+// --- P21 ----------------------------------------------------------------------
+
+/** The served currencies list (P21) with `configured` per code. */
+export function useMatrixCurrencies() {
+  return useQuery({
+    queryKey: MATRIX_CURRENCIES_KEY,
+    queryFn: ({ signal }) => fetchMatrixCurrencies({ signal }),
+    retry: retryUnlessAuth,
+    staleTime: 10 * 60_000,
+  });
+}
+
+export type UseDistributionParams = Omit<UseMatrixParams, 'currency'>;
+
+/** Band distribution + score histogram for the grid's server filters (P21).
+ *  Under `priority-matrix` so a score save re-reads it with the grid. */
+export function usePriorityDistribution(params: UseDistributionParams) {
+  const filters = {
+    hubId: params.hubId,
+    region: params.region,
+    category: params.category,
+    type: params.type,
+    status: params.status,
+    q: params.q,
+  };
+  return useQuery({
+    queryKey: ['priority-matrix', 'distribution', filters] as const,
+    queryFn: ({ signal }) => fetchPriorityDistribution(filters, { signal }),
+    retry: retryUnlessAuth,
+    placeholderData: (prev) => prev,
+  });
+}
+
+/** `GET /priorities/compare` for the selected ids, fetched only when enabled. */
+export function usePriorityCompare(projectIds: readonly string[], enabled: boolean) {
+  return useQuery({
+    queryKey: ['priority-matrix', 'compare', [...projectIds]] as const,
+    queryFn: ({ signal }) => fetchPriorityCompare(projectIds, { signal }),
+    enabled: enabled && projectIds.length > 0,
+    retry: retryUnlessAuth,
+  });
+}
+
+/**
+ * P21-T04: the live Matrix row of each compared project (`GET /priorities/{id}`),
+ * read only for users who may edit from Compare. Under `priority-matrix`, so a
+ * score save re-reads them with the grid, the distribution and compare.
+ */
+export function usePriorityEditRows(projectIds: readonly string[], enabled: boolean) {
+  return useQueries({
+    queries: projectIds.map((id) => ({
+      queryKey: ['priority-matrix', 'row', id] as const,
+      queryFn: ({ signal }: { signal: AbortSignal }) => fetchPriorityRow(id, { signal }),
+      enabled,
+      retry: retryUnlessAuth,
+    })),
   });
 }

@@ -1,17 +1,16 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
-import { screen } from '@testing-library/react';
+import { screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
 import { renderWithProviders } from '@/test/render';
 import { useHubFilterStore } from '@/stores/hub-filter';
 import { ApiError } from '@/lib/api/client';
-import type { ClassBreakdown, EngineerUtilizationResponse, HubCapacitySummary, UtilizationMatrix } from './api/types';
+import type { ClassBreakdown, EngineerUtilizationResponse, HubCapacitySummary } from './api/types';
 import { areaRow, classRow, hubRow, SUMMARY_P11, totalsRow } from './test-fixtures';
 
 const hooks = {
   useHubLoadVsCapacity: vi.fn(),
   useClassBreakdown: vi.fn(),
-  useUtilizationMatrix: vi.fn(),
   useActiveScheduleRun: vi.fn(),
   useEngineerUtilization: vi.fn(),
 };
@@ -19,12 +18,8 @@ const hooks = {
 vi.mock('./hooks/use-capacity', () => ({
   useHubLoadVsCapacity: (...a: unknown[]) => hooks.useHubLoadVsCapacity(...a),
   useClassBreakdown: (...a: unknown[]) => hooks.useClassBreakdown(...a),
-  useUtilizationMatrix: (...a: unknown[]) => hooks.useUtilizationMatrix(...a),
   useActiveScheduleRun: () => hooks.useActiveScheduleRun(),
   useEngineerUtilization: () => hooks.useEngineerUtilization(),
-}));
-vi.mock('./components/class-breakdown-chart', () => ({
-  ClassBreakdownChart: () => <div data-testid="class-breakdown-chart" />,
 }));
 
 import CapacityPage from './CapacityPage';
@@ -49,15 +44,6 @@ const classBreakdown: ClassBreakdown = {
   schedule_run_version: 6,
   rows: [classRow({ category: 'A+', deliverable_count: 4, left_out_count: 1, total_count: 5 })],
 };
-const utilization: UtilizationMatrix = {
-  has_active_schedule_run: true,
-  schedule_run_version: 6,
-  engineers: [],
-  chambers: [
-    { chamber_id: 'c1', code: 'GR-1', lab_region: 'Greece', max_concurrent: 2, week_counts: { '33': 2 } },
-  ],
-};
-
 const engUtil: EngineerUtilizationResponse = {
   week_range: [1, 4],
   current_week: 2,
@@ -81,7 +67,6 @@ describe('CapacityPage', () => {
     useHubFilterStore.setState({ hubId: 'hub-india' });
     hooks.useHubLoadVsCapacity.mockReturnValue(pending);
     hooks.useClassBreakdown.mockReturnValue(pending);
-    hooks.useUtilizationMatrix.mockReturnValue(pending);
     renderWithProviders(<CapacityPage />);
     expect(hooks.useHubLoadVsCapacity).toHaveBeenLastCalledWith({ hubId: 'hub-india', region: null });
     expect(hooks.useClassBreakdown).toHaveBeenLastCalledWith('hub-india', null);
@@ -92,7 +77,6 @@ describe('CapacityPage', () => {
     useHubFilterStore.setState({ hubId: null, region: 'Romania' });
     hooks.useHubLoadVsCapacity.mockReturnValue(pending);
     hooks.useClassBreakdown.mockReturnValue(pending);
-    hooks.useUtilizationMatrix.mockReturnValue(pending);
     renderWithProviders(<CapacityPage />);
     expect(hooks.useHubLoadVsCapacity).toHaveBeenLastCalledWith({ hubId: null, region: 'Romania' });
     expect(hooks.useClassBreakdown).toHaveBeenLastCalledWith(null, 'Romania');
@@ -108,7 +92,6 @@ describe('CapacityPage', () => {
     const user = userEvent.setup();
     hooks.useHubLoadVsCapacity.mockReturnValue(pending);
     hooks.useClassBreakdown.mockReturnValue(pending);
-    hooks.useUtilizationMatrix.mockReturnValue(pending);
     renderWithProviders(<CapacityPage />);
     expect(screen.getByRole('heading', { name: 'RPD Capacity' })).toBeInTheDocument();
 
@@ -157,7 +140,6 @@ describe('CapacityPage', () => {
     });
     hooks.useHubLoadVsCapacity.mockReturnValue(ready({ ...hubLoad, rows, totals }));
     hooks.useClassBreakdown.mockReturnValue(ready(classBreakdown));
-    hooks.useUtilizationMatrix.mockReturnValue(ready(utilization));
     renderWithProviders(<CapacityPage />);
 
     expect(screen.getByRole('group', { name: 'Design load' })).toHaveTextContent('207.86 %');
@@ -166,21 +148,23 @@ describe('CapacityPage', () => {
     expect(screen.getByTestId('kpi-Lab load-P1')).toHaveTextContent('300');
     expect(screen.getByLabelText('Lab load by lab region')).toHaveTextContent('India: 496.5');
 
-    // Matrix (inline since P19-T02): one row per hub, served buckets verbatim, served booked % as Util.
-    expect(screen.queryByRole('button', { name: 'Show hub utilization matrix' })).not.toBeInTheDocument();
-    expect(screen.getByTestId('util-PD-India-P2-D')).toHaveTextContent('100');
-    expect(screen.getByTestId('util-PD-India-Queue-L')).toHaveTextContent('100');
-    expect(screen.getByTestId('util-row-PD-India')).toHaveTextContent('232.36%');
-    const total = screen.getByTestId('util-row-total');
+    // P19-T06: the merged "Load vs. capacity by hub" table carries the served buckets
+    // (behind "Show priority split") and the served totals.
+    await user.click(screen.getByRole('button', { name: 'Show priority split' }));
+    expect(screen.getByTestId('split-PD-India-P2-D')).toHaveTextContent('100');
+    expect(screen.getByTestId('split-R&D-India-Queue-L')).toHaveTextContent('100');
+    expect(screen.getByTestId('split-total-P1-D')).toHaveTextContent('416');
+    expect(screen.getByTestId('hub-summary-row-PD-India')).toHaveTextContent('232.36%');
+    const total = screen.getByTestId('hub-summary-total');
     expect(total).toHaveTextContent('603');
     expect(total).toHaveTextContent('207.86%');
 
     await user.click(screen.getByRole('radio', { name: 'YTD 2026' }));
-    expect(screen.getByTestId('util-row-total')).toHaveTextContent('299.5%');
+    expect(screen.getByTestId('hub-summary-total')).toHaveTextContent('299.5%');
     expect(screen.getByRole('group', { name: 'Design load' })).toHaveTextContent('299.5 %');
   });
 
-  it('renders the client layout in order: KPI cards, class cards, charts, booked tiles, summary table, inline hub matrix, class chart, then chamber / engineer sections', () => {
+  it('renders the client layout in order: KPI cards, class cards, charts, booked tiles, the merged load vs. capacity table, then the engineer section', () => {
     hooks.useHubLoadVsCapacity.mockReturnValue(ready({ ...hubLoad, areas: [areaRow()] }));
     hooks.useClassBreakdown.mockReturnValue(ready(classBreakdown));
     renderWithProviders(<CapacityPage />);
@@ -191,10 +175,6 @@ describe('CapacityPage', () => {
       screen.getByTestId('load-capacity-charts'),
       screen.getByTestId('hub-booking-strip'),
       screen.getByTestId('hub-summary-table'),
-      screen.getByTestId('section-hub-matrix'),
-      // P19-T05 (owner ruling): the class chart moved down, above the chamber / engineer disclosures.
-      screen.getByTestId('class-chart-section'),
-      screen.getByTestId('section-chambers'),
       screen.getByTestId('section-engineers'),
     ];
     for (let i = 1; i < order.length; i++) {
@@ -208,51 +188,57 @@ describe('CapacityPage', () => {
     expect(screen.getByRole('group', { name: 'Lab capacity' })).toBeInTheDocument();
     expect(screen.getByRole('group', { name: 'Lab load' })).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'Class breakdown — deliverable vs. left out' })).toBeInTheDocument();
-    // the class chart is no longer inside the class cards panel, and stays collapsed
-    expect(screen.getByTestId('class-breakdown-panel')).not.toContainElement(screen.getByTestId('class-chart-section'));
-    expect(screen.getByRole('button', { name: 'Show class chart' })).toHaveAttribute('aria-expanded', 'false');
-    expect(screen.queryByTestId('class-breakdown-chart')).not.toBeInTheDocument();
+    // P19-T07: the seven class cards stay; the engineer disclosure is the only one left
+    expect(screen.getByTestId('class-cards')).toBeInTheDocument();
+    const more = screen.getByTestId('capacity-more-detail');
+    expect(within(more).getAllByRole('button').map((b) => b.getAttribute('aria-label'))).toEqual(['Show engineer utilization']);
     expect(screen.getByText('Design Load vs Capacity by Hub')).toBeInTheDocument();
     // provenance names the exact active run version
     expect(screen.getAllByTestId('schedule-run-provenance')[0]).toHaveTextContent(/v6/);
   });
 
-  it('P19-T02: the hub utilization matrix is inline and expanded (a section with a heading, no disclosure)', () => {
+  it('P19-T06: the hub utilization matrix is merged into ONE "Load vs. capacity by hub" table; its own section and heading are gone', () => {
     hooks.useHubLoadVsCapacity.mockReturnValue(ready(hubLoad));
     hooks.useClassBreakdown.mockReturnValue(ready(classBreakdown));
     renderWithProviders(<CapacityPage />);
-    const section = screen.getByRole('region', { name: 'Global resource utilization matrix' });
-    expect(section).toHaveAttribute('data-testid', 'section-hub-matrix');
-    expect(screen.getByRole('heading', { name: 'Global resource utilization matrix' })).toBeInTheDocument();
-    expect(screen.getByTestId('util-row-R&D-Greece')).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /hub utilization matrix/i })).not.toBeInTheDocument();
-    // built from the hub-load rows already on the page: the chamber/engineer reads stay unfetched
-    expect(hooks.useUtilizationMatrix).not.toHaveBeenCalled();
+    expect(screen.queryByTestId('section-hub-matrix')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('hub-utilization-matrix')).not.toBeInTheDocument();
+    expect(screen.queryByText(/Global resource utilization matrix/i)).not.toBeInTheDocument();
+    expect(screen.queryByText('Load vs. capacity per hub')).not.toBeInTheDocument();
+    expect(screen.getAllByText('Load vs. capacity by hub')).toHaveLength(1);
+    expect(screen.getAllByRole('table').filter((t) => t.getAttribute('data-testid') === 'hub-summary-table')).toHaveLength(1);
+    expect(screen.getByTestId('hub-summary-row-R&D-Greece')).toBeInTheDocument();
+    // built from the hub-load rows already on the page: the engineer read stays unfetched
     expect(hooks.useEngineerUtilization).not.toHaveBeenCalled();
   });
 
-  it('chamber and engineer sections stay collapsed and fetch nothing until opened (engineer utilization is audited per read)', async () => {
+  it('P19-T07: the class chart and the chamber utilization matrix are removed', () => {
+    hooks.useHubLoadVsCapacity.mockReturnValue(ready(hubLoad));
+    hooks.useClassBreakdown.mockReturnValue(ready(classBreakdown));
+    renderWithProviders(<CapacityPage />);
+    expect(screen.queryByRole('button', { name: /class chart/i })).not.toBeInTheDocument();
+    expect(screen.queryByTestId('class-chart-section')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('class-breakdown-chart')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /chamber utilization/i })).not.toBeInTheDocument();
+    expect(screen.queryByTestId('section-chambers')).not.toBeInTheDocument();
+    expect(screen.queryByText('Resource utilization matrix')).not.toBeInTheDocument();
+    expect(screen.queryByText(/Chambers × weeks/)).not.toBeInTheDocument();
+  });
+
+  it('the engineer section stays collapsed and fetches nothing until opened (engineer utilization is audited per read)', async () => {
     const user = userEvent.setup();
     hooks.useHubLoadVsCapacity.mockReturnValue(ready(hubLoad));
     hooks.useClassBreakdown.mockReturnValue(ready(classBreakdown));
-    hooks.useUtilizationMatrix.mockReturnValue(ready(utilization));
     hooks.useEngineerUtilization.mockReturnValue(ready(engUtil));
     renderWithProviders(<CapacityPage />);
 
-    expect(hooks.useUtilizationMatrix).not.toHaveBeenCalled();
     expect(hooks.useEngineerUtilization).not.toHaveBeenCalled();
-    expect(screen.queryByText('Resource utilization matrix')).not.toBeInTheDocument();
     expect(screen.queryByRole('table', { name: 'Engineer utilization by week' })).not.toBeInTheDocument();
     expect(screen.queryByText('Priya N')).not.toBeInTheDocument();
 
-    const chambers = screen.getByRole('button', { name: 'Show chamber utilization' });
-    expect(chambers).toHaveAttribute('aria-expanded', 'false');
-    await user.click(chambers);
-    expect(hooks.useUtilizationMatrix).toHaveBeenLastCalledWith(null, null);
-    expect(screen.getByText('Resource utilization matrix')).toBeInTheDocument();
-    expect(hooks.useEngineerUtilization).not.toHaveBeenCalled();
-
-    await user.click(screen.getByRole('button', { name: 'Show engineer utilization' }));
+    const engineers = screen.getByRole('button', { name: 'Show engineer utilization' });
+    expect(engineers).toHaveAttribute('aria-expanded', 'false');
+    await user.click(engineers);
     expect(hooks.useEngineerUtilization).toHaveBeenCalled();
     // ADR 0028: the Engineers x weeks heatmap replaces the old GDPR placeholder
     expect(screen.getByRole('table', { name: 'Engineer utilization by week' })).toBeInTheDocument();
@@ -293,9 +279,9 @@ describe('CapacityPage', () => {
     expect(booked()).toHaveTextContent('3,522 of 1,515.72 engineer-days');
     expect(screen.getByTestId('booked-lab-R&D-Greece')).toHaveTextContent('2,979 of 1,117.32 chamber-days');
     expect(screen.getAllByTestId('priority-load-chart-axis').map((e) => e.textContent)).toEqual(['engineer-days', 'chamber-days']);
-    expect(screen.getByTestId('util-matrix-unit-note')).toHaveTextContent('Capacity and load in days');
-    expect(screen.getByTestId('util-row-R&D-Greece')).toHaveTextContent('1,515.72');
-    expect(screen.getByTestId('util-row-total')).toHaveTextContent('3,522');
+    expect(screen.getByTestId('hub-summary-unit-note')).toHaveTextContent('Load and capacity in working days');
+    expect(within(screen.getByTestId('hub-summary-row-R&D-Greece')).getByTestId('design-capacity')).toHaveTextContent('1,515.72');
+    expect(screen.getByTestId('total-design-load')).toHaveTextContent('3,522');
 
     // 3. Days + YTD 2026
     await user.click(screen.getByRole('radio', { name: 'YTD 2026' }));
@@ -309,7 +295,7 @@ describe('CapacityPage', () => {
     expect(screen.getByRole('radio', { name: 'YTD 2026' })).toHaveAttribute('aria-checked', 'true');
     expect(cap()).toHaveTextContent('179.75');
     expect(booked()).toHaveTextContent('326.56%');
-    expect(screen.getByTestId('util-matrix-unit-note')).toHaveTextContent('All values in weeks');
+    expect(screen.getByTestId('hub-summary-unit-note')).toHaveTextContent(/^Weeks\./);
   });
 
   it('P19-T05: the unit toggle is reachable and operable by keyboard', async () => {
@@ -344,7 +330,6 @@ describe('CapacityPage', () => {
     const forbidden = failed(new ApiError(403, 'forbidden'));
     hooks.useHubLoadVsCapacity.mockReturnValue(forbidden);
     hooks.useClassBreakdown.mockReturnValue(forbidden);
-    hooks.useUtilizationMatrix.mockReturnValue(forbidden);
     renderWithProviders(<CapacityPage />);
 
     expect(screen.getByText(/does not have access to RPD Capacity/i)).toBeInTheDocument();
@@ -354,7 +339,6 @@ describe('CapacityPage', () => {
   it('shows a per-section error with the rest of the surface intact on a non-auth failure', () => {
     hooks.useHubLoadVsCapacity.mockReturnValue(ready(hubLoad));
     hooks.useClassBreakdown.mockReturnValue(failed(new ApiError(500, 'boom')));
-    hooks.useUtilizationMatrix.mockReturnValue(ready(utilization));
     renderWithProviders(<CapacityPage />);
 
     expect(screen.getByRole('alert')).toHaveTextContent(
@@ -374,14 +358,6 @@ describe('CapacityPage', () => {
     hooks.useHubLoadVsCapacity.mockReturnValue(ready(noRun));
     hooks.useClassBreakdown.mockReturnValue(
       ready({ has_active_schedule_run: false, schedule_run_version: null, rows: [] }),
-    );
-    hooks.useUtilizationMatrix.mockReturnValue(
-      ready({
-        has_active_schedule_run: false,
-        schedule_run_version: null,
-        engineers: [],
-        chambers: [],
-      }),
     );
     renderWithProviders(<CapacityPage />);
     expect(screen.getAllByText('No schedule computed yet').length).toBeGreaterThan(0);

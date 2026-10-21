@@ -25,10 +25,10 @@ import {
   PriorityBoardPage,
   ProjectsPage,
   ProjectWorkspacePage,
-  RegistrationPage,
   WorkflowSettingsPage,
 } from './lazy-surfaces';
 import { SURFACES } from './nav';
+import { RegisterRedirect } from './register-redirect';
 
 /**
  * Route table. One route per surface. Built surfaces (P4-T02..T07) are lazy
@@ -76,7 +76,6 @@ const SURFACE_ELEMENTS: Partial<Record<string, React.ReactNode>> = {
   '/priority-board': lazyElement(<PriorityBoardPage />),
   '/timeline': lazyElement(<GanttPage />),
   '/check-in': lazyElement(<CheckInPage />),
-  '/register': lazyElement(<RegistrationPage />),
   '/planning': lazyElement(<PlanningPage />),
   '/audit-log': lazyElement(<AuditLogPage />),
   '/settings/workflow': lazyElement(<WorkflowSettingsPage />),
@@ -151,6 +150,9 @@ export const routeObjects: RouteObject[] = [
       // P14 (ADR 0027 §1): the VIP page left the nav; VIP is a Dashboard card.
       // Old bookmarks land on the Dashboard.
       { path: 'vip', element: <Navigate to="/" replace /> },
+      // P22-T01: the old Project Registration route.
+      { path: 'register', element: <RegisterRedirect /> },
+      { path: 'register/:projectId', element: <RegisterRedirect /> },
       // Developer route, deliberately absent from SURFACES (and therefore from the
       // sidebar): every primitive in both density zones. See pages/design-system.tsx.
       { path: 'design-system', element: lazyElement(<DesignSystemPage />) },

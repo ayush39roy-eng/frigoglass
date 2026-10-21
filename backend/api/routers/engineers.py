@@ -22,6 +22,7 @@ engineer to a hub outside the caller's scope 403s.
 
 from __future__ import annotations
 
+import logging
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -53,6 +54,44 @@ router = APIRouter(prefix="/engineers", tags=["capacity-planning", "engineers"])
 
 _read = require_permission(Surface.CAPACITY_PLANNING, Action.READ)
 _write = require_permission(Surface.CAPACITY_PLANNING, Action.WRITE)
+
+logger = logging.getLogger(__name__)
+
+#: Postgres SQLSTATEs (P19-R01, S19-L1).
+_UNIQUE_VIOLATION = "23505"
+_FOREIGN_KEY_VIOLATION = "23503"
+
+
+def _integrity_http_error(exc: IntegrityError, action: str) -> HTTPException:
+    """Map a flush-time IntegrityError to a client-safe HTTP error.
+
+    P19-R01 (S19-L1): the DB message ("Failing row contains (...)") and
+    SQLAlchemy's `[parameters: ...]` carry row values, including the
+    engineer's name (personal data, OQ #8). So only the SQLSTATE and the
+    constraint name are logged, and the returned exception is raised
+    `from None` so no traceback with the original error reaches a log.
+    The only constraints a validated body can still hit are `user_id`'s
+    foreign key (unknown user) and unique key (user already linked).
+    """
+
+    orig = exc.orig
+    sqlstate = getattr(orig, "sqlstate", None) or getattr(orig, "pgcode", None)
+    constraint = getattr(getattr(orig, "__cause__", None), "constraint_name", None)
+    logger.warning(
+        "engineer.%s integrity error sqlstate=%s constraint=%s", action, sqlstate, constraint
+    )
+    if sqlstate == _UNIQUE_VIOLATION:
+        return HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="This user is already linked to another engineer.",
+        )
+    if sqlstate == _FOREIGN_KEY_VIOLATION:
+        return HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Unknown user_id"
+        )
+    return HTTPException(
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="The engineer could not be saved."
+    )
 
 
 async def _get_engineer_or_404(
@@ -166,7 +205,11 @@ async def create_engineer(
 
     engineer = Engineer(**body.model_dump())
     db.add(engineer)
-    await db.flush()
+    try:
+        await db.flush()
+    except IntegrityError as exc:
+        await db.rollback()
+        raise _integrity_http_error(exc, "create") from None
 
     db.add(
         AuditLogEntry(
@@ -208,7 +251,11 @@ async def update_engineer(
     before_state = engineer_audit_state(engineer)
     for field_name, value in body.model_dump(exclude_unset=True).items():
         setattr(engineer, field_name, value)
-    await db.flush()
+    try:
+        await db.flush()
+    except IntegrityError as exc:
+        await db.rollback()
+        raise _integrity_http_error(exc, "update") from None
     after_state = engineer_audit_state(engineer)
 
     db.add(
@@ -257,9 +304,11 @@ async def delete_engineer(
     await db.delete(engineer)
     try:
         await db.commit()
-    except IntegrityError as exc:
+    except IntegrityError:
+        # FK references only; raised `from None` so the DB message (row
+        # values) never reaches a traceback in the log (P19-R01).
         await db.rollback()
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="Cannot delete engineer: still referenced by existing projects/schedule data.",
-        ) from exc
+        ) from None

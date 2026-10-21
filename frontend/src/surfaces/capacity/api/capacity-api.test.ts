@@ -10,7 +10,6 @@ import {
   fetchActiveScheduleRun,
   fetchClassBreakdown,
   fetchHubLoadVsCapacity,
-  fetchUtilizationMatrix,
 } from './capacity-api';
 
 const mockApiGet = vi.mocked(apiGet);
@@ -41,15 +40,9 @@ describe('capacity-api', () => {
     expect(mockApiGet).toHaveBeenCalledWith('/capacity/class-breakdown', {});
   });
 
-  it('requests the utilization-matrix endpoint verbatim', async () => {
-    mockApiGet.mockResolvedValueOnce({
-      has_active_schedule_run: false,
-      schedule_run_version: null,
-      engineers: [],
-      chambers: [],
-    });
-    await fetchUtilizationMatrix();
-    expect(mockApiGet).toHaveBeenCalledWith('/capacity/utilization-matrix', {});
+  it('P19-T07: no longer exposes a utilization-matrix fetcher (the chamber matrix was removed)', async () => {
+    const mod = await import('./capacity-api');
+    expect(Object.keys(mod)).not.toContain('fetchUtilizationMatrix');
   });
 
   it('treats a 404 from /schedule-runs/active as "no run yet", not an error', async () => {

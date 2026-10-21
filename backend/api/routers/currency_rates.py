@@ -76,7 +76,10 @@ async def update_currency_rate(
             detail=f"No currency_rates row for currency_code={currency_code.value!r}",
         )
 
-    before_state = {"currency_code": rate.currency_code.value, "rate_to_eur": str(rate.rate_to_eur)}
+    before_state = {
+        "currency_code": rate.currency_code.value,
+        "rate_to_eur": str(rate.rate_to_eur) if rate.rate_to_eur is not None else None,
+    }
     rate.rate_to_eur = body.rate_to_eur
     # `CurrencyRate.updated_by_user_id` (P1-T02 model) was never set by
     # P1-T04's original stub endpoint (no authenticated actor existed yet).
@@ -98,4 +101,4 @@ async def update_currency_rate(
     )
     await db.commit()
     await db.refresh(rate)
-    return rate
+    return currency_rate_read(rate)

@@ -18,7 +18,7 @@ import {
   useRegionSummary,
   useStatusOverview,
 } from '@/surfaces/dashboard/hooks/use-dashboard';
-import { useClassBreakdown, useHubLoadVsCapacity, useUtilizationMatrix } from '@/surfaces/capacity/hooks/use-capacity';
+import { useClassBreakdown, useHubLoadVsCapacity } from '@/surfaces/capacity/hooks/use-capacity';
 import { usePriorityMatrix, usePrioritySummary } from '@/surfaces/matrix/hooks/use-matrix';
 import { useGantt } from '@/surfaces/gantt/hooks/use-gantt';
 
@@ -69,7 +69,6 @@ describe('hub filter wiring: query key + hub_id per surface', () => {
     ['dashboard / projects list', () => useDashboardProjects({ hub_id: HUB }), '/dashboard/projects', ['dashboard', 'projects', { hub_id: HUB, category: undefined, status_: undefined, priority: undefined }]],
     ['capacity hub load (+ dashboard booked card)', () => useHubLoadVsCapacity({ hubId: HUB }), '/capacity/hub-load', ['capacity', 'hub-load', { hubId: HUB, region: null }]],
     ['capacity class breakdown', () => useClassBreakdown(HUB), '/capacity/class-breakdown', ['capacity', 'class-breakdown', { hubId: HUB, region: null }]],
-    ['capacity utilization', () => useUtilizationMatrix(HUB), '/capacity/utilization-matrix', ['capacity', 'utilization-matrix', { hubId: HUB, region: null }]],
     ['matrix summary', () => usePrioritySummary(HUB), '/priorities/summary', ['priority-matrix', 'summary', { hubId: HUB, region: null }]],
     ['matrix grid', () => usePriorityMatrix({ currency: 'EUR', hubId: HUB }), '/priorities', ['priority-matrix', { currency: 'EUR', hubId: HUB, category: undefined }]],
     ['gantt', () => useGantt({ hubId: HUB }), '/gantt', ['gantt', { hubId: HUB }]],
@@ -119,7 +118,6 @@ describe('country filter wiring (P13, ADR 0025): region in the key and the reque
     ['dashboard / projects list', () => useDashboardProjects({ region: 'India' }), '/dashboard/projects', ['dashboard', 'projects', { hub_id: undefined, category: undefined, status_: undefined, priority: undefined, region: 'India' }]],
     ['capacity hub load', () => useHubLoadVsCapacity({ region: 'India' }), '/capacity/hub-load', ['capacity', 'hub-load', { hubId: null, region: 'India' }]],
     ['capacity class breakdown', () => useClassBreakdown(null, 'India'), '/capacity/class-breakdown', ['capacity', 'class-breakdown', { hubId: null, region: 'India' }]],
-    ['capacity utilization', () => useUtilizationMatrix(null, 'India'), '/capacity/utilization-matrix', ['capacity', 'utilization-matrix', { hubId: null, region: 'India' }]],
     ['matrix summary', () => usePrioritySummary(null, 'India'), '/priorities/summary', ['priority-matrix', 'summary', { hubId: null, region: 'India' }]],
     ['matrix grid', () => usePriorityMatrix({ currency: 'EUR', region: 'India' }), '/priorities', ['priority-matrix', { currency: 'EUR', hubId: undefined, region: 'India', category: undefined }]],
     ['gantt', () => useGantt({ region: 'India' }), '/gantt', ['gantt', { hubId: undefined, region: 'India' }]],

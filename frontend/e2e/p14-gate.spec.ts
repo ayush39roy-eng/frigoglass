@@ -101,7 +101,8 @@ test('Registration form: priority change previewed; No keeps form open and saves
   const target = await schedulable(request, 'P4', 2);
   const run0 = await activeRunId(request);
   await actAs(page, 'portfolioManager');
-  await page.goto(`/register?edit=${target.id}`);
+  // P22-T01: the deep link opens the registration drawer on the Projects page.
+  await page.goto(`/projects?edit=${target.id}`);
   await settle(page);
   await page.locator('#reg-priority').click();
   await page.getByRole('option', { name: /P1/ }).click();

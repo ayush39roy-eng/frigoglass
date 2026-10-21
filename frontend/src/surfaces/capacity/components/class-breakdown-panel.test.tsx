@@ -1,15 +1,11 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
 import { renderWithProviders } from '@/test/render';
 import type { ClassBreakdown } from '../api/types';
 import { classRow } from '../test-fixtures';
-import { ClassBreakdownPanel, ClassChartSection } from './class-breakdown-panel';
-
-vi.mock('./class-breakdown-chart', () => ({
-  ClassBreakdownChart: () => <div data-testid="class-breakdown-chart" />,
-}));
+import { ClassBreakdownPanel } from './class-breakdown-panel';
 
 const withRun: ClassBreakdown = {
   has_active_schedule_run: true,
@@ -99,22 +95,8 @@ describe('ClassBreakdownPanel', () => {
       expect(screen.getByTestId(`class-${c}-hub-OEM-HCK`)).toBeInTheDocument();
     }
     expect(screen.getByText('Run v3')).toBeInTheDocument();
-    // P19-T05: the chart disclosure moved down the page (ClassChartSection).
+    // P19-T07: the class chart and its disclosure are removed.
     expect(screen.queryByRole('button', { name: 'Show class chart' })).not.toBeInTheDocument();
     expect(screen.queryByTestId('class-breakdown-chart')).not.toBeInTheDocument();
-  });
-
-  it('P19-T05: ClassChartSection is a collapsed, lazy disclosure; nothing without a run or categorised projects', async () => {
-    const user = userEvent.setup();
-    const { unmount } = renderWithProviders(<ClassChartSection data={withRun} />);
-    const button = screen.getByRole('button', { name: 'Show class chart' });
-    expect(button).toHaveAttribute('aria-expanded', 'false');
-    expect(screen.queryByTestId('class-breakdown-chart')).not.toBeInTheDocument();
-    await user.click(button);
-    expect(screen.getByTestId('class-breakdown-chart')).toBeInTheDocument();
-    unmount();
-
-    renderWithProviders(<ClassChartSection data={{ has_active_schedule_run: false, schedule_run_version: null, rows: [] }} />);
-    expect(screen.queryByRole('button', { name: 'Show class chart' })).not.toBeInTheDocument();
   });
 });

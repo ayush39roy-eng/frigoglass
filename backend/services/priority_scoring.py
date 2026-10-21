@@ -24,11 +24,11 @@ import domain_constants as dc
 def compute_priority_score(dimension_scores: list[int]) -> tuple[float, int, str]:
     """`(weighted_score, normalized_pct, suggested_band)` per DOMAIN_RULES.md.
 
-    `dimension_scores` must be exactly 13 ints (1-5 each), in
+    `dimension_scores` must be exactly 13 ints (0-5 each, ADR 0033), in
     `domain_constants.PRIORITIZATION_DIMENSIONS` / `models.priority.
     DIMENSION_FIELD_NAMES` order (Strategic Project, New Customer, ...,
     CAPEX Investment). Caller (the Pydantic request schema) is responsible for
-    the 1-5 range check; this function only asserts the count.
+    the 0-5 range check; this function only asserts the count.
     """
 
     if len(dimension_scores) != len(dc.PRIORITIZATION_DIMENSIONS):
@@ -94,3 +94,37 @@ def dimension_points(dimension_scores: list[int]) -> dict[str, dict[str, float]]
             "scaled_points": round(pts * 100 / dc.TOTAL_WEIGHT, 2),
         }
     return out
+
+
+def dimension_score_rows(dimension_scores: list[int] | None) -> list[dict[str, object]]:
+    """P21-T01 (docs/API_CONTRACT_P21.md §3): the 13 dimensions in positional
+    order, each `{key, label, pillar, score, weight, points, max_points}`.
+
+    `points = score / 5 * weight` (ADR 0029; a score of 0 earns 0, ADR 0033),
+    `max_points = weight` (the points at score 5). Both are on the raw scale,
+    so `Σ points == weighted_score` exactly (every weight is a multiple of 5,
+    so each point value is an integer). `None` (an unscored project) gives the
+    full list with `score` and `points` null.
+    """
+
+    rows: list[dict[str, object]] = []
+    scores: list[int | None] = (
+        list(dimension_scores)
+        if dimension_scores is not None
+        else [None] * len(dc.PRIORITIZATION_DIMENSIONS)
+    )
+    for (pillar, label, key, weight), score in zip(
+        dc.PRIORITIZATION_DIMENSIONS, scores, strict=True
+    ):
+        rows.append(
+            {
+                "key": key,
+                "label": label,
+                "pillar": pillar,
+                "score": score,
+                "weight": weight,
+                "points": round(_points(score, weight), 2) if score is not None else None,
+                "max_points": float(weight),
+            }
+        )
+    return rows

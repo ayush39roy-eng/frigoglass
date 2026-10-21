@@ -21,6 +21,7 @@ A Hub Planner therefore sees every chamber in their hub's lab region
 
 from __future__ import annotations
 
+import logging
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -55,6 +56,44 @@ router = APIRouter(prefix="/chambers", tags=["capacity-planning", "chambers"])
 
 _read = require_permission(Surface.CAPACITY_PLANNING, Action.READ)
 _write = require_permission(Surface.CAPACITY_PLANNING, Action.WRITE)
+
+logger = logging.getLogger(__name__)
+
+#: Postgres SQLSTATEs (P19-R01, S19-L2).
+_UNIQUE_VIOLATION = "23505"
+_NOT_NULL_VIOLATION = "23502"
+_CHECK_VIOLATION = "23514"
+
+
+def _integrity_http_error(exc: IntegrityError, action: str) -> HTTPException:
+    """Map a flush-time IntegrityError to a client-safe HTTP error.
+
+    P19-R01 (S19-L2): only a unique violation (the only unique key besides
+    the primary key is `code`) is the 409 "code already exists"; before,
+    every IntegrityError (an explicit `null` included) was reported as one.
+    A NOT NULL or CHECK violation is a 422. Anything else is a generic 500.
+    Only the SQLSTATE and constraint name are logged, never the DB message
+    (it carries row values), and the exception is raised `from None`.
+    """
+
+    orig = exc.orig
+    sqlstate = getattr(orig, "sqlstate", None) or getattr(orig, "pgcode", None)
+    constraint = getattr(getattr(orig, "__cause__", None), "constraint_name", None)
+    logger.warning(
+        "chamber.%s integrity error sqlstate=%s constraint=%s", action, sqlstate, constraint
+    )
+    if sqlstate == _UNIQUE_VIOLATION:
+        return HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail="Chamber code already exists"
+        )
+    if sqlstate in (_NOT_NULL_VIOLATION, _CHECK_VIOLATION):
+        return HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="The chamber values are not valid.",
+        )
+    return HTTPException(
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="The chamber could not be saved."
+    )
 
 
 async def _get_chamber_or_404(
@@ -189,9 +228,7 @@ async def create_chamber(
         await db.flush()
     except IntegrityError as exc:
         await db.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT, detail="Chamber code already exists"
-        ) from exc
+        raise _integrity_http_error(exc, "create") from None
 
     db.add(
         AuditLogEntry(
@@ -239,9 +276,7 @@ async def update_chamber(
         await db.flush()
     except IntegrityError as exc:
         await db.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT, detail="Chamber code already exists"
-        ) from exc
+        raise _integrity_http_error(exc, "update") from None
     after_state = chamber_audit_state(chamber)
 
     db.add(
@@ -287,9 +322,11 @@ async def delete_chamber(
     await db.delete(chamber)
     try:
         await db.commit()
-    except IntegrityError as exc:
+    except IntegrityError:
+        # FK references only; raised `from None` so the DB message (row
+        # values) never reaches a traceback in the log (P19-R01).
         await db.rollback()
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="Cannot delete chamber: still referenced by existing schedule data.",
-        ) from exc
+        ) from None

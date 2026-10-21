@@ -142,8 +142,9 @@ _EXPORT_WITHHELD_FIELDS: frozenset[str] = frozenset()
 
 #: Nested (non-scalar) fields that exports skip: spreadsheet cells are scalar.
 #: `dimension_points` is the served per-dimension points map (ADR 0029); the 13
-#: dimension scores and the weighted score are already exported flat.
-_EXPORT_NESTED_FIELDS: frozenset[str] = frozenset({"dimension_points"})
+#: dimension scores and the weighted score are already exported flat. P21-T01:
+#: `dimension_scores` (the per-dimension list) is skipped for the same reason.
+_EXPORT_NESTED_FIELDS: frozenset[str] = frozenset({"dimension_points", "dimension_scores"})
 
 
 def rows_from_models(

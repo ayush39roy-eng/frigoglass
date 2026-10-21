@@ -11,10 +11,10 @@ test.describe('Capacity surface (P4-T03)', () => {
     await expect(capacity.hubLoadPanel()).toBeVisible();
     await expect(capacity.classBreakdownPanel()).toBeVisible();
 
-    // P19: the chamber and engineer sections are collapsed until asked for.
-    await expect(capacity.utilizationPanel()).toHaveCount(0);
-    await capacity.openChamberUtilization();
-    await expect(capacity.utilizationPanel()).toBeVisible();
+    // P19-T07: the class chart and chamber matrix are removed; the engineer section is
+    // collapsed until asked for.
+    await expect(capacity.removedDisclosures()).toHaveCount(0);
+    await expect(capacity.removedChamberMatrix()).toHaveCount(0);
     await expect(page.getByRole('table', { name: 'Engineer utilization by week' })).toHaveCount(0);
   });
 

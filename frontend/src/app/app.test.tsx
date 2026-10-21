@@ -69,17 +69,30 @@ describe('App shell + routing', () => {
     expect(await screen.findByRole('slider', { name: 'Zoom' })).toBeInTheDocument();
   });
 
-  it('navigates to the Project Registration surface on nav click', async () => {
+  it('P22-T01: navigates to the merged Projects page on nav click (Register project lives there)', async () => {
     const user = userEvent.setup();
     renderApp('/');
     await screen.findByRole('heading', { name: 'Global RPD Dashboard' });
-    await user.click(screen.getByRole('link', { name: 'Register' }));
-    expect(
-      await screen.findByRole('heading', { name: 'Project Registration' }),
-    ).toBeInTheDocument();
-    // The real surface (P4-T06) renders, not the placeholder — its "New
-    // project" action is always present (before any RBAC downgrade).
-    expect(await screen.findByRole('button', { name: 'New project' })).toBeInTheDocument();
+    await user.click(screen.getByRole('link', { name: 'Projects' }));
+    expect(await screen.findByRole('heading', { level: 1, name: 'Projects' })).toBeInTheDocument();
+    // The registration entry point is on this page now (full-permission session).
+    expect(await screen.findByRole('button', { name: 'Register project' })).toBeInTheDocument();
+  });
+
+  it('P22-T01: the nav has one "Projects" entry and no "Register" / "Project Registration" entry', async () => {
+    renderApp('/');
+    await screen.findByRole('heading', { name: 'Global RPD Dashboard' });
+    const nav = screen.getByRole('navigation', { name: 'Surfaces' });
+    expect(within(nav).getAllByRole('link', { name: 'Projects' })).toHaveLength(1);
+    expect(within(nav).queryByRole('link', { name: 'Register' })).not.toBeInTheDocument();
+    expect(within(nav).queryByRole('link', { name: /Registration/ })).not.toBeInTheDocument();
+    expect(SURFACES.filter((s) => s.path === '/register')).toHaveLength(0);
+    expect(SURFACES.filter((s) => s.path === '/projects')).toHaveLength(1);
+  });
+
+  it('P22-T01: /register redirects to the Projects page', async () => {
+    renderApp('/register');
+    expect(await screen.findByRole('heading', { level: 1, name: 'Projects' })).toBeInTheDocument();
   });
 
   it('navigates to the Capacity Planning surface on nav click', async () => {

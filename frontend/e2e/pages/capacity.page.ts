@@ -11,20 +11,22 @@ export class CapacityPage {
     return this.page.getByRole('heading', { name: 'RPD Capacity' });
   }
 
+  /** P19-T06 renamed the merged table "Load vs. capacity by hub". */
   hubLoadPanel() {
-    return this.page.getByRole('heading', { name: 'Load vs. capacity per hub' });
+    return this.page.getByRole('heading', { name: 'Load vs. capacity by hub' });
   }
 
   classBreakdownPanel() {
     return this.page.getByRole('heading', { name: 'Class breakdown — deliverable vs. left out' });
   }
 
-  /** P19: the chamber matrix is collapsed by default; open it, then its heading is visible. */
-  async openChamberUtilization(): Promise<void> {
-    await this.page.getByRole('button', { name: 'Show chamber utilization' }).click();
+  /** P19-T07: the class chart and the chamber utilization matrix were removed (owner);
+   *  these locate them so specs can assert they stay gone. */
+  removedDisclosures() {
+    return this.page.getByRole('button', { name: /^(Show|Hide) (class chart|chamber utilization)$/ });
   }
 
-  utilizationPanel() {
+  removedChamberMatrix() {
     return this.page.getByRole('heading', { name: 'Resource utilization matrix' });
   }
 

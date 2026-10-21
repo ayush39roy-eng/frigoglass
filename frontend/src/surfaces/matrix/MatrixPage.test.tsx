@@ -1,12 +1,19 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
-import { act, screen, within } from '@testing-library/react';
+import { act, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
 import { renderWithProviders } from '@/test/render';
 import { ApiError } from '@/lib/api/client';
 import { useScenarioStore } from '@/stores/scenario';
 import { useHubFilterStore } from '@/stores/hub-filter';
-import type { PriorityMatrixRow, PriorityPortfolioSummary } from './api/types';
+import type {
+  CurrencyOption,
+  PriorityCompareProject,
+  PriorityDistribution,
+  PriorityMatrixRow,
+  PriorityPortfolioSummary,
+} from './api/types';
+import { useCompareSelection } from './lib/compare-selection';
 
 vi.mock('@tanstack/react-virtual', () => ({
   useVirtualizer: ({ count }: { count: number }) => ({
@@ -32,6 +39,9 @@ const hooks = {
   useScenarioVersionDetail: vi.fn(),
   useUpdateCurrencyRate: vi.fn(),
   useScoringDimensions: vi.fn<() => { data: unknown }>(() => ({ data: undefined })),
+  useMatrixCurrencies: vi.fn(),
+  usePriorityDistribution: vi.fn(),
+  usePriorityCompare: vi.fn(),
 };
 vi.mock('./hooks/use-matrix', () => ({
   usePriorityMatrix: (args: unknown) => hooks.usePriorityMatrix(args),
@@ -43,6 +53,9 @@ vi.mock('./hooks/use-matrix', () => ({
   useScenarioVersionDetail: (version: number | null) => hooks.useScenarioVersionDetail(version),
   useUpdateCurrencyRate: () => hooks.useUpdateCurrencyRate(),
   useScoringDimensions: () => hooks.useScoringDimensions(),
+  useMatrixCurrencies: () => hooks.useMatrixCurrencies(),
+  usePriorityDistribution: (args: unknown) => hooks.usePriorityDistribution(args),
+  usePriorityCompare: (ids: string[], enabled: boolean) => hooks.usePriorityCompare(ids, enabled),
 }));
 vi.mock('@/lib/api/reference', () => ({ useHubs: () => ({ data: [] }) }));
 
@@ -79,12 +92,44 @@ const scoredRow: PriorityMatrixRow = {
   ...P13_MATRIX_ROW_DEFAULTS,
 };
 
+const currencies: CurrencyOption[] = [
+  { currency_code: 'EUR', name: 'Euro', rate_to_eur: 1, configured: true },
+  { currency_code: 'USD', name: 'US dollar', rate_to_eur: 1.08, configured: true },
+  { currency_code: 'INR', name: 'Indian rupee', rate_to_eur: 97, configured: true },
+  { currency_code: 'EGP', name: 'Egyptian pound', rate_to_eur: 52.3, configured: true },
+  { currency_code: 'ZAR', name: 'South African rand', rate_to_eur: null, configured: false },
+  { currency_code: 'IDR', name: 'Indonesian rupiah', rate_to_eur: null, configured: false },
+];
+
+const distribution: PriorityDistribution = {
+  total_projects: 10,
+  scored_projects: 7,
+  band_distribution: [
+    { band: 'P1', count: 3, share_pct: 30 },
+    { band: 'P2', count: 2, share_pct: 20 },
+    { band: 'P3', count: 1, share_pct: 10 },
+    { band: 'P4', count: 1, share_pct: 10 },
+    { band: 'Q', count: 0, share_pct: 0 },
+    { band: 'Unscored', count: 3, share_pct: 30 },
+  ],
+  score_histogram: Array.from({ length: 10 }, (_, i) => ({
+    bucket_from: i * 10,
+    bucket_to: i * 10 + 10,
+    count: i === 7 ? 3 : i === 5 ? 2 : 0,
+  })),
+};
+
+/** Selector for the "USD · US dollar" style option names. */
+const usd = { name: 'USD · US dollar' };
+
 beforeEach(() => {
   vi.clearAllMocks();
   useScenarioStore.setState({ active: false, notes: '', pending: {}, past: [], future: [] });
-  hooks.useCurrencyRates.mockReturnValue(ready([
-    { id: 'r2', currency_code: 'USD', rate_to_eur: 1.08, updated_by_user_id: null, updated_at: '2026-01-01T00:00:00Z' },
-  ]));
+  useCompareSelection.setState({ items: [], capHit: false });
+  hooks.useMatrixCurrencies.mockReturnValue(ready(currencies));
+  hooks.usePriorityMatrix.mockReset();
+  hooks.usePriorityDistribution.mockReturnValue(ready(distribution));
+  hooks.usePriorityCompare.mockReturnValue(pending);
   hooks.useUpdatePriorityScore.mockReturnValue({ mutateAsync: vi.fn().mockResolvedValue({}) });
   hooks.useApplyScenario.mockReturnValue({ mutateAsync: vi.fn().mockResolvedValue({}), isPending: false });
   hooks.useScenarioVersions.mockReturnValue({ data: undefined, isPending: true, isError: false, error: null, refetch: vi.fn() });
@@ -139,10 +184,251 @@ describe('MatrixPage', () => {
     renderWithProviders(<MatrixPage />);
 
     expect(hooks.usePriorityMatrix).toHaveBeenLastCalledWith(expect.objectContaining({ currency: 'EUR' }));
-    await user.click(screen.getByRole('radio', { name: 'USD' }));
+    await user.click(screen.getByRole('radio', usd));
     expect(hooks.usePriorityMatrix).toHaveBeenLastCalledWith(expect.objectContaining({ currency: 'USD' }));
-    // financial value is still the row's raw number — the page never converts
-    expect(screen.getByText('120')).toBeInTheDocument();
+    expect(screen.getByTestId('currency-rate-caption')).toHaveTextContent('1 EUR = 1.08 USD');
+  });
+
+  describe('P21 currencies', () => {
+    it('offers EUR, USD, INR, EGP, ZAR and IDR labelled "code · name"', () => {
+      hooks.usePriorityMatrix.mockReturnValue(ready([scoredRow]));
+      hooks.usePrioritySummary.mockReturnValue(ready(summary));
+      renderWithProviders(<MatrixPage />);
+      const group = screen.getByRole('radiogroup', { name: 'Display currency' });
+      expect(within(group).getAllByRole('radio').map((r) => r.getAttribute('aria-label'))).toEqual([
+        'EUR · Euro',
+        'USD · US dollar',
+        'INR · Indian rupee',
+        'EGP · Egyptian pound',
+        'ZAR · South African rand',
+        'IDR · Indonesian rupiah',
+      ]);
+      expect(within(group).getByText('EGP · Egyptian pound')).toBeInTheDocument();
+    });
+
+    it('a currency with configured=false is disabled, explains why, and is never requested', async () => {
+      const user = userEvent.setup();
+      hooks.usePriorityMatrix.mockReturnValue(ready([scoredRow]));
+      hooks.usePrioritySummary.mockReturnValue(ready(summary));
+      renderWithProviders(<MatrixPage />);
+      const zar = screen.getByRole('radio', { name: 'ZAR · South African rand' });
+      expect(zar).toHaveAttribute('aria-disabled', 'true');
+      expect(zar).toHaveAccessibleDescription('Rate not set — an Admin can set it');
+      expect(screen.getByRole('radio', { name: 'EGP · Egyptian pound' })).not.toHaveAttribute('aria-disabled');
+      await user.hover(zar);
+      expect(await screen.findByRole('tooltip')).toHaveTextContent('Rate not set — an Admin can set it');
+      await user.click(zar);
+      expect(hooks.usePriorityMatrix).not.toHaveBeenCalledWith(expect.objectContaining({ currency: 'ZAR' }));
+      await user.click(screen.getByRole('radio', { name: 'EGP · Egyptian pound' }));
+      expect(hooks.usePriorityMatrix).toHaveBeenLastCalledWith(expect.objectContaining({ currency: 'EGP' }));
+    });
+
+    it('a 422 CURRENCY_NOT_CONFIGURED falls back to EUR and says why', async () => {
+      const user = userEvent.setup();
+      hooks.usePriorityMatrix.mockImplementation((p: { currency: string }) =>
+        p.currency === 'EGP'
+          ? failed(new ApiError(422, 'x', 'No exchange rate is configured for EGP.', 'CURRENCY_NOT_CONFIGURED'))
+          : ready([scoredRow]),
+      );
+      hooks.usePrioritySummary.mockReturnValue(ready(summary));
+      renderWithProviders(<MatrixPage />);
+      await user.click(screen.getByRole('radio', { name: 'EGP · Egyptian pound' }));
+      expect(await screen.findByTestId('currency-not-configured')).toHaveTextContent(
+        'No exchange rate is configured for EGP, so figures are shown in EUR.',
+      );
+      expect(hooks.usePriorityMatrix).toHaveBeenLastCalledWith(expect.objectContaining({ currency: 'EUR' }));
+    });
+  });
+
+  describe('P21 sticky View panel', () => {
+    it('turns compact when stuck: smaller padding, shadow, filters behind "Filters (n)"', async () => {
+      const user = userEvent.setup();
+      hooks.usePriorityMatrix.mockReturnValue(ready([scoredRow]));
+      hooks.usePrioritySummary.mockReturnValue(ready(summary));
+      renderWithProviders(<MatrixPage />);
+      const panel = screen.getByTestId('matrix-view-panel');
+      expect(panel).toHaveAttribute('data-stuck', 'false');
+      expect(panel.className).toContain('sticky');
+      expect(screen.getByRole('radiogroup', { name: 'Cat' })).toBeInTheDocument();
+
+      await user.click(within(screen.getByRole('radiogroup', { name: 'Cat' })).getByRole('radio', { name: 'B' }));
+
+      const sentinel = screen.getByTestId('matrix-view-sentinel');
+      vi.spyOn(sentinel, 'getBoundingClientRect').mockReturnValue({ top: -40 } as DOMRect);
+      fireEvent.scroll(window);
+      await waitFor(() => expect(panel).toHaveAttribute('data-stuck', 'true'));
+      expect(panel.className).toContain('shadow-pop');
+      expect(panel.className).toContain('py-2');
+      expect(screen.queryByRole('radiogroup', { name: 'Cat' })).not.toBeInTheDocument();
+
+      const toggle = screen.getByRole('button', { name: /Filters \(1\)/ });
+      expect(toggle).toHaveAttribute('aria-expanded', 'false');
+      await user.click(toggle);
+      expect(toggle).toHaveAttribute('aria-expanded', 'true');
+      expect(screen.getByRole('radiogroup', { name: 'Cat' })).toBeInTheDocument();
+
+      vi.spyOn(sentinel, 'getBoundingClientRect').mockReturnValue({ top: 20 } as DOMRect);
+      fireEvent.scroll(window);
+      await waitFor(() => expect(panel).toHaveAttribute('data-stuck', 'false'));
+    });
+
+    it('the grid scrolls inside its own labelled, focusable region', () => {
+      hooks.usePriorityMatrix.mockReturnValue(ready([scoredRow]));
+      hooks.usePrioritySummary.mockReturnValue(ready(summary));
+      renderWithProviders(<MatrixPage />);
+      const region = screen.getByRole('region', { name: /Scoring grid table/ });
+      expect(region).toHaveAttribute('tabindex', '0');
+      expect(within(region).getByRole('table', { name: 'Prioritization scoring grid' })).toBeInTheDocument();
+    });
+  });
+
+  describe('P21 chart row', () => {
+    it('renders the served band distribution (counts and shares) and the score histogram', () => {
+      hooks.usePriorityMatrix.mockReturnValue(ready([scoredRow]));
+      hooks.usePrioritySummary.mockReturnValue(ready(summary));
+      renderWithProviders(<MatrixPage />);
+      expect(hooks.usePriorityDistribution).toHaveBeenLastCalledWith(
+        expect.objectContaining({ category: undefined, hubId: undefined }),
+      );
+      const dist = screen.getByTestId('band-distribution');
+      expect(within(dist).getByTestId('band-legend-P1')).toHaveTextContent('P13(30%)');
+      expect(within(dist).getByTestId('band-legend-Unscored')).toHaveTextContent('Unscored3(30%)');
+      // Q is a committed priority, never a score band: muted and not a filter button.
+      expect(within(dist).getByTestId('band-legend-Q').tagName).toBe('SPAN');
+      const hist = screen.getByTestId('score-histogram');
+      const table = within(hist).getByRole('table');
+      expect(within(table).getByRole('row', { name: '70–80 3' })).toBeInTheDocument();
+      expect(within(table).getAllByRole('row')).toHaveLength(11);
+    });
+
+    it('the distribution follows the server filters', async () => {
+      const user = userEvent.setup();
+      hooks.usePriorityMatrix.mockReturnValue(ready([scoredRow]));
+      hooks.usePrioritySummary.mockReturnValue(ready(summary));
+      renderWithProviders(<MatrixPage />);
+      await user.click(within(screen.getByRole('radiogroup', { name: 'Status' })).getByRole('radio', { name: 'In Queue' }));
+      expect(hooks.usePriorityDistribution).toHaveBeenLastCalledWith(expect.objectContaining({ status: 'In Queue' }));
+    });
+
+    it('clicking a band narrows the table to the rows whose served band matches', async () => {
+      const user = userEvent.setup();
+      const p3Row: PriorityMatrixRow = { ...scoredRow, project_id: 'p9', project_name: 'Cooler P3', suggested_band: 'P3', rank: 2 };
+      hooks.usePriorityMatrix.mockReturnValue(ready([scoredRow, p3Row]));
+      hooks.usePrioritySummary.mockReturnValue(ready(summary));
+      renderWithProviders(<MatrixPage />);
+      const p3 = screen.getByTestId('band-legend-P3');
+      await user.click(p3);
+      expect(p3).toHaveAttribute('aria-pressed', 'true');
+      expect(screen.getByTestId('matrix-row-count')).toHaveTextContent('1 of 2 projects shown');
+      expect(screen.getByRole('link', { name: 'Cooler P3' })).toBeInTheDocument();
+      expect(screen.queryByRole('link', { name: 'Cooler A' })).not.toBeInTheDocument();
+      await user.click(screen.getByRole('button', { name: 'Clear band filter (P3)' }));
+      expect(screen.getByTestId('matrix-row-count')).toHaveTextContent('2 projects');
+    });
+  });
+
+  describe('P21 compare', () => {
+    const rows: PriorityMatrixRow[] = Array.from({ length: 6 }, (_, i) => ({
+      ...scoredRow,
+      project_id: `c${String(i)}`,
+      project_name: `Cooler ${String(i)}`,
+      rank: i + 1,
+    }));
+    const dims = (strat: number) => [
+      { key: 'strategic_project' as const, label: 'Strategic Project', pillar: 'Strategic Alignment', score: strat, weight: 25, points: strat * 5, max_points: 25 },
+      { key: 'capex_investment' as const, label: 'CAPEX Investment (inverted)', pillar: 'Investment & Feasibility', score: 2, weight: 15, points: 6, max_points: 15 },
+    ];
+    const compared: PriorityCompareProject[] = [
+      {
+        project_id: 'c0', project_name: 'Cooler 0', hub: 'R&D-Greece', set_priority: 'P2', has_score: true,
+        weighted_score: 268, normalized_pct: 91, suggested_band: 'P1', dimension_scores: dims(5),
+      },
+      {
+        project_id: 'c1', project_name: 'Cooler 1', hub: 'PD-India', set_priority: null, has_score: true,
+        weighted_score: 130, normalized_pct: 44, suggested_band: 'P3', dimension_scores: dims(0),
+      },
+      {
+        project_id: 'c2', project_name: 'Cooler 2', hub: 'PD-India', set_priority: null, has_score: false,
+        weighted_score: null, normalized_pct: null, suggested_band: null,
+        dimension_scores: dims(0).map((d) => ({ ...d, score: null, points: null })),
+      },
+    ];
+
+    it('caps the selection at 5 with a message, keeps it across filters, and Clear empties it', async () => {
+      const user = userEvent.setup();
+      hooks.usePriorityMatrix.mockReturnValue(ready(rows));
+      hooks.usePrioritySummary.mockReturnValue(ready(summary));
+      renderWithProviders(<MatrixPage />);
+      expect(screen.queryByTestId('compare-bar')).not.toBeInTheDocument();
+
+      await user.click(screen.getByRole('checkbox', { name: 'Select Cooler 0 to compare' }));
+      expect(screen.getByTestId('compare-message')).toHaveTextContent('Select at least 2 projects to compare');
+      expect(screen.getByRole('button', { name: 'Compare (1)' })).toBeDisabled();
+
+      for (const i of [1, 2, 3, 4]) {
+        await user.click(screen.getByRole('checkbox', { name: `Select Cooler ${String(i)} to compare` }));
+      }
+      expect(screen.getByRole('button', { name: 'Compare (5)' })).toBeEnabled();
+      await user.click(screen.getByRole('checkbox', { name: 'Select Cooler 5 to compare' }));
+      expect(screen.getByRole('checkbox', { name: 'Select Cooler 5 to compare' })).not.toBeChecked();
+      expect(screen.getByTestId('compare-message')).toHaveTextContent('Up to 5 projects can be compared');
+
+      // A filter change keeps the selection.
+      await user.click(within(screen.getByRole('radiogroup', { name: 'Cat' })).getByRole('radio', { name: 'B' }));
+      expect(screen.getByRole('button', { name: 'Compare (5)' })).toBeInTheDocument();
+
+      await user.click(screen.getByRole('button', { name: 'Clear' }));
+      expect(screen.queryByTestId('compare-bar')).not.toBeInTheDocument();
+    });
+
+    it('opens the dialog: calls GET /priorities/compare for the selection, shows radar legend and the dimension table', async () => {
+      const user = userEvent.setup();
+      hooks.usePriorityMatrix.mockReturnValue(ready(rows));
+      hooks.usePrioritySummary.mockReturnValue(ready(summary));
+      hooks.usePriorityCompare.mockReturnValue(ready({ projects: compared }));
+      renderWithProviders(<MatrixPage />);
+
+      await user.click(screen.getByRole('checkbox', { name: 'Select Cooler 0 to compare' }));
+      await user.click(screen.getByRole('checkbox', { name: 'Select Cooler 1 to compare' }));
+      await user.click(screen.getByRole('checkbox', { name: 'Select Cooler 2 to compare' }));
+      await user.click(screen.getByRole('button', { name: 'Compare (3)' }));
+
+      expect(hooks.usePriorityCompare).toHaveBeenLastCalledWith(['c0', 'c1', 'c2'], true);
+      const dialog = screen.getByRole('dialog', { name: 'Compare projects (3)' });
+      const legend = within(dialog).getByRole('list', { name: /Legend/ });
+      const legendButtons = within(legend).getAllByRole('button');
+      expect(legendButtons).toHaveLength(3);
+      await user.click(legendButtons[1] as HTMLElement);
+      expect(legendButtons[1]).toHaveAttribute('aria-pressed', 'false');
+
+      const table = within(dialog).getByTestId('compare-table');
+      expect(within(table).getByRole('columnheader', { name: 'Strategic Alignment' })).toBeInTheDocument();
+      const strat = within(table).getAllByTestId('compare-row')[0] as HTMLElement;
+      expect(strat).toHaveTextContent('Strategic Project');
+      const cells = within(strat).getAllByRole('cell');
+      expect(cells[0]).toHaveTextContent('525/25 pts');
+      expect(cells[0]).toHaveAttribute('data-highest', 'true');
+      expect(cells[1]).toHaveTextContent('00/25 pts');
+      expect(cells[1]).not.toHaveAttribute('data-highest');
+      const total = within(table).getByTestId('compare-total-row');
+      expect(total).toHaveTextContent('91/100');
+      expect(total).toHaveTextContent('44/100');
+      expect(within(total).getAllByRole('cell')[2]).toHaveTextContent('Not scored');
+    });
+
+    it('maps a 422 COMPARE_PROJECT_UNAVAILABLE to a readable message', async () => {
+      const user = userEvent.setup();
+      hooks.usePriorityMatrix.mockReturnValue(ready(rows));
+      hooks.usePrioritySummary.mockReturnValue(ready(summary));
+      hooks.usePriorityCompare.mockReturnValue(
+        failed(new ApiError(422, 'x', 'unavailable', 'COMPARE_PROJECT_UNAVAILABLE')),
+      );
+      renderWithProviders(<MatrixPage />);
+      await user.click(screen.getByRole('checkbox', { name: 'Select Cooler 0 to compare' }));
+      await user.click(screen.getByRole('checkbox', { name: 'Select Cooler 1 to compare' }));
+      await user.click(screen.getByRole('button', { name: 'Compare (2)' }));
+      expect(screen.getByRole('alert')).toHaveTextContent('One of the selected projects is no longer available to you');
+    });
   });
 
   it('shows the hard-gate forced-to-P1 count from the summary', () => {
@@ -370,8 +656,10 @@ describe('MatrixPage', () => {
       hooks.usePrioritySummary.mockReturnValue(ready(summary));
     });
 
-    it('renders the served Rank, Leader (unavailable / none) and Status columns', () => {
+    it('renders the served Rank, Leader (unavailable / none) and Status columns', async () => {
+      const user = userEvent.setup();
       renderWithProviders(<MatrixPage />);
+      await user.click(screen.getByRole('button', { name: 'Detailed view' }));
       for (const name of ['Rank', 'Leader', 'Status']) {
         expect(screen.getByRole('columnheader', { name })).toBeInTheDocument();
       }
@@ -407,6 +695,7 @@ describe('MatrixPage', () => {
     it('the Hub and Leader column inputs narrow the served rows in view only', async () => {
       const user = userEvent.setup();
       renderWithProviders(<MatrixPage />);
+      await user.click(screen.getByRole('button', { name: 'Detailed view' }));
       const calls = hooks.usePriorityMatrix.mock.calls.length;
       await user.type(screen.getByRole('searchbox', { name: 'Filter by leader' }), 'unavailable');
       expect(screen.getByTestId('matrix-row-count')).toHaveTextContent('1 of 3 projects shown');
@@ -416,17 +705,18 @@ describe('MatrixPage', () => {
       expect(hooks.usePriorityMatrix.mock.calls.slice(calls).every(([p]) => (p as { q?: string }).q === undefined)).toBe(true);
     });
 
-    it('Detailed view shows the 13 dimension columns; Reset view restores the default', async () => {
+    it('the 13 dimension columns are always shown; Detailed view adds Leader and points; Reset view restores the default', async () => {
       const user = userEvent.setup();
       renderWithProviders(<MatrixPage />);
-      expect(screen.queryByRole('button', { name: /^Strategic Project: 1 =/ })).not.toBeInTheDocument();
+      expect(screen.getAllByRole('button', { name: /^Strategic Project: 1 =/ }).length).toBeGreaterThan(0);
+      expect(screen.queryByRole('columnheader', { name: 'Leader' })).not.toBeInTheDocument();
       await user.click(screen.getByRole('button', { name: 'Detailed view' }));
-      expect(screen.getByRole('button', { name: /^Strategic Project: 1 =/ })).toBeInTheDocument();
+      expect(screen.getByRole('columnheader', { name: 'Leader' })).toBeInTheDocument();
       await user.click(within(screen.getByRole('radiogroup', { name: 'Type' })).getByRole('radio', { name: 'CO' }));
-      await user.click(screen.getByRole('radio', { name: 'USD' }));
+      await user.click(screen.getByRole('radio', usd));
 
       await user.click(screen.getByRole('button', { name: 'Reset view' }));
-      expect(screen.queryByRole('button', { name: /^Strategic Project: 1 =/ })).not.toBeInTheDocument();
+      expect(screen.queryByRole('columnheader', { name: 'Leader' })).not.toBeInTheDocument();
       expect(hooks.usePriorityMatrix).toHaveBeenLastCalledWith(
         expect.objectContaining({ currency: 'EUR', type: undefined, category: undefined, status: undefined }),
       );
@@ -439,7 +729,7 @@ describe('MatrixPage', () => {
       const user = userEvent.setup();
       renderWithProviders(<MatrixPage />);
       expect(screen.queryByTestId('fx-rate-editor')).not.toBeInTheDocument(); // EUR: nothing to edit
-      await user.click(screen.getByRole('radio', { name: 'USD' }));
+      await user.click(screen.getByRole('radio', usd));
       const input = screen.getByRole('spinbutton', { name: 'Exchange rate (Admin)' });
       expect(input).toHaveValue(1.08);
       await user.clear(input);
@@ -452,7 +742,7 @@ describe('MatrixPage', () => {
     it('a non-Admin role never sees the FX editor', async () => {
       const user = userEvent.setup();
       renderWithProviders(<MatrixPage />, { session: { roles: ['Portfolio Manager'] } });
-      await user.click(screen.getByRole('radio', { name: 'USD' }));
+      await user.click(screen.getByRole('radio', usd));
       expect(screen.queryByTestId('fx-rate-editor')).not.toBeInTheDocument();
       expect(screen.getByTestId('currency-rate-caption')).toHaveTextContent('1 EUR = 1.08 USD');
     });

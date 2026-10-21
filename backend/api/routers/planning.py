@@ -85,7 +85,7 @@ from services.capacity_supply import (
     round2,
     to_days,
 )
-from services.hub_scope import narrowed_hub_filter, narrowed_lab_regions
+from services.hub_scope import hub_scope_filter, narrowed_hub_filter, narrowed_lab_regions
 
 router = APIRouter(prefix="/planning", tags=["capacity-planning"])
 
@@ -239,6 +239,26 @@ def _check_len(name: str, values: list[object], limit: int) -> None:
         )
 
 
+async def _in_scope_engineer_ids(
+    db: AsyncSession, principal: Principal, requested: list[uuid.UUID]
+) -> list[uuid.UUID]:
+    """The requested engineer ids the caller may see (RBAC hub scope,
+    `hub_scope_filter`), sorted as before. Unknown and out-of-scope ids are
+    both dropped, so the two are indistinguishable (P19-R01, S19-M1). The
+    optional `hub_id` / `region` filter is not applied here: it narrows the
+    listed rows, not who the caller may filter by (unchanged semantics for
+    an in-scope engineer of another hub)."""
+
+    if not requested:
+        return []
+    stmt = select(Engineer.id).where(Engineer.id.in_(set(requested)))
+    scope = hub_scope_filter(principal, Engineer.hub_id)
+    if scope is not None:
+        stmt = stmt.where(scope)
+    visible = set((await db.execute(stmt)).scalars().all())
+    return sorted(visible, key=str)
+
+
 def _project_predicate(
     project_type: list[ProjectType],
     project_status: list[ProjectStatus],
@@ -252,7 +272,8 @@ def _project_predicate(
     - `requesting_department`: projects have no department (OQ #34), so any
       value matches no project.
     - `engineer_id`: projects with at least one step of the active run booked
-      on one of the engineers.
+      on one of the engineers. Callers pass only in-scope ids
+      (`_in_scope_engineer_ids`, P19-R01), never the raw query values.
     """
 
     parts: list[ColumnElement[bool]] = []
@@ -310,8 +331,16 @@ async def resource_load(
     `project_status`, `requesting_department`, `category`, `engineer_id`)
     restrict which projects' booked steps count as load; `engineer_id` also
     restricts the engineer rows. Capacity never depends on the project
-    filters. Load has no basis: it is every booked week of the active run
-    (I6/I7, spillover included), as on `/capacity/hub-load`.
+    filters.
+
+    P19-R01 (S19-M1): `engineer_id` is first intersected with the caller's
+    hub scope; only in-scope ids filter anything or appear in
+    `filters_applied`. If ids were sent and none is in scope (unknown and
+    out-of-scope alike), the answer is the out-of-scope-hub shape: empty
+    engineer and chamber lists and zero totals.
+
+    Load has no basis: it is every booked week of the active run (I6/I7,
+    spillover included), as on `/capacity/hub-load`.
     """
 
     _check_len("project_type", list(project_type), MAX_LIST_FILTER)
@@ -328,7 +357,14 @@ async def resource_load(
     statuses = sorted(set(project_status), key=list(ProjectStatus).index)
     categories = sorted(set(category), key=list(ProjectCategory).index)
     departments = sorted({d.strip() for d in requesting_department if d.strip()})
-    engineer_ids = sorted(set(engineer_id), key=str)
+    # P19-R01 (S19-M1): the engineer filter is intersected with the caller's
+    # RBAC scope BEFORE any predicate is built. An out-of-scope id must not
+    # re-slice the region-wide chamber load (a per-engineer workload signal,
+    # OQ #8), must not be echoed, and must behave exactly like an unknown id.
+    engineer_ids = await _in_scope_engineer_ids(db, current_user, engineer_id)
+    #: Ids were sent and none is visible: answer like an out-of-scope hub
+    #: (empty lists, zero totals), never like "no engineer filter".
+    no_visible_engineer = bool(engineer_id) and not engineer_ids
 
     current_week = dc.CURRENT_WEEK
     active_run = await get_active_run(db)
@@ -345,14 +381,18 @@ async def resource_load(
         eng_stmt = eng_stmt.where(eng_filter)
     if engineer_ids:
         eng_stmt = eng_stmt.where(Engineer.id.in_(engineer_ids))
-    engineers = (await db.execute(eng_stmt)).scalars().all()
+    engineers: list[Engineer] = (
+        [] if no_visible_engineer else list((await db.execute(eng_stmt)).scalars().all())
+    )
 
     # --- Chambers (lab regions in scope, narrowed by hub/region) -------------
     ch_stmt = select(Chamber).order_by(Chamber.lab_region, Chamber.code)
     lab_regions = await narrowed_lab_regions(db, current_user, hub_id, region)
     if lab_regions is not None:
         ch_stmt = ch_stmt.where(Chamber.lab_region.in_(lab_regions))
-    chambers = (await db.execute(ch_stmt)).scalars().all()
+    chambers: list[Chamber] = (
+        [] if no_visible_engineer else list((await db.execute(ch_stmt)).scalars().all())
+    )
 
     # --- Load from the active run --------------------------------------------
     eng_load: dict[uuid.UUID, float] = defaultdict(float)

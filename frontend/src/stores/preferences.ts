@@ -11,7 +11,10 @@ import type { SurfaceKey } from '@/types/enums';
  * The profile photo especially is personal data (GDPR, OPEN_QUESTIONS #8), so it
  * stays on the device that uploaded it, keyed by the signed-in email.
  */
-export type StartPage = '/' | '/capacity' | '/matrix' | '/timeline' | '/register' | '/planning';
+// P22-T01: '/register' became '/projects' (Projects and Registration merged). A
+// stored '/register' has no surface entry, so `resolveStartPage` falls back to
+// the Dashboard; the route itself also redirects.
+export type StartPage = '/' | '/projects' | '/capacity' | '/matrix' | '/timeline' | '/planning';
 
 interface PreferencesState {
   avatars: Record<string, string>;
@@ -48,15 +51,15 @@ export function useAvatarFor(email: string | undefined): string | null {
 
 const START_PAGE_SURFACE: Record<StartPage, SurfaceKey> = {
   '/': 'dashboard',
+  '/projects': 'dashboard',
   '/capacity': 'capacity',
   '/matrix': 'matrix',
   '/timeline': 'gantt',
-  '/register': 'project_registration',
   '/planning': 'capacity_planning',
 };
 
 /** The preferred start page if this user may read it, else the Dashboard. */
 export function resolveStartPage(me: MeResponse | null, preferred: StartPage): StartPage {
-  const surface = START_PAGE_SURFACE[preferred];
-  return me?.permissions[surface]?.read ? preferred : '/';
+  const surface = START_PAGE_SURFACE[preferred] as SurfaceKey | undefined;
+  return surface !== undefined && me?.permissions[surface]?.read ? preferred : '/';
 }

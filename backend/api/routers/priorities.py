@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import uuid
 from collections import Counter
+from collections.abc import Sequence
 from decimal import Decimal
 from typing import Annotated
 
@@ -46,10 +47,10 @@ from sqlalchemy.orm import selectinload
 import domain_constants as dc
 from api.db import get_db
 from api.deps import require_permission
+from api.errors import HTTP_422, CodedHTTPException
 from core.principal import Principal
 from core.rbac import Action, Surface
 from models.audit import AuditLogEntry
-from models.currency import CurrencyRate
 from models.enums import (
     CurrencyCode,
     LabRegion,
@@ -61,19 +62,27 @@ from models.enums import (
 from models.priority import DIMENSION_FIELD_NAMES, PriorityScore
 from models.project import Project
 from schemas.priority import (
+    BandShare,
     DimensionInfo,
     DimensionPoints,
+    DimensionScore,
+    PriorityCompareItem,
+    PriorityCompareResponse,
     PriorityDimensionsResponse,
+    PriorityDistribution,
     PriorityMatrixRow,
     PriorityPortfolioSummary,
     PriorityScoreRead,
     PriorityScoreUpdateRequest,
+    ScoreHistogramBucket,
 )
 from services.audit_helpers import priority_score_audit_state
+from services.currency import rate_to_eur as _currency_rate_to_eur
 from services.hub_scope import global_hub_filter, hub_scope_filter, narrowed_hub_filter
 from services.priority_scoring import (
     compute_priority_score,
     dimension_points,
+    dimension_score_rows,
     dimension_table,
 )
 from services.project_filters import (
@@ -90,16 +99,9 @@ _write = require_permission(Surface.MATRIX, Action.WRITE)
 
 
 async def _rate_to_eur(db: AsyncSession, currency: CurrencyCode) -> Decimal:
-    if currency == CurrencyCode.EUR:
-        return Decimal("1.0")
-    result = await db.execute(select(CurrencyRate).where(CurrencyRate.currency_code == currency))
-    rate = result.scalar_one_or_none()
-    if rate is None:  # pragma: no cover - defensive; CurrencyRate is seeded for all 3 codes
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"No currency_rates row for {currency.value!r}",
-        )
-    return Decimal(str(rate.rate_to_eur))
+    """P21-T01: 422 `CURRENCY_NOT_CONFIGURED` when `currency` has no rate."""
+
+    return await _currency_rate_to_eur(db, currency)
 
 
 def _convert(amount: float | None, rate: Decimal) -> float | None:
@@ -113,6 +115,11 @@ def _dimension_points(score: PriorityScore | None) -> dict[str, DimensionPoints]
         return None
     pts = dimension_points([getattr(score, f) for f in DIMENSION_FIELD_NAMES])
     return {k: DimensionPoints(**v) for k, v in pts.items()}
+
+
+def _dimension_scores(score: PriorityScore | None) -> list[DimensionScore]:
+    dims = None if score is None else [getattr(score, f) for f in DIMENSION_FIELD_NAMES]
+    return [DimensionScore(**d) for d in dimension_score_rows(dims)]
 
 
 def _build_row(
@@ -156,6 +163,7 @@ def _build_row(
         normalized_pct=score.normalized_pct if score else None,
         suggested_band=score.suggested_band if score else None,
         dimension_points=_dimension_points(score),
+        dimension_scores=_dimension_scores(score),
         is_new_model=project.type == ProjectType.NM,
         is_rm_saving_project=project.rm_savings_keur is not None,
         currency=currency,
@@ -199,6 +207,51 @@ async def list_priority_matrix(
     columns are unchanged and never logged.
     """
 
+    # P21-T01: resolve the rate first, so an unconfigured currency is a 422
+    # before any project row is read.
+    rate = await _rate_to_eur(db, currency)
+    projects = await _matrix_projects(
+        db,
+        current_user,
+        hub_id=hub_id,
+        region=region,
+        category=category,
+        type_=type_,
+        status_=status_,
+        q=q,
+    )
+    ranks = score_ranks(projects, _score_value)
+    rows = [
+        _build_row(
+            p, p.priority_score, currency, rate, current_user=current_user, rank=ranks.get(p.id)
+        )
+        for p in projects
+    ]
+    rows.sort(
+        key=lambda r: (
+            0 if r.rank is not None else 1,
+            r.rank if r.rank is not None else 0,
+            r.project_name.lower(),
+        )
+    )
+    return rows
+
+
+async def _matrix_projects(
+    db: AsyncSession,
+    current_user: Principal,
+    *,
+    hub_id: uuid.UUID | None,
+    region: LabRegion | None,
+    category: ProjectCategory | None,
+    type_: ProjectType | None,
+    status_: ProjectStatus | None,
+    q: str | None,
+) -> Sequence[Project]:
+    """The Matrix's row set: hub scope AND the global hub / country filter AND
+    the toolbar filters. Shared by `GET /priorities` and
+    `GET /priorities/distribution` so their counts always reconcile."""
+
     stmt = select(Project).options(
         selectinload(Project.hub),
         selectinload(Project.priority_score),
@@ -221,24 +274,7 @@ async def list_priority_matrix(
     if search is not None:
         stmt = stmt.where(search)
     stmt = stmt.order_by(Project.name)
-
-    projects = (await db.execute(stmt)).scalars().all()
-    rate = await _rate_to_eur(db, currency)
-    ranks = score_ranks(projects, _score_value)
-    rows = [
-        _build_row(
-            p, p.priority_score, currency, rate, current_user=current_user, rank=ranks.get(p.id)
-        )
-        for p in projects
-    ]
-    rows.sort(
-        key=lambda r: (
-            0 if r.rank is not None else 1,
-            r.rank if r.rank is not None else 0,
-            r.project_name.lower(),
-        )
-    )
-    return rows
+    return (await db.execute(stmt)).scalars().all()
 
 
 def _score_value(project: Project) -> float | None:
@@ -297,6 +333,146 @@ async def priority_portfolio_summary(
         suggested_band_counts=dict(suggested_band_counts),
         set_priority_counts=dict(set_priority_counts),
     )
+
+
+#: P21-T01: the fixed bucket order of `band_distribution`. "Q" is a committed
+#: priority, never a score band, so its count is 0 under the current rules; it
+#: is listed so the chart's legend is stable.
+_DISTRIBUTION_BANDS: tuple[str, ...] = ("P1", "P2", "P3", "P4", "Q", "Unscored")
+_HISTOGRAM_WIDTH = 10
+COMPARE_MIN = 2
+COMPARE_MAX = 5
+
+
+def _share(count: int, total: int) -> float:
+    return round(count * 100 / total, 2) if total else 0.0
+
+
+def _histogram_bucket(pct: int) -> int:
+    """Index of the 10-point bucket; 100 falls into the last bucket [90, 100]."""
+
+    return min(max(pct, 0) // _HISTOGRAM_WIDTH, 100 // _HISTOGRAM_WIDTH - 1)
+
+
+@router.get("/distribution", response_model=PriorityDistribution)
+async def priority_distribution(
+    hub_id: uuid.UUID | None = None,
+    region: LabRegion | None = None,
+    category: ProjectCategory | None = None,
+    type_: Annotated[ProjectType | None, Query(alias="type")] = None,
+    status_: ProjectStatus | None = None,
+    q: Annotated[str | None, Query(max_length=Q_MAX_LENGTH)] = None,
+    db: AsyncSession = Depends(get_db),
+    current_user: Principal = Depends(_read),
+) -> PriorityDistribution:
+    """P21-T01 (docs/API_CONTRACT_P21.md §4): band distribution and a 10-point
+    histogram of `normalized_pct` over exactly the rows `GET /priorities`
+    returns for the same filters and scope. A band is the stored
+    `suggested_band`; a project without a score is "Unscored". No financial
+    field is read."""
+
+    projects = await _matrix_projects(
+        db,
+        current_user,
+        hub_id=hub_id,
+        region=region,
+        category=category,
+        type_=type_,
+        status_=status_,
+        q=q,
+    )
+    total = len(projects)
+    counts: Counter[str] = Counter()
+    histogram = [0] * (100 // _HISTOGRAM_WIDTH)
+    scored = 0
+    for p in projects:
+        score = p.priority_score
+        if score is None or score.suggested_band is None:
+            counts["Unscored"] += 1
+            continue
+        scored += 1
+        counts[score.suggested_band.value] += 1
+        if score.normalized_pct is not None:
+            histogram[_histogram_bucket(score.normalized_pct)] += 1
+    return PriorityDistribution(
+        total_projects=total,
+        scored_projects=scored,
+        band_distribution=[
+            BandShare(band=band, count=counts[band], share_pct=_share(counts[band], total))
+            for band in _DISTRIBUTION_BANDS
+        ],
+        score_histogram=[
+            ScoreHistogramBucket(
+                bucket_from=i * _HISTOGRAM_WIDTH,
+                bucket_to=(i + 1) * _HISTOGRAM_WIDTH,
+                count=n,
+            )
+            for i, n in enumerate(histogram)
+        ],
+    )
+
+
+def _compare_error(code: str, detail: str) -> CodedHTTPException:
+    return CodedHTTPException(status_code=HTTP_422, code=code, detail=detail)
+
+
+@router.get("/compare", response_model=PriorityCompareResponse)
+async def compare_priorities(
+    project_id: Annotated[list[uuid.UUID], Query()],
+    db: AsyncSession = Depends(get_db),
+    current_user: Principal = Depends(_read),
+) -> PriorityCompareResponse:
+    """P21-T01 (docs/API_CONTRACT_P21.md §5): 2-5 distinct projects side by
+    side, in the order given. Hub-scoped: an unknown id and an id outside the
+    caller's scope give the same 422 `COMPARE_PROJECT_UNAVAILABLE`, which does
+    not say which id failed, so existence is never revealed. No financial
+    fields."""
+
+    if not COMPARE_MIN <= len(project_id) <= COMPARE_MAX:
+        raise _compare_error(
+            "COMPARE_COUNT",
+            f"Compare takes {COMPARE_MIN} to {COMPARE_MAX} project_id values.",
+        )
+    if len(set(project_id)) != len(project_id):
+        raise _compare_error("COMPARE_DUPLICATE", "Each project_id may appear only once.")
+
+    stmt = (
+        select(Project)
+        .options(selectinload(Project.hub), selectinload(Project.priority_score))
+        .where(Project.id.in_(project_id))
+    )
+    hub_filter = hub_scope_filter(current_user, Project.hub_id)
+    if hub_filter is not None:
+        stmt = stmt.where(hub_filter)
+    found = {p.id: p for p in (await db.execute(stmt)).scalars().all()}
+    if len(found) != len(project_id):
+        raise _compare_error(
+            "COMPARE_PROJECT_UNAVAILABLE",
+            "One or more projects cannot be compared.",
+        )
+
+    items: list[PriorityCompareItem] = []
+    for pid in project_id:
+        p = found[pid]
+        score = p.priority_score
+        items.append(
+            PriorityCompareItem(
+                project_id=p.id,
+                project_name=p.name,
+                hub=p.hub.name,
+                set_priority=p.priority,
+                has_score=score is not None,
+                weighted_score=(
+                    float(score.weighted_score)
+                    if score is not None and score.weighted_score is not None
+                    else None
+                ),
+                normalized_pct=score.normalized_pct if score is not None else None,
+                suggested_band=score.suggested_band if score is not None else None,
+                dimension_scores=_dimension_scores(score),
+            )
+        )
+    return PriorityCompareResponse(projects=items)
 
 
 @router.get("/{project_id}", response_model=PriorityMatrixRow)

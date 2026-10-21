@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 
 vi.mock('@tanstack/react-virtual', () => ({
   useVirtualizer: ({ count }: { count: number }) => ({
@@ -39,5 +39,21 @@ describe('VirtualMatrixGrid', () => {
     expect(screen.getByText('Beta')).toBeInTheDocument();
     // horizontal + vertical scroll live in one container, not the page body
     expect(screen.getByTestId('matrix-grid-scroll')).toHaveClass('overflow-auto');
+  });
+
+  it('P21-T03: marks the scroll region once scrolled sideways (frozen-block shadow) and the frozen edge cell', () => {
+    const rows: Row[] = [{ id: 'a', name: 'Alpha', v: 1 }];
+    render(<VirtualMatrixGrid rows={rows} columns={columns} rowKey={(r) => r.id} caption="Grid" />);
+    const scroll = screen.getByTestId('matrix-grid-scroll');
+    expect(scroll).toHaveAttribute('data-scrolled-x', 'false');
+    scroll.scrollLeft = 120;
+    fireEvent.scroll(scroll);
+    expect(scroll).toHaveAttribute('data-scrolled-x', 'true');
+    scroll.scrollLeft = 0;
+    fireEvent.scroll(scroll);
+    expect(scroll).toHaveAttribute('data-scrolled-x', 'false');
+    // The sticky header cell and the body cell of the last frozen column carry the edge.
+    expect(screen.getByRole('columnheader', { name: 'Name' })).toHaveClass('mg-frozen-edge', 'mg-cell-sticky');
+    expect(screen.getByText('Alpha').closest('[role="cell"]')).toHaveClass('mg-frozen-edge');
   });
 });

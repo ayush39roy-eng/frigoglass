@@ -14,18 +14,15 @@ import { CountrySegmented } from '@/components/shared/hub-filter/country-segment
 import { DEFAULT_CAPACITY_VIEW, type CapacityView } from './lib/pick-figures';
 import { AccessNotice } from './components/access-notice';
 import { CapacityReportingNotice } from './components/capacity-reporting-notice';
-import { ChamberUtilizationPanel } from './components/chamber-utilization-panel';
-import type { LabRegion } from '@/types/enums';
-import { ClassBreakdownPanel, ClassChartSection } from './components/class-breakdown-panel';
+import { ClassBreakdownPanel } from './components/class-breakdown-panel';
 import { CapacityKpiRow } from './components/capacity-kpi-row';
 import { CapacityToolbar } from './components/capacity-toolbar';
 import { CollapsibleSection } from './components/collapsible-section';
 import { HubBookingStrip } from './components/hub-booking-strip';
 import { HubSummaryTable } from './components/hub-summary-table';
-import { HubUtilizationMatrix } from './components/hub-utilization-matrix';
 import { EngineerUtilizationPanel } from './components/engineer-utilization-panel';
 import { LoadCapacityCharts } from './components/load-capacity-charts';
-import { useActiveScheduleRun, useClassBreakdown, useHubLoadVsCapacity, useUtilizationMatrix } from './hooks/use-capacity';
+import { useActiveScheduleRun, useClassBreakdown, useHubLoadVsCapacity } from './hooks/use-capacity';
 
 const CAPACITY_SURFACE = SURFACES.find((s) => s.path === '/capacity');
 
@@ -62,31 +59,6 @@ function authKind(errors: unknown[]): 'forbidden' | 'unauthorized' | null {
   return null;
 }
 
-/**
- * The chamber utilization matrix, behind its disclosure. The query lives HERE, not
- * on the page, so nothing is fetched until the section is opened.
- */
-function ChamberSection({
-  hubId,
-  region,
-  activeRun,
-}: {
-  hubId: string | null;
-  region: LabRegion | null;
-  activeRun: ReturnType<typeof useActiveScheduleRun>['data'];
-}): React.JSX.Element {
-  const utilization = useUtilizationMatrix(hubId, region);
-  return (
-    <SectionBoundary
-      query={utilization}
-      title="Resource utilization matrix"
-      errorDescription="The chamber utilization matrix could not be loaded."
-    >
-      {(data) => <ChamberUtilizationPanel data={data} activeRun={activeRun} />}
-    </SectionBoundary>
-  );
-}
-
 export default function CapacityPage(): React.JSX.Element {
   // P12 (ADR 0020): the global header hub filter. The server filters hub rows;
   // lab figures stay region-wide (§4). Nothing is re-derived here. (P19-T02: the
@@ -110,7 +82,7 @@ export default function CapacityPage(): React.JSX.Element {
   /** The page's ONE view state (P19-T05): the horizon, YTD 2026 (= remaining
    *  year) / Full year (ADR 0008), and the unit, Weeks / Days. The header toggles
    *  write it; the KPI cards, charts, booked tiles, summary table, Details dialog
-   *  and matrix all read it, and each shows the served field for it (I19). */
+   *  all read it, and each shows the served field for it (I19). */
   const [view, setView] = React.useState<CapacityView>(DEFAULT_CAPACITY_VIEW);
 
   const hubData = hubLoad.data;
@@ -181,40 +153,23 @@ export default function CapacityPage(): React.JSX.Element {
             </StaggerSection>
           ) : null}
 
-          {/* 5. One compact table; per-hub detail is behind each row's Details dialog. */}
+          {/* 5. "Load vs. capacity by hub": ONE table (P19-T06 merged the summary table and the
+              hub utilization matrix); per-hub detail is behind each row's Details dialog. */}
           <StaggerSection>
             <SectionBoundary
               query={hubLoad}
-              title="Load vs. capacity per hub"
+              title="Load vs. capacity by hub"
               errorDescription="Per-hub load and capacity could not be loaded from the active schedule run."
             >
               {(data) => <HubSummaryTable data={data} activeRun={activeRun.data} view={view} />}
             </SectionBoundary>
           </StaggerSection>
 
-          {/* 6. The hub utilization matrix, inline and expanded (P19-T02, owner ruling). It is
-              built from the hub-load rows already on the page, so it fetches nothing extra. */}
-          {showRun && hubData.rows.length > 0 ? (
-            <StaggerSection>
-              <section aria-label="Global resource utilization matrix" data-testid="section-hub-matrix">
-                <HubUtilizationMatrix rows={hubData.rows} totals={hubData.totals} view={view} />
-              </section>
-            </StaggerSection>
-          ) : null}
-
-          {/* 7. The class chart (P19-T05, owner ruling: moved down from under the class cards),
-              then chamber and engineer utilization. All collapsed and lazy: nothing renders
-              or fetches until opened. The class chart reuses the class-breakdown data already
-              on the page. */}
+          {/* 6. Engineer utilization, collapsed and lazy: nothing renders or fetches until
+              opened. (P19-T07, owner removal: the class chart and the chamber utilization
+              matrix that sat here are gone, and the page no longer reads
+              /capacity/utilization-matrix.) */}
           <div className="flex flex-col gap-s3" data-testid="capacity-more-detail">
-            {classBreakdown.data ? <ClassChartSection data={classBreakdown.data} /> : null}
-            <CollapsibleSection
-              showLabel="Show chamber utilization"
-              hint="Concurrent projects per chamber per week"
-              testId="section-chambers"
-            >
-              <ChamberSection hubId={hubId} region={region} activeRun={activeRun.data} />
-            </CollapsibleSection>
             <CollapsibleSection
               showLabel="Show engineer utilization"
               hint="Named per-engineer weekly load (personal data; read only when opened)"

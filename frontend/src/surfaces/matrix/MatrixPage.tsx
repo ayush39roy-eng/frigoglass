@@ -3,11 +3,11 @@ import { RotateCcw, TableProperties } from 'lucide-react';
 
 import { PageHeader } from '@/components/layout/page-header';
 import { SectionBoundary } from '@/components/shared/section-boundary';
-import { CurrencyToggle } from '@/components/shared/currency-toggle';
 import { DownloadButton } from '@/components/shared/download-button';
 import { EmptyState } from '@/components/shared/empty-state';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Skeleton } from '@/components/ui/skeleton';
 import { ReadOnlyNotice } from '@/components/session/write-gate';
 import { ApiError } from '@/lib/api/client';
 import { useHubFilter } from '@/stores/hub-filter';
@@ -18,20 +18,28 @@ import { formatInteger } from '@/lib/format';
 import { SURFACES } from '@/app/nav';
 import { effectivePendingEdits, useScenarioStore } from '@/stores/scenario';
 import { usePermission, useSessionStore } from '@/stores/session';
-import type { CurrencyCode } from '@/types/enums';
 
 import { AccessNotice, WriteForbiddenNotice } from './components/access-notice';
 import { FxRateEditor } from './components/fx-rate-editor';
 import { ChipFilter, ColumnFilterInput } from './components/matrix-toolbar';
+import { MatrixCurrencyControl } from './components/matrix-currency-control';
+import { MatrixViewPanel } from './components/matrix-view-panel';
+import { ScoreChartsRow } from './components/score-charts';
+import { CompareBar, CompareDialog } from './components/compare-dialog';
 import {
   CATEGORY_CHIPS,
   DEFAULT_MATRIX_VIEW,
   STATUS_CHIPS,
   TYPE_CHIPS,
+  activeFilterCount,
   canEditFxRate,
   isDefaultView,
   type MatrixViewState,
 } from './lib/matrix-view';
+import { useCompareSelection } from './lib/compare-selection';
+import { rowBand } from './lib/row-scores';
+import { useGridMaxHeight, useStuck } from './lib/use-stuck';
+import { NARROW_QUERY, useMediaQuery } from './lib/use-media-query';
 import { MatrixTable } from './components/matrix-table';
 import { PortfolioSummaryPanel } from './components/portfolio-summary-panel';
 import { ScenarioModeToggle, ScenarioPendingPanel } from './components/scenario-panel';
@@ -41,24 +49,27 @@ import { liveRequestValuesFromRow } from './components/score-edit-schema';
 import { ScoreEditDialog } from './components/score-edit-dialog';
 import { VersionHistoryDialog } from './components/version-history-panel';
 import {
-  useCurrencyRates,
+  useMatrixCurrencies,
+  usePriorityDistribution,
   usePriorityMatrix,
   usePrioritySummary,
   useUpdatePriorityScore,
 } from './hooks/use-matrix';
-import type { PriorityMatrixRow, PriorityScoreUpdateRequest } from './api/types';
+import type { MatrixCurrencyCode, PriorityMatrixRow, PriorityScoreUpdateRequest } from './api/types';
 
 const MATRIX_SURFACE = SURFACES.find((s) => s.path === '/matrix');
 const SEARCH_MAX_LENGTH = 100;
 
 /** P13-T14: the Hub / Leader column inputs narrow the SERVED rows in view
  *  (text match only — ranks and figures stay as served). An id with no
- *  name matches "unavailable". */
-function narrowInView(rows: PriorityMatrixRow[], hubText: string, leaderText: string): PriorityMatrixRow[] {
-  const hub = hubText.trim().toLowerCase();
-  const leader = leaderText.trim().toLowerCase();
-  if (hub === '' && leader === '') return rows;
+ *  name matches "unavailable". P21: the band picked on the distribution chart
+ *  narrows by each row's SERVED band. */
+function narrowInView(rows: PriorityMatrixRow[], view: MatrixViewState): PriorityMatrixRow[] {
+  const hub = view.hubText.trim().toLowerCase();
+  const leader = view.leaderText.trim().toLowerCase();
+  if (hub === '' && leader === '' && view.band === null) return rows;
   return rows.filter((r) => {
+    if (view.band !== null && rowBand(r) !== view.band) return false;
     if (hub !== '' && !r.hub.toLowerCase().includes(hub)) return false;
     if (leader !== '') {
       const shown = r.leader_name ?? (r.leader_engineer_id ? 'unavailable' : '');
@@ -79,7 +90,7 @@ function authKind(errors: unknown[]): 'forbidden' | 'unauthorized' | null {
 }
 
 export default function MatrixPage(): React.JSX.Element {
-  const [currency, setCurrency] = React.useState<CurrencyCode>('EUR');
+  const [currency, setCurrency] = React.useState<MatrixCurrencyCode>('EUR');
   // P12 (ADR 0020): the hub is the global header filter (was a local select).
   const { hubId, region } = useHubFilter();
   const [view, setView] = React.useState<MatrixViewState>(DEFAULT_MATRIX_VIEW);
@@ -94,17 +105,52 @@ export default function MatrixPage(): React.JSX.Element {
   const [dialogOpen, setDialogOpen] = React.useState(false);
   const [writeForbidden, setWriteForbidden] = React.useState(false);
 
-  const ratesQuery = useCurrencyRates();
+  const currenciesQuery = useMatrixCurrencies();
+  const currencies = currenciesQuery.data;
+  const selectedRate = currencies?.find((c) => c.currency_code === currency)?.rate_to_eur ?? null;
   const summaryQuery = usePrioritySummary(hubId, region);
-  const matrixQuery = usePriorityMatrix({
-    currency,
+  const serverFilters = {
     hubId: hubId ?? undefined,
     region: region ?? undefined,
     category: view.category ?? undefined,
     type: view.type ?? undefined,
     status: view.status ?? undefined,
     q: debouncedQ === '' ? undefined : debouncedQ,
-  });
+  };
+  const matrixQuery = usePriorityMatrix({ currency, ...serverFilters });
+  const distributionQuery = usePriorityDistribution(serverFilters);
+
+  // P21 §1: a currency whose rate was removed meanwhile answers 422
+  // CURRENCY_NOT_CONFIGURED. Fall back to EUR, say why, and re-read the list.
+  const [unconfigured, setUnconfigured] = React.useState<MatrixCurrencyCode | null>(null);
+  const matrixError = matrixQuery.error;
+  if (matrixError instanceof ApiError && matrixError.code === 'CURRENCY_NOT_CONFIGURED' && currency !== 'EUR') {
+    // Adjusting state while rendering (React's documented pattern): converges on EUR.
+    setUnconfigured(currency);
+    setCurrency('EUR');
+  }
+  const refetchCurrencies = currenciesQuery.refetch;
+  React.useEffect(() => {
+    if (unconfigured !== null) void refetchCurrencies();
+  }, [unconfigured, refetchCurrencies]);
+
+  // P21 sticky View panel + layout.
+  const narrow = useMediaQuery(NARROW_QUERY);
+  const sentinelRef = React.useRef<HTMLDivElement>(null);
+  const panelRef = React.useRef<HTMLElement>(null);
+  const stuck = useStuck(sentinelRef);
+
+  // P21 Compare selection (session-persisted, survives filters).
+  const compareItems = useCompareSelection((s) => s.items);
+  const toggleCompare = useCompareSelection((s) => s.toggle);
+  const selectedIds = React.useMemo(() => new Set(compareItems.map((i) => i.id)), [compareItems]);
+  const onToggleSelect = React.useCallback(
+    (row: PriorityMatrixRow) => toggleCompare({ id: row.project_id, name: row.project_name, hub: row.hub }),
+    [toggleCompare],
+  );
+  const [compareOpen, setCompareOpen] = React.useState(false);
+  // Below the grid: card padding + page gutter (+ the Compare bar when shown).
+  const gridMaxHeight = useGridMaxHeight(sentinelRef, panelRef, stuck, compareItems.length > 0 ? 176 : 112);
   const updateScore = useUpdatePriorityScore();
 
   // Scenario mode (P5-T01) — a genuinely different interaction model from the
@@ -143,6 +189,7 @@ export default function MatrixPage(): React.JSX.Element {
     view.category !== null ||
     view.type !== null ||
     view.status !== null ||
+    view.band !== null ||
     debouncedQ !== '' ||
     view.hubText.trim() !== '' ||
     view.leaderText.trim() !== '';
@@ -233,15 +280,26 @@ export default function MatrixPage(): React.JSX.Element {
         <AccessNotice kind={denied} />
       ) : (
         <div className="flex flex-col gap-4">
-          <Card>
-            <CardHeader>
-              <CardTitle>View</CardTitle>
-            </CardHeader>
-            <CardContent className="flex flex-col gap-4">
-              <div className="flex flex-wrap items-end gap-4">
-                <CurrencyToggle value={currency} onChange={setCurrency} rates={ratesQuery.data} />
+          <div ref={sentinelRef} aria-hidden="true" className="-mb-4 h-0" data-testid="matrix-view-sentinel" />
+          <MatrixViewPanel
+            panelRef={panelRef}
+            stuck={stuck}
+            narrow={narrow}
+            filterCount={activeFilterCount(view)}
+            summary={`${currency} · ${activeFilterCount(view) === 0 ? 'no filters' : `${String(activeFilterCount(view))} filters`}`}
+            renderControls={(compact) => (
+              <>
+                <MatrixCurrencyControl
+                  value={currency}
+                  onChange={(next) => {
+                    setUnconfigured(null);
+                    setCurrency(next);
+                  }}
+                  currencies={currencies}
+                  compact={compact}
+                />
                 {/* P13-T14: editable FX rate, Admin / Super Admin only (PUT /currency-rates). */}
-                {isAdmin && currency !== 'EUR' ? <FxRateEditor currency={currency} rates={ratesQuery.data} /> : null}
+                {isAdmin && currency !== 'EUR' && !compact ? <FxRateEditor currency={currency} rate={selectedRate} /> : null}
                 <ScenarioModeToggle disabled={!canEdit} />
                 <VersionHistoryDialog projectLookup={projectLookup} />
                 <div className="ml-auto flex flex-wrap items-end gap-2">
@@ -250,7 +308,7 @@ export default function MatrixPage(): React.JSX.Element {
                     size="sm"
                     aria-pressed={view.detailed}
                     onClick={() => setViewField('detailed', !view.detailed)}
-                    title="Show the 13 score-dimension columns"
+                    title="Show Leader, Type and Committed, and each dimension's points"
                   >
                     <TableProperties aria-hidden="true" />
                     Detailed view
@@ -275,18 +333,26 @@ export default function MatrixPage(): React.JSX.Element {
                     fallbackFilename="matrix-export"
                   />
                 </div>
-              </div>
-              <div className="flex flex-wrap items-center gap-x-6 gap-y-3 border-t border-border pt-3">
+              </>
+            )}
+            filters={
+              <>
                 <ChipFilter label="Cat" value={view.category} options={CATEGORY_CHIPS} onChange={(v) => setViewField('category', v)} />
                 <ChipFilter label="Type" value={view.type} options={TYPE_CHIPS} onChange={(v) => setViewField('type', v)} />
-                <div className="flex items-center gap-2">
+                <div className="flex max-w-full items-center gap-2 overflow-x-auto">
                   <span className="text-2xs font-bold uppercase tracking-wider text-text-subtle">Hub</span>
                   <CountrySegmented />
                 </div>
                 <ChipFilter label="Status" value={view.status} options={STATUS_CHIPS} onChange={(v) => setViewField('status', v)} />
-              </div>
-            </CardContent>
-          </Card>
+              </>
+            }
+          />
+
+          {unconfigured ? (
+            <p role="status" className="rounded border border-warning/40 bg-warning-subtle px-3 py-2 text-xs text-text" data-testid="currency-not-configured">
+              No exchange rate is configured for {unconfigured}, so figures are shown in EUR. An Admin can set the rate.
+            </p>
+          ) : null}
 
           <ReadOnlyNotice surface="matrix" what="Score editing and scenario mode" />
           {writeForbidden ? <WriteForbiddenNotice /> : null}
@@ -303,13 +369,27 @@ export default function MatrixPage(): React.JSX.Element {
             {(summary) => <PortfolioSummaryPanel summary={summary} />}
           </SectionBoundary>
 
+          {distributionQuery.data ? (
+            <ScoreChartsRow
+              distribution={distributionQuery.data}
+              activeBand={view.band}
+              onBandClick={(band) => setViewField('band', band)}
+            />
+          ) : distributionQuery.isPending ? (
+            <Skeleton className="h-48 w-full rounded-card" aria-label="Loading score overview" />
+          ) : (
+            <p className="text-2xs text-text-muted" data-testid="matrix-chart-row-error">
+              The score overview could not be loaded; the table below is unaffected.
+            </p>
+          )}
+
           <SectionBoundary
             query={matrixQuery}
             title="Scoring grid"
             errorDescription="The prioritization scoring grid could not be loaded."
           >
             {(served) => {
-              const narrowed = narrowInView(served, view.hubText, view.leaderText);
+              const narrowed = narrowInView(served, view);
               const rows = [...narrowed].sort((a, b) => {
                 if (a.rank !== null && b.rank !== null) {
                   if (a.rank !== b.rank) return a.rank - b.rank;
@@ -329,13 +409,13 @@ export default function MatrixPage(): React.JSX.Element {
               });
               return (
               <Card>
-                <CardHeader>
+                <CardHeader className="flex-wrap">
                   <CardTitle>Scoring grid</CardTitle>
                   <span className="text-2xs text-text-muted" data-numeric="" data-testid="matrix-row-count">
                     {rows.length === served.length
                       ? `${formatInteger(served.length)} ${served.length === 1 ? 'project' : 'projects'}`
                       : `${formatInteger(rows.length)} of ${formatInteger(served.length)} projects shown`}{' '}
-                    · ranked by score · financial columns in {currency} (converted server-side)
+                    · ranked by score · scores 0–5 per dimension, total out of 100
                   </span>
                   <ScoringTotalLine />
                 </CardHeader>
@@ -350,8 +430,11 @@ export default function MatrixPage(): React.JSX.Element {
                       {/* Kept while filtered, so the column filter inputs stay reachable. */}
                       <MatrixTable
                         rows={rows}
-                        currency={currency}
                         canEdit={canEdit}
+                        selectedIds={selectedIds}
+                        onToggleSelect={onToggleSelect}
+                        maxHeight={gridMaxHeight}
+                        narrow={narrow}
                         onEdit={handleEdit}
                         scenarioStagedProjectIds={scenarioActive ? scenarioStagedProjectIds : undefined}
                         detailed={view.detailed}
@@ -370,8 +453,12 @@ export default function MatrixPage(): React.JSX.Element {
               );
             }}
           </SectionBoundary>
+
+          <CompareBar onOpen={() => setCompareOpen(true)} />
         </div>
       )}
+
+      <CompareDialog open={compareOpen} onOpenChange={setCompareOpen} />
 
       <ScoreEditDialog
         row={dialogRow}

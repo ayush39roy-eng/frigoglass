@@ -40,8 +40,14 @@ export interface Hub {
  */
 export interface CurrencyRate {
   id: Id;
-  currency_code: CurrencyCode;
-  rate_to_eur: number;
+  /** P21 (API_CONTRACT_P21 §1): the served enum adds EGP / ZAR / IDR. */
+  currency_code: CurrencyCode | 'EGP' | 'ZAR' | 'IDR';
+  /** P21: display name, e.g. "Egyptian pound". */
+  name: string;
+  /** P21: null until a rate is set (not configured). */
+  rate_to_eur: number | null;
+  /** P21: `rate_to_eur !== null`. */
+  configured: boolean;
   updated_by_user_id: Id | null;
   updated_at: string;
 }

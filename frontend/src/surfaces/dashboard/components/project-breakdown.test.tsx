@@ -199,7 +199,7 @@ describe('All registered projects register (P13, ADR 0025 §5)', () => {
     });
     expect(screen.getByRole('link', { name: 'Edit Ice cooler ICOOL-7' })).toHaveAttribute(
       'href',
-      '/register?edit=p-1',
+      '/projects?edit=p-1',
     );
   });
 

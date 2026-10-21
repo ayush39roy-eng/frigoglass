@@ -320,6 +320,18 @@ CONTRACT_TABLE: list[tuple[Path, str, str, str]] = [
     (_MATRIX_TS, "DimensionPoints", "DimensionPoints", "exact"),
     (_MATRIX_TS, "PriorityScoreUpdateRequest", "PriorityScoreUpdateRequest", "exact"),
     (_MATRIX_TS, "PriorityScoreRead", "PriorityScoreRead", "exact"),
+    # P21-T01 (docs/API_CONTRACT_P21.md §3-§5): rubric scores on rows, band
+    # distribution and compare. TS names are P21-T02's; rows stay red until it mirrors
+    # the served field names (and `PriorityMatrixRow.dimension_scores` above).
+    (_MATRIX_TS, "DimensionScore", "DimensionScore", "exact"),
+    (_MATRIX_TS, "BandDistributionEntry", "BandShare", "exact"),
+    (_MATRIX_TS, "ScoreHistogramBucket", "ScoreHistogramBucket", "exact"),
+    (_MATRIX_TS, "PriorityDistribution", "PriorityDistribution", "exact"),
+    (_MATRIX_TS, "PriorityCompareProject", "PriorityCompareItem", "exact"),
+    # The Matrix currency picker reads `currency_code, name, rate_to_eur,
+    # configured` of `GET /currency-rates` (deliberate partial mirror).
+    (_MATRIX_TS, "CurrencyOption", "CurrencyRateRead", "subset"),
+    (_MATRIX_TS, "PriorityCompareResponse", "PriorityCompareResponse", "exact"),
     # --- Matrix: Scenario Apply + Versions & History (backend/schemas/scenario.py,
     # P5-T01/P5-T02/P5-T03) ---
     (_MATRIX_TS, "ScenarioPriorityScoreChange", "ScenarioPriorityScoreChange", "exact"),
@@ -889,3 +901,21 @@ def test_activity_item_union_matches_backend() -> None:
         ("audit_entry_id", "Id"),
     ]:
         assert re.search(rf"\b{field}:\s*{re.escape(ts_type)};", union), (field, ts_type)
+
+
+def test_currency_rate_mirror_p21() -> None:
+    """P21-T01 (docs/API_CONTRACT_P21.md §1): `lib/api/reference.ts`
+    `CurrencyRate` mirrors `CurrencyRateRead` exactly, with `rate_to_eur`
+    admitting `null`. Checked here rather than through CONTRACT_TABLE so the
+    other `reference.ts` interfaces are not pulled into the coverage check.
+    Red until frontend-builder (P21-T02) adds `name`, `configured` and
+    `rate_to_eur: number | null`.
+    """
+
+    reference_ts = FRONTEND_SRC / "lib" / "api" / "reference.ts"
+    backend_props, backend_required = _backend_fields("CurrencyRateRead")
+    ts_fields = _resolve_ts_fields_with_imports(reference_ts, "CurrencyRate")
+    assert set(ts_fields) == backend_props
+    assert backend_required <= {n for n, f in ts_fields.items() if not f["optional"]}
+    for name in _backend_nullable_fields("CurrencyRateRead"):
+        assert _ts_type_is_nullable(ts_fields[name]["type"]), name

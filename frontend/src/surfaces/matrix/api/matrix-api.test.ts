@@ -8,6 +8,9 @@ vi.mock('@/lib/api/client', async () => {
 import { apiGet, apiSend } from '@/lib/api/client';
 import {
   applyScenario,
+  fetchMatrixCurrencies,
+  fetchPriorityCompare,
+  fetchPriorityDistribution,
   fetchPriorityMatrix,
   fetchPrioritySummary,
   fetchScenarioVersionDetail,
@@ -112,5 +115,42 @@ describe('matrix-api', () => {
     });
     await fetchScenarioVersionDetail(4);
     expect(mockApiGet).toHaveBeenCalledWith('/scenarios/versions/4', {});
+  });
+
+  describe('P21', () => {
+    it('reads GET /currency-rates and lists the six offered codes in order; a missing row is not configured', async () => {
+      mockApiGet.mockResolvedValueOnce([
+        { id: 'a', currency_code: 'EUR', name: 'Euro', rate_to_eur: 1, configured: true, updated_by_user_id: null, updated_at: '' },
+        { id: 'b', currency_code: 'EGP', name: 'Egyptian pound', rate_to_eur: null, configured: false, updated_by_user_id: null, updated_at: '' },
+      ]);
+      const out = await fetchMatrixCurrencies();
+      expect(mockApiGet).toHaveBeenCalledWith('/currency-rates', {});
+      expect(out.map((c) => [c.currency_code, c.configured])).toEqual([
+        ['EUR', true], ['USD', false], ['INR', false], ['EGP', false], ['ZAR', false], ['IDR', false],
+      ]);
+      expect(out[3]).toEqual({ currency_code: 'EGP', name: 'Egyptian pound', rate_to_eur: null, configured: false });
+    });
+
+    it('a pre-P21 row without name / configured gets the static name and configured = rate set', async () => {
+      mockApiGet.mockResolvedValueOnce([
+        { id: 'r', currency_code: 'USD', rate_to_eur: 1.08, updated_by_user_id: null, updated_at: '' },
+      ]);
+      const out = await fetchMatrixCurrencies();
+      expect(out[1]).toEqual({ currency_code: 'USD', name: 'US dollar', rate_to_eur: 1.08, configured: true });
+    });
+
+    it('requests the distribution with the grid filters (no currency)', async () => {
+      mockApiGet.mockResolvedValueOnce({ band_distribution: [], score_histogram: [] });
+      await fetchPriorityDistribution({ hubId: 'h1', category: 'B', status: 'In Queue' });
+      expect(mockApiGet).toHaveBeenCalledWith('/priorities/distribution', {
+        query: { hub_id: 'h1', region: undefined, category: 'B', type: undefined, status_: 'In Queue', q: undefined },
+      });
+    });
+
+    it('requests compare with one project_id per selected project, in order', async () => {
+      mockApiGet.mockResolvedValueOnce({ projects: [] });
+      await fetchPriorityCompare(['a', 'b']);
+      expect(mockApiGet).toHaveBeenCalledWith('/priorities/compare?project_id=a&project_id=b', {});
+    });
   });
 });

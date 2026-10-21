@@ -34,16 +34,26 @@ async function compareCard(page: Page, bands: Band[], label: string): Promise<vo
     expect(b.in_flight_total + b.not_started_total + b.delivered_total + b.other_total, `${label} ${b.priority} API parts sum`).toBe(b.total);
     const item = items.nth(i);
     const aria = (await item.getAttribute('aria-label')) ?? '';
+    // P19 gate: P17-R08 redesigned the row (headline + parts; parts with total 0 omitted).
+    const parts: string[] = [];
+    if (b.in_flight_total > 0) parts.push(`in flight ${b.in_flight_within_year} of ${b.in_flight_total}`);
+    if (b.not_started_total > 0) parts.push(`not started ${b.not_started_within_year} of ${b.not_started_total}`);
+    if (b.delivered_total > 0) parts.push(`already delivered ${b.delivered_total}`);
+    if (b.other_total > 0) parts.push(`not in plan ${b.other_total}`);
     expect(aria, `${label} ${b.priority}`).toBe(
-      `${b.priority}: in flight ${b.in_flight_within_year} of ${b.in_flight_total}, not started ${b.not_started_within_year} of ${b.not_started_total}, ${b.total} projects`,
+      [`${b.priority}: ${b.within_year} of ${b.total} finishing this year`, ...parts].join('; '),
     );
     const txt = (await item.innerText()).replace(/\s+/g, ' ');
-    expect(txt).toContain(`${b.total} projects`);
-    expect(txt).toContain(b.in_flight_total > 0 ? `${String(Math.round(b.in_flight_within_year_share_pct))}%` : '–');
+    expect(txt).toContain(`${b.within_year} of ${b.total} finishing this year`);
+    expect(txt, `${label} ${b.priority} no "0 of 0"`).not.toContain('0 of 0');
     if (b.delivered_total > 0) expect(txt).toContain(`Already delivered: ${b.delivered_total}`);
     else expect(txt).not.toContain('Already delivered');
     if (b.other_total > 0) expect(txt).toContain(`Not in plan: ${b.other_total}`);
     else expect(txt).not.toContain('Not in plan');
+    const segs = await item.locator('[data-segment]').evaluateAll((els) =>
+      els.map((e) => Number(e.getAttribute('data-count'))),
+    );
+    expect(segs.reduce((a, n) => a + n, 0), `${label} ${b.priority} segments sum to total`).toBe(b.total);
     console.log(label, b.priority, 'UI ok:', aria, '| delivered', b.delivered_total, 'other', b.other_total);
   }
 }

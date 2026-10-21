@@ -15,6 +15,8 @@ import {
   type RoleName,
 } from '@/types/enums';
 
+import type { DistributionBand } from '../api/types';
+
 export interface MatrixViewState {
   category: ProjectCategory | null;
   type: ProjectType | null;
@@ -24,6 +26,9 @@ export interface MatrixViewState {
   /** Hub / Leader column inputs → narrow the served rows in view. */
   hubText: string;
   leaderText: string;
+  /** P21: band picked on the distribution chart — narrows the SERVED rows in
+   *  view by their served band (no score is re-banded in the browser). */
+  band: DistributionBand | null;
   detailed: boolean;
 }
 
@@ -34,6 +39,7 @@ export const DEFAULT_MATRIX_VIEW: MatrixViewState = {
   q: '',
   hubText: '',
   leaderText: '',
+  band: null,
   detailed: false,
 };
 
@@ -45,6 +51,7 @@ export function isDefaultView(v: MatrixViewState): boolean {
     v.q === '' &&
     v.hubText === '' &&
     v.leaderText === '' &&
+    v.band === null &&
     !v.detailed
   );
 }
@@ -58,4 +65,17 @@ export const STATUS_CHIPS = PROJECT_STATUSES.map((s) => ({ value: s, label: s })
  *  convenience only (ADR 0010 §2) — the server still decides. */
 export function canEditFxRate(roles: readonly RoleName[] | undefined): boolean {
   return roles?.some((r) => r === 'Admin' || r === 'Super Admin') ?? false;
+}
+
+/** P21: how many filters are active (the compact panel's "Filters (n)"). */
+export function activeFilterCount(v: MatrixViewState): number {
+  return [
+    v.category !== null,
+    v.type !== null,
+    v.status !== null,
+    v.band !== null,
+    v.q.trim() !== '',
+    v.hubText.trim() !== '',
+    v.leaderText.trim() !== '',
+  ].filter(Boolean).length;
 }

@@ -6,22 +6,8 @@ import type { BookingStatus } from '@/types/enums';
 
 import { STATUS_TONE_TEXT } from '../lib/status-format';
 
-/**
- * Compact booking-status mark for dense Capacity tables (P19-T02): the status
- * icon (a distinct shape per status, toned) with the label as screen-reader
- * text and a `title`. Tables using it render `StatusLegend` so sighted users get
- * the labels without hovering; status never rests on colour alone. The status
- * is always the served one (ADR 0016, I19).
- */
-export function StatusMark({ status, className }: { status: BookingStatus; className?: string }): React.JSX.Element {
-  const meta = BOOKING_STATUS_META[status];
-  return (
-    <span className="inline-flex" title={meta.label} data-booking-status={status}>
-      <meta.Icon className={cn('size-3.5 shrink-0', className ?? STATUS_TONE_TEXT[meta.tone])} aria-hidden="true" />
-      <span className="sr-only">{meta.label}</span>
-    </span>
-  );
-}
+/* P19-T06: the compact `StatusMark` went with the hub utilization matrix; the merged
+ * table's booked cells carry the icon and a visible label themselves. */
 
 /** Icon legend with the SERVED thresholds (`full_threshold_pct`, `near_full_threshold_pct`). */
 export function StatusLegend({

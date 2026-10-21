@@ -142,6 +142,17 @@ for P4 and for P8.**
 
 **Who must answer:** Frigoglass DPO, with works council consultation as needed.
 
+**Note (2026-10-21, P19-R01, security-auditor finding S19-I1):** since ADR 0032 a design step of a
+part-time leader books `ceil(duration / fte)` calendar weeks. `GanttStepRow.span_fte` is withheld
+from every caller who may not edit the step's timing, but that is defence in depth, not
+confidentiality: every Gantt reader (Executive Viewer, Portfolio Manager, an Engineer on own
+assignments) is served `start_week`, `end_week` and `duration_weeks`, and
+`(end − start + 1) ÷ duration_weeks` reveals a leader's approximate FTE, i.e. part-time status. This
+is recorded as an **accepted owner risk under ADR 0028** (per-engineer data is an owner residual
+risk pending the DPO), not a block. If the DPO rules that part-time status must be hidden from
+non-planners, withholding `span_fte` is not enough: the Gantt would also need to stop serving the
+calendar span or the work weeks of design steps to those roles.
+
 ---
 
 ### 9. Which IdP, and can we get an app registration?
@@ -662,3 +673,11 @@ costs (a chamber is worth several designers) or different limits?
   prices", question text never stored in the audit log, no financial field or name ever put in the model's context, https
   required for the endpoint (`RPD_GROQ_ALLOW_INSECURE_BASE_URL` for a private self-hosted one). Does the client accept
   aggregate figures leaving the network, or must the chat use a self-hosted model (ties to #23)?
+
+### 50. Exchange rates for EGP, ZAR and IDR, and who may set them *(2026-10-21, P21, non-blocking)*
+
+The Matrix now offers the Egyptian pound, South African rand and Indonesian rupiah. No rate was
+invented: the three are "not configured" and converting into them is refused (422
+`CURRENCY_NOT_CONFIGURED`) until a rate is set. Which rates (EUR → EGP / ZAR / IDR) should we load,
+and from which source and date? Rates can be set today by **Super Admin and Admin** (the existing
+`PUT /currency-rates/{code}` rule since P3); should it be Super Admin only?

@@ -13,7 +13,6 @@ export const DashboardPage = React.lazy(() => import('@/surfaces/dashboard/Dashb
 export const CapacityPage = React.lazy(() => import('@/surfaces/capacity/CapacityPage'));
 export const MatrixPage = React.lazy(() => import('@/surfaces/matrix/MatrixPage'));
 export const GanttPage = React.lazy(() => import('@/surfaces/gantt/GanttPage'));
-export const RegistrationPage = React.lazy(() => import('@/surfaces/registration/RegistrationPage'));
 export const PlanningPage = React.lazy(() => import('@/surfaces/planning/PlanningPage'));
 export const AuditLogPage = React.lazy(() => import('@/surfaces/audit-log/AuditLogPage'));
 export const WorkflowSettingsPage = React.lazy(

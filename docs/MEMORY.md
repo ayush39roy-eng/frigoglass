@@ -26985,3 +26985,593 @@ Findings:
 Earlier open items: S18-L1..L4 / I-items unchanged, out of scope here. OQ #8 / P4-T08: ADR 0028 owner ruling stands. FTE
 on Capacity Planning is visible to planning roles only, the same roles as `GET /engineers`. Gate result for this slice:
 PASS. Schedule S19-M1 as a remediation task (one-line intersection + test) before production. S19-L1..L3 can ride with it.
+
+## [2026-10-21] P19 + P20 (+P17-R05..R09) gate — workflow-auditor — FAIL (every number reconciles; 2 copy defects contradict ADR 0032, 4 observations, 3 owner decisions)
+
+Method: own disposable Postgres 17 (:55441, removed afterwards; :5433 / :8001 / :5183 and the qa-p19 containers not touched). `alembic upgrade head` (head = `p20a_run_step_span_fte`), `seed_demo_data --dataset client_2026 --schedule` (253 projects, W42, run v1 within-year 67), `seed_dev_users`. In-process ASGI with principal overrides (Portfolio Manager; Hub Planner PD-India). Spans were re-derived independently from DOMAIN_RULES with integer hundredths arithmetic (no `scheduling.workflow` helper). Read-only on code: no repo file changed except this entry. Scripts are in the session scratchpad `wa/`.
+
+**(1) ADR 0032: PASS.**
+- Independent span check over the whole run: 465 Not Started design rows, 34 In Progress design tails, 14 lab, 196 elapsed, 1036 skipped and 455 Done rows. 0 problems.
+  - FTE 1.0: 1→1, 2→2, 4→4, 6→6.
+  - FTE 0.63: 1→2, 2→4, 4→7, 6→10.
+  - FTE 0.5: 1→2.
+  - Tails equal `ceil(remaining / f)`, with remaining computed exactly. Lab and elapsed rows equal their duration. `duration_weeks` is effort on every row.
+  - The float trap is avoided by the scheduler (`Fraction(str(fte))`) and by the Gantt inverse `floor(cal × h / 100)`, which is the exact inverse.
+- Frozen: 12 In Development projects (leaders at 0.31 to 0.97) frozen at W34. Their rows are identical at actual FTE, at FTE 1.0 and with every FTE at 0. None became a data_error.
+- FTE 0, −1 and NaN on the busiest sub-1.0 leader: all 4 of that leader's projects become `data_error`, with no rows and null start, end, projected, unconstrained, expected and progress. The message names the leader and the steps. With every FTE at 0, 179 of 180 non-frozen schedulable projects are data errors. The one left (S16, OEM) has only Done or 0-week design steps, as ADR 0032 §4 requires.
+- Invariants: `validate_invariants` finds 0 violations on the full run (I1–I22 incl. I8 determinism and I1/I6/I21 as amended), on the FTE-1.0 run, the frozen variant and the FTE-0 variants. Independent I1 check over stretched spans: 1380 engineer-weeks from W42, 0 double-booked. Independent I3: 0 violations. The stored run equals a fresh greedy run: 2204/2204 steps and 253/253 outcomes. `span_fte` is non-null on 499 rows with 0 mismatches against the rule (design, not skipped, not Done, not frozen, leader set). Run v1 is byte-stable after two later runs (I14).
+- Greedy vs CP-SAT, 14-project fixture (PD-Romania + OEM-HCK, leaders at 0.31 / 0.52 / 0.53), CP-SAT OPTIMAL: 168 rows with 0 duration, span or unconstrained mismatches. 0 invariant violations on the CP-SAT output.
+  - One divergence, explained: two P4 B-OEM projects share a 0.31-FTE leader whose stretched chain leaves room for only one before the horizon. Greedy keeps the first in scheduling order; CP-SAT keeps the other (same band, objective tie). Within-year is 7 vs 8.
+- What-if zero scenario, `POST /whatif/simulate`: before and after outcome counts are equal (50 / 83 / 59 / 0 / 61). The diff gives within-year 67 → 67, equal to the Dashboard's 67. Per-project finish and within-year match the stored run: 0 mismatches. `utilization_before` and `utilization_after` equal `/capacity/hub-load` for 6 hubs and 3 regions.
+- Impact reproduced, FTE forced to 1.0 vs actual:
+
+  | Figure | FTE 1.0 | Actual FTE |
+  |---|---|---|
+  | Within-year (flag) | 107 | 67 |
+  | Within-year (outcome class) | 90 | 50 |
+  | P1 within-year | 11 | 6 |
+  | P1 left-out | 2 | 8 |
+  | Left-out | 34 | 59 |
+  | Spillover | 68 | 83 |
+  | Unconstrained finish > W52 | 59 | 89 |
+
+  - Transitions: within → spill 40, spill → left_out 27, left_out → spill 2.
+  - The "40 moved to spillover" by hub: PD-India 19, R&D-India 7, OEM-HCK 6, PD-Romania 5, R&D-Greece 2, OEM-Seltek 1.
+  - By priority: P3 26, P4 8, P1 5, P2 1.
+  - By leader FTE: 0.62 ×16, 0.31 ×8, 0.97 ×7, 0.63 ×3, 0.52 ×3, 0.53 ×2, 0.49 ×1.
+  - All 11 P1 changes are PD-India / R&D-India at 0.62–0.63: 5 within → spill (W49→53, W46→53, W51→59/60/60) and 6 spill → left_out. This matches ADR 0032 and P20-T01.
+
+**(2) Load stays in work weeks: PASS.**
+- `/capacity/hub-load` design load equals the Σ of stored-run design `duration_weeks` per hub for all 6 hubs: R&D-Greece 45, R&D-India 279, PD-India 782, PD-Romania 137, OEM-HCK 51, OEM-Seltek 44. Total 1338, equal to a fresh greedy run. Lab per region: Greece 22, India 270, Romania 24 (total 316).
+- `engineer-utilization`, 59 engineers:
+  - `total_booked` equals the per-engineer Σ duration, with 0 mismatches. It sums to 1338.
+  - Every W1..W52 cell equals my own spread of effort over [start, end], with In Progress tails carrying the remaining effort. 0 mismatches, max |diff| 0.00.
+  - Each row sums to its `duration_weeks`. No cell from W42 on exceeds the engineer's FTE. Example: a 0.5 FTE 1-week step over W42–43 reads 0.5 per week.
+- `/planning/resource-load`:
+  - Unfiltered: engineer loads equal `total_booked` (0 mismatches). Chamber loads equal the per-chamber Σ (316).
+  - Filtered, independent expected values in brackets, 0 row mismatches in every case:
+
+    | Filter | Engineer load | Chamber load |
+    |---|---|---|
+    | type NM | 243 [243] | 62 [62] |
+    | category B, C | 1144 [1144] | 286 [286] |
+    | status In Development | 690 [690] | 221 [221] |
+    | type CO + category B | 174 [174] | 54 [54] |
+
+  - `engineer_id` (3 ids): lists only those engineers; load counts only projects with a step on them. `hub_id` = PD-India: 35 PD-India engineers, India chambers. Capacity does not move with project filters. `basis=remaining` equals `/engineers` remaining.
+- Priority board remaining design weeks equal my remaining effort: P1 106, P2 32, P3 214, P4 351, Q 0. The pre-fix elapsed count would have been 206 / 61 / 437 / 676.
+- Capacity is `working_weeks × Σ fte` for every hub (Decimal, ±0.01).
+
+**(3) Health badge: PASS.** All 21 within-year, not-blocked projects led at 0.31 / 0.49 / 0.5 / 0.63 FTE read `on_track`. Live check on the 0.5 FTE project "BEATBOX 3D LOGO PREMIUM SLIM 130", stage OEM-J (1 week of effort):
+- In Progress from W42: tail W42–43, `overrun_weeks` 0, `on_track`.
+- In Progress from W34: tail ends W43, planned end 34 + 2 − 1 = 35, `overrun_weeks` 8, `at_risk`.
+
+The edit was reverted. The new run equals run v1.
+
+**(4) P19 figures: PASS.**
+- `/planning/capacity-summary` equals hub-load on both bases (hubs, regions, totals, days). Shares sum to 100.01 for design (rounding) and 100.00 for lab. For the Hub Planner, the summary shows only PD-India at 100 %, and its totals equal her hub-load.
+- Hand-checks of engineer capacity (all 59 engineers match):
+  - R&D-Greece Engineer 1: 52 − (12 + 0 + 0 + 25)/5 = 44.60 × 1.00 = 44.6 weeks, × 5 = 223.0 days.
+  - Nikhil (PD-India, 0.63): 52 − 47/6 = 44.1667 × 0.63 = 27.825, served 27.82; × 6 = 166.92 days.
+- Hand-checks of chamber capacity (all 10 chambers match):
+  - GR-CH1: 52 − 2.40 − 2 − 8 − 1 = 38.60 × 0.209 × 1 = 8.07 weeks, 40.35 days (×5).
+  - IN-CH2: 52 − 2.1667 − 2 − 11 − 1 = 35.8333 × 0.898 × 4 = 128.71 weeks, 772.26 days (×6).
+- Days equal served weeks × served weekdays on every hub-load row, `lab_regions` row, total, engineer and chamber: 0 problems. Design weekdays: R&D-Greece 5, R&D-India 6, PD-India 6, PD-Romania 5, OEM-HCK 6, OEM-Seltek 6. Lab weekdays: Greece 5, India 6, Romania 5.
+- OEM design 6 vs OEM lab 5 is internally consistent with DOMAIN_RULES:
+  - Design uses the hub's own `HubWorkCalendar`. The OEM hubs carry India's placeholder calendar, 6 / 13 / 7 / 7 / 20 (`domain_constants.HUB_WORK_CALENDAR_SEED`: "not in the workbook; seeded with India's calendar"; left unchanged when the lab region moved to Greece on 2026-10-13).
+  - Lab uses the region calendar that sets the chambers' holiday weeks: max(12/5 = 2.40 for R&D-Greece, 13/6 = 2.17 for OEM) = R&D-Greece, 5 days.
+  - The 6 for OEM design is a seed placeholder, not client data. See OD2.
+- Capacity page: `pick-figures.ts` only selects served `*_days` fields (no browser multiplication). Booked % and status are the same served fields in both units, so they are unit-free.
+
+**(5) Dashboard: PASS.**
+- Drill-downs, as Portfolio Manager for All / Greece / India / Romania and as Hub Planner PD-India for All / India / Greece. 111 `/dashboard/projects` lists checked: every pipeline cell (incl. the `type=Unmapped` column), every row total (`analytics.by_hub`), every column total (`by_type`) and the grand total (`PipelineTotals.total_count`). List count = `total_count` = cell, 0 mismatches.
+- The Unmapped column: 67 pipeline / 10 completing (all hubs), 62 / 9 (India), 5 / 1 (Romania).
+- Completing cells, `completing_by_hub`, `completing_by_type` and the corner equal the served rows with `within_year AND NOT blocked`, 0 mismatches.
+- Delivery by priority: in every filter, the six segments sum to the band total with none negative, and the bands' within-year adds up to `within_year_count` (67 = P1 6 + P3 44 + P4 17).
+- Scheduled counts, with the Status overview figures from the same filter:
+
+  | Filter | Scheduled | Pipeline | Cancelled | On Hold (status) |
+  |---|---|---|---|---|
+  | All | 209 | 253 | 29 | 15 |
+  | Greece | 24 | 27 | 2 | 1 |
+  | India | 162 | 194 | 25 | 7 |
+  | Romania | 23 | 32 | 2 | 7 |
+
+  In each row, pipeline − Cancelled − On Hold (status) = scheduled.
+- The "On Hold at a stage" tile is 0 (`blocked_count`, 0 blocked rows). "On Hold (project)" is 15 (`on_hold_count`). They are consistent and different things.
+
+**(6) Scheduler diff: PASS.** `git diff HEAD -- backend/scheduling` is only the P20 FTE change: `span` / `remaining_span`, the FTE data_error, validator spans and what-if leader / unattainable FTE. Nothing in lab gating, efficiency or delay changed (known defects #2 and #3 untouched). Outcome hashes, using the P17/P18 hash definition on the same input:
+
+| Scheduler | Actual FTE | FTE forced to 1.0 |
+|---|---|---|
+| `git archive HEAD` | `faac0fd703094a36` (107; it ignores FTE) | `faac0fd703094a36` |
+| Working tree | `fa9ea03a4e3e1cda` (67) | `faac0fd703094a36` (107) |
+
+The seed's FTE tuning pass runs at the initial 1.0, so the seeded FTEs are the same as before P20.
+
+**Defects (block the gate; copy only, no number is wrong):**
+- **D1** `frontend/src/surfaces/capacity/components/hub-summary-table.tsx:115`, `BOOKED_NEAR_100_NOTE`. It is shown under the summary table header and in its info popover. The text "Load counts every scheduled week ... set to fit the scheduled load" is false since ADR 0032.
+  - Load counts work (effort) weeks. A 0.5 FTE step scheduled over 8 calendar weeks counts 4.
+  - It contradicts `capacity-reporting-notice.tsx` on the same page ("Work weeks, not calendar weeks").
+  - The "near 100 %" claim is also weaker now: design booked is 100.9 / 59.37 / 80.88 / 99.48 / 93.12 / 100.64 %.
+  - Fix: say "Load counts the work weeks of every scheduled step (not the calendar weeks a part-time leader takes), including work past W52, and is not capped at capacity", and soften "most".
+- **D2** `backend/seed/seed_demo_data.py:17`, module docstring: "FTE and chamber efficiency are tuned ... The scheduler ignores both." That is false for FTE since ADR 0032. `client_2026.py` was updated, but this line was missed by the P20-T02 grep, which searched for "ADR 0002" only.
+
+**Observations (not blocking).**
+- O1: On the Capacity Planning page, the Resource load analytics engineer capacity total is 1717.38 (Σ of 2-dp per-engineer rows, per contract §5). The Overview / capacity-summary total is 1717.55 (hub `wwpe × Σ fte`). Both follow the contract, but the page shows two design-capacity totals 0.17 apart. Suggest a footnote or using the served hub total.
+- O2: The "209 scheduled" chip and badge are summed in the browser from four served buckets (`DashboardPage.tsx:162`, `within-year-panel.tsx:45`). The numbers are correct; serving one `scheduled_count` would be stricter I9.
+- O3: `tests/test_openapi_frontend_contract.py` currently has 2 red tests: `PriorityMatrixRow` (frontend-only `band` / `normalized_score`) and 7 unlisted matrix interfaces. They come from uncommitted concurrent matrix work, not from P19/P20. The other 311 tests in the P20/P19/R09 files pass.
+- O4: In the workspace, a late In Progress stage shows `planned_end_week` 43 (the run row) next to `overrun_weeks` 8, which is computed against 35. Correct per ADR 0032 follow-up 2, but "planned end" reads oddly.
+
+**Owner decisions.**
+- **OD1 (rounding granularity):** per-step `ceil` (ADR 0032 §2) roughly doubles every short design step at any FTE below 1.0. Most PDD/OEM design steps are 1 week, and ceil(1/0.97) = 2. Measured elapsed / effort on Not Started design rows:
+
+  | FTE | Elapsed / effort | 1 / FTE |
+  |---|---|---|
+  | 0.97 | 1.73 | 1.03 |
+  | 0.62 | 1.99 | 1.61 |
+  | 0.63 | 1.90 | 1.59 |
+  | 0.31 | 3.85 | 3.23 |
+
+  7 of the 40 within → spillover moves come only from 0.96/0.97 leaders (within-year would be 74 instead of 67 if they were at 1.0). The owner ruled "0.5 FTE = half speed", which per-step ceil honours exactly at 0.5. The owner should confirm per-step rounding versus a coarser rounding, such as ceil over a leader's consecutive work, before the real roster is loaded.
+- **OD2:** the OEM hub calendars are India placeholders (6 weekdays) although OEM work runs from Greece. Confirm the OEM calendar. It sets OEM design capacity and design days (×6); OEM lab days already use Greece's 5.
+- **OD3** (carried from P20-T01): `derive_remaining` uses float `ceil` (10 × 0.3 → 4). 0 rows are affected in this seed (my exact computation matched all 34 tails).
+
+**Gate: workflow-auditor FAIL for P19 + P20 (+P17-R05..R09) on D1 and D2 (stale copy that contradicts ADR 0032; same class as the P17 FAIL).** Every invariant and reconciliation figure above holds. A re-gate needs only D1 and D2 fixed, plus a grep check for "scheduled week" / "ignores" wording. No numeric re-run is needed unless code under `backend/scheduling`, `api/routers/capacity.py`, `planning.py` or `dashboard.py` changes.
+
+## [2026-10-21] P19-T06 - RPD Capacity: booked tiles by hub family; summary table + hub utilization matrix merged into "Load vs. capacity by hub"; gate D1 note (frontend-builder): DONE
+
+Frontend only, `frontend/src/surfaces/capacity/` only (no shared ui/layout/lib file, no e2e file touched). Every figure is one served field (I9/I19); nothing is summed, divided or re-bucketed in the browser.
+
+**Family mapping (one place).** New `surfaces/capacity/lib/hub-families.ts` (kept inside capacity/ rather than `src/lib/` because other agents are editing shared files): `hubFamily(hub)` maps the hub-name PREFIX `R&D-` -> "R&D", `PD-` -> "PD (Product Development)", `OEM-` -> "OEM"; an unknown prefix -> "Other hubs" (last, never hidden). `groupByHubFamily(rows)` (family order R&D, PD, OEM, Other; served order inside a family; families with no served row omitted) and `firstHubPerLabRegion(rowsInDisplayOrder)`. Selection only. `lib/region-groups.ts` (P19-T02 region grouping) deleted, now unused.
+
+**1. Capacity booked tiles.** `hub-booking-strip.tsx`: one `section` per family (aria-labelledby its h3 family name, sunken box) holding that family's hub tiles (h4); grid 3 boxes at xl, 2 at md, 1 below; tiles stack inside a box (side by side only at sm with one box per row). Tile content unchanged (design + "Lab (<region> region)" booked %, status chip, "x of y engineer-/chamber-wks|days", Weeks/Days + YTD/Full year, "Your hubs only"). A Hub Planner gets only boxes for their served hubs, never an empty box. **No family total: the API serves none.** BACKEND FOLLOW-UP if the owner wants one: a served `families[]` aggregate on `GET /capacity/hub-load` (per family: design load/capacity year+remaining, design booked % + status, day pairs; lab figures only if the owner rules how a region shared across families, Greece in R&D and OEM and India in R&D and PD, should count). The existing `areas[]` (Europe/India) does not map to families.
+
+**2. Merged table.** `hub-summary-table.tsx` (`HubSummaryTable`, title "Load vs. capacity by hub", kept in the summary table's place; testids `hub-summary-*` kept so e2e "Details for <hub>" still works). `hub-utilization-matrix.tsx` DELETED, along with its page section ("Global resource utilization matrix" heading and `section-hub-matrix`); the dead `StatusMark` in `status-mark.tsx` was removed with it (`StatusLegend` kept).
+- Rows: one `<tbody>` per family with a `th scope="rowgroup"` header (name only; no served subtotal).
+- Columns: Hub (sticky left) | Design (per hub): Capacity, Load, Booked %, Gap | Lab (per lab region): Lab region, Capacity, Load, Booked %, Gap | Details icon button. `stickyHeader`; labelled focusable scroll region "Load versus capacity by hub".
+- Lab once per region: full figures on the region's FIRST row in display order (R&D-Greece for Greece, R&D-India for India, PD-Romania for Romania); later rows show the region tag plus one muted italic cell "Same as <hub> above (shared <region> lab region)" spanning the lab columns. Chosen over de-emphasised repeats: a repeated number invites adding it up. For a scoped user the first served row of the region carries the figures.
+- Total row: served `totals` (design; lab each region once) plus served `totals.lab_regions` "Greece, India, Romania · each once"; total gaps are "—" / sr "not served" (no served total gap).
+- Priority split: every Load cell carries a stacked mini-bar of the served `*_load_by_priority` (segments `flex-grow` = served value), `role="img"` with an accessible name "Design load by priority (wks): P1 400, …" and a Radix tooltip listing the buckets. "Show priority split" (aria-expanded / aria-controls) adds P1-D…Q-D after the design Gap and P1-L…Q-L after the lab Gap, including served totals; shared lab rows span them too. Split is always weeks, labelled "(wks)" in the legend / names, also in Days mode.
+- Booked % cell: tint by the SERVED status (`bg-*-subtle` + `text-*-subtle-fg`, the AA token pairs), status icon + visible label, thin bar width = served % capped at 100 with a red overflow tick above 100 (presentation only). Gap: served weeks, `+` red (`text-danger-subtle-fg`) when over, `−` green (`text-success-subtle-fg`) when spare, sr " over capacity" / " spare". Legend: status icons with served thresholds, unit note, gap sign meaning, priority colour swatches.
+- Kept: Details dialog per hub (focus returns), provenance chips, info popover, note, Weeks/Days (served day fields; gaps "Gap (wks)"), YTD/Full year.
+
+**Gate D1 (coordinator, mid-task).** `BOOKED_NEAR_100_NOTE` replaced by `BOOKED_NOTE`: "Load counts work weeks, including work scheduled past W52, and is not capped at capacity. Part-time leaders stretch the calendar, not the load. The demo engineer FTE and chamber efficiency values are tuned (ADR 0024), so these figures will move with real rosters." No claim about where the figures sit. Popover lead-in now "Reading booked %." Grep of surfaces/capacity for "every scheduled week", "ignores FTE", "near 100", "spills past", "elapsed", "stretched": nothing else stale (`capacity-reporting-notice.tsx` already says work weeks / FTE as speed).
+
+**Tests.** `hub-summary-table.test.tsx` rewritten (19): title and served cells; family row groups incl. mixed served order and a one-family scoped payload; region once + shared marker + colSpan; served totals not sums; mini-bar names, split toggle (aria, columns, colspans, total split, weeks in Days); status tint + label + icon + overflow marker (served status wins); gap sign/colour; horizon; header bands and order; Days; old API "—"; sticky column + labelled region; D1 note; Details buttons, dialog + focus return, shared-region hub's dialog; empty state; axe closed and open; old matrix module absent (`import.meta.glob`). `hub-booking-strip.test.tsx` +2 (family boxes / order / no total / grid classes; scoped Hub Planner gets one box). New `lib/hub-families.test.ts` (3). `CapacityPage.test.tsx`: matrix assertions moved to the merged table (split cells, totals, Days), order test without the matrix, new test that the matrix section/heading are gone and the table title appears once.
+
+**Verification.** `tsc -b`: no capacity error (remaining errors are in surfaces/matrix and surfaces/projects, other agents' in-flight work). `eslint src/surfaces/capacity` 0 errors, 2 pre-existing warnings. `vitest run src/surfaces/capacity` 14 files / 86 passed. Full vitest 176 files: 1332 passed, 2 failed, all in `surfaces/matrix` (other agent, in flight; an earlier run had 22 MatrixPage failures as that work moved). `vite build` OK (index 138.73 KB gzip; CapacityPage chunk 23.40 KB gzip). Live read-only on :5183 as Alice PM, light, reduced motion, at 1280 / 1440 / 390: axe serious/critical 0 with the split closed and open, and 0 in the Details dialog (Escape returns focus to "Details for PD-India"); document scrollWidth == viewport in every state; at 1280 and 1440 the closed table fits (1092 / 1252 px, no scroll); with the split open and at 390 it scrolls inside its labelled region with the Hub column sticky; no console errors. Live rows: lab figures once for Greece (R&D-Greece), India (R&D-India), Romania (PD-Romania); Total 1,717.55 / 1,531 / 89.14% Near full, lab 325.3 / 328 / 100.83%; Days total 10,122.98 / 9,003. Screenshots reviewed (session scratchpad `p19t06/`: `table-{1280,1440,390}.png`, `table-split-*.png`, `table-split-scrolled-1440.png`, `table-days-1440.png`, `tooltip-1440.png`, `booked-{1280,1440,390}.png`); fixes from review: split headers no longer wrap ("P1-D"), total lab-region list on one line. Not run: e2e (needs the test stack), dark-mode axe (token pairs are the existing dark-safe ones). Nothing committed; dev servers untouched. P19-T20 gate pending.
+
+## [2026-10-21] P19-R01 — Security remediation from the P19 + P20 gate (backend-builder): DONE
+
+Scope: `api/routers/planning.py`, `engineers.py`, `chambers.py`; `schemas/engineer.py`, `chamber.py`; new
+`tests/test_p19_r01_security.py`; ADR 0032 + OQ #8 notes; add-on D2 in `seed/seed_demo_data.py`. Not touched:
+`backend/scheduling/`, the P21 priorities / currency files, frontend. Testcontainers DB only; :5433 / :8001 / :5183
+not touched. Nothing committed.
+
+1. **S19-M1 (Medium)**: `resource_load` now calls `_in_scope_engineer_ids` FIRST. It keeps only the requested ids that
+   match `hub_scope_filter(Engineer.hub_id)` (RBAC scope; the optional `hub_id` / `region` is NOT applied here, so a
+   Portfolio Manager can still slice by an in-scope engineer of another hub, as before). Only those ids reach
+   `_project_predicate`, the engineer-row filter and `filters_applied` (and so the audit `filter_key`). If ids were sent
+   and none is in scope, engineers and chambers are both `[]` with zero totals: the out-of-scope-hub shape. Unknown and
+   out-of-scope ids give byte-identical bodies (tested).
+   Re-check of the other filters: `hub_id` / `region` already go through `narrowed_hub_filter` /
+   `narrowed_lab_regions`. An out-of-scope `hub_id` is echoed as sent, exactly like an unknown one, so it reveals
+   nothing. `project_type` / `project_status` / `category` are enum values that slice the region-wide chamber load by
+   project (S19-I2, accepted by contract §5). Engineer rows are always scope-filtered. `requesting_department` binds
+   `false()`. No change needed.
+   Contract note: the task said the probe should get "the unfiltered GR-1 load" and also "zero loads and empty lists".
+   I implemented the explicit rule (empty lists, zero totals). The test asserts that GR-1 never reads 10.0 / 9.0 and
+   that the body equals the out-of-scope-hub figures.
+2. **S19-L1**: `EngineerUpdateRequest` has a before-mode `field_validator` (`reject_explicit_null`, error type
+   `null_not_allowed`, loc = field) on `name`, `hub_id`, `fte` and `allowed_categories`. It returns 422. `user_id: null`
+   still unlinks (nullable). Engineer create and update flushes catch `IntegrityError`, roll back and raise
+   `_integrity_http_error(...) from None`:
+   - 23505 (user already linked) gives 409;
+   - 23503 (unknown user_id) gives 422;
+   - anything else gives a generic 500.
+   Only the SQLSTATE and constraint name are logged (`engineer.update integrity error sqlstate=… constraint=…`), never
+   the DB message ("Failing row contains …" carries the name). The delete paths now raise `from None` too. The engine
+   already had `hide_parameters=True`.
+3. **S19-L2**: `ChamberUpdateRequest` rejects `null` the same way on all 9 fields (every chamber column is NOT NULL).
+   `chambers._integrity_http_error`:
+   - 23505 gives 409 "Chamber code already exists" (code is the only non-PK unique key);
+   - 23502 / 23514 give 422;
+   - else a generic 500.
+   Same logging rule, `from None`.
+4. **S19-L3**: the engineer and chamber create and update models are `strict=True` with extra forbidden. UUID and enum
+   fields (`hub_id`, `user_id`, `lab_region`, list items of `allowed_categories` via
+   `Annotated[EngineerAllowedCategory, Strict(False)]`) opt out, the same pattern as `schemas/checkin.py` and
+   `project.py`, because a strict UUID or enum refuses its JSON string. The following now give 422: `{"fte": true}`,
+   `"0.5"`, `"1"`; `platforms` `"2"` / `true` / `2.5`; `efficiency` `true` / `"0.5"`; `max_concurrent "3"`. JSON
+   integers still pass for floats (`fte: 1`, `efficiency: 1`).
+   Frontend check (read-only): `surfaces/planning` sends JSON numbers everywhere. Inline `InlineNumber` sends
+   `Number(text)`; the forms send `Number(...)` / `parseOptionalNumber`. Enums and UUIDs are sent as strings, which is
+   accepted. No string-number payload was found, so there is nothing to report. The retired `weeks_per_chamber` key is
+   still ignored.
+5. **S19-I1 (docs)**: appended "Follow-up: `span_fte` withholding is not confidentiality" to ADR 0032, and a dated
+   2026-10-21 note under OQ #8. Calendar span ÷ work weeks reveals approximate FTE to every Gantt reader. This is an
+   accepted owner risk under ADR 0028. If the DPO rules otherwise, the Gantt must stop serving span or work weeks to
+   non-planners.
+6. **Add-on D2 (coordinator)**: the `seed/seed_demo_data.py` module docstring said "The scheduler ignores both" (FTE and
+   chamber efficiency). It now says FTE sets the leader's design speed since ADR 0032, and efficiency is still
+   capacity-only (OQ #3). I grepped `api core models schemas services seed workers alembic tests domain_constants.py`
+   for other "scheduler ignores FTE"-style wording. There were no other hits: `api/routers/capacity.py`,
+   `schemas/capacity.py`, `models/engineer.py`, `models/hub.py` and `seed/client_2026.py` already cite ADR 0032
+   correctly ("downtime does not gate" is about downtime, which is correct).
+
+Tests: `tests/test_p19_r01_security.py`, 45 tests. They cover:
+- the auditor probe: an OEM-HCK Hub Planner with Alpha's, Beta's or both ids gets empty lists, zero totals, no echo,
+  and a body equal to an unknown id's (the unfiltered GR-1 is 13.0);
+- mixed in-scope + out-of-scope / unknown ids equal the in-scope id alone;
+- the audit `filter_key` has no out-of-scope id;
+- Portfolio Manager and in-scope Hub Planner filters are unchanged (GR-1 9.0 / 10.0);
+- engineer null x4 gives 422 with no change; `user_id` null gives 200; strict engineer PATCH x5 and POST;
+- the frontend engineer payloads pass;
+- unknown and taken `user_id` give 422 / 409 with no name in the body or the log;
+- chamber null x9 gives 422; duplicate code gives 409 with the row intact; strict chamber x8;
+- the frontend chamber payloads pass, including create with `weeks_per_chamber`;
+- mapper units for both routers (SQLSTATE to status, no row values logged);
+- a rejected null writes no audit row.
+Test gotcha: the handlers' `db.rollback()` undoes the test's uncommitted setup SAVEPOINT and expires ORM objects, so
+the integrity tests `commit()` the setup and keep plain ids.
+
+Results:
+- New file: 45 passed.
+- Full backend suite: 1916 passed, 6 failed. All 6 failures are in `test_openapi_frontend_contract.py`, on P21 rows
+  (`PriorityMatrixRow`, `BandShare`, `PriorityDistribution`, `PriorityCompareItem`, the types-file coverage check, and
+  `test_currency_rate_mirror_p21`). They belong to the parallel P21 backend / frontend work in progress, not to this
+  change. A rerun of the contract file a few minutes later left only `test_currency_rate_mirror_p21` failing (TS mirror
+  lacks `name` / `configured`).
+- `ruff check .` is clean. mypy on the 5 touched source files reports no errors in them (14 pre-existing errors in
+  `models/types.py`, `engineer.py`, `scenario.py`, `audit.py`).
+- `ruff format`: the new test file is formatted. Pre-existing format drift in `planning.py`, `engineers.py` and
+  `chambers.py` (lines not touched here) was left alone.
+Open: S19-I3 (frontend FTE 0.01–9.99 mirror) and S19-I4 (audit filter_key digest) were not in scope and remain
+optional.
+
+## [2026-10-21] P21-T01 — Matrix: EGP/ZAR/IDR currencies, score 0, `dimension_scores`, distribution, compare (backend-builder): DONE
+
+**Contract:** `docs/API_CONTRACT_P21.md` (new). **ADR:** 0033 (score 0; supersedes the 1..5 range of
+ADR 0029, a status note added there). **DOMAIN_RULES:** "Prioritization scoring" (0..5) and
+"Currency" (six codes, no invented rates) amended, revision line added. **OQ #50** (rates for the
+three new currencies; Super Admin only?). **Plan:** P21 section opened (T01 DONE, T02/T20 TODO).
+
+**Built.**
+- Currencies: `CurrencyCode` + `EGP`, `ZAR`, `IDR`; `currency_rates.rate_to_eur` nullable (null =
+  not configured); `domain_constants.CURRENCY_RATE_SEED` gives them `None`, `CURRENCY_NAMES` holds
+  display names. `GET /currency-rates` (the list the Matrix already uses) rows gain `name` and
+  `configured`, `rate_to_eur: float | None`; the code stays `currency_code` (not duplicated as
+  `code`). New `services/currency.py` (`rate_to_eur`, 422 `CURRENCY_NOT_CONFIGURED` for a missing
+  row or a null rate) used by `GET /priorities`, `GET /priorities/{id}` and `GET /exports/matrix`
+  (export also 422s an unknown code, which was an unhandled ValueError). Rate PUT body now bounded
+  `0.0001 <= rate < 1e6`, finite. PUT stays Admin + Super Admin (FX editor relies on it; OQ #50).
+- Score 0: `PriorityScoreUpdateRequest` and `ScenarioPriorityScoreChange` `ge=0, le=5`; model CHECKs
+  `BETWEEN 0 AND 5`; `DIMENSION_SCORE_MIN = 0`; new `SEED_DIMENSION_SCORE_FLOOR = 1` used by
+  `seed/client_2026.derive_dims` so seeded scores are byte-identical. Formula untouched. **Confirmed:
+  no recompute** — every stored score is 1..5 and its points are unchanged; nothing marked stale.
+- `PriorityMatrixRow.dimension_scores: DimensionScore[]` (required, 13, positional order;
+  `{key,label,pillar,score|null,weight,points|null,max_points}`, raw scale so Σ points ==
+  `weighted_score`). The "out of 100" is the existing `normalized_pct`, the band `suggested_band`.
+  Export skips it (`_EXPORT_NESTED_FIELDS`).
+- `GET /priorities/distribution` (same filters as `GET /priorities` via a shared `_matrix_projects`
+  helper, hub-scoped): `{total_projects, scored_projects, band_distribution[6], score_histogram[10]}`.
+  Bands from `suggested_band`; "Q" is always 0 (never a score band); shares rounded independently.
+- `GET /priorities/compare?project_id=..` (2–5 distinct; 422 `COMPARE_COUNT` / `COMPARE_DUPLICATE` /
+  `COMPARE_PROJECT_UNAVAILABLE`, the last identical for unknown and out-of-scope). No financials.
+- Migration `p21a_currencies_score_zero` (head): enum values in an autocommit block, nullable rate,
+  inserts the three null rows only when the table is already seeded (the seed script refuses a
+  non-empty table, so a fresh DB still seeds 6), swaps the 13 CHECKs. Downgrade reverses all but
+  the enum values. No string-built SQL (constraint via `sa.column().between()`, rows via bind params).
+- `backend/scheduling/` untouched: score/band logic lives in `services/priority_scoring.py` and the
+  scheduler never reads the score.
+
+**Tests.** New `tests/test_p21_matrix.py` (40): currency list + null rates, 422 for EGP/ZAR(no
+row)/IDR on list/row/export, unknown export code 422, Super Admin set-rate + audit (before null) +
+conversion, 403 for PM/Hub Planner/Exec/Auditor/Engineer with no audit row, rate bounds incl.
+NaN/Infinity, hand-worked score-0 example (134 → 45 % → P3; all zeros 0/P4), PUT 0 persists (DB
+constraint), -1/6 → 422, `dimension_scores` order/sums/unscored, distribution reconciles with
+`GET /priorities` under 5 filter sets and Hub Planner scope (an out-of-scope `hub_id` gives 0),
+compare order/no financials/limits/duplicates/indistinguishable 422, Auditor 403, and two migration
+tests on their own containers (seeded and empty table, down/up idempotent).
+`test_seed_scripts` expects 6 currency rows. Contract test: 7 P21 rows + `CurrencyOption` subset +
+`test_currency_rate_mirror_p21` (reference.ts `CurrencyRate`).
+
+**Results.** Full backend suite: **1918 passed, 5 failed, 96.87 % coverage**; the 5 are the
+expected contract rows, red until P21-T02 mirrors: `PriorityMatrixRow` (drop `band`,
+`normalized_score`; `dimension_scores` required), `PriorityDistribution` (+ `total_projects`,
+`scored_projects`), `PriorityCompareItem::PriorityCompareProject` (use `suggested_band`,
+`normalized_pct`; + `set_priority`, `has_score`, `weighted_score`), `CurrencyRateRead::CurrencyOption`
+(`code` → `currency_code`), `test_currency_rate_mirror_p21` (+ `name`, `configured`, nullable
+rate). `ruff check .` clean. mypy: no new errors in touched files (pre-existing ones remain in
+`priorities.py` `_build_row`/summary). Disposable testcontainers only; :5433/:8001/:5183 untouched;
+the live dev DB has not been migrated (owner runs `alembic upgrade head`).
+
+## [2026-10-21] P21-T02 — Prioritization Matrix: currencies, sticky View panel, rubric columns, charts, compare, score 0 (frontend-builder): DONE
+
+Built against `docs/API_CONTRACT_P21.md` (authoritative; started before it landed, then aligned). Every figure shown is a served field (I9): no share, bucket, point, band or conversion is computed in the browser.
+- **Currencies.** `MatrixCurrencyControl` (matrix-local; the shared `CurrencyToggle` is unchanged apart from null-safety) lists EUR/USD/INR/EGP/ZAR/IDR from `GET /currency-rates` (`currency_code`, `name`, `rate_to_eur | null`, `configured`), labelled "EGP · Egyptian pound" and wrapping. A code with `configured=false`, or with no served row, gets `aria-disabled` plus the tooltip/description "Rate not set — an Admin can set it", and is never requested. A 422 `CURRENCY_NOT_CONFIGURED` from `GET /priorities` falls back to EUR with a status notice and re-reads the list. A pre-P21 row without `name`/`configured` gets the static name and `configured = rate !== null`. `lib/api/reference.ts` `CurrencyRate` now mirrors `CurrencyRateRead` (`name`, `configured`, nullable `rate_to_eur`, `currency_code` widened locally); coordinator-approved shared edit. `currency-toggle.tsx` treats a null rate as unavailable, and its test fixtures gained the new fields.
+- **Sticky View panel** (`matrix-view-panel.tsx`, `lib/use-stuck.ts`). It is `sticky top-0` in the surface scroll region and uses a sentinel plus a rAF scroll listener to set `data-stuck`. When stuck it is compact: `py-2`, `shadow-pop`, currency codes only, and the filters sit behind "Filters (n)" with `aria-expanded`. Below 768 px it collapses to a "View & filters (n)" button that opens a bottom-sheet Dialog. Transitions carry `motion-reduce:transition-none`. The grid keeps its own labelled, focusable scroll region. Its max height (`useGridMaxHeight`) is the scroll region's height minus the stuck panel and the chrome below, so the grid's sticky header always sits under the panel; measured 1440: panel bottom 181, grid header 304; 390: 161 / 284. The grid card is the last section on the page (order: rubric, portfolio summary, score overview, grid).
+- **Grid.** The CAPEX / RM sav. / TCOGS / Selling price / Gross margin % columns are removed. In their place are 13 rubric columns from `dimension_scores` (legacy flat score + `dimension_points` fallback), grouped under pillar header bands (new `group` on `MatrixColumn`, `aria-colspan` band row, pillar order from DOMAIN_RULES). Each cell shows the score 0–5. On hover and for screen readers it adds "label: s of 5, p/max pts (scaled of 100)". Detailed view also shows points visibly, plus Leader / Type / Committed. A final "Score /100" column shows `normalized_pct` as "91/100" with the `suggested_band` chip and the hard-gate badge. A checkbox column is added. Frozen columns are checkbox + Project + Hub (at < 768 px, checkbox + Project only, or nothing would scroll). The financial figures moved into the edit dialog as a read-only "Financials" block (served, already converted; only editors open it). Exports are untouched.
+- **Charts** (`score-charts.tsx`, from `GET /priorities/distribution` with the grid's server filters). The band distribution is a stacked bar sized by the served `share_pct`, with a legend of `aria-pressed` buttons that set a client-side band filter over the served rows (`view.band`, counted in "Filters (n)", cleared by Reset). Q is shown muted and is not a filter. There is a "shares may not add to 100" note. The score histogram has 10 served buckets coloured by the fixed thresholds; the 50–60 bucket is two-tone across 55. Each chart has a `<details>` data table.
+- **Compare** (`compare-dialog.tsx`, `lib/compare-selection.ts`). The selection lives in a zustand store persisted to sessionStorage, so it survives filters. The cap is 5, with a live message. A sticky bottom "Compare (n)" bar (enabled at ≥ 2) has Clear and per-item remove. The dialog calls `GET /priorities/compare?project_id=…` and shows a radar (recharts) with a legend that toggles series. Below it is a table: pillar group rows, then rows per dimension with score + points; each row's highest value is bold, highlighted and marked "(highest)" for screen readers. A Score /100 + band footer follows; unscored projects read "Not scored". The 422 codes `COMPARE_COUNT` / `COMPARE_DUPLICATE` / `COMPARE_PROJECT_UNAVAILABLE` are mapped to readable messages.
+- **Score 0.** The zod schema accepts 0..5. Inputs have `min=0`, help text reads "0 gives no points; 1 gives 1/5 of the weight; 5 the full weight" (`SCORE_RANGE_HELP_COPY`, `aria-describedby`), and the header tooltip adds "0 — no contribution".
+- **Types** (`matrix/api/types.ts`): `MatrixCurrencyCode`, `CurrencyOption` (subset of `CurrencyRateRead`), `DimensionScore`, `BandDistributionEntry`, `ScoreHistogramBucket`, `PriorityDistribution` (with totals), `PriorityCompareProject`, `PriorityCompareResponse`, and required `PriorityMatrixRow.dimension_scores`. `test-fixtures.ts` defaults `dimension_scores: []`.
+- **e2e.** `pages/matrix.page.ts` gains P21 locators, and `toggleCurrency` matches "CODE · ". `matrix.spec.ts`: the TCOGS header assertion is inverted, and a new P21 flow covers sticky, charts, rubric bands and compare. Not run against the live API (it needs a restart for P21).
+Results: `tsc -b` clean. eslint on `src/surfaces/matrix` (+ touched shared files and e2e) has 0 errors; 2 warnings remain in `scoring-model.tsx` that were there before. Full Vitest: 176 files / 1335 tests passed. `vite build` went to a scratch outDir so `dist/` was not touched; bundle budget PASS at 185.4 KB gzip; MatrixPage chunk 26.9 KB gzip. `pytest tests/test_openapi_frontend_contract.py`: 208 passed; the P21 rows and `test_currency_rate_mirror_p21` are green. Mocked-route Playwright on my own vite (:5199, real API on :8001 plus route mocks for the P21 fields): axe 0 serious/critical at 1440 and 390 (top, stuck, sheet, compare dialog, edit dialog). Screenshots were reviewed.
+Notes: at 1440 the "Score /100" column needs a horizontal scroll (the grid is ~1660 px wide in compact view). At 390 the app shell's sidebar leaves ~200 px for the grid (shell, not the Matrix). The pytest run rewrote `backend/.coverage`.
+
+## [2026-10-21] P19 + P20 (+P17-R05..R09) gate — qa-inspector: FAIL (one light-mode serious axe defect on the Gantt, pre-existing code first exposed by this gate; every functional and numeric check PASS)
+
+Scope: working tree after P17-R05..R09, P19-T01..T05, P20-T01..T03 (+ follow-up). Disposable stack: Postgres 17 `qa-p19-pg` (:55920), Redis 7 `qa-p19-redis` (:56920), Keycloak 26 `qa-p19-kc` (:58920, for the Keycloak-token specs), uvicorn :8920 (RPD_DEV_MODE, CURRENT_WEEK 42, no Groq key), `vite preview --mode e2e` :5920. `alembic upgrade head` ran through `p20a_run_step_span_fte` (head); `seed_demo_data --dataset client_2026 --schedule` (253 projects, run v1 within-year 67 — matches the P20-T01 impact study) + currency rates + dev users; DB dropped and reseeded once after the mutating Keycloak specs. Build output in the session scratchpad (`fe/budget/dist`, `fe/dist-e2e`), coverage in `be/.coverage` and `fe/cov`. All containers and processes removed afterwards; :5433 / :8001 / :5183 and the owner's `frigoglass-keycloak-1` never touched. Caveat: other agents were editing the tree during the gate (P19-R01 security tests, P21 matrix, P22-T01 registration drawer, e.g. `p9-surfaces.spec.ts` changed under me); vitest/tsc/eslint ran on the tree at the start, the live checks on the e2e build taken at the start.
+
+**1. Backend: PASS.** `pytest -q --cov --cov=scheduling` (testcontainers): **1830 passed, 0 failed**, 7 min 27 s; total **96.10 %** (gate 70 %), non-scheduling 96 %, **scheduling/ 94 %** (gate 85 %: cp_sat 97, greedy 91, invariants 93, monte_carlo 92, solver_comparison 93, whatif 94, workflow 98). P19/P20 files: api/routers/planning 99, capacity 98, gantt 98, dashboard 98, services/run_step_effort 89, workspace 94. Golden files (`tests/scheduling/test_golden_files.py`, `test_p9_golden.py`) green; contract test `test_openapi_frontend_contract.py` green (GanttStepRow back to "exact" with `span_fte`). `ruff check .` clean.
+**2. Frontend: PASS.** `tsc -b` exit 0; eslint 0 errors, 11 warnings (react-hooks/incompatible-library, pre-existing); `vitest run --coverage`: **176 files, 1295/1295**; statements 86.66 %, branches 78.55 %, functions 84.9 %, lines 88.66 % (gate 70 %); surfaces/gantt 92.75 % statements. `vite build` + bundle budget: initial load **185.2 KB gzip of 400 KB** (index 134.0 KB gzip) PASS.
+**3. E2E: 102 of 105 pass after spec repairs; the 3 remaining failures are carried/known (below).**
+- Keycloak specs (dashboard incl. the P17-R08 drill-down spec, capacity, planning, gantt) + mocked p19-planning: **14/14**, after fixing the stale `loginAs` fixture (the app now shows a sign-in page; `fixtures.ts` also seeds the session user, while `api/deps.py` ignores `X-Dev-User-Email` whenever `Authorization` is present, so every call is still authenticated by the real Keycloak token).
+- p9-rbac 21/21, p9-surfaces 3/3, p12-gate 10/11, p14-gate 12/12, p15-gate 4/4, p16-gate 3/3, p17-gate 2/3, p18-gate 3/3, p18-regate 9/9.
+- Stale specs repaired (test code only): `p18-gate` Delivery card assertions moved to the P17-R08 design (headline "w of t finishing this year", parts, segment counts sum to total); `p9-surfaces` Gantt markers use the first *visible* group (after ADR 0032 the first row's markers are both past W52 and draw nothing), Capacity asserts the YTD radio before opening the modal (page behind a modal is aria-hidden); `p18-regate` 429 case uses an 80-project heavy solve (after ADR 0032 a 25-project solve ends in ~0.7 s, so the 300 ms window raced).
+- Remaining failures, not P19/P20: p12-gate header hub filter axe (aria-hidden-focus x2 on nav/header + scrollable-region-focusable x1 on the Radix Select viewport = carried D2); p17-gate dark axe (color-contrast x3 = carried D1, report-only).
+- New live spec `frontend/e2e/p19-gate.spec.ts` (config `frontend/playwright.p19qa.config.ts`, `RPD_P19_MATCH='p19-gate\.spec\.ts'`; MUTATES its DB): **14 of 15 pass**; the Gantt test fails only on the axe defect QA-P19-1.
+**4. Live checks (browser + API), all PASS:**
+- *Dashboard (Alice PM):* heading order pipeline → VIP → Status overview → Completing → pipeline Hub × Type → completing Hub × Type → Pipeline vs completing → … → Delivery by priority → All registered projects (last). VIP slim column beside the pipeline row (same top, 301 vs 944 px wide); the two Hub × Type tables side by side (same top). **All 61 drill-down figures** open a list whose count equals the figure, no mismatch notice, focus returns to the figure; 8 of them untyped ("—"), e.g. "View 28 untyped projects in R&D-India" = 28, "View all 67 untyped projects" = 67, completing "View all 10 untyped …" = 10. Delivery by priority: per band "w of t finishing this year" = API, segments sum to total, empty bands hidden, no "0 of 0", no dash. On Hold: tile "On Hold at a stage", note "Separately, 15 projects are paused (status On Hold) …" = served `on_hold_count` 15 = the "On Hold (project)" status card.
+- *RPD Capacity:* 4 KPI cards; class cards A+, A, B, C, A-OEM, B-OEM, C-OEM above the two charts ("Design Load vs Capacity by Hub", "Lab Load vs Capacity by Lab Region"); 6 hub booked tiles, no "Europe"/India-area text on the page; summary table grouped Greece, Romania, India with the lab cells rendered 3 times (once per region); Details dialog opens, focus returns; matrix inline; class chart disclosure below the matrix, above chamber and engineer utilization; on load only `/capacity/hub-load` and `/capacity/class-breakdown` are requested. Toggles, KPI and summary-table totals equal the API in all four combinations: Weeks/Full year 1717.55 / 1339 / 325.3 / 322; Weeks/YTD 330.29 / 1339 / 62.56 / 322; Days/YTD 1946.68 / 7852 / 366.57 / 1886; Days/Full year 10122.98 / 7852 / 1906.12 / 1886; booked 77.96 % / 405.4 % in both units.
+- *Capacity Planning:* as Frank Admin, total cards "330.3 wks" / "62.6 wks" = served 330.29 / 62.56 (59 engineers, 38.89 FTE, 10 chambers); 6 hub cards with served share and engineer counts, 3 lab-region cards; category and stage chips present; 59 FTE inputs. Inline FTE edit R&D-Greece Engineer 1: 1 → 0.9 (PATCH `{fte:0.9}`), API 0.9, then reverted to 1 (PATCH `{fte:1}`); audit rows `engineer.update` x2 with Frank as actor and before/after states. Portfolio Manager: read-only notice, 0 inputs, 0 chips, 0 edit/delete/add. **Executive Viewer has no Capacity Planning read at all** (P19-T03 role matrix: `/planning/capacity-summary` 403, the page shows "Your role does not have access…", nothing rendered) — stricter than "read-only", consistent with PROJECT_AND_STACK §5. Bob HubPlanner: only `hub-card-PD-India` and `lab-card-India`; API scoped the same; the resource load lists no other hub. Resource load: **0 `/planning/resource-load` requests before scrolling**, 1 after (`?basis=remaining`); Type filter → `project_type=NM`; Dept `aria-disabled="true"`; What-if tab estimate renders (axe 0).
+- *Gantt:* Executive Viewer: 253 rows / 2201 steps, **0 non-null `span_fte`**, 0 drag handles, 0 Edit timing buttons. Bob HubPlanner (disposable DB: PD-India Engineer 11 set 0.63 → 0.5, synchronous greedy recalc; restored afterwards): target "300L SLIM Cooler" PDD-A, 1 wk of work at 0.5 FTE planned W44–W45. Timing dialog note "Planned now: W44–W45 on the calendar · 1 wks of work at 0.5 FTE …", field "Work (weeks)". Right-edge drag +2 weeks: label exactly "4 wks on the calendar · 2 wks of work at 0.5 FTE" at 1440 and 1280; Escape cancels and sends nothing; drop at 1280 sends **PATCH `{"duration_override_weeks":2}`** (work, not calendar 4) and the server stores 2.
+- *Workspace:* 47 part-time-led (FTE < 1) within-year projects all `on_track` via API; 3 opened in the browser (2 with a design stage In Progress, FTE 0.62 / 0.63): badge `data-health` = API `on_track`, never `at_risk`.
+**5. Axe (serious/critical), light:** Dashboard, Capacity (incl. Days/YTD and the Details dialog), Capacity Planning Overview and Resource load at 1440, 1280 and 390: **0 everywhere**; Dashboard drill-down dialogs 0; Gantt timing dialog 1280 / 390 and drag tooltip 1280: 0. **Gantt at 1440 (dialog and drag tooltip): color-contrast x2 = QA-P19-1.** No horizontal page overflow on any page at any width. Dark (report only): Dashboard 1440 x3 / 390 x2, Capacity x3, Planning 1440 x13 / 390 x4, Resource load 1440 x12, all color-contrast 4.18:1 white on `#397dd0` = carried D1 primary token, now on the new P19 toggles and Util-% cells too.
+**6. Screenshots reviewed** (scratchpad `shots/`): `dash-1440-full`, `cap-1440`, `cap-{Weeks,Days}-*-1440`, `cap-details-1440`, `planning-1440`, `resource-load-{1440,1280,390}`, `planning-exec-1440`, `gantt-dialog-*`, `gantt-drag-{1440,1280}`, `gantt-390`, `workspace-parttime-1440`, `dark-*`.
+
+**Defects:**
+- **QA-P19-1 (serious, blocking per the light-axe rule; frontend-builder):** Gantt skipped-step rows wrap the lab `StepKindBadge` in `opacity-60` (`frontend/src/surfaces/gantt/components/gantt-chart.tsx:653`, code from 2026-10-01, unchanged by P19/P20): #669e9b on #e3f0f1 = 2.59:1 at 10 px. Seen whenever a project with skipped lab steps is expanded (1440 here). Fix: do not dim the badge (dim only the name), or use the subtle tokens at full opacity.
+- **QA-P19-2 (pre-existing, Gantt at 390 px; frontend-builder, owner to rank):** the sticky project column (272 px) plus the sticky status column (148 px) exceed the 198 px Gantt viewport; the status column covers the row controls and the whole timeline (pointer hit-test lands in the sticky column). Keyboard path works (expand and Edit timing via focus + Enter, dialog axe 0), drag is impossible at 390. No page overflow.
+- Observations: (O1) at 1280 the drag label next to a bar ending near W52 runs under the sticky status column ("4 wks on the ca…"); (O2) the Dashboard's own "Capacity booked" card still shows Europe / India area tiles (`dash-booked-Europe-*`) — the hubs-only ruling was applied to the Capacity page only, owner to confirm; (O3) dark D1 now covers more P19 surfaces; carried D2 unchanged.
+Tests added / changed (test code only, no feature code): new `frontend/e2e/p19-gate.spec.ts`, `frontend/playwright.p19qa.config.ts`; repaired `frontend/e2e/fixtures.ts` (`loginAs`), `p18-gate.spec.ts`, `p18-regate.spec.ts`, `p9-surfaces.spec.ts`. Nothing committed.
+
+## [2026-10-21] Engineer heatmap investigation (workflow-auditor)
+
+Read-only on code. Dev DB `rpd-pg-dev` was read with SELECTs only. Side effect: the 2 GETs on :8001 `/capacity/engineer-utilization` (alice.pm, frank.admin) each wrote the endpoint's own `capacity.engineer_utilization.read` audit row. The comparison used a disposable PG17 on :55471 (alembic head, `seed_demo_data --dataset client_2026 --schedule`, run v1 within-year 67) and the working-tree API on :8071. Both were removed afterwards. Scripts: session scratchpad `i1.py`, `an.py`.
+
+- **How the live numbers are made.** :8001 runs pre-P20-T02 code: `booked` = number of design rows covering week w over `[start, start+duration−1]`, and `pct = booked / (wwpe × fte / 52) × 100`. PD-India wwpe = 52 − 47/6 = 44.17, so the cell is 186.88 at FTE 0.63 and 189.90 at 0.62. For OEM-HCK at 0.31 a cell is 379.79, and two rows give 759.59. The active dev run v2 (2026-10-13, schema `p16a`) has no FTE stretch. Working tree (HEAD 7e6e707): effort is spread over the stored `[start, end]`, with In Progress tails as in P20-T02.
+- **No I1 breach.** I checked I1 independently on the stored dev run v2: 0 engineer-weeks from W42 on carry more than 1 design row, and there are 0 `eng_conflict` rows. All 164 overlaps fall before W42: 156 are Done+Done and 8 are Done + In Progress actual-start. The causes:
+  - Theoni W30–34 (760): Done history of "MAX-1200 A Huayi" and "MAX-750 A Huayi" overlapping.
+  - Lokesh W30–35 (374): "CCBSA PRCD" and "S-250 Edge light" have identical Done histories.
+  - The fresh seed reproduces the same 164 overlaps.
+  - Separate old-rule artefact: 7 cells at W42–43 read 2.0 (Adrian, Alin, Bianca, PD-India Engineer 6). The old rule paints `duration` weeks from the start of a shortened Done row (`end < start+d−1`), which creates a phantom double. The working tree fixes this.
+- **Past weeks.** W1–W41 cells are seeded Done history (`client_2026` lays it back from W42 at the full lead-time duration, not FTE-stretched, with no per-leader I1 guard). DOMAIN_RULES says history is "recorded for display" and is not capacity. On the fresh DB with working-tree code, all 292 nonzero pre-W42 cells still read above 100 % (max 1519 %).
+- **"Most show 0".** Only 5 of 59 rows are empty in both DBs: Marian (Commercialized/On Hold), Sailesh (Cancelled), R&D-India Engineer 8/9/10 (no projects led). 54 of 59 lead a project. 40 rows are empty in W1–W30, and their work starts at W42, which is off-screen: 52 columns at 2.25rem, with no scroll to the current week. PD-India Engineer 14 is booked W42–W52.
+- **Fresh DB, working tree, from W42.** No cell's booked weeks exceed the engineer's FTE (0 cells). Σ total_booked = 1338 (I6). Examples:
+  - Theoni: 0.25 → 94.95 %, then 0.29 → 108.51 %.
+  - Lokesh, Nikhil: 0.5 → 93.44 %.
+  - Pawan: 94.95 %.
+  - PD-India Engineer 14: 93.44 %, then 106.79 %.
+  - R&D-Greece Engineer 1 (FTE 1.0): 116.59 %.
+  The maximum is 117.74 %, not 100 %. The per-week capacity `wwpe × fte / 52` subtracts leave averaged over the year, but the scheduler books every week, so a fully booked week reads 52/wwpe ≈ 116–118 % and lands in the "over" band. Per-step ceil (OD1) gives the 93–107 % spread.
+- **Labels.** The cells are percent (`formatPercent`; the "%" is stripped in the cell text). Not mislabelled. Empty cells show "0" and the band "under-utilized".
+
+**Real defects (not cured by a restart):**
+- **H1, owner ruling then backend-builder.** `api/routers/capacity.py::engineer_utilization` weekly denominator. Options: per-week capacity = `fte`, or keep it and say so. The total column stays `wwpe × fte`.
+- **H2, owner ruling then backend-builder + frontend-builder.** Weeks before `current_week` show seeded history on the utilization colour scale. Either serve them as history (null pct or a flag) and draw them neutral (`engineer-utilization-heatmap.tsx`), or hide them.
+- **H3, frontend-builder.** No initial scroll to the current week. Zero cells should be neutral "no booking", not "under-utilized".
+- **H4, low, backend-builder.** `seed/client_2026.py` Done history is not FTE-stretched and not I1-guarded per leader (synthetic data only).
+
+**Stale state (cured by migrate + restart + re-run):** the 187/190/380 single-booking values from W42 on, and the 7 phantom 2.0 cells at W42–43. Fix: `alembic upgrade head` on :5433 (p20a, p21a), restart :8001, then a greedy run. Queued run v3 (2026-10-18, priority_move) has had no worker since then. Expect the cells from W42 on to read 93–118 %. The pre-W42 values (760 and others) will remain until H2 is decided.
+
+## [2026-10-21] P19-T07 — RPD Capacity owner removals: class chart and chamber utilization matrix (frontend-builder): DONE
+
+Owner request. Work stayed inside `frontend/src/surfaces/capacity/`, plus the test and e2e files that referenced the removed items.
+- **Removed from the page.** (1) The "Show/Hide class chart" disclosure and its deliverable vs. left-out bar chart per category. The seven class cards under the KPI row stay. (2) The "Show/Hide chamber utilization" disclosure and the "Resource utilization matrix" (Chambers × weeks heatmap) inside it. Page order is now: KPI cards, class cards, two load-vs-capacity charts, booked tiles, "Load vs. capacity by hub" table, then "Show engineer utilization" (unchanged; still collapsed and lazy).
+- **Deleted.** `components/class-breakdown-chart.tsx`, `components/chamber-utilization-panel.tsx`, `components/chamber-utilization-heatmap.tsx` (+ its test), `ClassChartSection` (in `class-breakdown-panel.tsx`), `useUtilizationMatrix` (`hooks/use-capacity.ts`), `fetchUtilizationMatrix` (`api/capacity-api.ts`). A grep confirmed none of them was used outside capacity, except `src/surfaces/hub-filter-wiring.test.tsx`, which lost its two `useUtilizationMatrix` rows.
+- **Kept on purpose.** The `UtilizationMatrix` / `ChamberWeekLoad` / `EngineerWeekLoad` types in `api/types.ts`, because `backend/tests/test_openapi_frontend_contract.py` mirrors them (docblock notes the page no longer reads them). `queryKeys.capacityUtilizationMatrix` in `lib/query-keys.ts`, because `surfaces/planning/hooks/use-planning.ts` still invalidates it (now a harmless no-op; planning is not my area). `CollapsibleSection`, which the engineer section still uses.
+- **Now unused by this page.** `GET /capacity/utilization-matrix` (whole endpoint, incl. `engineers[]` and `chambers[]`). No frontend fetcher for it remains anywhere. All `/capacity/class-breakdown` fields are still read by the class cards. Backend endpoints are untouched.
+- **Tests.** `CapacityPage.test.tsx`: the order test ends hub table then engineer section, and the only disclosure in `capacity-more-detail` is "Show engineer utilization". A new P19-T07 test asserts there is no class-chart or chamber disclosure, no `class-chart-section` / `section-chambers` testids, and no "Resource utilization matrix" or "Chambers × weeks" text. The engineer lazy test was kept without its chamber steps. New `CapacityPage.requests.test.tsx` runs the real hooks and fetchers with `apiGet` stubbed. It asserts that hub-load and class-breakdown are requested, that engineer-utilization is requested only after opening, and that `utilization-matrix` / chamber is never requested. `class-breakdown-panel.test.tsx` drops the `ClassChartSection` test. In `use-capacity.test.tsx`, the 403 no-retry test now uses `useClassBreakdown`. `capacity-api.test.ts` asserts the fetcher is gone.
+- **e2e.** `pages/capacity.page.ts`: `openChamberUtilization`/`utilizationPanel` are replaced by `removedDisclosures`/`removedChamberMatrix`, and the stale `hubLoadPanel` heading is fixed to "Load vs. capacity by hub" (renamed in P19-T06). `capacity.spec.ts` asserts the removed sections stay absent. In `p19-gate.spec.ts`, the Capacity test now orders the table before the engineer section (the stale `section-hub-matrix` y-probe was replaced). It also checks that the only disclosure is the engineer one, that `hub-utilization-matrix` / `class-chart-section` / `section-chambers` are absent, and that no chamber / utilization-matrix request is made even after opening engineers. The e2e specs were not run.
+Results: `tsc -b` clean. eslint on `src/surfaces/capacity` + touched test/e2e files has 0 errors; 2 warnings in `engineer-utilization-heatmap.tsx` were already there. Vitest on capacity + hub-filter wiring + planning hooks: 16 files / 118 passed. Full Vitest: 176 files / 1331 passed. `vite build` went to a scratch outDir, leaving `dist/` untouched; the CapacityPage chunk is 16.5 KB gzip. Live on :5183 (Alice PM, light, 1440): 7 class cards; the only disclosure is "Show engineer utilization"; the order was verified by y-position; no class chart or chamber section; requests were `/capacity/hub-load`, `/capacity/class-breakdown`, and `/capacity/engineer-utilization` only after opening; axe serious/critical 0, both closed and with engineers open. Dev servers were not restarted.
+
+## [2026-10-21] P21-T03 — Prioritization Matrix scoring grid: boxes and borders (frontend-builder): DONE
+
+Owner request: "create boxes or borders for easy understanding" on the scoring grid. This is presentation only: no figure changed and nothing new is computed (I9). Files touched are all in `frontend/src/surfaces/matrix/`.
+- **New `components/virtual-matrix-grid.css`.** This is the first per-component stylesheet in the matrix surface. It is plain CSS using `mg-` classes and token colours only. Row state lives in one custom property, `--mg-row-bg`, which the frozen cells inherit. Every surface that text sits on is an opaque `color-mix` of two tokens, so contrast does not depend on what is layered under it. Line hierarchy: inner 1 px `--color-border`/0.75 between dimension cells of a pillar; pillar 2 px `--color-border-strong`; block 3 px `--color-border-strong` at identity | info | scores | Score /100 | Edit. The CSS ships in the lazy MatrixPage chunk (0.82 KB gzip), so the initial load is unchanged.
+- **Boxes.** `MatrixColumn.box` (`{id, kind: identity|info|pillar|score|actions, tint?}`); `lib/grid-boxes.ts` `columnLines()` gives each column its `data-line` (none/inner/pillar/block). Header, band, filter and body cells all carry `data-line`, `data-box-kind`, `data-tint`, `data-pillar-start` / `data-pillar-end` (value `pillar-<name>`). The 2nd and 4th pillars (Regulatory & Quality, Market & Volume) get a faint `--color-primary` wash (5 % light / 8 % dark) from the band to the last row. Each pillar band has a 3 px bottom accent: solid primary on tinted pillars, primary/45 on the rest. "Score /100" is its own block with the same wash and a `text-text` header.
+- **Score chips.** `DimCell` renders the served score in `.mg-chip` (`data-testid="score-chip"`, `data-intensity` 0..5 from `lib/score-chip.ts` `scoreIntensity`, which clamps and rounds for display only). The ramp is one hue, primary mixed into the surface at 11/18/27/36/46 %, and 5 is bold. 0 is a dashed-outline chip with `text-muted` showing "0". The number is always shown; the title, sr-only summary and Detailed-view points are unchanged. The unscored "–" moved from `text-subtle` to `text-muted`.
+- **Rows.** `data-zebra` even/odd (surface / surface-raised). Hover and `:focus-within` use primary 7 %. Selected rows (`VirtualMatrixGrid.isRowSelected`, wired from `selectedIds`) get `data-selected="true"`, primary 10 % (12 % on hover) and a 3 px primary inset bar on the first cell, so selection never relies on colour alone. `aria-selected` was deliberately not used because it is not allowed on `role=row` inside `role=table`. The frozen cells take `--mg-row-bg`, so zebra, hover and selection run across the whole row.
+- **Frozen / sticky.** Sticky header cells are opaque `surface-sunken`; frozen body cells are the opaque row background. The scroll region gets `data-scrolled-x` from a passive scroll listener that writes a DOM attribute, not React state, so scrolling never re-renders. When it is `true`, the last frozen column (`.mg-frozen-edge`, Hub; Project at < 768 px) casts `6px 0 8px -4px` (slate-900/0.16 light, black/0.55 dark). The old ad-hoc `border-r`/`border-l` classes on Project/Hub/Score were removed in favour of the box lines.
+- **Headers.** Dimension abbreviations wrap (`whitespace-normal break-words text-center`). Header cells are `py-2 leading-tight`, centred, and all 44 px tall at 1440 and 390. The header row has a 2 px `border-strong` bottom; the band row has a 1 px one.
+- **Tests.** `matrix-table.test.tsx` has 3 new tests: pillar start/end markers and line kinds (block/pillar/inner counts, tint alternation, one frozen edge, three sticky cells); chip intensity 0..5 equals the served score, with the number and sr text kept; zebra plus a single selected row with its checkbox checked. `virtual-matrix-grid.test.tsx` has 1 new test: the `data-scrolled-x` toggle and the frozen-edge class on header and body.
+Results: `tsc -b` clean. eslint `src/surfaces/matrix`: 0 errors, the 2 pre-existing `scoring-model.tsx` warnings. Vitest `src/surfaces/matrix`: 10 files / 107 tests passed. `vite build` to a scratch outDir (`dist/` untouched): MatrixPage 27.48 KB gzip JS + 0.82 KB CSS; index chunk unchanged (138.7 KB gzip).
+Live check on :5183 (dev server not restarted) with the P21 mocked routes from P21-T02, because the dev API on :8001 does not serve P21 yet (`/priorities/distribution` returns 404):
+- Axe light at 1440 and 390 had 0 serious/critical (grid at rest with 2 rows selected, scrolled sideways, Detailed view, lower rows).
+- Axe dark (report only) had color-contrast ×3 at 1440 and ×1 at 390, all on primary buttons (EUR currency button, Detailed-view toggle, Compare bar). This is carried D1, white on the dark primary token. No grid node was flagged, so there is no new dark violation.
+- Axe cannot resolve `color-mix` or gradient tints, so an in-page compositing contrast sweep also ran over every visible text node. Light: body minimum 5.02:1 (category chip on a selected row), chips ≥ 8.24:1, header labels 4.58:1 (pre-existing `text-subtle` on sunken). Dark: body ≥ 6.68:1, chips ≥ 8.71:1.
+- Measured: sticky header background rgb(227,231,237), frozen body cell opaque, and the shadow present after a sideways scroll at both widths.
+- Screenshots reviewed (scratchpad `t03/shots/`): `1440-grid-el`, `1440-grid-scrolled`, `1440-grid-low`, `1440-grid-detailed`, `1440-grid-dark`, `390-grid-scrolled`.
+Notes: at 390 the app shell still leaves about 200 px for the grid, so only the checkbox and Project are visible before scrolling (shell issue, carried from P21-T02). The live dataset has no 0 scores, so the dashed 0 chip is covered by the unit test only.
+
+## [2026-10-21] P22-T01 — Projects and Project Registration merged into one page (frontend-builder): DONE
+
+Owner request: "club the project registration and all project page". Frontend only; no backend change, no new
+endpoint, same payloads. Every number on the page is a served field (I9); nothing is counted or ranked in the browser.
+
+**The page (`/projects`, nav "Projects", read on `dashboard` as before).** `surfaces/projects/ProjectsPage.tsx`:
+- Header: title "Projects", country buttons and hub chip (global filter), the served `total_count` badge, List / Cards
+  tabs, one **Export** menu, and **Register project** (only with `project_registration` write and no 403 seen).
+- Filter bar (all sent to `GET /dashboard/projects`): search `q` (debounced, ≤ 100), Hub (writes the global store),
+  Category, Type, Status, Priority, Leader, Current step (facets endpoint), **Sort** (`name` / `priority`, the served
+  `sort`) and a **Drafts** chip (`aria-pressed`, sets `status_=Draft`). Below `sm` the selects fold behind a "Filters"
+  toggle (`aria-expanded`); search and Drafts stay visible.
+- List: new `components/projects-table.tsx`, TanStack-Virtual rows (#, Project + code + VIP, Hub + flag, Cat, Type,
+  Status, Leader, End wk, Current step, Priority + rank, Actions: Open, and "Edit" for writers with accessible name
+  "Edit registration of <name>"). A just-saved row gets a highlight + "New"/"Updated" badge and is scrolled to
+  (instant), for 12 s; a polite status line names it, and says so when the current filters hide it (with Clear filters).
+  Cards: the Dashboard `ProjectCardGrid`, lazy (Ask the agent per card).
+- `ReadOnlyNotice surface="project_registration"` shows for roles without Registration write (e.g. Executive Viewer).
+- Export menu (`components/projects-export-menu.tsx`): "Projects list" = `GET /exports/dashboard` with every page
+  filter + sort (old Projects Download); "Registration register" = `GET /exports/project-registration` (old /register
+  Download, financial columns as the server decides), only with `project_registration` read; its hint names the
+  filters that endpoint takes (hub, q, category, type, status, priority — no country/leader/step/sort).
+
+**The drawer (`components/registration-drawer.tsx`, lazy chunk 3.24 KB gzip).** Radix Dialog as a right sheet
+(`sm:max-w-2xl`, full screen below `sm`): focus trap, Escape, focus returns to the trigger (explicit
+`onCloseAutoFocus` to the stored trigger when still connected). Create → `POST /projects` (body unchanged, always a
+Draft). Edit → `GET /projects/{id}` then `PATCH /projects/{id}`, with the P14 priority preview first
+(`applyFormPriorityMove`) and the P11 `X-Schedule-*` follow (`followPatch`); the move-flow host stays on the page so
+its panels survive the drawer closing. Edit shows a "Registration status" region (status, workflow, Frozen, Stale —
+the facts the old expanded row had) and, for a Draft, the served hard-gate panel ("Leave Draft",
+`GET …/hard-gate-status`, `POST …/submit`), with a note when there are unsaved edits; a submit keeps the drawer open
+with "Submitted. The project left Draft for <status>." Every close path goes through one guard: unsaved edits →
+"Discard unsaved changes?" alertdialog (Keep editing / Discard changes); a successful save closes without asking;
+`beforeunload` is armed while dirty. A 403 on any write closes the drawer and downgrades the page (WriteForbiddenNotice,
+no Register / Edit). After save or submit the page invalidates `['dashboard']` (the registration hooks still
+invalidate `['projects']`).
+
+**Shared form change (`registration/components/project-form.tsx`).** New `variant="sheet"` (pinned header/footer,
+scrolling body), `onDirtyChange`, `prelude`. Dirtiness = the RHF text fields compared with the opening values via
+`useWatch` (unset / null / '' alike, CRLF = LF) OR any select/checkbox differing. **Found in the browser:** RHF's own
+`formState.isDirty` reported every real project's edit form as dirty on open (a field with no default reads back as
+''), so Escape always asked; jsdom did not reproduce it. Fixed as above; verified on 10 live projects; regression tests
+added. The Workspace's inline use is unchanged (`onDirtyChange` optional).
+
+**Routing.** `/register` → `/projects` keeping the query (so `/register?edit=<id>` still opens the drawer);
+`/register/:projectId` → `/projects?edit=<id>` (`app/register-redirect.tsx`). `lib/registration-links.ts` now builds
+`/projects?edit=<id>` (the Dashboard register's Edit). `useEditDeepLink` unchanged (UUID-only, write-only, drops the
+param). Nav: the "Register" entry is removed from `SURFACES`; "Projects" (`task: P22-T01`) is the single entry. There
+is no command palette and no breadcrumb in the app (the header says so), so nothing to update there. Profile start
+page: `/register` replaced by `/projects` (`stores/preferences.ts`, `pages/profile.tsx`); a stored `/register` falls
+back to the Dashboard.
+
+**Where each old capability went.** /register filters (hub, search, category, status, priority, type) → page filter
+bar (plus country, leader, step, sort from the old Projects/register). /register "Projects shown / In development / In
+queue / Drafts" StatStrip (counted in the browser) → removed; the served `total_count` badge for the chosen
+status/Drafts chip replaces it (I9). /register list rows → list view; expanded row details → the edit drawer (form
+fields + status region); expanded-row hard gate + Submit → edit drawer "Leave Draft". New project dialog → drawer
+(create). Edit pencil → row "Edit" → drawer. ?edit= deep link → same, on /projects. /register Download →
+Export › Registration register. Projects Download → Export › Projects list. Projects card grid → Cards tab.
+Read-only/403 notices → kept. **Not present before, so not added:** project Delete (no `DELETE /projects/{id}` in the
+backend; the Dashboard register says "No Delete") and Excel import (export-only by P5-T05 scope lock, OQ #7) — both
+need backend work.
+
+**Removed.** `registration/RegistrationPage.tsx` + test, `registration/components/project-list.tsx` + test (only used
+by that page), the registration `AccessNotice` (dead; `WriteForbiddenNotice` kept), `RegistrationPage` lazy handle,
+the `/register` SURFACES entry. Their coverage moved to `projects/ProjectsPage.test.tsx` (27 tests).
+
+**Tests.** `ProjectsPage.test.tsx` (27): writer vs Executive Viewer (Register / Edit / notice), unfiltered key, global
+hub, every filter + search + sort, Drafts chip, cards, error/empty, Export (both sources for writers, one for read-only,
+paths + filters), create → exact `POST /projects` body + highlight + focus return, client validation, edit → `GET` +
+`PATCH /projects/{id}` + highlight + focus, hard gate missing → disabled, gate ready → `POST …/submit`, Frozen/Stale/
+workflow, unsaved guard (Escape, Keep, Cancel → Discard), clean Escape, 403 downgrade, P11 deferred, P14 Yes/No,
+deep link (writer opens, read-only does not), axe (page, create drawer, Draft edit drawer). `register-redirect.test.tsx`
+(3), `app.test.tsx` (+3: nav click, single nav entry, /register redirect; old Registration nav test replaced),
+`project-form.test.tsx` (+2 dirty reporting), `use-edit-deep-link.test.tsx` and `project-breakdown.test.tsx` and
+`session.test.tsx` (URLs / nav label). E2E: `pages/registration.page.ts` → `pages/projects.page.ts` (`ProjectsPage`),
+`registration.spec.ts` rewritten for the drawer (create → gate → edit → submit; unsaved guard; /register redirect +
+axe), `p9-surfaces` (drawer), `p9-rbac` (no Register nav row; Registration notice checked on /projects), `p13-gate`
+(/projects instead of /register), `p14-gate` (/projects?edit=). E2E typechecked, not run (they write to the DB).
+
+**Results.** `tsc -b` exit 0. ESLint on touched dirs: 0 errors, 2 warnings (pre-existing `AdminUsersRoute`
+fast-refresh; TanStack `useVirtualizer` incompatible-library, same as every virtualized table). Full Vitest: 177 files /
+1350 tests passed (earlier runs showed transient matrix/capacity failures from other agents editing mid-run; they
+pass in isolation and on the final run). `vite build` OK; initial 185.4 KB gzip of 400 KB; `ProjectsPage` chunk 7.26 KB
+gzip, drawer 3.24 KB gzip.
+
+**Visual (read-only Playwright on :5183, every non-GET aborted — 0 writes, 0 console errors).** Frank Admin and Dave
+ExecutiveViewer at 1440 and 390, light mode: `/register` lands on `/projects`; nav shows one "Projects"; 253 projects;
+Frank sees Register + per-row Edit and both export sources; Dave sees neither, one export source and the read-only
+notice. Axe 0 serious/critical on: list (all four), filters open (390), create drawer, discard dialog, edit drawer via
+`/register/<id>` (1440, 390). Create drawer 672 px sheet at 1440, full screen at 390; empty Create draft → "Name is
+required"; typing then Escape → discard dialog; Keep editing keeps the value; Cancel → Discard closes; focus back on
+Register project. The live DB has no Drafts, so the Draft hard gate was verified in unit tests only. Nothing saved.
+
+**Shared-file edits to report:** `registration/components/project-form.tsx` (sheet variant, dirty, prelude — also used
+by the Workspace Details panel), `lib/registration-links.ts` (href), `stores/preferences.ts` + `pages/profile.tsx`
+(start page), `surfaces/dashboard/components/project-breakdown.test.tsx` (one href assertion). `git rm` staged the four
+deleted files; nothing committed.
+
+## [2026-10-21] P19-R02 — Gantt gate remediation (QA-P19-1, QA-P19-2, O1) (frontend-builder): DONE
+
+Scope: `frontend/src/surfaces/gantt/` only. No backend, no served-field change, no number derived in the browser (I9/I19).
+
+**QA-P19-1 (blocking) fixed.** `StepLeftCell` no longer wraps a skipped row in `opacity-60`. The step name alone is muted
+with full-strength tokens: `text-text-muted` + `line-through decoration-text-subtle` + sr-only "(skipped)". The
+`StepKindBadge` keeps its own full-contrast tokens. There are no bars to dim (a skipped step draws none). Every other
+opacity on text in the Gantt was checked: the only one was the zero-week dot in `activity-load-strip.tsx`
+(`text-text-subtle/60`), now `text-text-subtle`. The remaining `opacity` is the transient Framer fade of the step SVG
+layer (ends at 1, reduced-motion off).
+
+**QA-P19-2 fixed (responsive columns).** New `lib/gantt-layout.ts`:
+- `useNarrowGantt()` is the `(max-width: 767px)` media query.
+- `ganttColumnWidths(narrow, chartWidth)`: wide is 272 + 148 (unchanged). Narrow is one name column at 40 % of the
+  measured chart width, clamped to 88..124 px, with no status column.
+- `useElementWidth` is a ResizeObserver hook.
+
+At 390 the app shell's icon rail leaves the chart 198 px wide, so the column is 88 px and the timeline gets 110 px. A
+fixed 124 px column would have left the timeline only 74 px.
+
+Narrow project row: the chevron and a 2-line clamped name expand the steps. An Info button opens the new
+`GanttProjectDetailsDialog` (`components/gantt-project-details.tsx`). The dialog holds the row meta, served weeks, VIP,
+tracking chip, status chips, priority move, Workspace link and Freeze. The button's accessible name lists the flags, and
+a decorative dot shows when there are any. Flag words come from the new `lib/gantt-status-labels.ts`, which reuses the
+`SCHEDULE_OUTCOME_META` labels.
+
+Narrow step row:
+- the kind badge stays;
+- the name is truncated;
+- a skipped step shows "n/a";
+- a step flag is a `role="img"` icon with "Status: …";
+- "edited" becomes icon-only;
+- the Edit timing button remains (keyboard route).
+
+`ProjectMetaLine` and `RowWeeks` moved to `components/gantt-row-meta.tsx` so the dialog can reuse them. The scroll
+container is now `role="region"`, labelled "Project timeline (scrolls horizontally through the weeks)", `tabIndex=0`,
+with `data-layout`. The drag handle is 20 px wide on the narrow layout (8 px otherwise). Touch drag works: live CDP touch
+at 390 shows the ghost and label, hit-testing lands on the handle, and Escape cancels.
+
+**O1 fixed (drag label).** `placeDragLabel` (pure, in `gantt-layout.ts`) puts the label right of the cursor-side ghost
+edge by default. Near the right edge it flips left of it, clamped to the visible left. An unmeasured viewport keeps the
+default. `StepDragOverlay` takes an optional `viewport` (GanttChart passes the scroll rect minus both sticky columns). A
+layout effect positions the label before paint and owns `style.left`. When the label is wider than the visible timeline
+(phones), it wraps to that width. The dragged row is raised with `has-[[data-dragging=true]]:z-20` so a wrapped label
+paints over its neighbours.
+
+**Robustness add-on.** The running :8001 backend omits `GanttStepRow.span_fte`: 0 of 1595 steps carried it. It is a
+stale process from before P20-T02 and was not restarted, per the brief. As a result the drag label read "8 wks of work at
+undefined FTE". `stepTimingTarget` and the step bar title now use `span_fte ?? null`, the documented "not served"
+fallback. The label then reads "… · calendar weeks follow the leader's FTE". When the backend is restarted the served
+figure shows as before.
+
+**Tests.** New `components/gantt-responsive.test.tsx`, 19 tests:
+- the skipped lab badge has no opacity on itself or any ancestor at 1440 and 390;
+- the name is muted and struck through;
+- the chart has no `opacity-` / `text-text-subtle/` classes;
+- the skipped row is axe-clean;
+- pure widths, including the 198 px case;
+- DOM widths at 1440 (272 / 148, 8 px handle) and 390 (124 unmeasured in jsdom, no status cells, 20 px handle, Edit
+  timing present);
+- the details dialog content and axe;
+- the step flag icon;
+- status-label order;
+- `placeDragLabel` cases;
+- the overlay flips near the edge, stays right with room, and wraps on a 110 px viewport;
+- a missing `span_fte` maps to null.
+
+Results: `tsc -b` 0, `eslint src/surfaces/gantt` 0 problems, Vitest gantt 10 files / 155, full suite 177 files / 1352
+passed, `vite build` OK (GanttPage chunk 22.1 KB gzip, index 138.7 KB gzip).
+
+**Live check** (:5183, Bob HubPlanner, read-only: every non-GET `/api` request is aborted by the script, and none was
+attempted). Target: "FV1000sz Heineken 2026 Cladding …", expanded, 8 skipped rows including 2 skipped LAB steps.
+- 1440 / 1280: columns 272 / 148. LAB badge effective opacity 1. Axe serious/critical 0 for the expanded view and 0
+  during the drag. A right-edge drag towards W52 flips the label left (`x 967..1236` against a visible right of 1242 at
+  1440; `807..1076` against 1082 at 1280). Page overflow 0.
+- 390: narrow layout, chart 198 px, name column 88 px, no status column. Handle hit-test lands on the handle. A touch
+  drag shows the wrapped label fully inside the timeline. Axe 0 for the expanded view, during the touch drag and on the
+  details dialog. Page overflow 0.
+
+Screenshots reviewed: scratchpad `shots/gantt-{1440,1280,390}-{initial,expanded,drag|touchdrag}.png`,
+`gantt-390-details.png`. The existing `e2e/p19-gate.spec.ts` selectors still apply. Its 390 branch only logs the
+hit-test, so qa can tighten it on re-gate.
+
+**Follow-ups, not done.**
+- At 390 the Gantt legend in `GanttPage` is a tall stack above the chart; a disclosure on narrow would help.
+- At 88 px, step names show about 6 characters; the full name is in the `title`.
+- Restart :8001 so `span_fte` is served again (owner / infra).
+
+Nothing committed.

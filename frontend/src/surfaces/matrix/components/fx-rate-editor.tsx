@@ -4,9 +4,9 @@ import { Check, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { ApiError } from '@/lib/api/client';
-import type { CurrencyRate } from '@/lib/api/reference';
 import { formatDecimal } from '@/lib/format';
-import type { CurrencyCode } from '@/types/enums';
+
+import type { MatrixCurrencyCode } from '../api/types';
 
 import { useUpdateCurrencyRate } from '../hooks/use-matrix';
 
@@ -18,12 +18,13 @@ import { useUpdateCurrencyRate } from '../hooks/use-matrix';
  */
 export function FxRateEditor({
   currency,
-  rates,
+  rate,
 }: {
-  currency: Exclude<CurrencyCode, 'EUR'>;
-  rates: CurrencyRate[] | undefined;
+  currency: Exclude<MatrixCurrencyCode, 'EUR'>;
+  /** The served `rate_to_eur` of the selected currency (P21 currencies list). */
+  rate: number | null;
 }): React.JSX.Element {
-  const current = rates?.find((r) => r.currency_code === currency);
+  const current = rate === null ? undefined : { rate_to_eur: rate };
   // Remount (fresh draft) whenever the currency or the served rate changes.
   return (
     <FxRateForm
@@ -38,8 +39,8 @@ function FxRateForm({
   currency,
   current,
 }: {
-  currency: Exclude<CurrencyCode, 'EUR'>;
-  current: CurrencyRate | undefined;
+  currency: Exclude<MatrixCurrencyCode, 'EUR'>;
+  current: { rate_to_eur: number } | undefined;
 }): React.JSX.Element {
   const id = React.useId();
   const [draft, setDraft] = React.useState<string>(current ? String(current.rate_to_eur) : '');

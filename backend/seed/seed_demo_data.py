@@ -14,7 +14,10 @@ Two datasets (`--dataset`):
       "<hub> Engineer <n>" capacity engineers;
     - step progress comes from Project Status and Development Step;
     - FTE and chamber efficiency are tuned on an in-memory greedy run toward
-      the booked % the client asked for. The scheduler ignores both.
+      the booked % the client asked for. Since ADR 0032 FTE also sets a
+      leader's design speed (`span = ceil(duration / fte)`), so the tuned
+      FTEs change the plan; chamber efficiency is still capacity-only (it
+      never gates booking, OQ #3).
     Row ids are deterministic (`uuid5`), so every reseed produces the same
     schedule run.
   - `prototype`: the ~46-project synthetic set extracted from

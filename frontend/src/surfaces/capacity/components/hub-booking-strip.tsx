@@ -14,6 +14,7 @@ import {
   type CapacityView,
   type UnitFigures,
 } from '../lib/pick-figures';
+import { groupByHubFamily } from '../lib/hub-families';
 import { formatFigure, formatPctCompact } from '../lib/status-format';
 
 /**
@@ -25,6 +26,11 @@ import { formatFigure, formatPctCompact } from '../lib/status-format';
  * Every figure is one served field (I9/I19), selected by `pickFigures` for the
  * page's horizon. The lab figure is region-level (ADR 0016), so hubs of the same
  * region show the same lab figure; the label names the region to make that clear.
+ *
+ * P19-T06: the tiles sit in one labelled box per hub FAMILY (R&D, PD, OEM;
+ * `lib/hub-families.ts`): three boxes side by side at xl, two per row at md, one
+ * per row below. Only families with a served row get a box, so a Hub Planner
+ * sees no empty box. No family total is shown: the API serves none (I19).
  */
 
 const HORIZON_CAPTION: Record<CapacityHorizon, string> = {
@@ -102,34 +108,56 @@ export function HubBookingStrip({
               Days toggles in the page header pick which figures are shown here; booked % is the same in weeks
               and days.
             </p>
+            <p>
+              Hubs are grouped by family (R&amp;D, PD, OEM). The boxes carry no family total because the
+              server does not serve one, and the browser does not add hubs up.
+            </p>
           </CardInfo>
         </div>
       </div>
-      <ul className="grid gap-s3 sm:grid-cols-2 xl:grid-cols-3" data-testid="booked-tiles">
-        {rows.map((r) => (
-          <li
-            key={r.hub}
-            className="flex min-w-0 flex-col gap-s2 rounded-dash border border-dash-hairline bg-surface p-card-tight shadow-dashCard"
-            data-testid={`booked-hub-${r.hub}`}
-          >
-            <h3 className="truncate text-sm font-bold text-text">{r.hub}</h3>
-            <div className="grid grid-cols-2 gap-s3">
-              <BookedLine
-                label="Design"
-                figures={pickUnitFigures(r, 'design', view)}
-                unit={resourceUnit('design', view.unit)}
-                testId={`booked-design-${r.hub}`}
-              />
-              <BookedLine
-                label={`Lab (${r.lab_region} region)`}
-                figures={pickUnitFigures(r, 'lab', view)}
-                unit={resourceUnit('lab', view.unit)}
-                testId={`booked-lab-${r.hub}`}
-              />
-            </div>
-          </li>
-        ))}
-      </ul>
+      <div className="grid gap-s3 md:grid-cols-2 xl:grid-cols-3" data-testid="booked-families">
+        {groupByHubFamily(rows).map(({ family, rows: familyRows }) => {
+          const headingId = `booked-family-${family.key}-heading`;
+          return (
+            <section
+              key={family.key}
+              aria-labelledby={headingId}
+              className="flex min-w-0 flex-col gap-s2 rounded-dash border border-dash-hairline bg-surface-sunken/50 p-s2"
+              data-testid={`booked-family-${family.key}`}
+            >
+              {/* No family aggregate is served (P19-T06), so the header carries the name only. */}
+              <h3 id={headingId} className="px-1 text-xs font-bold uppercase tracking-wider text-text-muted">
+                {family.label}
+              </h3>
+              <ul className="grid gap-s2 sm:grid-cols-2 md:grid-cols-1" data-testid="booked-tiles">
+                {familyRows.map((r) => (
+                  <li
+                    key={r.hub}
+                    className="flex min-w-0 flex-col gap-s2 rounded-dash border border-dash-hairline bg-surface p-s3 shadow-dashCard"
+                    data-testid={`booked-hub-${r.hub}`}
+                  >
+                    <h4 className="truncate text-sm font-bold text-text">{r.hub}</h4>
+                    <div className="grid grid-cols-2 gap-s3">
+                      <BookedLine
+                        label="Design"
+                        figures={pickUnitFigures(r, 'design', view)}
+                        unit={resourceUnit('design', view.unit)}
+                        testId={`booked-design-${r.hub}`}
+                      />
+                      <BookedLine
+                        label={`Lab (${r.lab_region} region)`}
+                        figures={pickUnitFigures(r, 'lab', view)}
+                        unit={resourceUnit('lab', view.unit)}
+                        testId={`booked-lab-${r.hub}`}
+                      />
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          );
+        })}
+      </div>
     </section>
   );
 }

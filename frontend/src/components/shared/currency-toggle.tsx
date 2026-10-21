@@ -34,7 +34,7 @@ export interface CurrencyToggleProps {
 function rateCaption(value: CurrencyCode, rates: CurrencyRate[] | undefined): string {
   if (value === 'EUR') return 'Base currency — 1 EUR = 1 EUR.';
   const row = rates?.find((r) => r.currency_code === value);
-  if (!row) return 'Active conversion rate unavailable.';
+  if (!row || row.rate_to_eur === null) return 'Active conversion rate unavailable.';
   // Display only: `rate_to_eur` is rendered as-is, not used in any calculation.
   return `Active rate: 1 EUR = ${formatDecimal(row.rate_to_eur)} ${value} (server-applied).`;
 }

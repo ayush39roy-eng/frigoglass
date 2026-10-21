@@ -7,9 +7,9 @@ import type { CurrencyRate } from '@/lib/api/reference';
 import { CurrencyToggle } from './currency-toggle';
 
 const rates: CurrencyRate[] = [
-  { id: 'r1', currency_code: 'EUR', rate_to_eur: 1, updated_by_user_id: null, updated_at: '2026-01-01T00:00:00Z' },
-  { id: 'r2', currency_code: 'USD', rate_to_eur: 1.08, updated_by_user_id: null, updated_at: '2026-01-01T00:00:00Z' },
-  { id: 'r3', currency_code: 'INR', rate_to_eur: 97, updated_by_user_id: null, updated_at: '2026-01-01T00:00:00Z' },
+  { id: 'r1', currency_code: 'EUR', name: 'Euro', configured: true, rate_to_eur: 1, updated_by_user_id: null, updated_at: '2026-01-01T00:00:00Z' },
+  { id: 'r2', currency_code: 'USD', name: 'US dollar', configured: true, rate_to_eur: 1.08, updated_by_user_id: null, updated_at: '2026-01-01T00:00:00Z' },
+  { id: 'r3', currency_code: 'INR', name: 'Indian rupee', configured: true, rate_to_eur: 97, updated_by_user_id: null, updated_at: '2026-01-01T00:00:00Z' },
 ];
 
 describe('CurrencyToggle', () => {

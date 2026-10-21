@@ -17,7 +17,6 @@ import type {
   EngineerUtilizationResponse,
   HubCapacitySummary,
   ScheduleRunSummary,
-  UtilizationMatrix,
 } from './types';
 
 type FetchCtx = Pick<ApiRequestOptions, 'signal'>;
@@ -50,14 +49,6 @@ export function fetchClassBreakdown(
   region?: LabRegion | null,
 ): Promise<ClassBreakdown> {
   return apiGet<ClassBreakdown>('/capacity/class-breakdown', withHubQuery(ctx, hubId, region));
-}
-
-export function fetchUtilizationMatrix(
-  ctx: FetchCtx = {},
-  hubId?: string | null,
-  region?: LabRegion | null,
-): Promise<UtilizationMatrix> {
-  return apiGet<UtilizationMatrix>('/capacity/utilization-matrix', withHubQuery(ctx, hubId, region));
 }
 
 export function fetchEngineerUtilization(

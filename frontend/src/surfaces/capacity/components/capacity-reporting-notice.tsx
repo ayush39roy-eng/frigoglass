@@ -35,8 +35,8 @@ import { CardInfo } from '@/components/ui/card-info';
  * carry to every figure here, including the class-breakdown and utilization
  * cards. Attaching it to one card would have implied it only governs that card,
  * and would have made the callout disappear whenever that one query failed.
- * The per-card affordances (`hub-load-panel.tsx`, `class-breakdown-panel.tsx`,
- * `chamber-utilization-panel.tsx`) carry the definitions specific to their own
+ * The per-card affordances (`hub-summary-table.tsx`, `class-breakdown-panel.tsx`)
+ * carry the definitions specific to their own
  * figures instead.
  */
 export function CapacityReportingNotice(): React.JSX.Element {
