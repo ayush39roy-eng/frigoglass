@@ -71,10 +71,10 @@ function bandSum(b: PriorityDeliveryBand): number {
 }
 
 describe('PortfolioAnalytics', () => {
-  it('renders all three views of the same completing-within-year rows', () => {
+  it('renders both views of the same (no finish-week chart, P17-R06) completing-within-year rows', () => {
     renderWithProviders(<PortfolioAnalytics rows={[row('a')]} priorityDelivery={BANDS} />);
     expect(screen.getByRole('heading', { name: 'Portfolio analytics' })).toBeInTheDocument();
-    expect(screen.getByRole('heading', { name: 'Finish-week distribution' })).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'Finish-week distribution' })).not.toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'Delivery by priority' })).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'Outcomes by hub' })).toBeInTheDocument();
   });
@@ -180,16 +180,9 @@ describe('PortfolioAnalytics', () => {
     expect(items[1]).toHaveTextContent('R&D-Greece');
   });
 
-  it('says so plainly when the run has no scheduled finish weeks, instead of drawing an empty chart', () => {
-    renderWithProviders(
-      <PortfolioAnalytics rows={[row('a', { last_step_end_week: null, within_year: false, left_out: true })]} priorityDelivery={BANDS} />,
-    );
-    expect(screen.getByText('No scheduled finish weeks in this run.')).toBeInTheDocument();
-  });
-
   it('exposes each chart definition behind a named affordance rather than as body copy', () => {
     renderWithProviders(<PortfolioAnalytics rows={[row('a')]} priorityDelivery={BANDS} />);
-    expect(screen.getByRole('button', { name: 'About Finish-week distribution' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'About Finish-week distribution' })).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'About Delivery by priority' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'About Outcomes by hub' })).toBeInTheDocument();
   });

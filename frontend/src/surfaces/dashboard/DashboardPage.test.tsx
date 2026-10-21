@@ -368,6 +368,79 @@ describe('DashboardPage — P17-R05 layout and scheduled-count labelling', () =>
   });
 });
 
+describe('DashboardPage — P17-R06 rearrangement', () => {
+  const rowsRun: CompletingWithinYear = {
+    ...withinYear,
+    rows: [
+      {
+        project_id: 'p1',
+        project_name: 'Alpha cooler refresh',
+        hub: 'R&D-Greece',
+        category: 'A+',
+        priority: 'P1',
+        within_year: true,
+        spillover: false,
+        left_out: false,
+        blocked: false,
+        cat_not_allowed: false,
+        last_step_end_week: 40,
+        type: null,
+        status: 'In Development',
+        not_started: false,
+      },
+    ],
+  };
+  function readyAll(run: CompletingWithinYear = rowsRun) {
+    hooks.useCompletingWithinYear.mockReturnValue(ready(run));
+    hooks.usePipelineTotals.mockReturnValue(ready(totals));
+    hooks.useStatusOverview.mockReturnValue(ready(status));
+    hooks.useHubTypePipeline.mockReturnValue(ready(hubType));
+  }
+  const follows = (a: Node, b: Node): boolean => Boolean(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING);
+
+  it('orders the page: Completing within the year, then the Hub x Type + VIP band, then the rest', async () => {
+    readyAll();
+    renderWithProviders(<DashboardPage />);
+    const completing = screen.getByRole('heading', { name: 'Completing within the year' });
+    const hubType = screen.getAllByText('Hub × type pipeline')[0]!;
+    const vip = screen.getByTestId('vip-projects-card');
+    const outcome = screen.getByText('Completion outcome');
+    const register = screen.getByTestId('all-projects-register');
+    expect(follows(completing, hubType)).toBe(true);
+    expect(follows(hubType, vip)).toBe(true);
+    // Hub x Type and VIP share one band (a two-column grid), Hub x Type first.
+    const band = vip.closest('.grid');
+    expect(band).not.toBeNull();
+    expect(band!.contains(hubType)).toBe(true);
+    expect(follows(vip, outcome)).toBe(true);
+    expect(follows(vip, register)).toBe(true);
+    await screen.findByRole('heading', { name: 'Portfolio analytics' }, { timeout: 5000 });
+    expect(follows(vip, screen.getByRole('heading', { name: 'Portfolio analytics' }))).toBe(true);
+  });
+
+  it('no longer shows the project outcomes table, the planning clock or the finish-week chart', async () => {
+    readyAll();
+    renderWithProviders(<DashboardPage />);
+    await screen.findByRole('heading', { name: 'Portfolio analytics' }, { timeout: 5000 });
+    expect(screen.queryByText('Project outcomes')).not.toBeInTheDocument();
+    expect(screen.queryByRole('table', { name: 'Per-project outcome from the active schedule run' })).not.toBeInTheDocument();
+    expect(screen.queryByText('Planning week')).not.toBeInTheDocument();
+    expect(screen.queryByText(/of the planning year elapsed/i)).not.toBeInTheDocument();
+    expect(screen.queryByText('Finish-week distribution')).not.toBeInTheDocument();
+    // The kept analytics cards are still there.
+    expect(screen.getByRole('heading', { name: 'Delivery by priority' })).toBeInTheDocument();
+    // "N scheduled" appears only as the header chip and the Completing badge.
+    expect(screen.queryByText(/^\d+ scheduled$/, { selector: 'span.rounded-pill.bg-text' })).not.toBeInTheDocument();
+  });
+
+  it('renders no Planning clock fallback when no schedule run is active', () => {
+    readyAll({ ...withinYear, has_active_schedule_run: false, schedule_run_version: null, rows: [] });
+    renderWithProviders(<DashboardPage />);
+    expect(screen.queryByText('Planning week')).not.toBeInTheDocument();
+    expect(screen.getByText('No schedule computed yet')).toBeInTheDocument();
+  });
+});
+
 describe('DashboardPage — P14 VIP projects card', () => {
   it('sits after the pipeline / KPI cards and before the register, and passes the global filter params', () => {
     hooks.useCompletingWithinYear.mockReturnValue(ready(withinYear));

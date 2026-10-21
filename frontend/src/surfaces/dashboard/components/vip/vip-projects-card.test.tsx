@@ -166,7 +166,7 @@ describe('Dashboard VIP projects card (ADR 0027, OQ #39)', () => {
     expect(within(g).getByTestId('vip-count-highlighted')).toHaveTextContent('2');
     expect(within(g).getByTestId('vip-count-high-risk')).toHaveTextContent('1');
     expect(within(g).getByTestId('vip-count-linked')).toHaveTextContent('3');
-    const names = within(g).getAllByTestId('vip-tile-item').map((li) => li.textContent);
+    const names = within(g).getAllByTestId('vip-tile-item').map((li) => li.querySelector('a,button,span:not([data-testid])')?.textContent);
     expect(names).toEqual(['Family Fridge for Commercial Appliances', 'Beat Box 3D Logo']);
     expect(client.apiGet).toHaveBeenCalledWith('/vip-board', expect.objectContaining({ query: { hub_id: undefined, region: undefined } }));
   });

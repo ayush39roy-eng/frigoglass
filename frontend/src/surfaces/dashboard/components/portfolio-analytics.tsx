@@ -1,22 +1,10 @@
 import * as React from 'react';
 import { motion } from 'framer-motion';
-import { BarChart3, Layers, Target } from 'lucide-react';
-import {
-  Bar,
-  BarChart as RechartsBarChart,
-  Cell,
-  PolarAngleAxis,
-  RadialBar,
-  RadialBarChart,
-  ResponsiveContainer,
-  Tooltip,
-  XAxis,
-  YAxis,
-} from 'recharts';
+import { Layers, Target } from 'lucide-react';
+import { PolarAngleAxis, RadialBar, RadialBarChart, ResponsiveContainer } from 'recharts';
 
 import { BoltCard } from '@/components/ui/bolt-card';
-import { DISPLAY_HORIZON_WEEKS, SPILLOVER_YEAR, WITHIN_YEAR_WEEK } from '@/lib/domain-constants';
-import { formatInteger, formatWeek } from '@/lib/format';
+import { formatInteger } from '@/lib/format';
 import { useMotionTokens } from '@/lib/motion';
 import { cn } from '@/lib/utils';
 import type { ProjectPriority } from '@/types/enums';
@@ -27,8 +15,8 @@ import { CardInfo } from '@/components/ui/card-info';
 
 /**
  * Portfolio analytics (2026-10-01, client ask: "lots of graphs, fascinating").
- * Three views of the SAME `completing-within-year` rows the outcome table
- * lists. Every figure is a COUNT of those rows (grouped by finish week, hub or
+ * Two views of the SAME `completing-within-year` rows the run
+ * lists. Every figure is a COUNT of those rows (grouped by hub or
  * priority); no schedule figure is recomputed (Invariant I9). The per-project
  * outcome flags and finish weeks are the run's own.
  */
@@ -50,17 +38,14 @@ export function PortfolioAnalytics({ rows, priorityDelivery }: PortfolioAnalytic
           Portfolio analytics
         </h2>
         <p className="text-sm font-medium text-text-muted">
-          The active run&apos;s project outcomes, sliced by finish week, hub and priority
+          The active run&apos;s project outcomes, sliced by priority and hub
         </p>
       </div>
       <div className="grid gap-gutter xl:grid-cols-12">
-        <div className="min-w-0 xl:col-span-7">
-          <FinishWeekHistogram rows={rows} />
-        </div>
-        <div className="min-w-0 xl:col-span-5">
+        <div className="min-w-0 xl:col-span-6">
           <PriorityDeliveryRings bands={priorityDelivery} />
         </div>
-        <div className="min-w-0 xl:col-span-12">
+        <div className="min-w-0 xl:col-span-6">
           <HubOutcomeStack rows={rows} />
         </div>
       </div>
@@ -99,217 +84,6 @@ function CardHead({
         <CardInfo label={`About ${title}`}>{info}</CardInfo>
       </div>
     </div>
-  );
-}
-
-/* ---------------------------- finish-week histogram ------------------------ */
-
-const BUCKET = 4;
-
-interface Bucket {
-  label: string;
-  from: number;
-  to: number;
-  count: number;
-  afterCutoff: boolean;
-}
-
-/**
- * 4-week buckets across the 52-week plan year, then ONE "Spillover" bucket for
- * every finish week after W52 (ADR 0024: no W53+ columns are drawn).
- */
-function buildBuckets(rows: CompletingWithinYearRow[]): Bucket[] {
-  const weeks = rows
-    .map((r) => r.last_step_end_week)
-    .filter((w): w is number => w !== null);
-  if (weeks.length === 0) return [];
-  const first = Math.floor((Math.min(...weeks) - 1) / BUCKET) * BUCKET + 1;
-  const buckets: Bucket[] = [];
-  for (let from = first; from <= DISPLAY_HORIZON_WEEKS; from += BUCKET) {
-    const to = Math.min(from + BUCKET - 1, DISPLAY_HORIZON_WEEKS);
-    buckets.push({
-      label: `W${String(from)}`,
-      from,
-      to,
-      count: weeks.filter((w) => w >= from && w <= to).length,
-      afterCutoff: false,
-    });
-  }
-  const spill = weeks.filter((w) => w > DISPLAY_HORIZON_WEEKS).length;
-  if (spill > 0) {
-    buckets.push({
-      label: `→${String(SPILLOVER_YEAR)}`,
-      from: DISPLAY_HORIZON_WEEKS + 1,
-      to: Number.POSITIVE_INFINITY,
-      count: spill,
-      afterCutoff: true,
-    });
-  }
-  return buckets;
-}
-
-function HistogramTooltip({
-  active,
-  payload,
-}: {
-  active?: boolean;
-  payload?: Array<{ payload: Bucket }>;
-}): React.JSX.Element | null {
-  const b = payload?.[0]?.payload;
-  if (!active || !b) return null;
-  return (
-    <div className="rounded-xl border-[1.5px] border-border bg-surface px-s3 py-s2 text-xs shadow-pop">
-      <p className="font-bold text-text">
-        {b.afterCutoff
-          ? `After ${formatWeek(WITHIN_YEAR_WEEK)} — spillover into ${String(SPILLOVER_YEAR)}`
-          : `${formatWeek(b.from)} – ${formatWeek(b.to)}`}
-      </p>
-      <p className="mt-0.5 flex items-center gap-1.5 text-text-muted">
-        <span
-          className={cn('size-2 rounded-full', b.afterCutoff ? 'bg-warning' : 'bg-primary')}
-          aria-hidden="true"
-        />
-        {formatInteger(b.count)} {b.count === 1 ? 'project finishes' : 'projects finish'}
-      </p>
-    </div>
-  );
-}
-
-function FinishWeekHistogram({ rows }: { rows: CompletingWithinYearRow[] }): React.JSX.Element {
-  const { reduced } = useMotionTokens();
-  const buckets = React.useMemo(() => buildBuckets(rows), [rows]);
-  const peak = buckets.reduce((m, b) => Math.max(m, b.count), 0);
-  const peakIndex = buckets.findIndex((b) => b.count === peak);
-  const [hover, setHover] = React.useState<number | null>(null);
-  const highlight = hover ?? peakIndex;
-
-  return (
-    <BoltCard className="flex h-full flex-col gap-s4 p-card">
-      <CardHead
-        icon={BarChart3}
-        title="Finish-week distribution"
-        subtitle="When projects' last steps end, in 4-week buckets"
-        info={
-          <p>
-            Each bar counts the projects whose last scheduled step ends in that 4-week window
-            (the run&apos;s own end week), across the 52-week plan year. Blue bars finish by{' '}
-            {formatWeek(WITHIN_YEAR_WEEK)}; the amber bar collects every project finishing after it
-            (spillover into {SPILLOVER_YEAR}).
-          </p>
-        }
-        right={
-          <span className="hidden items-center gap-s3 text-2xs font-semibold text-text-muted sm:flex">
-            <span className="flex items-center gap-1.5">
-              <span className="size-2.5 rounded-full bg-primary" aria-hidden="true" />
-              By {formatWeek(WITHIN_YEAR_WEEK)}
-            </span>
-            <span className="flex items-center gap-1.5">
-              <span className="size-2.5 rounded-full bg-warning" aria-hidden="true" />
-              Spillover
-            </span>
-          </span>
-        }
-      />
-      {buckets.length === 0 ? (
-        <p className="text-sm text-text-muted">No scheduled finish weeks in this run.</p>
-      ) : (
-        <figure aria-label="Projects by finish week" className="min-h-64 w-full flex-1">
-          <ResponsiveContainer width="100%" height="100%">
-            <RechartsBarChart
-              data={buckets}
-              margin={{ top: 24, right: 4, bottom: 0, left: -24 }}
-              onMouseMove={(state) => {
-                const idx = state.activeTooltipIndex;
-                setHover(typeof idx === 'number' ? idx : null);
-              }}
-              onMouseLeave={() => setHover(null)}
-            >
-              <defs>
-                <pattern
-                  id="finish-hatch"
-                  patternUnits="userSpaceOnUse"
-                  width="7"
-                  height="7"
-                  patternTransform="rotate(45)"
-                >
-                  <rect width="7" height="7" fill="hsl(var(--color-primary))" />
-                  <line x1="0" y1="0" x2="0" y2="7" stroke="hsl(0 0% 100% / 0.35)" strokeWidth="3" />
-                </pattern>
-                <pattern
-                  id="finish-hatch-warn"
-                  patternUnits="userSpaceOnUse"
-                  width="7"
-                  height="7"
-                  patternTransform="rotate(45)"
-                >
-                  <rect width="7" height="7" fill="hsl(var(--color-warning))" />
-                  <line x1="0" y1="0" x2="0" y2="7" stroke="hsl(0 0% 100% / 0.35)" strokeWidth="3" />
-                </pattern>
-              </defs>
-              <XAxis
-                dataKey="label"
-                tickLine={false}
-                axisLine={false}
-                interval={0}
-                tick={{ fontSize: 10, fontWeight: 600, fill: 'hsl(var(--color-text-subtle))' }}
-              />
-              <YAxis
-                allowDecimals={false}
-                tickLine={false}
-                axisLine={false}
-                tick={{ fontSize: 10, fill: 'hsl(var(--color-text-subtle))' }}
-              />
-              <Tooltip content={<HistogramTooltip />} cursor={false} />
-              <Bar
-                dataKey="count"
-                radius={[10, 10, 10, 10]}
-                maxBarSize={34}
-                background={{ fill: 'hsl(var(--color-surface-sunken))', radius: 10 }}
-                isAnimationActive={!reduced}
-                animationDuration={900}
-                label={(props: { x?: string | number | undefined; y?: string | number | undefined; width?: string | number | undefined; index?: number | undefined }) => {
-                  const x = Number(props.x);
-                  const y = Number(props.y);
-                  const width = Number(props.width);
-                  const index = props.index;
-                  return index === highlight && Number.isFinite(x) && Number.isFinite(y) && Number.isFinite(width) ? (
-                    <g>
-                      <rect x={x + width / 2 - 14} y={y - 22} width={28} height={17} rx={8.5} fill="hsl(var(--color-text))" />
-                      <text
-                        x={x + width / 2}
-                        y={y - 13.5}
-                        textAnchor="middle"
-                        dominantBaseline="central"
-                        fontSize={10}
-                        fontWeight={700}
-                        fill="hsl(var(--color-text-inverse))"
-                      >
-                        {index === undefined ? '' : (buckets[index]?.count ?? '')}
-                      </text>
-                    </g>
-                  ) : (
-                    <g />
-                  );
-                }}
-              >
-                {buckets.map((b, i) => (
-                  <Cell
-                    key={b.label}
-                    fill={
-                      i === highlight
-                        ? `url(#${b.afterCutoff ? 'finish-hatch-warn' : 'finish-hatch'})`
-                        : b.afterCutoff
-                          ? 'hsl(var(--color-warning) / 0.55)'
-                          : 'hsl(var(--color-primary) / 0.6)'
-                    }
-                  />
-                ))}
-              </Bar>
-            </RechartsBarChart>
-          </ResponsiveContainer>
-        </figure>
-      )}
-    </BoltCard>
   );
 }
 

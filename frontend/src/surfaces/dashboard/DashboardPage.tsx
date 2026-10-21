@@ -32,9 +32,8 @@ import { PipelineRow } from './components/pipeline-row';
 import { ProjectBreakdown } from './components/project-breakdown';
 import { SectionBoundary } from '@/components/shared/section-boundary';
 import { StatusOverviewCards } from './components/status-overview-cards';
-import { WithinYearKpis, WithinYearTable } from './components/within-year-panel';
+import { WithinYearKpis } from './components/within-year-panel';
 import { DeliveryGaugeCard } from './components/delivery-gauge-card';
-import { PlanningClockCard } from './components/planning-clock-card';
 import { CapacityBookedCard } from './components/capacity-booked-card';
 import { VipProjectsCard } from './components/vip/vip-projects-card';
 import { Button } from '@/components/ui/button';
@@ -44,8 +43,7 @@ import { PanelSkeleton } from '@/components/ui/panel-skeleton';
  * Deferred analytics panels (2026-10-01).
  *
  * `completion-profile-card.tsx` and `portfolio-analytics.tsx` are the Dashboard's
- * only two Recharts consumers, and `project-spotlight.tsx` is its largest
- * non-chart panel. Importing them at module scope made Recharts (≈353 KB raw /
+ * only two Recharts consumers. Importing them at module scope made Recharts (≈353 KB raw /
  * ≈103 KB gzip — by far the biggest third-party module in the app) a STATIC
  * import of the Dashboard route chunk, so the browser downloaded and executed all
  * of it before the page could paint, and so did every test that merely renders the
@@ -58,11 +56,10 @@ import { PanelSkeleton } from '@/components/ui/panel-skeleton';
  * above-the-fold regions), sized to the panel it replaces so the layout does not
  * jolt when the real panel swaps in.
  *
- * `DeliveryGaugeCard` and `PlanningClockCard` stay EAGER on purpose: they are
- * hand-built SVG/CSS, ~5 KB and ~4 KB of source with no dependency beyond
- * framer-motion and lucide (both already in the chunk), and one or the other is on
- * screen in every state of this page. Splitting them would buy nothing and cost an
- * extra request on the common path.
+ * `DeliveryGaugeCard` stays EAGER on purpose: it is hand-built SVG/CSS, ~5 KB of
+ * source with no dependency beyond framer-motion and lucide (both already in the
+ * chunk). Splitting it would buy nothing and cost an extra request on the common
+ * path.
  */
 const CompletionProfileCard = React.lazy(async () => ({
   default: (await import('./components/completion-profile-card')).CompletionProfileCard,
@@ -315,55 +312,66 @@ export default function DashboardPage(): React.JSX.Element {
               </SectionBoundary>
             </StaggerSection>
 
-            {/* P14 (ADR 0027 §6): VIP projects per country, after the KPI cards. */}
+            {/* P17-R06: Hub x Type pipeline summary (main column) beside the
+                compact VIP projects card (side column); stacked on narrow
+                screens, Hub x Type first. */}
             <StaggerSection>
-              <VipProjectsCard />
+              <div className="grid grid-cols-[minmax(0,1fr)] gap-gutter xl:grid-cols-12">
+                <div className="min-w-0 xl:col-span-8">
+                  <SectionBoundary
+                    query={hubTypePipeline}
+                    title="Hub × type pipeline"
+                    errorDescription="The hub × type pipeline summary could not be loaded."
+                  >
+                    {(data) => (
+                      <div className="grid grid-cols-[minmax(0,1fr)] gap-gutter">
+                        <HubTypePipelineTable rows={data} />
+                        <HubRankList rows={data} />
+                      </div>
+                    )}
+                  </SectionBoundary>
+                </div>
+                {/* P14 (ADR 0027 §6): VIP projects per country. */}
+                <div className="relative min-w-0 xl:col-span-4">
+                  <VipProjectsCard fill />
+                </div>
+              </div>
             </StaggerSection>
 
             {/* Row 2 — completion curve beside the two feature cards. Profile and
                 gauge read the SAME completing-within-year payload (one fetch,
                 several reads), so they render only once it has resolved; the
                 boundary above shows its skeleton/error meanwhile. */}
-            <StaggerSection>
-              <div className="grid gap-gutter xl:grid-cols-12">
-                <div className="min-w-0 xl:col-span-8 [&>*]:h-full">
-                  {withinYear.data?.has_active_schedule_run ? (
+            {withinYear.data?.has_active_schedule_run ? (
+              <StaggerSection>
+                <div className="grid gap-gutter xl:grid-cols-12">
+                  <div className="min-w-0 xl:col-span-8 [&>*]:h-full">
                     <React.Suspense fallback={<PanelSkeleton height="h-[22rem]" />}>
                       <CompletionProfileCard data={withinYear.data} />
                     </React.Suspense>
-                  ) : null}
-                </div>
-                <div className="min-w-0 xl:col-span-4 [&>*]:h-full">
-                  {withinYear.data?.has_active_schedule_run ? (
+                  </div>
+                  <div className="min-w-0 xl:col-span-4 [&>*]:h-full">
                     <DeliveryGaugeCard data={withinYear.data} />
-                  ) : (
-                    <PlanningClockCard />
-                  )}
+                  </div>
                 </div>
-              </div>
-            </StaggerSection>
+              </StaggerSection>
+            ) : null}
 
-            {/* Row 3 — the per-project table beside pipeline composition. */}
+            {/* Row 3 - the completion outcome donut now uses the space the
+                removed outcomes table / planning clock left: beside the capacity
+                card when the session can read Capacity, full width otherwise. */}
             <StaggerSection>
               <div className="grid gap-gutter xl:grid-cols-12">
-                {withinYear.data?.has_active_schedule_run ? (
-                  <div className="h-[34rem] min-w-0 xl:col-span-7 xl:h-auto xl:min-h-[34rem]">
-                    <WithinYearTable data={withinYear.data} />
+                <div className={canReadCapacity ? 'min-w-0 xl:col-span-7 [&>*]:h-full' : 'min-w-0 xl:col-span-12'}>
+                  <PipelinePanel withinYear={withinYear.data ?? null} />
+                </div>
+                {/* P11 (ADR 0016): compact Europe / India booked %, only for a
+                    session that can read Capacity (no fetch otherwise). */}
+                {canReadCapacity ? (
+                  <div className="min-w-0 xl:col-span-5 [&>*]:h-full">
+                    <CapacityBookedCard />
                   </div>
                 ) : null}
-                <div
-                  className={
-                    withinYear.data?.has_active_schedule_run
-                      ? 'flex min-w-0 flex-col gap-gutter xl:col-span-5'
-                      : 'min-w-0 xl:col-span-12'
-                  }
-                >
-                  {withinYear.data?.has_active_schedule_run ? <PlanningClockCard /> : null}
-                  <PipelinePanel withinYear={withinYear.data ?? null} />
-                  {/* P11 (ADR 0016): compact Europe / India booked %, only for a
-                      session that can read Capacity (no fetch otherwise). */}
-                  {canReadCapacity ? <CapacityBookedCard /> : null}
-                </div>
               </div>
             </StaggerSection>
 
@@ -385,22 +393,7 @@ export default function DashboardPage(): React.JSX.Element {
             </StaggerSection>
 
 
-            <StaggerSection>
-              <SectionBoundary
-                query={hubTypePipeline}
-                title="Hub × type pipeline"
-                errorDescription="The hub × type pipeline summary could not be loaded."
-              >
-                {(data) => (
-                  <div className="grid gap-4 xl:grid-cols-[1.4fr_1fr]">
-                    <HubTypePipelineTable rows={data} />
-                    <HubRankList rows={data} />
-                  </div>
-                )}
-              </SectionBoundary>
-            </StaggerSection>
-
-            {/* P13-T10: "Analytics & breakdown" after the hub × type pipeline. */}
+            {/* P13-T10: "Analytics & breakdown" after the all-projects register. */}
             <StaggerSection>
               <SectionBoundary
                 query={analytics}

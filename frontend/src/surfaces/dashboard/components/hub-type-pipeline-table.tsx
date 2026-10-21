@@ -113,7 +113,7 @@ export function HubTypePipelineTable({ rows }: HubTypePipelineTableProps): React
             <React.Suspense fallback={<PanelSkeleton height="h-64" />}>
               <HubTypePipelineChart rows={rows} />
             </React.Suspense>
-            <Table>
+            <Table scrollLabel="Hub by project type pipeline table">
             <TableHeader>
               <TableRow>
                 <TableHead>Hub</TableHead>
