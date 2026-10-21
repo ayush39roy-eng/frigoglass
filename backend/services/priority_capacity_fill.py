@@ -27,6 +27,7 @@ from collections import defaultdict
 from collections.abc import Collection
 from dataclasses import dataclass, field
 from decimal import Decimal
+from types import EllipsisType
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -84,13 +85,22 @@ class CapacityFill:
         )
 
 
-async def compute_capacity_fill(db: AsyncSession, hub_ids: Collection[uuid.UUID]) -> CapacityFill:
+async def compute_capacity_fill(
+    db: AsyncSession,
+    hub_ids: Collection[uuid.UUID],
+    *,
+    active_run: ScheduleRun | None | EllipsisType = ...,
+) -> CapacityFill:
     """The P1 capacity fill of every hub in `hub_ids` (callers pass in-scope
     hubs only). Query count is constant: hubs, projects + scores, engineers,
-    calendars, the active run, and `remaining_run_load_by_project`'s own."""
+    calendars, the active run, and `remaining_run_load_by_project`'s own.
+
+    P25-T03: a caller that already loaded the active run (the Priority board,
+    the Workspace) passes it as `active_run` (`None` = there is none), so it
+    is not read twice. Omitted, the loader reads it itself."""
 
     ids = sorted(set(hub_ids), key=str)
-    run = await get_active_run(db)
+    run = await get_active_run(db) if isinstance(active_run, EllipsisType) else active_run
     if not ids:
         return CapacityFill(run=run)
 

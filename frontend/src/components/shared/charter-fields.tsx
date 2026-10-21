@@ -3,6 +3,8 @@ import { FileSpreadsheet } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 
+import { CHARTER_FIELDS, CHARTER_NOT_SET, type CharterFields } from './charter-fields-meta';
+
 /**
  * P24-T02 (ADR 0035): the three read-only charter fields the API serves on
  * `ProjectRead`, `WorkspaceProject` and `ProjectFilterRow` — the client
@@ -10,18 +12,6 @@ import { Button } from '@/components/ui/button';
  * written. Shown verbatim; never edited (a write is a 422) and never a
  * scheduling input. A null value prints "Not set".
  */
-
-export type CharterFieldKey = 'plant' | 'requesting_department' | 'product_type';
-
-export type CharterFields = Record<CharterFieldKey, string | null>;
-
-export const CHARTER_FIELDS: readonly { key: CharterFieldKey; label: string; short: string }[] = [
-  { key: 'plant', label: 'Plant', short: 'Plant' },
-  { key: 'requesting_department', label: 'Requesting department', short: 'Req. dept' },
-  { key: 'product_type', label: 'Product type', short: 'Product type' },
-];
-
-export const CHARTER_NOT_SET = 'Not set';
 
 /** One table cell: the served value, or a subtle "Not set". */
 export function CharterCell({ value }: { value: string | null }): React.JSX.Element {

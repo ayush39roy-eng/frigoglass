@@ -73,8 +73,13 @@ function card(id: string, overrides: Partial<PriorityBoardCard> = {}): PriorityB
     hub: 'R&D-Greece',
     category: 'A',
     status: 'In Development',
+    external_code: null,
     score: 70,
     band: 'P1',
+    suggested_band: 'P1',
+    score_band: 'P1',
+    capacity_fill: false,
+    capacity_fill_reason: null,
     hard_gated: false,
     is_vip: false,
     projected_end_week: 40,
@@ -198,8 +203,8 @@ describe('PriorityBoardPage — served grouping', () => {
     const gamma = cardEl('Gamma Queue');
     expect(within(gamma).getByTestId('finish-chip')).toHaveTextContent('No projected finish');
     expect(gamma).toHaveTextContent('Weighted score —');
-    // P21-T05: the served band is shown beside the served weighted score.
-    expect(within(cardEl('Alpha Cooler')).getByTestId('board-card-band')).toHaveTextContent('score band P1');
+    // P25-T04: the served suggested band is shown beside the served weighted score, as the grid's chip.
+    expect(within(within(cardEl('Alpha Cooler')).getByTestId('board-card-band')).getByTitle(/Priority band P1/)).toBeInTheDocument();
   });
 
   it('passes the global hub filter as hub_id', async () => {
@@ -497,7 +502,8 @@ describe('PriorityBoardPage — P21-T05 Cards | List layout', () => {
     expect(rows).toHaveLength(4);
     // Names only: no score, chips or status in a row; the position and the name.
     const alpha = rows.find((r) => r.textContent?.includes('Alpha Cooler')) as HTMLElement;
-    expect(alpha).toHaveTextContent(/^2Alpha Cooler$/);
+    // Names only, plus the same suggested-band chip as the grid ("P1").
+    expect(alpha).toHaveTextContent(/^2Alpha CoolerP1$/);
     expect(within(alpha).getByRole('link', { name: 'Alpha Cooler' })).toHaveAttribute('title', 'Alpha Cooler');
     // Owner feedback: the full name over up to two lines (fixed 46 px row), never one truncated line.
     expect(within(alpha).getByRole('link', { name: 'Alpha Cooler' })).toHaveClass('line-clamp-2');
@@ -561,6 +567,47 @@ describe('PriorityBoardPage — P21-T05 Cards | List layout', () => {
     expect(screen.getAllByTestId('board-list-row').length).toBe(4);
     // Another user keeps the default.
     expect(localStorage.getItem(boardLayoutStorageKey('someone-else'))).toBeNull();
+  });
+
+  it('P25-T04: cards and list rows show the served suggested band chip, with the capacity-fill reason; the list shows external_code', async () => {
+    const reason = 'P1 (capacity fill): hub P1 design load 9.00 of 10.00 weeks with this project';
+    client.apiGet.mockImplementation((path: string) => {
+      if (path === '/priority-board') {
+        return Promise.resolve(
+          board({
+            P1: [card('alpha', { name: 'Alpha Cooler', external_code: 'FG-2026-014' })],
+            P2: [card('beta', { name: 'Beta Freezer', band: 'P2', score_band: 'P2', suggested_band: 'P1', capacity_fill: true, capacity_fill_reason: reason })],
+          }),
+        );
+      }
+      if (path === '/dashboard/projects/facets') return Promise.resolve(FACETS);
+      return Promise.reject(new Error(`unexpected GET ${path}`));
+    });
+    const user = userEvent.setup();
+    renderWithProviders(<PriorityBoardPage />);
+    await screen.findByRole('link', { name: 'Beta Freezer' });
+    // Card: the promoted chip, the score band as secondary text (it differs), the reason in the tooltip.
+    const beta = within(cardEl('Beta Freezer'));
+    expect(beta.getByTestId('band-chip-capacity-fill')).toHaveTextContent('P1 · capacity fill');
+    expect(beta.getByTestId('band-chip-score-band')).toHaveTextContent('score band P2');
+    await user.hover(beta.getByRole('button', { name: 'Suggested band P1 by capacity fill, score band P2' }));
+    expect((await screen.findAllByText(reason)).length).toBeGreaterThan(0);
+    // A base P1 card: plain chip, no score-band line (it equals the suggested band).
+    expect(within(cardEl('Alpha Cooler')).queryByTestId('band-chip-score-band')).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'List' }));
+    const rows = screen.getAllByTestId('board-list-row');
+    const alphaRow = rows.find((r) => r.textContent?.includes('Alpha Cooler')) as HTMLElement;
+    const betaRow = rows.find((r) => r.textContent?.includes('Beta Freezer')) as HTMLElement;
+    // With a code: the name takes one line and the code the second.
+    expect(within(alphaRow).getByTestId('board-list-code')).toHaveTextContent('FG-2026-014');
+    expect(within(alphaRow).getByRole('link', { name: 'Alpha Cooler' })).toHaveClass('line-clamp-1');
+    // Without a code: two lines for the name.
+    expect(within(betaRow).queryByTestId('board-list-code')).not.toBeInTheDocument();
+    expect(within(betaRow).getByRole('link', { name: 'Beta Freezer' })).toHaveClass('line-clamp-2');
+    // Dense chip: "P1" with the fill outline; the full label stays the accessible name.
+    const dense = within(betaRow).getByRole('button', { name: 'Suggested band P1 by capacity fill, score band P2' });
+    expect(dense).toHaveTextContent(/^P1$/);
   });
 
   it('list layout has no serious/critical axe violations', async () => {

@@ -7,6 +7,7 @@ import { PriorityMoveControl } from '@/components/shared/priority-move/priority-
 import { TrackingStatusChip } from '@/components/shared/tracking-status-chip';
 import { VipBadge } from '@/components/shared/vip-badge';
 import { CategoryTag } from '@/components/ui/category-tag';
+import { SuggestedBandChip } from '@/components/shared/suggested-band-chip';
 import { formatDecimal } from '@/lib/format';
 import { cn } from '@/lib/utils';
 
@@ -47,6 +48,8 @@ export const BoardCard = React.memo(function BoardCard({
   const { card, servedPriority, pending } = item;
   const locked = card.hard_gated && servedPriority === 'P1';
   const staged = React.useContext(BoardScenarioContext).has(card.project_id);
+  // P25-T03: the served suggested (promoted) band; a pre-P25-T03 API only serves `band`.
+  const suggested = card.suggested_band ?? card.band;
 
   return (
     <div
@@ -110,9 +113,14 @@ export const BoardCard = React.memo(function BoardCard({
             {card.score === null ? '—' : formatDecimal(card.score)}
           </span>
         </span>
-        {card.band ? (
-          <span className="text-text-muted" data-testid="board-card-band">
-            · score band <span className="font-semibold text-text">{card.band}</span>
+        {suggested ? (
+          <span className="inline-flex" data-testid="board-card-band">
+            <SuggestedBandChip
+              band={suggested}
+              capacityFill={card.capacity_fill}
+              reason={card.capacity_fill_reason}
+              scoreBand={card.score_band}
+            />
           </span>
         ) : null}
       </p>

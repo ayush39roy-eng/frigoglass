@@ -6,7 +6,7 @@ import { formatInteger } from '@/lib/format';
 import { BAND_THRESHOLDS, POINTS_RULE_COPY, type PriorityMatrixRow } from '../api/types';
 import { formatOutOf100, rowBand, rowNormalizedScore } from '../lib/row-scores';
 import { HardGateBadge } from './hard-gate-badge';
-import { SuggestedBandChip } from './suggested-band-chip';
+import { SuggestedBandChip } from '@/components/shared/suggested-band-chip';
 
 /**
  * The prioritization score cell (`frontend-builder` SKILL names this as an
@@ -16,7 +16,7 @@ import { SuggestedBandChip } from './suggested-band-chip';
  *   - `normalized_pct`  — backend: round(weighted_score / total_weight × 100),
  *     shown out of 100 ("91/100", P21)
  *   - `weighted_score`  — backend: Σ points (score/5 × weight)
- *   - `suggested_band`  — backend: banded from `normalized_pct`
+ *   - `suggested_band`  — backend: the band after the hub's P1 capacity fill (P25, ADR 0036)
  * Nothing is recomputed here (Invariant I9). The threshold table is shown as
  * static rule copy so the band is *legible*, not to derive it.
  */

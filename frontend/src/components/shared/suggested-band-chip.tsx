@@ -7,7 +7,7 @@ import { cn } from '@/lib/utils';
 import type { ProjectPriority } from '@/types/enums';
 
 /**
- * P25 (ADR 0036): the SUGGESTED band, as served. When the hub's P1 capacity
+ * P25 (ADR 0036): the SUGGESTED band, as served (Matrix grid, Compare, Priority board, Workspace). When the hub's P1 capacity
  * fill promoted the project (`capacity_fill`), it reads "P1 · capacity fill" in
  * a distinct outlined variant with a fill icon, plus a secondary line with the
  * served score band. The tooltip is the served `capacity_fill_reason`, shown
@@ -22,6 +22,9 @@ export interface SuggestedBandChipProps {
   scoreBand?: ProjectPriority | null | undefined;
   /** Hide the "score band" line (tight cells). */
   compact?: boolean;
+  /** List rows: the fill variant reads "P1" with its icon and outline (the full label stays the
+   *  accessible name and the tooltip). Implies `compact`. */
+  dense?: boolean;
 }
 
 export function SuggestedBandChip({
@@ -30,6 +33,7 @@ export function SuggestedBandChip({
   reason,
   scoreBand,
   compact = false,
+  dense = false,
 }: SuggestedBandChipProps): React.JSX.Element {
   if (capacityFill === true) {
     const name = `Suggested band P1 by capacity fill${scoreBand ? `, score band ${scoreBand}` : ''}`;
@@ -37,9 +41,9 @@ export function SuggestedBandChip({
       <span className="inline-flex flex-col items-start gap-0.5" data-testid="band-chip-capacity-fill">
         <span className="inline-flex items-center gap-1 rounded-sm border-[1.5px] border-band-p1 bg-surface px-1.5 py-0.5 text-2xs font-semibold leading-none text-text">
           <ArrowUpFromLine className="size-3 shrink-0 text-band-p1" aria-hidden="true" />
-          P1 · capacity fill
+          {dense ? 'P1' : 'P1 · capacity fill'}
         </span>
-        {scoreBand && !compact ? (
+        {scoreBand && !compact && !dense ? (
           <span className="text-[10px] leading-none text-text-muted" data-testid="band-chip-score-band">
             score band {scoreBand}
           </span>

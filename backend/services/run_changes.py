@@ -9,7 +9,9 @@ Scoping is the data-access layer's, applied server-side:
 - an Engineer principal sees only projects with a step assigned to their own
   linked Engineer row in the compared (new) run, the Gantt's "own
   assignments" rule (`services.hub_scope.is_engineer_self_scoped`, P10-F01);
-- everyone else is filtered by `hub_scope_filter(principal, Project.hub_id)`.
+- everyone else is filtered by `hub_scope_filter(principal, Project.hub_id)`,
+  ORed with their own assignments when they also hold Engineer
+  (`hub_scope.project_row_scope`, 2026-10-21 multi-role fix).
 Changed projects outside that scope are only *counted* (`hidden_count`).
 Their names, ids and figures never leave this function.
 """
@@ -30,7 +32,7 @@ from models.project import Project
 from models.schedule import ScheduleRun, ScheduleRunProjectOutcome, ScheduleRunProjectStep
 from scheduling.types import ScheduleOutput
 from schemas.schedule_run import ScheduleRunChangeRow, ScheduleRunChanges
-from services.hub_scope import hub_scope_filter, is_engineer_self_scoped
+from services.hub_scope import needs_own_assignments, project_row_scope
 
 
 class _Compared(NamedTuple):
@@ -130,9 +132,10 @@ async def diff_outcomes(
     compared fields; `after` comes either from stored outcome rows
     (`compute_run_changes`) or from an unsaved scheduler output (the P14
     priority-move preview, `outcomes_from_output`), so both use one
-    comparison. `own_project_ids` is awaited only for an Engineer
-    self-scoped principal (projects with a step assigned to them in the
-    `after` schedule). `exclude_project_ids` are neither listed nor counted.
+    comparison. `own_project_ids` is awaited only for a caller holding
+    Engineer whose scope it can change (`hub_scope.needs_own_assignments`:
+    projects with a step assigned to them in the `after` schedule).
+    `exclude_project_ids` are neither listed nor counted.
     """
 
     changed: set[uuid.UUID] = {
@@ -149,13 +152,17 @@ async def diff_outcomes(
             .join(Hub, Project.hub_id == Hub.id)
             .where(Project.id.in_(changed))
         )
-        if is_engineer_self_scoped(principal):
-            own = await own_project_ids()
-            stmt = stmt.where(Project.id.in_(own))
-        else:
-            hub_filter = hub_scope_filter(principal, Project.hub_id)
-            if hub_filter is not None:
-                stmt = stmt.where(hub_filter)
+        # ADR 0012 MAX (2026-10-21 multi-role fix): a self-scoped Engineer
+        # sees own assignments only; Engineer plus a hub-scoped role sees
+        # that hub scope OR own assignments.
+        own = (
+            Project.id.in_(await own_project_ids())
+            if needs_own_assignments(principal)
+            else None
+        )
+        scope = project_row_scope(principal, Project.hub_id, own)
+        if scope is not None:
+            stmt = stmt.where(scope)
         for pid, name, hub_name, priority in (await db.execute(stmt)).all():
             b = before.get(pid, _EMPTY)
             a = after.get(pid, _EMPTY)

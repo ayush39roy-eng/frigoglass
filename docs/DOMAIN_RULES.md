@@ -360,7 +360,10 @@ for p in candidates:
 
 - Served as `suggested_band` (promoted band), `score_band` (pure score band), `capacity_fill` and
   `capacity_fill_reason` on Matrix rows. Per-hub totals are served by `GET /priorities/capacity-fill`
-  (`docs/API_CONTRACT_P25.md`). Matrix band counts use the promoted band.
+  (`docs/API_CONTRACT_P25.md`). Matrix band counts use the promoted band. *(P25-T03:)* the same
+  four fields, from the same computation, are served on Priority board cards, in the Workspace
+  score section and in the Matrix export, so a project's fill is identical everywhere it is shown.
+  Board columns stay keyed by the committed priority.
 - The fill never writes `Project.priority`, a score or an audit row, and it never schedules. The
   committed priority stays a human decision (Priority board, ADR 0015/0018). Exact 2 dp arithmetic.
 - The walk for a hub uses every project of the hub, independent of row filters and of the caller.

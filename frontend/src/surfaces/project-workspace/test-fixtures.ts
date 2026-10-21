@@ -122,6 +122,10 @@ export function workspaceFixture(over: Partial<WorkspaceResponse> = {}): Workspa
       weighted_score: 980,
       normalized_pct: 70,
       suggested_band: 'P1',
+      // P25-T03: a base P1 project, no capacity fill.
+      score_band: 'P1',
+      capacity_fill: false,
+      capacity_fill_reason: null,
     },
     files: [
       {

@@ -3,7 +3,8 @@ import { FolderKanban, FolderOpen, Pencil } from 'lucide-react';
 
 import { CountryFlag } from '@/components/shared/hub-filter/country-flag';
 import { PriorityBandPill } from '@/components/shared/priority-band-pill';
-import { CHARTER_FIELDS, CharterCell } from '@/components/shared/charter-fields';
+import { CharterCell } from '@/components/shared/charter-fields';
+import { CHARTER_FIELDS } from '@/components/shared/charter-fields-meta';
 import { NoLeaderLabel } from '@/components/shared/no-leader-label';
 import { ProjectStatusBadge } from '@/components/shared/project-status-badge';
 import { CategoryTag } from '@/components/ui/category-tag';

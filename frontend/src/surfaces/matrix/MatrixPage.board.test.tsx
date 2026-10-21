@@ -339,7 +339,7 @@ describe('P21-T05 Matrix tabs', () => {
     await user.click(screen.getByRole('tab', { name: 'Priority board' }));
     const card = within(boardCard('Alpha Cooler'));
     await waitFor(() => expect(card.getByTestId('board-card-score')).toHaveTextContent('59'));
-    expect(card.getByTestId('board-card-band')).toHaveTextContent('score band P4');
+    expect(within(card.getByTestId('board-card-band')).getByTitle(/Priority band P4/)).toBeInTheDocument();
     // Thirteen typed inputs: allow for a loaded runner.
   }, 20_000);
 

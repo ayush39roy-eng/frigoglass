@@ -2,7 +2,7 @@ import * as React from 'react';
 import { Pencil } from 'lucide-react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 
-import { CHARTER_FIELDS, CHARTER_NOT_SET } from '@/components/shared/charter-fields';
+import { CHARTER_FIELDS, CHARTER_NOT_SET } from '@/components/shared/charter-fields-meta';
 import { ProjectStatusBadge } from '@/components/shared/project-status-badge';
 import { usePriorityMoveHost } from '@/components/shared/priority-move/priority-move-context';
 import { applyFormPriorityMove } from '@/components/shared/priority-move/form-priority-move';

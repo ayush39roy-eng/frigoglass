@@ -446,6 +446,10 @@ CONTRACT_TABLE: list[tuple[Path, str, str, str]] = [
     (_WORKSPACE_TS, "WorkspaceProject", "WorkspaceProject", "exact"),
     (_WORKSPACE_TS, "WorkspaceSchedule", "WorkspaceSchedule", "exact"),
     (_WORKSPACE_TS, "WorkspaceStage", "WorkspaceStage", "exact"),
+    # P25-T03 (ADR 0036, docs/API_CONTRACT_P25.md §5): gains `score_band`,
+    # `capacity_fill`, `capacity_fill_reason` (`suggested_band` is now the
+    # promoted band). Red here and in `test_section7_nullability_matches_exactly`
+    # until P25-T04 mirrors them.
     (_WORKSPACE_TS, "WorkspacePriorityScore", "WorkspacePriorityScore", "exact"),
     (_WORKSPACE_TS, "FileRead", "FileRead", "exact"),
     (_WORKSPACE_TS, "CommentRead", "CommentRead", "exact"),
@@ -511,6 +515,9 @@ CONTRACT_TABLE: list[tuple[Path, str, str, str]] = [
     (_CHECKINS_TS, "CheckInSubmitResponse", "CheckInResponse", "exact"),
     (_CHECKINS_TS, "CheckInHistoryRow", "CheckInHistoryRow", "exact"),
     # --- P12-T03: priority board (backend/schemas/priority_board.py) ---
+    # P25-T03 (ADR 0036, docs/API_CONTRACT_P25.md §5): the card gains
+    # `external_code`, `suggested_band`, `score_band`, `capacity_fill`,
+    # `capacity_fill_reason`. Red until P25-T04 mirrors them.
     (_PRIORITY_BOARD_TS, "PriorityBoardCard", "PriorityBoardCard", "exact"),
     (_PRIORITY_BOARD_TS, "PriorityBoardColumn", "PriorityBoardColumn", "exact"),
     (_PRIORITY_BOARD_TS, "PriorityBoardResponse", "PriorityBoardResponse", "exact"),

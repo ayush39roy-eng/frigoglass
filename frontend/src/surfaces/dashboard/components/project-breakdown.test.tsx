@@ -152,7 +152,7 @@ describe('All registered projects register (P13, ADR 0025 §5)', () => {
     expect(useRegionSummary).toHaveBeenLastCalledWith(null, null);
   });
 
-  it('shows the served total_count and every contract column, with no Plant / Req. dept / Delete', () => {
+  it('shows the served total_count and every contract column; workbook columns off by default; no Delete', () => {
     useDashboardProjects.mockReturnValue(ok([row()], 236));
     renderWithProviders(<ProjectBreakdown />);
     expect(screen.getByTestId('register-total')).toHaveTextContent('236 projects');
@@ -178,6 +178,33 @@ describe('All registered projects register (P13, ADR 0025 §5)', () => {
     expect(screen.queryByText(/Plant/)).not.toBeInTheDocument();
     expect(screen.queryByText(/Req\. dept/)).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /Delete/i })).not.toBeInTheDocument();
+  });
+
+  it('P24-T02: Workbook fields adds Plant / Req. dept / Product type with the served values (ADR 0035)', async () => {
+    const user = userEvent.setup();
+    useDashboardProjects.mockReturnValue(ok([row({ plant: 'Kato Achaia', requesting_department: 'Marketing', product_type: null })]));
+    renderWithProviders(<ProjectBreakdown />);
+    await user.click(screen.getByRole('button', { name: 'Workbook fields' }));
+    const headers = screen.getAllByRole('columnheader').map((h) => h.textContent);
+    expect(headers.slice(7, 10)).toEqual(['Plant', 'Req. dept', 'Product type']);
+    const table = screen.getByRole('table', { name: 'All registered projects' });
+    const cells = within(table).getAllByRole('cell').map((c) => c.textContent);
+    expect(cells).toEqual(expect.arrayContaining(['Kato Achaia', 'Marketing', 'Not set']));
+  });
+
+  it('P24-T02: a null leader reads "No leader"; with a served LEFT_OUT outcome it adds the hint', () => {
+    useDashboardProjects.mockReturnValue(
+      ok([
+        row({ project_id: 'p-1', leader_name: null, leader_engineer_id: null, outcome: 'LEFT_OUT' }),
+        row({ project_id: 'p-2', leader_name: null, leader_engineer_id: null, outcome: 'WITHIN_YEAR' }),
+      ]),
+    );
+    renderWithProviders(<ProjectBreakdown />);
+    const labels = screen.getAllByTestId('no-leader');
+    expect(labels).toHaveLength(2);
+    expect(within(labels[0]!).getByText('No leader assigned')).toHaveClass('sr-only');
+    expect(within(labels[0]!).getByTestId('no-leader-left-out')).toHaveTextContent('Left out: no leader assigned');
+    expect(within(labels[1]!).queryByTestId('no-leader-left-out')).not.toBeInTheDocument();
   });
 
   it('prints a finish past W52 as "After W52" (ADR 0024) and a missing week as a dash', () => {

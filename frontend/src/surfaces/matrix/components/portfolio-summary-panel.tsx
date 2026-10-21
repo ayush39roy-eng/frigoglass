@@ -22,7 +22,7 @@ import { BandDistributionChart, type BandDatum } from './band-distribution-chart
  * read verbatim from `GET /priorities/summary`. The table is authoritative; the
  * bar chart plots the identical `suggested_band_counts` values.
  *
- * `suggested_band` = what the current 13-dimension score computes to (server-
+ * `suggested_band` = the score band after the hub's P1 capacity fill (P25; server-
  * side). `set_priority` = the priority currently *committed* on the project
  * (`Project.priority`). They can differ — a Portfolio Manager may override, or a
  * hard gate may pin a project to P1 on "Apply Priorities". Labelled explicitly

@@ -26,6 +26,12 @@ and `lab_weeks` follow the filtered set; the weeks are each card's remaining
 design / lab load in the active run
 (`services.capacity_priority.remaining_run_load_by_project`).
 
+**P25-T03 (ADR 0036, docs/API_CONTRACT_P25.md §5).** Each card also serves
+`external_code` and the P1 capacity fill (`suggested_band` promoted,
+`score_band`, `capacity_fill`, `capacity_fill_reason`), from the Matrix's
+loader (`services.priority_capacity_fill`). Columns stay keyed by the
+committed `Project.priority`, so counts and weeks do not change.
+
 There is no write here: a drop calls the existing `POST
 /projects/{id}/priority` (ADR 0015), which owns RBAC, the hard-gate 409,
 audit, the recalculation and the coalesced follow-up run.
@@ -63,6 +69,7 @@ from services.active_run import get_active_run
 from services.capacity_priority import remaining_run_load_by_project
 from services.capacity_supply import round2
 from services.hub_scope import global_hub_filter, hub_scope_filter
+from services.priority_capacity_fill import compute_capacity_fill
 from services.project_cards import build_project_cards
 
 router = APIRouter(prefix="/priority-board", tags=["priority-board"])
@@ -137,6 +144,10 @@ async def get_priority_board(
     active_run = await get_active_run(db)
     cards = await build_project_cards(db, projects, active_run)
     remaining = await remaining_run_load_by_project(db, active_run, [p.id for p in projects])
+    # P25-T03 (ADR 0036): the same one-pass loader as the Matrix, over the
+    # hubs of the cards shown (already scoped). The walk itself uses every
+    # project of each hub, so a card's fill matches its Matrix row.
+    fill = await compute_capacity_fill(db, {p.hub_id for p in projects}, active_run=active_run)
 
     by_column: dict[ProjectPriority, list[PriorityBoardCard]] = {p: [] for p in COLUMN_ORDER}
     design_by_column: dict[ProjectPriority, float] = {p: 0.0 for p in COLUMN_ORDER}
@@ -144,6 +155,7 @@ async def get_priority_board(
     for project in projects:
         assert project.priority is not None  # filtered above
         card = cards[project.id]
+        row_fill = fill.for_row(project.id, project.hub_id, card.band)
         design, lab = remaining.get(project.id, (0.0, 0.0))
         design_by_column[project.priority] += design
         lab_by_column[project.priority] += lab
@@ -151,12 +163,17 @@ async def get_priority_board(
             PriorityBoardCard(
                 project_id=project.id,
                 name=project.name,
+                external_code=project.external_code,
                 hub_id=project.hub_id,
                 hub=project.hub.name,
                 category=project.category,
                 status=project.status,
                 score=card.score,
                 band=card.band,
+                suggested_band=row_fill.suggested_band,
+                score_band=row_fill.score_band,
+                capacity_fill=row_fill.capacity_fill,
+                capacity_fill_reason=row_fill.capacity_fill_reason,
                 hard_gated=card.hard_gated,
                 is_vip=project.is_vip,
                 projected_end_week=card.projected_end_week,

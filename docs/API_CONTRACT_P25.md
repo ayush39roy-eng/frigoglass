@@ -1,6 +1,6 @@
 # API contract: P25, P1 capacity fill (ADR 0036)
 
-Owner: backend-builder (P25-T01). Consumer: frontend-builder (P25-T02). Date: 2026-10-21.
+Owner: backend-builder (P25-T01, §5 P25-T03). Consumer: frontend-builder (P25-T02, §5 P25-T04). Date: 2026-10-21.
 Rules: `docs/DOMAIN_RULES.md` "Prioritization scoring" → "P1 capacity fill"; ADR 0036.
 
 Everything here is **additive**, with one change of meaning: `suggested_band` on matrix rows and
@@ -77,11 +77,49 @@ its `capacity_weeks`, and `0.0` / `0.0` / `0` for the rest. Overfull hubs have
 | `score_band_counts` | **new**: counts of the pure score band |
 | `capacity_fill_count` | **new**: promoted projects in scope |
 
-## 5. Not changed
+## 5. Board, Workspace and Matrix export (P25-T03, 2026-10-21)
 
-Committed priority (`set_priority`, `Project.priority`), stored scores, the priority board, project
-cards, the Workspace, and `GET /exports/matrix` still use the stored score band. Nothing here writes,
-audits or schedules.
+*(Revised by P25-T03. Before it, this section said the board, the Workspace and the export still
+used the stored score band.)* The fill is served everywhere a band is shown, from the same one-pass
+loader (`services/priority_capacity_fill.py`), so a project's four fill fields are **identical** on
+its Matrix row, its board card, its Workspace score section and its export row. Hub scoping is
+unchanged: only the rows shown are scoped, and the walk for each shown hub uses every project of
+that hub (§1).
+
+**5a. `PriorityBoardCard` (`GET /priority-board`)**, additive:
+
+| Field | Type | Meaning |
+|---|---|---|
+| `external_code` | string \| null | **new**: the project's external code (null if none), for telling apart similar names in the List layout |
+| `suggested_band` | `"P1".."P4" \| null` | **new**: the promoted band, as §1 |
+| `score_band` | `"P1".."P4" \| null` | **new**: the pure score band, as §1 |
+| `capacity_fill` | boolean | **new**, as §1 |
+| `capacity_fill_reason` | string \| null | **new**, as §1 |
+| `band` | `"P1".."P4" \| null` | **unchanged**: the stored score band (always equal to `score_band`); kept for existing clients |
+
+Columns stay keyed by the **committed** `Project.priority`: a promoted card stays in its committed
+column, and column `count`, `design_weeks` and `lab_weeks` are unchanged.
+
+**5b. `WorkspacePriorityScore` (`GET /projects/{id}/workspace` → `priority_score`)**:
+`suggested_band` **changes meaning** to the promoted band (as on Matrix rows), and `score_band`,
+`capacity_fill`, `capacity_fill_reason` are **new**, as §1. `priority_score` stays null for an
+unscored project.
+
+**5c. `GET /exports/matrix` (CSV / XLSX, `Matrix` sheet)**:
+
+| Column | Meaning |
+|---|---|
+| `suggested_band_after_capacity_fill` | the row's promoted `suggested_band`. **Renamed** from `suggested_band` so the header says it is the band after the P1 capacity fill |
+| `score_band` | **new**: the pure score band |
+| `capacity_fill` | **new**: `True` / `False` |
+| `capacity_fill_reason` | **new**: the served reason text, empty when null |
+
+The four columns are adjacent, in that order. Every other column is unchanged; nested fields
+(`dimension_points`, `dimension_scores`) stay out; text cells keep the formula-injection guard.
+
+**Still not changed:** committed priority (`set_priority`, `Project.priority`), stored scores and
+the stored `PriorityScore.suggested_band`. Project cards (`services/project_cards.py`) are an
+internal helper and still carry the stored band. Nothing here writes, audits or schedules.
 
 ## 6. Contract-test rows (`backend/tests/test_openapi_frontend_contract.py`)
 
@@ -93,3 +131,13 @@ audits or schedules.
 | `PriorityPortfolioSummary` | `PriorityPortfolioSummary` | exact | adds `score_band_counts`, `capacity_fill_count` |
 | `HubP1Fill` | `HubP1Fill` | exact | declares it (new) |
 | `PriorityCapacityFill` | `PriorityCapacityFill` | exact | declares it (new) |
+
+P25-T03 rows (red until P25-T04 mirrors them; the six rows above are green since P25-T02):
+
+| TS | Backend schema | Mode | Red until the frontend… |
+|---|---|---|---|
+| `PriorityBoardCard` (`frontend/src/surfaces/priority-board/api.ts`) | `PriorityBoardCard` | exact | adds `external_code`, `suggested_band`, `score_band`, `capacity_fill`, `capacity_fill_reason` |
+| `WorkspacePriorityScore` (`frontend/src/surfaces/project-workspace/api/types.ts`) | `WorkspacePriorityScore` | exact, plus `test_section7_nullability_matches_exactly` | adds `score_band` and `capacity_fill_reason` (both `\| null`) and `capacity_fill` |
+
+The export has no contract row (CSV / XLSX); its columns are pinned by
+`backend/tests/test_p25_t03_fill_surfaces.py`.

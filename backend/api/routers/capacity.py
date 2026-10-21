@@ -77,6 +77,7 @@ from models.enums import (
     HubName,
     LabRegion,
     ProjectCategory,
+    RoleName,
     WorkflowStepKind,
 )
 from models.hub import Hub, HubWorkCalendar
@@ -127,7 +128,6 @@ from services.capacity_supply import (
     to_days,
 )
 from services.hub_scope import (
-    is_engineer_self_scoped,
     narrowed_hub_filter,
     narrowed_lab_regions,
 )
@@ -724,7 +724,12 @@ async def engineer_utilization(
     hub_filter = narrowed_hub_filter(current_user, Engineer.hub_id, hub_id, region)
     if hub_filter is not None:
         eng_stmt = eng_stmt.where(hub_filter)
-    if is_engineer_self_scoped(current_user):
+    # ADR 0028 amendment (2026-10-19, P15 gate): any caller holding the
+    # Engineer role sees only their own heatmap row, even with a role that can
+    # read Capacity (GDPR, OQ #8). Deliberately NOT `is_engineer_self_scoped`,
+    # which since the 2026-10-21 multi-role fix is False when a hub-scoped
+    # role is also held (that helper scopes project rows, ADR 0012 MAX).
+    if RoleName.ENGINEER in current_user.roles:
         eng_stmt = eng_stmt.where(Engineer.user_id == current_user.user_id)
     engineers = (await db.execute(eng_stmt)).scalars().all()
 

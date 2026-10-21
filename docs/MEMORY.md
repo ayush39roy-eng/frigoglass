@@ -28500,3 +28500,319 @@ Built against `docs/API_CONTRACT_P25.md` and ADR 0036. Every figure is a served 
   - The filter showed "12 of 253 projects shown".
   - Screenshots: session scratchpad `t05/p25/{1440,390}-{panel,grid-fill}.png`.
 - Nothing committed.
+
+### 2026-10-21: P24-T01 follow-up: `seed_demo_data --reset --schedule` works on a live DB (backend-builder)
+
+**Symptom.** On the owner's dev DB, `python -m seed.seed_demo_data --reset --schedule` failed at `DELETE FROM schedule_runs`
+with `fk_notifications_previous_schedule_run_id_schedule_runs`. The transaction rolled back, so the DB was left intact.
+
+**Root cause.** `_DEPENDENT_TABLES_CHILD_FIRST` (added in 1c0290a) listed `Notification` *after* `ScheduleRun`.
+`notifications` has 2 nullable FKs to `schedule_runs` and a NOT NULL `project_id`, so its rows must be deleted, not
+detached, and deleted first.
+- Latent second failure: `stage_checkins` (NOT NULL `project_id`) was append-only with **no** escape hatch
+  (`p12b_vip_checkins`). Any live check-in would therefore have failed the reset next.
+- Latent third failure: the reset deleted the single `schedule_run_follow_ups` row that the migration inserts (ADR 0023).
+  Dispatch tolerates this through its upsert, but it was wrong.
+
+**FK audit.** `pg_constraint` on a migrated disposable DB; it matches the ORM. These tables reference
+projects / engineers / chambers / hubs / schedule_runs:
+- `notifications`, `schedule_run_project_{steps,outcomes}`
+- `priority_application_{runs,results}`, `scenario_apply_{runs,changes}`
+- `stage_checkins`, `project_{files,comments,access_grants,workflow_steps}`
+- `priority_scores`, `vip_item_projects` (ON DELETE CASCADE)
+- `user_hub_scopes`, `hub_work_calendars`, `engineers`, `projects`
+- `audit_log_entries.hub_id` (hubs only)
+
+Step-timing overrides, tracking status, `is_vip` and progress are columns on `projects` / `project_workflow_steps`, not
+separate tables.
+
+**Fix (`backend/seed/seed_demo_data.py`).**
+- Delete order: `notifications` first, then schedule-run children, `schedule_runs`, priority-move history,
+  scenario-apply history, `stage_checkins` and `project_access_grants`. Then the primary tables, as before.
+- `schedule_run_follow_ups` is reset to the migration's state (`pending=false`, counters cleared) instead of being
+  deleted.
+- The reset sets `SET LOCAL rpd.allow_checkin_delete = 'on'` next to the existing `rpd.allow_comment_delete`.
+- **User config is kept** across the reseed:
+  - `_reset` snapshots access grants, `vip_item_projects` links, `is_vip` pins and `engineers.user_id`.
+  - `_restore_user_config` re-inserts every row whose project or engineer id exists again. It runs before
+    `seed_vip_board`.
+  - client_2026 ids are uuid5, so all of it survives. With prototype (random ids), none of it does.
+  - The counts appear under `reset_user_config` in the script's JSON output.
+- `vip_items` were never deleted and still are not.
+- `user_hub_scopes` is deleted only when the hubs are (no audit rows). Before this fix it was always wiped, even though
+  the hubs are kept on any DB with audit rows.
+- The audit log is untouched. As in 1c0290a, hubs and calendars are kept when audit rows exist.
+
+**Migration `p24b_checkin_reset_escape`** (down `p24a_project_charter_fields`).
+- It `CREATE OR REPLACE`s `stage_checkins_reject_mutation`. DELETE is allowed only under
+  `SET LOCAL rpd.allow_checkin_delete = 'on'`, the same pattern as the comments hatch (P9-T01).
+- UPDATE is still rejected unconditionally, even with the setting on; the test asserts this. TRUNCATE is still rejected.
+- Downgrade restores the p12b body.
+- Verified with up, down and up on a disposable PG.
+- **Standing decision:** this reverses p12b's "no escape hatch: check-ins are history" for the admin reseed only. The API
+  never sets the GUC. `audit_log_entries` keeps no hatch. The security-auditor should review it at the P24 gate.
+
+**What a reseed now clears on a live DB** (user-generated): notifications, stage check-ins (weekly check-in history),
+project comments, project files (DB rows only; MinIO objects are orphaned, as before), priority-move runs and results,
+scenario-apply runs and changes, every schedule run, and all per-project/step edits held on the project rows (status,
+priority, progress, step timing overrides, frozen, delay, charter fields).
+**What it keeps:** users, roles, the audit log, hubs and calendars (when audit rows exist), user hub scopes (same
+condition), VIP items, plus user VIP links and pins, access grants and engineer↔user links on surviving ids. It also keeps
+currency rates, export jobs and the workflow reference tables.
+
+**Tests.**
+- New `tests/test_seed_reset_live_db.py` (own container):
+  - It seeds client_2026 with `--schedule` and adds one of each dependent row against the active run and its projects.
+    The notification sets both run FKs; there is also an audit row, so the hubs are kept, as on a live DB.
+  - It asserts that UPDATE on a check-in is rejected even with the GUC on.
+  - It runs `--reset --schedule`, asserts what is deleted and what is kept, then reseeds once more.
+  - Mutation check: with the old order the test fails with exactly `fk_notifications_previous_schedule_run_id_schedule_runs`.
+- `test_seed_scripts`, `test_client_2026_seed`, `test_p12_checkins`, `test_migrations` and the new file: 67 passed.
+- `ruff check .` is clean, and the new files are ruff-format clean.
+- mypy shows no new errors in `seed_demo_data.py`. Its 5 remaining errors are on older lines.
+- The only DB used was a disposable PG17 on :55490 plus testcontainers, all removed. :5433, :8001 and :5183 were not
+  touched. The owner reseeds the dev DB.
+- Nothing committed.
+
+## [2026-10-21] P25-T03 — P1 capacity fill on the board, the Workspace and the Matrix export (backend-builder): DONE
+
+Follow-up (1)–(3) from P25-T02's entry. Contract: `docs/API_CONTRACT_P25.md` §5 (rewritten: it used to say these three
+surfaces were not changed) and §6 (two new rows). ADR 0036 Consequences and DOMAIN_RULES "P1 capacity fill" each gain
+one amendment line. Plan: P25-T03 DONE, P25-T04 (frontend mirror) TODO. `backend/seed/` and `backend/scheduling/`
+untouched; only testcontainers DBs were used (:5433 / :8001 / :5183 untouched).
+
+**One implementation.** All three surfaces call `services/priority_capacity_fill.py::compute_capacity_fill` over the
+hubs of the rows they show (already scoped) and `CapacityFill.for_row(...)`, exactly like the Matrix. The loader gains
+an optional keyword `active_run` (`...` = read it yourself, as before; `None` = no run), so the board and the Workspace,
+which already hold the active run, do not read it twice. No second walk, no per-row query.
+
+**Served.**
+- `PriorityBoardCard`: new `external_code` (null if none), `suggested_band` (promoted), `score_band`, `capacity_fill`,
+  `capacity_fill_reason`. `band` is kept unchanged (the stored score band, always = `score_band`) so existing clients
+  do not break. Columns stay keyed by the committed `Project.priority`: counts and design / lab weeks are unchanged,
+  and a promoted card stays in its committed column.
+- `WorkspacePriorityScore`: `suggested_band` now = the promoted band (same meaning change as Matrix rows in P25-T01),
+  plus `score_band`, `capacity_fill`, `capacity_fill_reason`. The fill is only computed when the project has a score
+  (`priority_score` stays null otherwise).
+- `GET /exports/matrix`: `score_band`, `capacity_fill`, `capacity_fill_reason` were already reaching the sheet through
+  `rows_from_models(PriorityMatrixRow)` since P25-T01, unannounced. They are now documented and pinned. **Decision:**
+  the promoted band's header is renamed `suggested_band` → `suggested_band_after_capacity_fill`
+  (`export_builder.MATRIX_PROMOTED_BAND_HEADER`), so the column says it is the band after the fill. No test, frontend
+  file or e2e spec read the old header. The four columns are adjacent; nested fields stay out; text cells keep the
+  formula guard. CSV and XLSX, sync and async job paths all use the same builder.
+- Hub scoping identical: only the rows shown are scoped; the walk per shown hub uses every project of that hub. A Hub
+  Planner's board cards carry the same fill values as the admin's for the same projects (tested).
+
+**Tests.** New `tests/test_p25_t03_fill_surfaces.py` (7), on P25-T01's hand-worked world (C 10, First promoted to
+9.00, Second stopped at 11.00, Zero skipped):
+- the four fields are identical on the Matrix row, the board card, the Workspace (First, Second, Base) and the CSV
+  export row for all five projects; `external_code` served or null; the export header shape;
+- XLSX export carries the fill and a formula-like project name is still neutralised;
+- board totals unchanged (P3: 5 cards, 12.0 design weeks; other columns 0);
+- no active run: every surface shows no fill and `suggested_band == score_band`;
+- Hub Planner board scoped to their hub, out-of-scope `hub_id` gives empty columns, fill equals the admin's;
+- unscored project: Workspace `priority_score` null;
+- statement count for `GET /priority-board` and one `GET /projects/{id}/workspace` is equal with 3 and 30 projects.
+
+**Results.**
+- New + related files (P25 ×2, exports ×2, P12 board / gate / hub filter / follow-up, P13 board / gate / hardening /
+  slice a / slice c, P14 preview, P21 matrix, workspace ×3): **287 passed**.
+- `tests/test_openapi_frontend_contract.py`: 207 passed, **3 failed, all expected and red until P25-T04**:
+  `test_field_sets_match[PriorityBoardCard::PriorityBoardCard]`,
+  `test_field_sets_match[WorkspacePriorityScore::WorkspacePriorityScore]`,
+  `test_section7_nullability_matches_exactly[WorkspacePriorityScore]`. Comments on both table rows say so.
+- `ruff check .` clean. `ruff format`: new test file and `priority_board.py` formatted; `services/workspace.py` and
+  `services/export_builder.py` were already unformatted at HEAD and left so (small diff). mypy: no new errors in the
+  touched files (the one in `export_builder.py:205`, `WriteOnlyCell` as a type, predates this task).
+- Full suite not run (another agent is editing the seed and its tests). Nothing committed.
+
+**For P25-T04.** Mirror the two interfaces (`surfaces/priority-board/api.ts` `PriorityBoardCard`;
+`surfaces/project-workspace/api/types.ts` `WorkspacePriorityScore`, with `score_band` and `capacity_fill_reason` as
+`| null`). Board cards can drop the "score band P1" wording workaround and show the promoted chip; the List layout can
+show `external_code`. The Workspace's `suggested_band` now means the promoted band.
+
+## [2026-10-21] P24-T02 — Charter fields mirrored and shown read-only; "No leader" label; Dept filter; e2e engineer picks (frontend-builder): DONE
+
+Follow-up to P24-T01 (ADR 0035). No business logic was added: every value shown is one served field (I9). The Matrix
+and priority-board directories were not touched (another agent works there). The dev servers were not restarted.
+
+**Types (contract).** `plant`, `requesting_department` and `product_type` (`string | null`) were added to `ProjectRead`
+(`surfaces/registration/api/types.ts`, so `WorkspaceProject` inherits them) and `ProjectFilterRow`
+(`surfaces/dashboard/api/types.ts`). They are not on `ProjectCreateRequest` / `ProjectUpdateRequest`: a write is a 422,
+and the form never sends them. A test pins that the PATCH body has none of the three. Fixtures were updated
+(`P13_ROW_DEFAULTS`, the workspace fixture, the registration and projects tests).
+- Contract: the 4 P24 rows pass (`ProjectRead`, `ProjectFilterRow`, `WorkspaceProject` and its nullability).
+- At the end of the task the file had 3 failures, all P25: `WorkspacePriorityScore` ×2 and `PriorityBoardCard`. They
+  are the new `capacity_fill` / `capacity_fill_reason` / `score_band` fields that P25-T04 is to mirror (see the entry
+  above). They are not P24, and `PriorityBoardCard` lives in `priority-board/`, which was out of bounds. At the start of
+  the task the file passed 210/210, so these backend fields landed during the task.
+
+**Read-only display.**
+- New `components/shared/charter-fields.tsx` holds `CharterCell`, the `CharterColumnsToggle` button (`aria-pressed`,
+  "Workbook fields") and `CharterFieldList`. Its metadata (`CHARTER_FIELDS`, `CHARTER_NOT_SET` = "Not set") is in
+  `charter-fields-meta.ts`, which keeps react-refresh clean. A null value prints "Not set".
+- Projects list (`projects-table.tsx`, `showCharter` prop, `min-w-[96rem]` when on) and the Dashboard register
+  (`registerColumns({ showCharter })` + the toggle in `project-breakdown.tsx`): optional Plant / Req. dept / Product type
+  columns. They are off by default. The register's "not recorded yet" info text is replaced.
+- `VirtualDataTable` gains `tableClassName` so the wider register scrolls sideways.
+- No filters for the three fields: `/dashboard/projects` serves no such filter params or options. Filtering in the
+  browser would break the served `total_count` (I9).
+- Registration drawer: a read-only "From the client workbook" group (`role="group"`, labelled by its heading), shown in
+  edit mode in `RegistrationSummary`.
+- Workspace Details: a "From the client workbook" `<dl>` (`data-testid="details-charter"`) between the details and
+  Financial lists. It uses the panel's `Field` styling and is not part of the inline edit form.
+
+**Resource load Dept filter** (`resource-load-section.tsx`). It was already gated on the served flag. Now
+`disabled` + `disabledReason` are spread only when `requesting_department_available` is false. When the flag is true it
+is a normal multi-select over the served `requesting_departments`, sent as `requesting_department` (exact match
+server-side). A new unit test covers the true case. The existing false-case test is kept.
+
+**"No leader".**
+- New `components/shared/no-leader-label.tsx` `NoLeaderLabel`: visible "No leader" (`aria-hidden`), sr-only "No leader
+  assigned", title "No leader assigned".
+- `leftOut` adds "Left out: no leader assigned" (`text-warning-subtle-fg`). It is shown only when both served facts
+  hold: `leader_engineer_id === null` and the served Left Out verdict. That is `outcome === 'LEFT_OUT'` on register
+  rows, `left_out` on Gantt rows and `schedule.left_out` in the Workspace. No other reason is claimed, because the
+  `no_leader` reason itself is not served.
+- Used on the Projects list, the Dashboard register (the Dashboard's only leader list), the Gantt row meta (inline,
+  non-wrapping; replaces the "—" + sr-only "No leader") and the Workspace header (replaces "Leader: —").
+- The label uses `text-text-muted`. `text-subtle` failed axe colour-contrast (4.06:1) live on the Workspace header.
+
+**e2e.**
+- `p15-gate.spec.ts` no longer picks indexes `[0, 7, 20, 40, last]`. `pickEngineers` takes the first served engineer
+  of each hub, the most and the least utilized, and the last row, deduplicated by id. Rows and cells are matched by an
+  exact, regex-escaped name (`^<name>, W`), not a substring.
+- A grep of all e2e specs found no other hard-coded engineer counts, indexes or "<hub> Engineer n" placeholders. The
+  names in `p19-planning.spec.ts` are a self-contained route mock. The `p18-gate` 180/100 figures come from the
+  lead-time table, not the seed.
+- `e2e/README.md`'s seed comment was updated (client_2026: 253 projects, 23 engineers).
+
+**Verification.**
+- `tsc -b`: clean.
+- eslint on the touched dirs: 0 errors, 2 pre-existing warnings (`project-breakdown.tsx` exports, `projects-table`
+  virtualizer).
+- Full vitest: 183 files, 1424 tests pass.
+- `vite build` + bundle check: 187.0 KB gzip initial (budget 400).
+- New unit tests: Projects page ×3, register ×2, Workspace ×3, Gantt (updated + Left Out row), Resource load ×1.
+
+**Live check** (:8001 restarted with the P24 data; :5183 vite dev, not restarted).
+- The API serves 253 rows, 20 leaderless (18 of them LEFT_OUT), plant on all 253, 9 departments with `available: true`
+  and 23 engineers (admin).
+- Temporary Playwright specs (deleted afterwards), run as admin:
+  - The labels render on the Projects list, the Gantt meta and the Workspace header.
+  - The drawer block shows the served values.
+  - Dept is enabled with 9 options.
+  - axe is clean on the Workspace, Projects (+Workbook fields), Gantt and the Dashboard register.
+  - An admin copy of the p15 heatmap test passes: 8 engineers picked, 24 cells checked.
+
+**Open finding, not fixed (dev data / RBAC, backend).**
+- On the live :8001 stack, `alice.pm` (portfolioManager) has the roles Portfolio Manager + Hub Planner + Engineer +
+  Executive Viewer, with `engineer_id: null`. The API serves her **0** Gantt rows and **0** heatmap engineers, but 253
+  register rows. Admin gets 253 / 23.
+- So both p15 tests that act as portfolioManager (heatmap, leader names on the Gantt) fail live. This is not the
+  index fix.
+- Someone needs to decide whether the dev user's role set is intended (`seed_dev_users`) or whether the Engineer role
+  narrows the Gantt and heatmap for a multi-role PM. Then rerun `e2e/p15-gate.spec.ts`.
+
+**Note.** The owner's commit `5f42cd1 new changes` landed during this task and took in part of this work. The rest is
+uncommitted in the working tree.
+
+## [2026-10-21] P25-T04 — P1 capacity fill on the board and in the Workspace (frontend-builder): DONE
+
+Mirror of P25-T03 (`docs/API_CONTRACT_P25.md` §5–6). Every figure is a served field (I9).
+- **Types.**
+  - `priority-board/api.ts` `PriorityBoardCard` gains `external_code`, `suggested_band` (promoted), `score_band`, `capacity_fill` and `capacity_fill_reason`; `band` is kept and documented as equal to `score_band`.
+  - `project-workspace/api/types.ts` `WorkspacePriorityScore` gains `score_band | null`, `capacity_fill` and `capacity_fill_reason | null`, and `suggested_band` is documented as promoted. That was a single block edit; no one else had a diff on the file.
+  - Fixtures updated (board test `card()`, workspace `test-fixtures.ts` score block).
+  - `pytest tests/test_openapi_frontend_contract.py`: **210 passed**, including the three P25-T03 rows (board card, workspace score, §7 nullability).
+- **Shared chip.** `SuggestedBandChip` moved from `surfaces/matrix/components/` to `components/shared/suggested-band-chip.tsx`; the grid and Compare imports were updated. A new `dense` prop renders the fill variant as "P1" with the icon and outline; the full label stays the accessible name and the reason stays in the tooltip.
+- **Board cards.** The served `suggested_band` chip replaces the stop-gap "score band P1" text, falling back to `band` for a pre-P25-T03 API. The "score band X" line appears only on the fill variant, which is the only case where it differs from the suggested band.
+- **List rows.**
+  - **Choice:** with a served `external_code`, the name is `line-clamp-1` and the code (mono, muted) is on line 2, because the code tells apart names with a shared prefix. With no code, the name keeps two lines.
+  - The link `title` is "name (code)". The dense chip sits on the right. Row height stays a fixed 46 px.
+- **Workspace (`scoring-section.tsx` only).** It shows the chip (`score-suggested-band`), plus the served reason as its own line (`score-fill-reason`) whenever one is served. The score band is on the chip's second line for the fill variant.
+  - Also fixed: a pre-existing axe serious finding at 390 (`scrollable-region-focusable` on the dimension table's scroll wrapper, present at HEAD). The wrapper is now a labelled, focusable region ("Dimension scores").
+  - The score save now also invalidates `['priority-board']`.
+  - `details-panel.tsx` (P24-T02's area) was not touched.
+- **Export.** No frontend code reads matrix export headers (`DownloadButton` only streams the file). The rename to `suggested_band_after_capacity_fill` needs no change. Two stale doc comments (score cell, summary panel) now say `suggested_band` is the promoted band.
+- **Tests.**
+  - New `project-workspace/components/scoring-section.test.tsx` (3): fill chip, score band, reason line and tooltip, axe; plain band with no reason line; not-promoted reason.
+  - `PriorityBoardPage.test.tsx` (+1): card chip, score band and reason tooltip; base card has no score-band line; list `external_code` line with `line-clamp-1`; no code gives `line-clamp-2`; dense chip "P1" with the full accessible name. Assertions updated in the card-facts, list and Matrix board (b) tests.
+- **Results.**
+  - `tsc -b`: 0 errors.
+  - ESLint on the touched files: 0 errors (the 2 pre-existing `scoring-model.tsx` warnings).
+  - **Full Vitest: 184 files / 1428 tests passed.**
+  - `vite build`: budget PASS at 187.0 KB gzip.
+- **Live on :5183.** The P25-T03 fields were mocked: an `external_code` "MOCK-…" on every other card (clearly mock data), the first two P2 cards promoted, the third "Not promoted", and a promoted Workspace score.
+  - axe 0 serious/critical on the board list, the board cards and the Workspace, at 1440 and 390.
+  - Screenshots (reviewed): session scratchpad `t05/t04p25/{1440,390}-{board-list,board-cards,workspace}.png`.
+- Nothing committed.
+
+## [2026-10-21] P24-R01 — Multi-role RBAC narrowing (alice.pm: 0 Gantt rows) (backend-builder): DONE
+
+**Symptom (owner's dev stack, after `seed_demo_data --reset --schedule`).** `alice.pm` holds PM + Hub Planner + Engineer +
+Executive Viewer, `hub_scope_all=true`, no linked engineer. She got 0 rows on `GET /gantt`, 0 engineers on
+`/capacity/engineer-utilization` and 0 projects on `/check-ins/due`, against 253 / 23 / 33 for admin. Every other surface
+matched admin (live GET probe on :8001).
+
+**Where her roles came from: the UI, not the seed and not the reseed.**
+- `seed_dev_users.DEV_USERS` gives one role per user, which is correct and unchanged.
+- `seed_demo_data` never reads or writes `user_roles`. `_restore_user_config` only restores grants, VIP links and pins,
+  and `engineers.user_id`.
+- Audit log, `user.update` rows (actor `frank.admin`, no request id or IP, i.e. via `PATCH /users/{id}` in dev):
+  - 2026-10-21 10:09:56 UTC: alice `["Portfolio Manager"]` → `["Portfolio Manager","Hub Planner","Engineer","Executive Viewer"]`;
+  - 2026-10-13 06:48:52 UTC: carol `["Engineer"]` → `["Engineer","Auditor"]`.
+- Both pre-reseed backups (`rpd-dev-before-p24-reseed{,-2}.dump`) were restored into a disposable PG17 on :55777 (now
+  removed). They already contain these role sets, so this predates the reseed.
+
+**Code bug: yes.** `services.hub_scope.is_engineer_self_scoped` was `not hub_ids and ENGINEER in roles`. Every
+`hub_scope_all` account has empty `hub_ids`, so adding Engineer to a PM / Executive Viewer / Admin replaced their scope
+with "own assignments". With no linked engineer that is the empty set. This contradicts ADR 0012 (MAX over the rules) and
+the helper's own docstring ("a broader role wins"). Affected: Gantt (and the Gantt export through it), run changes
+(also the P14 priority-move preview through `diff_outcomes`), the check-in due list and check-in write routes, and
+`authorize_project_action`'s role path. Workspace detail had already worked for her, through its ADR 0012 fallback.
+Dashboard, Matrix, priority board, Planning, VIP and Capacity hub figures only use `hub_scope_filter`, so they were
+correct. Notifications already used the union rule.
+
+**Fix.**
+- `services/hub_scope.py`:
+  - New `HUB_SCOPED_PROJECT_ROLES` (SA, Admin, PM, HP, EV) and `has_hub_project_scope`.
+  - `is_engineer_self_scoped` = Engineer and no hub-scoped role. It no longer depends on `hub_ids`.
+  - New `project_row_scope(principal, column, own)`: self-scoped gives `own` (or always-false); otherwise the hub scope
+    ORed with `own` when Engineer is held.
+  - New `needs_own_assignments`, so `hub_scope_all` callers skip the own-assignment query.
+- `api/routers/gantt.py` and `services/run_changes.py` use `project_row_scope`. So Hub Planner of hub A + Engineer
+  assigned in hub B now sees A ∪ own, where before it saw A only.
+- Check-in, workspace and `authorize_project_action` take the corrected predicate unchanged. Check-in's
+  `candidate_filter` and the workspace fallback already form the union.
+- Stricter: an Engineer whose other roles give no project rows (Auditor), or an Engineer-only account carrying stray
+  `hub_ids`, is self-scoped. Before, stray `hub_ids` gave a hub-wide Gantt.
+- **Not changed, by decision: the engineer heatmap.** ADR 0028's 2026-10-19 amendment says any caller holding Engineer
+  sees only their own heatmap row, even with a Capacity-reading role (GDPR, OQ #8), and `test_p15_engineer_utilization`
+  pins it. `api/routers/capacity.py` now states that rule explicitly (`RoleName.ENGINEER in roles`) instead of going
+  through the changed helper. As before, it is ANDed with the hub scope. So alice's heatmap stays at 0 while she holds
+  Engineer. Widening it needs an ADR 0028 amendment; it is a one-line change.
+
+**Tests.** New `tests/test_multi_role_row_scope.py` (29):
+- Pure predicates.
+- For PM, the alice shape, EV and Admin: R + unlinked Engineer returns the same response as R on Gantt, Workspace,
+  `/dashboard/projects`, `/capacity/hub-load`, `/planning/resource-load`, `/priority-board`, `/priorities`,
+  `/check-ins/due`, run changes and `/notifications`; the heatmap follows the ADR 0028 rule.
+- The alice shape against admin counts.
+- HP + Engineer union, and HP + unlinked Engineer.
+- Engineer-only, Engineer with `hub_scope_all`, Engineer + Auditor and Engineer with stray `hub_ids` stay on own
+  assignments.
+- Unlinked Engineer sees nothing.
+- Notification recipients.
+
+Mutation check: restoring the old predicate fails 18 of them. Full backend suite: **2022 passed**. `ruff check .` is
+clean, and the new test file is ruff-format clean. `gantt.py`, `hub_scope.py`, `run_changes.py` and `capacity.py` were
+already format-dirty at HEAD on untouched lines and were left so. Testcontainers only; :5433 was read with SELECT only,
+:8001 with GETs only. Nothing was restarted, nothing committed. `backend/scheduling/` and `backend/seed/` untouched.
+
+**Dev-DB correction (not run; for the owner).** It restores the login page's one-role-per-user intent through the API,
+so it is audited. `seed_dev_users` needs no change.
+`curl -X PATCH -H 'X-Dev-User-Email: frank.admin@example.com' -H 'Content-Type: application/json' -d '{"roles":["Portfolio Manager"]}' http://localhost:8001/users/2676e31c-bcd8-4bd5-86cc-4a9f073e7ea3`
+and for carol `-d '{"roles":["Engineer"]}'` on `/users/a837585c-8a4c-4ecb-8e9d-d1b91343865a`. The :8001 server also
+needs a restart to pick up the code fix (not done). Then rerun `e2e/p15-gate.spec.ts`: its heatmap test as
+portfolioManager only passes once alice no longer holds Engineer (ADR 0028).

@@ -31,7 +31,7 @@ export function NoLeaderLabel({ leftOut = false, inline = false, className }: No
       className={cn('flex min-w-0', inline ? 'flex-row items-center gap-x-1.5' : 'flex-col', className)}
       data-testid="no-leader"
     >
-      <span className={cn('truncate italic text-text-subtle', inline && 'shrink-0')} title={NO_LEADER_ACCESSIBLE}>
+      <span className={cn('truncate italic text-text-muted', inline && 'shrink-0')} title={NO_LEADER_ACCESSIBLE}>
         <span aria-hidden="true">{NO_LEADER_TEXT}</span>
         <span className="sr-only">{NO_LEADER_ACCESSIBLE}</span>
       </span>

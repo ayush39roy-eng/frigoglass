@@ -146,6 +146,10 @@ _EXPORT_WITHHELD_FIELDS: frozenset[str] = frozenset()
 #: `dimension_scores` (the per-dimension list) is skipped for the same reason.
 _EXPORT_NESTED_FIELDS: frozenset[str] = frozenset({"dimension_points", "dimension_scores"})
 
+#: P25-T03 (ADR 0036): the Matrix export's header for `PriorityMatrixRow.
+#: suggested_band`, which is the promoted band (after the P1 capacity fill).
+MATRIX_PROMOTED_BAND_HEADER = "suggested_band_after_capacity_fill"
+
 
 def rows_from_models(
     models_list: Sequence[BaseModel],
@@ -321,6 +325,12 @@ async def build_matrix_sheets(
         current_user=principal,
     )
     headers, rows = rows_from_models(rows_models)
+    # P25-T03 (ADR 0036): the row's `suggested_band` is the band AFTER the P1
+    # capacity fill, so the column says so. `score_band`, `capacity_fill` and
+    # `capacity_fill_reason` follow it (declaration order of the row model).
+    headers = [MATRIX_PROMOTED_BAND_HEADER if h == "suggested_band" else h for h in headers]
+    for row in rows:
+        row[MATRIX_PROMOTED_BAND_HEADER] = row.pop("suggested_band", None)
     return {"Matrix": (headers, rows)}
 
 

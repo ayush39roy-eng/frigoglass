@@ -106,7 +106,18 @@ class WorkspacePriorityScore(BaseModel):
     hard_gates: list[HardGateReason]
     weighted_score: float | None
     normalized_pct: int | None
+    #: P25-T03 (ADR 0036): the suggested band AFTER the P1 capacity fill, the
+    #: same value as the Matrix row's: "P1" when `capacity_fill`, else
+    #: `score_band`. Null when unscored. (Before P25-T03 this was the stored
+    #: score band, which is now `score_band`.)
     suggested_band: ProjectPriority | None
+    #: ADR 0036: the pure score band (>= 70 P1, >= 55 P2, >= 40 P3, else P4).
+    score_band: ProjectPriority | None
+    #: ADR 0036: promoted to P1 by the hub's capacity fill ("P1 (capacity fill)").
+    capacity_fill: bool
+    #: ADR 0036: reason for a promoted, stopped or zero-load-skipped candidate,
+    #: served for display as is; null otherwise.
+    capacity_fill_reason: str | None
 
 
 class FileRead(BaseModel):

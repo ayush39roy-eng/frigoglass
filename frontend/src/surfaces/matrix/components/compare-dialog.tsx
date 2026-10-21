@@ -44,7 +44,7 @@ import { sortByPillar } from '../lib/pillars';
 import { formatOutOf100, formatPoints } from '../lib/row-scores';
 import { previewScore } from '../lib/score-preview';
 import { useScoringModel } from '../scoring-model';
-import { SuggestedBandChip } from './suggested-band-chip';
+import { SuggestedBandChip } from '@/components/shared/suggested-band-chip';
 import { liveRequestValuesFromRow, scoreDimensionsSchema, toRequestBody } from './score-edit-schema';
 
 /**

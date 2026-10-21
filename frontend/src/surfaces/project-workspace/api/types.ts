@@ -72,7 +72,14 @@ export interface WorkspacePriorityScore {
    *  score has been computed (e.g. not every dimension entered yet). */
   weighted_score: number | null;
   normalized_pct: number | null;
+  /** P25-T03 (API_CONTRACT_P25 §5b): the band AFTER the hub's P1 capacity fill (ADR 0036). */
   suggested_band: ProjectPriority | null;
+  /** P25-T03: the pure score band (≥ 70 P1, ≥ 55 P2, ≥ 40 P3, else P4). */
+  score_band: ProjectPriority | null;
+  /** P25-T03: promoted to P1 by the hub's capacity fill. */
+  capacity_fill: boolean;
+  /** P25-T03: the served reason for a fill decision, shown verbatim. */
+  capacity_fill_reason: string | null;
 }
 
 export const FILE_CATEGORIES = [

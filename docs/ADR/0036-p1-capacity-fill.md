@@ -93,5 +93,8 @@ P1 until capacity is full." The owner accepted these details:
   board (`schemas/priority_board.py`), Project cards (`services/project_cards.py`), the Workspace
   score section and `GET /exports/matrix`. Mirroring the fill there is a follow-up, not part of
   P25-T01.
+  *(Done by P25-T03, 2026-10-21: the board card, the Workspace score section and the Matrix
+  export now serve the four fill fields from the same loader; the export's promoted-band column
+  is `suggested_band_after_capacity_fill`. `docs/API_CONTRACT_P25.md` §5.)*
 - Cost per read: a constant number of queries for the hubs involved (no N+1), plus the existing
   per-row work of `remaining_run_load_by_project`.

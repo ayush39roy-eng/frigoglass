@@ -25,6 +25,9 @@ recalc, P3-T06) to see the freeze reflected in a new schedule run.
   with at least one active-run step assigned to the caller's own linked
   `Engineer` row (`Engineer.user_id == current_user.user_id`), narrower than
   a hub filter, per `services.hub_scope.is_engineer_self_scoped`.
+  *(2026-10-21)* Engineer plus a hub-scoped role (PM, Hub Planner,
+  Executive Viewer, Admin): that role's hub scope OR own assignments
+  (`services.hub_scope.project_row_scope`, ADR 0012 MAX).
 - Portfolio Manager/Executive Viewer/Admin (`hub_scope_all=True`):
   unrestricted, unchanged.
 The freeze toggle's project lookup is hub-scoped the same way as
@@ -66,7 +69,7 @@ from collections.abc import Sequence
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import or_, select
+from sqlalchemy import ColumnElement, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -104,8 +107,9 @@ from services.audit_helpers import project_audit_state
 from services.hub_scope import (
     global_hub_filter,
     hub_scope_filter,
-    is_engineer_self_scoped,
     is_hub_in_scope,
+    needs_own_assignments,
+    project_row_scope,
 )
 from services.project_cards import build_project_cards
 from services.project_filters import (
@@ -257,38 +261,29 @@ async def get_gantt(
     stmt = select(Project).options(
         selectinload(Project.hub), selectinload(Project.leader_engineer)
     )
-    own_engineer_id: uuid.UUID | None = None
-    if is_engineer_self_scoped(current_user):
-        # Engineer role, per docs/PROJECT_AND_STACK.md §5: "R (own
-        # assignments)" — narrower than (and instead of) a hub filter:
-        # Engineer is never hub-scoped at all (`hub_scope_filter` would
-        # incorrectly resolve to an always-false "in scope of zero hubs"
-        # predicate for this principal shape — see `services.hub_scope.
-        # is_engineer_self_scoped`'s docstring). Restrict to projects with
-        # at least one active-run step assigned to the caller's own linked
-        # Engineer row instead.
+    # Engineer role, per docs/PROJECT_AND_STACK.md §5: "R (own assignments)"
+    # = projects with at least one active-run step assigned to the caller's
+    # own linked Engineer row. ADR 0012 (MAX over the rules): a caller who
+    # also holds a hub-scoped role gets that hub scope OR their own
+    # assignments, never the narrower set alone (2026-10-21 multi-role fix,
+    # `services.hub_scope.project_row_scope`).
+    own: ColumnElement[bool] | None = None
+    if needs_own_assignments(current_user):
         own_engineer_id = (
             await db.execute(
                 select(Engineer.id).where(Engineer.user_id == current_user.user_id)
             )
         ).scalar_one_or_none()
-        if own_engineer_id is None:
-            own_project_ids: set[uuid.UUID] = set()
-        else:
-            own_project_rows = await db.execute(
-                select(ScheduleRunProjectStep.project_id)
-                .where(
+        if own_engineer_id is not None:
+            own = Project.id.in_(
+                select(ScheduleRunProjectStep.project_id).where(
                     ScheduleRunProjectStep.schedule_run_id == active_run.id,
                     ScheduleRunProjectStep.assigned_engineer_id == own_engineer_id,
                 )
-                .distinct()
             )
-            own_project_ids = {row[0] for row in own_project_rows.all()}
-        stmt = stmt.where(Project.id.in_(own_project_ids))
-    else:
-        hub_filter = hub_scope_filter(current_user, Project.hub_id)
-        if hub_filter is not None:
-            stmt = stmt.where(hub_filter)
+    scope = project_row_scope(current_user, Project.hub_id, own)
+    if scope is not None:
+        stmt = stmt.where(scope)
     # ADR 0020 hub / ADR 0025 country, ANDed with the scope above.
     global_filter = global_hub_filter(Project.hub_id, hub_id, region)
     if global_filter is not None:

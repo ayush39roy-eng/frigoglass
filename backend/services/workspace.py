@@ -69,6 +69,7 @@ from schemas.workspace import (
 from services.active_run import get_active_run, slip_weeks
 from services.display_labels import stage_status_label
 from services.hub_scope import hub_scope_filter, is_engineer_self_scoped
+from services.priority_capacity_fill import compute_capacity_fill
 from services.progress import project_progress_pct
 from services.project_access import effective_project_access
 from services.workflow_durations import effective_duration_weeks
@@ -80,6 +81,9 @@ ACTIVITY_MAX_LIMIT = 200
 #: already in the feed.
 _COMMENT_ACTION_PREFIX = "project_comment."
 _FINANCIAL_FIELDS = ("customer_name", "tcogs_eur", "selling_price_eur", "gross_margin_pct")
+#: P25-T03: `WorkspacePriorityScore` fields served from the capacity fill, not
+#: read from the stored `PriorityScore`.
+_FILL_FIELDS = ("suggested_band", "score_band", "capacity_fill", "capacity_fill_reason")
 
 
 # --- Pure helpers ---------------------------------------------------------------------
@@ -743,11 +747,26 @@ async def build_workspace(
     score = (
         await db.execute(select(PriorityScore).where(PriorityScore.project_id == project.id))
     ).scalar_one_or_none()
-    priority_score = (
-        WorkspacePriorityScore.model_validate(score, from_attributes=True)
-        if score is not None
-        else None
-    )
+    priority_score: WorkspacePriorityScore | None = None
+    if score is not None:
+        # P25-T03 (ADR 0036): the same one-pass loader as the Matrix. The
+        # project is already scoped (`get_scoped_project_or_404`); the walk
+        # uses every project of its hub, so the fill equals its Matrix row's.
+        fill = await compute_capacity_fill(db, {project.hub_id}, active_run=run)
+        row_fill = fill.for_row(project.id, project.hub_id, score.suggested_band)
+        priority_score = WorkspacePriorityScore.model_validate(
+            {
+                **{
+                    name: getattr(score, name)
+                    for name in WorkspacePriorityScore.model_fields
+                    if name not in _FILL_FIELDS
+                },
+                "suggested_band": row_fill.suggested_band,
+                "score_band": row_fill.score_band,
+                "capacity_fill": row_fill.capacity_fill,
+                "capacity_fill_reason": row_fill.capacity_fill_reason,
+            }
+        )
 
     files = (
         (

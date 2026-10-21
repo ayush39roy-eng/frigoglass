@@ -24,10 +24,20 @@ export interface PriorityBoardCard {
   hub: HubName;
   category: ProjectCategory | null;
   status: ProjectStatus;
+  /** P25-T03: the project's external code, null if none (tells similar names apart in the List layout). */
+  external_code: string | null;
   /** Weighted priority score, as the Matrix serves it. */
   score: number | null;
-  /** Score-derived band, as the Matrix serves it. */
+  /** The stored score band; kept for existing clients, always equal to `score_band` (P25-T03). */
   band: ProjectPriority | null;
+  /** P25-T03 (ADR 0036): the suggested band AFTER the hub's P1 capacity fill, as on Matrix rows. */
+  suggested_band: ProjectPriority | null;
+  /** P25-T03: the pure score band. */
+  score_band: ProjectPriority | null;
+  /** P25-T03: promoted to P1 by the hub's capacity fill. */
+  capacity_fill: boolean;
+  /** P25-T03: the served reason, shown verbatim in the tooltip. */
+  capacity_fill_reason: string | null;
   /** True ⇒ pinned to P1, not draggable out (ADR 0018 §4). */
   hard_gated: boolean;
   is_vip: boolean;

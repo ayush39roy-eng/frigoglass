@@ -2,7 +2,7 @@ import * as React from 'react';
 import { Pencil, Save, X } from 'lucide-react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 
-import { PriorityBandPill } from '@/components/shared/priority-band-pill';
+import { SuggestedBandChip } from '@/components/shared/suggested-band-chip';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { ApiError } from '@/lib/api/client';
@@ -61,6 +61,8 @@ function ScoringSectionInner({
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: queryKeys.projectWorkspace(projectId) });
       void queryClient.invalidateQueries({ queryKey: ['priority-matrix'] });
+      // P21-T05 / P25-T04: the board cards show the served score and suggested band too.
+      void queryClient.invalidateQueries({ queryKey: ['priority-board'] });
       setEditing(false);
     },
     onError: (err) => {
@@ -97,12 +99,25 @@ function ScoringSectionInner({
                 No band
               </span>
             ) : (
-              <PriorityBandPill priority={score.suggested_band} />
+              // P25-T04: the served suggested band (after the hub's P1 capacity fill), same chip as the Matrix.
+              <span data-testid="score-suggested-band">
+                <SuggestedBandChip
+                  band={score.suggested_band}
+                  capacityFill={score.capacity_fill}
+                  reason={score.capacity_fill_reason}
+                  scoreBand={score.score_band}
+                />
+              </span>
             )}
           </span>
         ) : (
           <span className="text-2xs text-text-subtle">Not scored yet</span>
         )}
+        {score?.capacity_fill_reason ? (
+          <p className="basis-full text-2xs text-text-muted" data-testid="score-fill-reason">
+            {score.capacity_fill_reason}
+          </p>
+        ) : null}
         {canWrite && !editing ? (
           <Button
             type="button"
@@ -121,7 +136,14 @@ function ScoringSectionInner({
         ) : null}
       </div>
 
-      <div className="overflow-x-auto rounded-dash border-[1.5px] border-border bg-surface">
+      {/* Pre-existing axe finding at 390 (scrollable-region-focusable), fixed in P25-T04: the
+          scrolling table region is labelled and keyboard-focusable. */}
+      <div
+        className="overflow-x-auto rounded-dash border-[1.5px] border-border bg-surface focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        role="region"
+        aria-label="Dimension scores"
+        tabIndex={0}
+      >
         <table className="w-full border-collapse text-sm" aria-label="Scoring dimensions">
           <thead className="bg-surface-sunken text-2xs font-bold uppercase tracking-wider text-text-subtle">
             <tr>

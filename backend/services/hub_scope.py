@@ -50,7 +50,11 @@ row-level qualifiers:
    checks `RoleName.ENGINEER in principal.roles`. `api/routers/gantt.py`
    resolves the caller's own `Engineer` row (`Engineer.user_id ==
    principal.user_id`) and restricts the project set to only those with at
-   least one schedule-run step assigned to that Engineer.
+   least one schedule-run step assigned to that Engineer. *(2026-10-21)*
+   Self-scoping is decided by the role set, not by `hub_ids`: a caller who
+   also holds a hub-scoped role (PM, Hub Planner, Executive Viewer, Admin,
+   Super Admin) gets that role's hub scope ORed with their own assignments
+   (`project_row_scope`), never the narrower set alone.
 
 Every "no rows in scope" case below (an empty `hub_ids`, an empty resolved
 lab-region set) is returned as an always-false predicate / empty set, never
@@ -65,7 +69,7 @@ from __future__ import annotations
 import uuid
 from typing import Any
 
-from sqlalchemy import ColumnElement, and_, select
+from sqlalchemy import ColumnElement, and_, false, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import InstrumentedAttribute
 
@@ -178,21 +182,84 @@ def is_engineer_self_scoped(principal: Principal) -> bool:
     that now rejects setting `hub_scope_all=True` on an Engineer-only account
     in the first place.
 
-    A caller who holds `Engineer` *plus* a broader role (e.g. also Hub
-    Planner or Portfolio Manager on the same account) is still scoped by
-    that broader role's rules instead, not by this narrower one — a
-    principal with a non-empty `hub_ids` never reaches this branch (unchanged
-    from before this fix; `hub_ids` is a real per-account hub assignment list,
-    not the "all hubs" bypass this fix removes). This remains a pragmatic,
-    explicitly-documented interpretation for a multi-role account (untested
-    in the P3-T02 seed data, where every test user holds exactly one role),
-    not something DOMAIN_RULES.md/`docs/PROJECT_AND_STACK.md` §5 specifies
-    directly — flagged in `docs/MEMORY.md`'s P3-T03 entry for orchestrator
-    review, and left as-is by this fix (only the `hub_scope_all` check was
-    removed, not the `hub_ids` one).
+    **2026-10-21 (multi-role fix, ADR 0012 "MAX over the rules").** The
+    test is now on the *role set*, not on `hub_ids`: a caller is
+    self-scoped only when Engineer is the sole role that gives them project
+    rows (`has_hub_project_scope` is False). The previous test,
+    `not hub_ids and ENGINEER in roles`, was wrong for a multi-role account:
+    a Portfolio Manager / Executive Viewer / Admin with `hub_scope_all=True`
+    has an EMPTY `hub_ids` by construction, so adding Engineer to such an
+    account narrowed every list (Gantt, engineer heatmap, run changes,
+    check-in due list) to "own assignments", and to nothing at all when no
+    `Engineer` row is linked. A broader role now always wins, and its own
+    hub scope is widened (never narrowed) by the Engineer's own assignments
+    — `project_row_scope` below. An Engineer whose only other roles are
+    non-project ones (Auditor) stays self-scoped, and so does an
+    Engineer-only account that happens to carry `hub_ids` (Engineer is
+    never hub-scoped, per the matrix).
     """
 
-    return not principal.hub_ids and RoleName.ENGINEER in principal.roles
+    return RoleName.ENGINEER in principal.roles and not has_hub_project_scope(principal)
+
+
+#: Roles whose project row scope is hub-based (§5 matrix qualifier "(own
+#: hub)" or "(all hubs)" / unqualified), as opposed to Engineer's "(own
+#: assignments)". Auditor reads no project surface, so it is in neither set.
+HUB_SCOPED_PROJECT_ROLES: frozenset[RoleName] = frozenset(
+    {
+        RoleName.SUPER_ADMIN,
+        RoleName.ADMIN,
+        RoleName.PORTFOLIO_MANAGER,
+        RoleName.HUB_PLANNER,
+        RoleName.EXECUTIVE_VIEWER,
+    }
+)
+
+
+def has_hub_project_scope(principal: Principal) -> bool:
+    """True when at least one of the caller's roles reads project rows by
+    hub scope (`hub_scope_filter`), so Engineer's narrower own-assignment
+    rule must not replace it (ADR 0012: effective access is the MAX)."""
+
+    return bool(principal.roles & HUB_SCOPED_PROJECT_ROLES)
+
+
+def project_row_scope(
+    principal: Principal,
+    hub_id_column: InstrumentedAttribute[Any],
+    own: ColumnElement[bool] | None,
+) -> ColumnElement[bool] | None:
+    """The project-row predicate for a surface Engineer may read (Gantt,
+    run changes), as the UNION of every role's rows (ADR 0012):
+
+    - self-scoped Engineer → `own` only (always-false when `own` is None,
+      i.e. no linked `Engineer` row);
+    - otherwise the hub scope, ORed with `own` when the caller also holds
+      Engineer and `own` is given; `None` (no filter) for `hub_scope_all`.
+
+    `own` is the caller's own-assignment predicate, built by the call site
+    (each surface has its own definition of "assigned"); pass `None` when
+    the caller has no linked engineer.
+    """
+
+    if is_engineer_self_scoped(principal):
+        return own if own is not None else false()
+    hub = hub_scope_filter(principal, hub_id_column)
+    if hub is None:
+        return None
+    if own is not None and RoleName.ENGINEER in principal.roles:
+        return or_(hub, own)
+    return hub
+
+
+def needs_own_assignments(principal: Principal) -> bool:
+    """Whether `project_row_scope` will read `own` for this caller, so call
+    sites can skip the own-assignment query for everyone else (a
+    `hub_scope_all` caller already sees every row)."""
+
+    if RoleName.ENGINEER not in principal.roles:
+        return False
+    return is_engineer_self_scoped(principal) or not principal.hub_scope_all
 
 
 def global_hub_filter(
