@@ -2,8 +2,13 @@
 
 ## Status
 
-Accepted (provisional — proceeding without formal client sign-off; revisit before P2 closes if the
-client's answer to `docs/OPEN_QUESTIONS.md` #2 differs)
+**Superseded by ADR 0032 (2026-10-21).** The owner ruled "0.5 FTE represents half speed": a design
+step led by an engineer with FTE `f` now books `ceil(duration / f)` weeks
+(`docs/ADR/0032-fte-gates-speed.md`, `docs/OPEN_QUESTIONS.md` #2 answered). The text below is
+kept unchanged as the historical record.
+
+~~Accepted (provisional — proceeding without formal client sign-off; revisit before P2 closes if
+the client's answer to `docs/OPEN_QUESTIONS.md` #2 differs)~~
 
 ## Context
 

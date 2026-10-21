@@ -1,5 +1,7 @@
 import * as React from 'react';
 
+import type { WorkflowStepKind } from '@/types/enums';
+
 import type { GanttProjectRow, GanttStepRow, StepTimingRequest, TimingEditable } from '../../api/types';
 
 /**
@@ -12,11 +14,22 @@ export interface StepTimingTarget {
   projectName: string;
   stepId: string;
   stepName: string;
+  /** Served step kind: only a `design` step is stretched by FTE (ADR 0032). */
+  kind: WorkflowStepKind;
   timingEditable: TimingEditable;
+  /** The bar as served: CALENDAR weeks. */
   plannedStartWeek: number | null;
   plannedEndWeek: number | null;
-  /** Served effective duration (`duration_weeks`). */
+  /** Served effective duration (`duration_weeks`): WORK weeks (ADR 0032). */
   durationWeeks: number | null;
+  /**
+   * Served `span_fte`: the FTE this step's calendar span is stretched by
+   * (ADR 0032), or `null` (not stretched, or withheld from a caller who may
+   * not edit timing). With it the right-edge drag converts calendar weeks to
+   * work weeks; with `null` it keeps the 1:1 week mapping and the labels say
+   * the calendar span follows the leader's FTE.
+   */
+  spanFte: number | null;
   /** Served lead-time table value. */
   leadTimeWeeks: number;
   durationOverrideWeeks: number | null;
@@ -29,10 +42,12 @@ export function stepTimingTarget(project: GanttProjectRow, step: GanttStepRow): 
     projectName: project.project_name,
     stepId: step.step_id,
     stepName: step.step_name,
+    kind: step.kind,
     timingEditable: step.timing_editable,
     plannedStartWeek: step.planned_start_week,
     plannedEndWeek: step.planned_end_week,
     durationWeeks: step.duration_weeks,
+    spanFte: step.span_fte,
     leadTimeWeeks: step.lead_time_weeks,
     durationOverrideWeeks: step.duration_override_weeks,
     startNotBeforeWeek: step.start_not_before_week,

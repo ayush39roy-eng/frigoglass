@@ -1,4 +1,4 @@
-import type { BookingStatus, CapacityArea, HubCapacityRow } from '../api/types';
+import type { BookingStatus, CapacityArea, CapacityTotals, HubCapacityRow, YearRemaining } from '../api/types';
 
 /** Selects which SERVED fields to show for a resource kind and horizon (ADR
  *  0008). Never combines them — every figure is one API field (I17). */
@@ -128,4 +128,105 @@ export function pickAreaFigures(
         bookedPct: area.lab_booked_pct_remaining,
         bookingStatus: area.lab_booking_status_remaining,
       };
+}
+
+/* ------------------------------------------------------------------------ *
+ * P19-T05: the Weeks | Days unit (API_CONTRACT_P19 §1).
+ *
+ * Days figures are SERVED (`capacity_days`, `load_days`, `lab_capacity_days`,
+ * `lab_load_days` on each hub row; `design_/lab_ capacity_days / load_days` on
+ * `totals`): the server multiplies served weeks by the hub's (or lab region's)
+ * served `weekdays_per_week`. The browser never multiplies (I19). These
+ * helpers only SELECT the served field for the unit and horizon. A day field
+ * missing from an older API is `null`, which renders "—".
+ *
+ * Booked % and its status are unit-free (load / capacity), so they are the
+ * same served fields in both units.
+ * ------------------------------------------------------------------------ */
+export type CapacityUnit = 'weeks' | 'days';
+
+/** The page's ONE view state: both header toggles (P19-T05). */
+export interface CapacityView {
+  horizon: CapacityHorizon;
+  unit: CapacityUnit;
+}
+
+export const DEFAULT_CAPACITY_VIEW: CapacityView = { horizon: 'year', unit: 'weeks' };
+
+/** Short unit, e.g. after a KPI figure. */
+export const UNIT_SHORT: Record<CapacityUnit, string> = { weeks: 'wks', days: 'days' };
+
+/** Resource unit, e.g. "engineer-days". */
+export function resourceUnit(kind: ResourceKind, unit: CapacityUnit): string {
+  return `${kind === 'design' ? 'engineer' : 'chamber'}-${UNIT_SHORT[unit]}`;
+}
+
+/** Long resource unit for prose and accessible names, e.g. "chamber-weeks". */
+export function resourceUnitLong(kind: ResourceKind, unit: CapacityUnit): string {
+  return `${kind === 'design' ? 'engineer' : 'chamber'}-${unit}`;
+}
+
+export interface UnitFigures {
+  /** Served load in the unit; null when the served day field is absent. */
+  load: number | null;
+  /** Served capacity for the horizon in the unit; null when absent. */
+  capacity: number | null;
+  bookedPct: number | null;
+  bookingStatus: BookingStatus;
+}
+
+function servedPair(pair: YearRemaining | undefined, horizon: CapacityHorizon): number | null {
+  if (pair === undefined) return null;
+  const v = pair[horizon];
+  return typeof v === 'number' ? v : null;
+}
+
+/** A hub row's design or lab load / capacity in the unit (served fields only). */
+export function pickUnitFigures(
+  row: HubCapacityRow,
+  kind: ResourceKind,
+  view: CapacityView,
+): UnitFigures {
+  const weeks = pickFigures(row, kind, view.horizon);
+  const base = { bookedPct: weeks.bookedPct, bookingStatus: weeks.bookingStatus };
+  if (view.unit === 'weeks') return { ...base, load: weeks.load, capacity: weeks.capacity };
+  // An older API may not serve the day fields: read them as optional.
+  const served: Partial<HubCapacityRow> = row;
+  return kind === 'design'
+    ? { ...base, load: servedPair(served.load_days, view.horizon), capacity: servedPair(served.capacity_days, view.horizon) }
+    : {
+        ...base,
+        load: servedPair(served.lab_load_days, view.horizon),
+        capacity: servedPair(served.lab_capacity_days, view.horizon),
+      };
+}
+
+/** The served portfolio totals' design or lab figures in the unit. */
+export function pickTotalUnitFigures(
+  totals: CapacityTotals,
+  kind: ResourceKind,
+  view: CapacityView,
+): UnitFigures {
+  const weeks = pickAreaFigures(totals, kind, view.horizon);
+  const base = { bookedPct: weeks.bookedPct, bookingStatus: weeks.bookingStatus };
+  if (view.unit === 'weeks') return { ...base, load: weeks.load, capacity: weeks.capacity };
+  const served: Partial<CapacityTotals> = totals;
+  return kind === 'design'
+    ? {
+        ...base,
+        load: servedPair(served.design_load_days, view.horizon),
+        capacity: servedPair(served.design_capacity_days, view.horizon),
+      }
+    : {
+        ...base,
+        load: servedPair(served.lab_load_days, view.horizon),
+        capacity: servedPair(served.lab_capacity_days, view.horizon),
+      };
+}
+
+/** The served weekdays per week behind a row's day figures, or null if absent. */
+export function servedWeekdays(row: HubCapacityRow, kind: ResourceKind): number | null {
+  const served: Partial<HubCapacityRow> = row;
+  const v = kind === 'design' ? served.weekdays_per_week : served.lab_weekdays_per_week;
+  return typeof v === 'number' ? v : null;
 }

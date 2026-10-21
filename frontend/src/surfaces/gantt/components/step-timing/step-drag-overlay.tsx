@@ -1,6 +1,5 @@
 import * as React from 'react';
 
-import { formatWeek } from '@/lib/format';
 import { cn } from '@/lib/utils';
 
 import {
@@ -10,6 +9,7 @@ import {
   type StepDragOrigin,
   type WeekScale,
 } from '../../lib/gantt-coordinates';
+import { stepDragLabel, WORK_WEEKS_HELP } from '../../lib/step-weeks-copy';
 import { useStepTimingHost, type StepTimingTarget } from './step-timing-context';
 
 /**
@@ -18,7 +18,10 @@ import { useStepTimingHost, type StepTimingTarget } from './step-timing-context'
  * - the bar body (only when `timing_editable === "move_resize"`) moves the bar
  *   and requests `start_not_before_week`;
  * - the right-edge handle (`"move_resize"` or `"resize"`) requests
- *   `duration_override_weeks`;
+ *   `duration_override_weeks`, a WORK figure (ADR 0032). The handle moves the
+ *   CALENDAR edge; with a served FTE the dragged calendar width is turned into
+ *   the largest work that fits it (`stepDragResult`), without one the mapping
+ *   is 1:1 (`StepTimingTarget.spanFte`);
  * - `"none"` renders nothing at all.
  *
  * Snaps to whole weeks, shows a ghost bar with a week label while dragging,
@@ -39,12 +42,6 @@ interface DragState {
   pointerId: number;
   startX: number;
   dx: number;
-}
-
-function ghostLabel(mode: StepDragMode, ghost: { startWeek: number; endWeek: number }): string {
-  const span = `${formatWeek(ghost.startWeek)}–${formatWeek(ghost.endWeek)}`;
-  if (mode === 'move') return `Start ≥ ${formatWeek(ghost.startWeek)} · ${span}`;
-  return `${String(ghost.endWeek - ghost.startWeek + 1)} wks · ${span}`;
 }
 
 export function StepDragOverlay({
@@ -80,6 +77,7 @@ export function StepDragOverlay({
     startWeek: start,
     endWeek: end,
     durationWeeks: target.durationWeeks ?? end - start + 1,
+    fte: target.spanFte,
   };
   const geom = barGeometry(start, end, scale);
   if (!geom) return null;
@@ -113,7 +111,16 @@ export function StepDragOverlay({
     host.pending && host.pending.projectId === target.projectId && host.pending.stepId === target.stepId
       ? host.pending
       : null;
-  const ghost = live && live.request ? { ...live.ghost, label: ghostLabel(drag?.mode ?? 'move', live.ghost) } : pending
+  const ghost = live && live.request
+    ? {
+        ...live.ghost,
+        label: stepDragLabel(drag?.mode ?? 'move', live.ghost, {
+          kind: target.kind,
+          workWeeks: live.workWeeks,
+          fte: target.spanFte,
+        }),
+      }
+    : pending
     ? { startWeek: pending.startWeek, endWeek: pending.endWeek, label: 'Saving…' }
     : null;
   const ghostGeom = ghost ? barGeometry(ghost.startWeek, ghost.endWeek, scale) : null;
@@ -158,7 +165,7 @@ export function StepDragOverlay({
         )}
         style={{ left: geom.x + geom.width - HANDLE_PX / 2, width: HANDLE_PX, top: top - 2, height: BODY_H + 4 }}
         data-testid="step-drag-handle"
-        title={`Drag to change the duration of ${target.stepName}`}
+        title={`Drag to change the duration of ${target.stepName}. ${target.kind === 'design' ? WORK_WEEKS_HELP : 'Lab and elapsed steps are not stretched by FTE.'}`}
         onPointerDown={begin('resize')}
         {...handlers}
       >

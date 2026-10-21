@@ -198,13 +198,18 @@ class HardGateReason(str, enum.Enum):
 
 
 class CurrencyCode(str, enum.Enum):
-    """Base EUR; USD and INR configurable-rate currencies, per DOMAIN_RULES.md
-    "Currency".
+    """Base EUR; the others are configurable-rate currencies, per DOMAIN_RULES.md
+    "Currency". EGP / ZAR / IDR (P21-T01) are seeded with no rate ("not
+    configured") until a Super Admin sets one; converting into an unconfigured
+    currency is a 422 `CURRENCY_NOT_CONFIGURED`.
     """
 
     EUR = "EUR"
     USD = "USD"
     INR = "INR"
+    EGP = "EGP"
+    ZAR = "ZAR"
+    IDR = "IDR"
 
 
 class SolverType(str, enum.Enum):

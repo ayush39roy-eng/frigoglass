@@ -11,3 +11,8 @@ export const STATUS_TONE_TEXT: Record<'danger' | 'warning' | 'success', string> 
 export function formatPctCompact(value: number | null): string {
   return value === null ? '—' : `${formatDecimal(value)}%`;
 }
+
+/** P19-T05: a served figure, or "—" when it is absent (a day field on an older API). */
+export function formatFigure(value: number | null): string {
+  return value === null ? '—' : formatDecimal(value);
+}

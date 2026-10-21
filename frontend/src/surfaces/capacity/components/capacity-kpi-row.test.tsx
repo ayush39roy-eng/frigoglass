@@ -22,7 +22,7 @@ const totals = totalsRow({
 
 describe('CapacityKpiRow (P19-T01)', () => {
   it('renders the four client cards with served totals, a per-hub line, the P1/P2/P3 split and booked %', () => {
-    renderWithProviders(<CapacityKpiRow totals={totals} rows={rows} horizon="year" />);
+    renderWithProviders(<CapacityKpiRow totals={totals} rows={rows} view={{ horizon: 'year', unit: 'weeks' }} />);
     expect(screen.getByTestId('kpi-design-capacity-value')).toHaveTextContent('57');
     expect(screen.getByTestId('kpi-design-load-value')).toHaveTextContent('110');
     const cap = screen.getByRole('group', { name: 'Design capacity' });
@@ -38,13 +38,37 @@ describe('CapacityKpiRow (P19-T01)', () => {
   });
 
   it('switches to the served remaining-year fields', () => {
-    renderWithProviders(<CapacityKpiRow totals={totals} rows={rows} horizon="remaining" />);
+    renderWithProviders(<CapacityKpiRow totals={totals} rows={rows} view={{ horizon: 'remaining', unit: 'weeks' }} />);
     expect(screen.getByTestId('kpi-design-capacity-value')).toHaveTextContent('31.5');
     expect(screen.getByLabelText('Design capacity by hub')).toHaveTextContent('PD-India: 22');
   });
 
+  it('P19-T05: Days shows the served day totals and per-hub / per-region day figures; splits labelled wks; booked % unchanged', () => {
+    renderWithProviders(<CapacityKpiRow totals={totals} rows={rows} view={{ horizon: 'year', unit: 'days' }} />);
+    expect(screen.getByTestId('kpi-design-capacity-value')).toHaveTextContent('1,515.72');
+    expect(screen.getByTestId('kpi-design-load-value')).toHaveTextContent('3,522');
+    expect(screen.getByTestId('kpi-lab-capacity-value')).toHaveTextContent('1,117.32');
+    expect(screen.getByTestId('kpi-lab-load-value')).toHaveTextContent('2,979');
+    expect(screen.getByRole('group', { name: 'Design capacity' })).toHaveTextContent('days');
+    expect(screen.getByRole('group', { name: 'Design capacity' })).not.toHaveTextContent('wks');
+    expect(screen.getByLabelText('Design capacity by hub')).toHaveTextContent('PD-India: 1,515.72');
+    expect(screen.getByLabelText('Lab load by lab region')).toHaveTextContent('India: 2,979');
+    // the per-priority split is served in weeks only and says so
+    expect(screen.getByTestId('kpi-Design load-P1')).toHaveTextContent('54');
+    expect(screen.getByTestId('kpi-Design load-split-unit')).toHaveTextContent('(wks)');
+    expect(screen.getByTestId('kpi-design-load-booked')).toHaveTextContent('192.98 %');
+  });
+
+  it('P19-T05: Days + YTD shows the served remaining day capacity', () => {
+    renderWithProviders(<CapacityKpiRow totals={totals} rows={rows} view={{ horizon: 'remaining', unit: 'days' }} />);
+    expect(screen.getByTestId('kpi-design-capacity-value')).toHaveTextContent('1,078.5');
+    expect(screen.getByTestId('kpi-lab-capacity-value')).toHaveTextContent('795');
+    // load has no basis: the same served value on both
+    expect(screen.getByTestId('kpi-design-load-value')).toHaveTextContent('3,522');
+  });
+
   it('has no serious/critical axe violations', async () => {
-    const { container } = renderWithProviders(<CapacityKpiRow totals={totals} rows={rows} horizon="year" />);
+    const { container } = renderWithProviders(<CapacityKpiRow totals={totals} rows={rows} view={{ horizon: 'year', unit: 'weeks' }} />);
     expect(await seriousAxeViolations(container)).toEqual([]);
   });
 });

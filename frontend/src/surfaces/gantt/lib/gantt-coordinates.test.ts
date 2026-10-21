@@ -6,6 +6,9 @@ import {
   delayConnectorGeometry,
   dragMoveStartWeek,
   dragResizeDuration,
+  fteHundredths,
+  fteSpanWeeks,
+  workWeeksForCalendarWeeks,
   makeWeekScale,
   plannedSpan,
   snapWeekDelta,
@@ -133,10 +136,12 @@ describe('step drag snapping (P12, ADR 0019)', () => {
     expect(stepDragResult('move', origin, 45, weeks)).toEqual({
       ghost: { startWeek: 13, endWeek: 16 },
       request: { start_not_before_week: 13 },
+      workWeeks: null,
     });
     expect(stepDragResult('move', origin, -15 * 30, weeks)).toEqual({
       ghost: { startWeek: 1, endWeek: 4 },
       request: { start_not_before_week: 1 },
+      workWeeks: null,
     });
     const late = stepDragResult('move', origin, 15 * 100, weeks);
     expect(late.request).toEqual({ start_not_before_week: 52 });
@@ -155,10 +160,12 @@ describe('step drag snapping (P12, ADR 0019)', () => {
     expect(stepDragResult('resize', origin, 30, weeks)).toEqual({
       ghost: { startWeek: 10, endWeek: 15 },
       request: { duration_override_weeks: 6 },
+      workWeeks: 6,
     });
     expect(stepDragResult('resize', origin, -15 * 10, weeks)).toEqual({
       ghost: { startWeek: 10, endWeek: 10 },
       request: { duration_override_weeks: 1 },
+      workWeeks: 1,
     });
     expect(dragResizeDuration(100, 10)).toBe(104);
     expect(dragResizeDuration(3, -9)).toBe(1);
@@ -176,6 +183,122 @@ describe('step drag snapping (P12, ADR 0019)', () => {
     const origin = { startWeek: 44, endWeek: 51, durationWeeks: 8 };
     expect(stepDragResult('resize', origin, 15 * 10, weeks).ghost.endWeek).toBe(52);
     expect(stepDragResult('move', origin, 15 * 5, weeks).ghost.endWeek).toBe(52);
+  });
+});
+
+describe('P20 (ADR 0032): right-edge drag turns calendar weeks into work weeks', () => {
+  const weeks = makeWeekScale('weeks'); // 15 px / week
+
+  it('fteSpanWeeks is ceil(work / fte) in exact hundredths (no float trap)', () => {
+    expect(fteSpanWeeks(4, 1)).toBe(4);
+    expect(fteSpanWeeks(4, 0.5)).toBe(8);
+    expect(fteSpanWeeks(4, 0.63)).toBe(7);
+    expect(fteSpanWeeks(4, 1.25)).toBe(4);
+    // 21 / 0.7 in binary floats is 30.000000000000004 → 31; the rule gives 30.
+    expect(fteSpanWeeks(21, 0.7)).toBe(30);
+    expect(() => fteSpanWeeks(4, 0)).toThrow(RangeError);
+  });
+
+  it('fteHundredths rejects missing, zero, negative and non-finite FTE', () => {
+    expect(fteHundredths(0.63)).toBe(63);
+    expect(fteHundredths(null)).toBeNull();
+    expect(fteHundredths(undefined)).toBeNull();
+    expect(fteHundredths(0)).toBeNull();
+    expect(fteHundredths(-1)).toBeNull();
+    expect(fteHundredths(Number.NaN)).toBeNull();
+  });
+
+  it('workWeeksForCalendarWeeks is the largest work whose span fits, kept to 1..104', () => {
+    expect(workWeeksForCalendarWeeks(8, 0.5)).toBe(4);
+    expect(workWeeksForCalendarWeeks(9, 0.5)).toBe(4); // 5 would span 10
+    expect(workWeeksForCalendarWeeks(7, 0.63)).toBe(4);
+    expect(workWeeksForCalendarWeeks(6, 0.63)).toBe(3);
+    expect(workWeeksForCalendarWeeks(30, 0.7)).toBe(21);
+    expect(workWeeksForCalendarWeeks(1, 0.5)).toBe(1); // the override minimum
+    expect(workWeeksForCalendarWeeks(300, 0.5)).toBe(104); // the override maximum
+  });
+
+  it('round-trips: for FTE <= 1 the largest work fitting ceil(w / fte) is w itself, and its span fits', () => {
+    for (const fte of [0.31, 0.5, 0.62, 0.63, 0.8, 0.97, 1]) {
+      for (let w = 1; w <= 104; w += 1) {
+        const span = fteSpanWeeks(w, fte);
+        expect(workWeeksForCalendarWeeks(span, fte)).toBe(w);
+        for (let cal = fteSpanWeeks(1, fte); cal <= span + 3; cal += 1) {
+          const fit = workWeeksForCalendarWeeks(cal, fte);
+          if (fit < 104) {
+            expect(fteSpanWeeks(fit, fte)).toBeLessThanOrEqual(cal);
+            expect(fteSpanWeeks(fit + 1, fte)).toBeGreaterThan(cal);
+          }
+        }
+      }
+    }
+  });
+
+  it('at 1.0 FTE the drag is exactly the pre-ADR-0032 1:1 mapping', () => {
+    const base = { startWeek: 10, endWeek: 13, durationWeeks: 4 };
+    for (const dx of [-150, -30, -15, 0, 15, 30, 45, 15 * 30]) {
+      expect(stepDragResult('resize', { ...base, fte: 1 }, dx, weeks)).toEqual(stepDragResult('resize', base, dx, weeks));
+    }
+  });
+
+  it('at 0.5 FTE a 2-calendar-week drag asks for 1 more work week, not 2', () => {
+    // 4 wks of work at 0.5 FTE: the bar is W10–W17 (8 calendar weeks).
+    const origin = { startWeek: 10, endWeek: 17, durationWeeks: 4, fte: 0.5 };
+    expect(stepDragResult('resize', origin, 15 * 2, weeks)).toEqual({
+      ghost: { startWeek: 10, endWeek: 19 },
+      request: { duration_override_weeks: 5 },
+      workWeeks: 5,
+    });
+    // One calendar week more fits no extra whole work week: nothing to send.
+    const one = stepDragResult('resize', origin, 15, weeks);
+    expect(one.request).toBeNull();
+    expect(one.ghost).toEqual({ startWeek: 10, endWeek: 17 });
+    // Shrinking 2 calendar weeks drops 1 work week (span 6).
+    expect(stepDragResult('resize', origin, -15 * 2, weeks)).toEqual({
+      ghost: { startWeek: 10, endWeek: 15 },
+      request: { duration_override_weeks: 3 },
+      workWeeks: 3,
+    });
+  });
+
+  it('at 0.63 FTE the ghost snaps to the span of the work it will send', () => {
+    // 4 wks of work at 0.63 FTE: ceil(4 / 0.63) = 7, the bar is W10–W16.
+    const origin = { startWeek: 10, endWeek: 16, durationWeeks: 4, fte: 0.63 };
+    // +1 calendar week: 8 fits floor(8 × 0.63) = 5 work weeks, whose span is 8.
+    expect(stepDragResult('resize', origin, 15, weeks)).toEqual({
+      ghost: { startWeek: 10, endWeek: 17 },
+      request: { duration_override_weeks: 5 },
+      workWeeks: 5,
+    });
+    // +2: 9 still fits only 5 (6 would span 10); the ghost stays on 8 weeks.
+    expect(stepDragResult('resize', origin, 30, weeks).ghost).toEqual({ startWeek: 10, endWeek: 17 });
+    // −1: 6 fits 3 work weeks, span 5.
+    expect(stepDragResult('resize', origin, -15, weeks)).toEqual({
+      ghost: { startWeek: 10, endWeek: 14 },
+      request: { duration_override_weeks: 3 },
+      workWeeks: 3,
+    });
+    // Far left: never below 1 work week (span 2).
+    expect(stepDragResult('resize', origin, -15 * 20, weeks)).toEqual({
+      ghost: { startWeek: 10, endWeek: 11 },
+      request: { duration_override_weeks: 1 },
+      workWeeks: 1,
+    });
+  });
+
+  it('a move ignores the FTE', () => {
+    const origin = { startWeek: 10, endWeek: 17, durationWeeks: 4, fte: 0.5 };
+    expect(stepDragResult('move', origin, 30, weeks)).toEqual({
+      ghost: { startWeek: 12, endWeek: 19 },
+      request: { start_not_before_week: 12 },
+      workWeeks: null,
+    });
+  });
+
+  it('an unusable FTE (0, negative) falls back to the 1:1 mapping rather than dividing', () => {
+    const base = { startWeek: 10, endWeek: 13, durationWeeks: 4 };
+    expect(stepDragResult('resize', { ...base, fte: 0 }, 30, weeks)).toEqual(stepDragResult('resize', base, 30, weeks));
+    expect(stepDragResult('resize', { ...base, fte: -1 }, 30, weeks)).toEqual(stepDragResult('resize', base, 30, weeks));
   });
 });
 

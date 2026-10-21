@@ -5,6 +5,7 @@ import { cn } from '@/lib/utils';
 
 import type { PriorityLoadSplit } from '../api/types';
 import { BUCKET_BG, BUCKET_SHORT, PRIORITY_BUCKETS } from '../lib/priority-split';
+import { formatFigure } from '../lib/status-format';
 
 /**
  * P13-T11: "Design / Lab load vs capacity" as one stacked column per hub (or lab
@@ -15,7 +16,14 @@ import { BUCKET_BG, BUCKET_SHORT, PRIORITY_BUCKETS } from '../lib/priority-split
  * Every segment is one served `*_load_by_priority` value; the label on top of a
  * column is the served `*_load_weeks` (which the buckets sum to, server-side).
  * The only arithmetic here is the pixel scale (value / axis max), which is
- * presentation, not a figure. The visible figures are also exposed as a table
+ * presentation, not a figure.
+ *
+ * P19-T05 (Weeks | Days): `load` and `capacity` are the served figures in the
+ * page's unit (served day fields in Days). The per-priority split is served in
+ * weeks only, so each segment's height is its share of the served weeks total
+ * (`splitTotal`, a pixel proportion) applied to the column, and every split
+ * VALUE shown (tooltips, the screen-reader table) is labelled in weeks. A day
+ * figure absent from an older API is `null`: no column, "—" as its label. The visible figures are also exposed as a table
  * to assistive tech, so colour is never the only carrier.
  */
 export interface PriorityLoadBar {
@@ -24,17 +32,25 @@ export interface PriorityLoadBar {
   /** Optional second line under the label, e.g. the hubs of a lab region. */
   sublabel?: string;
   split: PriorityLoadSplit;
-  /** The served total load (`design_load_weeks` / `lab_load_weeks`). */
-  load: number;
-  /** The served capacity for the selected horizon. */
-  capacity: number;
+  /** The served weeks total the split sums to (`design_load_weeks` / `lab_load_weeks`);
+   *  used only as the denominator of each segment's pixel share. */
+  splitTotal: number;
+  /** The served total load in the page's unit; null when the served field is absent. */
+  load: number | null;
+  /** The served capacity for the selected horizon in the page's unit; null when absent. */
+  capacity: number | null;
 }
 
 export interface PriorityLoadChartProps {
   bars: PriorityLoadBar[];
   /** Accessible name for the chart, e.g. "Design load vs capacity by hub". */
   ariaLabel: string;
+  /** Long unit of `load` / `capacity`, e.g. "engineer-days" (accessible names, axis title). */
   unit: string;
+  /** Short unit printed under each column's value label, e.g. "days". */
+  unitShort: string;
+  /** Unit of the per-priority split values (served in weeks only), e.g. "wks". */
+  splitUnit: string;
   capacityLabel: string;
 }
 
@@ -57,9 +73,9 @@ function axisScale(max: number): { top: number; ticks: number[] } {
 
 const PLOT_INSET = 'absolute inset-x-0 bottom-0 top-5';
 
-export function PriorityLoadChart({ bars, ariaLabel, unit, capacityLabel }: PriorityLoadChartProps): React.JSX.Element {
+export function PriorityLoadChart({ bars, ariaLabel, unit, unitShort, splitUnit, capacityLabel }: PriorityLoadChartProps): React.JSX.Element {
   // Display scale only: the tallest load or capacity outline sets the axis.
-  const { top: max, ticks } = axisScale(bars.reduce((m, b) => Math.max(m, b.load, b.capacity), 0));
+  const { top: max, ticks } = axisScale(bars.reduce((m, b) => Math.max(m, b.load ?? 0, b.capacity ?? 0), 0));
   const captionId = React.useId();
 
   return (
@@ -90,6 +106,9 @@ export function PriorityLoadChart({ bars, ariaLabel, unit, capacityLabel }: Prio
         aria-label={`${ariaLabel}, scrollable`}
       >
         <div className="flex flex-col gap-s3" aria-hidden="true" style={{ minWidth: `${String(bars.length * 3.5 + 3)}rem` }}>
+      <p className="text-2xs font-semibold text-text-muted first-letter:uppercase" data-testid="priority-load-chart-axis">
+        {unit}
+      </p>
       <div className="flex gap-s2">
         <div className="relative h-56 w-10 shrink-0">
           <div className={PLOT_INSET}>
@@ -116,26 +135,28 @@ export function PriorityLoadChart({ bars, ariaLabel, unit, capacityLabel }: Prio
                 {/* Capacity outline, behind the stack. */}
                 <div
                   className="absolute inset-x-[8%] bottom-0 rounded-t-sm border-2 border-b-0 border-text-muted/80"
-                  style={{ height: pct(bar.capacity, max) }}
-                  title={`${capacityLabel} ${formatDecimal(bar.capacity)}`}
+                  style={{ height: pct(bar.capacity ?? 0, max) }}
+                  title={`${capacityLabel} ${formatFigure(bar.capacity)} ${unitShort}`}
                 />
-                <div className="relative mx-[18%] flex flex-col-reverse overflow-hidden rounded-t-sm" style={{ height: pct(bar.load, max) }}>
+                <div className="relative mx-[18%] flex flex-col-reverse overflow-hidden rounded-t-sm" style={{ height: pct(bar.load ?? 0, max) }}>
                   {PRIORITY_BUCKETS.map((b) =>
                     bar.split[b] > 0 ? (
                       <div
                         key={b}
                         className={cn('w-full shrink-0', BUCKET_BG[b])}
-                        style={{ height: pct(bar.split[b], bar.load) }}
-                        title={`${BUCKET_SHORT[b]} ${formatDecimal(bar.split[b])}`}
+                        style={{ height: pct(bar.split[b], bar.splitTotal) }}
+                        title={`${BUCKET_SHORT[b]} ${formatDecimal(bar.split[b])} ${splitUnit}`}
                       />
                     ) : null,
                   )}
                 </div>
                 <span
                   className="absolute inset-x-0 pb-0.5 text-center font-mono text-2xs font-semibold tabular-nums text-text"
-                  style={{ bottom: pct(bar.load, max) }}
+                  style={{ bottom: pct(bar.load ?? 0, max) }}
+                  data-testid={`load-bar-value-${bar.key}`}
                 >
-                  {formatDecimal(bar.load)}
+                  {formatFigure(bar.load)}
+                  <span className="block text-[0.625rem] font-medium text-text-subtle">{unitShort}</span>
                 </span>
               </div>
             ))}
@@ -164,17 +185,21 @@ export function PriorityLoadChart({ bars, ariaLabel, unit, capacityLabel }: Prio
       </div>
 
       <table className="sr-only">
-        <caption>{ariaLabel}</caption>
+        <caption>
+          {ariaLabel}; load and capacity in {unit}, priority split in {splitUnit}
+        </caption>
         <thead>
           <tr>
             <th scope="col">Name</th>
             {PRIORITY_BUCKETS.map((b) => (
               <th key={b} scope="col">
-                {b}
+                {b} ({splitUnit})
               </th>
             ))}
-            <th scope="col">Load</th>
-            <th scope="col">{capacityLabel}</th>
+            <th scope="col">Load ({unitShort})</th>
+            <th scope="col">
+              {capacityLabel} ({unitShort})
+            </th>
           </tr>
         </thead>
         <tbody>
@@ -184,8 +209,8 @@ export function PriorityLoadChart({ bars, ariaLabel, unit, capacityLabel }: Prio
               {PRIORITY_BUCKETS.map((b) => (
                 <td key={b}>{formatDecimal(bar.split[b])}</td>
               ))}
-              <td>{formatDecimal(bar.load)}</td>
-              <td>{formatDecimal(bar.capacity)}</td>
+              <td>{formatFigure(bar.load)}</td>
+              <td>{formatFigure(bar.capacity)}</td>
             </tr>
           ))}
         </tbody>

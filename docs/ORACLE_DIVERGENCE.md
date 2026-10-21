@@ -164,3 +164,11 @@ Per `docs/IMPLEMENTATION_PLAN.md` P2-T05, this entire `tests/oracle/` directory 
 report's supporting `divergences.json` and `diff_against_scheduler.py`) is deleted once P2-T05
 replaces it with spec-derived golden-file tests. `docs/ORACLE_DIVERGENCE.md` itself is *not* deleted
 — it's the permanent record of this analysis.
+
+## Post-P2 note (2026-10-21, P20-T01)
+
+ADR 0002 (FTE does not gate booking), listed above among the ADR-governed defects that produced
+zero divergence, is superseded by ADR 0032 (FTE gates speed: a design step books
+`ceil(duration / fte)` weeks). The scheduler now intentionally diverges from the prototype for
+every non-frozen project led below 1.0 FTE. The oracle was retired at P2 close, so nothing is
+re-run. This note only keeps the record above from reading as current behaviour.

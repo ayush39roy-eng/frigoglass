@@ -85,9 +85,11 @@ from scheduling.types import (
     ScheduleInput,
     ScheduleOutput,
     StepProgressInput,
+    StepSchedule,
     StepTimingInput,
 )
 from scheduling.types import WorkflowStepTemplate as SchedWorkflowStepTemplate
+from scheduling.workflow import is_valid_fte
 from services.notifications import generate_schedule_change_notifications
 from services.schedule_stale import clear_stale_for_run
 
@@ -365,6 +367,32 @@ async def _next_version(db: AsyncSession) -> int:
     return (latest or 0) + 1
 
 
+def run_step_span_fte(
+    project: ProjectInput,
+    step: StepSchedule,
+    fte_by_engineer: dict[str, float],
+) -> float | None:
+    """ADR 0032 (P20-T02): the leader FTE the run used to stretch `step`, read
+    from the run's own input, or `None` when the step was not stretched: not a
+    design step, skipped, Done in the input, a frozen project (I10), no
+    assigned engineer (no leader, or an In Progress tail with nothing left),
+    or an FTE that is not `is_valid_fte` (the scheduler rejects those as a
+    data error). Persisted as `ScheduleRunProjectStep.span_fte`."""
+
+    if step.kind != "design" or step.skipped or project.frozen:
+        return None
+    if step.assigned_engineer_id is None:
+        return None
+    if any(
+        sp.step_id == step.step_id and sp.status == "Done" for sp in project.step_progress
+    ):
+        return None
+    fte = fte_by_engineer.get(step.assigned_engineer_id)
+    if fte is None or not is_valid_fte(fte):
+        return None
+    return fte
+
+
 async def persist_schedule_output(
     db: AsyncSession,
     schedule_input: ScheduleInput,
@@ -509,12 +537,20 @@ async def persist_schedule_output(
                 )
             )
 
+    project_inputs = {p.project_id: p for p in schedule_input.projects}
+    fte_by_engineer = {e.engineer_id: e.fte for e in schedule_input.engineers}
     for outcome in schedule_output.project_outcomes:
         project = project_id_map.get(outcome.project_id)
         if project is None:  # pragma: no cover - defensive, should never happen
             continue
+        project_input = project_inputs.get(outcome.project_id)
 
         for step in outcome.steps:
+            span_fte = (
+                run_step_span_fte(project_input, step, fte_by_engineer)
+                if project_input is not None
+                else None
+            )
             db.add(
                 ScheduleRunProjectStep(
                     schedule_run_id=run.id,
@@ -533,6 +569,7 @@ async def persist_schedule_output(
                     eng_conflict=outcome.eng_conflict,
                     chamber_overlap=outcome.overlap,
                     skipped=step.skipped,
+                    span_fte=span_fte,
                 )
             )
             if sync_live_workflow_steps:

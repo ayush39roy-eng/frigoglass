@@ -27,13 +27,18 @@ projects). Sections marked *(2026-10-10)* changed. Invariants I21–I24. Open qu
 **Revised 2026-10-13** (ADR 0024): the demo dataset is now the client's real 2026 pipeline, `CURRENT_WEEK` is
 42, and every surface shows a 52-week year. Work past W52 is shown as spillover.
 
+**Revised 2026-10-21** (ADR 0032, owner ruling "0.5 FTE represents half speed"): FTE gates
+scheduling speed. A design step books `ceil(duration / fte)` weeks of its leader. Sections marked
+*(2026-10-21)* changed; ADR 0002 is superseded and known defect #1 is closed.
+
 ---
 
 ## Workflow templates — two workflows, 14 steps each *(2026-09-27, ADR 0007)*
 
 Names follow the client workbook. Step IDs are unchanged from the prototype era. `kind` says which
-resource a step books: `design` books the project's leader for every week of the step; `lab` books a
-chamber; `elapsed` books nothing but occupies calendar weeks on the project's critical path.
+resource a step books: `design` books the project's leader for every week of the step (its span is
+stretched by the leader's FTE, see Booking rules, ADR 0032); `lab` books a chamber; `elapsed` books
+nothing but occupies calendar weeks on the project's critical path.
 
 ### `PDD` workflow — every non-OEM hub
 
@@ -172,10 +177,22 @@ forbids one engineer on two design steps in a week, so the scheduler serialises 
 therefore means lab ∥ design and elapsed ∥ anything. `sequence_order` is display order and the
 deterministic walk/tie-break order; it is not a dependency.
 
-## Booking rules *(revised 2026-09-27)*
+## Booking rules *(revised 2026-09-27; FTE 2026-10-21, ADR 0032)*
 
-- **Design step**: the project's assigned leader must be free for every week in `[w, w + duration)`.
-  Non-frozen projects advance `w` until a free window is found.
+- **Design step**: the project's assigned leader must be free for every week in `[w, w + span)`.
+  Non-frozen projects advance `w` until a free window is found. *(2026-10-21, ADR 0032)* FTE gates
+  speed:
+  ```
+  span = ceil(duration_weeks / leader.fte)      # elapsed weeks; per step; exact decimal arithmetic
+  ```
+  (4 weeks at 0.5 FTE = 8; at 0.63 FTE = 7; at 1.0 = 4.) `duration_weeks` stays the effort figure
+  and is what the run row reports, load counts and progress weights. The leader is booked for every
+  week of the span and still does one step at a time. Lab, elapsed and skipped steps are never
+  stretched. A **frozen** project is never stretched (its dates are locked, I10).
+- *(2026-10-21, ADR 0032)* **Leader FTE ≤ 0** (or not finite) on a non-frozen project with design
+  work left to place: the project is rejected as a `data_error` (no rows, no capacity, null
+  completion weeks). Nothing divides by zero. With no design work left, the FTE is irrelevant. An
+  unassigned or unknown leader is unchanged: `LEFT_OUT` with `no_leader`.
 - **Lab step**: a chamber in the project's lab region whose `allowed_stages` includes this step, with
   concurrent project count `< chamber.max_concurrent` (= platform count) for every week in the
   window. Consumption is **`1.0` platform-week per project-week** (ADR 0007; the prototype's `0.5`
@@ -229,6 +246,8 @@ unconstrained_end_week = earliest finish assuming unlimited engineers and chambe
                        with the lead-time durations only (Done/In-Progress stages keep their actual
                        start; remaining weeks as in the progress rules). Computed by the scheduler
                        as a pure by-product and stored on the run's outcome row.
+                       (2026-10-21, ADR 0032) Design steps use their FTE-stretched span:
+                       unlimited engineers remove contention, not the leader's own speed.
 slip_weeks           = projected_end_week − expected_end_week               (may be negative)
 ```
 
@@ -296,7 +315,9 @@ so no agent "fixes" them without approval and no agent copies them blindly.
 1. **FTE is not applied in scheduling.** The Capacity Planning surface reports capacity scaled by
    FTE (0.5 FTE → 9.4 weeks, 1.0 FTE → 18.9 weeks), but the scheduler treats every engineer as fully
    available for whole weeks. Capacity reporting and the Gantt therefore disagree.
-   → `docs/OPEN_QUESTIONS.md` #2.
+   → `docs/OPEN_QUESTIONS.md` #2. **Closed 2026-10-21 (ADR 0032, supersedes ADR 0002):** FTE gates
+   speed. A design step books `ceil(duration / fte)` weeks, and load stays in effort weeks, so the
+   Gantt and booked % now agree with the FTE-scaled capacity.
 2. **Chamber `efficiency` and `weeks_per_chamber` are display-only.** Only `max` concurrent gates
    booking. → `docs/OPEN_QUESTIONS.md` #3. *(2026-09-27: `weeks_per_chamber` retired; `efficiency`,
    platforms and downtime now feed the capacity-supply formula (ADR 0008). Booking is still gated
@@ -307,7 +328,8 @@ so no agent "fixes" them without approval and no agent copies them blindly.
 ## Invariants (the workflow-auditor asserts all of these on every solver run)
 
 - **I1**: No engineer is assigned two design steps in the same week — unless at least one project is
-  `frozen`, in which case `ENG_CONFLICT` is raised.
+  `frozen`, in which case `ENG_CONFLICT` is raised. *(ADR 0032: "in the same week" means any week of
+  either step's FTE-stretched span.)*
 - **I2**: No chamber exceeds `max` concurrent projects in any week — unless frozen, then `OVERLAP`.
 - **I3** *(revised 2026-09-27, ADR 0009)*: Every non-skipped step starts after all of its
   predecessors end: `step.start >= max(pred.end) + 1`. Under the seeded strict chain this is the
@@ -318,7 +340,8 @@ so no agent "fixes" them without approval and no agent copies them blindly.
   present with `skipped = true` and zero duration) or `LEFT_OUT = true`.
 - **I6** *(revised)*: Total design load per hub = Σ `design`-kind step durations for that hub's
   projects (elapsed and skipped steps contribute 0). Must reconcile with the Capacity surface to the
-  week.
+  week. *(2026-10-21, ADR 0032)* The durations are **effort** weeks (`duration_weeks`), never the
+  FTE-stretched elapsed span. That keeps them comparable with supply `working_weeks × Σ fte`.
 - **I7** *(revised)*: Total lab load per lab region = Σ `lab`-kind step durations × 1.0. Must
   reconcile with the Capacity surface.
 - **I8**: Re-running the greedy scheduler on identical input produces byte-identical output
@@ -370,7 +393,14 @@ if remaining_weeks_override is not null:
 else:
     remaining = ceil(duration_weeks * (1 - percent_complete / 100))
 remaining = max(0, remaining)
+
+remaining_span = ceil(remaining / leader.fte)   # design step of a non-frozen project (ADR 0032)
+               = remaining                       # every other step
 ```
+
+*(2026-10-21, ADR 0032)* `remaining` (including `remaining_weeks_override`) is remaining
+**effort**. The In Progress / Blocked tail books `remaining_span` weeks. `actual_start_week`
+stays locked.
 
 `duration_weeks` is the step's lead-time-table duration (ADR 0007). A skipped step (`duration == 0`)
 has no progress state of its own — it is always treated as complete. A `remaining == 0` in-progress step occupies no future
@@ -390,7 +420,7 @@ if status == Done:
 
 if status == In Progress:
     start   = actual_start_week                            # fixed
-    tail    = [max(CURRENT_WEEK, prev_step_end + 1) .. + remaining)   # the not-yet-done part
+    tail    = [max(CURRENT_WEEK, prev_step_end + 1) .. + remaining_span)   # the not-yet-done part (ADR 0032)
     the step's booked interval for capacity/conflict purposes is `tail`
     if remaining == 0: the step is complete for scheduling; end = max(actual_start_week, prev_step_end)
 
@@ -499,8 +529,12 @@ completion_pct              = capacity / load          (null when load == 0)
 ```
 
 Seed values: `docs/CLIENT_FORMULAS.md` §2.1–2.2. Editable on Capacity Planning (Hub Planner, own
-hub) and Workflow Settings (Super Admin); audit-logged. FTE still does not gate week-level booking
-(ADR 0002) and downtime does not gate chamber booking; both are supply-reporting inputs.
+hub) and Workflow Settings (Super Admin); audit-logged. Downtime does not gate chamber booking; it
+is a supply-reporting input. *(2026-10-21, ADR 0032, superseding ADR 0002)* FTE now gates design
+booking speed (`span = ceil(duration / fte)`, Booking rules). It is still the supply multiplier
+here. Supply (`working_weeks × Σ fte`) and load (I6, Σ `duration_weeks`) are both in **effort**
+weeks, so `booked_pct` stays comparable: a 0.5 FTE engineer booked for every elapsed week reads
+about 100 %, not 200 %. Load sums never use the elapsed span.
 
 ### Booked % and areas *(2026-10-09, ADR 0016)*
 
@@ -699,9 +733,11 @@ capacity stays region-wide under a hub filter (chambers are shared per region).
 
 ## P12 invariants *(2026-10-10)*
 
-- **I21** (ADR 0019): every scheduled step that is not skipped, not `Done` and not in a frozen project
-  books a span equal to its effective duration (for `In Progress`/`Blocked`, the tail equals the
-  remaining duration derived from the effective duration).
+- **I21** (ADR 0019; amended 2026-10-21, ADR 0032): every scheduled step that is not skipped, not
+  `Done` and not in a frozen project carries its effective duration (effort) as `duration_weeks`
+  and books a span of `ceil(duration / fte)` weeks if it is a design step (leader FTE `fte`), else
+  `duration` weeks. For `In Progress`/`Blocked` the tail is `ceil(remaining / fte)` (design) or
+  `remaining`, with `remaining` derived from the effective duration.
 - **I22** (ADR 0019): every `Not Started` step with `start_not_before_week` set starts at or after it
   (frozen projects exempt — their dates are locked, I10; ruled 2026-10-10 at P12-T01 review).
 - **I24** (ADR 0023): for any burst of auto-triggers answering `deferred` during one in-flight run,

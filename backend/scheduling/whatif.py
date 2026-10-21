@@ -58,7 +58,13 @@ from scheduling.types import (
     ScheduleInput,
     ScheduleOutput,
 )
-from scheduling.workflow import analyse_project, build_lead_time_table, build_workflows
+from scheduling.workflow import (
+    analyse_project,
+    build_lead_time_table,
+    build_workflows,
+    is_valid_fte,
+    unconstrained_end_week,
+)
 
 #: The most greedy runs one `solve_minimum_additions` call may spend (baseline
 #: run and zero-addition run included). A caller may ask for fewer, never more.
@@ -186,9 +192,10 @@ class AddProject:
 
 @dataclass(frozen=True)
 class AddEngineer:
-    """`count` hypothetical designers in `hub` (FTE does not gate booking, ADR
-    0002; it does feed supply). `allowed_categories` defaults to every category
-    of the hub's workflow."""
+    """`count` hypothetical designers in `hub`. Their FTE feeds supply and gates
+    speed: a design step they lead books `ceil(duration / fte)` weeks (ADR
+    0032). `allowed_categories` defaults to every category of the hub's
+    workflow."""
 
     hub: str
     fte: float = 1.0
@@ -555,7 +562,12 @@ def _pick_leader(
     engineers: Sequence[EngineerInput],
     load: Mapping[str, float],
 ) -> EngineerInput | None:
-    hub_engs = sorted((e for e in engineers if e.hub == project.hub), key=lambda e: e.engineer_id)
+    # ADR 0032: a designer at FTE <= 0 cannot lead design work (and would
+    # divide by zero below), so they are never picked.
+    hub_engs = sorted(
+        (e for e in engineers if e.hub == project.hub and is_valid_fte(e.fte)),
+        key=lambda e: e.engineer_id,
+    )
     if not hub_engs:
         return None
     eligible = [e for e in hub_engs if not _cat_not_allowed(project, e)] or hub_engs
@@ -1307,8 +1319,10 @@ class ProjectResult:
     outcome: str  # one of OUTCOME_CLASSES
     finish_week: int | None  # projected_end_week (end + delay); None when not scheduled
     within_year: bool
-    #: Earliest finish with unlimited designers and chambers. A project whose
-    #: value is past W52 cannot finish in the year whatever is added.
+    #: Earliest finish with unlimited designers and chambers, at the speed of
+    #: the project's assigned leader (ADR 0032: design steps stretch by 1/FTE).
+    #: Whether a project cannot finish in the year whatever is added is decided
+    #: at the fastest designer's speed (`_unattainable_new_projects`).
     unconstrained_end_week: int | None
 
 
@@ -1677,15 +1691,21 @@ def scenario_with_additions(
 
 
 def _violators(
-    target: str, res: SimulationResult, base_run: _BaselineRun
+    target: str,
+    res: SimulationResult,
+    base_run: _BaselineRun,
+    unattainable: frozenset[str] | None = None,
 ) -> tuple[tuple[str, ...], int]:
-    """(violating project ids, total lateness weeks over the violators)."""
+    """(violating project ids, total lateness weeks over the violators).
+    `unattainable`: new projects excluded from the target (None: decide per
+    result from its own unconstrained finish)."""
 
     ids: list[str] = []
     late = 0
     if target == "all_new_within_year":
         for r in res.projects:
-            if r.is_new and r.outcome != "within_year" and not _unattainable(r):
+            skip = _unattainable(r) if unattainable is None else r.project_id in unattainable
+            if r.is_new and r.outcome != "within_year" and not skip:
                 ids.append(r.project_id)
                 late += _lateness(r)
     else:
@@ -1703,6 +1723,33 @@ def _unattainable(r: ProjectResult) -> bool:
     """A project that misses W52 even with unlimited resources."""
 
     return r.unconstrained_end_week is not None and r.unconstrained_end_week > dc.WITHIN_YEAR_WEEK
+
+
+def _unattainable_new_projects(applied: AppliedScenario, designer_fte: float) -> frozenset[str]:
+    """New projects that miss W52 even with unlimited designers and chambers
+    when led at the fastest speed any designer could give them: the larger of
+    the solver's added-designer FTE and the best valid FTE among the hub's
+    designers (ADR 0032). Fixed for the whole search, so the target never
+    depends on which designer the leader balancing happened to pick."""
+
+    si = applied.schedule_input
+    new = set(applied.new_project_ids)
+    best: dict[str, float] = {}
+    for e in sorted(si.engineers, key=lambda e: e.engineer_id):
+        if is_valid_fte(e.fte):
+            best[e.hub] = max(best.get(e.hub, 0.0), e.fte)
+    workflows = build_workflows(si.workflow_steps)
+    table = build_lead_time_table(si.lead_times)
+    out: set[str] = set()
+    for p in sorted(si.projects, key=lambda p: p.project_id):
+        if p.project_id not in new:
+            continue
+        speed = max(designer_fte, best.get(p.hub, 0.0))
+        plan = analyse_project(p, workflows[p.workflow_id], table, leader_fte=speed)
+        u = unconstrained_end_week(plan, si.current_week)
+        if u is not None and u > dc.WITHIN_YEAR_WEEK:
+            out.add(p.project_id)
+    return frozenset(out)
 
 
 def _lateness(r: ProjectResult) -> int:
@@ -1791,6 +1838,7 @@ def solve_minimum_additions(
     designer_hubs = tuple(sorted(hubs))
 
     new_set = set(applied0.new_project_ids)
+    unattainable_ids = _unattainable_new_projects(applied0, designer_fte)
     _, _, per_project = _plan_loads(
         dataclasses.replace(
             applied0.schedule_input,
@@ -1866,7 +1914,7 @@ def solve_minimum_additions(
         sc = _apply_units(scenario, dims, units, designer_fte)
         res = _simulate_with(baseline, sc, base_run, runs, budget, check_limits=False)
         runs += 1
-        vio, late = _violators(target, res, base_run)
+        vio, late = _violators(target, res, base_run, unattainable_ids)
         cache[units] = (res, vio, late)
         hub_of = {r.project_id: r.hub for r in res.projects}
         bad_regions = {_lab_region_of(hub_of[p]) for p in vio}
@@ -2179,7 +2227,7 @@ def solve_minimum_additions(
         ),
     )
     unattainable = (
-        tuple(r.project_id for r in res.projects if r.is_new and _unattainable(r))
+        tuple(r.project_id for r in res.projects if r.is_new and r.project_id in unattainable_ids)
         if target == "all_new_within_year"
         else ()
     )
@@ -2190,8 +2238,9 @@ def solve_minimum_additions(
     if unattainable:
         workings.append(
             f"{len(unattainable)} added project(s) cannot finish by W{dc.WITHIN_YEAR_WEEK} even "
-            "with unlimited designers and chambers (their lead-time critical path alone ends "
-            "later); they are excluded from the search."
+            "with unlimited designers and chambers (their lead-time critical path, at the "
+            "fastest designer FTE available, alone ends later); they are excluded from the "
+            "search."
         )
     return MinimumAdditionsResult(
         target=target,

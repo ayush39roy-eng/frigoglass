@@ -4,8 +4,10 @@ Load figures are sourced from the active `ScheduleRun`'s snapshot
 (`ScheduleRunProjectStep`), per Invariants I6/I7 ("must reconcile with the
 Capacity surface"). Since P9-T03 the *supply* figures are the client's
 formulas (docs/DOMAIN_RULES.md "Capacity supply", ADR 0008), computed by
-`services.capacity_supply` (I17). Per ADR 0002 they are reporting figures:
-FTE and downtime still do not gate week-level booking.
+`services.capacity_supply` (I17). They are reporting figures; downtime does
+not gate week-level booking. FTE gates design speed (ADR 0032, superseding
+ADR 0002), but load stays in effort weeks (`duration_weeks`), so supply and
+load remain comparable.
 """
 
 from __future__ import annotations
@@ -354,6 +356,10 @@ class EngineerWeekUtilization(BaseModel):
     FTE-weighted working weeks spread evenly over the year (ADR 0008)."""
 
     week: int
+    #: Effort weeks booked in this week (2 dp). ADR 0032: a design row's
+    #: `duration_weeks` (effort) is spread over its elapsed span, so a 0.5 FTE
+    #: leader reads about 0.5 per busy week; In Progress / Blocked rows put the
+    #: remaining effort on the booked tail (`services.run_step_effort`).
     booked: float
     capacity: float
     #: `booked / capacity * 100` (2 dp). With zero capacity: 100.0 when
@@ -369,7 +375,8 @@ class EngineerUtilizationRow(BaseModel):
     hub: HubName
     #: The categories the engineer may lead, comma-joined (e.g. "A, B, OEM").
     role: str
-    #: Design-step weeks booked over the whole run horizon (incl. weeks > 52).
+    #: Design-step effort weeks (Σ `duration_weeks`, never the FTE-stretched
+    #: span) booked over the whole run horizon (incl. weeks > 52).
     #: Summed over a hub's engineers this equals the hub design load (I6).
     total_booked: float
     #: FTE-weighted working weeks in the 52-week year (the sum of `weeks[].capacity`).

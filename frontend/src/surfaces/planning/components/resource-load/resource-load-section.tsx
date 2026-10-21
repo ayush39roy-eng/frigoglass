@@ -163,7 +163,7 @@ export function ResourceLoadSection({
             Hub
           </Label>
           <Select value={filters.hubId ?? ALL} onValueChange={(v) => set('hubId')(v === ALL ? null : v)}>
-            <SelectTrigger id="rl-hub" className="h-8 w-40">
+            <SelectTrigger id="rl-hub" className="h-8 w-40 text-xs">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>

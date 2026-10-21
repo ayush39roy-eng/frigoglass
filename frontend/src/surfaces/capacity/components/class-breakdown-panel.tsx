@@ -19,6 +19,10 @@ import { CollapsibleSection } from './collapsible-section';
  * row (one card per served category, A+/A/B/C and any OEM category the server
  * serves). The stacked-bar chart that used to follow is behind a collapsed
  * "Show class chart" disclosure, rendered only when opened.
+ *
+ * P19-T05 (owner ruling): that disclosure moved down the page, after the hub
+ * summary table and utilization matrix (`ClassChartSection`, placed by
+ * `CapacityPage`). The cards stay here under the KPI row.
  */
 
 export interface ClassBreakdownPanelProps {
@@ -69,15 +73,7 @@ export function ClassBreakdownPanel({ data }: ClassBreakdownPanelProps): React.J
             ))}
           </div>
 
-          {hasAny ? (
-            <CollapsibleSection
-              showLabel="Show class chart"
-              hint="Deliverable vs. left-out counts per category, as bars"
-              testId="class-chart-section"
-            >
-              <ClassBreakdownChart rows={data.rows} />
-            </CollapsibleSection>
-          ) : (
+          {hasAny ? null : (
             <EmptyState
               title="No categorised projects in this run"
               description="The active schedule run produced no A+/A/B/C project outcomes in your hub scope."
@@ -87,5 +83,25 @@ export function ClassBreakdownPanel({ data }: ClassBreakdownPanelProps): React.J
         </>
       )}
     </section>
+  );
+}
+
+/**
+ * P19-T05: the class chart, collapsed and lazy, placed lower on the page (above
+ * the chamber and engineer utilization disclosures). Rendered only when the
+ * served breakdown has a run and at least one categorised project; the chart
+ * itself mounts only when opened. Counts are served verbatim.
+ */
+export function ClassChartSection({ data }: ClassBreakdownPanelProps): React.JSX.Element | null {
+  const hasAny = data.rows.some((r) => r.deliverable_count + r.left_out_count > 0);
+  if (!data.has_active_schedule_run || !hasAny) return null;
+  return (
+    <CollapsibleSection
+      showLabel="Show class chart"
+      hint="Deliverable vs. left-out counts per category, as bars"
+      testId="class-chart-section"
+    >
+      <ClassBreakdownChart rows={data.rows} />
+    </CollapsibleSection>
   );
 }

@@ -39,7 +39,7 @@ from services.active_run import get_active_run
 from services.display_labels import agent_health_label, stage_status_label
 from services.progress import project_progress_pct
 from services.workflow_durations import effective_duration_weeks
-from services.workspace import health_badge, is_step_skipped
+from services.workspace import engineer_ftes_for_rows, health_badge, is_step_skipped
 
 logger = logging.getLogger(__name__)
 
@@ -195,7 +195,12 @@ async def build_agent_context(db: AsyncSession, project: Project) -> dict[str, A
         for r in live_rows
     )
     health = health_badge(
-        outcome, run_steps, live_by_step, run.current_week if run is not None else dc.CURRENT_WEEK
+        outcome,
+        run_steps,
+        live_by_step,
+        run.current_week if run is not None else dc.CURRENT_WEEK,
+        fte_by_engineer=await engineer_ftes_for_rows(db, run_steps),
+        frozen=project.frozen,
     )
 
     files = (

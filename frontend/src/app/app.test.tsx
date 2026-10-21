@@ -88,9 +88,9 @@ describe('App shell + routing', () => {
     await screen.findByRole('heading', { name: 'Global RPD Dashboard' });
     await user.click(screen.getByRole('link', { name: 'Planning' }));
     expect(await screen.findByRole('heading', { name: 'Capacity Planning' })).toBeInTheDocument();
-    // The real surface (P4-T07) renders, not the placeholder — its tab list
-    // (Engineers / Chambers / Apply Logic & Auto-assign) is always present.
-    expect(await screen.findByRole('tab', { name: 'Apply Logic & Auto-assign' })).toBeInTheDocument();
+    // The real surface renders, not the placeholder: its tab list is always
+    // present (P19-T04: Overview / Engineers / Chambers / What-if planner).
+    expect(await screen.findByRole('tab', { name: 'Overview' })).toBeInTheDocument();
   });
 
   it('navigates to the Audit Log surface on nav click', async () => {

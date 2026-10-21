@@ -218,12 +218,14 @@ async function serious(page: Page): Promise<string[]> {
 }
 
 const SHOTS = process.env.P19_SHOTS;
+/** Tall viewports are for full-page screenshots only (the shell scrolls inside its own container). */
+const HEIGHT = Number(process.env.P19_HEIGHT ?? '900');
 
 for (const width of [1440, 1280, 390]) {
   test(`Overview at ${String(width)} px: order, fit, axe, lazy resource load (admin)`, async ({ page }) => {
     await page.addInitScript(() => window.localStorage.setItem('rpd-theme', 'light'));
     await page.emulateMedia({ reducedMotion: 'reduce' });
-    await page.setViewportSize({ width, height: 900 });
+    await page.setViewportSize({ width, height: HEIGHT });
     const calls = await mockApi(page, 'admin');
     const planning = new PlanningPage(page);
     await planning.goto();
@@ -231,7 +233,7 @@ for (const width of [1440, 1280, 390]) {
     await expect(planning.labCard('Greece').getByText('GR-CH1')).toBeVisible();
 
     // Not fetched until the analytics section is near the viewport.
-    expect(calls.resourceLoad).toEqual([]);
+    if (HEIGHT <= 900) expect(calls.resourceLoad).toEqual([]);
 
     // No page-level horizontal overflow; at 1280+ no card table scrolls.
     const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);

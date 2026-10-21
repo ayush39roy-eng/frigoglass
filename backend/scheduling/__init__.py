@@ -103,6 +103,8 @@ from scheduling.workflow import (
     canonical_step_timing,
     compute_progress_pct,
     derive_remaining,
+    fte_span,
+    is_valid_fte,
     project_progress_pct,
     unconstrained_end_week,
 )
@@ -169,6 +171,8 @@ __all__ = [
     "default_workflow_templates",
     "derive_remaining",
     "forecast_delivery",
+    "fte_span",
+    "is_valid_fte",
     "format_forecast",
     "format_report",
     "project_progress_pct",

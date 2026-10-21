@@ -18,7 +18,7 @@ const all = [
 
 describe('HubBookingStrip (P19-T02: hubs only, no Europe / India areas)', () => {
   it('shows one tile per hub with its design booked % and its lab region booked %, labelled by region', () => {
-    renderWithProviders(<HubBookingStrip rows={all} horizon="year" />);
+    renderWithProviders(<HubBookingStrip rows={all} view={{ horizon: 'year', unit: 'weeks' }} />);
     expect(screen.getAllByTestId(/^booked-hub-/)).toHaveLength(6);
     expect(screen.getByTestId('booked-design-OEM-HCK')).toHaveTextContent('12.5%');
     expect(within(screen.getByTestId('booked-design-OEM-HCK')).getByText('Available')).toBeInTheDocument();
@@ -36,14 +36,14 @@ describe('HubBookingStrip (P19-T02: hubs only, no Europe / India areas)', () => 
   });
 
   it('follows the horizon', () => {
-    renderWithProviders(<HubBookingStrip rows={[hubRow({ hub: 'PD-India' })]} horizon="remaining" />);
+    renderWithProviders(<HubBookingStrip rows={[hubRow({ hub: 'PD-India' })]} view={{ horizon: 'remaining', unit: 'weeks' }} />);
     expect(screen.getByTestId('booked-design-PD-India')).toHaveTextContent('326.56%');
     expect(screen.getByTestId('booked-lab-PD-India')).toHaveTextContent('374.72%');
     expect(screen.getByTestId('booked-strip-horizon')).toHaveTextContent(/Remaining year/);
   });
 
   it('a hub-scoped user sees only the served hubs, flagged', () => {
-    renderWithProviders(<HubBookingStrip rows={[hubRow({ hub: 'PD-India' })]} horizon="year" />, {
+    renderWithProviders(<HubBookingStrip rows={[hubRow({ hub: 'PD-India' })]} view={{ horizon: 'year', unit: 'weeks' }} />, {
       session: { hub_scope_all: false },
     });
     expect(screen.getByTestId('booked-hub-PD-India')).toBeInTheDocument();
@@ -52,12 +52,12 @@ describe('HubBookingStrip (P19-T02: hubs only, no Europe / India areas)', () => 
   });
 
   it('renders nothing without rows', () => {
-    renderWithProviders(<HubBookingStrip rows={[]} horizon="year" />);
+    renderWithProviders(<HubBookingStrip rows={[]} view={{ horizon: 'year', unit: 'weeks' }} />);
     expect(screen.queryByTestId('hub-booking-strip')).not.toBeInTheDocument();
   });
 
   it('has no serious/critical axe violations', async () => {
-    const { container } = renderWithProviders(<HubBookingStrip rows={all} horizon="year" />);
+    const { container } = renderWithProviders(<HubBookingStrip rows={all} view={{ horizon: 'year', unit: 'weeks' }} />);
     expect(await seriousAxeViolations(container)).toEqual([]);
   });
 });

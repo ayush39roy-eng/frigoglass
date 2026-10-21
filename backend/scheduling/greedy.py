@@ -29,6 +29,13 @@ Shape of a run (all pure, all deterministic — Invariant I8):
      `lab` searches eligible chambers, `elapsed` books nothing, `skipped`
      steps are transparent, held (Blocked) steps are not placed.
 
+FTE (ADR 0032, supersedes ADR 0002): a design step of a non-frozen project
+books `span = ceil(duration / leader.fte)` consecutive weeks of its leader (an
+In Progress tail `ceil(remaining / fte)`); `duration_weeks` on the output row
+stays the effort figure, so load (I6) is unchanged. Frozen projects are not
+stretched (their dates stay locked, I10). A leader at FTE <= 0 makes the
+project a `data_error` (see `workflow.analyse_project`).
+
 No DB access, no network access, no filesystem access, no randomness, no
 wall-clock dependence. Every collection this module iterates is explicitly
 sorted before iteration.
@@ -62,6 +69,7 @@ from scheduling.workflow import (
     build_workflows,
     compute_progress_pct,
     first_step_frontier,
+    leader_fte_of,
     unconstrained_end_week,
     validate_schedulable_project,
 )
@@ -236,6 +244,7 @@ def prepare_run(schedule_input: ScheduleInput) -> RunContext:
             # Commercialized / On Hold / Cancelled / Draft / anything else.
             excluded.append(project)
 
+    fte_by_engineer = {e.engineer_id: e.fte for e in schedule_input.engineers}
     plans: dict[str, ProjectPlan] = {}
     for project in schedulable:
         validate_schedulable_project(
@@ -247,7 +256,10 @@ def prepare_run(schedule_input: ScheduleInput) -> RunContext:
             horizon_weeks=schedule_input.horizon_weeks,
         )
         plans[project.project_id] = analyse_project(
-            project, workflows[project.workflow_id], lead_time_table
+            project,
+            workflows[project.workflow_id],
+            lead_time_table,
+            leader_fte=leader_fte_of(project, fte_by_engineer),
         )
 
     return RunContext(
@@ -476,13 +488,14 @@ def prebook_anchored_steps(
                 assert sp.actual_start_week is not None
                 if pred_end is None:
                     continue  # placed during the walk
-                if sp.remaining == 0:
+                if sp.remaining_span == 0:
                     end = max(sp.actual_start_week, pred_end)
                     placed[sid] = _Placement(sp.actual_start_week, end, None, None)
                     known_ends[sid] = end
                     continue
+                # ADR 0032: the remaining effort is stretched by the leader's FTE.
                 tail_start = max(current_week, pred_end + 1, sp.actual_start_week)
-                tail_end = tail_start + sp.remaining - 1
+                tail_end = tail_start + sp.remaining_span - 1
                 placement, conflict, over = _book_anchored(
                     ctx,
                     state,
@@ -668,7 +681,7 @@ def _schedule_one_project(
             # (inconsistent data: in progress behind a not-started step) — the
             # tail is placed now, still without a search.
             assert sp.actual_start_week is not None
-            if sp.remaining == 0:
+            if sp.remaining_span == 0:
                 emit(sp, sp.actual_start_week, max(sp.actual_start_week, pred_end), None, None)
                 continue
             tail_start = max(current_week, pred_end + 1, sp.actual_start_week)
@@ -679,7 +692,7 @@ def _schedule_one_project(
                 leader,
                 region,
                 tail_start,
-                tail_start + sp.remaining - 1,
+                tail_start + sp.remaining_span - 1,
                 project_id=project.project_id,
                 consume_from=current_week,
                 reported_start=sp.actual_start_week,
@@ -699,7 +712,10 @@ def _schedule_one_project(
             continue
 
         # --- Not Started (or frozen): place per the Booking rules -----------------
-        duration = sp.duration  # effective duration (ADR 0019)
+        # Elapsed weeks booked: the effective duration (ADR 0019), stretched by
+        # the leader's FTE for a design step (ADR 0032). `emit` still reports
+        # the effort (`sp.duration`) as `duration_weeks`.
+        duration = sp.span
         w = pred_end + 1 if frozen else max(current_week, pred_end + 1)
         if sp.start_not_before_week is not None:
             # ADR 0019 earliest start (never set for a frozen project): the

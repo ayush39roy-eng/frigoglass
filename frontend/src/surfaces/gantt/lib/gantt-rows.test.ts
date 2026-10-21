@@ -27,6 +27,7 @@ function step(seq: number, start: number, end: number): GanttStepRow {
     duration_override_weeks: null,
     start_not_before_week: null,
     timing_editable: 'none',
+    span_fte: null,
   };
 }
 

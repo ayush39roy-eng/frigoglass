@@ -187,10 +187,10 @@ function EngineerForm({
             />
           </Field>
         </div>
-        <p className="text-2xs text-text-muted">
-          FTE is a reporting figure only (RPD Capacity&apos;s design-capacity display) — per ADR
-          0002, it does not gate the scheduler&apos;s booking rules in v1 (
-          <span className="italic">docs/OPEN_QUESTIONS.md #2</span>).
+        <p className="text-2xs text-text-muted" data-testid="engineer-fte-help">
+          FTE sets the engineer&apos;s speed on the design steps they lead: at 0.5 FTE they work at
+          half speed, so 4 weeks of work take 8 calendar weeks (ADR 0032). It also scales their
+          design capacity on RPD Capacity.
         </p>
 
         <fieldset className="space-y-2">

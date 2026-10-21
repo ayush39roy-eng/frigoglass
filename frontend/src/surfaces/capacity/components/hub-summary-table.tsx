@@ -20,10 +20,16 @@ import { cn } from '@/lib/utils';
 import type { BookingStatus } from '@/types/enums';
 
 import type { HubCapacityRow, HubCapacitySummary, ScheduleRunSummary } from '../api/types';
-import { pickAreaFigures, pickFigures, type CapacityHorizon } from '../lib/pick-figures';
+import {
+  pickFigures,
+  pickTotalUnitFigures,
+  pickUnitFigures,
+  UNIT_SHORT,
+  type CapacityView,
+} from '../lib/pick-figures';
 import { groupRowsByLabRegion } from '../lib/region-groups';
 import { HubSupplyDetail } from './hub-supply-breakdown';
-import { formatPctCompact } from '../lib/status-format';
+import { formatFigure, formatPctCompact } from '../lib/status-format';
 import { StatusLegend, StatusMark } from './status-mark';
 
 /**
@@ -44,6 +50,11 @@ import { StatusLegend, StatusMark } from './status-mark';
  * as screen-reader text and a `title`; a legend under the table names the icons,
  * so status never rests on colour alone. Each row's Details icon button
  * ("Details for <hub>") opens the full per-hub figures in a dialog.
+ *
+ * P19-T05 (Weeks | Days): load and capacity (rows, lab cells per region, Total)
+ * follow the page's unit, reading the SERVED day fields in Days. Booked % is
+ * unit-free. The gap is served in weeks only, so in Days mode its column says
+ * "Gap (wks)" and keeps the served weeks.
  */
 const NUM = 'px-2 text-right font-mono tabular-nums whitespace-nowrap';
 const HEAD = 'h-auto px-2 py-1.5';
@@ -106,18 +117,23 @@ export const BOOKED_NEAR_100_NOTE =
 export interface HubSummaryTableProps {
   data: HubCapacitySummary;
   activeRun: ScheduleRunSummary | null | undefined;
-  horizon: CapacityHorizon;
+  view: CapacityView;
 }
 
-export function HubSummaryTable({ data, activeRun, horizon }: HubSummaryTableProps): React.JSX.Element {
+export function HubSummaryTable({ data, activeRun, view }: HubSummaryTableProps): React.JSX.Element {
+  const { horizon, unit } = view;
+  const days = unit === 'days';
   const [detailHub, setDetailHub] = React.useState<string | null>(null);
   // The dialog is controlled (one dialog for all rows), so Radix has no trigger to
   // return focus to; remember the opening button and restore it on close.
   const openerRef = React.useRef<HTMLElement | null>(null);
   const detailRow = data.rows.find((r) => r.hub === detailHub) ?? null;
-  const totalD = pickAreaFigures(data.totals, 'design', horizon);
-  const totalL = pickAreaFigures(data.totals, 'lab', horizon);
+  const totalD = pickTotalUnitFigures(data.totals, 'design', view);
+  const totalL = pickTotalUnitFigures(data.totals, 'lab', view);
   const capFull = horizon === 'year' ? 'Capacity, full year' : 'Capacity, remaining year';
+  // Accessible unit suffix for the load / capacity headers; the gap is served in weeks only.
+  const inUnit = `, in ${unit}`;
+  const gapShort = days ? `Gap (${UNIT_SHORT.weeks})` : 'Gap';
   const groups = groupRowsByLabRegion(data.rows);
 
   const openDetails = (e: React.MouseEvent<HTMLElement>, row: HubCapacityRow): void => {
@@ -201,18 +217,20 @@ export function HubSummaryTable({ data, activeRun, horizon }: HubSummaryTablePro
                   </TableHead>
                 </TableRow>
                 <TableRow>
-                  <SubHead short="Load" full="Design load" />
-                  <SubHead short="Cap." full={`Design ${capFull.toLowerCase()}`} />
+                  <SubHead short="Load" full={`Design load${inUnit}`} />
+                  <SubHead short="Cap." full={`Design ${capFull.toLowerCase()}${inUnit}`} />
                   <SubHead short="Booked" full="Design booked" />
-                  <SubHead short="Gap" full="Design gap" />
-                  <SubHead short="Load" full="Lab load" className={LAB_EDGE} />
-                  <SubHead short="Cap." full={`Lab ${capFull.toLowerCase()}`} />
+                  <SubHead short={gapShort} full="Design gap, in weeks" />
+                  <SubHead short="Load" full={`Lab load${inUnit}`} className={LAB_EDGE} />
+                  <SubHead short="Cap." full={`Lab ${capFull.toLowerCase()}${inUnit}`} />
                   <SubHead short="Booked" full="Lab booked" />
-                  <SubHead short="Gap" full="Lab gap" />
+                  <SubHead short={gapShort} full="Lab gap, in weeks" />
                 </TableRow>
               </TableHeader>
               {groups.map((group) => {
-                const lab = pickFigures(group.rows[0] as HubCapacityRow, 'lab', horizon);
+                const first = group.rows[0] as HubCapacityRow;
+                const lab = pickUnitFigures(first, 'lab', view);
+                const labGap = pickFigures(first, 'lab', horizon).gap;
                 const span = group.rows.length;
                 return (
                   <TableBody key={group.region} data-testid={`hub-summary-region-${group.region}`}>
@@ -230,7 +248,8 @@ export function HubSummaryTable({ data, activeRun, horizon }: HubSummaryTablePro
                       </TableHead>
                     </TableRow>
                     {group.rows.map((row, i) => {
-                      const d = pickFigures(row, 'design', horizon);
+                      const d = pickUnitFigures(row, 'design', view);
+                      const dGap = pickFigures(row, 'design', horizon).gap;
                       return (
                         <TableRow key={row.hub} data-testid={`hub-summary-row-${row.hub}`}>
                           <TableHead
@@ -239,10 +258,10 @@ export function HubSummaryTable({ data, activeRun, horizon }: HubSummaryTablePro
                           >
                             {row.hub}
                           </TableHead>
-                          <TableCell className={NUM} data-testid="design-load">{formatDecimal(d.load)}</TableCell>
-                          <TableCell className={NUM} data-testid="design-capacity">{formatDecimal(d.capacity)}</TableCell>
+                          <TableCell className={NUM} data-testid="design-load">{formatFigure(d.load)}</TableCell>
+                          <TableCell className={NUM} data-testid="design-capacity">{formatFigure(d.capacity)}</TableCell>
                           <BookedCell pct={d.bookedPct} status={d.bookingStatus} testId="design-booked" />
-                          <GapCell value={d.gap} />
+                          <GapCell value={dGap} />
                           {i === 0 ? (
                             <>
                               <TableCell
@@ -250,10 +269,10 @@ export function HubSummaryTable({ data, activeRun, horizon }: HubSummaryTablePro
                                 className={cn(NUM, LAB_EDGE, 'bg-surface-sunken/40')}
                                 data-testid="lab-load"
                               >
-                                {formatDecimal(lab.load)}
+                                {formatFigure(lab.load)}
                               </TableCell>
                               <TableCell rowSpan={span} className={cn(NUM, 'bg-surface-sunken/40')} data-testid="lab-capacity">
-                                {formatDecimal(lab.capacity)}
+                                {formatFigure(lab.capacity)}
                               </TableCell>
                               <BookedCell
                                 pct={lab.bookedPct}
@@ -262,7 +281,7 @@ export function HubSummaryTable({ data, activeRun, horizon }: HubSummaryTablePro
                                 className="bg-surface-sunken/40"
                                 testId="lab-booked"
                               />
-                              <GapCell value={lab.gap} rowSpan={span} className="bg-surface-sunken/40" />
+                              <GapCell value={labGap} rowSpan={span} className="bg-surface-sunken/40" />
                             </>
                           ) : null}
                           <TableCell className="px-2 py-1 text-right last:pe-3">
@@ -294,15 +313,15 @@ export function HubSummaryTable({ data, activeRun, horizon }: HubSummaryTablePro
                   >
                     Total
                   </TableHead>
-                  <TableCell className={NUM}>{formatDecimal(totalD.load)}</TableCell>
-                  <TableCell className={NUM}>{formatDecimal(totalD.capacity)}</TableCell>
+                  <TableCell className={NUM} data-testid="total-design-load">{formatFigure(totalD.load)}</TableCell>
+                  <TableCell className={NUM} data-testid="total-design-capacity">{formatFigure(totalD.capacity)}</TableCell>
                   <BookedCell pct={totalD.bookedPct} status={totalD.bookingStatus} />
                   <TableCell className={NUM}>
                     <span aria-hidden="true">—</span>
                     <span className="sr-only">not shown</span>
                   </TableCell>
-                  <TableCell className={cn(NUM, LAB_EDGE)}>{formatDecimal(totalL.load)}</TableCell>
-                  <TableCell className={NUM}>{formatDecimal(totalL.capacity)}</TableCell>
+                  <TableCell className={cn(NUM, LAB_EDGE)} data-testid="total-lab-load">{formatFigure(totalL.load)}</TableCell>
+                  <TableCell className={NUM} data-testid="total-lab-capacity">{formatFigure(totalL.capacity)}</TableCell>
                   <BookedCell pct={totalL.bookedPct} status={totalL.bookingStatus} />
                   <TableCell className={NUM}>
                     <span aria-hidden="true">—</span>
@@ -314,7 +333,11 @@ export function HubSummaryTable({ data, activeRun, horizon }: HubSummaryTablePro
             </Table>
             <div data-testid="hub-summary-legend">
               <StatusLegend fullPct={data.full_threshold_pct} nearFullPct={data.near_full_threshold_pct}>
-                <span>Weeks. Total counts each lab region once.</span>
+                <span data-testid="hub-summary-unit-note">
+                  {days
+                    ? 'Load and capacity in working days (served: weeks × the hub’s working days per week; lab uses its region’s). Gap in weeks (no served day gap). Total counts each lab region once.'
+                    : 'Weeks. Total counts each lab region once.'}
+                </span>
               </StatusLegend>
             </div>
           </>
@@ -339,10 +362,11 @@ export function HubSummaryTable({ data, activeRun, horizon }: HubSummaryTablePro
               <DialogHeader>
                 <DialogTitle>{detailRow.hub}: load vs. capacity</DialogTitle>
                 <DialogDescription>
-                  Full figures for this hub ({horizon === 'year' ? 'full year' : 'YTD 2026, remaining year'}), exactly as served.
+                  Full figures for this hub ({horizon === 'year' ? 'full year' : 'YTD 2026, remaining year'}, in {unit}),
+                  exactly as served.
                 </DialogDescription>
               </DialogHeader>
-              <HubSupplyDetail row={detailRow} horizon={horizon} />
+              <HubSupplyDetail row={detailRow} view={view} />
             </>
           ) : null}
         </DialogContent>

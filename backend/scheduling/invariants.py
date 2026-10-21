@@ -44,9 +44,12 @@ What is assertable at the pure-function level (2026-09-27 revision):
     I16 expected / projected / unconstrained end weeks are the stored
         by-products of the run (consistent with target_end_week, end_week +
         delay, and a recomputed unconstrained walk)
-    I21 (ADR 0019) every non-skipped, non-Done step of a non-frozen project
-        books a span equal to its effective duration; an In Progress /
-        Blocked tail equals the remaining derived from the effective duration
+    I21 (ADR 0019, ADR 0032) every non-skipped, non-Done step of a
+        non-frozen project carries its effective duration (effort) as
+        `duration_weeks` and books a span equal to that duration stretched by
+        the leader's FTE (`ceil(duration / fte)` for design, the duration
+        itself for lab / elapsed); an In Progress / Blocked tail equals
+        `ceil(remaining / fte)` (design) or `remaining`
     I22 (ADR 0019) every Not Started step with `start_not_before_week` set
         starts at or after it (frozen projects and held steps exempt)
     I13 (health badge), I14 (run immutability) and I17 (capacity supply) are
@@ -84,6 +87,7 @@ from scheduling.workflow import (
     build_workflows,
     compute_progress_pct,
     first_step_frontier,
+    leader_fte_of,
     unconstrained_end_week,
 )
 
@@ -146,7 +150,7 @@ class _Ctx:
             return True
         sp = plan.steps.get(step.step_id)
         return bool(
-            sp is not None and sp.anchored and sp.status != STATUS_DONE and sp.remaining == 0
+            sp is not None and sp.anchored and sp.status != STATUS_DONE and sp.remaining_span == 0
         )
 
     def effective_weeks(self, project_id: str, step: StepSchedule) -> range:
@@ -162,10 +166,15 @@ class _Ctx:
         start = step.start_week
         plan = self.plans.get(project_id)
         sp = plan.steps.get(step.step_id) if plan is not None else None
-        if sp is not None and sp.status in (STATUS_IN_PROGRESS, STATUS_BLOCKED) and sp.remaining:
+        if (
+            sp is not None
+            and sp.status in (STATUS_IN_PROGRESS, STATUS_BLOCKED)
+            and sp.remaining_span
+        ):
             # The row is shown from actual_start_week, but only the tail
-            # `[end - remaining + 1 .. end]` is booked (DOMAIN_RULES progress).
-            start = max(start, step.end_week - sp.remaining + 1)
+            # `[end - remaining_span + 1 .. end]` is booked (DOMAIN_RULES
+            # progress; ADR 0032 stretches a design tail by the leader's FTE).
+            start = max(start, step.end_week - sp.remaining_span + 1)
         return range(max(start, self.schedule_input.current_week), step.end_week + 1)
 
     def is_scheduled(self, outcome: ProjectScheduleOutcome) -> bool:
@@ -204,6 +213,7 @@ def _build_ctx(
         )
         table = {}
 
+    fte_by_engineer = {e.engineer_id: e.fte for e in schedule_input.engineers}
     for project in sorted(schedule_input.projects, key=lambda p: p.project_id):
         if project.status not in dc.SCHEDULABLE_STATUS_ORDER:
             continue
@@ -214,7 +224,9 @@ def _build_ctx(
             continue
         if project.frozen and project.actual_start_week is None:
             continue
-        plans[project.project_id] = analyse_project(project, wf, table)
+        plans[project.project_id] = analyse_project(
+            project, wf, table, leader_fte=leader_fte_of(project, fte_by_engineer)
+        )
 
     return _Ctx(schedule_input, schedule_output, projects, outcomes, plans), violations
 
@@ -719,7 +731,9 @@ def compute_design_load_by_hub(
     schedule_input: ScheduleInput, schedule_output: ScheduleOutput
 ) -> dict[str, int]:
     """I6: Σ `design`-kind step `duration_weeks` per project hub (elapsed and
-    skipped steps contribute 0)."""
+    skipped steps contribute 0). These are effort weeks, never the
+    FTE-stretched elapsed span (ADR 0032), so they compare with the supply
+    `working_weeks × Σ fte` (ADR 0008)."""
 
     projects = {p.project_id: p for p in schedule_input.projects}
     load: dict[str, int] = defaultdict(int)
@@ -1168,15 +1182,18 @@ def _check_i16_completion_lines(ctx: _Ctx) -> list[InvariantViolation]:
 
 
 def _check_i21_effective_duration_span(ctx: _Ctx) -> list[InvariantViolation]:
-    """I21 (ADR 0019): every scheduled step that is not skipped, not `Done` and
-    not in a frozen project books a span equal to its effective duration
-    (`duration_override_weeks ?? lead time`), and carries that value as
-    `duration_weeks`. For an `In Progress` / `Blocked` step the booked tail
-    `[max(CURRENT_WEEK, pred_end + 1, actual_start) .. end]` equals the
-    remaining duration derived from the effective duration (ADR 0006); with
-    `remaining == 0` the row ends at `max(actual_start, pred_end)` and books
-    nothing. Held steps (a Blocked hold) book nothing and are exempt; a
-    missing predecessor row is I5's to report."""
+    """I21 (ADR 0019, amended by ADR 0032): every scheduled step that is not
+    skipped, not `Done` and not in a frozen project carries its effective
+    duration (`duration_override_weeks ?? lead time`, effort weeks) as
+    `duration_weeks`, and books a span equal to that duration stretched by
+    its leader's FTE (`ceil(duration / fte)` for a design step; lab and
+    elapsed steps are not stretched). For an `In Progress` / `Blocked` step
+    the booked tail `[max(CURRENT_WEEK, pred_end + 1, actual_start) .. end]`
+    equals the remaining duration derived from the effective duration (ADR
+    0006), stretched the same way; with `remaining == 0` the row ends at
+    `max(actual_start, pred_end)` and books nothing. Held steps (a Blocked
+    hold) book nothing and are exempt; a missing predecessor row is I5's to
+    report."""
 
     violations: list[InvariantViolation] = []
     cw = ctx.schedule_input.current_week
@@ -1222,10 +1239,11 @@ def _check_i21_effective_duration_span(ctx: _Ctx) -> list[InvariantViolation]:
                 )
             if sp.status == STATUS_NOT_STARTED:
                 span = step.end_week - step.start_week + 1
-                if span != sp.duration:
+                if span != sp.span:
                     bad(
                         f"books weeks {step.start_week}..{step.end_week} ({span} weeks) but "
-                        f"its effective duration is {sp.duration}"
+                        f"its effective duration {sp.duration} at the leader's FTE spans "
+                        f"{sp.span}"
                     )
                 continue
 
@@ -1235,7 +1253,7 @@ def _check_i21_effective_duration_span(ctx: _Ctx) -> list[InvariantViolation]:
             if any(r is None for r in preds):
                 continue  # I5 reports the missing row
             pred_end = max(r.end_week for r in preds if r is not None) if preds else frontier - 1
-            if sp.remaining == 0:
+            if sp.remaining_span == 0:
                 expected_end = max(sp.actual_start_week, pred_end)
                 if step.end_week != expected_end:
                     bad(
@@ -1245,11 +1263,11 @@ def _check_i21_effective_duration_span(ctx: _Ctx) -> list[InvariantViolation]:
                 continue
             tail_start = max(cw, pred_end + 1, sp.actual_start_week)
             tail = step.end_week - tail_start + 1
-            if tail != sp.remaining:
+            if tail != sp.remaining_span:
                 bad(
                     f"{sp.status} tail {tail_start}..{step.end_week} is {tail} weeks but the "
                     f"remaining derived from the effective duration {sp.duration} is "
-                    f"{sp.remaining}"
+                    f"{sp.remaining}, spanning {sp.remaining_span} at the leader's FTE"
                 )
     return violations
 

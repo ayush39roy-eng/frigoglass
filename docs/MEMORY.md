@@ -26638,3 +26638,350 @@ Contract: `docs/API_CONTRACT_P19.md` (sections 1-6). All additive; nothing remov
 - `EngineerRead` and `ChamberRead`: planning TS marks the new fields optional (`?`), but the backend requires them.
 
 Coverage 96.7 %. `ruff check .` clean; mypy clean on the new files (pre-existing errors elsewhere unchanged). P19-T20 gate pending.
+
+## [2026-10-21] P19-T04 - Capacity Planning page redesign + Resource load analytics (frontend-builder): DONE
+
+Client parity with the older app's Configuration page, on `docs/API_CONTRACT_P19.md`. Frontend `surfaces/planning/` plus the type-only items the coordinator allowed. Every figure is one served field (I9/I19); the old client-side "Total FTE" reduce on this page is gone (now served `fte_total`).
+
+**Page.** Header "Capacity Planning / Configure resource mapping, availability, and capacity logic for the year." with [YTD 2026 | Full year] (default YTD = `remaining`), [Weeks | Days] (both work: served `capacity_weeks` / `capacity_days`), "Apply logic" (the existing Apply Logic panel, now in a dialog via a new `bare` prop; confirm dialog, 403 Admin-only message unchanged) and "Auto-assign projects" (dialog with the unchanged OQ #10 placeholder). Tabs: **Overview** (new, default) | Engineers | Chambers (the full existing tables, hub filter and exports kept) | What-if planner (P18, unchanged, forceMount). The old "Apply Logic & Auto-assign" tab is replaced by the header buttons.
+**Overview.** Two total cards (design: weeks headline, "≈ N man-days", engineer count, FTE; lab: "≈ N lab-days", chamber count; reversed in Days) from `capacity-summary` totals. Two columns at `xl` (1280+), one below: per hub "<hub> Hub (<share_pct>%)" + wks/days pills, table Name | FTE | Cap. | Project types; per lab region "<region> labs (<share>%)", table Chamber | Plat. | Eff. | Wks/ch | Cap. | Stages. Category chips = all eight `allowed_categories` values (A+, A, B, C, OEM = any OEM category, A-OEM, B-OEM, C-OEM). Stage chips = the served lab-kind templates (PDD-F, PDD-H, OEM-E, OEM-H; PDD first), compact text "PDD-F · PoC", accessible name "Allow stage PDD-F Proof of concept for GR-CH1". The client's PDD-J / PDD-L are not lab-kind in our workflow (PATCH would 422), so not offered. "Eff." shows the stored fraction (as the client's app does under "Eff %"), not ×100.
+**Editing.** Toggle chips (`aria-pressed`, names like "Allow category B for Lokesh"), inline FTE / platforms / efficiency (Enter or blur commits, Escape reverts, validated with the existing form zod fields), edit/delete icons and a per-card "Add" opening the existing forms with the hub / region preselected (new optional `defaultHubId` / `defaultRegion` props). All saves go through the existing `PATCH /engineers|/chambers`; `useUpdateEngineer` / `useUpdateChamber` are now optimistic for the INPUT fields only (served capacity waits for the refetch), with rollback; they and Apply Logic also invalidate `['planning']`. Editable only with Capacity Planning write AND the hub (or a hub of the region) in `/me` scope (UI narrowing; server decides; a 403 downgrades to read-only as before). Read-only roles see static chips and values.
+**Resource load analytics** (owner add-on). Filter bar: Hub (single select; server `hub_id` is single-valued), Type, Status, Dept, Cat, Engineer (multi-select popovers with checkboxes, search over 8 options; lists sent as repeated params, sorted). Dept is aria-disabled with the tooltip "No department data yet" when `requesting_department_available` is false (OQ #34). Engineer and chamber panels side by side at `xl`, stacked below: horizontal grouped bars (capacity outline + load fill, value labels, "<name> (<hub>)"; chosen over a sideways-scrolling vertical chart so ~20 engineers stay readable at 390 without scrolling; bars aria-hidden because the table carries the same figures) above a sortable table (aria-sort) Engineer|Hub / Chamber|Region | Capacity | Load | Util % with served totals; Util % > 100 is red with a warning icon and sr-only "(over capacity)". Personal data (ADR 0028): nothing is fetched until the section is near the viewport (IntersectionObserver, armed only after the columns above have loaded, else it fired during the skeleton), filters debounced 400 ms, `keepPreviousData`, no refetch on focus. Verified live: 0 `resource-load` reads before scrolling, 1 after.
+**Type mirrors.** `planning/api/types.ts`: summary, resource-load, options and filters-applied types per the contract; engineer/chamber `weekdays_per_week`, `capacity_weeks`, `capacity_days`, `working_weeks` REQUIRED. `capacity/api/types.ts` (type-only, coordinator-approved): `YearRemaining`, `LabRegionCapacityRow`, the six `HubCapacityRow` day fields, `HubCapacitySummary.lab_regions`, the four `CapacityTotals` day totals; `capacity/test-fixtures.ts` given the matching served values (no other capacity file touched). `backend/tests/test_openapi_frontend_contract.py`: two rows added (`YearRemaining`, `LabRegionCapacityRow`); the file passes (200 tests).
+**NOT done: the Capacity page's Days toggle.** Not a small change: that page also shows `gap_*`, `*_by_priority` splits, `*_estimated_weeks`, class counts and weekly heatmaps, none of which have served day fields, so a Days mode would be partial or need more backend fields (or an owner ruling that Days applies to capacity/load only). Left disabled.
+**Shared touches.** `src/app/app.test.tsx` one assertion (tab name). Planning query keys live in `hooks/use-planning.ts` (`planningKeys`), not `lib/query-keys.ts`, because other agents were editing shared files. e2e: `pages/planning.page.ts` (new locators; Apply Logic now via the header dialog), `planning.spec.ts` updated, new mocked `p19-planning.spec.ts` + `playwright.p19planning.config.ts` (port 5293).
+**Verification.** `tsc -b` clean; eslint clean on all touched files; vitest full 176 files / 1264 passed (planning: page 24, resource-load section 7, hooks +3, api +3); `vite build` OK (index 138.9 KB gzip, PlanningPage lazy chunk 33.2 KB gzip). Mocked Playwright 5/5: axe serious/critical 0 at 1440, 1280, 390 (editable and read-only), page overflow 0, no card table scrolls at 1280/1440 (at 390 they scroll in labelled focusable regions), keyboard chip toggles send the exact PATCH bodies. Live read-only on :5183 against the restarted :8001 as Alice PM and Frank Admin at 1440 and 390: totals equal the API (330.3 wks vs served 330.29), axe 0 both before and after the analytics loaded, no writes made. Screenshots reviewed next to the reference (session scratchpad `p19t04/`, `p19t04/tall/`, `live/`). Not run: the Keycloak e2e suite (`planning.spec.ts` needs the test stack), dark-mode axe. Nothing committed; dev servers untouched. P19-T20 gate pending.
+
+## [2026-10-21] P19-T05 - RPD Capacity Weeks / Days toggle on the served day fields; class chart moved down (frontend-builder): DONE
+
+Frontend only, `frontend/src/surfaces/capacity/` only (planning untouched; no shared ui/layout file touched). `capacity/api/types.ts` already carried the P19-T03 mirror from P19-T04 (`YearRemaining`, `LabRegionCapacityRow`, six `HubCapacityRow` day fields, `HubCapacitySummary.lab_regions`, four `CapacityTotals` day totals). Checked against `API_CONTRACT_P19.md` §1 and the live :8001 response: names match, kept as is. `test_openapi_frontend_contract.py`: 200 passed.
+
+**State.** One `CapacityView { horizon: 'year' | 'remaining', unit: 'weeks' | 'days' }` in `CapacityPage` (`DEFAULT_CAPACITY_VIEW` = Full year, Weeks), replacing the horizon-only state. `CapacityToolbar` takes `view` + `onViewChange`. Every consumer now takes `view`. The four combinations are just the two fields.
+
+**Selection, no arithmetic (I9/I19).** In `lib/pick-figures.ts`, `pickUnitFigures(row, kind, view)` and `pickTotalUnitFigures(totals, kind, view)` return `{load, capacity, bookedPct, bookingStatus}`. Weeks returns the old fields. Days returns `capacity_days` / `load_days` / `lab_capacity_days` / `lab_load_days` (rows) or `design_/lab_ capacity_days / load_days` (totals) for the horizon. Booked % and status are always the served unit-free fields. Day fields are read as `Partial<>`, so a field absent on an older API gives `null`, and `formatFigure` (`lib/status-format.ts`) prints "—". `servedWeekdays` exposes the served `weekdays_per_week` / `lab_weekdays_per_week` (shown in the Details dialog). Unit labels come from `UNIT_SHORT`, `resourceUnit` ("engineer-days") and `resourceUnitLong`.
+
+**What switches in Days.** KPI headline + unit ("days") + per-hub / per-lab-region lines; both load-vs-capacity charts (visible axis title "Engineer-days" / "Chamber-days", value label with "days" under it, tooltips, the sr table headers); booked tiles "x of y engineer-days / chamber-days"; summary table load / capacity per hub, lab cells once per region, Total (served day totals); the legend says days; Details dialog load, capacity and its bars, plus a served "In working days" line under "How this is calculated"; utilization matrix capacity / load / Total. Booked % is unchanged everywhere.
+
+**Still in weeks in Days mode (no served day value), each labelled "wks":**
+1. KPI load cards' P1..Queue split, with "(wks)" after it;
+2. chart segment values (tooltips "P1 707 wks", sr table "P1 (wks)"). Segment HEIGHT is the pixel share split / served `*_load_weeks` applied to the days column: presentation, no figure;
+3. summary table Gap columns, headed "Gap (wks)", accessible name "... gap, in weeks";
+4. Details dialog "Load (estimated) (wks)" (`*_load_estimated_weeks`), "Gap, load − cap. (wks)", the gap badge tooltip, and the weeks formula derivation;
+5. utilization matrix P1-D..Q-D / P1-L..Q-L, with the header note "Capacity and load in days · P1–Q columns in weeks" and sr "(wks)" on each column head;
+6. unchanged and not unit-bearing: class cards and class chart (counts), chamber heatmap (concurrent-project counts per week), engineer heatmap (weekly booked / capacity in weeks, its own endpoint).
+BACKEND FOLLOW-UP if the owner wants these in days: `design_/lab_ gap_days_{year,remaining}`, `design_/lab_ load_estimated_days`, `*_load_by_priority_days` on rows and totals, and day figures on `/capacity/engineer-utilization`.
+
+**Owner add-on: class chart moved.** The "Show class chart" disclosure left `ClassBreakdownPanel` (cards stay under the KPI row). New `ClassChartSection` is rendered by `CapacityPage` as the first item of `capacity-more-detail`: after the hub summary table and the inline hub matrix, above chamber / engineer utilization. **Kept behind its disclosure** (collapsed, lazy): it matches the two disclosures it now sits with, and the reused class-breakdown data means it fetches nothing new. It renders nothing without a run or with no categorised project; the cards panel keeps its empty states.
+
+**a11y.** The unit toggle is the shared Radix ToggleGroup `type="single"`, like the horizon toggle. It exposes `role="radio"` + `aria-checked` (correct ARIA for single choice), NOT `aria-pressed`. The brief's "aria-pressed" check was done as `aria-checked`. Live: Tab reaches the unit group (roving tab stop on the checked item); ArrowRight + Space selects Days; Tab to the horizon group, ArrowLeft + Enter selects YTD. KPI 1,946.68 = served `totals.design_capacity_days.remaining`. Radix moves focus asynchronously, so probes must wait a tick after an arrow key.
+
+**Tests.** `CapacityPage.test.tsx`: the old "Days disabled" test was replaced by (a) all four combinations, with served values, unit labels, booked % unchanged and the matrix note, and (b) keyboard operation. The order test now includes `class-chart-section` → `section-chambers` → `section-engineers`, and asserts the chart is not inside the class panel. `capacity-kpi-row.test.tsx`: Days + full year and Days + YTD. `hub-summary-table.test.tsx`: Days (rows, lab per region, Total, Gap (wks), Details dialog day figures, weekdays) and an old API without day fields showing "—". Accessible header names now end ", in weeks/days". `priority-load-chart.test.tsx`: days axis, value label, splits in wks, null → "—". `class-breakdown-panel.test.tsx`: chart not under the cards; `ClassChartSection` collapsed / lazy / absent without a run. The other tests changed only `horizon=` to `view=`.
+
+**Verification.** `tsc -b` clean; `eslint src/surfaces/capacity` 0 errors, 2 pre-existing warnings; `vitest run src/surfaces/capacity` 13 files / 73 passed; `vite build` OK (index 138.89 KB gzip, CapacityPage chunk 22.52 KB gzip); contract test 200 passed. Live read-only on :5183 as Alice PM at 1440 with reduced motion. All four combinations equal the served API: Full year Weeks 1,717.55 / Days 10,122.98; YTD Weeks 330.29 / Days 1,946.68 design capacity. Booked 89.14% / 463.53% in both units. Document scrollWidth 1440 in every state, no console errors. Live order: matrix, then class chart, then chambers, then engineers. Screenshots reviewed (session scratchpad `p19t05/`: `days-*.png`, `weeks-*.png`, `dialog-days-ytd.png`, `days-more-detail.png`). Fixes found on review: the axis title was "Engineer-Days" (CSS capitalize), now first-letter only; the dialog gap label truncated "(wks)", now "Gap, load − cap. (wks)". Not run: full vitest suite, e2e (no e2e selector referenced the old Days state or the class chart), live axe (unit axe tests pass), dark mode, 390 px. Nothing committed; dev servers untouched. P19-T20 gate pending.
+
+## [2026-10-21] P20-T01 — FTE gates scheduling speed (algorithm-engineer): DONE
+
+Owner ruling (final, 2026-10-21): "0.5 FTE represents half speed." ADR 0032 supersedes ADR 0002 and answers OQ #2.
+Scope: `backend/scheduling/` (`workflow.py`, `greedy.py`, `cp_sat.py`, `invariants.py`, `whatif.py`, `types.py`,
+`__init__.py`), new `backend/tests/scheduling/test_p20_fte_speed.py`, docs (ADR 0032, ADR 0002 marked superseded in place,
+DOMAIN_RULES, OQ #2 answered, ORACLE_DIVERGENCE post-P2 note, plan section P20). :5433 / :8001 / :5183 not touched;
+no migration, no dependency. Nothing committed.
+
+Decisions (ADR 0032):
+- `span = ceil(duration / fte)` per design step of a NON-FROZEN project, rounded up (same convention as derived
+  `remaining`), per step (a project's total can exceed ceil(Σ/f)), in exact decimal arithmetic (`Fraction(str(fte))`:
+  21/0.7 = 30, not the float 31). FTE > 1 not capped. `duration_weeks` stays EFFORT on every run row.
+- Only `design` steps (PDD A B D E I J K M, OEM A B D G I J K M). Lab, elapsed and skipped steps are unchanged.
+- FTE <= 0, NaN or infinite with design work left to place gives `data_error` (existing mechanism: no rows, no capacity,
+  null weeks). Never divides. With no design work left, FTE is irrelevant. Unassigned leader unchanged (`no_leader`
+  LEFT_OUT).
+- Frozen projects are NOT stretched (I10; dates stay locked). Done steps keep their actuals. In Progress / Blocked
+  tails book `ceil(remaining / fte)`; `remaining_weeks_override` is read as remaining effort.
+- Load = effort (I6/I7 formulas unchanged, I6 wording explicit), so booked % stays comparable with
+  `working_weeks × Σ fte`. I21 amended (span = ceil(duration/fte) for design). I1 holds over spans.
+  `unconstrained_end_week` uses spans (leader speed is not a contention limit), so I16 still holds.
+- What-if: added designers carry FTE into the run; `_pick_leader` skips FTE <= 0 (was a latent ZeroDivisionError);
+  "unattainable" (OQ #47) is judged once per solve at the fastest designer speed (max of the solver's `designer_fte`
+  and the hub's best FTE) so the target does not depend on leader balancing. Public shapes unchanged.
+
+Implementation: `StepPlan` gains `span` / `remaining_span`; `analyse_project(..., leader_fte=)` computes them
+(`leader_fte=None` gives effort only, which the what-if load paths use on purpose). `prepare_run` passes the leader's
+FTE, so greedy and CP-SAT share the spans. The validator's `_build_ctx` does the same. New public helpers:
+`scheduling.fte_span`, `scheduling.is_valid_fte`, `workflow.leader_fte_of`.
+
+Tests: `test_p20_fte_speed.py`, 42 tests. They cover:
+- hand examples: 4 wk at 0.5 = 8, at 0.63 = 7, at 1.0 = 4; the float trap;
+- invalid FTE values; a full 14-step PDD/A at 0.5 (W10 to W65; only the design rows are doubled);
+- same-leader serialisation; load in effort; progress weights;
+- FTE 0 / -1 / NaN data error in greedy and CP-SAT; FTE 0 with design Done is not an error; no_leader unchanged;
+- frozen output identical at 1.0 / 0.5 / 0.63 / 0.0; In Progress tail stretch and override; Done unchanged;
+- the seed with mixed FTE (0.5 / 0.8 / 1): invariants empty and every design span = fte_span; I21 negative case;
+- byte-identical re-run; greedy vs CP-SAT equal durations, spans and unconstrained;
+- what-if: zero scenario == baseline at fractional FTE (estimate "before" == the run's I6); added 0.5 FTE designer
+  doubles spans; zero-FTE designer never picked; unattainable at the fastest speed.
+
+Golden files: no existing fixture pinned a non-1.0 FTE outcome, so none changed (every hand fixture is at 1.0; the
+seed selftests assert invariants, not weeks).
+
+Results: scheduling suite 311 passed, coverage 94 %. Full backend suite (testcontainers) 1799 passed. ruff check and
+format are clean. mypy: no new errors (the 38 pre-existing errors are all in `cp_sat.py`, from ortools stubs).
+
+Impact. Disposable testcontainers Postgres, alembic head, `seed_demo_data` client_2026, `build_schedule_input_from_db`,
+RPD_CURRENT_WEEK=42, greedy. "Before" is the same input at FTE 1.0, which is identical to the ADR 0002 path.
+Script: scratchpad `p20_impact.py`.
+- Within-year: 107 -> 67. The flag counts the 17 Commercialized projects; scheduled within-year is 90 -> 50.
+- Transitions: within_year -> spillover 40; spillover -> left_out 27; left_out -> spillover 2.
+- Outcome classes after: left_out 34 -> 59, spillover 68 -> 83.
+- P1 (25 scheduled): within-year 11 -> 6, left_out 2 -> 8, spillover 12 -> 11.
+  - All 11 P1 changes have PD-India / R&D-India leaders at FTE 0.62-0.63.
+  - 5 go within-year -> spillover (ends W51 -> W59/60, W46 -> W53, W49 -> W53).
+  - 6 Frameless/De-rating B projects go spillover -> left_out.
+- P2: 1 -> 0 within-year. P3: 70 -> 44. P4: 8 -> 0.
+- Unconstrained finish past W52: 59 -> 89.
+- Invariants: empty before and after.
+- Caveat: the seed's FTEs (0.31 to 1.0, mostly 0.62/0.63/0.97) were TUNED so that load ~ capacity
+  (`client_2026.tune_fte`, ADR 0024). They are not a real roster, so the effect is exaggerated.
+- PD-India design load 967 -> 782. This is not an effort change: more projects are LEFT_OUT, and a left-out project
+  carries only the rows it booked.
+
+Follow-ups outside `backend/scheduling/` (detail in ADR 0032 §6):
+1. backend-builder: `GET /capacity/engineer-utilization` weekly cells put 1.0 on the first `duration_weeks` weeks.
+   Spread `duration_weeks / (end - start + 1)` over `[start, end]` instead. The total is already correct.
+2. backend-builder: `services/workspace.stage_overrun` uses planned end = `start + duration - 1`, so every sub-1.0 FTE
+   design step reads as overrun ("At Risk"). Use `start + fte_span(duration, fte) - 1` with the snapshot FTE, or the
+   run's `end_week`.
+3. frontend-builder (+ backend `step_timing` if served): the Gantt right-edge drag turns elapsed bar width into
+   `duration_override_weeks`, which is effort. Convert elapsed to effort, and label effort vs elapsed.
+4. Copy that cites ADR 0002 must be revised:
+   - frontend: `capacity-reporting-notice.tsx`, `planning/components/engineer-form.tsx`, `planning/api/types.ts`,
+     `components/ui/card-info.tsx`;
+   - backend docstrings: `api/routers/capacity.py`, `schemas/capacity.py`, `models/engineer.py`, `models/hub.py`.
+Correct already, no change needed: capacity hub-load, planning resource-load, Gantt per-project totals, what-if
+utilization (all sum effort `duration_weeks`).
+
+Observation, not changed: `derive_remaining` uses float `ceil(d × (1 − pct/100))`, so 10 × (1 − 0.7) gives 4, not 3.
+That is pre-existing; fixing it would change runs. Candidate for an owner decision.
+Dev DB: the next greedy run on :5433 will show the impact above (adjusted for the real DB state). Expect the
+Dashboard to drop by about 40 within-year projects.
+
+## [2026-10-21] P20-T03 — Frontend follow-ups to ADR 0032 (frontend-builder): DONE (drag conversion dormant until the backend serves the FTE)
+
+Scope: `frontend/src` only. backend/ not touched (P20-T02 is running in parallel). Dev servers :8001 / :5183 not
+restarted. No dependency, nothing committed.
+
+Gantt drag (ADR 0019 x ADR 0032):
+- `GET /gantt` serves NO FTE for a step (checked `backend/schemas/gantt.py`: `GanttStepRow` / `GanttProjectRow` carry
+  start/end weeks, `duration_weeks` = work, `leader_engineer_id`, no FTE). Both are pinned `exact` by
+  `test_openapi_frontend_contract.py`, so the TS mirror cannot gain the field ahead of the backend.
+- Built anyway, dormant: `lib/gantt-coordinates.ts` gains `fteHundredths`, `fteSpanWeeks(work, fte) = ceil(work / fte)`
+  and its inverse `workWeeksForCalendarWeeks(cal, fte) = clamp(floor(cal × fte), 1, 104)` = the LARGEST work whose
+  span fits the dragged calendar width. Integer arithmetic on hundredths (Engineer.fte is Numeric(3,2)), so
+  21 at 0.7 spans 30 like the scheduler's `Fraction`. `stepDragResult` takes an optional `origin.fte`: with it the
+  resize request is `workWeeksForCalendarWeeks(ceil(duration / fte) + Δ)` and the ghost snaps to that work's span;
+  without it (or FTE <= 0) the old 1:1 `duration + Δ` path. At FTE 1.0 both paths are identical (tested).
+  Below one work week's span the request floors at 1 work week. Result gains `workWeeks`.
+- `StepTimingTarget` gains `kind` and `spanFte`; `stepTimingTarget()` sets `spanFte: null` with a TODO. So production
+  drag behaviour is UNCHANGED until the backend serves the field. BACKEND FIELD NEEDED: `GanttStepRow.span_fte:
+  float | null` = the leader FTE the active run stretched this step by (from the run's input snapshot), null for lab,
+  elapsed, skipped, Done and frozen-project steps and when there is no leader. Then map it in `stepTimingTarget` and
+  add it to `surfaces/gantt/api/types.ts`. GDPR note for security-auditor: FTE (part-time status) of a leader whose
+  name is withheld (OQ #8) may itself be personal data; alternative is a server-side conversion (PATCH accepts a
+  calendar-weeks target) with no FTE served, but then the drag label cannot say "at 0.5 FTE".
+Labels (`lib/step-weeks-copy.ts`):
+- Drag tooltip: "8 wks on the calendar · 4 wks of work at 0.5 FTE"; with no served FTE "6 wks of work · calendar
+  weeks follow the leader's FTE" (it does not guess the span); lab/elapsed "N wks on the calendar · not stretched by FTE".
+- Step bar hover (SVG title): "Prototype build · planned W10–W17 on the calendar · 4 wks of work" — the served weeks
+  verbatim, no derived count (I9).
+- Timing dialog: design field "Work (weeks)" (lab/elapsed keep "Duration (weeks)"), lead-time hint "wks of work",
+  note "Planned now: W10–W17 on the calendar · 4 wks of work[ at 0.5 FTE]." + help "at 0.5 FTE, 4 weeks of work take
+  8 calendar weeks (ADR 0032)". Value sent as typed: no conversion in the dialog (it is a work figure).
+- "edited" marker: "work 6 wks (table 4)" for design steps.
+Copy citing ADR 0002 (now says FTE gates speed, ADR 0032): `capacity-reporting-notice.tsx` (load = work weeks, FTE
+applied as speed, holidays + chamber downtime still not; "load > capacity is not overbooking" kept),
+`engineer-form.tsx` help ("FTE sets the engineer's speed … at 0.5 FTE they work at half speed, so 4 weeks of work
+take 8 calendar weeks"), `planning/api/types.ts` EngineerRead doc, `components/ui/card-info.tsx` doc,
+`capacity-reporting-notice.test.tsx` doc. Grep for "ADR 0002" / "does not gate" in frontend/src now finds only
+"superseded" notes. Dashboard "Reporting figures only" on Capacity booked left as is (still true: booked % never
+gates the scheduler).
+Tests: gantt-coordinates (+9: span/inverse, float trap, round-trip for FTE <= 1 over 1..104, 1.0 == 1:1, 0.5, 0.63,
+move ignores FTE, FTE 0/negative falls back), step-timing (+11: overlay drag at 1.0 / 0.5 / 0.63 FTE with request +
+label, no-FTE label and unchanged request, lab label, bar title, dialog labels with and without FTE, lab dialog;
+2 updated for the new wording), capacity notice (+1), engineer form (+1).
+Results: `tsc -b` clean; eslint on touched dirs 0 errors (2 pre-existing `useVirtualizer` warnings); full Vitest
+176 files / 1292 tests passed; `vite build` OK, initial `index` chunk 138.91 kB gzip.
+Next: when P20-T02 (or a follow-up) serves `GanttStepRow.span_fte`, add it to the TS mirror and replace the
+`spanFte: null` in `step-timing-context.ts::stepTimingTarget` with `step.span_fte`; the bar title can then add
+"at f FTE" via `workWeeksPhrase(kind, duration, span_fte)`.
+
+## [2026-10-21] P20-T02 — ADR 0032 backend follow-ups + `GanttStepRow.span_fte` (backend-builder): DONE
+
+Scope: `backend/` outside `scheduling/`, which was not edited. It uses the exported `fte_span`, `is_valid_fte` and
+`derive_remaining`. Testcontainers DB only. :5433 / :8001 / :5183 not touched. Frontend not touched. Nothing committed.
+
+Changes:
+1. **Engineer utilization weekly cells** (`api/routers/capacity.py::engineer_utilization`):
+   - Each design row's effort (`duration_weeks`) is spread evenly over its stored `[start_week, end_week]`.
+     A 0.5 FTE bar of 4 effort weeks over 8 elapsed weeks reads 0.5 per week.
+   - In Progress / Blocked rows (live status, non-frozen project): the remaining effort goes on the booked tail
+     `[max(run.current_week, pred_end + 1, start) .. end]`, where `pred_end` comes from the same run's rows plus the
+     run's `workflow_snapshot` predecessors. The done effort goes on the weeks before the tail.
+   - Remaining effort is `derive_remaining`, clamped to `[0, duration]` and to the tail's length. The cap keeps a run
+     that is stale against live progress at no more than 1 effort week per booked week; the excess stays in the done
+     part, so every row still sums to `duration_weeks`.
+   - `total_booked` is now Σ `duration_weeks` directly. It is unchanged, and equals `/planning/resource-load`.
+   - Cells are served at 2 dp.
+   - New module `services/run_step_effort.py`: `spread_effort`, `weekly_effort_for_rows`, `effort_from`,
+     `step_predecessors_for_run`.
+2. **Priority board remaining design weeks** (`services.capacity_priority.remaining_run_load_by_project`): these counted
+   elapsed weeks from `current_week`, which doubles them at 0.5 FTE. They now count effort through the same helper.
+   Lab is unchanged. Results at FTE 1.0 are unchanged, and every existing board test passes.
+3. **Stage overrun / health badge** (`services/workspace.py`):
+   - New helpers `planned_span_weeks(duration, fte)` and `row_span_fte(row, fte_by_engineer, frozen=)`, plus
+     `engineer_ftes_for_rows`.
+   - A Not Started stage's planned end is the run's own `end_week`. Any other stage's planned end is
+     `start + fte_span(duration, fte) − 1`, for a design row of a non-frozen project.
+   - `fte` is the run's stored `span_fte`; rows from older runs fall back to the assigned engineer's current FTE.
+   - `health_badge` gains the keyword arguments `fte_by_engineer` and `frozen`. All three callers pass them:
+     workspace, `project_cards` and `ask_agent`.
+4. **`GanttStepRow.span_fte: float | None`** (coordinator add-on):
+   - New nullable column `ScheduleRunProjectStep.span_fte` `Numeric(3, 2)`, migration `p20a_run_step_span_fte`
+     (revises `p16a_rescore_adr0029`, no backfill).
+   - `persist_schedule_output` fills it from the run's own input (`run_step_span_fte`). It stays null for lab,
+     elapsed, skipped, Done-in-input and frozen steps, and for steps with no engineer or an invalid FTE.
+   - `GET /gantt` serves it only when the caller may edit step timing on the project: GANTT/WRITE with the hub in
+     scope (`can_write_timing`, the same check as `PATCH .../timing`). The live Done or frozen state also nulls it.
+     Everyone else gets null (OQ #8).
+   - Contract: the `GanttStepRow` row in `tests/test_openapi_frontend_contract.py` is TEMPORARILY "subset" until the TS
+     mirror lands. The exact backend field set is pinned by `test_gantt_step_row_contract`.
+5. **Engineer FTE request bounds** (`schemas/engineer.py`, create and update): `ge=0.01, le=9.99, allow_inf_nan=False`.
+   Before this, 0.004 passed `gt=0` and was stored as 0.00 (a scheduler data_error), and `inf` reached the DB.
+6. **Docstrings citing ADR 0002** now cite ADR 0032: `api/routers/capacity.py`, `schemas/capacity.py`,
+   `models/engineer.py`, `models/hub.py`, `seed/client_2026.py`. A grep finds no other occurrences outside scheduling.
+7. Docs: ADR 0032 has a new "Follow-up status" section. IMPLEMENTATION_PLAN gains the P20-T02 and P20-T03 rows.
+
+Sweep (item 4 of the task). Each place was checked for a step end or span derived from `duration_weeks` instead of the
+run's stored start/end:
+- **Gantt bars and weekly active counts**: use stored start/end. Correct; the elapsed occupancy is intended.
+- **Gantt per-project totals**: effort. Correct.
+- **Utilization matrix `busy_weeks`**: elapsed. Correct, because the leader is busy every week of the span.
+- **Exports**: export the stored start/end/duration. Correct.
+- **Workspace planned weeks, `tracking.plan_percent` / due stages, `project_cards.run_step_ranges`**: stored rows.
+  Correct.
+- **Check-in, notifications, priority preview, run_changes**: use stored outcome weeks only. Correct.
+- **What-if API layer**: passes FTE through to the scheduler; the schemas already bound FTE to (0, 1]. Correct.
+- **`services/step_timing`**: stores the override as effort. Correct. The elapsed-to-effort conversion is the
+  frontend's job (P20-T03), and `span_fte` now supports it.
+- Only `engineer_utilization`, `stage_overrun` and the priority board were wrong. All three are fixed.
+
+Tests: new `tests/test_p20_fte_followups.py`, 31 tests:
+- `spread_effort` units, including the tail split and the stale cap;
+- a 0.5 FTE bar reads 0.5 per week, with totals equal to resource-load;
+- an In Progress tail;
+- the seed at 0.5 FTE: totals equal to resource-load and hub-load, and no cell from the current week on above 0.5
+  outside frozen leaders;
+- overrun and health at 1.0 / 0.5 FTE (on time and late), frozen not stretched, the workspace endpoint
+  (0.5 FTE leader is `on_track`), board remaining effort;
+- FTE bounds;
+- `span_fte` persistence rules (unit, plus a real greedy run over the mixed-FTE seed);
+- `span_fte` on GET /gantt: Hub Planner of the hub gets 0.5 / 1.0; lab is null; Executive Viewer, Portfolio Manager
+  and Engineer get null; live Done and frozen are null; the exact contract row.
+
+Results: full backend suite 1830 passed, coverage 96.08 %. `ruff check` is clean. On the touched files, mypy is clean
+and `ruff format` is clean for the new files. Pre-existing format drift in 95 files was not reformatted. One earlier
+full run had `test_workspace_api::test_stage_patch_done_marks_stale_and_audits` fail once; it passed alone and in the
+next full run (flake, unrelated).
+
+Left open:
+- Frontend (P20-T03): add `span_fte: number | null` to `gantt/api/types.ts`. Also update the 4 test fixtures that
+  build `GanttStepRow` literals (`GanttPage.test.tsx`, `step-timing.test.tsx`, `gantt-badges.test.tsx`,
+  `gantt-rows.test.ts`), plus the `spanFte` null test in `step-timing.test.tsx`. Then use `step.span_fte` in
+  `stepTimingTarget`, and flip the contract row back to "exact". This was NOT done here: it is more than two lines,
+  and those files carry another agent's uncommitted edits.
+- Dev DB (:5433) needs `alembic upgrade head` (`p20a_run_step_span_fte`) before the next run. `span_fte` is null until
+  then.
+
+## [2026-10-21] P20-T03 follow-up — Gantt drag conversion live on served `span_fte` (frontend-builder): DONE
+
+Supersedes the "dormant" caveat of the P20-T03 entry above. P20-T02 now serves `GanttStepRow.span_fte`. It is
+populated only for callers who may edit the step's timing. It is null for lab, elapsed, skipped and Done steps,
+frozen projects, steps with no leader and pre-P20-T02 runs.
+- `gantt/api/types.ts`: `span_fte: number | null` (required) on `GanttStepRow`. The 4 fixtures (`GanttPage.test.tsx`,
+  `step-timing.test.tsx`, `gantt-badges.test.tsx`, `gantt-rows.test.ts`) gain `span_fte: null`. The other three files had
+  no prior uncommitted edits; my earlier P20-T03 edits in `step-timing.test.tsx` were kept.
+- `stepTimingTarget` now maps `spanFte: step.span_fte` (TODO removed). So the right-edge drag converts calendar weeks
+  to work weeks whenever the FTE is served and falls back to 1:1 when it is null. The step bar hover text now adds
+  "at f FTE" from `span_fte`.
+- Tests: the null-only target test now covers both cases (0.5 maps through, null stays null). There are 2 new
+  chart-level drags: `span_fte` 0.5 with +2 calendar weeks sends 5 work weeks with the label "10 wks on the calendar
+  · 5 wks of work at 0.5 FTE"; `span_fte` null with +2 sends 6. Plus 1 hover-text test with the FTE.
+- `backend/tests/test_openapi_frontend_contract.py`: the `GanttStepRow` row goes from the temporary "subset" back to
+  "exact", and its comment is removed. No other backend file touched.
+Results: `tsc -b` clean. eslint on `src/surfaces/gantt` clean. Full Vitest: 176 files / 1295 tests passed. `pytest
+tests/test_openapi_frontend_contract.py`: 200 passed.
+
+## [2026-10-21] P19 + P20 (+P17-R05..R09) gate — security-auditor: PASS (0 Critical, 0 High, 1 Medium, 3 Low, 4 Info)
+
+Scope: `api/routers/planning.py`, `capacity.py` (hub-load day fields, `lab_regions[]`, engineer-utilization spread),
+`engineers.py`, `chambers.py`, `gantt.py` (`span_fte`), `dashboard.py` (`type=Unmapped`); schemas planning / capacity /
+engineer (FTE bounds) / chamber / gantt / dashboard; services capacity_supply, export_builder (column split),
+run_step_effort, workspace (health badge), capacity_priority, schedule_persistence; migration `p20a_run_step_span_fte`;
+frontend `surfaces/capacity`, `planning`, `gantt`, `dashboard`. Read-only review. Method: code read, scope trace through
+`narrowed_hub_filter` / `narrowed_lab_regions`, negative probes in scratchpad test files (run against the conftest
+testcontainers Postgres, no repo change), plus `pytest tests/test_p19_planning_capacity.py tests/test_p20_fte_followups.py
+tests/test_p17_r09_unmapped_type.py` (71 passed). :5433 / :8001 / :5183 not touched.
+
+Verified clean:
+- Role matrix for `/planning/capacity-summary`, `/resource-load`, `/resource-load/options`: CAPACITY_PLANNING READ =
+  PM, Hub Planner, Admin, Super Admin; Engineer, Executive Viewer, Auditor 403; 401 with no token (tests exist).
+- Hub Planner scope: out-of-scope `hub_id`, `region`, or a mix gives empty lists and zero totals on all three endpoints,
+  with no foreign engineer or chamber name in the body (probed). Shares and totals are computed only from rows the caller
+  may see. `lab_regions[]` on hub-load comes only from served rows. Chamber load is region-wide by contract.
+- List bounds: 51 category / type / status / department values give 422; 501 `engineer_id` values give 422, 500 give
+  200. A department value over 100 chars, an unknown enum or an unknown basis gives 422. A SQL-looking department value
+  matches nothing (bound `false()`).
+- Resource-load audit: `planning.resource_load.read` holds the filter key and row counts only, never a figure. It is
+  coalesced per user per filter set per minute. The options endpoint is not audited. That is acceptable: it serves names
+  only, the same names `GET /engineers` already serves to the same roles, and no figures (ADR 0028).
+- `span_fte`: the check `principal_can(GANTT, WRITE) and is_hub_in_scope(project.hub_id)` is exactly what
+  `PATCH .../timing` enforces (GANTT WRITE + `hub_scope_filter`). Neither path honours ADR 0012 project grants, so a
+  grant gives neither. Probed:
+  - Hub Planner of the hub and Admin / Super Admin get the value.
+  - Executive Viewer, Portfolio Manager and Engineer get null.
+  - Auditor gets 403.
+  - A Hub Planner of another hub sees no rows.
+  - Executive Viewer + Hub Planner gets the value, which is correct because that user may PATCH.
+  - Live Done and frozen steps give null.
+  - Nothing else serves the field: the Gantt export uses an explicit header list without it, and the workspace and
+    health badge use FTE internally only.
+- FTE bounds on create and PATCH: 0, -1, 0.004, "0.005", 10, NaN, Infinity and the raw JSON `1e309` all give 422.
+  Chamber efficiency 0 / 1.5 / NaN, platforms 0 / 1001, and design-kind or unknown `allowed_stages` give 422. A Hub
+  Planner cannot PATCH another hub's engineer (404), another region's chamber (404), or move an engineer out of scope
+  (403). PM, Executive Viewer, Engineer and Auditor get 403 on PATCH.
+- `type=Unmapped` is a bound `IS NULL` predicate ANDed with `narrowed_hub_filter`, so it cannot widen scope. The export
+  endpoint still types `type` as ProjectType, so `Unmapped` there gives 422. The drill-down dialog columns hold no
+  financial field.
+- Exports: the `rows_from_models` nested split only adds capacity / day columns. Every text cell still passes formula
+  neutralisation. No financial or FTE-span column was added.
+- Migration: one nullable `Numeric(3,2)` column, no backfill, linear on `p16a_rescore_adr0029`, clean downgrade.
+- No raw SQL or f-string SQL in scope. No logging of figures. No secrets in the diff. No dependency, deploy, Nginx, CSP
+  or TLS change in this delta, so the headers and TLS posture are unchanged from the last gate.
+- Frontend: no `dangerouslySetInnerHTML`, `innerHTML`, query persistence or new storage in the four surfaces. Resource
+  load is lazy: an IntersectionObserver gates it, filters are debounced 400 ms, `refetchOnWindowFocus: false`, and the
+  options call is also gated. Save errors are fixed text plus the server's string `detail`, rendered as text.
+  Inline chips send only enum values; the server validates them.
+
+Findings:
+| ID | Sev | Finding | Fix |
+|----|-----|---------|-----|
+| S19-M1 | Medium | `GET /planning/resource-load`: `engineer_id` narrows the engineer rows to the caller's scope, but `_project_predicate` uses the RAW ids. A Hub Planner can pass an out-of-scope engineer's id and the region-wide chamber load (and their own engineers' load) is re-sliced to "projects with a step booked on that engineer". Probe: Hub Planner of OEM-HCK (Greece region, R&D-Greece engineers out of scope). GR-1 load is 13.0 unfiltered, 10.0 with Alpha's id, 9.0 with Beta's (both out of scope); the engineer list stays empty. The ids are discoverable through cross-hub leaders on own-hub Gantt rows. The result is a per-out-of-scope-engineer workload signal (GDPR, OQ #8). It also confirms whether a guessed id has bookings, and the id is echoed in `filters_applied`. | Intersect `engineer_ids` with the in-scope engineer ids before building the predicate. If the intersection is empty while ids were sent, return zero loads. Echo only in-scope ids. Add a test: a Hub Planner with an out-of-scope `engineer_id` gets the same chamber loads as with no engineer filter, or zeros. |
+| S19-L1 | Low | `PATCH /engineers/{id}` with explicit `null` for `fte`, `name`, `allowed_categories` or `hub_id` passes the schema (`X \| None`), `setattr`s None, and raises an unhandled `IntegrityError`, giving a 500. The Postgres "Failing row contains (...)" text in the server traceback includes the engineer's name, so PII reaches the error log. Pre-existing pattern, but these are the PATCH paths the new inline editing uses. | Reject explicit null for non-nullable fields in `EngineerUpdateRequest` (model validator, or drop None from `exclude_unset`). Add a test. |
+| S19-L2 | Low | `PATCH /chambers/{id}` with explicit `null` for `efficiency`, `platforms`, `code` or `allowed_stages` gives 409 "Chamber code already exists": every IntegrityError is mapped to the duplicate-code message. The error is misleading and the status class is wrong. | Same as L1 for `ChamberUpdateRequest`. Map only the unique violation to 409. |
+| S19-L3 | Low | Engineer and chamber request models are lax, not strict (CLAUDE.md: "Pydantic v2 (strict)"). `{"fte": true}` is accepted as 1.0 (200), and numeric strings are coerced. The values stay inside the bounds, so there is no direct harm. | `ConfigDict(strict=True)` on the request models (check that the frontend sends JSON numbers, which it does), or `StrictFloat` for fte / efficiency. |
+| S19-I1 | Info | Withholding `span_fte` is defence in depth, not confidentiality. Every Gantt reader (Executive Viewer, PM, an Engineer on own assignments) gets `start_week`, `end_week` and `duration_weeks`, and `end − start + 1 = ceil(duration / fte)`, so part-time status can be roughly inferred. ADR 0028 accepts per-engineer data as an owner residual risk, so this is not a block. | State it in ADR 0032 §"Follow-up status" and OQ #8. |
+| S19-I2 | Info | The resource-load project filters (type, status, category) slice the region-wide chamber load by other hubs' projects. This matches contract §5 ("region-wide like /capacity") and serves aggregates only. | None. Revisit if the client objects. |
+| S19-I3 | Info | The frontend engineer form and inline FTE validate only `> 0`, with no upper bound and no 2-dp limit. The server is authoritative: 0.004 and 10 give 422, and the user sees the generic "Not saved". | Mirror 0.01–9.99 in `engineer-form-schema.ts` (UX). |
+| S19-I4 | Info | The resource-load audit `filter_key` can reach about 20 KB (500 engineer ids), and every distinct filter set writes a row. The table is append-only and bounded by the request rate of authenticated planners. | Optional: store a digest plus counts instead of the id list. |
+
+Earlier open items: S18-L1..L4 / I-items unchanged, out of scope here. OQ #8 / P4-T08: ADR 0028 owner ruling stands. FTE
+on Capacity Planning is visible to planning roles only, the same roles as `GET /engineers`. Gate result for this slice:
+PASS. Schedule S19-M1 as a remediation task (one-line intersection + test) before production. S19-L1..L3 can ride with it.

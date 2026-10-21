@@ -8,11 +8,14 @@ import { CardInfo } from '@/components/ui/card-info';
  *
  * Load figures come from the active schedule run's booked steps (Invariants
  * I6 / I7). Supply figures are the CLIENT'S formulas (working calendar × FTE;
- * chamber working weeks × efficiency × platforms), computed server-side. The
- * scheduler still books whole engineer-weeks regardless of FTE (ADR 0002) and
- * gates chambers on platform count only (ADR 0008) — so a reader must not
- * conclude "load > capacity ⇒ the scheduler overbooked" or "headroom ⇒ the
- * scheduler will use it".
+ * chamber working weeks × efficiency × platforms), computed server-side.
+ * Since ADR 0032 (2026-10-21, superseding ADR 0002) the scheduler applies FTE
+ * as SPEED: a design step spans `ceil(work / fte)` calendar weeks of its
+ * leader, while load stays in WORK weeks, so load and FTE-scaled supply are in
+ * the same unit. It still ignores the work calendar's holidays and chamber
+ * downtime / efficiency, and gates chambers on platform count only (ADR 0008)
+ * — so a reader must still not conclude "load > capacity ⇒ the scheduler
+ * overbooked" or "headroom ⇒ the scheduler will use it".
  *
  * RESHAPED 2026-10-01 (client text cleanup), NOT reduced. This used to render
  * a four-paragraph `<aside>` wall above the first card — the single largest
@@ -42,8 +45,9 @@ export function CapacityReportingNotice(): React.JSX.Element {
       <p>
         <span className="font-medium text-text">Load</span> (engineer-weeks, chamber-weeks) is
         taken verbatim from the active schedule run&rsquo;s booked steps &mdash; the sum of
-        design-step lead times per hub, and of lab-step lead times (&times;&nbsp;1.0) per lab
-        region (Invariants I6 / I7, ADR&nbsp;0007). The{' '}
+        design-step weeks of work per hub, and of lab-step lead times (&times;&nbsp;1.0) per lab
+        region (Invariants I6 / I7, ADR&nbsp;0007). Work weeks, not calendar weeks: a design step
+        led at 0.5&nbsp;FTE counts its 4 weeks of work even though it spans 8 calendar weeks. The{' '}
         <span className="font-medium text-text">estimated</span> load beside it is the
         projects&rsquo; hand-entered figure, for comparison only.
       </p>
@@ -51,10 +55,12 @@ export function CapacityReportingNotice(): React.JSX.Element {
         <span className="font-medium text-text">Capacity</span> is the client&rsquo;s own supply
         formula (ADR&nbsp;0008): a hub work calendar gives working weeks per engineer, scaled by
         Σ&nbsp;FTE; each chamber&rsquo;s downtime and efficiency give efficient lab weeks, summed
-        per region. The scheduler itself applies{' '}
-        <span className="font-medium text-text">neither</span> FTE nor downtime when it books
-        (ADR&nbsp;0002 / 0008) &mdash; it books whole weeks and gates lab steps only on a
-        chamber&rsquo;s platform count.
+        per region. The scheduler applies FTE as{' '}
+        <span className="font-medium text-text">speed</span> (ADR&nbsp;0032): a leader at
+        0.5&nbsp;FTE takes twice as many calendar weeks for the same work. It does{' '}
+        <span className="font-medium text-text">not</span> apply holidays or chamber downtime
+        when it books (ADR&nbsp;0008) &mdash; it gates lab steps only on a chamber&rsquo;s
+        platform count.
       </p>
       <p>
         So on this surface, load exceeding capacity does{' '}

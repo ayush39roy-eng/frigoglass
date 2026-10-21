@@ -69,8 +69,9 @@ class HubWorkCalendar(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     Exactly one row per hub (`hub_id` unique). Seeded from
     `domain_constants.HUB_WORK_CALENDAR_SEED` (docs/CLIENT_FORMULAS.md §2.1).
     Editable on Capacity Planning (Hub Planner, own hub) and Workflow Settings
-    (Super Admin); audit-logged (P9-T03). Per ADR 0002 none of this gates
-    week-level booking in the scheduler — supply reporting only.
+    (Super Admin); audit-logged (P9-T03). The calendar (working weeks,
+    downtime) is supply reporting only and never gates week-level booking.
+    Engineer FTE does gate design speed (ADR 0032, superseding ADR 0002).
     """
 
     __tablename__ = "hub_work_calendars"

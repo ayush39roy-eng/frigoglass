@@ -180,7 +180,7 @@ describe('CapacityPage', () => {
     expect(screen.getByRole('group', { name: 'Design load' })).toHaveTextContent('299.5 %');
   });
 
-  it('renders the client layout in order: KPI cards, class cards, charts, booked tiles, summary table, inline hub matrix, then the collapsed sections', () => {
+  it('renders the client layout in order: KPI cards, class cards, charts, booked tiles, summary table, inline hub matrix, class chart, then chamber / engineer sections', () => {
     hooks.useHubLoadVsCapacity.mockReturnValue(ready({ ...hubLoad, areas: [areaRow()] }));
     hooks.useClassBreakdown.mockReturnValue(ready(classBreakdown));
     renderWithProviders(<CapacityPage />);
@@ -192,7 +192,10 @@ describe('CapacityPage', () => {
       screen.getByTestId('hub-booking-strip'),
       screen.getByTestId('hub-summary-table'),
       screen.getByTestId('section-hub-matrix'),
-      screen.getByTestId('capacity-more-detail'),
+      // P19-T05 (owner ruling): the class chart moved down, above the chamber / engineer disclosures.
+      screen.getByTestId('class-chart-section'),
+      screen.getByTestId('section-chambers'),
+      screen.getByTestId('section-engineers'),
     ];
     for (let i = 1; i < order.length; i++) {
       const prev = order[i - 1];
@@ -205,6 +208,10 @@ describe('CapacityPage', () => {
     expect(screen.getByRole('group', { name: 'Lab capacity' })).toBeInTheDocument();
     expect(screen.getByRole('group', { name: 'Lab load' })).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'Class breakdown — deliverable vs. left out' })).toBeInTheDocument();
+    // the class chart is no longer inside the class cards panel, and stays collapsed
+    expect(screen.getByTestId('class-breakdown-panel')).not.toContainElement(screen.getByTestId('class-chart-section'));
+    expect(screen.getByRole('button', { name: 'Show class chart' })).toHaveAttribute('aria-expanded', 'false');
+    expect(screen.queryByTestId('class-breakdown-chart')).not.toBeInTheDocument();
     expect(screen.getByText('Design Load vs Capacity by Hub')).toBeInTheDocument();
     // provenance names the exact active run version
     expect(screen.getAllByTestId('schedule-run-provenance')[0]).toHaveTextContent(/v6/);
@@ -256,22 +263,74 @@ describe('CapacityPage', () => {
     expect(screen.queryByText('Priya N')).not.toBeInTheDocument();
   });
 
-  it('header toggles: YTD 2026 / Full year is the one horizon; Days is disabled (no served weekdays_per_week)', async () => {
+  it('P19-T05: Weeks | Days and YTD | Full year are one view state; all four combinations show the served fields', async () => {
     const user = userEvent.setup();
     hooks.useHubLoadVsCapacity.mockReturnValue(ready(hubLoad));
     hooks.useClassBreakdown.mockReturnValue(ready(classBreakdown));
     renderWithProviders(<CapacityPage />);
-    expect(screen.getByRole('radio', { name: 'Full year' })).toHaveAttribute('aria-checked', 'true');
-    expect(screen.getByRole('radio', { name: 'Weeks' })).toHaveAttribute('aria-checked', 'true');
+    const weeks = screen.getByRole('radio', { name: 'Weeks' });
     const days = screen.getByRole('radio', { name: 'Days' });
-    expect(days).toHaveAttribute('aria-disabled', 'true');
+    expect(weeks).toHaveAttribute('aria-checked', 'true');
+    expect(days).toHaveAttribute('aria-checked', 'false');
+    expect(days).not.toHaveAttribute('aria-disabled');
+    expect(screen.queryByText(/does not serve it|not serve.*yet/i)).not.toBeInTheDocument();
+
+    const cap = (): HTMLElement => screen.getByTestId('kpi-design-capacity-value');
+    const booked = (): HTMLElement => screen.getByTestId('booked-design-R&D-Greece');
+
+    // 1. Weeks + Full year
+    expect(cap()).toHaveTextContent('252.62');
+    expect(screen.getByRole('group', { name: 'Design capacity' })).toHaveTextContent('wks');
+    expect(booked()).toHaveTextContent('232.36%');
+    expect(booked()).toHaveTextContent('120 of 252.62 engineer-wks');
+
+    // 2. Days + Full year
     await user.click(days);
-    expect(screen.getByRole('radio', { name: 'Weeks' })).toHaveAttribute('aria-checked', 'true');
-    expect(screen.getByRole('radio', { name: 'Days' })).toHaveAttribute('aria-checked', 'false');
+    expect(days).toHaveAttribute('aria-checked', 'true');
+    expect(cap()).toHaveTextContent('1,515.72');
+    expect(screen.getByRole('group', { name: 'Design capacity' })).toHaveTextContent('days');
+    expect(booked()).toHaveTextContent('232.36%');
+    expect(booked()).toHaveTextContent('3,522 of 1,515.72 engineer-days');
+    expect(screen.getByTestId('booked-lab-R&D-Greece')).toHaveTextContent('2,979 of 1,117.32 chamber-days');
+    expect(screen.getAllByTestId('priority-load-chart-axis').map((e) => e.textContent)).toEqual(['engineer-days', 'chamber-days']);
+    expect(screen.getByTestId('util-matrix-unit-note')).toHaveTextContent('Capacity and load in days');
+    expect(screen.getByTestId('util-row-R&D-Greece')).toHaveTextContent('1,515.72');
+    expect(screen.getByTestId('util-row-total')).toHaveTextContent('3,522');
+
+    // 3. Days + YTD 2026
     await user.click(screen.getByRole('radio', { name: 'YTD 2026' }));
+    expect(days).toHaveAttribute('aria-checked', 'true');
+    expect(cap()).toHaveTextContent('1,078.5');
+    expect(booked()).toHaveTextContent('326.56%');
+    expect(booked()).toHaveTextContent('3,522 of 1,078.5 engineer-days');
+
+    // 4. Weeks + YTD 2026
+    await user.click(weeks);
     expect(screen.getByRole('radio', { name: 'YTD 2026' })).toHaveAttribute('aria-checked', 'true');
-    // the one state drives the KPI card too
-    expect(screen.getByTestId('kpi-design-capacity-value')).toHaveTextContent('179.75');
+    expect(cap()).toHaveTextContent('179.75');
+    expect(booked()).toHaveTextContent('326.56%');
+    expect(screen.getByTestId('util-matrix-unit-note')).toHaveTextContent('All values in weeks');
+  });
+
+  it('P19-T05: the unit toggle is reachable and operable by keyboard', async () => {
+    const user = userEvent.setup();
+    hooks.useHubLoadVsCapacity.mockReturnValue(ready(hubLoad));
+    hooks.useClassBreakdown.mockReturnValue(ready(classBreakdown));
+    renderWithProviders(<CapacityPage />);
+    const weeks = screen.getByRole('radio', { name: 'Weeks' });
+    // the checked item is the radio group's tab stop (roving tab index); arrows move, Space / Enter select
+    weeks.focus();
+    expect(weeks).toHaveFocus();
+    await user.keyboard('{ArrowRight}');
+    const days = screen.getByRole('radio', { name: 'Days' });
+    expect(days).toHaveFocus();
+    await user.keyboard(' ');
+    expect(days).toHaveAttribute('aria-checked', 'true');
+    expect(screen.getByTestId('kpi-design-capacity-value')).toHaveTextContent('1,515.72');
+    await user.keyboard('{ArrowLeft}');
+    await user.keyboard('{Enter}');
+    expect(screen.getByRole('radio', { name: 'Weeks' })).toHaveAttribute('aria-checked', 'true');
+    expect(screen.getByTestId('kpi-design-capacity-value')).toHaveTextContent('252.62');
   });
 
   it('keeps the exports reachable', () => {

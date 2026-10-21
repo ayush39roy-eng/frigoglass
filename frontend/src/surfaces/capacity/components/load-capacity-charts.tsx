@@ -6,7 +6,7 @@ import { CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 
 import type { HubCapacityRow } from '../api/types';
 import { labRegionRows } from '../lib/lab-region-rows';
-import { pickFigures, type CapacityHorizon } from '../lib/pick-figures';
+import { pickUnitFigures, resourceUnitLong, UNIT_SHORT, type CapacityView } from '../lib/pick-figures';
 import { PriorityLoadChart } from './priority-load-chart';
 
 /**
@@ -17,14 +17,18 @@ import { PriorityLoadChart } from './priority-load-chart';
  * (`PriorityLoadChart`, P13-T11). Lab figures are region-level (shared chambers),
  * so the lab chart has one column per lab region, naming the hubs that share it;
  * calling it "by hub" would draw India's chambers three times.
+ *
+ * P19-T05: load and capacity follow the page's unit (served day fields in Days);
+ * the axis title and value labels name the unit. The priority split stays weeks.
  */
 export interface LoadCapacityChartsProps {
   rows: HubCapacityRow[];
-  horizon: CapacityHorizon;
+  view: CapacityView;
 }
 
-export function LoadCapacityCharts({ rows, horizon }: LoadCapacityChartsProps): React.JSX.Element {
-  const capacityLabel = horizon === 'year' ? 'Yearly capacity' : 'Remaining capacity';
+export function LoadCapacityCharts({ rows, view }: LoadCapacityChartsProps): React.JSX.Element {
+  const capacityLabel = view.horizon === 'year' ? 'Yearly capacity' : 'Remaining capacity';
+  const unitShort = UNIT_SHORT[view.unit];
   return (
     <section aria-label="Load versus capacity charts" className="grid gap-gutter lg:grid-cols-2" data-testid="load-capacity-charts">
       <BoltCard className="min-w-0">
@@ -37,15 +41,21 @@ export function LoadCapacityCharts({ rows, horizon }: LoadCapacityChartsProps): 
         <CardContent className="pt-s3">
           <PriorityLoadChart
             ariaLabel="Design load by priority versus capacity, per hub"
-            unit="engineer-weeks"
+            unit={resourceUnitLong('design', view.unit)}
+            unitShort={unitShort}
+            splitUnit={UNIT_SHORT.weeks}
             capacityLabel={capacityLabel}
-            bars={rows.map((r) => ({
-              key: r.hub,
-              label: r.hub,
-              split: r.design_load_by_priority,
-              load: r.design_load_weeks,
-              capacity: pickFigures(r, 'design', horizon).capacity,
-            }))}
+            bars={rows.map((r) => {
+              const f = pickUnitFigures(r, 'design', view);
+              return {
+                key: r.hub,
+                label: r.hub,
+                split: r.design_load_by_priority,
+                splitTotal: r.design_load_weeks,
+                load: f.load,
+                capacity: f.capacity,
+              };
+            })}
           />
         </CardContent>
       </BoltCard>
@@ -59,16 +69,22 @@ export function LoadCapacityCharts({ rows, horizon }: LoadCapacityChartsProps): 
         <CardContent className="pt-s3">
           <PriorityLoadChart
             ariaLabel="Lab load by priority versus capacity, per lab region"
-            unit="chamber-weeks"
+            unit={resourceUnitLong('lab', view.unit)}
+            unitShort={unitShort}
+            splitUnit={UNIT_SHORT.weeks}
             capacityLabel={capacityLabel}
-            bars={labRegionRows(rows).map((l) => ({
-              key: l.region,
-              label: l.region,
-              sublabel: l.hubs.join(', '),
-              split: l.row.lab_load_by_priority,
-              load: l.row.lab_load_weeks,
-              capacity: pickFigures(l.row, 'lab', horizon).capacity,
-            }))}
+            bars={labRegionRows(rows).map((l) => {
+              const f = pickUnitFigures(l.row, 'lab', view);
+              return {
+                key: l.region,
+                label: l.region,
+                sublabel: l.hubs.join(', '),
+                split: l.row.lab_load_by_priority,
+                splitTotal: l.row.lab_load_weeks,
+                load: f.load,
+                capacity: f.capacity,
+              };
+            })}
           />
         </CardContent>
       </BoltCard>

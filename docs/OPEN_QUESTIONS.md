@@ -41,6 +41,13 @@ DOMAIN_RULES.md), pending an ADR either way.
 
 **Who must answer:** Client + orchestrator (needs an ADR regardless of the answer).
 
+**Answered 2026-10-21 (owner):** "0.5 FTE represents half speed." A design step led by an
+engineer with FTE `f` takes `duration / f` elapsed weeks (4 weeks at 0.5 FTE = 8 weeks), rounded
+up to whole weeks per step. The engineer still does one step at a time. Lab, elapsed and skipped
+steps, frozen projects and Done steps are not stretched. An In Progress tail stretches its
+remaining effort. FTE ≤ 0 is a data error. Load stays in effort weeks, so booked % is comparable
+with the FTE-scaled capacity. ADR 0032 records this and supersedes ADR 0002 (P20).
+
 ---
 
 ### 3. Do chamber `efficiency` and `weeks_per_chamber` constrain booking, or are they reporting-only?

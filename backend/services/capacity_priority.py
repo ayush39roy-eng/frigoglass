@@ -34,6 +34,7 @@ from models.schedule import ScheduleRun, ScheduleRunProjectStep
 from models.workflow import ProjectWorkflowStep
 from services.active_run import step_kinds_for_run
 from services.capacity_supply import round2
+from services.run_step_effort import effort_from, weekly_effort_for_rows
 
 PriorityBucket = Literal["P1", "P2", "P3", "P4", "Queue"]
 
@@ -95,13 +96,20 @@ async def remaining_run_load_by_project(
 ) -> dict[uuid.UUID, tuple[float, float]]:
     """Each project's remaining `(design_weeks, lab_weeks)` in the active run.
 
-    Remaining = the weeks of each non-skipped step's stored window
+    Remaining = the part of each non-skipped step's stored window
     (`start_week..end_week`, inclusive) at or after the run's
     `current_week`. A step whose live status is `Done` adds 0. For a
     `Not Started` step the window equals its effective duration (I21); for an
     `In Progress` / `Blocked` step the part from `current_week` on is the
     booked tail (the derived remaining duration, I21). Lab weeks use the same
     `LAB_STEP_CONSUMPTION_PER_PROJECT_WEEK` as the Capacity lab load.
+
+    ADR 0032: design weeks are **effort**, like every load figure. A design
+    row spans `ceil(duration / fte)` elapsed weeks, so its weeks from
+    `current_week` on are counted at the row's effort per week
+    (`services.run_step_effort.weekly_effort_for_rows`), not one per elapsed
+    week. At FTE 1.0 this is the elapsed count, unchanged. Lab rows are never
+    stretched and keep the elapsed count.
 
     Projects not in the run (no stored step) are absent from the result.
     """
@@ -121,30 +129,37 @@ async def remaining_run_load_by_project(
         ).all()
     }
     rows = (
-        await db.execute(
-            select(
-                ScheduleRunProjectStep.project_id,
-                ScheduleRunProjectStep.step_template_id,
-                ScheduleRunProjectStep.start_week,
-                ScheduleRunProjectStep.end_week,
-                ScheduleRunProjectStep.skipped,
+        (
+            await db.execute(
+                select(ScheduleRunProjectStep)
+                .where(ScheduleRunProjectStep.schedule_run_id == run.id)
+                .where(ScheduleRunProjectStep.project_id.in_(ids))
             )
-            .where(ScheduleRunProjectStep.schedule_run_id == run.id)
-            .where(ScheduleRunProjectStep.project_id.in_(ids))
         )
-    ).all()
+        .scalars()
+        .all()
+    )
+    design_rows = [
+        r
+        for r in rows
+        if not r.skipped
+        and (r.project_id, r.step_template_id) not in done
+        and kinds.get(r.step_template_id) == WorkflowStepKind.DESIGN
+    ]
+    effort = await weekly_effort_for_rows(db, run, design_rows)
 
     design: dict[uuid.UUID, float] = defaultdict(float)
     lab: dict[uuid.UUID, float] = defaultdict(float)
     seen: set[uuid.UUID] = set()
-    for pid, step_id, start, end, skipped in rows:
+    for r in rows:
+        pid = r.project_id
         seen.add(pid)
-        if skipped or (pid, step_id) in done:
+        if r.skipped or (pid, r.step_template_id) in done:
             continue
-        weeks = max(0, end - max(start, run.current_week) + 1)
-        kind = kinds.get(step_id)
+        kind = kinds.get(r.step_template_id)
         if kind == WorkflowStepKind.DESIGN:
-            design[pid] += weeks
+            design[pid] += effort_from(effort.get(r.id, {}), run.current_week)
         elif kind == WorkflowStepKind.LAB:
+            weeks = max(0, r.end_week - max(r.start_week, run.current_week) + 1)
             lab[pid] += weeks * dc.LAB_STEP_CONSUMPTION_PER_PROJECT_WEEK
-    return {pid: (design.get(pid, 0.0), lab.get(pid, 0.0)) for pid in seen}
+    return {pid: (round2(design.get(pid, 0.0)), lab.get(pid, 0.0)) for pid in seen}

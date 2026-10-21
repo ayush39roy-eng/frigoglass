@@ -48,7 +48,8 @@ Step kinds (ADR 0007): `design` -> optional interval on the leader's
 `AddNoOverlap`; `lab` -> one optional interval per eligible chamber (exactly
 one chosen iff present) at demand 1.0 per project-week on that chamber's
 `AddCumulative`; `elapsed` -> `end == start + duration` only, no resource;
-`skipped` -> no variables, `end = max(pred.end)` (transparent). Precedence:
+`skipped` -> no variables, `end = max(pred.end)` (transparent). A design
+interval's length is the step's FTE-stretched `span` (ADR 0032). Precedence:
 `start >= pred.end` (exclusive-end convention) per DAG edge.
 
 Objective weighting: ADR 0005 (documented gap-fill, not DOMAIN_RULES.md text)
@@ -250,7 +251,7 @@ def run_cp_sat(
         # within horizon" rule is a reified constraint below.
         fixed_ends = [pl.end_week + 1 for pl in prebooked.values()]
         upper_bound = max([horizon, frontier, *fixed_ends]) + sum(
-            sp.duration for sp in plan.steps.values()
+            sp.span for sp in plan.steps.values()
         )
         lower_bound = frontier
         # Tightest valid floor for the derived max/skip vars: a fixed (Done)
@@ -284,7 +285,10 @@ def run_cp_sat(
                 ends_excl[sid] = prebooked[sid].end_week + 1
                 continue
 
-            duration = sp.duration  # effective duration (ADR 0019)
+            # Elapsed weeks: the effective duration (ADR 0019), stretched by the
+            # leader's FTE for a design step (ADR 0032, shared with greedy via
+            # `prepare_run`). The output row still reports `sp.duration` (effort).
+            duration = sp.span
             # ADR 0019 earliest start: a Not Started step may not start before
             # its `start_not_before_week` (<= horizon, so `upper_bound` still
             # leaves room for the whole chain and the absent case stays SAT).

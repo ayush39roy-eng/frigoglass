@@ -13,6 +13,16 @@ const HUBS: Hub[] = [
 ];
 
 describe('EngineerFormDialog', () => {
+  it('explains FTE as the engineer’s speed (ADR 0032), not as a reporting-only figure', () => {
+    renderWithProviders(
+      <EngineerFormDialog mode="create" engineer={null} open onOpenChange={() => {}} hubs={HUBS} onSubmit={vi.fn()} />,
+    );
+    const help = screen.getByTestId('engineer-fte-help');
+    expect(help).toHaveTextContent("FTE sets the engineer's speed");
+    expect(help).toHaveTextContent('at 0.5 FTE they work at half speed, so 4 weeks of work take 8 calendar weeks');
+    expect(help).not.toHaveTextContent(/reporting figure only|does not gate|0002/);
+  });
+
   it('requires a hub before submitting in create mode', async () => {
     const user = userEvent.setup();
     const onSubmit = vi.fn().mockResolvedValue(undefined);

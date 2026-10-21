@@ -55,6 +55,13 @@ export interface GanttStepRow {
   /** P12 contract §3 (reconciled): what the Gantt may do with this bar for the
    *  caller, decided server-side (ADR 0019 §4 + GANTT write on the project). */
   timing_editable: TimingEditable;
+  /** P20-T02 (ADR 0032, reconciled with `backend/schemas/gantt.py`): the leader
+   *  FTE the active run stretched this step's calendar span by
+   *  (`ceil(work / fte)`). `null` for lab, elapsed, skipped and Done steps,
+   *  frozen projects, steps with no leader, runs persisted before P20-T02, and
+   *  (OQ #8, part-time status is personal data) for every caller who may not
+   *  edit this step's timing. Only the right-edge drag and its labels read it. */
+  span_fte: number | null;
 }
 
 /** ADR 0019 §4: `move_resize` (Not Started), `resize` (In Progress / On Hold),

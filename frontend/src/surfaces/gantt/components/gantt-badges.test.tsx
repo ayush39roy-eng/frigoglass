@@ -51,6 +51,7 @@ const baseStep: GanttStepRow = {
     duration_override_weeks: null,
     start_not_before_week: null,
     timing_editable: 'none',
+  span_fte: null,
 };
 
 describe('ProjectRowBadges — each chip is a server flag rendered verbatim', () => {

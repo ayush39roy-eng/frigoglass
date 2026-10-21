@@ -39,7 +39,7 @@ const data: HubCapacitySummary = {
 
 describe('HubSummaryTable (P19-T01, P19-T02)', () => {
   it('is one compact row per hub with served load, capacity, booked % chip and gap for design and lab', () => {
-    renderWithProviders(<HubSummaryTable data={data} activeRun={undefined} horizon="year" />);
+    renderWithProviders(<HubSummaryTable data={data} activeRun={undefined} view={{ horizon: 'year', unit: 'weeks' }} />);
     const india = screen.getByTestId('hub-summary-row-PD-India');
     expect(within(india).getByTestId('design-load')).toHaveTextContent('587');
     expect(within(india).getByTestId('design-capacity')).toHaveTextContent('252.62');
@@ -60,7 +60,7 @@ describe('HubSummaryTable (P19-T01, P19-T02)', () => {
   });
 
   it('follows the horizon', () => {
-    renderWithProviders(<HubSummaryTable data={data} activeRun={undefined} horizon="remaining" />);
+    renderWithProviders(<HubSummaryTable data={data} activeRun={undefined} view={{ horizon: 'remaining', unit: 'weeks' }} />);
     const india = screen.getByTestId('hub-summary-row-PD-India');
     expect(within(india).getByTestId('design-capacity')).toHaveTextContent('179.75');
     expect(india).toHaveTextContent('326.56%');
@@ -87,7 +87,7 @@ describe('HubSummaryTable (P19-T01, P19-T02)', () => {
         hubRow({ hub: 'OEM-Seltek', ...greeceLab, design_load_weeks: 44 }),
       ],
     };
-    renderWithProviders(<HubSummaryTable data={grouped} activeRun={undefined} horizon="year" />);
+    renderWithProviders(<HubSummaryTable data={grouped} activeRun={undefined} view={{ horizon: 'year', unit: 'weeks' }} />);
     const table = screen.getByTestId('hub-summary-table');
     // one lab figure per region, not per hub
     expect(within(table).getAllByTestId('lab-load')).toHaveLength(3);
@@ -115,15 +115,69 @@ describe('HubSummaryTable (P19-T01, P19-T02)', () => {
   });
 
   it('uses Design / Lab header bands with short sub-headers that keep full accessible names', () => {
-    renderWithProviders(<HubSummaryTable data={data} activeRun={undefined} horizon="year" />);
+    renderWithProviders(<HubSummaryTable data={data} activeRun={undefined} view={{ horizon: 'year', unit: 'weeks' }} />);
     expect(screen.getByRole('columnheader', { name: 'Design' })).toHaveAttribute('colspan', '4');
     expect(screen.getByRole('columnheader', { name: 'Lab (per lab region)' })).toHaveAttribute('colspan', '4');
-    expect(screen.getByRole('columnheader', { name: 'Design capacity, full year' })).toHaveTextContent('Cap.');
-    expect(screen.getByRole('columnheader', { name: 'Lab gap' })).toBeInTheDocument();
+    expect(screen.getByRole('columnheader', { name: 'Design capacity, full year, in weeks' })).toHaveTextContent('Cap.');
+    expect(screen.getByRole('columnheader', { name: 'Lab gap, in weeks' })).toHaveTextContent('Gap');
+  });
+
+  it('P19-T05: in days, load / capacity / lab-per-region / Total read the served day fields; booked % and gap (wks) unchanged', async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<HubSummaryTable data={data} activeRun={undefined} view={{ horizon: 'year', unit: 'days' }} />);
+    const india = screen.getByTestId('hub-summary-row-PD-India');
+    expect(within(india).getByTestId('design-load')).toHaveTextContent('3,522');
+    expect(within(india).getByTestId('design-capacity')).toHaveTextContent('1,515.72');
+    expect(within(india).getByTestId('lab-load')).toHaveTextContent('2,979');
+    expect(within(india).getByTestId('lab-capacity')).toHaveTextContent('1,117.32');
+    expect(india).toHaveTextContent('232.36%'); // booked % is unit-free
+    expect(india).toHaveTextContent('+334.38'); // gap stays the served weeks
+    expect(screen.getByRole('columnheader', { name: 'Design load, in days' })).toBeInTheDocument();
+    expect(screen.getByRole('columnheader', { name: 'Design gap, in weeks' })).toHaveTextContent('Gap (wks)');
+    // Total: the served day totals
+    expect(screen.getByTestId('total-design-load')).toHaveTextContent('3,522');
+    expect(screen.getByTestId('total-design-capacity')).toHaveTextContent('1,515.72');
+    expect(screen.getByTestId('total-lab-load')).toHaveTextContent('2,979');
+    expect(screen.getByTestId('total-lab-capacity')).toHaveTextContent('1,117.32');
+    expect(screen.getByTestId('hub-summary-total')).toHaveTextContent('168.73%');
+    expect(screen.getByTestId('hub-summary-unit-note')).toHaveTextContent(/working days/);
+    // Details dialog follows the unit too
+    await user.click(screen.getByRole('button', { name: 'Details for PD-India' }));
+    const dialog = screen.getByRole('dialog');
+    expect(within(dialog).getByTestId('design-load')).toHaveTextContent('3,522');
+    expect(within(dialog).getByTestId('design-capacity')).toHaveTextContent('1,515.72');
+    expect(within(dialog).getByTestId('lab-capacity')).toHaveTextContent('1,117.32');
+    expect(within(dialog).getByTestId('design-gap')).toHaveTextContent('Gap, load − cap. (wks)');
+    expect(within(dialog).getByTestId('design-load-estimated')).toHaveTextContent(/\(wks\)/);
+    expect(within(dialog).getByTestId('detail-weekdays')).toHaveTextContent('6');
+    expect(within(dialog).getByLabelText(/load versus yearly capacity, in engineer-days/)).toBeInTheDocument();
+  });
+
+  it('P19-T05: day fields absent on an older API show "—", never a computed value', () => {
+    const old = structuredClone(data);
+    for (const r of old.rows) {
+      const loose = r as unknown as Record<string, unknown>;
+      delete loose.capacity_days;
+      delete loose.load_days;
+      delete loose.lab_capacity_days;
+      delete loose.lab_load_days;
+    }
+    const t = old.totals as unknown as Record<string, unknown>;
+    delete t.design_capacity_days;
+    delete t.design_load_days;
+    delete t.lab_capacity_days;
+    delete t.lab_load_days;
+    renderWithProviders(<HubSummaryTable data={old} activeRun={undefined} view={{ horizon: 'remaining', unit: 'days' }} />);
+    const india = screen.getByTestId('hub-summary-row-PD-India');
+    expect(within(india).getByTestId('design-load')).toHaveTextContent('—');
+    expect(within(india).getByTestId('design-capacity')).toHaveTextContent('—');
+    expect(within(india).getByTestId('lab-load')).toHaveTextContent('—');
+    expect(screen.getByTestId('total-design-capacity')).toHaveTextContent('—');
+    expect(screen.getByTestId('total-lab-load')).toHaveTextContent('—');
   });
 
   it('shows the status as an icon with its label as text for assistive tech, plus a legend with the served thresholds', () => {
-    renderWithProviders(<HubSummaryTable data={data} activeRun={undefined} horizon="year" />);
+    renderWithProviders(<HubSummaryTable data={data} activeRun={undefined} view={{ horizon: 'year', unit: 'weeks' }} />);
     const india = screen.getByTestId('hub-summary-row-PD-India');
     expect(within(india).getAllByText('Full').length).toBeGreaterThan(0);
     expect(within(india).queryByText('Full', { selector: '.rounded-pill' })).toBeNull();
@@ -134,14 +188,14 @@ describe('HubSummaryTable (P19-T01, P19-T02)', () => {
 
   it('explains why booked % sits near 100% under the header and in the info popover', async () => {
     const user = userEvent.setup();
-    renderWithProviders(<HubSummaryTable data={data} activeRun={undefined} horizon="year" />);
+    renderWithProviders(<HubSummaryTable data={data} activeRun={undefined} view={{ horizon: 'year', unit: 'weeks' }} />);
     expect(screen.getByTestId('hub-summary-booked-note')).toHaveTextContent(/not capped at capacity/);
     await user.click(screen.getByRole('button', { name: 'How load and capacity are defined' }));
     expect(screen.getAllByText(/spills past W52/).length).toBeGreaterThanOrEqual(2);
   });
 
   it('every Details trigger is an icon button named for its hub', () => {
-    renderWithProviders(<HubSummaryTable data={data} activeRun={undefined} horizon="year" />);
+    renderWithProviders(<HubSummaryTable data={data} activeRun={undefined} view={{ horizon: 'year', unit: 'weeks' }} />);
     for (const hub of ['PD-India', 'R&D-Greece']) {
       const b = screen.getByRole('button', { name: `Details for ${hub}` });
       expect(b).toHaveAttribute('aria-haspopup', 'dialog');
@@ -151,7 +205,7 @@ describe('HubSummaryTable (P19-T01, P19-T02)', () => {
 
   it('Details opens a dialog with the full served figures, the bars and "How this is calculated"; Escape closes and returns focus', async () => {
     const user = userEvent.setup();
-    renderWithProviders(<HubSummaryTable data={data} activeRun={undefined} horizon="year" />);
+    renderWithProviders(<HubSummaryTable data={data} activeRun={undefined} view={{ horizon: 'year', unit: 'weeks' }} />);
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
 
     const button = screen.getByRole('button', { name: 'Details for PD-India' });
@@ -177,13 +231,13 @@ describe('HubSummaryTable (P19-T01, P19-T02)', () => {
 
   it('shows the no-run empty state', () => {
     renderWithProviders(
-      <HubSummaryTable data={{ ...data, has_active_schedule_run: false, rows: [] }} activeRun={undefined} horizon="year" />,
+      <HubSummaryTable data={{ ...data, has_active_schedule_run: false, rows: [] }} activeRun={undefined} view={{ horizon: 'year', unit: 'weeks' }} />,
     );
     expect(screen.getByText('No schedule computed yet')).toBeInTheDocument();
   });
 
   it('has no serious/critical axe violations', async () => {
-    const { container } = renderWithProviders(<HubSummaryTable data={data} activeRun={undefined} horizon="year" />);
+    const { container } = renderWithProviders(<HubSummaryTable data={data} activeRun={undefined} view={{ horizon: 'year', unit: 'weeks' }} />);
     expect(await seriousAxeViolations(container)).toEqual([]);
   });
 });

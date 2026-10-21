@@ -11,12 +11,12 @@ import { useHubFilter } from '@/stores/hub-filter';
 import { HubFilterChip } from '@/components/shared/hub-filter/hub-filter-chip';
 import { CountrySegmented } from '@/components/shared/hub-filter/country-segmented';
 
-import type { CapacityHorizon } from './lib/pick-figures';
+import { DEFAULT_CAPACITY_VIEW, type CapacityView } from './lib/pick-figures';
 import { AccessNotice } from './components/access-notice';
 import { CapacityReportingNotice } from './components/capacity-reporting-notice';
 import { ChamberUtilizationPanel } from './components/chamber-utilization-panel';
 import type { LabRegion } from '@/types/enums';
-import { ClassBreakdownPanel } from './components/class-breakdown-panel';
+import { ClassBreakdownPanel, ClassChartSection } from './components/class-breakdown-panel';
 import { CapacityKpiRow } from './components/capacity-kpi-row';
 import { CapacityToolbar } from './components/capacity-toolbar';
 import { CollapsibleSection } from './components/collapsible-section';
@@ -107,10 +107,11 @@ export default function CapacityPage(): React.JSX.Element {
   const denied = authKind([hubLoad.error, classBreakdown.error]);
   const motionTokens = useMotionTokens();
 
-  /** YTD 2026 (= remaining year) / Full year (ADR 0008). The page's ONE horizon
-   *  state: the header toggle, KPI cards, charts, booked tiles, summary table and
-   *  matrix all read it, and each shows the served field for it (I19). */
-  const [horizon, setHorizon] = React.useState<CapacityHorizon>('year');
+  /** The page's ONE view state (P19-T05): the horizon, YTD 2026 (= remaining
+   *  year) / Full year (ADR 0008), and the unit, Weeks / Days. The header toggles
+   *  write it; the KPI cards, charts, booked tiles, summary table, Details dialog
+   *  and matrix all read it, and each shows the served field for it (I19). */
+  const [view, setView] = React.useState<CapacityView>(DEFAULT_CAPACITY_VIEW);
 
   const hubData = hubLoad.data;
   const showRun = hubData?.has_active_schedule_run === true;
@@ -122,7 +123,7 @@ export default function CapacityPage(): React.JSX.Element {
         description={description}
         actions={
           <>
-            {denied ? null : <CapacityToolbar horizon={horizon} onHorizonChange={setHorizon} />}
+            {denied ? null : <CapacityToolbar view={view} onViewChange={setView} />}
             <CountrySegmented />
             <HubFilterChip />
             {/* The surface-wide honest-framing callout (P4-T03): rendered for EVERY
@@ -151,7 +152,7 @@ export default function CapacityPage(): React.JSX.Element {
           {/* 1. The client's four headline cards. */}
           {showRun && hubData.rows.length > 0 ? (
             <StaggerSection>
-              <CapacityKpiRow totals={hubData.totals} rows={hubData.rows} horizon={horizon} />
+              <CapacityKpiRow totals={hubData.totals} rows={hubData.rows} view={view} />
             </StaggerSection>
           ) : null}
 
@@ -169,14 +170,14 @@ export default function CapacityPage(): React.JSX.Element {
           {/* 3. Load vs capacity charts. */}
           {showRun && hubData.rows.length > 0 ? (
             <StaggerSection>
-              <LoadCapacityCharts rows={hubData.rows} horizon={horizon} />
+              <LoadCapacityCharts rows={hubData.rows} view={view} />
             </StaggerSection>
           ) : null}
 
           {/* 4. Capacity booked: one tile per hub, design + its lab region (ADR 0016; hubs only, P19-T02). */}
           {showRun && hubData.rows.length > 0 ? (
             <StaggerSection>
-              <HubBookingStrip rows={hubData.rows} horizon={horizon} />
+              <HubBookingStrip rows={hubData.rows} view={view} />
             </StaggerSection>
           ) : null}
 
@@ -187,7 +188,7 @@ export default function CapacityPage(): React.JSX.Element {
               title="Load vs. capacity per hub"
               errorDescription="Per-hub load and capacity could not be loaded from the active schedule run."
             >
-              {(data) => <HubSummaryTable data={data} activeRun={activeRun.data} horizon={horizon} />}
+              {(data) => <HubSummaryTable data={data} activeRun={activeRun.data} view={view} />}
             </SectionBoundary>
           </StaggerSection>
 
@@ -196,13 +197,17 @@ export default function CapacityPage(): React.JSX.Element {
           {showRun && hubData.rows.length > 0 ? (
             <StaggerSection>
               <section aria-label="Global resource utilization matrix" data-testid="section-hub-matrix">
-                <HubUtilizationMatrix rows={hubData.rows} totals={hubData.totals} horizon={horizon} />
+                <HubUtilizationMatrix rows={hubData.rows} totals={hubData.totals} view={view} />
               </section>
             </StaggerSection>
           ) : null}
 
-          {/* 7. Chamber and engineer utilization: collapsed and lazy, nothing renders or fetches until opened. */}
+          {/* 7. The class chart (P19-T05, owner ruling: moved down from under the class cards),
+              then chamber and engineer utilization. All collapsed and lazy: nothing renders
+              or fetches until opened. The class chart reuses the class-breakdown data already
+              on the page. */}
           <div className="flex flex-col gap-s3" data-testid="capacity-more-detail">
+            {classBreakdown.data ? <ClassChartSection data={classBreakdown.data} /> : null}
             <CollapsibleSection
               showLabel="Show chamber utilization"
               hint="Concurrent projects per chamber per week"

@@ -294,6 +294,9 @@ CONTRACT_TABLE: list[tuple[Path, str, str, str]] = [
     (_CAPACITY_TS, "ClassHubSplit", "ClassBreakdownHubRow", "exact"),
     # P13-T11 addendum: served portfolio totals (design per hub, lab per region once).
     (_CAPACITY_TS, "CapacityTotals", "CapacityTotals", "exact"),
+    # --- P19-T03/T04: served days on the Capacity surface (API_CONTRACT_P19 §1) ---
+    (_CAPACITY_TS, "YearRemaining", "YearRemaining", "exact"),
+    (_CAPACITY_TS, "LabRegionCapacityRow", "LabRegionCapacityRow", "exact"),
     # This is the known P3-T09 GDPR-remediation drift this task exists to
     # catch: `EngineerWeekLoad.name` was removed server-side; the frontend
     # type was fixed in this same task to match. `mode="exact"` here is

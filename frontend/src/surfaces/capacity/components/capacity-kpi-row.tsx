@@ -1,13 +1,14 @@
 import * as React from 'react';
 
 import { BookingStatusChip } from '@/components/shared/booking-status-chip';
-import { formatBookedPct, formatDecimal } from '@/lib/format';
+import { formatBookedPct } from '@/lib/format';
 import { cn } from '@/lib/utils';
 import type { BookingStatus } from '@/types/enums';
 
 import type { CapacityTotals, HubCapacityRow } from '../api/types';
 import { labRegionRows } from '../lib/lab-region-rows';
-import { pickAreaFigures, pickFigures, type CapacityHorizon } from '../lib/pick-figures';
+import { pickTotalUnitFigures, pickUnitFigures, UNIT_SHORT, type CapacityView } from '../lib/pick-figures';
+import { formatFigure } from '../lib/status-format';
 import { KpiCaptions } from './kpi-captions';
 
 /**
@@ -20,8 +21,10 @@ import { KpiCaptions } from './kpi-captions';
  *
  * Every number is one served field (I9/I19): the headline is `totals`
  * (design per hub, lab once per lab region, computed server-side); the
- * breakdown lines are the hub rows' own figures; `pickFigures` /
- * `pickAreaFigures` only SELECT the year or remaining field. Nothing here sums.
+ * breakdown lines are the hub rows' own figures; `pickUnitFigures` /
+ * `pickTotalUnitFigures` only SELECT the year or remaining field in weeks or
+ * the SERVED days (P19-T05). Nothing here sums or multiplies. The per-priority
+ * split is served in weeks only, so in Days mode it is labelled "(wks)".
  */
 type Accent = 'ink' | 'primary' | 'success';
 
@@ -39,7 +42,7 @@ const STATUS_TEXT: Record<BookingStatus, string> = {
 
 interface KpiCardProps {
   label: string;
-  value: number;
+  value: number | null;
   unit: string;
   accent: Accent;
   testId: string;
@@ -61,7 +64,7 @@ function KpiCard({ label, value, unit, accent, testId, footer, booked }: KpiCard
       <p className="label-caps text-text-subtle">{label}</p>
       <p className="flex items-baseline gap-1.5" data-numeric="">
         <span className="font-display text-3xl font-extrabold tabular-nums text-text" data-testid={`${testId}-value`}>
-          {formatDecimal(value)}
+          {formatFigure(value)}
         </span>
         <span className="text-xs font-semibold text-text-muted">{unit}</span>
       </p>
@@ -83,34 +86,37 @@ function KpiCard({ label, value, unit, accent, testId, footer, booked }: KpiCard
 export interface CapacityKpiRowProps {
   totals: CapacityTotals;
   rows: HubCapacityRow[];
-  horizon: CapacityHorizon;
+  view: CapacityView;
 }
 
-export function CapacityKpiRow({ totals, rows, horizon }: CapacityKpiRowProps): React.JSX.Element {
-  const design = pickAreaFigures(totals, 'design', horizon);
-  const lab = pickAreaFigures(totals, 'lab', horizon);
+export function CapacityKpiRow({ totals, rows, view }: CapacityKpiRowProps): React.JSX.Element {
+  const design = pickTotalUnitFigures(totals, 'design', view);
+  const lab = pickTotalUnitFigures(totals, 'lab', view);
   const regions = labRegionRows(rows);
+  const unit = UNIT_SHORT[view.unit];
+  // The priority split is served in weeks only: name its unit when the card is in days.
+  const splitUnit = view.unit === 'days' ? UNIT_SHORT.weeks : undefined;
 
   return (
     <section aria-label="Capacity headline figures" className="grid gap-gutter sm:grid-cols-2 xl:grid-cols-4" data-testid="capacity-kpi-row">
       <KpiCard
         label="Design capacity"
         value={design.capacity}
-        unit="wks"
+        unit={unit}
         accent="ink"
         testId="kpi-design-capacity"
         footer={
           <KpiCaptions
             label="Design capacity"
             partsLabel="By hub"
-            parts={rows.map((r) => ({ key: r.hub, label: r.hub, value: pickFigures(r, 'design', horizon).capacity }))}
+            parts={rows.map((r) => ({ key: r.hub, label: r.hub, value: pickUnitFigures(r, 'design', view).capacity }))}
           />
         }
       />
       <KpiCard
         label="Design load"
         value={design.load}
-        unit="wks"
+        unit={unit}
         accent="primary"
         testId="kpi-design-load"
         booked={{ pct: design.bookedPct, status: design.bookingStatus }}
@@ -118,29 +124,30 @@ export function CapacityKpiRow({ totals, rows, horizon }: CapacityKpiRowProps): 
           <KpiCaptions
             label="Design load"
             split={totals.design_load_by_priority}
+            {...(splitUnit ? { splitUnit } : {})}
             partsLabel="By hub"
-            parts={rows.map((r) => ({ key: r.hub, label: r.hub, value: r.design_load_weeks }))}
+            parts={rows.map((r) => ({ key: r.hub, label: r.hub, value: pickUnitFigures(r, 'design', view).load }))}
           />
         }
       />
       <KpiCard
         label="Lab capacity"
         value={lab.capacity}
-        unit="wks"
+        unit={unit}
         accent="ink"
         testId="kpi-lab-capacity"
         footer={
           <KpiCaptions
             label="Lab capacity"
             partsLabel="By lab region"
-            parts={regions.map((l) => ({ key: l.region, label: l.region, value: pickFigures(l.row, 'lab', horizon).capacity }))}
+            parts={regions.map((l) => ({ key: l.region, label: l.region, value: pickUnitFigures(l.row, 'lab', view).capacity }))}
           />
         }
       />
       <KpiCard
         label="Lab load"
         value={lab.load}
-        unit="wks"
+        unit={unit}
         accent="success"
         testId="kpi-lab-load"
         booked={{ pct: lab.bookedPct, status: lab.bookingStatus }}
@@ -148,8 +155,9 @@ export function CapacityKpiRow({ totals, rows, horizon }: CapacityKpiRowProps): 
           <KpiCaptions
             label="Lab load"
             split={totals.lab_load_by_priority}
+            {...(splitUnit ? { splitUnit } : {})}
             partsLabel="By lab region"
-            parts={regions.map((l) => ({ key: l.region, label: l.region, value: l.row.lab_load_weeks }))}
+            parts={regions.map((l) => ({ key: l.region, label: l.region, value: pickUnitFigures(l.row, 'lab', view).load }))}
           />
         }
       />

@@ -34,7 +34,7 @@ from models.workflow import ProjectWorkflowStep, WorkflowStepTemplate
 from services.progress import project_progress_pct
 from services.tracking import TrackingStatus, due_stages_for, status_from_due_stages
 from services.workflow_durations import effective_duration_weeks
-from services.workspace import health_badge, is_step_skipped
+from services.workspace import engineer_ftes_for_rows, health_badge, is_step_skipped
 
 CardHealth = Literal["on_track", "at_risk", "off_track", "left_out", "blocked"]
 
@@ -115,6 +115,11 @@ async def build_project_cards(
         ).scalars():
             run_steps_by_project[step.project_id].append(step)
 
+    # ADR 0032: the health badge's planned span of a design row is stretched
+    # by its engineer's FTE.
+    fte_by_engineer = await engineer_ftes_for_rows(
+        db, (s for steps in run_steps_by_project.values() for s in steps)
+    )
     due = await due_stages_for(db, ids, active_run=active_run)
     run_week = active_run.current_week if active_run is not None else dc.CURRENT_WEEK
 
@@ -129,7 +134,14 @@ async def build_project_cards(
 
         health: CardHealth | None = None
         if active_run is not None:
-            badge = health_badge(outcome, run_steps, live_by_step, run_week)
+            badge = health_badge(
+                outcome,
+                run_steps,
+                live_by_step,
+                run_week,
+                fte_by_engineer=fte_by_engineer,
+                frozen=project.frozen,
+            )
             health = None if badge == "unscheduled" else badge
 
         current: CurrentStage | None = None

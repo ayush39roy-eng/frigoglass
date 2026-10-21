@@ -23,6 +23,7 @@ import {
   type GanttZoom,
 } from '../lib/gantt-coordinates';
 import { buildVisualRows, visualRowHeight } from '../lib/gantt-rows';
+import { calendarRangePhrase, workWeeksPhrase } from '../lib/step-weeks-copy';
 import type { GanttProjectRow, GanttStepRow, GanttWeeklyActiveCount } from '../api/types';
 import { ActivityLoadStrip, COUNT_ROW_HEIGHT, LOAD_STRIP_HEIGHT, WeeklyCountRow } from './activity-load-strip';
 import { GanttBarGroup, GanttHatchDefs, GanttSpilloverMarker } from './gantt-bars';
@@ -352,7 +353,7 @@ function BarLayer({
         plannedEndWeek={s.planned_end_week}
         delayedEndWeek={s.actual_end_week}
         frozen={row.project.frozen}
-        title={barTitle(`${s.step_name}`, planned, actual)}
+        title={stepBarTitle(s, planned, actual)}
         compact
         kind={s.kind}
         skipped={s.skipped}
@@ -416,6 +417,25 @@ function barTitle(
 ): string {
   const parts = [label];
   if (planned) parts.push(`planned ${formatPlanWeek(planned.startWeek)}–${formatPlanWeek(planned.endWeek)}`);
+  if (actual) parts.push(`actual ${formatPlanWeek(actual.startWeek)}–${formatPlanWeek(actual.endWeek)}`);
+  return parts.join(' · ');
+}
+
+/**
+ * P20 (ADR 0032): the step bar's hover text names both figures — the bar is
+ * CALENDAR weeks (served planned weeks, verbatim) and `duration_weeks` is WORK
+ * weeks — e.g. "Prototype build · planned W10–W17 on the calendar · 4 wks of
+ * work at 0.5 FTE". The suffix needs the served `span_fte`, which is null
+ * for unstretched steps and for callers who may not edit the step (OQ #8).
+ */
+function stepBarTitle(
+  s: GanttStepRow,
+  planned: { startWeek: number; endWeek: number } | null,
+  actual: { startWeek: number; endWeek: number } | null,
+): string {
+  const parts = [s.step_name];
+  if (planned) parts.push(`planned ${calendarRangePhrase(planned.startWeek, planned.endWeek)}`);
+  if (s.duration_weeks !== null && !s.skipped) parts.push(workWeeksPhrase(s.kind, s.duration_weeks, s.span_fte));
   if (actual) parts.push(`actual ${formatPlanWeek(actual.startWeek)}–${formatPlanWeek(actual.endWeek)}`);
   return parts.join(' · ');
 }
@@ -622,7 +642,7 @@ function StepLeftCell({
   const editedTitle = edited
     ? [
         step.duration_override_weeks !== null
-          ? `duration ${String(step.duration_override_weeks)} wks (table ${String(step.lead_time_weeks)})`
+          ? `${kind === 'design' ? 'work' : 'duration'} ${String(step.duration_override_weeks)} wks (table ${String(step.lead_time_weeks)})`
           : null,
         step.start_not_before_week !== null ? `earliest start ${formatPlanWeek(step.start_not_before_week)}` : null,
       ]

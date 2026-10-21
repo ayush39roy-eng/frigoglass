@@ -34,7 +34,10 @@ class CurrencyRate(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     )
     #: Multiply a EUR amount by this to get the given currency, per
     #: DOMAIN_RULES.md's `EUR = 1.0, USD = 1.08, INR = 97` convention.
-    rate_to_eur: Mapped[float] = mapped_column(Numeric(10, 4), nullable=False)
+    #: NULL = "not configured" (P21-T01: EGP / ZAR / IDR are seeded without
+    #: a rate; no rate is invented). Converting into such a currency is a 422
+    #: `CURRENCY_NOT_CONFIGURED` (`services.currency.rate_to_eur`).
+    rate_to_eur: Mapped[float | None] = mapped_column(Numeric(10, 4), nullable=True)
 
     updated_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("users.id"), nullable=True

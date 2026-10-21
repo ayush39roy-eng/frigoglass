@@ -18,9 +18,11 @@ import { cn } from '@/lib/utils';
  * statement, the "source: live project registry vs. active schedule run"
  * distinction (the two senses of "spillover" collide if that is lost, see
  * `pipeline-panel.tsx`), the Load-vs-Capacity distinction (I6 / I7, ADR 0007 /
- * 0008) and the "the scheduler applies NEITHER FTE NOR chamber downtime when it
- * books" caveat (ADR 0002 / 0008 — without it, "load > capacity" misreads as "the
- * scheduler overbooked someone", which is false). So it moved HERE: an icon
+ * 0008) and the "the scheduler does not apply holidays or chamber downtime when
+ * it books" caveat (ADR 0008 — without it, "load > capacity" misreads as "the
+ * scheduler overbooked someone", which is false). Since 2026-10-21 the
+ * scheduler DOES apply FTE, as speed (ADR 0032, superseding ADR 0002); that
+ * caveat used to name FTE too. So it moved HERE: an icon
  * button in the owning card's header, opening a popover holding the same words
  * verbatim.
  *

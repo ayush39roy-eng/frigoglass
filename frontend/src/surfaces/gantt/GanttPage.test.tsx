@@ -69,6 +69,7 @@ function step(seq: number, start: number, end: number, over: Partial<GanttStepRo
     duration_override_weeks: null,
     start_not_before_week: null,
     timing_editable: 'none',
+    span_fte: null,
     ...over,
   };
 }

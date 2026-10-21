@@ -21,12 +21,13 @@ class Engineer(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     rules ("Design step: the project's assigned leader must be free..."). Also
     doubles as the pool of eligible project leaders (Project.leader_engineer_id).
 
-    `fte` and its effect (or lack thereof) on scheduling: per ADR 0002, FTE is
-    a stored, reportable field used by the Capacity Planning surface's display,
-    but does NOT gate the greedy/CP-SAT scheduler's booking rules in v1 — an
-    engineer is treated as fully available for every week they aren't already
-    booked, regardless of `fte`. This is a provisional decision; see
-    docs/OPEN_QUESTIONS.md #2 and docs/MEMORY.md 2026-08-29 22:15 entry.
+    `fte` gates scheduling speed (ADR 0032, superseding ADR 0002; answers
+    docs/OPEN_QUESTIONS.md #2): a design step of a non-frozen project led by
+    this engineer books `ceil(duration_weeks / fte)` consecutive elapsed weeks
+    (`scheduling.fte_span`), while `duration_weeks` stays the effort figure
+    that load and booked % sum. It is also the supply multiplier on Capacity
+    (`working_weeks × Σ fte`, ADR 0008). An FTE <= 0 with design work left is
+    a `data_error` in the scheduler; the API refuses it (`gt=0`).
     """
 
     __tablename__ = "engineers"

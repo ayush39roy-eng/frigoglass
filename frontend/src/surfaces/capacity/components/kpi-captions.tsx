@@ -4,6 +4,7 @@ import { formatDecimal } from '@/lib/format';
 
 import type { PriorityLoadSplit } from '../api/types';
 import { BUCKET_SHORT, PRIORITY_BUCKETS } from '../lib/priority-split';
+import { formatFigure } from '../lib/status-format';
 
 /**
  * P13-T11: the mock-up's caption lines under a Capacity KPI — the load by
@@ -17,12 +18,16 @@ export interface KpiCaptionsProps {
   label: string;
   /** Omitted for the capacity cards, which have a per-hub line but no priority split. */
   split?: PriorityLoadSplit;
-  parts: { key: string; label: string; value: number }[];
+  /** P19-T05: shown after the split when it is in a different unit from the card
+   *  (the per-priority split is served in weeks only), e.g. "wks". */
+  splitUnit?: string;
+  /** A part's value is `null` when its served field is absent (prints "—"). */
+  parts: { key: string; label: string; value: number | null }[];
   /** Says what `parts` are, e.g. "By hub" or "By lab region". */
   partsLabel: string;
 }
 
-export function KpiCaptions({ label, split, parts, partsLabel }: KpiCaptionsProps): React.JSX.Element {
+export function KpiCaptions({ label, split, splitUnit, parts, partsLabel }: KpiCaptionsProps): React.JSX.Element {
   return (
     <div className="flex flex-col gap-1 text-2xs text-text-muted" data-testid={`kpi-captions-${label}`}>
       {split ? (
@@ -38,6 +43,12 @@ export function KpiCaptions({ label, split, parts, partsLabel }: KpiCaptionsProp
               </span>
             </React.Fragment>
           ))}
+          {splitUnit ? (
+            <span className="whitespace-nowrap font-semibold text-text-subtle" data-testid={`kpi-${label}-split-unit`}>
+              {' '}
+              ({splitUnit})
+            </span>
+          ) : null}
         </p>
       ) : null}
       {parts.length > 0 ? (
@@ -47,7 +58,7 @@ export function KpiCaptions({ label, split, parts, partsLabel }: KpiCaptionsProp
             <React.Fragment key={part.key}>
               {i > 0 ? <span aria-hidden="true"> · </span> : null}
               <span className="whitespace-nowrap">
-                {part.label}: <span className="tabular-nums">{formatDecimal(part.value)}</span>
+                {part.label}: <span className="tabular-nums">{formatFigure(part.value)}</span>
               </span>
             </React.Fragment>
           ))}

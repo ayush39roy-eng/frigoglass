@@ -196,7 +196,7 @@ function LoadBars({ rows, unit, tone, label }: { rows: LoadRow[]; unit: Capacity
           assistive technology to avoid reading every number twice. */}
       <ul className="flex flex-col gap-1.5" aria-hidden="true" data-testid="load-bars">
         {rows.map((r) => (
-          <li key={r.id} className="grid grid-cols-[minmax(6rem,11rem)_1fr] items-center gap-2">
+          <li key={r.id} className="grid grid-cols-1 items-center gap-x-2 gap-y-0.5 sm:grid-cols-[minmax(6rem,11rem)_1fr]">
             <span className="truncate text-2xs font-medium text-text" title={`${r.name} (${r.group})`}>
               {r.name} ({r.group})
             </span>

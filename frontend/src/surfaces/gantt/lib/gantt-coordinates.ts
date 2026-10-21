@@ -282,12 +282,58 @@ export function dragResizeDuration(originDurationWeeks: number, deltaWeeks: numb
   return clamp(originDurationWeeks + deltaWeeks, 1, DURATION_OVERRIDE_MAX_WEEKS);
 }
 
+// ---------------------------------------------------------------------------
+// P20 (ADR 0032): FTE gates speed. A design step of a non-frozen project spans
+// `ceil(work / fte)` calendar weeks; `duration_weeks` and
+// `duration_override_weeks` stay WORK weeks. A right-edge drag moves the
+// CALENDAR edge, so the dragged calendar width must be turned back into work
+// before it is sent. These two helpers are that documented rule and its exact
+// inverse — nothing else. The FTE is taken in whole hundredths
+// (`Engineer.fte` is `Numeric(3, 2)`), so the arithmetic is on integers, as
+// the scheduler's `Fraction(str(fte))` is (no `21 / 0.7 = 30.000…04 → 31` trap).
+// ---------------------------------------------------------------------------
+
+/** The FTE in whole hundredths, or `null` when there is no usable FTE. */
+export function fteHundredths(fte: number | null | undefined): number | null {
+  if (fte == null || !Number.isFinite(fte)) return null;
+  const h = Math.round(fte * 100);
+  return h > 0 ? h : null;
+}
+
+/** ADR 0032 §1: calendar weeks a design step of `workWeeks` books at `fte`:
+ *  `ceil(work / fte)`. */
+export function fteSpanWeeks(workWeeks: number, fte: number): number {
+  const h = fteHundredths(fte);
+  if (h === null) throw new RangeError('fteSpanWeeks: FTE must be > 0');
+  return Math.ceil((workWeeks * 100) / h);
+}
+
+/**
+ * The inverse used by the right-edge drag: the LARGEST whole number of work
+ * weeks whose span `ceil(work / fte)` still fits in `calendarWeeks`, i.e.
+ * `floor(calendarWeeks × fte)`, kept to the override's domain `1..104`.
+ * Examples: 8 calendar weeks at 0.5 FTE → 4 work weeks; 7 at 0.63 → 4
+ * (span 7); 6 at 0.63 → 3 (span 5). Below one work week's span the floor is
+ * 1 work week (the override's minimum), whose span is then wider than asked.
+ */
+export function workWeeksForCalendarWeeks(calendarWeeks: number, fte: number): number {
+  const h = fteHundredths(fte);
+  if (h === null) throw new RangeError('workWeeksForCalendarWeeks: FTE must be > 0');
+  return clamp(Math.floor((calendarWeeks * h) / 100), 1, DURATION_OVERRIDE_MAX_WEEKS);
+}
+
 export interface StepDragOrigin {
   /** The bar as served: `planned_start_week..planned_end_week` (inclusive). */
   startWeek: number;
   endWeek: number;
-  /** The served effective duration (`duration_weeks`). */
+  /** The served effective duration (`duration_weeks`) — WORK weeks (ADR 0032). */
   durationWeeks: number;
+  /**
+   * The FTE the step's calendar span is stretched by (ADR 0032): the leader's
+   * FTE for a design step of a non-frozen project, `null` when the step is not
+   * stretched or the FTE is not served. `null` keeps the 1:1 week mapping.
+   */
+  fte?: number | null;
 }
 
 export interface StepDragResult {
@@ -295,14 +341,21 @@ export interface StepDragResult {
   ghost: { startWeek: number; endWeek: number };
   /** The value the drop would send, or `null` when the drop changes nothing. */
   request: { start_not_before_week: number } | { duration_override_weeks: number } | null;
+  /** Resize only: the work weeks the drop would request (`null` for a move). */
+  workWeeks: number | null;
 }
 
 /**
  * The ghost and request for a drag of `dxPx` from `origin`.
  * - `move`: the whole bar shifts; the request is the new start week as a floor.
- * - `resize`: the end edge moves; the request is the new duration
- *   (`durationWeeks + Δ`). For a started step the server derives the remaining
- *   tail from it, so the ghost is indicative only.
+ * - `resize`: the end edge moves by Δ calendar weeks.
+ *   - No FTE (`origin.fte == null`): the request is `durationWeeks + Δ`.
+ *   - With an FTE (ADR 0032): the step's span `ceil(durationWeeks / fte)`
+ *     plus Δ is the dragged calendar width, and the request is the largest work
+ *     that fits it (`workWeeksForCalendarWeeks`). The ghost snaps to that
+ *     work's span. At FTE 1.0 this is exactly the no-FTE result.
+ *   For a started step the server derives the remaining tail from the work, so
+ *   the ghost is indicative only.
  * The ghost never extends past the horizon's last week.
  */
 export function stepDragResult(
@@ -319,13 +372,24 @@ export function stepDragResult(
     return {
       ghost: { startWeek: start, endWeek: Math.min(lastWeek, origin.endWeek + shift) },
       request: shift === 0 ? null : { start_not_before_week: start },
+      workWeeks: null,
     };
   }
-  const duration = dragResizeDuration(origin.durationWeeks, delta);
-  const change = duration - origin.durationWeeks;
-  const end = Math.min(lastWeek, Math.max(origin.startWeek, origin.endWeek + change));
+  const fte = fteHundredths(origin.fte) === null ? null : (origin.fte as number);
+  let work: number;
+  let calendarChange: number;
+  if (fte === null) {
+    work = dragResizeDuration(origin.durationWeeks, delta);
+    calendarChange = work - origin.durationWeeks;
+  } else {
+    const baseSpan = fteSpanWeeks(origin.durationWeeks, fte);
+    work = workWeeksForCalendarWeeks(Math.max(1, baseSpan + delta), fte);
+    calendarChange = fteSpanWeeks(work, fte) - baseSpan;
+  }
+  const end = Math.min(lastWeek, Math.max(origin.startWeek, origin.endWeek + calendarChange));
   return {
     ghost: { startWeek: origin.startWeek, endWeek: end },
-    request: change === 0 ? null : { duration_override_weeks: duration },
+    request: work === origin.durationWeeks ? null : { duration_override_weeks: work },
+    workWeeks: work,
   };
 }

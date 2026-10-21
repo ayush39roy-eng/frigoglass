@@ -186,9 +186,11 @@ def default_lead_times() -> tuple[LeadTime, ...]:
 class EngineerInput:
     """A design-step scheduling resource and the pool of eligible project leaders.
 
-    `fte` is accepted and carried through purely for reporting parity with
-    `Engineer.fte` — per ADR 0002 it has **no** effect on booking. An engineer
-    is fully available every week they are not already booked to a design step.
+    `fte` gates speed (ADR 0032, supersedes ADR 0002): a design step of a
+    non-frozen project this engineer leads books `ceil(duration / fte)`
+    consecutive weeks of them; they still do one step at a time. `fte` must
+    be > 0 for any project with design work to place, else the project is a
+    `data_error`.
 
     `allowed_categories` is a subset of `{"A+","A","B","C","OEM","A-OEM","B-OEM","C-OEM"}`.
     """
@@ -300,7 +302,9 @@ class ProjectInput:
 class StepSchedule:
     """One step row of a project's schedule.
 
-    `duration_weeks` is always the step's *effective* duration (ADR 0019:
+    `duration_weeks` is always the step's *effective* duration, in effort
+    weeks, never stretched by FTE (ADR 0032; a design row of a non-frozen
+    project spans `ceil(duration_weeks / fte)` weeks) (ADR 0019:
     the project's `duration_override_weeks` if set, else the lead-time-table
     duration; 0 when `skipped`), so that Σ over design/lab kinds reconciles
     with the Capacity surface's process-derived load (I6/I7) when that side

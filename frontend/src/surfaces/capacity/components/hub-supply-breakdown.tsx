@@ -16,7 +16,18 @@ import { formatDecimal, formatFraction } from '@/lib/format';
 import { cn } from '@/lib/utils';
 
 import type { HubCapacityRow } from '../api/types';
-import { pickFigures, type CapacityHorizon, type ResourceFigures, type ResourceKind } from '../lib/pick-figures';
+import {
+  pickFigures,
+  pickUnitFigures,
+  resourceUnitLong,
+  servedWeekdays,
+  type CapacityHorizon,
+  type CapacityView,
+  type ResourceFigures,
+  type ResourceKind,
+  type UnitFigures,
+} from '../lib/pick-figures';
+import { formatFigure } from '../lib/status-format';
 import { CardInfo } from '@/components/ui/card-info';
 import { CapacityStat } from './capacity-stat';
 
@@ -34,6 +45,12 @@ export type { CapacityHorizon } from '../lib/pick-figures';
  * supply figures equal the ADR 0008 formulas evaluated server-side; the load
  * figures are I6/I7 sums over the active run). `pickFigures` only SELECTS which
  * of the served fields to show for the chosen horizon; it never combines them.
+ *
+ * P19-T05 (Weeks | Days): load and capacity (and their bars) follow the page's
+ * unit, reading the SERVED day fields in Days. The estimated load and the gap
+ * are served in weeks only, so in Days mode they keep their weeks and say so;
+ * completion and booked % are unit-free. "How this is calculated" shows the
+ * weeks formulas (that is what the workbook has) plus the served day figures.
  */
 
 const HORIZON_LABEL: Record<CapacityHorizon, string> = {
@@ -66,18 +83,27 @@ function ResourceBlock({
   kind,
   horizon,
   figures,
+  shown,
   unit,
   note,
 }: {
   hub: string;
   kind: ResourceKind;
   horizon: CapacityHorizon;
+  /** The served weeks figures (estimate, gap, completion: weeks / unit-free only). */
   figures: ResourceFigures;
+  /** Load and capacity in the page's unit (served days in Days; null if absent). */
+  shown: UnitFigures;
+  /** The page's long resource unit, e.g. "engineer-days". */
   unit: string;
   note?: string;
 }): React.JSX.Element {
   const title = kind === 'design' ? 'Design' : 'Lab';
   const shortfall = figures.gap > 0;
+  const weeksUnit = resourceUnitLong(kind, 'weeks');
+  const inDays = unit !== weeksUnit;
+  /** Names the weeks unit on figures that have no served day value, in Days mode only. */
+  const weeksTag = inDays ? ' (wks)' : '';
   return (
     <section
       aria-label={`${hub} ${title.toLowerCase()} load vs. capacity`}
@@ -89,7 +115,7 @@ function ResourceBlock({
           {title} <span className="normal-case tracking-normal text-text-subtle">· {unit}</span>
         </h4>
         <div className="flex items-center gap-1">
-          <GapBadge gap={figures.gap} unit={unit} />
+          <GapBadge gap={figures.gap} unit={weeksUnit} />
           {/* The lab caveat used to render as a line of prose under this block,
               once per hub card — six identical sentences on a full page. Same
               words, now one affordance per block (client text cleanup,
@@ -105,22 +131,22 @@ function ResourceBlock({
       <div className="grid gap-s2 sm:grid-cols-2">
         <CapacityStat
           label="Load (process-derived)"
-          value={figures.load}
+          value={shown.load}
           data-testid={`${kind}-load`}
         />
         <CapacityStat
-          label="Load (estimated)"
+          label={`Load (estimated)${weeksTag}`}
           value={figures.loadEstimated}
           muted
           data-testid={`${kind}-load-estimated`}
         />
         <CapacityStat
           label={HORIZON_LABEL[horizon]}
-          value={figures.capacity}
+          value={shown.capacity}
           data-testid={`${kind}-capacity`}
         />
         <CapacityStat
-          label="Gap (load − capacity)"
+          label={inDays ? 'Gap, load − cap. (wks)' : 'Gap (load − capacity)'}
           value={figures.gap}
           renderValue={(text, rawValue) => (
             <span className={cn(shortfall ? 'text-warning-subtle-fg' : 'text-text')}>
@@ -148,26 +174,32 @@ function ResourceBlock({
         />
       </div>
 
-      <BarChart
-        ariaLabel={`${hub} ${title.toLowerCase()}: load versus ${HORIZON_LABEL[horizon].toLowerCase()}, in ${unit}`}
-        formatValue={formatDecimal}
-        data={[
-          {
-            key: 'load',
-            label: 'Load (process-derived)',
-            value: figures.load,
-            tone: shortfall ? 'warning' : 'primary',
-          },
-          { key: 'capacity', label: HORIZON_LABEL[horizon], value: figures.capacity, tone: 'neutral' },
-        ]}
-      />
+      {shown.load === null || shown.capacity === null ? (
+        <p className="text-2xs text-text-muted" data-testid={`${kind}-bars-unavailable`}>
+          Load and capacity in {unit} are not served by this API version.
+        </p>
+      ) : (
+        <BarChart
+          ariaLabel={`${hub} ${title.toLowerCase()}: load versus ${HORIZON_LABEL[horizon].toLowerCase()}, in ${unit}`}
+          formatValue={formatDecimal}
+          data={[
+            {
+              key: 'load',
+              label: 'Load (process-derived)',
+              value: shown.load,
+              tone: shortfall ? 'warning' : 'primary',
+            },
+            { key: 'capacity', label: HORIZON_LABEL[horizon], value: shown.capacity, tone: 'neutral' },
+          ]}
+        />
+      )}
     </section>
   );
 }
 
 export interface HubSupplyDetailProps {
   row: HubCapacityRow;
-  horizon: CapacityHorizon;
+  view: CapacityView;
 }
 
 /**
@@ -175,9 +207,17 @@ export interface HubSupplyDetailProps {
  * and Lab blocks with their bars, and "How this is calculated". Rendered inside the
  * summary table's Details dialog, so it exists in the DOM only while the dialog is open.
  */
-export function HubSupplyDetail({ row, horizon }: HubSupplyDetailProps): React.JSX.Element {
+export function HubSupplyDetail({ row, view }: HubSupplyDetailProps): React.JSX.Element {
+  const { horizon } = view;
   const design = pickFigures(row, 'design', horizon);
   const lab = pickFigures(row, 'lab', horizon);
+  const designShown = pickUnitFigures(row, 'design', view);
+  const labShown = pickUnitFigures(row, 'lab', view);
+  const designDays = pickUnitFigures(row, 'design', { horizon, unit: 'days' });
+  const labDays = pickUnitFigures(row, 'lab', { horizon: 'year', unit: 'days' });
+  const labDaysRemaining = pickUnitFigures(row, 'lab', { horizon: 'remaining', unit: 'days' });
+  const designDaysYear = pickUnitFigures(row, 'design', { horizon: 'year', unit: 'days' });
+  const designDaysRemaining = pickUnitFigures(row, 'design', { horizon: 'remaining', unit: 'days' });
   return (
     <div className="space-y-s3" data-testid="capacity-hub-card">
             <header className="flex flex-wrap items-baseline justify-between gap-s2">
@@ -196,17 +236,31 @@ export function HubSupplyDetail({ row, horizon }: HubSupplyDetailProps): React.J
                   Remaining fraction{' '}
                   <strong className="text-text">{formatDecimal(row.remaining_fraction)}</strong>
                 </span>
+                <span data-numeric="" data-testid="detail-weekdays">
+                  Working days / week{' '}
+                  <strong className="text-text">{formatFigure(servedWeekdays(row, 'design'))}</strong>
+                  {' '}(lab region{' '}
+                  <strong className="text-text">{formatFigure(servedWeekdays(row, 'lab'))}</strong>)
+                </span>
               </span>
             </header>
 
             <div className="grid gap-s3 lg:grid-cols-2">
-              <ResourceBlock hub={row.hub} kind="design" horizon={horizon} figures={design} unit="engineer-weeks" />
+              <ResourceBlock
+                hub={row.hub}
+                kind="design"
+                horizon={horizon}
+                figures={design}
+                shown={designShown}
+                unit={resourceUnitLong('design', view.unit)}
+              />
               <ResourceBlock
                 hub={row.hub}
                 kind="lab"
                 horizon={horizon}
                 figures={lab}
-                unit="chamber-weeks"
+                shown={labShown}
+                unit={resourceUnitLong('lab', view.unit)}
                 note={`Lab figures are for the ${row.lab_region} lab region and repeat on every hub of that region.`}
               />
             </div>
@@ -250,6 +304,18 @@ export function HubSupplyDetail({ row, horizon }: HubSupplyDetailProps): React.J
                     <dd data-numeric="" className="text-text">
                       {formatDecimal(row.lab_capacity_year)} × {formatDecimal(row.remaining_fraction)}{' '}
                       = <strong>{formatDecimal(row.lab_capacity_remaining)}</strong> chamber-weeks
+                    </dd>
+                  </div>
+                  <div className="sm:col-span-2" data-testid="days-derivation">
+                    <dt className="text-text-subtle">In working days (served)</dt>
+                    <dd data-numeric="" className="text-text">
+                      Design capacity {formatFigure(designDaysYear.capacity)} (year) /{' '}
+                      {formatFigure(designDaysRemaining.capacity)} (remaining) engineer-days at{' '}
+                      {formatFigure(servedWeekdays(row, 'design'))} days a week; lab capacity{' '}
+                      {formatFigure(labDays.capacity)} / {formatFigure(labDaysRemaining.capacity)} chamber-days at{' '}
+                      {formatFigure(servedWeekdays(row, 'lab'))} days a week (the {row.lab_region} region calendar).
+                      Load {formatFigure(designDays.load)} engineer-days, {formatFigure(labDays.load)} chamber-days.
+                      Each is the served weeks figure × the served working days, computed on the server.
                     </dd>
                   </div>
                 </dl>

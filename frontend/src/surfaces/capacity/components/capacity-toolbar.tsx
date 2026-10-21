@@ -1,73 +1,67 @@
 import * as React from 'react';
 
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { CURRENT_WEEK, WITHIN_YEAR_WEEK } from '@/lib/domain-constants';
 
-import type { CapacityHorizon } from '../lib/pick-figures';
+import type { CapacityView } from '../lib/pick-figures';
 
 /**
- * The client's two header toggles (P19-T01, mock-up parity):
+ * The client's two header toggles (P19-T01, Days enabled in P19-T05):
  *
- *   Weeks | Days         the unit every figure is shown in
+ *   Weeks | Days         the unit every capacity and load figure is shown in
  *   YTD 2026 | Full year the horizon (served `*_remaining` vs `*_year` fields)
  *
- * The horizon is the page's ONE source of truth (`CapacityPage` owns the state);
- * this only renders it. "YTD 2026" is the client's label for the remaining-year
- * figures (their id is `from_today`): capacity from the current week to W52.
+ * Both are ONE view state owned by `CapacityPage` (`CapacityView`); this only
+ * renders it, so all four combinations are just the two fields together. "YTD
+ * 2026" is the client's label for the remaining-year figures (their id is
+ * `from_today`): capacity from the current week to W52.
  *
- * "Days" needs each hub's `weekdays_per_week` to turn weeks into days. The
- * capacity endpoint does not serve it (it lives on the hub work calendar, ADR
- * 0008), and a constant invented in the browser would break I19. So the toggle
- * is rendered but disabled with a tooltip, and the page shows weeks only. The
- * backend change that enables it is recorded in docs/MEMORY.md (P19-T01).
+ * Days shows the SERVED day fields (API_CONTRACT_P19 §1): the server multiplies
+ * served weeks by each hub's (or lab region's) served working days per week.
+ * The browser never multiplies (I19). Booked % is unit-free and unchanged.
  */
 const PILL =
   'gap-0.5 divide-x-0 rounded-pill border-dash-hairline bg-dash-alt p-0.5';
 const PILL_ITEM = 'rounded-pill data-[state=on]:shadow-sm';
 
 export interface CapacityToolbarProps {
-  horizon: CapacityHorizon;
-  onHorizonChange: (horizon: CapacityHorizon) => void;
+  view: CapacityView;
+  onViewChange: (view: CapacityView) => void;
   disabled?: boolean;
 }
 
-export function CapacityToolbar({ horizon, onHorizonChange, disabled = false }: CapacityToolbarProps): React.JSX.Element {
+export function CapacityToolbar({ view, onViewChange, disabled = false }: CapacityToolbarProps): React.JSX.Element {
   return (
     <div className="flex flex-wrap items-center gap-s2" data-testid="capacity-toolbar">
-      <ToggleGroup type="single" value="weeks" aria-label="Display unit" size="sm" className={PILL}>
-        <ToggleGroupItem value="weeks" className={PILL_ITEM}>
+      <ToggleGroup
+        type="single"
+        value={view.unit}
+        onValueChange={(v) => {
+          if (v === 'weeks' || v === 'days') onViewChange({ ...view, unit: v });
+        }}
+        disabled={disabled}
+        aria-label="Display unit"
+        size="sm"
+        className={PILL}
+      >
+        <ToggleGroupItem value="weeks" className={PILL_ITEM} title="Show capacity and load in weeks">
           Weeks
         </ToggleGroupItem>
-        <Tooltip>
-          <TooltipTrigger asChild>
-            {/* aria-disabled (not `disabled`) keeps the item focusable, so the tooltip
-                that explains why is reachable by keyboard. Selecting it does nothing:
-                the group's value is fixed to "weeks". */}
-            <ToggleGroupItem
-              value="days"
-              aria-disabled="true"
-              className={`${PILL_ITEM} cursor-not-allowed opacity-60`}
-              onClick={(e) => {
-                e.preventDefault();
-              }}
-              data-testid="capacity-days-toggle"
-            >
-              Days
-            </ToggleGroupItem>
-          </TooltipTrigger>
-          <TooltipContent>
-            Days needs each hub&rsquo;s working days per week, which the capacity service does not serve yet. Figures are
-            shown in weeks.
-          </TooltipContent>
-        </Tooltip>
+        <ToggleGroupItem
+          value="days"
+          className={PILL_ITEM}
+          title="Show capacity and load in working days (served per hub calendar)"
+          data-testid="capacity-days-toggle"
+        >
+          Days
+        </ToggleGroupItem>
       </ToggleGroup>
 
       <ToggleGroup
         type="single"
-        value={horizon}
+        value={view.horizon}
         onValueChange={(v) => {
-          if (v === 'year' || v === 'remaining') onHorizonChange(v);
+          if (v === 'year' || v === 'remaining') onViewChange({ ...view, horizon: v });
         }}
         disabled={disabled}
         aria-label="Capacity horizon"

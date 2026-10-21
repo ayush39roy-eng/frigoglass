@@ -8,9 +8,9 @@ import { formatDecimal } from '@/lib/format';
 import { cn } from '@/lib/utils';
 
 import type { CapacityTotals, HubCapacityRow } from '../api/types';
-import { pickAreaFigures, pickFigures, type CapacityHorizon } from '../lib/pick-figures';
+import { pickTotalUnitFigures, pickUnitFigures, UNIT_SHORT, type CapacityView } from '../lib/pick-figures';
 import { BUCKET_SHORT, PRIORITY_BUCKETS } from '../lib/priority-split';
-import { formatPctCompact } from '../lib/status-format';
+import { formatFigure, formatPctCompact } from '../lib/status-format';
 import { StatusMark } from './status-mark';
 
 /**
@@ -27,12 +27,16 @@ import { StatusMark } from './status-mark';
  * per-hub cards. The TOTAL row is the served `totals` (P13-T11 addendum: design
  * per hub, lab once per region, with its served booked % and status) for the
  * selected horizon — the browser adds nothing up.
+ *
+ * P19-T05: capacity and load follow the page's unit (served day fields in Days).
+ * The per-priority columns are served in weeks only; in Days mode the header
+ * says so and each of those column heads carries "(wks)" in its accessible name.
  */
 export interface HubUtilizationMatrixProps {
   rows: HubCapacityRow[];
   /** The served `HubCapacitySummary.totals`. */
   totals: CapacityTotals;
-  horizon: CapacityHorizon;
+  view: CapacityView;
 }
 
 // P19-T02: tight padding and a compact status mark (no chip), so the 18 columns fit
@@ -67,17 +71,22 @@ function UtilCell({
   );
 }
 
-export function HubUtilizationMatrix({ rows, totals, horizon }: HubUtilizationMatrixProps): React.JSX.Element {
-  const totalD = pickAreaFigures(totals, 'design', horizon);
-  const totalL = pickAreaFigures(totals, 'lab', horizon);
-  const capHead = horizon === 'year' ? 'cap (yr)' : 'cap (rem.)';
+export function HubUtilizationMatrix({ rows, totals, view }: HubUtilizationMatrixProps): React.JSX.Element {
+  const totalD = pickTotalUnitFigures(totals, 'design', view);
+  const totalL = pickTotalUnitFigures(totals, 'lab', view);
+  const capHead = view.horizon === 'year' ? 'cap (yr)' : 'cap (rem.)';
+  const days = view.unit === 'days';
+  /** Accessible-only unit for the priority columns in Days mode (they stay weeks). */
+  const splitSr = days ? <span className="sr-only"> ({UNIT_SHORT.weeks})</span> : null;
 
   return (
     <BoltCard>
       <CardHeader className="flex-wrap gap-y-s2">
         <CardTitle>Global resource utilization matrix</CardTitle>
         <div className="flex flex-wrap items-center gap-s2">
-          <span className="text-2xs text-text-muted">All values in weeks</span>
+          <span className="text-2xs text-text-muted" data-testid="util-matrix-unit-note">
+            {days ? 'Capacity and load in days · P1–Q columns in weeks' : 'All values in weeks'}
+          </span>
           <CardInfo label="How the utilization matrix is built">
             <p>
               One row per hub from the active run. <strong className="text-text">Util.</strong> is the served booked %
@@ -107,7 +116,7 @@ export function HubUtilizationMatrix({ rows, totals, horizon }: HubUtilizationMa
                 <TableHead scope="col" className={HEAD}>D. util.</TableHead>
                 {PRIORITY_BUCKETS.map((b) => (
                   <TableHead key={`d-${b}`} scope="col" className={HEAD}>
-                    {BUCKET_SHORT[b]}-D
+                    {BUCKET_SHORT[b]}-D{splitSr}
                   </TableHead>
                 ))}
                 <TableHead scope="col" className={cn(HEAD, 'border-l border-ink-fg/20')}>
@@ -117,31 +126,31 @@ export function HubUtilizationMatrix({ rows, totals, horizon }: HubUtilizationMa
                 <TableHead scope="col" className={HEAD}>L. util.</TableHead>
                 {PRIORITY_BUCKETS.map((b) => (
                   <TableHead key={`l-${b}`} scope="col" className={HEAD}>
-                    {BUCKET_SHORT[b]}-L
+                    {BUCKET_SHORT[b]}-L{splitSr}
                   </TableHead>
                 ))}
               </TableRow>
             </TableHeader>
             <TableBody>
               {rows.map((row) => {
-                const d = pickFigures(row, 'design', horizon);
-                const l = pickFigures(row, 'lab', horizon);
+                const d = pickUnitFigures(row, 'design', view);
+                const l = pickUnitFigures(row, 'lab', view);
                 return (
                   <TableRow key={row.hub} data-testid={`util-row-${row.hub}`}>
                     <TableCell className="whitespace-nowrap px-1.5 py-2 font-semibold text-text first:ps-3">
                       {row.hub}
                       <span className="block text-2xs font-normal text-text-subtle">{row.lab_region} lab</span>
                     </TableCell>
-                    <TableCell className={NUM}>{formatDecimal(d.capacity)}</TableCell>
-                    <TableCell className={NUM}>{formatDecimal(d.load)}</TableCell>
+                    <TableCell className={NUM}>{formatFigure(d.capacity)}</TableCell>
+                    <TableCell className={NUM}>{formatFigure(d.load)}</TableCell>
                     <UtilCell pct={d.bookedPct} status={d.bookingStatus} />
                     {PRIORITY_BUCKETS.map((b) => (
                       <TableCell key={`d-${b}`} className={NUM} data-testid={`util-${row.hub}-${b}-D`}>
                         {formatDecimal(row.design_load_by_priority[b])}
                       </TableCell>
                     ))}
-                    <TableCell className={cn(NUM, 'border-l border-dash-hairline')}>{formatDecimal(l.capacity)}</TableCell>
-                    <TableCell className={NUM}>{formatDecimal(l.load)}</TableCell>
+                    <TableCell className={cn(NUM, 'border-l border-dash-hairline')}>{formatFigure(l.capacity)}</TableCell>
+                    <TableCell className={NUM}>{formatFigure(l.load)}</TableCell>
                     <UtilCell pct={l.bookedPct} status={l.bookingStatus} />
                     {PRIORITY_BUCKETS.map((b) => (
                       <TableCell key={`l-${b}`} className={NUM} data-testid={`util-${row.hub}-${b}-L`}>
@@ -155,16 +164,16 @@ export function HubUtilizationMatrix({ rows, totals, horizon }: HubUtilizationMa
             <TableFooter className="bg-ink text-ink-fg [&_td]:text-ink-fg">
               <TableRow className="hover:bg-transparent" data-testid="util-row-total">
                 <TableCell className="px-1.5 font-bold first:ps-3">Total</TableCell>
-                <TableCell className={NUM}>{formatDecimal(totalD.capacity)}</TableCell>
-                <TableCell className={NUM}>{formatDecimal(totalD.load)}</TableCell>
+                <TableCell className={NUM}>{formatFigure(totalD.capacity)}</TableCell>
+                <TableCell className={NUM}>{formatFigure(totalD.load)}</TableCell>
                 <UtilCell pct={totalD.bookedPct} status={totalD.bookingStatus} onInk />
                 {PRIORITY_BUCKETS.map((b) => (
                   <TableCell key={`d-${b}`} className={NUM}>
                     {formatDecimal(totals.design_load_by_priority[b])}
                   </TableCell>
                 ))}
-                <TableCell className={cn(NUM, 'border-l border-ink-fg/20')}>{formatDecimal(totalL.capacity)}</TableCell>
-                <TableCell className={NUM}>{formatDecimal(totalL.load)}</TableCell>
+                <TableCell className={cn(NUM, 'border-l border-ink-fg/20')}>{formatFigure(totalL.capacity)}</TableCell>
+                <TableCell className={NUM}>{formatFigure(totalL.load)}</TableCell>
                 <UtilCell pct={totalL.bookedPct} status={totalL.bookingStatus} onInk />
                 {PRIORITY_BUCKETS.map((b) => (
                   <TableCell key={`l-${b}`} className={NUM}>

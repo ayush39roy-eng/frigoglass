@@ -133,6 +133,27 @@ _BAND_ORDER = {band: i for i, band in enumerate(dc.PRIORITY_ORDER)}
 _QUEUE_BAND = _BAND_ORDER[ProjectPriority.Q.value]
 
 
+def _served_span_fte(
+    step: ScheduleRunProjectStep,
+    *,
+    can_write_timing: bool,
+    frozen: bool,
+    live_status: WorkflowStepStatus | None,
+) -> float | None:
+    """`GanttStepRow.span_fte` (P20-T02, ADR 0032): the run's stored
+    `span_fte`, served only to a caller who may edit this project's step
+    timing (OQ #8), and never for a step that cannot be dragged because it is
+    skipped, Done (live) or in a frozen project. The run already stores NULL
+    for lab / elapsed / skipped / Done steps, frozen projects and no leader.
+    """
+
+    if not can_write_timing or frozen or step.skipped or step.span_fte is None:
+        return None
+    if live_status == WorkflowStepStatus.DONE:
+        return None
+    return float(step.span_fte)
+
+
 def _kind_weeks(
     steps: Sequence[ScheduleRunProjectStep], kinds: dict[str, WorkflowStepKind]
 ) -> tuple[int | None, int | None, int | None]:
@@ -444,6 +465,12 @@ async def get_gantt(
                         schedulable=schedulable,
                         skipped=step.skipped or actual is None or actual.duration_weeks == 0,
                         step_status=actual.status if actual else WorkflowStepStatus.NOT_STARTED,
+                    ),
+                    span_fte=_served_span_fte(
+                        step,
+                        can_write_timing=can_write_timing,
+                        frozen=project.frozen,
+                        live_status=actual.status if actual else None,
                     ),
                 )
             )

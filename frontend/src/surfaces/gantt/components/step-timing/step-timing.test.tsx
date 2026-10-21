@@ -39,6 +39,10 @@ vi.mock('@/lib/use-follow-up-run', () => ({
 }));
 
 import { GanttChart } from '../gantt-chart';
+import { makeWeekScale } from '../../lib/gantt-coordinates';
+import { StepDragOverlay } from './step-drag-overlay';
+import { StepTimingContext, stepTimingTarget, type StepTimingApi, type StepTimingTarget } from './step-timing-context';
+import { StepTimingDialog } from './step-timing-dialog';
 import { StepTimingProvider } from './step-timing-provider';
 import { P13_GANTT_ROW_DEFAULTS } from '../../test-fixtures';
 
@@ -67,6 +71,7 @@ function step(over: Partial<GanttStepRow> = {}): GanttStepRow {
     duration_override_weeks: null,
     start_not_before_week: null,
     timing_editable: 'move_resize',
+    span_fte: null,
     ...over,
   };
 }
@@ -315,7 +320,7 @@ describe('"Edit timing" dialog (keyboard alternative)', () => {
     renderChart();
     await user.click(screen.getByRole('button', { name: 'Edit timing for Prototype build (Cooler Alpha)' }));
     const dialog = await screen.findByTestId('step-timing-dialog');
-    const duration = within(dialog).getByLabelText('Duration (weeks)');
+    const duration = within(dialog).getByLabelText('Work (weeks)');
     expect(duration).toHaveValue(4);
     await user.clear(duration);
     await user.type(duration, '6');
@@ -385,7 +390,7 @@ describe('row markers', () => {
     renderChart(project({ duration_override_weeks: 6, start_not_before_week: 40, lead_time_weeks: 4 }));
     const marker = screen.getByTestId('step-timing-edited');
     expect(marker).toHaveTextContent('edited');
-    expect(marker).toHaveAttribute('title', 'Timing edited: duration 6 wks (table 4) · earliest start W40');
+    expect(marker).toHaveAttribute('title', 'Timing edited: work 6 wks (table 4) · earliest start W40');
   });
 
   it('no marker without an edit', () => {
@@ -403,5 +408,137 @@ describe('row markers', () => {
   it('chart with handles + markers has no serious/critical axe violations', async () => {
     const { container } = renderChart(project({ duration_override_weeks: 6 }, { is_vip: true, tracking_status: 'live' }));
     expect(await seriousAxeViolations(container)).toEqual([]);
+  });
+});
+
+describe('P20 (ADR 0032): calendar weeks vs work weeks', () => {
+  /** A target as `stepTimingTarget` builds it, with a given served FTE. */
+  function target(stepOver: Partial<GanttStepRow>, spanFte: number | null): StepTimingTarget {
+    const p = project({ ...stepOver, span_fte: spanFte });
+    return stepTimingTarget(p, p.steps[0]!);
+  }
+
+  function renderOverlay(t: StepTimingTarget) {
+    const host: StepTimingApi = { submit: vi.fn(), openDialog: vi.fn(), pending: null, busy: false };
+    renderWithProviders(
+      <StepTimingContext.Provider value={host}>
+        <div style={{ position: 'relative' }}>
+          <StepDragOverlay target={t} scale={makeWeekScale('weeks')} rowHeight={44} />
+        </div>
+      </StepTimingContext.Provider>,
+    );
+    return host;
+  }
+
+  function resize(toDx: number) {
+    const handle = screen.getByTestId('step-drag-handle');
+    fireEvent.pointerDown(handle, { pointerId: 1, button: 0, clientX: 500 });
+    fireEvent.pointerMove(handle, { pointerId: 1, clientX: 500 + toDx });
+    const label = screen.queryByTestId('step-drag-label')?.textContent ?? null;
+    fireEvent.pointerUp(handle, { pointerId: 1, button: 0, clientX: 500 + toDx });
+    return label;
+  }
+
+  it('stepTimingTarget maps the served span_fte (and null stays null)', () => {
+    const served = project({ span_fte: 0.5 });
+    expect(stepTimingTarget(served, served.steps[0]!).spanFte).toBe(0.5);
+    expect(stepTimingTarget(project(), project().steps[0]!).spanFte).toBeNull();
+  });
+
+  it('served span_fte 0.5 drives the chart drag: +2 calendar weeks sends 5 work weeks, not 6', async () => {
+    api.setStepTiming.mockResolvedValue(response({ duration_override_weeks: 5, start_not_before_week: null, effective_duration_weeks: 5 }));
+    renderChart(project({ planned_start_week: 10, planned_end_week: 17, span_fte: 0.5 }));
+    const handle = screen.getByTestId('step-drag-handle');
+    fireEvent.pointerDown(handle, { pointerId: 1, button: 0, clientX: 300 });
+    fireEvent.pointerMove(handle, { pointerId: 1, clientX: 300 + 2 * WEEK_PX });
+    expect(screen.getByTestId('step-drag-label')).toHaveTextContent('10 wks on the calendar · 5 wks of work at 0.5 FTE');
+    fireEvent.pointerUp(handle, { pointerId: 1, button: 0, clientX: 300 + 2 * WEEK_PX });
+    await waitFor(() => expect(api.setStepTiming).toHaveBeenCalledWith('p1', 'PDD-E', { duration_override_weeks: 5 }));
+  });
+
+  it('served span_fte null falls back 1:1: +2 calendar weeks sends 6 work weeks', async () => {
+    api.setStepTiming.mockResolvedValue(response({ duration_override_weeks: 6, start_not_before_week: null, effective_duration_weeks: 6 }));
+    renderChart(project({ span_fte: null }));
+    drag(screen.getByTestId('step-drag-handle'), 300, 300 + 2 * WEEK_PX);
+    await waitFor(() => expect(api.setStepTiming).toHaveBeenCalledWith('p1', 'PDD-E', { duration_override_weeks: 6 }));
+  });
+
+  it('at 1.0 FTE a +2 week drag sends 6 work weeks and says both figures', () => {
+    const host = renderOverlay(target({}, 1));
+    expect(resize(2 * WEEK_PX)).toBe('6 wks on the calendar · 6 wks of work at 1 FTE');
+    expect(host.submit).toHaveBeenCalledWith(expect.anything(), { duration_override_weeks: 6 }, { startWeek: 10, endWeek: 15 });
+  });
+
+  it('at 0.5 FTE a +2 calendar-week drag sends 5 work weeks, not 6', () => {
+    const host = renderOverlay(target({ planned_start_week: 10, planned_end_week: 17 }, 0.5));
+    expect(resize(2 * WEEK_PX)).toBe('10 wks on the calendar · 5 wks of work at 0.5 FTE');
+    expect(host.submit).toHaveBeenCalledWith(expect.anything(), { duration_override_weeks: 5 }, { startWeek: 10, endWeek: 19 });
+  });
+
+  it('at 0.63 FTE the label shows the snapped calendar span of the work sent', () => {
+    const host = renderOverlay(target({ planned_start_week: 10, planned_end_week: 16 }, 0.63));
+    expect(resize(WEEK_PX)).toBe('8 wks on the calendar · 5 wks of work at 0.63 FTE');
+    expect(host.submit).toHaveBeenCalledWith(expect.anything(), { duration_override_weeks: 5 }, { startWeek: 10, endWeek: 17 });
+  });
+
+  it('with no served FTE the drag is unchanged and the label does not guess the calendar span', async () => {
+    renderChart();
+    const handle = screen.getByTestId('step-drag-handle');
+    fireEvent.pointerDown(handle, { pointerId: 1, button: 0, clientX: 300 });
+    fireEvent.pointerMove(handle, { pointerId: 1, clientX: 300 + 2 * WEEK_PX });
+    expect(screen.getByTestId('step-drag-label')).toHaveTextContent("6 wks of work · calendar weeks follow the leader's FTE");
+    fireEvent.pointerUp(handle, { pointerId: 1, button: 0, clientX: 300 + 2 * WEEK_PX });
+    await waitFor(() => expect(api.setStepTiming).toHaveBeenCalledWith('p1', 'PDD-E', { duration_override_weeks: 6 }));
+  });
+
+  it('a lab step says it is not stretched by FTE', () => {
+    renderOverlay(target({ kind: 'lab', step_id: 'PDD-F', step_name: 'Lab test' }, null));
+    expect(resize(2 * WEEK_PX)).toBe('6 wks on the calendar · not stretched by FTE');
+  });
+
+  it('the step bar hover text names calendar weeks and work weeks', () => {
+    const { container } = renderChart(project({ planned_start_week: 10, planned_end_week: 17 }));
+    const titles = Array.from(container.querySelectorAll('title')).map((t) => t.textContent);
+    expect(titles).toContain('Prototype build · planned W10–W17 on the calendar · 4 wks of work');
+  });
+
+  it('the step bar hover text adds the served FTE', () => {
+    const { container } = renderChart(project({ planned_start_week: 10, planned_end_week: 17, span_fte: 0.5 }));
+    const titles = Array.from(container.querySelectorAll('title')).map((t) => t.textContent);
+    expect(titles).toContain('Prototype build · planned W10–W17 on the calendar · 4 wks of work at 0.5 FTE');
+  });
+
+  it('the dialog labels the field as work and shows the served bar as calendar weeks', async () => {
+    const user = userEvent.setup();
+    renderChart(project({ planned_start_week: 10, planned_end_week: 17 }));
+    await user.click(screen.getByRole('button', { name: /Edit timing for Prototype build/ }));
+    const dialog = await screen.findByTestId('step-timing-dialog');
+    expect(within(dialog).getByLabelText('Work (weeks)')).toHaveValue(4);
+    const note = within(dialog).getByTestId('step-timing-weeks-note');
+    expect(note).toHaveTextContent('Planned now: W10–W17 on the calendar · 4 wks of work.');
+    expect(note).toHaveTextContent('at 0.5 FTE, 4 weeks of work take 8 calendar weeks');
+  });
+
+  it('the dialog adds "at 0.5 FTE" once the FTE is served', () => {
+    renderWithProviders(
+      <StepTimingDialog
+        target={target({ planned_start_week: 10, planned_end_week: 17 }, 0.5)}
+        busy={false}
+        onOpenChange={() => undefined}
+        onSubmit={() => undefined}
+      />,
+    );
+    expect(screen.getByTestId('step-timing-weeks-note')).toHaveTextContent(
+      'Planned now: W10–W17 on the calendar · 4 wks of work at 0.5 FTE.',
+    );
+  });
+
+  it('a lab step keeps "Duration (weeks)" and says FTE does not stretch it', async () => {
+    const user = userEvent.setup();
+    renderChart(project({ kind: 'lab', step_name: 'Lab test' }));
+    await user.click(screen.getByRole('button', { name: /Edit timing for Lab test/ }));
+    const dialog = await screen.findByTestId('step-timing-dialog');
+    expect(within(dialog).getByLabelText('Duration (weeks)')).toHaveValue(4);
+    expect(within(dialog).getByTestId('step-timing-weeks-note')).toHaveTextContent('not stretched by FTE');
   });
 });

@@ -73,6 +73,16 @@ class GanttStepRow(BaseModel):
     #: Computed server-side from ADR 0019 §4 and the caller's GANTT write
     #: permission on the project; the browser never derives it.
     timing_editable: TimingEditable
+    #: P20-T02 (ADR 0032): the leader FTE the active run used to stretch this
+    #: step to `ceil(duration_weeks / fte)` elapsed weeks
+    #: (`ScheduleRunProjectStep.span_fte`, from the run's own input). The
+    #: browser converts a right-edge drag's elapsed width back to effort with
+    #: it. `null` for lab, elapsed, skipped and Done steps, frozen projects,
+    #: steps with no leader, rows of runs persisted before P20-T02, and, for
+    #: privacy (OQ #8: part-time status is personal data), for every caller
+    #: who may not edit step timing on this project (GANTT/WRITE with the
+    #: project's hub in scope, the check `PATCH .../timing` applies).
+    span_fte: float | None
 
 
 class GanttProjectRow(BaseModel):

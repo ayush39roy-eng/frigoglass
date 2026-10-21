@@ -19,6 +19,7 @@ import { DISPLAY_HORIZON_WEEKS } from '@/lib/domain-constants';
 
 import type { StepTimingRequest } from '../../api/types';
 import { DURATION_OVERRIDE_MAX_WEEKS } from '../../lib/gantt-coordinates';
+import { calendarRangePhrase, WORK_WEEKS_HELP, workWeeksPhrase } from '../../lib/step-weeks-copy';
 import type { StepTimingTarget } from './step-timing-context';
 import { stepTimingFormSchema, type StepTimingFormInput, type StepTimingFormValues } from './step-timing-schema';
 import { TIMING_COPY } from './timing-copy';
@@ -29,6 +30,12 @@ import { TIMING_COPY } from './timing-copy';
  * `start_not_before_week`, "Reset timing" sends both as `null`. Only changed
  * fields are sent (an absent field is left as it is). A started step
  * (`timing_editable === "resize"`) offers the duration only.
+ *
+ * P20 (ADR 0032): the duration typed here is WORK weeks for every kind. For a
+ * design step it is labelled "Work (weeks)" and the hint shows the served bar
+ * as calendar weeks next to the served work weeks, because a leader below
+ * 1.0 FTE stretches the one into more of the other. Nothing is converted
+ * here: the value is sent as typed.
  */
 export function StepTimingDialog({
   target,
@@ -75,6 +82,11 @@ function TimingForm({
 }): React.JSX.Element {
   const ids = { duration: React.useId(), start: React.useId() };
   const canMove = target.timingEditable === 'move_resize';
+  const isDesign = target.kind === 'design';
+  const plannedNow =
+    target.plannedStartWeek !== null && target.plannedEndWeek !== null && target.durationWeeks !== null
+      ? `Planned now: ${calendarRangePhrase(target.plannedStartWeek, target.plannedEndWeek)} · ${workWeeksPhrase(target.kind, target.durationWeeks, target.spanFte)}.`
+      : null;
   const hasEdit = target.durationOverrideWeeks !== null || target.startNotBeforeWeek !== null;
   const [nothingChanged, setNothingChanged] = React.useState(false);
   const {
@@ -119,7 +131,7 @@ function TimingForm({
       <div className="my-4 grid gap-4 sm:grid-cols-2">
         <div className="space-y-1.5">
           <Label htmlFor={ids.duration} className="text-xs">
-            Duration (weeks)
+            {isDesign ? 'Work (weeks)' : 'Duration (weeks)'}
           </Label>
           <Input
             id={ids.duration}
@@ -139,7 +151,7 @@ function TimingForm({
             </p>
           ) : (
             <p id={`${ids.duration}-hint`} className="text-2xs text-text-muted" data-numeric="">
-              Lead-time table: {target.leadTimeWeeks} wks
+              Lead-time table: {target.leadTimeWeeks} wks{isDesign ? ' of work' : ''}
               {target.durationOverrideWeeks !== null ? ` · overridden to ${String(target.durationOverrideWeeks)}` : ''}
             </p>
           )}
@@ -175,6 +187,11 @@ function TimingForm({
             </p>
           )}
         </div>
+      </div>
+
+      <div className="mb-3 space-y-1 text-2xs text-text-muted" data-testid="step-timing-weeks-note">
+        {plannedNow ? <p data-numeric="">{plannedNow}</p> : null}
+        <p>{isDesign ? WORK_WEEKS_HELP : 'Lab and elapsed steps are not stretched by FTE: their weeks of work and calendar weeks are the same.'}</p>
       </div>
 
       {nothingChanged ? (

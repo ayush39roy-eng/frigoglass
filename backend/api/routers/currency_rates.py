@@ -21,6 +21,7 @@ from models.audit import AuditLogEntry
 from models.currency import CurrencyRate
 from models.enums import CurrencyCode, RoleName
 from schemas.currency import CurrencyRateRead, CurrencyRateUpdateRequest
+from services.currency import currency_rate_read
 
 router = APIRouter(prefix="/currency-rates", tags=["currency-rates"])
 
@@ -32,13 +33,16 @@ _admin_only = require_roles(RoleName.ADMIN, RoleName.SUPER_ADMIN)
 async def list_currency_rates(
     db: AsyncSession = Depends(get_db),
     current_user: Principal = Depends(get_current_principal),
-) -> list[CurrencyRate]:
+) -> list[CurrencyRateRead]:
     """List all currency rates. Any authenticated principal (P9-R02, security
     S-07, carried from P3-T08 #5); no surface permission, since every role
     that sees money needs the rates.
+
+    P21-T01: each row carries `name` and `configured`; `rate_to_eur` is `null`
+    for a currency with no configured rate (EGP / ZAR / IDR until set).
     """
     result = await db.execute(select(CurrencyRate).order_by(CurrencyRate.currency_code))
-    return list(result.scalars().all())
+    return [currency_rate_read(r) for r in result.scalars().all()]
 
 
 @router.put("/{currency_code}", response_model=CurrencyRateRead)
@@ -47,8 +51,10 @@ async def update_currency_rate(
     body: CurrencyRateUpdateRequest,
     db: AsyncSession = Depends(get_db),
     current_user: Principal = Depends(_admin_only),
-) -> CurrencyRate:
-    """Update `rate_to_eur` for one currency.
+) -> CurrencyRateRead:
+    """Update `rate_to_eur` for one currency. P21-T01: this is also how a
+    Super Admin (or Admin) configures EGP / ZAR / IDR the first time; the
+    audit row's `before_state.rate_to_eur` is then `null`.
 
     **RBAC (P3-T02)**: requires a validated OIDC token (401) and
     `RoleName.ADMIN` (403 otherwise) — fulfils this endpoint's own

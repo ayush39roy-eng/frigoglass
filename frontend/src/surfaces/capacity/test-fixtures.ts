@@ -42,6 +42,13 @@ export function hubRow(overrides: Partial<HubCapacityRow> = {}): HubCapacityRow 
     // P13-T11 (API_CONTRACT_P13 §6): served priority buckets; they sum to the loads above.
     design_load_by_priority: { P1: 400, P2: 100, P3: 50, P4: 0, Queue: 37 },
     lab_load_by_priority: { P1: 300, P2: 96.5, P3: 0, P4: 0, Queue: 100 },
+    // P19-T03 (API_CONTRACT_P19 §1): served days (PD-India and the India region work 6 days).
+    weekdays_per_week: 6,
+    capacity_days: { year: 1515.72, remaining: 1078.5 },
+    load_days: { year: 3522, remaining: 3522 },
+    lab_weekdays_per_week: 6,
+    lab_capacity_days: { year: 1117.32, remaining: 795 },
+    lab_load_days: { year: 2979, remaining: 2979 },
     ...overrides,
   };
 }
@@ -111,15 +118,35 @@ export function totalsRow(overrides: Partial<CapacityTotals> = {}): CapacityTota
     lab_booking_status_year: 'full',
     lab_booking_status_remaining: 'full',
     lab_load_by_priority: { P1: 300, P2: 96.5, P3: 0, P4: 0, Queue: 100 },
+    // P19-T03: served day totals for the single PD-India row.
+    design_capacity_days: { year: 1515.72, remaining: 1078.5 },
+    design_load_days: { year: 3522, remaining: 3522 },
+    lab_capacity_days: { year: 1117.32, remaining: 795 },
+    lab_load_days: { year: 2979, remaining: 2979 },
     ...overrides,
   };
 }
 
 /** P11 contract §4 summary fields (+ the P13-T11 served `totals`), for tests
  *  that build a `HubCapacitySummary`. */
-export const SUMMARY_P11: Pick<HubCapacitySummary, 'near_full_threshold_pct' | 'full_threshold_pct' | 'areas' | 'totals'> = {
+export const SUMMARY_P11: Pick<
+  HubCapacitySummary,
+  'near_full_threshold_pct' | 'full_threshold_pct' | 'areas' | 'totals' | 'lab_regions'
+> = {
   near_full_threshold_pct: 85,
   full_threshold_pct: 100,
   areas: [],
   totals: totalsRow(),
+  // P19-T03: the India region row, served once.
+  lab_regions: [
+    {
+      lab_region: 'India',
+      weekdays_per_week: 6,
+      chamber_count: 2,
+      capacity_weeks: { year: 186.22, remaining: 132.5 },
+      load_weeks: 496.5,
+      capacity_days: { year: 1117.32, remaining: 795 },
+      load_days: { year: 2979, remaining: 2979 },
+    },
+  ],
 };

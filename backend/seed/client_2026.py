@@ -33,10 +33,12 @@ Engineers and leaders (`assign_leaders`, `tune_fte`)
 - Every engineer may lead every category, OEM included, so no project raises
   CAT_NOT_ALLOWED.
 - **FTE is demo tuning.** It is ADR 0024's target booked %, not the client's
-  roster, and must be replaced by the roster. FTE never gates booking
-  (ADR 0002). After the seed has written the projects it runs the greedy
-  scheduler once, in memory, and reads each hub's design load the way the
-  Capacity surface does (I6). `tune_fte` then sets the hub's total FTE to
+  roster, and must be replaced by the roster. Since ADR 0032 (supersedes
+  ADR 0002) FTE also gates design speed (`span = ceil(duration / fte)`),
+  so the tuned FTEs change the plan, not just the booked %. After the
+  seed has written the projects it runs the greedy scheduler once, in
+  memory, and reads each hub's design load the way the Capacity surface
+  does (I6). `tune_fte` then sets the hub's total FTE to
   `load / (target × working weeks per engineer)`:
   - the target is R&D-India 60 % and every other hub 100 %;
   - the total is rounded down to 0.01, so the hub books at or just above
@@ -366,7 +368,7 @@ def derive_dims(code: str, priority: str, marketing_priority: int | None) -> lis
     n = len(dc.PRIORITIZATION_DIMENSIONS)
     target = _target_pct(code, priority, marketing_priority)
     order = sorted(range(n), key=lambda i: _digest(code, f"dim{i}"))
-    dims = [dc.DIMENSION_SCORE_MIN] * n
+    dims = [dc.SEED_DIMENSION_SCORE_FLOOR] * n
     i = 0
     while band_for(dims)[1] < target and any(d < dc.DIMENSION_SCORE_MAX for d in dims):
         idx = order[i % n]

@@ -255,8 +255,13 @@ PRIORITIZATION_DIMENSIONS: Final[tuple[tuple[str, str, str, int], ...]] = (
 
 TOTAL_WEIGHT: Final[int] = sum(w for *_rest, w in PRIORITIZATION_DIMENSIONS)
 
-DIMENSION_SCORE_MIN: Final[int] = 1
+# ADR 0033 (owner ruling 2026-10-21): a dimension may be scored 0 ("does not
+# apply"), which earns 0 points. Supersedes the 1..5 range of ADR 0029.
+DIMENSION_SCORE_MIN: Final[int] = 0
 DIMENSION_SCORE_MAX: Final[int] = 5
+# The seed's derived-dims search starts every dimension at 1 (its pre-ADR-0033
+# behaviour), so seeded scores are unchanged by ADR 0033.
+SEED_DIMENSION_SCORE_FLOOR: Final[int] = 1
 
 # Band thresholds on normalised_pct = round(Σ points / TOTAL_WEIGHT * 100),
 # points = score / 5 * weight (ADR 0029).
@@ -277,10 +282,25 @@ HARD_GATE_REASONS: Final[tuple[str, ...]] = (
 # Rates are configurable at runtime (CurrencyRate table, backend/models/currency.py)
 # per DOMAIN_RULES.md — these are only the documented v1 seed values, not hardcoded
 # runtime constants.
-CURRENCY_RATE_SEED: Final[Mapping[str, float]] = {
+CURRENCY_RATE_SEED: Final[Mapping[str, float | None]] = {
     "EUR": 1.0,
     "USD": 1.08,
     "INR": 97.0,
+    # P21-T01: no rate is invented. `None` = "not configured" until a Super
+    # Admin sets one (`PUT /currency-rates/{code}`).
+    "EGP": None,
+    "ZAR": None,
+    "IDR": None,
+}
+
+#: Display names served by `GET /currency-rates` (static metadata, not rates).
+CURRENCY_NAMES: Final[Mapping[str, str]] = {
+    "EUR": "Euro",
+    "USD": "US dollar",
+    "INR": "Indian rupee",
+    "EGP": "Egyptian pound",
+    "ZAR": "South African rand",
+    "IDR": "Indonesian rupiah",
 }
 
 # --- Outcome flags (docs/DOMAIN_RULES.md booking rules / invariants) ---

@@ -4,12 +4,17 @@ import { BookingStatusChip } from '@/components/shared/booking-status-chip';
 import { Badge } from '@/components/ui/badge';
 import { CardInfo } from '@/components/ui/card-info';
 import { CURRENT_WEEK, WITHIN_YEAR_WEEK } from '@/lib/domain-constants';
-import { formatDecimal } from '@/lib/format';
 import { useSessionStore } from '@/stores/session';
 
 import type { HubCapacityRow } from '../api/types';
-import { pickFigures, type CapacityHorizon, type ResourceFigures } from '../lib/pick-figures';
-import { formatPctCompact } from '../lib/status-format';
+import {
+  pickUnitFigures,
+  resourceUnit,
+  type CapacityHorizon,
+  type CapacityView,
+  type UnitFigures,
+} from '../lib/pick-figures';
+import { formatFigure, formatPctCompact } from '../lib/status-format';
 
 /**
  * "Capacity booked" (P19-T02, owner ruling 2026-10-21): HUBS ONLY. One tile per
@@ -34,7 +39,7 @@ function BookedLine({
   testId,
 }: {
   label: string;
-  figures: Pick<ResourceFigures, 'load' | 'capacity' | 'bookedPct' | 'bookingStatus'>;
+  figures: UnitFigures;
   unit: string;
   testId: string;
 }): React.JSX.Element {
@@ -49,7 +54,7 @@ function BookedLine({
       </span>
       <span className="text-2xs text-text-muted" data-numeric="">
         {figures.bookedPct === null ? 'No capacity in scope · ' : null}
-        {formatDecimal(figures.load)} of {formatDecimal(figures.capacity)} {unit}
+        {formatFigure(figures.load)} of {formatFigure(figures.capacity)} {unit}
       </span>
     </div>
   );
@@ -57,11 +62,12 @@ function BookedLine({
 
 export function HubBookingStrip({
   rows,
-  horizon,
+  view,
 }: {
   rows: HubCapacityRow[];
-  horizon: CapacityHorizon;
+  view: CapacityView;
 }): React.JSX.Element | null {
+  const { horizon } = view;
   const scopedToHubs = useSessionStore((s) => (s.me ? !s.me.hub_scope_all : false));
   if (rows.length === 0) return null;
   return (
@@ -92,8 +98,9 @@ export function HubBookingStrip({
             </p>
             <p>
               Design is per hub. Lab capacity belongs to a lab region (its chambers), so the lab figure is the
-              region&rsquo;s and is the same on every hub of that region. The YTD 2026 / Full year toggle in the
-              page header picks which figures are shown here.
+              region&rsquo;s and is the same on every hub of that region. The YTD 2026 / Full year and Weeks /
+              Days toggles in the page header pick which figures are shown here; booked % is the same in weeks
+              and days.
             </p>
           </CardInfo>
         </div>
@@ -109,14 +116,14 @@ export function HubBookingStrip({
             <div className="grid grid-cols-2 gap-s3">
               <BookedLine
                 label="Design"
-                figures={pickFigures(r, 'design', horizon)}
-                unit="engineer-wks"
+                figures={pickUnitFigures(r, 'design', view)}
+                unit={resourceUnit('design', view.unit)}
                 testId={`booked-design-${r.hub}`}
               />
               <BookedLine
                 label={`Lab (${r.lab_region} region)`}
-                figures={pickFigures(r, 'lab', horizon)}
-                unit="chamber-wks"
+                figures={pickUnitFigures(r, 'lab', view)}
+                unit={resourceUnit('lab', view.unit)}
                 testId={`booked-lab-${r.hub}`}
               />
             </div>

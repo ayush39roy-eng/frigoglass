@@ -30,7 +30,7 @@ reader who can read the project; the P3-T09 own-name-only rule is lifted.
 from __future__ import annotations
 
 import uuid
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -53,7 +53,7 @@ from models.schedule import ScheduleRun, ScheduleRunProjectOutcome, ScheduleRunP
 from models.user import User
 from models.workflow import ProjectWorkflowStep, WorkflowStepTemplate
 from models.workspace import ProjectComment, ProjectFile
-from scheduling.workflow import derive_remaining
+from scheduling.workflow import derive_remaining, fte_span, is_valid_fte
 from schemas.workspace import (
     ActivityComment,
     ActivityEvent,
@@ -92,12 +92,38 @@ def is_step_skipped(duration: int, kind: WorkflowStepKind, cert_required: bool) 
     return duration == 0 or (kind == WorkflowStepKind.LAB and not cert_required)
 
 
+def planned_span_weeks(duration_weeks: int, span_fte: float | None) -> int:
+    """The elapsed weeks a step is planned to take (ADR 0032): the FTE-stretched
+    `fte_span(duration, fte)` when `span_fte` is given (a design row of a
+    non-frozen project, `fte` = its leader's), else `duration` (lab, elapsed,
+    frozen). An FTE that is not `is_valid_fte` cannot occur on a scheduled
+    design row (the run rejects it as a data error), so it falls back to the
+    unstretched duration rather than dividing.
+    """
+
+    if span_fte is not None and is_valid_fte(span_fte):
+        return fte_span(duration_weeks, span_fte)
+    return duration_weeks
+
+
 def stage_overrun(
-    run_step: ScheduleRunProjectStep | None, live: ProjectWorkflowStep | None
+    run_step: ScheduleRunProjectStep | None,
+    live: ProjectWorkflowStep | None,
+    span_fte: float | None = None,
 ) -> int | None:
-    """Weeks past the stage's lead-time duration in the active run:
-    `(actual_end_week if Done else run end) − (run start + duration − 1)`,
-    floored at 0. `None` for a skipped step or when the run has no row.
+    """Weeks past the stage's planned elapsed span in the active run:
+    `(actual_end_week if Done else run end) − planned_end`, floored at 0.
+    `None` for a skipped step or when the run has no row.
+
+    `planned_end` (ADR 0032, FTE gates speed):
+    - a `Not Started` stage: the run's own stored `end_week`, which already
+      carries the FTE stretch the scheduler applied, so a sub-1.0 FTE leader
+      never reads as an overrun by itself;
+    - otherwise (`In Progress` / `Blocked` / `Done`, whose stored row starts
+      at the recorded actual start, or no live row):
+      `run start + planned_span_weeks(duration, span_fte) − 1`, where
+      `span_fte` is the leader's FTE for a design row of a non-frozen project
+      (see `row_span_fte`) and `None` otherwise.
     """
 
     if run_step is None or run_step.skipped or run_step.duration_weeks == 0:
@@ -109,8 +135,47 @@ def stage_overrun(
         and live.actual_end_week is not None
     ):
         end = live.actual_end_week
-    planned_end = run_step.start_week + run_step.duration_weeks - 1
+    if live is not None and live.status == WorkflowStepStatus.NOT_STARTED:
+        planned_end = run_step.end_week
+    else:
+        planned_end = (
+            run_step.start_week + planned_span_weeks(run_step.duration_weeks, span_fte) - 1
+        )
     return max(0, end - planned_end)
+
+
+def row_span_fte(
+    run_step: ScheduleRunProjectStep,
+    fte_by_engineer: Mapping[uuid.UUID, float] | None,
+    *,
+    frozen: bool,
+) -> float | None:
+    """The FTE that stretches this run row (ADR 0032), or `None` when it is
+    not stretched. The run's own stored `span_fte` wins (P20-T02). For rows
+    persisted before it existed, the assigned engineer's current FTE is
+    used: only a design row books an engineer (the project's leader,
+    `assigned_engineer_id`), and a frozen project is never stretched (I10).
+    Lab / elapsed / skipped rows have no engineer."""
+
+    if frozen or run_step.assigned_engineer_id is None:
+        return None
+    if run_step.span_fte is not None:
+        return float(run_step.span_fte)
+    if fte_by_engineer is None:
+        return None
+    return fte_by_engineer.get(run_step.assigned_engineer_id)
+
+
+async def engineer_ftes_for_rows(
+    db: AsyncSession, run_steps: Iterable[ScheduleRunProjectStep]
+) -> dict[uuid.UUID, float]:
+    """`{engineer_id: fte}` for every engineer a run row assigns (one query)."""
+
+    ids = {s.assigned_engineer_id for s in run_steps if s.assigned_engineer_id is not None}
+    if not ids:
+        return {}
+    rows = (await db.execute(select(Engineer.id, Engineer.fte).where(Engineer.id.in_(ids)))).all()
+    return {eid: float(fte) for eid, fte in rows}
 
 
 def health_badge(
@@ -118,6 +183,9 @@ def health_badge(
     run_steps: Sequence[ScheduleRunProjectStep],
     live_by_step: dict[str, ProjectWorkflowStep],
     run_current_week: int,
+    *,
+    fte_by_engineer: Mapping[uuid.UUID, float] | None = None,
+    frozen: bool = False,
 ) -> HealthBadge:
     """DOMAIN_RULES "Health badge" (I13), from the active run's stored rows:
 
@@ -127,8 +195,11 @@ def health_badge(
     - `blocked` (a Blocked stage held the project) → `blocked` (ruling 5);
     - projected finish (`last_step_end + delay`, delay terminal per ADR 0004)
       after `WITHIN_YEAR_WEEK` → `off_track`;
-    - any stage overrunning its duration, or any stage the run ends before
-      its current week that is not Done (overdue) → `at_risk`;
+    - any stage overrunning its planned span (`stage_overrun`; ADR 0032: a
+      design stage's planned span is FTE-stretched, so pass the assigned
+      engineers' `fte_by_engineer` and the project's `frozen` flag), or any
+      stage the run ends before its current week that is not Done (overdue)
+      → `at_risk`;
     - otherwise `on_track`.
     """
 
@@ -148,7 +219,7 @@ def health_badge(
         if step.skipped:
             continue
         live = live_by_step.get(step.step_template_id)
-        overrun = stage_overrun(step, live)
+        overrun = stage_overrun(step, live, row_span_fte(step, fte_by_engineer, frozen=frozen))
         if overrun is not None and overrun > 0:
             return "at_risk"
         done = live is not None and live.status == WorkflowStepStatus.DONE
@@ -553,6 +624,8 @@ async def build_workspace(
         .scalars()
         .all()
     } if engineer_ids else {}
+    # ADR 0032: a design row's planned span is stretched by its engineer's FTE.
+    fte_by_engineer = {eid: float(e.fte) for eid, e in engineers.items()}
     chamber_ids = [s.assigned_chamber_id for s in run_steps if s.assigned_chamber_id]
     chamber_codes: dict[uuid.UUID, str] = (
         dict(
@@ -617,7 +690,13 @@ async def build_workspace(
                     if run_step is not None and run_step.assigned_chamber_id
                     else None
                 ),
-                overrun_weeks=stage_overrun(run_step, live),
+                overrun_weeks=stage_overrun(
+                    run_step,
+                    live,
+                    row_span_fte(run_step, fte_by_engineer, frozen=project.frozen)
+                    if run_step is not None
+                    else None,
+                ),
             )
         )
 
@@ -653,7 +732,12 @@ async def build_workspace(
         schedule_stale=project.schedule_stale,
     )
     health = health_badge(
-        outcome, run_steps, live_by_step, run.current_week if run is not None else dc.CURRENT_WEEK
+        outcome,
+        run_steps,
+        live_by_step,
+        run.current_week if run is not None else dc.CURRENT_WEEK,
+        fte_by_engineer=fte_by_engineer,
+        frozen=project.frozen,
     )
 
     score = (

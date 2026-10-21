@@ -19,7 +19,12 @@ construction, on:
     capture"): normalised status, derived `remaining`, the `data_error` that
     rejects a project with inconsistent actuals, the `Blocked` hold set;
   - the two pure by-products of a run that need no solve: the
-    *unconstrained* finish week and the duration-weighted `progress_pct` (I12).
+    *unconstrained* finish week and the duration-weighted `progress_pct` (I12);
+  - the FTE stretch (ADR 0032): a design step of a non-frozen project led by
+    an engineer with FTE `f` books `ceil(duration / f)` elapsed weeks (its
+    `span`); an In Progress / Blocked tail books `ceil(remaining / f)`. The
+    effort figures (`duration`, `remaining`) are unchanged and remain what
+    load (I6), progress weights (I12) and `duration_weeks` report.
 
 Pure, deterministic, no I/O. Every mapping built here is keyed and every
 iteration is over an explicitly sorted sequence (Invariant I8).
@@ -30,6 +35,7 @@ from __future__ import annotations
 import math
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
+from fractions import Fraction
 
 from scheduling.types import (
     CATEGORY_RANK,
@@ -58,6 +64,40 @@ ANCHORED_STATUSES: frozenset[str] = frozenset({STATUS_IN_PROGRESS, STATUS_BLOCKE
 #: `1..ScheduleInput.horizon_weeks`.
 DURATION_OVERRIDE_MIN_WEEKS = 1
 DURATION_OVERRIDE_MAX_WEEKS = 104
+
+
+# --- FTE stretch (ADR 0032) -------------------------------------------------------
+
+
+def is_valid_fte(fte: float) -> bool:
+    """An FTE a design step can be scheduled at: finite and strictly positive
+    (ADR 0032). `0`, a negative value, NaN and infinity are not."""
+
+    return math.isfinite(fte) and fte > 0
+
+
+def fte_span(effort_weeks: int, fte: float) -> int:
+    """ADR 0032: elapsed weeks for `effort_weeks` of design work by an engineer
+    at `fte`: `ceil(effort_weeks / fte)`. Evaluated in exact rational
+    arithmetic on the FTE's decimal value (`Engineer.fte` is `Numeric(3, 2)`),
+    so `21 / 0.7` is 30, never the 31 a binary-float division would give.
+    `0` effort is 0 weeks. Raises `ValueError` for an FTE that is not
+    `is_valid_fte` (never divides by zero)."""
+
+    if not is_valid_fte(fte):
+        raise ValueError(f"fte {fte!r} is not a positive finite number")
+    if effort_weeks <= 0:
+        return 0
+    return math.ceil(Fraction(effort_weeks) / Fraction(str(fte)))
+
+
+def leader_fte_of(project: ProjectInput, fte_by_engineer: Mapping[str, float]) -> float | None:
+    """The FTE of the project's leader, or `None` when the leader is unset or
+    does not resolve (the scheduler reports that as `no_leader`)."""
+
+    if project.leader_engineer_id is None:
+        return None
+    return fte_by_engineer.get(project.leader_engineer_id)
 
 
 # --- Workflow (DAG) -------------------------------------------------------------
@@ -209,6 +249,12 @@ class StepPlan:
     actual_start_week: int | None
     actual_end_week: int | None
     remaining: int  # derived per DOMAIN_RULES.md (0 when skipped / Done / Not Started)
+    # ADR 0032: elapsed weeks the step books when placed (`ceil(duration / fte)`
+    # for a design step of a non-frozen project, else `duration`), and the
+    # elapsed weeks of an In Progress / Blocked tail (`ceil(remaining / fte)`,
+    # else `remaining`). `duration` / `remaining` stay the effort figures.
+    span: int
+    remaining_span: int
     # ADR 0019 earliest start: set only for a non-skipped `Not Started` step of
     # a non-frozen project (In Progress / Blocked / Done and frozen ignore it).
     start_not_before_week: int | None = None
@@ -361,13 +407,22 @@ def analyse_project(
     project: ProjectInput,
     workflow: Workflow,
     lead_time_table: Mapping[tuple[str, str, str], int],
+    *,
+    leader_fte: float | None = None,
 ) -> ProjectPlan:
     """Build the `ProjectPlan`: durations, skips, normalised progress, `remaining`,
-    the Blocked hold set, and any `data_error`.
+    the FTE-stretched `span` / `remaining_span` (ADR 0032), the Blocked hold
+    set, and any `data_error`.
 
     `frozen` wins over progress (ADR 0006 precedence): a frozen project's
     progress rows are ignored entirely (every step reads as Not Started) and it
-    can never be progress-tracked, blocked or rejected for a data error.
+    can never be progress-tracked, blocked or rejected for a data error. A
+    frozen project is also never stretched (ADR 0032: its dates stay locked).
+
+    `leader_fte` is the leader's FTE (`None`: no leader resolves, or the caller
+    only wants effort figures; nothing is stretched). A non-frozen project whose
+    leader FTE is not `is_valid_fte` (0, negative, NaN) is a `data_error` when
+    any design step still has work to place; otherwise the FTE is irrelevant.
     """
 
     progress_by_step: dict[str, StepProgressInput] = {}
@@ -407,6 +462,21 @@ def analyse_project(
             return None
         return row.start_not_before_week
 
+    # ADR 0032: a non-frozen project with a valid leader FTE is stretched.
+    stretch_fte = (
+        leader_fte
+        if not project.frozen and leader_fte is not None and is_valid_fte(leader_fte)
+        else None
+    )
+
+    def spans(kind: str, effort: int, remaining: int) -> tuple[int, int]:
+        """(span, remaining_span): `ceil(weeks / fte)` for a stretched design
+        step, the effort figures unchanged for everything else."""
+
+        if kind != "design" or stretch_fte is None:
+            return effort, remaining
+        return fte_span(effort, stretch_fte), fte_span(remaining, stretch_fte)
+
     plans: dict[str, StepPlan] = {}
     for step in workflow.steps:
         lead = lead_time_table[(project.workflow_id, project.category, step.step_id)]  # type: ignore[index]
@@ -425,10 +495,13 @@ def analyse_project(
                 actual_start_week=None,
                 actual_end_week=None,
                 remaining=0,
+                span=0,
+                remaining_span=0,
             )
             continue
 
         if progress is None:
+            span, remaining_span = spans(step.kind, duration, duration)
             plans[step.step_id] = StepPlan(
                 step=step,
                 duration=duration,
@@ -438,6 +511,8 @@ def analyse_project(
                 actual_start_week=None,
                 actual_end_week=None,
                 remaining=duration,
+                span=span,
+                remaining_span=remaining_span,
                 start_not_before_week=start_floor(step.step_id),
             )
             continue
@@ -491,6 +566,7 @@ def analyse_project(
         else:
             remaining = duration
 
+        span, remaining_span = spans(step.kind, duration, remaining)
         plans[step.step_id] = StepPlan(
             step=step,
             duration=duration,
@@ -500,10 +576,31 @@ def analyse_project(
             actual_start_week=progress.actual_start_week if status != STATUS_NOT_STARTED else None,
             actual_end_week=progress.actual_end_week if status == STATUS_DONE else None,
             remaining=remaining,
+            span=span,
+            remaining_span=remaining_span,
             start_not_before_week=(
                 start_floor(step.step_id) if status == STATUS_NOT_STARTED else None
             ),
         )
+
+    if not project.frozen and leader_fte is not None and not is_valid_fte(leader_fte):
+        # ADR 0032: a leader at FTE 0 (or a negative / non-finite FTE) cannot
+        # do design work, so any design step with work left is unplaceable.
+        # Reported through the existing data-error rejection; never a divide.
+        unplaceable = [
+            sid
+            for sid in workflow.walk_order
+            if sid in plans
+            and plans[sid].step.kind == "design"
+            and not plans[sid].skipped
+            and plans[sid].status != STATUS_DONE
+            and (plans[sid].status == STATUS_NOT_STARTED or plans[sid].remaining > 0)
+        ]
+        if unplaceable:
+            errors.append(
+                f"leader {project.leader_engineer_id!r} has FTE {leader_fte!r} (must be > 0): "
+                f"design step(s) {', '.join(unplaceable)} cannot be scheduled"
+            )
 
     data_error = "; ".join(errors) if errors else None
     if data_error is not None:
@@ -513,6 +610,7 @@ def analyse_project(
             if step.step_id not in plans:
                 lead = lead_time_table[(project.workflow_id, project.category, step.step_id)]  # type: ignore[index]
                 duration = effective_duration(step.step_id, lead)
+                span, remaining_span = spans(step.kind, duration, duration)
                 plans[step.step_id] = StepPlan(
                     step=step,
                     duration=duration,
@@ -522,6 +620,8 @@ def analyse_project(
                     actual_start_week=None,
                     actual_end_week=None,
                     remaining=duration,
+                    span=span,
+                    remaining_span=remaining_span,
                     start_not_before_week=start_floor(step.step_id),
                 )
 
@@ -569,9 +669,12 @@ def unconstrained_end_week(plan: ProjectPlan, current_week: int) -> int | None:
     """DOMAIN_RULES.md "Expected vs projected completion": the earliest finish
     assuming unlimited engineers and chambers — walk the DAG with the
     effective durations only (ADR 0019: `duration_override_weeks ?? lead
-    time`), honouring a Not Started step's `start_not_before_week` (a plan
-    input, not a resource). Done / In Progress stages keep their actual
-    start and their derived `remaining` (progress rules); a Blocked stage is
+    time`), stretched by the leader's FTE (ADR 0032: `span` /
+    `remaining_span`; unlimited engineers remove contention, not the leader's
+    own speed, so unconstrained <= constrained still holds), honouring a Not
+    Started step's `start_not_before_week` (a plan input, not a resource).
+    Done / In Progress stages keep their actual start and their derived
+    `remaining` (progress rules); a Blocked stage is
     treated as In Progress (unlimited resources cannot unblock it, but the
     *unconstrained* figure deliberately assumes the block clears now — the
     constrained run reports the hold via `blocked=True`). `None` when every
@@ -591,11 +694,11 @@ def unconstrained_end_week(plan: ProjectPlan, current_week: int) -> int | None:
             ends[sid] = sp.actual_end_week
         elif sp.status in (STATUS_IN_PROGRESS, STATUS_BLOCKED):
             assert sp.actual_start_week is not None
-            if sp.remaining == 0:
+            if sp.remaining_span == 0:
                 ends[sid] = max(sp.actual_start_week, pred_end)
             else:
                 tail_start = max(current_week, pred_end + 1, sp.actual_start_week)
-                ends[sid] = tail_start + sp.remaining - 1
+                ends[sid] = tail_start + sp.remaining_span - 1
         else:
             start = pred_end + 1 if plan.project.frozen else max(current_week, pred_end + 1)
             if sp.start_not_before_week is not None:
@@ -603,7 +706,7 @@ def unconstrained_end_week(plan: ProjectPlan, current_week: int) -> int | None:
                 # resource limit, so unlimited resources do not lift it (keeps
                 # unconstrained <= constrained, I16).
                 start = max(start, sp.start_not_before_week)
-            ends[sid] = start + sp.duration - 1
+            ends[sid] = start + sp.span - 1
     non_skipped = [ends[sid] for sid, sp in plan.steps.items() if not sp.skipped]
     return max(non_skipped) if non_skipped else None
 

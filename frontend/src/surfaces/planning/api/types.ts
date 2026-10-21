@@ -155,11 +155,12 @@ export interface ResourceLoadFilters {
 /**
  * `GET /engineers` / `GET /engineers/{id}` row (`backend/schemas/engineer.py::EngineerRead`).
  *
- * `fte` is stored and shown here verbatim — per ADR 0002 (`docs/DOMAIN_RULES.md`
- * known defect #1 / `docs/OPEN_QUESTIONS.md` #2) it is a REPORTING field only:
- * it feeds the RPD Capacity surface's `design_capacity_weeks` figure but does
- * NOT gate the greedy/CP-SAT scheduler's booking rules in v1. Never implied
- * here to affect scheduling.
+ * `fte` is stored and shown here verbatim. Since ADR 0032 (2026-10-21,
+ * superseding ADR 0002; answers `docs/OPEN_QUESTIONS.md` #2) it gates the
+ * scheduler's SPEED: a design step this engineer leads spans
+ * `ceil(work / fte)` calendar weeks (0.5 FTE = half speed). It also scales the
+ * RPD Capacity surface's design capacity (`working_weeks × Σ fte`, ADR 0008).
+ * The browser never applies it: spans come from the run.
  */
 export interface EngineerRead {
   id: Id;

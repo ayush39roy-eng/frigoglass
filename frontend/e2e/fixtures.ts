@@ -34,6 +34,15 @@ function tokens(): Record<DevUserKey, string> {
 
 export async function loginAs(page: Page, role: DevUserKey): Promise<void> {
   const token = tokens()[role];
+  // P19 gate (qa-inspector): the app now shows a sign-in page until a session
+  // user is chosen (`lib/api/dev-user.ts`). Seed the same user's session key so
+  // the shell renders; `api/deps.py` ignores `X-Dev-User-Email` whenever an
+  // `Authorization` header is present, so every API call below is still
+  // authenticated by the real Keycloak token.
+  const { DEV_EMAILS } = await import('./dev-session');
+  await page.addInitScript((value) => {
+    window.sessionStorage.setItem('rpd-dev-user-email', value);
+  }, DEV_EMAILS[role]);
   await page.route('**/api/**', async (route) => {
     const headers = { ...route.request().headers(), Authorization: `Bearer ${token}` };
     await route.continue({ headers });

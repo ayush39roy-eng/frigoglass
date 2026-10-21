@@ -152,6 +152,13 @@ class ScheduleRunProjectStep(Base):
 
     eng_conflict: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     chamber_overlap: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    #: ADR 0032 (P20-T02): the leader FTE this run used to stretch the step to
+    #: `ceil(duration_weeks / fte)` elapsed weeks, copied from the run's own
+    #: input at persist time. NULL when the step was not stretched (lab,
+    #: elapsed, skipped or Done steps, frozen projects, no leader) and on rows
+    #: written before migration p20a_run_step_span_fte. Personal data (OQ #8):
+    #: served only to callers who may edit step timing (`GanttStepRow.span_fte`).
+    span_fte: Mapped[float | None] = mapped_column(Numeric(3, 2), nullable=True)
     #: ADR 0007: `duration_weeks == 0` for this category, or a lab step when the
     #: project's `certification_testing_required` is false. Occupies nothing;
     #: `start_week == end_week == max(predecessor end)` (Invariant I5).

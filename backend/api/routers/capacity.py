@@ -17,8 +17,11 @@ module docstring for why Chamber can't be filtered by hub_id directly).
 **Supply (P9-T03, ADR 0008).** The capacity *supply* figures are the
 client's formulas from docs/DOMAIN_RULES.md "Capacity supply", computed by
 `services.capacity_supply` from the stored hub calendars and chamber
-downtime (I17). They are reporting figures: per ADR 0002, FTE and downtime
-still do not gate week-level booking. The *load* figures come from the
+downtime (I17). They are reporting figures; downtime does not gate
+week-level booking. FTE gates design speed (ADR 0032, superseding ADR 0002:
+a design step spans `ceil(duration / fte)` elapsed weeks), but every *load*
+figure here sums effort (`duration_weeks`), never the elapsed span. The
+*load* figures come from the
 active `ScheduleRun` snapshot and reconcile with Invariants I6/I7. Step
 kinds are read from that run's `workflow_snapshot` (`services.active_run`).
 
@@ -128,6 +131,7 @@ from services.hub_scope import (
     narrowed_hub_filter,
     narrowed_lab_regions,
 )
+from services.run_step_effort import weekly_effort_for_rows
 
 router = APIRouter(prefix="/capacity", tags=["capacity"])
 
@@ -698,10 +702,17 @@ async def engineer_utilization(
 ) -> EngineerUtilizationResponse:
     """Engineers x Weeks utilization (ADR 0028, P4-T08).
 
-    Booked = the active run's non-skipped design-kind step durations, one
-    booked week per week of `[start_week, start_week + duration_weeks - 1]`
-    on the assigned engineer; the same basis as the hub design load, so the
-    hub's engineers' `booked_total` sums to it (I6). Capacity per week =
+    Booked = the active run's non-skipped design-kind step durations (effort
+    weeks) on the assigned engineer; the same basis as the hub design load and
+    `GET /planning/resource-load`, so `total_booked` is Σ `duration_weeks`
+    and the hub's engineers' totals sum to it (I6). ADR 0032: a design row
+    spans `ceil(duration / fte)` elapsed weeks, so each row's effort is spread
+    evenly over its stored `[start_week, end_week]`
+    (`duration_weeks / (end − start + 1)` per week); an In Progress / Blocked
+    row puts its remaining effort on the booked tail and the done effort
+    before it (`services.run_step_effort`). A 0.5 FTE leader therefore reads
+    about 0.5 booked weeks per week against a weekly capacity of
+    `wwpe × 0.5 / 52`. Capacity per week =
     `working_weeks_per_engineer * fte / 52` (ADR 0008). Hub scope is ANDed
     with the `hub_id` / `region` filters; an Engineer-role caller gets only
     their own row. Every read writes `capacity.engineer_utilization.read`
@@ -717,7 +728,8 @@ async def engineer_utilization(
         eng_stmt = eng_stmt.where(Engineer.user_id == current_user.user_id)
     engineers = (await db.execute(eng_stmt)).scalars().all()
 
-    booked: dict[uuid.UUID, dict[int, int]] = defaultdict(lambda: defaultdict(int))
+    booked: dict[uuid.UUID, dict[int, float]] = defaultdict(lambda: defaultdict(float))
+    totals: dict[uuid.UUID, int] = defaultdict(int)
     if active_run is not None and engineers:
         kinds = await step_kinds_for_run(db, active_run)
         steps = (
@@ -729,11 +741,17 @@ async def engineer_utilization(
                 )
             )
         ).scalars().all()
-        for step in steps:
-            if kinds.get(step.step_template_id) != WorkflowStepKind.DESIGN:
+        design_steps = [
+            s for s in steps if kinds.get(s.step_template_id) == WorkflowStepKind.DESIGN
+        ]
+        effort = await weekly_effort_for_rows(db, active_run, design_steps)
+        for step in design_steps:
+            if step.assigned_engineer_id is None:
                 continue
-            for week in range(step.start_week, step.start_week + step.duration_weeks):
-                booked[step.assigned_engineer_id][week] += 1
+            totals[step.assigned_engineer_id] += step.duration_weeks
+            cells = booked[step.assigned_engineer_id]
+            for week, value in effort.get(step.id, {}).items():
+                cells[week] += value
 
     calendar_by_hub = {
         c.hub_id: c for c in (await db.execute(select(HubWorkCalendar))).scalars().all()
@@ -751,14 +769,15 @@ async def engineer_utilization(
         weeks = [
             EngineerWeekUtilization(
                 week=w,
-                booked=float(mine.get(w, 0)),
+                booked=round2(mine.get(w, 0.0)),
                 capacity=round2(weekly_cap),
-                utilization_pct=_pct(mine.get(w, 0), weekly_cap),
+                utilization_pct=_pct(mine.get(w, 0.0), weekly_cap),
             )
             for w in range(1, dc.WITHIN_YEAR_WEEK + 1)
         ]
         year_cap = weekly_cap * dc.WITHIN_YEAR_WEEK
-        total_booked = float(sum(mine.values()))
+        # Σ effort (`duration_weeks`), exact; the cells are its weekly spread.
+        total_booked = float(totals.get(e.id, 0))
         rows.append(
             EngineerUtilizationRow(
                 id=e.id,
