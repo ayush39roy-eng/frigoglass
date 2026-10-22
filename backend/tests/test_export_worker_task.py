@@ -52,9 +52,10 @@ from models.enums import (
 )
 from models.export import ExportJob
 from models.hub import Hub
-from models.priority import DIMENSION_FIELD_NAMES, PriorityScore
 from models.project import Project
 from models.user import User
+from seed.initial_scoring_rubric import seed_priority_score
+from services.scoring_rubric import load_rubric
 from tests.conftest import run_alembic
 from workers.export_tasks import _generate_export_async
 
@@ -162,11 +163,8 @@ async def _seed_matrix_project(postgres_url: str):
             db.add(project)
             await db.flush()
 
-            score = PriorityScore(
-                project_id=project.id,
-                **dict.fromkeys(DIMENSION_FIELD_NAMES, 4),
-                hard_gates=[],
-            )
+            # ADR 0037: scores live in priority_dimension_scores.
+            score = seed_priority_score(await load_rubric(db), project.id, [4] * 13)
             db.add(score)
             await db.flush()
 

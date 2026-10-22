@@ -28816,3 +28816,203 @@ so it is audited. `seed_dev_users` needs no change.
 and for carol `-d '{"roles":["Engineer"]}'` on `/users/a837585c-8a4c-4ecb-8e9d-d1b91343865a`. The :8001 server also
 needs a restart to pick up the code fix (not done). Then rerun `e2e/p15-gate.spec.ts`: its heatmap test as
 portfolioManager only passes once alice no longer holds Engineer (ADR 0028).
+
+## 2026-10-22: Dashboard Hub × Type row: three equal columns (owner ask, ad hoc)
+
+The owner asked for the pipeline summary table, the completing-within-year table and the "Pipeline vs completing"
+chart to share one row at the same size. `hub-type-section.tsx`: at xl the row is now `xl:grid-cols-3`, equal
+columns, each card stretched to the row height. Before a run exists, the chart is absent and the two tables split
+`xl:grid-cols-2`. "Top hubs" (`HubRankList`) moves to full width beneath; previously it sat beside the chart. This
+supersedes the P17-R08 5/7 split. To fit a third of the row, both tables use `text-xs` and tighter cell padding
+(`px-1.5` cells, `px-s2` hub column). The completing table can still scroll sideways on narrow xl viewports. Its
+`overflow-x-auto` region is kept. No data or logic change. `tsc` is clean, and the dashboard Vitest suite is 171
+passed. Not checked in a browser: the Playwright browser was locked by another session.
+
+## 2026-10-22: Dashboard Hub × Type row, follow-up (owner: "empty space, fix it")
+
+This revises the entry above. The equal-thirds row left blank space under the pipeline table. It also clipped the
+completing table at 1440 px: the region was 439 px of content in 357 px. The chart's "11 (30.56%)" bar labels
+overlapped the bars next to them.
+- **Row widths.** The row is now `1fr / 1.3fr / 0.9fr`, at equal height. The completing cells are the widest
+  content.
+- **Tables.** Both table regions are `flex-1` and the tables `h-full`, so the rows share the card height. Card
+  titles are `text-lg`.
+- **Completing table.** The share is shown under the count without brackets. The caption is shortened but keeps
+  "Counts every project in the pipeline" (I9, asserted by the caption test).
+- **Chart.** Bars carry counts only, and the served completing share is drawn under each type code (`TypeTick`).
+  The legend moved under the title.
+
+Checked headless at 1440×900 against :5183: no table scrolls sideways (331/331, 446/446) and no overlap. Note that
+:5173 is a different app, not this repo. Dashboard Vitest suite: 171 passed. `tsc` and eslint are clean.
+Correction to the entry above: the first test run after dropping the brackets had 3 failures. Assertions in
+`completing-hub-type-table.test.tsx` and `DashboardPage.test.tsx` lines 551/553 expected "7 (8.54%)". They now
+expect "7 8.54%": same served values, display only. After that, the dashboard suite is 171 passed.
+
+## 2026-10-22: Dashboard: monthly completions, profile row moved up, compact KPIs, Completion outcome removed (owner ask)
+
+- **Completion profile: monthly bars.** The card now shows two columns: the cumulative W1–W52 curve, and "Completed
+  per month (that month only)". The monthly bars count within-year finishes, using the same `outcomeOf` rows and
+  `last_step_end_week` as the curve, so blocked rows stay excluded (I9). Each month is counted on its own, so the
+  twelve bars sum to the curve's W52 value.
+- **Week → month mapping.** This is new in `surfaces/dashboard/lib/plan-month.ts`, with a test. A plan week is the
+  ISO week of `PLAN_YEAR` (ADR 0035) and belongs to the month holding its Thursday.
+- **Outcome totals column removed from that card.** It repeated the KPI cards below it.
+- **Order.** Status overview → Completion profile + Delivery rate → "Completing within the year" → Hub × Type row.
+  The KPI cards there use the new `StatCard size="compact"` (`components/ui/kpi-card.tsx`): a single row, and the
+  heading is h2-sized.
+- **Delivery rate.** Its content is spread with `justify-between` so the card fills the row height.
+- **"Completion outcome" donut removed.** It repeated the profile, gauge and KPI split. `PipelinePanel` and its test
+  were deleted, and nothing else imported them. "Capacity booked" is now full width, with Europe and India side by
+  side from `lg`.
+- **Tests.** The order test was rewritten to the new order and asserts that "Completion outcome" is absent. The
+  profile-card totals tests were replaced by monthly-bucket tests: W10 → Mar, W30 → Jul, and blocked W20 is not
+  counted.
+- **Checks.** Dashboard + ui Vitest: 208 passed. `tsc` is clean, and eslint shows 0 errors (one existing warning in
+  `project-breakdown.tsx`). Checked headless at 1440 px against :5183.
+
+## [2026-10-22] P26-T01 — Editable scoring rubric: tables, versions, preview, every reader on the tables (backend-builder): DONE
+
+**Ruling.** Owner, 2026-10-22: "in the Prioritization Matrix, only there, we can edit the scoring rubric: edit the
+weightage and also add something (new dimensions)". The details are the orchestrator's defaults. **ADR 0037** (new).
+**DOMAIN_RULES** "Prioritization scoring" gains an amendment paragraph and a note on the TOTAL_WEIGHT line.
+**Contract** `docs/API_CONTRACT_P26.md` (new). **Plan:** P26 opened (T01 DONE, T02 and T20 TODO).
+`backend/scheduling/` untouched. Only testcontainers DBs were used (:5433 / :8001 / :5183 untouched). Nothing committed.
+
+**Data model.** Migration **`p26a_scoring_rubric_tables`** (head, revises `p24b_checkin_reset_escape`):
+- `scoring_dimensions`: `key` unique, weight CHECK 1..100, `inverted`, `active`, `display_order`, created by / at.
+- `rubric_versions`: `version` unique, who, when, `reason`, `total_weight`, JSONB snapshot.
+- `priority_dimension_scores`: PK (`priority_score_id`, `dimension_id`), score 0..5 or null, ON DELETE CASCADE.
+- `priority_scores.rubric_version`.
+- Data step: inserts the 13 dimensions (ADR 0029 keys, labels, pillars and weights; `inverted` on CAPEX only;
+  order 1..13) and version 1, copies every score (13 rows per project), and recomputes the cached fields (the count
+  of corrected rows is logged).
+- **The 13 old columns and their CHECKs are dropped**, not kept deprecated. Downgrade restores them losslessly and
+  refuses if a project lacks one of the 13.
+- `domain_constants.PRIORITIZATION_DIMENSIONS` and `TOTAL_WEIGHT` are deleted, as are
+  `models.priority.DIMENSION_FIELD_NAMES`, `compute_priority_score` and the seed's `_priority_score_fields`.
+- The 13 now exist only as seed data (`seed/initial_scoring_rubric.py`) and frozen in the migration.
+
+**Formula.** One implementation, `services/priority_scoring.py::compute_score(rubric, scores)`:
+- TOTAL_WEIGHT = Σ active weights;
+- points = score / 5 × weight;
+- a null score on an active dimension counts 0 and is listed in `missing_dimension_keys`;
+- no active dimension scored = Unscored.
+
+**Decision:** exact rational arithmetic, half up. Weights 1..100 make `.5` possible; Python's `round()` would round
+it to even. Under the old 295 rubric no `.5` is possible, so stored values are unchanged.
+
+**Endpoints** (`api/routers/scoring_rubric.py`, service `services/scoring_rubric.py`):
+- **`GET /scoring-rubric`** and **`/versions`**: Matrix read.
+- **`PUT /scoring-rubric`** and **`POST /scoring-rubric/preview`**: Admin and Super Admin only.
+
+PUT behaviour:
+- Full replacement with a required `reason`; strict, extra keys forbidden.
+- 409 `RUBRIC_VERSION_CONFLICT` on a stale `version`.
+- Coded 422s: `RUBRIC_NO_ACTIVE_DIMENSION`, `_DIMENSION_MISSING` (never delete), `_UNKNOWN_KEY`, `_DUPLICATE_KEY`,
+  `_DUPLICATE_LABEL`.
+- New keys are slugified from the label, with `_2` on a collision with a key or a Matrix row / export column
+  (`Rank` → `rank_2`).
+- A save takes an exclusive advisory lock; score writes take it shared.
+- A save writes the new version, recomputes **every stored score in the same transaction** (cached `weighted_score`
+  / `normalized_pct` / score band + `rubric_version`), and writes one `scoring_rubric.update` audit row (before /
+  after + counts).
+- An unchanged proposal is a 200 with no version and no audit row.
+
+Preview: old vs new pct, score band and suggested band after the P1 capacity fill. It uses the same loader through
+a new `normalized_override` on `compute_capacity_fill`. It also returns counts and band transitions, and writes
+nothing.
+
+**Readers switched.**
+- Matrix rows: the 13 flat fields are removed. `dimension_scores` has N active entries; new
+  `missing_dimension_keys` and `rubric_version`. `has_score` = at least one active dimension scored.
+- Compare.
+- `/priorities/dimensions`: active dimensions + `rubric_version`.
+- Score PUT: `{"scores": {key: 0..5 | null}, "hard_gates"}`, active keys only (422 `UNKNOWN_DIMENSION_KEY`), omitted
+  keys kept, null clears, `scored_at` / `scored_by` now set.
+- Scenario apply: the same map; the whole batch is validated first.
+- Workspace score section: `dimension_scores`, `missing_dimension_keys`, `rubric_version` replace the flat 13.
+- Audit and scenario snapshots: `scores` map + `rubric_version`.
+- Export: one column per active dimension after `has_score`; the 13 keep their header names.
+- Seed: the CURRENT rubric is used for cached values; `--reset` keeps the rubric; `derive_dims` still targets the
+  initial rubric.
+- Distribution, summary, capacity fill and board read the recomputed cache.
+
+What-if does not use the rubric (it takes a 0..100 score). Scheduler verified: no score or rubric reference under
+`backend/scheduling/`, and a test pins it. Nothing is stale, `Project.priority` is untouched, and no run starts.
+
+**Tests.** New `tests/test_p26_scoring_rubric.py` (52):
+- migrated rubric;
+- weight edit hand-calculated (strategic 25 → 100: 8 → 27, 60 → 60, 63 → 71 P2 → P1);
+- adding a dimension: points unchanged, 177 / 325 = 54, incomplete; scoring it completes;
+- deactivate / reactivate (95 → 100 → 95, the capex 0 kept);
+- versions + 409 + no-op;
+- preview == saved incl. capacity fill;
+- validation (codes, strict types, envelope);
+- slugify and collisions;
+- RBAC (5 readers, 2 non-readers, 5 non-writers incl. the preview, 401) and the audit row for both admins;
+- score PUT shape (unknown, inactive, strict, partial, null, all-null → unscored);
+- all readers consistent after a change: rows, compare, board, Workspace, distribution, summary, export,
+  `/dimensions`;
+- scenario apply;
+- no stale / no run;
+- scheduler grep.
+
+**Migration losslessness** (own PG17 container) covers all 253 client_2026 seed dimension sets plus 3 edge sets.
+Sums, pcts and bands are identical before and after; scores pivot back exactly; Σ table points = stored sum; the
+old columns are gone; down + up is lossless.
+
+Existing tests adapted: `test_priority_scoring` (oracle with literal weights, half-up golden, p16a + p26a frozen
+weights), `test_p21_matrix`, `test_p13_slice_c`, `test_scenario_apply_api`, `test_rbac_enforcement`, `factories`,
+`test_export_worker_task`, and `test_migrations` (36 tables, `PRE_P26_TABLE_COUNT`). New `tests/rubric_helpers.py`.
+
+**Results.** Full backend suite: **2068 passed, 16 failed, coverage 97.02 %**. The 16 are exactly the expected
+contract rows, red until P26-T02 (listed in contract §7):
+- `PriorityMatrixRow`, `PriorityCompareItem`, `PriorityScoreUpdateRequest`, `PriorityScoreRead`,
+  `PriorityDimensionsResponse`, `ScenarioPriorityScoreChange`, `WorkspacePriorityScore`;
+- 9 new: `ScoringRubricRead`, `ScoringRubricDimension`, `ScoringRubricDimensionInput`, `ScoringRubricUpdateRequest`,
+  `ScoringRubricPreviewRequest`, `ScoringRubricVersionsResponse`, `ScoringRubricPreview`, `RubricPreviewProject`,
+  `RubricBandChange`.
+
+`ruff check .` is clean. New files are ruff-formatted. mypy: no new errors (the pre-existing `_build_row` / summary
+ones in `priorities.py` remain).
+
+**For the owner (dev DB, not done).**
+1. `cd backend && alembic upgrade head` against :5433 (`p26a`). The log line `p26a: copied N priority_scores rows x
+   13 dimensions; K cached score(s) corrected` should show K = 0.
+2. Restart :8001.
+
+Until P26-T02 lands, the frontend's score edit dialog, Compare editing and scenario staging send the old flat body
+(422), and the grid / Workspace read the removed flat fields. So migrate together with P26-T02, or accept a broken
+Matrix edit in between.
+
+**For P26-T02.** Mirror contract §7. The rubric editor goes in the Matrix only, for `can_edit` users. Preview before
+save, 409 → reload, and show versions. Render N dynamic dimensions from `dimension_scores` / `GET /scoring-rubric`.
+Send the `scores` map. Mark "incomplete" from `missing_dimension_keys`.
+
+## 2026-10-22: Completion profile: monthly bars only, drill into weeks and projects (owner ask)
+
+This supersedes the two-column version above. The cumulative W1–W52 curve is removed. `completion-profile-card.tsx`
+is rewritten:
+- **Month view.** Twelve monthly bars, each counting within-year finishes in that month only.
+- **Opening a month.** Selecting a bar, or the matching sr-only button (it shows on focus), opens that month. The
+  month view shows weekly bars for the weeks whose Thursday is in that month (`lib/plan-month.ts`), beside a list of
+  the projects finishing then. Each list row shows name (linking to `/projects/:id`), hub · type · priority, and a
+  finish-week chip.
+- **Weeks.** Selecting a week narrows the list to it, and selecting it again clears the filter. "All months" goes
+  back.
+- **Data.** The same rows and `outcomeOf` membership as before, so blocked is excluded (I9). Nothing new is fetched.
+
+Tests are rewritten for monthly buttons (disabled at 0), month → weeks (March 2026 = W10–W13), the project links,
+and week narrowing. Dashboard + ui Vitest is green, and `tsc` and eslint are clean. Checked headless against :5183:
+November opens to W45–W48 with 12 projects, and selecting W45 lists 2.
+
+## 2026-10-22: Dashboard: "Unregistered date" card removed; In Queue before On Hold (owner ask)
+
+- **Project pipeline row (`pipeline-row.tsx`).** It now reads "Spillover {PLAN_YEAR-1} + Newly registered {PLAN_YEAR}
+  = Total projects", as three cards and two glyphs. The served `unregistered_count` is still inside `total_count`
+  (ADR 0030; not changed server-side). Whenever it is > 0, the Total caption reads "All statuses · incl. N with no
+  registration year", so the on-screen sum stays true. It is 0 on the dev DB today.
+- **Status overview (`status-overview-cards.tsx`).** The order is now In Development, Under Industrialization,
+  Commercialized, In Queue, On Hold (project). A new order test covers it.
+- **Tests.** The pipeline-row tests now expect 3 cards. Dashboard Vitest is green, and `tsc` and eslint are clean.
+  Checked headless against :5183.

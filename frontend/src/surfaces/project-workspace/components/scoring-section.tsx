@@ -6,35 +6,45 @@ import { SuggestedBandChip } from '@/components/shared/suggested-band-chip';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { ApiError } from '@/lib/api/client';
-import { SCORING_ANCHORS, SCORING_SCALE } from '@/lib/domain-constants';
+import { SCORING_SCALE, scoringAnchor } from '@/lib/domain-constants';
+import { IncompleteScoreMarker } from '@/components/shared/incomplete-score-marker';
+import { usePermission } from '@/stores/session';
 import { formatInteger } from '@/lib/format';
 import { queryKeys } from '@/lib/query-keys';
 import { HARD_GATE_REASONS, type HardGateReason } from '@/types/enums';
 import { updatePriorityScore } from '@/surfaces/matrix/api/matrix-api';
-import { DIMENSIONS, POINTS_RULE_COPY, type DimensionField, type PriorityScoreUpdateRequest } from '@/surfaces/matrix/api/types';
-import { FetchedScoringModelProvider, formatWeight, useScoringModel } from '@/surfaces/matrix/scoring-model';
+import { POINTS_RULE_COPY, type DimensionScoreMap, type PriorityScoreUpdateRequest } from '@/surfaces/matrix/api/types';
+import { changedScores, scoresFromDimensionScores, toRequestBody } from '@/surfaces/matrix/components/score-edit-schema';
+import { rowMissingLabels } from '@/surfaces/matrix/lib/row-scores';
+import {
+  FetchedScoringModelProvider,
+  formatWeight,
+  modelFromDimensionScores,
+  useScoringModel,
+  type ScoringModelEntry,
+} from '@/surfaces/matrix/scoring-model';
 
 import type { WorkspacePriorityScore } from '../api/types';
 
 /**
- * The 13 scoring dimensions + the three P1-forcing hard gates, with the deck's
- * 1 / 5 anchors beside every dimension. Weighted score, normalised % and band
- * are the server's (I9) — shown, never computed. Saves through the Matrix's
- * `PUT /priorities/{id}` (same endpoint, same RBAC: Matrix write).
+ * The project's scoring dimensions + the three P1-forcing hard gates, with the
+ * deck's 1 / 5 anchors where the deck describes a dimension. P26 (ADR 0037):
+ * the rows are the served ACTIVE dimensions (`dimension_scores`, display order;
+ * for an unscored project the served table of `GET /priorities/dimensions`),
+ * never a fixed list. Weighted score, normalised % and band are the server's
+ * (I9) — shown, never computed. Saves through the Matrix's
+ * `PUT /priorities/{id}` (same endpoint, same RBAC: Matrix write) with only the
+ * dimensions changed here (`{scores, hard_gates}`; "Not scored" clears).
  */
-type Scores = Record<DimensionField, number>;
-
-function scoresOf(ps: WorkspacePriorityScore | null): Scores {
-  return Object.fromEntries(DIMENSIONS.map((d) => [d.field, ps ? ps[d.field] : 3])) as Scores;
-}
-
 export function ScoringSection(props: {
   projectId: string;
   score: WorkspacePriorityScore | null;
   canWrite: boolean;
 }): React.JSX.Element {
+  // The served table needs Matrix read; a Workspace viewer without it reads the score's own list.
+  const matrixRead = usePermission('matrix').read;
   return (
-    <FetchedScoringModelProvider>
+    <FetchedScoringModelProvider enabled={matrixRead || props.canWrite}>
       <ScoringSectionInner {...props} />
     </FetchedScoringModelProvider>
   );
@@ -51,8 +61,17 @@ function ScoringSectionInner({
 }): React.JSX.Element {
   const queryClient = useQueryClient();
   const model = useScoringModel();
+  const served = new Map(model.dimensions.map((d) => [d.key, d]));
+  // The project's own served list first (its active dimensions), else the served table.
+  const dims: ScoringModelEntry[] = score
+    ? modelFromDimensionScores(score.dimension_scores).map((d) => ({ ...d, scaled_weight: served.get(d.key)?.scaled_weight ?? null }))
+    : [...model.dimensions];
+  const base: DimensionScoreMap = score ? scoresFromDimensionScores(score.dimension_scores) : {};
+  const missing = score
+    ? rowMissingLabels({ has_score: score.weighted_score !== null, missing_dimension_keys: score.missing_dimension_keys, dimension_scores: score.dimension_scores })
+    : [];
   const [editing, setEditing] = React.useState(false);
-  const [scores, setScores] = React.useState<Scores>(() => scoresOf(score));
+  const [scores, setScores] = React.useState<DimensionScoreMap>(base);
   const [gates, setGates] = React.useState<HardGateReason[]>(score?.hard_gates ?? []);
   const [error, setError] = React.useState<string | null>(null);
 
@@ -113,6 +132,11 @@ function ScoringSectionInner({
         ) : (
           <span className="text-2xs text-text-subtle">Not scored yet</span>
         )}
+        {missing.length > 0 ? (
+          <p className="basis-full text-2xs text-text-muted" data-testid="score-incomplete">
+            <IncompleteScoreMarker missingLabels={missing} /> {missing.length} of {dims.length} dimensions not scored
+          </p>
+        ) : null}
         {score?.capacity_fill_reason ? (
           <p className="basis-full text-2xs text-text-muted" data-testid="score-fill-reason">
             {score.capacity_fill_reason}
@@ -124,7 +148,7 @@ function ScoringSectionInner({
             variant="ghost"
             size="sm"
             onClick={() => {
-              setScores(scoresOf(score));
+              setScores(base);
               setGates(score?.hard_gates ?? []);
               setError(null);
               setEditing(true);
@@ -154,9 +178,17 @@ function ScoringSectionInner({
             </tr>
           </thead>
           <tbody>
-            {model.dimensions.map((d) => {
-              const anchor = SCORING_ANCHORS[d.key];
+            {dims.length === 0 ? (
+              <tr>
+                <td colSpan={4} className="px-3 py-3 text-2xs text-text-muted">
+                  The scoring dimensions are not available to your role here; open the Prioritization Matrix to score.
+                </td>
+              </tr>
+            ) : null}
+            {dims.map((d) => {
+              const anchor = scoringAnchor(d.key);
               const id = `ws-score-${d.key}`;
+              const current = editing ? (scores[d.key] ?? null) : (base[d.key] ?? null);
               return (
                 <tr key={d.key} className="border-t border-border/70 transition-colors hover:bg-primary-subtle/30">
                   <th scope="row" className="px-3 py-2.5 text-left font-bold text-text">
@@ -169,24 +201,30 @@ function ScoringSectionInner({
                     {editing ? (
                       <select
                         id={id}
-                        value={scores[d.key]}
-                        onChange={(e) => setScores((prev) => ({ ...prev, [d.key]: Number(e.target.value) }))}
+                        value={current === null ? '' : String(current)}
+                        onChange={(e) => {
+                          const raw = e.target.value;
+                          setScores((prev) => ({ ...prev, [d.key]: raw === '' ? null : Number(raw) }));
+                        }}
                         className="h-7 rounded border border-border-strong bg-surface px-1 text-xs text-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                       >
+                        <option value="">– Not scored</option>
                         {SCORING_SCALE.map((s) => (
                           <option key={s.score} value={s.score}>
                             {s.score} — {s.label}
                           </option>
                         ))}
                       </select>
-                    ) : score ? (
-                      <span className="font-mono font-semibold text-text">{score[d.key]}</span>
+                    ) : current !== null ? (
+                      <span className="font-mono font-semibold text-text">{current}</span>
                     ) : (
-                      <span className="text-text-subtle">–</span>
+                      <span className="text-text-subtle" title="Not scored">
+                        –<span className="sr-only">Not scored</span>
+                      </span>
                     )}
                   </td>
                   <td className="px-2 py-1 text-2xs text-text-muted">
-                    1 = {anchor.low} · 5 = {anchor.high}
+                    {anchor ? `1 = ${anchor.low} · 5 = ${anchor.high}` : '—'}
                   </td>
                 </tr>
               );
@@ -221,7 +259,7 @@ function ScoringSectionInner({
             <X />
             Cancel
           </Button>
-          <Button type="button" size="sm" disabled={save.isPending} onClick={() => save.mutate({ ...scores, hard_gates: gates })}>
+          <Button type="button" size="sm" disabled={save.isPending} onClick={() => save.mutate(toRequestBody(changedScores(base, scores), gates))}>
             <Save />
             {save.isPending ? 'Saving…' : 'Save scores'}
           </Button>

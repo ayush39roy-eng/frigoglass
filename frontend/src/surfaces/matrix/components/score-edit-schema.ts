@@ -2,103 +2,72 @@ import { z } from 'zod';
 
 import { HARD_GATE_REASONS, type HardGateReason } from '@/types/enums';
 
-import {
-  DIMENSION_FIELDS,
-  type DimensionField,
-  type PriorityMatrixRow,
-  type PriorityScoreUpdateRequest,
+import type {
+  DimensionKey,
+  DimensionScore,
+  DimensionScoreMap,
+  PriorityMatrixRow,
+  PriorityScoreUpdateRequest,
 } from '../api/types';
 
 /**
- * Client-side mirror of `backend/schemas/priority.py::PriorityScoreUpdateRequest`
- * (`extra="forbid"`; 13 int dims each `ge=0 le=5` since P21 — 0 means "no
- * contribution"; `hard_gates` an enum array).
+ * P26 (ADR 0037, docs/API_CONTRACT_P26.md §5): the score body is
+ * `{scores: {key: 0..5 | null}, hard_gates}`. `scores` holds only ACTIVE
+ * dimension keys (the served `dimension_scores` of the row); a key left out
+ * keeps its stored value and null clears a score. There is no fixed list of
+ * dimensions and no invented default: an unscored dimension stays null until
+ * someone scores it.
  *
- * Client validation is for responsiveness only — the backend is the authority
- * (`frontend-builder` SKILL). Kept deliberately close to the Pydantic
- * constraints so a bad value is caught before the request, not after.
- *
- * Only the 13 numeric dimensions go through `react-hook-form`. `hard_gates` is a
- * 3-checkbox set held in component state (its values are always valid enum
- * members by construction) and merged in at submit time — this also keeps the
- * form off the `watch()` API.
+ * Client validation is for responsiveness only; the backend (strict ints 0..5
+ * or null, 422 `UNKNOWN_DIMENSION_KEY` for a non-active key) is the authority.
  */
 
-const dimensionScore = z.coerce
-  .number({ invalid_type_error: 'Enter a whole number from 0 to 5' })
-  .int('Must be a whole number')
-  .min(0, 'Minimum score is 0')
-  .max(5, 'Maximum score is 5');
-
-export const scoreDimensionsSchema = z.object({
-  strategic_project: dimensionScore,
-  new_customer: dimensionScore,
-  new_options: dimensionScore,
-  regulatory_compliance: dimensionScore,
-  quality_improvements: dimensionScore,
-  rm_savings: dimensionScore,
-  total_rm_savings: dimensionScore,
-  gross_margins: dimensionScore,
-  profitability: dimensionScore,
-  annual_volume: dimensionScore,
-  three_year_volume: dimensionScore,
-  new_models: dimensionScore,
-  capex_investment: dimensionScore,
-});
+export const dimensionScoreValueSchema = z.union([z.number().int().min(0).max(5), z.null()]);
+export const scoresMapSchema = z.record(z.string().min(1).max(64), dimensionScoreValueSchema);
 
 const hardGate = z.enum([...HARD_GATE_REASONS] as [HardGateReason, ...HardGateReason[]]);
 export const hardGatesSchema = z.array(hardGate);
 
-/** Input type (pre-coercion) — what the RHF fields hold. */
-export type ScoreDimensionsInput = z.input<typeof scoreDimensionsSchema>;
-/** Output type (post-coercion) — validated numbers. */
-export type ScoreDimensionsValues = z.output<typeof scoreDimensionsSchema>;
+/** Every active dimension's served score of a row (`dimension_scores`), null = not scored. */
+export function scoresFromDimensionScores(scores: readonly DimensionScore[]): DimensionScoreMap {
+  return Object.fromEntries(scores.map((d) => [d.key, d.score]));
+}
 
-const DEFAULT_DIMENSION = 3;
-
-/** Build RHF default values from an existing row, or a neutral 3/5 for an
- *  unscored project (`has_score=false`). */
-export function dimensionDefaultsFromRow(row: PriorityMatrixRow): ScoreDimensionsInput {
-  return Object.fromEntries(
-    DIMENSION_FIELDS.map((field) => [field, row[field] ?? DEFAULT_DIMENSION]),
-  ) as unknown as ScoreDimensionsInput;
+/** The row's current live values as a full request (every active key) — a scenario edit's baseline. */
+export function liveRequestValuesFromRow(row: PriorityMatrixRow): PriorityScoreUpdateRequest {
+  return { scores: scoresFromDimensionScores(row.dimension_scores), hard_gates: [...row.hard_gates] };
 }
 
 /**
- * The row's current live values in full `PriorityScoreUpdateRequest` shape —
- * used as a scenario edit's "baseline" (P5-T01, `docs/PROJECT_AND_STACK.md`
- * §4's "diffed against last committed version"). Nulls (`has_score=false`,
- * an unscored project) default to the same neutral 3/5 used to pre-fill the
- * form (`dimensionDefaultsFromRow`) — the caller pairs this with
- * `row.has_score` (`useScenarioStore`'s `liveHasScore`) so a first-time score
- * for a previously-unscored project is never treated as a no-op merely
- * because every dimension happened to stay at the default.
+ * The keys of `next` whose value differs from `base` (a key missing from `base`
+ * counts as null). Only ACTIVE keys are sent: `activeKeys` filters out anything
+ * else (e.g. a dimension deactivated since a scenario edit was staged).
  */
-export function liveRequestValuesFromRow(row: PriorityMatrixRow): PriorityScoreUpdateRequest {
-  const dims = Object.fromEntries(
-    DIMENSION_FIELDS.map((field) => [field, row[field] ?? DEFAULT_DIMENSION]),
-  ) as Record<DimensionField, number>;
-  return { ...dims, hard_gates: [...row.hard_gates] };
+export function changedScores(
+  base: DimensionScoreMap,
+  next: DimensionScoreMap,
+  activeKeys?: ReadonlySet<DimensionKey>,
+): DimensionScoreMap {
+  const out: DimensionScoreMap = {};
+  for (const [key, value] of Object.entries(next)) {
+    if (activeKeys && !activeKeys.has(key)) continue;
+    if ((base[key] ?? null) !== value) out[key] = value;
+  }
+  return out;
 }
 
-export function toRequestBody(
-  dims: ScoreDimensionsValues,
-  hardGates: HardGateReason[],
-): PriorityScoreUpdateRequest {
+/** A validated PUT body: the score map (only what should change) and the full hard-gate list. */
+export function toRequestBody(scores: DimensionScoreMap, hardGates: readonly HardGateReason[]): PriorityScoreUpdateRequest {
+  return { scores: scoresMapSchema.parse(scores), hard_gates: hardGatesSchema.parse([...hardGates]) };
+}
+
+/** The row with a staged scenario request applied (scores and hard gates), for display only. */
+export function rowWithStaged(row: PriorityMatrixRow, next: PriorityScoreUpdateRequest): PriorityMatrixRow {
   return {
-    strategic_project: dims.strategic_project,
-    new_customer: dims.new_customer,
-    new_options: dims.new_options,
-    regulatory_compliance: dims.regulatory_compliance,
-    quality_improvements: dims.quality_improvements,
-    rm_savings: dims.rm_savings,
-    total_rm_savings: dims.total_rm_savings,
-    gross_margins: dims.gross_margins,
-    profitability: dims.profitability,
-    annual_volume: dims.annual_volume,
-    three_year_volume: dims.three_year_volume,
-    new_models: dims.new_models,
-    capex_investment: dims.capex_investment,
-    hard_gates: hardGatesSchema.parse(hardGates),
+    ...row,
+    hard_gates: [...next.hard_gates],
+    dimension_scores: row.dimension_scores.map((d) =>
+      Object.prototype.hasOwnProperty.call(next.scores, d.key) ? { ...d, score: next.scores[d.key] ?? null } : d,
+    ),
   };
 }

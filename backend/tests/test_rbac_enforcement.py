@@ -138,9 +138,7 @@ async def test_engineers_create_forbidden_for_portfolio_manager_read_only_role(d
     hub = await make_hub(db_session)
     try:
         async with await _as(db_session, RoleName.PORTFOLIO_MANAGER) as client:
-            resp = await client.post(
-                "/engineers", json={"name": "Eng", "hub_id": str(hub.id)}
-            )
+            resp = await client.post("/engineers", json={"name": "Eng", "hub_id": str(hub.id)})
         assert resp.status_code == 403
     finally:
         _teardown()
@@ -150,9 +148,7 @@ async def test_engineers_create_allowed_for_hub_planner(db_session):
     hub = await make_hub(db_session)
     try:
         async with await _as(db_session, RoleName.HUB_PLANNER) as client:
-            resp = await client.post(
-                "/engineers", json={"name": "Eng", "hub_id": str(hub.id)}
-            )
+            resp = await client.post("/engineers", json={"name": "Eng", "hub_id": str(hub.id)})
         assert resp.status_code == 201
     finally:
         _teardown()
@@ -206,22 +202,8 @@ async def test_priorities_put_forbidden_for_hub_planner_read_only_role(db_sessio
     """Hub Planner has READ, not WRITE, on the Matrix — unlike most other
     surfaces, where Hub Planner gets R/W.
     """
-    body = {
-        "strategic_project": 3,
-        "new_customer": 3,
-        "new_options": 3,
-        "regulatory_compliance": 3,
-        "quality_improvements": 3,
-        "rm_savings": 3,
-        "total_rm_savings": 3,
-        "gross_margins": 3,
-        "profitability": 3,
-        "annual_volume": 3,
-        "three_year_volume": 3,
-        "new_models": 3,
-        "capex_investment": 3,
-        "hard_gates": [],
-    }
+    # ADR 0037: scores keyed by rubric dimension key.
+    body = {"scores": {"strategic_project": 3, "new_customer": 3}, "hard_gates": []}
     try:
         async with await _as(db_session, RoleName.HUB_PLANNER) as client:
             resp = await client.put(f"/priorities/{uuid.uuid4()}", json=body)
@@ -235,22 +217,8 @@ async def test_priorities_put_allowed_for_portfolio_manager(db_session):
 
     hub = await make_hub(db_session)
     project = await make_project(db_session, hub)
-    body = {
-        "strategic_project": 3,
-        "new_customer": 3,
-        "new_options": 3,
-        "regulatory_compliance": 3,
-        "quality_improvements": 3,
-        "rm_savings": 3,
-        "total_rm_savings": 3,
-        "gross_margins": 3,
-        "profitability": 3,
-        "annual_volume": 3,
-        "three_year_volume": 3,
-        "new_models": 3,
-        "capex_investment": 3,
-        "hard_gates": [],
-    }
+    # ADR 0037: scores keyed by rubric dimension key.
+    body = {"scores": {"strategic_project": 3, "new_customer": 3}, "hard_gates": []}
     try:
         async with await _as(db_session, RoleName.PORTFOLIO_MANAGER) as client:
             resp = await client.put(f"/priorities/{project.id}", json=body)
@@ -357,9 +325,7 @@ async def test_gantt_freeze_allowed_for_hub_planner(db_session):
             # Unfreezing (frozen=False) needs no actual_start_week, so this
             # exercises the RBAC-allowed path without also depending on the
             # handler's own hard-gate validation logic.
-            resp = await client.post(
-                f"/gantt/projects/{project.id}/freeze", json={"frozen": False}
-            )
+            resp = await client.post(f"/gantt/projects/{project.id}/freeze", json={"frozen": False})
         assert resp.status_code == 200
         assert resp.json()["frozen"] is False
     finally:

@@ -233,27 +233,13 @@ LAB_REGION_AREA: Final[Mapping[str, str]] = {
 #: Areas in the order the Capacity surface serves them.
 AREA_ORDER: Final[tuple[str, ...]] = ("Europe", "India")
 
-# --- Prioritization scoring — 13 dimensions ---
-# (pillar, dimension_name, snake_case_field, weight)
-PRIORITIZATION_DIMENSIONS: Final[tuple[tuple[str, str, str, int], ...]] = (
-    ("Strategic Alignment", "Strategic Project", "strategic_project", 25),
-    ("Strategic Alignment", "New Customer", "new_customer", 25),
-    ("Strategic Alignment", "New Options", "new_options", 25),
-    ("Regulatory & Quality", "Regulatory Compliance", "regulatory_compliance", 25),
-    ("Regulatory & Quality", "Quality Improvements", "quality_improvements", 25),
-    ("Financial Return", "RM Savings", "rm_savings", 25),
-    ("Financial Return", "Total RM Savings", "total_rm_savings", 25),
-    ("Financial Return", "Gross Profitability", "gross_margins", 25),
-    # ROI keeps the DB/API key `profitability` and its positional slot (ADR 0029);
-    # only its label and pillar change.
-    ("Investment & Feasibility", "ROI", "profitability", 25),
-    ("Market & Volume", "Annual Volume", "annual_volume", 15),
-    ("Market & Volume", "3-Year Volume", "three_year_volume", 25),
-    ("Market & Volume", "New Models", "new_models", 15),
-    ("Investment & Feasibility", "CAPEX Investment (inverted)", "capex_investment", 15),
-)
-
-TOTAL_WEIGHT: Final[int] = sum(w for *_rest, w in PRIORITIZATION_DIMENSIONS)
+# --- Prioritization scoring ---
+# ADR 0037 (P26-T01): the dimensions, pillars and weights are NOT constants any
+# more. They live in the `scoring_dimensions` / `rubric_versions` tables
+# (editable by Admin / Super Admin); TOTAL_WEIGHT = Σ ACTIVE weights is derived
+# from them on every read (`services.priority_scoring.Rubric`). The initial
+# 13 are seed data in `seed/initial_scoring_rubric.py` and frozen in migration
+# `p26a_scoring_rubric_tables`. Only the score range and the bands stay here.
 
 # ADR 0033 (owner ruling 2026-10-21): a dimension may be scored 0 ("does not
 # apply"), which earns 0 points. Supersedes the 1..5 range of ADR 0029.
@@ -264,7 +250,7 @@ DIMENSION_SCORE_MAX: Final[int] = 5
 SEED_DIMENSION_SCORE_FLOOR: Final[int] = 1
 
 # Band thresholds on normalised_pct = round(Σ points / TOTAL_WEIGHT * 100),
-# points = score / 5 * weight (ADR 0029).
+# points = score / 5 * weight (ADR 0029; TOTAL_WEIGHT from the rubric, ADR 0037).
 PRIORITY_BAND_THRESHOLDS: Final[tuple[tuple[int, str], ...]] = (
     (70, "P1"),
     (55, "P2"),

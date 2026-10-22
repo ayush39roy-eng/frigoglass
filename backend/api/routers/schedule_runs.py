@@ -26,7 +26,7 @@ from. They are deliberately low-level "recompute now" primitives, not
 business actions:
 
 - Neither is "Apply Priorities" (`docs/PROJECT_AND_STACK.md` §2) — that
-  action additionally re-runs the 13-dimension band assignment across the
+  action additionally re-runs the rubric band assignment across the
   whole portfolio, writes a versioned `PriorityApplicationRun`, and would
   then trigger a recalculation as a downstream *consequence* — none of the
   priority-band part is built here (`api/routers/priorities.py`).

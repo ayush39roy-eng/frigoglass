@@ -7,6 +7,7 @@
 import type { HardGateReason, HubName, ProjectPriority, WorkflowStepKind, WorkflowStepStatus } from '@/types/enums';
 import type { Id } from '@/types/common';
 import type { ProjectRead } from '@/surfaces/registration/api/types';
+import type { DimensionScore } from '@/surfaces/matrix/api/types';
 
 /** I13: a pure function of the active run's stored outcome — never derived here. */
 export type WorkspaceHealth = 'on_track' | 'at_risk' | 'off_track' | 'left_out' | 'blocked' | 'unscheduled';
@@ -54,19 +55,12 @@ export interface WorkspaceStage {
 }
 
 export interface WorkspacePriorityScore {
-  strategic_project: number;
-  new_customer: number;
-  new_options: number;
-  regulatory_compliance: number;
-  quality_improvements: number;
-  rm_savings: number;
-  total_rm_savings: number;
-  gross_margins: number;
-  profitability: number;
-  annual_volume: number;
-  three_year_volume: number;
-  new_models: number;
-  capex_investment: number;
+  /** P26 (ADR 0037): one entry per ACTIVE rubric dimension, in display order (as on Matrix rows). */
+  dimension_scores: DimensionScore[];
+  /** P26: active dimensions with no score ("incomplete"). */
+  missing_dimension_keys: string[];
+  /** P26: the rubric version the score was computed with. */
+  rubric_version: number;
   hard_gates: HardGateReason[];
   /** P9-R03: nullable per `backend/schemas/workspace.py` — null until the
    *  score has been computed (e.g. not every dimension entered yet). */

@@ -308,9 +308,9 @@ async def export_matrix(
     db: AsyncSession = Depends(get_db),
     current_user: Principal = Depends(_read_matrix),
 ) -> StreamingResponse | ExportJobAccepted:
-    """The 13-dimension scoring grid, including the encrypted financial
-    columns for whichever rows/fields the caller's role and hub scope
-    already entitle them to see via `GET /priorities` (see module
+    """The scoring grid (one column per active rubric dimension, ADR 0037),
+    including the encrypted financial columns for whichever rows/fields the
+    caller's role and hub scope already entitle them to see via `GET /priorities` (see module
     docstring)."""
 
     if currency is not None:

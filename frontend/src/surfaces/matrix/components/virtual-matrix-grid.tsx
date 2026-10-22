@@ -11,7 +11,7 @@ import './virtual-matrix-grid.css';
  * Row-virtualized, horizontally-scrolling data grid for the Prioritization
  * Matrix (TanStack Virtual — CLAUDE.md: "Virtualize any list over 100 rows …
  * 236 projects × 14 steps is the baseline"). The Matrix is wide (identity +
- * info + 13 rubric columns in 5 pillar boxes + Score /100), so header and body share
+ * info + one column per active rubric dimension in pillar boxes + Score /100), so header and body share
  * a single `overflow-x:auto` scroll container with a sticky header row — the
  * page body never scrolls horizontally.
  *

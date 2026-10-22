@@ -4,7 +4,7 @@
  * browser (I9).
  */
 
-import type { DimensionField, DistributionBand, PriorityMatrixRow } from '../api/types';
+import type { DimensionKey, DimensionScore, DistributionBand, PriorityMatrixRow } from '../api/types';
 
 /** The row's served normalized score 0..100 (`normalized_pct`, API_CONTRACT_P21 §0). */
 export function rowNormalizedScore(row: PriorityMatrixRow): number | null {
@@ -24,23 +24,31 @@ export interface ServedDimensionCell {
   maxPoints: number | null;
 }
 
-/** One dimension's served score and points (`dimension_scores`; a pre-P21
- *  API without it falls back to the flat score and `dimension_points`). */
-export function rowDimension(
-  row: PriorityMatrixRow,
-  key: DimensionField,
-  fallbackWeight: number,
-): ServedDimensionCell {
-  // `dimension_scores` is required by the contract; tolerate an API that predates it.
-  const list = row.dimension_scores as PriorityMatrixRow['dimension_scores'] | undefined;
-  const served = list?.find((d) => d.key === key);
-  if (served) return { score: served.score, points: served.points, maxPoints: served.max_points };
-  const legacy = row.dimension_points?.[key];
-  return {
-    score: row[key],
-    points: legacy ? legacy.points : null,
-    maxPoints: legacy ? fallbackWeight : null,
-  };
+/** One dimension's served score and points (`dimension_scores`, P21 §3 / P26).
+ *  A key the row does not carry (e.g. an older row) reads as not scored. */
+export function rowDimension(row: { dimension_scores: readonly DimensionScore[] }, key: DimensionKey): ServedDimensionCell {
+  const served = row.dimension_scores.find((d) => d.key === key);
+  if (!served) return { score: null, points: null, maxPoints: null };
+  return { score: served.score, points: served.points, maxPoints: served.max_points };
+}
+
+/**
+ * P26 (ADR 0037): the labels of the active dimensions a scored project has no
+ * score on (`missing_dimension_keys`, served), in display order. Empty for an
+ * unscored or complete row. Labels come from the row's own `dimension_scores`;
+ * a key it does not describe is shown as the key itself.
+ */
+export function rowMissingLabels(row: {
+  has_score: boolean;
+  missing_dimension_keys?: readonly DimensionKey[] | undefined;
+  dimension_scores: readonly DimensionScore[];
+}): string[] {
+  const missing = row.missing_dimension_keys ?? [];
+  if (!row.has_score || missing.length === 0) return [];
+  const labelOf = new Map(row.dimension_scores.map((d) => [d.key, d.label]));
+  const ordered = row.dimension_scores.filter((d) => missing.includes(d.key)).map((d) => d.label);
+  const unknown = missing.filter((k) => !labelOf.has(k));
+  return [...ordered, ...unknown];
 }
 
 /** "91/100" — every score reads out of 100 (owner request, P21). */

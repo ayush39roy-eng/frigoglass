@@ -131,11 +131,14 @@ from models.enums import (  # noqa: E402
     WorkflowStepKind,
     WorkflowStepStatus,
 )
-from models.priority import DIMENSION_FIELD_NAMES  # noqa: E402
 from models.project import category_allowed_for_hub, workflow_id_for_hub  # noqa: E402
 from models.vip import vip_item_projects  # noqa: E402
 from scheduling.greedy import run_greedy_sgs  # noqa: E402
 from seed import client_2026 as c26  # noqa: E402
+from seed.initial_scoring_rubric import (  # noqa: E402
+    ensure_scoring_rubric,
+    seed_priority_score,
+)
 from seed.seed_vip_board import seed_vip_board  # noqa: E402
 from services.schedule_persistence import (  # noqa: E402
     build_schedule_input_from_db,
@@ -511,24 +514,6 @@ async def seed_chambers(
     return chambers_by_code
 
 
-def _priority_score_fields(dims: list[int]) -> tuple[float, int, str]:
-    """weighted_score / normalized_pct / suggested_band, per the formula in
-    docs/DOMAIN_RULES.md "Prioritization scoring", using
-    `domain_constants.PRIORITIZATION_DIMENSIONS`'s weights (same 13-dimension
-    order the prototype's `dims` arrays are already in).
-    """
-    # ADR 0029: points = score / 5 * weight; pct = round(sum / TOTAL_WEIGHT * 100).
-    weighted_score = sum(
-        score * weight / dc.DIMENSION_SCORE_MAX
-        for score, (*_rest, weight) in zip(dims, dc.PRIORITIZATION_DIMENSIONS, strict=True)
-    )
-    normalized_pct = round(weighted_score / dc.TOTAL_WEIGHT * 100)
-    suggested_band = next(
-        label for threshold, label in dc.PRIORITY_BAND_THRESHOLDS if normalized_pct >= threshold
-    )
-    return weighted_score, normalized_pct, suggested_band
-
-
 def seed_project_status(raw: str) -> ProjectStatus:
     """A seeded project's status. ADR 0034 (P23-T02): Draft is retired from
     registration, so no seed may create a Draft project; a data file that
@@ -571,6 +556,9 @@ async def seed_projects(
     for workflow_id, step_id, _code, _name, _kind, seq, _preds in dc.WORKFLOW_STEP_TEMPLATE_SEED:
         templates_by_workflow.setdefault(workflow_id, []).append((step_id, seq))
     lead_times = lead_time_lookup(dc.LEAD_TIME_SEED)
+    # ADR 0037: scores are computed under the CURRENT rubric (version 1 = the
+    # 13 dimensions unless an admin has changed it; the reseed keeps it).
+    rubric = await ensure_scoring_rubric(session)
 
     count = 0
     for p in data["projects"]:
@@ -617,15 +605,9 @@ async def seed_projects(
                 )
             )
 
-        weighted_score, normalized_pct, suggested_band = _priority_score_fields(p["dims"])
         session.add(
-            PriorityScore(
-                project_id=project.id,
-                **dict(zip(DIMENSION_FIELD_NAMES, p["dims"], strict=True)),
-                hard_gates=[HardGateReason(g) for g in p["gates"]],
-                weighted_score=weighted_score,
-                normalized_pct=normalized_pct,
-                suggested_band=ProjectPriority(suggested_band),
+            seed_priority_score(
+                rubric, project.id, p["dims"], [HardGateReason(g) for g in p["gates"]]
             )
         )
         count += 1
@@ -677,6 +659,8 @@ async def seed_client_2026(
     projects: list[dict[str, Any]] = data["projects"]
     lead_times = lead_time_lookup(dc.LEAD_TIME_SEED)
     current_week = dc.CURRENT_WEEK
+    # ADR 0037: scores are computed under the CURRENT rubric.
+    rubric = await ensure_scoring_rubric(session)
 
     project_ids = [c26.project_uuid(p["external_code"]) for p in projects]
     order = sorted(
@@ -773,17 +757,7 @@ async def seed_client_2026(
         # SYNTHETIC rubric scores (ADR 0035, c26.SYNTHETIC_DIMENSION_SCORES):
         # no client source holds them; kept so the Matrix is not empty.
         dims = c26.derive_dims(p["external_code"], p["priority"], p["marketing_priority"])
-        weighted_score, normalized_pct, suggested_band = _priority_score_fields(dims)
-        session.add(
-            PriorityScore(
-                project_id=project.id,
-                **dict(zip(DIMENSION_FIELD_NAMES, dims, strict=True)),
-                hard_gates=[],
-                weighted_score=weighted_score,
-                normalized_pct=normalized_pct,
-                suggested_band=ProjectPriority(suggested_band),
-            )
-        )
+        session.add(seed_priority_score(rubric, project.id, dims))
     await session.flush()
 
     # --- Summary run: one in-memory greedy run (nothing persisted) ---------

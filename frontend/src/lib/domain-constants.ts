@@ -46,11 +46,12 @@ export const CARRY_OVER_YEAR = PLAN_YEAR - 1;
 
 /**
  * Prioritization scoring anchors (P9 contract §8; deck slide 4 "Scoring Logic").
- * STATIC display copy: what a 1 and a 5 mean on each of the 13 dimensions, so a
- * scorer reads the rubric where they score. Weights are in
- * `surfaces/matrix/api/types.ts::DIMENSIONS`; the weighted score, normalised
- * percentage and band all come from the API (Invariant I9) — nothing here is
- * used in a calculation.
+ * STATIC display copy: what a 1 and a 5 mean, for the dimensions the deck
+ * describes, looked up by the served dimension key (`scoringAnchor`). It is
+ * NOT the rubric: since P26 (ADR 0037) the dimensions, labels, pillars and
+ * weights are served by `GET /scoring-rubric` and an Admin may add new ones,
+ * which simply have no anchor copy. Nothing here is used in a calculation, and
+ * no surface derives its dimension list from these keys.
  */
 export interface ScoringAnchor {
   /** What a score of 1 means. */
@@ -59,7 +60,7 @@ export interface ScoringAnchor {
   high: string;
 }
 
-export const SCORING_ANCHORS = {
+const SCORING_ANCHORS: Readonly<Record<string, ScoringAnchor>> = {
   strategic_project: { low: 'Non-strategic', high: 'Core roadmap' },
   new_customer: { low: 'Existing minor', high: 'Major strategic customer' },
   new_options: { low: 'Minor option', high: 'Breakthrough feature' },
@@ -74,15 +75,20 @@ export const SCORING_ANCHORS = {
   new_models: { low: 'Single model', high: 'Global platform' },
   // Inverted: the SMALLER the investment, the HIGHER the score.
   capex_investment: { low: '> €500K', high: '< €10K' },
-} as const satisfies Record<string, ScoringAnchor>;
+};
 
-export type ScoringAnchorField = keyof typeof SCORING_ANCHORS;
+/** The deck's 1 / 5 anchor copy for a served dimension key; undefined for a
+ *  dimension the deck does not describe (e.g. one an Admin added). */
+export function scoringAnchor(key: string): ScoringAnchor | undefined {
+  return Object.prototype.hasOwnProperty.call(SCORING_ANCHORS, key) ? SCORING_ANCHORS[key] : undefined;
+}
 
-/** The 1..5 scale every dimension is scored on. */
-export const SCORING_SCALE: readonly { score: 1 | 2 | 3 | 4 | 5; label: string }[] = [
+/** The 0..5 scale every dimension is scored on (0 since ADR 0033). */
+export const SCORING_SCALE: readonly { score: 0 | 1 | 2 | 3 | 4 | 5; label: string }[] = [
   { score: 5, label: 'Exceptional / Must-do' },
   { score: 4, label: 'Strong case' },
   { score: 3, label: 'Moderate / Average' },
   { score: 2, label: 'Weak case' },
-  { score: 1, label: 'Negligible / N/A' },
+  { score: 1, label: 'Negligible' },
+  { score: 0, label: 'Does not apply (no points)' },
 ] as const;

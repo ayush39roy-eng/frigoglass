@@ -43,27 +43,29 @@ from tests.auth_helpers import (
 )
 from tests.factories import make_hub, make_priority_score, make_project, make_user
 
-_DIMS = dict(
-    strategic_project=4,
-    new_customer=4,
-    new_options=4,
-    regulatory_compliance=4,
-    quality_improvements=4,
-    rm_savings=4,
-    total_rm_savings=4,
-    gross_margins=4,
-    profitability=4,
-    annual_volume=4,
-    three_year_volume=4,
-    new_models=4,
-    capex_investment=4,
+#: ADR 0037: a change carries `scores` keyed by rubric dimension key.
+_DIMS = dict.fromkeys(
+    (
+        "strategic_project",
+        "new_customer",
+        "new_options",
+        "regulatory_compliance",
+        "quality_improvements",
+        "rm_savings",
+        "total_rm_savings",
+        "gross_margins",
+        "profitability",
+        "annual_volume",
+        "three_year_volume",
+        "new_models",
+        "capex_investment",
+    ),
+    4,
 )
 
 
 def _change_payload(project_id: uuid.UUID, **overrides) -> dict:
-    payload = {"project_id": str(project_id), **_DIMS, "hard_gates": []}
-    payload.update(overrides)
-    return payload
+    return {"project_id": str(project_id), "scores": {**_DIMS, **overrides}, "hard_gates": []}
 
 
 def _client(db_session) -> AsyncClient:
@@ -80,14 +82,10 @@ def _teardown():
 
 
 async def _as(db_session, *roles: RoleName, hub_scope_all: bool = True, hub_ids=()):
-    user = await make_user(
-        db_session, *roles, hub_scope_all=hub_scope_all, hub_ids=list(hub_ids)
-    )
+    user = await make_user(db_session, *roles, hub_scope_all=hub_scope_all, hub_ids=list(hub_ids))
     client = _client(db_session)
     override_current_principal(
-        make_principal(
-            *roles, user_id=user.id, hub_scope_all=hub_scope_all, hub_ids=hub_ids
-        )
+        make_principal(*roles, user_id=user.id, hub_scope_all=hub_scope_all, hub_ids=hub_ids)
     )
     return client
 
@@ -135,7 +133,7 @@ async def test_apply_creates_snapshot_for_new_priority_score(db_session):
         change = changes[0]
         assert change.entity_type.value == "priority_score"
         assert change.before_state is None  # this PriorityScore did not exist before
-        assert change.after_state["strategic_project"] == 4
+        assert change.after_state["scores"]["strategic_project"] == 4
         assert change.project_id == project.id
         assert change.hub_id == hub.id
 
@@ -174,8 +172,8 @@ async def test_apply_snapshots_before_state_on_update(db_session):
             )
         ).scalar_one()
         assert change.before_state is not None
-        assert change.before_state["strategic_project"] == 2
-        assert change.after_state["strategic_project"] == 5
+        assert change.before_state["scores"]["strategic_project"] == 2
+        assert change.after_state["scores"]["strategic_project"] == 5
     finally:
         _teardown()
 
@@ -286,9 +284,7 @@ async def test_apply_all_or_nothing_on_invalid_item(db_session):
             )
         assert resp.status_code == 404
 
-        run_count = (
-            await db_session.execute(select(ScenarioApplyRun))
-        ).scalars().all()
+        run_count = (await db_session.execute(select(ScenarioApplyRun))).scalars().all()
         assert run_count == []
         score = (
             await db_session.execute(
@@ -334,18 +330,18 @@ async def test_apply_service_atomic_on_mid_batch_failure(db_session, monkeypatch
     p2 = await make_project(db_session, hub, name="Atomic P2")
 
     call_count = {"n": 0}
-    original = scenario_apply_module.compute_priority_score
+    original = scenario_apply_module.write_project_scores
 
-    def _boom(dims: list[int]) -> tuple[float, int, str]:
+    def _boom(rubric, score, updates):
         call_count["n"] += 1
         if call_count["n"] == 2:
             raise RuntimeError("simulated mid-apply failure")
-        return original(dims)
+        return original(rubric, score, updates)
 
     # String-path form (not `setattr(scenario_apply_module, ...)`) so mypy
     # doesn't need `services.scenario_apply` to explicitly re-export
-    # `compute_priority_score` under `--strict`'s `no_implicit_reexport`.
-    monkeypatch.setattr("services.scenario_apply.compute_priority_score", _boom)
+    # `write_project_scores` under `--strict`'s `no_implicit_reexport`.
+    monkeypatch.setattr("services.scenario_apply.write_project_scores", _boom)
 
     # A real `User` row (not just a fake `Principal`) — `ScenarioApplyRun.
     # applied_by_user_id` is a real FK, and this test flushes far enough to
@@ -356,8 +352,8 @@ async def test_apply_service_atomic_on_mid_batch_failure(db_session, monkeypatch
     from schemas.scenario import ScenarioPriorityScoreChange
 
     changes = [
-        ScenarioPriorityScoreChange(project_id=p1.id, **_DIMS, hard_gates=[]),
-        ScenarioPriorityScoreChange(project_id=p2.id, **_DIMS, hard_gates=[]),
+        ScenarioPriorityScoreChange(project_id=p1.id, scores=_DIMS, hard_gates=[]),
+        ScenarioPriorityScoreChange(project_id=p2.id, scores=_DIMS, hard_gates=[]),
     ]
 
     with pytest.raises(RuntimeError, match="simulated mid-apply failure"):
@@ -377,9 +373,7 @@ async def test_apply_service_atomic_on_mid_batch_failure(db_session, monkeypatch
     # unhandled exception) must discard ALL of it, including item 1.
     await db_session.rollback()
 
-    assert (
-        await db_session.execute(select(ScenarioApplyRun))
-    ).scalars().all() == []
+    assert (await db_session.execute(select(ScenarioApplyRun))).scalars().all() == []
     assert (
         await db_session.execute(select(PriorityScore).where(PriorityScore.project_id == p1.id))
     ).scalar_one_or_none() is None
@@ -394,15 +388,13 @@ async def test_apply_service_rejects_empty_and_duplicate_without_touching_db(db_
     principal = make_principal(RoleName.PORTFOLIO_MANAGER, hub_scope_all=True)
 
     with pytest.raises(ScenarioApplyValidationError):
-        await apply_priority_score_changes(
-            db_session, principal=principal, notes=None, changes=[]
-        )
+        await apply_priority_score_changes(db_session, principal=principal, notes=None, changes=[])
 
     from schemas.scenario import ScenarioPriorityScoreChange
 
     dup_changes = [
-        ScenarioPriorityScoreChange(project_id=project.id, **_DIMS, hard_gates=[]),
-        ScenarioPriorityScoreChange(project_id=project.id, **_DIMS, hard_gates=[]),
+        ScenarioPriorityScoreChange(project_id=project.id, scores=_DIMS, hard_gates=[]),
+        ScenarioPriorityScoreChange(project_id=project.id, scores=_DIMS, hard_gates=[]),
     ]
     with pytest.raises(ScenarioApplyValidationError):
         await apply_priority_score_changes(
@@ -419,7 +411,9 @@ async def test_apply_service_not_found_for_unknown_project(db_session):
             db_session,
             principal=principal,
             notes=None,
-            changes=[ScenarioPriorityScoreChange(project_id=uuid.uuid4(), **_DIMS, hard_gates=[])],
+            changes=[
+                ScenarioPriorityScoreChange(project_id=uuid.uuid4(), scores=_DIMS, hard_gates=[])
+            ],
         )
 
 
@@ -512,7 +506,7 @@ async def test_versions_list_and_detail_roundtrip(db_session):
             detail = detail_resp.json()
             assert detail["version"] == version
             assert len(detail["changes"]) == 1
-            assert detail["changes"][0]["after_state"]["strategic_project"] == 4
+            assert detail["changes"][0]["after_state"]["scores"]["strategic_project"] == 4
     finally:
         _teardown()
 

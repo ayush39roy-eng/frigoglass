@@ -52,7 +52,7 @@ import { PortfolioSummaryPanel } from './components/portfolio-summary-panel';
 import { ScenarioModeToggle, ScenarioPendingPanel } from './components/scenario-panel';
 import { FetchedScoringModelProvider, ScoringTotalLine } from './scoring-model';
 import { ScoringRubricPanel } from './components/scoring-rubric-panel';
-import { liveRequestValuesFromRow } from './components/score-edit-schema';
+import { liveRequestValuesFromRow, rowWithStaged } from './components/score-edit-schema';
 import { ScoreEditDialog } from './components/score-edit-dialog';
 import { VersionHistoryDialog } from './components/version-history-panel';
 import {
@@ -274,7 +274,7 @@ function MatrixSurface(): React.JSX.Element {
   const title = MATRIX_SURFACE?.title ?? 'Prioritization Matrix';
   const description =
     MATRIX_SURFACE?.summary ??
-    '13 scoring dimensions per project, weighted score and band, with a server-driven currency toggle.';
+    'Scoring dimensions per project (the editable rubric), weighted score and band, with a server-driven currency toggle.';
 
   const denied = authKind([matrixQuery.error, summaryQuery.error]);
   const setSearch = React.useCallback((next: string) => setViewField('q', next), [setViewField]);
@@ -338,20 +338,24 @@ function MatrixSurface(): React.JSX.Element {
   const dialogRow = React.useMemo<PriorityMatrixRow | null>(() => {
     if (!editRow) return null;
     const staged = scenarioActive ? scenarioPending[editRow.project_id] : undefined;
-    return staged ? { ...editRow, ...staged.next } : editRow;
+    return staged ? rowWithStaged(editRow, staged.next) : editRow;
   }, [editRow, scenarioActive, scenarioPending]);
 
   const handleSubmit = React.useCallback(
     async (projectId: string, body: PriorityScoreUpdateRequest) => {
       if (scenarioActive) {
         if (!editRow) return;
+        // The dialog sends only what it changed; the staged `next` is the full
+        // picture (live values, then anything staged before, then this edit).
+        const live = liveRequestValuesFromRow(editRow);
+        const prior = scenarioPending[projectId]?.next.scores ?? live.scores;
         stageScenarioEdit({
           projectId,
           projectName: editRow.project_name,
           hub: editRow.hub,
-          liveValues: liveRequestValuesFromRow(editRow),
+          liveValues: live,
           liveHasScore: editRow.has_score,
-          next: body,
+          next: { scores: { ...prior, ...body.scores }, hard_gates: body.hard_gates },
         });
         return;
       }
@@ -365,7 +369,7 @@ function MatrixSurface(): React.JSX.Element {
         throw err;
       }
     },
-    [scenarioActive, editRow, stageScenarioEdit, updateScore],
+    [scenarioActive, editRow, scenarioPending, stageScenarioEdit, updateScore],
   );
 
   return (

@@ -126,7 +126,7 @@ export const SURFACES: readonly SurfaceNavItem[] = [
     icon: LayoutGrid,
     task: 'P4-T04',
     summary:
-      '236 projects x 13 scoring dimensions, weighted score and band per project, with a server-driven currency toggle (EUR / USD / INR).',
+      'Every project scored on the editable rubric, weighted score and band per project, with a server-driven currency toggle.',
     group: 'Plan',
     density: 'working',
   },

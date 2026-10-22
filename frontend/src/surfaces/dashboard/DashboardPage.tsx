@@ -25,7 +25,6 @@ import {
 } from './hooks/use-dashboard';
 import { AccessNotice } from './components/access-notice';
 import { HubTypeSection } from './components/hub-type-section';
-import { PipelinePanel } from './components/pipeline-panel';
 import { ScheduledCountInfo } from './components/scheduled-count-info';
 import { PipelineRow } from './components/pipeline-row';
 import { ProjectBreakdown } from './components/project-breakdown';
@@ -302,7 +301,28 @@ export default function DashboardPage(): React.JSX.Element {
               </SectionBoundary>
             </StaggerSection>
 
-            {/* Row 1 — the four outcome KPI cards, full width. */}
+            {/* Completion profile + delivery rate, straight after Status overview
+                (owner ask 2026-10-22). Profile and gauge read the SAME
+                completing-within-year payload (one fetch, several reads), so they
+                render only once it has resolved; the KPI boundary below shows its
+                skeleton/error meanwhile. */}
+            {withinYear.data?.has_active_schedule_run ? (
+              <StaggerSection>
+                <div className="grid gap-gutter xl:grid-cols-12">
+                  <div className="min-w-0 xl:col-span-8 [&>*]:h-full">
+                    <React.Suspense fallback={<PanelSkeleton height="h-[22rem]" />}>
+                      <CompletionProfileCard data={withinYear.data} />
+                    </React.Suspense>
+                  </div>
+                  <div className="min-w-0 xl:col-span-4 [&>*]:h-full">
+                    <DeliveryGaugeCard data={withinYear.data} />
+                  </div>
+                </div>
+              </StaggerSection>
+            ) : null}
+
+            {/* The outcome KPI cards, compact: their figures repeat the profile
+                and gauge above (owner ask 2026-10-22). */}
             <StaggerSection>
               <SectionBoundary
                 query={withinYear}
@@ -316,6 +336,7 @@ export default function DashboardPage(): React.JSX.Element {
                     pipelineTotal={pipelineTotals.data?.total_count ?? null}
                     cancelled={cancelledCount}
                     onHold={onHoldCount}
+                    compact
                   />
                 )}
               </SectionBoundary>
@@ -334,42 +355,15 @@ export default function DashboardPage(): React.JSX.Element {
               />
             </StaggerSection>
 
-            {/* Row 2 — completion curve beside the two feature cards. Profile and
-                gauge read the SAME completing-within-year payload (one fetch,
-                several reads), so they render only once it has resolved; the
-                boundary above shows its skeleton/error meanwhile. */}
-            {withinYear.data?.has_active_schedule_run ? (
+            {/* P11 (ADR 0016): compact Europe / India booked %, only for a session
+                that can read Capacity (no fetch otherwise). The completion outcome
+                donut that sat beside it was removed (owner ask 2026-10-22: the
+                same split is in the profile, the gauge and the KPI cards). */}
+            {canReadCapacity ? (
               <StaggerSection>
-                <div className="grid gap-gutter xl:grid-cols-12">
-                  <div className="min-w-0 xl:col-span-8 [&>*]:h-full">
-                    <React.Suspense fallback={<PanelSkeleton height="h-[22rem]" />}>
-                      <CompletionProfileCard data={withinYear.data} />
-                    </React.Suspense>
-                  </div>
-                  <div className="min-w-0 xl:col-span-4 [&>*]:h-full">
-                    <DeliveryGaugeCard data={withinYear.data} />
-                  </div>
-                </div>
+                <CapacityBookedCard />
               </StaggerSection>
             ) : null}
-
-            {/* Row 3 - the completion outcome donut now uses the space the
-                removed outcomes table / planning clock left: beside the capacity
-                card when the session can read Capacity, full width otherwise. */}
-            <StaggerSection>
-              <div className="grid gap-gutter xl:grid-cols-12">
-                <div className={canReadCapacity ? 'min-w-0 xl:col-span-7 [&>*]:h-full' : 'min-w-0 xl:col-span-12'}>
-                  <PipelinePanel withinYear={withinYear.data ?? null} />
-                </div>
-                {/* P11 (ADR 0016): compact Europe / India booked %, only for a
-                    session that can read Capacity (no fetch otherwise). */}
-                {canReadCapacity ? (
-                  <div className="min-w-0 xl:col-span-5 [&>*]:h-full">
-                    <CapacityBookedCard />
-                  </div>
-                ) : null}
-              </div>
-            </StaggerSection>
 
             {withinYear.data?.has_active_schedule_run && withinYear.data.rows.length > 0 ? (
               <StaggerSection>

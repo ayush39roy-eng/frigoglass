@@ -130,6 +130,8 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 
 import domain_constants as dc
+from seed.initial_scoring_rubric import INITIAL_KEYS, initial_rubric
+from services.priority_scoring import compute_score
 
 #: ADR 0035: every seeded rubric score is synthetic (module docstring).
 SYNTHETIC_DIMENSION_SCORES: bool = True
@@ -359,23 +361,24 @@ def _target_pct(code: str, priority: str, marketing_priority: int | None) -> int
     return 25 + _digest(code, "p4") % 12
 
 
-def band_for(dims: Sequence[int]) -> tuple[float, int, str]:
-    """(weighted_score, normalised_pct, band), DOMAIN_RULES "Prioritization scoring"."""
+_INITIAL_RUBRIC = initial_rubric()
 
-    # ADR 0029: points = score / 5 * weight; pct = round(sum / TOTAL_WEIGHT * 100).
-    weighted = sum(
-        s * w / dc.DIMENSION_SCORE_MAX
-        for s, (*_r, w) in zip(dims, dc.PRIORITIZATION_DIMENSIONS, strict=True)
-    )
-    pct = round(weighted / dc.TOTAL_WEIGHT * 100)
-    band = next(label for threshold, label in dc.PRIORITY_BAND_THRESHOLDS if pct >= threshold)
-    return weighted, pct, band
+
+def band_for(dims: Sequence[int]) -> tuple[float, int, str]:
+    """(weighted_score, normalised_pct, band) of positional `dims` under the
+    INITIAL rubric (ADR 0029 weights, ADR 0037 `seed.initial_scoring_rubric`),
+    through the one scoring implementation (`services.priority_scoring`)."""
+
+    result = compute_score(_INITIAL_RUBRIC, dict(zip(INITIAL_KEYS, dims, strict=True)))
+    assert result.weighted_score is not None and result.normalized_pct is not None
+    assert result.band is not None
+    return float(result.weighted_score), result.normalized_pct, result.band
 
 
 def derive_dims(code: str, priority: str, marketing_priority: int | None) -> list[int]:
     """13 dimension scores whose band equals `priority` (module docstring)."""
 
-    n = len(dc.PRIORITIZATION_DIMENSIONS)
+    n = len(INITIAL_KEYS)
     target = _target_pct(code, priority, marketing_priority)
     order = sorted(range(n), key=lambda i: _digest(code, f"dim{i}"))
     dims = [dc.SEED_DIMENSION_SCORE_FLOOR] * n

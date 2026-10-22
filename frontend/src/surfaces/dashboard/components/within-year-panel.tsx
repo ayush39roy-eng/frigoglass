@@ -41,7 +41,9 @@ export function WithinYearKpis({
   pipelineTotal = null,
   cancelled = null,
   onHold = null,
-}: WithinYearKpisProps & ScheduledCountFigures): React.JSX.Element {
+  compact = false,
+}: WithinYearKpisProps & ScheduledCountFigures & { compact?: boolean }): React.JSX.Element {
+  const size = compact ? 'compact' : 'default';
   const totalCount =
     data.within_year_count +
     data.spillover_count +
@@ -53,7 +55,7 @@ export function WithinYearKpis({
       <div className="flex flex-wrap items-end justify-between gap-s3">
         <div>
           <div className="flex flex-wrap items-center gap-s2">
-            <h2 className="font-display text-h1 font-extrabold tracking-tight text-text">
+            <h2 className={compact ? 'font-display text-h2 font-extrabold tracking-tight text-text' : 'font-display text-h1 font-extrabold tracking-tight text-text'}>
               Completing within the year
             </h2>
             {data.has_active_schedule_run ? (
@@ -97,6 +99,7 @@ export function WithinYearKpis({
           {/* The one blue tile. "Within year" earns it: it is the number the whole
               application exists to produce. */}
           <StatCard
+            size={size}
             variant="feature"
             label="Within year"
             value={data.within_year_count}
@@ -109,6 +112,7 @@ export function WithinYearKpis({
               left-out count (no slot found yet), summed for display; never framed
               as "beyond the 78-week horizon". */}
           <StatCard
+            size={size}
             label="Spillover (past W52)"
             value={spilloverPastYearCount(data)}
             tone="warning"
@@ -127,6 +131,7 @@ export function WithinYearKpis({
               project STATUS On Hold (paused, not in the plan, ADR 0017 §3); the
               muted line quotes the served status count verbatim. */}
           <StatCard
+            size={size}
             variant="ink"
             label="On Hold at a stage"
             value={data.blocked_count}

@@ -317,8 +317,27 @@ slip_weeks           = projected_end_week − expected_end_week               (m
 *(Amended 2026-10-21, ADR 0033.)* Each dimension score is an integer **0..5** (was 1..5). A score of
 0 ("does not apply") earns 0 points. The formula, the total and the bands below are unchanged.
 
+*(Amended 2026-10-22, ADR 0037: editable rubric.)* The table above is the **initial** rubric
+(version 1), not a constant.
+- **Where it lives.** Dimensions (stable `key`, `label`, `pillar`, `weight` 1..100, `inverted`,
+  `active`, `display_order`) are in `scoring_dimensions`. Per-project scores are in
+  `priority_dimension_scores` (0..5 or null).
+- **Editing.** Admin and Super Admin edit the rubric in the Matrix: weights, labels, pillars and
+  order; they can add dimensions (and new pillars) and deactivate or reactivate dimensions. A
+  dimension is never deleted.
+- **Versions.** Every change is a new rubric version (snapshot, who, when, reason), and every
+  stored score is recomputed in the same transaction.
+- **TOTAL_WEIGHT** = Σ weights of the **active** dimensions.
+- **Missing scores.** A missing (null) score on an active dimension counts 0 points and makes the
+  project's score "incomplete" (`missing_dimension_keys`). A project with no score on any active
+  dimension is Unscored.
+- **Rounding** is exact, half up. Under the initial rubric it is identical to the old `round()`.
+- **Schedule.** A rubric change never changes the schedule: the scheduler does not read scores, and
+  nothing is marked stale.
+
 ```
-TOTAL_WEIGHT = Σ weights = 295            (derived, never hard-coded; the client said "300", see OQ #41)
+TOTAL_WEIGHT = Σ weights = 295            (derived, never hard-coded; the client said "300", see OQ #41;
+                                          ADR 0037: Σ ACTIVE weights of the current rubric version)
 score(d)     ∈ {0, 1, 2, 3, 4, 5}         (ADR 0033)
 points(d)    = score(d) / 5 × weight(d)   a dimension contributes its weight at score 5, weight/5 at
                                           score 1 and 0 at score 0 (not score × weight)

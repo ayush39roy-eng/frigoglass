@@ -22,9 +22,10 @@ from typing import Any
 
 from models.chamber import Chamber
 from models.engineer import Engineer
-from models.priority import DIMENSION_FIELD_NAMES, PriorityScore
+from models.priority import PriorityScore
 from models.project import Project
 from models.types import FINANCIAL_FIELD_NAMES
+from services.priority_scoring import Rubric
 
 #: Sanity check: every name in FINANCIAL_FIELD_NAMES must be one this module
 #: knows to redact. If a new encrypted field is ever added to `Project`
@@ -109,13 +110,26 @@ def chamber_audit_state(chamber: Chamber) -> dict[str, Any]:
     }
 
 
-def priority_score_audit_state(score: PriorityScore) -> dict[str, Any]:
+def priority_score_audit_state(score: PriorityScore, rubric: Rubric) -> dict[str, Any]:
+    """ADR 0037: `scores` holds every stored dimension score by key (active
+    and inactive dimensions alike); `rubric_version` is the version the
+    cached fields were computed with. Before P26 the 13 scores were flat keys
+    of this dict; old audit rows keep that shape."""
+
+    key_of = {d.id: d.key for d in rubric.dimensions}
     return {
         "id": str(score.id),
         "project_id": _uuid_str(score.project_id),
-        **{name: getattr(score, name) for name in DIMENSION_FIELD_NAMES},
+        "scores": dict(
+            sorted(
+                (key_of[s.dimension_id], s.score)
+                for s in score.dimension_scores
+                if s.dimension_id in key_of
+            )
+        ),
         "hard_gates": [g.value for g in (score.hard_gates or [])],
         "weighted_score": float(score.weighted_score) if score.weighted_score is not None else None,
         "normalized_pct": score.normalized_pct,
         "suggested_band": score.suggested_band.value if score.suggested_band else None,
+        "rubric_version": score.rubric_version,
     }

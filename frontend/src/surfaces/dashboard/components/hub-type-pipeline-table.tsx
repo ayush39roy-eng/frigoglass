@@ -116,7 +116,7 @@ export function HubTypePipelineTable({
             <Table2 className="size-5" aria-hidden="true" />
           </span>
           <div>
-            <h3 className="font-display text-h2 font-bold tracking-tight text-text">
+            <h3 className="font-display text-lg font-bold leading-tight tracking-tight text-text">
               Project pipeline summary: Hub × Type
             </h3>
             <p className="text-xs font-medium text-text-subtle">
@@ -140,26 +140,26 @@ export function HubTypePipelineTable({
         <p className="py-s6 text-center text-sm text-text-muted">No projects in the pipeline for your hub scope.</p>
       ) : (
         <div
-          className="overflow-x-auto rounded-xl border-[1.5px] border-dash-hairline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className="flex-1 overflow-x-auto rounded-xl border-[1.5px] border-dash-hairline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           tabIndex={0}
           role="region"
           aria-label="Project pipeline by hub and project type"
         >
-          <table className="w-full border-collapse text-sm">
+          <table className="h-full w-full border-collapse text-xs">
             <caption className="sr-only">Project pipeline by hub and project type</caption>
             <thead>
               <tr className="bg-ink text-ink-fg">
-                <th scope="col" className="sticky left-0 z-10 bg-ink px-s3 py-s2 text-left text-2xs font-bold uppercase tracking-wider">
+                <th scope="col" className="sticky left-0 z-10 bg-ink px-s2 py-s2 text-left text-2xs font-bold uppercase tracking-wider">
                   Hub
                 </th>
                 {pivot.types.map((t) => (
-                  <th key={t} scope="col" className="px-s2 py-s2 text-center text-2xs font-bold uppercase tracking-wider">
+                  <th key={t} scope="col" className="px-1 py-s2 text-center text-2xs font-bold uppercase tracking-wider">
                     <abbr title={typeLabel(t)} className="no-underline">
                       {typeCode(t)}
                     </abbr>
                   </th>
                 ))}
-                <th scope="col" className="border-l border-white/20 px-s2 py-s2 text-center text-2xs font-bold uppercase tracking-wider">
+                <th scope="col" className="border-l border-white/20 px-1 py-s2 text-center text-2xs font-bold uppercase tracking-wider">
                   Total
                 </th>
               </tr>
@@ -167,15 +167,15 @@ export function HubTypePipelineTable({
             <tbody>
               {pivot.hubs.map((hub) => (
                 <tr key={hub} className="border-t border-dash-hairline odd:bg-surface even:bg-dash-alt">
-                  <th scope="row" className="sticky left-0 z-10 whitespace-nowrap bg-inherit px-s3 py-1 text-left font-semibold text-text">
+                  <th scope="row" className="sticky left-0 z-10 whitespace-nowrap bg-inherit px-s2 py-1 text-left font-semibold text-text">
                     {hub}
                   </th>
                   {pivot.types.map((t) => (
-                    <td key={t} className="px-s2 py-1 text-center" data-numeric="">
+                    <td key={t} className="px-1 py-1 text-center" data-numeric="">
                       {figure({ source: 'pipeline', hub, typeKey: t, count: pivot.cell(hub, t) })}
                     </td>
                   ))}
-                  <td className="border-l border-dash-hairline bg-primary-subtle/40 px-s2 py-1 text-center" data-numeric="">
+                  <td className="border-l border-dash-hairline bg-primary-subtle/40 px-1 py-1 text-center" data-numeric="">
                     {servedTotal(byHub === null ? null : (hubTotal.get(hub) ?? 0), { source: 'pipeline', hub, typeKey: null })}
                   </td>
                 </tr>
@@ -183,15 +183,15 @@ export function HubTypePipelineTable({
             </tbody>
             <tfoot>
               <tr className="border-t-2 border-primary/40 bg-primary-subtle">
-                <th scope="row" className="sticky left-0 z-10 bg-primary-subtle px-s3 py-1 text-left font-bold text-primary-subtle-fg">
+                <th scope="row" className="sticky left-0 z-10 bg-primary-subtle px-s2 py-1 text-left font-bold text-primary-subtle-fg">
                   Total
                 </th>
                 {pivot.types.map((t) => (
-                  <td key={t} className="px-s2 py-1 text-center" data-numeric="">
+                  <td key={t} className="px-1 py-1 text-center" data-numeric="">
                     {servedTotal(byType === null ? null : (typeTotal.get(t) ?? 0), { source: 'pipeline', hub: null, typeKey: t })}
                   </td>
                 ))}
-                <td className="border-l border-primary/30 px-s2 py-1 text-center" data-numeric="">
+                <td className="border-l border-primary/30 px-1 py-1 text-center" data-numeric="">
                   {servedTotal(grandTotal, { source: 'pipeline', hub: null, typeKey: null })}
                 </td>
               </tr>

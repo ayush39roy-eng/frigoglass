@@ -56,6 +56,9 @@ export const queryKeys = {
     q?: string | undefined;
   }) => ['priority-matrix', params ?? null] as const,
   priorityDimensions: () => ['priority-matrix', 'dimensions'] as const,
+  // P26 (ADR 0037): the editable rubric and its versions (Matrix only).
+  scoringRubric: () => ['scoring-rubric'] as const,
+  scoringRubricVersions: () => ['scoring-rubric', 'versions'] as const,
   prioritySummary: (hubId?: string | null, region?: LabRegion | null) =>
     withHub(['priority-matrix', 'summary'], hubId, region),
   priorityRow: (id: string, currency?: CurrencyCode) =>

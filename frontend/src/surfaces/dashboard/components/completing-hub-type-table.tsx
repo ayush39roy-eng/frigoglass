@@ -52,13 +52,12 @@ export function CompletingHubTypeTable({
             <CircleCheckBig className="size-5" aria-hidden="true" />
           </span>
           <div>
-            <h3 className="font-display text-h2 font-bold tracking-tight text-text">
+            <h3 className="font-display text-lg font-bold leading-tight tracking-tight text-text">
               Completing within year: Hub × Type
             </h3>
             <p className="text-xs font-medium text-text-subtle">
-              Projects the active run finishes by W52, with their share of each cell&apos;s pipeline.
-              Counts every project in the pipeline, so the total equals the within-year KPI. Select a
-              figure to list its projects.
+              Finished by W52 in the active run. Counts every project in the pipeline, so the total
+              equals the KPI.
             </p>
           </div>
         </div>
@@ -80,18 +79,18 @@ export function CompletingHubTypeTable({
         <p className="py-s6 text-center text-sm text-text-muted">No pipeline projects in view.</p>
       ) : (
         <div
-          className="overflow-x-auto rounded-xl border-[1.5px] border-dash-hairline"
+          className="flex-1 overflow-x-auto rounded-xl border-[1.5px] border-dash-hairline"
           tabIndex={0}
           role="region"
           aria-label="Projects completing within the year, by hub and project type"
         >
-          <table className="w-full border-collapse text-sm">
+          <table className="h-full w-full border-collapse text-xs">
             <caption className="sr-only">
               Projects completing within the year, by hub and project type
             </caption>
             <thead>
               <tr className="bg-ink text-ink-fg">
-                <th scope="col" className="sticky left-0 z-10 bg-ink px-s3 py-s2 text-left text-2xs font-bold uppercase tracking-wider">
+                <th scope="col" className="sticky left-0 z-10 bg-ink px-s2 py-s2 text-left text-2xs font-bold uppercase tracking-wider">
                   Hub
                 </th>
                 {pivot.types.map((t) => (
@@ -99,7 +98,7 @@ export function CompletingHubTypeTable({
                     key={t}
                     scope="col"
                     title={typeLabel(t)}
-                    className="px-s2 py-s2 text-center text-2xs font-bold uppercase tracking-wider"
+                    className="px-1 py-s2 text-center text-2xs font-bold uppercase tracking-wider"
                   >
                     <abbr title={typeLabel(t)} className="no-underline">
                       {typeCode(t)}
@@ -107,7 +106,7 @@ export function CompletingHubTypeTable({
                   </th>
                 ))}
                 {showHubTotals ? (
-                  <th scope="col" className="border-l border-white/20 px-s2 py-s2 text-center text-2xs font-bold uppercase tracking-wider">
+                  <th scope="col" className="border-l border-white/20 px-1 py-s2 text-center text-2xs font-bold uppercase tracking-wider">
                     Total
                   </th>
                 ) : null}
@@ -116,13 +115,13 @@ export function CompletingHubTypeTable({
             <tbody>
               {pivot.hubs.map((hub) => (
                 <tr key={hub} className="border-t border-dash-hairline odd:bg-surface even:bg-dash-alt">
-                  <th scope="row" className="sticky left-0 z-10 whitespace-nowrap bg-inherit px-s3 py-1 text-left font-semibold text-text">
+                  <th scope="row" className="sticky left-0 z-10 whitespace-nowrap bg-inherit px-s2 py-1 text-left font-semibold text-text">
                     {hub}
                   </th>
                   {pivot.types.map((t) => {
                     const c = pivot.cell(hub, t);
                     return (
-                      <td key={t} className="px-s2 py-1 text-center" data-numeric="">
+                      <td key={t} className="px-1 py-1 text-center" data-numeric="">
                         {c === null ? (
                           <span className="text-text-subtle" aria-label="No projects">
                             –
@@ -140,7 +139,7 @@ export function CompletingHubTypeTable({
                     );
                   })}
                   {showHubTotals ? (
-                    <td className="border-l border-dash-hairline bg-success-subtle/40 px-s2 py-1 text-center font-bold" data-numeric="">
+                    <td className="border-l border-dash-hairline bg-success-subtle/40 px-1 py-1 text-center font-bold" data-numeric="">
                       {(() => {
                         const h = pivot.hubTotal(hub);
                         return h === null ? (
@@ -164,13 +163,13 @@ export function CompletingHubTypeTable({
             {byType.length > 0 ? (
               <tfoot>
                 <tr className="border-t-2 border-success/50 bg-success-subtle">
-                  <th scope="row" className="sticky left-0 z-10 bg-success-subtle px-s3 py-1 text-left font-bold text-success-subtle-fg">
+                  <th scope="row" className="sticky left-0 z-10 bg-success-subtle px-s2 py-1 text-left font-bold text-success-subtle-fg">
                     Total
                   </th>
                   {pivot.types.map((t) => {
                     const r = pivot.total(t);
                     return (
-                      <td key={t} className="px-s2 py-1 text-center font-bold" data-numeric="">
+                      <td key={t} className="px-1 py-1 text-center font-bold" data-numeric="">
                         {r === null ? (
                           <span className="text-text-subtle">–</span>
                         ) : (
@@ -187,7 +186,7 @@ export function CompletingHubTypeTable({
                     );
                   })}
                   {showHubTotals ? (
-                    <td className="border-l border-success/30 px-s2 py-1 text-center font-bold" data-numeric="">
+                    <td className="border-l border-success/30 px-1 py-1 text-center font-bold" data-numeric="">
                       {grandTotal === null ? (
                         <span className="text-text-subtle" aria-label="No grand total served">
                           –
@@ -235,8 +234,8 @@ function CellFigure({
       ) : (
         <span className={countClass}>{formatInteger(count)}</span>
       )}{' '}
-      <span className={cn('text-2xs', strong ? 'text-success-subtle-fg' : 'text-text-muted')}>
-        ({formatServedPct(pct)})
+      <span className={cn('text-[0.625rem]', strong ? 'text-success-subtle-fg' : 'text-text-muted')}>
+        {formatServedPct(pct)}
       </span>
     </span>
   );

@@ -167,3 +167,24 @@
     transition: none;
   }
 }
+
+/* ---- P26: a missing score on an active dimension (incomplete) ---- */
+
+.mg-chip[data-empty='true'] {
+  font-weight: 500;
+  color: hsl(var(--color-text-muted));
+  background-color: hsl(var(--color-surface-sunken));
+  border: 1px dotted hsl(var(--color-border-strong));
+}
+
+/* ---- P26: dimension headers are the served labels (any length): wrap, at most 3 lines ---- */
+
+.mg-dim-head {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  hyphens: auto;
+  max-width: 100%;
+}

@@ -74,6 +74,7 @@ from api.routers.projects import router as projects_router  # noqa: E402
 from api.routers.reference import router as reference_router  # noqa: E402
 from api.routers.scenarios import router as scenarios_router  # noqa: E402
 from api.routers.schedule_runs import router as schedule_runs_router  # noqa: E402
+from api.routers.scoring_rubric import router as scoring_rubric_router  # noqa: E402
 from api.routers.step_timing import router as step_timing_router  # noqa: E402
 from api.routers.users import router as users_router  # noqa: E402
 from api.routers.vip import pin_router as vip_pin_router  # noqa: E402
@@ -178,6 +179,7 @@ app.include_router(engineers_router)
 app.include_router(chambers_router)
 app.include_router(priorities_router)
 app.include_router(priority_board_router)
+app.include_router(scoring_rubric_router)
 app.include_router(vip_router)
 app.include_router(vip_pin_router)
 app.include_router(vip_board_router)

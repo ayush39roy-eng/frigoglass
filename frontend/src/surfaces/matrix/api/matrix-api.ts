@@ -32,6 +32,11 @@ import {
   type PriorityScoreRead,
   type PriorityScoreUpdateRequest,
   type ScoringDimensionTable,
+  type ScoringRubric,
+  type ScoringRubricPreview,
+  type ScoringRubricPreviewRequest,
+  type ScoringRubricUpdateRequest,
+  type ScoringRubricVersions,
   type ScenarioApplyRequest,
   type ScenarioApplyResponse,
   type ScenarioApplyRunDetail,
@@ -105,7 +110,8 @@ export function fetchPriorityRow(projectId: string, ctx: FetchCtx = {}): Promise
 }
 
 /**
- * `PUT /priorities/{projectId}` — upsert the 13 dimension scores + hard gates.
+ * `PUT /priorities/{projectId}` — P26: `{scores: {key: 0..5 | null}, hard_gates}`
+ * (active keys only; omitted keys unchanged; null clears) + hard gates.
  * The server recomputes `weighted_score` / `normalized_pct` / `suggested_band`;
  * this does NOT write `Project.priority` ("Apply Priorities" is a separate,
  * deferred action) and MUST NOT trigger a schedule run.
@@ -244,4 +250,32 @@ export function fetchPriorityCapacityFill(
     ...ctx,
     query: { hub_id: params.hubId, region: params.region },
   });
+}
+
+// --- P26 scoring rubric (docs/API_CONTRACT_P26.md) ------------------------------
+
+export const RUBRIC_PATHS = {
+  rubric: '/scoring-rubric',
+  versions: '/scoring-rubric/versions',
+  preview: '/scoring-rubric/preview',
+} as const;
+
+/** `GET /scoring-rubric` (Matrix read): every dimension, active and inactive, plus `can_edit`. */
+export function fetchScoringRubric(ctx: FetchCtx = {}): Promise<ScoringRubric> {
+  return apiGet<ScoringRubric>(RUBRIC_PATHS.rubric, ctx);
+}
+
+/** `GET /scoring-rubric/versions` (Matrix read): every version, newest first. */
+export function fetchScoringRubricVersions(ctx: FetchCtx = {}): Promise<ScoringRubricVersions> {
+  return apiGet<ScoringRubricVersions>(RUBRIC_PATHS.versions, ctx);
+}
+
+/** `POST /scoring-rubric/preview` (Admin / Super Admin): the impact of a proposal; nothing is saved. */
+export function previewScoringRubric(body: ScoringRubricPreviewRequest): Promise<ScoringRubricPreview> {
+  return apiSend<ScoringRubricPreview>('POST', RUBRIC_PATHS.preview, body);
+}
+
+/** `PUT /scoring-rubric` (Admin / Super Admin): the full replacement; 409 `RUBRIC_VERSION_CONFLICT` when stale. */
+export function updateScoringRubric(body: ScoringRubricUpdateRequest): Promise<ScoringRubric> {
+  return apiSend<ScoringRubric>('PUT', RUBRIC_PATHS.rubric, body);
 }

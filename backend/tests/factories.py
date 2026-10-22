@@ -185,21 +185,45 @@ async def make_priority_score(
     session: AsyncSession,
     project: Project,
     *,
-    dims: list[int],
+    dims: list[int] | None = None,
+    scores: dict[str, int | None] | None = None,
     hard_gates: list | None = None,
     weighted_score: float | None = None,
     normalized_pct: int | None = None,
     suggested_band: ProjectPriority | None = None,
+    rubric_version: int | None = 1,
 ) -> PriorityScore:
-    from models.priority import DIMENSION_FIELD_NAMES
+    """ADR 0037: `dims` are positional over the 13 initial keys
+    (`seed.initial_scoring_rubric.INITIAL_KEYS`); `scores` maps any rubric
+    key to a score. The cached fields are stored AS GIVEN (tests pin them),
+    never computed here."""
 
+    from sqlalchemy import select
+
+    from models.scoring_rubric import PriorityDimensionScore, ScoringDimension
+    from seed.initial_scoring_rubric import INITIAL_KEYS
+
+    by_key: dict[str, int | None] = {}
+    if dims is not None:
+        by_key.update(zip(INITIAL_KEYS, dims, strict=True))
+    if scores is not None:
+        by_key.update(scores)
+    dim_ids = {
+        key: dim_id
+        for key, dim_id in (
+            await session.execute(select(ScoringDimension.key, ScoringDimension.id))
+        ).all()
+    }
     score = PriorityScore(
         project_id=project.id,
-        **dict(zip(DIMENSION_FIELD_NAMES, dims, strict=True)),
         hard_gates=hard_gates or [],
         weighted_score=weighted_score,
         normalized_pct=normalized_pct,
         suggested_band=suggested_band,
+        rubric_version=rubric_version,
+        dimension_scores=[
+            PriorityDimensionScore(dimension_id=dim_ids[k], score=v) for k, v in by_key.items()
+        ],
     )
     session.add(score)
     await session.flush()

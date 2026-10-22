@@ -1,5 +1,5 @@
 """Pydantic request/response models for the Prioritization Matrix surface
-(`docs/DOMAIN_RULES.md` "Prioritization scoring — 13 dimensions";
+(`docs/DOMAIN_RULES.md` "Prioritization scoring"; ADR 0037 editable rubric;
 `docs/PROJECT_AND_STACK.md` §2).
 
 **Out of scope here, deferred to P3-T06** (per this task's explicit scope
@@ -15,9 +15,9 @@ router's module docstring for the exact boundary (this PUT updates
 from __future__ import annotations
 
 import uuid
-from typing import Literal
+from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
 from models.enums import (
     CurrencyCode,
@@ -30,54 +30,6 @@ from models.enums import (
 )
 
 
-class PriorityScoreUpdateRequest(BaseModel):
-    """The 13 dimension scores (0-5 each, ADR 0033; 0 earns 0 points) plus active
-    hard gates. Field order/names match `models.priority.DIMENSION_FIELD_NAMES`
-    exactly.
-    """
-
-    model_config = ConfigDict(extra="forbid")
-
-    strategic_project: int = Field(ge=0, le=5)
-    new_customer: int = Field(ge=0, le=5)
-    new_options: int = Field(ge=0, le=5)
-    regulatory_compliance: int = Field(ge=0, le=5)
-    quality_improvements: int = Field(ge=0, le=5)
-    rm_savings: int = Field(ge=0, le=5)
-    total_rm_savings: int = Field(ge=0, le=5)
-    gross_margins: int = Field(ge=0, le=5)
-    profitability: int = Field(ge=0, le=5)
-    annual_volume: int = Field(ge=0, le=5)
-    three_year_volume: int = Field(ge=0, le=5)
-    new_models: int = Field(ge=0, le=5)
-    capex_investment: int = Field(ge=0, le=5)
-    hard_gates: list[HardGateReason] = Field(default_factory=list)
-
-
-class PriorityScoreRead(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-
-    id: uuid.UUID
-    project_id: uuid.UUID
-    strategic_project: int
-    new_customer: int
-    new_options: int
-    regulatory_compliance: int
-    quality_improvements: int
-    rm_savings: int
-    total_rm_savings: int
-    gross_margins: int
-    profitability: int
-    annual_volume: int
-    three_year_volume: int
-    new_models: int
-    capex_investment: int
-    hard_gates: list[HardGateReason]
-    weighted_score: float | None
-    normalized_pct: int | None
-    suggested_band: ProjectPriority | None
-
-
 class DimensionPoints(BaseModel):
     """One dimension's contribution to a project's score (ADR 0029).
     `points = score / 5 * weight`; `scaled_points = points * 100 / total_weight`."""
@@ -87,12 +39,15 @@ class DimensionPoints(BaseModel):
 
 
 class DimensionScore(BaseModel):
-    """P21-T01 (docs/API_CONTRACT_P21.md §3): one dimension of a project's
-    rubric, in positional order. Not financial: visible to every Matrix reader.
+    """P21-T01 (docs/API_CONTRACT_P21.md §3), P26-T01 (ADR 0037): one ACTIVE
+    dimension of the rubric for a project, in `display_order`. Not financial:
+    visible to every Matrix reader.
 
     `points = score / 5 * weight` (0 at score 0, ADR 0033), `max_points =
-    weight`; both on the raw scale, so `Σ points == weighted_score`. `score`
-    and `points` are null when the project is unscored.
+    weight`; both on the raw scale, so `Σ points == weighted_score` (a null
+    `points` counts 0). `score` and `points` are null when the project has no
+    score on this dimension (then it is in `missing_dimension_keys`) or is
+    unscored.
     """
 
     key: str
@@ -102,6 +57,47 @@ class DimensionScore(BaseModel):
     weight: int
     points: float | None
     max_points: float
+
+
+#: P26-T01 (ADR 0037): one dimension score, 0..5 (ADR 0033), or null = not
+#: scored (counts 0 points; the project is then "incomplete").
+DimensionScoreValue = Annotated[int, Field(ge=0, le=5, strict=True)] | None
+#: Upper bound on the keys of one score map (the rubric is far smaller).
+MAX_SCORE_KEYS = 200
+
+
+class PriorityScoreUpdateRequest(BaseModel):
+    """`PUT /priorities/{project_id}` (ADR 0037, docs/API_CONTRACT_P26.md §5).
+
+    `scores` maps ACTIVE dimension keys (`GET /scoring-rubric`) to 0..5 or
+    null. A key that is not an active dimension is a 422
+    `UNKNOWN_DIMENSION_KEY`. Active keys left out keep their stored value
+    (null for a new score row); inactive dimensions' historic scores are never
+    touched. Replaces the 13 fixed fields of P3..P25.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    scores: dict[
+        Annotated[str, StringConstraints(min_length=1, max_length=64)], DimensionScoreValue
+    ] = Field(max_length=MAX_SCORE_KEYS)
+    hard_gates: list[HardGateReason] = Field(default_factory=list)
+
+
+class PriorityScoreRead(BaseModel):
+    """The stored score after a write (ADR 0037): the per-dimension list of
+    the ACTIVE rubric, which of them are missing, and the cached results."""
+
+    id: uuid.UUID
+    project_id: uuid.UUID
+    hard_gates: list[HardGateReason]
+    weighted_score: float | None
+    normalized_pct: int | None
+    #: The pure score band (stored), null when no active dimension is scored.
+    suggested_band: ProjectPriority | None
+    dimension_scores: list[DimensionScore]
+    missing_dimension_keys: list[str]
+    rubric_version: int
 
 
 class DimensionInfo(BaseModel):
@@ -116,10 +112,12 @@ class DimensionInfo(BaseModel):
 
 
 class PriorityDimensionsResponse(BaseModel):
-    """`GET /priorities/dimensions`: the dimension table in positional order."""
+    """`GET /priorities/dimensions`: the ACTIVE dimensions of the current
+    rubric in `display_order` (ADR 0037); `total_weight` = Σ their weights."""
 
     dimensions: list[DimensionInfo]
     total_weight: int
+    rubric_version: int
 
 
 class PriorityMatrixRow(BaseModel):
@@ -155,19 +153,6 @@ class PriorityMatrixRow(BaseModel):
     rank: int | None
 
     has_score: bool
-    strategic_project: int | None
-    new_customer: int | None
-    new_options: int | None
-    regulatory_compliance: int | None
-    quality_improvements: int | None
-    rm_savings: int | None
-    total_rm_savings: int | None
-    gross_margins: int | None
-    profitability: int | None
-    annual_volume: int | None
-    three_year_volume: int | None
-    new_models: int | None
-    capex_investment: int | None
     hard_gates: list[HardGateReason]
     weighted_score: float | None
     normalized_pct: int | None
@@ -181,12 +166,20 @@ class PriorityMatrixRow(BaseModel):
     #: ADR 0036: short reason for a promoted, stopped or zero-load-skipped
     #: candidate; null for every project the fill walk did not decide on.
     capacity_fill_reason: str | None
-    #: ADR 0029: per-dimension points keyed by dimension key; `null` when unscored.
+    #: ADR 0029: per ACTIVE dimension points keyed by key (0 for a missing
+    #: score); `null` when unscored.
     dimension_points: dict[str, DimensionPoints] | None = None
-    #: P21-T01: the 13 dimensions in positional order (always 13 entries; the
-    #: scores and points are null when unscored). The "out of 100" figure is
-    #: `normalized_pct` and the score band is `suggested_band` (not duplicated).
+    #: P26-T01 (ADR 0037): one entry per ACTIVE rubric dimension, in
+    #: `display_order` (scores and points null when unscored or missing). The
+    #: "out of 100" figure is `normalized_pct`. Replaces the 13 flat fields.
     dimension_scores: list[DimensionScore]
+    #: ADR 0037: active dimensions this SCORED project has no score on (they
+    #: count 0 points; the score is "incomplete"). Empty when complete and
+    #: when unscored.
+    missing_dimension_keys: list[str]
+    #: ADR 0037: the rubric version the score was computed with (the current
+    #: one: a rubric change recomputes every score in the same transaction).
+    rubric_version: int
 
     is_new_model: bool
     is_rm_saving_project: bool
@@ -272,6 +265,9 @@ class PriorityCompareItem(BaseModel):
     capacity_fill: bool
     capacity_fill_reason: str | None
     dimension_scores: list[DimensionScore]
+    #: ADR 0037: as on `PriorityMatrixRow`.
+    missing_dimension_keys: list[str]
+    rubric_version: int
 
 
 class PriorityCompareResponse(BaseModel):

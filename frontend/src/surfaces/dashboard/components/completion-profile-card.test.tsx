@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { screen, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 
 import { renderWithProviders } from '@/test/render';
 import type { CompletingWithinYear, CompletingWithinYearRow } from '../api/types';
@@ -48,40 +49,53 @@ const payload: CompletingWithinYear = {
 };
 
 describe('CompletionProfileCard', () => {
-  it('renders the three 52-week outcome totals from the endpoint fields (left out inside spillover)', () => {
+  it('counts within-year finishes per calendar month, each month on its own, excluding blocked rows', () => {
     renderWithProviders(<CompletionProfileCard data={payload} />);
 
-    const totals = screen.getByText('Outcome totals').closest('div');
-    expect(totals).not.toBeNull();
-    const list = within(totals as HTMLElement).getByRole('list');
-    expect(within(list).getAllByRole('listitem')).toHaveLength(3);
-    expect(within(list).getByText('9')).toBeInTheDocument();
-    // ADR 0024: spillover past W52 = served spillover_count 4 + left_out_count 2.
-    expect(within(list).getByText('Spillover (past W52)')).toBeInTheDocument();
-    expect(within(list).getByText('6')).toBeInTheDocument();
-    expect(within(list).getByText('1')).toBeInTheDocument();
-    expect(within(list).queryByText(/left out/i)).not.toBeInTheDocument();
+    const months = screen.getByRole('list', { name: 'Within-year projects completed per month' });
+    expect(within(months).getAllByRole('listitem')).toHaveLength(12);
+    // W10 (Thursday 5 Mar 2026) and W30 (Thursday 23 Jul 2026).
+    expect(within(months).getByRole('button', { name: 'March: 1' })).toBeEnabled();
+    expect(within(months).getByRole('button', { name: 'July: 1' })).toBeEnabled();
+    // The blocked row at W20 (May) is not a within-year finish.
+    expect(within(months).getByRole('button', { name: 'May: 0' })).toBeDisabled();
+    // Not cumulative: August repeats nothing from July.
+    expect(within(months).getByRole('button', { name: 'August: 0' })).toBeDisabled();
   });
 
-  it('builds the within-year series over W1–W52 only, cumulatively, excluding blocked rows', () => {
-    renderWithProviders(<CompletionProfileCard data={payload} />);
+  it('opens a month into its weeks and the projects finishing in it, and narrows to a week', async () => {
+    const user = userEvent.setup();
+    const data: CompletingWithinYear = {
+      ...payload,
+      rows: [
+        ...payload.rows,
+        row('w3', { within_year: true, last_step_end_week: 11, hub: 'PD-India', priority: 'P2' }),
+      ],
+    };
+    renderWithProviders(<CompletionProfileCard data={data} />);
 
-    const summary = screen.getByText(
-      /Cumulative within-year projects completing by week, from the active schedule run/i,
-    ).parentElement;
-    expect(summary).not.toBeNull();
+    await user.click(screen.getByRole('button', { name: 'March: 2' }));
+    expect(screen.getByRole('heading', { name: /March 2026/ })).toBeInTheDocument();
+    // March 2026 holds the ISO weeks whose Thursday is in March: W10–W13
+    // (W14's Thursday is 2 April).
+    const weeks = screen.getByRole('list', { name: 'Within-year projects completed per week in March' });
+    expect(within(weeks).getAllByRole('button').map((b) => b.textContent)).toEqual([
+      'W10: 1',
+      'W11: 1',
+      'W12: 0',
+      'W13: 0',
+    ]);
+    const projects = screen.getByRole('list', { name: 'Projects completing in March' });
+    expect(within(projects).getByRole('link', { name: 'Project w1' })).toHaveAttribute('href', '/projects/w1');
+    expect(within(projects).getByRole('link', { name: 'Project w3' })).toBeInTheDocument();
 
-    // By W13 only the W10 within-year project has landed.
-    expect(within(summary as HTMLElement).getByText(/By W13: within year 1$/)).toBeInTheDocument();
-    // By W39 both within-year projects have landed — the BLOCKED row at W20 is
-    // excluded, exactly as `within_year_count` excludes it.
-    expect(within(summary as HTMLElement).getByText(/By W39: within year 2$/)).toBeInTheDocument();
-    // The axis ends at W52 (ADR 0024) — the W60 spillover finish is not plotted;
-    // it is summarised as spillover past W52 (4 spillover + 2 left out).
-    expect(
-      within(summary as HTMLElement).getByText(/End of year W52: within year 2; spillover past W52: 6/),
-    ).toBeInTheDocument();
-    expect((summary as HTMLElement).textContent).not.toMatch(/W6[0-9]|W78/);
+    await user.click(within(weeks).getByRole('button', { name: 'W11: 1' }));
+    const narrowed = screen.getByRole('list', { name: 'Projects completing in W11' });
+    expect(within(narrowed).getAllByRole('listitem')).toHaveLength(1);
+    expect(within(narrowed).getByRole('link', { name: 'Project w3' })).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'All months' }));
+    expect(screen.getByRole('list', { name: 'Within-year projects completed per month' })).toBeInTheDocument();
   });
 
   it('names the 52-week plan year, never the 78-week search horizon', () => {
@@ -103,11 +117,9 @@ describe('CompletionProfileCard', () => {
           ...payload,
           rows: [row('l1', { left_out: true }), row('b1', { blocked: true })],
         }}
-       
       />,
     );
     expect(screen.getByText('No finishes by W52')).toBeInTheDocument();
-    // The totals panel still renders — those counts exist independently of the chart.
-    expect(screen.getByText('Outcome totals')).toBeInTheDocument();
+    expect(screen.queryByTestId('completion-profile-monthly')).not.toBeInTheDocument();
   });
 });

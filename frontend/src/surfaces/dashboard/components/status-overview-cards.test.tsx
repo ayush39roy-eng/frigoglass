@@ -43,6 +43,14 @@ const SUMMARY: RegionSummary = {
 };
 
 describe('StatusOverviewCards', () => {
+  it('orders the cards with In Queue just before On Hold (owner ask 2026-10-22)', () => {
+    render(<StatusOverviewCards data={DATA} />);
+    const order = screen
+      .getAllByTestId(/^status-card-/)
+      .map((el) => el.getAttribute('data-testid')?.replace('status-card-', ''));
+    expect(order).toEqual(['in-development', 'under-industrialization', 'commercialized', 'in-queue', 'on-hold']);
+  });
+
   it('renders the five cards with served counts and "% of total"', () => {
     render(<StatusOverviewCards data={DATA} />);
     const expected: [string, string, string][] = [

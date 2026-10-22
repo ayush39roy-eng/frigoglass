@@ -99,6 +99,9 @@ export interface StatCardProps {
   badge?: StatBadge | null;
   /** Optional block under the caption (P13: the per-country chips). */
   footer?: React.ReactNode;
+  /** `compact`: one short row (icon, label + figure, badge) and a small
+   *  caption, for a KPI row that repeats figures shown above it in full. */
+  size?: 'default' | 'compact';
   className?: string;
 }
 
@@ -112,8 +115,10 @@ export function StatCard({
   variant,
   badge,
   footer,
+  size = 'default',
   className,
 }: StatCardProps): React.JSX.Element {
+  const compact = size === 'compact';
   const motionTokens = useMotionTokens();
   const kind: StatVariant = variant ?? (feature ? 'feature' : 'plain');
   const solid = kind !== 'plain';
@@ -146,7 +151,8 @@ export function StatCard({
       {...bgStyle}
       transition={{ type: 'spring', stiffness: 420, damping: 26 }}
       className={cn(
-        'group relative flex min-h-[10.5rem] flex-col gap-s3 overflow-hidden rounded-dash p-card',
+        'group relative flex flex-col overflow-hidden rounded-dash',
+        compact ? 'gap-s2 px-s5 py-s4' : 'min-h-[10.5rem] gap-s3 p-card',
         'transition-shadow duration-base ease-ease-out-expo',
         kind === 'feature' && 'border-[1.5px] border-on-feature/15 text-on-feature shadow-feature hover:shadow-feature',
         kind === 'ink' && 'border-[1.5px] border-transparent text-ink-fg shadow-ink',
@@ -173,11 +179,12 @@ export function StatCard({
         />
       )}
 
-      <div className="relative flex items-start justify-between gap-s2">
+      <div className={cn('relative flex justify-between gap-s2', compact ? 'items-center' : 'items-start')}>
         {Icon ? (
           <span
             className={cn(
-              'grid size-12 shrink-0 place-items-center rounded-2xl transition-transform duration-base ease-ease-out-expo group-hover:-rotate-6 group-hover:scale-105',
+              'grid shrink-0 place-items-center rounded-2xl transition-transform duration-base ease-ease-out-expo group-hover:-rotate-6 group-hover:scale-105',
+              compact ? 'size-10' : 'size-12',
               kind === 'feature' && 'bg-surface text-text shadow-card',
               kind === 'ink' && 'bg-ink-fg/10 text-ink-fg ring-1 ring-ink-fg/20',
               kind === 'plain' && TONE_PILL[tone],
@@ -188,6 +195,19 @@ export function StatCard({
         ) : (
           <span />
         )}
+        {compact ? (
+          <div className="relative mr-auto min-w-0 pl-s1">
+            <span className={cn('block truncate text-xs font-semibold', solid ? mutedText : 'text-text-muted')}>
+              {label}
+            </span>
+            <span
+              className={cn('block font-display text-3xl font-extrabold leading-none tabular-nums', solid ? 'text-inherit' : 'text-text')}
+              data-numeric=""
+            >
+              {displayValue}
+            </span>
+          </div>
+        ) : null}
         {badge ? (
           <span
             className={cn(
@@ -201,24 +221,27 @@ export function StatCard({
         ) : null}
       </div>
 
-      <div className="relative mt-auto space-y-1">
-        <span className={cn('block text-sm font-semibold', solid ? mutedText : 'text-text-muted')}>
-          {label}
-        </span>
-        {/* font-display = Plus Jakarta Sans 800 at the density's display size;
-            tabular-nums so the figure does not re-flow when it ticks. */}
-        <span
-          className={cn('block font-display text-display tabular-nums', solid ? 'text-inherit' : 'text-text')}
-          data-numeric=""
-        >
-          {displayValue}
-        </span>
-      </div>
+      {compact ? null : (
+        <div className="relative mt-auto space-y-1">
+          <span className={cn('block text-sm font-semibold', solid ? mutedText : 'text-text-muted')}>
+            {label}
+          </span>
+          {/* font-display = Plus Jakarta Sans 800 at the density's display size;
+              tabular-nums so the figure does not re-flow when it ticks. */}
+          <span
+            className={cn('block font-display text-display tabular-nums', solid ? 'text-inherit' : 'text-text')}
+            data-numeric=""
+          >
+            {displayValue}
+          </span>
+        </div>
+      )}
 
       {caption ? (
         <span
           className={cn(
-            'relative border-t-[1.5px] pt-s2 text-xs font-medium',
+            'relative border-t-[1.5px] pt-s2 font-medium',
+            compact ? 'text-2xs' : 'text-xs',
             kind === 'plain' && 'border-dash-hairline',
             kind === 'feature' && 'border-on-feature/20',
             kind === 'ink' && 'border-ink-fg/15',

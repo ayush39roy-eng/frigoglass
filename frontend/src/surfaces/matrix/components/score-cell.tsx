@@ -4,7 +4,8 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { formatInteger } from '@/lib/format';
 
 import { BAND_THRESHOLDS, POINTS_RULE_COPY, type PriorityMatrixRow } from '../api/types';
-import { formatOutOf100, rowBand, rowNormalizedScore } from '../lib/row-scores';
+import { formatOutOf100, rowBand, rowMissingLabels, rowNormalizedScore } from '../lib/row-scores';
+import { IncompleteScoreMarker } from '@/components/shared/incomplete-score-marker';
 import { HardGateBadge } from './hard-gate-badge';
 import { SuggestedBandChip } from '@/components/shared/suggested-band-chip';
 
@@ -17,6 +18,8 @@ import { SuggestedBandChip } from '@/components/shared/suggested-band-chip';
  *     shown out of 100 ("91/100", P21)
  *   - `weighted_score`  — backend: Σ points (score/5 × weight)
  *   - `suggested_band`  — backend: the band after the hub's P1 capacity fill (P25, ADR 0036)
+ *   - `missing_dimension_keys` — backend (P26, ADR 0037): unscored active
+ *     dimensions; non-empty shows a subtle "incomplete" marker
  * Nothing is recomputed here (Invariant I9). The threshold table is shown as
  * static rule copy so the band is *legible*, not to derive it.
  */
@@ -64,14 +67,15 @@ export function ScoreCell({ row }: { row: PriorityMatrixRow }): React.JSX.Elemen
     );
   }
 
+  const missing = rowMissingLabels(row);
   return (
-    <span className="inline-flex flex-wrap items-center gap-1.5" data-testid="score-cell">
+    <span className="inline-flex flex-wrap items-center gap-1.5" data-testid="score-cell" data-incomplete={missing.length > 0 || undefined}>
       <Tooltip>
         <TooltipTrigger asChild>
           <button
             type="button"
             className="inline-flex items-baseline gap-1 rounded-sm underline decoration-dotted underline-offset-2"
-            aria-label={`Score ${formatOutOf100(score)}, band ${band}`}
+            aria-label={`Score ${formatOutOf100(score)}, band ${band}${missing.length > 0 ? ', incomplete' : ''}`}
           >
             <span className="tnum text-sm font-semibold text-text" data-numeric="" data-testid="score-out-of-100">
               {formatOutOf100(score)}
@@ -87,6 +91,7 @@ export function ScoreCell({ row }: { row: PriorityMatrixRow }): React.JSX.Elemen
         scoreBand={row.score_band}
       />
       <HardGateBadge gates={row.hard_gates} />
+      <IncompleteScoreMarker missingLabels={missing} compact />
     </span>
   );
 }

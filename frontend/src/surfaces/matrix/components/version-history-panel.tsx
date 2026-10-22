@@ -18,8 +18,8 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { ApiError } from '@/lib/api/client';
 import { formatInteger, formatTimestamp } from '@/lib/format';
 
-import { DIMENSIONS, type ScenarioApplyChangeDetail, type ScenarioApplyRunSummary } from '../api/types';
-import { useScenarioVersionDetail, useScenarioVersions } from '../hooks/use-matrix';
+import type { ScenarioApplyChangeDetail, ScenarioApplyRunSummary } from '../api/types';
+import { useScenarioVersionDetail, useScenarioVersions, useScoringRubric } from '../hooks/use-matrix';
 
 /**
  * Versions & History (P5-T03) — browse/compare historical **scenario-apply**
@@ -58,22 +58,56 @@ export interface ProjectLookupEntry {
   hub: string;
 }
 
+/** Snapshot fields that are not dimension scores. */
+const SNAPSHOT_META_KEYS = new Set([
+  'id',
+  'project_id',
+  'hard_gates',
+  'weighted_score',
+  'normalized_pct',
+  'suggested_band',
+  'rubric_version',
+  'scores',
+]);
+
+/**
+ * The dimension scores of one audit snapshot. P26 (ADR 0037) snapshots hold
+ * `scores: {key: value}`; older rows keep one flat field per dimension, so any
+ * other numeric-or-null field is read as a dimension key. No fixed list.
+ */
+function snapshotScores(state: Record<string, unknown> | null): Record<string, unknown> {
+  if (state === null) return {};
+  const map = state.scores;
+  if (map !== null && typeof map === 'object' && !Array.isArray(map)) return map as Record<string, unknown>;
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(state)) {
+    if (SNAPSHOT_META_KEYS.has(key)) continue;
+    if (value === null || typeof value === 'number') out[key] = value;
+  }
+  return out;
+}
+
 /** Raw field-for-field diff lines for one changed `PriorityScore` row — never
  *  a recomputed score/band figure (Invariant I9). `before_state === null`
  *  means a first-time score: every dimension is listed as newly set rather
- *  than "changed", since there was nothing to diff against. */
+ *  than "changed", since there was nothing to diff against. Labels come from
+ *  the served rubric (all versions' keys stay; a dimension is never deleted). */
 function priorityScoreDiffEntries(
   change: ScenarioApplyChangeDetail,
+  labelOf: (key: string) => string,
 ): { label: string; from: string; to: string }[] {
   const { before_state: before, after_state: after } = change;
   const entries: { label: string; from: string; to: string }[] = [];
+  const beforeScores = snapshotScores(before);
+  const afterScores = snapshotScores(after);
+  const keys = [...new Set([...Object.keys(beforeScores), ...Object.keys(afterScores)])];
 
-  for (const dim of DIMENSIONS) {
-    const afterVal = after[dim.field];
-    const beforeVal = before ? before[dim.field] : undefined;
+  for (const key of keys) {
+    const afterVal = afterScores[key];
+    const beforeVal = beforeScores[key];
     if (before === null || beforeVal !== afterVal) {
       entries.push({
-        label: dim.label,
+        label: labelOf(key),
         from: before === null ? '—' : String(beforeVal ?? '—'),
         to: String(afterVal ?? '—'),
       });
@@ -288,6 +322,9 @@ function VersionDetail({
   query: ReturnType<typeof useScenarioVersionDetail>;
   projectLookup: Record<string, ProjectLookupEntry | undefined>;
 }): React.JSX.Element {
+  // P26: dimension labels from the served rubric (every dimension, active or not).
+  const rubric = useScoringRubric();
+  const labels = new Map((rubric.data?.dimensions ?? []).map((d) => [d.key, d.label]));
   if (query.isPending) {
     return (
       <div className="space-y-2" aria-busy="true">
@@ -313,6 +350,7 @@ function VersionDetail({
   }
 
   const run = query.data;
+  const labelOf = (key: string) => labels.get(key) ?? key;
 
   return (
     <div className="space-y-3" data-testid="version-detail">
@@ -342,7 +380,7 @@ function VersionDetail({
         <ul className="space-y-2">
           {run.changes.map((change) => {
             const project = change.project_id ? projectLookup[change.project_id] : undefined;
-            const entries = priorityScoreDiffEntries(change);
+            const entries = priorityScoreDiffEntries(change, labelOf);
             return (
               <li
                 key={change.id}

@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 
-import { DIMENSION_FIELDS, type PriorityScoreUpdateRequest, type ScenarioPriorityScoreChange } from '@/surfaces/matrix/api/types';
+import type { PriorityScoreUpdateRequest, ScenarioPriorityScoreChange } from '@/surfaces/matrix/api/types';
 
 /**
  * Scenario edit state (P5-T01) — an in-progress, uncommitted set of
@@ -32,6 +32,9 @@ export interface ScenarioPendingEdit {
   /** Display-only — never sent to the backend. */
   hub: string;
   /**
+   * P26: requests hold a `scores` map keyed by ACTIVE dimension key. `baseline`
+   * and `next` both carry every active key of the row (null = not scored).
+   *
    * The live `PriorityScoreUpdateRequest` values captured at the moment this
    * project was FIRST staged in the current scenario — i.e. "the last
    * committed version" this project is diffed against. Deliberately never
@@ -157,14 +160,23 @@ export const useScenarioStore = create<ScenarioState>()((set) => ({
   reset: () => set({ pending: {}, past: [], future: [], notes: '' }),
 }));
 
-/** Order-independent equality over the 13 dimension fields + `hard_gates`. */
+/** P26: equality over the union of both score maps' keys (a missing key reads
+ *  as null) + order-independent `hard_gates`. */
 function scoresEqual(a: PriorityScoreUpdateRequest, b: PriorityScoreUpdateRequest): boolean {
-  for (const field of DIMENSION_FIELDS) {
-    if (a[field] !== b[field]) return false;
+  const keys = new Set([...Object.keys(a.scores), ...Object.keys(b.scores)]);
+  for (const key of keys) {
+    if ((a.scores[key] ?? null) !== (b.scores[key] ?? null)) return false;
   }
   if (a.hard_gates.length !== b.hard_gates.length) return false;
   const bSorted = [...b.hard_gates].sort();
   return [...a.hard_gates].sort().every((g, i) => g === bSorted[i]);
+}
+
+/** The scores of `next` that differ from `baseline` (P26 diff semantics). */
+export function changedScoreKeys(edit: ScenarioPendingEdit): string[] {
+  return Object.keys(edit.next.scores).filter(
+    (key) => (edit.baseline.scores[key] ?? null) !== (edit.next.scores[key] ?? null),
+  );
 }
 
 /** True if a staged edit's `next` is identical to its `baseline` — e.g. the
@@ -188,16 +200,24 @@ export function effectivePendingEdits(pending: PendingMap): ScenarioPendingEdit[
 }
 
 /**
- * The `POST /scenarios/apply` `priority_scores` diff: one full-row entry per
- * genuinely-changed project (full replacement, not a sparse per-field diff —
- * confirmed by `backend/schemas/scenario.py::ScenarioPriorityScoreChange`,
- * whose 13 dimension fields are all required, `ge=1 le=5`, none optional).
- * No-op edits (see `isNoOpEdit`) are excluded — the frontend does not rely on
- * the backend to drop them.
+ * The `POST /scenarios/apply` `priority_scores` diff (P26 contract §5): one
+ * entry per genuinely-changed project with ONLY the dimensions whose staged
+ * value differs from the baseline (omitted keys keep their stored value; null
+ * clears) and the full `hard_gates` list. No-op edits (see `isNoOpEdit`) are
+ * excluded — the frontend does not rely on the backend to drop them. With
+ * `activeKeys`, a key that is no longer an active dimension (the rubric changed
+ * after the edit was staged) is left out, so the batch is not rejected.
  */
-export function computeScenarioDiff(pending: PendingMap): ScenarioPriorityScoreChange[] {
-  return effectivePendingEdits(pending).map((edit) => ({
-    project_id: edit.projectId,
-    ...edit.next,
-  }));
+export function computeScenarioDiff(
+  pending: PendingMap,
+  activeKeys?: ReadonlySet<string>,
+): ScenarioPriorityScoreChange[] {
+  return effectivePendingEdits(pending).map((edit) => {
+    const scores: PriorityScoreUpdateRequest['scores'] = {};
+    for (const key of changedScoreKeys(edit)) {
+      if (activeKeys && !activeKeys.has(key)) continue;
+      scores[key] = edit.next.scores[key] ?? null;
+    }
+    return { project_id: edit.projectId, scores, hard_gates: [...edit.next.hard_gates] };
+  });
 }

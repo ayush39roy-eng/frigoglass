@@ -12,7 +12,11 @@ import { RegionChips } from './region-chips';
 
 /**
  * Project Pipeline row (ADR 0030, client's older app):
- *   Spillover {PLAN_YEAR-1} + Newly registered {PLAN_YEAR} + Unregistered date = Total projects.
+ *   Spillover {PLAN_YEAR-1} + Newly registered {PLAN_YEAR} = Total projects.
+ *
+ * Owner ask 2026-10-22: the "Unregistered date" card is removed. The served
+ * `unregistered_count` is still part of the total (ADR 0030), so when it is
+ * non-zero the Total caption names it, and the sum on screen stays honest.
  *
  * Portfolio COMPOSITION off the live project registry (carry_over / reg_year),
  * NOT the schedule-run "Spillover (past W52)" outcome, which lives in the
@@ -70,27 +74,19 @@ export function PipelineRow({ totals, regionSummary = null }: PipelineRowProps):
       muted: false,
     },
     {
-      bucket: 'unregistered',
-      label: 'Unregistered date',
-      count: totals.unregistered_count,
-      caption:
-        totals.unregistered_count === 0
-          ? 'No registration year set'
-          : `${share(totals.unregistered_share_pct)} · no registration year set`,
-      rail: 'border-t-border-strong',
-      muted: totals.unregistered_count === 0,
-    },
-    {
       bucket: 'total',
       label: 'Total projects',
       count: totals.total_count,
-      caption: `All statuses · full ${String(PLAN_YEAR)} pipeline`,
+      caption:
+        totals.unregistered_count > 0
+          ? `All statuses · incl. ${formatInteger(totals.unregistered_count)} with no registration year`
+          : `All statuses · full ${String(PLAN_YEAR)} pipeline`,
       rail: 'border-t-ink',
       muted: false,
       big: true,
     },
   ];
-  const glyphs = ['+', '+', '='];
+  const glyphs = ['+', '='];
 
   return (
     <Card className="border-0 bg-transparent shadow-none" data-testid="pipeline-row">
@@ -98,7 +94,7 @@ export function PipelineRow({ totals, regionSummary = null }: PipelineRowProps):
         <div>
           <CardTitle className="text-h2 font-extrabold">Project pipeline</CardTitle>
           <p className="mt-0.5 text-sm font-medium text-text-muted">
-            Spillover + newly registered + unregistered date = total projects
+            Spillover + newly registered = total projects
           </p>
         </div>
         <CardInfo label="Project pipeline source">
@@ -114,7 +110,7 @@ export function PipelineRow({ totals, regionSummary = null }: PipelineRowProps):
           </p>
         </CardInfo>
       </CardHeader>
-      <div className="grid gap-s1 lg:grid-cols-[1fr_auto_1fr_auto_1fr_auto_1fr] lg:gap-s2">
+      <div className="grid gap-s1 lg:grid-cols-[1fr_auto_1fr_auto_1fr] lg:gap-s2">
         {cards.map((card, i) => (
           <React.Fragment key={card.bucket}>
             <section

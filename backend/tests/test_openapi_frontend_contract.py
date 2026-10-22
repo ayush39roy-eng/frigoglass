@@ -337,6 +337,20 @@ CONTRACT_TABLE: list[tuple[Path, str, str, str]] = [
     # two are new; all red until P25-T02 mirrors them.
     (_MATRIX_TS, "HubP1Fill", "HubP1Fill", "exact"),
     (_MATRIX_TS, "PriorityCapacityFill", "PriorityCapacityFill", "exact"),
+    # P26-T01 (ADR 0037, docs/API_CONTRACT_P26.md §7): the editable scoring
+    # rubric. `PriorityMatrixRow`, `PriorityCompareProject`, `PriorityScoreRead`,
+    # `PriorityScoreUpdateRequest`, `ScoringDimensionTable`,
+    # `ScenarioPriorityScoreChange` and `WorkspacePriorityScore` change shape;
+    # the rows below are new. All red until P26-T02 mirrors them.
+    (_MATRIX_TS, "ScoringRubric", "ScoringRubricRead", "exact"),
+    (_MATRIX_TS, "ScoringRubricDimension", "ScoringRubricDimension", "exact"),
+    (_MATRIX_TS, "ScoringRubricDimensionInput", "ScoringRubricDimensionInput", "exact"),
+    (_MATRIX_TS, "ScoringRubricUpdateRequest", "ScoringRubricUpdateRequest", "exact"),
+    (_MATRIX_TS, "ScoringRubricPreviewRequest", "ScoringRubricPreviewRequest", "exact"),
+    (_MATRIX_TS, "ScoringRubricVersions", "ScoringRubricVersionsResponse", "exact"),
+    (_MATRIX_TS, "ScoringRubricPreview", "ScoringRubricPreview", "exact"),
+    (_MATRIX_TS, "RubricPreviewProject", "RubricPreviewProject", "exact"),
+    (_MATRIX_TS, "RubricBandChange", "RubricBandChange", "exact"),
     # --- Matrix: Scenario Apply + Versions & History (backend/schemas/scenario.py,
     # P5-T01/P5-T02/P5-T03) ---
     (_MATRIX_TS, "ScenarioPriorityScoreChange", "ScenarioPriorityScoreChange", "exact"),
@@ -618,8 +632,9 @@ class TestTsParserSelfTest:
         # Own fields.
         assert "id" in fields
         assert "weighted_score" in fields
-        # Inherited from `extends PriorityScoreUpdateRequest`.
-        assert "strategic_project" in fields
+        # Inherited from `extends PriorityScoreUpdateRequest`. (P26-T01: the
+        # 13 flat score fields left the backend shape; `hard_gates` is the
+        # field both shapes inherit.)
         assert "hard_gates" in fields
 
     def test_resolves_extends_across_files(self) -> None:

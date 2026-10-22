@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import uuid
 from collections import defaultdict
-from collections.abc import Collection
+from collections.abc import Collection, Mapping
 from dataclasses import dataclass, field
 from decimal import Decimal
 from types import EllipsisType
@@ -90,6 +90,7 @@ async def compute_capacity_fill(
     hub_ids: Collection[uuid.UUID],
     *,
     active_run: ScheduleRun | None | EllipsisType = ...,
+    normalized_override: Mapping[uuid.UUID, int | None] | None = None,
 ) -> CapacityFill:
     """The P1 capacity fill of every hub in `hub_ids` (callers pass in-scope
     hubs only). Query count is constant: hubs, projects + scores, engineers,
@@ -97,7 +98,13 @@ async def compute_capacity_fill(
 
     P25-T03: a caller that already loaded the active run (the Priority board,
     the Workspace) passes it as `active_run` (`None` = there is none), so it
-    is not read twice. Omitted, the loader reads it itself."""
+    is not read twice. Omitted, the loader reads it itself.
+
+    P26-T01 (ADR 0037): `normalized_override` replaces the stored
+    `normalized_pct` of the projects it names (None = unscored), so the
+    rubric preview can show the suggested band a proposed rubric would give,
+    through the very same walk. Projects it does not name keep their stored
+    score."""
 
     ids = sorted(set(hub_ids), key=str)
     run = await get_active_run(db) if isinstance(active_run, EllipsisType) else active_run
@@ -134,14 +141,18 @@ async def compute_capacity_fill(
             hub_names=hub_names,
         )
 
-    scored = (
-        await db.execute(
-            select(Project.id, Project.hub_id, Project.status, PriorityScore.normalized_pct)
-            .join(PriorityScore, PriorityScore.project_id == Project.id)
-            .where(Project.hub_id.in_(ids))
-            .where(PriorityScore.normalized_pct.is_not(None))
-        )
-    ).all()
+    stmt = (
+        select(Project.id, Project.hub_id, Project.status, PriorityScore.normalized_pct)
+        .join(PriorityScore, PriorityScore.project_id == Project.id)
+        .where(Project.hub_id.in_(ids))
+    )
+    if normalized_override is None:
+        stmt = stmt.where(PriorityScore.normalized_pct.is_not(None))
+    scored = [
+        (pid, h, st, normalized_override.get(pid, pct) if normalized_override is not None else pct)
+        for pid, h, st, pct in (await db.execute(stmt)).all()
+    ]
+    scored = [row for row in scored if row[3] is not None]
     loads = await remaining_run_load_by_project(db, run, [pid for pid, *_ in scored])
 
     by_hub: dict[uuid.UUID, list[FillProject]] = defaultdict(list)

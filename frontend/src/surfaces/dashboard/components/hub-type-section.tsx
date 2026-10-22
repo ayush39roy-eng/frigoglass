@@ -5,6 +5,7 @@ import { CircleCheckBig } from 'lucide-react';
 import { BoltCard } from '@/components/ui/bolt-card';
 import { PanelSkeleton } from '@/components/ui/panel-skeleton';
 import { SectionBoundary } from '@/components/shared/section-boundary';
+import { cn } from '@/lib/utils';
 import type { LabRegion } from '@/types/enums';
 
 import type { CompletingWithinYear, DashboardAnalytics, HubTypePipelineRow } from '../api/types';
@@ -22,9 +23,10 @@ const PipelineVsCompletingChart = React.lazy(async () => ({
 /**
  * P17-R08: the Hub × Type row, directly after "Completing within the year"
  * (client's older app: pipeline summary | completing within year | pipeline vs
- * completing). At xl the two tables share one row (5 / 7 columns) and the chart
- * runs beneath them beside "Top hubs"; three columns at 1440 px squeezed the
- * completing table into a sideways scroll. Below xl everything stacks.
+ * completing). At xl all three share one row, equal height (owner ask,
+ * 2026-10-22): 1 / 1.3 / 0.9, because the completing table's count-over-share
+ * cells are the widest content and the chart reflows freely. "Top hubs" runs full width beneath. Below xl
+ * everything stacks.
  *
  * Owns the drill-down dialog: one dialog for both tables, focus returns to the
  * figure that opened it.
@@ -61,8 +63,8 @@ export function HubTypeSection({
 
   return (
     <section aria-label="Pipeline and within-year completion by hub and type" className="flex flex-col gap-gutter">
-      <div className="grid grid-cols-[minmax(0,1fr)] gap-gutter xl:grid-cols-12">
-        <div className="min-w-0 xl:col-span-5">
+      <div className={cn('grid grid-cols-[minmax(0,1fr)] gap-gutter', hasRun ? 'xl:grid-cols-[minmax(0,1fr)_minmax(0,1.3fr)_minmax(0,0.9fr)]' : 'xl:grid-cols-2')}>
+        <div className="min-w-0 [&>*]:h-full">
           <SectionBoundary
             query={hubTypePipeline}
             title="Project pipeline summary: Hub × Type"
@@ -79,7 +81,7 @@ export function HubTypeSection({
             )}
           </SectionBoundary>
         </div>
-        <div className="min-w-0 xl:col-span-7">
+        <div className="min-w-0 [&>*]:h-full">
           <SectionBoundary
             query={analytics}
             title="Completing within year: Hub × Type"
@@ -105,20 +107,16 @@ export function HubTypeSection({
             }
           </SectionBoundary>
         </div>
-      </div>
-
-      <div className="grid grid-cols-[minmax(0,1fr)] gap-gutter xl:grid-cols-12">
         {hasRun && analytics.data ? (
-          <div className="min-w-0 xl:col-span-8 [&>*]:h-full">
+          <div className="min-w-0 [&>*]:h-full">
             <React.Suspense fallback={<PanelSkeleton height="h-[20rem]" />}>
               <PipelineVsCompletingChart rows={analytics.data.completing_by_type} />
             </React.Suspense>
           </div>
         ) : null}
-        <div className={hasRun ? 'min-w-0 xl:col-span-4 [&>*]:h-full' : 'min-w-0 xl:col-span-12'}>
-          {hubTypePipeline.data ? <HubRankList rows={hubTypePipeline.data} /> : null}
-        </div>
       </div>
+
+      {hubTypePipeline.data ? <HubRankList rows={hubTypePipeline.data} /> : null}
 
       <HubTypeDrilldownDialog
         target={target}

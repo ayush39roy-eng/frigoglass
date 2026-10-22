@@ -35,13 +35,18 @@ from sqlalchemy.orm import selectinload
 
 from core.principal import Principal
 from models.enums import ProjectPriority, ScenarioEntityType
-from models.priority import DIMENSION_FIELD_NAMES, PriorityScore
+from models.priority import PriorityScore
 from models.project import Project
 from models.scenario import ScenarioApplyChange, ScenarioApplyRun
 from schemas.scenario import ScenarioPriorityScoreChange
 from services.audit_helpers import priority_score_audit_state
 from services.hub_scope import hub_scope_filter
-from services.priority_scoring import compute_priority_score
+from services.scoring_rubric import (
+    UnknownDimensionKeyError,
+    load_rubric,
+    lock_rubric,
+    write_project_scores,
+)
 
 
 class ScenarioApplyValidationError(Exception):
@@ -134,11 +139,22 @@ async def apply_priority_score_changes(
     duplicate_ids = {pid for pid in project_ids if project_ids.count(pid) > 1}
     if duplicate_ids:
         raise ScenarioApplyValidationError(
-            f"Duplicate project_id(s) in one apply request: "
-            f"{sorted(str(d) for d in duplicate_ids)}"
+            f"Duplicate project_id(s) in one apply request: {sorted(str(d) for d in duplicate_ids)}"
         )
 
     projects_by_id = await _resolve_projects_in_scope(db, principal, project_ids)
+
+    # ADR 0037: every change is scored against the current rubric, under the
+    # shared rubric lock; any key that is not an active dimension fails the
+    # whole batch before anything is written.
+    await lock_rubric(db, exclusive=False)
+    rubric = await load_rubric(db)
+    active_keys = set(rubric.active_keys)
+    unknown = sorted({k for c in changes for k in c.scores if k not in active_keys})
+    if unknown:
+        raise ScenarioApplyValidationError(
+            f"Not an active scoring dimension: {', '.join(unknown)}."
+        )
 
     existing_scores_stmt = (
         select(PriorityScore)
@@ -166,24 +182,22 @@ async def apply_priority_score_changes(
     for change in changes:
         project = projects_by_id[change.project_id]
         existing = existing_by_project.get(change.project_id)
-        before_state = priority_score_audit_state(existing) if existing is not None else None
+        before_state = (
+            priority_score_audit_state(existing, rubric) if existing is not None else None
+        )
 
-        dims = [getattr(change, name) for name in DIMENSION_FIELD_NAMES]
-        weighted_score, normalized_pct, suggested_band_str = compute_priority_score(dims)
-        suggested_band = ProjectPriority(suggested_band_str)
-
-        score = existing or PriorityScore(project_id=change.project_id)
-        for name in DIMENSION_FIELD_NAMES:
-            setattr(score, name, getattr(change, name))
+        score = existing or PriorityScore(project_id=change.project_id, dimension_scores=[])
+        try:
+            write_project_scores(rubric, score, change.scores)
+        except UnknownDimensionKeyError as exc:  # pragma: no cover - validated above
+            raise ScenarioApplyValidationError(str(exc)) from exc
         score.hard_gates = change.hard_gates
-        score.weighted_score = weighted_score
-        score.normalized_pct = normalized_pct
-        score.suggested_band = suggested_band
+        score.scored_by_user_id = principal.user_id
         if existing is None:
             db.add(score)
         await db.flush()  # populate score.id for a create; persist edits for an update
 
-        after_state = priority_score_audit_state(score)
+        after_state = priority_score_audit_state(score, rubric)
 
         db.add(
             ScenarioApplyChange(
@@ -198,7 +212,8 @@ async def apply_priority_score_changes(
         )
 
         written_scores.append(score)
-        suggested_bands[change.project_id] = suggested_band
+        if score.suggested_band is not None:
+            suggested_bands[change.project_id] = score.suggested_band
 
     await db.flush()
     return run, written_scores, suggested_bands

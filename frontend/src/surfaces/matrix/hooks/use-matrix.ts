@@ -27,6 +27,10 @@ import {
   fetchPriorityMatrix,
   fetchPriorityRow,
   fetchScoringDimensions,
+  fetchScoringRubric,
+  fetchScoringRubricVersions,
+  previewScoringRubric,
+  updateScoringRubric,
   fetchPrioritySummary,
   fetchScenarioVersionDetail,
   fetchScenarioVersions,
@@ -34,7 +38,13 @@ import {
   updatePriorityScore,
   type MatrixQueryParams,
 } from '../api/matrix-api';
-import type { MatrixCurrencyCode, PriorityScoreUpdateRequest, ScenarioApplyRequest } from '../api/types';
+import type {
+  MatrixCurrencyCode,
+  PriorityScoreUpdateRequest,
+  ScenarioApplyRequest,
+  ScoringRubricPreviewRequest,
+  ScoringRubricUpdateRequest,
+} from '../api/types';
 
 /** Do not retry an auth failure — a 401/403 will not fix itself on retry.
  *  Param typed `Error` so `useQuery` infers `TError = Error`. */
@@ -200,14 +210,70 @@ export function useUpdateCurrencyRate() {
   });
 }
 
-/** The served dimension table (weights, scaled weights, total). Static for a
- *  session in practice; failure leaves the static fallback in place. */
-export function useScoringDimensions() {
+/** The served table of ACTIVE dimensions (weights, scaled weights, total, rubric
+ *  version). Under `priority-matrix`, so a rubric save re-reads it. */
+export function useScoringDimensions(enabled = true) {
   return useQuery({
     queryKey: queryKeys.priorityDimensions(),
     queryFn: ({ signal }) => fetchScoringDimensions({ signal }),
     staleTime: 5 * 60_000,
     retry: retryUnlessAuth,
+    enabled,
+  });
+}
+
+// --- P26 scoring rubric (ADR 0037) ----------------------------------------------
+
+/** `GET /scoring-rubric`: every dimension (active and inactive) and the caller's `can_edit`. */
+export function useScoringRubric(enabled = true) {
+  return useQuery({
+    queryKey: queryKeys.scoringRubric(),
+    queryFn: ({ signal }) => fetchScoringRubric({ signal }),
+    retry: retryUnlessAuth,
+    enabled,
+  });
+}
+
+/** `GET /scoring-rubric/versions`, read only when the history tab is shown. */
+export function useScoringRubricVersions(enabled: boolean) {
+  return useQuery({
+    queryKey: queryKeys.scoringRubricVersions(),
+    queryFn: ({ signal }) => fetchScoringRubricVersions({ signal }),
+    retry: retryUnlessAuth,
+    enabled,
+  });
+}
+
+/** `POST /scoring-rubric/preview`: writes nothing, so it invalidates nothing. */
+export function usePreviewScoringRubric() {
+  return useMutation({ mutationFn: (body: ScoringRubricPreviewRequest) => previewScoringRubric(body) });
+}
+
+/**
+ * P26: a rubric save recomputes EVERY stored score server-side (ADR 0037 §4),
+ * so every reader of a score or band is re-read: the Matrix rows, distribution,
+ * summary, capacity fill, compare, edit rows and the served dimension table
+ * (all under `priority-matrix`), the rubric and its versions, the Priority
+ * board, the VIP board (it orders by weighted score) and every Workspace. A
+ * rubric change never changes the schedule (ADR 0037 §7), so run-derived views
+ * (Gantt, Dashboard, Capacity) are deliberately not refreshed.
+ */
+export function invalidateRubricReaders(queryClient: QueryClient): void {
+  void queryClient.invalidateQueries({ queryKey: ['priority-matrix'] });
+  void queryClient.invalidateQueries({ queryKey: queryKeys.scoringRubric() });
+  void queryClient.invalidateQueries({ queryKey: ['priority-board'] });
+  void queryClient.invalidateQueries({ queryKey: ['vip-board'] });
+  void queryClient.invalidateQueries({ queryKey: ['projects', 'workspace'] });
+}
+
+/** `PUT /scoring-rubric`: on success every score reader is re-read (`invalidateRubricReaders`). */
+export function useSaveScoringRubric() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (body: ScoringRubricUpdateRequest) => updateScoringRubric(body),
+    onSuccess: () => {
+      invalidateRubricReaders(queryClient);
+    },
   });
 }
 

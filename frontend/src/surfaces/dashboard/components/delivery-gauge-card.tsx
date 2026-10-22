@@ -41,7 +41,7 @@ export function DeliveryGaugeCard({ data }: DeliveryGaugeCardProps): React.JSX.E
   const shownPct = useCountUp(pct);
 
   return (
-    <BoltCard className="flex flex-col p-card">
+    <BoltCard className="flex flex-col justify-between gap-s4 p-card">
       <div className="flex items-start justify-between gap-s3">
         <div className="flex items-center gap-s3">
           <span className="grid size-10 place-items-center rounded-xl bg-primary-subtle text-primary-subtle-fg">

@@ -46,7 +46,7 @@ function Figure({
 
 function AreaLine({ area }: { area: CapacityArea }): React.JSX.Element {
   return (
-    <li className="space-y-1.5 border-b border-dash-hairline py-2.5 last:border-b-0" data-testid="capacity-booked-area">
+    <li className="space-y-1.5 border-b border-dash-hairline py-2.5 last:border-b-0 lg:border-b-0" data-testid="capacity-booked-area">
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
         <span className="min-w-16 text-sm font-extrabold text-text">{area.area}</span>
         <Figure
@@ -113,7 +113,7 @@ export function CapacityBookedCard(): React.JSX.Element | null {
         </div>
       </CardHeader>
       <CardContent>
-        <ul aria-label="Capacity booked by area">
+        <ul aria-label="Capacity booked by area" className="grid gap-x-gutter lg:grid-cols-2">
           {data.areas.map((area) => (
             <AreaLine key={area.area} area={area} />
           ))}

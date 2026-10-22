@@ -46,6 +46,7 @@ from tests.auth_helpers import (
     override_current_principal,
 )
 from tests.factories import make_user
+from tests.rubric_helpers import INITIAL_KEYS
 
 _FINANCIAL = ("customer_name", "tcogs", "selling_price", "gross_margin")
 
@@ -649,9 +650,10 @@ async def test_priorities_dimensions_endpoint_and_row_points(db_session):
     async with _client(db_session) as client:
         table = await _get(client, "/priorities/dimensions")
         rows = await _get(client, "/priorities")
-    assert table["total_weight"] == dc.TOTAL_WEIGHT == 295
+    assert table["total_weight"] == 295  # the initial rubric (ADR 0029 / 0037)
+    assert table["rubric_version"] == 1
     dims = table["dimensions"]
-    assert [d["key"] for d in dims] == [k for _p, _l, k, _w in dc.PRIORITIZATION_DIMENSIONS]
+    assert [d["key"] for d in dims] == list(INITIAL_KEYS)
     by_key = {d["key"]: d for d in dims}
     assert by_key["gross_margins"]["label"] == "Gross Profitability"
     assert by_key["profitability"]["label"] == "ROI"
@@ -665,9 +667,12 @@ async def test_priorities_dimensions_endpoint_and_row_points(db_session):
     for r in scored:
         pts = r["dimension_points"]
         assert list(pts) == list(by_key)
+        score_by_key = {d["key"]: d["score"] for d in r["dimension_scores"]}
         for k, d in by_key.items():
-            assert pts[k]["points"] == round(r[k] * d["weight"] / 5, 2)
-            assert pts[k]["scaled_points"] == round(r[k] * d["weight"] / 5 * 100 / 295, 2)
+            assert pts[k]["points"] == round(score_by_key[k] * d["weight"] / 5, 2)
+            assert pts[k]["scaled_points"] == round(
+                score_by_key[k] * d["weight"] / 5 * 100 / 295, 2
+            )
         assert round(sum(v["points"] for v in pts.values()), 1) == round(r["weighted_score"], 1)
         assert r["normalized_pct"] == round(r["weighted_score"] / 295 * 100)
     for r in rows:

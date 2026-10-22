@@ -37,7 +37,6 @@ from models.enums import (
     ProjectType,
     RoleName,
 )
-from services.priority_scoring import compute_priority_score
 from tests.auth_helpers import (
     clear_current_principal_override,
     make_principal,
@@ -45,6 +44,13 @@ from tests.auth_helpers import (
 )
 from tests.conftest import run_alembic
 from tests.factories import make_hub, make_priority_score, make_project, make_user
+from tests.rubric_helpers import (
+    INITIAL_KEYS,
+    INITIAL_TOTAL_WEIGHT,
+    INITIAL_WEIGHTS,
+    score_body,
+    score_of,
+)
 
 _FINANCIAL_KEYS = (
     "capex_keur",
@@ -55,7 +61,7 @@ _FINANCIAL_KEYS = (
     "customer_name",
     "currency",
 )
-_KEYS = [key for _p, _l, key, _w in dc.PRIORITIZATION_DIMENSIONS]
+_KEYS = list(INITIAL_KEYS)
 
 #: Hand-worked example with zeros (ADR 0033). Points = score / 5 * weight:
 #: 25 + 0 + 15 + 0 + 5 + 25 + 0 + 10 + 20 + 0 + 25 + 0 + 9 = 134;
@@ -107,7 +113,7 @@ async def _seed_rates(db_session) -> None:
 
 async def _scored(db_session, hub, name, dims, **overrides):
     project = await make_project(db_session, hub, name=name, **overrides)
-    weighted, pct, band = compute_priority_score(dims)
+    weighted, pct, band = score_of(dims)
     await make_priority_score(
         db_session,
         project,
@@ -258,16 +264,16 @@ async def test_set_rate_rejects_non_positive_out_of_range_or_non_finite(db_sessi
 
 
 def test_score_zero_points_hand_worked():
-    weighted, pct, band = compute_priority_score(_ZERO_DIMS)
+    weighted, pct, band = score_of(_ZERO_DIMS)
     assert weighted == 134.0
     assert pct == 45
     assert band == "P3"
-    assert compute_priority_score([0] * 13) == (0.0, 0, "P4")
-    assert compute_priority_score([5] * 13) == (295.0, 100, "P1")
+    assert score_of([0] * 13) == (0.0, 0, "P4")
+    assert score_of([5] * 13) == (295.0, 100, "P1")
 
 
 def _body(dims):
-    return {**dict(zip(_KEYS, dims, strict=True)), "hard_gates": []}
+    return score_body(dims)
 
 
 async def test_put_priorities_accepts_zero_and_stores_points(db_session):
@@ -320,12 +326,14 @@ async def test_matrix_rows_dimension_scores_order_sum_and_unscored(db_session):
     for row in rows:
         dims = row["dimension_scores"]
         assert [d["key"] for d in dims] == _KEYS
-        assert [d["weight"] for d in dims] == [w for *_r, w in dc.PRIORITIZATION_DIMENSIONS]
+        assert [d["weight"] for d in dims] == INITIAL_WEIGHTS
         assert [d["max_points"] for d in dims] == [d["weight"] for d in dims]
         assert set(dims[0]) == {"key", "label", "pillar", "score", "weight", "points", "max_points"}
         if row["has_score"]:
             assert sum(d["points"] for d in dims) == pytest.approx(row["weighted_score"])
-            assert row["normalized_pct"] == round(row["weighted_score"] / dc.TOTAL_WEIGHT * 100)
+            assert row["normalized_pct"] == round(
+                row["weighted_score"] / INITIAL_TOTAL_WEIGHT * 100
+            )
         else:
             assert all(d["score"] is None and d["points"] is None for d in dims)
             assert row["weighted_score"] is None and row["suggested_band"] is None
@@ -489,6 +497,9 @@ async def test_compare_returns_projects_in_order_without_financials(db_session):
         "capacity_fill",
         "capacity_fill_reason",
         "dimension_scores",
+        # P26-T01 (ADR 0037).
+        "missing_dimension_keys",
+        "rubric_version",
     }
     for key in _FINANCIAL_KEYS:
         assert key not in resp.text
@@ -599,7 +610,7 @@ def test_migration_p21a_adds_unconfigured_currencies_and_score_zero():
             "(gen_random_uuid(), 'EUR', 1.0), (gen_random_uuid(), 'USD', 1.08), "
             "(gen_random_uuid(), 'INR', 97)",
         )
-        r = run_alembic(["upgrade", "head"], url)
+        r = run_alembic(["upgrade", "p21a_currencies_score_zero"], url)
         assert r.returncode == 0, r.stderr
         rows = _sql(
             url,
@@ -627,7 +638,7 @@ def test_migration_p21a_adds_unconfigured_currencies_and_score_zero():
         assert r.returncode == 0, r.stderr
         rows = _sql(url, fetch="SELECT currency_code::text FROM currency_rates ORDER BY 1")
         assert [row[0] for row in rows] == ["EUR", "INR", "USD"]
-        r = run_alembic(["upgrade", "head"], url)
+        r = run_alembic(["upgrade", "p21a_currencies_score_zero"], url)
         assert r.returncode == 0, r.stderr
         rows = _sql(url, fetch="SELECT count(*) FROM currency_rates")
         assert rows[0][0] == 6

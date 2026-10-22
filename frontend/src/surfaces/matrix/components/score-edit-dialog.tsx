@@ -1,6 +1,4 @@
 import * as React from 'react';
-import { useForm } from 'react-hook-form';
-import { zodResolver } from '@hookform/resolvers/zod';
 
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -12,30 +10,32 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
 import { ApiError } from '@/lib/api/client';
 import { formatDecimal } from '@/lib/format';
 import { HARD_GATE_REASONS, type HardGateReason } from '@/types/enums';
 
 import {
   SCORE_RANGE_HELP_COPY,
+  type DimensionScoreMap,
   type PriorityMatrixRow,
   type PriorityScoreUpdateRequest,
 } from '../api/types';
+import { groupByPillar } from '../lib/pillars';
+import { rowMissingLabels } from '../lib/row-scores';
 import { formatWeight, useScoringModel } from '../scoring-model';
-import {
-  dimensionDefaultsFromRow,
-  scoreDimensionsSchema,
-  toRequestBody,
-  type ScoreDimensionsInput,
-  type ScoreDimensionsValues,
-} from './score-edit-schema';
+import { IncompleteScoreMarker } from '@/components/shared/incomplete-score-marker';
+import { changedScores, scoresFromDimensionScores, toRequestBody } from './score-edit-schema';
 
 /**
- * Inline edit of the 13 dimension scores + hard gates for one project.
- * `react-hook-form` + `zod` (`frontend-builder` SKILL) — client validation for
- * responsiveness only; the backend re-validates and is the authority.
+ * Inline edit of the dimension scores + hard gates for one project.
+ *
+ * P26 (ADR 0037): the fields are the row's served ACTIVE dimensions
+ * (`dimension_scores`, display order, grouped by pillar), however many there
+ * are. Each is a 0–5 menu with "– Not scored"; the body sent is
+ * `{scores, hard_gates}` with ONLY the dimensions changed in this dialog
+ * (omitted keys keep their stored value; choosing "– Not scored" sends null,
+ * which clears it). The menu makes every value valid by construction; the
+ * backend re-validates and is the authority.
  *
  * Two modes (P5-T01), selected by the caller — this component itself never
  * calls the network, it only calls `onSubmit`:
@@ -82,6 +82,8 @@ export function ScoreEditDialog({
   );
 }
 
+const SCORE_OPTIONS = [0, 1, 2, 3, 4, 5] as const;
+
 function ScoreEditForm({
   row,
   onOpenChange,
@@ -94,24 +96,30 @@ function ScoreEditForm({
   mode: 'immediate' | 'scenario';
 }): React.JSX.Element {
   const model = useScoringModel();
-  const pillars = [...new Set(model.dimensions.map((d) => d.pillar))];
+  const weightOf = new Map(model.dimensions.map((d) => [d.key, d]));
+  const groups = groupByPillar(row.dimension_scores);
+  const base = React.useMemo(() => scoresFromDimensionScores(row.dimension_scores), [row.dimension_scores]);
+  const [values, setValues] = React.useState<DimensionScoreMap>(base);
   const [submitError, setSubmitError] = React.useState<string | null>(null);
+  const [submitting, setSubmitting] = React.useState(false);
   const [gates, setGates] = React.useState<HardGateReason[]>([...row.hard_gates]);
+  const changed = changedScores(base, values);
+  const changedCount = Object.keys(changed).length;
+  const gatesChanged =
+    gates.length !== row.hard_gates.length || gates.some((g) => !row.hard_gates.includes(g));
+  const missing = rowMissingLabels(row);
+  const n = row.dimension_scores.length;
 
-  const {
-    register,
-    handleSubmit,
-    formState: { errors, isSubmitting },
-  } = useForm<ScoreDimensionsInput, unknown, ScoreDimensionsValues>({
-    resolver: zodResolver(scoreDimensionsSchema),
-    defaultValues: dimensionDefaultsFromRow(row),
-    mode: 'onChange',
-  });
-
-  const submit = handleSubmit(async (values) => {
+  const submit = async (event: React.FormEvent) => {
+    event.preventDefault();
     setSubmitError(null);
+    if (changedCount === 0 && !gatesChanged) {
+      onOpenChange(false);
+      return;
+    }
+    setSubmitting(true);
     try {
-      await onSubmit(row.project_id, toRequestBody(values, gates));
+      await onSubmit(row.project_id, toRequestBody(changed, gates));
       onOpenChange(false);
     } catch (err) {
       if (err instanceof ApiError && err.isForbidden) {
@@ -119,6 +127,10 @@ function ScoreEditForm({
           mode === 'scenario'
             ? 'Your role cannot apply scenario changes.'
             : 'Your role cannot edit prioritization scores.',
+        );
+      } else if (err instanceof ApiError && err.code === 'UNKNOWN_DIMENSION_KEY') {
+        setSubmitError(
+          'The scoring rubric changed while you were editing: a dimension you changed is no longer active. Close and reopen to score the current dimensions.',
         );
       } else if (err instanceof ApiError) {
         setSubmitError(
@@ -134,11 +146,14 @@ function ScoreEditForm({
             : 'The score could not be saved. Please try again.',
         );
       }
+    } finally {
+      setSubmitting(false);
     }
-  });
+  };
 
+  const dimsText = `${String(n)} ${n === 1 ? 'dimension' : 'dimensions'}, each 0–5`;
   return (
-    <form onSubmit={submit} noValidate>
+    <form onSubmit={(e) => void submit(e)} noValidate>
       <DialogHeader>
         <DialogTitle>
           {mode === 'scenario' ? 'Stage prioritization score change' : 'Edit prioritization score'}
@@ -146,59 +161,75 @@ function ScoreEditForm({
         <DialogDescription>
           {mode === 'scenario' ? (
             <>
-              {row.project_name} — 13 dimensions, each 0–5. This stages the change locally only;
-              nothing is sent to the server until you Apply the scenario.
+              {row.project_name} — {dimsText}. This stages the change locally only; nothing is sent to the server
+              until you Apply the scenario.
             </>
           ) : (
             <>
-              {row.project_name} — 13 dimensions, each 0–5. The weighted score and band are recomputed by
-              the server on save. This does not apply priorities or re-run the schedule.
+              {row.project_name} — {dimsText}. The weighted score and band are recomputed by the server on save.
+              This does not apply priorities or re-run the schedule.
             </>
           )}
         </DialogDescription>
       </DialogHeader>
 
       <p className="mt-2 text-2xs text-text-muted" id="score-range-help" data-testid="score-range-help">
-        {SCORE_RANGE_HELP_COPY}
+        {SCORE_RANGE_HELP_COPY}. “– Not scored” counts 0 points and marks the score incomplete. Only the dimensions you
+        change are sent.
       </p>
+      {missing.length > 0 ? (
+        <p className="mt-1 flex items-center gap-1.5 text-2xs text-text-muted" data-testid="score-edit-incomplete">
+          <IncompleteScoreMarker missingLabels={missing} />
+          <span>
+            {missing.length} of {n} not scored.
+          </span>
+        </p>
+      ) : null}
 
       <div className="my-4 max-h-[52vh] space-y-4 overflow-y-auto pr-1">
-        {pillars.map((pillar) => (
-          <fieldset key={pillar} className="space-y-2">
-            <legend className="text-2xs font-semibold uppercase tracking-wide text-text-muted">
-              {pillar}
-            </legend>
+        {n === 0 ? (
+          <p className="text-xs text-text-muted">No active scoring dimensions are served for this project.</p>
+        ) : null}
+        {groups.map((group) => (
+          <fieldset key={group.pillar} className="space-y-2" data-testid="score-edit-pillar">
+            <legend className="text-2xs font-semibold uppercase tracking-wide text-text-muted">{group.pillar}</legend>
             <div className="grid gap-2 sm:grid-cols-2">
-              {model.dimensions.filter((d) => d.pillar === pillar).map((dim) => {
-                const err = errors[dim.key];
+              {group.items.map((dim) => {
+                const id = `score-${dim.key}`;
+                const served = weightOf.get(dim.key);
+                const value = values[dim.key] ?? null;
+                const dirty = Object.prototype.hasOwnProperty.call(changed, dim.key);
                 return (
                   <div key={dim.key} className="flex items-center justify-between gap-2">
-                    <Label
-                      htmlFor={dim.key}
-                      className="text-xs"
-                      title={`weight ${formatWeight(dim.weight, dim.scaled_weight)}`}
+                    <label
+                      htmlFor={id}
+                      className="text-xs text-text"
+                      title={`weight ${formatWeight(served?.weight ?? dim.weight, served?.scaled_weight ?? null)}`}
                     >
                       {dim.label}
-                    </Label>
-                    <div className="flex flex-col items-end">
-                      <Input
-                        id={dim.key}
-                        type="number"
-                        min={0}
-                        max={5}
-                        step={1}
-                        inputMode="numeric"
-                        className="h-8 w-16 text-right tnum"
-                        aria-invalid={err ? true : undefined}
-                        aria-describedby="score-range-help"
-                        {...register(dim.key)}
-                      />
-                      {err ? (
-                        <span role="alert" className="text-2xs text-danger">
-                          {err.message}
-                        </span>
-                      ) : null}
-                    </div>
+                      {dirty ? <span className="ml-1 text-2xs font-semibold text-warning-subtle-fg">edited</span> : null}
+                    </label>
+                    <select
+                      id={id}
+                      value={value === null ? '' : String(value)}
+                      aria-describedby="score-range-help"
+                      onChange={(e) => {
+                        const raw = e.target.value;
+                        setValues((prev) => ({ ...prev, [dim.key]: raw === '' ? null : Number(raw) }));
+                      }}
+                      className={
+                        'h-8 w-28 rounded border bg-surface px-1 text-xs text-text tnum focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ' +
+                        (dirty ? 'border-warning font-semibold' : 'border-border-strong')
+                      }
+                      data-testid="score-edit-select"
+                    >
+                      <option value="">– Not scored</option>
+                      {SCORE_OPTIONS.map((opt) => (
+                        <option key={opt} value={String(opt)}>
+                          {opt}
+                        </option>
+                      ))}
+                    </select>
                   </div>
                 );
               })}
@@ -244,12 +275,12 @@ function ScoreEditForm({
         <Button type="button" variant="secondary" size="sm" onClick={() => onOpenChange(false)}>
           Cancel
         </Button>
-        <Button type="submit" size="sm" disabled={isSubmitting}>
+        <Button type="submit" size="sm" disabled={submitting}>
           {mode === 'scenario'
-            ? isSubmitting
+            ? submitting
               ? 'Staging…'
               : 'Stage change'
-            : isSubmitting
+            : submitting
               ? 'Saving…'
               : 'Save score'}
         </Button>

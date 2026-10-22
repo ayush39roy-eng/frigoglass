@@ -1,10 +1,11 @@
-"""Prioritization Matrix surface — the 13-dimension scoring grid CRUD + read
+"""Prioritization Matrix surface — the scoring grid CRUD (rubric dimensions from
+the `scoring_dimensions` table, ADR 0037) + read
 models, currency-toggle-aware financial columns.
 (`docs/DOMAIN_RULES.md` "Prioritization scoring"; `docs/PROJECT_AND_STACK.md` §2)
 
 **Scope boundary — read before extending this file**: `PUT
-/priorities/{project_id}` upserts `models.priority.PriorityScore` (the 13
-dimension inputs + cached `weighted_score`/`normalized_pct`/`suggested_band`)
+/priorities/{project_id}` upserts `models.priority.PriorityScore` (the dimension
+inputs + cached `weighted_score`/`normalized_pct`/`suggested_band`)
 ONLY. It deliberately never writes `Project.priority` ("set_priority") —
 per `models/priority.py`'s own docstring, `suggested_band` "may differ from
 `Project.priority` if a Portfolio Manager manually overrides it," which only
@@ -40,11 +41,10 @@ from decimal import Decimal
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-import domain_constants as dc
 from api.db import get_db
 from api.deps import require_permission
 from api.errors import HTTP_422, CodedHTTPException
@@ -56,18 +56,16 @@ from models.enums import (
     HubName,
     LabRegion,
     ProjectCategory,
-    ProjectPriority,
     ProjectStatus,
     ProjectType,
 )
 from models.hub import Hub
-from models.priority import DIMENSION_FIELD_NAMES, PriorityScore
+from models.priority import PriorityScore
 from models.project import Project
 from schemas.priority import (
     BandShare,
     DimensionInfo,
     DimensionPoints,
-    DimensionScore,
     HubP1Fill,
     PriorityCapacityFill,
     PriorityCompareItem,
@@ -85,9 +83,8 @@ from services.currency import rate_to_eur as _currency_rate_to_eur
 from services.hub_scope import global_hub_filter, hub_scope_filter, narrowed_hub_filter
 from services.priority_capacity_fill import CapacityFill, RowFill, compute_capacity_fill
 from services.priority_scoring import (
-    compute_priority_score,
+    Rubric,
     dimension_points,
-    dimension_score_rows,
     dimension_table,
 )
 from services.project_filters import (
@@ -95,6 +92,17 @@ from services.project_filters import (
     leader_name_if_self,
     score_ranks,
     search_predicate,
+)
+from services.scoring_rubric import (
+    UnknownDimensionKeyError,
+    dimension_score_models,
+    is_scored,
+    load_rubric,
+    lock_rubric,
+    missing_keys,
+    project_scores,
+    served_rubric_version,
+    write_project_scores,
 )
 
 router = APIRouter(prefix="/priorities", tags=["prioritization-matrix"])
@@ -115,16 +123,13 @@ def _convert(amount: float | None, rate: Decimal) -> float | None:
     return float(Decimal(str(amount)) * rate)
 
 
-def _dimension_points(score: PriorityScore | None) -> dict[str, DimensionPoints] | None:
-    if score is None:
+def _dimension_points(
+    rubric: Rubric, score: PriorityScore | None
+) -> dict[str, DimensionPoints] | None:
+    if not is_scored(score):
         return None
-    pts = dimension_points([getattr(score, f) for f in DIMENSION_FIELD_NAMES])
+    pts = dimension_points(rubric, project_scores(rubric, score) or {})
     return {k: DimensionPoints(**v) for k, v in pts.items()}
-
-
-def _dimension_scores(score: PriorityScore | None) -> list[DimensionScore]:
-    dims = None if score is None else [getattr(score, f) for f in DIMENSION_FIELD_NAMES]
-    return [DimensionScore(**d) for d in dimension_score_rows(dims)]
 
 
 def _build_row(
@@ -133,6 +138,7 @@ def _build_row(
     currency: CurrencyCode,
     rate: Decimal,
     *,
+    rubric: Rubric,
     current_user: Principal,
     rank: int | None,
     fill: RowFill,
@@ -148,20 +154,7 @@ def _build_row(
         leader_name=leader_name_if_self(project, current_user),
         leader_engineer_id=project.leader_engineer_id,
         rank=rank,
-        has_score=score is not None,
-        strategic_project=getattr(score, "strategic_project", None),
-        new_customer=getattr(score, "new_customer", None),
-        new_options=getattr(score, "new_options", None),
-        regulatory_compliance=getattr(score, "regulatory_compliance", None),
-        quality_improvements=getattr(score, "quality_improvements", None),
-        rm_savings=getattr(score, "rm_savings", None),
-        total_rm_savings=getattr(score, "total_rm_savings", None),
-        gross_margins=getattr(score, "gross_margins", None),
-        profitability=getattr(score, "profitability", None),
-        annual_volume=getattr(score, "annual_volume", None),
-        three_year_volume=getattr(score, "three_year_volume", None),
-        new_models=getattr(score, "new_models", None),
-        capex_investment=getattr(score, "capex_investment", None),
+        has_score=is_scored(score),
         hard_gates=list(score.hard_gates) if score else [],
         weighted_score=(
             float(score.weighted_score) if score and score.weighted_score is not None else None
@@ -171,8 +164,10 @@ def _build_row(
         score_band=fill.score_band,
         capacity_fill=fill.capacity_fill,
         capacity_fill_reason=fill.capacity_fill_reason,
-        dimension_points=_dimension_points(score),
-        dimension_scores=_dimension_scores(score),
+        dimension_points=_dimension_points(rubric, score),
+        dimension_scores=dimension_score_models(rubric, score),
+        missing_dimension_keys=missing_keys(rubric, score),
+        rubric_version=served_rubric_version(rubric, score),
         is_new_model=project.type == ProjectType.NM,
         is_rm_saving_project=project.rm_savings_keur is not None,
         currency=currency,
@@ -231,12 +226,14 @@ async def list_priority_matrix(
     )
     ranks = score_ranks(projects, _score_value)
     fill = await compute_capacity_fill(db, {p.hub_id for p in projects})
+    rubric = await load_rubric(db)
     rows = [
         _build_row(
             p,
             p.priority_score,
             currency,
             rate,
+            rubric=rubric,
             current_user=current_user,
             rank=ranks.get(p.id),
             fill=_row_fill(fill, p),
@@ -309,14 +306,18 @@ def _score_value(project: Project) -> float | None:
 
 @router.get("/dimensions", response_model=PriorityDimensionsResponse)
 async def priority_dimensions(
+    db: AsyncSession = Depends(get_db),
     current_user: Principal = Depends(_read),
 ) -> PriorityDimensionsResponse:
-    """The dimension table (labels, pillars, weights, weights scaled to 100) and
-    `total_weight`, served so the browser never computes them (ADR 0029, I9)."""
+    """The ACTIVE dimensions of the current rubric (labels, pillars, weights,
+    weights scaled to 100) and `total_weight`, served so the browser never
+    computes them (ADR 0029, I9; ADR 0037: from the rubric tables)."""
 
+    rubric = await load_rubric(db)
     return PriorityDimensionsResponse(
-        dimensions=[DimensionInfo(**d) for d in dimension_table()],  # type: ignore[arg-type]
-        total_weight=dc.TOTAL_WEIGHT,
+        dimensions=[DimensionInfo.model_validate(d) for d in dimension_table(rubric)],
+        total_weight=rubric.total_weight,
+        rubric_version=rubric.version,
     )
 
 
@@ -339,7 +340,7 @@ async def priority_portfolio_summary(
         stmt = stmt.where(hub_filter)
     projects = (await db.execute(stmt)).scalars().all()
 
-    scored = [p for p in projects if p.priority_score is not None]
+    scored = [p for p in projects if is_scored(p.priority_score)]
     # ADR 0036: `suggested_band_counts` follow the promoted band, the score
     # band is counted separately.
     fill = await compute_capacity_fill(db, {p.hub_id for p in projects})
@@ -525,6 +526,7 @@ async def compare_priorities(
         )
 
     fill = await compute_capacity_fill(db, {p.hub_id for p in found.values()})
+    rubric = await load_rubric(db)
     items: list[PriorityCompareItem] = []
     for pid in project_id:
         p = found[pid]
@@ -536,7 +538,7 @@ async def compare_priorities(
                 project_name=p.name,
                 hub=p.hub.name,
                 set_priority=p.priority,
-                has_score=score is not None,
+                has_score=is_scored(score),
                 weighted_score=(
                     float(score.weighted_score)
                     if score is not None and score.weighted_score is not None
@@ -547,7 +549,9 @@ async def compare_priorities(
                 score_band=row_fill.score_band,
                 capacity_fill=row_fill.capacity_fill,
                 capacity_fill_reason=row_fill.capacity_fill_reason,
-                dimension_scores=_dimension_scores(score),
+                dimension_scores=dimension_score_models(rubric, score),
+                missing_dimension_keys=missing_keys(rubric, score),
+                rubric_version=served_rubric_version(rubric, score),
             )
         )
     return PriorityCompareResponse(projects=items)
@@ -578,11 +582,13 @@ async def get_priority_row(
 
     rate = await _rate_to_eur(db, currency)
     fill = await compute_capacity_fill(db, {project.hub_id})
+    rubric = await load_rubric(db)
     return _build_row(
         project,
         project.priority_score,
         currency,
         rate,
+        rubric=rubric,
         current_user=current_user,
         rank=None,
         fill=_row_fill(fill, project),
@@ -595,13 +601,14 @@ async def upsert_priority_score(
     body: PriorityScoreUpdateRequest,
     db: AsyncSession = Depends(get_db),
     current_user: Principal = Depends(_write),
-) -> PriorityScore:
-    """Create or update the 13-dimension score for one project. Recomputes
-    `weighted_score`/`normalized_pct`/`suggested_band` via
-    `services.priority_scoring.compute_priority_score` — never trusts a
-    client-supplied value for those three cached fields (they are not even
-    accepted in the request body). Does NOT touch `Project.priority` — see
-    module docstring.
+) -> PriorityScoreRead:
+    """Create or update one project's dimension scores (ADR 0037: keyed by
+    ACTIVE rubric dimension key, 0..5 or null; 422 `UNKNOWN_DIMENSION_KEY`
+    otherwise). Recomputes `weighted_score`/`normalized_pct`/`suggested_band`
+    against the current rubric (under the shared rubric lock, so a concurrent
+    rubric save cannot interleave) — never trusts a client-supplied value for
+    those cached fields. Does NOT touch `Project.priority` — see module
+    docstring.
     """
 
     stmt = select(Project).where(Project.id == project_id)
@@ -612,28 +619,31 @@ async def upsert_priority_score(
     if project is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found")
 
-    dims = [getattr(body, name) for name in DIMENSION_FIELD_NAMES]
-    weighted_score, normalized_pct, suggested_band_str = compute_priority_score(dims)
-    suggested_band = ProjectPriority(suggested_band_str)
-
+    await lock_rubric(db, exclusive=False)
+    rubric = await load_rubric(db)
     existing = (
         await db.execute(select(PriorityScore).where(PriorityScore.project_id == project_id))
     ).scalar_one_or_none()
 
-    before_state = priority_score_audit_state(existing) if existing else None
+    before_state = priority_score_audit_state(existing, rubric) if existing else None
     action = "priority_score.update" if existing else "priority_score.create"
 
-    score = existing or PriorityScore(project_id=project_id)
-    for name in DIMENSION_FIELD_NAMES:
-        setattr(score, name, getattr(body, name))
+    score = existing or PriorityScore(project_id=project_id, dimension_scores=[])
+    try:
+        write_project_scores(rubric, score, body.scores)
+    except UnknownDimensionKeyError as exc:
+        raise CodedHTTPException(
+            status_code=HTTP_422,
+            code="UNKNOWN_DIMENSION_KEY",
+            detail=f"Not an active scoring dimension: {', '.join(exc.keys)}.",
+        ) from exc
     score.hard_gates = body.hard_gates
-    score.weighted_score = weighted_score
-    score.normalized_pct = normalized_pct
-    score.suggested_band = suggested_band
+    score.scored_at = func.now()
+    score.scored_by_user_id = current_user.user_id
     if existing is None:
         db.add(score)
     await db.flush()
-    after_state = priority_score_audit_state(score)
+    after_state = priority_score_audit_state(score, rubric)
 
     db.add(
         AuditLogEntry(
@@ -648,4 +658,18 @@ async def upsert_priority_score(
     )
     await db.commit()
     await db.refresh(score)
-    return score
+    return priority_score_read(rubric, score)
+
+
+def priority_score_read(rubric: Rubric, score: PriorityScore) -> PriorityScoreRead:
+    return PriorityScoreRead(
+        id=score.id,
+        project_id=score.project_id,
+        hard_gates=list(score.hard_gates),
+        weighted_score=float(score.weighted_score) if score.weighted_score is not None else None,
+        normalized_pct=score.normalized_pct,
+        suggested_band=score.suggested_band,
+        dimension_scores=dimension_score_models(rubric, score),
+        missing_dimension_keys=missing_keys(rubric, score),
+        rubric_version=served_rubric_version(rubric, score),
+    )

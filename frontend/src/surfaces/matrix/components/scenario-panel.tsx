@@ -9,6 +9,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { ApiError } from '@/lib/api/client';
 import {
+  changedScoreKeys,
   computeScenarioDiff,
   effectivePendingEdits,
   isNoOpEdit,
@@ -16,7 +17,8 @@ import {
   type ScenarioPendingEdit,
 } from '@/stores/scenario';
 
-import { DIMENSIONS, type ScenarioApplyRequest } from '../api/types';
+import type { ScenarioApplyRequest } from '../api/types';
+import { useScoringModel } from '../scoring-model';
 import { useApplyScenario } from '../hooks/use-matrix';
 
 /**
@@ -69,17 +71,17 @@ export function ScenarioModeToggle({ disabled = false }: { disabled?: boolean })
   );
 }
 
-/** Raw field-for-field diff lines for one staged edit — display only. */
-function diffEntries(edit: ScenarioPendingEdit): { label: string; from: string; to: string }[] {
+/** Raw field-for-field diff lines for one staged edit — display only. P26: the
+ *  changed dimensions of the `scores` map, labelled from the served model (the
+ *  key itself when the dimension is not served any more). */
+function diffEntries(
+  edit: ScenarioPendingEdit,
+  labelOf: (key: string) => string,
+): { label: string; from: string; to: string }[] {
   const entries: { label: string; from: string; to: string }[] = [];
-  for (const dim of DIMENSIONS) {
-    if (edit.baseline[dim.field] !== edit.next[dim.field]) {
-      entries.push({
-        label: dim.label,
-        from: String(edit.baseline[dim.field]),
-        to: String(edit.next[dim.field]),
-      });
-    }
+  const show = (v: number | null | undefined) => (v === null || v === undefined ? 'not scored' : String(v));
+  for (const key of changedScoreKeys(edit)) {
+    entries.push({ label: labelOf(key), from: show(edit.baseline.scores[key]), to: show(edit.next.scores[key]) });
   }
   const removedGates = edit.baseline.hard_gates.filter((g) => !edit.next.hard_gates.includes(g));
   const addedGates = edit.next.hard_gates.filter((g) => !edit.baseline.hard_gates.includes(g));
@@ -115,6 +117,9 @@ export function ScenarioPendingPanel({
 
   const applyScenarioMutation = useApplyScenario();
   const [error, setError] = React.useState<string | null>(null);
+  const model = useScoringModel();
+  const labels = new Map(model.dimensions.map((d) => [d.key, d.label]));
+  const labelOf = (key: string) => labels.get(key) ?? key;
 
   if (!active) return null;
 
@@ -125,7 +130,9 @@ export function ScenarioPendingPanel({
 
   async function handleApply(): Promise<void> {
     setError(null);
-    const diff = computeScenarioDiff(pending);
+    // Only ACTIVE keys are accepted (P26); once the served model is loaded, a
+    // staged score on a dimension deactivated since is left out.
+    const diff = computeScenarioDiff(pending, model.loaded ? new Set(model.dimensions.map((d) => d.key)) : undefined);
     if (diff.length === 0) return;
     const body: ScenarioApplyRequest = {
       notes: notes.trim() === '' ? null : notes.trim(),
@@ -137,6 +144,10 @@ export function ScenarioPendingPanel({
     } catch (err) {
       if (err instanceof ApiError && err.isForbidden) {
         setError('Your role cannot apply scenario changes.');
+      } else if (err instanceof ApiError && err.code === 'UNKNOWN_DIMENSION_KEY') {
+        setError(
+          'A staged score is on a dimension that is no longer active (the scoring rubric changed). Remove that project\'s staged change and stage it again.',
+        );
       } else if (err instanceof ApiError) {
         setError(err.detail ?? 'The scenario could not be applied. Please try again.');
       } else {
@@ -186,7 +197,7 @@ export function ScenarioPendingPanel({
         ) : (
           <ul className="space-y-2">
             {allStaged.map((edit) => {
-              const entries = diffEntries(edit);
+              const entries = diffEntries(edit, labelOf);
               const noOp = isNoOpEdit(edit);
               return (
                 <li

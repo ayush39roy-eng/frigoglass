@@ -14,35 +14,27 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
+from typing import Annotated
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
 from models.enums import HardGateReason, ProjectPriority, ScenarioEntityType
+from schemas.priority import MAX_SCORE_KEYS, DimensionScoreValue
 
 
 class ScenarioPriorityScoreChange(BaseModel):
-    """One project's proposed new 13-dimension score, as part of a scenario
+    """One project's proposed new dimension scores, as part of a scenario
     diff. Field shape matches `schemas.priority.PriorityScoreUpdateRequest`
-    exactly (this generalises that single-row PUT to a batched, versioned,
-    snapshotted Apply) plus the `project_id` needed to address it in a batch.
+    exactly (ADR 0037: `scores` keyed by ACTIVE rubric dimension key, 0..5 or
+    null) plus the `project_id` needed to address it in a batch.
     """
 
     model_config = ConfigDict(extra="forbid")
 
     project_id: uuid.UUID
-    strategic_project: int = Field(ge=0, le=5)
-    new_customer: int = Field(ge=0, le=5)
-    new_options: int = Field(ge=0, le=5)
-    regulatory_compliance: int = Field(ge=0, le=5)
-    quality_improvements: int = Field(ge=0, le=5)
-    rm_savings: int = Field(ge=0, le=5)
-    total_rm_savings: int = Field(ge=0, le=5)
-    gross_margins: int = Field(ge=0, le=5)
-    profitability: int = Field(ge=0, le=5)
-    annual_volume: int = Field(ge=0, le=5)
-    three_year_volume: int = Field(ge=0, le=5)
-    new_models: int = Field(ge=0, le=5)
-    capex_investment: int = Field(ge=0, le=5)
+    scores: dict[
+        Annotated[str, StringConstraints(min_length=1, max_length=64)], DimensionScoreValue
+    ] = Field(max_length=MAX_SCORE_KEYS)
     hard_gates: list[HardGateReason] = Field(default_factory=list)
 
 

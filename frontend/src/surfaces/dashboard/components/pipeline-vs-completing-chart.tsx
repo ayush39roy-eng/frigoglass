@@ -37,12 +37,42 @@ interface PvcDatum {
   pct: number;
   /** Bar label text, read by `LabelList` from each bar's own datum. (P17-R08:
    *  the old `label` callback indexed into this array with Recharts' `index`,
-   *  which counts drawn rects only, so every label after a zero bar shifted.) */
+   *  which counts drawn rects only, so every label after a zero bar shifted.)
+   *  Counts only: at a third of the row "11 (30.56%)" ran into the next bar, so
+   *  the served share is drawn under the type code instead (`TypeTick`). */
   pipelineLabel: string;
   completingLabel: string;
 }
 
 const LABEL_STYLE = { fontSize: 9, fontWeight: 700, fill: 'hsl(var(--color-text-muted))' } as const;
+
+/** X-axis tick: the type code, and under it the served completing share. */
+function TypeTick({
+  x,
+  y,
+  payload,
+  data,
+}: {
+  x?: number;
+  y?: number;
+  payload?: { value: string; index: number };
+  data: PvcDatum[];
+}): React.JSX.Element | null {
+  if (x === undefined || y === undefined || payload === undefined) return null;
+  const d = data[payload.index];
+  return (
+    <g transform={`translate(${x},${y})`}>
+      <text dy={10} textAnchor="middle" fontSize={11} fontWeight={600} fill="hsl(var(--color-text-subtle))">
+        {payload.value}
+      </text>
+      {d !== undefined && d.pipeline > 0 ? (
+        <text dy={23} textAnchor="middle" fontSize={9} fontWeight={700} fill="hsl(var(--color-success))">
+          {formatServedPct(d.pct)}
+        </text>
+      ) : null}
+    </g>
+  );
+}
 
 function PvcTooltip({
   active,
@@ -80,7 +110,7 @@ export function PipelineVsCompletingChart({ rows }: { rows: CompletingByTypeRow[
         completing: r.completing_count,
         pct: r.completing_pct,
         pipelineLabel: formatInteger(r.pipeline_count),
-        completingLabel: `${formatInteger(r.completing_count)} (${formatServedPct(r.completing_pct)})`,
+        completingLabel: formatInteger(r.completing_count),
       })),
     [rows],
   );
@@ -92,28 +122,26 @@ export function PipelineVsCompletingChart({ rows }: { rows: CompletingByTypeRow[
             <Split className="size-5" aria-hidden="true" />
           </span>
           <div>
-            <h3 className="font-display text-h2 font-bold tracking-tight text-text">Pipeline vs completing</h3>
+            <h3 className="font-display text-lg font-bold leading-tight tracking-tight text-text">Pipeline vs completing</h3>
             <p className="text-xs font-medium text-text-subtle">Per project type, in the active run</p>
           </div>
         </div>
-        <div className="flex items-center gap-s3">
-          <span className="hidden items-center gap-s3 text-2xs font-semibold text-text-muted sm:flex">
-            <span className="flex items-center gap-1.5">
-              <span className="size-2.5 rounded-full bg-primary" aria-hidden="true" />
-              Pipeline
-            </span>
-            <span className="flex items-center gap-1.5">
-              <span className="size-2.5 rounded-full bg-success" aria-hidden="true" />
-              Completing
-            </span>
-          </span>
-          <CardInfo label="About pipeline vs completing">
-            <p>
-              For each project type: the pipeline count and how many of those projects the active
-              schedule run completes within the year, with the served completing share.
-            </p>
-          </CardInfo>
-        </div>
+        <CardInfo label="About pipeline vs completing">
+          <p>
+            For each project type: the pipeline count and how many of those projects the active
+            schedule run completes within the year, with the served completing share under the type.
+          </p>
+        </CardInfo>
+      </div>
+      <div className="flex flex-wrap items-center gap-s3 text-2xs font-semibold text-text-muted">
+        <span className="flex items-center gap-1.5">
+          <span className="size-2.5 rounded-full bg-primary" aria-hidden="true" />
+          Pipeline
+        </span>
+        <span className="flex items-center gap-1.5">
+          <span className="size-2.5 rounded-full bg-success" aria-hidden="true" />
+          Completing (share under each type)
+        </span>
       </div>
       {data.length === 0 ? (
         <p className="py-s6 text-center text-sm text-text-muted">No pipeline projects in view.</p>
@@ -128,7 +156,8 @@ export function PipelineVsCompletingChart({ rows }: { rows: CompletingByTypeRow[
                   tickLine={false}
                   axisLine={false}
                   interval={0}
-                  tick={{ fontSize: 11, fontWeight: 600, fill: 'hsl(var(--color-text-subtle))' }}
+                  height={34}
+                  tick={<TypeTick data={data} />}
                 />
                 <YAxis
                   allowDecimals={false}

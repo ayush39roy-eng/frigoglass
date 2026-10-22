@@ -30,26 +30,27 @@ import { useScenarioStore } from '@/stores/scenario';
 import {
   COMPARE_MAX,
   COMPARE_MIN,
-  DIMENSION_FIELDS,
   SCORE_RANGE_HELP_COPY,
-  type DimensionField,
+  type DimensionKey,
   type DimensionScore,
+  type DimensionScoreMap,
   type PriorityCompareProject,
   type PriorityMatrixRow,
   type PriorityScoreRead,
 } from '../api/types';
 import { usePriorityCompare, usePriorityEditRows, useUpdatePriorityScore } from '../hooks/use-matrix';
 import { useCompareSelection, type CompareItem } from '../lib/compare-selection';
-import { sortByPillar } from '../lib/pillars';
-import { formatOutOf100, formatPoints } from '../lib/row-scores';
+import { groupByPillar } from '../lib/pillars';
+import { formatOutOf100, formatPoints, rowMissingLabels } from '../lib/row-scores';
 import { previewScore } from '../lib/score-preview';
 import { useScoringModel } from '../scoring-model';
 import { SuggestedBandChip } from '@/components/shared/suggested-band-chip';
-import { liveRequestValuesFromRow, scoreDimensionsSchema, toRequestBody } from './score-edit-schema';
+import { liveRequestValuesFromRow, scoresMapSchema, toRequestBody } from './score-edit-schema';
+import { IncompleteScoreMarker } from '@/components/shared/incomplete-score-marker';
 
 /**
  * P21 Compare: a sticky "Compare (n)" bar for the 2–5 selected projects and a
- * dialog with a radar of the 13 dimension scores (one colour per project, with
+ * dialog with a radar of the served dimension scores (one colour per project, with
  * a legend that toggles series) and a dimension × project table. Every figure
  * is from `GET /priorities/compare`; the table only marks each row's highest
  * served value.
@@ -57,8 +58,9 @@ import { liveRequestValuesFromRow, scoreDimensionsSchema, toRequestBody } from '
  * P21-T04: users who may edit scores (the edit dialog's rule: Matrix write and
  * no 403 seen) get a 0–5 menu in each cell. Saving is EXPLICIT, per project
  * ("Save changes (n)" + "Discard"), never autosave: each save is an audited
- * `PUT /priorities/{id}` with the edit dialog's exact body (13 scores + the
- * project's current hard gates), through the same mutation. While a project has
+ * `PUT /priorities/{id}` with the edit dialog's body shape (P26: `{scores,
+ * hard_gates}` with only the edited dimensions; "–" sends null and clears a
+ * score; the project's current hard gates), through the same mutation. While a project has
  * unsaved edits its points and score out of 100 are shown as a labelled
  * PREVIEW; the authoritative figures are re-read from the server after the save
  * (compare, grid rows, distribution). In Scenario mode the same button stages
@@ -129,7 +131,7 @@ export function CompareBar({ onOpen }: { onOpen: () => void }): React.JSX.Elemen
 
 // --- Dialog -----------------------------------------------------------------------
 
-type Edits = Record<string, Partial<Record<DimensionField, number>>>;
+type Edits = Record<string, DimensionScoreMap>;
 type SaveStatus =
   | { kind: 'saving' }
   | { kind: 'error'; message: string }
@@ -195,7 +197,7 @@ export function CompareDialog({
             ) : null}
           </DialogTitle>
           <DialogDescription>
-            The 13 dimension scores (0–5) with their points, and the score out of 100. All figures are served by the
+            The dimension scores (0–5) with their points, and the score out of 100. All figures are served by the
             API; the highest value in each row is marked.
             {canEdit
               ? scenarioActive
@@ -313,21 +315,25 @@ function orderLike(projects: PriorityCompareProject[], items: CompareItem[]): Pr
 }
 
 interface DimRow {
-  key: DimensionField;
+  key: DimensionKey;
   label: string;
   pillar: string;
   cells: (DimensionScore | undefined)[];
 }
 
+/** One row per served ACTIVE dimension (display order, grouped by pillar in
+ *  order of first appearance), from the first project that carries any. */
 function dimensionRows(projects: PriorityCompareProject[]): DimRow[] {
   const first = projects.find((p) => p.dimension_scores.length > 0);
   if (!first) return [];
-  return sortByPillar(first.dimension_scores).map((d) => ({
-    key: d.key,
-    label: d.label,
-    pillar: d.pillar,
-    cells: projects.map((p) => p.dimension_scores.find((x) => x.key === d.key)),
-  }));
+  return groupByPillar(first.dimension_scores)
+    .flatMap((g) => g.items)
+    .map((d) => ({
+      key: d.key,
+      label: d.label,
+      pillar: d.pillar,
+      cells: projects.map((p) => p.dimension_scores.find((x) => x.key === d.key)),
+    }));
 }
 
 /** Indices holding the row's highest served value (ties all marked; none when all null). */
@@ -395,17 +401,19 @@ function CompareBody({
   const scoreTop = highest(projects.map((p) => p.normalized_pct));
 
   /** The value a cell starts from: the staged scenario value in Scenario mode, else the served score. */
-  const baseOf = (p: PriorityCompareProject, key: DimensionField): number | null => {
+  const baseOf = (p: PriorityCompareProject, key: DimensionKey): number | null => {
     const staged = scenarioActive ? pending[p.project_id] : undefined;
-    if (staged) return staged.next[key];
+    if (staged && Object.prototype.hasOwnProperty.call(staged.next.scores, key)) return staged.next.scores[key] ?? null;
     return p.dimension_scores.find((d) => d.key === key)?.score ?? null;
   };
-  const valueOf = (p: PriorityCompareProject, key: DimensionField): number | null =>
-    edits[p.project_id]?.[key] ?? baseOf(p, key);
+  const isEdited = (p: PriorityCompareProject, key: DimensionKey): boolean =>
+    Object.prototype.hasOwnProperty.call(edits[p.project_id] ?? {}, key);
+  const valueOf = (p: PriorityCompareProject, key: DimensionKey): number | null =>
+    isEdited(p, key) ? (edits[p.project_id]?.[key] ?? null) : baseOf(p, key);
   const dirtyCount = (id: string) => Object.keys(edits[id] ?? {}).length;
   const isStaged = (id: string) => scenarioActive && pending[id] !== undefined;
 
-  const setCell = (p: PriorityCompareProject, key: DimensionField, value: number) => {
+  const setCell = (p: PriorityCompareProject, key: DimensionKey, value: number | null) => {
     const base = baseOf(p, key);
     setEdits((prev) => {
       const cur = { ...(prev[p.project_id] ?? {}) };
@@ -433,23 +441,24 @@ function CompareBody({
     const id = p.project_id;
     const row = liveRows.get(id);
     if (!row || dirtyCount(id) === 0) return;
-    const values = Object.fromEntries(DIMENSION_FIELDS.map((f) => [f, valueOf(p, f)]));
-    const parsed = scoreDimensionsSchema.safeParse(values);
+    // P26: only the edited dimensions are sent (omitted keys keep their value; null clears).
+    const parsed = scoresMapSchema.safeParse(edits[id] ?? {});
     if (!parsed.success) {
-      setStatus((prev) => ({ ...prev, [id]: { kind: 'error', message: 'Give every dimension a whole number from 0 to 5.' } }));
+      setStatus((prev) => ({ ...prev, [id]: { kind: 'error', message: 'Each score must be a whole number from 0 to 5, or not scored.' } }));
       return;
     }
     const staged = scenarioActive ? pending[id] : undefined;
     const body = toRequestBody(parsed.data, staged ? staged.next.hard_gates : row.hard_gates);
 
     if (scenarioActive) {
+      const live = liveRequestValuesFromRow(row);
       stageEdit({
         projectId: id,
         projectName: p.project_name,
         hub: p.hub,
-        liveValues: liveRequestValuesFromRow(row),
+        liveValues: live,
         liveHasScore: row.has_score,
-        next: body,
+        next: { scores: { ...(staged?.next.scores ?? live.scores), ...body.scores }, hard_gates: body.hard_gates },
       });
       setEdits((prev) => ({ ...prev, [id]: {} }));
       setStatus((prev) => ({
@@ -512,7 +521,7 @@ function CompareBody({
 
       <figure
         className="h-72 w-full sm:h-80"
-        aria-label="Radar of the 13 served dimension scores (0–5) per project; the table below has the same figures"
+        aria-label={`Radar of the ${String(rows.length)} served dimension scores (0–5) per project; the table below has the same figures`}
         data-testid="compare-radar"
       >
         <ResponsiveContainer width="100%" height="100%">
@@ -548,7 +557,8 @@ function CompareBody({
 
       {editable ? (
         <p className="text-2xs text-text-muted" id={HELP_ID} data-testid="compare-edit-help">
-          Scores 0–5: {SCORE_RANGE_HELP_COPY}. Edited cells are marked; figures marked “preview” are provisional
+          Scores 0–5: {SCORE_RANGE_HELP_COPY}; “– Not scored” clears a score (it then counts 0 and the score is
+          incomplete). Only edited cells are sent. Edited cells are marked; figures marked “preview” are provisional
           until the server has saved them. The chart and the highest-value marks show saved figures only.
         </p>
       ) : null}
@@ -615,7 +625,7 @@ function CompareBody({
                             cell={c}
                             top={top.has(i)}
                             value={valueOf(p, r.key)}
-                            dirty={edits[p.project_id]?.[r.key] !== undefined}
+                            dirty={isEdited(p, r.key)}
                             previewPoints={preview && dimIndex >= 0 ? (preview.points[dimIndex] ?? null) : undefined}
                             disabled={!canEdit || status[p.project_id]?.kind === 'saving'}
                             onChange={(v) => setCell(p, r.key, v)}
@@ -648,6 +658,7 @@ function CompareBody({
                             {formatOutOf100(p.normalized_pct)}
                           </span>
                           <BandChip project={p} />
+                          <IncompleteScoreMarker missingLabels={rowMissingLabels(p)} compact />
                         </>
                       )}
                       {scoreTop.has(i) ? <span className="sr-only">(highest)</span> : null}
@@ -659,7 +670,7 @@ function CompareBody({
                       >
                         <Badge tone="warning">{isStaged(p.project_id) && dirtyCount(p.project_id) === 0 ? 'scenario preview' : 'preview'}</Badge>
                         <span className="tnum" data-numeric="">
-                          {preview.outOf100 === null ? 'score all 13' : formatOutOf100(preview.outOf100)}
+                          {preview.outOf100 === null ? 'not scored' : formatOutOf100(preview.outOf100)}
                         </span>
                       </span>
                     ) : null}
@@ -685,9 +696,7 @@ function CompareBody({
                           ? rowQueries[projects.indexOf(p)]?.isError
                             ? 'The current score could not be loaded, so it cannot be saved here.'
                             : 'loading'
-                          : DIMENSION_FIELDS.some((f) => valueOf(p, f) === null)
-                            ? 'Give all 13 dimensions a score before saving.'
-                            : null
+                          : null
                     }
                     status={status[p.project_id]}
                     onSave={() => void save(p)}
@@ -802,7 +811,7 @@ function EditableCell({
   /** Provisional points while the project has unsaved / staged edits; undefined = show served points. */
   previewPoints: number | null | undefined;
   disabled: boolean;
-  onChange: (value: number) => void;
+  onChange: (value: number | null) => void;
 }): React.JSX.Element {
   const maxPoints = cell?.max_points ?? null;
   const points = previewPoints !== undefined ? previewPoints : (cell?.points ?? null);
@@ -823,22 +832,16 @@ function EditableCell({
           aria-describedby={HELP_ID}
           value={value === null ? '' : String(value)}
           disabled={disabled}
-          onChange={(e) => {
-            if (e.target.value !== '') onChange(Number(e.target.value));
-          }}
+          onChange={(e) => onChange(e.target.value === '' ? null : Number(e.target.value))}
           className={cn(
-            'h-7 w-14 rounded border bg-surface px-1 text-xs text-text tnum',
+            'h-7 w-[4.5rem] rounded border bg-surface px-1 text-xs text-text tnum',
             'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
             'disabled:cursor-not-allowed disabled:opacity-60',
             dirty ? 'border-warning font-semibold' : 'border-border-strong',
           )}
           data-testid="compare-score-select"
         >
-          {value === null ? (
-            <option value="" disabled>
-              –
-            </option>
-          ) : null}
+          <option value="">– Not scored</option>
           {SCORE_OPTIONS.map((n) => (
             <option key={n} value={String(n)}>
               {n}

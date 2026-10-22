@@ -62,9 +62,13 @@ from tests.conftest import run_alembic
 # export_jobs + P5-T06's notifications + P9-T01's workflows,
 # workflow_lead_times, hub_work_calendars, project_files, project_comments +
 # P10-T01's project_access_grants + P12-T03's stage_checkins and
-# schedule_run_follow_ups + P14-T02's vip_items and vip_item_projects), plus
+# schedule_run_follow_ups + P14-T02's vip_items and vip_item_projects + P26-T01's
+# scoring_dimensions, rubric_versions and priority_dimension_scores), plus
 # `alembic_version`.
-EXPECTED_TABLE_COUNT = 33
+EXPECTED_TABLE_COUNT = 36
+#: P26-T01 (`p26a_scoring_rubric_tables`, head): every downgrade target below is
+#: older, so each one also drops these three tables.
+PRE_P26_TABLE_COUNT = EXPECTED_TABLE_COUNT - 3
 
 EXPECTED_ENUM_TYPES = {
     "lab_region",
@@ -209,7 +213,7 @@ def test_migration_up_down_up_down_cycle():
         assert _query_scalar(url, _VIP_TABLES_SQL) == 2
         r = run_alembic(["downgrade", "p13a_oem_lab_region"], url)
         assert r.returncode == 0, f"downgrade to p13a (P14-T02) failed:\n{r.stdout}\n{r.stderr}"
-        assert _table_count(url) == EXPECTED_TABLE_COUNT - 2
+        assert _table_count(url) == PRE_P26_TABLE_COUNT - 2
         assert _query_scalar(url, _VIP_TABLES_SQL) == 0
         r = run_alembic(["upgrade", "head"], url)
         assert r.returncode == 0, f"upgrade head after P14-T02 downgrade failed:\n{r.stderr}"
@@ -220,7 +224,7 @@ def test_migration_up_down_up_down_cycle():
         # downgrade just it, then re-apply.
         r = run_alembic(["downgrade", "p12a_step_timing"], url)
         assert r.returncode == 0, f"downgrade to p12a (P12-T03) failed:\n{r.stdout}\n{r.stderr}"
-        assert _table_count(url) == EXPECTED_TABLE_COUNT - 4
+        assert _table_count(url) == PRE_P26_TABLE_COUNT - 4
         assert not (set(P12_TRIGGERS) & _trigger_names(url))
         assert _query_scalar(url, _IS_VIP_COLUMN_SQL) == 0
         assert _query_scalar(url, _STEP_TIMING_COLUMNS_SQL) == 2
@@ -233,7 +237,7 @@ def test_migration_up_down_up_down_cycle():
         r = run_alembic(["downgrade", "d451acccb1ab"], url)
         assert r.returncode == 0, f"downgrade to d451acccb1ab (P12) failed:\n{r.stdout}\n{r.stderr}"
         assert _query_scalar(url, _STEP_TIMING_COLUMNS_SQL) == 0
-        assert _table_count(url) == EXPECTED_TABLE_COUNT - 4
+        assert _table_count(url) == PRE_P26_TABLE_COUNT - 4
         r = run_alembic(["upgrade", "head"], url)
         assert r.returncode == 0, f"upgrade head after P12 downgrade failed:\n{r.stderr}"
         assert _query_scalar(url, _STEP_TIMING_COLUMNS_SQL) == 2
@@ -251,7 +255,7 @@ def test_migration_up_down_up_down_cycle():
         assert r.returncode == 0, f"downgrade -1 (P10-T01) failed:\n{r.stdout}\n{r.stderr}"
         assert _query_scalar(url, _ACCESS_GRANTS_TABLE_SQL) == 0
         assert _query_scalar(url, _MANAGER_ID_COLUMN_SQL) == 0
-        assert _table_count(url) == EXPECTED_TABLE_COUNT - 5
+        assert _table_count(url) == PRE_P26_TABLE_COUNT - 5
         r = run_alembic(["upgrade", "head"], url)
         assert r.returncode == 0, f"upgrade head after P10-T01 -1 failed:\n{r.stderr}"
         assert _query_scalar(url, _ACCESS_GRANTS_TABLE_SQL) == 1
@@ -283,7 +287,7 @@ def test_migration_up_down_up_down_cycle():
         assert r.returncode == 0, f"downgrade to 5c9e1f2a7b3d failed:\n{r.stdout}\n{r.stderr}"
         assert _query_scalar(url, _STAGE_BLOCKED_SQL) == 0
         assert _query_scalar(url, _RUN_ID_NULLABLE_SQL) == "NO"
-        assert _table_count(url) == EXPECTED_TABLE_COUNT - 5
+        assert _table_count(url) == PRE_P26_TABLE_COUNT - 5
         r = run_alembic(["upgrade", "head"], url)
         assert r.returncode == 0, f"upgrade head after P9-T03 -1 failed:\n{r.stdout}\n{r.stderr}"
         assert _query_scalar(url, _STAGE_BLOCKED_SQL) == 1
@@ -291,7 +295,7 @@ def test_migration_up_down_up_down_cycle():
         # --- P9-T01: downgrade to just before `5c9e1f2a7b3d`, then re-apply --
         r = run_alembic(["downgrade", "2418c6385a72"], url)
         assert r.returncode == 0, f"downgrade to 2418c6385a72 failed:\n{r.stdout}\n{r.stderr}"
-        assert _table_count(url) == EXPECTED_TABLE_COUNT - 10
+        assert _table_count(url) == PRE_P26_TABLE_COUNT - 10
         assert not (set(P9_TRIGGERS) & _trigger_names(url))
         assert "workflow_step_status" not in _enum_type_names(url)
         r = run_alembic(["upgrade", "head"], url)

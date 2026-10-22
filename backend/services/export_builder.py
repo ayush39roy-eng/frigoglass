@@ -141,9 +141,10 @@ def _stringify(value: Any) -> Any:
 _EXPORT_WITHHELD_FIELDS: frozenset[str] = frozenset()
 
 #: Nested (non-scalar) fields that exports skip: spreadsheet cells are scalar.
-#: `dimension_points` is the served per-dimension points map (ADR 0029); the 13
-#: dimension scores and the weighted score are already exported flat. P21-T01:
-#: `dimension_scores` (the per-dimension list) is skipped for the same reason.
+#: `dimension_points` is the served per-dimension points map (ADR 0029).
+#: `dimension_scores` (the per-dimension list) is not exported as a nested
+#: cell; `build_matrix_sheets` flattens it to one column per active rubric
+#: dimension (ADR 0037).
 _EXPORT_NESTED_FIELDS: frozenset[str] = frozenset({"dimension_points", "dimension_scores"})
 
 #: P25-T03 (ADR 0036): the Matrix export's header for `PriorityMatrixRow.
@@ -310,8 +311,8 @@ async def build_matrix_sheets(
     category: str | None = None,
     region: str | None = None,
 ) -> ExportSheets:
-    """The 13-dimension scoring grid, one row per project — Matrix's only
-    tabular view.
+    """The scoring grid (one column per active rubric dimension, ADR 0037),
+    one row per project — Matrix's only tabular view.
     """
 
     from api.routers.priorities import list_priority_matrix
@@ -325,6 +326,16 @@ async def build_matrix_sheets(
         current_user=principal,
     )
     headers, rows = rows_from_models(rows_models)
+    # P26-T01 (ADR 0037): one column per ACTIVE rubric dimension, headed by its
+    # key (the 13 migrated keys are the old column names), right after
+    # `has_score`, in display order. The rubric reserves every row field name,
+    # so a dimension key never collides with another column.
+    if rows_models:
+        dim_keys = [d.key for d in rows_models[0].dimension_scores]
+        at = headers.index("has_score") + 1
+        headers = headers[:at] + dim_keys + headers[at:]
+        for row, model in zip(rows, rows_models, strict=True):
+            row.update({d.key: d.score for d in model.dimension_scores})
     # P25-T03 (ADR 0036): the row's `suggested_band` is the band AFTER the P1
     # capacity fill, so the column says so. `score_band`, `capacity_fill` and
     # `capacity_fill_reason` follow it (declaration order of the row model).

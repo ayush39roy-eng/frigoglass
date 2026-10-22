@@ -14,52 +14,30 @@ import type {
 } from '@/types/enums';
 import type { Id } from '@/types/common';
 
-/** The 13 scoring-dimension field names, in `docs/DOMAIN_RULES.md` table order
- *  (mirrors `backend/models/priority.py::DIMENSION_FIELD_NAMES`). */
-export const DIMENSION_FIELDS = [
-  'strategic_project',
-  'new_customer',
-  'new_options',
-  'regulatory_compliance',
-  'quality_improvements',
-  'rm_savings',
-  'total_rm_savings',
-  'gross_margins',
-  'profitability',
-  'annual_volume',
-  'three_year_volume',
-  'new_models',
-  'capex_investment',
-] as const;
-
-export type DimensionField = (typeof DIMENSION_FIELDS)[number];
-
-export interface DimensionMeta {
-  field: DimensionField;
-  /** Column header (short). */
-  short: string;
-  /** Full display name from `docs/DOMAIN_RULES.md`. */
-  label: string;
-  pillar: string;
-  /** Weight from `docs/DOMAIN_RULES.md` (ADR 0029) — display fallback only, never
-   *  used in a client-side calculation. Prefer the served `ScoringDimension`. */
-  weight: number;
-}
+/**
+ * P26 (ADR 0037): the rubric is data, not code. Dimension keys are the served,
+ * stable `ScoringRubricDimension.key` values (the 13 initial keys plus any an
+ * Admin adds); nothing in the frontend lists them. A key is a plain string.
+ */
+export type DimensionKey = string;
 
 /** One entry of the SERVED dimension table (P16, ADR 0029): `dimensions[]`.
- *  `scaled_weight` = weight x 100 / total_weight, computed by the server (I9). */
+ *  `scaled_weight` = weight x 100 / total_weight, computed by the server (I9).
+ *  P26: only the ACTIVE dimensions of the current rubric, in display order. */
 export interface ScoringDimension {
-  key: DimensionField;
+  key: DimensionKey;
   label: string;
   pillar: string;
   weight: number;
   scaled_weight: number;
 }
 
-/** The served table plus `total_weight` (295 today; derived server-side). */
+/** `GET /priorities/dimensions`: the served table plus `total_weight` (Σ active
+ *  weights, derived server-side) and the rubric version it describes (P26). */
 export interface ScoringDimensionTable {
   dimensions: ScoringDimension[];
   total_weight: number;
+  rubric_version: number;
 }
 
 /** Per-row, per-dimension served points: `points` out of `weight`,
@@ -106,7 +84,7 @@ export interface CurrencyOption {
 /** One served per-dimension score on a Matrix row / compare entry (P21 §3).
  *  `points` out of `max_points` (= weight), raw scale, both served (I9). */
 export interface DimensionScore {
-  key: DimensionField;
+  key: DimensionKey;
   label: string;
   pillar: string;
   score: number | null;
@@ -162,6 +140,10 @@ export interface PriorityCompareProject {
   /** P25: the served reason for a walk decision (promoted / not promoted); shown verbatim, never parsed. */
   capacity_fill_reason: string | null;
   dimension_scores: DimensionScore[];
+  /** P26: active dimensions with no score ("incomplete"). */
+  missing_dimension_keys: DimensionKey[];
+  /** P26: the rubric version the score was computed with. */
+  rubric_version: number;
 }
 
 export interface PriorityCompareResponse {
@@ -171,23 +153,6 @@ export interface PriorityCompareResponse {
 /** Compare holds 2..5 projects (owner request, P21). */
 export const COMPARE_MIN = 2;
 export const COMPARE_MAX = 5;
-
-/** `docs/DOMAIN_RULES.md` "Prioritization scoring — 13 dimensions". */
-export const DIMENSIONS: readonly DimensionMeta[] = [
-  { field: 'strategic_project', short: 'Strat.', label: 'Strategic Project', pillar: 'Strategic Alignment', weight: 25 },
-  { field: 'new_customer', short: 'New cust.', label: 'New Customer', pillar: 'Strategic Alignment', weight: 25 },
-  { field: 'new_options', short: 'New opt.', label: 'New Options', pillar: 'Strategic Alignment', weight: 25 },
-  { field: 'regulatory_compliance', short: 'Reg.', label: 'Regulatory Compliance', pillar: 'Regulatory & Quality', weight: 25 },
-  { field: 'quality_improvements', short: 'Quality', label: 'Quality Improvements', pillar: 'Regulatory & Quality', weight: 25 },
-  { field: 'rm_savings', short: 'RM sav.', label: 'RM Savings', pillar: 'Financial Return', weight: 25 },
-  { field: 'total_rm_savings', short: 'Tot. RM', label: 'Total RM Savings', pillar: 'Financial Return', weight: 25 },
-  { field: 'gross_margins', short: 'Gross prof.', label: 'Gross Profitability', pillar: 'Financial Return', weight: 25 },
-  { field: 'profitability', short: 'ROI', label: 'ROI', pillar: 'Investment & Feasibility', weight: 25 },
-  { field: 'annual_volume', short: 'Ann. vol.', label: 'Annual Volume', pillar: 'Market & Volume', weight: 15 },
-  { field: 'three_year_volume', short: '3yr vol.', label: '3-Year Volume', pillar: 'Market & Volume', weight: 25 },
-  { field: 'new_models', short: 'New mdl.', label: 'New Models', pillar: 'Market & Volume', weight: 15 },
-  { field: 'capex_investment', short: 'CAPEX', label: 'CAPEX Investment (inverted)', pillar: 'Investment & Feasibility', weight: 15 },
-] as const;
 
 /** `docs/DOMAIN_RULES.md` band thresholds — display copy of a fixed rule, used
  *  only to make the API's `suggested_band` legible. Not used to derive a band
@@ -220,25 +185,14 @@ export interface PriorityMatrixRow {
   /** P13-T14: 1-based rank by score within the filtered set, served; null when unscored. */
   rank: number | null;
 
+  /** P26: true when at least one ACTIVE dimension is scored. */
   has_score: boolean;
-  strategic_project: number | null;
-  new_customer: number | null;
-  new_options: number | null;
-  regulatory_compliance: number | null;
-  quality_improvements: number | null;
-  rm_savings: number | null;
-  total_rm_savings: number | null;
-  gross_margins: number | null;
-  profitability: number | null;
-  annual_volume: number | null;
-  three_year_volume: number | null;
-  new_models: number | null;
-  capex_investment: number | null;
   hard_gates: HardGateReason[];
   /** Backend-computed: Σ points (score/5 × weight), out of `total_weight`. Displayed verbatim. */
   weighted_score: number | null;
-  /** Served per-dimension points (P16, ADR 0029); absent/null when unscored. */
-  dimension_points?: Partial<Record<DimensionField, DimensionPoints>> | null;
+  /** Served per-dimension points (P16, ADR 0029), keyed by ACTIVE dimension key
+   *  (`{points: 0, scaled_points: 0}` for a missing score); absent/null when unscored. */
+  dimension_points?: Record<DimensionKey, DimensionPoints> | null;
   /** Backend-computed: round(weighted_score / total_weight × 100). Displayed verbatim. */
   normalized_pct: number | null;
   /** Backend-computed band from `normalized_pct`. Does NOT itself reflect the
@@ -252,10 +206,15 @@ export interface PriorityMatrixRow {
   capacity_fill: boolean;
   /** P25: the served reason for a walk decision (promoted / not promoted); shown verbatim, never parsed. */
   capacity_fill_reason: string | null;
-  /** P21 §3: the 13 served per-dimension scores, points and max points, in
-   *  positional order. (`normalized_pct` / `suggested_band` above are the
-   *  row's score out of 100 and its band.) */
+  /** P21 §3 / P26: one served entry per ACTIVE dimension, in `display_order`:
+   *  score (null = not scored), points and max points. (`normalized_pct` /
+   *  `suggested_band` above are the row's score out of 100 and its band.) */
   dimension_scores: DimensionScore[];
+  /** P26 (ADR 0037): active dimensions this project has no score on. Non-empty
+   *  on a scored row = the score is "incomplete" (each missing one counts 0). */
+  missing_dimension_keys: DimensionKey[];
+  /** P26: the rubric version the cached score was computed with. */
+  rubric_version: number;
 
   is_new_model: boolean;
   is_rm_saving_project: boolean;
@@ -305,32 +264,140 @@ export interface PriorityCapacityFill {
   hubs: HubP1Fill[];
 }
 
-/** `PUT /priorities/{project_id}` request body (→ `PriorityScoreUpdateRequest`).
- *  `extra="forbid"` server-side — send exactly these keys. */
+/** P26 (ADR 0037): one dimension score, an integer 0..5, or null (clears it). */
+export type DimensionScoreValue = number | null;
+/** P26: scores keyed by ACTIVE dimension key. Keys left out keep their stored value. */
+export type DimensionScoreMap = Record<DimensionKey, DimensionScoreValue>;
+
+/** `PUT /priorities/{project_id}` request body (→ `PriorityScoreUpdateRequest`,
+ *  P26 contract §5). `extra="forbid"` server-side. `scores` holds only ACTIVE
+ *  keys (else 422 `UNKNOWN_DIMENSION_KEY`); omitted keys are unchanged and null
+ *  clears a score. `hard_gates` is optional server-side; we always send it. */
 export interface PriorityScoreUpdateRequest {
-  strategic_project: number;
-  new_customer: number;
-  new_options: number;
-  regulatory_compliance: number;
-  quality_improvements: number;
-  rm_savings: number;
-  total_rm_savings: number;
-  gross_margins: number;
-  profitability: number;
-  annual_volume: number;
-  three_year_volume: number;
-  new_models: number;
-  capex_investment: number;
+  scores: DimensionScoreMap;
   hard_gates: HardGateReason[];
 }
 
-/** `PUT /priorities/{project_id}` response (→ `PriorityScoreRead`). */
-export interface PriorityScoreRead extends PriorityScoreUpdateRequest {
+/** `PUT /priorities/{project_id}` response (→ `PriorityScoreRead`, P26 §5).
+ *  `suggested_band` here is the stored SCORE band (null when unscored). */
+export interface PriorityScoreRead {
   id: Id;
   project_id: Id;
+  hard_gates: HardGateReason[];
   weighted_score: number | null;
   normalized_pct: number | null;
   suggested_band: ProjectPriority | null;
+  dimension_scores: DimensionScore[];
+  missing_dimension_keys: DimensionKey[];
+  rubric_version: number;
+}
+
+// --- Scoring rubric (P26, ADR 0037, docs/API_CONTRACT_P26.md §1-§4) ---------
+
+/** One dimension of the served rubric (→ `ScoringRubricDimension`). `id` is null
+ *  only in a preview, for a dimension that does not exist yet; `scaled_weight`
+ *  (weight × 100 / total, 2 dp, served) is null for an inactive dimension. */
+export interface ScoringRubricDimension {
+  id: Id | null;
+  key: DimensionKey;
+  label: string;
+  pillar: string;
+  weight: number;
+  scaled_weight: number | null;
+  inverted: boolean;
+  active: boolean;
+  display_order: number;
+}
+
+/** `GET /scoring-rubric` and the `PUT` response (→ `ScoringRubricRead`). */
+export interface ScoringRubric {
+  version: number;
+  /** Σ weights of the ACTIVE dimensions (served). */
+  total_weight: number;
+  changed_at: string;
+  changed_by_user_id: Id | null;
+  /** Null for the migrated version 1. */
+  changed_by_name: string | null;
+  reason: string;
+  /** Every dimension, active and inactive, in `display_order`. */
+  dimensions: ScoringRubricDimension[];
+  /** Distinct pillars, order of first appearance. */
+  pillars: string[];
+  /** The caller may edit (Admin / Super Admin). */
+  can_edit: boolean;
+}
+
+/** One dimension of a proposal (→ `ScoringRubricDimensionInput`). `key` = an
+ *  existing key, or omitted / null for a NEW dimension (the server slugifies it).
+ *  The list position is the new `display_order`. */
+export interface ScoringRubricDimensionInput {
+  key?: DimensionKey | null;
+  label: string;
+  pillar: string;
+  weight: number;
+  inverted?: boolean;
+  active?: boolean;
+}
+
+/** `POST /scoring-rubric/preview` body (→ `ScoringRubricPreviewRequest`). */
+export interface ScoringRubricPreviewRequest {
+  dimensions: ScoringRubricDimensionInput[];
+}
+
+/** `PUT /scoring-rubric` body (→ `ScoringRubricUpdateRequest`): the full
+ *  replacement, the version it was edited from (409 `RUBRIC_VERSION_CONFLICT`
+ *  when stale) and the required reason. */
+export interface ScoringRubricUpdateRequest extends ScoringRubricPreviewRequest {
+  version: number;
+  reason: string;
+}
+
+/** `GET /scoring-rubric/versions` (→ `ScoringRubricVersionsResponse`), newest first. */
+export interface ScoringRubricVersions {
+  versions: ScoringRubric[];
+}
+
+/** A preview band: a score band, or "Unscored" when a project becomes (un)scored. */
+export type RubricPreviewBand = 'P1' | 'P2' | 'P3' | 'P4' | 'Unscored';
+
+/** One score-band transition of a preview (→ `RubricBandChange`). */
+export interface RubricBandChange {
+  from_band: RubricPreviewBand;
+  to_band: RubricPreviewBand;
+  count: number;
+}
+
+/** One project of a preview (→ `RubricPreviewProject`), every figure served. */
+export interface RubricPreviewProject {
+  project_id: Id;
+  project_name: string;
+  hub: HubName;
+  old_normalized_pct: number | null;
+  new_normalized_pct: number | null;
+  old_score_band: ProjectPriority | null;
+  new_score_band: ProjectPriority | null;
+  /** After the P1 capacity fill (ADR 0036), as Matrix rows serve it. */
+  old_suggested_band: ProjectPriority | null;
+  new_suggested_band: ProjectPriority | null;
+  new_capacity_fill: boolean;
+  score_band_changed: boolean;
+  suggested_band_changed: boolean;
+  /** Under the proposed rubric. */
+  missing_dimension_keys: DimensionKey[];
+}
+
+/** `POST /scoring-rubric/preview` response (→ `ScoringRubricPreview`). Nothing is saved. */
+export interface ScoringRubricPreview {
+  current_version: number;
+  current_total_weight: number;
+  proposed_total_weight: number;
+  /** The proposal as it would be saved (new keys slugified, `id` null). */
+  dimensions: ScoringRubricDimension[];
+  scored_projects: number;
+  score_band_change_count: number;
+  suggested_band_change_count: number;
+  band_changes: RubricBandChange[];
+  projects: RubricPreviewProject[];
 }
 
 // --- Scenario Apply (P5-T01/P5-T02) ---------------------------------------
@@ -340,12 +407,10 @@ export interface PriorityScoreRead extends PriorityScoreUpdateRequest {
 // and `docs/MEMORY.md`'s "P5-T02 — backend-builder" entry). Do not add
 // speculative fields here for entity types the backend does not accept yet.
 
-/** One project's proposed new 13-dimension score + hard gates, as part of a
- *  scenario diff (→ `ScenarioPriorityScoreChange`). Same field shape as
- *  `PriorityScoreUpdateRequest` — this is a FULL row replacement per project,
- *  not a sparse per-field diff (confirmed by reading the backend schema: every
- *  dimension field is required, `ge=1 le=5`, none nullable/optional) — plus
- *  `project_id` to address it in a batch. `extra="forbid"` server-side. */
+/** One project's proposed scores + hard gates in a scenario diff (→
+ *  `ScenarioPriorityScoreChange`, P26 §5): the same `scores` map as the PUT
+ *  (active keys only, omitted = unchanged, null clears) plus `project_id`.
+ *  Any non-active key fails the whole batch with a 422. `extra="forbid"`. */
 export interface ScenarioPriorityScoreChange extends PriorityScoreUpdateRequest {
   project_id: Id;
 }
@@ -411,8 +476,9 @@ export interface ScenarioApplyChangeSummary {
  *  snapshot); `after_state` is always present. Both are the exact JSONB
  *  written by `services.audit_helpers.priority_score_audit_state(...)` for
  *  the only entity type this ever contains today (`priority_score`): `id`,
- *  `project_id`, the 13 dimension fields, `hard_gates`, `weighted_score`,
- *  `normalized_pct`, `suggested_band`. Typed as a raw JSON record (not the
+ *  `project_id`, `hard_gates`, `weighted_score`, `normalized_pct`,
+ *  `suggested_band`, and the scores. P26: new snapshots hold `scores: {key:
+ *  value}` + `rubric_version`; pre-P26 rows keep one flat field per dimension. Typed as a raw JSON record (not the
  *  named dimension interface) because the schema is intentionally generic
  *  across the four `ScenarioEntityType` values — read fields defensively. */
 export interface ScenarioApplyChangeDetail extends ScenarioApplyChangeSummary {

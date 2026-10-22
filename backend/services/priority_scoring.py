@@ -1,19 +1,33 @@
-"""The 13-dimension prioritization scoring formula, per `docs/DOMAIN_RULES.md`
-"Prioritization scoring — 13 dimensions".
+"""The prioritization scoring formula, per `docs/DOMAIN_RULES.md`
+"Prioritization scoring" — against the editable rubric (ADR 0037, P26-T01).
 
-This is the same formula `seed.seed_demo_data._priority_score_fields` already
-implements for seed-time computation (see that module's docstring and
-`docs/MEMORY.md` P1-T03/P1-T05 entries) — duplicated here rather than
-imported from `seed/`, because `seed_demo_data` is a standalone CLI script
-(argparse, its own `asyncio.run`), not a module the API process should import
-at request time. **This is a deliberate, flagged duplication** of one pure
-function, not two independently-maintained implementations of the rule set:
-both read their weights/thresholds from `domain_constants`, so they cannot
-drift on the *data* (only a literal code bug in one but not the other could
-cause disagreement) — `tests/test_priority_scoring.py`'s existing golden
-threshold cases (P1-T05) apply equally to this copy. Flagged for a future
-task to fold `seed_demo_data._priority_score_fields` into an import of this
-module instead, once someone owns editing that already-reviewed seed script.
+Pure functions only (no DB). The rubric itself (dimensions, weights, the
+current version) is loaded from the `scoring_dimensions` / `rubric_versions`
+tables by `services.scoring_rubric.load_rubric` and passed in as a `Rubric`.
+There is no dimension or weight constant left in code: every reader goes
+through a `Rubric`.
+
+```
+TOTAL_WEIGHT   = Σ weight(d) over ACTIVE dimensions
+points(d)      = score(d) / 5 × weight(d)      (score 0..5; null counts 0)
+raw            = Σ points(d)                    (= weighted_score)
+normalized_pct = round(raw / TOTAL_WEIGHT × 100), half up, exact
+band           = >= 70 P1, >= 55 P2, >= 40 P3, else P4
+```
+
+A project with at least one active dimension scored is "scored"; the active
+dimensions it has no score on count 0 points and are served as
+`missing_dimension_keys` ("incomplete"). A project with no score on any active
+dimension is unscored (all three cached fields null), exactly like a project
+without a `PriorityScore` row.
+
+Rounding: exact rational arithmetic with half-up rounding. Under the
+pre-ADR-0037 rubric (every weight a multiple of 5, total 295) no input can
+produce a `.5`, so this is identical to the old float `round()` on every
+stored score (pinned by the migration losslessness test).
+
+The seed (`seed/initial_scoring_rubric.py`) computes through these same
+functions, so seed-time and request-time scores cannot drift.
 """
 
 from __future__ import annotations
@@ -21,116 +35,159 @@ from __future__ import annotations
 import uuid
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
-from decimal import Decimal
+from decimal import ROUND_HALF_UP, Decimal
+from fractions import Fraction
 from typing import Literal
 
 import domain_constants as dc
 
 
-def compute_priority_score(dimension_scores: list[int]) -> tuple[float, int, str]:
-    """`(weighted_score, normalized_pct, suggested_band)` per DOMAIN_RULES.md.
-
-    `dimension_scores` must be exactly 13 ints (0-5 each, ADR 0033), in
-    `domain_constants.PRIORITIZATION_DIMENSIONS` / `models.priority.
-    DIMENSION_FIELD_NAMES` order (Strategic Project, New Customer, ...,
-    CAPEX Investment). Caller (the Pydantic request schema) is responsible for
-    the 0-5 range check; this function only asserts the count.
-    """
-
-    if len(dimension_scores) != len(dc.PRIORITIZATION_DIMENSIONS):
-        raise ValueError(
-            f"expected {len(dc.PRIORITIZATION_DIMENSIONS)} dimension scores, "
-            f"got {len(dimension_scores)}"
-        )
-    weighted_score = sum(_points(score, weight) for score, weight in _pairs(dimension_scores))
-    normalized_pct = round(weighted_score / dc.TOTAL_WEIGHT * 100)
-    suggested_band = next(
-        label for threshold, label in dc.PRIORITY_BAND_THRESHOLDS if normalized_pct >= threshold
-    )
-    return float(weighted_score), normalized_pct, suggested_band
+@dataclass(frozen=True)
+class RubricDimension:
+    id: uuid.UUID
+    key: str
+    label: str
+    pillar: str
+    weight: int
+    inverted: bool
+    active: bool
+    display_order: int
 
 
-def _points(score: int, weight: int) -> float:
+@dataclass(frozen=True)
+class Rubric:
+    """One rubric version: every dimension (active and inactive), in
+    `display_order`."""
+
+    version: int
+    dimensions: tuple[RubricDimension, ...]
+
+    @property
+    def active(self) -> tuple[RubricDimension, ...]:
+        return tuple(d for d in self.dimensions if d.active)
+
+    @property
+    def total_weight(self) -> int:
+        return sum(d.weight for d in self.active)
+
+    @property
+    def active_keys(self) -> tuple[str, ...]:
+        return tuple(d.key for d in self.active)
+
+
+@dataclass(frozen=True)
+class ScoreResult:
+    """`weighted_score` is exact to 1 dp (each point is `score × weight / 5`).
+    All three are None when no active dimension is scored."""
+
+    weighted_score: Decimal | None
+    normalized_pct: int | None
+    band: str | None
+    missing_keys: tuple[str, ...]
+
+    @property
+    def scored(self) -> bool:
+        return self.normalized_pct is not None
+
+
+def points(score: int, weight: int) -> Fraction:
     """ADR 0029: a dimension contributes `score / 5 * weight` (weight at score 5)."""
 
-    return score * weight / dc.DIMENSION_SCORE_MAX
+    return Fraction(score * weight, dc.DIMENSION_SCORE_MAX)
 
 
-def _pairs(dimension_scores: list[int]) -> list[tuple[int, int]]:
-    return [
-        (score, weight)
-        for score, (*_rest, weight) in zip(
-            dimension_scores, dc.PRIORITIZATION_DIMENSIONS, strict=True
-        )
-    ]
+def band_for(pct: int) -> str:
+    return next(label for threshold, label in dc.PRIORITY_BAND_THRESHOLDS if pct >= threshold)
 
 
-def scaled_weight(weight: int) -> float:
+def _half_up(value: Fraction) -> int:
+    """`round()` half up for a non-negative exact value."""
+
+    return int(value + Fraction(1, 2))
+
+
+def to_2dp(value: Fraction) -> Decimal:
+    return (Decimal(value.numerator) / Decimal(value.denominator)).quantize(
+        Decimal("0.01"), rounding=ROUND_HALF_UP
+    )
+
+
+def compute_score(rubric: Rubric, scores: Mapping[str, int | None]) -> ScoreResult:
+    """The cached fields of one project under `rubric`. `scores` maps
+    dimension key → 0..5 or None; keys of inactive (or unknown) dimensions are
+    ignored, active keys absent from `scores` count as missing."""
+
+    active = rubric.active
+    present = [(d, scores.get(d.key)) for d in active]
+    if not any(s is not None for _d, s in present):
+        return ScoreResult(None, None, None, ())
+    total = rubric.total_weight
+    raw = sum((points(s, d.weight) for d, s in present if s is not None), Fraction(0))
+    pct = _half_up(raw * 100 / total)
+    missing = tuple(d.key for d, s in present if s is None)
+    return ScoreResult(to_2dp(raw), pct, band_for(pct), missing)
+
+
+def scaled_weight(rubric: Rubric, weight: int) -> float:
     """A weight shown out of 100: `weight * 100 / TOTAL_WEIGHT`, 2 dp (I9: server-side)."""
 
-    return round(weight * 100 / dc.TOTAL_WEIGHT, 2)
+    return float(to_2dp(Fraction(weight * 100, rubric.total_weight)))
 
 
-def dimension_table() -> list[dict[str, object]]:
-    """The served dimension table, in positional (DB column) order."""
+def dimension_table(rubric: Rubric) -> list[dict[str, object]]:
+    """The served dimension table: ACTIVE dimensions in `display_order`."""
 
     return [
         {
-            "key": key,
-            "label": label,
-            "pillar": pillar,
-            "weight": weight,
-            "scaled_weight": scaled_weight(weight),
+            "key": d.key,
+            "label": d.label,
+            "pillar": d.pillar,
+            "weight": d.weight,
+            "scaled_weight": scaled_weight(rubric, d.weight),
         }
-        for pillar, label, key, weight in dc.PRIORITIZATION_DIMENSIONS
+        for d in rubric.active
     ]
 
 
-def dimension_points(dimension_scores: list[int]) -> dict[str, dict[str, float]]:
-    """Per-dimension `{points, scaled_points}` (2 dp), keyed by dimension key.
-    `scaled_points = points * 100 / TOTAL_WEIGHT`."""
+def dimension_points(
+    rubric: Rubric, scores: Mapping[str, int | None]
+) -> dict[str, dict[str, float]]:
+    """Per ACTIVE dimension `{points, scaled_points}` (2 dp), keyed by key.
+    `scaled_points = points * 100 / TOTAL_WEIGHT`; a missing score is 0."""
 
     out: dict[str, dict[str, float]] = {}
-    for (*_r, key, weight), score in zip(
-        dc.PRIORITIZATION_DIMENSIONS, dimension_scores, strict=True
-    ):
-        pts = _points(score, weight)
-        out[key] = {
-            "points": round(pts, 2),
-            "scaled_points": round(pts * 100 / dc.TOTAL_WEIGHT, 2),
+    for d in rubric.active:
+        score = scores.get(d.key)
+        pts = points(score, d.weight) if score is not None else Fraction(0)
+        out[d.key] = {
+            "points": float(to_2dp(pts)),
+            "scaled_points": float(to_2dp(pts * 100 / rubric.total_weight)),
         }
     return out
 
 
-def dimension_score_rows(dimension_scores: list[int] | None) -> list[dict[str, object]]:
-    """P21-T01 (docs/API_CONTRACT_P21.md §3): the 13 dimensions in positional
-    order, each `{key, label, pillar, score, weight, points, max_points}`.
-
-    `points = score / 5 * weight` (ADR 0029; a score of 0 earns 0, ADR 0033),
-    `max_points = weight` (the points at score 5). Both are on the raw scale,
-    so `Σ points == weighted_score` exactly (every weight is a multiple of 5,
-    so each point value is an integer). `None` (an unscored project) gives the
-    full list with `score` and `points` null.
-    """
+def dimension_score_rows(
+    rubric: Rubric, scores: Mapping[str, int | None] | None
+) -> list[dict[str, object]]:
+    """docs/API_CONTRACT_P21.md §3 / P26 §4: the ACTIVE dimensions in
+    `display_order`, each `{key, label, pillar, score, weight, points,
+    max_points}`. `points = score / 5 * weight`, `max_points = weight`, raw
+    scale, so `Σ points == weighted_score` (null points count 0). `score` and
+    `points` are null for a dimension the project has no score on, and for
+    every dimension of an unscored project (`scores is None`)."""
 
     rows: list[dict[str, object]] = []
-    scores: list[int | None] = (
-        list(dimension_scores)
-        if dimension_scores is not None
-        else [None] * len(dc.PRIORITIZATION_DIMENSIONS)
-    )
-    for (pillar, label, key, weight), score in zip(
-        dc.PRIORITIZATION_DIMENSIONS, scores, strict=True
-    ):
+    for d in rubric.active:
+        score = scores.get(d.key) if scores is not None else None
         rows.append(
             {
-                "key": key,
-                "label": label,
-                "pillar": pillar,
+                "key": d.key,
+                "label": d.label,
+                "pillar": d.pillar,
                 "score": score,
-                "weight": weight,
-                "points": round(_points(score, weight), 2) if score is not None else None,
-                "max_points": float(weight),
+                "weight": d.weight,
+                "points": float(to_2dp(points(score, d.weight))) if score is not None else None,
+                "max_points": float(d.weight),
             }
         )
     return rows

@@ -41,26 +41,26 @@ const SUMMARY: RegionSummary = {
 };
 
 describe('PipelineRow', () => {
-  it('renders four cards with served counts and "of total" shares', () => {
+  it('renders three cards with served counts and "of total" shares', () => {
     renderWithProviders(<PipelineRow totals={TOTALS} regionSummary={SUMMARY} />);
     expect(screen.getByTestId('pipeline-count-spillover')).toHaveTextContent('76');
     expect(screen.getByTestId('pipeline-count-new')).toHaveTextContent('160');
-    expect(screen.getByTestId('pipeline-count-unregistered')).toHaveTextContent('3');
+    expect(screen.queryByTestId('pipeline-count-unregistered')).not.toBeInTheDocument();
     expect(screen.getByTestId('pipeline-count-total')).toHaveTextContent('239');
     expect(screen.getByTestId('pipeline-caption-spillover')).toHaveTextContent('31.8% of total');
     expect(screen.getByTestId('pipeline-caption-new')).toHaveTextContent('66.95% of total');
-    expect(screen.getByTestId('pipeline-caption-unregistered')).toHaveTextContent('1.26% of total');
-    expect(screen.getByTestId('pipeline-caption-total')).toHaveTextContent(`All statuses · full ${String(PLAN_YEAR)} pipeline`);
+    // The served unregistered count is still inside the total, so the caption names it.
+    expect(screen.getByTestId('pipeline-caption-total')).toHaveTextContent('All statuses · incl. 3 with no registration year');
   });
 
   it('labels the years from the domain constants and reads as an equation', () => {
     renderWithProviders(<PipelineRow totals={TOTALS} />);
     expect(screen.getByRole('region', { name: `Spillover ${String(CARRY_OVER_YEAR)}` })).toBeInTheDocument();
     expect(screen.getByRole('region', { name: `Newly registered ${String(PLAN_YEAR)}` })).toBeInTheDocument();
-    expect(screen.getByRole('region', { name: 'Unregistered date' })).toBeInTheDocument();
+    expect(screen.queryByRole('region', { name: 'Unregistered date' })).not.toBeInTheDocument();
     expect(screen.getByRole('region', { name: 'Total projects' })).toBeInTheDocument();
     const glyphs = screen.getAllByTestId('pipeline-glyph').map((g) => g.textContent);
-    expect(glyphs).toEqual(['+', '+', '=']);
+    expect(glyphs).toEqual(['+', '=']);
     // decorative; kept visible when the cards stack so the equation still reads
     for (const g of screen.getAllByTestId('pipeline-glyph')) {
       expect(g).toHaveAttribute('aria-hidden', 'true');
@@ -79,18 +79,16 @@ describe('PipelineRow', () => {
     expect(screen.getByRole('list', { name: 'Total projects by country' })).toHaveTextContent('Greece:80(33.33%)');
   });
 
-  it('keeps the Unregistered card at 0, muted, with no chips', () => {
+  it('says nothing about unregistered projects in the total when there are none', () => {
     renderWithProviders(
       <PipelineRow
         totals={{ ...TOTALS, unregistered_count: 0, unregistered_share_pct: 0, total_count: 236 }}
         regionSummary={SUMMARY}
       />,
     );
-    expect(screen.getByTestId('pipeline-count-unregistered')).toHaveTextContent('0');
-    expect(screen.getByTestId('pipeline-count-unregistered').className).toContain('text-text-muted');
-    expect(screen.getByTestId('pipeline-caption-unregistered')).toHaveTextContent('No registration year set');
+    expect(screen.getByTestId('pipeline-caption-total')).toHaveTextContent(`All statuses · full ${String(PLAN_YEAR)} pipeline`);
     expect(screen.queryByRole('list', { name: 'Unregistered date by country' })).not.toBeInTheDocument();
-    expect(screen.getAllByTestId('pipeline-glyph')).toHaveLength(3);
+    expect(screen.getAllByTestId('pipeline-glyph')).toHaveLength(2);
   });
 
   it('renders without chips while the region summary is absent', () => {

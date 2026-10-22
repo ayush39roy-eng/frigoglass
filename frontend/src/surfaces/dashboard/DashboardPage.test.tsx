@@ -422,24 +422,29 @@ describe('DashboardPage — P17-R06/R08 rearrangement', () => {
   }
   const follows = (a: Node, b: Node): boolean => Boolean(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING);
 
-  it('P17-R08 order: Completing, the Hub × Type tables, the rest, and the register LAST', async () => {
+  it('2026-10-22 order: Status, profile + delivery rate, compact Completing, the Hub × Type row, the register LAST', async () => {
     readyAll();
     hooks.useDashboardAnalytics.mockReturnValue(ready(ANALYTICS_R08));
     renderWithProviders(<DashboardPage />);
+    const status = screen.getByRole('heading', { name: 'Status overview' });
+    const profile = await screen.findByText('Completion profile', undefined, { timeout: 5000 });
+    const gauge = screen.getByRole('heading', { name: 'Delivery rate' });
     const completing = screen.getByRole('heading', { name: 'Completing within the year' });
     const pipelineTable = screen.getByRole('heading', { name: 'Project pipeline summary: Hub × Type' });
     const completingTable = screen.getByRole('heading', { name: 'Completing within year: Hub × Type' });
-    const outcome = screen.getByText('Completion outcome');
     const register = screen.getByTestId('all-projects-register');
+    expect(follows(status, profile)).toBe(true);
+    expect(follows(profile, gauge)).toBe(true);
+    expect(follows(gauge, completing)).toBe(true);
     expect(follows(completing, pipelineTable)).toBe(true);
     expect(follows(pipelineTable, completingTable)).toBe(true);
-    expect(follows(completingTable, outcome)).toBe(true);
-    // The two tables share one band; the chart follows them.
+    // The completion outcome donut is gone (its split repeats the cards above).
+    expect(screen.queryByText('Completion outcome')).not.toBeInTheDocument();
+    // The two tables and the chart share one band.
     const band = pipelineTable.closest('.grid');
     expect(band!.contains(completingTable)).toBe(true);
     const chart = await screen.findByRole('heading', { name: 'Pipeline vs completing' }, { timeout: 5000 });
-    expect(follows(completingTable, chart)).toBe(true);
-    expect(follows(chart, outcome)).toBe(true);
+    expect(band!.contains(chart)).toBe(true);
     await screen.findByRole('heading', { name: 'Portfolio analytics' }, { timeout: 5000 });
     const analytics = await screen.findByRole('heading', { name: 'Analytics & breakdown' }, { timeout: 5000 });
     expect(follows(analytics, register)).toBe(true);
@@ -548,9 +553,9 @@ describe('DashboardPage — P13-T10 analytics & breakdown', () => {
     expect(screen.getByRole('list', { name: 'Pipeline projects by project type' })).toHaveTextContent(
       'Cost Optimization: 89 (37.71%)',
     );
-    expect(screen.getByRole('table', { name: /completing within the year/i })).toHaveTextContent('7 (8.54%)');
+    expect(screen.getByRole('table', { name: /completing within the year/i })).toHaveTextContent('7 8.54%');
     // Per-hub Total column = served completing_by_hub.
-    expect(screen.getByRole('row', { name: /PD-India/ })).toHaveTextContent('14 (7.78%)');
+    expect(screen.getByRole('row', { name: /PD-India/ })).toHaveTextContent('14 7.78%');
     // Donut centres show the served PipelineTotals.total_count (239), not a client sum.
     expect(screen.getAllByText('239').length).toBeGreaterThanOrEqual(2);
   });

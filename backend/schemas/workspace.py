@@ -26,6 +26,7 @@ from models.enums import (
     WorkflowStepKind,
     WorkflowStepStatus,
 )
+from schemas.priority import DimensionScore
 from schemas.project import ProjectRead
 
 HORIZON_MAX_WEEK = 78
@@ -90,19 +91,13 @@ class WorkspaceStage(BaseModel):
 
 
 class WorkspacePriorityScore(BaseModel):
-    strategic_project: int
-    new_customer: int
-    new_options: int
-    regulatory_compliance: int
-    quality_improvements: int
-    rm_savings: int
-    total_rm_savings: int
-    gross_margins: int
-    profitability: int
-    annual_volume: int
-    three_year_volume: int
-    new_models: int
-    capex_investment: int
+    #: ADR 0037 (P26-T01): one entry per ACTIVE rubric dimension, in display
+    #: order, as on Matrix rows (replaces the 13 flat fields).
+    dimension_scores: list[DimensionScore]
+    #: ADR 0037: active dimensions this project has no score on ("incomplete").
+    missing_dimension_keys: list[str]
+    #: ADR 0037: the rubric version the score was computed with.
+    rubric_version: int
     hard_gates: list[HardGateReason]
     weighted_score: float | None
     normalized_pct: int | None

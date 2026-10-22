@@ -10,15 +10,15 @@ import { ProjectStatusBadge } from '@/components/shared/project-status-badge';
 import { CategoryTag } from '@/components/ui/category-tag';
 import { categoricalRankSoftBg, categoricalRankText, categoryRank } from '@/lib/categorical-palette';
 import { cn } from '@/lib/utils';
-import { SCORING_ANCHORS } from '@/lib/domain-constants';
+import { scoringAnchor } from '@/lib/domain-constants';
 import { PROJECT_TYPE_LABELS } from '@/types/enums';
 import { Checkbox } from '@/components/ui/checkbox';
 
 import { POINTS_RULE_COPY, type PriorityMatrixRow } from '../api/types';
-import { sortByPillar } from '../lib/pillars';
+import { groupByPillar } from '../lib/pillars';
 import { formatPoints, rowDimension } from '../lib/row-scores';
 import { scoreIntensity } from '../lib/score-chip';
-import { formatWeight, useScoringModel, type ScoringModelEntry } from '../scoring-model';
+import { formatWeight, layoutDimensions, useScoringModel, type ScoringModelEntry } from '../scoring-model';
 import { ScoreCell } from './score-cell';
 import { VirtualMatrixGrid, type MatrixBox, type MatrixColumn } from './virtual-matrix-grid';
 
@@ -31,28 +31,36 @@ const ACTIONS_BOX: MatrixBox = { id: 'actions', kind: 'actions' };
  * Column definitions + rendering for the 236-row scoring grid.
  *
  * P21 (owner request): the financial columns are gone from the grid (they stay
- * in the edit dialog and the exports). The grid shows the 13 rubric scores,
+ * in the edit dialog and the exports). The grid shows the rubric scores,
  * grouped under pillar header bands, and a final "Score /100" column. Every
  * figure is a served field rendered verbatim (I9).
+ *
+ * P26 (ADR 0037): the rubric is data. The dimension columns are the ACTIVE
+ * dimensions of the served table (`GET /priorities/dimensions`, display order;
+ * before it arrives, the first row's `dimension_scores`), grouped into pillar
+ * boxes in order of first appearance. Any number of dimensions and any pillar
+ * name work; nothing is keyed to a fixed list.
  */
 
 /**
- * Dimension column header with the scoring anchors as a tooltip (P9 contract
- * §8): what a 1 and a 5 mean, plus pillar and weight. A real button so the
- * tooltip is reachable by keyboard; the visible text stays the short label.
+ * Dimension column header: the served label (wrapped, at most three lines) and
+ * a tooltip with pillar, weight and, where the deck describes the dimension,
+ * what a 1 and a 5 mean. A real button so the tooltip is reachable by keyboard.
  */
 function DimHeader({ dim }: { dim: ScoringModelEntry }): React.JSX.Element {
-  const { key: field, short, label, pillar, weight, scaled_weight: scaled } = dim;
-  const anchor = SCORING_ANCHORS[field];
+  const { key, label, pillar, weight, scaled_weight: scaled } = dim;
+  const anchor = scoringAnchor(key);
+  const anchorText = anchor ? `: 1 = ${anchor.low}, 5 = ${anchor.high}` : '';
   return (
     <Tooltip>
       <TooltipTrigger asChild>
         <button
           type="button"
-          className="cursor-help whitespace-normal break-words rounded-sm text-center leading-tight underline decoration-dotted underline-offset-2"
-          aria-label={`${label}: 1 = ${anchor.low}, 5 = ${anchor.high} (${pillar}, weight ${formatWeight(weight, scaled)})`}
+          className="mg-dim-head cursor-help rounded-sm text-center leading-tight underline decoration-dotted underline-offset-2"
+          aria-label={`${label}${anchorText} (${pillar}, weight ${formatWeight(weight, scaled)})`}
+          data-testid={`dim-head-${key}`}
         >
-          {short}
+          {label}
         </button>
       </TooltipTrigger>
       <TooltipContent className="max-w-xs text-left">
@@ -64,19 +72,25 @@ function DimHeader({ dim }: { dim: ScoringModelEntry }): React.JSX.Element {
         <span className="mt-1 block">
           <strong>0</strong> — no contribution (no points)
         </span>
-        <span className="block">
-          <strong>1</strong> — {anchor.low}
-        </span>
-        <span className="block">
-          <strong>5</strong> — {anchor.high}
-        </span>
+        {anchor ? (
+          <>
+            <span className="block">
+              <strong>1</strong> — {anchor.low}
+            </span>
+            <span className="block">
+              <strong>5</strong> — {anchor.high}
+            </span>
+          </>
+        ) : null}
+        <span className="block text-text-inverse/80">– — not scored (counts 0 points; the score is incomplete)</span>
       </TooltipContent>
     </Tooltip>
   );
 }
 
 /** One rubric cell: the served score 0–5, its served points on hover and for
- *  screen readers, and visibly in Detailed view. Nothing is computed. */
+ *  screen readers, and visibly in Detailed view. A missing score (null on an
+ *  active dimension, P26) is an empty "–" chip. Nothing is computed. */
 function DimCell({
   row,
   dim,
@@ -86,11 +100,22 @@ function DimCell({
   dim: ScoringModelEntry;
   showPoints: boolean;
 }): React.JSX.Element {
-  const cell = rowDimension(row, dim.key, dim.weight);
+  const cell = rowDimension(row, dim.key);
   if (cell.score === null) {
+    // An unscored project has no chips at all; a scored one shows its gaps as empty chips.
+    const text = row.has_score ? `${dim.label}: not scored (0 points; incomplete)` : `${dim.label}: not scored`;
     return (
-      <span className="text-text-muted" title={`${dim.label}: not scored`}>
-        –<span className="sr-only">{`${dim.label}: not scored`}</span>
+      <span className="flex flex-col items-center" title={text} data-testid={`dim-${dim.key}`}>
+        {row.has_score ? (
+          <span className="mg-chip" data-empty="true" data-testid="score-chip-empty" aria-hidden="true">
+            –
+          </span>
+        ) : (
+          <span className="text-text-muted" aria-hidden="true">
+            –
+          </span>
+        )}
+        <span className="sr-only">{text}</span>
       </span>
     );
   }
@@ -180,6 +205,7 @@ export function MatrixTable({
   narrow = false,
 }: MatrixTableProps): React.JSX.Element {
   const model = useScoringModel();
+  const dims = React.useMemo(() => layoutDimensions(model, rows), [model, rows]);
   const columns = React.useMemo<MatrixColumn<PriorityMatrixRow>[]>(() => {
     const cols: MatrixColumn<PriorityMatrixRow>[] = [];
     if (selectedIds && onToggleSelect) {
@@ -315,24 +341,24 @@ export function MatrixTable({
       );
     }
 
-    // P21: the 13 rubric columns, grouped under pillar header bands. P21-T03:
-    // each pillar is one box; every second pillar carries a faint tint.
-    const pillars: string[] = [];
-    for (const dim of sortByPillar(model.dimensions)) {
-      if (!pillars.includes(dim.pillar)) pillars.push(dim.pillar);
-      const pillarIndex = pillars.indexOf(dim.pillar);
-      cols.push({
-        box: { id: `pillar-${dim.pillar}`, kind: 'pillar', tint: pillarIndex % 2 === 1 },
-        id: `dim-${dim.key}`,
-        header: <DimHeader dim={dim} />,
-        group: dim.pillar,
-        width: detailed ? 72 : 58,
-        align: 'center',
-        headerClassName: 'px-1 normal-case tracking-normal text-text-muted',
-        cellClassName: 'px-1',
-        cell: (row) => <DimCell row={row} dim={dim} showPoints={detailed} />,
-      });
-    }
+    // P21 / P26: one column per ACTIVE dimension, grouped under pillar header
+    // bands (first appearance). P21-T03: each pillar is one box; every second
+    // pillar carries a faint tint.
+    groupByPillar(dims).forEach((group, pillarIndex) => {
+      for (const dim of group.items) {
+        cols.push({
+          box: { id: `pillar-${group.pillar}`, kind: 'pillar', tint: pillarIndex % 2 === 1 },
+          id: `dim-${dim.key}`,
+          header: <DimHeader dim={dim} />,
+          group: group.pillar,
+          width: detailed ? 76 : 68,
+          align: 'center',
+          headerClassName: 'px-1 normal-case tracking-normal text-text-muted',
+          cellClassName: 'px-1',
+          cell: (row) => <DimCell row={row} dim={dim} showPoints={detailed} />,
+        });
+      }
+    });
 
     cols.push({
       id: 'score',
@@ -374,7 +400,7 @@ export function MatrixTable({
       return cols.map((c) => (columnFilters[c.id] === undefined ? c : { ...c, filter: columnFilters[c.id] }));
     }
     return cols;
-  }, [canEdit, onEdit, scenarioStagedProjectIds, detailed, columnFilters, model, selectedIds, onToggleSelect, narrow]);
+  }, [canEdit, onEdit, scenarioStagedProjectIds, detailed, columnFilters, dims, selectedIds, onToggleSelect, narrow]);
 
   const sortedRows = React.useMemo(() => {
     return [...rows].sort((a, b) => {

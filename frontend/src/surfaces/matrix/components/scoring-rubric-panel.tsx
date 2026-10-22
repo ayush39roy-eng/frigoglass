@@ -11,17 +11,18 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-import { SCORING_ANCHORS, SCORING_SCALE } from '@/lib/domain-constants';
+import { SCORING_SCALE, scoringAnchor } from '@/lib/domain-constants';
 import { cn } from '@/lib/utils';
 
 import { POINTS_RULE_COPY } from '../api/types';
 import { formatWeight, useScoringModel } from '../scoring-model';
 
 /**
- * Collapsible "Scoring rubric" (P9 contract §8): the 1..5 scale and, per
- * dimension, what a 1 and a 5 mean. Static copy from the deck's "Scoring
- * Logic" slide via `domain-constants.ts` — the API is not involved and no
- * score is derived from it (Invariant I9).
+ * Collapsible "Scoring rubric" (P9 contract §8): the 0..5 scale and, per ACTIVE
+ * dimension of the served model (P26: display order, any number), its pillar,
+ * served weight and, where the deck describes it, what a 1 and a 5 mean. No
+ * score is derived from it (Invariant I9). Editing lives in the "Scoring
+ * rubric" side sheet opened from the View panel.
  */
 export function ScoringRubricPanel(): React.JSX.Element {
   const model = useScoringModel();
@@ -71,7 +72,7 @@ export function ScoringRubricPanel(): React.JSX.Element {
             </TableHeader>
             <TableBody>
               {model.dimensions.map((dim) => {
-                const anchor = SCORING_ANCHORS[dim.key];
+                const anchor = scoringAnchor(dim.key);
                 return (
                   <TableRow key={dim.key}>
                     <TableCell className="font-medium text-text">{dim.label}</TableCell>
@@ -79,8 +80,8 @@ export function ScoringRubricPanel(): React.JSX.Element {
                     <TableCell className="text-right" data-numeric="">
                       {formatWeight(dim.weight, dim.scaled_weight)}
                     </TableCell>
-                    <TableCell>{anchor.low}</TableCell>
-                    <TableCell>{anchor.high}</TableCell>
+                    <TableCell>{anchor ? anchor.low : <span className="text-text-subtle">—</span>}</TableCell>
+                    <TableCell>{anchor ? anchor.high : <span className="text-text-subtle">—</span>}</TableCell>
                   </TableRow>
                 );
               })}
@@ -88,7 +89,7 @@ export function ScoringRubricPanel(): React.JSX.Element {
           </Table>
           <p className="text-2xs text-text-subtle">
             {POINTS_RULE_COPY}{' '}
-            {model.total_weight === null ? '' : `Weights total ${String(model.total_weight)}, shown scaled to 100. `}The weighted score, normalised percentage and band are computed by
+            {model.total_weight === null ? '' : `Active weights total ${String(model.total_weight)}, shown scaled to 100. `}The weighted score, normalised percentage and band are computed by
             the server (DOMAIN_RULES.md) — this rubric only explains the inputs.
           </p>
         </CardContent>

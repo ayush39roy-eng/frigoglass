@@ -22,12 +22,12 @@ describe('CompletingHubTypeTable (P13-T10)', () => {
     renderWithProviders(<CompletingHubTypeTable cells={cells} byType={byType} />);
     const table = screen.getByRole('table', { name: /completing within the year/i });
     const india = within(table).getByRole('row', { name: /PD-India/ });
-    expect(india).toHaveTextContent('7 (8.54%)');
+    expect(india).toHaveTextContent('7 8.54%');
     // No served cell → a dash, not a computed zero.
     expect(india).toHaveTextContent('–');
     const total = within(table).getByRole('row', { name: /Total/ });
-    expect(total).toHaveTextContent('1 (20%)');
-    expect(total).toHaveTextContent('10 (11.24%)');
+    expect(total).toHaveTextContent('1 20%');
+    expect(total).toHaveTextContent('10 11.24%');
     // Without served per-hub totals there is no Total column.
     expect(within(table).getAllByRole('columnheader').map((h) => h.textContent)).toEqual(['Hub', 'NM', 'CO']);
   });
@@ -45,7 +45,7 @@ describe('CompletingHubTypeTable (P13-T10)', () => {
       'CO',
       'Total',
     ]);
-    expect(within(table).getByRole('row', { name: /PD-India/ })).toHaveTextContent('14 (7.78%)');
+    expect(within(table).getByRole('row', { name: /PD-India/ })).toHaveTextContent('14 7.78%');
     // A hub the server lists no total for (pipeline 0) shows a dash.
     const greece = within(table).getByRole('row', { name: /R&D-Greece/ });
     expect(greece.lastElementChild).toHaveTextContent('–');

@@ -21,7 +21,6 @@ from models.export import ExportJob
 from models.hub import Hub, HubWorkCalendar
 from models.notification import Notification
 from models.priority import (
-    DIMENSION_FIELD_NAMES,
     PriorityApplicationResult,
     PriorityApplicationRun,
     PriorityScore,
@@ -30,6 +29,7 @@ from models.project import Project
 from models.project_access import ProjectAccessGrant
 from models.scenario import ScenarioApplyChange, ScenarioApplyRun
 from models.schedule import ScheduleRun, ScheduleRunProjectOutcome, ScheduleRunProjectStep
+from models.scoring_rubric import PriorityDimensionScore, RubricVersion, ScoringDimension
 from models.user import Role, User, UserHubScope, UserRole
 from models.vip import VipItem, vip_item_projects
 from models.workflow import (
@@ -62,7 +62,9 @@ __all__ = [
     "PriorityScore",
     "PriorityApplicationRun",
     "PriorityApplicationResult",
-    "DIMENSION_FIELD_NAMES",
+    "ScoringDimension",
+    "RubricVersion",
+    "PriorityDimensionScore",
     "ScheduleRun",
     "ScheduleRunProjectStep",
     "ScheduleRunProjectOutcome",

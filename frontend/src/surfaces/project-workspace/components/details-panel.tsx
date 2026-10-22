@@ -25,7 +25,7 @@ import { ScoringSection } from './scoring-section';
  * including the P9 planning fields, editable in place through the SAME form
  * Registration uses (`ProjectForm variant="inline"` — one schema, one submit
  * path, one PATCH /projects/{id}). Financial fields are shown to roles that can
- * read them and never logged or put in a URL. The 13 scoring dimensions follow.
+ * read them and never logged or put in a URL. The scoring dimensions follow.
  */
 export function DetailsPanel({
   data,

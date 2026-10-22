@@ -2077,3 +2077,20 @@ audits or schedules. Contract: `docs/API_CONTRACT_P25.md`. OQ #51.
 | P25-T03 | Backend: serve the fill everywhere a band is shown, from the one-pass loader (`compute_capacity_fill`, optional pre-loaded `active_run`): `PriorityBoardCard` + `external_code`, `suggested_band` (promoted), `score_band`, `capacity_fill`, `capacity_fill_reason` (board totals unchanged); `WorkspacePriorityScore` same four (`suggested_band` = promoted); `GET /exports/matrix` + `score_band` / `capacity_fill` / `capacity_fill_reason`, promoted band relabelled `suggested_band_after_capacity_fill`; contract §5; tests | backend-builder | DONE (MEMORY 2026-10-21) |
 | P25-T04 | Frontend: mirror P25-T03 (board card + `WorkspacePriorityScore` types, turning the two contract rows and the §7 nullability row green); show "P1 (capacity fill)" on board cards and in the Workspace score section; show `external_code` in the board's List layout | frontend-builder | DONE (MEMORY 2026-10-21) |
 | P25-T20 | Gate: qa, workflow, security | — | TODO |
+
+## P26 — Editable scoring rubric (ADR 0037)
+
+Opened 2026-10-22. Owner request: "in the Prioritization Matrix, only there, we can edit the
+scoring rubric: edit the weightage and also add something (new dimensions)"; details delegated to
+the orchestrator's defaults. The rubric moves into tables (`scoring_dimensions`,
+`rubric_versions`, `priority_dimension_scores`); Admin / Super Admin edit weights, labels, pillars,
+order, add / deactivate / reactivate dimensions (never delete), with optimistic versioning (409),
+a preview, and an audited new version that recomputes every stored score in the same transaction.
+TOTAL_WEIGHT = Σ active weights; a missing score counts 0 and marks the score incomplete. The
+schedule is never touched. Contract: `docs/API_CONTRACT_P26.md`.
+
+| ID | Task | Owner | Status |
+|---|---|---|---|
+| P26-T01 | Backend: ADR 0037 + DOMAIN_RULES amendment; migration `p26a_scoring_rubric_tables` (3 tables, 13 dimensions + version 1, lossless score copy, old 13 columns dropped); `GET/PUT /scoring-rubric`, `GET /scoring-rubric/versions`, `POST /scoring-rubric/preview`; every reader on the tables (Matrix rows N `dimension_scores` + `missing_dimension_keys` + `rubric_version`, compare, distribution, summary, capacity fill, board, Workspace, score PUT `scores` map, scenario apply, export one column per active dimension, seed); constants removed; contract `docs/API_CONTRACT_P26.md`; tests | backend-builder | DONE (MEMORY 2026-10-22) |
+| P26-T02 | Frontend: rubric editor in the Prioritization Matrix only (Admin / Super Admin: weights, labels, pillars incl. new, order, add, deactivate / reactivate, reason; preview impact before save; 409 reload flow; version history); Matrix grid / compare / edit dialog / Workspace / scenario on N dynamic dimensions and the `scores` map; "incomplete" marker from `missing_dimension_keys`; mirror the contract types (turns the 16 P26 contract rows green) | frontend-builder | TODO |
+| P26-T20 | Gate: qa, workflow, security | — | TODO |

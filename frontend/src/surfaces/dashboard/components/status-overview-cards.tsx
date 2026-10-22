@@ -12,7 +12,8 @@ import { RegionChips } from './region-chips';
 
 /**
  * Status overview, five cards (ADR 0030, P17-T04; client's older app):
- * In Development / Under Industrialization / In Queue / Commercialized / On Hold,
+ * In Development / Under Industrialization / Commercialized / In Queue / On Hold (owner ask
+ * 2026-10-22: In Queue sits just before On Hold),
  * plus an "Other statuses: n" remainder (every other status, today Cancelled)
  * so the five cards and the remainder reconcile with the total. P23-T01: the
  * copy names no status that is not served; the breakdown lists only the
@@ -65,16 +66,6 @@ export function StatusOverviewCards({ data, regionSummary = null }: StatusOvervi
       number: 'text-primary',
     },
     {
-      status: 'In Queue',
-      testId: 'in-queue',
-      label: 'In Queue',
-      count: data.in_queue,
-      sharePct: data.in_queue_share_pct,
-      rail: 'border-t-border-strong',
-      bar: 'bg-border-strong',
-      number: 'text-text-muted',
-    },
-    {
       status: 'Commercialized',
       testId: 'commercialized',
       label: 'Commercialized',
@@ -83,6 +74,16 @@ export function StatusOverviewCards({ data, regionSummary = null }: StatusOvervi
       rail: 'border-t-success',
       bar: 'bg-success',
       number: 'text-success-subtle-fg',
+    },
+    {
+      status: 'In Queue',
+      testId: 'in-queue',
+      label: 'In Queue',
+      count: data.in_queue,
+      sharePct: data.in_queue_share_pct,
+      rail: 'border-t-border-strong',
+      bar: 'bg-border-strong',
+      number: 'text-text-muted',
     },
     {
       status: 'On Hold',
