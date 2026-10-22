@@ -11,6 +11,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
+import { NotInCapacityRosterBadge } from '@/components/shared/capacity-roster-markers';
 import { CountryFlag } from '@/components/shared/hub-filter/country-flag';
 import { formatDecimal, formatInteger } from '@/lib/format';
 import { HUB_NAMES, type LabRegion } from '@/types/enums';
@@ -73,6 +74,8 @@ export function EngineerTable({ rows, canEdit, onEdit, onDelete }: EngineerTable
                   <HardHat className="size-[18px]" />
                 </span>
                 <span className="font-semibold text-text">{row.name}</span>
+                {/* P29 (API_CONTRACT_P29 §3.3): served flag; an older API omits it. */}
+                {row.counts_in_capacity === false ? <NotInCapacityRosterBadge /> : null}
               </span>
             </TableCell>
             <TableCell className="text-right tnum" data-numeric="">

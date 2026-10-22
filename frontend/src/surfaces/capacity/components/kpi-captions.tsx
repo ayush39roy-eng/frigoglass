@@ -25,9 +25,11 @@ export interface KpiCaptionsProps {
   parts: { key: string; label: string; value: number | null }[];
   /** Says what `parts` are, e.g. "By hub" or "By lab region". */
   partsLabel: string;
+  /** P30: the served run-booked weeks ("Booked in plan"), always in weeks. */
+  inPlan?: { label: string; weeks: number; unit: string };
 }
 
-export function KpiCaptions({ label, split, splitUnit, parts, partsLabel }: KpiCaptionsProps): React.JSX.Element {
+export function KpiCaptions({ label, split, splitUnit, parts, partsLabel, inPlan }: KpiCaptionsProps): React.JSX.Element {
   return (
     <div className="flex flex-col gap-1 text-2xs text-text-muted" data-testid={`kpi-captions-${label}`}>
       {split ? (
@@ -62,6 +64,14 @@ export function KpiCaptions({ label, split, splitUnit, parts, partsLabel }: KpiC
               </span>
             </React.Fragment>
           ))}
+        </p>
+      ) : null}
+      {inPlan ? (
+        <p data-numeric="" data-testid={`kpi-${label}-in-plan`}>
+          <span className="font-semibold text-text">{inPlan.label}:</span>{' '}
+          <span className="whitespace-nowrap tabular-nums">
+            {formatDecimal(inPlan.weeks)} {inPlan.unit}
+          </span>
         </p>
       ) : null}
     </div>

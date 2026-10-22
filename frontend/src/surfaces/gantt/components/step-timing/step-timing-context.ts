@@ -32,7 +32,11 @@ export interface StepTimingTarget {
   spanFte: number | null;
   /** Served lead-time table value. */
   leadTimeWeeks: number;
+  /** The USER's duration (ADR 0041 R4): the only duration "Reset timing" clears. */
   durationOverrideWeeks: number | null;
+  /** P30: the step's share of the client effort figure (served, never a user
+   *  edit); what "Reset timing" falls back to. 0 = skipped by the split. */
+  effortWeeks: number | null;
   startNotBeforeWeek: number | null;
 }
 
@@ -52,11 +56,17 @@ export function stepTimingTarget(project: GanttProjectRow, step: GanttStepRow): 
     spanFte: step.span_fte ?? null,
     leadTimeWeeks: step.lead_time_weeks,
     durationOverrideWeeks: step.duration_override_weeks,
+    // An older API (before P30) omits the field: no effort value.
+    effortWeeks: step.effort_weeks ?? null,
     startNotBeforeWeek: step.start_not_before_week,
   };
 }
 
-/** `true` when the step carries a planner override or floor (the "edited" marker). */
+/**
+ * `true` when the step carries a planner override or floor (the "edited"
+ * marker). P30 (ADR 0041 R4): reads ONLY the user's two fields; an effort
+ * value (`effort_weeks`) is the client's figure, never a timing edit.
+ */
 export function hasTimingEdit(step: Pick<GanttStepRow, 'duration_override_weeks' | 'start_not_before_week'>): boolean {
   return step.duration_override_weeks !== null || step.start_not_before_week !== null;
 }

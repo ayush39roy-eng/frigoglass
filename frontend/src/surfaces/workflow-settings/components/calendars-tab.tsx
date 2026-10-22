@@ -3,7 +3,9 @@ import { Save } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { useHubs } from '@/lib/api/reference';
 import { formatDecimal } from '@/lib/format';
+import { joinNames, memberHubsByCapacityHub } from '@/lib/hub-labels';
 
 import type { HubCalendarSetting, HubCalendarUpdateRequest, WorkflowSettingsSaveResult } from '../api/types';
 import { previewWorkingWeeksPerEngineer } from '../lib/preview';
@@ -31,11 +33,22 @@ export interface CalendarsTabProps {
 }
 
 export function CalendarsTab({ calendars, canWrite, onSave, saving }: CalendarsTabProps): React.JSX.Element {
+  // P29 (ADR 0042, API_CONTRACT_P29 §5.3): calendars are served for the capacity
+  // hubs only; a member hub (OEM-HCK, OEM-Seitek) uses its capacity hub's calendar.
+  const hubsQuery = useHubs();
+  const memberGroups = memberHubsByCapacityHub(hubsQuery.data ?? []);
   return (
-    <div className="grid gap-4 xl:grid-cols-2">
-      {calendars.map((c) => (
-        <CalendarCard key={`${c.hub_id}-${String(c.working_weeks_per_engineer)}`} calendar={c} canWrite={canWrite} onSave={onSave} saving={saving} />
+    <div className="flex flex-col gap-3">
+      {memberGroups.map((g) => (
+        <p key={g.capacityHub} className="text-xs text-text-muted" data-testid="calendar-member-note">
+          {joinNames(g.members)} {g.members.length === 1 ? 'uses' : 'use'} {g.capacityHub}&rsquo;s calendar.
+        </p>
       ))}
+      <div className="grid gap-4 xl:grid-cols-2">
+        {calendars.map((c) => (
+          <CalendarCard key={`${c.hub_id}-${String(c.working_weeks_per_engineer)}`} calendar={c} canWrite={canWrite} onSave={onSave} saving={saving} />
+        ))}
+      </div>
     </div>
   );
 }

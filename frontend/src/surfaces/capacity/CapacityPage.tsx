@@ -74,7 +74,7 @@ export default function CapacityPage(): React.JSX.Element {
   const title = CAPACITY_SURFACE?.title ?? 'RPD Capacity';
   const description =
     CAPACITY_SURFACE?.summary ??
-    'Design and lab load vs. capacity per hub, reconciled to the week against the active schedule run (Invariants I6 / I7).';
+    'Design and lab demand vs. capacity per hub, with what the active schedule run booked (Invariants I25, I6 / I7).';
 
   const denied = authKind([hubLoad.error, classBreakdown.error]);
   const motionTokens = useMotionTokens();
@@ -159,7 +159,7 @@ export default function CapacityPage(): React.JSX.Element {
             <SectionBoundary
               query={hubLoad}
               title="Load vs. capacity by hub"
-              errorDescription="Per-hub load and capacity could not be loaded from the active schedule run."
+              errorDescription="Per-hub demand and capacity could not be loaded."
             >
               {(data) => <HubSummaryTable data={data} activeRun={activeRun.data} view={view} />}
             </SectionBoundary>

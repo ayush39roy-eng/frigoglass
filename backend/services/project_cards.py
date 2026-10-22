@@ -33,8 +33,12 @@ from models.schedule import ScheduleRun, ScheduleRunProjectOutcome, ScheduleRunP
 from models.workflow import ProjectWorkflowStep, WorkflowStepTemplate
 from services.progress import project_progress_pct
 from services.tracking import TrackingStatus, due_stages_for, status_from_due_stages
-from services.workflow_durations import effective_duration_weeks
-from services.workspace import engineer_ftes_for_rows, health_badge, is_step_skipped
+from services.workspace import (
+    engineer_ftes_for_rows,
+    health_badge,
+    row_effective_weeks,
+    row_is_skipped,
+)
 
 CardHealth = Literal["on_track", "at_risk", "off_track", "left_out", "blocked"]
 
@@ -151,18 +155,16 @@ async def build_project_cards(
             kind = template.kind if template is not None else WorkflowStepKind.DESIGN
             run_step = run_by_step.get(row.step_template_id)
             # Progress weights: the Workspace's exact formula (ruling 3).
-            lead_skipped = is_step_skipped(
-                row.duration_weeks, kind, project.certification_testing_required
-            )
+            # ADR 0041 R4/R5: weight = eff (`user ?? effort ?? lead`, 0 when
+            # skipped by the one predicate).
+            live_skipped = row_is_skipped(row, kind, project.certification_testing_required)
             weighted.append(
                 (
                     row.percent_complete,
-                    0
-                    if lead_skipped
-                    else effective_duration_weeks(row.duration_weeks, row.duration_override_weeks),
+                    row_effective_weeks(row, kind, project.certification_testing_required),
                 )
             )
-            skipped = run_step.skipped if run_step is not None else lead_skipped
+            skipped = (run_step.skipped if run_step is not None else False) or live_skipped
             if current is None and not skipped and row.status != WorkflowStepStatus.DONE:
                 current = CurrentStage(
                     step_id=row.step_template_id,

@@ -184,8 +184,9 @@ async def test_seeded_half_fte_totals_unchanged(db_session):
             if 0 < w["booked"] < 1:
                 stretched += 1
     assert stretched > 0
+    # ADR 0041 R12: engineer utilization reconciles with the run-BOOKED load.
     assert sum(r["total_booked"] for r in body["engineers"]) == sum(
-        r["design_load_weeks"] for r in cap["rows"]
+        r["design_load_booked_weeks"] for r in cap["rows"]
     )
 
 
@@ -350,6 +351,7 @@ GANTT_STEP_ROW_FIELDS = {
     "actual_start_week", "actual_end_week", "assigned_engineer_name",
     "assigned_chamber_code", "eng_conflict", "chamber_overlap", "lead_time_weeks",
     "duration_override_weeks", "start_not_before_week", "timing_editable", "span_fte",
+    "effort_weeks",  # ADR 0041 R4 (P30-T02)
 }
 
 

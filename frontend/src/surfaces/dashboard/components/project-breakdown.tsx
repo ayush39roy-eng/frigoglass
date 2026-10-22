@@ -18,6 +18,7 @@ import { PanelSkeleton } from '@/components/ui/panel-skeleton';
 import { BoltCard } from '@/components/ui/bolt-card';
 import { CardInfo } from '@/components/ui/card-info';
 import { useHubs } from '@/lib/api/reference';
+import { hubPickerLabel } from '@/lib/hub-labels';
 import { formatInteger } from '@/lib/format';
 import { useDebouncedValue } from '@/lib/use-debounced-value';
 import { useHubFilter } from '@/stores/hub-filter';
@@ -187,7 +188,7 @@ export function ProjectBreakdown(): React.JSX.Element {
 
   const hubOptions = React.useMemo(() => {
     const inScope = hubsInScope(me, hubsQuery.data) ?? [];
-    return inScope.filter((h) => region === null || h.lab_region === region).map((h) => ({ value: h.id, label: h.name }));
+    return inScope.filter((h) => region === null || h.lab_region === region).map((h) => ({ value: h.id, label: hubPickerLabel(h, hubsQuery.data) }));
   }, [me, hubsQuery.data, region]);
 
   const hasLocalFilter = debouncedSearch !== '' || Object.values(filters).some((v) => v !== ALL);

@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 
+import { NotInCapacityRosterBadge } from '@/components/shared/capacity-roster-markers';
 import { cn } from '@/lib/utils';
 import { formatDecimal, formatPercent, formatWeek } from '@/lib/format';
 
@@ -107,6 +108,8 @@ export function EngineerUtilizationHeatmap({ data }: { data: EngineerUtilization
         <div role="rowheader" className="sticky left-0 z-10 flex items-center gap-1.5 bg-surface px-2 py-1">
           <span className="font-medium text-text">{e.name}</span>
           <span className="text-text-subtle">{e.role}</span>
+          {/* P29 (API_CONTRACT_P29 §3.3): served flag; an older API omits it (no marker). */}
+          {e.counts_in_capacity === false ? <NotInCapacityRosterBadge /> : null}
         </div>
         {weeks.map((w) => {
           const cell = byWeek.get(w);

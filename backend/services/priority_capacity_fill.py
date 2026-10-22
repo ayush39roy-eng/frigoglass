@@ -10,11 +10,13 @@ needs for a set of hubs, and runs it once per hub:
   Σ FTE of its engineers with `counts_in_capacity`,
   `domain_constants.CURRENT_WEEK`, rounded to 2 dp). ADR 0042 (P29): the walk
   is per capacity hub, over the projects of the capacity hub AND its member
-  hubs (R&D-Greece walks its own, OEM-HCK's and OEM-Seltek's projects as one
+  hubs (R&D-Greece walks its own, OEM-HCK's and OEM-Seitek's projects as one
   set); a member hub id resolves to its capacity hub everywhere here;
-- each scored project's remaining design effort in the active run
-  (`services.capacity_priority.remaining_run_load_by_project`, effort weeks,
-  ADR 0032); a project not in the run counts 0;
+- each scored project's REMAINING DESIGN DEMAND (ADR 0041 R12, I25:
+  `services.demand_load`, from the live project and step rows, effort weeks;
+  0 for a non-schedulable project), the same basis as the Capacity page's
+  `design_load_remaining_weeks`. Before ADR 0041 it was the remaining design
+  effort the active run booked;
 - the live status (schedulable or not) and the stored `normalized_pct`.
 
 **Reads only.** Nothing here writes `Project.priority` or a score. The fill
@@ -45,8 +47,8 @@ from models.project import Project
 from models.schedule import ScheduleRun
 from services.active_run import get_active_run
 from services.capacity_hubs import load_capacity_hub_map
-from services.capacity_priority import remaining_run_load_by_project
 from services.capacity_supply import design_capacity, fte_sum, round2
+from services.demand_load import load_demand
 from services.priority_scoring import (
     FillProject,
     HubFill,
@@ -174,11 +176,15 @@ async def compute_capacity_fill(
         for pid, h, st, pct in (await db.execute(stmt)).all()
     ]
     scored = [row for row in scored if row[3] is not None]
-    loads = await remaining_run_load_by_project(db, run, [pid for pid, *_ in scored])
+    # ADR 0041 R12: load(p) = p's REMAINING design DEMAND (I25, live rows,
+    # effort weeks; 0 for a non-schedulable project), so "capacity full"
+    # means the same as on the Capacity page.
+    demand = await load_demand(db, [pid for pid, *_ in scored])
 
     by_hub: dict[uuid.UUID, list[FillProject]] = defaultdict(list)
     for pid, p_hub_id, p_status, pct in scored:
-        design_weeks = loads.get(pid, (0.0, 0.0))[0]
+        own = demand.projects.get(pid)
+        design_weeks = float(own.design_remaining) if own is not None else 0.0
         by_hub[cmap.capacity_of.get(p_hub_id, p_hub_id)].append(
             FillProject(
                 project_id=pid,

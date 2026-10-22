@@ -2,6 +2,7 @@ import * as React from 'react';
 import { Link } from 'react-router-dom';
 import { ArrowLeft, RefreshCw } from 'lucide-react';
 
+import { ProvisionalLeaderBadge } from '@/components/shared/capacity-roster-markers';
 import { NoLeaderLabel } from '@/components/shared/no-leader-label';
 import { PriorityMoveControl } from '@/components/shared/priority-move/priority-move-control';
 import { Badge } from '@/components/ui/badge';
@@ -76,7 +77,11 @@ export function WorkspaceHeader({
                 Leader: <NoLeaderLabel leftOut={data.schedule.left_out} inline />
               </span>
             ) : (
-              <span>Leader: {p.leader_engineer_name ?? NAME_UNAVAILABLE}</span>
+              <span className="inline-flex items-center gap-1" data-testid="header-leader">
+                Leader: {p.leader_engineer_name ?? NAME_UNAVAILABLE}
+                {/* P29 (ADR 0042 §7): the served flag; assigned by the data load, not a person. */}
+                {p.leader_is_provisional === true ? <ProvisionalLeaderBadge /> : null}
+              </span>
             )}
           </div>
         </div>

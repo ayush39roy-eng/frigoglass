@@ -31,8 +31,8 @@ vi.mock('./hooks/use-users', () => ({
 vi.mock('@/lib/api/reference', () => ({
   useHubs: () => ({
     data: [
-      { id: 'hub-greece', name: 'R&D-Greece', lab_region: 'Greece', is_oem: false },
-      { id: 'hub-india', name: 'PD-India', lab_region: 'India', is_oem: false },
+      { id: 'hub-greece', name: 'R&D-Greece', lab_region: 'Greece', is_oem: false, capacity_hub_id: null, capacity_hub_name: null },
+      { id: 'hub-india', name: 'PD-India', lab_region: 'India', is_oem: false, capacity_hub_id: null, capacity_hub_name: null },
     ],
   }),
 }));

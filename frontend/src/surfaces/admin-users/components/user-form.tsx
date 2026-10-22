@@ -25,6 +25,7 @@ import {
 import { ApiError } from '@/lib/api/client';
 import { apiErrorMessage } from '@/lib/api/error-messages';
 import type { Hub } from '@/lib/api/reference';
+import { hubPickerLabel } from '@/lib/hub-labels';
 import type { EngineerOption } from '@/surfaces/registration/api/engineers-api';
 import type { RoleName } from '@/types/enums';
 
@@ -223,9 +224,9 @@ function UserForm({
                   <Checkbox
                     checked={hubIds.includes(hub.id)}
                     onCheckedChange={(next) => toggleHub(hub.id, next === true)}
-                    aria-label={hub.name}
+                    aria-label={hubPickerLabel(hub, hubs)}
                   />
-                  {hub.name}
+                  {hubPickerLabel(hub, hubs)}
                 </label>
               ))}
             </div>

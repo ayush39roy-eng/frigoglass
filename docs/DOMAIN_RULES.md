@@ -46,6 +46,14 @@ charter fields"). No scheduling or capacity rule changes.
 remaining-year design capacity promotes lower-scoring projects to a *suggested* "P1 (capacity fill)"
 (see "P1 capacity fill"). Scores, score bands and committed priorities are unchanged.
 
+**Revised 2026-10-23** (P30, ADR 0041 with the workflow-auditor's binding R1–R14, owner accepted
+R1): a project's typed effort figure (client columns 16 / 21) is split over its steps and sets both
+the load and the calendar span; a step whose effective duration is 0 is skipped (one predicate
+everywhere); the Capacity surfaces serve run-independent **demand** (full year, remaining) beside
+the run-**booked** load; hub `OEM-Seltek` is spelled `OEM-Seitek`. Sections marked *(2026-10-23,
+ADR 0041)* changed. New invariants I25 (demand) and I26 (effort split); I6, I7, I17, I19, I23
+revised.
+
 ---
 
 ## Workflow templates — two workflows, 14 steps each *(2026-09-27, ADR 0007)*
@@ -74,7 +82,7 @@ nothing but occupies calendar weeks on the project's critical path.
 | PDD-M | TF_3 | TF-3 | design |
 | PDD-N | COMM | Commercialization | elapsed |
 
-### `OEM` workflow — hubs `OEM-HCK`, `OEM-Seltek`
+### `OEM` workflow — hubs `OEM-HCK`, `OEM-Seitek`
 
 | ID | Code | Name | Kind |
 |---|---|---|---|
@@ -115,30 +123,93 @@ duration_weeks = lead_time[workflow][category][step_id]      # integer weeks, ma
 | OEM / B-OEM | 1 | 1 | 1 | 0 | 0 | 2 | 2 | 6 | 0 | 1 | 0 | 0 | 0 | 0 | 14 |
 | OEM / C-OEM | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 4 |
 
-- A step whose `duration_weeks == 0` is **skipped**: it consumes no calendar time and no capacity,
-  and is recorded in the run with `skipped = true`, `start = end = max(predecessor end)` (so it is
-  transparent to successors). The 14-row shape of a project's schedule is preserved (I5).
-- `lab` steps are also skipped when `project.certification_testing_required == false` (default
-  `true`) — this is how the client's lab-load pivot works (`docs/CLIENT_FORMULAS.md` §2.3).
-- Process-derived totals per project (used by the Capacity surface "Process derived" column and by
-  the unconstrained expected finish, below): `design_weeks = Σ duration over design steps`,
-  `lab_weeks = Σ duration over lab steps`, `critical_path_weeks = longest path through the DAG`.
-- Optional per-project `estimated_design_weeks` / `estimated_lab_weeks` feed the Capacity surface's
-  "Estimated" column only; they never affect the schedule (`docs/OPEN_QUESTIONS.md` #12).
+- *(2026-10-23, ADR 0041 R4/R5)* **Effective duration and the one skip predicate.** For project `p`
+  and step `s`, with `lead(p,s)` the table value above:
+  ```
+  eff(p,s) = 0                                        if lead(p,s) = 0
+           = 0                                        if kind(s) = lab and not p.certification_testing_required
+           = user_override ?? effort_weeks ?? lead    otherwise
+  skipped(p,s)  ⟺  eff(p,s) = 0
+  ```
+  `user_override` is the step's `duration_override_weeks` (the user's figure, below), `effort_weeks`
+  its share of the project's effort figure ("Per-project effort", below). A skipped step consumes
+  no calendar time and no capacity, and is recorded in the run with `skipped = true`,
+  `start = end = max(predecessor end)` (so it is transparent to successors). The 14-row shape of a
+  project's schedule is preserved (I5). I5, I11, I21 and I22 read "skipped" this way. Every reader
+  uses this one predicate (`scheduling.is_step_skipped`; on the service side
+  `services.workspace.is_step_skipped`): the scheduler, the validator's I5 (derived from the
+  inputs), step timing (`STEP_SKIPPED`), the Workspace stage PATCH (`STAGE_SKIPPED`), the Gantt's
+  `timing_editable`, the project cards, tracking and the demand load. Everywhere a duration was
+  used (booking, remaining duration, load, progress weights, the unconstrained finish),
+  `duration_weeks` means `eff`.
+- `lab` steps are skipped when `project.certification_testing_required == false` (default `true`).
+  *(2026-10-23, ADR 0041 §3)* The client import sets the flag when column 18 is "Yes" **or** the
+  project carries lab weeks (`lab_effort_weeks > 0`): the client's own lab pivot applies no
+  certification filter (`docs/DATA_RECONCILIATION_2026.md` W9; the earlier citation of
+  `docs/CLIENT_FORMULAS.md` §2.3 for this rule was a misreading).
+- Process-derived totals per project (used by the unconstrained expected finish, below):
+  `design_weeks = Σ eff over design steps`, `lab_weeks = Σ eff over lab steps`,
+  `critical_path_weeks = longest path through the DAG`.
+- *(Retired 2026-10-23, ADR 0041 R13.)* ~~Optional per-project `estimated_design_weeks` /
+  `estimated_lab_weeks` feed the Capacity surface's "Estimated" column only.~~ The client's
+  per-project figures are now `design_effort_weeks` / `lab_effort_weeks`, and they DO drive the
+  schedule and the load (below). The `estimated_*` fields are kept stored and served as deprecated
+  (`*_load_estimated_weeks`) for one release; nothing new reads them (OQ #12).
 - The table is edited only on Workflow Settings (Super Admin). Every edit is audit-logged and sets
-  `schedule_stale` on every schedulable project; it never triggers a solve.
-- *(2026-10-10, ADR 0019)* **Per-project override.** A project's step may carry
-  `duration_override_weeks` (1..104). Then `duration_weeks = duration_override_weeks` for that
-  project's step, everywhere the table duration was used (booking, remaining duration, capacity
-  load, progress weights, the unconstrained finish). A step whose table duration is 0 stays skipped;
-  an override never revives it. A table edit never clears an override.
+  `schedule_stale` on every schedulable project; it never triggers a solve. *(ADR 0041 R6)* It also
+  re-derives every project's effort split (it depends on the table's shape).
+- *(2026-10-10, ADR 0019; 2026-10-23, ADR 0041 R4)* **Per-project user override.** A project's step
+  may carry `duration_override_weeks` (1..104), the **user's** figure from the Gantt / Workspace.
+  It wins over the effort split and the table (`eff` above). A step whose table duration is 0 stays
+  skipped; an override never revives it, nor a lab step without certification testing. A table
+  edit and an effort re-derivation never clear an override. A **new** user override cannot be set
+  on a step whose effective duration is 0 (409 `STEP_SKIPPED`); an existing one keeps the step.
+
+### Per-project effort *(2026-10-23, ADR 0041 §3 as amended by R1–R7)*
+
+A project may carry the client's typed figures `design_effort_weeks` (workbook column 16 "Process
+Design Man Week") and `lab_effort_weeks` (column 21 "Lab Weeks- Process Derived"), `Numeric(6,2)`,
+≥ 0. They are not financial fields.
+
+- **R1 (owner accepted 2026-10-23).** One effort figure sets both the load and the calendar span:
+  a design step books `ceil(eff / fte)` weeks of its leader, exclusive (ADR 0032). A B project
+  with a figure of 4 runs 4 weeks of design at 1.0 FTE, not the table's 10.
+- **Split (R2).** For a figure `x > 0`: `S` = the project's steps of that kind (design / lab) with
+  `lead > 0`, `T = Σ lead`, `E = max(1, round_half_up(x))` on the stored decimal. Quotas are exact
+  rationals `q_i = E × lead_i / T`; each step gets `⌊q_i⌋`; the remainder `E − Σ⌊q_i⌋` goes one week
+  at a time by larger fractional part, then larger `lead_i`, then smaller `sequence_order`, then
+  `step_id`. `Σ = E`. A step that gets 0 is skipped. Examples: PDD/B design 4 → A 1, E 2, K 1 (D, J,
+  M skipped); PDD/C design 3 → A 1, D 1, E 1; PDD/B lab 10 → H 10; PDD/A+ lab 4 → F 2, H 2; 1.5 → 2.
+- **Recorded work is never erased (R3).** A step whose stage status is not Not Started gets
+  `max(1, share)`; the total may then exceed `E` by the number of raised steps. The seed apportions
+  before deriving progress, and derives progress on effective durations.
+- **Edge cases (R7).** No non-zero step of the kind (`T = 0`): not applied (no effort written). A
+  split that would put a step above 104 weeks: rejected at write (422 `EFFORT_SPLIT_REJECTED`) and
+  at import. Certification testing off: lab steps stay skipped, whatever `lab_effort_weeks` says
+  (no lab effort written). A blank or 0 figure: no effort written; the table applies (fallback).
+- **Storage (R4).** The split lives in `project_workflow_steps.effort_weeks` (0..104, null = none),
+  never in `duration_override_weeks`. Gantt "Reset timing" clears the user's values, so the step
+  falls back to its effort value.
+- **Re-derivation (R6)**, in the same transaction, audit action `project.effort_rederived` (only
+  when a step's effort changes), sets `schedule_stale`, never solves: on a figure edit, a change of
+  `category` or `certification_testing_required`, a workflow change (hub move PDD ↔ OEM), a step-kind
+  or lead-time edit on Workflow Settings, a stage status crossing Not Started (R3's input), and on
+  unfreezing. Scope: every project with a figure or a stored effort, non-schedulable ones included.
+  A **frozen** project is a no-op (I10); its figures are still validated (R7).
+- **Monte Carlo (R10).** A sampled duration keeps a floor of 1 for a non-zero input; 0 stays 0.
+- *Observation.* A Not Started step longer than `HORIZON_WEEKS − CURRENT_WEEK` can never be placed
+  (Romania's 70-week H steps at W42 are `LEFT_OUT` by construction).
 
 Categories: non-OEM hubs use `A+ / A / B / C`; OEM hubs use `A-OEM / B-OEM / C-OEM`. The
 prototype-era multipliers (`A+ 1.0, A 0.8, B 0.5, C 0.25`) are retired and must not be reintroduced.
 
 ## Hubs and lab-region mapping
 
-Hubs: `R&D-Greece`, `R&D-India`, `PD-India`, `PD-Romania`, `OEM-HCK`, `OEM-Seltek`
+Hubs: `R&D-Greece`, `R&D-India`, `PD-India`, `PD-Romania`, `OEM-HCK`, `OEM-Seitek`
+
+*(2026-10-23, ADR 0041 §4)* `OEM-Seitek` is the client's spelling; the prototype's `OEM-Seltek` was
+renamed (migration `p30a`). Stored schedule runs keep the string they were written with (I14), and
+the scheduler accepts both spellings (`scheduling.hubs`).
 
 Lab region mapping:
 
@@ -149,7 +220,7 @@ Lab region mapping:
 | PD-India | India |
 | PD-Romania | Romania |
 | OEM-HCK | Greece |
-| OEM-Seltek | Greece |
+| OEM-Seitek | Greece |
 
 ## Horizon constants *(revised 2026-10-13, ADR 0024)*
 
@@ -216,8 +287,9 @@ deterministic walk/tie-break order; it is not a dependency.
   is retired).
 - **Elapsed step**: no resource is booked; the step occupies `[w, w + duration)` starting at its
   earliest feasible start. It never waits for capacity.
-- **Skipped step** (`duration == 0`, or a lab step when `certification_testing_required` is false):
-  occupies nothing; `start = end = max(predecessor end)`.
+- **Skipped step** (`eff == 0`: a 0-week lead time, a lab step when `certification_testing_required`
+  is false, or a step the effort split zeroed; ADR 0041 R5): occupies nothing;
+  `start = end = max(predecessor end)`.
 - **Frozen projects**: dates are locked at `actual_start`; capacity is consumed regardless of
   conflict. A double-booked engineer raises `ENG_CONFLICT`; an over-capacity chamber raises `OVERLAP`.
 - **LEFT_OUT**: no feasible window before `HORIZON_WEEKS`.
@@ -285,7 +357,7 @@ expected_end_week    = project.target_end_week                              ("ex
                        if set, else unconstrained_end_week
 unconstrained_end_week = earliest finish assuming unlimited engineers and chambers:
                        start at max(CURRENT_WEEK, actual_start_week or CURRENT_WEEK), walk the DAG
-                       with the lead-time durations only (Done/In-Progress stages keep their actual
+                       with the effective durations `eff` only (Done/In-Progress stages keep their actual
                        start; remaining weeks as in the progress rules). Computed by the scheduler
                        as a pure by-product and stored on the run's outcome row.
                        (2026-10-21, ADR 0032) Design steps use their FTE-stretched span:
@@ -378,7 +450,10 @@ capacity is full." This changes the **suggested** band only, computed on read, p
 
 ```
 C       = hub remaining-year design capacity        (= /capacity/hub-load design_capacity_remaining)
-load(p) = p's remaining design effort weeks in the active run (0 when not in the run; ADR 0032)
+load(p) = p's remaining design DEMAND (I25 rem, effort weeks; 0 for a non-schedulable project)
+          (2026-10-23, ADR 0041 R12: the same basis as `design_load_remaining_weeks`, so "capacity
+          full" means the same as on the Capacity page; before, the remaining effort the active
+          run booked)
 base    = hub's scored projects with normalised_pct >= 70 (score band P1, any status)
 L       = Σ load(p) over base
 if no active run, or C <= 0, or L >= C:  promote nothing
@@ -458,12 +533,14 @@ so no agent "fixes" them without approval and no agent copies them blindly.
   `allowed_stages` contains that step.
 - **I5** *(revised)*: Every scheduled project has either a complete 14-step schedule (skipped steps
   present with `skipped = true` and zero duration) or `LEFT_OUT = true`.
-- **I6** *(revised)*: Total design load per hub = Σ `design`-kind step durations for that hub's
-  projects (elapsed and skipped steps contribute 0). Must reconcile with the Capacity surface to the
-  week. *(2026-10-21, ADR 0032)* The durations are **effort** weeks (`duration_weeks`), never the
-  FTE-stretched elapsed span. That keeps them comparable with supply `working_weeks × Σ fte`.
-- **I7** *(revised)*: Total lab load per lab region = Σ `lab`-kind step durations × 1.0. Must
-  reconcile with the Capacity surface.
+- **I6** *(rev. 2026-10-23, ADR 0041)*: **booked design load** per capacity hub (ADR 0042) = Σ
+  `duration_weeks` of the non-skipped `design`-kind rows **of the active run**, over the projects of
+  the hub and its members. Elapsed and skipped rows add 0. These are effort weeks, never the span
+  (ADR 0032). The served `design_load_booked_weeks` equals it to the week, and so does Σ Gantt
+  per-project design weeks. Each row's `duration_weeks` = `eff` of the run input.
+- **I7** *(rev. 2026-10-23, ADR 0041)*: **booked lab load** per lab region = Σ `duration_weeks` × 1.0
+  of the non-skipped `lab` rows of the active run. It equals the served `lab_load_booked_weeks`, with
+  each region counted once.
 - **I8**: Re-running the greedy scheduler on identical input produces byte-identical output
   (determinism).
 - **I9**: `within_year` count on the Dashboard equals the count of projects satisfying the
@@ -522,8 +599,8 @@ remaining_span = ceil(remaining / leader.fte)   # design step of a non-frozen pr
 **effort**. The In Progress / Blocked tail books `remaining_span` weeks. `actual_start_week`
 stays locked.
 
-`duration_weeks` is the step's lead-time-table duration (ADR 0007). A skipped step (`duration == 0`)
-has no progress state of its own — it is always treated as complete. A `remaining == 0` in-progress step occupies no future
+`duration_weeks` is the step's effective duration `eff` (ADR 0007, ADR 0019, ADR 0041 R4). A skipped
+step (`eff == 0`) has no progress state of its own — it is always treated as complete. A `remaining == 0` in-progress step occupies no future
 weeks and consumes no future capacity, but is **not** treated as fixed history unless `status ==
 Done`.
 
@@ -626,7 +703,9 @@ rule and ADR 0004 — delay is still terminal).
 ## Capacity supply *(2026-09-27, ADR 0008)*
 
 The RPD Capacity surface's *supply* figures are the client's, computed from a per-hub work calendar
-and per-chamber downtime. Load is unchanged (I6/I7). `CURRENT_WEEK` is one global value.
+and per-chamber downtime. `CURRENT_WEEK` is one global value. *(2026-10-23, ADR 0041)* The load is
+served three ways ("Load basis", below): full-year demand, remaining demand (both I25) and the
+run-booked load (I6/I7).
 
 ```
 # per hub (HubWorkCalendar: weekdays_per_week, national_holiday_days, medical_leave_days,
@@ -648,6 +727,27 @@ gap                         = load − capacity
 completion_pct              = capacity / load          (null when load == 0)
 ```
 
+### Load basis *(2026-10-23, ADR 0041 §2, R8, R9, R12)*
+
+Per capacity hub (design, own + member hubs) and per lab region (lab, each region once):
+
+| Served field | Definition | Paired with (booked %, gap, completion) |
+|---|---|---|
+| `design_load_weeks` / `lab_load_weeks` | **full-year demand** (I25): Σ `eff` over every project with status ∉ {Cancelled, Draft} — On Hold and Commercialized included (client ruling 2026-10-22) | yearly capacity |
+| `design_load_remaining_weeks` / `lab_load_remaining_weeks` | **remaining demand** (I25): Σ `rem` over projects in a schedulable status (In Buyoff, Under Industrialization, In Development, In Queue) | remaining capacity |
+| `design_load_booked_weeks` / `lab_load_booked_weeks` | **booked in plan** (I6/I7): what the active run booked | nothing (no booked % of this kind) |
+
+`rem(p,s)` = 0 when `eff = 0` or the stage is Done; for In Progress / Blocked the derived remaining
+duration of `eff`; `eff` for Not Started. Effort weeks, never a span; not windowed to W52; stored
+progress counts for every project, frozen included. Demand is computed from live project and step
+rows (never a run) with the scheduler's own `eff` (`scheduling.demand.compute_demand_load`).
+
+Which load each reader uses (R12): the hub table, areas, totals and lab-region rows serve all three;
+`*_load_by_priority` splits the full-year demand; the ADR 0042 `members` carry demand (full year and
+remaining) and booked, each summing to its row; the P1 capacity fill uses remaining demand; engineer
+utilization (heatmap, resource load) and the what-if "before" stay run-booked; any Dashboard capacity
+figure reads the same served fields.
+
 Seed values: `docs/CLIENT_FORMULAS.md` §2.1–2.2. Editable on Capacity Planning (Hub Planner, own
 hub) and Workflow Settings (Super Admin); audit-logged. Downtime does not gate chamber booking; it
 is a supply-reporting input. *(2026-10-21, ADR 0032, superseding ADR 0002)* FTE now gates design
@@ -658,11 +758,11 @@ about 100 %, not 200 %. Load sums never use the elapsed span.
 
 ### Capacity hubs *(2026-10-22, ADR 0042)*
 
-Client ruling: OEM-HCK and OEM-Seltek are under Greece. `hubs.capacity_hub_id` points both at
+Client ruling: OEM-HCK and OEM-Seitek are under Greece. `hubs.capacity_hub_id` points both at
 R&D-Greece; every other hub is its own capacity hub. Supply (the formulas above) is computed per
 capacity hub over its engineers with `counts_in_capacity = true`; load is Σ over the projects of
 the capacity hub and its member hubs. Capacity surfaces serve the four capacity hubs only, the
-Greece row with a `members` breakdown (own / OEM-HCK / OEM-Seltek) for display; `booked_pct`,
+Greece row with a `members` breakdown (own / OEM-HCK / OEM-Seitek) for display; `booked_pct`,
 status, gap and `completion_pct` exist for the aggregate only. Booking is unchanged: the scheduler
 books the project's assigned leader (Booking rules). Wherever an engineer is *chosen* for a project
 (the seed's provisional-leader picker, the what-if planner), the candidates are the engineers of its
@@ -675,6 +775,8 @@ registration, plant, filters, RBAC and the country filter (ADR 0025).
 
 ```
 booked_pct   = load / capacity × 100            (2 dp; null when capacity == 0)   — year and remaining
+               (2026-10-23, ADR 0041, I19 rev.: year = full-year demand / yearly capacity;
+                remaining = remaining demand / remaining capacity)
 status       = full       if booked_pct >= 100 (or capacity == 0 and load > 0)
                near_full  if 85 <= booked_pct < 100
                available  otherwise
@@ -723,19 +825,23 @@ AGENT_UNAVAILABLE` when `RPD_GROQ_API_KEY` is unset. Provisional pending `docs/O
 - **I16**: `expected_end_week`, `projected_end_week` and `unconstrained_end_week` shown anywhere in
   the UI equal the values stored on the active run's outcome row / the project record. No client
   recomputation.
-- **I17**: The Capacity surface's supply figures equal the ADR 0008 formulas evaluated on the stored
-  calendar/chamber inputs, to two decimals, and its load figures equal I6/I7 sums over the active
-  run.
+- **I17** *(rev. 2026-10-23, ADR 0041)*: The Capacity surface's supply figures equal the ADR 0008
+  formulas evaluated on the stored calendar/chamber inputs, to two decimals. Its load figures equal
+  I25 (demand: `*_load_weeks`, `*_load_remaining_weeks`) and I6/I7 (booked: `*_load_booked_weeks`),
+  each served field to its own definition.
 - **I18** *(2026-09-30, ADR 0012)*: A `ProjectAccessGrant` write (grant or revoke) succeeds only
   when the actor is Super Admin, global Admin, or a manager granting/revoking their own direct
   report on a project where the manager's own effective access is Admin. No principal can grant a
   project role to themselves, to a non-report, or on a project they cannot themselves administer.
   Revoking a grant never reduces a principal's effective access below what rules (1)-(4)/(6) of the
   resolver above already give them.
-- **I19** *(2026-10-09, ADR 0016)*: Every served `booked_pct` equals `load / capacity × 100` of the
-  same row's served load and capacity, to two decimals. Its status follows the threshold rule. An
-  area's lab load and lab capacity count each lab region exactly once. No booked figure or status
-  is computed in the browser.
+- **I19** *(2026-10-09, ADR 0016; rev. 2026-10-23, ADR 0041)*: Every served `booked_pct` equals
+  `load / capacity × 100` of the same row, to two decimals. **Year** pairs `design_load_weeks` /
+  `lab_load_weeks` (full-year demand) with the yearly capacity; **remaining** pairs
+  `*_load_remaining_weeks` with the remaining capacity; `gap` and `completion_pct` use the same
+  pairs. Nothing of this kind is served for `*_load_booked_weeks`. Its status follows the threshold
+  rule. An area's lab load and lab capacity count each lab region exactly once. No booked figure or
+  status is computed in the browser.
 - **I20** *(2026-10-09, ADR 0015)*: A priority move that returns `queued` creates exactly one new
   `ScheduleRun`, and that run's input carries the new priority. Frozen projects' dates are identical
   across the baseline and the new run (I10). Every row of `GET /schedule-runs/{run}/changes` equals
@@ -804,12 +910,15 @@ Two planner inputs per `ProjectWorkflowStep`, never overwritten by a run:
 
 | Field | Domain | Effect |
 |---|---|---|
-| `duration_override_weeks` | int 1..104 or null | the step's effective duration for this project (see Lead times) |
+| `duration_override_weeks` | int 1..104 or null | the user's duration for this step; wins over the effort split and the table (see Lead times, `eff`) |
 | `start_not_before_week` | int 1..HORIZON_WEEKS or null | a `Not Started` step's search floor becomes `max(CURRENT_WEEK, predecessors' end + 1, start_not_before_week)` |
 
 - Editable from the Gantt: drag the right edge → duration; drag the bar → earliest start; "Reset
   timing" clears both. Done steps never; In Progress / Blocked steps resize only; skipped steps and
-  frozen or non-schedulable projects never.
+  frozen or non-schedulable projects never. *(2026-10-23, ADR 0041 R4)* "Reset timing" restores the
+  step's effort value (`effort_weeks`), never the table, when the project carries a figure; a step
+  the effort split zeroed refuses a new value (409 `STEP_SKIPPED`), clearing is always allowed. The
+  Gantt's "(table T)" hint and "has a timing edit" read only the user's two fields.
 - A timing change **recalculates automatically**, exactly like a priority move (same lifecycle,
   greedy only, `trigger_reason="step_timing"`). This is the second exception to "Rescheduling is
   explicit" (OQ #29).
@@ -881,6 +990,31 @@ capacity stays region-wide under a hub filter (chambers are shared per region).
 - **I24** (ADR 0023): for any burst of auto-triggers answering `deferred` during one in-flight run,
   exactly one `follow_up` run is created after it, and its input snapshot reflects every change saved
   before it was dispatched.
-- **I23** (ADR 0020): for any hub `h` in scope, each hub-filtered Dashboard total equals the
-  corresponding unfiltered per-hub figure for `h`, and the Gantt, Capacity and Dashboard agree for `h`
-  to two decimals.
+- **I23** (ADR 0020; rev. 2026-10-23, ADR 0041): for any hub `h` in scope, each hub-filtered Dashboard
+  total equals the corresponding unfiltered per-hub figure for `h`, and the Gantt, Capacity and
+  Dashboard agree for `h` to two decimals: Dashboard and Capacity show the same served capacity fields
+  for `h`, and the Gantt's per-project design and lab weeks for `h` sum to the Capacity
+  `*_load_booked_weeks` (not the demand).
+
+## ADR 0041 invariants *(2026-10-23)*
+
+- **I25 — demand load**, from live project and step rows, never from a run, with the same `eff` the
+  scheduler uses.
+  - Full-year design demand(h) = Σ `eff(p,s)` over design-kind `s`, for every project of capacity
+    hub `h` and its members with status ∉ {Cancelled, Draft}.
+  - Remaining design demand(h) = Σ `rem(p,s)` over the same, for projects in a schedulable status
+    (In Buyoff, Under Industrialization, In Development, In Queue).
+  - `rem(p,s)` is 0 when `eff = 0` or the stage is Done; for In Progress or Blocked it is
+    `derive_remaining(eff, percent_complete, remaining_weeks_override)`; for Not Started it is `eff`.
+    Effort, never a span. Not windowed to W52. Stored progress applies to every project, frozen
+    included.
+  - Lab is the same per lab region.
+  - The served `design_load_weeks`, `design_load_remaining_weeks`, `lab_load_weeks` and
+    `lab_load_remaining_weeks` equal these (design to the week, lab to 2 dp).
+- **I26 — effort split.** For every non-frozen project with `design_effort_weeks = x > 0` whose
+  category has a design-kind step with `lead > 0`, the derived effort on those steps equals the R2
+  apportionment of `E = max(1, round_half_up(x))` over their lead times, raised to `max(1, ·)` on
+  started steps (R3); Σ = E plus the number of raised steps; other steps carry no derived effort. Lab
+  is the same with `lab_effort_weeks` when certification testing is on. It holds in the same
+  transaction as any re-derivation trigger (R6). A project without a figure carries no derived
+  effort on any step.

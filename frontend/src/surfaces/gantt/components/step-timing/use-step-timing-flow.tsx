@@ -56,6 +56,8 @@ export function useStepTimingFlow(): { api: StepTimingApi; element: React.JSX.El
         stepName: target.stepName,
         effectiveDurationWeeks: res.effective_duration_weeks,
         durationOverrideWeeks: res.duration_override_weeks,
+        // An older API omits it: no effort value.
+        effortWeeks: res.effort_weeks ?? null,
         startNotBeforeWeek: res.start_not_before_week,
       };
       if (res.recalc_status === 'unchanged') {
@@ -116,7 +118,7 @@ export function useStepTimingFlow(): { api: StepTimingApi; element: React.JSX.El
           res = await setStepTiming(target.projectId, target.stepId, body);
         } catch (err) {
           // Roll back: the ghost goes, the served bar stays, nothing was saved.
-          setFlow({ kind: 'notice', target, tone: 'danger', title: TIMING_COPY.notChangedTitle, body: timingErrorCopy(err) });
+          setFlow({ kind: 'notice', target, tone: 'danger', title: TIMING_COPY.notChangedTitle, body: timingErrorCopy(err, target) });
           return;
         }
         await handleResponse(target, res);

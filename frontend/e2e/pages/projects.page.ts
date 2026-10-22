@@ -50,4 +50,14 @@ export class ProjectsPage {
   editButtonFor(name: string): Locator {
     return this.page.getByRole('button', { name: `Edit registration of ${name}` });
   }
+
+  /** P29 (ADR 0042 §7): the provisional-leader badge beside the Leader select in the drawer. */
+  provisionalLeaderBadge(): Locator {
+    return this.drawer().getByTestId('provisional-leader');
+  }
+
+  /** P29: a hub option of the drawer's Hub select, e.g. "OEM-HCK (Greece)". */
+  hubOption(label: string): Locator {
+    return this.page.getByRole('option', { name: label, exact: true });
+  }
 }

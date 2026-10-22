@@ -6,7 +6,7 @@ import { CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 
 import type { HubCapacityRow } from '../api/types';
 import { labRegionRows } from '../lib/lab-region-rows';
-import { pickUnitFigures, resourceUnitLong, UNIT_SHORT, type CapacityView } from '../lib/pick-figures';
+import { DEMAND_LABEL, pickUnitFigures, resourceUnitLong, UNIT_SHORT, type CapacityView } from '../lib/pick-figures';
 import { PriorityLoadChart } from './priority-load-chart';
 
 /**
@@ -20,6 +20,11 @@ import { PriorityLoadChart } from './priority-load-chart';
  *
  * P19-T05: load and capacity follow the page's unit (served day fields in Days);
  * the axis title and value labels name the unit. The priority split stays weeks.
+ *
+ * P30 (ADR 0041, I19 rev.): each column is DEMAND: the full-year demand against
+ * the yearly capacity, or the remaining demand against the remaining capacity.
+ * The served priority split splits the full-year demand only, so the remaining
+ * view draws plain columns (no split of the remaining demand is served).
  */
 export interface LoadCapacityChartsProps {
   rows: HubCapacityRow[];
@@ -29,18 +34,21 @@ export interface LoadCapacityChartsProps {
 export function LoadCapacityCharts({ rows, view }: LoadCapacityChartsProps): React.JSX.Element {
   const capacityLabel = view.horizon === 'year' ? 'Yearly capacity' : 'Remaining capacity';
   const unitShort = UNIT_SHORT[view.unit];
+  const year = view.horizon === 'year';
+  const loadLabel = DEMAND_LABEL[view.horizon];
   return (
-    <section aria-label="Load versus capacity charts" className="grid gap-gutter lg:grid-cols-2" data-testid="load-capacity-charts">
+    <section aria-label="Demand versus capacity charts" className="grid gap-gutter lg:grid-cols-2" data-testid="load-capacity-charts">
       <BoltCard className="min-w-0">
         <CardHeader>
           <CardTitle className="flex items-center gap-s2">
             <PenTool className="size-4 text-primary" aria-hidden="true" />
-            Design Load vs Capacity by Hub
+            Design Demand vs Capacity by Hub
           </CardTitle>
         </CardHeader>
         <CardContent className="pt-s3">
           <PriorityLoadChart
-            ariaLabel="Design load by priority versus capacity, per hub"
+            ariaLabel={`Design ${loadLabel.toLowerCase()}${year ? ' by priority' : ''} versus capacity, per hub`}
+            loadLabel={loadLabel}
             unit={resourceUnitLong('design', view.unit)}
             unitShort={unitShort}
             splitUnit={UNIT_SHORT.weeks}
@@ -50,7 +58,7 @@ export function LoadCapacityCharts({ rows, view }: LoadCapacityChartsProps): Rea
               return {
                 key: r.hub,
                 label: r.hub,
-                split: r.design_load_by_priority,
+                split: year ? r.design_load_by_priority : null,
                 splitTotal: r.design_load_weeks,
                 load: f.load,
                 capacity: f.capacity,
@@ -63,12 +71,13 @@ export function LoadCapacityCharts({ rows, view }: LoadCapacityChartsProps): Rea
         <CardHeader>
           <CardTitle className="flex items-center gap-s2">
             <FlaskConical className="size-4 text-success" aria-hidden="true" />
-            Lab Load vs Capacity by Lab Region
+            Lab Demand vs Capacity by Lab Region
           </CardTitle>
         </CardHeader>
         <CardContent className="pt-s3">
           <PriorityLoadChart
-            ariaLabel="Lab load by priority versus capacity, per lab region"
+            ariaLabel={`Lab ${loadLabel.toLowerCase()}${year ? ' by priority' : ''} versus capacity, per lab region`}
+            loadLabel={loadLabel}
             unit={resourceUnitLong('lab', view.unit)}
             unitShort={unitShort}
             splitUnit={UNIT_SHORT.weeks}
@@ -79,7 +88,7 @@ export function LoadCapacityCharts({ rows, view }: LoadCapacityChartsProps): Rea
                 key: l.region,
                 label: l.region,
                 sublabel: l.hubs.join(', '),
-                split: l.row.lab_load_by_priority,
+                split: year ? l.row.lab_load_by_priority : null,
                 splitTotal: l.row.lab_load_weeks,
                 load: f.load,
                 capacity: f.capacity,

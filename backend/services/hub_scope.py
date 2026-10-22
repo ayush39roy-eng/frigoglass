@@ -28,7 +28,7 @@ row-level qualifiers:
 2. **Lab-region-scoped rows** (`Chamber`) — `Chamber` has no `hub_id` column
    at all (see `models/chamber.py`/`models/hub.py`): a lab region is shared
    by up to four hubs per DOMAIN_RULES.md's "Hubs and lab-region mapping"
-   table (R&D-India, PD-India, OEM-HCK and OEM-Seltek all map to "India").
+   table (R&D-India, PD-India, OEM-HCK and OEM-Seitek all map to "India").
    A Hub Planner scoped to e.g. only R&D-India must still see every chamber
    in the India lab region (chambers are genuinely shared infrastructure
    across those hubs, not owned by a single one) — resolved by mapping the

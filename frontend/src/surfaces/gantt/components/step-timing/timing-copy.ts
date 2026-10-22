@@ -2,6 +2,8 @@ import { ApiError } from '@/lib/api/client';
 import { apiErrorMessage } from '@/lib/api/error-messages';
 import { MOVE_COPY } from '@/components/shared/priority-move/move-copy';
 
+import type { StepTimingTarget } from './step-timing-context';
+
 /**
  * Honest copy for every Gantt step-timing outcome (ADR 0019, P12 contract §3).
  * The server decides each branch; the Gantt only says what it was told.
@@ -36,7 +38,24 @@ export const TIMING_ERROR_COPY: Record<string, string> = {
   STEP_SKIPPED: 'This step is skipped for the project (0 weeks), so it has no timing to change. Nothing was saved.',
 };
 
-export function timingErrorCopy(err: unknown): string {
+/** P30 (ADR 0041 R4, API_CONTRACT_P30 §3): 409 `STEP_SKIPPED` on a step the
+ *  client effort split gave 0 weeks. Clearing values is always allowed. */
+export const EFFORT_SKIPPED_COPY =
+  "This step's share of the project's client effort figure is 0 weeks, so it is skipped and cannot take a new duration or start. Change the effort figure on the project to give it weeks. Nothing was saved.";
+
+/** The served 409 body says the effort share is 0 ("…its effort share is 0 weeks…"). */
+function mentionsEffortShare(err: ApiError): boolean {
+  return /effort share/i.test(err.detail ?? '');
+}
+
+export function timingErrorCopy(err: unknown, target?: Pick<StepTimingTarget, 'effortWeeks'>): string {
+  if (
+    err instanceof ApiError &&
+    err.code === 'STEP_SKIPPED' &&
+    (target?.effortWeeks === 0 || mentionsEffortShare(err))
+  ) {
+    return EFFORT_SKIPPED_COPY;
+  }
   if (err instanceof ApiError && err.code && err.code in TIMING_ERROR_COPY) {
     return TIMING_ERROR_COPY[err.code] ?? '';
   }

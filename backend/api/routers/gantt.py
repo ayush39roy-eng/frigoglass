@@ -91,9 +91,11 @@ from models.enums import (
     WorkflowStepKind,
     WorkflowStepStatus,
 )
+from models.hub import Hub
 from models.project import Project
 from models.schedule import ScheduleRun, ScheduleRunProjectOutcome, ScheduleRunProjectStep
 from models.workflow import ProjectWorkflowStep, WorkflowStepTemplate
+from scheduling.effort_split import EffortSplitRejected
 from schemas.gantt import (
     FreezeToggleRequest,
     GanttProjectRow,
@@ -112,6 +114,12 @@ from services.hub_scope import (
     project_row_scope,
 )
 from services.project_cards import build_project_cards
+from services.project_effort import (
+    TRIGGER_UNFREEZE,
+    rederive_project_effort,
+    split_rejected_error,
+    validate_effort_split,
+)
 from services.project_filters import (
     Q_MAX_LENGTH,
     STEP_CODE_MAX_LENGTH,
@@ -121,6 +129,7 @@ from services.project_filters import (
 from services.schedule_stale import mark_projects_stale
 from services.step_timing import timing_editable
 from services.tracking import tracking_status_for
+from services.workspace import row_is_skipped
 
 router = APIRouter(prefix="/gantt", tags=["gantt"])
 
@@ -453,12 +462,23 @@ async def get_gantt(
                     duration_override_weeks=(
                         actual.duration_override_weeks if actual else None
                     ),
+                    effort_weeks=actual.effort_weeks if actual else None,
                     start_not_before_week=actual.start_not_before_week if actual else None,
                     timing_editable=timing_editable(
                         can_write=can_write_timing,
                         frozen=project.frozen,
                         schedulable=schedulable,
-                        skipped=step.skipped or actual is None or actual.duration_weeks == 0,
+                        # ADR 0041 R5: the one skip predicate on the live row
+                        # (lead 0, lab without cert, or effective 0).
+                        skipped=step.skipped
+                        or actual is None
+                        or row_is_skipped(
+                            actual,
+                            templates[step.step_template_id].kind
+                            if step.step_template_id in templates
+                            else WorkflowStepKind.DESIGN,
+                            project.certification_testing_required,
+                        ),
                         step_status=actual.status if actual else WorkflowStepStatus.NOT_STARTED,
                     ),
                     span_fte=_served_span_fte(
@@ -548,12 +568,40 @@ async def toggle_freeze(
             ),
         )
 
+    unfreezing = project.frozen and not body.frozen
+    if unfreezing and (
+        project.design_effort_weeks is not None or project.lab_effort_weeks is not None
+    ):
+        # ADR 0041 R7 before anything is written: a lead-time edit made while
+        # the project was frozen could have pushed its split above 104 weeks.
+        hub_is_oem = (
+            await db.execute(select(Hub.is_oem).where(Hub.id == project.hub_id))
+        ).scalar_one()
+        try:
+            await validate_effort_split(
+                db,
+                hub_is_oem=hub_is_oem,
+                category=project.category,
+                design_effort_weeks=project.design_effort_weeks,
+                lab_effort_weeks=project.lab_effort_weeks,
+                certification_testing_required=project.certification_testing_required,
+                project_id=project.id,
+            )
+        except EffortSplitRejected as exc:
+            raise split_rejected_error(exc) from exc
     before_state = project_audit_state(project)
     inputs_before = (project.frozen, project.actual_start_week)
     project.frozen = body.frozen
     if body.actual_start_week is not None:
         project.actual_start_week = body.actual_start_week
     await db.flush()
+    if unfreezing:
+        # ADR 0041 R6: re-derivation is a no-op while frozen (I10), so the
+        # effort split catches up on unfreeze (same transaction, own audit
+        # row). The figures were validated (R7) when they were written.
+        await rederive_project_effort(
+            db, project, trigger=TRIGGER_UNFREEZE, actor_user_id=current_user.user_id
+        )
     if (project.frozen, project.actual_start_week) != inputs_before:
         # P14-T01 (workflow-auditor finding S1): `frozen` and
         # `actual_start_week` are scheduler inputs, so a freeze or unfreeze

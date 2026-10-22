@@ -56,6 +56,8 @@ async def set_step_timing(
         duration_override_weeks=result.duration_override_weeks,
         start_not_before_week=result.start_not_before_week,
         effective_duration_weeks=result.effective_duration_weeks,
+        effort_weeks=result.effort_weeks,
+        lead_time_weeks=result.lead_time_weeks,
         recalc_status=result.recalc_status,
         schedule_run_id=result.schedule_run_id,
         baseline_run_id=result.baseline_run_id,

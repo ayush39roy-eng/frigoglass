@@ -23,7 +23,7 @@ import type { HubTypePipelineRow } from '../api/types';
 /**
  * FALLBACK only — used until `GET /hubs` resolves (or when it is unavailable).
  * The label shown is the hub's SERVED `lab_region` (`useHubCountry`). Client
- * correction 2026-10-13: the OEM hubs (OEM-HCK, OEM-Seltek) are Europe — lab
+ * correction 2026-10-13: the OEM hubs (OEM-HCK, OEM-Seitek) are Europe — lab
  * region Greece — not India, so this fallback agrees with the served value.
  */
 export const HUB_COUNTRY: Record<HubName, string> = {
@@ -32,7 +32,7 @@ export const HUB_COUNTRY: Record<HubName, string> = {
   'PD-India': 'India',
   'PD-Romania': 'Romania',
   'OEM-HCK': 'Greece',
-  'OEM-Seltek': 'Greece',
+  'OEM-Seitek': 'Greece',
 };
 
 /** hub name → served `lab_region` from `GET /hubs`, falling back to

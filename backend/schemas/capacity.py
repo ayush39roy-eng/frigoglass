@@ -1,9 +1,12 @@
 """Read models for the RPD Capacity surface (`docs/PROJECT_AND_STACK.md` §2).
 
-Load figures are sourced from the active `ScheduleRun`'s snapshot
-(`ScheduleRunProjectStep`), per Invariants I6/I7 ("must reconcile with the
-Capacity surface"). Since P9-T03 the *supply* figures are the client's
-formulas (docs/DOMAIN_RULES.md "Capacity supply", ADR 0008), computed by
+ADR 0041 (P30): the hub table's load figures are DEMAND from the live
+project / step rows (I25: `*_load_weeks` full year, `*_load_remaining_weeks`)
+plus the active run's BOOKED load (`*_load_booked_weeks`, I6/I7 rev.).
+The class breakdown and the utilization matrix stay run-based.
+
+Since P9-T03 the *supply* figures are the client's formulas
+(docs/DOMAIN_RULES.md "Capacity supply", ADR 0008), computed by
 `services.capacity_supply` (I17). They are reporting figures; downtime does
 not gate week-level booking. FTE gates design speed (ADR 0032, superseding
 ADR 0002), but load stays in effort weeks (`duration_weeks`), so supply and
@@ -74,52 +77,70 @@ class CapacityChamberRow(BaseModel):
 class CapacityHubMember(BaseModel):
     """ADR 0042 (docs/API_CONTRACT_P29.md §2): one hub of a capacity hub's row,
     for display. The capacity hub itself is listed first (`own: true`), then
-    its member hubs (OEM-HCK, OEM-Seltek) by name. Only hubs in the caller's
+    its member hubs (OEM-HCK, OEM-Seitek) by name. Only hubs in the caller's
     scope are listed (ADR 0042 §8)."""
 
     hub: HubName
     #: True for the capacity hub itself ("R&D-Greece own").
     own: bool
-    #: Projects of this hub with design load in the active run (at least one
-    #: non-skipped design-kind step row), i.e. the projects summed into
-    #: `design_load_weeks`. 0 with no active run.
+    #: ADR 0041 (R12, docs/API_CONTRACT_P30.md §5): projects of this hub in
+    #: the full-year demand scope (status not Cancelled / Draft), i.e. the
+    #: projects summed into `design_load_weeks`.
     project_count: int
-    #: Σ design-kind step durations (effort weeks) of this hub's projects in
-    #: the active run (I6). Over every listed member it adds up to the row's
-    #: `design_load_weeks` when the caller sees every member.
+    #: Full-year design DEMAND of this hub's projects (I25). Over every member
+    #: it adds up to the row's `design_load_weeks` (when the caller sees
+    #: every member); likewise the two fields below.
     design_load_weeks: int
+    #: Remaining design demand (I25), schedulable projects only.
+    design_load_remaining_weeks: int
+    #: Design effort the active run BOOKED for this hub's projects (I6).
+    design_load_booked_weeks: int
+    #: Projects of this hub with booked design work in the active run.
+    booked_project_count: int
 
 
 class HubCapacityRow(BaseModel):
     """One CAPACITY hub's load vs. supply (docs/API_CONTRACT_P9.md §4, ADR 0008;
     ADR 0042: rows are the capacity hubs only, R&D-Greece's row aggregating
-    OEM-HCK and OEM-Seltek).
+    OEM-HCK and OEM-Seitek).
 
-    Load (Invariants I6/I7), from the active `ScheduleRun`:
-    - `design_load_weeks`: Σ design-kind step durations of the projects of
-      this capacity hub and of its member hubs (ADR 0042 §3).
-    - `lab_load_weeks`: Σ lab-kind step durations × 1.0 over every project of
-      this hub's *lab region*. Region-level, repeated on each hub of the region.
-    - `*_estimated_weeks`: Σ the projects' hand-entered estimates
-      (`Project.estimated_*_weeks`, docs/OPEN_QUESTIONS.md #12). Taken over
-      schedulable projects; lab estimates only count projects with
-      `certification_testing_required`, like the process-derived lab load.
+    Load (ADR 0041, docs/API_CONTRACT_P30.md §5). Three figures per kind:
+    - `design_load_weeks` / `lab_load_weeks`: FULL-YEAR DEMAND (I25), from
+      the live project and step rows (never the run): Σ effective step
+      durations (`user ?? effort ?? lead`, 0 when skipped) of every project
+      not Cancelled / Draft (On Hold and Commercialized included), design
+      per capacity hub (own + members, ADR 0042 §3), lab per lab region
+      (region-level, repeated on each hub of the region).
+    - `*_load_remaining_weeks`: REMAINING DEMAND (I25), the same over the
+      schedulable projects, counting only what is left of each stage
+      (Done 0, In Progress / Blocked the derived remaining duration).
+    - `*_load_booked_weeks`: what the ACTIVE RUN booked (I6/I7 rev.).
+      Engineer utilization and the what-if "before" reconcile with it.
+    - `*_estimated_weeks`: deprecated (ADR 0041 R13: the client's per-project
+      figures now feed the demand); Σ `Project.estimated_*_weeks` of the
+      schedulable projects. Kept for one release.
 
     Supply (DOMAIN_RULES "Capacity supply", `services.capacity_supply`): the
     `design_*` figures are per capacity hub (its calendar, Σ fte of its
     engineers with `counts_in_capacity`, ADR 0042) and the `lab_*` figures
     are per region.
     `gap = load − capacity` and `completion_pct = capacity / load`, `None`
-    when load is 0. Year and remaining-year variants both use the
-    process-derived load. Floats are rounded to 2 dp, `remaining_fraction`
-    to 4 dp.
+    when load is 0. I19 rev.: the YEAR variants pair the full-year demand
+    with the yearly capacity, the REMAINING variants pair the remaining
+    demand with the remaining capacity; nothing of this kind is served for
+    the booked load. Floats are rounded to 2 dp, `remaining_fraction` to
+    4 dp.
     """
 
     hub: HubName
     lab_region: LabRegion
     design_load_weeks: int
+    design_load_remaining_weeks: int
+    design_load_booked_weeks: int
     design_load_estimated_weeks: float
     lab_load_weeks: float
+    lab_load_remaining_weeks: float
+    lab_load_booked_weeks: float
     lab_load_estimated_weeks: float
     engineer_fte_total: float
     working_weeks_per_engineer: float
@@ -141,8 +162,9 @@ class HubCapacityRow(BaseModel):
     design_capacity_weeks: float | None = Field(default=None, deprecated=True)
     #: Deprecated alias of `lab_capacity_remaining`, kept for one release.
     lab_capacity_units: float | None = Field(default=None, deprecated=True)
-    #: Deprecated. This hub's *own* lab load (× 1.0, ADR 0007). The
-    #: region-level `lab_load_weeks` supersedes it. Kept for one release.
+    #: Deprecated. The full-year lab demand of this row's own projects (own
+    #: + members; × 1.0, ADR 0007). The region-level `lab_load_weeks`
+    #: supersedes it. Kept for one release.
     lab_load_units: float | None = Field(default=None, deprecated=True)
     # --- P11 (docs/API_CONTRACT_P11.md §4, ADR 0016) ----------------------
     #: `load / capacity × 100` on this row's served figures, 2 dp; `None`
@@ -157,12 +179,12 @@ class HubCapacityRow(BaseModel):
     lab_booking_status_remaining: BookingStatus
     area: CapacityAreaName
     # --- P13 (docs/API_CONTRACT_P13.md §6) --------------------------------
-    #: `design_load_weeks` split by the priority bucket of the hub's projects.
-    #: Same basis (active run, non-skipped design-kind steps); sums to it.
+    #: `design_load_weeks` (full-year demand, ADR 0041 R12) split by the
+    #: priority bucket of the projects; sums to it.
     design_load_by_priority: PriorityLoadSplit
-    #: `lab_load_weeks` split by priority bucket. Same region-level basis
-    #: (every project of the row's lab region, repeated on each hub of the
-    #: region); sums to it.
+    #: `lab_load_weeks` (full-year lab demand) split by priority bucket. Same
+    #: region-level basis (every project of the row's lab region, repeated on
+    #: each hub of the region); sums to it.
     lab_load_by_priority: PriorityLoadSplit
     # --- P19-T03 (docs/API_CONTRACT_P19.md §1): Weeks / Days toggle -------
     #: The hub's `HubWorkCalendar.weekdays_per_week` (ADR 0008).
@@ -170,21 +192,24 @@ class HubCapacityRow(BaseModel):
     #: Design capacity in days: served `design_capacity_year` / `_remaining`
     #: × `weekdays_per_week`, 2 dp.
     capacity_days: YearRemaining
-    #: Design load in days: `design_load_weeks × weekdays_per_week` (same on
-    #: both bases), 2 dp.
+    #: Design demand in days (ADR 0041): `year` = `design_load_weeks ×
+    #: weekdays_per_week`, `remaining` = `design_load_remaining_weeks ×
+    #: weekdays_per_week`, 2 dp.
     load_days: YearRemaining
     #: `weekdays_per_week` of the calendar the row's lab region takes its
     #: chambers' holiday weeks from (`services.capacity_supply.region_calendar`).
     lab_weekdays_per_week: float
     #: Served `lab_capacity_year` / `_remaining` × `lab_weekdays_per_week`, 2 dp.
     lab_capacity_days: YearRemaining
-    #: Served `lab_load_weeks` × `lab_weekdays_per_week` (both bases), 2 dp.
+    #: `year` = served `lab_load_weeks`, `remaining` = served
+    #: `lab_load_remaining_weeks`, × `lab_weekdays_per_week`, 2 dp.
     lab_load_days: YearRemaining
     # --- P29 (docs/API_CONTRACT_P29.md §2, ADR 0042) -----------------------
     #: The hubs this row aggregates, own first, in the caller's scope. Empty
     #: for a capacity hub with no member hub (R&D-India, PD-India, PD-Romania).
-    #: Design load / project figures per hub; every other figure of the row
-    #: (supply, booked %, status, gap, completion) is for the aggregate only.
+    #: Demand + booked design load and project figures per hub (ADR 0041
+    #: R12); every other figure of the row (supply, booked %, status, gap,
+    #: completion) is for the aggregate only.
     members: list[CapacityHubMember]
     #: The global `hub_id` filter's hub when it is one of this row's hubs
     #: (an OEM hub selects the Greece row); null otherwise.
@@ -203,7 +228,11 @@ class LabRegionCapacityRow(BaseModel):
     weekdays_per_week: float
     chamber_count: int
     capacity_weeks: YearRemaining
+    #: Full-year lab demand of the region (I25) = the hub rows' `lab_load_weeks`.
     load_weeks: float
+    #: ADR 0041: remaining lab demand and the run-booked lab load of the region.
+    load_remaining_weeks: float
+    load_booked_weeks: float
     capacity_days: YearRemaining
     load_days: YearRemaining
 
@@ -223,10 +252,16 @@ class CapacityArea(BaseModel):
     area: CapacityAreaName
     hubs: list[HubName]
     lab_regions: list[LabRegion]
+    #: ADR 0041: full-year demand, remaining demand and run-booked load,
+    #: each summed like the hub rows' fields of the same name.
     design_load_weeks: int
+    design_load_remaining_weeks: int
+    design_load_booked_weeks: int
     design_capacity_year: float
     design_capacity_remaining: float
     lab_load_weeks: float
+    lab_load_remaining_weeks: float
+    lab_load_booked_weeks: float
     lab_capacity_year: float
     lab_capacity_remaining: float
     design_booked_pct_year: float | None
@@ -256,6 +291,8 @@ class CapacityTotals(BaseModel):
     hubs: list[HubName]
     lab_regions: list[LabRegion]
     design_load_weeks: int
+    design_load_remaining_weeks: int
+    design_load_booked_weeks: int
     design_capacity_year: float
     design_capacity_remaining: float
     design_booked_pct_year: float | None
@@ -264,6 +301,8 @@ class CapacityTotals(BaseModel):
     design_booking_status_remaining: BookingStatus
     design_load_by_priority: PriorityLoadSplit
     lab_load_weeks: float
+    lab_load_remaining_weeks: float
+    lab_load_booked_weeks: float
     lab_capacity_year: float
     lab_capacity_remaining: float
     lab_booked_pct_year: float | None

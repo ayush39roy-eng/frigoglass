@@ -25,6 +25,7 @@ from scheduling.types import (
     ProjectInput,
     ScheduleInput,
     StepProgressInput,
+    StepTimingInput,
 )
 from seed import client_2026 as c26
 from seed import extract_client_2026 as ex
@@ -48,17 +49,14 @@ def _order(projects: list[dict[str, Any]]) -> list[int]:
 
 
 def _specs(project: dict[str, Any]) -> list[c26.StepSpec]:
+    """The seed's own step specs: effective durations after the ADR 0041
+    effort split (0 = skipped), as `seed_demo_data.seed_client_2026` uses."""
+
+    from seed.seed_demo_data import client_2026_step_specs
+    from services.workflow_durations import lead_time_lookup
+
     workflow = "OEM" if project["hub"] in dc.OEM_HUBS else "PDD"
-    lead = {(wf, cat, sid): w for wf, cat, sid, w in dc.LEAD_TIME_SEED}
-    out = []
-    for wf, sid, _code, _name, kind, _seq, _preds in dc.WORKFLOW_STEP_TEMPLATE_SEED:
-        if wf != workflow:
-            continue
-        weeks = lead[(wf, project["category"], sid)]
-        if kind == "lab" and not project["certification_testing_required"]:
-            weeks = 0
-        out.append(c26.StepSpec(sid, kind, weeks))
-    return out
+    return client_2026_step_specs(project, workflow, lead_time_lookup(dc.LEAD_TIME_SEED))
 
 
 def _derive_all(
@@ -113,42 +111,61 @@ PROVISIONAL = {
     "Marian": "PD-Romania",
     "Sailesh": "PD-India",
     "Antonis": "PD-India",
+    # ADR 0041: arrives with the carry-over rows (one A+ project, 2025).
+    "Vaggelis": "R&D-Greece",
 }
-#: ADR 0042 §5: the leaders on no client roster are not counted in capacity.
-NOT_COUNTED = {"Theoni", "Dipak", "Antonis", "Sailesh"}
+#: ADR 0042 §5 (+ Vaggelis, DATA_RECONCILIATION decision (c)): the leaders on
+#: no client roster are not counted in capacity.
+NOT_COUNTED = {"Theoni", "Dipak", "Antonis", "Sailesh", "Vaggelis"}
 #: ADR 0042 §7 on the client data: the 17 leaderless OEM projects, walked in
 #: scheduling order, go to the least-loaded counted Greek engineer (ties
 #: alphabetical). Loads after: Dimopoulou 9 + 4 x 5 = 29, Kanarios and
 #: Lioumis 6 x 5 = 30 each.
 PROVISIONAL_LEADERS = {
-    "26-S0555": "Dimopoulou",
-    "26-S0568": "Kanarios",
+    # ADR 0041 dataset (330 rows): 20 leaderless OEM projects, effort-based
+    # loads (the walk adds each project's effective design weeks).
+    "26-S0554": "Dimopoulou",
+    "26-S0555": "Kanarios",
+    "26-S0568": "Lioumis",
     "26-S0596-5": "Lioumis",
-    "26-S0560": "Kanarios",
-    "26-S0567": "Lioumis",
-    "26-S0562": "Dimopoulou",
-    "26-S0570": "Kanarios",
-    "26-S0558": "Lioumis",
-    "26-S0563": "Dimopoulou",
-    "26-S0596-6": "Kanarios",
-    "26-S0559": "Lioumis",
-    "26-S0561": "Dimopoulou",
-    "26-S0596-4": "Kanarios",
-    "26-S0566": "Lioumis",
-    "26-S0565": "Dimopoulou",
-    "26-S0564": "Kanarios",
-    "26-S0557": "Lioumis",
+    "26-S0560": "Dimopoulou",
+    "26-S0567": "Kanarios",
+    "26-S0562": "Lioumis",
+    "26-S0569": "Dimopoulou",
+    "26-S0570": "Lioumis",
+    "26-S0558": "Dimopoulou",
+    "26-S0563": "Kanarios",
+    "26-S0596-6": "Lioumis",
+    "26-S0559": "Dimopoulou",
+    "26-S0556": "Kanarios",
+    "26-S0561": "Lioumis",
+    "26-S0596-4": "Dimopoulou",
+    "26-S0566": "Kanarios",
+    "26-S0565": "Lioumis",
+    "26-S0564": "Dimopoulou",
+    "26-S0557": "Kanarios",
 }
 
 
 # --- The committed JSON ------------------------------------------------------
 
 
-def test_dataset_is_the_253_projects_requested_in_2026(data: dict[str, Any]) -> None:
+def test_dataset_is_2026_or_capacity_flagged_adr_0041(data: dict[str, Any]) -> None:
+    """ADR 0041 §1 / decision (a): requested in 2026 (253) or flagged Y for
+    capacity (262): 330 rows, 77 carry-over from 2024/25."""
+
     projects = data["projects"]
-    assert data["project_count"] == len(projects) == 253
-    assert all(dt.date.fromisoformat(p["request_date"]).year == 2026 for p in projects)
-    assert len({p["external_code"] for p in projects}) == 253
+    assert data["project_count"] == len(projects) == 330
+    years = Counter(dt.date.fromisoformat(p["request_date"]).year for p in projects)
+    assert years == {2026: 253, 2025: 62, 2024: 15}
+    assert all(p["request_year"] == dt.date.fromisoformat(p["request_date"]).year for p in projects)
+    assert sum(p["capacity_flag"] for p in projects) == 262
+    assert all(p["capacity_flag"] for p in projects if p["request_year"] < 2026)
+    assert len({p["external_code"] for p in projects}) == 330
+    assert Counter(p["hub"] for p in projects) == {
+        "R&D-Greece": 6, "OEM-HCK": 14, "OEM-Seitek": 14, "R&D-India": 30,
+        "PD-India": 223, "PD-Romania": 43,
+    }  # fmt: skip
     statuses = Counter(p["status"] for p in projects)
     assert set(statuses) <= {s.value for s in ProjectStatus}
     # Closed statuses are kept (displayed, not scheduled).
@@ -187,17 +204,18 @@ def test_priority_follows_marketing_rank_then_status(data: dict[str, Any]) -> No
 
 
 def test_charter_fields_spillover_and_end_dates(data: dict[str, Any]) -> None:
-    """ADR 0035: plant (253), requesting department (237), product type (250),
-    `Spillover '25` (17) and the end dates (22, of which 15 are in the plan)."""
+    """ADR 0035 on the ADR 0041 dataset: plant (330), requesting department
+    (314), product type (327), `Spillover '25` (34) and the end dates (81,
+    `Mon'YY` strings included; 35 are in the plan)."""
 
     projects = data["projects"]
-    assert sum(p["plant"] is not None for p in projects) == 253
-    assert sum(p["requesting_department"] is not None for p in projects) == 237
-    assert sum(p["product_type"] is not None for p in projects) == 250
-    assert sum(p["spillover_2025"] for p in projects) == 17
-    assert sum(p["end_date"] is not None for p in projects) == 22
+    assert sum(p["plant"] is not None for p in projects) == 330
+    assert sum(p["requesting_department"] is not None for p in projects) == 314
+    assert sum(p["product_type"] is not None for p in projects) == 327
+    assert sum(p["spillover_2025"] for p in projects) == 34
+    assert sum(p["end_date"] is not None for p in projects) == 81
     weeks = [p["target_end_week"] for p in projects if p["target_end_week"] is not None]
-    assert len(weeks) == 15 and all(1 <= w <= dc.WITHIN_YEAR_WEEK for w in weeks)
+    assert len(weeks) == 35 and all(1 <= w <= dc.WITHIN_YEAR_WEEK for w in weeks)
     for p in projects:
         if p["end_date"] is not None:
             assert p["target_end_week"] == ex.plan_week(dt.date.fromisoformat(p["end_date"]))
@@ -267,8 +285,8 @@ def test_extract_maps_hubs_categories_statuses_and_leaders() -> None:
     ]
     out = ex.extract(rows)["projects"]
     assert [p["excel_row"] for p in out] == [6, 7, 8, 9, 11]
-    assert out[0]["hub"] == "OEM-Seltek" and out[0]["category"] == "B-OEM"
-    assert out[1]["hub"] == "OEM-Seltek" and out[1]["leader"] == "Lokesh"
+    assert out[0]["hub"] == "OEM-Seitek" and out[0]["category"] == "B-OEM"
+    assert out[1]["hub"] == "OEM-Seitek" and out[1]["leader"] == "Lokesh"
     assert out[2]["category"] == "B" and out[2]["status"] == "In Development"
     assert out[2]["development_step"] == "PDD-H" and out[2]["priority"] == "P3"
     assert out[3]["status"] == "Under Industrialization" and out[3]["priority"] == "P1"
@@ -374,12 +392,13 @@ def test_extract_rejects_unknown_hub_and_status() -> None:
 
 def test_roster_is_the_workbook_roster_plus_provisional_leaders(data: dict[str, Any]) -> None:
     """ADR 0035: the 17 roster people with the workbook's hub and FTE, the two
-    0-FTE placeholders not created, and the 6 workbook leaders who are not on
-    the roster added as provisional engineers at FTE 1.0. No synthetic one."""
+    0-FTE placeholders not created, and the 7 workbook leaders who are not on
+    the roster (Vaggelis with the ADR 0041 carry-over rows) added as
+    provisional engineers at FTE 1.0. No synthetic one."""
 
     build = c26.build_roster(data)
     by_name = {e.name: e for e in build.engineers}
-    assert len(by_name) == len(build.engineers) == 23
+    assert len(by_name) == len(build.engineers) == 24
     real = {n: (e.hub, e.fte) for n, e in by_name.items() if not e.provisional}
     assert real == WORKBOOK_ROSTER
     provisional = {n: e.hub for n, e in by_name.items() if e.provisional}
@@ -415,21 +434,21 @@ def test_leaders_are_the_workbook_leaders_never_reassigned(data: dict[str, Any])
     for p, leader in zip(projects, leaders, strict=True):
         assert leader == c26.LEADER_ALIASES.get(p["leader"], p["leader"])
     blank = [p for p, leader in zip(projects, leaders, strict=True) if leader is None]
-    assert len(blank) == 20
+    assert len(blank) == 23
     assert Counter(p["hub"] for p in blank) == {
         "OEM-HCK": 9,
-        "OEM-Seltek": 8,
+        "OEM-Seitek": 11,
         "PD-India": 1,
         "PD-Romania": 1,
         "R&D-Greece": 1,
     }
-    assert sum(c26.is_open(p) for p in blank) == 18
+    assert sum(c26.is_open(p) for p in blank) == 21
 
 
 def test_provisional_leaders_for_leaderless_oem_projects_adr_0042(
     data: dict[str, Any],
 ) -> None:
-    """ADR 0042 §7 on the client data: the 17 leaderless OEM projects get the
+    """ADR 0042 §7 on the client data: the 20 leaderless OEM projects get the
     least-loaded counted R&D-Greece engineer, deterministically; the three
     blank leaders on other hubs stay blank."""
 
@@ -486,18 +505,20 @@ def test_assign_provisional_leaders_rule() -> None:
 
 
 def test_bc_projects_are_regulatory_compliance_adr_0038_amendment(data: dict[str, Any]) -> None:
-    """The workbook's 59 BC projects carry app type RC (and so the
-    `regulatory_compliance` tag); AC and SER stay untyped."""
+    """The workbook's 63 BC projects carry app type RC (and so the
+    `regulatory_compliance` tag); ADR 0041 §4: AC and SER map one to one;
+    only CER stays untyped."""
 
     by_code = Counter((p["excel_type"], p["type"]) for p in data["projects"])
-    assert by_code[("BC", "RC")] == 59
+    assert by_code[("BC", "RC")] == 63
     assert by_code[("BC", None)] == 0
-    assert by_code[("AC", None)] == 6 and by_code[("SER", None)] == 2
+    assert by_code[("AC", "AC")] == 9 and by_code[("SER", "SER")] == 2
+    assert [p["excel_type"] for p in data["projects"] if p["type"] is None] == ["CER"]
     assert all(
         ex.TYPE_MAP.get(v) == "RC"
         for v in ("BC", "BUSINESS CONTINUITY", "BUSINESS CONTINIUTY", "BUSINESS CONTINUATION")
     )
-    assert "AC" not in ex.TYPE_MAP and "SER" not in ex.TYPE_MAP
+    assert ex.TYPE_MAP["AC"] == "AC" and ex.TYPE_MAP["SER"] == "SER"
 
 
 def test_extract_maps_business_continuity_text_variants() -> None:
@@ -508,14 +529,15 @@ def test_extract_maps_business_continuity_text_variants() -> None:
         (9, _row(c5="AC")),
     ]
     out = ex.extract(rows)["projects"]
-    assert [p["type"] for p in out] == ["RC", "RC", "RC", None]
+    assert [p["type"] for p in out] == ["RC", "RC", "RC", "AC"]
     assert out[0]["excel_type"] == "BUSINESS CONTINUITY"
     assert out[3]["excel_type"] == "AC"
 
 
 def test_carry_over_and_reg_year(data: dict[str, Any]) -> None:
     pairs = [c26.carry_over_and_reg_year(p) for p in data["projects"]]
-    assert Counter(pairs) == {(True, 2025): 17, (False, 2026): 236}
+    # ADR 0041 §1: carry-over = requested before 2026; reg_year = request year.
+    assert Counter(pairs) == {(False, 2026): 253, (True, 2025): 62, (True, 2024): 15}
 
 
 def test_derived_dims_land_in_the_projects_band(data: dict[str, Any]) -> None:
@@ -566,7 +588,12 @@ def test_derived_progress_is_consistent(data: dict[str, Any], current_week: int)
         elif p["status"] == "Commercialized":
             assert statuses == {"Done"}
         else:
-            assert "Done" in statuses
+            # Every live step before the current one is Done (ADR 0041 §4: a
+            # Development Step may make the first live step current).
+            k = c26.current_step_index(p, specs)
+            assert k is not None
+            if any(spec.duration for spec in specs[:k]):
+                assert "Done" in statuses
     # One In Progress design step per leader; lab tails fit the platforms.
     assert all(n == 1 for n in busy_design.values())
     platforms: Counter[str] = Counter()
@@ -604,6 +631,12 @@ def test_seed_inputs_schedule_without_invariant_violations(data: dict[str, Any])
                 ),
                 workflow_id="OEM" if p["hub"] in dc.OEM_HUBS else "PDD",
                 certification_testing_required=p["certification_testing_required"],
+                # ADR 0041 R4: the seed's effort split, merged into the timing.
+                step_timing=tuple(
+                    StepTimingInput(spec.step_id, spec.effort, None)
+                    for spec in sorted(_specs(p), key=lambda s: s.step_id)
+                    if spec.effort is not None
+                ),
                 step_progress=tuple(
                     StepProgressInput(
                         step_id=spec.step_id,
@@ -645,9 +678,9 @@ def test_seed_inputs_schedule_without_invariant_violations(data: dict[str, Any])
     assert not any(o.data_error for o in output.project_outcomes)
     outcomes = output.project_outcomes
     assert not any(o.eng_conflict or o.overlap for o in outcomes)
-    assert sum(o.excluded for o in output.project_outcomes) == 61
+    assert sum(o.excluded for o in output.project_outcomes) == 109
     no_leader = {o.project_id for o in outcomes if o.no_leader}
-    assert len(no_leader) == 18
+    assert len(no_leader) == 21
     assert all(o.left_out for o in outcomes if o.no_leader)
     assert no_leader == {
         ids[i] for i, p in enumerate(projects) if leaders[i] is None and c26.is_open(p)

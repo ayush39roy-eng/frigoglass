@@ -5,9 +5,16 @@ import type { BookingStatus, CapacityArea, CapacityTotals, HubCapacityRow, YearR
 export type CapacityHorizon = 'year' | 'remaining';
 export type ResourceKind = 'design' | 'lab';
 
+/**
+ * P30 (ADR 0041, I19 rev.): `load` is the DEMAND paired with the horizon's
+ * capacity: full-year demand (`*_load_weeks`) for "year", remaining demand
+ * (`*_load_remaining_weeks`) for "remaining". `booked` is what the active run
+ * booked (`*_load_booked_weeks`, I6/I7), the same on both horizons; nothing
+ * (no %, gap or status) is served against it.
+ */
 export interface ResourceFigures {
   load: number;
-  loadEstimated: number;
+  booked: number;
   capacity: number;
   gap: number;
   completionPct: number | null;
@@ -26,7 +33,7 @@ export function pickFigures(
     return horizon === 'year'
       ? {
           load: row.design_load_weeks,
-          loadEstimated: row.design_load_estimated_weeks,
+          booked: row.design_load_booked_weeks,
           capacity: row.design_capacity_year,
           gap: row.design_gap_year,
           completionPct: row.design_completion_pct_year,
@@ -34,8 +41,8 @@ export function pickFigures(
           bookingStatus: row.design_booking_status_year,
         }
       : {
-          load: row.design_load_weeks,
-          loadEstimated: row.design_load_estimated_weeks,
+          load: row.design_load_remaining_weeks,
+          booked: row.design_load_booked_weeks,
           capacity: row.design_capacity_remaining,
           gap: row.design_gap_remaining,
           completionPct: row.design_completion_pct_remaining,
@@ -46,7 +53,7 @@ export function pickFigures(
   return horizon === 'year'
     ? {
         load: row.lab_load_weeks,
-        loadEstimated: row.lab_load_estimated_weeks,
+        booked: row.lab_load_booked_weeks,
         capacity: row.lab_capacity_year,
         gap: row.lab_gap_year,
         completionPct: row.lab_completion_pct_year,
@@ -54,8 +61,8 @@ export function pickFigures(
         bookingStatus: row.lab_booking_status_year,
       }
     : {
-        load: row.lab_load_weeks,
-        loadEstimated: row.lab_load_estimated_weeks,
+        load: row.lab_load_remaining_weeks,
+        booked: row.lab_load_booked_weeks,
         capacity: row.lab_capacity_remaining,
         gap: row.lab_gap_remaining,
         completionPct: row.lab_completion_pct_remaining,
@@ -66,7 +73,10 @@ export function pickFigures(
 
 
 export interface AreaBookingFigures {
+  /** P30: full-year demand ("year") or remaining demand ("remaining"). */
   load: number;
+  /** P30: booked by the active run (no % served). */
+  booked: number;
   capacity: number;
   bookedPct: number | null;
   bookingStatus: BookingStatus;
@@ -77,6 +87,8 @@ export interface AreaBookingFigures {
 export type RollupFigures = Pick<
   CapacityArea,
   | 'design_load_weeks'
+  | 'design_load_remaining_weeks'
+  | 'design_load_booked_weeks'
   | 'design_capacity_year'
   | 'design_capacity_remaining'
   | 'design_booked_pct_year'
@@ -84,6 +96,8 @@ export type RollupFigures = Pick<
   | 'design_booking_status_year'
   | 'design_booking_status_remaining'
   | 'lab_load_weeks'
+  | 'lab_load_remaining_weeks'
+  | 'lab_load_booked_weeks'
   | 'lab_capacity_year'
   | 'lab_capacity_remaining'
   | 'lab_booked_pct_year'
@@ -104,12 +118,14 @@ export function pickAreaFigures(
     return horizon === 'year'
       ? {
           load: area.design_load_weeks,
+          booked: area.design_load_booked_weeks,
           capacity: area.design_capacity_year,
           bookedPct: area.design_booked_pct_year,
           bookingStatus: area.design_booking_status_year,
         }
       : {
-          load: area.design_load_weeks,
+          load: area.design_load_remaining_weeks,
+          booked: area.design_load_booked_weeks,
           capacity: area.design_capacity_remaining,
           bookedPct: area.design_booked_pct_remaining,
           bookingStatus: area.design_booking_status_remaining,
@@ -118,12 +134,14 @@ export function pickAreaFigures(
   return horizon === 'year'
     ? {
         load: area.lab_load_weeks,
+        booked: area.lab_load_booked_weeks,
         capacity: area.lab_capacity_year,
         bookedPct: area.lab_booked_pct_year,
         bookingStatus: area.lab_booking_status_year,
       }
     : {
-        load: area.lab_load_weeks,
+        load: area.lab_load_remaining_weeks,
+        booked: area.lab_load_booked_weeks,
         capacity: area.lab_capacity_remaining,
         bookedPct: area.lab_booked_pct_remaining,
         bookingStatus: area.lab_booking_status_remaining,
@@ -167,7 +185,9 @@ export function resourceUnitLong(kind: ResourceKind, unit: CapacityUnit): string
 }
 
 export interface UnitFigures {
-  /** Served load in the unit; null when the served day field is absent. */
+  /** Served demand for the horizon in the unit (P30: full-year or remaining
+   *  demand; `load_days.remaining` is served from the remaining demand); null
+   *  when the served day field is absent. */
   load: number | null;
   /** Served capacity for the horizon in the unit; null when absent. */
   capacity: number | null;
@@ -223,6 +243,21 @@ export function pickTotalUnitFigures(
         capacity: servedPair(served.lab_capacity_days, view.horizon),
       };
 }
+
+/* ------------------------------------------------------------------------ *
+ * P30 (ADR 0041, API_CONTRACT_P30 §4): wording for the load columns. The
+ * demand a horizon pairs with (I19 rev.) and the run-booked figure, which has
+ * no served day value, booked % or gap.
+ * ------------------------------------------------------------------------ */
+
+/** Column / stat label of the demand the horizon pairs with. */
+export const DEMAND_LABEL: Record<CapacityHorizon, string> = {
+  year: 'Full-year demand',
+  remaining: 'Remaining demand',
+};
+
+/** Short label of the run-booked figure. */
+export const BOOKED_IN_PLAN_LABEL = 'Booked in plan';
 
 /** The served weekdays per week behind a row's day figures, or null if absent. */
 export function servedWeekdays(row: HubCapacityRow, kind: ResourceKind): number | null {

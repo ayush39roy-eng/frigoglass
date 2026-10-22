@@ -51,7 +51,7 @@ const greeceLab = {
 const six: HubCapacitySummary = {
   ...data,
   totals: totalsRow({
-    hubs: ['R&D-Greece', 'R&D-India', 'PD-India', 'PD-Romania', 'OEM-HCK', 'OEM-Seltek'],
+    hubs: ['R&D-Greece', 'R&D-India', 'PD-India', 'PD-Romania', 'OEM-HCK', 'OEM-Seitek'],
     lab_regions: ['Greece', 'India', 'Romania'],
     design_load_weeks: 1717.55,
     lab_load_weeks: 542.5,
@@ -64,7 +64,7 @@ const six: HubCapacitySummary = {
     hubRow({ hub: 'R&D-Greece', ...greeceLab, design_load_weeks: 45 }),
     hubRow({ hub: 'R&D-India' }),
     hubRow({ hub: 'PD-Romania', lab_region: 'Romania', lab_load_weeks: 24 }),
-    hubRow({ hub: 'OEM-Seltek', ...greeceLab, design_load_weeks: 44 }),
+    hubRow({ hub: 'OEM-Seitek', ...greeceLab, design_load_weeks: 44 }),
   ],
 };
 
@@ -98,7 +98,7 @@ describe('HubSummaryTable — "Load vs. capacity by hub" (P19-T06 merged table)'
     expect(within(screen.getByTestId('hub-summary-family-rd')).getByRole('rowheader', { name: 'R&D' })).toBeInTheDocument();
     expect(rowsOf('rd')).toEqual(['hub-summary-row-R&D-Greece', 'hub-summary-row-R&D-India']);
     expect(rowsOf('pd')).toEqual(['hub-summary-row-PD-India', 'hub-summary-row-PD-Romania']);
-    expect(rowsOf('oem')).toEqual(['hub-summary-row-OEM-HCK', 'hub-summary-row-OEM-Seltek']);
+    expect(rowsOf('oem')).toEqual(['hub-summary-row-OEM-HCK', 'hub-summary-row-OEM-Seitek']);
     // a scoped (one-family) payload has no empty groups
     renderWithProviders(
       <HubSummaryTable data={{ ...six, rows: [hubRow({ hub: 'OEM-HCK', ...greeceLab })] }} activeRun={undefined} view={WEEKS_YEAR} />,
@@ -117,12 +117,13 @@ describe('HubSummaryTable — "Load vs. capacity by hub" (P19-T06 merged table)'
     const rdGreece = screen.getByTestId('hub-summary-row-R&D-Greece');
     expect(within(rdGreece).getByTestId('lab-load')).toHaveTextContent('22');
     expect(within(rdGreece).getByTestId('lab-booked')).toHaveTextContent('100.5%');
-    for (const hub of ['OEM-HCK', 'OEM-Seltek']) {
+    for (const hub of ['OEM-HCK', 'OEM-Seitek']) {
       const r = screen.getByTestId(`hub-summary-row-${hub}`);
       expect(within(r).getByTestId('lab-region')).toHaveTextContent('Greece');
       expect(within(r).queryByTestId('lab-load')).not.toBeInTheDocument();
       expect(within(r).getByTestId('lab-shared')).toHaveTextContent('Same as R&D-Greece above (shared Greece lab region)');
-      expect(within(r).getByTestId('lab-shared')).toHaveAttribute('colspan', '4');
+      // P30: Capacity | Demand | Booked % | Gap | In plan
+      expect(within(r).getByTestId('lab-shared')).toHaveAttribute('colspan', '5');
     }
     const pdIndia = screen.getByTestId('hub-summary-row-PD-India');
     expect(within(pdIndia).getByTestId('lab-shared')).toHaveTextContent('Same as R&D-India above');
@@ -145,8 +146,8 @@ describe('HubSummaryTable — "Load vs. capacity by hub" (P19-T06 merged table)'
     const user = userEvent.setup();
     renderWithProviders(<HubSummaryTable data={six} activeRun={undefined} view={{ horizon: 'year', unit: 'days' }} />);
     const india = screen.getByTestId('hub-summary-row-R&D-India');
-    expect(within(india).getByRole('img', { name: 'Design load by priority (wks): P1 400, P2 100, P3 50, P4 0, Q 37' })).toBeInTheDocument();
-    expect(within(india).getByRole('img', { name: /^Lab load by priority \(wks\): P1 300/ })).toBeInTheDocument();
+    expect(within(india).getByRole('img', { name: 'Design full-year demand by priority (wks): P1 400, P2 100, P3 50, P4 0, Q 37' })).toBeInTheDocument();
+    expect(within(india).getByRole('img', { name: /^Lab full-year demand by priority \(wks\): P1 300/ })).toBeInTheDocument();
     expect(screen.queryByTestId('split-R&D-India-P2-D')).not.toBeInTheDocument();
 
     const toggle = screen.getByRole('button', { name: 'Show priority split' });
@@ -157,12 +158,12 @@ describe('HubSummaryTable — "Load vs. capacity by hub" (P19-T06 merged table)'
     // served weeks even in Days mode, and labelled so
     expect(screen.getByTestId('split-R&D-India-P2-D')).toHaveTextContent('100');
     expect(screen.getByTestId('split-R&D-India-Queue-L')).toHaveTextContent('100');
-    expect(screen.getByRole('columnheader', { name: 'Design load, priority P1, in weeks' })).toHaveTextContent('P1-D');
-    expect(screen.getByRole('columnheader', { name: 'Lab load, priority Q, in weeks' })).toHaveTextContent('Q-L');
-    expect(screen.getByRole('columnheader', { name: 'Design (per hub)' })).toHaveAttribute('colspan', '9');
-    expect(screen.getByRole('columnheader', { name: 'Lab (per lab region)' })).toHaveAttribute('colspan', '10');
+    expect(screen.getByRole('columnheader', { name: 'Design full-year demand, priority P1, in weeks' })).toHaveTextContent('P1-D');
+    expect(screen.getByRole('columnheader', { name: 'Lab full-year demand, priority Q, in weeks' })).toHaveTextContent('Q-L');
+    expect(screen.getByRole('columnheader', { name: 'Design (per hub)' })).toHaveAttribute('colspan', '10');
+    expect(screen.getByRole('columnheader', { name: 'Lab (per lab region)' })).toHaveAttribute('colspan', '11');
     // shared lab rows span the lab split columns too; the total split is the served totals
-    expect(within(screen.getByTestId('hub-summary-row-OEM-HCK')).getByTestId('lab-shared')).toHaveAttribute('colspan', '9');
+    expect(within(screen.getByTestId('hub-summary-row-OEM-HCK')).getByTestId('lab-shared')).toHaveAttribute('colspan', '10');
     expect(screen.queryByTestId('split-OEM-HCK-P1-L')).not.toBeInTheDocument();
     expect(screen.getByTestId('split-total-P1-D')).toHaveTextContent('400');
 
@@ -220,16 +221,51 @@ describe('HubSummaryTable — "Load vs. capacity by hub" (P19-T06 merged table)'
     expect(screen.getByTestId('hub-summary-row-R&D-Greece')).toHaveTextContent('88.5%');
   });
 
-  it('uses Design / Lab header bands with Capacity | Load | Booked % | Gap and full accessible names', () => {
+  it('uses Design / Lab header bands with Capacity | Demand | Booked % | Gap | In plan and full accessible names (P30)', () => {
     renderWithProviders(<HubSummaryTable data={data} activeRun={undefined} view={WEEKS_YEAR} />);
-    expect(screen.getByRole('columnheader', { name: 'Design (per hub)' })).toHaveAttribute('colspan', '4');
-    expect(screen.getByRole('columnheader', { name: 'Lab (per lab region)' })).toHaveAttribute('colspan', '5');
+    expect(screen.getByRole('columnheader', { name: 'Design (per hub)' })).toHaveAttribute('colspan', '5');
+    expect(screen.getByRole('columnheader', { name: 'Lab (per lab region)' })).toHaveAttribute('colspan', '6');
     expect(screen.getByRole('columnheader', { name: 'Design capacity, full year, in weeks' })).toHaveTextContent('Capacity');
+    expect(screen.getByRole('columnheader', { name: 'Design full-year demand, in weeks' })).toHaveTextContent('Demandfull year');
+    expect(screen.getByRole('columnheader', { name: 'Design booked %, full-year demand over capacity' })).toBeInTheDocument();
+    expect(screen.getByRole('columnheader', { name: 'Design weeks booked by the active plan, in weeks' })).toHaveTextContent('In plan');
     expect(screen.getByRole('columnheader', { name: 'Lab region' })).toBeInTheDocument();
-    expect(screen.getByRole('columnheader', { name: 'Lab gap, load minus capacity, in weeks' })).toHaveTextContent('Gap');
+    expect(screen.getByRole('columnheader', { name: 'Lab gap, demand minus capacity, in weeks' })).toHaveTextContent('Gap');
     const sub = screen.getAllByRole('row')[1] as HTMLElement;
     const visible = [...sub.querySelectorAll('th')].map((h) => h.querySelector('[aria-hidden="true"]')?.textContent ?? h.textContent);
-    expect(visible).toEqual(['Capacity', 'Load', 'Booked %', 'Gap', 'Lab region', 'Capacity', 'Load', 'Booked %', 'Gap']);
+    expect(visible).toEqual([
+      'Capacity', 'Demandfull year', 'Booked %', 'Gap', 'In plan',
+      'Lab region', 'Capacity', 'Demandfull year', 'Booked %', 'Gap', 'In plan',
+    ]);
+  });
+
+  it('P30: full year shows full-year demand, remaining shows remaining demand; In plan is the run-booked figure on both, with no %', () => {
+    const { unmount } = renderWithProviders(<HubSummaryTable data={data} activeRun={undefined} view={WEEKS_YEAR} />);
+    let india = screen.getByTestId('hub-summary-row-PD-India');
+    expect(within(india).getByTestId('design-load')).toHaveTextContent('587');
+    expect(within(india).getByTestId('design-in-plan')).toHaveTextContent('420');
+    expect(within(india).getByTestId('lab-load')).toHaveTextContent('496.5');
+    expect(within(india).getByTestId('lab-in-plan')).toHaveTextContent('409.5');
+    expect(within(india).getByTestId('design-in-plan')).not.toHaveTextContent('%');
+    expect(screen.getByTestId('total-design-in-plan')).toHaveTextContent('420');
+    expect(screen.getByTestId('total-lab-in-plan')).toHaveTextContent('409.5');
+    unmount();
+    renderWithProviders(<HubSummaryTable data={data} activeRun={undefined} view={{ horizon: 'remaining', unit: 'weeks' }} />);
+    india = screen.getByTestId('hub-summary-row-PD-India');
+    expect(within(india).getByTestId('design-load')).toHaveTextContent('436');
+    expect(within(india).getByTestId('lab-load')).toHaveTextContent('408.25');
+    expect(within(india).getByTestId('design-in-plan')).toHaveTextContent('420');
+    expect(screen.getByRole('columnheader', { name: 'Design remaining demand, in weeks' })).toHaveTextContent('Demandremaining');
+    expect(screen.getByTestId('total-design-load')).toHaveTextContent('436');
+    // the served split is of the full-year demand: no mini-bar under the remaining demand
+    expect(within(india).queryByTestId('design-load-split-bar')).not.toBeInTheDocument();
+  });
+
+  it('P30: In plan keeps weeks (labelled) in Days mode; no day figure is derived for it', () => {
+    renderWithProviders(<HubSummaryTable data={data} activeRun={undefined} view={{ horizon: 'year', unit: 'days' }} />);
+    const india = screen.getByTestId('hub-summary-row-PD-India');
+    expect(within(india).getByTestId('design-in-plan')).toHaveTextContent('420wks');
+    expect(screen.getByRole('columnheader', { name: 'Design weeks booked by the active plan, in weeks' })).toHaveTextContent('In planwks');
   });
 
   it('P19-T05: in days, load / capacity / lab-per-region / Total read the served day fields; booked % and gap (wks) unchanged', async () => {
@@ -242,8 +278,8 @@ describe('HubSummaryTable — "Load vs. capacity by hub" (P19-T06 merged table)'
     expect(within(india).getByTestId('lab-capacity')).toHaveTextContent('1,117.32');
     expect(india).toHaveTextContent('232.36%'); // booked % is unit-free
     expect(within(india).getByTestId('design-gap')).toHaveTextContent('+334.38'); // gap stays the served weeks
-    expect(screen.getByRole('columnheader', { name: 'Design load, in days' })).toBeInTheDocument();
-    expect(screen.getByRole('columnheader', { name: 'Design gap, load minus capacity, in weeks' })).toHaveTextContent('Gap (wks)');
+    expect(screen.getByRole('columnheader', { name: 'Design full-year demand, in days' })).toBeInTheDocument();
+    expect(screen.getByRole('columnheader', { name: 'Design gap, demand minus capacity, in weeks' })).toHaveTextContent('Gap (wks)');
     expect(screen.getByTestId('total-design-load')).toHaveTextContent('3,522');
     expect(screen.getByTestId('total-design-capacity')).toHaveTextContent('1,515.72');
     expect(screen.getByTestId('total-lab-load')).toHaveTextContent('2,979');
@@ -257,10 +293,10 @@ describe('HubSummaryTable — "Load vs. capacity by hub" (P19-T06 merged table)'
     expect(within(dialog).getByTestId('design-load')).toHaveTextContent('3,522');
     expect(within(dialog).getByTestId('design-capacity')).toHaveTextContent('1,515.72');
     expect(within(dialog).getByTestId('lab-capacity')).toHaveTextContent('1,117.32');
-    expect(within(dialog).getByTestId('design-gap')).toHaveTextContent('Gap, load − cap. (wks)');
-    expect(within(dialog).getByTestId('design-load-estimated')).toHaveTextContent(/\(wks\)/);
+    expect(within(dialog).getByTestId('design-gap')).toHaveTextContent('Gap, demand − cap. (wks)');
+    expect(within(dialog).getByTestId('design-in-plan')).toHaveTextContent(/Booked in plan \(wks\)/);
     expect(within(dialog).getByTestId('detail-weekdays')).toHaveTextContent('6');
-    expect(within(dialog).getByLabelText(/load versus yearly capacity, in engineer-days/)).toBeInTheDocument();
+    expect(within(dialog).getByLabelText(/full-year demand versus yearly capacity, in engineer-days/)).toBeInTheDocument();
   });
 
   it('P19-T05: day fields absent on an older API show "—", never a computed value', () => {
@@ -297,13 +333,14 @@ describe('HubSummaryTable — "Load vs. capacity by hub" (P19-T06 merged table)'
     const user = userEvent.setup();
     renderWithProviders(<HubSummaryTable data={data} activeRun={undefined} view={WEEKS_YEAR} />);
     const note = screen.getByTestId('hub-summary-booked-note');
-    expect(note).toHaveTextContent(/Load counts work weeks, including work scheduled past W52/);
+    // P30 (ADR 0041): demand scope, the remaining view, and In plan without a %.
+    expect(note).toHaveTextContent(/Demand counts the effort weeks of every project of the hub, On Hold and Commercialized included/);
     expect(note).toHaveTextContent(/not capped at capacity/);
-    expect(note).toHaveTextContent(/Part-time leaders stretch the calendar, not the load/);
-    expect(note).toHaveTextContent(/tuned \(ADR 0024\)/);
+    expect(note).toHaveTextContent(/remaining view counts open projects/);
+    expect(note).toHaveTextContent(/“In plan” is what the active schedule booked; it has no booked %/);
     expect(note).not.toHaveTextContent(/every scheduled week|near 100/);
     await user.click(screen.getByRole('button', { name: 'How load and capacity are defined' }));
-    expect(screen.getAllByText(/Part-time leaders stretch the calendar/).length).toBeGreaterThanOrEqual(2);
+    expect(screen.getAllByText(/On Hold and Commercialized included/).length).toBeGreaterThanOrEqual(2);
   });
 
   it('every Details trigger is an icon button named for its hub', () => {
@@ -325,14 +362,16 @@ describe('HubSummaryTable — "Load vs. capacity by hub" (P19-T06 merged table)'
     const dialog = screen.getByRole('dialog', { name: /PD-India/ });
     const design = within(dialog).getByTestId('capacity-design');
     expect(within(design).getByTestId('design-load')).toHaveTextContent('587');
-    expect(within(design).getByTestId('design-load-estimated')).toHaveTextContent('451.5');
+    expect(within(design).getByTestId('design-load')).toHaveTextContent('Full-year demand');
+    expect(within(design).getByTestId('design-in-plan')).toHaveTextContent('420');
+    expect(within(design).queryByTestId('design-load-estimated')).not.toBeInTheDocument();
     expect(within(design).getByTestId('design-capacity')).toHaveTextContent('252.62');
     expect(within(design).getByTestId('design-gap')).toHaveTextContent('+334.38');
     expect(within(design).getByTestId('design-completion')).toHaveTextContent('43%');
     const lab = within(dialog).getByTestId('capacity-lab');
     expect(within(lab).getByTestId('lab-completion')).toHaveTextContent('38%');
     expect(within(dialog).getAllByText('Shortfall')).toHaveLength(2);
-    expect(within(dialog).getAllByLabelText(/load versus yearly capacity/i).length).toBeGreaterThan(0);
+    expect(within(dialog).getAllByLabelText(/demand versus yearly capacity/i).length).toBeGreaterThan(0);
     expect(within(dialog).getByText('How this is calculated')).toBeInTheDocument();
     expect(within(dialog).getByText('IN-CH-2')).toBeInTheDocument();
 
@@ -344,8 +383,8 @@ describe('HubSummaryTable — "Load vs. capacity by hub" (P19-T06 merged table)'
   it('a hub whose region is shared still opens its own Details', async () => {
     const user = userEvent.setup();
     renderWithProviders(<HubSummaryTable data={six} activeRun={undefined} view={WEEKS_YEAR} />);
-    await user.click(screen.getByRole('button', { name: 'Details for OEM-Seltek' }));
-    expect(screen.getByRole('dialog', { name: /OEM-Seltek/ })).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Details for OEM-Seitek' }));
+    expect(screen.getByRole('dialog', { name: /OEM-Seitek/ })).toBeInTheDocument();
   });
 
   it('shows the no-run empty state', () => {

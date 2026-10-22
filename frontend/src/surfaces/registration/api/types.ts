@@ -60,9 +60,17 @@ export interface ProjectCreateRequest {
   target_end_week?: number | null;
   /** Default true. When false the workflow's lab steps are skipped (ADR 0007 §5). */
   certification_testing_required?: boolean;
-  /** Capacity surface "Estimated" column only — never affects the schedule (OQ #12). */
+  /** @deprecated R13 (ADR 0041): kept stored one release; nothing reads it. */
   estimated_design_weeks?: number | null;
   estimated_lab_weeks?: number | null;
+  /** P30 (ADR 0041, API_CONTRACT_P30 §2): the client's effort figures (workbook
+   *  col 16 "Process Design Man Week" / col 21 "Lab Weeks- Process Derived"),
+   *  0..9999.99, at most 2 dp. They drive the schedule AND the load (R1): the
+   *  server splits them over the steps (R2). null clears the figure (the
+   *  lead-time table applies). 422 `EFFORT_SPLIT_REJECTED` when a step would
+   *  exceed 104 weeks. Not financial. */
+  design_effort_weeks?: number | null;
+  lab_effort_weeks?: number | null;
   /** P27 (ADR 0038, API_CONTRACT_P27 §2/§3): "project nature" tags, any
    *  combination. On PATCH this is the FULL new set (omit = unchanged; null is a
    *  422). A newly set tag makes the server pre-fill its dimension with 5. */
@@ -115,6 +123,17 @@ export interface ProjectRead {
   certification_testing_required: boolean;
   estimated_design_weeks: number | null;
   estimated_lab_weeks: number | null;
+  /** P30 (ADR 0041, API_CONTRACT_P30 §2): the client's effort figures, 2 dp.
+   *  Writable (see `ProjectCreateRequest`). */
+  design_effort_weeks: number | null;
+  lab_effort_weeks: number | null;
+  /** P30: display only (workbook cols 22 / 17 / 23 / 24 / 3). Never written. */
+  safety_lab_weeks: number | null;
+  actual_design_weeks: number | null;
+  actual_testing_weeks: number | null;
+  safety_certification_required: boolean;
+  /** Col 3 "Project to be considered for Capacity Calculation" = Y. */
+  capacity_flag: boolean;
   /** ADR 0035: the client workbook's charter fields, as written. Read-only —
    *  not on `ProjectCreateRequest` / `ProjectUpdateRequest` (a write is 422).
    *  Never a scheduling input. */

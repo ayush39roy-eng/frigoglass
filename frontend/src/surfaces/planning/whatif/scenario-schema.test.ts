@@ -70,7 +70,7 @@ describe('buildScenarioRequest (mirrors the server limits)', () => {
     const v = buildScenarioRequest(l);
     expect(v.errors[a.key]?.category).toMatch(/OEM hubs use/);
     expect(v.errors[b.key]?.category).toMatch(/A\+, A, B and C/);
-    expect(categoriesForHub('OEM-Seltek')).toEqual(['A-OEM', 'B-OEM', 'C-OEM']);
+    expect(categoriesForHub('OEM-Seitek')).toEqual(['A-OEM', 'B-OEM', 'C-OEM']);
   });
 
   it('bounds designer FTE to (0, 1] and count to 1..50', () => {

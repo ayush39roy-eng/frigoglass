@@ -13,6 +13,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { useHubs } from '@/lib/api/reference';
+import { hubPickerLabel } from '@/lib/hub-labels';
 import { cn } from '@/lib/utils';
 import { isLabRegion, useHubFilter } from '@/stores/hub-filter';
 import { useSessionStore } from '@/stores/session';
@@ -116,7 +117,8 @@ export function HubFilterSelect({ className }: { className?: string }): React.JS
                 <SelectLabel>Hubs</SelectLabel>
                 {options.map((h) => (
                   <SelectItem key={h.id} value={`${HUB_PREFIX}${h.id}`}>
-                    {h.name}
+                    {/* P29: a member hub reads "OEM-HCK (Greece)" (served capacity hub). */}
+                    {hubPickerLabel(h, hubsQuery.data)}
                   </SelectItem>
                 ))}
               </SelectGroup>

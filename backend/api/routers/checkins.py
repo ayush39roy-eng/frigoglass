@@ -73,6 +73,7 @@ from services.active_run import get_active_run
 from services.checkin import CheckInAccess, candidate_filter, resolve_access, visible_stages
 from services.hub_scope import global_hub_filter
 from services.notifications import generate_stage_blocked_notifications
+from services.project_effort import TRIGGER_STAGE_STATUS, rederive_project_effort
 from services.rate_limit import TokenBucketLimiter
 from services.run_dispatch import enqueue_or_fail, find_in_flight_run
 from services.schedule_persistence import create_queued_schedule_run
@@ -372,11 +373,15 @@ async def submit_check_ins(
 
     before_states: dict[uuid.UUID, list[dict[str, Any]]] = defaultdict(list)
     blocked_now: list[_Planned] = []
+    started_flip: dict[uuid.UUID, Project] = {}
     for item in planned:
         before_states[item.project.id].append(_stage_state(item.row))
         was_blocked = item.row.status == WorkflowStepStatus.BLOCKED
+        was_started = item.row.status != WorkflowStepStatus.NOT_STARTED
         for name, value in item.merged.items():
             setattr(item.row, name, value)
+        if was_started != (item.row.status != WorkflowStepStatus.NOT_STARTED):
+            started_flip[item.project.id] = item.project
         if item.row.status == WorkflowStepStatus.BLOCKED and not was_blocked:
             blocked_now.append(item)
         db.add(
@@ -397,6 +402,15 @@ async def submit_check_ins(
         pid for pid, items in by_project.items() if any(i.changed for i in items)
     ]
     await mark_projects_stale(db, changed_ids)
+    # ADR 0041 R3/R6: a stage that left (or returned to) Not Started changes
+    # the effort split's `started` input; re-derive in the same transaction.
+    for project_id in sorted(started_flip, key=str):
+        await rederive_project_effort(
+            db,
+            started_flip[project_id],
+            trigger=TRIGGER_STAGE_STATUS,
+            actor_user_id=current_user.user_id,
+        )
 
     if blocked_now:
         names = dict(

@@ -4,6 +4,7 @@ import { BookingStatusChip } from '@/components/shared/booking-status-chip';
 import { Badge } from '@/components/ui/badge';
 import { CardInfo } from '@/components/ui/card-info';
 import { CURRENT_WEEK, WITHIN_YEAR_WEEK } from '@/lib/domain-constants';
+import { cn } from '@/lib/utils';
 import { useSessionStore } from '@/stores/session';
 
 import type { HubCapacityRow } from '../api/types';
@@ -15,6 +16,7 @@ import {
   type UnitFigures,
 } from '../lib/pick-figures';
 import { groupByHubFamily } from '../lib/hub-families';
+import { hasMemberBreakdown, membersCaption } from '../lib/members';
 import { formatFigure, formatPctCompact } from '../lib/status-format';
 
 /**
@@ -60,6 +62,8 @@ function BookedLine({
       </span>
       <span className="text-2xs text-text-muted" data-numeric="">
         {figures.bookedPct === null ? 'No capacity in scope · ' : null}
+        {/* P30: the demand the horizon pairs with (I19 rev.). */}
+        <span className="sr-only">Demand </span>
         {formatFigure(figures.load)} of {formatFigure(figures.capacity)} {unit}
       </span>
     </div>
@@ -76,6 +80,7 @@ export function HubBookingStrip({
   const { horizon } = view;
   const scopedToHubs = useSessionStore((s) => (s.me ? !s.me.hub_scope_all : false));
   if (rows.length === 0) return null;
+  const groups = groupByHubFamily(rows);
   return (
     <section aria-labelledby="capacity-booked-heading" className="space-y-s2" data-testid="hub-booking-strip">
       <div className="flex flex-wrap items-center justify-between gap-s2">
@@ -93,9 +98,11 @@ export function HubBookingStrip({
           </Badge>
           <CardInfo label="How booked % is defined">
             <p>
-              <strong className="text-text">Booked %</strong> = load / capacity &times; 100, computed on the
-              server to two decimals (ADR&nbsp;0016, Invariant I19). Over 100&nbsp;% means more work is
-              planned than the capacity can deliver.
+              <strong className="text-text">Booked %</strong> = demand / capacity &times; 100, computed on the
+              server to two decimals (ADR&nbsp;0016, Invariant I19). Full year: the full-year demand of every
+              project (On Hold and Commercialized included) against the yearly capacity. YTD 2026: the
+              remaining demand of open projects against the remaining capacity (ADR&nbsp;0041). Over 100&nbsp;%
+              means more work is asked of the hub than its capacity can deliver.
             </p>
             <p>
               <strong className="text-text">Full</strong> from 100&nbsp;%, <strong className="text-text">Near full</strong>{' '}
@@ -109,14 +116,20 @@ export function HubBookingStrip({
               and days.
             </p>
             <p>
-              Hubs are grouped by family (R&amp;D, PD, OEM). The boxes carry no family total because the
-              server does not serve one, and the browser does not add hubs up.
+              Hubs are grouped by family (R&amp;D, PD). The boxes carry no family total because the server
+              does not serve one, and the browser does not add hubs up. OEM-HCK and OEM-Seitek share
+              R&amp;D-Greece&rsquo;s capacity, so their demand is in R&amp;D-Greece&rsquo;s booked % (ADR&nbsp;0042).
             </p>
           </CardInfo>
         </div>
       </div>
-      <div className="grid gap-s3 md:grid-cols-2 xl:grid-cols-3" data-testid="booked-families">
-        {groupByHubFamily(rows).map(({ family, rows: familyRows }) => {
+      {/* P29: with the four capacity hubs only R&D and PD boxes are served, so the
+          grid takes as many columns as there are boxes (no empty third column). */}
+      <div
+        className={cn('grid gap-s3', groups.length >= 3 ? 'md:grid-cols-2 xl:grid-cols-3' : groups.length === 2 ? 'md:grid-cols-2' : undefined)}
+        data-testid="booked-families"
+      >
+        {groups.map(({ family, rows: familyRows }) => {
           const headingId = `booked-family-${family.key}-heading`;
           return (
             <section
@@ -136,7 +149,23 @@ export function HubBookingStrip({
                     className="flex min-w-0 flex-col gap-s2 rounded-dash border border-dash-hairline bg-surface p-s3 shadow-dashCard"
                     data-testid={`booked-hub-${r.hub}`}
                   >
-                    <h4 className="truncate text-sm font-bold text-text">{r.hub}</h4>
+                    <div className="min-w-0">
+                      <h4 className="text-sm font-bold text-text">{r.hub}</h4>
+                      {/* P29 (ADR 0042): one capacity for the capacity hub and its member hubs. */}
+                      {hasMemberBreakdown(r) ? (
+                        <p className="text-2xs text-text-muted" data-testid={`booked-members-${r.hub}`}>
+                          {membersCaption(r)}
+                          {r.selected_member !== null && r.selected_member !== r.hub ? (
+                            <>
+                              {' · '}
+                              <span className="font-semibold text-primary-subtle-fg" data-testid={`booked-selected-${r.hub}`}>
+                                Filtered on {r.selected_member}
+                              </span>
+                            </>
+                          ) : null}
+                        </p>
+                      ) : null}
+                    </div>
                     <div className="grid grid-cols-2 gap-s3">
                       <BookedLine
                         label="Design"

@@ -332,13 +332,18 @@ export function StatusDonut({ data }: { data: StatusOverview }): React.JSX.Eleme
   );
 }
 
+/** "Regulatory / Business Compliance" → ["Regulatory", "Business Compliance"]: the
+ *  only allowed break points of a type label are its " / " separators. */
+function labelParts(label: string): string[] {
+  return label.split(' / ');
+}
+
 /**
  * "Projects by type" (owner ask 2026-10-22): the served `GET /dashboard/analytics`
- * `by_type` buckets as a horizontal bar list — one grid row per type,
- * `[full label] [bar 1fr] [count · served share]` (the same overlap-proof row
- * layout as the fixed legends). Bar widths are the served `share_pct` figures;
+ * `by_type` buckets as a bar list. P29-T04: each row is `[full label … count · served
+ * share]` over a full-width thin bar. Bar widths are the served `share_pct` figures;
  * counts and shares print verbatim (I9/I19). Full type names, never ellipsized
- * (the label wraps inside its own cell).
+ * (a label breaks only at " / ").
  */
 export function TypeBars({ buckets }: { buckets: AnalyticsBucket[] }): React.JSX.Element {
   const rows = buckets.map((b, i) => ({
@@ -365,24 +370,42 @@ export function TypeBars({ buckets }: { buckets: AnalyticsBucket[] }): React.JSX
       {rows.length === 0 ? (
         <p className="text-xs text-text-muted">No pipeline projects in view.</p>
       ) : (
-        <ul className="flex flex-col gap-s3" aria-label="Pipeline projects by type">
+        // P29-T04 (owner polish): each row is two lines, line 1 the label (left) and
+        // "count · %" (right), line 2 a FULL-WIDTH thin bar, so the bar always has the
+        // card's width and the label the row's. Labels break only at " / "
+        // ("Regulatory /" + "Business Compliance"), never ellipsized; the figures never wrap.
+        <ul className="flex flex-col gap-s3" aria-label="Pipeline projects by type" data-testid="exec-type-list">
           {rows.map((r) => (
             <li
               key={r.key}
-              className="grid grid-cols-[minmax(0,7rem)_minmax(1.5rem,1fr)_auto] items-center gap-x-s2"
+              className="flex flex-col gap-1"
               data-testid={`exec-type-row-${r.key}`}
               aria-label={`${r.label}: ${formatInteger(r.count)} projects (${formatServedPct(r.share_pct)})`}
             >
-              <span className="text-2xs font-semibold leading-tight text-text">{r.label}</span>
-              <span className="h-2.5 overflow-hidden rounded-full bg-surface-sunken" aria-hidden="true">
+              <span className="flex items-baseline justify-between gap-s2" data-testid="exec-type-head">
+                <span className="min-w-0 text-2xs font-semibold leading-tight text-text" data-testid="exec-type-label">
+                  {labelParts(r.label).map((part, i, all) => (
+                    <React.Fragment key={part}>
+                      <span className="whitespace-nowrap">{i < all.length - 1 ? `${part} /` : part}</span>
+                      {i < all.length - 1 ? ' ' : null}
+                    </React.Fragment>
+                  ))}
+                </span>
+                <span
+                  className="shrink-0 whitespace-nowrap text-right text-2xs tabular-nums text-text-muted"
+                  data-numeric=""
+                  aria-hidden="true"
+                  data-testid="exec-type-figures"
+                >
+                  {formatInteger(r.count)} · {formatServedPct(r.share_pct)}
+                </span>
+              </span>
+              <span className="block h-1.5 w-full overflow-hidden rounded-full bg-surface-sunken" aria-hidden="true" data-testid="exec-type-track">
                 <span
                   className="block h-full rounded-full"
                   style={{ width: `${String(Math.min(100, r.share_pct))}%`, background: r.fill }}
                   data-served-share={r.share_pct}
                 />
-              </span>
-              <span className="whitespace-nowrap pl-s2 text-right text-2xs tabular-nums text-text-muted" data-numeric="" aria-hidden="true">
-                {formatInteger(r.count)} · {formatServedPct(r.share_pct)}
               </span>
             </li>
           ))}

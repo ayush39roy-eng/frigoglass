@@ -41,14 +41,14 @@ class Hub(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         ),
         nullable=False,
     )
-    #: True for OEM-HCK / OEM-Seltek, per DOMAIN_RULES.md's CAT_NOT_ALLOWED rule
+    #: True for OEM-HCK / OEM-Seitek, per DOMAIN_RULES.md's CAT_NOT_ALLOWED rule
     #: ("... or OEM for OEM-hub projects"). Stored rather than derived by string-
     #: matching `name` in application code, to keep that rule's implementation
     #: (P2/P3) a single column read instead of scattered enum comparisons.
     is_oem: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     #: ADR 0042 (P29): the hub whose engineers, work calendar and design supply
     #: serve this hub's projects. `None` = this hub is its own capacity hub.
-    #: OEM-HCK and OEM-Seltek point at R&D-Greece (seed and migration
+    #: OEM-HCK and OEM-Seitek point at R&D-Greece (seed and migration
     #: `p29a_capacity_hubs`). A capacity hub has no capacity hub of its own:
     #: the CHECK below refuses a self-reference and the trigger
     #: `trg_hubs_capacity_hub_flat` refuses a chain (member of a member) and a

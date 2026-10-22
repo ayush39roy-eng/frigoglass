@@ -31,11 +31,13 @@ export interface PriorityLoadBar {
   label: string;
   /** Optional second line under the label, e.g. the hubs of a lab region. */
   sublabel?: string;
-  split: PriorityLoadSplit;
+  /** P30: the served split of the FULL-YEAR demand; null in the remaining view
+   *  (no split of the remaining demand is served), which draws one plain column. */
+  split: PriorityLoadSplit | null;
   /** The served weeks total the split sums to (`design_load_weeks` / `lab_load_weeks`);
    *  used only as the denominator of each segment's pixel share. */
   splitTotal: number;
-  /** The served total load in the page's unit; null when the served field is absent. */
+  /** The served demand in the page's unit (P30: full-year or remaining); null when absent. */
   load: number | null;
   /** The served capacity for the selected horizon in the page's unit; null when absent. */
   capacity: number | null;
@@ -52,6 +54,8 @@ export interface PriorityLoadChartProps {
   /** Unit of the per-priority split values (served in weeks only), e.g. "wks". */
   splitUnit: string;
   capacityLabel: string;
+  /** P30: what the column is, e.g. "Full-year demand" / "Remaining demand". */
+  loadLabel?: string;
 }
 
 function pct(value: number, max: number): string {
@@ -78,7 +82,16 @@ const PLOT_PX = 204;
  *  one is read from the column's hover card (owner ask 2026-10-22). */
 const MIN_LABEL_PX = 14;
 
-export function PriorityLoadChart({ bars, ariaLabel, unit, unitShort, splitUnit, capacityLabel }: PriorityLoadChartProps): React.JSX.Element {
+export function PriorityLoadChart({
+  bars,
+  ariaLabel,
+  unit,
+  unitShort,
+  splitUnit,
+  capacityLabel,
+  loadLabel = 'Load',
+}: PriorityLoadChartProps): React.JSX.Element {
+  const hasSplit = bars.some((b) => b.split !== null);
   // Display scale only: the tallest load or capacity outline sets the axis.
   const { top: max, ticks } = axisScale(bars.reduce((m, b) => Math.max(m, b.load ?? 0, b.capacity ?? 0), 0));
   const captionId = React.useId();
@@ -94,12 +107,19 @@ export function PriorityLoadChart({ bars, ariaLabel, unit, unitShort, splitUnit,
           <span className="inline-block size-2.5 rounded-sm border-[1.5px] border-text-muted" />
           {capacityLabel}
         </li>
-        {PRIORITY_BUCKETS.map((b) => (
-          <li key={b} className="flex items-center gap-1">
-            <span className={cn('inline-block size-2.5 rounded-sm', BUCKET_BG[b])} />
-            {b === 'Queue' ? 'Queue' : b}
+        {hasSplit ? (
+          PRIORITY_BUCKETS.map((b) => (
+            <li key={b} className="flex items-center gap-1">
+              <span className={cn('inline-block size-2.5 rounded-sm', BUCKET_BG[b])} />
+              {b === 'Queue' ? 'Queue' : b}
+            </li>
+          ))
+        ) : (
+          <li className="flex items-center gap-1">
+            <span className="inline-block size-2.5 rounded-sm bg-primary/70" />
+            {loadLabel}
           </li>
-        ))}
+        )}
       </ul>
 
       {/* Narrow screens: the columns keep a readable width and the plot scrolls
@@ -144,26 +164,30 @@ export function PriorityLoadChart({ bars, ariaLabel, unit, unitShort, splitUnit,
                   title={`${capacityLabel} ${formatFigure(bar.capacity)} ${unitShort}`}
                 />
                 <div className="relative mx-[18%] flex flex-col-reverse overflow-hidden rounded-t-sm" style={{ height: pct(bar.load ?? 0, max) }}>
+                  {bar.split === null ? (
+                    <div className="h-full w-full bg-primary/70" data-testid={`load-plain-${bar.key}`} />
+                  ) : null}
                   {PRIORITY_BUCKETS.map((b) => {
-                    if (bar.split[b] <= 0) return null;
+                    const split = bar.split;
+                    if (split === null || split[b] <= 0) return null;
                     // Pixel estimate for the label decision only (presentation).
                     const px =
                       max > 0 && bar.splitTotal > 0
-                        ? PLOT_PX * Math.min(1, (bar.load ?? 0) / max) * (bar.split[b] / bar.splitTotal)
+                        ? PLOT_PX * Math.min(1, (bar.load ?? 0) / max) * (split[b] / bar.splitTotal)
                         : 0;
                     return (
                       <div
                         key={b}
                         className={cn('grid w-full shrink-0 place-items-center overflow-hidden', BUCKET_BG[b])}
-                        style={{ height: pct(bar.split[b], bar.splitTotal) }}
-                        title={`${BUCKET_SHORT[b]} ${formatDecimal(bar.split[b])} ${splitUnit}`}
+                        style={{ height: pct(split[b], bar.splitTotal) }}
+                        title={`${BUCKET_SHORT[b]} ${formatDecimal(split[b])} ${splitUnit}`}
                       >
                         {px >= MIN_LABEL_PX ? (
                           <span
                             className="font-mono text-[0.625rem] font-bold leading-none tabular-nums text-white [text-shadow:0_1px_1px_rgb(0_0_0/0.35)]"
                             data-testid={`load-seg-${bar.key}-${b}`}
                           >
-                            {formatDecimal(bar.split[b])}
+                            {formatDecimal(split[b])}
                           </span>
                         ) : null}
                       </div>
@@ -177,19 +201,21 @@ export function PriorityLoadChart({ bars, ariaLabel, unit, unitShort, splitUnit,
                   data-testid={`load-bar-hover-${bar.key}`}
                 >
                   <p className="mb-1 font-bold text-text">{bar.label}</p>
-                  {PRIORITY_BUCKETS.map((b) => (
-                    <p key={b} className="flex items-center justify-between gap-s3 tabular-nums text-text-muted">
-                      <span className="flex items-center gap-1">
-                        <span className={cn('inline-block size-2 rounded-sm', BUCKET_BG[b])} />
-                        {b}
-                      </span>
-                      <span className="font-mono font-semibold text-text">
-                        {formatDecimal(bar.split[b])} {splitUnit}
-                      </span>
-                    </p>
-                  ))}
+                  {bar.split !== null
+                    ? PRIORITY_BUCKETS.map((b) => (
+                        <p key={b} className="flex items-center justify-between gap-s3 tabular-nums text-text-muted">
+                          <span className="flex items-center gap-1">
+                            <span className={cn('inline-block size-2 rounded-sm', BUCKET_BG[b])} />
+                            {b}
+                          </span>
+                          <span className="font-mono font-semibold text-text">
+                            {formatDecimal(bar.split?.[b] ?? 0)} {splitUnit}
+                          </span>
+                        </p>
+                      ))
+                    : null}
                   <p className="mt-1 flex justify-between gap-s3 border-t border-dash-hairline pt-1 tabular-nums text-text-muted">
-                    Load <span className="font-mono font-semibold text-text">{formatFigure(bar.load)} {unitShort}</span>
+                    {loadLabel} <span className="font-mono font-semibold text-text">{formatFigure(bar.load)} {unitShort}</span>
                   </p>
                   <p className="flex justify-between gap-s3 tabular-nums text-text-muted">
                     {capacityLabel}{' '}
@@ -234,17 +260,22 @@ export function PriorityLoadChart({ bars, ariaLabel, unit, unitShort, splitUnit,
 
       <table className="sr-only">
         <caption>
-          {ariaLabel}; load and capacity in {unit}, priority split in {splitUnit}
+          {ariaLabel}; {loadLabel.toLowerCase()} and capacity in {unit}
+          {hasSplit ? `, priority split in ${splitUnit}` : ''}
         </caption>
         <thead>
           <tr>
             <th scope="col">Name</th>
-            {PRIORITY_BUCKETS.map((b) => (
-              <th key={b} scope="col">
-                {b} ({splitUnit})
-              </th>
-            ))}
-            <th scope="col">Load ({unitShort})</th>
+            {hasSplit
+              ? PRIORITY_BUCKETS.map((b) => (
+                  <th key={b} scope="col">
+                    {b} ({splitUnit})
+                  </th>
+                ))
+              : null}
+            <th scope="col">
+              {loadLabel} ({unitShort})
+            </th>
             <th scope="col">
               {capacityLabel} ({unitShort})
             </th>
@@ -254,9 +285,7 @@ export function PriorityLoadChart({ bars, ariaLabel, unit, unitShort, splitUnit,
           {bars.map((bar) => (
             <tr key={bar.key}>
               <th scope="row">{bar.label}</th>
-              {PRIORITY_BUCKETS.map((b) => (
-                <td key={b}>{formatDecimal(bar.split[b])}</td>
-              ))}
+              {hasSplit ? PRIORITY_BUCKETS.map((b) => <td key={b}>{formatDecimal(bar.split?.[b] ?? 0)}</td>) : null}
               <td>{formatFigure(bar.load)}</td>
               <td>{formatFigure(bar.capacity)}</td>
             </tr>

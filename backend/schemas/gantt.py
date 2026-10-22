@@ -67,8 +67,15 @@ class GanttStepRow(BaseModel):
     #: time`). `lead_time_weeks` is the lead-time table value for the
     #: project's workflow/category; the two timing fields are the live
     #: planner inputs (they may be newer than the run while it recalculates).
+    #: ADR 0041 R4 (docs/API_CONTRACT_P30.md §4): `duration_override_weeks`
+    #: is the USER's figure only (1..104); `effort_weeks` is the derived
+    #: per-project effort (0..104, never a user edit). Effective = user ??
+    #: effort ?? lead. A "timing edit" (hasTimingEdit / Reset timing) is a
+    #: non-null `duration_override_weeks` or `start_not_before_week`; Reset
+    #: timing clears both and the step falls back to `effort_weeks`.
     lead_time_weeks: int
     duration_override_weeks: int | None
+    effort_weeks: int | None
     start_not_before_week: int | None
     #: Computed server-side from ADR 0019 §4 and the caller's GANTT write
     #: permission on the project; the browser never derives it.

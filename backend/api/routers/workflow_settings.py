@@ -57,6 +57,7 @@ from models.enums import OEM_PROJECT_CATEGORIES, ProjectCategory, WorkflowStepKi
 from models.hub import Hub, HubWorkCalendar
 from models.user import User
 from models.workflow import Workflow, WorkflowLeadTime, WorkflowStepTemplate
+from scheduling.effort_split import EffortSplitRejected
 from scheduling.types import WorkflowStepTemplate as SchedWorkflowStepTemplate
 from scheduling.workflow import build_workflows
 from schemas.workflow_settings import (
@@ -83,6 +84,12 @@ from services.capacity_supply import (
     round2,
 )
 from services.hub_scope import hub_scope_filter, scoped_lab_regions
+from services.project_effort import (
+    TRIGGER_LEAD_TIME_EDIT,
+    TRIGGER_STEP_KIND_EDIT,
+    rederive_all_projects,
+    split_rejected_error,
+)
 from services.schedule_stale import mark_all_schedulable_stale
 from services.workflow_durations import recompute_step_durations
 from services.workflow_previews import REFERENCE_CATEGORY, load_category_previews, ratio
@@ -455,10 +462,24 @@ async def put_workflow_steps(
         sid: {"kind": t.kind.value, "predecessor_ids": list(t.predecessor_ids or [])}
         for sid, t in sorted(templates.items())
     }
+    kinds_changed = any(templates[sid].kind != s.kind for sid, s in proposed.items())
     for sid, s in proposed.items():
         templates[sid].kind = s.kind
         templates[sid].predecessor_ids = list(s.predecessor_ids)
     await db.flush()
+    rederived = 0
+    if kinds_changed:
+        # ADR 0041 R6: the effort split depends on which steps are design /
+        # lab, so a step-kind edit re-derives every project with a figure
+        # (frozen ones excepted, I10). R7 rejects the whole edit.
+        try:
+            results = await rederive_all_projects(
+                db, trigger=TRIGGER_STEP_KIND_EDIT, actor_user_id=current_user.user_id
+            )
+        except EffortSplitRejected as exc:
+            await db.rollback()
+            raise split_rejected_error(exc) from exc
+        rederived = sum(1 for r in results if r.changed)
     after = {
         sid: {"kind": t.kind.value, "predecessor_ids": list(t.predecessor_ids or [])}
         for sid, t in sorted(templates.items())
@@ -472,7 +493,7 @@ async def put_workflow_steps(
         entity_id=workflow_id,
         hub_id=None,
         before_state={"steps": before},
-        after_state={"steps": after},
+        after_state={"steps": after, "effort_rederived_projects": rederived},
     )
 
 
@@ -551,6 +572,17 @@ async def put_lead_times(
         )
     await db.flush()
     recomputed = await recompute_step_durations(db)
+    # ADR 0041 R6: the split depends on the table's shape, so a lead-time
+    # edit re-derives every project with a figure (frozen ones excepted).
+    # It writes `effort_weeks` only: a user override is never cleared.
+    try:
+        results = await rederive_all_projects(
+            db, trigger=TRIGGER_LEAD_TIME_EDIT, actor_user_id=current_user.user_id
+        )
+    except EffortSplitRejected as exc:
+        await db.rollback()
+        raise split_rejected_error(exc) from exc
+    rederived = sum(1 for r in results if r.changed)
     return await _finish_put(
         db,
         response,
@@ -560,7 +592,11 @@ async def put_lead_times(
         entity_id="lead_times",
         hub_id=None,
         before_state={"lead_times": before},
-        after_state={"lead_times": after, "recomputed_step_rows": recomputed},
+        after_state={
+            "lead_times": after,
+            "recomputed_step_rows": recomputed,
+            "effort_rederived_projects": rederived,
+        },
     )
 
 
@@ -590,7 +626,7 @@ async def put_hub_calendar(
     if hub is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Unknown hub")
     if hub.capacity_hub_id is not None:
-        # P29 (ADR 0042 §1): a capacity member hub (OEM-HCK, OEM-Seltek) uses
+        # P29 (ADR 0042 §1): a capacity member hub (OEM-HCK, OEM-Seitek) uses
         # its capacity hub's calendar; it has none of its own.
         raise CodedHTTPException(
             HTTP_422,

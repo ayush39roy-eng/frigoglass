@@ -9,6 +9,8 @@ Gantt").
     project frozen:                                            409 PROJECT_FROZEN
     project status not schedulable:                            409 NOT_SCHEDULABLE
     step lead time 0 (skipped):                                409 STEP_SKIPPED
+    effort-zeroed step (ADR 0041 R4/R5) and a NEW non-null value:
+                                                               409 STEP_SKIPPED
     requested values equal the stored ones:                    unchanged (nothing written)
     step Done (any change):                                    409 STEP_DONE
     a non-null start_not_before_week on In Progress / Blocked: 409 STEP_STARTED
@@ -69,7 +71,8 @@ from schemas.step_timing import DURATION_OVERRIDE_MAX_WEEKS, TimingEditable
 from services.active_run import get_active_run
 from services.run_dispatch import enqueue_or_fail, find_in_flight_run
 from services.schedule_persistence import create_queued_schedule_run
-from services.workflow_durations import effective_duration_weeks
+from services.workflow_durations import live_step_effective_weeks
+from services.workspace import row_is_skipped
 from workers.progress import publish_progress
 from workers.schedule_tasks import run_greedy_schedule
 
@@ -93,6 +96,10 @@ class StepTimingResult:
     duration_override_weeks: int | None
     start_not_before_week: int | None
     effective_duration_weeks: int
+    #: ADR 0041 R4: the derived effort value the step falls back to when the
+    #: user override is cleared, and the lead-time value.
+    effort_weeks: int | None
+    lead_time_weeks: int
     recalc_status: RecalcStatus
     schedule_run_id: uuid.UUID | None = None
     baseline_run_id: uuid.UUID | None = None
@@ -149,18 +156,23 @@ def validate_timing_changes(changes: dict[str, Any]) -> None:
 
 
 def _served_effective(
-    lead_time_weeks: int, duration_override_weeks: int | None, cert_skipped: bool
+    row: ProjectWorkflowStep,
+    kind: WorkflowStepKind,
+    cert_required: bool,
+    duration_override_weeks: int | None,
 ) -> int:
-    """The response's `effective_duration_weeks`: 0 for a step skipped because
-    certification testing is off (it books no weeks; P12-F04), else
-    `services.workflow_durations.effective_duration_weeks`. The shared helper
-    keeps answering the lead time for skipped steps, since its other callers
-    use it as a roll-up weight.
-    """
+    """The response's `effective_duration_weeks`: `eff` of the step with the
+    given user override (ADR 0041 R4: `user ?? effort ?? lead`), 0 for any
+    skipped step (lead 0, lab without certification testing: P12-F04, or an
+    effort-zeroed step). The scheduler's own predicate."""
 
-    if cert_skipped:
-        return 0
-    return effective_duration_weeks(lead_time_weeks, duration_override_weeks)
+    return live_step_effective_weeks(
+        lead_weeks=row.duration_weeks,
+        kind=kind,
+        certification_testing_required=cert_required,
+        user_override_weeks=duration_override_weeks,
+        effort_weeks=row.effort_weeks,
+    )
 
 
 def _conflict(code: str, message: str) -> CodedHTTPException:
@@ -225,15 +237,29 @@ async def apply_step_timing(
         )
 
     # A lab step is skipped while the project has no certification testing
-    # (DOMAIN_RULES "Lead times"); the scheduler ignores timing on it.
+    # (DOMAIN_RULES "Lead times"); the scheduler ignores timing on it, but
+    # the values are kept for when it is turned back on (P12-F04).
     cert_skipped = (
         template.kind == WorkflowStepKind.LAB and not project.certification_testing_required
     )
+    cert_required = project.certification_testing_required
     before: dict[str, int | None] = {
         "duration_override_weeks": row.duration_override_weeks,
         "start_not_before_week": row.start_not_before_week,
     }
     after = {name: changes.get(name, before[name]) for name in TIMING_FIELDS}
+    # ADR 0041 R4/R5: a step the client's effort split zeroed (effective 0,
+    # the one skip predicate) is skipped: a NEW user value cannot be set on
+    # it (409 STEP_SKIPPED). Clearing values ("Reset timing") stays allowed,
+    # and a step that already carries a user override is not skipped (the
+    # override keeps it).
+    if not cert_skipped and row_is_skipped(row, template.kind, cert_required):
+        if any(after[name] is not None and after[name] != before[name] for name in TIMING_FIELDS):
+            raise _conflict(
+                "STEP_SKIPPED",
+                "This step is skipped for the project (its effort share is 0 weeks) and "
+                "cannot be given timing.",
+            )
     if after == before:
         return StepTimingResult(
             project_id=project.id,
@@ -241,8 +267,10 @@ async def apply_step_timing(
             duration_override_weeks=before["duration_override_weeks"],
             start_not_before_week=before["start_not_before_week"],
             effective_duration_weeks=_served_effective(
-                row.duration_weeks, before["duration_override_weeks"], cert_skipped
+                row, template.kind, cert_required, before["duration_override_weeks"]
             ),
+            effort_weeks=row.effort_weeks,
+            lead_time_weeks=row.duration_weeks,
             recalc_status="unchanged",
         )
     if row.status == WorkflowStepStatus.DONE:
@@ -290,7 +318,7 @@ async def apply_step_timing(
         )
     )
     effective = _served_effective(
-        row.duration_weeks, after["duration_override_weeks"], cert_skipped
+        row, template.kind, cert_required, after["duration_override_weeks"]
     )
 
     if recalc != "queued":
@@ -301,6 +329,8 @@ async def apply_step_timing(
             duration_override_weeks=after["duration_override_weeks"],
             start_not_before_week=after["start_not_before_week"],
             effective_duration_weeks=effective,
+            effort_weeks=row.effort_weeks,
+            lead_time_weeks=row.duration_weeks,
             recalc_status=recalc,
         )
 
@@ -331,6 +361,8 @@ async def apply_step_timing(
             duration_override_weeks=after["duration_override_weeks"],
             start_not_before_week=after["start_not_before_week"],
             effective_duration_weeks=effective,
+            effort_weeks=row.effort_weeks,
+            lead_time_weeks=row.duration_weeks,
             recalc_status="dispatch_failed",
             baseline_run_id=baseline_id,
         )
@@ -361,6 +393,8 @@ async def apply_step_timing(
         duration_override_weeks=after["duration_override_weeks"],
         start_not_before_week=after["start_not_before_week"],
         effective_duration_weeks=effective,
+        effort_weeks=row.effort_weeks,
+        lead_time_weeks=row.duration_weeks,
         recalc_status="queued",
         schedule_run_id=run.id,
         baseline_run_id=baseline_id,

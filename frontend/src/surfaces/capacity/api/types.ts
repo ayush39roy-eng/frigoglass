@@ -36,27 +36,39 @@ export interface CapacityChamberRow {
  * status exists anywhere (I19).
  */
 export interface CapacityHubMember {
-  /** "R&D-Greece" | "OEM-HCK" | "OEM-Seltek". */
+  /** "R&D-Greece" | "OEM-HCK" | "OEM-Seitek". */
   hub: HubName;
   /** True for the capacity hub itself (listed first when in scope). */
   own: boolean;
-  /** Projects of this hub with at least one non-skipped design step in the active run. */
+  /** P30 (API_CONTRACT_P30 §4): projects of this hub in the full-year scope
+   *  (status not Cancelled / Draft). */
   project_count: number;
-  /** Integer effort weeks of those projects (I6 per hub); 0 with no run. */
+  /** P30: full-year design DEMAND of this hub's projects (I25), integer weeks. */
   design_load_weeks: number;
+  /** P30: remaining design demand (I25), integer weeks. */
+  design_load_remaining_weeks: number;
+  /** P30: design weeks booked by the active run (I6); 0 with no run. */
+  design_load_booked_weeks: number;
+  /** P30: projects with booked design work in the active run. */
+  booked_project_count: number;
 }
 
 /**
  * One CAPACITY hub's load vs. supply, from `GET /capacity/hub-load` (→ HubCapacitySummary
  * row). P29 (ADR 0042): rows are the four capacity hubs only; R&D-Greece's row
- * aggregates OEM-HCK and OEM-Seltek (load) and serves `members` for display.
+ * aggregates OEM-HCK and OEM-Seitek (load) and serves `members` for display.
  * (PLACEHOLDER — P9 contract §4 *extended*, ADR 0008.)
  *
- * LOAD (primary figures, Invariants I6 / I7): `design_load_weeks` = Σ design-kind
- * step durations over the active run for the hub's projects; `lab_load_weeks` =
- * Σ lab-kind durations × 1.0 for the hub's LAB REGION (repeated on every hub of
- * that region). `*_estimated_weeks` = Σ the projects' hand-entered estimates —
- * a secondary figure (OQ #12), never a schedule input.
+ * LOAD (P30, ADR 0041, API_CONTRACT_P30 §4; DOMAIN_RULES "Load basis"):
+ *   `design_load_weeks` / `lab_load_weeks`  = FULL-YEAR DEMAND (I25: every project
+ *       not Cancelled / Draft, On Hold + Commercialized included), paired with the
+ *       yearly capacity (year booked % / gap / completion, I19 rev.);
+ *   `*_load_remaining_weeks` = REMAINING DEMAND (schedulable projects, Done stages
+ *       0), paired with the remaining capacity;
+ *   `*_load_booked_weeks`   = what the active run booked (I6 / I7). No booked %
+ *       of this kind is served, so none is shown.
+ * Lab figures are the hub's LAB REGION's (repeated on every hub of that region).
+ * `*_estimated_weeks` are deprecated (R13), kept one release, not read.
  *
  * SUPPLY (the client's formulas, computed server-side to 2 dp):
  *   design_capacity_year      = working_weeks_per_engineer × engineer_fte_total
@@ -69,9 +81,19 @@ export interface CapacityHubMember {
 export interface HubCapacityRow {
   hub: HubName;
   lab_region: LabRegion;
+  /** P30: full-year design demand (I25), integer weeks. */
   design_load_weeks: number;
+  /** P30: remaining design demand (I25), integer weeks. */
+  design_load_remaining_weeks: number;
+  /** P30: design weeks booked by the active run (I6), integer weeks. */
+  design_load_booked_weeks: number;
   design_load_estimated_weeks: number;
+  /** P30: full-year lab demand of the lab region (I25), 2 dp. */
   lab_load_weeks: number;
+  /** P30: remaining lab demand of the lab region (I25), 2 dp. */
+  lab_load_remaining_weeks: number;
+  /** P30: lab weeks of the region booked by the active run (I7), 2 dp. */
+  lab_load_booked_weeks: number;
   lab_load_estimated_weeks: number;
   engineer_fte_total: number;
   working_weeks_per_engineer: number;
@@ -119,7 +141,7 @@ export interface HubCapacityRow {
   lab_load_days: YearRemaining;
   /** P29 (ADR 0042, API_CONTRACT_P29 §2.2): the hubs this capacity hub's row
    *  covers, for display only. `[]` on a capacity hub with no member hubs; on
-   *  R&D-Greece: own first, then OEM-HCK / OEM-Seltek, only the hubs in the
+   *  R&D-Greece: own first, then OEM-HCK / OEM-Seitek, only the hubs in the
    *  caller's scope. Never summed in the browser: the row's own
    *  `design_load_weeks` is the total (a scoped caller sees a partial list). */
   members: CapacityHubMember[];
@@ -153,9 +175,14 @@ export interface CapacityArea {
   hubs: HubName[];
   lab_regions: LabRegion[];
   design_load_weeks: number;
+  /** P30: remaining design demand; booked = run-booked (no % served). */
+  design_load_remaining_weeks: number;
+  design_load_booked_weeks: number;
   design_capacity_year: number;
   design_capacity_remaining: number;
   lab_load_weeks: number;
+  lab_load_remaining_weeks: number;
+  lab_load_booked_weeks: number;
   lab_capacity_year: number;
   lab_capacity_remaining: number;
   design_booked_pct_year: number | null;
@@ -195,7 +222,12 @@ export interface LabRegionCapacityRow {
   weekdays_per_week: number;
   chamber_count: number;
   capacity_weeks: YearRemaining;
+  /** P30: full-year lab demand of the region (I25), 2 dp. */
   load_weeks: number;
+  /** P30: remaining lab demand of the region (I25), 2 dp. */
+  load_remaining_weeks: number;
+  /** P30: lab weeks of the region booked by the active run (I7), 2 dp. */
+  load_booked_weeks: number;
   capacity_days: YearRemaining;
   load_days: YearRemaining;
 }
@@ -205,6 +237,9 @@ export interface CapacityTotals {
   hubs: HubName[];
   lab_regions: LabRegion[];
   design_load_weeks: number;
+  /** P30: remaining design demand; booked = run-booked (no % served). */
+  design_load_remaining_weeks: number;
+  design_load_booked_weeks: number;
   design_capacity_year: number;
   design_capacity_remaining: number;
   design_booked_pct_year: number | null;
@@ -213,6 +248,8 @@ export interface CapacityTotals {
   design_booking_status_remaining: BookingStatus;
   design_load_by_priority: PriorityLoadSplit;
   lab_load_weeks: number;
+  lab_load_remaining_weeks: number;
+  lab_load_booked_weeks: number;
   lab_capacity_year: number;
   lab_capacity_remaining: number;
   lab_booked_pct_year: number | null;

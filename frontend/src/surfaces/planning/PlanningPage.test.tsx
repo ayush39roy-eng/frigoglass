@@ -41,16 +41,16 @@ vi.mock('./hooks/use-planning', () => ({
 vi.mock('@/lib/api/reference', () => ({
   useHubs: () => ({
     data: [
-      { id: 'hub-1', name: 'R&D-Greece', lab_region: 'Greece', is_oem: false },
-      { id: 'hub-2', name: 'PD-India', lab_region: 'India', is_oem: false },
+      { id: 'hub-1', name: 'R&D-Greece', lab_region: 'Greece', is_oem: false, capacity_hub_id: null, capacity_hub_name: null },
+      { id: 'hub-2', name: 'PD-India', lab_region: 'India', is_oem: false, capacity_hub_id: null, capacity_hub_name: null },
     ],
   }),
   useWorkflowStepTemplates: () => ({
     data: [
-      { id: 'OEM-E', name: 'Proof of Concept', kind: 'lab', base_weeks: 3, code: 'POC' },
-      { id: 'PDD-E', name: 'Design', kind: 'design', base_weeks: 3, code: 'DES' },
-      { id: 'PDD-F', name: 'Proof of Concept', kind: 'lab', base_weeks: 3, code: 'POC' },
-      { id: 'PDD-H', name: 'Certification Testing & Compliance', kind: 'lab', base_weeks: 3, code: 'CERT' },
+      { id: 'OEM-E', workflow_id: 'OEM', code: 'POC', name: 'Proof of Concept', kind: 'lab', sequence_order: 5, predecessor_ids: [] },
+      { id: 'PDD-E', workflow_id: 'PDD', code: 'DES', name: 'Design', kind: 'design', sequence_order: 5, predecessor_ids: [] },
+      { id: 'PDD-F', workflow_id: 'PDD', code: 'POC', name: 'Proof of Concept', kind: 'lab', sequence_order: 6, predecessor_ids: [] },
+      { id: 'PDD-H', workflow_id: 'PDD', code: 'CERT', name: 'Certification Testing & Compliance', kind: 'lab', sequence_order: 8, predecessor_ids: [] },
     ],
     isPending: false,
   }),
@@ -82,6 +82,7 @@ const engineer: EngineerRead = {
   weekdays_per_week: 5,
   capacity_weeks: pair(44.5, 9.25),
   capacity_days: pair(222.5, 46.25),
+  counts_in_capacity: true,
 };
 const lokesh: EngineerRead = {
   ...engineer,
@@ -119,8 +120,8 @@ const summary: CapacitySummary = {
   current_week: 42,
   design: {
     hubs: [
-      { hub: 'R&D-Greece', engineer_count: 1, fte_total: 1, weekdays_per_week: 5, capacity_weeks: pair(44.5, 9.25), capacity_days: pair(222.5, 46.25), share_pct: pair(67.17, 67.27) },
-      { hub: 'PD-India', engineer_count: 1, fte_total: 0.5, weekdays_per_week: 6, capacity_weeks: pair(21.75, 4.5), capacity_days: pair(130.5, 27), share_pct: pair(32.83, 32.73) },
+      { hub: 'R&D-Greece', engineer_count: 1, not_counted_engineer_count: 0, members: ['OEM-HCK', 'OEM-Seitek'], selected_member: null, fte_total: 1, weekdays_per_week: 5, capacity_weeks: pair(44.5, 9.25), capacity_days: pair(222.5, 46.25), share_pct: pair(67.17, 67.27) },
+      { hub: 'PD-India', engineer_count: 1, not_counted_engineer_count: 0, members: [], selected_member: null, fte_total: 0.5, weekdays_per_week: 6, capacity_weeks: pair(21.75, 4.5), capacity_days: pair(130.5, 27), share_pct: pair(32.83, 32.73) },
     ],
     total: { engineer_count: 2, fte_total: 1.5, capacity_weeks: pair(66.25, 13.75), capacity_days: pair(353, 73.25) },
   },

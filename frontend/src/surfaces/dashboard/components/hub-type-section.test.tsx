@@ -33,8 +33,8 @@ import { HubTypeSection } from './hub-type-section';
 /* ------------------------- one fixture, every payload ------------------------ */
 
 const HUBS = [
-  { id: 'h-pdin', name: 'PD-India' as HubName, lab_region: 'India' as LabRegion, is_oem: false },
-  { id: 'h-gr', name: 'R&D-Greece' as HubName, lab_region: 'Greece' as LabRegion, is_oem: false },
+  { id: 'h-pdin', name: 'PD-India' as HubName, lab_region: 'India' as LabRegion, is_oem: false, capacity_hub_id: null, capacity_hub_name: null },
+  { id: 'h-gr', name: 'R&D-Greece' as HubName, lab_region: 'Greece' as LabRegion, is_oem: false, capacity_hub_id: null, capacity_hub_name: null },
 ];
 
 interface P {

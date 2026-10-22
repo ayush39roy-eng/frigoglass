@@ -304,10 +304,13 @@ async def build_capacity_sheets(db: AsyncSession, principal: Principal) -> Expor
     result = await hub_load_vs_capacity(db=db, current_user=principal)
     headers, rows = rows_from_models(result.rows)
     # P29 (ADR 0042): one readable cell for the capacity hub's members
-    # breakdown, e.g. "R&D-Greece 1 project(s) 10 wk; OEM-HCK 2 project(s) 6 wk".
+    # breakdown. ADR 0041 R12: demand (full year / remaining) and booked, e.g.
+    # "R&D-Greece 6 project(s) 77 wk demand, 60 wk remaining, 30 wk booked; ...".
     for row in rows:
         row["members"] = "; ".join(
-            f"{m['hub']} {m['project_count']} project(s) {m['design_load_weeks']} wk"
+            f"{m['hub']} {m['project_count']} project(s) {m['design_load_weeks']} wk demand, "
+            f"{m['design_load_remaining_weeks']} wk remaining, "
+            f"{m['design_load_booked_weeks']} wk booked"
             for m in row.get("members") or []
         )
     return {"Capacity": (headers, rows)}

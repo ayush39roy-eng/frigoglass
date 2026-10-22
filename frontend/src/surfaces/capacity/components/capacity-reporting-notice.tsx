@@ -43,13 +43,15 @@ export function CapacityReportingNotice(): React.JSX.Element {
   return (
     <CardInfo label="How to read these figures">
       <p>
-        <span className="font-medium text-text">Load</span> (engineer-weeks, chamber-weeks) is
-        taken verbatim from the active schedule run&rsquo;s booked steps &mdash; the sum of
-        design-step weeks of work per hub, and of lab-step lead times (&times;&nbsp;1.0) per lab
-        region (Invariants I6 / I7, ADR&nbsp;0007). Work weeks, not calendar weeks: a design step
-        led at 0.5&nbsp;FTE counts its 4 weeks of work even though it spans 8 calendar weeks. The{' '}
-        <span className="font-medium text-text">estimated</span> load beside it is the
-        projects&rsquo; hand-entered figure, for comparison only.
+        <span className="font-medium text-text">Demand</span> (engineer-weeks, chamber-weeks) is
+        the work the projects ask for (ADR&nbsp;0041, Invariant I25): the full-year demand counts
+        every project of the hub, On Hold and Commercialized included, and the remaining demand
+        counts open projects&rsquo; work still to do. A step&rsquo;s weeks are a timing edit, else
+        the client&rsquo;s effort figure, else the lead-time table. Work weeks, not calendar weeks: a
+        design step led at 0.5&nbsp;FTE counts its 4 weeks of work even though it spans 8 calendar
+        weeks.{' '}
+        <span className="font-medium text-text">Booked in plan</span> is what the active schedule run
+        booked (Invariants I6 / I7); it matches the timeline and has no booked %.
       </p>
       <p>
         <span className="font-medium text-text">Capacity</span> is the client&rsquo;s own supply
@@ -63,7 +65,7 @@ export function CapacityReportingNotice(): React.JSX.Element {
         platform count.
       </p>
       <p>
-        So on this surface, load exceeding capacity does{' '}
+        So on this surface, demand exceeding capacity does{' '}
         <span className="font-medium text-text">not</span> mean the scheduler overbooked anyone,
         and spare capacity does <span className="font-medium text-text">not</span> mean the
         scheduler will use it. The two figures are computed different ways and are shown side by

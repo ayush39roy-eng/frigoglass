@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
+from decimal import Decimal
 from typing import Annotated, Literal
 
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field
@@ -34,6 +35,21 @@ def _distinct_tags(tags: list[ScoringTag]) -> list[ScoringTag]:
     if len(set(tags)) != len(tags):
         raise ValueError("each scoring tag may appear once")
     return canonical_tags(tags)
+
+
+def _two_dp(value: float) -> float:
+    if Decimal(str(value)) != Decimal(str(value)).quantize(Decimal("0.01")):
+        raise ValueError("at most 2 decimal places")
+    return value
+
+
+#: ADR 0041: a per-project effort figure, stored `Numeric(6, 2)` (0..9999.99,
+#: at most two decimals). A JSON number; read exactly through its decimal
+#: string (`scheduling.effort_split.to_decimal`), never its binary value.
+#: P30-R01 (S30-L1): strict (CLAUDE.md "Pydantic v2 (strict)"), so `"4"` and
+#: `true` are a 422, not a coerced 4.0 / 1.0. A JSON integer or float still
+#: passes (a strict float accepts an int), as in `schemas/engineer.py`.
+EffortWeeks = Annotated[float, Field(ge=0, le=9999.99, strict=True), AfterValidator(_two_dp)]
 
 
 #: ADR 0038: zero or more of the six fixed tags, no duplicates (422), served
@@ -87,6 +103,11 @@ class ProjectCreateRequest(BaseModel):
     #: Capacity "Estimated" column only; never a schedule input (OQ #12).
     estimated_design_weeks: float | None = Field(default=None, ge=0, le=9999.99)
     estimated_lab_weeks: float | None = Field(default=None, ge=0, le=9999.99)
+    #: ADR 0041 (docs/API_CONTRACT_P30.md §2): the client's per-project design
+    #: / lab effort in man-weeks (2 dp). When > 0 it drives the schedule and
+    #: the load (split over the steps); blank or 0 = the lead-time table.
+    design_effort_weeks: EffortWeeks | None = None
+    lab_effort_weeks: EffortWeeks | None = None
     #: ADR 0038 (docs/API_CONTRACT_P27.md §2): "project nature" tags; each
     #: pre-fills its mapped dimension score with 5.
     scoring_tags: ScoringTags = Field(default_factory=list)
@@ -131,6 +152,11 @@ class ProjectUpdateRequest(BaseModel):
     certification_testing_required: bool | None = None
     estimated_design_weeks: float | None = Field(default=None, ge=0, le=9999.99)
     estimated_lab_weeks: float | None = Field(default=None, ge=0, le=9999.99)
+    #: ADR 0041: `null` clears the figure (the lead-time table applies again).
+    #: A change re-derives the step effort split (ADR 0041 R6) and marks the
+    #: project `schedule_stale`; never solves.
+    design_effort_weeks: EffortWeeks | None = None
+    lab_effort_weeks: EffortWeeks | None = None
     #: ADR 0038: the FULL new tag set (replaces it; `null` is a 422
     #: `NULL_NOT_ALLOWED`). Only a not-set -> set tag pre-fills a score.
     scoring_tags: ScoringTags | None = None
@@ -168,6 +194,17 @@ class ProjectRead(BaseModel):
     certification_testing_required: bool
     estimated_design_weeks: float | None
     estimated_lab_weeks: float | None
+    # --- ADR 0041 (docs/API_CONTRACT_P30.md §2) ----------------------------
+    #: The client's per-project effort figures (man-weeks, 2 dp). Writable on
+    #: create / PATCH; not financial.
+    design_effort_weeks: float | None
+    lab_effort_weeks: float | None
+    #: Display only (client workbook cols 22, 17, 23, 24, 3); read-only.
+    safety_lab_weeks: float | None
+    actual_design_weeks: float | None
+    actual_testing_weeks: float | None
+    safety_certification_required: bool
+    capacity_flag: bool
     #: ADR 0035: the client workbook's charter fields, as written (read-only).
     plant: str | None
     requesting_department: str | None

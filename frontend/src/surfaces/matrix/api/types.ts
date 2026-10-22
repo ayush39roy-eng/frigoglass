@@ -266,7 +266,7 @@ export interface HubP1Fill {
   filled_load_weeks: number;
   promoted_count: number;
   /** P29 (ADR 0042, API_CONTRACT_P29 §4): member hubs in scope, by name, own hub
-   *  not listed (`["OEM-HCK","OEM-Seltek"]` on R&D-Greece, `[]` elsewhere). The
+   *  not listed (`["OEM-HCK","OEM-Seitek"]` on R&D-Greece, `[]` elsewhere). The
    *  Greece walk covers their projects. */
   members: HubName[];
   /** P29: the request's `hub_id` when it is this capacity hub or a member, else null. */

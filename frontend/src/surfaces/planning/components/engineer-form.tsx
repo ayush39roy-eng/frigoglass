@@ -23,6 +23,7 @@ import {
 } from '@/components/ui/select';
 import { ApiError } from '@/lib/api/client';
 import type { Hub } from '@/lib/api/reference';
+import { capacityHubsOnly, joinNames, memberHubsByCapacityHub } from '@/lib/hub-labels';
 import { ENGINEER_ALLOWED_CATEGORIES, type EngineerAllowedCategory } from '@/types/enums';
 
 import type { EngineerCreateRequest, EngineerRead } from '../api/types';
@@ -95,7 +96,15 @@ function EngineerForm({
   onSubmit: EngineerFormDialogProps['onSubmit'];
 }): React.JSX.Element {
   const [submitError, setSubmitError] = React.useState<string | null>(null);
-  const [hubId, setHubId] = React.useState<string>(engineer?.hub_id ?? defaultHubId ?? '');
+  // P29 (API_CONTRACT_P29 §5.2): an engineer sits on a capacity hub only; a
+  // member hub (OEM-HCK, OEM-Seitek) is a 422 HUB_NOT_CAPACITY_HUB, so it is
+  // not offered. Their design work is done by their capacity hub's engineers.
+  const hubOptions = React.useMemo(() => capacityHubsOnly(hubs), [hubs]);
+  const memberGroups = React.useMemo(() => memberHubsByCapacityHub(hubs), [hubs]);
+  const [hubId, setHubId] = React.useState<string>(() => {
+    const initial = engineer?.hub_id ?? defaultHubId ?? '';
+    return hubOptions.some((h) => h.id === initial) ? initial : '';
+  });
   const [categories, setCategories] = React.useState<EngineerAllowedCategory[]>(
     engineer?.allowed_categories ?? [],
   );
@@ -166,13 +175,18 @@ function EngineerForm({
                 <SelectValue placeholder="Select a hub" />
               </SelectTrigger>
               <SelectContent>
-                {hubs.map((h) => (
+                {hubOptions.map((h) => (
                   <SelectItem key={h.id} value={h.id}>
                     {h.name}
                   </SelectItem>
                 ))}
               </SelectContent>
             </Select>
+            {memberGroups.map((g) => (
+              <span key={g.capacityHub} className="text-2xs text-text-muted" data-testid="engineer-hub-members-note">
+                {joinNames(g.members)} {g.members.length === 1 ? 'uses' : 'use'} {g.capacityHub}&rsquo;s engineers.
+              </span>
+            ))}
           </Field>
           <Field label="FTE" htmlFor="eng-fte" error={errors.fte?.message} required>
             <Input

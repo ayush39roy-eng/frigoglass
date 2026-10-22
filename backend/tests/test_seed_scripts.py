@@ -117,6 +117,22 @@ def test_seed_dev_users_duplicate_guard_and_reset(seeded_schema_url, monkeypatch
     assert counts_after_reset["_verified_from_db"]["users"] == 7
 
 
+async def _effort_invariants(url: str):
+    """ADR 0041 I26 and I25 (self-consistency) on the seeded rows, plus the
+    PDD/B figure-4 example (A1 E2 K1) wherever the client data carries it."""
+
+    from scheduling import check_i26_effort_split, compute_demand_load
+    from services.demand_load import load_live_project_rows
+
+    engine = create_async_engine(url)
+    try:
+        async with async_sessionmaker(engine, expire_on_commit=False)() as session:
+            rows, _meta = await load_live_project_rows(session)
+    finally:
+        await engine.dispose()
+    return rows, check_i26_effort_split(rows), compute_demand_load(rows)
+
+
 async def _fetch(url: str, stmt):
     engine = create_async_engine(url)
     try:
@@ -229,43 +245,59 @@ def test_seed_demo_data_default_is_the_client_2026_dataset(seeded_schema_url, mo
 
     counts = asyncio.run(seed_demo_data.run(reset_first=True))
     assert counts["dataset"] == "client_2026"
-    assert counts["projects"] == 253
-    assert counts["_verified_from_db"]["projects"] == 253
-    assert counts["_verified_from_db"]["project_workflow_steps"] == 253 * 14
-    assert counts["_verified_from_db"]["priority_scores"] == 253
-    assert counts["engineers"] == 23 and counts["provisional_engineers"] == 6
+    # ADR 0041 §1: 2026 ∪ capacity flag Y = 330 projects (77 carry-over).
+    assert counts["projects"] == 330
+    assert counts["_verified_from_db"]["projects"] == 330
+    assert counts["_verified_from_db"]["project_workflow_steps"] == 330 * 14
+    assert counts["_verified_from_db"]["priority_scores"] == 330
+    assert counts["engineers"] == 24 and counts["provisional_engineers"] == 7
     assert counts["skipped_zero_fte_placeholders"] == 2
     # P29 (ADR 0042 §7): the 17 leaderless OEM projects get a provisional
     # leader; the 3 blank leaders on non-member hubs stay blank.
-    assert counts["provisional_leaders"] == 17
+    assert counts["provisional_leaders"] == 20
     assert counts["projects_without_leader"] == 3
-    assert counts["carry_over_projects"] == 17
+    assert counts["carry_over_projects"] == 77
     run = counts["summary_run"]
-    assert run["within_year"] + run["spillover"] + run["left_out"] + run["blocked"] == 192
+    assert run["within_year"] + run["spillover"] + run["left_out"] + run["blocked"] == 221
     assert run["no_leader"] == 1  # P29: 17 OEM projects now have a provisional leader
+
+    # ADR 0041: the seed's effort split satisfies I26; B / 4 is A1 E2 K1.
+    live, i26, demand = asyncio.run(_effort_invariants(seeded_schema_url))
+    assert i26 == ()
+    b4 = [
+        r for r in live
+        if r.design_effort_weeks is not None and float(r.design_effort_weeks) == 4
+        and any(s.step_id == "PDD-E" and s.lead_weeks == 4 for s in r.steps)
+    ]  # fmt: skip
+    assert b4
+    for r in b4:
+        effort = {s.step_id: s.effort_weeks for s in r.steps if s.kind == "design"}
+        assert {k: v for k, v in effort.items() if v} == {"PDD-A": 1, "PDD-E": 2, "PDD-K": 1}
+    assert set(demand.design_full_year) == {"PD-India", "PD-Romania", "R&D-Greece", "R&D-India"}
 
     projects = asyncio.run(_fetch(seeded_schema_url, select(Project)))
     engineers = asyncio.run(_fetch(seeded_schema_url, select(Engineer)))
     engineer_ids = {e.id for e in engineers}
     assert sum(p.leader_engineer_id is None for p in projects) == 3
-    assert sum(p.leader_is_provisional for p in projects) == 17
+    assert sum(p.leader_is_provisional for p in projects) == 20
     assert all(
         p.leader_engineer_id in engineer_ids for p in projects if p.leader_engineer_id is not None
     )
     assert all(0.01 <= float(e.fte) <= 1.0 for e in engineers)
-    # Roster 14.3 + 6 provisional leaders at 1.0.
-    assert round(sum(float(e.fte) for e in engineers), 2) == 20.3
+    # Roster 14.3 + 7 provisional leaders at 1.0.
+    assert round(sum(float(e.fte) for e in engineers), 2) == 21.3
     assert not any("Engineer " in e.name for e in engineers)
     chambers = asyncio.run(_fetch(seeded_schema_url, select(Chamber)))
     workbook_eff = {code: eff for code, _r, _p, eff, *_rest in seed_demo_data.dc.CHAMBER_SEED}
     assert {c.code: float(c.efficiency) for c in chambers} == workbook_eff
-    assert sum(p.carry_over for p in projects) == 17
-    assert {p.reg_year for p in projects if p.carry_over} == {2025}
+    assert sum(p.carry_over for p in projects) == 77
+    assert {p.reg_year for p in projects if p.carry_over} == {2024, 2025}
     assert {p.reg_year for p in projects if not p.carry_over} == {2026}
-    assert sum(p.target_end_week is not None for p in projects) == 15
-    assert sum(p.plant is not None for p in projects) == 253
-    assert sum(p.requesting_department is not None for p in projects) == 237
-    assert sum(p.product_type is not None for p in projects) == 250
+    assert sum(p.capacity_flag for p in projects) == 262
+    assert sum(p.target_end_week is not None for p in projects) == 35
+    assert sum(p.plant is not None for p in projects) == 330
+    assert sum(p.requesting_department is not None for p in projects) == 314
+    assert sum(p.product_type is not None for p in projects) == 327
     # ADR 0040: the seed sets no VIP, and the seeded VIP board links (there
     # are some) do not imply one.
     assert sum(p.is_vip for p in projects) == 0

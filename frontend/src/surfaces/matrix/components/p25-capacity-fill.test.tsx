@@ -70,8 +70,8 @@ describe('Capacity fill panel (P25)', () => {
           has_active_schedule_run: true,
           schedule_run_version: 12,
           hubs: [
-            { hub: 'R&D-Greece', capacity_weeks: 10, base_load_weeks: 6, filled_load_weeks: 9, promoted_count: 1 },
-            { hub: 'PD-India', capacity_weeks: 20, base_load_weeks: 25.5, filled_load_weeks: 25.5, promoted_count: 0 },
+            { hub: 'R&D-Greece', capacity_weeks: 10, base_load_weeks: 6, filled_load_weeks: 9, promoted_count: 1, members: ['OEM-HCK', 'OEM-Seitek'], selected_member: null },
+            { hub: 'PD-India', capacity_weeks: 20, base_load_weeks: 25.5, filled_load_weeks: 25.5, promoted_count: 0, members: [], selected_member: null },
           ],
         }}
       />,
@@ -95,7 +95,7 @@ describe('Capacity fill panel (P25)', () => {
         data={{
           has_active_schedule_run: false,
           schedule_run_version: null,
-          hubs: [{ hub: 'R&D-Greece', capacity_weeks: 10, base_load_weeks: 0, filled_load_weeks: 0, promoted_count: 0 }],
+          hubs: [{ hub: 'R&D-Greece', capacity_weeks: 10, base_load_weeks: 0, filled_load_weeks: 0, promoted_count: 0, members: [], selected_member: null }],
         }}
       />,
     );

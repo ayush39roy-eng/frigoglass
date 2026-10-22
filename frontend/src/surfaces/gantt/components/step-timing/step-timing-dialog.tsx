@@ -87,7 +87,13 @@ function TimingForm({
     target.plannedStartWeek !== null && target.plannedEndWeek !== null && target.durationWeeks !== null
       ? `Planned now: ${calendarRangePhrase(target.plannedStartWeek, target.plannedEndWeek)} · ${workWeeksPhrase(target.kind, target.durationWeeks, target.spanFte)}.`
       : null;
+  // P30 (ADR 0041 R4): only the user's two fields count; Reset restores the
+  // client effort value (or the table when the project has none).
   const hasEdit = target.durationOverrideWeeks !== null || target.startNotBeforeWeek !== null;
+  const resetTo =
+    target.effortWeeks !== null
+      ? `the client effort figure (${String(target.effortWeeks)} wks)`
+      : `the lead-time table (${String(target.leadTimeWeeks)} wks)`;
   const [nothingChanged, setNothingChanged] = React.useState(false);
   const {
     register,
@@ -152,6 +158,7 @@ function TimingForm({
           ) : (
             <p id={`${ids.duration}-hint`} className="text-2xs text-text-muted" data-numeric="">
               Lead-time table: {target.leadTimeWeeks} wks{isDesign ? ' of work' : ''}
+              {target.effortWeeks !== null ? ` · client effort ${String(target.effortWeeks)}` : ''}
               {target.durationOverrideWeeks !== null ? ` · overridden to ${String(target.durationOverrideWeeks)}` : ''}
             </p>
           )}
@@ -201,7 +208,15 @@ function TimingForm({
       ) : null}
 
       <DialogFooter className="gap-2 sm:justify-between">
-        <Button type="button" variant="ghost" size="sm" onClick={reset} disabled={busy || !hasEdit}>
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          onClick={reset}
+          disabled={busy || !hasEdit}
+          title={`Clear your timing edit: the step goes back to ${resetTo}`}
+          data-testid="step-timing-reset"
+        >
           <RotateCcw />
           Reset timing
         </Button>

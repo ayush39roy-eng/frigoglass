@@ -16,6 +16,8 @@ import {
   type HubName,
   type LabRegion,
   type ProjectCategory,
+  type ProjectType,
+  type WorkflowId,
   type WorkflowStepKind,
 } from '@/types/enums';
 import type { Id } from '@/types/common';
@@ -27,6 +29,22 @@ export interface Hub {
   name: HubName;
   lab_region: LabRegion;
   is_oem: boolean;
+  /** P29 (ADR 0042, API_CONTRACT_P29 §1.1): R&D-Greece's id on OEM-HCK and
+   *  OEM-Seitek (their capacity hub); null on a hub that is its own capacity hub. */
+  capacity_hub_id: Id | null;
+  /** P29: "R&D-Greece" on OEM-HCK and OEM-Seitek; null elsewhere. Drives the
+   *  "(Greece)" picker label (`lib/hub-labels.ts`); never hard-coded. */
+  capacity_hub_name: HubName | null;
+}
+
+/** P29-T04 (API_CONTRACT_P29 §1.2): `GET /reference/project-types` row. The
+ *  labels are static display text; the app's ONE label source is
+ *  `PROJECT_TYPE_LABELS` in `types/enums.ts`, which mirrors the served list
+ *  (backend `domain_constants.PROJECT_TYPE_LABELS`), so no surface waits on a
+ *  fetch to name a type. */
+export interface ProjectTypeRead {
+  code: ProjectType;
+  label: string;
 }
 
 /**
@@ -52,11 +70,18 @@ export interface CurrencyRate {
   updated_at: string;
 }
 
+/** `GET /workflow-step-templates` (→ `WorkflowStepTemplateRead`, ADR 0007 /
+ *  0009): both workflows' steps with client codes. Durations are not on the
+ *  template (they come from the lead-time table); the prototype-era
+ *  `base_weeks` is gone (P30-T03). */
 export interface WorkflowStepTemplate {
   id: string;
+  workflow_id: WorkflowId;
+  code: string;
   name: string;
   kind: WorkflowStepKind;
-  base_weeks: number;
+  sequence_order: number;
+  predecessor_ids: string[];
 }
 
 export function fetchHubs(signal?: AbortSignal): Promise<Hub[]> {

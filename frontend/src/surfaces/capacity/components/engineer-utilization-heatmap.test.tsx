@@ -13,7 +13,7 @@ import { EngineerUtilizationPanel } from './engineer-utilization-panel';
 
 function eng(id: string, name: string, hub: 'R&D-Greece' | 'PD-India', pcts: number[]) {
   return {
-    id, name, hub, role: 'Designer', total_booked: 2, total_capacity: 3, utilization_pct: 66.7,
+    id, name, hub, role: 'Designer', counts_in_capacity: true, total_booked: 2, total_capacity: 3, utilization_pct: 66.7,
     weeks: pcts.map((p, i) => ({ week: i + 1, booked: p / 100, capacity: 1, utilization_pct: p })),
   };
 }

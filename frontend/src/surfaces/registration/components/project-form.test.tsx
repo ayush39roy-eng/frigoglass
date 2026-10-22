@@ -17,8 +17,8 @@ import { ProjectForm, ProjectFormDialog } from './project-form';
 vi.setConfig({ testTimeout: 30_000 });
 
 const hubs: Hub[] = [
-  { id: 'hub-1', name: 'R&D-Greece', lab_region: 'Greece', is_oem: false },
-  { id: 'hub-2', name: 'PD-Romania', lab_region: 'Romania', is_oem: false },
+  { id: 'hub-1', name: 'R&D-Greece', lab_region: 'Greece', is_oem: false, capacity_hub_id: null, capacity_hub_name: null },
+  { id: 'hub-2', name: 'PD-Romania', lab_region: 'Romania', is_oem: false, capacity_hub_id: null, capacity_hub_name: null },
 ];
 
 beforeEach(() => {
@@ -167,12 +167,12 @@ describe('ProjectFormDialog', () => {
       <ProjectFormDialog
         mode="edit"
         project={{
-          id: 'p9', name: 'Old cooler', external_code: null, hub_id: 'hub-1', leader_engineer_id: null,
+          id: 'p9', name: 'Old cooler', external_code: null, hub_id: 'hub-1', leader_engineer_id: null, leader_is_provisional: false,
           category: null, type: null, priority: null, status: 'In Queue', frozen: false, actual_start_week: null,
           delay_weeks: 0, reg_year: null, carry_over: false, comments: null, customer_name: null, tcogs_eur: null,
           selling_price_eur: null, gross_margin_pct: null, capex_keur: null, rm_savings_keur: null,
           target_end_week: null, certification_testing_required: true, estimated_design_weeks: null,
-          estimated_lab_weeks: null, plant: null, requesting_department: null, product_type: null, scoring_tags: [], tag_dimension_keys: [], schedule_stale: false, workflow_id: 'PDD',
+          estimated_lab_weeks: null, design_effort_weeks: null, lab_effort_weeks: null, safety_lab_weeks: null, actual_design_weeks: null, actual_testing_weeks: null, safety_certification_required: false, capacity_flag: false, plant: null, requesting_department: null, product_type: null, scoring_tags: [], tag_dimension_keys: [], schedule_stale: false, workflow_id: 'PDD',
           created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z',
         }}
         open
@@ -195,12 +195,12 @@ describe('ProjectFormDialog', () => {
         variant="inline"
         onDirtyChange={onDirtyChange}
         project={{
-          id: 'p9', name: 'Old cooler', external_code: null, hub_id: 'hub-1', leader_engineer_id: null,
+          id: 'p9', name: 'Old cooler', external_code: null, hub_id: 'hub-1', leader_engineer_id: null, leader_is_provisional: false,
           category: null, type: 'NO', priority: null, status: 'In Queue', frozen: false, actual_start_week: null,
           delay_weeks: 0, reg_year: null, carry_over: false, comments: null, customer_name: null, tcogs_eur: null,
           selling_price_eur: null, gross_margin_pct: null, capex_keur: null, rm_savings_keur: null,
           target_end_week: null, certification_testing_required: true, estimated_design_weeks: null,
-          estimated_lab_weeks: null, plant: null, requesting_department: null, product_type: null,
+          estimated_lab_weeks: null, design_effort_weeks: null, lab_effort_weeks: null, safety_lab_weeks: null, actual_design_weeks: null, actual_testing_weeks: null, safety_certification_required: false, capacity_flag: false, plant: null, requesting_department: null, product_type: null,
           scoring_tags: ['new_options', 'improvement'], tag_dimension_keys: ['new_options', 'quality_improvements'],
           schedule_stale: false, workflow_id: 'PDD',
           created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z',
@@ -241,12 +241,12 @@ describe('ProjectFormDialog', () => {
         mode="edit"
         variant="inline"
         project={{
-          id: 'p9', name: 'Old cooler', external_code: null, hub_id: 'hub-1', leader_engineer_id: null,
+          id: 'p9', name: 'Old cooler', external_code: null, hub_id: 'hub-1', leader_engineer_id: null, leader_is_provisional: false,
           category: null, type: null, priority: null, status: 'In Queue', frozen: false, actual_start_week: null,
           delay_weeks: 0, reg_year: null, carry_over: false, comments: null, customer_name: null, tcogs_eur: null,
           selling_price_eur: null, gross_margin_pct: null, capex_keur: null, rm_savings_keur: null,
           target_end_week: null, certification_testing_required: true, estimated_design_weeks: null,
-          estimated_lab_weeks: null, plant: null, requesting_department: null, product_type: null,
+          estimated_lab_weeks: null, design_effort_weeks: null, lab_effort_weeks: null, safety_lab_weeks: null, actual_design_weeks: null, actual_testing_weeks: null, safety_certification_required: false, capacity_flag: false, plant: null, requesting_department: null, product_type: null,
           scoring_tags: ['new_models'], tag_dimension_keys: ['new_models'],
           schedule_stale: false, workflow_id: 'PDD',
           created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z',
@@ -290,7 +290,7 @@ describe('ProjectFormDialog', () => {
           name: 'Cooler A',
           external_code: null,
           hub_id: 'hub-1',
-          leader_engineer_id: null,
+          leader_engineer_id: null, leader_is_provisional: false,
           category: null,
           type: null,
           priority: null,
@@ -311,6 +311,13 @@ describe('ProjectFormDialog', () => {
           certification_testing_required: true,
           estimated_design_weeks: null,
           estimated_lab_weeks: null,
+          design_effort_weeks: null,
+          lab_effort_weeks: null,
+          safety_lab_weeks: null,
+          actual_design_weeks: null,
+          actual_testing_weeks: null,
+          safety_certification_required: false,
+          capacity_flag: false,
           plant: null,
           requesting_department: null,
           product_type: null, scoring_tags: [], tag_dimension_keys: [],
@@ -507,8 +514,8 @@ describe('ProjectFormDialog', () => {
 
 describe('ProjectFormDialog — P9 planning fields and category-by-hub (ADR 0007)', () => {
   const mixedHubs: Hub[] = [
-    { id: 'hub-1', name: 'R&D-Greece', lab_region: 'Greece', is_oem: false },
-    { id: 'hub-oem', name: 'OEM-HCK', lab_region: 'Greece', is_oem: true },
+    { id: 'hub-1', name: 'R&D-Greece', lab_region: 'Greece', is_oem: false, capacity_hub_id: null, capacity_hub_name: null },
+    { id: 'hub-oem', name: 'OEM-HCK', lab_region: 'Greece', is_oem: true, capacity_hub_id: null, capacity_hub_name: null },
   ];
 
   async function pickHub(user: ReturnType<typeof userEvent.setup>, name: string) {
@@ -550,7 +557,7 @@ describe('ProjectFormDialog — P9 planning fields and category-by-hub (ADR 0007
     expect(screen.queryByText('Leader is required.')).not.toBeInTheDocument();
   });
 
-  it('submits target_end_week, certification_testing_required (default on) and the estimated weeks', async () => {
+  it('submits target_end_week, certification_testing_required (default on) and the client effort figures (P30)', async () => {
     const user = userEvent.setup();
     const onSubmit = vi.fn().mockResolvedValue(undefined);
     renderWithProviders(
@@ -559,8 +566,8 @@ describe('ProjectFormDialog — P9 planning fields and category-by-hub (ADR 0007
     await user.type(screen.getByLabelText(/^Name/), 'Cooler P');
     await pickHub(user, 'R&D-Greece');
     await user.type(screen.getByLabelText(/^Expected completion \(week\)/), '44');
-    await user.type(screen.getByLabelText(/^Estimated design weeks/), '18');
-    await user.type(screen.getByLabelText(/^Estimated lab weeks/), '10');
+    await user.type(screen.getByLabelText(/^Design effort \(client, weeks\)/), '4.25');
+    await user.type(screen.getByLabelText(/^Lab effort \(client, weeks\)/), '10');
     expect(screen.getByRole('checkbox', { name: /Certification testing required/ })).toHaveAttribute('data-state', 'checked');
     expect(screen.getByText('Lab steps are skipped when off.')).toBeInTheDocument();
     await user.click(screen.getByRole('checkbox', { name: /Certification testing required/ }));
@@ -570,10 +577,15 @@ describe('ProjectFormDialog — P9 planning fields and category-by-hub (ADR 0007
       expect.objectContaining({
         target_end_week: 44,
         certification_testing_required: false,
-        estimated_design_weeks: 18,
-        estimated_lab_weeks: 10,
+        design_effort_weeks: 4.25,
+        lab_effort_weeks: 10,
       }),
     );
+    // R13: the deprecated estimates are no longer edited or sent.
+    const body = onSubmit.mock.calls[0]![0] as Record<string, unknown>;
+    expect(body).not.toHaveProperty('estimated_design_weeks');
+    expect(body).not.toHaveProperty('estimated_lab_weeks');
+    expect(screen.queryByLabelText(/Estimated design weeks/)).toBeNull();
   });
 
   it('rejects an expected-completion week outside the 52-week plan year (ADR 0024)', async () => {
@@ -593,12 +605,12 @@ describe('ProjectFormDialog — P9 planning fields and category-by-hub (ADR 0007
 
 describe('ProjectForm — unsaved-changes reporting (P22-T01)', () => {
   const existing = {
-    id: 'p-1', name: 'Cooler A', external_code: null, hub_id: 'hub-1', leader_engineer_id: null,
+    id: 'p-1', name: 'Cooler A', external_code: null, hub_id: 'hub-1', leader_engineer_id: null, leader_is_provisional: false,
     category: 'A' as const, type: null, priority: 'P2' as const, status: 'In Queue' as const, frozen: false,
     actual_start_week: null, delay_weeks: 0, reg_year: 2026, carry_over: false, comments: 'one\r\ntwo',
     customer_name: null, tcogs_eur: 100.5, selling_price_eur: null, gross_margin_pct: null, capex_keur: null,
     rm_savings_keur: null, target_end_week: null, certification_testing_required: true,
-    estimated_design_weeks: null, estimated_lab_weeks: null, plant: null, requesting_department: null, product_type: null, scoring_tags: [], tag_dimension_keys: [], schedule_stale: false, workflow_id: 'PDD' as const,
+    estimated_design_weeks: null, estimated_lab_weeks: null, design_effort_weeks: null, lab_effort_weeks: null, safety_lab_weeks: null, actual_design_weeks: null, actual_testing_weeks: null, safety_certification_required: false, capacity_flag: false, plant: null, requesting_department: null, product_type: null, scoring_tags: [], tag_dimension_keys: [], schedule_stale: false, workflow_id: 'PDD' as const,
     created_at: '', updated_at: '',
   };
 

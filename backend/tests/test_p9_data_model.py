@@ -237,7 +237,7 @@ async def test_trigger_accepts_matching_categories_and_null_for_drafts(
     db_session: AsyncSession,
 ) -> None:
     oem_hub = await make_hub(
-        db_session, name=HubName.OEM_SELTEK, lab_region=LabRegion.INDIA, is_oem=True
+        db_session, name=HubName.OEM_SEITEK, lab_region=LabRegion.INDIA, is_oem=True
     )
     p = await make_project(db_session, oem_hub, category=ProjectCategory.C_OEM)
     draft = await make_project(db_session, oem_hub, category=None, status=ProjectStatus.DRAFT)

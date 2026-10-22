@@ -38,8 +38,13 @@ from scheduling.workflow import derive_remaining
 from services.active_run import get_active_run
 from services.display_labels import agent_health_label, stage_status_label
 from services.progress import project_progress_pct
-from services.workflow_durations import effective_duration_weeks
-from services.workspace import engineer_ftes_for_rows, health_badge, is_step_skipped
+from services.workflow_durations import display_duration_weeks
+from services.workspace import (
+    engineer_ftes_for_rows,
+    health_badge,
+    row_effective_weeks,
+    row_is_skipped,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -124,13 +129,17 @@ async def build_agent_context(db: AsyncSession, project: Project) -> dict[str, A
         # the lead-time duration was used (remaining duration, roll-up weight).
         # An override never revives a skipped step (lead time 0, or a lab
         # step without certification testing).
-        lead_time = live.duration_weeks if live is not None else 0
-        duration = effective_duration_weeks(
-            lead_time,
-            live.duration_override_weeks if live is not None else None,
-            skipped=is_step_skipped(
-                lead_time, t.kind, project.certification_testing_required
-            ),
+        # ADR 0041 R4/R5: `user ?? effort ?? lead`, the one skip predicate.
+        duration = (
+            display_duration_weeks(
+                lead_weeks=live.duration_weeks,
+                kind=t.kind,
+                certification_testing_required=project.certification_testing_required,
+                user_override_weeks=live.duration_override_weeks,
+                effort_weeks=live.effort_weeks,
+            )
+            if live is not None
+            else 0
         )
         percent = live.percent_complete if live is not None else 0
         # ADR 0017: the agent sees the stage status as users do ("On Hold",
@@ -141,7 +150,11 @@ async def build_agent_context(db: AsyncSession, project: Project) -> dict[str, A
         skipped = (
             run_step.skipped
             if run_step is not None
-            else is_step_skipped(duration, t.kind, project.certification_testing_required)
+            else (
+                row_is_skipped(live, t.kind, project.certification_testing_required)
+                if live is not None
+                else True
+            )
         )
         stages.append(
             {
@@ -184,13 +197,11 @@ async def build_agent_context(db: AsyncSession, project: Project) -> dict[str, A
     progress = project_progress_pct(
         (
             r.percent_complete,
-            0
-            if is_step_skipped(
-                r.duration_weeks,
+            row_effective_weeks(
+                r,
                 kind_by_step.get(r.step_template_id, WorkflowStepKind.DESIGN),
                 project.certification_testing_required,
-            )
-            else effective_duration_weeks(r.duration_weeks, r.duration_override_weeks),
+            ),
         )
         for r in live_rows
     )

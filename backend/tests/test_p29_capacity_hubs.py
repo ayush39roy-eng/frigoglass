@@ -1,22 +1,23 @@
 """P29-T01 / P29-T06 (ADR 0042, docs/API_CONTRACT_P29.md): OEM-HCK and
-OEM-Seltek are capacity children of R&D-Greece.
+OEM-Seitek are capacity children of R&D-Greece.
 
 One small world on the shared savepoint-isolated DB (CURRENT_WEEK 31):
 
     R&D-Greece (calendar 5 / 12, 0, 0, 25 -> 44.60 working weeks)
         engineers Alpha 1.0, Beta 0.8 (counted), Theoni 1.0 (NOT counted)
-        members OEM-HCK, OEM-Seltek (no calendar, no engineers)
+        members OEM-HCK, OEM-Seitek (no calendar, no engineers)
     PD-India (calendar 6 / 13, 7, 7, 20 -> 44.17)
         engineers Gamma 1.0 (counted), Dipak 1.0 (NOT counted)
 
 Active-run design load: R&D-Greece own 10 (G1), OEM-HCK 4 + 2 (H1, H2),
-OEM-Seltek 4 (S1) -> Greece aggregate 20; PD-India 7 (I1).
+OEM-Seitek 4 (S1) -> Greece aggregate 20; PD-India 7 (I1).
 """
 
 from __future__ import annotations
 
 import uuid
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
 from sqlalchemy import select
@@ -38,6 +39,7 @@ from models.enums import (
 from models.hub import HubWorkCalendar
 from models.project import Project
 from models.schedule import ScheduleRunProjectStep
+from models.workflow import ProjectWorkflowStep
 from services.capacity_supply import round2
 from services.export_builder import build_capacity_sheets, csv_bytes
 from services.schedule_persistence import build_schedule_input_from_db
@@ -80,7 +82,7 @@ async def _world(db_session) -> SimpleNamespace:
     )
     seltek = await make_hub(
         db_session,
-        name=HubName.OEM_SELTEK,
+        name=HubName.OEM_SEITEK,
         lab_region=LabRegion.GREECE,
         is_oem=True,
         capacity_hub=greece,
@@ -170,6 +172,20 @@ async def _world(db_session) -> SimpleNamespace:
                 assigned_engineer_id=eng.id if eng is not None else None,
             )
         )
+        # ADR 0041 (P30): the hub-load / capacity-fill load is DEMAND from the
+        # live rows. Mirror each run figure as a Not Started live row whose
+        # user override is that figure (OEM-D has lead 0 for B-OEM, so H2's
+        # demand sits on OEM-B instead).
+        live_step = "OEM-B" if (key, step_id) == ("h2", "OEM-D") else step_id
+        db_session.add(
+            ProjectWorkflowStep(
+                project_id=p[key].id,
+                step_template_id=live_step,
+                sequence_order=i + 1,
+                duration_weeks=1,
+                duration_override_weeks=weeks,
+            )
+        )
     await db_session.flush()
     return SimpleNamespace(
         greece=greece,
@@ -217,12 +233,20 @@ async def test_hub_load_serves_capacity_hubs_with_greece_aggregate(db_session):
     assert list(rows) == ["PD-India", "R&D-Greece"]
 
     gr = rows["R&D-Greece"]
-    # Load = own + OEM-HCK + OEM-Seltek (ADR 0042 §3).
+    # Load = own + OEM-HCK + OEM-Seitek (ADR 0042 §3).
     assert gr["design_load_weeks"] == 10 + 4 + 2 + 4
+    # ADR 0041 R12: members carry demand (full year, remaining) and booked.
+    def _m(hub: str, own: bool, n: int, weeks: int) -> dict:
+        return {
+            "hub": hub, "own": own, "project_count": n, "design_load_weeks": weeks,
+            "design_load_remaining_weeks": weeks, "design_load_booked_weeks": weeks,
+            "booked_project_count": n,
+        }  # fmt: skip
+
     assert gr["members"] == [
-        {"hub": "R&D-Greece", "own": True, "project_count": 1, "design_load_weeks": 10},
-        {"hub": "OEM-HCK", "own": False, "project_count": 2, "design_load_weeks": 6},
-        {"hub": "OEM-Seltek", "own": False, "project_count": 1, "design_load_weeks": 4},
+        _m("R&D-Greece", True, 1, 10),
+        _m("OEM-HCK", False, 2, 6),
+        _m("OEM-Seitek", False, 1, 4),
     ]
     assert sum(m["design_load_weeks"] for m in gr["members"]) == gr["design_load_weeks"]
     assert gr["selected_member"] is None
@@ -312,11 +336,13 @@ async def test_capacity_export_has_capacity_hub_rows_and_readable_members(db_ses
     assert [r["hub"] for r in rows] == ["PD-India", "R&D-Greece"]
     gr = rows[1]
     assert gr["members"] == (
-        "R&D-Greece 1 project(s) 10 wk; OEM-HCK 2 project(s) 6 wk; OEM-Seltek 1 project(s) 4 wk"
+        "R&D-Greece 1 project(s) 10 wk demand, 10 wk remaining, 10 wk booked; "
+        "OEM-HCK 2 project(s) 6 wk demand, 6 wk remaining, 6 wk booked; "
+        "OEM-Seitek 1 project(s) 4 wk demand, 4 wk remaining, 4 wk booked"
     )
     assert rows[0]["members"] == ""
     assert "members" in headers and "selected_member" in headers
-    assert b"OEM-Seltek 1 project(s) 4 wk" in csv_bytes(headers, rows)
+    assert b"OEM-Seitek 1 project(s) 4 wk" in csv_bytes(headers, rows)
 
 
 # --- P1 capacity fill on the aggregate ----------------------------------------------------
@@ -346,7 +372,7 @@ async def test_capacity_fill_walks_the_capacity_hub_set(db_session):
     gr_load = next(r for r in load["rows"] if r["hub"] == "R&D-Greece")
     assert [h["hub"] for h in fill["hubs"]] == ["PD-India", "R&D-Greece"]
     assert gr_fill["capacity_weeks"] == gr_load["design_capacity_remaining"]
-    assert gr_fill["members"] == ["OEM-HCK", "OEM-Seltek"]
+    assert gr_fill["members"] == ["OEM-HCK", "OEM-Seitek"]
     assert gr_fill["base_load_weeks"] == 10.0
     # H1 (4) -> 14, S1 (4) -> 18, H2 (2) -> 20, all within ~32.4 weeks.
     assert gr_fill["filled_load_weeks"] == 20.0 and gr_fill["promoted_count"] == 3
@@ -374,7 +400,7 @@ async def test_planning_summary_and_resource_load(db_session):
     gr = rows["R&D-Greece"]
     assert gr["engineer_count"] == 2 and gr["not_counted_engineer_count"] == 1
     assert gr["fte_total"] == 1.8
-    assert gr["members"] == ["OEM-HCK", "OEM-Seltek"]
+    assert gr["members"] == ["OEM-HCK", "OEM-Seitek"]
     cap_row = next(r for r in load["rows"] if r["hub"] == "R&D-Greece")
     assert gr["capacity_weeks"]["year"] == cap_row["design_capacity_year"]
     assert summary["design"]["total"]["engineer_count"] == 3
@@ -424,11 +450,11 @@ async def test_get_hubs_serves_the_capacity_hub(db_session):
         types = await _get(client, "/reference/project-types")
     assert hubs["OEM-HCK"]["capacity_hub_id"] == str(w.greece.id)
     assert hubs["OEM-HCK"]["capacity_hub_name"] == "R&D-Greece"
-    assert hubs["OEM-Seltek"]["capacity_hub_name"] == "R&D-Greece"
+    assert hubs["OEM-Seitek"]["capacity_hub_name"] == "R&D-Greece"
     assert hubs["R&D-Greece"]["capacity_hub_id"] is None
     assert hubs["R&D-Greece"]["capacity_hub_name"] is None
     assert {t["code"]: t["label"] for t in types}["RC"] == "Regulatory / Business Compliance"
-    assert [t["code"] for t in types] == ["NM", "CO", "RC", "NO", "IMP"]
+    assert [t["code"] for t in types] == ["NM", "CO", "RC", "NO", "IMP", "AC", "SER"]
 
 
 async def test_counts_in_capacity_is_admin_only_and_audited(db_session):
@@ -543,11 +569,11 @@ def test_whatif_capacity_rows_are_capacity_hubs_only():
     everyone = Scope(True, frozenset(dc.HUB_LAB_REGION), frozenset({"Greece", "India", "Romania"}))
     assert everyone.capacity_row_ok("R&D-Greece")
     assert not everyone.capacity_row_ok("OEM-HCK")
-    assert not everyone.capacity_row_ok("OEM-Seltek")
-    member_only = Scope(False, frozenset({"OEM-Seltek"}), frozenset({"Greece"}))
+    assert not everyone.capacity_row_ok("OEM-Seitek")
+    member_only = Scope(False, frozenset({"OEM-Seitek"}), frozenset({"Greece"}))
     assert member_only.capacity_row_ok("R&D-Greece")
     assert not member_only.capacity_row_ok("PD-India")
-    assert not member_only.capacity_row_ok("OEM-Seltek")
+    assert not member_only.capacity_row_ok("OEM-Seitek")
 
 
 async def test_whatif_refuses_designers_on_a_member_hub(db_session):
@@ -575,7 +601,7 @@ async def test_whatif_estimate_serves_no_oem_row(db_session):
     assert resp.status_code == 200, resp.text
     body = resp.json()
     hubs = {r["hub"] for r in body["design"]}
-    assert "OEM-HCK" not in hubs and "OEM-Seltek" not in hubs
+    assert "OEM-HCK" not in hubs and "OEM-Seitek" not in hubs
     assert "R&D-Greece" in hubs
     assert "OEM-HCK" not in body["touched_hubs"]
     assert not any(ln.startswith("OEM-") for ln in body["workings"])
@@ -603,3 +629,62 @@ async def test_project_ids_are_untouched_by_reads(db_session):
     }
     assert before == after
     assert uuid.UUID(str(w.greece.id))
+
+
+# --- P30-R01 (S30-I1): scope check on the REQUESTED hub before member resolution -------
+
+#: Every engineer list that resolves a member-hub filter to its capacity hub,
+#: with the key holding its engineer rows and the field naming an engineer.
+_ENGINEER_LISTS = (
+    ("/engineers", None, "name"),
+    ("/capacity/engineer-utilization", "engineers", "name"),
+    ("/capacity/utilization-matrix", "engineers", "engineer_id"),
+    ("/planning/resource-load", "engineers", "name"),
+    ("/planning/resource-load/options", "engineers", "name"),
+)
+
+
+def _engineer_rows(body: Any, key: str | None) -> Any:
+    return body if key is None else body[key]
+
+
+@pytest.mark.parametrize(("path", "key", "_field"), _ENGINEER_LISTS)
+async def test_out_of_scope_member_filter_is_empty_not_the_capacity_hub(
+    db_session, path, key, _field
+):
+    """ADR 0020 §3: a Greece-only planner filtering on OEM-HCK (outside their
+    scope) gets an empty list, not their own Greek engineers via the
+    OEM-HCK → R&D-Greece resolution."""
+
+    w = await _world(db_session)
+    await act_as(db_session, RoleName.HUB_PLANNER, hub_ids=[w.greece.id])
+    async with client_for(db_session) as client:
+        unfiltered = await _get(client, path)
+        by_hck = await _get(client, path, hub_id=w.hck.id)
+        by_seitek = await _get(client, path, hub_id=w.seltek.id)
+    # Sanity: the caller does see Greek engineers without a filter.
+    assert _engineer_rows(unfiltered, key)
+    assert _engineer_rows(by_hck, key) == []
+    assert _engineer_rows(by_seitek, key) == []
+    if key is not None:
+        # Same shape as any other out-of-scope filter.
+        assert set(by_hck) == set(unfiltered)
+
+
+@pytest.mark.parametrize(("path", "key", "field"), _ENGINEER_LISTS)
+async def test_in_scope_member_filter_still_resolves_to_the_capacity_hub(
+    db_session, path, key, field
+):
+    """P29 behaviour kept: a caller holding R&D-Greece and OEM-HCK who filters
+    on OEM-HCK gets the capacity hub's (Greek) engineers."""
+
+    w = await _world(db_session)
+    await act_as(db_session, RoleName.HUB_PLANNER, hub_ids=[w.greece.id, w.hck.id])
+    async with client_for(db_session) as client:
+        by_hck = await _get(client, path, hub_id=w.hck.id)
+    greek = (
+        {str(w.alpha.id), str(w.beta.id), str(w.theoni.id)}
+        if field == "engineer_id"
+        else {"Alpha", "Beta", "Theoni"}
+    )
+    assert {e[field] for e in _engineer_rows(by_hck, key)} == greek

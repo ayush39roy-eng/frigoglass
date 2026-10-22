@@ -299,14 +299,14 @@ class HubP1Fill(BaseModel):
     """
 
     #: P29 (ADR 0042): the CAPACITY hub. R&D-Greece's walk covers its own,
-    #: OEM-HCK's and OEM-Seltek's projects as one set.
+    #: OEM-HCK's and OEM-Seitek's projects as one set.
     hub: HubName
     capacity_weeks: float
     base_load_weeks: float
     filled_load_weeks: float
     promoted_count: int
     #: P29: the member hubs of this capacity hub in the caller's scope, by
-    #: name (`["OEM-HCK", "OEM-Seltek"]` on R&D-Greece, empty elsewhere).
+    #: name (`["OEM-HCK", "OEM-Seitek"]` on R&D-Greece, empty elsewhere).
     members: list[HubName]
     #: P29: the `hub_id` filter's hub when it resolves to this entry.
     selected_member: HubName | None

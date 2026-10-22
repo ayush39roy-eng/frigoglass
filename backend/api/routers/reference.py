@@ -36,7 +36,7 @@ async def list_hubs(db: AsyncSession = Depends(get_db)) -> list[HubRead]:
     surface permission, since every role needs hub labels.
 
     P29 (ADR 0042): each hub carries `capacity_hub_id` / `capacity_hub_name`
-    (R&D-Greece for OEM-HCK and OEM-Seltek, null otherwise).
+    (R&D-Greece for OEM-HCK and OEM-Seitek, null otherwise).
     """
 
     hubs = list((await db.execute(select(Hub).order_by(Hub.name))).scalars().all())

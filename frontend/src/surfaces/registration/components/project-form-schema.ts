@@ -27,14 +27,22 @@ function optionalNumericString(opts: {
   integer?: boolean;
   min?: number;
   max?: number;
+  /** P30: at most this many decimal places (the server's `≤ 2 dp`). */
+  decimals?: number;
   message?: string;
 }): z.ZodType<string | undefined, z.ZodTypeDef, string | undefined> {
   const pattern = opts.integer ? INTEGER_PATTERN : NUMBER_PATTERN;
   const typeMessage = opts.message ?? (opts.integer ? 'Enter a whole number' : 'Enter a number');
+  const decimals = opts.decimals;
   return z
     .string()
     .optional()
     .refine((v) => v === undefined || v.trim() === '' || pattern.test(v.trim()), typeMessage)
+    .refine((v) => {
+      if (decimals === undefined || v === undefined || v.trim() === '') return true;
+      const frac = v.trim().split('.')[1];
+      return frac === undefined || frac.length <= decimals;
+    }, `At most ${String(decimals ?? 0)} decimal places`)
     .refine((v) => {
       if (opts.min === undefined) return true;
       if (v === undefined || v.trim() === '') return true;
@@ -65,8 +73,10 @@ export const projectFormSchema = z.object({
   // P9 (contract §6); ADR 0024 (2026-10-13): a week the user enters lives on the
   // 52-week plan year, W1–W52 (the server's 78-week search horizon is internal).
   target_end_week: optionalNumericString({ integer: true, min: 1, max: DISPLAY_HORIZON_WEEKS }),
-  estimated_design_weeks: optionalNumericString({ min: 0 }),
-  estimated_lab_weeks: optionalNumericString({ min: 0 }),
+  // P30 (ADR 0041, API_CONTRACT_P30 §2): the client's effort figures,
+  // 0..9999.99 with at most 2 decimals (the server's own limits).
+  design_effort_weeks: optionalNumericString({ min: 0, max: 9999.99, decimals: 2 }),
+  lab_effort_weeks: optionalNumericString({ min: 0, max: 9999.99, decimals: 2 }),
 });
 
 export type ProjectFormInput = z.input<typeof projectFormSchema>;

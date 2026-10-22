@@ -43,7 +43,7 @@ vi.mock('@/surfaces/dashboard/hooks/use-dashboard', () => ({
   }),
 }));
 vi.mock('@/lib/api/reference', () => ({
-  useHubs: () => ({ data: [{ id: 'hub-1', name: 'R&D-Greece', lab_region: 'Greece', is_oem: false }] }),
+  useHubs: () => ({ data: [{ id: 'hub-1', name: 'R&D-Greece', lab_region: 'Greece', is_oem: false, capacity_hub_id: null, capacity_hub_name: null }] }),
   useCategoriesForHub: () => ({ data: undefined, options: ['A+', 'A', 'B', 'C'] }),
 }));
 vi.mock('@/surfaces/project-workspace/api/workspace-api', () => ({ askAgent: vi.fn() }));
@@ -115,6 +115,7 @@ const project: ProjectRead = {
   external_code: null,
   hub_id: 'hub-1',
   leader_engineer_id: null,
+  leader_is_provisional: false,
   category: null,
   type: null,
   priority: null,
@@ -135,6 +136,13 @@ const project: ProjectRead = {
   certification_testing_required: true,
   estimated_design_weeks: null,
   estimated_lab_weeks: null,
+  design_effort_weeks: null,
+  lab_effort_weeks: null,
+  safety_lab_weeks: null,
+  actual_design_weeks: null,
+  actual_testing_weeks: null,
+  safety_certification_required: false,
+  capacity_flag: false,
   plant: null,
   requesting_department: null,
   product_type: null, scoring_tags: [], tag_dimension_keys: [],
@@ -383,8 +391,8 @@ describe('Projects page — registration drawer', () => {
       rm_savings_keur: null,
       target_end_week: null,
       certification_testing_required: true,
-      estimated_design_weeks: null,
-      estimated_lab_weeks: null,
+      design_effort_weeks: null,
+      lab_effort_weeks: null,
       scoring_tags: ['new_models', 'improvement'],
     });
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());

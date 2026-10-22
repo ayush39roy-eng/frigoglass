@@ -37,7 +37,17 @@ export interface WorkspaceStage {
   kind: WorkflowStepKind;
   sequence_order: number;
   predecessor_ids: string[];
+  /** P30 (API_CONTRACT_P30 §3): the effective duration (user ?? effort ?? lead),
+   *  except a lab step skipped only because certification testing is off shows
+   *  its lead time. */
   duration_weeks: number;
+  /** P30: the lead-time table value. */
+  lead_time_weeks: number;
+  /** P30: the USER's duration (Gantt / Workspace), 1..104; null = none. */
+  duration_override_weeks: number | null;
+  /** P30: the step's share of the project's client effort figure
+   *  (server-derived, 0 = skipped by the split); null = no split. */
+  effort_weeks: number | null;
   skipped: boolean;
   planned_start_week: number | null;
   planned_end_week: number | null;

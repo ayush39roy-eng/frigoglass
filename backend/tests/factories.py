@@ -66,7 +66,7 @@ async def make_hub(
     capacity_hub: Hub | None = None,
 ) -> Hub:
     """P29 (ADR 0042): `capacity_hub` makes this hub a capacity member of it
-    (OEM-HCK / OEM-Seltek under R&D-Greece); omitted, the hub is its own."""
+    (OEM-HCK / OEM-Seitek under R&D-Greece); omitted, the hub is its own."""
     hub = Hub(
         name=name,
         lab_region=lab_region,

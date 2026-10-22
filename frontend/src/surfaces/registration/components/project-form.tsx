@@ -23,12 +23,15 @@ import {
 } from '@/components/ui/select';
 import { MOVE_COPY } from '@/components/shared/priority-move/move-copy';
 import { PriorityMoveNotAppliedError } from '@/components/shared/priority-move/form-priority-move';
+import { ProvisionalLeaderBadge } from '@/components/shared/capacity-roster-markers';
 import { ScoringTagsField } from '@/components/shared/scoring-tags';
 import { canonicalScoringTags } from '@/lib/scoring-tags';
 import { ApiError } from '@/lib/api/client';
 import { apiErrorMessage } from '@/lib/api/error-messages';
 import { useCategoriesForHub, type Hub } from '@/lib/api/reference';
+import { hubPickerLabel } from '@/lib/hub-labels';
 import { DISPLAY_HORIZON_WEEKS } from '@/lib/domain-constants';
+import { formatDecimal } from '@/lib/format';
 import {
   PROJECT_PRIORITIES,
   PROJECT_TYPES,
@@ -54,6 +57,12 @@ import {
   type ProjectFormInput,
   type ProjectFormValues,
 } from './project-form-schema';
+import {
+  EFFORT_FIELD_IDS,
+  EFFORT_SPLIT_REJECTED_COPY,
+  effortSplitField,
+  type EffortField,
+} from './effort-fields';
 
 /**
  * Create / edit dialog for one project (`POST /projects` / `PATCH
@@ -152,6 +161,9 @@ function requiredMark(field: keyof typeof REQUIRED_FIELD_LABELS): React.ReactNod
  * schema and one submit path. Radix Dialog title/description/footer only
  * render in the dialog variant.
  */
+/** P29: visible text beside the provisional-leader badge (the badge's sr text says the same). */
+const PROVISIONAL_LEADER_NOTE = 'Assigned by the data load, not by a person. Choose a leader to confirm one.';
+
 export function ProjectForm({
   mode,
   project,
@@ -204,6 +216,12 @@ export function ProjectForm({
   const [scoringTags, setScoringTags] = React.useState<ScoringTag[]>(initialTags);
 
   const engineersQuery = useEngineerOptions(hubId || undefined);
+  // P29: the served `leader_is_provisional` describes the SAVED leader only, so
+  // the badge goes as soon as another leader is picked (the server clears it on save).
+  const provisionalLeader =
+    project?.leader_is_provisional === true &&
+    project.leader_engineer_id !== null &&
+    leaderId === project.leader_engineer_id;
   // P9: category options depend on the hub's workflow (contract §6). The server
   // list wins; the `is_oem` split is the fallback while it loads / offline.
   const selectedHub = React.useMemo(() => hubs.find((h) => h.id === hubId), [hubs, hubId]);
@@ -236,8 +254,8 @@ export function ProjectForm({
     capex_keur: numToStr(project?.capex_keur),
     rm_savings_keur: numToStr(project?.rm_savings_keur),
     target_end_week: numToStr(project?.target_end_week),
-    estimated_design_weeks: numToStr(project?.estimated_design_weeks),
-    estimated_lab_weeks: numToStr(project?.estimated_lab_weeks),
+    design_effort_weeks: numToStr(project?.design_effort_weeks),
+    lab_effort_weeks: numToStr(project?.lab_effort_weeks),
   }));
 
   const {
@@ -306,8 +324,21 @@ export function ProjectForm({
     }
   };
 
+  // P30 (ADR 0041 R7): a 422 `EFFORT_SPLIT_REJECTED` lands on its figure and
+  // shows only while that field still holds the value the server rejected.
+  const [effortRejected, setEffortRejected] = React.useState<{
+    field: EffortField;
+    message: string;
+    at: string;
+  } | null>(null);
+  const effortError = (field: EffortField): string | undefined =>
+    effortRejected?.field === field && effortRejected.at === normaliseText(watched[field]).trim()
+      ? effortRejected.message
+      : undefined;
+
   const submit = handleSubmit(async (values) => {
     setSubmitError(null);
+    setEffortRejected(null);
     if (!hubId) {
       setSubmitError('Hub is required.');
       return;
@@ -333,8 +364,9 @@ export function ProjectForm({
       rm_savings_keur: parseOptionalNumber(values.rm_savings_keur) ?? null,
       target_end_week: parseOptionalNumber(values.target_end_week) ?? null,
       certification_testing_required: certificationTesting,
-      estimated_design_weeks: parseOptionalNumber(values.estimated_design_weeks) ?? null,
-      estimated_lab_weeks: parseOptionalNumber(values.estimated_lab_weeks) ?? null,
+      // P30: the client's effort figures (null clears: the lead-time table applies).
+      design_effort_weeks: parseOptionalNumber(values.design_effort_weeks) ?? null,
+      lab_effort_weeks: parseOptionalNumber(values.lab_effort_weeks) ?? null,
       scoring_tags: [...scoringTags],
     };
     if (mode === 'create') {
@@ -358,6 +390,12 @@ export function ProjectForm({
         setSubmitError(err.message);
       } else if (err instanceof ApiError && err.isForbidden) {
         setSubmitError('Your role cannot create or edit projects.');
+      } else if (err instanceof ApiError && err.code === 'EFFORT_SPLIT_REJECTED') {
+        // P30 (ADR 0041 R7): the split would put one step above 104 weeks.
+        const field = effortSplitField(err);
+        setEffortRejected({ field, message: EFFORT_SPLIT_REJECTED_COPY, at: normaliseText(values[field]).trim() });
+        setSubmitError('Nothing was saved. Lower the effort figure marked below.');
+        requestAnimationFrame(() => document.getElementById(EFFORT_FIELD_IDS[field])?.focus());
       } else if (requiredFieldErrorsFromApi(err)) {
         // P23-T02: the server's per-field 422 lands on the same fields.
         showRequiredErrors(requiredFieldErrorsFromApi(err) ?? {});
@@ -426,7 +464,7 @@ export function ProjectForm({
                 <SelectContent>
                   {hubs.map((h) => (
                     <SelectItem key={h.id} value={h.id}>
-                      {h.name}
+                      {hubPickerLabel(h, hubs)}
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -436,6 +474,15 @@ export function ProjectForm({
               label={<>Leader{requiredMark('leader_engineer_id')}</>}
               htmlFor="reg-leader"
               error={requiredError('leader_engineer_id')}
+              // P29 (ADR 0042 §7): the served flag, while the saved leader is still selected.
+              hint={
+                provisionalLeader ? (
+                  <span className="inline-flex flex-wrap items-center gap-1.5" data-testid="reg-leader-provisional">
+                    <ProvisionalLeaderBadge />
+                    <span aria-hidden="true">{PROVISIONAL_LEADER_NOTE}</span>
+                  </span>
+                ) : undefined
+              }
             >
               <Select value={leaderId} onValueChange={setLeaderId} disabled={!hubId}>
                 <SelectTrigger
@@ -583,7 +630,7 @@ export function ProjectForm({
         {/* A top border + top padding marks this as its own section rather than
             a continuation of Identity — matching the existing separation between
             the Financial section below and everything above it. The P9 planning
-            fields (target end week, certification, estimated weeks) get the same
+            fields (target end week, certification, effort figures) get the same
             first-class treatment as every other field group, not an appended one. */}
         <fieldset className="space-y-3 border-t border-border pt-5">
           <legend className="text-2xs font-semibold uppercase tracking-wide text-text-muted">
@@ -626,40 +673,43 @@ export function ProjectForm({
               </span>
             </div>
             <Field
-              label="Estimated design weeks"
-              htmlFor="reg-est-design"
-              error={errors.estimated_design_weeks?.message}
-              hint="Capacity “Estimated” column only — never changes the schedule."
+              label="Design effort (client, weeks)"
+              htmlFor={EFFORT_FIELD_IDS.design_effort_weeks}
+              error={errors.design_effort_weeks?.message ?? effortError('design_effort_weeks')}
+              hint="Process Design Man Week. Split over the design steps; empty uses the lead-time table."
             >
               <Input
-                id="reg-est-design"
+                id={EFFORT_FIELD_IDS.design_effort_weeks}
                 type="number"
                 min={0}
-                step="0.5"
+                max={9999.99}
+                step="0.01"
                 inputMode="decimal"
                 className="tnum"
-                aria-invalid={errors.estimated_design_weeks ? true : undefined}
-                {...register('estimated_design_weeks')}
+                aria-invalid={errors.design_effort_weeks || effortError('design_effort_weeks') ? true : undefined}
+                {...register('design_effort_weeks')}
               />
             </Field>
             <Field
-              label="Estimated lab weeks"
-              htmlFor="reg-est-lab"
-              error={errors.estimated_lab_weeks?.message}
-              hint="Capacity “Estimated” column only — never changes the schedule."
+              label="Lab effort (client, weeks)"
+              htmlFor={EFFORT_FIELD_IDS.lab_effort_weeks}
+              error={errors.lab_effort_weeks?.message ?? effortError('lab_effort_weeks')}
+              hint="Lab Weeks (process derived). Split over the lab steps when certification testing is on."
             >
               <Input
-                id="reg-est-lab"
+                id={EFFORT_FIELD_IDS.lab_effort_weeks}
                 type="number"
                 min={0}
-                step="0.5"
+                max={9999.99}
+                step="0.01"
                 inputMode="decimal"
                 className="tnum"
-                aria-invalid={errors.estimated_lab_weeks ? true : undefined}
-                {...register('estimated_lab_weeks')}
+                aria-invalid={errors.lab_effort_weeks || effortError('lab_effort_weeks') ? true : undefined}
+                {...register('lab_effort_weeks')}
               />
             </Field>
           </div>
+          {project ? <ClientWorkbookFigures project={project} /> : null}
         </fieldset>
 
         <fieldset className="space-y-3 border-t border-border pt-5">
@@ -789,6 +839,38 @@ export function ProjectForm({
   );
 }
 
+/** A served figure as written (2 dp at most on the wire); null → an en dash. */
+function servedWeeks(value: number | null): string {
+  return value === null ? '–' : `${formatDecimal(value)} wk`;
+}
+
+/**
+ * P30 (ADR 0041, API_CONTRACT_P30 §2): the client workbook's display-only
+ * figures, read-only and compact. Served verbatim; nothing is derived here.
+ */
+function ClientWorkbookFigures({ project }: { project: ProjectRead }): React.JSX.Element {
+  const items: { label: string; value: string }[] = [
+    { label: 'Safety lab', value: servedWeeks(project.safety_lab_weeks) },
+    { label: 'Actual design', value: servedWeeks(project.actual_design_weeks) },
+    { label: 'Actual testing', value: servedWeeks(project.actual_testing_weeks) },
+    { label: 'Safety cert. required', value: project.safety_certification_required ? 'Yes' : 'No' },
+    { label: 'Capacity flag', value: project.capacity_flag ? 'Yes' : 'No' },
+  ];
+  return (
+    <div className="rounded border border-border bg-surface-sunken/40 px-3 py-2" data-testid="client-workbook-figures">
+      <p className="text-2xs font-medium text-text-muted">From the client workbook (read-only)</p>
+      <dl className="mt-1 grid grid-cols-2 gap-x-4 gap-y-1 sm:grid-cols-3">
+        {items.map((item) => (
+          <div key={item.label} className="flex min-w-0 flex-wrap items-baseline justify-between gap-x-2">
+            <dt className="text-2xs text-text-muted">{item.label}</dt>
+            <dd className="tnum text-xs text-text">{item.value}</dd>
+          </div>
+        ))}
+      </dl>
+    </div>
+  );
+}
+
 function InlineHeader({ children }: { children: React.ReactNode; className?: string | undefined }): React.JSX.Element {
   return <div className="flex flex-col gap-1">{children}</div>;
 }
@@ -814,8 +896,8 @@ function Field({
   htmlFor: string;
   error?: string | undefined;
   required?: boolean | undefined;
-  /** Helper text under the control (P9 planning fields). */
-  hint?: string | undefined;
+  /** Helper text under the control (P9 planning fields; P29 provisional-leader badge). */
+  hint?: React.ReactNode;
   children: React.ReactNode;
 }): React.JSX.Element {
   return (

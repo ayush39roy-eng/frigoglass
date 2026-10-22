@@ -205,7 +205,7 @@ async def test_category_workflow_mismatch_on_create(db_session, is_oem, category
     await _act_as(db_session, RoleName.ADMIN)
     hub = await make_hub(
         db_session,
-        name=HubName.OEM_SELTEK if is_oem else HubName.PD_ROMANIA,
+        name=HubName.OEM_SEITEK if is_oem else HubName.PD_ROMANIA,
         lab_region=LabRegion.INDIA if is_oem else LabRegion.ROMANIA,
         is_oem=is_oem,
     )

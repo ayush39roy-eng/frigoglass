@@ -38,8 +38,8 @@ vi.mock('./hooks/use-gantt', () => ({
 vi.mock('@/lib/api/reference', () => ({
   useHubs: () => ({
     data: [
-      { id: 'hub-greece', name: 'R&D-Greece', lab_region: 'Greece', is_oem: false },
-      { id: 'hub-india', name: 'R&D-India', lab_region: 'India', is_oem: false },
+      { id: 'hub-greece', name: 'R&D-Greece', lab_region: 'Greece', is_oem: false, capacity_hub_id: null, capacity_hub_name: null },
+      { id: 'hub-india', name: 'R&D-India', lab_region: 'India', is_oem: false, capacity_hub_id: null, capacity_hub_name: null },
     ],
   }),
 }));
@@ -70,6 +70,7 @@ function step(seq: number, start: number, end: number, over: Partial<GanttStepRo
     start_not_before_week: null,
     timing_editable: 'none',
     span_fte: null,
+    effort_weeks: null,
     ...over,
   };
 }

@@ -33,8 +33,15 @@ from tests.factories import make_hub, make_schedule_run, make_user
 from tests.p12_helpers import CW, add_checkin, plan_step, set_progress, stepped_project
 
 
-def _live(status=WorkflowStepStatus.NOT_STARTED, duration=4, start=None):
-    return SimpleNamespace(status=status, duration_weeks=duration, actual_start_week=start)
+def _live(status=WorkflowStepStatus.NOT_STARTED, duration=4, start=None, effort=None):
+    # ADR 0041 R5: the live row's three durations feed the one skip predicate.
+    return SimpleNamespace(
+        status=status,
+        duration_weeks=duration,
+        actual_start_week=start,
+        duration_override_weeks=None,
+        effort_weeks=effort,
+    )
 
 
 def _run(start, end, skipped=False):
@@ -87,6 +94,10 @@ def test_stage_is_due_rules():
     assert not stage_is_due(_live(WorkflowStepStatus.DONE), _run(28, 34), **kw)
     assert not stage_is_due(_live(), _run(28, 34, skipped=True), **kw)
     assert not stage_is_due(_live(WorkflowStepStatus.IN_PROGRESS, duration=0, start=5), None, **kw)
+    # ADR 0041 R5: an effort-zeroed step is skipped, even if a (stale) run
+    # still plans it over CW.
+    assert not stage_is_due(_live(effort=0), _run(28, 34), **kw)
+    assert stage_is_due(_live(effort=2), _run(28, 34), **kw)
     # A lab step on a project without certification testing is skipped.
     assert not stage_is_due(
         _live(WorkflowStepStatus.IN_PROGRESS, start=5),

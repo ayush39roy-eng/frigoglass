@@ -80,6 +80,7 @@ import uuid
 from collections import Counter
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
@@ -417,7 +418,7 @@ async def seed_workflows(session: AsyncSession) -> dict[str, int]:
 
 async def seed_hubs(session: AsyncSession) -> dict[str, Hub]:
     """6 rows, from `domain_constants.HUB_LAB_REGION` / `OEM_HUBS`. ADR 0042
-    (P29): OEM-HCK and OEM-Seltek point at R&D-Greece (`capacity_hub_id`,
+    (P29): OEM-HCK and OEM-Seitek point at R&D-Greece (`capacity_hub_id`,
     `domain_constants.HUB_CAPACITY_HUB`). Each CAPACITY hub gets its
     `HubWorkCalendar` from `HUB_WORK_CALENDAR_SEED` (ADR 0008); a member hub
     has none (an existing one, from a pre-P29 seed, is deleted), the same
@@ -637,18 +638,26 @@ def client_2026_step_specs(
     project: dict[str, Any], workflow_id: str, lead_times: Mapping[tuple[str, str, str], int]
 ) -> list[c26.StepSpec]:
     """The project's 14 steps in sequence order, with the duration the
-    scheduler uses (0 = skipped: a 0-week lead time, or a lab step when
-    certification testing is off)."""
+    scheduler uses: `eff = effort ?? lead`, 0 = skipped (a 0-week lead time,
+    a lab step when certification testing is off, or a step the client's
+    effort figure apportions 0 weeks; ADR 0041 §3, R5). The effort split runs
+    here, BEFORE progress is derived (R3)."""
 
-    specs: list[c26.StepSpec] = []
-    for wf, step_id, _code, _name, kind, _seq, _preds in dc.WORKFLOW_STEP_TEMPLATE_SEED:
-        if wf != workflow_id:
-            continue
-        weeks = duration_for(lead_times, workflow_id, project["category"], step_id)
-        if kind == WorkflowStepKind.LAB.value and not project["certification_testing_required"]:
-            weeks = 0
-        specs.append(c26.StepSpec(step_id, kind, weeks))
-    return specs
+    steps = [
+        (step_id, kind, seq, duration_for(lead_times, workflow_id, project["category"], step_id))
+        for wf, step_id, _code, _name, kind, seq, _preds in dc.WORKFLOW_STEP_TEMPLATE_SEED
+        if wf == workflow_id
+    ]
+    try:
+        return c26.effort_step_specs(project, steps)
+    except ValueError as exc:  # EffortSplitRejected (R7): rejected at import
+        raise ValueError(f"{project['external_code']}: {exc}") from exc
+
+
+def _decimal(value: object) -> Decimal | None:
+    """A JSON figure as an exact `Numeric(6, 2)` decimal (via its string)."""
+
+    return None if value is None else Decimal(str(value)).quantize(Decimal("0.01"))
 
 
 def _provisional_leaders(
@@ -816,6 +825,14 @@ async def seed_client_2026(
             target_end_week=p["target_end_week"],
             comments=p["comments"],
             certification_testing_required=p["certification_testing_required"],
+            # ADR 0041 §3: the client's per-project figures (exact decimals).
+            design_effort_weeks=_decimal(p.get("design_effort_weeks")),
+            lab_effort_weeks=_decimal(p.get("lab_effort_weeks")),
+            safety_lab_weeks=_decimal(p.get("safety_lab_weeks")),
+            actual_design_weeks=_decimal(p.get("actual_design_weeks")),
+            actual_testing_weeks=_decimal(p.get("actual_testing_weeks")),
+            safety_certification_required=bool(p.get("safety_certification_required")),
+            capacity_flag=bool(p.get("capacity_flag")),
             customer_name=p["customer"],
             plant=p["plant"],
             requesting_department=p["requesting_department"],
@@ -834,6 +851,8 @@ async def seed_client_2026(
                     duration_weeks=duration_for(
                         lead_times, workflow_id, category.value, spec.step_id
                     ),
+                    # ADR 0041 R4: the derived effort (never the user's override).
+                    effort_weeks=spec.effort,
                     status=WorkflowStepStatus(prog.status),
                     percent_complete=prog.percent_complete,
                     actual_start_week=prog.actual_start_week,
@@ -987,7 +1006,7 @@ async def run(
             if dataset == DATASET_CLIENT_2026:
                 chambers_by_code = await seed_chambers(session, deterministic_ids=True)
                 counts["chambers"] = len(chambers_by_code)
-                _step("seeding 253 client projects, engineers, steps...")
+                _step("seeding the client projects, engineers, steps...")
                 counts.update(
                     await seed_client_2026(session, _load_client_2026_data(), hubs_by_name)
                 )

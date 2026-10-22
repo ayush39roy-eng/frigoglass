@@ -101,7 +101,17 @@ export function StageRow({ stage, canWrite, onSave }: StageRowProps): React.JSX.
         <span className="w-6 font-mono text-2xs">{stage.step_id.slice(-1)}</span>
         <StepKindBadge kind={stage.kind} compact />
         <span className="flex-1 truncate line-through decoration-border-strong">{stage.name}</span>
-        <Badge tone="outline" className="border-dashed text-text-subtle" title="Not applicable — no lead time for this project's category, or a lab step without certification testing">
+        <Badge
+          tone="outline"
+          className="border-dashed text-text-subtle"
+          title={
+            // P30 (ADR 0041 R5): a step the client effort split gave 0 weeks is skipped too.
+            stage.effort_weeks === 0 && stage.duration_override_weeks === null && stage.lead_time_weeks > 0
+              ? "Skipped — its share of the project's client effort figure is 0 weeks"
+              : "Not applicable — no lead time for this project's category, or a lab step without certification testing"
+          }
+          data-testid={`stage-skipped-${stage.step_id}`}
+        >
           n/a
         </Badge>
       </li>

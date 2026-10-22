@@ -33,6 +33,7 @@ from models.enums import (
     WorkflowStepStatus,
 )
 from models.hub import Hub
+from models.workflow import ProjectWorkflowStep
 from scheduling.greedy import run_greedy_sgs
 from seed import seed_demo_data
 from services.capacity_priority import PRIORITY_BUCKETS, priority_bucket, split_to_total
@@ -113,6 +114,25 @@ async def _capacity_fixture(db_session) -> SimpleNamespace:
     await plan_step(db_session, run, pdi_none, "PDD-F", 33, 38)  # lab 6
     await plan_step(db_session, run, rdi_p4, "PDD-E", 31, 33)  # design 3
     await plan_step(db_session, run, rdi_p4, "PDD-H", 34, 34)  # lab 1
+    # ADR 0041 (P30): the hub rows' load (and its priority split, R12) is the
+    # DEMAND of the live rows. Mirror the run's figures into the live rows'
+    # derived effort (0 elsewhere) so demand = the hand-built run here.
+    planned = {
+        gr_p1.id: {"PDD-A": 10, "PDD-F": 4},
+        gr_q.id: {"PDD-A": 5, "PDD-F": 0},
+        pdi_p2.id: {"PDD-E": 7, "PDD-H": 3},
+        # Category B has no PDD-F (lead 0): its 6 lab weeks sit on PDD-H.
+        pdi_none.id: {"PDD-A": 2, "PDD-H": 6},
+        rdi_p4.id: {"PDD-E": 3, "PDD-H": 1},
+    }
+    for row in (
+        await db_session.execute(
+            select(ProjectWorkflowStep).where(ProjectWorkflowStep.project_id.in_(list(planned)))
+        )
+    ).scalars():
+        if row.duration_weeks > 0:
+            row.effort_weeks = planned[row.project_id].get(row.step_template_id, 0)
+    await db_session.flush()
     await add_outcome(db_session, run, gr_p1, within_year=True)
     await add_outcome(db_session, run, gr_q, within_year=False, left_out=True, projected=None)
     await add_outcome(db_session, run, pdi_p2, within_year=True)
@@ -292,7 +312,9 @@ def _assert_totals_reconcile(body: dict) -> None:
     assert _total(t["lab_load_by_priority"]) == t["lab_load_weeks"]
     for kind in ("design", "lab"):
         for basis in ("year", "remaining"):
-            load, cap = t[f"{kind}_load_weeks"], t[f"{kind}_capacity_{basis}"]
+            # I19 rev. (ADR 0041): remaining pairs the remaining demand.
+            load_key = f"{kind}_load_weeks" if basis == "year" else f"{kind}_load_remaining_weeks"
+            load, cap = t[load_key], t[f"{kind}_capacity_{basis}"]
             pct = t[f"{kind}_booked_pct_{basis}"]
             assert pct == _booked(load, cap), (kind, basis)
             status = t[f"{kind}_booking_status_{basis}"]

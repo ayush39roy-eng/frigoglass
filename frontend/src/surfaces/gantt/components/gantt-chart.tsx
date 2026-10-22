@@ -25,6 +25,7 @@ import { ganttColumnWidths, useElementWidth, useNarrowGantt } from '../lib/gantt
 import { projectStatusLabels, stepStatusLabels } from '../lib/gantt-status-labels';
 import { buildVisualRows, visualRowHeight } from '../lib/gantt-rows';
 import { calendarRangePhrase, workWeeksPhrase } from '../lib/step-weeks-copy';
+import { durationSourceSuffix, editBaselineText, isEffortZeroed } from '../lib/step-duration-source';
 import type { GanttProjectRow, GanttStepRow, GanttWeeklyActiveCount } from '../api/types';
 import { ActivityLoadStrip, COUNT_ROW_HEIGHT, LOAD_STRIP_HEIGHT, WeeklyCountRow } from './activity-load-strip';
 import { GanttBarGroup, GanttHatchDefs, GanttSpilloverMarker } from './gantt-bars';
@@ -523,7 +524,10 @@ function stepBarTitle(
 ): string {
   const parts = [s.step_name];
   if (planned) parts.push(`planned ${calendarRangePhrase(planned.startWeek, planned.endWeek)}`);
-  if (s.duration_weeks !== null && !s.skipped) parts.push(workWeeksPhrase(s.kind, s.duration_weeks, s.span_fte ?? null));
+  // P30 (ADR 0041 R4): name where the served duration comes from (client effort / timing edit).
+  if (s.duration_weeks !== null && !s.skipped) {
+    parts.push(`${workWeeksPhrase(s.kind, s.duration_weeks, s.span_fte ?? null)}${durationSourceSuffix(s)}`);
+  }
   if (actual) parts.push(`actual ${formatPlanWeek(actual.startWeek)}–${formatPlanWeek(actual.endWeek)}`);
   return parts.join(' · ');
 }
@@ -696,11 +700,13 @@ function StepLeftCell({
     kind === 'lab' ? step.assigned_chamber_code : kind === 'design' ? step.assigned_engineer_name : null;
   const host = useStepTimingHost();
   const editable = host !== null && step.timing_editable !== 'none' && !skipped;
+  // P30 (ADR 0041 R4): only the user's two fields are a "timing edit"; an
+  // effort value is the client's figure, named in the hint but never "edited".
   const edited = hasTimingEdit(step);
   const editedTitle = edited
     ? [
         step.duration_override_weeks !== null
-          ? `${kind === 'design' ? 'work' : 'duration'} ${String(step.duration_override_weeks)} wks (table ${String(step.lead_time_weeks)})`
+          ? `${kind === 'design' ? 'work' : 'duration'} ${String(step.duration_override_weeks)} wks (${editBaselineText(step)})`
           : null,
         step.start_not_before_week !== null ? `earliest start ${formatPlanWeek(step.start_not_before_week)}` : null,
       ]
@@ -721,7 +727,13 @@ function StepLeftCell({
             'block truncate text-2xs',
             skipped ? 'text-text-muted line-through decoration-text-subtle' : 'text-text',
           )}
-          title={skipped ? `${name} — not applicable for this project (skipped)` : name}
+          title={
+            skipped
+              ? isEffortZeroed(step)
+                ? `${name} — skipped: its share of the project's client effort figure is 0 weeks`
+                : `${name} — not applicable for this project (skipped)`
+              : name
+          }
           data-testid="gantt-step-name"
         >
           {sequenceOrder}. {name}

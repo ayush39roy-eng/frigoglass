@@ -68,7 +68,17 @@ class WorkspaceStage(BaseModel):
     kind: WorkflowStepKind
     sequence_order: int
     predecessor_ids: list[str]
+    #: ADR 0041 R4: the step's effective duration `user ?? effort ?? lead`
+    #: (0 for a lead-0 or effort-zeroed step; a lab step skipped only because
+    #: certification testing is off still shows its planned length).
     duration_weeks: int
+    #: P30 (docs/API_CONTRACT_P30.md §3): the three inputs of `duration_weeks`.
+    #: The lead-time table value, the user's Gantt override (1..104) and the
+    #: derived per-project effort (0..104, from `design_effort_weeks` /
+    #: `lab_effort_weeks`). Read-only here.
+    lead_time_weeks: int
+    duration_override_weeks: int | None
+    effort_weeks: int | None
     skipped: bool
     #: From the active run's step row (I13), not recomputed.
     planned_start_week: int | None

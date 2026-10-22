@@ -46,7 +46,7 @@ vi.mock('@/lib/api/sse', () => ({
   streamSolverProgress: (...a: unknown[]) => sse.streamSolverProgress(...a),
 }));
 vi.mock('@/lib/api/reference', () => ({
-  useHubs: () => ({ data: [{ id: 'hub-in', name: 'PD-India', lab_region: 'India', is_oem: false }] }),
+  useHubs: () => ({ data: [{ id: 'hub-in', name: 'PD-India', lab_region: 'India', is_oem: false, capacity_hub_id: null, capacity_hub_name: null }] }),
   useCategoriesForHub: () => ({ data: undefined, options: ['A+', 'A', 'B', 'C'] }),
 }));
 vi.mock('@/surfaces/registration/hooks/use-registration', () => ({

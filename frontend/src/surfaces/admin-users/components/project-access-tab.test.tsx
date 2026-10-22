@@ -28,7 +28,7 @@ vi.mock('../hooks/use-project-access', () => ({
   useRevokeProjectAccessGrant: (id: unknown) => hooks.useRevokeProjectAccessGrant(id),
 }));
 vi.mock('@/lib/api/reference', () => ({
-  useHubs: () => ({ data: [{ id: 'hub-1', name: 'PD-India', lab_region: 'India', is_oem: false }] }),
+  useHubs: () => ({ data: [{ id: 'hub-1', name: 'PD-India', lab_region: 'India', is_oem: false, capacity_hub_id: null, capacity_hub_name: null }] }),
 }));
 
 function ready<T>(data: T) {

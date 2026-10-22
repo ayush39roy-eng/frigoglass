@@ -5,7 +5,7 @@
  *
  *   "R&D-"  -> R&D                       (R&D-Greece, R&D-India)
  *   "PD-"   -> PD (Product Development)  (PD-India, PD-Romania)
- *   "OEM-"  -> OEM                       (OEM-HCK, OEM-Seltek)
+ *   "OEM-"  -> OEM                       (OEM-HCK, OEM-Seitek)
  *
  * A hub with an unknown prefix falls into "Other hubs", shown last, so a new
  * hub is never hidden. Grouping is selection only: no figure is added up here

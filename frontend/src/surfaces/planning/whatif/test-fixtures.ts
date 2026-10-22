@@ -11,7 +11,7 @@ import type {
 
 export const ALL_SCOPE: ScopeInfo = {
   all_hubs: true,
-  hubs: ['R&D-Greece', 'R&D-India', 'PD-India', 'PD-Romania', 'OEM-HCK', 'OEM-Seltek'],
+  hubs: ['R&D-Greece', 'R&D-India', 'PD-India', 'PD-Romania', 'OEM-HCK', 'OEM-Seitek'],
   lab_regions: ['Greece', 'India', 'Romania'],
 };
 

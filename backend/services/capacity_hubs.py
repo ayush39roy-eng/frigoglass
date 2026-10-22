@@ -1,7 +1,7 @@
 """Capacity hubs (ADR 0042, P29-T01): the one place that groups hubs into the
 hubs whose engineers, work calendar and design supply serve them.
 
-`hubs.capacity_hub_id` points a *member* hub (OEM-HCK, OEM-Seltek) at its
+`hubs.capacity_hub_id` points a *member* hub (OEM-HCK, OEM-Seitek) at its
 capacity hub (R&D-Greece); every other hub is its own capacity hub. The
 capacity surfaces (`GET /capacity/hub-load`, `GET /planning/capacity-summary`,
 `GET /priorities/capacity-fill`, the engineer heatmap, the Capacity Planning
@@ -23,6 +23,9 @@ Rules implemented here, all read-only:
   with that member highlighted (`CapacityRowScope.selected_member`).
 - **Engineer lists** on a capacity surface resolve a `hub_id` filter to the
   capacity hub (`CapacityHubMap.resolve`), ANDed with the unchanged row scope.
+  P30-R01 (S30-I1): the scope check runs on the REQUESTED hub first, so an
+  out-of-scope member hub gives an empty list (ADR 0020 §3), never the
+  caller's own capacity hub's engineers (`engineer_hub_filter`).
 """
 
 from __future__ import annotations
@@ -32,7 +35,7 @@ from collections import defaultdict
 from collections.abc import Collection, Iterable
 from dataclasses import dataclass, field
 
-from sqlalchemy import select
+from sqlalchemy import ColumnElement, false, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.principal import Principal
@@ -40,7 +43,7 @@ from models.engineer import Engineer
 from models.enums import HubName, LabRegion
 from models.hub import Hub
 from services.capacity_supply import fte_sum
-from services.hub_scope import narrowed_hub_filter
+from services.hub_scope import is_hub_in_scope, narrowed_hub_filter
 
 
 @dataclass(frozen=True)
@@ -81,6 +84,29 @@ class CapacityHubMap:
 
         wanted = set(capacity_hub_ids)
         return [h for h, c in self.capacity_of.items() if c in wanted]
+
+
+def engineer_hub_filter(
+    principal: Principal,
+    cmap: CapacityHubMap,
+    hub_id: uuid.UUID | None,
+    region: LabRegion | None = None,
+) -> ColumnElement[bool] | None:
+    """The `Engineer.hub_id` predicate of an engineer list under the global
+    `hub_id` / `region` filters (ADR 0020, ADR 0025, ADR 0042).
+
+    P30-R01 (S30-I1): the RBAC check applies to the hub the caller ASKED for,
+    before any member → capacity-hub resolution. A `hub_id` outside the
+    caller's scope is an always-false predicate (empty rows, zero totals, no
+    403), even when it resolves to a capacity hub the caller does see. Only
+    an in-scope member hub (OEM-HCK) then resolves to its capacity hub, ANDed
+    with the unchanged row scope (`narrowed_hub_filter`). `None` = no
+    predicate (unrestricted caller, no filter).
+    """
+
+    if hub_id is not None and not is_hub_in_scope(principal, hub_id):
+        return false()
+    return narrowed_hub_filter(principal, Engineer.hub_id, cmap.resolve(hub_id), region)
 
 
 async def load_capacity_hub_map(db: AsyncSession) -> CapacityHubMap:

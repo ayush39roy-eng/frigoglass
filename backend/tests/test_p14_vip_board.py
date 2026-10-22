@@ -30,7 +30,7 @@ def _cleanup():
 
 _HUBS = (
     (HubName.OEM_HCK, LabRegion.GREECE, True),
-    (HubName.OEM_SELTEK, LabRegion.GREECE, True),
+    (HubName.OEM_SEITEK, LabRegion.GREECE, True),
     (HubName.RD_GREECE, LabRegion.GREECE, False),
     (HubName.PD_ROMANIA, LabRegion.ROMANIA, False),
     (HubName.RD_INDIA, LabRegion.INDIA, False),
@@ -84,7 +84,7 @@ def test_area_is_lab_region_with_oem_hubs_as_greece():
 
 async def test_seed_is_idempotent_and_links_by_exact_name(db_session):
     hubs = await _hubs(db_session)
-    s8 = await _project(db_session, hubs[HubName.OEM_SELTEK], "S8 for Kazakhstan")
+    s8 = await _project(db_session, hubs[HubName.OEM_SEITEK], "S8 for Kazakhstan")
     bee1 = await _project(db_session, hubs[HubName.RD_INDIA], "BEE star labelling - S-300")
     bee2 = await _project(db_session, hubs[HubName.RD_INDIA], "BEE star labelling CT 50")
     # Same prefix on another hub: never linked (prefix match is R&D-India only).
@@ -155,7 +155,7 @@ async def _seeded_board(db):
     hubs = await _hubs(db)
     run = await make_schedule_run(db, is_active=True)
     s8 = await _project(
-        db, hubs[HubName.OEM_SELTEK], "S8 for Kazakhstan", priority=ProjectPriority.P1
+        db, hubs[HubName.OEM_SEITEK], "S8 for Kazakhstan", priority=ProjectPriority.P1
     )
     flex = await _project(db, hubs[HubName.OEM_HCK], "BEATBOX 3D LOGO FLEX60")
     bee = await _project(db, hubs[HubName.RD_INDIA], "BEE star labelling A")
@@ -191,7 +191,7 @@ async def test_board_shape_order_counts_and_live_facts(db_session):
 
     oem, india, romania = body["areas"]
     assert oem["label"] == "Greece"
-    assert oem["hubs"] == ["OEM-HCK", "OEM-Seltek", "R&D-Greece"]
+    assert oem["hubs"] == ["OEM-HCK", "OEM-Seitek", "R&D-Greece"]
     assert india["hubs"] == ["PD-India", "R&D-India"]
     assert romania["hubs"] == ["PD-Romania"]
     # Yellow highlight = VIP: the tile lists the highlighted items in order.
@@ -222,7 +222,7 @@ async def test_board_shape_order_counts_and_live_facts(db_session):
     assert super8["highlighted"] is True and super8["sort_order"] == 1
     [proj] = super8["projects"]
     assert proj == {
-        "id": str(p["s8"].id), "name": "S8 for Kazakhstan", "hub": "OEM-Seltek",
+        "id": str(p["s8"].id), "name": "S8 for Kazakhstan", "hub": "OEM-Seitek",
         "priority": "P1", "status": "In Development", "projected_end_week": 40,
         "within_year": True, "health": "on_track",
     }
@@ -264,7 +264,7 @@ async def test_board_hub_and_region_filters_narrow(db_session):
 
     assert [a["area"] for a in by_hub["areas"]] == ["Greece"]
     items = _items_by_title(by_hub["areas"][0])
-    # OEM-Seltek's S8 is filtered out (counted hidden); OEM-HCK's Beatbox shown.
+    # OEM-Seitek's S8 is filtered out (counted hidden); OEM-HCK's Beatbox shown.
     assert items["Super-8 CC Kazakhstan TCCC EC 26 (Coke)"]["hidden_project_count"] == 1
     assert [x["name"] for x in items["Beat Box 3D Logo"]["projects"]] == [
         "BEATBOX 3D LOGO FLEX60"

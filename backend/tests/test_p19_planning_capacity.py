@@ -35,6 +35,7 @@ from models.enums import (
 )
 from models.hub import HubWorkCalendar
 from models.schedule import ScheduleRunProjectStep
+from models.workflow import ProjectWorkflowStep
 from tests.auth_helpers import clear_current_principal_override
 from tests.factories import make_engineer, make_hub, make_project, make_schedule_run
 from tests.p12_helpers import act_as, client_for
@@ -169,6 +170,16 @@ async def _world(db_session, *, with_run: bool = True):
                 assigned_chamber_id=ch.id if ch else None,
             )
         )
+        if not skipped:
+            # ADR 0041 (P30): the hub table's load is DEMAND from the live
+            # rows; mirror the run figure as the step's user override so the
+            # demand equals this hand-built run.
+            db_session.add(
+                ProjectWorkflowStep(
+                    project_id=project.id, step_template_id=step_id, sequence_order=i + 1,
+                    duration_weeks=1, duration_override_weeks=weeks,
+                )
+            )
     await db_session.flush()
     return w
 

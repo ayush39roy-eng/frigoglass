@@ -47,8 +47,8 @@ function me(role: 'pm' | 'hub'): unknown {
 }
 
 const HUBS = [
-  { id: 'hub-pd-india', name: 'PD-India', lab_region: 'India', is_oem: false },
-  { id: 'hub-rd-greece', name: 'R&D-Greece', lab_region: 'Greece', is_oem: false },
+  { id: 'hub-pd-india', name: 'PD-India', lab_region: 'India', is_oem: false, capacity_hub_id: null, capacity_hub_name: null },
+  { id: 'hub-rd-greece', name: 'R&D-Greece', lab_region: 'Greece', is_oem: false, capacity_hub_id: null, capacity_hub_name: null },
 ];
 const CHAMBERS = [
   {
@@ -246,7 +246,7 @@ function sixHubEstimate(): unknown {
   const d0 = base.design[0];
   const l0 = base.lab[0];
   if (!d0 || !l0) throw new Error('fixture');
-  const hubs = ['OEM-HCK', 'OEM-Seltek', 'PD-India', 'PD-Romania', 'R&D-Greece', 'R&D-India'];
+  const hubs = ['OEM-HCK', 'OEM-Seitek', 'PD-India', 'PD-Romania', 'R&D-Greece', 'R&D-India'];
   const regions = ['Greece', 'India', 'Romania'];
   return {
     ...base,

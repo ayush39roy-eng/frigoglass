@@ -7,6 +7,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Skeleton } from '@/components/ui/skeleton';
 import { ErrorState } from '@/components/shared/error-state';
 import type { Hub } from '@/lib/api/reference';
+import { hubPickerLabel } from '@/lib/hub-labels';
 import { PROJECT_TYPE_LABELS, type ProjectType } from '@/types/enums';
 
 import type { CapacityBasis, FilterOption, ResourceLoadFilters } from '../../api/types';
@@ -155,7 +156,7 @@ export function ResourceLoadSection({
           Resource load analytics
         </h2>
         <p className="text-2xs text-text-muted">
-          {BASIS_LABEL[basis]} · load from the active schedule
+          {BASIS_LABEL[basis]} · load = weeks booked by the active schedule
           {data?.schedule_run_version != null ? ` (run v${String(data.schedule_run_version)})` : ''}
         </p>
       </div>
@@ -173,7 +174,8 @@ export function ResourceLoadSection({
               <SelectItem value={ALL}>All hubs</SelectItem>
               {hubOptions.map((h) => (
                 <SelectItem key={h.id} value={h.id}>
-                  {h.name}
+                  {/* P29: a member hub lists its capacity hub's engineers (contract §3.2). */}
+                  {hubPickerLabel(h, hubs)}
                 </SelectItem>
               ))}
             </SelectContent>

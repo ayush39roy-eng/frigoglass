@@ -49,8 +49,14 @@ class StepTimingResponse(BaseModel):
     step_id: str
     duration_override_weeks: int | None
     start_not_before_week: int | None
-    #: `duration_override_weeks ?? lead time` (ADR 0019 §1).
+    #: `duration_override_weeks ?? effort_weeks ?? lead time` (ADR 0019 §1,
+    #: ADR 0041 R4); 0 for a skipped step.
     effective_duration_weeks: int
+    #: ADR 0041 R4 (docs/API_CONTRACT_P30.md §4): the derived per-project
+    #: effort of the step (0..104, null = none) — what "Reset timing" falls
+    #: back to — and the lead-time table value.
+    effort_weeks: int | None
+    lead_time_weeks: int
     recalc_status: RecalcStatus
     schedule_run_id: uuid.UUID | None
     baseline_run_id: uuid.UUID | None

@@ -20,6 +20,7 @@ import { hubsInScope } from '@/components/shared/hub-filter/hub-scope';
 import { usePriorityMoveFlow } from '@/components/shared/priority-move/use-priority-move-flow';
 import { ReadOnlyNotice } from '@/components/session/write-gate';
 import { useHubs } from '@/lib/api/reference';
+import { hubPickerLabel } from '@/lib/hub-labels';
 import { formatInteger } from '@/lib/format';
 import { cn } from '@/lib/utils';
 import { useDebouncedValue } from '@/lib/use-debounced-value';
@@ -175,7 +176,7 @@ export default function ProjectsPage(): React.JSX.Element {
     const inScope = hubsInScope(me, hubsQuery.data) ?? [];
     return inScope
       .filter((h) => region === null || h.lab_region === region)
-      .map((h) => ({ value: h.id, label: h.name }));
+      .map((h) => ({ value: h.id, label: hubPickerLabel(h, hubsQuery.data) }));
   }, [me, hubsQuery.data, region]);
 
   const hasLocalFilter = vipOnly || debouncedSearch !== '' || Object.values(filters).some((v) => v !== ALL);

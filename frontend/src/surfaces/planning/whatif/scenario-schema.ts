@@ -97,7 +97,7 @@ export function scenarioTotals(lines: Pick<ScenarioLines, 'projects' | 'engineer
  *  scenario the assistant returns with In Buyoff loads and sends unchanged. */
 export const WHATIF_STATUSES: readonly WhatIfStatus[] = UI_SCHEDULABLE_STATUSES;
 
-export const OEM_HUBS: readonly string[] = ['OEM-HCK', 'OEM-Seltek'];
+export const OEM_HUBS: readonly string[] = ['OEM-HCK', 'OEM-Seitek'];
 
 /** Categories a hub's workflow accepts (OEM hubs use the -OEM categories). */
 export function categoriesForHub(hub: string): readonly ProjectCategory[] {

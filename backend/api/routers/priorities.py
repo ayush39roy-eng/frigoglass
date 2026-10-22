@@ -463,7 +463,7 @@ async def priority_capacity_fill(
 
     P29 (ADR 0042, docs/API_CONTRACT_P29.md §4): one entry per CAPACITY hub
     with a hub in scope AND the filter; R&D-Greece's walk covers OEM-HCK and
-    OEM-Seltek (`members`), and `hub_id` = an OEM hub selects it."""
+    OEM-Seitek (`members`), and `hub_id` = an OEM hub selects it."""
 
     cmap, row_scopes = await capacity_rows_for_request(db, current_user, hub_id, region)
     fill = await compute_capacity_fill(db, [r.capacity_hub_id for r in row_scopes])

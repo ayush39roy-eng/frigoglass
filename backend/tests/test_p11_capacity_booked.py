@@ -21,6 +21,7 @@ from models.chamber import Chamber
 from models.enums import HubName, LabRegion, ProjectCategory, RoleName
 from models.hub import HubWorkCalendar
 from models.schedule import ScheduleRunProjectStep
+from models.workflow import ProjectWorkflowStep
 from services.capacity_supply import (
     area_for_region,
     booked_pct,
@@ -164,17 +165,34 @@ async def _world(db_session):
                 end_week=31 + weeks - 1,
             )
         )
+        # ADR 0041 (P30): the hub table's load is DEMAND from the live rows.
+        # The same step as a live row whose user override is the run's
+        # figure, so demand (full year = remaining, all Not Started) equals
+        # the booked load here.
+        if key == "oem" and step_id == "OEM-E":
+            # This world puts OEM-HCK in the India lab region; the scheduler's
+            # mapping (and the demand load, I25) puts OEM lab work in Greece.
+            # Keep the OEM lab step run-only so the India region is unambiguous.
+            continue
+        db_session.add(
+            ProjectWorkflowStep(
+                project_id=projects[key].id, step_template_id=step_id, sequence_order=i + 1,
+                duration_weeks=1, duration_override_weeks=weeks,
+            )
+        )
     await db_session.flush()
     return hubs
 
 
+#: I19 rev. (ADR 0041): year pairs the full-year demand, remaining pairs the
+#: remaining demand.
 _PAIRS = [
     ("design_booked_pct_year", "design_booking_status_year", "design_load_weeks",
      "design_capacity_year"),
-    ("design_booked_pct_remaining", "design_booking_status_remaining", "design_load_weeks",
-     "design_capacity_remaining"),
+    ("design_booked_pct_remaining", "design_booking_status_remaining",
+     "design_load_remaining_weeks", "design_capacity_remaining"),
     ("lab_booked_pct_year", "lab_booking_status_year", "lab_load_weeks", "lab_capacity_year"),
-    ("lab_booked_pct_remaining", "lab_booking_status_remaining", "lab_load_weeks",
+    ("lab_booked_pct_remaining", "lab_booking_status_remaining", "lab_load_remaining_weeks",
      "lab_capacity_remaining"),
 ]
 
@@ -255,7 +273,8 @@ async def test_areas_count_each_lab_region_once(db_session):
 
     # Lab, India: the region figure ONCE, although three hub rows repeat it.
     pd = rows["PD-India"]
-    assert pd["lab_load_weeks"] == 12 + 6 + 4  # region-level, on every India row
+    assert pd["lab_load_weeks"] == 12 + 6  # region-level demand, on every India row
+    assert pd["lab_load_booked_weeks"] == 12 + 6 + 4  # the run also booked OEM-E
     for key in ("lab_load_weeks", "lab_capacity_year", "lab_capacity_remaining"):
         assert rows["R&D-India"][key] == rows["OEM-HCK"][key] == pd[key]
         assert india[key] == pd[key]

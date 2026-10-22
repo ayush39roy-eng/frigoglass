@@ -99,7 +99,7 @@
     "PD-India": "India",
     "PD-Romania": "Romania",
     "OEM-HCK": "India",
-    "OEM-Seltek": "India"
+    "OEM-Seitek": "India"
   },
   "hubs": [
     "R&D-Greece",
@@ -107,7 +107,7 @@
     "PD-India",
     "PD-Romania",
     "OEM-HCK",
-    "OEM-Seltek"
+    "OEM-Seitek"
   ],
   "engineers": [
     {
@@ -1240,7 +1240,7 @@
     {
       "id": "26-00222",
       "name": "Seltek ice-maker platform adaptation",
-      "hub": "OEM-Seltek",
+      "hub": "OEM-Seitek",
       "leader": "Pawan",
       "cat": "B",
       "type": "NO",
@@ -1747,7 +1747,7 @@
     {
       "id": "26-00235",
       "name": "Condenser fin-pitch study",
-      "hub": "OEM-Seltek",
+      "hub": "OEM-Seitek",
       "leader": "Mihai",
       "cat": "B",
       "type": "NO",
@@ -2059,7 +2059,7 @@
     {
       "id": "26-00243",
       "name": "S-800 castor upgrade",
-      "hub": "OEM-Seltek",
+      "hub": "OEM-Seitek",
       "leader": "Mihai",
       "cat": "B",
       "type": "CO",

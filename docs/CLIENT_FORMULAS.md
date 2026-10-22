@@ -180,6 +180,12 @@ remaining_lab_capacity      = total × remaining_fraction (K55)
 
 ### 2.3 Load, gap and completion (rows 3–9)
 
+> **Correction (2026-10-23, ADR 0041 / `docs/DATA_RECONCILIATION_2026.md` W9).** The pivot's lab
+> column sums column 21 over **every** flagged row (no certification filter), and "Count of
+> Certification Testing Required" counts non-blank cells (Yes + No). Where this section reads the
+> lab load as "certification = Yes only", it is wrong. The app now imports
+> `certification_testing_required = (col 18 = Yes) OR (lab_effort_weeks > 0)`.
+
 ```
 design_load (hub)   = Σ over projects "Process Design Man Week"      (pivot, GETPIVOTDATA)
 lab_load (region)   = Σ over projects "Lab Weeks - Process Derived"  (pivot)

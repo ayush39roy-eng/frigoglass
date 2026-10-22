@@ -41,7 +41,7 @@ describe('buildHubTotals', () => {
 
   it('places the OEM hubs in Europe (Greece), not India — client correction 2026-10-13', () => {
     expect(HUB_COUNTRY['OEM-HCK']).toBe('Greece');
-    expect(HUB_COUNTRY['OEM-Seltek']).toBe('Greece');
+    expect(HUB_COUNTRY['OEM-Seitek']).toBe('Greece');
   });
 
   it('prefers the served GET /hubs lab_region over the fallback map', () => {
@@ -51,9 +51,9 @@ describe('buildHubTotals', () => {
       { name: 'R&D-India', lab_region: 'India' },
     ]);
     expect(map['OEM-HCK']).toBe('Greece');
-    expect(map['OEM-Seltek']).toBe('Greece'); // fallback, not served here
+    expect(map['OEM-Seitek']).toBe('Greece'); // fallback, not served here
     expect(hubCountryMap([{ name: 'R&D-Greece', lab_region: 'Romania' }])['R&D-Greece']).toBe('Romania');
     expect(hubCountryMap(undefined)).toEqual(HUB_COUNTRY);
-    expect(buildHubTotals([{ hub: 'OEM-Seltek', type: 'NM', count: 2 }], map)[0]?.country).toBe('Greece');
+    expect(buildHubTotals([{ hub: 'OEM-Seitek', type: 'NM', count: 2 }], map)[0]?.country).toBe('Greece');
   });
 });

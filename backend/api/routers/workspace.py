@@ -126,6 +126,7 @@ from schemas.workspace import (
 from services.file_sniff import EXTENSION_FOR_CONTENT_TYPE, UploadRejected, extension_of, sniff
 from services.notifications import generate_stage_blocked_notifications
 from services.project_access import authorize_project_action
+from services.project_effort import TRIGGER_STAGE_STATUS, rederive_project_effort
 from services.project_steps import WorkflowChangeWithProgress, sync_project_steps
 from services.rate_limit import TokenBucketLimiter
 from services.run_dispatch import enqueue_or_fail, find_in_flight_run
@@ -141,6 +142,7 @@ from services.workspace import (
     get_scoped_project_or_404,
     list_activity,
     merge_stage_update,
+    row_is_skipped,
     user_names,
 )
 from workers.progress import publish_progress
@@ -248,7 +250,14 @@ async def patch_stage(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Stage {step_id!r} is not a stage of this project's workflow",
         )
-    if row.duration_weeks == 0:
+    kind = (
+        await db.execute(
+            select(WorkflowStepTemplate.kind).where(WorkflowStepTemplate.id == step_id)
+        )
+    ).scalar_one()
+    # ADR 0041 R5: the one skip predicate (lead 0, a lab step without
+    # certification testing, or an effective duration of 0).
+    if row_is_skipped(row, kind, project.certification_testing_required):
         raise CodedHTTPException(
             HTTP_422,
             "STAGE_SKIPPED",
@@ -279,10 +288,19 @@ async def patch_stage(
 
     before_state = _stage_state(project, row)
     was_blocked = row.status == WorkflowStepStatus.BLOCKED
+    was_started = row.status != WorkflowStepStatus.NOT_STARTED
     for name, value in merged.items():
         setattr(row, name, value)
     await db.flush()
     await mark_projects_stale(db, [project.id])
+    if was_started != (row.status != WorkflowStepStatus.NOT_STARTED):
+        # ADR 0041 R3/R6: a stage's started flag is an input of the effort
+        # split (a started step keeps at least 1 week); re-derive in the
+        # same transaction. Never rejected: a status change cannot raise a
+        # step above 104 weeks.
+        await rederive_project_effort(
+            db, project, trigger=TRIGGER_STAGE_STATUS, actor_user_id=current_user.user_id
+        )
     if row.status == WorkflowStepStatus.BLOCKED and not was_blocked:
         # P9-T03 follow-up: a Blocked stage "surfaces on Notifications".
         step_name = (

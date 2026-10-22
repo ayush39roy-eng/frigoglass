@@ -9,12 +9,12 @@ import { seriousAxeViolations } from '@/test/axe';
 import { useHubFilterStore } from '@/stores/hub-filter';
 
 const HUBS: Hub[] = [
-  { id: 'h-gr', name: 'R&D-Greece', lab_region: 'Greece', is_oem: false },
-  { id: 'h-in', name: 'R&D-India', lab_region: 'India', is_oem: false },
-  { id: 'h-pdin', name: 'PD-India', lab_region: 'India', is_oem: false },
-  { id: 'h-ro', name: 'PD-Romania', lab_region: 'Romania', is_oem: false },
-  { id: 'h-hck', name: 'OEM-HCK', lab_region: 'Greece', is_oem: true },
-  { id: 'h-sel', name: 'OEM-Seltek', lab_region: 'Greece', is_oem: true },
+  { id: 'h-gr', name: 'R&D-Greece', lab_region: 'Greece', is_oem: false, capacity_hub_id: null, capacity_hub_name: null },
+  { id: 'h-in', name: 'R&D-India', lab_region: 'India', is_oem: false, capacity_hub_id: null, capacity_hub_name: null },
+  { id: 'h-pdin', name: 'PD-India', lab_region: 'India', is_oem: false, capacity_hub_id: null, capacity_hub_name: null },
+  { id: 'h-ro', name: 'PD-Romania', lab_region: 'Romania', is_oem: false, capacity_hub_id: null, capacity_hub_name: null },
+  { id: 'h-hck', name: 'OEM-HCK', lab_region: 'Greece', is_oem: true, capacity_hub_id: 'h-gr', capacity_hub_name: 'R&D-Greece' },
+  { id: 'h-sel', name: 'OEM-Seitek', lab_region: 'Greece', is_oem: true, capacity_hub_id: 'h-gr', capacity_hub_name: 'R&D-Greece' },
 ] as Hub[];
 
 const hubs = { data: HUBS as Hub[] | undefined };
@@ -72,9 +72,11 @@ describe('<HubFilterSelect> (header)', () => {
     const user = userEvent.setup();
     renderWithProviders(<HubFilterSelect />);
     await user.click(screen.getByRole('combobox', { name: 'Hub filter' }));
-    await user.click(await screen.findByRole('option', { name: 'OEM-HCK' }));
+    // P29: a member hub's option reads "OEM-HCK (Greece)"; the trigger keeps the short name.
+    await user.click(await screen.findByRole('option', { name: 'OEM-HCK (Greece)' }));
     expect(useHubFilterStore.getState().hubId).toBe('h-hck');
     expect(screen.getByRole('combobox', { name: 'Hub filter' })).toHaveTextContent('OEM-HCK');
+    expect(screen.getByRole('combobox', { name: 'Hub filter' })).not.toHaveTextContent('(Greece)');
     await user.click(screen.getByRole('combobox', { name: 'Hub filter' }));
     await user.click(await screen.findByRole('option', { name: 'All hubs' }));
     expect(useHubFilterStore.getState().hubId).toBeNull();
@@ -154,8 +156,8 @@ describe('<HubFilterSelect> countries group (P13, ADR 0025)', () => {
       'R&D-India',
       'PD-India',
       'PD-Romania',
-      'OEM-HCK',
-      'OEM-Seltek',
+      'OEM-HCK (Greece)',
+      'OEM-Seitek (Greece)',
     ]);
     expect(screen.getByText('Countries')).toBeInTheDocument();
     expect(screen.getByText('Hubs')).toBeInTheDocument();

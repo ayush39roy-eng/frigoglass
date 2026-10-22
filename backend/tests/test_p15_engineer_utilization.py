@@ -69,20 +69,21 @@ async def test_engineer_sums_equal_hub_design_load(db_session):
                 assert abs(w["utilization_pct"] - w["booked"] / w["capacity"] * 100) <= max(
                     0.6, 0.02 * w["utilization_pct"]
                 )
-    loads = {r["hub"]: r["design_load_weeks"] for r in cap["rows"]}
+    # ADR 0041 R12: engineer utilization stays run-booked (I6 rev.).
+    loads = {r["hub"]: r["design_load_booked_weeks"] for r in cap["rows"]}
     # I6 across the whole portfolio: every design week is booked to some engineer.
     assert sum(by_hub.values()) == sum(loads.values())
     # The OEM hubs DO have engineers. By-engineer-hub totals differ from the Capacity
     # hub table because 6 projects are led by an engineer from a different hub (the
     # leader is the booked resource, DOMAIN_RULES). By PROJECT hub every figure
     # reconciles (the portfolio total above); by engineer hub we only assert that.
-    # P29 (ADR 0042): the Greece capacity row also carries OEM-HCK / OEM-Seltek
+    # P29 (ADR 0042): the Greece capacity row also carries OEM-HCK / OEM-Seitek
     # load, which the prototype seed books on PD-India / PD-Romania leaders
     # (cross-capacity-hub leaders). R&D-Greece's OWN member load still
     # reconciles with its engineers.
     greece = next(r for r in cap["rows"] if r["hub"] == "R&D-Greece")
     own = next(m for m in greece["members"] if m["own"])
-    assert by_hub["R&D-Greece"] == own["design_load_weeks"]
+    assert by_hub["R&D-Greece"] == own["design_load_booked_weeks"]
     assert by_hub["R&D-India"] == loads["R&D-India"]
 
 

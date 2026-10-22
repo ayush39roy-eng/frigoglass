@@ -50,7 +50,7 @@ from models.hub import Hub, HubWorkCalendar
 from schemas.capacity import YearRemaining
 from schemas.engineer import EngineerCreateRequest, EngineerRead, EngineerUpdateRequest
 from services.audit_helpers import engineer_audit_state
-from services.capacity_hubs import load_capacity_hub_map
+from services.capacity_hubs import engineer_hub_filter, load_capacity_hub_map
 from services.capacity_supply import (
     design_capacity,
     fte_sum,
@@ -171,7 +171,7 @@ CAPACITY_ROSTER_ADMIN_ROLES: frozenset[RoleName] = frozenset(
 
 def _require_capacity_hub(hub: Hub) -> None:
     """ADR 0042: an engineer's hub is always a capacity hub. A member hub
-    (OEM-HCK, OEM-Seltek) is refused with 422 `HUB_NOT_CAPACITY_HUB`."""
+    (OEM-HCK, OEM-Seitek) is refused with 422 `HUB_NOT_CAPACITY_HUB`."""
 
     if hub.capacity_hub_id is not None:
         raise CodedHTTPException(
@@ -210,14 +210,13 @@ async def list_engineers(
     """
 
     stmt = select(Engineer)
-    hub_filter = hub_scope_filter(current_user, Engineer.hub_id)
+    # ADR 0042: a member hub (OEM-HCK) has no engineers of its own; its
+    # capacity hub's engineers do its design work. P30-R01 (S30-I1): the
+    # scope check runs on the requested hub first (out of scope → []).
+    cmap = await load_capacity_hub_map(db)
+    hub_filter = engineer_hub_filter(current_user, cmap, hub_id)
     if hub_filter is not None:
         stmt = stmt.where(hub_filter)
-    if hub_id is not None:
-        # ADR 0042: a member hub (OEM-HCK) has no engineers of its own; its
-        # capacity hub's engineers do its design work.
-        cmap = await load_capacity_hub_map(db)
-        stmt = stmt.where(Engineer.hub_id == cmap.resolve(hub_id))
     result = await db.execute(stmt.order_by(Engineer.name))
     return await _engineer_reads(db, list(result.scalars().all()))
 

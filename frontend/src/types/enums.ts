@@ -9,7 +9,7 @@ export const HUB_NAMES = [
   'PD-India',
   'PD-Romania',
   'OEM-HCK',
-  'OEM-Seltek',
+  'OEM-Seitek',
 ] as const;
 export type HubName = (typeof HUB_NAMES)[number];
 
@@ -109,15 +109,26 @@ export const UI_SCHEDULABLE_STATUSES: readonly SchedulableStatus[] = [
   'In Queue',
 ];
 
-export const PROJECT_TYPES = ['NM', 'CO', 'RC', 'NO', 'IMP'] as const;
+export const PROJECT_TYPES = ['NM', 'CO', 'RC', 'NO', 'IMP', 'AC', 'SER'] as const;
 export type ProjectType = (typeof PROJECT_TYPES)[number];
 
+/**
+ * The ONE display-label source for project types (filters, Matrix, Gantt,
+ * Dashboard charts, Registration select). Mirrors `GET /reference/project-types`
+ * (backend `domain_constants.PROJECT_TYPE_LABELS`, API_CONTRACT_P29 §1.2).
+ * P29-T04 (ADR 0038 amendment 2026-10-22): the client's "Business Continuity"
+ * (`BC`) projects are `RC`, relabelled "Regulatory / Business Compliance". The
+ * wire value stays `RC`; there is no `BC` type.
+ */
 export const PROJECT_TYPE_LABELS: Record<ProjectType, string> = {
   NM: 'New Model',
   CO: 'Cost Optimization',
-  RC: 'Regulatory / Compliance',
+  RC: 'Regulatory / Business Compliance',
   NO: 'New Option',
   IMP: 'Improvement',
+  // P30 (ADR 0041 §4, API_CONTRACT_P30 §1): no scoring tag (ADR 0038 §6).
+  AC: 'Alternative Component',
+  SER: 'Service',
 };
 
 /**

@@ -17,6 +17,8 @@ import { cn } from '@/lib/utils';
 
 import type { HubCapacityRow } from '../api/types';
 import {
+  BOOKED_IN_PLAN_LABEL,
+  DEMAND_LABEL,
   pickFigures,
   pickUnitFigures,
   resourceUnitLong,
@@ -30,24 +32,27 @@ import {
 import { formatFigure } from '../lib/status-format';
 import { CardInfo } from '@/components/ui/card-info';
 import { CapacityStat } from './capacity-stat';
+import { MembersBreakdown } from './capacity-members';
 
 export type { CapacityHorizon } from '../lib/pick-figures';
 
 /**
  * The client's capacity breakdown (ADR 0008, `docs/CLIENT_FORMULAS.md` §2), one
- * card per hub: a Design section and a Lab section, each with Load
- * (process-derived — the I6/I7 figure — with the hand-entered estimate as a
- * secondary figure), capacity, gap and completion % for either the FULL YEAR or
+ * card per hub: a Design section and a Lab section, each with the DEMAND the
+ * horizon pairs with (P30, ADR 0041 / I19 rev.: full-year demand for the full
+ * year, remaining demand for the remaining year) and what the active plan booked
+ * (`*_load_booked_weeks`, weeks only, no %), capacity, gap and completion % for either the FULL YEAR or
  * the REMAINING YEAR (segmented toggle), and an expandable "How this is
  * calculated" that shows FTE × working weeks and the per-chamber table.
  *
  * Every number here is one API field rendered verbatim (Invariant I17 — the
  * supply figures equal the ADR 0008 formulas evaluated server-side; the load
- * figures are I6/I7 sums over the active run). `pickFigures` only SELECTS which
+ * demand figures are I25 sums over the projects, the "booked in plan" figure the
+ * I6/I7 sum over the active run). `pickFigures` only SELECTS which
  * of the served fields to show for the chosen horizon; it never combines them.
  *
  * P19-T05 (Weeks | Days): load and capacity (and their bars) follow the page's
- * unit, reading the SERVED day fields in Days. The estimated load and the gap
+ * unit, reading the SERVED day fields in Days. The booked-in-plan figure and the gap
  * are served in weeks only, so in Days mode they keep their weeks and say so;
  * completion and booked % are unit-free. "How this is calculated" shows the
  * weeks formulas (that is what the workbook has) plus the served day figures.
@@ -90,7 +95,7 @@ function ResourceBlock({
   hub: string;
   kind: ResourceKind;
   horizon: CapacityHorizon;
-  /** The served weeks figures (estimate, gap, completion: weeks / unit-free only). */
+  /** The served weeks figures (booked in plan, gap, completion: weeks / unit-free only). */
   figures: ResourceFigures;
   /** Load and capacity in the page's unit (served days in Days; null if absent). */
   shown: UnitFigures;
@@ -106,7 +111,7 @@ function ResourceBlock({
   const weeksTag = inDays ? ' (wks)' : '';
   return (
     <section
-      aria-label={`${hub} ${title.toLowerCase()} load vs. capacity`}
+      aria-label={`${hub} ${title.toLowerCase()} demand vs. capacity`}
       className="space-y-s3 rounded-dash border border-dash-hairline bg-surface p-card-tight"
       data-testid={`capacity-${kind}`}
     >
@@ -130,15 +135,15 @@ function ResourceBlock({
 
       <div className="grid gap-s2 sm:grid-cols-2">
         <CapacityStat
-          label="Load (process-derived)"
+          label={DEMAND_LABEL[horizon]}
           value={shown.load}
           data-testid={`${kind}-load`}
         />
         <CapacityStat
-          label={`Load (estimated)${weeksTag}`}
-          value={figures.loadEstimated}
+          label={`${BOOKED_IN_PLAN_LABEL}${weeksTag}`}
+          value={figures.booked}
           muted
-          data-testid={`${kind}-load-estimated`}
+          data-testid={`${kind}-in-plan`}
         />
         <CapacityStat
           label={HORIZON_LABEL[horizon]}
@@ -146,7 +151,7 @@ function ResourceBlock({
           data-testid={`${kind}-capacity`}
         />
         <CapacityStat
-          label={inDays ? 'Gap, load − cap. (wks)' : 'Gap (load − capacity)'}
+          label={inDays ? 'Gap, demand − cap. (wks)' : 'Gap (demand − capacity)'}
           value={figures.gap}
           renderValue={(text, rawValue) => (
             <span className={cn(shortfall ? 'text-warning-subtle-fg' : 'text-text')}>
@@ -176,16 +181,16 @@ function ResourceBlock({
 
       {shown.load === null || shown.capacity === null ? (
         <p className="text-2xs text-text-muted" data-testid={`${kind}-bars-unavailable`}>
-          Load and capacity in {unit} are not served by this API version.
+          Demand and capacity in {unit} are not served by this API version.
         </p>
       ) : (
         <BarChart
-          ariaLabel={`${hub} ${title.toLowerCase()}: load versus ${HORIZON_LABEL[horizon].toLowerCase()}, in ${unit}`}
+          ariaLabel={`${hub} ${title.toLowerCase()}: ${DEMAND_LABEL[horizon].toLowerCase()} versus ${HORIZON_LABEL[horizon].toLowerCase()}, in ${unit}`}
           formatValue={formatDecimal}
           data={[
             {
               key: 'load',
-              label: 'Load (process-derived)',
+              label: DEMAND_LABEL[horizon],
               value: shown.load,
               tone: shortfall ? 'warning' : 'primary',
             },
@@ -244,6 +249,9 @@ export function HubSupplyDetail({ row, view }: HubSupplyDetailProps): React.JSX.
                 </span>
               </span>
             </header>
+
+            {/* P29 (ADR 0042): the hubs this capacity covers, served counts and loads (display only). */}
+            <MembersBreakdown row={row} horizon={horizon} />
 
             <div className="grid gap-s3 lg:grid-cols-2">
               <ResourceBlock
@@ -314,7 +322,8 @@ export function HubSupplyDetail({ row, view }: HubSupplyDetailProps): React.JSX.
                       {formatFigure(servedWeekdays(row, 'design'))} days a week; lab capacity{' '}
                       {formatFigure(labDays.capacity)} / {formatFigure(labDaysRemaining.capacity)} chamber-days at{' '}
                       {formatFigure(servedWeekdays(row, 'lab'))} days a week (the {row.lab_region} region calendar).
-                      Load {formatFigure(designDays.load)} engineer-days, {formatFigure(labDays.load)} chamber-days.
+                      {DEMAND_LABEL[horizon]} {formatFigure(designDays.load)} engineer-days; full-year lab demand{' '}
+                      {formatFigure(labDays.load)} chamber-days.
                       Each is the served weeks figure × the served working days, computed on the server.
                     </dd>
                   </div>

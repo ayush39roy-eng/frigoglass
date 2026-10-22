@@ -48,7 +48,7 @@ class Scope:
     def capacity_row_ok(self, hub: str) -> bool:
         """P29-T06 (ADR 0042 §4, §8): a hub-keyed CAPACITY row (design
         requirement, utilization, designer addition, workings line) is served
-        only for a capacity hub (never OEM-HCK / OEM-Seltek), and is visible
+        only for a capacity hub (never OEM-HCK / OEM-Seitek), and is visible
         when the capacity hub or any of its member hubs is in scope (the
         aggregate is visible to a member's scope, like `GET /capacity/hub-load`)."""
 

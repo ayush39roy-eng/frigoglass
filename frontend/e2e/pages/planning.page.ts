@@ -93,4 +93,14 @@ export class PlanningPage {
   autoAssignPlaceholder() {
     return this.page.getByText('Auto-assign is pending a client decision');
   }
+
+  /** P29 (contract §3.3): "Not in capacity roster" markers (Overview hub cards and Engineers tab). */
+  notInRosterMarkers(): Locator {
+    return this.page.getByTestId('not-in-capacity-roster');
+  }
+
+  /** P29 (contract §3.1): the served members / not-counted line under a hub card. */
+  hubCardNotes(hub: string): Locator {
+    return this.hubCard(hub).getByTestId('hub-notes');
+  }
 }

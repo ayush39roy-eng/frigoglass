@@ -116,8 +116,9 @@ export function DetailsPanel({
               <Field label="Delay (weeks)" value={String(p.delay_weeks)} />
               <Field label="Expected completion (week)" value={p.target_end_week === null ? 'Process-derived' : formatPlanWeek(p.target_end_week)} />
               <Field label="Certification testing" value={p.certification_testing_required ? 'Required' : 'Not required — lab steps skipped'} />
-              <Field label="Estimated design weeks" value={p.estimated_design_weeks === null ? '—' : formatDecimal(p.estimated_design_weeks)} />
-              <Field label="Estimated lab weeks" value={p.estimated_lab_weeks === null ? '—' : formatDecimal(p.estimated_lab_weeks)} />
+              {/* P30 (ADR 0041): the client's effort figures drive the step split. */}
+              <Field label="Design effort (client)" value={weeksOrDash(p.design_effort_weeks, 'Lead-time table')} />
+              <Field label="Lab effort (client)" value={weeksOrDash(p.lab_effort_weeks, 'Lead-time table')} />
               <Field label="Registration year" value={p.reg_year === null ? '—' : String(p.reg_year)} />
               <Field label="Carried over" value={p.carry_over ? 'Yes' : 'No'} />
               <Field label="External code" value={p.external_code ?? '—'} />
@@ -135,6 +136,12 @@ export function DetailsPanel({
               {CHARTER_FIELDS.map(({ key, label }) => (
                 <Field key={key} label={label} value={p[key] || CHARTER_NOT_SET} />
               ))}
+              {/* P30 (API_CONTRACT_P30 §2): display-only workbook figures, served verbatim. */}
+              <Field label="Safety lab weeks" value={weeksOrDash(p.safety_lab_weeks)} />
+              <Field label="Actual design weeks" value={weeksOrDash(p.actual_design_weeks)} />
+              <Field label="Actual testing weeks" value={weeksOrDash(p.actual_testing_weeks)} />
+              <Field label="Safety cert. required" value={p.safety_certification_required ? 'Yes' : 'No'} />
+              <Field label="Capacity flag" value={p.capacity_flag ? 'Yes' : 'No'} />
             </dl>
             <h3 id="details-financial-heading" className="label-caps mt-1 border-t border-border pt-2 text-text-muted">
               Financial — commercially sensitive
@@ -159,6 +166,11 @@ export function DetailsPanel({
       </CardContent>
     </Card>
   );
+}
+
+/** A served week figure (≤ 2 dp) or a dash / fallback text when null. */
+function weeksOrDash(value: number | null, empty = '—'): string {
+  return value === null ? empty : `${formatDecimal(value)} wk`;
 }
 
 function Field({ label, value, wide }: { label: string; value: React.ReactNode; wide?: boolean }): React.JSX.Element {

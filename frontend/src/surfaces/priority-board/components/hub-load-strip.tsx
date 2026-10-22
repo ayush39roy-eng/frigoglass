@@ -10,7 +10,8 @@ import { useHubLoadVsCapacity } from '@/surfaces/capacity/hooks/use-capacity';
 
 /**
  * P13-T12: the mock-up's per-hub "Design load / Lab load" bars above the
- * Kanban. Each bar is the hub's served full-year load, capacity and booked %
+ * Kanban. Each bar is the hub's served full-year DEMAND (P30, ADR 0041: every
+ * project not Cancelled / Draft), yearly capacity and booked %
  * from `GET /capacity/hub-load` (ADR 0016, I19) — the same query and cache entry
  * as the Capacity surface. The bar width is the served booked % capped at 100;
  * the browser computes no figure. Lab figures are the hub's lab region's.
@@ -61,7 +62,7 @@ function HubLoadCard({ row }: { row: HubCapacityRow }): React.JSX.Element {
     <li className="flex min-w-[13rem] flex-1 flex-col gap-1.5 rounded-dash border border-dash-hairline bg-surface px-3 py-2" data-testid={`hub-load-${row.hub}`}>
       <span className="text-xs font-bold text-text">{row.hub}</span>
       <LoadBar
-        label="Design load"
+        label="Design demand"
         load={row.design_load_weeks}
         capacity={row.design_capacity_year}
         bookedPct={row.design_booked_pct_year}
@@ -69,7 +70,7 @@ function HubLoadCard({ row }: { row: HubCapacityRow }): React.JSX.Element {
         testId={`hub-load-${row.hub}-design`}
       />
       <LoadBar
-        label={`Lab load (${row.lab_region})`}
+        label={`Lab demand (${row.lab_region})`}
         load={row.lab_load_weeks}
         capacity={row.lab_capacity_year}
         bookedPct={row.lab_booked_pct_year}
@@ -92,7 +93,7 @@ export function HubLoadStrip({
   const query = useHubLoadVsCapacity({ enabled, hubId, region });
   if (!enabled || !query.data?.has_active_schedule_run || query.data.rows.length === 0) return null;
   return (
-    <section aria-label="Design and lab load per hub, full year" className="mb-3">
+    <section aria-label="Design and lab demand per hub, full year" className="mb-3">
       <ul className="flex flex-wrap gap-2">
         {query.data.rows.map((row) => (
           <HubLoadCard key={row.hub} row={row} />

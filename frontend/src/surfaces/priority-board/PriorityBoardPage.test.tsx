@@ -298,6 +298,10 @@ describe('PriorityBoardPage — P13-T12 weeks and toolbar', () => {
     const design = await screen.findByTestId('hub-load-PD-India-design');
     expect(design).toHaveTextContent('587 / 252.62 wks (232.36 %)');
     expect(screen.getByTestId('hub-load-PD-India-lab')).toHaveTextContent('496.5 / 186.22 wks (266.62 %)');
+    // P30 (ADR 0041): these are the served full-year DEMAND figures, labelled so.
+    expect(design).toHaveTextContent('Design demand');
+    expect(screen.getByTestId('hub-load-PD-India-lab')).toHaveTextContent('Lab demand (India)');
+    expect(screen.getByRole('region', { name: 'Design and lab demand per hub, full year' })).toBeInTheDocument();
   });
 
   it('ADR 0028: a leader id with no name is offered as "Name unavailable"', async () => {

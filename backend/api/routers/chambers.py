@@ -10,7 +10,7 @@ need `CAPACITY_PLANNING`/`READ`, mutations need `CAPACITY_PLANNING`/`WRITE`.
 **Hub-scoped (P3-T03) — via lab region, not hub_id**: `Chamber` has no
 `hub_id` column (`models/chamber.py`) — a lab region is shared by up to four
 hubs (`docs/DOMAIN_RULES.md`'s hub/lab-region mapping table: R&D-India,
-PD-India, OEM-HCK and OEM-Seltek all map to "India"). A Hub Planner's
+PD-India, OEM-HCK and OEM-Seitek all map to "India"). A Hub Planner's
 visibility here is therefore resolved via `services.hub_scope.
 scoped_lab_regions` (their scoped hub_ids -> the `LabRegion`s those hubs map
 to) rather than a direct `.where(Chamber.hub_id.in_(...))`, since no such

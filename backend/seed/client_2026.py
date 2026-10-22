@@ -71,7 +71,7 @@ Chambers
 --------
 Seeded from `domain_constants.CHAMBER_SEED` exactly: the formula workbook's
 platforms, efficiency (0.7 / 0.6 / 0.6 / 0.5, ...) and downtime. Allowed
-stages stay ours (docs/OPEN_QUESTIONS.md).
+stages follow the client's test-type mapping (ADR 0041 §4).
 
 Priority dimensions (`derive_dims`) — SYNTHETIC
 -----------------------------------------------
@@ -91,14 +91,27 @@ band's target percentage:
 The unranked P3/P4 targets vary with the project code. No hard gates are set,
 because the workbook records none.
 
+Per-project effort (`effort_step_specs`, ADR 0041 §3, R2-R7)
+------------------------------------------------------------
+The client's `design_effort_weeks` (col 16) / `lab_effort_weeks` (col 21) are
+apportioned over the project's design / lab steps by the scheduler package's
+`derive_project_effort` (exact rationals, R2 ties), BEFORE progress is
+derived (R3), with every step Not Started. The result is the step's
+`effort_weeks` (R4); its effective duration is `effort ?? lead`, 0 = skipped.
+A blank or 0 figure keeps the lead-time table. A split above 104 weeks fails
+the import loudly (R7). Example: PDD/B, 4 -> A1 E2 K1 (D, J, M skipped).
+
 Step progress (`derive_progress`)
 ---------------------------------
-The workbook has no per-step data. Only non-skipped steps carry progress. A
-skipped step (0-week lead time, or a lab step with certification testing off)
-stays Not Started, and the scheduler treats it as complete. The *current step*
-is chosen as follows:
-- **Under Industrialization**: the first non-skipped step after
-  Certification (step H). All design and lab steps before it are Done.
+The workbook has no per-step data. Only non-skipped steps carry progress, and
+durations are the EFFECTIVE ones above (ADR 0041 R3). A skipped step (0-week
+lead time, a lab step with certification testing off, or an effort-zeroed
+step) stays Not Started, and the scheduler treats it as complete. The
+*current step* is chosen as follows:
+- **Under Industrialization**: the workbook's Development Step when set
+  (ADR 0041 §4; the next non-skipped step if it is skipped), else the first
+  non-skipped step after Certification (step H). All design and lab steps
+  before it are Done.
 - **In Development** with a Development Step (`PDD-H`, `PDD-J`, ...): that
   step. If it is skipped for the category, the next non-skipped step is used.
   The steps before it are Done.
@@ -135,9 +148,14 @@ capture") and I21:
 Project fields (ADR 0035)
 -------------------------
 - `plant`, `requesting_department`, `product_type`: the workbook values.
-- `carry_over` / `reg_year` (`carry_over_and_reg_year`): a project the
-  project file flags `Spillover '25` is `carry_over = true`, `reg_year =
-  2025`; every other project is `carry_over = false`, `reg_year = 2026`.
+- `carry_over` / `reg_year` (`carry_over_and_reg_year`, ADR 0041 §1,
+  superseding ADR 0035 §10): a project requested before 2026 (a capacity-
+  flagged 2024/25 row) is `carry_over = true` with `reg_year` = its request
+  year; every 2026 project is `carry_over = false`, `reg_year = 2026`.
+  `Spillover '25` is display only.
+- ADR 0041 §3: `capacity_flag`, `design_effort_weeks`, `lab_effort_weeks`,
+  `safety_lab_weeks`, `actual_design_weeks`, `actual_testing_weeks`,
+  `safety_certification_required` as the extractor writes them.
 - `target_end_week`: the extractor's plan week of "Project End Date -
   LATEST" (2025 dates are not imported; see the extractor docstring).
 """
@@ -151,6 +169,8 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 
 import domain_constants as dc
+from scheduling.effort_split import EffortStepInput, derive_project_effort
+from scheduling.workflow import step_effective_weeks
 from seed.initial_scoring_rubric import INITIAL_KEYS, initial_rubric
 from services.priority_scoring import compute_score
 
@@ -194,7 +214,7 @@ CLIENT_APP_ALLOWED_CATEGORIES: Mapping[str, tuple[str, ...]] = {
     "Praveer Kumar Singh": ("A",),
     "Ayush Kumar": ("A",),
     # ADR 0042 §6: the three R&D-Greece roster engineers may lead the OEM
-    # categories (OEM-HCK and OEM-Seltek are capacity children of Greece).
+    # categories (OEM-HCK and OEM-Seitek are capacity children of Greece).
     # Dimopoulou keeps the client app's blanket "OEM" chip as well.
     "Dimopoulou": ("A+", "A", "OEM", "A-OEM", "B-OEM", "C-OEM"),
     "Lioumis": ("A+", "A", "A-OEM", "B-OEM", "C-OEM"),
@@ -208,7 +228,11 @@ CLIENT_APP_ALLOWED_CATEGORIES: Mapping[str, tuple[str, ...]] = {
 #: ADR 0042 §5: workbook project leaders who are on no client roster. Their
 #: FTE is never part of the design supply (`Engineer.counts_in_capacity`
 #: false); the scheduler still books them (docs/OPEN_QUESTIONS.md #52).
-NOT_IN_CAPACITY_ROSTER: frozenset[str] = frozenset({"Theoni", "Dipak", "Antonis", "Sailesh"})
+NOT_IN_CAPACITY_ROSTER: frozenset[str] = frozenset(
+    # ADR 0041 / DATA_RECONCILIATION decision (c): Vaggelis (R&D-Greece, one
+    # carry-over A+ project) gets the same treatment (OQ #64).
+    {"Theoni", "Dipak", "Antonis", "Sailesh", "Vaggelis"}
+)
 
 #: ADR 0042 §7: the audit `source` of a seeded / migrated provisional leader.
 PROVISIONAL_LEADER_SOURCE: str = "provisional_leader_adr_0042"
@@ -432,11 +456,15 @@ def project_leaders(
 
 
 def carry_over_and_reg_year(project: Mapping[str, object]) -> tuple[bool, int]:
-    """(carry_over, reg_year) for a project (module docstring, ADR 0035)."""
+    """(carry_over, reg_year) for a project (module docstring). ADR 0041 §1
+    (superseding ADR 0035 §10): a project requested before the plan year
+    is carry-over, and its registration year is its request year;
+    `spillover_2025` is display only. Data without a `request_year` (an
+    older extract) falls back to the plan year."""
 
-    if project.get("spillover_2025"):
-        return True, CARRY_OVER_REG_YEAR
-    return False, PLAN_REG_YEAR
+    raw = project.get("request_year")
+    year = int(str(raw)) if raw is not None else PLAN_REG_YEAR
+    return year < PLAN_REG_YEAR, year
 
 
 # --- Priority dimensions ---------------------------------------------------
@@ -491,12 +519,63 @@ def derive_dims(code: str, priority: str, marketing_priority: int | None) -> lis
 
 @dataclass(frozen=True)
 class StepSpec:
-    """One of a project's 14 steps: template id, kind, and its duration for
-    this project (0 = skipped, including a cert-off lab step)."""
+    """One of a project's 14 steps: template id, kind, and its EFFECTIVE
+    duration for this project (0 = skipped: a 0-week lead time, a cert-off
+    lab step, or a step the effort split zeroed; ADR 0041 R5). `lead` is
+    the lead-time value, `effort` the derived effort (`effort_weeks`, R4)."""
 
     step_id: str
     kind: str
     duration: int
+    lead: int = 0
+    effort: int | None = None
+
+
+def effort_step_specs(
+    project: Mapping[str, object],
+    steps: Sequence[tuple[str, str, int, int]],
+) -> list[StepSpec]:
+    """ADR 0041 §3 / R2 / R7 for one project: `steps` are `(step_id, kind,
+    sequence_order, lead_weeks)` of its workflow in sequence order. The
+    project's `design_effort_weeks` / `lab_effort_weeks` are apportioned by
+    the scheduler package's `derive_project_effort` (the only split), with
+    every step Not Started: the seed apportions BEFORE `derive_progress`
+    (R3), which then works on these effective durations. A blank or 0
+    figure keeps the table (no effort written). Raises `ValueError` (R7:
+    rejected at import) when a step would exceed 104 weeks."""
+
+    derivation = derive_project_effort(
+        design_effort_weeks=_figure(project.get("design_effort_weeks")),
+        lab_effort_weeks=_figure(project.get("lab_effort_weeks")),
+        certification_testing_required=bool(project["certification_testing_required"]),
+        steps=tuple(
+            EffortStepInput(step_id=sid, sequence_order=seq, kind=kind, lead_weeks=lead)
+            for sid, kind, seq, lead in steps
+        ),
+    )  # EffortSplitRejected (a ValueError) propagates: the import fails loudly.
+    effort = derivation.effort_weeks_by_step()
+    cert = bool(project["certification_testing_required"])
+    return [
+        StepSpec(
+            step_id=sid,
+            kind=kind,
+            duration=step_effective_weeks(
+                lead_weeks=lead,
+                kind=kind,
+                certification_testing_required=cert,
+                override_weeks=effort.get(sid),
+            ),
+            lead=lead,
+            effort=effort.get(sid),
+        )
+        for sid, kind, _seq, lead in steps
+    ]
+
+
+def _figure(value: object) -> str | None:
+    """A JSON figure as its decimal string (never its binary value)."""
+
+    return None if value is None else str(value)
 
 
 @dataclass(frozen=True)
@@ -553,11 +632,16 @@ def current_step_index(project: Mapping[str, object], steps: Sequence[StepSpec])
     if status == "Commercialized":
         return len(steps)
     letter: str | None = None
+    dev = project.get("development_step")
     if status == "Under Industrialization":
+        # ADR 0041 §4: the workbook's Development Step, when set, is the
+        # current step for Under Industrialization too.
+        if isinstance(dev, str) and dev:
+            at_or_after = [i for i in live if steps[i].step_id[-1] >= dev[-1]]
+            return at_or_after[0] if at_or_after else live[-1]
         after = [i for i in live if steps[i].step_id[-1] > UNDER_INDUSTRIALIZATION_AFTER]
         return after[0] if after else live[-1]
     if status == "In Development":
-        dev = project.get("development_step")
         if isinstance(dev, str) and dev:
             letter = dev[-1]
         else:

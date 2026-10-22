@@ -60,7 +60,8 @@ from __future__ import annotations
 
 import math
 import uuid
-from typing import Annotated
+from decimal import Decimal
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy import select
@@ -82,6 +83,7 @@ from models.enums import (
 )
 from models.hub import Hub
 from models.project import Project, category_allowed_for_hub
+from scheduling.effort_split import EffortSplitRejected
 from schemas.project import (
     HardGateStatus,
     PriorityMoveRequest,
@@ -99,6 +101,16 @@ from services.hub_scope import hub_scope_filter, is_hub_in_scope
 from services.priority_move import apply_priority_change, ensure_priority_move_allowed
 from services.priority_preview import confirm_priority_move, preview_priority_move
 from services.project_access import authorize_project_action, effective_project_access
+from services.project_effort import (
+    TRIGGER_CREATE,
+    TRIGGER_FIGURE,
+    TRIGGER_PROJECT_FIELDS,
+    TRIGGER_WORKFLOW_CHANGE,
+    rederive_project_effort,
+    split_rejected_error,
+    template_kinds,
+    validate_effort_split,
+)
 from services.project_hard_gates import (
     HARD_GATE_FIELDS,
     hard_gate_error,
@@ -142,8 +154,32 @@ SCHEDULE_INPUT_FIELDS: frozenset[str] = frozenset(
         "delay_weeks",
         "target_end_week",
         "certification_testing_required",
+        # ADR 0041: the effort figures drive the step durations (R1).
+        "design_effort_weeks",
+        "lab_effort_weeks",
     }
 )
+
+#: ADR 0041 R6: a change to any of these re-derives the effort split.
+EFFORT_SPLIT_INPUT_FIELDS: frozenset[str] = frozenset(
+    {
+        "design_effort_weeks",
+        "lab_effort_weeks",
+        "category",
+        "certification_testing_required",
+        "hub_id",
+    }
+)
+_EFFORT_FIGURES = ("design_effort_weeks", "lab_effort_weeks")
+
+
+def _figures_to_decimal(data: dict[str, Any]) -> None:
+    """ADR 0041: a validated effort figure (a JSON number, at most 2 dp) is
+    stored as its exact decimal (`Numeric(6, 2)`), never its binary value."""
+
+    for name in _EFFORT_FIGURES:
+        if data.get(name) is not None:
+            data[name] = Decimal(str(data[name])).quantize(Decimal("0.01"))
 
 
 def _category_mismatch(hub: Hub, category: ProjectCategory | None) -> CodedHTTPException | None:
@@ -322,10 +358,30 @@ async def create_project(
             [field_error("leader_engineer_id", "Unknown leader_engineer_id")],
         )
 
+    _figures_to_decimal(data)
+    kinds = await template_kinds(db)
+    # ADR 0041 R7: a figure whose split exceeds 104 weeks on a step rejects
+    # the registration before anything is stored.
+    try:
+        await validate_effort_split(
+            db,
+            hub_is_oem=hub.is_oem,
+            category=body.category,
+            design_effort_weeks=data.get("design_effort_weeks"),
+            lab_effort_weeks=data.get("lab_effort_weeks"),
+            certification_testing_required=body.certification_testing_required,
+        )
+    except EffortSplitRejected as exc:
+        raise split_rejected_error(exc, kinds) from exc
     project = Project(**data, status=ProjectStatus.IN_QUEUE, schedule_stale=True)
     db.add(project)
     await db.flush()
     await sync_project_steps(db, project, hub.is_oem)
+    # ADR 0041 R6: the effort split of a new project's figures (same
+    # transaction).
+    await rederive_project_effort(
+        db, project, trigger=TRIGGER_CREATE, actor_user_id=current_user.user_id, kinds=kinds
+    )
     # ADR 0038: every tag of a new project is a not-set -> set transition.
     await apply_tag_prefill(
         db, project, before=[], after=project.scoring_tags, principal=current_user
@@ -446,8 +502,40 @@ async def update_project(
     if mismatch is not None:
         raise mismatch
 
+    _figures_to_decimal(updates)
+    effort_target = {
+        name: updates[name] if name in updates else getattr(project, name)
+        for name in (*_EFFORT_FIGURES, "certification_testing_required")
+    }
+    if any(name in updates for name in EFFORT_SPLIT_INPUT_FIELDS):
+        # ADR 0041 R7 before anything is written: the split the PATCHed
+        # project would get (frozen projects included: a figure stored while
+        # frozen must apply on unfreeze).
+        try:
+            await validate_effort_split(
+                db,
+                hub_is_oem=target_hub.is_oem,
+                category=target_category,
+                design_effort_weeks=effort_target["design_effort_weeks"],
+                lab_effort_weeks=effort_target["lab_effort_weeks"],
+                certification_testing_required=bool(
+                    effort_target["certification_testing_required"]
+                ),
+                project_id=project.id,
+            )
+        except EffortSplitRejected as exc:
+            raise split_rejected_error(exc, await template_kinds(db)) from exc
     before_state = project_audit_state(project)
     tags_before = list(project.scoring_tags or [])
+    figures_changed = any(
+        name in updates and getattr(project, name) != updates[name] for name in _EFFORT_FIGURES
+    )
+    workflow_changes = target_hub.is_oem != current_hub.is_oem
+    effort_inputs_changed = any(
+        getattr(project, name) != value
+        for name, value in updates.items()
+        if name in EFFORT_SPLIT_INPUT_FIELDS
+    )
     schedule_inputs_changed = any(
         getattr(project, name) != value
         for name, value in updates.items()
@@ -473,6 +561,23 @@ async def update_project(
             raise CodedHTTPException(
                 HTTP_422, "WORKFLOW_CHANGE_WITH_PROGRESS", str(exc)
             ) from exc
+    if effort_inputs_changed:
+        # ADR 0041 R6: figure edit, category / certification change or a hub
+        # move (PDD <-> OEM re-points the steps). A no-op on a frozen
+        # project (I10); R7 rejects the whole PATCH.
+        # Validated above, so this cannot be rejected (R7).
+        await rederive_project_effort(
+            db,
+            project,
+            trigger=(
+                TRIGGER_WORKFLOW_CHANGE
+                if workflow_changes
+                else TRIGGER_FIGURE
+                if figures_changed
+                else TRIGGER_PROJECT_FIELDS
+            ),
+            actor_user_id=current_user.user_id,
+        )
     if "scoring_tags" in updates:
         # ADR 0038: only a not-set -> set tag pre-fills its score (same
         # transaction); `scoring_tags` is not a scheduler input, so it never

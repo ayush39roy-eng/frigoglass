@@ -127,11 +127,11 @@ def test_hub_work_calendar_seed_matches_client_formulas_2_1(
 
 
 def test_capacity_member_hubs_have_no_calendar_adr_0042() -> None:
-    """ADR 0042 (P29): OEM-HCK and OEM-Seltek are capacity children of
+    """ADR 0042 (P29): OEM-HCK and OEM-Seitek are capacity children of
     R&D-Greece and carry no work calendar of their own; the seed has one row
     per capacity hub."""
 
-    assert dict(dc.HUB_CAPACITY_HUB) == {"OEM-HCK": "R&D-Greece", "OEM-Seltek": "R&D-Greece"}
+    assert dict(dc.HUB_CAPACITY_HUB) == {"OEM-HCK": "R&D-Greece", "OEM-Seitek": "R&D-Greece"}
     assert {r[0] for r in dc.HUB_WORK_CALENDAR_SEED} == {
         "R&D-Greece",
         "R&D-India",

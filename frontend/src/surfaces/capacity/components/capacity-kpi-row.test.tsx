@@ -15,6 +15,8 @@ const totals = totalsRow({
   design_capacity_year: 57,
   design_capacity_remaining: 31.5,
   design_load_weeks: 110,
+  design_load_remaining_weeks: 64,
+  design_load_booked_weeks: 88,
   design_booked_pct_year: 192.98,
   design_booking_status_year: 'full',
   design_load_by_priority: { P1: 54, P2: 56, P3: 0, P4: 0, Queue: 0 },
@@ -27,9 +29,12 @@ describe('CapacityKpiRow (P19-T01)', () => {
     expect(screen.getByTestId('kpi-design-load-value')).toHaveTextContent('110');
     const cap = screen.getByRole('group', { name: 'Design capacity' });
     expect(within(cap).getByLabelText('Design capacity by hub')).toHaveTextContent('PD-India: 40 · R&D-Greece: 17');
-    const load = screen.getByRole('group', { name: 'Design load' });
-    expect(within(load).getByTestId('kpi-Design load-P1')).toHaveTextContent('54');
-    expect(within(load).getByTestId('kpi-Design load-P2')).toHaveTextContent('56');
+    const load = screen.getByRole('group', { name: 'Design demand' });
+    expect(within(load).getByTestId('kpi-design-load-qualifier')).toHaveTextContent('full year');
+    expect(within(load).getByTestId('kpi-Design demand-P1')).toHaveTextContent('54');
+    expect(within(load).getByTestId('kpi-Design demand-P2')).toHaveTextContent('56');
+    // P30: the run-booked weeks, served, no %
+    expect(within(load).getByTestId('kpi-Design demand-in-plan')).toHaveTextContent('Booked in plan: 88 wks');
     expect(screen.getByTestId('kpi-design-load-booked')).toHaveTextContent('192.98 %');
     expect(screen.getByTestId('kpi-design-load-booked')).toHaveTextContent('Full');
     // lab cards are per lab region
@@ -37,10 +42,15 @@ describe('CapacityKpiRow (P19-T01)', () => {
     expect(screen.getByTestId('kpi-lab-load-booked')).toHaveTextContent('266.62 %');
   });
 
-  it('switches to the served remaining-year fields', () => {
+  it('switches to the served remaining-year fields: remaining demand, no full-year split (P30)', () => {
     renderWithProviders(<CapacityKpiRow totals={totals} rows={rows} view={{ horizon: 'remaining', unit: 'weeks' }} />);
     expect(screen.getByTestId('kpi-design-capacity-value')).toHaveTextContent('31.5');
     expect(screen.getByLabelText('Design capacity by hub')).toHaveTextContent('PD-India: 22');
+    expect(screen.getByTestId('kpi-design-load-value')).toHaveTextContent('64');
+    expect(screen.getByTestId('kpi-design-load-qualifier')).toHaveTextContent('remaining');
+    expect(screen.getByLabelText('Design demand by hub')).toHaveTextContent('PD-India: 436');
+    expect(screen.queryByTestId('kpi-Design demand-P1')).not.toBeInTheDocument();
+    expect(screen.getByTestId('kpi-Design demand-in-plan')).toHaveTextContent('88 wks');
   });
 
   it('P19-T05: Days shows the served day totals and per-hub / per-region day figures; splits labelled wks; booked % unchanged', () => {
@@ -52,10 +62,10 @@ describe('CapacityKpiRow (P19-T01)', () => {
     expect(screen.getByRole('group', { name: 'Design capacity' })).toHaveTextContent('days');
     expect(screen.getByRole('group', { name: 'Design capacity' })).not.toHaveTextContent('wks');
     expect(screen.getByLabelText('Design capacity by hub')).toHaveTextContent('PD-India: 1,515.72');
-    expect(screen.getByLabelText('Lab load by lab region')).toHaveTextContent('India: 2,979');
+    expect(screen.getByLabelText('Lab demand by lab region')).toHaveTextContent('India: 2,979');
     // the per-priority split is served in weeks only and says so
-    expect(screen.getByTestId('kpi-Design load-P1')).toHaveTextContent('54');
-    expect(screen.getByTestId('kpi-Design load-split-unit')).toHaveTextContent('(wks)');
+    expect(screen.getByTestId('kpi-Design demand-P1')).toHaveTextContent('54');
+    expect(screen.getByTestId('kpi-Design demand-split-unit')).toHaveTextContent('(wks)');
     expect(screen.getByTestId('kpi-design-load-booked')).toHaveTextContent('192.98 %');
   });
 
@@ -63,8 +73,8 @@ describe('CapacityKpiRow (P19-T01)', () => {
     renderWithProviders(<CapacityKpiRow totals={totals} rows={rows} view={{ horizon: 'remaining', unit: 'days' }} />);
     expect(screen.getByTestId('kpi-design-capacity-value')).toHaveTextContent('1,078.5');
     expect(screen.getByTestId('kpi-lab-capacity-value')).toHaveTextContent('795');
-    // load has no basis: the same served value on both
-    expect(screen.getByTestId('kpi-design-load-value')).toHaveTextContent('3,522');
+    // P30: the remaining day demand (served: remaining demand × weekdays)
+    expect(screen.getByTestId('kpi-design-load-value')).toHaveTextContent('2,616');
   });
 
   it('has no serious/critical axe violations', async () => {

@@ -13,7 +13,7 @@ import type {
   WorkflowId,
 } from '@/types/enums';
 
-export type WhatIfHub = 'R&D-Greece' | 'R&D-India' | 'PD-India' | 'PD-Romania' | 'OEM-HCK' | 'OEM-Seltek';
+export type WhatIfHub = 'R&D-Greece' | 'R&D-India' | 'PD-India' | 'PD-Romania' | 'OEM-HCK' | 'OEM-Seitek';
 export type WhatIfRegion = 'Greece' | 'India' | 'Romania';
 /** Wire mirror of `SchedulableStatusLiteral` (backend default "In Queue"). The UI
  *  offers only `WHATIF_STATUSES` (P23-T01, no In Buyoff); the type stays complete. */

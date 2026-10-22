@@ -37,7 +37,11 @@ describe('CapacityReportingNotice', () => {
     expect(supply).toHaveTextContent(/applies FTE as speed \(ADR.0032\)/);
     expect(supply).toHaveTextContent(/0\.5.FTE takes twice as many calendar weeks/);
     expect(supply).not.toHaveTextContent(/0002/);
-    expect(screen.getByText(/the sum of design-step weeks of work/)).toHaveTextContent(/spans 8 calendar weeks/);
+    // P30 (ADR 0041): demand is the projects' work, booked in plan is the run's.
+    const demand = screen.getByText(/the work the projects ask for/);
+    expect(demand).toHaveTextContent(/spans 8 calendar weeks/);
+    expect(demand).toHaveTextContent(/On Hold and Commercialized included/);
+    expect(demand).toHaveTextContent(/Booked in plan is what the active schedule run booked/);
     expect(screen.getByRole('dialog')).not.toHaveTextContent(/neither/i);
   });
 

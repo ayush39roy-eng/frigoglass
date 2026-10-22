@@ -34,6 +34,7 @@ from models.priority import PriorityScore
 from models.project import Project
 from models.schedule import ScheduleRun, ScheduleRunProjectStep
 from models.scoring_rubric import PriorityDimensionScore, RubricVersion, ScoringDimension
+from models.workflow import ProjectWorkflowStep
 from services.scoring_rubric import slugify
 from tests.auth_helpers import (
     clear_current_principal_override,
@@ -398,6 +399,13 @@ async def test_preview_equals_the_saved_result_including_capacity_fill(db_sessio
                 duration_weeks=weeks,
                 start_week=dc.CURRENT_WEEK,
                 end_week=dc.CURRENT_WEEK + weeks - 1,
+            )
+        )
+        # ADR 0041 R12: the fill reads remaining demand from the live rows.
+        db_session.add(
+            ProjectWorkflowStep(
+                project_id=project.id, step_template_id="PDD-A", sequence_order=1,
+                duration_weeks=1, duration_override_weeks=weeks,
             )
         )
     await make_project(db_session, hub, name="Unscored")

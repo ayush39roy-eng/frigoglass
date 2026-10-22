@@ -86,8 +86,8 @@ test.describe('Registration P9 fields (P9 contract §6)', () => {
     const dialog = page.getByTestId('registration-drawer');
     await expect(dialog.getByLabel('Expected completion (week)')).toBeVisible();
     await expect(dialog.getByText('Certification testing required')).toBeVisible();
-    await expect(dialog.getByLabel('Estimated design weeks')).toBeVisible();
-    await expect(dialog.getByLabel('Estimated lab weeks')).toBeVisible();
+    await expect(dialog.getByLabel('Design effort (client, weeks)')).toBeVisible();
+    await expect(dialog.getByLabel('Lab effort (client, weeks)')).toBeVisible();
 
     await dialog.locator('#reg-hub').click();
     await page.getByRole('option', { name: 'OEM-HCK' }).click();

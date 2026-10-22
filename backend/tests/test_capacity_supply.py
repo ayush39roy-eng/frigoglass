@@ -31,6 +31,7 @@ from services.capacity_supply import (
     region_holiday_weeks,
     round2,
 )
+from services.project_steps import sync_project_steps
 from tests.auth_helpers import (
     clear_current_principal_override,
     make_principal,
@@ -178,6 +179,11 @@ async def test_hub_load_supply_and_load_figures(db_session):
     await make_project(
         db_session, india, name="Held", status=ProjectStatus.ON_HOLD, estimated_design_weeks=99
     )
+    # ADR 0041 (P30): the demand load reads the live step rows. PDD/A design
+    # 1+4+1+6+2+1+2+1 = 18, lab F4 + H6 = 10; OEM/A-OEM design 1+1+2+4+1 = 9,
+    # no lab (certification testing off). "Held" has no step rows.
+    await sync_project_steps(db_session, p_india, False)
+    await sync_project_steps(db_session, p_oem, True)
     run = await make_schedule_run(
         db_session,
         is_active=True,
@@ -221,9 +227,13 @@ async def test_hub_load_supply_and_load_figures(db_session):
 
     pd = rows["PD-India"]
     assert pd["lab_region"] == "India"
-    assert pd["design_load_weeks"] == 7
-    assert pd["lab_load_weeks"] == 8.0  # region: 6 (PD) + 2 (OEM)
-    assert pd["lab_load_units"] == 6.0  # deprecated: this hub's own lab load
+    # Booked in the run (I6/I7 rev.), with the run's own snapshot kinds.
+    assert pd["design_load_booked_weeks"] == 7
+    assert pd["lab_load_booked_weeks"] == 8.0  # region: 6 (PD) + 2 (OEM)
+    # Demand (I25) from the live rows, independent of the run.
+    assert pd["design_load_weeks"] == 18 and pd["design_load_remaining_weeks"] == 18
+    assert pd["lab_load_weeks"] == 10.0 and pd["lab_load_remaining_weeks"] == 10.0
+    assert pd["lab_load_units"] == 10.0  # deprecated: this row's own lab demand
     assert pd["design_load_estimated_weeks"] == 10.5  # On Hold project excluded
     assert pd["lab_load_estimated_weeks"] == 4.0  # OEM project has no cert testing
     assert pd["engineer_fte_total"] == 1.75
@@ -237,14 +247,15 @@ async def test_hub_load_supply_and_load_figures(db_session):
     assert pd["lab_capacity_year"] == round2(lab_year)
     assert pd["lab_capacity_remaining"] == round2(lab_year * 21 / 52)
     assert pd["lab_capacity_units"] == pd["lab_capacity_remaining"]
-    assert pd["design_gap_year"] == round2(7 - (52 - 47 / 6) * 1.75)
-    assert pd["design_completion_pct_year"] == round2((52 - 47 / 6) * 1.75 / 7)
-    assert pd["lab_gap_remaining"] == round2(8 - lab_year * 21 / 52)
+    assert pd["design_gap_year"] == round2(18 - (52 - 47 / 6) * 1.75)
+    assert pd["design_completion_pct_year"] == round2((52 - 47 / 6) * 1.75 / 18)
+    assert pd["design_gap_remaining"] == round2(18 - remaining)
+    assert pd["lab_gap_remaining"] == round2(10 - lab_year * 21 / 52)
     assert [c["code"] for c in pd["chambers"]] == ["IN-A"]
 
     oem_row = rows["OEM-HCK"]
-    assert oem_row["design_load_weeks"] == 2
-    assert oem_row["lab_load_weeks"] == 8.0  # same region figure
+    assert oem_row["design_load_weeks"] == 9 and oem_row["design_load_booked_weeks"] == 2
+    assert oem_row["lab_load_weeks"] == 10.0  # same region figure
     assert oem_row["engineer_fte_total"] == 0.0
     assert oem_row["design_completion_pct_year"] == 0.0
 

@@ -22,7 +22,7 @@ from scheduling.whatif import (
     MAX_REMOVED_DESIGNERS_TOTAL,
 )
 
-HubLiteral = Literal["R&D-Greece", "R&D-India", "PD-India", "PD-Romania", "OEM-HCK", "OEM-Seltek"]
+HubLiteral = Literal["R&D-Greece", "R&D-India", "PD-India", "PD-Romania", "OEM-HCK", "OEM-Seitek"]
 RegionLiteral = Literal["Greece", "India", "Romania"]
 CategoryLiteral = Literal["A+", "A", "B", "C", "A-OEM", "B-OEM", "C-OEM"]
 PriorityLiteral = Literal["P1", "P2", "P3", "P4", "Q"]

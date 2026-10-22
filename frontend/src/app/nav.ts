@@ -114,7 +114,7 @@ export const SURFACES: readonly SurfaceNavItem[] = [
     icon: GaugeCircle,
     task: 'P4-T03',
     summary:
-      'Design and lab load vs. capacity per hub, reconciled to the week against the active schedule run (Invariants I6 / I7).',
+      'Design and lab demand vs. capacity per hub, with what the active schedule run booked (Invariants I25, I6 / I7).',
     group: 'Plan',
     density: 'working',
   },

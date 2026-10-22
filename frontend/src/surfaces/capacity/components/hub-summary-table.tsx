@@ -1,8 +1,9 @@
 import * as React from 'react';
-import { ChevronDown, PanelRightOpen } from 'lucide-react';
+import { ChevronDown, ChevronRight, PanelRightOpen } from 'lucide-react';
 
 import { BOOKING_STATUS_META } from '@/components/shared/booking-status-meta';
 import { EmptyState } from '@/components/shared/empty-state';
+import { Badge } from '@/components/ui/badge';
 import { BoltCard } from '@/components/ui/bolt-card';
 import { Button } from '@/components/ui/button';
 import { CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -17,13 +18,15 @@ import {
 import { RunProvenanceChips } from '@/components/ui/run-provenance-chips';
 import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
-import { formatDecimal } from '@/lib/format';
+import { formatDecimal, formatInteger } from '@/lib/format';
 import { cn } from '@/lib/utils';
 import type { BookingStatus } from '@/types/enums';
 
 import type { HubCapacityRow, HubCapacitySummary, PriorityLoadSplit, ScheduleRunSummary } from '../api/types';
 import { firstHubPerLabRegion, groupByHubFamily } from '../lib/hub-families';
 import {
+  DEMAND_LABEL,
+  pickAreaFigures,
   pickFigures,
   pickTotalUnitFigures,
   pickUnitFigures,
@@ -33,6 +36,14 @@ import {
 } from '../lib/pick-figures';
 import { BUCKET_BG, BUCKET_SHORT, PRIORITY_BUCKETS } from '../lib/priority-split';
 import { formatFigure, formatPctCompact } from '../lib/status-format';
+import {
+  hasMemberBreakdown,
+  memberBooked,
+  memberDemand,
+  otherMembers,
+  projectsText,
+  SELECTED_MEMBER_SR,
+} from '../lib/members';
 import { HubSupplyDetail } from './hub-supply-breakdown';
 import { StatusLegend } from './status-mark';
 
@@ -59,6 +70,24 @@ import { StatusLegend } from './status-mark';
  * split are served in weeks only and are labelled so in Days mode. Booked %
  * cells are tinted by the SERVED status, carry the status icon and its label,
  * and a thin bar (capped visually at 100, with an overflow marker above it).
+ *
+ * P30 (ADR 0041, I19 rev.): the load column is DEMAND. The full-year view shows
+ * the full-year demand (`*_load_weeks`) against the yearly capacity; the
+ * remaining view shows the remaining demand (`*_load_remaining_weeks`) against
+ * the remaining capacity. Booked % and gap follow the same served pairs. An
+ * "In plan" column per band shows what the active run booked
+ * (`*_load_booked_weeks`, weeks in both units; no booked %, gap or status of
+ * this kind is served, so none is shown). The priority split splits the
+ * full-year demand only, so its mini-bar is shown in the full-year view only.
+ *
+ * P29 (ADR 0042): rows are the four CAPACITY hubs. R&D-Greece's row carries
+ * OEM-HCK and OEM-Seitek (one capacity, one load, one booked %). Its hub cell
+ * has a compact disclosure ("Includes OEM-HCK and OEM-Seitek") that opens one
+ * indented sub-row per served member: hub, served project count and served
+ * design load (weeks). Sub-rows carry no capacity, booked % or gap (none is
+ * served per member, I19) and are never summed. The disclosure starts open
+ * when the hub filter selected one of the row's hubs (`selected_member`), and
+ * that member is highlighted.
  */
 const NUM = 'px-2 text-right font-mono tabular-nums whitespace-nowrap';
 const HEAD = 'h-auto px-2 py-1.5';
@@ -152,19 +181,20 @@ function LoadCell({
   className,
 }: {
   load: number | null;
-  split: PriorityLoadSplit;
+  /** The served full-year split; omitted in the remaining view (it splits the full-year demand). */
+  split?: PriorityLoadSplit | undefined;
   kind: ResourceKind;
   testId?: string;
   className?: string;
 }): React.JSX.Element {
-  const label = `${KIND_LABEL[kind]} load by priority (${UNIT_SHORT.weeks}): ${splitText(split)}`;
-  const nonZero = PRIORITY_BUCKETS.filter((b) => split[b] > 0);
+  const label = split ? `${KIND_LABEL[kind]} full-year demand by priority (${UNIT_SHORT.weeks}): ${splitText(split)}` : '';
+  const nonZero = split ? PRIORITY_BUCKETS.filter((b) => split[b] > 0) : [];
   return (
     <TableCell className={cn(NUM, 'py-1.5', className)}>
       <span className="block" data-testid={testId}>
         {formatFigure(load)}
       </span>
-      {nonZero.length > 0 ? (
+      {split && nonZero.length > 0 ? (
         <Tooltip>
           <TooltipTrigger asChild>
             <span
@@ -179,7 +209,7 @@ function LoadCell({
             </span>
           </TooltipTrigger>
           <TooltipContent className="font-sans">
-            <span className="block font-semibold">{KIND_LABEL[kind]} load by priority ({UNIT_SHORT.weeks})</span>
+            <span className="block font-semibold">{KIND_LABEL[kind]} full-year demand by priority ({UNIT_SHORT.weeks})</span>
             {PRIORITY_BUCKETS.map((b) => (
               <span key={b} className="flex items-center gap-1.5">
                 <span className={cn('inline-block size-2 rounded-sm', BUCKET_BG[b])} aria-hidden="true" />
@@ -193,20 +223,73 @@ function LoadCell({
   );
 }
 
-function SubHead({ short, full, className }: { short: string; full: string; className?: string }): React.JSX.Element {
+/** "Includes OEM-HCK and OEM-Seitek": wraps between words only, never inside a hub name. */
+function MembersCaptionText({ row }: { row: HubCapacityRow }): React.JSX.Element {
+  const names = otherMembers(row).map((m) => m.hub);
+  return (
+    <span>
+      Includes{' '}
+      {names.map((n, i) => (
+        <React.Fragment key={n}>
+          {i === 0 ? '' : i === names.length - 1 ? ' and ' : ', '}
+          <span className="whitespace-nowrap">{n}</span>
+        </React.Fragment>
+      ))}
+    </span>
+  );
+}
+
+function SubHead({
+  short,
+  full,
+  sub,
+  className,
+}: {
+  short: string;
+  full: string;
+  /** P30: a small second line (e.g. "full year"), part of the visible header only. */
+  sub?: string | undefined;
+  className?: string;
+}): React.JSX.Element {
   return (
     <TableHead scope="col" className={cn(HEAD, 'whitespace-nowrap text-right', className)}>
-      {short === full ? (
+      {short === full && sub === undefined ? (
         short
       ) : (
         <>
-          <span aria-hidden="true" title={full}>
+          <span aria-hidden="true" title={full} className="block">
             {short}
+            {sub !== undefined ? (
+              <span className="block text-2xs font-medium normal-case tracking-normal text-text-muted">{sub}</span>
+            ) : null}
           </span>
           <span className="sr-only">{full}</span>
         </>
       )}
     </TableHead>
+  );
+}
+
+/**
+ * P30: the run-booked weeks (`*_load_booked_weeks`). Served in weeks only, so
+ * the Days view keeps weeks and says so; no %, gap or status is served for it.
+ */
+function InPlanCell({
+  weeks,
+  days,
+  testId,
+  className,
+}: {
+  weeks: number;
+  days: boolean;
+  testId?: string;
+  className?: string;
+}): React.JSX.Element {
+  return (
+    <TableCell className={cn(NUM, 'text-text-muted', className)} data-testid={testId}>
+      {formatDecimal(weeks)}
+      {days ? <span className="ml-1 text-2xs">{UNIT_SHORT.weeks}</span> : null}
+    </TableCell>
   );
 }
 
@@ -239,7 +322,7 @@ function SplitCells({
 
 /** How to read load against capacity (P19-T02; rewritten P19-T06 for ADR 0032, matching `capacity-reporting-notice.tsx`). */
 export const BOOKED_NOTE =
-  'Load counts work weeks, including work scheduled past W52, and is not capped at capacity. Part-time leaders stretch the calendar, not the load. The demo engineer FTE and chamber efficiency values are tuned (ADR 0024), so these figures will move with real rosters.';
+  'Demand counts the effort weeks of every project of the hub, On Hold and Commercialized included (not Cancelled or Draft), and is not capped at capacity. The remaining view counts open projects’ work still to do. “In plan” is what the active schedule booked; it has no booked %.';
 
 export interface HubSummaryTableProps {
   data: HubCapacitySummary;
@@ -252,6 +335,8 @@ export function HubSummaryTable({ data, activeRun, view }: HubSummaryTableProps)
   const days = unit === 'days';
   const [detailHub, setDetailHub] = React.useState<string | null>(null);
   const [showSplit, setShowSplit] = React.useState(false);
+  // P29: per-row members disclosure. Unset = open when the filter selected one of the row's hubs.
+  const [membersOpen, setMembersOpen] = React.useState<Record<string, boolean>>({});
   const tableId = React.useId();
   // The dialog is controlled (one dialog for all rows), so Radix has no trigger to
   // return focus to; remember the opening button and restore it on close.
@@ -259,15 +344,21 @@ export function HubSummaryTable({ data, activeRun, view }: HubSummaryTableProps)
   const detailRow = data.rows.find((r) => r.hub === detailHub) ?? null;
   const totalD = pickTotalUnitFigures(data.totals, 'design', view);
   const totalL = pickTotalUnitFigures(data.totals, 'lab', view);
+  const totalDWeeks = pickAreaFigures(data.totals, 'design', horizon);
+  const totalLWeeks = pickAreaFigures(data.totals, 'lab', horizon);
   const capFull = horizon === 'year' ? 'capacity, full year' : 'capacity, remaining year';
+  const demandFull = DEMAND_LABEL[horizon].toLowerCase();
+  const demandSub = horizon === 'year' ? 'full year' : 'remaining';
+  const yearView = horizon === 'year';
   // Accessible unit suffix for the load / capacity headers; gap and split are served in weeks only.
   const inUnit = `, in ${unit}`;
   const gapShort = days ? `Gap (${UNIT_SHORT.weeks})` : 'Gap';
   const groups = groupByHubFamily(data.rows);
   const firstOfRegion = firstHubPerLabRegion(groups.flatMap((g) => g.rows));
   const splitCols = showSplit ? PRIORITY_BUCKETS.length : 0;
-  const designCols = 4 + splitCols;
-  const labCols = 5 + splitCols;
+  // P30: Capacity | Demand | Booked % | Gap | In plan (+ split); lab adds its region column.
+  const designCols = 5 + splitCols;
+  const labCols = 6 + splitCols;
   const allCols = 1 + designCols + labCols + 1;
 
   const openDetails = (e: React.MouseEvent<HTMLElement>, row: HubCapacityRow): void => {
@@ -280,7 +371,7 @@ export function HubSummaryTable({ data, activeRun, view }: HubSummaryTableProps)
       <SubHead
         key={`${kind}-${b}`}
         short={`${BUCKET_SHORT[b]}-${kind === 'design' ? 'D' : 'L'}`}
-        full={`${KIND_LABEL[kind]} load, priority ${BUCKET_SHORT[b]}, in weeks`}
+        full={`${KIND_LABEL[kind]} full-year demand, priority ${BUCKET_SHORT[b]}, in weeks`}
         className={cn('bg-surface-sunken', i === 0 ? 'border-l border-border/60' : undefined)}
       />
     ));
@@ -294,36 +385,50 @@ export function HubSummaryTable({ data, activeRun, view }: HubSummaryTableProps)
             <RunProvenanceChips
               scheduleRunVersion={data.schedule_run_version}
               activeRun={activeRun}
-              leadIn="Load figures in this card are read directly from"
+              leadIn="“In plan” figures in this card are read directly from"
               srTail="Computed server-side and shown to two decimals (Invariant I17); none of it is recalculated in your browser."
             />
           ) : null}
           <CardInfo label="How load and capacity are defined">
             <p>
-              <strong className="text-text">Design load</strong> = Σ design-step lead times for
-              the hub&rsquo;s projects; <strong className="text-text">lab load</strong> = Σ
-              lab-step lead times (&times;&nbsp;1.0) for the hub&rsquo;s lab region &mdash; both
-              taken verbatim from the active run&rsquo;s booked steps (Invariants I6 / I7,
-              ADR&nbsp;0007). The <strong className="text-text">estimated</strong> load is the
-              projects&rsquo; hand-entered design / lab weeks, shown for comparison only.
+              <strong className="text-text">Full-year demand</strong> = Σ the effective design-step
+              weeks (lab: lab-step weeks, per lab region) of every project of the hub, On Hold and
+              Commercialized included, Cancelled and Draft excluded. A step&rsquo;s weeks are the
+              user&rsquo;s timing edit, else the client&rsquo;s effort figure split over the steps,
+              else the lead-time table (ADR&nbsp;0041).{' '}
+              <strong className="text-text">Remaining demand</strong> counts open projects only, and
+              only the work still to do. Both come from the projects themselves, not from a schedule
+              run (Invariant I25).
+            </p>
+            <p>
+              <strong className="text-text">In plan</strong> = the weeks the active schedule run
+              booked (Invariants I6 / I7); it matches the timeline. No booked % is computed for it.
             </p>
             <p>
               <strong className="text-text">Capacity</strong> is the client&rsquo;s own supply
               formula (ADR&nbsp;0008): working weeks per engineer &times; Σ FTE for design;
               Σ (working weeks &times; efficiency &times; platforms) over the region&rsquo;s
               chambers for lab. &ldquo;Remaining year&rdquo; (YTD 2026) scales by (52 &minus; current
-              week) / 52. Booked = load / capacity; gap = load &minus; capacity.
+              week) / 52. Full year: booked = full-year demand / yearly capacity. Remaining year:
+              booked = remaining demand / remaining capacity. Gap = demand &minus; capacity.
             </p>
             <p>
               <strong className="text-text">Reading booked %.</strong> {BOOKED_NOTE}
             </p>
             <p>
-              <strong className="text-text">Priority split.</strong> The bar under each load, and the
-              P1&nbsp;&hellip;&nbsp;Q columns behind &ldquo;Show priority split&rdquo;, are the served load per
-              priority bucket in weeks; &ldquo;Q&rdquo; is a project whose priority is Q or not set.
+              <strong className="text-text">Priority split.</strong> The bar under the full-year demand,
+              and the P1&nbsp;&hellip;&nbsp;Q columns behind &ldquo;Show priority split&rdquo;, are the served
+              full-year demand per priority bucket in weeks; &ldquo;Q&rdquo; is a project whose priority is Q
+              or not set.
             </p>
             <p>
-              Hubs are grouped by family (R&amp;D, PD, OEM). Lab figures belong to a lab region, so they are
+              <strong className="text-text">OEM hubs.</strong> OEM-HCK and OEM-Seitek have no capacity row of
+              their own: R&amp;D-Greece&rsquo;s engineers do their design work, so their projects&rsquo; design
+              demand is counted in R&amp;D-Greece&rsquo;s row against one capacity (ADR&nbsp;0042). &ldquo;Includes
+              &hellip;&rdquo; under the hub opens each hub&rsquo;s projects, design demand and weeks in plan, as served.
+            </p>
+            <p>
+              Hubs are grouped by family (R&amp;D, PD). Lab figures belong to a lab region, so they are
               shown once, on the region&rsquo;s first hub; the Total counts each lab region once. All of it
               is computed server-side and shown to two decimals (Invariant I17); none of it is recalculated
               in your browser.
@@ -388,17 +493,19 @@ export function HubSummaryTable({ data, activeRun, view }: HubSummaryTableProps)
                 </TableRow>
                 <TableRow className="hover:bg-transparent">
                   <SubHead short="Capacity" full={`Design ${capFull}${inUnit}`} />
-                  <SubHead short="Load" full={`Design load${inUnit}`} />
-                  <SubHead short="Booked %" full="Design booked %" />
-                  <SubHead short={gapShort} full="Design gap, load minus capacity, in weeks" />
+                  <SubHead short="Demand" sub={demandSub} full={`Design ${demandFull}${inUnit}`} />
+                  <SubHead short="Booked %" full={`Design booked %, ${demandFull} over capacity`} />
+                  <SubHead short={gapShort} full="Design gap, demand minus capacity, in weeks" />
+                  <SubHead short="In plan" sub={days ? UNIT_SHORT.weeks : undefined} full="Design weeks booked by the active plan, in weeks" />
                   {showSplit ? splitHeads('design') : null}
                   <TableHead scope="col" className={cn(HEAD, LAB_EDGE)}>
                     Lab region
                   </TableHead>
                   <SubHead short="Capacity" full={`Lab ${capFull}${inUnit}`} />
-                  <SubHead short="Load" full={`Lab load${inUnit}`} />
-                  <SubHead short="Booked %" full="Lab booked %" />
-                  <SubHead short={gapShort} full="Lab gap, load minus capacity, in weeks" />
+                  <SubHead short="Demand" sub={demandSub} full={`Lab ${demandFull}${inUnit}`} />
+                  <SubHead short="Booked %" full={`Lab booked %, ${demandFull} over capacity`} />
+                  <SubHead short={gapShort} full="Lab gap, demand minus capacity, in weeks" />
+                  <SubHead short="In plan" sub={days ? UNIT_SHORT.weeks : undefined} full="Lab weeks booked by the active plan, in weeks" />
                   {showSplit ? splitHeads('lab') : null}
                 </TableRow>
               </TableHeader>
@@ -417,68 +524,159 @@ export function HubSummaryTable({ data, activeRun, view }: HubSummaryTableProps)
                   {rows.map((row) => {
                     const d = pickUnitFigures(row, 'design', view);
                     const l = pickUnitFigures(row, 'lab', view);
-                    const dGap = pickFigures(row, 'design', horizon).gap;
-                    const lGap = pickFigures(row, 'lab', horizon).gap;
+                    const dWeeks = pickFigures(row, 'design', horizon);
+                    const lWeeks = pickFigures(row, 'lab', horizon);
+                    const dGap = dWeeks.gap;
+                    const lGap = lWeeks.gap;
                     const owner = firstOfRegion.get(row.lab_region);
                     const labHere = owner === row.hub;
+                    const breakdown = hasMemberBreakdown(row);
+                    const open = breakdown && (membersOpen[row.hub] ?? row.selected_member !== null);
+                    const subRowsId = `${tableId}-members-${row.hub}`;
                     return (
-                      <TableRow key={row.hub} data-testid={`hub-summary-row-${row.hub}`}>
-                        <TableHead
-                          scope="row"
-                          className={cn(
-                            STICKY,
-                            'h-auto whitespace-nowrap bg-surface px-2 py-2 text-sm font-semibold normal-case tracking-normal text-text first:ps-3',
-                          )}
-                        >
-                          {row.hub}
-                        </TableHead>
-                        <TableCell className={NUM} data-testid="design-capacity">
-                          {formatFigure(d.capacity)}
-                        </TableCell>
-                        <LoadCell load={d.load} split={row.design_load_by_priority} kind="design" testId="design-load" />
-                        <BookedCell pct={d.bookedPct} status={d.bookingStatus} testId="design-booked" />
-                        <GapCell value={dGap} testId="design-gap" />
-                        {showSplit ? <SplitCells split={row.design_load_by_priority} kind="design" hub={row.hub} /> : null}
-                        <TableCell className={cn('px-2 py-1.5', LAB_EDGE)} data-testid="lab-region">
-                          <span className="inline-flex rounded-pill border border-border bg-surface-sunken px-1.5 py-0.5 text-2xs font-semibold text-text">
-                            {row.lab_region}
-                          </span>
-                        </TableCell>
-                        {labHere ? (
-                          <>
-                            <TableCell className={NUM} data-testid="lab-capacity">
-                              {formatFigure(l.capacity)}
-                            </TableCell>
-                            <LoadCell load={l.load} split={row.lab_load_by_priority} kind="lab" testId="lab-load" />
-                            <BookedCell pct={l.bookedPct} status={l.bookingStatus} testId="lab-booked" />
-                            <GapCell value={lGap} testId="lab-gap" />
-                            {showSplit ? <SplitCells split={row.lab_load_by_priority} kind="lab" hub={row.hub} /> : null}
-                          </>
-                        ) : (
-                          <TableCell
-                            colSpan={4 + splitCols}
-                            className="px-2 py-1.5 text-2xs italic text-text-muted"
-                            data-testid="lab-shared"
+                      <React.Fragment key={row.hub}>
+                        <TableRow data-testid={`hub-summary-row-${row.hub}`}>
+                          <TableHead
+                            scope="row"
+                            className={cn(
+                              STICKY,
+                              'h-auto whitespace-nowrap bg-surface px-2 py-2 text-sm font-semibold normal-case tracking-normal text-text first:ps-3',
+                            )}
                           >
-                            Same as {owner} above (shared {row.lab_region} lab region)
+                            {row.hub}
+                            {breakdown ? (
+                              <button
+                                type="button"
+                                className="mt-0.5 flex max-w-[11rem] items-start gap-0.5 whitespace-normal rounded-sm text-left text-2xs font-medium text-primary-subtle-fg hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                                aria-expanded={open}
+                                aria-controls={open ? subRowsId : undefined}
+                                onClick={() => {
+                                  setMembersOpen((prev) => ({ ...prev, [row.hub]: !open }));
+                                }}
+                                data-testid={`members-toggle-${row.hub}`}
+                              >
+                                <ChevronRight
+                                  className={cn('mt-px size-3 shrink-0 transition-transform', open && 'rotate-90')}
+                                  aria-hidden="true"
+                                />
+                                <MembersCaptionText row={row} />
+                              </button>
+                            ) : null}
+                          </TableHead>
+                          <TableCell className={NUM} data-testid="design-capacity">
+                            {formatFigure(d.capacity)}
                           </TableCell>
-                        )}
-                        <TableCell className="px-2 py-1 text-right last:pe-3">
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="size-8"
-                            onClick={(e) => {
-                              openDetails(e, row);
-                            }}
-                            aria-label={`Details for ${row.hub}`}
-                            aria-haspopup="dialog"
-                            title={`Details for ${row.hub}`}
-                          >
-                            <PanelRightOpen aria-hidden="true" />
-                          </Button>
-                        </TableCell>
-                      </TableRow>
+                          <LoadCell load={d.load} split={yearView ? row.design_load_by_priority : undefined} kind="design" testId="design-load" />
+                          <BookedCell pct={d.bookedPct} status={d.bookingStatus} testId="design-booked" />
+                          <GapCell value={dGap} testId="design-gap" />
+                          <InPlanCell weeks={dWeeks.booked} days={days} testId="design-in-plan" />
+                          {showSplit ? <SplitCells split={row.design_load_by_priority} kind="design" hub={row.hub} /> : null}
+                          <TableCell className={cn('px-2 py-1.5', LAB_EDGE)} data-testid="lab-region">
+                            <span className="inline-flex rounded-pill border border-border bg-surface-sunken px-1.5 py-0.5 text-2xs font-semibold text-text">
+                              {row.lab_region}
+                            </span>
+                          </TableCell>
+                          {labHere ? (
+                            <>
+                              <TableCell className={NUM} data-testid="lab-capacity">
+                                {formatFigure(l.capacity)}
+                              </TableCell>
+                              <LoadCell load={l.load} split={yearView ? row.lab_load_by_priority : undefined} kind="lab" testId="lab-load" />
+                              <BookedCell pct={l.bookedPct} status={l.bookingStatus} testId="lab-booked" />
+                              <GapCell value={lGap} testId="lab-gap" />
+                              <InPlanCell weeks={lWeeks.booked} days={days} testId="lab-in-plan" />
+                              {showSplit ? <SplitCells split={row.lab_load_by_priority} kind="lab" hub={row.hub} /> : null}
+                            </>
+                          ) : (
+                            <TableCell
+                              colSpan={5 + splitCols}
+                              className="px-2 py-1.5 text-2xs italic text-text-muted"
+                              data-testid="lab-shared"
+                            >
+                              Same as {owner} above (shared {row.lab_region} lab region)
+                            </TableCell>
+                          )}
+                          <TableCell className="px-2 py-1 text-right last:pe-3">
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="size-8"
+                              onClick={(e) => {
+                                openDetails(e, row);
+                              }}
+                              aria-label={`Details for ${row.hub}`}
+                              aria-haspopup="dialog"
+                              title={`Details for ${row.hub}`}
+                            >
+                              <PanelRightOpen aria-hidden="true" />
+                            </Button>
+                          </TableCell>
+                        </TableRow>
+                        {open
+                          ? row.members.map((m, i) => {
+                              const selected = row.selected_member === m.hub;
+                              return (
+                                <TableRow
+                                  key={`${row.hub}-member-${m.hub}`}
+                                  id={i === 0 ? subRowsId : undefined}
+                                  className={cn(
+                                    'text-text-muted',
+                                    i < row.members.length - 1 && 'border-b-0',
+                                    selected ? 'bg-primary-subtle hover:bg-primary-subtle' : 'bg-surface hover:bg-surface',
+                                  )}
+                                  data-testid={`hub-summary-member-${m.hub}`}
+                                  data-member-of={row.hub}
+                                  data-selected={selected ? 'true' : undefined}
+                                >
+                                  <TableHead
+                                    scope="row"
+                                    className={cn(
+                                      STICKY,
+                                      'h-auto whitespace-nowrap py-1 pl-5 pr-2 text-xs font-medium normal-case tracking-normal text-text',
+                                      selected ? 'bg-primary-subtle' : 'bg-surface',
+                                    )}
+                                  >
+                                    <span className="block border-l-2 border-border-strong pl-2">
+                                    <span className="flex items-center gap-1.5">
+                                      {m.hub}
+                                      {m.own ? <span className="text-2xs font-normal text-text-muted">(own)</span> : null}
+                                      {selected ? (
+                                        <Badge tone="primary" className="rounded-pill">
+                                          <span aria-hidden="true">Selected</span>
+                                          <span className="sr-only">{SELECTED_MEMBER_SR}</span>
+                                        </Badge>
+                                      ) : null}
+                                    </span>
+                                    <span className="block text-2xs font-normal text-text-muted" data-testid="member-projects">
+                                      {projectsText(m.project_count)}
+                                      {typeof m.booked_project_count === 'number' ? (
+                                        <span className="whitespace-nowrap">, {formatInteger(m.booked_project_count)} in plan</span>
+                                      ) : null}
+                                    </span>
+                                    </span>
+                                  </TableHead>
+                                  <TableCell className={NUM}>
+                                    <span className="sr-only">No separate capacity</span>
+                                  </TableCell>
+                                  <TableCell className={cn(NUM, 'py-1 text-text')} data-testid="member-design-load">
+                                    {formatFigure(memberDemand(m, horizon))}
+                                    {days ? <span className="ml-1 text-2xs text-text-muted">{UNIT_SHORT.weeks}</span> : null}
+                                    <span className="sr-only"> design {demandFull} weeks</span>
+                                  </TableCell>
+                                  <TableCell colSpan={2} className="px-2 py-1" />
+                                  <TableCell className={cn(NUM, 'py-1 text-text-muted')} data-testid="member-in-plan">
+                                    {formatFigure(memberBooked(m))}
+                                    {days ? <span className="ml-1 text-2xs">{UNIT_SHORT.weeks}</span> : null}
+                                    <span className="sr-only"> design weeks in plan</span>
+                                  </TableCell>
+                                  {splitCols > 0 ? <TableCell colSpan={splitCols} className="px-2 py-1" /> : null}
+                                  <TableCell colSpan={labCols} className={cn('px-2 py-1', LAB_EDGE)} />
+                                  <TableCell className="last:pe-3" />
+                                </TableRow>
+                              );
+                            })
+                          : null}
+                      </React.Fragment>
                     );
                   })}
                 </TableBody>
@@ -496,7 +694,7 @@ export function HubSummaryTable({ data, activeRun, view }: HubSummaryTableProps)
                   </TableCell>
                   <LoadCell
                     load={totalD.load}
-                    split={data.totals.design_load_by_priority}
+                    split={yearView ? data.totals.design_load_by_priority : undefined}
                     kind="design"
                     testId="total-design-load"
                     className="font-bold"
@@ -506,6 +704,7 @@ export function HubSummaryTable({ data, activeRun, view }: HubSummaryTableProps)
                     <span aria-hidden="true">—</span>
                     <span className="sr-only">not served</span>
                   </TableCell>
+                  <InPlanCell weeks={totalDWeeks.booked} days={days} testId="total-design-in-plan" className="font-bold" />
                   {showSplit ? <SplitCells split={data.totals.design_load_by_priority} kind="design" hub="total" /> : null}
                   <TableCell className={cn('px-2 py-1.5 text-2xs text-text-muted', LAB_EDGE)} data-testid="total-lab-regions">
                     <span className="block whitespace-nowrap">{data.totals.lab_regions.join(', ')}</span>
@@ -516,7 +715,7 @@ export function HubSummaryTable({ data, activeRun, view }: HubSummaryTableProps)
                   </TableCell>
                   <LoadCell
                     load={totalL.load}
-                    split={data.totals.lab_load_by_priority}
+                    split={yearView ? data.totals.lab_load_by_priority : undefined}
                     kind="lab"
                     testId="total-lab-load"
                     className="font-bold"
@@ -526,6 +725,7 @@ export function HubSummaryTable({ data, activeRun, view }: HubSummaryTableProps)
                     <span aria-hidden="true">—</span>
                     <span className="sr-only">not served</span>
                   </TableCell>
+                  <InPlanCell weeks={totalLWeeks.booked} days={days} testId="total-lab-in-plan" className="font-bold" />
                   {showSplit ? <SplitCells split={data.totals.lab_load_by_priority} kind="lab" hub="total" /> : null}
                   <TableCell className="last:pe-3" />
                 </TableRow>
@@ -535,25 +735,28 @@ export function HubSummaryTable({ data, activeRun, view }: HubSummaryTableProps)
               <StatusLegend fullPct={data.full_threshold_pct} nearFullPct={data.near_full_threshold_pct}>
                 <span data-testid="hub-summary-unit-note">
                   {days
-                    ? 'Load and capacity in working days (served: weeks × the hub’s working days per week; lab uses its region’s). Gap and priority split in weeks (no served day figure). Total counts each lab region once.'
+                    ? 'Demand and capacity in working days (served: weeks × the hub’s working days per week; lab uses its region’s). Gap, In plan and priority split in weeks (no served day figure). Total counts each lab region once.'
                     : 'Weeks. Total counts each lab region once.'}
                 </span>
               </StatusLegend>
               <div className="flex flex-wrap items-center gap-x-s4 gap-y-1 text-2xs text-text-muted">
                 <span>
-                  Gap = load − capacity:{' '}
+                  Gap = demand − capacity:{' '}
                   <span className="font-semibold text-danger-subtle-fg">+ over capacity</span>,{' '}
                   <span className="font-semibold text-success-subtle-fg">− spare</span>
                 </span>
-                <span className="inline-flex flex-wrap items-center gap-x-2 gap-y-1" data-testid="priority-legend">
-                  Load bar by priority ({UNIT_SHORT.weeks}):
-                  {PRIORITY_BUCKETS.map((b) => (
-                    <span key={b} className="inline-flex items-center gap-1">
-                      <span className={cn('inline-block size-2.5 rounded-sm', BUCKET_BG[b])} aria-hidden="true" />
-                      {BUCKET_SHORT[b]}
-                    </span>
-                  ))}
-                </span>
+                {/* P30: the bars split the full-year demand, so they (and this key) show in the full-year view only. */}
+                {yearView ? (
+                  <span className="inline-flex flex-wrap items-center gap-x-2 gap-y-1" data-testid="priority-legend">
+                    Full-year demand bar by priority ({UNIT_SHORT.weeks}):
+                    {PRIORITY_BUCKETS.map((b) => (
+                      <span key={b} className="inline-flex items-center gap-1">
+                        <span className={cn('inline-block size-2.5 rounded-sm', BUCKET_BG[b])} aria-hidden="true" />
+                        {BUCKET_SHORT[b]}
+                      </span>
+                    ))}
+                  </span>
+                ) : null}
               </div>
             </div>
           </>

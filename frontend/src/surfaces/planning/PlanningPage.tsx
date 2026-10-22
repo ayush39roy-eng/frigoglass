@@ -20,6 +20,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { ReadOnlyNotice } from '@/components/session/write-gate';
 import { ApiError } from '@/lib/api/client';
 import { useHubs, useWorkflowStepTemplates } from '@/lib/api/reference';
+import { hubPickerLabel } from '@/lib/hub-labels';
 import { hubsInScope, regionsInScope } from '@/components/shared/hub-filter/hub-scope';
 import { usePermission, useSession } from '@/stores/session';
 import { HUB_NAMES, LAB_REGIONS, type LabRegion } from '@/types/enums';
@@ -500,7 +501,7 @@ export default function PlanningPage(): React.JSX.Element {
                         <SelectItem value={ALL}>All hubs</SelectItem>
                         {(hubsQuery.data ?? []).map((h) => (
                           <SelectItem key={h.id} value={h.id}>
-                            {h.name}
+                            {hubPickerLabel(h, hubsQuery.data)}
                           </SelectItem>
                         ))}
                       </SelectContent>

@@ -3,7 +3,10 @@ import { Pencil, Plus, Trash2 } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { NotInCapacityRosterBadge } from '@/components/shared/capacity-roster-markers';
 import { CountryFlag } from '@/components/shared/hub-filter/country-flag';
+import { formatInteger } from '@/lib/format';
+import { cn } from '@/lib/utils';
 import type { EngineerAllowedCategory, LabRegion } from '@/types/enums';
 
 import type { CapacityBasis, DesignHubSummary, EngineerRead, EngineerUpdateRequest } from '../../api/types';
@@ -21,6 +24,13 @@ import { CardPills } from './card-pills';
  * engineer's capacity is their own served `capacity_weeks` / `capacity_days`.
  * Nothing is summed or scaled here (I9/I19); a field an older API does not
  * serve prints "—".
+ *
+ * P29 (ADR 0042, API_CONTRACT_P29 §3): one card per CAPACITY hub. A served
+ * `members` list (R&D-Greece: OEM-HCK, OEM-Seitek) adds "Capacity also serves
+ * …" under the header, the filter-selected member in bold; a served
+ * `not_counted_engineer_count` adds "N not in capacity roster", and those
+ * engineers' rows carry the marker (their own capacity is still shown, muted:
+ * it is not part of the hub's capacity).
  *
  * Editing (`canEdit`: Capacity Planning write AND the hub in the caller's
  * scope, the server being the authority): FTE inline, category chips as toggle
@@ -101,6 +111,7 @@ export function HubEngineerCard({
           ) : null}
         </div>
       </header>
+      <HubCardNotes summary={summary} />
 
       {engineers.length === 0 ? (
         <p className="px-3 py-3 text-2xs text-text-subtle">No engineers in this hub.</p>
@@ -145,6 +156,43 @@ export function HubEngineerCard({
   );
 }
 
+/** P29: the served members and not-counted figures, one muted line; nothing derived. */
+function HubCardNotes({ summary }: { summary: DesignHubSummary | undefined }): React.JSX.Element | null {
+  const members = summary?.members ?? [];
+  const notCounted = summary?.not_counted_engineer_count ?? 0;
+  if (members.length === 0 && notCounted === 0) return null;
+  return (
+    <p className="flex flex-wrap gap-x-3 gap-y-0.5 border-b border-border px-3 py-1.5 text-2xs text-text-muted" data-testid="hub-notes">
+      {members.length > 0 ? (
+        <span data-testid="hub-notes-members">
+          Capacity also serves{' '}
+          {members.map((m, i) => (
+            <React.Fragment key={m}>
+              {i === 0 ? '' : i === members.length - 1 ? ' and ' : ', '}
+              <span
+                className={cn(summary?.selected_member === m && 'font-semibold text-primary-subtle-fg')}
+                data-selected={summary?.selected_member === m ? 'true' : undefined}
+              >
+                {m}
+              </span>
+            </React.Fragment>
+          ))}
+          <span className="sr-only">
+            {summary?.selected_member && members.includes(summary.selected_member)
+              ? ` (${summary.selected_member} selected in the hub filter)`
+              : ''}
+          </span>
+        </span>
+      ) : null}
+      {notCounted > 0 ? (
+        <span data-testid="hub-notes-not-counted" data-numeric="">
+          {formatInteger(notCounted)} not in capacity roster
+        </span>
+      ) : null}
+    </p>
+  );
+}
+
 function EngineerRow({
   engineer,
   basis,
@@ -183,7 +231,11 @@ function EngineerRow({
 
   return (
     <TableRow data-testid={`engineer-row-${engineer.id}`}>
-      <TableCell className="px-1.5 py-1.5 font-semibold text-text">{engineer.name}</TableCell>
+      <TableCell className="px-1.5 py-1.5 font-semibold text-text">
+        {engineer.name}
+        {/* P29 (API_CONTRACT_P29 §3.3): served flag; an older API omits it. */}
+        {engineer.counts_in_capacity === false ? <NotInCapacityRosterBadge className="mt-0.5 flex w-fit" /> : null}
+      </TableCell>
       <TableCell className="px-1.5 py-1.5 text-right tnum" data-numeric="">
         {canEdit ? (
           <InlineNumber
@@ -200,7 +252,13 @@ function EngineerRow({
           formatPlain(engineer.fte)
         )}
       </TableCell>
-      <TableCell className="whitespace-nowrap px-1.5 py-1.5 text-right font-mono font-semibold text-primary-subtle-fg tnum" data-numeric="">
+      <TableCell
+        className={cn(
+          'whitespace-nowrap px-1.5 py-1.5 text-right font-mono font-semibold tnum',
+          engineer.counts_in_capacity === false ? 'text-text-muted' : 'text-primary-subtle-fg',
+        )}
+        data-numeric=""
+      >
         {formatAmount(pickUnit(engineer, unit, basis), unit)}
       </TableCell>
       <TableCell className="px-1.5 py-1.5">

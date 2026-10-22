@@ -22,10 +22,14 @@ Source and selection
 --------------------
 - Sheet `2024-25-26 Projects`. The header is row 5 and data starts at row 6.
   Only rows with a Project Name (column I) are read.
-- The dataset is every row whose `Project Request (MM/YY)` (column B) falls in
-  **2026**: 253 projects. Every one of them is kept, including Cancelled,
-  Commercialized and On Hold rows. Those statuses are displayed but never
-  scheduled (DOMAIN_RULES "Booking rules").
+- ADR 0041 §1 (decision (a) of docs/DATA_RECONCILIATION_2026.md): the
+  dataset is every row whose `Project Request (MM/YY)` (column B) falls in
+  **2026**, **or** whose `Project to be considered for Capacity Calculation`
+  (column D) is `Y`: 330 projects (253 requested in 2026 + 77 flagged rows
+  requested in 2024/25, the carry-over). Every one of them is kept, including
+  Cancelled, Commercialized and On Hold rows. Those statuses are displayed
+  but never scheduled (DOMAIN_RULES "Booking rules"); every status but
+  Cancelled / Draft counts in the full-year demand (I25).
 
 Column mapping (0-based column index → JSON field)
 --------------------------------------------------
@@ -52,27 +56,36 @@ Column mapping (0-based column index → JSON field)
   blank. The values are kept as the workbook writes them (the controlled
   lists are `Lists & Explanations` columns C, Q and D,
   `domain_constants.PLANT_OPTIONS` etc.). They are not remapped: for
-  example `OEM-Seitek` stays the plant name even though the hub is
-  `OEM-Seltek`, and the department `Development`, which is not in the
+  example `OEM-SEITEK` stays the plant name as written while the hub is
+  `OEM-Seitek`, and the department `Development`, which is not in the
   workbook's own list, is kept as written (docs/OPEN_QUESTIONS.md).
 - 10 `RPDO hub` → `hub`. `OEM-Seitek` and `OEM-SEITEK` (the workbook's
-  spellings) map to the app hub `OEM-Seltek`. Every other value must be one of
+  spellings) map to the app hub `OEM-Seitek` (ADR 0041 §4 renamed the app's
+  `OEM-Seltek`). Every other value must be one of
   the six app hubs, otherwise the script fails loudly.
 - 4 `Project Category` → `category`, with the OEM rule (ADR 0007): a project
   on an OEM hub carries `A-OEM`/`B-OEM`/`C-OEM` (`A+`/`A` → `A-OEM`, `B` →
   `B-OEM`, `C` → `C-OEM`). An `X-OEM` category on a non-OEM hub becomes `X`.
-- 5 `Project Type` → `type`. `CO`, `NO`, `NM`, `IMP` and `RC` map one to one.
+- 5 `Project Type` → `type`. `CO`, `NO`, `NM`, `IMP`, `RC`, `AC`
+  (Alternative Component) and `SER` (Service) map one to one (ADR 0041 §4).
   `BC` (Business Continuity) is the app's `RC`, "Regulatory / Business
   Compliance" (ADR 0038 amendment 2026-10-22, owner ruling), and so are the
   text variants "Business Continuity", "Business Continiuty" and "Business
-  Continuation" (any case). `AC` (Alternative Component) and `SER` (Service)
-  are in the workbook's own vocabulary (`Lists & Explanations`) but not in
-  the app's `ProjectType` enum, so `type` is null for them (data
-  reconciliation pending). The raw code is always kept in `excel_type`.
-- 18 `Certification Testing Required` → `certification_testing_required`:
-  true only for `Yes`. `No` and blank both give false. This matches the
-  client's own lab-load pivot, which sums lab weeks only for projects flagged
-  "Yes" (docs/CLIENT_FORMULAS.md §2.3).
+  Continuation" (any case). `CER` and `TCO` stay null (OQ #58). The raw code
+  is always kept in `excel_type`.
+- 18 `Certification Testing Required` → `excel_certification` (raw) and,
+  ADR 0041 §3, `certification_testing_required = (col 18 == "Yes") OR
+  (lab_effort_weeks > 0)`: the client's lab pivot sums col 21 with no cert
+  filter (docs/DATA_RECONCILIATION_2026.md W9).
+- ADR 0041 §3 per-project figures (number, 2 dp; a text cell holding a
+  number is read as that number; anything else is null and counted):
+  16 `Process Design Man Week` → `design_effort_weeks`, 21 `Lab Weeks-
+  Process Derived` → `lab_effort_weeks` (both null when blank **or 0**: a
+  typed 0 is a blank, the lead-time table applies), 22 `Lab Week for Safety
+  testing` → `safety_lab_weeks` (0 kept), 17 `Actual Design Man Week` →
+  `actual_design_weeks`, 23 `Actual Testing Time` → `actual_testing_weeks`
+  (null when blank or 0), 24 `Safety Certification Required` →
+  `safety_certification_required` (`yes`, any case).
 - 32 `Project Status` → `status`: `In Que` → In Queue, `Development` → In
   Development, `Industrialization` → Under Industrialization, and
   `Commercialized`, `On Hold`, `Cancelled` unchanged. Any other value fails
@@ -88,7 +101,9 @@ Column mapping (0-based column index → JSON field)
 - 45 `Project End Date - LATEST` → `end_date` (ISO date, null when blank)
   and `target_end_week`. A `datetime` cell is used as is; a number is an
   Excel date serial (days since 1899-12-30) and is converted. Some rows
-  hold the serial because the cell is formatted as a number.
+  hold the serial because the cell is formatted as a number. A text cell
+  `Mon'YY` (e.g. `Feb'26`) is the first of that month (ADR 0041 §4); `-` is
+  null.
   `target_end_week` is the date's ISO week when the ISO week-year is the
   plan year 2026 (W1–W52; a 2026 ISO week 53 becomes 52), and 52 + the ISO
   week when it is 2027 and that is still inside the 78-week horizon. **A
@@ -96,13 +111,15 @@ Column mapping (0-based column index → JSON field)
   null): week numbers start at 2026 W1, so a 2025 date has no week. The
   raw `end_date` stays in the JSON (docs/OPEN_QUESTIONS.md, ADR 0035).
 - 56 `Spillover '25` → `spillover_2025`: true for `Y` / `Yes` (any case),
-  else false. The seed sets `carry_over = true` and `reg_year = 2025` for
-  these projects (ADR 0035).
+  else false. Display only since ADR 0041 §1 (it no longer sets
+  `carry_over`; ADR 0035 §10 superseded).
+- 1 → `request_year`. ADR 0041 §1: `carry_over = request_year < 2026` and
+  `reg_year = request_year` (the seed reads both).
 - 52 `Development Step` → `development_step`. Kept only when it is a workflow
   step id (`PDD-A`..`PDD-N` or `OEM-A`..`OEM-N`). `Not Started` and blank
   give null.
-- 3 `Project to be considered for Capacity Calculation` → `capacity_flag`.
-  Traceability only.
+- 3 `Project to be considered for Capacity Calculation` → `capacity_flag`
+  (true for `Y`), stored as `projects.capacity_flag` (decision (a)).
 
 The workbook has no financial values for these rows (TCOGS, selling price,
 gross margin), so none are emitted.
@@ -165,7 +182,13 @@ COL_RM_CODE = 7
 COL_NAME = 8
 COL_PLANT = 9
 COL_HUB = 10
+COL_DESIGN_EFFORT = 16
+COL_ACTUAL_DESIGN = 17
 COL_CERT = 18
+COL_LAB_EFFORT = 21
+COL_SAFETY_LAB = 22
+COL_ACTUAL_TESTING = 23
+COL_SAFETY_CERT = 24
 COL_STATUS = 32
 COL_REMARKS = 33
 COL_LEADER = 34
@@ -195,6 +218,13 @@ EXPECTED_HEADERS = {
     COL_NAME: "Project Name",
     COL_HUB: "RPDO hub",
     COL_CERT: "Certification Testing Required",
+    COL_CAPACITY_FLAG: "Project to be considered for Capacity Calculation",
+    COL_DESIGN_EFFORT: "Process Design Man Week",
+    COL_ACTUAL_DESIGN: "Actual Design Man Week",
+    COL_LAB_EFFORT: "Lab Weeks- Process Derived",
+    COL_SAFETY_LAB: "Lab Week for Safety testing",
+    COL_ACTUAL_TESTING: "Actual Testing Time",
+    COL_SAFETY_CERT: "Safety Certification Required",
     COL_STATUS: "Project Status",
     COL_LEADER: "Project Leader",
     COL_PLANT: "Plant/OEM",
@@ -232,11 +262,13 @@ HUB_MAP = {
     "PD-India": "PD-India",
     "PD-Romania": "PD-Romania",
     "OEM-HCK": "OEM-HCK",
-    "OEM-Seltek": "OEM-Seltek",
-    "OEM-Seitek": "OEM-Seltek",
-    "OEM-SEITEK": "OEM-Seltek",
+    "OEM-Seitek": "OEM-Seitek",
+    # The prototype's spelling (renamed by ADR 0041 §4) and the workbook's
+    # upper-case variant both normalise to the client's `OEM-Seitek`.
+    "OEM-Seltek": "OEM-Seitek",
+    "OEM-SEITEK": "OEM-Seitek",
 }
-OEM_HUBS = frozenset({"OEM-HCK", "OEM-Seltek"})
+OEM_HUBS = frozenset({"OEM-HCK", "OEM-Seitek"})
 
 STATUS_MAP = {
     "In Que": "In Queue",
@@ -258,6 +290,9 @@ TYPE_MAP = {
     "IMP": "IMP",
     "RC": "RC",
     "BC": "RC",
+    # ADR 0041 §4: the client's own types.
+    "AC": "AC",
+    "SER": "SER",
     "BUSINESS CONTINUITY": "RC",
     "BUSINESS CONTINIUTY": "RC",
     "BUSINESS CONTINUATION": "RC",
@@ -316,8 +351,19 @@ def _request_date(value: Any) -> _dt.date | None:
     return _dt.date(year, month, 1)
 
 
+_MONTHS = {
+    m: i
+    for i, m in enumerate(
+        ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"),
+        start=1,
+    )
+}
+_MON_YY_RE = re.compile(r"^([A-Z][a-z]{2})'(\d{2})$")
+
+
 def _end_date(value: Any) -> _dt.date | None:
-    """`Project End Date - LATEST`: a date cell, or an Excel date serial."""
+    """`Project End Date - LATEST`: a date cell, an Excel date serial, or a
+    `Mon'YY` text (the first of that month, ADR 0041 §4). `-` is null."""
 
     if isinstance(value, _dt.datetime):
         return value.date()
@@ -327,7 +373,36 @@ def _end_date(value: Any) -> _dt.date | None:
         low, high = _EXCEL_SERIAL_RANGE
         if low <= value <= high and float(value).is_integer():
             return _EXCEL_EPOCH + _dt.timedelta(days=int(value))
+        return None
+    match = _MON_YY_RE.fullmatch(_text(value))
+    if match and match.group(1) in _MONTHS:
+        return _dt.date(2000 + int(match.group(2)), _MONTHS[match.group(1)], 1)
     return None
+
+
+def figure(value: Any, *, keep_zero: bool = False) -> float | None:
+    """A per-project figure (ADR 0041 §3): a number (or a text cell holding
+    one) rounded to 2 dp; null when blank, non-numeric, negative, or 0 unless
+    `keep_zero`. A typed 0 is a blank for the effort figures."""
+
+    if value is None or isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        number = float(value)
+    else:
+        text = _text(value)
+        if not text:
+            return None
+        try:
+            number = float(text)
+        except ValueError:
+            return None
+    if number != number or number < 0:  # NaN or negative
+        return None
+    number = round(number, 2)
+    if number == 0 and not keep_zero:
+        return None
+    return number
 
 
 def plan_week(date: _dt.date | None) -> int | None:
@@ -429,8 +504,12 @@ def extract(rows: list[tuple[int, tuple[Any, ...]]]) -> dict[str, Any]:
     used_codes: set[str] = set()
     for number, row in rows:
         request = _request_date(row[COL_REQUEST])
-        if request is None or request.year != REQUEST_YEAR:
+        capacity_flag = _one_line(row[COL_CAPACITY_FLAG]).upper() == "Y"
+        # ADR 0041 §1: requested in 2026, or flagged for capacity (any year).
+        in_2026 = request is not None and request.year == REQUEST_YEAR
+        if not (in_2026 or (capacity_flag and request is not None)):
             continue
+        assert request is not None
 
         name = _one_line(row[COL_NAME])[:NAME_MAX]
         excel_hub = _one_line(row[COL_HUB])
@@ -473,6 +552,8 @@ def extract(rows: list[tuple[int, tuple[Any, ...]]]) -> dict[str, Any]:
         customer = _one_line(row[COL_CUSTOMER]).upper()
         end_date = _end_date(row[COL_END_DATE])
         comments = _text(row[COL_REMARKS])[:COMMENTS_MAX]
+        excel_cert = _one_line(row[COL_CERT])
+        lab_effort = figure(row[COL_LAB_EFFORT])
         projects.append(
             {
                 "excel_row": number,
@@ -490,7 +571,16 @@ def extract(rows: list[tuple[int, tuple[Any, ...]]]) -> dict[str, Any]:
                 "excel_status": excel_status,
                 "marketing_priority": marketing_priority,
                 "priority": priority_for(marketing_priority, status),
-                "certification_testing_required": _one_line(row[COL_CERT]).lower() == "yes",
+                "excel_certification": excel_cert or None,
+                # ADR 0041 §3: cert Yes, or the project carries lab weeks.
+                "certification_testing_required": excel_cert.lower() == "yes"
+                or (lab_effort is not None and lab_effort > 0),
+                "design_effort_weeks": figure(row[COL_DESIGN_EFFORT]),
+                "lab_effort_weeks": lab_effort,
+                "safety_lab_weeks": figure(row[COL_SAFETY_LAB], keep_zero=True),
+                "actual_design_weeks": figure(row[COL_ACTUAL_DESIGN]),
+                "actual_testing_weeks": figure(row[COL_ACTUAL_TESTING]),
+                "safety_certification_required": _one_line(row[COL_SAFETY_CERT]).lower() == "yes",
                 "leader": leader_for(row[COL_LEADER]),
                 "customer": customer or None,
                 "comments": comments or None,
@@ -503,7 +593,8 @@ def extract(rows: list[tuple[int, tuple[Any, ...]]]) -> dict[str, Any]:
                 "end_date": end_date.isoformat() if end_date is not None else None,
                 "target_end_week": plan_week(end_date),
                 "spillover_2025": _one_line(row[COL_SPILLOVER_25]).upper() in ("Y", "YES"),
-                "capacity_flag": _one_line(row[COL_CAPACITY_FLAG]) or None,
+                "capacity_flag": capacity_flag,
+                "request_year": request.year,
             }
         )
 
@@ -528,7 +619,10 @@ def extract(rows: list[tuple[int, tuple[Any, ...]]]) -> dict[str, Any]:
         "source": {
             "workbook": "24-25-26 Global RPD Project Pipeline.xlsx (client; not committed)",
             "sheet": SHEET,
-            "selection": f"Project Request (MM/YY) in {REQUEST_YEAR}",
+            "selection": (
+                f"Project Request (MM/YY) in {REQUEST_YEAR}, or Project to be considered "
+                "for Capacity Calculation = Y (ADR 0041 §1)"
+            ),
             "extractor": "backend/seed/extract_client_2026.py",
         },
         "project_count": len(projects),
@@ -624,10 +718,29 @@ def main(argv: list[str]) -> int:
     data["roster"] = read_roster(args.formula_workbook)
     args.out.write_text(json.dumps(data, indent=1, ensure_ascii=False) + "\n", encoding="utf-8")
     # Counts only: never print row values (customer is an encrypted field).
+    projects = data["projects"]
     print(
         f"wrote {data['project_count']} projects, {len(data['leaders'])} leaders, "
         f"{len(data['roster'])} roster rows to {args.out}"
     )
+    # ADR 0041 §7.1 summary: counts only (never a row value).
+    by_hub_status = Counter((p["hub"], p["status"]) for p in projects)
+    cert_by_lab = sum(
+        1
+        for p in projects
+        if p["certification_testing_required"]
+        and (p["excel_certification"] or "").lower() != "yes"
+    )
+    print(
+        "carry-over (request year < 2026): "
+        f"{sum(1 for p in projects if p['request_year'] < REQUEST_YEAR)}; "
+        f"capacity flag Y: {sum(1 for p in projects if p['capacity_flag'])}; "
+        f"blank design effort: {sum(1 for p in projects if p['design_effort_weeks'] is None)}; "
+        f"blank lab effort: {sum(1 for p in projects if p['lab_effort_weeks'] is None)}; "
+        f"cert set by lab weeks only: {cert_by_lab}"
+    )
+    for (hub, status), n in sorted(by_hub_status.items()):
+        print(f"  {hub:12s} {status:24s} {n}")
     return 0
 
 

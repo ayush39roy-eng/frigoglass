@@ -205,6 +205,9 @@ async def test_queued_saves_audits_and_dispatches_one_greedy_run(db_session, dis
         "duration_override_weeks": 9,
         "start_not_before_week": 40,
         "effective_duration_weeks": 9,
+        # ADR 0041 R4 (P30-T02): the derived effort (none here) and the lead.
+        "effort_weeks": None,
+        "lead_time_weeks": 6,
         "recalc_status": "queued",
         "schedule_run_id": body["schedule_run_id"],
         "baseline_run_id": str(w.run.id),

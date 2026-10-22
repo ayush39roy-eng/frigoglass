@@ -174,7 +174,7 @@ def check_scope(ctx: WhatIfContext, sc: Scenario) -> None:
     """Raise unless `sc` stays inside the caller's scope (module docstring)."""
 
     # P29-T06 (ADR 0042): designers sit on capacity hubs. Adding or removing
-    # designers on a member hub (OEM-HCK, OEM-Seltek) is a 422 for everyone:
+    # designers on a member hub (OEM-HCK, OEM-Seitek) is a 422 for everyone:
     # its design work is done by its capacity hub's engineers.
     designer_hubs = [ae.hub for ae in sc.add_engineers]
     designer_hubs += [rc.hub for rc in sc.remove_engineer_counts]

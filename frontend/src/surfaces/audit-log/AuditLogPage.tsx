@@ -17,6 +17,7 @@ import {
 } from '@/components/ui/select';
 import { ApiError } from '@/lib/api/client';
 import { useHubs } from '@/lib/api/reference';
+import { hubPickerLabel } from '@/lib/hub-labels';
 import { formatInteger } from '@/lib/format';
 import { SURFACES } from '@/app/nav';
 
@@ -191,7 +192,7 @@ export default function AuditLogPage(): React.JSX.Element {
                     <SelectItem value={ALL}>All</SelectItem>
                     {(hubsQuery.data ?? []).map((h) => (
                       <SelectItem key={h.id} value={h.id}>
-                        {h.name}
+                        {hubPickerLabel(h, hubsQuery.data)}
                       </SelectItem>
                     ))}
                   </SelectContent>

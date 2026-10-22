@@ -16,20 +16,25 @@ import enum
 
 
 class HubName(str, enum.Enum):
-    """The six hubs, per docs/DOMAIN_RULES.md "Hubs and lab-region mapping"."""
+    """The six hubs, per docs/DOMAIN_RULES.md "Hubs and lab-region mapping".
+
+    ADR 0041 §4 (P30-T02, migration `p30a`): `OEM-Seitek` is the client's
+    spelling; the prototype's `OEM-Seltek` was renamed. Stored schedule runs
+    keep the old string (I14); `scheduling.hubs.canonical_hub_name` maps it.
+    """
 
     RD_GREECE = "R&D-Greece"
     RD_INDIA = "R&D-India"
     PD_INDIA = "PD-India"
     PD_ROMANIA = "PD-Romania"
     OEM_HCK = "OEM-HCK"
-    OEM_SELTEK = "OEM-Seltek"
+    OEM_SEITEK = "OEM-Seitek"
 
 
 class LabRegion(str, enum.Enum):
     """Lab regions chambers are pooled by, per the DOMAIN_RULES.md hub→lab-region
     table. Multiple hubs share a lab region (e.g. R&D-India, PD-India, OEM-HCK and
-    OEM-Seltek all map to "India") — this is why Chamber has its own `lab_region`
+    OEM-Seitek all map to "India") — this is why Chamber has its own `lab_region`
     column rather than an FK to Hub.
     """
 
@@ -155,6 +160,10 @@ class ProjectType(str, enum.Enum):
     RC = "RC"
     NO = "NO"
     IMP = "IMP"
+    #: ADR 0041 §4 (migration `p30a`): client types "Alternative Component"
+    #: and "Service". No scoring tag (ADR 0038 §6 unchanged).
+    AC = "AC"
+    SER = "SER"
 
 
 class WorkflowStepKind(str, enum.Enum):

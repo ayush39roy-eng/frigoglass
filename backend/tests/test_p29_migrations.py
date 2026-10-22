@@ -51,6 +51,7 @@ import asyncpg
 from testcontainers.postgres import PostgresContainer
 
 import domain_constants as dc
+from scheduling.hubs import canonical_hub_name
 from seed import client_2026 as c26
 from seed.initial_scoring_rubric import initial_rubric
 from services.priority_scoring import compute_score
@@ -73,8 +74,13 @@ def _load(name: str) -> ModuleType:
 
 def test_p29a_frozen_facts_equal_the_live_rules():
     p29a = _load("p29a_capacity_hubs")
-    assert p29a._CAPACITY_HUB_OF == dict(dc.HUB_CAPACITY_HUB)
-    assert set(p29a._NOT_IN_CAPACITY_ROSTER) == set(c26.NOT_IN_CAPACITY_ROSTER)
+    # p29a predates the ADR 0041 rename (migration p30a): its frozen copy keeps
+    # the old spelling, which maps onto today's constants.
+    assert {
+        canonical_hub_name(h): canonical_hub_name(c) for h, c in p29a._CAPACITY_HUB_OF.items()
+    } == dict(dc.HUB_CAPACITY_HUB)
+    # Vaggelis arrives with the ADR 0041 carry-over rows (seed only).
+    assert set(p29a._NOT_IN_CAPACITY_ROSTER) == set(c26.NOT_IN_CAPACITY_ROSTER) - {"Vaggelis"}
     assert p29a._OEM_CATEGORIES == tuple(sorted(dc.OEM_CATEGORIES))
     for name in p29a._OEM_ELIGIBLE_GREEKS:
         assert set(p29a._OEM_CATEGORIES) <= set(c26.CLIENT_APP_ALLOWED_CATEGORIES[name])
@@ -87,10 +93,13 @@ def test_p29a_frozen_facts_equal_the_live_rules():
 def test_p29b_codes_are_the_seed_bc_rows_and_formula_matches_service():
     p29b = _load("p29b_bc_type_regulatory")
     data = json.loads((_BACKEND / "seed/client_2026_seed_data.json").read_text())
+    # The 2026-requested rows p29b was frozen from (ADR 0041 added the 2024/25
+    # carry-over rows to the seed later; they arrive with a reseed, typed RC).
     bc_codes = {
         p["external_code"]
         for p in data["projects"]
-        if (p.get("excel_type") or "").strip().upper()
+        if p.get("request_year", 2026) == 2026
+        and (p.get("excel_type") or "").strip().upper()
         in {"BC", "BUSINESS CONTINUITY", "BUSINESS CONTINIUTY", "BUSINESS CONTINUATION"}
     }
     assert set(p29b._BC_EXTERNAL_CODES) == bc_codes

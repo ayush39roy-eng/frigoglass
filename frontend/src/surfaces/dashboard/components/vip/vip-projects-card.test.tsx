@@ -25,7 +25,7 @@ function project(id: string, overrides: Partial<VipItemProject> = {}): VipItemPr
   return {
     id,
     name: `Project ${id}`,
-    hub: 'OEM-Seltek',
+    hub: 'OEM-Seitek',
     priority: 'P3',
     status: 'In Development',
     projected_end_week: 40,
@@ -104,7 +104,7 @@ const BOARD: VipBoardResponse = {
     area({
       area: 'Greece',
       label: 'Greece',
-      hubs: ['R&D-Greece', 'OEM-HCK', 'OEM-Seltek'],
+      hubs: ['R&D-Greece', 'OEM-HCK', 'OEM-Seitek'],
       item_count: 7,
       highlighted_count: 2,
       vip_project_count: 2,
@@ -164,7 +164,7 @@ describe('Dashboard VIP projects card (ADR 0027, OQ #39)', () => {
     expect(tiles.map((t) => t.getAttribute('data-area'))).toEqual(['Greece', 'India', 'Romania']);
     const g = greeceTile();
     expect(within(g).getByRole('heading', { name: 'Greece' })).toBeInTheDocument();
-    expect(g).toHaveTextContent('R&D-Greece · OEM-HCK · OEM-Seltek');
+    expect(g).toHaveTextContent('R&D-Greece · OEM-HCK · OEM-Seitek');
     expect(within(g).getByTestId('vip-count-highlighted')).toHaveTextContent('2');
     expect(within(g).getByTestId('vip-count-high-risk')).toHaveTextContent('1');
     expect(within(g).getByTestId('vip-count-linked')).toHaveTextContent('3');
@@ -205,7 +205,7 @@ describe('Dashboard VIP projects card (ADR 0027, OQ #39)', () => {
     const options = within(picker).getAllByTestId('vip-picker-project');
     expect(options).toHaveLength(2);
     expect(options[0]).toHaveTextContent('BEATBOX 3D LOGO FLEX60');
-    expect(options[0]).toHaveTextContent('OEM-Seltek');
+    expect(options[0]).toHaveTextContent('OEM-Seitek');
     expect(options[0]).toHaveTextContent('P2');
     expect(options[0]).toHaveTextContent('W30');
     expect(within(options[0]!).getByTestId('finish-chip')).toHaveAttribute('data-within-year', 'true');

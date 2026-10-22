@@ -21,7 +21,7 @@ class HubRead(BaseModel):
     lab_region: LabRegion
     is_oem: bool
     #: P29 (ADR 0042): the hub whose engineers, calendar and design supply
-    #: serve this hub (R&D-Greece for OEM-HCK and OEM-Seltek); null when the
+    #: serve this hub (R&D-Greece for OEM-HCK and OEM-Seitek); null when the
     #: hub is its own capacity hub.
     capacity_hub_id: uuid.UUID | None
     #: The name of that capacity hub; null with `capacity_hub_id`.

@@ -72,6 +72,14 @@ def project_audit_state(project: Project) -> dict[str, Any]:
         "rm_savings_keur": (
             float(project.rm_savings_keur) if project.rm_savings_keur is not None else None
         ),
+        # ADR 0041 (P30): the per-project effort figures (not financial).
+        "design_effort_weeks": (
+            str(project.design_effort_weeks) if project.design_effort_weeks is not None else None
+        ),
+        "lab_effort_weeks": (
+            str(project.lab_effort_weeks) if project.lab_effort_weeks is not None else None
+        ),
+        "certification_testing_required": project.certification_testing_required,
         # ADR 0038 (P27): Registration "project nature" tags.
         "scoring_tags": [t.value for t in canonical_tags(project.scoring_tags)],
         # --- Financial/PII fields: NEVER read, always the literal string below. ---

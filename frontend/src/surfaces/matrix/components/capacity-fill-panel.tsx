@@ -3,6 +3,7 @@ import * as React from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { formatDecimal, formatInteger } from '@/lib/format';
+import { joinNames } from '@/lib/hub-labels';
 import { cn } from '@/lib/utils';
 
 import type { HubP1Fill, PriorityCapacityFill } from '../api/types';
@@ -13,6 +14,10 @@ import type { HubP1Fill, PriorityCapacityFill } from '../api/types';
  * capacity, the base P1 load (projects scoring 70+), the load after the fill and
  * how many projects were promoted. Every number is a served field; bar lengths
  * are only a visual scale of those figures (I9).
+ *
+ * P29 (ADR 0042): one row per CAPACITY hub; R&D-Greece's walk covers the
+ * projects of OEM-HCK and OEM-Seitek too, named under the hub from the served
+ * `members`.
  */
 export const CAPACITY_FILL_EXPLAINER =
   'Projects scoring 70+ are P1. If a hub still has design capacity this year, the next-highest scores are promoted until it is full.';
@@ -84,8 +89,17 @@ function HubFillRow({ fill }: { fill: HubP1Fill }): React.JSX.Element {
       className="grid grid-cols-[6.5rem_minmax(4rem,1fr)_auto_auto] items-center gap-3 border-b border-border/60 py-1.5"
       data-testid={`capacity-fill-${fill.hub}`}
     >
-      <span className="truncate text-xs font-semibold text-text" title={fill.hub}>
-        {fill.hub}
+      <span className="min-w-0 text-xs font-semibold text-text">
+        <span className="block truncate" title={fill.hub}>
+          {fill.hub}
+        </span>
+        {/* P29 (ADR 0042, contract §4): the Greece walk covers its member hubs' projects. */}
+        {(fill.members ?? []).length > 0 ? (
+          <span className="block text-2xs font-normal leading-tight text-text-muted" data-testid="capacity-fill-members">
+            <span aria-hidden="true">+ {fill.members.join(', ')}</span>
+            <span className="sr-only">includes {joinNames(fill.members)}</span>
+          </span>
+        ) : null}
       </span>
       <div className="relative h-2.5 w-full overflow-hidden rounded-pill bg-surface-sunken" aria-hidden="true">
         {/* Filled load (base + promoted), hatched; the base P1 load solid on top. */}

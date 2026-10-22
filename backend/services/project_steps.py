@@ -15,8 +15,10 @@ exactly one row per step of its workflow:
 - `duration_weeks` is rewritten from the lead-time table for the project's
   current `(workflow, category)` (ADR 0007), 0 when there is no category yet.
 - a re-pointed row loses its Gantt-set timing (`duration_override_weeks`,
-  `start_not_before_week`, ADR 0019); every other row keeps it, since a
-  lead-time change never clears an override.
+  `start_not_before_week`, ADR 0019) and its derived effort (`effort_weeks`,
+  ADR 0041); every other row keeps them, since a lead-time change never
+  clears an override. The caller re-derives the effort split afterwards
+  (`services.project_effort.rederive_project_effort`, ADR 0041 R6).
 
 Planned weeks are not touched here. They belong to schedule runs.
 """
@@ -86,6 +88,9 @@ async def sync_project_steps(db: AsyncSession, project: Project, hub_is_oem: boo
             # activity (PDD-E is not OEM-E), so it does not carry across.
             row.duration_override_weeks = None
             row.start_not_before_week = None
+            # ADR 0041 R6: the derived effort belonged to the old step too;
+            # the caller re-derives it (`services.project_effort`).
+            row.effort_weeks = None
 
     present = {row.sequence_order for row in existing}
     for t in templates:

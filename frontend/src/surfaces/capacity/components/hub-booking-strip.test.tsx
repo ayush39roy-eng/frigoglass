@@ -13,7 +13,7 @@ const all = [
   hubRow({ hub: 'PD-India' }),
   hubRow({ hub: 'PD-Romania', lab_region: 'Romania', lab_booked_pct_year: 51, lab_booking_status_year: 'available' }),
   hubRow({ hub: 'OEM-HCK', ...greeceLab, design_booked_pct_year: 12.5, design_booking_status_year: 'available' }),
-  hubRow({ hub: 'OEM-Seltek', ...greeceLab, design_booked_pct_year: 99, design_booking_status_year: 'near_full' }),
+  hubRow({ hub: 'OEM-Seitek', ...greeceLab, design_booked_pct_year: 99, design_booking_status_year: 'near_full' }),
 ];
 
 describe('HubBookingStrip (P19-T02: hubs only, no Europe / India areas)', () => {
@@ -22,7 +22,7 @@ describe('HubBookingStrip (P19-T02: hubs only, no Europe / India areas)', () => 
     expect(screen.getAllByTestId(/^booked-hub-/)).toHaveLength(6);
     expect(screen.getByTestId('booked-design-OEM-HCK')).toHaveTextContent('12.5%');
     expect(within(screen.getByTestId('booked-design-OEM-HCK')).getByText('Available')).toBeInTheDocument();
-    expect(within(screen.getByTestId('booked-design-OEM-Seltek')).getByText('Near full')).toBeInTheDocument();
+    expect(within(screen.getByTestId('booked-design-OEM-Seitek')).getByText('Near full')).toBeInTheDocument();
     const hckLab = screen.getByTestId('booked-lab-OEM-HCK');
     expect(hckLab).toHaveTextContent('Lab (Greece region)');
     expect(hckLab).toHaveTextContent('100.5%');
@@ -50,7 +50,7 @@ describe('HubBookingStrip (P19-T02: hubs only, no Europe / India areas)', () => 
         .map((t) => t.getAttribute('data-testid'));
     expect(hubsIn('rd')).toEqual(['booked-hub-R&D-Greece', 'booked-hub-R&D-India']);
     expect(hubsIn('pd')).toEqual(['booked-hub-PD-India', 'booked-hub-PD-Romania']);
-    expect(hubsIn('oem')).toEqual(['booked-hub-OEM-HCK', 'booked-hub-OEM-Seltek']);
+    expect(hubsIn('oem')).toEqual(['booked-hub-OEM-HCK', 'booked-hub-OEM-Seitek']);
     // each family header is the name only: nothing summed in the browser
     expect(within(boxes[2] as HTMLElement).getByRole('heading', { level: 3 })).toHaveTextContent(/^OEM$/);
     // tile content kept
@@ -61,7 +61,7 @@ describe('HubBookingStrip (P19-T02: hubs only, no Europe / India areas)', () => 
 
   it('P19-T06: a Hub Planner sees only their own family box and hub tiles, with no empty boxes', () => {
     renderWithProviders(
-      <HubBookingStrip rows={[hubRow({ hub: 'OEM-HCK', ...greeceLab }), hubRow({ hub: 'OEM-Seltek', ...greeceLab })]} view={{ horizon: 'year', unit: 'weeks' }} />,
+      <HubBookingStrip rows={[hubRow({ hub: 'OEM-HCK', ...greeceLab }), hubRow({ hub: 'OEM-Seitek', ...greeceLab })]} view={{ horizon: 'year', unit: 'weeks' }} />,
       { session: { hub_scope_all: false } },
     );
     expect(within(screen.getByTestId('booked-families')).getAllByRole('region')).toHaveLength(1);

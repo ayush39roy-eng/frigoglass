@@ -14,7 +14,7 @@ shared, and only aggregates leave this module.
 
 **Capacity hubs (P29, ADR 0042).** Design supply rows are the four capacity
 hubs (`services.capacity_hubs`), over engineers with `counts_in_capacity`;
-R&D-Greece's row lists `members` (OEM-HCK, OEM-Seltek in scope). Engineer
+R&D-Greece's row lists `members` (OEM-HCK, OEM-Seitek in scope). Engineer
 lists resolve a member-hub `hub_id` to its capacity hub; the engineer totals'
 capacity skips non-counted engineers.
 
@@ -81,6 +81,7 @@ from services.active_run import get_active_run, step_kinds_for_run
 from services.capacity_hubs import (
     capacity_rows_for_request,
     counted_fte_by_capacity_hub,
+    engineer_hub_filter,
     load_capacity_hub_map,
 )
 from services.capacity_supply import (
@@ -394,7 +395,7 @@ async def resource_load(
     # ADR 0042: engineers sit on capacity hubs, so a member-hub filter
     # (OEM-HCK) lists its capacity hub's engineers; the RBAC scope is unchanged.
     cmap = await load_capacity_hub_map(db)
-    eng_filter = narrowed_hub_filter(current_user, Engineer.hub_id, cmap.resolve(hub_id), region)
+    eng_filter = engineer_hub_filter(current_user, cmap, hub_id, region)
     if eng_filter is not None:
         eng_stmt = eng_stmt.where(eng_filter)
     if engineer_ids:
@@ -619,7 +620,7 @@ async def resource_load_options(
         .order_by(Hub.name, Engineer.name, Engineer.id)
     )
     cmap = await load_capacity_hub_map(db)
-    eng_filter = narrowed_hub_filter(current_user, Engineer.hub_id, cmap.resolve(hub_id), region)
+    eng_filter = engineer_hub_filter(current_user, cmap, hub_id, region)
     if eng_filter is not None:
         eng_stmt = eng_stmt.where(eng_filter)
     engineers = [

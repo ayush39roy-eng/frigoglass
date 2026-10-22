@@ -8,8 +8,8 @@ import type { Hub } from '@/lib/api/reference';
 import { EngineerFormDialog } from './engineer-form';
 
 const HUBS: Hub[] = [
-  { id: 'hub-1', name: 'R&D-Greece', lab_region: 'Greece', is_oem: false },
-  { id: 'hub-2', name: 'PD-India', lab_region: 'India', is_oem: false },
+  { id: 'hub-1', name: 'R&D-Greece', lab_region: 'Greece', is_oem: false, capacity_hub_id: null, capacity_hub_name: null },
+  { id: 'hub-2', name: 'PD-India', lab_region: 'India', is_oem: false, capacity_hub_id: null, capacity_hub_name: null },
 ];
 
 describe('EngineerFormDialog', () => {
@@ -82,7 +82,7 @@ describe('EngineerFormDialog', () => {
           user_id: null,
           created_at: '2026-01-01T00:00:00Z',
           updated_at: '2026-01-01T00:00:00Z',
-          weekdays_per_week: 5, capacity_weeks: { year: 44, remaining: 9 }, capacity_days: { year: 220, remaining: 45 },
+          weekdays_per_week: 5, capacity_weeks: { year: 44, remaining: 9 }, capacity_days: { year: 220, remaining: 45 }, counts_in_capacity: true,
         }}
         open
         onOpenChange={() => {}}

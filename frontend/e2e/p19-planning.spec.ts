@@ -36,12 +36,12 @@ function me(role: Role): unknown {
 }
 
 const HUBS = [
-  { id: 'h-grc', name: 'R&D-Greece', lab_region: 'Greece', is_oem: false },
-  { id: 'h-rdi', name: 'R&D-India', lab_region: 'India', is_oem: false },
-  { id: 'h-pdi', name: 'PD-India', lab_region: 'India', is_oem: false },
-  { id: 'h-pdr', name: 'PD-Romania', lab_region: 'Romania', is_oem: false },
-  { id: 'h-hck', name: 'OEM-HCK', lab_region: 'Greece', is_oem: true },
-  { id: 'h-sel', name: 'OEM-Seltek', lab_region: 'Greece', is_oem: true },
+  { id: 'h-grc', name: 'R&D-Greece', lab_region: 'Greece', is_oem: false, capacity_hub_id: null, capacity_hub_name: null },
+  { id: 'h-rdi', name: 'R&D-India', lab_region: 'India', is_oem: false, capacity_hub_id: null, capacity_hub_name: null },
+  { id: 'h-pdi', name: 'PD-India', lab_region: 'India', is_oem: false, capacity_hub_id: null, capacity_hub_name: null },
+  { id: 'h-pdr', name: 'PD-Romania', lab_region: 'Romania', is_oem: false, capacity_hub_id: null, capacity_hub_name: null },
+  { id: 'h-hck', name: 'OEM-HCK', lab_region: 'Greece', is_oem: true, capacity_hub_id: null, capacity_hub_name: null },
+  { id: 'h-sel', name: 'OEM-Seitek', lab_region: 'Greece', is_oem: true, capacity_hub_id: null, capacity_hub_name: null },
 ];
 const WPW: Record<string, number> = { Greece: 5, India: 6, Romania: 5 };
 const NAMES = [
@@ -165,11 +165,11 @@ const OPTIONS = {
 };
 
 const TEMPLATES = [
-  { id: 'OEM-E', workflow_id: 'OEM', code: 'POC', name: 'Proof of Concept', kind: 'lab', base_weeks: 3 },
-  { id: 'OEM-H', workflow_id: 'OEM', code: 'CERT', name: 'Certification Testing & Compliance', kind: 'lab', base_weeks: 3 },
-  { id: 'PDD-E', workflow_id: 'PDD', code: 'DES', name: 'Design', kind: 'design', base_weeks: 3 },
-  { id: 'PDD-F', workflow_id: 'PDD', code: 'POC', name: 'Proof of Concept', kind: 'lab', base_weeks: 3 },
-  { id: 'PDD-H', workflow_id: 'PDD', code: 'CERT', name: 'Certification Testing & Compliance', kind: 'lab', base_weeks: 3 },
+  { id: 'OEM-E', workflow_id: 'OEM', code: 'POC', name: 'Proof of Concept', kind: 'lab', sequence_order: 8, predecessor_ids: [] },
+  { id: 'OEM-H', workflow_id: 'OEM', code: 'CERT', name: 'Certification Testing & Compliance', kind: 'lab', sequence_order: 5, predecessor_ids: [] },
+  { id: 'PDD-E', workflow_id: 'PDD', code: 'DES', name: 'Design', kind: 'design', sequence_order: 6, predecessor_ids: [] },
+  { id: 'PDD-F', workflow_id: 'PDD', code: 'POC', name: 'Proof of Concept', kind: 'lab', sequence_order: 8, predecessor_ids: [] },
+  { id: 'PDD-H', workflow_id: 'PDD', code: 'CERT', name: 'Certification Testing & Compliance', kind: 'lab', sequence_order: 0, predecessor_ids: [] },
 ];
 
 interface Calls {

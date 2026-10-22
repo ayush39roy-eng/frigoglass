@@ -54,6 +54,7 @@ function step(over: Partial<GanttStepRow> = {}): GanttStepRow {
     start_not_before_week: null,
     timing_editable: 'move_resize',
     span_fte: null,
+    effort_weeks: null,
     ...over,
   };
 }

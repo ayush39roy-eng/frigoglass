@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Iterable
+from decimal import Decimal
 from typing import TYPE_CHECKING
 
 from sqlalchemy import (
@@ -185,7 +186,8 @@ class Project(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     #: completion", docs/OPEN_QUESTIONS.md #19).
     target_end_week: Mapped[int | None] = mapped_column(Integer, nullable=True)
     #: When false, every `lab`-kind step is skipped (docs/DOMAIN_RULES.md
-    #: "Lead times"; the client's lab-load pivot, docs/CLIENT_FORMULAS.md §2.3).
+    #: "Lead times"). ADR 0041 §3: the client import sets it when col 18 is
+    #: "Yes" OR the project carries lab weeks (`lab_effort_weeks > 0`).
     certification_testing_required: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=True, server_default="true"
     )
@@ -193,6 +195,30 @@ class Project(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     #: column only — never affect the schedule (docs/OPEN_QUESTIONS.md #12).
     estimated_design_weeks: Mapped[float | None] = mapped_column(Numeric(6, 2), nullable=True)
     estimated_lab_weeks: Mapped[float | None] = mapped_column(Numeric(6, 2), nullable=True)
+    # --- ADR 0041 (P30-T02, migration p30a): the client's per-project figures
+    #: `Process Design Man Week` (workbook col 16): the project's design
+    #: effort in man-weeks. When > 0 it is apportioned over the category's
+    #: non-zero design-kind steps (`services.project_effort`, the exact split
+    #: of `scheduling.effort_split`) into `ProjectWorkflowStep.effort_weeks`,
+    #: which drives both the schedule and the load (R1). Blank or 0: the
+    #: lead-time table applies. Not a financial field.
+    design_effort_weeks: Mapped[Decimal | None] = mapped_column(Numeric(6, 2), nullable=True)
+    #: `Lab Weeks- Process Derived` (col 21): apportioned over the lab-kind
+    #: steps when certification testing is on (R7).
+    lab_effort_weeks: Mapped[Decimal | None] = mapped_column(Numeric(6, 2), nullable=True)
+    #: Display only (cols 22, 17, 23, 24): never a scheduling input.
+    safety_lab_weeks: Mapped[Decimal | None] = mapped_column(Numeric(6, 2), nullable=True)
+    actual_design_weeks: Mapped[Decimal | None] = mapped_column(Numeric(6, 2), nullable=True)
+    actual_testing_weeks: Mapped[Decimal | None] = mapped_column(Numeric(6, 2), nullable=True)
+    safety_certification_required: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false"
+    )
+    #: `Project to be considered for Capacity Calculation` = Y (col 3,
+    #: decision (a) of docs/DATA_RECONCILIATION_2026.md). Display / QA only;
+    #: the demand scope is by status (I25), not by this flag.
+    capacity_flag: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false"
+    )
     #: Set by a progress edit / workflow-settings change; cleared when a new
     #: `ScheduleRun` is activated. A stale flag never auto-solves (ADR 0006).
     schedule_stale: Mapped[bool] = mapped_column(
@@ -285,6 +311,17 @@ class Project(UUIDPrimaryKeyMixin, TimestampMixin, Base):
             name="estimated_lab_weeks_non_negative",
         ),
         CheckConstraint("rpd_scoring_tags_distinct(scoring_tags)", name="scoring_tags_distinct"),
+        # ADR 0041 (migration p30a).
+        *(
+            CheckConstraint(f"{name} IS NULL OR {name} >= 0", name=f"{name}_non_negative")
+            for name in (
+                "design_effort_weeks",
+                "lab_effort_weeks",
+                "safety_lab_weeks",
+                "actual_design_weeks",
+                "actual_testing_weeks",
+            )
+        ),
     )
 
     @property

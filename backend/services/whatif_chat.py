@@ -466,7 +466,7 @@ status In Queue and priority P3 unless the user says otherwise. The planning yea
 week {year_end}.
 
 Hubs the user may plan for: {hubs}. Lab regions: {regions}. Categories: A+, A, B, C for every hub \
-except OEM-HCK and OEM-Seltek, which use A-OEM, B-OEM, C-OEM.
+except OEM-HCK and OEM-Seitek, which use A-OEM, B-OEM, C-OEM.
 """
 
 

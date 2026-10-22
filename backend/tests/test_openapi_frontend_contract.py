@@ -253,6 +253,8 @@ _PRIORITY_BOARD_TS = FRONTEND_SRC / "surfaces" / "priority-board" / "api.ts"
 _VIP_TS = FRONTEND_SRC / "lib" / "api" / "vip.ts"
 # P18-T03 (docs/API_CONTRACT_P18.md section 9): the What-if planner.
 _WHATIF_TS = FRONTEND_SRC / "surfaces" / "planning" / "api" / "whatif-types.ts"
+# P29-T03: shared reference data (`GET /hubs`, `GET /reference/project-types`).
+_REFERENCE_TS = FRONTEND_SRC / "lib" / "api" / "reference.ts"
 
 # (frontend file, ts interface name, backend openapi schema name, mode)
 CONTRACT_TABLE: list[tuple[Path, str, str, str]] = [
@@ -288,6 +290,15 @@ CONTRACT_TABLE: list[tuple[Path, str, str, str]] = [
     # gain `counts_in_capacity`; `ProjectRead` / `WorkspaceProject` gain
     # `leader_is_provisional`. Red until P29-T03 mirrors them.
     (_CAPACITY_TS, "HubCapacityRow", "HubCapacityRow", "exact"),
+    # P29-T03 (ADR 0042): the Greece row's members breakdown. P30-T02 (ADR 0041
+    # R12) adds `design_load_remaining_weeks`, `design_load_booked_weeks`,
+    # `booked_project_count`: red until P30-T03 mirrors them.
+    (_CAPACITY_TS, "CapacityHubMember", "CapacityHubMember", "exact"),
+    (_REFERENCE_TS, "Hub", "HubRead", "exact"),
+    (_REFERENCE_TS, "ProjectTypeRead", "ProjectTypeRead", "exact"),
+    (_REFERENCE_TS, "CurrencyRate", "CurrencyRateRead", "exact"),
+    # P30-T03: the prototype-era `base_weeks` shape was replaced by the served one.
+    (_REFERENCE_TS, "WorkflowStepTemplate", "WorkflowStepTemplateRead", "exact"),
     (_CAPACITY_TS, "CapacityChamberRow", "CapacityChamberRow", "exact"),
     (_CAPACITY_TS, "HubCapacitySummary", "HubCapacitySummary", "exact"),
     # P11 (docs/API_CONTRACT_P11.md §4, ADR 0016): the Europe / India roll-up.

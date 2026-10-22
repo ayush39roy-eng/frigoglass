@@ -7,7 +7,14 @@ import type { BookingStatus } from '@/types/enums';
 
 import type { CapacityTotals, HubCapacityRow } from '../api/types';
 import { labRegionRows } from '../lib/lab-region-rows';
-import { pickTotalUnitFigures, pickUnitFigures, UNIT_SHORT, type CapacityView } from '../lib/pick-figures';
+import {
+  BOOKED_IN_PLAN_LABEL,
+  pickAreaFigures,
+  pickTotalUnitFigures,
+  pickUnitFigures,
+  UNIT_SHORT,
+  type CapacityView,
+} from '../lib/pick-figures';
 import { formatFigure } from '../lib/status-format';
 import { KpiCaptions } from './kpi-captions';
 
@@ -25,6 +32,12 @@ import { KpiCaptions } from './kpi-captions';
  * `pickTotalUnitFigures` only SELECT the year or remaining field in weeks or
  * the SERVED days (P19-T05). Nothing here sums or multiplies. The per-priority
  * split is served in weeks only, so in Days mode it is labelled "(wks)".
+ *
+ * P30 (ADR 0041, I19 rev.): the load cards are DEMAND cards. Full year: the
+ * full-year demand (booked % against the yearly capacity) with its served
+ * priority split; remaining year: the remaining demand (booked % against the
+ * remaining capacity), without the split (it splits the full-year demand only).
+ * Each adds "Booked in plan" (the run-booked weeks, served; no % of its kind).
  */
 type Accent = 'ink' | 'primary' | 'success';
 
@@ -48,9 +61,11 @@ interface KpiCardProps {
   testId: string;
   footer: React.ReactNode;
   booked?: { pct: number | null; status: BookingStatus };
+  /** P30: a short qualifier after the label, e.g. "full year". */
+  qualifier?: string;
 }
 
-function KpiCard({ label, value, unit, accent, testId, footer, booked }: KpiCardProps): React.JSX.Element {
+function KpiCard({ label, value, unit, accent, testId, footer, booked, qualifier }: KpiCardProps): React.JSX.Element {
   return (
     <div
       role="group"
@@ -61,7 +76,14 @@ function KpiCard({ label, value, unit, accent, testId, footer, booked }: KpiCard
       )}
       data-testid={testId}
     >
-      <p className="label-caps text-text-subtle">{label}</p>
+      <p className="label-caps text-text-subtle">
+        {label}
+        {qualifier ? (
+          <span className="ml-1 font-medium normal-case tracking-normal text-text-muted" data-testid={`${testId}-qualifier`}>
+            · {qualifier}
+          </span>
+        ) : null}
+      </p>
       <p className="flex items-baseline gap-1.5" data-numeric="">
         <span className="font-display text-3xl font-extrabold tabular-nums text-text" data-testid={`${testId}-value`}>
           {formatFigure(value)}
@@ -96,6 +118,11 @@ export function CapacityKpiRow({ totals, rows, view }: CapacityKpiRowProps): Rea
   const unit = UNIT_SHORT[view.unit];
   // The priority split is served in weeks only: name its unit when the card is in days.
   const splitUnit = view.unit === 'days' ? UNIT_SHORT.weeks : undefined;
+  const year = view.horizon === 'year';
+  const qualifier = year ? 'full year' : 'remaining';
+  // P30: run-booked weeks (served, weeks only).
+  const designInPlan = pickAreaFigures(totals, 'design', view.horizon).booked;
+  const labInPlan = pickAreaFigures(totals, 'lab', view.horizon).booked;
 
   return (
     <section aria-label="Capacity headline figures" className="grid gap-gutter sm:grid-cols-2 xl:grid-cols-4" data-testid="capacity-kpi-row">
@@ -114,7 +141,8 @@ export function CapacityKpiRow({ totals, rows, view }: CapacityKpiRowProps): Rea
         }
       />
       <KpiCard
-        label="Design load"
+        label="Design demand"
+        qualifier={qualifier}
         value={design.load}
         unit={unit}
         accent="primary"
@@ -122,11 +150,12 @@ export function CapacityKpiRow({ totals, rows, view }: CapacityKpiRowProps): Rea
         booked={{ pct: design.bookedPct, status: design.bookingStatus }}
         footer={
           <KpiCaptions
-            label="Design load"
-            split={totals.design_load_by_priority}
+            label="Design demand"
+            {...(year ? { split: totals.design_load_by_priority } : {})}
             {...(splitUnit ? { splitUnit } : {})}
             partsLabel="By hub"
             parts={rows.map((r) => ({ key: r.hub, label: r.hub, value: pickUnitFigures(r, 'design', view).load }))}
+            inPlan={{ label: BOOKED_IN_PLAN_LABEL, weeks: designInPlan, unit: UNIT_SHORT.weeks }}
           />
         }
       />
@@ -145,7 +174,8 @@ export function CapacityKpiRow({ totals, rows, view }: CapacityKpiRowProps): Rea
         }
       />
       <KpiCard
-        label="Lab load"
+        label="Lab demand"
+        qualifier={qualifier}
         value={lab.load}
         unit={unit}
         accent="success"
@@ -153,11 +183,12 @@ export function CapacityKpiRow({ totals, rows, view }: CapacityKpiRowProps): Rea
         booked={{ pct: lab.bookedPct, status: lab.bookingStatus }}
         footer={
           <KpiCaptions
-            label="Lab load"
-            split={totals.lab_load_by_priority}
+            label="Lab demand"
+            {...(year ? { split: totals.lab_load_by_priority } : {})}
             {...(splitUnit ? { splitUnit } : {})}
             partsLabel="By lab region"
             parts={regions.map((l) => ({ key: l.region, label: l.region, value: pickUnitFigures(l.row, 'lab', view).load }))}
+            inPlan={{ label: BOOKED_IN_PLAN_LABEL, weeks: labInPlan, unit: UNIT_SHORT.weeks }}
           />
         }
       />

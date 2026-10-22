@@ -90,7 +90,7 @@ from scheduling.types import (
     StepTimingInput,
 )
 from scheduling.types import WorkflowStepTemplate as SchedWorkflowStepTemplate
-from scheduling.workflow import is_valid_fte
+from scheduling.workflow import is_valid_fte, merged_step_override
 from services.notifications import generate_schedule_change_notifications
 from services.schedule_stale import clear_stale_for_run
 
@@ -275,12 +275,16 @@ async def build_schedule_input_from_db(
             )
         )
         # ADR 0019 (P12): Gantt-set timing, only for steps that carry any.
+        # ADR 0041 R4: the solver input carries the MERGED duration
+        # `user ?? effort` (domain 0..104; 0 = skipped), merged here by the
+        # scheduler's own `merged_step_override`; the floor is the user's.
         # Sorted by step_id so the hashed input is deterministic (I8).
-        if s.duration_override_weeks is not None or s.start_not_before_week is not None:
+        merged = merged_step_override(s.duration_override_weeks, s.effort_weeks)
+        if merged is not None or s.start_not_before_week is not None:
             timing_by_project.setdefault(s.project_id, []).append(
                 StepTimingInput(
                     step_id=s.step_template_id,
-                    duration_override_weeks=s.duration_override_weeks,
+                    duration_override_weeks=merged,
                     start_not_before_week=s.start_not_before_week,
                 )
             )
@@ -308,7 +312,7 @@ async def build_schedule_input_from_db(
             ),
             # ADR 0040: the manual VIP pin, sort key 2 of the scheduling order.
             is_vip=p.is_vip,
-            # ADR 0042: OEM-HCK / OEM-Seltek -> R&D-Greece; else the hub itself.
+            # ADR 0042: OEM-HCK / OEM-Seitek -> R&D-Greece; else the hub itself.
             capacity_hub=hub_name_by_id.get(
                 p.hub.capacity_hub_id or p.hub.id, p.hub.name.value
             ),

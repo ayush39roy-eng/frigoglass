@@ -8,10 +8,10 @@ page) calls `tracking_status_for` here, so they cannot disagree.
 **Due stage** for week `CURRENT_WEEK`: not skipped, not `Done`, and either
 its status is `In Progress` / `Blocked` or the active run's planned window
 `[start_week, end_week]` (inclusive) for the stage contains `CURRENT_WEEK`.
-Skipped is decided exactly as the Workspace decides it: the active run's
-step row when the run has one, else a 0-week lead time or a lab step on a
-project without certification testing (ADR 0007,
-`services.workspace.is_step_skipped`).
+Skipped: the active run's step row says skipped, or the live row is
+skipped by the one predicate of ADR 0041 R5 (a 0-week lead time, a lab step
+on a project without certification testing, or an effective duration
+`user ?? effort ?? lead` of 0; `services.workspace.row_is_skipped`).
 
 **Decision beyond the contract:** only projects whose status is schedulable
 have due stages. A Draft, On Hold, Commercialized or Cancelled project is out
@@ -62,7 +62,7 @@ from models.project import Project
 from models.schedule import ScheduleRun, ScheduleRunProjectStep
 from models.workflow import ProjectWorkflowStep, WorkflowStepTemplate
 from services.active_run import get_active_run
-from services.workspace import is_step_skipped
+from services.workspace import row_is_skipped
 
 TrackingStatus = Literal["live", "due", "overdue", "idle"]
 
@@ -98,9 +98,12 @@ def _is_skipped(
     rule of ADR 0007.
     """
 
-    if run_step is not None:
-        return run_step.skipped
-    return is_step_skipped(live.duration_weeks, kind or WorkflowStepKind.DESIGN, cert_required)
+    if run_step is not None and run_step.skipped:
+        return True
+    # ADR 0041 R5: the one skip predicate on the live row (lead 0, a lab step
+    # without certification testing, or an effective duration of 0), so a
+    # stage zeroed since the run was computed is never due.
+    return row_is_skipped(live, kind or WorkflowStepKind.DESIGN, cert_required)
 
 
 def stage_is_due(

@@ -6,6 +6,8 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Label } from '@/components/ui/label';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
+import { useHubs } from '@/lib/api/reference';
+import { capacityHubsOnly, hubPickerLabel } from '@/lib/hub-labels';
 import { HUB_NAMES, LAB_REGIONS, PROJECT_PRIORITIES, PROJECT_TYPES, PROJECT_TYPE_LABELS } from '@/types/enums';
 
 import type { ChamberRead } from '../../api/types';
@@ -117,13 +119,23 @@ function HubSelect({
   onChange,
   invalid,
   describedBy,
+  capacityOnly = false,
 }: {
   id: string;
   value: string;
   onChange: (hub: WhatIfHub) => void;
   invalid: boolean;
   describedBy: string | undefined;
+  /** P29 (API_CONTRACT_P29 §8): designer lines take capacity hubs only (an OEM hub is a 422). */
+  capacityOnly?: boolean;
 }): React.JSX.Element {
+  // P29: served hubs give the "(Greece)" label of a member hub; the static list
+  // is the fallback while they load (no label, no narrowing).
+  const hubsQuery = useHubs();
+  const served = hubsQuery.data;
+  const options = served
+    ? (capacityOnly ? capacityHubsOnly(served) : served).map((h) => ({ value: h.name, label: hubPickerLabel(h, served) }))
+    : HUB_NAMES.map((h) => ({ value: h, label: h }));
   return (
     <NativeSelect
       id={id}
@@ -132,9 +144,9 @@ function HubSelect({
       aria-describedby={describedBy}
       onChange={(e) => onChange(e.target.value as WhatIfHub)}
     >
-      {HUB_NAMES.map((h) => (
-        <option key={h} value={h}>
-          {h}
+      {options.map((o) => (
+        <option key={o.value} value={o.value}>
+          {o.label}
         </option>
       ))}
     </NativeSelect>
@@ -309,7 +321,7 @@ export function ScenarioBuilder({ validation, chambers }: ScenarioBuilderProps):
             return (
               <LineShell key={l.key} groupLabel={`Added designers, line ${String(i + 1)}`} onRemove={() => removeLine('engineers', l.key)}>
                 <Field id={id('hub')} label="Hub">
-                  {(p) => <HubSelect {...p} value={l.hub} invalid={p['aria-invalid']} describedBy={p['aria-describedby']} onChange={(hub) => updateLine('engineers', l.key, { hub })} />}
+                  {(p) => <HubSelect {...p} value={l.hub} invalid={p['aria-invalid']} describedBy={p['aria-describedby']} capacityOnly onChange={(hub) => updateLine('engineers', l.key, { hub })} />}
                 </Field>
                 <Field id={id('fte')} label="FTE each" error={err(l.key, 'fte')}>
                   {(p) => <TextInput {...p} value={l.fte} onChange={(e) => updateLine('engineers', l.key, { fte: e.target.value })} />}
@@ -338,7 +350,7 @@ export function ScenarioBuilder({ validation, chambers }: ScenarioBuilderProps):
             return (
               <LineShell key={l.key} groupLabel={`Removed designers, line ${String(i + 1)}`} onRemove={() => removeLine('removals', l.key)}>
                 <Field id={id('hub')} label="Hub">
-                  {(p) => <HubSelect {...p} value={l.hub} invalid={p['aria-invalid']} describedBy={p['aria-describedby']} onChange={(hub) => updateLine('removals', l.key, { hub })} />}
+                  {(p) => <HubSelect {...p} value={l.hub} invalid={p['aria-invalid']} describedBy={p['aria-describedby']} capacityOnly onChange={(hub) => updateLine('removals', l.key, { hub })} />}
                 </Field>
                 <Field id={id('count')} label="Count" error={err(l.key, 'count')}>
                   {(p) => <TextInput {...p} value={l.count} onChange={(e) => updateLine('removals', l.key, { count: e.target.value })} />}

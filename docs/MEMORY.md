@@ -30882,3 +30882,814 @@ downgrade keeps the scores.
 
 **Observed:** during this session `backend/scheduling/whatif.py` (P30-T01, concurrent) briefly shadowed the
 `scheduling.hubs` module with a local `hubs` set (AttributeError in `touched_scope`). It was fixed by the final run.
+
+## [2026-10-23] P30-T01 — Scheduler side of ADR 0041: one skip predicate, 0..104 solver domain, exact effort split, I5 from inputs, I25/I26 checks, Monte Carlo floor, OEM-Seitek spelling — algorithm-engineer: DONE
+
+Binding text: ADR 0041 "Workflow-auditor ruling" R1–R14 and "Invariant wording" (owner accepted R1 2026-10-23). Nothing here writes a 0 anywhere; this lands before P30-T02 (R14).
+
+- **R5, one predicate** (`scheduling/workflow.py`, exported from `scheduling`):
+  - `step_effective_weeks(*, lead_weeks, kind, certification_testing_required, override_weeks) -> int` is `eff(p,s)`: 0 if lead = 0 or (kind = lab and not cert), else `override ?? lead`.
+  - `is_step_skipped(*, same kwargs) -> bool` is `eff == 0`. Use it for `services.workspace.is_step_skipped` and the other call sites in P30-T02.
+  - `merged_step_override(user_override_weeks, effort_weeks) -> int | None` is R4's `user ?? effort`, merged outside the solver. Its value goes into `StepTimingInput.duration_override_weeks`.
+  - `analyse_project` now uses the predicate. A zeroed step is skipped: `start = end = pred end`, 0 duration, no resource, transparent to successors.
+- **Domain:**
+  - New `STEP_DURATION_MIN_WEEKS = 0` and `STEP_DURATION_MAX_WEEKS = 104` set the solver-input domain. `validate_step_timing` accepts 0..104; the message reads "outside 0..104".
+  - `DURATION_OVERRIDE_MIN_WEEKS = 1` is kept as the *user* domain (ADR 0019 unchanged; Monte Carlo uses it).
+  - `test_p12_step_timing.py::test_invalid_step_timing_rejected` now expects 0 to be valid; −1 and 105 are rejected. This is an intentional ADR 0041 change.
+- **R2/R3/R7 split** (`scheduling/effort_split.py`, pure, exact):
+  - `apportion_effort(figure, steps, *, kind="design"|"lab", certification_testing_required=True) -> EffortSplit`.
+  - `derive_project_effort(*, design_effort_weeks, lab_effort_weeks, certification_testing_required, steps) -> ProjectEffortDerivation`. `.effort_weeks` gives one `(step_id, int | None)` per step: the whole `effort_weeks` column to write.
+  - Steps are `EffortStepInput(step_id, sequence_order, kind, lead_weeks, started)`. `lead_weeks` is the table value in force; `started` = stored status ≠ Not Started.
+  - `round_half_up`, `effort_target_weeks` (E = max(1, round_half_up(x)) on the decimal; None for blank or 0).
+  - Figures are Decimal, int or str. A float is read via `str()`.
+  - Quotas are `Fraction`s. The remainder goes by (larger fraction, larger t, sequence_order, step_id).
+  - R3 raises started steps to max(1, ·). `raised_step_ids` lists them, and Σ = E + len(raised).
+  - R7 cases:
+    - T = 0 → `applied=False`, `not_applied_reason="no_nonzero_step"`.
+    - Lab with cert off → `"certification_off"`.
+    - Blank or 0 → `"no_figure"`.
+    - Any step > 104 → `EffortSplitRejected` (a `ValueError`; `.step_id`, `.weeks`), which the caller must turn into a rejected write or import.
+  - Golden results:
+    - B/4 → A1 E2 K1 (D J M = 0, skipped).
+    - C/3 → A1 D1 E1.
+    - B lab 10 → H10.
+    - A+ lab 4 → F2 H2.
+    - B lab 70 → H70.
+    - 1.5 → 2, 2.5 → 3, 0.40 → 1.
+- **Finding on the "52 cases":** the 52 float-vs-exact disagreements over E = 1..300 (the auditor's float version) are **18 in PDD/A design + 34 in OEM/A-OEM design**. The ruling's "(PDD/A …)" label covers only 18 of them. The test asserts the exact 18 + 34 split, and that the implementation equals an independent exact reference in every (category, kind, E). Where a step would exceed 104 (A-OEM G, PDD/A+ B, …), the split is *rejected*, not clamped.
+- **Validator** (`invariants.py`):
+  - I5 now derives "skipped" from the inputs: `_input_says_skipped` reads lead / kind / cert / merged override directly, never `analyse_project`. A test monkeypatches `analyse_project` back to the old predicate, and I5 still fires.
+  - I5 also rejects a non-skipped row with `duration_weeks < 1` or `end < start` (the ruling's degenerate rows).
+  - New input-level R3 check, tagged **I26**: a non-frozen schedulable project's step with recorded progress (≠ Not Started), lead > 0 and cert-ok, whose merged override is 0, is a violation. Before, this "recorded work vanishes" case was silent. `_Ctx` now carries `workflows` and `lead_time_table`.
+- **I25 / I26 over live rows** (`scheduling/demand.py`). The inputs the backend must supply:
+  - `LiveProjectRow(project_id, hub, capacity_hub, status, frozen, certification_testing_required, design_effort_weeks, lab_effort_weeks, steps)`. `capacity_hub` is resolved: `capacity_hub_id` name, else the hub. The effort figures are the stored Numeric(6,2), None when blank. Pass every stored project; scope is applied inside.
+  - `LiveStepRow(step_id, sequence_order, kind, lead_weeks, user_override_weeks, effort_weeks, status, percent_complete, remaining_weeks_override)`. Steps come from the template plus the lead-time table in force, plus the stored stage progress.
+  - `compute_demand_load(projects) -> DemandLoad`. Its maps are `design_full_year` / `design_remaining` per capacity hub (int) and `lab_full_year` / `lab_remaining` per lab region (float; region = lab region of the project's hub).
+    - Full year excludes Cancelled and Draft.
+    - Remaining covers the 4 schedulable statuses only.
+    - `rem`: 0 if eff = 0 or Done; `derive_remaining` for In Progress / Blocked; eff for Not Started. Frozen projects are included.
+  - `check_i25_demand(projects, served_design: [ServedDesignLoad(capacity_hub, design_load_weeks, design_load_remaining_weeks)], served_lab: [ServedLabLoad(lab_region, lab_load_weeks, lab_load_remaining_weeks)])`. Design must match exactly, lab to 2 dp. A hub with demand must be served, and a served row without in-scope projects must be 0. Pass the unfiltered rows.
+  - `check_i26_effort_split(projects)`: for each non-frozen project, every step's `effort_weeks` == `derive_project_effort(...)`. That includes None for steps outside an applied split, so a blank figure with a stale effort column is a violation (§3 fallback). Lab steps are not checked when cert is off. A stored figure whose split exceeds 104 is a violation.
+  - Raise `ValueError` on an unknown stage status or hub.
+- **R10:** `monte_carlo._perturbed_step_timing` keeps 0 at 0. A non-zero value stays clamped to 1..104 (floor 1).
+- **R14 hub spelling** (`scheduling/hubs.py`):
+  - `HUB_LAB_REGION` / `OEM_HUBS` are `domain_constants`' tables with the other spelling of OEM-Seltek/OEM-Seitek added. `canonical_hub_name`: old → new. `constants_hub_name`: either spelling → whichever spelling `dc` carries.
+  - greedy, CP-SAT (via greedy helpers), invariants and what-if lookups/validation use it. What-if `_ALL_HUBS` stays `dc`-canonical, so no phantom hub row; `_calendar_map` normalises keys.
+  - The scheduler accepts both spellings before *and* after P30-T02. A replay of an old run (I14, old spelling) keeps working, and a project's `hub` string is never rewritten.
+  - Fixtures:
+    - `_selftest_common._OEM_HUBS` and the seed loader map to `OEM-Seitek`.
+    - `test_p29_capacity_hub.py` and `_whatif_fixtures.py` use `OEM-Seitek`.
+    - **`backend/seed/prototype_seed_data.json` is NOT renamed.** It lives outside `scheduling/`, and `seed/seed_demo_data.py` writes its hub strings into the `hub_name` DB enum, which still says Seltek until P30-T02's migration. Renaming it now would break the demo seed. **P30-T02 must rename it together with the enum.** The scheduler loader already normalises it, so the rename will be output-neutral.
+- **Byte-identity / determinism:** prototype-seed `repr` sha256 is unchanged after every edit:
+  - greedy `ac4138…` / CP-SAT `bd6ed1…` (W42);
+  - `f0cd8d…` / `611b9e…` (W31).
+  Seed with every non-frozen figure apportioned (> 50 zeroed steps), at FTE 1.0 and 0.63: greedy and CP-SAT invariant-clean, `check_scheduler_determinism` clean, CP-SAT repr-identical on re-run, and greedy = CP-SAT on every common skipped flag.
+- **Tests:** new `backend/tests/scheduling/test_p30_effort.py`, 46 tests. They cover:
+  - the predicate truth table, precedence and domain;
+  - the split: examples, exhaustive exact check, the 52 float cases, total tie order, input-order independence, R3, R7;
+  - the B/4 project on greedy and CP-SAT at FTE 1.0 and 0.63, with hand weeks (1.0: A31 E32-33 H34-39 K40 L41 N42; 0.63: A31-32 E33-36 H37-42 K43-44 L45 N46) and I6 = 4;
+  - the seed stress test;
+  - I5 independence;
+  - the R3 path: Done D raised to 1 keeps W29 (I11), both solvers;
+  - a zeroed started step reported as I26;
+  - the Monte Carlo floor, and no revival;
+  - I25 by hand (Greece 32/20 design, 18/18 lab; members, Commercialized, On Hold, cert off, stale lead-0 override not revived), plus drift detection;
+  - I26 drift / R3 / blank / frozen / cert / >104;
+  - both hub spellings schedule repr-identically.
+- **Results:**
+  - `pytest -c pytest-scheduling.ini`: **391 passed** (was 345). Total coverage 96.58 % as reported. The config now measures models/services too, a change outside this task. effort_split 99 %, demand 100 %.
+  - All five `_selftest*` scripts pass (RPD_CURRENT_WEEK=31).
+  - `tests/test_client_2026_seed.py` + `test_p20_fte_followups.py`: 55 passed.
+  - ruff clean. mypy (`-p scheduling`, plus the new test) shows only the 38 pre-existing OR-Tools stub errors.
+- **Left undecided by the ADR (my calls, flagged):**
+  1. Cert-off lab steps: whether the backend stores a derived lab effort. I recommend None, since `derive_project_effort` returns None. I26 accepts either, because the predicate skips them anyway.
+  2. A blank figure with a stale effort column fails I26. I read §3's fallback as requiring a cleared column.
+  3. The input-level R3 check reuses the I26 tag; the ADR has no separate ID.
+  4. A user override on a step whose effort is 0 keeps the step: user ?? effort (R4's "an existing one keeps the step").
+  5. R7 ">104 rejected" applies after the R3 raise. A raise can never exceed 104.
+- **Coordination:** the user committed the working tree mid-task (`1166717 executive`), including these files. This agent did not commit. Files touched: backend/scheduling/{workflow,invariants,greedy,whatif,monte_carlo,_selftest_common,__init__,types}.py, new backend/scheduling/{effort_split,demand,hubs}.py, backend/tests/scheduling/{test_p30_effort,test_p12_step_timing,test_p29_capacity_hub,_whatif_fixtures}.py.
+
+## [2026-10-23] Owner decision: deploy P29/P30 data to Render as-is; rotate secrets afterwards — orchestrator
+
+**Request (owner):**
+- Deploy the new data to the Render site.
+- Wipe the old data and load the new.
+- Every surface, VIP included, must show the same figures.
+- The owner supplied the Render DB URL and the field-encryption key in chat. These are NOT recorded here or in any
+  file; they are used only in process environment for the deploy.
+
+**Live state, checked 2026-10-23 with read-only GETs:**
+- S26-C1 is still open. `GET /me` with no auth returns 200, and so do `/me/dev-users` and `/docs`.
+- The frontend serves no CSP or X-Frame-Options, so S26-M1 is still open.
+
+**Owner rulings (AskUserQuestion, 2026-10-23):**
+1. **"Deploy as-is, I accept"** the open-admin risk on the hosted site. The owner was told that anyone with the URL has
+   Admin read/write on real client financials and GDPR roster data. S26-C1 stays OPEN in the gate; this is a recorded
+   owner risk acceptance, not a fix.
+2. **"Yes, rotate after deploy."** After the deploy the owner rotates the Render DB password. The orchestrator then
+   re-encrypts the four financial columns under a new Fernet key, following the S26-H1 procedure.
+
+**Deploy plan:**
+1. P30-T02 and P29-T03 / P30-T03 complete.
+2. P30-T04 audited reseed (disposable DB, dev pins copied).
+3. Gate (P30-T20).
+4. Push `main`. Render's backend entrypoint runs `alembic upgrade head`, which applies p29a, p29b and p30a.
+5. Reseed `client_2026` on the Render DB, replacing the old data. VIP pins: the owner says 10.
+6. Run the schedule (greedy and CP-SAT; the invariant-clean, better within-year run becomes active).
+7. Cross-surface reconciliation with read-only GETs: Dashboard, Executive, Capacity, VIP board, Gantt, Matrix.
+
+**Note:** the owner's working tree commits (`1166717 executive`) already contain part of P29/P30.
+
+## [2026-10-23] P29-T03 + P29-T04 frontend — OEM hubs under Greece capacity; RC = "Regulatory / Business Compliance" (frontend-builder): DONE
+
+Built against `docs/API_CONTRACT_P29.md` (ADR 0042, ADR 0038 amendment). Frontend only; backend untouched;
+nothing committed. Every figure is one served field (I9/I19): the members breakdown is the served
+`members[]`, never summed; the row total is the row's own `design_load_weeks`.
+
+**Type mirrors.** `capacity/api/types.ts`: new `CapacityHubMember`; `HubCapacityRow.members` / `selected_member`;
+`EngineerUtilizationRow.counts_in_capacity`. `planning/api/types.ts`: `DesignHubSummary.not_counted_engineer_count` /
+`members: HubName[]` / `selected_member`; `EngineerRead.counts_in_capacity`; `EngineerCreateRequest.counts_in_capacity?`
+(never sent by the UI: Admin-only, 403 otherwise); `EngineerLoadRow.counts_in_capacity`. `matrix/api/types.ts`
+`HubP1Fill.members` / `selected_member`. `registration/api/types.ts` `ProjectRead.leader_is_provisional` (so
+`ProjectListItem`, `WorkspaceProject`). `lib/api/reference.ts` `Hub.capacity_hub_id` / `capacity_hub_name`, and a
+`ProjectTypeRead` mirror. Test fixtures across the suite updated for the required fields. Every P29 row of
+`backend/tests/test_openapi_frontend_contract.py` is green.
+
+**Capacity page (four capacity-hub rows).**
+- "Load vs. capacity by hub": R&D-Greece's hub cell has a compact disclosure, "Includes OEM-HCK and OEM-Seltek"
+  (names from served `members`; wraps between words, never inside a name). It opens one indented sub-row per
+  served member: the name, "(own)", the served project count, and the served design load in weeks ("wks" in Days
+  mode). Sub-rows have blank capacity / booked / gap / lab cells, because nothing per member is served (I19).
+  - The disclosure starts open when the served `selected_member` is set; that member gets a primary tint and a
+    "Selected" badge (sr "selected in the hub filter").
+  - Rows without members, an own-only member list, or an older API without `members`: no disclosure.
+  - Info copy explains the OEM hubs; family copy is now "(R&D, PD)".
+- Booked tiles: the Greece tile reads "Includes OEM-HCK and OEM-Seltek", plus "Filtered on OEM-HCK" under a
+  member filter. The family grid takes as many columns as there are served boxes (two now, so xl has no empty third
+  column). The tile name is no longer `truncate`.
+- Details dialog: new "Hubs on this capacity" table (Hub | Projects | Design load (wks)), with the selected member
+  highlighted (`components/capacity-members.tsx`; helpers in `lib/members.ts`).
+- Engineer heatmap: "Not in capacity roster" badge on `counts_in_capacity === false` rows.
+- OEM filter: the page sends the selected `hub_id` unchanged and renders what is served. There is no client-side
+  row filter to change (verified); an out-of-scope id shows the existing "No hubs in scope" state.
+
+**Capacity Planning.**
+- Overview hub card: a muted line, "Capacity also serves OEM-HCK and OEM-Seltek" (selected member bold), and
+  "N not in capacity roster" (served `not_counted_engineer_count`). A non-counted engineer's row has the badge, and
+  their own served capacity is muted.
+- Engineers tab: the same badge.
+- Engineer form: offers the capacity hubs only (`capacity_hub_id == null`), with the note "OEM-HCK and
+  OEM-Seltek use R&D-Greece's engineers."
+- What-if builder: designer-add and remove lines offer capacity hubs only; project lines offer all six, with
+  "(Greece)" labels from the served hubs and a static fallback while loading.
+- Workflow Settings calendars: "OEM-HCK and OEM-Seltek use R&D-Greece's calendar." (contract §5.3).
+
+**Matrix P1 capacity fill.** The Greece row shows "+ OEM-HCK, OEM-Seltek" (sr "includes …").
+
+**Provisional leader.** Shared `components/shared/capacity-roster-markers.tsx` provides `NotInCapacityRosterBadge` and
+`ProvisionalLeaderBadge`.
+- Workspace header: "Leader: X [Provisional]".
+- Registration / Workspace Details form: the badge plus "Assigned by the data load, not by a person. Choose a
+  leader to confirm one." as the Leader field hint, outside the label so the select's name is unchanged. It shows
+  only while the saved leader is still selected.
+
+**Hub pickers "(Greece)".** `lib/hub-labels.ts` `hubPickerLabel(hub, hubs)`: the country is the served `lab_region` of
+the capacity hub (found by `capacity_hub_id`), falling back to the hub's own `lab_region`; it is never hard-coded.
+Applied to:
+- the header hub filter (options only; the trigger keeps the short name so it never truncates)
+- the Registration hub select
+- the Projects and Dashboard register hub filters
+- the Planning engineers-tab filter and the resource-load hub filter
+- the Audit log hub filter
+- the Admin user-form hub scope
+- the what-if project lines
+
+**P29-T04 frontend.** `PROJECT_TYPE_LABELS.RC` = "Regulatory / Business Compliance" in `types/enums.ts`. This is the
+one label source every surface already reads (filters, Matrix chips/titles, Gantt, Dashboard charts incl. Executive
+"Projects by type", Registration select, Workspace). It mirrors `GET /reference/project-types`; no `BC` type.
+Decision: no runtime fetch for static display labels (the served list is pinned by a unit test of the mirror).
+
+**Tests.** New files:
+- `lib/hub-labels.test.ts` (8, incl. the RC label list)
+- `capacity/components/hub-summary-table.p29.test.tsx` (16: four rows, no OEM family, collapsed / open disclosure,
+  aria-controls, served counts / loads, no per-member booked/capacity/gap, scoped caller not summed, own-only,
+  OEM / own selected, Days "wks", colSpans with the split, old API, axe, Details dialog, booked tiles + grid)
+- `capacity/CapacityPage.p29.test.tsx` (3: OEM filter passes the id and highlights; out-of-scope empty state;
+  heatmap marker)
+- `planning/components/p29-capacity-hubs.test.tsx` (8: card notes, marker + muted capacity, selected member, axe,
+  engineer table, capacity-only engineer hub picker, `counts_in_capacity` never sent)
+- `planning/whatif/components/scenario-builder.p29.test.tsx` (1)
+- `registration/components/project-form.p29.test.tsx` (5: "(Greece)" options, provisional badge on/off, RC label, axe)
+- `project-workspace/components/workspace-header.p29.test.tsx` (3)
+- `matrix/components/capacity-fill-panel.p29.test.tsx` (1)
+- `dashboard/components/executive/executive-charts.p29.test.tsx` (1)
+- `workflow-settings/components/calendars-tab.p29.test.tsx` (2)
+
+Updated: `hub-filter.test.tsx` (option names "(Greece)"; OEM fixtures carry `capacity_hub_id`).
+
+e2e (typechecked ad hoc, not run): `pages/capacity.page.ts` gains `hubRow` / `hubRows` / `membersToggle` / `memberRow` /
+`notInRosterMarkers`; `pages/planning.page.ts` gains `notInRosterMarkers` / `hubCardNotes`; `pages/projects.page.ts`
+gains `provisionalLeaderBadge` / `hubOption`; `capacity.spec.ts` gains a P29 four-rows + disclosure + axe test. The only
+non-`@types/node` e2e type error is the pre-existing `p19-gate.spec.ts:597`.
+
+**Verification.**
+- `npx tsc -b`: clean.
+- `npx eslint .`: 0 errors, 9 warnings, all pre-existing (`useVirtualizer` / fast-refresh in other files).
+- `npx vitest run`: 207 files / 1622 tests passed.
+- `vite build` to a scratch outDir: initial 189.1 KB gzip (budget 400 KB, PASS); CapacityPage chunk 18.14 KB gzip.
+- Mocked-API Playwright (scratch spec, removed afterwards) at 1280, light + dark, all hubs and the OEM-HCK filter:
+  - The table fits with the disclosure open (scroll 1092 = client 1092), and the document does not overflow.
+  - No axe serious/critical violation comes from any P29 element. The remaining hits are the pre-existing
+    priority-load chart segment labels (`load-seg-*`, `priority-load-chart.tsx`, another session's in-flight
+    file) and, in dark mode only, the header Weeks/Full-year toggle.
+  - Screenshots are in the session scratchpad `p29shots/`.
+
+**Open / for others.**
+1. `backend/tests/test_openapi_frontend_contract.py::test_every_p4_surface_types_file_is_covered` now fails, because
+   `CapacityHubMember` is a new exported interface. The backend owner needs to add
+   `(_CAPACITY_TS, "CapacityHubMember", "CapacityHubMember", "exact")`. Optionally also add `lib/api/reference.ts`
+   `Hub`↔`HubRead` and `ProjectTypeRead` (that file is not in the table).
+2. The other 12 failures in that file are P30 fields (`*_load_booked_weeks`, `*_load_remaining_weeks`, `effort_weeks`,
+   `design_effort_weeks`, `capacity_flag`, `safety_*`, `actual_*_weeks`, …) for P30-T03, not P29.
+3. In the Executive "Projects by type" chart, the RC label wraps to two or three lines in its 7 rem label cell. It
+   does not overlap or ellipsize. The layout was left alone as instructed; widening the cell is an owner call.
+4. Live check not possible: :8001 predates p29a.
+
+**Addendum (2026-10-23, P29-T04 frontend, coordinator follow-up on open point 5).** Open points 3 and 4 are
+accepted: the "(Greece)" label comes from the capacity hub's `lab_region`, and the header filter button shows the
+short name.
+
+The Executive "Projects by type" list (`TypeBars` in `executive-charts.tsx`; nothing else in the Executive view was
+touched) is now ONE grid, `grid-cols-[min-content_minmax(1.5rem,1fr)_auto]`, with each row a `col-span-3
+grid-cols-subgrid` `li`. The label column is therefore exactly as wide as the longest unbreakable label part, and
+bars and "count · %" align across rows. Labels break only at " / ": each part is a `whitespace-nowrap` span, and the
+first part keeps its slash ("Regulatory /" + "Business Compliance"). Nothing is ellipsized.
+
+Verified with mocked-API Playwright at 1440 and 1280, light and dark, with all five types plus Unmapped:
+- RC renders on exactly 2 lines; every other label renders on 1 line.
+- No label overflows.
+- Bar x and figure right edge are identical on every row (1240 / 1378 at 1440, 1120 / 1220 at 1280).
+- Screenshots: session scratchpad `p29shots/exec-types-*.png`. The scratch spec was removed.
+
+Observation: at 1280 the card is narrow, so the bar track is short (about 25 px). That is the card's column width
+in the Executive layout, which belongs to another session; I did not change it.
+
+Tests: `executive-charts.p29.test.tsx` now has 2 tests (break parts, subgrid alignment classes, single-part labels
+stay on one line). Results:
+- `vitest run src/surfaces/dashboard`: 38 files, 237 tests passed.
+- `tsc -b`: clean.
+- `eslint .`: 0 errors, 9 warnings that were already there.
+
+**Addendum 2 (2026-10-23, coordinator: the 1280 bars were about 25 px stubs).** `TypeBars` rows are now two lines.
+- Line 1 is the label on the left and the served "count · %" on the right (`whitespace-nowrap shrink-0`).
+- Line 2 is a full-width thin track (`h-1.5 w-full rounded-full`) with the served-share fill, in the same colours.
+- The subgrid layout is gone. Labels still break only at " / ".
+- Nothing else in the Executive view changed.
+
+Measured with mocked-API Playwright, light and dark:
+- At 1440 the track is 260 px and RC fits on one line.
+- At 1280 the track is 220 px and RC breaks once, at " / ".
+- Figures are right-aligned at the same x on every row, with no overlap and no ellipsis.
+- Rows are evenly spaced (26 px; the two-line RC row is 39 px).
+- Screenshots: session scratchpad `p29shots/exec-types-*.png`.
+
+The test now asserts the new structure. Results:
+- Dashboard Vitest: 38 files, 237 tests passed.
+- `tsc -b`: clean.
+- `eslint .`: 0 errors, 9 warnings that were already there.
+
+## [2026-10-23] P30-T02 — Backend side of ADR 0041: effort column + split triggers, one skip predicate, demand vs booked load, 330-row dataset, OEM-Seitek (backend-builder): DONE
+
+Binding text: ADR 0041 R1–R14 + "Invariant wording". Scheduler API from P30-T01 called, never re-implemented; `backend/scheduling/` not touched. Nothing committed; dev DB :5433 / API :8001 / worker not touched. Contract: `docs/API_CONTRACT_P30.md` (frontend P30-T03 builds on it).
+
+- **Migration `p30a_effort_types_hub_rename`** (revises `p29b`): `project_workflow_steps.effort_weeks` INT 0..104 (CHECK); `projects.design_effort_weeks`, `lab_effort_weeks`, `safety_lab_weeks`, `actual_design_weeks`, `actual_testing_weeks` NUMERIC(6,2) ≥ 0, `safety_certification_required`, `capacity_flag` BOOL default false; `hub_name` RENAME VALUE `OEM-Seltek` → `OEM-Seitek`; `project_type` ADD VALUE `AC`, `SER` (autocommit block); chamber `allowed_stages` per ADR 0041 §4 / decision (e) (IN-CH1 {F}, IN-CH2 {F,H}, IN-CH4 {F}, GR-CH2 {F,H,OEM-E,OEM-H}, RO-CH2 {F,H}) only where a chamber still has the pre-ADR stages; one audited `chamber.update` each (`source = chamber_stages_adr_0041`), schedulable projects marked stale. `duration_override_weeks` CHECK stays 1..104 (R4). No split is written by the migration (no figure exists yet). Downgrade reverses all of it (AC/SER projects un-typed, audited; enum values cannot be dropped). Test `tests/test_p30_migration.py`: up/down/up on data, CHECKs, chamber audits, and a stored run + `workflow_snapshot` byte-stable across the rename (stored runs hold no hub string; their rows join to the renamed hub).
+- **R4/R5 wiring:** `services.workflow_durations.live_step_effective_weeks` / `live_step_skipped` (= `scheduling.step_effective_weeks` / `is_step_skipped` over `merged_step_override`); `services.workspace.is_step_skipped` now needs `user_override_weeks` + `effort_weeks` (keyword-required, so no caller can forget them), plus `row_is_skipped` / `row_effective_weeks`. Used by step timing, Workspace stage PATCH (`STAGE_SKIPPED`), Gantt `timing_editable`, project cards (current stage + I12 weights), tracking (due stages: run-skipped OR live-skipped), ask-agent, demand. Input builder: `StepTimingInput.duration_override_weeks = user ?? effort`. Step timing: a NEW non-null value on an effort-zeroed step → 409 `STEP_SKIPPED`; clearing allowed; reset falls back to effort; response gains `effort_weeks`, `lead_time_weeks`. Gantt step row and Workspace stage serve `effort_weeks` (+ stage `lead_time_weeks`, `duration_override_weeks`).
+- **Split + R6 (`services/project_effort.py`):** `rederive_project_effort` (frozen: validated, never written), `rederive_all_projects`, `validate_effort_split` (R7 checked BEFORE any write, so a 422 `EFFORT_SPLIT_REJECTED` leaves the session untouched; no rollback needed except Workflow Settings). Triggers: create/PATCH (figures, category, cert, hub move PDD↔OEM — `sync_project_steps` now also clears `effort_weeks` on re-pointed rows), lead-time and step-kind edits on Workflow Settings, unfreeze, and a stage status crossing Not Started (stage PATCH, check-ins). Own audit action `project.effort_rederived` (per-step before/after, split info, trigger), sets `schedule_stale`, never solves. Figures are writable on create/PATCH (float, ≤ 2 dp, stored as exact Decimal), audited in `project.update` (not financial).
+- **Demand (I25) / R12:** `services/demand_load.py` builds `LiveProjectRow`s (lead from the lead-time table in force) and serves `compute_demand_load` totals + per-project figures. `/capacity/hub-load`: `design_load_weeks` / `lab_load_weeks` = full-year demand (status ∉ {Cancelled, Draft}, On Hold + Commercialized included), new `*_load_remaining_weeks`, `*_load_booked_weeks` (run); booked % / gap / completion: year ↔ full-year demand, remaining ↔ remaining demand (I19 rev.); priority split, `load_days`, areas, totals, lab-region rows, `members` (demand + remaining + booked + `booked_project_count`, each summing to the row) follow. P1 capacity fill: load(p) = remaining demand (no-run rule kept). Engineer utilization, resource load, what-if "before" unchanged (run-booked). Capacity export `members` cell carries demand/remaining/booked.
+- **Seed + extractor:** selection 2026 ∪ capacity flag Y = 330 rows (253 + 77 carry-over; hubs 6/14/14/30/223/43 = reconciliation §2.1); `capacity_flag`, `request_year`, the six figures (blank/0 effort → null), `certification_testing_required = Yes OR lab weeks > 0`, AC/SER types, `Mon'YY` end dates, `OEM-SEITEK` normalised; JSON regenerated from `~/Downloads/24-25-26 Global RPD Project Pipeline.xlsx`. Seed: `carry_over = request_year < 2026`, `reg_year = request_year`; split via `c26.effort_step_specs` (P30-T01's `derive_project_effort`, all Not Started) BEFORE `derive_progress`, which works on effective durations (R3); `effort_weeks` written; Development Step used for Under Industrialization too (§4); Vaggelis not counted (decision (c)); chambers per (e); R7 at import fails loudly. 24 engineers (7 provisional), 20 provisional OEM leaders, 3 leaderless.
+- **Docs:** DOMAIN_RULES (R13): `eff` + one predicate, new "Per-project effort" section, retired `estimated_*` sentence, lab/cert justification corrected (W9), hub spelling, "Load basis" table, P1 fill load, step-timing reset/409, I6/I7/I17/I19/I23 rev., new I25/I26. `docs/CLIENT_FORMULAS.md` §2.3 correction note. Contract `docs/API_CONTRACT_P30.md`.
+- **Tests:** new `tests/test_p30_effort_backend.py` (17: B4 A1 E2 K1 through create + PATCH, 2.5 → A1 E1 K1, clear, R7 422 nothing written, cert-off lab, category + hub move PDD→OEM (B-OEM A1 B1 G1 J1), lead-time edit E→8 gives E3 K1 and keeps the user override, step-kind edit, frozen no-op + unfreeze, R3 raise and reset via stage PATCH, every R5 call site, R4 precedence/reset/409, solver input merge, I25 via `check_i25_demand` unfiltered + per capacity hub + drift detected, I19 pairs, members sums, capacity fill on remaining demand, seed wiring, extractor), `tests/test_p30_migration.py`; I26 via `check_i26_effort_split` after every trigger and after the client seed (`test_seed_scripts`). Updated pre-ADR expectations in 20 files (run-booked reconciliations now read `*_load_booked_weeks`; hand-built run worlds mirror their figures into live rows; 330-row seed counts; OEM-Seitek; AC/SER). Contract table: added `CapacityHubMember`, `reference.ts` `Hub`/`ProjectTypeRead`/`CurrencyRate` (coordinator ask), stale `WorkflowStepTemplate` allowlisted.
+- **Results:** full backend suite (incl. tests/scheduling) **2261 passed, 13 failed** — all 13 are `test_openapi_frontend_contract` P30 field drift, red until P30-T03 mirrors (list in the contract §7). `pytest -c pytest-scheduling.ini` 391 passed (94.63 %). ruff clean; mypy: no new errors in non-test code (test files untyped like the repo baseline).
+- **Scratch reseed** (own Postgres container, `p30a` head, CURRENT_WEEK 42, no pins; I1–I26 clean on both runs: `validate_invariants`, `check_i25_demand` vs served rows, `check_i26_effort_split`):
+
+  | Capacity hub | Full-year demand | Remaining demand | Booked greedy / CP-SAT | Capacity yr / rem | Booked % yr / rem |
+  |---|---|---|---|---|---|
+  | Greece (own 77, HCK 67, Seitek 122) | 266 | 106 | 195 / 155 | 124.88 / 24.02 | 213.00 / 441.30 |
+  | R&D-India | 150 | 65 | 125 / 112 | 88.33 / 16.99 | 169.82 / 382.58 |
+  | PD-India | 884 | 436 | 420 / 415 | 253.96 / 48.84 | 348.09 / 892.71 |
+  | PD-Romania | 534 | 81 | 189 / 190 | 253.00 / 48.65 | 211.07 / 166.50 |
+
+  Lab demand full/remaining: Greece 46/14, India 860/408, Romania 860/70 (booked greedy 26/409/280). Full-year figures equal DATA_RECONCILIATION §7.7 exactly. Greedy run: within 81 / spillover 66 / left out 74 (no_leader 1) / blocked 0; Dashboard within_year_count 132 (incl. 51 Commercialized) → rate **48.5 %**. CP-SAT (FEASIBLE, 69.6 s, objective 171 / bound 268): within 102 / spillover 63 / left out 56 / blocked 0; Dashboard 153 → **56.2 %**.
+- **Decisions the ADR did not cover (flagged):** (1) a stage status crossing Not Started is an R6 trigger (R3's `started` is a split input; without it I26 breaks after a reset). (2) Cert-off lab steps keep P12-F04 behaviour in step timing (values accepted, `not_needed`), not 409; the Workspace still shows their lead time. (3) Effort-zeroed step: any new non-null timing value (floor too) is 409; clearing allowed. (4) `CapacityHubMember.project_count` = full-year-scope projects; added `booked_project_count`. (5) P1 fill keeps "no active run → promote nothing". (6) Seed writes the split without one audit row per project (like the rest of the seed). (7) ADR 0041 §4 items implemented here because no other task owns them: AC/SER, chamber stages, Development Step for Under Industrialization, `Mon'YY`, Vaggelis not counted. (8) The demand's lab region follows `scheduling.hubs` (DOMAIN_RULES mapping), which equals `hubs.lab_region` on every migrated DB.
+
+## [2026-10-23] Gate P28–P30 — security-auditor: FAIL (new S30-H1: client data in a PUBLIC GitHub repo; P28–P30 application code has no High/Critical; S26-C1 owner-accepted risk, S26-H1 open)
+
+Scope: P28-T01 (+addenda), P29-T01..T06, P30-T01/T02, P30-T03 as far as in the tree; migrations `p29a_capacity_hubs`,
+`p29b_bc_type_regulatory`, `p30a_effort_types_hub_rename`; `scripts/rotate_field_key.py`; carried S26-*. Read-only review,
+OWASP ASVS L2. Method: code read of every changed router/service/schema/migration; 8 probes
+(scratchpad `sec-p30/test_sec_probe_p30.py`, copied into `backend/tests/` for the testcontainers conftest, then deleted):
+8 passed. Deployed site: GET only, no auth/dev headers. :5433 / :8001 / the Render DB not touched; nothing written.
+No dependency changed in this delta (pyproject: packaging `include` only; no package.json/lock change), so pip-audit /
+npm audit were not re-run.
+
+Verified (no finding):
+- **Migrations.** Only bound parameters for data; the f-strings / `.format()` interpolate module constants only (enum
+  RENAME/ADD VALUE, constraint names, constant WHERE fragments). Every data change has an audit row (actor null,
+  `source` tagged); no financial column is selected (project snapshots are redacted by construction). No audit-trigger
+  change, no SET/`set_config` outside the pre-existing seed escape hatches.
+- **ADR 0042 §8 scoping (probed, OEM-HCK-only Hub Planner).** hub-load and `region=Greece`: Greece aggregate, `members`
+  = [OEM-HCK] only; `hub_id=R&D-Greece` → `rows: []`. capacity-summary / capacity-fill `members` = [OEM-HCK]. Zero engineer
+  rows from `/engineers` (± `hub_id`), heatmap, utilization matrix, resource-load and options. Capacity export `members`
+  cell = OEM-HCK only. Greece-only planner: `hub_id=OEM-HCK` on hub-load → `[]`; members = own only.
+- **Effort writes.** EV/Auditor 403, Engineer 404, out-of-scope HP (India, OEM-Seitek) 404, in-scope HP 200. NaN,
+  Infinity, 1e400, 0.001, list → 422; `capacity_flag`, `safety_lab_weeks`, `actual_design_weeks`, `leader_is_provisional`,
+  `effort_weeks` → 422 extra_forbidden (display-only fields are not writable). 422 `EFFORT_SPLIT_REJECTED` on create echoes
+  only the figure and step ("effort figure 300.00 puts step 'PDD-E' at 120 weeks…"), never the body's customer/TCOGS;
+  nothing is stored and no audit row is written. `project.effort_rederived` / `project.update` / `project.create` rows
+  hold no customer or TCOGS value. The new project fields (effort, safety lab, actuals, flags, provisional) are not
+  financial (DOMAIN_RULES).
+- **Step timing 409 STEP_SKIPPED** is reached only after GANTT WRITE + hub-scoped lookup (EV/Auditor 403, out-of-scope 404,
+  never the 409); body strict (`"2"` → 422).
+- **counts_in_capacity.** HP POST false / PATCH true → 403 `COUNTS_IN_CAPACITY_ADMIN_ONLY`, nothing created; member hub
+  → 422 `HUB_NOT_CAPACITY_HUB`; OEM HP cannot PATCH a Greek engineer (404); Admin null / "false" → 422, false → 200, audited.
+- **`/reference/project-types`, `/hubs`:** 401 without a principal.
+- **What-if:** member-hub designer lines 422; workings lines are aggregates (no engineer names).
+- **Exports:** the `members` text cell and new columns go through `_stringify` → `_neutralise_formula` (CSV) and
+  text-typed XLSX cells.
+- **GDPR / OQ #8:** no per-engineer ranking added; ADR 0028 heatmap rule intact; no P4-T08 sign-off implied.
+- **Frontend P28/P29/P30-T03 (in tree):** no `dangerouslySetInnerHTML`/`innerHTML`/eval; no financial field in
+  `surfaces/dashboard` (Executive view); KPI dialogs, risks list, upcoming completions and VIP tile only select rows
+  of already-fetched hub-scoped endpoints; `localStorage['rpd-dashboard-view']` holds only `executive|detailed`
+  (validated on read); no external links in new files.
+- **rotate_field_key.py (S26-H1 tool):** correct. Raw `LargeBinary` Core table (no TypeDecorator), constant column list
+  checked against the models, `MultiFernet([new, old]).rotate()` in one transaction with FOR UPDATE, verification
+  (new-key-only decrypt, SHA-256 equality, old key fails, counts equal), counts-only audit row and output,
+  `hide_parameters=True`, keys never from argv, idempotent on re-run. Operator caveats: FOR UPDATE does not block NEW
+  rows, so API and every worker must be suspended; swap the key on every service; pre-rotation backups and MinIO
+  exports stay exposed; rotate the DB password first.
+- TLS: both Render hosts negotiate TLS 1.3; on-prem nginx/TLS config unchanged in this delta.
+
+Findings:
+| ID | Sev | Finding | Fix |
+|----|-----|---------|-----|
+| S30-H1 | High | `github.com/ayush39roy-eng/frigoglass` is **public** (unauthenticated GitHub API: `private:false`; raw URL of the file returns 200). It tracks `backend/seed/client_2026_seed_data.json` (330 client pipeline rows: names, review comments, plant/department, effort, the engineer roster and leader assignments, and 239 `customer` values: ALL/KA/COKE/WM, which is the designated encrypted `customer_name` field) and `reference/Formula-2025-26 Global RPD Project Pipeline.xlsx` plus the client deck. This exposes client-confidential data and GDPR personal data (engineer names linked to projects). P30-T02 regenerated the JSON in this delta (180 → 239 customer values, +77 rows); the files have been tracked since e268097 / 80f2c00 and earlier gates did not flag it. Deploy step 4 ("push main") would publish the new version. No credential or key is committed (history grep clean). | Owner: make the repo private (or remove it) before any push. Move client data out of git: the seed reads it from a non-committed path or volume, and tests use a synthetic fixture. Purge it from history (`git filter-repo`) and treat clones and forks as exposed. Notify the client per contract and do a GDPR exposure assessment. Re-gate evidence: the unauthenticated GitHub API returns 404 for the repo, or the files are absent from tree and history. |
+| S30-L1 | Low | `ProjectCreateRequest` / `ProjectUpdateRequest` are not strict, so the new `design_effort_weeks` / `lab_effort_weeks` accept `"4"` and `true` (→ 1.0) with 200 (probed). CLAUDE.md requires Pydantic strict. Bounds and 2 dp still hold. | Use `Field(strict=True)` on `EffortWeeks` (or strict models). |
+| S30-I1 | Info | Engineer lists (`/engineers`, heatmap, utilization matrix, resource-load and options) resolve a member `hub_id` to its capacity hub BEFORE the RBAC AND. A Greece-only planner filtering on out-of-scope OEM-HCK gets their own Greek engineers instead of empty (ADR 0020 says empty), while hub-load returns `[]`. Nothing outside the caller's scope is served. | Optional: require `is_hub_in_scope(hub_id)` before `cmap.resolve`. |
+| S30-I2 | Info | An OEM-only caller sees Greece's aggregate `engineer_count` / `not_counted_engineer_count` / `fte_total`. This is by design (ADR 0042 §8, aggregate only). | None. |
+| S30-I3 | Info | `services/demand_load.py` runs `select(Project)`, so every hub-load / capacity-fill read loads and decrypts the 4 financial columns of every project. They are not served or logged. | `load_only` the columns it needs. |
+| S30-I4 | Info | The p29b downgrade also un-types an RC project a person retyped after the upgrade (audited). The p30a downgrade drops the figures without an audit row (schema rollback). | Acceptable; note it in the runbook. |
+| S30-I5 | Info | The session scratchpad holds a 45-byte Fernet-key file `scratchkey`, mode 0644, from another session. | Confirm it is a disposable-DB key and delete it after P30-T04. Never store the Render key on disk. |
+
+Carried:
+- **S26-C1 (Critical): OPEN, owner-accepted risk (2026-10-23 entry).** Re-verified with GET only and no headers:
+  `/me` 200 → frank.admin@example.com, `["Admin"]`, `hub_scope_all: true`, `dev_mode: true`; `/me/dev-users` 200;
+  `/docs` and `/openapi.json` 200. Meaning: anyone with the URL has Admin read/write, decrypted financials and roster
+  data included. That holds for the P29/P30 data once deployed. This is recorded, not counted as a code FAIL.
+- **S26-H1 (High): OPEN.** The owner re-shared the DB URL and field key on 2026-10-23 and committed to rotating after
+  the deploy. The tool is reviewed above and is fit for purpose. Rotation closes it, with the re-encryption count
+  matching the non-null count.
+- **S26-M1:** fixed in code (`render.yaml` headers + `test_p27_render_csp.py`). **Not live:** the frontend still serves
+  only HSTS + nosniff, with no CSP or XFO. It takes effect after a Blueprint sync / deploy.
+- **S26-L1:** fixed in code (P27-R01); still correct under the ADR 0042 aggregate.
+- **S26-L2:** fixed in code (docs only in dev mode). Still live as 200 because Render runs dev mode, so it closes with S26-C1.
+- S26-I1 (422 echoes `input`, including "NaN"/"Infinity") unchanged; S26-I2 and S26-I4 unchanged.
+
+Not concluded (P30-T03 in flight, files changing during the review): `frontend/src/surfaces/registration/components/
+effort-fields.ts`, `project-form.tsx`, `project-form-schema.ts`, `surfaces/project-workspace/components/details-panel.tsx`,
+`surfaces/project-workspace/api/types.ts`, `surfaces/gantt/api/types.ts` and the Gantt step-timing components. No sink was found in
+them so far.
+
+**Gate result: FAIL** for the security leg of P30-T20 (P28–P30), on S30-H1 (new High). The P28–P30 application code has
+no High or Critical; S30-L1 should ride with the next remediation. To re-gate: S30-H1 evidence (repo private or the data
+purged), plus the S26-H1 rotation note. S26-C1 stays an owner-accepted open risk until dev mode is off.
+
+## [2026-10-23] Owner decision on S30-H1 (client data in public GitHub repo) — orchestrator
+
+- **Verified by the orchestrator.** `api.github.com/repos/ayush39roy-eng/frigoglass` returns `private: false`
+  (visibility public, 0 forks). The raw `client_2026_seed_data.json` URL returns 200 without login. The following are
+  tracked: `backend/seed/client_2026_seed_data.json`, `reference/Formula-2025-26 Global RPD Project Pipeline.xlsx`,
+  `reference/RPD Web Application mock-up-Frigoglass.pptx` and `reference/rpd-platform-prototype.html`.
+- **Owner ruling (AskUserQuestion, 2026-10-23).**
+  - "Push as-is, I accept." The P29/P30 push goes ahead with the repo public, so the regenerated seed data (330 rows,
+    roster and the customer field) becomes public. This is a recorded owner risk acceptance; S30-H1 stays OPEN.
+  - History scrub: "Not now, decide later."
+  - The options the owner was offered: make the repo private and untrack the client files; or untrack them and stay
+    public.
+- **Gate status.** The security leg FAILED on S30-H1. It and S26-C1 are owner-accepted risks, not code defects. The
+  P28–P30 code has no High or Critical finding. S30-L1 (non-strict effort fields) is to be fixed with the QA
+  remediation.
+
+## [2026-10-23] P30-T04 audited reseed — workflow-auditor
+
+**Verdict: greedy PASS, CP-SAT PASS (I1–I26).** Recommend activating the CP-SAT run, subject to the OQ #10 caveat
+below. This entry is the task log, not a phase-gate vote; the P30-T20 gate is separate.
+
+**Setup.**
+- Disposable Postgres 17 container on a random localhost port, throwaway Fernet key in env only.
+  `alembic upgrade head` = `p30a_effort_types_hub_rename`. Then currency rates, `client_2026 --reset` at CW 42 (330
+  projects, 24 engineers, 20 provisional leaders, 3 leaderless, 77 carry-over), then dev users.
+- VIP pins were read from dev DB :5433 with SELECT only, under a read-only transaction. Dev is still at `p27a` with 253
+  projects. There are 10 pins, matched by external code with names cross-checked, and all 10 exist in the 330-row seed.
+  They were applied as the app stores them: `is_vip`, `schedule_stale`, and an audited `project.vip_pin`
+  (source `p30_t04_copy_dev_pins`). Two pins are non-schedulable: 26-00661 (On Hold) and 26-S0534 (Commercialized).
+- Both runs went through the worker's own body (`workers.schedule_tasks._run_cp_sat_schedule_async`, activate=True,
+  SSE publish stubbed), never FastAPI. v1 is greedy and v2 is CP-SAT (default deterministic budget).
+- Surfaces were read through the real ASGI app (dev header auth, frank.admin). Container removed. :5433 not written;
+  :8001 and the worker not touched.
+
+**Independent re-derivation** (my own checker from DOMAIN_RULES over raw DB rows; scratchpad `p30t04/indep.py`).
+- My serial SGS reproduces greedy v1 row for row: 0 differences in any placed row or verdict.
+  - This holds once two things are matched. First, the P2-classified partial retention on LEFT_OUT (MEMORY P2,
+    ORACLE_DIVERGENCE). Second, "no window before HORIZON_WEEKS" read as end ≤ 77.
+  - Partial retention: 16 left-out projects keep 103 wk of Not Started design rows. Those weeks block later projects
+    and count in `design_load_booked_weeks`.
+  - Without retention: within-year is the same (84), with 8 projects moving from left-out to spillover.
+- I1–I5, I11, I15, I16, I21: 0 violations on both runs.
+  - No ENG_CONFLICT, OVERLAP, data_error or blocked. I22 and I10 are vacuous (no floors, nothing frozen).
+  - I18, I20 and I24 were not exercised.
+- I8: greedy re-run is byte-identical, also from a freshly built input. The built input's project order varies with DB
+  order, but the output does not. CP-SAT re-run on identical input is byte-identical (ruling 6).
+- I14: v1's stored rows were hash-identical before and after v2 was persisted.
+- `validate_invariants`: 0 on both runs. App `check_i25_demand` and `check_i26_effort_split`: 0.
+- I12 note: 31 projects sit at an exact x.5. Run and Workspace both use Python `round` (half-even): 62.5 → 62 on
+  26-00413 and 26IND009_1, where half-up gives 63. Surfaces agree, so this is not a violation. DOMAIN_RULES should
+  state the tie rule (ADR 0037 uses half-up for scores).
+- I26: 0 violations over 377 splits (274 design + 103 lab), covering every non-frozen project with a figure. No R3 raise
+  was needed. Hand checks, all equal to the stored splits:
+  - 26IND014 B/4 → A1 E2 K1
+  - 26-00412 C/1.5 → A1 E1
+  - 26-S0401 B/1.5 → E1 K1
+  - 26-S0221 B lab 10 → H10
+  - 26-S0508 A+/30 → A2 B11 D1 E8 I3 J1 K3 M1; lab 4 → F2 H2
+  - 26-S0537 B-OEM/5 → A1 B1 G2 J1
+  - 26ROM005 B 20/70 → A2 D2 E8 J2 K4 M2, H70
+- I25 (by hand from live rows), I17 and I19 match the served rows exactly. Members sum to their row.
+
+| Capacity hub | Full yr / rem demand | Booked greedy / CP-SAT | Capacity yr / rem | Booked % yr / rem |
+|---|---|---|---|---|
+| Greece (own 77/56, HCK 67/23, Seitek 122/27) | 266 / 106 | 195 / 155 | 124.88 / 24.02 | 213.00 / 441.30 |
+| R&D-India | 150 / 65 | 125 / 107 | 88.33 / 16.99 | 169.82 / 382.58 |
+| PD-India | 884 / 436 | 420 / 418 | 253.96 / 48.84 | 348.09 / 892.71 |
+| PD-Romania | 534 / 81 | 189 / 190 | 253.00 / 48.65 | 211.07 / 166.50 |
+
+- Lab demand (full / rem) and booked (greedy / CP-SAT):
+  - Greece 46/14, booked 26/12, capacity 73.34
+  - India 860/408, booked 409/472, capacity 188.30
+  - Romania 860/70, booked 280/280, capacity 216.30
+- Against DATA_RECONCILIATION §7.7: full-year demand, capacities, booked % (year) and lab demand all match.
+  Remaining demand differs because §7.7 is "open rows, before progress". I reproduce 215/150/676/198 (lab 741/32/350)
+  exactly before progress. I25 `rem` then subtracts Done stages (105/85/239/109) and the completed In-Progress share
+  (4/0/1/8).
+
+**Cross-surface (both runs activated in turn): 0 failures.**
+- Dashboard completing-within-year (unfiltered and each of the six hub filters), analytics, status-overview,
+  region-summary and pipeline totals.
+- Executive (same served fields; VIP tile 10).
+- Capacity: rows, members, areas, totals, lab regions. The OEM-HCK and OEM-Seitek filters return the Greece row with
+  `selected_member`.
+- Gantt: all 330 rows paged. Step weeks match the run. Per-project design/lab weeks sum to `*_load_booked_weeks`, per
+  hub too (I23 rev.).
+- Workspace: I12, I13 and I16 on all 330.
+- VIP board: 42 linked rows match the run. vip-projects shows the 8 schedulable pins; the 2 non-schedulable ones have
+  no year rows, by definition.
+- Matrix P1 fill, re-walked by hand on remaining demand: promotions are PD-India 0, Romania 8, Greece 7, R&D-India 6.
+  The fill is run-independent.
+
+**Dashboard figures** (denominator = within + spillover + left out + blocked; rate = `withinYearSharePct`):
+
+| Run | Within year (Commercialized) | Spillover | Left out | Blocked | Denominator | Rate (exact) | Solver |
+|---|---|---|---|---|---|---|---|
+| greedy v1 | 135 (51) | 63 | 74 (1 no leader) | 0 | 272 | 50 % (49.63) | — |
+| CP-SAT v2 | 150 (51) | 53 | 69 (1 no leader) | 0 | 272 | 55 % (55.15) | FEASIBLE, objective 2670 / bound 2773, 78.6 s |
+
+**VIP.** On both runs the 8 schedulable pins are scheduling_order positions 0–7, and all 8 finish within the year.
+With Commercialized S8 for Kazakhstan, 9 of 10 pins count as within-year; the On Hold pin is excluded.
+
+**Greedy vs CP-SAT.** Inputs are equal apart from order. Net: +15 within-year (P3 +14, P4 +3, P1 −1, P2 −1).
+- CP-SAT leaves out 4 P1 projects that greedy schedules as spillover: 26-S0306, 26-S0299, 26-S0297, 26-00409, all
+  PD-India In Queue, no hard gates.
+- CP-SAT moves P1 25-00315 from within-year (W48) to spillover.
+- CP-SAT leaves out 15 in-flight P3 projects (R&D-India BEE). Their anchored rows are kept (ruling 2).
+- This is ADR 0005 working as specified, in the OQ #10 class, which is still open. It is explained, not a bug.
+
+**Recommendation.** Activate CP-SAT on dev and Render: invariant-clean, 150 vs 135. Before doing so:
+1. Tell the owner the OQ #10 trade-off (4 P1s unplaced).
+2. Tell the owner that any auto-trigger (priority move, step timing, check-in, VIP pin) dispatches greedy with
+   activate=True. The first such edit replaces the CP-SAT run, and the rate returns to about 50 %.
+
+Nothing was tuned toward a target.
+
+## [2026-10-23] P30-R01 — S30-L1, S30-I1 (backend-builder)
+
+Gate remediation, security leg of the P28–P30 gate. Backend only; nothing under `backend/scheduling/` touched.
+Not committed. No :5433 / :8001 / Render contact.
+
+- **S30-L1 (Low) — fixed.** `schemas/project.py` `EffortWeeks` is now
+  `Annotated[float, Field(ge=0, le=9999.99, strict=True), AfterValidator(_two_dp)]` (same per-field strict pattern
+  as `schemas/engineer.py` P19-R01). `"4"`, `"2.5"`, `true`, `false` → 422 `VALIDATION_ERROR` on `POST /projects`
+  and `PATCH /projects/{id}` for both `design_effort_weeks` and `lab_effort_weeks`. A JSON int or float still passes
+  (strict float accepts an int). The bounds, ≤ 2 dp and `null` (clear) are unchanged. No contract shape change.
+- **S30-I1 (Info) — fixed.** New `services/capacity_hubs.engineer_hub_filter(principal, cmap, hub_id, region)`:
+  when `hub_id` is given and `not is_hub_in_scope(principal, hub_id)`, it returns `false()`, so the result is empty
+  rows with the normal response shape (ADR 0020 §3, no 403). Otherwise it does what it did before:
+  `narrowed_hub_filter(principal, Engineer.hub_id, cmap.resolve(hub_id), region)`. Every engineer-list site that
+  resolved a member hub now calls it:
+  - `GET /engineers`: this one previously used `hub_scope_filter` plus `== cmap.resolve(hub_id)`.
+  - `GET /capacity/engineer-utilization` (heatmap) and `GET /capacity/utilization-matrix`.
+  - `GET /planning/resource-load` and `GET /planning/resource-load/options`.
+
+  No `cmap.resolve(hub_id)` remains in the routers. Chambers on the matrix were already correct through
+  `narrowed_lab_regions`. P29 behaviour for in-scope callers is unchanged: a caller holding R&D-Greece + OEM-HCK who
+  filters on OEM-HCK gets the Greek engineers. An OEM-HCK-only caller still gets `[]`, because the row scope is
+  unchanged (P29 test kept).
+- **Tests.**
+  - `tests/test_p29_capacity_hubs.py`: 2 parametrized tests × 5 endpoints. First, a Greece-only planner filtering
+    on OEM-HCK and on OEM-Seitek gets `[]`, with the same top-level keys as unfiltered and a non-empty unfiltered
+    list. Second, a Greece + OEM-HCK planner filtering on OEM-HCK gets Alpha / Beta / Theoni.
+  - `tests/test_p30_effort_backend.py::test_figures_are_strict_json_numbers_s30_l1`, for both fields: string or
+    bool → 422 on PATCH (loc ends in the field) and on POST, with nothing stored. Int and float → 200 / 201 with the
+    value served.
+- **Checks.**
+  - ruff check: clean on all touched files.
+  - ruff format: clean on `schemas/project.py`. The other touched files already had format drift before this task,
+    and I did not reformat unrelated code.
+  - mypy: no errors in the touched source files (`services/capacity_hubs.py`, `api/routers/{engineers,capacity,
+    planning}.py`, `schemas/project.py`). The 52 errors it reports are in imported modules and already existed.
+    The test files are untyped by convention.
+  - Related suites: p29 capacity hubs, p30 effort backend, p12 hub filter, hub_scope, core_rbac, rbac_enforcement and
+    p12_r01 grant hub scope gave 177 passed. With the new tests the p29 + p30 files are green.
+  - Full backend suite: 2286 passed, 1 failed. The failure is
+    `test_p13_region_filter::test_region_rows_are_exactly_the_regions_hubs`. It covers dashboard / gantt only, none of
+    the touched code, and passed when rerun alone and as its whole file (twice), so it is an order/timing flake and
+    not this change. `test_openapi_frontend_contract` was green in this run.
+- `docs/IMPLEMENTATION_PLAN.md`: P30-R01 row added (DONE) at the top of the P30 table.
+
+## [2026-10-23] P30-T03 — Frontend of ADR 0041: contract mirror, demand vs booked on Capacity, R4 provenance in the Gantt, effort figures on Registration / Workspace (frontend-builder): DONE
+
+Built against `docs/API_CONTRACT_P30.md`. Frontend only, plus the caller-authorised edit to
+`backend/tests/test_openapi_frontend_contract.py` (WorkflowStepTemplate pinned, allowlist entry removed). Nothing
+committed. Dashboard Executive composition not touched (only the shared hub rename / type labels reach it).
+
+**Contract mirror (`test_openapi_frontend_contract.py`: 224 passed, was 13 red).**
+- `capacity/api/types.ts`: `HubCapacityRow` / `CapacityArea` / `CapacityTotals` gain `design_/lab_load_remaining_weeks`,
+  `design_/lab_load_booked_weeks`; `LabRegionCapacityRow` `load_remaining_weeks` / `load_booked_weeks`;
+  `CapacityHubMember` `design_load_remaining_weeks` / `design_load_booked_weeks` / `booked_project_count`.
+- `gantt/api/types.ts`: `GanttStepRow.effort_weeks`; `StepTimingResponse.effort_weeks` / `lead_time_weeks`.
+- `registration/api/types.ts`: `ProjectCreateRequest` (so `ProjectUpdateRequest`) `design_effort_weeks` /
+  `lab_effort_weeks`; `ProjectRead` (so `ProjectListItem`, `WorkspaceProject`) the seven §2 fields, nullable as served.
+- `project-workspace/api/types.ts` `WorkspaceStage`: `lead_time_weeks`, `duration_override_weeks`, `effort_weeks`.
+- `OEM-Seltek` → `OEM-Seitek` in every src / test / e2e file (0 occurrences left). `PROJECT_TYPES` + labels gain
+  `AC` "Alternative Component", `SER` "Service" (the one label source; the served-list mirror test updated).
+- `lib/api/reference.ts` `WorkflowStepTemplate` now equals `WorkflowStepTemplateRead` (id, workflow_id, code, name,
+  kind, sequence_order, predecessor_ids; `base_weeks` gone); fixtures in Planning / chamber-form tests and
+  `e2e/p19-planning.spec.ts` updated. Contract table: `(_REFERENCE_TS, "WorkflowStepTemplate",
+  "WorkflowStepTemplateRead", "exact")` added; the `frontend_only` allowlist entry removed.
+
+**Capacity semantics (I19 rev.; every figure one served field).**
+- `lib/pick-figures.ts`: `load` = full-year demand for "year", **remaining demand** for "remaining" (was the same
+  `*_load_weeks` on both); new `booked` = `*_load_booked_weeks` (both horizons); `loadEstimated` removed (R13);
+  `DEMAND_LABEL`, `BOOKED_IN_PLAN_LABEL`. Days: `load_days.remaining` is already served from the remaining demand.
+- "Load vs. capacity by hub" table: columns per band are Capacity | Demand (sub-line "full year" / "remaining") |
+  Booked % | Gap | **In plan** (run-booked, weeks in both units, "wks" in Days, no %). Lab-shared colspan 5. Total row
+  serves the totals' booked weeks. The served priority split splits the full-year demand only, so its mini-bar and
+  legend key show in the full-year view only. Copy (note, CardInfo, unit note) rewritten for demand / In plan.
+- Greece members: sub-rows show the member's demand for the horizon in the Demand column and its booked weeks in the
+  In plan column, plus "N projects, M in plan" (served counts). A test checks the sub-row cells line up with the
+  row's columns (also with the split open). Details dialog: "Hubs on this capacity" = Hub | Projects | Full-year /
+  Remaining demand (wks) | In plan (wks) | Projects in plan; resource blocks show "Full-year / Remaining demand" and
+  "Booked in plan" (replaces "Load (estimated)").
+- KPI cards: "Design demand · full year|remaining", "Lab demand …", split only in the full-year view, plus
+  "Booked in plan: N wks". Charts: "Design / Lab Demand vs Capacity …"; in YTD `PriorityLoadChart` draws plain
+  columns (`split: null`) since no remaining split is served. Booking strip / reporting notice / nav summary reworded.
+- Elsewhere: Priority board strip "Design demand" / "Lab demand (region)" (full-year pair, unchanged figures);
+  Capacity Planning Resource load header says "load = weeks booked by the active schedule" (R12: run-booked).
+
+**Gantt R4.** `lib/step-duration-source.ts` names the source of the served duration (user / effort / table) from
+served fields only. `hasTimingEdit` unchanged in logic (user fields only), documented. The "edited" hint reads
+"work 6 wks (client effort 2, table 4)" when an effort value exists, else "(table T)"; bar hover text adds
+"(client effort)" / "(timing edit)". `StepTimingTarget.effortWeeks`; dialog hint "Lead-time table: T · client effort
+E · overridden to U"; Reset's title says what it restores (effort figure, else table); the change summary says
+"(client effort)" instead of "(lead-time table)" when an effort value is in force. 409 `STEP_SKIPPED` on an
+effort-zeroed step (target `effortWeeks === 0` or the served detail "effort share") shows `EFFORT_SKIPPED_COPY` in
+the existing inline notice. An effort-zeroed skipped step's name / Workspace n/a badge say why.
+
+**Registration / Workspace.** The form's deprecated "Estimated design/lab weeks" inputs are replaced by "Design
+effort (client, weeks)" / "Lab effort (client, weeks)" (0..9999.99, at most 2 dp client-side; null clears); the
+estimates are no longer sent (PATCH leaves them stored). 422 `EFFORT_SPLIT_REJECTED` maps to the field named by
+`detail[].loc` (`effort-fields.ts`), with readable copy, aria-invalid and focus; it clears when that figure changes.
+Edit mode shows a compact read-only "From the client workbook" block (safety lab, actual design / testing, safety
+cert., capacity flag). Workspace Details read view: effort figures (or "Lead-time table") and the five display-only
+figures under "From the client workbook".
+
+**Tests.** New: `capacity/components/hub-summary-table.p30.test.tsx` (6), `gantt/lib/step-duration-source.test.ts`
+(6), `registration/components/project-form.p30.test.tsx` (8), `project-workspace/components/details-panel.p30.test.tsx`
+(3), a P30 block in `step-timing.test.tsx` (7). Updated: pick-figures, hub-summary-table, capacity-kpi-row,
+CapacityPage, reporting notice, project-form, ProjectsPage, PriorityBoardPage, resource-load, hub-labels and the
+fixtures. Results: `npx vitest run` 211 files / 1655 passed; `npx tsc -b` clean; `npx eslint .` 0 errors, 9
+pre-existing warnings; `vite build` (scratch outDir) initial 189.1 KB gzip (budget 400, PASS), CapacityPage chunk
+18.6 KB, GanttPage 22.1 KB.
+
+**Visual check** (mocked API via Playwright route interception on a `VITE_API_BASE_URL=/mockapi` scratch build,
+P30-T02 reseed figures, 1440 light + dark; screenshots in the session scratchpad `p30shots/`; harness scripts
+deleted): Capacity table with Greece expanded (full year and YTD), KPI cards, Details dialog, Gantt rows, the
+timing dialog and the 409 notice. Table fits (scroll 1252 = client 1252, document 1440), no clipped / ellipsized
+cell, axe serious/critical: none on the table, KPIs, Details dialog, timing notice. One dark-mode hit on the
+timing dialog's primary "Save timing" button (`hover:bg-primary-hover` contrast) — the shared Button, not P30.
+Native `title` tooltips cannot be screenshotted; their texts were read from the DOM and match the copy above.
+
+**Open points.**
+1. With no active run the hub table still shows "No schedule computed yet" although demand is served then (contract:
+   booked 0, demand served). Kept the existing empty state; showing demand without a run is a small follow-up.
+2. Gantt's per-project design / lab weeks reconcile with `*_load_booked_weeks` (I23 rev.); no Gantt copy claims
+   otherwise, but nothing on the Gantt names "demand".
+3. Dark-mode primary Button contrast (above) predates P30.
+4. The P29 note "Includes OEM-HCK and OEM-Seitek" still wraps to two lines in the hub cell at 1440 (by design,
+   max-w 11rem, no ellipsis).
+
+## [2026-10-23] Gate P28–P30 re-check — security-auditor: PASS (code leg); S26-C1, S26-H1, S30-H1 OPEN as owner-accepted risks
+
+Scope: P30-R01 (S30-L1, S30-I1), the P30-T03 frontend files left open in the first leg, and a secret sweep of the
+working tree. Read-only. Probes: scratchpad `sec-p30r/test_sec_probe_p30r.py`, copied into `backend/tests/` for the
+conftest and deleted after each run (0 left). Runs used `--no-cov`, except the first run, which rewrote the
+already-modified `backend/.coverage`. :5433, :8001, Render and GitHub were not contacted.
+
+- **S30-L1: CLOSED.** `EffortWeeks` is `Field(strict=True)` (`schemas/project.py:52`). Probed both fields on PATCH and
+  POST with `"4"`, `"2.5"`, `true`, `false`, `"1e1"`, `{}`, `[4]`, NaN, Infinity, `"0x10"`, -1 and 10000: all 422, and
+  no project was created. `4`, `2.5`, `0` and `null` gave 200 with the right value. A rejected POST that also carried
+  `customer_name` / `tcogs_eur` did not echo either value.
+- **S30-I1: CLOSED.** `engineer_hub_filter` (`services/capacity_hubs.py:89`) checks `is_hub_in_scope` before
+  `cmap.resolve`. It is the only resolve path, used by `/engineers`, the heatmap, utilization-matrix, resource-load
+  and its options; `cmap.resolve(hub_id)` no longer appears in any router. Probed all 5 endpoints:
+  - A Greece-only Hub Planner (HP) filtering on OEM-HCK, OEM-Seitek, PD-India, or OEM-HCK + region=Greece gets 200 `[]`.
+    A filter on its own hub returns 3 rows.
+  - An OEM-HCK-only HP gets `[]` with no filter, with hub_id = HCK or Greece, and with region=Greece.
+  - Admin filtering on HCK gets exactly the 3 Greek engineers.
+  - A pure Engineer role gets 403 on all 5.
+  - `/engineers` has no `region` parameter, so it ignores one and returns in-scope rows only. Not a finding.
+- **P30-T03 frontend: no finding.** Reviewed `registration/components/{effort-fields.ts, project-form.tsx,
+  project-form-schema.ts}`, `project-workspace/components/details-panel.tsx`, `project-workspace/api/types.ts`,
+  `gantt/api/types.ts`, `gantt/lib/step-duration-source.ts` and `gantt/components/step-timing/*`.
+  - No unsafe-HTML sink, eval, storage, console or dynamic href.
+  - No added diff line touches a financial field. Financial fields appear only in their pre-existing form inputs and
+    in the Workspace read view, which is gated by `project_registration.read`.
+  - Error copy is static: `EFFORT_SPLIT_REJECTED_COPY` and `EFFORT_SKIPPED_COPY`. `effortSplitField` reads only
+    `detail[].loc`, and the 409 code only regex-tests the detail text. Neither renders the server body. The form keeps
+    its "never include body in an error" rule.
+- **Secrets: clean.**
+  - No Render DB hostname and no Fernet-shaped string anywhere in the working tree (gitignored files included).
+  - Postgres URLs with an inline password are all placeholders: localhost `rpd:<3ch>`, docstring `user:<4ch>`, a test
+    dummy at 127.0.0.1:1, `${…}` env interpolation, and MEMORY regex text.
+  - The only one in a changed file is a docstring placeholder (`seed_demo_data.py:61`). The diff adds no Render or
+    `dpg-` string. `backend/.env` is gitignored and untracked.
+- **S30-I5 (`scratchkey`): consistent with a throwaway; not deleted (read-only).** It is a 44-character Fernet key,
+  created at 03:39:10 between `scripts/p30_report.py` (the P30-T02 scratch-DB report, "never :5433") and
+  `report_greedy.json`. Its value appears in no repo file and no other scratchpad file, `backend/.env` included. The
+  scratchpad directory is mode 0700. I cannot prove offline that it is not the Render key; the owner can confirm.
+  Delete it with the scratchpad.
+
+New finding:
+| ID | Sev | Finding | Fix |
+|----|-----|---------|-----|
+| S30-L2 | Low | Pre-existing since P15 (`6f842f4`, 2026-10-19), not this delta. `GET /capacity/engineer-utilization?hub_id=<unknown uuid>` writes its read-audit row with `hub_id=<that uuid>` (`api/routers/capacity.py:923`). The FK `fk_audit_log_entries_hub_id_hubs` then fails, which gives an IntegrityError and a 500. It needs an authenticated user with Capacity read access. No data is disclosed. It is an error-path and log-noise issue. | Store `hub_id` in the audit row only if the hub exists (or always put it only in `after_state`); add a test. |
+
+**Accepted risks (OPEN, not code failures):**
+- S26-C1 (Critical): dev mode on Render, owner-accepted.
+- S26-H1 (High): DB URL and field key to be rotated after the deploy using the reviewed `rotate_field_key.py`.
+- S30-H1 (High): client data in a public repo, owner-accepted 2026-10-23; history scrub deferred.
+
+Carried as before: S26-M1 (not live until sync) and S26-I1, I2, I4; S30-I2, I3, I4 unchanged.
+
+**Gate result: PASS for the security code leg of P30-T20 (P28–P30).** No High or Critical finding in application code.
+The owner-accepted deployment and repo risks above stay OPEN.
+
+## [2026-10-23] Dev DB (:5433) migrated + reseeded to P30; CP-SAT run active — orchestrator
+
+The owner said "run the migration". The auto-mode classifier had refused the first attempt, before the owner's
+instruction.
+
+1. **Backup.** `pg_dump -Fc` of the dev DB at p27a, written to session scratchpad `backup/dev_rpd_before_p30_20261023_0410.dump`
+   (741 KB).
+2. **Stopped** the API (:8001, uvicorn) and the solver worker (celery, `--queues=solver --concurrency=1`).
+3. **Migrated:** `alembic upgrade head`, p27a → p29a → p29b → p30a (head).
+4. **Reseeded:** `seed_demo_data --reset --dataset client_2026 --schedule`.
+   - 330 projects and 24 engineers.
+   - User config kept: 10 VIP pins and 43 VIP links. No VIP item was unresolved.
+   - Greedy v1: within-year 135, which equals the P30-T04 audit.
+5. **Restarted** the API and worker in the background (logs in scratchpad `logs/`).
+6. **CP-SAT.** It ran through the worker task's own code (`run_cp_sat_schedule.apply(activate=True)`, in a local process,
+   never inside FastAPI; script at scratchpad `scripts/run_cpsat_eager.py`). The API dispatch endpoint deliberately
+   never activates a run (P3-T06 note).
+   - Result: v2 cp_sat, FEASIBLE, now ACTIVE.
+   - Dashboard: within 150, spillover 53, left out 69, blocked 0, denominator 272, rate 55 %. This equals the P30-T04
+     audit exactly.
+   - Capacity booked % (year) equals the audit: Greece 213.00 (members R&D-Greece / OEM-HCK / OEM-Seitek), R&D-India
+     169.82, PD-India 348.09, PD-Romania 211.07.
+7. **S30-I5.** The scratchpad `scratchkey` was compared without printing: it is neither the Render key nor the dev key,
+   so it was a throwaway. Deleted.
+
+**Caveats told to the owner:**
+- The CP-SAT run leaves out 4 PD-India P1 projects that greedy schedules as spillover (OQ #10 class).
+- Any auto-recalc (priority move, step timing, check-in, VIP pin) runs greedy and replaces this active run. The rate
+  then drops to about 50 %.
+
+**Follow-up candidate:** queue CP-SAT for auto-recalcs, or add an "activate CP-SAT run" action (the P3-T06 gap).
+
+## [2026-10-23] Gate P28–P30 — workflow-auditor: PASS
+
+Delta audit after P30-T04 (my audited reseed), covering P30-R01 (strict effort fields, `engineer_hub_filter`) and the
+P30-T03 frontend. Read-only on the repo apart from this entry. :5433, :8001 and Render were not touched. The disposable
+PG17 container (`p30t04-pg`, random localhost port, throwaway Fernet key) was removed, and the key deleted. Harness:
+scratchpad `p30t20/` (a copy of `p30t04/` plus `surfdiff3.py`, `r01probe.py`, `r01cmp.py`).
+
+**1. T04 harness re-run on the current tree: identical to T04.**
+- Backend files changed since T04: `services/capacity_hubs.py`, `schemas/project.py`, `api/routers/{capacity,engineers,
+  planning}.py`. Nothing under `scheduling/` or `seed/` changed.
+- `alembic upgrade head` = `p30a_effort_types_hub_rename`. Then currency rates, `seed_demo_data --reset --dataset
+  client_2026` (CW 42) and dev users. The seed JSON is byte-identical to T04.
+- Pins: I reused the T04 list (`devpins.txt`, 10 pins, all names matched) and applied it the audited way.
+- Live rows: projects, steps, engineers, leads, templates and calendars are identical to T04. Only timestamps and the
+  random hub UUIDs differ.
+- Greedy v1: input sha `b97c0bed825cc9b6`, output `9e9f83d44f56a80c`. CP-SAT v2: input `c9067778b97dbdf3`, output
+  `b8cf9e16bbc57d15`, FEASIBLE 2670 / bound 2773. All four hashes equal T04. Wall time was 193 s, against 78.6 s at T04,
+  because the budget is deterministic.
+- My SGS against greedy: 0 row or verdict diffs (with partial retention, as at T04).
+- `validate_invariants`: 0 on both runs. `check_i25_demand`: 0. `check_i26_effort_split`: 0.
+- My I26 checker: 0 violations over 377 splits. I8 greedy rerun is byte-identical, also from a freshly built input.
+- I14: v1's stored-row hashes are unchanged after v2 was persisted.
+- Cross-surface reconciliation: 0 failures on both runs.
+- All 108 served surface captures per run (Dashboard ×7 filters, Capacity, Gantt 330 rows, VIP, Priorities, Planning,
+  Workspace ×330) equal T04 in content. I normalised hub UUIDs, uuid4 ids (VIP items, audit entries), timestamps and
+  list order.
+- Figures are therefore exactly the T04 tables:
+  - Greedy: 135 / 63 / 74 / 0, 49.63 %. CP-SAT: 150 / 53 / 69 / 0, 55.15 %.
+  - Booked design, greedy / CP-SAT: Greece 195/155, R&D-India 125/107, PD-India 420/418, PD-Romania 189/190.
+  - Booked lab: Greece 26/12, India 409/472, Romania 280/280.
+  - Booked % (year): 213.00, 169.82, 348.09, 211.07.
+  - VIP: 8 schedulable pins at positions 0–7, all within the year.
+- They also agree with the orchestrator's :5433 reseed entry above.
+
+**2. R01 filters (I17/I19/I23).** Code: an out-of-scope `hub_id` gives `false()`. Otherwise the predicate is the
+pre-R01 `narrowed_hub_filter(principal, Engineer.hub_id, cmap.resolve(hub_id), region)`, unchanged. Tested with four
+principals: Admin, plus Hub Planners scoped to R&D-Greece, to R&D-Greece + OEM-HCK, and to PD-India (bob). The two
+Greece planners exist only in the disposable DB. Results:
+- **In scope.** On all 5 R01 endpoints (`/engineers`, `/capacity/engineer-utilization`, `/capacity/utilization-matrix`,
+  `/planning/resource-load` with basis year and remaining, and `/planning/resource-load/options`), the planner's body is
+  identical to Admin's for the same filter. This includes OEM-HCK resolving to the Greek engineers for the
+  Greece + OEM-HCK caller. The Capacity, Dashboard and class-breakdown figures are identical too.
+- **Out of scope.** All 140 (principal, hub, endpoint) combinations return empty rows or zeroed skeletons, with the
+  same top-level keys as unfiltered and 0 engineer ids or names leaked. A Greece-only caller filtering on OEM-HCK or
+  OEM-Seitek gets empty results (the S30-I1 fix).
+- **Independent figures (CP-SAT active).** Resource-load per-engineer `load_weeks` = Σ run `duration_weeks` by
+  assigned engineer: 0 mismatches. Totals: 870 = 155+418+190+107, and chambers 764 = 12+472+280. Utilization-matrix
+  `busy_weeks` = run spans: 0 mismatches. Resource load is run-booked on both bases (R12).
+
+**3. P30-T03 frontend: correct.**
+- `pick-figures.ts`:
+  - Year pairs `*_load_weeks` with `*_capacity_year`, `*_booked_pct_year`, `*_gap_year` and `*_completion_pct_year`.
+  - Remaining pairs `*_load_remaining_weeks` with the `*_remaining` fields.
+  - `booked` = `*_load_booked_weeks` on both horizons, with no % served or shown.
+  - Days figures are only selected from served day fields.
+- Hub table, Total row, KPI cards, charts, Details dialog, members sub-rows and dialog, and the Priority board strip:
+  each figure is one served field. "In plan" = `*_load_booked_weeks` (weeks, no %). Member demand follows the horizon.
+- The only browser arithmetic is presentational: bar-width clamps, axis scale, and segment proportions.
+- No `loadEstimated` or `*_estimated_weeks` reader is left outside test fixtures.
+- Gantt R4 (`step-duration-source.ts`, `gantt-chart.tsx`, the timing dialog and state):
+  - Precedence is user ?? effort ?? table.
+  - `hasTimingEdit` and the "edited" hint read only the user's two fields.
+  - Reset names the effort figure, or else the table.
+  - `isEffortZeroed` = no override ∧ effort 0 ∧ lead > 0.
+  - Served data check: on 451 Not Started non-skipped, non-frozen Gantt steps (191 effort, 260 table),
+    `duration_weeks` equals the R4 precedence, with 0 mismatches.
+
+**Non-blocking notes.**
+- N1 (Low, frontend). With "Show priority split" on in the remaining view, the P1…Q columns show the full-year split
+  beside the remaining demand. Their title and sr-only text say "full-year demand", but the visible "P1-D" header does
+  not. Suggest a "full year" sub-label or hiding the toggle in YTD.
+- N2 (Info, ADR 0042 §8 as designed). A caller whose scope lacks some members sees the Greece aggregate (266 / 155),
+  but the members only within scope. So members do not sum to the row for that caller. The Gantt reconciles per visible
+  member, not per row: Greece-only 17 = own member; Greece + HCK 77 = 17 + 60; Admin 155 = row.
+- N3 (Info). `/dashboard/completing-within-year` rows and `/dashboard/hub-type-pipeline` (types within a hub) have no
+  deterministic ORDER BY, so row order follows heap order. Content is identical.
+- N4 (Info). The `scheduling/workflow.project_progress_pct` docstring still says the duration is "override ?? lead
+  time". The behaviour uses `eff`, effort included (I12 holds on all 330).
+- Carried from T03: with no active run, the hub table hides the served demand.
+
+**4. Proposed DOMAIN_RULES wording (not edited).**
+- I12 tie rule: 31 projects sit at an exact x.5. Run and Workspace agree and use half-to-even (62.5 → 62 on 26-00413
+  and 26IND009_1).
+  - Option A (records the current behaviour, no code change). Replace the roll-up formula's `round(` with
+    `round_half_even(` and add: "The quotient is exact (integers over integers). A tie at exactly .5 goes to the even
+    integer (62.5 → 62, 87.5 → 88). The scheduler outcome and the Workspace use the one shared function
+    (`scheduling.project_progress_pct`), so they never differ. This deliberately differs from the half-up rounding of
+    scores (ADR 0037) and effort figures (I26)."
+  - Option B (half-up). Needs an ADR and a change to the shared function (algorithm-engineer). 2 of 330 displayed
+    values move from 62 to 63.
+  - I recommend A unless the owner wants one rounding rule app-wide.
+- I23 (for N2). Append: "For a member hub h (ADR 0042), 'the Capacity `*_load_booked_weeks` for h' is h's served
+  `members` entry. The capacity-hub row is an aggregate (ADR 0042 §8) and reconciles with the Gantt only for a caller
+  whose scope covers every member."
+
+**Verdict: PASS for P28–P30.** No invariant (I1–I26) or reconciliation failure. Greedy and CP-SAT outputs are
+byte-identical to the T04 audit. R01 changes no in-scope figure and leaks nothing out of scope. T03 displays the right
+served field per I19 rev., I25 and R4. The three prototype defects (FTE, chamber efficiency, delay) are untouched:
+there are no scheduler changes since T04.

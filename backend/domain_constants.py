@@ -29,7 +29,7 @@ from typing import Final
 #: (workflow_id, name)
 WORKFLOW_SEED: Final[tuple[tuple[str, str], ...]] = (
     ("PDD", "Product Development & Design (non-OEM hubs)"),
-    ("OEM", "OEM workflow (OEM-HCK, OEM-Seltek)"),
+    ("OEM", "OEM workflow (OEM-HCK, OEM-Seitek)"),
 )
 
 # (workflow_id, step_id, code, name, kind, sequence_order, predecessor_ids)
@@ -63,7 +63,7 @@ WORKFLOW_STEP_TEMPLATE_SEED: Final[
     ("PDD", "PDD-L", "PILOT", "Pilot", "elapsed", 12, ("PDD-K",)),
     ("PDD", "PDD-M", "TF_3", "TF-3", "design", 13, ("PDD-L",)),
     ("PDD", "PDD-N", "COMM", "Commercialization", "elapsed", 14, ("PDD-M",)),
-    # --- OEM workflow — hubs OEM-HCK, OEM-Seltek -----------------------------
+    # --- OEM workflow — hubs OEM-HCK, OEM-Seitek -----------------------------
     ("OEM", "OEM-A", "COMM_BRF", "Commercial Brief", "design", 1, ()),
     (
         "OEM",
@@ -144,20 +144,20 @@ HUB_LAB_REGION: Final[Mapping[str, str]] = {
     # is run from Greece, so both OEM hubs use the Greece chambers and count
     # in the Europe area. They were "India" before.
     "OEM-HCK": "Greece",
-    "OEM-Seltek": "Greece",
+    "OEM-Seitek": "Greece",
 }
 
-OEM_HUBS: Final[frozenset[str]] = frozenset({"OEM-HCK", "OEM-Seltek"})
+OEM_HUBS: Final[frozenset[str]] = frozenset({"OEM-HCK", "OEM-Seitek"})
 
 #: ADR 0042 (2026-10-22, P29): hub -> its *capacity hub*. OEM-HCK and
-#: OEM-Seltek are capacity children of R&D-Greece: Greece's engineers, work
+#: OEM-Seitek are capacity children of R&D-Greece: Greece's engineers, work
 #: calendar and supply serve all three, and Greece's load is the sum of its
 #: own and the OEM projects. Every hub not listed is its own capacity hub
 #: (`hubs.capacity_hub_id` null). The OEM hubs stay hubs for registration,
 #: plant, filters, RBAC scoping, the Hub × Type table and the country filter.
 HUB_CAPACITY_HUB: Final[Mapping[str, str]] = {
     "OEM-HCK": "R&D-Greece",
-    "OEM-Seltek": "R&D-Greece",
+    "OEM-Seitek": "R&D-Greece",
 }
 
 
@@ -305,6 +305,9 @@ PROJECT_TYPE_LABELS: Final[Mapping[str, str]] = {
     "RC": "Regulatory / Business Compliance",
     "NO": "New Option",
     "IMP": "Improvement",
+    # ADR 0041 §4: the client's own type list (`Lists & Explanations` col J).
+    "AC": "Alternative Component",
+    "SER": "Service",
 }
 
 # ADR 0038 §6: the backfill / seed rule from `Project.type`. Every other type
@@ -370,19 +373,24 @@ SCHEDULE_OUTCOME_FLAGS: Final[tuple[str, ...]] = (
 # books no POC/CERT step but still contributes its efficient lab weeks to
 # supply, exactly as the workbook does. ADR 0035: efficiency, platforms and
 # downtime are the workbook's and are seeded untouched (ADR 0024's tuning is
-# retired). `allowed_stages` stay ours; the client's own test mapping differs
-# (docs/OPEN_QUESTIONS.md #57).
+# retired). ADR 0041 §4 (P30-T02, decision (e) of
+# docs/DATA_RECONCILIATION_2026.md): `allowed_stages` follow the client's own
+# test-type mapping: "ALL test" -> {PDD-F, PDD-H}; "POC & Industrialization"
+# -> {PDD-F}; "POC & Certification" -> {PDD-F, PDD-H, OEM-E, OEM-H} (Greece
+# serves the OEM hubs); Romania (unspecified) -> {PDD-F, PDD-H}. India CH-4
+# follows the client mapping "POC & Industrialization" (OQ #71). Migration
+# `p30a` applies the same change to an upgraded database.
 CHAMBER_SEED: Final[
     tuple[tuple[str, str, int, float, float, float, float, tuple[str, ...]], ...]
 ] = (
-    ("IN-CH1", "India", 1, 0.7, 2, 1, 1, ("PDD-F", "PDD-H")),
-    ("IN-CH2", "India", 4, 0.6, 2, 11, 1, ("PDD-F",)),
+    ("IN-CH1", "India", 1, 0.7, 2, 1, 1, ("PDD-F",)),
+    ("IN-CH2", "India", 4, 0.6, 2, 11, 1, ("PDD-F", "PDD-H")),
     ("IN-CH3", "India", 2, 0.6, 2, 7, 1, ("PDD-F", "PDD-H")),
-    ("IN-CH4", "India", 1, 0.5, 2, 2, 1, ()),
+    ("IN-CH4", "India", 1, 0.5, 2, 2, 1, ("PDD-F",)),
     ("GR-CH1", "Greece", 1, 0.7, 2, 8, 1, ("PDD-F", "PDD-H", "OEM-E", "OEM-H")),
-    ("GR-CH2", "Greece", 2, 0.6, 2, 8, 1, ("PDD-F", "OEM-E")),
+    ("GR-CH2", "Greece", 2, 0.6, 2, 8, 1, ("PDD-F", "PDD-H", "OEM-E", "OEM-H")),
     ("RO-CH1", "Romania", 1, 0.7, 2, 3, 1, ("PDD-F", "PDD-H")),
-    ("RO-CH2", "Romania", 4, 0.6, 2, 3, 1, ("PDD-F",)),
+    ("RO-CH2", "Romania", 4, 0.6, 2, 3, 1, ("PDD-F", "PDD-H")),
     ("RO-CH3", "Romania", 2, 0.6, 2, 3, 1, ("PDD-F", "PDD-H")),
     ("RO-CH4", "Romania", 1, 0.7, 2, 4, 1, ("PDD-F", "PDD-H")),
 )

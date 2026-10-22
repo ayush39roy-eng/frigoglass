@@ -11,7 +11,7 @@ vi.mock('./hooks/use-audit-log', () => ({
   useAuditLog: (params: unknown) => hooks.useAuditLog(params),
 }));
 vi.mock('@/lib/api/reference', () => ({
-  useHubs: () => ({ data: [{ id: 'hub-1', name: 'R&D-Greece', lab_region: 'Greece', is_oem: false }] }),
+  useHubs: () => ({ data: [{ id: 'hub-1', name: 'R&D-Greece', lab_region: 'Greece', is_oem: false, capacity_hub_id: null, capacity_hub_name: null }] }),
 }));
 vi.mock('@tanstack/react-virtual', () => ({
   useVirtualizer: ({ count }: { count: number }) => ({

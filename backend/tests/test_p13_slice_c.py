@@ -170,7 +170,10 @@ async def test_gantt_design_and_lab_weeks_reconcile_with_capacity_design_load(db
         key = dc.capacity_hub_name(row["hub"])
         design_by_hub[key] = design_by_hub.get(key, 0) + (row["design_weeks"] or 0)
     for hub_row in capacity["rows"]:
-        assert design_by_hub.get(hub_row["hub"], 0) == hub_row["design_load_weeks"], hub_row["hub"]
+        # I23 rev. (ADR 0041): the Gantt reconciles with the run-BOOKED load.
+        assert design_by_hub.get(hub_row["hub"], 0) == hub_row["design_load_booked_weeks"], (
+            hub_row["hub"]
+        )
 
 
 async def test_gantt_leader_name_is_served_to_every_reader(db_session):

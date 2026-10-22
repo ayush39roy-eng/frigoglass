@@ -186,7 +186,7 @@ test('UI 1440: simulate zero 107 -> 107 = Dashboard; touched labelling and headl
     matched++;
   }
   console.log('UI estimate zero: design rows matched to Capacity booked %:', matched, 'of', n);
-  // Every design row the UI shows matched the Capacity figure (6 hubs before P24; OEM-Seltek has no engineers in
+  // Every design row the UI shows matched the Capacity figure (6 hubs before P24; OEM-Seitek has no engineers in
   // the real roster, ADR 0035, so the count follows the served rows).
   expect(n).toBeGreaterThan(0);
   expect(matched).toBe(n);

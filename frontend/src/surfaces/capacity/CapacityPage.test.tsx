@@ -49,7 +49,7 @@ const engUtil: EngineerUtilizationResponse = {
   current_week: 2,
   engineers: [
     {
-      id: 'e1', name: 'Priya N', hub: 'R&D-Greece', role: 'Designer', total_booked: 3.5, total_capacity: 4, utilization_pct: 87.5,
+      id: 'e1', name: 'Priya N', hub: 'R&D-Greece', role: 'Designer', counts_in_capacity: true, total_booked: 3.5, total_capacity: 4, utilization_pct: 87.5,
       weeks: [1, 2, 3, 4].map((week) => ({ week, booked: 0.5 + week * 0.1, capacity: 1, utilization_pct: 60 + week * 10 })),
     },
   ],
@@ -142,11 +142,11 @@ describe('CapacityPage', () => {
     hooks.useClassBreakdown.mockReturnValue(ready(classBreakdown));
     renderWithProviders(<CapacityPage />);
 
-    expect(screen.getByRole('group', { name: 'Design load' })).toHaveTextContent('207.86 %');
+    expect(screen.getByRole('group', { name: 'Design demand' })).toHaveTextContent('207.86 %');
     expect(screen.getByTestId('kpi-design-capacity-value')).toHaveTextContent('290.1');
-    expect(screen.getByTestId('kpi-Design load-P1')).toHaveTextContent('416');
-    expect(screen.getByTestId('kpi-Lab load-P1')).toHaveTextContent('300');
-    expect(screen.getByLabelText('Lab load by lab region')).toHaveTextContent('India: 496.5');
+    expect(screen.getByTestId('kpi-Design demand-P1')).toHaveTextContent('416');
+    expect(screen.getByTestId('kpi-Lab demand-P1')).toHaveTextContent('300');
+    expect(screen.getByLabelText('Lab demand by lab region')).toHaveTextContent('India: 496.5');
 
     // P19-T06: the merged "Load vs. capacity by hub" table carries the served buckets
     // (behind "Show priority split") and the served totals.
@@ -161,7 +161,7 @@ describe('CapacityPage', () => {
 
     await user.click(screen.getByRole('radio', { name: 'YTD 2026' }));
     expect(screen.getByTestId('hub-summary-total')).toHaveTextContent('299.5%');
-    expect(screen.getByRole('group', { name: 'Design load' })).toHaveTextContent('299.5 %');
+    expect(screen.getByRole('group', { name: 'Design demand' })).toHaveTextContent('299.5 %');
   });
 
   it('renders the client layout in order: KPI cards, class cards, charts, booked tiles, the merged load vs. capacity table, then the engineer section', () => {
@@ -184,15 +184,15 @@ describe('CapacityPage', () => {
     }
     // four KPI cards with the served totals
     expect(screen.getByRole('group', { name: 'Design capacity' })).toBeInTheDocument();
-    expect(screen.getByRole('group', { name: 'Design load' })).toBeInTheDocument();
+    expect(screen.getByRole('group', { name: 'Design demand' })).toBeInTheDocument();
     expect(screen.getByRole('group', { name: 'Lab capacity' })).toBeInTheDocument();
-    expect(screen.getByRole('group', { name: 'Lab load' })).toBeInTheDocument();
+    expect(screen.getByRole('group', { name: 'Lab demand' })).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'Class breakdown — deliverable vs. left out' })).toBeInTheDocument();
     // P19-T07: the seven class cards stay; the engineer disclosure is the only one left
     expect(screen.getByTestId('class-cards')).toBeInTheDocument();
     const more = screen.getByTestId('capacity-more-detail');
     expect(within(more).getAllByRole('button').map((b) => b.getAttribute('aria-label'))).toEqual(['Show engineer utilization']);
-    expect(screen.getByText('Design Load vs Capacity by Hub')).toBeInTheDocument();
+    expect(screen.getByText('Design Demand vs Capacity by Hub')).toBeInTheDocument();
     // provenance names the exact active run version
     expect(screen.getAllByTestId('schedule-run-provenance')[0]).toHaveTextContent(/v6/);
   });
@@ -279,7 +279,7 @@ describe('CapacityPage', () => {
     expect(booked()).toHaveTextContent('3,522 of 1,515.72 engineer-days');
     expect(screen.getByTestId('booked-lab-R&D-Greece')).toHaveTextContent('2,979 of 1,117.32 chamber-days');
     expect(screen.getAllByTestId('priority-load-chart-axis').map((e) => e.textContent)).toEqual(['engineer-days', 'chamber-days']);
-    expect(screen.getByTestId('hub-summary-unit-note')).toHaveTextContent('Load and capacity in working days');
+    expect(screen.getByTestId('hub-summary-unit-note')).toHaveTextContent('Demand and capacity in working days');
     expect(within(screen.getByTestId('hub-summary-row-R&D-Greece')).getByTestId('design-capacity')).toHaveTextContent('1,515.72');
     expect(screen.getByTestId('total-design-load')).toHaveTextContent('3,522');
 
@@ -288,13 +288,15 @@ describe('CapacityPage', () => {
     expect(days).toHaveAttribute('aria-checked', 'true');
     expect(cap()).toHaveTextContent('1,078.5');
     expect(booked()).toHaveTextContent('326.56%');
-    expect(booked()).toHaveTextContent('3,522 of 1,078.5 engineer-days');
+    // P30 (I19 rev.): YTD pairs the REMAINING demand (served days) with the remaining capacity
+    expect(booked()).toHaveTextContent('2,616 of 1,078.5 engineer-days');
 
     // 4. Weeks + YTD 2026
     await user.click(weeks);
     expect(screen.getByRole('radio', { name: 'YTD 2026' })).toHaveAttribute('aria-checked', 'true');
     expect(cap()).toHaveTextContent('179.75');
     expect(booked()).toHaveTextContent('326.56%');
+    expect(booked()).toHaveTextContent('436 of 179.75 engineer-wks');
     expect(screen.getByTestId('hub-summary-unit-note')).toHaveTextContent(/^Weeks\./);
   });
 

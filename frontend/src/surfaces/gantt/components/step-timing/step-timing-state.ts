@@ -8,6 +8,8 @@ export interface TimingChange {
   /** Served after-values, for the summary line. */
   effectiveDurationWeeks: number;
   durationOverrideWeeks: number | null;
+  /** P30: served `effort_weeks` (what a cleared user value falls back to). */
+  effortWeeks: number | null;
   startNotBeforeWeek: number | null;
 }
 
@@ -25,9 +27,13 @@ export type StepTimingFlowState =
   | ({ kind: 'updated' } & RunFields)
   | { kind: 'notice'; target: StepTimingTarget; tone: 'success' | 'warning' | 'danger'; title: string; body: string };
 
-/** "6 wks (lead-time table) · earliest start W40" — served values only. */
+/** "6 wks (lead-time table) · earliest start W40" — served values only.
+ *  P30 (ADR 0041 R4): with no user value the duration is the client effort
+ *  figure when the step has one, else the table. */
 export function timingChangeSummary(change: TimingChange): string {
-  const duration = `${String(change.effectiveDurationWeeks)} wks${change.durationOverrideWeeks === null ? ' (lead-time table)' : ''}`;
+  const source =
+    change.durationOverrideWeeks !== null ? '' : change.effortWeeks !== null ? ' (client effort)' : ' (lead-time table)';
+  const duration = `${String(change.effectiveDurationWeeks)} wks${source}`;
   const floor = change.startNotBeforeWeek === null ? 'no start floor' : `earliest start ${formatPlanWeek(change.startNotBeforeWeek)}`;
   return `${change.stepName}: ${duration} · ${floor}`;
 }

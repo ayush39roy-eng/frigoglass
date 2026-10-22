@@ -25,7 +25,7 @@ CapacityBasis = Literal["year", "remaining"]
 
 class DesignHubSummary(BaseModel):
     """One CAPACITY hub's design supply (ADR 0042: R&D-Greece, R&D-India,
-    PD-India, PD-Romania; R&D-Greece's supply serves OEM-HCK and OEM-Seltek
+    PD-India, PD-Romania; R&D-Greece's supply serves OEM-HCK and OEM-Seitek
     too). `capacity_weeks` equals `GET /capacity/hub-load`
     `design_capacity_year` / `design_capacity_remaining` of the same row."""
 
@@ -44,7 +44,7 @@ class DesignHubSummary(BaseModel):
     #: 2 dp; 0.0 when the total is 0. On served (2 dp) figures.
     share_pct: YearRemaining
     #: P29 (ADR 0042): the member hubs this supply also serves, in the
-    #: caller's scope, by name (`["OEM-HCK", "OEM-Seltek"]` on R&D-Greece; empty
+    #: caller's scope, by name (`["OEM-HCK", "OEM-Seitek"]` on R&D-Greece; empty
     #: elsewhere). The capacity hub itself is not listed.
     members: list[HubName]
     #: The global `hub_id` filter's hub when it resolves to this row (own or

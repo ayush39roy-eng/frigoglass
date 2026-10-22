@@ -29,6 +29,7 @@ from models.hub import HubWorkCalendar
 from models.priority import PriorityScore
 from models.project import Project
 from models.schedule import ScheduleRunProjectStep
+from models.workflow import ProjectWorkflowStep
 from services.priority_capacity_fill import compute_capacity_fill
 from services.priority_scoring import (
     P1_SCORE_THRESHOLD,
@@ -239,6 +240,15 @@ async def _project(db_session, hub, run, name, pct, weeks, *, pid=None, **overri
                 duration_weeks=weeks,
                 start_week=dc.CURRENT_WEEK,
                 end_week=dc.CURRENT_WEEK + weeks - 1,
+            )
+        )
+        # ADR 0041 R12 (P30): the fill's load is the REMAINING DEMAND of the
+        # live rows; mirror the run figure as a Not Started PDD-A row whose
+        # user override is `weeks`.
+        db_session.add(
+            ProjectWorkflowStep(
+                project_id=project.id, step_template_id="PDD-A", sequence_order=1,
+                duration_weeks=1, duration_override_weeks=weeks,
             )
         )
         await db_session.flush()

@@ -312,8 +312,9 @@ async def test_i23_filtered_figures_equal_unfiltered_per_hub_figures(db_session)
                 for s in p["steps"]
                 if not s["skipped"] and kinds.get(s["step_id"]) == "design"
             )
-            member_load = {m["hub"]: m["design_load_weeks"] for m in row["members"]}
-            assert gantt_design == member_load.get(name, row["design_load_weeks"]), name
+            # I23 rev. (ADR 0041): the Gantt sums to the run-BOOKED load.
+            member_load = {m["hub"]: m["design_load_booked_weeks"] for m in row["members"]}
+            assert gantt_design == member_load.get(name, row["design_load_booked_weeks"]), name
             assert sum(1 for p in gantt["rows"] if p["blocked"]) == within["blocked_count"]
             if projects_h:
                 checked_hubs += 1

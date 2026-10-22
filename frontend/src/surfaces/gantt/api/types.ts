@@ -46,10 +46,14 @@ export interface GanttStepRow {
   chamber_overlap: boolean;
   /** P12 contract §3 (reconciled with `backend/schemas/gantt.py`): the lead-time table value. */
   lead_time_weeks: number;
-  /** P12 contract §3, ADR 0019 (reconciled): this project's duration for the
-   *  step; null = the lead-time table applies. `duration_weeks` above is the
-   *  effective duration. */
+  /** P12 contract §3, ADR 0019 (reconciled); P30 (ADR 0041 R4): the USER's
+   *  duration for the step (Gantt / Workspace) only; null = none. `duration_weeks`
+   *  above is the effective duration (user ?? effort ?? lead). */
   duration_override_weeks: number | null;
+  /** P30 (API_CONTRACT_P30 §3, ADR 0041 R4): the step's share of the project's
+   *  client effort figure, server-derived (0..104; 0 = skipped by the split);
+   *  null = no effort split. Never a "timing edit". */
+  effort_weeks: number | null;
   /** P12 contract §3, ADR 0019 (reconciled): earliest start floor; null = none. */
   start_not_before_week: number | null;
   /** P12 contract §3 (reconciled): what the Gantt may do with this bar for the
@@ -194,8 +198,12 @@ export interface StepTimingResponse {
   step_id: string;
   duration_override_weeks: number | null;
   start_not_before_week: number | null;
-  /** `duration_override_weeks ?? lead time`, served. */
+  /** P30: `user ?? effort ?? lead`, served; 0 when skipped. */
   effective_duration_weeks: number;
+  /** P30 (API_CONTRACT_P30 §3): what "Reset timing" falls back to. */
+  effort_weeks: number | null;
+  /** P30: the lead-time table value. */
+  lead_time_weeks: number;
   recalc_status: 'queued' | 'deferred' | 'not_needed' | 'unchanged' | 'applied' | 'dispatch_failed';
   schedule_run_id: Id | null;
   baseline_run_id: Id | null;

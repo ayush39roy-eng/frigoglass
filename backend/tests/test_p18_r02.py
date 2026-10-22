@@ -225,10 +225,18 @@ async def _assert_estimate_before_equals_capacity(c) -> tuple[dict, dict]:
     rem = (await c.post("/whatif/estimate", json={"scenario": {}, "basis": "remaining"})).json()
     sim = (await c.post("/whatif/simulate", json={"scenario": {}})).json()
     assert year["design"] and year["lab"]
+    # ADR 0041 R12: the what-if "before" reconciles with the run-BOOKED load
+    # (`*_load_booked_weeks`); the Capacity page's own booked % is on demand
+    # (I19 rev.), so the expected figure is booked / capacity here.
+    def _pct(load: float, cap: float) -> float | None:
+        return None if cap == 0 else round(load / cap * 100, 2)
+
     for est, suffix in ((year, "year"), (rem, "remaining")):
         for d in est["design"]:
+            row = rows[d["hub"]]
             assert d["booked_pct_before"] == pytest.approx(
-                rows[d["hub"]][f"design_booked_pct_{suffix}"], abs=0.005
+                _pct(row["design_load_booked_weeks"], row[f"design_capacity_{suffix}"]),
+                abs=0.005,
             ), (d["hub"], suffix)
             assert d["capacity_before"] == pytest.approx(
                 rows[d["hub"]][f"design_capacity_{suffix}"], abs=0.005
@@ -238,9 +246,11 @@ async def _assert_estimate_before_equals_capacity(c) -> tuple[dict, dict]:
             assert region_rows
             for r in region_rows:
                 assert lab["booked_pct_before"] == pytest.approx(
-                    r[f"lab_booked_pct_{suffix}"], abs=0.005
+                    _pct(r["lab_load_booked_weeks"], r[f"lab_capacity_{suffix}"]), abs=0.005
                 ), (lab["lab_region"], suffix)
-                assert lab["baseline_load_weeks"] == pytest.approx(r["lab_load_weeks"], abs=0.005)
+                assert lab["baseline_load_weeks"] == pytest.approx(
+                    r["lab_load_booked_weeks"], abs=0.005
+                )
     # ... and simulate's utilization_before is the same single source.
     util = {(u["scope"], u["key"]): u for u in sim["utilization_before"]}
     for d in year["design"]:
@@ -282,7 +292,7 @@ async def test_estimate_before_equals_capacity_for_a_hub_planner_and_shared_lab(
     assert part_year["lab"][0] == pm_lab
     cap_pd = next(r for r in part_cap["rows"] if r["hub"] == "PD-India")
     cap_full_pd = next(r for r in full_cap["rows"] if r["hub"] == "PD-India")
-    assert cap_pd["lab_load_weeks"] == cap_full_pd["lab_load_weeks"] > 0
+    assert cap_pd["lab_load_booked_weeks"] == cap_full_pd["lab_load_booked_weeks"] > 0
 
 
 # --- D2b --------------------------------------------------------------------------------

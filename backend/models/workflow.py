@@ -28,7 +28,7 @@ if TYPE_CHECKING:
 class Workflow(TimestampMixin, Base):
     """One of the two workflows, per docs/DOMAIN_RULES.md "Workflow templates —
     two workflows, 14 steps each" (2026-09-27, ADR 0007): `PDD` for every
-    non-OEM hub, `OEM` for `OEM-HCK`/`OEM-Seltek`. A project's workflow is a
+    non-OEM hub, `OEM` for `OEM-HCK`/`OEM-Seitek`. A project's workflow is a
     function of its hub (`Hub.is_oem`) — see `models.project.workflow_id_for_hub`.
 
     Primary key is the literal workflow ID ("PDD"/"OEM"), for the same reason
@@ -214,10 +214,21 @@ class ProjectWorkflowStep(TimestampMixin, Base):
     blocked_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     # --- Step timing from the Gantt (docs/DOMAIN_RULES.md, ADR 0019) ---------
-    #: This project's duration for this step (1..104). Null = the lead-time
+    #: The USER's duration for this step (1..104; ADR 0019, unchanged by ADR
+    #: 0041 R4). Null = the derived effort (`effort_weeks`) or the lead-time
     #: table (`duration_weeks`) applies. Never revives a skipped step (table
     #: duration 0). A planner input: a schedule run never overwrites it.
     duration_override_weeks: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    #: ADR 0041 R4 (migration `p30a`): this step's share of the project's
+    #: typed effort figure (`Project.design_effort_weeks` / `lab_effort_weeks`),
+    #: 0..104, written only by `services.project_effort` (the exact split of
+    #: `scheduling.effort_split`). 0 skips the step. Null = no derived effort.
+    #: Effective duration = `duration_override_weeks ?? effort_weeks ??
+    #: duration_weeks` (lead), never reviving a lead-0 step or a lab step
+    #: without certification testing (`scheduling.step_effective_weeks`).
+    #: Separate from the user's override so a re-derivation never clears it
+    #: and "Reset timing" restores this value.
+    effort_weeks: Mapped[int | None] = mapped_column(Integer, nullable=True)
     #: A `Not Started` step may not start before this week (1..HORIZON_WEEKS).
     #: Null = no floor. A planner input: a schedule run never overwrites it.
     start_not_before_week: Mapped[int | None] = mapped_column(Integer, nullable=True)
@@ -284,6 +295,11 @@ class ProjectWorkflowStep(TimestampMixin, Base):
         CheckConstraint(
             "start_not_before_week IS NULL OR start_not_before_week BETWEEN 1 AND 78",
             name="start_not_before_range",
+        ),
+        # ADR 0041 R4 (migration p30a_effort_types_hub_rename).
+        CheckConstraint(
+            "effort_weeks IS NULL OR effort_weeks BETWEEN 0 AND 104",
+            name="effort_weeks_range",
         ),
     )
 

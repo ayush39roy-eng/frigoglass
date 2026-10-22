@@ -15,8 +15,8 @@ vi.mock('../../hooks/use-planning', () => ({
 import { ResourceLoadSection } from './resource-load-section';
 
 const HUBS = [
-  { id: 'hub-1', name: 'R&D-Greece' as const, lab_region: 'Greece' as const, is_oem: false },
-  { id: 'hub-2', name: 'PD-India' as const, lab_region: 'India' as const, is_oem: false },
+  { id: 'hub-1', name: 'R&D-Greece' as const, lab_region: 'Greece' as const, is_oem: false, capacity_hub_id: null, capacity_hub_name: null },
+  { id: 'hub-2', name: 'PD-India' as const, lab_region: 'India' as const, is_oem: false, capacity_hub_id: null, capacity_hub_name: null },
 ];
 
 const options: ResourceLoadOptionsResponse = {
@@ -39,8 +39,8 @@ const load: ResourceLoadResponse = {
   current_week: 42,
   basis: 'remaining',
   engineers: [
-    { engineer_id: 'e1', name: 'Ada', hub: 'R&D-Greece', weekdays_per_week: 5, capacity_weeks: 9.25, load_weeks: 12.5, utilization_pct: 135.14, capacity_days: 46.25, load_days: 62.5 },
-    { engineer_id: 'e2', name: 'Lokesh', hub: 'PD-India', weekdays_per_week: 6, capacity_weeks: 4.5, load_weeks: 2, utilization_pct: 44.44, capacity_days: 27, load_days: 12 },
+    { engineer_id: 'e1', name: 'Ada', hub: 'R&D-Greece', counts_in_capacity: true, weekdays_per_week: 5, capacity_weeks: 9.25, load_weeks: 12.5, utilization_pct: 135.14, capacity_days: 46.25, load_days: 62.5 },
+    { engineer_id: 'e2', name: 'Lokesh', hub: 'PD-India', counts_in_capacity: false, weekdays_per_week: 6, capacity_weeks: 4.5, load_weeks: 2, utilization_pct: 44.44, capacity_days: 27, load_days: 12 },
   ],
   chambers: [
     { chamber_id: 'c1', code: 'GR-CH1', lab_region: 'Greece', weekdays_per_week: 5, capacity_weeks: 1.71, load_weeks: 1, utilization_pct: 58.48, capacity_days: 8.55, load_days: 5 },
@@ -158,6 +158,8 @@ describe('ResourceLoadSection', () => {
   it('charts and tables show the served fields in the page unit, labelled "<name> (<hub>)"', () => {
     const { rerender } = renderWithProviders(<ResourceLoadSection basis="remaining" unit="weeks" hubs={HUBS} />);
     reveal();
+    // P30 (ADR 0041 R12): this load is the run-booked figure, not the Capacity page's demand.
+    expect(screen.getByTestId('resource-load')).toHaveTextContent('load = weeks booked by the active schedule');
     const eng = screen.getByRole('region', { name: /^Engineer load vs capacity \(/ });
     expect(within(eng).getByText('Ada (R&D-Greece)')).toBeInTheDocument();
     const ada = within(eng).getByTestId('load-row-e1');

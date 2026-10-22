@@ -262,8 +262,8 @@ def test_reset_schedule_succeeds_with_live_user_rows(db_url, monkeypatch):
     assert before["notifications"] == 1 and before["stage_checkins"] == 1
 
     counts = asyncio.run(seed_demo_data.run(reset_first=True, schedule=True))
-    assert counts["_verified_from_db"]["projects"] == 253
-    assert counts["schedule_run"]["projects"] == 253
+    assert counts["_verified_from_db"]["projects"] == 330
+    assert counts["schedule_run"]["projects"] == 330
     assert counts["reset_user_config"] == {
         "access_grants_kept": 1,
         "access_grants_dropped": 0,
@@ -295,8 +295,11 @@ def test_reset_schedule_succeeds_with_live_user_rows(db_url, monkeypatch):
     # P29 (ADR 0042 §7): each client_2026 seed appends one audit row per
     # provisional leader (17); the test's own row and the earlier seed's rows
     # are kept, never deleted.
-    assert before["audit"] == 1 + 17
-    assert after["audit"] == before["audit"] + 17
+    # ADR 0041: 20 provisional leaders on the 330-row dataset, plus one
+    # `project.effort_rederived`-free seed (the seed writes the split
+    # directly, no audit row per project).
+    assert before["audit"] == 1 + 20
+    assert after["audit"] == before["audit"] + 20
     assert after["user_hub_scopes"] == 1
     # Kept: user configuration, restored onto the same (uuid5) ids.
     assert after["grant_ids"] == {ids["grant_id"]}

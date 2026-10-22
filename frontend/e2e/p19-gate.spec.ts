@@ -203,8 +203,8 @@ test('Capacity: KPI cards, seven class cards first, two charts, hub tiles only, 
   expect(ys.charts).toBeLessThan(ys.tiles);
   expect(ys.tiles).toBeLessThan(ys.table);
   expect(ys.table).toBeLessThan(ys.engineers);
-  await expect(page.getByRole('heading', { name: 'Design Load vs Capacity by Hub' })).toBeVisible();
-  await expect(page.getByRole('heading', { name: 'Lab Load vs Capacity by Lab Region' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Design Demand vs Capacity by Hub' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Lab Demand vs Capacity by Lab Region' })).toBeVisible();
   const tiles = await page.getByTestId('booked-tiles').locator('[data-testid^="booked-hub-"]').evaluateAll((els) => els.map((e) => e.getAttribute('data-testid')));
   expect(tiles).toHaveLength(6);
   const strip = (await page.getByTestId('hub-booking-strip').innerText());
@@ -293,7 +293,7 @@ test('Capacity: Weeks/Days × YTD/Full year, every combination equals the API', 
       const dPct = hk === 'year' ? r.design_booked_pct_year : r.design_booked_pct_remaining;
       expect(num(await tr.getByTestId('design-capacity').innerText()), `${r.hub} design cap ${c.unit}/${c.horizon}`).toBeCloseTo(dCap, 1);
       expect(num(await tr.getByTestId('design-load').first().innerText()), `${r.hub} design load`).toBeCloseTo(dLoad, 1);
-      // Final gate: a hub with no engineers (OEM-Seltek in the real roster, ADR 0035) has no capacity, so its
+      // Final gate: a hub with no engineers (OEM-Seitek in the real roster, ADR 0035) has no capacity, so its
       // booked % is served null and shown without a number.
       if (dPct === null) expect(await tr.getByTestId('design-booked').innerText(), `${r.hub} design booked (null)`).not.toMatch(/\d/);
       else expect(num(await tr.getByTestId('design-booked').innerText()), `${r.hub} design booked`).toBeCloseTo(dPct, 1);
@@ -529,7 +529,7 @@ test('Capacity Planning roles: PM read-only, Executive Viewer no access, Hub Pla
   await hp.getByTestId('resource-load').scrollIntoViewIfNeeded();
   await settle(hp, 1200);
   const rlText = await hp.getByTestId('resource-load').innerText();
-  for (const other of ['(R&D-Greece)', '(R&D-India)', '(PD-Romania)', '(OEM-HCK)', '(OEM-Seltek)']) expect(rlText).not.toContain(other);
+  for (const other of ['(R&D-Greece)', '(R&D-India)', '(PD-Romania)', '(OEM-HCK)', '(OEM-Seitek)']) expect(rlText).not.toContain(other);
   await hp.close();
 });
 

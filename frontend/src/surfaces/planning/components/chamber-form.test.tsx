@@ -13,9 +13,9 @@ import { useWorkflowStepTemplates } from '@/lib/api/reference';
 import { ChamberFormDialog } from './chamber-form';
 
 const STEP_TEMPLATES = [
-  { id: 'PDD-A', name: 'Marketing Brief', kind: 'design' as const, base_weeks: 2 },
-  { id: 'PDD-F', name: 'Proof of Concept', kind: 'lab' as const, base_weeks: 3 },
-  { id: 'PDD-H', name: 'Certification', kind: 'lab' as const, base_weeks: 4 },
+  { id: 'PDD-A', workflow_id: 'PDD' as const, code: 'A', name: 'Marketing Brief', kind: 'design' as const, sequence_order: 1, predecessor_ids: [] },
+  { id: 'PDD-F', workflow_id: 'PDD' as const, code: 'F', name: 'Proof of Concept', kind: 'lab' as const, sequence_order: 6, predecessor_ids: ['PDD-E'] },
+  { id: 'PDD-H', workflow_id: 'PDD' as const, code: 'H', name: 'Certification', kind: 'lab' as const, sequence_order: 8, predecessor_ids: ['PDD-G'] },
 ];
 
 function mockStepTemplates() {

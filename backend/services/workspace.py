@@ -79,7 +79,11 @@ from services.scoring_rubric import (
     missing_keys,
     served_rubric_version,
 )
-from services.workflow_durations import effective_duration_weeks
+from services.workflow_durations import (
+    display_duration_weeks,
+    live_step_effective_weeks,
+    live_step_skipped,
+)
 
 COMMENT_EDIT_WINDOW = timedelta(minutes=15)
 ACTIVITY_DEFAULT_LIMIT = 50
@@ -93,11 +97,56 @@ _FINANCIAL_FIELDS = ("customer_name", "tcogs_eur", "selling_price_eur", "gross_m
 # --- Pure helpers ---------------------------------------------------------------------
 
 
-def is_step_skipped(duration: int, kind: WorkflowStepKind, cert_required: bool) -> bool:
-    """ADR 0007: a 0-week step, or a lab step on a project without
-    certification testing."""
+def is_step_skipped(
+    lead_weeks: int,
+    kind: WorkflowStepKind,
+    cert_required: bool,
+    *,
+    user_override_weeks: int | None,
+    effort_weeks: int | None,
+) -> bool:
+    """ADR 0041 R5, the one skip predicate (`scheduling.is_step_skipped`):
+    a lead-0 step, a lab step on a project without certification testing, or
+    a step whose effective duration (`user ?? effort ?? lead`, R4) is 0. Every
+    service-side caller passes the live row's three durations
+    (`row_is_skipped`)."""
 
-    return duration == 0 or (kind == WorkflowStepKind.LAB and not cert_required)
+    return live_step_skipped(
+        lead_weeks=lead_weeks,
+        kind=kind,
+        certification_testing_required=cert_required,
+        user_override_weeks=user_override_weeks,
+        effort_weeks=effort_weeks,
+    )
+
+
+def row_is_skipped(
+    row: ProjectWorkflowStep, kind: WorkflowStepKind, cert_required: bool
+) -> bool:
+    """`is_step_skipped` of a live `ProjectWorkflowStep` row."""
+
+    return is_step_skipped(
+        row.duration_weeks,
+        kind,
+        cert_required,
+        user_override_weeks=row.duration_override_weeks,
+        effort_weeks=row.effort_weeks,
+    )
+
+
+def row_effective_weeks(
+    row: ProjectWorkflowStep, kind: WorkflowStepKind, cert_required: bool
+) -> int:
+    """`eff(p, s)` of a live row (0 when skipped): the duration used as the
+    remaining-duration base and the roll-up weight (I12)."""
+
+    return live_step_effective_weeks(
+        lead_weeks=row.duration_weeks,
+        kind=kind,
+        certification_testing_required=cert_required,
+        user_override_weeks=row.duration_override_weeks,
+        effort_weeks=row.effort_weeks,
+    )
 
 
 def planned_span_weeks(duration_weeks: int, span_fte: float | None) -> int:
@@ -677,13 +726,17 @@ async def build_workspace(
         # the lead-time duration was used (remaining duration, roll-up weight).
         # An override never revives a skipped step (lead time 0, or a lab
         # step without certification testing).
-        lead_time = live.duration_weeks if live is not None else 0
-        duration = effective_duration_weeks(
-            lead_time,
-            live.duration_override_weeks if live is not None else None,
-            skipped=is_step_skipped(
-                lead_time, t.kind, project.certification_testing_required
-            ),
+        # ADR 0041 R4/R5: `user ?? effort ?? lead`; the one skip predicate.
+        duration = (
+            display_duration_weeks(
+                lead_weeks=live.duration_weeks,
+                kind=t.kind,
+                certification_testing_required=project.certification_testing_required,
+                user_override_weeks=live.duration_override_weeks,
+                effort_weeks=live.effort_weeks,
+            )
+            if live is not None
+            else 0
         )
         status_ = live.status if live is not None else WorkflowStepStatus.NOT_STARTED
         percent = live.percent_complete if live is not None else 0
@@ -691,7 +744,11 @@ async def build_workspace(
         skipped = (
             run_step.skipped
             if run_step is not None
-            else is_step_skipped(duration, t.kind, project.certification_testing_required)
+            else (
+                row_is_skipped(live, t.kind, project.certification_testing_required)
+                if live is not None
+                else True
+            )
         )
         stages.append(
             WorkspaceStage(
@@ -702,6 +759,11 @@ async def build_workspace(
                 sequence_order=t.sequence_order,
                 predecessor_ids=list(t.predecessor_ids or []),
                 duration_weeks=duration,
+                lead_time_weeks=live.duration_weeks if live is not None else 0,
+                duration_override_weeks=(
+                    live.duration_override_weeks if live is not None else None
+                ),
+                effort_weeks=live.effort_weeks if live is not None else None,
                 skipped=skipped,
                 planned_start_week=run_step.start_week if run_step is not None else None,
                 planned_end_week=run_step.end_week if run_step is not None else None,
@@ -739,13 +801,11 @@ async def build_workspace(
     progress = project_progress_pct(
         (
             r.percent_complete,
-            0
-            if is_step_skipped(
-                r.duration_weeks,
+            row_effective_weeks(
+                r,
                 kind_by_step.get(r.step_template_id, WorkflowStepKind.DESIGN),
                 project.certification_testing_required,
-            )
-            else effective_duration_weeks(r.duration_weeks, r.duration_override_weeks),
+            ),
         )
         for r in live_rows
     )

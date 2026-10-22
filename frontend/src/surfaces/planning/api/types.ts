@@ -37,7 +37,7 @@ export interface DesignHubSummary {
   /** This hub's share of the design total, 0-100, per basis. */
   share_pct: BasisPair;
   /** P29: member hubs in scope, by name, own hub NOT listed
-   *  (`["OEM-HCK","OEM-Seltek"]` on R&D-Greece, `[]` elsewhere). */
+   *  (`["OEM-HCK","OEM-Seitek"]` on R&D-Greece, `[]` elsewhere). */
   members: HubName[];
   /** P29: the request's `hub_id` when it is this hub or a member, else null. */
   selected_member: HubName | null;

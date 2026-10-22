@@ -55,7 +55,7 @@ function change(overrides: Partial<PriorityPreviewChange>): PriorityPreviewChang
 
 const CHANGES: PriorityPreviewChange[] = [
   change({ project_id: 'c1', name: 'Bar 250 R290', hub: 'PD-India', priority: 'P1', end_week_before: 50, end_week_after: 55, within_year_after: false }),
-  change({ project_id: 'c2', name: 'Super-16 for Kazakhstan', hub: 'OEM-Seltek', priority: 'P3', end_week_before: 30, end_week_after: 34 }),
+  change({ project_id: 'c2', name: 'Super-16 for Kazakhstan', hub: 'OEM-Seitek', priority: 'P3', end_week_before: 30, end_week_after: 34 }),
   change({ project_id: 'c3', name: 'IC3-450 B rating', hub: 'R&D-Greece', priority: 'P4', end_week_before: 60, end_week_after: 48, within_year_before: false, within_year_after: true }),
 ];
 

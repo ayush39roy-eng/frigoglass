@@ -72,6 +72,7 @@ function step(over: Partial<GanttStepRow> = {}): GanttStepRow {
     start_not_before_week: null,
     timing_editable: 'move_resize',
     span_fte: null,
+    effort_weeks: null,
     ...over,
   };
 }
@@ -111,6 +112,8 @@ function response(over: Partial<StepTimingResponse> = {}): StepTimingResponse {
     duration_override_weeks: null,
     start_not_before_week: 13,
     effective_duration_weeks: 4,
+    effort_weeks: null,
+    lead_time_weeks: 4,
     recalc_status: 'queued',
     schedule_run_id: 'run-2',
     baseline_run_id: 'run-1',
@@ -540,5 +543,87 @@ describe('P20 (ADR 0032): calendar weeks vs work weeks', () => {
     const dialog = await screen.findByTestId('step-timing-dialog');
     expect(within(dialog).getByLabelText('Duration (weeks)')).toHaveValue(4);
     expect(within(dialog).getByTestId('step-timing-weeks-note')).toHaveTextContent('not stretched by FTE');
+  });
+});
+
+describe('P30 (ADR 0041 R4): effort values are not timing edits', () => {
+  it('a step on its client effort figure has no "edited" marker, Reset is disabled, and the bar says "client effort"', async () => {
+    const user = userEvent.setup();
+    const { container } = renderChart(
+      project({ effort_weeks: 4, lead_time_weeks: 10, duration_weeks: 4, planned_start_week: 10, planned_end_week: 13 }),
+    );
+    expect(screen.queryByTestId('step-timing-edited')).not.toBeInTheDocument();
+    const titles = Array.from(container.querySelectorAll('title')).map((t) => t.textContent);
+    expect(titles).toContain('Prototype build · planned W10–W13 on the calendar · 4 wks of work (client effort)');
+    await user.click(screen.getByRole('button', { name: /Edit timing for Prototype build/ }));
+    const dialog = await screen.findByTestId('step-timing-dialog');
+    expect(within(dialog).getByRole('button', { name: 'Reset timing' })).toBeDisabled();
+    expect(dialog).toHaveTextContent('Lead-time table: 10 wks of work · client effort 4');
+    expect(dialog).not.toHaveTextContent('overridden to');
+  });
+
+  it('a user value over an effort value: the marker names both baselines, Reset falls back to the effort and sends nulls', async () => {
+    const user = userEvent.setup();
+    renderChart(project({ effort_weeks: 4, lead_time_weeks: 10, duration_override_weeks: 6, duration_weeks: 6 }));
+    expect(screen.getByTestId('step-timing-edited')).toHaveAttribute('title', 'Timing edited: work 6 wks (client effort 4, table 10)');
+    await user.click(screen.getByRole('button', { name: /Edit timing for Prototype build/ }));
+    const dialog = await screen.findByTestId('step-timing-dialog');
+    const reset = within(dialog).getByRole('button', { name: 'Reset timing' });
+    expect(reset).toBeEnabled();
+    expect(reset).toHaveAttribute('title', 'Clear your timing edit: the step goes back to the client effort figure (4 wks)');
+    expect(dialog).toHaveTextContent('client effort 4 · overridden to 6');
+    api.setStepTiming.mockResolvedValue(
+      response({ duration_override_weeks: null, start_not_before_week: null, effective_duration_weeks: 4, effort_weeks: 4, lead_time_weeks: 10 }),
+    );
+    await user.click(reset);
+    await waitFor(() =>
+      expect(api.setStepTiming).toHaveBeenCalledWith('p1', 'PDD-E', { duration_override_weeks: null, start_not_before_week: null }),
+    );
+    const panel = await screen.findByTestId('step-timing-panel');
+    await waitFor(() => expect(panel).toHaveTextContent('Prototype build: 4 wks (client effort) · no start floor'));
+  });
+
+  it('without an effort value Reset still names the lead-time table', async () => {
+    const user = userEvent.setup();
+    renderChart(project({ duration_override_weeks: 6, duration_weeks: 6, lead_time_weeks: 4 }));
+    await user.click(screen.getByRole('button', { name: /Edit timing for Prototype build/ }));
+    expect(within(await screen.findByTestId('step-timing-dialog')).getByRole('button', { name: 'Reset timing' })).toHaveAttribute(
+      'title',
+      'Clear your timing edit: the step goes back to the lead-time table (4 wks)',
+    );
+  });
+
+  it('409 STEP_SKIPPED on a step the effort split zeroed shows the effort message inline; nothing saved', async () => {
+    api.setStepTiming.mockRejectedValue(
+      new ApiError(409, 'Conflict', "Step PDD-D is skipped: its effort share is 0 weeks; nothing to time.", 'STEP_SKIPPED'),
+    );
+    renderChart(project({ effort_weeks: 0, lead_time_weeks: 1 }));
+    drag(screen.getByTestId('step-drag-body'), 200, 200 + 2 * WEEK_PX);
+    const notice = await screen.findByTestId('step-timing-notice');
+    expect(notice).toHaveTextContent("This step's share of the project's client effort figure is 0 weeks");
+    expect(notice).toHaveTextContent('Nothing was saved.');
+    expect(screen.queryByTestId('step-drag-ghost')).not.toBeInTheDocument();
+  });
+
+  it('a lead-0 STEP_SKIPPED keeps the generic copy', async () => {
+    api.setStepTiming.mockRejectedValue(new ApiError(409, 'Conflict', 'Step has no lead time.', 'STEP_SKIPPED'));
+    renderChart();
+    drag(screen.getByTestId('step-drag-body'), 200, 200 + 2 * WEEK_PX);
+    expect(await screen.findByTestId('step-timing-notice')).toHaveTextContent('This step is skipped for the project (0 weeks)');
+  });
+
+  it('a step skipped by the effort split says so on its name', () => {
+    renderChart(project({ skipped: true, effort_weeks: 0, lead_time_weeks: 1, timing_editable: 'none', duration_weeks: 0 }));
+    expect(screen.getByTestId('gantt-step-name')).toHaveAttribute(
+      'title',
+      "Prototype build — skipped: its share of the project's client effort figure is 0 weeks",
+    );
+  });
+
+  it('stepTimingTarget carries the served effort_weeks (absent on an older API → null)', () => {
+    expect(stepTimingTarget(project(), step({ effort_weeks: 3 })).effortWeeks).toBe(3);
+    const legacy = step() as Partial<GanttStepRow>;
+    delete legacy.effort_weeks;
+    expect(stepTimingTarget(project(), legacy as GanttStepRow).effortWeeks).toBeNull();
   });
 });

@@ -28,6 +28,8 @@ from sqlalchemy.engine import CursorResult
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import domain_constants as dc
+from scheduling.workflow import is_step_skipped as scheduling_is_step_skipped
+from scheduling.workflow import merged_step_override, step_effective_weeks
 
 # --- Lightweight table handles (no ORM dependency) ---------------------------
 
@@ -127,16 +129,98 @@ def duration_for(
     return lookup.get((workflow_id, category, step_id), 0)
 
 
-def effective_duration_weeks(
-    lead_time_weeks: int, duration_override_weeks: int | None, *, skipped: bool = False
+def _kind_value(kind: object) -> str:
+    value = getattr(kind, "value", kind)
+    return str(value)
+
+
+def live_step_effective_weeks(
+    *,
+    lead_weeks: int,
+    kind: object,
+    certification_testing_required: bool,
+    user_override_weeks: int | None,
+    effort_weeks: int | None,
 ) -> int:
-    """ADR 0019 §1: `duration_override_weeks ?? lead_time`, used everywhere the
-    lead-time duration was used (remaining duration, progress roll-up
-    weights). An override never revives a skipped step: a step whose table
-    duration is 0, or one the caller says is `skipped` (a lab step while the
-    project's `certification_testing_required` is false), keeps its
-    lead-time value and the override is ignored, as the scheduler does.
-    """
-    if skipped or lead_time_weeks == 0 or duration_override_weeks is None:
+    """ADR 0041 "Invariant wording" `eff(p, s)` of a live step row, through
+    the scheduler's own functions (never re-implemented here):
+
+        eff = 0                                lead = 0, or lab ∧ ¬cert
+        eff = user ?? effort ?? lead           otherwise (R4)
+
+    `lead_weeks` is the step's lead-time duration
+    (`ProjectWorkflowStep.duration_weeks`), `user_override_weeks` the user's
+    `duration_override_weeks` and `effort_weeks` the derived effort column.
+    This is the duration used everywhere the lead time was (remaining
+    duration, roll-up weights, demand load); 0 means skipped (R5)."""
+
+    return step_effective_weeks(
+        lead_weeks=lead_weeks,
+        kind=_kind_value(kind),
+        certification_testing_required=certification_testing_required,
+        override_weeks=merged_step_override(user_override_weeks, effort_weeks),
+    )
+
+
+def live_step_skipped(
+    *,
+    lead_weeks: int,
+    kind: object,
+    certification_testing_required: bool,
+    user_override_weeks: int | None,
+    effort_weeks: int | None,
+) -> bool:
+    """ADR 0041 R5, THE skip predicate (`scheduling.is_step_skipped`):
+    skipped ⟺ lead = 0 ∨ (lab ∧ ¬cert) ∨ effective = 0."""
+
+    return scheduling_is_step_skipped(
+        lead_weeks=lead_weeks,
+        kind=_kind_value(kind),
+        certification_testing_required=certification_testing_required,
+        override_weeks=merged_step_override(user_override_weeks, effort_weeks),
+    )
+
+
+def display_duration_weeks(
+    *,
+    lead_weeks: int,
+    kind: object,
+    certification_testing_required: bool,
+    user_override_weeks: int | None,
+    effort_weeks: int | None,
+) -> int:
+    """The duration a stage is shown with (Workspace / agent context): `eff`,
+    except that a lab step skipped only because certification testing is off
+    shows its lead-time value (overrides ignored, P12-F04, unchanged), so it
+    still reads as a planned length; a lead-0 step and an effort-zeroed step
+    show 0. Its `skipped` flag is served beside it."""
+
+    if _kind_value(kind) == "lab" and not certification_testing_required:
+        return lead_weeks
+    return live_step_effective_weeks(
+        lead_weeks=lead_weeks,
+        kind=kind,
+        certification_testing_required=certification_testing_required,
+        user_override_weeks=user_override_weeks,
+        effort_weeks=effort_weeks,
+    )
+
+
+def effective_duration_weeks(
+    lead_time_weeks: int,
+    duration_override_weeks: int | None,
+    *,
+    effort_weeks: int | None = None,
+    skipped: bool = False,
+) -> int:
+    """ADR 0019 §1 / ADR 0041 R4: `user ?? effort ?? lead_time` for a step
+    that is not skipped by its lead time; a lead-0 step (or one the caller
+    says is `skipped` for certification) keeps its lead-time value and the
+    overrides are ignored, as the scheduler does. Prefer
+    `live_step_effective_weeks`, which also applies the lab/certification
+    gate and answers 0 for every skipped step."""
+
+    if skipped or lead_time_weeks == 0:
         return lead_time_weeks
-    return duration_override_weeks
+    merged = merged_step_override(duration_override_weeks, effort_weeks)
+    return lead_time_weeks if merged is None else merged
