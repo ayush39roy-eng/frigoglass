@@ -105,6 +105,12 @@ column, and column `count`, `design_weeks` and `lab_weeks` are unchanged.
 `capacity_fill`, `capacity_fill_reason` are **new**, as §1. `priority_score` stays null for an
 unscored project.
 
+*(P27, security S26-L1:)* the Workspace serves `capacity_fill_reason` with its hub figures only when
+the project's hub is in the caller's scope **and** the caller can read the Matrix. Any other caller
+who can open the project (a project grant, an Engineer's own assignment) gets
+`"P1 (capacity fill)"` for a promoted project and `null` otherwise. `capacity_fill` and the bands
+are unchanged. The type is unchanged (`string | null`).
+
 **5c. `GET /exports/matrix` (CSV / XLSX, `Matrix` sheet)**:
 
 | Column | Meaning |

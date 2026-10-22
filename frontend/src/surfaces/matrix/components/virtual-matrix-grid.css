@@ -14,7 +14,8 @@
  *   block   3px  --color-border-strong  identity | info | scores | Score /100
  */
 
-.mg-scroll {
+.mg-scroll,
+.mg-pillar-scope {
   --mg-line-inner: hsl(var(--color-border) / 0.75);
   --mg-line-pillar: hsl(var(--color-border-strong));
   --mg-line-block: hsl(var(--color-border-strong));
@@ -24,7 +25,8 @@
   --mg-frozen-shadow: hsl(var(--slate-900) / 0.16);
 }
 
-.dark .mg-scroll {
+.dark .mg-scroll,
+.dark .mg-pillar-scope {
   --mg-tint: hsl(var(--color-primary) / 0.08);
   --mg-frozen-shadow: hsl(0 0% 0% / 0.55);
 }
@@ -121,8 +123,8 @@
 
 .mg-chip {
   display: inline-flex;
-  min-width: 1.625rem;
-  height: 1.5rem;
+  min-width: 1.5rem;
+  height: 1.375rem;
   align-items: center;
   justify-content: center;
   border-radius: var(--radius);
@@ -177,6 +179,23 @@
   border: 1px dotted hsl(var(--color-border-strong));
 }
 
+/* ---- P27 (ADR 0038): score pre-filled by a Registration "project nature" tag ----
+ * A small tag glyph on the chip's top-right corner; the words are in the cell's
+ * title and screen-reader text. Still edited through the score dialog. */
+
+.mg-chip-reg {
+  position: absolute;
+  top: -0.3rem;
+  right: -0.35rem;
+  width: 0.7rem;
+  height: 0.7rem;
+  padding: 1px;
+  border-radius: 9999px;
+  color: hsl(var(--color-primary));
+  background-color: hsl(var(--color-surface));
+  box-shadow: 0 0 0 1px hsl(var(--color-border-strong));
+}
+
 /* ---- P26: dimension headers are the served labels (any length): wrap, at most 3 lines ---- */
 
 .mg-dim-head {
@@ -184,7 +203,14 @@
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 3;
   overflow: hidden;
-  overflow-wrap: anywhere;
+  overflow-wrap: break-word;
   hyphens: auto;
   max-width: 100%;
+}
+
+/* A pillar band never spills into the next box (its columns are sized for its
+ * longest word; this is the fallback for an extreme name). */
+.mg-band {
+  overflow: hidden;
+  overflow-wrap: break-word;
 }

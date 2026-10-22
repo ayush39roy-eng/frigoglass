@@ -19,6 +19,7 @@ from httpx import ASGITransport, AsyncClient
 from sqlalchemy import func, select
 
 import api.routers.whatif as whatif_router
+import domain_constants as dc
 import services.whatif as whatif_service
 from api.db import get_db
 from api.main import app
@@ -289,8 +290,12 @@ async def test_simulate_adds_projects_and_matches_the_engine(db_session):
     assert body["diff"]["within_year_before"] == raw.diff.within_year_before
     assert body["diff"]["existing_within_year_after"] == raw.diff.existing_within_year_after
     assert [p["project_id"] for p in body["projects"]] == [p.project_id for p in raw.projects]
+    # P29-T06 (ADR 0042): the service serves capacity-hub rows only; the engine
+    # still emits a (zero) row per member hub, which is dropped.
     assert body["utilization_after"] == [
-        {k: getattr(u, k) for k in body["utilization_after"][0]} for u in raw.utilization_after
+        {k: getattr(u, k) for k in body["utilization_after"][0]}
+        for u in raw.utilization_after
+        if not (u.scope == "hub" and u.key in dc.HUB_CAPACITY_HUB)
     ]
     assert user is not None and world is not None
 

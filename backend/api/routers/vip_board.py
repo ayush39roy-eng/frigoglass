@@ -12,9 +12,10 @@ active run (`services.project_cards`, the same source as the Priority board
 and `GET /vip-projects`).
 
 **Writes**, `MATRIX` WRITE, every one audited (`vip_item.create|update|
-delete|link|unlink`; `is_vip` changes add `project.vip_pin|vip_unpin`).
-`is_vip` = linked to a highlighted item (yellow highlight = VIP); it is
-recomputed on link, unlink, delete and highlight toggle:
+delete|link|unlink`). *(ADR 0040, 2026-10-22, supersedes the ADR 0027
+amendment.)* Links are plain references: no write here sets or clears
+`projects.is_vip` (only `PUT /projects/{id}/vip` does), so the responses'
+`pinned_project_ids` / `unpinned_project_ids` are always empty:
 - `POST /vip-items`, `PATCH /vip-items/{id}`, `DELETE /vip-items/{id}`;
 - `PUT /vip-items/{id}/projects` replaces the item's links.
 
@@ -74,7 +75,6 @@ from services.vip_board import (
     AREA_ORDER,
     PILLAR_RANK,
     PILLARS,
-    recompute_is_vip,
     vip_area_for_hub,
 )
 
@@ -166,8 +166,7 @@ async def _in_scope_ids(
     db: AsyncSession, principal: Principal, ids: list[uuid.UUID]
 ) -> list[uuid.UUID]:
     """The subset of project ids inside the caller's hub scope (P14-R01 S2).
-    Writes and the `is_vip` recompute use every id; only responses are
-    filtered.
+    Writes use every id; only responses are filtered.
     """
 
     if not ids:
@@ -301,6 +300,19 @@ async def get_vip_board(
         projects = {p.id: p for p in (await db.execute(stmt)).scalars().all()}
     cards = await build_project_cards(db, list(projects.values()), active_run)
 
+    # ADR 0040: pinned VIP projects per hub, same scope as the links above.
+    pinned_by_hub: dict[uuid.UUID, int] = {}
+    if visible_hubs:
+        pin_stmt = (
+            select(Project.hub_id, func.count())
+            .where(Project.is_vip.is_(True), Project.hub_id.in_(list(visible_hubs)))
+            .group_by(Project.hub_id)
+        )
+        pin_scope = hub_scope_filter(current_user, Project.hub_id)
+        if pin_scope is not None:
+            pin_stmt = pin_stmt.where(pin_scope)
+        pinned_by_hub = {hid: n for hid, n in (await db.execute(pin_stmt)).all()}
+
     def project_row(project: Project) -> VipBoardProject:
         card = cards[project.id]
         return VipBoardProject(
@@ -372,6 +384,9 @@ async def get_vip_board(
                     1 for i in area_items if i.status_tag == VipStatusTag.HIGH_RISK
                 ),
                 linked_project_count=len(area_project_ids),
+                vip_project_count=sum(
+                    pinned_by_hub.get(h.id, 0) for h in hubs if vip_area_for_hub(h) == area
+                ),
                 vip_items=vip_items,
                 items=item_rows,
             )
@@ -486,8 +501,6 @@ async def update_vip_item(
     after = _item_state(item)
     if after != before:
         _audit(db, current_user, "vip_item.update", item.id, before, after)
-    if after["highlighted"] != before["highlighted"]:
-        await recompute_is_vip(db, await _linked_ids(db, [item.id]), current_user.user_id)
     await db.commit()
     return await _item_response(db, item, current_user)
 
@@ -510,12 +523,9 @@ async def delete_vip_item(
     for gone in [*item.children, item]:
         db.expunge(gone)
     _audit(db, current_user, "vip_item.delete", item_id, before, None)
-    changed = await recompute_is_vip(db, linked, current_user.user_id)
     await db.commit()
     return VipItemDeleteResponse(
-        id=item_id,
-        deleted_item_count=len(ids),
-        unpinned_project_ids=await _in_scope_ids(db, current_user, changed["unpinned"]),
+        id=item_id, deleted_item_count=len(ids), unpinned_project_ids=[]
     )
 
 
@@ -593,12 +603,11 @@ async def set_vip_item_projects(
             {"project_ids": sorted(str(p) for p in current)},
             {"removed_project_ids": [str(p) for p in removed]},
         )
-    changed = await recompute_is_vip(db, [*added, *removed], current_user.user_id)
     await db.commit()
     return VipItemLinksResponse(
         item=await _item_response(db, item, current_user),
         added_project_ids=await _in_scope_ids(db, current_user, added),
         removed_project_ids=await _in_scope_ids(db, current_user, removed),
-        pinned_project_ids=await _in_scope_ids(db, current_user, changed["pinned"]),
-        unpinned_project_ids=await _in_scope_ids(db, current_user, changed["unpinned"]),
+        pinned_project_ids=[],
+        unpinned_project_ids=[],
     )

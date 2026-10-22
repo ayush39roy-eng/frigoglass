@@ -15,8 +15,14 @@ export class DashboardPage {
     return this.page.getByRole('heading', { name: 'Completing within the year' });
   }
 
-  pipelineSection() {
-    return this.page.getByRole('heading', { name: 'Completion outcome' });
+  /** The "Completion outcome" donut was removed (2026-10-22); the profile replaces it. */
+  completionProfileSection() {
+    return this.page.getByRole('heading', { name: 'Completion profile' });
+  }
+
+  /** P23-T03: the Dashboard "Capacity booked" card was removed (it lives on RPD Capacity, per hub). */
+  capacityBookedHeading() {
+    return this.page.getByRole('heading', { name: 'Capacity booked' });
   }
 
   statusOverviewSection() {
@@ -39,5 +45,59 @@ export class DashboardPage {
 
   drilldownDialog() {
     return this.page.getByTestId('hub-type-drilldown');
+  }
+
+  // ---- P28 Executive view (ADR 0039) ----
+
+  /** Deep link straight into the Executive view. */
+  async gotoExecutive(): Promise<void> {
+    await this.page.goto('/?view=executive');
+  }
+
+  /** The header's Executive | Detailed radiogroup. */
+  viewToggle() {
+    return this.page.getByTestId('dashboard-view-toggle');
+  }
+
+  viewToggleOption(view: 'executive' | 'detailed') {
+    return this.page.getByTestId(`dashboard-view-${view}`);
+  }
+
+  executiveView() {
+    return this.page.getByTestId('executive-view');
+  }
+
+  /** One KPI tile: scheduled | within-year | spillover | left-out | blocked | vip | pipeline. */
+  executiveKpi(tile: 'scheduled' | 'within-year' | 'spillover' | 'left-out' | 'blocked' | 'vip' | 'pipeline') {
+    return this.page.getByTestId(`exec-kpi-${tile}`);
+  }
+
+  pipelineDonut() {
+    return this.page.getByTestId('exec-pipeline-donut');
+  }
+
+  statusDonut() {
+    return this.page.getByTestId('exec-status-donut');
+  }
+
+  /** The "Projects by type" bar list. */
+  projectsByTypeChart() {
+    return this.page.getByTestId('exec-type-chart');
+  }
+
+  priorityDeliveryChart() {
+    return this.page.getByTestId('exec-priority-delivery');
+  }
+
+  risksCard() {
+    return this.page.getByTestId('exec-risks-card');
+  }
+
+  riskRows() {
+    return this.page.getByTestId('exec-risk-row');
+  }
+
+  hubsGlance() {
+    return this.page.getByTestId('exec-hubs-card');
   }
 }

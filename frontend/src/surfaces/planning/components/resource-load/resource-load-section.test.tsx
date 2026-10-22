@@ -203,6 +203,28 @@ describe('ResourceLoadSection', () => {
     expect(within(eng).getByRole('columnheader', { name: /^Engineer/ })).toHaveAttribute('aria-sort', 'ascending');
   });
 
+  it.each([
+    ['Type', 'Type filter options'],
+    ['Status', 'Status filter options'],
+    ['Dept', 'Department filter options'],
+    ['Cat', 'Category filter options'],
+    ['Engineer', 'Engineer filter options'],
+  ])('QA-F24-1: the %s filter popover is a dialog with an accessible name (axe clean while open)', async (label, name) => {
+    const user = userEvent.setup();
+    hooks.useResourceLoadOptions.mockReturnValue({
+      data: { ...options, requesting_departments: ['Marketing', 'Sales'], requesting_department_available: true },
+      isPending: false,
+    });
+    renderWithProviders(<ResourceLoadSection basis="remaining" unit="weeks" hubs={HUBS} />);
+    reveal();
+    await user.click(screen.getByRole('button', { name: `${label} filter: All` }));
+    const dialog = await screen.findByRole('dialog', { name });
+    expect(within(dialog).getAllByRole('checkbox').length).toBeGreaterThan(0);
+    expect(await seriousAxeViolations(document.body)).toEqual([]);
+    await user.keyboard('{Escape}');
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+  });
+
   it('has no serious axe violations', async () => {
     const { container } = renderWithProviders(<ResourceLoadSection basis="remaining" unit="weeks" hubs={HUBS} />);
     reveal();

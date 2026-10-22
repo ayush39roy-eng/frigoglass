@@ -25,6 +25,24 @@ export class MatrixPage {
     return this.page.getByRole('combobox', { name: `${dimension} score for ${projectName}` });
   }
 
+  /** P26-T03: the "Scoring scale and dimensions" card, the only place the rubric is read and edited. */
+  rubricCard(): Locator {
+    return this.page.getByTestId('scoring-rubric-card');
+  }
+
+  /** Shown only for the served `can_edit` (Admin / Super Admin). */
+  rubricEditButton(): Locator {
+    return this.rubricCard().getByRole('button', { name: 'Edit rubric' });
+  }
+
+  rubricHistoryButton(): Locator {
+    return this.rubricCard().getByRole('button', { name: 'Rubric version history' });
+  }
+
+  rubricHistoryDialog(): Locator {
+    return this.page.getByRole('dialog', { name: 'Rubric version history' });
+  }
+
   heading() {
     return this.page.getByRole('heading', { name: 'Prioritization Matrix' });
   }
@@ -85,5 +103,10 @@ export class MatrixPage {
 
   scoreEditDialog() {
     return this.page.getByRole('dialog', { name: 'Edit prioritization score' });
+  }
+
+  /** P27 (ADR 0038): "from registration" marks on tag-filled score chips in the grid. */
+  fromRegistrationMarks(): Locator {
+    return this.page.getByTestId('from-registration-mark');
   }
 }

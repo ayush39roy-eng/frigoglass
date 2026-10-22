@@ -163,7 +163,21 @@ async def test_out_of_scope_hub_gives_zeros_not_403_and_own_hub_equals_unfiltere
     async with _client(db_session) as client:
         for path in FILTERED_PATHS:
             _zeroed(path, await _get(client, path, hub_id=india.id))
-            assert await _get(client, path, hub_id=greece.id) == await _get(client, path), path
+            filtered = _without_selected_member(await _get(client, path, hub_id=greece.id))
+            assert filtered == _without_selected_member(await _get(client, path)), path
+
+
+def _without_selected_member(body):
+    """P29 (ADR 0042): a capacity row names the filtered hub in `selected_member`
+    (null unfiltered); every other figure is identical."""
+
+    if isinstance(body, dict) and isinstance(body.get("rows"), list):
+        rows = [
+            {k: v for k, v in r.items() if k != "selected_member"} if isinstance(r, dict) else r
+            for r in body["rows"]
+        ]
+        return {**body, "rows": rows}
+    return body
 
 
 async def test_unknown_hub_gives_zeros_for_an_all_hubs_reader(db_session):
@@ -268,11 +282,21 @@ async def test_i23_filtered_figures_equal_unfiltered_per_hub_figures(db_session)
             assert filtered_projects["total_count"] == len(projects_h)
 
             # Capacity: exactly the unfiltered row; one area; lab region-wide.
+            # P29 (ADR 0042): the row is the CAPACITY hub's (an OEM hub selects
+            # R&D-Greece's), identical but for `selected_member`.
+            capacity_name = dc.capacity_hub_name(name)
             capacity = await _get(client, "/capacity/hubs", hub_id=hub.id)
             (row,) = capacity["rows"]
-            assert row == next(r for r in all_capacity["rows"] if r["hub"] == name)
+            assert row["hub"] == capacity_name and row["selected_member"] == name
+            assert {k: v for k, v in row.items() if k != "selected_member"} == {
+                k: v
+                for k, v in next(
+                    r for r in all_capacity["rows"] if r["hub"] == capacity_name
+                ).items()
+                if k != "selected_member"
+            }
             (area,) = capacity["areas"]
-            assert area["area"] == row["area"] and area["hubs"] == [name]
+            assert area["area"] == row["area"] and area["hubs"] == [capacity_name]
             assert area["lab_regions"] == [row["lab_region"]]
             assert area["design_load_weeks"] == row["design_load_weeks"]
             assert area["design_capacity_year"] == row["design_capacity_year"]
@@ -288,7 +312,8 @@ async def test_i23_filtered_figures_equal_unfiltered_per_hub_figures(db_session)
                 for s in p["steps"]
                 if not s["skipped"] and kinds.get(s["step_id"]) == "design"
             )
-            assert gantt_design == row["design_load_weeks"], name
+            member_load = {m["hub"]: m["design_load_weeks"] for m in row["members"]}
+            assert gantt_design == member_load.get(name, row["design_load_weeks"]), name
             assert sum(1 for p in gantt["rows"] if p["blocked"]) == within["blocked_count"]
             if projects_h:
                 checked_hubs += 1

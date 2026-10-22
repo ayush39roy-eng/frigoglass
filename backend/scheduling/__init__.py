@@ -3,7 +3,9 @@
 Owned exclusively by `algorithm-engineer`. Rules enforced here are exactly
 `docs/DOMAIN_RULES.md`'s "Scheduling order", "Precedence", "Booking rules",
 "Per-stage progress capture", "Expected vs projected completion", "Step
-timing from the Gantt" and Invariants I1-I17, I21-I22 (`whatif.py`, P18: pure
+timing from the Gantt" and Invariants I1-I17, I21-I22, I25-I26 (ADR 0041:
+`effort_split.py` apportions a per-project effort figure, `demand.py` checks
+demand and the split over live rows) (`whatif.py`, P18: pure
 what-if planning on top of the greedy SGS) — implemented from that
 document directly. The prototype
 oracle was retired at P2 close.
@@ -19,7 +21,9 @@ Purity contract:
 
 This package imports `backend/domain_constants.py` (pure data) for
 `CURRENT_WEEK`, `HORIZON_WEEKS`, `WITHIN_YEAR_WEEK`, `PRIORITY_ORDER`,
-`SCHEDULABLE_STATUS_ORDER`, `HUB_LAB_REGION` and `OEM_HUBS` only. The workflow
+`SCHEDULABLE_STATUS_ORDER`, `HUB_LAB_REGION` and `OEM_HUBS` only (the last two
+through `scheduling.hubs`, which accepts both spellings of the renamed
+`OEM-Seltek` / `OEM-Seitek` hub, ADR 0041 §4). The workflow
 templates, the lead-time table, the category rank and the lab-consumption
 factor are defined in `scheduling.types` (transcribed from DOMAIN_RULES.md).
 `scheduling.cp_sat` additionally imports `ortools.sat.python.cp_model`.
@@ -28,12 +32,36 @@ factor are defined in `scheduling.types` (transcribed from DOMAIN_RULES.md).
 from __future__ import annotations
 
 from scheduling.cp_sat import CpSatSolveInfo, run_cp_sat
+from scheduling.demand import (
+    DemandLoad,
+    LiveProjectRow,
+    LiveStepRow,
+    ServedDesignLoad,
+    ServedLabLoad,
+    check_i25_demand,
+    check_i26_effort_split,
+    compute_demand_load,
+)
+from scheduling.effort_split import (
+    EffortSplit,
+    EffortSplitRejected,
+    EffortStepInput,
+    ProjectEffortDerivation,
+    apportion_effort,
+    derive_project_effort,
+    effort_target_weeks,
+    round_half_up,
+)
 from scheduling.greedy import run_greedy_sgs
+from scheduling.hubs import canonical_hub_name
 from scheduling.invariants import (
+    CrossCapacityHubLeader,
     InvariantViolation,
     check_scheduler_determinism,
+    compute_design_load_by_capacity_hub,
     compute_design_load_by_hub,
     compute_lab_load_by_hub,
+    cross_capacity_hub_leaders,
     validate_invariants,
 )
 from scheduling.monte_carlo import (
@@ -96,6 +124,8 @@ from scheduling.whatif import (
     validate_scenario_limits,
 )
 from scheduling.workflow import (
+    STEP_DURATION_MAX_WEEKS,
+    STEP_DURATION_MIN_WEEKS,
     ProjectPlan,
     analyse_project,
     build_lead_time_table,
@@ -104,8 +134,11 @@ from scheduling.workflow import (
     compute_progress_pct,
     derive_remaining,
     fte_span,
+    is_step_skipped,
     is_valid_fte,
+    merged_step_override,
     project_progress_pct,
+    step_effective_weeks,
     unconstrained_end_week,
 )
 
@@ -164,8 +197,11 @@ __all__ = [
     "canonical_step_timing",
     "check_scheduler_determinism",
     "compare_solvers",
+    "CrossCapacityHubLeader",
+    "compute_design_load_by_capacity_hub",
     "compute_design_load_by_hub",
     "compute_lab_load_by_hub",
+    "cross_capacity_hub_leaders",
     "compute_progress_pct",
     "default_lead_times",
     "default_workflow_templates",
@@ -180,4 +216,27 @@ __all__ = [
     "run_greedy_sgs",
     "unconstrained_end_week",
     "validate_invariants",
+    # ADR 0041 (P30-T01)
+    "STEP_DURATION_MAX_WEEKS",
+    "STEP_DURATION_MIN_WEEKS",
+    "DemandLoad",
+    "EffortSplit",
+    "EffortSplitRejected",
+    "EffortStepInput",
+    "LiveProjectRow",
+    "LiveStepRow",
+    "ProjectEffortDerivation",
+    "ServedDesignLoad",
+    "ServedLabLoad",
+    "apportion_effort",
+    "canonical_hub_name",
+    "check_i25_demand",
+    "check_i26_effort_split",
+    "compute_demand_load",
+    "derive_project_effort",
+    "effort_target_weeks",
+    "is_step_skipped",
+    "merged_step_override",
+    "round_half_up",
+    "step_effective_weeks",
 ]

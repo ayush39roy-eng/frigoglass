@@ -27,6 +27,7 @@ from models.enums import (
     ProjectPriority,
     ProjectStatus,
     ProjectType,
+    ScoringTag,
 )
 
 
@@ -180,9 +181,18 @@ class PriorityMatrixRow(BaseModel):
     #: ADR 0037: the rubric version the score was computed with (the current
     #: one: a rubric change recomputes every score in the same transaction).
     rubric_version: int
+    #: ADR 0038 (P27): the project's Registration "project nature" tags.
+    scoring_tags: list[ScoringTag]
+    #: ADR 0038: dimension keys backed by those tags (show "from registration"
+    #: on these `dimension_scores` entries; the score stays editable).
+    tag_dimension_keys: list[str]
 
     is_new_model: bool
     is_rm_saving_project: bool
+    #: ADR 0027: the VIP pin (`projects.is_vip`), set by `PUT /projects/{id}/vip`.
+    #: Served so the Matrix can show, filter and float VIP projects (owner ask
+    #: 2026-10-22).
+    is_vip: bool
 
     #: Financial columns, converted to `currency` (the query param the grid
     #: endpoint was called with). `gross_margin_pct` is a percentage, never
@@ -288,16 +298,24 @@ class HubP1Fill(BaseModel):
       (`<= capacity_weeks` whenever `promoted_count > 0`).
     """
 
+    #: P29 (ADR 0042): the CAPACITY hub. R&D-Greece's walk covers its own,
+    #: OEM-HCK's and OEM-Seltek's projects as one set.
     hub: HubName
     capacity_weeks: float
     base_load_weeks: float
     filled_load_weeks: float
     promoted_count: int
+    #: P29: the member hubs of this capacity hub in the caller's scope, by
+    #: name (`["OEM-HCK", "OEM-Seltek"]` on R&D-Greece, empty elsewhere).
+    members: list[HubName]
+    #: P29: the `hub_id` filter's hub when it resolves to this entry.
+    selected_member: HubName | None
 
 
 class PriorityCapacityFill(BaseModel):
-    """`GET /priorities/capacity-fill`: the P1 capacity fill of every hub in the
-    caller's scope (narrowed by `hub_id` / `region`), ordered by hub name."""
+    """`GET /priorities/capacity-fill`: the P1 capacity fill of every CAPACITY
+    hub with a hub in the caller's scope (narrowed by `hub_id` / `region`; an
+    OEM hub selects R&D-Greece, ADR 0042), ordered by hub name."""
 
     has_active_schedule_run: bool
     schedule_run_version: int | None

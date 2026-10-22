@@ -45,6 +45,11 @@ const hooks = {
   usePriorityCompare: vi.fn(),
   usePriorityEditRows: vi.fn<(ids: string[], enabled: boolean) => unknown[]>(() => []),
   usePriorityCapacityFill: vi.fn<(hubId: string | null, region: string | null) => unknown>(() => ({ data: undefined, isPending: true, isError: false })),
+  // P26-T03: the "Scoring scale and dimensions" card reads and edits the rubric.
+  useScoringRubric: vi.fn<(enabled: boolean) => unknown>(() => ({ data: undefined, isPending: true, isError: false, error: null, refetch: vi.fn() })),
+  useScoringRubricVersions: vi.fn<(enabled: boolean) => unknown>(() => ({ data: undefined, isPending: true, isError: false, error: null, refetch: vi.fn() })),
+  usePreviewScoringRubric: vi.fn(() => ({ mutateAsync: vi.fn(), isPending: false })),
+  useSaveScoringRubric: vi.fn(() => ({ mutateAsync: vi.fn(), isPending: false })),
 };
 vi.mock('./hooks/use-matrix', () => ({
   usePriorityMatrix: (args: unknown) => hooks.usePriorityMatrix(args),
@@ -61,11 +66,20 @@ vi.mock('./hooks/use-matrix', () => ({
   usePriorityCompare: (ids: string[], enabled: boolean) => hooks.usePriorityCompare(ids, enabled),
   usePriorityEditRows: (ids: string[], enabled: boolean) => hooks.usePriorityEditRows(ids, enabled),
   usePriorityCapacityFill: (hubId: string | null, region: string | null) => hooks.usePriorityCapacityFill(hubId, region),
+  useScoringRubric: (enabled: boolean) => hooks.useScoringRubric(enabled),
+  useScoringRubricVersions: (enabled: boolean) => hooks.useScoringRubricVersions(enabled),
+  usePreviewScoringRubric: () => hooks.usePreviewScoringRubric(),
+  useSaveScoringRubric: () => hooks.useSaveScoringRubric(),
 }));
 vi.mock('@/lib/api/reference', () => ({ useHubs: () => ({ data: [] }) }));
+const vipPin = vi.hoisted(() => ({ mutate: vi.fn(), isPending: false, isError: false }));
+vi.mock('@/lib/api/vip', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/api/vip')>()),
+  useSetProjectVip: () => vipPin,
+}));
 
 import MatrixPage from './MatrixPage';
-import { P13_MATRIX_ROW_DEFAULTS, P25_FILL_DEFAULTS } from './test-fixtures';
+import { P13_MATRIX_ROW_DEFAULTS, P25_FILL_DEFAULTS, testDimensionScores, testRubric } from './test-fixtures';
 
 const pending = { data: undefined, isPending: true, isError: false, error: null, refetch: vi.fn() };
 function ready<T>(data: T) {
@@ -89,14 +103,16 @@ const summary: PriorityPortfolioSummary = {
 const scoredRow: PriorityMatrixRow = {
   project_id: 'p1', project_name: 'Cooler A', hub: 'R&D-Greece', category: 'A+', type: 'NM',
   set_priority: 'P2', has_score: true,
-  strategic_project: 5, new_customer: 4, new_options: 3, regulatory_compliance: 2,
-  quality_improvements: 3, rm_savings: 4, total_rm_savings: 3, gross_margins: 3,
-  profitability: 4, annual_volume: 3, three_year_volume: 3, new_models: 2, capex_investment: 4,
   hard_gates: [], weighted_score: 980, normalized_pct: 70, suggested_band: 'P1',
   is_new_model: true, is_rm_saving_project: true,
   currency: 'EUR', capex_keur: 120, rm_savings_keur: 40, tcogs_eur: 5000,
   selling_price_eur: 8000, gross_margin_pct: 37.5,
   ...P13_MATRIX_ROW_DEFAULTS,
+  dimension_scores: testDimensionScores({
+    strategic_project: 5, new_customer: 4, new_options: 3, regulatory_compliance: 2,
+    quality_improvements: 3, rm_savings: 4, total_rm_savings: 3, gross_margins: 3,
+    profitability: 4, annual_volume: 3, three_year_volume: 3, new_models: 2, capex_investment: 4,
+  }),
 };
 
 const currencies: CurrencyOption[] = [
@@ -178,7 +194,7 @@ describe('MatrixPage', () => {
   });
 
   it('P16: renders Total: 100 (scaled from <served total_weight>)', () => {
-    hooks.useScoringDimensions.mockReturnValue({ data: { total_weight: 295, dimensions: [] } });
+    hooks.useScoringDimensions.mockReturnValue({ data: { total_weight: 295, rubric_version: 1, dimensions: [] } });
     hooks.usePriorityMatrix.mockReturnValue(ready([scoredRow]));
     hooks.usePrioritySummary.mockReturnValue(ready(summary));
     renderWithProviders(<MatrixPage />);
@@ -211,7 +227,10 @@ describe('MatrixPage', () => {
         'ZAR · South African rand',
         'IDR · Indonesian rupiah',
       ]);
-      expect(within(group).getByText('EGP · Egyptian pound')).toBeInTheDocument();
+      // Owner ask 2026-10-22: the visible label is the code; the full name stays the
+      // accessible name and the hover title of a configured option.
+      expect(within(group).getByText('EGP')).toBeInTheDocument();
+      expect(within(group).getByRole('radio', { name: 'USD · US dollar' })).toHaveAttribute('title', 'USD · US dollar');
     });
 
     it('a currency with configured=false is disabled, explains why, and is never requested', async () => {
@@ -291,7 +310,7 @@ describe('MatrixPage', () => {
   });
 
   describe('P21 chart row', () => {
-    it('renders the served band distribution (counts and shares) and the score histogram', () => {
+    it('renders only the served band distribution (counts and shares)', () => {
       hooks.usePriorityMatrix.mockReturnValue(ready([scoredRow]));
       hooks.usePrioritySummary.mockReturnValue(ready(summary));
       renderWithProviders(<MatrixPage />);
@@ -303,10 +322,10 @@ describe('MatrixPage', () => {
       expect(within(dist).getByTestId('band-legend-Unscored')).toHaveTextContent('Unscored3(30%)');
       // Q is a committed priority, never a score band: muted and not a filter button.
       expect(within(dist).getByTestId('band-legend-Q').tagName).toBe('SPAN');
-      const hist = screen.getByTestId('score-histogram');
-      const table = within(hist).getByRole('table');
-      expect(within(table).getByRole('row', { name: '70–80 3' })).toBeInTheDocument();
-      expect(within(table).getAllByRole('row')).toHaveLength(11);
+      // Owner ask 2026-10-22: the histogram, the decision summary and the capacity-fill panel are gone.
+      expect(screen.queryByTestId('score-histogram')).not.toBeInTheDocument();
+      expect(screen.queryByText('Portfolio decision summary')).not.toBeInTheDocument();
+      expect(screen.queryByTestId('capacity-fill-panel')).not.toBeInTheDocument();
     });
 
     it('the distribution follows the server filters', async () => {
@@ -457,16 +476,33 @@ describe('MatrixPage', () => {
     expect(screen.getByTestId('matrix-row-count')).toHaveTextContent('1 of 2 projects shown');
     expect(screen.getByText('Filled Cooler')).toBeInTheDocument();
     expect(screen.queryByText('Plain Cooler')).not.toBeInTheDocument();
-    expect(screen.getByTestId('band-chip-capacity-fill')).toHaveTextContent('P1 · capacity fill');
+    // The grid's narrow cell shows the dense chip ("P1"); the full label is the accessible name.
+    expect(screen.getByTestId('band-chip-capacity-fill')).toHaveTextContent('P1');
+    expect(screen.getByRole('button', { name: 'Suggested band P1 by capacity fill, score band P2' })).toBeInTheDocument();
     await user.click(chip);
     expect(screen.getByTestId('matrix-row-count')).toHaveTextContent('2 projects');
   });
 
-  it('shows the hard-gate forced-to-P1 count from the summary', () => {
-    hooks.usePriorityMatrix.mockReturnValue(ready([scoredRow]));
+  it('floats VIP projects to the top, filters to them and pins from the star (owner ask 2026-10-22)', async () => {
+    const user = userEvent.setup();
+    const vip: PriorityMatrixRow = { ...scoredRow, project_id: 'p9', project_name: 'Cooler VIP', rank: 9, is_vip: true };
+    const plain: PriorityMatrixRow = { ...scoredRow, rank: 1, is_vip: false };
+    hooks.usePriorityMatrix.mockReturnValue(ready([plain, vip]));
     hooks.usePrioritySummary.mockReturnValue(ready(summary));
     renderWithProviders(<MatrixPage />);
-    expect(screen.getByText('Hard-gate forced to P1')).toBeInTheDocument();
+
+    const names = (): string[] =>
+      screen.getAllByRole('link', { name: /^Cooler/ }).map((a) => a.textContent ?? '');
+    // VIP first despite its lower rank.
+    expect(names()).toEqual(['Cooler VIP', 'Cooler A']);
+
+    await user.click(screen.getByTestId('vip-filter'));
+    expect(names()).toEqual(['Cooler VIP']);
+    await user.click(screen.getByTestId('vip-filter'));
+
+    await user.click(screen.getByRole('button', { name: 'Make Cooler A VIP' }));
+    expect(vipPin.mutate).toHaveBeenCalledWith({ projectId: 'p1', isVip: true });
+    expect(screen.getByRole('button', { name: 'Remove VIP from Cooler VIP' })).toHaveAttribute('aria-pressed', 'true');
   });
 
   it('degrades to an access notice on a 403 (Engineer / Auditor)', () => {
@@ -494,6 +530,8 @@ describe('MatrixPage', () => {
     renderWithProviders(<MatrixPage />);
 
     await user.click(screen.getByRole('button', { name: 'Edit prioritization score for Cooler A' }));
+    // P26: an unchanged dialog closes without a request, so change one score first.
+    await user.selectOptions(screen.getByLabelText('Strategic Project'), '1');
     await user.click(screen.getByRole('button', { name: 'Save score' }));
 
     expect(await screen.findByText(/read-only access to the Prioritization Matrix/i)).toBeInTheDocument();
@@ -523,9 +561,7 @@ describe('MatrixPage', () => {
       expect(screen.getByTestId('scenario-empty')).toBeInTheDocument();
 
       await user.click(screen.getByRole('button', { name: 'Edit prioritization score for Cooler A' }));
-      const strategic = screen.getByLabelText('Strategic Project');
-      await user.clear(strategic);
-      await user.type(strategic, '1');
+      await user.selectOptions(screen.getByLabelText('Strategic Project'), '1');
       await user.click(screen.getByRole('button', { name: 'Stage change' }));
 
       // Nothing was sent to the server — this is the key scenario-mode assertion.
@@ -544,9 +580,7 @@ describe('MatrixPage', () => {
 
       await user.click(screen.getByRole('checkbox', { name: 'Scenario mode' }));
       await user.click(screen.getByRole('button', { name: 'Edit prioritization score for Cooler A' }));
-      const strategic = screen.getByLabelText('Strategic Project');
-      await user.clear(strategic);
-      await user.type(strategic, '1');
+      await user.selectOptions(screen.getByLabelText('Strategic Project'), '1');
       await user.click(screen.getByRole('button', { name: 'Stage change' }));
       expect(screen.getByTestId('scenario-pending-item')).toBeInTheDocument();
 
@@ -567,9 +601,7 @@ describe('MatrixPage', () => {
 
       await user.click(screen.getByRole('checkbox', { name: 'Scenario mode' }));
       await user.click(screen.getByRole('button', { name: 'Edit prioritization score for Cooler A' }));
-      const strategic = screen.getByLabelText('Strategic Project');
-      await user.clear(strategic);
-      await user.type(strategic, '1');
+      await user.selectOptions(screen.getByLabelText('Strategic Project'), '1');
       await user.click(screen.getByRole('button', { name: 'Stage change' }));
 
       await user.click(screen.getByRole('button', { name: 'Discard' }));
@@ -591,9 +623,7 @@ describe('MatrixPage', () => {
 
       await user.click(screen.getByRole('checkbox', { name: 'Scenario mode' }));
       await user.click(screen.getByRole('button', { name: 'Edit prioritization score for Cooler A' }));
-      const strategic = screen.getByLabelText('Strategic Project');
-      await user.clear(strategic);
-      await user.type(strategic, '1');
+      await user.selectOptions(screen.getByLabelText('Strategic Project'), '1');
       await user.click(screen.getByRole('button', { name: 'Stage change' }));
 
       await user.click(screen.getByRole('button', { name: /Apply/ }));
@@ -601,10 +631,38 @@ describe('MatrixPage', () => {
       expect(applyMutateAsync).toHaveBeenCalledTimes(1);
       const [body] = applyMutateAsync.mock.calls[0] as [{ priority_scores: Record<string, unknown>[] }];
       expect(body.priority_scores).toHaveLength(1);
-      expect(body.priority_scores[0]).toMatchObject({ project_id: 'p1', strategic_project: 1 });
+      // P26: the `scores` map holds only the changed dimension; hard gates are sent in full.
+      expect(body.priority_scores[0]).toEqual({ project_id: 'p1', scores: { strategic_project: 1 }, hard_gates: [] });
 
       await screen.findByTestId('scenario-empty');
     });
+  });
+
+  it('P26-T03: no rubric button in the View panel; the card is always expanded and is the only place to edit', async () => {
+    const user = userEvent.setup();
+    hooks.usePriorityMatrix.mockReturnValue(ready([scoredRow]));
+    hooks.usePrioritySummary.mockReturnValue(ready(summary));
+    hooks.useScoringRubric.mockReturnValue(ready(testRubric({ can_edit: false })));
+    const view = renderWithProviders(<MatrixPage />, { session: { roles: ['Portfolio Manager'] } });
+    const panel = screen.getByTestId('matrix-view-panel');
+    expect(within(panel).queryByRole('button', { name: /Scoring rubric|^Rubric/ })).not.toBeInTheDocument();
+    expect(screen.queryByTestId('scoring-rubric-button')).not.toBeInTheDocument();
+    const card = screen.getByTestId('scoring-rubric-card');
+    expect(hooks.useScoringRubric).toHaveBeenLastCalledWith(true);
+    expect(within(card).queryByRole('button', { name: /Show rubric|Hide rubric/ })).not.toBeInTheDocument();
+    expect(within(card).getAllByTestId('rubric-dimension-row')).toHaveLength(13);
+    expect(within(card).getByTestId('rubric-readonly-note')).toHaveTextContent('Read-only · managed by Admins');
+    expect(within(card).queryByRole('button', { name: 'Edit rubric' })).not.toBeInTheDocument();
+    view.unmount();
+
+    // An Admin (served can_edit) edits inline in the same card.
+    hooks.useScoringRubric.mockReturnValue(ready(testRubric({ can_edit: true })));
+    renderWithProviders(<MatrixPage />);
+    const adminCard = screen.getByTestId('scoring-rubric-card');
+    await user.click(within(adminCard).getByRole('button', { name: 'Edit rubric' }));
+    expect(within(adminCard).getAllByTestId('rubric-row')).toHaveLength(13);
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(within(adminCard).getByRole('button', { name: 'Save new version' })).toBeInTheDocument();
   });
 
   describe('Versions & History (P5-T03)', () => {

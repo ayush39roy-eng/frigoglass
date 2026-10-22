@@ -281,6 +281,12 @@ CONTRACT_TABLE: list[tuple[Path, str, str, str]] = [
     # mirror now carries `solver_status: string | null`).
     (_DASHBOARD_TS, "ScheduleRunSummary", "ScheduleRunSummary", "exact"),
     # --- Capacity (backend/schemas/capacity.py + schedule_run.py) ---
+    # P29-T01 (ADR 0042, docs/API_CONTRACT_P29.md): `HubCapacityRow` gains `members` +
+    # `selected_member`; `HubP1Fill` and `DesignHubSummary` gain `members` +
+    # `selected_member` (+ `not_counted_engineer_count`); `EngineerRead`,
+    # `EngineerCreateRequest`, `EngineerResourceLoad` and `EngineerUtilizationRow`
+    # gain `counts_in_capacity`; `ProjectRead` / `WorkspaceProject` gain
+    # `leader_is_provisional`. Red until P29-T03 mirrors them.
     (_CAPACITY_TS, "HubCapacityRow", "HubCapacityRow", "exact"),
     (_CAPACITY_TS, "CapacityChamberRow", "CapacityChamberRow", "exact"),
     (_CAPACITY_TS, "HubCapacitySummary", "HubCapacitySummary", "exact"),
@@ -450,6 +456,10 @@ CONTRACT_TABLE: list[tuple[Path, str, str, str]] = [
         "exact",
     ),
     # --- P9-T03: project registration (backend/schemas/project.py, §6) ---
+    # P27-T01 (ADR 0038, docs/API_CONTRACT_P27.md §5): `ProjectCreateRequest`
+    # gains `scoring_tags`; `ProjectRead` (so `WorkspaceProject`) and the Matrix
+    # `PriorityMatrixRow` gain `scoring_tags` + `tag_dimension_keys`. Red until
+    # P27-T02 mirrors them.
     (_REGISTRATION_TS, "ProjectCreateRequest", "ProjectCreateRequest", "exact"),
     (_REGISTRATION_TS, "ProjectRead", "ProjectRead", "exact"),
     (_REGISTRATION_TS, "HardGateStatus", "HardGateStatus", "exact"),

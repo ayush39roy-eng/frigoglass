@@ -33,6 +33,7 @@ from __future__ import annotations
 import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from typing import TypedDict
 
 from fastapi import FastAPI, Response
 from fastapi.exceptions import RequestValidationError
@@ -94,7 +95,27 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     await dispose_engine()
 
 
+class ApiDocsUrls(TypedDict):
+    docs_url: str | None
+    redoc_url: str | None
+    openapi_url: str | None
+
+
+def api_docs_urls() -> ApiDocsUrls:
+    """P27 / S26-L2: the interactive docs (`/docs`, `/redoc`) and the raw
+    schema (`/openapi.json`) are served only in dev mode (read once at
+    startup, like `cors_allowed_headers`). Outside dev mode all three are
+    None, so the routes do not exist (404). The schema is still built
+    in-process by `app.openapi()`, which the contract tests use.
+    """
+
+    if is_dev_mode():
+        return {"docs_url": "/docs", "redoc_url": "/redoc", "openapi_url": "/openapi.json"}
+    return {"docs_url": None, "redoc_url": None, "openapi_url": None}
+
+
 app = FastAPI(
+    **api_docs_urls(),
     title="RPD Web Application API",
     version="0.4.0",
     description=(

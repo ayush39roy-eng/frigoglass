@@ -117,8 +117,6 @@ def test_category_order_and_oem_categories() -> None:
         ("PD-India", 6, (13, 7, 7, 20)),
         ("R&D-Greece", 5, (12, 0, 0, 25)),
         ("PD-Romania", 5, (13, 7, 0, 20)),
-        ("OEM-HCK", 6, (13, 7, 7, 20)),
-        ("OEM-Seltek", 6, (13, 7, 7, 20)),
     ],
 )
 def test_hub_work_calendar_seed_matches_client_formulas_2_1(
@@ -126,6 +124,29 @@ def test_hub_work_calendar_seed_matches_client_formulas_2_1(
 ) -> None:
     row = next(r for r in dc.HUB_WORK_CALENDAR_SEED if r[0] == hub)
     assert row[1] == weekdays and row[2:] == deductions
+
+
+def test_capacity_member_hubs_have_no_calendar_adr_0042() -> None:
+    """ADR 0042 (P29): OEM-HCK and OEM-Seltek are capacity children of
+    R&D-Greece and carry no work calendar of their own; the seed has one row
+    per capacity hub."""
+
+    assert dict(dc.HUB_CAPACITY_HUB) == {"OEM-HCK": "R&D-Greece", "OEM-Seltek": "R&D-Greece"}
+    assert {r[0] for r in dc.HUB_WORK_CALENDAR_SEED} == {
+        "R&D-Greece",
+        "R&D-India",
+        "PD-India",
+        "PD-Romania",
+    }
+    assert dc.capacity_hub_name("OEM-HCK") == "R&D-Greece"
+    assert dc.capacity_hub_name("PD-India") == "PD-India"
+
+
+def test_project_type_labels_cover_every_type_adr_0038_amendment() -> None:
+    from models.enums import ProjectType
+
+    assert set(dc.PROJECT_TYPE_LABELS) == {t.value for t in ProjectType}
+    assert dc.PROJECT_TYPE_LABELS["RC"] == "Regulatory / Business Compliance"
 
 
 def test_hub_work_calendar_seed_reproduces_workbook_working_weeks() -> None:

@@ -179,7 +179,9 @@ export function StatCard({
         />
       )}
 
-      <div className={cn('relative flex justify-between gap-s2', compact ? 'items-center' : 'items-start')}>
+      {/* Compact: `flex-wrap` so a badge drops to its own line on a narrow tile
+          instead of overlapping the figure (P28 owner visual pass). */}
+      <div className={cn('relative flex justify-between gap-s2', compact ? 'flex-wrap items-center' : 'items-start')}>
         {Icon ? (
           <span
             className={cn(
@@ -197,7 +199,9 @@ export function StatCard({
         )}
         {compact ? (
           <div className="relative mr-auto min-w-0 pl-s1">
-            <span className={cn('block truncate text-xs font-semibold', solid ? mutedText : 'text-text-muted')}>
+            {/* P28 owner correction: tile labels must never ellipsize — the
+                label wraps (leading-tight) instead of truncating. */}
+            <span className={cn('block text-xs font-semibold leading-tight', solid ? mutedText : 'text-text-muted')}>
               {label}
             </span>
             <span
@@ -211,7 +215,7 @@ export function StatCard({
         {badge ? (
           <span
             className={cn(
-              'inline-flex items-center rounded-pill px-2.5 py-1 text-2xs font-bold tabular-nums',
+              'inline-flex items-center whitespace-nowrap rounded-pill px-2.5 py-1 text-2xs font-bold tabular-nums',
               kind === 'feature' ? 'bg-surface text-text' : BADGE_TONE[badge.tone ?? 'neutral'],
             )}
             data-numeric=""

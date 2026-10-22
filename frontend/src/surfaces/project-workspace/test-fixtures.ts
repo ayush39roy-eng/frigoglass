@@ -1,4 +1,5 @@
 import type { WorkspaceResponse, WorkspaceStage } from './api/types';
+import { testDimensionScores } from '@/surfaces/matrix/test-fixtures';
 
 const NAMES: [string, string, WorkspaceStage['kind']][] = [
   ['A', 'Marketing Brief', 'design'],
@@ -76,7 +77,7 @@ export function workspaceFixture(over: Partial<WorkspaceResponse> = {}): Workspa
       estimated_lab_weeks: 10,
       plant: null,
       requesting_department: null,
-      product_type: null,
+      product_type: null, scoring_tags: [], tag_dimension_keys: [],
       schedule_stale: false,
       workflow_id: 'PDD',
       created_at: '2026-01-01T00:00:00Z',
@@ -105,19 +106,14 @@ export function workspaceFixture(over: Partial<WorkspaceResponse> = {}): Workspa
             : stage(i),
     ),
     priority_score: {
-      strategic_project: 5,
-      new_customer: 4,
-      new_options: 3,
-      regulatory_compliance: 2,
-      quality_improvements: 3,
-      rm_savings: 4,
-      total_rm_savings: 3,
-      gross_margins: 3,
-      profitability: 4,
-      annual_volume: 3,
-      three_year_volume: 3,
-      new_models: 2,
-      capex_investment: 4,
+      // P26 (ADR 0037): one served entry per active dimension (the initial 13 here).
+      dimension_scores: testDimensionScores({
+        strategic_project: 5, new_customer: 4, new_options: 3, regulatory_compliance: 2,
+        quality_improvements: 3, rm_savings: 4, total_rm_savings: 3, gross_margins: 3,
+        profitability: 4, annual_volume: 3, three_year_volume: 3, new_models: 2, capex_investment: 4,
+      }),
+      missing_dimension_keys: [],
+      rubric_version: 1,
       hard_gates: [],
       weighted_score: 980,
       normalized_pct: 70,

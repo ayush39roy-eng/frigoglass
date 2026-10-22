@@ -1,19 +1,27 @@
 import * as React from 'react';
 import { motion } from 'framer-motion';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { ArrowUpRight, FolderKanban, GanttChartSquare, Gauge as GaugeIcon, List } from 'lucide-react';
 
 import { PageHeader } from '@/components/layout/page-header';
 import { SURFACES } from '@/app/nav';
 import { GlowOverlay } from '@/components/ui/background-components';
 import { formatInteger } from '@/lib/format';
+import { cn } from '@/lib/utils';
+import { useKeepScrollAnchor } from '@/lib/use-keep-scroll-anchor';
 import { ApiError } from '@/lib/api/client';
 import { useMotionTokens } from '@/lib/motion';
-import { usePermission } from '@/stores/session';
 import { useHubFilter } from '@/stores/hub-filter';
+import { useSessionStore } from '@/stores/session';
 import { HubFilterChip } from '@/components/shared/hub-filter/hub-filter-chip';
 import { CountrySegmented } from '@/components/shared/hub-filter/country-segmented';
 
+import {
+  readStoredDashboardView,
+  resolveDashboardView,
+  storeDashboardView,
+  type DashboardView,
+} from './lib/view-mode';
 import {
   useCompletingWithinYear,
   useDashboardAnalytics,
@@ -24,15 +32,17 @@ import {
   useRegionSummary,
 } from './hooks/use-dashboard';
 import { AccessNotice } from './components/access-notice';
+import { ExecutiveView } from './components/executive/executive-view';
+import { DashboardViewToggle } from './components/executive/view-toggle';
 import { HubTypeSection } from './components/hub-type-section';
 import { ScheduledCountInfo } from './components/scheduled-count-info';
 import { PipelineRow } from './components/pipeline-row';
 import { ProjectBreakdown } from './components/project-breakdown';
 import { SectionBoundary } from '@/components/shared/section-boundary';
+import { StaggerSection } from './components/stagger';
 import { StatusOverviewCards } from './components/status-overview-cards';
 import { WithinYearKpis } from './components/within-year-panel';
 import { DeliveryGaugeCard } from './components/delivery-gauge-card';
-import { CapacityBookedCard } from './components/capacity-booked-card';
 import { VipProjectsCard } from './components/vip/vip-projects-card';
 import { Button } from '@/components/ui/button';
 import { PanelSkeleton } from '@/components/ui/panel-skeleton';
@@ -92,41 +102,32 @@ function authKind(errors: unknown[]): 'forbidden' | 'unauthorized' | null {
   return null;
 }
 
-/**
- * Page-mount stagger (Dashboard polish, 2026-09-30; retuned 2026-10-01 to the
- * Boltshift motion spec): each top-level section fades/rises in a few
- * milliseconds after the one before it, so the eye is guided down the page
- * instead of every panel popping in at once. Gated by `useMotionTokens()` — the
- * shared `prefers-reduced-motion` switch every other animated element in the app
- * reads from (`lib/motion.ts`) — and applied at the PAGE level, wrapping each
- * section from the outside, so none of the individual section components
- * (`WithinYearPanel`, `StatusOverviewCards`, …) needed their own internal DOM
- * changed; their existing unit tests are untouched by this.
- *
- * Boltshift's mount vocabulary is `y: 16 → 0` + opacity + `scale: 0.985 → 1` on
- * a `{stiffness: 300, damping: 30}` spring. The scale is on the SECTION
- * (everything settling into place together), never on an individual card hover
- * — the spec's own "DO NOT" list bans that, and `stat-card.tsx` / the spotlight
- * cards accordingly hover on `y` alone.
- */
-const SECTION_VARIANTS = {
-  hidden: { opacity: 0, y: 16, scale: 0.985 },
-  show: { opacity: 1, y: 0, scale: 1 },
-} as const;
-
-const SECTION_SPRING = { type: 'spring', stiffness: 300, damping: 30 } as const;
-
-function StaggerSection({ children }: { children: React.ReactNode }): React.JSX.Element {
-  const { reduced } = useMotionTokens();
-  if (reduced) return <>{children}</>;
-  return (
-    <motion.div variants={SECTION_VARIANTS} transition={SECTION_SPRING}>
-      {children}
-    </motion.div>
-  );
-}
+// The page-mount stagger (Boltshift motion spec) moved to
+// `./components/stagger.tsx` in P28 so the Executive view shares it verbatim.
 
 export default function DashboardPage(): React.JSX.Element {
+  // P28 (ADR 0039 §2): Executive | Detailed. Precedence: URL `view` param →
+  // localStorage `rpd-dashboard-view` → role default (roles exactly
+  // ["Executive Viewer"] → Executive). Toggling writes BOTH the URL param
+  // (deep-linkable) and the stored per-user choice.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const roles = useSessionStore((s) => s.me?.roles ?? []);
+  const view = resolveDashboardView(searchParams.get('view'), readStoredDashboardView(), roles);
+  const setView = React.useCallback(
+    (next: DashboardView): void => {
+      storeDashboardView(next);
+      setSearchParams(
+        (prev) => {
+          const params = new URLSearchParams(prev);
+          params.set('view', next);
+          return params;
+        },
+        { replace: true },
+      );
+    },
+    [setSearchParams],
+  );
+  const executive = view === 'executive';
   // P12 (ADR 0020): every Dashboard figure follows the global header hub filter;
   // the server filters and totals (I9/I19/I23), the browser only renders.
   // P13 (ADR 0025): and the country filter beside it.
@@ -140,23 +141,20 @@ export default function DashboardPage(): React.JSX.Element {
   const regionSummary = useRegionSummary(hubId, region);
   // P13-T10 (API_CONTRACT_P13 §5): served breakdowns + completing Hub × Type.
   const analytics = useDashboardAnalytics(hubId, region);
+  // A hub / country change keeps the previous figures on screen (placeholderData)
+  // so the page holds its scroll position; dim it until every section is current.
+  // …and hold the section the reader is on in place while the layout settles.
+  const sectionsRef = React.useRef<HTMLDivElement>(null);
+  useKeepScrollAnchor(sectionsRef, `${hubId ?? ''}|${region ?? ''}`);
+  const refreshing = [withinYear, pipelineTotals, statusOverview, hubTypePipeline, regionSummary, analytics].some(
+    (q) => q.isPlaceholderData,
+  );
   const activeRun = useActiveScheduleRun(withinYear.data?.has_active_schedule_run === true);
   const motionTokens = useMotionTokens();
-  const canReadCapacity = usePermission('capacity').read;
 
   const title = DASHBOARD_SURFACE?.title ?? 'Global RPD Dashboard';
-  /**
-   * Client text cleanup, 2026-10-01: the page used to print `SURFACES[].summary`
-   * verbatim — a 180-character paragraph naming every figure on the page and
-   * citing Invariant I9 — directly under the title. The client asked for "the
-   * heading and the details one" only, with everything else living inside a
-   * card. The full sentence is NOT lost: `nav.ts`'s `summary` is byte-unchanged
-   * (the sidebar/command surfaces still read it), and the I9 provenance it cited
-   * is now stated precisely, per card, by the info popovers and the schedule-run
-   * chip row — closer to the numbers it describes than a page-level paragraph
-   * ever was.
-   */
-  const description = 'Portfolio status for the active schedule run.';
+  // Owner ask 2026-10-22: no description line under the title (it repeated the
+  // cards); the header is one compact band (PageHeader `aside`).
 
   const totalProjectsCount = withinYear.data?.has_active_schedule_run
     ? withinYear.data.within_year_count +
@@ -188,22 +186,22 @@ export default function DashboardPage(): React.JSX.Element {
         <PageHeader
           eyebrow="Plan · Overview"
           title={title}
-          description={description}
+          aside={<CountrySegmented />}
           actions={
             <>
-              <CountrySegmented />
+              <DashboardViewToggle view={view} onChange={setView} />
               <HubFilterChip />
               {totalProjectsCount !== null ? (
                 <div
                   data-numeric=""
                   data-testid="dashboard-total-projects"
-                  className="flex items-center gap-2.5 rounded-pill border-2 border-primary/25 bg-surface py-1.5 pl-4 pr-2 shadow-dashCard transition-all hover:border-primary/50"
+                  className="flex items-center gap-2 rounded-pill border-2 border-primary/25 bg-surface py-1 pl-3 pr-1.5 shadow-dashCard transition-all hover:border-primary/50"
                 >
-                  <span className="grid size-8 shrink-0 place-items-center rounded-full bg-primary/10 text-primary">
-                    <FolderKanban className="size-4.5" aria-hidden="true" />
+                  <span className="grid size-7 shrink-0 place-items-center rounded-full bg-primary/10 text-primary">
+                    <FolderKanban className="size-4" aria-hidden="true" />
                   </span>
                   <span className="flex items-baseline gap-1.5 leading-none">
-                    <span className="font-display text-2xl sm:text-3xl font-black tracking-tight text-text tabular-nums">
+                    <span className="font-display text-2xl font-black tracking-tight text-text tabular-nums">
                       {formatInteger(totalProjectsCount)}
                     </span>
                     <span className="text-xs font-bold uppercase tracking-wider text-text-muted">
@@ -223,18 +221,24 @@ export default function DashboardPage(): React.JSX.Element {
                   )}
                 </div>
               ) : null}
-              <Button
-                type="button"
-                variant="secondary"
-                className="rounded-pill border-[1.5px] font-semibold"
-                onClick={() => scrollToRegister(motionTokens.reduced)}
-              >
-                <List aria-hidden="true" />
-                All projects
-              </Button>
+              {/* The register lives on the Detailed view only (ADR 0039 §3); its
+                  scroll shortcut would point at nothing in Executive. */}
+              {!executive ? (
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  className="rounded-pill border-[1.5px] font-semibold"
+                  onClick={() => scrollToRegister(motionTokens.reduced)}
+                >
+                  <List aria-hidden="true" />
+                  All projects
+                </Button>
+              ) : null}
               <Button
                 asChild
                 variant="secondary"
+                size="sm"
                 className="rounded-pill border-[1.5px] font-semibold"
               >
                 <Link to="/capacity">
@@ -242,7 +246,7 @@ export default function DashboardPage(): React.JSX.Element {
                   Capacity view
                 </Link>
               </Button>
-              <Button asChild className="rounded-pill font-semibold shadow-feature">
+              <Button asChild size="sm" className="rounded-pill font-semibold shadow-feature">
                 <Link to="/timeline">
                   <GanttChartSquare aria-hidden="true" />
                   Open timeline
@@ -257,7 +261,10 @@ export default function DashboardPage(): React.JSX.Element {
           <AccessNotice kind={denied} />
         ) : (
           <motion.div
-            className="flex flex-col gap-s8"
+            className={cn('flex flex-col gap-s8 transition-opacity duration-base', refreshing && 'opacity-60')}
+            aria-busy={refreshing}
+            data-testid="dashboard-sections"
+            ref={sectionsRef}
             // `exactOptionalPropertyTypes`: an explicit `undefined` isn't
             // assignable to these (non-optional-union) framer-motion props, so
             // the reduced-motion case spreads no animation props at all rather
@@ -270,12 +277,29 @@ export default function DashboardPage(): React.JSX.Element {
                   variants: { show: { transition: { staggerChildren: 0.08 } } },
                 })}
           >
+            {executive ? (
+              /* P28 (ADR 0039): the Executive ("helicopter") view — a second
+                 presentation of the SAME served payloads. Its extra reads
+                 (VIP board, register rows for overdue check-ins, and
+                 /capacity/hub-load) are fetched by hooks mounted only inside
+                 it, so they stop when the toggle returns to Detailed. */
+              <ExecutiveView
+                withinYear={withinYear}
+                pipelineTotals={pipelineTotals}
+                statusOverview={statusOverview}
+                analytics={analytics}
+                activeRun={activeRun.data}
+                hubId={hubId}
+                region={region}
+              />
+            ) : (
+              <>
             {/* P17 (ADR 0030): Spillover + Newly registered + Unregistered = Total.
                 P17-R08: the compact VIP column sits beside it (xl), so VIP is
                 above the fold; below xl it stacks under the pipeline row. */}
             <StaggerSection>
               <div className="grid grid-cols-[minmax(0,1fr)] gap-gutter xl:grid-cols-12">
-                <div className="min-w-0 xl:col-span-9">
+                <div className="min-w-0 xl:col-span-8">
                   <SectionBoundary
                     query={pipelineTotals}
                     title="Project pipeline"
@@ -285,7 +309,7 @@ export default function DashboardPage(): React.JSX.Element {
                   </SectionBoundary>
                 </div>
                 {/* P14 (ADR 0027 §6): VIP projects per country, compact. */}
-                <div className="relative min-w-0 xl:col-span-3">
+                <div className="relative min-w-0 xl:col-span-4">
                   <VipProjectsCard fill />
                 </div>
               </div>
@@ -355,15 +379,12 @@ export default function DashboardPage(): React.JSX.Element {
               />
             </StaggerSection>
 
-            {/* P11 (ADR 0016): compact Europe / India booked %, only for a session
-                that can read Capacity (no fetch otherwise). The completion outcome
-                donut that sat beside it was removed (owner ask 2026-10-22: the
-                same split is in the profile, the gauge and the KPI cards). */}
-            {canReadCapacity ? (
-              <StaggerSection>
-                <CapacityBookedCard />
-              </StaggerSection>
-            ) : null}
+            {/* P23-T03 (owner ask 2026-10-22): the Dashboard "Capacity booked"
+                card (Europe / India booked %) is gone; booked % lives per hub on
+                the RPD Capacity page. The DETAILED view never asks for
+                GET /capacity/hub-load — the Executive view's "Hubs at a glance"
+                does, lazily, while it is shown (ADR 0039 §4, owner-sanctioned
+                narrowing of P23-T03). */}
 
             {withinYear.data?.has_active_schedule_run && withinYear.data.rows.length > 0 ? (
               <StaggerSection>
@@ -395,6 +416,8 @@ export default function DashboardPage(): React.JSX.Element {
             <StaggerSection>
               <ProjectBreakdown />
             </StaggerSection>
+              </>
+            )}
           </motion.div>
         )}
       </div>

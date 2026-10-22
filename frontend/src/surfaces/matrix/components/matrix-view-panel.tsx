@@ -107,10 +107,11 @@ export function MatrixViewPanel({
 
   return (
     <section ref={panelRef} aria-labelledby={`${filtersId}-title`} className={shell} data-testid="matrix-view-panel" data-stuck={stuck ? 'true' : 'false'}>
-      <h2 id={`${filtersId}-title`} className={cn('mb-2 font-display text-h2 font-bold text-text', stuck && 'sr-only')}>
+      {/* Owner ask 2026-10-22: no visible "View" title; the controls sit on one aligned line. */}
+      <h2 id={`${filtersId}-title`} className="sr-only">
         View
       </h2>
-      <div className={cn('flex flex-wrap items-end', stuck ? 'gap-2' : 'gap-4')}>
+      <div className={cn('flex flex-wrap items-center', stuck ? 'gap-2' : 'gap-x-4 gap-y-2')}>
         {renderControls(stuck)}
         {stuck ? (
           <Button
@@ -134,8 +135,8 @@ export function MatrixViewPanel({
         <div
           id={filtersId}
           className={cn(
-            'flex flex-wrap items-center gap-x-6 gap-y-3 border-t border-border',
-            stuck ? 'mt-2 pt-2' : 'mt-3 pt-3',
+            'flex flex-wrap items-center gap-x-6 gap-y-2 border-t border-border',
+            stuck ? 'mt-2 pt-2' : 'mt-2.5 pt-2.5',
           )}
         >
           {filters}

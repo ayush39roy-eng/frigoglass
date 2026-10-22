@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { Link } from 'react-router-dom';
-import { FolderKanban, Layers, Pencil } from 'lucide-react';
+import { FolderKanban, Layers, Pencil, Star, Tag } from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -13,12 +13,16 @@ import { cn } from '@/lib/utils';
 import { scoringAnchor } from '@/lib/domain-constants';
 import { PROJECT_TYPE_LABELS } from '@/types/enums';
 import { Checkbox } from '@/components/ui/checkbox';
+import { useSetProjectVip } from '@/lib/api/vip';
 
 import { POINTS_RULE_COPY, type PriorityMatrixRow } from '../api/types';
 import { groupByPillar } from '../lib/pillars';
+import { isVipRow } from '../lib/vip-row';
+import { dimensionColumnWidth, pillarTinted, widenForBand } from '../lib/grid-boxes';
 import { formatPoints, rowDimension } from '../lib/row-scores';
 import { scoreIntensity } from '../lib/score-chip';
-import { formatWeight, layoutDimensions, useScoringModel, type ScoringModelEntry } from '../scoring-model';
+import { useScoringModel } from '../scoring-model';
+import { formatWeight, layoutDimensions, type ScoringModelEntry } from '../lib/scoring-model-core';
 import { ScoreCell } from './score-cell';
 import { VirtualMatrixGrid, type MatrixBox, type MatrixColumn } from './virtual-matrix-grid';
 
@@ -101,9 +105,17 @@ function DimCell({
   showPoints: boolean;
 }): React.JSX.Element {
   const cell = rowDimension(row, dim.key);
+  // P27 (ADR 0038): pre-filled by a Registration tag (served `tag_dimension_keys`).
+  // A hint only — the cell is edited through the same dialog as any other.
+  // Absent from a pre-P27 API (an older backend still running): no tag hint,
+  // rather than a crash of the whole Matrix route.
+  const tagKeys = (row as Partial<PriorityMatrixRow>).tag_dimension_keys ?? [];
+  const fromRegistration = tagKeys.includes(dim.key);
+  const regText = fromRegistration ? ' (from registration; still editable)' : '';
   if (cell.score === null) {
     // An unscored project has no chips at all; a scored one shows its gaps as empty chips.
-    const text = row.has_score ? `${dim.label}: not scored (0 points; incomplete)` : `${dim.label}: not scored`;
+    const text =
+      (row.has_score ? `${dim.label}: not scored (0 points; incomplete)` : `${dim.label}: not scored`) + regText;
     return (
       <span className="flex flex-col items-center" title={text} data-testid={`dim-${dim.key}`}>
         {row.has_score ? (
@@ -123,17 +135,21 @@ function DimCell({
   // Served scaled-to-100 points (`dimension_points[key].scaled_points`), when present.
   const scaled = row.dimension_points?.[dim.key]?.scaled_points;
   const scaledText = scaled === undefined ? '' : ` (${scaled.toFixed(2)} of 100)`;
-  const summary = `${dim.label}: ${String(cell.score)} of 5${pts ? `, ${pts}${scaledText}` : ''}`;
+  const summary = `${dim.label}: ${String(cell.score)} of 5${pts ? `, ${pts}${scaledText}` : ''}${regText}`;
   return (
     <span className="flex flex-col items-center gap-0.5 leading-tight" title={summary} data-testid={`dim-${dim.key}`}>
       <span
-        className="mg-chip tnum"
+        className="mg-chip tnum relative"
         data-numeric=""
         data-intensity={scoreIntensity(cell.score)}
+        data-from-registration={fromRegistration || undefined}
         data-testid="score-chip"
         aria-hidden="true"
       >
         {cell.score}
+        {fromRegistration ? (
+          <Tag className="mg-chip-reg" data-testid="from-registration-mark" aria-hidden="true" />
+        ) : null}
       </span>
       {showPoints && pts ? (
         <span className="tnum text-2xs text-text-muted" aria-hidden="true">
@@ -166,6 +182,8 @@ export interface MatrixTableProps {
   maxHeight?: number | string;
   /** Narrow viewport: slimmer frozen columns. */
   narrow?: boolean;
+  /** Offer the VIP star toggle (the server still authorises each pin). */
+  canPinVip?: boolean;
 }
 
 /** P13-T14 / ADR 0028: the API serves the leader's name. An id with no name
@@ -192,7 +210,48 @@ function leaderCell(row: PriorityMatrixRow): React.ReactNode {
   );
 }
 
+/**
+ * Owner ask 2026-10-22: make a project VIP from the Matrix. A star before the
+ * name toggles `PUT /projects/{id}/vip`; the server authorises (Project
+ * Registration write, hub admin grant) and audits it. Read-only sessions see
+ * the star as an indicator only.
+ */
+function VipToggle({ row, canPin }: { row: PriorityMatrixRow; canPin: boolean }): React.JSX.Element | null {
+  const setVip = useSetProjectVip();
+  const vip = isVipRow(row);
+  if (!canPin && !vip) return null;
+  if (!canPin) {
+    return (
+      <span className="grid size-6 shrink-0 place-items-center text-accent" title="VIP project" data-testid="vip-mark">
+        <Star className="size-3.5 fill-current" aria-hidden="true" />
+        <span className="sr-only">VIP</span>
+      </span>
+    );
+  }
+  const label = vip ? `Remove VIP from ${row.project_name}` : `Make ${row.project_name} VIP`;
+  const failed = setVip.isError ? ' (the last change was refused: you need edit rights on this project)' : '';
+  return (
+    <button
+      type="button"
+      aria-pressed={vip}
+      aria-label={label}
+      title={label + failed}
+      disabled={setVip.isPending}
+      onClick={() => setVip.mutate({ projectId: row.project_id, isVip: !vip })}
+      className={cn(
+        'grid size-6 shrink-0 place-items-center rounded-full transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50',
+        vip ? 'text-accent hover:bg-accent/12' : 'text-text-subtle hover:bg-surface-sunken hover:text-accent',
+        setVip.isError && 'text-danger',
+      )}
+      data-testid="vip-toggle"
+    >
+      <Star className={cn('size-3.5', vip && 'fill-current')} aria-hidden="true" />
+    </button>
+  );
+}
+
 export function MatrixTable({
+  canPinVip = false,
   rows,
   canEdit,
   onEdit,
@@ -236,11 +295,12 @@ export function MatrixTable({
         box: IDENTITY_BOX,
         sticky: true,
         cell: (row) => (
-          <span className="flex min-w-0 items-center gap-2.5">
+          <span className="flex min-w-0 items-center gap-1.5">
+            <VipToggle row={row} canPin={canPinVip} />
             <span
               aria-hidden="true"
               className={cn(
-                'hidden size-7 shrink-0 place-items-center rounded-full sm:grid',
+                'hidden size-6 shrink-0 place-items-center rounded-full sm:grid',
                 row.category
                   ? cn(categoricalRankSoftBg(categoryRank(row.category)), categoricalRankText(categoryRank(row.category)))
                   : 'bg-surface-sunken text-text-muted',
@@ -345,19 +405,23 @@ export function MatrixTable({
     // bands (first appearance). P21-T03: each pillar is one box; every second
     // pillar carries a faint tint.
     groupByPillar(dims).forEach((group, pillarIndex) => {
-      for (const dim of group.items) {
+      const widths = widenForBand(
+        group.items.map((d) => dimensionColumnWidth(d.label, detailed ? 76 : 64)),
+        group.pillar,
+      );
+      group.items.forEach((dim, i) => {
         cols.push({
-          box: { id: `pillar-${group.pillar}`, kind: 'pillar', tint: pillarIndex % 2 === 1 },
+          box: { id: `pillar-${group.pillar}`, kind: 'pillar', tint: pillarTinted(pillarIndex) },
           id: `dim-${dim.key}`,
           header: <DimHeader dim={dim} />,
           group: group.pillar,
-          width: detailed ? 76 : 68,
+          width: widths[i] ?? 64,
           align: 'center',
           headerClassName: 'px-1 normal-case tracking-normal text-text-muted',
           cellClassName: 'px-1',
           cell: (row) => <DimCell row={row} dim={dim} showPoints={detailed} />,
         });
-      }
+      });
     });
 
     cols.push({
@@ -366,7 +430,7 @@ export function MatrixTable({
       width: 168,
       box: SCORE_BOX,
       headerClassName: 'text-text',
-      cell: (row) => <ScoreCell row={row} />,
+      cell: (row) => <ScoreCell row={row} dense />,
     });
 
     if (canEdit) {
@@ -400,10 +464,12 @@ export function MatrixTable({
       return cols.map((c) => (columnFilters[c.id] === undefined ? c : { ...c, filter: columnFilters[c.id] }));
     }
     return cols;
-  }, [canEdit, onEdit, scenarioStagedProjectIds, detailed, columnFilters, dims, selectedIds, onToggleSelect, narrow]);
+  }, [canEdit, onEdit, scenarioStagedProjectIds, detailed, columnFilters, dims, selectedIds, onToggleSelect, narrow, canPinVip]);
 
   const sortedRows = React.useMemo(() => {
     return [...rows].sort((a, b) => {
+      // VIP projects float to the top (owner ask 2026-10-22), each group in rank order.
+      if (isVipRow(a) !== isVipRow(b)) return isVipRow(a) ? -1 : 1;
       if (a.rank !== null && b.rank !== null) {
         if (a.rank !== b.rank) return a.rank - b.rank;
         return a.project_name.localeCompare(b.project_name);

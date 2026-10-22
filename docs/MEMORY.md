@@ -29016,3 +29016,1869 @@ November opens to W45–W48 with 12 projects, and selecting W45 lists 2.
   Commercialized, In Queue, On Hold (project). A new order test covers it.
 - **Tests.** The pipeline-row tests now expect 3 cards. Dashboard Vitest is green, and `tsc` and eslint are clean.
   Checked headless against :5183.
+
+## [2026-10-22] P23-T03: Dashboard "Capacity booked" card removed (frontend-builder): DONE
+
+Owner ask: remove the Dashboard "Capacity booked" card (Europe / India design and lab booked %, plus an "Open capacity"
+link). Booked % already lives per hub on the RPD Capacity page (P19-T02 `HubBookingStrip`). This also closes P19 gate
+observation O2 (the Dashboard still showed Europe / India area tiles).
+- **Deleted.** `surfaces/dashboard/components/capacity-booked-card.tsx` and `capacity-booked-card.test.tsx`. Nothing
+  else imported them.
+- **DashboardPage.tsx.** The card's `StaggerSection` was removed, along with `canReadCapacity` and the now-unused
+  `usePermission` import. The Dashboard no longer calls `useHubLoadVsCapacity`, so it never requests
+  `GET /capacity/hub-load`.
+- **Layout.** The "Completion outcome" donut was already removed earlier on 2026-10-22, so the card was on its own
+  full-width row. Removing it removes the whole row. Hub × Type (with Top hubs beneath it) now leads straight into
+  Portfolio analytics, with no empty space. No other row changed.
+- **Kept on purpose (owned by the Capacity surface).** `useHubLoadVsCapacity` with its `enabled` option, the
+  `CapacityArea` type, the `areas[]` field and the `areaRow` / `SUMMARY_P11` fixtures. The Capacity page and its tests
+  still use them. FOLLOW-UP (outside this task's scope): the doc comment on `enabled` in
+  `surfaces/capacity/hooks/use-capacity.ts` still mentions the Dashboard card. `areas[]` is now unused by the whole
+  frontend; the backend still serves it.
+- **Tests.** `DashboardPage.test.tsx`: the two P11 card tests were replaced by one P23-T03 test. With a Super Admin
+  session (Capacity read), there is no card, no "Capacity booked" heading, no "Europe" text, and
+  `useHubLoadVsCapacity` is never called. The hub-filter and country-filter tests now assert that the capacity hook
+  is not called. The `areaRow` / `SUMMARY_P11` / `ROLE_MATRIX` imports were dropped.
+- **e2e.** `pages/dashboard.page.ts`: the stale `pipelineSection()`, which targeted the removed "Completion outcome"
+  heading, became `completionProfileSection()`, and `capacityBookedHeading()` was added. `dashboard.spec.ts` uses
+  both and asserts that the heading count is 0. The `p12-gate.spec.ts` surface label is now "Dashboard". These specs
+  were not run.
+- **Checks.** `tsc -b`: no errors outside `surfaces/matrix/` and `surfaces/project-workspace/` (all of those are
+  P26-T02 in flight). Eslint on `src/surfaces/dashboard` plus the 3 e2e files: 0 errors, plus the existing warning in
+  `project-breakdown.tsx`. Dashboard Vitest: 27 files, 167 passed. `vite build` is fine, with DashboardPage at
+  20.58 kB gzip.
+- **Live check.** Read-only and headless against :5183 at 1440×900, light, Super Admin. No "Capacity booked" heading,
+  no "Open capacity" link, and no `/capacity` API request. Axe found 0 serious or critical issues. The screenshot
+  shows Top hubs followed directly by Portfolio analytics, with no gap. Dev servers were not restarted.
+
+## 2026-10-22: P4 colour, numbers inside stacked bars (owner ask)
+
+- **P4 colour.** `--color-band-p4` is now teal (light `--teal-600`, dark `--teal-400`; it was slate, too close to
+  Queue). Queue stays slate. Every band consumer (pills, Matrix charts, Capacity, portfolio analytics) reads the
+  token, so it changes app-wide.
+- **Capacity bars (`capacity/components/priority-load-chart.tsx`).** A priority segment at least 14 px tall (pixel
+  estimate from the 204 px plot) shows its served weeks value inside. Hovering a column opens a card with all five
+  served bucket values, the load and the capacity, so slim segments stay readable. The sr-only table is unchanged.
+- **Dashboard "Delivery by priority" (`portfolio-analytics.tsx`).** The bar is now `h-5`, and each segment holding at
+  least 4 % of its band prints its served count inside, in dark ink on the light tints. The native hover title stays.
+  "Outcomes by hub" already printed its counts.
+- **Checks.** Vitest for dashboard / capacity / matrix / components: 565 passed, 1 failed. The failure is
+  `matrix/scoring-model.test.tsx` ("Gross Profitability" label), which belongs to someone else's uncommitted Matrix
+  scoring edits, not this change. `tsc` and eslint are clean. Checked headless on :5183 at `/capacity` and `/`.
+
+## [2026-10-22] P26-T02 — Editable scoring rubric in the Matrix; N dynamic dimensions and the `scores` map everywhere (frontend-builder): DONE
+
+Built against `docs/API_CONTRACT_P26.md` (authoritative), ADR 0037 and the P26-T01 entry. Every score, band, total and
+scaled weight shown is a served field (I9). The only browser arithmetic: the existing labelled Compare "preview" (now
+"missing counts 0", ADR 0037), the editor's live "Proposed (draft)" total of active draft weights (replaced by the served
+`proposed_total_weight` after Preview), and grid column widths (layout). `backend/scheduling/` untouched.
+
+**Types (contract §7, all 16 rows green).** `matrix/api/types.ts`:
+- `PriorityMatrixRow` loses the 13 flat fields, gains `missing_dimension_keys`, `rubric_version`. `dimension_points` is
+  `Record<string, …>`.
+- `PriorityCompareProject` + the same two. `ScoringDimensionTable` + `rubric_version`.
+- `PriorityScoreUpdateRequest` = `{scores: DimensionScoreMap, hard_gates}`. `PriorityScoreRead` is standalone (no longer
+  extends the request). `ScenarioPriorityScoreChange` extends the new request.
+- New: `ScoringRubric`, `ScoringRubricDimension`, `ScoringRubricDimensionInput`, `ScoringRubricUpdateRequest`,
+  `ScoringRubricPreviewRequest`, `ScoringRubricVersions`, `ScoringRubricPreview`, `RubricPreviewProject`,
+  `RubricBandChange`. `DimensionKey = string`.
+- Removed: `DIMENSION_FIELDS`, `DimensionField`, `DIMENSIONS`, `DimensionMeta`, and the dead placeholder
+  `src/types/priority.ts`.
+- `project-workspace/api/types.ts` `WorkspacePriorityScore`: `dimension_scores`, `missing_dimension_keys`,
+  `rubric_version` replace the 13.
+- `pytest tests/test_openapi_frontend_contract.py`: **219 passed** (run with `--noconftest` at the end because Docker
+  had gone away; the same 219 passed earlier with the conftest).
+
+**Nothing is fixed to 13 any more.**
+- `scoring-model.tsx` + new `lib/scoring-model-core.ts`: the model is the served `/priorities/dimensions` (active, display
+  order). Until it arrives it is empty, and the grid lays out from the first row's `dimension_scores`; there is no static
+  fallback list.
+- `lib/pillars.ts`: pillars are grouped by FIRST APPEARANCE in display order (the served `pillars` rule).
+  `PILLAR_ORDER` is gone. **Visible change:** under the initial rubric, ROI (position 9) opens "Investment &
+  Feasibility" before "Market & Volume", so ROI and CAPEX are now adjacent in the grid, Compare, the dialog and the
+  editor.
+- `lib/domain-constants.ts`: the deck's 1/5 anchors are now an optional lookup `scoringAnchor(key)`. A new dimension
+  has none (shown as "—"). It is display copy only and never a dimension list. `SCORING_SCALE` gains 0.
+- **Grid** (`matrix-table.tsx`): one column per served active dimension under its pillar band; P21-T03 boxes, lines and
+  alternating tint work for any number of dimensions. Headers are the served labels, clamped to 3 lines. Column width
+  is set from the label's longest word (64..112 px), and a pillar band is widened until its own longest word fits (no
+  spill into the next box). `lib/grid-boxes.ts` has `dimensionColumnWidth` and `widenForBand`.
+- **Incomplete.** On a scored row, a missing dimension is an empty dotted "–" chip (`score-chip-empty`). The
+  Score /100 cell shows a dashed-circle `IncompleteScoreMarker` (shared,
+  `components/shared/incomplete-score-marker.tsx`), a focusable button whose name and tooltip list the unscored
+  labels; the score button's name gains ", incomplete". An unscored project keeps plain dashes and no marker. The same
+  marker is used in Compare's total row, the edit dialog and the Workspace.
+- **Edit dialog:** one 0–5 menu per served dimension, plus "– Not scored", grouped by pillar. It sends ONLY the
+  dimensions changed in the dialog (`{scores, hard_gates}`; "– Not scored" sends null and clears). An unchanged dialog
+  closes with no request. Unscored projects start empty (the invented neutral 3s are gone). 422
+  `UNKNOWN_DIMENSION_KEY` says the rubric changed.
+- **Compare:** dynamic rows. Each menu has "– Not scored" (null clears). Save sends only the edited keys. The "score
+  all 13" block is gone (partial scores are valid).
+- **Scenario:** `stores/scenario.ts` `baseline` / `next` are full `scores` maps. Equality is over the union of keys.
+  `computeScenarioDiff(pending, activeKeys?)` sends only changed keys plus the full `hard_gates`, and drops keys that
+  are no longer active. A staged edit carries display-only `labels`. The scenario panel labels come from the model,
+  then those labels, then the key.
+- **Scenario version history** reads both P26 `scores` snapshots and legacy flat snapshots (any numeric field that is
+  not a meta field), labelled from `GET /scoring-rubric`.
+- **Workspace scoring section:** rows come from `score.dimension_scores` (or the served table when unscored; that read
+  is enabled only with Matrix read or write). Menus are 0–5 plus "Not scored", and the save sends only changed keys.
+- **Board:** shows no dimensions, so nothing changed. **Export:** the frontend only streams the served file; columns are
+  server-side, so no change.
+
+**Rubric editor** (`components/rubric-editor/`: `scoring-rubric-sheet.tsx`, `rubric-dimension-row.tsx`,
+`rubric-preview-panel.tsx`, `rubric-version-history.tsx`; pure logic in `lib/rubric-draft.ts`):
+- **Where.** A "Scoring rubric" button (`scoring-rubric-button`, compact "Rubric") sits in the View panel, on both tabs
+  and in the narrow sheet. It is Matrix only. It opens a Radix Dialog styled as a right side sheet (`sm:max-w-3xl`,
+  full height; full screen at 390, measured 390×844).
+- **Focus.** On open, focus goes to the sheet itself (the title is announced). On close it returns to the trigger.
+  `GET /scoring-rubric` is read only when the sheet is open.
+- **Read only.** Without the served `can_edit`, the sheet shows the same dimensions as text: grouped, with served
+  weight and scaled weight, "(inverted)", and "Inactive · scores are kept".
+- **Editable rows.** Each row has label, pillar (select or "New pillar…" free text), weight 1..100, Inverted and Active.
+  - Reorder by drag (handle; within a pillar; a cross-pillar drop is refused) or by Move up / Move down. Focus is kept;
+    at an end it moves to the other button. A live region announces "X moved up: position 2 of 3 in P".
+  - Pillars also move as blocks.
+  - A pillar change moves the row to the end of the new pillar.
+  - Controls have stable names from the served label ("Label of X").
+- **Inactive rows** are greyed (sunken background; no opacity, so contrast holds), with "Not in the score; scores are
+  kept." and "Reactivate".
+- **Add dimension** takes label, pillar (or a new one) and weight. It shows "Total weight: current N → proposed M with
+  this dimension" and the scaled-to-100 note, and focuses the new row's label. A new row can be removed before saving.
+- **Validation mirrors the coded 422s** on the fields: label required or ≤ 80; duplicate label, case-insensitive, on
+  both rows; weight a whole number 1..100; pillar required or ≤ 60; form-level "At least one dimension must be active."
+  A server 422 is mapped back: coded errors to the fields they concern (duplicate label to the colliding rows); FastAPI
+  `loc` errors to row i / field, or to the reason.
+- **Preview impact** calls `POST /scoring-rubric/preview`. It shows the served totals old → new, scored projects, score
+  and suggested band change counts, band-transition chips ("1 P2 → P1"), and a sortable table (`aria-sort`) of only
+  the projects whose score or a band changes, with old/new score, score band, suggested band, "capacity fill" and
+  "incomplete (n)". It is marked "Out of date" when the draft changes afterwards.
+- **Save** sends `PUT` with `version` (the version edited), the trimmed required `reason` and every dimension in the
+  grouped order shown (new ones without `key`). On success it seeds the rubric cache, resets the draft and reports
+  "Saved as version N" (or "Nothing changed" for a no-op 200). `useSaveScoringRubric` → `invalidateRubricReaders`
+  invalidates `priority-matrix` (rows, distribution, summary, capacity fill, compare, edit rows, dimensions),
+  `scoring-rubric`, `priority-board`, `vip-board` (it orders by weighted score) and `['projects','workspace']`.
+  Run-derived views are not invalidated (ADR 0037 §7).
+- **409 `RUBRIC_VERSION_CONFLICT`** shows "Someone else changed the rubric; reload and re-apply." with "Reload latest
+  version (keep my draft for comparison)". The editor then shows the latest version, and a comparison panel lists the
+  Admin's draft against it, with "Re-apply my draft on version N". That rebases: their edits win, and dimensions others
+  added are appended.
+- **Version history tab:** versions newest first (who, or "system (migration)"; when; reason; total weight "(was N)";
+  active count), and per version a snapshot diff against the previous one (added; label, pillar, weight, inverted,
+  active; position only when the relative order changed).
+- **Draft lifetime.** The draft lives outside the sheet content, so it survives close/reopen until it is saved or
+  discarded. An untouched draft follows a newer served version.
+- **Decision (grouped order is stored).** The editor and the grid show each pillar together, and a save stores that
+  grouped order. Under the initial rubric this moves CAPEX next to ROI. The editor says so when the stored order is not
+  grouped (`rubric-order-note`).
+- **Rename.** The collapsible card above the grid is now titled "Scoring scale and dimensions" (its "Show rubric" toggle
+  is unchanged), to tell it apart from the editor.
+
+**Tests (new and updated).**
+- `lib/rubric-draft.test.ts` (9): grouping, moves, pillar change, add, validation, 422 mapping, rebase, snapshot diff.
+- `components/rubric-editor/scoring-rubric-sheet.test.tsx` (12):
+  - read-only;
+  - add in a new pillar, with totals and focus;
+  - add-form validation;
+  - deactivate and reactivate;
+  - keyboard and drag reorder, and pillar move;
+  - field validation and no-active, with nothing sent;
+  - preview rendering and sort, and stale marking;
+  - save body (version, reason, new dimension without key) and the five invalidations;
+  - 409 → reload → comparison → re-apply → save on the new version;
+  - field-level 422 mapping;
+  - version history diff;
+  - axe.
+- `matrix-table.test.tsx` (+2): 14 dimensions and a new pillar (bands, tint, lines, served weight); incomplete chips,
+  marker name and tooltip.
+- `score-edit-dialog.test.tsx` (rewritten, 6): 14 menus by pillar and axe; changed-keys-only body with 0 and null; no
+  invented 3s; unchanged closes; `UNKNOWN_DIMENSION_KEY`.
+- `compare-dialog.test.tsx` (14): `scores` bodies; partial scoring of an unscored project with an incomplete marker; null
+  clears.
+- `scenario-panel.test.tsx` (+2) and `stores/scenario.test.ts` (+3): diff semantics, null, active-key filter, union
+  equality.
+- `version-history-panel.test.tsx` (+1): `scores` snapshots.
+- `scoring-section.test.tsx` (+2): 14 dimensions and incomplete; changed-keys body.
+- `MatrixPage.test.tsx` (+1): the View panel button opens the read-only sheet, reads only when open, and returns focus.
+- Fixtures: `matrix/test-fixtures.ts` gains test-data builders (`INITIAL_TEST_DIMENSIONS`, `FOURTEEN_TEST_DIMENSIONS`,
+  `testDimensionScores`, `testDimensionTable`, `testRubric`). The Workspace fixture uses `dimension_scores`.
+- e2e (typechecked, not run): `pages/matrix.page.ts` `rubricButton()` / `rubricSheet()`; a `matrix.spec.ts` P26 test
+  (PM read-only, history, focus return).
+
+**Results.**
+- `tsc -b`: clean.
+- `eslint .`: 0 errors. The 9 warnings are all in files not touched here, and the 2 old `scoring-model.tsx` warnings
+  are gone.
+- **Full Vitest: 185 files / 1461 tests passed.**
+- `vite build` to a scratch outDir (`dist/` untouched): budget PASS, 187.3 KB gzip initial; the MatrixPage chunk is
+  51.5 KB gzip (was 39.5; the editor lives in the Matrix route chunk).
+- **Live, own vite :5196** (`--mode e2e`), stopped afterwards; :5183 and :8001 were not restarted.
+  - The dev API on :8001 answered 500 on every endpoint (including `/me` and `/hubs`), and Docker was not reachable
+    later. So EVERY API route was mocked in Playwright: 64 "MOCK Cooler" projects, a 14-dimension rubric v2 with a
+    "Sustainability" pillar, versions, preview, and a 409 on PUT. Every non-GET was answered by a mock or aborted, so
+    nothing was written.
+  - axe 0 serious/critical in light mode at 1440 and 390: grid scrolled right with the marker tooltip; editor; edited;
+    preview; 409; history; read-only (PM).
+  - Measured: 14 dimension columns; focus on open goes to the sheet, after add to the new label, after a move it stays
+    on the button (announced), and on close returns to the trigger.
+  - Screenshots, reviewed: scratchpad `p26/shots/{1440,390}-{grid,grid-right,sheet,sheet-edit,sheet-preview,sheet-409,history,sheet-readonly}.png`.
+  - Fixed after review: mid-word header breaks, a band spilling into Score, inactive-row contrast (opacity), the
+    unfocusable scroll region (read-only, 390), a hidden tab panel taking space, and a duplicated "(inverted)".
+
+**Notes / follow-ups.**
+- (1) The owner committed `9a4b2b2` ("added data") at 13:39, mid-task, and it includes part of this work. The rest is
+  uncommitted. Nothing was committed by me.
+- (2) The dev stack is down (API 500 / Docker gone). The owner still needs to `alembic upgrade head` (p26a) and restart
+  :8001 (P26-T01 note), then re-check live. In particular, the real `/priorities/dimensions` now drives the grid.
+- (3) At 390 the app shell still leaves about 200 px for the grid (carried).
+- (4) A rubric preview/save by a Hub Planner is 403 by design. The editor only shows edit controls for the served
+  `can_edit`.
+
+## [2026-10-22] Final gate (P21–P26) — security-auditor: FAIL (1 Critical, 1 High, 1 Medium, 2 Low, 4 Info; the Critical and High are deployment/secrets, not code; P21–P26 code review has no High or Critical)
+
+Scope: P21-R01, P23-T01..T03, P24-T01/T02 + reseed follow-up (`p24b_checkin_reset_escape`), P24-R01 (`services/hub_scope.py`),
+P25-T01..T04, P26-T01/T02 (ADR 0037), plus the hosted Render deployment. Read-only review. Method: code read; a scratchpad
+probe (`sec/test_sec_probe_p26.py`, 29 probes) was copied into `backend/tests/` to use the conftest testcontainers
+Postgres and then deleted; related suites `test_p26_scoring_rubric test_multi_role_row_scope test_p25_capacity_fill
+test_p25_t03_fill_surfaces test_p23_registration test_p24_charter_fields test_rbac_enforcement test_hub_scope`: 200
+passed. Deployed site: GET/HEAD/OPTIONS only (no header, no write). :5433 / :8001 / :5183 not touched.
+
+Verified (no finding):
+- **ADR 0037 rubric.** PUT and preview are 403 for PM, HP, EV, Engineer, Auditor and the alice shape (PM+HP+Eng+EV), with
+  no audit row written. Envelope is strict: `version` true / "1" / 1.0, empty or non-string `reason`, and an extra key all
+  give 422. Dimension fields are strict too: `weight` true / "5" / 0 / 101 / 5.5, `inverted` "true", `active` 1, empty
+  label, 500-char label and a non-slug key all give 422 on both PUT and preview. 409 comes from the version check under an
+  exclusive advisory lock. The audit row holds before/after snapshots plus the reason.
+- **Rubric collisions.** New keys are slugs `[a-z0-9_]`, so labels never become export headers. The labels "Rank",
+  "Suggested band after capacity fill", "tcogs_eur" and "Project Name" became `rank_2`,
+  `suggested_band_after_capacity_fill_2`, `tcogs_eur_2` and `project_name_2`. The CSV headers are unique and none is
+  formula-like.
+- **Rubric preview scoping.** A hub-scoped Admin's preview omits other hubs' projects. The p26a interpolated SQL uses only
+  the frozen constant key list.
+- **P24-R01.** Engineer + EV is denied stage PATCH (403) and freeze (403) on an unassigned project. Engineer has
+  Workspace R only, so the union with a hub role adds no write. Gantt `can_write_timing` and freeze still use
+  `is_hub_in_scope`. Engineer + Auditor and Engineer with stray `hub_ids` stay self-scoped. The ADR 0028 heatmap rule
+  (`RoleName.ENGINEER in roles` → own row) is explicit in `capacity.py`.
+- **p24b.** Only `seed/seed_demo_data.py` sets `rpd.allow_checkin_delete`. No API, service or worker code runs
+  SET/`set_config`/`text(f…)`. UPDATE/TRUNCATE are still rejected. The `audit_log_entries` triggers are unchanged since
+  `ba3881d85b55`, with no hatch.
+- **ADR 0034.** The coded 422s (HARD_GATE_FIELDS_MISSING, UNKNOWN_LEADER, DRAFT_RETIRED) echo no values. `status` in a
+  create body gives 422 (`extra="forbid"`), and create forces In Queue.
+- **Charter fields.** Read-only (422 on write), unencrypted by design, formula-guarded in exports, and the access log
+  holds no bodies.
+- **S21-L2 fully closed.** `compare-selection.ts` listens for `rpd:signed-out`. No dependency, nginx, CSP or TLS change
+  in this delta.
+
+Findings:
+| ID | Sev | Finding | Fix |
+|----|-----|---------|-----|
+| S26-C1 | Critical | The Render backend `https://frigoglass-hu6f.onrender.com` runs with `RPD_DEV_MODE=true`. `GET /me` with **no header at all** returns `frank.admin@example.com`, roles `["Admin"]`, `hub_scope_all: true`, `dev_mode: true` (`api/deps.py:240` falls back to `DEV_DEFAULT_USER_EMAIL`). `X-Dev-User-Email` picks any active user, including Super Admin, and `/me/dev-users` (200) lists accounts. Anyone on the internet has full Admin read/write, including decrypted financials, exports, user/role admin and the rubric. The code default is OFF (`core/config.py:230`), so this is the service's environment. | Set `RPD_DEV_MODE` unset/false and configure OIDC (no password auth exists in the code). Until an IdP exists, suspend the service or put it behind an access proxy. Treat as a possible data exposure: review Render logs and `audit_log_entries` for frank.admin actions the owner did not make, and do a GDPR Art. 33 assessment (real roster names are seeded). |
+| S26-H1 | High | The DB password and `RPD_FIELD_ENCRYPTION_KEY` were disclosed in chat. With both, a DB copy decrypts every customer name, TCOGS, selling price and margin. A direct DB connection can also `SET LOCAL rpd.allow_checkin_delete` and, as table owner, disable the audit triggers. There is no key-rotation path (`models/types.py` uses a single Fernet). | Rotate the DB password first, then re-encrypt with a new Fernet key using a one-off `MultiFernet([new, old]).rotate()` over the 4 `projects` columns in one transaction, then swap the secret and restart the API and all workers. Restrict external DB access. Treat old backups as exposed. Steps are in the gate report. |
+| S26-M1 | Medium | The Render static frontend `frigoglass-frontend.onrender.com` serves HSTS + nosniff but **no CSP and no X-Frame-Options/frame-ancestors**, and `render.yaml` declares no `headers`. The on-prem nginx config is correct and unchanged. | Add a `headers:` block to `render.yaml` mirroring `deploy/nginx/default.conf` (CSP with `connect-src` = API origin, `frame-ancestors 'none'`, X-Frame-Options DENY, Referrer-Policy). |
+| S26-L1 | Low | `capacity_fill_reason` carries the hub's P1 design load and remaining design capacity ("hub P1 design load 9.00 of 10.00 weeks"). The Workspace serves it to anyone with project access. Probe: a PD-India Hub Planner with a Viewer grant on an R&D-Greece project saw R&D-Greece's figures in the Workspace, while `/priorities/capacity-fill` and `/capacity/hub-load` gave them only their own hub. An own-assignment Engineer (no Capacity read) sees them too. It is aggregate only, with no other project names and no financials. Matrix, board and export are hub-scoped and unaffected. | In `services/workspace.py`, serve the hub-figure reason only when `is_hub_in_scope(project.hub_id)` and the caller can read the Matrix; otherwise a generic "Promoted by the hub's P1 capacity fill" or null. |
+| S26-L2 | Low | `/docs` and `/openapi.json` are public on the deployed API (200), because `FastAPI()` keeps the default docs URLs. | Set `docs_url`/`redoc_url`/`openapi_url` to None unless dev mode, or block them at the proxy. |
+| S26-I1 | Info | Pydantic 422s echo `input` back to the sender (e.g. a rubric key). The value goes only to the same caller, is not logged and is not cross-user. | Optional: drop `input` in `sanitizing_validation_exception_handler`. |
+| S26-I2 | Info | Trigger-based immutability (audit log, check-ins, comments) holds against every app code path but not against the table owner. | Run the app as a non-owner role with no TRIGGER/ALTER; migrations as owner. |
+| S26-I3 | Info | `GET /scoring-rubric/versions` shows `changed_by_name` to every Matrix reader. | Acceptable. |
+| S26-I4 | Info | No built-in Fernet key rotation. | Optional: support `RPD_FIELD_ENCRYPTION_KEYS` (MultiFernet), and add a rotation script. |
+
+Carried: S19-I3 and S19-I4 are optional; S18-L1..L4 are unchanged. OQ #8 / P4-T08: the ADR 0028 owner ruling stands, and
+the heatmap rule is preserved by P24-R01.
+
+**Gate result: FAIL** for P21–P26, on S26-C1 (Critical) and S26-H1 (High). Both are deployment configuration and secret
+hygiene, not application code; the P21–P26 code has no High or Critical. To re-gate:
+1. evidence that the deployed `/me` without credentials gives 401 and `/me/dev-users` gives 404;
+2. the DB password and field key rotated, with an owner note that the re-encryption row count matches the count of
+   non-null rows.
+S26-M1 should be fixed before any further public hosting. S26-L1 and S26-L2 should ride with the next remediation.
+
+## [2026-10-22] Final gate (P21–P26) — workflow-auditor — PASS on items 1–6; item 7 (Render DB) NOT RUN, connection string needed
+
+Scope: P21, P22, P23, P24 (+P24-R01), P25 and P26 against DOMAIN_RULES as amended by ADR 0033–0037. Read-only on the repo. Disposable PG17 container `wa-final-pg` (127.0.0.1:55941, throwaway Fernet key in the environment only; now removed) at alembic head `p26a_scoring_rubric_tables`, `seed_demo_data --dataset client_2026 --schedule`, CW 42, plus dev users and currency rates. :5433, :8001, :5183 and the Render DB were not touched. API calls were in-process (httpx ASGI, `X-Dev-User-Email`). No financial value or customer name was printed or logged. `backend/scheduling/` has no change since the ADR 0032 commit 7e6e707, which was already gated, and the working tree is clean there.
+
+**1. ADR 0035 seed vs the client workbooks** (openpyxl, `python -I`, columns found by their header text, not by the extractor's map).
+- Roster (`RPD Capacity!I42:T50`): all 17 people match on name, hub and FTE (Σ 14.3). The 2 zero-FTE placeholders are not created. The 6 provisional leaders are at FTE 1.0 in the hubs ADR 0035 names, which are their majority hubs (Dipak R&D-India 28 vs PD-India 24, Elena Micu and Marian PD-Romania, Theoni OEM-HCK 4 of 9, Sailesh and Antonis PD-India). Totals: **23 engineers, Σ FTE 20.30**. Per hub: PD-India 9 / 7.75, R&D-India 4 / 3.0, R&D-Greece 3 / 2.8, PD-Romania 6 / 5.75, OEM-HCK 1 / 1.0. Allowed categories match ADR 0035 §3.
+- Chambers: efficiencies 0.7/0.6/0.6/0.5 (India), 0.7/0.6 (Greece) and 0.7/0.6/0.6/0.7 (Romania) match the workbook. Platforms and the maintenance, breakdown and calibration weeks also match the workbook detail table. That table gives Romania 1/4/2/1; the workbook's own summary block says 2/2/2/2, with the same total of 8.
+- Projects: 253 requested in 2026. The multiset of (name, hub, leader through the alias map) is identical to the workbook, so every leader assignment matches. Plant 253, department 237 and product type 250 are equal as multisets. **Carry-over: 17** (`Spillover '25` = Y or Yes) are the same 17 names, with reg_year 2025; the other 236 have 2026. `target_end_week`: 22 dated, 15 imported and all equal to the ISO-week rule, 7 from 2025-12-01 not imported.
+- Null leaders: **20** (OEM-HCK 9, OEM-Seltek 8, R&D-Greece 1, PD-India 1 Cancelled, PD-Romania 1 Commercialized). **18 are LEFT_OUT with no leader** (OEM-HCK 9, OEM-Seltek 8, R&D-Greece 1).
+- Capacity (ADR 0008), recomputed by hand from the stored inputs, equals what is served to 2 dp. Design capacity per year: Greece 124.88 (the same as the workbook's 124.88), R&D-India 132.50, PD-India 342.29, Romania 253.00 (the workbook formula at the roster FTE gives the workbook's 165 exactly), HCK 44.17. Lab: India 188.30, Greece 73.34, Romania 216.30 (the same as the workbook's 216.3).
+- **Booked % (year), each = load / capacity:** Greece 25.62, R&D-India 151.70, PD-India 146.07, Romania 54.55, HCK 22.64, Seltek null; lab India 123.74, Greece 21.82, Romania 11.10. These equal ADR 0035's table.
+- Differences from the workbook are inputs only, all already documented: provisional FTE (+6.0); the India medical-leave divisor /6 vs /5 (OQ #59: 44.17 vs 43.93 working weeks); the lab holiday basis (region calendar vs the workbook's flat 2.6 weeks: Greece 73.34 vs 72.96, India 188.30 vs 186.22); and the workbook's own remaining-weeks snapshot.
+
+**2. ADR 0037 rubric.**
+- Migration losslessness: I built a pre-P26 DB from commit 0d9bbc0 (temporary worktree, now removed) and seeded client_2026. I wrote 3 ADR 0033 zero edge sets (all 0; 5s with two 0s; the ADR 0033 golden, 45) with consistent caches, then upgraded with HEAD. 253 × 13 rows were copied and the log said "0 corrected". Scores, weighted score, pct and band are identical for all 253; Σ weighted is 32615.00 before and after; bands P1 26 / P2 6 / P3 93 / P4 128 are unchanged; Σ table points = the stored weighted score. Downgrade restores the 13 columns exactly, and the second upgrade is lossless too.
+- Change tested: strategic weight 25 → 40, plus a new "Sustainability Impact" (pillar ESG, weight 20); key `sustainability_impact`; total 330.
+  - The hand calculation (exact fractions, half up, missing counts 0) equals the preview's new pct, score band and `missing_dimension_keys` on all 253 projects.
+  - PUT gives v2; all 253 caches equal the hand values and carry `rubric_version` 2. A stale PUT returns 409 `RUBRIC_VERSION_CONFLICT`. PM, HP and EV get 403 on the preview. There is one `scoring_rubric.update` audit row.
+  - **Preview = saved** on pct, score band, suggested band after fill, `capacity_fill` and missing keys for all 253.
+  - Scoring the new dimension at 4 on one project: hand pct 91 = served 91; weighted 300.0 = hand.
+  - Readers agree: rows (14 dimensions), compare (14), board (score, band, suggested band, fill on 192 cards), Workspace, distribution and summary (equal to the row counts), export (new column after `has_score`, pct equal), capacity fill (re-derived, 0 mismatches).
+  - A second save (revert, deactivate) gives v3, back to 295. The stored score of the inactive dimension is kept, and every cache equals the hand value.
+- **Scheduler untouched:**
+  - `ProjectInput` has no score field. Every project's priority and `schedule_stale` are unchanged, and no run was started.
+  - The canonical input hash is identical across a rubric save. The raw repr hash moves only with DB row order after a run is persisted; it moved with no rubric write in between too.
+  - Outcome hash of v1 (seed) = v2 (fresh) = v3 (after both rubric writes and a score write) = `96e0907e…`. The greedy output sha is identical.
+
+**3. ADR 0036 capacity fill, re-derived on the real roster.** Inputs: C = served `design_capacity_remaining`; load = remaining effort of non-Done design rows in the active run (Not Started: duration; In Progress: ceil(duration × (1 − pct)) or the override). The walk follows the rule exactly.
+
+| Hub | C | Base load | Filled | Promoted | Note |
+|---|---|---|---|---|---|
+| R&D-Greece | 24.02 | 0 | 19 | 3 | 1 zero-load skip; candidates exhausted |
+| R&D-India | 25.48 | 4 | 25 | 7 | 3 skips; **stopped** |
+| PD-India | 65.83 | 108 | — | 0 | overfull |
+| PD-Romania | 48.65 | 0 | 46 | 12 | stopped |
+| OEM-HCK | 8.49 | 0 | 2 | 2 | 9 zero-load skips (no leader) |
+| OEM-Seltek | 0 | — | — | 0 | C = 0 |
+
+- Total **24 promoted**; promoted bands P1 49 / P2 6 / P3 73 / P4 125; score bands 25 / 6 / 94 / 128.
+- The served capacity-fill entries, matrix rows (band, score band, fill, reason presence), board cards, export rows and the Workspace (49 checked) equal this with 0 mismatches. Still equal after the rubric change.
+- Hub Planner (bob, PD-India): capacity fill and the fill fields on 165 rows are equal to the admin's.
+
+**4. ADR 0034.**
+- A name + hub create is 422 `HARD_GATE_FIELDS_MISSING` naming all 8 fields (priority included), and writes no project and no audit row.
+- A full create gives 201 In Queue with `schedule_stale` set and no run.
+- PATCH to Draft is 422 `DRAFT_RETIRED`. There are 0 Draft rows.
+- The scheduler still excludes Draft through `SCHEDULABLE_STATUS_ORDER` (no code change).
+
+**5. P24-R01.** Each user was compared on 22 endpoints (Dashboard ×6, Capacity ×2, Planning ×2, board, priorities ×4, check-ins due, notifications, VIP, run changes v4 vs v3, Workspace, every Gantt page, heatmap). The comparison was role R alone vs R + extra roles, with roles changed through `PATCH /users` on the disposable DB and then restored.
+- Admin + Engineer, EV + Engineer and HP + Engineer: every endpoint is identical except `/capacity/engineer-utilization`, which goes to 0. That is the documented ADR 0028 own-row exception.
+- Alice's shape (PM + HP + Engineer + EV) has the same row sets everywhere: Gantt 254, check-ins due 33, run changes 5, register 254. The Gantt content differs only in `timing_editable` and `span_fte`, and that comes from **Hub Planner**'s write right. PM + Engineer and PM + EV alone are identical to PM.
+
+**6. Invariants on a fresh greedy run** (v2; v4 after a probe registration).
+- My own checker, written from DOMAIN_RULES and separate from `scheduling/invariants.py`, found 0 violations on I1, I2, I3, I4, I5, I9 (rule), I11, I12 (with cert-off lab steps at weight 0), I15, I16, I21 (39 stretched design rows, all `ceil(duration / fte)`, span_fte 0.5 / 0.75) and I22. 50 left-out projects keep partial rows, 16 of them with placed Not Started steps. That is the P2-classified partial-retention behaviour (MEMORY P2 entries), not new.
+- The built-in `validate_invariants` also reports 0 violations. I8: byte-identical re-run. I14: v1 is byte-stable after v2–v4. I13: Workspace health equals the stored outcome on all 193 schedulable projects. I6, I7, I17, I19: computed loads equal the served loads to the week (design 32 / 201 / 500 / 138 / 10 / 0; lab India 233, Greece 16, Romania 24), and every booked % equals load / capacity.
+- I9 and I23: Dashboard pipeline **17 / 236 / 0 / 253**; run **41 (24 open + 17 Commercialized) / 42 / 126**. The six hub-filtered Dashboard figures sum to the unfiltered ones, each hub-filtered capacity row equals the unfiltered row, and the Gantt equals the stored run on all 253 projects and every step.
+- I18, I20, I24 and the P21–P26 suites: the backend files ran on testcontainers, 594 passed. They cover the multi-role tests, P11 priority move and run changes, the P12 follow-up, grants (resolver, delegation, API), P21, P23, P24, P25 ×2, P26, the seed tests, migrations and the OpenAPI/frontend contract. `tests/scheduling` (golden files, invariants): 311 passed.
+- **ADR 0032 still applied.** Known defects 2 (chamber efficiency is capacity-only) and 3 (terminal delay) are unchanged, with no change under `backend/scheduling/`.
+
+**Observations (non-blocking).**
+- **O1 (owner/client).** Per-hub load follows the project's hub (I6), but two provisional leaders lead across hubs. All 32 weeks of R&D-Greece's run design load are Theoni's (OEM-HCK engineer); its own three roster engineers lead nothing in the run. 23 weeks of PD-India's load are Dipak's (R&D-India). So R&D-Greece's 25.62 % and PD-India's 146.07 % do not show who does the work. This is consistent with ADR 0035 ("majority hub") and OQ #52. Worth one line in the client questions.
+- **O2.** The workbook is internally inconsistent on Romania platforms (2/2/2/2 vs 1/4/2/1). The seed uses the detail table; the total is equal.
+- **O3.** Copies of the two workbooks, which hold client financial data, are in this session's scratchpad (`wbF/`, `wbM/`). My `rm` was denied, so they must be deleted by hand. There is also a second worktree, `scratchpad/wt-head` (0d9bbc0). It is not mine and I left it alone.
+
+**Item 7 (Render DB) not run.** I did not search for credentials, as instructed. To reconcile its figures against the seed (pipeline 17/236/0/253, run 41/42/126, booked % per hub as in item 1), I need a read-only connection string from the owner.
+
+**Verdict: workflow-auditor PASS for P21–P26 + P24-R01 on items 1–6.** No invariant, reconciliation or ADR check fails. Item 7 is still open; it is not a FAIL. The orchestrator should not count this gate as fully closed until the Render reconciliation is run.
+
+## [2026-10-22] Final gate item 7 (Render DB reconciliation) — closed by orchestrator check
+
+The workflow-auditor's item 7 (Render database read-only reconciliation) was not run by the auditor (no connection string supplied to it). The orchestrator ran the equivalent check on 2026-10-22 against the deployed API after the reseed from commit 0d9bbc0 (read-only GETs): pipeline 17 / 236 / 0 / 253; status 83 / 24 / 85 / 17 / 15 / other 29; run within-year 41 / spillover 42 / left-out 126 / blocked 0; 23 engineers, 20.3 FTE; design booked % (year) R&D-Greece 25.62, R&D-India 151.70, PD-India 146.07, PD-Romania 54.55, OEM-HCK 22.64, OEM-Seltek null; VIP board served from the new run. All equal the seed figures the auditor re-derived in items 1 and 6. Note: the deployed DB is at p24b (pre-P26); the rubric code is not deployed. Separate blocker: security S26-C1 (Render backend in dev mode) and S26-H1 (secrets shared in chat) remain open until the owner changes the Render configuration and rotates secrets.
+
+## 2026-10-22: Dashboard country filter moved top right (owner ask)
+
+`PageHeader` (`components/layout/page-header.tsx`) has a new optional `aside` slot. The slot is pinned top right on the
+title's line, and the actions drop to their own row beneath. Without `aside` the layout is unchanged, so every other
+surface is untouched. The Dashboard passes `<CountrySegmented />` as `aside`, and the scheduled-count pill and
+buttons stay in the actions row. Other pages that use `CountrySegmented` (Capacity, Gantt, Matrix, Projects,
+Priority board, Check-in) still have it in their actions. They have not been moved, pending the owner's word.
+Dashboard/layout/hub-filter Vitest: 200 passed, and `tsc` is clean. Checked headless on :5183.
+
+## 2026-10-22: Hub filter on "Analytics & breakdown"; Dashboard keeps its place on a hub change (owner ask)
+
+- **Hub filter in "Analytics & breakdown".** The `analytics-breakdown.tsx` header now carries `HubFilterSelect` in a
+  bordered pill. This is the same page-wide hub / country filter as the app header, not a separate local one.
+- **Why the page jumped.** On a hub change every Dashboard query went pending, the sections fell back to skeletons
+  and the page height collapsed. After that, the new figures made the sections above shorter or taller.
+- **Fix part 1, keep figures on screen (`hooks/use-dashboard.ts`).** The seven per-hub queries (completing, pipeline
+  totals, status, hub×type, region summary, analytics, facets) now use `placeholderData: (prev) => prev`, so the last
+  figures stay up while the new ones load. `DashboardPage` dims the sections (`opacity-60`, `aria-busy`) while any of
+  them `isPlaceholderData`, so a previous hub's numbers never pass as current (I9).
+- **Fix part 2, hold the scroll position (`lib/use-keep-scroll-anchor.ts`, new).** On the reader's pointer or key
+  press, the hook snapshots the anchor section: the one holding focus, else the top visible one. On a key change it
+  holds that section at the same offset by correcting the scroll whenever the sections resize. It stops after 4 s or
+  on the reader's own wheel / touch scroll.
+- **Measured headless on :5183.** I scrolled to the breakdown and picked PD-India in its filter. The section's top
+  moved 0 px from the hub change, at 100 ms, 400 ms and 1.5 s (before the fix it moved about 515 px). A separate
+  22 px move happens when the dropdown opens: the browser scrolls the focused trigger into view.
+- **Checks.** Dashboard, components and lib Vitest: 435 passed. `tsc` and eslint are clean. There is no unit test for
+  the hook yet: jsdom has no layout, so it is verified in the browser only.
+
+## 2026-10-22: Dashboard header + pipeline row compacted (owner ask: "lot of empty space")
+
+- **Header (`PageHeader` with `aside`).** It is now one band, `mb-s4`: eyebrow and title on the left, with the country
+  filter stacked over the actions on the right, both right-aligned. The description line "Portfolio status for the
+  active schedule run." is removed from the Dashboard. The pill and the action buttons are smaller (`size="sm"`,
+  `py-1`, a 2xl figure).
+- **Pipeline row.** The subtitle is dropped (the + / = glyphs state the equation, and the info popover stays). Cards
+  use `px-s4 py-s2`. The "Project pipeline" heading is `text-h1`, the same size as "Status overview" (owner: "heading
+  got small"). The row is now 8 / 4 with the VIP card, which was 9 / 3, so VIP rows no longer truncate.
+- **Unchanged.** All served figures and data-testids. Dashboard + layout Vitest is green, and `tsc` is clean.
+- **Concurrent git operation.** Mid-task the working tree was briefly reset to HEAD by another session's git stash,
+  then popped (the reflog shows "reset: moving to HEAD"). The edits came back intact.
+
+## [2026-10-22] P27-R01..R04 — Security remediation from the final gate (S26-L1, S26-L2, S26-M1, S26-H1 support) (backend-builder): DONE
+
+Remediation of "Final gate (P21–P26) — security-auditor: FAIL". Disposable environments only: testcontainers Postgres,
+a fresh `rpd_p27_key_rotation` database in that container, and a throwaway docker Postgres 17 + Redis 7 + uvicorn on
+127.0.0.1:55437 / :56387 / :18431, plus a static server on :18432, all stopped and removed afterwards. :5433, :8001 and
+:5183, the Render DB and the deployed site were not touched.
+
+**Plan numbering clash.** "P27" was already opened (in parallel) for the Registration "project nature" tags (ADR 0038,
+P27-T01/T02). The remediation tasks are therefore **P27-R01..R04**, under a "### P27 — Security remediation (final gate)"
+subsection placed after the tags table.
+
+**P27-R01 — S26-L1 (Workspace `capacity_fill_reason`).** `services/workspace.py::_scoped_fill_reason` serves the
+reason with figures only when `is_hub_in_scope(principal, project.hub_id)` **and** `principal_can(MATRIX, READ)`.
+Otherwise it serves `GENERIC_CAPACITY_FILL_REASON = "P1 (capacity fill)"` for a promoted project, and null for a
+stopped or skipped one. `capacity_fill`, `suggested_band` and `score_band` are unchanged, so the fill is still identical
+on every surface. The Matrix, board and export were already hub-scoped (auditor) and are untouched. Amended:
+DOMAIN_RULES "P1 capacity fill" (one bullet) and `docs/API_CONTRACT_P25.md` §5b; the type is unchanged.
+Tests: `tests/test_p27_capacity_fill_reason_scope.py` (5). They cover the auditor's probes: a PD-India Hub Planner with
+Viewer grants on R&D-Greece projects gets the generic reason / null, and an Engineer who leads their own project gets
+the same. An in-scope Hub Planner and a global PM keep the figures. A unit matrix covers the rest. Gotcha: adding an
+engineer to the hand-worked hub raises its capacity, so the probe engineer is homed in another hub.
+
+**P27-R02 — S26-L2 (API docs).** `api/main.py::api_docs_urls()` (a TypedDict, so mypy accepts the `**` into `FastAPI()`)
+returns `/docs`, `/redoc` and `/openapi.json` only when `is_dev_mode()` (read once at import, like the CORS headers),
+and None for all three otherwise. `app.openapi()` still builds the schema in-process, so the contract tests and every
+`app.openapi()` caller work unchanged. No other repo tooling fetches `/openapi.json` (grepped). Tests:
+`tests/test_p27_api_docs_disabled.py` (11). Unit cases cover the env values. The real `api.main` is imported in a clean
+subprocess both ways: 404 x3 without dev mode with more than 100 schema paths still built, and 200 x3 with
+`RPD_DEV_MODE=true`. Gotcha: in this FastAPI version `app.routes` holds nested router objects without `.path`, so the
+probe GETs the URLs with a TestClient. The app logs to stdout, so the probe lines are tagged.
+
+**P27-R03 — S26-M1 (Render static headers).** `render.yaml` has a `headers:` block on `/*`:
+- `Content-Security-Policy`: `default-src 'self'`; `script-src 'self' 'sha256-V0ZiTxQfDEJo9pOlp5hFZbHboxfD1edEal3o2vpOkMI='`
+  (the index.html theme script, identical in source and build; **no** `'unsafe-inline'`); `style-src 'self' 'unsafe-inline'`;
+  `img-src 'self' data: blob:`; `font-src 'self' data:` (the @fontsource CSS has a data: woff); `connect-src 'self'
+  https://frigoglass-hu6f.onrender.com`; `object-src 'none'`; `base-uri 'self'`; `form-action 'self'`;
+  `frame-ancestors 'none'`; `upgrade-insecure-requests`.
+- Also `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`, `Referrer-Policy: strict-origin-when-cross-origin`,
+  `Permissions-Policy` (camera/mic/geo/payment/usb/... all `()`, `fullscreen=(self)`) and `Cross-Origin-Opener-Policy:
+  same-origin`.
+
+How it was derived. The frontend was built with `VITE_API_BASE_URL` pointing at the disposable API (`tsc -b` clean; the
+Vite build went to the scratchpad, so `frontend/dist` was not overwritten). The built bundle has no
+eval/`new Function`, no third-party origin, and fonts are bundled. A Python static server applied the render.yaml
+headers verbatim, with only the API origin swapped and u-i-r dropped for plain http. Playwright then loaded 19 routes
+(every surface, a Workspace, 404) in light and dark, opening one menu, select or dialog per page.
+- **Strict `style-src 'self'`: 6 `style-src-elem` violations per page.** The bundle and Radix's scroll lock
+  (`Combination` chunk) inject `<style>` elements with dynamic content, so hashes cannot cover them. `'unsafe-inline'`
+  stays for styles only, as in nginx.
+- **With it: 0 CSP events and 0 console CSP messages on all 38 loads, and 0 5xx.** The theme script ran under its hash
+  (the dark class was applied in the dark context).
+Guard test `tests/test_p27_render_csp.py` (4) checks four things: the hash equals every inline script in
+`frontend/index.html`, `connect-src` = `'self'` + the `VITE_API_BASE_URL` origin, the locked-down directives, and the
+framing / referrer / permissions headers. **If anyone edits the index.html inline script, update the hash or the theme
+flash returns** (the test fails first).
+
+**P27-R04 — S26-H1 support (key rotation).** `backend/scripts/rotate_field_key.py` (+ `scripts/__init__.py`; Dockerfile
+`COPY scripts ./scripts`; pyproject `packages.find` includes `scripts*`). Run as `python -m scripts.rotate_field_key
+[--dry-run]`.
+- Keys come from `RPD_FIELD_KEY_OLD` / `RPD_FIELD_KEY_NEW` or their `_FILE` forms, exactly one of each. They are never
+  read from argv (argparse knows only `--dry-run`, so `--old-key` exits 2). They are validated as Fernet keys and must
+  differ. Error messages never echo a value.
+- Constant `ENCRYPTED_COLUMNS` (the 4 `projects` columns). `discover_encrypted_columns()` walks `Base.metadata` for
+  `EncryptedString` / `EncryptedNumeric`, and the script refuses to run on a mismatch. These 4 are the only
+  `EncryptedType` usages today.
+- One transaction: SELECT ... FOR UPDATE, `MultiFernet([new, old]).rotate()` per non-null value, and an executemany
+  UPDATE built in Core over a raw `LargeBinary` `sa.table` from the constant names (no interpolation). `updated_at` is
+  kept.
+- Verification inside the transaction: `COUNT(col)` = rotated = verified, where verified means new-key-only decrypt +
+  same SHA-256 of the plaintext + the old key alone fails. One `field_encryption_key.rotate` audit row (counts only).
+  Any failure raises and rolls back; `--dry-run` verifies, then rolls back.
+- The engine uses `hide_parameters=True`. Output is counts only.
+Tests: `tests/test_p27_rotate_field_key.py` (12):
+- discovery = constant; key loading (env/file, refusals with no value echoed and no exception cause, same key refused);
+- in a transaction: rotate + verify + audit row, then the app with `_fernet.cache_clear()` on the new key reads the
+  values; a value under an unknown key makes the run fail with nothing changed and no audit row;
+- end to end on the fresh DB: subprocess dry run (bytes unchanged), then a real run with `_FILE` keys (6/6 rotated,
+  new-key decrypt equals old plaintext, old key fails, the app decrypts on the new key), then a wrong-key run (exit 1,
+  unchanged); no key, plaintext or `gAAAAA` token in any output. Also argv refusal and the missing-keys refusal.
+Extra check on the disposable seeded DB (253 projects): the dry run, then the real run, both gave `customer_name 180/180`
+(the other 3 columns are null in the seed). The API restarted on the new key served all 180 values, and the audit row
+held counts only. Gotcha: in an async session, `expire_all()` and then re-reading raises MissingGreenlet; use
+`execution_options(populate_existing=True)`.
+
+**Runbook.** New `docs/HANDOVER/KEY_ROTATION.md`, linked from DEPLOYMENT_RUNBOOK §6.
+- What the script does and how it is configured.
+- Render order: rotate the DB password and restrict access; suspend the API and all workers; back up; dry run; real
+  run (record the counts for the re-gate owner note); swap `RPD_FIELD_ENCRYPTION_KEY` on the API **and every worker**;
+  restart (the key is `lru_cache`d per process); verify (the Workspace shows values, no `InvalidToken`, the audit row);
+  destroy the old key; treat pre-rotation backups as exposed; purge old exports (plaintext financials in MinIO). The
+  on-prem compose equivalent is included.
+- The production env checklist: `RPD_DEV_MODE` off (`/me` 401 and `/me/dev-users` 404 without credentials, and docs
+  404); `RPD_OIDC_*`; unshared key and DB password; `RPD_CORS_ORIGINS_MODE=replace`; deactivate the `@example.com` dev
+  users after a real Super Admin exists; `VITE_API_BASE_URL` = the CSP `connect-src`; `VITE_OIDC_ISSUER` /
+  `VITE_OIDC_CLIENT_ID`; a header curl check.
+- **Honest gap stated in the runbook:** there is no browser SSO callback or token exchange yet
+  (`frontend/src/pages/login-sso.ts`). With dev mode off, the hosted demo has no interactive login until that flow is
+  built, so suspend it or put it behind an access proxy.
+
+**Not done here (operator / owner actions):** S26-C1 (turn dev mode off on Render, and the exposure review) and the
+actual rotation of the Render DB password and field key. Both are needed for the re-gate.
+
+**Verification.**
+- New tests: 32 passed.
+- Full backend suite: 2138 passed and 4 failed, at 97.17% coverage. All 4 failures are
+  `test_openapi_frontend_contract` rows for `scoring_tags` / `tag_dimension_keys` (`PriorityMatrixRow`,
+  `ProjectCreateRequest`, `ProjectRead`, `WorkspaceProject`). They come from the concurrent P27-T01 tags work, which is
+  waiting for P27-T02 to mirror the frontend types, and are unrelated to this task.
+- `ruff check .` is clean. mypy reports nothing in the changed files; the whole-backend mypy count is pre-existing.
+- Frontend `tsc -b` is clean and the Vite build passes.
+- Mid-task, the tags agent's model change landed before its migration, and project-inserting tests failed for a few
+  minutes until `p27a_project_scoring_tags` appeared. Their files were not touched.
+
+## [2026-10-22] P27-T01 — Registration "project nature" tags pre-fill rubric scores (backend-builder): DONE
+
+**Spec.** ADR 0038 (owner-decided) and the DOMAIN_RULES "Prioritization scoring" ADR 0038 amendment, implemented as
+written. **Contract:** `docs/API_CONTRACT_P27.md` (new). `backend/scheduling/` untouched. `frontend/` untouched.
+Only testcontainers DBs were used (:5433 / :8001 untouched). Nothing committed.
+
+**Storage.** `projects.scoring_tags` is an ARRAY of the new PG enum `project_scoring_tag`, the same convention as
+`priority_scores.hard_gates`. It is NOT NULL with default `{}`. CHECK `ck_projects_scoring_tags_distinct` calls the
+IMMUTABLE SQL function `rpd_scoring_tags_distinct(project_scoring_tag[])`: no duplicates and no null elements (a CHECK
+cannot hold a subquery). `models.enums.ScoringTag` declares the six values; its declaration order is the canonical
+order. `domain_constants.SCORING_TAG_DIMENSION_KEY` maps tag to dimension KEY (`improvement` → `quality_improvements`).
+`PROJECT_TYPE_SCORING_TAG` holds the backfill/seed rule. `models.project.canonical_tags()` and the `Project.tag_dimension_keys`
+property serve both in canonical order.
+
+**Migration `p27a_project_scoring_tags`** (head, revises `p26a_scoring_rubric_tables`):
+- Creates the enum, function, column and CHECK.
+- Backfill from `type`: NM/NO/RC/IMP get one tag. CO and null get none.
+- For each tagged project, the mapped dimension is upserted to 5. A missing `priority_scores` row is created, and the
+  dimension is written even if it is inactive.
+- The cached fields are recomputed under the CURRENT rubric (the `scoring_dimensions` rows and the max version).
+  The formula is frozen in the revision, the same as `compute_score`, following the p26a convention. A test pins
+  that the two are equal.
+- Writes one audit row per touched project: actor null, `priority_score.create`/`.update`,
+  `after_state.source = "registration_tag_backfill"`.
+- Logs `p27a: tagged N project(s) from type; created C score row(s); normalised % changed for X, score band changed
+  for K project(s)`.
+- Downgrade drops the CHECK, column, function and enum. **Scores are not reverted** (they are ordinary scores; the
+  before values are in the audit rows).
+- Band-change count: the dev DB was not touched. On the client_2026 seed data (253 projects, initial rubric):
+  113 tagged (NM 36, NO 56, IMP 21; there are no RC), normalised % changed for 108, **score band changed for 20**
+  (P4→P3 13, P3→P2 7). The P1 capacity fill is computed on read, so it is not in that count.
+
+**Rule** (`services/scoring_tags.py::apply_tag_prefill`, called from `POST /projects` after the stage sync, and from
+`PATCH /projects/{id}` when `scoring_tags` is in the body, before the project.update audit and the priority move
+commit, all in the same transaction):
+- Only not-set→set tags write 5, under the shared rubric lock. The score row is created if needed, and the cached
+  fields are recomputed through `compute_score`/`apply_result`. `scored_at` and `scored_by` are set.
+- One audit row, shaped like the Matrix PUT's, plus `source: "registration_tag"` and `tags` (the newly set ones).
+- Re-saving keeps a manual edit. Removing a tag keeps the score. Re-adding writes 5 again.
+- `scoring_tags` is not in `SCHEDULE_INPUT_FIELDS`, so it never sets stale. `priority` is never touched.
+- Permission is the existing Registration write: `_write` on create; on PATCH, `authorize_project_action(...,
+  min_grant_role="admin")`.
+
+**Validation.** `ScoringTags = list[ScoringTag]` with `max_length=6` and an AfterValidator. Unknown values, labels and
+dimension keys are rejected (`enum`), duplicates are rejected (`value_error`), and accepted lists are canonicalised.
+PATCH `null` is a coded 422 `NULL_NOT_ALLOWED`. POST `null` is a `list_type` 422.
+
+**Reads.**
+- `ProjectRead` (and so `WorkspaceProject`, list, POST/PATCH responses) and `PriorityMatrixRow` gain `scoring_tags`
+  and `tag_dimension_keys`. `ProjectRead.scoring_tags` canonicalises through an AfterValidator.
+- `tag_dimension_keys` reflects the tags, not whether the score is still 5.
+- Matrix export gains a `scoring_tags` column. `tag_dimension_keys` is skipped (`_EXPORT_NESTED_FIELDS`).
+- Audit `project_audit_state` includes `scoring_tags`.
+- Workspace activity: "Project nature set to …" and "Score pre-filled from project nature (…): N%, suggested Px".
+
+**Seed.** Both seed paths set `scoring_tags=tags_for_type(type)`, and `seed_priority_score(..., tags=)` sets the mapped
+dims to 5, the same as the backfill.
+
+**Tests.** New `tests/test_p27_scoring_tags.py` (26) covers:
+- create with 2 tags and no score row (17 %, P4, 11 missing, audit create);
+- create without tags writes no score;
+- all six tags (140/295 = 47, P3);
+- the transition sequence: set → manual 2 → re-save with a rename (kept) → add a second tag (only it written) →
+  remove all (kept) → re-add (5), plus not stale and priority unchanged;
+- a PATCH without tags writes nothing;
+- a PATCH on an unscored project creates the row, with the activity texts;
+- an inactive mapped dimension is written but does not count, and counts after reactivation (27 %);
+- 6 bad-value 422s, PATCH null `NULL_NOT_ALLOWED`, and create 422s that write nothing;
+- RBAC: Engineer/EV/Auditor 403, Hub Planner own hub 200 and other hub 404, Editor grant 403;
+- tags on project, list, Workspace and Matrix;
+- the seed rule, and a scheduler grep;
+- the p27a backfill on its own container: tags, scores, cache = `compute_score`, priority/stale untouched,
+  5 audit rows, CHECK rejects duplicates and null, downgrade keeps scores, re-upgrade works.
+
+`test_migrations`: `project_scoring_tag` was added to the expected enums, plus a p27a down/up step. The contract test
+table has a P27 comment.
+
+**Results.**
+- Full backend suite: **2138 passed, 4 failed, coverage 97.20 %**. The 4 are the expected contract rows, red until
+  P27-T02: `PriorityMatrixRow`, `ProjectCreateRequest`, `ProjectRead`, `WorkspaceProject`.
+- `ruff check .` is clean. mypy: no new errors in non-test sources (test files are untyped repo-wide as before).
+
+**Deviations from ADR 0038:**
+1. ADR §6 lists BC, AC and SER as types that get no tag. They do not exist in `ProjectType` (NM/CO/RC/NO/IMP), so the
+   rule covers them trivially.
+2. The backfill recomputes with a frozen copy of the formula, not by importing `services.priority_scoring`. This is the
+   migration convention; equality is pinned by a test.
+3. The reported band count is the stored score band. The capacity-fill promoted band is read-time only.
+
+**For the owner (dev DB, not done).** `cd backend && alembic upgrade head` against :5433 (p27a), read the p27a log
+line for K, then restart :8001. Expect the 4 contract rows to stay red until P27-T02.
+
+**For P27-T02.** Mirror contract §8. Add a "Project nature" multi-select on Registration and the Workspace edit; send
+the full set on PATCH. Mark the `dimension_scores` entries whose key is in `tag_dimension_keys` as "from registration",
+still editable. After a tags PATCH, re-fetch the Matrix row / Workspace, because the PATCH response has no score.
+
+## 2026-10-22: Matrix page made compact (owner ask: "too much data", "looks awful", grid too small)
+
+- **Portfolio decision summary (`portfolio-summary-panel.tsx`).** Rewritten as one grid: P1–P4 and Q across, with
+  rows for Suggested (after the P1 capacity fill), Score band and Committed (`Project.priority`). The three stat
+  tiles are now header chips (scored badge, Not yet scored, Hard-gate P1) plus the fill note. Both bar charts are
+  removed, since Score overview draws the band distribution once. The explanatory copy moved into a `CardInfo`. Test
+  ids `summary-suggested-*`, `summary-score-band-*` and `summary-fill-note` are kept.
+- **View panel.** The "View" title is sr-only, and the controls sit on one aligned line: Display currency (codes
+  only; the "EUR · Euro" name stays the accessible name and title) with the rate caption inline, Scenario mode (its
+  "Edit mode" label is sr-only), Version history, Detailed view, Reset and Download. The page header no longer
+  repeats `CountrySegmented`, which stays in the panel's HUB filter row.
+- **Scoring grid (`virtual-matrix-grid.tsx`, `.mg-chip`, `matrix-table.tsx`).** Cell padding is tighter (rows py-1,
+  headers py-1.5, filter / band rows py-1), the score chip is 1.375 rem and the project icon size-6. The estimated
+  row height went from 44 to 34, so rows went from about 49 px to about 38 px and roughly 1.3× more projects fit in
+  the same scroll height.
+- **Score overview (`score-charts.tsx`).** The band bar is now h-6, with counts inside segments of at least 4 %.
+  Legend chips are smaller, and the explanatory copy moved into a `CardInfo`. The layout is 5/7 and the histogram is
+  h-24.
+- **P1 capacity fill (`capacity-fill-panel.tsx`).** One slim row per hub (name, bar, figures, promoted pill), two
+  columns from xl, with the explainer and legend on one footer line. The figure and promoted texts and test ids are
+  unchanged.
+- **Tests.** Two MatrixPage tests were updated: the visible currency label is the code, with the full name in the
+  aria-label / title; the hard-gate figure is the "Hard-gate P1" chip. Matrix and dashboard Vitest are green, and
+  `tsc` and eslint are clean. The rubric-panel tests failed once while the full suite was under load and passed on
+  rerun.
+- **Concurrency.** Note from the parallel dashboard agent: the reflog shows a 15:26 "reset: moving to HEAD" from
+  another session, and the edits survived.
+
+## [2026-10-22] P26-T03 — Rubric editing moves into the "Scoring scale and dimensions" card; pillar-first grouped table (frontend-builder): DONE
+
+Owner request: "I want the option to be there only, remove the dropdown for scoring rubric, and edit it there only, showing an
+edit option". Plus an owner add-on in the same task: the dimensions table is pillar-first and visually grouped like the grid's
+pillar boxes. Built against `docs/API_CONTRACT_P26.md`, ADR 0037 and the P26-T02 entry; no API change; `backend/` untouched.
+Work stayed in `frontend/src/surfaces/matrix/` plus the e2e files. Nothing was saved on the dev DB and nothing was committed.
+
+**Removed.**
+- The View panel "Scoring rubric" / "Rubric" button (`scoring-rubric-button`). The panel's P21-T05 controls stack is unchanged,
+  so its height is the same on both tabs.
+- The "Show rubric / Hide rubric" collapse.
+- `components/rubric-editor/scoring-rubric-sheet.tsx` (the side sheet). Nothing else used it. Its editor body moved to the new
+  shared `components/rubric-editor/rubric-editor.tsx` (`RubricEditor`, plus the add form, the totals and the 409 comparison
+  panel). `rubric-dimension-row.tsx`, `rubric-preview-panel.tsx`, `rubric-version-history.tsx` and `lib/rubric-draft.ts` are
+  reused.
+
+**The card (`components/scoring-rubric-panel.tsx`), always expanded.**
+- Reads `GET /scoring-rubric` (enabled always; falls back to the served `/priorities/dimensions` model while loading).
+- Header: title, the served version · total weight · changed when / by; "Version history" (link button, accessible name
+  "Rubric version history", opens a small dialog with the existing history view, focus returns to it); "Edit rubric" only
+  when the served `can_edit` is true, else "Read-only · managed by Admins".
+- Body: the 0–5 scale legend, then the dimensions. Inactive dimensions are listed in a note ("scores are kept"); the
+  points rule and active total line are kept.
+- **Pillar-first table (owner add-on).** Columns: Pillar | Dimension | Weight | 1 — Negligible | 5 — Exceptional. One
+  `<tbody>` per pillar (display order, first appearance); the pillar cell is a `<th scope="rowgroup">` spanning the group's
+  rows. It shows the name in bold small caps, the dimension count and the pillar's weight, e.g. "3 · 75 (25.4 of 100)".
+- **Same visual system as the grid.** `lib/grid-boxes.ts` gains `pillarTinted(index)`, now used by both `matrix-table.tsx`
+  and the card. The grid's `--mg-*` tokens are declared on `.mg-pillar-scope` as well as `.mg-scroll`
+  (`virtual-matrix-grid.css`). New `components/rubric-pillars.css`: 3 px line between pillar groups, 1 px between
+  dimensions, the alternating 5 % primary tint (Regulatory & Quality, Investment & Feasibility shaded), and a 3 px left
+  accent on the pillar cell (solid on tinted pillars, soft on others, like the grid's band accent). Text sits on surface
+  or 5 % tint only, so AA holds (axe 0).
+- The table body scrolls inside the card (max 26rem; focusable named region "Scoring dimensions", sticky header).
+- **Phones (≤ 639 px):** each pillar is a boxed `<section>` with an `<h4>` header (same summary, tint and accent) and its
+  dimensions stacked inside (label + weight, then "1: … · 5: …").
+- **Decision / I9 note:** the pillar weight is a display sum of the served `weight` and `scaled_weight` of that pillar's
+  active dimensions. No score is derived. If the auditor wants it served, `GET /scoring-rubric` could add per-pillar totals.
+  The editor's pillar header shows the live draft sum ("weight 75 (draft)"), like the existing "Proposed (draft)" total.
+
+**Inline edit mode (same card).**
+- "Edit rubric" swaps the table for `RubricEditor`. Focus moves to the editor region ("Editing the rubric (version N)"),
+  and the header shows an "Editing · unsaved changes" badge.
+- Dimensions are grouped in one box, with the same tint, accents and lines as the read table (`rp-section`).
+- The grid scrolls inside the card from `sm` up (max min(60vh, 40rem)). Below it sits an expandable "Hide / Show impact
+  preview" panel holding the existing summary and changed-projects table.
+- Footer, sticky at the card bottom from `sm` up (on phones it follows the list, one page scroll): live total
+  ("Current total weight N", "Proposed (draft) M"), the required "Reason for this change", status, Cancel, Preview impact,
+  Save new version.
+- **Reorder across pillars (owner add-on).** New `moveDimension` in `lib/rubric-draft.ts`: Move up at a pillar's top
+  joins the end of the previous pillar, and Move down at its bottom joins the start of the next. Only the very first and
+  last rows are aria-disabled. A drag onto another pillar's row now moves the dimension into that pillar before the
+  target (`moveBefore`; it was refused before), and a drop on a pillar's list moves it to that pillar's end
+  (`moveToPillarEnd(…, pillar)`). The moves are announced ("… moved up into Regulatory & Quality: position 3 of 3 …").
+  A pillar change or "New pillar…" moves the row into that group; a new pillar gets the next tint.
+- New `draftPillarWeights`.
+- On phones the row stacks as a small form (label, pillar and weight full width).
+- Save / preview / 409 reload-keep-draft-re-apply / 422 mapping / invalidations are exactly as P26-T02. A successful save
+  (or a no-op 200) leaves edit mode, shows "Saved as version N…" in the card and returns focus to "Edit rubric".
+- **Cancel:** with no changes it leaves at once. With changes it opens an alertdialog "Discard your rubric changes?"
+  (Keep editing / Discard changes; focus goes back to Cancel or to Edit rubric).
+- **Leaving the page:** a `beforeunload` guard only while there are unsaved changes. In-app links go through
+  `useBlocker` ("Leave with unsaved rubric changes?" Stay / Leave and discard). The blocker is rendered only under a data
+  router (`UNSAFE_DataRouterContext`), so the MemoryRouter component tests still work.
+- Out of scope but in `matrix/`: `portfolio-summary-panel.tsx`'s sideways scroller was an unfocusable scrollable region
+  (axe serious at 390, from the uncommitted summary rework). It is now a focusable named region.
+
+**Tests.**
+- New `components/scoring-rubric-panel.test.tsx` (18, ported from the sheet tests and extended):
+  - always expanded, no toggle;
+  - pillar-first headers, 5 `<tbody>` groups, rowSpans 3/2/3/2/2, `scope=rowgroup`, tint false/true/false/true/false,
+    pillar summaries;
+  - phone stacked sections (axe);
+  - read-only note with no Edit button;
+  - Edit only for `can_edit`: inline (no dialog), focus, footer;
+  - add, add validation, deactivate and reactivate;
+  - keyboard, drag and cross-pillar reorder; the edit-mode tint; a new pillar gets the next tint;
+  - validation with nothing sent;
+  - preview expandable and stale;
+  - save body (version, trimmed reason, 14 dimensions, new one without key), five invalidations, leaves edit, focus;
+  - 409 → reload → compare → re-apply → version 2;
+  - 422 mapping;
+  - Cancel / Keep / Discard with focus;
+  - `beforeunload` only while dirty;
+  - in-app link blocked under a memory data router;
+  - history dialog for read-only users (lazy read, diff, focus return);
+  - axe read-only and editor + preview.
+- `lib/rubric-draft.test.ts` +3: `moveDimension`, `moveToPillarEnd` to another pillar, `draftPillarWeights`. The
+  cross-pillar `moveBefore` expectation was updated.
+- `MatrixPage.test.tsx`: the P26 test is replaced. No rubric button in the View panel, the card is expanded, there is a
+  read-only note for a PM, and an Admin edits inline.
+- **e2e (typechecked, not run):**
+  - `pages/matrix.page.ts`: `rubricCard()`, `rubricEditButton()`, `rubricHistoryButton()`, `rubricHistoryDialog()`
+    replace `rubricButton()` / `rubricSheet()`.
+  - `matrix.spec.ts` P26-T03, 3 tests:
+    - PM read-only: pillar first, tint, history dialog, axe;
+    - Admin inline edit → preview → Cancel → discard, with no PUT;
+    - Save with the PUT mocked by `page.route`: asserts version, reason and weight.
+  - `final-gate-p21-p26.spec.ts` helpers now use the card, re-enter edit after each save, and use the history dialog.
+  - `p16-gate.spec.ts`: the "Show rubric" click was removed.
+
+**Results.**
+- `tsc -b`: clean.
+- `eslint .`: 0 errors (warnings only, none in the touched files).
+- e2e files: ad-hoc strict `tsc` clean.
+- Vitest: matrix 16 files green; full suite 185 files / 1470 tests passed (before the final layout tweak; re-run, see
+  below).
+- `vite build` to a scratch outDir (`dist/` untouched): MatrixPage chunk 53.4 KB gzip (was 51.5). The budget script was not
+  run on the scratch build.
+
+**Live check** (headless, light, against :5183 and :8001; dev servers not restarted). Signed in on the dev login page as
+Frank Admin and Alice PortfolioManager. A Playwright route aborted every non-GET API call except the read-only
+`POST /scoring-rubric/preview`, and 0 writes were attempted.
+- Frank, 1440 and 390: no rubric button in the View panel; no toggle; 5 groups / 13 rows; pillar first.
+- Edit → focus on the editor → New Customer weight 31 → "Proposed (draft) 301" → Preview: 295 → 301, 33 changed projects
+  → Cancel → discard dialog → Discard → "Changes discarded", focus back on Edit rubric.
+- Alice: read-only note and no Edit button; history dialog (version 1, "system (migration)"), and focus returns.
+- axe 0 serious/critical at 1440 and 390 for: card, history, edit, preview, discard dialog (Frank) and card, history
+  (Alice).
+- Screenshots reviewed in scratchpad `live/shots/{1440,390}-{frank,alice}-*.png`. Fixed after review:
+  - tiny pillar names (now `text-sm`);
+  - the edit row overflowing at 390 (label `min-w-[12rem]`);
+  - the phone footer taking most of the viewport (no inner scroll or sticky below `sm`).
+- The dialogs at 390 looked offset in the first shots only because they were mid-animation; settled, they are full width.
+
+**Notes.**
+- (1) At 390 the app shell still leaves about 230 px for content (carried from P26-T02 note 3).
+- (2) `docs/IMPLEMENTATION_PLAN.md` P26 gains the P26-T03 row; P26-T20 gate still TODO.
+
+## 2026-10-22: Matrix "Scoring scale and dimensions" table given colour (owner ask: "looks very boring")
+
+`scoring-rubric-panel.tsx` and `rubric-pillars.css`, read table only (the phone stack and the editor are unchanged):
+- **Pillar hues.** Each pillar `<tbody>` gets a hue (`--rp-hue`, cycled from `--dash-cat-1/2/8/5/6/7`). It shows as a
+  4px rail and a 9 % wash on the pillar cell, the pillar name in the hue, and a 5 % wash on row hover. On these rows
+  the hue replaces the grey alternating tint (`data-tint` is still set).
+- **Weight bars.** Each weight cell has a mini bar in the pillar hue, scaled to the heaviest served scaled weight
+  (display only).
+- **1 / 5 columns.** "1 — Negligible" carries a soft red dot and "5 — Exceptional" a green dot (headers and cells),
+  and the 5 text is full-strength.
+- **Score scale legend.** The 0–5 legend uses the grid's `mg-chip` intensity chips.
+- **Tests.** Rubric panel tests pass 18/18 with `--testTimeout=90000`. At the default 10 s, 5–6 editor tests time out
+  while the machine load average is about 43, from other sessions.
+- **Not yet seen in a browser.** At 15:38 another session's P27 edit to `matrix-table.tsx` (`DimCell`:
+  `row.tag_dimension_keys.includes`) throws on :5183, because the running API does not serve `tag_dimension_keys`
+  yet. The whole Matrix route errors, which blocks the screenshot. That is not this change, and it was left for that
+  session.
+
+## [2026-10-22] P26-T03 addendum — final full-suite run (frontend-builder)
+
+The last full Vitest runs happened while other work was in flight on the machine: 192 files / 1513 tests, of which 10 failed.
+Every failure was a 10 s timeout or a follow-on from one, in `app.test.tsx`, `session-gate`, `GanttPage` and 3 long
+`scoring-rubric-panel` flows. Run alone, those 3 pass, and so does the whole matrix suite: 16 files, 179 tests. The
+`scoring-rubric-panel` describe now carries a 30 s timeout. The other timeouts are outside `matrix/` and were not touched.
+
+Final checks:
+- `tsc -b`: 0 errors.
+- `eslint`: 0 errors.
+- `vite build` (scratch outDir): MatrixPage is 53.5 KB gzip and index is 128.6 KB gzip.
+
+## [2026-10-22] Final gate (P21–P26) — qa-inspector: FAIL (3 blocking defects: QA-F26-1 rubric 409 "Re-apply my draft" loses the other admin's change; QA-F23-1 Dashboard "Delivery by priority" white-on-amber labels 3.15:1; QA-F24-1 Planning resource-load filter popovers have no accessible name. Suites green; P26-T03 rubric rewrite in flight and NOT gated)
+
+**Scope and environment.** P21, P22, P23 (incl. T03), P24 (incl. R01), P25, P26 (T01/T02) and P19-R03. Disposable stack, all removed afterwards:
+- Postgres 17 `qa-fg-pg` (:55931), Redis 7 `qa-fg-redis` (:56931), Keycloak 26 `qa-fg-kc` (:58931), MinIO `qa-fg-minio` (:59931; added so the Workspace upload spec can run);
+- uvicorn :8931 (RPD_DEV_MODE, CURRENT_WEEK 42, throwaway Fernet key in env only);
+- Celery solver worker `--pool=solo` on that Redis ("mingle: all alone");
+- `vite preview --mode e2e` :5931 on a scratch build.
+- `alembic upgrade head` reached **`p26a_scoring_rubric_tables`** ("copied 0 rows; 0 corrected" on the empty DB). Then `seed_demo_data --dataset client_2026 --schedule` (253 projects, 23 engineers, 3542 steps, run v1, within year 41), currency rates (6) and dev users (7).
+- :5433, :8001, :5183, `frigoglass-keycloak-1` and the Render DB were not touched.
+- **Snapshot caveat.** The frontend under test is the tree as built at gate start (~14:45 IST), i.e. the P26-T02 side-sheet rubric editor. During the gate another agent started "P26-T03" (the rubric editor moved inline into the "Scoring scale and dimensions" card, `scoring-rubric-sheet.tsx` replaced by `rubric-editor.tsx`), plus "Matrix page made compact", Dashboard header changes and P27. None of that is covered here. That agent also rewrote the helpers of my new `e2e/final-gate-p21-p26.spec.ts` and `pages/matrix.page.ts` for the new UI. I left their version in place and ran a temporary snapshot copy (sheet helpers) against my build, then deleted the copy. **The Matrix rubric surface must be re-gated once P26-T03 lands**, using `final-gate-p21-p26.spec.ts` as it now stands (not run by me in that form).
+
+**Backend: PASS.**
+- `pytest --cov` (testcontainers): **2084 passed, 0 failed** (8 min 6 s). Coverage **96.09 %** (gate ≥ 70 %).
+- `pytest -c pytest-scheduling.ini`: **311 passed**, `scheduling/` **94.19 %** (gate ≥ 85 %).
+- P21–P26 files: scoring_rubric service 98 / router 100, priority_scoring 98, priority_capacity_fill 100, priorities router 98, priority_board 100, projects router 94, hub_scope 99, workspace 94, export_builder 99, client_2026 seed 97, seed_demo_data 96.
+- Contract test `test_openapi_frontend_contract.py` **219 passed** and golden files (`test_golden_files`, `test_p9_golden`) **38 passed**: 257/257.
+- `ruff check .`: clean. (Informational: `ruff format --check` would reformat 91 files, all pre-existing.)
+
+**Frontend: PASS.**
+- `tsc -b` exit 0. `eslint .` gives 0 errors and 9 warnings (pre-existing `incompatible-library`).
+- `vitest run --coverage`: **185 files / 1461 tests passed**. Statements **87.3 %**, branches 79.58 %, functions 86.2 %, lines 89.42 % (gate ≥ 70 %). Per surface (statements): matrix 89.1, priority-board 88.5, projects 89.9, registration 92.5, dashboard 91.1, gantt 93.8, capacity 98.4, planning 86.4, project-workspace 80.5.
+- `vite build` OK; bundle budget **187.3 KB gzip of 400 KB**, PASS. MatrixPage 51.5 KB gzip, GanttPage 22.4 KB.
+
+**Live checks (snapshot spec, dev header).**
+- **Rubric editor as Frank Admin: PASS except the 409 re-apply.**
+  - Weight edit (Strategic Project 25 → 60): preview showed 295 → 330. After save (v2), **all 253 previewed projects' stored `normalized_pct`, `score_band`, `suggested_band` and `capacity_fill` equal the preview, with 0 diffs**, every row is on `rubric_version` 2, and the served total is 330.
+  - Version history lists the new version on top with its reason. Focus returns to the trigger.
+  - Add dimension (new pillar, weight 20): focus moves to the new label, the version is saved, 14 active dimensions. **253 of 253 scored projects become incomplete** (`missing_dimension_keys`). The grid shows the new pillar column and the incomplete marker.
+  - Deactivate: 0 incomplete, 13 active. Reactivate: 253 incomplete again. Each step is a new version, and history counts match.
+  - Read-only as Alice PM at 1440 and 390: "Read only", no textbox, spinbutton, Save or add form. API: `can_edit` false, PUT 403, preview 403.
+  - **409 with two tabs:** tab A saves New Customer 30 (v+1). Tab B edits New Options 30 and gets **409**. The conflict panel and "Reload latest version" work, and the comparison shows. **"Re-apply my draft" then saves New Customer back to 25: QA-F26-1**, reproduced twice.
+- **14 dimensions: PASS.**
+  - Grid at 1440 and 390 shows the new pillar column.
+  - Compare (2 projects): 14 score menus per project, and it lists the new label.
+  - Edit dialog: 14 `score-edit-select` and the incomplete note. Scoring only the new dimension sends exactly `{"scores":{"qa_gate_sustainability_4":4},"hard_gates":[]}`, and the project is no longer incomplete.
+- **Capacity-fill chips: PASS.**
+  - 24 promoted rows. Every board card's `suggested_band` / `score_band` / `capacity_fill` / `capacity_fill_reason` equals its Matrix row (0 mismatches). The Workspace `priority_score` equals the row.
+  - UI, for "BEE star labelling-S35 (Coke configuration)", R&D-India: the "Capacity fill" filter shows "24 of 253 projects". The grid chip "Suggested band P1 by capacity fill, score band P3" and its tooltip equal the served reason verbatim. The same chip appears on the board in Cards and in List, and in the Workspace (`score-suggested-band` + `score-fill-reason`).
+- **Board tab, Cards/List: PASS.** I hit-tested the centre of every column header in view with `elementFromPoint`, at the top and at max scroll (stuck panel). At 1440, 5 headers per state are in view and 0 are covered in Cards and List. At 390, 0–1 are in view and 0 are covered.
+- **Registration: PASS.**
+  - Name + hub only: the drawer shows the 8 per-field errors (Leader, Category, Type, Priority, Actual start week, TCOGS, Selling price, Gross margin "… is required.") and **sends no POST**.
+  - API `POST /projects` with name + hub: 422 `HARD_GATE_FIELDS_MISSING`, `field_errors` keys `leader_engineer_id, category, type, actual_start_week, tcogs_eur, selling_price_eur, gross_margin_pct, priority`.
+  - `registration.spec` creates a project In Queue (never Draft).
+- **Projects filters: PASS.** The Status options are All, Under Industrialization, In Development, In Queue, Commercialized, On Hold, Cancelled. There is no In Buyoff or Draft, and no "Drafts" chip.
+- **Dashboard: PASS.** Scrolled to the bottom: no "Capacity booked" heading, no "Open capacity" link and **0 `/api/capacity/` requests**.
+- **Gantt W52 labels and focus: PASS** (p19-gate, now hard assertions).
+  - W52 target "Alternate sourcing of cable harness", Marketing Brief W52, 1 FTE. Labels at 1440 and 1280: "3 wks on the calendar, to W54 · 3 wks of work at 1 FTE", "5 wks …, to W56", "4 wks …, to W55". In each, calendar weeks = ceil(work / FTE), and the suffix week = start + calendar − 1.
+  - 0.5 FTE target "S-250 Edge light doors…" PDD-K at W44–W47:
+    - label "6 wks on the calendar · 3 wks of work at 0.5 FTE" at 1440 and 390;
+    - touch PATCH `{"duration_override_weeks":3}` → replanned W44–W49;
+    - 1280 mouse PATCH 4 → W44–W51, label "8 wks …";
+    - Escape sends nothing.
+  - The 390 Details dialog returns focus to the Details button (`toBeFocused`).
+- **Capacity Planning: PASS functionally.** `/engineers` returns 23. The Engineers tab shows 23 Edit buttons at 1440 and 390. Dept is enabled (not `aria-disabled`) with 9 options = 9 served. **Axe fails with the popover open: QA-F24-1.**
+- **Multi-role (P24-R01): PASS.** alice set to Portfolio Manager + Engineer through `PATCH /users` on the disposable DB (`engineer_id` null). `/gantt` gives **254 rows for her = 254 for admin** (253 + 1 e2e-registered). The Timeline renders rows and axe is clean. Roles restored afterwards.
+- The rubric was restored to weight 295 at the end, with the QA dimensions inactive (a dimension is never deleted). That was disposable data anyway.
+
+**Axe (serious/critical).**
+- **Light, gating.** 28 sweep scans (13 surfaces + Workspace × 1440 / 390): **26 clean**. Every live-check state above is 0 except the Dept popover:
+  - rubric sheet (admin and PM, 1440 and 390), preview, history, after add, 409 panel;
+  - grid with 14 dimensions (1440, 390), compare, edit dialog;
+  - fill filter + tooltip, Workspace fill;
+  - board Cards / List (1440, 390);
+  - registration errors;
+  - Gantt as PM+Engineer.
+- Failures:
+  - **QA-F23-1** (p13 "Dashboard: choose India"): `color-contrast` ×2, white #ffffff on #db7706 = **3.15:1** (10 px bold), `span[data-segment="in_flight_not_finishing"]`.
+  - **QA-F24-1**: `aria-dialog-name` ×1 at 1440 and at 390 on `/planning` with the Dept filter open.
+  - Not P21–P26, pre-existing, observations: 390 Versions & History `scrollable-region-focusable` (`timeline-change-list`, untouched since P12; overflows only with many changes); 390 Workflow settings `scrollable-region-focusable` (`dag-diagram` figure).
+- **Dark, report only** (carried D1, white on the dark primary #397dd0 = 4.18:1): Dashboard ×3, Projects ×2, Capacity ×3, Matrix grid ×6, Weekly check-in ×1, Capacity planning ×8. Board, Gantt, Audit log, History and Downloads are clean.
+
+**E2E suites against the stack** (after the repairs below):
+- matrix / dashboard / capacity / gantt / planning / registration (Keycloak tokens): **18/18**, of which matrix 6/6.
+- p19-gate **18/18** and p19-planning 3/3.
+- p12, p14, p15, p16, p17, p18-gate, p18-regate, p18-whatif: all pass except carried items.
+- p9-r04, p9-workspace (upload now passes with MinIO), p9-surfaces, p9-settings-admin, p9-rbac, p13: pass except the items below.
+- Remaining failures:
+  - carried: p10 `/login` ×5 (stale against the redesigned sign-in page; one test also targets :5184) and the Ask-agent 503 `role=alert` contrast 4.31:1;
+  - carried D2: p13 / p12 header select open (`aria-hidden-focus` + `scrollable-region-focusable`; p12 also had a transient 1.23:1 contrast on the fading Dashboard heading);
+  - QA-F23-1 (p13 India);
+  - p9-settings-admin create-dialog role descriptions, `text-text-subtle` on #edeeef 4.34:1 ×7 (User admin, not P21–P26; observation);
+  - p9-workspace "comment create and edit", a re-run artefact: it passed on the fresh DB, and on re-run the previous run's identical comment makes its locator ambiguous;
+  - p17 dark (report only).
+
+**Defects (blocking):**
+- **QA-F26-1 (P26-T02, `frontend/src/surfaces/matrix/lib/rubric-draft.ts::rebaseDraft`; owner frontend-builder): lost update in the 409 flow.**
+  - What it does: `rebaseDraft(mine, latest)` keeps EVERY field of the stale draft and only appends dimensions added by others. So "Re-apply my draft on version N" silently reverts every concurrent change the user never edited. Live: tab A saved New Customer 30, tab B edited only New Options, and after re-apply New Customer was 25 again.
+  - Fix: rebase only the user's edits, i.e. the fields where `mine` differs from the draft's own base version, onto `latest`, and keep latest values elsewhere. Test: a unit test with disjoint edits by two admins, plus the e2e 409 test (expects both weights 30).
+  - The function still exists unchanged in the in-flight P26-T03 tree.
+- **QA-F23-1 (Dashboard `surfaces/dashboard/components/portfolio-analytics.tsx` `DELIVERY_SEGMENTS`, 2026-10-22 owner ask; frontend-builder): WCAG 1.4.3.**
+  - `in_flight_not_finishing` uses `bg-warning` + `text-white` (3.15:1), seen with Country India. `not_in_plan` uses `bg-border-strong` (slate-300) + `text-white` (about 1.6:1) and will fail whenever that segment is labelled.
+  - Fix: use a dark ink (e.g. `text-text` / `text-warning-subtle-fg`-class contrast ≥ 4.5:1) on those fills. Re-run p13 "Dashboard: choose India".
+- **QA-F24-1 (Planning `surfaces/planning/components/resource-load/multi-select-filter.tsx`; frontend-builder): WCAG 4.1.2.**
+  - The Radix `PopoverContent` (role=dialog) has no accessible name. Dept was enabled by P24-T02; the same applies to Type, Status, Cat and Engineer.
+  - Fix: `aria-label={`${label} filter options`}` (or `aria-labelledby`) on `PopoverContent`.
+
+**Tests changed (test code only; nothing committed):**
+- New `frontend/e2e/final-gate-p21-p26.spec.ts`: rubric live checks, 14 dimensions, capacity-fill consistency, board header hit-tests, registration errors, filters / Dashboard, Planning, multi-role, rubric restore, and an axe sweep (light 1440 / 390, dark report-only). Its rubric helpers were since adapted by the P26-T03 agent.
+- `e2e/p19-gate.spec.ts`:
+  - QA-P19-3 is a hard `toBeFocused()`;
+  - QA-P19-4 labels are hard, with the ", to W5x" suffix rule;
+  - OEM-Seltek null booked % handled;
+  - Dept is now expected enabled;
+  - FTE edit takes `.first()` (3 R&D-Greece engineers).
+- `p9-r04-remediation.spec.ts`: freezes a project via the API when the seed has none, and unfreezes it in afterAll.
+- `p13-gate.spec.ts`: Romania option `exact`.
+- `p15-gate.spec.ts`: the Matrix leader names need Detailed view (P21).
+- `p17-gate.spec.ts`: the "Unregistered" card was removed (2026-10-22); Spillover + New + served unregistered = Total.
+- `p18-regate.spec.ts`: seed-independent estimate checks (touched-row sums, UI headline = served estimate, touched flags by row count).
+- `matrix.spec.ts`: pillar header `exact`; the board-tab test now logs in.
+- Hygiene note: `planning.spec` leaves an "E2E Engineer …" row, which I deleted before the 23-engineer check.
+
+Logs, axe JSONL and screenshots are in the session scratchpad (`e2e-*.log`, `axe-*.jsonl`, `final-shots/`, `pw-*`).
+
+## 2026-10-22: Matrix route crash fixed (pre-P27 API)
+
+The owner hit "This page hit an error" on /matrix. The cause is P27's `DimCell` (`matrix-table.tsx`) calling
+`row.tag_dimension_keys.includes(...)`. The running backend does not serve `tag_dimension_keys` yet, so it threw and
+took down the whole route. The read now goes through `(row as Partial<PriorityMatrixRow>).tag_dimension_keys ?? []`,
+the same pattern as P25's `capacity_fill_count`, so an older API gives no tag hint instead of a crash.
+`score-edit-dialog.tsx` already copes (`new Set(undefined)` is empty).
+- **Checked headless on :5183.** /matrix renders with no page errors, and the coloured rubric table from the entry
+  above was confirmed visually.
+- **Checks.** Matrix Vitest is 181 passed with `--testTimeout=90000`, given the machine load. `tsc` and eslint are
+  clean.
+- **Open.** The P27 backend still needs deploying or restarting on :8001 for the tag hints to show.
+
+## [2026-10-22] P27-T02 — Registration "project nature" tags: multi-select, "from registration" hints, contract types (frontend-builder): DONE
+
+Built against `docs/API_CONTRACT_P27.md`, ADR 0038 and the P27-T01 entry. The browser computes no score (I9/I16): it
+sends the tags, and the pre-filled 5 appears only after the score readers are re-read. Which dimension a tag fills is
+taken only from the served `tag_dimension_keys`; there is no tag→dimension map in the frontend. Dashboard files and
+`backend/` were not touched. Nothing committed.
+
+**Types (contract §8).**
+- `types/enums.ts` gains `SCORING_TAGS` (canonical order), `ScoringTag` and `SCORING_TAG_LABELS` (the six owner labels).
+- Registration `ProjectCreateRequest.scoring_tags?` (so also `ProjectUpdateRequest`). `ProjectRead.scoring_tags` and
+  `tag_dimension_keys` (so also `WorkspaceProject`). Matrix `PriorityMatrixRow.scoring_tags` and `tag_dimension_keys`.
+- `pytest tests/test_openapi_frontend_contract.py` (`--noconftest`): **219 passed, 0 failed**. The 4 rows that were red
+  are green.
+
+**Control.**
+- `components/shared/scoring-tags.tsx` `ScoringTagsField`: a fieldset "Project nature" with 6 checkboxes in the fixed
+  order and the helper text "Ticking one gives that dimension full score (5); it can still be changed in the Matrix."
+  (the fieldset's description).
+- In `ProjectForm` it is its own section after Identity, so it appears in create (drawer), edit (drawer) and the
+  Workspace inline edit (the same form).
+- State is held in canonical order and counts for the unsaved-changes check. Every save sends `scoring_tags` as the
+  FULL set; unticking all sends `[]`, never null.
+- It is editable only where the form is shown, so the existing Registration-write gating applies
+  (`canEditDetails` / drawer RBAC).
+- Helpers are in `lib/scoring-tags.ts` (`canonicalScoringTags`, `scoringTagsText`, `SCORING_TAGS_HELP`).
+
+**Refresh.**
+- New `lib/score-readers.ts` `invalidateScoreReaders`: `priority-matrix`, `priority-board`, `vip-board` and
+  `['projects','workspace']`.
+- Called by `useCreateProject` and `useUpdateProject` when the body carries `scoring_tags`, and always by the Workspace
+  `details-panel` save. Run-derived views are not refreshed (tags never set stale).
+
+**Hints (still editable, nothing locked).** `FromRegistrationHint` is a focusable tag-icon button with tooltip and
+accessible name "<label>: from registration. Pre-filled with 5 … still editable."
+- Matrix score dialog: compact form next to the label.
+- Workspace scoring section: full "from registration" chip in the row header. `ScoringSection` gains a
+  `tagDimensionKeys` prop, fed from `WorkspaceProject.tag_dimension_keys`.
+- Matrix grid: a non-focusable small tag glyph on the chip's corner (`.mg-chip-reg`, `data-from-registration`). The
+  words "(from registration; still editable)" are in the cell title and screen-reader text. Making it non-focusable
+  avoids adding one tab stop per tagged cell.
+- A key not in `dimension_scores` (an inactive dimension) is ignored, per contract §5.
+
+**Read view.** Workspace Details shows "Project nature: New Models, Improvement" (or "—") after Type. No Matrix column
+or filter was added (optional; skipped to keep the compacted grid as is).
+
+**Tests.**
+- `lib/scoring-tags.test.ts` (2).
+- `project-form.test.tsx` (+2): order, labels, helper text, pre-ticked served set, dirty, a full-set PATCH body in
+  canonical order, and untick-all sends `[]`.
+- `use-registration.test.tsx` (+2): the invalidations, and none without tags.
+- `score-edit-dialog.test.tsx` (+1): 2 hints, the inactive key ignored, still editable, changed-key body, axe.
+- `matrix-table.test.tsx` (+1): the mark and its words on the tagged cell only.
+- `scoring-section.test.tsx` (+1): the hint, still editable, PUT body, axe.
+- `ProjectWorkspacePage.test.tsx` (+1): the read view, hints, and a tags PATCH that invalidates `priority-matrix`.
+- `ProjectsPage.test.tsx`: the create POST ticks Improvement then New Models and expects
+  `scoring_tags: ['new_models','improvement']`.
+- Fixtures (`P13_MATRIX_ROW_DEFAULTS`, the Workspace fixture, ProjectRead literals, the board-test rows) gain the two
+  fields.
+- e2e page objects (typechecked ad hoc, not run): `projects.page.ts` `projectNature()` / `projectNatureTag(label)`, and
+  `matrix.page.ts` `fromRegistrationMarks()`. No existing registration selector changed.
+
+**Results.**
+- `tsc --noEmit -p tsconfig.app.json`: clean.
+- eslint: 0 errors. The 9 warnings are all in files I did not touch.
+- **Full Vitest: 193 files / 1518 tests passed.**
+- `vite build` / bundle budget: NOT run (permission to build into the scratchpad was denied). The change adds only
+  small components and a lucide icon already in the bundle.
+
+**Deviations / notes.**
+- (1) The live UI was not checked (dev API not restarted with p27a; the owner still needs `alembic upgrade head` and
+  a :8001 restart).
+- (2) The Dashboard all-projects register is not invalidated after a tags save, because Dashboard files were off-limits
+  for this task. It refreshes on its normal stale time.
+- (3) The tag labels are the owner's fixed labels, as the task specifies. The hints use the served dimension label, as
+  contract §1 asks.
+
+## [2026-10-22] P28-T01 Executive dashboard view (ADR 0039) — frontend-builder
+
+**What was built.** The Dashboard's second presentation, the Executive ("helicopter") view, frontend-only, every figure
+a served field or an established Detailed-view derivation (I9/I19).
+
+- **View toggle + resolution.** `components/executive/view-toggle.tsx` — an Executive | Detailed segmented control in
+  the PageHeader actions (same pill ToggleGroup chrome as `CountrySegmented`; Radix radiogroup semantics, focus kept on
+  switch). Resolution in `lib/view-mode.ts` (pure, unit-tested): URL `?view=` on `/` → localStorage
+  `rpd-dashboard-view` → role default (served roles EXACTLY `["Executive Viewer"]` → Executive, else Detailed).
+  Toggling writes the URL param (deep-linkable, replace) and localStorage. Detailed view = the pre-P28 page, unchanged;
+  the header's "All projects" scroll shortcut hides in Executive (its target, the register, is Detailed-only).
+- **Layout** (owner-corrected order, one viewport at 1440×900): (1) Portfolio-health charts row — Project pipeline
+  donut (`pipeline-totals` counts + served `*_share_pct`), Status overview donut (five card statuses + served Other),
+  compact `DeliveryGaugeCard` (new `compact` prop; same payload/formula), Delivery-by-priority (one grid row per band:
+  `P# | stacked bar | within_year/total · within_year_share_pct`; segment widths = the served
+  in_flight/not_started/delivered/other `*_share_pct`); (2) Executive-summary KPI strip — compact StatCards: Scheduled
+  (`outcomeTotal`, the Detailed header's sum, with a served-counts mini split bar), Within year (+`withinYearSharePct`
+  badge), Spillover, Left out, Blocked, VIP (served per-area `highlighted_count`s summed); no-run fallback = pipeline
+  total + VIP + one notice, run tiles hidden; (3) Risks & escalations — `lib/executive.ts::selectRiskRows`, SELECTION
+  only: blocked rows (`completing-within-year` `blocked===true`), overdue check-ins (`/dashboard/projects` served
+  `tracking_status==='overdue'`, same hook/filter as the register), VIP-highlighted projects with served
+  `within_year===false`; that order, deduped by id, capped at 8 with "+N more" → `/projects`; rows link like register
+  rows (`/projects/{id}`) with reason chips Blocked / Overdue check-in / VIP not in year; (4) Hubs at a glance —
+  delivery per hub from served `analytics.completing_by_hub` (`completing_count/pipeline_count · completing_pct`)
+  beside design booked % per hub + lab booked % per region ONCE (`/capacity/hub-load`, `pickFigures(…,'year')`,
+  status-tinted via `BOOKING_STATUS_META`, `load/capacity wk` printed, "—" on null) + Projects-by-type bar list
+  (served `by_type` buckets); (5) provenance footer (`ScheduleRunProvenance`, version/solver/timestamp chips).
+- **Hub-load supersession (ADR 0039 §4).** `HubsGlanceCard` is the Dashboard's only `/capacity/hub-load` consumer,
+  mounted ONLY in the Executive view and additionally `enabled`-gated on Capacity read. The P23-T03 test was narrowed
+  to the Detailed view; a positive Executive-side assertion was added (both cite ADR 0039 §4).
+- **Lazy charts.** All Recharts panels live in `components/executive/executive-charts.tsx` behind `React.lazy` +
+  `PanelSkeleton` (donuts ×2 + type bars); Recharts stays out of the route chunk.
+
+**Decisions the ADR did not spell out.**
+- VIP KPI = Σ served per-area `highlighted_count` (a presentation sum of served counts, the same class as the Detailed
+  header total). A null (unresolved board) renders "—", never 0.
+- "+N more" links to `/projects` (the register page) since the Dashboard register is Detailed-only.
+- Booked % uses the FULL-YEAR served figures (`pickFigures(…, 'year')`).
+- After three owner visual passes: single-column donut legends (grid `[dot|label 1fr|numbers auto]`,
+  `overflow-wrap:anywhere` guard, legend under the donut below ~1400px), band/hub bars are robust CSS-width bars (the
+  served share IS the CSS percentage; a per-row Recharts bar intermittently dropped rows at 390 and was replaced —
+  owner correction #3 prioritised layout robustness), every bar carries counts + served %, no ellipsized labels
+  (StatCard compact labels wrap instead of truncating; compact badges wrap to their own line), bottom row
+  `items-start` so cards size to content.
+- Incidental fix: another in-flight edit had added `placeholderData: (prev) => prev` to every `use-dashboard.ts` hook,
+  which collapsed every hook's `data` to `{}` under tsc (tree-wide type errors). Switched to TanStack's
+  `keepPreviousData` — identical behaviour, inference preserved.
+
+**Tests/results.** New: `lib/view-mode.test.ts` (precedence + role rule), `lib/executive.test.ts` (risk selection /
+dedupe / VIP helpers), `executive-charts.test.tsx` (full legend labels, served counts+shares, band numbers),
+`exec-kpi-strip.test.tsx` (verbatim figures, full labels, no-run fallback), `risks-card.test.tsx` (order/cap/links),
+`hubs-glance-card.test.tsx` (hub-load gating + filter, lab dedupe, "—" on null), `executive-view.a11y.test.tsx` (axe
+clean, nothing tabbable in aria-hidden figures), DashboardPage P28 suite (toggle, persistence, deep link, role
+defaults, filter propagation, hub-load positive assertion). `renderWithProviders` gained a `route` option.
+Dashboard+executive suites: 78 passed; full `vitest run`: 1513 tests, 1512 passed, 1 pre-existing flake
+(`ProjectsPage.test.tsx` registration-payload test under full parallelism — user-modified P27 file, passes in
+isolation; re-run pending below). `tsc -b` clean. eslint: 0 errors, only pre-existing warnings in untouched files.
+`vite build` to a scratch outDir: bundle budget PASS 188.5 KB gzip initial (budget 400); DashboardPage chunk
+78.7→96.5 kB raw (21.4→26.2 kB gzip), + new lazy `executive-charts` chunk 9.2 kB raw / 3.0 kB gzip. Visual pass via a
+temporary fixture-fed static harness (deleted after): screenshots at 1440/1280/390, light+dark — no overlap, no
+ellipsized legend/tile labels, no half-empty cards. e2e: `dashboard.page.ts` gained Executive selectors
+(typecheck-only; dev API down, no live Playwright run).
+
+- **Addendum (same task, final run):** the full `vitest run` after the last visual fixes is entirely green —
+  **193 files / 1535 tests passed** (the earlier `ProjectsPage.test.tsx` parallelism flake did not recur). Full
+  `eslint .`: 0 errors, 9 warnings, all pre-existing and none in files this task touched.
+
+## [2026-10-22] P26-R01 / P23-R01 / P24-R02 — Final-gate (P21–P26) qa remediation: QA-F26-1, QA-F23-1, QA-F24-1 (frontend-builder): DONE
+
+Remediates the three blocking defects of "Final gate (P21–P26) — qa-inspector: FAIL". Frontend only; `backend/` untouched;
+no API or contract change. Nothing was saved on the dev DB (all live checks abort every non-GET except the read-only
+`POST /scoring-rubric/preview`; 0 writes attempted). Dev servers not restarted. Nothing committed. The P27 "Registration
+tags" files (ADR 0038, P27-T01/T02) and the P28 Executive view files were not touched.
+
+**P26-R01 — QA-F26-1, lost update in the rubric 409 "Re-apply my draft" (P26-T03 inline editor).**
+- Root cause: `rebaseDraft(mine, latest)` kept every field of the stale draft, so re-applying reverted every concurrent
+  change the Admin never edited.
+- `lib/rubric-draft.ts`:
+  - `RubricDraft` gains `base: ScoringRubric` (the served rubric the draft was edited from; set by `draftFromRubric`).
+    The diff uses this snapshot, not the `rubric` prop, so a background refetch cannot shift the base.
+  - New `rebaseDraft(mine, base, latest, choices?) → { draft, applied, conflicts }`. It starts from `latest` and applies
+    ONLY the fields where `mine` differs from `base`. Everything else keeps the latest value.
+  - Conflicts (each defaults to the server value; `choices[id] === 'mine'` takes the Admin's):
+    - `both-changed`: the same field changed on both sides to different values (an identical change is not a conflict);
+    - `remote-deactivated` / `remote-renamed`: the Admin changed a dimension someone else deactivated or renamed
+      (per changed field);
+    - `both-added`: the Admin added a label someone else also added (case-insensitive). Labels are unique, so it becomes
+      that one dimension, and its differing pillar / weight / inverted / active are conflicts;
+    - `order`: both sides reordered. A pillar change alone does not count as a reorder; it is compared after applying
+      pillar moves the way the editor does.
+  - Dimensions the Admin added are re-added, and dimensions others added are kept. When only the Admin reordered, their
+    order is used.
+- `components/rubric-editor/rubric-editor.tsx`: the comparison panel is now a rebase panel (`rubric-comparison`).
+  - "Re-applied as they are" lists the changes, e.g. "New Options · weight 25 → 30".
+  - Each conflict is a `fieldset`/`legend` ("RM Savings · weight") with a note, "Your value 40 · Current 30", and native
+    radios "Keep current (30)" (checked by default) / "Use mine (40)".
+  - A conflict-count badge. The button keeps its name "Re-apply my draft on version N" (final-gate spec unchanged). The
+    status says how many conflicts kept the current value.
+  - `reload()` keeps `{ mine, base: draft.base }`.
+- `scoring-rubric-panel.tsx` unchanged; it already spreads the draft, so `base` survives edits.
+- Tests:
+  - `lib/rubric-draft.test.ts`: +11. Disjoint edits (the live defect: New Customer stays 30, New Options 30, everything
+    else equals latest), untouched draft = latest, same change both sides, same-field conflict + choice, deactivated
+    remotely, renamed remotely + my deactivation applied, label vs label, add vs remote add (different and same label,
+    choice valid), order (mine only / both / choice), pillar change ≠ reorder.
+  - `scoring-rubric-panel.test.tsx`: the 409 test was updated, plus 2 new tests. One runs disjoint + conflict through
+    the UI and checks the PUT body is 30/30/30, with axe on the panel. The other checks that "Use mine" re-applies 40.
+  - New `e2e/qa-f26-1-rubric-rebase.spec.ts`: two contexts as Frank Admin, signed in from the dev login page. One
+    in-test mock server serves `GET`/`PUT /scoring-rubric`, seeded once from the real GET, so tab B really gets a 409.
+    Every other non-GET is aborted. It asserts the applied line, the conflict row, the default, axe 0, the form values
+    after re-apply, and that the final PUT is `version` v+1 with weights 30/30/30 and every other dimension identical
+    to tab A's version. It handles both `/api/...` (preview e2e) and the dev `VITE_API_BASE_URL` origin. **Run live on
+    :5183: PASS** (twice).
+
+**P23-R01 — QA-F23-1, Dashboard "Delivery by priority" contrast (WCAG 1.4.3).**
+- New `surfaces/dashboard/lib/delivery-segments.ts` (`DELIVERY_SEGMENTS`, moved out of `portfolio-analytics.tsx`):
+  - each segment's count ink comes from its token pair: solid fills use their `-fg` token (`text-success-fg`,
+    `text-warning-fg`, `text-primary-fg`); the 40 % tints and the grey "Not in plan" use `text-text`;
+  - no fixed `text-white` remains; the fills and colour meaning are unchanged;
+  - each entry names its `fillToken` / `inkToken` / `alpha` / `ground` (the bar track `--color-surface-sunken`).
+- **Same defect found by the live check on "Outcomes by hub"** (same Dashboard, All Hubs): white on `bg-warning` 3.15:1.
+  It now uses `HUB_OUTCOME_STACK` in the same module: success-fg / warning-fg / text-inverse on text-muted.
+- New `delivery-segments-contrast.test.ts` (20 tests). It measures every pair from `tokens.css` in cascade order, light
+  and dark, compositing the tints over the track, and requires ≥ 4.5. One exception: dark "Already delivered" uses the
+  primary pair, which is the carried D1 (white on dark primary 4.18:1 app-wide), held at ≥ 4.1 and marked. A guard
+  test confirms the old white-on-amber and white-on-grey pairs fail the measurement.
+- Live, computed in the browser, light: in flight finishing 5.08, in flight not finishing 5.88 (was 3.15), not started
+  finishing 8.95, not started not finishing 10.25, delivered 7.84, not in plan 8.93 (was about 2.1).
+
+**P24-R02 — QA-F24-1, Capacity Planning filter popovers have no accessible name (WCAG 4.1.2).**
+- `multi-select-filter.tsx`: new optional `name` prop (the full name for an abbreviated label). `PopoverContent`
+  (role=dialog) gets `aria-label="<name ?? label> filter options"`, and the sr-only legend uses the same name.
+- `resource-load-section.tsx`: Dept → `name="Department"`, Cat → `name="Category"`. The trigger names are unchanged
+  ("Dept filter: All"), so the existing specs still hold.
+- `resource-load-section.test.tsx`: +5 (`it.each` over Type, Status, Dept, Cat and Engineer). Each finds
+  `dialog` by its name ("Department filter options", …) with checkboxes, axe 0 while open, and Escape closes it.
+
+**Also fixed (found by the requested live axe runs, same surfaces):**
+- Matrix rubric card (read table, 1440): `color-contrast` ×3. The pillar names were drawn in the pillar hue, for
+  example teal #17b5a7 on its 9 % wash = 2.34:1. This came from the unlogged 2026-10-22 "given colour" change, which
+  was never checked in a browser. In `rubric-pillars.css`, `.rp-pillar-name` is now `--color-text`; the hue stays
+  on the rail, the wash and the weight bars.
+- Dashboard (1440): `aria-hidden-focus` ×1. The Recharts `BarChart` in `completion-profile-card.tsx` (`CountBars`,
+  inside an `aria-hidden` wrapper) rendered a tabbable svg. It now has `accessibilityLayer={false}`, the pattern
+  `analytics-breakdown.tsx` and `pipeline-vs-completing-chart.tsx` already use.
+
+**Results.**
+- `tsc -b`: exit 0. `eslint .`: 0 errors, 9 warnings (pre-existing `incompatible-library` / only-export-components;
+  none in touched files).
+- `vitest run`: **194 files / 1556 tests passed**, which includes the in-flight P27/P28 tests; none failed.
+- `vite build` to a scratch outDir (`dist/` untouched): budget script on that build **188.5 KB gzip of 400 KB, PASS**.
+  MatrixPage 55.1 KB gzip, DashboardPage 26.2, PlanningPage 33.3.
+
+**Live check** (read-only, light, `:5183` + `:8001`, signed in as Frank Admin from the dev login page). serious/critical
+axe results, after the fixes:
+- Matrix rubric card at 1440 and 390: read view, edit mode, preview (New Customer 31 → Preview impact), the discard
+  dialog, and after Cancel → Discard: **0** in every state.
+- Dashboard, Country = India, at 1440 and 390, with the delivery card in view and with the register in view: **0**.
+  Sweep across every country option (All Hubs, Greece, India, Romania) at 1440 and 390: the delivery card **0**, the
+  whole page **0**.
+- Capacity Planning at 1440 and 390, with each of the Type, Status, Dept, Cat and Engineer popovers open: **0** in each,
+  and every dialog was found by its name.
+- 0 writes attempted.
+- Scripts and results are in the session scratchpad (`live-check.cjs`, `countries.cjs`, `live-out/`).
+
+**Notes.**
+- The final-gate spec's real-DB 409 test (`final-gate-p21-p26.spec.ts`, expects both weights 30) should now pass at
+  the re-gate. It was not run here, because it saves to the DB.
+- The dark theme was not swept; carried D1 is unchanged.
+- `docs/IMPLEMENTATION_PLAN.md` gains P23-R01, P24-R02 and P26-R01, marked DONE against this entry. The phase gates
+  (P23/P24/P26-T20) are still TODO; the qa re-gate should re-run the Matrix rubric surface on the P26-T03 UI.
+- Correction to the count above: `lib/rubric-draft.test.ts` gained **10** tests (22 in the file), plus the rewritten
+  original rebase test.
+
+## [2026-10-22] Final gate re-check (P21–P26) — qa-inspector: PASS (QA-F26-1, QA-F23-1 and QA-F24-1 closed; P26-T03 rubric card gated; P27-R01..R04 security fixes verified live; all suites green; 1 carried non-blocking axe observation)
+
+**Scope.** Re-gate after "Final gate (P21–P26) — qa-inspector: FAIL". It covers the remediation (P26-R01, P23-R01, P24-R02), P26-T03 (the inline rubric editor in the "Scoring scale and dimensions" card, not gated before), and the P27 security fixes P27-R01..R04 (S26-L1, S26-L2, S26-M1, key rotation). P27-T01/T02 (tags, ADR 0038) and P28-T01 (Executive view, ADR 0039) are NOT in this gate. They were in the tree and are reported only for suite breakage (none, see the end).
+
+**Environment (disposable, all removed afterwards with `docker rm -f -v`; processes stopped).**
+- Postgres 17 `qa-rg2-pg` :55932, Redis 7 `qa-rg2-redis` :56932, Keycloak 26 `qa-rg2-kc` :58932 (realm import), MinIO `qa-rg2-minio` :59932.
+- uvicorn :8932 (dev mode, CURRENT_WEEK 42, throwaway Fernet key in a scratchpad file only). Celery solver worker `--pool=solo` ("ready").
+- `vite preview --mode e2e` :5932 on a scratchpad build. A temporary Playwright config (no webServer, baseURL :5932) was deleted afterwards.
+- `alembic upgrade head` reached **`p27a_project_scoring_tags`** (head includes the P27 tags migration; 0 rows on the empty DB). Then `seed_demo_data --dataset client_2026 --schedule` (253 projects, run v1, within year 41), currency rates and dev users.
+- Extra instances for item 5: uvicorn :8933 with `RPD_DEV_MODE=false`; uvicorn :8934 (dev mode, `RPD_CORS_ORIGINS` = the static origin) behind a static server :18934 that applies the `render.yaml` headers.
+- :5433, :8001, :5183, `frigoglass-keycloak-1` and Render were not touched. The working-tree `git status` was byte-identical at start and end.
+- Snapshot: the tree as at 16:33 IST.
+
+**1. QA-F26-1 (lost update in the 409 re-apply): CLOSED.**
+- `qa-f26-1-rubric-rebase.spec.ts` (two contexts, mocked rubric server): **1/1 PASS**. Checked:
+  - "Re-applied as they are" lists New Options 25 → 30;
+  - the RM Savings conflict is shown per field ("Your value 40 · Current 30") and defaults to current;
+  - axe 0;
+  - the final PUT is v+1 with New Customer 30 / New Options 30 / RM Savings 30, and every other dimension equals tab A's version.
+- `final-gate-p21-p26.spec.ts` "409 with two tabs, then reload and re-apply", on the **real DB**: **PASS**.
+  - Tab A saved New Customer 30. Tab B (edited New Options only) got 409 → Reload → comparison → "Re-apply my draft on version N" → saved v+1.
+  - Stored rubric: **new_customer 30 and new_options 30**, so the other Admin's change survived.
+  - axe on the 409 panel: 0.
+
+**2. P26-T03 rubric card: PASS**, checked live as Frank Admin and Alice PM at 1440 and 390 (temporary spec, kept in the scratchpad as `rg2/zz-qa-rg2-live.spec.ts`).
+- **Read view, pillar first.**
+  - Header row is Pillar | Dimension | Weight | 1 — Negligible | 5 — Exceptional.
+  - 5 `<tbody>` groups in served order, each with `th[scope=rowgroup]`. rowSpans are 3/2/3/2/3, each equal to the group's row count and the served active dimensions per pillar.
+  - `data-tint` alternates false/true/false/true/false.
+  - At 390 there are 5 stacked `<section>`s with the same counts and tints, page overflow 0 px, and the card's right edge ≤ 390.
+  - The screen-reader pillar summary reads "3 dimensions, total weight 75 (25.4 of 100)".
+- **Edit button.** Present only for Frank: served `can_edit` true for Frank and false for Alice. Alice sees "Read-only · managed by Admins", with no textbox, spinbutton, Save or add form. API: PUT 403, preview 403.
+- **Edit, preview, save (preview = saved).** New Customer 25 → 60 previewed 295 → 330 over 253 projects. After the save, all 253 stored `normalized_pct` / `score_band` / `suggested_band` / `capacity_fill` equal the preview, with **0 diffs**.
+- **Add, deactivate, reactivate.**
+  - Add "QA Gate Sustainability 1" in a new pillar, weight 20: focus goes to its label, v3, 14 active, and 253 of 253 scored projects are incomplete. The grid shows the pillar column and the incomplete marker.
+  - Deactivate (v4): 0 incomplete, 13 active. Reactivate (v5): 253 incomplete.
+  - 14-dimension grid, compare and edit dialog all work. A score PUT sends exactly `{"scores":{"qa_gate_sustainability_1":4},"hard_gates":[]}`.
+  - Restored at the end: total 295, QA dimension inactive.
+- **Version history dialog.** Listed v1..v5 for both users. Focus returns to "Rubric version history".
+- **Cancel / discard guard (1440 and 390, 0 non-GET requests).**
+  - Cancel with no change leaves at once, and focus goes to Edit rubric.
+  - With a change, Cancel opens the "Discard your rubric changes?" alertdialog. Keep editing keeps the value (27), and focus goes back to Cancel. Discard restores the read table, and focus goes to Edit rubric.
+  - An in-app Dashboard link while dirty shows "Leave with unsaved rubric changes?" (checked at 1440; at 390 the nav link is behind the menu and was not exercised). Stay keeps the URL and the draft.
+  - `beforeunload` fires while dirty (1440 and 390).
+- **Removed controls.** No `scoring-rubric-button`, no "Scoring rubric" / "Rubric" View-panel button, no "Show/Hide rubric" control, and no dialog on load.
+- **390 layout.** Edit mode page overflow 0 px.
+- **axe.** 0 serious/critical in every state: read card ×4, history ×4, edit ×2, discard dialog ×2, leave blocker, preview at 390, after add, and the 14-dimension grid, compare and edit dialog.
+
+**3. QA-F23-1 (Dashboard contrast): CLOSED.** Every country option (All Hubs, Greece, India, Romania) was checked at 1440 and 390, scrolled into view and after the bar animation. I measured each labelled segment in the browser, compositing the alpha fills over the track:
+- labelled segments per country: All Hubs 24, Greece 11, India 16, Romania 7;
+- **minimum contrast 5.08:1 everywhere, 0 below 4.5**;
+- axe 0 for each country at each width.
+(It was 3.15:1 white-on-amber at the last gate.)
+
+**4. QA-F24-1 (Planning filter popovers): CLOSED.**
+- Type, Status, Dept, Cat and Engineer each open a dialog named "Type / Status / Department / Category / Engineer filter options", with 4 / 6 / 9 / 5 / 23 checkboxes.
+- axe 0 with each open, at 1440 and 390. Escape closes the popover and returns focus to the trigger.
+
+**5. P27 security fixes: PASS.**
+- **S26-L2 (dev mode off, :8933).**
+  - `/docs` 404, `/redoc` 404, `/openapi.json` 404 (also with a valid bearer), `/docs/oauth2-redirect` 404.
+  - `/me` with no credentials 401; with `X-Dev-User-Email` also 401. `/me/dev-users` 404. `/me` with a Keycloak bearer 200.
+  - Dev mode on (:8932): all three docs URLs 200.
+- **S26-L1 (Workspace `capacity_fill_reason`), the auditor's two probes re-run on the seeded DB.**
+  - Target: an R&D-Greece project promoted by the fill (admin and PM see "P1 (capacity fill): hub P1 design load 3.00 of 24.02 weeks with this project").
+  - **Probe 1:** bob.hub (Hub Planner, PD-India only) with a `viewer` grant gets **"P1 (capacity fill)"**. On a granted non-promoted R&D-Greece project he gets **null**. Without the grant, the Workspace is 404. His `/priorities/capacity-fill` lists only PD-India.
+  - **Probe 2:** carol.eng (Engineer), linked to the project's leader engineer, gets **"P1 (capacity fill)"**. She gets 403 on `/priorities` and on `/capacity/hub-load`.
+  - In every case `suggested_band` P1, `score_band` P3 and `capacity_fill` true are unchanged.
+  - Grants were revoked and carol's link restored.
+- **S26-M1 (render.yaml CSP).**
+  - Production build with `VITE_API_BASE_URL` = the disposable API. A static server sent the `render.yaml` headers verbatim (connect-src origin swapped, `upgrade-insecure-requests` dropped for http). The response carries the CSP, XFO DENY, nosniff, Referrer-Policy, Permissions-Policy and COOP.
+  - The built index.html has exactly one inline script, and its sha256 equals the declared hash (`V0ZiTxQf…`). There are 0 inline `<style>` tags and 0 `on*` attributes.
+  - Sweep: 17 routes (Dashboard, Executive view, Projects, a Workspace, Matrix grid and board, Capacity, Gantt, Planning, Check-in, History, Downloads, Audit log, User admin, Workflow settings, /login, 404) × light/dark × 1440/390 = **68 loads**. On each page I opened the rubric edit and history (Matrix), the Dept popover (Planning) and the register drawer (Projects).
+  - Result: **0 `securitypolicyviolation` events, 0 console CSP messages, 0 page errors, 0 5xx, 125 successful API GETs per pass through connect-src**. The theme script ran under its hash (dark class correct on all 68).
+  - Negative control: an injected inline script and a fetch to example.org were blocked (`script-src-elem`, `connect-src`).
+- **Key rotation (`python -m scripts.rotate_field_key`) on the disposable DB.**
+  - Dry run: 184 of 184 non-null values (customer_name 181, the 3 financial columns 1 each), rolled back.
+  - Real run: 184 of 184, committed. One `field_encryption_key.rotate` audit row holding counts only.
+  - `--old-key` is refused with exit 2.
+  - Two unrelated keys: exit 1, "does not decrypt with the old or the new key. Rolled back". No `gAAAA` token in any output.
+  - The API restarted on the new key served 254 projects with 0 InvalidToken: customer_name 180 non-empty + 1 empty string = 181. No value was printed.
+
+**6. Suites.**
+- **Backend.**
+  - `pytest --cov` (testcontainers): **2142 passed, 0 failed** (11 min 33 s). Coverage **95.91 %** (gate ≥ 70).
+  - `pytest -c pytest-scheduling.ini`: **311 passed**, `scheduling/` **94.19 %** (gate ≥ 85).
+  - Contract `test_openapi_frontend_contract.py` + golden files (`test_golden_files`, `test_p9_golden`): **257 passed**. The 4 P27 contract rows red in the P27-R entry are green now.
+  - Files: `api/main.py` 100, `services/workspace.py` 95.1, `scoring_rubric` service 98.3 / router 100, `priority_capacity_fill` 100, `scripts/rotate_field_key.py` 73.8 (in-process only; its subprocess runs are not counted).
+  - `ruff check .`: clean.
+- **Frontend.**
+  - `tsc -b` exit 0. `eslint .`: 0 errors, 9 warnings (pre-existing `incompatible-library` / only-export-components).
+  - `vitest run --coverage`: **194 files / 1556 tests passed**. Statements **87.73 %**, branches 79.98, functions 86.89, lines 89.78.
+  - Per surface (statements): matrix 91.3, dashboard 92.0, planning 86.4, projects 89.9, registration 92.7, gantt 93.8, capacity 98.4, project-workspace 80.6, priority-board 88.5.
+  - Remediated files: `rubric-draft.ts` 93.5, `scoring-rubric-panel.tsx` 93.7, `rubric-editor.tsx` 86.8, `delivery-segments.ts` 100, `portfolio-analytics.tsx` 100, `multi-select-filter.tsx` 80.
+  - `vite build` (scratch outDir) + budget: **188.5 KB gzip of 400 KB, PASS**.
+- **E2E on the stack.**
+  - final-gate-p21-p26 **41/42**. The one failure is the carried observation below.
+  - qa-f26-1 1/1, p19-gate **18/18**, matrix **8/8** (including the 3 P26-T03 tests), dashboard 3/3, capacity 2/2, planning 2/2, gantt 2/2, registration **3/3**.
+  - Registration first failed 3/3 at the end of an 8-minute batch: a redirect to /login, with the API logging `/me` 401 because the Keycloak tokens minted in global-setup had expired. That is a harness artefact. Re-run with fresh tokens: 3/3.
+- **Axe light, all surfaces, 1440 and 390** (final-gate sweep: 13 surfaces + Workspace × 2 = 28 scans): **27 clean**. p19 light gate scans: all 0.
+- **Carried observation, non-blocking.** 390 Workflow settings has `scrollable-region-focusable` ×1 on `figure[data-testid="dag-diagram"]`. It was recorded at the last gate, is not P21–P26 code and is not one of the six surfaces. The fix is `tabIndex={0}` + a name on the figure (frontend-builder, backlog).
+- **Dark, report only** (carried D1, white on #397dd0 4.18:1): Dashboard ×4, Projects ×2, Capacity ×3, Matrix grid ×6, Check-in ×1, Planning ×8. Board, Gantt, Audit log, History and Downloads are clean.
+
+**In-flight P27 tags / P28 Executive (not gated).** They broke nothing: the full Vitest run (with their tests), tsc, eslint, the build budget, the backend suite at `p27a`, the contract tests and every e2e spec above are green. The Executive view loads with 0 CSP violations.
+
+**Verdict: qa-inspector PASS for P21–P26** (plus P26-T03 and the P27-R01..R04 code fixes). The security re-gate items S26-C1 (Render dev mode) and S26-H1 (rotate the Render DB password and field key) are operator actions and are outside qa's remit.
+
+**Tests changed:** none in the repo. The temporary live spec and Playwright config were removed and are kept in the scratchpad at `rg2/`. Logs, axe JSONL, screenshots and the CSP harness are in the session scratchpad at `rg2/`.
+
+## [2026-10-22] Final gate (P21–P26, P24-R01, P27 security code) — status — orchestrator
+
+- **qa-inspector:** PASS on re-check (QA-F26-1, QA-F23-1, QA-F24-1 fixed; P26-T03 inline rubric card gated; P27 security code fixes verified live: docs 404 with dev mode off, scoped capacity_fill_reason, render.yaml CSP 0 violations over 68 loads, key-rotation script 184/184). Backend 2142 passed, frontend 1556 passed.
+- **workflow-auditor:** PASS on items 1–6; item 7 (Render reconciliation) closed by the orchestrator's read-only API check (entry above).
+- **security-auditor:** FAIL remains on S26-C1 (Render backend runs with RPD_DEV_MODE=true: unauthenticated Admin) and S26-H1 (DB password and field key shared in chat). Both are owner/operator actions on Render, not code; the code-level findings S26-M1/L1/L2 are fixed (P27-R01..R04). Re-gate needs: deployed /me without credentials → 401, /me/dev-users → 404, password and key rotated with the re-encryption count matching.
+- **Gate verdict:** the P21–P26 code is accepted; the phase gates P23/P24/P25/P26-T20 stay open until the security re-gate passes on the deployed configuration.
+- **Not ours, not gated:** in-flight P27 "Registration tags" (ADR 0038) and P28 "Executive view" from another session; they broke no suite.
+- **Owner follow-ups:** frontend SSO callback missing (deployed site needs suspension or an access proxy once dev mode is off); OQ #49–#62; EGP/ZAR/IDR rates; auto-scoring thresholds; heatmap choices; Workflow settings DAG figure focusability (backlog).
+
+## [2026-10-22] P28-T01 addendum: owner rounds 2–5 (tiles/dialogs, hero donuts, risks regroup) — frontend-builder
+
+Follow-up owner feedback folded into the Executive view (plan row stays DONE):
+
+- **Equal KPI tiles + click-through.** The strip now renders six IDENTICAL fixed-frame tiles
+  (`exec-kpi-tile.tsx`: fixed height, `icon | label | badge slot` top row — the badge slot always present so no tile
+  wraps taller; labels never ellipsize). Each run tile is a real button (`aria-haspopup="dialog"`, keyboard-activatable)
+  opening `kpi-projects-dialog.tsx`: the rows BEHIND its number, selected from the already-fetched
+  `completing-within-year` rows by `lib/executive.ts::selectOutcomeRows` — pure selection through the surface's one
+  outcome precedence (`outcomeOf`, P9-F02 blocked-wins), so list length always equals the tile's served count (I9).
+  Rows (name link `/projects/{id}` · hub · PriorityBandPill · end week `formatPlanWeek`/"—" · outcome chip) render in
+  the shared `VirtualDataTable` (TanStack Virtual). Focus returns to the opening tile explicitly
+  (`onCloseAutoFocus` + opener ref). The VIP tile opens the EXISTING `VipBoardDialog` — directly with one area in
+  scope, via a small area-picker dialog with several (decision: the board dialog is per-area by design). The no-run
+  pipeline tile and an unresolved VIP tile are not clickable. The Scheduled mini split bar was dropped (owner allowed).
+- **Hero donuts.** Project pipeline + Status overview left their cards (eyebrow + info popover over the chart on the
+  page background). Labels are drawn IN the chart on leader lines (custom `<g>` renderer: polyline + word-wrapped name
+  + `count · served %`; `labelLine` off so line and text always agree; no mid-word breaks — the `overflow-wrap:anywhere`
+  guard is gone). Size was tuned over three owner rounds to a FIXED 200 px outer diameter (px-capped radii, identical
+  on both donuts, figure h-[15rem]) so the hero row stays ≈300 px and the KPI strip is on screen at 1440×900. Labels
+  are clamped inside the SVG by the renderer (estimated text width vs 2·cx/2·cy), so they cannot clip at the container
+  edge at any width. Zero slices are named in one muted line ("No projects: Unregistered"). The donut Pies are static
+  (recharts suppresses labels while animating); the page-level reduced-motion-gated stagger remains the entrance.
+- **Row composition.** Charts row = pipeline donut (xl 4) | status donut (xl 4) | Delivery rate (xl 2) | Delivery by
+  priority (xl 2); KPI strip second; bottom row unchanged. Plain document flow throughout (stacked grid rows, no
+  absolute positioning between sections) — the "overlapping tiles" the owner saw live was the dev server rendering a
+  half-applied edit; full-page renders at 1440/1280 light+dark verified clean end-to-end after completion.
+- **Risks list.** Rows are now ONLY full project name (wraps, never truncates) + hub, grouped under tiny muted
+  subheadings Blocked / Overdue check-in / VIP not in year (rendered only when non-empty, original order and cap kept).
+- **Checks.** Dashboard suites: 36 files / 234 tests green (incl. new dialog/tile/grouping/leader-label tests and an
+  axe pass on the open dialog). eslint: 0 errors (one pre-existing warning, untouched file). Bundle budget PASS —
+  initial 188.5 KB gzip; DashboardPage chunk 102.3 kB raw / 27.2 kB gzip, executive-charts lazy chunk 10.2 kB raw /
+  3.5 kB gzip. `tsc -b`: clean in every file of this task; 6 errors exist in `src/surfaces/matrix/*` test fixtures from
+  a CONCURRENT edit (`matrix/api/types.ts` gained a required `is_vip` at 18:10 while this task was running) — not
+  touched by, or related to, P28-T01.
+
+- **Addendum (final run):** full `vitest run` after rounds 2–5: **all 1564 tests passed** (the concurrent matrix
+  `is_vip` issue is tsc-only, in fixture typing, and does not fail at runtime).
+
+## [2026-10-22] ADR 0040 frontend — Projects page VIP pin, VIP-first order, VIP filter — frontend-builder
+
+- **Shared toggle.** New `frontend/src/components/shared/vip-toggle.tsx` (`VipToggle {projectId, projectName, isVip, canPin}`):
+  the Matrix grid's look and wording (outline star / filled accent star, `aria-pressed`, "Make <name> VIP" /
+  "Remove VIP from <name>", refusal in the title on error; read-only = filled `vip-mark` on VIPs only). Calls the
+  existing `useSetProjectVip()`. The Matrix keeps its own local copy (matrix/ not touched in this task); a later
+  task may switch it to the shared one.
+- **Order + filter.** `surfaces/projects/lib/vip-order.ts`: `isVipProject` (missing `is_vip` = false) and
+  `orderForDisplay(rows, vipOnly)`, a stable partition of the SERVED rows (VIP first, each group in served order; no
+  re-sort). Page-level "VIP" toggle (`data-testid="vip-filter"`, `aria-pressed`) next to the filters; Clear resets
+  it. With it on, the count badge reads "N VIP of <served total_count> projects" (same precedent as the Matrix
+  "x of y shown"; the list is not paged, so the narrowed count is the rendered rows).
+- **List.** `projects-table.tsx`: star before the name (new `canPinVip` prop); the `VipBadge` in the row was
+  replaced by the star (no duplicate mark). `#` is the ordinal in the shown order.
+- **Cards.** The Projects Cards view now uses a Projects-owned `components/projects-card-grid.tsx` (same card as the
+  Dashboard `ProjectCardGrid`, plus the star before the name; VipBadge dropped there too). Reason: dashboard/ was
+  out of scope and its card has no slot. The Dashboard register still uses its own card, unchanged. Known debt
+  (pre-existing, carried): the card grid renders all rows unvirtualized.
+- Gate: `usePermission('project_registration').write`; server decides.
+- `vip-badge.tsx` doc comment updated (a pin is manual and schedules first, ADR 0040).
+- **Checks.** Vitest `src/surfaces/projects` + `vip-toggle.test.tsx`: 2 files / 41 tests passed (5 new page tests:
+  order incl. missing `is_vip`, filter + Clear, empty filtered state, star PUTs in list and cards, read-only mark;
+  4 toggle unit tests asserting `mutate({projectId, isVip})`). eslint on changed files: 0 errors (1 pre-existing
+  `incompatible-library` warning on useVirtualizer). `tsc --noEmit -p tsconfig.app.json`: clean in every changed
+  file; the only errors are the known `is_vip` fixture errors in `src/surfaces/matrix/*.test.tsx` (concurrent
+  edit, noted in the P28-T01 addendum).
+- **Live check** (http://localhost:5183/projects, frank.admin): 253 projects, 0 VIP (ADR 0040 reset). Pinned one
+  project from the list (PUT 200): it moved to row 1 with a filled star, and the VIP filter showed "1 VIP of 253".
+  Unpinned it from the Cards view (PUT 200); back to 0 VIP. This left two audited `is_vip` rows on the dev DB, and
+  the stale/recalc path that a pin triggers, but no net change.
+
+## [2026-10-22] ADR 0040 — VIP schedules first (scheduler side) — algorithm-engineer
+
+- **Input field:** `scheduling.types.ProjectInput.is_vip: bool = False` (last field, keyword default). The backend-builder's input builder maps `projects.is_vip` onto it; every existing caller/fixture is unchanged.
+- **Greedy:** `greedy._sort_key` is now `(frozen desc, is_vip desc, priority, status, category, project_id)`, per DOMAIN_RULES "Scheduling order" as amended. `prepare_run` → `ctx.ordered` is the one shared order. Greedy, the CP-SAT frozen/anchored walks and hint, `scheduling_order`, what-if and Monte Carlo all go through it.
+- **CP-SAT (decision):** the ADR 0005 objective weighted bands only, so a VIP P4 project would still lose to a P1 project in the solver. New `cp_sat.objective_weights(projects)` gives a VIP project its band weight plus `vip_bonus = Σ(non-VIP band weights) + 1`. This is a lexicographic VIP tier, and the band still orders VIP projects among themselves. `CpSatSolveInfo.objective_value` and the bound use the same weights. `solver_comparison._weighted_within_year_objective` uses `objective_weights(schedule_input.projects)` for both solvers. With no VIP every weight is the plain band, so the objective is identical.
+- **Byte-identity:** seed greedy and CP-SAT `repr` sha256 match before and after (greedy `ac4138…`, CP-SAT `ae611d…`). All golden files pass unchanged.
+- **Tests:** new `backend/tests/scheduling/test_adr0040_vip_order.py` (10 tests) covers: the sort key, VIP P4 beating non-VIP P1 on a shared leader and on a shared chamber, frozen still beating VIP, explicit False byte-identical on the seed, a seed VIP pin that is I1–I10 clean and moves to the front of the non-frozen order, objective weights, and CP-SAT putting the VIP P4 project within the year. The scheduling suite (`pytest -c pytest-scheduling.ini`) gives **321 passed**, 94.2% coverage. ruff is clean. mypy -p scheduling still reports the 38 OR-Tools stub errors that were already there, with none added.
+- **Files:** backend/scheduling/{types,greedy,cp_sat,solver_comparison}.py, backend/tests/scheduling/test_adr0040_vip_order.py.
+
+## [2026-10-22] ADR 0040 — VIP manual-only + pin is a scheduling input (backend side) — backend-builder
+
+- **Manual only.** `services/vip_board.py::recompute_is_vip` deleted; `api/routers/vip_board.py` no longer touches
+  `projects.is_vip` on link, unlink, item delete or highlight toggle (links are plain references; `vip_item.*` audit
+  rows unchanged, no more `project.vip_pin|unpin` from the board). `VipItemLinksResponse.pinned_project_ids` /
+  `unpinned_project_ids` and `VipItemDeleteResponse.unpinned_project_ids` are kept on the wire (exact frontend
+  mirror) and are always `[]`. `models/vip.py` docstring updated.
+- **Pin = scheduling input, same path as a priority move.** Extracted the ADR 0015 lifecycle from
+  `services/priority_move.apply_priority_change` into `decide_auto_recalc` (not_needed / deferred via
+  `find_in_flight_run` incl. the ADR 0023 follow-up flag / queued + baseline) and `dispatch_auto_recalc`
+  (commit; when queued: `create_queued_schedule_run` GREEDY → `enqueue_or_fail(run_greedy_schedule.delay(...,
+  activate=True, recalc_project_id))` → `project.recalculate_requested` audit → commit → SSE "queued"; broker
+  failure → `dispatch_failed`). `apply_priority_change` now calls both (behaviour unchanged, P11 tests green).
+  `PUT /projects/{id}/vip` on a real change sets `is_vip` + `schedule_stale`, calls both with
+  `trigger_reason="vip_pin"`, and keeps its `project.vip_pin|vip_unpin` audit row (after_state gains
+  `recalc_status`, `baseline_run_id`). Outcome is served in the PATCH-path headers `X-Schedule-Recalc` /
+  `X-Schedule-Run-Id` / `X-Schedule-Baseline-Run-Id` (already CORS-exposed); the JSON body is unchanged so the
+  exact `VipPinResponse` mirror holds. Unchanged value: nothing written, no headers. Never solves in-process.
+- **Scheduler input.** `services/schedule_persistence.build_schedule_input_from_db` (the single builder: worker,
+  preview, what-if baseline) passes `is_vip=p.is_vip` to `ProjectInput.is_vip` (algorithm-engineer's field, present).
+  The P14 preview token hashes `asdict(input)`, so a pin change also stales outstanding priority previews.
+- **Seed.** `seed/seed_vip_board.py` no longer sets `is_vip`; report keys `is_vip_set`/`is_vip_cleared`/
+  `unlinked_is_vip_pins` replaced by `is_vip_pins` (count only). Client seed: zero VIP. Decision: `seed_demo_data
+  --reset` still preserves existing manual pins as user config (P24 behaviour, like grants and links), so the dev DB
+  must be cleared once (owner/orchestrator action, ADR 0040 §2) before a reseed, or the old link-derived pins survive.
+- **Lists.** `GET /dashboard/projects` (Projects page) already serves `is_vip`; VIP-first ordering is client-side.
+- **Tests.** New `tests/test_adr0040_vip_pin.py` (5: queued run + headers + audit + input carries `is_vip`; unpin
+  recalcs; deferred sets follow-up `vip_pin`; not_needed for On Hold; unchanged writes nothing). Rewrote
+  `test_p14_vip_board.py` link/highlight/seed tests to assert links never change `is_vip`; dispatch mock added to
+  `test_p12_board_vip.py`; `test_seed_scripts.py` asserts 0 VIP with links present. Full backend suite **2157
+  passed**; contract test green; ruff clean; mypy adds no errors in touched files. Dev DB :5433 / :8001 not touched.
+- **Frontend follow-up (not mine):** `frontend/src/lib/api/vip.ts` comment "A link changes `projects.is_vip`" is stale.
+
+## 2026-10-22: ADR 0040: VIP is a manual pin and schedules first (orchestrator wrap-up)
+
+Owner ruling: "I will add the VIP projects manually. For now don't keep any VIP. Give an option to add to VIP in
+Projects and the Prioritisation Matrix, and the VIP project will have highest priority."
+- **Docs.** ADR 0040 is written. DOMAIN_RULES "Scheduling order" is now frozen → `is_vip` → priority → status →
+  category, and the VIP "never changes scheduling order" line is struck through.
+- **Scheduler (algorithm-engineer).** `ProjectInput.is_vip`, a greedy sort key, and CP-SAT objective weights (a VIP
+  outweighs any mix of non-VIPs). With no VIP the output is byte-identical. Scheduling suite: 321 passed.
+- **Backend (backend-builder).** Links no longer set `is_vip` (`recompute_is_vip` was deleted). A pin follows the P11
+  priority-move recalc path (`decide_auto_recalc` / `dispatch_auto_recalc`, `trigger_reason="vip_pin"`). The
+  scheduler input carries `is_vip`, and the seed sets no VIP. Full suite: 2157 passed.
+- **Frontend.** The Matrix has a star toggle, VIP-first order and a VIP filter (this session). The Projects page has
+  the same, in list and cards (frontend-builder), via the shared `VipToggle` and `useSetProjectVip`. The grid's
+  capacity-fill band chip is now dense, so promoted rows stay 41 px instead of 65 px. `is_vip` was added to the
+  Matrix test fixtures.
+- **tsc caveat.** `npx tsc --noEmit -p .` checks nothing: the root tsconfig only references the others. Use `-p
+  tsconfig.app.json`. Earlier "tsc clean" notes from this session therefore covered no files; it is clean now (0
+  errors). Vitest for matrix, projects, components/shared and dashboard: 565 passed.
+- **Dev environment.**
+  - Unpinned 36 VIPs through the audited `PUT /projects/{id}/vip` (0 left).
+  - Applied the pending p27a migration (owner-approved; its P27 backfill re-scored 108 projects and changed the band
+    of 20).
+  - Restarted uvicorn on :8001 and the Celery solver worker with the new code.
+  - Active run is still v1 (41 / 42 / 126). The first pin will queue a greedy recalc.
+- **Open.** No phase gate has run on ADR 0040. The Projects cards view is a copy of the Dashboard card
+  (`projects-card-grid.tsx`) and can drift from it.
+
+## 2026-10-22: "VIP 20" tile now counts pinned projects (ADR 0040 follow-up)
+
+The owner asked why the Executive "VIP" tile still showed 20 with 0 projects pinned. It summed the VIP board's per-area
+`highlighted_count`, which is the client's highlighted slide bullets (Greece 6 + India 8 + Romania 6), not VIP
+projects.
+- **Backend.** `VipBoardArea.vip_project_count` is new (`schemas/vip_board.py`, `api/routers/vip_board.py`): the count
+  of `projects.is_vip` in the area's hubs, scoped by the same `visible_hubs` + `hub_scope_filter` as the links.
+- **Frontend.** `lib/api/vip.ts` gains the field. `vipHighlightedTotal` (Executive KPI strip), the strip's area
+  picker and the Dashboard VIP card's "N VIP" chip now read `vip_project_count`. Highlighted items are still listed
+  as board content. The fixtures were updated, plus one test that the headline ignores highlighted items.
+- **Checks.** Contract test 219 passed, and ruff is clean. `tsc -p tsconfig.app.json` reports 0 errors. Dashboard
+  Vitest: 234 passed.
+- **Blocked.**
+  - The DB-backed VIP board tests (and 48 others) fail on `hubs.capacity_hub_id`. Another session added that column to
+    `models/hub.py` at 18:45 with no migration yet; it is not this change.
+  - :8001 was NOT restarted for the same reason. A restart would load the new Hub model against a DB without the
+    column. The tile keeps showing 20 until that session lands its migration and the API restarts.
+
+## [2026-10-22] Data reconciliation 2026 — capacity figures vs the client's workbooks (data-reconciliation agent): DONE
+
+Docs only; no application code, seed or DB write. Dev DB read with SELECT only. Owner/coordinator
+corrections applied mid-task: full-year load = flag Y, every status except Cancelled (remaining
+year = open statuses); OEM hubs under Greece is decided (ADR 0042, P29) and cited, not proposed;
+the draft ADR is **0041** (0040 was taken by VIP).
+
+**Written.**
+- `docs/DATA_RECONCILIATION_2026.md` — the authoritative comparison (formula workbook FW, live
+  project sheet MW, old app CA, app today) of every Capacity-panel figure and input, with cell
+  references; the client's figures recomputed from the live sheet; 16 workbook inconsistencies
+  (W1–W16); the stale pivot reconstructed from its cache; root causes; decisions; implementation
+  spec; before/after table.
+- `docs/ADR/0041-per-project-effort-and-capacity-roster.md` — **Proposed**, needs the
+  workflow-auditor: per-project effort (col 16/21) distributed onto steps via
+  `duration_override_weeks` (domain → 0..104, 0 = skip), run-independent full-year / remaining
+  load, dataset 2026 ∪ flag Y, types BC/AC/SER, hub `OEM-Seltek` → `OEM-Seitek`, chamber stages
+  from the client's test-type mapping.
+- `docs/OPEN_QUESTIONS.md` #64–#75.
+
+**Headline (client definition: flag Y excl. Cancelled, Σ col 16, vs the FW roster).** Greece
+(R&D-Greece + OEM-HCK + OEM-Seitek) 243 wk vs 124.88 → 194.6 % booked / 51.4 % completion; R&D-India
+150 vs 87.87 → 170.7 / 58.6; PD-India 658 vs 252.62 → 260.5 / 38.4; PD-Romania 375 vs 165.00 →
+227.3 / 44.0 (Σ 1426 vs 630.37). FW's own pivot says 794 / 38 / 455 for PD-India / R&D-India /
+PD-Romania: it was refreshed 2026-06-29 (pivot cache 6, 595 records) before 23 rows moved to
+R&D-India. The app today shows run-booked load 500 / 201 / 138 / 32 (+ OEM-HCK 10) against supply
+342.29 / 132.50 / 253.00 / 124.88 (+ 44.17).
+
+**Root causes, in order.** (1) The client's load is a typed per-project figure (India B 4 / C 3,
+Romania 20 / 15); the app books 10 / 6 (ADR 0007 kinds × table; the briefing's "B 8 / C 4" is the
+workbook's R column, not the app). (2) OEM load with no OEM capacity (ADR 0042). (3) Six provisional
+leaders at 1.0 FTE (+266 man-weeks; ADR 0042 §5). (4) Load = what the run booked, 2026-requested
+only, vs the client's flagged set of all statuses. (5) Stale pivot; E7/E9 sum the wrong field.
+
+**Findings that correct earlier docs.** `docs/CLIENT_FORMULAS.md` §2.3 is wrong: the pivot's lab
+column sums every flagged row (no cert filter) and "Count of Certification Testing Required"
+counts non-blank cells; DOMAIN_RULES' "lab steps skipped when cert = false" has no basis in the
+client's arithmetic. Col 16 / 21 are typed values (533 / 199), not formulas. A seventh non-roster
+leader (Vaggelis, R&D-Greece) appears with the carry-over rows. Romania's unflagged 2026 rows (S.No
+596 block) carry no effort at all. Lead-time table: FW = `LEAD_TIME_SEED` = DB, cell for cell; the
+old app's live templates differ on 7 cells and carry gap/overlap values. Calendars/chambers match
+except FW's own divisors (W1–W3). 
+
+**Decisions recorded (§6 of the doc).** (a) dataset 2026 ∪ flag Y = 330 rows, 77 carry-over,
+`capacity_flag` stored; full-year load = all non-cancelled, remaining = open only. (b) per-project
+effort with table fallback (36 blank full-year rows), lab imported regardless of the cert flag,
+override domain 0..104 — ADR 0041. (c) roster per ADR 0042 (+ Vaggelis not counted). (d) app
+divisors kept; FW deltas are workbook errors. (e) chamber stages per the client's mapping. (f)
+BC/AC/SER; rename to OEM-Seitek. (g) OEM under Greece — decided, ADR 0042. (h) lead-time table
+unchanged. Defaults overridden: lab/cert import rule (evidence W9), min-1 floor dropped (B has six
+design steps), load basis run-independent, selection widened to all flagged statuses (owner).
+
+**Expected after P29 + ADR 0041 (§7.7).** Capacity 124.88 / 88.33 / 253.96 / 253.00; full-year
+demand 266 / 150 / 884 / 534 (Romania 675 under its 20/15 convention); booked 213.0 / 169.8 /
+348.1 / 211.1 %; lab demand India 860 / Greece 46 / Romania 860.
+
+Scratch scripts and outputs: `/private/tmp/claude-501/-Users-ayushroy-frigoglass/a0b44f67-072c-4e23-bc07-f1c7c8791ead/scratchpad/`
+(not committed). Nothing committed; `docs/IMPLEMENTATION_PLAN.md` not edited (the orchestrator
+opens the ADR 0041 phase after the auditor's ruling).
+
+## [2026-10-22] Data reconciliation 2026 — addendum: project type BC (data-reconciliation agent): DONE
+
+Correction to the entry above, decision (f): `BC` is **not** added as a type. The owner ruled that
+the client's "Business Continuity" projects are the app's `RC`, relabelled "Regulatory / Business
+Compliance" (ADR 0038 amendment 2026-10-22, P29-T04); 63 of the 330 selected rows become `RC`.
+The reconciliation now only recommends adding `AC` (Alternative Component, 9 rows) and `SER`
+(Service, 2 rows); `CER` (1 row) and `TCO` stay null with `excel_type` (OQ #58). Updated in
+`docs/DATA_RECONCILIATION_2026.md` (§2.9, §6 f, §7.1, §7.3, §7.4, §7.5, §7.7) and ADR 0041 §4 /
+Consequences. Expected type-null count after the change: 1.
+
+## [2026-10-22] P29-T02 — Scheduler: `ProjectInput.capacity_hub`; engineer pool by capacity hub (ADR 0042) — algorithm-engineer: DONE
+
+- **Input field:** `scheduling.types.ProjectInput.capacity_hub: str = ""` (last field). `__post_init__` resolves `""` to `hub`, so every existing call site and golden file is unchanged and the field is always a real hub after construction. An unknown capacity hub is a `ValueError` (`workflow.validate_schedulable_project`). Gotcha (documented in the docstring): `dataclasses.replace(p, hub=X)` keeps the old resolved `capacity_hub`; a caller that re-hubs a project must pass `capacity_hub` too. The input builder (P29-T01) must set it from `hubs.capacity_hub_id`.
+- **Finding: greedy / CP-SAT never pick an engineer.** They book the assigned `leader_engineer_id` wherever that engineer sits (DOMAIN_RULES "Booking rules": "the project's assigned leader must be free"). There was no `engineer.hub == project.hub` test anywhere in `greedy.py`, `cp_sat.py` or `invariants.py`, so the booking walk needed no code change; only a docstring was added (greedy module docstring). Workflow selection (`_is_oem_hub(project.hub)`), lab region (`HUB_LAB_REGION[project.hub]`) and the ADR 0007 OEM-category rule (`_cat_not_allowed`: `"OEM"` marker or the project's own `X-OEM`) are unchanged.
+- **Leaderless projects (unchanged, not touched):** `leader_engineer_id` is `None`, or does not resolve to an input engineer, so the project is `LEFT_OUT` with `no_leader=True`. It gets no step rows, `start_week`/`end_week`/`projected_end_week` are `None` and `within_year`/`spillover` are False. `cat_not_allowed` is never evaluated, and it books no capacity, Done/In Progress steps included: `prebook_anchored_steps` skips it at greedy.py `if leader is None: continue`. `unconstrained_end_week`, `expected_end_week`, `blocked` and `progress_pct` are still reported (`_no_leader_outcome`). A `data_error` is checked first and wins. CP-SAT does the same (cp_sat.py `_no_leader_outcome` before the model is built). Nothing auto-assigns a leader in greedy or CP-SAT. In what-if, only the projects of a *removed* engineer and new hypothetical projects are auto-assigned; a baseline project with no leader stays leaderless. ADR 0042 §7's provisional leaders come from the seed, so this is correct as is.
+- **what-if (`whatif.py`) is where the pool rule bites:** `_pick_leader` draws from `engineer.hub == project.capacity_hub`. `AddProject.capacity_hub: str | None = None`; `None` takes the capacity hub the baseline's projects on that hub carry (first by `project_id`), else the hub itself. An unknown value is a `ValueError`. Design-side figures are now per capacity hub: `_plan_loads` design weeks, the `_utilization` hub rows (via `compute_design_load_by_capacity_hub`), `touched_scope` hubs, the analytic `n_added_by_hub`, the designer search dimensions in `solve_minimum_additions` and the best-FTE lookup in `_unattainable_new_projects`. A workings line for a member hub reads `1 x 5 wk (B-OEM, OEM-HCK)`; non-OEM lines are byte-identical. Lab figures still follow the hub's lab region.
+- **Validator (`invariants.py`):** new `compute_design_load_by_capacity_hub` (ADR 0042 §3: own + member projects; same grand total as I6's per-hub figure, which is now the `members` breakdown). New `cross_capacity_hub_leaders()` / `CrossCapacityHubLeader`, exported from `scheduling`. **Decision: no hard invariant "booked engineer ∈ project's capacity hub".** There was no such check to retarget. A new one would reject the client's own data: Dipak (R&D-India) leads 24 open PD-India projects and Ashish (R&D-India) one, so `validate_invariants` would fail on the client seed. It is a diagnostic instead. The rule is stated in the validator's module docstring.
+- **Self-test data:** `_selftest_common.load_seed_schedule_input` gives the prototype seed's OEM projects `capacity_hub="R&D-Greece"`. Their prototype leaders (PD-India / PD-Romania engineers) are kept, and the output is byte-identical.
+- **Byte-identity (I8 / regression):** prototype-seed sha256 of `repr(output)`, measured before any P29-T02 edit and again after: greedy `ac4138…` and CP-SAT `bd6ed1…`, unchanged. With `capacity_hub` set or reset to `hub`, output is identical for both solvers. (The ADR 0040 entry quotes CP-SAT `ae611d…`. My pre-edit measurement today was already `bd6ed1…`, so that drift comes from other uncommitted work in the tree, not from this task.)
+- **Tests:** new `backend/tests/scheduling/test_p29_capacity_hub.py`, 17 tests. Golden case, greedy and CP-SAT: OEM-HCK B-OEM project, capacity hub R&D-Greece, Greek leader carrying `B-OEM` only. It runs the 14 OEM rows; design A 31, B 32, G 36–37, J 44 on the Greek engineer; lab H 38–43 on the Greece chamber, never on the India chamber that sorts first; ends W44, within year. Also covered:
+  - a shared-calendar case (Greek P1 project + OEM P2 project on one engineer, hand-derived weeks, OEM spills to W56);
+  - determinism, including shuffled input;
+  - unset vs set byte-identity on the fixture and on the seed;
+  - leaderless / unknown-leader OEM project with an idle eligible Greek engineer: `LEFT_OUT`/`no_leader`, never assigned (both solvers);
+  - the capacity-hub load aggregate ({R&D-Greece 10, OEM-HCK 5, OEM-Seltek 5} → {R&D-Greece 20});
+  - the cross-hub diagnostic;
+  - what-if: an idle legacy OEM-HCK engineer loses to the least-loaded Greek one, an explicit override works, the Greece row gets +5 wk, `touched_scope` is (R&D-Greece, Greece), the designer search is in R&D-Greece, and unknown hubs are rejected.
+
+  New `_selftest.scenario_oem_project_on_greece_capacity_hub`.
+
+  Results:
+  - `pytest -c pytest-scheduling.ini`: **338 passed**, 94.26 % coverage.
+  - All five `_selftest*` scripts pass with `RPD_CURRENT_WEEK=31`. Without the pin, `_selftest` shows two FAILs that were already there and assume week 31.
+  - ruff clean; mypy shows only the 38 OR-Tools stub errors that were already there.
+- **Backend tests touching `ProjectInput`:** `tests/test_client_2026_seed.py` + `tests/test_p20_fte_followups.py` give 50 passed, 1 failed. `test_roster_is_the_workbook_roster_plus_provisional_leaders` expects Theoni on `OEM-HCK`; P29-T01's in-flight seed (`backend/seed/client_2026.py`) moves her to R&D-Greece (ADR 0042 §5). The expectation belongs to P29-T01; this is not a scheduler regression.
+- **Open for P29-T01 / the orchestrator (not done here, outside the task):**
+  1. `EngineerInput` has no `counts_in_capacity`, so what-if supply (`whatif._supply`) still sums every engineer's FTE, including Theoni, Dipak, Antonis and Sailesh. What-if booked % will then differ from the Capacity page's ADR 0042 §2/§5 figures. Proposed fix: `EngineerInput.counts_in_capacity: bool = True` plus a filter in `_supply`.
+  2. What-if utilization / analytic still emit a row per hub (six); OEM rows now carry 0 design load. The service should serve the four capacity hubs.
+  3. A cross-capacity-hub leader's load counts on the project's capacity hub while their FTE sits in another hub's supply. Dipak → PD-India is the live case; he is non-counted anyway.
+- **DOMAIN_RULES ambiguity resolved:** "The scheduler's engineer pool for a project is the engineers of its capacity hub" reads as a selection rule. It covers the seed's provisional-leader picker and the what-if picker. It does not constrain booking: "Booking rules" books the assigned leader, and the client data has cross-hub leaders. Sources: DOMAIN_RULES "Booking rules", ADR 0042 §6–7, `backend/seed/client_2026_seed_data.json`.
+- **Files:** backend/scheduling/{types,greedy,workflow,invariants,whatif,__init__,_selftest,_selftest_common}.py, backend/tests/scheduling/test_p29_capacity_hub.py. `backend/services` was not touched.
+
+## [2026-10-22] P29-T05 — Scheduler follow-up: `EngineerInput.counts_in_capacity`; what-if supply and picks use counted designers only (ADR 0042 §5–6 clarified) — algorithm-engineer: DONE
+
+- **Input field:** `scheduling.types.EngineerInput.counts_in_capacity: bool = True` (last field; mirrors `engineers.counts_in_capacity`). Greedy, CP-SAT, the validator and Monte Carlo never read it: a non-counted engineer is **booked** wherever they are the assigned leader (Booking rules, ADR 0042 §6 as clarified). The P29-T06 input builder must pass it.
+- **what-if (`whatif.py`), the only consumer:**
+  - `_supply` sums FTE over counted engineers only. It is the single place FTE becomes supply, so this covers every design-side figure: analytic `fte_before` / `fte_after_scenario` / capacity / booked % / min designers, the simulate `utilization_before` / `utilization_after` rows (`units` = counted FTE), and `solve_minimum_additions` (its analytic seed and every simulated run).
+  - `_pick_leader` (new hypothetical projects and the projects of a removed engineer) considers counted engineers of the capacity hub only. With none, the project stays leaderless and becomes `LEFT_OUT` / `no_leader` in the run; it is never handed to a non-counted engineer.
+  - A non-counted engineer keeps the projects they already lead.
+  - `_unattainable_new_projects` takes its fastest-designer speed from counted engineers only, since only they can be picked.
+  - **Decision (my call, beyond the brief's wording):** `RemoveEngineerCount` removes counted designers only (least led design first, as before). "Remove N designers" therefore always lowers supply by those designers' FTE, and never silently removes a roster-less leader, which would leave supply unchanged. An explicit `remove_engineers` id can still remove any engineer.
+  - `AddEngineer` designers always count. The simulate workings line "N designers" still counts every engineer in the run (it describes the greedy input), unchanged.
+- **Regression / byte-identity:** prototype-seed `repr` sha256 unchanged: greedy `ac4138…`, CP-SAT `bd6ed1…`. Booking is identical with a leader flagged non-counted (greedy and CP-SAT). Explicit `counts_in_capacity=True` everywhere gives `repr`-identical `analytic_requirements` and `simulate` results to engineers built without the field. Every existing what-if test passes unchanged.
+- **Tests:** 7 new in `backend/tests/scheduling/test_p29_capacity_hub.py` (24 in the file). Fixture: R&D-Greece, 50 working weeks per engineer. eng-gr (counted) leads 10 wk, eng-gr-b (counted) leads 22 wk, and the non-counted `eng-a-theoni` leads 5 wk; she sorts first and is least loaded.
+  - Supply is 2.0 FTE / 100 wk (3.0 / 150 if she were counted); load stays 37 wk, booked 37 %; simulate `units` = 2.0.
+  - A new OEM-HCK project goes to eng-gr (her, if counted). She keeps p-oem-base and is booked for it; invariants are clean.
+  - The orphan of a removed eng-gr goes to eng-gr-b (her, if counted). With no counted designer left, the orphan is `no_leader`.
+  - `RemoveEngineerCount` removes eng-gr (her, if counted), and FTE goes 2 → 1.
+  - `solve_minimum_additions`: `utilization_after` units = 2.0 + added designers.
+  - All-counted vs unflagged is `repr`-identical.
+
+  Results:
+  - `pytest -c pytest-scheduling.ini`: **345 passed**, 94.26 % coverage.
+  - All five `_selftest*` scripts pass (`RPD_CURRENT_WEEK=31`).
+  - ruff clean; mypy shows only the 38 OR-Tools stub errors that were already there, none in the new tests.
+- **Files:** backend/scheduling/{types,whatif}.py, backend/tests/scheduling/test_p29_capacity_hub.py. `backend/services` was not touched.
+
+## [2026-10-22] Delivery-rate experiment: why the Dashboard within-year share is ~20 % (algorithm-engineer, read-only, isolated worktree): DONE
+
+**Question (owner):** the within-year share is ~20 %; the client expects about 50 %. Find the cause; no fudging.
+
+**Formula:** `withinYearSharePct = within_year / (within_year + spillover + left_out + blocked)`
+(`frontend/src/surfaces/dashboard/lib/outcome.ts`, counts from `GET /dashboard/completing-within-year`). The denominator is 209 = 253 − 15 On Hold − 29 Cancelled. The 17 Commercialized projects count as within-year.
+
+**Results** (fresh `client_2026` seed on a scratch Postgres; `validate_invariants` run on every run):
+
+| Scenario | within / spill / left out | Share |
+|---|---|---|
+| W42 baseline | 41 / 42 / 126 | 19.6 % |
+| W15 (workbook clock) only | 87 / 30 / 92 | 41.6 % |
+| W42 + per-project design effort only | 91 / 50 / 68 | 43.5 % |
+| W42, all data fixes (effort + OEM provisional leader + R&D-India chips), no pooling | 102 / 56 / 51 | **48.8 %** |
+| W15, all data fixes | 158 / 23 / 28 | 75.6 % |
+
+**Findings:**
+- **Effort:** per-project design effort is the biggest lever. The seed books B at 10 and C at 6 design weeks; the client enters 4 / 3.
+- **Clock:** the W42 drop is partly an artefact. The seed lays April (W15–17) status at W42, so all 85 In Queue projects start at W42; with unlimited resources only 148 of 209 could finish in year.
+- **OEM provisional leaders** (ADR 0042 §7) add about 6–8 percentage points.
+- **`allowed_categories`** never changes who is booked; it only raises CAT_NOT_ALLOWED.
+- **Pooled assignment** moves the count by at most ±3 projects and adds no capacity. Done as a greedy rule it breaks I21 (17–24 violations); done as leader reassignment in data, every invariant passes. **Decision: no pooled-assignment rule and no ADR.**
+- **Caveat for ADR 0041:** turning lead times into man-weeks also shortens calendar time, because a leader is booked full-time for a step's whole span. The client's Final RPD gives B 8 weeks of design time against 4 man-weeks (about 50 % allocation).
+- **Lead-time table:** our design-kind steps sum to 10 (B) / 6 (C), against the client's "Design Time – Project leader concept" of 8 / 4.
+
+**Artefacts:** `/private/tmp/claude-501/-Users-ayushroy-frigoglass/a0b44f67-072c-4e23-bc07-f1c7c8791ead/scratchpad/` (`harness.py`, `results/`, `greedy_pooled_experiment.patch`). The dev DB (:5433) was not touched. Nothing committed.
+
+**Next:** the reseed waits on P29-T01 (OEM under Greece + BC→RC) and the workflow-auditor ruling on ADR 0041 (per-project effort).
+
+## [2026-10-22] ADR 0041 domain ruling — per-project effort drives schedule and load (workflow-auditor): ACCEPT WITH CHANGES
+
+This is a ruling on a proposed solver-input change, not a phase gate. No code was edited and nothing was committed. The full
+ruling, with R1–R14 and the replacement wording for I6/I7/I17/I19/I23/I25/I26, is appended to
+`docs/ADR/0041-per-project-effort-and-capacity-roster.md` ("Workflow-auditor ruling (2026-10-22)"). The ADR status
+line is unchanged; the orchestrator owns it.
+
+**Re-derived independently.** Probe scripts are in the session scratchpad at `.../scratchpad/wa0041/` (`distribute.py`,
+`probe_examples.py`, `probe_solver.py`, `probe_cpsat.py`). The 46-project fixture had every design and lab figure
+apportioned (100 zeroed steps).
+- **Current code.** A 0 override raises `ValueError` in `validate_step_timing`, so the whole run fails.
+- **Domain widened without the skip change.** This produced 72 degenerate rows with `end = start - 1`; I3 and I15 fire.
+- **With "effective 0 ⇒ skipped" in `analyse_project`:**
+  - I1–I22 are clean at FTE 1.0 and at FTE 0.63.
+  - The run is deterministic (same sha256 on re-run).
+  - CP-SAT is invariant-clean and matches greedy on every skipped flag.
+  - The greedy vs CP-SAT difference in I6 is the known left-out pattern (left-out projects carry only booked rows).
+- **Gap found: recorded progress on a zeroed step is erased silently.** A Done stage with actuals 31..33 was shown
+  skipped at 30..30. An In Progress stage vanished. No invariant fired.
+
+**Defects in the ADR text.**
+- (a) The B/E=4 worked example contradicts its own rule. The correct result is A1 E2 K1, not A1 D1 E1 K1.
+- (b) A float implementation differs from exact arithmetic in 52 cases. The rule must use exact rationals and give a
+  total tie order.
+- (c) The proposed I22/I23 collide with the existing I22 (step floor) and I23 (hub filter). They become I25/I26.
+- (d) One override column for both user drags and derived effort breaks ADR 0019 in three ways:
+  - "a table edit never clears an override"
+  - Gantt "Reset timing" wipes the client figure
+  - every effort project shows as user-edited
+  A separate effort column is required.
+- (e) Six service-side skip checks test `duration_weeks == 0` and would accept writes on effort-zeroed steps. The demand
+  `coalesce` revives table-0 steps.
+- (f) "Open" omits In Buyoff; the full-year scope includes Draft.
+- (g) The re-derivation triggers miss workflow change, step-kind edits and unfreeze. Frozen projects must be exempt (I10).
+- (h) The ADR never says which load the P1 capacity fill, what-if, priority split, Dashboard cards and `members` use.
+- (i) The Monte Carlo floor would drop to 0.
+- (j) The rule is undefined when E < 0.5, when the table has no non-zero step of a kind (T = 0), when a step would
+  exceed 104 weeks, and when certification is off with a lab figure.
+
+**Coordinator evidence weighed (delivery-rate experiment).**
+- **Floor of 1.** It is invariant-clean, but B has 6 and C has 5 non-zero design steps, so a floor cannot reach the
+  client's 4 and 3. Keep 0..104, with recorded work protected by `max(1, ·)`.
+- **Span vs load.** Under ADR 0032 the effort figure sets both load and span. B design goes from 10 to 4 weeks at
+  1.0 FTE, against the client's own "leader concept" design time of 8. This is the largest within-year lever
+  (19.6 → 43.5 %). The owner must accept it explicitly (R1).
+- **Alternatives.**
+  - "Lead-time span, effort load" needs fractional allocation with I1 rewritten. That is a separate ADR.
+  - A hybrid of table spans and effort-only load is rejected: it reopens known defect #1.
+- **B/C design steps.** DOMAIN_RULES makes PDD A, B, D, E, I, J, K and M design for every category, so B is 10 and C
+  is 6. The client's 8/4 omits A and J (OQ #13). With a per-project figure only the per-step split depends on this;
+  the fallback rows still load 10/6.
+- **Pooled assignment.** Not part of 0041. No ruling is needed.
+
+**Next.** The orchestrator updates the ADR text (R1–R14) and gets the owner's R1 acceptance. Only then does it open
+tasks. Order: algorithm-engineer (skip predicate, solver domain 0..104, validator I5 independence, I25/I26 checks,
+Monte Carlo floor, fixtures) lands before any migration or seed that writes a 0. The P29 migration precedes `p30a`.
+The workflow-auditor re-derives after the reseed.
+
+## [2026-10-23] Owner decisions: ADR 0041 accepted (R1), P29 + P30 started — orchestrator
+
+- **Request (owner, relaying the client):** the client wants the within-year delivery rate to read at least 51 %, and
+  wants OEM capacity and booked % "clubbed inside Greece".
+- **Ruling on the 51 %:** no Dashboard figure is set or tuned toward a target (I9/I19). The rate comes only from real
+  data fixes, as measured in "Delivery-rate experiment" (2026-10-22): per-project effort 19.6 → 43.5 %; all data fixes
+  at W42 give 48.8 %. The owner was told the outcome is whatever the reseeded run serves.
+- **Owner answers (2026-10-23):**
+  1. ADR 0041 R1 is **accepted**: one effort figure sets both load and span. ADR 0041 status changed to Accepted, with
+     R1–R14 binding over the draft text.
+  2. Current project progress is **not available** from the client, so the April status stays.
+- **OEM under Greece:** this is ADR 0042 (already Accepted) / P29. P29-T01 (+T04 backend, T06) was delegated to
+  backend-builder.
+- **Opened P30 (ADR 0041).** P30-T01 (scheduler) was delegated to algorithm-engineer, in parallel with P29-T01; their
+  file scopes do not overlap. P30-T02 (backend) waits on P29-T01 (R14: `p30a` after `p29a`). P29-T03 and P30-T03
+  (frontend) wait on their contracts. P30-T04 is the reseed plus a workflow-auditor re-derivation, which reports the
+  served rate. One gate (P30-T20) covers P29 and P30.
+
+## [2026-10-23] P30-T04 / dev-DB reseed constraints (relayed from sessions frigoglass-04 and -50) — orchestrator
+
+1. **Dev DB :5433 is at `p27a`.** `p29a` and `p29b` are not applied.
+2. **Do not restart :8001 or the solver worker until the p29 migrations are applied on :5433.** They were restarted
+   before the `models/hub.py` `capacity_hub_id` edit landed.
+3. **An owner-directed, audited VIP sync ran on the dev DB (ADR 0040).**
+   - 37 projects are pinned. Pins are scheduling input: VIP schedules first.
+   - 10 unlinked VIP items were un-highlighted, and 2 non-board pins were removed.
+   - Greedy runs v4 and v5 were produced.
+   - Pins survive a reseed as user config (P24).
+4. **Consequence for P30-T04.**
+   - The disposable-DB reseed must copy the dev DB's 37 pins before it runs. Otherwise the schedule order differs and
+     the measured within-year rate will not match what the dev DB serves.
+   - The figure reported to the owner is the one the dev DB serves after its reseed.
+
+## 2026-10-23: impact logo; VIP board → pins sync; "On hold" label; Risks headings (owner asks)
+
+- **Logo.** `src/assets/impact-wordmark.png` was cut from the owner's screenshot: the wordmark only, with the cursor
+  painted out and a transparent background. `components/shared/impact-logo.tsx` adds the live tagline "Innovation •
+  Market Expansion • Performance" (the VIP board's pillars) on a white chip, so it reads in dark mode. It appears in
+  the Dashboard VIP card header (small, no tagline) and the VIP board dialog header.
+- **VIP data (owner: "they should show as VIP"; keep only linked items).** Done through the audited API
+  (scratchpad `vipsync.py`):
+  - 10 highlighted VIP items with no project link were un-highlighted, not deleted (Greece 2, India 7, Romania 1).
+  - The 37 projects linked to the 10 remaining highlighted items were pinned (`PUT /projects/{id}/vip`).
+  - 2 pins not on the board were removed (New model introduction SC-550 / SC-650, PD-India).
+  - The pins queued greedy recalcs v4 and v5 (ADR 0040: VIP schedules first). Active v5: within 42 / spillover 42 /
+    left out 125.
+  - VIP outcomes: 7 within year, 7 spillover, 22 left out (mostly the India BEE projects, which lack leader or CERT
+    capacity), 1 other.
+- **Executive view.** The "Blocked" KPI tile, dialog title and risk chip now read "On hold" (`lib/executive.ts`,
+  `exec-kpi-strip.tsx`, `risks-card.tsx`). The Risks card's "Overdue check-in" and "VIP not in year" headings are
+  sr-only (owner: "remove only the labels").
+- **Old-API guard.** `vip_project_count` is absent from the running :8001, so the VIP card and the strip show "–"
+  instead of NaN.
+- **Not done, on purpose.** p29a / p29b were not applied and :8001 was not restarted. Peer session frigoglass-04
+  reports P29-T01 unfinished; its builder stopped. The running API predates the `models/hub.py` `capacity_hub_id`
+  edit.
+- **Checks.** `tsc -p tsconfig.app.json` reports 0 errors. Dashboard Vitest: 235 passed. eslint is clean on the
+  changed files.
+
+## [2026-10-23] Dashboard Executive: "Hubs at a glance" replaced by "Upcoming completions" — frontend-builder
+
+- **Request (owner):** remove the Executive view's "Hubs at a glance" card (per-hub delivery + full-year booked %),
+  "not needed", and put something more valuable for CEO/CMO readers in the same slot (xl:col-span-6, between
+  Risks and Projects by type).
+- **Built:** `components/executive/upcoming-completions-card.tsx` + `lib/upcoming-completions.ts`. Data is only what
+  the page already fetches: the served `CompletingWithinYear.rows` and `GET /me current_week` (session store, the
+  WeekPill's figure; build-time `CURRENT_WEEK` fallback). Membership is `outcomeOf(row) === 'within_year'`, so On
+  Hold rows are excluded exactly as the KPI tiles exclude them (I9). There is no new endpoint and no recomputed
+  verdict: the card only selects and counts served rows.
+  - A strip of when the value lands: **Delivered** (within-year rows with a null `last_step_end_week`, meaning no
+    stage left; 17 Commercialized rows in the live run) + Q1–Q4 counts by the ISO-Thursday month of the served
+    finish week (the `plan-month.ts` rule). The five tiles sum to the served `within_year_count` (live: 17 + 0 + 0 +
+    0 + 25 = 42). A test pins that reconciliation. Without the Delivered tile the strip would show 25 against a KPI
+    of 42.
+  - A list of within-year finishes in `[current_week, current_week + 8)`, soonest first (ties by name, then id).
+    Each row has a finish-week chip, the name linking to `/projects/:id`, the hub and a `PriorityBandPill`. The list
+    is capped at 6, with "+N more in the project register", and has an empty state.
+- **Removed:** `hubs-glance-card.tsx` and its test (nothing else used them). With them went the Executive view's
+  only `/capacity/hub-load` fetch (the ADR 0039 §4 supersession). Neither Dashboard view requests hub-load now.
+  `DashboardPage.test.tsx` was updated to assert the absence; the a11y test now checks `exec-upcoming-card`.
+- **Verified:** `tsc -p tsconfig.app.json` clean; eslint clean on the changed files; `vitest run src/surfaces/dashboard`
+  37 files / 235 tests pass. Headless screenshot of `/?view=executive` (frank.admin) checked; grid alignment is kept.
+
+## 2026-10-23: VIP reduced to one project per highlighted item; Executive VIP tile lists the projects (owner ask)
+
+- **One project per item.** Owner choice "One project per VIP item". Each of the 10 highlighted, linked VIP board
+  items keeps exactly one pinned project: the linked project with the best Matrix rank. The other 27 were unpinned
+  through the audited `PUT /projects/{id}/vip` (scratchpad `vipone.py`), so the VIP count is now 10. India's "BEE
+  5-star labelling" keeps "BEE star labelling-S35 (Coke configuration)", rank 45 of its 28 linked. The board links
+  are unchanged; only the pins changed.
+- **Executive VIP tile.** `exec-kpi-strip.tsx` gains a `vipProjects` prop. `executive-view.tsx` passes the register
+  rows with the served `is_vip`. `/dashboard/projects` is unpaged; verified rows 253 = total_count 253. The tile shows
+  that count (10) and opens a "VIP projects" dialog: each row has a star, the name linking to its Workspace, the hub
+  and the priority, plus "Open the VIP board". Before, it showed "–" and opened only the board, because :8001 does not
+  serve `vip_project_count` yet.
+- **Checks.** `tsc -p tsconfig.app.json` reports 0 errors. Dashboard Vitest: 235 passed. Checked headless on :5183,
+  where the dialog lists the 10.
+- **Still "–".** The Detailed Dashboard VIP card's per-country "VIP" chips show "–" until :8001 restarts after the
+  P29 migrations land.
+
+## [2026-10-23] Owner go-ahead: reseed + make the delivery rate as high as the real data allows — orchestrator
+
+**Owner (2026-10-23):** "do what you think is best … there are only 10 VIP now … the delivery rate should be high … seed
+the data."
+
+**Plan:**
+1. Finish P29 (T01 backend running, T03 frontend started on `API_CONTRACT_P29.md`) and P30 (T01 scheduler running;
+   T02 backend after P29-T01; T03 frontend after T02).
+2. P30-T04 on a disposable DB:
+   - Reseed `client_2026` with the dev DB's current VIP pins copied in (owner: 10 now, down from 37).
+   - Run BOTH greedy and CP-SAT. CP-SAT's existing ADR 0005 objective maximises priority-weighted within-year
+     completions, with VIP first under ADR 0040.
+   - The workflow-auditor validates I1–I26 on both.
+3. Dev DB :5433: apply the p29 and p30 migrations; only then restart :8001 and the worker (see the constraints entry
+   above); reseed; run CP-SAT as the active run if it is invariant-clean.
+4. Report the served within-year rate.
+
+**Levers that are legitimate:** the data fixes (ADR 0041/0042) and the solver choice (CP-SAT is the app's own
+optimiser).
+
+**Not used:** inventing progress, changing the formula's denominator, or any target-tuned input.
+
+## [2026-10-23] P29-T01 + P29-T04 (backend) + P29-T06 — OEM hubs under Greece capacity; BC = RC; what-if on capacity hubs (backend-builder): DONE
+
+Built on the uncommitted work of an earlier backend-builder session that stopped on a usage limit (2026-10-22). That work
+was reviewed against ADR 0042 / ADR 0038 and kept; this session fixed it, completed it, tested it and wrote the
+contract. One migration chain: `p27a_project_scoring_tags` → `p29a_capacity_hubs` → `p29b_bc_type_regulatory` (head;
+any `p30a` must revise `p29b`). `backend/scheduling/` not touched. Nothing committed; dev DB :5433 / API :8001 not touched.
+
+**Contract:** `docs/API_CONTRACT_P29.md` (frontend P29-T03 builds against it).
+- Capacity surfaces serve the four capacity hubs only: `/capacity/hub-load`, `/planning/capacity-summary`,
+  `/priorities/capacity-fill`, what-if, and the capacity export.
+- The Greece row aggregates the load of R&D-Greece + OEM-HCK + OEM-Seltek against Greece's calendar × the FTE of
+  counted engineers.
+- New fields: `members[]` (display only, in-scope hubs only), `selected_member` (an OEM `hub_id` filter selects the
+  Greece row), `counts_in_capacity` on engineer rows, `leader_is_provisional` on project reads,
+  `capacity_hub_id/_name` on `GET /hubs`.
+- New endpoint `GET /reference/project-types`: RC is labelled "Regulatory / Business Compliance".
+
+**Schema / migration `p29a`:**
+- `hubs.capacity_hub_id`, with CHECK not-self and trigger `trg_hubs_capacity_hub_flat` (no chains).
+- `engineers.counts_in_capacity` (default true) and `projects.leader_is_provisional`.
+- Data changes:
+  - OEM hubs point to R&D-Greece.
+  - Theoni, Dipak, Antonis and Sailesh are not counted.
+  - Theoni moves OEM-HCK → R&D-Greece.
+  - Dimopoulou, Lioumis and Kanarios gain A/B/C-OEM.
+  - The OEM calendars are deleted.
+  - Provisional leaders: least Σ design effort of schedulable led projects among Greece's counted eligible
+    engineers; walk in scheduling order (no frozen/VIP keys); ties alphabetical.
+  - One In Progress design stage per leader: the extra one is reset to Not Started.
+  - Schedulable Greece/OEM projects are marked stale.
+- Every change has an audit row (actor null, `source` tagged; no financial field read).
+- Downgrade:
+  - Leaders are blanked (audited).
+  - The India calendar is restored on the OEM hubs (the pre-ADR seed values; the actual before values are in the
+    audit rows).
+  - The OEM categories are removed and Theoni goes back to OEM-HCK.
+  - Stage resets are NOT restored.
+
+**`p29b`:** the 59 frozen BC external codes with `type IS NULL` become RC, get the `regulatory_compliance` tag and
+score 5, and the score is recomputed under the current rubric (audited). Priority and stale flags are untouched. The
+downgrade keeps the scores.
+
+**Readers:**
+- Capacity hub-load: rows, members, areas and totals.
+- Capacity fill: one walk per capacity hub.
+- Planning summary: `engineer_count` is now counted-only, plus `not_counted_engineer_count`.
+- Resource-load: totals' capacity counts counted rows only.
+- Heatmap / utilization matrix / engineers list: a member `hub_id` resolves to the capacity hub, ANDed with RBAC.
+- Input builder: passes `capacity_hub` (from `hubs.capacity_hub_id`) and `counts_in_capacity`.
+- What-if (T06): hub rows go through `Scope.capacity_row_ok`; designers on a member hub get a 422.
+- Capacity export: `members` is one text cell (fixed this session).
+- Seed + extractor: BC and its text variants → RC; tags and score 5 from type; seeded provisional leaders get audit
+  rows.
+
+**Scoping decision (ADR 0042 §8):**
+- An OEM-scoped caller sees the Greece aggregate, but `members` lists only their own hubs.
+- No engineer row is widened: Greek engineers stay invisible to an OEM-only caller.
+
+**Fixes this session:**
+- mypy: loop-variable reuse in `capacity.py` and `whatif.py`.
+- Lint in the test file.
+- `test_engineer_hub_must_be_a_capacity_hub` acted as Admin on a Super-Admin-only calendar PUT.
+
+**Tests:**
+- New `tests/test_p29_migrations.py`:
+  - Container: up/down/up on a hand-derived world. It covers provisional leaders = seed rule, the stage reset, stale
+    flags, every audit row by action/source, the BC → RC score (27 % / 8 %), the trigger refusing chains, and the
+    downgrade reversals.
+  - Pins of the frozen copies: constants, 59 codes = seed JSON, p29b formula = `compute_score`.
+- `tests/test_p29_capacity_hubs.py`: 17 API tests, including the export.
+- Updated pre-ADR expectations in `test_p12_hub_filter`, `test_p13_slice_c`, `test_p15_engineer_utilization`,
+  `test_p18_whatif_api`, `test_p25_capacity_fill`, `test_seed_scripts` (4 calendars, 3 leaderless, 17 provisional,
+  no_leader 1) and `test_seed_reset_live_db` (+17 audit rows per seed).
+- Full backend suite (excl. `tests/scheduling`, concurrently edited by P30-T01): **1852 passed, 9 failed**. The 9 are
+  `test_openapi_frontend_contract` field drift (new fields), red until P29-T03 mirrors them (P27 precedent; annotated
+  in the table).
+- ruff clean; mypy shows no errors in P29-touched files (repo baseline unchanged otherwise).
+
+**Reseed figures** (scratch container, CURRENT_WEEK 42, greedy, run-booked load):
+
+| Hub | Load (wk) | Capacity (wk) | Booked (full year) |
+|---|---|---|---|
+| Greece | 131 (own 32/3 projects, OEM-HCK 55/11, OEM-Seltek 44/8) | 124.88 | 104.90 % |
+| R&D-India | 201 | 88.33 | 227.56 % |
+| PD-India | 500 | 253.96 | 196.88 % |
+| PD-Romania | 138 | 253.00 | 54.55 % |
+
+- The capacities equal DATA_RECONCILIATION §7.7.
+- 17 provisional leaders; 3 projects stay leaderless.
+- Within-year in the persisted run: 55 (incl. 17 Commercialized).
+
+**Observed:** during this session `backend/scheduling/whatif.py` (P30-T01, concurrent) briefly shadowed the
+`scheduling.hubs` module with a local `hubs` set (AttributeError in `touched_scope`). It was fixed by the final run.

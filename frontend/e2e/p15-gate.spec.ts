@@ -95,6 +95,11 @@ test('Leader names on Dashboard register, Gantt, Matrix, Workspace; none withhel
   for (const [path, label] of [['/', 'register'], ['/timeline', 'gantt'], ['/matrix', 'matrix']] as const) {
     await page.goto(path);
     await settle(page);
+    // P21: the Matrix grid shows the Leader column in Detailed view only.
+    if (label === 'matrix') {
+      await page.getByRole('button', { name: 'Detailed view' }).click();
+      await page.waitForTimeout(400);
+    }
     const body = await page.locator('body').innerText();
     expect(body, label).not.toContain('Withheld');
     expect(body, label).not.toContain('Name unavailable');

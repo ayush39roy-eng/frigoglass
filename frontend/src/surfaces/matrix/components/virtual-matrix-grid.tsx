@@ -105,7 +105,7 @@ export function VirtualMatrixGrid<Row>({
   columns,
   rowKey,
   caption,
-  estimateRowHeight = 44,
+  estimateRowHeight = 34,
   maxHeight,
   className,
   regionLabel,
@@ -212,7 +212,7 @@ export function VirtualMatrixGrid<Row>({
                   {...boxAttrs(b.first, b.first + b.span - 1)}
                   className={cn(
                     cellClasses(columns[b.first] as MatrixColumn<Row>, b.first),
-                    'mg-band flex items-center px-2 py-1.5 leading-tight',
+                    'mg-band flex items-center px-2 py-1 leading-tight',
                     b.label !== null && 'justify-center text-center text-text',
                   )}
                   style={
@@ -239,7 +239,7 @@ export function VirtualMatrixGrid<Row>({
                 {...boxAttrs(i)}
                 className={cn(
                   cellClasses(col, i),
-                  'flex items-center px-3 py-2 leading-tight',
+                  'flex items-center px-3 py-1.5 leading-tight',
                   ALIGN[col.align ?? 'left'],
                   col.headerClassName,
                 )}
@@ -260,7 +260,7 @@ export function VirtualMatrixGrid<Row>({
                   key={col.id}
                   role="cell"
                   {...boxAttrs(i)}
-                  className={cn(cellClasses(col, i), 'flex items-center px-2 py-1.5')}
+                  className={cn(cellClasses(col, i), 'flex items-center px-2 py-1')}
                   style={cellStyle(col, i)}
                 >
                   {col.filter ?? null}
@@ -293,7 +293,7 @@ export function VirtualMatrixGrid<Row>({
                       {...boxAttrs(i)}
                       className={cn(
                         cellClasses(col, i),
-                        'flex min-w-0 items-center px-3 py-2',
+                        'flex min-w-0 items-center px-3 py-1',
                         ALIGN[col.align ?? 'left'],
                         col.cellClassName,
                       )}

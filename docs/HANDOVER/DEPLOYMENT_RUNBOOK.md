@@ -232,6 +232,9 @@ read-only at `/run/secrets/<name>` only inside the containers that declare it.
   convenience; it is the entire point of the P6-T04 hardening work.
 - This document does not, and will never, contain a real secret value. If you find one committed
   anywhere in this repository, treat it as a security incident, not a documentation bug.
+- **Rotating the field encryption key** (after a leak, or on a schedule), and the **production
+  environment checklist** (dev mode off, OIDC, CORS replace mode, dev users deactivated):
+  `docs/HANDOVER/KEY_ROTATION.md` (P27, `backend/scripts/rotate_field_key.py`).
 
 ## 7. TLS / HSTS / WAF (ModSecurity)
 

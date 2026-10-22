@@ -90,13 +90,9 @@ export function PipelineRow({ totals, regionSummary = null }: PipelineRowProps):
 
   return (
     <Card className="border-0 bg-transparent shadow-none" data-testid="pipeline-row">
-      <CardHeader className="items-end border-0 px-0 pb-s3 pt-0">
-        <div>
-          <CardTitle className="text-h2 font-extrabold">Project pipeline</CardTitle>
-          <p className="mt-0.5 text-sm font-medium text-text-muted">
-            Spillover + newly registered = total projects
-          </p>
-        </div>
+      <CardHeader className="items-center border-0 px-0 pb-s2 pt-0">
+        {/* The + / = glyphs between the cards state the equation; no subtitle. */}
+        <CardTitle className="text-h1 font-extrabold">Project pipeline</CardTitle>
         <CardInfo label="Project pipeline source">
           <p>
             Portfolio composition off the live project registry, every project included
@@ -117,25 +113,27 @@ export function PipelineRow({ totals, regionSummary = null }: PipelineRowProps):
               aria-label={card.label}
               data-testid={`pipeline-card-${card.bucket}`}
               className={cn(
-                'flex min-w-0 flex-col gap-s1 rounded-dash border-[1.5px] border-t-4 border-dash-hairline bg-surface px-card py-s3 shadow-dashCard',
+                'flex min-w-0 flex-col gap-1 rounded-dash border-[1.5px] border-t-4 border-dash-hairline bg-surface px-s4 py-s2 shadow-dashCard',
                 card.rail,
               )}
             >
               <h4 className="label-caps text-text-subtle">{card.label}</h4>
-              <span
-                className={cn(
-                  'block font-display font-extrabold tabular-nums',
-                  card.big ? 'text-4xl text-ink' : 'text-3xl',
-                  card.muted ? 'text-text-muted' : card.big ? '' : 'text-text',
-                )}
-                data-numeric=""
-                data-testid={`pipeline-count-${card.bucket}`}
-              >
-                {formatInteger(card.count)}
-              </span>
-              <span className="text-xs font-medium text-text-muted" data-testid={`pipeline-caption-${card.bucket}`}>
-                {card.caption}
-              </span>
+              <div className="flex flex-col gap-0.5">
+                <span
+                  className={cn(
+                    'block font-display font-extrabold leading-none tabular-nums',
+                    card.big ? 'text-4xl text-ink' : 'text-3xl',
+                    card.muted ? 'text-text-muted' : card.big ? '' : 'text-text',
+                  )}
+                  data-numeric=""
+                  data-testid={`pipeline-count-${card.bucket}`}
+                >
+                  {formatInteger(card.count)}
+                </span>
+                <span className="text-xs font-medium text-text-muted" data-testid={`pipeline-caption-${card.bucket}`}>
+                  {card.caption}
+                </span>
+              </div>
               {regionSummary && !(card.muted && card.count === 0) ? (
                 <RegionChips
                   label={card.label}

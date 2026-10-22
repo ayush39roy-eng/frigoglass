@@ -79,10 +79,7 @@ describe('use-matrix', () => {
     await result.current.mutateAsync({
       projectId: 'p1',
       body: {
-        strategic_project: 3, new_customer: 3, new_options: 3, regulatory_compliance: 3,
-        quality_improvements: 3, rm_savings: 3, total_rm_savings: 3, gross_margins: 3,
-        profitability: 3, annual_volume: 3, three_year_volume: 3, new_models: 3,
-        capex_investment: 3, hard_gates: [],
+        scores: { strategic_project: 3, capex_investment: null }, hard_gates: [],
       },
     });
 
@@ -114,10 +111,7 @@ describe('use-matrix', () => {
       priority_scores: [
         {
           project_id: 'p1',
-          strategic_project: 5, new_customer: 3, new_options: 3, regulatory_compliance: 3,
-          quality_improvements: 3, rm_savings: 3, total_rm_savings: 3, gross_margins: 3,
-          profitability: 3, annual_volume: 3, three_year_volume: 3, new_models: 3,
-          capex_investment: 3, hard_gates: [],
+          scores: { strategic_project: 5, capex_investment: null }, hard_gates: [],
         },
       ],
     };

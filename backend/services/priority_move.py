@@ -192,10 +192,63 @@ async def apply_priority_change(
     project.priority = new_priority
     project.schedule_stale = True
 
+    recalc, baseline_id = await decide_auto_recalc(db, project, trigger_reason=TRIGGER_REASON)
+    add_priority_move_audit(
+        db, project, before, new_priority, principal, recalc=recalc, baseline_id=baseline_id
+    )
+    outcome = await dispatch_auto_recalc(
+        db, project, principal,
+        recalc=recalc, baseline_id=baseline_id, trigger_reason=TRIGGER_REASON,
+    )
+    return PriorityMoveResult(
+        project_id=project.id,
+        priority_before=before,
+        priority_after=new_priority,
+        recalc_status=outcome.recalc_status,
+        schedule_run_id=outcome.schedule_run_id,
+        baseline_run_id=outcome.baseline_run_id,
+        task_id=outcome.task_id,
+    )
+
+
+# --- the shared auto-recalc lifecycle (ADR 0015; reused by ADR 0040) ----------------
+
+
+@dataclass(frozen=True)
+class AutoRecalcOutcome:
+    recalc_status: RecalcStatus
+    schedule_run_id: uuid.UUID | None = None
+    baseline_run_id: uuid.UUID | None = None
+    task_id: str | None = None
+
+    def response_headers(self) -> dict[str, str]:
+        """The `X-Schedule-*` headers, same rules as `PriorityMoveResult`."""
+
+        if self.recalc_status == "unchanged":
+            return {}
+        headers: dict[str, str] = {RECALC_HEADER: self.recalc_status}
+        if self.schedule_run_id is not None:
+            headers[RUN_ID_HEADER] = str(self.schedule_run_id)
+        if self.baseline_run_id is not None:
+            headers[BASELINE_RUN_ID_HEADER] = str(self.baseline_run_id)
+        return headers
+
+
+async def decide_auto_recalc(
+    db: AsyncSession, project: Project, *, trigger_reason: str
+) -> tuple[RecalcStatus, uuid.UUID | None]:
+    """Step 1 of the auto-recalc lifecycle, after the caller has written the
+    scheduler input and set `schedule_stale`: `not_needed` for a
+    non-schedulable status, `deferred` when a run is in flight (the ADR 0023
+    follow-up flag is set under the dispatch lock), else `queued` with the
+    active run as the baseline. Holds the dispatch lock until the caller's
+    next commit (`dispatch_auto_recalc` commits on every path).
+    """
+
     recalc: RecalcStatus
     if project.status in NON_SCHEDULABLE_STATUSES:
         recalc = "not_needed"
-    elif await find_in_flight_run(db, trigger_reason=TRIGGER_REASON) is not None:
+    elif await find_in_flight_run(db, trigger_reason=trigger_reason) is not None:
         recalc = "deferred"
     else:
         recalc = "queued"
@@ -203,26 +256,37 @@ async def apply_priority_change(
     if recalc == "queued":
         active = await get_active_run(db)
         baseline_id = active.id if active is not None else None
+    return recalc, baseline_id
 
-    add_priority_move_audit(
-        db, project, before, new_priority, principal, recalc=recalc, baseline_id=baseline_id
-    )
+
+async def dispatch_auto_recalc(
+    db: AsyncSession,
+    project: Project,
+    principal: Principal,
+    *,
+    recalc: RecalcStatus,
+    baseline_id: uuid.UUID | None,
+    trigger_reason: str,
+) -> AutoRecalcOutcome:
+    """Step 2, after the caller has staged its own audit row: commit, and
+    when `queued` create the QUEUED greedy run (committed together with the
+    input change, the stale flag and the audit row, I20), enqueue
+    `run_greedy_schedule` (`activate=True`, `recalc_project_id`) on the
+    solver worker, audit `project.recalculate_requested`, commit and publish
+    the SSE "queued" event. A broker failure answers `dispatch_failed` (the
+    change is saved and stays stale). Never solves in-process.
+    """
 
     if recalc != "queued":
         await db.commit()
-        return PriorityMoveResult(
-            project_id=project.id,
-            priority_before=before,
-            priority_after=new_priority,
-            recalc_status=recalc,
-        )
+        return AutoRecalcOutcome(recalc_status=recalc)
 
-    # Commits the priority, the stale flag, the audit row and the QUEUED run
-    # together, before the worker can read them.
+    # Commits the input change, the stale flag, the audit row and the QUEUED
+    # run together, before the worker can read them.
     run = await create_queued_schedule_run(
         db,
         solver_type=SolverType.GREEDY,
-        trigger_reason=TRIGGER_REASON,
+        trigger_reason=trigger_reason,
         triggered_by_user_id=principal.user_id,
     )
     task_id = await enqueue_or_fail(
@@ -237,15 +301,9 @@ async def apply_priority_change(
         actor_user_id=principal.user_id,
     )
     if task_id is None:
-        # P14-T01 (M3): the move is saved and the project stays stale; the
+        # P14-T01 (M3): the change is saved and the project stays stale; the
         # run row is FAILED (`DISPATCH_FAILED`), audited, committed.
-        return PriorityMoveResult(
-            project_id=project.id,
-            priority_before=before,
-            priority_after=new_priority,
-            recalc_status="dispatch_failed",
-            baseline_run_id=baseline_id,
-        )
+        return AutoRecalcOutcome(recalc_status="dispatch_failed", baseline_run_id=baseline_id)
     run.celery_task_id = task_id
     db.add(run)
     db.add(
@@ -261,16 +319,13 @@ async def apply_priority_change(
                 "schedule_run_id": str(run.id),
                 "schedule_run_version": run.version,
                 "celery_task_id": run.celery_task_id,
-                "trigger_reason": TRIGGER_REASON,
+                "trigger_reason": trigger_reason,
             },
         )
     )
     await db.commit()
     publish_progress(str(run.id), status="queued")
-    return PriorityMoveResult(
-        project_id=project.id,
-        priority_before=before,
-        priority_after=new_priority,
+    return AutoRecalcOutcome(
         recalc_status="queued",
         schedule_run_id=run.id,
         baseline_run_id=baseline_id,

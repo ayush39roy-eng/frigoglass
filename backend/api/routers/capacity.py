@@ -43,6 +43,13 @@ hub's; its lab figures stay region-wide, ADR 0020 §4).
 region's hubs, so `areas[]` reduces to the containing area (Greece/Romania →
 Europe, India → India) and the lab figures/chambers to that lab region.
 
+**Capacity hubs (P29, ADR 0042, `docs/API_CONTRACT_P29.md`).** The hub
+table serves the four CAPACITY hubs; R&D-Greece's row aggregates OEM-HCK and
+OEM-Seltek (`members`, `selected_member`), and supply counts only engineers
+with `counts_in_capacity`. The engineer lists (utilization matrix, heatmap)
+resolve a member-hub filter to its capacity hub (`services.capacity_hubs`).
+The class breakdown is a per-project count and keeps the six hubs in `by_hub`.
+
 **Priority split (P13-T11, `docs/API_CONTRACT_P13.md` §6).** Each hub row
 carries `design_load_by_priority` / `lab_load_by_priority` (`P1`..`P4`,
 `Queue`), built in the same loop and on the same basis as `design_load_weeks`
@@ -86,6 +93,7 @@ from models.schedule import ScheduleRun, ScheduleRunProjectOutcome, ScheduleRunP
 from schemas.capacity import (
     CapacityArea,
     CapacityChamberRow,
+    CapacityHubMember,
     CapacityTotals,
     ChamberWeekLoad,
     ClassBreakdown,
@@ -104,6 +112,11 @@ from schemas.capacity import (
     YearRemaining,
 )
 from services.active_run import get_active_run, step_kinds_for_run
+from services.capacity_hubs import (
+    capacity_rows_for_request,
+    counted_fte_by_capacity_hub,
+    load_capacity_hub_map,
+)
 from services.capacity_priority import (
     PRIORITY_BUCKETS,
     SCHEDULABLE_STATUSES,
@@ -117,7 +130,6 @@ from services.capacity_supply import (
     calendar_figures,
     chamber_figures,
     design_capacity,
-    fte_sum,
     gap_and_completion,
     hub_weekdays_per_week,
     lab_remaining_fraction,
@@ -150,27 +162,35 @@ async def hub_load_vs_capacity(
     db: AsyncSession = Depends(get_db),
     current_user: Principal = Depends(_read),
 ) -> HubCapacitySummary:
-    """Per-hub load vs. supply (docs/API_CONTRACT_P9.md §4, ADR 0008).
+    """Per-capacity-hub load vs. supply (docs/API_CONTRACT_P9.md §4, ADR 0008;
+    ADR 0042, docs/API_CONTRACT_P29.md §2).
 
     Served at `/capacity/hub-load` (the pre-P9 path the frontend calls) and at
     `/capacity/hubs` (the path named in the contract doc). Same handler.
 
-    Rows are hub-scoped (P3-T03). The region-level lab figures sum over every
-    project and chamber of the row's lab region, including hubs outside the
-    caller's scope, because lab capacity is shared across a region. Only the
-    aggregate leaves this function.
+    ADR 0042: one row per CAPACITY hub (R&D-Greece, R&D-India, PD-India,
+    PD-Romania). R&D-Greece's row aggregates its own projects and those of
+    its member hubs OEM-HCK and OEM-Seltek; its supply is Greece's calendar
+    × Σ fte of Greece's engineers with `counts_in_capacity`. A row is served
+    when any of its hubs is in the caller's scope AND the `hub_id` / `region`
+    filter (so `hub_id` = OEM-HCK gives the Greece row with
+    `selected_member` = OEM-HCK); its aggregate figures always cover every
+    member (ADR 0042 §8, like the ADR 0016 area figures), and `members` lists
+    only the in-scope hubs.
+
+    The region-level lab figures sum over every project and chamber of the
+    row's lab region, including hubs outside the caller's scope, because lab
+    capacity is shared across a region. Only the aggregate leaves this
+    function.
     """
 
-    hub_stmt = select(Hub).order_by(Hub.name)
-    hub_filter = narrowed_hub_filter(current_user, Hub.id, hub_id, region)
-    if hub_filter is not None:
-        hub_stmt = hub_stmt.where(hub_filter)
-    hubs = (await db.execute(hub_stmt)).scalars().all()
+    cmap, row_scopes = await capacity_rows_for_request(db, current_user, hub_id, region)
     active_run = await _active_run(db)
     current_week = dc.CURRENT_WEEK
 
-    # --- Load (I6/I7), from the active run only ----------------------------
+    # --- Load (I6/I7), from the active run only, per PROJECT hub ------------
     design_load: dict[uuid.UUID, int] = defaultdict(int)
+    design_projects: dict[uuid.UUID, set[uuid.UUID]] = defaultdict(set)
     lab_load_by_hub: dict[uuid.UUID, float] = defaultdict(float)
     lab_load_by_region: dict[LabRegion, float] = defaultdict(float)
     # P13 (contract §6): the same loads, split by the project's priority bucket.
@@ -181,6 +201,7 @@ async def hub_load_vs_capacity(
         steps = (
             await db.execute(
                 select(
+                    Project.id,
                     Project.hub_id,
                     Hub.lab_region,
                     Project.priority,
@@ -193,7 +214,9 @@ async def hub_load_vs_capacity(
                 .where(ScheduleRunProjectStep.schedule_run_id == active_run.id)
             )
         ).all()
-        for step_hub_id, step_region, step_priority, step_id, duration, skipped in steps:
+        for step_project, step_hub_id, step_region, step_priority, step_id, duration, skipped in (
+            steps
+        ):
             # I6/I7 (revised 2026-09-27, ADR 0007): design-kind → design load,
             # lab-kind → lab load (× 1.0); elapsed and skipped steps add 0.
             if skipped:
@@ -202,6 +225,7 @@ async def hub_load_vs_capacity(
             bucket = priority_bucket(step_priority)
             if kind == WorkflowStepKind.DESIGN:
                 design_load[step_hub_id] += duration
+                design_projects[step_hub_id].add(step_project)
                 design_by_priority[step_hub_id][bucket] += duration
             elif kind == WorkflowStepKind.LAB:
                 weeks = duration * dc.LAB_STEP_CONSUMPTION_PER_PROJECT_WEEK
@@ -231,11 +255,8 @@ async def hub_load_vs_capacity(
         if est_l is not None and cert_required:
             est_lab_by_region[est_region] += float(est_l)
 
-    # --- Supply (ADR 0008) ---------------------------------------------------
-    fte_values: dict[uuid.UUID, list[object]] = defaultdict(list)
-    for eng_hub_id, fte in (await db.execute(select(Engineer.hub_id, Engineer.fte))).all():
-        fte_values[eng_hub_id].append(fte)
-    fte_by_hub = {k: fte_sum(v) for k, v in fte_values.items()}
+    # --- Supply (ADR 0008), per capacity hub (ADR 0042) ----------------------
+    fte_by_capacity_hub, _counted, _not_counted = await counted_fte_by_capacity_hub(db, cmap)
     calendar_by_hub = {
         c.hub_id: c for c in (await db.execute(select(HubWorkCalendar))).scalars().all()
     }
@@ -258,17 +279,22 @@ async def hub_load_vs_capacity(
     lab_fraction = lab_remaining_fraction(current_week)
 
     rows: list[HubCapacityRow] = []
-    for h in hubs:
-        cal = calendar_figures(calendar_by_hub.get(h.id), current_week)
-        fte = fte_by_hub.get(h.id, 0.0)
-        design_year, design_remaining = design_capacity(
-            calendar_by_hub.get(h.id), fte, current_week
-        )
-        wd = hub_weekdays_per_week(calendar_by_hub.get(h.id))
+    for scope in row_scopes:
+        h = cmap.hubs[scope.capacity_hub_id]
+        group = scope.all_member_ids
+        cal_row = calendar_by_hub.get(h.id)
+        cal = calendar_figures(cal_row, current_week)
+        fte = fte_by_capacity_hub.get(h.id, 0.0)
+        design_year, design_remaining = design_capacity(cal_row, fte, current_week)
+        wd = hub_weekdays_per_week(cal_row)
         lab_wd = region_weekdays_per_week(calendars, h.lab_region)
         lab_year = lab_year_by_region.get(h.lab_region, 0.0)
         lab_remaining = lab_year * lab_fraction
-        d_load = design_load.get(h.id, 0)
+        d_load = sum(design_load.get(m, 0) for m in group)
+        d_split: dict[str, float] = defaultdict(float)
+        for m in group:
+            for member_bucket, member_weeks in design_by_priority.get(m, {}).items():
+                d_split[member_bucket] += member_weeks
         l_load = lab_load_by_region.get(h.lab_region, 0.0)
         d_gap_y, d_pct_y = gap_and_completion(d_load, design_year)
         d_gap_r, d_pct_r = gap_and_completion(d_load, design_remaining)
@@ -279,12 +305,25 @@ async def hub_load_vs_capacity(
         d_book_r = booking(d_load, round2(design_remaining))
         l_book_y = booking(round2(l_load), round2(lab_year))
         l_book_r = booking(round2(l_load), round2(lab_remaining))
+        members = (
+            [
+                CapacityHubMember(
+                    hub=cmap.name(m),
+                    own=m == h.id,
+                    project_count=len(design_projects.get(m, ())),
+                    design_load_weeks=design_load.get(m, 0),
+                )
+                for m in scope.member_ids
+            ]
+            if len(group) > 1
+            else []
+        )
         rows.append(
             HubCapacityRow(
                 hub=h.name,
                 lab_region=h.lab_region,
                 design_load_weeks=d_load,
-                design_load_estimated_weeks=round2(est_design.get(h.id, 0.0)),
+                design_load_estimated_weeks=round2(sum(est_design.get(m, 0.0) for m in group)),
                 lab_load_weeks=round2(l_load),
                 lab_load_estimated_weeks=round2(est_lab_by_region.get(h.lab_region, 0.0)),
                 engineer_fte_total=round2(fte),
@@ -305,7 +344,7 @@ async def hub_load_vs_capacity(
                 chambers=chambers_by_region.get(h.lab_region, []),
                 design_capacity_weeks=round2(design_remaining),
                 lab_capacity_units=round2(lab_remaining),
-                lab_load_units=round2(lab_load_by_hub.get(h.id, 0.0)),
+                lab_load_units=round2(sum(lab_load_by_hub.get(m, 0.0) for m in group)),
                 design_booked_pct_year=d_book_y[0],
                 design_booked_pct_remaining=d_book_r[0],
                 lab_booked_pct_year=l_book_y[0],
@@ -315,9 +354,7 @@ async def hub_load_vs_capacity(
                 lab_booking_status_year=l_book_y[1],
                 lab_booking_status_remaining=l_book_r[1],
                 area=area_for_region(h.lab_region),
-                design_load_by_priority=PriorityLoadSplit(
-                    **split_to_total(design_by_priority.get(h.id, {}), d_load)
-                ),
+                design_load_by_priority=PriorityLoadSplit(**split_to_total(d_split, d_load)),
                 lab_load_by_priority=PriorityLoadSplit(
                     **split_to_total(lab_by_priority.get(h.lab_region, {}), l_load)
                 ),
@@ -327,6 +364,10 @@ async def hub_load_vs_capacity(
                 lab_weekdays_per_week=lab_wd,
                 lab_capacity_days=_days(round2(lab_year), round2(lab_remaining), lab_wd),
                 lab_load_days=_days(round2(l_load), round2(l_load), lab_wd),
+                members=members,
+                selected_member=(
+                    cmap.name(scope.selected_member) if scope.selected_member is not None else None
+                ),
             )
         )
 
@@ -619,7 +660,12 @@ async def utilization_matrix(
         )
 
     eng_stmt = select(Engineer).options(selectinload(Engineer.hub))
-    eng_hub_filter = narrowed_hub_filter(current_user, Engineer.hub_id, hub_id, region)
+    # ADR 0042: engineers sit on capacity hubs, so a member-hub filter (OEM-HCK)
+    # lists its capacity hub's engineers. The RBAC scope is unchanged.
+    cmap = await load_capacity_hub_map(db)
+    eng_hub_filter = narrowed_hub_filter(
+        current_user, Engineer.hub_id, cmap.resolve(hub_id), region
+    )
     if eng_hub_filter is not None:
         eng_stmt = eng_stmt.where(eng_hub_filter)
     engineers = (await db.execute(eng_stmt)).scalars().all()
@@ -721,7 +767,10 @@ async def engineer_utilization(
 
     active_run = await _active_run(db)
     eng_stmt = select(Engineer).options(selectinload(Engineer.hub)).order_by(Engineer.name)
-    hub_filter = narrowed_hub_filter(current_user, Engineer.hub_id, hub_id, region)
+    # ADR 0042: a member-hub filter (OEM-HCK) lists its capacity hub's
+    # engineers; the RBAC scope on `Engineer.hub_id` is unchanged.
+    cmap = await load_capacity_hub_map(db)
+    hub_filter = narrowed_hub_filter(current_user, Engineer.hub_id, cmap.resolve(hub_id), region)
     if hub_filter is not None:
         eng_stmt = eng_stmt.where(hub_filter)
     # ADR 0028 amendment (2026-10-19, P15 gate): any caller holding the
@@ -789,6 +838,7 @@ async def engineer_utilization(
                 name=e.name,
                 hub=e.hub.name,
                 role=", ".join(c.value for c in e.allowed_categories),
+                counts_in_capacity=e.counts_in_capacity,
                 total_booked=total_booked,
                 total_capacity=round2(year_cap),
                 utilization_pct=_pct(total_booked, year_cap),

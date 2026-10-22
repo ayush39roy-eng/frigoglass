@@ -152,7 +152,7 @@
   --color-band-p1: var(--red-600);
   --color-band-p2: var(--amber-600);
   --color-band-p3: var(--blue-600);
-  --color-band-p4: var(--slate-500);
+  --color-band-p4: var(--teal-600);
   --color-band-q: var(--slate-400);
 
   /* Gantt timeline. Solid = planned (brand blue); hatched = actual + delay (amber);
@@ -242,7 +242,7 @@
   --color-band-p1: var(--red-500);
   --color-band-p2: var(--amber-500);
   --color-band-p3: var(--blue-400);
-  --color-band-p4: var(--slate-400);
+  --color-band-p4: var(--teal-400);
   --color-band-q: var(--slate-500);
 
   --color-gantt-planned: var(--blue-500);

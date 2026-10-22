@@ -53,7 +53,15 @@ _STAGE_LETTER_TO_STEP_IDS: dict[str, tuple[str, ...]] = {
     "L": ("PDD-L",),
 }
 
-_OEM_HUBS = frozenset({"OEM-HCK", "OEM-Seltek"})
+#: ADR 0041 §4 / R14: the client's spelling is `OEM-Seitek`. The prototype seed
+#: JSON (`backend/seed/prototype_seed_data.json`, read by the backend's demo
+#: seed too, which writes the hub enum) still says `OEM-Seltek` until the
+#: P30-T02 enum rename; this loader maps it to the new spelling, so the
+#: scheduler fixtures already use it (`scheduling.hubs` accepts both).
+_OEM_HUBS = frozenset({"OEM-HCK", "OEM-Seitek"})
+_HUB_SPELLING = {"OEM-Seltek": "OEM-Seitek"}
+#: ADR 0042: both OEM hubs' capacity hub.
+OEM_CAPACITY_HUB = "R&D-Greece"
 
 
 def seed_path() -> Path:
@@ -88,7 +96,8 @@ def load_seed_schedule_input() -> ScheduleInput:
     )
     projects = []
     for p in seed["projects"]:
-        is_oem = p["hub"] in _OEM_HUBS
+        hub = _HUB_SPELLING.get(p["hub"], p["hub"])
+        is_oem = hub in _OEM_HUBS
         cat = p["cat"]
         if is_oem:
             cat = {"A+": "A-OEM", "A": "A-OEM", "B": "B-OEM", "C": "C-OEM"}[cat]
@@ -96,7 +105,7 @@ def load_seed_schedule_input() -> ScheduleInput:
             ProjectInput(
                 project_id=p["id"],
                 name=p["name"],
-                hub=p["hub"],
+                hub=hub,
                 status=p["status"],
                 category=cat,
                 priority=p["prio"],
@@ -105,6 +114,11 @@ def load_seed_schedule_input() -> ScheduleInput:
                 actual_start_week=p["actualStart"] if p["frozen"] else None,
                 delay_weeks=p["delay"],
                 workflow_id="OEM" if is_oem else "PDD",
+                # ADR 0042 (P29): the OEM hubs are capacity children of
+                # R&D-Greece. The prototype's OEM leaders (PD-India / Romania
+                # engineers) are kept as they are: the scheduler books the
+                # assigned leader, so the output is byte-identical either way.
+                capacity_hub=OEM_CAPACITY_HUB if is_oem else hub,
             )
         )
     return ScheduleInput(projects=tuple(projects), engineers=engineers, chambers=chambers)

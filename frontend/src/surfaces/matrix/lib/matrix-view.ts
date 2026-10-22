@@ -31,6 +31,8 @@ export interface MatrixViewState {
   band: DistributionBand | null;
   /** P25: show only rows the server promoted by capacity fill (client-side over served rows). */
   capacityFill: boolean;
+  /** Owner ask 2026-10-22: show only VIP projects (served `is_vip`). */
+  vipOnly: boolean;
   detailed: boolean;
 }
 
@@ -43,6 +45,7 @@ export const DEFAULT_MATRIX_VIEW: MatrixViewState = {
   leaderText: '',
   band: null,
   capacityFill: false,
+  vipOnly: false,
   detailed: false,
 };
 
@@ -56,6 +59,7 @@ export function isDefaultView(v: MatrixViewState): boolean {
     v.leaderText === '' &&
     v.band === null &&
     !v.capacityFill &&
+    !v.vipOnly &&
     !v.detailed
   );
 }
@@ -79,6 +83,7 @@ export function activeFilterCount(v: MatrixViewState): number {
     v.status !== null,
     v.band !== null,
     v.capacityFill,
+    v.vipOnly,
     v.q.trim() !== '',
     v.hubText.trim() !== '',
     v.leaderText.trim() !== '',

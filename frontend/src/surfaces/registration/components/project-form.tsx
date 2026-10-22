@@ -23,6 +23,8 @@ import {
 } from '@/components/ui/select';
 import { MOVE_COPY } from '@/components/shared/priority-move/move-copy';
 import { PriorityMoveNotAppliedError } from '@/components/shared/priority-move/form-priority-move';
+import { ScoringTagsField } from '@/components/shared/scoring-tags';
+import { canonicalScoringTags } from '@/lib/scoring-tags';
 import { ApiError } from '@/lib/api/client';
 import { apiErrorMessage } from '@/lib/api/error-messages';
 import { useCategoriesForHub, type Hub } from '@/lib/api/reference';
@@ -34,6 +36,7 @@ import {
   type ProjectCategory,
   type ProjectPriority,
   type ProjectType,
+  type ScoringTag,
 } from '@/types/enums';
 
 import { useEngineerOptions } from '../hooks/use-registration';
@@ -194,6 +197,11 @@ export function ProjectForm({
   const [certificationTesting, setCertificationTesting] = React.useState<boolean>(
     project?.certification_testing_required ?? true,
   );
+  // P27 (ADR 0038): "project nature" tags, held in canonical order. Sent as the
+  // FULL set on every save (PATCH replaces it); the server pre-fills a newly
+  // set tag's dimension with 5 — nothing about the score is decided here.
+  const initialTags = React.useMemo(() => canonicalScoringTags(project?.scoring_tags ?? []), [project?.scoring_tags]);
+  const [scoringTags, setScoringTags] = React.useState<ScoringTag[]>(initialTags);
 
   const engineersQuery = useEngineerOptions(hubId || undefined);
   // P9: category options depend on the hub's workflow (contract §6). The server
@@ -260,7 +268,8 @@ export function ProjectForm({
     type !== (project?.type ?? NONE) ||
     priority !== (project?.priority ?? NONE) ||
     carryOver !== (project?.carry_over ?? false) ||
-    certificationTesting !== (project?.certification_testing_required ?? true);
+    certificationTesting !== (project?.certification_testing_required ?? true) ||
+    scoringTags.join('|') !== initialTags.join('|');
   React.useEffect(() => {
     onDirtyChange?.(dirty);
   }, [dirty, onDirtyChange]);
@@ -326,6 +335,7 @@ export function ProjectForm({
       certification_testing_required: certificationTesting,
       estimated_design_weeks: parseOptionalNumber(values.estimated_design_weeks) ?? null,
       estimated_lab_weeks: parseOptionalNumber(values.estimated_lab_weeks) ?? null,
+      scoring_tags: [...scoringTags],
     };
     if (mode === 'create') {
       // P23: `POST /projects` requires the hard-gate fields (no Draft any more).
@@ -560,6 +570,15 @@ export function ProjectForm({
             Carried over from a prior year
           </label>
         </fieldset>
+
+        {/* P27 (ADR 0038): own section, same separation as Planning / Financial. */}
+        <div className="border-t border-border pt-5">
+          <ScoringTagsField
+            value={scoringTags}
+            onChange={setScoringTags}
+            legendClassName="text-2xs font-semibold uppercase tracking-wide text-text-muted"
+          />
+        </div>
 
         {/* A top border + top padding marks this as its own section rather than
             a continuation of Identity — matching the existing separation between

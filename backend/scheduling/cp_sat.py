@@ -55,7 +55,10 @@ interval's length is the step's FTE-stretched `span` (ADR 0032). Precedence:
 Objective weighting: ADR 0005 (documented gap-fill, not DOMAIN_RULES.md text)
 -- `PRIORITY_OBJECTIVE_WEIGHT = {P1:4, P2:3, P3:2, P4:1, Q:0}` times
 `within_year`, plus a coarse presence tie-break scaled so it can never
-override the primary term.
+override the primary term. ADR 0040 adds a VIP tier on top of the band
+(`objective_weights`): a VIP project's weight exceeds the sum of every non-VIP
+weight, mirroring `is_vip` as the second scheduling-order key. With no VIP
+project the weights are the plain bands.
 
 Purity / determinism: same contract as the rest of the package (no I/O;
 `ortools.sat.python.cp_model` is a pure solver library). `num_search_workers=1`
@@ -69,6 +72,7 @@ is returned as `ScheduleOutput.solver_status`.
 from __future__ import annotations
 
 import math
+from collections.abc import Iterable
 from dataclasses import dataclass
 
 from ortools.sat.python import cp_model
@@ -107,6 +111,26 @@ from scheduling.workflow import (
 
 # Ordinal objective weight derived from the priority band -- ADR 0005.
 PRIORITY_OBJECTIVE_WEIGHT: dict[str, int] = {"P1": 4, "P2": 3, "P3": 2, "P4": 1, "Q": 0}
+
+
+def objective_weights(projects: Iterable[ProjectInput]) -> dict[str, int]:
+    """Per-project weight of `within_year` in the ADR 0005 primary objective,
+    with the ADR 0040 VIP tier on top.
+
+    A non-VIP project weighs its band (`PRIORITY_OBJECTIVE_WEIGHT`). A VIP
+    project weighs its band plus `vip_bonus = Σ(non-VIP band weights) + 1`, so
+    one more VIP project within the year outranks every combination of non-VIP
+    ones (VIP is the second scheduling-order key, above priority; DOMAIN_RULES
+    "Scheduling order"). Among VIP projects the band still orders them. With
+    no VIP project every weight is the plain band weight, so the objective --
+    and therefore the solve -- is exactly the pre-ADR-0040 one.
+    """
+
+    ordered = sorted(projects, key=lambda p: p.project_id)
+    band = {p.project_id: PRIORITY_OBJECTIVE_WEIGHT.get(p.priority or "Q", 0) for p in ordered}
+    vip_bonus = sum(band[p.project_id] for p in ordered if not p.is_vip) + 1
+    return {p.project_id: band[p.project_id] + (vip_bonus if p.is_vip else 0) for p in ordered}
+
 
 #: Pass-1 (ADR 0005 portfolio objective) budget, in CP-SAT *deterministic*
 #: time units. Ruling 6: never a wall-clock limit. Sized in P9-R01 on the real
@@ -404,10 +428,8 @@ def run_cp_sat(
 
     # --- Objective (ADR 0005 + presence tie-break) ------------------------------
     _TIEBREAK_SCALE = len(solvable) + 1
-    primary = sum(
-        PRIORITY_OBJECTIVE_WEIGHT.get(p.priority or "Q", 0) * project_vars[p.project_id].within_year
-        for p in solvable
-    )
+    weights = objective_weights(solvable)  # ADR 0005 bands + ADR 0040 VIP tier
+    primary = sum(weights[p.project_id] * project_vars[p.project_id].within_year for p in solvable)
     presence_tiebreak = sum(project_vars[p.project_id].present for p in solvable)
     model.Maximize(_TIEBREAK_SCALE * primary + presence_tiebreak)
 
@@ -480,8 +502,7 @@ def run_cp_sat(
     primary_value = (
         float(
             sum(
-                PRIORITY_OBJECTIVE_WEIGHT.get(p.priority or "Q", 0)
-                * solver.Value(project_vars[p.project_id].within_year)
+                weights[p.project_id] * solver.Value(project_vars[p.project_id].within_year)
                 for p in solvable
             )
         )

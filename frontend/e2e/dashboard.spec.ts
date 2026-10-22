@@ -12,10 +12,12 @@ test.describe('Dashboard surface (P4-T02)', () => {
 
     await expect(dashboard.heading()).toBeVisible();
     await expect(dashboard.withinYearSection()).toBeVisible();
-    await expect(dashboard.pipelineSection()).toBeVisible();
+    await expect(dashboard.completionProfileSection()).toBeVisible();
     await expect(dashboard.statusOverviewSection()).toBeVisible();
     await expect(dashboard.hubTypePipelineSection()).toBeVisible();
     await expect(dashboard.completingHubTypeSection()).toBeVisible();
+    // P23-T03: no Capacity booked card on the Dashboard.
+    await expect(dashboard.capacityBookedHeading()).toHaveCount(0);
 
     // No console errors during a normal authenticated load.
     const consoleErrors: string[] = [];

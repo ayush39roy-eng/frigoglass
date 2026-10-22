@@ -144,6 +144,10 @@ class ProjectType(str, enum.Enum):
     review — per the memory protocol, this is a gap-fill from the (non-
     authoritative) prototype, not a documented DOMAIN_RULES.md value, and should
     be confirmed with the client rather than assumed permanent.
+
+    ADR 0038 amendment (2026-10-22, P29-T04): `RC` is labelled "Regulatory /
+    Business Compliance" and is the client's `BC` ("Business Continuity")
+    type; the labels live in `domain_constants.PROJECT_TYPE_LABELS`.
     """
 
     NM = "NM"
@@ -199,6 +203,22 @@ class HardGateReason(str, enum.Enum):
     REGULATORY_DEADLINE_6MO = "Regulatory deadline within 6 months"
     CUSTOMER_CERT_AT_RISK = "Customer certification at risk (Coke/Pepsi)"
     ACTIVE_SAFETY_NONCOMPLIANCE = "Active safety non-compliance"
+
+
+class ScoringTag(str, enum.Enum):
+    """ADR 0038 (P27): a Registration "project nature" tag. A project carries
+    zero or more. When one goes from not set to set, the mapped rubric
+    dimension (`domain_constants.SCORING_TAG_DIMENSION_KEY`, by stable key) is
+    pre-filled with score 5. Declaration order is the canonical order tags are
+    stored and served in.
+    """
+
+    NEW_CUSTOMER = "new_customer"
+    STRATEGIC_PROJECT = "strategic_project"
+    NEW_OPTIONS = "new_options"
+    REGULATORY_COMPLIANCE = "regulatory_compliance"
+    NEW_MODELS = "new_models"
+    IMPROVEMENT = "improvement"
 
 
 class CurrencyCode(str, enum.Enum):

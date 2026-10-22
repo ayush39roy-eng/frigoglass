@@ -71,11 +71,33 @@ class CapacityChamberRow(BaseModel):
     efficient_lab_weeks: float
 
 
+class CapacityHubMember(BaseModel):
+    """ADR 0042 (docs/API_CONTRACT_P29.md §2): one hub of a capacity hub's row,
+    for display. The capacity hub itself is listed first (`own: true`), then
+    its member hubs (OEM-HCK, OEM-Seltek) by name. Only hubs in the caller's
+    scope are listed (ADR 0042 §8)."""
+
+    hub: HubName
+    #: True for the capacity hub itself ("R&D-Greece own").
+    own: bool
+    #: Projects of this hub with design load in the active run (at least one
+    #: non-skipped design-kind step row), i.e. the projects summed into
+    #: `design_load_weeks`. 0 with no active run.
+    project_count: int
+    #: Σ design-kind step durations (effort weeks) of this hub's projects in
+    #: the active run (I6). Over every listed member it adds up to the row's
+    #: `design_load_weeks` when the caller sees every member.
+    design_load_weeks: int
+
+
 class HubCapacityRow(BaseModel):
-    """One hub's load vs. supply (docs/API_CONTRACT_P9.md §4, ADR 0008).
+    """One CAPACITY hub's load vs. supply (docs/API_CONTRACT_P9.md §4, ADR 0008;
+    ADR 0042: rows are the capacity hubs only, R&D-Greece's row aggregating
+    OEM-HCK and OEM-Seltek).
 
     Load (Invariants I6/I7), from the active `ScheduleRun`:
-    - `design_load_weeks`: Σ design-kind step durations of this hub's projects.
+    - `design_load_weeks`: Σ design-kind step durations of the projects of
+      this capacity hub and of its member hubs (ADR 0042 §3).
     - `lab_load_weeks`: Σ lab-kind step durations × 1.0 over every project of
       this hub's *lab region*. Region-level, repeated on each hub of the region.
     - `*_estimated_weeks`: Σ the projects' hand-entered estimates
@@ -84,7 +106,9 @@ class HubCapacityRow(BaseModel):
       `certification_testing_required`, like the process-derived lab load.
 
     Supply (DOMAIN_RULES "Capacity supply", `services.capacity_supply`): the
-    `design_*` figures are per hub and the `lab_*` figures are per region.
+    `design_*` figures are per capacity hub (its calendar, Σ fte of its
+    engineers with `counts_in_capacity`, ADR 0042) and the `lab_*` figures
+    are per region.
     `gap = load − capacity` and `completion_pct = capacity / load`, `None`
     when load is 0. Year and remaining-year variants both use the
     process-derived load. Floats are rounded to 2 dp, `remaining_fraction`
@@ -156,6 +180,15 @@ class HubCapacityRow(BaseModel):
     lab_capacity_days: YearRemaining
     #: Served `lab_load_weeks` × `lab_weekdays_per_week` (both bases), 2 dp.
     lab_load_days: YearRemaining
+    # --- P29 (docs/API_CONTRACT_P29.md §2, ADR 0042) -----------------------
+    #: The hubs this row aggregates, own first, in the caller's scope. Empty
+    #: for a capacity hub with no member hub (R&D-India, PD-India, PD-Romania).
+    #: Design load / project figures per hub; every other figure of the row
+    #: (supply, booked %, status, gap, completion) is for the aggregate only.
+    members: list[CapacityHubMember]
+    #: The global `hub_id` filter's hub when it is one of this row's hubs
+    #: (an OEM hub selects the Greece row); null otherwise.
+    selected_member: HubName | None
 
 
 class LabRegionCapacityRow(BaseModel):
@@ -372,9 +405,13 @@ class EngineerUtilizationRow(BaseModel):
 
     id: uuid.UUID
     name: str
+    #: The engineer's hub, always a capacity hub (ADR 0042).
     hub: HubName
     #: The categories the engineer may lead, comma-joined (e.g. "A, B, OEM").
     role: str
+    #: ADR 0042 §5 (P29): false = not on the client's capacity roster; booked
+    #: by the scheduler but never counted as hub supply.
+    counts_in_capacity: bool
     #: Design-step effort weeks (Σ `duration_weeks`, never the FTE-stretched
     #: span) booked over the whole run horizon (incl. weeks > 52).
     #: Summed over a hub's engineers this equals the hub design load (I6).

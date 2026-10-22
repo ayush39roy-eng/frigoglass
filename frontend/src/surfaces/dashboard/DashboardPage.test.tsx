@@ -5,8 +5,6 @@ import userEvent from '@testing-library/user-event';
 import { renderWithProviders } from '@/test/render';
 import { useHubFilterStore } from '@/stores/hub-filter';
 import { ApiError } from '@/lib/api/client';
-import { ROLE_MATRIX } from '@/test/roles';
-import { areaRow, SUMMARY_P11 } from '@/surfaces/capacity/test-fixtures';
 import type {
   CompletingWithinYear,
   DashboardAnalytics,
@@ -47,7 +45,10 @@ vi.mock('@/lib/api/reference', () => ({
     ],
   }),
 }));
-// P11: the "Capacity booked" card shares the Capacity surface's hook.
+// P23-T03 as narrowed by ADR 0039 §4 (P28, owner-sanctioned supersession): the
+// DETAILED view never asks for /capacity/hub-load. Owner ask 2026-10-23 removed
+// the Executive view's "Hubs at a glance" (its only consumer), so NEITHER view
+// asks for it now. Mocked so the absence is assertable in both views.
 const capacityHook = { useHubLoadVsCapacity: vi.fn() };
 vi.mock('@/surfaces/capacity/hooks/use-capacity', () => ({
   useHubLoadVsCapacity: (...a: unknown[]) => capacityHook.useHubLoadVsCapacity(...a),
@@ -112,6 +113,9 @@ const hubType: HubTypePipelineRow[] = [{ hub: 'R&D-Greece', type: 'NM', count: 3
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // P28: no stored view choice leaks between tests (role default applies).
+  window.localStorage.removeItem('rpd-dashboard-view');
+  capacityHook.useHubLoadVsCapacity.mockReturnValue(pending);
   useHubFilterStore.setState({ hubId: null, region: null });
   vipHook.useVipBoard.mockReturnValue(ready({ run_id: null, pillars: [], areas: [] }));
   hooks.useActiveScheduleRun.mockReturnValue(ready(null));
@@ -119,9 +123,6 @@ beforeEach(() => {
   hooks.useProjectFacets.mockReturnValue(ready({ leaders: [], steps: [] }));
   hooks.useDashboardAnalytics.mockReturnValue(pending);
   hooks.useDashboardProjects.mockReturnValue(ready({ total_count: 0, rows: [] }));
-  capacityHook.useHubLoadVsCapacity.mockReturnValue(
-    ready({ has_active_schedule_run: true, schedule_run_version: 4, remaining_weeks: 47, rows: [], ...SUMMARY_P11, areas: [areaRow()] }),
-  );
 });
 
 describe('DashboardPage', () => {
@@ -137,7 +138,7 @@ describe('DashboardPage', () => {
     expect(hooks.useStatusOverview).toHaveBeenLastCalledWith('hub-greece', null);
     expect(hooks.useHubTypePipeline).toHaveBeenLastCalledWith('hub-greece', null);
     expect(hooks.useDashboardProjects).toHaveBeenLastCalledWith(expect.objectContaining({ hub_id: 'hub-greece' }));
-    expect(capacityHook.useHubLoadVsCapacity).toHaveBeenLastCalledWith({ hubId: 'hub-greece', region: null });
+    expect(capacityHook.useHubLoadVsCapacity).not.toHaveBeenCalled();
     expect(screen.getByTestId('hub-filter-chip')).toBeInTheDocument();
   });
 
@@ -165,26 +166,19 @@ describe('DashboardPage', () => {
     expect(screen.getByTestId('schedule-run-provenance')).toHaveTextContent(/v4/);
   });
 
-  it('P11: shows the "Capacity booked" card for a session that can read Capacity', () => {
+  // Narrowed to the DETAILED view by ADR 0039 §4 (P28); since the 2026-10-23
+  // removal of "Hubs at a glance" the Executive view does not request it either
+  // (asserted in the "P28 Executive view" suite below).
+  it('P23-T03 (Detailed view): no "Capacity booked" card and no capacity request, even for a session that can read Capacity', () => {
     hooks.useCompletingWithinYear.mockReturnValue(ready(withinYear));
     hooks.usePipelineTotals.mockReturnValue(ready(totals));
     hooks.useStatusOverview.mockReturnValue(ready(status));
     hooks.useHubTypePipeline.mockReturnValue(ready(hubType));
+    // Default session: Super Admin, Capacity read.
     renderWithProviders(<DashboardPage />);
-    expect(screen.getByTestId('capacity-booked-card')).toBeInTheDocument();
-    expect(screen.getByTestId('dash-booked-Europe-design')).toHaveTextContent('72.44 %');
-  });
-
-  it('P11: hides the "Capacity booked" card (and never asks for it) without Capacity read', () => {
-    hooks.useCompletingWithinYear.mockReturnValue(ready(withinYear));
-    hooks.usePipelineTotals.mockReturnValue(ready(totals));
-    hooks.useStatusOverview.mockReturnValue(ready(status));
-    hooks.useHubTypePipeline.mockReturnValue(ready(hubType));
-    // Dashboard read, Capacity none.
-    renderWithProviders(<DashboardPage />, {
-      session: { roles: ['Engineer'], permissions: { ...ROLE_MATRIX.Engineer, dashboard: { read: true, write: false } } },
-    });
     expect(screen.queryByTestId('capacity-booked-card')).not.toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'Capacity booked' })).not.toBeInTheDocument();
+    expect(screen.queryByText(/Europe/)).not.toBeInTheDocument();
     expect(capacityHook.useHubLoadVsCapacity).not.toHaveBeenCalled();
   });
 
@@ -278,7 +272,7 @@ describe('DashboardPage — P13 country filter (ADR 0025)', () => {
     expect(hooks.useHubTypePipeline).toHaveBeenLastCalledWith(null, 'India');
     expect(hooks.useRegionSummary).toHaveBeenLastCalledWith(null, 'India');
     expect(hooks.useDashboardProjects).toHaveBeenLastCalledWith(expect.objectContaining({ region: 'India' }));
-    expect(capacityHook.useHubLoadVsCapacity).toHaveBeenLastCalledWith({ hubId: null, region: 'India' });
+    expect(capacityHook.useHubLoadVsCapacity).not.toHaveBeenCalled();
     expect(screen.getByTestId('hub-filter-chip')).toHaveTextContent('Country: India');
     expect(screen.getByRole('radio', { name: /India/ })).toHaveAttribute('aria-checked', 'true');
   });
@@ -566,5 +560,110 @@ describe('DashboardPage — P13-T10 analytics & breakdown', () => {
     renderWithProviders(<DashboardPage />);
     expect(screen.getByText('The analytics breakdown could not be loaded.')).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'Global RPD Dashboard' })).toBeInTheDocument();
+  });
+});
+
+/**
+ * P28 — Executive view (ADR 0039). The toggle, the view-resolution precedence
+ * in situ. (The ADR 0039 §4 hub-load fetch went with "Hubs at a glance",
+ * owner ask 2026-10-23: the Executive view no longer requests it.)
+ */
+describe('DashboardPage — P28 Executive view (ADR 0039)', () => {
+  function readyAll(): void {
+    hooks.useCompletingWithinYear.mockReturnValue(ready(withinYear));
+    hooks.usePipelineTotals.mockReturnValue(ready(totals));
+    hooks.useStatusOverview.mockReturnValue(ready(status));
+    hooks.useHubTypePipeline.mockReturnValue(ready(hubType));
+  }
+
+  it('defaults to Detailed (Super Admin session) and shows the Executive | Detailed radiogroup', () => {
+    readyAll();
+    renderWithProviders(<DashboardPage />);
+    const toggle = screen.getByTestId('dashboard-view-toggle');
+    expect(toggle).toHaveAttribute('role', 'radiogroup');
+    expect(within(toggle).getByRole('radio', { name: /Detailed/ })).toHaveAttribute('aria-checked', 'true');
+    expect(screen.queryByTestId('executive-view')).not.toBeInTheDocument();
+    expect(screen.getByTestId('all-projects-register')).toBeInTheDocument();
+  });
+
+  it('clicking Executive switches the view, persists to localStorage, shows Upcoming completions (no hub-load request), and keeps focus', async () => {
+    readyAll();
+    const user = userEvent.setup();
+    renderWithProviders(<DashboardPage />);
+    const execButton = screen.getByTestId('dashboard-view-executive');
+    await user.click(execButton);
+
+    expect(screen.getByTestId('executive-view')).toBeInTheDocument();
+    // The detailed register is gone; the exec KPI strip is here.
+    expect(screen.queryByTestId('all-projects-register')).not.toBeInTheDocument();
+    expect(screen.getByTestId('exec-kpi-strip')).toBeInTheDocument();
+    // Per-user persistence (ADR 0039 §2).
+    expect(window.localStorage.getItem('rpd-dashboard-view')).toBe('executive');
+    // Owner ask 2026-10-23: "Upcoming completions" replaced "Hubs at a glance",
+    // built from the served within-year rows — no /capacity/hub-load request.
+    expect(screen.getByTestId('exec-upcoming-card')).toBeInTheDocument();
+    expect(screen.queryByTestId('exec-hubs-card')).not.toBeInTheDocument();
+    expect(capacityHook.useHubLoadVsCapacity).not.toHaveBeenCalled();
+    // Focus is not lost on the switch (the toggle never unmounts).
+    expect(screen.getByTestId('dashboard-view-executive')).toHaveFocus();
+    // Switching back re-establishes the Detailed page.
+    await user.click(screen.getByTestId('dashboard-view-detailed'));
+    expect(screen.queryByTestId('executive-view')).not.toBeInTheDocument();
+    expect(window.localStorage.getItem('rpd-dashboard-view')).toBe('detailed');
+  });
+
+  it('deep link: ?view=executive on / renders the Executive view (URL beats the stored choice)', () => {
+    readyAll();
+    window.localStorage.setItem('rpd-dashboard-view', 'detailed');
+    renderWithProviders(<DashboardPage />, { route: '/?view=executive' });
+    expect(screen.getByTestId('executive-view')).toBeInTheDocument();
+    expect(
+      within(screen.getByTestId('dashboard-view-toggle')).getByRole('radio', { name: /Executive/ }),
+    ).toHaveAttribute('aria-checked', 'true');
+  });
+
+  it('stored choice beats the role default', () => {
+    readyAll();
+    window.localStorage.setItem('rpd-dashboard-view', 'executive');
+    renderWithProviders(<DashboardPage />);
+    expect(screen.getByTestId('executive-view')).toBeInTheDocument();
+  });
+
+  it('role default: roles exactly ["Executive Viewer"] land on Executive; Executive Viewer + another role lands on Detailed', () => {
+    readyAll();
+    renderWithProviders(<DashboardPage />, { session: { roles: ['Executive Viewer'] } });
+    expect(screen.getByTestId('executive-view')).toBeInTheDocument();
+  });
+
+  it('role default is Detailed when Executive Viewer is not the only role', () => {
+    readyAll();
+    renderWithProviders(<DashboardPage />, { session: { roles: ['Executive Viewer', 'Auditor'] } });
+    expect(screen.queryByTestId('executive-view')).not.toBeInTheDocument();
+  });
+
+  it('the Executive view sends the global hub / country filter on its own reads', () => {
+    useHubFilterStore.setState({ hubId: null, region: 'India' });
+    readyAll();
+    window.localStorage.setItem('rpd-dashboard-view', 'executive');
+    renderWithProviders(<DashboardPage />);
+    // Overdue check-ins come from the register's endpoint under the same filter,
+    // with NO extra filters (ADR 0039 §3).
+    expect(hooks.useDashboardProjects).toHaveBeenLastCalledWith({ hub_id: undefined, region: 'India' });
+    expect(vipHook.useVipBoard).toHaveBeenCalledWith({ region: 'India' });
+  });
+
+  it('no active run: the strip falls back to the pipeline total with a notice; run panels are hidden', () => {
+    hooks.useCompletingWithinYear.mockReturnValue(
+      ready({ ...withinYear, has_active_schedule_run: false, schedule_run_version: null }),
+    );
+    hooks.usePipelineTotals.mockReturnValue(ready(totals));
+    hooks.useStatusOverview.mockReturnValue(ready(status));
+    hooks.useHubTypePipeline.mockReturnValue(ready(hubType));
+    window.localStorage.setItem('rpd-dashboard-view', 'executive');
+    renderWithProviders(<DashboardPage />);
+    expect(screen.getByTestId('exec-no-run-notice')).toBeInTheDocument();
+    expect(screen.getByTestId('exec-kpi-pipeline')).toHaveTextContent('239');
+    expect(screen.queryByTestId('exec-delivery-gauge')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('exec-provenance')).not.toBeInTheDocument();
   });
 });

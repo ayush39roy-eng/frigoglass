@@ -16,7 +16,7 @@ test('Matrix labels, weights, total line, points, edit dialog', async ({ page })
   await page.goto('/matrix');
   await settle(page);
   await page.getByRole('button', { name: 'Detailed view' }).click();
-  await page.getByRole('button', { name: 'Show rubric' }).click();
+  // P26-T03: the "Scoring scale and dimensions" card is always expanded.
   const body = page.locator('body');
   await expect(body).toContainText('Gross Profitability');
   await expect(body).toContainText('ROI');

@@ -170,9 +170,11 @@ inside the spillover framing ("past W52"). The server still decides each verdict
 Sort all projects by, in order:
 
 1. `frozen` descending (frozen projects scheduled first, dates locked)
-2. Priority: `P1 → P2 → P3 → P4 → Q`
-3. Status: `In Buyoff (0) → Under Industrialization (1) → In Development (2) → In Queue (3)`
-4. Category: `A+ → A → B → C → A-OEM → B-OEM → C-OEM` *(OEM tail added 2026-09-27)*
+2. `is_vip` descending: a VIP project schedules before every non-VIP one, whatever its band
+   *(2026-10-22, ADR 0040)*
+3. Priority: `P1 → P2 → P3 → P4 → Q`
+4. Status: `In Buyoff (0) → Under Industrialization (1) → In Development (2) → In Queue (3)`
+5. Category: `A+ → A → B → C → A-OEM → B-OEM → C-OEM` *(OEM tail added 2026-09-27)*
 
 ## Precedence *(2026-09-27, ADR 0009)*
 
@@ -335,6 +337,18 @@ slip_weeks           = projected_end_week − expected_end_week               (m
 - **Schedule.** A rubric change never changes the schedule: the scheduler does not read scores, and
   nothing is marked stale.
 
+*(Amended 2026-10-22, ADR 0038: registration tags.)* At Registration a project carries zero or more
+"project nature" tags: New Customer → `new_customer`, Strategic Project → `strategic_project`, New
+Options → `new_options`, Regulatory / Business Compliance → `regulatory_compliance`, New Models →
+`new_models`, Improvement → `quality_improvements`.
+- When a tag goes from not set to set, the mapped dimension's score is written as **5** (full
+  weight) in the same transaction. Re-saving a tag already set does not rewrite it; removing a tag
+  leaves the score unchanged.
+- The pre-filled 5 is an ordinary, editable score. Untagged dimensions are scored manually.
+- Existing projects are backfilled from `type`: NM → New Models, NO → New Options, RC → Regulatory
+  Compliance, IMP → Improvement.
+- Schedule unchanged; committed priority never rewritten.
+
 ```
 TOTAL_WEIGHT = Σ weights = 295            (derived, never hard-coded; the client said "300", see OQ #41;
                                           ADR 0037: Σ ACTIVE weights of the current rubric version)
@@ -387,6 +401,10 @@ for p in candidates:
   committed priority stays a human decision (Priority board, ADR 0015/0018). Exact 2 dp arithmetic.
 - The walk for a hub uses every project of the hub, independent of row filters and of the caller.
   Hub Planners see only their own hubs.
+- *(P27, security S26-L1:)* `capacity_fill_reason` carries the hub's P1 design load and capacity.
+  In the Workspace it is served with figures only to a caller who has the project's hub in scope
+  and can read the Matrix. Anyone else gets "P1 (capacity fill)" when promoted, null otherwise.
+  The band and `capacity_fill` stay identical everywhere.
 - Hard gates do not enter the base set (`docs/OPEN_QUESTIONS.md` #51).
 
 ### Hard gates (override band, force P1)
@@ -638,6 +656,21 @@ here. Supply (`working_weeks × Σ fte`) and load (I6, Σ `duration_weeks`) are 
 weeks, so `booked_pct` stays comparable: a 0.5 FTE engineer booked for every elapsed week reads
 about 100 %, not 200 %. Load sums never use the elapsed span.
 
+### Capacity hubs *(2026-10-22, ADR 0042)*
+
+Client ruling: OEM-HCK and OEM-Seltek are under Greece. `hubs.capacity_hub_id` points both at
+R&D-Greece; every other hub is its own capacity hub. Supply (the formulas above) is computed per
+capacity hub over its engineers with `counts_in_capacity = true`; load is Σ over the projects of
+the capacity hub and its member hubs. Capacity surfaces serve the four capacity hubs only, the
+Greece row with a `members` breakdown (own / OEM-HCK / OEM-Seltek) for display; `booked_pct`,
+status, gap and `completion_pct` exist for the aggregate only. Booking is unchanged: the scheduler
+books the project's assigned leader (Booking rules). Wherever an engineer is *chosen* for a project
+(the seed's provisional-leader picker, the what-if planner), the candidates are the engineers of its
+capacity hub; workflow selection and lab region stay by hub. Engineers not on
+the client's capacity roster (Theoni, Dipak, Antonis, Sailesh — OQ #52) have
+`counts_in_capacity = false`: they are booked but never counted as supply. OEM hubs remain hubs for
+registration, plant, filters, RBAC and the country filter (ADR 0025).
+
 ### Booked % and areas *(2026-10-09, ADR 0016)*
 
 ```
@@ -831,7 +864,10 @@ capacity stays region-wide under a hub filter (chambers are shared per region).
 - Order: pinned projects (`projects.is_vip`) first, then automatic fill; within each group by
   priority `P1 → P4 → Q`, then weighted score descending, then name. More pins than `limit` are all
   shown and the hub is flagged `over_limit`.
-- VIP never changes scheduling order and a pin never recalculates.
+- *(Superseded 2026-10-22, ADR 0040.)* ~~VIP never changes scheduling order and a pin never
+  recalculates.~~ VIP is a manual pin only (`PUT /projects/{id}/vip`); a VIP board link no longer
+  sets it. A pin is a scheduling input (sort key 2 above) and follows the priority-change
+  recalculation path.
 
 ## P12 invariants *(2026-10-10)*
 

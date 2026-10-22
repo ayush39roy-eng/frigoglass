@@ -62,8 +62,10 @@ export function MatrixCurrencyControl({
   const selected = options.find((o) => o.currency_code === value);
 
   return (
-    <div className={cn('flex min-w-0 flex-col gap-1', className)}>
-      <span id={labelId} className={cn('text-2xs font-medium text-text-muted', compact && 'sr-only')}>
+    // Owner ask 2026-10-22: one compact line (label, codes, rate). The full
+    // "EUR · Euro" name stays the accessible name and the hover title.
+    <div className={cn('flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1', className)}>
+      <span id={labelId} className={cn('text-2xs font-bold uppercase tracking-wider text-text-subtle', compact && 'sr-only')}>
         Display currency
       </span>
       <span id={reasonId} className="sr-only">
@@ -92,12 +94,13 @@ export function MatrixCurrencyControl({
               aria-disabled={o.configured ? undefined : true}
               aria-describedby={o.configured ? undefined : reasonId}
               data-testid={`currency-option-${o.currency_code}`}
+              title={o.configured ? label : undefined}
               className={cn(
                 'whitespace-nowrap rounded border border-border-strong',
                 !o.configured && 'cursor-not-allowed opacity-55 hover:bg-transparent',
               )}
             >
-              {compact ? o.currency_code : label}
+              {o.currency_code}
             </ToggleGroupItem>
           );
           if (o.configured) return item;

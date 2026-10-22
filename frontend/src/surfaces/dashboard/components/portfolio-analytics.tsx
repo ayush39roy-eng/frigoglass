@@ -11,6 +11,7 @@ import type { ProjectPriority } from '@/types/enums';
 import type { CompletingWithinYearRow, PriorityDeliveryBand } from '../api/types';
 import { displayOutcomeOf, type DisplayOutcome } from '../lib/outcome';
 import { formatServedPct } from '../lib/analytics';
+import { DELIVERY_SEGMENTS, HUB_OUTCOME_STACK, type SegmentKey } from '../lib/delivery-segments';
 import { CardInfo } from '@/components/ui/card-info';
 
 /**
@@ -100,27 +101,16 @@ const PRIORITY_DOT: Record<ProjectPriority, string> = {
 export const PRIORITY_NOTE =
   'Projects that have not started cannot finish within the year however high their priority; in-flight and not-started work are shown separately.';
 
-type SegmentKey =
-  | 'in_flight_finishing'
-  | 'in_flight_not_finishing'
-  | 'not_started_finishing'
-  | 'not_started_not_finishing'
-  | 'delivered'
-  | 'not_in_plan';
-
 /**
  * P17-R08 (owner): one status colour scheme for every band (the band colour is
  * only the P-label dot). Finishing = green, not finishing = amber; in flight is
  * solid, not started is the light tint; delivered is blue, not in plan grey.
+ * QA-F23-1: each segment's count ink comes from its token pair (AA 4.5:1),
+ * see `lib/delivery-segments.ts`.
  */
-const DELIVERY_SEGMENTS: { key: SegmentKey; label: string; fill: string }[] = [
-  { key: 'in_flight_finishing', label: 'In flight, finishing this year', fill: 'bg-success' },
-  { key: 'in_flight_not_finishing', label: 'In flight, not finishing', fill: 'bg-warning' },
-  { key: 'not_started_finishing', label: 'Not started, finishing this year', fill: 'bg-success/40' },
-  { key: 'not_started_not_finishing', label: 'Not started, not finishing', fill: 'bg-warning/40' },
-  { key: 'delivered', label: 'Already delivered', fill: 'bg-primary' },
-  { key: 'not_in_plan', label: 'Not in plan', fill: 'bg-border-strong' },
-];
+/** A segment narrower than this share of its bar keeps its count in the hover
+ *  title and the caption line only (no room to print it). */
+const MIN_LABEL_SHARE = 0.04;
 
 /** Segment sizes are served counts; the two "not finishing" parts are the
  *  difference of two served integers (owner ruling, P17-R08). */
@@ -215,19 +205,25 @@ function PriorityBandRow({ band: b }: { band: PriorityDeliveryBand }): React.JSX
           {formatServedPct(b.within_year_share_pct)}
         </span>
       </div>
-      <div className="mt-1 flex h-3 w-full overflow-hidden rounded-full bg-surface-sunken" aria-hidden="true">
+      <div className="mt-1 flex h-5 w-full overflow-hidden rounded-full bg-surface-sunken" aria-hidden="true">
         {DELIVERY_SEGMENTS.map((seg) => {
           const n = counts[seg.key];
           if (n <= 0) return null;
           return (
             <span
               key={seg.key}
-              className={cn('h-full border-r border-surface last:border-r-0', seg.fill)}
+              className={cn(
+                'grid h-full min-w-0 place-items-center overflow-hidden border-r-2 border-surface text-[0.625rem] font-bold tabular-nums last:border-r-0',
+                seg.fill,
+                seg.ink,
+              )}
               style={{ flexGrow: n, flexBasis: 0 }}
               data-segment={seg.key}
               data-count={n}
               title={`${b.priority} · ${seg.label}: ${formatInteger(n)}`}
-            />
+            >
+              {b.total > 0 && n / b.total >= MIN_LABEL_SHARE ? formatInteger(n) : null}
+            </span>
           );
         })}
       </div>
@@ -244,11 +240,7 @@ function PriorityBandRow({ band: b }: { band: PriorityDeliveryBand }): React.JSX
 
 // ADR 0024: three outcomes on the 52-week year; a left-out project sits in the
 // spillover segment (not done by W52), never in a separate "left out" one.
-const STACK_ORDER: { bucket: DisplayOutcome; label: string; fill: string; dot: string }[] = [
-  { bucket: 'within_year', label: 'Within year', fill: 'bg-success', dot: 'bg-success' },
-  { bucket: 'spillover', label: 'Spillover (past W52)', fill: 'bg-warning', dot: 'bg-warning' },
-  { bucket: 'blocked', label: 'On Hold at a stage', fill: 'bg-text-muted', dot: 'bg-text-muted' },
-];
+const STACK_ORDER = HUB_OUTCOME_STACK;
 
 function HubOutcomeStack({ rows }: { rows: CompletingWithinYearRow[] }): React.JSX.Element {
   const { reduced } = useMotionTokens();
@@ -318,8 +310,9 @@ function HubOutcomeStack({ rows }: { rows: CompletingWithinYearRow[] }): React.J
                     <span
                       key={s.bucket}
                       className={cn(
-                        'grid h-full place-items-center border-r-2 border-surface text-2xs font-bold text-white last:border-r-0',
+                        'grid h-full place-items-center border-r-2 border-surface text-2xs font-bold last:border-r-0',
                         s.fill,
+                        s.ink,
                       )}
                       style={{ width: `${String((n / h.total) * 100)}%` }}
                       title={`${h.hub}: ${String(n)} ${s.label.toLowerCase()}`}

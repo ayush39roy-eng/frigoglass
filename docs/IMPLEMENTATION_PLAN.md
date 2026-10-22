@@ -2041,6 +2041,8 @@ hard-gate fields are set (ADR 0034, contract `docs/API_CONTRACT_P23.md`). The wi
 |---|---|---|---|
 | P23-T01 | Frontend: one shared `UI_PROJECT_STATUSES` (and `UI_SCHEDULABLE_STATUSES`) in `types/enums.ts` without In Buyoff / Draft, used by every filter, chip and select (Projects, Dashboard register, Gantt, Priority board, Matrix via `PROJECT_STATUSES`, leave-Draft target, what-if); Drafts chip removed; Dashboard "Other statuses" copy names only served statuses; badge still renders any status. Extension (owner ruling): registration drawer has one "Register project" action, client-side check of the 8 hard-gate fields (incl. priority), server 422 `HARD_GATE_FIELDS_MISSING` mapped onto the fields, Leave Draft kept only for a legacy Draft | frontend-builder | DONE (MEMORY 2026-10-21) |
 | P23-T02 | Backend: `POST /projects` validates the hard-gate fields up front (422 `HARD_GATE_FIELDS_MISSING` with `field_errors`), creates In Queue; PATCH to Draft is 422 `DRAFT_RETIRED`; priority joins the gate (ADR 0034); `UNKNOWN_LEADER` 422; legacy `/submit` shares the 422 shape; ORM Draft default removed; seed refuses Draft; contract `docs/API_CONTRACT_P23.md` | backend-builder | DONE (MEMORY 2026-10-21) |
+| P23-T03 | Frontend: Dashboard "Capacity booked" card (Europe / India booked %, "Open capacity" link) removed, with its test; the Dashboard no longer requests `GET /capacity/hub-load`; no empty row left (Hub × Type leads into Portfolio analytics); DashboardPage tests assert absence + no capacity request; e2e page object / specs updated (stale "Completion outcome" locator replaced) | frontend-builder | DONE (MEMORY 2026-10-22) |
+| P23-R01 | Final-gate qa remediation QA-F23-1 (WCAG 1.4.3): Dashboard "Delivery by priority" segment counts take the ink of their token pair (no fixed white; dark text on amber, the tints and grey), segments moved to `dashboard/lib/delivery-segments.ts`; same fix on "Outcomes by hub" (white on amber found live); token-measured contrast test light + dark; live axe 0 across every country incl. India at 1440 / 390 | frontend-builder | DONE (MEMORY 2026-10-22) |
 | P23-T20 | Gate: qa, workflow, security | — | TODO |
 
 ## P24 — Real client data in the seed (ADR 0035)
@@ -2058,6 +2060,7 @@ retired. Rubric scores stay synthetic and flagged. OQ #52–#62. The dev DB is r
 | P24-T01 | Backend: extractor reads the roster (`RPD Capacity!I39:T50`), plant / product type / requesting department, end date (`target_end_week` rule) and `Spillover '25`; JSON regenerated; `seed/client_2026.py` real roster + provisional leaders + no invented assignment, tuning removed; `seed_demo_data` stores the new fields, `carry_over` / `reg_year`; migration `p24a_project_charter_fields`; `ProjectRead` and `ProjectFilterRow` serve the 3 fields (read-only); resource-load department filter + options; ADR 0035; OQ #52–#62; tests | backend-builder | DONE (MEMORY 2026-10-21) |
 | P24-T02 | Frontend: mirror `plant`, `requesting_department`, `product_type` (all `string \| null`) on `ProjectRead` (registration types), `WorkspaceProject` (project-workspace types) and `ProjectFilterRow` (dashboard types), turning those contract rows (and the WorkspaceProject nullability row) green; fix `e2e/p15-gate.spec.ts`, which picks engineer index 40 (the seed now has 23 engineers); show them read-only (register columns / Workspace); the Resource load analytics department filter now has served options; optionally label a no-leader left-out project ("No leader") — the reason is not served today, only `leader_engineer_id = null` + `LEFT_OUT` | frontend-builder | DONE (MEMORY 2026-10-21) |
 | P24-R01 | Backend: multi-role row scoping — Engineer no longer narrows a principal who also holds a hub-scoped role (ADR 0012 MAX): `is_engineer_self_scoped` by role set, `project_row_scope` union on Gantt / run changes; heatmap keeps the ADR 0028 own-row rule; alice.pm's extra roles were added in the UI (audit log), dev-DB correction command in MEMORY | backend-builder | DONE (MEMORY 2026-10-21) |
+| P24-R02 | Final-gate qa remediation QA-F24-1 (WCAG 4.1.2): Capacity Planning resource-load filter popovers (Type, Status, Dept, Cat, Engineer) get an accessible name (`<Name> filter options`, Dept → Department, Cat → Category); tests per filter; live axe 0 with each open at 1440 / 390 | frontend-builder | DONE (MEMORY 2026-10-22) |
 | P24-T20 | Gate: qa, workflow, security | — | TODO |
 
 ## P25 — P1 capacity fill (ADR 0036)
@@ -2092,5 +2095,84 @@ schedule is never touched. Contract: `docs/API_CONTRACT_P26.md`.
 | ID | Task | Owner | Status |
 |---|---|---|---|
 | P26-T01 | Backend: ADR 0037 + DOMAIN_RULES amendment; migration `p26a_scoring_rubric_tables` (3 tables, 13 dimensions + version 1, lossless score copy, old 13 columns dropped); `GET/PUT /scoring-rubric`, `GET /scoring-rubric/versions`, `POST /scoring-rubric/preview`; every reader on the tables (Matrix rows N `dimension_scores` + `missing_dimension_keys` + `rubric_version`, compare, distribution, summary, capacity fill, board, Workspace, score PUT `scores` map, scenario apply, export one column per active dimension, seed); constants removed; contract `docs/API_CONTRACT_P26.md`; tests | backend-builder | DONE (MEMORY 2026-10-22) |
-| P26-T02 | Frontend: rubric editor in the Prioritization Matrix only (Admin / Super Admin: weights, labels, pillars incl. new, order, add, deactivate / reactivate, reason; preview impact before save; 409 reload flow; version history); Matrix grid / compare / edit dialog / Workspace / scenario on N dynamic dimensions and the `scores` map; "incomplete" marker from `missing_dimension_keys`; mirror the contract types (turns the 16 P26 contract rows green) | frontend-builder | TODO |
+| P26-T02 | Frontend: rubric editor in the Prioritization Matrix only (Admin / Super Admin: weights, labels, pillars incl. new, order, add, deactivate / reactivate, reason; preview impact before save; 409 reload flow; version history); Matrix grid / compare / edit dialog / Workspace / scenario on N dynamic dimensions and the `scores` map; "incomplete" marker from `missing_dimension_keys`; mirror the contract types (turns the 16 P26 contract rows green) | frontend-builder | DONE (MEMORY 2026-10-22) |
+| P26-T03 | Frontend (owner request): rubric editing moves into the "Scoring scale and dimensions" card on the Matrix; the View panel "Scoring rubric" button, the side sheet and the "Show / Hide rubric" collapse are removed; the card is always expanded (pillar-first table: one rowspan cell per pillar with count and weight, grid-matching tint, accents and separators; stacked boxes on phones); "Edit rubric" for the served `can_edit` only (else "Read-only · managed by Admins"); "Version history" dialog for everyone; inline edit mode with the P26-T02 editor (cross-pillar reorder), expandable preview, sticky footer, Cancel asks to discard, leave-page warning; tests + e2e | frontend-builder | DONE (MEMORY 2026-10-22) |
+| P26-R01 | Final-gate qa remediation QA-F26-1 (lost update): the rubric 409 "Re-apply my draft" re-applies only the Admin's own changes (draft vs the version it was edited from, kept on the draft) onto the latest version; conflicts (same field both sides, a dimension deactivated / renamed remotely, same label added twice, both reordered) shown per field "Your value 40 · Current 30" with a choice defaulting to the server value; added dimensions re-added; unit tests for the scenarios, panel tests, two-tab e2e with mocked routes (`e2e/qa-f26-1-rubric-rebase.spec.ts`); also the read card's pillar-name contrast | frontend-builder | DONE (MEMORY 2026-10-22) |
 | P26-T20 | Gate: qa, workflow, security | — | TODO |
+
+## P27 — Registration "project nature" tags pre-fill scores (ADR 0038)
+
+Opened 2026-10-22. Owner request: if Registration says the project is a New Customer, Strategic
+Project, New Options, Regulatory / Business Compliance, New Models or Improvement, that dimension
+gets full score. Owner answers: multi-select tags; pre-filled 5 stays editable; untagged
+dimensions manual; backfill existing projects from `type`. Contract: `docs/API_CONTRACT_P27.md`.
+
+| ID | Task | Owner | Status |
+|---|---|---|---|
+| P27-T01 | Backend: `Project.scoring_tags` (6 fixed values, multi); migration + backfill from `type` (NM/NO/RC/IMP) setting mapped scores to 5 and recomputing; create/PATCH accept tags, set→5 only on not-set→set transition, audited with tag source; tags served on project/Workspace reads and the Matrix rows; contract `docs/API_CONTRACT_P27.md`; tests | backend-builder | DONE (MEMORY 2026-10-22) |
+| P27-T02 | Frontend: "Project nature" multi-select on Registration and the Workspace edit; Matrix / Workspace score shows a "from registration" hint on tag-filled dimensions (still editable); mirror contract types; tests | frontend-builder | DONE (MEMORY 2026-10-22) |
+| P27-T20 | Gate: qa, workflow, security | — | TODO |
+
+### P27 — Security remediation (final gate)
+
+Opened 2026-10-22 from "Final gate (P21–P26) — security-auditor: FAIL" (MEMORY). Top priority in
+P27. Code items here; S26-C1 (dev mode off on Render + exposure review) and the actual Render DB
+password / field-key rotation are operator actions, both required for the re-gate (evidence:
+`/me` 401 + `/me/dev-users` 404 without credentials; rotated count = non-null count). IDs are
+`P27-R..` because P27-T.. is the tags work above.
+
+| ID | Task | Owner | Status |
+|---|---|---|---|
+| P27-R01 | S26-L1: Workspace `capacity_fill_reason` with hub figures only when the hub is in the caller's scope and the caller can read the Matrix; otherwise "P1 (capacity fill)" when promoted, else null; `capacity_fill` unchanged; DOMAIN_RULES + contract P25 §5b note; auditor-probe tests | backend-builder | DONE (MEMORY 2026-10-22) |
+| P27-R02 | S26-L2: `/docs`, `/redoc`, `/openapi.json` only in dev mode (`api_docs_urls()`); `app.openapi()` still works for the contract tests; tests | backend-builder | DONE (MEMORY 2026-10-22) |
+| P27-R03 | S26-M1: `render.yaml` static-site `headers:` (strict CSP with script hash, no inline script; style `'unsafe-inline'` proven necessary; `connect-src` = API origin; `frame-ancestors 'none'`, XFO DENY, Referrer-Policy, Permissions-Policy, nosniff, COOP); browser check 0 violations; guard test | backend-builder | DONE (MEMORY 2026-10-22) |
+| P27-R04 | S26-H1 support: `backend/scripts/rotate_field_key.py` (MultiFernet, one transaction, verify + rollback, `--dry-run`, keys from env/files only, columns from the models); tests on disposable DBs; `docs/HANDOVER/KEY_ROTATION.md` (Render steps + production env checklist) | backend-builder | DONE (MEMORY 2026-10-22) |
+
+
+## P28 — Executive dashboard view (ADR 0039)
+
+Opened 2026-10-22. Owner request: the client's "Level 1: Executive View (Helicopter)" (Teams
+proposal + ASCII mock-up + Power BI quality-dashboard visual reference): one compact page for
+CEO / CMO / top management on the Dashboard, with pipeline and status-overview pie charts and
+the key figures. Frontend only; every number stays a served field (I9/I19). Mock-up items with
+no served source (CAPEX, roadmap quarters, curated alerts, test success rate, hiring) are not
+invented — OQ #63. Contract: ADR 0039.
+
+| ID | Task | Owner | Status |
+|---|---|---|---|
+| P28-T01 | Frontend: Executive view on the Dashboard (header Executive / Detailed toggle, `?view=executive`, per-user localStorage, Executive-Viewer-only role default; KPI tile strip; pipeline + status donuts + delivery gauge; delivery-by-priority bars; Risks & escalations list from served rows: blocked, overdue check-ins, VIP not within year; Hubs at a glance from `/capacity/hub-load`, fetched only in Executive view; P23-T03 absence test narrowed to the Detailed view; tests) | frontend-builder | DONE (MEMORY 2026-10-22 P28-T01) |
+| P28-T20 | Gate: qa, workflow, security | — | TODO |
+
+## P29 — OEM hubs under Greece capacity (ADR 0042)
+
+Opened 2026-10-22. Client ruling: both OEM hubs are under Greece; Greece's capacity serves all
+three and Greece's load includes the OEM projects. `hubs.capacity_hub_id`, `engineers.counts_in_capacity`,
+capacity surfaces on four capacity hubs with a members breakdown, Greek engineers eligible for OEM
+categories, provisional leaders for the 17 leaderless OEM projects. Contract: `docs/API_CONTRACT_P29.md`.
+Solver input changes: workflow-auditor gates.
+
+| ID | Task | Owner | Status |
+|---|---|---|---|
+| P29-T01 | Backend: migration `p29a_capacity_hubs` (`hubs.capacity_hub_id`, `engineers.counts_in_capacity`, Theoni → R&D-Greece, Greek roster + OEM categories, OEM calendars retired, provisional leaders for leaderless OEM projects with audit); capacity service per capacity hub with `members`; hub-load / capacity-fill / heatmap / dashboard capacity cards / Capacity Planning readers; scheduler input passes `capacity_hub`; seed + extractor; contract `docs/API_CONTRACT_P29.md`; tests | backend-builder | DONE (MEMORY 2026-10-23 P29-T01/T04/T06) |
+| P29-T02 | Scheduler: `ProjectInput.capacity_hub` (defaults to hub); engineer pool and leader eligibility by capacity hub; OEM workflow still selected by hub; golden files / invariants updated; self-tests | algorithm-engineer | DONE |
+| P29-T03 | Frontend: capacity surfaces show four rows with the Greece members breakdown and OEM-filter behaviour; "not in capacity roster" marker on Capacity Planning roster; provisional-leader badge in Workspace/Registration; hub pickers label OEM hubs "(Greece)"; mirror contract types; tests + e2e page objects | frontend-builder | TODO |
+| P29-T04 | Data: client type `BC` (Business Continuity) = app `RC`, relabelled "Regulatory / Business Compliance"; extractor + seed + migration step (type, `regulatory_compliance` tag, score 5 pre-fill, audit); frontend label (ADR 0038 amendment 2026-10-22) | backend-builder (in P29-T01) / frontend-builder (in P29-T03) | backend DONE (MEMORY 2026-10-23 P29-T01/T04/T06); frontend TODO (P29-T03) |
+| P29-T05 | Scheduler follow-up: `EngineerInput.counts_in_capacity` (default true); what-if supply sums counted engineers only (ADR 0042 §6 clarified) | algorithm-engineer | DONE |
+| P29-T06 | Backend follow-up: input builder passes `counts_in_capacity` to `EngineerInput`; what-if service serves the four capacity hubs only | backend-builder (in P29-T01) | DONE (MEMORY 2026-10-23 P29-T01/T04/T06) |
+| P29-T20 | Gate: qa, workflow, security | — | TODO |
+
+
+## P30 — Per-project effort drives schedule and load (ADR 0041)
+
+Opened 2026-10-23. Owner accepted R1 (one effort figure sets load and span; B design 10 → 4 weeks
+at 1.0 FTE). ADR 0041 is Accepted with the workflow-auditor's R1–R14 binding. Sequencing (R14):
+the solver change lands before any 0 is written; migration `p30a` runs after `p29a_capacity_hubs`.
+The workflow-auditor re-derives after the reseed. No figure is tuned toward a target.
+
+| ID | Task | Owner | Status |
+|---|---|---|---|
+| P30-T01 | Scheduler: one skip predicate (R5: eff = 0 ⇒ skipped in `analyse_project`), override/effort domain 0..104, validator I5 derives skip from inputs, I25/I26 checks, Monte Carlo floor (R10), fixtures + golden files incl. the R14 hub-spelling rename (stored runs keep the old spelling, I14); self-tests | algorithm-engineer | TODO |
+| P30-T02 | Backend: migration `p30a` (after p29a) adding `project_workflow_steps.effort_weeks` (R4 precedence user ?? effort ?? lead) + per-project `design_effort_weeks` / `lab_effort_weeks`; exact-rational split (R2) with recorded-work protection (R3); R6 re-derivation triggers + audit action; R5 predicate in step_timing / stage PATCH / gantt / project_cards / tracking / demand query; I25 demand fields and R12 reader mapping; seed + extractor read the client's effort columns; R7/R8 edge cases; DOMAIN_RULES text (R13); contract `docs/API_CONTRACT_P30.md`; tests | backend-builder | TODO (after P29-T01) |
+| P30-T03 | Frontend: Gantt "Reset timing" / `hasTimingEdit` / "(table T)" tooltip ignore effort values (R4); effort fields shown read-only where the contract serves them; mirror contract types; tests | frontend-builder | TODO (after P30-T02) |
+| P30-T04 | Reseed client_2026 on a disposable DB + workflow-auditor re-derivation (I1–I26), and report the resulting within-year rate as served | workflow-auditor | TODO |
+| P30-T20 | Gate: qa, workflow, security (covers P29 + P30) | — | TODO |

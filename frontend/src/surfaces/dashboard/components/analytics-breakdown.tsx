@@ -15,6 +15,7 @@ import {
 } from 'recharts';
 
 import { BoltCard } from '@/components/ui/bolt-card';
+import { HubFilterSelect } from '@/components/shared/hub-filter/hub-filter-select';
 import { CardInfo } from '@/components/ui/card-info';
 import { categoryRank } from '@/lib/categorical-palette';
 import { formatInteger } from '@/lib/format';
@@ -48,13 +49,20 @@ export interface AnalyticsBreakdownProps {
 export function AnalyticsBreakdown({ data, pipelineTotal }: AnalyticsBreakdownProps): React.JSX.Element {
   return (
     <section className="space-y-s4" aria-labelledby="analytics-breakdown-heading">
-      <div>
-        <h2 id="analytics-breakdown-heading" className="font-display text-h1 font-extrabold tracking-tight text-text">
-          Analytics &amp; breakdown
-        </h2>
-        <p className="text-sm font-medium text-text-muted">
-          The pipeline by type, registration year, hub and category
-        </p>
+      <div className="flex flex-wrap items-end justify-between gap-s3">
+        <div>
+          <h2 id="analytics-breakdown-heading" className="font-display text-h1 font-extrabold tracking-tight text-text">
+            Analytics &amp; breakdown
+          </h2>
+          <p className="text-sm font-medium text-text-muted">
+            The pipeline by type, registration year, hub and category
+          </p>
+        </div>
+        {/* Owner ask 2026-10-22: the same hub / country filter as the header,
+            here too, so the charts can be re-cut without scrolling up. It sets
+            the one page-wide filter (`useHubFilter`); the page keeps its
+            scroll position while the new figures load. */}
+        <HubFilterSelect className="rounded-pill border-[1.5px] border-dash-hairline bg-surface p-0.5 shadow-dashCard" />
       </div>
 
       <div className="grid gap-gutter lg:grid-cols-2">

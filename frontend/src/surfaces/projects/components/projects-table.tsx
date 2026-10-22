@@ -12,7 +12,7 @@ import { CharterCell } from '@/components/shared/charter-fields';
 import { CHARTER_FIELDS } from '@/components/shared/charter-fields-meta';
 import { NoLeaderLabel } from '@/components/shared/no-leader-label';
 import { ProjectStatusBadge } from '@/components/shared/project-status-badge';
-import { VipBadge } from '@/components/shared/vip-badge';
+import { VipToggle } from '@/components/shared/vip-toggle';
 import { categoricalRankSoftBg, categoricalRankText, categoryRank } from '@/lib/categorical-palette';
 import { formatInteger, formatPlanWeek } from '@/lib/format';
 import { cn } from '@/lib/utils';
@@ -20,11 +20,14 @@ import { PROJECT_TYPE_LABELS } from '@/types/enums';
 
 import type { ProjectFilterRow } from '@/surfaces/dashboard/api/types';
 
+import { isVipProject } from '../lib/vip-order';
+
 /**
  * P22-T01: the Projects page list view. Row-virtualized (TanStack Virtual,
  * CLAUDE.md: any list over 100 rows; 236 projects is the baseline). Every cell
  * prints one served field of `GET /dashboard/projects` (I9). `#` is the row's
- * position in the served order, a display ordinal only.
+ * position in the shown order (VIP first, ADR 0040), a display ordinal only.
+ * The star before the name is the VIP pin (`VipToggle`).
  *
  * Its own small table rather than the Dashboard's `VirtualDataTable` because
  * the merged page needs two things that one does not do: the "Edit
@@ -43,6 +46,8 @@ export interface ProjectsTableProps {
   maxHeight?: number;
   /** P24-T02: show the optional read-only workbook columns (ADR 0035). */
   showCharter?: boolean;
+  /** ADR 0040: show the VIP pin toggle (Registration write; the server still decides). */
+  canPinVip?: boolean;
 }
 
 interface Column {
@@ -75,6 +80,7 @@ export function ProjectsTable({
   highlightLabel = 'Saved',
   maxHeight = 640,
   showCharter = false,
+  canPinVip = false,
 }: ProjectsTableProps): React.JSX.Element {
   const scrollRef = React.useRef<HTMLDivElement>(null);
 
@@ -99,6 +105,12 @@ export function ProjectsTable({
           const rank = row.category ? categoryRank(row.category) : 9;
           return (
             <span className="flex min-w-0 items-center gap-2">
+              <VipToggle
+                projectId={row.project_id}
+                projectName={row.project_name}
+                isVip={isVipProject(row)}
+                canPin={canPinVip}
+              />
               <EntityCell
                 icon={FolderKanban}
                 iconClassName={cn(categoricalRankSoftBg(rank), categoricalRankText(rank))}
@@ -107,7 +119,6 @@ export function ProjectsTable({
                 to={`/projects/${row.project_id}`}
                 subtitle={row.external_code ?? undefined}
               />
-              {row.is_vip ? <VipBadge /> : null}
               {row.project_id === highlightId ? (
                 <Badge tone="primary" data-testid="row-highlight-badge">
                   {highlightLabel}
@@ -266,7 +277,7 @@ export function ProjectsTable({
         ),
       },
     ],
-    [canEdit, onEdit, highlightId, highlightLabel, showCharter],
+    [canEdit, onEdit, highlightId, highlightLabel, showCharter, canPinVip],
   );
 
   const gridTemplate = columns.map((c) => c.width).join(' ');

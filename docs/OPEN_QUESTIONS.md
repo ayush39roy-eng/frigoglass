@@ -835,3 +835,125 @@ made. Should these steps book nobody (elapsed time only) or a different resource
 - **#42 (b).** The project file has a `Spillover '25` column. The Dashboard pipeline now shows
   Spillover 17 / New 236 / Unregistered 0 (see #62.2). The client's 76 spillover projects still
   cannot be reproduced from the 2026 rows alone; see #60.
+
+### 63. Executive view: data the mock-up shows that the system does not have *(2026-10-22, P28, ADR 0039, non-blocking)*
+
+The helicopter-view mock-up includes figures with no source in the RPD application today:
+1. **CAPEX utilization** (72 % in the mock-up) — no CAPEX field exists on a project or hub. Should
+   CAPEX (budget + spent) be registered per project, and who maintains it?
+2. **Product roadmap** (Q1: S-60 Upgrade … Q4: Smart Cooler) — is this a curated list someone types
+   in, or derived from project target end dates?
+3. **Executive alerts** (BEE Testing Delay, Supplier Qualification, …) — curated by whom? Today the
+   Executive view derives risks from served data only (blocked projects, overdue check-ins, VIP
+   projects not completing within the year).
+4. **Testing & validation figures** (BEE tests 14, field trials 28, open issues 7, success rate
+   94 %) — test outcomes/issues are not recorded in the system. Lab *booked %* is shown instead.
+5. **Hiring status** (2 open positions) — not in the system.
+
+Until answered, the Executive view shows only served figures (ADR 0039 §5).
+
+## Added 2026-10-22 — from the data reconciliation (`docs/DATA_RECONCILIATION_2026.md`, ADR 0041 draft, ADR 0042)
+
+Only questions the data cannot answer. Each states what the app assumes until answered.
+
+### 64. Who are the project leaders who are on no capacity roster, and who leads the leaderless OEM rows? *(2026-10-22, reconciliation, non-blocking)*
+
+The project sheet names Dipak (52 projects: 28 R&D-India, 24 PD-India), Theoni (12: OEM-HCK 5,
+R&D-Greece 4, OEM-Seitek 3), Antonis (1), Sailesh (1) and — once the flagged 2024/25 rows are
+imported — Vaggelis (1 A+ project, R&D-Greece, requested 2025). None is in `RPD Capacity!I42:T50`.
+1. Are they design engineers whose weeks should count as supply (then: hub and FTE), or leads only?
+   Dipak alone carries 112 design weeks of R&D-India work against a counted roster of 2.0 FTE.
+2. Is Theoni the Greek R&D OEM coordinator? Should she count in Greece's 2.8 FTE?
+3. Who leads the 20 OEM rows with a blank leader (OEM-HCK 9, OEM-Seitek 11)? ADR 0042 §7 assigns a
+   provisional Greek roster engineer.
+
+**Assuming until answered:** ADR 0042 §5 — Theoni, Dipak, Antonis, Sailesh (and Vaggelis, added by
+the reconciliation) stay leaders at 1.0 FTE with `counts_in_capacity = false`; Theoni's hub is
+R&D-Greece.
+
+### 65. Rishi 1.0 or 0.5 FTE, Atul 0.5 or 0? *(2026-10-22, reconciliation, non-blocking)*
+
+The formula workbook (2026-09-15, `RPD Capacity!J42`, `J48`) says Rishi 1, Atul 0.5. The older
+`data.xlsx` behind the client's previous app says Rishi 0.5 ("PLM and other miscellaneous
+activities") and Atul 0 ("Plant support & Field issues"). The difference is 1.0 FTE = 44 man-weeks
+of PD-India supply. **Assuming:** the later workbook (1.0 / 0.5).
+
+### 66. Elena Micu and Marian *(2026-10-22, reconciliation, non-blocking)*
+
+Both lead PD-Romania projects (15 and 2) and appear in the older app's `RESOURCE REF` as PD-Romania
+engineers, but not in the formula workbook's roster (Σ Romania 3.75 FTE). Are they design engineers
+and at what FTE? With them counted Romania's capacity is 253.00 man-weeks; without, 165.00.
+**Assuming:** counted at 1.0 each (ADR 0042 §5), flagged "not in capacity roster — confirm".
+
+### 67. Which per-project effort figure is authoritative, and what do blank cells mean? *(2026-10-22, reconciliation, non-blocking)*
+
+`Process Design Man Week` (column 16) is typed per project: India enters 4 per B and 3 per C (the
+`Final RPD` conversion table), Romania enters 20 per B and 15 per C, Greece 20–30 per A/A+. The
+lead-time table gives 8/4 (your R column) and the app's step kinds 10/6. 36 of the 300 rows in the
+full-year scope have no figure (PD-India 18, PD-Romania 17 — all of Romania's unflagged 2026 rows,
+S.No 596 block — OEM-HCK 1).
+1. Is column 16 the figure the plan should book and the Capacity page should sum?
+2. For a blank cell: the category table (A 18 / B 10 / C 6, Romania +150 wk) or the hub's own
+   convention (Romania B 20 / C 15, +291 wk)? Should Romania's convention be a per-hub default?
+3. Same for `Lab Weeks- Process Derived` (column 21): 50 open rows say "Certification Testing
+   Required = Yes" with no lab weeks (28 of them R&D-India BEE-star-labelling projects).
+
+**Assuming:** column 16/21 drive the schedule and the load (ADR 0041); blank → category table.
+
+### 68. The `RPD Capacity` pivot is stale *(2026-10-22, reconciliation, non-blocking)*
+
+The pivot in the formula workbook was last refreshed on 2026-06-29 from a 595-row copy of the
+project sheet that the file no longer contains. Since then 23 flagged rows moved from PD-India to
+R&D-India and 5 more were added there, so the pivot shows PD-India 207 projects / 794 design weeks
+and R&D-India 2 / 38 where the live sheet says 181 / 690 and 30 / 150. Please confirm the live
+`2024-25-26 Projects` sheet is the reference and refresh the pivot; the app reproduces the live
+figures (`docs/DATA_RECONCILIATION_2026.md` §1.1).
+
+### 69. `RPD Capacity!E7` and `E9` sum the wrong field *(2026-10-22, reconciliation, non-blocking)*
+
+`E7` (Greece lab load) sums "Process Design Man Week" (65) instead of lab weeks (4); `E9` (Romania
+lab load) sums "Actual Design Man Week" (413) instead of lab weeks (854 all rows / 560 cert = Yes).
+Confirm these are copy-paste errors. **Assuming:** yes; the app sums lab weeks.
+
+### 70. Lab weeks and the "Certification Testing Required" flag *(2026-10-22, reconciliation, non-blocking)*
+
+Your pivot sums `Lab Weeks- Process Derived` over every flagged row; the flag does not filter it
+(and "Count of Certification Testing Required" counts Yes and No cells). The app skips a project's
+lab steps when the flag is not Yes. 13 open rows carry lab weeks with the flag blank or No (PD-India
+C rows at 2 wk, one PD-Romania B row at 70 wk). What does the flag govern — certification only,
+with POC/other testing still booked? **Assuming:** a project with typed lab weeks needs the lab
+(ADR 0041 import rule).
+
+### 71. Romania's platforms and India CH-4 *(2026-10-22, reconciliation, non-blocking)*
+
+`RPD Capacity!N66:N69` gives Romania 2/2/2/2 platforms; `V89:V92` gives 1/4/2/1 (both Σ 8; the
+capacity uses 1/4/2/1). India CH-4: the formula workbook says "only for reliability /
+industrialization — non-calibrated", the older `Lab Capacity` sheet says "POC & Industrialization".
+May CH-4 run POC? Which Romania split is right? **Assuming:** 1/4/2/1; CH-4 runs POC (PDD-F) only.
+
+### 72. Full-year scope: unflagged 2026 rows, On Hold in the remaining year *(2026-10-22, reconciliation, non-blocking)*
+
+68 rows requested in 2026 are not flagged for capacity (29 Cancelled, 17 Commercialized, 15 On
+Hold, 7 open; 67 design weeks). Should they be flagged? And does the remaining-year load include On
+Hold projects? **Assuming:** full-year load = every imported non-cancelled project (adds those 67
+weeks); remaining-year load = open statuses only, On Hold excluded.
+
+### 73. Column 55 "Status/2025/2026 Spillover" *(2026-10-22, reconciliation, non-blocking)*
+
+Values R-2026 (114), D-2026 (20), I-2025 (18), D-2025 (13), Yes (13), POC (4), I-2026 (2), CERT (2)
+are undocumented. What do they mean, and how do they relate to `Spillover '25` (Yes/Y on 30 rows,
+17 of them requested in 2026)? **Assuming:** ignored; carry-over is the request year < 2026.
+
+### 74. `Development Step` on Industrialization and In Que rows *(2026-10-22, reconciliation, non-blocking)*
+
+24 Industrialization rows carry a step before or at certification (PDD-B…PDD-J) and 8 In Que rows
+carry PDD-A/F/H/J. Is the column the project's current step regardless of status? **Assuming:**
+yes for Industrialization and Development; In Que projects have not started.
+
+### 75. Duplicate rows and codes *(2026-10-22, reconciliation, non-blocking)*
+
+S.No 596 is used on 17 PD-Romania rows (599–622), 392 and 399 twice; PD code `26-00412` and RM code
+`26ROM005` appear twice; four names appear twice ("Super 550 development in C class", "Max-1200
+front grid fixing improvement for Lidl", "Reed switch ease as alternative to AIN tech. for 1m
+cable", "SFC-700 HC @ 60Hz …"). Are these distinct projects? **Assuming:** yes; the app generates
+unique codes.

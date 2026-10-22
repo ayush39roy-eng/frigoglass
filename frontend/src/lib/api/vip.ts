@@ -167,6 +167,8 @@ export interface VipBoardArea {
   hubs: HubName[];
   item_count: number;
   highlighted_count: number;
+  /** ADR 0040: projects pinned VIP (manual `is_vip`) in the area, visible to the caller. */
+  vip_project_count: number;
   high_risk_count: number;
   linked_project_count: number;
   /** OQ #39: yellow highlight = VIP. The tile lists these ("2–3 VIP per hub"). */
@@ -258,9 +260,9 @@ function runVipWrite(write: VipItemWrite): Promise<unknown> {
 }
 
 /**
- * Every VIP item write (`MATRIX` WRITE). A link changes `projects.is_vip`, so
- * the views that print the VIP badge refetch too. Nothing recalculates
- * (ADR 0027 §5).
+ * Every VIP item write (`MATRIX` WRITE). Since ADR 0040 a link no longer changes
+ * `projects.is_vip` (only `PUT /projects/{id}/vip` does); the board views refetch.
+ * Nothing recalculates (ADR 0027 §5).
  */
 export function useVipItemWrite() {
   const queryClient = useQueryClient();
@@ -272,6 +274,25 @@ export function useVipItemWrite() {
         keys.push(['priority-board'], ['gantt'], ['dashboard', 'projects'], ['projects']);
       }
       for (const key of keys) void queryClient.invalidateQueries({ queryKey: key });
+    },
+  });
+}
+
+// ---------------------------------------------------------------------------
+// `PUT /projects/{id}/vip` (owner ask 2026-10-22: make a project VIP from the
+// Matrix). The server authorises it (Project Registration write, hub admin
+// grant) and audits it; on success every reader of `is_vip` is re-read.
+// ---------------------------------------------------------------------------
+
+export function useSetProjectVip() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ projectId, isVip }: { projectId: Id; isVip: boolean }) =>
+      apiSend<VipPinResponse>('PUT', `/projects/${projectId}/vip`, { is_vip: isVip } satisfies VipPinRequest),
+    onSuccess: () => {
+      for (const key of ['priority-matrix', 'priority-board', 'vip-board', 'vip-projects', 'dashboard', 'projects', 'gantt']) {
+        void queryClient.invalidateQueries({ queryKey: [key] });
+      }
     },
   });
 }

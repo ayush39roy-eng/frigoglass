@@ -8,14 +8,17 @@ import { ApiError } from '@/lib/api/client';
 const hooks = {
   useScenarioVersions: vi.fn(),
   useScenarioVersionDetail: vi.fn(),
+  useScoringRubric: vi.fn(),
 };
 vi.mock('../hooks/use-matrix', () => ({
   useScenarioVersions: (args: unknown) => hooks.useScenarioVersions(args),
   useScenarioVersionDetail: (version: number | null) => hooks.useScenarioVersionDetail(version),
+  useScoringRubric: () => hooks.useScoringRubric(),
 }));
 
 import { VersionHistoryDialog } from './version-history-panel';
 import type { ScenarioApplyRunDetail, ScenarioApplyRunSummary } from '../api/types';
+import { FOURTEEN_TEST_DIMENSIONS, testRubric } from '../test-fixtures';
 
 const pending = { data: undefined, isPending: true, isError: false, error: null, refetch: vi.fn() };
 function ready<T>(data: T) {
@@ -100,6 +103,8 @@ beforeEach(() => {
   vi.clearAllMocks();
   hooks.useScenarioVersions.mockReturnValue(pending);
   hooks.useScenarioVersionDetail.mockReturnValue(pending);
+  // P26: dimension labels come from the served rubric (every dimension, active or not).
+  hooks.useScoringRubric.mockReturnValue(ready(testRubric({}, FOURTEEN_TEST_DIMENSIONS)));
 });
 
 async function openDialog() {
@@ -189,6 +194,28 @@ describe('VersionHistoryDialog', () => {
     expect(changes[0]!.textContent).toContain('Hard gates: none → Active safety non-compliance');
     expect(within(changes[1]!).getByText('New score')).toBeInTheDocument();
     expect(changes[1]!.textContent).toContain('Strategic Project: — → 4');
+  });
+
+  it('P26: reads `scores` map snapshots (any dimension, null = not scored), labelled from the served rubric', async () => {
+    hooks.useScenarioVersions.mockReturnValue(ready(runs));
+    hooks.useScenarioVersionDetail.mockReturnValue(
+      ready({
+        ...detail,
+        changes: [
+          {
+            id: 'c3', entity_type: 'priority_score', entity_id: 's1', project_id: 'p1', hub_id: 'h1',
+            before_state: { id: 's1', project_id: 'p1', scores: { strategic_project: 3, sustainability_esg: null }, rubric_version: 2, hard_gates: [] },
+            after_state: { id: 's1', project_id: 'p1', scores: { strategic_project: 3, sustainability_esg: 4 }, rubric_version: 2, hard_gates: [] },
+          },
+        ],
+      }),
+    );
+    const user = await openDialog();
+    await user.click(within(screen.getAllByTestId('version-history-row')[0]!).getByRole('button', { name: 'View diff' }));
+    const change = screen.getByTestId('version-detail-change');
+    expect(change.textContent).toContain('Sustainability & ESG: — → 4');
+    expect(change.textContent).not.toContain('Strategic Project');
+    expect(change.textContent).not.toContain('rubric_version');
   });
 
   it('the back button returns from a version detail to the list', async () => {

@@ -4,6 +4,7 @@ import { LayoutGrid, Star } from 'lucide-react';
 import { CountryFlag } from '@/components/shared/hub-filter/country-flag';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { ImpactLogo } from '@/components/shared/impact-logo';
 import { Skeleton } from '@/components/ui/skeleton';
 import { apiErrorMessage } from '@/lib/api/error-messages';
 import { useVipBoard, type VipArea, type VipBoardArea } from '@/lib/api/vip';
@@ -45,7 +46,7 @@ export function VipProjectsCard({ fill = false }: { fill?: boolean } = {}): Reac
       data-testid="vip-projects-card"
       className={fill ? 'xl:absolute xl:inset-0 xl:flex xl:flex-col xl:overflow-hidden' : undefined}
     >
-      <CardHeader className="px-s3 pb-1.5 pt-s2">
+      <CardHeader className="flex-row items-center justify-between gap-2 px-s3 pb-1.5 pt-s2">
         <div>
           <CardTitle className="flex items-center gap-2 text-base">
             <Star className="size-4 text-text-muted" aria-hidden="true" />
@@ -53,6 +54,7 @@ export function VipProjectsCard({ fill = false }: { fill?: boolean } = {}): Reac
           </CardTitle>
           <CardDescription className="sr-only">The client's VIP list per country.</CardDescription>
         </div>
+        <ImpactLogo size="sm" tagline={false} />
       </CardHeader>
       <CardContent className={cn('px-s3 pb-s2 pt-0', fill && 'xl:flex xl:min-h-0 xl:flex-1 xl:flex-col')}>
         {query.isPending ? (
@@ -103,7 +105,8 @@ function Count({
   label: string;
   /** Full wording when `label` is shortened for the slim column. */
   title?: string;
-  value: number;
+  /** Null: not served by this API version (shown as "–"). */
+  value: number | null;
   testId: string;
   alarm?: boolean;
 }) {
@@ -114,8 +117,8 @@ function Count({
         {title ? <span className="sr-only">{title}</span> : null}
         <span aria-hidden={title ? true : undefined}>{label}</span>
       </dt>
-      <dd className={alarm && value > 0 ? 'order-1 font-bold tabular-nums text-danger' : 'order-1 font-bold tabular-nums text-text'} data-numeric="">
-        {formatInteger(value)}
+      <dd className={alarm && value !== null && value > 0 ? 'order-1 font-bold tabular-nums text-danger' : 'order-1 font-bold tabular-nums text-text'} data-numeric="">
+        {value === null ? '–' : formatInteger(value)}
       </dd>
     </div>
   );
@@ -144,7 +147,8 @@ function AreaTile({ area, onViewAll }: { area: VipBoardArea; onViewAll: () => vo
         </h3>
         <p className="sr-only">{hubs}</p>
         <dl className="flex flex-wrap gap-x-1.5 text-2xs">
-          <Count label="VIP" value={area.highlighted_count} testId="vip-count-highlighted" />
+          {/* ADR 0040: "VIP" counts pinned projects, not highlighted slide items. */}
+          <Count label="VIP" value={(area as Partial<typeof area>).vip_project_count ?? null} testId="vip-count-highlighted" />
           <Count label="risk" title="High risk" value={area.high_risk_count} testId="vip-count-high-risk" alarm />
           <Count label="linked" title="Linked projects" value={area.linked_project_count} testId="vip-count-linked" />
         </dl>

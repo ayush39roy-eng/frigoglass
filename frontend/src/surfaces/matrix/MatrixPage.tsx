@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { ArrowUpFromLine, RotateCcw, TableProperties } from 'lucide-react';
+import { ArrowUpFromLine, RotateCcw, Star, TableProperties } from 'lucide-react';
 import { useSearchParams } from 'react-router-dom';
 
 import { PageHeader } from '@/components/layout/page-header';
@@ -31,7 +31,6 @@ import { ChipFilter, ColumnFilterInput } from './components/matrix-toolbar';
 import { MatrixCurrencyControl } from './components/matrix-currency-control';
 import { MatrixViewPanel } from './components/matrix-view-panel';
 import { ScoreChartsRow } from './components/score-charts';
-import { CapacityFillPanel } from './components/capacity-fill-panel';
 import { CompareBar, CompareDialog } from './components/compare-dialog';
 import {
   CATEGORY_CHIPS,
@@ -48,7 +47,7 @@ import { rowBand } from './lib/row-scores';
 import { useGridMaxHeight, useSpaceBelow, useStuck } from './lib/use-stuck';
 import { NARROW_QUERY, useMediaQuery } from './lib/use-media-query';
 import { MatrixTable } from './components/matrix-table';
-import { PortfolioSummaryPanel } from './components/portfolio-summary-panel';
+import { isVipRow } from './lib/vip-row';
 import { ScenarioModeToggle, ScenarioPendingPanel } from './components/scenario-panel';
 import { FetchedScoringModelProvider, ScoringTotalLine } from './scoring-model';
 import { ScoringRubricPanel } from './components/scoring-rubric-panel';
@@ -57,7 +56,6 @@ import { ScoreEditDialog } from './components/score-edit-dialog';
 import { VersionHistoryDialog } from './components/version-history-panel';
 import {
   useMatrixCurrencies,
-  usePriorityCapacityFill,
   usePriorityDistribution,
   usePriorityMatrix,
   usePrioritySummary,
@@ -75,8 +73,9 @@ const SEARCH_MAX_LENGTH = 100;
 function narrowInView(rows: PriorityMatrixRow[], view: MatrixViewState): PriorityMatrixRow[] {
   const hub = view.hubText.trim().toLowerCase();
   const leader = view.leaderText.trim().toLowerCase();
-  if (hub === '' && leader === '' && view.band === null && !view.capacityFill) return rows;
+  if (hub === '' && leader === '' && view.band === null && !view.capacityFill && !view.vipOnly) return rows;
   return rows.filter((r) => {
+    if (view.vipOnly && !isVipRow(r)) return false;
     if (view.band !== null && rowBand(r) !== view.band) return false;
     if (view.capacityFill && r.capacity_fill !== true) return false;
     if (hub !== '' && !r.hub.toLowerCase().includes(hub)) return false;
@@ -204,7 +203,6 @@ function MatrixSurface(): React.JSX.Element {
   const matrixQuery = usePriorityMatrix({ currency, ...serverFilters });
   const distributionQuery = usePriorityDistribution(serverFilters);
   // P25: per-hub P1 capacity fill (global hub / country filter only; the fill ignores row filters).
-  const capacityFillQuery = usePriorityCapacityFill(hubId, region);
 
   // P21 §1: a currency whose rate was removed meanwhile answers 422
   // CURRENCY_NOT_CONFIGURED. Fall back to EUR, say why, and re-read the list.
@@ -295,6 +293,7 @@ function MatrixSurface(): React.JSX.Element {
     view.status !== null ||
     view.band !== null ||
     view.capacityFill ||
+    view.vipOnly ||
     debouncedQ !== '' ||
     view.hubText.trim() !== '' ||
     view.leaderText.trim() !== '';
@@ -325,6 +324,8 @@ function MatrixSurface(): React.JSX.Element {
   // Session table first (ADR 0010), server 403 second.
   const permission = usePermission('matrix');
   const canEdit = permission.write && !writeForbidden;
+  // `PUT /projects/{id}/vip` is a Project Registration write; the server still decides per project.
+  const canPinVip = usePermission('project_registration').write;
 
   const handleEdit = React.useCallback((row: PriorityMatrixRow) => {
     setEditRow(row);
@@ -356,6 +357,7 @@ function MatrixSurface(): React.JSX.Element {
           liveValues: live,
           liveHasScore: editRow.has_score,
           next: { scores: { ...prior, ...body.scores }, hard_gates: body.hard_gates },
+          labels: Object.fromEntries(editRow.dimension_scores.map((d) => [d.key, d.label])),
         });
         return;
       }
@@ -377,12 +379,9 @@ function MatrixSurface(): React.JSX.Element {
       <PageHeader
         title={title}
         description={description}
-        actions={
-          <>
-            <CountrySegmented />
-            <HubFilterChip />
-          </>
-        }
+        // The country / hub selector lives in the View panel's filter row
+        // (owner ask 2026-10-22: no duplicate in the header).
+        actions={<HubFilterChip />}
       />
 
       <Tabs value={tab} onValueChange={setTab}>
@@ -408,7 +407,7 @@ function MatrixSurface(): React.JSX.Element {
                     (Search, Leader, Cards | List) is portalled on top of it, so the panel keeps
                     its height and the space is used. */}
                 <div className="grid [&>*]:[grid-area:1/1]" data-testid="matrix-controls-stack">
-                <div className={cn('flex flex-wrap items-end gap-4', onBoard && !narrow && 'invisible')} data-grid-only={onBoard && !narrow ? 'hidden' : undefined}>
+                <div className={cn('flex flex-wrap items-center gap-4', onBoard && !narrow && 'invisible')} data-grid-only={onBoard && !narrow ? 'hidden' : undefined}>
                 {onBoard && narrow ? null : (
                 <MatrixCurrencyControl
                   value={currency}
@@ -429,7 +428,7 @@ function MatrixSurface(): React.JSX.Element {
                 </div>
                 <ScenarioModeToggle disabled={!canEdit} />
                 <VersionHistoryDialog projectLookup={projectLookup} />
-                <div className="ml-auto flex flex-wrap items-end gap-2">
+                <div className="ml-auto flex flex-wrap items-center gap-2">
                   <GridOnly onBoard={onBoard} narrow={narrow} compact={compact}>
                   <Button
                     variant={view.detailed ? 'primary' : 'secondary'}
@@ -487,6 +486,17 @@ function MatrixSurface(): React.JSX.Element {
                     <ArrowUpFromLine aria-hidden="true" />
                     Capacity fill
                   </Button>
+                  <Button
+                    variant={view.vipOnly ? 'primary' : 'secondary'}
+                    size="sm"
+                    aria-pressed={view.vipOnly}
+                    onClick={() => setViewField('vipOnly', !view.vipOnly)}
+                    title="Show only VIP projects"
+                    data-testid="vip-filter"
+                  >
+                    <Star aria-hidden="true" className={view.vipOnly ? 'fill-current' : undefined} />
+                    VIP
+                  </Button>
                 </GridOnly>
               </>
             }
@@ -504,16 +514,11 @@ function MatrixSurface(): React.JSX.Element {
           <ScenarioPendingPanel writeForbidden={writeForbidden || !permission.write} />
 
           <TabsContent value="grid" className="mt-0 flex flex-col gap-4">
+          {/* P26-T03: the rubric is read and edited (Admins, served `can_edit`) in this card only. */}
           <ScoringRubricPanel />
 
-          <SectionBoundary
-            query={summaryQuery}
-            title="Portfolio decision summary"
-            errorDescription="The portfolio scoring summary could not be loaded."
-          >
-            {(summary) => <PortfolioSummaryPanel summary={summary} />}
-          </SectionBoundary>
-
+          {/* Owner ask 2026-10-22: of the summary, histogram and capacity-fill
+              panels only the band distribution stays (it filters the grid). */}
           {distributionQuery.data ? (
             <ScoreChartsRow
               distribution={distributionQuery.data}
@@ -528,12 +533,6 @@ function MatrixSurface(): React.JSX.Element {
             </p>
           )}
 
-          <CapacityFillPanel
-            data={capacityFillQuery.data}
-            isPending={capacityFillQuery.isPending}
-            isError={capacityFillQuery.isError}
-          />
-
           <SectionBoundary
             query={matrixQuery}
             title="Scoring grid"
@@ -542,6 +541,8 @@ function MatrixSurface(): React.JSX.Element {
             {(served) => {
               const narrowed = narrowInView(served, view);
               const rows = [...narrowed].sort((a, b) => {
+                // VIP projects first (owner ask 2026-10-22), each group in rank order.
+                if (isVipRow(a) !== isVipRow(b)) return isVipRow(a) ? -1 : 1;
                 if (a.rank !== null && b.rank !== null) {
                   if (a.rank !== b.rank) return a.rank - b.rank;
                   return a.project_name.localeCompare(b.project_name);
@@ -580,6 +581,7 @@ function MatrixSurface(): React.JSX.Element {
                     <div className="flex flex-col gap-3">
                       {/* Kept while filtered, so the column filter inputs stay reachable. */}
                       <MatrixTable
+                        canPinVip={canPinVip}
                         rows={rows}
                         canEdit={canEdit}
                         selectedIds={selectedIds}

@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { FilterX, Plus, Search, SlidersHorizontal } from 'lucide-react';
+import { FilterX, Plus, Search, SlidersHorizontal, Star } from 'lucide-react';
 
 import { PageHeader } from '@/components/layout/page-header';
 import { Badge } from '@/components/ui/badge';
@@ -45,6 +45,7 @@ import { useEditDeepLink } from '@/surfaces/registration/hooks/use-edit-deep-lin
 
 import { ProjectsExportMenu, type ExportSource } from './components/projects-export-menu';
 import { ProjectsTable } from './components/projects-table';
+import { orderForDisplay } from './lib/vip-order';
 import type { RegistrationDrawerState, RegistrationSaved } from './components/registration-drawer';
 
 /**
@@ -63,6 +64,11 @@ import type { RegistrationDrawerState, RegistrationSaved } from './components/re
  *   with Registration write; the server still decides every write;
  * - one Export menu with both old exports.
  *
+ * - ADR 0040: a star before each name pins / unpins VIP
+ *   (`PUT /projects/{id}/vip`, Registration write; the server decides). VIP
+ *   projects are listed first, each group in the served order, and the "VIP"
+ *   toggle narrows the served rows to `is_vip` (a missing `is_vip` is false).
+ *
  * `/register` and `/register/:id` redirect here (`app/routes.tsx`);
  * `?edit=<id>` opens the drawer for that project (`use-edit-deep-link.ts`).
  */
@@ -70,8 +76,8 @@ import type { RegistrationDrawerState, RegistrationSaved } from './components/re
 const RegistrationDrawer = React.lazy(() => import('./components/registration-drawer'));
 
 /** Deferred like the Dashboard register: the cards embed "Ask the agent". */
-const ProjectCardGrid = React.lazy(async () => ({
-  default: (await import('@/surfaces/dashboard/components/project-card-grid')).ProjectCardGrid,
+const ProjectsCardGrid = React.lazy(async () => ({
+  default: (await import('./components/projects-card-grid')).ProjectsCardGrid,
 }));
 
 type View = 'list' | 'cards';
@@ -118,6 +124,8 @@ export default function ProjectsPage(): React.JSX.Element {
   const [view, setView] = React.useState<View>('list');
   /** P24-T02: the optional read-only workbook columns (ADR 0035). */
   const [showCharter, setShowCharter] = React.useState(false);
+  /** ADR 0040: show only VIP projects (narrows the served rows). */
+  const [vipOnly, setVipOnly] = React.useState(false);
   const debouncedSearch = useDebouncedValue(search.trim(), 300);
   const { hubId, region, setHubId } = useHubFilter();
   const me = useSessionStore((st) => st.me);
@@ -170,13 +178,14 @@ export default function ProjectsPage(): React.JSX.Element {
       .map((h) => ({ value: h.id, label: h.name }));
   }, [me, hubsQuery.data, region]);
 
-  const hasLocalFilter = debouncedSearch !== '' || Object.values(filters).some((v) => v !== ALL);
+  const hasLocalFilter = vipOnly || debouncedSearch !== '' || Object.values(filters).some((v) => v !== ALL);
   const isFiltered = hasLocalFilter || hubId !== null || region !== null;
 
   const set = (key: keyof Filters) => (next: string) => setFilters((prev) => ({ ...prev, [key]: next }));
   const clearLocal = (): void => {
     setFilters(EMPTY_FILTERS);
     setSearch('');
+    setVipOnly(false);
   };
 
   // ---- Drawer ------------------------------------------------------------
@@ -228,7 +237,10 @@ export default function ProjectsPage(): React.JSX.Element {
     return () => window.clearTimeout(t);
   }, [highlight]);
 
-  const rows = query.data?.rows;
+  const rows = React.useMemo(
+    () => (query.data ? orderForDisplay(query.data.rows, vipOnly) : undefined),
+    [query.data, vipOnly],
+  );
   const highlightVisible = highlight !== null && rows !== undefined && rows.some((r) => r.project_id === highlight.id);
 
   // ---- Export ------------------------------------------------------------
@@ -290,9 +302,11 @@ export default function ProjectsPage(): React.JSX.Element {
               <CountrySegmented />
             </div>
             <HubFilterChip />
-            {query.data ? (
+            {query.data && rows ? (
               <Badge tone="neutral" data-numeric="" data-testid="projects-total">
-                {formatInteger(query.data.total_count)} {query.data.total_count === 1 ? 'project' : 'projects'}
+                {vipOnly
+                  ? `${formatInteger(rows.length)} VIP of ${formatInteger(query.data.total_count)} projects`
+                  : `${formatInteger(query.data.total_count)} ${query.data.total_count === 1 ? 'project' : 'projects'}`}
               </Badge>
             ) : null}
             <Tabs value={view} onValueChange={(v) => setView(v as View)}>
@@ -417,6 +431,19 @@ export default function ProjectsPage(): React.JSX.Element {
               </Select>
             </div>
           </div>
+          <Button
+            type="button"
+            variant={vipOnly ? 'primary' : 'secondary'}
+            size="sm"
+            className="rounded-pill"
+            aria-pressed={vipOnly}
+            onClick={() => setVipOnly((v) => !v)}
+            title="Show only VIP projects"
+            data-testid="vip-filter"
+          >
+            <Star aria-hidden="true" className={vipOnly ? 'fill-current' : undefined} />
+            VIP
+          </Button>
           {view === 'list' ? <CharterColumnsToggle pressed={showCharter} onPressedChange={setShowCharter} /> : null}
           {hasLocalFilter ? (
             <Button type="button" variant="ghost" size="sm" onClick={clearLocal}>
@@ -466,7 +493,7 @@ export default function ProjectsPage(): React.JSX.Element {
           </div>
         ) : query.isError ? (
           <ErrorState description="The project list could not be loaded." onRetry={() => void query.refetch()} />
-        ) : query.data.rows.length === 0 ? (
+        ) : rows === undefined || rows.length === 0 ? (
           <EmptyState
             title={isFiltered ? 'No projects match these filters' : 'No projects'}
             description={
@@ -487,11 +514,12 @@ export default function ProjectsPage(): React.JSX.Element {
           />
         ) : view === 'cards' ? (
           <React.Suspense fallback={<PanelSkeleton height="h-[28rem]" />}>
-            <ProjectCardGrid rows={query.data.rows} />
+            <ProjectsCardGrid rows={rows} canPinVip={registration.write} />
           </React.Suspense>
         ) : (
           <ProjectsTable
-            rows={query.data.rows}
+            rows={rows}
+            canPinVip={registration.write}
             canEdit={canWrite}
             onEdit={handleEdit}
             highlightId={highlight?.id ?? null}

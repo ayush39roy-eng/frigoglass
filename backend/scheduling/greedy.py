@@ -36,6 +36,19 @@ stays the effort figure, so load (I6) is unchanged. Frozen projects are not
 stretched (their dates stay locked, I10). A leader at FTE <= 0 makes the
 project a `data_error` (see `workflow.analyse_project`).
 
+Leader and capacity hub (ADR 0042, P29): this walk never *chooses* an
+engineer — it books the project's assigned `leader_engineer_id` (DOMAIN_RULES
+"Booking rules": "the project's assigned leader must be free"), wherever that
+engineer's hub is; the only eligibility test on the leader is the category
+rule (`_cat_not_allowed`, a warning). A project whose leader is unset or does
+not resolve is `LEFT_OUT` with `no_leader` and books nothing (`_no_leader_outcome`;
+`prebook_anchored_steps` skips it) — unchanged by ADR 0042, whose seed assigns
+provisional leaders upstream. `ProjectInput.capacity_hub` (R&D-Greece for the
+OEM hubs) is the pool that engineer *selection* draws from — the what-if
+leader picker (`whatif._pick_leader`) and the service-side pickers — and the
+key of the capacity-hub load aggregate; workflow and lab region still follow
+`project.hub` (`_is_oem_hub`, `_lab_region_for_hub`).
+
 No DB access, no network access, no filesystem access, no randomness, no
 wall-clock dependence. Every collection this module iterates is explicitly
 sorted before iteration.
@@ -46,6 +59,7 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 
 import domain_constants as dc
+from scheduling import hubs
 from scheduling.types import (
     CATEGORY_RANK,
     OEM_CATEGORIES,
@@ -78,13 +92,15 @@ from scheduling.workflow import (
 
 
 def _is_oem_hub(hub: str) -> bool:
-    return hub in dc.OEM_HUBS
+    return hubs.is_oem_hub(hub)
 
 
 def _lab_region_for_hub(hub: str) -> str:
-    if hub not in dc.HUB_LAB_REGION:
-        raise ValueError(f"unknown hub {hub!r}; expected one of {sorted(dc.HUB_LAB_REGION)}")
-    return dc.HUB_LAB_REGION[hub]
+    # ADR 0041 §4 / R14: both spellings of a renamed hub are accepted
+    # (`scheduling.hubs`), so an old run's input snapshot still replays.
+    if hub not in hubs.HUB_LAB_REGION:
+        raise ValueError(f"unknown hub {hub!r}; expected one of {sorted(hubs.HUB_LAB_REGION)}")
+    return hubs.HUB_LAB_REGION[hub]
 
 
 def _cat_not_allowed(project: ProjectInput, leader: EngineerInput) -> bool:
@@ -101,14 +117,16 @@ def _cat_not_allowed(project: ProjectInput, leader: EngineerInput) -> bool:
     return project.category not in allowed
 
 
-def _sort_key(project: ProjectInput) -> tuple[int, int, int, int, str]:
-    """DOMAIN_RULES.md "Scheduling order": frozen desc, priority, status,
-    category (`A+ → A → B → C → A-OEM → B-OEM → C-OEM`), then an explicit
-    `project_id` tiebreak (P2-T01 decision: a pure function must not derive
-    determinism from caller ordering)."""
+def _sort_key(project: ProjectInput) -> tuple[int, int, int, int, int, str]:
+    """DOMAIN_RULES.md "Scheduling order": frozen desc, is_vip desc (ADR 0040),
+    priority, status, category (`A+ → A → B → C → A-OEM → B-OEM → C-OEM`), then
+    an explicit `project_id` tiebreak (P2-T01 decision: a pure function must not
+    derive determinism from caller ordering). With no VIP project the order is
+    exactly the pre-ADR-0040 one."""
 
     return (
         0 if project.frozen else 1,
+        0 if project.is_vip else 1,
         dc.PRIORITY_ORDER.index(project.priority),
         dc.SCHEDULABLE_STATUS_ORDER[project.status],
         CATEGORY_RANK.index(project.category),
@@ -251,7 +269,7 @@ def prepare_run(schedule_input: ScheduleInput) -> RunContext:
             project,
             workflows,
             lead_time_table,
-            hub_lab_region=dc.HUB_LAB_REGION,
+            hub_lab_region=hubs.HUB_LAB_REGION,
             priority_order=dc.PRIORITY_ORDER,
             horizon_weeks=schedule_input.horizon_weeks,
         )

@@ -5,6 +5,8 @@ extensions on `/dashboard/projects` and `/gantt`.
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 from sqlalchemy import func, select
 
@@ -48,6 +50,21 @@ def _cleanup():
     yield
     clear_current_principal_override()
     app.dependency_overrides.pop(get_db, None)
+
+
+@pytest.fixture(autouse=True)
+def _no_dispatch(monkeypatch):
+    """ADR 0040: a pin change now queues a greedy recalc (the priority-move
+    path); nothing reaches Celery or Redis here (`test_adr0040_vip_pin.py`
+    covers the dispatch itself)."""
+
+    import services.priority_move as priority_move
+    from workers.schedule_tasks import run_greedy_schedule
+
+    monkeypatch.setattr(
+        run_greedy_schedule, "delay", lambda *a, **k: SimpleNamespace(id="celery-task-test")
+    )
+    monkeypatch.setattr(priority_move, "publish_progress", lambda *a, **k: None)
 
 
 async def _scored(db_session, hub, name, priority, score=None, *, gates=None, **kw):

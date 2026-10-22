@@ -74,6 +74,7 @@ import domain_constants as dc
 from models.chamber import Chamber
 from models.engineer import Engineer
 from models.enums import ScheduleRunStatus, SolverType
+from models.hub import Hub
 from models.project import Project, workflow_id_for_hub
 from models.schedule import ScheduleRun, ScheduleRunProjectOutcome, ScheduleRunProjectStep
 from models.workflow import ProjectWorkflowStep, WorkflowLeadTime, WorkflowStepTemplate
@@ -229,6 +230,12 @@ async def build_schedule_input_from_db(
     project_rows = (
         (await db.execute(select(Project).options(selectinload(Project.hub)))).scalars().all()
     )
+    # ADR 0042 (P29): each project's capacity hub, whose engineers form its
+    # engineer pool (`ProjectInput.capacity_hub`). Read from `hubs`, not from
+    # the project's loaded hub, so a member hub's parent need not be loaded.
+    hub_name_by_id = {
+        h_id: name.value for h_id, name in (await db.execute(select(Hub.id, Hub.name))).all()
+    }
     engineer_rows = (
         (await db.execute(select(Engineer).options(selectinload(Engineer.hub)))).scalars().all()
     )
@@ -299,6 +306,12 @@ async def build_schedule_input_from_db(
                 workflow_id_for_hub(p.hub.is_oem),
                 template_workflow,
             ),
+            # ADR 0040: the manual VIP pin, sort key 2 of the scheduling order.
+            is_vip=p.is_vip,
+            # ADR 0042: OEM-HCK / OEM-Seltek -> R&D-Greece; else the hub itself.
+            capacity_hub=hub_name_by_id.get(
+                p.hub.capacity_hub_id or p.hub.id, p.hub.name.value
+            ),
         )
         for p in project_rows
     )
@@ -310,6 +323,9 @@ async def build_schedule_input_from_db(
             hub=e.hub.name.value,
             allowed_categories=tuple(c.value for c in (e.allowed_categories or ())),
             fte=float(e.fte),
+            # ADR 0042 §5 (P29-T06): not on the capacity roster = booked but
+            # never supply (the what-if engine sums counted engineers only).
+            counts_in_capacity=e.counts_in_capacity,
         )
         for e in engineer_rows
     )

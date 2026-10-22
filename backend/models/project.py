@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import uuid
+from collections.abc import Iterable
 from typing import TYPE_CHECKING
 
 from sqlalchemy import (
+    ARRAY,
     Boolean,
     CheckConstraint,
     Enum,
@@ -26,6 +28,7 @@ from models.enums import (
     ProjectPriority,
     ProjectStatus,
     ProjectType,
+    ScoringTag,
 )
 from models.hub import Hub
 from models.types import EncryptedNumeric, EncryptedString
@@ -62,6 +65,13 @@ def workflow_id_for_hub(hub_is_oem: bool) -> str:
     return dc.WORKFLOW_ID_FOR_OEM_HUB if hub_is_oem else dc.WORKFLOW_ID_FOR_NON_OEM_HUB
 
 
+def canonical_tags(tags: Iterable[ScoringTag | str] | None) -> list[ScoringTag]:
+    """ADR 0038: tags de-duplicated, in `ScoringTag` declaration order."""
+
+    present = {ScoringTag(t) for t in (tags or ())}
+    return [t for t in ScoringTag if t in present]
+
+
 class Project(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     """A single R&D/PD project moving through the 14-step PDD workflow.
 
@@ -92,6 +102,14 @@ class Project(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     hub_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("hubs.id"), nullable=False)
     leader_engineer_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("engineers.id"), nullable=True
+    )
+    #: ADR 0042 §7: the leader was assigned by the seed / migration
+    #: `p29a_capacity_hubs` (the least-loaded eligible engineer of the capacity
+    #: hub), not by a person. The UI badges it; the client is asked who should
+    #: lead (docs/OPEN_QUESTIONS.md #52). Cleared when a PATCH changes
+    #: `leader_engineer_id` (a person chose the leader).
+    leader_is_provisional: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false"
     )
 
     #: Nullable to allow ProjectStatus.DRAFT rows before Project Registration's
@@ -210,6 +228,25 @@ class Project(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     requesting_department: Mapped[str | None] = mapped_column(String(100), nullable=True)
     product_type: Mapped[str | None] = mapped_column(String(100), nullable=True)
 
+    # --- ADR 0038 (P27-T01): Registration "project nature" tags ----------
+    #: Zero or more `ScoringTag`s, stored in canonical (enum declaration)
+    #: order. No duplicates and no null elements (CHECK
+    #: `scoring_tags_distinct`, migration p27a). Setting a tag pre-fills the
+    #: mapped dimension's score with 5 (`services.scoring_tags`); the tags
+    #: are not a scheduler input and never touch `priority`.
+    scoring_tags: Mapped[list[ScoringTag]] = mapped_column(
+        ARRAY(
+            Enum(
+                ScoringTag,
+                name="project_scoring_tag",
+                values_callable=lambda enum_cls: [e.value for e in enum_cls],
+            )
+        ),
+        nullable=False,
+        default=list,
+        server_default="{}",
+    )
+
     # --- Encrypted financial fields (CLAUDE.md non-negotiable) ---
     customer_name: Mapped[str | None] = mapped_column(EncryptedString, nullable=True)
     tcogs_eur: Mapped[object | None] = mapped_column(EncryptedNumeric, nullable=True)
@@ -247,7 +284,16 @@ class Project(UUIDPrimaryKeyMixin, TimestampMixin, Base):
             "estimated_lab_weeks IS NULL OR estimated_lab_weeks >= 0",
             name="estimated_lab_weeks_non_negative",
         ),
+        CheckConstraint("rpd_scoring_tags_distinct(scoring_tags)", name="scoring_tags_distinct"),
     )
+
+    @property
+    def tag_dimension_keys(self) -> list[str]:
+        """ADR 0038: the rubric dimension keys backed by this project's
+        Registration tags, in canonical tag order (served so the UI can mark
+        those scores "from registration")."""
+
+        return [dc.SCORING_TAG_DIMENSION_KEY[t.value] for t in canonical_tags(self.scoring_tags)]
 
     def __repr__(self) -> str:  # pragma: no cover - debug convenience only
         # Never include financial fields here — __repr__ output can end up in

@@ -55,23 +55,12 @@ describe('matrix-api', () => {
   });
 
   it('PUTs the score body to /priorities/{id} without extra keys', async () => {
+    // P26: a `scores` map (active keys only; null clears) + hard gates.
     const body: PriorityScoreUpdateRequest = {
-      strategic_project: 3,
-      new_customer: 3,
-      new_options: 3,
-      regulatory_compliance: 3,
-      quality_improvements: 3,
-      rm_savings: 3,
-      total_rm_savings: 3,
-      gross_margins: 3,
-      profitability: 3,
-      annual_volume: 3,
-      three_year_volume: 3,
-      new_models: 3,
-      capex_investment: 3,
+      scores: { strategic_project: 3, sustainability_esg: 4, capex_investment: null },
       hard_gates: [],
     };
-    mockApiSend.mockResolvedValueOnce({ ...body, id: 's1', project_id: 'p1', weighted_score: 840, normalized_pct: 60, suggested_band: 'P2' });
+    mockApiSend.mockResolvedValueOnce({ id: 's1', project_id: 'p1', hard_gates: [], weighted_score: 840, normalized_pct: 60, suggested_band: 'P2', dimension_scores: [], missing_dimension_keys: [], rubric_version: 2 });
     await updatePriorityScore('p1', body);
     expect(mockApiSend).toHaveBeenCalledWith('PUT', '/priorities/p1', body);
   });
@@ -82,10 +71,7 @@ describe('matrix-api', () => {
       priority_scores: [
         {
           project_id: 'p1',
-          strategic_project: 5, new_customer: 3, new_options: 3, regulatory_compliance: 3,
-          quality_improvements: 3, rm_savings: 3, total_rm_savings: 3, gross_margins: 3,
-          profitability: 3, annual_volume: 3, three_year_volume: 3, new_models: 3,
-          capex_investment: 3, hard_gates: [],
+          scores: { strategic_project: 5, capex_investment: null }, hard_gates: [],
         },
       ],
     };
@@ -152,5 +138,20 @@ describe('matrix-api', () => {
       await fetchPriorityCompare(['a', 'b']);
       expect(mockApiGet).toHaveBeenCalledWith('/priorities/compare?project_id=a&project_id=b', {});
     });
+  });
+
+  it('P26: GET /scoring-rubric, GET /scoring-rubric/versions, POST preview and PUT go to their paths verbatim', async () => {
+    const { fetchScoringRubric, fetchScoringRubricVersions, previewScoringRubric, updateScoringRubric } = await import('./matrix-api');
+    mockApiGet.mockResolvedValue({});
+    mockApiSend.mockResolvedValue({});
+    await fetchScoringRubric();
+    expect(mockApiGet).toHaveBeenLastCalledWith('/scoring-rubric', {});
+    await fetchScoringRubricVersions();
+    expect(mockApiGet).toHaveBeenLastCalledWith('/scoring-rubric/versions', {});
+    const dims = [{ key: 'strategic_project', label: 'Strategic Project', pillar: 'Strategic Alignment', weight: 30, inverted: false, active: true }];
+    await previewScoringRubric({ dimensions: dims });
+    expect(mockApiSend).toHaveBeenLastCalledWith('POST', '/scoring-rubric/preview', { dimensions: dims });
+    await updateScoringRubric({ version: 4, reason: 'why', dimensions: dims });
+    expect(mockApiSend).toHaveBeenLastCalledWith('PUT', '/scoring-rubric', { version: 4, reason: 'why', dimensions: dims });
   });
 });

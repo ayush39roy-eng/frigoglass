@@ -13,3 +13,34 @@ services:
       - type: rewrite
         source: /*
         destination: /index.html
+    # P27 / S26-M1: security headers, based on deploy/nginx/default.conf (on-prem).
+    # - connect-src: 'self' + the API origin (= VITE_API_BASE_URL above; change both together).
+    # - script-src: no 'unsafe-inline'. The one inline script (index.html, theme before first
+    #   paint) is allowed by its SHA-256. If that script changes, update the hash
+    #   (backend/tests/test_p27_render_csp.py checks it against frontend/index.html).
+    # - style-src: 'unsafe-inline' is required. The bundle and Radix (scroll lock) inject <style>
+    #   elements at runtime, which a strict 'self' blocks (verified in a browser, P27); their
+    #   content is dynamic, so hashes cannot cover them. Scripts stay strict.
+    # - font-src data: for the @fontsource CSS's inline data: font; img-src data:/blob: for
+    #   inline SVG/data images and generated downloads.
+    # - frame-ancestors 'none' + X-Frame-Options DENY: never framed (nginx uses 'self'; the
+    #   hosted SPA has no same-origin framing need).
+    headers:
+      - path: /*
+        name: Content-Security-Policy
+        value: "default-src 'self'; script-src 'self' 'sha256-V0ZiTxQfDEJo9pOlp5hFZbHboxfD1edEal3o2vpOkMI='; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' https://frigoglass-hu6f.onrender.com; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; upgrade-insecure-requests"
+      - path: /*
+        name: X-Frame-Options
+        value: DENY
+      - path: /*
+        name: X-Content-Type-Options
+        value: nosniff
+      - path: /*
+        name: Referrer-Policy
+        value: strict-origin-when-cross-origin
+      - path: /*
+        name: Permissions-Policy
+        value: "accelerometer=(), autoplay=(), camera=(), display-capture=(), fullscreen=(self), geolocation=(), gyroscope=(), magnetometer=(), microphone=(), midi=(), payment=(), publickey-credentials-get=(), screen-wake-lock=(), usb=(), xr-spatial-tracking=()"
+      - path: /*
+        name: Cross-Origin-Opener-Policy
+        value: same-origin

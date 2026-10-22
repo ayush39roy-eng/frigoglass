@@ -1,5 +1,6 @@
 """Read-only reference data: `GET /hubs`, `GET /workflow-step-templates`,
-`GET /reference/categories?hub_id=` (P9-T03).
+`GET /reference/categories?hub_id=` (P9-T03), `GET /reference/project-types`
+(P29-T04).
 
 Both tables are seeded once (P1-T03) and are not user-editable in v1 — no
 CRUD here on purpose, just the two GETs every surface's dropdowns/labels need
@@ -15,13 +16,14 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+import domain_constants as dc
 from api.db import get_db
 from api.deps import get_current_principal
-from models.enums import ProjectCategory
+from models.enums import ProjectCategory, ProjectType
 from models.hub import Hub
 from models.project import category_allowed_for_hub
 from models.workflow import WorkflowStepTemplate
-from schemas.reference import HubRead, WorkflowStepTemplateRead
+from schemas.reference import HubRead, ProjectTypeRead, WorkflowStepTemplateRead
 
 #: P9-R02 (security S-07, carried from P3-T08 #5): any authenticated
 #: principal. No surface permission: every role needs these labels.
@@ -29,13 +31,27 @@ router = APIRouter(tags=["reference"], dependencies=[Depends(get_current_princip
 
 
 @router.get("/hubs", response_model=list[HubRead])
-async def list_hubs(db: AsyncSession = Depends(get_db)) -> list[Hub]:
+async def list_hubs(db: AsyncSession = Depends(get_db)) -> list[HubRead]:
     """List all six hubs. Any authenticated principal (P9-R02, S-07); no
     surface permission, since every role needs hub labels.
+
+    P29 (ADR 0042): each hub carries `capacity_hub_id` / `capacity_hub_name`
+    (R&D-Greece for OEM-HCK and OEM-Seltek, null otherwise).
     """
 
-    result = await db.execute(select(Hub).order_by(Hub.name))
-    return list(result.scalars().all())
+    hubs = list((await db.execute(select(Hub).order_by(Hub.name))).scalars().all())
+    names = {h.id: h.name for h in hubs}
+    return [
+        HubRead(
+            id=h.id,
+            name=h.name,
+            lab_region=h.lab_region,
+            is_oem=h.is_oem,
+            capacity_hub_id=h.capacity_hub_id,
+            capacity_hub_name=names.get(h.capacity_hub_id) if h.capacity_hub_id else None,
+        )
+        for h in hubs
+    ]
 
 
 @router.get("/workflow-step-templates", response_model=list[WorkflowStepTemplateRead])
@@ -70,3 +86,12 @@ async def list_categories_for_hub(
     if hub is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Unknown hub")
     return [c for c in ProjectCategory if category_allowed_for_hub(hub.is_oem, c)]
+
+
+@router.get("/reference/project-types", response_model=list[ProjectTypeRead])
+async def list_project_types() -> list[ProjectTypeRead]:
+    """P29-T04 (ADR 0038 amendment): every project type with its label, in
+    `ProjectType` order. `RC` is "Regulatory / Business Compliance" (the
+    client's `BC`). Any authenticated principal, like `GET /hubs`."""
+
+    return [ProjectTypeRead(code=t, label=dc.PROJECT_TYPE_LABELS[t.value]) for t in ProjectType]

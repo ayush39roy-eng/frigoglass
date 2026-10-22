@@ -145,7 +145,11 @@ _EXPORT_WITHHELD_FIELDS: frozenset[str] = frozenset()
 #: `dimension_scores` (the per-dimension list) is not exported as a nested
 #: cell; `build_matrix_sheets` flattens it to one column per active rubric
 #: dimension (ADR 0037).
-_EXPORT_NESTED_FIELDS: frozenset[str] = frozenset({"dimension_points", "dimension_scores"})
+#: ADR 0038: `tag_dimension_keys` is a UI hint derived from `scoring_tags`
+#: (which IS exported), so it is skipped too.
+_EXPORT_NESTED_FIELDS: frozenset[str] = frozenset(
+    {"dimension_points", "dimension_scores", "tag_dimension_keys"}
+)
 
 #: P25-T03 (ADR 0036): the Matrix export's header for `PriorityMatrixRow.
 #: suggested_band`, which is the promoted band (after the P1 capacity fill).
@@ -299,6 +303,13 @@ async def build_capacity_sheets(db: AsyncSession, principal: Principal) -> Expor
 
     result = await hub_load_vs_capacity(db=db, current_user=principal)
     headers, rows = rows_from_models(result.rows)
+    # P29 (ADR 0042): one readable cell for the capacity hub's members
+    # breakdown, e.g. "R&D-Greece 1 project(s) 10 wk; OEM-HCK 2 project(s) 6 wk".
+    for row in rows:
+        row["members"] = "; ".join(
+            f"{m['hub']} {m['project_count']} project(s) {m['design_load_weeks']} wk"
+            for m in row.get("members") or []
+        )
     return {"Capacity": (headers, rows)}
 
 

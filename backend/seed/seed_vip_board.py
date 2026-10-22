@@ -11,11 +11,9 @@ Idempotent:
   reported. "BEE star labelling" is the one prefix match, R&D-India only.
 
 Slide → area (ADR 0027 amendment, OQ #39): "OEM" → Greece, "Europe" →
-Romania, "India" → India. Yellow highlight = VIP: every linked project gets
-`is_vip` = "linked to a highlighted item" (`recompute_is_vip`, without audit
-rows: seeds and data migrations write none, by convention since P9-T01), so
-a re-run also clears the flag on projects linked only to plain items.
-Existing `is_vip` pins with no link are left as they are and counted.
+Romania, "India" → India. *(ADR 0040, 2026-10-22.)* Links are plain
+references and never set or clear `projects.is_vip`: the seed sets no VIP.
+The current number of manual pins is reported (`is_vip_pins`), untouched.
 
 Run: `uv run python -m seed.seed_vip_board` (needs `RPD_DATABASE_URL`).
 `seed_demo_data` also calls `seed_vip_board` for the client 2026 dataset.
@@ -45,7 +43,7 @@ from sqlalchemy.orm import selectinload  # noqa: E402
 from models.enums import HubName  # noqa: E402
 from models.project import Project  # noqa: E402
 from models.vip import VipArea, VipItem, VipPillar, VipStatusTag, vip_item_projects  # noqa: E402
-from services.vip_board import recompute_is_vip, vip_area_for_hub  # noqa: E402
+from services.vip_board import vip_area_for_hub  # noqa: E402
 
 BEE_PREFIX = "BEE star labelling"
 BEE_HUB = HubName.RD_INDIA
@@ -352,25 +350,20 @@ async def seed_vip_board(session: AsyncSession) -> dict[str, Any]:
                     created += child_created
                     await link(child, child_spec, area)
 
-    changed = await recompute_is_vip(session, linked_project_ids, None, audit=False)
     await session.flush()
 
-    all_linked = select(vip_item_projects.c.project_id)
-    unlinked_pins = await session.scalar(
-        select(func.count())
-        .select_from(Project)
-        .where(Project.is_vip.is_(True), Project.id.not_in(all_linked))
+    # ADR 0040: reported only; a link never changes `is_vip`.
+    pins = await session.scalar(
+        select(func.count()).select_from(Project).where(Project.is_vip.is_(True))
     ) or 0
     return {
         "items_in_seed": seed_item_count(),
         "items_created": created,
         "links_added": links_added,
         "linked_projects": len(linked_project_ids),
-        "is_vip_set": len(changed["pinned"]),
-        "is_vip_cleared": len(changed["unpinned"]),
         "resolved": resolved,
         "unresolved": unresolved,
-        "unlinked_is_vip_pins": unlinked_pins,
+        "is_vip_pins": pins,
     }
 
 

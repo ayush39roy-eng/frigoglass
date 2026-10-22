@@ -76,7 +76,13 @@ async def test_engineer_sums_equal_hub_design_load(db_session):
     # hub table because 6 projects are led by an engineer from a different hub (the
     # leader is the booked resource, DOMAIN_RULES). By PROJECT hub every figure
     # reconciles (the portfolio total above); by engineer hub we only assert that.
-    assert by_hub["R&D-Greece"] == loads["R&D-Greece"]
+    # P29 (ADR 0042): the Greece capacity row also carries OEM-HCK / OEM-Seltek
+    # load, which the prototype seed books on PD-India / PD-Romania leaders
+    # (cross-capacity-hub leaders). R&D-Greece's OWN member load still
+    # reconciles with its engineers.
+    greece = next(r for r in cap["rows"] if r["hub"] == "R&D-Greece")
+    own = next(m for m in greece["members"] if m["own"])
+    assert by_hub["R&D-Greece"] == own["design_load_weeks"]
     assert by_hub["R&D-India"] == loads["R&D-India"]
 
 

@@ -11,6 +11,7 @@ import type {
   ProjectPriority,
   ProjectStatus,
   ProjectType,
+  ScoringTag,
 } from '@/types/enums';
 import type { Id } from '@/types/common';
 
@@ -215,9 +216,18 @@ export interface PriorityMatrixRow {
   missing_dimension_keys: DimensionKey[];
   /** P26: the rubric version the cached score was computed with. */
   rubric_version: number;
+  /** P27 (ADR 0038, API_CONTRACT_P27 §5): the project's Registration "project
+   *  nature" tags, canonical order. */
+  scoring_tags: ScoringTag[];
+  /** P27: dimension keys pre-filled by those tags. Mark the matching
+   *  `dimension_scores` entries "from registration" (still editable); a key not
+   *  in `dimension_scores` (inactive dimension) is ignored. */
+  tag_dimension_keys: DimensionKey[];
 
   is_new_model: boolean;
   is_rm_saving_project: boolean;
+  /** ADR 0027: the VIP pin (`projects.is_vip`). Absent from a pre-2026-10-22 API. */
+  is_vip: boolean;
 
   /** The currency these financial columns were converted to, server-side. */
   currency: CurrencyCode | MatrixCurrencyCode;
@@ -255,6 +265,12 @@ export interface HubP1Fill {
   /** Base load plus the promoted projects' weeks (= base when nothing is promoted). */
   filled_load_weeks: number;
   promoted_count: number;
+  /** P29 (ADR 0042, API_CONTRACT_P29 §4): member hubs in scope, by name, own hub
+   *  not listed (`["OEM-HCK","OEM-Seltek"]` on R&D-Greece, `[]` elsewhere). The
+   *  Greece walk covers their projects. */
+  members: HubName[];
+  /** P29: the request's `hub_id` when it is this capacity hub or a member, else null. */
+  selected_member: HubName | null;
 }
 
 /** `GET /priorities/capacity-fill` (P25). */

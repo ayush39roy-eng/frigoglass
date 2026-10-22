@@ -120,6 +120,32 @@ export const PROJECT_TYPE_LABELS: Record<ProjectType, string> = {
   IMP: 'Improvement',
 };
 
+/**
+ * P27 (ADR 0038, `docs/API_CONTRACT_P27.md` §1): Registration "project nature"
+ * tags, multi-select, in the server's canonical order (`backend/models/enums.py`
+ * `ScoringTag`). Independent of the single `type` above. Ticking one makes the
+ * server pre-fill its mapped dimension's score with 5; which dimension that is
+ * comes from the served `tag_dimension_keys`, never from a client-side map.
+ */
+export const SCORING_TAGS = [
+  'new_customer',
+  'strategic_project',
+  'new_options',
+  'regulatory_compliance',
+  'new_models',
+  'improvement',
+] as const;
+export type ScoringTag = (typeof SCORING_TAGS)[number];
+
+export const SCORING_TAG_LABELS: Record<ScoringTag, string> = {
+  new_customer: 'New Customer',
+  strategic_project: 'Strategic Project',
+  new_options: 'New Options',
+  regulatory_compliance: 'Regulatory / Business Compliance',
+  new_models: 'New Models',
+  improvement: 'Improvement',
+};
+
 // ADR 0007: `design` books the project leader, `lab` books a chamber, `elapsed`
 // books nothing but occupies calendar weeks on the critical path.
 export const WORKFLOW_STEP_KINDS = ['design', 'lab', 'elapsed'] as const;

@@ -20,9 +20,7 @@ const STOPPED = 'Not promoted: hub P1 design load would be 11.00 of 10.00 weeks'
 function row(overrides: Partial<PriorityMatrixRow> = {}): PriorityMatrixRow {
   return {
     project_id: 'p1', project_name: 'Cooler A', hub: 'R&D-Greece', category: 'A', type: 'NM', set_priority: 'P2',
-    has_score: true, strategic_project: 3, new_customer: 3, new_options: 3, regulatory_compliance: 3,
-    quality_improvements: 3, rm_savings: 3, total_rm_savings: 3, gross_margins: 3, profitability: 3,
-    annual_volume: 3, three_year_volume: 3, new_models: 3, capex_investment: 3, hard_gates: [],
+    has_score: true, hard_gates: [],
     weighted_score: 177, normalized_pct: 60, suggested_band: 'P2', is_new_model: false, is_rm_saving_project: false,
     currency: 'EUR', capex_keur: null, rm_savings_keur: null, tcogs_eur: null, selling_price_eur: null,
     gross_margin_pct: null,

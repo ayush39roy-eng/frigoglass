@@ -53,15 +53,13 @@ from core.rbac import Action, Surface
 from models.audit import AuditLogEntry
 from models.enums import (
     CurrencyCode,
-    HubName,
     LabRegion,
     ProjectCategory,
     ProjectStatus,
     ProjectType,
 )
-from models.hub import Hub
 from models.priority import PriorityScore
-from models.project import Project
+from models.project import Project, canonical_tags
 from schemas.priority import (
     BandShare,
     DimensionInfo,
@@ -79,6 +77,7 @@ from schemas.priority import (
     ScoreHistogramBucket,
 )
 from services.audit_helpers import priority_score_audit_state
+from services.capacity_hubs import capacity_rows_for_request
 from services.currency import rate_to_eur as _currency_rate_to_eur
 from services.hub_scope import global_hub_filter, hub_scope_filter, narrowed_hub_filter
 from services.priority_capacity_fill import CapacityFill, RowFill, compute_capacity_fill
@@ -168,8 +167,11 @@ def _build_row(
         dimension_scores=dimension_score_models(rubric, score),
         missing_dimension_keys=missing_keys(rubric, score),
         rubric_version=served_rubric_version(rubric, score),
+        scoring_tags=canonical_tags(project.scoring_tags),
+        tag_dimension_keys=project.tag_dimension_keys,
         is_new_model=project.type == ProjectType.NM,
         is_rm_saving_project=project.rm_savings_keur is not None,
+        is_vip=project.is_vip,
         currency=currency,
         capex_keur=_convert(
             float(project.capex_keur) if project.capex_keur is not None else None, rate
@@ -457,26 +459,28 @@ async def priority_capacity_fill(
     """P25-T01 (ADR 0036, docs/API_CONTRACT_P25.md §2): the P1 capacity fill of
     every hub in the caller's scope, narrowed by the global `hub_id` /
     `region` filter (never widened; out of scope → `hubs: []`). Read only:
-    never writes a committed priority or a score."""
+    never writes a committed priority or a score.
 
-    hub_stmt = select(Hub.id, Hub.name).order_by(Hub.name)
-    hub_filter = narrowed_hub_filter(current_user, Hub.id, hub_id, region)
-    if hub_filter is not None:
-        hub_stmt = hub_stmt.where(hub_filter)
-    hubs: list[tuple[uuid.UUID, HubName]] = [
-        (h_id, name) for h_id, name in (await db.execute(hub_stmt)).all()
-    ]
-    fill = await compute_capacity_fill(db, [h_id for h_id, _ in hubs])
+    P29 (ADR 0042, docs/API_CONTRACT_P29.md §4): one entry per CAPACITY hub
+    with a hub in scope AND the filter; R&D-Greece's walk covers OEM-HCK and
+    OEM-Seltek (`members`), and `hub_id` = an OEM hub selects it."""
+
+    cmap, row_scopes = await capacity_rows_for_request(db, current_user, hub_id, region)
+    fill = await compute_capacity_fill(db, [r.capacity_hub_id for r in row_scopes])
     out: list[HubP1Fill] = []
-    for h_id, name in hubs:
-        hub_fill = fill.hubs[h_id]
+    for scope in row_scopes:
+        hub_fill = fill.hubs[scope.capacity_hub_id]
         out.append(
             HubP1Fill(
-                hub=name,
+                hub=cmap.name(scope.capacity_hub_id),
                 capacity_weeks=float(hub_fill.capacity_weeks),
                 base_load_weeks=float(hub_fill.base_load_weeks),
                 filled_load_weeks=float(hub_fill.filled_load_weeks),
                 promoted_count=len(hub_fill.promoted_ids),
+                members=[cmap.name(m) for m in scope.member_ids if m != scope.capacity_hub_id],
+                selected_member=(
+                    cmap.name(scope.selected_member) if scope.selected_member is not None else None
+                ),
             )
         )
     return PriorityCapacityFill(

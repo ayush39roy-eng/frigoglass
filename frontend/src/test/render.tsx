@@ -21,10 +21,12 @@ export interface SessionRenderOptions {
   session?: Partial<MeResponse> | null;
 }
 
-/** Render a plain component tree with the providers most components assume. */
+/** Render a plain component tree with the providers most components assume.
+ *  `route` sets the MemoryRouter's initial location (P28: `/?view=executive`
+ *  deep links are resolved from the URL search params). */
 export function renderWithProviders(
   ui: React.ReactElement,
-  options?: RenderOptions & { theme?: ThemePreference } & SessionRenderOptions,
+  options?: RenderOptions & { theme?: ThemePreference; route?: string } & SessionRenderOptions,
 ): RenderResult {
   seedSession(options?.session === undefined ? {} : options.session);
   const client = createQueryClient();
@@ -34,7 +36,7 @@ export function renderWithProviders(
         <QueryClientProvider client={client}>
           {/* Row click-throughs (Dashboard / Matrix / Gantt → /projects/:id, P9) are
               real <Link>s, which need a router context even in component tests. */}
-          <MemoryRouter>
+          <MemoryRouter initialEntries={[options?.route ?? '/']}>
             <TooltipProvider>{children}</TooltipProvider>
           </MemoryRouter>
         </QueryClientProvider>
@@ -42,7 +44,7 @@ export function renderWithProviders(
     );
   }
   // Strip our own options before handing the rest to Testing Library.
-  const { theme: _theme, session: _session, ...rtlOptions } = options ?? {};
+  const { theme: _theme, session: _session, route: _route, ...rtlOptions } = options ?? {};
   return render(ui, { wrapper: Wrapper, ...rtlOptions });
 }
 

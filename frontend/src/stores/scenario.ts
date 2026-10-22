@@ -57,6 +57,10 @@ export interface ScenarioPendingEdit {
   hasScore: boolean;
   /** The staged, not-yet-applied new values. */
   next: PriorityScoreUpdateRequest;
+  /** Display-only (P26): dimension labels by key, from the row the edit was
+   *  staged on, so the pending list reads well even for a dimension the served
+   *  model no longer lists. Never sent to the backend. */
+  labels?: Record<string, string>;
 }
 
 type PendingMap = Record<string, ScenarioPendingEdit>;
@@ -72,6 +76,8 @@ export interface StageEditInput {
    *  .hasScore`. */
   liveHasScore: boolean;
   next: PriorityScoreUpdateRequest;
+  /** Display-only dimension labels by key (see `ScenarioPendingEdit.labels`). */
+  labels?: Record<string, string>;
 }
 
 interface ScenarioState {
@@ -112,15 +118,16 @@ export const useScenarioStore = create<ScenarioState>()((set) => ({
   setActive: (active) => set({ active }),
   setNotes: (notes) => set({ notes }),
 
-  stageEdit: ({ projectId, projectName, hub, liveValues, liveHasScore, next }) =>
+  stageEdit: ({ projectId, projectName, hub, liveValues, liveHasScore, next, labels }) =>
     set((state) => {
       const existing = state.pending[projectId];
       const baseline = existing ? existing.baseline : liveValues;
       const hasScore = existing ? existing.hasScore : liveHasScore;
+      const merged = existing?.labels || labels ? { ...(existing?.labels ?? {}), ...(labels ?? {}) } : undefined;
       return {
         pending: {
           ...state.pending,
-          [projectId]: { projectId, projectName, hub, baseline, hasScore, next },
+          [projectId]: { projectId, projectName, hub, baseline, hasScore, next, ...(merged ? { labels: merged } : {}) },
         },
         past: [...state.past, state.pending],
         future: [],

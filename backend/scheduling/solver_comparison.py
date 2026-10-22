@@ -78,7 +78,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from scheduling.cp_sat import PRIORITY_OBJECTIVE_WEIGHT, CpSatSolveInfo, run_cp_sat
+from scheduling.cp_sat import CpSatSolveInfo, objective_weights, run_cp_sat
 from scheduling.greedy import run_greedy_sgs
 from scheduling.invariants import InvariantViolation, validate_invariants
 from scheduling.types import (
@@ -240,11 +240,11 @@ class SolverComparisonReport:
 # --- Objective metric -------------------------------------------------------
 
 
-def _weighted_within_year_objective(
-    output: ScheduleOutput, priority_by_id: dict[str, str | None]
-) -> int:
+def _weighted_within_year_objective(output: ScheduleOutput, weight_by_id: dict[str, int]) -> int:
     """ADR 0005's objective metric applied to a `ScheduleOutput`: the
-    priority-band-weighted count of projects completing within the year.
+    priority-band-weighted count of projects completing within the year, with
+    the ADR 0040 VIP tier (`cp_sat.objective_weights`; plain bands when no
+    project is VIP).
 
     Applied identically to both solvers' outputs so the two are comparable on a
     single number (greedy has no native objective — see the module docstring).
@@ -254,8 +254,7 @@ def _weighted_within_year_objective(
     for outcome in output.project_outcomes:
         if not outcome.within_year:
             continue
-        band = priority_by_id.get(outcome.project_id) or "Q"
-        total += PRIORITY_OBJECTIVE_WEIGHT.get(band, 0)
+        total += weight_by_id.get(outcome.project_id, 0)
     return total
 
 
@@ -397,9 +396,7 @@ def compare_solvers(
     cp_sat_output, cp_sat_info = run_cp_sat(schedule_input, **cp_sat_kwargs)  # type: ignore[arg-type]
 
     projects_by_id: dict[str, ProjectInput] = {p.project_id: p for p in schedule_input.projects}
-    priority_by_id: dict[str, str | None] = {
-        p.project_id: p.priority for p in schedule_input.projects
-    }
+    weight_by_id = objective_weights(schedule_input.projects)
 
     greedy_violations = validate_invariants(schedule_input, greedy_output)
     # I8 (determinism) re-runs the greedy scheduler internally and is not a
@@ -441,8 +438,8 @@ def compare_solvers(
     non_excluded_cp_sat = [o for o in cp_sat_output.project_outcomes if not o.excluded]
 
     return SolverComparisonReport(
-        greedy_objective=_weighted_within_year_objective(greedy_output, priority_by_id),
-        cp_sat_objective=_weighted_within_year_objective(cp_sat_output, priority_by_id),
+        greedy_objective=_weighted_within_year_objective(greedy_output, weight_by_id),
+        cp_sat_objective=_weighted_within_year_objective(cp_sat_output, weight_by_id),
         cp_sat_internal_objective=cp_sat_info.objective_value,
         cp_sat_status=cp_sat_info.status_name,
         cp_sat_solve_info=cp_sat_info,

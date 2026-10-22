@@ -459,6 +459,7 @@ function CompareBody({
         liveValues: live,
         liveHasScore: row.has_score,
         next: { scores: { ...(staged?.next.scores ?? live.scores), ...body.scores }, hard_gates: body.hard_gates },
+        labels: Object.fromEntries(p.dimension_scores.map((d) => [d.key, d.label])),
       });
       setEdits((prev) => ({ ...prev, [id]: {} }));
       setStatus((prev) => ({

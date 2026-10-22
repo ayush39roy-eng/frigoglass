@@ -26,8 +26,19 @@ Hubs are listed in name order, only those with at least one in-year project.
 **`PUT /projects/{project_id}/vip`**: the priority move's permission exactly
 (hub-scoped lookup, 404 out of scope; Registration WRITE or an Admin-level
 project grant, 403 otherwise). An unchanged value writes nothing; a change
-writes `project.vip_pin` / `project.vip_unpin`. A pin never recalculates and
-never changes scheduling order (ADR 0022 §4).
+writes `project.vip_pin` / `project.vip_unpin`.
+
+*(ADR 0040, 2026-10-22; supersedes ADR 0022 §4.)* This is the ONLY way
+`projects.is_vip` changes (a VIP board link no longer sets it). A pin is a
+scheduling input (sort key 2, after `frozen`, before priority): a change
+sets `schedule_stale` and follows the committed-priority-change path
+exactly (`services.priority_move.decide_auto_recalc` +
+`dispatch_auto_recalc`, `trigger_reason="vip_pin"`): `not_needed` for a
+non-schedulable status, `deferred` (ADR 0023 follow-up flag) while a run is
+in flight, else a QUEUED greedy run enqueued on the solver worker with
+`activate=True`. The outcome is in the same `X-Schedule-Recalc` /
+`X-Schedule-Run-Id` / `X-Schedule-Baseline-Run-Id` headers as the PATCH
+priority path; the JSON body is unchanged. Nothing solves in-process.
 """
 
 from __future__ import annotations
@@ -36,7 +47,7 @@ import uuid
 from collections import defaultdict
 from typing import Literal
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Response
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -61,6 +72,7 @@ from schemas.vip import (
 )
 from services.active_run import get_active_run
 from services.hub_scope import global_hub_filter, hub_scope_filter
+from services.priority_move import decide_auto_recalc, dispatch_auto_recalc
 from services.project_access import authorize_project_action
 from services.project_cards import ProjectCard, build_project_cards
 
@@ -68,6 +80,9 @@ router = APIRouter(prefix="/vip-projects", tags=["vip-projects"])
 pin_router = APIRouter(prefix="/projects", tags=["vip-projects"])
 
 _read = require_permission(Surface.DASHBOARD, Action.READ)
+
+#: ADR 0040: `ScheduleRun.trigger_reason` of a run started by a VIP pin change.
+VIP_PIN_TRIGGER_REASON = "vip_pin"
 
 VIP_LIMIT_MIN = 10
 VIP_LIMIT_MAX = 15
@@ -208,6 +223,7 @@ async def get_vip_projects(
 async def set_project_vip(
     project_id: uuid.UUID,
     body: VipPinRequest,
+    response: Response,
     db: AsyncSession = Depends(get_db),
     current_user: Principal = Depends(get_current_principal),
 ) -> VipPinResponse:
@@ -221,6 +237,11 @@ async def set_project_vip(
 
     before = project.is_vip
     project.is_vip = body.is_vip
+    # ADR 0040: a pin is a scheduling input, same lifecycle as a priority move.
+    project.schedule_stale = True
+    recalc, baseline_id = await decide_auto_recalc(
+        db, project, trigger_reason=VIP_PIN_TRIGGER_REASON
+    )
     db.add(
         AuditLogEntry(
             actor_user_id=current_user.user_id,
@@ -229,8 +250,18 @@ async def set_project_vip(
             entity_id=str(project.id),
             hub_id=project.hub_id,
             before_state={"project_id": str(project.id), "is_vip": before},
-            after_state={"project_id": str(project.id), "is_vip": body.is_vip},
+            after_state={
+                "project_id": str(project.id),
+                "is_vip": body.is_vip,
+                "recalc_status": recalc,
+                "baseline_run_id": str(baseline_id) if baseline_id is not None else None,
+            },
         )
     )
-    await db.commit()
-    return VipPinResponse(project_id=project.id, is_vip=body.is_vip)
+    outcome = await dispatch_auto_recalc(
+        db, project, current_user,
+        recalc=recalc, baseline_id=baseline_id, trigger_reason=VIP_PIN_TRIGGER_REASON,
+    )
+    for name, value in outcome.response_headers().items():
+        response.headers[name] = value
+    return VipPinResponse(project_id=project_id, is_vip=body.is_vip)

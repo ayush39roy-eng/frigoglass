@@ -41,7 +41,7 @@ const project: ProjectRead = {
   estimated_lab_weeks: null,
   plant: null,
   requesting_department: null,
-  product_type: null,
+  product_type: null, scoring_tags: [], tag_dimension_keys: [],
   schedule_stale: false,
   workflow_id: 'PDD',
   created_at: '2026-01-01T00:00:00Z',

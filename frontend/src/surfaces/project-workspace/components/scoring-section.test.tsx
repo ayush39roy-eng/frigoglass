@@ -13,15 +13,15 @@ import { renderWithProviders } from '@/test/render';
 import { seriousAxeViolations } from '@/test/axe';
 
 import type { WorkspacePriorityScore } from '../api/types';
+import { FOURTEEN_TEST_DIMENSIONS, testDimensionScores, uniformScores } from '@/surfaces/matrix/test-fixtures';
+import { apiSend } from '@/lib/api/client';
 import { ScoringSection } from './scoring-section';
 
 const REASON = 'P1 (capacity fill): hub P1 design load 9.00 of 10.00 weeks with this project';
 
 function score(overrides: Partial<WorkspacePriorityScore> = {}): WorkspacePriorityScore {
   return {
-    strategic_project: 3, new_customer: 3, new_options: 3, regulatory_compliance: 3, quality_improvements: 3,
-    rm_savings: 3, total_rm_savings: 3, gross_margins: 3, profitability: 3, annual_volume: 3,
-    three_year_volume: 3, new_models: 3, capex_investment: 3, hard_gates: [],
+    dimension_scores: testDimensionScores(uniformScores(3)), missing_dimension_keys: [], rubric_version: 1, hard_gates: [],
     weighted_score: 177, normalized_pct: 60, suggested_band: 'P2', score_band: 'P2',
     capacity_fill: false, capacity_fill_reason: null,
     ...overrides,
@@ -56,5 +56,61 @@ describe('Workspace scoring section — P25 capacity fill', () => {
     renderWithProviders(<ScoringSection projectId="p1" canWrite={false} score={score({ capacity_fill_reason: stopped })} />);
     expect(screen.getByTestId('score-fill-reason')).toHaveTextContent(stopped);
     expect(screen.queryByTestId('band-chip-capacity-fill')).not.toBeInTheDocument();
+  });
+
+  it('P26: rows are the served dimensions (14, a new pillar); a missing one reads "–" and the section is marked incomplete', () => {
+    const scores = { ...uniformScores(3, FOURTEEN_TEST_DIMENSIONS), sustainability_esg: null };
+    renderWithProviders(
+      <ScoringSection
+        projectId="p1"
+        canWrite={false}
+        score={score({
+          dimension_scores: testDimensionScores(scores, FOURTEEN_TEST_DIMENSIONS),
+          missing_dimension_keys: ['sustainability_esg'],
+        })}
+      />,
+    );
+    const table = screen.getByRole('table', { name: 'Scoring dimensions' });
+    expect(within(table).getAllByRole('row')).toHaveLength(15); // header + 14
+    const esg = within(table).getByRole('rowheader', { name: 'Sustainability & ESG' }).closest('tr') as HTMLElement;
+    expect(esg).toHaveTextContent('Not scored');
+    expect(esg).toHaveTextContent('—'); // no deck anchor for an added dimension
+    expect(screen.getByTestId('score-incomplete')).toHaveTextContent('1 of 14 dimensions not scored');
+  });
+
+  it('P26: a save sends only the changed dimensions as a scores map (null clears)', async () => {
+    const user = userEvent.setup();
+    const send = vi.mocked(apiSend).mockResolvedValue({});
+    renderWithProviders(<ScoringSection projectId="p1" canWrite score={score()} />);
+    await user.click(screen.getByRole('button', { name: 'Edit scores' }));
+    await user.selectOptions(screen.getByLabelText('Strategic Project'), '5');
+    await user.selectOptions(screen.getByLabelText('New Options'), '');
+    await user.click(screen.getByRole('button', { name: 'Save scores' }));
+    expect(send).toHaveBeenCalledWith('PUT', '/priorities/p1', {
+      scores: { strategic_project: 5, new_options: null },
+      hard_gates: [],
+    });
+  });
+
+  it('P27: tagged dimensions show "from registration" and stay editable', async () => {
+    const user = userEvent.setup();
+    const send = vi.mocked(apiSend).mockResolvedValue({});
+    const { container } = renderWithProviders(
+      <ScoringSection
+        projectId="p1"
+        canWrite
+        score={score({ dimension_scores: testDimensionScores({ ...uniformScores(3), new_customer: 5 }) })}
+        tagDimensionKeys={['new_customer']}
+      />,
+    );
+    const table = screen.getByRole('table', { name: 'Scoring dimensions' });
+    const tagged = within(table).getByRole('rowheader', { name: /New Customer/ });
+    expect(within(tagged).getByTestId('from-registration-hint')).toHaveTextContent('from registration');
+    expect(within(table).getAllByTestId('from-registration-hint')).toHaveLength(1);
+    expect(await seriousAxeViolations(container)).toEqual([]);
+    await user.click(screen.getByRole('button', { name: 'Edit scores' }));
+    await user.selectOptions(screen.getByLabelText('New Customer'), '1');
+    await user.click(screen.getByRole('button', { name: 'Save scores' }));
+    expect(send).toHaveBeenCalledWith('PUT', '/priorities/p1', { scores: { new_customer: 1 }, hard_gates: [] });
   });
 });

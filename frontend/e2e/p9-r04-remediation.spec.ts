@@ -45,12 +45,34 @@ const headers = (email: string) => ({ 'X-Dev-User-Email': email, 'Content-Type':
 
 let frozenId = '';
 let frozenName = '';
+let frozenByTest = '';
+
+test.afterAll(async ({ request }) => {
+  if (frozenByTest) {
+    await request.post(`${BACKEND_URL}/gantt/projects/${frozenByTest}/freeze`, {
+      headers: headers(DEV_EMAILS.superAdmin),
+      data: { frozen: false },
+    });
+  }
+});
 const candidates: { id: string; name: string; stage: Stage }[] = [];
 
 test.beforeAll(async ({ request }) => {
   const projects = await apiGet<ProjectRow[]>(request, 'hubPlanner', '/projects?limit=200');
-  const frozen = projects.find((p) => p.frozen);
-  expect(frozen, 'the seed has a frozen project').toBeTruthy();
+  let frozen = projects.find((p) => p.frozen);
+  if (!frozen) {
+    // Final gate (P21–P26): the client_2026 roster seed (ADR 0035) has no frozen project.
+    // Freeze the first schedulable one through the API and unfreeze it in afterAll.
+    const target = projects.find((p) => SCHEDULABLE.has(p.status));
+    expect(target, 'a schedulable project to freeze').toBeTruthy();
+    const res = await request.post(`${BACKEND_URL}/gantt/projects/${target?.id ?? ''}/freeze`, {
+      headers: headers(DEV_EMAILS.superAdmin),
+      data: { frozen: true, actual_start_week: 31 },
+    });
+    expect(res.status(), 'freeze a project for the read-only check').toBe(200);
+    frozen = target;
+    frozenByTest = target?.id ?? '';
+  }
   frozenId = frozen?.id ?? '';
   frozenName = frozen?.name ?? '';
   for (const p of [...projects].reverse().filter((x) => SCHEDULABLE.has(x.status) && !x.frozen)) {

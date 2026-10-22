@@ -12,6 +12,12 @@ sees the chambers of their hubs' lab regions). As on `/capacity/hub-load`, a
 region's lab capacity and a chamber's load are region-wide: chambers are
 shared, and only aggregates leave this module.
 
+**Capacity hubs (P29, ADR 0042).** Design supply rows are the four capacity
+hubs (`services.capacity_hubs`), over engineers with `counts_in_capacity`;
+R&D-Greece's row lists `members` (OEM-HCK, OEM-Seltek in scope). Engineer
+lists resolve a member-hub `hub_id` to its capacity hub; the engineer totals'
+capacity skips non-counted engineers.
+
 **Supply** is ADR 0008 (`services.capacity_supply`), the same code path as
 `/capacity/hub-load`, `/engineers` and `/chambers`, so the figures agree to
 2 dp (I17). **Load** is the active run's non-skipped step durations (I6/I7).
@@ -72,6 +78,11 @@ from schemas.planning import (
     ResourceLoadTotals,
 )
 from services.active_run import get_active_run, step_kinds_for_run
+from services.capacity_hubs import (
+    capacity_rows_for_request,
+    counted_fte_by_capacity_hub,
+    load_capacity_hub_map,
+)
 from services.capacity_supply import (
     booked_pct,
     chamber_figures,
@@ -131,25 +142,19 @@ async def capacity_summary(
     figures as `GET /capacity/hub-load` for the same filters."""
 
     current_week = dc.CURRENT_WEEK
-    hub_stmt = select(Hub).order_by(Hub.name)
-    hub_filter = narrowed_hub_filter(current_user, Hub.id, hub_id, region)
-    if hub_filter is not None:
-        hub_stmt = hub_stmt.where(hub_filter)
-    hubs = (await db.execute(hub_stmt)).scalars().all()
-    hub_ids = [h.id for h in hubs]
-
-    fte_values: dict[uuid.UUID, list[object]] = defaultdict(list)
-    if hub_ids:
-        fte_stmt = select(Engineer.hub_id, Engineer.fte).where(Engineer.hub_id.in_(hub_ids))
-        for eng_hub_id, fte in (await db.execute(fte_stmt)).all():
-            fte_values[eng_hub_id].append(fte)
+    # ADR 0042: one design row per CAPACITY hub with a hub in scope AND the
+    # filter (an OEM hub selects R&D-Greece); supply over counted engineers.
+    cmap, row_scopes = await capacity_rows_for_request(db, current_user, hub_id, region)
+    hubs = [cmap.hubs[r.capacity_hub_id] for r in row_scopes]
+    fte_by_hub, counted, not_counted = await counted_fte_by_capacity_hub(db, cmap)
     calendar_by_hub = {
         c.hub_id: c for c in (await db.execute(select(HubWorkCalendar))).scalars().all()
     }
 
     design_rows: list[DesignHubSummary] = []
-    for h in hubs:
-        fte = fte_sum(fte_values.get(h.id, []))
+    for scope in row_scopes:
+        h = cmap.hubs[scope.capacity_hub_id]
+        fte = fte_by_hub.get(h.id, 0.0)
         cal = calendar_by_hub.get(h.id)
         year, remaining = design_capacity(cal, fte, current_week)
         wd = hub_weekdays_per_week(cal)
@@ -157,12 +162,17 @@ async def capacity_summary(
         design_rows.append(
             DesignHubSummary(
                 hub=h.name,
-                engineer_count=len(fte_values.get(h.id, [])),
+                engineer_count=counted.get(h.id, 0),
+                not_counted_engineer_count=not_counted.get(h.id, 0),
                 fte_total=round2(fte),
                 weekdays_per_week=wd,
                 capacity_weeks=weeks,
                 capacity_days=_days(weeks, wd),
                 share_pct=YearRemaining(year=0.0, remaining=0.0),
+                members=[cmap.name(m) for m in scope.member_ids if m != h.id],
+                selected_member=(
+                    cmap.name(scope.selected_member) if scope.selected_member is not None else None
+                ),
             )
         )
     d_weeks = _sum([r.capacity_weeks for r in design_rows])
@@ -301,13 +311,17 @@ def _project_predicate(
 
 
 def _total(rows: list[EngineerResourceLoad] | list[ChamberResourceLoad]) -> ResourceLoadTotal:
-    cap = round2(sum(r.capacity_weeks for r in rows))
+    """Σ of the served rows. P29 (ADR 0042 §5): an engineer row with
+    `counts_in_capacity` false adds its load but not its capacity (supply)."""
+
+    supply = [r for r in rows if getattr(r, "counts_in_capacity", True)]
+    cap = round2(sum(r.capacity_weeks for r in supply))
     load = round2(sum(r.load_weeks for r in rows))
     return ResourceLoadTotal(
         capacity_weeks=cap,
         load_weeks=load,
         utilization_pct=booked_pct(load, cap),
-        capacity_days=round2(sum(r.capacity_days for r in rows)),
+        capacity_days=round2(sum(r.capacity_days for r in supply)),
         load_days=round2(sum(r.load_days for r in rows)),
     )
 
@@ -377,7 +391,10 @@ async def resource_load(
         .options(selectinload(Engineer.hub))
         .order_by(Hub.name, Engineer.name, Engineer.id)
     )
-    eng_filter = narrowed_hub_filter(current_user, Engineer.hub_id, hub_id, region)
+    # ADR 0042: engineers sit on capacity hubs, so a member-hub filter
+    # (OEM-HCK) lists its capacity hub's engineers; the RBAC scope is unchanged.
+    cmap = await load_capacity_hub_map(db)
+    eng_filter = narrowed_hub_filter(current_user, Engineer.hub_id, cmap.resolve(hub_id), region)
     if eng_filter is not None:
         eng_stmt = eng_stmt.where(eng_filter)
     if engineer_ids:
@@ -455,6 +472,7 @@ async def resource_load(
                 engineer_id=e.id,
                 name=e.name,
                 hub=e.hub.name,
+                counts_in_capacity=e.counts_in_capacity,
                 weekdays_per_week=wd,
                 capacity_weeks=cap,
                 load_weeks=load,
@@ -600,7 +618,8 @@ async def resource_load_options(
         .join(Hub, Engineer.hub_id == Hub.id)
         .order_by(Hub.name, Engineer.name, Engineer.id)
     )
-    eng_filter = narrowed_hub_filter(current_user, Engineer.hub_id, hub_id, region)
+    cmap = await load_capacity_hub_map(db)
+    eng_filter = narrowed_hub_filter(current_user, Engineer.hub_id, cmap.resolve(hub_id), region)
     if eng_filter is not None:
         eng_stmt = eng_stmt.where(eng_filter)
     engineers = [

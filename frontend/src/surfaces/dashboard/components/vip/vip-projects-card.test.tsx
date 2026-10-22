@@ -84,6 +84,7 @@ function area(a: Partial<VipBoardArea> & Pick<VipBoardArea, 'area' | 'label'>): 
     hubs: [],
     item_count: 0,
     highlighted_count: 0,
+    vip_project_count: 0,
     high_risk_count: 0,
     linked_project_count: 0,
     vip_items: [],
@@ -106,6 +107,7 @@ const BOARD: VipBoardResponse = {
       hubs: ['R&D-Greece', 'OEM-HCK', 'OEM-Seltek'],
       item_count: 7,
       highlighted_count: 2,
+      vip_project_count: 2,
       high_risk_count: 1,
       linked_project_count: 3,
       vip_items: [

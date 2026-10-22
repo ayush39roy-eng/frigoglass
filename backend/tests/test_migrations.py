@@ -93,7 +93,24 @@ EXPECTED_ENUM_TYPES = {
     "project_file_category",
     # P10-T01 (`d451acccb1ab`): project-level access grant role.
     "project_access_role",
+    # P27-T01 (`p27a_project_scoring_tags`): Registration "project nature" tags.
+    "project_scoring_tag",
 }
+
+# P29-T01 (`p29a_capacity_hubs`, `p29b_bc_type_regulatory`, head): three
+# columns and the flat-capacity-hub trigger.
+_P29_COLUMNS_SQL = (
+    "SELECT count(*) FROM information_schema.columns WHERE "
+    "(table_name = 'hubs' AND column_name = 'capacity_hub_id') OR "
+    "(table_name = 'engineers' AND column_name = 'counts_in_capacity') OR "
+    "(table_name = 'projects' AND column_name = 'leader_is_provisional')"
+)
+P29_TRIGGERS = ("trg_hubs_capacity_hub_flat",)
+
+_SCORING_TAGS_COLUMN_SQL = (
+    "SELECT count(*) FROM information_schema.columns "
+    "WHERE table_name = 'projects' AND column_name = 'scoring_tags'"
+)
 
 # P9-T01: the OEM-category-matches-hub guard on `projects` and the
 # never-hard-delete guard on `project_comments`, both plain triggers like the
@@ -206,6 +223,33 @@ def test_migration_up_down_up_down_cycle():
         assert _query_scalar(url, _IS_VIP_COLUMN_SQL) == 1
         assert _query_scalar(url, _FOLLOW_UP_SEED_SQL) == 1
         assert _query_scalar(url, _STEP_TIMING_COLUMNS_SQL) == 2
+
+        # --- P29-T01 (`p29a_capacity_hubs` + `p29b_bc_type_regulatory`, head):
+        # downgrade both (columns, trigger and function go; tables and enums
+        # unchanged), then re-apply.
+        assert _query_scalar(url, _P29_COLUMNS_SQL) == 3
+        assert set(P29_TRIGGERS) <= _trigger_names(url)
+        r = run_alembic(["downgrade", "p27a_project_scoring_tags"], url)
+        assert r.returncode == 0, f"downgrade to p27a (P29-T01) failed:\n{r.stdout}\n{r.stderr}"
+        assert _query_scalar(url, _P29_COLUMNS_SQL) == 0
+        assert not (set(P29_TRIGGERS) & _trigger_names(url))
+        assert _table_count(url) == EXPECTED_TABLE_COUNT
+        assert _enum_type_names(url) == EXPECTED_ENUM_TYPES
+        r = run_alembic(["upgrade", "head"], url)
+        assert r.returncode == 0, f"re-upgrade to p29b failed:\n{r.stdout}\n{r.stderr}"
+        assert _query_scalar(url, _P29_COLUMNS_SQL) == 3
+
+        # --- P27-T01 (`p27a_project_scoring_tags`): downgrade just it
+        # (column, CHECK function and enum go; tables unchanged), re-apply.
+        assert _query_scalar(url, _SCORING_TAGS_COLUMN_SQL) == 1
+        r = run_alembic(["downgrade", "p26a_scoring_rubric_tables"], url)
+        assert r.returncode == 0, f"downgrade to p26a (P27-T01) failed:\n{r.stdout}\n{r.stderr}"
+        assert _query_scalar(url, _SCORING_TAGS_COLUMN_SQL) == 0
+        assert _enum_type_names(url) == EXPECTED_ENUM_TYPES - {"project_scoring_tag"}
+        assert _table_count(url) == EXPECTED_TABLE_COUNT
+        r = run_alembic(["upgrade", "head"], url)
+        assert r.returncode == 0, f"re-upgrade to head after p27a failed:\n{r.stdout}\n{r.stderr}"
+        assert _query_scalar(url, _SCORING_TAGS_COLUMN_SQL) == 1
 
         # --- P14-T02 (`p14a_vip_items`, head): the two VIP board tables;
         # downgrade just it, then re-apply. Every older target below also

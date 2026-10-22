@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { formatDecimal, formatInteger } from '@/lib/format';
 import { cn } from '@/lib/utils';
+import { CardInfo } from '@/components/ui/card-info';
 import type { ProjectPriority } from '@/types/enums';
 
 import {
@@ -106,12 +107,15 @@ export function BandDistributionPanel({
   activeBand,
   onBandClick,
   capacityFillCount,
+  hideHeading = false,
 }: {
   entries: BandDistributionEntry[];
   activeBand: DistributionBand | null;
   onBandClick: (band: DistributionBand | null) => void;
   /** P25: served `capacity_fill_count` (inside the P1 bucket); undefined from a pre-P25 API. */
   capacityFillCount?: number | undefined;
+  /** The card already titles it "Band distribution": keep the heading for assistive tech only. */
+  hideHeading?: boolean;
 }): React.JSX.Element {
   const ordered = DISTRIBUTION_BANDS.map((band) => entries.find((e) => e.band === band)).filter(
     (e): e is BandDistributionEntry => e !== undefined,
@@ -119,9 +123,9 @@ export function BandDistributionPanel({
   const total = ordered.reduce((sum, e) => sum + e.count, 0);
 
   return (
-    <section aria-labelledby="matrix-band-dist-title" className="flex min-w-0 flex-col gap-3" data-testid="band-distribution">
+    <section aria-labelledby="matrix-band-dist-title" className="flex min-w-0 flex-col gap-2" data-testid="band-distribution">
       <div className="flex items-center justify-between gap-2">
-        <h3 id="matrix-band-dist-title" className="text-sm font-semibold text-text">
+        <h3 id="matrix-band-dist-title" className={cn('text-sm font-semibold text-text', hideHeading && 'sr-only')}>
           Band distribution
         </h3>
         {activeBand !== null ? (
@@ -134,24 +138,26 @@ export function BandDistributionPanel({
       {total === 0 ? (
         <p className="text-2xs text-text-muted">No projects in this filter.</p>
       ) : (
-        <div className="flex h-4 w-full overflow-hidden rounded-pill bg-surface-sunken" aria-hidden="true">
+        <div className="flex h-6 w-full overflow-hidden rounded-pill bg-surface-sunken" aria-hidden="true">
           {ordered
             .filter((e) => e.count > 0)
             .map((e) => (
               <span
                 key={e.band}
                 className={cn(
-                  'h-full border-r border-surface last:border-0 transition-opacity motion-reduce:transition-none',
+                  'grid h-full place-items-center overflow-hidden border-r-2 border-surface text-[0.625rem] font-bold tabular-nums text-white last:border-0 transition-opacity motion-reduce:transition-none',
                   BAND_BG[e.band],
                   activeBand !== null && activeBand !== e.band && 'opacity-35',
                 )}
                 // Served share, used as the segment length only.
                 style={{ width: `${String(e.share_pct)}%` }}
-              />
+              >
+                {e.share_pct >= 4 ? formatInteger(e.count) : null}
+              </span>
             ))}
         </div>
       )}
-      <ul className="flex flex-wrap gap-1.5" aria-label="Bands — choose one to filter the table">
+      <ul className="flex flex-wrap gap-1" aria-label="Bands — choose one to filter the table">
         {ordered.map((e) => {
           if (e.band === 'Q') {
             // Q is a committed priority, never a score band: always 0, shown muted, not a filter.
@@ -177,7 +183,7 @@ export function BandDistributionPanel({
                 aria-pressed={active}
                 onClick={() => onBandClick(active ? null : e.band)}
                 className={cn(
-                  'inline-flex items-center gap-1.5 rounded border px-2 py-1 text-2xs text-text transition-colors motion-reduce:transition-none',
+                  'inline-flex items-center gap-1.5 rounded border px-1.5 py-0.5 text-2xs text-text transition-colors motion-reduce:transition-none',
                   'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
                   active ? 'border-primary bg-primary-subtle font-semibold' : 'border-border hover:bg-surface-raised',
                 )}
@@ -197,8 +203,8 @@ export function BandDistributionPanel({
         })}
       </ul>
       {capacityFillCount !== undefined ? (
-        <p className="text-2xs text-text" data-testid="band-distribution-fill-note">
-          Bands are the suggested bands, after the P1 capacity fill. P1{' '}
+        <p className="text-2xs text-text-muted" data-testid="band-distribution-fill-note">
+          P1{' '}
           <span className="tnum" data-numeric="">
             {formatInteger(ordered.find((e) => e.band === 'P1')?.count ?? 0)}
           </span>
@@ -209,7 +215,6 @@ export function BandDistributionPanel({
           by capacity fill.
         </p>
       ) : null}
-      <p className="text-2xs text-text-subtle">Shares are served and rounded each, so they may not add up to exactly 100%.</p>
       <DataTable
         caption="Projects per band, with share of the filtered set (served)"
         head={['Band', 'Projects', 'Share %']}
@@ -245,7 +250,7 @@ export function ScoreHistogramPanel({ buckets }: { buckets: ScoreHistogramBucket
   const peak = sorted.reduce((m, b) => Math.max(m, b.count), 0);
 
   return (
-    <section aria-labelledby="matrix-histogram-title" className="flex min-w-0 flex-col gap-3" data-testid="score-histogram">
+    <section aria-labelledby="matrix-histogram-title" className="flex min-w-0 flex-col gap-2" data-testid="score-histogram">
       <div className="flex flex-wrap items-baseline justify-between gap-2">
         <h3 id="matrix-histogram-title" className="text-sm font-semibold text-text">
           Score histogram <span className="font-normal text-text-muted">(score /100, 10-point buckets)</span>
@@ -262,7 +267,7 @@ export function ScoreHistogramPanel({ buckets }: { buckets: ScoreHistogramBucket
       {peak === 0 ? (
         <p className="text-2xs text-text-muted">No scored projects in this filter.</p>
       ) : (
-        <div className="flex h-28 items-end gap-1" aria-hidden="true">
+        <div className="flex h-24 items-end gap-1" aria-hidden="true">
           {sorted.map((b) => (
             <div key={b.bucket_from} className="flex h-full min-w-0 flex-1 flex-col items-center justify-end gap-0.5">
               <span className="tnum text-2xs font-semibold text-text">{b.count > 0 ? formatInteger(b.count) : ''}</span>
@@ -305,18 +310,26 @@ export function ScoreChartsRow({
 }): React.JSX.Element {
   return (
     <Card data-testid="matrix-chart-row">
+      {/* Owner ask 2026-10-22: only the band distribution stays (the histogram is
+          gone); it still filters the grid by band. */}
       <CardHeader>
-        <CardTitle>Score overview</CardTitle>
-        <span className="text-2xs text-text-muted">Follows the Cat / Type / Status / Hub / search filters · served counts</span>
+        <CardTitle>Band distribution</CardTitle>
+        <CardInfo label="About the band distribution">
+          <p>
+            Served counts for the Cat / Type / Status / Hub / search filters above: the suggested bands, after each
+            hub&apos;s P1 capacity fill. Select a band to filter the grid.
+          </p>
+          <p>Shares are served and rounded each, so they may not add up to exactly 100%.</p>
+        </CardInfo>
       </CardHeader>
-      <CardContent className="grid gap-6 lg:grid-cols-2">
+      <CardContent className="pt-0">
         <BandDistributionPanel
           entries={distribution.band_distribution}
           activeBand={activeBand}
           onBandClick={onBandClick}
           capacityFillCount={(distribution as Partial<PriorityDistribution>).capacity_fill_count}
+          hideHeading
         />
-        <ScoreHistogramPanel buckets={distribution.score_histogram} />
       </CardContent>
     </Card>
   );

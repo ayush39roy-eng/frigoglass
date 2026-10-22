@@ -102,7 +102,8 @@ function CountBars({
   const fill = `hsl(var(${OUTCOME_STYLE.within_year.colorToken}))`;
   return (
     <ResponsiveContainer width="100%" height={CHART_HEIGHT}>
-      <BarChart data={points} margin={{ top: 18, right: 8, bottom: 0, left: 0 }}>
+      {/* The chart is aria-hidden (the buttons below are the control): no tabbable svg inside it. */}
+      <BarChart accessibilityLayer={false} data={points} margin={{ top: 18, right: 8, bottom: 0, left: 0 }}>
         <CartesianGrid stroke="hsl(var(--color-dash-hairline))" strokeDasharray="4 4" horizontal vertical={false} />
         <XAxis
           dataKey="label"

@@ -43,8 +43,29 @@ Engineers (`build_roster`)
   blank** (`leader_engineer_id` null): the scheduler leaves the project
   out with `no_leader` (DOMAIN_RULES "Booking rules"). No assignment is
   invented.
-- **OEM hubs** have no roster engineers. Their projects are led only by
-  the provisional leaders named on them (Theoni); the rest have no leader.
+- **OEM hubs** have no roster engineers (ADR 0042: they are capacity
+  children of R&D-Greece, so Greece's engineers design their projects).
+  A provisional leader's hub is always a capacity hub
+  (`domain_constants.capacity_hub_name`): Theoni, who leads most projects
+  on OEM-HCK, is an R&D-Greece engineer.
+- **Capacity roster** (ADR 0042 §5). `EngineerSeed.counts_in_capacity` is
+  false for the four leaders on no client roster
+  (`NOT_IN_CAPACITY_ROSTER`: Theoni, Dipak, Antonis, Sailesh); true for
+  everyone else, including Elena Micu and Marian. Supply sums only counted
+  engineers; the scheduler still books the others.
+- **OEM eligibility** (ADR 0042 §6). Dimopoulou, Lioumis and Kanarios carry
+  `A-OEM`, `B-OEM`, `C-OEM` in `CLIENT_APP_ALLOWED_CATEGORIES`.
+- **Provisional leaders for leaderless OEM projects** (ADR 0042 §7,
+  `assign_provisional_leaders`). Every project on a capacity member hub
+  whose workbook leader is blank gets the eligible engineer of its capacity
+  hub (counted in capacity) with the least Σ design effort of schedulable
+  projects already led, ties alphabetical; the walk is in scheduling order
+  and each assignment adds the project's design effort to the chosen
+  engineer's load. `Project.leader_is_provisional` is set and one audit row
+  per project records it (`source = "provisional_leader_adr_0042"`).
+  Migration `p29a_capacity_hubs` applies the same rule to an upgraded
+  database (a frozen copy; a test pins the two equal). The three blank
+  leaders on non-member hubs stay blank.
 
 Chambers
 --------
@@ -172,14 +193,25 @@ CLIENT_APP_ALLOWED_CATEGORIES: Mapping[str, tuple[str, ...]] = {
     "Ashish": ("A+", "A"),
     "Praveer Kumar Singh": ("A",),
     "Ayush Kumar": ("A",),
-    "Dimopoulou": ("A+", "A", "OEM"),
-    "Lioumis": ("A+", "A"),
-    "Kanarios": ("A+", "A"),
+    # ADR 0042 §6: the three R&D-Greece roster engineers may lead the OEM
+    # categories (OEM-HCK and OEM-Seltek are capacity children of Greece).
+    # Dimopoulou keeps the client app's blanket "OEM" chip as well.
+    "Dimopoulou": ("A+", "A", "OEM", "A-OEM", "B-OEM", "C-OEM"),
+    "Lioumis": ("A+", "A", "A-OEM", "B-OEM", "C-OEM"),
+    "Kanarios": ("A+", "A", "A-OEM", "B-OEM", "C-OEM"),
     "Stef Marius": ("B", "C"),
     "Alin Boboc": ("B", "C"),
     "Adrian Bortoc": ("B", "C"),
     "Bianca": ("C",),
 }
+
+#: ADR 0042 §5: workbook project leaders who are on no client roster. Their
+#: FTE is never part of the design supply (`Engineer.counts_in_capacity`
+#: false); the scheduler still books them (docs/OPEN_QUESTIONS.md #52).
+NOT_IN_CAPACITY_ROSTER: frozenset[str] = frozenset({"Theoni", "Dipak", "Antonis", "Sailesh"})
+
+#: ADR 0042 §7: the audit `source` of a seeded / migrated provisional leader.
+PROVISIONAL_LEADER_SOURCE: str = "provisional_leader_adr_0042"
 
 _UNSCHEDULED = frozenset({"Commercialized", "On Hold", "Cancelled", "Draft"})
 UNDER_INDUSTRIALIZATION_AFTER = "H"  # current step: the first non-skipped one after this letter
@@ -224,6 +256,9 @@ class EngineerSeed:
     provisional: bool = False
     #: Where the row comes from: the roster cell, or "provisional leader".
     source: str = ""
+    #: ADR 0042 §5: part of the hub's design supply (false for
+    #: `NOT_IN_CAPACITY_ROSTER`).
+    counts_in_capacity: bool = True
 
 
 @dataclass
@@ -312,13 +347,71 @@ def build_roster(data: Mapping[str, object]) -> RosterBuild:
         out.engineers.append(
             EngineerSeed(
                 leader_name,
-                str(leader["hub"]),
+                # ADR 0042: an engineer's hub is always a capacity hub, so a
+                # leader whose projects are mostly on OEM-HCK (Theoni) is an
+                # R&D-Greece engineer.
+                dc.capacity_hub_name(str(leader["hub"])),
                 PROVISIONAL_LEADER_FTE,
                 _ordered_categories(led),
                 provisional=True,
                 source="provisional leader (not on the RPD Capacity roster)",
+                counts_in_capacity=leader_name not in NOT_IN_CAPACITY_ROSTER,
             )
         )
+    return out
+
+
+# --- Provisional leaders for leaderless member-hub projects (ADR 0042 §7) ---
+
+
+def leader_eligible_for(category: str, allowed_categories: Sequence[str]) -> bool:
+    """DOMAIN_RULES CAT_NOT_ALLOWED: the category is allowed, or the blanket
+    `OEM` chip covers an OEM category (`scheduling.greedy._cat_not_allowed`)."""
+
+    if category in allowed_categories:
+        return True
+    return category in dc.OEM_CATEGORIES and "OEM" in allowed_categories
+
+
+@dataclass(frozen=True)
+class LeaderlessProject:
+    """One project with a blank leader, in the caller's walk order."""
+
+    key: str
+    category: str
+    schedulable: bool
+    #: Σ design-kind step durations (effort weeks) of the project.
+    design_effort_weeks: int
+
+
+@dataclass(frozen=True)
+class LeaderCandidate:
+    name: str
+    allowed_categories: tuple[str, ...]
+    #: Σ design effort of the schedulable projects the engineer already leads.
+    load_weeks: int
+
+
+def assign_provisional_leaders(
+    projects: Sequence[LeaderlessProject], candidates: Sequence[LeaderCandidate]
+) -> dict[str, str | None]:
+    """ADR 0042 §7, pure. `projects` are walked in the order given (callers
+    pass scheduling order). Each gets the eligible candidate with the least
+    load, ties by name; a schedulable project's design effort is then added to
+    the chosen candidate's load. `None` when no candidate is eligible. The
+    migration `p29a_capacity_hubs` freezes a copy of this walk."""
+
+    loads = {c.name: c.load_weeks for c in candidates}
+    out: dict[str, str | None] = {}
+    for p in projects:
+        eligible = [c for c in candidates if leader_eligible_for(p.category, c.allowed_categories)]
+        if not eligible:
+            out[p.key] = None
+            continue
+        chosen = min(eligible, key=lambda c: (loads[c.name], c.name))
+        out[p.key] = chosen.name
+        if p.schedulable:
+            loads[chosen.name] += p.design_effort_weeks
     return out
 
 

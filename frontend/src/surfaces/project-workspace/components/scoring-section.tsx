@@ -8,6 +8,7 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { ApiError } from '@/lib/api/client';
 import { SCORING_SCALE, scoringAnchor } from '@/lib/domain-constants';
 import { IncompleteScoreMarker } from '@/components/shared/incomplete-score-marker';
+import { FromRegistrationHint } from '@/components/shared/scoring-tags';
 import { usePermission } from '@/stores/session';
 import { formatInteger } from '@/lib/format';
 import { queryKeys } from '@/lib/query-keys';
@@ -16,13 +17,8 @@ import { updatePriorityScore } from '@/surfaces/matrix/api/matrix-api';
 import { POINTS_RULE_COPY, type DimensionScoreMap, type PriorityScoreUpdateRequest } from '@/surfaces/matrix/api/types';
 import { changedScores, scoresFromDimensionScores, toRequestBody } from '@/surfaces/matrix/components/score-edit-schema';
 import { rowMissingLabels } from '@/surfaces/matrix/lib/row-scores';
-import {
-  FetchedScoringModelProvider,
-  formatWeight,
-  modelFromDimensionScores,
-  useScoringModel,
-  type ScoringModelEntry,
-} from '@/surfaces/matrix/scoring-model';
+import { FetchedScoringModelProvider, useScoringModel } from '@/surfaces/matrix/scoring-model';
+import { formatWeight, modelFromDimensionScores, type ScoringModelEntry } from '@/surfaces/matrix/lib/scoring-model-core';
 
 import type { WorkspacePriorityScore } from '../api/types';
 
@@ -40,6 +36,9 @@ export function ScoringSection(props: {
   projectId: string;
   score: WorkspacePriorityScore | null;
   canWrite: boolean;
+  /** P27 (ADR 0038): served `WorkspaceProject.tag_dimension_keys`; those rows
+   *  get a "from registration" hint and stay editable. */
+  tagDimensionKeys?: readonly string[] | undefined;
 }): React.JSX.Element {
   // The served table needs Matrix read; a Workspace viewer without it reads the score's own list.
   const matrixRead = usePermission('matrix').read;
@@ -54,11 +53,14 @@ function ScoringSectionInner({
   projectId,
   score,
   canWrite,
+  tagDimensionKeys,
 }: {
   projectId: string;
   score: WorkspacePriorityScore | null;
   canWrite: boolean;
+  tagDimensionKeys?: readonly string[] | undefined;
 }): React.JSX.Element {
+  const fromRegistration = new Set(tagDimensionKeys ?? []);
   const queryClient = useQueryClient();
   const model = useScoringModel();
   const served = new Map(model.dimensions.map((d) => [d.key, d]));
@@ -192,7 +194,10 @@ function ScoringSectionInner({
               return (
                 <tr key={d.key} className="border-t border-border/70 transition-colors hover:bg-primary-subtle/30">
                   <th scope="row" className="px-3 py-2.5 text-left font-bold text-text">
-                    {editing ? <label htmlFor={id}>{d.label}</label> : d.label}
+                    <span className="inline-flex flex-wrap items-center gap-1.5">
+                      {editing ? <label htmlFor={id}>{d.label}</label> : d.label}
+                      {fromRegistration.has(d.key) ? <FromRegistrationHint dimensionLabel={d.label} /> : null}
+                    </span>
                   </th>
                   <td className="px-2 py-1 text-right text-text-muted" data-numeric="">
                     {formatWeight(d.weight, d.scaled_weight)}

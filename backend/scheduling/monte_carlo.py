@@ -57,7 +57,8 @@ docs/MEMORY.md entry for the full justification)
       underruns). A 0-week cell stays 0 (a skipped step never un-skips under
       perturbation); every other cell is re-rounded to >= 1. A project's ADR
       0019 `duration_override_weeks` (its effective duration) is scaled by the
-      same factor, re-rounded and clamped to 1..104; floors are not perturbed
+      same factor, re-rounded and clamped to 1..104 (ADR 0041 R10: a merged
+      value of 0, a skipped step, stays 0); floors are not perturbed
       and no extra RNG draw is made, so pre-P12 forecasts are unchanged. This is what
       makes contention -- and therefore `left_out` / `spillover` -- actually
       vary across iterations; delay perturbation alone never changes
@@ -238,13 +239,17 @@ def _perturbed_step_timing(
 ) -> tuple[StepTimingInput, ...]:
     """ADR 0019: a per-project `duration_override_weeks` is the step's
     effective duration, so it is perturbed by the same per-iteration factor
-    as the lead-time cells (re-rounded, clamped to the override domain
-    1..104 so the perturbed input stays valid). Floors are plan inputs and
-    are not perturbed. `()` stays `()`, so pre-P12 forecasts are unchanged."""
+    as the lead-time cells (re-rounded, clamped to 1..104 so the perturbed
+    input stays valid). ADR 0041 R10: the merged value may be 0 (an
+    effort-zeroed, skipped step); a 0 stays 0, exactly like a 0-week
+    lead-time cell, so perturbation never revives a skipped step, and a
+    non-zero value keeps the sampling floor of 1, so it never zeroes one.
+    Floors are plan inputs and are not perturbed. `()` stays `()`, so pre-P12
+    forecasts are unchanged."""
 
     return tuple(
         r
-        if r.duration_override_weeks is None
+        if r.duration_override_weeks is None or r.duration_override_weeks == 0
         else replace(
             r,
             duration_override_weeks=max(

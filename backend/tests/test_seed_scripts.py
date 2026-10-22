@@ -53,7 +53,8 @@ def test_seed_demo_data_duplicate_guard_and_reset(seeded_schema_url, monkeypatch
     counts = asyncio.run(seed_demo_data.run(reset_first=False, dataset="prototype"))
     assert counts["projects"] == 46
     assert counts["hubs"] == 6
-    assert counts["hub_work_calendars"] == 6
+    # P29 (ADR 0042): the two OEM member hubs carry no calendar of their own.
+    assert counts["hub_work_calendars"] == 4
     assert counts["chambers"] == 10
     # P9-T01: 28 templates (PDD + OEM) and the 98-row lead-time table — upserted
     # over the rows the migration already inserted, so still exactly 28 / 98.
@@ -62,7 +63,7 @@ def test_seed_demo_data_duplicate_guard_and_reset(seeded_schema_url, monkeypatch
     assert counts["_verified_from_db"]["projects"] == 46
     assert counts["_verified_from_db"]["workflow_step_templates"] == 28
     assert counts["_verified_from_db"]["workflow_lead_times"] == 98
-    assert counts["_verified_from_db"]["hub_work_calendars"] == 6
+    assert counts["_verified_from_db"]["hub_work_calendars"] == 4
 
     # Second run, no --reset: the duplicate-seed guard must fire loudly
     # (RuntimeError), not silently skip or silently duplicate rows.
@@ -234,16 +235,20 @@ def test_seed_demo_data_default_is_the_client_2026_dataset(seeded_schema_url, mo
     assert counts["_verified_from_db"]["priority_scores"] == 253
     assert counts["engineers"] == 23 and counts["provisional_engineers"] == 6
     assert counts["skipped_zero_fte_placeholders"] == 2
-    assert counts["projects_without_leader"] == 20
+    # P29 (ADR 0042 §7): the 17 leaderless OEM projects get a provisional
+    # leader; the 3 blank leaders on non-member hubs stay blank.
+    assert counts["provisional_leaders"] == 17
+    assert counts["projects_without_leader"] == 3
     assert counts["carry_over_projects"] == 17
     run = counts["summary_run"]
     assert run["within_year"] + run["spillover"] + run["left_out"] + run["blocked"] == 192
-    assert run["no_leader"] == 18
+    assert run["no_leader"] == 1  # P29: 17 OEM projects now have a provisional leader
 
     projects = asyncio.run(_fetch(seeded_schema_url, select(Project)))
     engineers = asyncio.run(_fetch(seeded_schema_url, select(Engineer)))
     engineer_ids = {e.id for e in engineers}
-    assert sum(p.leader_engineer_id is None for p in projects) == 20
+    assert sum(p.leader_engineer_id is None for p in projects) == 3
+    assert sum(p.leader_is_provisional for p in projects) == 17
     assert all(
         p.leader_engineer_id in engineer_ids for p in projects if p.leader_engineer_id is not None
     )
@@ -261,6 +266,11 @@ def test_seed_demo_data_default_is_the_client_2026_dataset(seeded_schema_url, mo
     assert sum(p.plant is not None for p in projects) == 253
     assert sum(p.requesting_department is not None for p in projects) == 237
     assert sum(p.product_type is not None for p in projects) == 250
+    # ADR 0040: the seed sets no VIP, and the seeded VIP board links (there
+    # are some) do not imply one.
+    assert sum(p.is_vip for p in projects) == 0
+    assert counts["vip_board"]["links_added"] > 0
+    assert counts["vip_board"]["is_vip_pins"] == 0
     done = asyncio.run(
         _fetch(
             seeded_schema_url,

@@ -24,12 +24,18 @@ CapacityBasis = Literal["year", "remaining"]
 
 
 class DesignHubSummary(BaseModel):
-    """One hub's design supply. `capacity_weeks` equals `GET /capacity/hub-load`
-    `design_capacity_year` / `design_capacity_remaining` of the same hub."""
+    """One CAPACITY hub's design supply (ADR 0042: R&D-Greece, R&D-India,
+    PD-India, PD-Romania; R&D-Greece's supply serves OEM-HCK and OEM-Seltek
+    too). `capacity_weeks` equals `GET /capacity/hub-load`
+    `design_capacity_year` / `design_capacity_remaining` of the same row."""
 
     hub: HubName
+    #: Engineers of the hub counted in capacity (`counts_in_capacity`).
     engineer_count: int
-    #: Σ fte of the hub's engineers, 2 dp (= hub-load `engineer_fte_total`).
+    #: P29 (ADR 0042 §5): engineers of the hub NOT counted in capacity (booked
+    #: by the scheduler, never supply). Not in `engineer_count` / `fte_total`.
+    not_counted_engineer_count: int
+    #: Σ fte of the hub's counted engineers, 2 dp (= hub-load `engineer_fte_total`).
     fte_total: float
     weekdays_per_week: float
     capacity_weeks: YearRemaining
@@ -37,9 +43,17 @@ class DesignHubSummary(BaseModel):
     #: This hub's capacity / the total over the caller's visible hubs × 100,
     #: 2 dp; 0.0 when the total is 0. On served (2 dp) figures.
     share_pct: YearRemaining
+    #: P29 (ADR 0042): the member hubs this supply also serves, in the
+    #: caller's scope, by name (`["OEM-HCK", "OEM-Seltek"]` on R&D-Greece; empty
+    #: elsewhere). The capacity hub itself is not listed.
+    members: list[HubName]
+    #: The global `hub_id` filter's hub when it resolves to this row (own or
+    #: member); null otherwise.
+    selected_member: HubName | None
 
 
 class DesignTotal(BaseModel):
+    #: Σ of the rows' counted engineers (P29: `not_counted_engineer_count` apart).
     engineer_count: int
     fte_total: float
     capacity_weeks: YearRemaining
@@ -90,6 +104,10 @@ class EngineerResourceLoad(BaseModel):
     engineer_id: uuid.UUID
     name: str
     hub: HubName
+    #: P29 (ADR 0042 §5): false = not on the client's capacity roster. The
+    #: row's own capacity is still served, but it is left out of
+    #: `totals.engineers.capacity_weeks` / `capacity_days`.
+    counts_in_capacity: bool
     weekdays_per_week: float
     #: The engineer's `capacity_weeks.<basis>` (same as `GET /engineers`).
     capacity_weeks: float
@@ -118,7 +136,9 @@ class ChamberResourceLoad(BaseModel):
 
 
 class ResourceLoadTotal(BaseModel):
-    """Σ of the served rows (2 dp); `utilization_pct` on those sums."""
+    """Σ of the served rows (2 dp); `utilization_pct` on those sums. P29
+    (ADR 0042 §5): for engineers, the capacity sums skip rows with
+    `counts_in_capacity` false (supply); the load sums every row."""
 
     capacity_weeks: float
     load_weeks: float

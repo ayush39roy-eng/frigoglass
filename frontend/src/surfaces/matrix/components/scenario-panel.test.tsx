@@ -11,17 +11,30 @@ vi.mock('../hooks/use-matrix', () => ({
   useApplyScenario: () => applyScenarioHook,
 }));
 
-import { ScenarioModeToggle, ScenarioPendingPanel } from './scenario-panel';
-import type { PriorityScoreUpdateRequest } from '../api/types';
+import * as React from 'react';
 
-function scores(overrides: Partial<PriorityScoreUpdateRequest> = {}): PriorityScoreUpdateRequest {
+import { ScenarioModeToggle, ScenarioPendingPanel as RawPanel } from './scenario-panel';
+import type { PriorityScoreUpdateRequest } from '../api/types';
+import type { HardGateReason } from '@/types/enums';
+import { ScoringModelProvider } from '../scoring-model';
+import { testDimensionTable, uniformScores } from '../test-fixtures';
+
+/** P26: `{scores, hard_gates}`; dimension overrides by key. */
+function scores(overrides: Record<string, number | null | HardGateReason[]> = {}): PriorityScoreUpdateRequest {
+  const { hard_gates, ...dims } = overrides;
   return {
-    strategic_project: 3, new_customer: 3, new_options: 3, regulatory_compliance: 3,
-    quality_improvements: 3, rm_savings: 3, total_rm_savings: 3, gross_margins: 3,
-    profitability: 3, annual_volume: 3, three_year_volume: 3, new_models: 3,
-    capex_investment: 3, hard_gates: [],
-    ...overrides,
+    scores: { ...uniformScores(3), ...(dims as Record<string, number | null>) },
+    hard_gates: (hard_gates as HardGateReason[] | undefined) ?? [],
   };
+}
+
+/** The panel inside the served model (labels come from it). */
+function ScenarioPendingPanel(props: React.ComponentProps<typeof RawPanel>): React.JSX.Element {
+  return (
+    <ScoringModelProvider table={testDimensionTable()}>
+      <RawPanel {...props} />
+    </ScoringModelProvider>
+  );
 }
 
 function stageOne(overrides: Partial<{ projectId: string; projectName: string; hub: string }> = {}) {
@@ -164,7 +177,8 @@ describe('ScenarioPendingPanel', () => {
       { notes: string | null; priority_scores: Record<string, unknown>[] },
     ];
     expect(body.notes).toBe('Q3 replan');
-    expect(body.priority_scores).toEqual([{ project_id: 'p1', ...scores({ strategic_project: 5, hard_gates: [] }) }]);
+    // P26: only the changed dimension, and the full (here emptied) hard-gate list.
+    expect(body.priority_scores).toEqual([{ project_id: 'p1', scores: { strategic_project: 5 }, hard_gates: [] }]);
 
     await waitFor(() => expect(useScenarioStore.getState().pending).toEqual({}));
     expect(useScenarioStore.getState().notes).toBe('');
@@ -213,6 +227,33 @@ describe('diff rendering edge cases (via ScenarioPendingPanel)', () => {
     expect(item.textContent).toContain('Strategic Project: 3 → 5');
     expect(item.textContent).toContain('New Customer: 3 → 1');
     expect(item.textContent).toContain('2 fields changed');
+  });
+
+  it('P26: a cleared score reads "not scored"; a key the model does not list falls back to the staged label', () => {
+    useScenarioStore.getState().stageEdit({
+      projectId: 'p1', projectName: 'Cooler A', hub: 'R&D-Greece',
+      liveValues: scores({ old_dimension: 2 }), liveHasScore: true,
+      next: scores({ capex_investment: null, old_dimension: 4 }),
+      labels: { old_dimension: 'Old Dimension' },
+    });
+    renderWithProviders(<ScenarioPendingPanel />);
+    const item = screen.getByTestId('scenario-pending-item');
+    expect(item.textContent).toContain('CAPEX Investment (inverted): 3 → not scored');
+    expect(item.textContent).toContain('Old Dimension: 2 → 4');
+  });
+
+  it('P26: Apply leaves out a staged key that is no longer an active dimension', async () => {
+    const user = userEvent.setup();
+    useScenarioStore.getState().stageEdit({
+      projectId: 'p1', projectName: 'Cooler A', hub: 'R&D-Greece',
+      liveValues: scores({ old_dimension: 2 }), liveHasScore: true,
+      next: scores({ strategic_project: 4, old_dimension: 4 }),
+    });
+    renderWithProviders(<ScenarioPendingPanel />);
+    await user.click(screen.getByRole('button', { name: /Apply/ }));
+    await waitFor(() => expect(applyScenarioHook.mutateAsync).toHaveBeenCalledTimes(1));
+    const [body] = applyScenarioHook.mutateAsync.mock.calls[0] as [{ priority_scores: unknown[] }];
+    expect(body.priority_scores).toEqual([{ project_id: 'p1', scores: { strategic_project: 4 }, hard_gates: [] }]);
   });
 
   it('does not render a hard-gates diff line when the gate set is unchanged', () => {

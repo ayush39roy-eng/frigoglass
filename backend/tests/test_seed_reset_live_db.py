@@ -292,7 +292,11 @@ def test_reset_schedule_succeeds_with_live_user_rows(db_url, monkeypatch):
     assert after["follow_up"] == (False, 0)
 
     # Kept: the audit log (append-only), so the hubs and the user hub scope.
-    assert after["audit"] == before["audit"] == 1
+    # P29 (ADR 0042 §7): each client_2026 seed appends one audit row per
+    # provisional leader (17); the test's own row and the earlier seed's rows
+    # are kept, never deleted.
+    assert before["audit"] == 1 + 17
+    assert after["audit"] == before["audit"] + 17
     assert after["user_hub_scopes"] == 1
     # Kept: user configuration, restored onto the same (uuid5) ids.
     assert after["grant_ids"] == {ids["grant_id"]}

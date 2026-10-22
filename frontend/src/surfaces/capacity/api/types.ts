@@ -31,8 +31,26 @@ export interface CapacityChamberRow {
 }
 
 /**
- * One hub's load vs. supply, from `GET /capacity/hub-load` (→ HubCapacitySummary
- * row; PLACEHOLDER — P9 contract §4 *extended*, ADR 0008).
+ * P29 (ADR 0042, API_CONTRACT_P29 §2.2): one hub of a capacity hub's row.
+ * Display only: there is no per-member capacity, so no per-member booked % or
+ * status exists anywhere (I19).
+ */
+export interface CapacityHubMember {
+  /** "R&D-Greece" | "OEM-HCK" | "OEM-Seltek". */
+  hub: HubName;
+  /** True for the capacity hub itself (listed first when in scope). */
+  own: boolean;
+  /** Projects of this hub with at least one non-skipped design step in the active run. */
+  project_count: number;
+  /** Integer effort weeks of those projects (I6 per hub); 0 with no run. */
+  design_load_weeks: number;
+}
+
+/**
+ * One CAPACITY hub's load vs. supply, from `GET /capacity/hub-load` (→ HubCapacitySummary
+ * row). P29 (ADR 0042): rows are the four capacity hubs only; R&D-Greece's row
+ * aggregates OEM-HCK and OEM-Seltek (load) and serves `members` for display.
+ * (PLACEHOLDER — P9 contract §4 *extended*, ADR 0008.)
  *
  * LOAD (primary figures, Invariants I6 / I7): `design_load_weeks` = Σ design-kind
  * step durations over the active run for the hub's projects; `lab_load_weeks` =
@@ -99,6 +117,15 @@ export interface HubCapacityRow {
   lab_weekdays_per_week: number;
   lab_capacity_days: YearRemaining;
   lab_load_days: YearRemaining;
+  /** P29 (ADR 0042, API_CONTRACT_P29 §2.2): the hubs this capacity hub's row
+   *  covers, for display only. `[]` on a capacity hub with no member hubs; on
+   *  R&D-Greece: own first, then OEM-HCK / OEM-Seltek, only the hubs in the
+   *  caller's scope. Never summed in the browser: the row's own
+   *  `design_load_weeks` is the total (a scoped caller sees a partial list). */
+  members: CapacityHubMember[];
+  /** P29: the request's `hub_id` when it is one of this row's hubs (own or
+   *  member), else null. Highlight that member. */
+  selected_member: HubName | null;
   /** @deprecated P3-era alias of `design_capacity_remaining`; kept one release, not read. */
   design_capacity_weeks?: number;
   /** @deprecated P3-era alias of `lab_capacity_remaining`; kept one release, not read. */
@@ -285,8 +312,12 @@ export interface EngineerWeekUtilization {
 export interface EngineerUtilizationRow {
   id: Id;
   name: string;
+  /** P29: always a capacity hub. */
   hub: HubName;
   role: string;
+  /** P29 (ADR 0042 §5): false for a leader who is booked but not on the
+   *  client's capacity roster (no supply). Show "Not in capacity roster". */
+  counts_in_capacity: boolean;
   total_booked: number;
   total_capacity: number;
   utilization_pct: number;

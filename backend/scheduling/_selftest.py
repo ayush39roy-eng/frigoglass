@@ -303,6 +303,88 @@ def scenario_oem_hub_requires_oem_allowed_category() -> None:
     )
 
 
+def scenario_oem_project_on_greece_capacity_hub() -> None:
+    """ADR 0042 (P29): an OEM-HCK project whose capacity hub is R&D-Greece, led
+    by a Greek engineer carrying `B-OEM` (no generic "OEM" marker), runs the OEM
+    workflow, books the Greek engineer and a chamber in the Greece lab region.
+
+    B-OEM lead times (A..N) 1 1 1 0 0 2 2 6 0 1 0 0 0 0, CURRENT_WEEK 31:
+    A 31, B 32, C 33, (D, E skipped), F 34-35, G 36-37, H 38-43, (I), J 44.
+    """
+
+    greek = EngineerInput("eng-gr-oem", "Greek OEM", "R&D-Greece", ("A+", "A", "B", "C", "B-OEM"))
+    # Sorts first and hosts the OEM lab stages, but is in the wrong lab region.
+    india = ChamberInput(
+        "ch-a-india", "IN-OEM", "India", max_concurrent=1, allowed_stages=("OEM-E", "OEM-H")
+    )
+    greece = ChamberInput(
+        "ch-gr-oem", "GR-OEM", "Greece", max_concurrent=1, allowed_stages=("OEM-E", "OEM-H")
+    )
+    proj = ProjectInput(
+        project_id="p-oem-gr",
+        name="OEM on Greece capacity",
+        hub="OEM-HCK",
+        status="In Queue",
+        category="B-OEM",
+        priority="P1",
+        frozen=False,
+        leader_engineer_id="eng-gr-oem",
+        workflow_id="OEM",
+        capacity_hub="R&D-Greece",
+    )
+    si = ScheduleInput(
+        projects=(proj,), engineers=(greek,), chambers=(india, greece), current_week=31
+    )
+    out = run_greedy_sgs(si)
+    o = out.project_outcomes[0]
+    design = [s for s in o.steps if s.kind == "design" and not s.skipped]
+    lab = [s for s in o.steps if s.kind == "lab" and not s.skipped]
+    check("capacity hub: scheduled, has a leader", not o.left_out and not o.no_leader)
+    check("capacity hub: B-OEM leader is category-eligible", not o.cat_not_allowed)
+    check("capacity hub: OEM workflow, 14 rows", [s.step_id[:4] for s in o.steps] == ["OEM-"] * 14)
+    check(
+        "capacity hub: every design step on the Greek engineer",
+        bool(design) and all(s.assigned_engineer_id == "eng-gr-oem" for s in design),
+    )
+    check(
+        "capacity hub: lab step in the Greece region",
+        [s.assigned_chamber_id for s in lab] == ["ch-gr-oem"],
+    )
+    check(
+        "capacity hub: hand-derived weeks",
+        [(s.step_id, s.start_week, s.end_week) for s in design + lab]
+        == [
+            ("OEM-A", 31, 31),
+            ("OEM-B", 32, 32),
+            ("OEM-G", 36, 37),
+            ("OEM-J", 44, 44),
+            ("OEM-H", 38, 43),
+        ],
+    )
+    check("capacity hub: within year (end W44)", o.end_week == 44 and o.within_year)
+    check("capacity hub: re-run byte-identical (I8)", repr(run_greedy_sgs(si)) == repr(out))
+    # Regression: without capacity_hub the field defaults to the hub, and the
+    # walk (which books the assigned leader) is byte-identical.
+    plain = ProjectInput(
+        project_id="p-oem-gr",
+        name="OEM on Greece capacity",
+        hub="OEM-HCK",
+        status="In Queue",
+        category="B-OEM",
+        priority="P1",
+        frozen=False,
+        leader_engineer_id="eng-gr-oem",
+        workflow_id="OEM",
+    )
+    check("capacity hub: defaults to the project's hub", plain.capacity_hub == "OEM-HCK")
+    out_plain = run_greedy_sgs(
+        ScheduleInput(
+            projects=(plain,), engineers=(greek,), chambers=(india, greece), current_week=31
+        )
+    )
+    check("capacity hub: unset -> byte-identical output", repr(out_plain) == repr(out))
+
+
 def scenario_spillover_boundary() -> None:
     """end_week + delay <= 52 -> within_year; one week over -> spillover, not left_out."""
 
@@ -484,6 +566,7 @@ def main() -> int:
     scenario_left_out_at_horizon()
     scenario_category_mismatch()
     scenario_oem_hub_requires_oem_allowed_category()
+    scenario_oem_project_on_greece_capacity_hub()
     scenario_spillover_boundary()
     scenario_delay_is_terminal_not_propagated()
     scenario_excluded_statuses()

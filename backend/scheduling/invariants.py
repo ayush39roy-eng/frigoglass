@@ -1,4 +1,6 @@
-"""Reusable invariant validator — Invariants I1-I17 and I21-I22, per `docs/DOMAIN_RULES.md`.
+"""Reusable invariant validator — Invariants I1-I17, I21-I22 and the solver-input
+part of I26, per `docs/DOMAIN_RULES.md`. I25 / I26 over live rows are in
+`scheduling.demand`.
 
 This is **the permanent correctness contract** for `backend/scheduling/`.
 `workflow-auditor` calls `validate_invariants()` on every solver-touching
@@ -28,7 +30,10 @@ What is assertable at the pure-function level (2026-09-27 revision):
     I4  lab steps booked only to eligible chambers in the project's lab region
     I5  14-row shape: skipped rows present with skipped=true and zero
         duration, or LEFT_OUT (a LEFT_OUT progress-tracked project still
-        carries its anchored rows, ruling 2); data-error projects carry no rows
+        carries its anchored rows, ruling 2); data-error projects carry no rows.
+        ADR 0041 R5: "skipped" is derived from the inputs (lead = 0, lab with
+        certification off, or a merged override of 0), never from
+        `analyse_project`; a non-skipped row has a positive duration
     I6  design load = Σ design-kind effective durations (each row's duration
         equals `duration_override_weeks ?? lead time`, ADR 0019;
         elapsed/skipped contribute 0)
@@ -52,9 +57,36 @@ What is assertable at the pure-function level (2026-09-27 revision):
         `ceil(remaining / fte)` (design) or `remaining`
     I22 (ADR 0019) every Not Started step with `start_not_before_week` set
         starts at or after it (frozen projects and held steps exempt)
+    I26 (ADR 0041 R3, input part) a started stage of a non-frozen project is
+        never zeroed by its merged override (the live-row I26 split check is
+        `scheduling.demand.check_i26_effort_split`)
     I13 (health badge), I14 (run immutability) and I17 (capacity supply) are
     API/DB-side invariants with nothing to assert on a `ScheduleOutput`; they
     are the workflow-auditor's to check against the live API (P9-T06).
+
+Capacity hubs (2026-10-22, ADR 0042, P29-T02):
+    `ProjectInput.capacity_hub` (R&D-Greece for `OEM-HCK` / `OEM-Seitek`, the
+    hub itself otherwise) is the project's engineer pool and the hub its design
+    load counts against. Inside this validator that means:
+    - I6's per-hub aggregate stays keyed by `project.hub` (the `members`
+      breakdown of the Capacity surface's Greece row); the surface's row
+      figure is `compute_design_load_by_capacity_hub`, which is Σ over the
+      capacity hub's own and member projects (ADR 0042 §3). Both sum to the
+      same grand total, which is what I6 asserts.
+    - I4 (lab region) and the workflow (I15) still follow `project.hub`: the
+      OEM hubs' lab region is already Greece.
+    - There is deliberately **no** invariant "the booked engineer belongs to
+      the project's capacity hub". The scheduler books the *assigned* leader
+      (DOMAIN_RULES "Booking rules") and never picks one; the pool rule
+      governs engineer selection (the what-if picker, the service-side
+      provisional-leader picker). The client's own data has leaders outside
+      the project's hub (an R&D-India engineer leads two dozen PD-India
+      projects), which a hard rule would reject. `cross_capacity_hub_leaders`
+      lists those cases as a *diagnostic* for the auditor and the Capacity
+      surface (such a project's load counts against its capacity hub while
+      the leader's FTE sits in another hub's supply).
+    - An unknown `capacity_hub` is a configuration error: `run_greedy_sgs`
+      raises `ValueError` (`workflow.validate_schedulable_project`).
 
 No DB access, no network access, no filesystem access, no randomness, no
 wall-clock dependence. Every iteration is over an explicitly sorted sequence,
@@ -64,9 +96,11 @@ so the *order* of violations returned is itself deterministic.
 from __future__ import annotations
 
 from collections import defaultdict
+from collections.abc import Mapping
 from dataclasses import dataclass
 
 import domain_constants as dc
+from scheduling import hubs
 from scheduling.greedy import run_greedy_sgs
 from scheduling.types import (
     LAB_CONSUMPTION_PER_PROJECT_WEEK,
@@ -75,6 +109,7 @@ from scheduling.types import (
     ScheduleInput,
     ScheduleOutput,
     StepSchedule,
+    StepTimingInput,
 )
 from scheduling.workflow import (
     STATUS_BLOCKED,
@@ -82,6 +117,7 @@ from scheduling.workflow import (
     STATUS_IN_PROGRESS,
     STATUS_NOT_STARTED,
     ProjectPlan,
+    Workflow,
     analyse_project,
     build_lead_time_table,
     build_workflows,
@@ -96,7 +132,7 @@ from scheduling.workflow import (
 
 @dataclass(frozen=True)
 class InvariantViolation:
-    """One concrete failure of one of Invariants I1-I17, I21-I22."""
+    """One concrete failure of one of Invariants I1-I17, I21-I22, I25-I26."""
 
     invariant: str
     description: str
@@ -118,6 +154,10 @@ class _Ctx:
     projects: dict[str, ProjectInput]
     outcomes: dict[str, ProjectScheduleOutcome]
     plans: dict[str, ProjectPlan]  # only for schedulable projects that analyse cleanly
+    # The validated inputs, for checks that must not lean on `analyse_project`
+    # (ADR 0041 R5: I5 derives "skipped" from the inputs itself).
+    workflows: Mapping[str, Workflow]
+    lead_time_table: Mapping[tuple[str, str, str], int]
 
     def plan(self, project_id: str) -> ProjectPlan | None:
         return self.plans.get(project_id)
@@ -228,7 +268,10 @@ def _build_ctx(
             project, wf, table, leader_fte=leader_fte_of(project, fte_by_engineer)
         )
 
-    return _Ctx(schedule_input, schedule_output, projects, outcomes, plans), violations
+    return (
+        _Ctx(schedule_input, schedule_output, projects, outcomes, plans, workflows, table),
+        violations,
+    )
 
 
 # --- Public entry point -------------------------------------------------------
@@ -262,6 +305,7 @@ def validate_invariants(
     violations.extend(_check_i16_completion_lines(ctx))
     violations.extend(_check_i21_effective_duration_span(ctx))
     violations.extend(_check_i22_start_not_before(ctx))
+    violations.extend(_check_i26_recorded_work_not_zeroed(ctx))
     return tuple(violations)
 
 
@@ -406,9 +450,9 @@ def _check_i2_anchored_room(
     violations: list[InvariantViolation] = []
     for outcome in sorted(ctx.schedule_output.project_outcomes, key=lambda o: o.project_id):
         project = ctx.projects.get(outcome.project_id)
-        if project is None or project.frozen or project.hub not in dc.HUB_LAB_REGION:
+        if project is None or project.frozen or project.hub not in hubs.HUB_LAB_REGION:
             continue
-        region = dc.HUB_LAB_REGION[project.hub]
+        region = hubs.HUB_LAB_REGION[project.hub]
         for step in outcome.steps:
             chamber_id = step.assigned_chamber_id
             if step.kind != "lab" or chamber_id is None:
@@ -556,7 +600,7 @@ def _check_i4_lab_chamber_eligibility(ctx: _Ctx) -> list[InvariantViolation]:
     for outcome in sorted(ctx.schedule_output.project_outcomes, key=lambda o: o.project_id):
         pid = outcome.project_id
         project = ctx.projects.get(pid)
-        expected_region = dc.HUB_LAB_REGION.get(project.hub) if project else None
+        expected_region = hubs.HUB_LAB_REGION.get(project.hub) if project else None
         for step in outcome.steps:
             if step.kind != "lab" or ctx.books_nothing(pid, step):
                 continue
@@ -625,19 +669,55 @@ def _check_i4_lab_chamber_eligibility(ctx: _Ctx) -> list[InvariantViolation]:
 # --- I5: complete schedule or LEFT_OUT --------------------------------------
 
 
+def _input_override(project: ProjectInput, step_id: str) -> int | None:
+    """The merged per-project duration the input carries for `step_id`
+    (`StepTimingInput.duration_override_weeks`), read straight from the input
+    rows: with duplicate rows (rejected before any run) the smallest value
+    wins, a deterministic choice made without the scheduler's helpers."""
+
+    rows: list[StepTimingInput] = [r for r in project.step_timing if r.step_id == step_id]
+    values = sorted(
+        (-1 if r.duration_override_weeks is None else r.duration_override_weeks) for r in rows
+    )
+    return None if not values or values[0] < 0 else values[0]
+
+
+def _input_says_skipped(ctx: _Ctx, project: ProjectInput, step_id: str) -> bool | None:
+    """ADR 0041 R5, derived from the inputs only (never from
+    `analyse_project`): skipped ⟺ lead = 0 ∨ (lab ∧ ¬certification) ∨ the
+    merged override is 0. `None` when the inputs cannot say (unknown
+    workflow, step or lead-time row: other checks report those)."""
+
+    wf = ctx.workflows.get(project.workflow_id)
+    if wf is None or step_id not in wf.steps_by_id or project.category is None:
+        return None
+    lead = ctx.lead_time_table.get((project.workflow_id, project.category, step_id))
+    if lead is None:
+        return None
+    if lead == 0:
+        return True
+    if wf.steps_by_id[step_id].kind == "lab" and not project.certification_testing_required:
+        return True
+    return _input_override(project, step_id) == 0
+
+
 def _check_i5_complete_or_left_out(ctx: _Ctx) -> list[InvariantViolation]:
-    """I5 (revised): every scheduled project has either a complete 14-step
-    schedule — skipped steps present with `skipped=true`, zero duration,
-    `start == end` and no resource — or `LEFT_OUT=true` (with an incomplete
-    row set). A data-error project carries no rows."""
+    """I5 (revised; ADR 0041 R5): every scheduled project has either a
+    complete 14-step schedule — skipped steps present with `skipped=true`,
+    zero duration, `start == end` and no resource; every other step with a
+    positive duration — or `LEFT_OUT=true` (with an incomplete row set). A
+    data-error project carries no rows. Whether a row should be skipped is
+    derived from the **inputs** (lead time, kind, certification flag, merged
+    override), independently of `analyse_project`."""
 
     violations: list[InvariantViolation] = []
     for outcome in sorted(ctx.schedule_output.project_outcomes, key=lambda o: o.project_id):
         pid = outcome.project_id
         if outcome.excluded:
             continue
-        plan = ctx.plan(pid)
-        total = len(plan.workflow.steps) if plan else len(ctx.schedule_input.workflow_steps)
+        project = ctx.projects.get(pid)
+        workflow = ctx.workflows.get(project.workflow_id) if project is not None else None
+        total = len(workflow.steps) if workflow else len(ctx.schedule_input.workflow_steps)
         if outcome.data_error is not None:
             if outcome.steps or outcome.left_out:
                 violations.append(
@@ -676,10 +756,10 @@ def _check_i5_complete_or_left_out(ctx: _Ctx) -> list[InvariantViolation]:
                 )
             )
             continue
-        if plan is None:
+        if project is None or workflow is None:
             continue
         ids = sorted(s.step_id for s in outcome.steps)
-        if ids != sorted(plan.workflow.steps_by_id):
+        if ids != sorted(workflow.steps_by_id):
             violations.append(
                 InvariantViolation(
                     invariant="I5",
@@ -691,14 +771,15 @@ def _check_i5_complete_or_left_out(ctx: _Ctx) -> list[InvariantViolation]:
             )
             continue
         for step in sorted(outcome.steps, key=lambda s: s.sequence_order):
-            sp = plan.steps[step.step_id]
-            if step.skipped != sp.skipped:
+            expected = _input_says_skipped(ctx, project, step.step_id)
+            if expected is not None and step.skipped != expected:
                 violations.append(
                     InvariantViolation(
                         invariant="I5",
                         description=(
                             f"project {pid!r} step {step.step_id!r}: skipped={step.skipped} but "
-                            f"the lead-time table / certification flag says skipped={sp.skipped}"
+                            "the inputs (lead time / certification flag / merged override) say "
+                            f"skipped={expected}"
                         ),
                         project_id=pid,
                         step_id=step.step_id,
@@ -716,6 +797,20 @@ def _check_i5_complete_or_left_out(ctx: _Ctx) -> list[InvariantViolation]:
                         description=(
                             f"project {pid!r} skipped step {step.step_id!r} must have zero "
                             "duration, start == end and no resource"
+                        ),
+                        project_id=pid,
+                        step_id=step.step_id,
+                    )
+                )
+            if not step.skipped and (step.duration_weeks < 1 or step.end_week < step.start_week):
+                violations.append(
+                    InvariantViolation(
+                        invariant="I5",
+                        description=(
+                            f"project {pid!r} step {step.step_id!r} is not skipped but has "
+                            f"duration_weeks={step.duration_weeks}, weeks "
+                            f"{step.start_week}..{step.end_week} (a 0-week step must be "
+                            "skipped, ADR 0041 R5)"
                         ),
                         project_id=pid,
                         step_id=step.step_id,
@@ -739,12 +834,72 @@ def compute_design_load_by_hub(
     load: dict[str, int] = defaultdict(int)
     for outcome in schedule_output.project_outcomes:
         project = projects.get(outcome.project_id)
-        if project is None or project.hub not in dc.HUB_LAB_REGION:
+        if project is None or project.hub not in hubs.HUB_LAB_REGION:
             continue
         for step in outcome.steps:
             if step.kind == "design" and not step.skipped:
                 load[project.hub] += step.duration_weeks
     return dict(load)
+
+
+def compute_design_load_by_capacity_hub(
+    schedule_input: ScheduleInput, schedule_output: ScheduleOutput
+) -> dict[str, int]:
+    """ADR 0042 §3: Σ `design`-kind step `duration_weeks` per **capacity hub**
+    — every project whose `capacity_hub` resolves to it (its own projects plus
+    its member hubs' projects; the OEM hubs' load lands on R&D-Greece). Same
+    rows and same grand total as `compute_design_load_by_hub` (I6), regrouped;
+    this is the figure the Capacity surface's capacity-hub row shows, the
+    per-hub one is its `members` breakdown."""
+
+    projects = {p.project_id: p for p in schedule_input.projects}
+    load: dict[str, int] = defaultdict(int)
+    for outcome in schedule_output.project_outcomes:
+        project = projects.get(outcome.project_id)
+        if project is None or project.hub not in hubs.HUB_LAB_REGION:
+            continue
+        for step in outcome.steps:
+            if step.kind == "design" and not step.skipped:
+                load[project.capacity_hub] += step.duration_weeks
+    return dict(load)
+
+
+@dataclass(frozen=True)
+class CrossCapacityHubLeader:
+    """One project whose assigned leader sits outside its capacity hub
+    (diagnostic, not a violation — see the module docstring)."""
+
+    project_id: str
+    hub: str
+    capacity_hub: str
+    engineer_id: str
+    engineer_hub: str
+
+
+def cross_capacity_hub_leaders(schedule_input: ScheduleInput) -> tuple[CrossCapacityHubLeader, ...]:
+    """ADR 0042 diagnostic: schedulable projects whose `leader_engineer_id`
+    resolves to an engineer with `hub != project.capacity_hub`. Sorted by
+    `project_id`. Unset / unknown leaders are not listed (they are `no_leader`
+    outcomes, not pool questions)."""
+
+    engineers = {e.engineer_id: e for e in schedule_input.engineers}
+    out: list[CrossCapacityHubLeader] = []
+    for project in sorted(schedule_input.projects, key=lambda p: p.project_id):
+        if project.status not in dc.SCHEDULABLE_STATUS_ORDER or project.leader_engineer_id is None:
+            continue
+        engineer = engineers.get(project.leader_engineer_id)
+        if engineer is None or engineer.hub == project.capacity_hub:
+            continue
+        out.append(
+            CrossCapacityHubLeader(
+                project_id=project.project_id,
+                hub=project.hub,
+                capacity_hub=project.capacity_hub,
+                engineer_id=engineer.engineer_id,
+                engineer_hub=engineer.hub,
+            )
+        )
+    return tuple(out)
 
 
 def compute_lab_load_by_hub(
@@ -757,7 +912,7 @@ def compute_lab_load_by_hub(
     load: dict[str, float] = defaultdict(float)
     for outcome in schedule_output.project_outcomes:
         project = projects.get(outcome.project_id)
-        if project is None or project.hub not in dc.HUB_LAB_REGION:
+        if project is None or project.hub not in hubs.HUB_LAB_REGION:
             continue
         for step in outcome.steps:
             if step.kind == "lab" and not step.skipped:
@@ -816,7 +971,7 @@ def _check_i6_design_load(ctx: _Ctx) -> list[InvariantViolation]:
     grand = 0
     for project in sorted(ctx.schedule_input.projects, key=lambda p: p.project_id):
         outcome = ctx.outcomes.get(project.project_id)
-        if outcome is None or project.hub not in dc.HUB_LAB_REGION:
+        if outcome is None or project.hub not in hubs.HUB_LAB_REGION:
             continue
         grand += sum(
             s.duration_weeks for s in outcome.steps if s.kind == "design" and not s.skipped
@@ -842,7 +997,7 @@ def _check_i7_lab_load(ctx: _Ctx) -> list[InvariantViolation]:
     grand = 0.0
     for project in sorted(ctx.schedule_input.projects, key=lambda p: p.project_id):
         outcome = ctx.outcomes.get(project.project_id)
-        if outcome is None or project.hub not in dc.HUB_LAB_REGION:
+        if outcome is None or project.hub not in hubs.HUB_LAB_REGION:
             continue
         grand += sum(
             s.duration_weeks * LAB_CONSUMPTION_PER_PROJECT_WEEK
@@ -1316,6 +1471,55 @@ def _check_i22_start_not_before(ctx: _Ctx) -> list[InvariantViolation]:
                         project_id=pid,
                         step_id=step.step_id,
                         week=step.start_week,
+                    )
+                )
+    return violations
+
+
+# --- R3 at the input (ADR 0041) -----------------------------------------------------
+
+
+def _check_i26_recorded_work_not_zeroed(ctx: _Ctx) -> list[InvariantViolation]:
+    """ADR 0041 R3 / I26, the part visible in a solver input: a step of a
+    non-frozen project whose stored stage status is not `Not Started` must
+    not be zeroed by its merged override (`user ?? effort` = 0). The effort
+    split raises such a step to `max(1, ·)` and a user override is never 0,
+    so a 0 here means recorded work would vanish from the run (the step is
+    skipped, its actuals dropped, and I11 — which exempts skipped steps —
+    would not notice). Lead-0 steps and lab steps with certification testing
+    off are skipped by the table, not by the override, and are not
+    reported (their progress has always been ignored)."""
+
+    violations: list[InvariantViolation] = []
+    for project in sorted(ctx.schedule_input.projects, key=lambda p: p.project_id):
+        if project.frozen or project.status not in dc.SCHEDULABLE_STATUS_ORDER:
+            continue
+        wf = ctx.workflows.get(project.workflow_id)
+        if wf is None or project.category is None:
+            continue
+        started = sorted(
+            {pr.step_id for pr in project.step_progress if pr.status != STATUS_NOT_STARTED}
+        )
+        for step_id in started:
+            if step_id not in wf.steps_by_id:
+                continue
+            lead = ctx.lead_time_table.get((project.workflow_id, project.category, step_id))
+            if not lead:
+                continue
+            if wf.steps_by_id[step_id].kind == "lab" and not project.certification_testing_required:
+                continue
+            if _input_override(project, step_id) == 0:
+                violations.append(
+                    InvariantViolation(
+                        invariant="I26",
+                        description=(
+                            f"project {project.project_id!r} step {step_id!r} has recorded "
+                            "progress but its merged duration is 0, so the run skips it and "
+                            "drops the recorded work (ADR 0041 R3: a started step keeps "
+                            "max(1, effort))"
+                        ),
+                        project_id=project.project_id,
+                        step_id=step_id,
                     )
                 )
     return violations

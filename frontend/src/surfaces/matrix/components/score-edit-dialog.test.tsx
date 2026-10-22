@@ -4,9 +4,11 @@ import userEvent from '@testing-library/user-event';
 
 import { renderWithProviders } from '@/test/render';
 
+import { seriousAxeViolations } from '@/test/axe';
+
 import type { PriorityMatrixRow } from '../api/types';
 import { ScoreEditDialog } from './score-edit-dialog';
-import { P13_MATRIX_ROW_DEFAULTS } from '../test-fixtures';
+import { FOURTEEN_TEST_DIMENSIONS, P13_MATRIX_ROW_DEFAULTS, testDimensionScores, uniformScores } from '../test-fixtures';
 
 function row(overrides: Partial<PriorityMatrixRow> = {}): PriorityMatrixRow {
   return {
@@ -17,10 +19,6 @@ function row(overrides: Partial<PriorityMatrixRow> = {}): PriorityMatrixRow {
     type: 'NM',
     set_priority: null,
     has_score: false,
-    strategic_project: null, new_customer: null, new_options: null, regulatory_compliance: null,
-    quality_improvements: null, rm_savings: null, total_rm_savings: null, gross_margins: null,
-    profitability: null, annual_volume: null, three_year_volume: null, new_models: null,
-    capex_investment: null,
     hard_gates: [],
     weighted_score: null,
     normalized_pct: null,
@@ -34,35 +32,59 @@ function row(overrides: Partial<PriorityMatrixRow> = {}): PriorityMatrixRow {
     selling_price_eur: null,
     gross_margin_pct: null,
     ...P13_MATRIX_ROW_DEFAULTS,
+    dimension_scores: testDimensionScores({}),
     ...overrides,
   };
 }
 
 describe('ScoreEditDialog', () => {
-  it('rejects an out-of-range dimension value client-side and does not call onSubmit', async () => {
-    const user = userEvent.setup();
-    const onSubmit = vi.fn().mockResolvedValue(undefined);
-    renderWithProviders(
-      <ScoreEditDialog row={row()} open onOpenChange={vi.fn()} onSubmit={onSubmit} />,
+  it('P26: one 0–5 menu per served active dimension, grouped by pillar (14 dimensions, a new pillar)', async () => {
+    const scores = { ...uniformScores(3, FOURTEEN_TEST_DIMENSIONS), sustainability_esg: null };
+    const { container } = renderWithProviders(
+      <ScoreEditDialog
+        row={row({
+          has_score: true,
+          dimension_scores: testDimensionScores(scores, FOURTEEN_TEST_DIMENSIONS),
+          missing_dimension_keys: ['sustainability_esg'],
+        })}
+        open
+        onOpenChange={vi.fn()}
+        onSubmit={vi.fn()}
+      />,
     );
-
-    const strategic = screen.getByLabelText('Strategic Project');
-    await user.clear(strategic);
-    await user.type(strategic, '9');
-    await user.click(screen.getByRole('button', { name: 'Save score' }));
-
-    expect(await screen.findByText('Maximum score is 5')).toBeInTheDocument();
-    expect(onSubmit).not.toHaveBeenCalled();
+    expect(screen.getAllByTestId('score-edit-select')).toHaveLength(14);
+    expect(screen.getAllByTestId('score-edit-pillar').map((f) => f.querySelector('legend')?.textContent)).toEqual([
+      'Strategic Alignment',
+      'Regulatory & Quality',
+      'Financial Return',
+      'Investment & Feasibility',
+      'Market & Volume',
+      'Sustainability',
+    ]);
+    const esg = screen.getByLabelText('Sustainability & ESG') as HTMLSelectElement;
+    expect(esg.value).toBe('');
+    expect(within(esg).getAllByRole('option').map((o) => o.textContent)).toEqual(['– Not scored', '0', '1', '2', '3', '4', '5']);
+    expect(screen.getByRole('dialog')).toHaveTextContent('Cooler A — 14 dimensions, each 0–5');
+    expect(screen.getByTestId('score-edit-incomplete')).toHaveTextContent('1 of 14 not scored');
+    expect(await seriousAxeViolations(container)).toEqual([]);
   });
 
-  it('submits the 13 coerced dims + chosen hard gates on a valid save', async () => {
+  it('P26: sends only the dimensions changed in the dialog (scores map) + the chosen hard gates', async () => {
     const user = userEvent.setup();
     const onSubmit = vi.fn().mockResolvedValue(undefined);
     const onOpenChange = vi.fn();
     renderWithProviders(
-      <ScoreEditDialog row={row()} open onOpenChange={onOpenChange} onSubmit={onSubmit} />,
+      <ScoreEditDialog
+        row={row({ has_score: true, dimension_scores: testDimensionScores(uniformScores(3)) })}
+        open
+        onOpenChange={onOpenChange}
+        onSubmit={onSubmit}
+      />,
     );
 
+    await user.selectOptions(screen.getByLabelText('Strategic Project'), '5');
+    await user.selectOptions(screen.getByLabelText('New Customer'), '0');
+    await user.selectOptions(screen.getByLabelText('CAPEX Investment (inverted)'), '');
     const gates = screen.getByRole('group', { name: /Hard gates/ });
     await user.click(within(gates).getByLabelText('Active safety non-compliance'));
     await user.click(screen.getByRole('button', { name: 'Save score' }));
@@ -70,42 +92,76 @@ describe('ScoreEditDialog', () => {
     expect(onSubmit).toHaveBeenCalledTimes(1);
     const [projectId, body] = onSubmit.mock.calls[0] as [string, Record<string, unknown>];
     expect(projectId).toBe('p1');
-    expect(body).toMatchObject({
-      strategic_project: 3,
-      capex_investment: 3,
+    expect(body).toEqual({
+      scores: { strategic_project: 5, new_customer: 0, capex_investment: null },
       hard_gates: ['Active safety non-compliance'],
     });
-    expect(Object.keys(body).sort()).toEqual(
-      [
-        'annual_volume', 'capex_investment', 'gross_margins', 'hard_gates', 'new_customer',
-        'new_models', 'new_options', 'profitability', 'quality_improvements', 'regulatory_compliance',
-        'rm_savings', 'strategic_project', 'three_year_volume', 'total_rm_savings',
-      ].sort(),
-    );
+    expect(onOpenChange).toHaveBeenCalledWith(false);
   });
 
-  it('P21: accepts 0 ("no contribution"), rejects -1, and shows the 0–5 help text', async () => {
+  it('P26: an unscored project starts empty (no invented 3s); scoring one dimension sends just that one', async () => {
     const user = userEvent.setup();
     const onSubmit = vi.fn().mockResolvedValue(undefined);
     renderWithProviders(<ScoreEditDialog row={row()} open onOpenChange={vi.fn()} onSubmit={onSubmit} />);
+    expect((screen.getByLabelText('Strategic Project') as HTMLSelectElement).value).toBe('');
+    await user.selectOptions(screen.getByLabelText('Strategic Project'), '4');
+    await user.click(screen.getByRole('button', { name: 'Save score' }));
+    expect(onSubmit.mock.calls[0]?.[1]).toEqual({ scores: { strategic_project: 4 }, hard_gates: [] });
+  });
 
+  it('P27: dimensions in tag_dimension_keys carry a "from registration" hint and stay editable; an inactive key is ignored', async () => {
+    const user = userEvent.setup();
+    const onSubmit = vi.fn().mockResolvedValue(undefined);
+    const { container } = renderWithProviders(
+      <ScoreEditDialog
+        row={row({
+          has_score: true,
+          dimension_scores: testDimensionScores({ ...uniformScores(3), new_options: 5, new_models: 5 }),
+          scoring_tags: ['new_options', 'new_models', 'improvement'],
+          // An inactive dimension's key may be listed while absent from dimension_scores: ignored.
+          tag_dimension_keys: ['new_options', 'new_models', 'not_served_dimension'],
+        })}
+        open
+        onOpenChange={vi.fn()}
+        onSubmit={onSubmit}
+      />,
+    );
+    const hints = screen.getAllByTestId('from-registration-hint');
+    expect(hints).toHaveLength(2);
+    expect(hints.map((h) => h.getAttribute('aria-label'))).toEqual([
+      expect.stringMatching(/^New Options: from registration/),
+      expect.stringMatching(/^New Models: from registration/),
+    ]);
+    const options = screen.getByLabelText('New Options') as HTMLSelectElement;
+    expect(options).toBeEnabled();
+    expect(options.value).toBe('5');
+    await user.selectOptions(options, '2');
+    await user.click(screen.getByRole('button', { name: 'Save score' }));
+    expect(onSubmit.mock.calls[0]?.[1]).toEqual({ scores: { new_options: 2 }, hard_gates: [] });
+    expect(await seriousAxeViolations(container)).toEqual([]);
+  });
+
+  it('closes without a request when nothing changed', async () => {
+    const user = userEvent.setup();
+    const onSubmit = vi.fn();
+    const onOpenChange = vi.fn();
+    renderWithProviders(<ScoreEditDialog row={row()} open onOpenChange={onOpenChange} onSubmit={onSubmit} />);
+    await user.click(screen.getByRole('button', { name: 'Save score' }));
+    expect(onSubmit).not.toHaveBeenCalled();
+    expect(onOpenChange).toHaveBeenCalledWith(false);
+  });
+
+  it('P21: shows the 0–5 help text; a 422 UNKNOWN_DIMENSION_KEY explains the rubric changed', async () => {
+    const user = userEvent.setup();
+    const { ApiError } = await import('@/lib/api/client');
+    const onSubmit = vi.fn().mockRejectedValue(new ApiError(422, 'x', 'Not an active scoring dimension: strategic_project.', 'UNKNOWN_DIMENSION_KEY'));
+    renderWithProviders(<ScoreEditDialog row={row()} open onOpenChange={vi.fn()} onSubmit={onSubmit} />);
     expect(screen.getByTestId('score-range-help')).toHaveTextContent(
       '0 gives no points; 1 gives 1/5 of the weight; 5 the full weight',
     );
-    const strategic = screen.getByLabelText('Strategic Project');
-    expect(strategic).toHaveAttribute('min', '0');
-
-    await user.clear(strategic);
-    await user.type(strategic, '-1');
+    await user.selectOptions(screen.getByLabelText('Strategic Project'), '0');
     await user.click(screen.getByRole('button', { name: 'Save score' }));
-    expect(await screen.findByText('Minimum score is 0')).toBeInTheDocument();
-    expect(onSubmit).not.toHaveBeenCalled();
-
-    await user.clear(strategic);
-    await user.type(strategic, '0');
-    await user.click(screen.getByRole('button', { name: 'Save score' }));
-    expect(onSubmit).toHaveBeenCalledTimes(1);
-    expect(onSubmit.mock.calls[0]?.[1]).toMatchObject({ strategic_project: 0 });
+    expect(await screen.findByRole('alert')).toHaveTextContent('The scoring rubric changed while you were editing');
   });
 
   it('P21: shows the served financial figures read-only (converted server-side, never in the grid)', () => {

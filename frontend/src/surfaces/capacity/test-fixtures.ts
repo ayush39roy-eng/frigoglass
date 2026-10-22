@@ -49,8 +49,50 @@ export function hubRow(overrides: Partial<HubCapacityRow> = {}): HubCapacityRow 
     lab_weekdays_per_week: 6,
     lab_capacity_days: { year: 1117.32, remaining: 795 },
     lab_load_days: { year: 2979, remaining: 2979 },
+    // P29 (API_CONTRACT_P29 §2.2): PD-India has no member hubs.
+    members: [],
+    selected_member: null,
     ...overrides,
   };
+}
+
+/**
+ * P29 (API_CONTRACT_P29 §11): the Greece capacity row as served after the
+ * client_2026 reseed: own 32 wk / 3 projects, OEM-HCK 55 / 11, OEM-Seltek 44 / 8,
+ * row load 131 against 124.88 capacity (104.90 % booked). Values as the server
+ * serves them; nothing here is computed by the tests.
+ */
+export function greeceRow(overrides: Partial<HubCapacityRow> = {}): HubCapacityRow {
+  return hubRow({
+    hub: 'R&D-Greece',
+    lab_region: 'Greece',
+    area: 'Europe',
+    design_load_weeks: 131,
+    design_load_estimated_weeks: 120,
+    engineer_fte_total: 2.8,
+    working_weeks_per_engineer: 44.6,
+    design_capacity_year: 124.88,
+    design_capacity_remaining: 23.61,
+    design_gap_year: 6.12,
+    design_gap_remaining: 107.39,
+    design_completion_pct_year: 0.95,
+    design_completion_pct_remaining: 0.18,
+    design_booked_pct_year: 104.9,
+    design_booked_pct_remaining: 554.85,
+    design_booking_status_year: 'full',
+    design_booking_status_remaining: 'full',
+    design_load_by_priority: { P1: 60, P2: 40, P3: 20, P4: 0, Queue: 11 },
+    weekdays_per_week: 5,
+    capacity_days: { year: 624.4, remaining: 118.05 },
+    load_days: { year: 655, remaining: 655 },
+    members: [
+      { hub: 'R&D-Greece', own: true, project_count: 3, design_load_weeks: 32 },
+      { hub: 'OEM-HCK', own: false, project_count: 11, design_load_weeks: 55 },
+      { hub: 'OEM-Seltek', own: false, project_count: 8, design_load_weeks: 44 },
+    ],
+    selected_member: null,
+    ...overrides,
+  });
 }
 
 /** P13-T11: one served class-breakdown row (counts as the server would serve them). */

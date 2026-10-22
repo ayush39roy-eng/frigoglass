@@ -22,8 +22,10 @@ import {
 } from '../api/types';
 import { groupByPillar } from '../lib/pillars';
 import { rowMissingLabels } from '../lib/row-scores';
-import { formatWeight, useScoringModel } from '../scoring-model';
+import { useScoringModel } from '../scoring-model';
+import { formatWeight } from '../lib/scoring-model-core';
 import { IncompleteScoreMarker } from '@/components/shared/incomplete-score-marker';
+import { FromRegistrationHint } from '@/components/shared/scoring-tags';
 import { changedScores, scoresFromDimensionScores, toRequestBody } from './score-edit-schema';
 
 /**
@@ -109,6 +111,8 @@ function ScoreEditForm({
     gates.length !== row.hard_gates.length || gates.some((g) => !row.hard_gates.includes(g));
   const missing = rowMissingLabels(row);
   const n = row.dimension_scores.length;
+  // P27 (ADR 0038): dimensions pre-filled by the Registration tags (served). Hint only; still editable.
+  const fromRegistration = new Set(row.tag_dimension_keys);
 
   const submit = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -201,14 +205,17 @@ function ScoreEditForm({
                 const dirty = Object.prototype.hasOwnProperty.call(changed, dim.key);
                 return (
                   <div key={dim.key} className="flex items-center justify-between gap-2">
-                    <label
-                      htmlFor={id}
-                      className="text-xs text-text"
-                      title={`weight ${formatWeight(served?.weight ?? dim.weight, served?.scaled_weight ?? null)}`}
-                    >
-                      {dim.label}
-                      {dirty ? <span className="ml-1 text-2xs font-semibold text-warning-subtle-fg">edited</span> : null}
-                    </label>
+                    <span className="flex min-w-0 flex-wrap items-center gap-1">
+                      <label
+                        htmlFor={id}
+                        className="text-xs text-text"
+                        title={`weight ${formatWeight(served?.weight ?? dim.weight, served?.scaled_weight ?? null)}`}
+                      >
+                        {dim.label}
+                        {dirty ? <span className="ml-1 text-2xs font-semibold text-warning-subtle-fg">edited</span> : null}
+                      </label>
+                      {fromRegistration.has(dim.key) ? <FromRegistrationHint dimensionLabel={dim.label} compact /> : null}
+                    </span>
                     <select
                       id={id}
                       value={value === null ? '' : String(value)}

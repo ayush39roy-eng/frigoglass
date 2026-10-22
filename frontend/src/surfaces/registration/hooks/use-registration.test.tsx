@@ -92,6 +92,39 @@ describe('use-registration', () => {
     expect(keys).toContainEqual(['projects', 'detail', 'p1', 'hard-gate-status']);
   });
 
+  it('P27: a PATCH with scoring_tags re-reads every score reader (Matrix, boards, Workspace), not run views', async () => {
+    vi.mocked(api.updateProject).mockResolvedValue({ id: 'p1' } as never);
+    const { client, Wrapper } = makeWrapper();
+    const spy = vi.spyOn(client, 'invalidateQueries');
+    const { result } = renderHook(() => useUpdateProject(), { wrapper: Wrapper });
+    await result.current.mutateAsync({ projectId: 'p1', body: { scoring_tags: ['new_options'] } });
+    await waitFor(() => expect(spy).toHaveBeenCalled());
+    const keys = spy.mock.calls.map((c) => c[0]?.queryKey);
+    expect(keys).toContainEqual(['priority-matrix']);
+    expect(keys).toContainEqual(['priority-board']);
+    expect(keys).toContainEqual(['vip-board']);
+    expect(keys).toContainEqual(['projects', 'workspace']);
+    for (const key of keys) {
+      expect(key).not.toContainEqual('schedule-runs');
+      expect(key).not.toContainEqual('gantt');
+    }
+  });
+
+  it('P27: a POST with scoring_tags re-reads the score readers; a PATCH without them does not', async () => {
+    vi.mocked(api.createProject).mockResolvedValue({ id: 'p1' } as never);
+    vi.mocked(api.updateProject).mockResolvedValue({ id: 'p1' } as never);
+    const { client, Wrapper } = makeWrapper();
+    const spy = vi.spyOn(client, 'invalidateQueries');
+    const create = renderHook(() => useCreateProject(), { wrapper: Wrapper });
+    await create.result.current.mutateAsync({ name: 'Cooler A', hub_id: 'hub-1', scoring_tags: ['new_models'] });
+    await waitFor(() => expect(spy.mock.calls.map((c) => c[0]?.queryKey)).toContainEqual(['priority-matrix']));
+    spy.mockClear();
+    const update = renderHook(() => useUpdateProject(), { wrapper: Wrapper });
+    await update.result.current.mutateAsync({ projectId: 'p1', body: { name: 'Cooler B' } });
+    await waitFor(() => expect(spy).toHaveBeenCalled());
+    expect(spy.mock.calls.map((c) => c[0]?.queryKey)).not.toContainEqual(['priority-matrix']);
+  });
+
   it('on submit, invalidates the list + hard-gate status but not schedule-runs / dashboard / gantt / capacity', async () => {
     vi.mocked(api.submitProject).mockResolvedValue({ id: 'p1' } as never);
     const { client, Wrapper } = makeWrapper();

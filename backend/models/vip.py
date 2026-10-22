@@ -3,8 +3,9 @@
 `vip_items` holds the client's slide content: one row per bullet, grouped by
 `area` (Greece / India / Romania) and `pillar`, with one level of sub-items
 (`parent_id`). `vip_item_projects` links an item to zero or more projects.
-A link on a highlighted item sets `projects.is_vip` (ADR 0027 amendment:
-yellow highlight = VIP); the flag never recalculates.
+A link is a plain reference: it never sets or clears `projects.is_vip`
+(ADR 0040, 2026-10-22, superseding the ADR 0027 amendment); only
+`PUT /projects/{id}/vip` does.
 
 The three enums are stored as VARCHAR with CHECK constraints (not native PG
 enum types), so adding a status tag later is a constraint swap, not an

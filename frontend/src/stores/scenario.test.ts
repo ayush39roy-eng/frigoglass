@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 
 import type { PriorityScoreUpdateRequest } from '@/surfaces/matrix/api/types';
+import type { HardGateReason } from '@/types/enums';
 
 import {
   computeScenarioDiff,
@@ -10,13 +11,19 @@ import {
   type ScenarioPendingEdit,
 } from './scenario';
 
-function scores(overrides: Partial<PriorityScoreUpdateRequest> = {}): PriorityScoreUpdateRequest {
+/** P26: a full `scores` map over 14 dimensions (the 13 initial keys and an added one). */
+const BASE: Record<string, number | null> = {
+  strategic_project: 3, new_customer: 3, new_options: 3, regulatory_compliance: 3,
+  quality_improvements: 3, rm_savings: 3, total_rm_savings: 3, gross_margins: 3,
+  profitability: 3, annual_volume: 3, three_year_volume: 3, new_models: 3,
+  capex_investment: 3, sustainability_esg: null,
+};
+
+function scores(overrides: Record<string, number | null | HardGateReason[]> = {}): PriorityScoreUpdateRequest {
+  const { hard_gates, ...dims } = overrides;
   return {
-    strategic_project: 3, new_customer: 3, new_options: 3, regulatory_compliance: 3,
-    quality_improvements: 3, rm_savings: 3, total_rm_savings: 3, gross_margins: 3,
-    profitability: 3, annual_volume: 3, three_year_volume: 3, new_models: 3,
-    capex_investment: 3, hard_gates: [],
-    ...overrides,
+    scores: { ...BASE, ...(dims as Record<string, number | null>) },
+    hard_gates: (hard_gates as HardGateReason[] | undefined) ?? [],
   };
 }
 
@@ -266,20 +273,40 @@ describe('isNoOpEdit / effectivePendingEdits / computeScenarioDiff', () => {
     expect(effectivePendingEdits(pending).map((e) => e.projectId)).toEqual(['p1']);
   });
 
-  it('computeScenarioDiff produces one full-row ScenarioPriorityScoreChange per genuinely-changed project, excluding no-ops', () => {
+  it('computeScenarioDiff (P26) sends only the changed keys of the scores map + the full hard gates, excluding no-ops', () => {
     const pending = {
       p1: edit({ projectId: 'p1' }), // no-op — excluded
       p2: edit({
         projectId: 'p2', projectName: 'B', hub: 'PD-Romania',
-        next: scores({ new_customer: 5, hard_gates: ['Customer certification at risk (Coke/Pepsi)'] }),
+        next: scores({ new_customer: 5, sustainability_esg: 4, hard_gates: ['Customer certification at risk (Coke/Pepsi)'] }),
       }),
     };
     const diff = computeScenarioDiff(pending);
-    expect(diff).toHaveLength(1);
-    expect(diff[0]).toEqual({
-      project_id: 'p2',
-      ...scores({ new_customer: 5, hard_gates: ['Customer certification at risk (Coke/Pepsi)'] }),
-    });
+    expect(diff).toEqual([
+      {
+        project_id: 'p2',
+        scores: { new_customer: 5, sustainability_esg: 4 },
+        hard_gates: ['Customer certification at risk (Coke/Pepsi)'],
+      },
+    ]);
+  });
+
+  it('computeScenarioDiff sends null to clear a score', () => {
+    const pending = { p1: edit({ next: scores({ capex_investment: null }) }) };
+    expect(computeScenarioDiff(pending)).toEqual([{ project_id: 'p1', scores: { capex_investment: null }, hard_gates: [] }]);
+  });
+
+  it('computeScenarioDiff leaves out keys that are no longer active dimensions', () => {
+    const pending = { p1: edit({ next: scores({ new_customer: 5, capex_investment: 1 }) }) };
+    const active = new Set(Object.keys(BASE).filter((k) => k !== 'capex_investment'));
+    expect(computeScenarioDiff(pending, active)).toEqual([{ project_id: 'p1', scores: { new_customer: 5 }, hard_gates: [] }]);
+  });
+
+  it('isNoOpEdit compares the union of keys (a missing key reads as null)', () => {
+    const baseline = scores();
+    const next = { scores: { ...baseline.scores }, hard_gates: [] };
+    delete next.scores.sustainability_esg; // null in the baseline, absent in next
+    expect(isNoOpEdit(edit({ baseline, next }))).toBe(true);
   });
 
   it('computeScenarioDiff returns an empty array when every staged edit is a no-op', () => {

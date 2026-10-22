@@ -103,14 +103,41 @@ WORKBOOK_ROSTER = {
     "Adrian Bortoc": ("PD-Romania", 1.0),
     "Bianca": ("PD-Romania", 0.75),
 }
-#: ADR 0035: workbook project leaders who are not on the roster.
+#: ADR 0035: workbook project leaders who are not on the roster. ADR 0042:
+#: an engineer's hub is always a capacity hub, so Theoni (most projects on
+#: OEM-HCK) is an R&D-Greece engineer.
 PROVISIONAL = {
     "Dipak": "R&D-India",
     "Elena Micu": "PD-Romania",
-    "Theoni": "OEM-HCK",
+    "Theoni": "R&D-Greece",
     "Marian": "PD-Romania",
     "Sailesh": "PD-India",
     "Antonis": "PD-India",
+}
+#: ADR 0042 §5: the leaders on no client roster are not counted in capacity.
+NOT_COUNTED = {"Theoni", "Dipak", "Antonis", "Sailesh"}
+#: ADR 0042 §7 on the client data: the 17 leaderless OEM projects, walked in
+#: scheduling order, go to the least-loaded counted Greek engineer (ties
+#: alphabetical). Loads after: Dimopoulou 9 + 4 x 5 = 29, Kanarios and
+#: Lioumis 6 x 5 = 30 each.
+PROVISIONAL_LEADERS = {
+    "26-S0555": "Dimopoulou",
+    "26-S0568": "Kanarios",
+    "26-S0596-5": "Lioumis",
+    "26-S0560": "Kanarios",
+    "26-S0567": "Lioumis",
+    "26-S0562": "Dimopoulou",
+    "26-S0570": "Kanarios",
+    "26-S0558": "Lioumis",
+    "26-S0563": "Dimopoulou",
+    "26-S0596-6": "Kanarios",
+    "26-S0559": "Lioumis",
+    "26-S0561": "Dimopoulou",
+    "26-S0596-4": "Kanarios",
+    "26-S0566": "Lioumis",
+    "26-S0565": "Dimopoulou",
+    "26-S0564": "Kanarios",
+    "26-S0557": "Lioumis",
 }
 
 
@@ -247,7 +274,8 @@ def test_extract_maps_hubs_categories_statuses_and_leaders() -> None:
     assert out[3]["status"] == "Under Industrialization" and out[3]["priority"] == "P1"
     assert out[3]["certification_testing_required"] is True and out[3]["customer"] == "ALL"
     assert out[0]["certification_testing_required"] is False  # blank → false
-    assert out[4]["type"] is None and out[4]["excel_type"] == "BC"
+    # ADR 0038 amendment (2026-10-22): the workbook's BC is the app's RC.
+    assert out[4]["type"] == "RC" and out[4]["excel_type"] == "BC"
     assert out[4]["development_step"] is None and out[4]["leader"] is None
     assert out[0]["name"] == "A project" and out[0]["priority"] == "P4"
 
@@ -369,6 +397,15 @@ def test_roster_is_the_workbook_roster_plus_provisional_leaders(data: dict[str, 
     for name in PROVISIONAL:
         led = {p["category"] for p in data["projects"] if c26.canonical_leader(p["leader"]) == name}
         assert set(by_name[name].allowed_categories) == led
+    # ADR 0042 §5: Theoni, Dipak, Antonis and Sailesh are booked but not
+    # counted; everyone else (Elena Micu and Marian included) counts.
+    assert {n for n, e in by_name.items() if not e.counts_in_capacity} == NOT_COUNTED
+    assert by_name["Elena Micu"].counts_in_capacity and by_name["Marian"].counts_in_capacity
+    # ADR 0042 §6: the Greek roster may lead the OEM categories.
+    for name in ("Dimopoulou", "Lioumis", "Kanarios"):
+        assert {"A-OEM", "B-OEM", "C-OEM"} <= set(by_name[name].allowed_categories)
+    # Every engineer sits on a capacity hub.
+    assert not any(e.hub in dc.HUB_CAPACITY_HUB for e in build.engineers)
 
 
 def test_leaders_are_the_workbook_leaders_never_reassigned(data: dict[str, Any]) -> None:
@@ -387,6 +424,93 @@ def test_leaders_are_the_workbook_leaders_never_reassigned(data: dict[str, Any])
         "R&D-Greece": 1,
     }
     assert sum(c26.is_open(p) for p in blank) == 18
+
+
+def test_provisional_leaders_for_leaderless_oem_projects_adr_0042(
+    data: dict[str, Any],
+) -> None:
+    """ADR 0042 §7 on the client data: the 17 leaderless OEM projects get the
+    least-loaded counted R&D-Greece engineer, deterministically; the three
+    blank leaders on other hubs stay blank."""
+
+    from seed.seed_demo_data import _provisional_leaders, client_2026_step_specs
+    from services.workflow_durations import lead_time_lookup
+
+    projects = data["projects"]
+    ids = [c26.project_uuid(p["external_code"]) for p in projects]
+    order = _order(projects)
+    lead = lead_time_lookup(dc.LEAD_TIME_SEED)
+    specs = {
+        i: client_2026_step_specs(p, "OEM" if p["hub"] in dc.OEM_HUBS else "PDD", lead)
+        for i, p in enumerate(projects)
+    }
+    build = c26.build_roster(data)
+    leaders = c26.project_leaders(projects, build.engineers)
+    first = _provisional_leaders(projects, ids, order, specs, build, leaders)
+    assert {projects[i]["external_code"]: n for i, n in first.items()} == PROVISIONAL_LEADERS
+    assert all(projects[i]["hub"] in dc.OEM_HUBS for i in first)
+    # Deterministic: the same answer again, and the walk order is what decides.
+    assert _provisional_leaders(projects, ids, order, specs, build, leaders) == first
+    still_blank = [p for i, p in enumerate(projects) if leaders[i] is None and i not in first]
+    assert Counter(p["hub"] for p in still_blank) == {
+        "PD-India": 1,
+        "PD-Romania": 1,
+        "R&D-Greece": 1,
+    }
+
+
+def test_assign_provisional_leaders_rule() -> None:
+    """ADR 0042 §7, pure: least load, ties alphabetical, eligibility by
+    category (or the blanket OEM chip), a schedulable project adds its effort,
+    a non-schedulable one does not, and no eligible candidate gives None."""
+
+    candidates = [
+        c26.LeaderCandidate("Zed", ("A-OEM", "B-OEM"), 0),
+        c26.LeaderCandidate("Amy", ("OEM",), 3),
+        c26.LeaderCandidate("Bob", ("B-OEM",), 0),
+    ]
+    projects = [
+        c26.LeaderlessProject("p1", "B-OEM", True, 5),  # Bob 0 = Zed 0 -> Bob (alphabetical)
+        c26.LeaderlessProject("p2", "B-OEM", True, 5),  # Zed 0 < Amy 3 < Bob 5 -> Zed
+        c26.LeaderlessProject("p3", "C-OEM", False, 2),  # only Amy (OEM chip); adds nothing
+        c26.LeaderlessProject("p4", "A-OEM", True, 9),  # Amy 3 < Zed 5 -> Amy
+        c26.LeaderlessProject("p5", "A", True, 1),  # nobody may lead A
+    ]
+    assert c26.assign_provisional_leaders(projects, candidates) == {
+        "p1": "Bob",
+        "p2": "Zed",
+        "p3": "Amy",
+        "p4": "Amy",
+        "p5": None,
+    }
+
+
+def test_bc_projects_are_regulatory_compliance_adr_0038_amendment(data: dict[str, Any]) -> None:
+    """The workbook's 59 BC projects carry app type RC (and so the
+    `regulatory_compliance` tag); AC and SER stay untyped."""
+
+    by_code = Counter((p["excel_type"], p["type"]) for p in data["projects"])
+    assert by_code[("BC", "RC")] == 59
+    assert by_code[("BC", None)] == 0
+    assert by_code[("AC", None)] == 6 and by_code[("SER", None)] == 2
+    assert all(
+        ex.TYPE_MAP.get(v) == "RC"
+        for v in ("BC", "BUSINESS CONTINUITY", "BUSINESS CONTINIUTY", "BUSINESS CONTINUATION")
+    )
+    assert "AC" not in ex.TYPE_MAP and "SER" not in ex.TYPE_MAP
+
+
+def test_extract_maps_business_continuity_text_variants() -> None:
+    rows = [
+        (6, _row(c5="Business Continuity")),
+        (7, _row(c5="business continiuty")),
+        (8, _row(c5=" Business  Continuation ")),
+        (9, _row(c5="AC")),
+    ]
+    out = ex.extract(rows)["projects"]
+    assert [p["type"] for p in out] == ["RC", "RC", "RC", None]
+    assert out[0]["excel_type"] == "BUSINESS CONTINUITY"
+    assert out[3]["excel_type"] == "AC"
 
 
 def test_carry_over_and_reg_year(data: dict[str, Any]) -> None:

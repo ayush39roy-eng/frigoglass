@@ -149,6 +149,23 @@ HUB_LAB_REGION: Final[Mapping[str, str]] = {
 
 OEM_HUBS: Final[frozenset[str]] = frozenset({"OEM-HCK", "OEM-Seltek"})
 
+#: ADR 0042 (2026-10-22, P29): hub -> its *capacity hub*. OEM-HCK and
+#: OEM-Seltek are capacity children of R&D-Greece: Greece's engineers, work
+#: calendar and supply serve all three, and Greece's load is the sum of its
+#: own and the OEM projects. Every hub not listed is its own capacity hub
+#: (`hubs.capacity_hub_id` null). The OEM hubs stay hubs for registration,
+#: plant, filters, RBAC scoping, the Hub × Type table and the country filter.
+HUB_CAPACITY_HUB: Final[Mapping[str, str]] = {
+    "OEM-HCK": "R&D-Greece",
+    "OEM-Seltek": "R&D-Greece",
+}
+
+
+def capacity_hub_name(hub: str) -> str:
+    """The capacity hub of `hub` (itself when it has no parent, ADR 0042)."""
+
+    return HUB_CAPACITY_HUB.get(hub, hub)
+
 #: Which workflow a hub's projects follow (docs/DOMAIN_RULES.md: "A project's
 #: workflow is a function of its hub (`Hub.is_oem`)").
 WORKFLOW_ID_FOR_OEM_HUB: Final[str] = "OEM"
@@ -198,20 +215,29 @@ LAB_STEP_CONSUMPTION_PER_PROJECT_WEEK: Final[float] = 1.0
 # --- Capacity supply (docs/DOMAIN_RULES.md "Capacity supply", ADR 0008) ---
 
 #: (hub_name, weekdays_per_week, national_holiday_days, medical_leave_days,
-#:  casual_leave_days, annual_leave_days) — docs/CLIENT_FORMULAS.md §2.1. The
-#: two OEM hubs are not in the workbook; they are seeded with India's calendar
-#: (P9-T01: they were then in the India lab region). Their lab region is
-#: Greece since 2026-10-13; the calendar was deliberately left unchanged
-#: (only the lab region was corrected) — see docs/MEMORY.md P9-T01 and the
-#: 2026-10-13 client-data entry.
+#:  casual_leave_days, annual_leave_days) — docs/CLIENT_FORMULAS.md §2.1.
+#: One row per CAPACITY hub (ADR 0042, 2026-10-22). The two OEM hubs are not
+#: in the workbook. P9-T01 seeded them with India's calendar (they were then
+#: in the India lab region); 2026-10-13 moved their lab region to Greece and
+#: left the calendar untouched; ADR 0042 retires their calendar rows
+#: altogether: an OEM hub is a capacity child of R&D-Greece, so Greece's
+#: calendar applies to its design work (migration `p29a_capacity_hubs`
+#: deletes the two rows). A member hub never has a calendar of its own.
 HUB_WORK_CALENDAR_SEED: Final[tuple[tuple[str, int, int, int, int, int], ...]] = (
     ("R&D-Greece", 5, 12, 0, 0, 25),
     ("R&D-India", 6, 13, 7, 7, 20),
     ("PD-India", 6, 13, 7, 7, 20),
     ("PD-Romania", 5, 13, 7, 0, 20),
-    ("OEM-HCK", 6, 13, 7, 7, 20),
-    ("OEM-Seltek", 6, 13, 7, 7, 20),
 )
+
+assert all(h not in HUB_CAPACITY_HUB for h, *_r in HUB_WORK_CALENDAR_SEED), (
+    "a capacity member hub (ADR 0042) carries no work calendar of its own"
+)
+assert all(h in HUB_LAB_REGION for h in HUB_CAPACITY_HUB), "unknown hub in HUB_CAPACITY_HUB"
+assert all(
+    HUB_CAPACITY_HUB[h] not in HUB_CAPACITY_HUB and HUB_CAPACITY_HUB[h] != h
+    for h in HUB_CAPACITY_HUB
+), "a capacity hub has no capacity hub of its own (ADR 0042)"
 
 WEEKS_IN_YEAR: Final[int] = 52
 
@@ -257,6 +283,38 @@ PRIORITY_BAND_THRESHOLDS: Final[tuple[tuple[int, str], ...]] = (
     (40, "P3"),
     (0, "P4"),
 )
+
+# ADR 0038 (P27): Registration "project nature" tag -> rubric dimension KEY
+# (stable, ADR 0037; never the label, so a rename does not break it). The
+# pre-filled score is DIMENSION_SCORE_MAX. Order = canonical tag order.
+SCORING_TAG_DIMENSION_KEY: Final[Mapping[str, str]] = {
+    "new_customer": "new_customer",
+    "strategic_project": "strategic_project",
+    "new_options": "new_options",
+    "regulatory_compliance": "regulatory_compliance",
+    "new_models": "new_models",
+    "improvement": "quality_improvements",
+}
+#: Display labels of `ProjectType` (the one backend source). ADR 0038
+#: amendment (2026-10-22): `RC` reads "Regulatory / Business Compliance" and
+#: is the client workbook's `BC` ("Business Continuity") type
+#: (`seed/extract_client_2026.TYPE_MAP`, migration `p29b_bc_type_regulatory`).
+PROJECT_TYPE_LABELS: Final[Mapping[str, str]] = {
+    "NM": "New Model",
+    "CO": "Cost Optimization",
+    "RC": "Regulatory / Business Compliance",
+    "NO": "New Option",
+    "IMP": "Improvement",
+}
+
+# ADR 0038 §6: the backfill / seed rule from `Project.type`. Every other type
+# (and a null type) gets no tag. New Customer / Strategic Project have no source.
+PROJECT_TYPE_SCORING_TAG: Final[Mapping[str, str]] = {
+    "NM": "new_models",
+    "NO": "new_options",
+    "RC": "regulatory_compliance",
+    "IMP": "improvement",
+}
 
 HARD_GATE_REASONS: Final[tuple[str, ...]] = (
     "Regulatory deadline within 6 months",

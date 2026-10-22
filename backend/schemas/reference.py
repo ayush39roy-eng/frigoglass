@@ -10,7 +10,7 @@ import uuid
 
 from pydantic import BaseModel, ConfigDict
 
-from models.enums import HubName, LabRegion, WorkflowStepKind
+from models.enums import HubName, LabRegion, ProjectType, WorkflowStepKind
 
 
 class HubRead(BaseModel):
@@ -20,6 +20,12 @@ class HubRead(BaseModel):
     name: HubName
     lab_region: LabRegion
     is_oem: bool
+    #: P29 (ADR 0042): the hub whose engineers, calendar and design supply
+    #: serve this hub (R&D-Greece for OEM-HCK and OEM-Seltek); null when the
+    #: hub is its own capacity hub.
+    capacity_hub_id: uuid.UUID | None
+    #: The name of that capacity hub; null with `capacity_hub_id`.
+    capacity_hub_name: HubName | None
 
 
 class WorkflowStepTemplateRead(BaseModel):
@@ -35,3 +41,12 @@ class WorkflowStepTemplateRead(BaseModel):
     kind: WorkflowStepKind
     sequence_order: int
     predecessor_ids: list[str]
+
+
+class ProjectTypeRead(BaseModel):
+    """P29-T04 (ADR 0038 amendment 2026-10-22): one project type and its
+    display label, from `domain_constants.PROJECT_TYPE_LABELS` (`RC` reads
+    "Regulatory / Business Compliance")."""
+
+    code: ProjectType
+    label: str

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { screen } from '@testing-library/react';
+import { screen, within } from '@testing-library/react';
 
 vi.mock('@tanstack/react-virtual', () => ({
   useVirtualizer: ({ count }: { count: number }) => ({
@@ -14,7 +14,14 @@ import { renderWithProviders } from '@/test/render';
 
 import type { PriorityMatrixRow } from '../api/types';
 import { MatrixTable } from './matrix-table';
-import { P13_MATRIX_ROW_DEFAULTS } from '../test-fixtures';
+import { FOURTEEN_TEST_DIMENSIONS, P13_MATRIX_ROW_DEFAULTS, testDimensionScores, testDimensionTable } from '../test-fixtures';
+import { ScoringModelProvider } from '../scoring-model';
+
+const SCORES = {
+  strategic_project: 5, new_customer: 4, new_options: 3, regulatory_compliance: 2,
+  quality_improvements: 3, rm_savings: 4, total_rm_savings: 3, gross_margins: 3,
+  profitability: 4, annual_volume: 3, three_year_volume: 3, new_models: 2, capex_investment: 4,
+};
 
 function row(overrides: Partial<PriorityMatrixRow> = {}): PriorityMatrixRow {
   return {
@@ -25,9 +32,6 @@ function row(overrides: Partial<PriorityMatrixRow> = {}): PriorityMatrixRow {
     type: 'NM',
     set_priority: 'P2',
     has_score: true,
-    strategic_project: 5, new_customer: 4, new_options: 3, regulatory_compliance: 2,
-    quality_improvements: 3, rm_savings: 4, total_rm_savings: 3, gross_margins: 3,
-    profitability: 4, annual_volume: 3, three_year_volume: 3, new_models: 2, capex_investment: 4,
     hard_gates: [],
     weighted_score: 980,
     normalized_pct: 70,
@@ -41,6 +45,7 @@ function row(overrides: Partial<PriorityMatrixRow> = {}): PriorityMatrixRow {
     selling_price_eur: 8640,
     gross_margin_pct: 37.5,
     ...P13_MATRIX_ROW_DEFAULTS,
+    dimension_scores: testDimensionScores(SCORES),
     ...overrides,
   };
 }
@@ -52,8 +57,8 @@ describe('MatrixTable', () => {
       expect(screen.queryByRole("columnheader", { name: gone }), String(gone)).not.toBeInTheDocument();
     }
     expect(screen.queryByText('129.6')).not.toBeInTheDocument();
-    // 13 rubric cells for the row, one per dimension.
-    expect(screen.getAllByTestId(/^dim-/)).toHaveLength(13);
+    // 13 rubric cells for the row, one per served dimension.
+    expect(screen.getAllByTestId(/^dim-(?!head)/)).toHaveLength(13);
     for (const pillar of [
       'Strategic Alignment',
       'Regulatory & Quality',
@@ -73,7 +78,6 @@ describe('MatrixTable', () => {
       <MatrixTable
         rows={[
           row({
-            strategic_project: 0,
             dimension_scores: [
               { key: 'strategic_project', label: 'Strategic Project', pillar: 'Strategic Alignment', score: 0, weight: 25, points: 0, max_points: 25 },
               { key: 'new_customer', label: 'New Customer', pillar: 'Strategic Alignment', score: 4, weight: 25, points: 20, max_points: 25 },
@@ -87,6 +91,25 @@ describe('MatrixTable', () => {
     const strat = screen.getByTestId('dim-strategic_project');
     expect(strat).toHaveAttribute('title', 'Strategic Project: 0 of 5, 0/25 pts');
     expect(screen.getByTestId('dim-new_customer')).toHaveTextContent('New Customer: 4 of 5, 20/25 pts');
+  });
+
+  it('P27: a tagged dimension\'s chip carries the "from registration" mark and words; others do not', () => {
+    renderWithProviders(
+      <MatrixTable
+        rows={[row({ scoring_tags: ['new_options'], tag_dimension_keys: ['new_options', 'inactive_dimension'] })]}
+        canEdit
+        onEdit={vi.fn()}
+      />,
+    );
+    const tagged = screen.getByTestId('dim-new_options');
+    expect(tagged).toHaveAttribute('title', expect.stringContaining('(from registration; still editable)'));
+    expect(tagged).toHaveTextContent('New Options: 3 of 5');
+    expect(tagged).toHaveTextContent('from registration');
+    expect(screen.getAllByTestId('from-registration-mark')).toHaveLength(1);
+    expect(within(tagged).getByTestId('score-chip')).toHaveAttribute('data-from-registration', 'true');
+    expect(screen.getByTestId('dim-new_customer')).not.toHaveTextContent('from registration');
+    // Still edited through the ordinary score dialog.
+    expect(screen.getByRole('button', { name: 'Edit prioritization score for Cooler A' })).toBeEnabled();
   });
 
   it('P21: Compare checkboxes are keyboard-reachable and call the toggle', async () => {
@@ -111,12 +134,14 @@ describe('MatrixTable', () => {
     const starts = [...(bodyRow as Element).querySelectorAll('[data-pillar-start]')].map((c) =>
       c.getAttribute('data-pillar-start'),
     );
+    // P26: pillars in order of first appearance in the served display order
+    // (ROI, position 9, opens Investment & Feasibility before Market & Volume).
     expect(starts).toEqual([
       'pillar-Strategic Alignment',
       'pillar-Regulatory & Quality',
       'pillar-Financial Return',
-      'pillar-Market & Volume',
       'pillar-Investment & Feasibility',
+      'pillar-Market & Volume',
     ]);
     expect((bodyRow as Element).querySelectorAll('[data-pillar-end]')).toHaveLength(5);
     // First pillar follows the info block (block line); later pillars get a pillar line.
@@ -176,8 +201,8 @@ describe('MatrixTable', () => {
       expect(chip, key).toHaveAttribute('data-intensity', String(score));
       expect(chip, key).toHaveClass('mg-chip');
     }
-    // The number and the screen-reader summary stay; colour is never alone.
-    expect(screen.getByTestId('dim-strategic_project')).toHaveTextContent('Strategic Project: 0 of 5, 0/25 pts');
+    // The number and the screen-reader summary (served label) stay; colour is never alone.
+    expect(screen.getByTestId('dim-strategic_project')).toHaveTextContent('strategic_project: 0 of 5, 0/25 pts');
   });
 
   it('P21-T03: rows are zebra-striped and a checked row is marked selected across the frozen block', () => {
@@ -226,7 +251,7 @@ describe('MatrixTable', () => {
             project_id: 'p2',
             project_name: 'Cooler B',
             has_score: false,
-            strategic_project: null,
+            dimension_scores: testDimensionScores({}),
             normalized_pct: null,
             weighted_score: null,
             suggested_band: null,
@@ -240,6 +265,72 @@ describe('MatrixTable', () => {
     );
     expect(screen.getByText('Cooler B')).toBeInTheDocument();
     expect(screen.getByTestId('score-cell-unscored')).toBeInTheDocument();
+    // An unscored project shows plain dashes, not "incomplete" chips.
+    expect(screen.queryAllByTestId('score-chip-empty')).toHaveLength(0);
+    expect(screen.queryByTestId('incomplete-marker')).not.toBeInTheDocument();
+  });
+
+  it('P26: columns follow the served table — 14 dimensions with a new pillar, in display order', () => {
+    const scores = { ...SCORES, sustainability_esg: 4 };
+    const { container } = renderWithProviders(
+      <ScoringModelProvider table={testDimensionTable(FOURTEEN_TEST_DIMENSIONS, 2)}>
+        <MatrixTable
+          rows={[row({ dimension_scores: testDimensionScores(scores, FOURTEEN_TEST_DIMENSIONS), rubric_version: 2 })]}
+          canEdit={false}
+          onEdit={vi.fn()}
+        />
+      </ScoringModelProvider>,
+    );
+    expect(screen.getAllByTestId(/^dim-(?!head)/)).toHaveLength(14);
+    expect(screen.getByRole('columnheader', { name: 'Sustainability' })).toBeInTheDocument();
+    const bodyRow = container.querySelector('.mg-row') as Element;
+    const starts = [...bodyRow.querySelectorAll('[data-pillar-start]')].map((c) => c.getAttribute('data-pillar-start'));
+    expect(starts).toHaveLength(6);
+    expect(starts.at(-1)).toBe('pillar-Sustainability');
+    // The new pillar alternates the tint like any other (6th pillar → tinted).
+    const startCells = [...bodyRow.querySelectorAll('[data-pillar-start]')];
+    expect(startCells.map((c) => c.getAttribute('data-tint'))).toEqual([null, 'true', null, 'true', null, 'true']);
+    expect(bodyRow.querySelectorAll('[data-box-kind="pillar"][data-line="inner"]')).toHaveLength(14 - 6);
+    // The new dimension's header is its served label; its weight comes from the served table.
+    expect(screen.getByRole('button', { name: /^Sustainability & ESG \(Sustainability, weight 30 \(9\.2 of 100\)\)$/ })).toBeInTheDocument();
+    expect(screen.getByTestId('dim-sustainability_esg')).toHaveTextContent('Sustainability & ESG: 4 of 5, 24/30 pts');
+    // Column order: dimension columns appear in display order inside each pillar.
+    const headKeys = [...container.querySelectorAll('[data-testid^="dim-head-"]')].map((h) => h.getAttribute('data-testid'));
+    expect(headKeys.slice(0, 3)).toEqual(['dim-head-strategic_project', 'dim-head-new_customer', 'dim-head-new_options']);
+    expect(headKeys.at(-1)).toBe('dim-head-sustainability_esg');
+  });
+
+  it('P26: an incomplete score shows empty "–" chips and a marker listing the unscored dimensions', async () => {
+    const { default: userEvent } = await import('@testing-library/user-event');
+    const user = userEvent.setup();
+    const scores = { ...SCORES, sustainability_esg: null, capex_investment: null };
+    renderWithProviders(
+      <ScoringModelProvider table={testDimensionTable(FOURTEEN_TEST_DIMENSIONS, 2)}>
+        <MatrixTable
+          rows={[
+            row({
+              dimension_scores: testDimensionScores(scores, FOURTEEN_TEST_DIMENSIONS),
+              missing_dimension_keys: ['capex_investment', 'sustainability_esg'],
+            }),
+          ]}
+          canEdit={false}
+          onEdit={vi.fn()}
+        />
+      </ScoringModelProvider>,
+    );
+    const empties = screen.getAllByTestId('score-chip-empty');
+    expect(empties).toHaveLength(2);
+    expect(empties[0]).toHaveTextContent('–');
+    expect(screen.getByTestId('dim-sustainability_esg')).toHaveTextContent('Sustainability & ESG: not scored (0 points; incomplete)');
+    const marker = screen.getByTestId('incomplete-marker');
+    expect(marker).toHaveAccessibleName(
+      'Incomplete: 2 dimensions not scored (CAPEX Investment (inverted), Sustainability & ESG); each counts 0 points',
+    );
+    expect(screen.getByRole('button', { name: 'Score 70/100, band P1, incomplete' })).toBeInTheDocument();
+    await user.hover(marker);
+    const tip = await screen.findByRole('tooltip');
+    expect(tip).toHaveTextContent('CAPEX Investment (inverted)');
+    expect(tip).toHaveTextContent('Sustainability & ESG');
   });
 
   it('P9: links each project to its workspace and exposes the scoring anchors on the dimension headers', () => {
@@ -261,8 +352,8 @@ describe('MatrixTable', () => {
         detailed
       />,
     );
-    expect(screen.getByText('15/25 pts')).toBeInTheDocument();
-    expect(screen.getByTitle('Gross Profitability: 3 of 5, 15/25 pts (5.08 of 100)')).toBeInTheDocument();
+    const gp = screen.getByTitle('Gross Profitability: 3 of 5, 15/25 pts (5.08 of 100)');
+    expect(gp).toHaveTextContent('15/25 pts');
   });
 
   it('sorts projects in order of the score: rank 1 first, descending score, unscored at bottom', () => {

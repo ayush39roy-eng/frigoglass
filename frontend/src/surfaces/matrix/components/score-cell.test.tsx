@@ -17,9 +17,7 @@ function row(overrides: Partial<PriorityMatrixRow> = {}): PriorityMatrixRow {
     type: 'NM',
     set_priority: 'P2',
     has_score: true,
-    strategic_project: 5, new_customer: 4, new_options: 3, regulatory_compliance: 2,
-    quality_improvements: 3, rm_savings: 4, total_rm_savings: 3, gross_margins: 3,
-    profitability: 4, annual_volume: 3, three_year_volume: 3, new_models: 2, capex_investment: 4,
+    
     hard_gates: [],
     weighted_score: 980,
     normalized_pct: 70,

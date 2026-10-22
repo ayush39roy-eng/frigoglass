@@ -74,6 +74,10 @@ class VipBoardArea(BaseModel):
     high_risk_count: int
     #: Distinct linked projects visible to the caller in this area.
     linked_project_count: int
+    #: ADR 0040: projects pinned VIP (`projects.is_vip`, manual only) in this
+    #: area's hubs, visible to the caller. This is the "VIP" headline; the
+    #: highlighted items are the client's slide bullets, not VIP projects.
+    vip_project_count: int
     #: The area's VIP (highlighted) items, in board order (sub-items after
     #: their parent), for the tile.
     vip_items: list[VipBoardVipItem]
@@ -158,7 +162,8 @@ class VipItemLinksRequest(BaseModel):
 class VipItemDeleteResponse(BaseModel):
     id: uuid.UUID
     deleted_item_count: int
-    #: Projects whose `is_vip` was cleared because they lost their last link.
+    #: ADR 0040: always `[]`. A link no longer sets or clears `is_vip`; the
+    #: field stays for wire compatibility (frontend mirror is exact).
     unpinned_project_ids: list[uuid.UUID]
 
 
@@ -166,5 +171,7 @@ class VipItemLinksResponse(BaseModel):
     item: VipItemResponse
     added_project_ids: list[uuid.UUID]
     removed_project_ids: list[uuid.UUID]
+    #: ADR 0040: both always `[]` (a link never changes `is_vip`); kept for
+    #: wire compatibility.
     pinned_project_ids: list[uuid.UUID]
     unpinned_project_ids: list[uuid.UUID]

@@ -137,7 +137,7 @@ const project: ProjectRead = {
   estimated_lab_weeks: null,
   plant: null,
   requesting_department: null,
-  product_type: null,
+  product_type: null, scoring_tags: [], tag_dimension_keys: [],
   schedule_stale: false,
   workflow_id: 'PDD',
   created_at: '2026-01-01T00:00:00Z',
@@ -355,6 +355,9 @@ describe('Projects page — registration drawer', () => {
     expect(within(drawer).queryByRole('button', { name: 'Create draft' })).not.toBeInTheDocument();
     expect(within(drawer).queryByText('Leave Draft')).not.toBeInTheDocument();
     await fillRequired(user, drawer);
+    // P27 (ADR 0038): ticked out of order, sent in canonical order.
+    await user.click(within(drawer).getByRole('checkbox', { name: 'Improvement' }));
+    await user.click(within(drawer).getByRole('checkbox', { name: 'New Models' }));
     await user.click(within(drawer).getByRole('button', { name: 'Register project' }));
 
     await waitFor(() => expect(http.send).toHaveBeenCalledTimes(1));
@@ -382,6 +385,7 @@ describe('Projects page — registration drawer', () => {
       certification_testing_required: true,
       estimated_design_weeks: null,
       estimated_lab_weeks: null,
+      scoring_tags: ['new_models', 'improvement'],
     });
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
     expect(screen.getByTestId('projects-saved-status')).toHaveTextContent('Registered “Cooler B”.');
@@ -756,5 +760,82 @@ describe('Projects page — accessibility', () => {
     const drawer = await screen.findByRole('dialog', { name: 'Edit Cooler A' });
     await within(drawer).findByRole('button', { name: 'Submit — leave Draft' });
     expect(await seriousAxeViolations(drawer)).toEqual([]);
+  });
+});
+
+describe('Projects page — VIP (ADR 0040)', () => {
+  const projectLinks = (): string[] =>
+    screen
+      .getAllByRole('link')
+      .filter((a) => /^\/projects\/[^/]+$/.test(a.getAttribute('href') ?? '') && !a.getAttribute('aria-label'))
+      .map((a) => a.textContent ?? '');
+
+  it('lists VIP projects first, each group keeping the served order; a missing is_vip is not VIP', () => {
+    const legacy = row('d', { project_name: 'Delta' }) as Partial<ProjectFilterRow>;
+    delete legacy.is_vip;
+    useDashboardProjects.mockReturnValue(
+      ok([
+        row('a', { project_name: 'Alpha' }),
+        row('b', { project_name: 'Bravo', is_vip: true }),
+        row('c', { project_name: 'Charlie' }),
+        legacy as ProjectFilterRow,
+        row('e', { project_name: 'Echo', is_vip: true }),
+      ]),
+    );
+    renderWithProviders(<ProjectsPage />);
+    expect(projectLinks()).toEqual(['Bravo', 'Echo', 'Alpha', 'Charlie', 'Delta']);
+    expect(screen.getByRole('button', { name: 'Remove VIP from Bravo' })).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByRole('button', { name: 'Make Delta VIP' })).toHaveAttribute('aria-pressed', 'false');
+  });
+
+  it('the VIP filter narrows the list to VIP projects and Clear resets it', async () => {
+    const user = userEvent.setup();
+    useDashboardProjects.mockReturnValue(
+      ok([row('a', { project_name: 'Alpha' }), row('b', { project_name: 'Bravo', is_vip: true }), row('c', { project_name: 'Charlie' })]),
+    );
+    renderWithProviders(<ProjectsPage />);
+    const filter = screen.getByTestId('vip-filter');
+    expect(filter).toHaveAttribute('aria-pressed', 'false');
+    await user.click(filter);
+    expect(filter).toHaveAttribute('aria-pressed', 'true');
+    expect(projectLinks()).toEqual(['Bravo']);
+    expect(screen.getByTestId('projects-total')).toHaveTextContent('1 VIP of 3 projects');
+    await user.click(screen.getByRole('button', { name: 'Clear' }));
+    expect(projectLinks()).toEqual(['Bravo', 'Alpha', 'Charlie']);
+  });
+
+  it('the VIP filter with no VIP shows the filtered empty state', async () => {
+    const user = userEvent.setup();
+    useDashboardProjects.mockReturnValue(ok([row('a', { project_name: 'Alpha' })]));
+    renderWithProviders(<ProjectsPage />);
+    await user.click(screen.getByTestId('vip-filter'));
+    expect(screen.getByText('No projects match these filters')).toBeInTheDocument();
+  });
+
+  it('the star sends PUT /projects/{id}/vip with the toggled value (list and cards)', async () => {
+    const user = userEvent.setup();
+    http.send.mockResolvedValue({ project_id: 'a', is_vip: true });
+    useDashboardProjects.mockReturnValue(
+      ok([row('a', { project_name: 'Alpha' }), row('b', { project_name: 'Bravo', is_vip: true })]),
+    );
+    renderWithProviders(<ProjectsPage />);
+    await user.click(screen.getByRole('button', { name: 'Make Alpha VIP' }));
+    await waitFor(() => expect(http.send).toHaveBeenCalledWith('PUT', '/projects/a/vip', { is_vip: true }));
+
+    await user.click(screen.getByRole('tab', { name: 'Cards' }));
+    const grid = await screen.findByTestId('projects-card-grid');
+    await user.click(within(grid).getByRole('button', { name: 'Remove VIP from Bravo' }));
+    await waitFor(() => expect(http.send).toHaveBeenCalledWith('PUT', '/projects/b/vip', { is_vip: false }));
+    const cards = within(grid).getAllByTestId('project-card').map((c) => c.getAttribute('data-project-id'));
+    expect(cards).toEqual(['b', 'a']);
+  });
+
+  it('a read-only role sees only a filled star mark on VIP projects, no toggle', () => {
+    useDashboardProjects.mockReturnValue(
+      ok([row('a', { project_name: 'Alpha' }), row('b', { project_name: 'Bravo', is_vip: true })]),
+    );
+    renderWithProviders(<ProjectsPage />, { session: READ_ONLY });
+    expect(screen.queryByTestId('vip-toggle')).not.toBeInTheDocument();
+    expect(screen.getAllByTestId('vip-mark')).toHaveLength(1);
   });
 });

@@ -15,11 +15,32 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
-from typing import Literal
+from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field
 
-from models.enums import HubName, ProjectCategory, ProjectPriority, ProjectStatus, ProjectType
+from models.enums import (
+    HubName,
+    ProjectCategory,
+    ProjectPriority,
+    ProjectStatus,
+    ProjectType,
+    ScoringTag,
+)
+from models.project import canonical_tags
+
+
+def _distinct_tags(tags: list[ScoringTag]) -> list[ScoringTag]:
+    if len(set(tags)) != len(tags):
+        raise ValueError("each scoring tag may appear once")
+    return canonical_tags(tags)
+
+
+#: ADR 0038: zero or more of the six fixed tags, no duplicates (422), served
+#: and stored in canonical order.
+ScoringTags = Annotated[
+    list[ScoringTag], Field(max_length=len(ScoringTag)), AfterValidator(_distinct_tags)
+]
 
 
 class ProjectCreateRequest(BaseModel):
@@ -66,6 +87,9 @@ class ProjectCreateRequest(BaseModel):
     #: Capacity "Estimated" column only; never a schedule input (OQ #12).
     estimated_design_weeks: float | None = Field(default=None, ge=0, le=9999.99)
     estimated_lab_weeks: float | None = Field(default=None, ge=0, le=9999.99)
+    #: ADR 0038 (docs/API_CONTRACT_P27.md §2): "project nature" tags; each
+    #: pre-fills its mapped dimension score with 5.
+    scoring_tags: ScoringTags = Field(default_factory=list)
 
 
 class ProjectUpdateRequest(BaseModel):
@@ -107,6 +131,9 @@ class ProjectUpdateRequest(BaseModel):
     certification_testing_required: bool | None = None
     estimated_design_weeks: float | None = Field(default=None, ge=0, le=9999.99)
     estimated_lab_weeks: float | None = Field(default=None, ge=0, le=9999.99)
+    #: ADR 0038: the FULL new tag set (replaces it; `null` is a 422
+    #: `NULL_NOT_ALLOWED`). Only a not-set -> set tag pre-fills a score.
+    scoring_tags: ScoringTags | None = None
 
 
 class ProjectRead(BaseModel):
@@ -117,6 +144,10 @@ class ProjectRead(BaseModel):
     external_code: str | None
     hub_id: uuid.UUID
     leader_engineer_id: uuid.UUID | None
+    #: P29 (ADR 0042 §7): the leader was assigned provisionally by the seed /
+    #: migration (least-loaded eligible engineer of the capacity hub), not by a
+    #: person. Cleared when a PATCH changes `leader_engineer_id`.
+    leader_is_provisional: bool
     category: ProjectCategory | None
     type: ProjectType | None
     priority: ProjectPriority | None
@@ -141,6 +172,11 @@ class ProjectRead(BaseModel):
     plant: str | None
     requesting_department: str | None
     product_type: str | None
+    #: ADR 0038: Registration "project nature" tags, canonical order.
+    scoring_tags: Annotated[list[ScoringTag], AfterValidator(canonical_tags)]
+    #: ADR 0038: the rubric dimension keys those tags map to (the scores the
+    #: UI marks "from registration"), canonical tag order.
+    tag_dimension_keys: list[str]
     #: Progress or settings changed since the active run (ADR 0006).
     schedule_stale: bool
     #: "PDD" | "OEM", a function of the hub (ADR 0007).

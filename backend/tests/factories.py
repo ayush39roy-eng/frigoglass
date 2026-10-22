@@ -63,8 +63,16 @@ async def make_hub(
     name: HubName = HubName.RD_GREECE,
     lab_region: LabRegion = LabRegion.GREECE,
     is_oem: bool = False,
+    capacity_hub: Hub | None = None,
 ) -> Hub:
-    hub = Hub(name=name, lab_region=lab_region, is_oem=is_oem)
+    """P29 (ADR 0042): `capacity_hub` makes this hub a capacity member of it
+    (OEM-HCK / OEM-Seltek under R&D-Greece); omitted, the hub is its own."""
+    hub = Hub(
+        name=name,
+        lab_region=lab_region,
+        is_oem=is_oem,
+        capacity_hub_id=capacity_hub.id if capacity_hub is not None else None,
+    )
     session.add(hub)
     await session.flush()
     return hub
@@ -77,12 +85,14 @@ async def make_engineer(
     name: str = "Test Engineer",
     fte: float = 1.0,
     allowed_categories: list[EngineerAllowedCategory] | None = None,
+    counts_in_capacity: bool = True,
 ) -> Engineer:
     eng = Engineer(
         name=name,
         hub_id=hub.id,
         fte=fte,
         allowed_categories=allowed_categories or [EngineerAllowedCategory.A],
+        counts_in_capacity=counts_in_capacity,
     )
     session.add(eng)
     await session.flush()

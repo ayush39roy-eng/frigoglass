@@ -193,6 +193,15 @@ class EngineerInput:
     `data_error`.
 
     `allowed_categories` is a subset of `{"A+","A","B","C","OEM","A-OEM","B-OEM","C-OEM"}`.
+
+    `counts_in_capacity` (2026-10-22, ADR 0042 §5–6, P29-T05; mirrors
+    `engineers.counts_in_capacity`): `False` for a leader who is on no client
+    capacity roster (Theoni, Dipak, Antonis, Sailesh — OQ #52). Such an
+    engineer is still **booked** wherever they are a project's assigned leader
+    (greedy / CP-SAT ignore this field entirely), but is never summed into
+    supply and never *chosen* as a leader for a new or re-assigned project (the
+    what-if planner). The default `True` keeps every pre-P29 caller and golden
+    file byte-identical.
     """
 
     engineer_id: str
@@ -200,6 +209,7 @@ class EngineerInput:
     hub: str
     allowed_categories: tuple[str, ...]
     fte: float = 1.0
+    counts_in_capacity: bool = True
 
 
 @dataclass(frozen=True)
@@ -274,6 +284,28 @@ class ProjectInput:
     `workflow_id` selects the template (`PDD` for non-OEM hubs, `OEM` for OEM
     hubs); the lead-time table is keyed by `(workflow_id, category, step_id)`
     so a mismatched workflow/category pair fails input validation.
+
+    `capacity_hub` (2026-10-22, ADR 0042 "Capacity hubs"): the hub whose
+    engineers form this project's **engineer pool** and whose supply its design
+    load counts against. `OEM-HCK` / `OEM-Seitek` (formerly `OEM-Seltek`) projects carry
+    `capacity_hub="R&D-Greece"` (`hubs.capacity_hub_id`); every other hub is
+    its own capacity hub. It defaults to `hub` (an empty string at construction
+    is replaced by `hub` in `__post_init__`), so every pre-P29 caller and
+    golden file is unchanged. What it governs inside this package:
+
+    - engineer *selection* — the what-if leader picker and its "designers of
+      the hub" figures choose from `engineer.hub == capacity_hub`;
+    - the capacity-hub load aggregate (`compute_design_load_by_capacity_hub`),
+      which is Σ over the capacity hub's own and member projects (ADR 0042 §3).
+
+    What it does **not** change: the workflow (still `OEM` for an OEM hub,
+    selected by `hub`), the lab region (`HUB_LAB_REGION[hub]`), and the
+    booking of an already-assigned `leader_engineer_id` — the greedy / CP-SAT
+    walks book the assigned leader wherever that engineer sits, exactly as
+    before (the client's own data has leaders outside the project's hub, e.g.
+    an R&D-India engineer leading PD-India projects). Because a dataclass
+    `replace(p, hub=...)` re-passes the already-resolved value, a caller that
+    re-hubs a project must set `capacity_hub` explicitly too.
     """
 
     project_id: str
@@ -293,6 +325,19 @@ class ProjectInput:
     # ADR 0019 (P12): Gantt-set per-step duration override / earliest start.
     # The default `()` keeps every pre-P12 caller and golden file byte-identical.
     step_timing: tuple[StepTimingInput, ...] = ()
+    # ADR 0040 (2026-10-22): manual VIP pin (`projects.is_vip`). Second key of
+    # the scheduling order (after `frozen`, before priority). The default
+    # `False` keeps every pre-ADR-0040 caller and golden file byte-identical.
+    is_vip: bool = False
+    # ADR 0042 (2026-10-22, P29): the capacity hub (see the docstring). `""`
+    # means "same as `hub`" and is resolved in `__post_init__`, so the field is
+    # always a real hub name after construction.
+    capacity_hub: str = ""
+
+    def __post_init__(self) -> None:
+        if self.capacity_hub == "":
+            # Frozen dataclass: the documented idiom for a derived default.
+            object.__setattr__(self, "capacity_hub", self.hub)
 
 
 # --- Output --------------------------------------------------------------
@@ -401,8 +446,8 @@ class ScheduleOutput:
     order projects were supplied in.
 
     `scheduling_order` is the exact sequence `project_id`s were processed in
-    by the greedy walk (frozen desc, priority, status, category, project_id
-    tiebreak) — excludes `excluded` projects entirely.
+    by the greedy walk (frozen desc, is_vip desc (ADR 0040), priority, status,
+    category, project_id tiebreak) — excludes `excluded` projects entirely.
     """
 
     project_outcomes: tuple[ProjectScheduleOutcome, ...]

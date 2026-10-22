@@ -183,12 +183,13 @@ export function ResourceLoadSection({
         <MultiSelectFilter label="Status" options={plain(options?.project_statuses)} value={filters.statuses} onChange={set('statuses')} />
         <MultiSelectFilter
           label="Dept"
+          name="Department"
           options={plain(options?.requesting_departments)}
           value={filters.departments}
           onChange={set('departments')}
           {...(deptUnavailable ? { disabled: true, disabledReason: 'No department data yet' } : {})}
         />
-        <MultiSelectFilter label="Cat" options={plain(options?.categories)} value={filters.categories} onChange={set('categories')} />
+        <MultiSelectFilter label="Cat" name="Category" options={plain(options?.categories)} value={filters.categories} onChange={set('categories')} />
         <MultiSelectFilter label="Engineer" options={engineerOptions} value={filters.engineerIds} onChange={set('engineerIds')} />
         {active ? (
           <Button type="button" variant="ghost" size="sm" className="h-8" onClick={() => setFilters(EMPTY_FILTERS)}>

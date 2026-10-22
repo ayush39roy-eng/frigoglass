@@ -589,6 +589,14 @@ async def put_hub_calendar(
     hub = await db.get(Hub, hub_id)
     if hub is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Unknown hub")
+    if hub.capacity_hub_id is not None:
+        # P29 (ADR 0042 §1): a capacity member hub (OEM-HCK, OEM-Seltek) uses
+        # its capacity hub's calendar; it has none of its own.
+        raise CodedHTTPException(
+            HTTP_422,
+            "HUB_NOT_CAPACITY_HUB",
+            "This hub uses its capacity hub's work calendar; edit that one instead.",
+        )
     cal = (
         await db.execute(select(HubWorkCalendar).where(HubWorkCalendar.hub_id == hub_id))
     ).scalar_one_or_none()

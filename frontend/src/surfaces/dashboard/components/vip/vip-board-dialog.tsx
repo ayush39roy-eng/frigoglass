@@ -5,6 +5,7 @@ import { CountryFlag } from '@/components/shared/hub-filter/country-flag';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { ImpactLogo } from '@/components/shared/impact-logo';
 import { apiErrorMessage } from '@/lib/api/error-messages';
 import { useVipItemWrite, type VipBoardArea, type VipItem, type VipPillarInfo } from '@/lib/api/vip';
 import { cn } from '@/lib/utils';
@@ -54,7 +55,8 @@ export function VipBoardDialog({
           {area ? (
             <>
               <DialogHeader className="flex-row flex-wrap items-center justify-between gap-2 pr-8">
-                <div className="flex flex-col gap-1">
+                <ImpactLogo />
+                <div className="mr-auto flex flex-col gap-1">
                   <DialogTitle className="flex items-center gap-2">
                     <CountryFlag region={area.area} />
                     {`VIP projects — ${area.label}`}

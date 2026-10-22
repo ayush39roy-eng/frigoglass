@@ -72,6 +72,11 @@ function axisScale(max: number): { top: number; ticks: number[] } {
 }
 
 const PLOT_INSET = 'absolute inset-x-0 bottom-0 top-5';
+/** Plot height in px: `h-56` (224) less the `top-5` (20) inset. Display only. */
+const PLOT_PX = 204;
+/** A segment at least this tall carries its served value inside it; a slimmer
+ *  one is read from the column's hover card (owner ask 2026-10-22). */
+const MIN_LABEL_PX = 14;
 
 export function PriorityLoadChart({ bars, ariaLabel, unit, unitShort, splitUnit, capacityLabel }: PriorityLoadChartProps): React.JSX.Element {
   // Display scale only: the tallest load or capacity outline sets the axis.
@@ -131,7 +136,7 @@ export function PriorityLoadChart({ bars, ariaLabel, unit, unitShort, splitUnit,
           </div>
           <div className={cn(PLOT_INSET, 'flex items-end gap-s3')}>
             {bars.map((bar) => (
-              <div key={bar.key} className="relative flex h-full min-w-[2.5rem] flex-1 flex-col justify-end" data-testid={`load-bar-${bar.key}`}>
+              <div key={bar.key} className="group relative flex h-full min-w-[2.5rem] flex-1 flex-col justify-end" data-testid={`load-bar-${bar.key}`}>
                 {/* Capacity outline, behind the stack. */}
                 <div
                   className="absolute inset-x-[8%] bottom-0 rounded-t-sm border-2 border-b-0 border-text-muted/80"
@@ -139,16 +144,59 @@ export function PriorityLoadChart({ bars, ariaLabel, unit, unitShort, splitUnit,
                   title={`${capacityLabel} ${formatFigure(bar.capacity)} ${unitShort}`}
                 />
                 <div className="relative mx-[18%] flex flex-col-reverse overflow-hidden rounded-t-sm" style={{ height: pct(bar.load ?? 0, max) }}>
-                  {PRIORITY_BUCKETS.map((b) =>
-                    bar.split[b] > 0 ? (
+                  {PRIORITY_BUCKETS.map((b) => {
+                    if (bar.split[b] <= 0) return null;
+                    // Pixel estimate for the label decision only (presentation).
+                    const px =
+                      max > 0 && bar.splitTotal > 0
+                        ? PLOT_PX * Math.min(1, (bar.load ?? 0) / max) * (bar.split[b] / bar.splitTotal)
+                        : 0;
+                    return (
                       <div
                         key={b}
-                        className={cn('w-full shrink-0', BUCKET_BG[b])}
+                        className={cn('grid w-full shrink-0 place-items-center overflow-hidden', BUCKET_BG[b])}
                         style={{ height: pct(bar.split[b], bar.splitTotal) }}
                         title={`${BUCKET_SHORT[b]} ${formatDecimal(bar.split[b])} ${splitUnit}`}
-                      />
-                    ) : null,
-                  )}
+                      >
+                        {px >= MIN_LABEL_PX ? (
+                          <span
+                            className="font-mono text-[0.625rem] font-bold leading-none tabular-nums text-white [text-shadow:0_1px_1px_rgb(0_0_0/0.35)]"
+                            data-testid={`load-seg-${bar.key}-${b}`}
+                          >
+                            {formatDecimal(bar.split[b])}
+                          </span>
+                        ) : null}
+                      </div>
+                    );
+                  })}
+                </div>
+                {/* Hover card: every served figure of the column, so a segment too
+                    slim to carry its number can still be read. */}
+                <div
+                  className="pointer-events-none absolute bottom-1/2 left-1/2 z-20 hidden w-max min-w-[8rem] -translate-x-1/2 rounded-xl border-[1.5px] border-dash-hairline bg-surface px-s3 py-s2 text-2xs shadow-pop group-hover:block"
+                  data-testid={`load-bar-hover-${bar.key}`}
+                >
+                  <p className="mb-1 font-bold text-text">{bar.label}</p>
+                  {PRIORITY_BUCKETS.map((b) => (
+                    <p key={b} className="flex items-center justify-between gap-s3 tabular-nums text-text-muted">
+                      <span className="flex items-center gap-1">
+                        <span className={cn('inline-block size-2 rounded-sm', BUCKET_BG[b])} />
+                        {b}
+                      </span>
+                      <span className="font-mono font-semibold text-text">
+                        {formatDecimal(bar.split[b])} {splitUnit}
+                      </span>
+                    </p>
+                  ))}
+                  <p className="mt-1 flex justify-between gap-s3 border-t border-dash-hairline pt-1 tabular-nums text-text-muted">
+                    Load <span className="font-mono font-semibold text-text">{formatFigure(bar.load)} {unitShort}</span>
+                  </p>
+                  <p className="flex justify-between gap-s3 tabular-nums text-text-muted">
+                    {capacityLabel}{' '}
+                    <span className="font-mono font-semibold text-text">
+                      {formatFigure(bar.capacity)} {unitShort}
+                    </span>
+                  </p>
                 </div>
                 <span
                   className="absolute inset-x-0 pb-0.5 text-center font-mono text-2xs font-semibold tabular-nums text-text"

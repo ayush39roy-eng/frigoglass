@@ -166,7 +166,9 @@ async def test_gantt_design_and_lab_weeks_reconcile_with_capacity_design_load(db
         capacity = await _get(client, "/capacity/hub-load")
     design_by_hub: dict[str, int] = {}
     for row in rows:
-        design_by_hub[row["hub"]] = design_by_hub.get(row["hub"], 0) + (row["design_weeks"] or 0)
+        # P29 (ADR 0042): Capacity rows are capacity hubs (OEM -> R&D-Greece).
+        key = dc.capacity_hub_name(row["hub"])
+        design_by_hub[key] = design_by_hub.get(key, 0) + (row["design_weeks"] or 0)
     for hub_row in capacity["rows"]:
         assert design_by_hub.get(hub_row["hub"], 0) == hub_row["design_load_weeks"], hub_row["hub"]
 

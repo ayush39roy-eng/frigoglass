@@ -140,10 +140,12 @@ from seed.initial_scoring_rubric import (  # noqa: E402
     seed_priority_score,
 )
 from seed.seed_vip_board import seed_vip_board  # noqa: E402
+from services.audit_helpers import project_audit_state  # noqa: E402
 from services.schedule_persistence import (  # noqa: E402
     build_schedule_input_from_db,
     persist_schedule_output,
 )
+from services.scoring_tags import tags_for_type  # noqa: E402
 from services.workflow_durations import duration_for, lead_time_lookup  # noqa: E402
 
 DATA_PATH = Path(__file__).resolve().parent / "prototype_seed_data.json"
@@ -414,8 +416,12 @@ async def seed_workflows(session: AsyncSession) -> dict[str, int]:
 
 
 async def seed_hubs(session: AsyncSession) -> dict[str, Hub]:
-    """6 rows, from `domain_constants.HUB_LAB_REGION` / `OEM_HUBS`, each with
-    its `HubWorkCalendar` from `HUB_WORK_CALENDAR_SEED` (ADR 0008).
+    """6 rows, from `domain_constants.HUB_LAB_REGION` / `OEM_HUBS`. ADR 0042
+    (P29): OEM-HCK and OEM-Seltek point at R&D-Greece (`capacity_hub_id`,
+    `domain_constants.HUB_CAPACITY_HUB`). Each CAPACITY hub gets its
+    `HubWorkCalendar` from `HUB_WORK_CALENDAR_SEED` (ADR 0008); a member hub
+    has none (an existing one, from a pre-P29 seed, is deleted), the same
+    facts as migration `p29a_capacity_hubs`.
     """
     hubs_by_name: dict[str, Hub] = {}
     existing_hubs = {
@@ -436,6 +442,12 @@ async def seed_hubs(session: AsyncSession) -> dict[str, Hub]:
             session.add(hub)
         hubs_by_name[hub_name] = hub
     await session.flush()
+    for hub_name, hub in hubs_by_name.items():
+        parent = dc.HUB_CAPACITY_HUB.get(hub_name)
+        hub.capacity_hub_id = hubs_by_name[parent].id if parent is not None else None
+    await session.flush()
+    member_ids = [hubs_by_name[name].id for name in dc.HUB_CAPACITY_HUB]
+    await session.execute(delete(HubWorkCalendar).where(HubWorkCalendar.hub_id.in_(member_ids)))
 
     existing_calendars = {
         c.hub_id: c for c in (await session.execute(select(HubWorkCalendar))).scalars().all()
@@ -591,6 +603,8 @@ async def seed_projects(
             gross_margin_pct=p["gm"],
             capex_keur=p["capex"],
             rm_savings_keur=p["rm"],
+            # ADR 0038: tags from `type`, the p27a backfill rule.
+            scoring_tags=tags_for_type(p["type"]),
         )
         session.add(project)
         await session.flush()  # need project.id for the children below
@@ -607,7 +621,11 @@ async def seed_projects(
 
         session.add(
             seed_priority_score(
-                rubric, project.id, p["dims"], [HardGateReason(g) for g in p["gates"]]
+                rubric,
+                project.id,
+                p["dims"],
+                [HardGateReason(g) for g in p["gates"]],
+                tags=project.scoring_tags,
             )
         )
         count += 1
@@ -631,6 +649,59 @@ def client_2026_step_specs(
             weeks = 0
         specs.append(c26.StepSpec(step_id, kind, weeks))
     return specs
+
+
+def _provisional_leaders(
+    projects: list[dict[str, Any]],
+    project_ids: list[uuid.UUID],
+    order: list[int],
+    specs: dict[int, list[c26.StepSpec]],
+    roster: c26.RosterBuild,
+    leaders: list[str | None],
+) -> dict[int, str]:
+    """ADR 0042 §7: project index → provisional leader name, for every project
+    of a capacity member hub with a blank workbook leader
+    (`client_2026.assign_provisional_leaders`; candidates are the counted
+    engineers of the capacity hub, loads Σ design effort of the open projects
+    they lead, walk in scheduling order)."""
+
+    def effort(i: int) -> int:
+        return sum(s.duration for s in specs[i] if s.kind == "design")
+
+    out: dict[int, str] = {}
+    for capacity_hub in sorted(set(dc.HUB_CAPACITY_HUB.values())):
+        members = {h for h, parent in dc.HUB_CAPACITY_HUB.items() if parent == capacity_hub}
+        candidates = [
+            c26.LeaderCandidate(
+                name=e.name,
+                allowed_categories=e.allowed_categories,
+                load_weeks=sum(
+                    effort(i)
+                    for i, p in enumerate(projects)
+                    if leaders[i] == e.name and c26.is_open(p)
+                ),
+            )
+            for e in roster.engineers
+            if e.hub == capacity_hub and e.counts_in_capacity
+        ]
+        walk = [i for i in order if projects[i]["hub"] in members and leaders[i] is None]
+        chosen = c26.assign_provisional_leaders(
+            [
+                c26.LeaderlessProject(
+                    key=str(project_ids[i]),
+                    category=str(projects[i]["category"]),
+                    schedulable=c26.is_open(projects[i]),
+                    design_effort_weeks=effort(i),
+                )
+                for i in walk
+            ],
+            candidates,
+        )
+        for i in walk:
+            name = chosen.get(str(project_ids[i]))
+            if name is not None:
+                out[i] = name
+    return out
 
 
 async def seed_client_2026(
@@ -668,33 +739,45 @@ async def seed_client_2026(
         key=lambda i: c26.scheduling_order_key(projects[i], str(project_ids[i])),
     )
     roster = c26.build_roster(data)
-    leader_names = c26.project_leaders(projects, roster.engineers)
+    workbook_leaders = c26.project_leaders(projects, roster.engineers)
 
     engineers_by_name: dict[str, Engineer] = {}
     for e in roster.engineers:
         # ADR 0035: a provisional engineer (a workbook leader who is not on the
         # roster) is flagged in `seed/client_2026.py`; the table has no flag.
+        # ADR 0042 §5: `counts_in_capacity` false for the leaders on no roster.
         eng = Engineer(
             id=c26.engineer_uuid(e.name),
             name=e.name,
             hub_id=hubs_by_name[e.hub].id,
             fte=e.fte,
             allowed_categories=[EngineerAllowedCategory(c) for c in e.allowed_categories],
+            counts_in_capacity=e.counts_in_capacity,
         )
         session.add(eng)
         engineers_by_name[e.name] = eng
     await session.flush()
 
+    specs: dict[int, list[c26.StepSpec]] = {}
+    for i, p in enumerate(projects):
+        hub = hubs_by_name[p["hub"]]
+        specs[i] = client_2026_step_specs(p, workflow_id_for_hub(hub.is_oem), lead_times)
+
+    # ADR 0042 §7: a provisional leader for each leaderless project of a
+    # capacity member hub (the same rule as migration `p29a_capacity_hubs`).
+    provisional = _provisional_leaders(
+        projects, project_ids, order, specs, roster, workbook_leaders
+    )
+    leader_names = [provisional.get(i, workbook_leaders[i]) for i in range(len(projects))]
+
     # Progress, in scheduling order, so the higher-priority project gets the
     # free leader / chamber platform at CURRENT_WEEK (client_2026 docstring).
     # A project with no leader books nothing, so it uses a private ledger.
-    specs: dict[int, list[c26.StepSpec]] = {}
     progress: dict[int, list[c26.StepProgress]] = {}
     ledger = c26.ResourceLedger()
     for i in order:
         p = projects[i]
         hub = hubs_by_name[p["hub"]]
-        specs[i] = client_2026_step_specs(p, workflow_id_for_hub(hub.is_oem), lead_times)
         shared = c26.is_open(p) and leader_names[i] is not None
         progress[i] = c26.derive_progress(
             p,
@@ -721,6 +804,7 @@ async def seed_client_2026(
             external_code=p["external_code"],
             hub_id=hub.id,
             leader_engineer_id=engineers_by_name[leader].id if leader is not None else None,
+            leader_is_provisional=i in provisional,
             category=category,
             type=ProjectType(p["type"]) if p["type"] else None,
             status=seed_project_status(p["status"]),
@@ -736,6 +820,8 @@ async def seed_client_2026(
             plant=p["plant"],
             requesting_department=p["requesting_department"],
             product_type=p["product_type"],
+            # ADR 0038: tags from `type`, the p27a backfill rule.
+            scoring_tags=tags_for_type(p["type"]),
         )
         session.add(project)
         workflow_id = workflow_id_for_hub(hub.is_oem)
@@ -757,7 +843,26 @@ async def seed_client_2026(
         # SYNTHETIC rubric scores (ADR 0035, c26.SYNTHETIC_DIMENSION_SCORES):
         # no client source holds them; kept so the Matrix is not empty.
         dims = c26.derive_dims(p["external_code"], p["priority"], p["marketing_priority"])
-        session.add(seed_priority_score(rubric, project.id, dims))
+        session.add(seed_priority_score(rubric, project.id, dims, tags=project.scoring_tags))
+        if i in provisional:
+            # ADR 0042 §7: the assignment is recorded like the migration's.
+            after = project_audit_state(project)
+            session.add(
+                AuditLogEntry(
+                    actor_user_id=None,
+                    action="project.update",
+                    entity_type="Project",
+                    entity_id=str(project.id),
+                    hub_id=project.hub_id,
+                    before_state={
+                        **after,
+                        "leader_engineer_id": None,
+                        "leader_is_provisional": False,
+                    },
+                    after_state={**after, "source": c26.PROVISIONAL_LEADER_SOURCE},
+                    notes="seed: provisional leader for a leaderless OEM project (ADR 0042 §7)",
+                )
+            )
     await session.flush()
 
     # --- Summary run: one in-memory greedy run (nothing persisted) ---------
@@ -786,6 +891,7 @@ async def seed_client_2026(
         "skipped_zero_fte_placeholders": len(roster.placeholders),
         "projects": len(projects),
         "projects_without_leader": sum(1 for n in leader_names if n is None),
+        "provisional_leaders": len(provisional),
         "carry_over_projects": sum(1 for p in projects if c26.carry_over_and_reg_year(p)[0]),
         "summary_run": {
             "current_week": current_week,

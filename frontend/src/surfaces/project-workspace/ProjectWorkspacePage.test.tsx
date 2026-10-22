@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { fireEvent, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { QueryClient } from '@tanstack/react-query';
 import { Route, Routes } from 'react-router-dom';
 
 import { renderWithProviders } from '@/test/render';
@@ -420,6 +421,34 @@ describe('Details panel', () => {
     await user.click(panel.getByRole('button', { name: 'Edit details' }));
     const form = within(panel.getByRole('form', { name: 'Edit Cooler Alpha' }));
     expect(form.getByLabelText(/^Expected completion \(week\)/)).toHaveValue(48);
+  });
+});
+
+describe('P27 — Registration "project nature" tags (ADR 0038)', () => {
+  it('the read view lists the tags; the score section marks the served tag dimensions; a tags PATCH re-reads the Matrix', async () => {
+    const fixture = workspaceFixture();
+    const tagged = {
+      ...fixture,
+      project: { ...fixture.project, scoring_tags: ['new_models' as const, 'improvement' as const], tag_dimension_keys: ['new_models', 'quality_improvements'] },
+    };
+    api.fetchWorkspace.mockResolvedValue(tagged);
+    reg.updateProject.mockResolvedValue({ project: tagged.project, recalc: null });
+    const user = userEvent.setup();
+    const spy = vi.spyOn(QueryClient.prototype, 'invalidateQueries');
+    renderPage();
+    const details = await screen.findByTestId('details-read');
+    expect(within(details).getByText('Project nature').nextElementSibling).toHaveTextContent('New Models, Improvement');
+    const scoring = within(screen.getByTestId('scoring-section'));
+    expect(scoring.getAllByTestId('from-registration-hint')).toHaveLength(2);
+
+    const panel = within(screen.getByTestId('details-panel'));
+    await user.click(panel.getByRole('button', { name: 'Edit details' }));
+    await user.click(panel.getByRole('checkbox', { name: 'New Customer' }));
+    await user.click(panel.getByRole('button', { name: 'Save changes' }));
+    await waitFor(() => expect(reg.updateProject).toHaveBeenCalled());
+    expect(reg.updateProject.mock.calls[0]?.[1]).toMatchObject({ scoring_tags: ['new_customer', 'new_models', 'improvement'] });
+    await waitFor(() => expect(spy.mock.calls.map((c) => c[0]?.queryKey)).toContainEqual(['priority-matrix']));
+    spy.mockRestore();
   });
 });
 

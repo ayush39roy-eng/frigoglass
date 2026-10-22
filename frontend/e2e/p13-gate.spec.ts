@@ -66,7 +66,7 @@ test('header select open (countries + hubs), axe clean', async ({ page }) => {
   await settle(page);
   await page.getByRole('combobox', { name: 'Hub filter' }).click();
   await checkAxe(page, 'header select open');
-  await page.getByRole('option', { name: 'Romania' }).click();
+  await page.getByRole('option', { name: 'Romania', exact: true }).click();
   await page.waitForLoadState('networkidle');
   await page.waitForTimeout(600);
   await checkAxe(page, 'capacity country Romania');

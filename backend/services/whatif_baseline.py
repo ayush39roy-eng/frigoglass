@@ -45,6 +45,21 @@ class Scope:
     def region_ok(self, region: str) -> bool:
         return region in self.lab_regions
 
+    def capacity_row_ok(self, hub: str) -> bool:
+        """P29-T06 (ADR 0042 §4, §8): a hub-keyed CAPACITY row (design
+        requirement, utilization, designer addition, workings line) is served
+        only for a capacity hub (never OEM-HCK / OEM-Seltek), and is visible
+        when the capacity hub or any of its member hubs is in scope (the
+        aggregate is visible to a member's scope, like `GET /capacity/hub-load`)."""
+
+        if hub in dc.HUB_CAPACITY_HUB:
+            return False
+        return self.hub_ok(hub) or any(
+            self.hub_ok(member)
+            for member, parent in dc.HUB_CAPACITY_HUB.items()
+            if parent == hub
+        )
+
 
 @dataclass(frozen=True)
 class WhatIfContext:

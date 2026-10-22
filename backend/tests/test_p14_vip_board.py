@@ -102,20 +102,19 @@ async def test_seed_is_idempotent_and_links_by_exact_name(db_session):
     first = await seed_vip_board(db_session)
     assert first["items_created"] == seed_item_count() == 49
     assert first["links_added"] == 4
-    assert first["is_vip_set"] == 3
-    assert first["unlinked_is_vip_pins"] == 1
+    # ADR 0040: links never set is_vip; only the one manual pin exists.
+    assert "is_vip_set" not in first and "is_vip_cleared" not in first
+    assert first["is_vip_pins"] == 1
     reasons = {u["link"]: u["reason"] for u in first["unresolved"]}
     assert reasons["Shekel 750"] == "outside area"
     assert reasons["IC3-450 B rating"] == "absent"
     assert reasons["Beatbox Max 450 3D logo"] == "outside area"
-    for p in (s8, bee1, bee2):
-        await db_session.refresh(p)
-        assert p.is_vip is True
-    for p in (bee_pd, near, wrong_area, greek, drawer):
+    # ADR 0040: linked to a highlighted item, still not VIP.
+    for p in (s8, bee1, bee2, bee_pd, near, wrong_area, greek, drawer):
         await db_session.refresh(p)
         assert p.is_vip is False
     await db_session.refresh(pinned)
-    assert pinned.is_vip is True  # pre-existing pins are left as they are
+    assert pinned.is_vip is True  # a manual pin is left as it is
 
     bee = await _item(
         db_session, VipArea.INDIA, "BEE 5-star labelling, report submission by 01st Jan 2027"
@@ -131,16 +130,16 @@ async def test_seed_is_idempotent_and_links_by_exact_name(db_session):
         "Mini Cube R600a with GMC", "Slim Counter Top R600a with GMC", "Twin Reach R600a",
     ]
 
-    # An in-app edit survives a re-run, and nothing is duplicated. A stale
-    # flag on a project linked only to a plain item is cleared.
+    # An in-app edit survives a re-run, and nothing is duplicated. ADR 0040:
+    # a manual pin on a linked project is never cleared by the seed either.
     coffee.status_note = "edited"
     drawer.is_vip = True
     await db_session.flush()
     second = await seed_vip_board(db_session)
     assert second["items_created"] == 0 and second["links_added"] == 0
-    assert (second["is_vip_set"], second["is_vip_cleared"]) == (0, 1)
+    assert second["is_vip_pins"] == 2
     await db_session.refresh(drawer)
-    assert drawer.is_vip is False
+    assert drawer.is_vip is True
     assert await db_session.scalar(select(func.count()).select_from(VipItem)) == 49
     assert await db_session.scalar(select(func.count()).select_from(vip_item_projects)) == 4
     await db_session.refresh(coffee)
@@ -370,10 +369,13 @@ async def test_create_update_delete_with_audit(db_session):
     assert [c["title"] for c in row.before_state["children"]] == ["Child"]
 
 
-async def test_links_recompute_is_vip_and_audit(db_session):
+async def test_links_never_change_is_vip_and_audit(db_session):
+    """ADR 0040: linking, unlinking, deleting and highlighting never set or
+    clear `projects.is_vip`; the link writes are still audited."""
+
     hubs = await _hubs(db_session)
     a = await _project(db_session, hubs[HubName.RD_INDIA], "Alpha")
-    b = await _project(db_session, hubs[HubName.PD_INDIA], "Beta")
+    b = await _project(db_session, hubs[HubName.PD_INDIA], "Beta", is_vip=True)
     await act_as(db_session, RoleName.ADMIN)
     async with client_for(db_session) as client:
         one = (await client.post(
@@ -381,8 +383,7 @@ async def test_links_recompute_is_vip_and_audit(db_session):
                                 "highlighted": True}
         )).json()
         two = (await client.post(
-            "/vip-items", json={"area": "India", "pillar": "INNOVATION", "title": "Two",
-                                "highlighted": True}
+            "/vip-items", json={"area": "India", "pillar": "INNOVATION", "title": "Two"}
         )).json()
         r = await client.put(
             f"/vip-items/{one['id']}/projects",
@@ -391,16 +392,25 @@ async def test_links_recompute_is_vip_and_audit(db_session):
         assert r.status_code == 200, r.text
         body = r.json()
         assert sorted(body["item"]["project_ids"]) == sorted([str(a.id), str(b.id)])
-        assert sorted(body["pinned_project_ids"]) == sorted([str(a.id), str(b.id)])
-        await client.put(f"/vip-items/{two['id']}/projects", json={"project_ids": [str(a.id)]})
-
-        # Unlink both from "one": Beta loses its last link, Alpha keeps "two".
-        r = await client.put(f"/vip-items/{one['id']}/projects", json={"project_ids": []})
-        assert r.json()["removed_project_ids"] == sorted([str(a.id), str(b.id)])
-        assert r.json()["unpinned_project_ids"] == [str(b.id)]
+        assert body["pinned_project_ids"] == [] and body["unpinned_project_ids"] == []
         await db_session.refresh(a)
         await db_session.refresh(b)
-        assert (a.is_vip, b.is_vip) == (True, False)
+        assert (a.is_vip, b.is_vip) == (False, True)
+
+        await client.put(f"/vip-items/{two['id']}/projects", json={"project_ids": [str(a.id)]})
+        # Highlight toggles on a linked item: no recompute.
+        assert (await client.patch(
+            f"/vip-items/{two['id']}", json={"highlighted": True}
+        )).status_code == 200
+        await client.patch(f"/vip-items/{one['id']}", json={"highlighted": False})
+        await db_session.refresh(a)
+        await db_session.refresh(b)
+        assert (a.is_vip, b.is_vip) == (False, True)
+
+        # Unlink both from "one": the manual pin on Beta stays.
+        r = await client.put(f"/vip-items/{one['id']}/projects", json={"project_ids": []})
+        assert r.json()["removed_project_ids"] == sorted([str(a.id), str(b.id)])
+        assert r.json()["unpinned_project_ids"] == []
 
         # Same set again: nothing written.
         before = await _vip_count(db_session, "vip_item.link")
@@ -408,19 +418,22 @@ async def test_links_recompute_is_vip_and_audit(db_session):
         assert r.json()["added_project_ids"] == []
         assert await _vip_count(db_session, "vip_item.link") == before
 
-        # Deleting "two" clears Alpha's flag.
         r = await client.delete(f"/vip-items/{two['id']}")
-        assert r.json()["unpinned_project_ids"] == [str(a.id)]
+        assert r.json()["unpinned_project_ids"] == []
+        r = await client.delete(f"/vip-items/{one['id']}")
+        assert r.json()["unpinned_project_ids"] == []
     await db_session.refresh(a)
-    assert a.is_vip is False
+    await db_session.refresh(b)
+    assert (a.is_vip, b.is_vip) == (False, True)
     assert await _vip_count(db_session, "vip_item.link") == 2
     assert await _vip_count(db_session, "vip_item.unlink") == 1
-    assert await _vip_count(db_session, "project.vip_pin") == 2
-    assert await _vip_count(db_session, "project.vip_unpin") == 2
+    assert await _vip_count(db_session, "project.vip_pin") == 0
+    assert await _vip_count(db_session, "project.vip_unpin") == 0
 
 
-async def test_only_highlighted_items_make_vip_and_toggle_recomputes(db_session):
-    """ADR 0027 amendment: yellow highlight = VIP."""
+async def test_highlighted_board_still_lists_vip_items(db_session):
+    """The board still lists highlighted items (`vip_items`); a highlight
+    no longer makes linked projects VIP (ADR 0040)."""
 
     hubs = await _hubs(db_session)
     a = await _project(db_session, hubs[HubName.PD_ROMANIA], "Alpha")
@@ -429,29 +442,17 @@ async def test_only_highlighted_items_make_vip_and_toggle_recomputes(db_session)
         plain = (await client.post(
             "/vip-items", json={"area": "Romania", "pillar": "PERFORMANCE", "title": "Plain"}
         )).json()
-        r = await client.put(
-            f"/vip-items/{plain['id']}/projects", json={"project_ids": [str(a.id)]}
-        )
-        assert r.json()["added_project_ids"] == [str(a.id)]
-        assert r.json()["pinned_project_ids"] == []
-        await db_session.refresh(a)
-        assert a.is_vip is False
-
+        await client.put(f"/vip-items/{plain['id']}/projects", json={"project_ids": [str(a.id)]})
         r = await client.patch(f"/vip-items/{plain['id']}", json={"highlighted": True})
         assert r.status_code == 200, r.text
         await db_session.refresh(a)
-        assert a.is_vip is True
+        assert a.is_vip is False
 
         board = (await client.get("/vip-board", params={"region": "Romania"})).json()
         [romania] = board["areas"]
         assert romania["vip_items"] == [{"id": plain["id"], "title": "Plain"}]
-
-        await client.patch(f"/vip-items/{plain['id']}", json={"highlighted": False})
-        await db_session.refresh(a)
-        assert a.is_vip is False
-    assert await _vip_count(db_session, "project.vip_pin") == 1
-    assert await _vip_count(db_session, "project.vip_unpin") == 1
-    assert await _vip_count(db_session, "vip_item.update") == 2
+    assert await _vip_count(db_session, "project.vip_pin") == 0
+    assert await _vip_count(db_session, "vip_item.update") == 1
 
 
 async def test_link_area_mismatch_and_unknown_project_422(db_session):
@@ -525,8 +526,8 @@ async def test_scoped_writer_keeps_out_of_scope_links(db_session):
 
 
 async def test_writer_responses_hide_out_of_scope_project_ids(db_session):
-    """P14-R01 S2: responses return only in-scope ids; is_vip stays correct
-    for every linked project."""
+    """P14-R01 S2: responses return only in-scope ids. ADR 0040: no write
+    touches is_vip on any linked project, visible or not."""
 
     hubs = await _hubs(db_session)
     pd = await _project(db_session, hubs[HubName.PD_INDIA], "PD two")
@@ -547,13 +548,12 @@ async def test_writer_responses_hide_out_of_scope_project_ids(db_session):
         r = await client.patch(f"/vip-items/{item.id}", json={"highlighted": True})
         assert r.status_code == 200, r.text
         assert r.json()["project_ids"] == [str(pd.id)]
-        # The recompute still covered the hidden project.
         await db_session.refresh(rd)
         await db_session.refresh(pd)
-        assert rd.is_vip is True and pd.is_vip is True
+        assert rd.is_vip is False and pd.is_vip is False
         r = await client.delete(f"/vip-items/{item.id}")
         assert r.status_code == 200, r.text
-        assert r.json()["unpinned_project_ids"] == [str(pd.id)]
+        assert r.json()["unpinned_project_ids"] == []
         await db_session.refresh(rd)
         assert rd.is_vip is False
 

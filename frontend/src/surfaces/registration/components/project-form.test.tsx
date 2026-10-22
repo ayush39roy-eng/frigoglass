@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
-import { screen } from '@testing-library/react';
+import { screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
 import { renderWithProviders } from '@/test/render';
@@ -172,7 +172,7 @@ describe('ProjectFormDialog', () => {
           delay_weeks: 0, reg_year: null, carry_over: false, comments: null, customer_name: null, tcogs_eur: null,
           selling_price_eur: null, gross_margin_pct: null, capex_keur: null, rm_savings_keur: null,
           target_end_week: null, certification_testing_required: true, estimated_design_weeks: null,
-          estimated_lab_weeks: null, plant: null, requesting_department: null, product_type: null, schedule_stale: false, workflow_id: 'PDD',
+          estimated_lab_weeks: null, plant: null, requesting_department: null, product_type: null, scoring_tags: [], tag_dimension_keys: [], schedule_stale: false, workflow_id: 'PDD',
           created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z',
         }}
         open
@@ -183,6 +183,82 @@ describe('ProjectFormDialog', () => {
     );
     await user.click(screen.getByRole('button', { name: 'Save changes' }));
     expect(onSubmit).toHaveBeenCalledTimes(1);
+  });
+
+  it('P27: "Project nature" offers the six tags in order with the helper text; edit pre-ticks the served set and sends the FULL new set', async () => {
+    const user = userEvent.setup();
+    const onSubmit = vi.fn().mockResolvedValue(undefined);
+    const onDirtyChange = vi.fn();
+    renderWithProviders(
+      <ProjectForm
+        mode="edit"
+        variant="inline"
+        onDirtyChange={onDirtyChange}
+        project={{
+          id: 'p9', name: 'Old cooler', external_code: null, hub_id: 'hub-1', leader_engineer_id: null,
+          category: null, type: 'NO', priority: null, status: 'In Queue', frozen: false, actual_start_week: null,
+          delay_weeks: 0, reg_year: null, carry_over: false, comments: null, customer_name: null, tcogs_eur: null,
+          selling_price_eur: null, gross_margin_pct: null, capex_keur: null, rm_savings_keur: null,
+          target_end_week: null, certification_testing_required: true, estimated_design_weeks: null,
+          estimated_lab_weeks: null, plant: null, requesting_department: null, product_type: null,
+          scoring_tags: ['new_options', 'improvement'], tag_dimension_keys: ['new_options', 'quality_improvements'],
+          schedule_stale: false, workflow_id: 'PDD',
+          created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z',
+        }}
+        onOpenChange={vi.fn()}
+        hubs={hubs}
+        onSubmit={onSubmit}
+      />,
+    );
+    const group = screen.getByRole('group', { name: 'Project nature' });
+    const boxes = within(group).getAllByRole('checkbox');
+    expect(boxes.map((b) => b.getAttribute('aria-checked') === 'true' ? `[x] ${b.closest('label')?.textContent ?? ''}` : b.closest('label')?.textContent)).toEqual([
+      'New Customer',
+      'Strategic Project',
+      '[x] New Options',
+      'Regulatory / Business Compliance',
+      'New Models',
+      '[x] Improvement',
+    ]);
+    expect(group).toHaveAccessibleDescription(
+      'Ticking one gives that dimension full score (5); it can still be changed in the Matrix.',
+    );
+    expect(onDirtyChange).toHaveBeenLastCalledWith(false);
+
+    await user.click(within(group).getByRole('checkbox', { name: 'Improvement' }));
+    await user.click(within(group).getByRole('checkbox', { name: 'New Customer' }));
+    expect(onDirtyChange).toHaveBeenLastCalledWith(true);
+    await user.click(screen.getByRole('button', { name: 'Save changes' }));
+    expect(onSubmit).toHaveBeenCalledTimes(1);
+    expect(onSubmit.mock.calls[0]?.[0]).toMatchObject({ scoring_tags: ['new_customer', 'new_options'] });
+  });
+
+  it('P27: removing every tag sends an empty list (never null or omitted)', async () => {
+    const user = userEvent.setup();
+    const onSubmit = vi.fn().mockResolvedValue(undefined);
+    renderWithProviders(
+      <ProjectForm
+        mode="edit"
+        variant="inline"
+        project={{
+          id: 'p9', name: 'Old cooler', external_code: null, hub_id: 'hub-1', leader_engineer_id: null,
+          category: null, type: null, priority: null, status: 'In Queue', frozen: false, actual_start_week: null,
+          delay_weeks: 0, reg_year: null, carry_over: false, comments: null, customer_name: null, tcogs_eur: null,
+          selling_price_eur: null, gross_margin_pct: null, capex_keur: null, rm_savings_keur: null,
+          target_end_week: null, certification_testing_required: true, estimated_design_weeks: null,
+          estimated_lab_weeks: null, plant: null, requesting_department: null, product_type: null,
+          scoring_tags: ['new_models'], tag_dimension_keys: ['new_models'],
+          schedule_stale: false, workflow_id: 'PDD',
+          created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z',
+        }}
+        onOpenChange={vi.fn()}
+        hubs={hubs}
+        onSubmit={onSubmit}
+      />,
+    );
+    await user.click(screen.getByRole('checkbox', { name: 'New Models' }));
+    await user.click(screen.getByRole('button', { name: 'Save changes' }));
+    expect(onSubmit.mock.calls[0]?.[0]).toHaveProperty('scoring_tags', []);
   });
 
   it('does not submit without a name (zod validation)', async () => {
@@ -237,7 +313,7 @@ describe('ProjectFormDialog', () => {
           estimated_lab_weeks: null,
           plant: null,
           requesting_department: null,
-          product_type: null,
+          product_type: null, scoring_tags: [], tag_dimension_keys: [],
           schedule_stale: false,
           workflow_id: 'PDD',
           created_at: '2026-01-01T00:00:00Z',
@@ -522,7 +598,7 @@ describe('ProjectForm — unsaved-changes reporting (P22-T01)', () => {
     actual_start_week: null, delay_weeks: 0, reg_year: 2026, carry_over: false, comments: 'one\r\ntwo',
     customer_name: null, tcogs_eur: 100.5, selling_price_eur: null, gross_margin_pct: null, capex_keur: null,
     rm_savings_keur: null, target_end_week: null, certification_testing_required: true,
-    estimated_design_weeks: null, estimated_lab_weeks: null, plant: null, requesting_department: null, product_type: null, schedule_stale: false, workflow_id: 'PDD' as const,
+    estimated_design_weeks: null, estimated_lab_weeks: null, plant: null, requesting_department: null, product_type: null, scoring_tags: [], tag_dimension_keys: [], schedule_stale: false, workflow_id: 'PDD' as const,
     created_at: '', updated_at: '',
   };
 

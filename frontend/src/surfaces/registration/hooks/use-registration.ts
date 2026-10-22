@@ -10,6 +10,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { ApiError } from '@/lib/api/client';
 import { queryKeys } from '@/lib/query-keys';
+import { invalidateScoreReaders } from '@/lib/score-readers';
 
 import { fetchEngineerOptions } from '../api/engineers-api';
 import {
@@ -81,20 +82,23 @@ export function useEngineerOptions(hubId: string | undefined) {
 }
 
 /** `POST /projects`. On success, invalidate the project list so the new
- *  row appears. Never touches `['schedule-runs', …]` — a new (or any status)
+ *  row appears (and, P27, the score readers when tags were sent). Never touches `['schedule-runs', …]` — a new (or any status)
  *  project only affects the next schedule run, not the active one. */
 export function useCreateProject() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (body: ProjectCreateRequest) => createProject(body),
-    onSuccess: () => {
+    onSuccess: (_data, body) => {
       void queryClient.invalidateQueries({ queryKey: ['projects'] });
+      // P27: tags pre-fill scores server-side; the new project's Matrix row / board card.
+      if (body.scoring_tags !== undefined) invalidateScoreReaders(queryClient);
     },
   });
 }
 
 /** `PATCH /projects/{id}`. Invalidates the list + this project's hard-gate
- *  status (a field edit can change which fields are still missing). */
+ *  status (a field edit can change which fields are still missing), and (P27)
+ *  every score reader when the body carries `scoring_tags`. */
 export function useUpdateProject() {
   const queryClient = useQueryClient();
   return useMutation({
@@ -105,6 +109,8 @@ export function useUpdateProject() {
       void queryClient.invalidateQueries({
         queryKey: queryKeys.projectHardGateStatus(variables.projectId),
       });
+      // P27: a newly set tag pre-fills its dimension with 5 server-side.
+      if (variables.body.scoring_tags !== undefined) invalidateScoreReaders(queryClient);
     },
   });
 }

@@ -22,10 +22,24 @@ Hypothetical engineers are labelled "What-if designer N".
 Modelling choices (each is an assumption recorded in docs/OPEN_QUESTIONS.md #43-#47):
 
 * Scheduling takes a leader per project, so a hypothetical project is given one
-  deterministically: the eligible engineer of its hub with the smallest led
-  design-weeks per FTE (ties by engineer id). Added engineers start at zero, so
-  they absorb new projects. Existing projects keep their leaders, except the
-  projects of a removed engineer, which are re-assigned the same way.
+  deterministically: the eligible engineer of its *capacity* hub (ADR 0042,
+  P29: R&D-Greece for an OEM-hub project; `ProjectInput.capacity_hub`) with the
+  smallest led design-weeks per FTE (ties by engineer id). Added engineers
+  start at zero, so they absorb new projects. Existing projects keep their
+  leaders, except the projects of a removed engineer, which are re-assigned
+  the same way. Design-side figures (hub rows, designer search dimensions,
+  touched hubs) are per capacity hub, so an OEM project's design weeks land on
+  Greece's row and designers for it are added to R&D-Greece; lab figures stay
+  per the hub's lab region (Greece either way).
+* Counted designers (ADR 0042 §5–6, P29-T05): design supply (`_supply`, hence
+  every booked %, capacity, FTE column and the minimum-additions search) sums
+  only engineers with `counts_in_capacity`. A non-counted engineer stays the
+  leader of the projects they already lead and is booked for them, but is never
+  picked for a new or re-assigned project, never removed by a
+  `RemoveEngineerCount` (which removes counted designers, so supply always
+  drops by what was removed; an explicit `remove_engineers` id still works),
+  and does not set the fastest-designer speed of the unattainable-project
+  test. Hypothetical (`AddEngineer`) designers always count.
 * Chamber downtime never gates booking (DOMAIN_RULES "Capacity supply"), so a
   downtime change moves supply and booked % only; the greedy placement is the
   same as the baseline's.
@@ -46,8 +60,9 @@ from dataclasses import dataclass, field
 from typing import Literal
 
 import domain_constants as dc
+from scheduling import hubs as hub_names
 from scheduling.greedy import _cat_not_allowed, run_greedy_sgs
-from scheduling.invariants import compute_design_load_by_hub
+from scheduling.invariants import compute_design_load_by_capacity_hub
 from scheduling.types import (
     OEM_CATEGORIES,
     PDD_CATEGORIES,
@@ -177,6 +192,12 @@ class AddProject:
     project's workflow is a function of its hub). `priority` wins over `score`
     (a normalised 0..100 score mapped with the DOMAIN_RULES bands).
     `project_type` is a display label only; it never affects scheduling.
+
+    `capacity_hub` (ADR 0042): the hub whose designers lead the new projects
+    and whose supply their design load counts against. `None` (the default)
+    takes the capacity hub the baseline's projects on `hub` already carry
+    (so an `OEM-HCK` project resolves to `R&D-Greece` once the baseline does),
+    else `hub` itself.
     """
 
     hub: str
@@ -188,6 +209,7 @@ class AddProject:
     score: float | None = None
     workflow_id: str | None = None
     certification_testing_required: bool = True
+    capacity_hub: str | None = None
 
 
 @dataclass(frozen=True)
@@ -195,7 +217,7 @@ class AddEngineer:
     """`count` hypothetical designers in `hub`. Their FTE feeds supply and gates
     speed: a design step they lead books `ceil(duration / fte)` weeks (ADR
     0032). `allowed_categories` defaults to every category of the hub's
-    workflow."""
+    workflow. They always count in capacity (`counts_in_capacity=True`)."""
 
     hub: str
     fte: float = 1.0
@@ -206,7 +228,9 @@ class AddEngineer:
 @dataclass(frozen=True)
 class RemoveEngineerCount:
     """Remove `count` engineers from `hub`: the ones leading the least design
-    work first (ties by engineer id), to disturb the plan least."""
+    work first (ties by engineer id), to disturb the plan least. Only counted
+    designers (`counts_in_capacity`, ADR 0042) are candidates, so the hub's
+    supply always drops by the removed designers' FTE."""
 
     hub: str
     count: int = 1
@@ -299,11 +323,13 @@ def _booking(load: float, capacity: float) -> tuple[float | None, str]:
 
 
 def _lab_region_of(hub: str) -> str:
-    return dc.HUB_LAB_REGION[hub]
+    return hub_names.HUB_LAB_REGION[hub]
 
 
 def _calendar_map(cals: Iterable[HubCalendarInput]) -> dict[str, HubCalendarInput]:
-    return {c.hub: c for c in sorted(cals, key=lambda c: c.hub)}
+    # ADR 0041 §4: a calendar under either spelling of a renamed hub is found
+    # under the spelling of the canonical hub list (`_ALL_HUBS`).
+    return {hub_names.constants_hub_name(c.hub): c for c in sorted(cals, key=lambda c: c.hub)}
 
 
 @dataclass(frozen=True)
@@ -337,7 +363,7 @@ def _region_holiday_weeks(cals: Mapping[str, HubCalendarInput], region: str) -> 
     vals = [
         c.national_holiday_days / float(c.weekdays_per_week)
         for hub, c in sorted(cals.items())
-        if hub in dc.HUB_LAB_REGION and dc.HUB_LAB_REGION[hub] == region
+        if hub in hub_names.HUB_LAB_REGION and hub_names.HUB_LAB_REGION[hub] == region
     ]
     return max(vals) if vals else 0.0
 
@@ -392,7 +418,7 @@ def _priority_from(spec: AddProject) -> str:
 
 
 def _default_allowed_categories(hub: str) -> tuple[str, ...]:
-    return ("OEM", *OEM_CATEGORIES) if hub in dc.OEM_HUBS else PDD_CATEGORIES
+    return ("OEM", *OEM_CATEGORIES) if hub in hub_names.OEM_HUBS else PDD_CATEGORIES
 
 
 def chamber_norm(
@@ -481,9 +507,11 @@ def _validate_scenario(
     si = baseline.schedule
     lead = {(lt.workflow_id, lt.category) for lt in si.lead_times}
     for ap in scenario.add_projects:
-        if ap.hub not in dc.HUB_LAB_REGION:
+        if ap.hub not in hub_names.HUB_LAB_REGION:
             raise ValueError(f"unknown hub {ap.hub!r}")
-        wf = "OEM" if ap.hub in dc.OEM_HUBS else "PDD"
+        if ap.capacity_hub is not None and ap.capacity_hub not in hub_names.HUB_LAB_REGION:
+            raise ValueError(f"unknown capacity hub {ap.capacity_hub!r}")
+        wf = "OEM" if ap.hub in hub_names.OEM_HUBS else "PDD"
         if ap.workflow_id is not None and ap.workflow_id != wf:
             raise ValueError(f"hub {ap.hub!r} uses workflow {wf!r}, not {ap.workflow_id!r}")
         if (wf, ap.category) not in lead:
@@ -497,14 +525,14 @@ def _validate_scenario(
         if ap.score is not None and not 0 <= ap.score <= 100:
             raise ValueError("score must be 0..100")
     for ae in scenario.add_engineers:
-        if ae.hub not in dc.HUB_LAB_REGION:
+        if ae.hub not in hub_names.HUB_LAB_REGION:
             raise ValueError(f"unknown hub {ae.hub!r}")
         if not 1 <= ae.count <= MAX_COUNT:
             raise ValueError(f"engineer count must be 1..{MAX_COUNT}")
         if not ae.fte > 0:
             raise ValueError("fte must be > 0")
     for rc in scenario.remove_engineer_counts:
-        if rc.hub not in dc.HUB_LAB_REGION:
+        if rc.hub not in hub_names.HUB_LAB_REGION:
             raise ValueError(f"unknown hub {rc.hub!r}")
         if rc.count < 1:
             raise ValueError("remove count must be >= 1")
@@ -557,6 +585,19 @@ def _project_design_weeks(si: ScheduleInput) -> dict[str, int]:
     return out
 
 
+def _capacity_hub_for(si: ScheduleInput, hub: str, explicit: str | None) -> str:
+    """ADR 0042: the capacity hub of a hypothetical project on `hub` — the
+    explicit value if given, else what the baseline's own projects on that hub
+    carry (first by `project_id`), else `hub` (its own capacity hub)."""
+
+    if explicit is not None:
+        return explicit
+    for p in sorted(si.projects, key=lambda p: p.project_id):
+        if p.hub == hub:
+            return p.capacity_hub
+    return hub
+
+
 def _pick_leader(
     project: ProjectInput,
     engineers: Sequence[EngineerInput],
@@ -564,8 +605,15 @@ def _pick_leader(
 ) -> EngineerInput | None:
     # ADR 0032: a designer at FTE <= 0 cannot lead design work (and would
     # divide by zero below), so they are never picked.
+    # ADR 0042: the pool is the project's *capacity* hub (R&D-Greece for an
+    # OEM-hub project), not its own hub, and only counted designers are ever
+    # chosen (P29-T05: a non-counted leader keeps their own projects only).
     hub_engs = sorted(
-        (e for e in engineers if e.hub == project.hub and is_valid_fte(e.fte)),
+        (
+            e
+            for e in engineers
+            if e.hub == project.capacity_hub and e.counts_in_capacity and is_valid_fte(e.fte)
+        ),
         key=lambda e: e.engineer_id,
     )
     if not hub_engs:
@@ -598,7 +646,11 @@ def apply_scenario(
     removed: set[str] = set(scenario.remove_engineers)
     for rc in sorted(scenario.remove_engineer_counts, key=lambda r: r.hub):
         pool = sorted(
-            (e for e in si.engineers if e.hub == rc.hub and e.engineer_id not in removed),
+            (
+                e
+                for e in si.engineers
+                if e.hub == rc.hub and e.counts_in_capacity and e.engineer_id not in removed
+            ),
             key=lambda e: (led.get(e.engineer_id, 0.0), e.engineer_id),
         )
         for e in pool[: rc.count]:
@@ -715,7 +767,7 @@ def apply_scenario(
     table = build_lead_time_table(si.lead_times)
     n_new = 0
     for idx, ap in enumerate(scenario.add_projects, start=1):
-        wf_id = "OEM" if ap.hub in dc.OEM_HUBS else "PDD"
+        wf_id = "OEM" if ap.hub in hub_names.OEM_HUBS else "PDD"
         for k in range(1, ap.count + 1):
             _budget.check()
             n_new += 1
@@ -731,6 +783,7 @@ def apply_scenario(
                 leader_engineer_id=None,
                 workflow_id=wf_id,
                 certification_testing_required=ap.certification_testing_required,
+                capacity_hub=_capacity_hub_for(si, ap.hub, ap.capacity_hub),
             )
             leader = _pick_leader(proto, engineers, load)
             if leader is not None:
@@ -782,9 +835,11 @@ def build_scenario_input(baseline: WhatIfBaseline, scenario: Scenario) -> Schedu
 def _plan_loads(
     si: ScheduleInput,
 ) -> tuple[dict[str, float], dict[str, float], dict[str, tuple[int, int]]]:
-    """(design weeks by hub, lab weeks by lab region, per-project (design, lab))
-    from the lead-time plan of every schedulable project. This is the I6/I7
-    demand without running the scheduler."""
+    """(design weeks by capacity hub, lab weeks by lab region, per-project
+    (design, lab)) from the lead-time plan of every schedulable project. This
+    is the I6/I7 demand without running the scheduler. Design weeks are keyed
+    by `capacity_hub` (ADR 0042 §3: an OEM project's design work is Greece's
+    load); lab weeks by the hub's lab region as before."""
 
     workflows = build_workflows(si.workflow_steps)
     table = build_lead_time_table(si.lead_times)
@@ -794,7 +849,7 @@ def _plan_loads(
     for p in sorted(si.projects, key=lambda p: p.project_id):
         if p.status not in dc.SCHEDULABLE_STATUS_ORDER or p.category is None:
             continue
-        if p.hub not in dc.HUB_LAB_REGION:
+        if p.hub not in hub_names.HUB_LAB_REGION:
             continue
         wf = workflows.get(p.workflow_id)
         if wf is None or any((p.workflow_id, p.category, s.step_id) not in table for s in wf.steps):
@@ -808,8 +863,8 @@ def _plan_loads(
         lab = sum(
             sp.duration for sp in plan.steps.values() if sp.step.kind == "lab" and not sp.skipped
         )
-        by_hub[p.hub] += d
-        by_region[dc.HUB_LAB_REGION[p.hub]] += lab * dc.LAB_STEP_CONSUMPTION_PER_PROJECT_WEEK
+        by_hub[p.capacity_hub] += d
+        by_region[hub_names.HUB_LAB_REGION[p.hub]] += lab * dc.LAB_STEP_CONSUMPTION_PER_PROJECT_WEEK
         per_project[p.project_id] = (d, lab)
     return dict(by_hub), dict(by_region), per_project
 
@@ -835,7 +890,10 @@ def _supply(
     cals = _calendar_map(calendars)
     fte: dict[str, float] = defaultdict(float)
     for e in engineers:
-        fte[e.hub] += e.fte
+        # ADR 0042 §5: supply is Σ fte over *counted* engineers only; a
+        # non-counted leader is booked but never supply.
+        if e.counts_in_capacity:
+            fte[e.hub] += e.fte
     wwpe: dict[str, float] = {}
     rem: dict[str, float] = {}
     for hub in _ALL_HUBS:
@@ -994,20 +1052,32 @@ def touched_scope(
     si = baseline.schedule
     hubs: set[str] = set()
     regions: set[str] = set()
-    hubs.update(ap.hub for ap in scenario.add_projects)
+    # ADR 0042: design-side scope is in capacity hubs (an added OEM-HCK
+    # project touches R&D-Greece's designers); its lab region is still the
+    # hub's own (Greece either way).
+    added_hubs = {ap.hub for ap in scenario.add_projects if ap.hub in hub_names.HUB_LAB_REGION}
+    hubs.update(
+        _capacity_hub_for(si, ap.hub, ap.capacity_hub)
+        for ap in scenario.add_projects
+        if ap.hub in hub_names.HUB_LAB_REGION
+    )
     hubs.update(ae.hub for ae in scenario.add_engineers)
     hubs.update(rc.hub for rc in scenario.remove_engineer_counts)
     eng_hub = {e.engineer_id: e.hub for e in si.engineers}
     hubs.update(eng_hub[i] for i in scenario.remove_engineers if i in eng_hub)
+    proj_cap = {p.project_id: p.capacity_hub for p in si.projects}
     proj_hub = {p.project_id: p.hub for p in si.projects}
-    hubs.update(proj_hub[i] for i, _ in scenario.priority_overrides if i in proj_hub)
+    overridden = [i for i, _ in scenario.priority_overrides if i in proj_hub]
+    hubs.update(proj_cap[i] for i in overridden)
     regions.update(ac.lab_region for ac in scenario.add_chambers)
     ch_region = {c.chamber_id: c.lab_region for c in si.chambers}
     regions.update(
         ch_region[d.chamber_id] for d in scenario.chamber_downtime if d.chamber_id in ch_region
     )
-    regions.update(dc.HUB_LAB_REGION[h] for h in hubs if h in dc.HUB_LAB_REGION)
-    return tuple(sorted(h for h in hubs if h in dc.HUB_LAB_REGION)), tuple(sorted(regions))
+    regions.update(hub_names.HUB_LAB_REGION[h] for h in hubs if h in hub_names.HUB_LAB_REGION)
+    regions.update(hub_names.HUB_LAB_REGION[h] for h in added_hubs)
+    regions.update(hub_names.HUB_LAB_REGION[proj_hub[i]] for i in overridden)
+    return tuple(sorted(h for h in hubs if h in hub_names.HUB_LAB_REGION)), tuple(sorted(regions))
 
 
 def analytic_requirements(
@@ -1082,11 +1152,14 @@ def analytic_requirements(
     )
     # After removing engineers the surviving projects keep their load; the
     # re-assigned ones only change leader, never demand.
+    # ADR 0042: a new project's design weeks and designer count go to its
+    # capacity hub's row; its lab weeks to its own hub's lab region.
+    cap_of = {p.project_id: p.capacity_hub for p in applied.schedule_input.projects}
     n_added_by_hub: dict[str, int] = defaultdict(int)
     n_added_by_region: dict[str, int] = defaultdict(int)
     for pid in applied.new_project_ids:
         hub = applied.new_project_labels[pid][0]
-        n_added_by_hub[hub] += 1
+        n_added_by_hub[cap_of[pid]] += 1
         n_added_by_region[_lab_region_of(hub)] += 1
 
     workings: list[str] = []
@@ -1107,11 +1180,13 @@ def analytic_requirements(
     else:
         workings.append("The scenario changes nothing, so there is nothing extra to add.")
 
-    # Group added projects per (hub, category) for the arithmetic lines.
-    groups: dict[tuple[str, str], list[str]] = defaultdict(list)
+    # Group added projects per (capacity hub, hub, category) for the arithmetic
+    # lines. For a non-OEM hub the first two are equal, so the order and text
+    # of the lines are exactly the pre-ADR-0042 ones.
+    groups: dict[tuple[str, str, str], list[str]] = defaultdict(list)
     for pid in applied.new_project_ids:
         hub, cat, _ = applied.new_project_labels[pid]
-        groups[(hub, cat)].append(pid)
+        groups[(cap_of[pid], hub, cat)].append(pid)
 
     design_rows: list[HubDesignRequirement] = []
     for hub in _ALL_HUBS:
@@ -1137,11 +1212,12 @@ def analytic_requirements(
 
         if n_added_by_hub.get(hub, 0) > 0:
             parts = []
-            for (g_hub, cat), pids in sorted(groups.items()):
-                if g_hub != hub:
+            for (g_cap, g_hub, cat), pids in sorted(groups.items()):
+                if g_cap != hub:
                     continue
                 d = add_per_project[pids[0]][0]
-                parts.append(f"{len(pids)} x {d} wk ({cat})")
+                member = "" if g_hub == g_cap else f", {g_hub}"
+                parts.append(f"{len(pids)} x {d} wk ({cat}{member})")
             workings.append(f"{hub}: extra design weeks = " + " + ".join(parts) + f" = {extra}.")
         workings.append(
             f"{hub}: load {_fmt(base_load)} + {extra} = {_fmt(new_load)} wk; capacity = "
@@ -1228,7 +1304,7 @@ def analytic_requirements(
 
         if extra_lab or n_added_by_region.get(region, 0):
             parts = []
-            for (g_hub, cat), pids in sorted(groups.items()):
+            for (_g_cap, g_hub, cat), pids in sorted(groups.items()):
                 if _lab_region_of(g_hub) != region:
                     continue
                 lw = add_per_project[pids[0]][1]
@@ -1403,17 +1479,18 @@ def _utilization(
     chamber_supply: Iterable[ChamberSupplyInput],
 ) -> tuple[UtilizationRow, ...]:
     sup = _supply(si.engineers, si.chambers, calendars, chamber_supply, si.current_week)
-    hub_load = compute_design_load_by_hub(si, output)
+    # ADR 0042 §3: the hub rows are capacity-hub rows (OEM load on Greece).
+    hub_load = compute_design_load_by_capacity_hub(si, output)
     # lab load by region from outcomes (I7)
     proj = {p.project_id: p for p in si.projects}
     region_load: dict[str, float] = defaultdict(float)
     for o in output.project_outcomes:
         p = proj.get(o.project_id)
-        if p is None or p.hub not in dc.HUB_LAB_REGION:
+        if p is None or p.hub not in hub_names.HUB_LAB_REGION:
             continue
         for st in o.steps:
             if st.kind == "lab" and not st.skipped:
-                region_load[dc.HUB_LAB_REGION[p.hub]] += (
+                region_load[hub_names.HUB_LAB_REGION[p.hub]] += (
                     st.duration_weeks * dc.LAB_STEP_CONSUMPTION_PER_PROJECT_WEEK
                 )
     rows: list[UtilizationRow] = []
@@ -1728,15 +1805,17 @@ def _unattainable(r: ProjectResult) -> bool:
 def _unattainable_new_projects(applied: AppliedScenario, designer_fte: float) -> frozenset[str]:
     """New projects that miss W52 even with unlimited designers and chambers
     when led at the fastest speed any designer could give them: the larger of
-    the solver's added-designer FTE and the best valid FTE among the hub's
-    designers (ADR 0032). Fixed for the whole search, so the target never
-    depends on which designer the leader balancing happened to pick."""
+    the solver's added-designer FTE and the best valid FTE among the capacity
+    hub's designers (ADR 0032; ADR 0042 for the pool). Fixed for the whole
+    search, so the target never depends on which designer the leader
+    balancing happened to pick."""
 
     si = applied.schedule_input
     new = set(applied.new_project_ids)
     best: dict[str, float] = {}
     for e in sorted(si.engineers, key=lambda e: e.engineer_id):
-        if is_valid_fte(e.fte):
+        # Only counted designers can be picked for a new project (P29-T05).
+        if e.counts_in_capacity and is_valid_fte(e.fte):
             best[e.hub] = max(best.get(e.hub, 0.0), e.fte)
     workflows = build_workflows(si.workflow_steps)
     table = build_lead_time_table(si.lead_times)
@@ -1744,7 +1823,7 @@ def _unattainable_new_projects(applied: AppliedScenario, designer_fte: float) ->
     for p in sorted(si.projects, key=lambda p: p.project_id):
         if p.project_id not in new:
             continue
-        speed = max(designer_fte, best.get(p.hub, 0.0))
+        speed = max(designer_fte, best.get(p.capacity_hub, 0.0))
         plan = analyse_project(p, workflows[p.workflow_id], table, leader_fte=speed)
         u = unconstrained_end_week(plan, si.current_week)
         if u is not None and u > dc.WITHIN_YEAR_WEEK:
@@ -1828,13 +1907,16 @@ def solve_minimum_additions(
     cap = max(2, min(int(max_runs), HARD_MAX_RUNS))
 
     applied0 = apply_scenario(baseline, scenario, _budget=budget)
-    hubs: set[str] = {applied0.new_project_labels[pid][0] for pid in applied0.new_project_ids}
+    # ADR 0042: designers are searched per *capacity* hub — an added OEM-HCK
+    # project is led from R&D-Greece, so that is where designers are added.
+    cap_of0 = {p.project_id: p.capacity_hub for p in applied0.schedule_input.projects}
+    hubs: set[str] = {cap_of0[pid] for pid in applied0.new_project_ids}
     by_id = {p.project_id: p for p in baseline.schedule.projects}
     by_eng = {e.engineer_id: e.hub for e in baseline.schedule.engineers}
     for eid in applied0.removed_engineer_ids:
         hubs.add(by_eng[eid])
     for pid, _ in scenario.priority_overrides:
-        hubs.add(by_id[pid].hub)
+        hubs.add(by_id[pid].capacity_hub)
     designer_hubs = tuple(sorted(hubs))
 
     new_set = set(applied0.new_project_ids)
@@ -1879,8 +1961,10 @@ def solve_minimum_additions(
     groups = sorted(set(region_of_dim))
 
     # Regions are independent subsystems: a project only ever uses the
-    # designers of its hub and the chambers of its hub's lab region, so one
-    # region's additions cannot change another region's projects. The search
+    # designers of its capacity hub (ADR 0042) and the chambers of its hub's
+    # lab region — and a capacity hub's lab region is its members' (the OEM
+    # hubs and R&D-Greece are all Greece) — so one region's additions cannot
+    # change another region's projects. The search
     # therefore solves one region at a time (a pool of at most 2-4 dimensions)
     # with every other region held fixed, and the minimum total is the sum.
     class _Group:

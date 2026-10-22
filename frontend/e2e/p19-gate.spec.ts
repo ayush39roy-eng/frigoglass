@@ -293,7 +293,10 @@ test('Capacity: Weeks/Days × YTD/Full year, every combination equals the API', 
       const dPct = hk === 'year' ? r.design_booked_pct_year : r.design_booked_pct_remaining;
       expect(num(await tr.getByTestId('design-capacity').innerText()), `${r.hub} design cap ${c.unit}/${c.horizon}`).toBeCloseTo(dCap, 1);
       expect(num(await tr.getByTestId('design-load').first().innerText()), `${r.hub} design load`).toBeCloseTo(dLoad, 1);
-      expect(num(await tr.getByTestId('design-booked').innerText()), `${r.hub} design booked`).toBeCloseTo(dPct, 1);
+      // Final gate: a hub with no engineers (OEM-Seltek in the real roster, ADR 0035) has no capacity, so its
+      // booked % is served null and shown without a number.
+      if (dPct === null) expect(await tr.getByTestId('design-booked').innerText(), `${r.hub} design booked (null)`).not.toMatch(/\d/);
+      else expect(num(await tr.getByTestId('design-booked').innerText()), `${r.hub} design booked`).toBeCloseTo(dPct, 1);
       if (await tr.getByTestId('lab-capacity').count()) {
         const lCap = days ? r.lab_capacity_days[hk] : hk === 'year' ? r.lab_capacity_year : r.lab_capacity_remaining;
         const lLoad = days ? r.lab_load_days[hk] : r.lab_load_weeks;
@@ -319,7 +322,7 @@ interface Summary {
   lab: { regions: { lab_region: string; capacity_weeks: { year: number; remaining: number } }[]; total: Record<string, unknown> };
 }
 
-test('Capacity Planning (Frank Admin): totals = API, hub and lab cards with chips, lazy Resource load, filters, Dept disabled, What-if', async ({ page, request }) => {
+test('Capacity Planning (Frank Admin): totals = API, hub and lab cards with chips, lazy Resource load, filters, Dept enabled, What-if', async ({ page, request }) => {
   test.setTimeout(240_000);
   await setup(page, 'admin');
   const rl: string[] = [];
@@ -354,7 +357,8 @@ test('Capacity Planning (Frank Admin): totals = API, hub and lab cards with chip
   console.log('resource-load first query', rl[0]);
   await settle(page, 800);
   const dept = section.getByRole('button', { name: /^Dept filter/ });
-  await expect(dept).toHaveAttribute('aria-disabled', 'true');
+  // P24-T02: the department options are served now (`requesting_department_available`), so Dept is enabled.
+  await expect(dept).not.toHaveAttribute('aria-disabled', 'true');
   // Filter: Type → first option; request carries project_type; UI totals = API with the same filter.
   const before = rl.length;
   await section.getByRole('button', { name: /^Type filter/ }).click();
@@ -391,7 +395,8 @@ test('Capacity Planning: inline FTE edit as Frank Admin, revert, audit rows', as
   await page.goto('/planning');
   const card = page.getByTestId('hub-card-R&D-Greece');
   await expect(card).toBeVisible({ timeout: 20_000 });
-  const input = card.getByRole('spinbutton', { name: /^FTE for / });
+  // Final gate: R&D-Greece has 3 engineers in the real roster (ADR 0035); edit the first one.
+  const input = card.getByRole('spinbutton', { name: /^FTE for / }).first();
   const name = ((await input.getAttribute('aria-label')) ?? '').replace('FTE for ', '');
   const original = await input.inputValue();
   const engId = ((await card.locator('[data-testid^="engineer-row-"]').first().getAttribute('data-testid')) ?? '').replace('engineer-row-', '');
@@ -779,12 +784,8 @@ test('Gantt QA-P19-1 re-check: project with skipped LAB steps expanded, axe 0 at
       await shot(page, 'gantt-details-390', false);
       await page.keyboard.press('Escape');
       await expect(dlg).toBeHidden();
-      // QA-P19-3 (re-gate finding): focus should return to the Details button (WCAG 2.4.3). Logged + annotated,
-      // not asserted, so the serial run continues; flip to `await expect(details).toBeFocused()` once fixed.
-      const focusBack = await details.evaluate((el) => el === document.activeElement);
-      const active = await page.evaluate(() => document.activeElement?.tagName ?? 'none');
-      console.log('QA-P19-3 details dialog focus return:', focusBack, 'active element', active);
-      if (!focusBack) test.info().annotations.push({ type: 'QA-P19-3', description: `focus after closing the details dialog is on ${active}, not the Details button` });
+      // QA-P19-3, fixed in P19-R03: focus returns to the Details button (WCAG 2.4.3). Hard assertion (final gate).
+      await expect(details).toBeFocused();
       // The expand chevron is reachable by pointer too.
       const chev = page.getByRole('button', { name: `Collapse steps for ${proj.project_name}` }).first();
       const cb = (await chev.boundingBox())!;
@@ -836,12 +837,16 @@ test('Gantt O1 re-check: drag label near W52 stays inside the visible timeline a
       measured += 1;
       const lt = (await page.getByTestId('step-drag-label').innerText()).replace(/\s+/g, ' ');
       console.log(`${String(width)} ${where}: "${lt}"`);
-      // ADR 0032 consistency: "C wks on the calendar · W wks of work at f FTE" must have C = ceil(W / f) (QA-P19-4).
-      const m = /^(\d+) wks on the calendar · (\d+) wks of work at ([\d.]+) FTE/.exec(lt);
+      // ADR 0032 consistency: "C wks on the calendar[, to WE] · W wks of work at f FTE" must have C = ceil(W / f),
+      // and the ", to WE" suffix (P19-R03) appears exactly when the span runs past W52, with E = start + C - 1.
+      // QA-P19-4 fixed in P19-R03: hard assertions (final gate).
+      const m = /^(\d+) wks on the calendar(?:, to W(\d+))? · (\d+) wks of work at ([\d.]+) FTE/.exec(lt);
       if (m) {
-        const want = Math.ceil(Math.round((Number(m[2]) * 100) / Number(m[3])) / 100);
-        if (Number(m[1]) !== want) test.info().annotations.push({ type: 'QA-P19-4', description: `${String(width)} ${where}: "${lt}" (expected ${String(want)} calendar weeks)` });
-        expect.soft(Number(m[1]), `QA-P19-4 calendar weeks for "${lt}"`).toBe(want);
+        const want = Math.ceil(Math.round((Number(m[3]) * 100) / Number(m[4])) / 100);
+        expect(Number(m[1]), `QA-P19-4 calendar weeks for "${lt}"`).toBe(want);
+        const end = step.planned_start_week! + want - 1;
+        if (end > 52) expect(m[2], `past-W52 suffix for "${lt}"`).toBe(String(end));
+        else expect(m[2], `no suffix inside the axis for "${lt}"`).toBeUndefined();
       }
       await expectLabelInside(page, `W52 ${where} ${String(width)}`);
       if (where === 'right edge') {
@@ -886,6 +891,7 @@ test('Gantt: Bob HubPlanner on a 0.5 FTE design step: drag label calendar vs wor
   const patches: unknown[] = [];
   page.on('request', (rq) => { if (rq.method() === 'PATCH' && rq.url().includes('/timing')) patches.push(rq.postDataJSON()); });
   let curSpan = span;
+  let curStart = step.planned_start_week!;
   for (const width of [1440, 390, 1280]) {
     await setup(page, 'hubPlanner', width);
     await openProject(page, proj);
@@ -931,7 +937,9 @@ test('Gantt: Bob HubPlanner on a 0.5 FTE design step: drag label calendar vs wor
     expect(weekPx).toBeGreaterThanOrEqual(16);
     const cal = curSpan + 2;
     const work = Math.max(1, Math.min(104, Math.floor(cal * 0.5)));
-    const expectLabel = `${String(Math.ceil(work / 0.5))} wks on the calendar · ${String(work)} wks of work at 0.5 FTE`;
+    const calWeeks = Math.ceil(work / 0.5);
+    const calEnd = curStart + calWeeks - 1;
+    const expectLabel = `${String(calWeeks)} wks on the calendar${calEnd > 52 ? `, to W${String(calEnd)}` : ''} · ${String(work)} wks of work at 0.5 FTE`;
     const label = page.getByTestId('step-drag-label');
     let touch: CDPSession | null = null;
     if (width === 390) {
@@ -946,9 +954,8 @@ test('Gantt: Bob HubPlanner on a 0.5 FTE design step: drag label calendar vs wor
     await expect(label).toBeVisible();
     const lt = (await label.innerText()).replace(/\s+/g, ' ');
     console.log(`drag label ${String(width)}: "${lt}" expected "${expectLabel}" weekPx ${weekPx.toFixed(1)}`);
-    // QA-P19-4: past W52 the ghost is clamped to the axis, so the calendar figure is the clamped span. Soft, so the
-    // PATCH (work weeks) is still checked.
-    expect.soft(lt, `drag label ${String(width)} (QA-P19-4 if the calendar figure is short)`).toBe(expectLabel);
+    // QA-P19-4 fixed in P19-R03: the calendar figure is ceil(work / FTE), with ", to WE" past W52. Hard (final gate).
+    expect(lt, `drag label ${String(width)}`).toBe(expectLabel);
     await expectLabelInside(page, `drag ${String(width)}`);
     await axe(page, `gantt drag tooltip light ${String(width)}`);
     await shot(page, `gantt-drag-${String(width)}`, false);
@@ -972,6 +979,7 @@ test('Gantt: Bob HubPlanner on a 0.5 FTE design step: drag label calendar vs wor
     const cur = await read();
     const stored = (cur as unknown as { duration_override_weeks: number | null }).duration_override_weeks;
     curSpan = cur.planned_end_week! - cur.planned_start_week! + 1;
+    curStart = cur.planned_start_week!;
     console.log('stored override', stored, 'span_fte', cur.span_fte, 'new plan', cur.planned_start_week, cur.planned_end_week, 'span', curSpan);
     expect(stored).toBe(work);
     if (cur.status === 'Not Started') expect(curSpan).toBe(Math.ceil(work / 0.5));

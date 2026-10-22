@@ -18,6 +18,13 @@ caller's own hub(s) via `services.hub_scope` unless `current_user.
 hub_scope_all` — a Hub Planner's list is silently filtered, a direct `GET
 /engineers/{id}` on an out-of-scope engineer 404s, and creating/moving an
 engineer to a hub outside the caller's scope 403s.
+
+**Capacity hubs (P29, ADR 0042).** An engineer's hub is always a capacity hub
+(a member hub such as OEM-HCK is a 422 `HUB_NOT_CAPACITY_HUB`).
+`counts_in_capacity` (served on every read) may be written by Admin / Super
+Admin only (403 `COUNTS_IN_CAPACITY_ADMIN_ONLY`); the change is in the
+`engineer.update` audit row's before / after state. `?hub_id=` on a member
+hub lists its capacity hub's engineers.
 """
 
 from __future__ import annotations
@@ -33,14 +40,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 import domain_constants as dc
 from api.db import get_db
 from api.deps import require_permission
+from api.errors import HTTP_422, CodedHTTPException
 from core.principal import Principal
 from core.rbac import Action, Surface
 from models.audit import AuditLogEntry
 from models.engineer import Engineer
+from models.enums import RoleName
 from models.hub import Hub, HubWorkCalendar
 from schemas.capacity import YearRemaining
 from schemas.engineer import EngineerCreateRequest, EngineerRead, EngineerUpdateRequest
 from services.audit_helpers import engineer_audit_state
+from services.capacity_hubs import load_capacity_hub_map
 from services.capacity_supply import (
     design_capacity,
     fte_sum,
@@ -140,6 +150,7 @@ async def _engineer_reads(db: AsyncSession, engineers: list[Engineer]) -> list[E
                 fte=float(e.fte),
                 allowed_categories=list(e.allowed_categories or []),
                 user_id=e.user_id,
+                counts_in_capacity=e.counts_in_capacity,
                 created_at=e.created_at,
                 updated_at=e.updated_at,
                 weekdays_per_week=wd,
@@ -150,6 +161,38 @@ async def _engineer_reads(db: AsyncSession, engineers: list[Engineer]) -> list[E
             )
         )
     return out
+
+
+#: P29 (ADR 0042 §5): who may change `counts_in_capacity`.
+CAPACITY_ROSTER_ADMIN_ROLES: frozenset[RoleName] = frozenset(
+    {RoleName.ADMIN, RoleName.SUPER_ADMIN}
+)
+
+
+def _require_capacity_hub(hub: Hub) -> None:
+    """ADR 0042: an engineer's hub is always a capacity hub. A member hub
+    (OEM-HCK, OEM-Seltek) is refused with 422 `HUB_NOT_CAPACITY_HUB`."""
+
+    if hub.capacity_hub_id is not None:
+        raise CodedHTTPException(
+            HTTP_422,
+            "HUB_NOT_CAPACITY_HUB",
+            "This hub's design work is done by its capacity hub's engineers; "
+            "add the engineer to the capacity hub instead.",
+        )
+
+
+def _require_capacity_admin(principal: Principal) -> None:
+    """ADR 0042 §5: `counts_in_capacity` is an Admin / Super Admin decision
+    (it changes the hub's supply). Anyone else gets 403
+    `COUNTS_IN_CAPACITY_ADMIN_ONLY`, also when sending the unchanged value."""
+
+    if not (principal.roles & CAPACITY_ROSTER_ADMIN_ROLES):
+        raise CodedHTTPException(
+            status.HTTP_403_FORBIDDEN,
+            "COUNTS_IN_CAPACITY_ADMIN_ONLY",
+            "Only an Admin can change whether an engineer counts in capacity.",
+        )
 
 
 @router.get("", response_model=list[EngineerRead])
@@ -171,7 +214,10 @@ async def list_engineers(
     if hub_filter is not None:
         stmt = stmt.where(hub_filter)
     if hub_id is not None:
-        stmt = stmt.where(Engineer.hub_id == hub_id)
+        # ADR 0042: a member hub (OEM-HCK) has no engineers of its own; its
+        # capacity hub's engineers do its design work.
+        cmap = await load_capacity_hub_map(db)
+        stmt = stmt.where(Engineer.hub_id == cmap.resolve(hub_id))
     result = await db.execute(stmt.order_by(Engineer.name))
     return await _engineer_reads(db, list(result.scalars().all()))
 
@@ -202,6 +248,9 @@ async def create_engineer(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Cannot create an engineer for a hub outside your assigned hub scope.",
         )
+    _require_capacity_hub(hub)
+    if not body.counts_in_capacity:
+        _require_capacity_admin(current_user)
 
     engineer = Engineer(**body.model_dump())
     db.add(engineer)
@@ -247,6 +296,9 @@ async def update_engineer(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Cannot move an engineer to a hub outside your assigned hub scope.",
             )
+        _require_capacity_hub(hub)
+    if "counts_in_capacity" in body.model_fields_set:
+        _require_capacity_admin(current_user)
 
     before_state = engineer_audit_state(engineer)
     for field_name, value in body.model_dump(exclude_unset=True).items():

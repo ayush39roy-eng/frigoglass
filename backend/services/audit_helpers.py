@@ -23,7 +23,7 @@ from typing import Any
 from models.chamber import Chamber
 from models.engineer import Engineer
 from models.priority import PriorityScore
-from models.project import Project
+from models.project import Project, canonical_tags
 from models.types import FINANCIAL_FIELD_NAMES
 from services.priority_scoring import Rubric
 
@@ -57,6 +57,8 @@ def project_audit_state(project: Project) -> dict[str, Any]:
         "external_code": project.external_code,
         "hub_id": _uuid_str(project.hub_id),
         "leader_engineer_id": _uuid_str(project.leader_engineer_id),
+        # P29 (ADR 0042 §7): the leader was assigned provisionally.
+        "leader_is_provisional": project.leader_is_provisional,
         "category": project.category.value if project.category else None,
         "type": project.type.value if project.type else None,
         "status": project.status.value if project.status else None,
@@ -70,6 +72,8 @@ def project_audit_state(project: Project) -> dict[str, Any]:
         "rm_savings_keur": (
             float(project.rm_savings_keur) if project.rm_savings_keur is not None else None
         ),
+        # ADR 0038 (P27): Registration "project nature" tags.
+        "scoring_tags": [t.value for t in canonical_tags(project.scoring_tags)],
         # --- Financial/PII fields: NEVER read, always the literal string below. ---
         "customer_name": "<redacted>",
         "tcogs_eur": "<redacted>",
@@ -86,6 +90,8 @@ def engineer_audit_state(engineer: Engineer) -> dict[str, Any]:
         "fte": float(engineer.fte) if engineer.fte is not None else None,
         "allowed_categories": [c.value for c in (engineer.allowed_categories or [])],
         "user_id": _uuid_str(engineer.user_id),
+        # P29 (ADR 0042 §5).
+        "counts_in_capacity": engineer.counts_in_capacity,
     }
 
 

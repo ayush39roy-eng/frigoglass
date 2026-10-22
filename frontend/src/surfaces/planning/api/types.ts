@@ -24,14 +24,23 @@ export interface BasisPair {
 // --- P19-T03: GET /planning/capacity-summary -------------------------------
 
 export interface DesignHubSummary {
+  /** P29 (ADR 0042): a capacity hub. */
   hub: HubName;
+  /** P29: engineers with `counts_in_capacity` only. */
   engineer_count: number;
+  /** P29 (API_CONTRACT_P29 §3.1): engineers of the hub with `counts_in_capacity = false`. */
+  not_counted_engineer_count: number;
   fte_total: number;
   weekdays_per_week: number;
   capacity_weeks: BasisPair;
   capacity_days: BasisPair;
   /** This hub's share of the design total, 0-100, per basis. */
   share_pct: BasisPair;
+  /** P29: member hubs in scope, by name, own hub NOT listed
+   *  (`["OEM-HCK","OEM-Seltek"]` on R&D-Greece, `[]` elsewhere). */
+  members: HubName[];
+  /** P29: the request's `hub_id` when it is this hub or a member, else null. */
+  selected_member: HubName | null;
 }
 
 export interface DesignTotalSummary {
@@ -70,6 +79,9 @@ export interface EngineerLoadRow {
   engineer_id: Id;
   name: string;
   hub: HubName;
+  /** P29 (API_CONTRACT_P29 §3.2): false = booked but not on the capacity roster;
+   *  the row's own capacity is still served, the totals' capacity omits it. */
+  counts_in_capacity: boolean;
   weekdays_per_week: number;
   capacity_weeks: number;
   load_weeks: number;
@@ -178,6 +190,9 @@ export interface EngineerRead {
   capacity_weeks: BasisPair;
   /** P19-T03: served `capacity_weeks × weekdays_per_week`. */
   capacity_days: BasisPair;
+  /** P29 (ADR 0042 §5, API_CONTRACT_P29 §5.1): false for a leader who is booked
+   *  but not on the client's capacity roster (never counted as supply). */
+  counts_in_capacity: boolean;
 }
 
 /** `POST /engineers` body (`EngineerCreateRequest`). `fte` defaults server-side
@@ -190,6 +205,10 @@ export interface EngineerCreateRequest {
   fte?: number;
   allowed_categories?: EngineerAllowedCategory[];
   user_id?: Id | null;
+  /** P29 (API_CONTRACT_P29 §5.2): default true server-side; sending it at all
+   *  (create or PATCH) needs Admin / Super Admin (403 COUNTS_IN_CAPACITY_ADMIN_ONLY).
+   *  This surface never sends it. */
+  counts_in_capacity?: boolean;
 }
 
 /** `PATCH /engineers/{id}` body — every field optional (partial update). */

@@ -8,13 +8,15 @@ construction, on:
     ADR 0009: "sequence_order is … the deterministic tie-break when the
     scheduler walks steps; it is no longer a dependency statement");
   - each step's lead-time duration (`lead_time[workflow][category][step]`,
-    ADR 0007 — no multiplier, no `max(1, …)`), and whether it is *skipped*
-    (`duration == 0`, or a `lab` step when `certification_testing_required`
-    is false);
-  - the per-project step timing set from the Gantt (ADR 0019): the
-    *effective* duration `duration_override_weeks ?? lead time` (never
-    reviving a skipped step) and a Not Started step's `start_not_before_week`
-    search floor;
+    ADR 0007 — no multiplier, no `max(1, …)`), its *effective* duration and
+    whether it is *skipped* — ONE predicate (ADR 0041 R5, `step_effective_weeks`
+    / `is_step_skipped`): `eff = 0` when the lead time is 0 or it is a `lab`
+    step with `certification_testing_required` false, else the merged
+    override `user ?? effort` (0..104, merged by the caller) `?? lead`; a
+    step is skipped exactly when `eff == 0`;
+  - the per-project step timing (ADR 0019, ADR 0041 R4): the merged
+    `duration_override_weeks` (never reviving a skipped step) and a Not
+    Started step's `start_not_before_week` search floor;
   - the per-step progress state (DOMAIN_RULES.md "Per-stage progress
     capture"): normalised status, derived `remaining`, the `data_error` that
     rejects a project with inconsistent actuals, the `Blocked` hold set;
@@ -59,11 +61,82 @@ STATUS_DONE = "Done"
 #: regardless of conflict, so an ENG_CONFLICT / OVERLAP may be raised.
 ANCHORED_STATUSES: frozenset[str] = frozenset({STATUS_IN_PROGRESS, STATUS_BLOCKED, STATUS_DONE})
 
-#: ADR 0019: domain of `StepTimingInput.duration_override_weeks` (the DB CHECK
-#: `duration_override_range` mirrors it). The floor's domain is
-#: `1..ScheduleInput.horizon_weeks`.
+#: ADR 0019 / ADR 0041 R4: domain of a *user-entered* override
+#: (`project_workflow_steps.duration_override_weeks`, Gantt / Workspace): 1..104.
+#: Unchanged by ADR 0041. The solver does not see this column on its own; see
+#: `STEP_DURATION_MIN_WEEKS`.
 DURATION_OVERRIDE_MIN_WEEKS = 1
 DURATION_OVERRIDE_MAX_WEEKS = 104
+
+#: ADR 0041 R4 / R14: domain of the solver input's merged per-project duration
+#: (`StepTimingInput.duration_override_weeks` = `user_override ?? effort_weeks`,
+#: merged outside the solver): 0..104, where 0 means "skipped" (R5). The
+#: floor's domain is `1..ScheduleInput.horizon_weeks`.
+STEP_DURATION_MIN_WEEKS = 0
+STEP_DURATION_MAX_WEEKS = DURATION_OVERRIDE_MAX_WEEKS
+
+
+# --- The one skip predicate (ADR 0041 R5) -----------------------------------------
+
+
+def merged_step_override(user_override_weeks: int | None, effort_weeks: int | None) -> int | None:
+    """ADR 0041 R4 precedence for the solver input: `user ?? effort`. The
+    result goes into `StepTimingInput.duration_override_weeks`; `None` means
+    "use the lead time". Pure; no range check (see `validate_step_timing`)."""
+
+    return user_override_weeks if user_override_weeks is not None else effort_weeks
+
+
+def step_effective_weeks(
+    *,
+    lead_weeks: int,
+    kind: str,
+    certification_testing_required: bool,
+    override_weeks: int | None,
+) -> int:
+    """ADR 0041 "Invariant wording", `eff(p, s)`:
+
+        eff = 0                       if lead = 0
+        eff = 0                       if kind = lab and not certification_testing_required
+        eff = override ?? lead        otherwise
+
+    `override_weeks` is the merged per-project value (`merged_step_override`:
+    user ?? effort, 0..104). An override never revives a lead-0 step or a lab
+    step with certification testing off (ADR 0019, R7); an override of 0
+    zeroes (skips) a step whose lead time is not 0 (ADR 0041 §3)."""
+
+    if lead_weeks == 0 or (kind == "lab" and not certification_testing_required):
+        return 0
+    return lead_weeks if override_weeks is None else override_weeks
+
+
+def is_step_skipped(
+    *,
+    lead_weeks: int,
+    kind: str,
+    certification_testing_required: bool,
+    override_weeks: int | None,
+) -> bool:
+    """ADR 0041 R5 — the ONE skip predicate, used by `analyse_project` and
+    meant for every service-side caller (`services.workspace.is_step_skipped`,
+    step timing `STEP_SKIPPED`, the stage PATCH `STAGE_SKIPPED`, Gantt
+    `timing_editable`, project cards, tracking and the demand query):
+
+        skipped  ⟺  lead = 0  ∨  (kind = lab ∧ ¬certification_testing_required)
+                              ∨  effective = 0
+
+    i.e. `step_effective_weeks(...) == 0`. Same keyword arguments as
+    `step_effective_weeks`."""
+
+    return (
+        step_effective_weeks(
+            lead_weeks=lead_weeks,
+            kind=kind,
+            certification_testing_required=certification_testing_required,
+            override_weeks=override_weeks,
+        )
+        == 0
+    )
 
 
 # --- FTE stretch (ADR 0032) -------------------------------------------------------
@@ -308,6 +381,13 @@ def validate_schedulable_project(
             f"project {project.project_id!r}: hub {project.hub!r} is not one of "
             f"{sorted(hub_lab_region)}"
         )
+    if project.capacity_hub not in hub_lab_region:
+        # ADR 0042: the capacity hub is a hub (R&D-Greece for the OEM hubs,
+        # the hub itself otherwise). Configuration-level, so it fails loudly.
+        raise ValueError(
+            f"project {project.project_id!r}: capacity_hub {project.capacity_hub!r} is not "
+            f"one of {sorted(hub_lab_region)}"
+        )
     if project.workflow_id not in workflows:
         raise ValueError(
             f"project {project.project_id!r}: workflow_id {project.workflow_id!r} is not one of "
@@ -331,8 +411,9 @@ def validate_schedulable_project(
 def validate_step_timing(project: ProjectInput, workflow: Workflow, *, horizon_weeks: int) -> None:
     """ADR 0019 / API contract P12 §1 input validation for `project.step_timing`
     (`ValueError`, never a silent default): a duplicate `step_id`, a `step_id`
-    that is not a step of the project's workflow, an override outside
-    1..104, or a floor outside 1..`horizon_weeks`."""
+    that is not a step of the project's workflow, a merged duration outside
+    0..104 (ADR 0041 R4: 0 is a valid input and means "skipped", R5), or a
+    floor outside 1..`horizon_weeks`."""
 
     seen: set[str] = set()
     for row in sorted(project.step_timing, key=_step_timing_sort_key):
@@ -344,11 +425,11 @@ def validate_step_timing(project: ProjectInput, workflow: Workflow, *, horizon_w
             raise ValueError(f"{where}: not a step of workflow {workflow.workflow_id!r}")
         override = row.duration_override_weeks
         if override is not None and not (
-            DURATION_OVERRIDE_MIN_WEEKS <= override <= DURATION_OVERRIDE_MAX_WEEKS
+            STEP_DURATION_MIN_WEEKS <= override <= STEP_DURATION_MAX_WEEKS
         ):
             raise ValueError(
                 f"{where}: duration_override_weeks={override} is outside "
-                f"{DURATION_OVERRIDE_MIN_WEEKS}..{DURATION_OVERRIDE_MAX_WEEKS}"
+                f"{STEP_DURATION_MIN_WEEKS}..{STEP_DURATION_MAX_WEEKS}"
             )
         floor = row.start_not_before_week
         if floor is not None and not 1 <= floor <= horizon_weeks:
@@ -445,14 +526,17 @@ def analyse_project(
         if row.step_id in workflow.steps_by_id:
             timing_by_step.setdefault(row.step_id, row)
 
-    def effective_duration(step_id: str, lead_weeks: int) -> int:
-        """`duration_override_weeks ?? lead time`; a 0-week (skipped) lead
-        time stays 0 even when an override exists (ADR 0019)."""
+    def effective_duration(step: WorkflowStepTemplate, lead_weeks: int) -> int:
+        """`eff(p, s)` (ADR 0041 R5): the merged override `?? lead time`; 0
+        for a lead-0 step or a lab step with certification testing off."""
 
-        row = timing_by_step.get(step_id)
-        if lead_weeks == 0 or row is None or row.duration_override_weeks is None:
-            return lead_weeks
-        return row.duration_override_weeks
+        row = timing_by_step.get(step.step_id)
+        return step_effective_weeks(
+            lead_weeks=lead_weeks,
+            kind=step.kind,
+            certification_testing_required=project.certification_testing_required,
+            override_weeks=None if row is None else row.duration_override_weeks,
+        )
 
     def start_floor(step_id: str) -> int | None:
         """The Not Started search floor; frozen projects ignore it (frozen wins)."""
@@ -480,8 +564,9 @@ def analyse_project(
     plans: dict[str, StepPlan] = {}
     for step in workflow.steps:
         lead = lead_time_table[(project.workflow_id, project.category, step.step_id)]  # type: ignore[index]
-        skipped = lead == 0 or (step.kind == "lab" and not project.certification_testing_required)
-        duration = effective_duration(step.step_id, lead)
+        # ADR 0041 R5: the one skip predicate — skipped ⟺ eff == 0.
+        duration = effective_duration(step, lead)
+        skipped = duration == 0
         progress = None if project.frozen else progress_by_step.get(step.step_id)
 
         if skipped:
@@ -609,7 +694,7 @@ def analyse_project(
         for step in workflow.steps:
             if step.step_id not in plans:
                 lead = lead_time_table[(project.workflow_id, project.category, step.step_id)]  # type: ignore[index]
-                duration = effective_duration(step.step_id, lead)
+                duration = effective_duration(step, lead)
                 span, remaining_span = spans(step.kind, duration, duration)
                 plans[step.step_id] = StepPlan(
                     step=step,

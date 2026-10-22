@@ -23,10 +23,14 @@ async function readAndCompare(page: Page, request: Parameters<typeof apiGet>[0],
   const s = await apiGet<Status>(request, 'admin', `/dashboard/status-overview${q}`);
   const ui = async (id: string): Promise<number> => num(await page.getByTestId(id).innerText());
   const cap = async (id: string): Promise<string> => page.getByTestId(id).innerText();
-  const p = { sp: await ui('pipeline-count-spillover'), nw: await ui('pipeline-count-new'), un: await ui('pipeline-count-unregistered'), tot: await ui('pipeline-count-total') };
+  // 2026-10-22 (owner ask): the "Unregistered" card is gone; the served count stays inside the total and the
+  // Total caption names it when > 0. So the row shows Spillover + New = Total whenever unregistered is 0.
+  const p = { sp: await ui('pipeline-count-spillover'), nw: await ui('pipeline-count-new'), tot: await ui('pipeline-count-total') };
   console.log(label, 'pipeline UI', JSON.stringify(p), 'API', t.spillover_count, t.new_count, t.unregistered_count, t.total_count);
-  expect([p.sp, p.nw, p.un, p.tot]).toEqual([t.spillover_count, t.new_count, t.unregistered_count, t.total_count]);
-  expect(p.sp + p.nw + p.un).toBe(p.tot);
+  await expect(page.getByTestId('pipeline-count-unregistered')).toHaveCount(0);
+  expect([p.sp, p.nw, p.tot]).toEqual([t.spillover_count, t.new_count, t.total_count]);
+  expect(p.sp + p.nw + t.unregistered_count).toBe(p.tot);
+  if (t.unregistered_count > 0) expect(await cap('pipeline-caption-total')).toContain(String(t.unregistered_count));
   expect(num(await cap('pipeline-caption-new'))).toBe(t.new_share_pct);
   expect(num(await cap('pipeline-caption-spillover'))).toBe(t.spillover_share_pct);
   const ids = ['in-development', 'under-industrialization', 'in-queue', 'commercialized', 'on-hold'];
@@ -51,8 +55,6 @@ test('Dashboard live numbers reconcile, unfiltered and under country filters', a
   await page.goto('/');
   await settle(page);
   await readAndCompare(page, request, '', 'all');
-  const un = await page.getByTestId('pipeline-count-unregistered').innerText();
-  expect(un.trim()).toBe('0');
   for (const c of ['India', 'Romania', 'Greece']) {
     await page.getByTestId('country-segmented').getByRole('radio', { name: c }).click();
     await page.waitForTimeout(1200);

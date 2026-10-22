@@ -46,6 +46,17 @@ class Hub(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     #: matching `name` in application code, to keep that rule's implementation
     #: (P2/P3) a single column read instead of scattered enum comparisons.
     is_oem: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    #: ADR 0042 (P29): the hub whose engineers, work calendar and design supply
+    #: serve this hub's projects. `None` = this hub is its own capacity hub.
+    #: OEM-HCK and OEM-Seltek point at R&D-Greece (seed and migration
+    #: `p29a_capacity_hubs`). A capacity hub has no capacity hub of its own:
+    #: the CHECK below refuses a self-reference and the trigger
+    #: `trg_hubs_capacity_hub_flat` refuses a chain (member of a member) and a
+    #: capacity hub becoming a member. Capacity surfaces group by this
+    #: (`services.capacity_hubs`); every other surface keeps the six hubs.
+    capacity_hub_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("hubs.id"), nullable=True
+    )
 
     engineers: Mapped[list[Engineer]] = relationship(back_populates="hub")
     projects: Mapped[list[Project]] = relationship(back_populates="hub")
@@ -53,6 +64,25 @@ class Hub(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     work_calendar: Mapped[HubWorkCalendar | None] = relationship(
         back_populates="hub", uselist=False
     )
+    capacity_hub: Mapped[Hub | None] = relationship(
+        "Hub", remote_side="Hub.id", foreign_keys=[capacity_hub_id], back_populates="member_hubs"
+    )
+    member_hubs: Mapped[list[Hub]] = relationship(
+        "Hub", foreign_keys=[capacity_hub_id], back_populates="capacity_hub"
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "capacity_hub_id IS NULL OR capacity_hub_id <> id",
+            name="capacity_hub_not_self",
+        ),
+    )
+
+    @property
+    def effective_capacity_hub_id(self) -> uuid.UUID:
+        """`capacity_hub_id`, or this hub's own id (ADR 0042)."""
+
+        return self.capacity_hub_id or self.id
 
     def __repr__(self) -> str:  # pragma: no cover - debug convenience only
         return f"<Hub {self.name.value if self.name else None}>"

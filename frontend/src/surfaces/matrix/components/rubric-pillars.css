@@ -1,0 +1,125 @@
+/*
+ * P26-T03: the "Scoring scale and dimensions" card groups its dimensions by
+ * pillar exactly like the scoring grid's pillar boxes (P21-T03,
+ * virtual-matrix-grid.css): the same tokens (`--mg-*`, declared on
+ * `.mg-pillar-scope`), the same alternating pillar tint (`pillarTinted`,
+ * lib/grid-boxes.ts) and the same line hierarchy:
+ *   inner   1px  between dimensions inside a pillar
+ *   pillar  3px  between pillar groups
+ * plus the grid band header's accent, as a left bar on the pillar cell
+ * (solid on tinted pillars, soft on the others).
+ */
+
+/* Read table: one <tbody> per pillar. */
+.rp-table {
+  border-collapse: collapse;
+}
+
+.rp-table .rp-group > tr > * {
+  border-top: 1px solid var(--mg-line-inner);
+}
+
+.rp-table .rp-group + .rp-group > tr:first-child > * {
+  border-top: 3px solid var(--mg-line-pillar);
+}
+
+.rp-table .rp-group:first-of-type > tr:first-child > * {
+  border-top: 0;
+}
+
+.rp-table .rp-group[data-tint='true'] > tr > *,
+.rp-section[data-tint='true'] {
+  background-image: linear-gradient(var(--mg-tint), var(--mg-tint));
+}
+
+.rp-pillar-cell {
+  box-shadow: inset 3px 0 0 var(--mg-accent-soft);
+}
+
+[data-tint='true'] .rp-pillar-cell,
+.rp-pillar-cell[data-tint='true'] {
+  box-shadow: inset 3px 0 0 var(--mg-accent);
+}
+
+/* Stacked (phone) and editor: one boxed section per pillar. */
+.rp-stack > .rp-section + .rp-section {
+  border-top: 3px solid var(--mg-line-pillar);
+}
+
+.rp-section .rp-item + .rp-item {
+  border-top: 1px solid var(--mg-line-inner);
+}
+
+.rp-pillar-name {
+  font-variant-caps: all-small-caps;
+  letter-spacing: 0.04em;
+}
+
+/*
+ * Owner ask 2026-10-22: colour. In the read table each pillar carries its own
+ * hue (`--rp-hue`, set inline from the categorical ramp): a 4px rail and a soft
+ * wash on the pillar cell, the pillar name in the hue, a faint wash on hover
+ * and the weight bar. The alternating grey tint is replaced by the hue there.
+ */
+.rp-table .rp-hued[data-tint='true'] > tr > * {
+  background-image: none;
+}
+
+.rp-table .rp-hued .rp-pillar-cell {
+  background-color: hsl(var(--rp-hue) / 0.09);
+  box-shadow: inset 4px 0 0 hsl(var(--rp-hue));
+}
+
+/* The pillar NAME stays in body ink: in the hue it read 2.34:1 on its own wash
+ * (teal, live axe 2026-10-22). The hue is carried by the rail, the wash and
+ * the weight bars; text is never set in it (WCAG 1.4.3). */
+.rp-table .rp-hued .rp-pillar-name {
+  color: hsl(var(--color-text));
+}
+
+.rp-table .rp-hued > tr:hover > *:not(.rp-pillar-cell) {
+  background-color: hsl(var(--rp-hue) / 0.05);
+}
+
+.rp-table .rp-hued > tr > *:not(.rp-pillar-cell) {
+  transition: background-color 120ms ease-out;
+}
+
+.rp-weight-track {
+  position: relative;
+  display: inline-block;
+  width: 3.5rem;
+  height: 0.375rem;
+  overflow: hidden;
+  border-radius: 9999px;
+  background-color: hsl(var(--color-surface-sunken));
+}
+
+.rp-weight-track > span {
+  position: absolute;
+  inset: 0 auto 0 0;
+  border-radius: 9999px;
+  background-color: hsl(var(--rp-hue, var(--color-primary)));
+}
+
+.rp-anchor-dot {
+  display: inline-block;
+  width: 0.5rem;
+  height: 0.5rem;
+  flex-shrink: 0;
+  border-radius: 9999px;
+}
+
+.rp-anchor-low {
+  background-color: hsl(var(--color-danger) / 0.55);
+}
+
+.rp-anchor-high {
+  background-color: hsl(var(--color-success));
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .rp-table .rp-hued > tr > *:not(.rp-pillar-cell) {
+    transition: none;
+  }
+}

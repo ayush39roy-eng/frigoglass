@@ -28,9 +28,12 @@ const CY = 112;
 
 export interface DeliveryGaugeCardProps {
   data: CompletingWithinYear;
+  /** P28 (ADR 0039): the Executive view's smaller variant — eyebrow heading,
+   *  tighter padding, no mini tiles. Same payload, same figures. */
+  compact?: boolean;
 }
 
-export function DeliveryGaugeCard({ data }: DeliveryGaugeCardProps): React.JSX.Element {
+export function DeliveryGaugeCard({ data, compact = false }: DeliveryGaugeCardProps): React.JSX.Element {
   const { reduced } = useMotionTokens();
   // The SAME within-year share as the KPI tile's "% of run" badge and the
   // outcome donut (`lib/outcome.ts::withinYearSharePct`) — one formula, one
@@ -41,17 +44,27 @@ export function DeliveryGaugeCard({ data }: DeliveryGaugeCardProps): React.JSX.E
   const shownPct = useCountUp(pct);
 
   return (
-    <BoltCard className="flex flex-col justify-between gap-s4 p-card">
+    <BoltCard
+      className={compact ? 'flex h-full flex-col justify-between gap-s3 p-s5' : 'flex flex-col justify-between gap-s4 p-card'}
+      data-testid={compact ? 'exec-delivery-gauge' : undefined}
+    >
       <div className="flex items-start justify-between gap-s3">
-        <div className="flex items-center gap-s3">
-          <span className="grid size-10 place-items-center rounded-xl bg-primary-subtle text-primary-subtle-fg">
-            <Gauge className="size-5" aria-hidden="true" />
-          </span>
-          <div>
-            <h3 className="font-display text-h2 font-bold tracking-tight text-text">Delivery rate</h3>
-            <p className="text-xs font-medium text-text-subtle">Within-year share of the run</p>
+        {compact ? (
+          <h3 className="flex items-center gap-1.5 label-caps text-text-subtle">
+            <Gauge className="size-3.5" aria-hidden="true" />
+            Delivery rate
+          </h3>
+        ) : (
+          <div className="flex items-center gap-s3">
+            <span className="grid size-10 place-items-center rounded-xl bg-primary-subtle text-primary-subtle-fg">
+              <Gauge className="size-5" aria-hidden="true" />
+            </span>
+            <div>
+              <h3 className="font-display text-h2 font-bold tracking-tight text-text">Delivery rate</h3>
+              <p className="text-xs font-medium text-text-subtle">Within-year share of the run</p>
+            </div>
           </div>
-        </div>
+        )}
         <CardInfo label="How the delivery rate is read">
           <p>
             Within-year projects (done by W52) divided by every project in the active schedule
@@ -62,7 +75,7 @@ export function DeliveryGaugeCard({ data }: DeliveryGaugeCardProps): React.JSX.E
         </CardInfo>
       </div>
 
-      <div className="relative mx-auto mt-s2 w-full max-w-[17rem]">
+      <div className={compact ? 'relative mx-auto my-auto w-full max-w-[15rem]' : 'relative mx-auto mt-s2 w-full max-w-[17rem]'}>
         <svg viewBox="0 0 240 132" className="w-full" role="img" aria-label={`${String(pct)}% delivered within the year`}>
           {Array.from({ length: SEGMENTS }, (_, i) => {
             // Spread segments across 180° → 0° (left to right along the top arc).
@@ -96,17 +109,30 @@ export function DeliveryGaugeCard({ data }: DeliveryGaugeCardProps): React.JSX.E
           })}
         </svg>
         <div className="absolute inset-x-0 bottom-0 text-center">
-          <span className="block font-display text-display tabular-nums text-text" data-numeric="">
+          <span
+            className={
+              compact
+                ? 'block font-display text-3xl font-extrabold tabular-nums text-text'
+                : 'block font-display text-display tabular-nums text-text'
+            }
+            data-numeric=""
+          >
             {shownPct}%
           </span>
           <span className="text-xs font-semibold text-text-subtle">delivered by W52</span>
         </div>
       </div>
 
-      <div className="mt-s4 grid grid-cols-2 gap-s3">
-        <MiniTile label="Within year" value={data.within_year_count} accent />
-        <MiniTile label="In the run" value={total} />
-      </div>
+      {compact ? (
+        <p className="text-2xs font-medium tabular-nums text-text-muted" data-numeric="">
+          {formatInteger(data.within_year_count)} of {formatInteger(total)} in the run
+        </p>
+      ) : (
+        <div className="mt-s4 grid grid-cols-2 gap-s3">
+          <MiniTile label="Within year" value={data.within_year_count} accent />
+          <MiniTile label="In the run" value={total} />
+        </div>
+      )}
     </BoltCard>
   );
 }

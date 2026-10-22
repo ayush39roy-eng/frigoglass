@@ -47,7 +47,7 @@ export function ScenarioModeToggle({ disabled = false }: { disabled?: boolean })
 
   return (
     <div className="flex flex-col gap-1">
-      <Label id={groupId} className="text-2xs text-text-muted">
+      <Label id={groupId} className="sr-only">
         Edit mode
       </Label>
       <div className="flex h-8 items-center gap-2" role="group" aria-labelledby={groupId}>
@@ -119,7 +119,7 @@ export function ScenarioPendingPanel({
   const [error, setError] = React.useState<string | null>(null);
   const model = useScoringModel();
   const labels = new Map(model.dimensions.map((d) => [d.key, d.label]));
-  const labelOf = (key: string) => labels.get(key) ?? key;
+  const labelOf = (edit: ScenarioPendingEdit) => (key: string) => labels.get(key) ?? edit.labels?.[key] ?? key;
 
   if (!active) return null;
 
@@ -197,7 +197,7 @@ export function ScenarioPendingPanel({
         ) : (
           <ul className="space-y-2">
             {allStaged.map((edit) => {
-              const entries = diffEntries(edit, labelOf);
+              const entries = diffEntries(edit, labelOf(edit));
               const noOp = isNoOpEdit(edit);
               return (
                 <li

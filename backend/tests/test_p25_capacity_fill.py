@@ -303,6 +303,8 @@ async def test_rows_hand_worked(db_session):
             "base_load_weeks": 6.0,
             "filled_load_weeks": 9.0,
             "promoted_count": 1,
+            "members": [],  # P29: no member hub in this world
+            "selected_member": None,
         }
     ]
     # Same capacity definition as the Capacity page.
@@ -372,6 +374,8 @@ async def test_no_active_run_means_no_fill(db_session):
             "base_load_weeks": 0.0,
             "filled_load_weeks": 0.0,
             "promoted_count": 0,
+            "members": [],  # P29: no member hub in this world
+            "selected_member": None,
         }
     ]
 

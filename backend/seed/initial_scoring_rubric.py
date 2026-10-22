@@ -30,7 +30,8 @@ from collections.abc import Sequence
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from models.enums import HardGateReason
+import domain_constants as dc
+from models.enums import HardGateReason, ScoringTag
 from models.priority import PriorityScore
 from models.scoring_rubric import PriorityDimensionScore, RubricVersion, ScoringDimension
 from services.priority_scoring import Rubric, RubricDimension, compute_score
@@ -114,10 +115,15 @@ def seed_priority_score(
     project_id: uuid.UUID,
     dims: Sequence[int],
     hard_gates: Sequence[HardGateReason] = (),
+    tags: Sequence[ScoringTag] = (),
 ) -> PriorityScore:
-    """`dims` are positional over `INITIAL_KEYS`."""
+    """`dims` are positional over `INITIAL_KEYS`. ADR 0038: each of `tags`
+    (the project's Registration tags) sets its mapped dimension to 5, the
+    same rule as the p27a backfill and the Registration pre-fill."""
 
-    scores = dict(zip(INITIAL_KEYS, dims, strict=True))
+    scores: dict[str, int | None] = dict(zip(INITIAL_KEYS, dims, strict=True))
+    for tag in tags:
+        scores[dc.SCORING_TAG_DIMENSION_KEY[tag.value]] = dc.DIMENSION_SCORE_MAX
     by_key = {d.key: d for d in rubric.dimensions}
     score = PriorityScore(
         project_id=project_id,

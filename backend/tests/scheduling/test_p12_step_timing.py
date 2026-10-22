@@ -373,8 +373,10 @@ def test_chamber_freed_by_shorter_lab_override() -> None:
     [
         ((_t("OEM-A", 2),), "not a step of workflow 'PDD'"),
         ((_t("PDD-Z", 2),), "not a step of workflow"),
-        ((_t("PDD-E", 0),), "outside 1..104"),
-        ((_t("PDD-E", 105),), "outside 1..104"),
+        # ADR 0041 R4: the solver input's merged duration is 0..104 (0 = skipped,
+        # R5), so 0 is valid now (tests/scheduling/test_p30_effort.py) and -1 is not.
+        ((_t("PDD-E", -1),), "outside 0..104"),
+        ((_t("PDD-E", 105),), "outside 0..104"),
         ((_t("PDD-E", None, 0),), "outside 1..78"),
         ((_t("PDD-E", None, 79),), "outside 1..78"),
         ((_t("PDD-E", 2), _t("PDD-E", None, 40)), "more than once"),

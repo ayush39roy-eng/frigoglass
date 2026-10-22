@@ -28,7 +28,13 @@ _Category = Annotated[EngineerAllowedCategory, Strict(False)]
 #: the DB as an IntegrityError (500) whose message carried the row (the
 #: engineer's name, personal data) into the error log. `user_id` is nullable
 #: (null unlinks the user) and is not listed.
-NON_NULLABLE_UPDATE_FIELDS = ("name", "hub_id", "fte", "allowed_categories")
+NON_NULLABLE_UPDATE_FIELDS = (
+    "name",
+    "hub_id",
+    "fte",
+    "allowed_categories",
+    "counts_in_capacity",
+)
 
 
 def reject_explicit_null(value: Any) -> Any:
@@ -57,6 +63,9 @@ class EngineerCreateRequest(BaseModel):
     fte: float = Field(default=1.0, ge=0.01, le=9.99, allow_inf_nan=False)
     allowed_categories: list[_Category] = Field(default_factory=list)
     user_id: uuid.UUID | None = Field(default=None, strict=False)
+    #: P29 (ADR 0042 §5): part of the hub's design supply. Only Admin /
+    #: Super Admin may set it to false (403 `COUNTS_IN_CAPACITY_ADMIN_ONLY`).
+    counts_in_capacity: bool = True
 
 
 class EngineerUpdateRequest(BaseModel):
@@ -72,6 +81,9 @@ class EngineerUpdateRequest(BaseModel):
     fte: float | None = Field(default=None, ge=0.01, le=9.99, allow_inf_nan=False)
     allowed_categories: list[_Category] | None = None
     user_id: uuid.UUID | None = Field(default=None, strict=False)
+    #: P29 (ADR 0042 §5): Admin / Super Admin only (403
+    #: `COUNTS_IN_CAPACITY_ADMIN_ONLY` for anyone else, even unchanged).
+    counts_in_capacity: bool | None = None
 
     @field_validator(*NON_NULLABLE_UPDATE_FIELDS, mode="before")
     @classmethod
@@ -94,6 +106,10 @@ class EngineerRead(BaseModel):
     fte: float
     allowed_categories: list[EngineerAllowedCategory]
     user_id: uuid.UUID | None
+    #: P29 (ADR 0042 §5): false = "not in capacity roster" (booked by the
+    #: scheduler, never counted as hub supply). The engineer's own
+    #: `capacity_weeks` below is still served.
+    counts_in_capacity: bool
     created_at: datetime
     updated_at: datetime
     # --- P19-T03 ------------------------------------------------------------

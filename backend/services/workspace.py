@@ -68,7 +68,7 @@ from schemas.workspace import (
 )
 from services.active_run import get_active_run, slip_weeks
 from services.display_labels import stage_status_label
-from services.hub_scope import hub_scope_filter, is_engineer_self_scoped
+from services.hub_scope import hub_scope_filter, is_engineer_self_scoped, is_hub_in_scope
 from services.priority_capacity_fill import compute_capacity_fill
 from services.progress import project_progress_pct
 from services.project_access import effective_project_access
@@ -430,6 +430,22 @@ def _week(value: Any) -> str:
     return "none" if value is None else f"week {value}"
 
 
+#: ADR 0038: display labels of the Registration "project nature" tags.
+SCORING_TAG_LABELS: dict[str, str] = {
+    "new_customer": "New Customer",
+    "strategic_project": "Strategic Project",
+    "new_options": "New Options",
+    "regulatory_compliance": "Regulatory / Business Compliance",
+    "new_models": "New Models",
+    "improvement": "Improvement",
+}
+
+
+def _tag_labels(tags: Any) -> str:
+    labels = [SCORING_TAG_LABELS.get(str(t), str(t)) for t in (tags or [])]
+    return ", ".join(labels) if labels else "none"
+
+
 def event_summary(entry: AuditLogEntry) -> str:
     """One human-readable line per audit row. Only non-personal values are
     shown: no engineer or user ids, and never a financial field (those are
@@ -451,6 +467,9 @@ def event_summary(entry: AuditLogEntry) -> str:
             changes.append("Hub changed")
         if before.get("leader_engineer_id") != after.get("leader_engineer_id"):
             changes.append("Leader changed")
+        if "scoring_tags" in after and before.get("scoring_tags") != after.get("scoring_tags"):
+            # ADR 0038: the Registration "project nature" tags.
+            changes.append(f"Project nature set to {_tag_labels(after.get('scoring_tags'))}")
         return "; ".join(changes) if changes else "Project details updated"
     if action == "project.submit":
         return f"Submitted: {_fmt(before.get('status'))} → {_fmt(after.get('status'))}"
@@ -493,6 +512,11 @@ def event_summary(entry: AuditLogEntry) -> str:
     if action.startswith("priority_score."):
         pct = after.get("normalized_pct")
         band = after.get("suggested_band")
+        if after.get("source") in ("registration_tag", "registration_tag_backfill"):
+            return (
+                f"Score pre-filled from project nature ({_tag_labels(after.get('tags'))}): "
+                f"{_fmt(pct)}%, suggested {_fmt(band)}"
+            )
         return f"Priority score updated ({_fmt(pct)}%, suggested {_fmt(band)})"
     return action.replace("_", " ").replace(".", ": ")
 
@@ -773,7 +797,9 @@ async def build_workspace(
             suggested_band=row_fill.suggested_band,
             score_band=row_fill.score_band,
             capacity_fill=row_fill.capacity_fill,
-            capacity_fill_reason=row_fill.capacity_fill_reason,
+            capacity_fill_reason=_scoped_fill_reason(
+                principal, project.hub_id, row_fill.capacity_fill, row_fill.capacity_fill_reason
+            ),
         )
 
     files = (
@@ -814,6 +840,29 @@ async def build_workspace(
         files=[file_read(f, principal, file_names) for f in files],
         activity=await list_activity(db, project, principal),
     )
+
+
+#: S26-L1: the reason served to a caller who may not see the hub's figures.
+GENERIC_CAPACITY_FILL_REASON = "P1 (capacity fill)"
+
+
+def _scoped_fill_reason(
+    principal: Principal,
+    hub_id: uuid.UUID,
+    capacity_fill: bool,
+    reason: str | None,
+) -> str | None:
+    """S26-L1 (final security gate): the fill reason carries the hub's P1
+    design load and remaining design capacity, which only the hub's Matrix
+    readers see elsewhere (Matrix, `/priorities/capacity-fill`). A caller who
+    reached the project another way (a project grant, an Engineer's own
+    assignment) gets a reason without numbers: "P1 (capacity fill)" for a
+    promoted project, otherwise null. `capacity_fill` itself is unchanged.
+    """
+
+    if is_hub_in_scope(principal, hub_id) and principal_can(principal, Surface.MATRIX, Action.READ):
+        return reason
+    return GENERIC_CAPACITY_FILL_REASON if capacity_fill else None
 
 
 def _financials(project: Project, principal: Principal) -> dict[str, Any]:

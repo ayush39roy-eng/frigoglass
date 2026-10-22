@@ -4,9 +4,12 @@ import { Star } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 /**
- * Marks a project pinned as VIP (`projects.is_vip`, ADR 0022). Shown on the
- * Gantt row, Projects cards, the Priority board and the VIP page. A pin never
- * changes scheduling order, so the badge is information only.
+ * Marks a project pinned as VIP (`projects.is_vip`, ADR 0022, ADR 0040).
+ * Shown on the Gantt row, the Dashboard project cards and the Priority board.
+ * Since ADR 0040 a pin is manual only (`PUT /projects/{id}/vip`) and is a
+ * scheduling input: a VIP project schedules first (sort key after `frozen`,
+ * before priority) and is listed first. The badge itself is display only; the
+ * pin is set with `VipToggle` on the Projects page and the Matrix grid.
  */
 export function VipBadge({ className }: { className?: string }): React.JSX.Element {
   return (

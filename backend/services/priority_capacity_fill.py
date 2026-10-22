@@ -4,10 +4,14 @@ Loads, in one pass and with a fixed number of queries whatever the number of
 projects (no N+1), everything `services.priority_scoring.fill_p1_capacity`
 needs for a set of hubs, and runs it once per hub:
 
-- capacity `C` = the hub's remaining-year design capacity, computed exactly as
-  `GET /capacity/hub-load` serves `design_capacity_remaining`
-  (`services.capacity_supply.design_capacity` on the hub's calendar, Σ FTE of
-  the hub's engineers, `domain_constants.CURRENT_WEEK`, rounded to 2 dp);
+- capacity `C` = the CAPACITY hub's remaining-year design capacity, computed
+  exactly as `GET /capacity/hub-load` serves `design_capacity_remaining`
+  (`services.capacity_supply.design_capacity` on the capacity hub's calendar,
+  Σ FTE of its engineers with `counts_in_capacity`,
+  `domain_constants.CURRENT_WEEK`, rounded to 2 dp). ADR 0042 (P29): the walk
+  is per capacity hub, over the projects of the capacity hub AND its member
+  hubs (R&D-Greece walks its own, OEM-HCK's and OEM-Seltek's projects as one
+  set); a member hub id resolves to its capacity hub everywhere here;
 - each scored project's remaining design effort in the active run
   (`services.capacity_priority.remaining_run_load_by_project`, effort weeks,
   ADR 0032); a project not in the run counts 0;
@@ -35,11 +39,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 import domain_constants as dc
 from models.engineer import Engineer
 from models.enums import NON_SCHEDULABLE_STATUSES, HubName, ProjectPriority
-from models.hub import Hub, HubWorkCalendar
+from models.hub import HubWorkCalendar
 from models.priority import PriorityScore
 from models.project import Project
 from models.schedule import ScheduleRun
 from services.active_run import get_active_run
+from services.capacity_hubs import load_capacity_hub_map
 from services.capacity_priority import remaining_run_load_by_project
 from services.capacity_supply import design_capacity, fte_sum, round2
 from services.priority_scoring import (
@@ -64,13 +69,21 @@ class RowFill:
 @dataclass(frozen=True)
 class CapacityFill:
     run: ScheduleRun | None
+    #: Keyed by CAPACITY hub id (ADR 0042).
     hubs: dict[uuid.UUID, HubFill] = field(default_factory=dict)
     hub_names: dict[uuid.UUID, HubName] = field(default_factory=dict)
+    #: Every hub id → its capacity hub id (itself when it has none).
+    capacity_of: dict[uuid.UUID, uuid.UUID] = field(default_factory=dict)
+
+    def for_hub(self, hub_id: uuid.UUID) -> HubFill | None:
+        """The fill of `hub_id`'s capacity hub."""
+
+        return self.hubs.get(self.capacity_of.get(hub_id, hub_id))
 
     def for_row(
         self, project_id: uuid.UUID, hub_id: uuid.UUID, score_band: ProjectPriority | None
     ) -> RowFill:
-        hub = self.hubs.get(hub_id)
+        hub = self.for_hub(hub_id)
         decision = hub.decisions.get(project_id) if hub is not None else None
         promoted = decision is not None and decision.outcome == "promoted"
         return RowFill(
@@ -92,9 +105,11 @@ async def compute_capacity_fill(
     active_run: ScheduleRun | None | EllipsisType = ...,
     normalized_override: Mapping[uuid.UUID, int | None] | None = None,
 ) -> CapacityFill:
-    """The P1 capacity fill of every hub in `hub_ids` (callers pass in-scope
-    hubs only). Query count is constant: hubs, projects + scores, engineers,
-    calendars, the active run, and `remaining_run_load_by_project`'s own.
+    """The P1 capacity fill of the capacity hubs of `hub_ids` (callers pass
+    in-scope hubs only; a member hub brings in its capacity hub, whose walk
+    covers every member, ADR 0042). Query count is constant: hubs, projects +
+    scores, engineers, calendars, the active run, and
+    `remaining_run_load_by_project`'s own.
 
     P25-T03: a caller that already loaded the active run (the Priority board,
     the Workspace) passes it as `active_run` (`None` = there is none), so it
@@ -106,20 +121,25 @@ async def compute_capacity_fill(
     through the very same walk. Projects it does not name keep their stored
     score."""
 
-    ids = sorted(set(hub_ids), key=str)
     run = await get_active_run(db) if isinstance(active_run, EllipsisType) else active_run
-    if not ids:
+    if not hub_ids:
         return CapacityFill(run=run)
+    cmap = await load_capacity_hub_map(db)
+    ids = sorted(cmap.resolve_many(hub_ids) & set(cmap.members_of), key=str)
+    if not ids:
+        return CapacityFill(run=run, capacity_of=cmap.capacity_of)
+    hub_names = {h_id: cmap.name(h_id) for h_id in ids}
+    group_hubs = cmap.hubs_resolving_to(ids)
 
-    hub_names = {
-        h_id: name
-        for h_id, name in (await db.execute(select(Hub.id, Hub.name).where(Hub.id.in_(ids)))).all()
-    }
     fte_values: dict[uuid.UUID, list[object]] = defaultdict(list)
     for eng_hub_id, fte in (
-        await db.execute(select(Engineer.hub_id, Engineer.fte).where(Engineer.hub_id.in_(ids)))
+        await db.execute(
+            select(Engineer.hub_id, Engineer.fte).where(
+                Engineer.hub_id.in_(group_hubs), Engineer.counts_in_capacity.is_(True)
+            )
+        )
     ).all():
-        fte_values[eng_hub_id].append(fte)
+        fte_values[cmap.capacity_of.get(eng_hub_id, eng_hub_id)].append(fte)
     calendars = {
         c.hub_id: c
         for c in (await db.execute(select(HubWorkCalendar).where(HubWorkCalendar.hub_id.in_(ids))))
@@ -139,12 +159,13 @@ async def compute_capacity_fill(
             run=None,
             hubs={h: HubFill(capacity[h], zero, zero, {}) for h in hub_names},
             hub_names=hub_names,
+            capacity_of=cmap.capacity_of,
         )
 
     stmt = (
         select(Project.id, Project.hub_id, Project.status, PriorityScore.normalized_pct)
         .join(PriorityScore, PriorityScore.project_id == Project.id)
-        .where(Project.hub_id.in_(ids))
+        .where(Project.hub_id.in_(group_hubs))
     )
     if normalized_override is None:
         stmt = stmt.where(PriorityScore.normalized_pct.is_not(None))
@@ -158,7 +179,7 @@ async def compute_capacity_fill(
     by_hub: dict[uuid.UUID, list[FillProject]] = defaultdict(list)
     for pid, p_hub_id, p_status, pct in scored:
         design_weeks = loads.get(pid, (0.0, 0.0))[0]
-        by_hub[p_hub_id].append(
+        by_hub[cmap.capacity_of.get(p_hub_id, p_hub_id)].append(
             FillProject(
                 project_id=pid,
                 normalized_pct=pct,
@@ -170,4 +191,5 @@ async def compute_capacity_fill(
         run=run,
         hubs={h: fill_p1_capacity(capacity[h], by_hub.get(h, [])) for h in hub_names},
         hub_names=hub_names,
+        capacity_of=cmap.capacity_of,
     )

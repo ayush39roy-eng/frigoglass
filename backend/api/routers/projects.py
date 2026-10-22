@@ -107,6 +107,7 @@ from services.project_hard_gates import (
 )
 from services.project_steps import WorkflowChangeWithProgress, sync_project_steps
 from services.rate_limit import TokenBucketLimiter
+from services.scoring_tags import apply_tag_prefill
 from services.text_search import Q_MAX_LENGTH, project_search_filter
 
 router = APIRouter(prefix="/projects", tags=["projects"])
@@ -325,6 +326,10 @@ async def create_project(
     db.add(project)
     await db.flush()
     await sync_project_steps(db, project, hub.is_oem)
+    # ADR 0038: every tag of a new project is a not-set -> set transition.
+    await apply_tag_prefill(
+        db, project, before=[], after=project.scoring_tags, principal=current_user
+    )
 
     db.add(
         AuditLogEntry(
@@ -396,7 +401,7 @@ async def update_project(
             )
 
     for key in ("name", "hub_id", "status", "delay_weeks", "carry_over",
-                "certification_testing_required"):
+                "certification_testing_required", "scoring_tags"):
         if key in updates and updates[key] is None:
             raise CodedHTTPException(
                 HTTP_422, "NULL_NOT_ALLOWED", f"{key} may not be null"
@@ -442,11 +447,19 @@ async def update_project(
         raise mismatch
 
     before_state = project_audit_state(project)
+    tags_before = list(project.scoring_tags or [])
     schedule_inputs_changed = any(
         getattr(project, name) != value
         for name, value in updates.items()
         if name in SCHEDULE_INPUT_FIELDS
     )
+    if (
+        "leader_engineer_id" in updates
+        and updates["leader_engineer_id"] != project.leader_engineer_id
+    ):
+        # ADR 0042 §7 (P29): a person chose the leader, so it is no longer the
+        # seed's / migration's provisional pick.
+        project.leader_is_provisional = False
     for field_name, value in updates.items():
         setattr(project, field_name, value)
     if schedule_inputs_changed:
@@ -460,6 +473,13 @@ async def update_project(
             raise CodedHTTPException(
                 HTTP_422, "WORKFLOW_CHANGE_WITH_PROGRESS", str(exc)
             ) from exc
+    if "scoring_tags" in updates:
+        # ADR 0038: only a not-set -> set tag pre-fills its score (same
+        # transaction); `scoring_tags` is not a scheduler input, so it never
+        # sets `schedule_stale`.
+        await apply_tag_prefill(
+            db, project, before=tags_before, after=project.scoring_tags, principal=current_user
+        )
     after_state = project_audit_state(project)
     if priority_moves:
         # The move is applied below, in the same commit; the snapshot shows

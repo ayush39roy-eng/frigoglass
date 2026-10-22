@@ -63,6 +63,8 @@ COPY services ./services
 COPY workers ./workers
 COPY scheduling ./scheduling
 COPY seed ./seed
+# P27 / S26-H1: one-off operational scripts (`python -m scripts.rotate_field_key`).
+COPY scripts ./scripts
 COPY alembic ./alembic
 COPY alembic.ini ./
 

@@ -11,6 +11,8 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { useHubs } from '@/lib/api/reference';
 import { formatCurrency, formatDecimal, formatPlanWeek } from '@/lib/format';
 import { queryKeys } from '@/lib/query-keys';
+import { invalidateScoreReaders } from '@/lib/score-readers';
+import { scoringTagsText } from '@/lib/scoring-tags';
 import { PROJECT_TYPE_LABELS } from '@/types/enums';
 import { updateProject } from '@/surfaces/registration/api/registration-api';
 import type { ProjectCreateRequest } from '@/surfaces/registration/api/types';
@@ -60,6 +62,9 @@ export function DetailsPanel({
     onSuccess: (result) => {
       void queryClient.invalidateQueries({ queryKey: queryKeys.projectWorkspace(p.id) });
       void queryClient.invalidateQueries({ queryKey: ['projects'] });
+      // P27 (ADR 0038): the form always sends `scoring_tags`; a newly set tag
+      // pre-fills its dimension with 5 server-side (the PATCH carries no score).
+      invalidateScoreReaders(queryClient);
       // P11 (ADR 0015): a priority change in this form schedules by itself; the
       // page's priority-move flow shows the progress and what moved.
       if (result.recalc && moveHost) {
@@ -105,6 +110,7 @@ export function DetailsPanel({
               <Field label="Workflow" value={p.workflow_id} />
               <Field label="Category" value={p.category ?? '—'} />
               <Field label="Type" value={p.type ? PROJECT_TYPE_LABELS[p.type] : '—'} />
+              <Field label="Project nature" value={scoringTagsText(p.scoring_tags)} />
               <Field label="Priority" value={p.priority ?? '—'} />
               <Field label="Actual start week" value={p.actual_start_week === null ? '—' : formatPlanWeek(p.actual_start_week)} />
               <Field label="Delay (weeks)" value={String(p.delay_weeks)} />
@@ -143,7 +149,13 @@ export function DetailsPanel({
             </dl>
           </div>
         )}
-        <ScoringSection key={JSON.stringify(data.priority_score)} projectId={p.id} score={data.priority_score} canWrite={canEditScores} />
+        <ScoringSection
+          key={JSON.stringify(data.priority_score)}
+          projectId={p.id}
+          score={data.priority_score}
+          canWrite={canEditScores}
+          tagDimensionKeys={p.tag_dimension_keys}
+        />
       </CardContent>
     </Card>
   );

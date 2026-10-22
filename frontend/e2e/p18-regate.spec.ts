@@ -96,8 +96,23 @@ test('API: +10 A at R&D-India headline = touched only; oversize scenarios are 42
   console.log('estimate +10 A R&D-India', JSON.stringify({ t: est.touched_hubs, l: est.touched_lab_regions, d: est.min_extra_designers_total, c: est.min_extra_chambers_total, dw: est.extra_design_weeks_total, lw: est.extra_lab_weeks_total }));
   expect(est.touched_hubs).toEqual(['R&D-India']);
   expect(est.touched_lab_regions).toEqual(['India']);
-  expect(est.min_extra_designers_total).toBe(0);
-  expect(est.min_extra_chambers_total).toBe(3);
+  // Final gate (P21–P26): the figures depend on the seed. The pre-P24 seed gave 0 designers / 3 chambers; the real
+  // roster (ADR 0035, R&D-India booked ~150 %) needs designers too. Check the shape and that the totals equal the
+  // per-hub / per-region rows instead of pinning seed figures.
+  const dTot = est.min_extra_designers_total as number;
+  const cTot = est.min_extra_chambers_total as number;
+  expect(Number.isInteger(dTot) && dTot >= 0).toBe(true);
+  expect(Number.isInteger(cTot) && cTot >= 0).toBe(true);
+  // Headline totals are over the touched hubs / regions only (P18-R01).
+  const sumOf = (xs: unknown, k: string, key: string, touched: unknown): number | null =>
+    Array.isArray(xs)
+      ? (xs as Json[]).filter((r) => (touched as string[]).includes(r[key] as string)).reduce((a, r) => a + Number(r[k] ?? 0), 0)
+      : null;
+  const dRows = sumOf(est.design, 'min_extra_designers', 'hub', est.touched_hubs);
+  const cRows = sumOf(est.lab, 'min_extra_chambers', 'lab_region', est.touched_lab_regions);
+  console.log('designer rows sum', dRows, 'chamber rows sum', cRows);
+  if (dRows !== null) expect(dRows).toBe(dTot);
+  if (cRows !== null) expect(cRows).toBe(cTot);
 
   const proj = (n: number) => ({ hub: 'PD-India', category: 'C', count: n });
   const oversize: [string, Json][] = [
@@ -171,7 +186,10 @@ test('UI 1440: simulate zero 107 -> 107 = Dashboard; touched labelling and headl
     matched++;
   }
   console.log('UI estimate zero: design rows matched to Capacity booked %:', matched, 'of', n);
-  expect(matched).toBe(6);
+  // Every design row the UI shows matched the Capacity figure (6 hubs before P24; OEM-Seltek has no engineers in
+  // the real roster, ADR 0035, so the count follows the served rows).
+  expect(n).toBeGreaterThan(0);
+  expect(matched).toBe(n);
 
   // +10 PDD/A at R&D-India (real scenario from here on: stop rewriting)
   await page.unroute('**/whatif/*');
@@ -180,8 +198,12 @@ test('UI 1440: simulate zero 107 -> 107 = Dashboard; touched labelling and headl
   await page.getByRole('group', { name: /Added projects, line 1/ }).getByLabel('Count').fill('10');
   await page.getByRole('button', { name: 'Estimate' }).click();
   await expect(page.getByTestId('est-touched-list')).toContainText('Hubs: R&D-India. Lab regions: India.');
-  await expect(page.getByTestId('est-designers')).toContainText('0');
-  await expect(page.getByTestId('est-chambers')).toContainText('3');
+  // Final gate: compare the UI headline with the served estimate for the same scenario (seed-independent).
+  const served = (await (await post(request, '/whatif/estimate', {
+    scenario: { add_projects: [{ hub: 'R&D-India', category: 'A', count: 10 }] },
+  })).json()) as Json;
+  await expect(page.getByTestId('est-designers')).toContainText(String(served.min_extra_designers_total));
+  await expect(page.getByTestId('est-chambers')).toContainText(String(served.min_extra_chambers_total));
   console.log('UI headline designers:', (await page.getByTestId('est-designers').innerText()).replace(/\s+/g, ' '),
     '| chambers:', (await page.getByTestId('est-chambers').innerText()).replace(/\s+/g, ' '));
   const first = page.getByTestId('est-design-row').first();
@@ -191,8 +213,8 @@ test('UI 1440: simulate zero 107 -> 107 = Dashboard; touched labelling and headl
   const flags = await page.getByTestId('est-design-row').evaluateAll((els) => els.map((e) => e.getAttribute('data-touched')));
   const labFlags = await page.getByTestId('est-lab-row').evaluateAll((els) => els.map((e) => e.getAttribute('data-touched')));
   console.log('design rows touched flags (display order)', flags.join(','), '| lab', labFlags.join(','));
-  expect(flags).toEqual(['true', 'false', 'false', 'false', 'false', 'false']);
-  expect(labFlags).toEqual(['true', 'false', 'false']);
+  expect(flags).toEqual(['true', ...Array<string>(flags.length - 1).fill('false')]);
+  expect(labFlags).toEqual(['true', ...Array<string>(labFlags.length - 1).fill('false')]);
   await expect(page.getByTestId('est-touched-mark')).toHaveCount(2);
   await shot(page, 'regate-estimate-1440');
   const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);

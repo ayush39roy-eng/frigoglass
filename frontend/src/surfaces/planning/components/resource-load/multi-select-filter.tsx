@@ -18,6 +18,8 @@ import type { FilterOption } from '../../api/types';
  */
 export interface MultiSelectFilterProps {
   label: string;
+  /** The full name for assistive technology when `label` is abbreviated ("Dept" → "Department"). */
+  name?: string;
   options: FilterOption[];
   value: string[];
   onChange: (next: string[]) => void;
@@ -25,7 +27,7 @@ export interface MultiSelectFilterProps {
   disabledReason?: string;
 }
 
-export function MultiSelectFilter({ label, options, value, onChange, disabled, disabledReason }: MultiSelectFilterProps): React.JSX.Element {
+export function MultiSelectFilter({ label, name, options, value, onChange, disabled, disabledReason }: MultiSelectFilterProps): React.JSX.Element {
   const [query, setQuery] = React.useState('');
   const listId = React.useId();
   const selected = new Set(value);
@@ -83,9 +85,10 @@ export function MultiSelectFilter({ label, options, value, onChange, disabled, d
           <ChevronDown aria-hidden="true" className="size-3.5 shrink-0" />
         </Button>
       </PopoverTrigger>
-      <PopoverContent align="start" className="w-64 p-2">
+      {/* QA-F24-1 (WCAG 4.1.2): the popover is a dialog and needs a name. */}
+      <PopoverContent align="start" className="w-64 p-2" aria-label={`${name ?? label} filter options`}>
         <fieldset>
-          <legend className="sr-only">{label}</legend>
+          <legend className="sr-only">{name ?? label}</legend>
           {options.length > 8 ? (
             <input
               type="search"

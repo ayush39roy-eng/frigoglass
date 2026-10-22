@@ -62,10 +62,13 @@ Column mapping (0-based column index → JSON field)
   on an OEM hub carries `A-OEM`/`B-OEM`/`C-OEM` (`A+`/`A` → `A-OEM`, `B` →
   `B-OEM`, `C` → `C-OEM`). An `X-OEM` category on a non-OEM hub becomes `X`.
 - 5 `Project Type` → `type`. `CO`, `NO`, `NM`, `IMP` and `RC` map one to one.
-  `BC` (Business Continuity), `AC` (Alternative Component) and `SER`
-  (Service) are in the workbook's own vocabulary (`Lists & Explanations`) but
-  not in the app's `ProjectType` enum, so `type` is null for them. The raw
-  code is kept in `excel_type`.
+  `BC` (Business Continuity) is the app's `RC`, "Regulatory / Business
+  Compliance" (ADR 0038 amendment 2026-10-22, owner ruling), and so are the
+  text variants "Business Continuity", "Business Continiuty" and "Business
+  Continuation" (any case). `AC` (Alternative Component) and `SER` (Service)
+  are in the workbook's own vocabulary (`Lists & Explanations`) but not in
+  the app's `ProjectType` enum, so `type` is null for them (data
+  reconciliation pending). The raw code is always kept in `excel_type`.
 - 18 `Certification Testing Required` → `certification_testing_required`:
   true only for `Yes`. `No` and blank both give false. This matches the
   client's own lab-load pivot, which sums lab weeks only for projects flagged
@@ -246,7 +249,19 @@ STATUS_MAP = {
 }
 SCHEDULED_STATUSES = frozenset({"In Queue", "In Development", "Under Industrialization"})
 
-TYPE_MAP = {"CO": "CO", "NO": "NO", "NM": "NM", "IMP": "IMP", "RC": "RC"}
+#: Workbook type (upper-cased, one line) → app `ProjectType`. ADR 0038
+#: amendment (2026-10-22): `BC` and its text variants are `RC`.
+TYPE_MAP = {
+    "CO": "CO",
+    "NO": "NO",
+    "NM": "NM",
+    "IMP": "IMP",
+    "RC": "RC",
+    "BC": "RC",
+    "BUSINESS CONTINUITY": "RC",
+    "BUSINESS CONTINIUTY": "RC",
+    "BUSINESS CONTINUATION": "RC",
+}
 
 _TO_OEM = {"A+": "A-OEM", "A": "A-OEM", "B": "B-OEM", "C": "C-OEM"}
 _FROM_OEM = {"A-OEM": "A", "B-OEM": "B", "C-OEM": "C"}

@@ -108,7 +108,7 @@ def portfolio_baseline(projects_per_engineer: int = 3) -> WhatIfBaseline:
         current_week=CURRENT_WEEK,
     )
     calendars = tuple(HubCalendarInput(hub, 5, 12, 3, 4, 20) for hub, _, _ in _HUB_PLAN) + (
-        HubCalendarInput("OEM-Seltek", 5, 12, 3, 4, 20),
+        HubCalendarInput("OEM-Seitek", 5, 12, 3, 4, 20),
     )
     supply = tuple(
         ChamberSupplyInput(c.chamber_id, c.lab_region, c.max_concurrent, c.efficiency, 2, 1, 1)

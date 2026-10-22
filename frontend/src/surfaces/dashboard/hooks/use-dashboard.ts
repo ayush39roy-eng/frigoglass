@@ -8,7 +8,10 @@
  * them (Invariant I9 — no independent calculation, including in the frontend).
  */
 
-import { useQuery } from '@tanstack/react-query';
+// `keepPreviousData` (not an inline `(prev) => prev`): the identity lambda
+// defeats TanStack v5's TData inference here (every hook's `data` collapsed to
+// `{}` under tsc), while the exported helper is typed to preserve it.
+import { keepPreviousData, useQuery } from '@tanstack/react-query';
 
 import { ApiError } from '@/lib/api/client';
 import { queryKeys, type DashboardProjectFilters } from '@/lib/query-keys';
@@ -37,6 +40,10 @@ function retryUnlessAuth(failureCount: number, error: Error): boolean {
 export function useCompletingWithinYear(hubId: string | null = null, region: LabRegion | null = null) {
   return useQuery({
     queryKey: queryKeys.dashboardCompletingWithinYear(hubId, region),
+    // Keep the last figures on screen while a new hub / country loads, so the
+    // page keeps its height and scroll position (owner ask 2026-10-22). The
+    // page dims while `isPlaceholderData` is set, so they never pass as current.
+    placeholderData: keepPreviousData,
     queryFn: ({ signal }) => fetchCompletingWithinYear({ signal }, hubId, region),
     retry: retryUnlessAuth,
   });
@@ -45,6 +52,10 @@ export function useCompletingWithinYear(hubId: string | null = null, region: Lab
 export function usePipelineTotals(hubId: string | null = null, region: LabRegion | null = null) {
   return useQuery({
     queryKey: queryKeys.dashboardPipelineTotals(hubId, region),
+    // Keep the last figures on screen while a new hub / country loads, so the
+    // page keeps its height and scroll position (owner ask 2026-10-22). The
+    // page dims while `isPlaceholderData` is set, so they never pass as current.
+    placeholderData: keepPreviousData,
     queryFn: ({ signal }) => fetchPipelineTotals({ signal }, hubId, region),
     retry: retryUnlessAuth,
   });
@@ -53,6 +64,10 @@ export function usePipelineTotals(hubId: string | null = null, region: LabRegion
 export function useStatusOverview(hubId: string | null = null, region: LabRegion | null = null) {
   return useQuery({
     queryKey: queryKeys.dashboardStatusOverview(hubId, region),
+    // Keep the last figures on screen while a new hub / country loads, so the
+    // page keeps its height and scroll position (owner ask 2026-10-22). The
+    // page dims while `isPlaceholderData` is set, so they never pass as current.
+    placeholderData: keepPreviousData,
     queryFn: ({ signal }) => fetchStatusOverview({ signal }, hubId, region),
     retry: retryUnlessAuth,
   });
@@ -61,6 +76,10 @@ export function useStatusOverview(hubId: string | null = null, region: LabRegion
 export function useHubTypePipeline(hubId: string | null = null, region: LabRegion | null = null) {
   return useQuery({
     queryKey: queryKeys.dashboardHubTypePipeline(hubId, region),
+    // Keep the last figures on screen while a new hub / country loads, so the
+    // page keeps its height and scroll position (owner ask 2026-10-22). The
+    // page dims while `isPlaceholderData` is set, so they never pass as current.
+    placeholderData: keepPreviousData,
     queryFn: ({ signal }) => fetchHubTypePipeline({ signal }, hubId, region),
     retry: retryUnlessAuth,
   });
@@ -70,6 +89,10 @@ export function useHubTypePipeline(hubId: string | null = null, region: LabRegio
 export function useRegionSummary(hubId: string | null = null, region: LabRegion | null = null) {
   return useQuery({
     queryKey: queryKeys.dashboardRegionSummary(hubId, region),
+    // Keep the last figures on screen while a new hub / country loads, so the
+    // page keeps its height and scroll position (owner ask 2026-10-22). The
+    // page dims while `isPlaceholderData` is set, so they never pass as current.
+    placeholderData: keepPreviousData,
     queryFn: ({ signal }) => fetchRegionSummary({ signal }, hubId, region),
     retry: retryUnlessAuth,
   });
@@ -79,6 +102,10 @@ export function useRegionSummary(hubId: string | null = null, region: LabRegion 
 export function useDashboardAnalytics(hubId: string | null = null, region: LabRegion | null = null) {
   return useQuery({
     queryKey: queryKeys.dashboardAnalytics(hubId, region),
+    // Keep the last figures on screen while a new hub / country loads, so the
+    // page keeps its height and scroll position (owner ask 2026-10-22). The
+    // page dims while `isPlaceholderData` is set, so they never pass as current.
+    placeholderData: keepPreviousData,
     queryFn: ({ signal }) => fetchDashboardAnalytics({ signal }, hubId, region),
     retry: retryUnlessAuth,
   });
@@ -88,6 +115,10 @@ export function useDashboardAnalytics(hubId: string | null = null, region: LabRe
 export function useProjectFacets(hubId: string | null = null, region: LabRegion | null = null) {
   return useQuery({
     queryKey: queryKeys.dashboardProjectFacets(hubId, region),
+    // Keep the last figures on screen while a new hub / country loads, so the
+    // page keeps its height and scroll position (owner ask 2026-10-22). The
+    // page dims while `isPlaceholderData` is set, so they never pass as current.
+    placeholderData: keepPreviousData,
     queryFn: ({ signal }) => fetchProjectFacets({ signal }, hubId, region),
     retry: retryUnlessAuth,
     staleTime: 60_000,
@@ -112,7 +143,7 @@ export function useDashboardProjects(params: ProjectFilterParams) {
     queryKey: queryKeys.dashboardProjects(filters),
     queryFn: ({ signal }) => fetchDashboardProjects(params, { signal }),
     retry: retryUnlessAuth,
-    placeholderData: (prev) => prev,
+    placeholderData: keepPreviousData,
   });
 }
 

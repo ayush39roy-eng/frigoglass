@@ -18,6 +18,7 @@ import type {
   ProjectPriority,
   ProjectStatus,
   ProjectType,
+  ScoringTag,
   WorkflowId,
 } from '@/types/enums';
 import type { Id } from '@/types/common';
@@ -62,6 +63,10 @@ export interface ProjectCreateRequest {
   /** Capacity surface "Estimated" column only — never affects the schedule (OQ #12). */
   estimated_design_weeks?: number | null;
   estimated_lab_weeks?: number | null;
+  /** P27 (ADR 0038, API_CONTRACT_P27 §2/§3): "project nature" tags, any
+   *  combination. On PATCH this is the FULL new set (omit = unchanged; null is a
+   *  422). A newly set tag makes the server pre-fill its dimension with 5. */
+  scoring_tags?: ScoringTag[];
 }
 
 /** `PATCH /projects/{id}` request body (→ `ProjectUpdateRequest`). Partial —
@@ -85,6 +90,10 @@ export interface ProjectRead {
   external_code: string | null;
   hub_id: Id;
   leader_engineer_id: Id | null;
+  /** P29 (ADR 0042 §7, API_CONTRACT_P29 §6): true when the leader was assigned
+   *  by the seed / migration, not by a person. Shown as a "Provisional" badge
+   *  next to the leader. Not writable; a PATCH to a different leader clears it. */
+  leader_is_provisional: boolean;
   category: ProjectCategory | null;
   type: ProjectType | null;
   priority: ProjectPriority | null;
@@ -112,6 +121,11 @@ export interface ProjectRead {
   plant: string | null;
   requesting_department: string | null;
   product_type: string | null;
+  /** P27 (API_CONTRACT_P27 §5): canonical order, [] when none. */
+  scoring_tags: ScoringTag[];
+  /** P27: the dimension keys those tags pre-fill (served; the "from
+   *  registration" hint). Reflects the tags, not whether the score is still 5. */
+  tag_dimension_keys: string[];
   /** Progress or settings changed since the active run (ADR 0006 / P9). */
   schedule_stale: boolean;
   /** `PDD` | `OEM`, a function of the hub (ADR 0007). */

@@ -94,7 +94,9 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["models*", "scheduling*", "api*", "core*", "schemas*", "services*", "workers*"]
+include = [
+    "models*", "scheduling*", "api*", "core*", "schemas*", "services*", "workers*", "scripts*",
+]
 exclude = ["tests*"]
 
 [tool.pytest.ini_options]

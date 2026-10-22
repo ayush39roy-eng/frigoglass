@@ -45,7 +45,7 @@ import { ROLE_MATRIX } from '@/test/roles';
 import { seedSession } from '@/test/session';
 import type { HubName, ProjectCategory, ProjectPriority, ProjectStatus, ProjectType } from '@/types/enums';
 
-import { DIMENSIONS, DIMENSION_FIELDS, type DimensionField } from './api/types';
+import { INITIAL_TEST_DIMENSIONS } from './test-fixtures';
 import { useCompareSelection } from './lib/compare-selection';
 import MatrixPage from './MatrixPage';
 
@@ -63,18 +63,18 @@ interface ServerProject {
   type: ProjectType;
   status: ProjectStatus;
   priority: ProjectPriority;
-  scores: Record<DimensionField, number>;
+  scores: Record<string, number>;
 }
 const NON_SCHEDULABLE: ProjectStatus[] = ['Cancelled', 'Commercialized', 'On Hold', 'Draft'];
-const all = (n: number) => Object.fromEntries(DIMENSION_FIELDS.map((f) => [f, n])) as Record<DimensionField, number>;
+const all = (n: number) => Object.fromEntries(INITIAL_TEST_DIMENSIONS.map((d) => [d.key, n])) as Record<string, number>;
 let projects: ServerProject[] = [];
 /** Hub scope of the signed-in user on the "server" (null = every hub). */
 let scope: string[] | null = null;
 
 function figures(p: ServerProject) {
-  const dims = DIMENSIONS.map((d) => ({
-    key: d.field, label: d.label, pillar: d.pillar, weight: d.weight, max_points: d.weight,
-    score: p.scores[d.field], points: (p.scores[d.field] / 5) * d.weight,
+  const dims = INITIAL_TEST_DIMENSIONS.map((d) => ({
+    key: d.key, label: d.label, pillar: d.pillar, weight: d.weight, max_points: d.weight,
+    score: p.scores[d.key] ?? 0, points: ((p.scores[d.key] ?? 0) / 5) * d.weight,
   }));
   const raw = dims.reduce((a, d) => a + d.points, 0);
   const pct = Math.round((raw / 295) * 100);
@@ -99,7 +99,7 @@ function matrixRows(q: Query) {
     return {
       project_id: p.id, project_name: p.name, hub: p.hub, category: p.category, type: p.type,
       set_priority: p.priority, status: p.status, leader_name: null, leader_engineer_id: null, rank: i + 1,
-      has_score: true, ...p.scores, hard_gates: [], weighted_score: f.raw, normalized_pct: f.pct,
+      has_score: true, missing_dimension_keys: [], rubric_version: 1, scoring_tags: [], tag_dimension_keys: [], hard_gates: [], weighted_score: f.raw, normalized_pct: f.pct,
       suggested_band: f.band, dimension_scores: f.dims, is_new_model: false, is_rm_saving_project: false,
       currency: 'EUR', capex_keur: null, rm_savings_keur: null, tcogs_eur: null, selling_price_eur: null,
       gross_margin_pct: null,
@@ -183,10 +183,14 @@ function serveSend(method: string, path: string, body?: unknown): Promise<unknow
   const put = /^\/priorities\/([^/]+)$/.exec(path);
   if (method === 'PUT' && put) {
     const p = projects.find((x) => x.id === put[1])!;
-    const b = body as Record<string, number>;
-    p.scores = Object.fromEntries(DIMENSION_FIELDS.map((f) => [f, b[f]])) as Record<DimensionField, number>;
+    // P26: `{scores: {key: value}, hard_gates}`; omitted keys keep their value.
+    const b = body as { scores: Record<string, number>; hard_gates: string[] };
+    p.scores = { ...p.scores, ...b.scores };
     const f = figures(p);
-    return Promise.resolve({ id: 's', project_id: p.id, ...b, weighted_score: f.raw, normalized_pct: f.pct, suggested_band: f.band });
+    return Promise.resolve({
+      id: 's', project_id: p.id, hard_gates: b.hard_gates, weighted_score: f.raw, normalized_pct: f.pct, suggested_band: f.band,
+      dimension_scores: f.dims, missing_dimension_keys: [], rubric_version: 1,
+    });
   }
   return Promise.reject(new ApiError(405, `unmocked ${method} ${path}`));
 }
@@ -321,13 +325,11 @@ describe('P21-T05 Matrix tabs', () => {
     await user.click(await screen.findByRole('button', { name: 'Edit prioritization score for Alpha Cooler' }));
     const dialog = await screen.findByRole('dialog', { name: 'Edit prioritization score' });
     const distBefore = getCalls('/priorities/distribution').length;
-    for (const f of DIMENSION_FIELDS) {
-      const input = within(dialog).getByLabelText(DIMENSIONS.find((d) => d.field === f)!.label);
-      await user.clear(input);
-      await user.type(input, '1');
+    for (const d of INITIAL_TEST_DIMENSIONS) {
+      await user.selectOptions(within(dialog).getByLabelText(d.label), '1');
     }
     await user.click(within(dialog).getByRole('button', { name: 'Save score' }));
-    expect(mockSend).toHaveBeenCalledWith('PUT', '/priorities/alpha', { ...all(1), hard_gates: [] });
+    expect(mockSend).toHaveBeenCalledWith('PUT', '/priorities/alpha', { scores: all(1), hard_gates: [] });
     await waitFor(() => expect(getCalls('/priorities/distribution').length).toBeGreaterThan(distBefore));
     const roots = invalidatedRoots(invalidate);
     expect(roots).toContain(JSON.stringify(['priority-matrix']));
@@ -349,11 +351,9 @@ describe('P21-T05 Matrix tabs', () => {
     await user.click(await screen.findByRole('checkbox', { name: 'Scenario mode' }));
     await user.click(await screen.findByRole('button', { name: 'Edit prioritization score for Alpha Cooler' }));
     const dialog = await screen.findByRole('dialog', { name: 'Stage prioritization score change' });
-    const input = within(dialog).getByLabelText('Strategic Project');
-    await user.clear(input);
-    await user.type(input, '1');
+    await user.selectOptions(within(dialog).getByLabelText('Strategic Project'), '1');
     await user.click(within(dialog).getByRole('button', { name: 'Stage change' }));
-    expect(useScenarioStore.getState().pending.alpha?.next.strategic_project).toBe(1);
+    expect(useScenarioStore.getState().pending.alpha?.next.scores.strategic_project).toBe(1);
 
     await user.click(screen.getByRole('tab', { name: 'Priority board' }));
     expect(await screen.findByTestId('board-scenario-note')).toHaveTextContent('Scenario');

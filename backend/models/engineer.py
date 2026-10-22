@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from typing import TYPE_CHECKING
 
-from sqlalchemy import ARRAY, Enum, ForeignKey, Numeric, String
+from sqlalchemy import ARRAY, Boolean, Enum, ForeignKey, Numeric, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from models.base import Base, TimestampMixin, UUIDPrimaryKeyMixin
@@ -33,7 +33,18 @@ class Engineer(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "engineers"
 
     name: Mapped[str] = mapped_column(String(200), nullable=False)
+    #: ADR 0042: an engineer's hub is always a *capacity* hub (a hub with no
+    #: `capacity_hub_id`); the API refuses a member hub (`HUB_NOT_CAPACITY_HUB`).
     hub_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("hubs.id"), nullable=False)
+    #: ADR 0042 §5: whether this engineer's FTE is part of the hub's design
+    #: supply (`yearly_design_capacity = working_weeks × Σ fte`, ADR 0008).
+    #: False for a project leader who is on no client roster (Theoni, Dipak,
+    #: Antonis, Sailesh; docs/OPEN_QUESTIONS.md #52): the scheduler still books
+    #: them because they lead projects, but they are never counted as supply.
+    #: Editable by Admin / Super Admin only (`PATCH /engineers/{id}`), audited.
+    counts_in_capacity: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True, server_default="true"
+    )
 
     #: 0 < fte <= 1 in the reference data (e.g. 0.5, 0.8, 1.0), but not DB-
     #: constrained to that range in case a future client answer allows >1.0

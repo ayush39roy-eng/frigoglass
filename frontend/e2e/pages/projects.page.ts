@@ -25,6 +25,16 @@ export class ProjectsPage {
     return this.page.getByTestId('registration-drawer');
   }
 
+  /** P27 (ADR 0038): the "Project nature" checkbox group inside the drawer. */
+  projectNature(): Locator {
+    return this.drawer().getByRole('group', { name: 'Project nature' });
+  }
+
+  /** One "Project nature" tag checkbox, by its label (e.g. "New Options"). */
+  projectNatureTag(label: string): Locator {
+    return this.projectNature().getByRole('checkbox', { name: label, exact: true });
+  }
+
   searchBox() {
     return this.page.getByRole('searchbox', { name: 'Search' });
   }

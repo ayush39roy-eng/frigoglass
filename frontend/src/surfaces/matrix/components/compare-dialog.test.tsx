@@ -31,16 +31,9 @@ import { seedSession } from '@/test/session';
 import { seriousAxeViolations } from '@/test/axe';
 import type { HardGateReason, HubName, ProjectPriority } from '@/types/enums';
 
-import {
-  DIMENSIONS,
-  DIMENSION_FIELDS,
-  type DimensionField,
-  type PriorityCompareProject,
-  type PriorityMatrixRow,
-  type PriorityScoreUpdateRequest,
-} from '../api/types';
+import type { PriorityCompareProject, PriorityMatrixRow, PriorityScoreUpdateRequest } from '../api/types';
 import { useCompareSelection } from '../lib/compare-selection';
-import { P13_MATRIX_ROW_DEFAULTS } from '../test-fixtures';
+import { INITIAL_TEST_DIMENSIONS, P13_MATRIX_ROW_DEFAULTS } from '../test-fixtures';
 import { CompareDialog, type CompareDialogProps } from './compare-dialog';
 
 const mockGet = vi.mocked(apiGet);
@@ -49,7 +42,7 @@ const TOTAL = 295;
 const GATE: HardGateReason = 'Regulatory deadline within 6 months';
 
 /** The test plays the server: it holds the stored scores and computes the served figures. */
-type Scores = Record<DimensionField, number>;
+type Scores = Record<string, number | null>;
 const server: Record<string, { name: string; hub: HubName; scores: Scores | null; gates: HardGateReason[]; fill?: string }> = {};
 
 function band(pct: number): ProjectPriority {
@@ -58,42 +51,45 @@ function band(pct: number): ProjectPriority {
 function served(id: string) {
   const s = server[id];
   if (!s) throw new Error(id);
-  const dims = DIMENSIONS.map((d) => {
-    const score = s.scores ? s.scores[d.field] : null;
+  // P26: a missing score counts 0 and is listed; no score at all = unscored.
+  const dims = INITIAL_TEST_DIMENSIONS.map((d) => {
+    const score = s.scores?.[d.key] ?? null;
     return {
-      key: d.field, label: d.label, pillar: d.pillar, weight: d.weight, max_points: d.weight,
+      key: d.key, label: d.label, pillar: d.pillar, weight: d.weight, max_points: d.weight,
       score, points: score === null ? null : (score / 5) * d.weight,
     };
   });
-  const raw = s.scores ? dims.reduce((a, d) => a + (d.points ?? 0), 0) : null;
+  const scored = dims.some((d) => d.score !== null);
+  const raw = scored ? dims.reduce((a, d) => a + (d.points ?? 0), 0) : null;
   const pct = raw === null ? null : Math.round((raw / TOTAL) * 100);
-  return { dims, raw, pct, band: pct === null ? null : band(pct) };
+  const missing = scored ? dims.filter((d) => d.score === null).map((d) => d.key) : [];
+  return { dims, raw, pct, band: pct === null ? null : band(pct), scored, missing };
 }
 function compareItem(id: string): PriorityCompareProject {
   const s = server[id]!;
   const v = served(id);
   return {
-    project_id: id, project_name: s.name, hub: s.hub, set_priority: null, has_score: s.scores !== null,
+    project_id: id, project_name: s.name, hub: s.hub, set_priority: null, has_score: v.scored,
     weighted_score: v.raw, normalized_pct: v.pct, suggested_band: s.fill ? 'P1' : v.band, dimension_scores: v.dims,
     score_band: v.band, capacity_fill: s.fill !== undefined, capacity_fill_reason: s.fill ?? null,
+    missing_dimension_keys: v.missing, rubric_version: 1,
   };
 }
 function matrixRow(id: string): PriorityMatrixRow {
   const s = server[id]!;
   const v = served(id);
-  const flat = Object.fromEntries(DIMENSION_FIELDS.map((f) => [f, s.scores ? s.scores[f] : null])) as Record<DimensionField, number | null>;
   return {
     ...P13_MATRIX_ROW_DEFAULTS,
-    ...flat,
+    missing_dimension_keys: v.missing,
     project_id: id, project_name: s.name, hub: s.hub, category: 'A', type: 'NM', set_priority: null,
-    has_score: s.scores !== null, hard_gates: s.gates, weighted_score: v.raw, normalized_pct: v.pct,
+    has_score: v.scored, hard_gates: s.gates, weighted_score: v.raw, normalized_pct: v.pct,
     suggested_band: v.band, score_band: v.band, capacity_fill: false, capacity_fill_reason: null,
-    dimension_scores: v.dims, is_new_model: false, is_rm_saving_project: false,
+    dimension_scores: v.dims, is_new_model: false, is_rm_saving_project: false, is_vip: false,
     currency: 'EUR', capex_keur: null, rm_savings_keur: null, tcogs_eur: null, selling_price_eur: null,
     gross_margin_pct: null,
   };
 }
-const all = (n: number) => Object.fromEntries(DIMENSION_FIELDS.map((f) => [f, n])) as Scores;
+const all = (n: number) => Object.fromEntries(INITIAL_TEST_DIMENSIONS.map((d) => [d.key, n])) as Scores;
 
 let client: QueryClient;
 function renderDialog(props: Partial<CompareDialogProps> = {}, session: Parameters<typeof seedSession>[0] = {}) {
@@ -145,12 +141,16 @@ beforeEach(() => {
   });
   mockSend.mockImplementation((_method: string, path: string, body?: unknown) => {
     const id = path.split('/').pop() ?? '';
+    // P26: only the sent keys change; null clears.
     const b = body as PriorityScoreUpdateRequest;
     const s = server[id]!;
-    s.scores = Object.fromEntries(DIMENSION_FIELDS.map((f) => [f, b[f]])) as Scores;
+    s.scores = { ...(s.scores ?? {}), ...b.scores };
     s.gates = b.hard_gates;
     const v = served(id);
-    return Promise.resolve({ id: 'score-' + id, project_id: id, ...b, weighted_score: v.raw, normalized_pct: v.pct, suggested_band: v.band });
+    return Promise.resolve({
+      id: 'score-' + id, project_id: id, hard_gates: b.hard_gates, weighted_score: v.raw, normalized_pct: v.pct,
+      suggested_band: v.band, dimension_scores: v.dims, missing_dimension_keys: v.missing, rubric_version: 1,
+    });
   });
 });
 
@@ -168,7 +168,7 @@ describe('Compare dialog score editing (P21-T04)', () => {
     const user = userEvent.setup();
     renderDialog({ canEdit: true });
     const strat = await screen.findByRole('combobox', { name: 'Strategic Project score for Alpha' });
-    expect(within(strat).getAllByRole('option').map((o) => o.textContent)).toEqual(['0', '1', '2', '3', '4', '5']);
+    expect(within(strat).getAllByRole('option').map((o) => o.textContent)).toEqual(['– Not scored', '0', '1', '2', '3', '4', '5']);
     expect(screen.getAllByRole('combobox')).toHaveLength(26);
     expect(within(actionsOf('a')).getByRole('button', { name: 'Save changes (0) for Alpha' })).toHaveAttribute('aria-disabled', 'true');
 
@@ -205,11 +205,9 @@ describe('Compare dialog score editing (P21-T04)', () => {
     await user.click(saveBtn);
 
     expect(mockSend).toHaveBeenCalledTimes(1);
+    // P26: only the edited dimensions are sent, with the project's hard gates.
     expect(mockSend).toHaveBeenCalledWith('PUT', '/priorities/a', {
-      ...all(3),
-      strategic_project: 5,
-      new_customer: 5,
-      regulatory_compliance: 5,
+      scores: { strategic_project: 5, new_customer: 5, regulatory_compliance: 5 },
       hard_gates: [GATE],
     });
     // 177 + 30 = 207 / 295 → 70 → P1, read back from the server.
@@ -236,7 +234,7 @@ describe('Compare dialog score editing (P21-T04)', () => {
     const saveBtn = within(actionsOf('a')).getByRole('button', { name: 'Save changes (1) for Alpha' });
     await waitFor(() => expect(saveBtn).toHaveAttribute('aria-disabled', 'false'));
     await user.click(saveBtn);
-    expect(mockSend).toHaveBeenCalledWith('PUT', '/priorities/a', { ...all(3), strategic_project: 0, hard_gates: [GATE] });
+    expect(mockSend).toHaveBeenCalledWith('PUT', '/priorities/a', { scores: { strategic_project: 0 }, hard_gates: [GATE] });
     // 177 − 15 = 162 / 295 → 55.
     await waitFor(() => expect(within(totalCell(0)).getByTestId('compare-served-score')).toHaveTextContent('55/100'));
   });
@@ -291,9 +289,9 @@ describe('Compare dialog score editing (P21-T04)', () => {
 
     expect(mockSend).not.toHaveBeenCalled();
     const edit = useScenarioStore.getState().pending.a;
-    expect(edit?.baseline).toEqual({ ...all(3), hard_gates: [GATE] });
+    expect(edit?.baseline).toEqual({ scores: all(3), hard_gates: [GATE] });
     expect(edit?.hasScore).toBe(true);
-    expect(edit?.next).toEqual({ ...all(3), strategic_project: 5, hard_gates: [GATE] });
+    expect(edit?.next).toEqual({ scores: { ...all(3), strategic_project: 5 }, hard_gates: [GATE] });
     // The cell now starts from the staged value; served figures unchanged, preview labelled for the scenario.
     expect(select('Strategic Project score for Alpha').value).toBe('5');
     expect(select('Strategic Project score for Alpha').closest('td')).not.toHaveAttribute('data-dirty');
@@ -336,16 +334,37 @@ describe('Compare dialog score editing (P21-T04)', () => {
     expect(onOpenChange).toHaveBeenCalledWith(false);
   });
 
-  it('an unscored project needs all 13 scores before Save', async () => {
+  it('P26: an unscored project can be scored partly — only that dimension is sent, the rest count 0 (incomplete)', async () => {
     const user = userEvent.setup();
     server.b!.scores = null;
     renderDialog({ canEdit: true });
     const strat = (await screen.findByRole('combobox', { name: 'Strategic Project score for Beta' })) as HTMLSelectElement;
     expect(strat.value).toBe('');
     await user.selectOptions(strat, '4');
-    expect(within(actionsOf('b')).getByRole('button', { name: 'Save changes (1) for Beta' })).toHaveAttribute('aria-disabled', 'true');
-    expect(actionsOf('b')).toHaveTextContent('Give all 13 dimensions a score before saving.');
-    expect(within(totalCell(1)).getByTestId('compare-preview-score')).toHaveTextContent('score all 13');
+    // Preview: 20 / 295 → 7 (every other dimension counts 0).
+    expect(within(totalCell(1)).getByTestId('compare-preview-score')).toHaveTextContent('preview7/100');
+    const saveBtn = within(actionsOf('b')).getByRole('button', { name: 'Save changes (1) for Beta' });
+    await waitFor(() => expect(saveBtn).toHaveAttribute('aria-disabled', 'false'));
+    await user.click(saveBtn);
+    expect(mockSend).toHaveBeenCalledWith('PUT', '/priorities/b', { scores: { strategic_project: 4 }, hard_gates: [] });
+    await waitFor(() => expect(within(totalCell(1)).getByTestId('compare-served-score')).toHaveTextContent('7/100'));
+    // The served score is incomplete: 12 dimensions are still unscored.
+    expect(within(totalCell(1)).getByTestId('incomplete-marker')).toHaveAccessibleName(/^Incomplete: 12 dimensions not scored/);
+  });
+
+  it('P26: "– Not scored" clears a score by sending null', async () => {
+    const user = userEvent.setup();
+    renderDialog({ canEdit: true });
+    await user.selectOptions(await screen.findByRole('combobox', { name: 'CAPEX Investment (inverted) score for Alpha' }), '');
+    const saveBtn = within(actionsOf('a')).getByRole('button', { name: 'Save changes (1) for Alpha' });
+    await waitFor(() => expect(saveBtn).toHaveAttribute('aria-disabled', 'false'));
+    await user.click(saveBtn);
+    expect(mockSend).toHaveBeenCalledWith('PUT', '/priorities/a', { scores: { capex_investment: null }, hard_gates: [GATE] });
+    await waitFor(() =>
+      expect(within(totalCell(0)).getByTestId('incomplete-marker')).toHaveAccessibleName(
+        'Incomplete: 1 dimension not scored (CAPEX Investment (inverted)); each counts 0 points',
+      ),
+    );
   });
 
   it('P25: shows the served promoted band with the capacity-fill chip and the score band', async () => {

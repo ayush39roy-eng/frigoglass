@@ -173,6 +173,18 @@ def invalid_scenario(message: str) -> CodedHTTPException:
 def check_scope(ctx: WhatIfContext, sc: Scenario) -> None:
     """Raise unless `sc` stays inside the caller's scope (module docstring)."""
 
+    # P29-T06 (ADR 0042): designers sit on capacity hubs. Adding or removing
+    # designers on a member hub (OEM-HCK, OEM-Seltek) is a 422 for everyone:
+    # its design work is done by its capacity hub's engineers.
+    designer_hubs = [ae.hub for ae in sc.add_engineers]
+    designer_hubs += [rc.hub for rc in sc.remove_engineer_counts]
+    for designer_hub in designer_hubs:
+        parent = dc.HUB_CAPACITY_HUB.get(designer_hub)
+        if parent is not None:
+            raise invalid_scenario(
+                f"{designer_hub} has no designers of its own; its design work is done by "
+                f"{parent}'s engineers. Add or remove designers on {parent}."
+            )
     scope = ctx.scope
     if scope.all_hubs:
         return
@@ -305,11 +317,12 @@ def _keep_line(line: str, scope: Scope) -> bool:
     """A workings line is kept if it is general, or about an in-scope hub or
     lab region. A line that starts with another hub / region is dropped."""
 
-    if scope.all_hubs:
-        return True
     for hub in dc.HUB_LAB_REGION:
         if line.startswith(f"{hub}: "):
-            return scope.hub_ok(hub)
+            # P29-T06 (ADR 0042): hub lines are capacity-hub lines.
+            return scope.capacity_row_ok(hub)
+    if scope.all_hubs:
+        return True
     for region in set(dc.HUB_LAB_REGION.values()):
         if line.startswith(f"{region} lab: ") or line.startswith(f"{region}: "):
             return scope.region_ok(region)
@@ -321,12 +334,13 @@ def scope_estimate(raw: AnalyticRequirements, scope: Scope) -> EstimateResponse:
     rows that are ALSO touched by the scenario (D2b): never the engine's own
     totals, which cover other hubs. Zero scenario: touched is empty, totals 0."""
 
-    touched_hubs = [h for h in raw.touched_hubs if scope.hub_ok(h)]
+    # P29-T06 (ADR 0042): design rows are capacity hubs only (no OEM row).
+    touched_hubs = [h for h in raw.touched_hubs if scope.capacity_row_ok(h)]
     touched_regions = [r for r in raw.touched_lab_regions if scope.region_ok(r)]
     design = [
         HubDesignRequirementOut(**{k: getattr(r, k) for k in HubDesignRequirementOut.model_fields})
         for r in raw.design
-        if scope.hub_ok(r.hub)
+        if scope.capacity_row_ok(r.hub)
     ]
     lab = [
         LabRegionRequirementOut(**{k: getattr(r, k) for k in LabRegionRequirementOut.model_fields})
@@ -352,7 +366,8 @@ def scope_estimate(raw: AnalyticRequirements, scope: Scope) -> EstimateResponse:
 
 
 def _util_ok(row_scope: str, key: str, scope: Scope) -> bool:
-    return scope.hub_ok(key) if row_scope == "hub" else scope.region_ok(key)
+    # P29-T06 (ADR 0042): hub utilization rows are capacity hubs only.
+    return scope.capacity_row_ok(key) if row_scope == "hub" else scope.region_ok(key)
 
 
 def _change_out(c: Any) -> ProjectChangeOut:
@@ -511,7 +526,7 @@ def scope_solution(raw: MinimumAdditionsResult, scope: Scope, ctx: WhatIfContext
             designers=[
                 DesignerAdditionOut(hub=h, count=n)
                 for h, n in raw.additions.designers
-                if scope.hub_ok(h)
+                if scope.capacity_row_ok(h)
             ],
             chambers=[
                 ChamberAdditionOut(lab_region=r, count=n)
@@ -523,7 +538,9 @@ def scope_solution(raw: MinimumAdditionsResult, scope: Scope, ctx: WhatIfContext
         unmet_project_ids=unmet,
         runs_used=raw.runs_used,
         run_cap=raw.run_cap,
-        searched_designer_hubs=[h for h in raw.searched_designer_hubs if scope.hub_ok(h)],
+        searched_designer_hubs=[
+            h for h in raw.searched_designer_hubs if scope.capacity_row_ok(h)
+        ],
         searched_chamber_regions=[r for r in raw.searched_chamber_regions if scope.region_ok(r)],
         achieved=achieved,
         workings=workings,

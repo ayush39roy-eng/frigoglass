@@ -3,6 +3,7 @@ import * as React from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { formatDecimal, formatInteger } from '@/lib/format';
+import { cn } from '@/lib/utils';
 
 import type { HubP1Fill, PriorityCapacityFill } from '../api/types';
 
@@ -34,10 +35,7 @@ export function CapacityFillPanel({
           {data?.schedule_run_version != null ? ` · run v${String(data.schedule_run_version)}` : ''}
         </span>
       </CardHeader>
-      <CardContent className="flex flex-col gap-3">
-        <p className="text-2xs text-text-muted" data-testid="capacity-fill-explainer">
-          {CAPACITY_FILL_EXPLAINER}
-        </p>
+      <CardContent className="flex flex-col gap-2 pt-0">
         {data === undefined ? (
           isPending ? (
             <Skeleton className="h-24 w-full" aria-label="Loading capacity fill" />
@@ -52,14 +50,21 @@ export function CapacityFillPanel({
           <p className="text-2xs text-text-muted">No hub in this selection.</p>
         ) : (
           <>
-            <ul className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3" aria-label="P1 capacity fill per hub">
+            {/* Owner ask 2026-10-22: compact. One slim row per hub (name, bar,
+                figures, promoted), two columns from xl, instead of a boxed card each. */}
+            <ul className="grid gap-x-8 xl:grid-cols-2" aria-label="P1 capacity fill per hub">
               {data.hubs.map((h) => (
                 <HubFillRow key={h.hub} fill={h} />
               ))}
             </ul>
-            <Legend />
           </>
         )}
+        <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 border-t border-border pt-2">
+          <p className="text-2xs text-text-muted" data-testid="capacity-fill-explainer">
+            {CAPACITY_FILL_EXPLAINER}
+          </p>
+          {data?.has_active_schedule_run && data.hubs.length > 0 ? <Legend /> : null}
+        </div>
       </CardContent>
     </Card>
   );
@@ -75,14 +80,14 @@ function HubFillRow({ fill }: { fill: HubP1Fill }): React.JSX.Element {
   const scale = Math.max(fill.capacity_weeks, fill.filled_load_weeks, fill.base_load_weeks);
   const over = fill.base_load_weeks > fill.capacity_weeks;
   return (
-    <li className="flex flex-col gap-1.5 rounded border border-border bg-surface px-3 py-2" data-testid={`capacity-fill-${fill.hub}`}>
-      <div className="flex items-baseline justify-between gap-2">
-        <span className="text-xs font-semibold text-text">{fill.hub}</span>
-        <span className="tnum text-2xs text-text" data-numeric="" data-testid="capacity-fill-promoted">
-          {formatInteger(fill.promoted_count)} promoted
-        </span>
-      </div>
-      <div className="relative h-3 w-full overflow-hidden rounded-pill bg-surface-sunken" aria-hidden="true">
+    <li
+      className="grid grid-cols-[6.5rem_minmax(4rem,1fr)_auto_auto] items-center gap-3 border-b border-border/60 py-1.5"
+      data-testid={`capacity-fill-${fill.hub}`}
+    >
+      <span className="truncate text-xs font-semibold text-text" title={fill.hub}>
+        {fill.hub}
+      </span>
+      <div className="relative h-2.5 w-full overflow-hidden rounded-pill bg-surface-sunken" aria-hidden="true">
         {/* Filled load (base + promoted), hatched; the base P1 load solid on top. */}
         <span
           className="absolute inset-y-0 left-0 bg-band-p1/45 bg-[repeating-linear-gradient(135deg,hsl(var(--color-band-p1))_0_2px,transparent_2px_5px)]"
@@ -95,11 +100,21 @@ function HubFillRow({ fill }: { fill: HubP1Fill }): React.JSX.Element {
           style={{ left: `calc(${pct(fill.capacity_weeks, scale)} - 1px)` }}
         />
       </div>
-      <p className="tnum text-2xs text-text-muted" data-numeric="" data-testid="capacity-fill-figures">
+      <p className="tnum whitespace-nowrap text-2xs text-text-muted" data-numeric="" data-testid="capacity-fill-figures">
         P1 load {formatDecimal(fill.base_load_weeks)} → {formatDecimal(fill.filled_load_weeks)} of{' '}
         {formatDecimal(fill.capacity_weeks)} wks
         {over ? <span className="ml-1 font-semibold text-danger">· over capacity</span> : null}
       </p>
+      <span
+        className={cn(
+          'tnum justify-self-end whitespace-nowrap rounded-pill px-2 py-0.5 text-2xs font-semibold',
+          fill.promoted_count > 0 ? 'bg-band-p1/12 text-text' : 'text-text-subtle',
+        )}
+        data-numeric=""
+        data-testid="capacity-fill-promoted"
+      >
+        {formatInteger(fill.promoted_count)} promoted
+      </span>
     </li>
   );
 }
