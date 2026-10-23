@@ -8,7 +8,7 @@
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
-import { queryKeys } from '@/lib/query-keys';
+import { queryKeys, sortedKeyList } from '@/lib/query-keys';
 import type { LabRegion } from '@/types/enums';
 
 import {
@@ -29,7 +29,12 @@ export function useGantt(params: UseGanttParams) {
     // Every user-facing filter must be in the key or a filter change would
     // serve the previous filter's rows (P4-T04 review). The whole params
     // object is the key, so a new filter can never be forgotten here.
-    queryKey: queryKeys.gantt(params),
+    // P31: category / type lists are sorted in the key.
+    queryKey: queryKeys.gantt({
+      ...params,
+      category: sortedKeyList(params.category),
+      type: sortedKeyList(params.type),
+    }),
     queryFn: ({ signal }) => fetchGantt(params, { signal }),
     retry: retryUnlessAuth,
     placeholderData: (prev) => prev,

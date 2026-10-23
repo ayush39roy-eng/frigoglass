@@ -148,8 +148,8 @@ describe('All registered projects register (P13, ADR 0025 §5)', () => {
       status_: undefined,
       priority: undefined,
     });
-    expect(useProjectFacets).toHaveBeenLastCalledWith(null, null);
-    expect(useRegionSummary).toHaveBeenLastCalledWith(null, null);
+    expect(useProjectFacets).toHaveBeenLastCalledWith(null, null, expect.objectContaining({ categories: [], types: [] }));
+    expect(useRegionSummary).toHaveBeenLastCalledWith(null, null, expect.objectContaining({ categories: [], types: [] }));
   });
 
   it('shows the served total_count and every contract column; workbook columns off by default; no Delete', () => {
@@ -251,8 +251,10 @@ describe('All registered projects register (P13, ADR 0025 §5)', () => {
     const user = userEvent.setup();
     renderWithProviders(<ProjectBreakdown />);
 
-    await user.click(screen.getByRole('combobox', { name: 'Type' }));
-    await user.click(await screen.findByRole('option', { name: /^CO ·/ }));
+    // P31: Type is a multi-select chip group (the Dashboard-wide selection).
+    const types = screen.getByRole('group', { name: 'Type' });
+    await user.click(within(types).getByRole('button', { name: 'Cost Optimization' }));
+    await user.click(within(types).getByRole('button', { name: 'Unmapped' }));
     await user.click(screen.getByRole('combobox', { name: 'Status' }));
     await user.click(await screen.findByRole('option', { name: 'In Queue' }));
     await user.click(screen.getByRole('combobox', { name: 'Leader' }));
@@ -262,7 +264,7 @@ describe('All registered projects register (P13, ADR 0025 §5)', () => {
 
     expect(useDashboardProjects).toHaveBeenLastCalledWith(
       expect.objectContaining({
-        type: 'CO',
+        type: ['CO', 'Unmapped'],
         status_: 'In Queue',
         leader_engineer_id: 'eng-1',
         current_step: 'PDD-E',
@@ -289,7 +291,7 @@ describe('All registered projects register (P13, ADR 0025 §5)', () => {
     const user = userEvent.setup();
     renderWithProviders(<ProjectBreakdown />);
     expect(useDashboardProjects).toHaveBeenLastCalledWith(expect.objectContaining({ region: 'India' }));
-    expect(useProjectFacets).toHaveBeenLastCalledWith(null, 'India');
+    expect(useProjectFacets).toHaveBeenLastCalledWith(null, 'India', expect.objectContaining({ categories: [], types: [] }));
 
     await user.click(screen.getByRole('combobox', { name: 'Hub' }));
     const options = (await screen.findAllByRole('option')).map((o) => o.textContent);
@@ -315,11 +317,17 @@ describe('All registered projects register (P13, ADR 0025 §5)', () => {
     const user = userEvent.setup();
     renderWithProviders(<ProjectBreakdown />);
 
-    await user.click(screen.getByRole('combobox', { name: 'Category' }));
-    await user.click(await screen.findByRole('option', { name: 'A+' }));
+    const cats = screen.getByRole('group', { name: 'Category' });
+    await user.click(within(cats).getByRole('button', { name: 'A+' }));
+    await user.click(within(cats).getByRole('button', { name: 'B' }));
 
-    expect(useDashboardProjects).toHaveBeenLastCalledWith(expect.objectContaining({ category: 'A+' }));
+    expect(useDashboardProjects).toHaveBeenLastCalledWith(expect.objectContaining({ category: ['A+', 'B'] }));
+    // Facets and the country summary follow the same selection.
+    expect(useProjectFacets).toHaveBeenLastCalledWith(null, null, expect.objectContaining({ categories: ['A+', 'B'] }));
     expect(screen.getByText(/No projects match these filters/i)).toBeInTheDocument();
+    // "All" clears the category selection.
+    await user.click(within(cats).getByRole('button', { name: 'All' }));
+    expect(useDashboardProjects).toHaveBeenLastCalledWith(expect.objectContaining({ category: undefined }));
   });
 
   it('ADR 0028: a leader id with no name renders as "Name unavailable" and stays a distinct filter option', async () => {
@@ -362,5 +370,20 @@ describe('All registered projects register (P13, ADR 0025 §5)', () => {
     check(tableTab, cardsTab);
     await user.click(cardsTab);
     check(cardsTab, tableTab);
+  });
+
+  it('P31: a legacy single-value link and repeated params both seed the chips; the export carries the lists', async () => {
+    useDashboardProjects.mockReturnValue(ok([]));
+    renderWithProviders(<ProjectBreakdown />, { route: '/?category=A&type=NM&type=RC' });
+    expect(useDashboardProjects).toHaveBeenLastCalledWith(
+      expect.objectContaining({ category: ['A'], type: ['NM', 'RC'] }),
+    );
+    expect(within(screen.getByRole('group', { name: 'Category' })).getByRole('button', { name: 'A' })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    );
+    expect(
+      within(screen.getByRole('group', { name: 'Type' })).getByRole('button', { name: 'Regulatory / Business Compliance' }),
+    ).toHaveAttribute('aria-pressed', 'true');
   });
 });

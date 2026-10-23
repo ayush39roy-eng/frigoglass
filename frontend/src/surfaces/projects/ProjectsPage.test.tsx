@@ -236,8 +236,11 @@ describe('Projects page — list and header', () => {
     useDashboardProjects.mockReturnValue(ok([]));
     renderWithProviders(<ProjectsPage />);
 
-    await user.click(screen.getByRole('combobox', { name: 'Category' }));
-    await user.click(await screen.findByRole('option', { name: 'A+' }));
+    // P31: Category / Type are multi-select chip groups.
+    await user.click(within(screen.getByRole('group', { name: 'Category' })).getByRole('button', { name: 'C' }));
+    await user.click(within(screen.getByRole('group', { name: 'Category' })).getByRole('button', { name: 'A+' }));
+    await user.click(within(screen.getByRole('group', { name: 'Type' })).getByRole('button', { name: 'Alternative Component' }));
+    await user.click(within(screen.getByRole('group', { name: 'Type' })).getByRole('button', { name: 'Unmapped' }));
     await user.click(screen.getByRole('combobox', { name: 'Priority' }));
     await user.click(await screen.findByRole('option', { name: 'P2' }));
     await user.click(screen.getByRole('combobox', { name: 'Leader' }));
@@ -250,13 +253,33 @@ describe('Projects page — list and header', () => {
 
     await waitFor(() =>
       expect(useDashboardProjects).toHaveBeenLastCalledWith(
-        expect.objectContaining({ category: 'A+', priority: 'P2', leader_engineer_id: 'eng-1', sort: 'priority', q: 'tauras' }),
+        expect.objectContaining({
+          category: ['A+', 'C'],
+          type: ['AC', 'Unmapped'],
+          priority: 'P2',
+          leader_engineer_id: 'eng-1',
+          sort: 'priority',
+          q: 'tauras',
+        }),
       ),
     );
     await user.click(screen.getByRole('button', { name: 'Clear' }));
     expect(box).toHaveValue('');
     await waitFor(() =>
       expect(useDashboardProjects).toHaveBeenLastCalledWith(expect.objectContaining({ category: undefined, priority: undefined })),
+    );
+    expect(useDashboardProjects.mock.lastCall?.[0]).not.toHaveProperty('type');
+    expect(within(screen.getByRole('group', { name: 'Category' })).getByRole('button', { name: 'All' })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    );
+  });
+
+  it('P31: a legacy single-value link (?category=B&type=CO) and repeated params both parse', () => {
+    useDashboardProjects.mockReturnValue(ok([]));
+    renderWithProviders(<ProjectsPage />, { route: '/projects?category=B&type=CO&type=SER&category=A' });
+    expect(useDashboardProjects).toHaveBeenLastCalledWith(
+      expect.objectContaining({ category: ['A', 'B'], type: ['CO', 'SER'] }),
     );
   });
 
@@ -319,20 +342,25 @@ describe('Projects page — Export menu', () => {
     useDashboardProjects.mockReturnValue(ok([row('a')]));
     renderWithProviders(<ProjectsPage />);
 
-    await user.click(screen.getByRole('combobox', { name: 'Category' }));
-    await user.click(await screen.findByRole('option', { name: 'B' }));
+    await user.click(within(screen.getByRole('group', { name: 'Category' })).getByRole('button', { name: 'B' }));
+    await user.click(within(screen.getByRole('group', { name: 'Category' })).getByRole('button', { name: 'A' }));
+    await user.click(within(screen.getByRole('group', { name: 'Type' })).getByRole('button', { name: 'New Model' }));
+    await user.click(within(screen.getByRole('group', { name: 'Type' })).getByRole('button', { name: 'Unmapped' }));
     await user.click(screen.getByRole('button', { name: 'Export' }));
     await user.click(await screen.findByRole('menuitem', { name: 'Projects list as CSV' }));
     expect(http.download).toHaveBeenLastCalledWith(
       '/exports/dashboard',
-      expect.objectContaining({ query: expect.objectContaining({ category: 'B', format: 'csv' }) }),
+      expect.objectContaining({
+        query: expect.objectContaining({ category: ['A', 'B'], type: ['NM', 'Unmapped'], format: 'csv' }),
+      }),
     );
 
     await user.click(screen.getByRole('button', { name: 'Export' }));
     await user.click(await screen.findByRole('menuitem', { name: 'Registration register as XLSX' }));
     expect(http.download).toHaveBeenLastCalledWith(
       '/exports/project-registration',
-      expect.objectContaining({ query: expect.objectContaining({ category: 'B', format: 'xlsx' }) }),
+      // `type` there too (P31); Unmapped is a 422 on that endpoint, so it is not sent.
+      expect.objectContaining({ query: expect.objectContaining({ category: ['A', 'B'], type: ['NM'], format: 'xlsx' }) }),
     );
   });
 

@@ -76,6 +76,7 @@ from sqlalchemy.orm import selectinload
 import domain_constants as dc
 from api.db import get_db
 from api.deps import principal_can, require_permission
+from api.query_params import CategoryListQuery, TypeListQuery
 from core.principal import Principal
 from core.rbac import Action, Surface
 from models.audit import AuditLogEntry
@@ -84,10 +85,8 @@ from models.engineer import Engineer
 from models.enums import (
     NON_SCHEDULABLE_STATUSES,
     LabRegion,
-    ProjectCategory,
     ProjectPriority,
     ProjectStatus,
-    ProjectType,
     WorkflowStepKind,
     WorkflowStepStatus,
 )
@@ -106,6 +105,7 @@ from schemas.gantt import (
 from schemas.project import ProjectRead
 from services.active_run import slip_weeks, step_kinds_for_run
 from services.audit_helpers import project_audit_state
+from services.category_type_filter import category_type_filter
 from services.hub_scope import (
     global_hub_filter,
     hub_scope_filter,
@@ -220,8 +220,8 @@ async def get_gantt(
     # tail of the scoped list; reject it with 422.
     offset: Annotated[int, Query(ge=0)] = 0,
     q: Annotated[str | None, Query(max_length=Q_MAX_LENGTH)] = None,
-    category: ProjectCategory | None = None,
-    type_: Annotated[ProjectType | None, Query(alias="type")] = None,
+    category: CategoryListQuery = None,
+    type_: TypeListQuery = None,
     status_: ProjectStatus | None = None,
     leader_engineer_id: uuid.UUID | None = None,
     current_step: Annotated[str | None, Query(max_length=STEP_CODE_MAX_LENGTH)] = None,
@@ -300,10 +300,10 @@ async def get_gantt(
     if project_id is not None:
         stmt = stmt.where(Project.id == project_id)
     # P13-T13: toolbar filters, all bound parameters (no SQL interpolation).
-    if category is not None:
-        stmt = stmt.where(Project.category == category)
-    if type_ is not None:
-        stmt = stmt.where(Project.type == type_)
+    # P31: OR within `category` / `type`, AND across; ANDed with the scope.
+    selection = category_type_filter(category, type_)
+    if selection is not None:
+        stmt = stmt.where(selection)
     if status_ is not None:
         stmt = stmt.where(Project.status == status_)
     if leader_engineer_id is not None:

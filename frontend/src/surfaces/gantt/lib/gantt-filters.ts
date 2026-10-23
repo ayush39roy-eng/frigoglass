@@ -17,8 +17,9 @@ export const SEARCH_MAX_LENGTH = 100;
 
 export interface GanttFilterState {
   q: string;
-  category: ProjectCategory | null;
-  type: ProjectType | null;
+  /** P31: multi-select, sent as repeated params (OR); empty = all. URL state on the page. */
+  category: ProjectCategory[];
+  type: ProjectType[];
   status: ProjectStatus | null;
   leaderEngineerId: string | null;
   currentStep: string | null;
@@ -28,8 +29,8 @@ export interface GanttFilterState {
 
 export const DEFAULT_GANTT_FILTERS: GanttFilterState = {
   q: '',
-  category: null,
-  type: null,
+  category: [],
+  type: [],
   status: null,
   leaderEngineerId: null,
   currentStep: null,
@@ -40,8 +41,8 @@ export const DEFAULT_GANTT_FILTERS: GanttFilterState = {
 export function hasActiveFilters(f: GanttFilterState): boolean {
   return (
     f.q.trim() !== '' ||
-    f.category !== null ||
-    f.type !== null ||
+    f.category.length > 0 ||
+    f.type.length > 0 ||
     f.status !== null ||
     f.leaderEngineerId !== null ||
     f.currentStep !== null ||

@@ -24,6 +24,14 @@ import { formatInteger } from '@/lib/format';
 import { SURFACES } from '@/app/nav';
 import { effectivePendingEdits, useScenarioStore } from '@/stores/scenario';
 import { usePermission, useSessionStore } from '@/stores/session';
+import { MultiChipFilter } from '@/components/shared/multi-chip-filter';
+import {
+  CATEGORY_CHIP_OPTIONS,
+  selectionParam,
+  TYPE_CHIP_OPTIONS,
+  useCategoryTypeParams,
+} from '@/lib/multi-select-filter';
+import type { ProjectCategory, ProjectType } from '@/types/enums';
 
 import { AccessNotice, WriteForbiddenNotice } from './components/access-notice';
 import { FxRateEditor } from './components/fx-rate-editor';
@@ -33,10 +41,8 @@ import { MatrixViewPanel } from './components/matrix-view-panel';
 import { ScoreChartsRow } from './components/score-charts';
 import { CompareBar, CompareDialog } from './components/compare-dialog';
 import {
-  CATEGORY_CHIPS,
   DEFAULT_MATRIX_VIEW,
   STATUS_CHIPS,
-  TYPE_CHIPS,
   activeFilterCount,
   canEditFxRate,
   isDefaultView,
@@ -176,12 +182,23 @@ function MatrixSurface(): React.JSX.Element {
   const [currency, setCurrency] = React.useState<MatrixCurrencyCode>('EUR');
   // P12 (ADR 0020): the hub is the global header filter (was a local select).
   const { hubId, region } = useHubFilter();
-  const [view, setView] = React.useState<MatrixViewState>(DEFAULT_MATRIX_VIEW);
+  const [localView, setView] = React.useState<MatrixViewState>(DEFAULT_MATRIX_VIEW);
+  // P31: Category / Type are multi-select URL state (`?category=A%2B&type=NM`,
+  // old single-value links still parse), shared by the grid and the board.
+  const chips = useCategoryTypeParams();
+  const view = React.useMemo<MatrixViewState>(
+    () => ({ ...localView, category: chips.categories, type: chips.types }),
+    [localView, chips.categories, chips.types],
+  );
   const debouncedQ = useDebouncedValue(view.q, 300).trim();
+  const { setCategories, setTypes, clear: clearChips } = chips;
   const setViewField = React.useCallback(
-    <K extends keyof MatrixViewState>(key: K, value: MatrixViewState[K]) =>
-      setView((v) => ({ ...v, [key]: value })),
-    [],
+    <K extends keyof MatrixViewState>(key: K, value: MatrixViewState[K]) => {
+      if (key === 'category') setCategories(value as ProjectCategory[]);
+      else if (key === 'type') setTypes(value as ProjectType[]);
+      else setView((v) => ({ ...v, [key]: value }));
+    },
+    [setCategories, setTypes],
   );
   const isAdmin = canEditFxRate(useSessionStore((s) => s.me?.roles));
   const [editRow, setEditRow] = React.useState<PriorityMatrixRow | null>(null);
@@ -195,8 +212,8 @@ function MatrixSurface(): React.JSX.Element {
   const serverFilters = {
     hubId: hubId ?? undefined,
     region: region ?? undefined,
-    category: view.category ?? undefined,
-    type: view.type ?? undefined,
+    category: selectionParam(view.category),
+    type: selectionParam(view.type),
     status: view.status ?? undefined,
     q: debouncedQ === '' ? undefined : debouncedQ,
   };
@@ -281,15 +298,19 @@ function MatrixSurface(): React.JSX.Element {
     [view.category, view.type, view.status, view.q, setSearch],
   );
   // On the board only the shared filters count (the band and the Hub / Leader text narrow the grid only).
-  const sharedFilterCount = [view.category, view.type, view.status].filter((v) => v !== null).length + (view.q.trim() !== '' ? 1 : 0);
+  const sharedFilterCount =
+    (view.category.length > 0 ? 1 : 0) +
+    (view.type.length > 0 ? 1 : 0) +
+    (view.status !== null ? 1 : 0) +
+    (view.q.trim() !== '' ? 1 : 0);
   const panelFilterCount = onBoard ? sharedFilterCount : activeFilterCount(view);
   // P21-T05 fix: the board's toolbar lives in the View panel on wide screens.
   const [boardToolbarSlot, setBoardToolbarSlot] = React.useState<HTMLDivElement | null>(null);
   const isFiltered =
     hubId !== null ||
     region !== null ||
-    view.category !== null ||
-    view.type !== null ||
+    view.category.length > 0 ||
+    view.type.length > 0 ||
     view.status !== null ||
     view.band !== null ||
     view.capacityFill ||
@@ -319,8 +340,9 @@ function MatrixSurface(): React.JSX.Element {
 
   const resetView = React.useCallback(() => {
     setView(DEFAULT_MATRIX_VIEW);
+    clearChips();
     setCurrency('EUR');
-  }, []);
+  }, [clearChips]);
   // Session table first (ADR 0010), server 403 second.
   const permission = usePermission('matrix');
   const canEdit = permission.write && !writeForbidden;
@@ -457,7 +479,9 @@ function MatrixSurface(): React.JSX.Element {
                       currency,
                       hub_id: hubId ?? undefined,
                       region: region ?? undefined,
-                      category: view.category ?? undefined,
+                      // P31: the export carries the multi-select (repeated params).
+                      category: selectionParam(view.category),
+                      type: selectionParam(view.type),
                     }}
                     fallbackFilename="matrix-export"
                   />
@@ -467,8 +491,20 @@ function MatrixSurface(): React.JSX.Element {
             )}
             filters={
               <>
-                <ChipFilter label="Cat" value={view.category} options={CATEGORY_CHIPS} onChange={(v) => setViewField('category', v)} />
-                <ChipFilter label="Type" value={view.type} options={TYPE_CHIPS} onChange={(v) => setViewField('type', v)} />
+                <MultiChipFilter
+                  label="Category"
+                  options={CATEGORY_CHIP_OPTIONS}
+                  value={view.category}
+                  onChange={(v) => setViewField('category', v)}
+                  data-testid="matrix-category-chips"
+                />
+                <MultiChipFilter
+                  label="Type"
+                  options={TYPE_CHIP_OPTIONS}
+                  value={view.type}
+                  onChange={(v) => setViewField('type', v)}
+                  data-testid="matrix-type-chips"
+                />
                 <div className="flex max-w-full items-center gap-2 overflow-x-auto">
                   <span className="text-2xs font-bold uppercase tracking-wider text-text-subtle">Hub</span>
                   <CountrySegmented />

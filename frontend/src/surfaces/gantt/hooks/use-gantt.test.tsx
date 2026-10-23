@@ -27,6 +27,21 @@ function makeWrapper() {
 beforeEach(() => vi.clearAllMocks());
 
 describe('useGantt', () => {
+  it('P31: keys category / type SORTED, sends them in the given order', async () => {
+    vi.mocked(api.fetchGantt).mockResolvedValue({
+      has_active_schedule_run: true,
+      schedule_run_version: 3,
+      total_count: 0,
+      rows: [],
+      weekly_active_counts: [],
+    });
+    const { client, Wrapper } = makeWrapper();
+    const { result } = renderHook(() => useGantt({ category: ['C', 'A'], type: ['SER', 'AC'] }), { wrapper: Wrapper });
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(vi.mocked(api.fetchGantt).mock.calls[0]![0]).toEqual({ category: ['C', 'A'], type: ['SER', 'AC'] });
+    expect(client.getQueryCache().getAll()[0]!.queryKey).toEqual(['gantt', { category: ['A', 'C'], type: ['AC', 'SER'] }]);
+  });
+
   it('re-fetches when the hub filter changes (hubId is part of the query key)', async () => {
     vi.mocked(api.fetchGantt).mockResolvedValue({
       has_active_schedule_run: true,

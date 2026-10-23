@@ -11,16 +11,9 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
-import {
-  PROJECT_CATEGORIES,
-  UI_PROJECT_STATUSES,
-  PROJECT_TYPES,
-  PROJECT_TYPE_LABELS,
-  type ProjectCategory,
-  type ProjectPriority,
-  type ProjectStatus,
-  type ProjectType,
-} from '@/types/enums';
+import { MultiChipFilter } from '@/components/shared/multi-chip-filter';
+import { CATEGORY_CHIP_OPTIONS, TYPE_CHIP_OPTIONS } from '@/lib/multi-select-filter';
+import { UI_PROJECT_STATUSES, type ProjectPriority, type ProjectStatus } from '@/types/enums';
 
 import type { GanttFacets, GanttSort } from '../api/types';
 import {
@@ -34,6 +27,7 @@ import {
 /**
  * P13-T13 Gantt toolbar (API_CONTRACT_P13 §7; mock-up image 12): search,
  * Category / Type / Status / Leader / Step filters, sort, P1–P4 / Queue tabs.
+ * P31: Category and Type are multi-select chip rows (`MultiChipFilter`).
  * Every filter is a SERVER param — this component only edits the filter state;
  * it never narrows rows itself.
  */
@@ -132,22 +126,6 @@ export function GanttFilterBar({ filters, onChange, facets }: GanttToolbarProps)
         </div>
       </div>
       <ToolbarSelect
-        label="Category"
-        allLabel="All categories"
-        value={filters.category}
-        onChange={(v) => set('category', v as ProjectCategory | null)}
-        options={PROJECT_CATEGORIES.map((c) => ({ value: c, label: c }))}
-        className="h-8 w-32"
-      />
-      <ToolbarSelect
-        label="Type"
-        allLabel="All types"
-        value={filters.type}
-        onChange={(v) => set('type', v as ProjectType | null)}
-        options={PROJECT_TYPES.map((t) => ({ value: t, label: `${t} — ${PROJECT_TYPE_LABELS[t]}` }))}
-        className="h-8 w-32"
-      />
-      <ToolbarSelect
         label="Status"
         allLabel="All statuses"
         value={filters.status}
@@ -193,6 +171,23 @@ export function GanttFilterBar({ filters, onChange, facets }: GanttToolbarProps)
           Clear filters
         </Button>
       ) : null}
+      {/* P31: multi-select category / type "tabs" (repeated server params). */}
+      <div className="flex w-full flex-col gap-2" data-testid="gantt-chip-filters">
+        <MultiChipFilter
+          label="Category"
+          options={CATEGORY_CHIP_OPTIONS}
+          value={filters.category}
+          onChange={(next) => set('category', next)}
+          data-testid="gantt-category-chips"
+        />
+        <MultiChipFilter
+          label="Type"
+          options={TYPE_CHIP_OPTIONS}
+          value={filters.type}
+          onChange={(next) => set('type', next)}
+          data-testid="gantt-type-chips"
+        />
+      </div>
     </div>
   );
 }

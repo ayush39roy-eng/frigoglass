@@ -30,7 +30,10 @@ import {
   useStatusOverview,
   useActiveScheduleRun,
   useRegionSummary,
+  useCrossFilterBreakdowns,
 } from './hooks/use-dashboard';
+import { useDashboardSelection } from './lib/selection';
+import { DashboardSelectionBar } from './components/dashboard-selection-bar';
 import { AccessNotice } from './components/access-notice';
 import { ExecutiveView } from './components/executive/executive-view';
 import { DashboardViewToggle } from './components/executive/view-toggle';
@@ -132,23 +135,38 @@ export default function DashboardPage(): React.JSX.Element {
   // the server filters and totals (I9/I19/I23), the browser only renders.
   // P13 (ADR 0025): and the country filter beside it.
   const { hubId, region } = useHubFilter();
-  const withinYear = useCompletingWithinYear(hubId, region);
-  const pipelineTotals = usePipelineTotals(hubId, region);
-  const statusOverview = useStatusOverview(hubId, region);
-  const hubTypePipeline = useHubTypePipeline(hubId, region);
+  // P31: the Dashboard-wide category / type selection (URL), sent with every
+  // Dashboard request in both views; the donuts and the bar below edit it.
+  const selection = useDashboardSelection();
+  const withinYear = useCompletingWithinYear(hubId, region, selection);
+  const pipelineTotals = usePipelineTotals(hubId, region, selection);
+  const statusOverview = useStatusOverview(hubId, region, selection);
+  const hubTypePipeline = useHubTypePipeline(hubId, region, selection);
   // Per-country chips under the KPI cards (contract §2). Optional enrichment:
   // the cards render without it, so its error never blanks a card.
-  const regionSummary = useRegionSummary(hubId, region);
+  const regionSummary = useRegionSummary(hubId, region, selection);
   // P13-T10 (API_CONTRACT_P13 §5): served breakdowns + completing Hub × Type.
-  const analytics = useDashboardAnalytics(hubId, region);
+  const analytics = useDashboardAnalytics(hubId, region, selection);
+  // P31 cross-filter: each selectable donut's own served distribution.
+  const breakdowns = useCrossFilterBreakdowns(hubId, region, selection);
   // A hub / country change keeps the previous figures on screen (placeholderData)
   // so the page holds its scroll position; dim it until every section is current.
   // …and hold the section the reader is on in place while the layout settles.
   const sectionsRef = React.useRef<HTMLDivElement>(null);
-  useKeepScrollAnchor(sectionsRef, `${hubId ?? ''}|${region ?? ''}`);
-  const refreshing = [withinYear, pipelineTotals, statusOverview, hubTypePipeline, regionSummary, analytics].some(
-    (q) => q.isPlaceholderData,
+  useKeepScrollAnchor(
+    sectionsRef,
+    `${hubId ?? ''}|${region ?? ''}|${selection.categories.join(',')}|${selection.types.join(',')}`,
   );
+  const refreshing = [
+    withinYear,
+    pipelineTotals,
+    statusOverview,
+    hubTypePipeline,
+    regionSummary,
+    analytics,
+    breakdowns.type.analytics,
+    breakdowns.category.analytics,
+  ].some((q) => q.isPlaceholderData);
   const activeRun = useActiveScheduleRun(withinYear.data?.has_active_schedule_run === true);
   const motionTokens = useMotionTokens();
 
@@ -260,6 +278,8 @@ export default function DashboardPage(): React.JSX.Element {
         {denied ? (
           <AccessNotice kind={denied} />
         ) : (
+          <>
+          <DashboardSelectionBar selection={selection} />
           <motion.div
             className={cn('flex flex-col gap-s8 transition-opacity duration-base', refreshing && 'opacity-60')}
             aria-busy={refreshing}
@@ -291,6 +311,8 @@ export default function DashboardPage(): React.JSX.Element {
                 activeRun={activeRun.data}
                 hubId={hubId}
                 region={region}
+                selection={selection}
+                breakdowns={breakdowns}
               />
             ) : (
               <>
@@ -406,7 +428,14 @@ export default function DashboardPage(): React.JSX.Element {
               >
                 {(data) => (
                   <React.Suspense fallback={<PanelSkeleton height="h-[40rem]" />}>
-                    <AnalyticsBreakdown data={data} pipelineTotal={pipelineTotals.data?.total_count} />
+                    <AnalyticsBreakdown
+                      data={data}
+                      pipelineTotal={pipelineTotals.data?.total_count}
+                      typeBuckets={breakdowns.type.analytics.data?.by_type}
+                      categoryBuckets={breakdowns.category.analytics.data?.by_category}
+                      categoryTotal={breakdowns.category.totals.data?.total_count}
+                      selection={selection}
+                    />
                   </React.Suspense>
                 )}
               </SectionBoundary>
@@ -419,6 +448,7 @@ export default function DashboardPage(): React.JSX.Element {
               </>
             )}
           </motion.div>
+          </>
         )}
       </div>
     </div>

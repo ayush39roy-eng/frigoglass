@@ -26,16 +26,23 @@ import { cn } from '@/lib/utils';
 import { useDebouncedValue } from '@/lib/use-debounced-value';
 import { useHubFilter } from '@/stores/hub-filter';
 import { usePermission, useSessionStore } from '@/stores/session';
+import { MultiChipFilter } from '@/components/shared/multi-chip-filter';
 import {
-  PROJECT_CATEGORIES,
+  CATEGORY_CHIP_OPTIONS_WITH_UNMAPPED,
+  CATEGORY_FILTER_VALUES,
+  selectionParam,
+  TYPE_CHIP_OPTIONS_WITH_UNMAPPED,
+  TYPE_FILTER_VALUES,
+  UNMAPPED_TYPE,
+  useCategoryTypeParams,
+  type CategoryFilterValue,
+  type TypeFilterValue,
+} from '@/lib/multi-select-filter';
+import {
   PROJECT_PRIORITIES,
   UI_PROJECT_STATUSES,
-  PROJECT_TYPE_LABELS,
-  PROJECT_TYPES,
-  type ProjectCategory,
   type ProjectPriority,
   type ProjectStatus,
-  type ProjectType,
 } from '@/types/enums';
 
 import { ALL, FilterSelect } from '@/surfaces/dashboard/components/project-breakdown';
@@ -84,16 +91,16 @@ const ProjectsCardGrid = React.lazy(async () => ({
 type View = 'list' | 'cards';
 type Sort = 'name' | 'priority';
 
+/** P31: category and type are NOT here — they are multi-select URL state
+ *  (`?category=A%2B&category=B&type=NM`, `useCategoryTypeParams`). */
 interface Filters {
-  category: string;
-  type: string;
   status_: string;
   priority: string;
   leader: string;
   step: string;
 }
 
-const EMPTY_FILTERS: Filters = { category: ALL, type: ALL, status_: ALL, priority: ALL, leader: ALL, step: ALL };
+const EMPTY_FILTERS: Filters = { status_: ALL, priority: ALL, leader: ALL, step: ALL };
 
 /** Server limit on `q` (API_CONTRACT_P13 §3). */
 const SEARCH_MAX = 100;
@@ -120,6 +127,8 @@ interface Highlight {
 export default function ProjectsPage(): React.JSX.Element {
   const queryClient = useQueryClient();
   const [filters, setFilters] = React.useState<Filters>(EMPTY_FILTERS);
+  // `/dashboard/projects` is a Dashboard endpoint: `Unmapped` is accepted on both lists (P31).
+  const chips = useCategoryTypeParams<TypeFilterValue, CategoryFilterValue>(TYPE_FILTER_VALUES, CATEGORY_FILTER_VALUES);
   const [search, setSearch] = React.useState('');
   const [sort, setSort] = React.useState<Sort>('name');
   const [view, setView] = React.useState<View>('list');
@@ -155,19 +164,19 @@ export default function ProjectsPage(): React.JSX.Element {
   const params = React.useMemo<ProjectFilterParams>(() => {
     const next: ProjectFilterParams = {
       hub_id: hubId ?? undefined,
-      category: pick<ProjectCategory>(filters.category),
+      category: selectionParam(chips.categories),
       status_: pick<ProjectStatus>(filters.status_),
       priority: pick<ProjectPriority>(filters.priority),
     };
     // Optional params only when set, so the unfiltered key matches the Dashboard's.
     if (region) next.region = region;
     if (debouncedSearch) next.q = debouncedSearch.slice(0, SEARCH_MAX);
-    if (filters.type !== ALL) next.type = filters.type as ProjectType;
+    if (chips.types.length > 0) next.type = chips.types;
     if (filters.leader !== ALL) next.leader_engineer_id = filters.leader;
     if (filters.step !== ALL) next.current_step = filters.step;
     if (sort !== 'name') next.sort = sort;
     return next;
-  }, [filters, hubId, region, debouncedSearch, sort]);
+  }, [filters, hubId, region, debouncedSearch, sort, chips.categories, chips.types]);
 
   const query = useDashboardProjects(params);
   const facets = useProjectFacets(hubId, region);
@@ -179,14 +188,21 @@ export default function ProjectsPage(): React.JSX.Element {
       .map((h) => ({ value: h.id, label: hubPickerLabel(h, hubsQuery.data) }));
   }, [me, hubsQuery.data, region]);
 
-  const hasLocalFilter = vipOnly || debouncedSearch !== '' || Object.values(filters).some((v) => v !== ALL);
+  const hasLocalFilter =
+    vipOnly ||
+    debouncedSearch !== '' ||
+    Object.values(filters).some((v) => v !== ALL) ||
+    chips.categories.length > 0 ||
+    chips.types.length > 0;
   const isFiltered = hasLocalFilter || hubId !== null || region !== null;
 
   const set = (key: keyof Filters) => (next: string) => setFilters((prev) => ({ ...prev, [key]: next }));
+  const clearChips = chips.clear;
   const clearLocal = (): void => {
     setFilters(EMPTY_FILTERS);
     setSearch('');
     setVipOnly(false);
+    clearChips();
   };
 
   // ---- Drawer ------------------------------------------------------------
@@ -277,11 +293,11 @@ export default function ProjectsPage(): React.JSX.Element {
         filters: {
           hub_id: params.hub_id,
           q: params.q,
-          category: params.category,
           status_: params.status_,
           priority: params.priority,
-          // `type_` on this endpoint; "Unmapped" is a register-only sentinel.
-          type_: params.type === 'Unmapped' ? undefined : params.type,
+          // P31: `type` (repeated) on this endpoint too; `Unmapped` is a 422 there, so it is left out.
+          category: selectionParam((params.category ?? []).filter((c) => c !== UNMAPPED_TYPE)),
+          type: selectionParam((params.type ?? []).filter((t) => t !== UNMAPPED_TYPE)),
         },
         fallbackFilename: 'project-registration-export',
       });
@@ -379,18 +395,6 @@ export default function ProjectsPage(): React.JSX.Element {
               options={hubOptions}
             />
             <FilterSelect
-              label="Category"
-              value={filters.category}
-              onChange={set('category')}
-              options={PROJECT_CATEGORIES.map((c) => ({ value: c, label: c }))}
-            />
-            <FilterSelect
-              label="Type"
-              value={filters.type}
-              onChange={set('type')}
-              options={PROJECT_TYPES.map((t) => ({ value: t, label: `${t} · ${PROJECT_TYPE_LABELS[t]}` }))}
-            />
-            <FilterSelect
               label="Status"
               value={filters.status_}
               onChange={set('status_')}
@@ -452,6 +456,24 @@ export default function ProjectsPage(): React.JSX.Element {
               Clear
             </Button>
           ) : null}
+        </div>
+
+        {/* P31: multi-select category / type "tabs" (URL state, sent as repeated params). */}
+        <div className="flex flex-col gap-2" data-testid="projects-chip-filters">
+          <MultiChipFilter
+            label="Category"
+            options={CATEGORY_CHIP_OPTIONS_WITH_UNMAPPED}
+            value={chips.categories}
+            onChange={chips.setCategories}
+            data-testid="projects-category-chips"
+          />
+          <MultiChipFilter
+            label="Type"
+            options={TYPE_CHIP_OPTIONS_WITH_UNMAPPED}
+            value={chips.types}
+            onChange={chips.setTypes}
+            data-testid="projects-type-chips"
+          />
         </div>
 
         <ReadOnlyNotice surface="project_registration" what="Registering or editing projects" />

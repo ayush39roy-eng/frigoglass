@@ -78,6 +78,8 @@ vi.mock('@/lib/api/vip', async (importOriginal) => ({
   useSetProjectVip: () => vipPin,
 }));
 
+vi.mock('@/lib/download', () => ({ saveBlob: vi.fn() }));
+
 import MatrixPage from './MatrixPage';
 import { P13_MATRIX_ROW_DEFAULTS, P25_FILL_DEFAULTS, testDimensionScores, testRubric } from './test-fixtures';
 
@@ -276,9 +278,9 @@ describe('MatrixPage', () => {
       const panel = screen.getByTestId('matrix-view-panel');
       expect(panel).toHaveAttribute('data-stuck', 'false');
       expect(panel.className).toContain('sticky');
-      expect(screen.getByRole('radiogroup', { name: 'Cat' })).toBeInTheDocument();
+      expect(screen.getByRole('group', { name: 'Category' })).toBeInTheDocument();
 
-      await user.click(within(screen.getByRole('radiogroup', { name: 'Cat' })).getByRole('radio', { name: 'B' }));
+      await user.click(within(screen.getByRole('group', { name: 'Category' })).getByRole('button', { name: 'B' }));
 
       const sentinel = screen.getByTestId('matrix-view-sentinel');
       vi.spyOn(sentinel, 'getBoundingClientRect').mockReturnValue({ top: -40 } as DOMRect);
@@ -286,13 +288,13 @@ describe('MatrixPage', () => {
       await waitFor(() => expect(panel).toHaveAttribute('data-stuck', 'true'));
       expect(panel.className).toContain('shadow-pop');
       expect(panel.className).toContain('py-2');
-      expect(screen.queryByRole('radiogroup', { name: 'Cat' })).not.toBeInTheDocument();
+      expect(screen.queryByRole('group', { name: 'Category' })).not.toBeInTheDocument();
 
       const toggle = screen.getByRole('button', { name: /Filters \(1\)/ });
       expect(toggle).toHaveAttribute('aria-expanded', 'false');
       await user.click(toggle);
       expect(toggle).toHaveAttribute('aria-expanded', 'true');
-      expect(screen.getByRole('radiogroup', { name: 'Cat' })).toBeInTheDocument();
+      expect(screen.getByRole('group', { name: 'Category' })).toBeInTheDocument();
 
       vi.spyOn(sentinel, 'getBoundingClientRect').mockReturnValue({ top: 20 } as DOMRect);
       fireEvent.scroll(window);
@@ -401,7 +403,7 @@ describe('MatrixPage', () => {
       expect(screen.getByTestId('compare-message')).toHaveTextContent('Up to 5 projects can be compared');
 
       // A filter change keeps the selection.
-      await user.click(within(screen.getByRole('radiogroup', { name: 'Cat' })).getByRole('radio', { name: 'B' }));
+      await user.click(within(screen.getByRole('group', { name: 'Category' })).getByRole('button', { name: 'B' }));
       expect(screen.getByRole('button', { name: 'Compare (5)' })).toBeInTheDocument();
 
       await user.click(screen.getByRole('button', { name: 'Clear' }));
@@ -761,20 +763,46 @@ describe('MatrixPage', () => {
       expect(within(rows[2]).getByTitle('Not scored — no rank')).toBeInTheDocument();
     });
 
+    it('P31: reads category / type from the URL (legacy single value too) and the export carries both lists', async () => {
+      const fetchMock = vi.fn((_input: string | URL) => Promise.resolve(new Response('a', { status: 200 })));
+      vi.stubGlobal('fetch', fetchMock);
+      try {
+        const user = userEvent.setup();
+        renderWithProviders(<MatrixPage />, { route: '/matrix?category=B&type=NM&type=CO' });
+        expect(hooks.usePriorityMatrix).toHaveBeenLastCalledWith(
+          expect.objectContaining({ category: ['B'], type: ['NM', 'CO'] }),
+        );
+        expect(within(screen.getByRole('group', { name: 'Type' })).getByRole('button', { name: 'New Model' })).toHaveAttribute(
+          'aria-pressed',
+          'true',
+        );
+        await user.click(screen.getByRole('button', { name: /^Download/ }));
+        await user.click(await screen.findByRole('menuitem', { name: 'Download as CSV' }));
+        await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+        const url = new URL(String(fetchMock.mock.calls.at(-1)?.[0]));
+        expect(url.pathname).toBe('/exports/matrix');
+        expect(url.searchParams.getAll('category')).toEqual(['B']);
+        expect(url.searchParams.getAll('type')).toEqual(['NM', 'CO']);
+      } finally {
+        vi.unstubAllGlobals();
+      }
+    });
+
     it('sends the Cat / Type / Status chips and the debounced Project search to the server', async () => {
       vi.useFakeTimers({ shouldAdvanceTime: true });
       try {
         const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime.bind(vi) });
         renderWithProviders(<MatrixPage />);
-        await user.click(within(screen.getByRole('radiogroup', { name: 'Cat' })).getByRole('radio', { name: 'B' }));
-        await user.click(within(screen.getByRole('radiogroup', { name: 'Type' })).getByRole('radio', { name: 'CO' }));
+        await user.click(within(screen.getByRole('group', { name: 'Category' })).getByRole('button', { name: 'B' }));
+        await user.click(within(screen.getByRole('group', { name: 'Category' })).getByRole('button', { name: 'A+' }));
+        await user.click(within(screen.getByRole('group', { name: 'Type' })).getByRole('button', { name: 'Cost Optimization' }));
         await user.click(within(screen.getByRole('radiogroup', { name: 'Status' })).getByRole('radio', { name: 'In Queue' }));
         await user.type(screen.getByRole('searchbox', { name: 'Filter by project name or code' }), 'evap');
         await act(async () => {
           await vi.advanceTimersByTimeAsync(400);
         });
         expect(hooks.usePriorityMatrix).toHaveBeenLastCalledWith(
-          expect.objectContaining({ category: 'B', type: 'CO', status: 'In Queue', q: 'evap' }),
+          expect.objectContaining({ category: ['A+', 'B'], type: ['CO'], status: 'In Queue', q: 'evap' }),
         );
       } finally {
         vi.useRealTimers();
@@ -801,7 +829,7 @@ describe('MatrixPage', () => {
       expect(screen.queryByRole('columnheader', { name: 'Leader' })).not.toBeInTheDocument();
       await user.click(screen.getByRole('button', { name: 'Detailed view' }));
       expect(screen.getByRole('columnheader', { name: 'Leader' })).toBeInTheDocument();
-      await user.click(within(screen.getByRole('radiogroup', { name: 'Type' })).getByRole('radio', { name: 'CO' }));
+      await user.click(within(screen.getByRole('group', { name: 'Type' })).getByRole('button', { name: 'Cost Optimization' }));
       await user.click(screen.getByRole('radio', usd));
 
       await user.click(screen.getByRole('button', { name: 'Reset view' }));

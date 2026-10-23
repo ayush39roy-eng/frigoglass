@@ -36,7 +36,8 @@ export interface ExportSource {
   label: string;
   hint?: string;
   path: string;
-  filters: Record<string, string | undefined>;
+  /** P31: a list is sent as a repeated param. */
+  filters: Record<string, string | readonly string[] | undefined>;
   fallbackFilename: string;
 }
 

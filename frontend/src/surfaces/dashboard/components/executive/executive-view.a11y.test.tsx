@@ -135,8 +135,14 @@ const status: StatusOverview = {
 };
 
 const analytics: DashboardAnalytics = {
-  by_type: [{ key: 'CO', count: 89, share_pct: 37.71 }],
-  by_category: [],
+  by_type: [
+    { key: 'CO', count: 89, share_pct: 37.71 },
+    { key: 'RC', count: 63, share_pct: 26.69 },
+  ],
+  by_category: [
+    { key: 'A+', count: 50, share_pct: 21.19 },
+    { key: 'B', count: 102, share_pct: 43.22 },
+  ],
   by_hub: [],
   by_reg_year: [],
   completing_hub_type: [],
@@ -159,6 +165,18 @@ describe('ExecutiveView a11y (P28)', () => {
         activeRun={null}
         hubId={null}
         region={null}
+        selection={{
+          categories: ['A+'],
+          types: [],
+          setCategories: vi.fn(),
+          setTypes: vi.fn(),
+          clear: vi.fn(),
+          active: true,
+        }}
+        breakdowns={{
+          type: { analytics: ready(analytics), totals: ready(totals) },
+          category: { analytics: ready(analytics), totals: ready(totals) },
+        }}
       />,
     );
 
@@ -166,7 +184,9 @@ describe('ExecutiveView a11y (P28)', () => {
     expect(await screen.findByTestId('exec-pipeline-donut')).toBeInTheDocument();
     expect(await screen.findByTestId('exec-status-donut')).toBeInTheDocument();
     expect(await screen.findByTestId('exec-priority-delivery')).toBeInTheDocument();
-    expect(await screen.findByTestId('exec-type-chart')).toBeInTheDocument();
+    // P31: the type and category donuts (with a category selected, so slices dim).
+    expect(await screen.findByTestId('exec-type-donut')).toBeInTheDocument();
+    expect(await screen.findByTestId('exec-category-donut')).toBeInTheDocument();
     expect(screen.getByTestId('exec-kpi-strip')).toBeInTheDocument();
     expect(screen.getByTestId('exec-risks-card')).toBeInTheDocument();
     expect(screen.getByTestId('exec-upcoming-card')).toBeInTheDocument();
@@ -183,5 +203,40 @@ describe('ExecutiveView a11y (P28)', () => {
     }
 
     expect(await seriousAxeViolations(container)).toEqual([]);
+  });
+
+  it('P31: the register rows behind Risks are requested with the Dashboard selection', async () => {
+    vipHook.useVipBoard.mockReturnValue(ready({ run_id: 'r', pillars: [], areas: [] }));
+    dashHooks.useDashboardProjects.mockReturnValue(ready({ total_count: 0, rows: [] }));
+    renderWithProviders(
+      <ExecutiveView
+        withinYear={ready(withinYear)}
+        pipelineTotals={ready(totals)}
+        statusOverview={ready(status)}
+        analytics={ready(analytics)}
+        activeRun={null}
+        hubId="h1"
+        region={null}
+        selection={{
+          categories: ['A+', 'A'],
+          types: ['NM'],
+          setCategories: vi.fn(),
+          setTypes: vi.fn(),
+          clear: vi.fn(),
+          active: true,
+        }}
+        breakdowns={{
+          type: { analytics: ready(analytics), totals: ready(totals) },
+          category: { analytics: ready(analytics), totals: ready(totals) },
+        }}
+      />,
+    );
+    expect(await screen.findByTestId('exec-type-donut')).toBeInTheDocument();
+    expect(dashHooks.useDashboardProjects).toHaveBeenLastCalledWith({
+      hub_id: 'h1',
+      region: undefined,
+      category: ['A+', 'A'],
+      type: ['NM'],
+    });
   });
 });

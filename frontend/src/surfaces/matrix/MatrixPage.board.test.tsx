@@ -81,14 +81,17 @@ function figures(p: ServerProject) {
   const band: ProjectPriority = pct >= 70 ? 'P1' : pct >= 55 ? 'P2' : pct >= 40 ? 'P3' : 'P4';
   return { dims, raw, pct, band };
 }
-type Query = Record<string, string | undefined>;
+type Query = Record<string, string | undefined> & { category?: string | string[]; type?: string | string[] };
+/** P31: `category` / `type` are repeated params (OR within, AND across). */
+const anyOf = (v: string | string[] | undefined, x: string): boolean =>
+  v === undefined || v.length === 0 || (typeof v === 'string' ? v === x : v.includes(x));
 function select(q: Query = {}): ServerProject[] {
   return projects.filter(
     (p) =>
       (scope === null || scope.includes(p.hub_id)) &&
       (!q.hub_id || q.hub_id === p.hub_id) &&
-      (!q.category || q.category === p.category) &&
-      (!q.type || q.type === p.type) &&
+      anyOf(q.category, p.category) &&
+      anyOf(q.type, p.type) &&
       (!q.status_ || q.status_ === p.status) &&
       (!q.q || p.name.toLowerCase().includes(q.q.toLowerCase())),
   );
@@ -385,11 +388,17 @@ describe('P21-T05 Matrix tabs', () => {
     expect(lastQuery('/priority-board')).toMatchObject({ status_: 'In Development' });
     expect(boardTotal()).toBe(grid);
 
-    // Category B narrows both.
-    await user.click(within(screen.getByRole('radiogroup', { name: 'Cat' })).getByRole('radio', { name: 'B' }));
-    await waitFor(() => expect(lastQuery('/priority-board')).toMatchObject({ status_: 'In Development', category: 'B' }));
+    // Category B narrows both (P31: a multi-select chip; repeated params).
+    await user.click(within(screen.getByRole('group', { name: 'Category' })).getByRole('button', { name: 'B' }));
+    await waitFor(() => expect(lastQuery('/priority-board')).toMatchObject({ status_: 'In Development', category: ['B'] }));
     await waitFor(() => expect(boardTotal()).toBe(1));
-    expect(lastQuery('/priorities')).toMatchObject({ status_: 'In Development', category: 'B' });
+    expect(lastQuery('/priorities')).toMatchObject({ status_: 'In Development', category: ['B'] });
+    // A second category ORs: A or B, on both views.
+    await user.click(within(screen.getByRole('group', { name: 'Category' })).getByRole('button', { name: 'A' }));
+    await waitFor(() => expect(lastQuery('/priority-board')).toMatchObject({ category: ['A', 'B'] }));
+    await waitFor(() => expect(boardTotal()).toBe(2));
+    expect(lastQuery('/priorities')).toMatchObject({ category: ['A', 'B'] });
+    await user.click(within(screen.getByRole('group', { name: 'Category' })).getByRole('button', { name: 'A' }));
     // The shared search reaches the board as q.
     await user.type(screen.getByRole('searchbox', { name: 'Search' }), 'beta');
     await waitFor(() => expect(lastQuery('/priority-board')).toMatchObject({ q: 'beta' }));

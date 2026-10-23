@@ -71,6 +71,7 @@ from models.enums import (
     ProjectStatus,
     ProjectType,
 )
+from services.category_type_filter import UNMAPPED, as_list
 
 if TYPE_CHECKING:
     from models.project import Project
@@ -90,7 +91,27 @@ ExportSheets = dict[str, tuple[list[str], list[dict[str, Any]]]]
 #: Celery's JSON task-argument serialization. Each builder function below
 #: parses its own expected keys back into the typed values the underlying
 #: router function actually wants.
-ExportFilters = dict[str, str | None]
+#: P31: a multi-select filter (`category`, `type_`) is stored as a bare string
+#: for one value (the pre-P31 shape) and a list for several.
+ExportFilters = dict[str, str | list[str] | None]
+
+#: A persisted multi-select filter value (see `ExportFilters`).
+_ListFilter = str | list[str] | None
+
+
+def _categories(value: _ListFilter, *, allow_unmapped: bool = False) -> list[Any]:
+    """A stored `category` filter as the route's list (pre-P31 bare string or
+    P31 list). `Unmapped` passes through only where the route admits it."""
+
+    return [
+        v if allow_unmapped and v == UNMAPPED else ProjectCategory(v) for v in as_list(value)
+    ]
+
+
+def _types(value: _ListFilter, *, allow_unmapped: bool = False) -> list[Any]:
+    """A stored `type_` filter as the route's list (see `_categories`)."""
+
+    return [v if allow_unmapped and v == UNMAPPED else ProjectType(v) for v in as_list(value)]
 
 
 # --------------------------------------------------------------------------
@@ -254,12 +275,12 @@ async def build_dashboard_sheets(
     principal: Principal,
     *,
     hub_id: str | None = None,
-    category: str | None = None,
+    category: _ListFilter = None,
     status_: str | None = None,
     priority: str | None = None,
     region: str | None = None,
     q: str | None = None,
-    type_: str | None = None,
+    type_: _ListFilter = None,
     leader_engineer_id: str | None = None,
     current_step: str | None = None,
     sort: str | None = None,
@@ -276,12 +297,12 @@ async def build_dashboard_sheets(
 
     result = await analytics_projects(
         hub_id=uuid.UUID(hub_id) if hub_id else None,
-        category=ProjectCategory(category) if category else None,
+        category=_categories(category, allow_unmapped=True),
         status_=ProjectStatus(status_) if status_ else None,
         priority=ProjectPriority(priority) if priority else None,
         region=LabRegion(region) if region else None,
         q=q,
-        type_=ProjectType(type_) if type_ else None,
+        type_=_types(type_, allow_unmapped=True),
         leader_engineer_id=uuid.UUID(leader_engineer_id) if leader_engineer_id else None,
         current_step=current_step,
         sort="priority" if sort == "priority" else "name",
@@ -322,8 +343,9 @@ async def build_matrix_sheets(
     *,
     currency: str | None = None,
     hub_id: str | None = None,
-    category: str | None = None,
+    category: _ListFilter = None,
     region: str | None = None,
+    type_: _ListFilter = None,
 ) -> ExportSheets:
     """The scoring grid (one column per active rubric dimension, ADR 0037),
     one row per project — Matrix's only tabular view.
@@ -334,7 +356,8 @@ async def build_matrix_sheets(
     rows_models = await list_priority_matrix(
         currency=CurrencyCode(currency) if currency else CurrencyCode.EUR,
         hub_id=uuid.UUID(hub_id) if hub_id else None,
-        category=ProjectCategory(category) if category else None,
+        category=_categories(category),
+        type_=_types(type_),
         region=LabRegion(region) if region else None,
         db=db,
         current_user=principal,
@@ -366,6 +389,8 @@ async def _fetch_all_gantt_rows(
     hub_id: uuid.UUID | None,
     project_id: uuid.UUID | None,
     region: LabRegion | None = None,
+    category: list[ProjectCategory] | None = None,
+    type_: list[ProjectType] | None = None,
 ) -> list[GanttProjectRow]:
     """`GET /gantt` paginates (`limit`/`offset`, max page size 500,
     `api/routers/gantt.py`) — an export of the "current view" must never
@@ -388,6 +413,8 @@ async def _fetch_all_gantt_rows(
             hub_id=hub_id,
             region=region,
             project_id=project_id,
+            category=category,
+            type_=type_,
             limit=page_size,
             offset=offset,
             db=db,
@@ -407,6 +434,8 @@ async def build_gantt_sheets(
     hub_id: str | None = None,
     project_id: str | None = None,
     region: str | None = None,
+    category: _ListFilter = None,
+    type_: _ListFilter = None,
 ) -> ExportSheets:
     """Flattened project x step rows — one row per workflow step (project-
     level fields repeated on every one of its steps), the natural tabular
@@ -423,6 +452,8 @@ async def build_gantt_sheets(
         hub_id=uuid.UUID(hub_id) if hub_id else None,
         project_id=uuid.UUID(project_id) if project_id else None,
         region=LabRegion(region) if region else None,
+        category=_categories(category),
+        type_=_types(type_),
     )
 
     headers = [
@@ -505,10 +536,10 @@ async def _fetch_all_projects(
     principal: Principal,
     *,
     hub_id: uuid.UUID | None,
-    category: ProjectCategory | None,
+    category: list[ProjectCategory],
     status_: ProjectStatus | None,
     priority: ProjectPriority | None,
-    type_: ProjectType | None,
+    type_: list[ProjectType],
     q: str | None = None,
 ) -> list[Project]:
     """Same "never silently truncate at one page" pagination loop as
@@ -546,10 +577,10 @@ async def build_project_registration_sheets(
     principal: Principal,
     *,
     hub_id: str | None = None,
-    category: str | None = None,
+    category: _ListFilter = None,
     status_: str | None = None,
     priority: str | None = None,
-    type_: str | None = None,
+    type_: _ListFilter = None,
     q: str | None = None,
 ) -> ExportSheets:
     from schemas.project import ProjectListItem
@@ -558,10 +589,10 @@ async def build_project_registration_sheets(
         db,
         principal,
         hub_id=uuid.UUID(hub_id) if hub_id else None,
-        category=ProjectCategory(category) if category else None,
+        category=_categories(category),
         status_=ProjectStatus(status_) if status_ else None,
         priority=ProjectPriority(priority) if priority else None,
-        type_=ProjectType(type_) if type_ else None,
+        type_=_types(type_),
         q=q,
     )
     headers, rows = rows_from_models([ProjectListItem.model_validate(p) for p in projects])

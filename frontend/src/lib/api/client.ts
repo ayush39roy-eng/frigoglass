@@ -53,9 +53,13 @@ export class ApiError extends Error {
   }
 }
 
+export type QueryParamValue = string | number | boolean | null | undefined | readonly string[];
+
 export interface ApiRequestOptions {
-  /** Query params — `undefined`/`null` values are dropped, others `String()`-ified. */
-  query?: Record<string, string | number | boolean | null | undefined> | undefined;
+  /** Query params — `undefined`/`null` values are dropped, others `String()`-ified.
+   *  P31: an array is sent as a REPEATED param (`?category=A%2B&category=B`), in
+   *  the given order; an empty array sends nothing (= no filter). */
+  query?: Record<string, QueryParamValue> | undefined;
   signal?: AbortSignal | null | undefined;
   /** Optional bearer token for a future token-based auth flow. */
   bearerToken?: string | undefined;
@@ -70,6 +74,10 @@ function buildUrl(path: string, query: ApiRequestOptions['query']): string {
   if (query) {
     for (const [key, value] of Object.entries(query)) {
       if (value === undefined || value === null) continue;
+      if (Array.isArray(value)) {
+        for (const item of value as readonly string[]) url.searchParams.append(key, item);
+        continue;
+      }
       url.searchParams.set(key, String(value));
     }
   }

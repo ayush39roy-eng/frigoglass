@@ -24,10 +24,38 @@ function withHub<const K extends readonly string[]>(
   base: K,
   hubId: string | null | undefined,
   region?: LabRegion | null,
-): K | readonly [...K, { hubId: string | null; region: LabRegion | null }] {
+  selection?: DashSel,
+):
+  | K
+  | readonly [...K, { hubId: string | null; region: LabRegion | null }]
+  | readonly [...K, { hubId: string | null; region: LabRegion | null }, KeySelection] {
   // P13 (ADR 0025): the country filter is keyed beside the hub, so switching
   // country refetches instead of serving another country's figures.
-  return hubId === undefined ? base : ([...base, { hubId, region: region ?? null }] as const);
+  if (hubId === undefined) return base;
+  const hub = { hubId, region: region ?? null };
+  // P31: the Dashboard category / type selection, sorted (canonical order), is
+  // appended only when non-empty, so the unfiltered key keeps its old shape.
+  const sel = keySelection(selection);
+  return sel === null ? ([...base, hub] as const) : ([...base, hub, sel] as const);
+}
+
+type DashSel = { categories: readonly string[]; types: readonly string[] } | undefined;
+
+/** P31: a category / type selection as it appears in a query key. */
+export interface KeySelection {
+  category: readonly string[];
+  type: readonly string[];
+}
+
+/** Sorted copies (so press order never splits the cache); `null` when empty. */
+export function keySelection(selection: DashSel): KeySelection | null {
+  if (!selection || (selection.categories.length === 0 && selection.types.length === 0)) return null;
+  return { category: [...selection.categories].sort(), type: [...selection.types].sort() };
+}
+
+/** Sorted copy of a selection for a key field; `undefined` when empty. */
+export function sortedKeyList(values: readonly string[] | undefined): string[] | undefined {
+  return values && values.length > 0 ? [...values].sort() : undefined;
 }
 
 export const queryKeys = {
@@ -49,9 +77,9 @@ export const queryKeys = {
     hubId?: string | undefined;
     region?: LabRegion | undefined;
     currency?: CurrencyCode | undefined;
-    category?: ProjectCategory | undefined;
+    category?: readonly ProjectCategory[] | undefined;
     // P13-T14 (API_CONTRACT_P13 §7): Type / Status chips and the Project search.
-    type?: string | undefined;
+    type?: readonly string[] | undefined;
     status?: string | undefined;
     q?: string | undefined;
   }) => ['priority-matrix', params ?? null] as const,
@@ -87,22 +115,22 @@ export const queryKeys = {
   dashboard: (versionId?: string) => ['dashboard', versionId ?? 'active'] as const,
   // P12 (ADR 0020): `hubId` is the global header hub filter. `undefined` gives
   // the prefix (for invalidation); `null` is "All hubs"; a uuid is one hub.
-  dashboardPipelineTotals: (hubId?: string | null, region?: LabRegion | null) =>
-    withHub(['dashboard', 'pipeline-totals'], hubId, region),
-  dashboardStatusOverview: (hubId?: string | null, region?: LabRegion | null) =>
-    withHub(['dashboard', 'status-overview'], hubId, region),
-  dashboardHubTypePipeline: (hubId?: string | null, region?: LabRegion | null) =>
-    withHub(['dashboard', 'hub-type-pipeline'], hubId, region),
-  dashboardCompletingWithinYear: (hubId?: string | null, region?: LabRegion | null) =>
-    withHub(['dashboard', 'completing-within-year'], hubId, region),
+  dashboardPipelineTotals: (hubId?: string | null, region?: LabRegion | null, selection?: DashSel) =>
+    withHub(['dashboard', 'pipeline-totals'], hubId, region, selection),
+  dashboardStatusOverview: (hubId?: string | null, region?: LabRegion | null, selection?: DashSel) =>
+    withHub(['dashboard', 'status-overview'], hubId, region, selection),
+  dashboardHubTypePipeline: (hubId?: string | null, region?: LabRegion | null, selection?: DashSel) =>
+    withHub(['dashboard', 'hub-type-pipeline'], hubId, region, selection),
+  dashboardCompletingWithinYear: (hubId?: string | null, region?: LabRegion | null, selection?: DashSel) =>
+    withHub(['dashboard', 'completing-within-year'], hubId, region, selection),
   // P13 (API_CONTRACT_P13 §2/§3): per-country summary and the register's facets.
-  dashboardRegionSummary: (hubId?: string | null, region?: LabRegion | null) =>
-    withHub(['dashboard', 'region-summary'], hubId, region),
-  dashboardProjectFacets: (hubId?: string | null, region?: LabRegion | null) =>
-    withHub(['dashboard', 'projects-facets'], hubId, region),
+  dashboardRegionSummary: (hubId?: string | null, region?: LabRegion | null, selection?: DashSel) =>
+    withHub(['dashboard', 'region-summary'], hubId, region, selection),
+  dashboardProjectFacets: (hubId?: string | null, region?: LabRegion | null, selection?: DashSel) =>
+    withHub(['dashboard', 'projects-facets'], hubId, region, selection),
   // P13-T10 (API_CONTRACT_P13 §5): served analytics + completing Hub × Type.
-  dashboardAnalytics: (hubId?: string | null, region?: LabRegion | null) =>
-    withHub(['dashboard', 'analytics'], hubId, region),
+  dashboardAnalytics: (hubId?: string | null, region?: LabRegion | null, selection?: DashSel) =>
+    withHub(['dashboard', 'analytics'], hubId, region, selection),
   dashboardProjects: (filters?: DashboardProjectFilters) =>
     ['dashboard', 'projects', filters ?? null] as const,
   // Every changeable Gantt filter input goes in the key (P4-T04 review blocker:
@@ -114,8 +142,9 @@ export const queryKeys = {
     hubId?: string | undefined;
     region?: LabRegion | undefined;
     q?: string | undefined;
-    category?: string | undefined;
-    type?: string | undefined;
+    // P31: sorted multi-select lists.
+    category?: readonly string[] | undefined;
+    type?: readonly string[] | undefined;
     status?: string | undefined;
     leaderEngineerId?: string | undefined;
     currentStep?: string | undefined;
@@ -261,21 +290,23 @@ export interface ProjectListFilters {
  *  as-is (snake_case query params, server-side filtering). */
 export interface PriorityBoardFilters {
   q?: string | undefined;
-  category?: string | undefined;
-  type?: string | undefined;
+  /** P31: repeated params; sorted lists in the key. */
+  category?: readonly string[] | undefined;
+  type?: readonly string[] | undefined;
   status_?: string | undefined;
   leader_engineer_id?: string | undefined;
 }
 
 export interface DashboardProjectFilters {
   hub_id?: string | undefined;
-  category?: string | undefined;
+  /** P31: sorted lists (repeated params). */
+  category?: readonly string[] | undefined;
   status_?: string | undefined;
   priority?: string | undefined;
   // P13 (API_CONTRACT_P13 §3) — all server-side.
   region?: LabRegion | undefined;
   q?: string | undefined;
-  type?: string | undefined;
+  type?: readonly string[] | undefined;
   leader_engineer_id?: string | undefined;
   current_step?: string | undefined;
   sort?: 'name' | 'priority' | undefined;

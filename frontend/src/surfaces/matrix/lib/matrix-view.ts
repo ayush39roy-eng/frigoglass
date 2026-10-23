@@ -5,10 +5,7 @@
  */
 
 import {
-  PROJECT_CATEGORIES,
   PROJECT_STATUSES,
-  PROJECT_TYPES,
-  PROJECT_TYPE_LABELS,
   type ProjectCategory,
   type ProjectStatus,
   type ProjectType,
@@ -18,8 +15,9 @@ import {
 import type { DistributionBand } from '../api/types';
 
 export interface MatrixViewState {
-  category: ProjectCategory | null;
-  type: ProjectType | null;
+  /** P31: multi-select (repeated server params, OR); empty = all. URL state on the page. */
+  category: ProjectCategory[];
+  type: ProjectType[];
   status: ProjectStatus | null;
   /** Project column search → server `q`. */
   q: string;
@@ -37,8 +35,8 @@ export interface MatrixViewState {
 }
 
 export const DEFAULT_MATRIX_VIEW: MatrixViewState = {
-  category: null,
-  type: null,
+  category: [],
+  type: [],
   status: null,
   q: '',
   hubText: '',
@@ -51,8 +49,8 @@ export const DEFAULT_MATRIX_VIEW: MatrixViewState = {
 
 export function isDefaultView(v: MatrixViewState): boolean {
   return (
-    v.category === null &&
-    v.type === null &&
+    v.category.length === 0 &&
+    v.type.length === 0 &&
     v.status === null &&
     v.q === '' &&
     v.hubText === '' &&
@@ -64,8 +62,6 @@ export function isDefaultView(v: MatrixViewState): boolean {
   );
 }
 
-export const CATEGORY_CHIPS = PROJECT_CATEGORIES.map((c) => ({ value: c, label: c }));
-export const TYPE_CHIPS = PROJECT_TYPES.map((t) => ({ value: t, label: t, title: PROJECT_TYPE_LABELS[t] }));
 export const STATUS_CHIPS = PROJECT_STATUSES.map((s) => ({ value: s, label: s }));
 
 /** `PUT /currency-rates/{code}` is `require_roles(ADMIN, SUPER_ADMIN)`
@@ -78,8 +74,8 @@ export function canEditFxRate(roles: readonly RoleName[] | undefined): boolean {
 /** P21: how many filters are active (the compact panel's "Filters (n)"). */
 export function activeFilterCount(v: MatrixViewState): number {
   return [
-    v.category !== null,
-    v.type !== null,
+    v.category.length > 0,
+    v.type.length > 0,
     v.status !== null,
     v.band !== null,
     v.capacityFill,

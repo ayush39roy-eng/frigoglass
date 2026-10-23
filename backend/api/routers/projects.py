@@ -70,6 +70,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from api.db import get_db
 from api.deps import get_current_principal, require_permission
 from api.errors import HTTP_422, CodedHTTPException, field_error
+from api.query_params import CategoryListQuery, TypeListQuery
 from core.principal import Principal
 from core.rbac import Action, Surface
 from models.audit import AuditLogEntry
@@ -97,6 +98,7 @@ from schemas.project import (
     ProjectUpdateRequest,
 )
 from services.audit_helpers import project_audit_state
+from services.category_type_filter import category_type_filter
 from services.hub_scope import hub_scope_filter, is_hub_in_scope
 from services.priority_move import apply_priority_change, ensure_priority_move_allowed
 from services.priority_preview import confirm_priority_move, preview_priority_move
@@ -237,10 +239,20 @@ async def _get_project_or_404(
 @router.get("", response_model=list[ProjectListItem])
 async def list_projects(
     hub_id: uuid.UUID | None = None,
-    category: ProjectCategory | None = None,
+    category: CategoryListQuery = None,
     status_: ProjectStatus | None = None,
     priority: ProjectPriority | None = None,
-    type_: ProjectType | None = None,
+    type_: TypeListQuery = None,
+    legacy_type: Annotated[
+        list[ProjectType] | None,
+        Query(
+            alias="type_",
+            description=(
+                "Pre-P31 spelling of `type`, still accepted (repeatable). "
+                "Its values are ORed with `type`."
+            ),
+        ),
+    ] = None,
     q: Annotated[str | None, Query(max_length=Q_MAX_LENGTH)] = None,
     limit: int = 100,
     offset: int = 0,
@@ -259,6 +271,10 @@ async def list_projects(
     P13-T17: `q` is a case-insensitive substring of name or `external_code`
     (at most 100 characters, wildcards literal, bound parameter —
     `services.text_search`), ANDed like the other filters.
+
+    P31 (`docs/API_CONTRACT_P31.md`): `category` and `type` are repeatable
+    (OR within a param, AND across, absent = all). The pre-P31 wire name
+    `type_` is still accepted and joins the `type` list.
     """
 
     if limit < 1 or limit > 500:
@@ -272,14 +288,13 @@ async def list_projects(
         stmt = stmt.where(hub_filter)
     if hub_id is not None:
         stmt = stmt.where(Project.hub_id == hub_id)
-    if category is not None:
-        stmt = stmt.where(Project.category == category)
+    selection = category_type_filter(category, [*(type_ or []), *(legacy_type or [])])
+    if selection is not None:
+        stmt = stmt.where(selection)
     if status_ is not None:
         stmt = stmt.where(Project.status == status_)
     if priority is not None:
         stmt = stmt.where(Project.priority == priority)
-    if type_ is not None:
-        stmt = stmt.where(Project.type == type_)
     search = project_search_filter(q)
     if search is not None:
         stmt = stmt.where(search)

@@ -12,7 +12,7 @@ import { useQuery } from '@tanstack/react-query';
 import type { ServedHealth } from '@/components/shared/project-outcome-chips';
 import type { TrackingStatus } from '@/components/shared/tracking-status-meta';
 import { apiGet } from '@/lib/api/client';
-import { queryKeys, type PriorityBoardFilters } from '@/lib/query-keys';
+import { queryKeys, sortedKeyList, type PriorityBoardFilters } from '@/lib/query-keys';
 import type { ProjectFacets } from '@/surfaces/dashboard/api/types';
 import type { Id } from '@/types/common';
 import type { HubName, LabRegion, ProjectCategory, ProjectPriority, ProjectStatus } from '@/types/enums';
@@ -73,7 +73,15 @@ export type { PriorityBoardFilters } from '@/lib/query-keys';
 
 /** True when no toolbar filter is set (the key then keeps its P12 shape). */
 export function isEmptyBoardFilters(filters: PriorityBoardFilters | undefined): boolean {
-  return !filters || Object.values(filters).every((v) => v === undefined || v === '');
+  return (
+    !filters ||
+    Object.values(filters).every((v) => v === undefined || v === '' || (Array.isArray(v) && v.length === 0))
+  );
+}
+
+/** P31: the key form — category / type lists sorted, so press order never splits the cache. */
+function keyBoardFilters(filters: PriorityBoardFilters): PriorityBoardFilters {
+  return { ...filters, category: sortedKeyList(filters.category), type: sortedKeyList(filters.type) };
 }
 
 export function fetchPriorityBoard(
@@ -89,8 +97,9 @@ export function fetchPriorityBoard(
       // P13-T12: every filter is applied by the server (§3 semantics); the
       // column counts and D/L weeks follow the filtered set.
       q: filters?.q || undefined,
-      category: filters?.category || undefined,
-      type: filters?.type || undefined,
+      // P31: repeated params (OR within, AND across); an empty list sends nothing.
+      category: filters?.category && filters.category.length > 0 ? filters.category : undefined,
+      type: filters?.type && filters.type.length > 0 ? filters.type : undefined,
       status_: filters?.status_ || undefined,
       leader_engineer_id: filters?.leader_engineer_id || undefined,
     },
@@ -105,7 +114,7 @@ export function usePriorityBoard(
   region: LabRegion | null = null,
   filters?: PriorityBoardFilters,
 ) {
-  const keyFilters = isEmptyBoardFilters(filters) ? undefined : filters;
+  const keyFilters = isEmptyBoardFilters(filters) || filters === undefined ? undefined : keyBoardFilters(filters);
   return useQuery({
     queryKey: queryKeys.priorityBoard(hubId, region, keyFilters),
     queryFn: ({ signal }) => fetchPriorityBoard(hubId, signal, region, keyFilters),

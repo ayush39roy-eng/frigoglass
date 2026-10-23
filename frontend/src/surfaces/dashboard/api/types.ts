@@ -178,15 +178,18 @@ export interface ProjectFilterResult {
 
 export interface ProjectFilterParams {
   hub_id?: Id | undefined;
-  category?: ProjectCategory | undefined;
+  /** P31: repeated `category` params, ORed by the server; omitted = all.
+   *  `Unmapped` = no category (Dashboard endpoints only). */
+  category?: readonly (ProjectCategory | 'Unmapped')[] | undefined;
   status_?: ProjectStatus | undefined;
   priority?: ProjectPriority | undefined;
   // P13 (API_CONTRACT_P13 §3) — every filter is applied server-side.
   region?: LabRegion | undefined;
   /** Case-insensitive substring of name or external_code, ≤ 100 chars. */
   q?: string | undefined;
-  /** `Unmapped` = projects with no type (`type IS NULL`), served since P17-R09. */
-  type?: ProjectType | 'Unmapped' | undefined;
+  /** P31: repeated `type` params, ORed. `Unmapped` = projects with no type
+   *  (`type IS NULL`), served since P17-R09. Omitted = all. */
+  type?: readonly (ProjectType | 'Unmapped')[] | undefined;
   leader_engineer_id?: Id | undefined;
   /** Step code, e.g. `PDD-E`. */
   current_step?: string | undefined;

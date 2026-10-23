@@ -481,31 +481,43 @@ describe('GanttPage', () => {
     it('sends Type, Status, Leader, Step, Category, sort and the priority tab to the server', async () => {
       const user = userEvent.setup();
       renderWithProviders(<GanttPage />);
-      await user.click(screen.getByRole('combobox', { name: 'Type' }));
-      await user.click(await screen.findByRole('option', { name: /^CO —/ }));
+      // P31: Category / Type are multi-select chip groups.
+      const types = screen.getByRole('group', { name: 'Type' });
+      await user.click(within(types).getByRole('button', { name: 'Cost Optimization' }));
+      await user.click(within(types).getByRole('button', { name: 'New Model' }));
       await user.click(screen.getByRole('combobox', { name: 'Status' }));
       await user.click(await screen.findByRole('option', { name: 'In Queue' }));
       await user.click(screen.getByRole('combobox', { name: 'Leader' }));
       await user.click(await screen.findByRole('option', { name: 'Sam Super' }));
       await user.click(screen.getByRole('combobox', { name: 'Current step' }));
       await user.click(await screen.findByRole('option', { name: 'PDD-E · Design Detailing' }));
-      await user.click(screen.getByRole('combobox', { name: 'Category' }));
-      await user.click(await screen.findByRole('option', { name: 'A+' }));
+      const cats = screen.getByRole('group', { name: 'Category' });
+      await user.click(within(cats).getByRole('button', { name: 'B' }));
+      await user.click(within(cats).getByRole('button', { name: 'A+' }));
       await user.click(screen.getByRole('combobox', { name: 'Sort' }));
       await user.click(await screen.findByRole('option', { name: 'End week' }));
       await user.click(screen.getByRole('radio', { name: 'In Queue' }));
       expect(hooks.useGantt).toHaveBeenLastCalledWith({
-        type: 'CO',
+        // Option order, whatever the press order.
+        type: ['NM', 'CO'],
         status: 'In Queue',
         leaderEngineerId: 'eng-0002',
         currentStep: 'PDD-E',
-        category: 'A+',
+        category: ['A+', 'B'],
         sort: 'end',
         priority: 'Q',
       });
       // "Clear filters" resets every filter but keeps the chosen sort.
       await user.click(screen.getByRole('button', { name: 'Clear filters' }));
       expect(hooks.useGantt).toHaveBeenLastCalledWith({ sort: 'end' });
+    });
+
+    it('P31: a legacy single-value link and repeated params both parse from the URL', () => {
+      renderWithProviders(<GanttPage />, { route: '/timeline?category=A&type=NM&type=SER&type=bogus' });
+      expect(hooks.useGantt).toHaveBeenLastCalledWith({ category: ['A'], type: ['NM', 'SER'], sort: 'priority' });
+      expect(
+        within(screen.getByRole('group', { name: 'Type' })).getByRole('button', { name: 'Service' }),
+      ).toHaveAttribute('aria-pressed', 'true');
     });
 
     it('debounces the search and sends it as q (max 100 chars)', async () => {

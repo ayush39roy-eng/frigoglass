@@ -55,6 +55,7 @@ from sqlalchemy.orm import selectinload
 import domain_constants as dc
 from api.db import get_db
 from api.deps import get_current_principal, require_permission
+from api.query_params import DashboardCategoryListQuery, DashboardTypeListQuery
 from api.routers.projects import _get_project_or_404
 from core.principal import Principal
 from core.rbac import Action, Surface
@@ -71,6 +72,7 @@ from schemas.vip import (
     VipYear,
 )
 from services.active_run import get_active_run
+from services.category_type_filter import category_type_filter
 from services.hub_scope import global_hub_filter, hub_scope_filter
 from services.priority_move import decide_auto_recalc, dispatch_auto_recalc
 from services.project_access import authorize_project_action
@@ -140,6 +142,8 @@ async def get_vip_projects(
     hub_id: uuid.UUID | None = None,
     region: LabRegion | None = None,
     limit: int = Query(default=VIP_LIMIT_DEFAULT, ge=VIP_LIMIT_MIN, le=VIP_LIMIT_MAX),
+    category: DashboardCategoryListQuery = None,
+    type_: DashboardTypeListQuery = None,
     db: AsyncSession = Depends(get_db),
     current_user: Principal = Depends(_read),
 ) -> VipProjectsResponse:
@@ -155,6 +159,11 @@ async def get_vip_projects(
     global_filter = global_hub_filter(Project.hub_id, hub_id, region)
     if global_filter is not None:
         stmt = stmt.where(global_filter)
+    # P31: the Dashboard's category / type selection, ANDed with the above.
+    # The per-hub ranking and fill then run over the selected projects only.
+    cat_type = category_type_filter(category, type_)
+    if cat_type is not None:
+        stmt = stmt.where(cat_type)
     projects = list((await db.execute(stmt)).scalars().all())
 
     active_run = await get_active_run(db)

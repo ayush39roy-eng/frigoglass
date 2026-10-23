@@ -48,8 +48,9 @@ export interface DownloadButtonProps {
   /** The surface's own CURRENT filter state, mirrored 1:1 onto the export
    * endpoint's query params (undefined values are dropped, same convention
    * as `apiGet`'s own `query` option) — this is what makes "download" match
-   * "what I'm looking at right now" rather than an unfiltered dump. */
-  filters?: Record<string, string | undefined>;
+   * "what I'm looking at right now" rather than an unfiltered dump. P31: a
+   * list is sent as a repeated param (`category=A%2B&category=B`). */
+  filters?: Record<string, string | readonly string[] | undefined>;
   /** Used only if the server response has no `Content-Disposition` filename
    * (it always does today — `api/routers/exports.py::_respond` sets one on
    * every response — this is a defensive fallback only). No extension; the

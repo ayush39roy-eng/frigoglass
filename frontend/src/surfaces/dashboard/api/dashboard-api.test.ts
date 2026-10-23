@@ -11,6 +11,11 @@ import {
   fetchCompletingWithinYear,
   fetchDashboardAnalytics,
   fetchDashboardProjects,
+  fetchHubTypePipeline,
+  fetchPipelineTotals,
+  fetchProjectFacets,
+  fetchRegionSummary,
+  fetchStatusOverview,
 } from './dashboard-api';
 
 const mockApiGet = vi.mocked(apiGet);
@@ -37,15 +42,45 @@ describe('dashboard-api', () => {
 
   it('forwards filters using the backend param names (status_ trailing underscore)', async () => {
     mockApiGet.mockResolvedValueOnce({ total_count: 0, rows: [] });
-    await fetchDashboardProjects({ status_: 'In Queue', category: 'A+' });
+    await fetchDashboardProjects({ status_: 'In Queue', category: ['A+'] });
     expect(mockApiGet).toHaveBeenCalledWith('/dashboard/projects', {
       query: {
         hub_id: undefined,
-        category: 'A+',
+        category: ['A+'],
         status_: 'In Queue',
         priority: undefined,
       },
     });
+  });
+
+  it('P31: every Dashboard aggregate sends the category / type selection as repeated params beside hub / region', async () => {
+    const sel = { categories: ['A+', 'A'] as const, types: ['NM'] as const };
+    const cases: [string, () => Promise<unknown>][] = [
+      ['/dashboard/pipeline-totals', () => fetchPipelineTotals({}, 'h1', null, sel)],
+      ['/dashboard/status-overview', () => fetchStatusOverview({}, 'h1', null, sel)],
+      ['/dashboard/hub-type-pipeline', () => fetchHubTypePipeline({}, 'h1', null, sel)],
+      ['/dashboard/completing-within-year', () => fetchCompletingWithinYear({}, 'h1', null, sel)],
+      ['/dashboard/region-summary', () => fetchRegionSummary({}, 'h1', null, sel)],
+      ['/dashboard/analytics', () => fetchDashboardAnalytics({}, 'h1', null, sel)],
+      ['/dashboard/projects/facets', () => fetchProjectFacets({}, 'h1', null, sel)],
+    ];
+    for (const [path, call] of cases) {
+      mockApiGet.mockResolvedValueOnce({});
+      await call();
+      expect(mockApiGet).toHaveBeenLastCalledWith(path, {
+        query: { hub_id: 'h1', region: undefined, category: ['A+', 'A'], type: ['NM'] },
+      });
+    }
+    // Only a type selection: no category param at all (empty list = no filter).
+    mockApiGet.mockResolvedValueOnce({});
+    await fetchPipelineTotals({}, null, 'India', { categories: [], types: ['CO', 'Unmapped'] });
+    expect(mockApiGet).toHaveBeenLastCalledWith('/dashboard/pipeline-totals', {
+      query: { hub_id: undefined, region: 'India', category: undefined, type: ['CO', 'Unmapped'] },
+    });
+    // No selection and no hub: the request is unchanged from before P31.
+    mockApiGet.mockResolvedValueOnce({});
+    await fetchPipelineTotals({}, null, null, { categories: [], types: [] });
+    expect(mockApiGet).toHaveBeenLastCalledWith('/dashboard/pipeline-totals', {});
   });
 
   it('treats a 404 from /schedule-runs/active as "no run yet", not an error', async () => {

@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
-import { screen, within } from '@testing-library/react';
+import { fireEvent, screen, within } from '@testing-library/react';
 
 import { renderWithProviders } from '@/test/render';
 
@@ -18,7 +18,7 @@ vi.mock('recharts', async (importOriginal) => {
   };
 });
 
-import { PipelineDonut, PriorityDeliveryChart, StatusDonut, TypeBars } from './executive-charts';
+import { CategoryDonut, PipelineDonut, PriorityDeliveryChart, StatusDonut, TypeDonut } from './executive-charts';
 
 const TOTALS: PipelineTotals = {
   spillover_count: 17,
@@ -108,22 +108,71 @@ describe('executive donuts (P28, ADR 0039 §3)', () => {
     expect(within(donut).getByTestId('exec-status-donut-slice-other')).toHaveTextContent('29 · 11.46%');
   });
 
-  it('Projects by type: served by_type buckets as a bar list — full labels, counts + shares verbatim', () => {
+  it('P31 Projects by type: a donut of the served by_type buckets — full labels, counts + shares verbatim', () => {
     renderWithProviders(
-      <TypeBars
+      <TypeDonut
         buckets={[
           { key: 'CO', count: 89, share_pct: 37.71 },
+          { key: 'RC', count: 63, share_pct: 24.9 },
           { key: 'Unmapped', count: 3, share_pct: 1.27 },
         ]}
+        total={236}
+        selected={[]}
+        onChange={() => undefined}
       />,
     );
-    const card = screen.getByTestId('exec-type-chart');
-    expect(within(card).getAllByText('Cost Optimization').length).toBeGreaterThan(0);
-    expect(within(card).getAllByText('Unmapped').length).toBeGreaterThan(0);
-    const row = within(card).getByTestId('exec-type-row-CO');
-    expect(row).toHaveTextContent('89 · 37.71%');
-    // The bar's width IS the served share (presentation of a served figure).
-    expect(row.querySelector('[data-served-share]')).toHaveAttribute('data-served-share', '37.71');
+    const donut = screen.getByTestId('exec-type-donut');
+    expect(within(donut).getByTestId('exec-type-donut-slice-CO')).toHaveTextContent('Cost Optimization');
+    expect(within(donut).getByTestId('exec-type-donut-slice-CO')).toHaveTextContent('89 · 37.71%');
+    expect(within(donut).getAllByText('236').length).toBeGreaterThan(0);
+    // Leader-line labels in the chart (same language as the status donut).
+    expect(donut.querySelector('figure svg')?.textContent).toContain('Optimization89 · 37.71%');
+    // The legend toggles carry the FULL served label, never truncated.
+    const legend = within(donut).getByRole('group', { name: 'Filter the Dashboard by project type' });
+    const rc = within(legend).getByRole('button', { name: 'Regulatory / Business Compliance' });
+    expect(rc).toHaveAttribute('aria-pressed', 'false');
+    expect(rc.className).not.toContain('truncate');
+    expect(within(legend).getByRole('button', { name: 'Unmapped' })).toBeInTheDocument();
+    expect(within(legend).getByRole('button', { name: 'All' })).toHaveAttribute('aria-pressed', 'true');
+  });
+
+  it('P31 cross-filter: a legend toggle or a slice click adds the value; selected stays bright, others dim', () => {
+    const onChange = vi.fn();
+    const { rerender } = renderWithProviders(
+      <CategoryDonut
+        buckets={[
+          { key: 'A+', count: 10, share_pct: 25 },
+          { key: 'A', count: 20, share_pct: 50 },
+          { key: 'B', count: 10, share_pct: 25 },
+        ]}
+        total={40}
+        selected={['A']}
+        onChange={onChange}
+      />,
+    );
+    const donut = screen.getByTestId('exec-category-donut');
+    const legend = within(donut).getByRole('group', { name: 'Filter the Dashboard by category' });
+    expect(within(legend).getByRole('button', { name: 'A' })).toHaveAttribute('aria-pressed', 'true');
+    fireEvent.click(within(legend).getByRole('button', { name: 'A+' }));
+    // Option order, not press order.
+    expect(onChange).toHaveBeenLastCalledWith(['A+', 'A']);
+    fireEvent.click(within(legend).getByRole('button', { name: 'All' }));
+    expect(onChange).toHaveBeenLastCalledWith([]);
+    // Slices: the selected one at full opacity, the others dimmed (not hidden).
+    const sectors = donut.querySelectorAll('figure svg path.recharts-sector');
+    expect(sectors).toHaveLength(3);
+    const opacities = [...sectors].map((p) => p.getAttribute('fill-opacity'));
+    expect(opacities).toEqual(['0.28', '1', '0.28']);
+    fireEvent.click(sectors[2] as Element);
+    expect(onChange).toHaveBeenLastCalledWith(['A', 'B']);
+    rerender(
+      <CategoryDonut buckets={[{ key: 'A+', count: 10, share_pct: 100 }]} total={10} selected={['C']} onChange={onChange} />,
+    );
+    // A selected value the served distribution no longer lists can still be switched off.
+    expect(within(screen.getByTestId('exec-category-donut')).getByRole('button', { name: 'C' })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    );
   });
 });
 

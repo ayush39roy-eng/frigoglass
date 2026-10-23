@@ -16,6 +16,8 @@ import type { HubName, LabRegion, ProjectCategory, ProjectPriority, ProjectStatu
 
 import type { CompletingWithinYearRow, ProjectFilterRow } from '../api/types';
 import { useDrilldownProjects } from '../hooks/use-dashboard';
+import { useDashboardSelection } from '../lib/selection';
+import { selectionParam } from '@/lib/multi-select-filter';
 import { typeLabel } from '../lib/analytics';
 import { drillAriaLabel, drillTitle, type DrillSource, type DrillTarget } from '../lib/drilldown';
 import { outcomeOf } from '../lib/outcome';
@@ -280,11 +282,16 @@ function PipelineList({
   const cellHubId = target.hub ? hubs.data?.find((h) => h.name === target.hub)?.id : undefined;
   const resolvedHubId = target.hub ? cellHubId : (hubId ?? undefined);
   const hubResolved = target.hub === null || cellHubId !== undefined;
+  // P31: the cell's own type, else (a Total cell) the Dashboard type selection;
+  // and always the Dashboard category selection — the cell counts were served
+  // for that same selection.
+  const selection = useDashboardSelection();
   const query = useDrilldownProjects(
     {
       hub_id: resolvedHubId,
       region: region ?? undefined,
-      type: target.typeKey ?? undefined,
+      type: target.typeKey !== null ? [target.typeKey] : selectionParam(selection.types),
+      category: selectionParam(selection.categories),
     },
     hubResolved,
   );

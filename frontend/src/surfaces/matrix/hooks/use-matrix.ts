@@ -9,7 +9,7 @@
 import { useMutation, useQueries, useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
 
 import { ApiError } from '@/lib/api/client';
-import { queryKeys } from '@/lib/query-keys';
+import { queryKeys, sortedKeyList } from '@/lib/query-keys';
 import { useCurrencyRates } from '@/lib/api/reference';
 import type {
   LabRegion,
@@ -61,8 +61,9 @@ export interface UseMatrixParams {
   currency: MatrixCurrencyCode;
   hubId?: string | undefined;
   region?: LabRegion | undefined;
-  category?: ProjectCategory | undefined;
-  type?: ProjectType | undefined;
+  /** P31: multi-select (repeated params), canonical order; sorted in the key. */
+  category?: readonly ProjectCategory[] | undefined;
+  type?: readonly ProjectType[] | undefined;
   status?: ProjectStatus | undefined;
   q?: string | undefined;
 }
@@ -89,8 +90,8 @@ export function usePriorityMatrix(params: UseMatrixParams) {
         currency: params.currency,
         hubId: params.hubId,
         region: params.region,
-        category: params.category,
-        type: params.type,
+        category: sortedKeyList(params.category),
+        type: sortedKeyList(params.type),
         status: params.status,
         q: params.q,
       },
@@ -302,8 +303,9 @@ export function usePriorityDistribution(params: UseDistributionParams) {
     status: params.status,
     q: params.q,
   };
+  const keyFilters = { ...filters, category: sortedKeyList(filters.category), type: sortedKeyList(filters.type) };
   return useQuery({
-    queryKey: ['priority-matrix', 'distribution', filters] as const,
+    queryKey: ['priority-matrix', 'distribution', keyFilters] as const,
     queryFn: ({ signal }) => fetchPriorityDistribution(filters, { signal }),
     retry: retryUnlessAuth,
     placeholderData: (prev) => prev,

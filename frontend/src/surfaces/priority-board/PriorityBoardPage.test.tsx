@@ -246,10 +246,10 @@ describe('PriorityBoardPage — P13-T12 weeks and toolbar', () => {
     const user = userEvent.setup();
     renderWithProviders(<PriorityBoardPage />);
     await screen.findByRole('link', { name: 'Alpha Cooler' });
-    await user.click(screen.getByRole('combobox', { name: 'Category' }));
-    await user.click(await screen.findByRole('option', { name: 'B' }));
-    await user.click(screen.getByRole('combobox', { name: 'Type' }));
-    await user.click(await screen.findByRole('option', { name: /^CO ·/ }));
+    // P31: Category / Type are multi-select chip groups (repeated params, OR).
+    await user.click(within(screen.getByRole('group', { name: 'Category' })).getByRole('button', { name: 'B' }));
+    await user.click(within(screen.getByRole('group', { name: 'Category' })).getByRole('button', { name: 'A' }));
+    await user.click(within(screen.getByRole('group', { name: 'Type' })).getByRole('button', { name: 'Cost Optimization' }));
     await user.click(screen.getByRole('combobox', { name: 'Status' }));
     await user.click(await screen.findByRole('option', { name: 'In Queue' }));
     await user.click(screen.getByRole('combobox', { name: 'Leader' }));
@@ -263,8 +263,8 @@ describe('PriorityBoardPage — P13-T12 weeks and toolbar', () => {
           expect.objectContaining({
             query: expect.objectContaining({
               region: 'India',
-              category: 'B',
-              type: 'CO',
+              category: ['A', 'B'],
+              type: ['CO'],
               status_: 'In Queue',
               leader_engineer_id: 'eng-self-0001',
             }),

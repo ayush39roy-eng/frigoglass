@@ -76,6 +76,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.db import get_db
 from api.deps import get_current_principal, require_permission
+from api.query_params import (
+    CategoryListQuery,
+    DashboardCategoryListQuery,
+    DashboardTypeListQuery,
+    TypeListQuery,
+)
 from core.minio_config import get_minio_client, get_minio_settings
 from core.principal import Principal
 from core.rbac import Action, Surface
@@ -91,6 +97,7 @@ from models.enums import (
 )
 from models.export import ExportJob
 from schemas.export import ExportJobAccepted, ExportJobListItem, ExportJobStatusResponse
+from services.category_type_filter import stored_filter
 from services.currency import rate_to_eur as currency_rate_to_eur
 from services.export_builder import ExportFilters, build_export_sheets, csv_bytes, xlsx_bytes
 
@@ -226,12 +233,12 @@ async def export_dashboard(
     response: Response,
     format: ExportFormat = ExportFormat.CSV,
     hub_id: uuid.UUID | None = None,
-    category: str | None = None,
+    category: DashboardCategoryListQuery = None,
     status_: str | None = None,
     priority: str | None = None,
     region: LabRegion | None = None,
     q: Annotated[str | None, Query(max_length=100)] = None,
-    type_: Annotated[ProjectType | None, Query(alias="type")] = None,
+    type_: DashboardTypeListQuery = None,
     leader_engineer_id: uuid.UUID | None = None,
     current_step: Annotated[str | None, Query(max_length=10)] = None,
     sort: Literal["name", "priority"] = "name",
@@ -242,11 +249,15 @@ async def export_dashboard(
     """The Dashboard's filterable analytics-breakdown table — see
     `services.export_builder.build_dashboard_sheets` for why this table
     specifically is "the current view" among Dashboard's several widgets.
+
+    P31: `category` / `type` are repeatable like `GET /dashboard/projects`.
+    A job stores one value as the bare string (the pre-P31 shape) and
+    several as a list.
     """
 
     filters: ExportFilters = {
         "hub_id": str(hub_id) if hub_id else None,
-        "category": category,
+        "category": stored_filter(category),
         "status_": status_,
         "priority": priority,
     }
@@ -255,7 +266,7 @@ async def export_dashboard(
     p13_filters: ExportFilters = {
         "region": region.value if region else None,
         "q": q,
-        "type_": type_.value if type_ else None,
+        "type_": stored_filter(type_),
         "leader_engineer_id": str(leader_engineer_id) if leader_engineer_id else None,
         "current_step": current_step,
         "sort": sort if sort != "name" else None,
@@ -302,8 +313,9 @@ async def export_matrix(
     format: ExportFormat = ExportFormat.CSV,
     currency: str | None = None,
     hub_id: uuid.UUID | None = None,
-    category: str | None = None,
+    category: CategoryListQuery = None,
     region: LabRegion | None = None,
+    type_: TypeListQuery = None,
     async_export: bool = False,
     db: AsyncSession = Depends(get_db),
     current_user: Principal = Depends(_read_matrix),
@@ -325,10 +337,13 @@ async def export_matrix(
     filters: ExportFilters = {
         "currency": currency,
         "hub_id": str(hub_id) if hub_id else None,
-        "category": category,
+        "category": stored_filter(category),
     }
     if region is not None:
         filters["region"] = region.value
+    # P31: stored only when set, so a pre-P31 job's filter shape is unchanged.
+    if type_:
+        filters["type_"] = stored_filter(type_)
     return await _respond(
         db,
         current_user,
@@ -348,6 +363,8 @@ async def export_gantt(
     hub_id: uuid.UUID | None = None,
     region: LabRegion | None = None,
     project_id: uuid.UUID | None = None,
+    category: CategoryListQuery = None,
+    type_: TypeListQuery = None,
     async_export: bool = False,
     db: AsyncSession = Depends(get_db),
     current_user: Principal = Depends(_read_gantt),
@@ -365,6 +382,11 @@ async def export_gantt(
     }
     if region is not None:
         filters["region"] = region.value
+    # P31: the Gantt toolbar's category / type selection, stored only when set.
+    if category:
+        filters["category"] = stored_filter(category)
+    if type_:
+        filters["type_"] = stored_filter(type_)
     return await _respond(
         db,
         current_user,
@@ -382,10 +404,14 @@ async def export_project_registration(
     response: Response,
     format: ExportFormat = ExportFormat.CSV,
     hub_id: uuid.UUID | None = None,
-    category: str | None = None,
+    category: CategoryListQuery = None,
     status_: str | None = None,
     priority: str | None = None,
-    type_: str | None = None,
+    type_: TypeListQuery = None,
+    legacy_type: Annotated[
+        list[ProjectType] | None,
+        Query(alias="type_", description="Pre-P31 spelling of `type`, ORed with it."),
+    ] = None,
     q: Annotated[str | None, Query(max_length=100)] = None,
     async_export: bool = False,
     db: AsyncSession = Depends(get_db),
@@ -398,10 +424,11 @@ async def export_project_registration(
 
     filters: ExportFilters = {
         "hub_id": str(hub_id) if hub_id else None,
-        "category": category,
+        "category": stored_filter(category),
         "status_": status_,
         "priority": priority,
-        "type_": type_,
+        # P31: `type` and the pre-P31 `type_` spelling, as on `GET /projects`.
+        "type_": stored_filter([*(type_ or []), *(legacy_type or [])]),
     }
     # P13-T17: the Registration search box (`GET /projects` `q`), stored only
     # when set so the persisted filter shape of older jobs is unchanged.

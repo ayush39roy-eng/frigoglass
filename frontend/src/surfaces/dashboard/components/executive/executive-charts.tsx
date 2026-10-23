@@ -5,6 +5,14 @@ import { BoltCard } from '@/components/ui/bolt-card';
 import { CardInfo } from '@/components/ui/card-info';
 import { CARRY_OVER_YEAR, PLAN_YEAR } from '@/lib/domain-constants';
 import { formatInteger } from '@/lib/format';
+import { categoryRank } from '@/lib/categorical-palette';
+import {
+  CATEGORY_FILTER_VALUES,
+  toggleSelection,
+  TYPE_FILTER_VALUES,
+  type MultiChipOption,
+} from '@/lib/multi-select-filter';
+import { MultiChipFilter } from '@/components/shared/multi-chip-filter';
 
 import type { AnalyticsBucket, PipelineTotals, PriorityDeliveryBand, StatusOverview } from '../../api/types';
 import { formatServedPct, typeLabel } from '../../lib/analytics';
@@ -63,6 +71,8 @@ interface Slice {
   count: number;
   share_pct: number;
   fill: string;
+  /** P31 cross-filter: another slice is selected and this one is not. */
+  dim?: boolean;
 }
 
 /** Theme-reactive categorical palette (`--dash-cat-1..10`, tokens.css). */
@@ -129,7 +139,7 @@ function renderLeaderLabel(props: SliceLabelProps): React.ReactElement {
   const halfBlock = (rows.length * lineHeight) / 2 + 2;
   my = Math.min(Math.max(my, halfBlock), cy * 2 - halfBlock);
   return (
-    <g>
+    <g opacity={datum.dim ? 0.5 : 1}>
       <polyline
         points={`${String(sx)},${String(sy)} ${String(mx)},${String(my)} ${String(ex)},${String(my)}`}
         fill="none"
@@ -165,6 +175,16 @@ function renderLeaderLabel(props: SliceLabelProps): React.ReactElement {
  * named in one muted line under the chart. The sr-only list carries the data
  * for assistive tech (the chart SVG is aria-hidden, P13-R01).
  */
+/** P31: a donut whose slices drive the Dashboard selection. */
+interface DonutSelect {
+  /** The values this donut can select, in option order (slices outside it are not clickable). */
+  allowed: readonly string[];
+  selected: readonly string[];
+  onChange: (next: string[]) => void;
+  /** Accessible name of the legend toggles ("Filter the Dashboard by type"). */
+  legendLabel: string;
+}
+
 function HeroDonut({
   title,
   info,
@@ -172,6 +192,7 @@ function HeroDonut({
   total,
   totalLabel,
   testId,
+  select,
 }: {
   title: string;
   info: React.ReactNode;
@@ -180,10 +201,29 @@ function HeroDonut({
   total: number;
   totalLabel: string;
   testId: string;
+  select?: DonutSelect | undefined;
 }): React.JSX.Element {
   const headingId = React.useId();
-  const drawn = slices.filter((s) => s.count > 0);
+  const anySelected = (select?.selected.length ?? 0) > 0;
+  const isOn = (key: string): boolean => select?.selected.includes(key) ?? false;
+  const drawn = slices
+    .filter((s) => s.count > 0)
+    .map((s) => (anySelected && !isOn(s.key) ? { ...s, dim: true } : s));
   const zero = slices.filter((s) => s.count === 0);
+  const toggle = (key: string): void => {
+    if (!select || !select.allowed.includes(key)) return;
+    select.onChange(toggleSelection(select.selected, key, select.allowed));
+  };
+  // The legend: every served bucket of this dimension, plus a selected value the
+  // served distribution no longer lists, so it can always be switched off.
+  const legend: MultiChipOption<string>[] = select
+    ? [
+        ...slices.filter((s) => select.allowed.includes(s.key)).map((s) => ({ value: s.key, label: s.label, swatch: s.fill })),
+        ...select.selected
+          .filter((v) => !slices.some((s) => s.key === v))
+          .map((v) => ({ value: v, label: v, swatch: undefined })),
+      ].sort((a, b) => select.allowed.indexOf(a.value) - select.allowed.indexOf(b.value))
+    : [];
 
   return (
     <section className="flex h-full min-h-0 flex-col" role="group" aria-labelledby={headingId} data-testid={testId}>
@@ -199,7 +239,7 @@ function HeroDonut({
           screen; the whole hero row stays ≈300 px tall so the KPI strip is
           visible without scrolling at 1440×900. The leader labels live in the
           remaining horizontal room and are clamped inside the SVG. */}
-      <figure aria-hidden="true" className="relative h-[15rem] w-full">
+      <figure aria-hidden="true" className="relative h-[15rem] w-full" data-selected={select ? select.selected.join(',') : undefined}>
         <ResponsiveContainer width="100%" height="100%">
           {/* Recharts 3 makes its surface tabbable; switched off inside the
               aria-hidden figure (P13-R01, axe aria-hidden-focus). */}
@@ -223,9 +263,17 @@ function HeroDonut({
               isAnimationActive={false}
               label={renderLeaderLabel}
               labelLine={false}
+              {...(select
+                ? { onClick: (_: unknown, index: number) => toggle(drawn[index]?.key ?? '') }
+                : {})}
             >
               {drawn.map((s) => (
-                <Cell key={s.key} fill={s.fill} />
+                <Cell
+                  key={s.key}
+                  fill={s.fill}
+                  fillOpacity={s.dim ? 0.28 : 1}
+                  className={select && select.allowed.includes(s.key) ? 'cursor-pointer outline-none' : undefined}
+                />
               ))}
             </Pie>
           </PieChart>
@@ -239,7 +287,20 @@ function HeroDonut({
           </span>
         </div>
       </figure>
-      {zero.length > 0 ? (
+      {select ? (
+        // The keyboard (and visible) path to the same toggles as the slices.
+        <MultiChipFilter
+          label={select.legendLabel}
+          hideLabel
+          options={legend}
+          value={select.selected}
+          onChange={(next) => select.onChange(next)}
+          dimUnselected
+          className="px-s2"
+          data-testid={`${testId}-legend`}
+        />
+      ) : null}
+      {zero.length > 0 && !select ? (
         <p className="px-s2 text-2xs text-text-muted" data-testid={`${testId}-zero`}>
           No projects: {zero.map((s) => s.label).join(', ')}
         </p>
@@ -332,86 +393,93 @@ export function StatusDonut({ data }: { data: StatusOverview }): React.JSX.Eleme
   );
 }
 
-/** "Regulatory / Business Compliance" → ["Regulatory", "Business Compliance"]: the
- *  only allowed break points of a type label are its " / " separators. */
-function labelParts(label: string): string[] {
-  return label.split(' / ');
+/** Stable colour per type (its place in the option order), so a slice keeps its
+ *  colour whatever else is filtered. */
+function typeFill(key: string): string {
+  const i = (TYPE_FILTER_VALUES as readonly string[]).indexOf(key);
+  return catFill(i === -1 ? TYPE_FILTER_VALUES.length : i);
+}
+
+export interface CrossFilterDonutProps {
+  /** The served buckets of THIS dimension, fetched WITHOUT this dimension's own
+   *  selection (cross-filter: the full distribution within the other filters). */
+  buckets: AnalyticsBucket[];
+  /** The served pipeline total for the same request basis (donut centre). */
+  total: number;
+  selected: readonly string[];
+  onChange: (next: string[]) => void;
 }
 
 /**
- * "Projects by type" (owner ask 2026-10-22): the served `GET /dashboard/analytics`
- * `by_type` buckets as a bar list. P29-T04: each row is `[full label … count · served
- * share]` over a full-width thin bar. Bar widths are the served `share_pct` figures;
- * counts and shares print verbatim (I9/I19). Full type names, never ellipsized
- * (a label breaks only at " / ").
+ * P31 "Projects by type" (owner: "can this be done in pie chart instead and should
+ * be dynamic based on different filterings"): the served `by_type` buckets as a
+ * hero donut. Clicking a slice — or its legend toggle — adds or removes that type
+ * from the Dashboard selection; selected slices stay full colour, the others dim.
+ * The buckets are served for the hub / country and the CATEGORY selection only,
+ * so the donut always shows every type to pick from (I9: counts and shares verbatim).
  */
-export function TypeBars({ buckets }: { buckets: AnalyticsBucket[] }): React.JSX.Element {
-  const rows = buckets.map((b, i) => ({
+export function TypeDonut({ buckets, total, selected, onChange }: CrossFilterDonutProps): React.JSX.Element {
+  const slices: Slice[] = buckets.map((b) => ({
     key: b.key,
     label: typeLabel(b.key),
     count: b.count,
     share_pct: b.share_pct,
-    fill: catFill(i),
+    fill: typeFill(b.key),
   }));
   return (
-    <ChartCard
+    <HeroDonut
       title="Projects by type"
-      testId="exec-type-chart"
+      testId="exec-type-donut"
+      slices={slices}
+      total={total}
+      totalLabel="projects"
+      select={{ allowed: TYPE_FILTER_VALUES, selected, onChange, legendLabel: 'Filter the Dashboard by project type' }}
       info={
-        <p>
-          Pipeline projects of each type, with each type&apos;s served share of the pipeline — the same
-          served buckets as the Detailed view&apos;s &quot;By project type&quot; chart. Bar lengths draw the
-          served shares; counts and percentages are printed verbatim.
-        </p>
+        <>
+          <p>
+            Pipeline projects of each type, with each type&apos;s served share. Click a slice or a type below
+            to filter the whole Dashboard by it; pick several to combine them, and &quot;All&quot; to clear.
+          </p>
+          <p>
+            This chart honours the hub / country and category filters but not the type filter itself, so every
+            type stays visible. Counts, shares and the total are served by the API.
+          </p>
+        </>
       }
-    >
-      {/* Top-aligned, taller rows: the card is exactly as tall as its content
-          (owner polish 2026-10-22 — no vertical centering of sparse content). */}
-      {rows.length === 0 ? (
-        <p className="text-xs text-text-muted">No pipeline projects in view.</p>
-      ) : (
-        // P29-T04 (owner polish): each row is two lines, line 1 the label (left) and
-        // "count · %" (right), line 2 a FULL-WIDTH thin bar, so the bar always has the
-        // card's width and the label the row's. Labels break only at " / "
-        // ("Regulatory /" + "Business Compliance"), never ellipsized; the figures never wrap.
-        <ul className="flex flex-col gap-s3" aria-label="Pipeline projects by type" data-testid="exec-type-list">
-          {rows.map((r) => (
-            <li
-              key={r.key}
-              className="flex flex-col gap-1"
-              data-testid={`exec-type-row-${r.key}`}
-              aria-label={`${r.label}: ${formatInteger(r.count)} projects (${formatServedPct(r.share_pct)})`}
-            >
-              <span className="flex items-baseline justify-between gap-s2" data-testid="exec-type-head">
-                <span className="min-w-0 text-2xs font-semibold leading-tight text-text" data-testid="exec-type-label">
-                  {labelParts(r.label).map((part, i, all) => (
-                    <React.Fragment key={part}>
-                      <span className="whitespace-nowrap">{i < all.length - 1 ? `${part} /` : part}</span>
-                      {i < all.length - 1 ? ' ' : null}
-                    </React.Fragment>
-                  ))}
-                </span>
-                <span
-                  className="shrink-0 whitespace-nowrap text-right text-2xs tabular-nums text-text-muted"
-                  data-numeric=""
-                  aria-hidden="true"
-                  data-testid="exec-type-figures"
-                >
-                  {formatInteger(r.count)} · {formatServedPct(r.share_pct)}
-                </span>
-              </span>
-              <span className="block h-1.5 w-full overflow-hidden rounded-full bg-surface-sunken" aria-hidden="true" data-testid="exec-type-track">
-                <span
-                  className="block h-full rounded-full"
-                  style={{ width: `${String(Math.min(100, r.share_pct))}%`, background: r.fill }}
-                  data-served-share={r.share_pct}
-                />
-              </span>
-            </li>
-          ))}
-        </ul>
-      )}
-    </ChartCard>
+    />
+  );
+}
+
+/** P31 "Projects by category": the served `by_category` buckets, the same way. */
+export function CategoryDonut({ buckets, total, selected, onChange }: CrossFilterDonutProps): React.JSX.Element {
+  const slices: Slice[] = buckets.map((b) => ({
+    key: b.key,
+    label: b.key,
+    count: b.count,
+    share_pct: b.share_pct,
+    fill: catFill(categoryRank(b.key)),
+  }));
+  return (
+    <HeroDonut
+      title="Projects by category"
+      testId="exec-category-donut"
+      slices={slices}
+      total={total}
+      totalLabel="projects"
+      select={{ allowed: CATEGORY_FILTER_VALUES, selected, onChange, legendLabel: 'Filter the Dashboard by category' }}
+      info={
+        <>
+          <p>
+            Pipeline projects of each category, with each category&apos;s served share. Click a slice or a
+            category below to filter the whole Dashboard by it; pick several to combine them.
+          </p>
+          <p>
+            This chart honours the hub / country and type filters but not the category filter itself. Counts,
+            shares and the total are served by the API.
+          </p>
+        </>
+      }
+    />
   );
 }
 

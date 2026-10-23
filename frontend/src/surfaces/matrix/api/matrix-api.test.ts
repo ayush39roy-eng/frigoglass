@@ -27,9 +27,9 @@ afterEach(() => vi.clearAllMocks());
 describe('matrix-api', () => {
   it('sends the currency (and optional filters) as query params — the toggle only changes this', async () => {
     mockApiGet.mockResolvedValueOnce([]);
-    await fetchPriorityMatrix({ currency: 'USD', hubId: 'hub-1', category: 'A+' });
+    await fetchPriorityMatrix({ currency: 'USD', hubId: 'hub-1', category: ['A+', 'B'], type: ['NM', 'CO'] });
     expect(mockApiGet).toHaveBeenCalledWith('/priorities', {
-      query: { currency: 'USD', hub_id: 'hub-1', category: 'A+' },
+      query: { currency: 'USD', hub_id: 'hub-1', category: ['A+', 'B'], type: ['NM', 'CO'] },
     });
   });
 
@@ -127,9 +127,9 @@ describe('matrix-api', () => {
 
     it('requests the distribution with the grid filters (no currency)', async () => {
       mockApiGet.mockResolvedValueOnce({ band_distribution: [], score_histogram: [] });
-      await fetchPriorityDistribution({ hubId: 'h1', category: 'B', status: 'In Queue' });
+      await fetchPriorityDistribution({ hubId: 'h1', category: ['B'], status: 'In Queue' });
       expect(mockApiGet).toHaveBeenCalledWith('/priorities/distribution', {
-        query: { hub_id: 'h1', region: undefined, category: 'B', type: undefined, status_: 'In Queue', q: undefined },
+        query: { hub_id: 'h1', region: undefined, category: ['B'], type: undefined, status_: 'In Queue', q: undefined },
       });
     });
 

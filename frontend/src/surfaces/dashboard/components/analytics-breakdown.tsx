@@ -20,10 +20,19 @@ import { CardInfo } from '@/components/ui/card-info';
 import { categoryRank } from '@/lib/categorical-palette';
 import { formatInteger } from '@/lib/format';
 import { useMotionTokens } from '@/lib/motion';
+import { MultiChipFilter } from '@/components/shared/multi-chip-filter';
+import {
+  CATEGORY_FILTER_VALUES,
+  toggleSelection,
+  TYPE_FILTER_VALUES,
+  type MultiChipOption,
+} from '@/lib/multi-select-filter';
+import { cn } from '@/lib/utils';
 import { HUB_NAMES, PROJECT_TYPES, type ProjectType } from '@/types/enums';
 
 import type { AnalyticsBucket, DashboardAnalytics } from '../api/types';
 import { formatServedPct, typeCode, typeLabel } from '../lib/analytics';
+import type { DashboardSelectionState } from '../lib/selection';
 
 /**
  * "Analytics & breakdown" (P13-T10, API_CONTRACT_P13 §5; mock-up images 7–8).
@@ -44,9 +53,40 @@ export interface AnalyticsBreakdownProps {
   /** Served `PipelineTotals.total_count` (same basis), shown in each donut's
    *  centre. Omitted while that query is unresolved. */
   pipelineTotal?: number | undefined;
+  /** P31 cross-filter: `by_type` served WITHOUT the type selection (falls back to `data`). */
+  typeBuckets?: AnalyticsBucket[] | undefined;
+  /** P31 cross-filter: `by_category` served WITHOUT the category selection. */
+  categoryBuckets?: AnalyticsBucket[] | undefined;
+  /** Served pipeline total on the category chart's own basis (its centre). */
+  categoryTotal?: number | undefined;
+  /** P31: the Dashboard selection the type / category charts drive. */
+  selection?: DashboardSelectionState | undefined;
 }
 
-export function AnalyticsBreakdown({ data, pipelineTotal }: AnalyticsBreakdownProps): React.JSX.Element {
+export function AnalyticsBreakdown({
+  data,
+  pipelineTotal,
+  typeBuckets,
+  categoryBuckets,
+  categoryTotal,
+  selection,
+}: AnalyticsBreakdownProps): React.JSX.Element {
+  const typeSelect: BucketSelect | undefined = selection
+    ? {
+        allowed: TYPE_FILTER_VALUES,
+        selected: selection.types,
+        onChange: (next) => selection.setTypes(next as typeof selection.types),
+        legendLabel: 'Filter the Dashboard by project type',
+      }
+    : undefined;
+  const categorySelect: BucketSelect | undefined = selection
+    ? {
+        allowed: CATEGORY_FILTER_VALUES,
+        selected: selection.categories,
+        onChange: (next) => selection.setCategories(next as typeof selection.categories),
+        legendLabel: 'Filter the Dashboard by category',
+      }
+    : undefined;
   return (
     <section className="space-y-s4" aria-labelledby="analytics-breakdown-heading">
       <div className="flex flex-wrap items-end justify-between gap-s3">
@@ -70,14 +110,15 @@ export function AnalyticsBreakdown({ data, pipelineTotal }: AnalyticsBreakdownPr
           icon={Tags}
           title="By project type"
           subtitle="Pipeline projects per type"
-          info="Pipeline projects of each type, with each type's served share of the pipeline."
+          info="Pipeline projects of each type, with each type's served share of the pipeline. Click a bar or a type under the chart to filter the whole Dashboard by it (several combine). This chart ignores the type filter itself, so every type stays visible."
         >
           <BucketBars
-            buckets={data.by_type}
+            buckets={typeBuckets ?? data.by_type}
             ariaLabel="Pipeline projects by project type"
             codeOf={(k) => typeCode(k)}
             nameOf={(k) => typeLabel(k)}
             colorOf={(k, i) => typeColorRank(k, i)}
+            select={typeSelect}
           />
         </ChartCard>
         <ChartCard
@@ -111,18 +152,33 @@ export function AnalyticsBreakdown({ data, pipelineTotal }: AnalyticsBreakdownPr
           icon={Shapes}
           title="By category"
           subtitle="Share of the pipeline per category"
-          info="Pipeline projects per category and each category's served share of the pipeline."
+          info="Pipeline projects per category and each category's served share of the pipeline. Click a slice or a category in the list to filter the whole Dashboard by it (several combine). This chart ignores the category filter itself, so every category stays visible."
         >
           <BucketDonut
-            buckets={data.by_category}
+            buckets={categoryBuckets ?? data.by_category}
             ariaLabel="Pipeline projects by category"
             colorOf={(k) => categoryRank(k)}
-            total={pipelineTotal}
+            total={categoryBuckets !== undefined ? categoryTotal : pipelineTotal}
+            select={categorySelect}
           />
         </ChartCard>
       </div>
     </section>
   );
+}
+
+/** P31: a chart whose bars / slices drive the Dashboard selection. */
+interface BucketSelect {
+  allowed: readonly string[];
+  selected: readonly string[];
+  onChange: (next: string[]) => void;
+  legendLabel: string;
+}
+
+function selectState(select: BucketSelect | undefined, key: string): { clickable: boolean; dim: boolean } {
+  if (!select) return { clickable: false, dim: false };
+  const clickable = select.allowed.includes(key);
+  return { clickable, dim: select.selected.length > 0 && !select.selected.includes(key) };
 }
 
 /* --------------------------------- colours --------------------------------- */
@@ -223,12 +279,14 @@ function BucketBars({
   codeOf,
   nameOf,
   colorOf,
+  select,
 }: {
   buckets: AnalyticsBucket[];
   ariaLabel: string;
   codeOf: (key: string) => string;
   nameOf: (key: string) => string;
   colorOf: (key: string, index: number) => number;
+  select?: BucketSelect | undefined;
 }): React.JSX.Element {
   const { reduced } = useMotionTokens();
   const data = React.useMemo<BucketDatum[]>(
@@ -273,10 +331,28 @@ function BucketBars({
               radius={[8, 8, 0, 0]}
               maxBarSize={64}
               isAnimationActive={!reduced}
+              {...(select
+                ? {
+                    onClick: (_: unknown, index: number) => {
+                      const key = data[index]?.key;
+                      if (key !== undefined && select.allowed.includes(key)) {
+                        select.onChange(toggleSelection(select.selected, key, select.allowed));
+                      }
+                    },
+                  }
+                : {})}
             >
-              {data.map((d) => (
-                <Cell key={d.key} fill={d.fill} />
-              ))}
+              {data.map((d) => {
+                const st = selectState(select, d.key);
+                return (
+                  <Cell
+                    key={d.key}
+                    fill={d.fill}
+                    fillOpacity={st.dim ? 0.28 : 1}
+                    className={st.clickable ? 'cursor-pointer' : undefined}
+                  />
+                );
+              })}
               {/* P17-R08: LabelList reads each bar's own datum; the old label
                   callback used Recharts' `index`, which skips zero bars. */}
               <LabelList dataKey="label" position="top" offset={8} fontSize={10} fontWeight={700} fill="hsl(var(--color-text))" />
@@ -291,8 +367,32 @@ function BucketBars({
           </li>
         ))}
       </ul>
+      {select ? (
+        <MultiChipFilter
+          label={select.legendLabel}
+          hideLabel
+          options={legendOptions(data, select)}
+          value={select.selected}
+          onChange={select.onChange}
+          dimUnselected
+          data-testid="analytics-type-legend"
+        />
+      ) : null}
     </>
   );
+}
+
+/** The toggles under a selectable chart: every served bucket it may select,
+ *  plus a selected value no longer served, so it can always be switched off. */
+function legendOptions(
+  data: readonly { key: string; name: string; fill: string }[],
+  select: BucketSelect,
+): MultiChipOption<string>[] {
+  const opts: MultiChipOption<string>[] = data
+    .filter((d) => select.allowed.includes(d.key))
+    .map((d) => ({ value: d.key, label: d.name, swatch: d.fill }));
+  for (const v of select.selected) if (!opts.some((o) => o.value === v)) opts.push({ value: v, label: v });
+  return opts.sort((a, b) => select.allowed.indexOf(a.value) - select.allowed.indexOf(b.value));
 }
 
 /* ------------------------------- bucket donut ------------------------------ */
@@ -302,11 +402,13 @@ function BucketDonut({
   ariaLabel,
   colorOf,
   total,
+  select,
 }: {
   buckets: AnalyticsBucket[];
   ariaLabel: string;
   colorOf: (key: string, index: number) => number;
   total?: number | undefined;
+  select?: BucketSelect | undefined;
 }): React.JSX.Element {
   const { reduced } = useMotionTokens();
   const data = React.useMemo(
@@ -332,10 +434,28 @@ function BucketDonut({
               startAngle={90}
               endAngle={-270}
               isAnimationActive={!reduced}
+              {...(select
+                ? {
+                    onClick: (_: unknown, index: number) => {
+                      const key = data[index]?.key;
+                      if (key !== undefined && select.allowed.includes(key)) {
+                        select.onChange(toggleSelection(select.selected, key, select.allowed));
+                      }
+                    },
+                  }
+                : {})}
             >
-              {data.map((d) => (
-                <Cell key={d.key} fill={d.fill} />
-              ))}
+              {data.map((d) => {
+                const st = selectState(select, d.key);
+                return (
+                  <Cell
+                    key={d.key}
+                    fill={d.fill}
+                    fillOpacity={st.dim ? 0.28 : 1}
+                    className={st.clickable ? 'cursor-pointer' : undefined}
+                  />
+                );
+              })}
             </Pie>
           </PieChart>
         </ResponsiveContainer>
@@ -350,23 +470,62 @@ function BucketDonut({
           </div>
         ) : null}
       </figure>
+      {select ? (
+        // P31: each legend row is a toggle of the Dashboard selection (the
+        // keyboard path to the same action as clicking the slice).
+        <ul aria-label={select.legendLabel} className="w-full min-w-0 flex-1 space-y-s2" data-testid="analytics-category-legend">
+          {data.map((d) => {
+            const st = selectState(select, d.key);
+            const on = select.selected.includes(d.key);
+            return (
+              <li key={d.key}>
+                <button
+                  type="button"
+                  aria-pressed={on}
+                  disabled={!st.clickable}
+                  aria-label={`${d.key}: ${formatInteger(d.count)} projects (${formatServedPct(d.share_pct)})`}
+                  onClick={() => select.onChange(toggleSelection(select.selected, d.key, select.allowed))}
+                  className={cn(
+                    'flex w-full items-center gap-s3 rounded-lg border px-s3 py-1.5 text-left transition-colors motion-reduce:transition-none',
+                    'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+                    on
+                      ? 'border-primary bg-primary-subtle'
+                      : 'border-dash-hairline bg-dash-alt hover:border-border-strong',
+                    st.dim && 'opacity-60 hover:opacity-100',
+                  )}
+                >
+                  <span aria-hidden="true" className="size-2.5 shrink-0 rounded-sm" style={{ background: d.fill }} />
+                  <span className="min-w-0 flex-1 text-sm font-medium text-text">{d.key}</span>
+                  <span className="font-mono text-sm font-semibold tabular-nums text-text" data-numeric="">
+                    {formatInteger(d.count)}
+                  </span>
+                  <span className="w-16 text-right text-2xs tabular-nums text-text-muted" data-numeric="">
+                    {formatServedPct(d.share_pct)}
+                  </span>
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+      ) : (
       <dl aria-label={ariaLabel} className="w-full min-w-0 flex-1 space-y-s2">
-        {data.map((d) => (
-          <div
-            key={d.key}
-            className="flex items-center gap-s3 rounded-lg border border-dash-hairline bg-dash-alt px-s3 py-1.5"
-          >
-            <span aria-hidden="true" className="size-2.5 shrink-0 rounded-sm" style={{ background: d.fill }} />
-            <dt className="min-w-0 flex-1 truncate text-sm font-medium text-text">{d.key}</dt>
-            <dd className="font-mono text-sm font-semibold tabular-nums text-text" data-numeric="">
-              {formatInteger(d.count)}
-            </dd>
-            <dd className="w-16 text-right text-2xs tabular-nums text-text-muted" data-numeric="">
-              {formatServedPct(d.share_pct)}
-            </dd>
-          </div>
-        ))}
-      </dl>
+          {data.map((d) => (
+            <div
+              key={d.key}
+              className="flex items-center gap-s3 rounded-lg border border-dash-hairline bg-dash-alt px-s3 py-1.5"
+            >
+              <span aria-hidden="true" className="size-2.5 shrink-0 rounded-sm" style={{ background: d.fill }} />
+              <dt className="min-w-0 flex-1 truncate text-sm font-medium text-text">{d.key}</dt>
+              <dd className="font-mono text-sm font-semibold tabular-nums text-text" data-numeric="">
+                {formatInteger(d.count)}
+              </dd>
+              <dd className="w-16 text-right text-2xs tabular-nums text-text-muted" data-numeric="">
+                {formatServedPct(d.share_pct)}
+              </dd>
+            </div>
+          ))}
+        </dl>
+      )}
     </div>
   );
 }

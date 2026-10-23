@@ -23,18 +23,17 @@ import { formatInteger } from '@/lib/format';
 import { useDebouncedValue } from '@/lib/use-debounced-value';
 import { useHubFilter } from '@/stores/hub-filter';
 import { usePermission, useSessionStore } from '@/stores/session';
+import { MultiChipFilter } from '@/components/shared/multi-chip-filter';
 import {
-  PROJECT_CATEGORIES,
-  UI_PROJECT_STATUSES,
-  PROJECT_TYPE_LABELS,
-  PROJECT_TYPES,
-  type ProjectCategory,
-  type ProjectStatus,
-  type ProjectType,
-} from '@/types/enums';
+  CATEGORY_CHIP_OPTIONS_WITH_UNMAPPED,
+  selectionParam,
+  TYPE_CHIP_OPTIONS_WITH_UNMAPPED,
+} from '@/lib/multi-select-filter';
+import { UI_PROJECT_STATUSES, type ProjectStatus } from '@/types/enums';
 
 import { useDashboardProjects, useProjectFacets, useRegionSummary } from '../hooks/use-dashboard';
 import type { ProjectFilterParams } from '../api/types';
+import { useDashboardSelection } from '../lib/selection';
 import { registerColumns, type RegisterRow } from './register-columns';
 import { RegisterRegionSummary } from './register-region-summary';
 import { VirtualDataTable } from './virtual-data-table';
@@ -64,16 +63,6 @@ type BreakdownView = 'table' | 'cards';
  *  projects as cards" page filters the same `GET /dashboard/projects` rows
  *  with the same four controls, so it reuses these rather than forking them. */
 export const ALL = '__all__';
-
-/** The local filters. The hub is NOT here: since P12 (ADR 0020) it is the
- *  global header hub filter (`stores/hub-filter.ts`), shared by every surface. */
-export interface FilterState {
-  category: string;
-  status_: string;
-  priority: string;
-}
-
-export const EMPTY: FilterState = { category: ALL, status_: ALL, priority: ALL };
 
 export function FilterSelect({
   label,
@@ -110,16 +99,17 @@ export function FilterSelect({
 }
 
 /** The register's own filters (ADR 0025 §5). Hub and country are the global
- *  filter; everything here is sent to the server, nothing is filtered locally. */
+ *  filter; P31: category and type are the Dashboard-wide selection
+ *  (`lib/selection.ts`, URL state), so the register, the charts and every KPI
+ *  are always cut the same way. Everything is sent to the server, nothing is
+ *  filtered locally. */
 interface RegisterFilters {
-  category: string;
-  type: string;
   status_: string;
   leader: string;
   step: string;
 }
 
-const REGISTER_EMPTY: RegisterFilters = { category: ALL, type: ALL, status_: ALL, leader: ALL, step: ALL };
+const REGISTER_EMPTY: RegisterFilters = { status_: ALL, leader: ALL, step: ALL };
 
 /** Server limit on `q` (contract §3). */
 const SEARCH_MAX = 100;
@@ -159,6 +149,7 @@ export function ProjectBreakdown(): React.JSX.Element {
   const panelId = `${tabsId}-panel`;
   const tabId = (v: BreakdownView): string => `${tabsId}-tab-${v}`;
   const { hubId, region, setHubId } = useHubFilter();
+  const selection = useDashboardSelection();
   const me = useSessionStore((st) => st.me);
   const hubsQuery = useHubs();
   const canEdit = usePermission('project_registration').write;
@@ -168,7 +159,7 @@ export function ProjectBreakdown(): React.JSX.Element {
   const params = React.useMemo<ProjectFilterParams>(() => {
     const next: ProjectFilterParams = {
       hub_id: hubId ?? undefined,
-      category: pick<ProjectCategory>(filters.category),
+      category: selectionParam(selection.categories),
       status_: pick<ProjectStatus>(filters.status_),
       priority: undefined,
     };
@@ -176,22 +167,23 @@ export function ProjectBreakdown(): React.JSX.Element {
     // and request stay identical to P12's.
     if (region) next.region = region;
     if (debouncedSearch) next.q = debouncedSearch.slice(0, SEARCH_MAX);
-    if (filters.type !== ALL) next.type = filters.type as ProjectType;
+    if (selection.types.length > 0) next.type = selection.types;
     if (filters.leader !== ALL) next.leader_engineer_id = filters.leader;
     if (filters.step !== ALL) next.current_step = filters.step;
     return next;
-  }, [filters, hubId, region, debouncedSearch]);
+  }, [filters, hubId, region, debouncedSearch, selection.categories, selection.types]);
 
   const query = useDashboardProjects(params);
-  const facets = useProjectFacets(hubId, region);
-  const summary = useRegionSummary(hubId, region);
+  const facets = useProjectFacets(hubId, region, selection);
+  const summary = useRegionSummary(hubId, region, selection);
 
   const hubOptions = React.useMemo(() => {
     const inScope = hubsInScope(me, hubsQuery.data) ?? [];
     return inScope.filter((h) => region === null || h.lab_region === region).map((h) => ({ value: h.id, label: hubPickerLabel(h, hubsQuery.data) }));
   }, [me, hubsQuery.data, region]);
 
-  const hasLocalFilter = debouncedSearch !== '' || Object.values(filters).some((v) => v !== ALL);
+  const hasLocalFilter =
+    debouncedSearch !== '' || Object.values(filters).some((v) => v !== ALL) || selection.active;
   const isFiltered = hasLocalFilter || hubId !== null || region !== null;
   const rows = React.useMemo<RegisterRow[]>(
     () => (query.data?.rows ?? []).map((row, i) => ({ ...row, ordinal: i + 1 })),
@@ -203,6 +195,7 @@ export function ProjectBreakdown(): React.JSX.Element {
   const clearLocal = (): void => {
     setFilters(REGISTER_EMPTY);
     setSearch('');
+    selection.clear();
   };
 
   return (
@@ -295,18 +288,6 @@ export function ProjectBreakdown(): React.JSX.Element {
             options={hubOptions}
           />
           <FilterSelect
-            label="Category"
-            value={filters.category}
-            onChange={set('category')}
-            options={PROJECT_CATEGORIES.map((c) => ({ value: c, label: c }))}
-          />
-          <FilterSelect
-            label="Type"
-            value={filters.type}
-            onChange={set('type')}
-            options={PROJECT_TYPES.map((t) => ({ value: t, label: `${t} · ${PROJECT_TYPE_LABELS[t]}` }))}
-          />
-          <FilterSelect
             label="Status"
             value={filters.status_}
             onChange={set('status_')}
@@ -330,6 +311,26 @@ export function ProjectBreakdown(): React.JSX.Element {
               Clear
             </Button>
           ) : null}
+        </div>
+
+        {/* P31: multi-select category / type — the Dashboard-wide selection, so
+            pressing a chip here re-cuts the charts and KPIs above as well. */}
+        <div className="flex flex-col gap-2" data-testid="register-chip-filters">
+          <MultiChipFilter
+            label="Category"
+            options={CATEGORY_CHIP_OPTIONS_WITH_UNMAPPED}
+            value={selection.categories}
+            onChange={selection.setCategories}
+            data-testid="register-category-chips"
+          />
+          <MultiChipFilter
+            label="Type"
+            options={TYPE_CHIP_OPTIONS_WITH_UNMAPPED}
+            value={selection.types}
+            onChange={selection.setTypes}
+            data-testid="register-type-chips"
+          />
+          <p className="text-2xs text-text-muted">Category and type apply to the whole Dashboard.</p>
         </div>
 
         <div id={panelId} role="tabpanel" aria-labelledby={tabId(view)}>

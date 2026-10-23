@@ -2203,7 +2203,7 @@ category / type filter becomes multi-select, applied server-side (I9: totals and
 
 | ID | Task | Owner | Status |
 |---|---|---|---|
-| P31-T01 | Backend: repeatable `category` / `type` on every endpoint above (OR within, AND across, empty = all, single value unchanged, `Unmapped` on the register); hub scoping unchanged; OpenAPI; tests | backend-builder | TODO |
-| P31-T02 | Frontend: multi-select category and type filters on Dashboard register, Projects page, Gantt toolbar, Matrix View panel, Priority board toolbar; URL state as repeated params (old single-value links still parse); compact chip / toggle-group UI with clear-all; export carries the selection; tests | frontend-builder | TODO |
+| P31-T01 | Backend: repeatable `category` / `type` on every endpoint above (OR within, AND across, empty = all, single value unchanged, `Unmapped` on the register); hub scoping unchanged; OpenAPI; tests (scope extended to every Dashboard aggregate + `/vip-projects`) | backend-builder | DONE (MEMORY 2026-10-23 P31-T01; `docs/API_CONTRACT_P31.md`; suite 2420 passed) |
+| P31-T02 | Frontend: multi-select category and type filters on Dashboard register, Projects page, Gantt toolbar, Matrix View panel, Priority board toolbar; URL state as repeated params (old single-value links still parse); compact chip / toggle-group UI with clear-all; export carries the selection; tests | frontend-builder | DONE (MEMORY 2026-10-23 P31-T02; + Dashboard cross-filter donuts) |
 | P31-R01 | Owner bug (Render): reload shows "Could not load" and forces a new sign-in. Session `/me` retries network / timeout / 502–504 with backoff for ~90 s behind a "Waking up the server…" state (elapsed time, Retry now); 401 → /login at once; dev-user email untouched while retrying; "Remember me" defaults ON; login dev-mode probe waits out 502–504; tests | frontend-builder | DONE |
 | P31-T20 | Gate: qa, workflow, security | — | TODO |

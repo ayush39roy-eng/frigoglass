@@ -1,6 +1,8 @@
 import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 
+import { fireEvent, screen, within } from '@testing-library/react';
+
 import { renderWithProviders } from '@/test/render';
 import { seriousAxeViolations } from '@/test/axe';
 
@@ -54,6 +56,49 @@ describe('AnalyticsBreakdown charts (P13-R01, QA-P13-1)', () => {
       );
       expect(tabbable).toEqual([]);
     }
+    expect(await seriousAxeViolations(container)).toEqual([]);
+  });
+
+  it('P31: the type bars and the category donut drive the Dashboard selection (cross-filter), axe-clean', async () => {
+    const setTypes = vi.fn();
+    const setCategories = vi.fn();
+    const selection = {
+      categories: ['B' as const],
+      types: [],
+      setCategories,
+      setTypes,
+      clear: vi.fn(),
+      active: true,
+    };
+    const { container } = renderWithProviders(
+      <AnalyticsBreakdown
+        data={DATA}
+        pipelineTotal={169}
+        // Served WITHOUT their own dimension: every value stays visible.
+        typeBuckets={[
+          { key: 'NM', count: 40, share_pct: 23.67 },
+          { key: 'CO', count: 89, share_pct: 52.66 },
+        ]}
+        categoryBuckets={DATA.by_category}
+        categoryTotal={236}
+        selection={selection}
+      />,
+    );
+    // Type: the legend toggles (keyboard path) and a bar click.
+    const typeLegend = screen.getByRole('group', { name: 'Filter the Dashboard by project type' });
+    fireEvent.click(within(typeLegend).getByRole('button', { name: 'Cost Optimization' }));
+    expect(setTypes).toHaveBeenLastCalledWith(['CO']);
+    // Category: each legend row is an aria-pressed toggle; B is selected, A+ is dimmed.
+    const catLegend = screen.getByRole('list', { name: 'Filter the Dashboard by category' });
+    const b = within(catLegend).getByRole('button', { name: /^B: 162 projects/ });
+    expect(b).toHaveAttribute('aria-pressed', 'true');
+    const aPlus = within(catLegend).getByRole('button', { name: /^A\+: 7 projects/ });
+    expect(aPlus).toHaveAttribute('aria-pressed', 'false');
+    expect(aPlus.className).toContain('opacity-60');
+    fireEvent.click(aPlus);
+    expect(setCategories).toHaveBeenLastCalledWith(['A+', 'B']);
+    // The category donut centre is the served total on its own basis.
+    expect(within(container).getAllByText('236').length).toBeGreaterThan(0);
     expect(await seriousAxeViolations(container)).toEqual([]);
   });
 });

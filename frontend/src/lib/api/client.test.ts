@@ -41,6 +41,18 @@ describe('apiGet', () => {
     expect(url.searchParams.has('priority')).toBe(false);
   });
 
+  it('P31: sends an array as a REPEATED param in order; an empty array sends nothing', async () => {
+    const fetchMock = vi.fn((_input: string | URL) => Promise.resolve(jsonResponse({ rows: [] })));
+    vi.stubGlobal('fetch', fetchMock);
+    await apiGet('/dashboard/projects', { query: { category: ['A+', 'A', 'B'], type: [], hub_id: 'h1' } });
+    const called = fetchMock.mock.calls[0]?.[0];
+    const url = new URL(typeof called === 'string' ? called : String(called));
+    expect(url.searchParams.getAll('category')).toEqual(['A+', 'A', 'B']);
+    expect(url.search).toContain('category=A%2B&category=A&category=B');
+    expect(url.searchParams.has('type')).toBe(false);
+    expect(url.searchParams.get('hub_id')).toBe('h1');
+  });
+
   it('throws an ApiError carrying the HTTP status and FastAPI detail', async () => {
     vi.stubGlobal(
       'fetch',
@@ -114,6 +126,19 @@ describe('apiDownload', () => {
     expect(url.searchParams.has('hub_id')).toBe(false);
     expect(url.searchParams.get('category')).toBe('A+');
     expect(url.searchParams.get('format')).toBe('csv');
+  });
+
+  it('P31: an export carries a multi-select as repeated params', async () => {
+    const fetchMock = vi.fn((_input: string | URL) => Promise.resolve(new Response('x', { status: 200 })));
+    vi.stubGlobal('fetch', fetchMock);
+    await apiDownload('/exports/dashboard', {
+      query: { category: ['A+', 'A'], type: ['NM'], format: 'xlsx' },
+      fallbackFilename: 'dashboard-export.xlsx',
+    });
+    const called = fetchMock.mock.calls[0]?.[0];
+    const url = new URL(typeof called === 'string' ? called : String(called));
+    expect(url.searchParams.getAll('category')).toEqual(['A+', 'A']);
+    expect(url.searchParams.getAll('type')).toEqual(['NM']);
   });
 
   it('throws an ApiError carrying the HTTP status on a non-2xx response (RBAC 403)', async () => {

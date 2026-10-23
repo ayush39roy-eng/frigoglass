@@ -50,9 +50,10 @@ export interface MatrixQueryParams {
   hubId?: string | undefined;
   /** P13 (ADR 0025): the country filter, sent as `region`. */
   region?: LabRegion | undefined;
-  category?: ProjectCategory | undefined;
-  /** P13-T14 (API_CONTRACT_P13 §7): the Type chip. */
-  type?: ProjectType | undefined;
+  /** P31: repeated `category` params (OR); omitted = all. */
+  category?: readonly ProjectCategory[] | undefined;
+  /** P13-T14 (API_CONTRACT_P13 §7): the Type chips — P31: repeated `type` params (OR). */
+  type?: readonly ProjectType[] | undefined;
   /** P13-T14: the Status chip, sent as `status_`. */
   status?: ProjectStatus | undefined;
   /** P13-T14: the Project column search — name or code substring, ≤ 100 chars. */

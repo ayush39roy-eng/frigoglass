@@ -41,8 +41,9 @@ export interface GanttQueryParams {
   // the scope and with `hub_id` / `region`. Undefined = not sent.
   /** Case-insensitive substring of name or external code, ≤ 100 chars. */
   q?: string | undefined;
-  category?: ProjectCategory | undefined;
-  type?: ProjectType | undefined;
+  /** P31: repeated params (OR within, AND across); omitted = all. */
+  category?: readonly ProjectCategory[] | undefined;
+  type?: readonly ProjectType[] | undefined;
   /** Sent as `status_` (the API's param name). */
   status?: ProjectStatus | undefined;
   leaderEngineerId?: string | undefined;

@@ -25,6 +25,7 @@ import {
 import { useDebouncedValue } from '@/lib/use-debounced-value';
 
 import { useBoardLeaderFacets, usePriorityBoard, type PriorityBoardFilters } from './api';
+import { selectionParam } from '@/lib/multi-select-filter';
 import { BoardColumn } from './components/board-column';
 import { BoardToolbar } from './components/board-toolbar';
 import { ALL, EMPTY_TOOLBAR, SEARCH_MAX, type BoardToolbarState } from './lib/toolbar-state';
@@ -84,8 +85,9 @@ export default function PriorityBoardPage(): React.JSX.Element {
 
 /** P21-T05: the Matrix View panel's filters, shared with the scoring grid. */
 export interface SharedBoardFilters {
-  category: ProjectCategory | null;
-  type: ProjectType | null;
+  /** P31: multi-select; empty = all. */
+  category: ProjectCategory[];
+  type: ProjectType[];
   status: ProjectStatus | null;
   /** The shared project search (undebounced; debounced here like the grid). */
   search: string;
@@ -130,8 +132,8 @@ export function PriorityBoardView({
         ? {
             ...ownToolbar,
             search: shared.search,
-            category: shared.category ?? ALL,
-            type: shared.type ?? ALL,
+            category: shared.category,
+            type: shared.type,
             status_: shared.status ?? ALL,
           }
         : ownToolbar,
@@ -150,8 +152,8 @@ export function PriorityBoardView({
     const pick = (v: string) => (v === ALL ? undefined : v);
     return {
       q: debouncedSearch ? debouncedSearch.slice(0, SEARCH_MAX) : undefined,
-      category: pick(toolbar.category),
-      type: pick(toolbar.type),
+      category: selectionParam(toolbar.category),
+      type: selectionParam(toolbar.type),
       status_: pick(toolbar.status_),
       leader_engineer_id: pick(toolbar.leader),
     };

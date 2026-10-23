@@ -15,7 +15,9 @@ import type {
   ScheduleRunSummary,
   StatusOverview,
 } from '../../api/types';
-import { useDashboardProjects } from '../../hooks/use-dashboard';
+import { useDashboardProjects, type useCrossFilterBreakdowns } from '../../hooks/use-dashboard';
+import { selectionParam } from '@/lib/multi-select-filter';
+import type { DashboardSelectionState } from '../../lib/selection';
 import { selectRiskRows } from '../../lib/executive';
 import { DeliveryGaugeCard } from '../delivery-gauge-card';
 import { ScheduleRunProvenance } from '../schedule-run-provenance';
@@ -50,8 +52,11 @@ const PipelineDonut = React.lazy(async () => ({
 const StatusDonut = React.lazy(async () => ({
   default: (await import('./executive-charts')).StatusDonut,
 }));
-const TypeBars = React.lazy(async () => ({
-  default: (await import('./executive-charts')).TypeBars,
+const TypeDonut = React.lazy(async () => ({
+  default: (await import('./executive-charts')).TypeDonut,
+}));
+const CategoryDonut = React.lazy(async () => ({
+  default: (await import('./executive-charts')).CategoryDonut,
 }));
 const PriorityDeliveryChart = React.lazy(async () => ({
   default: (await import('./executive-charts')).PriorityDeliveryChart,
@@ -65,16 +70,21 @@ export interface ExecutiveViewProps {
   activeRun: ScheduleRunSummary | null | undefined;
   hubId: string | null;
   region: LabRegion | null;
+  /** P31: the Dashboard category / type selection (already applied to every query above). */
+  selection: DashboardSelectionState;
+  /** P31 cross-filter: each donut's own served distribution. */
+  breakdowns: ReturnType<typeof useCrossFilterBreakdowns>;
 }
 
 export function ExecutiveView({
   withinYear,
   pipelineTotals,
   statusOverview,
-  analytics,
   activeRun,
   hubId,
   region,
+  selection,
+  breakdowns,
 }: ExecutiveViewProps): React.JSX.Element {
   // Executive-only fetches (mount-gated): the VIP board (KPI tile + VIP-at-risk
   // rows) and the register rows (served `tracking_status` for overdue check-ins)
@@ -85,6 +95,9 @@ export function ExecutiveView({
   const projects = useDashboardProjects({
     hub_id: hubId ?? undefined,
     region: region ?? undefined,
+    // P31: the same category / type selection as every other figure here.
+    category: selectionParam(selection.categories),
+    type: selectionParam(selection.types),
   });
 
   const risks = React.useMemo(
@@ -166,30 +179,69 @@ export function ExecutiveView({
         </SectionBoundary>
       </StaggerSection>
 
+      {/* P31 (owner 2026-10-23): "Projects by type" became a donut, with
+          "Projects by category" beside it. Their slices and legend toggles
+          drive the Dashboard selection (cross-filter); each donut is served
+          without its own dimension's selection so every value stays pickable. */}
+      <StaggerSection>
+        <section aria-label="Projects by type and category" className="grid gap-gutter md:grid-cols-2" data-testid="exec-cross-filter">
+          <div className="min-w-0">
+            <SectionBoundary
+              query={breakdowns.type.analytics}
+              title="Projects by type"
+              errorDescription="The type breakdown could not be loaded."
+            >
+              {(data) => (
+                breakdowns.type.totals.data === undefined ? (
+                  <PanelSkeleton height="h-[18rem]" />
+                ) : (
+                <React.Suspense fallback={<PanelSkeleton height="h-[18rem]" />}>
+                  <TypeDonut
+                    buckets={data.by_type}
+                    total={breakdowns.type.totals.data.total_count}
+                    selected={selection.types}
+                    onChange={(next) => selection.setTypes(next as typeof selection.types)}
+                  />
+                </React.Suspense>
+                )
+              )}
+            </SectionBoundary>
+          </div>
+          <div className="min-w-0">
+            <SectionBoundary
+              query={breakdowns.category.analytics}
+              title="Projects by category"
+              errorDescription="The category breakdown could not be loaded."
+            >
+              {(data) => (
+                breakdowns.category.totals.data === undefined ? (
+                  <PanelSkeleton height="h-[18rem]" />
+                ) : (
+                <React.Suspense fallback={<PanelSkeleton height="h-[18rem]" />}>
+                  <CategoryDonut
+                    buckets={data.by_category}
+                    total={breakdowns.category.totals.data.total_count}
+                    selected={selection.categories}
+                    onChange={(next) => selection.setCategories(next as typeof selection.categories)}
+                  />
+                </React.Suspense>
+                )
+              )}
+            </SectionBoundary>
+          </div>
+        </section>
+      </StaggerSection>
+
       {/* Owner polish (2026-10-22): cards in this row size to their OWN content
           (items-start) — a short Risks list must never stretch into a
           half-empty card beside a taller sibling. */}
       <StaggerSection>
         <div className="grid items-start gap-gutter xl:grid-cols-12">
-          <div className="min-w-0 xl:col-span-3">
+          <div className="min-w-0 xl:col-span-4">
             <RisksCard risks={risks} />
           </div>
-          <div className="min-w-0 xl:col-span-6">
+          <div className="min-w-0 xl:col-span-8">
             <UpcomingCompletionsCard rows={withinYear.data?.rows ?? []} />
-          </div>
-          {/* Owner addendum: project types as a compact horizontal bar list. */}
-          <div className="min-w-0 xl:col-span-3">
-            <SectionBoundary
-              query={analytics}
-              title="Projects by type"
-              errorDescription="The type breakdown could not be loaded."
-            >
-              {(data) => (
-                <React.Suspense fallback={<PanelSkeleton height="h-48" />}>
-                  <TypeBars buckets={data.by_type} />
-                </React.Suspense>
-              )}
-            </SectionBoundary>
           </div>
         </div>
       </StaggerSection>

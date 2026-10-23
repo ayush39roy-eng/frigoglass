@@ -23,7 +23,11 @@ const hooks = {
   useRegionSummary: vi.fn(),
   useProjectFacets: vi.fn(),
   useDashboardAnalytics: vi.fn(),
+  useCrossFilterBreakdowns: vi.fn(),
 };
+
+/** P31: no Dashboard category / type selection. */
+const NO_SEL = expect.objectContaining({ categories: [], types: [] });
 
 vi.mock('./hooks/use-dashboard', () => ({
   useCompletingWithinYear: (...a: unknown[]) => hooks.useCompletingWithinYear(...a),
@@ -35,6 +39,14 @@ vi.mock('./hooks/use-dashboard', () => ({
   useRegionSummary: (...a: unknown[]) => hooks.useRegionSummary(...a),
   useProjectFacets: (...a: unknown[]) => hooks.useProjectFacets(...a),
   useDashboardAnalytics: (...a: unknown[]) => hooks.useDashboardAnalytics(...a),
+  // P31: the cross-filter donuts read the same mocked payloads (the page calls
+  // useDashboardAnalytics / usePipelineTotals just before this hook).
+  useCrossFilterBreakdowns: (...a: unknown[]) => {
+    hooks.useCrossFilterBreakdowns(...a);
+    const analytics = hooks.useDashboardAnalytics.mock.results.at(-1)?.value as unknown;
+    const totals = hooks.usePipelineTotals.mock.results.at(-1)?.value as unknown;
+    return { type: { analytics, totals }, category: { analytics, totals } };
+  },
 }));
 vi.mock('@/lib/api/reference', () => ({
   useHubs: () => ({
@@ -133,10 +145,10 @@ describe('DashboardPage', () => {
     hooks.useStatusOverview.mockReturnValue(ready(status));
     hooks.useHubTypePipeline.mockReturnValue(ready(hubType));
     renderWithProviders(<DashboardPage />);
-    expect(hooks.useCompletingWithinYear).toHaveBeenLastCalledWith('hub-greece', null);
-    expect(hooks.usePipelineTotals).toHaveBeenLastCalledWith('hub-greece', null);
-    expect(hooks.useStatusOverview).toHaveBeenLastCalledWith('hub-greece', null);
-    expect(hooks.useHubTypePipeline).toHaveBeenLastCalledWith('hub-greece', null);
+    expect(hooks.useCompletingWithinYear).toHaveBeenLastCalledWith('hub-greece', null, NO_SEL);
+    expect(hooks.usePipelineTotals).toHaveBeenLastCalledWith('hub-greece', null, NO_SEL);
+    expect(hooks.useStatusOverview).toHaveBeenLastCalledWith('hub-greece', null, NO_SEL);
+    expect(hooks.useHubTypePipeline).toHaveBeenLastCalledWith('hub-greece', null, NO_SEL);
     expect(hooks.useDashboardProjects).toHaveBeenLastCalledWith(expect.objectContaining({ hub_id: 'hub-greece' }));
     expect(capacityHook.useHubLoadVsCapacity).not.toHaveBeenCalled();
     expect(screen.getByTestId('hub-filter-chip')).toBeInTheDocument();
@@ -266,11 +278,11 @@ describe('DashboardPage — P13 country filter (ADR 0025)', () => {
     useHubFilterStore.setState({ hubId: null, region: 'India' });
     readyAll();
     renderWithProviders(<DashboardPage />);
-    expect(hooks.useCompletingWithinYear).toHaveBeenLastCalledWith(null, 'India');
-    expect(hooks.usePipelineTotals).toHaveBeenLastCalledWith(null, 'India');
-    expect(hooks.useStatusOverview).toHaveBeenLastCalledWith(null, 'India');
-    expect(hooks.useHubTypePipeline).toHaveBeenLastCalledWith(null, 'India');
-    expect(hooks.useRegionSummary).toHaveBeenLastCalledWith(null, 'India');
+    expect(hooks.useCompletingWithinYear).toHaveBeenLastCalledWith(null, 'India', NO_SEL);
+    expect(hooks.usePipelineTotals).toHaveBeenLastCalledWith(null, 'India', NO_SEL);
+    expect(hooks.useStatusOverview).toHaveBeenLastCalledWith(null, 'India', NO_SEL);
+    expect(hooks.useHubTypePipeline).toHaveBeenLastCalledWith(null, 'India', NO_SEL);
+    expect(hooks.useRegionSummary).toHaveBeenLastCalledWith(null, 'India', NO_SEL);
     expect(hooks.useDashboardProjects).toHaveBeenLastCalledWith(expect.objectContaining({ region: 'India' }));
     expect(capacityHook.useHubLoadVsCapacity).not.toHaveBeenCalled();
     expect(screen.getByTestId('hub-filter-chip')).toHaveTextContent('Country: India');
@@ -534,7 +546,7 @@ describe('DashboardPage — P13-T10 analytics & breakdown', () => {
     useHubFilterStore.setState({ hubId: null, region: 'Romania' });
     readyAll();
     renderWithProviders(<DashboardPage />);
-    expect(hooks.useDashboardAnalytics).toHaveBeenLastCalledWith(null, 'Romania');
+    expect(hooks.useDashboardAnalytics).toHaveBeenLastCalledWith(null, 'Romania', NO_SEL);
   });
 
   it('renders the served section after the hub × type pipeline, with the served total in each donut', async () => {
@@ -667,3 +679,62 @@ describe('DashboardPage — P28 Executive view (ADR 0039)', () => {
     expect(screen.queryByTestId('exec-provenance')).not.toBeInTheDocument();
   });
 });
+
+describe('DashboardPage — P31 Dashboard-wide category / type selection', () => {
+  function readyAll(): void {
+    hooks.useCompletingWithinYear.mockReturnValue(ready(withinYear));
+    hooks.usePipelineTotals.mockReturnValue(ready(totals));
+    hooks.useStatusOverview.mockReturnValue(ready(status));
+    hooks.useHubTypePipeline.mockReturnValue(ready(hubType));
+  }
+
+  it('reads repeated URL params and sends them with EVERY Dashboard query; the bar shows them pressed', () => {
+    readyAll();
+    renderWithProviders(<DashboardPage />, { route: '/?category=A%2B&category=A&type=NM' });
+    const sel = expect.objectContaining({ categories: ['A+', 'A'], types: ['NM'] });
+    for (const hook of [
+      hooks.useCompletingWithinYear,
+      hooks.usePipelineTotals,
+      hooks.useStatusOverview,
+      hooks.useHubTypePipeline,
+      hooks.useRegionSummary,
+      hooks.useDashboardAnalytics,
+      hooks.useCrossFilterBreakdowns,
+    ]) {
+      expect(hook).toHaveBeenLastCalledWith(null, null, sel);
+    }
+    // The register (same selection, repeated params).
+    expect(hooks.useDashboardProjects).toHaveBeenLastCalledWith(
+      expect.objectContaining({ category: ['A+', 'A'], type: ['NM'] }),
+    );
+    const bar = screen.getByTestId('dashboard-selection-bar');
+    const cats = within(bar).getByRole('group', { name: 'Category' });
+    expect(within(cats).getByRole('button', { name: 'A+' })).toHaveAttribute('aria-pressed', 'true');
+    expect(within(cats).getByRole('button', { name: 'A' })).toHaveAttribute('aria-pressed', 'true');
+    expect(within(cats).getByRole('button', { name: 'B' })).toHaveAttribute('aria-pressed', 'false');
+    expect(within(cats).getByRole('button', { name: 'All' })).toHaveAttribute('aria-pressed', 'false');
+    const types = within(bar).getByRole('group', { name: 'Type' });
+    expect(within(types).getByRole('button', { name: 'New Model' })).toHaveAttribute('aria-pressed', 'true');
+    expect(within(types).getByRole('button', { name: 'Unmapped' })).toBeInTheDocument();
+  });
+
+  it('a legacy single-value link still parses; toggling chips re-queries; Clear empties both lists', async () => {
+    readyAll();
+    const user = userEvent.setup();
+    renderWithProviders(<DashboardPage />, { route: '/?category=B' });
+    expect(hooks.usePipelineTotals).toHaveBeenLastCalledWith(null, null, expect.objectContaining({ categories: ['B'], types: [] }));
+    const bar = screen.getByTestId('dashboard-selection-bar');
+    await user.click(within(within(bar).getByRole('group', { name: 'Category' })).getByRole('button', { name: 'A+' }));
+    await user.click(within(within(bar).getByRole('group', { name: 'Type' })).getByRole('button', { name: 'Cost Optimization' }));
+    // Canonical (option) order, whatever the press order.
+    expect(hooks.usePipelineTotals).toHaveBeenLastCalledWith(
+      null,
+      null,
+      expect.objectContaining({ categories: ['A+', 'B'], types: ['CO'] }),
+    );
+    await user.click(within(bar).getByRole('button', { name: 'Clear' }));
+    expect(hooks.usePipelineTotals).toHaveBeenLastCalledWith(null, null, NO_SEL);
+    expect(within(bar).queryByRole('button', { name: 'Clear' })).not.toBeInTheDocument();
+  });
+});
+

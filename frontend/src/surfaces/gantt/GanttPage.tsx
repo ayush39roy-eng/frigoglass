@@ -6,6 +6,7 @@ import { StatStrip } from '@/components/ui/stat-variants';
 import { SectionBoundary } from '@/components/shared/section-boundary';
 import { ScheduleRunProvenance } from '@/components/shared/schedule-run-provenance';
 import { DownloadButton } from '@/components/shared/download-button';
+import { selectionParam, useCategoryTypeParams } from '@/lib/multi-select-filter';
 import { EmptyState } from '@/components/shared/empty-state';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -47,8 +48,8 @@ function toQueryParams(
     hubId: hubId ?? undefined,
     region: region ?? undefined,
     q: trimmed === '' ? undefined : trimmed,
-    category: f.category ?? undefined,
-    type: f.type ?? undefined,
+    category: selectionParam(f.category),
+    type: selectionParam(f.type),
     status: f.status ?? undefined,
     leaderEngineerId: f.leaderEngineerId ?? undefined,
     currentStep: f.currentStep ?? undefined,
@@ -73,7 +74,25 @@ export default function GanttPage(): React.JSX.Element {
   // P12 (ADR 0020): the global header hub filter replaces the page-local select.
   const { hubId, region } = useHubFilter();
   const [zoomPx, setZoomPx] = React.useState<number>(ZOOM_DEFAULT_PX);
-  const [filters, setFilters] = React.useState<GanttFilterState>(DEFAULT_GANTT_FILTERS);
+  const [localFilters, setLocalFilters] = React.useState<GanttFilterState>(DEFAULT_GANTT_FILTERS);
+  // P31: category / type are multi-select URL state (`?category=A%2B&type=NM`);
+  // old single-value links still parse. The rest of the toolbar is local.
+  const chips = useCategoryTypeParams();
+  const filters = React.useMemo<GanttFilterState>(
+    () => ({ ...localFilters, category: chips.categories, type: chips.types }),
+    [localFilters, chips.categories, chips.types],
+  );
+  const { setBoth } = chips;
+  const setFilters = React.useCallback(
+    (next: GanttFilterState | ((prev: GanttFilterState) => GanttFilterState)) => {
+      const resolved = typeof next === 'function' ? next(filters) : next;
+      if (resolved.category.join() !== filters.category.join() || resolved.type.join() !== filters.type.join()) {
+        setBoth(resolved.category, resolved.type);
+      }
+      setLocalFilters(resolved);
+    },
+    [filters, setBoth],
+  );
   const [forest, setForest] = React.useState(false);
   const [hideStats, setHideStats] = React.useState(false);
   const debouncedQ = useDebouncedValue(filters.q, 300);
@@ -224,7 +243,13 @@ export default function GanttPage(): React.JSX.Element {
                 </div>
                 <DownloadButton
                   path="/exports/gantt"
-                  filters={{ hub_id: hubId ?? undefined, region: region ?? undefined }}
+                  filters={{
+                    hub_id: hubId ?? undefined,
+                    region: region ?? undefined,
+                    // P31: the export carries the category / type selection.
+                    category: selectionParam(filters.category),
+                    type: selectionParam(filters.type),
+                  }}
                   fallbackFilename="gantt-export"
                   className="ml-auto"
                 />

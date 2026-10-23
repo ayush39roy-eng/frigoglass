@@ -22,6 +22,13 @@ totals, not 403. Totals are computed here for the filtered set (I9, I23).
 `/region-summary` serves the per-country KPI chips; `/projects` is the
 "All registered projects" register and `/projects/facets` its dropdowns.
 
+**Category / type selection (P31, `docs/API_CONTRACT_P31.md`).** Every GET
+here also takes repeatable `category` and `type` params (OR within a param,
+AND across params and with the hub / country filter; absent = all; one
+value = the pre-P31 behaviour; `Unmapped` = IS NULL). One predicate,
+`_dashboard_filter`, builds the set for every card, chart, count and the
+register, so they reconcile for any selection (I9, I23).
+
 Per Invariant I9 ("`within_year` count on the Dashboard equals the count of
 projects satisfying the within-year rule in the current schedule run. No
 independent calculation anywhere"): `completing_within_year` below is the only
@@ -41,12 +48,18 @@ import uuid
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, Query
-from sqlalchemy import Select, exists, func, select
+from sqlalchemy import ColumnElement, Select, and_, exists, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from api.db import get_db
 from api.deps import require_permission
+from api.query_params import (
+    DashboardCategoryListQuery,
+    DashboardCategoryValue,
+    DashboardTypeListQuery,
+    DashboardTypeValue,
+)
 from core.principal import Principal
 from core.rbac import Action, Surface
 from models.enums import (
@@ -79,13 +92,13 @@ from schemas.dashboard import (
     ProjectFilterRow,
     RegionSummary,
     RegionSummaryRow,
-    RegisterTypeFilter,
     ScheduleOutcome,
     StatusOverview,
     StepFacet,
 )
 from services.active_run import get_active_run
 from services.capacity_supply import round2
+from services.category_type_filter import category_type_filter
 from services.hub_scope import narrowed_hub_filter
 from services.project_cards import build_project_cards
 from services.text_search import project_search_filter
@@ -111,10 +124,37 @@ _FOUR_SCHEDULABLE_STATUSES = (
 )
 
 
+def _dashboard_filter(
+    current_user: Principal,
+    hub_id: uuid.UUID | None,
+    region: LabRegion | None,
+    category: list[DashboardCategoryValue] | None,
+    type_: list[DashboardTypeValue] | None,
+) -> ColumnElement[bool] | None:
+    """The Dashboard's project filter: RBAC scope AND hub / country (ADR
+    0020 / 0025, `narrowed_hub_filter`, never widens) AND the P31 category /
+    type selection (OR within a param, AND across, `Unmapped` = IS NULL).
+    `None` when nothing restricts the set."""
+
+    clauses = [
+        c
+        for c in (
+            narrowed_hub_filter(current_user, Project.hub_id, hub_id, region),
+            category_type_filter(category, type_),
+        )
+        if c is not None
+    ]
+    if not clauses:
+        return None
+    return clauses[0] if len(clauses) == 1 else and_(*clauses)
+
+
 @router.get("/pipeline-totals", response_model=PipelineTotals)
 async def pipeline_totals(
     hub_id: uuid.UUID | None = None,
     region: LabRegion | None = None,
+    category: DashboardCategoryListQuery = None,
+    type_: DashboardTypeListQuery = None,
     db: AsyncSession = Depends(get_db),
     current_user: Principal = Depends(_read),
 ) -> PipelineTotals:
@@ -125,7 +165,7 @@ async def pipeline_totals(
     """
 
     stmt = select(Project.carry_over, Project.reg_year.is_(None), func.count())
-    hub_filter = narrowed_hub_filter(current_user, Project.hub_id, hub_id, region)
+    hub_filter = _dashboard_filter(current_user, hub_id, region, category, type_)
     if hub_filter is not None:
         stmt = stmt.where(hub_filter)
     result = await db.execute(stmt.group_by(Project.carry_over, Project.reg_year.is_(None)))
@@ -153,11 +193,13 @@ async def pipeline_totals(
 async def status_overview(
     hub_id: uuid.UUID | None = None,
     region: LabRegion | None = None,
+    category: DashboardCategoryListQuery = None,
+    type_: DashboardTypeListQuery = None,
     db: AsyncSession = Depends(get_db),
     current_user: Principal = Depends(_read),
 ) -> StatusOverview:
     stmt = select(Project.status, func.count())
-    hub_filter = narrowed_hub_filter(current_user, Project.hub_id, hub_id, region)
+    hub_filter = _dashboard_filter(current_user, hub_id, region, category, type_)
     if hub_filter is not None:
         stmt = stmt.where(hub_filter)
     result = await db.execute(stmt.group_by(Project.status))
@@ -205,6 +247,8 @@ async def status_overview(
 async def hub_type_pipeline(
     hub_id: uuid.UUID | None = None,
     region: LabRegion | None = None,
+    category: DashboardCategoryListQuery = None,
+    type_: DashboardTypeListQuery = None,
     db: AsyncSession = Depends(get_db),
     current_user: Principal = Depends(_read),
 ) -> list[HubTypePipelineRow]:
@@ -215,7 +259,7 @@ async def hub_type_pipeline(
     """
 
     stmt = select(Hub.name, Project.type, func.count()).join(Project, Project.hub_id == Hub.id)
-    hub_filter = narrowed_hub_filter(current_user, Project.hub_id, hub_id, region)
+    hub_filter = _dashboard_filter(current_user, hub_id, region, category, type_)
     if hub_filter is not None:
         stmt = stmt.where(hub_filter)
     # P30-R02 (gate N3 / QA 1b): fully deterministic order (hub name, then
@@ -260,6 +304,8 @@ async def _priority_delivery(
     current_user: Principal,
     hub_id: uuid.UUID | None,
     region: LabRegion | None,
+    category: list[DashboardCategoryValue] | None = None,
+    type_: list[DashboardTypeValue] | None = None,
 ) -> list[PriorityDeliveryBand]:
     """P17-R03: per-band delivery split, counted over EVERY project in scope
     and filter (LEFT JOIN to the active run's outcome for `within_year`, the
@@ -282,7 +328,7 @@ async def _priority_delivery(
         (ScheduleRunProjectOutcome.project_id == Project.id)
         & (ScheduleRunProjectOutcome.schedule_run_id == run_id),
     )
-    hub_filter = narrowed_hub_filter(current_user, Project.hub_id, hub_id, region)
+    hub_filter = _dashboard_filter(current_user, hub_id, region, category, type_)
     if hub_filter is not None:
         stmt = stmt.where(hub_filter)
     grouped = (await db.execute(stmt)).all()
@@ -340,6 +386,8 @@ async def _priority_delivery(
 async def completing_within_year(
     hub_id: uuid.UUID | None = None,
     region: LabRegion | None = None,
+    category: DashboardCategoryListQuery = None,
+    type_: DashboardTypeListQuery = None,
     db: AsyncSession = Depends(get_db),
     current_user: Principal = Depends(_read),
 ) -> CompletingWithinYear:
@@ -362,7 +410,9 @@ async def completing_within_year(
             left_out_count=0,
             blocked_count=0,
             rows=[],
-            priority_delivery=await _priority_delivery(db, None, current_user, hub_id, region),
+            priority_delivery=await _priority_delivery(
+                db, None, current_user, hub_id, region, category, type_
+            ),
         )
 
     stmt = (
@@ -371,7 +421,7 @@ async def completing_within_year(
         .options(selectinload(Project.hub))
         .where(ScheduleRunProjectOutcome.schedule_run_id == active_run.id)
     )
-    hub_filter = narrowed_hub_filter(current_user, Project.hub_id, hub_id, region)
+    hub_filter = _dashboard_filter(current_user, hub_id, region, category, type_)
     if hub_filter is not None:
         stmt = stmt.where(hub_filter)
     # P30-R02 (gate N3): deterministic row order (project name, then id).
@@ -420,7 +470,9 @@ async def completing_within_year(
         left_out_count=left_out_count,
         blocked_count=blocked_count,
         rows=rows,
-        priority_delivery=await _priority_delivery(db, active_run.id, current_user, hub_id, region),
+        priority_delivery=await _priority_delivery(
+            db, active_run.id, current_user, hub_id, region, category, type_
+        ),
     )
 
 
@@ -428,6 +480,8 @@ async def completing_within_year(
 async def region_summary(
     hub_id: uuid.UUID | None = None,
     region: LabRegion | None = None,
+    category: DashboardCategoryListQuery = None,
+    type_: DashboardTypeListQuery = None,
     db: AsyncSession = Depends(get_db),
     current_user: Principal = Depends(_read),
 ) -> RegionSummary:
@@ -442,7 +496,7 @@ async def region_summary(
     stmt = select(
         Hub.lab_region, Project.status, Project.carry_over, no_reg_year, func.count()
     ).join(Hub, Project.hub_id == Hub.id)
-    hub_filter = narrowed_hub_filter(current_user, Project.hub_id, hub_id, region)
+    hub_filter = _dashboard_filter(current_user, hub_id, region, category, type_)
     if hub_filter is not None:
         stmt = stmt.where(hub_filter)
     result = await db.execute(
@@ -501,6 +555,8 @@ _UNKNOWN_YEAR = "Unknown"
 async def dashboard_analytics(
     hub_id: uuid.UUID | None = None,
     region: LabRegion | None = None,
+    category: DashboardCategoryListQuery = None,
+    type_: DashboardTypeListQuery = None,
     db: AsyncSession = Depends(get_db),
     current_user: Principal = Depends(_read),
 ) -> DashboardAnalytics:
@@ -517,7 +573,7 @@ async def dashboard_analytics(
     here (I19).
     """
 
-    hub_filter = narrowed_hub_filter(current_user, Project.hub_id, hub_id, region)
+    hub_filter = _dashboard_filter(current_user, hub_id, region, category, type_)
     pipeline_stmt = select(
         Hub.name, Project.type, Project.category, Project.reg_year, func.count()
     ).join(Hub, Project.hub_id == Hub.id)
@@ -541,13 +597,14 @@ async def dashboard_analytics(
     by_year: dict[int | None, int] = {}
     hub_type: dict[tuple[str, ProjectType | None], int] = {}
     total = 0
-    for hub_name, type_, category, reg_year, count in grouped:
+    # Loop names differ from the `category` / `type_` filter params on purpose.
+    for hub_name, row_type, row_category, reg_year, count in grouped:
         total += count
-        by_type[type_] = by_type.get(type_, 0) + count
-        by_category[category] = by_category.get(category, 0) + count
+        by_type[row_type] = by_type.get(row_type, 0) + count
+        by_category[row_category] = by_category.get(row_category, 0) + count
         by_hub[hub_name.value] = by_hub.get(hub_name.value, 0) + count
         by_year[reg_year] = by_year.get(reg_year, 0) + count
-        key = (hub_name.value, type_)
+        key = (hub_name.value, row_type)
         hub_type[key] = hub_type.get(key, 0) + count
 
     def _buckets(counts: dict[str, int]) -> list[AnalyticsBucket]:
@@ -656,11 +713,11 @@ def _register_stmt(
     *,
     hub_id: uuid.UUID | None,
     region: LabRegion | None,
-    category: ProjectCategory | None = None,
+    category: list[DashboardCategoryValue] | None = None,
     status_: ProjectStatus | None = None,
     priority: ProjectPriority | None = None,
     q: str | None = None,
-    type_: RegisterTypeFilter | None = None,
+    type_: list[DashboardTypeValue] | None = None,
     leader_engineer_id: uuid.UUID | None = None,
 ) -> Select[Project]:
     """The register's scoped, filtered project set. Every predicate is a
@@ -668,22 +725,20 @@ def _register_stmt(
 
     P17-R09: `type_ == "Unmapped"` (the analytics bucket key, `_UNMAPPED`)
     selects `Project.type IS NULL`, so the list equals the `/analytics`
-    `by_type` "Unmapped" bucket for the same scope and filter."""
+    `by_type` "Unmapped" bucket for the same scope and filter.
+
+    P31: `category` and `type_` are lists (OR within, AND across, empty =
+    all); the same predicate as every Dashboard aggregate
+    (`_dashboard_filter`), so the register reconciles with the cards."""
 
     stmt = select(Project).options(selectinload(Project.hub), selectinload(Project.leader_engineer))
-    hub_filter = narrowed_hub_filter(current_user, Project.hub_id, hub_id, region)
+    hub_filter = _dashboard_filter(current_user, hub_id, region, category, type_)
     if hub_filter is not None:
         stmt = stmt.where(hub_filter)
-    if category is not None:
-        stmt = stmt.where(Project.category == category)
     if status_ is not None:
         stmt = stmt.where(Project.status == status_)
     if priority is not None:
         stmt = stmt.where(Project.priority == priority)
-    if type_ == _UNMAPPED:
-        stmt = stmt.where(Project.type.is_(None))
-    elif type_ is not None:
-        stmt = stmt.where(Project.type == type_)
     if leader_engineer_id is not None:
         stmt = stmt.where(Project.leader_engineer_id == leader_engineer_id)
     search = project_search_filter(q)
@@ -718,12 +773,12 @@ def _outcome_bucket(outcome: ScheduleRunProjectOutcome | None) -> ScheduleOutcom
 @router.get("/projects", response_model=ProjectFilterResult)
 async def analytics_projects(
     hub_id: uuid.UUID | None = None,
-    category: ProjectCategory | None = None,
+    category: DashboardCategoryListQuery = None,
     status_: ProjectStatus | None = None,
     priority: ProjectPriority | None = None,
     region: LabRegion | None = None,
     q: Annotated[str | None, Query(max_length=100)] = None,
-    type_: Annotated[RegisterTypeFilter | None, Query(alias="type")] = None,
+    type_: DashboardTypeListQuery = None,
     leader_engineer_id: uuid.UUID | None = None,
     current_step: Annotated[str | None, Query(max_length=10)] = None,
     sort: Literal["name", "priority"] = "name",
@@ -735,7 +790,9 @@ async def analytics_projects(
     to the "All registered projects" register in P13 (ADR 0025 §5,
     `docs/API_CONTRACT_P13.md` §3). Every filter is ANDed server-side.
     `type` is a `ProjectType` or the sentinel "Unmapped" (null type,
-    P17-R09); any other value is 422.
+    P17-R09); any other value is 422. P31: `category` and `type` are
+    repeatable (OR within a param, AND across; `Unmapped` also on
+    `category`); `total_count` is the full filtered set.
 
     Bulk loads only: hub and leader by `selectinload`, then one
     `build_project_cards` pass (scores, live steps, run steps, outcomes,
@@ -827,6 +884,8 @@ async def analytics_projects(
 async def analytics_project_facets(
     hub_id: uuid.UUID | None = None,
     region: LabRegion | None = None,
+    category: DashboardCategoryListQuery = None,
+    type_: DashboardTypeListQuery = None,
     db: AsyncSession = Depends(get_db),
     current_user: Principal = Depends(_read),
 ) -> ProjectFacets:
@@ -834,7 +893,9 @@ async def analytics_project_facets(
     scoped, hub/region-filtered set, so the register's dropdowns only offer
     values that exist. Leader names follow OQ#8 (null unless the caller)."""
 
-    stmt = _register_stmt(current_user, hub_id=hub_id, region=region)
+    stmt = _register_stmt(
+        current_user, hub_id=hub_id, region=region, category=category, type_=type_
+    )
     projects = list((await db.execute(stmt)).scalars().all())
     cards = await build_project_cards(db, projects, await get_active_run(db))
 

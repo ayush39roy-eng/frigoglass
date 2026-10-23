@@ -48,6 +48,7 @@ from sqlalchemy.orm import selectinload
 from api.db import get_db
 from api.deps import require_permission
 from api.errors import HTTP_422, CodedHTTPException
+from api.query_params import CategoryListQuery, TypeListQuery
 from core.principal import Principal
 from core.rbac import Action, Surface
 from models.audit import AuditLogEntry
@@ -78,6 +79,7 @@ from schemas.priority import (
 )
 from services.audit_helpers import priority_score_audit_state
 from services.capacity_hubs import capacity_rows_for_request
+from services.category_type_filter import category_type_filter
 from services.currency import rate_to_eur as _currency_rate_to_eur
 from services.hub_scope import global_hub_filter, hub_scope_filter, narrowed_hub_filter
 from services.priority_capacity_fill import CapacityFill, RowFill, compute_capacity_fill
@@ -197,8 +199,8 @@ async def list_priority_matrix(
     currency: CurrencyCode = CurrencyCode.EUR,
     hub_id: uuid.UUID | None = None,
     region: LabRegion | None = None,
-    category: ProjectCategory | None = None,
-    type_: Annotated[ProjectType | None, Query(alias="type")] = None,
+    category: CategoryListQuery = None,
+    type_: TypeListQuery = None,
     status_: ProjectStatus | None = None,
     q: Annotated[str | None, Query(max_length=Q_MAX_LENGTH)] = None,
     db: AsyncSession = Depends(get_db),
@@ -258,8 +260,8 @@ async def _matrix_projects(
     *,
     hub_id: uuid.UUID | None,
     region: LabRegion | None,
-    category: ProjectCategory | None,
-    type_: ProjectType | None,
+    category: Sequence[ProjectCategory] | None,
+    type_: Sequence[ProjectType] | None,
     status_: ProjectStatus | None,
     q: str | None,
 ) -> Sequence[Project]:
@@ -279,10 +281,10 @@ async def _matrix_projects(
     global_filter = global_hub_filter(Project.hub_id, hub_id, region)
     if global_filter is not None:
         stmt = stmt.where(global_filter)
-    if category is not None:
-        stmt = stmt.where(Project.category == category)
-    if type_ is not None:
-        stmt = stmt.where(Project.type == type_)
+    # P31: OR within `category` / `type`, AND across; ANDed with the scope.
+    selection = category_type_filter(category, type_)
+    if selection is not None:
+        stmt = stmt.where(selection)
     if status_ is not None:
         stmt = stmt.where(Project.status == status_)
     search = search_predicate(q)
@@ -389,8 +391,8 @@ def _histogram_bucket(pct: int) -> int:
 async def priority_distribution(
     hub_id: uuid.UUID | None = None,
     region: LabRegion | None = None,
-    category: ProjectCategory | None = None,
-    type_: Annotated[ProjectType | None, Query(alias="type")] = None,
+    category: CategoryListQuery = None,
+    type_: TypeListQuery = None,
     status_: ProjectStatus | None = None,
     q: Annotated[str | None, Query(max_length=Q_MAX_LENGTH)] = None,
     db: AsyncSession = Depends(get_db),

@@ -6,7 +6,9 @@ import { cn } from '@/lib/utils';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { PROJECT_CATEGORIES, UI_PROJECT_STATUSES, PROJECT_TYPE_LABELS, PROJECT_TYPES } from '@/types/enums';
+import { MultiChipFilter } from '@/components/shared/multi-chip-filter';
+import { CATEGORY_CHIP_OPTIONS, TYPE_CHIP_OPTIONS } from '@/lib/multi-select-filter';
+import { UI_PROJECT_STATUSES } from '@/types/enums';
 
 import {
   ALL,
@@ -19,7 +21,8 @@ import {
 
 /**
  * P13-T12 (API_CONTRACT_P13 §6): the Priority board's toolbar — a search box
- * and Category / Type / Status / Leader filters. Every value is sent to
+ * and Category / Type / Status / Leader filters (P31: Category and Type are
+ * multi-select chip rows; inside the Matrix they live in its View panel). Every value is sent to
  * `GET /priority-board`; nothing is filtered in the browser, and the column
  * counts and D/L weeks are the server's for the filtered set. Hub and country
  * are the global header filter, so they are not repeated here.
@@ -90,10 +93,10 @@ export function BoardToolbar({
   compact = false,
 }: BoardToolbarProps): React.JSX.Element {
   const searchId = React.useId();
-  const set = (key: keyof BoardToolbarState) => (next: string) => onChange({ ...value, [key]: next });
+  const set = (key: 'search' | 'status_' | 'leader') => (next: string) => onChange({ ...value, [key]: next });
   const active =
     value.search.trim() !== '' ||
-    (!embedded && (value.category !== ALL || value.type !== ALL || value.status_ !== ALL)) ||
+    (!embedded && (value.category.length > 0 || value.type.length > 0 || value.status_ !== ALL)) ||
     value.leader !== ALL;
 
   return (
@@ -121,23 +124,28 @@ export function BoardToolbar({
       {embedded ? null : (
         <>
           <ToolbarSelect
-        label="Category"
-        value={value.category}
-        onChange={set('category')}
-        options={PROJECT_CATEGORIES.map((c) => ({ value: c, label: c }))}
-      />
-      <ToolbarSelect
-        label="Type"
-        value={value.type}
-        onChange={set('type')}
-        options={PROJECT_TYPES.map((t) => ({ value: t, label: `${t} · ${PROJECT_TYPE_LABELS[t]}` }))}
-      />
-      <ToolbarSelect
-        label="Status"
-        value={value.status_}
-        onChange={set('status_')}
-        options={UI_PROJECT_STATUSES.map((s) => ({ value: s, label: s }))}
+            label="Status"
+            value={value.status_}
+            onChange={set('status_')}
+            options={UI_PROJECT_STATUSES.map((s) => ({ value: s, label: s }))}
           />
+          {/* P31: multi-select category / type "tabs" (repeated server params). */}
+          <div className="order-last flex w-full flex-col gap-2" data-testid="board-chip-filters">
+            <MultiChipFilter
+              label="Category"
+              options={CATEGORY_CHIP_OPTIONS}
+              value={value.category}
+              onChange={(next) => onChange({ ...value, category: next })}
+              data-testid="board-category-chips"
+            />
+            <MultiChipFilter
+              label="Type"
+              options={TYPE_CHIP_OPTIONS}
+              value={value.type}
+              onChange={(next) => onChange({ ...value, type: next })}
+              data-testid="board-type-chips"
+            />
+          </div>
         </>
       )}
       {leaders ? (

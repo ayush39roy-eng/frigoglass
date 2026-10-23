@@ -49,15 +49,14 @@ from sqlalchemy.orm import selectinload
 
 from api.db import get_db
 from api.deps import require_permission
+from api.query_params import CategoryListQuery, TypeListQuery
 from core.principal import Principal
 from core.rbac import Action, Surface
 from models.enums import (
     NON_SCHEDULABLE_STATUSES,
     LabRegion,
-    ProjectCategory,
     ProjectPriority,
     ProjectStatus,
-    ProjectType,
 )
 from models.project import Project
 from schemas.priority_board import (
@@ -68,6 +67,7 @@ from schemas.priority_board import (
 from services.active_run import get_active_run
 from services.capacity_priority import remaining_run_load_by_project
 from services.capacity_supply import round2
+from services.category_type_filter import category_type_filter
 from services.hub_scope import global_hub_filter, hub_scope_filter
 from services.priority_capacity_fill import compute_capacity_fill
 from services.project_cards import build_project_cards
@@ -98,8 +98,8 @@ async def get_priority_board(
     hub_id: uuid.UUID | None = None,
     region: LabRegion | None = None,
     q: Annotated[str | None, Query(max_length=100)] = None,
-    category: ProjectCategory | None = None,
-    type_: Annotated[ProjectType | None, Query(alias="type")] = None,
+    category: CategoryListQuery = None,
+    type_: TypeListQuery = None,
     status_: ProjectStatus | None = None,
     leader_engineer_id: uuid.UUID | None = None,
     db: AsyncSession = Depends(get_db),
@@ -122,10 +122,10 @@ async def get_priority_board(
         stmt = stmt.where(global_filter)
     # P13 (contract §6): every predicate a SQLAlchemy expression with bound
     # parameters; nothing is interpolated into SQL.
-    if category is not None:
-        stmt = stmt.where(Project.category == category)
-    if type_ is not None:
-        stmt = stmt.where(Project.type == type_)
+    # P31: OR within `category` / `type`, AND across; ANDed with the scope.
+    selection = category_type_filter(category, type_)
+    if selection is not None:
+        stmt = stmt.where(selection)
     if status_ is not None:
         stmt = stmt.where(Project.status == status_)
     if leader_engineer_id is not None:

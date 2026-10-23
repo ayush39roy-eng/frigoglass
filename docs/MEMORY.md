@@ -32237,3 +32237,153 @@ action, not code.)
 - Security review point: "Remember me" defaulting ON means the dev-mode test identity persists in localStorage until
   sign-out. It is not a credential (it only selects a seeded user when `RPD_DEV_MODE` is on, which is already the
   owner-accepted risk S26-C1).
+
+## [2026-10-23] P31-T01 — Multi-select `category` / `type` filters, backend (backend-builder): DONE
+
+**Contract:** `docs/API_CONTRACT_P31.md` (new). Backend only. Nothing under `backend/scheduling/` or `frontend/` was
+touched. No migration. No response model changed, so the OpenAPI contract test needed no edit. Not committed. :5433,
+:8001 and Render were not touched (testcontainers only). The tracked `backend/.coverage` was restored.
+
+**Built:**
+- `services/category_type_filter.py` (new) holds the one predicate, `category_type_filter` / `any_of`:
+  - OR within a param via `IN`, AND across params, empty or `None` = no filter, duplicates collapse;
+  - one value gives the pre-P31 `col = :v` exactly;
+  - `"Unmapped"` gives `IS NULL`, ORed with the other values;
+  - all values are bound parameters.
+  It also holds `stored_filter` / `as_list` for export job filters.
+- `api/query_params.py` (new) declares the params once:
+  - `CategoryListQuery` / `TypeListQuery`, and Dashboard variants that admit `Unmapped`, all with alias `category` /
+    `type`;
+  - the Python default is `None`, not `Query(default=[])`. Export builders call `get_gantt`, `list_priority_matrix`,
+    `analytics_projects` and `list_projects` directly, and a `Query()` default would arrive there as a FieldInfo.
+    `None` and `[]` mean the same.
+- Endpoints:
+  - Dashboard: `pipeline-totals`, `status-overview`, `completing-within-year` (counts, rows, `priority_delivery`),
+    `hub-type-pipeline`, `analytics`, `region-summary`, `projects`, `projects/facets`;
+  - `/vip-projects`;
+  - `/projects`, `/gantt`, `/priorities`, `/priorities/distribution`, `/priority-board`;
+  - `/exports/dashboard`, `/exports/matrix`, `/exports/gantt`, `/exports/project-registration`.
+  - In Dashboard aggregates, one helper, `_dashboard_filter`, ANDs the RBAC scope + hub/region (`narrowed_hub_filter`)
+    with the selection. In `/analytics`, the loop variables were renamed so they no longer shadow the params.
+
+**Judgement calls (for review):**
+1. **`Unmapped` on `category` too, Dashboard only.** It mirrors the `by_category` "Unmapped" bucket so a pie click
+   round-trips. `Unmapped` off the Dashboard stays 422 (tested).
+2. **`/projects` and `/exports/project-registration` used the wire name `type_` (no alias).** `type` (the contract) is
+   added. `type_` is still accepted, repeatable, and ORed into `type`, so the current frontend and old links keep
+   working.
+3. **Exports:**
+   - `/exports/dashboard`, `/exports/matrix` and `/exports/project-registration` took `category` as an unvalidated
+     `str`. It is now a validated enum list, so an unknown value is 422 instead of a builder `ValueError`.
+   - `/exports/matrix` gains `type` (before, it was not a param and was ignored). `/exports/gantt` gains both params.
+   - Job `filters` store one value as a bare string (the pre-P31 shape) and several as a list. The builders read both,
+     so jobs queued before P31 still build.
+   - `ExportFilters` is widened to `dict[str, str | list[str] | None]`.
+4. `/vip-projects`: the per-hub ranking and auto-fill run over the selected projects (top-N of the selection).
+5. **Incident (self-inflicted, fixed):** I first wrote the new predicate module to an existing path,
+   `services/project_filters.py` (q / leader / rank helpers). It was restored byte-for-byte with `git checkout` before
+   anything imported it (it had no uncommitted changes), and the new code went to `category_type_filter.py`.
+
+**Tests:** `tests/test_p31_multi_select_filters.py` (new, 127 incl. parametrized cases):
+- the predicate's SQL shapes (single value equals the old `=`, bound and not inlined, IS NULL, AND) and the
+  stored-filter round trip;
+- for each row endpoint (register, `/projects`, `/gantt`, `/priorities`, board): empty = all, single value = table
+  oracle, duplicate value, OR, AND;
+- register `Unmapped` + a real type (and category `Unmapped`), with the dashboard export row for row;
+- 422 on unknown values: 18 endpoints × 6 cases, including a mixed valid+invalid list and `""`;
+- `Unmapped` gives 422 off the Dashboard;
+- the legacy `type_` on `/projects` and the registration export;
+- a Hub Planner stays scoped, and an out-of-scope hub with a selection is empty or zero;
+- aggregates partition: each single type + `Unmapped` sums to the unfiltered value for every integer served, and the
+  same for categories. Category × type cells sum to the category; OR = sum; empty = all. This covers all 6 Dashboard
+  aggregates and the distribution;
+- within one selection: the register equals the pipeline, status, region, analytics and hub-type totals; the status
+  cards + other == total; Σ completing_by_type == `within_year_count` (I9); priority_delivery covers the prioritised
+  set;
+- facets and VIP follow the selection;
+- the matrix and gantt CSVs carry the selection;
+- the builder reads pre-P31 and P31 job filters.
+
+**Differential check against HEAD:** a temporary git worktree of HEAD and the working tree ran the same snapshot
+(demo seed, single `category` / `type` / `type_` values on 9 endpoints, 73 cases). Every case has identical row
+identity and order. The only difference is `/exports/matrix?type=X`, where HEAD ignored `type`. The worktree and the
+temporary test were removed.
+
+**Checks:**
+- ruff check: clean.
+- ruff format: the new files are formatted. The edited files keep their prior state: gantt, projects, vip and
+  export_builder were already unformatted and were not reformatted.
+- mypy: the error set on the touched files is identical before and after (diffed).
+- Full backend `pytest`: **2420 passed, 0 failed**, coverage 97.21 %.
+
+**For P31-T02 (frontend):**
+- send repeated keys;
+- `/projects` may now use `type` (`type_` still works);
+- Dashboard pie clicks may send `Unmapped` for either param.
+
+## [2026-10-23] Gate P31 (backend) — security-auditor: PASS (P31-T01 code; 0 Critical, 0 High, 0 Medium, 1 Low, 4 Info; S26-C1, S26-H1, S30-H1 still OPEN as owner-accepted risks)
+
+**Scope.** The backend part of P31-T20: `api/query_params.py`, `services/category_type_filter.py`, and the P31 edits in
+the dashboard, gantt, priorities, priority_board, projects, vip and exports routers plus `services/export_builder.py`.
+The work was read-only. A temporary probe, `backend/tests/test_zz_secprobe_p31.py` (testcontainers), was run and then
+deleted, with 8 of 8 passing. `backend/.coverage` was restored byte-identical. No :5433, :8001 or Render traffic. The
+frontend part (P31-T02) is not reviewed here. P31-R01 (pushed, 8f48db7) is covered only as item 7 below.
+
+**Results:**
+1. **SQL injection: none.** The predicate compiles to `IN (__[POSTCOMPILE_…])` and `IS NULL`, with no literals
+   inlined. Each element is enum-validated before it reaches SQL. Six hostile payloads (quote, `;DROP`, `=cmd|`,
+   CRLF, `%00`, NUL) were sent as `category`, `type` and `type_` to all 18 endpoints. Every one returned 422.
+2. **Scope cannot be widened.** Each endpoint chains `.where()` with scope first, or uses `_dashboard_filter`, which is
+   `and_(narrowed_hub_filter, selection)`. In the probe, a Hub Planner sent every category and type plus `Unmapped` (and
+   `type_` where accepted) to all 18 endpoints, including the 4 sync exports. No out-of-scope project id or name
+   appeared in any response. The same held with an out-of-scope `hub_id`. The async builder with a Hub Planner
+   principal and stored list filters also stayed scoped. Negative auth: with no principal, all 18 endpoints return 401.
+   An Engineer gets 403 on 16 of them. `/gantt` and `/exports/gantt` return 200 for an Engineer, which is pre-existing
+   RBAC (Engineer has Gantt read) and not changed by P31.
+3. **S31-L1 (Low): repeated params have no size cap.** `dedupe` collapses the list to at most 8 values, so SQL never
+   grows. The HTTP layer is the issue. With 5,000 `?type=NM` (40 KB URL), `/dashboard/analytics` returns 200 in about
+   100 ms. With 5,000 invalid values it returns a 422 of 1.85 MB in about 300 ms: one `input`/`ctx` echo per element,
+   about 46x amplification. On-prem, nginx's default 8 KB request line limits this to about 1,000 values (about 370
+   KB). Render puts uvicorn/httptools behind Render's proxy with no limit of ours. **Fix:** add `max_length=16` to the
+   four `Query(...)` in `api/query_params.py` and to the two `legacy_type` declarations. This was verified in a scratch
+   app: 17 items gives a single `too_long` 422 of about 2.7 KB for 500 inputs. Not gate-blocking. It can ride with
+   P31-T02 or the next remediation.
+4. **Export jobs are safe.** Stored `filters` hold only enum wire strings, either a bare string or a list. Filenames
+   come from fixed stems (`_job_file_name` / `filename_stem`), so no filter value reaches `Content-Disposition`. A
+   tampered stored value (`"A' OR 1=1"`) fails closed in the builder with a `ValueError` from the enum constructor.
+   `_FORMULA_TRIGGERS` / `_neutralise_formula` / `_stringify` are unchanged by P31. Filter values are never written
+   into the sheets.
+5. **422 bodies.** They echo only the caller's own input and the public enum list (`ctx.expected`), as JSON, through
+   the P9-F01 sanitizing handler. No project, financial or PII data appears (checked against project names). This is
+   Info, except for the size issue in S31-L1.
+6. **The `type_` legacy alias is fine.** On `/projects` and `/exports/project-registration`, `legacy_type` is
+   `list[ProjectType]` (enum-validated, no `Unmapped`, 422 tested). It is concatenated with `type` and deduped, and
+   the job stores a list (`['NM','CO']`). It cannot bypass validation or scope.
+7. **P31-R01 is not a credential.** The `rpd-dev-user-email` value in localStorage is a seeded `@example.com` user
+   selector. It only has an effect when `RPD_DEV_MODE` is on, so its exposure is the same as S26-C1 and not new
+   (Info). `useSignOut` calls `setDevUserEmail(null)`, which removes it from both sessionStorage and localStorage.
+   `dev-role-switcher` writes to sessionStorage and clears the localStorage copy.
+8. **Accepted risks.** S26-C1 (Critical, dev mode on Render), S26-H1 (High, rotate DB password and field key) and
+   S30-H1 (High, client data in a public repo) stay OPEN as owner-accepted risks. P31 does not change them.
+
+**Info:**
+- I1: on `/exports/dashboard`, `status_` and `priority` are still unvalidated `str`. This is pre-P31. A bad value
+  gives a builder `ValueError`, not 422.
+- I2 is item 5. I3 is item 7.
+- I4: the CSV guard is intact.
+
+**Verdict (backend part of P31-T20): PASS.** It has no High or Critical finding. S31-L1 is recommended. The frontend
+leg (P31-T02) still needs its own security review before P31-T20 can close.
+
+## [2026-10-23] P31-T02 — Multi-select category / type filters + Dashboard cross-filter donuts (frontend-builder): DONE
+
+**Shared:** `src/lib/multi-select-filter.ts` (parse/serialize repeated URL params, legacy single value parses, canonical option order, `useCategoryTypeParams` with one-navigation `setBoth`; RR6 functional `setSearchParams` is not queued, so two writes in one tick lose the first) and `src/components/shared/multi-chip-filter.tsx` (`[All] [A+] …` labelled `role=group` of `aria-pressed` buttons, check mark + fill, full labels, wraps, never truncates). `apiGet`/`apiDownload` send arrays as repeated params; query keys hold SORTED lists (absent when empty).
+
+**Pages, all multi-select, URL state (`?category=A%2B&category=B&type=NM`):**
+- Dashboard (both views): Dashboard-wide selection bar under the header; every Dashboard query (pipeline-totals, status-overview, completing-within-year, hub-type-pipeline, region-summary, analytics, facets, register, Executive register rows, Hub×Type drill-down) carries it. Executive "Projects by type" is now a hero donut with a "Projects by category" donut beside it (new row after the KPI strip; Risks 4 / Upcoming 8 below). Detailed: by-type bars + by-category donut clickable. Slice/bar click or legend toggle (aria-pressed) toggles; unselected slices dim to 0.28. Cross-filter: each donut is served without its own dimension (`useCrossFilterBreakdowns`, extra analytics + pipeline-totals reads; one fetch when nothing selected). `Unmapped` offered on Dashboard category and type only (API_CONTRACT_P31). The register's chips are the same Dashboard selection.
+- Projects page (incl. Unmapped; `/dashboard/projects`), Gantt toolbar, Matrix View panel (grid + embedded board), Priority board toolbar: no Unmapped (422 there).
+- Exports: dashboard / projects list, registration (`type`, Unmapped dropped), matrix (`category` + `type`), gantt (`category` + `type`).
+
+**Not filtered:** VIP board (`/vip-board`, no params); the frontend does not call `/vip-projects`. `useProjectList` (`GET /projects`) has no UI and still takes single values.
+
+**Tests:** new `multi-select-filter.test.tsx`, `multi-chip-filter.test.tsx` (toggle, All, keyboard, aria, axe), `priority-board/api.test.tsx`; updated Dashboard page/hooks/api, executive charts + a11y, analytics-breakdown a11y, hub-type drill-down, register, Projects, Gantt (+hook key), Matrix (+URL/export), board. e2e page objects referenced none of these controls (no change). Results: vitest 215 files / 1707 passed; `tsc -b` 0; eslint 0 errors (8 pre-existing warnings); bundle 190.3 KB gzip initial (budget 400). No screenshots (owner deadline; QA skipped by owner).

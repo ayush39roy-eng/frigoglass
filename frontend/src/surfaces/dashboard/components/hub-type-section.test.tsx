@@ -161,24 +161,30 @@ function ok<T>(data: T): UseQueryResult<T> {
 }
 
 /** A fake `GET /dashboard/projects`: ANDs `hub_id`, `region` and `type`, like the server
- *  (`type=Unmapped` = no type, P17-R09). */
-function fakeServer(path: string, opts?: { query?: Record<string, string | undefined> }) {
+ *  (`type=Unmapped` = no type, P17-R09; P31: `type` is a repeated param, ORed). */
+function fakeServer(path: string, opts?: { query?: Record<string, string | readonly string[] | undefined> }) {
   if (path === '/hubs') return Promise.resolve(HUBS);
   if (path === '/dashboard/projects') {
     const q = opts?.query ?? {};
     const hubName = q.hub_id ? HUBS.find((h) => h.id === q.hub_id)?.name : undefined;
+    const types = q.type === undefined ? [] : typeof q.type === 'string' ? [q.type] : q.type;
     const rows = PROJECTS.filter(
       (p) =>
         (!q.hub_id || p.hub === hubName) &&
         (!q.region || regionOf(p.hub) === q.region) &&
-        (!q.type || (q.type === 'Unmapped' ? p.type === null : p.type === q.type)),
+        (types.length === 0 || types.includes(p.type ?? 'Unmapped')),
     ).map(registerRow);
     return Promise.resolve({ total_count: rows.length, rows });
   }
   return Promise.reject(new Error(`unexpected GET ${path}`));
 }
 
-function renderSection(scope: P[] = PROJECTS, hubId: string | null = null, region: LabRegion | null = null) {
+function renderSection(
+  scope: P[] = PROJECTS,
+  hubId: string | null = null,
+  region: LabRegion | null = null,
+  route = '/',
+) {
   const d = payloads(scope);
   return renderWithProviders(
     <HubTypeSection
@@ -189,6 +195,7 @@ function renderSection(scope: P[] = PROJECTS, hubId: string | null = null, regio
       hubId={hubId}
       region={region}
     />,
+    { route },
   );
 }
 
@@ -213,7 +220,7 @@ describe('HubTypeSection drill-down (P17-R08)', () => {
     const r = await openAndCount('View 4 New Model projects in PD-India');
     expect(r.list).toBe(r.cell);
     expect(r.list).toBe(4);
-    expect(client.apiGet).toHaveBeenCalledWith('/dashboard/projects', expect.objectContaining({ query: expect.objectContaining({ hub_id: 'h-pdin', type: 'NM' }) }));
+    expect(client.apiGet).toHaveBeenCalledWith('/dashboard/projects', expect.objectContaining({ query: expect.objectContaining({ hub_id: 'h-pdin', type: ['NM'] }) }));
     expect(within(r.dialog).getByRole('heading', { name: 'New Model · PD-India' })).toBeInTheDocument();
     expect(within(r.dialog).queryByTestId('drilldown-mismatch')).not.toBeInTheDocument();
   });
@@ -249,13 +256,13 @@ describe('HubTypeSection drill-down (P17-R08)', () => {
     let r = await openAndCount('View 1 untyped project in PD-India');
     expect(r.list).toBe(r.cell);
     expect(r.list).toBe(1);
-    expect(client.apiGet).toHaveBeenLastCalledWith('/dashboard/projects', expect.objectContaining({ query: expect.objectContaining({ hub_id: 'h-pdin', type: 'Unmapped' }) }));
+    expect(client.apiGet).toHaveBeenLastCalledWith('/dashboard/projects', expect.objectContaining({ query: expect.objectContaining({ hub_id: 'h-pdin', type: ['Unmapped'] }) }));
     expect(within(r.dialog).getByText('Project f')).toBeInTheDocument();
     expect(within(r.dialog).queryByTestId('drilldown-mismatch')).not.toBeInTheDocument();
     await userEvent.keyboard('{Escape}');
     r = await openAndCount('View all 1 untyped project');
     expect(r.list).toBe(r.cell);
-    expect(client.apiGet).toHaveBeenLastCalledWith('/dashboard/projects', expect.objectContaining({ query: expect.objectContaining({ type: 'Unmapped' }) }));
+    expect(client.apiGet).toHaveBeenLastCalledWith('/dashboard/projects', expect.objectContaining({ query: expect.objectContaining({ type: ['Unmapped'] }) }));
   });
 
   it('hub-filtered: passes the global filter and the lists still match the cells', async () => {
@@ -273,7 +280,7 @@ describe('HubTypeSection drill-down (P17-R08)', () => {
     renderSection(PROJECTS.filter((p) => p.hub === 'PD-India'), null, 'India');
     const r = await openAndCount('View 1 Cost Optimization project in PD-India');
     expect(r.list).toBe(1);
-    expect(client.apiGet).toHaveBeenLastCalledWith('/dashboard/projects', expect.objectContaining({ query: expect.objectContaining({ hub_id: 'h-pdin', region: 'India', type: 'CO' }) }));
+    expect(client.apiGet).toHaveBeenLastCalledWith('/dashboard/projects', expect.objectContaining({ query: expect.objectContaining({ hub_id: 'h-pdin', region: 'India', type: ['CO'] }) }));
   });
 
   it('returns focus to the clicked figure on close, shows no financial fields, and is axe-clean', async () => {
@@ -292,7 +299,7 @@ describe('HubTypeSection drill-down (P17-R08)', () => {
   it('flags a list that disagrees with the clicked figure instead of hiding it', async () => {
     renderSection();
     // The server now returns one project fewer than the table showed.
-    client.apiGet.mockImplementation((path: string, opts?: { query?: Record<string, string | undefined> }) =>
+    client.apiGet.mockImplementation((path: string, opts?: { query?: Record<string, string | readonly string[] | undefined> }) =>
       path === '/dashboard/projects'
         ? (fakeServer(path, opts) as Promise<{ total_count: number; rows: ProjectFilterRow[] }>).then((r) => ({ total_count: r.total_count - 1, rows: r.rows.slice(1) }))
         : fakeServer(path, opts),
@@ -300,5 +307,15 @@ describe('HubTypeSection drill-down (P17-R08)', () => {
     const r = await openAndCount('View 4 New Model projects in PD-India');
     expect(r.list).toBe(3);
     expect(within(r.dialog).getByTestId('drilldown-mismatch')).toHaveTextContent('This list has 3 projects but the table shows 4');
+  });
+
+  it('P31: a drill-down list carries the Dashboard category selection (the cell was served for it)', async () => {
+    renderSection(PROJECTS, null, null, '/?category=A%2B&category=B');
+    await userEvent.click(screen.getByRole('button', { name: 'View 4 New Model projects in PD-India' }));
+    await screen.findByTestId('hub-type-drilldown');
+    expect(client.apiGet).toHaveBeenCalledWith(
+      '/dashboard/projects',
+      expect.objectContaining({ query: expect.objectContaining({ hub_id: 'h-pdin', type: ['NM'], category: ['A+', 'B'] }) }),
+    );
   });
 });
