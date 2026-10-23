@@ -67,15 +67,18 @@ export function RisksCard({ risks }: { risks: RiskRow[] }): React.JSX.Element {
                 </h4>
                 <ul className="space-y-1" aria-label={meta.label}>
                   {group.map((risk) => (
+                    // Below `sm` the hub drops under the name (P28-R01: names wrap
+                    // between words, never letter by letter); from `sm` up the
+                    // two-column row is unchanged.
                     <li
                       key={risk.projectId}
-                      className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-baseline gap-x-s2 rounded-lg border border-dash-hairline bg-dash-alt px-s3 py-1.5"
+                      className="grid min-w-0 grid-cols-1 items-baseline gap-x-s2 gap-y-0.5 rounded-lg border border-dash-hairline bg-dash-alt px-s3 py-1.5 sm:grid-cols-[minmax(0,1fr)_auto] sm:gap-y-0"
                       data-testid="exec-risk-row"
                       data-reason={risk.reason}
                     >
                       <Link
                         to={`/projects/${risk.projectId}`}
-                        className="min-w-0 break-words text-xs font-semibold leading-tight text-text underline-offset-2 hover:underline focus-visible:rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                        className="min-w-0 text-xs font-semibold leading-tight text-text underline-offset-2 hover:underline focus-visible:rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                       >
                         {risk.name}
                       </Link>

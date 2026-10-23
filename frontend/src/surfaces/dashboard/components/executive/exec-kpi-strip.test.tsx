@@ -116,6 +116,36 @@ describe('ExecKpiStrip (P28, ADR 0039 §3 + addenda)', () => {
     }
   });
 
+  it('QA-F28-2/F28-3: the badge never shares the label row at any width; every tile keeps ONE fixed frame', () => {
+    renderWithProviders(<ExecKpiStrip data={DATA} pipelineTotal={253} vipBoard={board(1)} />);
+    const tiles = screen.getAllByTestId(/exec-kpi-.*-tile$/).filter((el) => el.hasAttribute('data-exec-kpi-tile'));
+    expect(tiles).toHaveLength(6);
+    const frames = new Set(tiles.map((el) => el.className.split(/\s+/).filter((c) => /^(md:)?(h|w|px|py)-/.test(c)).sort().join(' ')));
+    // Identical footprint: taller fixed frame below md, the approved height from md up.
+    expect(frames.size).toBe(1);
+    expect([...frames][0]!.split(' ')).toEqual(expect.arrayContaining(['h-[7.5rem]', 'md:h-[5.75rem]', 'w-full']));
+    for (const el of tiles) {
+      const header = within(el).getByTestId('exec-kpi-tile-header');
+      const label = within(el).getByTestId('exec-kpi-tile-label');
+      const badge = within(el).getByTestId('exec-kpi-tile-badge');
+      const figureLine = within(el).getByTestId('exec-kpi-tile-figure-line');
+      // The label row holds ONLY the icon chip and the label — no badge, at any breakpoint.
+      const [icon, onlyLabel, ...rest] = [...header.children] as HTMLElement[];
+      expect(rest).toHaveLength(0);
+      expect(onlyLabel).toBe(label);
+      expect(header).not.toContainElement(badge);
+      expect(icon!.className.split(/\s+/)).toEqual(expect.arrayContaining(['hidden', 'md:grid']));
+      // The badge follows the number on the figure line: under it below md, beside it from md.
+      expect(figureLine).toContainElement(badge);
+      expect(figureLine.lastElementChild).toBe(badge);
+      expect(figureLine.className.split(/\s+/)).toEqual(expect.arrayContaining(['flex-col', 'md:flex-row']));
+      expect(label.className).not.toMatch(/truncate|ellipsis|line-clamp|whitespace-nowrap|break-words|anywhere|break-all/);
+    }
+    const scheduled = within(screen.getByTestId('exec-kpi-scheduled'));
+    expect(scheduled.getByTestId('exec-kpi-tile-label')).toHaveTextContent(/^Scheduled$/);
+    expect(scheduled.getByTestId('exec-kpi-tile-figure-line')).toHaveTextContent(/^5of 253$/);
+  });
+
   it('each run tile is a button that opens the dialog with exactly its served rows', async () => {
     const user = userEvent.setup();
     renderWithProviders(<ExecKpiStrip data={DATA} pipelineTotal={253} vipBoard={board(1)} />);

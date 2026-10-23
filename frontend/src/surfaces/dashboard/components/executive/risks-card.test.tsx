@@ -37,6 +37,13 @@ describe('RisksCard (P28, ADR 0039 §3 + owner round 3)', () => {
     expect(screen.queryByTestId('exec-risks-more')).not.toBeInTheDocument();
   });
 
+  it('P28-R01: below sm the hub drops under the name; names never break letter by letter', () => {
+    renderWithProviders(<RisksCard risks={[risk(1)]} />);
+    const item = screen.getByTestId('exec-risk-row');
+    expect(item.className.split(/\s+/)).toEqual(expect.arrayContaining(['grid-cols-1', 'sm:grid-cols-[minmax(0,1fr)_auto]']));
+    expect(within(item).getByRole('link').className).not.toMatch(/break-words|break-all|anywhere/);
+  });
+
   it('renders a heading only for non-empty groups', () => {
     renderWithProviders(<RisksCard risks={[risk(1, 'overdue')]} />);
     expect(screen.queryByTestId('exec-risk-group-blocked')).not.toBeInTheDocument();

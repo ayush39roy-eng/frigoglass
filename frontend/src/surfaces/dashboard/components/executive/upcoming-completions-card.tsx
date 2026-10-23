@@ -81,9 +81,17 @@ export function UpcomingCompletionsCard({
         </CardInfo>
       </div>
 
-      <ol className="grid grid-cols-5 gap-s2" aria-label={`Within-year completions by when they land in ${String(PLAN_YEAR)}`}>
+      {/* Below `sm` (QA-F28-1) the five tiles do not fit one row of a phone-width
+          card: "Delivered" takes a full-width row (label left, figure right)
+          and the quarters sit 2 x 2, so every label renders in full (they may
+          wrap between words, never inside one). From `sm` up: one row of five. */}
+      <ol
+        className="grid grid-cols-2 gap-s2 sm:grid-cols-5"
+        data-testid="exec-upcoming-strip"
+        aria-label={`Within-year completions by when they land in ${String(PLAN_YEAR)}`}
+      >
         <li
-          className="flex flex-col rounded-lg border border-dash-hairline bg-success-subtle px-s2 py-1.5"
+          className="col-span-2 flex flex-row items-center justify-between gap-s2 rounded-lg border border-dash-hairline bg-success-subtle px-s2 py-1.5 sm:col-span-1 sm:flex-col sm:items-stretch sm:justify-start sm:gap-0"
           data-testid="exec-upcoming-delivered"
           aria-label={`Delivered (no stage left): ${formatInteger(delivered)}`}
         >
@@ -109,7 +117,7 @@ export function UpcomingCompletionsCard({
               aria-label={`${q.key} (${q.months}): ${formatInteger(quarters[i] ?? 0)} completing${isCurrent ? ', current quarter' : isPast ? ', past' : ''}`}
             >
               <span className="label-caps text-[0.6rem] text-text-subtle" aria-hidden="true">
-                {q.key} · {q.months}
+                {q.key} · <span className="whitespace-nowrap">{q.months}</span>
               </span>
               <span
                 className={cn('text-lg font-extrabold leading-tight tabular-nums', isPast ? 'text-text-muted' : 'text-text')}
@@ -135,9 +143,14 @@ export function UpcomingCompletionsCard({
         ) : (
           <ul className="space-y-1" aria-label={`Completing in the next ${String(UPCOMING_WINDOW_WEEKS)} weeks`}>
             {shown.map(({ row, week }) => (
+              // Below `sm` (QA-F28-1) the row stacks: line 1 is the week chip and
+              // the full name (wrapping between words), line 2 is
+              // "hub · priority". From `sm` up the meta wrapper is
+              // `display: contents`, so hub and pill are the grid's 3rd and 4th
+              // columns exactly as before.
               <li
                 key={row.project_id}
-                className="grid min-w-0 grid-cols-[auto_minmax(0,1fr)_auto_auto] items-center gap-x-s2 rounded-lg border border-dash-hairline bg-dash-alt px-s3 py-1.5"
+                className="grid min-w-0 grid-cols-[auto_minmax(0,1fr)] items-center gap-x-s2 gap-y-1 rounded-lg border border-dash-hairline bg-dash-alt px-s3 py-1.5 sm:grid-cols-[auto_minmax(0,1fr)_auto_auto] sm:gap-y-0"
                 data-testid="exec-upcoming-row"
               >
                 <span
@@ -149,12 +162,24 @@ export function UpcomingCompletionsCard({
                 </span>
                 <Link
                   to={`/projects/${row.project_id}`}
-                  className="min-w-0 break-words text-xs font-semibold leading-tight text-text underline-offset-2 hover:underline focus-visible:rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  className="min-w-0 text-xs font-semibold leading-tight text-text underline-offset-2 hover:underline focus-visible:rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 >
                   {row.project_name}
                 </Link>
-                <span className="shrink-0 text-2xs text-text-muted">{row.hub}</span>
-                {row.priority ? <PriorityBandPill priority={row.priority} /> : <span aria-hidden="true" />}
+                <span
+                  className="col-start-2 flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1 sm:contents"
+                  data-testid="exec-upcoming-row-meta"
+                >
+                  <span className="shrink-0 text-2xs text-text-muted">{row.hub}</span>
+                  {row.priority ? (
+                    <span className="inline-flex items-center gap-x-1.5 sm:contents">
+                      <span className="text-2xs text-text-subtle sm:hidden" aria-hidden="true">·</span>
+                      <PriorityBandPill priority={row.priority} />
+                    </span>
+                  ) : (
+                    <span aria-hidden="true" />
+                  )}
+                </span>
               </li>
             ))}
           </ul>

@@ -2140,8 +2140,9 @@ invented — OQ #63. Contract: ADR 0039.
 
 | ID | Task | Owner | Status |
 |---|---|---|---|
+| P28-R01 | Gate remediation (QA leg of P30-T20): QA-F28-1 Upcoming completions stacks below `sm` (chip + name / hub · priority; quarter strip 2-col with Delivered full width), QA-F28-2 KPI tile header stacks below `md` (no icon, label line, badge line; one taller fixed frame); Risks rows stack below `sm`; no letter-level `break-words` on names; dead `hubsGlance()` removed; e2e `p28-executive.spec.ts` (typecheck-only); unit tests; 1440 unchanged (0-pixel diff). Addendum QA-F28-3: the KPI badge moved from the label row to the figure line at every width (sweep 390 + 760–1920, 0 issues) | frontend-builder | DONE (MEMORY 2026-10-23 P28-R01 + P28-R01 addendum) |
 | P28-T01 | Frontend: Executive view on the Dashboard (header Executive / Detailed toggle, `?view=executive`, per-user localStorage, Executive-Viewer-only role default; KPI tile strip; pipeline + status donuts + delivery gauge; delivery-by-priority bars; Risks & escalations list from served rows: blocked, overdue check-ins, VIP not within year; Hubs at a glance from `/capacity/hub-load`, fetched only in Executive view; P23-T03 absence test narrowed to the Detailed view; tests) | frontend-builder | DONE (MEMORY 2026-10-22 P28-T01) |
-| P28-T20 | Gate: qa, workflow, security | — | TODO |
+| P28-T20 | Gate: qa, workflow, security | — | DONE (MEMORY 2026-10-23 "Gate P28–P30": qa PASS re-check 2, workflow PASS, security code PASS; owner-accepted open risks S26-C1, S26-H1, S30-H1) |
 
 ## P29 — OEM hubs under Greece capacity (ADR 0042)
 
@@ -2159,7 +2160,7 @@ Solver input changes: workflow-auditor gates.
 | P29-T04 | Data: client type `BC` (Business Continuity) = app `RC`, relabelled "Regulatory / Business Compliance"; extractor + seed + migration step (type, `regulatory_compliance` tag, score 5 pre-fill, audit); frontend label (ADR 0038 amendment 2026-10-22) | backend-builder (in P29-T01) / frontend-builder (in P29-T03) | backend DONE (MEMORY 2026-10-23 P29-T01/T04/T06); frontend DONE (MEMORY 2026-10-23 P29-T03 + P29-T04 frontend) |
 | P29-T05 | Scheduler follow-up: `EngineerInput.counts_in_capacity` (default true); what-if supply sums counted engineers only (ADR 0042 §6 clarified) | algorithm-engineer | DONE |
 | P29-T06 | Backend follow-up: input builder passes `counts_in_capacity` to `EngineerInput`; what-if service serves the four capacity hubs only | backend-builder (in P29-T01) | DONE (MEMORY 2026-10-23 P29-T01/T04/T06) |
-| P29-T20 | Gate: qa, workflow, security | — | TODO |
+| P29-T20 | Gate: qa, workflow, security | — | DONE (MEMORY 2026-10-23 "Gate P28–P30": qa PASS re-check 2, workflow PASS, security code PASS; owner-accepted open risks S26-C1, S26-H1, S30-H1) |
 
 
 ## P30 — Per-project effort drives schedule and load (ADR 0041)
@@ -2172,8 +2173,9 @@ The workflow-auditor re-derives after the reseed. No figure is tuned toward a ta
 | ID | Task | Owner | Status |
 |---|---|---|---|
 | P30-R01 | Gate remediation (security leg): S30-L1 strict `design_effort_weeks` / `lab_effort_weeks` (string / bool → 422); S30-I1 engineer lists scope-check the REQUESTED `hub_id` before member → capacity-hub resolution (out of scope → empty, ADR 0020); tests | backend-builder | DONE (MEMORY 2026-10-23 P30-R01) |
+| P30-R02 | Gate follow-ups (non-blocking, from P30-T20 QA / workflow / security): deterministic ORDER BY on `/dashboard/hub-type-pipeline` (hub, type, NULL last) and `/dashboard/completing-within-year` (name, id) + ANALYZE stability test + robust P13 region test (QA 1b / N3); tests for R7 rejection on lead-time edit and unfreeze and the check-in R6 re-derivation (QA 3); S30-L2 unknown `hub_id` on engineer-utilization → 200 empty, audit FK only for an existing hub; N4 docstring (inside `scheduling/`, reported to algorithm-engineer) | backend-builder | DONE (MEMORY 2026-10-23 P30-R02) |
 | P30-T01 | Scheduler: one skip predicate (R5: eff = 0 ⇒ skipped in `analyse_project`), override/effort domain 0..104, validator I5 derives skip from inputs, I25/I26 checks, Monte Carlo floor (R10), fixtures + golden files incl. the R14 hub-spelling rename (stored runs keep the old spelling, I14); self-tests | algorithm-engineer | DONE (MEMORY 2026-10-23 P30-T01; `prototype_seed_data.json` rename left to P30-T02 with the enum) |
 | P30-T02 | Backend: migration `p30a` (after p29a) adding `project_workflow_steps.effort_weeks` (R4 precedence user ?? effort ?? lead) + per-project `design_effort_weeks` / `lab_effort_weeks`; exact-rational split (R2) with recorded-work protection (R3); R6 re-derivation triggers + audit action; R5 predicate in step_timing / stage PATCH / gantt / project_cards / tracking / demand query; I25 demand fields and R12 reader mapping; seed + extractor read the client's effort columns; R7/R8 edge cases; DOMAIN_RULES text (R13); contract `docs/API_CONTRACT_P30.md`; tests | backend-builder | DONE (MEMORY 2026-10-23 P30-T02) |
 | P30-T03 | Frontend: Gantt "Reset timing" / `hasTimingEdit` / "(table T)" tooltip ignore effort values (R4); effort fields shown read-only where the contract serves them; mirror contract types; tests | frontend-builder | DONE (MEMORY 2026-10-23 P30-T03; contract test 224 passed) |
 | P30-T04 | Reseed client_2026 on a disposable DB + workflow-auditor re-derivation (I1–I26), and report the resulting within-year rate as served | workflow-auditor | DONE (MEMORY 2026-10-23 P30-T04 audited reseed; greedy + CP-SAT PASS) |
-| P30-T20 | Gate: qa, workflow, security (covers P29 + P30) | — | TODO |
+| P30-T20 | Gate: qa, workflow, security (covers P29 + P30) | — | DONE (MEMORY 2026-10-23 "Gate P28–P30": qa PASS re-check 2, workflow PASS, security code PASS; owner-accepted open risks S26-C1, S26-H1, S30-H1) |

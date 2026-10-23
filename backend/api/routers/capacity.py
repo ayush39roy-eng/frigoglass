@@ -914,13 +914,22 @@ async def engineer_utilization(
         )
     ).first()
     if recent is None:
+        # P30-R02 (S30-L2): the audit row's `hub_id` is a FK to `hubs`; an
+        # unknown filter id would fail it (500). The filter is still recorded
+        # in `after_state`; the column only names a hub that exists. The
+        # response is unchanged (empty rows, like every other filter).
+        audit_hub_id = (
+            (await db.execute(select(Hub.id).where(Hub.id == hub_id))).scalar_one_or_none()
+            if hub_id is not None
+            else None
+        )
         db.add(
             AuditLogEntry(
                 actor_user_id=current_user.user_id,
                 action="capacity.engineer_utilization.read",
                 entity_type="EngineerUtilization",
                 entity_id="engineer-utilization",
-                hub_id=hub_id,
+                hub_id=audit_hub_id,
                 before_state=None,
                 after_state={
                     "hub_id": hub_text,

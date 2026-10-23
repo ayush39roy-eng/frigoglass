@@ -218,7 +218,11 @@ async def hub_type_pipeline(
     hub_filter = narrowed_hub_filter(current_user, Project.hub_id, hub_id, region)
     if hub_filter is not None:
         stmt = stmt.where(hub_filter)
-    result = await db.execute(stmt.group_by(Hub.name, Project.type).order_by(Hub.name))
+    # P30-R02 (gate N3 / QA 1b): fully deterministic order (hub name, then
+    # type, NULL type last) so the row order never follows the query plan.
+    result = await db.execute(
+        stmt.group_by(Hub.name, Project.type).order_by(Hub.name, Project.type.asc().nulls_last())
+    )
     return [
         HubTypePipelineRow(hub=hub_name, type=project_type, count=count)
         for hub_name, project_type, count in result.all()
@@ -370,7 +374,8 @@ async def completing_within_year(
     hub_filter = narrowed_hub_filter(current_user, Project.hub_id, hub_id, region)
     if hub_filter is not None:
         stmt = stmt.where(hub_filter)
-    result = await db.execute(stmt)
+    # P30-R02 (gate N3): deterministic row order (project name, then id).
+    result = await db.execute(stmt.order_by(Project.name, Project.id))
     rows: list[CompletingWithinYearRow] = []
     within_year_count = spillover_count = left_out_count = blocked_count = 0
     for outcome, project, has_progress in result.all():

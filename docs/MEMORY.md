@@ -31693,3 +31693,443 @@ Greece planners exist only in the disposable DB. Results:
 byte-identical to the T04 audit. R01 changes no in-scope figure and leaks nothing out of scope. T03 displays the right
 served field per I19 rev., I25 and R4. The three prototype defects (FTE, chamber efficiency, delay) are untouched:
 there are no scheduler changes since T04.
+
+## [2026-10-23] Gate P28–P30 — qa-inspector: FAIL (2 blocking visual defects in the P28 Executive view at 390 px; every suite, coverage gate and contract green; P29/P30 surfaces clean)
+
+Scope: working tree after P28-T01 (+addenda, Upcoming completions, VIP tile), P29-T01..T06, P30-T01..T04, P30-R01.
+Nothing committed. :5433 / :8001 / Render not touched. Disposable stack only: PG17 `qa-p30g-pg` (:55941), Redis
+`qa-p30g-redis` (:56941), dev-mode uvicorn :8941 (CW 42), `vite preview` :5941 of a `VITE_API_BASE_URL=/mockapi` scratch
+build; the browser's `/mockapi/*` calls were intercepted by Playwright and answered from the disposable API, so the
+mocks carry real served shapes and `client_2026` data (330 projects, greedy v1 within-year 132, same as P30-T02's scratch
+reseed, no pins). Containers, processes and the throwaway key were removed. A temporary probe test
+(`backend/tests/test_zz_qa_p30_flake_probe.py`) was deleted after use. The tracked `backend/.coverage`, which the runs
+rewrote, was restored byte-for-byte. Harness and screenshots: session scratchpad `qa/` (`ui.mjs`, `tall.mjs`,
+`el390.mjs`, `shots/`).
+
+**1. Suites: PASS.**
+- Backend `pytest`: **2287 passed, 0 failed**. Coverage **97.12 %** (gate 70 %). New files: `services/project_effort.py`,
+  `demand_load.py`, `workflow_durations.py`, `project_steps.py` and `api/routers/step_timing.py` are each 100 %;
+  `capacity_hubs.py` 98 %.
+- `pytest -c pytest-scheduling.ini`: **391 passed**, **94.63 %** (gate 85 %). `demand.py` 100 %, `effort_split.py` 99 %,
+  `workflow.py` 98 %, `invariants.py` 93 %, `hubs.py` 92 %.
+- Frontend `vitest run --coverage`: **211 files / 1655 passed**. Statements 87.84 %, branches 80.4 %, functions 86.87 %,
+  lines 89.87 %. Every new P28–P30 file is ≥ 88 % (most 100 %), except the VIP `vip-meta.ts` at 62.5 %, which is not in
+  this scope.
+- `tsc -b` exit 0. `eslint .` 0 errors, 9 warnings (pre-existing: `useVirtualizer` / fast-refresh).
+- Bundle budget (scratch outDir, a copy of `check-bundle-size.mjs` pointed at it): **PASS, 189.1 KB gzip initial**
+  (budget 400). DashboardPage 27.87 KB gzip, `executive-charts` 3.63, CapacityPage 19.18, GanttPage 22.74.
+
+**1b. `test_p13_region_filter::test_region_rows_are_exactly_the_regions_hubs`: root cause found. It is a test defect
+plus an unordered API, with no user-visible effect; not gate-blocking.**
+- Passed 4/4 in isolation and in this full run.
+- Cause: `/dashboard/hub-type-pipeline` (`api/routers/dashboard.py:221`) groups by `(Hub.name, Project.type)` but orders
+  by `Hub.name` only, so the order of types within a hub depends on the plan. The test compares the filtered list with
+  the unfiltered one order-sensitively (`tests/test_p13_region_filter.py:242`).
+- Deterministic repro on identical data: after `ANALYZE projects; ANALYZE hubs` (what autovacuum does part-way through a
+  long full run, hence "timing"), the region-filtered and unfiltered plans differ. Greece types came back
+  `[NM, CO, RC, …]` against `[RC, NM, CO, …]`, and India and Romania differed the same way. Content was always equal.
+  Without ANALYZE, and with hash-aggregation forced, the orders matched.
+- No consumer depends on the order: `hub-type-pipeline-table.tsx:69-70` sorts hubs and types explicitly.
+- Same class as the workflow-auditor's N3. Fix (backend-builder, non-blocking): `order_by(Hub.name, Project.type)`, and/or
+  compare as sorted lists in the test.
+
+**2. e2e typecheck: PASS.** There is no e2e tsconfig. An ad hoc strict config (`noUnused*`, `@/` alias, `types: node`)
+over `e2e/**/*.ts` plus `playwright.config.ts` gives exit 0, so the old `p19-gate.spec.ts:597` error is gone too. No
+`Seltek`, `Load (estimated)`, `Estimated design/lab`, `base_weeks` or `hubs-glance` string is left in `e2e/`.
+Non-blocking:
+- `e2e/pages/dashboard.page.ts:100` `hubsGlance()` → `exec-hubs-card` is dead (the card was removed 2026-10-23); it has no
+  callers.
+- No e2e spec drives the Executive view at all; the page object is typecheck-only.
+- Historic gate specs (p17, p18, p19-gate) reference test ids that no longer exist, pre-existing and outside P28–P30.
+
+**3. Acceptance criteria, spot-checked. All covered except the following (none blocking):**
+- P30-T02 R7 on a **lead-time** edit (`workflow_settings.py:582-584`, 422 + rollback): not covered. The step-kind
+  variant is tested.
+- R7 rejection on **unfreeze** (`gantt.py:590-591`): not covered.
+- R6 trigger from **check-ins** (`checkins.py:408`): the line is executed, but no test asserts the re-derived split or the
+  `project.effort_rederived` audit row. Stage PATCH is asserted.
+- P28-T01: no e2e spec (unit, a11y and DashboardPage tests exist). ADR 0039 §3/§4 still describe "Hubs at a glance",
+  which the owner removed 2026-10-23. The ADR text needs an amendment note.
+- Verified covered: P28 view-mode precedence and role default, KPI and dialog counts = served, risk selection order
+  and cap, Upcoming reconciliation (5 tiles = `within_year_count`), no hub-load fetch in either view. P29 migration
+  up/down/up, members / `selected_member`, scoping, `counts_in_capacity` Admin-only, input builder `capacity_hub` and
+  counted flag, what-if four hubs, BC → RC (p29b and label), "(Greece)" pickers, provisional badge. P30 split examples,
+  R3, R4 precedence / reset / 409, R5 at every call site, I25/I26, strictness (R01), S30-I1 for 5 endpoints × 2 scopes,
+  Gantt `hasTimingEdit` / "(table T)" / Reset copy.
+- Live R4 check on the disposable API: a user override of 6 on 26-S0513 PDD-B served "effort 5, lead 4, effective 6".
+  PATCH on an effort-zeroed step returned 409 `STEP_SKIPPED`.
+
+**4. UI quality (mocked-API Playwright, 1440 and 390 px, light and dark, reduced motion, axe wcag2a/aa + 21a/aa):**
+
+| Surface | 1440 light | 1440 dark | 390 light | 390 dark |
+|---|---|---|---|---|
+| Executive | clean | axe 3 (D1) | **QA-F28-1, QA-F28-2** | axe 3 (D1) + same defects |
+| Capacity, Greece expanded, Full year | clean | clean | clean | clean |
+| Capacity, Greece expanded, YTD | clean | clean | clean | clean |
+| Gantt rows | clean | axe 3 (D1, incl. leader name `text-primary` 4.47) | clean | clean |
+| Gantt timing dialog | clean | axe 1 (D1, "Save timing") | clean | axe 1 (D1) |
+| Registration drawer (effort) | clean | axe 1 (D1, submit) | clean | axe 1 (D1) |
+| Workspace | clean | axe 4 (D1) | clean | axe 2 (D1) |
+
+- Document horizontal overflow is 0 everywhere. Capacity at 390 scrolls inside its region with the Hub column sticky
+  (P19 design).
+- Capacity figures reconcile with their members:
+  - Full year: Greece 267 = 78 + 67 + 122 (+1 against the audit is my own override, as R4 predicts).
+  - YTD: 107 = 57 + 23 + 27.
+  - In plan: 195 = 57 + 60 + 78.
+- Executive 1440 reconciles: Delivered 51 + Q4 81 = 132 within year; P1–P4 totals 28 + 8 + 116 + 178 = 330.
+- Gantt row meta and step names ellipsize with `title` tooltips. This predates P30 (`gantt-row-meta.tsx`, 2026-10-19).
+- Workspace stage names ellipsize at 390 (pre-existing).
+
+**Blocking:**
+- **QA-F28-1. Executive "Upcoming completions" breaks at 390 px.**
+  - File: `frontend/src/surfaces/dashboard/components/executive/upcoming-completions-card.tsx:140`. The row grid
+    `grid-cols-[auto_minmax(0,1fr)_auto_auto]` leaves the name column the space after the week chip, hub and priority
+    pill. At 390 (card 216 px) that is about 6 px, and `break-words` (`:152`) then stacks the project name one letter
+    per line. The measured link is **6 px wide and 930 px tall**. The quarter strip `grid-cols-5` (`:84`) also cuts
+    "DELIVERED" to "DELI" and squeezes the Q labels.
+  - Repro: Executive view at a 390×900 viewport with any within-year finish in W42–W49. See
+    `qa/shots/tall-exec-390-dark.png` and `el390-exec-upcoming-card-light.png`.
+  - Fix direction: stack the row on narrow widths (name on its own line, chips below) and wrap the quarter strip
+    (e.g. `grid-cols-3 sm:grid-cols-5`).
+- **QA-F28-2. Executive KPI tile labels are clipped or covered at 390 px.**
+  - File: `frontend/src/surfaces/dashboard/components/executive/exec-kpi-tile.tsx:99-129`, in the `grid-cols-2` strip
+    (`exec-kpi-strip.tsx:176` / `:200`).
+  - Tiles are about 98 px wide. The 32 px icon and the always-present `shrink-0` badge slot leave the single-word label
+    (`:112`, `min-w-0 flex-1`) less than its width. "Scheduled" shows as "S" under the "of 330" badge, "Spillover" as
+    "Spillov", and "Within year" sits under the "49%" badge.
+  - This breaks the P28 rule "labels never ellipsize". The P28-T01 390 check predates the fixed-frame tiles (rounds 2–5).
+  - Repro: same viewport. See `qa/shots/el390-kpistrip-light.png`.
+  - Fix direction: below `sm`, put the badge on its own line or drop the invisible slot.
+
+**Judged non-blocking:**
+- **"Save timing" dark contrast** is the carried **D1** (P17 gate, 2026-10-20). Dark `--color-primary`
+  `221 83% 55%` (#397dd0) with white `--color-primary-fg` measures 4.18:1 app-wide (`styles/tokens.css:929-931`, the
+  graphite layer from 2026-10-02). Every gate since has recorded it as report-only. Correction to P30-T03: the IDLE
+  colour fails; axe only matched a node whose class list contains `hover:bg-primary-hover`. The hover colour
+  (#4d8ddb) is lighter and so worse. Not introduced by P30; it should get its own token fix (darken the dark primary
+  fill, or use dark text on it).
+- **Greece caption wrap** ("Includes OEM-HCK and / OEM-Seitek") wraps once between words at 1440 and 390, with no
+  ellipsis and no overlap, and the sub-rows align. Acceptable as is.
+- Executive dark adds D1 on P28's own selected "Executive" toggle (same token).
+- Observation for the owner (owner-directed copy): the KPI tile "On hold 0" (the run's blocked outcome) sits on the
+  same page as the Status donut's "On Hold 28" (project status). Likewise "Spillover 66" (run) against the pipeline
+  donut's "Spillover 77" (carry-over). Same words, different measures.
+- The 390 country filter is a deliberate horizontal scroller (`overflow-x: auto`) in both views.
+
+**5. Contract parity: PASS.** `test_openapi_frontend_contract.py` **224 passed**.
+
+**Verdict: FAIL** on QA-F28-1 and QA-F28-2, both frontend, both in the P28 Executive view at 390 px. P29 and P30 code
+has no blocking QA defect. Re-gate: fix both, add a 390 px render test (for example, assert that the Upcoming name link
+is at least 80 px wide and that tile labels are not overflowed), then a 390 light/dark screenshot check.
+
+## [2026-10-23] P28-R01 — QA-F28-1, QA-F28-2 (frontend-builder)
+
+Gate remediation for the QA leg of P30-T20. Frontend only; backend not touched; nothing committed. The 1280/1440 desktop
+layout is unchanged (verified pixel-identical, below).
+
+**QA-F28-1 Upcoming completions** (`frontend/src/surfaces/dashboard/components/executive/upcoming-completions-card.tsx`)
+- Rows below `sm`: `grid-cols-[auto_minmax(0,1fr)]`. Line 1 is the week chip plus the full name. Line 2 is a meta
+  wrapper (`col-start-2`) holding "hub · priority pill", and the "·" stays with the pill.
+- From `sm` up the meta wrapper (and the dot+pill group) is `sm:contents` and the dot is `sm:hidden`, so hub and pill
+  are grid columns 3 and 4 of the original `sm:grid-cols-[auto_minmax(0,1fr)_auto_auto]`.
+- `break-words` removed from the name link: names wrap between words only.
+- Quarter strip: `grid-cols-2 sm:grid-cols-5`. "Delivered" spans both columns below `sm` (label left, figure right) and
+  the quarters sit 2 × 2. The month range is `whitespace-nowrap`, so the line can wrap after "Q1 ·" but never inside
+  "Jan–Mar". New test id: `exec-upcoming-strip`, `exec-upcoming-row-meta`.
+
+**QA-F28-2 KPI tiles** (`exec-kpi-tile.tsx`)
+- Below `md` the header is a one-column grid: no icon chip (`hidden md:grid`), the label on its own line, then the badge
+  slot, which stays invisible-but-present on badge-less tiles. From `md` up it is the original
+  `flex items-center gap-s2` row.
+- Frame: `h-[7.5rem] px-s3` below `md`, the approved `md:h-[5.75rem] md:px-s4` from `md` up. That is still one fixed
+  frame for every tile, so all six stay identical.
+- Why `md` and not `sm`: the 640–767 px 3-column strip gives tiles of about 150 px, where the old row also crushed the
+  label. New test ids: `exec-kpi-tile-header`, `-label`, `-badge`.
+
+**Other P28 sections**
+- `risks-card.tsx` rows: `grid-cols-1 sm:grid-cols-[minmax(0,1fr)_auto]`, so the hub drops under the name below `sm`.
+  `break-words` removed.
+- No `break-words`, `anywhere` or `break-all` remains in non-test `src/surfaces/dashboard` TSX.
+
+**e2e**
+- `e2e/pages/dashboard.page.ts`: dead `hubsGlance()` removed; `upcomingCard()` and `upcomingRows()` added.
+- New `e2e/p28-executive.spec.ts`, typecheck-only (not run). At 1440 and 390 it opens `/?view=executive` and asserts:
+  - the six tiles are present and share one height;
+  - the Upcoming card is present;
+  - every Upcoming name link is at least 80 px wide;
+  - no tile label overflows or overlaps its badge.
+
+**Tests**
+- New unit tests: `exec-kpi-strip.test.tsx` (header stack, hidden icon, label/badge order, one frame),
+  `upcoming-completions-card.test.tsx` (stacked row, meta `sm:contents`, strip classes, no-truncation classes) and
+  `risks-card.test.tsx`.
+- `vitest run src/surfaces/dashboard`: 38 files / 241 passed. Full `vitest run`: **211 files / 1659 passed**.
+- `tsc -b` exit 0. `eslint .`: 0 errors, the same 9 pre-existing warnings. e2e ad hoc strict typecheck (QA's
+  `tsconfig.e2e.json`): exit 0.
+
+**Visual re-check** (harness: session scratchpad `r01/shoot.mjs`, screenshots in `r01/shots/`)
+- Disposable stack: PG17 `r01-pg` (:55941), Redis `r01-redis` (:56941), dev uvicorn :8941 (CW 42), seeded the same as
+  QA (`client_2026 --schedule`, 330 projects, within-year 132).
+- Before = QA's `dist-mock` build on :5942. After = a fresh `/mockapi` build on :5943.
+- 390, light and dark, after:
+  - all six tiles are 98×120 with labels whole and 0 label/badge/icon overlaps (before: 6 of 6 bad);
+  - minimum Upcoming/Risks name width 104 px, maximum height 90 px (before: 0 px wide and 1080 px tall);
+  - 0 clipped quarter labels (before: 5);
+  - document overflow 0.
+- 1440, full-height 2400 px viewport, before vs after: **0 differing pixels in light and dark**.
+  - 900 px-viewport runs show a few to a few hundred pixels of ECharts antialias noise that also varies between two runs
+    of the same build.
+  - A first attempt that used a non-breaking space after "Q4" changed 6 sub-pixel pixels, so it was reverted.
+- axe: light clean at both widths. Dark has only the carried D1 `color-contrast` nodes, the same set before and after:
+  - country/view toggles, white on `#397dd0`, 4.18;
+  - the `text-primary` "+N more" links, 4.23.
+  - At 390 the "before" count is one lower only because its broken layout pushed `exec-upcoming-more` off the shot.
+
+**Cleanup and notes**
+- Containers, my previews and uvicorn were removed. Temp files (build, key, logs) were deleted. Screenshots and
+  `shoot.mjs` kept for the re-gate.
+- **Note:** a stale `vite preview` of `qa/dist-mock` (PID 4284, the QA run's) was still listening on :5941. It is not
+  mine and I left it.
+- **Note:** during this task `backend/.coverage` shows as deleted and several backend files are modified (capacity /
+  dashboard routers, `schemas/gantt.py`, `test_p13_region_filter.py`, new `test_p30_r02_gate_followups.py`). That is not
+  this task's work; it looks like a parallel backend remediation.
+
+## [2026-10-23] P30-R02 — gate follow-ups (backend-builder)
+
+Non-blocking QA, workflow and security items from gate P30-T20. Backend only; nothing under `backend/scheduling/` was
+edited. Nothing committed. :5433, :8001 and Render were not touched. The tracked `backend/.coverage`, which the suite
+rewrites, was restored byte-for-byte afterwards. (A parallel frontend agent's entry above saw it as "deleted" while
+my suite was running; pytest-cov recreates it. It is back now.)
+
+**1. Deterministic ordering (QA 1b / workflow N3).**
+- `api/routers/dashboard.py` `/dashboard/hub-type-pipeline`: `order_by(Hub.name, Project.type.asc().nulls_last())`.
+  Both columns are native PG enums, so the order is the enum declaration order (`HubName`, then `ProjectType`;
+  p30a only appended `AC` / `SER` and renamed a hub value in place), and NULL type comes last within its hub.
+- `/dashboard/completing-within-year`: rows `order_by(Project.name, Project.id)`.
+- `tests/test_p13_region_filter.py::test_region_rows_are_exactly_the_regions_hubs`: hub-type content is compared as a
+  multiset, and the served order is asserted separately against `_hub_type_key` (enum index; NULL last).
+- New `tests/test_p30_r02_gate_followups.py::test_dashboard_orders_are_stable_after_analyze_and_across_plans`: the demo
+  seed plus one NULL-type project. Both endpoints (unfiltered and per region) give identical bodies before
+  `ANALYZE projects / hubs / schedule_run_project_outcomes`, after it, and with `SET LOCAL enable_hashagg = off,
+  enable_hashjoin = off`. Completing rows equal the DB's own `ORDER BY name, id`. Verified: this test FAILS with the
+  dashboard change reverted and passes with it.
+
+**2. Missing tests (QA 3).** Same new file:
+- `test_lead_time_edit_rejected_by_r7_rolls_back`: B project with figure 200 (A20 D20 E80 J20 K40 M20). PUT lead time
+  PDD/B/PDD-E = 10 gives E = 125 > 104, so 422 `EFFORT_SPLIT_REJECTED` with loc `design_effort_weeks`. The lead time
+  stays 4, the split is unchanged, there is no new `project.effort_rederived` row and no `lead_times_update` audit row.
+  (The handler calls `db.rollback()`, so the test commits its setup savepoint first.)
+- `test_unfreeze_rejected_by_r7_keeps_the_project_frozen`: a frozen project with figure 200. The same lead-time edit is
+  accepted (frozen projects are exempt, I10). Then unfreeze gives 422 `EFFORT_SPLIT_REJECTED`, the project stays
+  frozen with `actual_start_week` 20, and no effort or audit row is written.
+- `test_check_in_start_rederives_the_split_r3_r6`: figure 4 gives A1 D0 E2 K1. An existing user override on D keeps D
+  schedulable (R4). A check-in "In Progress" on D re-derives in the same request: D effort 0 → 1 (R3), the override
+  is kept, and the audit row has trigger `stage_status`, `raised_step_ids == ["PDD-D"]`, and before/after effort for D
+  of 0 and 1.
+
+**3. S30-L2 (Low): CLOSED.** `api/routers/capacity.py` engineer-utilization writes the read-audit column `hub_id` only
+when the hub exists (a parameterized `select(Hub.id)` lookup). Otherwise the column is NULL; the requested id is still
+recorded in `after_state.hub_id`. The response is the normal empty 200, the same as the other filters. Test
+`test_engineer_utilization_unknown_hub_is_empty_not_500_s30_l2[admin, hub-planner]`: unknown hub gives 200 with
+`engineers == []` and an audit row with `hub_id` NULL and `after_state = {hub_id: <uuid>, region: null, row_count: 0}`.
+A real hub filter still sets the column.
+
+**4. N4 docstring: NOT edited (owned by algorithm-engineer).** `backend/scheduling/workflow.py:799`
+`project_progress_pct` still says the effective duration is "ADR 0019: `duration_override_weeks ?? lead time`". It
+should read "user override ?? effort ?? lead (ADR 0041 R4)". The behaviour is already correct (I12 holds). Reported
+for algorithm-engineer. Outside `scheduling/`, I fixed the one stale field comment: `schemas/gantt.py` Σ booked
+durations now reads "`user override ?? effort ?? lead time`, ADR 0019 / ADR 0041 R4". The `services/workspace.py` and
+`services/ask_agent.py` comments already carry the ADR 0041 line.
+
+**Checks.**
+- ruff check: clean on every touched file. `ruff format`: the new test file is formatted. `capacity.py` and
+  `test_p13_region_filter.py` were already unformatted before this task, and I did not reformat them.
+- mypy (strict): no new errors in the routers. The only errors are the 2 pre-existing `_has_stage_progress`
+  no-untyped-call errors. The new test file has only the repo-wide test-style `no-untyped-def` / `[index]` errors.
+- Backend `pytest`: **2293 passed, 0 failed** (2287 + 6 new). Coverage 97.11 % (gate 70 %).
+
+## [2026-10-23] Gate P28–P30 re-check — qa-inspector: FAIL (QA-F28-1 and the 390 px part of QA-F28-2 closed; new QA-F28-3: Executive "Scheduled" KPI label hidden under its badge at 1280–1390 px; everything else green)
+
+Re-gate after P28-R01 (frontend) and P30-R02 (backend). Nothing committed. :5433, :8001 and Render were not touched.
+- Disposable stack: `qa-p30rg-pg` :55941, `qa-p30rg-redis` :56941, uvicorn :8941 (CW 42), `vite preview` :5941 of a fresh
+  `/mockapi` scratch build. Same seed as the first pass: 330 projects, greedy v1 within year 132, plus my 26-S0513 PDD-B
+  override of 6.
+- All of it was removed afterwards (stopped by port), and the throwaway key emptied.
+- The stale preview PID 4284 was mine: my first-pass `pkill` pattern missed the pnpm path. It is stopped.
+- `backend/.coverage` was restored byte-for-byte.
+- Harness: session scratchpad `qa/ui.mjs` plus `qa/rg/geo.mjs`, `textext.mjs`, `sweep.mjs` and `z1280.mjs`; shots in
+  `qa/rg/shots/`.
+
+**Suites: PASS.**
+- Backend `pytest`: **2293 passed, 0 failed, 97.16 %**.
+- `pytest -c pytest-scheduling.ini`: **391 passed, 94.63 %**.
+- `vitest run --coverage`: **211 files / 1659 passed**, statements 87.84 %. `exec-kpi-tile`, `upcoming-completions-card`
+  and `risks-card` are at 100 %.
+- `tsc -b` 0. `eslint .`: 0 errors, the same 9 warnings.
+- Budget **PASS at 189.2 KB gzip** (DashboardPage 28.07 KB).
+- e2e strict ad hoc typecheck (`qa/tsconfig.e2e.json`, now including `e2e/p28-executive.spec.ts`): exit 0. Every e2e
+  test id in the page objects and P28–P30 specs exists in `src`. The dead `hubsGlance()` is gone.
+- Contract `test_openapi_frontend_contract.py`: **224 passed**.
+
+**Remediation verified:**
+- **QA-F28-1: CLOSED.**
+  - At 390 the Upcoming rows stack: chip plus name, then meta. The narrowest name link is 104 px (was 6) and the
+    tallest 90 px (was 930).
+  - The quarter strip is 2 × 2 with Delivered spanning; no label is clipped. The Risks rows stack as well.
+  - Cosmetic, non-blocking: when the meta line wraps, the "·" can lead the line ("· P3", BEATBOX row).
+- **QA-F28-2 at 390: CLOSED.** The six tiles are 98 px wide, of equal height, each with its whole label above its
+  badge and no overlap with label, badge or icon (light and dark).
+- **P30-R02:**
+  - `dashboard.py:224` orders by `Hub.name, Project.type NULLS LAST`; completing-within-year (`:378`, `:757`) orders by
+    `name, id`.
+  - The p13 test, the ANALYZE-stability test and the three QA-3 tests (lead-time edit 422, unfreeze 422, check-in
+    re-derivation) pass. A targeted rerun of the contract, R02 and p13 tests gave 231 passed.
+  - N4 docstring (`scheduling/workflow.py:799`): still stale. It is algorithm-engineer's and non-blocking.
+
+**Regression matrix** (`ui.mjs`, 1440 and 390, light and dark, axe wcag2a/aa + 21a/aa):
+- Identical to the first pass apart from the fixed Executive 390.
+- Light is axe-clean on Executive, Capacity (Greece expanded, full year and YTD), the Gantt timing dialog, the
+  Registration drawer and the Workspace.
+- Dark has only carried D1 (white on #397dd0, 4.18:1; `text-primary` 4.47).
+- Document overflow is 0 everywhere. API errors: 0.
+- Gantt row-meta, step-name and Workspace stage-name truncation is pre-existing, with tooltips.
+
+**Blocking — QA-F28-3 (new): the Executive KPI label is covered by its badge at desktop widths.**
+- Where: `frontend/src/surfaces/dashboard/components/executive/exec-kpi-tile.tsx`:
+  - `:105`, the `md:flex` header row;
+  - `:119`, the label `min-w-0 flex-1`;
+  - `:125`, the badge `shrink-0 whitespace-nowrap`.
+- Cause: at `xl` (6-column strip) the tile is 168 px at 1280. The icon (32 px) and the "of 330" badge leave the label
+  36 px, but "Scheduled" is one unbreakable 63 px word, so it overflows under the badge.
+- Measured with text `Range` rects against the badge rect (sweep 760–1920 px):
+  - overlap at **1280 (19 px; reads "Schedu")**, 1300 (15), 1320 (12), 1340 (9), 1360 (5), 1380 (2);
+  - 768: the word touches the badge (2 px);
+  - 1240, 1400–1920 and 390: clear.
+  - Light and dark are identical.
+- Repro: `/?view=executive` at 1280×900; see `qa/rg/shots/zoom-sched-1280-light.png`.
+- History: this predates P28-R01 (the desktop layout was kept pixel-identical). My first pass sampled only 390 and
+  1440, so it missed this. It is the same defect class as QA-F28-2, on the CEO-facing headline strip at a standard
+  laptop width.
+- Fix direction (frontend-builder): make the header layout depend on the tile's width, not the viewport (a container
+  query on the tile, e.g. stack label and badge when the tile is narrower than about 200 px). Or keep the stacked
+  header up to `2xl`. Extend `e2e/p28-executive.spec.ts` and a unit or geometry test to 768 and 1280 widths, asserting
+  that the label's `scrollWidth ≤ clientWidth` and its text does not reach the badge's left edge.
+
+**Verdict: FAIL**, on QA-F28-3 only. P29 and P30 are clean, and every other remediation item is verified.
+
+## [2026-10-23] P28-R01 addendum — QA-F28-3 KPI label under its badge at desktop widths (frontend-builder)
+
+Follow-up to the P28-R01 entry above, after the qa-inspector re-check (QA-F28-3). Frontend only; nothing committed;
+backend not touched.
+
+**Cause.** The P28-R01 fix had kept the approved `md`+ header row `icon | label | badge`. At `xl` (6-column strip) the
+tile is 168 px at 1280, which leaves the label 36 px. "Scheduled" is a single 63 px word, so it ran under the "of 330"
+badge from 1280 to 1380 px and touched it at 768.
+
+**Fix** (`frontend/src/surfaces/dashboard/components/executive/exec-kpi-tile.tsx`)
+- The badge left the label row at every width. The header is now `icon chip | label` only; the icon is still
+  `hidden md:grid`.
+- New figure line (`data-testid="exec-kpi-tile-figure-line"`, `mt-auto`) holds the number, then the badge:
+  - below `md`, `flex-col`: the badge sits under the number;
+  - from `md` up, `md:flex-row md:items-center md:gap-s2`: "272 [of 330]", "132 [49%]".
+- The badge slot is still always present (invisible without a badge), so every figure sits on the same line.
+- The frame is unchanged: `h-[7.5rem]` below `md`, `md:h-[5.75rem]`. All six tiles are identical; the 390 layout keeps
+  label, then figure, then badge. The desktop look is the approved tile with the badge moved after the number.
+- Worst case at `md`+: the narrowest tile (168 px, 136 px inner) against a 3-digit figure plus "of 330" (about 113 px).
+  The label now gets the tile width less the icon, at least 96 px.
+
+**Tests**
+- `exec-kpi-strip.test.tsx`: the QA-F28-2 test was rewritten as QA-F28-2/F28-3. It asserts:
+  - the header's only children are icon and label, and it does not contain the badge;
+  - the badge is the last child of the figure line (`flex-col` / `md:flex-row`);
+  - there is one fixed frame;
+  - the figure line text is "5of 253".
+- `e2e/p28-executive.spec.ts`: widths 1440, 1280, 768 and 390. Using `Range` client rects of the label text, it asserts
+  no overlap with the badge or the icon chip and no `scrollWidth` overflow or text past the tile edge, plus the existing
+  checks (equal tile heights, Upcoming name ≥ 80 px). Typecheck-only.
+- `vitest run src/surfaces/dashboard`: 38 / 241 passed. Full `vitest run`: **211 files / 1659 passed**. `tsc -b` 0.
+  `eslint .`: 0 errors, the same 9 warnings. e2e strict typecheck (`qa/tsconfig.e2e.json`): 0.
+
+**Sweep** (session scratchpad `r01/sweep.mjs`, results `r01/shots/sweep.json`, strip shots
+`r01/shots/f3-kpistrip-{390,760,780,1280,1440,1920}-{light,dark}.png`)
+- Setup:
+  - disposable PG17 `r01b-pg` :55951, Redis `r01b-redis` :56951, dev uvicorn :8951 (CW 42);
+  - `client_2026 --schedule` (330 projects, within year 132);
+  - `vite preview` :5951 of a `/mockapi` build.
+- Viewports: 390 plus 760–1920 px in steps of 20, light and dark, **120 viewports**.
+- Checked per tile:
+  - label `Range` rects against the badge, icon and figure rects;
+  - label `scrollWidth` and text past the tile edge;
+  - figure against badge;
+  - badge, figure or icon cut by the frame's `overflow:hidden`;
+  - badge text clipped;
+  - every tile the same size.
+- Result: **0 issues in all 120.** Tiles are 98×120 at 390, 182×120 at 760, and 189–349×92 or 168–257×92 from 780 px
+  (`md`). The label-text-to-badge vertical gap is 18 px at `md`+ and 59 px below. Document overflow is 0.
+- The stack, preview and API were removed afterwards, and the key, build and logs deleted.
+
+## [2026-10-23] Gate P28–P30 — qa-inspector: PASS (re-check 2)
+
+A narrow re-check of QA-F28-3 after "P28-R01 addendum — QA-F28-3". Everything else in the P28–P30 QA leg already
+passed in "Gate P28–P30 re-check — qa-inspector" and was not re-run.
+
+Constraints held: nothing committed; :5433, :8001 and Render not touched; `backend/.coverage` unchanged.
+
+Setup:
+- Fresh `/mockapi` scratch build, served by `vite preview` on :5941.
+- Disposable stack `qa-p30rg2-pg` (:55941) and `qa-p30rg2-redis` (:56941), uvicorn :8941 (CW 42).
+- Seeded `client_2026 --schedule`: 330 projects, within year 132.
+- Stack removed afterwards and the throwaway key emptied.
+
+**QA-F28-3: CLOSED.** New harness: session scratchpad `qa/rg/sweep2.mjs`.
+- The old `sweep.mjs` only compared label and badge on the same row, so it would pass trivially once the badge moved.
+  The new harness checks pairwise overlap between label text (`Range` rects), figure text, the visible badge and the
+  icon. It also checks label `scrollWidth`, any part outside the tile frame, badge text clipping, six tiles of equal
+  height, and document overflow.
+- Viewports: 390 plus 760–1920 in steps of 20, light and dark: **120 viewports, 0 issues**.
+- At 1280 the tile reads "Scheduled" on the label line and "272 of 330" on the figure line (shot
+  `qa/rg/shots/s2-kpistrip-1280-light.png`).
+
+**axe on the Executive view** (wcag2a/aa and 21a/aa, serious and critical only):
+- Light 390: clean. Light 1280: clean. Dark 390: clean.
+- Dark 1280: color-contrast × 2, the `text-primary` "+N more" links (`exec-upcoming-more`, and the risks "more" link)
+  at 4.23:1. This is the carried D1 dark primary-token family, already listed in P28-R01, and non-blocking under the
+  standing precedent.
+
+**Checks:**
+- `vitest run src/surfaces/dashboard`: **38 files / 241 passed**.
+- `tsc -b`: 0.
+- `eslint .`: 0 errors and the same 9 pre-existing warnings.
+- e2e strict typecheck (`qa/tsconfig.e2e.json`, including the 4-width `p28-executive.spec.ts`): 0.
+
+Still carried, non-blocking: D1 dark primary contrast (app-wide token), the stale N4 docstring
+(`scheduling/workflow.py:799`, algorithm-engineer), and the cosmetic leading "·" on a wrapped Upcoming meta line at 390.
+
+**Verdict: PASS** for the qa-inspector leg of gate P30-T20 (P28–P30).
+
+## [2026-10-23] Gate P28–P30 (P30-T20, also closes P28-T20 and P29-T20): PASS — orchestrator
+
+**Legs:**
+- **qa-inspector: PASS** at re-check 2. The first pass failed on QA-F28-1 and QA-F28-2; re-check 1 failed on QA-F28-3.
+  All three were fixed in P28-R01 and its addendum.
+- **workflow-auditor: PASS.** The T04 audited reseed plus a delta audit; run hashes are identical.
+- **security-auditor: code PASS.** This is the re-check after P30-R01.
+
+**Remediation:** P28-R01 (frontend), P30-R01 (S30-L1, S30-I1) and P30-R02 (deterministic ordering, the three missing
+tests, S30-L2).
+
+**Open owner-accepted risks (not code):**
+- S26-C1: Render runs in dev mode with no authentication.
+- S26-H1: the DB password and field key are rotated after the deploy.
+- S30-H1: client data is in a public GitHub repo. The history scrub is deferred.
+
+**Carried non-blocking items:**
+- D1: dark-mode primary contrast is 4.18–4.23:1.
+- The N4 docstring at `backend/scheduling/workflow.py:799` (algorithm-engineer).
+- Workflow N1: the YTD priority-split header does not say "full year".
+- The Executive KPI label "On hold" is the run's blocked count, and Spillover 66 is the run outcome while the pipeline
+  donut's Spillover 77 is carry-over. Same words, different measures; raised with the owner.
+- The CP-SAT run leaves out 4 P1 projects (OQ #10 class), and auto-recalcs revert the active run to greedy.
+
+**DOMAIN_RULES:** I12 now states half-to-even rounding (the workflow-auditor's Option A wording).

@@ -691,7 +691,10 @@ rule and ADR 0004 — delay is still terminal).
   recorded `[actual_start_week, actual_end_week]`. Done stages are immutable history; the solver
   never re-places them.
 - **I12**: `project_progress_pct` equals the duration-weighted formula above — never an unweighted
-  mean of the 14 `percent_complete` values.
+  mean of the 14 `percent_complete` values. *(Rounding, stated 2026-10-23, P30 gate:)* the exact
+  quotient is rounded half-to-even — a tie at exactly .5 goes to the even integer (62.5 → 62,
+  87.5 → 88). Scheduler and Workspace share `scheduling.project_progress_pct`. This deliberately
+  differs from the half-up rounding of scores (ADR 0037) and effort (I26).
 - **I13**: The Project Workspace health badge for a project is a pure function of that project's
   stored outcome in the active `ScheduleRun` (finish week, per-stage overrun, `left_out`). No
   independent recomputation anywhere — mirrors I9.

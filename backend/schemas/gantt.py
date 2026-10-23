@@ -130,8 +130,9 @@ class GanttProjectRow(BaseModel):
     #: (so the UI can tell "withheld" from "no leader").
     leader_name: str | None
     leader_engineer_id: uuid.UUID | None
-    #: Σ of the active run's booked effective durations (`override ?? lead
-    #: time`, ADR 0019) over the project's non-skipped steps of that kind —
+    #: Σ of the active run's booked effective durations (`user override ??
+    #: effort ?? lead time`, ADR 0019 / ADR 0041 R4) over the project's
+    #: non-skipped steps of that kind —
     #: the same basis as the Capacity design/lab load (I6/I7). `total_weeks`
     #: sums every non-skipped step (design + lab + elapsed). All `null` when
     #: the project has no step in the active run.

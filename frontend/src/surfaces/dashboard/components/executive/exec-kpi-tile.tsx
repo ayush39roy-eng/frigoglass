@@ -7,10 +7,12 @@ import { cn } from '@/lib/utils';
 /**
  * One Executive KPI tile (P28 addendum, owner correction: "same width and
  * size"). Every tile renders the IDENTICAL fixed skeleton — a fixed-height
- * card with one top row `icon chip | label | badge slot` and the figure on the
- * bottom line — so no badge, label or footer can ever wrap a tile taller or
- * narrower than its siblings. The badge slot is always present (invisible when
- * a tile has no badge) to keep the top rows aligned across the strip.
+ * card with a top row `icon chip | label` and the figure line `number | badge
+ * slot` at the bottom — so no badge, label or footer can ever wrap a tile
+ * taller or narrower than its siblings. The badge slot is always present
+ * (invisible when a tile has no badge) to keep the figure lines aligned.
+ * (QA-F28-3, 2026-10-23: the badge moved from the label row to the figure
+ * line, so it can never cover the label at any width.)
  *
  * A tile with `onOpen` is a real <button> (keyboard-activatable,
  * `aria-haspopup="dialog"`) that opens the data behind its number; Radix
@@ -44,7 +46,7 @@ export interface ExecKpiTileProps {
   icon: React.ComponentType<{ className?: string }>;
   tone?: ExecTileTone;
   variant?: ExecTileVariant;
-  /** Short badge text for the fixed top-right slot ("of 253", "18%"). */
+  /** Short badge text shown after the figure ("of 253", "18%"). */
   badge?: string;
   badgeTone?: 'pop' | 'neutral';
   /** Makes the tile a button opening its data dialog; receives the button
@@ -56,9 +58,12 @@ export interface ExecKpiTileProps {
 }
 
 /** ONE fixed footprint for every tile (equal width comes from the strip's
- *  equal grid columns; equal height from this class). */
+ *  equal grid columns; equal height from this class). Below `md` (QA-F28-2:
+ *  ~100 px tiles in the phone 2-column strip, ~150 px in the 640–767 px
+ *  3-column strip) there is no icon chip and the badge sits under the number,
+ *  so the frame is taller there; it is still ONE fixed height for every tile. */
 const TILE_FRAME =
-  'relative flex h-[5.75rem] w-full flex-col overflow-hidden rounded-dash border-[1.5px] px-s4 py-s3 text-left transition-shadow duration-base';
+  'relative flex h-[7.5rem] w-full flex-col overflow-hidden rounded-dash border-[1.5px] px-s3 py-s3 text-left transition-shadow duration-base md:h-[5.75rem] md:px-s4';
 
 export function ExecKpiTile({
   label,
@@ -96,10 +101,13 @@ export function ExecKpiTile({
       {variant === 'plain' ? (
         <span aria-hidden="true" className={cn('absolute inset-y-3 left-0 w-1.5 rounded-r-full', TONE_RAIL[tone])} />
       ) : null}
-      <span className="flex w-full items-center gap-s2">
+      {/* Header: icon chip + label only (QA-F28-3: the badge no longer shares
+          this row at ANY width, so the label always has the tile's full
+          width less the icon). Below `md` the icon chip is hidden too. */}
+      <span className="flex w-full items-center gap-s2" data-testid="exec-kpi-tile-header">
         <span
           className={cn(
-            'grid size-8 shrink-0 place-items-center rounded-xl',
+            'hidden size-8 shrink-0 place-items-center rounded-xl md:grid',
             variant === 'feature' && 'bg-surface text-text shadow-card',
             variant === 'ink' && 'bg-ink-fg/10 text-ink-fg ring-1 ring-ink-fg/20',
             variant === 'plain' && TONE_PILL[tone],
@@ -108,11 +116,26 @@ export function ExecKpiTile({
           <Icon className="size-4" aria-hidden="true" />
         </span>
         {/* The label never ellipsizes; it is short by design and may wrap
-            within its own cell on very narrow tiles. */}
-        <span className={cn('min-w-0 flex-1 text-xs font-semibold leading-tight', solid ? 'opacity-90' : 'text-text-muted')}>
+            between words on narrow tiles. */}
+        <span data-testid="exec-kpi-tile-label" className={cn('min-w-0 flex-1 text-xs font-semibold leading-tight', solid ? 'opacity-90' : 'text-text-muted')}>
           {label}
         </span>
-        {/* FIXED badge slot: present on every tile so the rows align. */}
+      </span>
+      {/* Figure line: the number, then the badge. Below `md` (~100–150 px
+          tiles) the badge sits on its own line under the number; from `md` up
+          it follows the number on the same line ("272 [of 330]"). The badge
+          slot is always present (invisible without a badge) so the figures of
+          every tile sit on the same line. */}
+      <span
+        className="mt-auto flex flex-col items-start gap-1 md:flex-row md:items-center md:gap-s2"
+        data-testid="exec-kpi-tile-figure-line"
+      >
+        <span
+          className={cn('block shrink-0 font-display text-3xl font-extrabold leading-none tabular-nums', solid ? 'text-inherit' : 'text-text')}
+          data-numeric=""
+        >
+          {shown}
+        </span>
         <span
           className={cn(
             'inline-flex h-5 shrink-0 items-center whitespace-nowrap rounded-pill px-2 text-2xs font-bold tabular-nums',
@@ -126,16 +149,11 @@ export function ExecKpiTile({
                   : 'bg-surface-sunken text-text',
           )}
           data-numeric=""
+          data-testid="exec-kpi-tile-badge"
           aria-hidden={badge === undefined ? true : undefined}
         >
           {badge ?? '—'}
         </span>
-      </span>
-      <span
-        className={cn('mt-auto block font-display text-3xl font-extrabold leading-none tabular-nums', solid ? 'text-inherit' : 'text-text')}
-        data-numeric=""
-      >
-        {shown}
       </span>
     </>
   );

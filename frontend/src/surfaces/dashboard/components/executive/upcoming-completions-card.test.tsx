@@ -59,6 +59,40 @@ describe('UpcomingCompletionsCard', () => {
     expect(screen.getByTestId('exec-upcoming-delivered')).toHaveAttribute('aria-label', 'Delivered (no stage left): 1');
   });
 
+  it('QA-F28-1: below sm each row stacks (chip + name, then hub · priority); from sm the 4-column grid is unchanged', () => {
+    renderWithProviders(
+      <UpcomingCompletionsCard rows={[row('a', 32, { project_name: 'Assembled double-door cooler for Coca-Cola HBC' })]} />,
+    );
+    const item = screen.getByTestId('exec-upcoming-row');
+    const cls = item.className.split(/\s+/);
+    expect(cls).toEqual(expect.arrayContaining(['grid-cols-[auto_minmax(0,1fr)]', 'sm:grid-cols-[auto_minmax(0,1fr)_auto_auto]']));
+    const [chip, link, meta] = [...item.children] as HTMLElement[];
+    expect(chip).toHaveTextContent('W32');
+    expect(link).toHaveRole('link');
+    // The name wraps between words only: no letter-level breaking, no truncation.
+    expect(link!.className).not.toMatch(/break-words|break-all|anywhere|truncate|line-clamp|whitespace-nowrap/);
+    // Line 2: the meta wrapper starts under the name and dissolves into columns 3–4 from sm.
+    expect(meta).toBe(within(item).getByTestId('exec-upcoming-row-meta'));
+    expect(meta!.className.split(/\s+/)).toEqual(expect.arrayContaining(['col-start-2', 'sm:contents']));
+    expect(meta).toHaveTextContent('R&D-Greece');
+    expect(within(meta!).getByText('·')).toHaveClass('sm:hidden');
+    expect(within(meta!).getByText('P2')).toBeInTheDocument();
+  });
+
+  it('QA-F28-1: the quarter strip wraps below sm (Delivered full width, quarters 2 x 2) with whole labels', () => {
+    renderWithProviders(<UpcomingCompletionsCard rows={[row('a', 32)]} />);
+    const strip = screen.getByTestId('exec-upcoming-strip');
+    expect(strip.className.split(/\s+/)).toEqual(expect.arrayContaining(['grid-cols-2', 'sm:grid-cols-5']));
+    expect(screen.getByTestId('exec-upcoming-delivered').className.split(/\s+/)).toEqual(
+      expect.arrayContaining(['col-span-2', 'sm:col-span-1']),
+    );
+    for (const el of strip.querySelectorAll('.label-caps')) {
+      expect(el.className).not.toMatch(/truncate|ellipsis|break-all|anywhere/);
+    }
+    // The month range never splits at its dash.
+    expect(screen.getByText('Jul–Sep')).toHaveClass('whitespace-nowrap');
+  });
+
   it('caps the list and links the rest to the register', () => {
     renderWithProviders(<UpcomingCompletionsCard rows={Array.from({ length: 9 }, (_, i) => row(`p${String(i)}`, 32))} />);
     expect(screen.getAllByTestId('exec-upcoming-row')).toHaveLength(6);

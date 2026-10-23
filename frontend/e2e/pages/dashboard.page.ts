@@ -97,7 +97,12 @@ export class DashboardPage {
     return this.page.getByTestId('exec-risk-row');
   }
 
-  hubsGlance() {
-    return this.page.getByTestId('exec-hubs-card');
+  /** "Upcoming completions" (replaced "Hubs at a glance", 2026-10-23). */
+  upcomingCard() {
+    return this.page.getByTestId('exec-upcoming-card');
+  }
+
+  upcomingRows() {
+    return this.page.getByTestId('exec-upcoming-row');
   }
 }

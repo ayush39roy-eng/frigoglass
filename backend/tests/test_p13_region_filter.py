@@ -26,7 +26,7 @@ from sqlalchemy import select
 from api.db import get_db
 from api.main import app
 from models.engineer import Engineer
-from models.enums import LabRegion, ProjectStatus, RoleName, SolverType
+from models.enums import HubName, LabRegion, ProjectStatus, ProjectType, RoleName, SolverType
 from models.hub import Hub
 from models.project import Project
 from scheduling.greedy import run_greedy_sgs
@@ -112,6 +112,21 @@ async def _get(client: AsyncClient, path: str, **params):
     resp = await client.get(path, params={k: str(v) for k, v in params.items()})
     assert resp.status_code == 200, (path, resp.text)
     return resp.json()
+
+
+_HUB_ORDER = {h.value: i for i, h in enumerate(HubName)}
+_TYPE_ORDER = {t.value: i for i, t in enumerate(ProjectType)}
+
+
+def _hub_type_key(row: dict) -> tuple[int, int]:
+    """The served `/dashboard/hub-type-pipeline` order (P30-R02): hub, then
+    type, NULL type last. Both are native PG enums, so ORDER BY follows their
+    declaration order (p30a only appended `AC` / `SER` and renamed a hub)."""
+
+    return (
+        _HUB_ORDER[row["hub"]],
+        len(_TYPE_ORDER) if row["type"] is None else _TYPE_ORDER[row["type"]],
+    )
 
 
 def _zeroed(path: str, body) -> None:
@@ -239,7 +254,13 @@ async def test_region_rows_are_exactly_the_regions_hubs(db_session):
             assert projects["total_count"] == len(expected)
             assert all(r["region"] == region for r in projects["rows"])
             hub_type = await _get(client, "/dashboard/hub-type-pipeline", region=region)
-            assert hub_type == [r for r in all_hub_type if region_of[r["hub"]] == region]
+            # P30-R02: content compared as a multiset (never plan-order
+            # sensitive); the served order itself is asserted separately.
+            expected_hub_type = [r for r in all_hub_type if region_of[r["hub"]] == region]
+            assert sorted(hub_type, key=_hub_type_key) == sorted(
+                expected_hub_type, key=_hub_type_key
+            )
+            assert hub_type == sorted(hub_type, key=_hub_type_key)
             gantt = await _get(client, "/gantt", region=region, limit=500)
             assert {p["project_id"] for p in gantt["rows"]} == {
                 p["project_id"] for p in all_gantt["rows"] if region_of[p["hub"]] == region
