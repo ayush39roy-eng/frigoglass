@@ -12,6 +12,10 @@ export function createQueryClient(): QueryClient {
       queries: {
         staleTime: 30_000,
         gcTime: 5 * 60_000,
+        // P31-R01: one retry covers a 502/503/504 from the API proxy on any
+        // idempotent GET. The long cold-start wait is handled once, up front,
+        // by the session boot (`stores/session.ts`), so by the time surface
+        // queries run the API is awake. Mutations are never retried.
         retry: 1,
         refetchOnWindowFocus: false,
       },

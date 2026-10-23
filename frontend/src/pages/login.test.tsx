@@ -55,6 +55,41 @@ describe('LoginPage (ADR 0013)', () => {
     await waitFor(() => expect(useSessionStore.getState().status).toBe('ready'));
   });
 
+  it('P31-R01: "Remember me" is on by default, so the test user lands in localStorage (survives reload / new tab)', async () => {
+    const user = userEvent.setup();
+    api.fetchDevUsers.mockResolvedValue([
+      { email: 'sam.super@example.com', full_name: 'Sam Super', roles: ['Super Admin'] },
+    ]);
+    api.fetchMe.mockResolvedValue(makeMe({ email: 'sam.super@example.com', dev_mode: true }));
+    renderWithProviders(<LoginPage />, { session: null });
+
+    const remember = await screen.findByRole('checkbox', { name: 'Remember me' });
+    expect(remember).toBeChecked();
+    await user.type(screen.getByLabelText('Email'), 'sam.super@example.com');
+    await user.type(screen.getByLabelText('Password'), TEST_LOGIN_PASSWORD);
+    await user.click(screen.getByRole('button', { name: 'Sign in' }));
+
+    await waitFor(() => expect(window.localStorage.getItem('rpd-dev-user-email')).toBe('sam.super@example.com'));
+    expect(window.sessionStorage.getItem('rpd-dev-user-email')).toBeNull();
+  });
+
+  it('P31-R01: unticking "Remember me" keeps the test user in this tab only', async () => {
+    const user = userEvent.setup();
+    api.fetchDevUsers.mockResolvedValue([
+      { email: 'sam.super@example.com', full_name: 'Sam Super', roles: ['Super Admin'] },
+    ]);
+    api.fetchMe.mockResolvedValue(makeMe({ email: 'sam.super@example.com', dev_mode: true }));
+    renderWithProviders(<LoginPage />, { session: null });
+
+    await user.click(await screen.findByRole('checkbox', { name: 'Remember me' }));
+    await user.type(screen.getByLabelText('Email'), 'sam.super@example.com');
+    await user.type(screen.getByLabelText('Password'), TEST_LOGIN_PASSWORD);
+    await user.click(screen.getByRole('button', { name: 'Sign in' }));
+
+    await waitFor(() => expect(window.sessionStorage.getItem('rpd-dev-user-email')).toBe('sam.super@example.com'));
+    expect(window.localStorage.getItem('rpd-dev-user-email')).toBeNull();
+  });
+
   it('dev mode: a wrong password is refused without signing in', async () => {
     const user = userEvent.setup();
     api.fetchDevUsers.mockResolvedValue([
@@ -100,6 +135,17 @@ describe('LoginPage (ADR 0013)', () => {
     expect(url.origin + url.pathname).toBe('https://idp.example.com/realms/rpd/protocol/openid-connect/auth');
     expect(url.searchParams.get('client_id')).toBe('rpd-frontend');
     expect(url.searchParams.get('redirect_uri')).toBe('https://rpd.frigoglass.example/login');
+  });
+
+  it('P31-R01: a 503 from a sleeping API is retried, so a dev-mode deploy still shows the test login form', async () => {
+    api.fetchDevUsers
+      .mockRejectedValueOnce(new ApiError(503, 'Service Unavailable'))
+      .mockResolvedValueOnce([{ email: 'sam.super@example.com', full_name: 'Sam Super', roles: ['Super Admin'] }]);
+    renderWithProviders(<LoginPage />, { session: null });
+
+    expect(await screen.findByTestId('login-dev-picker', {}, { timeout: 3_000 })).toBeInTheDocument();
+    expect(api.fetchDevUsers).toHaveBeenCalledTimes(2);
+    expect(screen.queryByTestId('login-sso-card')).not.toBeInTheDocument();
   });
 
   it('a network failure probing dev mode still falls back to the SSO path, with a note', async () => {

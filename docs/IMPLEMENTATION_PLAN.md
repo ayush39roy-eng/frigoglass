@@ -2179,3 +2179,31 @@ The workflow-auditor re-derives after the reseed. No figure is tuned toward a ta
 | P30-T03 | Frontend: Gantt "Reset timing" / `hasTimingEdit` / "(table T)" tooltip ignore effort values (R4); effort fields shown read-only where the contract serves them; mirror contract types; tests | frontend-builder | DONE (MEMORY 2026-10-23 P30-T03; contract test 224 passed) |
 | P30-T04 | Reseed client_2026 on a disposable DB + workflow-auditor re-derivation (I1–I26), and report the resulting within-year rate as served | workflow-auditor | DONE (MEMORY 2026-10-23 P30-T04 audited reseed; greedy + CP-SAT PASS) |
 | P30-T20 | Gate: qa, workflow, security (covers P29 + P30) | — | DONE (MEMORY 2026-10-23 "Gate P28–P30": qa PASS re-check 2, workflow PASS, security code PASS; owner-accepted open risks S26-C1, S26-H1, S30-H1) |
+
+## P31 — Multi-select category and project-type filters
+
+Opened 2026-10-23. Owner: "Can we pick A+, A, B — multiple together, same with project types." Every
+category / type filter becomes multi-select, applied server-side (I9: totals and counts stay served).
+
+**Contract:**
+- `category` and `type` are repeatable query params (`?category=A%2B&category=B&type=NM&type=CO`).
+  - Values within one param are ORed; different params are ANDed.
+  - An empty list means no filter.
+  - A single value behaves exactly as today, so old links keep working.
+  - The Dashboard register's `type` also accepts `Unmapped` (type IS NULL) in the list.
+- Unknown values give 422 as today.
+- Endpoints:
+  - `GET /dashboard/projects` and its facets, if they take these filters;
+  - `GET /projects` (list);
+  - `GET /gantt` (and its export, if any);
+  - `GET /priorities` and `GET /priorities/…` at priorities.py:200/392;
+  - `GET /priority-board`;
+  - `GET /exports/matrix` and any other export with these params.
+- Planning resource-load already takes lists and is unchanged.
+
+| ID | Task | Owner | Status |
+|---|---|---|---|
+| P31-T01 | Backend: repeatable `category` / `type` on every endpoint above (OR within, AND across, empty = all, single value unchanged, `Unmapped` on the register); hub scoping unchanged; OpenAPI; tests | backend-builder | TODO |
+| P31-T02 | Frontend: multi-select category and type filters on Dashboard register, Projects page, Gantt toolbar, Matrix View panel, Priority board toolbar; URL state as repeated params (old single-value links still parse); compact chip / toggle-group UI with clear-all; export carries the selection; tests | frontend-builder | TODO |
+| P31-R01 | Owner bug (Render): reload shows "Could not load" and forces a new sign-in. Session `/me` retries network / timeout / 502–504 with backoff for ~90 s behind a "Waking up the server…" state (elapsed time, Retry now); 401 → /login at once; dev-user email untouched while retrying; "Remember me" defaults ON; login dev-mode probe waits out 502–504; tests | frontend-builder | DONE |
+| P31-T20 | Gate: qa, workflow, security | — | TODO |

@@ -22,6 +22,7 @@ function wrapper({ children }: { children: React.ReactNode }): React.JSX.Element
 
 afterEach(() => {
   window.sessionStorage.clear();
+  window.localStorage.removeItem('rpd-dev-user-email');
   vi.restoreAllMocks();
 });
 
@@ -42,6 +43,17 @@ describe('useSignOut (P21-R01, security S21-L2)', () => {
     expect(window.sessionStorage.getItem('rpd-dev-user-email')).toBeNull();
     expect(window.sessionStorage.getItem('rpd-future-store')).toBeNull();
     expect(window.sessionStorage.getItem('unrelated-key')).toBe('kept');
+  });
+
+  it('P31-R01: clears a remembered (localStorage) test user as well as the per-tab one', () => {
+    window.localStorage.setItem('rpd-dev-user-email', 'planner@example.test');
+    window.sessionStorage.setItem('rpd-dev-user-email', 'planner@example.test');
+
+    const { result } = renderHook(() => useSignOut(), { wrapper });
+    act(() => result.current());
+
+    expect(window.localStorage.getItem('rpd-dev-user-email')).toBeNull();
+    expect(window.sessionStorage.getItem('rpd-dev-user-email')).toBeNull();
   });
 
   it('dispatches the signed-out event after sessionStorage is cleared', () => {

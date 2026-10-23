@@ -32133,3 +32133,107 @@ tests, S30-L2).
 - The CP-SAT run leaves out 4 P1 projects (OQ #10 class), and auto-recalcs revert the active run to greedy.
 
 **DOMAIN_RULES:** I12 now states half-to-even rounding (the workflow-auditor's Option A wording).
+
+## [2026-10-23] Render deployed with the P30 dataset; Render = dev on every surface — orchestrator
+
+**Code:**
+- Render deployed `b8cb46c` (owner push), then `eece71f` (gate fixes).
+- The frontend build then FAILED on a missing `src/assets/impact-wordmark.png`. The root `.gitignore` `*.png` rule had
+  kept the logo added in owner commit 1166717 out of git. It was force-added in `6ef0205`.
+- The backend ran p29a, p29b and p30a on boot.
+
+**Data:** the owner ran scratchpad `scripts/deploy_render_data.sh`.
+- It was launched twice concurrently. The orchestrator killed the duplicate client and later terminated its orphaned
+  server session (pg pid 2493419, a blocked `DELETE FROM project_workflow_steps`) with `pg_terminate_backend`; its
+  transaction rolled back.
+- The surviving run did the following:
+  1. Unpinned 27 VIPs via the API (1 + 26 across the two attempts), leaving the dev DB's 10.
+  2. `--reset` reseed: 330 projects, 24 engineers; 10 pins and 43 links kept.
+  3. Greedy v1: 135 within year. The remote save took about 21 minutes because rows are written one at a time.
+  4. CP-SAT through the worker task code: FEASIBLE, activated as v2.
+- The script's final print step had an f-string quoting bug (report only, no effect).
+- Then 10 VIP board items were un-highlighted via `PATCH /vip-items/{id}` to match the dev DB's ADR 0040 sync (Render
+  had 20 highlighted, dev 10).
+
+**Verification:** normalized responses from Render and dev were compared (ids and timestamps stripped). ALL MATCH on
+`vip-board`, `vip-projects`, `capacity/hub-load`, `dashboard/completing-within-year`, `pipeline-totals`,
+`status-overview`, `analytics`, `region-summary`, `dashboard/projects`, `priorities/capacity-fill` and
+`planning/capacity-summary`.
+
+**Live figures:**
+- Active run v2 cp_sat: within 150, spillover 53, left out 69, blocked 0, rate 55 %.
+- Pipeline: 77 spillover + 253 new = 330.
+- Design booked % (year): R&D-Greece 213.00, R&D-India 169.82, PD-India 348.09, PD-Romania 211.07.
+
+**Next (owner):** rotate secrets (S26-H1): change the Render DB password, then `scripts/rotate_field_key.py` with the
+API and workers paused.
+
+**Script lesson:** remote reseeds are slow (about 40 minutes end to end). A bulk-insert path for
+`persist_schedule_output` would help, as a follow-up.
+
+## [2026-10-23] P31 opened + owner bug reports (orchestrator)
+
+**P31 (multi-select filters).** The owner asked to "pick A+, A, B … same with project types".
+- Plan P31 has the contract: repeatable `category` / `type`, OR within a param, AND across params.
+- P31-T01 (backend) and P31-T02 (frontend) were started in parallel.
+
+**Scope extension (owner: "pie chart instead … dynamic based on different filterings").**
+- Interpreted as Power BI-style cross-filtering: category and type donuts whose clicked slices select values.
+- The selection applies to every Dashboard figure, in both the Executive and Detailed views, and is computed
+  server-side (I9).
+- The backend adds the list params to every Dashboard aggregate endpoint. The frontend adds a Dashboard-wide selection
+  bar plus clickable donuts.
+- Each donut shows its own dimension's distribution under the other active filters.
+
+**Render reload bug.**
+1. Deep-link reloads return 404 (`/capacity` and `/timeline` 404, `/` 200). Render is not applying the `render.yaml`
+   `routes` rewrite: the service was created in the dashboard, not from the Blueprint. The same cause keeps the S26-M1
+   security headers from going live. The fix is the owner's: Render dashboard → frigoglass-frontend →
+   Redirects/Rewrites: `/*` → `/index.html` (Rewrite), or link the service to the Blueprint.
+2. "Could not load your session", then a re-login: the free-tier API cold start makes `/me` fail, and SessionGate shows
+   an error at once. P31-R01 adds retry with backoff and "Waking up the server…", and defaults dev-login
+   remember-me to on.
+
+## [2026-10-23] P31-R01 — session survives API cold start (frontend-builder)
+
+**Bug (owner, Render):** reloading showed "Could not load your session", then the user had to sign in again. The Render
+free-tier API sleeps when idle; the first `/me` after a nap took 30–60 s or returned 502/503/504, and the session store
+turned that straight into the error card. (Deep-link reload 404s are a separate Render dashboard rewrite setting, owner
+action, not code.)
+
+**Code (frontend only; no business logic touched):**
+- `frontend/src/stores/session.ts`: `load()` now retries transient failures: `ApiError` status 0, 502, 503, 504, and a
+  per-attempt timeout (`SESSION_ATTEMPT_TIMEOUT_MS` = 20 s, raced and aborted). Backoff is 1, 2, 4, 8, 15 s, then 15 s
+  repeating, inside a 90 s budget (`SESSION_RETRY_BUDGET_MS`) measured from the first attempt, which gives 10 attempts.
+  A 401 is final at once ('unauthorized' → /login). Every other status (400, 403, 404, 500) is final at once ('other').
+  When the budget runs out the error kind is 'network'. New state: `waking {since, attempt, nextRetryAt}` and
+  `retryNow()`. `reset()` bumps a generation counter and ends any backoff, so a stale loop never writes state. The store
+  never reads or writes the dev-user email.
+- `frontend/src/components/session/session-gate.tsx`: `status === 'loading' && waking` renders a calm
+  "Waking up the server…" panel (role=status, `motion-safe:animate-pulse` icon, "Waiting N s" ticking each second, a
+  "Retry now" button). The error card appears only after the budget, with new copy for the network case.
+- `frontend/src/pages/login.tsx`: "Remember me" defaults ON (localStorage), so a reload or a new tab keeps the test
+  user. The `/me/dev-users` probe now retries 502/503/504 up to 6 times (backoff capped at 15 s) instead of falling back
+  to the SSO card on a sleeping dev-mode deploy. A 404 (production) and status 0 behave as before.
+- Sign-out is unchanged: `setDevUserEmail(null)` already clears both sessionStorage and localStorage. A test now pins
+  this.
+- `frontend/src/lib/query-client.ts`: behaviour unchanged (queries `retry: 1` already covers a 502–504 on GETs;
+  mutations `retry: 0`). Added a comment only. `dev-user.ts` doc comment updated.
+
+**Tests:**
+- New `src/stores/session-retry.test.ts` (11 tests, fake timers): the schedule; network/502 → success with the email
+  kept; 503 until the budget → error after exactly 10 calls with the email kept; 401 called once; 400/403/404/500 not
+  retried; hung attempt → timeout → retry; `retryNow`; `reset` stops the loop.
+- `session-gate.test.tsx`: the old "network failure is retryable" test is replaced by three cold-start tests (waking
+  panel and elapsed time then app; Retry now; error only after about 90 s, then Retry recovers) plus "401 goes to
+  /login without retry".
+- `login.test.tsx`: remember-me default writes localStorage; unticked writes sessionStorage; a 503 probe is retried.
+- `use-sign-out.test.tsx`: localStorage and sessionStorage are both cleared.
+- Results: full `npx vitest run` 212 files / 1677 tests pass; `npx tsc -b` clean; `npx eslint .` 0 errors (9
+  pre-existing warnings in files not touched here).
+
+**Notes:**
+- Did not touch dashboard, projects, gantt, matrix or priority-board (P31-T02 is in flight there). Not committed.
+- Security review point: "Remember me" defaulting ON means the dev-mode test identity persists in localStorage until
+  sign-out. It is not a credential (it only selects a seeded user when `RPD_DEV_MODE` is on, which is already the
+  owner-accepted risk S26-C1).

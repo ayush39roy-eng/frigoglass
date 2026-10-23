@@ -1,5 +1,5 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { screen, waitFor } from '@testing-library/react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { act, fireEvent, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
 import { ApiError } from '@/lib/api/client';
@@ -45,14 +45,78 @@ describe('SessionGate (boot on GET /me)', () => {
     expect(screen.queryByRole('navigation', { name: 'Surfaces' })).not.toBeInTheDocument();
   });
 
-  it('a network failure is retryable', async () => {
-    const user = userEvent.setup();
+  it('a 401 goes to /login without any retry', async () => {
+    api.fetchMe.mockRejectedValue(new ApiError(401, 'unauthorized'));
+    renderApp('/', { session: null });
+    expect(await screen.findByRole('heading', { name: 'Welcome back' })).toBeInTheDocument();
+    expect(api.fetchMe).toHaveBeenCalledTimes(1);
+    expect(screen.queryByTestId('session-gate-waking')).not.toBeInTheDocument();
+  });
+});
+
+describe('SessionGate during an API cold start (P31-R01)', () => {
+  afterEach(() => {
+    useSessionStore.getState().reset();
+    vi.useRealTimers();
+  });
+
+  it('network errors show "Waking up the server…" with elapsed time, then the app once /me answers', async () => {
+    vi.useFakeTimers();
+    setDevUserEmail('sam.super@example.com');
     api.fetchMe
       .mockRejectedValueOnce(new ApiError(0, 'Network request failed'))
+      .mockRejectedValueOnce(new ApiError(504, 'Gateway Timeout'))
       .mockResolvedValueOnce(makeMe());
     renderApp('/', { session: null });
-    expect(await screen.findByText('Could not load your session')).toBeInTheDocument();
-    await user.click(screen.getByRole('button', { name: 'Retry' }));
+    await act(() => vi.advanceTimersByTimeAsync(0));
+
+    expect(screen.getByText('Waking up the server…')).toBeInTheDocument();
+    expect(screen.getByTestId('session-gate-elapsed')).toHaveTextContent('Waiting 0 s');
+    expect(screen.queryByText('Could not load your session')).not.toBeInTheDocument();
+
+    await act(() => vi.advanceTimersByTimeAsync(2_000));
+    expect(screen.getByTestId('session-gate-elapsed')).toHaveTextContent('Waiting 2 s');
+    expect(api.fetchMe).toHaveBeenCalledTimes(2);
+
+    await act(() => vi.advanceTimersByTimeAsync(2_000));
+    expect(api.fetchMe).toHaveBeenCalledTimes(3);
+    vi.useRealTimers();
+    expect(await screen.findByRole('heading', { name: 'Global RPD Dashboard' })).toBeInTheDocument();
+    expect(getDevUserEmail()).toBe('sam.super@example.com');
+  });
+
+  it('"Retry now" tries again without waiting for the backoff', async () => {
+    vi.useFakeTimers();
+    api.fetchMe.mockRejectedValueOnce(new ApiError(503, 'Service Unavailable')).mockResolvedValueOnce(makeMe());
+    renderApp('/', { session: null });
+    await act(() => vi.advanceTimersByTimeAsync(0));
+    expect(api.fetchMe).toHaveBeenCalledTimes(1);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Retry now' }));
+    await act(() => vi.advanceTimersByTimeAsync(0));
+    expect(api.fetchMe).toHaveBeenCalledTimes(2);
+    vi.useRealTimers();
+    expect(await screen.findByRole('heading', { name: 'Global RPD Dashboard' })).toBeInTheDocument();
+  });
+
+  it('shows the error card only after the ~90 s budget is spent, and Retry starts over', async () => {
+    vi.useFakeTimers();
+    setDevUserEmail('sam.super@example.com');
+    api.fetchMe.mockRejectedValue(new ApiError(502, 'Bad Gateway'));
+    renderApp('/', { session: null });
+    await act(() => vi.advanceTimersByTimeAsync(60_000));
+    expect(screen.getByText('Waking up the server…')).toBeInTheDocument();
+    expect(screen.queryByText('Could not load your session')).not.toBeInTheDocument();
+
+    await act(() => vi.advanceTimersByTimeAsync(40_000));
+    expect(screen.getByText('Could not load your session')).toBeInTheDocument();
+    expect(screen.getByText(/did not respond after about 90 seconds/)).toBeInTheDocument();
+    expect(getDevUserEmail()).toBe('sam.super@example.com');
+
+    api.fetchMe.mockReset();
+    api.fetchMe.mockResolvedValue(makeMe());
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    vi.useRealTimers();
     expect(await screen.findByRole('heading', { name: 'Global RPD Dashboard' })).toBeInTheDocument();
   });
 });

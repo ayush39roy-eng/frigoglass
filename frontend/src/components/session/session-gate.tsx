@@ -1,10 +1,12 @@
 import * as React from 'react';
 import { Navigate } from 'react-router-dom';
+import { RefreshCw, Server } from 'lucide-react';
 
 import { ErrorState } from '@/components/shared/error-state';
+import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { getDevUserEmail } from '@/lib/api/dev-user';
-import { useSessionStore } from '@/stores/session';
+import { useSessionStore, type SessionWaking } from '@/stores/session';
 
 /**
  * Boot gate (ADR 0010 §2): nothing under the app shell renders until `GET /me`
@@ -19,12 +21,19 @@ import { useSessionStore } from '@/stores/session';
  * ADR 0013 §1/§5: an `unauthorized` `/me` redirects to `/login` instead of
  * the old "Sign in to continue" / "Try again" dead end — retrying a request
  * with no auth was never going to succeed without an actual sign-in action.
+ *
+ * P31-R01: while the store retries a transient `/me` failure (the API waking
+ * from an idle nap), show a calm "Waking up the server…" panel with the time
+ * waited and a "Retry now" button. The error card appears only once the
+ * store's retry budget is spent.
  */
 export function SessionGate({ children }: { children: React.ReactNode }): React.JSX.Element {
   const status = useSessionStore((s) => s.status);
   const errorKind = useSessionStore((s) => s.errorKind);
   const load = useSessionStore((s) => s.load);
   const me = useSessionStore((s) => s.me);
+  const waking = useSessionStore((s) => s.waking);
+  const retryNow = useSessionStore((s) => s.retryNow);
 
   React.useEffect(() => {
     if (status === 'idle') void load();
@@ -48,13 +57,17 @@ export function SessionGate({ children }: { children: React.ReactNode }): React.
           title="Could not load your session"
           description={
             errorKind === 'network'
-              ? 'The API is unreachable. Check your connection and try again.'
+              ? 'The server did not respond after about 90 seconds. It may still be starting up, or your connection may be down. Try again in a moment.'
               : 'The server did not return a valid session. Try again, or contact your RPD administrator.'
           }
           onRetry={() => void load()}
         />
       </div>
     );
+  }
+
+  if (status === 'loading' && waking) {
+    return <WakingUp waking={waking} onRetryNow={retryNow} />;
   }
 
   return (
@@ -83,6 +96,45 @@ export function SessionGate({ children }: { children: React.ReactNode }): React.
         <Skeleton className="h-64" />
       </div>
       <span className="sr-only">Signing you in…</span>
+    </div>
+  );
+}
+
+/** Seconds since `since`, re-rendered once a second. */
+function useElapsedSeconds(since: number): number {
+  const [now, setNow] = React.useState(() => Date.now());
+  React.useEffect(() => {
+    const id = window.setInterval(() => setNow(Date.now()), 1_000);
+    return () => window.clearInterval(id);
+  }, []);
+  return Math.max(0, Math.floor((now - since) / 1_000));
+}
+
+function WakingUp({ waking, onRetryNow }: { waking: SessionWaking; onRetryNow: () => void }): React.JSX.Element {
+  const elapsed = useElapsedSeconds(waking.since);
+  return (
+    <div className="grid h-full place-items-center p-s6" data-testid="session-gate-waking">
+      <div
+        role="status"
+        aria-live="polite"
+        className="flex max-w-sm flex-col items-center gap-3 rounded-card border border-border bg-surface px-6 py-10 text-center shadow-card"
+      >
+        <Server className="size-8 text-primary motion-safe:animate-pulse" aria-hidden="true" />
+        <div className="space-y-1">
+          <p className="text-sm font-semibold text-text">Waking up the server…</p>
+          <p className="text-xs text-text-muted">
+            The RPD server was idle and is starting up. This usually takes under a minute; you will
+            not need to sign in again.
+          </p>
+        </div>
+        <p className="font-mono text-xs tabular-nums text-text-subtle" data-testid="session-gate-elapsed">
+          Waiting {elapsed} s
+        </p>
+        <Button variant="secondary" size="sm" onClick={onRetryNow}>
+          <RefreshCw />
+          Retry now
+        </Button>
+      </div>
     </div>
   );
 }

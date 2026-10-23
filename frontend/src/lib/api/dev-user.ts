@@ -5,8 +5,9 @@
  * select which seeded user an unauthenticated request runs as. The header
  * switcher in the app header (`components/session/dev-role-switcher.tsx`)
  * writes the choice here; `lib/api/client.ts` reads it on every request. The
- * value lives in `sessionStorage` (per-tab, cleared when the tab closes) — it
- * is not a credential and is never persisted across sessions.
+ * value lives in `sessionStorage` (per-tab) or, with "Remember me" (on by
+ * default since P31-R01), in `localStorage`. It is not a credential; sign-out
+ * clears both stores.
  *
  * Kept as its own tiny module so the API client never has to import the
  * session store (which imports the API client — a cycle).

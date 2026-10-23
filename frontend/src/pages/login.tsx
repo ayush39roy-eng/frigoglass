@@ -51,6 +51,8 @@ import { buildAuthorizeUrl, getOidcConfig } from './login-sso';
  * Left half: brand panel with the bundled cooler illustration (no external image).
  */
 
+const GATEWAY_STATUSES = new Set([502, 503, 504]);
+
 const SUPER_ADMIN: RoleName = 'Super Admin';
 const ROLE_ORDER: RoleName[] = [SUPER_ADMIN, ...ROLE_NAMES.filter((r) => r !== SUPER_ADMIN)];
 
@@ -70,7 +72,12 @@ export default function LoginPage(): React.JSX.Element {
   const devUsers = useQuery({
     queryKey: queryKeys.devUsers(),
     queryFn: ({ signal }) => fetchDevUsers({ signal }),
-    retry: false,
+    // A 404 means production (SSO) and is final. P31-R01: a 502/503/504 is the
+    // API waking from an idle nap, so wait it out instead of falling back to
+    // the SSO card in a dev-mode deployment.
+    retry: (failureCount, error) =>
+      error instanceof ApiError && GATEWAY_STATUSES.has(error.status) && failureCount < 6,
+    retryDelay: (attempt) => Math.min(1_000 * 2 ** attempt, 15_000),
   });
 
   React.useEffect(() => {
@@ -197,7 +204,9 @@ function TestLoginForm({
   const [email, setEmail] = React.useState('');
   const [password, setPassword] = React.useState('');
   const [showPassword, setShowPassword] = React.useState(false);
-  const [remember, setRemember] = React.useState(false);
+  // P31-R01: on by default, so a reload or a new tab keeps the signed-in test
+  // user (localStorage). Sign-out clears both stores (`use-sign-out.ts`).
+  const [remember, setRemember] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
   const [submitting, setSubmitting] = React.useState(false);
   const accounts = React.useMemo(() => pickTestAccounts(users, ROLE_ORDER), [users]);
