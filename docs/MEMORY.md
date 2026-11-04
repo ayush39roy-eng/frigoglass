@@ -33262,3 +33262,404 @@ past-W52 axis) are superseded. Frontend only; backend not touched.
     "none" gets none; there is no "Edit steps" link; a viewer fixture has no affordances.
   - The Workspace page and its tests are back to HEAD.
 - **Checks.** `tsc -b` clean. eslint 0 errors (8 pre-existing warnings). Full vitest 224 files / 1781 tests passed.
+
+## [2026-11-04] P32-R03 (backend) — backend-builder
+
+**Task.** Owner rule 2026-11-04: in the imported workbook, "Num of Projects" (the models column) is a project count.
+Blank or 1 is one project; n ≥ 2 is n projects ("if it is written 5, the system treats them as 5 projects").
+Expansion is now the default. Backend only: `frontend/` and `backend/scheduling/` were not touched. A concurrent
+frontend agent had uncommitted edits under `frontend/src/surfaces/planning/whatif/import/`; they were left alone.
+
+**Changes.**
+- `backend/schemas/whatif_import.py`:
+  - `ImportSimulateRequest.expand_multi: bool = True` (was False). The field is kept, so `false` still gives one
+    project per row.
+  - `ImportCounts.projects_after_expansion: int` added.
+- `backend/services/plan_import_xlsx.py`:
+  - New `_num_projects`. It accepts `2`, `2.0`, `"2"`, `" 3 "`, `"4.0"` and 1..100. Blank / whitespace / None
+    gives `num_projects=None`.
+  - Any other non-blank value (`"x"`, 0, negative, `2.5`, `"2.5"`, 101, a boolean) gives `num_projects=None` plus a
+    warning `NUM_PROJECTS_INVALID` (field `num_projects`): "… is read as 1 project".
+  - Before this change such values were silently dropped to None.
+  - `ParseCounts.projects_after_expansion` = Σ max(1, num_projects) over rows with `include` and a schedulable
+    status.
+- `backend/services/whatif_import.py` `to_engine_request`:
+  - The expanded total is computed before any row is built. Over 600 gives 422 `INVALID_IMPORT`: "the file gives N
+    projects after expanding Num of Projects; at most 600 can be simulated. Exclude rows, lower Num of Projects or
+    turn off the expansion."
+  - Previously the check fired mid-loop with a vaguer message.
+  - The expansion itself is unchanged and was verified:
+    - copies are named `"<name> (k/n)"` with keys `"<key>-<k>"` (= `row-<file_row>-<k>`);
+    - every copy gets the same hub, category, status, priority, rank, stage, step weeks, leader and file_row;
+    - only copy 1 carries `replaces_project_id`;
+    - n = 1 or blank keeps the unsuffixed key and name;
+    - non-schedulable rows are still filtered before expansion.
+- Docs:
+  - ADR 0044 §5 "Num of Projects" bullet gets an "(Amended 2026-11-04, owner: expansion is the default …)" sentence.
+  - `docs/API_CONTRACT_P32.md`:
+    - B2: the new count, `num_projects` range, `NUM_PROJECTS_INVALID` in the issue codes.
+    - B3: `expand_multi` default true and an amended expansion paragraph with the cap message.
+    - F-section "Expand Num of Projects (on by default)".
+  - DOMAIN_RULES "Plan import" paragraph not edited (it does not mention the column).
+
+**Tests.**
+- `test_p32_plan_import_xlsx.py`: a parametrized `test_num_projects_parsing` (17 cases, including the warning and
+  the count) and `test_projects_after_expansion_counts_schedulable_included_rows_only`. `test_counts` asserts the new
+  field.
+- `test_p32_whatif_import_api.py`:
+  - `test_num_of_projects_expands_by_default`:
+    - a matched row with 5 becomes 5 projects, Alpha Cooler (1/5)…(5/5), refs `row-N-1..5`;
+    - only copy 1 replaces Alpha;
+    - all copies share hub, category, status, priority, leader and file_row;
+    - an invalid value gives 1 project plus a warning;
+    - an On Hold row with 4 is dropped;
+    - parse `projects_after_expansion` = 7;
+    - explicit false gives 3 file projects with plain names.
+  - `test_simulate_request_defaults_to_expansion`.
+  - The cap test now relies on the default (7 × 100 → 422 naming 700 and 600), and the same rows with
+    `expand_multi=false` → 200 with 7 file projects.
+  - The parse counts assertion now includes `projects_after_expansion: 5`.
+- Results: P32 import suites 75 passed. `test_p18_whatif_api` + `test_openapi_frontend_contract` 282 passed. ruff
+  check/format clean. mypy clean on the three app modules and the whatif router (only the pre-existing repo-wide
+  errors in other modules). `backend/.coverage` restored.
+
+**For the frontend part.** `import-store.ts` still defaults `expandMulti: false` and sends `expand_multi`
+explicitly, so the UI will keep sending false until the frontend flips it. `ImportCounts` gains
+`projects_after_expansion` (the frontend's strict schema needs the field). Issue code `NUM_PROJECTS_INVALID` is new.
+
+`docs/IMPLEMENTATION_PLAN.md` not edited; the orchestrator marks P32-R03.
+
+## [2026-11-04] P32-R03 (frontend) — frontend-builder
+
+Owner rule: the workbook's "Num of Projects" (models) column is a project count. Blank or 1 means one project; n ≥ 2
+means n projects. Frontend only; backend/ and surfaces/gantt not touched.
+
+- **Default on.** `DEFAULT_IMPORT_OPTIONS.expandMulti` is now `true`. `reset` and `setParsed` both go back to it via
+  `EMPTY`. The checkbox stays, relabelled "Count the 'Num of Projects' column as separate projects (on by default)".
+- **Ref mapping (`import-rows.ts`).** New `copiesOfRow(row, expand)` mirrors the server rule
+  (`services/whatif_import.py`: n = num_projects when expand and num_projects, else 1).
+  - `refOfRow(ref, row, expand)` is now exported and exact. With one copy the ref must be the row key. With n copies it
+    must be `<key>-<k>` with 1 ≤ k ≤ n.
+  - Before this, with expansion on, the unexpanded ref `row-5` still matched a row of 5. That kept a stale edit, which
+    was then sent for a project that no longer exists. A plain prefix match also accepted any `row-5-*`.
+  - Toggling either way now drops the other setting's edits, in the body and through `pruneEdits` on Compute.
+- **Review chip.** On rows with n ≥ 2 (and only while the option is on), the name shows a chip "×5 projects" with the
+  title "This row becomes 5 projects: name (1/5) … (5/5)" and sr-only text. Blank or 1 shows nothing.
+- **"Projects to schedule" tile.** It shows the served `counts.projects_after_expansion`, which is optional in the
+  zod schema and the types.
+  - The served value is used only while it still describes the request: expansion on, and no row's include or status
+    changed since the parse.
+  - Otherwise it shows a display-only Σ copiesOfRow over included, mapped rows (`projectsToSchedule`).
+  - The strip is now `xl:grid-cols-8`.
+- **Not changed.** `computeBlockedReason` still checks ≤ 600 against included rows, not expanded projects. Over-limit
+  after expansion is caught by the server's 422 (existing handling).
+- **Tests.**
+  - Store: the default is true, including after reset; toggling off prunes copy edits.
+  - Rows: refOfRow/copiesOfRow edge cases (k bounds, row-5 vs row-50, stale unexpanded ref) and projectsToSchedule.
+  - The existing row-5-2 test now uses a row of 5.
+  - Review: the chip for 5, none for null/1, hidden when off, axe; the tile shows served 42, then 3 when toggled off,
+    and 7 as the fallback sum.
+  - View: the default simulate body has `expand_multi: true`; unticking sends `false` with the copy edit pruned.
+- **Checks.** `tsc -b` clean. eslint clean on the import folder. Import folder vitest 6 files / 45 tests. Full vitest
+  224 files / 1787 tests passed. All were run in a clean worktree at HEAD with only these edits.
+- **Incident.** Running `npx prettier --write` on the import folder in the main tree reformatted all 30 files (the
+  repo has no prettier config, so defaults applied). Restoring from git was blocked by the permission classifier.
+  - The clean change is in the patch `p32-r03-frontend.patch` (scratchpad). The pre-restore folder is backed up to
+    the scratchpad.
+  - The main tree's import folder still holds the reformatted code until someone with permission restores it and
+    applies the patch. Do not run prettier on this repo.
+
+## [2026-11-04] P32-R04 — frontend-builder
+
+Owner decision 2026-11-04: "the drag of the bars for change of timeline — mainly we will do it in Workflow, so put it
+there." Answers: per project (not the template), on the Workflow page, and the Timeline (`/timeline`) keeps its drag.
+Frontend only. Not touched: `backend/` and `surfaces/planning/whatif/import/` (another agent is editing it).
+
+- **Route and tabs.** `/settings/workflow` now has two top-level tabs:
+  - **"Project step timing"** comes first and is the default.
+  - **"Workflow templates"** is the P9-T04 content, unchanged, moved into `components/workflow-templates-section.tsx`.
+    It opens with `?tab=templates`.
+  - The tab is URL state. A role without template read that asks for `?tab=templates` falls back to step timing.
+- **RBAC.**
+  - The route and nav item are now visible with `workflow_settings` read OR `gantt` read:
+    - new `SurfaceNavItem.alsoReadableVia: ['gantt']`;
+    - `canReadNavItem` in `nav-visibility.ts`;
+    - `RequireAnyRead` in `components/session/require-read.tsx`, built on `RequireRead`'s `alsoAllow`.
+  - Who sees the route: Hub Planner, Portfolio Manager, Admin, Super Admin, Executive Viewer and Engineer. The
+    Auditor still gets a 403.
+  - The templates tab is mounted only with `workflow_settings` read, so its `GET` never fires for others. Admin reads
+    it; Super Admin edits it. Server-side enforcement is unchanged.
+  - Step editing follows the served `timing_editable` per step, so in practice:
+    - Hub Planner (own hub), Admin and Super Admin edit;
+    - Portfolio Manager, Executive Viewer and Engineer are read only.
+- **Project step timing section** (`components/project-step-timing/`):
+  - **Picker.** `ProjectPicker` is a searchable combobox. It matches name, code, hub or status. It opens on focus,
+    shows at most 50 results and hints "type to narrow". It shows hub, status and a priority pill.
+  - **Picker data.** `use-step-timing-projects.ts`:
+    - With `dashboard` read: `GET /dashboard/projects` (the Projects page endpoint, `sort=name`).
+    - Without it (Engineer): `GET /gantt` rows (`sort=name`), which carry no status.
+    - Both send the global hub/country filter.
+  - **Selection** is stored as `?project=<id>`.
+  - **Project read.** `GET /gantt?project_id=` through the new `GanttQueryParams.projectId` and
+    `queryKeys.gantt({projectId})`, in `useProjectTimeline`. The key is under `['gantt']`, so the shared flow's save
+    invalidation and `invalidateRunDerivedQueries` refetch it together with the Timeline.
+  - **States.**
+    - Empty: "Pick a project to adjust its steps".
+    - Loading skeleton.
+    - 403: "Timeline not available".
+    - "No schedule yet".
+    - "This project is not on the timeline".
+    - Error with retry.
+    - A read-only hint when no step is editable.
+  - **Header.** Name and code, hub, category, leader (name / "Name unavailable" / `NoLeaderLabel`), "Finish
+    <formatYearWeek(projected_end_week)>", a status badge (when served), a priority pill,
+    `ProjectedFinishChip` (within year = not spillover and not left_out), and an "Open project" link.
+- **Shared waterfall.** New `gantt/components/project-step-waterfall.tsx` (`ProjectStepWaterfall`):
+  - **Rows.** 14 rows sorted by `sequence_order`, 40 px high, not virtualized (≤ 14 rows).
+  - **Left cell.** `StepLeftCell timingEdits`: number + name, the D/L/E kind badge, engineer/chamber, the edited and
+    parallel markers, and the Edit timing button.
+  - **Bar.** The new `StepBarGraphic`.
+  - **Overlay.** The shared `StepDragOverlay`.
+  - **Status column.** `stageStatusLabel` + `StepRowBadges`.
+  - **Host.** The section wraps it in `StepTimingProvider`, so the dialog, Reset, run-follow ("Recalculating…" →
+    "Timeline updated") and 409 copy are the Timeline's own.
+- **Axis.**
+  - **`projectWaterfallScale`** (`gantt-coordinates.ts`): from min(first served planned/actual start,
+    `CURRENT_WEEK`) − 2 to max(W52, latest served end, latest `start_not_before_week`) + 2, capped at 78.
+    `maxDragWeek = 78`.
+  - **`dragLastWeek(scale)`** is used by `dragMoveStartWeek`, `stepDragResult` and the overlay's overlap branch.
+    `stepDragCalendar.pastAxis` uses min(axis end, 52) only when `maxDragWeek` is set.
+  - **`GanttWeekAxis` / `GanttGridLines`** now honour `originWeek`. They take optional `weekLabel` / `ariaLabel`
+    props, and they skip markers that fall off the axis. The waterfall labels weeks with `formatYearWeek`
+    ("W5 '27"). The W52 year-end marker, the shading past it and the current-week line are kept.
+  - **No change to the Timeline or the What-if import.** Both use origin 1 or have no `maxDragWeek`, so their output
+    is unchanged.
+- **Reuse refactor.**
+  - The step-bar branch of `gantt-chart.tsx` `BarLayer` moved to `StepBarGraphic` in `gantt-step-row.tsx`, used by
+    both charts.
+  - `stepBarTitle` and `calendarRangePhrase` take an optional week formatter. The default is `formatPlanWeek`, so the
+    Timeline text is unchanged.
+- **Tests.**
+  - New `project-step-timing-section.test.tsx`, 18 tests:
+    - the tab is first and the empty state shows;
+    - picker → URL → 14 rows;
+    - the hub filter param;
+    - the axis W40–W57 with "W2 '27", "W42 now" and W52 year-end;
+    - drop onto the step above → PATCH `{start_not_before_week: 42, overlap_weeks: 1}` with the
+      "Parallel with Step A · 1 wk overlap · same designer" label → "Timeline updated" → the project read refetches;
+    - the clamp;
+    - a W78 drag clamp;
+    - resize;
+    - the dialog Reset → three nulls;
+    - Done / started gating;
+    - an Executive Viewer is read only with no templates tab;
+    - the Engineer fallback to `/gantt`;
+    - no run / not served / 403;
+    - axe;
+    - templates tab: Hub Planner none, Admin read-only notice;
+    - the `?tab=templates` fallback;
+    - nav visibility per role.
+  - `session.test.tsx`:
+    - the expected nav set accounts for `alsoReadableVia`;
+    - new route-guard test: a Hub Planner opens `/settings/workflow`; the Auditor gets a 403.
+  - `WorkflowSettingsPage.test.tsx` renders at `?tab=templates`; its assertions are unchanged.
+  - `gantt-coordinates.test.ts`: scale and `maxDragWeek` tests.
+  - Every Timeline test (GanttPage, step-timing, gantt-responsive) is untouched and green, so the Timeline drag is
+    still present.
+- **Checks.**
+  - `tsc -b` clean.
+  - eslint: 0 errors, 8 warnings, all pre-existing. A new `routes.tsx` fast-refresh warning was avoided by moving the
+    guard into `require-read.tsx`.
+  - Full vitest: 225 files / 1808 tests passed.
+  - `vite build` + budget: PASS, 191.3 KB gzip initial.
+  - Not checked in a real browser.
+- **Orchestrator.** `docs/IMPLEMENTATION_PLAN.md` was not edited; the orchestrator adds/marks P32-R04.
+
+## [2026-11-05] P32-R04 follow-up — frontend-builder: waterfall width and unplaced projects
+
+The orchestrator's live check found two issues. Frontend only. Not touched: `backend/` and the import folder.
+
+**1. Width.** `ProjectStepWaterfall` now measures its card (`useElementWidth`).
+- The week width grows to fill the card: `(card − 300 step col − 132 status col − 3) / weeks`.
+- 24 px per week stays the minimum. Horizontal scroll appears only below that, and the status column sits at the
+  card edge.
+- `GanttWeekAxis` skips a tick label that would run past the axis end instead of clipping it (the "W2 '" bug). The
+  check is ~6 px per character. The Timeline's 2-character numbers always fit, so its output is unchanged.
+
+**2. Projects the run did not place.** This is a verified backend fact: `GET /gantt` builds step rows only from the
+active run's placed steps (`ScheduleRunProjectStep`).
+- Live on :8011, "Frameless Lookalike … E-47" (In Queue, left out) is served with `steps: []`. S-1000 has 4 rows,
+  S-200 has 10; 74 projects are left out.
+- `GET /projects/{id}/workspace` serves all 14 stages with `step_id`, kind, predecessors, durations and status.
+- It does NOT serve `timing_editable`, `start_not_before_week`, `overlap_weeks` or `span_fte`.
+- No left-out reason is stored or served anywhere (the outcome row has only left_out, cat_not_allowed and the end
+  weeks).
+
+What the frontend now does:
+- **Fill-in.** When the gantt row has fewer than 14 steps, the section also reads the workspace (key
+  `['projects','workspace',id]`, so a save and a run refetch it). `lib/complete-step-rows.ts` adds each missing step
+  as a row with no planned weeks.
+- **Unknown fields.** Floor and overlap are shown as unset (unknown). `span_fte` is null.
+- **Editability.** `timing_editable` is a mirror of ADR 0019 §4 (`services/step_timing.timing_editable`) from served
+  facts: session GANTT write, frozen, schedulable status, skipped, stage status. It only decides whether to OFFER the
+  Edit timing dialog. Bars and drag are absent, and the server decides on PATCH (409 copy handles refusals).
+- **Row note.** An unplaced row shows "Not placed in the active run".
+- **Banner** (`step-timing-not-placed`):
+  - "Not placed: the scheduler found no slot before the planning horizon (W26 '27)", or "Partly placed: N of M steps…".
+  - The reason, when one is served: no leader (`leader_engineer_id` null) or category not allowed. Otherwise "The run
+    records no reason; … usually engineer or chamber capacity".
+  - Then "Shorten steps, run steps in parallel or change the leader (Edit timing on a step), then it recalculates."
+- **Read-only note.** Shown only when nothing is editable, with the actual cause: role, frozen, non-scheduled status,
+  or "done, skipped or outside your hub scope".
+- **Backend gap.** Recommendation: `/gantt` should serve every workflow step for left-out / partly placed projects,
+  with served `timing_editable`, floor and overlap. That would retire the frontend mirror.
+
+**Tests.**
+- Section tests +9:
+  - adaptive width and the drag at the wider week;
+  - minimum width in jsdom;
+  - label skip;
+  - a left-out project with 0 rows: 14 rows, banner, no drag, 13 Edit timing buttons, dialog → PATCH;
+  - the no-leader reason;
+  - partly placed (4 served + 10);
+  - no workspace read when fully placed;
+  - read-only for a viewer and for a frozen project;
+  - axe.
+- New `complete-step-rows.test.ts` (9 cases).
+
+**Checks.** `tsc -b` clean. eslint 0 errors (8 pre-existing warnings). Full vitest 226 files / 1826 tests passed.
+Build: see the final report.
+
+## [2026-11-05] P32-R05 (backend) — backend-builder
+
+Task: serve `breakdowns` on `POST /whatif/import/simulate` per docs/API_CONTRACT_P32.md C1. Not touched: `frontend/`,
+`backend/scheduling/`. `docs/IMPLEMENTATION_PLAN.md` was not edited; the orchestrator marks P32-R05.
+
+- **Schema** (`backend/schemas/whatif_import.py`). All new models are strict (`extra="forbid"`, `strict=True`).
+  - `ImportSimulateResponse.breakdowns: ImportBreakdownsOut` = `{years: [BreakdownYearOut{key,label}], by_year: dict[str, BreakdownOut]}`.
+  - `BreakdownOut` = `{total, file, plan, outcomes: BreakdownOutcomesOut{within_year, spillover, left_out, blocked,
+    data_error, excluded}, by_category, by_hub, by_priority, by_status, by_source: [BreakdownBucketOut], by_finish_quarter: [FinishQuarterOut]}`.
+  - `BreakdownBucketOut` = `{key, total, within_year, spillover, not_placed}`.
+  - `FinishQuarterOut` = `{key: "YYYY-Qn", label: "Qn 'YY", count}`.
+- **Service** (`backend/services/whatif_import.py`). `scope_import_result` builds the served list once and passes
+  it to `import_breakdowns(served)`, so the figures are over exactly the returned (scoped) `projects`.
+  - Helpers: `breakdown_year_key`, `breakdown_years`, `finish_quarter`, `breakdown_of`, `_buckets`.
+- **Rules.**
+  - Year keys, always all five in this order, each with a block (an empty block has total 0):
+    - `all`;
+    - `str(BASE_YEAR)` "2026" = placed with finish 1..52;
+    - `str(BASE_YEAR+1)` "2027" = 53..104;
+    - `later` = >104;
+    - `not_placed` = outcome left_out / blocked / data_error, by outcome even when a finish week is served.
+  - Placed = outcome within_year / spillover. Excluded file rows count only under `all` (outcome `excluded`).
+  - Bucket `within_year` = served `within_plan_year`; `spillover` = placed and not within; `not_placed` = left_out +
+    blocked + data_error. An excluded project adds to a bucket's `total` only.
+  - Orders:
+    - category: `dc.CATEGORY_ORDER`;
+    - priority: `dc.PRIORITY_ORDER`;
+    - hub: `HubName` enum order;
+    - status: `ProjectStatus` enum order;
+    - source: file, plan.
+  - Empty buckets are omitted.
+  - **Addition beyond C1:** a project with no category / priority (data-error file row) goes to a trailing
+    `"unknown"` bucket, so Σ buckets = total still holds.
+  - Quarters: placed projects with a finish week only, chronological. Weeks 1–13 Q1 … 40–52 Q4; 53+ roll to the
+    next year (W120 = 2028 Q2).
+- **Tests.** New `backend/tests/test_p32_r05_import_breakdowns.py`, 6 tests:
+  - pure year/quarter rules;
+  - a hand-built set with all outcomes, unknown bucket, order and labels;
+  - empty input;
+  - API merge + file_only invariants;
+  - a crowded single-designer file (spill / left out);
+  - a scoped Hub Planner with an extra out-of-scope PD-India plan project. Its breakdowns cover only the returned
+    6 projects (plan = 1); the Admin sees plan = 2.
+  - `assert_invariants` checks every invariant listed in the task against an independent year rule.
+- **Checks.**
+  - All `tests/test_p32_*.py`: 131 passed.
+  - `test_openapi_frontend_contract` passed together with the P32 import tests (305 passed).
+  - `ruff check .` clean.
+  - mypy: 0 errors in the changed files; the repo-wide pre-existing test/seed errors are unchanged in kind.
+  - `backend/.coverage` unchanged.
+
+## [2026-11-05] P32-R05 (frontend) — frontend-builder
+
+Executive tab, Year filter, session scenarios with a builder and a Compare tab, and a UI clean-up of the plan import
+(`docs/API_CONTRACT_P32.md` C2). Frontend only; `backend/` not touched. `docs/IMPLEMENTATION_PLAN.md` not edited
+(the orchestrator adds/marks P32-R05).
+
+- **Served breakdowns (C1).** `ImportSimulateResponse.breakdowns` is typed and zod-checked but **optional**: a response
+  without it still validates and the Executive tab falls back to the served `kpis` ("Charts unavailable" card). Bucket
+  key `unknown` is labelled "Unknown" (`stack-segments.ts bucketLabel`).
+- **Tabs.** Executive (first, replaces Overview; `results-overview.tsx` deleted) · Gantt · Capacity · Projects ·
+  Compare (shows the scenario count). Executive and Compare are `React.lazy` chunks (8 KB / 12 KB raw).
+- **Year filter.** `import-store.yearFilter` (shared, reset on a new parse) + `YearFilterBar` (Radix single toggle:
+  All · 2026 · 2027 · After 2027 · Not placed, keys from the served `years`, fallback list when absent), shown on
+  Executive / Gantt / Projects. `year-filter.ts projectInYear` filters ROWS only, by served `finish_week`
+  (year k = weeks (k−base)·52+1 … +52, later > 104) and outcome (not placed = left_out / blocked / data_error);
+  excluded rows appear only under All. The Gantt keeps the whole result's axis (`yearKey` prop filters rows).
+- **Executive** (`results-executive.tsx`) reuses the Dashboard ADR 0039 parts: `ExecKpiTile`, `HeroDonut`,
+  `ChartCard` (now exported from `executive-charts.tsx`; `Slice.share_pct` optional, the figure line prints the
+  count alone when no share is served; Dashboard output unchanged) and `components/ui/bar-chart` for finishes per
+  quarter. Tiles: projects / year label (block.total), finish in plan year, spill over, not placed, from the file
+  (+ plan badge), plan before → after (merge) or not scheduled. "Not placed" is always ONE served field:
+  `by_year.not_placed.total` for All, the block total for Not placed, the block's `left_out` (0) for a finish-year
+  block. Stacked bars by category / hub / priority / status (`ServedStackChart`): segments sized by CSS
+  `flex-grow = served count` (no browser ratio), numbers column `within/total`. Newly slipping / recovered lists,
+  issues, workings.
+- **Scenarios** (`scenarios-store.ts`, Zustand, no persist): ≤ 10 scenarios, ≤ 4 compared (first = baseline,
+  "Make baseline"), a diff pair. "Save as scenario" (dialog, default "Scenario N") snapshots rows + options + edits +
+  the served response. Rename (inline) and delete on the Compare tab. Banner: kept for this session only.
+- **Builder** (`scenario-builder-dialog.tsx`, rules in `scenario-rules.ts`): starts from the Review rows that would be
+  sent (included + mapped); per dimension "Only" / "All except" chips (category, hub, priority, status, source =
+  matched to plan / new in file); limits "at most N <category> rows" keeping the first N by priority band → rank
+  (unranked last) → file row ("Only 5 A+" shortcut); mode toggle. Computes with the normal `/whatif/import/simulate`
+  (its own `useImportSimulation`), auto-saves as a `variant` with a one-line rule summary, opens Compare. The
+  planner's own rows/options are untouched. N counts file rows (an expanded "Num of Projects" row counts once).
+- **Compare** (`results-compare.tsx`, helpers `scenario-compare.ts`): KPI table with deltas vs the baseline (the
+  difference of two served figures, coloured by direction), grouped bars per outcome (within / spill over / not
+  placed) via `BarChart`, design capacity booked % per hub × window side by side with the ADR 0016 chip, and
+  "projects that change outcome" between two chosen scenarios matched by `ref` (expanded copies by their own ref;
+  one-sided projects shown as "not in scenario"), virtualized over 100 via `ProjectRowsTable`.
+- **Clean-up.** One `FeatureCard` (icon chip + title + one-line hint + optional `CardInfo` + actions) for Upload,
+  Expected format, Issues, Rows, Options, Executive lists and Compare sections; the long paragraphs moved into info
+  popovers (header "How this works", format, rows, options, Gantt editing). Stepper is a compact pill (labels only).
+  Sticky `ActionBar` (role toolbar) on Review (Compute plan, Back to the last results) and Results (Back to review,
+  Save as scenario, Build a variant, recompute status). Tokens only; no raw hex; no `dangerouslySetInnerHTML`.
+- **Tests.** New `scenario-logic.test.ts` (9: only 5 A+ ordering, only/except/source, cap 0, year filter, options
+  fallback, deltas, outcome changes, capacity compare, store save/rename/delete/compare cap/baseline) and
+  `results-r05.test.tsx` (6: Year filter switches the served block and filters Gantt/Projects + axe on Executive,
+  Gantt, Projects, Capacity; Executive from fixture breakdowns incl. "Unknown"; fallback without breakdowns;
+  save/rename/delete via UI + axe on Compare; builder "Only 5 A+" → exact include set and file_only `/simulate`
+  body, variant saved, planner rows untouched + axe on the dialog; Compare deltas, baseline swap, outcome changes,
+  capacity rows + axe). `import-plan-view.test.tsx` asserts the Executive tab instead of Overview (leftover
+  `console.log('DBG…')` lines removed). Fixture `BREAKDOWNS` added to `SIMULATE_RESPONSE`.
+- **Checks.** `tsc -b` clean; eslint 0 errors (8 pre-existing warnings); full vitest 228 files / 1841 tests passed;
+  `npm run build` budget PASS 191.5 KB gzip initial. Not checked in a real browser (390 px layout reasoned from
+  classes: tiles 2-col, toggles/tabs wrap, tables scroll).
+
+## [2026-11-05] P32-R05 (frontend) follow-up — frontend-builder: Compare "Projects scheduled"
+
+Orchestrator live check: on the Compare tab, "Projects" showed 411 while the Executive tile for the same scenario
+showed 304. Compare read `kpis.projects_total`, which also counts the 107 not-scheduled (commercialized / cancelled /
+on hold) plan projects.
+
+- **Compare figures** (`scenario-compare.ts COMPARE_KPIS`) now come from the same served fields as the Executive
+  "All" tiles:
+  - "Projects scheduled" = `by_year.all.total`.
+  - "Finish in <year>" = `all.outcomes.within_year`.
+  - "Spill over" = `all.outcomes.spillover`.
+  - "Not placed" = `by_year.not_placed.total`.
+  - "From the file" / "From the plan" = `all.file` / `all.plan`.
+- **Detail rows.** "Not scheduled" (`kpis.excluded`) stays its own row below. Then come Left out, Blocked, Data errors
+  and "Newly slipping".
+- **Fallback.** Without breakdowns, each figure falls back to the served kpis figure, as the Executive fallback does.
+  In that fallback "Projects scheduled" is still `kpis.projects_total`, which includes the not-scheduled projects
+  (older servers only).
+- **Grouped bars** read the same rows.
+- **Labels.** "Finish in 2027" is used when every compared scenario has the same plan year. The Executive "All" tile
+  is renamed "Projects scheduled" to match.
+- **Tests.**
+  - The Compare test asserts "Projects scheduled" 3 (= `all.total`, not 240), "Not scheduled" 3, "Finish in 2027",
+    "From the file" 2, and served-block deltas (+1 / ±0 / −1, flipped after the baseline swap).
+  - The import flow end-to-end test got a 20 s timeout. It is ~5 s alone and went past 10 s under parallel load.
+- **Checks.** `tsc -b` clean. eslint clean on the import and executive folders. whatif vitest 153/153, run twice.

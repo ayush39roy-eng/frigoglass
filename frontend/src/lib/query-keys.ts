@@ -150,6 +150,8 @@ export const queryKeys = {
     currentStep?: string | undefined;
     priority?: string | undefined;
     sort?: string | undefined;
+    // P32-R04: the Workflow page's per-project step timing (`project_id`).
+    projectId?: string | undefined;
   }) => ['gantt', params ?? null] as const,
 
   // --- capacity ---

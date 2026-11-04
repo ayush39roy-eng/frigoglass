@@ -11,12 +11,13 @@ import type { ImportParseResponse, ImportRow, ImportSimulateResponse, ImportStep
  */
 
 export type ImportStep = 'upload' | 'review' | 'results';
-export type ResultsTab = 'overview' | 'gantt' | 'capacity' | 'projects';
+export type ResultsTab = 'executive' | 'gantt' | 'capacity' | 'projects' | 'compare';
 
 export const DEFAULT_IMPORT_OPTIONS: ImportOptions = {
   mode: 'merge',
   planYearEndWeek: 104,
-  expandMulti: false,
+  // Owner rule 2026-11-04 (P32-R03): "Num of Projects" is a project count, on by default.
+  expandMulti: true,
 };
 const UNDO_LIMIT = 50;
 
@@ -31,6 +32,11 @@ export interface ImportState {
   undoStack: EditMap[];
   result: ImportSimulateResponse | null;
   resultsTab: ResultsTab;
+  /**
+   * The Results "Year" filter key (P32-R05 C2): `all`, a year, `later` or `not_placed`.
+   * Shared by the Executive, Gantt and Projects tabs.
+   */
+  yearFilter: string;
 
   /** A fresh parse: rows reset to the served ones, edits and result cleared. */
   setParsed: (parsed: ImportParseResponse) => void;
@@ -39,6 +45,7 @@ export interface ImportState {
   setOptions: (patch: Partial<ImportOptions>) => void;
   setStep: (step: ImportStep) => void;
   setResultsTab: (tab: ResultsTab) => void;
+  setYearFilter: (key: string) => void;
   setResult: (result: ImportSimulateResponse) => void;
   /**
    * Apply a Gantt drop. `base` is the step's served timing triple, used when the step has
@@ -61,7 +68,8 @@ const EMPTY = {
   edits: {} as EditMap,
   undoStack: [] as EditMap[],
   result: null,
-  resultsTab: 'overview' as ResultsTab,
+  resultsTab: 'executive' as ResultsTab,
+  yearFilter: 'all',
 };
 
 function pushUndo(stack: EditMap[], edits: EditMap): EditMap[] {
@@ -86,6 +94,7 @@ export const useImportPlan = create<ImportState>()((set) => ({
   setOptions: (patch) => set((s) => ({ options: { ...s.options, ...patch } })),
   setStep: (step) => set({ step }),
   setResultsTab: (resultsTab) => set({ resultsTab }),
+  setYearFilter: (yearFilter) => set({ yearFilter }),
   setResult: (result) => set({ result }),
   applyEdit: (ref, stepId, patch, base) =>
     set((s) => {

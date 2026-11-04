@@ -148,6 +148,9 @@ class ImportCounts(BaseModel):
     new: int
     auto_assign: int
     new_designers: int
+    #: Σ max(1, num_projects) over the schedulable included rows: the file
+    #: projects a simulate with the default `expand_multi=true` builds.
+    projects_after_expansion: int
 
 
 class ImportParseResponse(BaseModel):
@@ -179,7 +182,9 @@ class StepEditIn(_Strict):
 class ImportSimulateRequest(_Strict):
     mode: Literal["merge", "file_only"] = "merge"
     plan_year_end_week: Literal[52, 104] = 104
-    expand_multi: bool = False
+    #: Owner rule 2026-11-04: `Num of Projects` n >= 2 is n projects by
+    #: default; `false` keeps one project per row.
+    expand_multi: bool = True
     rows: list[ImportRow] = Field(max_length=MAX_IMPORT_ROWS)
     edits: list[StepEditIn] = Field(default_factory=list, max_length=MAX_EDITS)
 
@@ -340,6 +345,65 @@ class SimIssueOut(BaseModel):
     message: str
 
 
+# --- served breakdowns (P32-R05, docs/API_CONTRACT_P32.md C1) ---------------------------------
+
+#: `all`, `<base year>`, `<base year + 1>`, `later`, `not_placed`.
+BreakdownYearKey = Annotated[str, Field(pattern=r"^(all|\d{4}|later|not_placed)$")]
+
+
+class BreakdownYearOut(_Strict):
+    key: BreakdownYearKey
+    label: str
+
+
+class BreakdownOutcomesOut(_Strict):
+    within_year: int
+    spillover: int
+    left_out: int
+    blocked: int
+    data_error: int
+    excluded: int
+
+
+class BreakdownBucketOut(_Strict):
+    #: The category / hub / priority / status / source value; `unknown` when
+    #: the project carries none (a data-error file row).
+    key: str
+    total: int
+    #: Finishes by the plan year end (`within_plan_year`).
+    within_year: int
+    #: Placed but finishes after the plan year end.
+    spillover: int
+    #: left_out + blocked + data_error.
+    not_placed: int
+
+
+class FinishQuarterOut(_Strict):
+    key: Annotated[str, Field(pattern=r"^\d{4}-Q[1-4]$")]
+    label: str
+    count: int
+
+
+class BreakdownOut(_Strict):
+    total: int
+    file: int
+    plan: int
+    outcomes: BreakdownOutcomesOut
+    by_category: list[BreakdownBucketOut]
+    by_hub: list[BreakdownBucketOut]
+    by_priority: list[BreakdownBucketOut]
+    by_status: list[BreakdownBucketOut]
+    by_source: list[BreakdownBucketOut]
+    #: Placed projects only, chronological.
+    by_finish_quarter: list[FinishQuarterOut]
+
+
+class ImportBreakdownsOut(_Strict):
+    years: list[BreakdownYearOut]
+    #: One block per `years[].key`, always all five (an empty block has total 0).
+    by_year: dict[str, BreakdownOut]
+
+
 class ImportSimulateResponse(BaseModel):
     base_year: int
     current_week: int
@@ -353,3 +417,5 @@ class ImportSimulateResponse(BaseModel):
     changes: ImportChangesOut
     issues: list[SimIssueOut]
     workings: list[str]
+    #: Chart figures over exactly `projects` (P32-R05, C1).
+    breakdowns: ImportBreakdownsOut

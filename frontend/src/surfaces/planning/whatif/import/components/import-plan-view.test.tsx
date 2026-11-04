@@ -111,27 +111,12 @@ describe('Import plan (Excel)', () => {
     await user.selectOptions(screen.getByLabelText('Mode'), 'merge');
 
     // --- compute
-    console.log(
-      'DBG',
-      screen.queryByTestId('import-compute-hint')?.textContent,
-      (
-        screen.getByRole('button', {
-          name: 'Compute plan',
-        }) as HTMLButtonElement
-      ).disabled,
-      screen.queryAllByRole('alert').map((a) => a.textContent),
-    );
     await user.click(screen.getByRole('button', { name: 'Compute plan' }));
-    console.log(
-      'DBG2',
-      screen.queryAllByRole('alert').map((a) => a.textContent),
-      calls.map((c) => c.url),
-    );
     await screen.findByTestId('import-results');
     const first = simulateBodies()[0];
     expect(first?.mode).toBe('merge');
     expect(first?.plan_year_end_week).toBe(104);
-    expect(first?.expand_multi).toBe(false);
+    expect(first?.expand_multi).toBe(true); // P32-R03: on by default
     expect(first?.rows.map((r) => r.leader)).toEqual([
       { kind: 'existing', engineer_id: 'eng-1', name: 'Nikos' },
       { kind: 'existing', engineer_id: 'eng-2', name: 'Lokesh' },
@@ -140,15 +125,13 @@ describe('Import plan (Excel)', () => {
     expect(first?.rows[2]?.priority).toBe('P1');
     expect(first?.edits).toEqual([]);
 
-    // --- overview
-    expect(screen.getByTestId('import-kpi-total')).toHaveTextContent('Projects scheduled237');
-    expect(screen.getByTestId('import-kpi-total')).toHaveTextContent(
-      '3 not scheduled (commercialized / cancelled / on hold)',
-    );
+    // --- executive (first tab, served breakdowns)
+    expect(screen.getByRole('tab', { name: 'Executive' })).toHaveAttribute('aria-selected', 'true');
+    await screen.findByTestId('import-executive');
+    await waitFor(() => expect(screen.getByTestId('import-kpi-total')).toHaveTextContent('Projects scheduled3'));
     expect(screen.getByTestId('import-kpi-within')).toHaveTextContent('Finish in 2027');
-    expect(screen.getByTestId('import-kpi-before')).toHaveTextContent('160');
-    expect(screen.getByTestId('import-kpi-after')).toHaveTextContent('158');
-    expect(screen.getAllByLabelText('Newly slipping')[0]).toHaveTextContent('Existing Plan Project');
+    expect(screen.getByTestId('import-kpi-before-after')).toHaveTextContent('160 → 158');
+    expect(screen.getByTestId('import-newly-slipping')).toHaveTextContent('Existing Plan Project');
     expect(await seriousAxeViolations(container)).toEqual([]);
 
     // --- Gantt
@@ -228,6 +211,29 @@ describe('Import plan (Excel)', () => {
         name: 'Engineer for Synthetic Freezer 300',
       }),
     ).toHaveValue('eng-2');
+    // The whole flow with an axe pass per step: ~5 s alone, past 10 s under full parallel load.
+  }, 20_000);
+
+  it('P32-R03: unticking "Num of Projects" sends expand_multi false and prunes the copies\' edits', async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<ImportPlanView />);
+    await uploadAndParse(user);
+    const box = screen.getByRole('checkbox', {
+      name: "Count the 'Num of Projects' column as separate projects (on by default)",
+    });
+    expect(box).toBeChecked();
+    // A copy edit left from an earlier expanded run (row-5 counted as 3 projects).
+    useImportPlan.setState((st) => ({
+      rows: st.rows.map((r) => (r.key === 'row-5' ? { ...r, num_projects: 3 } : r)),
+    }));
+    useImportPlan.getState().applyEdit('row-5-2', 'PDD-E', { start_not_before_week: 50 }, {});
+    await user.click(box);
+    expect(box).not.toBeChecked();
+    await user.click(screen.getByRole('button', { name: 'Compute plan' }));
+    await screen.findByTestId('import-results');
+    expect(simulateBodies()[0]?.expand_multi).toBe(false);
+    expect(simulateBodies()[0]?.edits).toEqual([]);
+    expect(useImportPlan.getState().edits).toEqual({});
   });
 
   it('a Gantt edit then Reset all edits re-simulates with no edits; quick drops are coalesced', async () => {

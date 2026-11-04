@@ -238,7 +238,8 @@ async def test_parse_maps_against_the_plan_and_audits_counts_only(db_session):
     assert rows["5"]["hub"] == "R&D-India"  # India + an R&D-India leader
     assert rows["5"]["stage_step_id"] == "PDD-E" and rows["5"]["status"] == "In Development"
     assert body["counts"] == {"rows": 5, "schedulable": 5, "not_scheduled": 0, "matched": 2,
-                              "new": 3, "auto_assign": 1, "new_designers": 1}  # fmt: skip
+                              "new": 3, "auto_assign": 1, "new_designers": 1,
+                              "projects_after_expansion": 5}  # fmt: skip
     for secret in (SECRET_CUSTOMER, SECRET_NOTE, "secret business case"):
         assert secret not in resp.text
 
@@ -508,6 +509,66 @@ async def test_simulate_expand_include_and_dedupe(db_session):
     assert [d["ref"] for d in body["capacity"]["designers"] if d["is_new"]] == ["new:1"]
 
 
+async def test_num_of_projects_expands_by_default(db_session):
+    """Owner rule (2026-11-04): Num of Projects n >= 2 is n projects without
+    the caller asking; `expand_multi=false` keeps one; only copy 1 replaces
+    the matched plan project; a bad value is read as 1 with a warning; On Hold
+    rows are still dropped whatever their count."""
+
+    world = await make_world(db_session)
+    await act_as(db_session, RoleName.PORTFOLIO_MANAGER)
+    data = build_workbook(
+        [
+            row(name="Alpha Cooler", hub="Greece", category="C", status="Que", num=5,
+                engineer="Kanarios", priority=2),
+            row(name="Single", hub="Greece", category="C", status="Que", num=1,
+                engineer="Kanarios"),
+            row(name="Bad Count", hub="Greece", category="C", status="Que", num="x",
+                engineer="Kanarios"),
+            row(name="Held Many", hub="Greece", category="C", status="On Hold", num=4),
+        ]
+    )  # fmt: skip
+    async with client_for(db_session) as c:
+        resp = await parse(c, data)
+        assert resp.status_code == 200, resp.text
+        parsed = resp.json()
+        rows = parsed["rows"]
+        assert [r["num_projects"] for r in rows] == [5, 1, None, 4]
+        assert parsed["counts"]["projects_after_expansion"] == 7  # 5 + 1 + 1; On Hold out
+        (bad,) = [i for i in parsed["issues"] if i["code"] == "NUM_PROJECTS_INVALID"]
+        assert (bad["row_key"], bad["severity"]) == (rows[2]["key"], "warning")
+
+        resp = await c.post("/whatif/import/simulate", json=sim_body(rows))
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["kpis"]["file_projects"] == 7
+        file_p = [p for p in body["projects"] if p["source"] == "file"]
+        key0 = rows[0]["key"]
+        assert [p["name"] for p in file_p[:5]] == [f"Alpha Cooler ({k}/5)" for k in range(1, 6)]
+        assert [p["ref"] for p in file_p[:5]] == [f"{key0}-{k}" for k in range(1, 6)]
+        assert [p["ref"] for p in file_p[5:]] == [rows[1]["key"], rows[2]["key"]]
+        assert [p["name"] for p in file_p[5:]] == ["Single", "Bad Count"]
+        # Only copy 1 replaces Alpha; copies 2..5 are new.
+        assert [p["replaces_project_id"] for p in file_p[:5]] == [str(world.alpha.id)] + [None] * 4
+        plan_refs = {p["ref"] for p in body["projects"] if p["source"] == "plan"}
+        assert str(world.alpha.id) not in plan_refs
+        # Every copy carries the row's hub, category, status, priority, leader.
+        for k in ("hub", "category", "status", "priority", "leader_name", "file_row"):
+            assert len({p[k] for p in file_p[:5]}) == 1, k
+        assert "Held Many" not in resp.text
+
+        resp = await c.post("/whatif/import/simulate", json=sim_body(rows, expand_multi=False))
+        assert resp.status_code == 200, resp.text
+        off = resp.json()
+        assert off["kpis"]["file_projects"] == 3
+        names = [p["name"] for p in off["projects"] if p["source"] == "file"]
+        assert names == ["Alpha Cooler", "Single", "Bad Count"]
+
+
+async def test_simulate_request_defaults_to_expansion():
+    assert ImportSimulateRequest.model_fields["expand_multi"].default is True
+
+
 async def test_simulate_invalid_rows_and_caps(db_session):
     world = await make_world(db_session)
     await act_as(db_session, RoleName.PORTFOLIO_MANAGER)
@@ -537,11 +598,17 @@ async def test_simulate_invalid_rows_and_caps(db_session):
             {**base, "step_weeks": {**base["step_weeks"], "PDD-A": 105}},
         ):
             assert (await post(case)).status_code == 422
-        # More than 600 projects after expansion.
+        # More than 600 projects after expansion (the default expands).
         many = [{**base, "key": f"row-{100 + i}", "file_row": 100 + i, "num_projects": 100}
                 for i in range(7)]  # fmt: skip
-        r = await c.post("/whatif/import/simulate", json=sim_body(many, expand_multi=True))
+        r = await c.post("/whatif/import/simulate", json=sim_body(many))
         assert r.status_code == 422 and r.json()["code"] == "INVALID_IMPORT"
+        assert "700 projects after expanding Num of Projects" in r.text
+        assert "at most 600" in r.text
+        # Without the expansion the same 7 rows are 7 projects.
+        r = await c.post("/whatif/import/simulate", json=sim_body(many, expand_multi=False))
+        assert r.status_code == 200, r.text
+        assert r.json()["kpis"]["file_projects"] == 7
         # More than 2000 rows: schema cap.
         r = await c.post("/whatif/import/simulate", json=sim_body([base] * 2001))
         assert r.status_code == 422

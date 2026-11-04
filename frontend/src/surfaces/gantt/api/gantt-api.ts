@@ -52,6 +52,8 @@ export interface GanttQueryParams {
   /** The P1–P4 / Queue tab. `Q` is the queue band. */
   priority?: ProjectPriority | undefined;
   sort?: GanttSort | undefined;
+  /** P32-R04: one project only (`project_id`), ANDed with the RBAC scope. */
+  projectId?: string | undefined;
 }
 
 /**
@@ -73,6 +75,7 @@ export function fetchGantt(params: GanttQueryParams, ctx: FetchCtx = {}): Promis
       current_step: params.currentStep,
       priority: params.priority,
       sort: params.sort,
+      project_id: params.projectId,
       limit: 500,
     },
   });

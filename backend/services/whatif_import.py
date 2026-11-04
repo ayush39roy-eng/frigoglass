@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import dataclasses
 import hashlib
+from collections.abc import Callable
 from typing import Any
 
 from sqlalchemy import select
@@ -33,6 +34,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 import domain_constants as dc
 from api.errors import HTTP_422, CodedHTTPException
 from core.principal import Principal
+from models.enums import HubName, ProjectStatus
 from models.hub import Hub
 from models.project import Project
 from scheduling.plan_import import (
@@ -57,10 +59,16 @@ from scheduling.workflow import (
 )
 from schemas.whatif_import import (
     MAX_SIMULATED_FILE_PROJECTS,
+    BreakdownBucketOut,
+    BreakdownOut,
+    BreakdownOutcomesOut,
+    BreakdownYearOut,
     CapacityWindowOut,
     DesignerCapacityOut,
     DesignerWindowOut,
+    FinishQuarterOut,
     HubCapacityOut,
+    ImportBreakdownsOut,
     ImportCapacityOut,
     ImportChangeOut,
     ImportChangesOut,
@@ -365,6 +373,17 @@ def to_engine_request(ctx: WhatIfContext, body: ImportSimulateRequest) -> Engine
     keys: set[str] = set()
     new_keys: dict[tuple[str, str], ImportNewEngineer] = {}
     projects: list[ImportProject] = []
+
+    def copies(r: ImportRow) -> int:
+        return r.num_projects if body.expand_multi and r.num_projects else 1
+
+    total = sum(copies(r) for r in rows)
+    if total > MAX_SIMULATED_FILE_PROJECTS:
+        raise invalid_import(
+            f"the file gives {total} projects after expanding Num of Projects; at most "
+            f"{MAX_SIMULATED_FILE_PROJECTS} can be simulated. Exclude rows, lower Num of "
+            "Projects or turn off the expansion."
+        )
     for r in rows:
         where = f"row {r.key!r}"
         if r.key in keys:
@@ -400,7 +419,9 @@ def to_engine_request(ctx: WhatIfContext, body: ImportSimulateRequest) -> Engine
             leader = new_keys[dk].key
         else:
             leader = None
-        n = r.num_projects if body.expand_multi and r.num_projects else 1
+        # Owner rule 2026-11-04: n copies "<name> (k/n)" keyed "<key>-<k>";
+        # only copy 1 replaces the matched plan project.
+        n = copies(r)
         for k in range(1, n + 1):
             projects.append(
                 ImportProject(
@@ -423,11 +444,6 @@ def to_engine_request(ctx: WhatIfContext, body: ImportSimulateRequest) -> Engine
                     ),
                 )
             )
-            if len(projects) > MAX_SIMULATED_FILE_PROJECTS:
-                raise invalid_import(
-                    f"at most {MAX_SIMULATED_FILE_PROJECTS} projects can be simulated "
-                    "(after expanding Num of Projects)"
-                )
     file_keys = frozenset(p.key for p in projects)
     edits = applicable_edits(ctx, body, projects)
     new_engs = tuple(new_keys.values())
@@ -601,6 +617,123 @@ def _project_out(
     )
 
 
+# --- served breakdowns (P32-R05, docs/API_CONTRACT_P32.md C1) ---------------------------------
+
+_NOT_PLACED_OUTCOMES = frozenset({"left_out", "blocked", "data_error"})
+_PLACED_OUTCOMES = frozenset({"within_year", "spillover"})
+#: A project with no value for a dimension (a data-error file row) is counted
+#: under this key, last, so every dimension still sums to the block's total.
+UNKNOWN_BUCKET = "unknown"
+_HUB_ORDER: tuple[str, ...] = tuple(h.value for h in HubName)
+_STATUS_ORDER: tuple[str, ...] = tuple(s.value for s in ProjectStatus)
+_SOURCE_ORDER: tuple[str, ...] = ("file", "plan")
+_QUARTER_WEEKS = 13
+
+
+def breakdown_year_key(p: ImportProjectOut) -> str | None:
+    """The year block a served project belongs to besides `all` (C1): placed
+    projects by `finish_week` (1..52 base year, 53..104 next year, > 104
+    `later`); left_out / blocked / data_error are `not_placed`; excluded file
+    rows are only in `all`."""
+
+    if p.outcome in _NOT_PLACED_OUTCOMES:
+        return "not_placed"
+    if p.outcome not in _PLACED_OUTCOMES or p.finish_week is None:
+        return None
+    if p.finish_week <= dc.WEEKS_IN_YEAR:
+        return str(BASE_YEAR)
+    if p.finish_week <= 2 * dc.WEEKS_IN_YEAR:
+        return str(BASE_YEAR + 1)
+    return "later"
+
+
+def breakdown_years() -> list[BreakdownYearOut]:
+    return [
+        BreakdownYearOut(key="all", label="All projects"),
+        BreakdownYearOut(key=str(BASE_YEAR), label=f"Finish in {BASE_YEAR}"),
+        BreakdownYearOut(key=str(BASE_YEAR + 1), label=f"Finish in {BASE_YEAR + 1}"),
+        BreakdownYearOut(key="later", label=f"Finish after {BASE_YEAR + 1}"),
+        BreakdownYearOut(key="not_placed", label="Not placed"),
+    ]
+
+
+def finish_quarter(week: int) -> tuple[int, int]:
+    """(calendar year, quarter) of an absolute week (53 = base year + 1, W1);
+    weeks 1-13 are Q1 ... 40-52 Q4."""
+
+    offset, in_year = divmod(week - 1, dc.WEEKS_IN_YEAR)
+    return BASE_YEAR + offset, min(in_year // _QUARTER_WEEKS + 1, 4)
+
+
+def _buckets(
+    projects: list[ImportProjectOut],
+    value: Callable[[ImportProjectOut], str | None],
+    order: tuple[str, ...],
+) -> list[BreakdownBucketOut]:
+    counts: dict[str, list[int]] = {}
+    for p in projects:
+        key = value(p) or UNKNOWN_BUCKET
+        c = counts.setdefault(key, [0, 0, 0, 0])
+        c[0] += 1
+        if p.outcome in _NOT_PLACED_OUTCOMES:
+            c[3] += 1
+        elif p.outcome in _PLACED_OUTCOMES:
+            c[1 if p.within_plan_year else 2] += 1
+    rank = {k: i for i, k in enumerate(order)}
+    keys = sorted(counts, key=lambda k: (k == UNKNOWN_BUCKET, rank.get(k, len(rank)), k))
+    return [
+        BreakdownBucketOut(
+            key=k,
+            total=counts[k][0],
+            within_year=counts[k][1],
+            spillover=counts[k][2],
+            not_placed=counts[k][3],
+        )
+        for k in keys
+    ]
+
+
+def breakdown_of(projects: list[ImportProjectOut]) -> BreakdownOut:
+    oc = dict.fromkeys(
+        ("within_year", "spillover", "left_out", "blocked", "data_error", "excluded"), 0
+    )
+    quarters: dict[tuple[int, int], int] = {}
+    for p in projects:
+        oc[p.outcome] += 1
+        if p.outcome in _PLACED_OUTCOMES and p.finish_week is not None:
+            yq = finish_quarter(p.finish_week)
+            quarters[yq] = quarters.get(yq, 0) + 1
+    return BreakdownOut(
+        total=len(projects),
+        file=sum(1 for p in projects if p.source == "file"),
+        plan=sum(1 for p in projects if p.source == "plan"),
+        outcomes=BreakdownOutcomesOut(**oc),
+        by_category=_buckets(projects, lambda p: p.category, dc.CATEGORY_ORDER),
+        by_hub=_buckets(projects, lambda p: p.hub, _HUB_ORDER),
+        by_priority=_buckets(projects, lambda p: p.priority, dc.PRIORITY_ORDER),
+        by_status=_buckets(projects, lambda p: p.status, _STATUS_ORDER),
+        by_source=_buckets(projects, lambda p: p.source, _SOURCE_ORDER),
+        by_finish_quarter=[
+            FinishQuarterOut(key=f"{y}-Q{q}", label=f"Q{q} '{y % 100:02d}", count=n)
+            for (y, q), n in sorted(quarters.items())
+        ],
+    )
+
+
+def import_breakdowns(projects: list[ImportProjectOut]) -> ImportBreakdownsOut:
+    """C1: every chart figure of the Executive tab, over exactly the served
+    (already scoped) `projects`, so the charts reconcile with the list."""
+
+    years = breakdown_years()
+    by_key: dict[str, list[ImportProjectOut]] = {y.key: [] for y in years}
+    by_key["all"] = list(projects)
+    for p in projects:
+        key = breakdown_year_key(p)
+        if key is not None:
+            by_key[key].append(p)
+    return ImportBreakdownsOut(years=years, by_year={k: breakdown_of(v) for k, v in by_key.items()})
+
+
 def scope_import_result(
     ctx: WhatIfContext, er: EngineRequest, raw: PlanImportResult
 ) -> ImportSimulateResponse:
@@ -769,6 +902,7 @@ def scope_import_result(
                 else "."
             ),
         ]
+    served = [_project_out(p, eng_name, ch_code) for p in rows]
     return ImportSimulateResponse(
         base_year=BASE_YEAR,
         current_week=raw.current_week,
@@ -777,11 +911,12 @@ def scope_import_result(
         mode=raw.mode,
         kpis=kpis,
         steps_meta=steps_meta_out(steps_meta(ctx)),
-        projects=[_project_out(p, eng_name, ch_code) for p in rows],
+        projects=served,
         capacity=capacity,
         changes=changes,
         issues=issues,
         workings=workings,
+        breakdowns=import_breakdowns(served),
     )
 
 

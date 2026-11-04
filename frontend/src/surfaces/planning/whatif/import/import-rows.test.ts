@@ -1,6 +1,15 @@
 import { describe, expect, it } from 'vitest';
 
-import { buildSimulateRequest, editsForRequest, rosterForRow, withHubOrCategory, type EditMap } from './import-rows';
+import {
+  buildSimulateRequest,
+  copiesOfRow,
+  editsForRequest,
+  projectsToSchedule,
+  refOfRow,
+  rosterForRow,
+  withHubOrCategory,
+  type EditMap,
+} from './import-rows';
 import { computeBlockedReason, checkImportFile, rowErrors } from './import-schema';
 import { PARSE_RESPONSE, ROWS } from './test-fixtures';
 
@@ -91,9 +100,54 @@ describe('review edits → simulate payload', () => {
   });
 
   it('expanded copies (row-5-2) keep their edits only when expansion is on', () => {
+    const rows = [{ ...row(0), num_projects: 5 }, row(1)];
     const edits = edit('row-5-2', 'PDD-E', 50);
-    expect(editsForRequest(edits, ROWS, { ...OPTS, expandMulti: true })).toHaveLength(1);
-    expect(editsForRequest(edits, ROWS, OPTS)).toHaveLength(0);
+    expect(editsForRequest(edits, rows, { ...OPTS, expandMulti: true })).toHaveLength(1);
+    expect(editsForRequest(edits, rows, OPTS)).toHaveLength(0);
+  });
+
+  it('P32-R03: refs map to rows by the server keys; the other expansion setting is stale', () => {
+    const five = { ...row(0), num_projects: 5 };
+    expect(copiesOfRow(five, true)).toBe(5);
+    expect(copiesOfRow(five, false)).toBe(1);
+    expect(copiesOfRow({ num_projects: null }, true)).toBe(1);
+    expect(copiesOfRow({ num_projects: 1 }, true)).toBe(1);
+    expect(refOfRow('row-5-1', five, true)).toBe(true);
+    expect(refOfRow('row-5-5', five, true)).toBe(true);
+    expect(refOfRow('row-5-6', five, true)).toBe(false);
+    expect(refOfRow('row-5-0', five, true)).toBe(false);
+    expect(refOfRow('row-5', five, true)).toBe(false); // the unexpanded ref is stale when on
+    expect(refOfRow('row-5', five, false)).toBe(true);
+    expect(refOfRow('row-5-2', five, false)).toBe(false);
+    // No prefix confusion between row-5 and row-50.
+    expect(refOfRow('row-50', five, true)).toBe(false);
+    expect(refOfRow('row-5', row(1), true)).toBe(false);
+    // A single-project row keeps its plain key with expansion on.
+    expect(refOfRow('row-6', row(1), true)).toBe(true);
+    expect(refOfRow('row-6-1', row(1), true)).toBe(false);
+
+    const rows = [five, row(1)];
+    const edits = {
+      ...edit('row-5', 'PDD-E', 50),
+      ...edit('row-5-3', 'PDD-E', 50),
+      ...edit('row-6', 'PDD-E', 50),
+    };
+    expect(editsForRequest(edits, rows, { ...OPTS, expandMulti: true }).map((e) => e.project_ref)).toEqual([
+      'row-5-3',
+      'row-6',
+    ]);
+    expect(editsForRequest(edits, rows, OPTS).map((e) => e.project_ref)).toEqual(['row-5', 'row-6']);
+  });
+
+  it('P32-R03: projects to schedule (display-only fallback) counts copies of included mapped rows', () => {
+    const rows = [
+      { ...row(0), num_projects: 5 },
+      { ...row(1), num_projects: null },
+      { ...row(1), key: 'x', num_projects: 3, include: false },
+    ];
+    expect(projectsToSchedule(rows, true)).toBe(6);
+    expect(projectsToSchedule(rows, false)).toBe(2);
+    expect(projectsToSchedule([{ ...row(0), num_projects: 4, status: 'On Hold' }], true)).toBe(0);
   });
 
   it('a hub change to an OEM hub re-keys stage, category and step weeks to the OEM workflow', () => {

@@ -41,6 +41,21 @@ export function useGantt(params: UseGanttParams) {
   });
 }
 
+/**
+ * P32-R04: one project's Gantt row (`GET /gantt?project_id=`) for the Workflow
+ * page's per-project step timing. The key sits under `['gantt']`, so a timing
+ * save and a completed run (`invalidateRunDerivedQueries`) refetch it with the
+ * Timeline. Disabled until a project is picked.
+ */
+export function useProjectTimeline(projectId: string | null) {
+  return useQuery({
+    queryKey: queryKeys.gantt({ projectId: projectId ?? '' }),
+    queryFn: ({ signal }) => fetchGantt({ projectId: projectId ?? undefined }, { signal }),
+    retry: retryUnlessAuth,
+    enabled: projectId !== null,
+  });
+}
+
 /** Leader / Step filter options (P13 §3 facets), keyed like the Dashboard's so
  *  the cache is shared. `enabled` is the caller's `dashboard` read. */
 export function useGanttFacets(hubId: string | null, region: LabRegion | null, enabled: boolean) {

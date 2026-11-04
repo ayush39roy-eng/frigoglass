@@ -179,6 +179,8 @@ class ParseCounts:
     new: int
     auto_assign: int
     new_designers: int
+    #: Σ max(1, num_projects) over the schedulable included rows.
+    projects_after_expansion: int
 
 
 @dataclass(frozen=True)
@@ -532,6 +534,27 @@ def _int_value(value: Any) -> int | None:
     if re.fullmatch(r"\d+(\.0+)?", s):
         return int(float(s))
     return None
+
+
+_MAX_NUM_PROJECTS = 100
+#: Sentinel: a non-blank Num of Projects that is not a whole number 1..100.
+_INVALID_NUM = -1
+
+
+def _num_projects(value: Any) -> int | None:
+    """`Num of Projects` (owner rule 2026-11-04: n >= 2 means n projects).
+
+    None for a blank cell, the count for a whole number 1..100 (`2`, `2.0`,
+    `" 3 "`), else `_INVALID_NUM` (the caller warns and reads it as 1)."""
+
+    if value is None or (isinstance(value, str) and not value.strip()):
+        return None
+    if isinstance(value, float) and math.isfinite(value) and value.is_integer():
+        value = int(value)
+    n = None if isinstance(value, bool) else _int_value(value)
+    if n is None or not 1 <= n <= _MAX_NUM_PROJECTS:
+        return _INVALID_NUM
+    return n
 
 
 def _yes_no(value: Any) -> bool | None:
@@ -1003,7 +1026,16 @@ def map_rows(raw: RawWorkbook, ctx: ParseContext) -> ParseResult:
                 f"added to {dc.capacity_hub_name(hub)} (FTE 1.0).",
             )
 
-        num = _int_value(v.get("num_projects"))
+        num = _num_projects(v.get("num_projects"))
+        if num is _INVALID_NUM:
+            num = None
+            issue(
+                "num_projects",
+                SEV_WARNING,
+                "NUM_PROJECTS_INVALID",
+                f"Num of Projects {_text(v.get('num_projects'), 40)!r} is not a whole number "
+                f"from 1 to {_MAX_NUM_PROJECTS}; the row is read as 1 project.",
+            )
         rows.append(
             ParsedRow(
                 key=key,
@@ -1029,7 +1061,7 @@ def map_rows(raw: RawWorkbook, ctx: ParseContext) -> ParseResult:
                 matched_project_id=matched.project_id if matched else None,
                 matched_project_name=matched.name if matched else None,
                 match_by=match_by,
-                num_projects=num if num is not None and 1 <= num <= 100 else None,
+                num_projects=num,
                 must_do=_yes_no(v.get("must_do")),
                 spillover_from_previous=_yes_no(v.get("spillover")),
                 complexity=_text(v.get("complexity"), 20),
@@ -1051,6 +1083,11 @@ def map_rows(raw: RawWorkbook, ctx: ParseContext) -> ParseResult:
     }
     schedulable = sum(1 for r in rows if r.status in _SCHEDULABLE)
     matched_n = sum(1 for r in rows if r.matched_project_id)
+    # Owner rule 2026-11-04: Num of Projects n >= 2 is n projects (the
+    # simulate default expands); blank / 1 / invalid is one.
+    after_expansion = sum(
+        max(1, r.num_projects or 1) for r in rows if r.include and r.status in _SCHEDULABLE
+    )
     counts = ParseCounts(
         rows=len(rows),
         schedulable=schedulable,
@@ -1059,6 +1096,7 @@ def map_rows(raw: RawWorkbook, ctx: ParseContext) -> ParseResult:
         new=len(rows) - matched_n,
         auto_assign=sum(1 for r in rows if r.leader.kind == "auto"),
         new_designers=len(new_designers),
+        projects_after_expansion=after_expansion,
     )
     order = {r.key: i for i, r in enumerate(rows)}
     issues.sort(key=lambda i: -1 if i.row_key is None else order.get(i.row_key, 0))

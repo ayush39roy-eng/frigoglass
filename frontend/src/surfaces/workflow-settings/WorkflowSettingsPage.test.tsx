@@ -33,6 +33,8 @@ import WorkflowSettingsPage from './WorkflowSettingsPage';
 function ready() {
   return { data: settingsFixture(), isPending: false, isError: false, error: null, refetch: vi.fn() };
 }
+/** P32-R04: the template settings are the page's second tab (`?tab=templates`). */
+const TEMPLATES = { route: '/settings/workflow?tab=templates' };
 const saved = (staleCount: number) => Promise.resolve({ settings: settingsFixture(), staleCount });
 
 beforeEach(() => {
@@ -47,7 +49,7 @@ beforeEach(() => {
 
 describe('WorkflowSettingsPage — steps & precedence', () => {
   it('lists the 14 steps with kind badges (text, not colour alone) and the inline DAG', () => {
-    renderWithProviders(<WorkflowSettingsPage />);
+    renderWithProviders(<WorkflowSettingsPage />, TEMPLATES);
     expect(screen.getByTestId('step-row-PDD-C')).toHaveTextContent('Elapsed');
     expect(screen.getByTestId('step-row-PDD-F')).toHaveTextContent('Lab');
     expect(screen.getByTestId('step-row-PDD-A')).toHaveTextContent('Design');
@@ -56,7 +58,7 @@ describe('WorkflowSettingsPage — steps & precedence', () => {
 
   it('letting TF-1 start after CAPEX (not Certification) shows "runs in parallel" and saves all 14 steps', async () => {
     const user = userEvent.setup();
-    renderWithProviders(<WorkflowSettingsPage />);
+    renderWithProviders(<WorkflowSettingsPage />, TEMPLATES);
     await user.click(screen.getByRole('button', { name: 'Can start after — TF-1' }));
     await user.click(await screen.findByRole('checkbox', { name: 'G Online CAPEX Approval' }));
     await user.click(screen.getByRole('checkbox', { name: 'H Certification Testing & Compliance' }));
@@ -81,7 +83,7 @@ describe('WorkflowSettingsPage — steps & precedence', () => {
 
   it('refuses to save an empty predecessor set and names the rule (client mirror of the server)', async () => {
     const user = userEvent.setup();
-    renderWithProviders(<WorkflowSettingsPage />);
+    renderWithProviders(<WorkflowSettingsPage />, TEMPLATES);
     await user.click(screen.getByRole('button', { name: 'Can start after — Pilot' }));
     await user.click(await screen.findByRole('checkbox', { name: 'K TF-2' }));
     await user.keyboard('{Escape}');
@@ -92,7 +94,7 @@ describe('WorkflowSettingsPage — steps & precedence', () => {
   it('surfaces a server 422 code verbatim', async () => {
     const user = userEvent.setup();
     hooks.saveSteps.mockRejectedValue(new ApiError(422, 'bad', 'Cycle through PDD-C', 'CYCLE'));
-    renderWithProviders(<WorkflowSettingsPage />);
+    renderWithProviders(<WorkflowSettingsPage />, TEMPLATES);
     await user.click(screen.getByRole('button', { name: 'Can start after — TF-1' }));
     await user.click(await screen.findByRole('checkbox', { name: 'G Online CAPEX Approval' }));
     await user.keyboard('{Escape}');
@@ -104,7 +106,7 @@ describe('WorkflowSettingsPage — steps & precedence', () => {
 describe('WorkflowSettingsPage — step-kind editor (Super Admin only)', () => {
   it('a kind change asks for confirmation explaining the load shift, then saves the new kind', async () => {
     const user = userEvent.setup();
-    renderWithProviders(<WorkflowSettingsPage />);
+    renderWithProviders(<WorkflowSettingsPage />, TEMPLATES);
     await user.click(screen.getByRole('combobox', { name: 'Kind — Pilot' }));
     await user.click(await screen.findByRole('option', { name: 'Design' }));
     const dialog = screen.getByRole('dialog');
@@ -119,7 +121,7 @@ describe('WorkflowSettingsPage — step-kind editor (Super Admin only)', () => {
 
   it('cancelling the confirm dialog leaves the kind unchanged and nothing to save', async () => {
     const user = userEvent.setup();
-    renderWithProviders(<WorkflowSettingsPage />);
+    renderWithProviders(<WorkflowSettingsPage />, TEMPLATES);
     await user.click(screen.getByRole('combobox', { name: 'Kind — Pilot' }));
     await user.click(await screen.findByRole('option', { name: 'Lab' }));
     await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Cancel' }));
@@ -130,7 +132,7 @@ describe('WorkflowSettingsPage — step-kind editor (Super Admin only)', () => {
   it('a KIND_IN_USE refusal is explained in readable terms', async () => {
     const user = userEvent.setup();
     hooks.saveSteps.mockRejectedValue(new ApiError(422, 'bad', 'PDD-F is allowed on IN-CH-2', 'KIND_IN_USE'));
-    renderWithProviders(<WorkflowSettingsPage />);
+    renderWithProviders(<WorkflowSettingsPage />, TEMPLATES);
     await user.click(screen.getByRole('combobox', { name: 'Kind — Proof of Concept' }));
     await user.click(await screen.findByRole('option', { name: 'Design' }));
     await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Change kind' }));
@@ -139,7 +141,7 @@ describe('WorkflowSettingsPage — step-kind editor (Super Admin only)', () => {
   });
 
   it('an Admin sees kind badges, not kind selects', () => {
-    renderWithProviders(<WorkflowSettingsPage />, { session: { roles: ['Admin'], permissions: ROLE_MATRIX.Admin } });
+    renderWithProviders(<WorkflowSettingsPage />, { ...TEMPLATES, session: { roles: ['Admin'], permissions: ROLE_MATRIX.Admin } });
     expect(screen.queryByRole('combobox', { name: /^Kind — / })).not.toBeInTheDocument();
     expect(screen.getByTestId('step-row-PDD-L')).toHaveTextContent('Elapsed');
   });
@@ -148,7 +150,7 @@ describe('WorkflowSettingsPage — step-kind editor (Super Admin only)', () => {
 describe('WorkflowSettingsPage — lead times, calendars, chambers', () => {
   it('lead-time grid: row sums and subtotals, 0 rendered as "—", edit updates the total and saves only the change', async () => {
     const user = userEvent.setup();
-    renderWithProviders(<WorkflowSettingsPage />);
+    renderWithProviders(<WorkflowSettingsPage />, TEMPLATES);
     await user.click(screen.getByRole('tab', { name: 'Lead times' }));
     const aPlus = screen.getByTestId('lead-row-A+');
     expect(within(aPlus).getByTestId('total')).toHaveTextContent('44');
@@ -169,7 +171,7 @@ describe('WorkflowSettingsPage — lead times, calendars, chambers', () => {
 
   it('hub calendar: saved figure from the server, live preview labelled "preview" while editing', async () => {
     const user = userEvent.setup();
-    renderWithProviders(<WorkflowSettingsPage />);
+    renderWithProviders(<WorkflowSettingsPage />, TEMPLATES);
     await user.click(screen.getByRole('tab', { name: 'Hub calendars' }));
     const card = screen.getByTestId('calendar-R&D-Greece');
     expect(within(card).getByTestId('saved-working-weeks')).toHaveTextContent('44.6');
@@ -193,7 +195,7 @@ describe('WorkflowSettingsPage — lead times, calendars, chambers', () => {
 
   it('chambers: derived working/efficient weeks from the server, preview on edit, partial PUT', async () => {
     const user = userEvent.setup();
-    renderWithProviders(<WorkflowSettingsPage />);
+    renderWithProviders(<WorkflowSettingsPage />, TEMPLATES);
     await user.click(screen.getByRole('tab', { name: 'Chambers' }));
     const row = screen.getByTestId('chamber-IN-CH-2');
     expect(row).toHaveTextContent('35.4');
@@ -210,7 +212,7 @@ describe('WorkflowSettingsPage — lead times, calendars, chambers', () => {
 describe('WorkflowSettingsPage — RBAC (Admin reads, Super Admin writes)', () => {
   it('Admin sees everything read-only: no editors, no save buttons, a read-only notice', async () => {
     const user = userEvent.setup();
-    renderWithProviders(<WorkflowSettingsPage />, { session: { roles: ['Admin'], permissions: ROLE_MATRIX.Admin } });
+    renderWithProviders(<WorkflowSettingsPage />, { ...TEMPLATES, session: { roles: ['Admin'], permissions: ROLE_MATRIX.Admin } });
     expect(screen.getByTestId('read-only-notice')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Save steps' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /Can start after/ })).not.toBeInTheDocument();
@@ -222,7 +224,7 @@ describe('WorkflowSettingsPage — RBAC (Admin reads, Super Admin writes)', () =
 
   it('degrades to an access notice on a 403', () => {
     hooks.useWorkflowSettings.mockReturnValue({ data: undefined, isPending: false, isError: true, error: new ApiError(403, 'no'), refetch: vi.fn() });
-    renderWithProviders(<WorkflowSettingsPage />);
+    renderWithProviders(<WorkflowSettingsPage />, TEMPLATES);
     expect(screen.getByText('Your role does not have access to Workflow Settings')).toBeInTheDocument();
   });
 });
@@ -248,7 +250,7 @@ describe('WorkflowSettingsPage — timeline previews (P13-T16)', () => {
         { category: wf === 'OEM' ? 'B-OEM' : 'B', design_weeks: 7, lab_weeks: 6, design_ratio: 1, lab_ratio: 1 },
       ]),
     );
-    renderWithProviders(<WorkflowSettingsPage />);
+    renderWithProviders(<WorkflowSettingsPage />, TEMPLATES);
     await user.click(screen.getByRole('tab', { name: 'Timeline previews' }));
     expect(hooks.useCategoryTimelines).toHaveBeenLastCalledWith('PDD');
     expect(hooks.useBEquivalent).toHaveBeenLastCalledWith('PDD');

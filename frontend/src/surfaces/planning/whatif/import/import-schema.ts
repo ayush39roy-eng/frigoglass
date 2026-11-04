@@ -121,6 +121,7 @@ export const importParseResponseSchema: z.ZodType<ImportParseResponse> = z.objec
     new: int,
     auto_assign: int,
     new_designers: int,
+    projects_after_expansion: int.optional(),
   }),
 });
 
@@ -141,6 +142,40 @@ const change = z.object({
   hub: z.string(),
   before_finish_week: nint,
   after_finish_week: nint,
+});
+
+const bucket = z.object({
+  key: z.string(),
+  total: int,
+  within_year: int,
+  spillover: int,
+  not_placed: int,
+});
+
+const breakdown = z.object({
+  total: int,
+  file: int,
+  plan: int,
+  outcomes: z.object({
+    within_year: int,
+    spillover: int,
+    left_out: int,
+    blocked: int,
+    data_error: int,
+    excluded: int,
+  }),
+  by_category: z.array(bucket),
+  by_hub: z.array(bucket),
+  by_priority: z.array(bucket),
+  by_status: z.array(bucket),
+  by_source: z.array(bucket),
+  by_finish_quarter: z.array(z.object({ key: z.string(), label: z.string(), count: int })),
+});
+
+/** C1 (P32-R05): optional, a server without it still validates. */
+const breakdowns = z.object({
+  years: z.array(z.object({ key: z.string(), label: z.string() })),
+  by_year: z.record(z.string(), breakdown),
 });
 
 export const importSimulateResponseSchema: z.ZodType<ImportSimulateResponse> = z.object({
@@ -273,6 +308,7 @@ export const importSimulateResponseSchema: z.ZodType<ImportSimulateResponse> = z
   }),
   issues: z.array(z.object({ ref: nstr, severity, code: z.string(), message: z.string() })),
   workings: z.array(z.string()),
+  breakdowns: breakdowns.optional(),
 });
 
 // --- client-side checks before a request is sent ------------------------------------------

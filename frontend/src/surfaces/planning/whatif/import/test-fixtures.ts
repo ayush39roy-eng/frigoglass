@@ -2,6 +2,9 @@
 // (no client data). Used by the import tests with a mocked fetch.
 
 import type {
+  Breakdown,
+  BreakdownBucket,
+  ImportBreakdowns,
   ImportParseResponse,
   ImportResultProject,
   ImportResultStep,
@@ -378,6 +381,102 @@ const autoProject: ImportResultProject = {
   })),
 };
 
+type Counts = [total: number, within: number, spill: number, notPlaced: number];
+function b(key: string, [total, within_year, spillover, not_placed]: Counts): BreakdownBucket {
+  return { key, total, within_year, spillover, not_placed };
+}
+function block(
+  file: number,
+  plan: number,
+  outcomes: Partial<Breakdown['outcomes']>,
+  dims: Partial<Omit<Breakdown, 'total' | 'file' | 'plan' | 'outcomes'>>,
+): Breakdown {
+  return {
+    total: file + plan,
+    file,
+    plan,
+    outcomes: { within_year: 0, spillover: 0, left_out: 0, blocked: 0, data_error: 0, excluded: 0, ...outcomes },
+    by_category: [],
+    by_hub: [],
+    by_priority: [],
+    by_status: [],
+    by_source: [],
+    by_finish_quarter: [],
+    ...dims,
+  };
+}
+
+/**
+ * C1 breakdowns over the three fixture projects: row-5 within the year (W67 = 2027 W15),
+ * row-6 not placed, plan-1 spills over (W110 = 2028 W6).
+ */
+export const BREAKDOWNS: ImportBreakdowns = {
+  years: [
+    { key: 'all', label: 'All projects' },
+    { key: '2026', label: 'Finish in 2026' },
+    { key: '2027', label: 'Finish in 2027' },
+    { key: 'later', label: 'Finish after 2027' },
+    { key: 'not_placed', label: 'Not placed' },
+  ],
+  by_year: {
+    all: block(
+      2,
+      1,
+      { within_year: 1, spillover: 1, left_out: 1 },
+      {
+        by_category: [b('A', [3, 1, 1, 1])],
+        by_hub: [b('R&D-Greece', [1, 1, 0, 0]), b('PD-India', [2, 0, 1, 1])],
+        by_priority: [b('P1', [1, 1, 0, 0]), b('P2', [1, 0, 1, 0]), b('P3', [1, 0, 0, 1])],
+        by_status: [b('In Development', [1, 1, 0, 0]), b('In Queue', [2, 0, 1, 1])],
+        by_source: [b('file', [2, 1, 0, 1]), b('plan', [1, 0, 1, 0])],
+        by_finish_quarter: [
+          { key: '2027-Q2', label: "Q2 '27", count: 1 },
+          { key: '2028-Q1', label: "Q1 '28", count: 1 },
+        ],
+      },
+    ),
+    '2026': block(0, 0, {}, {}),
+    '2027': block(
+      1,
+      0,
+      { within_year: 1 },
+      {
+        by_category: [b('A', [1, 1, 0, 0])],
+        by_hub: [b('R&D-Greece', [1, 1, 0, 0])],
+        by_priority: [b('P1', [1, 1, 0, 0])],
+        by_status: [b('In Development', [1, 1, 0, 0])],
+        by_source: [b('file', [1, 1, 0, 0])],
+        by_finish_quarter: [{ key: '2027-Q2', label: "Q2 '27", count: 1 }],
+      },
+    ),
+    later: block(
+      0,
+      1,
+      { spillover: 1 },
+      {
+        by_category: [b('A', [1, 0, 1, 0])],
+        by_hub: [b('PD-India', [1, 0, 1, 0])],
+        by_priority: [b('P2', [1, 0, 1, 0])],
+        by_status: [b('In Queue', [1, 0, 1, 0])],
+        by_source: [b('plan', [1, 0, 1, 0])],
+        by_finish_quarter: [{ key: '2028-Q1', label: "Q1 '28", count: 1 }],
+      },
+    ),
+    not_placed: block(
+      1,
+      0,
+      { left_out: 1 },
+      {
+        by_category: [b('A', [1, 0, 0, 1])],
+        by_hub: [b('PD-India', [1, 0, 0, 1])],
+        by_priority: [b('P3', [1, 0, 0, 1])],
+        by_status: [b('In Queue', [1, 0, 0, 1])],
+        by_source: [b('file', [1, 0, 0, 1])],
+      },
+    ),
+  },
+};
+
 export const SIMULATE_RESPONSE: ImportSimulateResponse = {
   base_year: 2026,
   current_week: 42,
@@ -528,4 +627,5 @@ export const SIMULATE_RESPONSE: ImportSimulateResponse = {
     },
   ],
   workings: ['Baseline: 237 projects; import: 3 rows.'],
+  breakdowns: BREAKDOWNS,
 };

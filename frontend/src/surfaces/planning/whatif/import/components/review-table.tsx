@@ -18,6 +18,7 @@ import type { WhatIfHub } from '../../../api/whatif-types';
 import { NativeSelect } from '../../components/form-controls';
 import {
   ENGINEER_ISSUE_CODES,
+  copiesOfRow,
   isMappedStatus,
   withStatus,
   categoriesForWorkflow,
@@ -25,6 +26,7 @@ import {
   withHubOrCategory,
   workflowOfHub,
 } from '../import-rows';
+import { useImportPlan } from '../import-store';
 import type { ImportParseIssue, ImportParseResponse, ImportRow } from '../import-types';
 import { EngineerPicker } from './engineer-picker';
 
@@ -73,6 +75,11 @@ function IncludeCell({ row: { original: r } }: Cell): React.JSX.Element {
 
 function ProjectCell({ row: { original: r } }: Cell): React.JSX.Element {
   const { issuesByRow } = useCtx();
+  // The chip follows the option: with expansion off the row stays one project (P32-R03).
+  const copies = copiesOfRow(
+    r,
+    useImportPlan((s) => s.options.expandMulti),
+  );
   const issues = issuesByRow.get(r.key) ?? [];
   const worst = issues.some((i) => i.severity === 'error')
     ? 'error'
@@ -86,6 +93,17 @@ function ProjectCell({ row: { original: r } }: Cell): React.JSX.Element {
         <span className="truncate text-xs font-medium text-text" title={r.name}>
           {r.name}
         </span>
+        {copies >= 2 ? (
+          <Badge
+            tone="neutral"
+            className="shrink-0"
+            title={`This row becomes ${String(copies)} projects: ${r.name} (1/${String(copies)}) … (${String(copies)}/${String(copies)})`}
+            data-testid="import-copies"
+          >
+            <span aria-hidden="true">{`×${String(copies)} projects`}</span>
+            <span className="sr-only">{`becomes ${String(copies)} projects`}</span>
+          </Badge>
+        ) : null}
         {worst ? (
           <span
             role="img"

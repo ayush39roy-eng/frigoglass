@@ -94,6 +94,11 @@ export interface ImportParseCounts {
   new: number;
   auto_assign: number;
   new_designers: number;
+  /**
+   * Projects the included, schedulable rows become once "Num of Projects" is expanded
+   * (P32-R03, served by the parse when the backend has it).
+   */
+  projects_after_expansion?: number | undefined;
 }
 
 export interface ImportParseResponse {
@@ -276,6 +281,54 @@ export interface ImportResultIssue {
   message: string;
 }
 
+// --- C1: served breakdowns (P32-R05) -------------------------------------------------------
+
+/** `all`, `<base year>`, `<base year + 1>`, `later`, `not_placed`. */
+export interface BreakdownYear {
+  key: string;
+  label: string;
+}
+
+export interface BreakdownBucket {
+  key: string;
+  total: number;
+  within_year: number;
+  spillover: number;
+  /** left_out + blocked + data_error, served. */
+  not_placed: number;
+}
+
+export interface FinishQuarter {
+  key: string;
+  label: string;
+  count: number;
+}
+
+export interface Breakdown {
+  total: number;
+  file: number;
+  plan: number;
+  outcomes: {
+    within_year: number;
+    spillover: number;
+    left_out: number;
+    blocked: number;
+    data_error: number;
+    excluded: number;
+  };
+  by_category: BreakdownBucket[];
+  by_hub: BreakdownBucket[];
+  by_priority: BreakdownBucket[];
+  by_status: BreakdownBucket[];
+  by_source: BreakdownBucket[];
+  by_finish_quarter: FinishQuarter[];
+}
+
+export interface ImportBreakdowns {
+  years: BreakdownYear[];
+  by_year: Record<string, Breakdown>;
+}
+
 export interface ImportSimulateResponse {
   base_year: number;
   current_week: number;
@@ -293,4 +346,9 @@ export interface ImportSimulateResponse {
   };
   issues: ImportResultIssue[];
   workings: string[];
+  /**
+   * Chart figures over exactly `projects` (C1). Optional so a server without it still
+   * renders (the Executive tab then falls back to the KPI figures).
+   */
+  breakdowns?: ImportBreakdowns | undefined;
 }

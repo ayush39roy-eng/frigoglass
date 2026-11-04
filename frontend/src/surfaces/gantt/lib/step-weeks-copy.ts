@@ -24,8 +24,12 @@ export function workWeeksPhrase(kind: WorkflowStepKind, workWeeks: number, fte: 
 }
 
 /** "W10–W17 on the calendar" — the served bar, verbatim. */
-export function calendarRangePhrase(startWeek: number, endWeek: number): string {
-  return `${formatPlanWeek(startWeek)}–${formatPlanWeek(endWeek)} on the calendar`;
+export function calendarRangePhrase(
+  startWeek: number,
+  endWeek: number,
+  fmt: (week: number) => string = formatPlanWeek,
+): string {
+  return `${fmt(startWeek)}–${fmt(endWeek)} on the calendar`;
 }
 
 /**

@@ -72,7 +72,14 @@ Contract: `docs/API_CONTRACT_P32.md`.
      plan project whose leader is on the roster keeps that leader — `ENGINEER_FROM_PLAN`, info —
      and auto-assign applies only when neither the file nor the matched project names one.)*
    - *Num of Projects*: shown; with `expand_multi=true` a row of `n > 1` becomes `n` projects
-     (`name (k/n)`). Default off: one row, one Gantt line.
+     (`name (k/n)`). Default off: one row, one Gantt line. *(Amended 2026-11-04, owner: expansion
+     is the default — "if it is written 5, the system treats them as 5 projects". `expand_multi`
+     defaults to true (a caller may send false); blank or 1 is one project, `n ≥ 2` is `n` projects
+     `name (k/n)` keyed `row-<file_row>-<k>` with the row's hub, category, status, priority, rank,
+     stage, step weeks and leader; only copy 1 replaces the matched plan project; On Hold rows are
+     still dropped; a value that is not a whole number 1..100 is read as 1 with warning
+     `NUM_PROJECTS_INVALID`; the 600-project cap applies after expansion (422); the parse
+     `counts.projects_after_expansion` gives the expanded total. P32-R03.)*
    - Ignored, never parsed into the response or logged: `Customer`, `CAPEX`, `Tooling`, `notes`,
      `Annual volume`, `Business case summary`, `Comments` (commercially sensitive or free text).
 6. **Durations come from the file's `Process steps` sheet.** Each project's step weeks are the

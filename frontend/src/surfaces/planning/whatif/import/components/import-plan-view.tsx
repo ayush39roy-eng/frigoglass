@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { Check } from 'lucide-react';
 
+import { CardInfo } from '@/components/ui/card-info';
 import { cn } from '@/lib/utils';
 
 import { buildSimulateRequest } from '../import-rows';
@@ -11,17 +12,17 @@ import { ResultsStep } from './results-step';
 import { ReviewStep } from './review-step';
 import { UploadStep } from './upload-step';
 
-const STEPS: { key: ImportStep; label: string; hint: string }[] = [
-  { key: 'upload', label: 'Upload', hint: 'the workbook' },
-  { key: 'review', label: 'Review', hint: 'fix rows, choose engineers' },
-  { key: 'results', label: 'Results', hint: 'plan, Gantt, capacity' },
+const STEPS: { key: ImportStep; label: string }[] = [
+  { key: 'upload', label: 'Upload' },
+  { key: 'review', label: 'Review' },
+  { key: 'results', label: 'Results' },
 ];
 
 function Stepper({ step, canResults, onGo }: { step: ImportStep; canResults: boolean; onGo: (s: ImportStep) => void }) {
   const idx = STEPS.findIndex((s) => s.key === step);
   return (
     <nav aria-label="Import steps">
-      <ol className="flex flex-wrap items-center gap-s2">
+      <ol className="flex flex-wrap items-center gap-s2 rounded-pill border border-border bg-surface px-s3 py-1.5">
         {STEPS.map((s, i) => {
           const done = i < idx;
           const reachable = s.key === 'upload' ? false : s.key === 'review' ? idx > 1 : canResults && idx === 1;
@@ -41,7 +42,7 @@ function Stepper({ step, canResults, onGo }: { step: ImportStep; canResults: boo
                 {done ? <Check className="size-3" /> : i + 1}
               </span>
               <span className={cn('text-xs', i === idx ? 'font-semibold text-text' : 'text-text-muted')}>
-                {s.label} <span className="hidden text-text-muted sm:inline">— {s.hint}</span>
+                {s.label}
               </span>
             </>
           );
@@ -117,14 +118,25 @@ export default function ImportPlanView(): React.JSX.Element {
 
   return (
     <section className="space-y-s4" aria-labelledby="import-plan-heading" data-testid="import-plan-view">
-      <div className="space-y-s2">
-        <h3 id="import-plan-heading" className="text-lg font-semibold text-text">
-          Import plan (Excel)
-        </h3>
-        <p className="max-w-prose text-sm text-text-muted">
-          Upload the capacity-planning workbook, check and fix its rows, then let the scheduler place every project: a
-          Gantt you can adjust and the capacity it needs. Nothing is saved or applied to the real plan.
-        </p>
+      <div className="flex flex-wrap items-center justify-between gap-s3">
+        <div className="min-w-0">
+          <div className="flex items-center gap-1">
+            <h3 id="import-plan-heading" className="text-lg font-semibold text-text">
+              Import plan (Excel)
+            </h3>
+            <CardInfo label="How this works">
+              <p>
+                Upload the capacity-planning workbook, check and fix its rows, then let the scheduler place every
+                project: a Gantt you can adjust and the capacity it needs.
+              </p>
+              <p>
+                Save a result as a scenario, or build variants with quick rules, and compare up to four side by side.
+                Scenarios last for this session only. Nothing is saved or applied to the real plan.
+              </p>
+            </CardInfo>
+          </div>
+          <p className="text-xs text-text-muted">Try a workbook against the plan. Nothing is saved.</p>
+        </div>
         <Stepper step={step} canResults={result !== null} onGo={setStep} />
       </div>
       {step === 'upload' || parsed === null ? (

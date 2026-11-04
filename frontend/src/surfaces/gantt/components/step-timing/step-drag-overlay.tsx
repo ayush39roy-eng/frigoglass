@@ -4,6 +4,7 @@ import { cn } from '@/lib/utils';
 
 import {
   barGeometry,
+  dragLastWeek,
   stepDragCalendar,
   stepDragResult,
   type StepDragMode,
@@ -71,7 +72,8 @@ function dragOutcome(
   const base = stepDragResult(mode, origin, dxPx, scale);
   if (mode !== 'move') return { ...base, overlap: null };
   const drop = overlapForDrop(target.overlapSteps, target.stepId, base.ghost.startWeek, scale.originWeek);
-  const lastWeek = scale.originWeek + scale.horizonWeeks - 1;
+  // P32-R04: a scale may allow drags past its axis end (`maxDragWeek`, W78).
+  const lastWeek = dragLastWeek(scale);
   const start = Math.min(drop.clampedWeek, lastWeek);
   const shift = start - origin.startWeek;
   const overlapWeeks = target.predecessorIds.length === 0 ? null : drop.overlapWeeks;

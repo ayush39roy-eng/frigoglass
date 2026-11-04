@@ -13,6 +13,7 @@ import {
 
 import { StepKindBadge } from '@/components/shared/step-kind-badge';
 import { Badge } from '@/components/ui/badge';
+import { CardInfo } from '@/components/ui/card-info';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -29,6 +30,7 @@ import { useImportPlan } from '../import-store';
 import type { ImportResultProject, ImportResultStep, ImportSimulateResponse, ImportStepMeta } from '../import-types';
 import { axisTicks, longWeekLabel, planYearOf, shortWeekLabel, weekOrDash } from '../week-labels';
 import { importScale, type DropEdit } from '../gantt-geometry';
+import { projectInYear, YEAR_ALL } from '../year-filter';
 import { StepDragHandles } from './step-drag';
 import { ImportStepTimingDialog, type TimingDialogTarget } from './step-timing-dialog';
 
@@ -84,9 +86,12 @@ function YearEndLine({ x, height }: { x: number; height: number }): React.JSX.El
 export function ResultsGantt({
   result,
   pending,
+  yearKey = YEAR_ALL,
 }: {
   result: ImportSimulateResponse;
   pending: boolean;
+  /** The Results Year filter (P32-R05): rows only, the axis stays the whole result's. */
+  yearKey?: string;
 }): React.JSX.Element {
   const edits = useImportPlan((s) => s.edits);
   const undoDepth = useImportPlan((s) => s.undoStack.length);
@@ -113,12 +118,13 @@ export function ResultsGantt({
     const q = search.trim().toLowerCase();
     return result.projects.filter(
       (p) =>
+        projectInYear(p, yearKey, base) &&
         (source === 'all' || p.source === source) &&
         (hub === 'all' || p.hub === hub) &&
         (outcome === 'all' || p.outcome === outcome) &&
         (q === '' || p.name.toLowerCase().includes(q)),
     );
-  }, [result.projects, source, hub, outcome, search]);
+  }, [result.projects, source, hub, outcome, search, yearKey, base]);
 
   const rows: GRow[] = React.useMemo(() => {
     const out: GRow[] = [];
@@ -299,11 +305,16 @@ export function ResultsGantt({
           ) : null}
         </span>
       </div>
-      <p className="text-2xs text-text-muted">
-        Drag a step bar to move it, drag its right edge to change its length, or drop it onto the step above to run the
-        two in parallel (capacity still applies). Every drop recomputes the What-if; nothing is saved. The dashed line
-        is the end of {String(planYear)}.
-      </p>
+      <div className="flex items-center gap-1 text-2xs text-text-muted">
+        Drag a bar to move it, its right edge to resize.
+        <CardInfo label="How Gantt editing works">
+          <p>
+            Drag a step bar to move it, drag its right edge to change its length, or drop it onto the step above to
+            run the two in parallel (capacity still applies). Every drop recomputes the What-if; nothing is saved.
+          </p>
+          <p>The dashed line is the end of {String(planYear)}.</p>
+        </CardInfo>
+      </div>
 
       {filtered.length === 0 ? (
         <p className="text-xs text-text-muted">No project matches these filters.</p>

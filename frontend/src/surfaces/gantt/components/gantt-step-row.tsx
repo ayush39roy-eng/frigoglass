@@ -3,12 +3,74 @@ import { PencilLine, SlidersHorizontal, TriangleAlert } from 'lucide-react';
 
 import { cn } from '@/lib/utils';
 import { formatPlanWeek } from '@/lib/format';
+import { SPILLOVER_YEAR } from '@/lib/domain-constants';
 import { StepKindBadge } from '@/components/shared/step-kind-badge';
 
 import { stepStatusLabels } from '../lib/gantt-status-labels';
 import { editBaselineText, isEffortZeroed } from '../lib/step-duration-source';
+import { isPastScaleEnd, lastScaleWeek, type WeekScale } from '../lib/gantt-coordinates';
+import { stepBarTitle } from '../lib/step-row-text';
 import type { GanttProjectRow, GanttStepRow } from '../api/types';
+import { GanttBarGroup, GanttSpilloverMarker } from './gantt-bars';
 import { hasTimingEdit, stepTimingTarget, useStepTimingHost } from './step-timing/step-timing-context';
+
+/**
+ * One step's bar (planned + actual, served weeks verbatim) and, when it runs
+ * past the axis end, the chevron spillover marker. SVG content: the caller
+ * provides the `<svg>` and `GanttHatchDefs`. Moved out of `gantt-chart.tsx`
+ * in P32-R04 so the Timeline and the Workflow page's per-project waterfall
+ * draw the same bar. `fmt` formats weeks in the hover text (default
+ * `formatPlanWeek`, the Timeline's "After W52").
+ */
+export function StepBarGraphic({
+  project,
+  step: s,
+  scale,
+  height,
+  fmt = formatPlanWeek,
+}: {
+  project: GanttProjectRow;
+  step: GanttStepRow;
+  scale: WeekScale;
+  height: number;
+  fmt?: (week: number) => string;
+}): React.JSX.Element {
+  const planned =
+    s.planned_start_week != null && s.planned_end_week != null
+      ? { startWeek: s.planned_start_week, endWeek: s.planned_end_week }
+      : null;
+  const actual =
+    s.actual_start_week != null && s.actual_end_week != null
+      ? { startWeek: s.actual_start_week, endWeek: s.actual_end_week }
+      : null;
+  const runsPast = !s.skipped && (isPastScaleEnd(planned?.endWeek, scale) || isPastScaleEnd(actual?.endWeek, scale));
+  return (
+    <>
+      <GanttBarGroup
+        scale={scale}
+        y={0}
+        rowHeight={height}
+        planned={planned}
+        actual={actual}
+        plannedEndWeek={s.planned_end_week}
+        delayedEndWeek={s.actual_end_week}
+        frozen={project.frozen}
+        title={stepBarTitle(s, planned, actual, fmt)}
+        compact
+        kind={s.kind}
+        skipped={s.skipped}
+      />
+      {runsPast ? (
+        <GanttSpilloverMarker
+          scale={scale}
+          rowHeight={height}
+          variant="chevron"
+          title={`${s.step_name} continues past ${fmt(lastScaleWeek(scale))} — spillover to ${String(SPILLOVER_YEAR)}`}
+        />
+      ) : null}
+    </>
+  );
+}
 
 /**
  * A Timeline step row's left cell (moved out of `gantt-chart.tsx` in P32-R02).

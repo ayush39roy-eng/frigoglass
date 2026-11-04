@@ -250,7 +250,8 @@ Response `ImportParseResponse`:
   "issues": [ { "row_key": "row-5" | null, "file_row": 5 | null, "field": "engineer" | null,
                 "severity": "info" | "warning" | "error", "code": "ENGINEER_UNKNOWN", "message": "…" } ],
   "counts": { "rows": 97, "schedulable": 85, "not_scheduled": 12, "matched": 38, "new": 59,
-              "auto_assign": 20, "new_designers": 2 }
+              "auto_assign": 20, "new_designers": 2,
+              "projects_after_expansion": 122 }  // Σ max(1, num_projects) over schedulable included rows
 }
 ```
 
@@ -269,7 +270,8 @@ Response `ImportParseResponse`:
   "leader": { "kind": "existing", "engineer_id": "uuid", "name": "Kanarios" }
           | { "kind": "new", "name": "Antonis" } | { "kind": "auto" },
   "matched_project_id": "uuid" | null, "matched_project_name": "…" | null, "match_by": "name" | "code" | null,
-  "num_projects": 1 | null, "must_do": true | null, "spillover_from_previous": true | null,
+  "num_projects": 5 | null,   // whole number 1..100; blank / invalid → null (one project)
+  "must_do": true | null, "spillover_from_previous": true | null,
   "complexity": "H" | null, "est_duration_months": "6-12" | null,
   "certification_testing_required": true,
   "step_weeks": { "PDD-A": 1, …14 },   // the workflow's 14 steps from lead_time_label
@@ -281,7 +283,9 @@ Issue codes: `HUB_DEFAULTED`, `HUB_OEM_DEFAULTED`, `CATEGORY_DEFAULTED`, `CATEGO
 `STATUS_DEFAULTED`, `STATUS_NOT_SCHEDULED`, `STAGE_UNKNOWN`, `STAGE_WORKFLOW_MISMATCH` (stage letter
 kept, mapped to the hub's workflow), `ENGINEER_MISSING` (→ auto), `ENGINEER_FROM_PLAN` (blank engineer on a matched row keeps the plan project's leader), `ENGINEER_UNKNOWN` (→ new designer),
 `MATCH_AMBIGUOUS`, `MATCHED`, `RANK_INVALID`, `NO_PROCESS_STEPS`, `LEAD_TIME_ROW_MISSING`,
-`LEAD_TIME_VALUE`, `DUPLICATE_ROW`.
+`LEAD_TIME_VALUE`, `DUPLICATE_ROW`, `NUM_PROJECTS_INVALID` (warning: a non-blank `Num of Projects`
+that is not a whole number 1..100 — `"x"`, `0`, `-2`, `2.5`, `101` — is read as 1 project;
+`"2"`, `2.0`, `" 3 "` are accepted). *(Amended 2026-11-04, P32-R03.)*
 
 ### B3. `POST /whatif/import/simulate` (backend-builder)
 
@@ -295,7 +299,7 @@ Request:
 {
   "mode": "merge" | "file_only",
   "plan_year_end_week": 52 | 104,
-  "expand_multi": false,
+  "expand_multi": true,          // default true (owner 2026-11-04); false = one project per row
   "rows": [ ImportRow ],         // as returned by /parse, possibly edited; ≤ 600 after expansion
   "edits": [ { "project_ref": "row-5" | "<project uuid>", "step_id": "PDD-E",
                "duration_weeks": 6 | null, "start_not_before_week": 60 | null, "overlap_weeks": 2 | null } ]
@@ -307,6 +311,17 @@ workflow, `step_weeks` keys = the workflow's 14 steps with 0..104, `matched_proj
 resolves `leader` (existing id must be on the roster; `new` names are deduplicated per
 (name, capacity hub) into `ImportNewEngineer`s), drops `include=false` rows, expands
 `num_projects` when `expand_multi`, and calls `run_plan_import` in the What-if worker thread.
+
+*(Amended 2026-11-04, P32-R03, owner: "if it is written 5, the system treats them as 5 projects".)*
+`expand_multi` defaults to **true**; a caller may still send `false` (one project per row). A
+schedulable included row with `num_projects = n ≥ 2` becomes `n` projects named `"<name> (k/n)"`,
+refs `"<key>-<k>"` (`row-<file_row>-<k>`), each with the row's hub, category, status, priority,
+rank, stage, step weeks and leader. Only copy 1 carries `replaces_project_id` (replaces the matched
+plan project); copies 2..n are new. On Hold / Cancelled / Commercialized rows are still dropped
+whatever their count. Blank / 1 / null is one project with the unsuffixed ref. The 600-project cap
+is checked on the expanded total before anything runs: 422 `INVALID_IMPORT` "the file gives N
+projects after expanding Num of Projects; at most 600 can be simulated. Exclude rows, lower Num of
+Projects or turn off the expansion." Edits address a copy by its `"<key>-<k>"` ref.
 
 Response `ImportSimulateResponse`:
 
@@ -382,7 +397,7 @@ Zustand store (session only):
    "New designer…" with a name input). Rows with `ENGINEER_MISSING` / `ENGINEER_UNKNOWN` are
    highlighted and a top banner says "N projects have no engineer — choose one or keep auto-assign".
    Matched rows show "replaces: <plan project>". Options: Mode (Merge with current plan / This file
-   only), Plan year (2027 default / 2026), Expand "Num of Projects". "Compute plan" button.
+   only), Plan year (2027 default / 2026), Expand "Num of Projects" (on by default, 2026-11-04). "Compute plan" button.
 3. **Results**, tabs:
    - *Overview*: KPI tiles (projects, finishing in plan year, spillover, left out; file vs plan;
      before/after for merge), newly slipping / recovered lists, issues.
@@ -402,3 +417,60 @@ Zustand store (session only):
 - No `dangerouslySetInnerHTML`; every figure is served (the browser only formats weeks and draws).
 - Tests: store, the release/overlap helper, lane packing, parse → review → simulate happy path
   with MSW-style mocks, engineer combobox, a11y (axe) on each step.
+
+---
+
+## Part C — Executive view, year filter, scenario comparison (P32-R05, owner 2026-11-05)
+
+### C1. Served breakdowns (backend-builder)
+
+`ImportSimulateResponse` gains `breakdowns`, computed by the service from the SAME scoped project list it
+returns (file projects + in-scope plan projects, excluded plan projects omitted as today), so every chart
+figure is served (I9) and reconciles with `projects`:
+
+```jsonc
+"breakdowns": {
+  "years": [ { "key": "all", "label": "All projects" },
+             { "key": "2026", "label": "Finish in 2026" },        // finish_week 1..52
+             { "key": "2027", "label": "Finish in 2027" },        // 53..104
+             { "key": "later", "label": "Finish after 2027" },    // > 104
+             { "key": "not_placed", "label": "Not placed" } ],    // outcome left_out / data_error / blocked
+  "by_year": { "<key>": Breakdown }
+}
+Breakdown = {
+  "total": 0, "file": 0, "plan": 0,
+  "outcomes": { "within_year": 0, "spillover": 0, "left_out": 0, "blocked": 0, "data_error": 0, "excluded": 0 },
+  "by_category": [ Bucket ], "by_hub": [ Bucket ], "by_priority": [ Bucket ],
+  "by_status": [ Bucket ], "by_source": [ Bucket ],
+  "by_finish_quarter": [ { "key": "2027-Q1", "label": "Q1 '27", "count": 0 } ]   // placed projects only, chronological
+}
+Bucket = { "key": "A+", "total": 0, "within_year": 0, "spillover": 0, "not_placed": 0 }
+```
+
+- Bucket order: category `A+ → A → B → C → A-OEM → B-OEM → C-OEM`; priority `P1 → Q`; hub and status in
+  the app's canonical order; empty buckets omitted. `within_year` = finishes by the plan year end
+  (`within_plan_year`), `spillover` = placed but later, `not_placed` = left_out + blocked + data_error.
+- Σ buckets of any dimension = `total`; `by_year.all.total` = number of returned `projects`.
+
+### C2. Frontend (frontend-builder)
+
+- **Results → "Executive" tab first** (replaces the current Overview), modelled on the Dashboard's Executive
+  view (ADR 0039 components: KPI tiles, donuts / stacked bars, reuse them): KPI tiles (projects, finish in
+  the plan year, spill over, not placed, file vs plan, before → after for merge), outcome donut, stacked bars
+  by category / hub / priority / status (within year · spillover · not placed), finishes per quarter,
+  newly slipping list. A **Year** segmented filter (All · 2026 · 2027 · After 2027 · Not placed) switches the
+  served `by_year[key]` block, and the same filter applies to the Gantt and Projects tabs (by each project's
+  served `finish_week` / outcome — row filtering only, no counting).
+- Tabs: Executive · Gantt · Capacity · Projects · Compare.
+- **Scenarios & compare** (session-only, Zustand): "Save as scenario" names the current computed result
+  (rows + options + edits + response). A **scenario builder** creates a variant from the parsed rows with
+  quick rules: include/exclude by category, hub, priority, source, status; "at most N of category X" (taking
+  the first N by priority band then rank then file row), e.g. "only 5 A+"; toggle merge/file-only. Each
+  variant is computed with the normal `/simulate`. **Compare** tab: up to 4 scenarios side by side — KPI
+  table with deltas vs the first (baseline) scenario, grouped bar chart (within year / spillover / not
+  placed), capacity booked % per hub and window, and "projects that change outcome" between two chosen
+  scenarios. Nothing is persisted; a banner says scenarios are kept for this session only.
+- **UI clean-up** across Upload / Review / Results: remove long explanatory paragraphs (keep one short
+  subtitle; move detail into info tooltips / "How this works" disclosure), consistent feature cards
+  (same card component, header with icon + title + one-line hint, consistent spacing), a clear stepper,
+  sticky action bar (Compute / Save as scenario), and the existing design tokens only.

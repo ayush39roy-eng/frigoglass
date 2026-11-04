@@ -18,7 +18,7 @@ describe('import store (session only)', () => {
     expect(s().options).toEqual({
       mode: 'merge',
       planYearEndWeek: 104,
-      expandMulti: false,
+      expandMulti: true,
     });
     expect(s().edits).toEqual({});
     expect(s().result).toBeNull();
@@ -84,5 +84,23 @@ describe('import store (session only)', () => {
     s().setOptions({ mode: 'file_only' });
     s().pruneEdits();
     expect(Object.keys(s().edits)).toEqual(['row-6|PDD-E']);
+  });
+
+  it('P32-R03: expansion is on by default (also after reset); toggling it off prunes copy edits', () => {
+    expect(s().options.expandMulti).toBe(true);
+    s().setOptions({ expandMulti: false });
+    s().reset();
+    expect(s().options.expandMulti).toBe(true);
+    s().setParsed({
+      ...PARSE_RESPONSE,
+      rows: PARSE_RESPONSE.rows.map((r) => (r.key === 'row-6' ? { ...r, num_projects: 5 } : r)),
+    });
+    s().applyEdit('row-6-2', 'PDD-E', { start_not_before_week: 50 }, {});
+    s().applyEdit('row-5', 'PDD-E', { start_not_before_week: 50 }, {});
+    s().pruneEdits();
+    expect(Object.keys(s().edits).sort()).toEqual(['row-5|PDD-E', 'row-6-2|PDD-E']);
+    s().setOptions({ expandMulti: false });
+    s().pruneEdits();
+    expect(Object.keys(s().edits)).toEqual(['row-5|PDD-E']);
   });
 });

@@ -147,9 +147,37 @@ export function isEmptyEdit(
   return e.duration_weeks === null && e.start_not_before_week === null && e.overlap_weeks === null;
 }
 
-/** Does `ref` (a result project ref) belong to file row `rowKey` (incl. expanded copies)? */
-function refOfRow(ref: string, rowKey: string, expand: boolean): boolean {
-  return ref === rowKey || (expand && ref.startsWith(`${rowKey}-`));
+/**
+ * How many projects a file row becomes in the run (owner rule 2026-11-04, P32-R03): the
+ * "Num of Projects" column is a project count, blank/1 → 1, n ≥ 2 → n when `expand` is on.
+ * Mirrors the server's expansion (`services/whatif_import.py`); used to map refs and for the
+ * Review chip / fallback tile only, never as a schedule figure.
+ */
+export function copiesOfRow(row: Pick<ImportRow, 'num_projects'>, expand: boolean): number {
+  return expand && row.num_projects !== null && row.num_projects >= 2 ? row.num_projects : 1;
+}
+
+/**
+ * Does `ref` (a result project ref) belong to file row `row` under the current expansion?
+ * One copy → the ref is the row key; n copies → `<key>-<k>` with 1 ≤ k ≤ n (server keys).
+ * A ref from the other expansion setting does not match, so toggling prunes its edits.
+ */
+export function refOfRow(ref: string, row: Pick<ImportRow, 'key' | 'num_projects'>, expand: boolean): boolean {
+  const n = copiesOfRow(row, expand);
+  if (n === 1) return ref === row.key;
+  const prefix = `${row.key}-`;
+  if (!ref.startsWith(prefix)) return false;
+  const tail = ref.slice(prefix.length);
+  if (!/^[1-9]\d*$/.test(tail)) return false;
+  return Number(tail) <= n;
+}
+
+/**
+ * Display-only fallback for the Review "Projects to schedule" tile when the parse does not
+ * serve `counts.projects_after_expansion`: Σ copies over included, mapped rows.
+ */
+export function projectsToSchedule(rows: readonly ImportRow[], expand: boolean): number {
+  return rows.reduce((acc, r) => (r.include && isMappedStatus(r.status) ? acc + copiesOfRow(r, expand) : acc), 0);
 }
 
 /**
@@ -168,9 +196,10 @@ export function editsForRequest(
   return Object.values(edits)
     .filter((e) => {
       if (isEmptyEdit(e)) return false;
-      const row = rows.find((r) => refOfRow(e.project_ref, r.key, options.expandMulti));
+      const row = rows.find((r) => refOfRow(e.project_ref, r, options.expandMulti));
       if (row) return row.include;
-      if (/^row-\d/.test(e.project_ref)) return false; // a row key that no longer exists
+      // A row key that no longer exists, or a copy of the other expansion setting.
+      if (/^row-\d/.test(e.project_ref)) return false;
       if (options.mode === 'file_only') return false;
       return !replaced.has(e.project_ref);
     })

@@ -60,7 +60,10 @@ describe.each(ROLE_NAMES)('gating for role: %s', (role: RoleName) => {
       .map((i) => i.path)
       .sort();
     // `surface: null` (P13-T15 Downloads) = any authenticated user.
-    const expected = SURFACES.filter((s) => (s.surface === null ? true : permissions[s.surface].read))
+    // P32-R04: `alsoReadableVia` surfaces also show the item (Workflow ← gantt read).
+    const expected = SURFACES.filter((s) =>
+      s.surface === null ? true : permissions[s.surface].read || (s.alsoReadableVia ?? []).some((v) => permissions[v].read),
+    )
       .map((s) => s.path)
       .sort();
     expect(visiblePaths).toEqual(expected);
@@ -111,6 +114,19 @@ describe('route guard', () => {
   it('the Project Workspace route is gated on project_workspace', async () => {
     renderApp('/projects/p-1', { session: { roles: ['Auditor'], permissions: ROLE_MATRIX.Auditor } });
     expect(await screen.findByTestId('forbidden-page')).toBeInTheDocument();
+  });
+
+  it('P32-R04: /settings/workflow opens for a Hub Planner (gantt read) and is 403 for the Auditor', async () => {
+    const { unmount } = renderApp('/settings/workflow', {
+      session: { roles: ['Hub Planner'], permissions: ROLE_MATRIX['Hub Planner'] },
+    });
+    expect(await screen.findByRole('tab', { name: 'Project step timing' })).toBeInTheDocument();
+    expect(screen.queryByRole('tab', { name: 'Workflow templates' })).not.toBeInTheDocument();
+    expect(screen.queryByTestId('forbidden-page')).not.toBeInTheDocument();
+    unmount();
+
+    renderApp('/settings/workflow', { session: { roles: ['Auditor'], permissions: ROLE_MATRIX.Auditor } });
+    expect(await screen.findByTestId('forbidden-page')).toHaveTextContent(/does not have access to Workflow Settings/);
   });
 
   it('a readable Project Workspace route mounts the workspace surface (not the 403 page)', async () => {

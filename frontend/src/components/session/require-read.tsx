@@ -1,7 +1,7 @@
 import * as React from 'react';
 
 import { ForbiddenPage } from '@/pages/forbidden';
-import { usePermission } from '@/stores/session';
+import { permissionFor, usePermission, useSessionStore } from '@/stores/session';
 import type { SurfaceKey } from '@/types/enums';
 
 /**
@@ -32,4 +32,29 @@ export function RequireRead({
   const { read } = usePermission(surface);
   if (!read && !alsoAllow) return <ForbiddenPage surfaceTitle={title} />;
   return <>{children}</>;
+}
+
+/**
+ * P32-R04: a route readable through further surfaces as well as its own
+ * (`nav.ts` `alsoReadableVia`; `/settings/workflow` = `workflow_settings` OR
+ * `gantt` read). The shared `alsoAllow` escape hatch above, nothing more.
+ */
+export function RequireAnyRead({
+  surface,
+  title,
+  via,
+  children,
+}: {
+  surface: SurfaceKey;
+  title: string;
+  via: readonly SurfaceKey[];
+  children: React.ReactNode;
+}): React.JSX.Element {
+  const me = useSessionStore((s) => s.me);
+  const alsoAllow = via.some((v) => permissionFor(me, v).read);
+  return (
+    <RequireRead surface={surface} title={title} alsoAllow={alsoAllow}>
+      {children}
+    </RequireRead>
+  );
 }

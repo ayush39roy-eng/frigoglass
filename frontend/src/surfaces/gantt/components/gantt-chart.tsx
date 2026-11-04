@@ -31,8 +31,7 @@ import { GanttCompletionMarkers } from './gantt-completion-markers';
 import { GanttProjectDetailsDialog } from './gantt-project-details';
 import { ProjectMetaLine, RowWeeks } from './gantt-row-meta';
 import { AXIS_HEIGHT, GanttGridLines, GanttWeekAxis } from './gantt-time-axis';
-import { StepLeftCell } from './gantt-step-row';
-import { stepBarTitle } from '../lib/step-row-text';
+import { StepBarGraphic, StepLeftCell } from './gantt-step-row';
 import { StepDragOverlay } from './step-timing/step-drag-overlay';
 import { stepTimingTarget } from './step-timing/step-timing-context';
 
@@ -422,41 +421,8 @@ function BarLayer({
       );
     }
   } else {
-    const s = row.step;
-    const planned =
-      s.planned_start_week != null && s.planned_end_week != null
-        ? { startWeek: s.planned_start_week, endWeek: s.planned_end_week }
-        : null;
-    const actual =
-      s.actual_start_week != null && s.actual_end_week != null
-        ? { startWeek: s.actual_start_week, endWeek: s.actual_end_week }
-        : null;
-    group = (
-      <GanttBarGroup
-        scale={scale}
-        y={0}
-        rowHeight={height}
-        planned={planned}
-        actual={actual}
-        plannedEndWeek={s.planned_end_week}
-        delayedEndWeek={s.actual_end_week}
-        frozen={row.project.frozen}
-        title={stepBarTitle(s, planned, actual)}
-        compact
-        kind={s.kind}
-        skipped={s.skipped}
-      />
-    );
-    if (!s.skipped && (isPastScaleEnd(planned?.endWeek, scale) || isPastScaleEnd(actual?.endWeek, scale))) {
-      spilloverMarker = (
-        <GanttSpilloverMarker
-          scale={scale}
-          rowHeight={height}
-          variant="chevron"
-          title={`${s.step_name} continues past W52 — spillover to ${String(SPILLOVER_YEAR)}`}
-        />
-      );
-    }
+    // P32-R04: shared with the Workflow page's per-project waterfall.
+    group = <StepBarGraphic project={row.project} step={row.step} scale={scale} height={height} />;
   }
 
   // The two completion lines are per PROJECT row (DOMAIN_RULES "Expected vs

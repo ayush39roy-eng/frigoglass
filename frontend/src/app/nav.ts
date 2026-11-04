@@ -63,6 +63,13 @@ export interface SurfaceNavItem {
    */
   surface: SurfaceKey | null;
   /**
+   * P32-R04: further surfaces whose READ also shows this item (OR with
+   * `surface`). `/settings/workflow` carries the per-project step timing,
+   * readable with `gantt` read; its template tabs stay on `workflow_settings`
+   * inside the page, and the server enforces both.
+   */
+  alsoReadableVia?: readonly SurfaceKey[];
+  /**
    * Density zone this surface renders in (src/components/layout/density-zone.tsx).
    *
    * 'overview' is for screens a person READS — a board audience, a form being filled
@@ -172,12 +179,16 @@ export const SURFACES: readonly SurfaceNavItem[] = [
   {
     path: '/settings/workflow',
     surface: 'workflow_settings',
+    // P32-R04 (owner 2026-11-04): per-project step timing lives here too, for
+    // everyone who reads the Timeline (editing is decided per step by the
+    // served `timing_editable`).
+    alsoReadableVia: ['gantt'],
     label: 'Workflow',
     title: 'Workflow Settings',
     icon: Workflow,
     task: 'P9-T04',
     summary:
-      'The two workflow templates (PDD / OEM): step kinds and precedence, the client lead-time table, hub work calendars and chamber downtime (ADRs 0007–0009). Super Admin edits; Admin reads.',
+      "Project step timing: move, resize or run a project's steps in parallel. The two workflow templates (PDD / OEM): step kinds and precedence, the client lead-time table, hub work calendars and chamber downtime (ADRs 0007–0009). Super Admin edits the templates; Admin reads them.",
     group: 'Configure',
     density: 'working',
   },

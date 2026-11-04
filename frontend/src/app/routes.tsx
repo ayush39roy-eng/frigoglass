@@ -3,7 +3,7 @@ import { Navigate, type RouteObject } from 'react-router-dom';
 
 import { AppShell } from '@/components/layout/app-shell';
 import { SurfaceFallback } from '@/components/layout/surface-fallback';
-import { RequireRead } from '@/components/session/require-read';
+import { RequireAnyRead, RequireRead } from '@/components/session/require-read';
 import { NotFound, RouteErrorBoundary } from '@/pages/not-found';
 import { PlaceholderPage } from '@/pages/placeholder-page';
 import { useSessionStore } from '@/stores/session';
@@ -114,6 +114,10 @@ const surfaceRoutes: RouteObject[] = SURFACES.map((surface) => {
   const element =
     surface.surface === null ? (
       inner
+    ) : surface.alsoReadableVia ? (
+      <RequireAnyRead surface={surface.surface} title={surface.title} via={surface.alsoReadableVia}>
+        {inner}
+      </RequireAnyRead>
     ) : (
       <Guard surface={surface.surface} title={surface.title}>
         {inner}

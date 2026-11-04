@@ -438,6 +438,57 @@ def test_counts():
     c = res.counts
     assert (c.rows, c.schedulable, c.not_scheduled, c.matched, c.new) == (4, 3, 1, 0, 4)
     assert (c.auto_assign, c.new_designers) == (1, 1)  # "Zed" / "zed" is one designer
+    assert c.projects_after_expansion == 3
+
+
+# Owner rule 2026-11-04: Num of Projects blank / 1 is one project, n >= 2 is n;
+# anything else is read as 1 with a warning.
+@pytest.mark.parametrize(
+    "raw,expected,warned",
+    [
+        (None, None, False),
+        ("", None, False),
+        ("   ", None, False),
+        (1, 1, False),
+        ("2", 2, False),
+        (2.0, 2, False),
+        (" 3 ", 3, False),
+        ("4.0", 4, False),
+        (100, 100, False),
+        ("x", None, True),
+        (0, None, True),
+        (-2, None, True),
+        ("-2", None, True),
+        (101, None, True),
+        (2.5, None, True),
+        ("2.5", None, True),
+        (True, None, True),
+    ],
+)
+def test_num_projects_parsing(raw, expected, warned):
+    res = _parse([row(name="a", hub="Greece", category="A", status="Que", num=raw)])
+    (r,) = res.rows
+    assert r.num_projects == expected
+    assert (_codes(res)["NUM_PROJECTS_INVALID"] == 1) is warned
+    if warned:
+        (i,) = [i for i in res.issues if i.code == "NUM_PROJECTS_INVALID"]
+        assert (i.severity, i.field, i.row_key) == ("warning", "num_projects", r.key)
+        assert "read as 1 project" in i.message
+    assert res.counts.projects_after_expansion == (expected or 1)
+
+
+def test_projects_after_expansion_counts_schedulable_included_rows_only():
+    res = _parse(
+        [
+            row(name="a", hub="Greece", category="A", status="Que", num=5),
+            row(name="b", hub="Greece", category="A", status="Que", num=1),
+            row(name="c", hub="Greece", category="A", status="Que"),
+            row(name="d", hub="Greece", category="A", status="On Hold", num=7),
+            row(name="e", hub="Greece", category="A", status="Que", num="lots"),
+        ]
+    )  # fmt: skip
+    assert res.counts.schedulable == 4
+    assert res.counts.projects_after_expansion == 5 + 1 + 1 + 1
 
 
 def test_blank_engineer_on_a_matched_row_keeps_the_plan_leader():

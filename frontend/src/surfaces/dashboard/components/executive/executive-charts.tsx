@@ -38,7 +38,7 @@ import { formatServedPct, typeLabel } from '../../lib/analytics';
 
 /* --------------------------------- chrome ---------------------------------- */
 
-function ChartCard({
+export function ChartCard({
   title,
   info,
   testId,
@@ -65,11 +65,12 @@ function ChartCard({
 
 /* --------------------------------- donuts ---------------------------------- */
 
-interface Slice {
+export interface Slice {
   key: string;
   label: string;
   count: number;
-  share_pct: number;
+  /** Served share; omitted when the source serves counts only (P32-R05 import view). */
+  share_pct?: number | undefined;
   fill: string;
   /** P31 cross-filter: another slice is selected and this one is not. */
   dim?: boolean;
@@ -95,6 +96,13 @@ function wrapWords(label: string, max = 14): string[] {
   }
   if (current !== '') lines.push(current);
   return lines;
+}
+
+/** "count · served share", or the count alone when no share is served. */
+function sliceFigure(s: Slice): string {
+  return s.share_pct === undefined
+    ? formatInteger(s.count)
+    : `${formatInteger(s.count)} · ${formatServedPct(s.share_pct)}`;
 }
 
 interface SliceLabelProps {
@@ -127,7 +135,7 @@ function renderLeaderLabel(props: SliceLabelProps): React.ReactElement {
   const ex = mx + (right ? 9 : -9);
   let tx = ex + (right ? 3 : -3);
   const lines = wrapWords(datum.label);
-  const rows = [...lines, `${formatInteger(datum.count)} · ${formatServedPct(datum.share_pct)}`];
+  const rows = [...lines, sliceFigure(datum)];
   const lineHeight = 11;
   // CLAMP the callout inside the SVG (the pie is centred, so the viewport is
   // ~2·cx wide and ~2·cy tall): a label may tuck back over the ring's edge on
@@ -185,7 +193,7 @@ interface DonutSelect {
   legendLabel: string;
 }
 
-function HeroDonut({
+export function HeroDonut({
   title,
   info,
   slices,
@@ -310,9 +318,7 @@ function HeroDonut({
         {slices.map((s) => (
           <div key={s.key} data-testid={`${testId}-slice-${s.key}`}>
             <dt>{s.label}</dt>
-            <dd data-numeric="">
-              {formatInteger(s.count)} · {formatServedPct(s.share_pct)}
-            </dd>
+            <dd data-numeric="">{sliceFigure(s)}</dd>
           </div>
         ))}
       </dl>
