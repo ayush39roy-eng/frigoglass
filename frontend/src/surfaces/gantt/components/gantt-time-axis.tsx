@@ -40,7 +40,7 @@ function labelStride(weekWidthPx: number): number {
 export interface GanttWeekAxisProps {
   scale: WeekScale;
   /** P32-R04: tick text for an absolute week (default: the number, e.g. "47"). */
-  weekLabel?: (week: number) => string;
+  weekLabel?: ((week: number) => string) | undefined;
   /** P32-R04: the axis' accessible name (default: "Week axis, week 1 to week 52"). */
   ariaLabel?: string;
 }

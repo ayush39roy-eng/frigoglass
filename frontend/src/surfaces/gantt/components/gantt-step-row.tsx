@@ -33,7 +33,7 @@ export function StepBarGraphic({
   step: GanttStepRow;
   scale: WeekScale;
   height: number;
-  fmt?: (week: number) => string;
+  fmt?: ((week: number) => string) | undefined;
 }): React.JSX.Element {
   const planned =
     s.planned_start_week != null && s.planned_end_week != null

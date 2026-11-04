@@ -10,15 +10,20 @@ import { NativeSelect } from '../../components/form-controls';
 import { num } from '../../components/figures';
 import { ProjectRowsTable, SectionHeading, type RowColumn } from '../../components/result-parts';
 import type { CapacityWindowDef, CapacityWindowFigure, DesignerRow, ImportSimulateResponse } from '../import-types';
+import { capacityHubDrill, capacityLabDrill, designerDrill, type Drill } from '../drilldown';
 import { shortWeekLabel } from '../week-labels';
+import { DrillNumber } from './drill-number';
 import { ServedStatusChip } from './status-chip';
 
 function WindowCells({
   windows,
   figures,
+  drill,
 }: {
   windows: readonly CapacityWindowDef[];
   figures: readonly CapacityWindowFigure[];
+  /** The projects booked in the cell (P32-R07). */
+  drill: (windowKey: string) => Drill;
 }) {
   return (
     <>
@@ -28,7 +33,9 @@ function WindowCells({
           <TableCell key={w.key} className="whitespace-nowrap">
             {f ? (
               <span className="inline-flex flex-wrap items-center gap-1.5">
-                <span className="font-mono tabular-nums">{`${num(f.load_weeks)} / ${num(f.capacity_weeks)}`}</span>
+                <DrillNumber drill={drill(w.key)} className="font-mono tabular-nums" testId="import-cap-cell">
+                  {`${num(f.load_weeks)} / ${num(f.capacity_weeks)}`}
+                </DrillNumber>
                 <span className="font-mono font-semibold tabular-nums">{formatBookedPct(f.booked_pct)}</span>
                 <ServedStatusChip status={f.status} />
               </span>
@@ -56,6 +63,7 @@ function WindowTable({
     name: string;
     extra: string;
     figures: CapacityWindowFigure[];
+    drill: (windowKey: string) => Drill;
   }[];
 }): React.JSX.Element {
   return (
@@ -80,7 +88,7 @@ function WindowTable({
                 <TableRow key={r.key}>
                   <TableCell className="font-medium">{r.name}</TableCell>
                   <TableCell className="font-mono tabular-nums">{r.extra}</TableCell>
-                  <WindowCells windows={windows} figures={r.figures} />
+                  <WindowCells windows={windows} figures={r.figures} drill={r.drill} />
                 </TableRow>
               ))}
             </TableBody>
@@ -127,7 +135,9 @@ export function ResultsCapacity({ result }: { result: ImportSimulateResponse }):
       header: 'Designer',
       cell: (d) => (
         <span className="inline-flex items-center gap-1.5 font-medium">
-          {d.name}
+          <DrillNumber drill={designerDrill(result, d.ref, d.name)} testId="import-designer-drill">
+            {d.name}
+          </DrillNumber>
           {d.is_new ? <Badge tone="primary">new</Badge> : null}
         </span>
       ),
@@ -173,6 +183,7 @@ export function ResultsCapacity({ result }: { result: ImportSimulateResponse }):
           name: h.hub,
           extra: num(h.fte),
           figures: h.windows,
+          drill: (wk: string) => capacityHubDrill(result, h.hub, wk),
         }))}
       />
       <WindowTable
@@ -184,6 +195,7 @@ export function ResultsCapacity({ result }: { result: ImportSimulateResponse }):
           name: r.region,
           extra: String(r.chambers),
           figures: r.windows,
+          drill: (wk: string) => capacityLabDrill(result, r.region, wk),
         }))}
       />
 

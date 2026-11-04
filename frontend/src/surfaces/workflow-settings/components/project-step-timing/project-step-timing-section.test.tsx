@@ -15,6 +15,18 @@ import type { GanttProjectRow, GanttResponse, GanttStepRow, StepTimingResponse }
 import { P13_GANTT_ROW_DEFAULTS } from '@/surfaces/gantt/test-fixtures';
 import type { RoleName, WorkflowStepKind } from '@/types/enums';
 
+// Deterministic virtualization: render every visual row.
+const virt = { scrollToIndex: vi.fn() };
+vi.mock('@tanstack/react-virtual', () => ({
+  useVirtualizer: ({ count }: { count: number }) => ({
+    getTotalSize: () => count * 44,
+    getVirtualItems: () =>
+      Array.from({ length: count }, (_, index) => ({ key: index, index, start: index * 44, size: 44 })),
+    measureElement: () => undefined,
+    scrollToIndex: (...a: unknown[]) => virt.scrollToIndex(...a),
+  }),
+}));
+
 const api = { fetchGantt: vi.fn(), setStepTiming: vi.fn() };
 vi.mock('@/surfaces/gantt/api/gantt-api', async () => {
   const actual = await vi.importActual<typeof import('@/surfaces/gantt/api/gantt-api')>('@/surfaces/gantt/api/gantt-api');
@@ -67,7 +79,7 @@ import type { WorkspaceResponse } from '@/surfaces/project-workspace/api/types';
 import { GanttWeekAxis } from '@/surfaces/gantt/components/gantt-time-axis';
 import { render } from '@testing-library/react';
 
-const WEEK_PX = 24; // WATERFALL_WEEK_PX
+const WEEK_PX = 16; // the chart's minimum week width (jsdom has no layout width)
 const LETTERS = 'ABCDEFGHIJKLMN';
 const KINDS: WorkflowStepKind[] = ['design', 'design', 'elapsed', 'design', 'design', 'lab', 'design', 'elapsed', 'lab', 'design', 'design', 'lab', 'design', 'elapsed'];
 
@@ -140,7 +152,8 @@ function gantt(rows: GanttProjectRow[]): GanttResponse {
 
 const PROJECTS = [
   { project_id: 'p1', project_name: 'Cooler Alpha', external_code: '24-001', hub: 'R&D-Greece', status: 'In Development', priority: 'P1' },
-  { project_id: 'p2', project_name: 'Freezer Beta', external_code: null, hub: 'R&D-India', status: 'In Queue', priority: 'P3' },
+  { project_id: 'p2', project_name: 'Frameless Door E-47', external_code: null, hub: 'R&D-Greece', status: 'In Queue', priority: 'P1' },
+  { project_id: 'p3', project_name: 'Freezer Beta', external_code: null, hub: 'PD-India', status: 'On Hold', priority: 'P3' },
 ];
 
 function response(over: Partial<StepTimingResponse> = {}): StepTimingResponse {
@@ -170,7 +183,26 @@ const CHANGES: ScheduleRunChanges = {
   rows: [],
 };
 
-let projectRow: GanttProjectRow = row();
+
+/** p1 fully placed (14 steps W42–W55); p2 left out (no served steps); p3 placed, another hub. */
+let rowsServed: GanttProjectRow[] = [];
+function defaultRows(): GanttProjectRow[] {
+  return [
+    row({ leader_engineer_id: 'eng-1', external_code: '24-001' }),
+    row({ project_id: 'p2', project_name: 'Frameless Door E-47', left_out: true, projected_end_week: null, expected_end_week: 63, leader_engineer_id: 'eng-1', steps: [] }),
+    row({ project_id: 'p3', project_name: 'Freezer Beta', hub: 'PD-India', priority: 'P3', leader_engineer_id: 'eng-2', steps: steps().map((st) => ({ ...st, timing_editable: 'none' as const })) }),
+  ];
+}
+
+/** A workspace payload for p2 with all 14 stages (PDD-C skipped, none placed). */
+function workspace(project: Partial<WorkspaceResponse['project']> = {}) {
+  const base = workspaceFixture();
+  return {
+    ...base,
+    project: { ...base.project, id: 'p2', status: 'In Queue' as const, frozen: false, ...project },
+    stages: Array.from({ length: 14 }, (_, i) => stage(i, { planned_start_week: null, planned_end_week: null, skipped: i === 2 })),
+  };
+}
 
 function LocationProbe() {
   const loc = useLocation();
@@ -187,103 +219,134 @@ function renderPage(route = '/settings/workflow', role?: RoleName) {
   );
 }
 
-/** Calls of `fetchGantt` for one project (the waterfall's read). */
-function projectReads(): number {
-  return api.fetchGantt.mock.calls.filter((c) => (c[0] as { projectId?: string }).projectId === 'p1').length;
-}
-
 function drag(el: Element, fromX: number, toX: number) {
   fireEvent.pointerDown(el, { pointerId: 1, button: 0, clientX: fromX });
   fireEvent.pointerMove(el, { pointerId: 1, clientX: toX });
   fireEvent.pointerUp(el, { pointerId: 1, button: 0, clientX: toX });
 }
 
-function stepRow(stepId: string): HTMLElement {
-  const el = screen.getAllByTestId('waterfall-step-row').find((r) => r.getAttribute('data-step-id') === stepId);
-  if (!el) throw new Error(`no row ${stepId}`);
+function projectRows(): HTMLElement[] {
+  return screen.getAllByTestId('gantt-project-row');
+}
+function stepRows(projectId: string): HTMLElement[] {
+  return screen.getAllByTestId('gantt-step-row').filter((r) => r.getAttribute('data-project-id') === projectId);
+}
+function stepRow(projectId: string, sequence: number): HTMLElement {
+  const el = stepRows(projectId)[sequence - 1];
+  if (!el) throw new Error(`no step ${String(sequence)} of ${projectId}`);
   return el;
+}
+async function expand(name: string) {
+  fireEvent.click(await screen.findByRole('button', { name: `Expand steps for ${name}` }));
 }
 
 beforeEach(() => {
   vi.clearAllMocks();
   useHubFilterStore.setState({ hubId: null, region: null });
-  projectRow = row();
-  api.fetchGantt.mockImplementation((params: { projectId?: string }) =>
-    Promise.resolve(params.projectId ? gantt(params.projectId === projectRow.project_id ? [projectRow] : []) : gantt([projectRow])),
-  );
+  rowsServed = defaultRows();
+  api.fetchGantt.mockImplementation(() => Promise.resolve(gantt(rowsServed)));
   api.setStepTiming.mockResolvedValue(response());
   dash.fetchDashboardProjects.mockResolvedValue({ total_count: PROJECTS.length, rows: PROJECTS });
+  wsApi.fetchWorkspace.mockResolvedValue(workspace());
   sse.streamSolverProgress.mockResolvedValue({ status: 'completed' });
   changesApi.fetchScheduleRunChanges.mockResolvedValue(CHANGES);
 });
 
-describe('Workflow page — Project step timing tab (P32-R04)', () => {
-  it('is the first, selected tab and starts with the empty state', async () => {
+describe('Workflow page — Project step timing: every project as a timeline (P32-R04)', () => {
+  it('is the first tab and lists every project in scope, collapsed, with status and a Not placed badge', async () => {
     renderPage();
     const tabs = screen.getAllByRole('tab');
     expect(tabs.map((t) => t.textContent)).toEqual(['Project step timing', 'Workflow templates']);
     expect(tabs[0]).toHaveAttribute('aria-selected', 'true');
-    expect(screen.getByText('Pick a project to adjust its steps')).toBeInTheDocument();
-    expect(api.fetchGantt).not.toHaveBeenCalled();
-    await waitFor(() => expect(dash.fetchDashboardProjects).toHaveBeenCalledWith(
-      { hub_id: undefined, region: undefined, sort: 'name' },
-      expect.anything(),
-    ));
+    await waitFor(() => expect(projectRows()).toHaveLength(3));
+    expect(screen.queryAllByTestId('gantt-step-row')).toHaveLength(0);
+    expect(screen.getByTestId('step-timing-count')).toHaveTextContent('3 of 3 projects shown');
+    expect(api.fetchGantt).toHaveBeenCalledWith({ hubId: undefined, region: undefined, priority: undefined }, expect.anything());
+    const badges = await screen.findAllByTestId('step-timing-not-placed');
+    expect(badges).toHaveLength(1);
+    expect(projectRows()[1]).toContainElement(badges[0]!);
+    expect(badges[0]).toHaveTextContent('Not placed');
+    expect(badges[0]).toHaveAttribute('title', expect.stringContaining('usually engineer or chamber capacity'));
+    expect(await within(projectRows()[2]!).findByText('On Hold')).toBeInTheDocument();
+    // Fully placed projects need no workspace read; a collapsed left-out one neither.
+    expect(wsApi.fetchWorkspace).not.toHaveBeenCalled();
   });
 
-  it('picking a project puts it in the URL and draws its 14 steps one below another', async () => {
-    const user = userEvent.setup();
-    renderPage();
-    const picker = screen.getByRole('combobox', { name: 'Project' });
-    await user.click(picker);
-    await user.type(picker, 'alpha');
-    const option = await screen.findByRole('option', { name: /Cooler Alpha/ });
-    expect(option).toHaveTextContent('R&D-Greece · In Development');
-    await user.click(option);
-
-    expect(screen.getByTestId('location')).toHaveTextContent('/settings/workflow?project=p1');
-    const card = await screen.findByTestId('step-timing-project');
-    expect(within(card).getByTestId('step-timing-project-name')).toHaveTextContent('Cooler Alpha');
-    expect(card).toHaveTextContent('Category A');
-    expect(within(card).getByTestId('step-timing-finish-week')).toHaveTextContent("Finish W3 '27");
-    expect(within(card).getByText('In Development')).toBeInTheDocument();
-    const rows = screen.getAllByTestId('waterfall-step-row');
-    expect(rows).toHaveLength(14);
-    expect(rows.map((r) => r.getAttribute('data-step-id'))).toEqual(Array.from(LETTERS).map((l) => `PDD-${l}`));
-    expect(screen.getAllByTestId('step-drag-body')).toHaveLength(14);
-    expect(api.fetchGantt).toHaveBeenCalledWith({ projectId: 'p1' }, expect.anything());
-  });
-
-  it('the hub filter narrows the picker list (server param)', async () => {
+  it('the hub filter is a server param', async () => {
     useHubFilterStore.setState({ hubId: 'hub-gr', region: null });
     renderPage();
     await waitFor(() =>
-      expect(dash.fetchDashboardProjects).toHaveBeenCalledWith({ hub_id: 'hub-gr', region: undefined, sort: 'name' }, expect.anything()),
+      expect(api.fetchGantt).toHaveBeenCalledWith({ hubId: 'hub-gr', region: undefined, priority: undefined }, expect.anything()),
     );
   });
 
-  it('axis: from 2 weeks before the earlier of the first start and the current week to max(W52, last end)+2; next-year labels', async () => {
-    renderPage('/settings/workflow?project=p1');
-    const scroll = await screen.findByTestId('waterfall-scroll');
-    // first start W42 = CURRENT_WEEK 42 → W40; last end W55 → W57.
-    expect(scroll).toHaveAttribute('data-origin-week', '40');
-    expect(scroll).toHaveAttribute('data-last-week', '57');
-    const axis = within(screen.getByTestId('waterfall-axis'));
-    expect(axis.getByTestId('gantt-year-end-label')).toHaveTextContent('W52 year-end');
-    expect(axis.getByText('W42 now')).toBeInTheDocument();
-    expect(axis.getByText("W2 '27")).toBeInTheDocument();
+  it('expanding a project shows its 14 steps with the Timeline editing, and puts it in the URL', async () => {
+    renderPage();
+    await expand('Cooler Alpha');
+    expect(stepRows('p1')).toHaveLength(14);
+    expect(screen.getAllByTestId('step-drag-body')).toHaveLength(14);
+    expect(screen.getAllByRole('button', { name: /^Edit timing for .* \(Cooler Alpha\)$/ })).toHaveLength(14);
+    expect(screen.getByTestId('location')).toHaveTextContent('/settings/workflow?project=p1');
+    fireEvent.click(screen.getByRole('button', { name: 'Collapse steps for Cooler Alpha' }));
+    expect(screen.queryAllByTestId('gantt-step-row')).toHaveLength(0);
+    expect(screen.getByTestId('location')).toHaveTextContent(/^\/settings\/workflow$/);
   });
 
-  it('dropping a bar onto the step above sends the overlap, shows the parallel label, then refetches this view', async () => {
-    renderPage('/settings/workflow?project=p1');
-    await screen.findByTestId('step-timing-project');
-    const body = within(stepRow('PDD-B')).getByTestId('step-drag-body');
+  it('Expand all / Collapse all', async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await waitFor(() => expect(projectRows()).toHaveLength(3));
+    await user.click(screen.getByRole('button', { name: 'Expand all' }));
+    expect(stepRows('p1')).toHaveLength(14);
+    expect(stepRows('p3')).toHaveLength(14);
+    await user.click(screen.getByRole('button', { name: 'Collapse all' }));
+    expect(screen.queryAllByTestId('gantt-step-row')).toHaveLength(0);
+  });
+
+  it('?project=<id> expands that project and scrolls it into view', async () => {
+    renderPage('/settings/workflow?project=p3');
+    await waitFor(() => expect(stepRows('p3')).toHaveLength(14));
+    expect(stepRows('p1')).toHaveLength(0);
+    // p1, p2 (collapsed) then p3: visual index 2.
+    await waitFor(() => expect(virt.scrollToIndex).toHaveBeenCalledWith(2, { align: 'start' }));
+  });
+
+  it('axis runs past W52 with next-year labels, the W52 marker and the current week', async () => {
+    renderPage();
+    await waitFor(() => expect(projectRows()).toHaveLength(3));
+    // starts W42 = CURRENT_WEEK → W40; last end W55 → W57.
+    const axis = screen.getByRole('img', { name: 'Week axis, week 40 to week 57' });
+    expect(within(axis).getByTestId('gantt-year-end-label')).toHaveTextContent('W52 year-end');
+    expect(within(axis).getByText('W42 now')).toBeInTheDocument();
+    expect(within(axis).getByText('W52')).toBeInTheDocument();
+    // At the 16 px minimum the stride is 4: W56 ("W4 '27") would be clipped, so it is skipped.
+    expect(within(axis).queryByText(/^W4 '/)).not.toBeInTheDocument();
+  });
+
+  it('weeks grow to fill the card width (the Timeline keeps its fixed width)', async () => {
+    const spy = vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(1750);
+    try {
+      renderPage();
+      await waitFor(() => expect(projectRows()).toHaveLength(3));
+      const axis = screen.getByRole('img', { name: 'Week axis, week 40 to week 57' });
+      // 1750 − 272 (names) − 148 (status) − 3 (borders).
+      await waitFor(() => expect(Number(axis.getAttribute('width'))).toBeCloseTo(1327, 5));
+      expect(within(axis).getByText("W4 '27")).toBeInTheDocument();
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('dropping a step onto the step above sends the overlap, shows the parallel label, then refreshes the list', async () => {
+    renderPage();
+    await expand('Cooler Alpha');
+    const body = within(stepRow('p1', 2)).getByTestId('step-drag-body');
     fireEvent.pointerDown(body, { pointerId: 1, button: 0, clientX: 300 });
     fireEvent.pointerMove(body, { pointerId: 1, clientX: 300 - WEEK_PX });
-    expect(within(stepRow('PDD-B')).getByTestId('step-drag-label')).toHaveTextContent(
+    expect(within(stepRow('p1', 2)).getByTestId('step-drag-label')).toHaveTextContent(
       'Parallel with Step A · 1 wk overlap · same designer — will start when they are free',
     );
-    const before = projectReads();
+    const before = api.fetchGantt.mock.calls.length;
     fireEvent.pointerUp(body, { pointerId: 1, button: 0, clientX: 300 - WEEK_PX });
     await waitFor(() =>
       expect(api.setStepTiming).toHaveBeenCalledWith('p1', 'PDD-B', { start_not_before_week: 42, overlap_weeks: 1 }),
@@ -291,40 +354,31 @@ describe('Workflow page — Project step timing tab (P32-R04)', () => {
     const panel = await screen.findByTestId('step-timing-panel');
     await waitFor(() => expect(panel).toHaveAttribute('data-kind', 'updated'));
     expect(within(panel).getByText('Timeline updated')).toBeInTheDocument();
-    await waitFor(() => expect(projectReads()).toBeGreaterThan(before));
+    await waitFor(() => expect(api.fetchGantt.mock.calls.length).toBeGreaterThan(before));
   });
 
-  it('the overlap drag cannot go before the start of the step above (clamp)', async () => {
-    renderPage('/settings/workflow?project=p1');
-    await screen.findByTestId('step-timing-project');
-    drag(within(stepRow('PDD-B')).getByTestId('step-drag-body'), 300, 300 - 5 * WEEK_PX);
-    await waitFor(() =>
-      expect(api.setStepTiming).toHaveBeenCalledWith('p1', 'PDD-B', { start_not_before_week: 42, overlap_weeks: 1 }),
-    );
-  });
-
-  it('a move past the axis end clamps at W78 (the scheduler horizon)', async () => {
-    renderPage('/settings/workflow?project=p1');
-    await screen.findByTestId('step-timing-project');
-    drag(within(stepRow('PDD-N')).getByTestId('step-drag-body'), 300, 300 + 60 * WEEK_PX);
+  it('a move past W52 is allowed up to W78 (the scheduler horizon)', async () => {
+    renderPage();
+    await expand('Cooler Alpha');
+    drag(within(stepRow('p1', 14)).getByTestId('step-drag-body'), 300, 300 + 60 * WEEK_PX);
     await waitFor(() =>
       expect(api.setStepTiming).toHaveBeenCalledWith('p1', 'PDD-N', { start_not_before_week: 78, overlap_weeks: null }),
     );
   });
 
-  it('dragging the right edge sends the new duration', async () => {
+  it('right-edge resize sends the new duration', async () => {
     api.setStepTiming.mockResolvedValue(response({ step_id: 'PDD-D', duration_override_weeks: 3, start_not_before_week: null, overlap_weeks: null }));
-    renderPage('/settings/workflow?project=p1');
-    await screen.findByTestId('step-timing-project');
-    drag(within(stepRow('PDD-D')).getByTestId('step-drag-handle'), 400, 400 + 2 * WEEK_PX);
+    renderPage();
+    await expand('Cooler Alpha');
+    drag(within(stepRow('p1', 4)).getByTestId('step-drag-handle'), 400, 400 + 2 * WEEK_PX);
     await waitFor(() => expect(api.setStepTiming).toHaveBeenCalledWith('p1', 'PDD-D', { duration_override_weeks: 3 }));
   });
 
   it('Edit timing dialog and Reset timing', async () => {
     const user = userEvent.setup();
-    projectRow = row({ steps: steps((i) => (i === 5 ? { duration_override_weeks: 3, duration_weeks: 3 } : {})) });
-    renderPage('/settings/workflow?project=p1');
-    await screen.findByTestId('step-timing-project');
+    rowsServed = [row({ steps: steps((i) => (i === 5 ? { duration_override_weeks: 3, duration_weeks: 3 } : {})) })];
+    renderPage();
+    await expand('Cooler Alpha');
     await user.click(screen.getByRole('button', { name: 'Edit timing for Step E (Cooler Alpha)' }));
     const dialog = await screen.findByTestId('step-timing-dialog');
     await user.click(within(dialog).getByRole('button', { name: 'Reset timing' }));
@@ -337,63 +391,136 @@ describe('Workflow page — Project step timing tab (P32-R04)', () => {
     );
   });
 
-  it('honours the served timing_editable: Done / started steps', async () => {
-    projectRow = row({
-      steps: steps((i) =>
-        i === 1 ? { status: 'Done', timing_editable: 'none' } : i === 2 ? { status: 'In Progress', timing_editable: 'resize' } : {},
-      ),
-    });
-    renderPage('/settings/workflow?project=p1');
-    await screen.findByTestId('step-timing-project');
-    expect(within(stepRow('PDD-A')).queryByTestId('step-drag-overlay')).not.toBeInTheDocument();
-    expect(within(stepRow('PDD-A')).getByTestId('waterfall-step-status')).toHaveTextContent('Done');
-    expect(within(stepRow('PDD-B')).queryByTestId('step-drag-body')).not.toBeInTheDocument();
-    expect(within(stepRow('PDD-B')).getByTestId('step-drag-handle')).toBeInTheDocument();
+  it('the search filters the list by name, code, hub or status', async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await waitFor(() => expect(projectRows()).toHaveLength(3));
+    const search = screen.getByRole('searchbox', { name: 'Search' });
+    await user.type(search, 'india');
+    expect(projectRows()).toHaveLength(1);
+    expect(projectRows()[0]).toHaveTextContent('Freezer Beta');
+    expect(screen.getByTestId('step-timing-count')).toHaveTextContent('1 of 3 projects shown');
+    await user.clear(search);
+    await user.type(search, 'in queue');
+    await waitFor(() => expect(projectRows()).toHaveLength(1));
+    expect(projectRows()[0]).toHaveTextContent('Frameless Door E-47');
+    await user.clear(search);
+    await user.type(search, '24-001');
+    expect(projectRows()[0]).toHaveTextContent('Cooler Alpha');
+    await user.clear(search);
+    await user.type(search, 'zzz');
+    expect(screen.getByText('No project matches the search')).toBeInTheDocument();
   });
 
-  it('read only for a viewer: no drag, no resize, no Edit timing, a read-only hint', async () => {
-    projectRow = row({ steps: steps(() => ({ timing_editable: 'none' })) });
-    renderPage('/settings/workflow?project=p1', 'Executive Viewer');
-    expect(screen.queryByRole('tab', { name: 'Workflow templates' })).not.toBeInTheDocument();
-    await screen.findByTestId('step-timing-project');
-    expect(screen.getAllByTestId('waterfall-step-row')).toHaveLength(14);
+  it('the priority filter is a server param', async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await waitFor(() => expect(projectRows()).toHaveLength(3));
+    await user.click(screen.getByRole('radio', { name: /^P3/ }));
+    await waitFor(() =>
+      expect(api.fetchGantt).toHaveBeenCalledWith({ hubId: undefined, region: undefined, priority: 'P3' }, expect.anything()),
+    );
+  });
+
+  it('served timing_editable "none" gives no drag, resize or Edit timing', async () => {
+    renderPage('/settings/workflow?project=p3');
+    await waitFor(() => expect(stepRows('p3')).toHaveLength(14));
     expect(screen.queryByTestId('step-drag-body')).not.toBeInTheDocument();
     expect(screen.queryByTestId('step-drag-handle')).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /Edit timing/ })).not.toBeInTheDocument();
-    expect(screen.getByTestId('step-timing-read-only')).toBeInTheDocument();
   });
 
-  it('an Engineer (no dashboard read) picks from the Timeline rows', async () => {
-    const user = userEvent.setup();
+  it('read only for a viewer: no affordances, the read-only notice, no templates tab', async () => {
+    rowsServed = [row({ steps: steps(() => ({ timing_editable: 'none' })) })];
+    renderPage('/settings/workflow?project=p1', 'Executive Viewer');
+    expect(screen.queryByRole('tab', { name: 'Workflow templates' })).not.toBeInTheDocument();
+    await waitFor(() => expect(stepRows('p1')).toHaveLength(14));
+    expect(screen.getByTestId('read-only-notice')).toHaveTextContent('Changing step timing');
+    expect(screen.queryByTestId('step-drag-body')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Edit timing/ })).not.toBeInTheDocument();
+  });
+
+  it('an Engineer (no dashboard read) still gets the list, without statuses', async () => {
     renderPage('/settings/workflow', 'Engineer');
-    await waitFor(() =>
-      expect(api.fetchGantt).toHaveBeenCalledWith({ hubId: undefined, region: undefined, sort: 'name' }, expect.anything()),
-    );
+    await waitFor(() => expect(projectRows()).toHaveLength(3));
     expect(dash.fetchDashboardProjects).not.toHaveBeenCalled();
-    await user.click(screen.getByRole('combobox', { name: 'Project' }));
-    expect(await screen.findByRole('option', { name: /Cooler Alpha/ })).toHaveTextContent('R&D-Greece');
   });
 
-  it('states: no active run, project not served, 403', async () => {
-    api.fetchGantt.mockResolvedValueOnce({ ...gantt([]), has_active_schedule_run: false });
-    const { unmount } = renderPage('/settings/workflow?project=p1');
+  it('states: no active run, 403', async () => {
+    api.fetchGantt.mockResolvedValue({ ...gantt([]), has_active_schedule_run: false });
+    const { unmount } = renderPage();
     expect(await screen.findByText('No schedule yet')).toBeInTheDocument();
     unmount();
-
-    renderPage('/settings/workflow?project=zz');
-    expect(await screen.findByText('This project is not on the timeline')).toBeInTheDocument();
-  });
-
-  it('a 403 on the project read says the timeline is not available', async () => {
     api.fetchGantt.mockRejectedValue(new ApiError(403, 'Forbidden', 'no'));
-    renderPage('/settings/workflow?project=p1');
-    expect(await screen.findByText('Timeline not available')).toBeInTheDocument();
+    renderPage();
+    expect(await screen.findByText('Your role does not have access to the Project Execution Timeline')).toBeInTheDocument();
   });
 
-  it('has no serious axe violations with a project open', async () => {
+  it('has no serious axe violations with a project expanded', async () => {
     const { container } = renderPage('/settings/workflow?project=p1');
-    await screen.findByTestId('step-timing-project');
+    await waitFor(() => expect(stepRows('p1')).toHaveLength(14));
     expect(await seriousAxeViolations(container)).toEqual([]);
+  });
+});
+
+describe('P32-R04 — projects the run did not place', () => {
+  it('expanded, a left-out project lists its 14 steps from the workspace with "Not placed" and Edit timing', async () => {
+    const user = userEvent.setup();
+    api.setStepTiming.mockResolvedValue(response({ project_id: 'p2', step_id: 'PDD-E', duration_override_weeks: 1, start_not_before_week: null, overlap_weeks: null }));
+    renderPage();
+    await expand('Frameless Door E-47');
+    await waitFor(() => expect(stepRows('p2')).toHaveLength(14));
+    expect(wsApi.fetchWorkspace).toHaveBeenCalledTimes(1);
+    expect(wsApi.fetchWorkspace).toHaveBeenCalledWith('p2', expect.anything());
+    expect(screen.getAllByTestId('gantt-step-unplaced')).toHaveLength(13); // PDD-C is skipped
+    expect(screen.queryByTestId('step-drag-body')).not.toBeInTheDocument();
+    expect(screen.getAllByRole('button', { name: /^Edit timing for .* \(Frameless Door E-47\)$/ })).toHaveLength(13);
+    await user.click(screen.getByRole('button', { name: 'Edit timing for Design Detailing (Frameless Door E-47)' }));
+    const dialog = await screen.findByTestId('step-timing-dialog');
+    const work = within(dialog).getByLabelText('Work (weeks)');
+    await user.clear(work);
+    await user.type(work, '1');
+    await user.click(within(dialog).getByRole('button', { name: 'Save timing' }));
+    await waitFor(() => expect(api.setStepTiming).toHaveBeenCalledWith('p2', 'PDD-E', { duration_override_weeks: 1 }));
+  });
+
+  it('a partly placed project keeps its served rows and adds the rest', async () => {
+    rowsServed = [row({ project_id: 'p2', project_name: 'Frameless Door E-47', left_out: true, projected_end_week: null, leader_engineer_id: 'eng-1', steps: steps().slice(0, 4) })];
+    renderPage('/settings/workflow?project=p2');
+    await waitFor(() => expect(stepRows('p2')).toHaveLength(14));
+    expect(screen.getAllByTestId('step-drag-body')).toHaveLength(4);
+    expect(screen.getAllByTestId('gantt-step-unplaced')).toHaveLength(10);
+  });
+
+  it('the badge names a served reason: no leader', async () => {
+    rowsServed = [row({ project_id: 'p2', project_name: 'Frameless Door E-47', left_out: true, projected_end_week: null, leader_engineer_id: null, steps: [] })];
+    renderPage();
+    expect(await screen.findByTestId('step-timing-not-placed')).toHaveAttribute('title', expect.stringContaining('Reason: the project has no leader.'));
+  });
+
+  it('a viewer gets the unplaced rows without Edit timing', async () => {
+    renderPage('/settings/workflow?project=p2', 'Executive Viewer');
+    await waitFor(() => expect(stepRows('p2')).toHaveLength(14));
+    expect(screen.queryByRole('button', { name: /Edit timing/ })).not.toBeInTheDocument();
+  });
+
+  it('axe: no serious violations with a left-out project expanded', async () => {
+    const { container } = renderPage('/settings/workflow?project=p2');
+    await waitFor(() => expect(stepRows('p2')).toHaveLength(14));
+    expect(await seriousAxeViolations(container)).toEqual([]);
+  });
+});
+
+describe('Week axis labels (P32-R04)', () => {
+  it('a tick label that would be clipped at the axis end is skipped', () => {
+    const scale = (horizonWeeks: number) => ({ originWeek: 41, horizonWeeks, weekWidthPx: 24, totalWidthPx: horizonWeeks * 24 });
+    const fmt = (w: number) => (w > 52 ? `W${String(w - 52)} '27` : `W${String(w)}`);
+    const { unmount } = render(<GanttWeekAxis scale={scale(14)} weekLabel={fmt} />);
+    expect(screen.getByText("W1 '27")).toBeInTheDocument();
+    unmount();
+    render(<GanttWeekAxis scale={scale(13)} weekLabel={fmt} />);
+    expect(screen.queryByText("W1 '27")).not.toBeInTheDocument();
+    expect(screen.getByText('W51')).toBeInTheDocument();
   });
 });
 
@@ -407,13 +534,12 @@ describe('Workflow page — RBAC (P32-R04)', () => {
     renderPage('/settings/workflow', 'Admin');
     await user.click(screen.getByRole('tab', { name: 'Workflow templates' }));
     expect(screen.getByTestId('location')).toHaveTextContent('?tab=templates');
-    expect(screen.getByTestId('read-only-notice')).toBeInTheDocument();
   });
 
-  it('?tab=templates falls back to step timing for a role without template read', () => {
+  it('?tab=templates falls back to step timing for a role without template read', async () => {
     renderPage('/settings/workflow?tab=templates', 'Hub Planner');
     expect(screen.getByRole('tab', { name: 'Project step timing' })).toHaveAttribute('aria-selected', 'true');
-    expect(screen.getByText('Pick a project to adjust its steps')).toBeInTheDocument();
+    await waitFor(() => expect(projectRows()).toHaveLength(3));
   });
 
   it('the Workflow nav item shows for Timeline readers, not for the Auditor', () => {
@@ -425,131 +551,5 @@ describe('Workflow page — RBAC (P32-R04)', () => {
       expect(paths(role)).toContain('/settings/workflow');
     }
     expect(paths('Auditor')).not.toContain('/settings/workflow');
-  });
-});
-
-/** A workspace payload for p1 with all 14 stages (not placed: no planned weeks). */
-function workspace(project: Partial<WorkspaceResponse['project']> = {}, stageOver: (i: number) => object = () => ({})) {
-  const base = workspaceFixture();
-  return {
-    ...base,
-    project: { ...base.project, id: 'p1', status: 'In Queue' as const, frozen: false, ...project },
-    stages: Array.from({ length: 14 }, (_, i) =>
-      stage(i, { planned_start_week: null, planned_end_week: null, skipped: i === 2, ...stageOver(i) }),
-    ),
-  };
-}
-
-describe('P32-R04 follow-up — width', () => {
-  it('weeks grow so the axis fills the card; the minimum (24 px) applies when it does not fit', async () => {
-    const spy = vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockImplementation(function (this: HTMLElement) {
-      return this.getAttribute('data-testid') === 'project-step-waterfall' ? 1750 : 0;
-    });
-    try {
-      renderPage('/settings/workflow?project=p1');
-      const box = await screen.findByTestId('project-step-waterfall');
-      // 1750 − 300 (step) − 132 (status) − 3 (borders) over W40–W57 (18 weeks).
-      await waitFor(() => expect(Number(box.getAttribute('data-week-px'))).toBeCloseTo(1315 / 18, 5));
-      // A one-week drag is now one (wider) week.
-      const px = 1315 / 18;
-      drag(within(stepRow('PDD-N')).getByTestId('step-drag-body'), 600, 600 + px);
-      await waitFor(() =>
-        expect(api.setStepTiming).toHaveBeenCalledWith('p1', 'PDD-N', { start_not_before_week: 56, overlap_weeks: null }),
-      );
-    } finally {
-      spy.mockRestore();
-    }
-  });
-
-  it('jsdom (no width): the minimum week width', async () => {
-    renderPage('/settings/workflow?project=p1');
-    expect(await screen.findByTestId('project-step-waterfall')).toHaveAttribute('data-week-px', '24');
-  });
-
-  it('a tick label that would be clipped at the axis end is skipped', () => {
-    const scale = (horizonWeeks: number) => ({ originWeek: 41, horizonWeeks, weekWidthPx: 24, totalWidthPx: horizonWeeks * 24 });
-    const fmt = (w: number) => (w > 52 ? `W${String(w - 52)} '27` : `W${String(w)}`);
-    const { unmount } = render(<GanttWeekAxis scale={scale(14)} weekLabel={fmt} />);
-    expect(screen.getByText("W1 '27")).toBeInTheDocument();
-    unmount();
-    render(<GanttWeekAxis scale={scale(13)} weekLabel={fmt} />);
-    expect(screen.queryByText("W1 '27")).not.toBeInTheDocument();
-    expect(screen.queryByText(/^W1 '$/)).not.toBeInTheDocument();
-    expect(screen.getByText('W51')).toBeInTheDocument();
-  });
-});
-
-describe('P32-R04 follow-up — projects the run did not place', () => {
-  it('a left-out project with no served step rows lists its 14 steps from the workspace, a banner, no bars, and Edit timing', async () => {
-    const user = userEvent.setup();
-    projectRow = row({ left_out: true, projected_end_week: null, expected_end_week: 63, leader_engineer_id: 'eng-1', steps: [] });
-    wsApi.fetchWorkspace.mockResolvedValue(workspace());
-    api.setStepTiming.mockResolvedValue(response({ step_id: 'PDD-E', duration_override_weeks: 1, start_not_before_week: null, overlap_weeks: null }));
-    renderPage('/settings/workflow?project=p1');
-    await screen.findByTestId('step-timing-project');
-    expect(wsApi.fetchWorkspace).toHaveBeenCalledWith('p1', expect.anything());
-    expect(screen.getAllByTestId('waterfall-step-row')).toHaveLength(14);
-    expect(screen.getByTestId('step-timing-not-placed')).toHaveTextContent(
-      "Not placed: the scheduler found no slot before the planning horizon (W26 '27).",
-    );
-    expect(screen.getByTestId('step-timing-not-placed')).toHaveTextContent('usually engineer or chamber capacity');
-    expect(screen.queryByTestId('step-timing-read-only')).not.toBeInTheDocument();
-    expect(screen.queryByTestId('step-drag-body')).not.toBeInTheDocument();
-    expect(screen.getAllByTestId('waterfall-step-unplaced')).toHaveLength(13); // 14 minus the skipped one
-    // 13 non-skipped steps offer the keyboard dialog; the skipped one does not.
-    expect(screen.getAllByRole('button', { name: /^Edit timing for / })).toHaveLength(13);
-    await user.click(screen.getByRole('button', { name: 'Edit timing for Design Detailing (Cooler Alpha)' }));
-    const dialog = await screen.findByTestId('step-timing-dialog');
-    const work = within(dialog).getByLabelText('Work (weeks)');
-    await user.clear(work);
-    await user.type(work, '1');
-    await user.click(within(dialog).getByRole('button', { name: 'Save timing' }));
-    await waitFor(() => expect(api.setStepTiming).toHaveBeenCalledWith('p1', 'PDD-E', { duration_override_weeks: 1 }));
-  });
-
-  it('names a served reason: no leader', async () => {
-    projectRow = row({ left_out: true, projected_end_week: null, leader_engineer_id: null, steps: [] });
-    wsApi.fetchWorkspace.mockResolvedValue(workspace());
-    renderPage('/settings/workflow?project=p1');
-    expect(await screen.findByTestId('step-timing-not-placed')).toHaveTextContent('Reason: the project has no leader.');
-  });
-
-  it('a partly placed project keeps its served rows and adds the rest', async () => {
-    projectRow = row({ left_out: true, projected_end_week: null, leader_engineer_id: 'eng-1', steps: steps().slice(0, 4) });
-    wsApi.fetchWorkspace.mockResolvedValue(workspace());
-    renderPage('/settings/workflow?project=p1');
-    await screen.findByTestId('step-timing-project');
-    expect(screen.getAllByTestId('waterfall-step-row')).toHaveLength(14);
-    expect(screen.getAllByTestId('step-drag-body')).toHaveLength(4);
-    expect(screen.getByTestId('step-timing-not-placed')).toHaveTextContent('Partly placed: 10 of 14 steps found no slot');
-  });
-
-  it('a fully placed project does not read the workspace', async () => {
-    renderPage('/settings/workflow?project=p1');
-    await screen.findByTestId('step-timing-project');
-    expect(wsApi.fetchWorkspace).not.toHaveBeenCalled();
-    expect(screen.queryByTestId('step-timing-not-placed')).not.toBeInTheDocument();
-  });
-
-  it('read only only when the user genuinely cannot edit: a viewer, a frozen project', async () => {
-    projectRow = row({ left_out: true, projected_end_week: null, steps: [] });
-    wsApi.fetchWorkspace.mockResolvedValue(workspace());
-    const { unmount } = renderPage('/settings/workflow?project=p1', 'Executive Viewer');
-    expect(await screen.findByTestId('step-timing-read-only')).toHaveTextContent('Your role can view step timing but not change it.');
-    expect(screen.queryByRole('button', { name: /^Edit timing for / })).not.toBeInTheDocument();
-    unmount();
-
-    projectRow = row({ left_out: true, projected_end_week: null, frozen: true, steps: [] });
-    wsApi.fetchWorkspace.mockResolvedValue(workspace({ frozen: true }));
-    renderPage('/settings/workflow?project=p1');
-    expect(await screen.findByTestId('step-timing-read-only')).toHaveTextContent('This project is frozen');
-  });
-
-  it('axe: no serious violations on a left-out project', async () => {
-    projectRow = row({ left_out: true, projected_end_week: null, steps: [] });
-    wsApi.fetchWorkspace.mockResolvedValue(workspace());
-    const { container } = renderPage('/settings/workflow?project=p1');
-    await screen.findByTestId('step-timing-not-placed');
-    expect(await seriousAxeViolations(container)).toEqual([]);
   });
 });

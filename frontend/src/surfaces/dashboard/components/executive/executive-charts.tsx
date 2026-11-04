@@ -216,6 +216,8 @@ export function HeroDonut({
   testId,
   select,
   legend: staticLegend = false,
+  onSliceOpen,
+  sliceOpenLabel,
 }: {
   title: string;
   info: React.ReactNode;
@@ -227,6 +229,14 @@ export function HeroDonut({
   select?: DonutSelect | undefined;
   /** A read-only legend (swatch · label · count) under the donut, like the P31 chips (P32-R05). */
   legend?: boolean;
+  /**
+   * P32-R07 (What-if import drill-down): clicking a slice or its legend chip opens what is
+   * behind it. With `legend`, the chips become buttons (the keyboard path); the opener is the
+   * chip, or null for a slice click. Ignored when `select` is given.
+   */
+  onSliceOpen?: ((key: string, opener: HTMLElement | null) => void) | undefined;
+  /** Accessible name of a slice's legend button ("Show the 3 projects in category A"). */
+  sliceOpenLabel?: ((slice: Slice) => string) | undefined;
 }): React.JSX.Element {
   const headingId = React.useId();
   const anySelected = (select?.selected.length ?? 0) > 0;
@@ -290,14 +300,25 @@ export function HeroDonut({
               labelLine={false}
               {...(select
                 ? { onClick: (_: unknown, index: number) => toggle(drawn[index]?.key ?? '') }
-                : {})}
+                : onSliceOpen
+                  ? {
+                      onClick: (_: unknown, index: number) => {
+                        const key = drawn[index]?.key;
+                        if (key !== undefined) onSliceOpen(key, null);
+                      },
+                    }
+                  : {})}
             >
               {drawn.map((s) => (
                 <Cell
                   key={s.key}
                   fill={s.fill}
                   fillOpacity={s.dim ? 0.28 : 1}
-                  className={select && select.allowed.includes(s.key) ? 'cursor-pointer outline-none' : undefined}
+                  className={
+                    (select && select.allowed.includes(s.key)) || (!select && onSliceOpen)
+                      ? 'cursor-pointer outline-none'
+                      : undefined
+                  }
                 />
               ))}
             </Pie>
@@ -328,7 +349,27 @@ export function HeroDonut({
           data-testid={`${testId}-legend`}
         />
       ) : null}
-      {staticLegend && !select ? (
+      {staticLegend && !select && onSliceOpen ? (
+        <ul className="flex flex-wrap gap-1.5 px-s2" aria-label={`${title}: show the projects`} data-testid={`${testId}-legend`}>
+          {drawn.map((s) => (
+            <li key={s.key}>
+              <button
+                type="button"
+                className="inline-flex h-7 cursor-pointer items-center gap-1 whitespace-nowrap rounded-pill border border-border bg-surface px-2.5 text-xs font-semibold text-text-muted transition-colors hover:border-border-strong hover:bg-surface-raised focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring [&:hover_.legend-label]:underline"
+                aria-haspopup="dialog"
+                aria-label={sliceOpenLabel ? sliceOpenLabel(s) : `${s.label}: ${formatInteger(s.count)}`}
+                onClick={(e) => onSliceOpen(s.key, e.currentTarget)}
+                data-testid={`${testId}-legend-${s.key}`}
+              >
+                <span className="size-2.5 shrink-0 rounded-sm" style={{ background: s.fill }} aria-hidden="true" />
+                <span className="legend-label text-text">{s.label}</span>
+                <span className="font-medium tabular-nums text-text-subtle">{formatInteger(s.count)}</span>
+              </button>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+      {staticLegend && !select && !onSliceOpen ? (
         <ul className="flex flex-wrap gap-1.5 px-s2" aria-hidden="true" data-testid={`${testId}-legend`}>
           {drawn.map((s) => (
             <li

@@ -8,6 +8,8 @@ import { buildSimulateRequest } from '../import-rows';
 import { useImportPlan, type ImportStep } from '../import-store';
 import type { ImportSimulateRequest } from '../import-types';
 import { RESIMULATE_DEBOUNCE_MS, useImportSimulation } from '../use-import';
+import { useDrill } from '../drill-store';
+import { DrillSheet } from './drill-sheet';
 import { ResultsStep } from './results-step';
 import { ReviewStep } from './review-step';
 import { UploadStep } from './upload-step';
@@ -116,6 +118,10 @@ export default function ImportPlanView(): React.JSX.Element {
     run(body, RESIMULATE_DEBOUNCE_MS);
   }, [step, body, bodyKey, run]);
 
+  // The drill-down sheet belongs to this view: closed when the view goes or the step changes.
+  const closeDrill = useDrill((s) => s.close);
+  React.useEffect(() => () => closeDrill(false), [step, closeDrill]);
+
   return (
     <section className="space-y-s4" aria-labelledby="import-plan-heading" data-testid="import-plan-view">
       <div className="flex flex-wrap items-center justify-between gap-s3">
@@ -146,6 +152,7 @@ export default function ImportPlanView(): React.JSX.Element {
       ) : (
         <ResultsStep result={result} simulation={simulation} onRetry={simulation.retry} />
       )}
+      <DrillSheet />
     </section>
   );
 }

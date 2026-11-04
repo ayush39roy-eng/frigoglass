@@ -25,6 +25,8 @@ import {
 } from '../scenario-compare';
 import { MAX_COMPARE, MAX_SCENARIO_NAME, useImportScenarios, type ImportScenario } from '../scenarios-store';
 import { planYearOf, weekOrDash } from '../week-labels';
+import { compareKpiDrill, outcomeChangeDrill } from '../drilldown';
+import { DrillNumber } from './drill-number';
 import { FeatureCard } from './feature-card';
 import { ServedStatusChip } from './status-chip';
 
@@ -140,6 +142,8 @@ function KpiTable({ picked }: { picked: ImportScenario[] }): React.JSX.Element {
   // "Finish in 2027" as on the Executive tab when every scenario has the same plan year.
   const years = new Set(picked.map((s) => planYearOf(s.response.plan_year_end_week, s.response.base_year)));
   const planYear = years.size === 1 ? ([...years][0] ?? null) : null;
+  const label = (k: (typeof COMPARE_KPIS)[number]) =>
+    k.key === 'within_plan_year' && planYear !== null ? `Finish in ${String(planYear)}` : k.label;
   return (
     <Table aria-label="Scenario figures" scrollLabel="Scenario figures">
       <TableHeader>
@@ -158,16 +162,23 @@ function KpiTable({ picked }: { picked: ImportScenario[] }): React.JSX.Element {
           const b = base ? k.value(base.response) : null;
           return (
             <TableRow key={k.key} data-testid={`compare-kpi-${k.key}`}>
-              <TableCell className="font-medium">
-                {k.key === 'within_plan_year' && planYear !== null ? `Finish in ${String(planYear)}` : k.label}
-              </TableCell>
+              <TableCell className="font-medium">{label(k)}</TableCell>
               {picked.map((s, i) => {
                 const v = k.value(s.response);
                 const d = i === 0 ? null : delta(b, v);
                 const good = d === null || d === 0 || k.higherIsBetter === null ? null : d > 0 === k.higherIsBetter;
                 return (
                   <TableCell key={s.id} className="whitespace-nowrap text-right tabular-nums">
-                    <span data-numeric="">{v === null ? '—' : int(v)}</span>
+                    {v === null ? (
+                      <span data-numeric="">—</span>
+                    ) : (
+                      <span data-numeric="">
+                        <DrillNumber
+                          drill={compareKpiDrill(s.response, k.key, label(k), v, s.name)}
+                          testId={`compare-drill-${k.key}`}
+                        />
+                      </span>
+                    )}
                     {d !== null ? (
                       <span
                         className={cn(
@@ -320,7 +331,16 @@ function OutcomeDiff({ picked }: { picked: ImportScenario[] }): React.JSX.Elemen
           </NativeSelect>
         </div>
         <p className="pb-1.5 text-xs text-text-muted" role="status">
-          {int(changes.length)} project{changes.length === 1 ? ' changes' : 's change'} outcome
+          {a && b ? (
+            <DrillNumber
+              drill={outcomeChangeDrill(a.response, b.response, changes, [a.name, b.name])}
+              className="font-semibold text-text"
+              testId="compare-changes-drill"
+            />
+          ) : (
+            int(changes.length)
+          )}{' '}
+          project{changes.length === 1 ? ' changes' : 's change'} outcome
         </p>
       </div>
       {changes.length === 0 ? (

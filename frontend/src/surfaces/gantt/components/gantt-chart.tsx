@@ -13,8 +13,11 @@ import { TrackingStatusChip } from '@/components/shared/tracking-status-chip';
 import { VipBadge } from '@/components/shared/vip-badge';
 
 import {
+  clampZoomPx,
   isPastScaleEnd,
   makeWeekScale,
+  WEEK_WIDTH_PX,
+  type WeekScale,
   plannedSpan,
   actualSpan,
   type GanttDensity,
@@ -72,6 +75,26 @@ export interface GanttChartProps {
   onFreezeClick: (project: GanttProjectRow) => void;
   canWrite: boolean;
   maxHeight?: number;
+  /**
+   * P32-R04 (Workflow page "Project step timing"): an axis other than the
+   * Timeline's W1–W52. `scaleFor(px)` builds it for a week width; with `fill`
+   * the weeks grow (from the zoom width) to fill the visible width.
+   * `weekLabel` formats ticks and bar hover text (e.g. "W5 '27"). Omitted =
+   * the Timeline, unchanged.
+   */
+  axis?: {
+    scaleFor: (weekWidthPx: number) => WeekScale;
+    fill?: boolean;
+    weekLabel?: (week: number) => string;
+  };
+  /** P32-R04: extra chips on a project row's meta line (comfortable density). */
+  rowExtra?: (project: GanttProjectRow) => React.ReactNode;
+  /** P32-R04: a step with no served weeks shows "Not placed in the active run". */
+  markUnplaced?: boolean;
+  /** P32-R04: scroll this project's row to the top once it is in `rows`. */
+  scrollToProjectId?: string | null;
+  /** P32-R04: the project ids whose rows are currently rendered (virtualized). */
+  onVisibleProjectsChange?: (projectIds: readonly string[]) => void;
 }
 
 export function GanttChart({
@@ -85,6 +108,11 @@ export function GanttChart({
   onFreezeClick,
   canWrite,
   maxHeight = 560,
+  axis,
+  rowExtra,
+  markUnplaced = false,
+  scrollToProjectId = null,
+  onVisibleProjectsChange,
 }: GanttChartProps): React.JSX.Element {
   const compact = density === 'forest';
   const stats = showStats && weeklyCounts !== undefined;
@@ -133,7 +161,15 @@ export function GanttChart({
     const r = el.getBoundingClientRect();
     return { left: r.left + LEFT_COL_WIDTH, right: r.left + el.clientWidth - BADGE_COL_WIDTH };
   }, [LEFT_COL_WIDTH, BADGE_COL_WIDTH]);
-  const scale = React.useMemo(() => makeWeekScale(zoom), [zoom]);
+  const scale = React.useMemo(() => {
+    if (!axis) return makeWeekScale(zoom);
+    const minPx = typeof zoom === 'number' ? clampZoomPx(zoom) : WEEK_WIDTH_PX[zoom];
+    const min = axis.scaleFor(minPx);
+    // The visible width minus both sticky columns and the 1.5 px borders.
+    const available = boxWidth - LEFT_COL_WIDTH - BADGE_COL_WIDTH - 3;
+    return axis.fill && available > min.totalWidthPx ? axis.scaleFor(available / min.horizonWeeks) : min;
+  }, [axis, zoom, boxWidth, LEFT_COL_WIDTH, BADGE_COL_WIDTH]);
+  const weekText = axis?.weekLabel;
   const visualRows = React.useMemo(
     () => buildVisualRows(rows, expandedIds),
     [rows, expandedIds],
@@ -174,6 +210,24 @@ export function GanttChart({
   }, [expandedIds]);
 
   const items = virtualizer.getVirtualItems();
+
+  // P32-R04: report which projects are on screen (only for hosts that ask).
+  const visibleKey = onVisibleProjectsChange
+    ? [...new Set(items.map((it) => visualRows[it.index]?.project.project_id).filter(Boolean))].join(',')
+    : '';
+  React.useEffect(() => {
+    if (onVisibleProjectsChange) onVisibleProjectsChange(visibleKey === '' ? [] : visibleKey.split(','));
+  }, [visibleKey, onVisibleProjectsChange]);
+
+  // P32-R04: bring a deep-linked project (`?project=`) to the top, once.
+  const scrolledTo = React.useRef<string | null>(null);
+  React.useEffect(() => {
+    if (!scrollToProjectId || scrolledTo.current === scrollToProjectId) return;
+    const index = visualRows.findIndex((vr) => vr.kind === 'project' && vr.project.project_id === scrollToProjectId);
+    if (index < 0) return;
+    scrolledTo.current = scrollToProjectId;
+    virtualizer.scrollToIndex(index, { align: 'start' });
+  }, [scrollToProjectId, visualRows, virtualizer]);
   const contentWidth = LEFT_COL_WIDTH + scale.totalWidthPx + BADGE_COL_WIDTH;
 
   return (
@@ -204,7 +258,7 @@ export function GanttChart({
                 {narrow ? 'Project' : 'Project / step'}
               </div>
               <div style={{ width: scale.totalWidthPx }} className="shrink-0">
-                <GanttWeekAxis scale={scale} />
+                <GanttWeekAxis scale={scale} weekLabel={weekText} />
               </div>
               {hasStatusCol ? (
                 <div
@@ -299,6 +353,7 @@ export function GanttChart({
                           onFreezeClick={onFreezeClick}
                           narrow={narrow}
                           onOpenDetails={openDetails}
+                          extra={rowExtra}
                         />
                       ) : (
                         <StepLeftCell project={vr.project} step={vr.step} compact={compact} narrow={narrow} timingEdits />
@@ -310,7 +365,19 @@ export function GanttChart({
                       className="relative shrink-0 border-b border-border/70 transition-colors group-hover/row:bg-primary-subtle/30"
                       style={{ width: scale.totalWidthPx }}
                     >
-                      <BarLayer row={vr} scale={scale} height={height} animate={animate} />
+                      <BarLayer row={vr} scale={scale} height={height} animate={animate} fmt={weekText} />
+                      {markUnplaced &&
+                      vr.kind === 'step' &&
+                      !vr.step.skipped &&
+                      vr.step.planned_start_week == null &&
+                      vr.step.actual_start_week == null ? (
+                        <span
+                          className="absolute left-2 top-1/2 -translate-y-1/2 whitespace-nowrap rounded-sm border border-dashed border-warning/60 bg-surface px-1.5 text-[0.625rem] font-semibold leading-4 text-warning-subtle-fg"
+                          data-testid="gantt-step-unplaced"
+                        >
+                          Not placed in the active run
+                        </span>
+                      ) : null}
                       {/* P12 (ADR 0019): drag handles, only where the server says
                           `timing_editable` allows it (none → nothing rendered). */}
                       {vr.kind === 'step' && !vr.step.skipped ? (
@@ -366,9 +433,11 @@ function BarLayer({
   scale,
   height,
   animate,
+  fmt = formatPlanWeek,
 }: {
+  fmt?: ((week: number) => string) | undefined;
   row: ReturnType<typeof buildVisualRows>[number];
-  scale: ReturnType<typeof makeWeekScale>;
+  scale: WeekScale;
   height: number;
   animate: boolean;
 }): React.JSX.Element {
@@ -397,7 +466,7 @@ function BarLayer({
         plannedEndWeek={plannedEndWeek}
         delayedEndWeek={delayedEndWeek}
         frozen={row.project.frozen}
-        title={barTitle(row.project.project_name, planned, actual)}
+        title={barTitle(row.project.project_name, planned, actual, fmt)}
       />
     );
     const p = row.project;
@@ -422,7 +491,7 @@ function BarLayer({
     }
   } else {
     // P32-R04: shared with the Workflow page's per-project waterfall.
-    group = <StepBarGraphic project={row.project} step={row.step} scale={scale} height={height} />;
+    group = <StepBarGraphic project={row.project} step={row.step} scale={scale} height={height} fmt={fmt} />;
   }
 
   // The two completion lines are per PROJECT row (DOMAIN_RULES "Expected vs
@@ -468,10 +537,11 @@ function barTitle(
   label: string,
   planned: { startWeek: number; endWeek: number } | null,
   actual: { startWeek: number; endWeek: number } | null,
+  fmt: (week: number) => string = formatPlanWeek,
 ): string {
   const parts = [label];
-  if (planned) parts.push(`planned ${formatPlanWeek(planned.startWeek)}–${formatPlanWeek(planned.endWeek)}`);
-  if (actual) parts.push(`actual ${formatPlanWeek(actual.startWeek)}–${formatPlanWeek(actual.endWeek)}`);
+  if (planned) parts.push(`planned ${fmt(planned.startWeek)}–${fmt(planned.endWeek)}`);
+  if (actual) parts.push(`actual ${fmt(actual.startWeek)}–${fmt(actual.endWeek)}`);
   return parts.join(' · ');
 }
 
@@ -486,7 +556,9 @@ function ProjectLeftCell({
   onFreezeClick,
   narrow = false,
   onOpenDetails,
+  extra,
 }: {
+  extra?: ((project: GanttProjectRow) => React.ReactNode) | undefined;
   project: GanttProjectRow;
   compact: boolean;
   expanded: boolean;
@@ -565,6 +637,7 @@ function ProjectLeftCell({
                 <RowWeeks project={project} />
                 {project.is_vip ? <VipBadge className="px-1 py-px" /> : null}
                 <TrackingStatusChip status={project.tracking_status} className="px-1 py-px" />
+                {extra ? extra(project) : null}
               </span>
             </>
           )}

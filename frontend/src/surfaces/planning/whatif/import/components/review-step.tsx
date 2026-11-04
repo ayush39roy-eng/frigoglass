@@ -16,6 +16,8 @@ import { useImportPlan } from '../import-store';
 import type { ImportMode, ImportParseIssue, ImportParseResponse, PlanYearEndWeek } from '../import-types';
 import { classifyImportError, type ImportSimulationState } from '../use-import';
 import { planYearOf } from '../week-labels';
+import { reviewTileDrill, type ReviewTile } from '../drilldown';
+import { DrillNumber } from './drill-number';
 import { ActionBar, FeatureCard } from './feature-card';
 import { IssueList, type IssueItem } from './issue-list';
 import { ReviewTable } from './review-table';
@@ -96,6 +98,17 @@ export function ReviewStep({
   const useServedProjects = servedProjects !== undefined && options.expandMulti && rowsAsServed;
   const projectsCount = useServedProjects ? servedProjects : projectsToSchedule(rows, options.expandMulti);
   const year = planYearOf(options.planYearEndWeek, parsed.base_year);
+  // P32-R07: every count tile lists the rows behind it.
+  const tileFig = (tile: ReviewTile, figure: number) => (
+    <DrillNumber
+      drill={reviewTileDrill(parsed, rows, tile, {
+        figure,
+        expandMulti: options.expandMulti,
+        servedProjects: useServedProjects,
+      })}
+      testId={`import-review-drill-${tile}`}
+    />
+  );
   const y0 = parsed.base_year;
 
   return (
@@ -124,20 +137,20 @@ export function ReviewStep({
         className="grid grid-cols-2 gap-s3 sm:grid-cols-4 xl:grid-cols-8"
         data-testid="import-counts"
       >
-        <FigureTile label="Rows" value={int(c.rows)} />
-        <FigureTile label="Schedulable" value={int(c.schedulable)} />
+        <FigureTile label="Rows" value={tileFig('rows', c.rows)} />
+        <FigureTile label="Schedulable" value={tileFig('schedulable', c.schedulable)} />
         <FigureTile
           label="Projects to schedule"
-          value={int(projectsCount)}
+          value={tileFig('projects', projectsCount)}
           hint={options.expandMulti ? 'Included rows, “Num of Projects” counted' : 'Included rows, one project each'}
           testId="import-projects-tile"
         />
-        <FigureTile label="Not scheduled" value={int(c.not_scheduled)} hint="On hold or finished" />
-        <FigureTile label="Matched to plan" value={int(c.matched)} />
-        <FigureTile label="New projects" value={int(c.new)} />
+        <FigureTile label="Not scheduled" value={tileFig('not_scheduled', c.not_scheduled)} hint="On hold or finished" />
+        <FigureTile label="Matched to plan" value={tileFig('matched', c.matched)} />
+        <FigureTile label="New projects" value={tileFig('new', c.new)} />
         <FigureTile
           label="Auto-assign"
-          value={int(noEngineer)}
+          value={tileFig('auto_assign', noEngineer)}
           hint={
             noEngineer === c.auto_assign
               ? 'Rows to schedule with no engineer'
@@ -145,7 +158,7 @@ export function ReviewStep({
           }
           testId="import-auto-tile"
         />
-        <FigureTile label="New designers" value={int(c.new_designers)} />
+        <FigureTile label="New designers" value={tileFig('new_designers', c.new_designers)} />
       </section>
 
       {c.not_a_project > 0 ? (
@@ -155,7 +168,20 @@ export function ReviewStep({
           testId="import-not-a-project-banner"
           role="status"
         >
-          <p>Listed under the rows as “Not a project”. Tick Include to schedule one.</p>
+          <p>
+            Listed under the rows as “Not a project”. Tick Include to schedule one.{' '}
+            <DrillNumber
+              drill={reviewTileDrill(parsed, rows, 'not_a_project', {
+                figure: c.not_a_project,
+                expandMulti: options.expandMulti,
+                servedProjects: useServedProjects,
+              })}
+              className="font-semibold underline"
+              testId="import-review-drill-not_a_project"
+            >
+              {`Show the ${int(c.not_a_project)}`}
+            </DrillNumber>
+          </p>
         </Callout>
       ) : null}
 

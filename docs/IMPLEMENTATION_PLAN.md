@@ -2228,4 +2228,7 @@ recomputing everything. Contract: `docs/API_CONTRACT_P32.md`.
 | P32-R03 | Owner rule: "Num of Projects" (models) n ≥ 2 → n projects by default (`expand_multi` default true, `projects_after_expansion`, ×n chip, invalid → 1 + warning) | backend-builder + frontend-builder | DONE (MEMORY 2026-11-04 P32-R03) |
 | P32-R04 | Owner: per-project step drag on the Workflow page ("Project step timing" tab, picker, 14-step waterfall, unplaced-project banner); Timeline keeps its drag | frontend-builder | DONE (MEMORY 2026-11-04/05 P32-R04) |
 | P32-R05 | Owner: What-if import Executive tab (served `breakdowns` by year), year filter (All/2026/2027/after/not placed) on Executive/Gantt/Projects, session scenarios + variant builder (e.g. only 5 A+) + Compare tab, card-based UI clean-up | backend-builder + frontend-builder | DONE (MEMORY 2026-11-05 P32-R05) |
+| P32-R06 | Client's priorities workbook (no Status column, Num of Models, Running, Rom/Unbound/OEM, budget lines) read alongside the first format | backend-builder + frontend-builder | DONE (MEMORY 2026-11-05 P32-R06) |
+| P32-R07 | Owner: every What-if import number is clickable → side sheet listing exactly those projects (count = number), Show on Gantt / Open project | frontend-builder | DONE (MEMORY 2026-11-05 P32-R07) |
+| P32-R04b | Owner: Workflow "Project step timing" lists ALL projects (the Timeline's Gantt with editing), expand → drag steps; search filter; axis past W52 | frontend-builder | DONE (MEMORY 2026-11-05 P32-R04 rework) |
 | P32-T20 | Gate: qa, workflow, security | — | TODO |

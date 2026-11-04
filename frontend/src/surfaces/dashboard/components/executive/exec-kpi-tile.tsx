@@ -54,6 +54,14 @@ export interface ExecKpiTileProps {
   onOpen?: (tile: HTMLButtonElement) => void;
   /** Accessible name when clickable ("Scheduled: open the 227 projects"). */
   openLabel?: string;
+  /**
+   * P32-R07 (What-if import drill-down): the figure as given (e.g. its own button) instead of
+   * the counted-up `value`. With `valueNode` / `badgeNode` the tile stays a group, so the
+   * nodes may hold their own buttons; do not combine with `onOpen`.
+   */
+  valueNode?: React.ReactNode;
+  /** The badge content as given (e.g. a button), in place of `badge`. */
+  badgeNode?: React.ReactNode;
   testId: string;
 }
 
@@ -75,6 +83,8 @@ export function ExecKpiTile({
   badgeTone = 'neutral',
   onOpen,
   openLabel,
+  valueNode,
+  badgeNode,
   testId,
 }: ExecKpiTileProps): React.JSX.Element {
   // Count-up like the shared StatCard; never invents a number.
@@ -134,12 +144,12 @@ export function ExecKpiTile({
           className={cn('block shrink-0 font-display text-3xl font-extrabold leading-none tabular-nums', solid ? 'text-inherit' : 'text-text')}
           data-numeric=""
         >
-          {shown}
+          {valueNode ?? shown}
         </span>
         <span
           className={cn(
             'inline-flex h-5 shrink-0 items-center whitespace-nowrap rounded-pill px-2 text-2xs font-bold tabular-nums',
-            badge === undefined && 'invisible',
+            badge === undefined && badgeNode === undefined && 'invisible',
             variant === 'feature'
               ? 'bg-surface text-text'
               : badgeTone === 'pop'
@@ -150,9 +160,9 @@ export function ExecKpiTile({
           )}
           data-numeric=""
           data-testid="exec-kpi-tile-badge"
-          aria-hidden={badge === undefined ? true : undefined}
+          aria-hidden={badge === undefined && badgeNode === undefined ? true : undefined}
         >
-          {badge ?? '—'}
+          {badgeNode ?? badge ?? '—'}
         </span>
       </span>
     </>

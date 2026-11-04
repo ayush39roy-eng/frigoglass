@@ -99,11 +99,15 @@ export function ResultsGantt({
   const undoEdit = useImportPlan((s) => s.undoEdit);
   const resetEdits = useImportPlan((s) => s.resetEdits);
 
+  // "Show on Gantt" from a drill-down (P32-R07): the Gantt mounts (keyed by the request)
+  // filtered to the project's name, with it expanded, then scrolls to and focuses it.
+  const consumeFocus = useImportPlan((s) => s.consumeGanttFocus);
+  const [focus] = React.useState(() => useImportPlan.getState().ganttFocus);
   const [source, setSource] = React.useState<'all' | 'file' | 'plan'>('all');
   const [hub, setHub] = React.useState('all');
   const [outcome, setOutcome] = React.useState<'all' | WhatIfOutcome>('all');
-  const [search, setSearch] = React.useState('');
-  const [expanded, setExpanded] = React.useState<Set<string>>(() => new Set());
+  const [search, setSearch] = React.useState(() => focus?.name ?? '');
+  const [expanded, setExpanded] = React.useState<Set<string>>(() => new Set(focus ? [focus.ref] : []));
   const [dialog, setDialog] = React.useState<TimingDialogTarget | null>(null);
 
   const base = result.base_year;
@@ -159,6 +163,17 @@ export function ResultsGantt({
   React.useEffect(() => {
     virtualizer.measure();
   }, [rows, virtualizer]);
+
+  React.useEffect(() => {
+    if (!focus) return;
+    consumeFocus();
+    const el = scrollRef.current;
+    el?.scrollIntoView?.({ block: 'start' });
+    const rowEl = [...(el?.querySelectorAll<HTMLElement>('[data-testid="import-gantt-project"]') ?? [])].find(
+      (r) => r.dataset.ref === focus.ref,
+    );
+    rowEl?.querySelector<HTMLElement>('button')?.focus();
+  }, [focus, consumeFocus]);
 
   const toggle = (ref: string) =>
     setExpanded((cur) => {
@@ -392,6 +407,7 @@ export function ResultsGantt({
                   className={cn(
                     'absolute left-0 flex border-b border-border/60',
                     row.kind === 'step' && 'bg-surface-sunken/30',
+                    row.kind === 'project' && focus?.ref === row.p.ref && 'ring-2 ring-inset ring-primary',
                   )}
                   style={{ top: AXIS_H + v.start, height: h, width: totalW }}
                   data-testid={row.kind === 'project' ? 'import-gantt-project' : 'import-gantt-step'}

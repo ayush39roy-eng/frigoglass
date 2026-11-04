@@ -11,7 +11,6 @@ import {
   TrendingDown,
 } from 'lucide-react';
 
-import { BarChart } from '@/components/ui/bar-chart';
 import { ExecKpiTile } from '@/surfaces/dashboard/components/executive/exec-kpi-tile';
 import { categoryRank, dashCatFill } from '@/lib/categorical-palette';
 import { formatInteger } from '@/lib/format';
@@ -24,8 +23,22 @@ import type { Breakdown, BreakdownBucket, ImportChange, ImportSimulateResponse }
 import { bucketLabel } from '../bucket-label';
 import { useEffectiveYear } from '../use-year-filter';
 import { planYearOf, weekOrDash } from '../week-labels';
-import { breakdownFor, YEAR_ALL, YEAR_NOT_PLACED, yearOptions } from '../year-filter';
+import { breakdownFor, YEAR_ALL, yearOptions } from '../year-filter';
+import {
+  bucketDrill,
+  changeDrill,
+  drillLabel,
+  execTileDrill,
+  outcomeDrill,
+  quarterDrill,
+  type BucketDim,
+  type Drill,
+  type ExecTile,
+} from '../drilldown';
+import { useDrill } from '../drill-store';
+import { DrillNumber } from './drill-number';
 import { FeatureCard } from './feature-card';
+import { QuarterBars } from './quarter-bars';
 import { IssueList, type IssueItem } from './issue-list';
 
 /**
@@ -44,6 +57,7 @@ const OUTCOME_FILL: Record<keyof Breakdown['outcomes'], string> = {
   excluded: 'hsl(var(--color-text-subtle))',
 };
 const OUTCOME_KEYS = ['within_year', 'spillover', 'left_out', 'blocked', 'data_error', 'excluded'] as const;
+type OutcomeKey = (typeof OUTCOME_KEYS)[number];
 
 type DonutDim = 'by_category' | 'by_hub' | 'by_priority' | 'by_status';
 const DONUTS: readonly (readonly [DonutDim, string])[] = [
@@ -66,13 +80,19 @@ function BucketDonut({
   dim,
   buckets,
   total,
+  result,
+  yearKey,
 }: {
   title: string;
   testId: string;
   dim: DonutDim;
   buckets: readonly BreakdownBucket[];
   total: number;
+  result: ImportSimulateResponse;
+  yearKey: string;
 }): React.JSX.Element {
+  const open = useDrill((s) => s.open);
+  const drillOf = (key: string): Drill => bucketDrill(result, yearKey, dim satisfies BucketDim, key);
   const slices: Slice[] = buckets.map((b, i) => ({
     key: b.key,
     label: bucketLabel(b.key),
@@ -91,10 +111,13 @@ function BucketDonut({
       total={total}
       totalLabel="projects"
       legend
+      onSliceOpen={(key, opener) => open(drillOf(key), opener)}
+      sliceOpenLabel={(sl) => drillLabel(drillOf(sl.key))}
       info={
         <p>
           Projects in the selected year by {title.replace('Projects by ', '')}. Hover a slice for how many finish
-          within the plan year, spill over or are not placed. Every count is served by the planner.
+          within the plan year, spill over or are not placed; click a slice or a chip to list its projects. Every
+          count is served by the planner.
         </p>
       }
     />
@@ -107,12 +130,14 @@ function ChangeList({
   empty,
   base,
   testId,
+  drill,
 }: {
   title: string;
   rows: readonly ImportChange[];
   empty: string;
   base: number;
   testId: string;
+  drill: Drill;
 }): React.JSX.Element {
   const columns: RowColumn<ImportChange>[] = [
     { header: 'Project', cell: (c) => <span className="font-medium">{c.name}</span> },
@@ -133,6 +158,15 @@ function ChangeList({
       title={`${title} (${int(rows.length)})`}
       hint="Plan projects only, whole plan (not filtered by year)"
       testId={testId}
+      actions={
+        <DrillNumber
+          drill={drill}
+          className="rounded-pill bg-surface-sunken px-2.5 py-0.5 text-2xs font-semibold text-text"
+          testId={`${testId}-drill`}
+        >
+          {`${int(rows.length)} project${rows.length === 1 ? '' : 's'}`}
+        </DrillNumber>
+      }
     >
       {rows.length === 0 ? (
         <p className="text-xs text-text-muted">{empty}</p>
@@ -165,17 +199,18 @@ export function ResultsExecutive({ result }: { result: ImportSimulateResponse })
     [result.issues, nameByRef],
   );
 
-  // "Not placed" (C1: left_out + blocked + data_error) is always one served figure: the
-  // served `not_placed` block's total for All / Not placed; a finish-year block holds only
-  // placed projects, so its served `left_out` (0) is shown.
-  const notPlaced =
-    block === null
-      ? k.left_out
-      : key === YEAR_ALL
-        ? (breakdownFor(result, YEAR_NOT_PLACED)?.total ?? block.outcomes.left_out)
-        : key === YEAR_NOT_PLACED
-          ? block.total
-          : block.outcomes.left_out;
+  const open = useDrill((st) => st.open);
+  // Every tile's figure and the projects behind it come from ONE selection (P32-R07,
+  // `drilldown.ts`): the served block for the Year filter, else the served kpis.
+  const tile = (t: ExecTile) => execTileDrill(result, key, t);
+  const opener = (t: ExecTile) => {
+    const d = tile(t);
+    return { value: d.figure, onOpen: (el: HTMLButtonElement) => open(d, el), openLabel: drillLabel(d) };
+  };
+  const fileDrill = tile('file');
+  const planDrill = tile('plan');
+  const beforeDrill = tile('before');
+  const afterDrill = tile('after');
 
   const slices: Slice[] = block
     ? OUTCOME_KEYS.map((o) => ({ key: o, label: OUTCOME_LABEL[o], count: block.outcomes[o], fill: OUTCOME_FILL[o] }))
@@ -190,7 +225,7 @@ export function ResultsExecutive({ result }: { result: ImportSimulateResponse })
       >
         <ExecKpiTile
           label={key === YEAR_ALL ? 'Projects scheduled' : yearLabel}
-          value={block ? block.total : k.projects_total}
+          {...opener('total')}
           icon={Layers}
           tone="primary"
           variant="feature"
@@ -198,23 +233,28 @@ export function ResultsExecutive({ result }: { result: ImportSimulateResponse })
         />
         <ExecKpiTile
           label={`Finish in ${String(year)}`}
-          value={block ? block.outcomes.within_year : k.within_plan_year}
+          {...opener('within')}
           icon={CalendarCheck}
           tone="success"
           testId="import-kpi-within"
         />
         <ExecKpiTile
           label="Spill over"
-          value={block ? block.outcomes.spillover : k.spillover}
+          {...opener('spillover')}
           icon={CalendarClock}
           tone="warning"
           testId="import-kpi-spillover"
         />
-        <ExecKpiTile label="Not placed" value={notPlaced} icon={CircleSlash} tone="danger" testId="import-kpi-leftout" />
+        <ExecKpiTile label="Not placed" {...opener('not_placed')} icon={CircleSlash} tone="danger" testId="import-kpi-leftout" />
         <ExecKpiTile
           label="From the file"
-          value={block ? block.file : k.file_projects}
-          badge={`${int(block ? block.plan : k.plan_projects)} plan`}
+          value={fileDrill.figure}
+          valueNode={<DrillNumber drill={fileDrill} testId="import-kpi-file-drill" />}
+          badgeNode={
+            <DrillNumber drill={planDrill} testId="import-kpi-plan-drill">
+              {`${int(planDrill.figure)} plan`}
+            </DrillNumber>
+          }
           icon={FileSpreadsheet}
           tone="neutral"
           testId="import-kpi-file"
@@ -223,6 +263,13 @@ export function ResultsExecutive({ result }: { result: ImportSimulateResponse })
           <ExecKpiTile
             label={`Plan in ${String(year)}: before → after`}
             value={`${int(k.before_within_plan_year)} → ${int(k.after_within_plan_year_existing)}`}
+            valueNode={
+              <>
+                <DrillNumber drill={beforeDrill} testId="import-kpi-before-drill" />
+                <span aria-hidden="true">{' → '}</span>
+                <DrillNumber drill={afterDrill} testId="import-kpi-after-drill" />
+              </>
+            }
             icon={ArrowRightLeft}
             tone="neutral"
             variant="ink"
@@ -231,7 +278,7 @@ export function ResultsExecutive({ result }: { result: ImportSimulateResponse })
         ) : (
           <ExecKpiTile
             label="Not scheduled"
-            value={k.excluded}
+            {...opener('excluded')}
             badge="on hold etc."
             icon={ListChecks}
             tone="neutral"
@@ -256,10 +303,16 @@ export function ResultsExecutive({ result }: { result: ImportSimulateResponse })
               slices={slices}
               total={block.total}
               totalLabel="projects"
+              legend
+              onSliceOpen={(o, el) => open(outcomeDrill(result, key, o as OutcomeKey, OUTCOME_LABEL[o as OutcomeKey]), el)}
+              sliceOpenLabel={(sl) =>
+                drillLabel(outcomeDrill(result, key, sl.key as OutcomeKey, OUTCOME_LABEL[sl.key as OutcomeKey]))
+              }
               info={
                 <p>
-                  Every project in the selection by its scheduled outcome. Counts and the total are served by the
-                  planner for the selected year; nothing is counted in the browser.
+                  Every project in the selection by its scheduled outcome; click a slice or a chip to list its
+                  projects. Counts and the total are served by the planner for the selected year; nothing is counted
+                  in the browser.
                 </p>
               }
             />
@@ -271,9 +324,9 @@ export function ResultsExecutive({ result }: { result: ImportSimulateResponse })
               {block.by_finish_quarter.length === 0 ? (
                 <p className="text-xs text-text-muted">No placed project in this selection.</p>
               ) : (
-                <BarChart
+                <QuarterBars
                   ariaLabel="Finishes per quarter"
-                  data={block.by_finish_quarter.map((q) => ({ key: q.key, label: q.label, value: q.count }))}
+                  bars={block.by_finish_quarter.map((q) => ({ key: q.key, label: q.label, drill: quarterDrill(result, key, q.key) }))}
                 />
               )}
             </ChartCard>
@@ -291,6 +344,8 @@ export function ResultsExecutive({ result }: { result: ImportSimulateResponse })
                   dim={dim}
                   buckets={block[dim]}
                   total={block.total}
+                  result={result}
+                  yearKey={key}
                 />
               </div>
             ))}
@@ -306,6 +361,7 @@ export function ResultsExecutive({ result }: { result: ImportSimulateResponse })
             empty="No plan project slips out of the year."
             base={base}
             testId="import-newly-slipping"
+            drill={changeDrill(result, 'newly_slipping', `Newly slipping out of ${String(year)}`)}
           />
           <ChangeList
             title={`Recovered into ${String(year)}`}
@@ -313,6 +369,7 @@ export function ResultsExecutive({ result }: { result: ImportSimulateResponse })
             empty="No plan project moves into the year."
             base={base}
             testId="import-recovered"
+            drill={changeDrill(result, 'recovered', `Recovered into ${String(year)}`)}
           />
         </div>
       ) : null}

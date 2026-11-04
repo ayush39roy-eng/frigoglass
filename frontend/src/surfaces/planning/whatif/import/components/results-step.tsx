@@ -53,6 +53,8 @@ export function ResultsStep({
   const setStep = useImportPlan((s) => s.setStep);
   const scenarioCount = useImportScenarios((s) => s.scenarios.length);
   const yearKey = useEffectiveYear(result);
+  // "Show on Gantt" from a drill-down remounts the Gantt on the requested project (P32-R07).
+  const ganttNonce = useImportPlan((s) => s.ganttFocusNonce);
   // Owner rule (2026-11-04): On Hold file rows are never mapped. They are sent with
   // include=false and the server drops them; this only guards the drawing.
   const shown = React.useMemo(
@@ -97,7 +99,7 @@ export function ResultsStep({
           </React.Suspense>
         </TabsContent>
         <TabsContent value="gantt">
-          <ResultsGantt result={shown} pending={simulation.pending} yearKey={yearKey} />
+          <ResultsGantt key={ganttNonce} result={shown} pending={simulation.pending} yearKey={yearKey} />
         </TabsContent>
         <TabsContent value="capacity">
           <ResultsCapacity result={result} />

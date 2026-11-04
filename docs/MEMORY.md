@@ -33835,3 +33835,192 @@ CATEGORY_FROM_PLAN, STAGE_FROM_PLAN and NOT_A_PROJECT render through the generic
 - eslint 0 errors, 8 pre-existing warnings.
 - Full vitest: 229 files / 1844 tests.
 - Build budget PASS, 191.5 KB gzip initial.
+
+## [2026-11-05] P32-R04 rework — frontend-builder: Workflow "Project step timing" is the full project timeline
+
+The owner asked for every project's timeline, expandable, with dragging: "here ALL the projects should come with the
+timeline and we can expand and then move and drag the bars". This supersedes the pick-one-project design in the two
+P32-R04 entries above. Frontend only; backend and the import folder were not touched.
+
+- **What the tab is now.** The Timeline's own `GanttChart` with `StepTimingProvider` mounted.
+  - Data: `GET /gantt` (`useGantt`, hub/country filter + priority tabs as server params), every project in scope,
+    virtualized by the chart.
+  - Collapsed rows are the Timeline's: name, meta line (leader · code · type · hub), weeks, the priority pill, the
+    "Open in Project Workspace" link, and the status chips column.
+  - Plus, through the new `rowExtra`: the served project status from `/dashboard/projects`
+    (`hooks/use-project-statuses.ts`; none for Engineers), and a "Not placed" badge when `left_out` or fewer than 14
+    steps are served. The badge's title gives the reason: no leader / category not allowed / "the run records no
+    reason".
+  - Expand (chevron, Expand all / Collapse all) shows the 14 step rows with move, resize, drop-onto-step-above,
+    Edit timing, Reset and run-follow, identical to `/timeline`.
+- **Search** filters the loaded rows by name, code, hub or status. Priority uses the Timeline's `PriorityTabs`.
+- **Deep link.** `?project=<id>` is always expanded (derived from the URL; no effect needed) and scrolled to the top
+  (`scrollToProjectId` → `virtualizer.scrollToIndex`). Expanding a project sets `?project`; collapsing it or
+  Collapse all clears it.
+- **New opt-in `GanttChart` props.** With none of them set, `/timeline` is unchanged and all its tests are untouched
+  and green.
+  - `axis {scaleFor, fill, weekLabel}`. Here the scale is `projectWaterfallScale` over all rows' steps: W40-ish to
+    max(W52, latest end / floor) + 2, max W78, `maxDragWeek = 78`, "W5 '27" labels. Weeks grow from the 16 px minimum
+    to fill the card.
+  - `rowExtra`.
+  - `markUnplaced`: a step with no served weeks shows "Not placed in the active run".
+  - `scrollToProjectId`.
+  - `onVisibleProjectsChange`: rendered project ids.
+- **Unplaced projects.** A workspace read happens only for a project that is expanded, has been on screen and has
+  fewer than 14 served steps. These ids accumulate, so rows do not jump. Uses `useQueries` with `combine`.
+  `completeStepRows` (unchanged) fills the missing steps. Expand all does not fetch off-screen workspaces.
+- **Removed (no dead code).**
+  - `gantt/components/project-step-waterfall.tsx`.
+  - The picker (`project-picker.tsx`).
+  - `use-step-timing-projects.ts`.
+  - The single-project header and banner.
+- **Kept.**
+  - `projectWaterfallScale` / `dragLastWeek` / `maxDragWeek`.
+  - The origin-aware axis and the label-skip.
+  - `StepBarGraphic`.
+  - `complete-step-rows.ts`.
+  - Nav/route gating (`alsoReadableVia: ['gantt']`).
+  - The templates tab.
+- **Tests.** `project-step-timing-section.test.tsx` was rewritten, 27 tests:
+  - all 3 fixture projects listed collapsed, with status and the Not placed badge;
+  - the hub param;
+  - expand shows 14 rows plus the URL; collapse;
+  - Expand all / Collapse all;
+  - `?project=` expands and calls `scrollToIndex(2)`;
+  - the axis W40–W57, W52 marker, now line, and the clipped label skipped;
+  - fill width 1327 px with "W4 '27";
+  - overlap drop → PATCH → "Timeline updated" → refetch;
+  - a W78 drag;
+  - resize;
+  - dialog Reset;
+  - search by hub / status / code / no match;
+  - the priority param;
+  - served `none`;
+  - viewer read-only;
+  - Engineer;
+  - no-run / 403;
+  - axe ×2;
+  - left-out expanded → workspace fetched once → 14 rows, 13 "Not placed" chips, 13 Edit timing → PATCH;
+  - partly placed 4 + 10;
+  - the no-leader reason;
+  - viewer unplaced;
+  - RBAC tab, `?tab` fallback, nav.
+- **Checks.**
+  - `tsc -b`: clean for this work.
+  - eslint: 0 errors, 8 pre-existing warnings.
+  - Full vitest: 229 files / 1844 tests passed.
+  - `vite build` + budget: PASS, 190.9 KB gzip.
+  - `npm run build` currently fails at `tsc -b` only in `src/surfaces/planning/whatif/import/drilldown.ts`, the other
+    agent's in-progress file, which this task does not touch.
+  - Not checked in a real browser.
+
+## [2026-11-05] P32-R07 — frontend-builder
+
+**Task.** The owner asked that in the What-if planner "ALL the numbers should be clickable and it should show which
+projects". Frontend only. Changes are in `surfaces/planning/whatif/import/` plus additive, optional props on two
+shared Executive components. Not touched: prettier, `surfaces/gantt`, `surfaces/workflow-settings` (another agent's
+work in progress), `backend/`.
+
+**Selection module.** `import/drilldown.ts` is pure, with one function per figure. Each one filters the SERVED
+`projects`, or the served parse `rows`, by served fields only: outcome, finish_week, category, hub, priority, status,
+source, leader_ref, steps, change refs, matched_project_id, leader.
+- **Year blocks** mirror the server's C1 rules (`breakdown_year_key`, `_buckets`, `finish_quarter`):
+  - placed projects go in `<base>` for weeks 1..52, `<base+1>` for 53..104, `later` beyond;
+  - not_placed = left_out + blocked + data_error;
+  - excluded projects appear only under All;
+  - an empty value goes in the "unknown" bucket.
+- **Figures.** `execTileDrill` returns both the tile figure and its list, so the Executive tiles now read their
+  values from it. The values are the same served fields as P32-R05.
+- **Shortfall.** When a list is shorter than its figure, the drill carries a `shortfall` reason and the sheet says
+  "N of M shown (reason)". It never shows a wrong count.
+
+**Sheet.** `components/drill-sheet.tsx` is built on Radix Dialog in the shadcn/registration-drawer pattern. It is a
+right-hand sheet from `sm` up and full screen on a phone.
+- Mounted once in `ImportPlanView`. State lives in `drill-store.ts` (Zustand). The sheet closes when the step changes
+  or the view unmounts.
+- Title is "<figure name> · N projects". Below it: an optional context line ("Year: Finish in 2027" or "Scenario:
+  X"), the listed count (`data-count`) and a search box.
+- `drill-table.tsx` is a TanStack Table, sortable, and virtualized above 100 rows. Columns: name, source ("file · row
+  5 · (2/5)" or plan), hub, category, priority, status, leader + auto chip, finish "W5 '27", outcome chip, before →
+  after (plan projects only), actions.
+- Parse-row drills use their own columns: row (+ copy), file row, hub, category, status, priority, engineer, issues.
+- Escape and Close return focus to the figure.
+
+**Row actions.**
+- "Show on Gantt" (current result only):
+  - `import-store.focusOnGantt` switches to the Gantt tab and resets the Year filter to All when the filter would
+    hide the project.
+  - The Gantt remounts (`key={ganttFocusNonce}`), searches the project's name, expands it, gives its row a ring,
+    scrolls and focuses it, then calls `consumeGanttFocus`.
+- "Open project" links to `/projects/<uuid>`, plan projects only.
+
+**What is clickable.**
+- **Executive:**
+  - Every KPI tile. Two tiles hold two buttons: "From the file" plus its "N plan" badge, and "before → after".
+    Both use the new `ExecKpiTile` props `valueNode` / `badgeNode`.
+  - Every slice and legend chip of the Outcome donut (it now has a legend) and of the category, hub, priority and
+    status donuts. This uses the new `HeroDonut` props `onSliceOpen` / `sliceOpenLabel`; with them the legend chips
+    become buttons.
+  - Every finishes-per-quarter bar. The new `components/quarter-bars.tsx` replaces `BarChart` there.
+  - The newly-slipping and recovered headers, through a "N projects" pill.
+  - All of this respects the Year filter.
+- **Capacity:**
+  - Each hub × window cell lists the projects whose capacity hub has design steps (not skipped or done before the
+    import) with weeks overlapping the window.
+  - Each lab region × window cell does the same for lab steps, using hub → region from `HUB_COUNTRY`.
+  - Excluded and data-error projects are skipped, as in the engine.
+  - Each designer name lists the projects with `leader_ref` = that designer.
+- **Compare:** each KPI cell per scenario (no Gantt action there), and the "N projects change outcome" count.
+- **Review:**
+  - Rows, Schedulable, Not scheduled, Matched, New and New designers filter `parsed.rows` as parsed.
+  - Projects to schedule shows one line per "(k/n)" copy.
+  - Auto-assign uses the current rows, as the tile does.
+  - Budget lines: a "Show the N" button in the banner.
+- **Affordance.** A quiet button: underline on hover, focus ring, pointer, `aria-haspopup="dialog"`. Accessible name
+  like "Show the 2 projects finishing in 2027".
+
+**Figures that cannot be reproduced by filtering.**
+1. "Not scheduled" (`kpis.excluded`, the Executive tile in file-only mode and the Compare row). It also counts the
+   not-scheduled plan projects that B3 omits from `projects`, so the sheet shows "1 of 3 shown (the other plan
+   projects that are not scheduled … are counted but not listed by the planner)".
+2. Without `breakdowns` (older servers), "Projects scheduled" / "From the plan" fall back to
+   `kpis.projects_total` / `plan_projects`, which include the same omitted projects. These get the same note.
+
+No hub-scope gap exists: the server computes kpis and breakdowns over the same scoped rows. Capacity cells and
+designer rows show load weeks and names, not a project count, so their sheet shows the list's own length.
+
+**Not changed.** `year-filter.projectInYear`, which the Gantt and Projects tabs use, still puts an excluded project
+with a finish week into a year. `drilldown.yearKeyOf` follows the server here. Served excluded rows have a null
+finish week, so the two agree in practice.
+
+**Tests.**
+- **Fixture.** New `DRILL_RESPONSE` / `DRILL_BREAKDOWNS` in `test-fixtures.ts`: 7 projects covering every outcome,
+  2026 / 2027 / later finishes, an excluded file row, a data-error "(2/2)" copy with no category, a blocked plan
+  project, and kpis consistent with the server's scoping. The breakdowns were hand-written from the C1 rules.
+- **`drilldown.test.ts` (10).** Checks year keys, quarter keys and the unknown bucket. Every check below asserts
+  list length = served figure, for the fixture:
+  - every Executive tile for every year key;
+  - every bucket of every dimension for every year key (the buckets also partition the block);
+  - every outcome and every quarter;
+  - changes;
+  - capacity cells and designers;
+  - every Compare KPI (excluded → shortfall) and outcome changes;
+  - every Review tile, including copies.
+  The no-breakdowns shortfall case is also covered.
+- **`drill-sheet.test.tsx` (6).** UI tests:
+  - Clicks every Executive drill button for all 5 years (60+ opens) and asserts the sheet rows = `data-count` = the
+    number shown on the button.
+  - The "N of M shown" case, Escape returning focus, and axe on the open sheet.
+  - Search, the Open project href, the file copy source, and Show on Gantt (tab, Year reset, filter, expand, focus).
+  - All 12 capacity cells and 3 designers.
+  - All 22 Compare cells and the changes count.
+  - All 8 Review tiles, plus axe.
+- Existing tests are unchanged and pass. The redundant sr-only " to " in the before → after tile was removed because
+  each number now has its own labelled button.
+
+**Checks.**
+- `tsc -b` clean.
+- eslint 0 errors, 8 pre-existing warnings.
+- Full vitest: 231 files / 1860 tests passed.
+- `npm run build` budget PASS: 190.9 KB gzip initial.
+- Not checked in a real browser. The phone full-screen layout was reasoned from the classes.

@@ -37,6 +37,13 @@ export interface ImportState {
    * Shared by the Executive, Gantt and Projects tabs.
    */
   yearFilter: string;
+  /**
+   * "Show on Gantt" from a drill-down (P32-R07): the project the Gantt tab opens on (filtered
+   * by its name, expanded, scrolled to). Consumed by the Gantt on mount; `ganttFocusNonce`
+   * remounts the Gantt so a second request applies too.
+   */
+  ganttFocus: { ref: string; name: string } | null;
+  ganttFocusNonce: number;
 
   /** A fresh parse: rows reset to the served ones, edits and result cleared. */
   setParsed: (parsed: ImportParseResponse) => void;
@@ -46,6 +53,9 @@ export interface ImportState {
   setStep: (step: ImportStep) => void;
   setResultsTab: (tab: ResultsTab) => void;
   setYearFilter: (key: string) => void;
+  /** Switch to the Gantt tab on `ref`; `yearFilter` "all" when its year block is not shown. */
+  focusOnGantt: (focus: { ref: string; name: string }, resetYear: boolean) => void;
+  consumeGanttFocus: () => void;
   setResult: (result: ImportSimulateResponse) => void;
   /**
    * Apply a Gantt drop. `base` is the step's served timing triple, used when the step has
@@ -70,6 +80,8 @@ const EMPTY = {
   result: null,
   resultsTab: 'executive' as ResultsTab,
   yearFilter: 'all',
+  ganttFocus: null as { ref: string; name: string } | null,
+  ganttFocusNonce: 0,
 };
 
 function pushUndo(stack: EditMap[], edits: EditMap): EditMap[] {
@@ -95,6 +107,14 @@ export const useImportPlan = create<ImportState>()((set) => ({
   setStep: (step) => set({ step }),
   setResultsTab: (resultsTab) => set({ resultsTab }),
   setYearFilter: (yearFilter) => set({ yearFilter }),
+  focusOnGantt: (ganttFocus, resetYear) =>
+    set((s) => ({
+      ganttFocus,
+      ganttFocusNonce: s.ganttFocusNonce + 1,
+      resultsTab: 'gantt',
+      ...(resetYear ? { yearFilter: 'all' } : {}),
+    })),
+  consumeGanttFocus: () => set((s) => (s.ganttFocus === null ? {} : { ganttFocus: null })),
   setResult: (result) => set({ result }),
   applyEdit: (ref, stepId, patch, base) =>
     set((s) => {

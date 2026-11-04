@@ -631,3 +631,202 @@ export const SIMULATE_RESPONSE: ImportSimulateResponse = {
   workings: ['Baseline: 237 projects; import: 3 rows.'],
   breakdowns: BREAKDOWNS,
 };
+
+// --- P32-R07 drill-down fixture -------------------------------------------------------------
+
+/** fileSteps() moved by `by` weeks (null weeks stay null). */
+function shifted(by: number): ImportResultStep[] {
+  return fileSteps().map((s) => ({
+    ...s,
+    start_week: s.start_week === null ? null : s.start_week + by,
+    end_week: s.end_week === null ? null : s.end_week + by,
+  }));
+}
+const unplacedSteps = (): ImportResultStep[] =>
+  fileSteps().map((s) => ({ ...s, start_week: null, end_week: null, editable: 'none' as const }));
+
+/**
+ * Seven served projects covering every outcome, a 2026 / 2027 / later finish, an excluded file
+ * row (only in "all"), a data-error row with no category ("unknown" bucket) and a blocked plan
+ * project. `DRILL_BREAKDOWNS` is written by hand from the server's C1 rules over exactly these
+ * rows, and the kpis are the server's scoped figures (2 more not-scheduled plan projects are
+ * counted in `excluded` / `projects_total` / `plan_projects` but not returned, B3).
+ */
+const drillProjects: ImportResultProject[] = [
+  { ...fileProject },
+  { ...autoProject },
+  { ...planProject, within_plan_year: false },
+  {
+    ...fileProject,
+    ref: 'row-7',
+    file_row: 7,
+    replaces_project_id: null,
+    name: 'Synthetic Display 120',
+    category: 'B',
+    priority: 'P2',
+    status: 'Commercialized',
+    leader_name: null,
+    leader_ref: null,
+    outcome: 'excluded',
+    start_week: null,
+    end_week: null,
+    finish_week: null,
+    within_plan_year: false,
+    steps: unplacedSteps(),
+  },
+  {
+    ...fileProject,
+    ref: 'row-8-2',
+    file_row: 8,
+    replaces_project_id: null,
+    name: 'Synthetic Chest 200 (2/2)',
+    hub: 'PD-Romania',
+    capacity_hub: 'PD-Romania',
+    category: '',
+    priority: 'P4',
+    status: 'In Queue',
+    leader_name: null,
+    leader_ref: null,
+    outcome: 'data_error',
+    data_error: 'No lead time for the category.',
+    start_week: null,
+    end_week: null,
+    finish_week: null,
+    within_plan_year: false,
+    steps: unplacedSteps(),
+  },
+  {
+    ...planProject,
+    ref: 'plan-2',
+    name: 'Existing Greek Project',
+    hub: 'R&D-Greece',
+    capacity_hub: 'R&D-Greece',
+    category: 'B',
+    priority: 'P1',
+    status: 'In Development',
+    leader_name: 'Antonis',
+    leader_ref: 'new:1',
+    outcome: 'within_year',
+    start_week: 42,
+    end_week: 50,
+    finish_week: 50,
+    within_plan_year: true,
+    before_outcome: 'within_year',
+    before_finish_week: 48,
+    steps: shifted(-17),
+  },
+  {
+    ...planProject,
+    ref: 'plan-3',
+    name: 'Existing Blocked Project',
+    category: 'A+',
+    priority: 'P2',
+    status: 'In Development',
+    outcome: 'blocked',
+    start_week: null,
+    end_week: null,
+    finish_week: null,
+    within_plan_year: false,
+    before_outcome: 'spillover',
+    before_finish_week: 70,
+    steps: unplacedSteps(),
+  },
+];
+
+export const DRILL_BREAKDOWNS: ImportBreakdowns = {
+  years: BREAKDOWNS.years,
+  by_year: {
+    all: block(
+      4,
+      3,
+      { within_year: 2, spillover: 1, left_out: 1, blocked: 1, data_error: 1, excluded: 1 },
+      {
+        by_category: [b('A+', [1, 0, 0, 1]), b('A', [3, 1, 1, 1]), b('B', [2, 1, 0, 0]), b('unknown', [1, 0, 0, 1])],
+        by_hub: [b('R&D-Greece', [3, 2, 0, 0]), b('PD-India', [3, 0, 1, 2]), b('PD-Romania', [1, 0, 0, 1])],
+        by_priority: [b('P1', [2, 2, 0, 0]), b('P2', [3, 0, 1, 1]), b('P3', [1, 0, 0, 1]), b('P4', [1, 0, 0, 1])],
+        by_status: [b('In Queue', [3, 0, 1, 2]), b('In Development', [3, 2, 0, 1]), b('Commercialized', [1, 0, 0, 0])],
+        by_source: [b('file', [4, 1, 0, 2]), b('plan', [3, 1, 1, 1])],
+        by_finish_quarter: [
+          { key: '2026-Q4', label: "Q4 '26", count: 1 },
+          { key: '2027-Q2', label: "Q2 '27", count: 1 },
+          { key: '2028-Q1', label: "Q1 '28", count: 1 },
+        ],
+      },
+    ),
+    '2026': block(
+      0,
+      1,
+      { within_year: 1 },
+      {
+        by_category: [b('B', [1, 1, 0, 0])],
+        by_hub: [b('R&D-Greece', [1, 1, 0, 0])],
+        by_priority: [b('P1', [1, 1, 0, 0])],
+        by_status: [b('In Development', [1, 1, 0, 0])],
+        by_source: [b('plan', [1, 1, 0, 0])],
+        by_finish_quarter: [{ key: '2026-Q4', label: "Q4 '26", count: 1 }],
+      },
+    ),
+    '2027': BREAKDOWNS.by_year['2027'] as Breakdown,
+    later: BREAKDOWNS.by_year.later as Breakdown,
+    not_placed: block(
+      2,
+      1,
+      { left_out: 1, blocked: 1, data_error: 1 },
+      {
+        by_category: [b('A+', [1, 0, 0, 1]), b('A', [1, 0, 0, 1]), b('unknown', [1, 0, 0, 1])],
+        by_hub: [b('PD-India', [2, 0, 0, 2]), b('PD-Romania', [1, 0, 0, 1])],
+        by_priority: [b('P2', [1, 0, 0, 1]), b('P3', [1, 0, 0, 1]), b('P4', [1, 0, 0, 1])],
+        by_status: [b('In Queue', [2, 0, 0, 2]), b('In Development', [1, 0, 0, 1])],
+        by_source: [b('file', [2, 0, 0, 2]), b('plan', [1, 0, 0, 1])],
+      },
+    ),
+  },
+};
+
+const capFigure = (key: string) => ({
+  key,
+  load_weeks: 10,
+  capacity_weeks: 20,
+  booked_pct: 50,
+  status: 'available',
+});
+
+export const DRILL_RESPONSE: ImportSimulateResponse = {
+  ...SIMULATE_RESPONSE,
+  kpis: {
+    projects_total: 9,
+    file_projects: 4,
+    plan_projects: 5,
+    within_plan_year: 2,
+    spillover: 1,
+    left_out: 1,
+    blocked: 1,
+    excluded: 3,
+    data_error: 1,
+    file_within_plan_year: 1,
+    file_scheduled: 3,
+    before_within_plan_year: 2,
+    after_within_plan_year_existing: 1,
+    newly_slipping: 1,
+    recovered: 0,
+  },
+  projects: drillProjects,
+  capacity: {
+    ...SIMULATE_RESPONSE.capacity,
+    hubs: ['R&D-Greece', 'PD-India', 'PD-Romania'].map((hub) => ({
+      hub,
+      fte: 2,
+      windows: [capFigure('y0'), capFigure('y1')],
+    })),
+    lab_regions: ['Greece', 'India', 'Romania'].map((region) => ({
+      region,
+      chambers: 2,
+      windows: [capFigure('y0'), capFigure('y1')],
+    })),
+    designers: [
+      { ref: 'eng-1', name: 'Nikos', hub: 'R&D-Greece', fte: 1, is_new: false, windows: [] },
+      ...SIMULATE_RESPONSE.capacity.designers,
+    ],
+  },
+  breakdowns: DRILL_BREAKDOWNS,
+};
