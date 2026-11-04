@@ -152,3 +152,12 @@ export function categoryRank(category: string): number {
   const index = PROJECT_CATEGORIES.indexOf(category as ProjectCategory);
   return index === -1 ? PROJECT_CATEGORIES.length : index;
 }
+
+/**
+ * The Dashboard donuts' slice fill for a palette position (`--dash-cat-1..10`,
+ * theme-reactive CSS, wraps after 10). Moved here from `executive-charts.tsx`
+ * (P32-R05) so the plan-import Executive donuts use the same hues.
+ */
+export function dashCatFill(rank: number): string {
+  return `hsl(var(--dash-cat-${String((((rank % 10) + 10) % 10) + 1)}))`;
+}

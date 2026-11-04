@@ -49,6 +49,12 @@ beforeEach(() => {
 });
 afterEach(() => vi.unstubAllGlobals());
 
+/** A donut's served slice: [count, served detail] from its readable data list. */
+const slice = (testId: string, key: string) =>
+  [...screen.getByTestId(`${testId}-slice-${key}`).querySelectorAll('dd')].map((d) => d.textContent);
+/** The served total in a donut's centre. */
+const centre = (testId: string) => screen.getByTestId(testId).querySelector('figure [data-numeric]')?.textContent;
+
 const projectNames = () =>
   within(screen.getByTestId('import-projects'))
     .getAllByTestId('import-project-row')
@@ -98,9 +104,10 @@ describe('P32-R05 results', () => {
     await waitFor(() => expect(screen.getByTestId('import-kpi-total')).toHaveTextContent('Finish after 20271'));
   });
 
-  it('Executive renders the served breakdowns: stacked bars, quarters, "Unknown" bucket', async () => {
+  it('Executive renders the served breakdowns as four Dashboard donuts, quarters, "Unknown" bucket (axe)', async () => {
     const all = SIMULATE_RESPONSE.breakdowns?.by_year.all;
     if (!all || !SIMULATE_RESPONSE.breakdowns) throw new Error('fixture');
+    // A data-error row with no category: the served "unknown" bucket comes last (Σ buckets = total).
     const withUnknown: ImportSimulateResponse = {
       ...SIMULATE_RESPONSE,
       breakdowns: {
@@ -109,30 +116,53 @@ describe('P32-R05 results', () => {
           ...SIMULATE_RESPONSE.breakdowns.by_year,
           all: {
             ...all,
-            by_category: [...all.by_category, { key: 'unknown', total: 1, within_year: 0, spillover: 0, not_placed: 1 }],
+            by_category: [
+              { key: 'A', total: 2, within_year: 1, spillover: 1, not_placed: 0 },
+              { key: 'unknown', total: 1, within_year: 0, spillover: 0, not_placed: 1 },
+            ],
           },
         },
       },
     };
     simulateReply = withUnknown;
     startAtResults(PARSE_RESPONSE.rows, withUnknown);
-    renderWithProviders(<ImportPlanView />);
+    const { container } = renderWithProviders(<ImportPlanView />);
     await screen.findByTestId('import-executive');
-    const hubs = screen.getAllByTestId('import-exec-hub-row');
-    expect(hubs.map((r) => [r.getAttribute('data-key'), r.lastElementChild?.textContent])).toEqual([
-      ['R&D-Greece', '1/1'],
-      ['PD-India', '0/2'],
-    ]);
-    // Segments are drawn from the served counts only.
-    expect(hubs[1]?.querySelector('[data-segment="spillover"]')).toHaveStyle({ flexGrow: '1' });
-    expect(hubs[1]?.querySelector('[data-segment="within_year"]')).toBeNull();
-    expect(screen.getByTestId('import-exec-category')).toHaveTextContent('Unknown');
-    expect(screen.getAllByTestId('import-exec-priority-row')).toHaveLength(3);
-    expect(screen.getAllByTestId('import-exec-status-row')).toHaveLength(2);
+    const grid = screen.getByTestId('import-exec-donuts');
+    expect(grid).toHaveClass('md:grid-cols-2');
+    for (const [id, title] of [
+      ['category', 'Projects by category'],
+      ['hub', 'Projects by hub'],
+      ['priority', 'Projects by priority'],
+      ['status', 'Projects by status'],
+    ]) {
+      const donut = within(grid).getByTestId(`import-exec-${id}`);
+      expect(within(donut).getByRole('heading', { name: title })).toBeInTheDocument();
+      expect(centre(`import-exec-${id}`)).toBe('3');
+    }
+    expect(slice('import-exec-category', 'A')).toEqual(['2', '1 within the plan year · 1 spill over · 0 not placed']);
+    expect(slice('import-exec-category', 'unknown')[0]).toBe('1');
+    expect(screen.getByTestId('import-exec-category-slice-unknown')).toHaveTextContent('Unknown');
+    expect(screen.getByTestId('import-exec-category-legend')).toHaveTextContent('Unknown1');
+    expect(slice('import-exec-hub', 'R&D-Greece')).toEqual(['1', '1 within the plan year · 0 spill over · 0 not placed']);
+    expect(slice('import-exec-hub', 'PD-India')).toEqual(['2', '0 within the plan year · 1 spill over · 1 not placed']);
+    expect(['P1', 'P2', 'P3'].map((k) => slice('import-exec-priority', k)[0])).toEqual(['1', '1', '1']);
+    expect(slice('import-exec-status', 'In Queue')[0]).toBe('2');
+    expect(slice('import-exec-status', 'In Development')[0]).toBe('1');
+    expect(screen.queryByTestId('import-exec-hub-row')).toBeNull(); // the stacked bars are gone
     expect(screen.getByTestId('import-exec-quarters')).toHaveTextContent("Q1 '28");
     expect(screen.getByTestId('import-exec-outcome-slice-spillover')).toHaveTextContent('1');
     await waitFor(() => expect(screen.getByTestId('import-kpi-leftout')).toHaveTextContent('Not placed1'));
     expect(screen.getByTestId('import-kpi-file')).toHaveTextContent('1 plan');
+    expect(await seriousAxeViolations(container)).toEqual([]);
+
+    // The Year filter drives the donuts: 2027 holds only row-5.
+    await userEvent.setup().click(screen.getByRole('radio', { name: '2027' }));
+    expect(centre('import-exec-hub')).toBe('1');
+    expect(slice('import-exec-hub', 'R&D-Greece')[0]).toBe('1');
+    expect(screen.queryByTestId('import-exec-hub-slice-PD-India')).toBeNull();
+    expect(slice('import-exec-priority', 'P1')[0]).toBe('1');
+    expect(screen.queryByTestId('import-exec-priority-slice-P2')).toBeNull();
   });
 
   it('without served breakdowns the Executive falls back to the KPI figures', async () => {

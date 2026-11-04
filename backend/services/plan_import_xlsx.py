@@ -83,6 +83,12 @@ class MatchableProject:
     priority: str | None
     #: The plan project's leader (kept for a blank engineer, ADR 0044 §5 amended).
     leader_engineer_id: str | None = None
+    #: The plan project's status, category and current step (the first step,
+    #: in walk order, that is neither Done nor skipped): fallbacks for a blank
+    #: cell (ADR 0044 amendment 2026-11-05, P32-R06).
+    status: str | None = None
+    category: str | None = None
+    current_step_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -154,7 +160,7 @@ class ParsedRow:
     stage_raw: str | None
     rank: int | None
     priority: str
-    priority_source: str  # "rank" | "matched" | "default"
+    priority_source: str  # "rank" | "running" | "matched" | "default"
     engineer_raw: str | None
     leader: Leader
     matched_project_id: str | None
@@ -181,6 +187,11 @@ class ParseCounts:
     new_designers: int
     #: Σ max(1, num_projects) over the schedulable included rows.
     projects_after_expansion: int
+    #: Rows whose status came from PRIORITY "Running", the matched plan
+    #: project or "Spillover from …" = Yes (no Status cell, P32-R06).
+    derived_status: int = 0
+    #: Rows excluded as budget lines (`NOT_A_PROJECT`, P32-R06).
+    not_a_project: int = 0
 
 
 @dataclass(frozen=True)
@@ -214,7 +225,16 @@ _FIELDS: dict[str, tuple[str, ...]] = {
     "status": ("status",),
     "engineer": ("recommended design engineer", "design engineer"),
     "spillover": ("spillover",),
-    "num_projects": ("num of projects", "number of projects", "no. of projects"),
+    # "Num of Models" is the 2026-11-05 workbook's name for the same column.
+    "num_projects": (
+        "num of projects",
+        "number of projects",
+        "no. of projects",
+        "num of models",
+        "num of model(s)",
+        "number of models",
+        "no. of models",
+    ),
     "must_do": ("must do",),
     "complexity": ("complexity",),
     "est_duration": ("est. dur", "est dur", "estimated duration"),
@@ -222,7 +242,8 @@ _FIELDS: dict[str, tuple[str, ...]] = {
 _EXPECTED_HEADERS = (
     "S/N, Project code, Plant, Expenses, PRIORITY, Project description, RPD HUB, "
     "Project Category, PDD Project Stage, Status, Recommended Design Engineer, "
-    "Spillover from 2026, Num of Projects, Must Do, Complexity, Est. Dur. (Months)"
+    "Spillover from 2026, Num of Projects (or Num of Models), Must Do, Complexity, "
+    "Est. Dur. (Months)"
 )
 
 
@@ -240,6 +261,9 @@ class RawWorkbook:
     #: (workflow, label) -> {step_id: weeks}; label as in the file (stripped).
     lead_times: dict[tuple[str, str], dict[str, int]]
     issues: tuple[ParseIssue, ...]
+    #: The fields whose column was found in the header row (None: unknown,
+    #: inferred from the rows' keys).
+    columns: frozenset[str] | None = None
 
 
 def _norm_header(value: Any) -> str:
@@ -500,6 +524,7 @@ def read_workbook(data: bytes) -> RawWorkbook:
             steps_sheet=steps_sheet,
             lead_times=lead,
             issues=tuple(issues),
+            columns=frozenset(cols),
         )
     finally:
         wb.close()
@@ -585,6 +610,7 @@ _STATUS_MAP: dict[str, str] = {
     "cancelled": "Cancelled",
 }
 _NOT_SCHEDULED = frozenset({"Commercialized", "On Hold", "Cancelled"})
+_STATUS_VALUES = frozenset(_STATUS_MAP.values())
 _SCHEDULABLE = frozenset(dc.SCHEDULABLE_STATUS_ORDER)
 _CATEGORY_BASE: dict[str, tuple[str, str]] = {
     # normalised raw -> (base category, file label)
@@ -628,6 +654,45 @@ def _hub_token(value: Any) -> tuple[str | None, bool]:
             return "OEM-Seitek", False
         return "OEM-HCK", True
     return None, False
+
+
+_ROM_PARTNER = re.compile(r"^(?:pd[\s\-]*)?rom(?:ania)?\s*/\s*(\S.*)$")
+
+
+def _rom_partner(value: Any) -> str | None:
+    """`Rom/<partner>` (P32-R06): the partner text as written, else None."""
+
+    text = _text(value, _RAW_MAX)
+    if text is None:
+        return None
+    m = _ROM_PARTNER.match(text.casefold())
+    if m is None:
+        return None
+    return text.split("/", 1)[1].strip() or None
+
+
+#: A row with a blank PRIORITY whose description matches one of these is a
+#: budget line, not a project (P32-R06, `NOT_A_PROJECT`).
+_BUDGET_LINE = (
+    re.compile(r"^provision\b"),
+    # CAPEX only as a short budget heading ("R&D CAPEX", "PDD Europe CAPEX
+    # Romania": at most 3 words before, 2 after), never a project that
+    # mentions CAPEX in a sentence ("… feasibility to define cost & capex").
+    re.compile(r"^(?:\S+\s+){0,3}capex(?:\s+\S+){0,2}$"),
+    re.compile(r"certification program"),
+    re.compile(r"^update certification"),
+)
+_RUNNING = "running"
+#: The rank of a "Running" row: first in its band (the schema allows 0; the service
+#: shifts every rank by one before the engine, which takes 1..9999).
+RUNNING_RANK = 0
+#: An OEM category given to a non-OEM workflow (a plan fallback only).
+_FROM_OEM = {"A-OEM": "A", "B-OEM": "B", "C-OEM": "C"}
+
+
+def is_budget_line(name: str) -> bool:
+    n = _norm(name)
+    return any(p.search(n) for p in _BUDGET_LINE)
 
 
 def _tokens(name: str) -> list[str]:
@@ -699,6 +764,25 @@ def map_rows(raw: RawWorkbook, ctx: ParseContext) -> ParseResult:
     )
     claimed: dict[str, int] = {}  # project_id -> file_row that took it
     seen_names: dict[str, int] = {}
+    # P32-R06: the 2026-11-05 workbook has no Status column.
+    columns = (
+        raw.columns if raw.columns is not None else frozenset(f for r in raw.rows for f in r.values)
+    )
+    has_status_col = "status" in columns
+    if raw.rows and not has_status_col:
+        issues.append(
+            ParseIssue(
+                None,
+                None,
+                "status",
+                SEV_INFO,
+                "STATUS_NOT_IN_FILE",
+                "The file has no Status column; statuses were derived from PRIORITY, the plan "
+                "and Spillover from 2026.",
+            )
+        )
+    derived_n = 0
+    budget_n = 0
 
     rows: list[ParsedRow] = []
     matched_engineers: set[str] = set()
@@ -791,16 +875,51 @@ def map_rows(raw: RawWorkbook, ctx: ParseContext) -> ParseResult:
             match = roster_by_id[str(matched.leader_engineer_id)]
             leader_from_plan = True
 
-        # Hub (ADR 0044 §5).
+        # Hub (ADR 0044 §5; P32-R06: Rom/<partner>, the plan's hub for a blank cell).
         hub_raw = _text(v.get("hub"), _RAW_MAX)
         hub: str | None = None
         oem_defaulted = False
         source = None
-        for fld in ("hub", "expenses", "plant"):
-            tok, oem_def = _hub_token(v.get(fld))
+        partner = _rom_partner(v.get("hub"))
+        if partner is not None and _norm(partner).startswith("oem"):
+            seitek = any(t in _norm(v.get("expenses")) for t in ("seitek", "seltek"))
+            hub, source = ("OEM-Seitek" if seitek else "OEM-HCK"), "hub"
+            oem_defaulted = not seitek
+            issue(
+                "hub",
+                SEV_INFO,
+                "HUB_MAPPED",
+                f"RPD HUB {hub_raw!r} is a Romania OEM project; {hub} is used"
+                + (" (Seitek in Expenses)." if seitek else "."),
+            )
+        elif partner is not None:
+            hub, source = "PD-Romania", "hub"
+            issue(
+                "hub",
+                SEV_INFO,
+                "HUB_MAPPED",
+                f"RPD HUB {hub_raw!r} is PD-Romania working with {partner[:40]}; "
+                "PD-Romania is used.",
+            )
+        else:
+            tok, oem_def = _hub_token(v.get("hub"))
             if tok is not None:
-                hub, oem_defaulted, source = tok, oem_def, fld
-                break
+                hub, oem_defaulted, source = tok, oem_def, "hub"
+            elif matched is not None:
+                hub, source = matched.hub, "plan"
+                issue(
+                    "hub",
+                    SEV_INFO,
+                    "HUB_FROM_PLAN",
+                    f"RPD HUB is blank or not recognised; the matched plan project's hub "
+                    f"{hub} is used.",
+                )
+            else:
+                for fld in ("expenses", "plant"):
+                    tok, oem_def = _hub_token(v.get(fld))
+                    if tok is not None:
+                        hub, oem_defaulted, source = tok, oem_def, fld
+                        break
         if hub == _INDIA:
             hub = (
                 "R&D-India"
@@ -815,7 +934,7 @@ def map_rows(raw: RawWorkbook, ctx: ParseContext) -> ParseResult:
                 "HUB_DEFAULTED",
                 f"No recognisable hub in RPD HUB / Expenses / Plant; {hub} is used.",
             )
-        elif source != "hub":
+        elif source in ("expenses", "plant"):
             issue(
                 "hub",
                 SEV_INFO,
@@ -834,6 +953,7 @@ def map_rows(raw: RawWorkbook, ctx: ParseContext) -> ParseResult:
 
         cat_raw = _text(v.get("category"), _RAW_MAX)
         ncat = _norm(cat_raw)
+        cat_from_plan = False
         if ncat == _norm(SPECIAL_LABEL):
             special, ncat = True, ""
         stage_raw = _text(v.get("stage"), _RAW_MAX)
@@ -877,6 +997,28 @@ def map_rows(raw: RawWorkbook, ctx: ParseContext) -> ParseResult:
                 "Special Category uses the file's Special Category lead times and is "
                 "scheduled as A+.",
             )
+        elif (
+            not cat_raw
+            and matched is not None
+            and (matched.category in _TO_OEM or matched.category in _FROM_OEM)
+        ):
+            # P32-R06: a blank category takes the matched plan project's.
+            category = label = str(matched.category)
+            cat_from_plan = True
+            issue(
+                "category",
+                SEV_INFO,
+                "CATEGORY_FROM_PLAN",
+                f"Category is blank; the matched plan project's category {category} is used.",
+            )
+            if wf != "OEM" and category in _FROM_OEM:
+                category = label = _FROM_OEM[category]
+                issue(
+                    "category",
+                    SEV_INFO,
+                    "CATEGORY_MAPPED",
+                    f"{hub} is not an OEM hub; the plan's OEM category is scheduled as {category}.",
+                )
         else:
             category = "B"
             label = "B"
@@ -891,7 +1033,7 @@ def map_rows(raw: RawWorkbook, ctx: ParseContext) -> ParseResult:
             label = SPECIAL_LABEL
         if wf == "OEM" and category in _TO_OEM:
             mapped = _TO_OEM[category]
-            if ncat in _CATEGORY_BASE or special:
+            if ncat in _CATEGORY_BASE or special or cat_from_plan:
                 issue(
                     "category",
                     SEV_INFO,
@@ -932,20 +1074,57 @@ def map_rows(raw: RawWorkbook, ctx: ParseContext) -> ParseResult:
                 lead_label = hit[0]
                 step_weeks = {s: int(hit[1].get(s, 0)) for s in step_ids}
 
-        # Status.
+        # Status (P32-R06: derived when the column is absent or the cell blank;
+        # first match wins: Running, the matched plan project, Spillover = Yes).
+        rank_cell = v.get("priority")
+        priority_blank = rank_cell is None or not str(rank_cell).strip()
+        running = _norm(rank_cell) == _RUNNING
+        spill = _yes_no(v.get("spillover"))
         status_raw = _text(v.get("status"), _RAW_MAX)
         nstat = _norm(status_raw)
+        plan_status = (
+            matched.status if matched is not None and matched.status in _STATUS_VALUES else None
+        )
         if nstat in _STATUS_MAP:
             status = _STATUS_MAP[nstat]
-        else:
-            status = "In Queue"
+        elif status_raw is None and running:
+            status = "In Development"
+            derived_n += 1
             issue(
                 "status",
-                SEV_WARNING,
-                "STATUS_DEFAULTED",
-                f"Status {'is blank' if not status_raw else f'{status_raw!r} is not recognised'}"
-                "; In Queue is used.",
+                SEV_INFO,
+                "STATUS_FROM_RUNNING",
+                "Status is not given; PRIORITY says Running, so In Development is used.",
             )
+        elif status_raw is None and plan_status is not None:
+            status = str(plan_status)
+            derived_n += 1
+            issue(
+                "status",
+                SEV_INFO,
+                "STATUS_FROM_PLAN",
+                f"Status is not given; the matched plan project's status {status} is used.",
+            )
+        elif status_raw is None and spill is True:
+            status = "In Development"
+            derived_n += 1
+            issue(
+                "status",
+                SEV_INFO,
+                "STATUS_FROM_SPILLOVER",
+                "Status is not given; the row is a spillover from the previous year, so In "
+                "Development is used.",
+            )
+        else:
+            status = "In Queue"
+            if has_status_col or status_raw is not None:
+                why = "is blank" if not status_raw else f"{status_raw!r} is not recognised"
+                issue(
+                    "status",
+                    SEV_WARNING,
+                    "STATUS_DEFAULTED",
+                    f"Status {why}; In Queue is used.",
+                )
         if status in _NOT_SCHEDULED:
             issue(
                 "status",
@@ -975,11 +1154,26 @@ def map_rows(raw: RawWorkbook, ctx: ParseContext) -> ParseResult:
                         f"Stage {stage_code} is mapped to {stage_step_id} ({hub} follows the "
                         f"{wf} workflow).",
                     )
+        elif (
+            matched is not None
+            and matched.current_step_id is not None
+            and matched.current_step_id.startswith(wf + "-")
+        ):
+            # P32-R06: a blank stage takes the matched plan project's current
+            # step (the first step, in walk order, neither Done nor skipped).
+            stage_step_id = matched.current_step_id
+            issue(
+                "stage",
+                SEV_INFO,
+                "STAGE_FROM_PLAN",
+                f"Stage is blank; the matched plan project's current step {stage_step_id} is used.",
+            )
 
-        # Priority (ADR 0044 §5).
-        rank_cell = v.get("priority")
+        # Priority (ADR 0044 §5; P32-R06: "Running" is P1, rank 0, first).
         rank = None
-        if rank_cell is not None and str(rank_cell).strip():
+        if running:
+            rank = RUNNING_RANK
+        elif not priority_blank:
             rank = _int_value(rank_cell)
             if rank is None or not (1 <= rank <= 9999):
                 issue(
@@ -989,7 +1183,9 @@ def map_rows(raw: RawWorkbook, ctx: ParseContext) -> ParseResult:
                     "PRIORITY is not a whole rank from 1; it is ignored.",
                 )
                 rank = None
-        if rank is not None:
+        if running:
+            priority, psrc = "P1", "running"
+        elif rank is not None:
             priority, psrc = "P1", "rank"
         elif matched is not None and matched.priority in dc.PRIORITY_ORDER:
             priority, psrc = str(matched.priority), "matched"
@@ -1024,6 +1220,20 @@ def map_rows(raw: RawWorkbook, ctx: ParseContext) -> ParseResult:
                 "ENGINEER_UNKNOWN",
                 f"{eng_raw!r} is not on the roster; a new What-if designer of that name is "
                 f"added to {dc.capacity_hub_name(hub)} (FTE 1.0).",
+            )
+
+        # P32-R06: a budget line (blank PRIORITY, a description such as
+        # "Provision for …", "… CAPEX …", "… Certification program") is not a
+        # project: excluded, the planner can include it on Review.
+        budget = priority_blank and is_budget_line(name)
+        if budget:
+            budget_n += 1
+            issue(
+                "name",
+                SEV_INFO,
+                "NOT_A_PROJECT",
+                "Looks like a budget line, not a project — excluded; include it on Review if it "
+                "is a project.",
             )
 
         num = _num_projects(v.get("num_projects"))
@@ -1063,14 +1273,14 @@ def map_rows(raw: RawWorkbook, ctx: ParseContext) -> ParseResult:
                 match_by=match_by,
                 num_projects=num,
                 must_do=_yes_no(v.get("must_do")),
-                spillover_from_previous=_yes_no(v.get("spillover")),
+                spillover_from_previous=spill,
                 complexity=_text(v.get("complexity"), 20),
                 est_duration_months=_text(v.get("est_duration"), 40),
                 certification_testing_required=True,
                 step_weeks=step_weeks,
                 # Owner rule 2026-11-04: On Hold / Cancelled / Commercialized
                 # rows are not mapped.
-                include=status in _SCHEDULABLE,
+                include=status in _SCHEDULABLE and not budget,
             )
         )
 
@@ -1097,6 +1307,8 @@ def map_rows(raw: RawWorkbook, ctx: ParseContext) -> ParseResult:
         auto_assign=sum(1 for r in rows if r.leader.kind == "auto"),
         new_designers=len(new_designers),
         projects_after_expansion=after_expansion,
+        derived_status=derived_n,
+        not_a_project=budget_n,
     )
     order = {r.key: i for i, r in enumerate(rows)}
     issues.sort(key=lambda i: -1 if i.row_key is None else order.get(i.row_key, 0))

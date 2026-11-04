@@ -1055,5 +1055,5 @@ done before the import; In Development / Under Industrialization rows start thei
 Progress at `CURRENT_WEEK`; ranked rows are P1 in rank order, unranked rows keep their matched band
 or take P3; a blank engineer keeps the matched plan project's leader, else is auto-assigned (What-if picker); On Hold / Cancelled / Commercialized rows are not mapped, an unknown named one becomes a new
 What-if designer. The plan year is selectable (2026 → W52, 2027 → W104, absolute weeks); "within
-the plan year" is `projected_end_week <= plan_year_end_week`. Full rules: ADR 0044,
+the plan year" is `projected_end_week <= plan_year_end_week`. A file without a Status column (or a blank cell) derives the status — PRIORITY "Running" → In Development (P1, first), else the matched plan project's status, else "Spillover" = Yes → In Development, else In Queue — and blank hub / category / stage fall back to the matched plan project; budget lines (blank PRIORITY, "Provision…", "… CAPEX", "… Certification program") are excluded (ADR 0044 amendment 2026-11-05). Full rules: ADR 0044,
 `docs/API_CONTRACT_P32.md`.

@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import io
 from collections import Counter
+from typing import Any
 
 import openpyxl
 import pytest
@@ -17,6 +18,7 @@ from services.plan_import_xlsx import (
     ImportFormatError,
     MatchableProject,
     ParseContext,
+    ParseIssue,
     ParseResult,
     RosterEntry,
     StepMeta,
@@ -520,3 +522,276 @@ def test_blank_engineer_on_a_matched_row_keeps_the_plan_leader():
     assert by["Ghost led"].leader.kind == "auto"  # an FTE-0 leader is never kept
     assert by["Named"].leader.engineer_id == "e-lok"  # the file's name wins
     assert res.counts.auto_assign == 2
+
+
+# --- P32-R06: the 2026-11-05 "priorities" workbook (no Status, Num of Models) ------------------
+
+
+def _plan_projects() -> tuple[MatchableProject, ...]:
+    return (
+        MatchableProject("p-alpha", "Plan Alpha", None, "PD-India", "P2",
+                         leader_engineer_id="e-lok", status="In Development", category="A",
+                         current_step_id="PDD-E"),
+        MatchableProject("p-hold", "Plan Hold", None, "R&D-Greece", "P3", status="On Hold",
+                         category="B", current_step_id="PDD-A"),
+        MatchableProject("p-run", "Plan Running", None, "PD-Romania", "P4", status="In Queue",
+                         category="B", current_step_id="PDD-A"),
+        MatchableProject("p-oemcat", "Plan OEM on Rom", None, "OEM-HCK", "P2",
+                         status="In Queue", category="B-OEM", current_step_id="OEM-C"),
+        MatchableProject("p-romoem", "Plan Rom OEM", None, "PD-Romania", "P3",
+                         status="Under Industrialization", category="A",
+                         current_step_id="PDD-H"),
+        MatchableProject("p-code", "Old Name", "26-00077", "PD-India", "P2", status="In Buyoff",
+                         category="C", current_step_id="PDD-K"),
+    )  # fmt: skip
+
+
+BUDGET_NAMES = (
+    "Provision for alternative & RM saving 2027",
+    "provision for RM saving (India)",
+    "Update Certification",
+    "PDD Europe CAPEX Romania",
+    "R&D CAPEX",
+    "PDD Europe Certification program",
+    "PDD India CAPEX",
+)
+
+
+def _priorities_rows() -> list[dict[str, Any]]:
+    return [
+        row(name="Running Chiller", priority="Running", hub="Rom", spillover="No"),
+        row(name="Unbound Cooler", priority=2, hub="Rom/Unbound", category="A+", engineer="Stef"),
+        row(name="OEM Bottle", priority=1, hub="Rom/OEM", category="B"),
+        row(name="OEM Seitek", priority=3, hub="Rom/OEM", expenses="OEM/Seitek"),
+        *[row(name=n) for n in BUDGET_NAMES],
+        row(name="Alt Compressor[BIS] Certification Coke 400L", hub="India"),
+        row(name="Coke EC28 migration feasibility", hub="India"),
+        row(name="Capex tooling cooler", priority=5, hub="Rom"),
+        row(name="Feasibility to define cost & capex for a new cooler", hub="Rom"),
+        row(name="Spill Freezer", hub="India", spillover="Yes"),
+        row(name="Plan Alpha", spillover="Yes"),
+        row(name="Plan Hold", spillover="Yes"),
+        row(name="Plan Running", priority="RUNNING ", hub="Rom"),
+        row(name="Plan OEM on Rom", priority=4, hub="Rom"),
+        row(name="Plan Rom OEM", priority=6, hub="Rom/OEM"),
+        row(name="New Name", code="26-00077", hub="India", category="B", num=3),
+        row(name="Consumer thing", plant="Consumer appl."),
+    ]  # fmt: skip
+
+
+def _priorities_parse() -> ParseResult:
+    from tests.plan_import_helpers import build_priorities_workbook
+
+    return parse_plan_workbook(
+        build_priorities_workbook(_priorities_rows()), _ctx(projects=_plan_projects())
+    )
+
+
+def test_priorities_workbook_header_and_status_column_absent():
+    res = _priorities_parse()
+    assert len(res.rows) == 23 and res.rows[0].file_row == 3  # header on row 2
+    file_level = [i for i in res.issues if i.row_key is None and i.code == "STATUS_NOT_IN_FILE"]
+    assert len(file_level) == 1 and file_level[0].severity == "info"
+    assert "no Status column" in file_level[0].message
+    codes = _codes(res)
+    assert "STATUS_DEFAULTED" not in codes  # the whole column is absent: no per-row warning
+    assert all(r.status_raw is None for r in res.rows)
+    by = {r.name: r for r in res.rows}
+    assert by["New Name"].num_projects == 3  # "Num of Models"
+
+
+def test_priorities_status_derivation_first_match_wins():
+    res = _priorities_parse()
+    by = {r.name: r for r in res.rows}
+
+    def st(name: str) -> tuple[str, set[str]]:
+        r = by[name]
+        return r.status, {i.code for i in res.issues if i.row_key == r.key and
+                          i.field == "status"}  # fmt: skip
+
+    assert st("Running Chiller") == ("In Development", {"STATUS_FROM_RUNNING"})
+    assert st("Plan Running") == ("In Development", {"STATUS_FROM_RUNNING"})  # before the plan
+    assert st("Plan Alpha") == ("In Development", {"STATUS_FROM_PLAN"})
+    assert st("Plan Hold") == ("On Hold", {"STATUS_FROM_PLAN", "STATUS_NOT_SCHEDULED"})
+    assert by["Plan Hold"].include is False  # the not-mapped rule, before Spillover
+    assert st("Plan OEM on Rom") == ("In Queue", {"STATUS_FROM_PLAN"})
+    assert st("Plan Rom OEM") == ("Under Industrialization", {"STATUS_FROM_PLAN"})
+    assert st("New Name") == ("In Buyoff", {"STATUS_FROM_PLAN"})
+    assert st("Spill Freezer") == ("In Development", {"STATUS_FROM_SPILLOVER"})
+    assert st("Unbound Cooler") == ("In Queue", set())  # no per-row issue
+    assert st("Consumer thing") == ("In Queue", set())
+    sev = {i.severity for i in res.issues if i.code.startswith("STATUS_FROM_")}
+    assert sev == {"info"}
+    assert res.counts.derived_status == 8
+
+
+def test_priorities_running_rank_and_priority_sources():
+    res = _priorities_parse()
+    got = {r.name: (r.rank, r.priority, r.priority_source) for r in res.rows}
+    assert got["Running Chiller"] == (0, "P1", "running")
+    assert got["Plan Running"] == (0, "P1", "running")  # "RUNNING " any case
+    assert got["Unbound Cooler"] == (2, "P1", "rank")
+    assert got["Plan Alpha"] == (None, "P2", "matched")
+    assert got["Spill Freezer"] == (None, "P3", "default")
+    assert "RANK_INVALID" not in _codes(res)
+
+
+def test_priorities_hub_rules():
+    res = _priorities_parse()
+    by = {r.name: r for r in res.rows}
+    hubs = {n: r.hub for n, r in by.items()}
+    assert hubs["Running Chiller"] == "PD-Romania"
+    assert hubs["Unbound Cooler"] == "PD-Romania"
+    assert hubs["OEM Bottle"] == "OEM-HCK"
+    assert hubs["OEM Seitek"] == "OEM-Seitek"
+    assert hubs["Plan Alpha"] == "PD-India"  # blank hub -> the plan's
+    assert hubs["Plan Rom OEM"] == "OEM-HCK"
+    assert hubs["Consumer thing"] == "R&D-Greece"  # the existing fallback
+    assert hubs["Spill Freezer"] == "PD-India"
+
+    def iss(name: str, code: str) -> list[ParseIssue]:
+        return [i for i in res.issues if i.row_key == by[name].key and i.code == code]
+
+    (m,) = iss("Unbound Cooler", "HUB_MAPPED")
+    assert m.severity == "info" and "Unbound" in m.message
+    assert iss("OEM Bottle", "HUB_MAPPED") and iss("OEM Bottle", "HUB_OEM_DEFAULTED")
+    assert iss("OEM Seitek", "HUB_MAPPED") and not iss("OEM Seitek", "HUB_OEM_DEFAULTED")
+    (hp,) = iss("Plan Alpha", "HUB_FROM_PLAN")
+    assert hp.severity == "info"
+    assert not iss("Plan Alpha", "HUB_DEFAULTED")
+    (hd,) = iss("Consumer thing", "HUB_DEFAULTED")
+    assert hd.severity == "warning"
+    assert set(by["OEM Bottle"].step_weeks) == {f"OEM-{c}" for c in "ABCDEFGHIJKLMN"}
+
+
+def test_priorities_category_stage_engineer_from_plan():
+    res = _priorities_parse()
+    by = {r.name: r for r in res.rows}
+
+    def codes(name: str) -> Counter[str]:
+        return _codes(res, by[name].key)
+
+    a = by["Plan Alpha"]
+    assert (a.category, a.lead_time_label) == ("A", "A")
+    assert a.stage_step_id == "PDD-E"
+    assert (a.leader.kind, a.leader.engineer_id) == ("existing", "e-lok")
+    c = codes("Plan Alpha")
+    for code in ("CATEGORY_FROM_PLAN", "STAGE_FROM_PLAN", "ENGINEER_FROM_PLAN", "HUB_FROM_PLAN"):
+        assert c[code] == 1, code
+    assert "CATEGORY_DEFAULTED" not in c and "ENGINEER_MISSING" not in c
+    # A plan OEM category on a PDD hub -> its base; the plan's OEM step is not used.
+    o = by["Plan OEM on Rom"]
+    assert o.category == "B" and o.stage_step_id is None
+    assert codes("Plan OEM on Rom")["CATEGORY_FROM_PLAN"] == 1
+    assert codes("Plan OEM on Rom")["CATEGORY_MAPPED"] == 1
+    assert "STAGE_FROM_PLAN" not in codes("Plan OEM on Rom")
+    # Rom/OEM + a plan PDD category -> the OEM category.
+    r = by["Plan Rom OEM"]
+    assert (r.category, r.lead_time_label, r.stage_step_id) == ("A-OEM", "A-OEM", None)
+    assert codes("Plan Rom OEM")["CATEGORY_MAPPED"] == 1
+    # Rom/OEM + a file "B" -> B-OEM.
+    assert by["OEM Bottle"].category == "B-OEM"
+    assert codes("OEM Bottle")["CATEGORY_MAPPED"] == 1
+    # The file's category wins over the plan's; the plan's stage fills the blank.
+    n = by["New Name"]
+    assert (n.matched_project_id, n.match_by) == ("p-code", "code")
+    assert n.category == "B" and n.stage_step_id == "PDD-K"
+    assert "CATEGORY_FROM_PLAN" not in codes("New Name")
+    # Not matched: the existing defaults.
+    rc = by["Running Chiller"]
+    assert rc.category == "B" and codes("Running Chiller")["CATEGORY_DEFAULTED"] == 1
+    assert rc.stage_step_id is None and rc.leader.kind == "auto"
+    assert by["OEM Seitek"].category == "B-OEM"
+    sev = {i.severity for i in res.issues if i.code in ("CATEGORY_FROM_PLAN", "STAGE_FROM_PLAN")}
+    assert sev == {"info"}
+
+
+def test_priorities_budget_lines_are_excluded():
+    res = _priorities_parse()
+    by = {r.name: r for r in res.rows}
+    for n in BUDGET_NAMES:
+        r = by[n]
+        assert r.include is False and r.status == "In Queue", n
+        (i,) = [i for i in res.issues if i.row_key == r.key and i.code == "NOT_A_PROJECT"]
+        assert i.severity == "info" and "budget line" in i.message
+    for n in (
+        "Alt Compressor[BIS] Certification Coke 400L",
+        "Coke EC28 migration feasibility",
+        "Capex tooling cooler",
+        "Feasibility to define cost & capex for a new cooler",
+    ):
+        assert by[n].include is True, n
+        assert "NOT_A_PROJECT" not in _codes(res, by[n].key)
+    assert _codes(res)["NOT_A_PROJECT"] == 7
+
+
+def test_priorities_counts():
+    c = _priorities_parse().counts
+    assert (c.rows, c.schedulable, c.not_scheduled, c.matched, c.new) == (23, 22, 1, 6, 17)
+    assert (c.derived_status, c.not_a_project) == (8, 7)
+    # 23 rows - 7 budget lines - 1 On Hold = 15 included rows; "New Name" is 3.
+    assert c.projects_after_expansion == 17
+    assert c.auto_assign == 21  # all but Stef and the kept plan leader
+
+
+@pytest.mark.parametrize(
+    "name,budget",
+    [
+        ("Provision for alternative & RM saving", True),
+        ("  PROVISION for x", True),
+        ("Update certification 2027", True),
+        ("PDD Europe CAPEX Romania", True),
+        ("R&D Capex", True),
+        ("PDD India Certification Program", True),
+        ("Alt Compressor[BIS] Certification Coke 400L", False),
+        ("Coke EC28 migration feasibility", False),
+        ("Provisional cooler", False),
+        ("Capexless cooler", False),
+        ("PDD India CAPEX", True),
+        ("Feasibility to define cost & capex for a new cooler", False),
+        ("Certification update for door", False),
+    ],
+)
+def test_budget_line_patterns(name, budget):
+    from services.plan_import_xlsx import is_budget_line
+
+    assert is_budget_line(name) is budget
+
+
+@pytest.mark.parametrize("header", ["Num of Models", "Num of Model(s)", "No. of models",
+                                    "NUM OF MODELS "])  # fmt: skip
+def test_num_of_models_header_aliases(header):
+    res = _parse([row(name="a", hub="Greece", category="A", status="Que", num=4)],
+                 rename={"Num of Projects": header})  # fmt: skip
+    assert res.rows[0].num_projects == 4
+
+
+def test_old_format_blank_status_cell_is_derived_or_defaulted():
+    """The Status column exists (first format): a blank cell is derived like
+    an absent column; a blank cell with nothing to derive from stays the
+    STATUS_DEFAULTED warning; no file-level STATUS_NOT_IN_FILE."""
+
+    res = _parse(
+        [
+            row(name="Plan Alpha", hub="India", category="A", status=None),
+            row(name="Spilled", hub="Greece", category="A", status=None, spillover="Yes"),
+            row(name="Runner", hub="Greece", category="A", status=None, priority="Running"),
+            row(name="Nothing", hub="Greece", category="A", status=None),
+            row(name="Given", hub="Greece", category="A", status="Que", spillover="Yes",
+                priority="Running"),
+        ],
+        _ctx(projects=_plan_projects()),
+    )  # fmt: skip
+    by = {r.name: r for r in res.rows}
+    assert by["Plan Alpha"].status == "In Development"
+    assert _codes(res, by["Plan Alpha"].key)["STATUS_FROM_PLAN"] == 1
+    assert by["Spilled"].status == "In Development"
+    assert _codes(res, by["Spilled"].key)["STATUS_FROM_SPILLOVER"] == 1
+    assert by["Runner"].status == "In Development"
+    assert by["Nothing"].status == "In Queue"
+    (d,) = [i for i in res.issues if i.code == "STATUS_DEFAULTED"]
+    assert d.row_key == by["Nothing"].key and d.severity == "warning"
+    assert by["Given"].status == "In Queue"  # a status cell is never overridden
+    assert by["Given"].priority_source == "running" and by["Given"].rank == 0
+    assert "STATUS_NOT_IN_FILE" not in _codes(res)
+    assert res.counts.derived_status == 3

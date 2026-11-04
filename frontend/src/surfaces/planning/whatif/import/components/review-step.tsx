@@ -71,7 +71,14 @@ export function ReviewStep({
   // every file row, On Hold ones included, so it is shown only as the tile's hint.
   const noEngineer = rows.filter((r) => r.include && isMappedStatus(r.status) && r.leader.kind === 'auto').length;
   const shownRows = onlyIssues ? rows.filter((r) => issuesByRow.has(r.key) || errors[r.key]) : rows;
-  const mappedRows = shownRows.filter((r) => isMappedStatus(r.status));
+  // P32-R06: rows the parse flagged as budget lines (info NOT_A_PROJECT, sent include=false)
+  // get their own collapsed group; the Include box stays enabled so one can be scheduled.
+  const notAProject = React.useMemo(
+    () => new Set(parsed.issues.filter((i) => i.code === 'NOT_A_PROJECT' && i.row_key !== null).map((i) => i.row_key)),
+    [parsed.issues],
+  );
+  const mappedRows = shownRows.filter((r) => isMappedStatus(r.status) && !notAProject.has(r.key));
+  const budgetRows = shownRows.filter((r) => isMappedStatus(r.status) && notAProject.has(r.key));
   const notMappedRows = shownRows.filter((r) => !isMappedStatus(r.status));
   const notMappedTotal = rows.filter((r) => !isMappedStatus(r.status)).length;
   const c = parsed.counts;
@@ -105,6 +112,12 @@ export function ReviewStep({
           Upload another file
         </Button>
       </div>
+      {c.derived_status > 0 ? (
+        <p className="-mt-s3 text-2xs text-text-muted" data-testid="import-derived-status">
+          Status derived for {int(c.derived_status)} row{c.derived_status === 1 ? '' : 's'} (the file has no Status
+          column)
+        </p>
+      ) : null}
 
       <section
         aria-label="File summary"
@@ -134,6 +147,17 @@ export function ReviewStep({
         />
         <FigureTile label="New designers" value={int(c.new_designers)} />
       </section>
+
+      {c.not_a_project > 0 ? (
+        <Callout
+          tone="neutral"
+          title={`${int(c.not_a_project)} row${c.not_a_project === 1 ? ' looks' : 's look'} like budget lines — not mapped`}
+          testId="import-not-a-project-banner"
+          role="status"
+        >
+          <p>Listed under the rows as “Not a project”. Tick Include to schedule one.</p>
+        </Callout>
+      ) : null}
 
       {notMappedTotal > 0 ? (
         <Callout
@@ -192,6 +216,26 @@ export function ReviewStep({
             update={updateRow}
           />
         )}
+        {budgetRows.length > 0 ? (
+          <details
+            className="group rounded-md border border-border bg-surface-sunken/40"
+            data-testid="import-not-a-project"
+          >
+            <summary className="cursor-pointer list-none rounded-md px-s3 py-s2 text-xs font-semibold text-text-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring [&::-webkit-details-marker]:hidden">
+              {`Not a project — ${int(budgetRows.length)}`}
+            </summary>
+            <div className="p-s2">
+              <ReviewTable
+                rows={budgetRows}
+                parsed={parsed}
+                issuesByRow={issuesByRow}
+                errors={errors}
+                update={updateRow}
+                label="Rows that look like budget lines"
+              />
+            </div>
+          </details>
+        ) : null}
         {notMappedRows.length > 0 ? (
           <details
             className="group rounded-md border border-border bg-surface-sunken/40"

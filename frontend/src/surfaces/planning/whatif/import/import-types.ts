@@ -11,7 +11,8 @@ export type ImportWorkflow = 'PDD' | 'OEM';
 export type ImportSeverity = 'info' | 'warning' | 'error';
 export type ImportMode = 'merge' | 'file_only';
 export type PlanYearEndWeek = 52 | 104;
-export type PrioritySource = 'rank' | 'matched' | 'default';
+/** `running` (P32-R06): PRIORITY "Running" — P1 with rank 0, scheduled before rank 1. */
+export type PrioritySource = 'rank' | 'running' | 'matched' | 'default';
 export type StepEditable = 'move_resize' | 'resize' | 'none';
 
 // --- B2: parse ---------------------------------------------------------------------------
@@ -99,6 +100,10 @@ export interface ImportParseCounts {
    * (P32-R03, served by the parse when the backend has it).
    */
   projects_after_expansion?: number | undefined;
+  /** Rows whose status was derived (Running / the plan / Spillover = Yes), P32-R06. */
+  derived_status: number;
+  /** Rows excluded as budget lines (`NOT_A_PROJECT`, include=false), P32-R06. */
+  not_a_project: number;
 }
 
 export interface ImportParseResponse {

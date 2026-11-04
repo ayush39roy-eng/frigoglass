@@ -125,3 +125,32 @@ Contract: `docs/API_CONTRACT_P32.md`.
 Commercialized) is parsed with `include = false`, shown greyed on Review as "not mapped", and never
 reaches the simulation, the Gantt, capacity or KPIs. In merge mode, a file row that matches a plan
 project and says On Hold removes that project from the run (the file is the newer status).
+
+## Amendment (2026-11-05, priorities workbook)
+
+The client sent `2027 RPD Capacity Planning_Priorities.xlsx` (same two sheets). Its project sheet
+has no `Status` column, renames `Num of Projects` to `Num of Models`, ranks PRIORITY 1..n per group
+(one row `Running`), uses RPD HUB `Rom`, `Rom/Unbound`, `Rom/OEM`, `India`, leaves category, stage
+and engineer mostly blank, and carries budget lines among the projects. Both formats are read
+(P32-R06, issue codes in `docs/API_CONTRACT_P32.md` B2):
+
+1. *Headers.* `Num of Models` ≡ `Num of Projects`; `Status` is optional.
+2. *Status* for an absent column or a blank cell, first match wins: PRIORITY `Running` → In
+   Development; the matched plan project's status (On Hold / Cancelled / Commercialized stay not
+   mapped); `Spillover from 2026` = Yes → In Development; else In Queue. A file without the column
+   gets one file-level info issue, not a warning per row.
+3. *Priority.* `Running` → P1, rank 0 (first in its band; `priority_source` `running`). The engine
+   takes ranks 1..9999, so the service passes rank + 1 (order kept; 9998 and 9999 would tie and
+   fall back to the file row).
+4. *Hub.* `Rom/<partner>` → PD-Romania; `Rom/OEM` → OEM-Seitek when Expenses mentions Seitek, else
+   OEM-HCK (warning). A blank or unrecognised RPD HUB on a matched row takes the plan project's hub
+   before the Expenses / Plant fallback.
+5. *Category, stage, engineer* blank on a matched row → the plan project's category, current step
+   (first step in walk order that is neither Done nor skipped in the live data, used only when it is
+   a step of the row's workflow) and leader. Category is re-mapped to the hub's workflow
+   (B ↔ B-OEM, A+/A → A-OEM, A-OEM → A, C ↔ C-OEM).
+6. *Budget lines.* A blank-PRIORITY row whose description starts with `Provision`, starts with
+   `Update certification`, contains `certification program`, or is a short CAPEX heading (at most
+   three words before `CAPEX` and two after) is excluded (`include = false`, info `NOT_A_PROJECT`);
+   the planner can include it on Review. The CAPEX rule is narrower than a bare `\bcapex\b`
+   because a real feasibility project in the file mentions CAPEX mid-sentence.

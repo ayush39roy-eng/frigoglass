@@ -226,6 +226,13 @@ leading/trailing spaces ignored, prefix-tolerant: `S/N`, `Project code`, `Plant`
 `Recommended Design Engineer`, `Spillover from 2026` (any `Spillover…`), `Num of Projects`,
 `Must Do`, `Complexity`, `Est. Dur. (Months)` (any `Est. Dur…`). All other columns are ignored and
 never read into the response. A row with an empty `Project description` is skipped.
+*(Amended 2026-11-05, P32-R06, priorities workbook.)* `Num of Models` ≡ `Num of Projects` (also
+`Num of Model(s)`, `No. of models`, `Number of models`). The `Status` column is optional: without
+it (or for a blank cell) the status is derived, first match wins: PRIORITY `Running` → In
+Development (`STATUS_FROM_RUNNING`); matched plan project → its status (`STATUS_FROM_PLAN`; On Hold /
+Cancelled / Commercialized keep the not-mapped rule); `Spillover from 2026` = Yes → In Development
+(`STATUS_FROM_SPILLOVER`); else In Queue (`STATUS_DEFAULTED` warning only when the column exists and
+the cell is blank; a file without the column gets ONE file-level info `STATUS_NOT_IN_FILE`).
 
 **Process-steps sheet**: the first sheet with a cell `PDD-A` and a row of 14 step codes. For each
 section (`PDD-A..PDD-N` header row; `OEM-A..OEM-N` header row) read the category rows below it (first
@@ -251,7 +258,9 @@ Response `ImportParseResponse`:
                 "severity": "info" | "warning" | "error", "code": "ENGINEER_UNKNOWN", "message": "…" } ],
   "counts": { "rows": 97, "schedulable": 85, "not_scheduled": 12, "matched": 38, "new": 59,
               "auto_assign": 20, "new_designers": 2,
-              "projects_after_expansion": 122 }  // Σ max(1, num_projects) over schedulable included rows
+              "projects_after_expansion": 122,  // Σ max(1, num_projects) over schedulable included rows
+              "derived_status": 23,   // P32-R06: status from Running / the plan / Spillover = Yes
+              "not_a_project": 8 }    // P32-R06: rows excluded as budget lines (NOT_A_PROJECT)
 }
 ```
 
@@ -265,7 +274,8 @@ Response `ImportParseResponse`:
   "category": "A+", "category_raw": "A+", "lead_time_label": "A+",   // the file row used (or "app")
   "status": "In Queue", "status_raw": "Que",
   "stage_step_id": "PDD-A" | null, "stage_raw": "PDD-A" | null,
-  "rank": 3 | null, "priority": "P1", "priority_source": "rank" | "matched" | "default",
+  "rank": 3 | null, "priority": "P1", "priority_source": "rank" | "running" | "matched" | "default",
+  // rank 0..9999: 0 = PRIORITY "Running" (P1, first; the service passes rank + 1 to the engine)
   "engineer_raw": "Antonis" | null,
   "leader": { "kind": "existing", "engineer_id": "uuid", "name": "Kanarios" }
           | { "kind": "new", "name": "Antonis" } | { "kind": "auto" },
@@ -286,6 +296,18 @@ kept, mapped to the hub's workflow), `ENGINEER_MISSING` (→ auto), `ENGINEER_FR
 `LEAD_TIME_VALUE`, `DUPLICATE_ROW`, `NUM_PROJECTS_INVALID` (warning: a non-blank `Num of Projects`
 that is not a whole number 1..100 — `"x"`, `0`, `-2`, `2.5`, `101` — is read as 1 project;
 `"2"`, `2.0`, `" 3 "` are accepted). *(Amended 2026-11-04, P32-R03.)*
+*(Amended 2026-11-05, P32-R06.)* `STATUS_NOT_IN_FILE` (info, file-level, no Status column),
+`STATUS_FROM_RUNNING`, `STATUS_FROM_PLAN`, `STATUS_FROM_SPILLOVER` (info: status derived),
+`HUB_MAPPED` (info: `Rom/<partner>` → PD-Romania naming the partner; `Rom/OEM` → OEM-Seitek when
+Expenses mentions Seitek, else OEM-HCK with `HUB_OEM_DEFAULTED`), `HUB_FROM_PLAN` (info: blank or
+unrecognised RPD HUB on a matched row → the plan project's hub, before the Expenses / Plant
+fallback), `CATEGORY_FROM_PLAN` (info: blank category on a matched row → the plan project's
+category; an OEM plan category on a non-OEM hub maps to its base, a non-OEM one on an OEM hub to the
+OEM category, both with `CATEGORY_MAPPED`), `STAGE_FROM_PLAN` (info: blank stage on a matched row →
+the plan project's current step = first step in walk order neither Done nor skipped, when it is a
+step of the row's workflow), `NOT_A_PROJECT` (info: blank PRIORITY and a description matching
+`^provision\b`, `certification program`, `^update certification`, or CAPEX as a short heading
+`^(\S+\s+){0,3}capex(\s+\S+){0,2}$` → `include = false`, status kept; the planner may include it).
 
 ### B3. `POST /whatif/import/simulate` (backend-builder)
 

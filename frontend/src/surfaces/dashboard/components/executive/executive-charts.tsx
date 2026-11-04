@@ -1,11 +1,11 @@
 import * as React from 'react';
-import { Cell, Pie, PieChart, ResponsiveContainer } from 'recharts';
+import { Cell, Pie, PieChart, ResponsiveContainer, Tooltip } from 'recharts';
 
 import { BoltCard } from '@/components/ui/bolt-card';
 import { CardInfo } from '@/components/ui/card-info';
 import { CARRY_OVER_YEAR, PLAN_YEAR } from '@/lib/domain-constants';
 import { formatInteger } from '@/lib/format';
-import { categoryRank } from '@/lib/categorical-palette';
+import { categoryRank, dashCatFill } from '@/lib/categorical-palette';
 import {
   CATEGORY_FILTER_VALUES,
   toggleSelection,
@@ -74,12 +74,12 @@ export interface Slice {
   fill: string;
   /** P31 cross-filter: another slice is selected and this one is not. */
   dim?: boolean;
+  /** Served breakdown of the slice, shown in its hover tooltip and the sr-only data (P32-R05). */
+  detail?: string | undefined;
 }
 
 /** Theme-reactive categorical palette (`--dash-cat-1..10`, tokens.css). */
-function catFill(rank: number): string {
-  return `hsl(var(--dash-cat-${String((((rank % 10) + 10) % 10) + 1)}))`;
-}
+const catFill = dashCatFill;
 
 /** Word-level line wrapping for an in-chart label — NEVER inside a word
  *  (owner correction: "In Develop ment" style mid-word breaks are banned). */
@@ -103,6 +103,20 @@ function sliceFigure(s: Slice): string {
   return s.share_pct === undefined
     ? formatInteger(s.count)
     : `${formatInteger(s.count)} · ${formatServedPct(s.share_pct)}`;
+}
+
+/** Hover tooltip of a slice with a `detail` line (P32-R05 import donuts). */
+function renderSliceTooltip(props: { active?: boolean; payload?: readonly { payload?: unknown }[] }): React.ReactElement | null {
+  const datum = props.payload?.[0]?.payload as Slice | undefined;
+  if (!props.active || !datum) return null;
+  return (
+    <div className="rounded-dash border border-dash-hairline bg-surface px-s3 py-s2 text-2xs shadow-pop">
+      <p className="font-bold text-text">
+        {datum.label} · <span className="tabular-nums">{formatInteger(datum.count)}</span>
+      </p>
+      {datum.detail ? <p className="mt-0.5 text-text-muted">{datum.detail}</p> : null}
+    </div>
+  );
 }
 
 interface SliceLabelProps {
@@ -201,6 +215,7 @@ export function HeroDonut({
   totalLabel,
   testId,
   select,
+  legend: staticLegend = false,
 }: {
   title: string;
   info: React.ReactNode;
@@ -210,6 +225,8 @@ export function HeroDonut({
   totalLabel: string;
   testId: string;
   select?: DonutSelect | undefined;
+  /** A read-only legend (swatch · label · count) under the donut, like the P31 chips (P32-R05). */
+  legend?: boolean;
 }): React.JSX.Element {
   const headingId = React.useId();
   const anySelected = (select?.selected.length ?? 0) > 0;
@@ -284,6 +301,9 @@ export function HeroDonut({
                 />
               ))}
             </Pie>
+            {slices.some((s) => s.detail !== undefined) ? (
+              <Tooltip content={renderSliceTooltip} isAnimationActive={false} />
+            ) : null}
           </PieChart>
         </ResponsiveContainer>
         <div className="pointer-events-none absolute inset-0 grid place-items-center">
@@ -308,6 +328,20 @@ export function HeroDonut({
           data-testid={`${testId}-legend`}
         />
       ) : null}
+      {staticLegend && !select ? (
+        <ul className="flex flex-wrap gap-1.5 px-s2" aria-hidden="true" data-testid={`${testId}-legend`}>
+          {drawn.map((s) => (
+            <li
+              key={s.key}
+              className="inline-flex h-7 items-center gap-1 whitespace-nowrap rounded-pill border border-border bg-surface px-2.5 text-xs font-semibold text-text-muted"
+            >
+              <span className="size-2.5 shrink-0 rounded-sm" style={{ background: s.fill }} />
+              <span className="text-text">{s.label}</span>
+              <span className="font-medium tabular-nums text-text-subtle">{formatInteger(s.count)}</span>
+            </li>
+          ))}
+        </ul>
+      ) : null}
       {zero.length > 0 && !select ? (
         <p className="px-s2 text-2xs text-text-muted" data-testid={`${testId}-zero`}>
           No projects: {zero.map((s) => s.label).join(', ')}
@@ -319,6 +353,7 @@ export function HeroDonut({
           <div key={s.key} data-testid={`${testId}-slice-${s.key}`}>
             <dt>{s.label}</dt>
             <dd data-numeric="">{sliceFigure(s)}</dd>
+            {s.detail ? <dd>{s.detail}</dd> : null}
           </div>
         ))}
       </dl>

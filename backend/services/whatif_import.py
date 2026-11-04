@@ -164,6 +164,39 @@ def app_lead_times(ctx: WhatIfContext) -> dict[tuple[str, str], dict[str, int]]:
     return out
 
 
+def plan_current_steps(ctx: WhatIfContext) -> dict[str, str | None]:
+    """project_id -> the plan project's current step: the first step, in the
+    workflow's walk order, that is neither Done nor skipped (ADR 0044
+    amendment 2026-11-05, P32-R06: the fallback for a blank stage)."""
+
+    si = ctx.baseline.schedule
+    workflows = build_workflows(si.workflow_steps)
+    table = build_lead_time_table(si.lead_times)
+    out: dict[str, str | None] = {}
+    for p in si.projects:
+        wf = workflows.get(p.workflow_id)
+        if wf is None or p.category is None:
+            out[p.project_id] = None
+            continue
+        timing = {t.step_id: t.duration_override_weeks for t in p.step_timing}
+        progress = {r.step_id: r.status for r in p.step_progress}
+        out[p.project_id] = next(
+            (
+                sid
+                for sid in wf.walk_order
+                if progress.get(sid) != STATUS_DONE
+                and not is_step_skipped(
+                    lead_weeks=table.get((p.workflow_id, p.category, sid), 0),
+                    kind=wf.steps_by_id[sid].kind,
+                    certification_testing_required=p.certification_testing_required,
+                    override_weeks=timing.get(sid),
+                )
+            ),
+            None,
+        )
+    return out
+
+
 async def matchable_projects(
     db: AsyncSession, principal: Principal, ctx: WhatIfContext
 ) -> tuple[MatchableProject, ...]:
@@ -174,6 +207,7 @@ async def matchable_projects(
     if pred is not None:
         stmt = stmt.where(pred)
     codes = {str(pid): code for pid, code in (await db.execute(stmt)).all()}
+    current = plan_current_steps(ctx)
     return tuple(
         MatchableProject(
             project_id=p.project_id,
@@ -182,6 +216,9 @@ async def matchable_projects(
             hub=p.hub,
             priority=p.priority,
             leader_engineer_id=p.leader_engineer_id,
+            status=p.status,
+            category=p.category,
+            current_step_id=current.get(p.project_id),
         )
         for p in ctx.baseline.schedule.projects
         if p.project_id in codes and ctx.scope.hub_ok(p.hub)
@@ -431,7 +468,10 @@ def to_engine_request(ctx: WhatIfContext, body: ImportSimulateRequest) -> Engine
                     category=r.category,
                     status=r.status,
                     priority=r.priority,
-                    rank=r.rank,
+                    # P32-R06: "Running" is rank 0 (first); the engine takes
+                    # 1..9999, so every rank is shifted by one (order kept;
+                    # 9998 and 9999 then tie and fall back to the file row).
+                    rank=None if r.rank is None else min(r.rank + 1, 9999),
                     file_row=r.file_row,
                     leader=leader,
                     current_step_id=r.stage_step_id,

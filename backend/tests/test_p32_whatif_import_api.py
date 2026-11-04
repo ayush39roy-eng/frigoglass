@@ -239,7 +239,8 @@ async def test_parse_maps_against_the_plan_and_audits_counts_only(db_session):
     assert rows["5"]["stage_step_id"] == "PDD-E" and rows["5"]["status"] == "In Development"
     assert body["counts"] == {"rows": 5, "schedulable": 5, "not_scheduled": 0, "matched": 2,
                               "new": 3, "auto_assign": 1, "new_designers": 1,
-                              "projects_after_expansion": 5}  # fmt: skip
+                              "projects_after_expansion": 5, "derived_status": 0,
+                              "not_a_project": 0}  # fmt: skip
     for secret in (SECRET_CUSTOMER, SECRET_NOTE, "secret business case"):
         assert secret not in resp.text
 
@@ -752,3 +753,109 @@ async def test_blank_engineer_on_a_matched_row_keeps_the_plan_leader(db_session)
         sim = await c.post("/whatif/import/simulate", json=sim_body(body["rows"]))
         p = next(p for p in sim.json()["projects"] if p["ref"] == r["key"])
         assert p["leader_ref"] == str(world.eng_gr.id) and p["leader_auto_assigned"] is False
+
+
+# --- P32-R06: the 2026-11-05 "priorities" workbook ------------------------------------------
+
+
+def priorities_file() -> bytes:
+    from tests.plan_import_helpers import build_priorities_workbook
+
+    return build_priorities_workbook(
+        [
+            row(sn=1, name="Alpha Cooler"),  # every cell blank: all from the plan
+            row(sn=2, name="Fresh Run", priority="Running", hub="India", category="A"),
+            row(sn=3, name="Fresh Ranked", priority=1, hub="India", category="A",
+                engineer="Lokesh"),
+            row(sn=4, name="Oem Partner", priority=2, hub="Rom/OEM", category="B"),
+            row(sn=5, name="Delta Held", spillover="Yes"),
+            row(sn=6, name="R&D CAPEX"),
+            row(sn=7, name="Spill One", hub="Greece", category="C", spillover="Yes", num=2),
+        ]
+    )  # fmt: skip
+
+
+async def test_priorities_workbook_parse_and_simulate_end_to_end(db_session):
+    from models.enums import WorkflowStepStatus
+
+    world = await make_world(db_session)
+    # Alpha's live progress: A..D Done, so its current step is after PDD-D.
+    for i, sid in enumerate(("PDD-A", "PDD-B", "PDD-C", "PDD-D")):
+        db_session.add(
+            ProjectWorkflowStep(
+                project_id=world.alpha.id, step_template_id=sid, sequence_order=i + 1,
+                duration_weeks=1, status=WorkflowStepStatus.DONE, percent_complete=100,
+                actual_start_week=20, actual_end_week=30,
+            )
+        )  # fmt: skip
+    await db_session.flush()
+    user = await act_as(db_session, RoleName.PORTFOLIO_MANAGER)
+    async with client_for(db_session) as c:
+        resp = await parse(c, priorities_file())
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        rows = {r["sn"]: r for r in body["rows"]}
+        codes = {(i["row_key"], i["code"]) for i in body["issues"]}
+
+        a = rows["1"]
+        assert a["matched_project_id"] == str(world.alpha.id)
+        assert (a["hub"], a["category"], a["status"]) == ("R&D-Greece", "C", "In Queue")
+        assert a["leader"]["engineer_id"] == str(world.eng_gr.id)
+        assert a["priority"] == "P2" and a["priority_source"] == "matched"
+        from tests.auth_helpers import make_principal as mp
+
+        ctx = await load_context(db_session, mp(RoleName.ADMIN, user_id=user.id))
+        expected_stage = import_service.plan_current_steps(ctx)[str(world.alpha.id)]
+        assert expected_stage not in (None, "PDD-A", "PDD-B", "PDD-C", "PDD-D")
+        assert a["stage_step_id"] == expected_stage
+        for code in ("HUB_FROM_PLAN", "CATEGORY_FROM_PLAN", "STAGE_FROM_PLAN",
+                     "STATUS_FROM_PLAN", "ENGINEER_FROM_PLAN"):  # fmt: skip
+            assert (a["key"], code) in codes, code
+
+        f = rows["2"]
+        assert (f["status"], f["priority"], f["rank"], f["priority_source"]) == (
+            "In Development", "P1", 0, "running")  # fmt: skip
+        assert (f["key"], "STATUS_FROM_RUNNING") in codes
+        assert rows["3"]["rank"] == 1 and rows["3"]["status"] == "In Queue"
+        o = rows["4"]
+        assert (o["hub"], o["category"]) == ("OEM-HCK", "B-OEM")
+        assert (o["key"], "HUB_MAPPED") in codes and (o["key"], "CATEGORY_MAPPED") in codes
+        d = rows["5"]
+        assert d["matched_project_id"] == str(world.delta.id)
+        assert d["status"] == "On Hold" and d["include"] is False
+        b = rows["6"]
+        assert b["include"] is False and (b["key"], "NOT_A_PROJECT") in codes
+        s = rows["7"]
+        assert s["status"] == "In Development" and (s["key"], "STATUS_FROM_SPILLOVER") in codes
+        assert s["num_projects"] == 2
+        assert (None, "STATUS_NOT_IN_FILE") in codes
+        assert not any(code == "STATUS_DEFAULTED" for _, code in codes)
+        counts = body["counts"]
+        assert (counts["rows"], counts["schedulable"], counts["not_scheduled"]) == (7, 6, 1)
+        assert (counts["derived_status"], counts["not_a_project"]) == (4, 1)
+        assert counts["projects_after_expansion"] == 6  # 1, 2, 3, 4 and 7 (x2)
+
+        sim = await c.post("/whatif/import/simulate", json=sim_body(body["rows"]))
+    assert sim.status_code == 200, sim.text
+    out = sim.json()
+    file_p = {p["ref"]: p for p in out["projects"] if p["source"] == "file"}
+    assert set(file_p) == {a["key"], f["key"], rows["3"]["key"], o["key"],
+                           f"{s['key']}-1", f"{s['key']}-2"}  # fmt: skip
+    plan_refs = {p["ref"] for p in out["projects"] if p["source"] == "plan"}
+    # Alpha replaced, Delta (On Hold in the file and the plan) removed.
+    assert str(world.alpha.id) not in plan_refs and str(world.delta.id) not in plan_refs
+    assert file_p[a["key"]]["replaces_project_id"] == str(world.alpha.id)
+    alpha_steps = {st["step_id"]: st for st in file_p[a["key"]]["steps"]}
+    for sid in ("PDD-A", "PDD-B", "PDD-C", "PDD-D"):
+        assert alpha_steps[sid]["done_before_import"] is True
+    run = file_p[f["key"]]
+    assert run["status"] == "In Development" and run["priority"] == "P1"
+    first = next(st for st in run["steps"] if not st["skipped"])
+    assert first["status"] == "In Progress" and first["start_week"] == out["current_week"]
+
+    # The engine takes ranks 1..9999: every rank is shifted by one, Running first.
+    req = ImportSimulateRequest.model_validate(sim_body(body["rows"]))
+    er = import_service.to_engine_request(ctx, req)
+    ranks = {p.key: p.rank for p in er.request.projects}
+    assert ranks[f["key"]] == 1 and ranks[rows["3"]["key"]] == 2
+    assert ranks[a["key"]] is None

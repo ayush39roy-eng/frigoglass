@@ -13,18 +13,20 @@ import {
 
 import { BarChart } from '@/components/ui/bar-chart';
 import { ExecKpiTile } from '@/surfaces/dashboard/components/executive/exec-kpi-tile';
+import { categoryRank, dashCatFill } from '@/lib/categorical-palette';
+import { formatInteger } from '@/lib/format';
 import { ChartCard, HeroDonut, type Slice } from '@/surfaces/dashboard/components/executive/executive-charts';
 
 import { int } from '../../components/figures';
 import { OUTCOME_LABEL } from '../../components/outcome-meta';
 import { ProjectRowsTable, WorkingsDisclosure, type RowColumn } from '../../components/result-parts';
-import type { Breakdown, ImportChange, ImportSimulateResponse } from '../import-types';
+import type { Breakdown, BreakdownBucket, ImportChange, ImportSimulateResponse } from '../import-types';
+import { bucketLabel } from '../bucket-label';
 import { useEffectiveYear } from '../use-year-filter';
 import { planYearOf, weekOrDash } from '../week-labels';
 import { breakdownFor, YEAR_ALL, YEAR_NOT_PLACED, yearOptions } from '../year-filter';
 import { FeatureCard } from './feature-card';
 import { IssueList, type IssueItem } from './issue-list';
-import { ServedStackChart } from './served-stack-chart';
 
 /**
  * Results → Executive (P32-R05 C2), modelled on the Dashboard Executive view (ADR 0039):
@@ -42,6 +44,62 @@ const OUTCOME_FILL: Record<keyof Breakdown['outcomes'], string> = {
   excluded: 'hsl(var(--color-text-subtle))',
 };
 const OUTCOME_KEYS = ['within_year', 'spillover', 'left_out', 'blocked', 'data_error', 'excluded'] as const;
+
+type DonutDim = 'by_category' | 'by_hub' | 'by_priority' | 'by_status';
+const DONUTS: readonly (readonly [DonutDim, string])[] = [
+  ['by_category', 'Projects by category'],
+  ['by_hub', 'Projects by hub'],
+  ['by_priority', 'Projects by priority'],
+  ['by_status', 'Projects by status'],
+];
+
+/**
+ * One Dashboard-style donut per dimension (owner 2026-11-05: "make pie chart as present in the
+ * dashboard"): the Dashboard's `HeroDonut` with its palette, centre total and a read-only
+ * legend. Slices are the served bucket `total`s, the centre is the served block total (Σ
+ * buckets = total, C1), the tooltip prints the bucket's served within / spill / not-placed
+ * counts. Counts only: the buckets serve no share, so none is shown.
+ */
+function BucketDonut({
+  title,
+  testId,
+  dim,
+  buckets,
+  total,
+}: {
+  title: string;
+  testId: string;
+  dim: DonutDim;
+  buckets: readonly BreakdownBucket[];
+  total: number;
+}): React.JSX.Element {
+  const slices: Slice[] = buckets.map((b, i) => ({
+    key: b.key,
+    label: bucketLabel(b.key),
+    count: b.total,
+    // Category keeps the Dashboard's fixed hue per category; the others go by served order.
+    fill: dashCatFill(dim === 'by_category' ? categoryRank(b.key) : i),
+    detail:
+      `${formatInteger(b.within_year)} within the plan year · ${formatInteger(b.spillover)} spill over · ` +
+      `${formatInteger(b.not_placed)} not placed`,
+  }));
+  return (
+    <HeroDonut
+      title={title}
+      testId={testId}
+      slices={slices}
+      total={total}
+      totalLabel="projects"
+      legend
+      info={
+        <p>
+          Projects in the selected year by {title.replace('Projects by ', '')}. Hover a slice for how many finish
+          within the plan year, spill over or are not placed. Every count is served by the planner.
+        </p>
+      }
+    />
+  );
+}
 
 function ChangeList({
   title,
@@ -220,29 +278,23 @@ export function ResultsExecutive({ result }: { result: ImportSimulateResponse })
               )}
             </ChartCard>
           </div>
-          <div className="grid gap-gutter md:grid-cols-2">
-            {(
-              [
-                ['by_category', 'By category'],
-                ['by_hub', 'By hub'],
-                ['by_priority', 'By priority'],
-                ['by_status', 'By status'],
-              ] as const
-            ).map(([dim, title]) => (
-              <ServedStackChart
-                key={dim}
-                title={title}
-                testId={`import-exec-${dim.replace('by_', '')}`}
-                buckets={block[dim]}
-                info={
-                  <p>
-                    One bar per value: within the plan year, spill over and not placed, with the served count
-                    finishing within the year out of the served total.
-                  </p>
-                }
-              />
+          <section
+            aria-label="Projects by category, hub, priority and status"
+            className="grid gap-gutter md:grid-cols-2"
+            data-testid="import-exec-donuts"
+          >
+            {DONUTS.map(([dim, title]) => (
+              <div key={dim} className="min-w-0">
+                <BucketDonut
+                  title={title}
+                  testId={`import-exec-${dim.replace('by_', '')}`}
+                  dim={dim}
+                  buckets={block[dim]}
+                  total={block.total}
+                />
+              </div>
             ))}
-          </div>
+          </section>
         </>
       )}
 

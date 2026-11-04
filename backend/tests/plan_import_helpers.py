@@ -142,3 +142,17 @@ def build_workbook(
     buf = io.BytesIO()
     wb.save(buf)
     return buf.getvalue()
+
+
+#: The 2026-11-05 "priorities" shape (P32-R06): no Status column, the models
+#: column renamed "Num of Models". Use with `rename=PRIORITIES_RENAME`; rows are
+#: still built with `row(...)` (canonical keys; `status` must not be given).
+PRIORITIES_HEADERS: tuple[str, ...] = tuple(h for h in HEADERS if h != "Status")
+PRIORITIES_RENAME: dict[str, str] = {
+    "Num of Projects": "Num of Models",
+    "Recommended Design Engineer ": "Recommended Design Engineer",
+}
+
+
+def build_priorities_workbook(rows: Sequence[dict[str, Any]], **kw: Any) -> bytes:
+    return build_workbook(rows, headers=PRIORITIES_HEADERS, rename=PRIORITIES_RENAME, **kw)

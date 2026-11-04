@@ -54,7 +54,7 @@ export const importRowSchema: z.ZodType<ImportRow> = z.object({
   stage_raw: nstr,
   rank: nint,
   priority: z.enum(PROJECT_PRIORITIES),
-  priority_source: z.enum(['rank', 'matched', 'default']),
+  priority_source: z.enum(['rank', 'running', 'matched', 'default']),
   engineer_raw: nstr,
   leader: leaderSchema,
   matched_project_id: nstr,
@@ -122,6 +122,8 @@ export const importParseResponseSchema: z.ZodType<ImportParseResponse> = z.objec
     auto_assign: int,
     new_designers: int,
     projects_after_expansion: int.optional(),
+    derived_status: int,
+    not_a_project: int,
   }),
 });
 

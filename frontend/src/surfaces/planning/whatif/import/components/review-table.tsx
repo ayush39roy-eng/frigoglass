@@ -33,8 +33,12 @@ import { EngineerPicker } from './engineer-picker';
 const ROW_H = 52;
 const VIRTUALIZE_OVER = 100;
 
+/** PRIORITY "Running" (P32-R06): P1, rank 0, placed before rank 1. */
+const RUNNING_LABEL = 'Running — schedules first';
+
 function priorityHint(row: ImportRow, original: ImportRow | undefined): string {
   if (original && original.priority !== row.priority) return 'edited';
+  if (row.priority_source === 'running') return 'running';
   if (row.priority_source === 'rank') return row.rank === null ? 'ranked' : `rank ${String(row.rank)}`;
   if (row.priority_source === 'matched') return 'from plan';
   return 'default';
@@ -184,6 +188,7 @@ function StatusCell({ row: { original: r } }: Cell): React.JSX.Element {
 
 function PriorityCell({ row: { original: r } }: Cell): React.JSX.Element {
   const { originals, update } = useCtx();
+  const hint = priorityHint(r, originals.get(r.key));
   return (
     <div className="flex flex-col gap-0.5">
       <NativeSelect
@@ -199,8 +204,14 @@ function PriorityCell({ row: { original: r } }: Cell): React.JSX.Element {
           </option>
         ))}
       </NativeSelect>
-      <span id={`prio-hint-${r.key}`} className="text-2xs text-text-muted" data-testid="import-priority-hint">
-        {priorityHint(r, originals.get(r.key))}
+      <span
+        id={`prio-hint-${r.key}`}
+        className="text-2xs text-text-muted"
+        data-testid="import-priority-hint"
+        title={hint === 'running' ? RUNNING_LABEL : undefined}
+      >
+        {hint}
+        {hint === 'running' ? <span className="sr-only"> — schedules first</span> : null}
       </span>
     </div>
   );

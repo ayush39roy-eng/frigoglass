@@ -234,6 +234,8 @@ export const PARSE_RESPONSE: ImportParseResponse = {
     new: 2,
     auto_assign: 1,
     new_designers: 1,
+    derived_status: 0,
+    not_a_project: 0,
   },
 };
 

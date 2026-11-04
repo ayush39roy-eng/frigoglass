@@ -90,9 +90,10 @@ class ImportRow(_Strict):
     status_raw: _Raw | None = None
     stage_step_id: _StepId | None = None
     stage_raw: _Raw | None = None
-    rank: int | None = Field(default=None, ge=1, le=9999)
+    #: 1..9999 from PRIORITY; 0 = "Running" (scheduled first, P32-R06).
+    rank: int | None = Field(default=None, ge=0, le=9999)
     priority: PriorityLiteral
-    priority_source: Literal["rank", "matched", "default"] = "default"
+    priority_source: Literal["rank", "running", "matched", "default"] = "default"
     engineer_raw: _Raw | None = None
     leader: Leader
     matched_project_id: _Id | None = None
@@ -151,6 +152,11 @@ class ImportCounts(BaseModel):
     #: Σ max(1, num_projects) over the schedulable included rows: the file
     #: projects a simulate with the default `expand_multi=true` builds.
     projects_after_expansion: int
+    #: Rows whose status was derived (no Status cell): from PRIORITY "Running",
+    #: the matched plan project or "Spillover from …" = Yes (P32-R06).
+    derived_status: int
+    #: Rows excluded as budget lines, `NOT_A_PROJECT` (P32-R06).
+    not_a_project: int
 
 
 class ImportParseResponse(BaseModel):

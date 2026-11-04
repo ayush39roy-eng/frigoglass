@@ -33663,3 +33663,175 @@ on hold) plan projects.
     "From the file" 2, and served-block deltas (+1 / ±0 / −1, flipped after the baseline swap).
   - The import flow end-to-end test got a 20 s timeout. It is ~5 s alone and went past 10 s under parallel load.
 - **Checks.** `tsc -b` clean. eslint clean on the import and executive folders. whatif vitest 153/153, run twice.
+
+## [2026-11-05] P32-R05 (frontend) follow-up 2 — frontend-builder: Executive breakdown donuts
+
+The owner asked to "make pie chart as present in the dashboard". The Executive tab's four stacked-bar cards are
+replaced by four Dashboard donuts: Projects by category, by hub, by priority and by status.
+
+- **Layout.** A 2×2 grid at `md` and up, one column on a phone. The year filter still drives the donuts.
+- **Component.** They reuse the Dashboard's `HeroDonut` (`executive-charts.tsx`), so the look matches:
+  - same ring and leader labels;
+  - centre total = the served block total;
+  - same `--dash-cat` palette (category keeps its fixed hue per category via `categoryRank`; the other donuts take
+    hues in served order).
+- **Additive props on `HeroDonut`.** Dashboard output is unchanged; its tests pass.
+  - `legend` draws a read-only chip legend (swatch · label · count).
+  - `Slice.detail` adds a Recharts hover tooltip and an sr-only line. Here it is the served bucket's
+    "N within the plan year · N spill over · N not placed".
+- **Slices** are the served bucket `total`s. Counts only: the buckets serve no share and none is computed (the
+  Dashboard's `share_pct` is served by its own API, and `HeroDonut` already prints the count alone when none is
+  given).
+- **Palette move.** `catFill` moved to `lib/categorical-palette.ts` as `dashCatFill`, so the import view uses the same
+  hues without a react-refresh export warning.
+- **Removed.** `served-stack-chart.tsx` and `stack-segments.ts` are deleted. `bucketLabel` ("unknown" → "Unknown")
+  now lives in `bucket-label.ts`.
+- **Tests.** The `results-r05.test.tsx` Executive test was rewritten:
+  - four donuts with titles and centre totals 3;
+  - slice counts and served detail per bucket, including "Unknown";
+  - legend text;
+  - the stacked bars are gone;
+  - axe;
+  - Year 2027 shrinks the hub and priority donuts to row-5 only.
+- **Checks.**
+  - `tsc -b` clean.
+  - eslint 0 errors, 8 pre-existing warnings.
+  - Full vitest: 228 files / 1841 tests.
+  - Build budget PASS, 191.5 KB gzip initial.
+  - Not checked in a browser; the tooltip is not exercised by jsdom.
+
+## [2026-11-05] P32-R06 — backend-builder
+
+**Task.** The client's new workbook (`2027 RPD Capacity Planning_Priorities.xlsx`, not committed, rows never copied
+into tests) must parse alongside the first format. Backend only: parser, service, schema, tests, docs. `frontend/` and
+`backend/scheduling/` not touched. `docs/IMPLEMENTATION_PLAN.md` not edited (the orchestrator adds/marks P32-R06).
+
+**Changes.**
+- `services/plan_import_xlsx.py`:
+  - Header aliases `Num of Models` / `Num of Model(s)` / `Number of models` / `No. of models` ≡ `Num of Projects`.
+  - `RawWorkbook.columns` records the header fields found, so an absent Status column is known.
+  - `MatchableProject` gains optional `status`, `category`, `current_step_id`.
+  - Status for an absent column or a blank cell, first match wins: PRIORITY `Running` (any case) → In Development
+    (`STATUS_FROM_RUNNING`); matched plan status (`STATUS_FROM_PLAN`; On Hold / Cancelled / Commercialized keep the
+    not-mapped rule); Spillover = Yes → In Development (`STATUS_FROM_SPILLOVER`); else In Queue. `STATUS_DEFAULTED`
+    (warning) only when the column exists. No column → one file-level info `STATUS_NOT_IN_FILE`. A non-blank
+    unrecognised cell keeps the old warning; a given status is never overridden.
+  - `Running` → P1, rank 0, `priority_source` `running`. An integer 0 is still `RANK_INVALID`.
+  - Hub: `Rom/<partner>` → PD-Romania (`HUB_MAPPED` info naming the partner). `Rom/OEM` → OEM-Seitek if Expenses
+    mentions Seitek, else OEM-HCK plus `HUB_OEM_DEFAULTED`. A blank or unrecognised RPD HUB on a matched row → plan
+    hub (`HUB_FROM_PLAN`) before the Expenses/Plant fallback. No match → the old fallback (Consumer appl. → R&D-Greece
+    warning).
+  - Category blank on a matched row → plan category (`CATEGORY_FROM_PLAN`). Re-mapped to the hub's workflow:
+    OEM plan category on a PDD hub → base; PDD on an OEM hub → OEM. Both add `CATEGORY_MAPPED`.
+  - Stage blank on a matched row → the plan's current step (`STAGE_FROM_PLAN`), only if it belongs to the row's
+    workflow; otherwise first step, no issue.
+  - Budget lines (`is_budget_line`): blank PRIORITY and the description matches `^provision\b`,
+    `certification program`, `^update certification`, or a short CAPEX heading `^(\S+\s+){0,3}capex(\s+\S+){0,2}$`.
+    The result is `include=false`, status kept, info `NOT_A_PROJECT`.
+    **Deviation from the brief:** a bare `\bcapex\b` caught a real feasibility project on the client file whose
+    description mentions CAPEX mid-sentence. The heading form excludes it.
+  - `ParseCounts.derived_status` and `not_a_project` (defaults 0). `schedulable` stays status-based.
+- `services/whatif_import.py`:
+  - `plan_current_steps(ctx)`: the first step in walk order that is not Done and not skipped. Uses `is_step_skipped`
+    with the live overrides, the same rule as `applicable_edits`.
+  - `matchable_projects` passes status, category and current step.
+  - `to_engine_request` passes `rank + 1` (capped 9999) to the engine, which accepts 1..9999 and orders by
+    `imp-<rank>`. So Running (0) goes first and order is kept; 9998 and 9999 would tie on the file row. The engine
+    rank is not served.
+- `schemas/whatif_import.py`: `ImportRow.rank` ge=0; `priority_source` adds `running`; `ImportCounts.derived_status`
+  and `not_a_project` (required).
+- Docs:
+  - `docs/API_CONTRACT_P32.md` B2: header/status paragraph, counts, `priority_source`/rank, issue-code list.
+  - ADR 0044 "Amendment (2026-11-05, priorities workbook)".
+  - DOMAIN_RULES "Plan import" paragraph: one sentence.
+
+**Frontend impact (not done here).**
+- `import-schema.ts` has `priority_source: z.enum(['rank','matched','default'])`. A parse response with a Running row
+  will fail zod until `'running'` is added (and a label in `review-table.tsx`).
+- The new counts are stripped by the non-strict zod object, so they are harmless.
+
+**Tests.**
+- `tests/plan_import_helpers.py`: `PRIORITIES_HEADERS` / `PRIORITIES_RENAME` / `build_priorities_workbook`.
+- `test_p32_plan_import_xlsx.py` +25:
+  - a synthetic 23-row priorities workbook asserting every rule and the counts;
+  - budget-pattern parametrize, including the must-not-catch cases;
+  - `Num of Models` header variants;
+  - old format with a blank Status cell (derived vs `STATUS_DEFAULTED`, given cell wins).
+- `test_p32_whatif_import_api.py`:
+  - existing counts assertion extended with the 2 keys;
+  - new end-to-end parse+simulate on the new shape: Alpha with live A..D Done → `STAGE_FROM_PLAN` equals
+    `plan_current_steps`, done-before-import in simulate; Running row In Progress at CW; Delta On Hold removed;
+    budget line excluded; Num of Models ×2 expanded; engine ranks shifted.
+- Results:
+  - P32 suites + `tests/scheduling/test_p32_plan_import.py` + `test_openapi_frontend_contract` + `test_p18_whatif_api`:
+    481 passed.
+  - ruff check clean; ruff format clean on touched files.
+  - mypy: 0 errors in the three app modules. Test files show only the repo-wide `no-untyped-def` noise plus the
+    pre-existing `[index]` / `no-any-return` lines.
+  - `backend/.coverage` restored.
+
+**Local smoke** (throwaway PG17 `p32r06-pg`, throwaway Fernet key, `alembic upgrade head` incl. p32a, currency rates,
+`client_2026 --reset` at CW 42, admin scope; container and key removed). Counts only:
+- Parse:
+  - 70 rows; 69 schedulable; 1 not mapped (On Hold from the plan).
+  - not_a_project 8. The brief said 7 but listed 8 names; all 8 caught, no false positive.
+  - Matched 18 (10 name, 8 code); 52 new.
+  - derived_status 23 (Running 1, plan 18, spillover 4) + `STATUS_NOT_IN_FILE` 1.
+  - Priority sources: rank 50, running 1, matched 6, default 13. Ranks 0..19.
+  - Auto-assign 54, plan leader kept 16, new designers 0.
+  - projects_after_expansion 77; include 61 / excluded 9.
+- Hub resolution:
+  - Rom → PD-Romania 19; Rom/Unbound → PD-Romania 7; Rom/OEM → OEM-HCK 6 / OEM-Seitek 6; India → PD-India 27.
+  - Blank hub (all Consumer appl.): plan hub OEM-Seitek 2, R&D-Greece warning 3.
+- Issue counts: `CATEGORY_DEFAULTED` 48, `CATEGORY_FROM_PLAN` 18, `STAGE_FROM_PLAN` 18, `HUB_MAPPED` 19,
+  `HUB_OEM_DEFAULTED` 6, `DUPLICATE_ROW` 2, `MATCH_AMBIGUOUS` 2.
+- Blank-PRIORITY Spillover=Yes rows: 7, not the 8 in the brief. 5 In Development; 2 In Queue because their matched plan
+  project is In Queue (the plan precedes Spillover by the rule order).
+- Simulate merge, 2027:
+  - 77 file + 312 plan.
+  - Scheduled 281; within 2027 196; spillover 39; not placed 46 (all left_out).
+  - Excluded 108. File within 48.
+  - Existing 162 → 148; 14 newly slipping.
+- Simulate file_only, 2027: 77 scheduled, 67 within, 9 spillover, 1 not placed.
+
+## [2026-11-05] P32-R06 (frontend) — frontend-builder: priorities workbook on Review
+
+This follows backend P32-R06. Changes are in the import folder only. Not touched: prettier, `backend/`. The uncommitted
+P32-R05 donut work in the tree is kept.
+
+**1. Running priority.**
+- `PrioritySource` and the zod enum gain `running`; the rank may be 0.
+- The Review priority hint shows "running", with the title "Running — schedules first" and a screen-reader-only
+  " — schedules first". The hint is still the select's `aria-describedby`.
+- The builder's `capOrder` needed no change: within a band rank 0 already sorts before 1 (null only is "unranked
+  last"). A test proves the running row wins a 1-slot A+ limit even when it is last in the file.
+
+**2. Parse counts.**
+- `counts.derived_status` and `counts.not_a_project` are typed and required in zod, as the server sends them. The
+  fixture now carries 0 / 0.
+- Review shows:
+  - an info line "Status derived for N rows (the file has no Status column)" when `derived_status > 0`;
+  - a neutral banner "N rows look like budget lines — not mapped";
+  - a separate collapsed group "Not a project — N" for mapped-status rows that carry a `NOT_A_PROJECT` issue.
+- In that group the Include checkbox is enabled. Ticking it includes the row in `/simulate`, and the row stays in
+  its group (keyed by the issue, so it does not jump).
+- An On Hold budget line still goes to the existing not-mapped group.
+
+**3. New info codes.** STATUS_NOT_IN_FILE, STATUS_FROM_RUNNING / _PLAN / _SPILLOVER, HUB_MAPPED, HUB_FROM_PLAN,
+CATEGORY_FROM_PLAN, STAGE_FROM_PLAN and NOT_A_PROJECT render through the generic issue list. A file-level issue
+(`row_key` null) is shown with no row prefix. Verified by test.
+
+**Tests.** New `review-p32-r06.test.tsx` (3):
+- the running hint;
+- budget-line banner, group, Include enabled and sent;
+- the derived-status line;
+- all nine codes, including the file-level one;
+- axe;
+- the "none" case;
+- the builder ordering.
+
+**Checks.**
+- `tsc -b` clean.
+- eslint 0 errors, 8 pre-existing warnings.
+- Full vitest: 229 files / 1844 tests.
+- Build budget PASS, 191.5 KB gzip initial.
