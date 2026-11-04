@@ -368,15 +368,15 @@ describe('QA-P19-4: the drag label calendar figure is not clipped at W52', () =>
     });
   });
 
-  it('0.5 FTE, W48–W49 dragged +4 calendar weeks: "6 wks on the calendar, to W53 · 3 wks of work at 0.5 FTE"', () => {
+  it("0.5 FTE, W48–W49 dragged +4 calendar weeks: 6 wks on the calendar, to W1 '27 · 3 wks of work at 0.5 FTE", () => {
     expect(resizeLabel({ planned_start_week: 48, planned_end_week: 49, duration_weeks: 1, span_fte: 0.5 }, 4)).toBe(
-      '6 wks on the calendar, to W53 · 3 wks of work at 0.5 FTE',
+      "6 wks on the calendar, to W1 '27 · 3 wks of work at 0.5 FTE",
     );
   });
 
   it('0.63 FTE, W46–W52 dragged +3: 10 calendar weeks (not the clipped 7), to W55', () => {
     expect(resizeLabel({ planned_start_week: 46, planned_end_week: 52, duration_weeks: 4, span_fte: 0.63 }, 3)).toBe(
-      '10 wks on the calendar, to W55 · 6 wks of work at 0.63 FTE',
+      "10 wks on the calendar, to W3 '27 · 6 wks of work at 0.63 FTE",
     );
   });
 
@@ -392,14 +392,14 @@ describe('QA-P19-4: the drag label calendar figure is not clipped at W52', () =>
     );
     expect(
       resizeLabel({ kind: 'lab', planned_start_week: 49, planned_end_week: 52, duration_weeks: 4, span_fte: null }, 2),
-    ).toBe('6 wks on the calendar, to W54 · not stretched by FTE');
+    ).toBe("6 wks on the calendar, to W2 '27 · not stretched by FTE");
     expect(resizeLabel({ planned_start_week: 40, planned_end_week: 43, duration_weeks: 4, span_fte: null }, 2)).toBe(
       "6 wks of work · calendar weeks follow the leader's FTE",
     );
   });
 
   it('pure copy helpers', () => {
-    expect(resizeDragLabel('design', 6, 3, 0.5, 53)).toBe('6 wks on the calendar, to W53 · 3 wks of work at 0.5 FTE');
+    expect(resizeDragLabel('design', 6, 3, 0.5, 53)).toBe("6 wks on the calendar, to W1 '27 · 3 wks of work at 0.5 FTE");
     expect(resizeDragLabel('design', 6, 3, 0.5)).toBe('6 wks on the calendar · 3 wks of work at 0.5 FTE');
     // a caller without `calendar` still gets the ghost width (inside the axis)
     expect(stepDragLabel('resize', { startWeek: 10, endWeek: 15 }, { kind: 'design', workWeeks: 3, fte: 0.5 })).toBe(

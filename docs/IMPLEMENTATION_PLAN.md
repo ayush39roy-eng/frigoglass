@@ -2223,4 +2223,6 @@ recomputing everything. Contract: `docs/API_CONTRACT_P32.md`.
 | P32-T04 | Backend: `.xlsx` parser + `POST /whatif/import/parse` and `/whatif/import/simulate`, schemas, scope, audit, limits; tests with a synthetic workbook | backend-builder | DONE (MEMORY 2026-11-04 P32-T04) |
 | P32-T05 | Frontend: live Gantt overlap gesture (release helper, drag label, dialog field, broken bar with lanes, Reset) ; tests | frontend-builder | DONE (MEMORY 2026-11-04 P32-T05) |
 | P32-T06 | Frontend: What-if "Import plan (Excel)" flow — upload, review/fix (engineer assignment), results (overview, draggable Gantt with re-simulate, capacity, projects); tests | frontend-builder | DONE (MEMORY 2026-11-04 P32-T06) |
+| P32-R01 | Owner bug "Solver queued" forever (no Celery worker locally / on Render): greedy recalcs run in-process (`RPD_GREEDY_INLINE`, default true; CP-SAT unchanged), Redis optional (best-effort progress, SSE falls back to the run row) | backend-builder | DONE (MEMORY 2026-11-04 P32-R01) |
+| P32-R02 | Owner: step bar editing (move, resize, parallel overlap) on the Project Execution Timeline only; a per-project section was tried and reverted the same day | frontend-builder | DONE (MEMORY 2026-11-04 P32-R02) |
 | P32-T20 | Gate: qa, workflow, security | — | TODO |

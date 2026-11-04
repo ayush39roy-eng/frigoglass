@@ -14,8 +14,8 @@ import {
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { formatPlanWeek } from '@/lib/format';
-import { DISPLAY_HORIZON_WEEKS } from '@/lib/domain-constants';
+import { formatYearWeek } from '@/lib/format';
+import { SCHEDULER_HORIZON_WEEKS } from '@/lib/domain-constants';
 
 import type { StepTimingRequest } from '../../api/types';
 import { DURATION_OVERRIDE_MAX_WEEKS } from '../../lib/gantt-coordinates';
@@ -185,7 +185,7 @@ function TimingForm({
             id={ids.start}
             type="number"
             min={1}
-            max={DISPLAY_HORIZON_WEEKS}
+            max={SCHEDULER_HORIZON_WEEKS}
             step={1}
             inputMode="numeric"
             placeholder="None"
@@ -202,7 +202,7 @@ function TimingForm({
           ) : (
             <p id={`${ids.start}-hint`} className="text-2xs text-text-muted" data-numeric="">
               {canMove
-                ? `Blank = no floor. Planned now: ${target.plannedStartWeek === null ? '—' : formatPlanWeek(target.plannedStartWeek)}.`
+                ? `Blank = no floor. Planned now: ${target.plannedStartWeek === null ? '—' : formatYearWeek(target.plannedStartWeek)}.`
                 : 'Fixed: the step has started.'}
             </p>
           )}

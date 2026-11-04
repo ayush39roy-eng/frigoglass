@@ -201,15 +201,26 @@ decisions made explicitly here, each re-derived rather than defaulted to:
    fall back to polling `GET /schedule-runs/{id}` — not built as a
    single-lookup endpoint yet, see P3-T06's "Deviations from plan" — or
    `GET /schedule-runs` filtered client-side).
+7. **Redis is optional (P32-R01)** — greedy runs execute in the API process
+   and may run where no Redis is reachable (Render, a laptop). If the
+   subscribe fails, the stream follows the `ScheduleRun` row instead: it
+   reads the row every `_DB_POLL_SECONDS`, emits each status change, and ends
+   on the terminal status (same synthesized payload as point 5). A Redis
+   error mid-stream switches to the same polling instead of closing. With a
+   live subscription the row is still rechecked every `_DB_RECHECK_SECONDS`,
+   so a progress event that was never published (inline runs publish
+   best-effort) cannot leave the stream hanging. Only the exception type of a
+   Redis failure is logged (its message can carry the Redis URL).
 """
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import time
 import uuid
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from datetime import UTC, datetime
 
 import redis.asyncio as redis_asyncio
@@ -218,7 +229,7 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from api.db import get_db
+from api.db import get_db, get_session_factory
 from api.deps import require_any_permission, require_roles
 from api.errors import CodedHTTPException
 from core.celery_config import get_celery_settings, get_redis_settings
@@ -264,6 +275,12 @@ _HEARTBEAT_INTERVAL_SECONDS = 15.0
 #: returning `None` — bounds how quickly this generator notices a client
 #: disconnect / the heartbeat deadline / the safety cap, without busy-looping.
 _POLL_TIMEOUT_SECONDS = 1.0
+#: P32-R01 (module docstring point 7): run-row polling cadence without Redis.
+_DB_POLL_SECONDS = 0.5
+#: P32-R01: run-row recheck cadence alongside a live Redis subscription.
+_DB_RECHECK_SECONDS = 2.0
+#: P32-R01: connect timeout for the SSE subscriber's Redis client.
+_REDIS_CONNECT_TIMEOUT_SECONDS = 2.0
 
 _read_any = require_any_permission(
     (Surface.DASHBOARD, Action.READ),
@@ -585,7 +602,9 @@ def _sse_data_frame(raw_json: str) -> bytes:
     return f"data: {raw_json}\n\n".encode()
 
 
-def _build_synthetic_terminal_payload(run: ScheduleRun) -> dict[str, str | float]:
+def _build_synthetic_terminal_payload(
+    run: ScheduleRun, *, message: str | None = None
+) -> dict[str, str | float]:
     """Construct ONE terminal-status payload directly from a `ScheduleRun`
     row's own DB columns, matching `workers/progress.py`'s documented
     message schema field-for-field. Used only for the "client connected
@@ -601,7 +620,8 @@ def _build_synthetic_terminal_payload(run: ScheduleRun) -> dict[str, str | float
         "schedule_run_id": str(run.id),
         "status": run.status.value,
         "timestamp": timestamp.astimezone(UTC).isoformat(),
-        "message": (
+        "message": message
+        or (
             "Synthesized on connect: this run had already reached a terminal "
             "state before this SSE client subscribed, and Redis pub/sub has "
             "no replay — this event reflects the ScheduleRun row's current "
@@ -623,13 +643,50 @@ def _build_synthetic_terminal_payload(run: ScheduleRun) -> dict[str, str | float
     return payload
 
 
+_ROW_FOLLOW_MESSAGE = (
+    "Synthesized from the ScheduleRun row: the progress channel did not "
+    "deliver this status (Redis unavailable or the event was not published)."
+)
+
+
+async def _read_run_for_stream(schedule_run_id: uuid.UUID) -> ScheduleRun | None:
+    """P32-R01: one fresh read of the run row, in its own short session (the
+    request-scoped session is already torn down while the body streams).
+    """
+
+    async with get_session_factory()() as db:
+        return await db.get(ScheduleRun, schedule_run_id)
+
+
+async def _close_redis_quietly(
+    redis_client: redis_asyncio.Redis | None,
+    pubsub: redis_asyncio.client.PubSub | None,
+    channel: str,
+) -> None:
+    try:
+        if pubsub is not None:
+            try:
+                await pubsub.unsubscribe(channel)
+            finally:
+                await pubsub.aclose()  # type: ignore[no-untyped-call]  # redis stubs
+    except Exception as exc:  # noqa: BLE001 - closing a broken connection
+        logger.info("SSE %s: Redis close failed (%s)", channel, type(exc).__name__)
+    finally:
+        if redis_client is not None:
+            try:
+                await redis_client.aclose()
+            except Exception as exc:  # noqa: BLE001 - closing a broken connection
+                logger.info("SSE %s: Redis close failed (%s)", channel, type(exc).__name__)
+
+
 async def _progress_event_source(
     *,
     request: Request,
     schedule_run_id: uuid.UUID,
-    redis_client: redis_asyncio.Redis,
-    pubsub: redis_asyncio.client.PubSub,
+    redis_client: redis_asyncio.Redis | None,
+    pubsub: redis_asyncio.client.PubSub | None,
     initial_terminal_payload: dict[str, str | float] | None,
+    read_run: Callable[[uuid.UUID], Awaitable[ScheduleRun | None]] | None = None,
 ) -> AsyncIterator[bytes]:
     """The actual SSE body generator. Deliberately takes `redis_client`/
     `pubsub` as already-open objects it owns and closes itself (in `finally`)
@@ -639,22 +696,25 @@ async def _progress_event_source(
     the body generator below has actually run — a real, documented FastAPI
     gotcha (dependencies-with-yield are not kept alive for the lifetime of a
     streamed response body). This generator therefore never touches the
-    request-scoped `db: AsyncSession` at all; the caller
-    (`stream_schedule_run_progress`) does every DB read it needs BEFORE
-    constructing this generator / returning the `StreamingResponse`, and
-    hands this function only plain values (`initial_terminal_payload`) plus
-    Redis objects that are NOT FastAPI dependencies and therefore aren't
-    subject to that teardown-timing gotcha.
+    request-scoped `db: AsyncSession` at all; it reads the run row through
+    `read_run` (default `_read_run_for_stream`, a fresh short session).
+
+    P32-R01: `pubsub=None` (Redis unreachable at connect) follows the run row
+    only; see module docstring point 7.
     """
 
     if initial_terminal_payload is not None:
         yield _sse_data_frame(json.dumps(initial_terminal_payload))
         return
 
+    reader = read_run or _read_run_for_stream
     channel = channel_name(schedule_run_id)
     max_stream_seconds = get_celery_settings().task_time_limit_seconds + 120
     deadline = time.monotonic() + max_stream_seconds
     last_heartbeat = time.monotonic()
+    # Row-follow mode reads the row at once; with Redis, after the first interval.
+    last_row_check = time.monotonic() if pubsub is not None else 0.0
+    last_row_status: str | None = None
     try:
         while True:
             if await request.is_disconnected():
@@ -678,40 +738,75 @@ async def _progress_event_source(
                 yield b": stream-timeout, closing - poll GET /schedule-runs/{id}\n\n"
                 break
 
-            try:
-                msg = await pubsub.get_message(
-                    ignore_subscribe_messages=True, timeout=_POLL_TIMEOUT_SECONDS
-                )
-            except Exception:
-                logger.exception(
-                    "Redis error while polling schedule-run-progress:%s — closing stream",
-                    schedule_run_id,
-                )
-                yield b": upstream-error, closing\n\n"
-                break
+            msg = None
+            if pubsub is not None:
+                try:
+                    msg = await pubsub.get_message(
+                        ignore_subscribe_messages=True, timeout=_POLL_TIMEOUT_SECONDS
+                    )
+                except Exception as exc:  # noqa: BLE001 - any Redis failure
+                    logger.warning(
+                        "Redis error while polling schedule-run-progress:%s (%s) — "
+                        "following the run row instead",
+                        schedule_run_id,
+                        type(exc).__name__,
+                    )
+                    yield b": upstream-error, following the run row\n\n"
+                    await _close_redis_quietly(redis_client, pubsub, channel)
+                    redis_client = pubsub = None
+                    last_row_check = 0.0
+                    continue
+            elif last_row_check:
+                await asyncio.sleep(_DB_POLL_SECONDS)
 
-            if msg is None:
-                if now - last_heartbeat >= _HEARTBEAT_INTERVAL_SECONDS:
-                    yield b": heartbeat\n\n"
-                    last_heartbeat = now
+            if msg is not None:
+                raw = msg["data"]
+                data_str = raw.decode() if isinstance(raw, (bytes, bytearray)) else raw
+                yield _sse_data_frame(data_str)
+
+                try:
+                    relayed_status = json.loads(data_str).get("status")
+                except (json.JSONDecodeError, TypeError, AttributeError):
+                    relayed_status = None
+                if relayed_status in _TERMINAL_STATUS_VALUES:
+                    break
+                if isinstance(relayed_status, str):
+                    last_row_status = relayed_status
                 continue
 
-            raw = msg["data"]
-            data_str = raw.decode() if isinstance(raw, (bytes, bytearray)) else raw
-            yield _sse_data_frame(data_str)
+            now = time.monotonic()
+            interval = _DB_POLL_SECONDS if pubsub is None else _DB_RECHECK_SECONDS
+            if now - last_row_check >= interval:
+                last_row_check = now
+                run = await reader(schedule_run_id)
+                if run is None:
+                    yield b": run-not-found, closing\n\n"
+                    break
+                if run.status.value in _TERMINAL_STATUS_VALUES:
+                    yield _sse_data_frame(
+                        json.dumps(
+                            _build_synthetic_terminal_payload(run, message=_ROW_FOLLOW_MESSAGE)
+                        )
+                    )
+                    break
+                if pubsub is None and run.status.value != last_row_status:
+                    last_row_status = run.status.value
+                    yield _sse_data_frame(
+                        json.dumps(
+                            {
+                                "schedule_run_id": str(run.id),
+                                "status": run.status.value,
+                                "timestamp": datetime.now(UTC).isoformat(),
+                            }
+                        )
+                    )
+                    continue
 
-            try:
-                relayed_status = json.loads(data_str).get("status")
-            except (json.JSONDecodeError, TypeError, AttributeError):
-                relayed_status = None
-            if relayed_status in _TERMINAL_STATUS_VALUES:
-                break
+            if now - last_heartbeat >= _HEARTBEAT_INTERVAL_SECONDS:
+                yield b": heartbeat\n\n"
+                last_heartbeat = now
     finally:
-        try:
-            await pubsub.unsubscribe(channel)
-            await pubsub.aclose()
-        finally:
-            await redis_client.aclose()
+        await _close_redis_quietly(redis_client, pubsub, channel)
 
 
 @router.get("/{schedule_run_id}/progress")
@@ -736,23 +831,36 @@ async def stream_schedule_run_progress(
     if run is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="ScheduleRun not found")
 
-    redis_client = redis_asyncio.Redis.from_url(get_redis_settings().redis_url)
-    pubsub = redis_client.pubsub()
     channel = channel_name(schedule_run_id)
-    # Subscribe BEFORE the SECOND (authoritative) status read below — see
-    # module docstring point 5 for why this ordering, not the reverse, is
-    # what closes the "missed the terminal event" race: any transition that
-    # happens strictly after this subscribe() call is still delivered live
-    # over this subscription even if it raced ahead of the refresh() below.
-    await pubsub.subscribe(channel)
+    redis_client: redis_asyncio.Redis | None = None
+    pubsub: redis_asyncio.client.PubSub | None = None
+    try:
+        redis_client = redis_asyncio.Redis.from_url(
+            get_redis_settings().redis_url,
+            socket_connect_timeout=_REDIS_CONNECT_TIMEOUT_SECONDS,
+        )
+        pubsub = redis_client.pubsub()
+        # Subscribe BEFORE the SECOND (authoritative) status read below — see
+        # module docstring point 5 for why this ordering, not the reverse, is
+        # what closes the "missed the terminal event" race: any transition
+        # that happens strictly after this subscribe() call is still delivered
+        # live over this subscription even if it raced ahead of the refresh().
+        await pubsub.subscribe(channel)
+    except Exception as exc:  # noqa: BLE001 - P32-R01: Redis is optional here
+        logger.warning(
+            "SSE schedule-run-progress:%s: Redis unavailable (%s); following the run row",
+            schedule_run_id,
+            type(exc).__name__,
+        )
+        await _close_redis_quietly(redis_client, pubsub, channel)
+        redis_client = pubsub = None
     await db.refresh(run)
 
     initial_terminal_payload: dict[str, str | float] | None = None
     if run.status.value in _TERMINAL_STATUS_VALUES:
         initial_terminal_payload = _build_synthetic_terminal_payload(run)
-        await pubsub.unsubscribe(channel)
-        await pubsub.aclose()
-        await redis_client.aclose()
+        await _close_redis_quietly(redis_client, pubsub, channel)
+        redis_client = pubsub = None
 
     generator = _progress_event_source(
         request=request,

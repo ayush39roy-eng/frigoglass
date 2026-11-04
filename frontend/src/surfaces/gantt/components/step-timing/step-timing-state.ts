@@ -1,4 +1,4 @@
-import { formatPlanWeek } from '@/lib/format';
+import { formatYearWeek } from '@/lib/format';
 
 import type { PendingGhost, StepTimingTarget } from './step-timing-context';
 
@@ -36,7 +36,7 @@ export function timingChangeSummary(change: TimingChange): string {
   const source =
     change.durationOverrideWeeks !== null ? '' : change.effortWeeks !== null ? ' (client effort)' : ' (lead-time table)';
   const duration = `${String(change.effectiveDurationWeeks)} wks${source}`;
-  const floor = change.startNotBeforeWeek === null ? 'no start floor' : `earliest start ${formatPlanWeek(change.startNotBeforeWeek)}`;
+  const floor = change.startNotBeforeWeek === null ? 'no start floor' : `earliest start ${formatYearWeek(change.startNotBeforeWeek)}`;
   const overlap =
     change.overlapWeeks != null ? ` · runs in parallel (${String(change.overlapWeeks)} wk overlap)` : '';
   return `${change.stepName}: ${duration} · ${floor}${overlap}`;

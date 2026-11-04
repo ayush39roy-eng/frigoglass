@@ -36,6 +36,15 @@ export const WITHIN_YEAR_WEEK = 52;
  */
 export const DISPLAY_HORIZON_WEEKS = WITHIN_YEAR_WEEK;
 
+/**
+ * P32-R02: the scheduler's internal search horizon (`HORIZON_WEEKS` in
+ * `backend/domain_constants.py`), exposed for ONE place only: the "Edit
+ * timing" dialog's earliest-start field accepts the server's full range
+ * (`start_not_before_week` is 1..HORIZON_WEEKS), so a step already floored at
+ * W53+ can still be saved. Every axis still presents W1–W52.
+ */
+export const SCHEDULER_HORIZON_WEEKS = 78;
+
 /** The calendar year the 52-week plan covers, and the year work past W52 spills
  *  into. Display copy only. */
 export const PLAN_YEAR = 2026;

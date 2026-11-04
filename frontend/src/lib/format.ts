@@ -9,7 +9,7 @@
  * just format what the API already computed.
  */
 
-import { DISPLAY_HORIZON_WEEKS } from '@/lib/domain-constants';
+import { DISPLAY_HORIZON_WEEKS, SPILLOVER_YEAR } from '@/lib/domain-constants';
 import type { CurrencyCode } from '@/types/enums';
 
 const currencyFormatters = new Map<string, Intl.NumberFormat>();
@@ -92,6 +92,16 @@ export function formatWeek(week: number): string {
  */
 export function formatPlanWeek(week: number): string {
   return week > DISPLAY_HORIZON_WEEKS ? `After ${formatWeek(DISPLAY_HORIZON_WEEKS)}` : formatWeek(week);
+}
+
+/**
+ * P32-R02: a served week with the spillover year named — `W47` inside the plan
+ * year, `W5 '27` for absolute week 57. Used by the step-timing labels and
+ * dialog (P32-R02). Formatting only.
+ */
+export function formatYearWeek(week: number): string {
+  if (week <= DISPLAY_HORIZON_WEEKS) return formatWeek(week);
+  return `W${String(week - DISPLAY_HORIZON_WEEKS)} '${String(SPILLOVER_YEAR % 100).padStart(2, '0')}`;
 }
 
 /**

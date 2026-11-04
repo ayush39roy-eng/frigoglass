@@ -354,7 +354,7 @@ describe('"Edit timing" dialog (keyboard alternative)', () => {
     const start = within(dialog).getByLabelText('Earliest start week');
     await user.type(start, '99');
     await user.click(within(dialog).getByRole('button', { name: 'Save timing' }));
-    expect(await within(dialog).findByText('Enter a week of 1–52, or leave it blank.')).toBeInTheDocument();
+    expect(await within(dialog).findByText('Enter a week of 1–78, or leave it blank.')).toBeInTheDocument();
     expect(api.setStepTiming).not.toHaveBeenCalled();
   });
 
@@ -397,6 +397,12 @@ describe('row markers', () => {
     const marker = screen.getByTestId('step-timing-edited');
     expect(marker).toHaveTextContent('edited');
     expect(marker).toHaveAttribute('title', 'Timing edited: work 6 wks (table 4) · earliest start W40');
+  });
+
+  it('P32-R02: a stored overlap shows the read-only "parallel N wk" chip beside the "edited" marker', () => {
+    renderChart(project({ overlap_weeks: 2, predecessor_ids: ['PDD-D'] }));
+    expect(screen.getByTestId('step-parallel-marker')).toHaveTextContent('parallel 2 wk');
+    expect(screen.getByTestId('step-timing-edited')).toBeInTheDocument();
   });
 
   it('no marker without an edit', () => {

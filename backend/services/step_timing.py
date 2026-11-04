@@ -43,7 +43,7 @@ The queued path is the priority move's lifecycle
 (`services/priority_move.py`, ADR 0015): `find_in_flight_run` (which takes the
 dispatch advisory lock), `create_queued_schedule_run` (its commit lands the
 fields, the stale flag, the audit row and the QUEUED run together, so the
-worker's input carries the new timing), `run_greedy_schedule.delay(...,
+worker's input carries the new timing), `dispatch_greedy(...,
 activate=True, recalc_project_id=...)`, a `project.recalculate_requested`
 audit row, a commit and the SSE "queued" event. Greedy only (OQ #10).
 Scheduling itself stays in `backend/scheduling/`, run by the worker.
@@ -78,12 +78,14 @@ from schemas.step_timing import (
     TimingEditable,
 )
 from services.active_run import get_active_run
-from services.run_dispatch import enqueue_or_fail, find_in_flight_run
+from services.run_dispatch import dispatch_greedy, enqueue_or_fail, find_in_flight_run
 from services.schedule_persistence import create_queued_schedule_run
 from services.workflow_durations import live_step_effective_weeks
 from services.workspace import row_is_skipped
-from workers.progress import publish_progress
-from workers.schedule_tasks import run_greedy_schedule
+
+# P32-R01: the greedy `queued` event is best-effort (Redis may be absent; the
+# run is committed and the SSE endpoint falls back to the run row).
+from workers.progress import publish_progress_best_effort as publish_progress
 
 #: `ScheduleRun.trigger_reason` of a run started by a Gantt drag.
 TRIGGER_REASON = "step_timing"
@@ -388,8 +390,9 @@ async def apply_step_timing(
     task_id = await enqueue_or_fail(
         db,
         run,
-        lambda: run_greedy_schedule.delay(
+        lambda: dispatch_greedy(
             str(run.id),
+            db=db,
             triggered_by_user_id=str(principal.user_id),
             activate=True,
             recalc_project_id=str(project.id),

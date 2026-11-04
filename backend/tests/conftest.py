@@ -65,6 +65,12 @@ os.environ.setdefault("RPD_FIELD_ENCRYPTION_KEY", Fernet.generate_key().decode()
 # `tests/test_migrations.py`'s "own dedicated throwaway container" pattern.
 os.environ.setdefault("RPD_REDIS_URL", "redis://localhost:6379/0")
 
+# P32-R01: greedy runs execute in-process by default (`RPD_GREEDY_INLINE`,
+# `services.run_dispatch.dispatch_greedy`). The suite's dispatch tests assert
+# on a patched `run_greedy_schedule.delay`, so the suite keeps broker dispatch;
+# `tests/test_p32_r01_greedy_inline.py` switches inline mode on explicitly.
+os.environ.setdefault("RPD_GREEDY_INLINE", "false")
+
 
 def run_alembic(args: list[str], database_url: str) -> subprocess.CompletedProcess:
     """Run `python -m alembic <args>` against `database_url`, from `backend/`.

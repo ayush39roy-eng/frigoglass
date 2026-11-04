@@ -129,7 +129,7 @@ from services.project_access import authorize_project_action
 from services.project_effort import TRIGGER_STAGE_STATUS, rederive_project_effort
 from services.project_steps import WorkflowChangeWithProgress, sync_project_steps
 from services.rate_limit import TokenBucketLimiter
-from services.run_dispatch import enqueue_or_fail, find_in_flight_run
+from services.run_dispatch import dispatch_greedy, enqueue_or_fail, find_in_flight_run
 from services.schedule_persistence import create_queued_schedule_run
 from services.schedule_stale import mark_projects_stale
 from services.workspace import (
@@ -145,8 +145,10 @@ from services.workspace import (
     row_is_skipped,
     user_names,
 )
-from workers.progress import publish_progress
-from workers.schedule_tasks import run_greedy_schedule
+
+# P32-R01: the greedy `queued` event is best-effort (Redis may be absent; the
+# run is committed and the SSE endpoint falls back to the run row).
+from workers.progress import publish_progress_best_effort as publish_progress
 
 router = APIRouter(prefix="/projects", tags=["project-workspace"])
 
@@ -392,8 +394,9 @@ async def recalculate(
     task_id = await enqueue_or_fail(
         db,
         run,
-        lambda: run_greedy_schedule.delay(
+        lambda: dispatch_greedy(
             str(run.id),
+            db=db,
             triggered_by_user_id=str(current_user.user_id),
             activate=True,
             recalc_project_id=str(project.id),

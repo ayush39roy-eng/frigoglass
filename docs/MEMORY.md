@@ -33047,3 +33047,218 @@ scheduled" tile, Gantt axis past the plan year.
 G beside F). Booked % above 100 % comes from in-progress anchoring and from the scheduler booking
 every week while capacity deducts leave (existing ADR 0008 semantics). P32-T03 ran `git stash` /
 `stash pop` on the shared tree mid-task (clean pop; noted). Nothing committed. Gate P32-T20 not run.
+
+## [2026-11-04] P32-R02 — frontend-builder
+
+Owner request: "this parallel drag in gantt chart can be in the project like for each project, and in the main
+timeline the gantt chart are not movable." Step-bar editing (ADR 0019 / ADR 0043 gestures) moved from the main
+Timeline to each project's own page. Frontend only; backend not touched.
+
+- **Main Timeline (`/timeline`) is read-only.** `GanttPage` no longer mounts `StepTimingProvider`. `GanttChart` no
+  longer renders `StepDragOverlay`, and `StepLeftCell` gets an explicit `timingEdits` prop (default `false`), so
+  there is no "Edit timing" button there even if a host is mounted.
+  - Kept: expanded step rows, bar tooltips, the "edited" marker, and a new visible read-only "parallel N wk" chip
+    (`step-parallel-marker`, from served `overlap_weeks`).
+  - Each project row gets an "Edit steps" icon link (`PencilRuler`, accessible name "Edit steps for <name>") to
+    `/projects/:id#timeline`. The narrow-layout details dialog gets the same as a button. Both are shown only when
+    some non-skipped step has served `timing_editable !== 'none'`.
+  - The provenance help text was updated.
+- **Project Workspace "Timeline" section** (`/projects/:projectId#timeline`, full width under the Ask-the-agent
+  panel): `project-workspace/components/project-timeline-section.tsx`.
+  - Data: `GET /gantt?project_id=` (already supported by `backend/api/routers/gantt.py`). The workspace stages lack
+    `timing_editable`, `span_fte`, `start_not_before_week` and `overlap_weeks`, so they are not used. New
+    `GanttQueryParams.projectId`, `queryKeys.gantt({projectId})` and `useProjectTimeline`.
+  - Refresh: the key sits under `['gantt']`, so the shared flow's save invalidation and
+    `invalidateRunDerivedQueries` on run completion both refetch it, and the workspace payload
+    (`['projects','workspace',id]`) as well. Tested.
+  - States: loading, 403 "Timeline not available", no active run, project not served, and a read-only hint when no
+    step is editable.
+  - `#timeline` scrolls the section into view (smooth unless reduced motion) and focuses its heading.
+- **Shared pieces, no duplication.**
+  - New `gantt/components/project-step-waterfall.tsx` (`ProjectStepWaterfall`): the 14 rows (number, name, kind
+    chip, engineer/chamber, status chips), the axis with the "now" line and the W52 year-end marker, and the shared
+    `StepDragOverlay`.
+  - New `gantt/components/gantt-step-row.tsx` holds `StepLeftCell` and `StepBarSvg`, moved out of `gantt-chart.tsx`.
+  - New `gantt/lib/step-row-text.ts` holds `stepBarTitle` and `hasEditableStep`.
+  - The step-timing provider, context, flow, dialog, `step-overlap.ts`, timing copy and "Timeline updated" panel are
+    reused as they were.
+- **Axis.** `projectWaterfallScale(steps, px)` in `gantt-coordinates.ts` starts the axis 2 weeks before
+  min(served planned/actual start, CURRENT_WEEK) and ends it at W52 (DISPLAY_HORIZON). It is at least 12 weeks wide.
+  `GanttWeekAxis` and `GanttGridLines` now honour `scale.originWeek`, and a marker outside the axis is not drawn.
+  The output with origin 1 is unchanged.
+  - Caveat: as on the main Timeline, a bar that starts after W52 is not drawn, so it cannot be dragged.
+  - `overlapForDrop` gets `scale.originWeek` as its frontier, as before; that only matters for unplaced
+    predecessors.
+- **Tests.**
+  - `step-timing.test.tsx` now renders the workspace waterfall and keeps all gesture, overlap, clamp, label, dialog,
+    Reset, FTE and P30 coverage. Ghost positions are origin-aware (`leftOf`). New assertions check that the main
+    Timeline has no drag, resize or Edit timing even with a host, keeps its markers and has the "Edit steps" link.
+  - `gantt-responsive.test.tsx`: the main chart has no handles. The 8 px and 20 px touch handles are asserted on the
+    waterfall.
+  - `GanttPage.test.tsx`: a page-level read-only assertion.
+  - `gantt-coordinates.test.ts`: scale tests.
+  - New `project-timeline-section.test.tsx` (8 tests): 14 rows, drag sends the PATCH with overlap and refetches,
+    dialog and Reset, viewer read-only, started/Done gating, `#timeline` scroll and focus, the
+    403/no-run/not-served states, and axe.
+  - `ProjectWorkspacePage.test.tsx`: mocks `fetchGantt`. A drop saves the overlap and the completed run refetches the
+    workspace and the timeline. An Engineer sees read-only bars.
+- **Checks.** `tsc -b` clean. eslint 0 errors (8 pre-existing warnings in unrelated files). Full vitest 225 files /
+  1796 tests passed. Bundle budget PASS (191.1 KB gzip initial).
+- **Not changed.** The What-if "Import plan" Gantt (P32-T06) keeps its own drag (a what-if, not the live Timeline).
+  No IMPLEMENTATION_PLAN row exists for P32-R02 (orchestrator to add/mark). Not checked in a real browser.
+
+## [2026-11-04] P32-R01 — backend-builder
+
+Owner bug: after a Gantt step-timing drag the UI sat on "Solver queued" forever. Cause: every greedy
+recalc went to the Celery broker (`run_greedy_schedule.delay`), and neither the owner's local stack
+nor Render runs a worker, so QUEUED runs never executed (they were reaped as ABANDONED much later).
+
+- **Setting.** `core/celery_config.py::SolverDispatchSettings.greedy_inline`, env `RPD_GREEDY_INLINE`,
+  bool, **default true**, cached `get_solver_dispatch_settings()`. `false` restores broker dispatch
+  (on-prem Compose with a `solver-worker`). Documented in `.env.example`. `render.yaml` lists only the
+  static frontend (no API service block), so there was nowhere to add it; the default applies.
+- **One helper.** `services/run_dispatch.py::dispatch_greedy(run_id, *, db, triggered_by_user_id,
+  activate, recalc_project_id) -> str`. It is used inside the existing `enqueue_or_fail` lambdas at all
+  5 greedy call sites: `priority_move.dispatch_auto_recalc` (priority move + VIP pin), `step_timing`,
+  `checkins`, Workspace Recalculate, and the ADR 0023 follow-up in `dispatch_follow_up_if_requested`.
+  The lifecycle is unchanged: QUEUED committed first, dispatch advisory lock, coalescing, audit rows,
+  SSE `queued`, `activate=True`, `recalc_project_id`. `enqueue_or_fail` now accepts a `str` from
+  `send()` as well as an AsyncResult. CP-SAT (`schedule_runs.py`) is untouched and stays on Celery.
+- **Inline mode.**
+  - The Celery task body runs via `run_greedy_schedule.apply(args, kwargs, task_id=<uuid4>)`, eager
+    and broker-less, on a lazily created one-thread `ThreadPoolExecutor` per API process
+    ("greedy-inline"), fire-and-forget. The synthetic task id is returned and is also what the body
+    writes to `celery_task_id`.
+  - The body's own `asyncio.run` + fresh engine (`_open_session_factory`) means it never touches the
+    API loop or the request session.
+  - **Start gate:** the thread waits on a `threading.Event` set by `after_commit` /
+    `after_soft_rollback` on the dispatcher's session (max 10 s, `INLINE_START_GATE_SECONDS`). So the
+    caller's `celery_task_id` + audit commit lands before the run's QUEUED→RUNNING transition.
+  - Failures: the body's own `except` marks FAILED and publishes `failed`, exactly as on a worker. The
+    wrapper logs the exception type only.
+  - Follow-ups: the body's completion hook calls `dispatch_follow_up_if_requested` → `dispatch_greedy`
+    from the pool thread. The new job queues behind the current one on the single thread. There is no
+    deadlock, because the advisory lock is transaction-scoped and released at that dispatch's commit.
+  - `wait_for_inline_runs(timeout)` exists for tests and shutdown.
+- **Response contract unchanged** (`recalc_status: queued`, `schedule_run_id`, `task_id`). The SSE
+  endpoint already synthesises a terminal event when a run is terminal at connect, so the frontend
+  run-follow needs no change. Frontend not touched.
+- **Tests.**
+  - `tests/conftest.py` sets `RPD_GREEDY_INLINE=false` by default, so the existing suites keep asserting
+    on a patched `.delay`. `test_workspace_api.py` now patches the task via `workers.schedule_tasks`,
+    because `workspace.py` no longer imports it.
+  - New `tests/test_p32_r01_greedy_inline.py` (dedicated Postgres container, no broker, 6 tests):
+    - the default is true and the env is read;
+    - `false` still calls `.delay` and never touches the pool;
+    - a priority move runs inline to COMPLETED + active, not stale, with `queued` first and `completed`
+      last;
+    - a step timing runs inline to COMPLETED + active, and `celery_task_id` equals the returned
+      `task_id`;
+    - I24 inline: 3 deferred moves, then the in-flight run executes inline, giving exactly one
+      `follow_up` run (COMPLETED + active) and a cleared flag;
+    - a failing body marks the run FAILED with `failed` published, and the logger shows the type only.
+- **Verification.** Full backend suite 2598 passed (`--no-cov`). Ruff clean. Mypy: 0 errors in the
+  touched source files (the repo-wide mypy baseline of ~3.1k errors, mostly untyped tests, is
+  pre-existing). `.coverage` not modified.
+- **Notes for the gate.**
+  - Gunicorn runs N processes, so there are N pools. Single-flight is still enforced by the DB advisory
+    lock.
+  - An inline run in progress when the API process dies is left RUNNING and is reaped by the existing
+    in-flight window (same as a dead worker).
+  - Redis is still needed for SSE `publish_progress`. A Redis outage makes the body fail its `running`
+    publish, so the run is marked FAILED, as on a worker.
+
+## [2026-11-04] P32-R01 follow-up (Redis optional) — backend-builder
+
+The coordinator flagged that Render and possibly the owner's laptop have no reachable Redis, so the
+whole flow (drag → inline recalc → UI refresh) must work with Redis down. CP-SAT is unchanged.
+
+- **Inline runs publish best-effort.** `workers/progress.py` gains a context-local `_best_effort` flag,
+  `best_effort_progress()` and `publish_progress_best_effort()`. `_run_greedy_inline` wraps
+  `run_greedy_schedule.apply` in `best_effort_progress()`. Inside it, a failed PUBLISH is logged (type
+  only) and swallowed, so the run is never FAILED because of Redis. A Celery worker keeps the strict
+  behaviour.
+- **Redis client.** The publisher's sync Redis client now has a 2 s connect and socket timeout, so a
+  blackholed host can no longer block the caller.
+- **The API's `queued` publish is best-effort.** This covers priority move / VIP pin, step timing,
+  check-ins, Workspace Recalculate and the follow-up. The change is an aliased import
+  (`publish_progress_best_effort as publish_progress`), so the existing test patches still apply.
+- **SSE `GET /schedule-runs/{id}/progress`** (module docstring point 7):
+  - A failed subscribe follows the `ScheduleRun` row instead. It reads the row at once, then every
+    `_DB_POLL_SECONDS` (0.5), in a fresh session (`_read_run_for_stream`). It emits each status change
+    and ends with the synthesized terminal payload.
+  - A Redis error mid-stream now switches to row-following. Before, it closed with
+    `: upstream-error, closing`.
+  - With a live subscription the row is also rechecked every `_DB_RECHECK_SECONDS` (2), so a dropped
+    publish cannot hang the stream. A missing row ends with `: run-not-found, closing`.
+  - The generator takes an optional `read_run` and Redis objects that may be `None`.
+  - Tests changed in `test_schedule_runs_progress_sse.py`: the redis-error test now expects the
+    fallback, and the heartbeat / malformed-JSON tests pass a running-row reader.
+- **Dispatch lock and follow-up** are Postgres-only. Their only Redis touch (the follow-up's `queued`
+  event) is now best-effort.
+- **New tests** in `tests/test_p32_r01_greedy_inline.py`, with Redis at `redis://127.0.0.1:1/0` and the
+  real publisher:
+  - step timing completes inline to COMPLETED + active, and the progress logs carry the type only;
+  - the SSE endpoint, unable to subscribe, delivers `queued` … `completed` (percent 100) for an inline
+    run;
+  - a deferred burst still gives exactly one new follow-up run, COMPLETED + active.
+  - The follow-up counts in the file are now relative, because the module container is shared.
+- **Verification.** Full backend suite 2601 passed (`--no-cov`). Ruff clean. Mypy: 0 errors in the touched source files.
+
+## [2026-11-04] P32-R02 follow-up — frontend-builder: project step timeline past W52
+
+The coordinator ruled that the per-project Timeline section must show spillover weeks. Frontend only.
+
+- **Axis.** `projectWaterfallScale` now ends at `max(W52, latest served planned/actual end, latest
+  start_not_before_week) + 2`, capped at the scheduler horizon. It sets `WeekScale.maxDragWeek = 78`. New constant
+  `SCHEDULER_HORIZON_WEEKS = 78` in `lib/domain-constants.ts` (mirrors `backend/domain_constants.py`), used only by
+  this section and the step-timing dialog. The W52 year-end marker and the shading past it are kept.
+- **Week labels.** New `formatYearWeek` (`lib/format.ts`): `W47` inside the year and `W5 '27` past W52, using
+  `SPILLOVER_YEAR`.
+  - Axis ticks get an optional `weekLabel` prop on `GanttWeekAxis`. The section passes the next-year format.
+  - Bar hover text, the "edited" marker, drag labels, the dialog note and the "Timeline updated" summary use
+    `formatYearWeek` on the section.
+  - The main Timeline still uses `formatPlanWeek` ("After W52") and its W1–W52 axis, unchanged.
+- **Drag clamp.** New `dragLastWeek(scale)` returns `maxDragWeek ?? axis end`. It is used by
+  `dragMoveStartWeek`, `stepDragResult` and the overlay's overlap branch. The What-if import scale has no
+  `maxDragWeek`, so it is unchanged.
+  - `stepDragCalendar.pastAxis` now means past min(axis end, W52), so the resize label still names a W53+ end.
+- **Dialog.** The earliest-start field now accepts 1–78 (the server's range), was 1–52. This avoids a validation
+  trap on a step already floored at W53+.
+- **Tests.**
+  - Section test: a spillover project with step 14 at W60 has an axis W18–W63 with the year-end marker and
+    "W5 '27" ticks. The bar is drawn and labelled "W8 '27–W9 '27". A +2 week drag sends
+    `{start_not_before_week: 62, overlap_weeks: null}`. axe passes.
+  - Section test: a drag far past the axis end clamps at 78.
+  - Scale tests updated and extended.
+  - QA-P19-4 resize labels now read "to W1 '27"; the dialog range message reads "1–78".
+- **Checks.** `tsc -b` clean. eslint 0 errors. Full vitest 225 files / 1800 tests passed on rerun. One run had
+  `app.test.tsx` "Dashboard at /" flake under load; it passes in isolation and on the full rerun.
+
+## [2026-11-04] P32-R02 reverted per owner: editing on the Execution Timeline only — frontend-builder
+
+The owner corrected the earlier request: "where did the option to move the bars go — bring it back to the Project
+Execution Timeline page only, on the Gantt charts." The two P32-R02 entries above (the Workspace section and its
+past-W52 axis) are superseded. Frontend only; backend not touched.
+
+- **Restored.** `/timeline` (GanttPage) mounts `StepTimingProvider` again. `GanttChart` renders `StepDragOverlay`
+  and passes `timingEdits` to `StepLeftCell`. This brings back move, right-edge resize, drop-onto-step-above
+  overlap, the Edit timing dialog, Reset and run-follow exactly as after P32-T05. The W1–W52 axis is unchanged.
+- **Removed (no dead code).**
+  - The Project Workspace "Timeline" section and its tests, its mount and the `#timeline` handling.
+  - `project-step-waterfall.tsx`, `projectWaterfallScale`, `maxDragWeek` and `dragLastWeek`.
+  - `useProjectTimeline`, plus `projectId` in `GanttQueryParams` and in the gantt query key.
+  - The "Edit steps" row link and dialog button.
+  - The axis origin / `weekLabel` generalisation (`gantt-time-axis.tsx` is back to HEAD).
+- **Kept.**
+  - `gantt-step-row.tsx` (`StepLeftCell` with its `timingEdits` prop) and `lib/step-row-text.ts` (`stepBarTitle`).
+  - The read-only "parallel N wk" chip.
+  - `formatYearWeek`, used by the drag labels ("to W1 '27"), the dialog note and the change summary.
+  - The dialog's earliest-start range 1–78 (`SCHEDULER_HORIZON_WEEKS`).
+- **Tests.**
+  - `step-timing.test.tsx` and `gantt-responsive.test.tsx` are restored to target the Timeline. The kept label and
+    range changes were re-applied, and a "parallel N wk" chip test was added.
+  - `GanttPage.test.tsx` adds a page-level test: 13 editable steps get drag, resize and Edit timing; a step served
+    "none" gets none; there is no "Edit steps" link; a viewer fixture has no affordances.
+  - The Workspace page and its tests are back to HEAD.
+- **Checks.** `tsc -b` clean. eslint 0 errors (8 pre-existing warnings). Full vitest 224 files / 1781 tests passed.

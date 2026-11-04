@@ -87,3 +87,34 @@ class CelerySettings(BaseSettings):
 @lru_cache
 def get_celery_settings() -> CelerySettings:
     return CelerySettings()
+
+
+class SolverDispatchSettings(BaseSettings):
+    """P32-R01: where a GREEDY run executes.
+
+    `RPD_GREEDY_INLINE` (bool, default `true`): every greedy dispatch
+    (priority move, step timing, check-in, VIP pin, Workspace Recalculate,
+    the ADR 0023 follow-up) runs inside the API process, on a small dedicated
+    thread pool off the event loop (`services.run_dispatch.dispatch_greedy`),
+    instead of being sent to the Celery broker. Greedy is a millisecond
+    heuristic and is allowed on either side of the API/worker boundary
+    (docs/PROJECT_AND_STACK.md §4); without this, a deployment with no Celery
+    worker (the owner's local stack, Render) left every greedy run `QUEUED`
+    until it was reaped.
+
+    Set `RPD_GREEDY_INLINE=false` to restore broker dispatch
+    (`run_greedy_schedule.delay`) on a stack that runs a `solver-worker`
+    (on-prem Docker Compose). CP-SAT is never affected: it always goes
+    through Celery (CLAUDE.md non-negotiable).
+    """
+
+    model_config = SettingsConfigDict(env_prefix="RPD_", extra="ignore")
+
+    greedy_inline: bool = True
+
+
+@lru_cache
+def get_solver_dispatch_settings() -> SolverDispatchSettings:
+    """Cached singleton. Tests call `.cache_clear()` after changing the env."""
+
+    return SolverDispatchSettings()

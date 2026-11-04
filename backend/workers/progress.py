@@ -77,7 +77,11 @@ wrapper — never `await`ed.
 from __future__ import annotations
 
 import json
+import logging
 import uuid
+from collections.abc import Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
 from datetime import UTC, datetime
 from typing import Literal
 
@@ -88,6 +92,20 @@ from core.celery_config import get_redis_settings
 ProgressStatus = Literal["queued", "running", "completed", "failed", "cancelled"]
 
 _CHANNEL_PREFIX = "schedule-run-progress"
+
+logger = logging.getLogger(__name__)
+
+#: P32-R01: seconds to wait for a Redis connection / reply before giving up.
+#: Without it a blackholed Redis host would block the caller indefinitely.
+REDIS_SOCKET_TIMEOUT_SECONDS = 2.0
+
+#: P32-R01: set while an in-process (inline) greedy run executes
+#: (`services.run_dispatch._run_greedy_inline`). Inside it, `publish_progress`
+#: is best-effort: a Redis failure is logged (type only) and swallowed, so the
+#: run's outcome never depends on the progress channel. A Celery worker
+#: (CP-SAT, or greedy with `RPD_GREEDY_INLINE=false`) keeps the strict
+#: behaviour documented on `publish_progress`.
+_best_effort: ContextVar[bool] = ContextVar("progress_best_effort", default=False)
 
 
 def channel_name(schedule_run_id: str | uuid.UUID) -> str:
@@ -110,7 +128,11 @@ _redis_client: redis.Redis | None = None
 def _client() -> redis.Redis:
     global _redis_client
     if _redis_client is None:
-        _redis_client = redis.Redis.from_url(get_redis_settings().redis_url)
+        _redis_client = redis.Redis.from_url(
+            get_redis_settings().redis_url,
+            socket_connect_timeout=REDIS_SOCKET_TIMEOUT_SECONDS,
+            socket_timeout=REDIS_SOCKET_TIMEOUT_SECONDS,
+        )
     return _redis_client
 
 
@@ -144,4 +166,49 @@ def publish_progress(
         payload["message"] = message
     if error is not None:
         payload["error"] = error
-    _client().publish(channel_name(schedule_run_id), json.dumps(payload))
+    if not _best_effort.get():
+        _client().publish(channel_name(schedule_run_id), json.dumps(payload))
+        return
+    try:
+        _client().publish(channel_name(schedule_run_id), json.dumps(payload))
+    except Exception as exc:  # noqa: BLE001 - best effort, see `_best_effort`
+        logger.warning(
+            "ScheduleRun %s: progress event %r not published (%s)",
+            schedule_run_id,
+            status,
+            type(exc).__name__,
+        )
+
+
+@contextmanager
+def best_effort_progress() -> Iterator[None]:
+    """Make every `publish_progress` in this context best-effort (see
+    `_best_effort`). Context-local: it follows `asyncio.run` into the run's
+    own loop and never leaks to other threads or requests.
+    """
+
+    token = _best_effort.set(True)
+    try:
+        yield
+    finally:
+        _best_effort.reset(token)
+
+
+def publish_progress_best_effort(
+    schedule_run_id: str | uuid.UUID,
+    *,
+    status: ProgressStatus,
+    percent: float | None = None,
+    message: str | None = None,
+    error: str | None = None,
+) -> None:
+    """P32-R01: `publish_progress` that never raises. Used for the API's own
+    `queued` event on greedy dispatches: the run is already committed and the
+    SSE endpoint falls back to reading the run row, so a Redis outage must
+    not fail the request. Logs the exception type only.
+    """
+
+    with best_effort_progress():
+        publish_progress(
+            schedule_run_id, status=status, percent=percent, message=message, error=error
+        )

@@ -45,22 +45,29 @@ flight and queued its own run).
 from __future__ import annotations
 
 import logging
+import threading
+import time
 import uuid
 from collections.abc import Callable
+from concurrent.futures import Future, ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from sqlalchemy import func, select, update
+from sqlalchemy import event, func, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from core.celery_config import get_celery_settings
+from core.celery_config import get_celery_settings, get_solver_dispatch_settings
 from models.audit import AuditLogEntry
 from models.checkin import ScheduleRunFollowUp
 from models.enums import ScheduleRunStatus, SolverType
 from models.schedule import ScheduleRun
 from services.schedule_persistence import create_queued_schedule_run
-from workers.progress import publish_progress
+
+# P32-R01: the greedy `queued` event is best-effort (Redis may be absent; the
+# run is committed and the SSE endpoint falls back to the run row).
+from workers.progress import best_effort_progress
+from workers.progress import publish_progress_best_effort as publish_progress
 
 #: Seconds added to the Celery hard time limit before a queued/running row
 #: stops counting as in flight.
@@ -167,7 +174,8 @@ async def enqueue_or_fail(
 ) -> str | None:
     """Enqueue the Celery message for an already-committed QUEUED `run`.
 
-    `send()` is the `.delay(...)` call; its result's id is returned. P14-T01
+    `send()` is the `.delay(...)` call (or `dispatch_greedy(...)`, which
+    answers the task id string); its result's id is returned. P14-T01
     (M3): if the broker refuses (Redis down, misconfigured), the QUEUED row
     would otherwise sit there until reaped and the request would 500 after
     its inputs were already committed. Instead the row is marked `FAILED`
@@ -178,7 +186,10 @@ async def enqueue_or_fail(
     """
 
     try:
-        return str(send().id)
+        sent = send()
+        # P32-R01: `dispatch_greedy` answers the task id itself (a str); a
+        # Celery `.delay(...)` answers an `AsyncResult`.
+        return sent if isinstance(sent, str) else str(sent.id)
     except Exception as exc:  # noqa: BLE001 - any broker failure, see docstring
         logger.warning(
             "ScheduleRun %s: could not enqueue the solver message (%s)",
@@ -207,6 +218,161 @@ async def enqueue_or_fail(
     )
     await db.commit()
     return None
+
+
+# --- P32-R01: in-process greedy execution -------------------------------------------
+
+#: Seconds an inline run waits for its dispatcher's transaction to end before
+#: starting anyway (see `dispatch_greedy`). Normally it is a few milliseconds.
+INLINE_START_GATE_SECONDS = 10.0
+
+_inline_lock = threading.Lock()
+_inline_executor: ThreadPoolExecutor | None = None
+_inline_pending: set[Future[None]] = set()
+
+
+def _get_inline_executor() -> ThreadPoolExecutor:
+    """One worker thread per API process, created lazily (after a Gunicorn
+    fork). One thread is enough: the dispatch lock allows one run in flight
+    plus the one coalesced follow-up, and a follow-up dispatched from the
+    finishing run's own thread simply waits behind it (no deadlock: the
+    finishing run never waits for it).
+    """
+
+    global _inline_executor
+    with _inline_lock:
+        if _inline_executor is None:
+            _inline_executor = ThreadPoolExecutor(
+                max_workers=1, thread_name_prefix="greedy-inline"
+            )
+        return _inline_executor
+
+
+def _open_gate_when_transaction_ends(db: AsyncSession, gate: threading.Event) -> None:
+    """Set `gate` when `db`'s current/next transaction ends (commit or
+    rollback). Every caller commits the run's `celery_task_id` and its audit
+    row right after `enqueue_or_fail` returns; waiting for that keeps the
+    caller's write and the run's own `QUEUED -> RUNNING` transition from
+    interleaving, and lets the caller's `queued` progress event go out first.
+    """
+
+    def _open(*_args: Any) -> None:
+        gate.set()
+
+    sync_session = db.sync_session
+    event.listen(sync_session, "after_commit", _open, once=True)
+    event.listen(sync_session, "after_soft_rollback", _open, once=True)
+
+
+def _run_greedy_inline(
+    schedule_run_id: str, task_id: str, kwargs: dict[str, Any], gate: threading.Event
+) -> None:
+    """Executor body: the Celery task's own body via `Task.apply` (eager, no
+    broker), in this thread. The body opens its own engine on its own
+    `asyncio.run` loop (`workers.schedule_tasks._open_session_factory`), so
+    it never touches the API's event loop or request session. Its own
+    `except` marks the run FAILED and publishes `failed`, exactly as on a
+    worker, then hands over to the ADR 0023 follow-up (which comes back here
+    through `dispatch_greedy`). Only the exception type is logged here.
+    """
+
+    gate.wait(INLINE_START_GATE_SECONDS)
+    from workers.schedule_tasks import run_greedy_schedule
+
+    try:
+        # Progress events are best-effort here: with no reachable Redis the
+        # run still completes (and activates); the SSE endpoint reads the row.
+        with best_effort_progress():
+            result = run_greedy_schedule.apply(
+                args=(schedule_run_id,), kwargs=kwargs, task_id=task_id
+            )
+    except Exception as exc:  # noqa: BLE001 - never let the pool thread die loudly
+        logger.warning(
+            "ScheduleRun %s: inline greedy run could not start (%s)",
+            schedule_run_id,
+            type(exc).__name__,
+        )
+        return
+    if result.failed():
+        logger.warning(
+            "ScheduleRun %s: inline greedy run failed (%s)",
+            schedule_run_id,
+            type(result.result).__name__,
+        )
+
+
+def dispatch_greedy(
+    schedule_run_id: str,
+    *,
+    db: AsyncSession | None,
+    triggered_by_user_id: str | None,
+    activate: bool,
+    recalc_project_id: str | None,
+) -> str:
+    """The one GREEDY dispatch, used inside every `enqueue_or_fail` lambda.
+
+    The caller has already committed the `QUEUED` run (unchanged lifecycle:
+    dispatch lock, ADR 0023 coalescing, audit rows, SSE `queued`).
+    - `RPD_GREEDY_INLINE=false`: `run_greedy_schedule.delay(...)` to the
+      broker; its task id is returned.
+    - `RPD_GREEDY_INLINE=true` (default): the task body is submitted,
+      fire-and-forget, to this process's dedicated one-thread pool and a
+      synthetic task id (uuid4) is returned, which the body also records as
+      the run's `celery_task_id`. The body starts once `db`'s current
+      transaction ends (the caller's commit), at most
+      `INLINE_START_GATE_SECONDS` later; `db=None` starts it at once.
+
+    CP-SAT never comes here: it always goes through Celery.
+    """
+
+    kwargs: dict[str, Any] = {
+        "triggered_by_user_id": triggered_by_user_id,
+        "activate": activate,
+        "recalc_project_id": recalc_project_id,
+    }
+    if not get_solver_dispatch_settings().greedy_inline:
+        from workers.schedule_tasks import run_greedy_schedule
+
+        return str(run_greedy_schedule.delay(schedule_run_id, **kwargs).id)
+
+    task_id = str(uuid.uuid4())
+    gate = threading.Event()
+    if db is None:
+        gate.set()
+    else:
+        _open_gate_when_transaction_ends(db, gate)
+    future = _get_inline_executor().submit(
+        _run_greedy_inline, schedule_run_id, task_id, kwargs, gate
+    )
+    with _inline_lock:
+        _inline_pending.add(future)
+    future.add_done_callback(_forget_inline)
+    return task_id
+
+
+def _forget_inline(future: Future[None]) -> None:
+    with _inline_lock:
+        _inline_pending.discard(future)
+
+
+def wait_for_inline_runs(timeout: float = 30.0) -> bool:
+    """Block until no inline greedy run is pending or running (including
+    follow-ups they dispatch). `True` when idle. For tests and shutdown.
+    """
+
+    deadline = time.monotonic() + timeout
+    while True:
+        with _inline_lock:
+            pending = list(_inline_pending)
+        if not pending:
+            return True
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return False
+        try:
+            pending[0].result(timeout=remaining)
+        except Exception:  # noqa: BLE001, S110 - only waiting; outcomes are logged
+            pass
 
 
 async def find_in_flight_run(
@@ -323,10 +489,6 @@ async def dispatch_follow_up_if_requested(db: AsyncSession) -> uuid.UUID | None:
     Always ends its transaction (commit or rollback), which releases the lock.
     """
 
-    # Imported here: `workers.schedule_tasks` calls this module at the end of
-    # every run, so a module-level import would be circular.
-    from workers.schedule_tasks import run_greedy_schedule
-
     if await find_in_flight_run(db, request_follow_up=False) is not None:
         await db.rollback()
         return None
@@ -344,8 +506,12 @@ async def dispatch_follow_up_if_requested(db: AsyncSession) -> uuid.UUID | None:
     task_id = await enqueue_or_fail(
         db,
         run,
-        lambda: run_greedy_schedule.delay(
-            str(run.id), triggered_by_user_id=None, activate=True, recalc_project_id=None
+        lambda: dispatch_greedy(
+            str(run.id),
+            db=db,
+            triggered_by_user_id=None,
+            activate=True,
+            recalc_project_id=None,
         ),
         actor_user_id=None,
     )

@@ -1,6 +1,6 @@
 import type { WorkflowStepKind } from '@/types/enums';
 import { DISPLAY_HORIZON_WEEKS } from '@/lib/domain-constants';
-import { formatPlanWeek, formatWeek } from '@/lib/format';
+import { formatPlanWeek, formatWeek, formatYearWeek } from '@/lib/format';
 
 /**
  * P20 (ADR 0032): every step-timing label says which number is CALENDAR weeks
@@ -44,7 +44,8 @@ export function resizeDragLabel(
   fte: number | null,
   pastEndWeek: number | null = null,
 ): string {
-  const to = pastEndWeek === null ? '' : `, to ${formatWeek(pastEndWeek)}`;
+  // P32-R02: a span past W52 names next year's week ("W1 '27").
+  const to = pastEndWeek === null ? '' : `, to ${formatYearWeek(pastEndWeek)}`;
   if (kind !== 'design') return `${String(calendarWeeks)} wks on the calendar${to} · not stretched by FTE`;
   if (fte === null) {
     const past = pastEndWeek === null ? '' : `, past ${formatWeek(DISPLAY_HORIZON_WEEKS)}`;
@@ -69,8 +70,8 @@ export function stepDragLabel(
     calendar?: { calendarWeeks: number; endWeek: number; pastAxis: boolean } | null;
   },
 ): string {
-  const span = `${formatWeek(ghost.startWeek)}–${formatWeek(ghost.endWeek)}`;
-  if (mode === 'move' || step.workWeeks === null) return `Start ≥ ${formatWeek(ghost.startWeek)} · ${span}`;
+  const span = `${formatYearWeek(ghost.startWeek)}–${formatYearWeek(ghost.endWeek)}`;
+  if (mode === 'move' || step.workWeeks === null) return `Start ≥ ${formatYearWeek(ghost.startWeek)} · ${span}`;
   const cal = step.calendar ?? null;
   return resizeDragLabel(
     step.kind,

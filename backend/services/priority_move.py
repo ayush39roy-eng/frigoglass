@@ -17,7 +17,7 @@ The queued path is the Workspace "Recalculate schedule" lifecycle
 (`api/routers/workspace.py::recalculate`): `create_queued_schedule_run`
 (which commits, so the priority, the stale flag, the `project.priority_move`
 audit row and the QUEUED run land together and the worker reads the new
-priority, I20), then `run_greedy_schedule.delay(..., activate=True,
+priority, I20), then `dispatch_greedy(..., activate=True,
 recalc_project_id=...)`, the Celery task id, a `project.recalculate_requested`
 audit row (as on the Workspace path), a commit and the SSE "queued" event.
 Greedy only: docs/OPEN_QUESTIONS.md #10 keeps CP-SAT out of user actions.
@@ -50,10 +50,12 @@ from models.priority import PriorityScore
 from models.project import Project
 from schemas.project import RecalcStatus
 from services.active_run import get_active_run
-from services.run_dispatch import enqueue_or_fail, find_in_flight_run
+from services.run_dispatch import dispatch_greedy, enqueue_or_fail, find_in_flight_run
 from services.schedule_persistence import create_queued_schedule_run
-from workers.progress import publish_progress
-from workers.schedule_tasks import run_greedy_schedule
+
+# P32-R01: the greedy `queued` event is best-effort (Redis may be absent; the
+# run is committed and the SSE endpoint falls back to the run row).
+from workers.progress import publish_progress_best_effort as publish_progress
 
 #: `ScheduleRun.trigger_reason` of a run started by a priority move.
 TRIGGER_REASON = "priority_move"
@@ -292,8 +294,9 @@ async def dispatch_auto_recalc(
     task_id = await enqueue_or_fail(
         db,
         run,
-        lambda: run_greedy_schedule.delay(
+        lambda: dispatch_greedy(
             str(run.id),
+            db=db,
             triggered_by_user_id=str(principal.user_id),
             activate=True,
             recalc_project_id=str(project.id),

@@ -167,6 +167,30 @@ describe('GanttPage', () => {
     expect(screen.getAllByTestId('gantt-step-row')).toHaveLength(14);
   });
 
+  it('P32-R02 (owner): step editing lives on this page — editable steps get drag, resize and Edit timing; served "none" gets none', async () => {
+    const user = userEvent.setup();
+    const editable = project({
+      steps: Array.from({ length: 14 }, (_, i) =>
+        step(i + 1, i * 2 + 1, i * 2 + 2, { timing_editable: i === 0 ? 'none' : 'move_resize' }),
+      ),
+    });
+    hooks.useGantt.mockReturnValue(ganttData({ rows: [editable] }));
+    const { unmount } = renderWithProviders(<GanttPage />);
+    await user.click(screen.getByRole('button', { name: 'Expand steps for Cooler Alpha' }));
+    expect(screen.getAllByTestId('step-drag-body')).toHaveLength(13);
+    expect(screen.getAllByTestId('step-drag-handle')).toHaveLength(13);
+    expect(screen.getAllByRole('button', { name: /^Edit timing for Step \d+ \(Cooler Alpha\)$/ })).toHaveLength(13);
+    expect(screen.queryByRole('link', { name: /Edit steps/ })).not.toBeInTheDocument();
+    unmount();
+
+    // A viewer: every step served `timing_editable: "none"` (the default fixture).
+    hooks.useGantt.mockReturnValue(ganttData());
+    renderWithProviders(<GanttPage />);
+    await user.click(screen.getByRole('button', { name: 'Expand steps for Cooler Alpha' }));
+    expect(screen.queryByTestId('step-drag-overlay')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Edit timing/ })).not.toBeInTheDocument();
+  });
+
   it('degrades to an access notice on a 403 (Auditor)', () => {
     hooks.useGantt.mockReturnValue({
       data: undefined,

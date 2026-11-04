@@ -22,6 +22,7 @@ from httpx import ASGITransport, AsyncClient
 from sqlalchemy import select, update
 
 import api.routers.workspace as workspace_router
+import workers.schedule_tasks as schedule_tasks
 from api.db import get_db
 from api.main import app
 from models.audit import AuditLogEntry
@@ -640,7 +641,7 @@ async def test_recalculate_dispatches_greedy_activating_run(db_session, monkeypa
         return SimpleNamespace(id="celery-task-123")
 
     published: list[tuple] = []
-    monkeypatch.setattr(workspace_router.run_greedy_schedule, "delay", _fake_delay)
+    monkeypatch.setattr(schedule_tasks.run_greedy_schedule, "delay", _fake_delay)
     monkeypatch.setattr(
         workspace_router, "publish_progress", lambda *a, **k: published.append((a, k))
     )

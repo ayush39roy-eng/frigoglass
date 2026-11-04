@@ -75,13 +75,15 @@ from services.hub_scope import global_hub_filter
 from services.notifications import generate_stage_blocked_notifications
 from services.project_effort import TRIGGER_STAGE_STATUS, rederive_project_effort
 from services.rate_limit import TokenBucketLimiter
-from services.run_dispatch import enqueue_or_fail, find_in_flight_run
+from services.run_dispatch import dispatch_greedy, enqueue_or_fail, find_in_flight_run
 from services.schedule_persistence import create_queued_schedule_run
 from services.schedule_stale import mark_projects_stale
 from services.tracking import DueStage, due_stages_for, status_from_due_stages
 from services.workspace import get_scoped_project_or_404, merge_stage_update
-from workers.progress import publish_progress
-from workers.schedule_tasks import run_greedy_schedule
+
+# P32-R01: the greedy `queued` event is best-effort (Redis may be absent; the
+# run is committed and the SSE endpoint falls back to the run row).
+from workers.progress import publish_progress_best_effort as publish_progress
 
 router = APIRouter(prefix="/check-ins", tags=["check-ins"])
 
@@ -498,8 +500,9 @@ async def submit_check_ins(
     task_id = await enqueue_or_fail(
         db,
         run,
-        lambda: run_greedy_schedule.delay(
+        lambda: dispatch_greedy(
             str(run.id),
+            db=db,
             triggered_by_user_id=str(current_user.user_id),
             activate=True,
             # The worker's "finish moved" activity event names one project.

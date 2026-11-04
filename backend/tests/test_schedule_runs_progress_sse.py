@@ -58,6 +58,8 @@ from __future__ import annotations
 import asyncio
 import json
 import uuid
+from datetime import UTC, datetime
+from types import SimpleNamespace
 
 import pytest
 import redis
@@ -476,21 +478,19 @@ async def test_progress_event_source_closes_cleanly_on_client_disconnect(
 
 
 async def test_progress_event_source_closes_cleanly_on_redis_error(
-    redis_url, _point_at_real_redis
+    redis_url, _point_at_real_redis, monkeypatch
 ):
     """A genuine Redis error while polling (connection drop, etc.) must not
-    crash the generator uncaught — it logs, yields one `: upstream-error,
-    closing\\n\\n` comment, and closes (unsubscribe/close still run via the
-    outer `finally`), rather than hanging or propagating an unhandled
-    exception into Starlette's response-streaming machinery. Simulated by
+    crash the generator uncaught. P32-R01 (module docstring point 7): it logs,
+    yields one `: upstream-error, following the run row` comment, closes the
+    subscription, and then follows the `ScheduleRun` row until it is
+    terminal (here: a completed row from a fake reader). Simulated by
     monkeypatching this specific `PubSub` instance's `get_message` — no way
     to reliably force a real connection failure against a healthy
-    `testcontainers` Redis without flaking, and this is exactly the kind of
-    rare-but-must-not-crash edge case this project's own conventions treat as
-    fair game for a monkeypatched unit test rather than requiring a live
-    reproduction.
+    `testcontainers` Redis without flaking.
     """
 
+    monkeypatch.setattr(schedule_runs_module, "_DB_POLL_SECONDS", 0.01)
     run_id = uuid.uuid4()
     redis_client, pubsub = await _open_real_subscription(redis_url, run_id)
 
@@ -498,6 +498,13 @@ async def test_progress_event_source_closes_cleanly_on_redis_error(
         raise ConnectionError("simulated redis failure")
 
     pubsub.get_message = _boom  # type: ignore[method-assign]
+    now = datetime.now(UTC)
+
+    async def _read(_run_id):
+        return SimpleNamespace(
+            id=run_id, status=ScheduleRunStatus.COMPLETED, completed_at=now,
+            created_at=now, error_message=None,
+        )
 
     request = _FakeRequest()
     generator = schedule_runs_module._progress_event_source(
@@ -506,12 +513,28 @@ async def test_progress_event_source_closes_cleanly_on_redis_error(
         redis_client=redis_client,
         pubsub=pubsub,
         initial_terminal_payload=None,
+        read_run=_read,
     )
 
     frames = [frame async for frame in generator]
 
-    assert frames == [b": upstream-error, closing\n\n"]
+    assert frames[0] == b": upstream-error, following the run row\n\n"
+    assert len(frames) == 2
+    last = json.loads(frames[1].decode()[len("data: ") : -2])
+    assert (last["schedule_run_id"], last["status"], last["percent"]) == (
+        str(run_id), "completed", 100.0,
+    )
     assert _subscriber_count(redis_url, channel_name(run_id)) == 0
+
+
+async def _running_row(run_id):
+    """P32-R01: a fake run-row reader for generator tests whose run never ends."""
+
+    now = datetime.now(UTC)
+    return SimpleNamespace(
+        id=run_id, status=ScheduleRunStatus.RUNNING, completed_at=None,
+        created_at=now, error_message=None,
+    )
 
 
 async def test_progress_event_source_sends_heartbeat_comments_when_idle(
@@ -538,6 +561,8 @@ async def test_progress_event_source_sends_heartbeat_comments_when_idle(
         redis_client=redis_client,
         pubsub=pubsub,
         initial_terminal_payload=None,
+        # P32-R01: the stream rechecks the run row; this one stays running.
+        read_run=_running_row,
     )
 
     frames: list[bytes] = []
@@ -578,6 +603,7 @@ async def test_progress_event_source_relays_malformed_json_without_crashing(
         redis_client=redis_client,
         pubsub=pubsub,
         initial_terminal_payload=None,
+        read_run=_running_row,
     )
 
     async def _get_first_frame():
