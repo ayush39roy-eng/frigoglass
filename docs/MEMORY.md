@@ -34024,3 +34024,44 @@ finish week, so the two agree in practice.
 - Full vitest: 231 files / 1860 tests passed.
 - `npm run build` budget PASS: 190.9 KB gzip initial.
 - Not checked in a real browser. The phone full-screen layout was reasoned from the classes.
+
+## [2026-11-05] P32-R08 — backend-builder (order-dependent workspace test)
+
+`tests/test_workspace_api.py::test_stage_patch_done_marks_stale_and_audits` failed in 2 of 2 full-suite runs and
+passed alone. **P32-R01 is not the cause.** Tests only; no production code changed.
+
+- **Root cause.**
+  - The test sends two stage PATCHes ("In Progress", then "Done") inside the `db_session` fixture's single outer
+    transaction (SAVEPOINTs). It then read the audit rows with `ORDER BY occurred_at` and asserted on `audits[-1]`.
+  - `AuditLogEntry.occurred_at` is `server_default=now()`, which is the **transaction start** time. So both rows
+    carry an identical timestamp. A probe confirmed this: same microsecond, ctids (0,1)/(0,2). Under the same
+    ORDER BY, a different tie-break returned "Done" first.
+  - The tie order is therefore undefined; in practice it is heap order. Alone, the table is fresh and heap order
+    equals insertion order, so the test passes. In the full suite, thousands of rolled-back audit inserts leave
+    dead tuples. After autovacuum frees that space, the second row can land in an earlier page, and `audits[-1]`
+    becomes the "In Progress" row.
+  - This depends on autovacuum timing. My first full run (`-x --no-cov`) passed 2653/2653, which fits a timing
+    race rather than a leaked thread.
+- **P32-R01 ruled out.**
+  - `patch_stage` never dispatches a run.
+  - `test_p32_r01_greedy_inline.py` uses its own Postgres container, patches the settings per test, drains the
+    pool (`wait_for_inline_runs`) and calls `cache_clear()` on `get_solver_dispatch_settings` in `finally`.
+  - conftest's `RPD_GREEDY_INLINE=false` is set before any import.
+- **Fix.** The test now picks audit rows by content, not by position: the statuses are
+  `["Done", "In Progress"]`, and the Done row is checked for actor, project and hub. The same latent pattern is
+  fixed the same way in:
+  - `test_p26_scoring_rubric.py::test_score_put_shape_unknown_keys_null_and_partial` (the one row whose
+    `strategic_project` is null);
+  - `test_user_admin_api.py::test_admin_updates_non_admin_user_with_audit` (the row whose before `full_name` is
+    "Before").
+  Other `order_by(occurred_at)` uses in tests are already order-insensitive or tie-broken.
+- **Not changed (for the gate / a later task).**
+  - In production each request commits on its own, so separate requests get distinct timestamps.
+  - Rows written in one transaction still tie. `GET /audit-log` orders by `occurred_at desc` with limit/offset
+    and no unique tie-breaker, so a page boundary that falls inside a tie can repeat or skip a row.
+  - Candidate fix: `clock_timestamp()` default (migration) and/or an `id` secondary sort key.
+- **Verification.**
+  - The 3 touched files plus `test_p32_r01_greedy_inline.py`: 129 passed.
+  - Full backend suite (`--no-cov`): 2653 passed, 0 failed.
+  - Ruff clean. Mypy: no errors on the edited lines (the untyped-tests baseline is pre-existing).
+  - `.coverage` restored.

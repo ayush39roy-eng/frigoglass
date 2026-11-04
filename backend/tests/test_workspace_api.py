@@ -381,18 +381,19 @@ async def test_stage_patch_done_marks_stale_and_audits(db_session):
     assert stage["status"] == "Done" and stage["percent_complete"] == 100
     assert stage["actual_start_week"] == 30 and stage["actual_end_week"] == 34
     assert done.json()["progress_pct"] == round(100 * 6 / 38)
+    # P32-R08: both PATCHes run inside this test's one outer transaction, so
+    # both rows carry the same `occurred_at` (`now()` is the transaction start)
+    # and no ORDER BY can tell them apart; pick the Done row by content.
     audits = (
         await db_session.execute(
-            select(AuditLogEntry)
-            .where(AuditLogEntry.action == "project_stage.update")
-            .order_by(AuditLogEntry.occurred_at)
+            select(AuditLogEntry).where(AuditLogEntry.action == "project_stage.update")
         )
     ).scalars().all()
-    assert len(audits) == 2
-    assert audits[-1].actor_user_id == actor.id
-    assert audits[-1].after_state["project_id"] == str(w.project.id)
-    assert audits[-1].after_state["status"] == "Done"
-    assert audits[-1].hub_id == w.hub.id
+    assert sorted(a.after_state["status"] for a in audits) == ["Done", "In Progress"]
+    done_audit = next(a for a in audits if a.after_state["status"] == "Done")
+    assert done_audit.actor_user_id == actor.id
+    assert done_audit.after_state["project_id"] == str(w.project.id)
+    assert done_audit.hub_id == w.hub.id
     activity = done.json()["activity"]
     assert any(item["kind"] == "event" and item["summary"] == "PDD-E marked Done"
                for item in activity)

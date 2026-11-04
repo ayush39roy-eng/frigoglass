@@ -684,19 +684,25 @@ async def test_score_put_shape_unknown_keys_null_and_partial(db_session):
         assert none.json()["normalized_pct"] is None and none.json()["suggested_band"] is None
         row = (await client.get(f"/priorities/{project.id}")).json()
     assert row["has_score"] is False and row["missing_dimension_keys"] == []
+    # P32-R08: every PUT above runs inside this test's one outer transaction,
+    # so all these rows share one `occurred_at` (`now()` is the transaction
+    # start) and their order is undefined; find the all-null PUT by content
+    # (the earlier successful PUTs all scored `strategic_project`).
     audit = (
         (
             await db_session.execute(
-                select(AuditLogEntry)
-                .where(AuditLogEntry.action.like("priority_score.%"))
-                .order_by(AuditLogEntry.occurred_at)
+                select(AuditLogEntry).where(AuditLogEntry.action.like("priority_score.%"))
             )
         )
         .scalars()
         .all()
     )
-    assert audit[-1].after_state["scores"]["strategic_project"] is None
-    assert audit[-1].after_state["rubric_version"] == 1
+    cleared_all = [
+        a for a in audit if "strategic_project" in a.after_state["scores"]
+        and a.after_state["scores"]["strategic_project"] is None
+    ]
+    assert len(cleared_all) == 1
+    assert cleared_all[0].after_state["rubric_version"] == 1
 
 
 # --- every reader agrees after a rubric change -----------------------------------------

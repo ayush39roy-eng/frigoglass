@@ -248,16 +248,17 @@ async def test_admin_updates_non_admin_user_with_audit(db_session):
                 select(AuditLogEntry)
                 .where(AuditLogEntry.action == "user.update")
                 .where(AuditLogEntry.entity_id == str(target.id))
-                .order_by(AuditLogEntry.occurred_at)
             )
         )
         .scalars()
         .all()
     )
+    # P32-R08: both PATCHes share one `occurred_at` (this test's one outer
+    # transaction), so their order is undefined; pick the first by content.
     assert len(rows) == 2
-    assert rows[0].actor_user_id == actor.id
-    assert rows[0].before_state["full_name"] == "Before"
-    assert rows[0].after_state["roles"] == ["Hub Planner"]
+    first = next(r for r in rows if r.before_state.get("full_name") == "Before")
+    assert first.actor_user_id == actor.id
+    assert first.after_state["roles"] == ["Hub Planner"]
     engineer_link = (
         await db_session.execute(select(Engineer.user_id).where(Engineer.id == eng.id))
     ).scalar_one()
