@@ -464,6 +464,8 @@ async def get_gantt(
                     ),
                     effort_weeks=actual.effort_weeks if actual else None,
                     start_not_before_week=actual.start_not_before_week if actual else None,
+                    overlap_weeks=actual.overlap_weeks if actual else None,
+                    predecessor_ids=sorted(template.predecessor_ids or []) if template else [],
                     timing_editable=timing_editable(
                         can_write=can_write_timing,
                         frozen=project.frozen,

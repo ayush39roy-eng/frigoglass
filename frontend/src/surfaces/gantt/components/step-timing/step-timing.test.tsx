@@ -73,6 +73,8 @@ function step(over: Partial<GanttStepRow> = {}): GanttStepRow {
     timing_editable: 'move_resize',
     span_fte: null,
     effort_weeks: null,
+    overlap_weeks: null,
+    predecessor_ids: [],
     ...over,
   };
 }
@@ -113,6 +115,7 @@ function response(over: Partial<StepTimingResponse> = {}): StepTimingResponse {
     start_not_before_week: 13,
     effective_duration_weeks: 4,
     effort_weeks: null,
+    overlap_weeks: null,
     lead_time_weeks: 4,
     recalc_status: 'queued',
     schedule_run_id: 'run-2',
@@ -210,7 +213,7 @@ describe('pointer drag', () => {
     expect(screen.getByTestId('step-drag-ghost')).toBeInTheDocument();
     expect(screen.getByTestId('step-drag-label')).toHaveTextContent('Start ≥ W13 · W13–W16');
     fireEvent.pointerUp(body, { pointerId: 1, button: 0, clientX: 200 + 3 * WEEK_PX + 4 });
-    await waitFor(() => expect(api.setStepTiming).toHaveBeenCalledWith('p1', 'PDD-E', { start_not_before_week: 13 }));
+    await waitFor(() => expect(api.setStepTiming).toHaveBeenCalledWith('p1', 'PDD-E', { start_not_before_week: 13, overlap_weeks: null }));
   });
 
   it('dragging the right edge sends duration_override_weeks (effective duration + Δ)', async () => {
@@ -355,7 +358,7 @@ describe('"Edit timing" dialog (keyboard alternative)', () => {
     expect(api.setStepTiming).not.toHaveBeenCalled();
   });
 
-  it('"Reset timing" sends both fields as null, and is disabled with no edit', async () => {
+  it('"Reset timing" sends all three timing fields as null (P32), and is disabled with no edit', async () => {
     const user = userEvent.setup();
     const { unmount } = renderChart();
     await user.click(screen.getByRole('button', { name: /Edit timing for Prototype build/ }));
@@ -366,7 +369,7 @@ describe('"Edit timing" dialog (keyboard alternative)', () => {
     await user.click(screen.getByRole('button', { name: /Edit timing for Prototype build/ }));
     await user.click(within(await screen.findByTestId('step-timing-dialog')).getByRole('button', { name: 'Reset timing' }));
     await waitFor(() =>
-      expect(api.setStepTiming).toHaveBeenCalledWith('p1', 'PDD-E', { duration_override_weeks: null, start_not_before_week: null }),
+      expect(api.setStepTiming).toHaveBeenCalledWith('p1', 'PDD-E', { duration_override_weeks: null, start_not_before_week: null, overlap_weeks: null }),
     );
   });
 
@@ -577,7 +580,7 @@ describe('P30 (ADR 0041 R4): effort values are not timing edits', () => {
     );
     await user.click(reset);
     await waitFor(() =>
-      expect(api.setStepTiming).toHaveBeenCalledWith('p1', 'PDD-E', { duration_override_weeks: null, start_not_before_week: null }),
+      expect(api.setStepTiming).toHaveBeenCalledWith('p1', 'PDD-E', { duration_override_weeks: null, start_not_before_week: null, overlap_weeks: null }),
     );
     const panel = await screen.findByTestId('step-timing-panel');
     await waitFor(() => expect(panel).toHaveTextContent('Prototype build: 4 wks (client effort) · no start floor'));
@@ -625,5 +628,137 @@ describe('P30 (ADR 0041 R4): effort values are not timing edits', () => {
     const legacy = step() as Partial<GanttStepRow>;
     delete legacy.effort_weeks;
     expect(stepTimingTarget(project(), legacy as GanttStepRow).effortWeeks).toBeNull();
+  });
+});
+
+describe('P32 (ADR 0043): parallel steps by overlap', () => {
+  // Predecessor "Design detailing" W5–W9 (not draggable here); the dragged step W10–W13 waits for it.
+  const PRED = step({
+    step_id: 'PDD-D',
+    step_name: 'Design detailing',
+    kind: 'design',
+    sequence_order: 4,
+    planned_start_week: 5,
+    planned_end_week: 9,
+    status: 'Done',
+    timing_editable: 'none',
+  });
+  function twoSteps(over: Partial<GanttStepRow> = {}): GanttProjectRow {
+    const s = step({ kind: 'lab', step_name: 'Cert testing', predecessor_ids: ['PDD-D'], ...over });
+    return project({}, { steps: [PRED, s] });
+  }
+
+  it('dropping onto the predecessor sends start_not_before_week + overlap_weeks and labels the overlap', async () => {
+    renderChart(twoSteps());
+    const body = screen.getByTestId('step-drag-body');
+    fireEvent.pointerDown(body, { pointerId: 1, button: 0, clientX: 200 });
+    fireEvent.pointerMove(body, { pointerId: 1, clientX: 200 - 3 * WEEK_PX });
+    const label = screen.getByTestId('step-drag-label');
+    expect(label).toHaveTextContent('Parallel with Design detailing · 3 wk overlap');
+    expect(label).toHaveAttribute('data-overlap', 'true');
+    // The ghost shows where it lands: W7–W10.
+    expect(screen.getByTestId('step-drag-ghost')).toHaveStyle({ left: `${String(6 * WEEK_PX)}px` });
+    fireEvent.pointerUp(body, { pointerId: 1, button: 0, clientX: 200 - 3 * WEEK_PX });
+    await waitFor(() =>
+      expect(api.setStepTiming).toHaveBeenCalledWith('p1', 'PDD-E', { start_not_before_week: 7, overlap_weeks: 3 }),
+    );
+  });
+
+  it('clamps to the start of the nearest non-skipped predecessor', async () => {
+    renderChart(twoSteps());
+    const body = screen.getByTestId('step-drag-body');
+    fireEvent.pointerDown(body, { pointerId: 1, button: 0, clientX: 200 });
+    fireEvent.pointerMove(body, { pointerId: 1, clientX: 200 - 9 * WEEK_PX });
+    expect(screen.getByTestId('step-drag-ghost')).toHaveStyle({ left: `${String(4 * WEEK_PX)}px` });
+    expect(screen.getByTestId('step-drag-label')).toHaveTextContent('5 wk overlap');
+    fireEvent.pointerUp(body, { pointerId: 1, button: 0, clientX: 200 - 9 * WEEK_PX });
+    await waitFor(() =>
+      expect(api.setStepTiming).toHaveBeenCalledWith('p1', 'PDD-E', { start_not_before_week: 5, overlap_weeks: 5 }),
+    );
+  });
+
+  it('design on design adds the same-designer note', () => {
+    renderChart(twoSteps({ kind: 'design', step_name: 'Prototype build' }));
+    const body = screen.getByTestId('step-drag-body');
+    fireEvent.pointerDown(body, { pointerId: 1, button: 0, clientX: 200 });
+    fireEvent.pointerMove(body, { pointerId: 1, clientX: 200 - 2 * WEEK_PX });
+    expect(screen.getByTestId('step-drag-label')).toHaveTextContent(
+      'Parallel with Design detailing · 2 wk overlap · same designer — will start when they are free',
+    );
+  });
+
+  it('dragging an overlapped step back past the release clears the overlap', async () => {
+    renderChart(twoSteps({ planned_start_week: 7, planned_end_week: 10, overlap_weeks: 3, start_not_before_week: 7 }));
+    drag(screen.getByTestId('step-drag-body'), 200, 200 + 4 * WEEK_PX);
+    await waitFor(() =>
+      expect(api.setStepTiming).toHaveBeenCalledWith('p1', 'PDD-E', { start_not_before_week: 11, overlap_weeks: null }),
+    );
+  });
+
+  it('an overlap is a timing edit: marker text and Reset sends all three nulls', async () => {
+    const user = userEvent.setup();
+    renderChart(twoSteps({ planned_start_week: 7, planned_end_week: 10, overlap_weeks: 3 }));
+    expect(screen.getByTestId('step-timing-edited')).toHaveAttribute(
+      'title',
+      'Timing edited: parallel with the previous step, 3 wk overlap',
+    );
+    await user.click(screen.getByRole('button', { name: /Edit timing for Cert testing/ }));
+    const dialog = await screen.findByTestId('step-timing-dialog');
+    expect(within(dialog).getByLabelText('Overlap with previous step (weeks)')).toHaveValue(3);
+    await user.click(within(dialog).getByRole('button', { name: 'Reset timing' }));
+    await waitFor(() =>
+      expect(api.setStepTiming).toHaveBeenCalledWith('p1', 'PDD-E', {
+        duration_override_weeks: null,
+        start_not_before_week: null,
+        overlap_weeks: null,
+      }),
+    );
+  });
+
+  it('the dialog sends a typed overlap, and 0 as null', async () => {
+    const user = userEvent.setup();
+    const { unmount } = renderChart(twoSteps());
+    await user.click(screen.getByRole('button', { name: /Edit timing for Cert testing/ }));
+    let dialog = await screen.findByTestId('step-timing-dialog');
+    let field = within(dialog).getByLabelText('Overlap with previous step (weeks)');
+    expect(field).toBeEnabled();
+    await user.clear(field);
+    await user.type(field, '2');
+    await user.click(within(dialog).getByRole('button', { name: 'Save timing' }));
+    await waitFor(() => expect(api.setStepTiming).toHaveBeenCalledWith('p1', 'PDD-E', { overlap_weeks: 2 }));
+    unmount();
+
+    renderChart(twoSteps({ overlap_weeks: 4 }));
+    await user.click(screen.getByRole('button', { name: /Edit timing for Cert testing/ }));
+    dialog = await screen.findByTestId('step-timing-dialog');
+    field = within(dialog).getByLabelText('Overlap with previous step (weeks)');
+    await user.clear(field);
+    await user.type(field, '0');
+    await user.click(within(dialog).getByRole('button', { name: 'Save timing' }));
+    await waitFor(() => expect(api.setStepTiming).toHaveBeenCalledWith('p1', 'PDD-E', { overlap_weeks: null }));
+  });
+
+  it('the overlap field is disabled on the first step and on a started step', async () => {
+    const user = userEvent.setup();
+    const { unmount } = renderChart();
+    await user.click(screen.getByRole('button', { name: /Edit timing for Prototype build/ }));
+    let dialog = await screen.findByTestId('step-timing-dialog');
+    expect(within(dialog).getByLabelText('Overlap with previous step (weeks)')).toBeDisabled();
+    expect(dialog).toHaveTextContent('The first step has no previous step to overlap.');
+    unmount();
+
+    renderChart(twoSteps({ status: 'In Progress', timing_editable: 'resize' }));
+    await user.click(screen.getByRole('button', { name: /Edit timing for Cert testing/ }));
+    dialog = await screen.findByTestId('step-timing-dialog');
+    expect(within(dialog).getByLabelText('Overlap with previous step (weeks)')).toBeDisabled();
+  });
+
+  it('the dialog copy says a drop onto the previous step runs them in parallel', async () => {
+    const user = userEvent.setup();
+    renderChart(twoSteps());
+    await user.click(screen.getByRole('button', { name: /Edit timing for Cert testing/ }));
+    expect(await screen.findByTestId('step-timing-dialog')).toHaveTextContent(
+      'Dragging it onto the previous step makes the two run in parallel',
+    );
   });
 });

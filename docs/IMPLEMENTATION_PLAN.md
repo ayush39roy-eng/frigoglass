@@ -2207,3 +2207,20 @@ category / type filter becomes multi-select, applied server-side (I9: totals and
 | P31-T02 | Frontend: multi-select category and type filters on Dashboard register, Projects page, Gantt toolbar, Matrix View panel, Priority board toolbar; URL state as repeated params (old single-value links still parse); compact chip / toggle-group UI with clear-all; export carries the selection; tests | frontend-builder | DONE (MEMORY 2026-10-23 P31-T02; + Dashboard cross-filter donuts) |
 | P31-R01 | Owner bug (Render): reload shows "Could not load" and forces a new sign-in. Session `/me` retries network / timeout / 502–504 with backoff for ~90 s behind a "Waking up the server…" state (elapsed time, Retry now); 401 → /login at once; dev-user email untouched while retrying; "Remember me" defaults ON; login dev-mode probe waits out 502–504; tests | frontend-builder | DONE |
 | P31-T20 | Gate: qa, workflow, security | — | TODO |
+
+## P32 — Plan import into the What-if, parallel steps by overlap (ADR 0043, ADR 0044)
+
+Opened 2026-11-04 from the client's two requests relayed by the owner: (1) upload the 2027 capacity
+planning workbook to the What-if planner and get the Gantt, capacity and completion for file +
+current projects; (2) per-step Gantt bars that can be moved, resized and overlapped (parallel steps),
+recomputing everything. Contract: `docs/API_CONTRACT_P32.md`.
+
+| ID | Task | Owner | Status |
+|---|---|---|---|
+| P32-T01 | Scheduler: `StepTimingInput.overlap_weeks`, release/gate semantics in greedy, CP-SAT, unconstrained finish, invariants (I3 via G, new I27), validation, hash omits 0; golden files unchanged; new tests | algorithm-engineer | DONE (MEMORY 2026-11-04 P32-T01) |
+| P32-T02 | Pure engine `scheduling/plan_import.py` (`run_plan_import`): scenario build, two greedy runs, per-step rows, windowed + weekly capacity, designers, KPIs, changes, issues; tests | algorithm-engineer | DONE (MEMORY 2026-11-04 P32-T02) |
+| P32-T03 | Backend: migration `p32a_step_overlap`, timing PATCH `overlap_weeks`, Gantt `overlap_weeks` + `predecessor_ids`, schedule input passes it; tests | backend-builder | DONE (MEMORY 2026-11-04 P32-T03) |
+| P32-T04 | Backend: `.xlsx` parser + `POST /whatif/import/parse` and `/whatif/import/simulate`, schemas, scope, audit, limits; tests with a synthetic workbook | backend-builder | DONE (MEMORY 2026-11-04 P32-T04) |
+| P32-T05 | Frontend: live Gantt overlap gesture (release helper, drag label, dialog field, broken bar with lanes, Reset) ; tests | frontend-builder | DONE (MEMORY 2026-11-04 P32-T05) |
+| P32-T06 | Frontend: What-if "Import plan (Excel)" flow — upload, review/fix (engineer assignment), results (overview, draggable Gantt with re-simulate, capacity, projects); tests | frontend-builder | DONE (MEMORY 2026-11-04 P32-T06) |
+| P32-T20 | Gate: qa, workflow, security | — | TODO |

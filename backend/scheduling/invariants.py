@@ -1,4 +1,4 @@
-"""Reusable invariant validator — Invariants I1-I17, I21-I22 and the solver-input
+"""Reusable invariant validator — Invariants I1-I17, I21-I22, I27 and the solver-input
 part of I26, per `docs/DOMAIN_RULES.md`. I25 / I26 over live rows are in
 `scheduling.demand`.
 
@@ -57,6 +57,13 @@ What is assertable at the pure-function level (2026-09-27 revision):
         `ceil(remaining / fte)` (design) or `remaining`
     I22 (ADR 0019) every Not Started step with `start_not_before_week` set
         starts at or after it (frozen projects and held steps exempt)
+    I27 (ADR 0043) every non-skipped, non-held Not Started step of a
+        non-frozen project starts at or after `gate(s)`. I3 is restated
+        through the release `G` (`start >= G(q) + 1` per predecessor `q`) for
+        every step with `overlap_weeks == 0` — identical to the pre-P32 I3
+        when no step has an overlap. For a step with `o(s) = 0`, I27 is I3
+        (`gate = release + 1`), so I27 is *reported* only for steps with
+        `o(s) > 0` (no duplicate violations for an I3 failure)
     I26 (ADR 0041 R3, input part) a started stage of a non-frozen project is
         never zeroed by its merged override (the live-row I26 split check is
         `scheduling.demand.check_i26_effort_split`)
@@ -124,6 +131,7 @@ from scheduling.workflow import (
     compute_progress_pct,
     first_step_frontier,
     leader_fte_of,
+    step_gate,
     unconstrained_end_week,
 )
 
@@ -132,7 +140,7 @@ from scheduling.workflow import (
 
 @dataclass(frozen=True)
 class InvariantViolation:
-    """One concrete failure of one of Invariants I1-I17, I21-I22, I25-I26."""
+    """One concrete failure of one of Invariants I1-I17, I21-I22, I25-I27."""
 
     invariant: str
     description: str
@@ -306,6 +314,7 @@ def validate_invariants(
     violations.extend(_check_i21_effective_duration_span(ctx))
     violations.extend(_check_i22_start_not_before(ctx))
     violations.extend(_check_i26_recorded_work_not_zeroed(ctx))
+    violations.extend(_check_i27_overlap_gate(ctx))
     return tuple(violations)
 
 
@@ -536,28 +545,98 @@ def _check_i3_precedence(ctx: _Ctx, *, tag: str) -> list[InvariantViolation]:
             template = plan.workflow.steps_by_id.get(step.step_id)
             if template is None:
                 continue  # reported by I15
+            sp = plan.steps.get(step.step_id)
+            if sp is not None and sp.overlap_weeks > 0:
+                continue  # ADR 0043: an overlapping step is I27's to check
+            g = None
             for pred_id in sorted(template.predecessor_ids):
                 pred = by_id.get(pred_id)
                 if pred is None:
                     continue  # reported by I5
-                if step.start_week < pred.end_week + 1:
-                    violations.append(_precedence_violation(tag, pid, step, pred))
+                pred_sp = plan.steps.get(pred_id)
+                release_g = pred.end_week
+                if pred_sp is not None and pred_sp.overlap_weeks > 0 and not pred_sp.skipped:
+                    # ADR 0043: an overlapping predecessor passes its own
+                    # predecessors' end on (G); its own end alone is not enough.
+                    if g is None:
+                        g = _row_releases(ctx, plan, outcome)[0]
+                    release_g = g.get(pred_id, pred.end_week)
+                if step.start_week < release_g + 1:
+                    violations.append(_precedence_violation(tag, pid, step, pred, release_g))
     return violations
 
 
 def _precedence_violation(
-    tag: str, pid: str, cur: StepSchedule, prev: StepSchedule
+    tag: str, pid: str, cur: StepSchedule, prev: StepSchedule, release_g: int | None = None
 ) -> InvariantViolation:
-    return InvariantViolation(
-        invariant=tag,
-        description=(
+    if release_g is None or release_g == prev.end_week:
+        description = (
             f"project {pid!r}: step {cur.step_id!r} (start_week={cur.start_week}) starts "
             f"before predecessor {prev.step_id!r} (end_week={prev.end_week}) has ended — "
             f"requires start >= {prev.end_week + 1}"
-        ),
+        )
+    else:
+        description = (
+            f"project {pid!r}: step {cur.step_id!r} (start_week={cur.start_week}) starts "
+            f"before the work predecessor {prev.step_id!r} passes on (it overlapped its own "
+            f"predecessors; release G={release_g}) has ended — requires start >= "
+            f"{release_g + 1}"
+        )
+    return InvariantViolation(
+        invariant=tag,
+        description=description,
         project_id=pid,
         step_id=cur.step_id,
     )
+
+
+def _row_releases(
+    ctx: _Ctx, plan: ProjectPlan, outcome: ProjectScheduleOutcome
+) -> tuple[dict[str, int], dict[str, int], dict[str, StepSchedule]]:
+    """ADR 0043 `G(q)` and `release(s)` recomputed from the *output rows*
+    (contract P32 A2), in walk order: `G(q)` is a skipped row's emitted week,
+    a row's end with no overlap, and `max(end, release(q))` with one.
+    `release(s)` is `max(G(q) for q in P(s))` (`frontier - 1` with none).
+    A step whose predecessors' `G` is unknown (a row missing — I5's to report)
+    gets no entry. Returns `(g, release, rows_by_step_id)`."""
+
+    by_id = {s.step_id: s for s in outcome.steps}
+    frontier = first_step_frontier(plan.project, ctx.schedule_input.current_week)
+    g: dict[str, int] = {}
+    release: dict[str, int] = {}
+    for sid in plan.workflow.walk_order:
+        sp = plan.steps[sid]
+        preds = sp.step.predecessor_ids
+        if all(p in g for p in preds):
+            release[sid] = max((g[p] for p in preds), default=frontier - 1)
+        row = by_id.get(sid)
+        if row is None:
+            continue
+        if row.skipped or sp.skipped or sp.overlap_weeks == 0:
+            g[sid] = row.end_week
+        elif sid in release:
+            g[sid] = max(row.end_week, release[sid])
+    return g, release, by_id
+
+
+def _row_gate(
+    ctx: _Ctx,
+    plan: ProjectPlan,
+    step_id: str,
+    release: dict[str, int],
+    by_id: dict[str, StepSchedule],
+) -> int | None:
+    """`gate(s)` from the output rows (`workflow.step_gate`); `None` when the
+    release or a start-anchor row is unknown."""
+
+    sp = plan.steps[step_id]
+    if step_id not in release:
+        return None
+    anchors = plan.start_anchor_ids(step_id) if sp.overlap_weeks else ()
+    if any(r not in by_id for r in anchors):
+        return None
+    frontier = first_step_frontier(plan.project, ctx.schedule_input.current_week)
+    return step_gate(sp, release[step_id], (by_id[r].start_week for r in anchors), frontier)
 
 
 def _check_i15_dag(ctx: _Ctx) -> list[InvariantViolation]:
@@ -1408,6 +1487,14 @@ def _check_i21_effective_duration_span(ctx: _Ctx) -> list[InvariantViolation]:
             if any(r is None for r in preds):
                 continue  # I5 reports the missing row
             pred_end = max(r.end_week for r in preds if r is not None) if preds else frontier - 1
+            if plan.has_overlap:
+                # ADR 0043: the tail starts at `gate(s)` where it used
+                # `pred_end + 1` (identical with no overlap anywhere).
+                _g, release, rows = _row_releases(ctx, plan, outcome)
+                gate = _row_gate(ctx, plan, step.step_id, release, rows)
+                if gate is None:
+                    continue  # I5 reports the missing row
+                pred_end = gate - 1
             if sp.remaining_span == 0:
                 expected_end = max(sp.actual_start_week, pred_end)
                 if step.end_week != expected_end:
@@ -1520,6 +1607,64 @@ def _check_i26_recorded_work_not_zeroed(ctx: _Ctx) -> list[InvariantViolation]:
                         ),
                         project_id=project.project_id,
                         step_id=step_id,
+                    )
+                )
+    return violations
+
+
+# --- I27: overlap gate (ADR 0043) -----------------------------------------------------
+
+
+def _check_i27_overlap_gate(ctx: _Ctx) -> list[InvariantViolation]:
+    """I27 (ADR 0043): every non-skipped `Not Started` step of a non-frozen
+    project starts at or after `gate(s) = max(release(s) + 1 - o(s), max
+    start of its nearest non-skipped predecessors, frontier)`, with `release`
+    and the anchor starts recomputed from the output rows. Held steps (a
+    Blocked hold places nothing) are exempt. Reported only for `o(s) > 0`:
+    with no overlap `gate(s) = release(s) + 1` and the check is I3."""
+
+    violations: list[InvariantViolation] = []
+    for outcome in sorted(ctx.schedule_output.project_outcomes, key=lambda o: o.project_id):
+        pid = outcome.project_id
+        project = ctx.projects.get(pid)
+        plan = ctx.plan(pid)
+        if (
+            outcome.excluded
+            or outcome.data_error is not None
+            or project is None
+            or plan is None
+            or project.frozen
+            or not plan.has_overlap
+        ):
+            continue
+        _g, release, by_id = _row_releases(ctx, plan, outcome)
+        for step in sorted(outcome.steps, key=lambda s: (s.sequence_order, s.step_id)):
+            sp = plan.steps.get(step.step_id)
+            if (
+                sp is None
+                or sp.skipped
+                or step.skipped
+                or sp.status != STATUS_NOT_STARTED
+                or sp.overlap_weeks == 0
+                or step.step_id in plan.held_step_ids
+            ):
+                continue
+            gate = _row_gate(ctx, plan, step.step_id, release, by_id)
+            if gate is None:
+                continue  # a predecessor / anchor row is missing: I5's to report
+            if step.start_week < gate:
+                violations.append(
+                    InvariantViolation(
+                        invariant="I27",
+                        description=(
+                            f"project {pid!r} step {step.step_id!r} (overlap_weeks="
+                            f"{sp.overlap_weeks}) starts at week {step.start_week}, before "
+                            f"its gate {gate} (release {release[step.step_id]} + 1 - overlap, "
+                            "the start of the step it runs in parallel with, the frontier)"
+                        ),
+                        project_id=pid,
+                        step_id=step.step_id,
+                        week=step.start_week,
                     )
                 )
     return violations

@@ -29,6 +29,8 @@ function step(seq: number, start: number, end: number): GanttStepRow {
     timing_editable: 'none',
     span_fte: null,
     effort_weeks: null,
+    overlap_weeks: null,
+    predecessor_ids: [],
   };
 }
 

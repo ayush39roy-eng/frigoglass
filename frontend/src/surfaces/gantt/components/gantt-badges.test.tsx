@@ -53,6 +53,8 @@ const baseStep: GanttStepRow = {
     timing_editable: 'none',
   span_fte: null,
   effort_weeks: null,
+  overlap_weeks: null,
+  predecessor_ids: [],
 };
 
 describe('ProjectRowBadges — each chip is a server flag rendered verbatim', () => {

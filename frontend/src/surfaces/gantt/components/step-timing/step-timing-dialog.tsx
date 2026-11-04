@@ -21,13 +21,19 @@ import type { StepTimingRequest } from '../../api/types';
 import { DURATION_OVERRIDE_MAX_WEEKS } from '../../lib/gantt-coordinates';
 import { calendarRangePhrase, WORK_WEEKS_HELP, workWeeksPhrase } from '../../lib/step-weeks-copy';
 import type { StepTimingTarget } from './step-timing-context';
-import { stepTimingFormSchema, type StepTimingFormInput, type StepTimingFormValues } from './step-timing-schema';
+import {
+  OVERLAP_MAX_WEEKS,
+  stepTimingFormSchema,
+  type StepTimingFormInput,
+  type StepTimingFormValues,
+} from './step-timing-schema';
 import { TIMING_COPY } from './timing-copy';
 
 /**
  * "Edit timing": the keyboard alternative to dragging a step bar (ADR 0019 §3).
  * Duration sets `duration_override_weeks`, earliest start sets
- * `start_not_before_week`, "Reset timing" sends both as `null`. Only changed
+ * `start_not_before_week`, P32 (ADR 0043) overlap sets `overlap_weeks` (0 is
+ * sent as `null`), "Reset timing" sends all three as `null`. Only changed
  * fields are sent (an absent field is left as it is). A started step
  * (`timing_editable === "resize"`) offers the duration only.
  *
@@ -80,8 +86,10 @@ function TimingForm({
   onCancel: () => void;
   onSubmit: (target: StepTimingTarget, body: StepTimingRequest) => void;
 }): React.JSX.Element {
-  const ids = { duration: React.useId(), start: React.useId() };
+  const ids = { duration: React.useId(), start: React.useId(), overlap: React.useId() };
   const canMove = target.timingEditable === 'move_resize';
+  const isFirstStep = target.predecessorIds.length === 0;
+  const canOverlap = canMove && !isFirstStep;
   const isDesign = target.kind === 'design';
   const plannedNow =
     target.plannedStartWeek !== null && target.plannedEndWeek !== null && target.durationWeeks !== null
@@ -89,7 +97,8 @@ function TimingForm({
       : null;
   // P30 (ADR 0041 R4): only the user's two fields count; Reset restores the
   // client effort value (or the table when the project has none).
-  const hasEdit = target.durationOverrideWeeks !== null || target.startNotBeforeWeek !== null;
+  const hasEdit =
+    target.durationOverrideWeeks !== null || target.startNotBeforeWeek !== null || target.overlapWeeks !== null;
   const resetTo =
     target.effortWeeks !== null
       ? `the client effort figure (${String(target.effortWeeks)} wks)`
@@ -107,6 +116,7 @@ function TimingForm({
     defaultValues: {
       durationWeeks: currentDuration(target),
       startNotBeforeWeek: target.startNotBeforeWeek === null ? '' : String(target.startNotBeforeWeek),
+      overlapWeeks: target.overlapWeeks ?? 0,
     },
   });
 
@@ -116,6 +126,8 @@ function TimingForm({
     if (canMove && values.startNotBeforeWeek !== target.startNotBeforeWeek) {
       body.start_not_before_week = values.startNotBeforeWeek;
     }
+    const overlap = values.overlapWeeks === 0 ? null : values.overlapWeeks;
+    if (canOverlap && overlap !== target.overlapWeeks) body.overlap_weeks = overlap;
     if (Object.keys(body).length === 0) {
       setNothingChanged(true);
       return;
@@ -123,7 +135,8 @@ function TimingForm({
     onSubmit(target, body);
   });
 
-  const reset = () => onSubmit(target, { duration_override_weeks: null, start_not_before_week: null });
+  const reset = () =>
+    onSubmit(target, { duration_override_weeks: null, start_not_before_week: null, overlap_weeks: null });
 
   return (
     <form onSubmit={(e) => void submit(e)} noValidate onChange={() => setNothingChanged(false)}>
@@ -194,6 +207,41 @@ function TimingForm({
             </p>
           )}
         </div>
+      </div>
+
+      <div className="mb-4 space-y-1.5">
+        <Label htmlFor={ids.overlap} className="text-xs">
+          Overlap with previous step (weeks)
+        </Label>
+        <Input
+          id={ids.overlap}
+          type="number"
+          min={0}
+          max={OVERLAP_MAX_WEEKS}
+          step={1}
+          inputMode="numeric"
+          disabled={!canOverlap}
+          className="h-8 w-24 tnum"
+          aria-invalid={errors.overlapWeeks ? true : undefined}
+          aria-describedby={`${ids.overlap}-hint`}
+          data-testid="step-timing-overlap"
+          {...register('overlapWeeks')}
+        />
+        {errors.overlapWeeks ? (
+          <p id={`${ids.overlap}-hint`} role="alert" className="text-2xs text-danger">
+            {errors.overlapWeeks.message}
+          </p>
+        ) : (
+          <p id={`${ids.overlap}-hint`} className="text-2xs text-text-muted">
+            {!canMove
+              ? 'Fixed: the step has started.'
+              : isFirstStep
+                ? 'The first step has no previous step to overlap.'
+                : `0 = none. The step may start this many weeks before the work it waits for ends, running in parallel with it. ${
+                    isDesign ? 'Two design steps share the project designer, so a design step still waits until they are free.' : ''
+                  }`.trim()}
+          </p>
+        )}
       </div>
 
       <div className="mb-3 space-y-1 text-2xs text-text-muted" data-testid="step-timing-weeks-note">

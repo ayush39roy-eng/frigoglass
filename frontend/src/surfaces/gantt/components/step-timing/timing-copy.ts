@@ -23,7 +23,7 @@ export const TIMING_COPY = {
   staleAfterFailure:
     'The timing is saved and the timeline is marked stale. Press Recalculate on the project to try again.',
   floorNote:
-    'Dragging the bar sets an earliest start. Precedence and capacity still apply, so the step may land later than where you dropped it, never earlier.',
+    'Dragging the bar sets an earliest start. Dragging it onto the previous step makes the two run in parallel (an overlap). Capacity still applies, so the step may land later than where you dropped it, never earlier.',
   startedNote: 'This step has started, so its start is fixed. Only its duration can change.',
 } as const;
 

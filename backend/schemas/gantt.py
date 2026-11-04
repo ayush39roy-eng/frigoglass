@@ -77,6 +77,16 @@ class GanttStepRow(BaseModel):
     duration_override_weeks: int | None
     effort_weeks: int | None
     start_not_before_week: int | None
+    #: ADR 0043 (docs/API_CONTRACT_P32.md A3): the live per-project overlap
+    #: (1..104, null = none), a third planner input. A "timing edit"
+    #: (hasTimingEdit / Reset timing) now also includes a non-null
+    #: `overlap_weeks`, and Reset timing clears all three fields.
+    overlap_weeks: int | None
+    #: ADR 0043: the step's precedence predecessors from the live workflow
+    #: template (the DAG the next run will use), sorted. Empty for the
+    #: workflow's first step. The browser computes `release` from these and
+    #: the sibling step rows when a bar is dragged onto its predecessor.
+    predecessor_ids: list[str]
     #: Computed server-side from ADR 0019 §4 and the caller's GANTT write
     #: permission on the project; the browser never derives it.
     timing_editable: TimingEditable

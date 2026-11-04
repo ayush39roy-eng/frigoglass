@@ -9,6 +9,7 @@ from sqlalchemy import (
     Enum,
     ForeignKey,
     Integer,
+    SmallInteger,
     String,
     Text,
     UniqueConstraint,
@@ -232,6 +233,11 @@ class ProjectWorkflowStep(TimestampMixin, Base):
     #: A `Not Started` step may not start before this week (1..HORIZON_WEEKS).
     #: Null = no floor. A planner input: a schedule run never overwrites it.
     start_not_before_week: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    #: ADR 0043 (migration `p32a_step_overlap`): weeks this step may overlap
+    #: the work it waits for (1..104). Null = 0 = no overlap (0 is stored as
+    #: null). Never on a workflow's first step. A planner input: a schedule
+    #: run never overwrites it. Frozen projects ignore it.
+    overlap_weeks: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)
 
     #: Design steps only (docs/DOMAIN_RULES.md booking rules).
     assigned_engineer_id: Mapped[uuid.UUID | None] = mapped_column(
@@ -300,6 +306,11 @@ class ProjectWorkflowStep(TimestampMixin, Base):
         CheckConstraint(
             "effort_weeks IS NULL OR effort_weeks BETWEEN 0 AND 104",
             name="effort_weeks_range",
+        ),
+        # ADR 0043 (migration p32a_step_overlap).
+        CheckConstraint(
+            "overlap_weeks IS NULL OR overlap_weeks BETWEEN 1 AND 104",
+            name="overlap_weeks_range",
         ),
     )
 

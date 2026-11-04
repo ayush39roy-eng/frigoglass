@@ -75,6 +75,11 @@ DURATION_OVERRIDE_MAX_WEEKS = 104
 STEP_DURATION_MIN_WEEKS = 0
 STEP_DURATION_MAX_WEEKS = DURATION_OVERRIDE_MAX_WEEKS
 
+#: ADR 0043 (P32): domain of `StepTimingInput.overlap_weeks`; 0 = no overlap
+#: (the DB stores 0 as NULL, check 1..104).
+OVERLAP_MIN_WEEKS = 0
+OVERLAP_MAX_WEEKS = 104
+
 
 # --- The one skip predicate (ADR 0041 R5) -----------------------------------------
 
@@ -331,6 +336,11 @@ class StepPlan:
     # ADR 0019 earliest start: set only for a non-skipped `Not Started` step of
     # a non-frozen project (In Progress / Blocked / Done and frozen ignore it).
     start_not_before_week: int | None = None
+    # ADR 0043 overlap: how many weeks before its release the step may start.
+    # Always 0 for a frozen project, a skipped step and a first step. Kept on
+    # a started (In Progress / Blocked / Done) step, so a step the planner ran
+    # in parallel and then started keeps running in parallel.
+    overlap_weeks: int = 0
 
     @property
     def anchored(self) -> bool:
@@ -349,6 +359,97 @@ class ProjectPlan:
 
     def step_plans_in_walk_order(self) -> tuple[StepPlan, ...]:
         return tuple(self.steps[sid] for sid in self.workflow.walk_order)
+
+    @property
+    def has_overlap(self) -> bool:
+        """True when any step carries a non-zero overlap (ADR 0043)."""
+
+        return any(sp.overlap_weeks > 0 for sp in self.steps.values())
+
+    def start_anchor_ids(self, step_id: str) -> tuple[str, ...]:
+        """ADR 0043 `SG(s)`: the nearest non-skipped predecessors of
+        `step_id`, walking through skipped steps. Sorted (I8)."""
+
+        found: set[str] = set()
+        seen: set[str] = set()
+        stack = list(self.steps[step_id].step.predecessor_ids)
+        while stack:
+            q = stack.pop()
+            if q in seen:
+                continue
+            seen.add(q)
+            if self.steps[q].skipped:
+                stack.extend(self.steps[q].step.predecessor_ids)
+            else:
+                found.add(q)
+        return tuple(sorted(found))
+
+    def release_sources(self) -> dict[str, tuple[str, ...]]:
+        """ADR 0043 / contract A2 static set `R(q)` behind `G(q)`, per step:
+        `{q}` if `o(q) = 0`; `{q} ∪ ⋃R(p)` if `o(q) > 0`; `⋃R(p)` if `q` is
+        skipped. `FRONTIER_SOURCE` stands for `frontier - 1` (a skipped first
+        step), so `G(q) = max(end(r) for r in R(q))` with that convention.
+        Each tuple is sorted (I8)."""
+
+        out: dict[str, tuple[str, ...]] = {}
+        for sid in self.workflow.walk_order:
+            sp = self.steps[sid]
+            preds = sp.step.predecessor_ids
+            upstream: set[str] = set()
+            if preds:
+                for p in preds:
+                    upstream.update(out[p])
+            else:
+                upstream.add(FRONTIER_SOURCE)
+            if sp.skipped:
+                out[sid] = tuple(sorted(upstream))
+            elif sp.overlap_weeks == 0:
+                out[sid] = (sid,)
+            else:
+                out[sid] = tuple(sorted(upstream | {sid}))
+        return out
+
+
+#: Marker inside `ProjectPlan.release_sources` for `frontier - 1`.
+FRONTIER_SOURCE = ""
+
+
+# --- ADR 0043 release / gate (shared by greedy, CP-SAT, unconstrained, I27) ----------
+
+
+def release_week(step: WorkflowStepTemplate, g: Mapping[str, int], frontier: int) -> int:
+    """`release(s) = max(G(q) for q in P(s))`, `frontier - 1` with no
+    predecessors. With every overlap 0 this is today's `max(pred.end)`."""
+
+    preds = step.predecessor_ids
+    return max(g[p] for p in preds) if preds else frontier - 1
+
+
+def passed_release(sp: StepPlan, end: int, release: int) -> int:
+    """`G(q)`, the week by which everything `q`'s successors wait for is done:
+    `release(q)` for a skipped step (where it is emitted), `end(q)` with no
+    overlap, `max(end(q), release(q))` for a step that overlapped its
+    predecessors (it passes their end on)."""
+
+    if sp.skipped:
+        return release
+    if sp.overlap_weeks == 0:
+        return end
+    return max(end, release)
+
+
+def step_gate(sp: StepPlan, release: int, anchor_starts: Iterable[int], frontier: int) -> int:
+    """`gate(s)`, contract P32 A2. With `o(s) = 0` it is `release(s) + 1`,
+    exactly today's `pred_end + 1` (no extra frontier floor, so every
+    pre-P32 schedule is unchanged). With `o(s) > 0`:
+    `max(release(s) + 1 - o(s), max start of SG(s), frontier)` — the step
+    never starts before the step it runs in parallel with has started, nor
+    before the project frontier. `anchor_starts` are the starts of
+    `ProjectPlan.start_anchor_ids(s)`."""
+
+    if sp.overlap_weeks == 0:
+        return release + 1
+    return max(release + 1 - sp.overlap_weeks, frontier, *anchor_starts)
 
 
 def validate_schedulable_project(
@@ -436,9 +537,26 @@ def validate_step_timing(project: ProjectInput, workflow: Workflow, *, horizon_w
             raise ValueError(
                 f"{where}: start_not_before_week={floor} is outside 1..{horizon_weeks}"
             )
+        # ADR 0043: overlap 0..104; never on the workflow's first step (it has
+        # no predecessor to run in parallel with).
+        overlap = row.overlap_weeks
+        if (
+            isinstance(overlap, bool)
+            or not isinstance(overlap, int)
+            or not OVERLAP_MIN_WEEKS <= overlap <= OVERLAP_MAX_WEEKS
+        ):
+            raise ValueError(
+                f"{where}: overlap_weeks={overlap!r} is outside "
+                f"{OVERLAP_MIN_WEEKS}..{OVERLAP_MAX_WEEKS}"
+            )
+        if overlap != 0 and not workflow.steps_by_id[row.step_id].predecessor_ids:
+            raise ValueError(
+                f"{where}: overlap_weeks={overlap} on the workflow's first step (it has no "
+                "predecessor to overlap)"
+            )
 
 
-def _step_timing_sort_key(row: StepTimingInput) -> tuple[str, int, int]:
+def _step_timing_sort_key(row: StepTimingInput) -> tuple[str, int, int, int]:
     """Total, deterministic order over timing rows (I8): by `step_id`, then the
     values (None sorts first), so even duplicate rows order identically."""
 
@@ -446,15 +564,17 @@ def _step_timing_sort_key(row: StepTimingInput) -> tuple[str, int, int]:
         row.step_id,
         -1 if row.duration_override_weeks is None else row.duration_override_weeks,
         -1 if row.start_not_before_week is None else row.start_not_before_week,
+        row.overlap_weeks,
     )
 
 
 def canonical_step_timing(rows: Iterable[StepTimingInput]) -> tuple[StepTimingInput, ...]:
     """The canonical form of a project's `step_timing` for the hashed /
-    snapshotted solver input (I8, contract P12 §1): rows with neither field
-    set are dropped and the rest are sorted by `step_id`. A project with no
-    timing therefore canonicalises to `()`, exactly the pre-P12 input, so
-    every existing input hash and golden file stays byte-identical.
+    snapshotted solver input (I8, contract P12 §1): rows with no field set
+    (no duration, no floor, overlap 0) are dropped and the rest are sorted by
+    `step_id`. A project with no timing therefore canonicalises to `()`,
+    exactly the pre-P12 input, so every existing input hash and golden file
+    stays byte-identical. ADR 0043: a row carrying only an overlap is kept.
 
     The scheduler itself does not require canonical input: it sorts the rows
     by `step_id` before use, so their supplied order never affects output.
@@ -465,11 +585,31 @@ def canonical_step_timing(rows: Iterable[StepTimingInput]) -> tuple[StepTimingIn
             (
                 r
                 for r in rows
-                if r.duration_override_weeks is not None or r.start_not_before_week is not None
+                if r.duration_override_weeks is not None
+                or r.start_not_before_week is not None
+                or r.overlap_weeks != 0
             ),
             key=_step_timing_sort_key,
         )
     )
+
+
+def canonical_step_timing_dict(row: StepTimingInput) -> dict[str, int | str | None]:
+    """The serialised form of one timing row for an input hash / snapshot
+    (ADR 0043, contract P32 A1): the three pre-P32 keys always, and
+    `overlap_weeks` **only when it is non-zero**, so a row without an overlap
+    serialises exactly as it did before P32 and every existing hash, golden
+    file and stored run stays byte-identical (I8, I14). Use this (not
+    `dataclasses.asdict`) wherever a `StepTimingInput` is hashed."""
+
+    out: dict[str, int | str | None] = {
+        "step_id": row.step_id,
+        "duration_override_weeks": row.duration_override_weeks,
+        "start_not_before_week": row.start_not_before_week,
+    }
+    if row.overlap_weeks != 0:
+        out["overlap_weeks"] = row.overlap_weeks
+    return out
 
 
 def derive_remaining(
@@ -546,6 +686,15 @@ def analyse_project(
             return None
         return row.start_not_before_week
 
+    def overlap_of(step: WorkflowStepTemplate) -> int:
+        """ADR 0043: the step's overlap; 0 in a frozen project and on a first
+        step (the validator rejects that input; this stays tolerant)."""
+
+        row = timing_by_step.get(step.step_id)
+        if project.frozen or row is None or not step.predecessor_ids:
+            return 0
+        return max(0, row.overlap_weeks)
+
     # ADR 0032: a non-frozen project with a valid leader FTE is stretched.
     stretch_fte = (
         leader_fte
@@ -599,6 +748,7 @@ def analyse_project(
                 span=span,
                 remaining_span=remaining_span,
                 start_not_before_week=start_floor(step.step_id),
+                overlap_weeks=overlap_of(step),
             )
             continue
 
@@ -666,6 +816,7 @@ def analyse_project(
             start_not_before_week=(
                 start_floor(step.step_id) if status == STATUS_NOT_STARTED else None
             ),
+            overlap_weeks=overlap_of(step),
         )
 
     if not project.frozen and leader_fte is not None and not is_valid_fte(leader_fte):
@@ -708,6 +859,7 @@ def analyse_project(
                     span=span,
                     remaining_span=remaining_span,
                     start_not_before_week=start_floor(step.step_id),
+                    overlap_weeks=overlap_of(step),
                 )
 
     tracked = any(not sp.skipped and sp.status != STATUS_NOT_STARTED for sp in plans.values())
@@ -764,34 +916,46 @@ def unconstrained_end_week(plan: ProjectPlan, current_week: int) -> int | None:
     *unconstrained* figure deliberately assumes the block clears now — the
     constrained run reports the hold via `blocked=True`). `None` when every
     step is skipped.
+
+    ADR 0043: precedence is the release / gate rule (`release_week`,
+    `step_gate`, `passed_release`), identical to the schedulers'; with every
+    overlap 0 it is `max(pred.end) + 1`, unchanged.
     """
 
     frontier = first_step_frontier(plan.project, current_week)
     ends: dict[str, int] = {}
+    starts: dict[str, int] = {}
+    g: dict[str, int] = {}
     for sid in plan.workflow.walk_order:
         sp = plan.steps[sid]
-        preds = sp.step.predecessor_ids
-        pred_end = max(ends[p] for p in preds) if preds else frontier - 1
+        release = release_week(sp.step, g, frontier)
         if sp.skipped:
-            ends[sid] = pred_end
-        elif sp.status == STATUS_DONE:
-            assert sp.actual_end_week is not None
+            starts[sid] = ends[sid] = release
+            g[sid] = release
+            continue
+        gate = step_gate(sp, release, (starts[r] for r in plan.start_anchor_ids(sid)), frontier)
+        if sp.status == STATUS_DONE:
+            assert sp.actual_start_week is not None and sp.actual_end_week is not None
+            starts[sid] = sp.actual_start_week
             ends[sid] = sp.actual_end_week
         elif sp.status in (STATUS_IN_PROGRESS, STATUS_BLOCKED):
             assert sp.actual_start_week is not None
+            starts[sid] = sp.actual_start_week
             if sp.remaining_span == 0:
-                ends[sid] = max(sp.actual_start_week, pred_end)
+                ends[sid] = max(sp.actual_start_week, gate - 1)
             else:
-                tail_start = max(current_week, pred_end + 1, sp.actual_start_week)
+                tail_start = max(current_week, gate, sp.actual_start_week)
                 ends[sid] = tail_start + sp.remaining_span - 1
         else:
-            start = pred_end + 1 if plan.project.frozen else max(current_week, pred_end + 1)
+            start = gate if plan.project.frozen else max(current_week, gate)
             if sp.start_not_before_week is not None:
                 # ADR 0019: a planner-set earliest start is a plan input, not a
                 # resource limit, so unlimited resources do not lift it (keeps
                 # unconstrained <= constrained, I16).
                 start = max(start, sp.start_not_before_week)
+            starts[sid] = start
             ends[sid] = start + sp.span - 1
+        g[sid] = passed_release(sp, ends[sid], release)
     non_skipped = [ends[sid] for sid, sp in plan.steps.items() if not sp.skipped]
     return max(non_skipped) if non_skipped else None
 

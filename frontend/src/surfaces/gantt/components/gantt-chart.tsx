@@ -524,6 +524,8 @@ function stepBarTitle(
 ): string {
   const parts = [s.step_name];
   if (planned) parts.push(`planned ${calendarRangePhrase(planned.startWeek, planned.endWeek)}`);
+  // P32 (ADR 0043): a stored overlap — the step runs in parallel with the previous one.
+  if ((s.overlap_weeks ?? null) !== null) parts.push(`runs in parallel (${String(s.overlap_weeks)} wk overlap)`);
   // P30 (ADR 0041 R4): name where the served duration comes from (client effort / timing edit).
   if (s.duration_weeks !== null && !s.skipped) {
     parts.push(`${workWeeksPhrase(s.kind, s.duration_weeks, s.span_fte ?? null)}${durationSourceSuffix(s)}`);
@@ -709,6 +711,9 @@ function StepLeftCell({
           ? `${kind === 'design' ? 'work' : 'duration'} ${String(step.duration_override_weeks)} wks (${editBaselineText(step)})`
           : null,
         step.start_not_before_week !== null ? `earliest start ${formatPlanWeek(step.start_not_before_week)}` : null,
+        (step.overlap_weeks ?? null) !== null
+          ? `parallel with the previous step, ${String(step.overlap_weeks)} wk overlap`
+          : null,
       ]
         .filter(Boolean)
         .join(' · ')

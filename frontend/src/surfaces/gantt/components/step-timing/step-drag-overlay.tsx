@@ -11,14 +11,20 @@ import {
   type WeekScale,
 } from '../../lib/gantt-coordinates';
 import { placeDragLabel } from '../../lib/gantt-layout';
-import { stepDragLabel, WORK_WEEKS_HELP } from '../../lib/step-weeks-copy';
+import { overlapForDrop } from '../../lib/step-overlap';
+import { overlapDragLabel, stepDragLabel, WORK_WEEKS_HELP } from '../../lib/step-weeks-copy';
+import type { StepTimingRequest } from '../../api/types';
 import { useStepTimingHost, type StepTimingTarget } from './step-timing-context';
 
 /**
  * Pointer drag on one step bar (ADR 0019 §3), drawn as an HTML layer over the
  * row's SVG bar:
  * - the bar body (only when `timing_editable === "move_resize"`) moves the bar
- *   and requests `start_not_before_week`;
+ *   and requests `start_not_before_week`. P32 (ADR 0043): a drop before the
+ *   week the step's predecessors release it (`overlapForDrop`) also sends
+ *   `overlap_weeks` — the two run in parallel — and the bar cannot be dragged
+ *   before the start of its nearest non-skipped predecessor (clamp). A drop at
+ *   or after the release sends `overlap_weeks: null`;
  * - the right-edge handle (`"move_resize"` or `"resize"`) requests
  *   `duration_override_weeks`, a WORK figure (ADR 0032). The handle moves the
  *   CALENDAR edge; with a served FTE the dragged calendar width is turned into
@@ -41,6 +47,44 @@ const HANDLE_PX = 8;
 const HANDLE_PX_TOUCH = 20;
 const BODY_H = 14;
 const LABEL_GAP = 6;
+
+interface DragOutcome {
+  ghost: { startWeek: number; endWeek: number };
+  request: StepTimingRequest | null;
+  workWeeks: number | null;
+  /** P32: the overlap a move drop would send (null = a plain floor). */
+  overlap: { weeks: number; label: string } | null;
+}
+
+/**
+ * One drag position → ghost + request. Resize is ADR 0019 / 0032 unchanged; a
+ * move is re-read through the ADR 0043 overlap helper, which only interprets
+ * the gesture (the landed week is always the next run's decision).
+ */
+function dragOutcome(
+  mode: StepDragMode,
+  origin: StepDragOrigin,
+  dxPx: number,
+  scale: WeekScale,
+  target: StepTimingTarget,
+): DragOutcome {
+  const base = stepDragResult(mode, origin, dxPx, scale);
+  if (mode !== 'move') return { ...base, overlap: null };
+  const drop = overlapForDrop(target.overlapSteps, target.stepId, base.ghost.startWeek, scale.originWeek);
+  const lastWeek = scale.originWeek + scale.horizonWeeks - 1;
+  const start = Math.min(drop.clampedWeek, lastWeek);
+  const shift = start - origin.startWeek;
+  const overlapWeeks = target.predecessorIds.length === 0 ? null : drop.overlapWeeks;
+  return {
+    ghost: { startWeek: start, endWeek: Math.min(lastWeek, origin.endWeek + shift) },
+    request: shift === 0 ? null : { start_not_before_week: start, overlap_weeks: overlapWeeks },
+    workWeeks: null,
+    overlap:
+      overlapWeeks === null
+        ? null
+        : { weeks: overlapWeeks, label: overlapDragLabel(overlapWeeks, drop.parallelWith, target.kind) },
+  };
+}
 
 /** The visible timeline area in CLIENT px: the scroll viewport minus the sticky columns. */
 export type TimelineViewport = () => { left: number; right: number } | null;
@@ -157,11 +201,11 @@ export function StepDragOverlay({
     if (!cur || cur.pointerId !== e.pointerId) return;
     e.currentTarget.releasePointerCapture?.(e.pointerId);
     setDrag(null);
-    const result = stepDragResult(cur.mode, origin, e.clientX - cur.startX, scale);
+    const result = dragOutcome(cur.mode, origin, e.clientX - cur.startX, scale, target);
     if (result.request) host.submit(target, result.request, result.ghost);
   };
 
-  const live = drag ? stepDragResult(drag.mode, origin, drag.dx, scale) : null;
+  const live = drag ? dragOutcome(drag.mode, origin, drag.dx, scale, target) : null;
   const pending =
     host.pending && host.pending.projectId === target.projectId && host.pending.stepId === target.stepId
       ? host.pending
@@ -169,17 +213,20 @@ export function StepDragOverlay({
   const ghost = live && live.request
     ? {
         ...live.ghost,
-        label: stepDragLabel(drag?.mode ?? 'move', live.ghost, {
+        overlap: live.overlap !== null,
+        label: live.overlap
+          ? live.overlap.label
+          : stepDragLabel(drag?.mode ?? 'move', live.ghost, {
           kind: target.kind,
           workWeeks: live.workWeeks,
           fte: target.spanFte,
           // QA-P19-4: the calendar figure is the unclipped span, not the ghost
           // (which stops at W52).
           calendar: live.workWeeks === null ? null : stepDragCalendar(origin, live.workWeeks, scale),
-        }),
+            }),
       }
     : pending
-    ? { startWeek: pending.startWeek, endWeek: pending.endWeek, label: 'Saving…' }
+    ? { startWeek: pending.startWeek, endWeek: pending.endWeek, label: 'Saving…', overlap: false }
     : null;
   const ghostGeom = ghost ? barGeometry(ghost.startWeek, ghost.endWeek, scale) : null;
 
@@ -207,6 +254,7 @@ export function StepDragOverlay({
             style={{ top: (rowHeight - 16) / 2 }}
             data-anchor={ghostGeom.x + ghostGeom.width}
             data-testid="step-drag-label"
+            data-overlap={ghost.overlap ? 'true' : undefined}
           >
             {ghost.label}
           </span>
@@ -220,7 +268,11 @@ export function StepDragOverlay({
           )}
           style={{ left: geom.x, width: Math.max(0, geom.width - handlePx / 2), top, height: BODY_H }}
           data-testid="step-drag-body"
-          title={`Drag to set the earliest start of ${target.stepName}`}
+          title={
+            target.predecessorIds.length > 0
+              ? `Drag to set the earliest start of ${target.stepName}; drop it onto the previous step to run them in parallel`
+              : `Drag to set the earliest start of ${target.stepName}`
+          }
           onPointerDown={begin('move')}
           {...handlers}
         />

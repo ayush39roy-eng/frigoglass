@@ -52,6 +52,16 @@ one chosen iff present) at demand 1.0 per project-week on that chamber's
 interval's length is the step's FTE-stretched `span` (ADR 0032). Precedence:
 `start >= pred.end` (exclusive-end convention) per DAG edge.
 
+Overlap (ADR 0043, contract P32 A2): a project whose steps all have
+`overlap_weeks == 0` gets exactly the pre-P32 model (same variables, same
+constraints, same order), so every golden file and CP-SAT result is unchanged.
+A project with any overlap uses the static release sets `R(q)`
+(`ProjectPlan.release_sources`): `start(s) >= end(r) + 1 - o(s)` for every `r`
+in `⋃R(q), q in P(s)` (exclusive ends: `start >= end_excl(r) - o(s)`), plus
+`start(s) >= start(r)` for `r` in the start anchors `SG(s)` when `o(s) > 0`.
+The `frontier` floor of `gate(s)` is the start variables' lower bound. A
+skipped step is emitted at `release` = max over its `R` set.
+
 Objective weighting: ADR 0005 (documented gap-fill, not DOMAIN_RULES.md text)
 -- `PRIORITY_OBJECTIVE_WEIGHT = {P1:4, P2:3, P3:2, P4:1, Q:0}` times
 `within_year`, plus a coarse presence tie-break scaled so it can never
@@ -103,6 +113,7 @@ from scheduling.types import (
     StepSchedule,
 )
 from scheduling.workflow import (
+    FRONTIER_SOURCE,
     ProjectPlan,
     compute_progress_pct,
     first_step_frontier,
@@ -289,12 +300,38 @@ def run_cp_sat(
         ends_excl: dict[str, cp_model.IntVar | int] = {}
         assign: dict[tuple[str, str], cp_model.IntVar] = {}
 
+        # ADR 0043: only a project with an overlap uses the release sets; every
+        # other project is modelled exactly as before P32.
+        sources = plan.release_sources() if plan.has_overlap else None
+
+        def release_terms(
+            ids: Iterable[str],
+            ends_excl: dict[str, cp_model.IntVar | int] = ends_excl,
+            frontier: int = frontier,
+        ) -> list[cp_model.IntVar | int]:
+            """Exclusive-end terms `G + 1` of a release set (`frontier` for the
+            `frontier - 1` marker), sorted for determinism."""
+
+            return [frontier if r == FRONTIER_SOURCE else ends_excl[r] for r in sorted(ids)]
+
+        def start_of(
+            r: str,
+            starts: dict[str, cp_model.IntVar] = starts,
+            prebooked: dict[str, _Placement] = prebooked,
+        ) -> cp_model.IntVar | int:
+            return prebooked[r].start_week if r in prebooked else starts[r]
+
         for sid in plan.workflow.walk_order:
             sp = plan.steps[sid]
             preds = sp.step.predecessor_ids
             pred_ends: list[cp_model.IntVar | int] = [ends_excl[p] for p in preds]
+            if sources is not None:
+                upstream = sorted({r for p in preds for r in sources[p]})
+                pred_ends = release_terms(upstream) if preds else []
 
             if sp.skipped:
+                # With an overlap, `pred_ends` is the release set: the skipped
+                # step is emitted at release(s) (ADR 0043).
                 if not preds:
                     ends_excl[sid] = frontier
                 elif all(isinstance(e, int) for e in pred_ends):
@@ -321,8 +358,19 @@ def run_cp_sat(
                 step_lo = max(step_lo, sp.start_not_before_week)
             start_var = model.NewIntVar(step_lo, upper_bound, f"start[{pid},{sid}]")
             end_var = model.NewIntVar(lower_bound, upper_bound, f"end[{pid},{sid}]")
+            o = sp.overlap_weeks
             for pe in pred_ends:
-                model.Add(start_var >= pe)  # Invariant I3 / I15, per DAG edge
+                # Invariant I3 / I15, per DAG edge; ADR 0043 release set when
+                # the project has an overlap (`- o`, I27).
+                if o:
+                    model.add(start_var >= pe - o)
+                else:
+                    model.Add(start_var >= pe)
+            if o:
+                # ADR 0043 start anchor: never before the step it runs in
+                # parallel with has started.
+                for r in plan.start_anchor_ids(sid):
+                    model.add(start_var >= start_of(r))
             # `end == start + duration` is enforced by the optional interval(s)
             # (design/lab) or an explicit reified constraint (elapsed) ONLY
             # while present -- "not present -> no constraint at all".

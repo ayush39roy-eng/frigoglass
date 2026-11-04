@@ -59,6 +59,7 @@ export function useStepTimingFlow(): { api: StepTimingApi; element: React.JSX.El
         // An older API omits it: no effort value.
         effortWeeks: res.effort_weeks ?? null,
         startNotBeforeWeek: res.start_not_before_week,
+        overlapWeeks: res.overlap_weeks ?? null,
       };
       if (res.recalc_status === 'unchanged') {
         setFlow({ kind: 'notice', target, tone: 'success', title: TIMING_COPY.notChangedTitle, body: TIMING_COPY.unchanged });

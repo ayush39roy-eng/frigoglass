@@ -25,15 +25,18 @@ configured (the forms keep working), `502` when the model provider fails.
 
 from __future__ import annotations
 
+import io
 import math
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.db import get_db
 from api.deps import require_permission
+from api.errors import HTTP_413, CodedHTTPException
 from core.principal import Principal
 from core.rbac import Action, Surface
 from schemas.whatif import (
@@ -46,18 +49,37 @@ from schemas.whatif import (
     SolveRequest,
     SolveResponse,
 )
+from schemas.whatif_import import (
+    ImportParseResponse,
+    ImportSimulateRequest,
+    ImportSimulateResponse,
+)
+from services.file_sniff import UploadRejected, extension_of, sniff
 from services.llm_client import LlmClient, configured_llm_client
+from services.plan_import_xlsx import MAX_FILE_BYTES, ImportFormatError, parse_plan_workbook
 from services.rate_limit import TokenBucketLimiter
 from services.whatif import (
+    WHATIF_TIME_CAP_SECONDS,
     audit_whatif,
     digest_of,
     do_estimate,
     do_simulate,
     do_solve,
+    run_capped,
     scenario_shape,
 )
 from services.whatif_baseline import load_context
 from services.whatif_chat import run_chat
+from services.whatif_import import (
+    audit_import_simulate,
+    audit_parse,
+    build_parse_context,
+    do_import_simulate,
+    import_format_error,
+    parse_response,
+    safe_file_name,
+    sha256_hex,
+)
 
 router = APIRouter(prefix="/whatif", tags=["whatif"])
 
@@ -181,5 +203,77 @@ async def ask(
         },
         coalesce=False,
     )  # fmt: skip
+    await db.commit()
+    return result
+
+
+# --- plan import (P32-T04, ADR 0044, docs/API_CONTRACT_P32.md B2/B3) ----------------------
+
+_UPLOAD_CHUNK = 256 * 1024
+
+
+def _read_upload_capped(upload: UploadFile) -> bytes | None:
+    """The upload's bytes, or None as soon as it passes `MAX_FILE_BYTES`."""
+
+    upload.file.seek(0)
+    buf = bytearray()
+    while chunk := upload.file.read(_UPLOAD_CHUNK):
+        buf.extend(chunk)
+        if len(buf) > MAX_FILE_BYTES:
+            return None
+    return bytes(buf)
+
+
+def _parse_or_error(data: bytes, pctx: object) -> object:
+    """Run in the What-if pool. A format problem is RETURNED (not raised) so
+    `run_capped` does not turn it into a scenario error."""
+
+    try:
+        return parse_plan_workbook(data, pctx)  # type: ignore[arg-type]
+    except ImportFormatError as exc:
+        return exc
+
+
+@router.post("/import/parse", response_model=ImportParseResponse)
+async def import_parse(
+    file: UploadFile = File(...),
+    db: AsyncSession = Depends(get_db),
+    current_user: Principal = Depends(_read),
+) -> ImportParseResponse:
+    _throttle(WHATIF_RATE_LIMIT, current_user)
+    data = await run_in_threadpool(_read_upload_capped, file)
+    if data is None:
+        raise CodedHTTPException(HTTP_413, "FILE_TOO_LARGE", "Plan files are limited to 5 MB.")
+    if not data:
+        raise import_format_error("The file is empty.")
+    try:
+        if extension_of(file.filename) != "xlsx":
+            raise UploadRejected("Only .xlsx workbooks can be imported.")
+        await run_in_threadpool(sniff, "xlsx", io.BytesIO(data))
+    except UploadRejected as exc:
+        raise import_format_error(f"Only .xlsx workbooks can be imported. {exc}") from exc
+    ctx = await load_context(db, current_user)
+    pctx = await build_parse_context(db, current_user, ctx)
+    result = await run_capped(
+        lambda: _parse_or_error(data, pctx), WHATIF_TIME_CAP_SECONDS, user_key=ctx.user_key
+    )
+    if isinstance(result, ImportFormatError):
+        raise import_format_error(str(result))
+    response = parse_response(safe_file_name(file.filename), pctx, result, ctx)  # type: ignore[arg-type]
+    await audit_parse(db, current_user, sha256_hex(data), result)  # type: ignore[arg-type]
+    await db.commit()
+    return response
+
+
+@router.post("/import/simulate", response_model=ImportSimulateResponse)
+async def import_simulate(
+    body: ImportSimulateRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: Principal = Depends(_read),
+) -> ImportSimulateResponse:
+    _throttle(WHATIF_RATE_LIMIT, current_user)
+    ctx = await load_context(db, current_user)
+    result = await do_import_simulate(ctx, body)
+    await audit_import_simulate(db, current_user, body, result)
     await db.commit()
     return result

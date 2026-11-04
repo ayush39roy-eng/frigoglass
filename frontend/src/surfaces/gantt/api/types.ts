@@ -66,6 +66,12 @@ export interface GanttStepRow {
    *  (OQ #8, part-time status is personal data) for every caller who may not
    *  edit this step's timing. Only the right-edge drag and its labels read it. */
   span_fte: number | null;
+  /** P32 (API_CONTRACT_P32 A3, ADR 0043): the planner's overlap with the work
+   *  this step waits for (1..104); null = none. A "timing edit". */
+  overlap_weeks: number | null;
+  /** P32 (A3): the template's predecessor step ids, sorted. Read only by the
+   *  drag gesture to interpret a drop (never to draw a schedule number). */
+  predecessor_ids: string[];
 }
 
 /** ADR 0019 §4: `move_resize` (Not Started), `resize` (In Progress / On Hold),
@@ -190,6 +196,8 @@ export interface GanttActiveRun {
 export interface StepTimingRequest {
   duration_override_weeks?: number | null;
   start_not_before_week?: number | null;
+  /** P32 (A3, ADR 0043): 0..104, 0 normalised to null by the server. */
+  overlap_weeks?: number | null;
 }
 
 /** P12 contract §3 (reconciled, pinned `exact`): the 200 response. */
@@ -198,6 +206,8 @@ export interface StepTimingResponse {
   step_id: string;
   duration_override_weeks: number | null;
   start_not_before_week: number | null;
+  /** P32 (A3, ADR 0043). */
+  overlap_weeks: number | null;
   /** P30: `user ?? effort ?? lead`, served; 0 when skipped. */
   effective_duration_weeks: number;
   /** P30 (API_CONTRACT_P30 §3): what "Reset timing" falls back to. */

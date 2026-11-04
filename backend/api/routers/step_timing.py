@@ -1,5 +1,6 @@
 """Gantt drag: `PATCH /projects/{project_id}/steps/{step_id}/timing`
-(ADR 0019, docs/API_CONTRACT_P12.md §3).
+(ADR 0019, docs/API_CONTRACT_P12.md §3; `overlap_weeks`: ADR 0043,
+docs/API_CONTRACT_P32.md A3).
 
 **RBAC**: the same checks as the Gantt freeze toggle
 (`api/routers/gantt.py::toggle_freeze`): `GANTT`/`WRITE` (Hub Planner, Admin,
@@ -55,6 +56,7 @@ async def set_step_timing(
         step_id=result.step_id,
         duration_override_weeks=result.duration_override_weeks,
         start_not_before_week=result.start_not_before_week,
+        overlap_weeks=result.overlap_weeks,
         effective_duration_weeks=result.effective_duration_weeks,
         effort_weeks=result.effort_weeks,
         lead_time_weeks=result.lead_time_weeks,

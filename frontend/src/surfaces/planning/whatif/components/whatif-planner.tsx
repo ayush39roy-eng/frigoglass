@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Calculator, FlaskConical, Sparkles } from 'lucide-react';
+import { Calculator, FileSpreadsheet, FlaskConical, SlidersHorizontal, Sparkles } from 'lucide-react';
 import type { UseMutationResult } from '@tanstack/react-query';
 
 import { EmptyState } from '@/components/shared/empty-state';
@@ -33,6 +33,10 @@ import { SolveView } from './solve-view';
 import { WhatIfErrorNotice } from './whatif-error';
 
 type ResultKind = 'estimate' | 'simulate' | 'solve';
+type PlannerPart = 'scenario' | 'import';
+
+// P32-T06: the plan import is its own part of the planner, loaded on first open (route-split).
+const ImportPlanView = React.lazy(() => import('../import/components/import-plan-view'));
 
 const TARGET_LABEL: Record<WhatIfTarget, string> = {
   all_new_within_year: 'Every new project that capacity can help finishes in the year',
@@ -160,8 +164,8 @@ export function WhatIfPlanner({ chambers }: WhatIfPlannerProps): React.JSX.Eleme
         ? `Designer FTE: ${fte.error}.`
         : null;
 
-  return (
-    <div className="space-y-s5" data-testid="whatif-planner">
+  const scenarioPart = (
+    <div className="space-y-s5">
       <p className="max-w-prose text-sm text-text-muted">
         Try a change without touching the plan: add projects, designers or chambers, or take a chamber down. Nothing here
         is saved or applied. Every figure is calculated by the server with the same rules as the real schedule.
@@ -269,6 +273,49 @@ export function WhatIfPlanner({ chambers }: WhatIfPlannerProps): React.JSX.Eleme
       </div>
 
       <ChatPanel onEditInBuilder={editInBuilder} />
+    </div>
+  );
+
+  const [part, setPart] = React.useState<PlannerPart>('scenario');
+  const [importOpened, setImportOpened] = React.useState(false);
+
+  return (
+    <div className="space-y-s5" data-testid="whatif-planner">
+      <Tabs
+        value={part}
+        onValueChange={(v) => {
+          setPart(v as PlannerPart);
+          if (v === 'import') setImportOpened(true);
+        }}
+      >
+        <TabsList aria-label="What-if planner parts" data-testid="whatif-parts">
+          <TabsTrigger value="scenario">
+            <SlidersHorizontal className="mr-1.5 size-4" aria-hidden="true" />
+            Scenario builder
+          </TabsTrigger>
+          <TabsTrigger value="import">
+            <FileSpreadsheet className="mr-1.5 size-4" aria-hidden="true" />
+            Import plan (Excel)
+          </TabsTrigger>
+        </TabsList>
+        <TabsContent value="import" forceMount className="data-[state=inactive]:hidden">
+          {importOpened ? (
+            <React.Suspense
+              fallback={
+                <div className="space-y-s3" aria-busy="true">
+                  <Skeleton className="h-10 w-full" />
+                  <Skeleton className="h-48 w-full" />
+                </div>
+              }
+            >
+              <ImportPlanView />
+            </React.Suspense>
+          ) : null}
+        </TabsContent>
+        <TabsContent value="scenario" forceMount className="data-[state=inactive]:hidden">
+          {scenarioPart}
+        </TabsContent>
+      </Tabs>
     </div>
   );
 }

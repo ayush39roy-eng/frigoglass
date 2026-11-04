@@ -3,6 +3,9 @@ import { z } from 'zod';
 import { DISPLAY_HORIZON_WEEKS } from '@/lib/domain-constants';
 import { DURATION_OVERRIDE_MAX_WEEKS } from '../../lib/gantt-coordinates';
 
+/** P32 (API_CONTRACT_P32 A3): `overlap_weeks` is 0..104. */
+export const OVERLAP_MAX_WEEKS = 104;
+
 /**
  * Client-side mirror of `StepTimingRequest` (`backend/schemas/step_timing.py`,
  * ADR 0019): duration 1..104 weeks, earliest start 1..52 or blank (no floor) — the
@@ -27,6 +30,13 @@ export const stepTimingFormSchema = z.object({
         .max(DISPLAY_HORIZON_WEEKS, `Enter a week of 1–${String(DISPLAY_HORIZON_WEEKS)}, or leave it blank.`)
         .nullable(),
     ),
+  // P32 (ADR 0043): weeks this step may start before the work it waits for
+  // ends; 0 = none (sent as null).
+  overlapWeeks: z.coerce
+    .number({ invalid_type_error: `Enter an overlap of 0–${String(OVERLAP_MAX_WEEKS)} weeks.` })
+    .int('Whole weeks only.')
+    .min(0, `Enter an overlap of 0–${String(OVERLAP_MAX_WEEKS)} weeks.`)
+    .max(OVERLAP_MAX_WEEKS, `Enter an overlap of 0–${String(OVERLAP_MAX_WEEKS)} weeks.`),
 });
 
 export type StepTimingFormInput = z.input<typeof stepTimingFormSchema>;

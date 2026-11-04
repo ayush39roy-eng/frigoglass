@@ -56,6 +56,11 @@ dependencies = [
     # P9-T03 (Project Workspace file upload): FastAPI needs it to parse
     # `multipart/form-data` (`UploadFile` / `Form`).
     "python-multipart>=0.0.18",
+    # P32-T04 (ADR 0044, plan import): uploaded .xlsx workbooks are untrusted
+    # XML. openpyxl parses through defusedxml whenever it is importable
+    # (entity-expansion / external-entity defence); the parser refuses to run
+    # without it (`services.plan_import_xlsx._open`).
+    "defusedxml>=0.7.1",
 ]
 
 [project.optional-dependencies]

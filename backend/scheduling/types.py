@@ -260,11 +260,19 @@ class StepTimingInput:
     - `start_not_before_week` (1..HORIZON_WEEKS or None): a `Not Started`
       step may not start before this week. Ignored for In Progress / Blocked /
       Done steps and for frozen projects.
+    - `overlap_weeks` (0..104, ADR 0043, P32): the step may start up to this
+      many weeks before the work it waits for has ended (release/gate rules
+      in `workflow.release_week` / `workflow.step_gate`). 0 = no overlap.
+      Rejected on a workflow's first step; ignored in a frozen project and on
+      a skipped step. The canonical / hashed form omits it when 0
+      (`workflow.canonical_step_timing_dict`), so every pre-P32 hash and
+      golden file is byte-identical.
     """
 
     step_id: str
     duration_override_weeks: int | None  # 1..104, None = lead-time table
     start_not_before_week: int | None  # 1..HORIZON_WEEKS, None = no floor
+    overlap_weeks: int = 0  # ADR 0043: 0..104, 0 = no overlap
 
 
 @dataclass(frozen=True)

@@ -352,6 +352,7 @@ GANTT_STEP_ROW_FIELDS = {
     "assigned_chamber_code", "eng_conflict", "chamber_overlap", "lead_time_weeks",
     "duration_override_weeks", "start_not_before_week", "timing_editable", "span_fte",
     "effort_weeks",  # ADR 0041 R4 (P30-T02)
+    "overlap_weeks", "predecessor_ids",  # ADR 0043 (P32-T03)
 }
 
 

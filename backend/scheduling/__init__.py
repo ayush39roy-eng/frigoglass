@@ -124,6 +124,8 @@ from scheduling.whatif import (
     validate_scenario_limits,
 )
 from scheduling.workflow import (
+    OVERLAP_MAX_WEEKS,
+    OVERLAP_MIN_WEEKS,
     STEP_DURATION_MAX_WEEKS,
     STEP_DURATION_MIN_WEEKS,
     ProjectPlan,
@@ -131,6 +133,7 @@ from scheduling.workflow import (
     build_lead_time_table,
     build_workflows,
     canonical_step_timing,
+    canonical_step_timing_dict,
     compute_progress_pct,
     derive_remaining,
     fte_span,
@@ -195,6 +198,9 @@ __all__ = [
     "build_lead_time_table",
     "build_workflows",
     "canonical_step_timing",
+    "canonical_step_timing_dict",
+    "OVERLAP_MAX_WEEKS",
+    "OVERLAP_MIN_WEEKS",
     "check_scheduler_determinism",
     "compare_solvers",
     "CrossCapacityHubLeader",

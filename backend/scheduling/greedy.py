@@ -16,18 +16,26 @@ Shape of a run (all pure, all deterministic — Invariant I8):
   3. **Pre-book the anchored steps** of every non-frozen, progress-tracked
      project (in scheduling order): `Done` steps at their recorded actuals
      (capacity consumed only for weeks >= CURRENT_WEEK) and `In Progress`
-     tails from `max(CURRENT_WEEK, pred_end + 1)` for `remaining` weeks. These
+     tails from `max(CURRENT_WEEK, gate)` for `remaining` weeks. These
      are facts about work already under way, so they must be on the books
      before any *search* for a free window (otherwise a higher-priority
      not-started project could grab the very weeks an in-progress project is
      already occupying). Conflicts here are flagged, never resolved by moving
      the anchored step (I11).
   4. Walk the non-frozen projects in scheduling order: each step in the DAG's
-     deterministic walk order gets `earliest_start = max(pred.end) + 1`
-     (floored at CURRENT_WEEK and, for a Not Started step, at its ADR 0019
+     deterministic walk order gets `earliest_start = gate(s)` (floored at
+     CURRENT_WEEK and, for a Not Started step, at its ADR 0019
      `start_not_before_week`); `design` searches the leader's calendar,
      `lab` searches eligible chambers, `elapsed` books nothing, `skipped`
      steps are transparent, held (Blocked) steps are not placed.
+
+Precedence (ADR 0009 as amended by ADR 0043): `gate(s)` and the release
+`G(q)` a step passes on are `workflow.step_gate` / `workflow.passed_release`.
+With every `overlap_weeks` 0, `gate(s) = max(pred.end) + 1` and `G(q) =
+end(q)`, i.e. exactly the pre-P32 rule, so every golden file is unchanged. A
+step with an overlap may start up to `o(s)` weeks before its release, but never
+before the step it runs in parallel with has started; it then passes its
+predecessors' end on, so successors still wait for all upstream work.
 
 FTE (ADR 0032, supersedes ADR 0002): a design step of a non-frozen project
 books `span = ceil(duration / leader.fte)` consecutive weeks of its leader (an
@@ -84,6 +92,9 @@ from scheduling.workflow import (
     compute_progress_pct,
     first_step_frontier,
     leader_fte_of,
+    passed_release,
+    release_week,
+    step_gate,
     unconstrained_end_week,
     validate_schedulable_project,
 )
@@ -452,33 +463,46 @@ def prebook_anchored_steps(
         region = _lab_region_for_hub(project.hub)
         frontier = first_step_frontier(project, current_week)
 
-        known_ends: dict[str, int] = {}
+        # ADR 0043: `known_g[q]` is the release G(q) a known step passes on
+        # (== its end when it has no overlap) and `known_starts[q]` its start
+        # (for the start anchor of an overlapping successor).
+        known_g: dict[str, int] = {}
+        known_starts: dict[str, int] = {}
         placed: dict[str, _Placement] = {}
         eng_conflict = False
         overlap = False
+
         for sid in plan.workflow.walk_order:
             sp = plan.steps[sid]
             preds = sp.step.predecessor_ids
-            preds_known = all(p in known_ends for p in preds)
-            pred_end = (
-                (max(known_ends[p] for p in preds) if preds else frontier - 1)
-                if preds_known
+            preds_known = all(p in known_g for p in preds)
+            release = release_week(sp.step, known_g, frontier) if preds_known else None
+            gate = (
+                _known_gate(plan, sp, release, known_starts, frontier)
+                if release is not None
                 else None
             )
 
             if sp.skipped:
-                if pred_end is not None:
-                    known_ends[sid] = pred_end
+                if release is not None:
+                    _know(known_g, known_starts, sp, release, release, release)
                 continue
             if sid in plan.held_step_ids:
                 # Held: not placed here (see _schedule_one_project); its end is
                 # known if its predecessors are, so successors stay consistent.
-                if pred_end is not None and sp.status == STATUS_BLOCKED:
+                if gate is not None and release is not None and sp.status == STATUS_BLOCKED:
                     assert sp.actual_start_week is not None
-                    hold_week = max(current_week, pred_end + 1, sp.actual_start_week)
-                    known_ends[sid] = max(sp.actual_start_week, hold_week - 1)
-                elif pred_end is not None:
-                    known_ends[sid] = pred_end
+                    hold_week = max(current_week, gate, sp.actual_start_week)
+                    _know(
+                        known_g,
+                        known_starts,
+                        sp,
+                        sp.actual_start_week,
+                        max(sp.actual_start_week, hold_week - 1),
+                        release,
+                    )
+                elif release is not None and sp.status != STATUS_BLOCKED:
+                    _know(known_g, known_starts, sp, release, release, release)
                 continue
 
             if sp.status == STATUS_DONE:
@@ -499,20 +523,21 @@ def prebook_anchored_steps(
                 eng_conflict |= conflict
                 overlap |= over
                 placed[sid] = placement
-                known_ends[sid] = placement.end_week
+                _know(known_g, known_starts, sp, placement.start_week, placement.end_week, release)
                 continue
 
             if sp.status in (STATUS_IN_PROGRESS, STATUS_BLOCKED):
                 assert sp.actual_start_week is not None
-                if pred_end is None:
+                if gate is None:
                     continue  # placed during the walk
                 if sp.remaining_span == 0:
-                    end = max(sp.actual_start_week, pred_end)
+                    end = max(sp.actual_start_week, gate - 1)
                     placed[sid] = _Placement(sp.actual_start_week, end, None, None)
-                    known_ends[sid] = end
+                    _know(known_g, known_starts, sp, sp.actual_start_week, end, release)
                     continue
                 # ADR 0032: the remaining effort is stretched by the leader's FTE.
-                tail_start = max(current_week, pred_end + 1, sp.actual_start_week)
+                # ADR 0043: `gate` replaces `pred_end + 1`.
+                tail_start = max(current_week, gate, sp.actual_start_week)
                 tail_end = tail_start + sp.remaining_span - 1
                 placement, conflict, over = _book_anchored(
                     ctx,
@@ -531,7 +556,7 @@ def prebook_anchored_steps(
                 eng_conflict |= conflict
                 overlap |= over
                 placed[sid] = placement
-                known_ends[sid] = placement.end_week
+                _know(known_g, known_starts, sp, placement.start_week, placement.end_week, release)
                 continue
             # Not Started: unknown until the walk.
 
@@ -539,6 +564,42 @@ def prebook_anchored_steps(
             placements[project.project_id] = placed
             flags[project.project_id] = (eng_conflict, overlap)
     return placements, flags
+
+
+def _known_gate(
+    plan: ProjectPlan,
+    sp: StepPlan,
+    release: int,
+    known_starts: dict[str, int],
+    frontier: int,
+) -> int | None:
+    """ADR 0043 `gate(s)` at pre-booking time; `None` while a start anchor is
+    not yet known."""
+
+    anchors = plan.start_anchor_ids(sp.step.step_id) if sp.overlap_weeks else ()
+    if any(r not in known_starts for r in anchors):
+        return None
+    return step_gate(sp, release, (known_starts[r] for r in anchors), frontier)
+
+
+def _know(
+    known_g: dict[str, int],
+    known_starts: dict[str, int],
+    sp: StepPlan,
+    start: int,
+    end: int,
+    release: int | None,
+) -> None:
+    """Record a step known at pre-booking time: its start, and its release
+    `G` when computable (a step with an overlap needs its own release to pass
+    it on; with no overlap `G` is its end, as before P32)."""
+
+    sid = sp.step.step_id
+    known_starts[sid] = start
+    if sp.overlap_weeks == 0 and not sp.skipped:
+        known_g[sid] = end
+    elif release is not None:
+        known_g[sid] = passed_release(sp, end, release)
 
 
 def _book_anchored(
@@ -615,6 +676,8 @@ def _schedule_one_project(
     left_out = False
     no_chamber_step_id: str | None = None
     ends: dict[str, int] = {}
+    starts: dict[str, int] = {}
+    g: dict[str, int] = {}  # ADR 0043 release G(q) each emitted step passes on
     steps_out: dict[str, StepSchedule] = {}
 
     def emit(
@@ -627,6 +690,8 @@ def _schedule_one_project(
         skipped: bool = False,
     ) -> None:
         ends[sp.step.step_id] = end
+        starts[sp.step.step_id] = start
+        g[sp.step.step_id] = passed_release(sp, end, release)
         steps_out[sp.step.step_id] = StepSchedule(
             step_id=sp.step.step_id,
             sequence_order=sp.step.sequence_order,
@@ -639,14 +704,17 @@ def _schedule_one_project(
             skipped=skipped,
         )
 
+    release = frontier - 1
     for sid in plan.workflow.walk_order:
         sp = plan.steps[sid]
-        preds = sp.step.predecessor_ids
-        pred_end = max(ends[p] for p in preds) if preds else frontier - 1
+        # ADR 0043: release(s) and gate(s); with no overlap anywhere these are
+        # max(pred.end) and max(pred.end) + 1, exactly the pre-P32 rule.
+        release = release_week(sp.step, g, frontier)
 
         if sp.skipped:
-            emit(sp, pred_end, pred_end, None, None, skipped=True)
+            emit(sp, release, release, None, None, skipped=True)
             continue
+        gate = step_gate(sp, release, (starts[r] for r in plan.start_anchor_ids(sid)), frontier)
 
         if sid in plan.held_step_ids:
             # Blocked hold (ADR 0006 / 0009): the Blocked step keeps its fixed
@@ -654,10 +722,10 @@ def _schedule_one_project(
             # held there, transparently, and nothing is booked.
             if sp.status == STATUS_BLOCKED:
                 assert sp.actual_start_week is not None
-                hold_week = max(current_week, pred_end + 1, sp.actual_start_week)
+                hold_week = max(current_week, gate, sp.actual_start_week)
                 emit(sp, sp.actual_start_week, max(sp.actual_start_week, hold_week - 1), None, None)
             else:
-                emit(sp, pred_end, pred_end, None, None)
+                emit(sp, release, release, None, None)
             continue
 
         if sid in prebooked:
@@ -700,9 +768,9 @@ def _schedule_one_project(
             # tail is placed now, still without a search.
             assert sp.actual_start_week is not None
             if sp.remaining_span == 0:
-                emit(sp, sp.actual_start_week, max(sp.actual_start_week, pred_end), None, None)
+                emit(sp, sp.actual_start_week, max(sp.actual_start_week, gate - 1), None, None)
                 continue
-            tail_start = max(current_week, pred_end + 1, sp.actual_start_week)
+            tail_start = max(current_week, gate, sp.actual_start_week)
             placement, conflict, over = _book_anchored(
                 ctx,
                 state,
@@ -734,10 +802,10 @@ def _schedule_one_project(
         # the leader's FTE for a design step (ADR 0032). `emit` still reports
         # the effort (`sp.duration`) as `duration_weeks`.
         duration = sp.span
-        w = pred_end + 1 if frozen else max(current_week, pred_end + 1)
+        w = gate if frozen else max(current_week, gate)
         if sp.start_not_before_week is not None:
             # ADR 0019 earliest start (never set for a frozen project): the
-            # search floor is max(CURRENT_WEEK, preds' end + 1, floor).
+            # search floor is max(CURRENT_WEEK, gate(s), floor).
             w = max(w, sp.start_not_before_week)
         kind = sp.step.kind
 

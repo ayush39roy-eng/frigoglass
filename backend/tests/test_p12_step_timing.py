@@ -204,6 +204,7 @@ async def test_queued_saves_audits_and_dispatches_one_greedy_run(db_session, dis
         "step_id": "PDD-E",
         "duration_override_weeks": 9,
         "start_not_before_week": 40,
+        "overlap_weeks": None,  # ADR 0043 (P32-T03)
         "effective_duration_weeks": 9,
         # ADR 0041 R4 (P30-T02): the derived effort (none here) and the lead.
         "effort_weeks": None,
@@ -243,10 +244,11 @@ async def test_queued_saves_audits_and_dispatches_one_greedy_run(db_session, dis
     assert audit.before_state == {
         "project_id": str(w.project.id), "step_id": "PDD-E",
         "duration_override_weeks": None, "start_not_before_week": None,
+        "overlap_weeks": None,  # ADR 0043 (P32-T03)
     }
     assert audit.after_state == {
         "project_id": str(w.project.id), "step_id": "PDD-E",
-        "duration_override_weeks": 9, "start_not_before_week": 40,
+        "duration_override_weeks": 9, "start_not_before_week": 40, "overlap_weeks": None,
         "recalc_status": "queued", "baseline_run_id": str(w.run.id),
     }
     (requested,) = await _audits(db_session, "project.recalculate_requested", w.project)

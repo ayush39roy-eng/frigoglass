@@ -32387,3 +32387,663 @@ leg (P31-T02) still needs its own security review before P31-T20 can close.
 **Not filtered:** VIP board (`/vip-board`, no params); the frontend does not call `/vip-projects`. `useProjectList` (`GET /projects`) has no UI and still takes single values.
 
 **Tests:** new `multi-select-filter.test.tsx`, `multi-chip-filter.test.tsx` (toggle, All, keyboard, aria, axe), `priority-board/api.test.tsx`; updated Dashboard page/hooks/api, executive charts + a11y, analytics-breakdown a11y, hub-type drill-down, register, Projects, Gantt (+hook key), Matrix (+URL/export), board. e2e page objects referenced none of these controls (no change). Results: vitest 215 files / 1707 passed; `tsc -b` 0; eslint 0 errors (8 pre-existing warnings); bundle 190.3 KB gzip initial (budget 400). No screenshots (owner deadline; QA skipped by owner).
+
+## [2026-10-23] P31 pushed live on owner's direction, QA skipped — orchestrator
+
+The owner said: "skip qa. just complete and push" (deadline about 20 minutes).
+
+**Verification before the push:** `tsc -b` and `vite build` passed on the final tree; vitest 215 files / 1707 passed
+(agent run plus the orchestrator's full run, exit 0).
+
+**Commit `e63cd89`, pushed.** Live checks on Render:
+- The backend serves the multi-value filters: `?type=NM&type=CO` returns 158 of 330.
+- New frontend bundle `index-74VBRkGk.js`; every route returns 200.
+
+**Gate P31-T20 is NOT closed:**
+- Security, backend part: PASS (S31-L1 Low: cap the list params with `max_length=16`, not yet applied).
+- Workflow, backend part: still running.
+- QA: skipped by the owner.
+- Security, frontend part: not run.
+
+**Live schedule regressed to greedy.**
+- Runs v3 and v4 were greedy `priority_move` recalcs made on Render at 02:20/02:21. The active run v4 has 135 within
+  year (about 50 %).
+- v5 (`vip_pin`) and v6 (`workspace_recalc`) FAILED: Render has no Celery solver worker, so worker-dispatched recalcs
+  fail there.
+- The orchestrator's attempt to re-run CP-SAT on Render was refused by the auto-mode classifier. It needs the owner to
+  run `scripts/run_cpsat_eager.py` with the Render env, or to grant permission.
+
+## [2026-10-23] Gate P31 (backend) — workflow-auditor: PASS
+
+Backend leg of P31-T20 (multi-select `category` / `type`, `docs/API_CONTRACT_P31.md`). The frontend leg (P31-T02)
+follows separately. Code audited = working tree = commit `e63cd89` for `backend/` (no diff); pre-P31 baseline =
+`8f48db7` (extracted with `git archive` into scratchpad, no worktree). Read-only on the repo apart from this entry.
+:5433, :8001 and Render were not touched.
+
+**Setup (as P30-T04 / P30-T20).** Disposable PG17 container (`p31t20-pg`, random localhost port, throwaway Fernet key),
+`alembic upgrade head` = `p30a_effort_types_hub_rename`, currency rates, `client_2026 --reset` at CW 42 (seed summary
+byte-identical to T04), dev users, the same 10 VIP pins applied the audited way. Greedy v1 then CP-SAT v2 through the
+worker body (activate=True); hashes equal T04 (greedy in/out `b97c0bed825cc9b6`/`9e9f83d44f56a80c`, CP-SAT
+`c9067778b97dbdf3`/`b8cf9e16bbc57d15`, FEASIBLE 2670/2773). CP-SAT active: 150 / 53 / 69 / 0. Container removed, key
+deleted. Harness: scratchpad `p31t20/` (`recon.py`, `surf.py`, `surfcmp.py`, `state.sh`, `raw/`).
+
+**1. Dashboard reconciliation under selections: 0 failures.** Hand values come only from raw psql dumps (projects, active
+run outcomes and step rows, scores, hub scopes). Endpoints: pipeline-totals, status-overview, completing-within-year
+(4 counts, row set, `priority_delivery` every field), hub-type-pipeline, analytics (by_type / category / hub / reg_year,
+completing_hub_type / by_type / by_hub, shares), region-summary, projects (+ facets: leaders, steps), vip-projects
+(plan and next; pinned-first + P1→Q / score / name ranking, limit 15, re-derived per hub from run step weeks).
+- Scopes: unfiltered, each of the 6 hubs, each of the 3 regions, and hub PD-India × region Greece (empty). Callers:
+  Admin, and Hub Planner bob (PD-India), whose out-of-scope hubs and regions gave zeros everywhere.
+- Selections: none; each category (7 + Unmapped); each type (7 + Unmapped); 8 multi-selections (incl. duplicates,
+  Unmapped ORed with a real value, every value of both params); and the full 8×8 category × type grid on unfiltered and
+  on each region.
+- 531 request sets per caller (×10 endpoints), 1062 total. Asserted: served = hand; Σ single categories = unfiltered
+  and Σ single types (incl. Unmapped) = unfiltered for every integer served by the 6 aggregates; Σ type cells =
+  category and Σ category cells = type; OR = Σ of disjoint singles; register `total_count` = pipeline = status = region
+  = Σ by_type = Σ by_category = Σ by_hub = Σ by_reg_year = Σ hub-type; five cards + other = total; Σ
+  `completing_by_type.completing_count` = Σ `completing_by_hub` = `within_year_count` (I9); every completing row inside
+  the selection. A negative control (hand model ignoring `type`) produced 64 failures on one request set, so the
+  harness discriminates.
+
+**2. Other surfaces: 0 failures.** 2217 current-code requests. `/gantt` (all pages), `/priorities`,
+`/priorities/distribution`, `/priority-board`, `/projects` (`type` and legacy `type_`), `/exports/matrix`, `/exports/gantt`,
+`/exports/project-registration`, `/exports/dashboard` (CSV parsed), across the scopes above.
+- Rows(selection) = rows(scope only) filtered by the predicate, in the same order: 1916 checks. `/projects` and the
+  registration export were compared by set plus name order (see N1).
+- Gantt `total_count` and `weekly_active_counts`, board column `count` / `design_weeks` / `lab_weeks`, and distribution
+  bands / histogram / `capacity_fill_count` partition over categories to the unfiltered value. Distribution
+  `total_projects` = `/priorities` rows for the same selection.
+- `/projects?type=X` = `?type_=X`. `Unmapped`, an unknown value in a list, and `category=` all give 422 on the 8
+  non-Dashboard endpoints (32 probes).
+- Pre-P31 identity (same DB, `8f48db7` app vs current): 1518 single-value requests. These include every Dashboard
+  aggregate unfiltered and per scope, the register with each single category / type, and all 8 surfaces above.
+  1413 are byte-identical. The 105 differences are all contract changes: 85 `/exports/matrix?type=` (pre-P31 ignored
+  `type`) and 20 `/exports/dashboard?type=Unmapped` (pre-P31 422).
+
+**3. Schedule unaffected.** Fingerprints before and after every request are identical: schedule_runs, outcomes, run
+steps, projects (incl. `schedule_stale` and `updated_at`; stale count 0), live steps, follow-ups, audit-log count, and
+export_jobs. Still v1 greedy inactive, v2 CP-SAT active. The predicate (`services/category_type_filter.py`) is pure
+and read-only.
+
+**4. Cross-filter readiness.** `/dashboard/analytics?category=…` (single, multi, with hub / region, and as Hub
+Planner) serves a `by_type` equal to the hand count of that category selection. Symmetrically, `?type=…` serves
+`by_category`. So each donut can be fed by the OTHER dimension's selection alone.
+
+**Non-blocking notes.**
+- N1 (Low, pre-existing, unchanged by P31). `GET /projects` orders by `name` only. The dataset has 4 duplicate names
+  (8 projects), so tie order is not deterministic. With `limit` < total, offset paging (including the registration
+  export's page loop if a page size below the set is ever used) could repeat or skip a tied row. Suggest
+  `order_by(Project.name, Project.id)` as the Dashboard register already does.
+- N2 (Info). Shares use Python `round` on binary floats, so exact ties go down (53.125 → 53.12). This is the same
+  family as the I12 tie note from P30-T20; the browser does not recompute, so the surfaces agree.
+- N3 (Info, for P31-T02). `by_type` / `by_category` omit the `Unmapped` key when its count is 0, rather than serving
+  0. A donut whose selected `Unmapped` slice drops to 0 under the other filter must handle the absent key.
+
+**Verdict: PASS (backend).** No invariant (I9, I19, I23) or reconciliation failure under any selection, scope or caller.
+Single values are unchanged from pre-P31 except the two contract-documented changes. Filters are read-only. There is no
+scheduler change: the three prototype defects (FTE, chamber efficiency, delay) are untouched.
+
+## [2026-11-04] P32-T05 — frontend-builder
+
+**Task.** Live Gantt overlap gesture (ADR 0043, `docs/API_CONTRACT_P32.md` A2/A4), plus the shared pure helpers
+P32-T06 imports.
+
+**Shared helpers (created first, exports as agreed with P32-T06).**
+- `frontend/src/surfaces/gantt/lib/step-overlap.ts`: `OverlapStep`, `releaseWeek` (A2 `release(s)` = max `G(q)` over
+  predecessors, `G` recursive: skipped = max G of its preds, `o=0` = end, `o>0` = max(end, preds' G); `frontier-1`
+  with no predecessors; unknown ids ignored, cycle-safe), `nearestStartAnchor` (nearest non-skipped predecessors,
+  walking through skipped; latest start + tied ids), `overlapForDrop` (round, floor at `frontier`, clamp to the
+  anchor; `w >= release+1` → `overlapWeeks: null`; else `release+1-w` capped at 104; `parallelWith` = nearest
+  non-skipped predecessors whose served end ≥ w, latest end first). Interprets the gesture only — never a displayed
+  schedule number (I9).
+- `frontend/src/surfaces/gantt/lib/lane-packing.ts`: `packLanes` (greedy, sorted start→end→input order, inclusive
+  weeks: a shared week = two lanes) and `laneCount` (≥ 1). Tests: `step-overlap.test.ts` (19), `lane-packing.test.ts` (5).
+
+**Live Gantt.**
+- `api/types.ts`: `GanttStepRow.overlap_weeks` + `predecessor_ids`; `StepTimingRequest.overlap_weeks?`;
+  `StepTimingResponse.overlap_weeks`. Readers use `?? null` / `?? []` so a pre-P32 API still renders.
+- `StepTimingTarget` gains `overlapWeeks`, `predecessorIds`, `overlapSteps` (`toOverlapSteps(project.steps)`).
+  `hasTimingEdit` includes a non-null `overlap_weeks` ("edited" marker title adds "parallel with the previous step,
+  N wk overlap"; step bar hover adds "runs in parallel (N wk overlap)").
+- Drag overlay (`step-drag-overlay.tsx`, `dragOutcome`): a body move is re-read through `overlapForDrop` (frontier =
+  axis origin W1; the server floors at CURRENT_WEEK). The bar may go left of the predecessor's end down to the
+  anchor; the ghost shows the clamped landing week. Every move PATCH now sends `{start_not_before_week, overlap_weeks}`
+  (null when no overlap, which also clears a previous overlap). Live label "Parallel with {name} · {N} wk overlap",
+  plus " · same designer — will start when they are free" for design onto design (`overlapDragLabel` in
+  `step-weeks-copy.ts`); `data-overlap="true"` on the label. Resize unchanged.
+- Dialog: "Overlap with previous step (weeks)" (0..104, 0 sent as null, only sent when changed), disabled with an
+  explanatory hint on the first step (no predecessors) and on started steps. Reset sends all three fields null and is
+  enabled by an overlap alone. `floorNote` copy now says dragging onto the previous step runs the two in parallel.
+  `TimingChange.overlapWeeks` added to the panel summary.
+- **Owner clarification mid-task (via coordinator), overrides A4's collapsed-row bullet:** "broken bar" = the existing
+  expanded waterfall (one row per step). The collapsed project row is unchanged; lane packing is NOT used in the live
+  Gantt (helper kept for T06). A first lane-packed collapsed row was built and fully reverted (`gantt-rows.ts`,
+  `gantt-bars.tsx` unchanged vs HEAD).
+
+**Tests.** Existing fixtures gained the two fields; 3 assertions updated for the intentional `overlap_weeks` in the
+move / Reset bodies. New `P32` block in `step-timing.test.tsx` (8): drop onto predecessor (body + label + ghost),
+anchor clamp, design-on-design note, drag back past release clears, overlap as edit + Reset nulls, dialog send / 0→null,
+disabled on first and started steps, floorNote copy. `tsc -b` clean, `eslint src/surfaces/gantt` clean, gantt vitest
+221/221. No `dangerouslySetInnerHTML`, no raw hex, no new dependency.
+
+**Notes.** The PATCH now always carries `overlap_weeks` on a move; it needs P32-T03's `extra="forbid"` schema to
+accept the field (422 against a pre-T03 backend). Untouched: `surfaces/planning/whatif/`.
+
+## [2026-11-04] P32-T03 — backend-builder
+
+**Task.** Parallel steps, database and API leg (ADR 0043, `docs/API_CONTRACT_P32.md` A3). Nothing under
+`backend/scheduling/` was edited. `StepTimingInput.overlap_weeks` came from algorithm-engineer (P32-T01). The plan-import
+files and `routers/whatif.py` (P32-T04) were not touched.
+
+**Built.**
+- Migration `alembic/versions/p32a_step_overlap.py` (down_revision `p30a_effort_types_hub_rename`; new head). It adds
+  `project_workflow_steps.overlap_weeks` SMALLINT NULL with CHECK `ck_project_workflow_steps_overlap_weeks_range`
+  (`IS NULL OR BETWEEN 1 AND 104`). No backfill. The model column and CHECK are in `models/workflow.py`.
+- `PATCH /projects/{id}/steps/{step_id}/timing` (`schemas/step_timing.py`, `services/step_timing.py`,
+  `api/routers/step_timing.py`):
+  - Takes `overlap_weeks: int | null`: strict, range 0..104 (`OVERLAP_MAX_WEEKS`). `normalise_timing_changes` turns 0
+    into null. Absent means untouched; null clears.
+  - Order of checks:
+    1. Range, then unknown step: 422.
+    2. Non-null overlap on a step whose **template `predecessor_ids` is empty**: 422 `VALIDATION_ERROR`,
+       loc `["body","overlap_weeks"]`. This reads the DAG, not `sequence_order`, and comes before the 409s.
+    3. Frozen / not schedulable / lead 0: 409 as before.
+    4. Effort-zeroed step with a NEW non-null value: 409 `STEP_SKIPPED` (overlap joins `TIMING_FIELDS`). Clearing is
+       allowed.
+    5. Same values: `unchanged`. The comparison includes overlap, so stored null + sent 0 counts as unchanged.
+    6. Done: 409 `STEP_DONE`.
+    7. In Progress / Blocked with a NEW non-null floor **or overlap**: 409 `STEP_STARTED`. Clearing is allowed, and
+       resending the same value with a resize is allowed.
+  - The audit `project.step_timing` before/after states now carry `overlap_weeks`.
+  - `StepTimingResponse.overlap_weeks` is new. The recalc lifecycle is unchanged.
+- `GanttStepRow` gains `overlap_weeks` (live row) and `predecessor_ids` (sorted, from the LIVE template = the DAG the
+  next run uses; `[]` when the template is missing).
+- `build_schedule_input_from_db`:
+  - Passes `overlap_weeks` (null → 0). A row with only an overlap is included.
+  - **Defensive:** a stored overlap on a step whose template has no predecessors is dropped to 0. The scheduler
+    raises `ValueError` on it, which would fail the whole run. Such a value could be left over from a Super Admin
+    DAG edit; this is the same idea as dropping other-workflow timing.
+  - `workflow_snapshot.step_timing` records `overlap_weeks` **only when non-zero**, so the snapshot of every run
+    without an overlap is unchanged (I14).
+  - The What-if baseline inherits all of this through the same builder (`whatif_baseline.py` calls it; no change).
+- `services/project_steps.py`: a workflow re-point also clears `overlap_weeks`.
+- Other readers checked:
+  - Workspace stages, demand load, ask-agent and exports read only the duration (overlap has no effect on duration)
+    and do not serve the floor, so they need no change.
+  - No OpenAPI copy is committed. The mirror test is `tests/test_openapi_frontend_contract.py` (`GanttStepRow`,
+    `StepTimingRequest`, `StepTimingResponse` exact). It passes against the frontend's concurrent `types.ts`.
+
+**Tests.**
+- New `tests/test_p32_step_overlap.py` (40 tests):
+  - set, combined fields, clear with null / 0, 0 → unchanged, same value → unchanged, other field keeps overlap;
+  - first-step 422 with loc, 0/null allowed on the first step, 422 before 409, first step follows the template DAG;
+  - range 422 (-1, 105) and strict 422 ("3", 2.5, true);
+  - started 409 (IP and Blocked) with clear allowed, resize keeping the overlap allowed;
+  - Done 409, lead-0 409, effort-zeroed 409 with clear allowed;
+  - RBAC 403 ×4, other-hub 404, Admin and Super Admin 200;
+  - Gantt serves `overlap_weeks` and sorted `predecessor_ids` (a 2-predecessor DAG);
+  - schedule input drops a stale first-step overlap; a greedy run's snapshot records the overlap only when non-zero;
+  - re-point clears the overlap; DB CHECK (0, 105, -1 refused; 1, 104 accepted).
+- New `tests/test_p32_migration.py`: up / down / up in its own PG17 container.
+- Updated, contract-driven: `test_p12_step_timing.py::test_queued_…` (exact body and audit gain `overlap_weeks: None`)
+  and `test_p20_fte_followups.py::GANTT_STEP_ROW_FIELDS` (+2 fields).
+- Results:
+  - The related suites (P12, P20, P30 effort, P12 gate QA, OpenAPI mirror and every test mentioning timing or gantt):
+    774 then 376 passed.
+  - `test_migrations.py`, `test_p29_migrations.py`, `test_p30_migration.py` and the P32 migration test: 6 passed.
+  - `ruff check .`: clean.
+  - mypy (strict) on the 9 touched source files: 0 errors in them.
+
+**Notes.**
+- (a) The DB CHECK on `start_not_before_week` is still 1..78. A 2027 plan year (W104, ADR 0044) does not reach live
+  rows, because the What-if import is never persisted.
+- (b) Process slip, disclosed: to diff mypy against the baseline I ran `git stash` / `git stash pop` on the shared
+  working tree for about 20 s. The pop was clean: no conflict, the stash list is empty, and every concurrent
+  agent's tracked file was still modified afterwards. Do not repeat this; diff in a scratch `git archive` instead.
+
+## [2026-11-04] P32-T02 — algorithm-engineer
+
+**Task.** Pure plan-import engine for the What-if (ADR 0044, `docs/API_CONTRACT_P32.md` B1/B3). No I/O, no
+CP-SAT, deterministic. Only new files; `whatif.py`, `types.py`, `greedy.py`, `workflow.py`, `cp_sat.py` and
+`invariants.py` were not edited (the `StepTimingInput.overlap_weeks` field from P32-T01 was used once it landed).
+
+**Files.** `backend/scheduling/plan_import.py` (new), `backend/tests/scheduling/test_p32_plan_import.py` (new, 42
+tests, synthetic baselines from `_whatif_fixtures`, CW 31; the client workbook is never used).
+
+**Public API** (backend-builder imports these from `scheduling.plan_import`):
+- Inputs as B1, field for field: `ImportNewEngineer`, `ImportProject`, `StepEdit`, `PlanImportRequest`.
+- `run_plan_import(baseline, req, *, deadline_s=None, clock=None) -> PlanImportResult`.
+- `build_plan_import_input(baseline, req) -> ScheduleInput`: the import run's input, for validators.
+- `validate_plan_import_limits(req)` and `capacity_hubs()`.
+- Constants: `MAX_IMPORT_PROJECTS` 600, `MAX_IMPORT_NEW_ENGINEERS` 50, `MAX_IMPORT_EDITS` 2000,
+  `PLAN_YEAR_END_WEEKS` (52, 104), `SPILLOVER_MARGIN_WEEKS` 26, `PLAN_BASE_YEAR` 2026 (labels only).
+- Results: `PlanImportResult`, `PlanImportProject`, `PlanImportStep`, `PlanImportCapacity` (`CapacityWindow`,
+  `CapacityWindowFigure`, `HubCapacityRow`, `LabRegionCapacityRow`, `WeeklyCapacity`, `WeeklySeries`, `DesignerRow`,
+  `DesignerWindowFigure`), `PlanImportKpis`, `PlanImportChanges`, `PlanImportChange`, `PlanImportIssue`.
+- Serialise with `whatif.to_jsonable`.
+
+**Rules as implemented (B1).**
+- Both runs use `within_year_week = plan_year_end_week` and `horizon = +26`.
+- Merge drops every `replaces_project_id`. In file_only mode, `replaces_project_id` is echoed but removes nothing, and
+  every `before_*` is null.
+- Ids are `imp-{rank or 9999:04d}-{file_row:05d}-{k}`, where `k` is the 1-based order among rows sharing
+  (rank, file_row).
+- Step timing:
+  - `step_weeks` become overrides; 0 means skipped.
+  - DAG ancestors of the stage get 0 and are reported `done_before_import`, status Done, editable none.
+  - In Development / Under Industrialization rows: the first non-ancestor, non-skipped step in walk order is In
+    Progress at 0 %, with `actual_start = current_week`. Pre-booking anchors it, so a live Not Started project waits;
+    two anchored rows on one designer give ENG_CONFLICT.
+- Auto-assign uses `whatif._pick_leader` in greedy `_sort_key` order. Load is seeded with the led design weeks of
+  every explicitly-led project in the run.
+- Ranks order only after VIP / priority / status / category, because they enter through the id tie-break, as B1
+  says.
+
+**Judgement calls (no ADR needed: each is inside the contract or follows an existing rule; the orchestrator may
+promote any of them).**
+1. Edit `duration_weeks = None` keeps the step's current duration and does not clear it. For a plan project the solver
+   input is the merged `user ?? effort` value, which cannot be split. Clearing it would silently revert an
+   effort-split step to the lead-time table. The floor and the overlap are replaced as given (None clears them).
+2. Edits follow the ADR 0019 / 0043 PATCH rules as `ValueError`s:
+   - frozen or non-schedulable project;
+   - Done step;
+   - skipped step (incl. done before the import) given any value;
+   - floor or overlap on an In Progress / Blocked step;
+   - overlap on a workflow's first step;
+   - unknown ref or step (a replaced project, or any plan project in file_only mode, is "not in the simulation");
+   - a duplicate (ref, step).
+3. Designer rows serve `booked_weeks` on the effort basis (Σ `duration/span` per booked week) plus
+   `booked_span_weeks` (calendar weeks). B1's literal "span weeks vs fte × available" would read 200 % for a fully
+   booked 0.5 FTE designer, against DOMAIN_RULES "Capacity supply" and ADR 0028 ("load basis = I6").
+   `available_weeks = fte × wwpe(capacity hub)/52 × window weeks`.
+4. Design load per week:
+   - Not Started, Done and frozen steps: `duration/(end-start+1)` on booked weeks ≥ CW.
+   - In Progress / Blocked tails: `remaining/remaining_span` on the last `remaining_span` weeks.
+   - Held (Blocked) steps: nothing.
+   - Lab steps: 1 per booked week.
+   - Exact `Fraction` sums. Weekly values and window totals are each rounded to 2 dp, so Σ rounded weekly can differ
+     from the window by ≤ 0.005/week.
+   - Supply per capacity hub = Σ counted FTE of engineers whose hub maps to it (`dc.capacity_hub_name`).
+5. A new designer on a capacity hub that serves OEM hubs (R&D-Greece) also gets "OEM" + the OEM categories (ADR 0042),
+   so an OEM row auto-assigned to them is not CAT_NOT_ALLOWED. New designer FTE must be in (0, 1].
+6. Issues are raised for file projects and for plan projects carrying an edit; the live plan's own warnings are not
+   repeated. NEW_DESIGNER is per file project led by a new designer (info). LEFT_OUT messages name the reason (no
+   designer / no chamber for step X / no window before the horizon). Messages carry no engineer or customer name.
+7. `projects` holds file rows (by file_row, request order), then non-excluded plan rows by
+   (finish null last, finish, name, id). `scheduling_order` is in refs.
+
+**Verification.**
+- 42/42 new tests pass. They cover merge/replace, file_only, rank order, expanded ids, ancestors and the anchor
+  (incl. ENG_CONFLICT), STEP_NOT_IN_CATEGORY, auto-assign spread, existing load and no designer, new designer
+  capacity, edits incl. overlap (`start(H) = end(G) − 1`) and every rejection, plan year 52 vs 104 (spillover →
+  within, left out → fits), capacity sums (Σ design = 34 effort weeks, Σ lab = 17, 0.5 FTE effort vs span, In
+  Progress tail = remaining), excluded rows, determinism and order independence, baseline immutability, caps,
+  deadline, and `validate_invariants(build_plan_import_input(...)) == ()` with overlap edits.
+- Full `tests/scheduling` suite: 433 passed.
+- `ruff check` / `ruff format --check` are clean, and `mypy --strict` reports no error in either new file. The only
+  errors are pre-existing ones in `cp_sat.py`, and `scheduling/` is mypy-excluded in pyproject.
+- 600 file rows + 200 plan projects (merge) run in 0.33 s.
+- `docs/IMPLEMENTATION_PLAN.md` is not edited; the orchestrator marks the task.
+
+## [2026-11-04] P32-T01 — algorithm-engineer
+
+**Task.** Per-project step overlap (ADR 0043, DOMAIN_RULES "Parallel steps — per-project overlap", contract
+`docs/API_CONTRACT_P32.md` A1/A2) in `backend/scheduling/` only. `plan_import.py` and everything outside
+`scheduling/` untouched.
+
+**Built.**
+- `types.py`: `StepTimingInput.overlap_weeks: int = 0` (last field).
+- `workflow.py`: `OVERLAP_MIN_WEEKS`/`OVERLAP_MAX_WEEKS` (0..104). `validate_step_timing` raises `ValueError` for
+  a value outside 0..104 (or a non-int / bool) and for a non-zero value on a step with no predecessors. The sort key
+  gains the overlap. `canonical_step_timing` keeps an overlap-only row. New `canonical_step_timing_dict(row)` gives
+  the hash/snapshot form, which carries `overlap_weeks` **only when non-zero**. Use it wherever a timing row is
+  hashed: `dataclasses.asdict` would add the key. `StepPlan.overlap_weeks` is 0 for a frozen project, a skipped
+  step and a first step, and is kept on started steps.
+- Shared helpers in `workflow.py`, used by greedy, CP-SAT, `unconstrained_end_week` and the validator:
+  `release_week`, `passed_release` (G), `step_gate`, `ProjectPlan.start_anchor_ids` (SG),
+  `ProjectPlan.release_sources` (static R sets; `FRONTIER_SOURCE` = frontier−1 marker) and `ProjectPlan.has_overlap`.
+- `greedy.py`: `prebook_anchored_steps` tracks known G and starts (`_know`, `_known_gate`). `_schedule_one_project`
+  emits skipped and held-not-blocked steps at release(s). Not Started floor = `max(CW, gate, start_not_before)`
+  (frozen: gate). In Progress / Blocked tails and the Blocked hold use `gate` where they used `pred_end + 1`.
+  With remaining 0 the row ends at `max(actual_start, gate − 1)`.
+- `cp_sat.py`: a project with no overlap gets the **identical pre-P32 model**. A project with an overlap uses the
+  R sets: `start ≥ end_excl(r) − o(s)` for every r in ⋃R(q), q ∈ P(s), plus `start ≥ start(r)` for r ∈ SG(s) when
+  o > 0. Skipped steps take the max over their R set. The new constraints use the snake_case `model.add`, so mypy
+  still shows only the 38 pre-existing OR-Tools stub errors.
+- `invariants.py`: I3 is restated through G (`start ≥ G(q) + 1` per predecessor). It is skipped for o(s) > 0 and
+  reworded when G ≠ end. I21's In Progress tail is checked against the gate when the project has an overlap.
+  New **I27** recomputes the gate from the output rows.
+- `__init__.py`: exports `canonical_step_timing_dict`, `OVERLAP_MIN_WEEKS` and `OVERLAP_MAX_WEEKS` (two small Edits).
+
+**Rule ambiguities resolved.**
+1. *Frontier floor in `gate`.* The contract writes `gate = max(release + 1 − o, anchor, frontier)` for every step.
+   Today's rule has no frontier floor on non-first steps (greedy uses `max(CW, pred_end + 1)`). That differs when a
+   non-frozen project's `actual_start_week` > CW and a Done predecessor ended earlier. Applying the floor only when
+   o(s) > 0 keeps "every o = 0 ⇒ today's rule" literally true. That is the invariant the contract says must hold,
+   and ADR 0043 §2 itself says "floored by frontier as today". Implemented: `gate = release + 1` when o = 0.
+2. *Where I27 is reported.* For o(s) = 0, I27 is the same check as I3 (gate = release + 1). I27 is therefore reported
+   only for o(s) > 0 steps, so an I3 failure is not reported twice and the existing negative suites' violation sets
+   are unchanged.
+3. *Which G a validator uses for a skipped row.* In I3 and I27, G of a skipped row is the row's emitted week. This is
+   what I3 already compared against, so I3 is byte-for-byte the same check when there is no overlap.
+4. *Started steps keep their overlap* (ADR 0043 §2 "keeps running in parallel"). The API refuses a *new* value on a
+   started step (409); the solver honours a stored one.
+5. *Prebook with an overlapping Done step.* A Done step with o > 0 whose predecessors are not yet known has an
+   unknown G. Its successors are then placed in the walk instead of pre-booked. With o = 0 nothing changes.
+
+**Byte-identity evidence.** Before editing, I took a repr snapshot of greedy and CP-SAT (3 + 1 deterministic units)
+on the 46-project seed, with and without a timing variant. After editing it is `cmp`-identical. The five
+`_selftest*` scripts give identical output except wall-clock lines. Their pre-existing failures are unchanged:
+`_selftest`/`_selftest_cp_sat` 2 and `_selftest_invariants` 1 (CURRENT_WEEK 42 vs scripts written for 31). Every
+existing golden test passes unchanged.
+
+**Tests.** New `backend/tests/scheduling/test_p32_overlap.py`, 34 tests, hand-derived on PDD/B at CW 31:
+- lab ∥ design (H 33-38 next to E 33-36);
+- anchor through skipped F/G (o = 10 → clamped at start(E));
+- elapsed overlap ending before its predecessor, with M waiting for both (G(L) = 45 → M 46);
+- design-on-design serialised by the leader (baseline weeks; the unconstrained walk does overlap: 47 vs 48);
+- floor still wins, and an overlapping lab step waits for the chamber;
+- first-step, out-of-range and 104-inclusive validation, and overlap on a skipped step ignored;
+- frozen ignores overlap;
+- In Progress tail 30..33 (vs 30..37 without overlap), and the Blocked hold at the gate;
+- unconstrained finish, order independence, canonical dict / `asdict` parity;
+- CP-SAT vs greedy agreement on 3 fixtures plus an In Progress one. L in the elapsed chain may sit at 44 or 45:
+  phase 2 minimises finish weeks only;
+- CP-SAT zero-overlap byte identity, and a contention case with the validator on both solvers;
+- negative I27 ×2, I3-via-G (a violation the old per-edge check misses), I21 against the gate;
+- a seeded fuzz with 5 seeds, both solvers and the full validator. It produces 1–6 real parallel pairs per case.
+
+**Results.**
+- `pytest -c pytest-scheduling.ini` without the concurrent `test_p32_plan_import.py`: **425 passed** (391 baseline +
+  34). Coverage of touched modules: cp_sat 97 %, greedy 91 %, invariants 93 %, workflow 98 %, types 100 %. The
+  run's TOTAL of 79.8 % fails the 85 % gate only because the concurrent, untested-in-that-run `plan_import.py` is
+  counted.
+- With the plan_import tests: 467 passed. That run's coverage report spans all of `backend/` (57 %). This comes from
+  the concurrent work, not this task, and needs a look before the gate.
+- ruff check and format are clean on my files. `plan_import.py` has 2 E501s, which belong to the other agent.
+
+**For backend-builder (P32-T03).** Pass `overlap_weeks` (NULL → 0) into `StepTimingInput`. Hash or snapshot timing
+rows with `canonical_step_timing_dict`, never `asdict`. `services/priority_preview._canonical` uses
+`dataclasses.asdict(schedule_input)`. Its token now carries `overlap_weeks: 0` on every timing row. That is harmless
+because the token is ephemeral, but it is not pre-P32-identical.
+
+`docs/IMPLEMENTATION_PLAN.md` is not edited; the orchestrator marks the task.
+
+## [2026-11-04] P32-T04 — backend-builder
+
+**Task.** Plan import into the What-if (ADR 0044, `docs/API_CONTRACT_P32.md` B2/B3): the `.xlsx` parser,
+`POST /whatif/import/parse` and `POST /whatif/import/simulate`. The engine is algorithm-engineer's
+`scheduling/plan_import.py` (P32-T02). It is called, not edited. `backend/scheduling/` and the concurrent P32-T03
+files are untouched.
+
+**Files.**
+- `backend/services/plan_import_xlsx.py`: a pure parser.
+  - `read_workbook` finds sheets by content (header names and step codes), never by name or column letter. The client's
+    sheet is called `Process steps ` (trailing space).
+  - `map_rows` applies the ADR 0044 §4–§6 rules against a `ParseContext`.
+- `backend/services/whatif_import.py`: plan context, request → engine dataclasses, the edit filter, scope narrowing,
+  audit.
+- `backend/schemas/whatif_import.py`: strict schemas with the caps.
+- The two routes in `backend/api/routers/whatif.py`.
+- `defusedxml>=0.7.1` added through uv (`pyproject.toml`, `uv.lock`).
+- Tests: `tests/plan_import_helpers.py` (synthetic workbooks), `tests/test_p32_plan_import_xlsx.py` (32 pure),
+  `tests/test_p32_whatif_import_api.py` (21 DB).
+
+**Decisions and assumptions (beyond the contract).**
+1. **Security.**
+   - openpyxl runs `read_only=True, data_only=True, keep_links=False`. The parser refuses to run unless
+     `openpyxl.xml.DEFUSEDXML` is true.
+   - The zip is pre-checked: ≤ 2000 members, ≤ 64 MB uncompressed. Scans stop at 20 sheets, 60 columns, 10 header
+     rows and 200 process-steps rows.
+   - Only the 16 contract columns are copied out of a row. Customer, CAPEX, Tooling, notes, volume, business case,
+     comments, region and date are never read into any structure.
+   - Parsing runs in the What-if pool under `run_capped` (time cap and one job per user).
+2. **Errors.**
+   - A file that is not .xlsx (extension or magic bytes), empty, corrupt, headerless or over 2000 data rows gets
+     **422 `IMPORT_FORMAT`**. This is not workspace's 415 `UNSUPPORTED_FILE_TYPE`, because the contract and frontend
+     list 413/422/429/503 only.
+   - Over 5 MB gets 413 `FILE_TOO_LARGE`. Engine `ValueError` gets 422 `INVALID_IMPORT`: it is returned from the
+     worker, so `run_capped` does not relabel it `INVALID_SCENARIO`.
+3. **Hub mapping.**
+   - The token order is RPD HUB, then Expenses, then Plant. Non-hub Expenses values ("Development", "In Que") are
+     ignored.
+   - Taking the hub from Expenses or Plant gives info `HUB_DEFAULTED`. If nothing resolves, the hub is the matched
+     leader's hub, else R&D-Greece, with a warning.
+   - When an OEM category or stage forces OEM, an OEM hub found in Expenses or Plant is preferred (`OEM/Seitek…` →
+     OEM-Seitek). Otherwise OEM-HCK.
+   - An OEM hub with a non-OEM category maps A+/A → A-OEM, B → B-OEM, C/C+/D → C-OEM (`CATEGORY_MAPPED`).
+   - Special Category with a blank category is scheduled as A+.
+4. **Lead-time rows.**
+   - Process-steps sections are rows holding all 14 codes of one workflow. Category rows are the labelled rows with at
+     least one number, read until a blank label.
+   - A missing plain row (the client file has C+ and D but no C) falls back to the app table as **info**
+     `LEAD_TIME_ROW_MISSING`. A missing special/C+/D row is a warning.
+5. **Matching.**
+   - A name matches only if it occurs once in the file and once in scope (symmetric with the code rule). Two file rows
+     on the same project: the first keeps it, the rest are `MATCH_AMBIGUOUS`.
+   - `DUPLICATE_ROW` is a warning for a repeated normalised name.
+   - "No engineer" tokens: blank, TBC, TBD, TBA, -, n/a, na, none, ?.
+   - Matching tokens split on spaces, hyphens, `_` and `.`.
+6. **Parse roster scope.** The parse roster lists the caller's in-scope designers (`capacity_row_ok`) plus any designer
+   a file row named. Matching uses the full roster: FTE > 0 and counted in capacity.
+7. **Edits (orchestrator ruling).** Stale edits are dropped, not 422'd. `applicable_edits` mirrors the engine's
+   `_apply_edit`:
+   - unknown, out-of-scope or replaced refs, and plan edits in file_only mode, are dropped;
+   - non-schedulable or frozen projects, and skipped, done-before-import or Done steps, are dropped;
+   - a floor or overlap on a started step is stripped, keeping only its duration.
+   - Only malformed edits (an overlap on a first step) or out-of-range values reach a 422.
+8. **On Hold (owner rule 2026-11-04, overrides B2/B3).**
+   - Parse: non-schedulable rows get `include=false` and info `STATUS_NOT_SCHEDULED` ("… — not mapped").
+   - Simulate drops them even when re-included.
+   - In merge mode a matched On Hold / Cancelled / Commercialized row **removes** its plan project. This is done
+     service-side by filtering the baseline copy (`without_projects`) before both runs. No engine field was needed.
+     The removed project is neither returned nor counted (KPIs are "baseline projects still in the run").
+9. **Scope narrowing.**
+   - KPIs are recomputed from the visible rows plus the in-scope excluded plan count. For an unrestricted caller they
+     equal the engine's (tested).
+   - Restricted callers get rewritten workings (the engine's lines carry whole-plan counts).
+   - Designers are served when in-scope or new. Issues are served for file rows and visible plan rows.
+10. **Response additions.** `within_plan_year`, `lab_overlap` and `no_leader` on projects, and `booked_span_weeks` on
+    designer windows (orchestrator).
+11. **Expansion.** `expand_multi`: only copy 1 carries `replaces_project_id`.
+12. **Audits.** `whatif.import_parse` stores `{file_sha256, counts}` plus issue-code counts. `whatif.import_simulate`
+    stores counts, the mode and a 16-hex request digest. Neither stores names, the file name or content.
+
+**Manual smoke (real client file, never committed).**
+- Run in a disposable PG17 (`p32t04-pg`, throwaway Fernet key, `alembic upgrade head` incl. p32a, `client_2026`
+  seed, CW 42; removed afterwards). The dev DB on :5433 was not used: it lacks p32a.
+- Parse: 97 rows, 87 schedulable, 10 not scheduled (On Hold, include=false); 41 matched (30 name + 11 code), 56 new;
+  18 auto-assign; 2 new designers (3 rows).
+- Issues by code:
+
+  | Code | Count |
+  |---|---|
+  | MATCHED | 41 |
+  | ENGINEER_MISSING | 18 |
+  | LEAD_TIME_ROW_MISSING (info, C rows) | 15 |
+  | STATUS_NOT_SCHEDULED | 10 |
+  | CATEGORY_MAPPED | 9 |
+  | HUB_OEM_DEFAULTED | 5 |
+  | ENGINEER_UNKNOWN | 3 |
+  | CATEGORY_DEFAULTED | 3 |
+  | HUB_DEFAULTED (info) | 2 |
+  | STATUS_DEFAULTED | 2 |
+  | MATCH_AMBIGUOUS | 2 |
+
+- Simulate, merge 2027: 87 file + 289 plan; within plan year 188 (file 55 of 87); existing 150 → 133; 17 newly
+  slipping; 48 left out.
+- Simulate, file_only: 67 of 87 within the plan year.
+- With `expand_multi`: 122 file projects.
+
+**Results.**
+- `tests/test_p32_plan_import_xlsx.py` + `tests/test_p32_whatif_import_api.py`: 53 passed. With `test_p18_whatif_api`
+  and `test_openapi_frontend_contract`: 335 passed. With all route/OpenAPI suites: 430 passed (earlier run).
+- ruff check and format are clean on every file I touched.
+- mypy is clean on the four app modules. The new test files show only the repo-wide `no-untyped-def` test noise
+  (`test_p18_whatif_api.py` has 38 of the same).
+
+`docs/IMPLEMENTATION_PLAN.md` is not edited; the orchestrator marks P32-T04.
+
+## [2026-11-04] P32-T04 follow-up — backend-builder
+
+**1. Plan leader kept for a blank engineer** (orchestrator ruling; ADR 0044 §5 amended in place with an "(Amended
+2026-11-04)" sentence).
+- A blank / TBC engineer on a row matched to a plan project whose leader is on the roster (FTE > 0, counted) now gets
+  `leader {kind:"existing"}` with that leader. The row gets info `ENGINEER_FROM_PLAN` instead of `ENGINEER_MISSING`.
+- Auto-assign only applies when neither the file nor the matched project names a leader. A plan leader with FTE 0 or
+  not counted in capacity is never kept.
+- Implementation: `MatchableProject.leader_engineer_id` was added, and the parser now matches projects BEFORE resolving
+  the hub. A kept leader therefore also drives the India → R&D-India rule.
+- Tests: +1 parser test, +1 API test (55 pass).
+- Not edited: `docs/API_CONTRACT_P32.md`'s B2 issue-code list and the DOMAIN_RULES "Plan import" paragraph ("a blank
+  engineer is auto-assigned") still say the old rule.
+- On the client file, 2 rows now keep their plan leader; auto-assign went from 18 to 16.
+
+**2. Left-out breakdown, real client file.** Disposable PG17, `client_2026` seed, CW 42, plan year 2027, horizon W130;
+container removed. Counts only.
+- **Plain baseline, same horizon:** 23 left out (PD-India 20, R&D-India 2, R&D-Greece 1; 1 no_leader, 0 no_chamber).
+  The live H=78 run leaves 74 out.
+- **Merge:** 48 left out, every one "horizon" (no free window before W130). None is no_leader, no_chamber or
+  data_error.
+  - File: 16 (PD-Romania 12, PD-India 4).
+  - Plan: 32 (PD-India 30, R&D-India 2). Of these, 16 were already left out in the baseline and 16 are newly left out
+    because the import adds PD-India load: PD-India design is booked 137.75 % in 2026 W42–52 and 111.04 % in 2027.
+- **File-only:** 11 left out, all PD-Romania, all "horizon".
+- **Cause:** concentration on named designers, not hub capacity. PD-Romania is only 60 % booked in 2027 in file-only.
+  - One 0.75-FTE designer is named on 17 rows: 110 remaining design effort-weeks against about 56 available to W130.
+    10 of the 11 file-only left-outs are theirs; the other belongs to a 1.0-FTE designer with 59 effort-weeks.
+  - Re-assigning those designers' rows to auto-assign: file-only left-out 11 → 0; merge 48 → 32 (31 plan PD-India /
+    R&D-India + 1 file).
+- **Import bugs checked and ruled out:**
+  - No FTE-0 leader.
+  - No lab step without a chamber; hub mapping is fine.
+  - No `unconstrained_end_week` beyond W130.
+  - In-Progress anchoring: of the In Development left-outs, the first unplaced step is a later design step (J/K/M) of
+    the same overloaded leader, so the anchoring works.
+- **Verdict:** genuine designer and hub capacity, no code change.
+
+## [2026-11-04] P32-T06 — frontend-builder
+
+**What-if "Import plan (Excel)" flow (ADR 0044, API_CONTRACT_P32 B2/B3/B4).** Frontend only. No `surfaces/gantt/` edits:
+it only imports `step-overlap.ts` (`overlapForDrop`) and `gantt-coordinates.ts` from P32-T05.
+
+- **Placement (owner, 2026-11-04).** The What-if planner now has two top-level sub-tabs: "Scenario builder" (default,
+  unchanged, so the P18/P19 e2e specs still hold) and "Import plan (Excel)". The import tab has its own heading, a stepper
+  (Upload → Review → Results) and is `React.lazy`-loaded on first open (its own chunk, about 42 KB gzip). Initial bundle
+  is 191 KB gzip, so it passes the budget. Both parts stay mounted (`forceMount`) after first open.
+- **Code.** All under `frontend/src/surfaces/planning/whatif/import/`:
+  - `import-types.ts` and `import-schema.ts` (zod) mirror B2/B3. Responses are shape-checked; a mismatch gives
+    `ImportShapeError`, shown as "unexpected format". Objects are non-strict, so unknown keys are stripped and the rows
+    sent back to `/simulate` carry only contract fields.
+  - `import-api.ts` holds the multipart parse and the JSON simulate calls.
+  - `import-store.ts` is the Zustand store, session only: parsed response, edited rows, options (mode merge / plan year
+    104 / expand off), edits map with an undo stack, last result, results tab.
+  - `import-rows.ts` holds row edits and builds the payload. A hub or category change re-keys stage, category and
+    `step_weeks` to the hub's workflow, using the file's own lead-time row when there is one.
+  - `use-import.ts`: `classifyImportError` handles 413 / 415 / 422 `IMPORT_FORMAT` / 422 `INVALID_IMPORT` and falls back
+    to `classifyWhatIfError` for 401/403/429/503. `useImportSimulation` aborts the previous request, debounces 400 ms and
+    applies only the latest answer.
+  - `week-labels.ts` gives "W5 '27" from `base_year`.
+  - `gantt-geometry.ts` holds `importScale` (origin = `current_week`, to `horizon_weeks`) and `moveDrop` (`overlapForDrop`
+    + drag label).
+- **Review.** Served counts. A banner says "N projects have no engineer — choose one or keep auto-assign"; rows with
+  `ENGINEER_*` issues or auto leaders are highlighted. The issue list is grouped by severity (virtualized over 100), with
+  "Show only rows with issues".
+  - The table is TanStack Table + Virtual, virtualized over 100 rows. Editable: Include, Hub, Category, Status, Priority
+    (hint "rank N" / "from plan" / "default" / "edited"), Stage (the workflow's steps from `steps_meta`) and Engineer.
+  - The engineer picker is a native select: capacity-hub roster first (OEM → R&D-Greece), other hubs, Auto-assign, and
+    "New designer…" with a name input (blank → Compute blocked).
+  - A "replaces: <plan project>" chip, then options and Compute.
+- **On Hold rule (owner, 2026-11-04).** Rows with On Hold / Cancelled / Commercialized / Draft status are listed in a
+  collapsed "Not mapped (On Hold) — N" group, with a "N On Hold projects not mapped" banner. Include is disabled while
+  the status is one of these. A status change back to a schedulable one re-includes the row; a change to On Hold
+  excludes it. Results drop file projects with such a status as a guard; the server drops `include=false` anyway.
+- **Results tabs.**
+  - **Overview:** KPI tiles, before/after (merge), newly slipping / recovered, issues, workings.
+  - **Gantt (owner clarification, 2026-11-04 — no lane packing):** one waterfall row per step, as the live expanded view
+    (number, name, engineer/chamber). Done-before-import steps are not drawn; they are listed in the project-row tooltip.
+    - The collapsed project row is one summary bar `start_week..end_week`. Expand all / Collapse all are provided.
+    - Filters: source, hub, outcome, search. The axis runs `current_week..horizon_weeks` with year-aware ticks and a
+      dashed "End of <year>" marker at `plan_year_end_week`.
+    - Design steps use primary, lab steps accent, elapsed steps are hollow. Not-placed projects are labelled.
+    - Drag gestures: body move → floor; onto the step above → overlap via `overlapForDrop`, labelled "Parallel with X ·
+      N wk overlap" plus the same-designer note; right edge → `duration_weeks`. An "Edit timing" dialog is the keyboard
+      path.
+    - Each change updates the edits map; the first edit of a step starts from its served timing triple. A debounced
+      re-POST follows with "Recomputing…", Undo, and "Reset all edits (n)".
+  - **Capacity:** window tables with served booked % and `BookingStatusChip`; designers show effort / available plus the
+    `booked_span_weeks` calendar figure when served.
+  - **Projects:** sortable, ascending first; chips for auto, no leader, designer conflict and lab overlap.
+  - "Back to review" keeps every edit. Stale edits (excluded row, `file_only` plan project, replaced project, removed
+    expansion) are left out of the body and pruned from the map on Compute.
+- **Orchestrator deltas absorbed.** Status values `available|near_full|full` (an unknown value renders as a neutral
+  badge). `booked_span_weeks`, `within_plan_year`, `lab_overlap` and `no_leader` are typed optional. A null step week
+  draws nothing.
+- **Deviation: Recharts, not ECharts.** ECharts is not a dependency (`chart-theme.ts` says so) and adding it would be a
+  new dependency, so the weekly load-vs-capacity chart is a Recharts `ComposedChart`, like the other surfaces, in the
+  lazy chunk.
+- **Bug avoided.** `flexRender` treats a cell function as a component type, so columns rebuilt per render remounted the
+  inputs and dropped the focus. The review columns are module-level named cell components reading a context.
+- **Tests (new, 9 files).** `week-labels`, `import-store` (incl. prune), `import-rows` (leader kinds, include, file_only
+  / replaced / expanded edits, OEM re-key, client checks), `gantt-geometry` (floor, overlap + label, clamp, no-op).
+  - `import-plan-view` drives fetch → zod → UI with a mocked fetch: parse → review edits → compute payload → overview →
+    Gantt drag → edit → re-simulate body → Undo → capacity → projects sort → back to review, with axe on each step. It
+    also covers Reset, coalesced edits, parse 413/422/429/503, client file rejection, simulate 422 and shape mismatch.
+  - `review-step` covers the On Hold group, the issues filter and virtualization over 100.
+  - `whatif-planner.import` covers the lazy sub-tab.
+  - `tsc -b` clean; eslint clean on `src/surfaces/planning`; full vitest 224 files / 1779 tests green; bundle PASS.
+- **Not done / for the gate.** No e2e spec against the real backend yet (the endpoints landed concurrently). FTE is not
+  served per step, so the resize ghost maps calendar to work 1:1; the server's answer is authoritative. The new files
+  were formatted with prettier `--single-quote --print-width 120` (the repo has no prettier config).
+
+## [2026-11-04] P32-T06 follow-up — frontend-builder
+
+Four fixes from the orchestrator's live run (real file, backend :8011). Frontend only.
+
+1. **Review table cramped.** The table is now `table-fixed` with a `<colgroup>` and the column widths: Include 64,
+   Project 240 (truncates, full name in `title`), Hub 150, Category 90, Status 190, Priority 90, Stage 220, Engineer 200.
+   Their sum is the table's `min-width`, so the region scrolls sideways instead of squeezing the selects.
+2. **Auto-assign tile 16 vs banner 15.**
+   - Cause: `services/plan_import_xlsx.py` counts `auto_assign` over every parsed row, including On Hold rows (which come
+     with `include=false`). The banner counted only included rows. So 16 = 15 to schedule + 1 On Hold row with no
+     engineer.
+   - Fix: the tile and the banner now share one definition, "included, mapped-status rows whose leader is still auto".
+     The served `counts.auto_assign` is shown as the tile's hint when it differs ("N in the file, incl. rows not mapped
+     or excluded").
+3. **Overview "Projects".** The tile is now "Projects scheduled" = served `within_plan_year + spillover + left_out +
+   blocked + data_error`. Its subline is "<excluded> not scheduled (commercialized / cancelled / on hold)". The "Not
+   placed" hint is now "<blocked> blocked · <data_error> data errors".
+4. **Gantt axis.**
+   - `importScale` now runs from `current_week` to the latest served `end_week` (project or step). It is at least
+     `plan_year_end_week + 4`, so the "End of <year>" marker label fits, and at most `horizon_weeks`.
+   - A summary bar still clipped at the horizon gets an amber chevron at its end.
+
+Checks: `tsc -b` clean, eslint clean on `src/surfaces/planning`, vitest on planning 27 files / 229 tests green. New
+assertions cover the tile/banner agreement with an On Hold auto row, the scale range (latest end / horizon cap / tail)
+and the Overview figure. Not checked in a real browser at 1448 px; the widths are set but the orchestrator should
+re-look live.
+
+## [2026-11-04] P32 — orchestrator: integration verified (plan import + parallel steps)
+
+Client requests relayed by the owner: (1) import the 2027 capacity-planning workbook into the What-if
+and get Gantt + capacity for file + current projects; (2) per-step Gantt bars, one below another,
+movable/resizable, overlap = parallel, everything recomputed. Owner rulings mid-task: the "broken
+chart" is the existing expanded step-row view (no lane packing); On Hold rows are not mapped; a blank
+engineer on a matched row keeps the plan leader. ADR 0043, ADR 0044 (+ amendments),
+`docs/API_CONTRACT_P32.md`, DOMAIN_RULES (Parallel steps, I27; Plan import).
+
+**Verification (orchestrator):** backend full suite 2592 passed (97.3 % cov); scheduling suite 467
+passed (95.1 %, gate 85 %); ruff clean; frontend `tsc -b` 0, eslint 0 errors, vitest 224 files /
+1779 passed. Dev DB :5433 migrated to `p32a_step_overlap`. Live browser run (backend :8011, vite
+:5174, the owner's own :8001 server was left untouched) with the real client file: parse 97 rows /
+87 schedulable / 10 On Hold not mapped / 41 matched / 15 auto-assign; merge, plan year 2027: 269
+scheduled, 188 finish in 2027 (55 of 87 file), 33 spillover, 48 not placed (all capacity — PD-India
+over-capacity and one 0.75-FTE Romania designer named on 17 rows; no import bug), 17 plan projects
+newly slipping. A Gantt drag of PDD-H onto PDD-G sent overlap 2 and moved the project finish W41 '27
+→ W39 '27. Live-test fixes applied: review column widths, auto-assign count definition, "Projects
+scheduled" tile, Gantt axis past the plan year.
+
+**Notes:** a step can only overlap its nearest non-skipped predecessor (to run H beside F, first move
+G beside F). Booked % above 100 % comes from in-progress anchoring and from the scheduler booking
+every week while capacity deducts leave (existing ADR 0008 semantics). P32-T03 ran `git stash` /
+`stash pop` on the shared tree mid-task (clean pop; noted). Nothing committed. Gate P32-T20 not run.

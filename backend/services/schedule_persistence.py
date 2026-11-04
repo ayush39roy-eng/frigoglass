@@ -176,12 +176,15 @@ def build_workflow_snapshot_from_input(schedule_input: ScheduleInput) -> dict[st
         # ADR 0019 (P12): the Gantt-set step timing the run was solved with,
         # so a run can be replayed. One row per (project, step) carrying any
         # timing, ordered by project id then step id.
+        # ADR 0043 (P32): `overlap_weeks` is recorded only when non-zero, so
+        # the snapshot of every run without an overlap is unchanged (I14).
         "step_timing": [
             {
                 "project_id": p.project_id,
                 "step_id": t.step_id,
                 "duration_override_weeks": t.duration_override_weeks,
                 "start_not_before_week": t.start_not_before_week,
+                **({"overlap_weeks": t.overlap_weeks} if t.overlap_weeks else {}),
             }
             for p in sorted(schedule_input.projects, key=lambda p: p.project_id)
             for t in sorted(p.step_timing, key=lambda t: t.step_id)
@@ -195,7 +198,7 @@ def _project_step_timing(
     template_workflow: dict[str, str],
 ) -> tuple[StepTimingInput, ...]:
     """ADR 0019: a project's `ProjectInput.step_timing`. Only rows that carry
-    a value (the caller already drops rows with both fields null) and only
+    a value (the caller already drops rows with every field null or 0) and only
     steps of the project's *current* workflow: the scheduler rejects an
     unknown step id with `ValueError`, which would fail the whole run, so a
     row left behind by a PDD↔OEM hub change never reaches it
@@ -263,6 +266,11 @@ async def build_schedule_input_from_db(
     progress_by_project: dict[uuid.UUID, list[StepProgressInput]] = {}
     timing_by_project: dict[uuid.UUID, list[StepTimingInput]] = {}
     template_workflow = {t.id: t.workflow_id for t in template_rows}
+    # ADR 0043: a workflow's first step (no predecessors) never carries an
+    # overlap; the scheduler rejects one with `ValueError`, which would fail
+    # the whole run, so a stale value (e.g. after a template DAG edit) is
+    # dropped here, like timing of another workflow below.
+    template_has_predecessors = {t.id: bool(t.predecessor_ids) for t in template_rows}
     for s in step_rows:
         progress_by_project.setdefault(s.project_id, []).append(
             StepProgressInput(
@@ -279,13 +287,21 @@ async def build_schedule_input_from_db(
         # `user ?? effort` (domain 0..104; 0 = skipped), merged here by the
         # scheduler's own `merged_step_override`; the floor is the user's.
         # Sorted by step_id so the hashed input is deterministic (I8).
+        # ADR 0043 (P32): the per-project overlap, null -> 0; a row carrying
+        # only an overlap is included.
         merged = merged_step_override(s.duration_override_weeks, s.effort_weeks)
-        if merged is not None or s.start_not_before_week is not None:
+        overlap = (
+            s.overlap_weeks or 0
+            if template_has_predecessors.get(s.step_template_id, False)
+            else 0
+        )
+        if merged is not None or s.start_not_before_week is not None or overlap:
             timing_by_project.setdefault(s.project_id, []).append(
                 StepTimingInput(
                     step_id=s.step_template_id,
                     duration_override_weeks=merged,
                     start_not_before_week=s.start_not_before_week,
+                    overlap_weeks=overlap,
                 )
             )
 

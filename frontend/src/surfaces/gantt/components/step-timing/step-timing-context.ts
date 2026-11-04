@@ -3,6 +3,7 @@ import * as React from 'react';
 import type { WorkflowStepKind } from '@/types/enums';
 
 import type { GanttProjectRow, GanttStepRow, StepTimingRequest, TimingEditable } from '../../api/types';
+import type { OverlapStep } from '../../lib/step-overlap';
 
 /**
  * The step a timing change acts on (ADR 0019). Every field is display data
@@ -38,6 +39,29 @@ export interface StepTimingTarget {
    *  edit); what "Reset timing" falls back to. 0 = skipped by the split. */
   effortWeeks: number | null;
   startNotBeforeWeek: number | null;
+  /** P32 (ADR 0043): the planner's stored overlap; null = none. */
+  overlapWeeks: number | null;
+  /** P32: served template predecessors; empty = the workflow's first step
+   *  (which can never take an overlap). */
+  predecessorIds: readonly string[];
+  /** P32: the project's served step rows, read only to interpret a drop onto
+   *  the previous step (`overlapForDrop`); never drawn as a schedule. */
+  overlapSteps: readonly OverlapStep[];
+}
+
+/** The project's served steps in the shape the overlap helpers read. An API
+ *  before P32 omits the two fields: no predecessors known, no overlap. */
+export function toOverlapSteps(steps: readonly GanttStepRow[]): OverlapStep[] {
+  return steps.map((s) => ({
+    stepId: s.step_id,
+    startWeek: s.planned_start_week,
+    endWeek: s.planned_end_week,
+    skipped: s.skipped,
+    predecessorIds: s.predecessor_ids ?? [],
+    overlapWeeks: s.overlap_weeks ?? null,
+    name: s.step_name,
+    kind: s.kind,
+  }));
 }
 
 export function stepTimingTarget(project: GanttProjectRow, step: GanttStepRow): StepTimingTarget {
@@ -59,16 +83,28 @@ export function stepTimingTarget(project: GanttProjectRow, step: GanttStepRow): 
     // An older API (before P30) omits the field: no effort value.
     effortWeeks: step.effort_weeks ?? null,
     startNotBeforeWeek: step.start_not_before_week,
+    overlapWeeks: step.overlap_weeks ?? null,
+    predecessorIds: step.predecessor_ids ?? [],
+    overlapSteps: toOverlapSteps(project.steps),
   };
 }
 
 /**
- * `true` when the step carries a planner override or floor (the "edited"
- * marker). P30 (ADR 0041 R4): reads ONLY the user's two fields; an effort
- * value (`effort_weeks`) is the client's figure, never a timing edit.
+ * `true` when the step carries a planner override, floor or overlap (the
+ * "edited" marker). P30 (ADR 0041 R4): reads ONLY the user's fields; an effort
+ * value (`effort_weeks`) is the client's figure, never a timing edit. P32
+ * (ADR 0043): a non-null `overlap_weeks` is a timing edit too.
  */
-export function hasTimingEdit(step: Pick<GanttStepRow, 'duration_override_weeks' | 'start_not_before_week'>): boolean {
-  return step.duration_override_weeks !== null || step.start_not_before_week !== null;
+export function hasTimingEdit(
+  step: Pick<GanttStepRow, 'duration_override_weeks' | 'start_not_before_week'> & {
+    overlap_weeks?: number | null;
+  },
+): boolean {
+  return (
+    step.duration_override_weeks !== null ||
+    step.start_not_before_week !== null ||
+    (step.overlap_weeks ?? null) !== null
+  );
 }
 
 /** The optimistic ghost shown at the drop position while the PATCH is in flight. */

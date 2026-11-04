@@ -84,3 +84,21 @@ export function stepDragLabel(
 /** Help text for the work-weeks field and the drag handle. */
 export const WORK_WEEKS_HELP =
   'Weeks of work at full speed. A leader below 1.0 FTE takes longer on the calendar: at 0.5 FTE, 4 weeks of work take 8 calendar weeks (ADR 0032).';
+
+/**
+ * P32 (ADR 0043 §5, API_CONTRACT_P32 A4): the live label while a step bar is
+ * dropped onto the work it waits for — "Parallel with TF-1 · 3 wk overlap".
+ * Two design steps share the project's one designer (I1), so that case says
+ * the step will start when the designer is free.
+ */
+export function overlapDragLabel(
+  overlapWeeks: number,
+  parallelWith: readonly { name?: string; kind?: string }[],
+  kind: WorkflowStepKind,
+): string {
+  const names = parallelWith.map((p) => p.name).filter((n): n is string => Boolean(n));
+  const who = names.length > 0 ? names.join(' & ') : 'the previous step';
+  const base = `Parallel with ${who} · ${String(overlapWeeks)} wk overlap`;
+  const sameDesigner = kind === 'design' && parallelWith.some((p) => p.kind === 'design');
+  return sameDesigner ? `${base} · same designer — will start when they are free` : base;
+}

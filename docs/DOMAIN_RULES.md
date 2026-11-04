@@ -1021,3 +1021,39 @@ capacity stays region-wide under a hub filter (chambers are shared per region).
   is the same with `lab_effort_weeks` when certification testing is on. It holds in the same
   transaction as any re-derivation trigger (R6). A project without a figure carries no derived
   effort on any step.
+
+## Parallel steps — per-project overlap *(2026-11-04, ADR 0043)*
+
+A `ProjectWorkflowStep` may carry `overlap_weeks` (1..104, null = 0), set by dragging a step bar onto
+the work it waits for (Gantt, live or What-if). It amends "Precedence" for that project only:
+
+```
+G(q) = max(G(p) for p in P(q))  (frontier-1 if none)   if q skipped (where it is emitted)
+G(q) = end(q)                                           if o(q) = 0
+G(q) = max(end(q), max(G(p) for p in P(q)))             if o(q) > 0
+release(s) = max(G(q) for q in P(s))  (frontier-1 if none)
+gate(s)    = max(release(s) + 1 - o(s), max start of the nearest non-skipped predecessors if o(s) > 0, frontier)
+```
+
+A Not Started step's search floor is `max(CURRENT_WEEK, gate(s), start_not_before_week)`; an In
+Progress / Blocked tail uses `gate(s)` where it used `pred_end + 1`. Frozen projects ignore overlap.
+With every overlap 0 this is exactly "Precedence" above. A step that overlapped its predecessors
+passes their end on, so successors still wait for all upstream work. Two design steps of one
+project still never overlap (one leader, I1). Project completion is the max end over steps. Not
+allowed on a workflow's first step (422) or as a new value on a started step (409 `STEP_STARTED`).
+"Reset timing" clears it with the other two timing fields.
+
+- **I27** (ADR 0043): every non-skipped Not Started step of a non-frozen project starts at or after
+  `gate(s)`; I3 holds unchanged for every step with `o(s) = 0`.
+
+## Plan import into the What-if *(2026-11-04, ADR 0044)*
+
+An `.xlsx` in the client's capacity-planning format can be parsed and simulated on the What-if
+planner, merged with the live plan (a matching row replaces its project) or alone. Nothing is
+persisted. Durations come from the file's `Process steps` sheet; ancestors of the file's stage are
+done before the import; In Development / Under Industrialization rows start their current step In
+Progress at `CURRENT_WEEK`; ranked rows are P1 in rank order, unranked rows keep their matched band
+or take P3; a blank engineer keeps the matched plan project's leader, else is auto-assigned (What-if picker); On Hold / Cancelled / Commercialized rows are not mapped, an unknown named one becomes a new
+What-if designer. The plan year is selectable (2026 → W52, 2027 → W104, absolute weeks); "within
+the plan year" is `projected_end_week <= plan_year_end_week`. Full rules: ADR 0044,
+`docs/API_CONTRACT_P32.md`.

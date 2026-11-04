@@ -1,11 +1,15 @@
 """ADR 0019: a Gantt drag sets a step's duration and earliest start, then
 recalculates (docs/API_CONTRACT_P12.md §3, DOMAIN_RULES "Step timing from the
-Gantt").
+Gantt"). ADR 0043 (docs/API_CONTRACT_P32.md A3, DOMAIN_RULES "Parallel
+steps") adds a third planner input, `overlap_weeks` (0..104; 0 is stored as
+null).
 
 `apply_step_timing` is the one implementation behind
 `PATCH /projects/{project_id}/steps/{step_id}/timing`. Order:
 
     unknown step for the project's workflow, or a range error: 422 VALIDATION_ERROR
+    a non-null overlap_weeks on the workflow's first step
+    (no template predecessors):                                422 VALIDATION_ERROR
     project frozen:                                            409 PROJECT_FROZEN
     project status not schedulable:                            409 NOT_SCHEDULABLE
     step lead time 0 (skipped):                                409 STEP_SKIPPED
@@ -13,7 +17,8 @@ Gantt").
                                                                409 STEP_SKIPPED
     requested values equal the stored ones:                    unchanged (nothing written)
     step Done (any change):                                    409 STEP_DONE
-    a non-null start_not_before_week on In Progress / Blocked: 409 STEP_STARTED
+    a NEW non-null start_not_before_week or overlap_weeks on
+    In Progress / Blocked:                                     409 STEP_STARTED
     write fields, set schedule_stale, audit project.step_timing, then
     lab step of a project without certification testing:      not_needed (no run)
     a run is queued/running:                                   deferred   (stays stale; registers
@@ -23,9 +28,9 @@ Gantt").
                                                                            trigger_reason="step_timing")
 
 Every 409/422 is raised before anything is written. Clearing
-`start_not_before_week` (an explicit null) on an In Progress / Blocked step is
-allowed: the floor only applies to Not Started steps, so clearing it is the
-"Reset timing" gesture, not a move.
+`start_not_before_week` or `overlap_weeks` (an explicit null, or overlap 0) on
+an In Progress / Blocked step is allowed: both only move a step's start, so
+clearing them is the "Reset timing" gesture, not a move.
 
 `not_needed`: a lab step is skipped by the scheduler while the project's
 `certification_testing_required` is false (DOMAIN_RULES "Lead times"), and the
@@ -67,7 +72,11 @@ from models.enums import (
 from models.project import Project
 from models.workflow import ProjectWorkflowStep, WorkflowStepTemplate
 from schemas.project import RecalcStatus
-from schemas.step_timing import DURATION_OVERRIDE_MAX_WEEKS, TimingEditable
+from schemas.step_timing import (
+    DURATION_OVERRIDE_MAX_WEEKS,
+    OVERLAP_MAX_WEEKS,
+    TimingEditable,
+)
 from services.active_run import get_active_run
 from services.run_dispatch import enqueue_or_fail, find_in_flight_run
 from services.schedule_persistence import create_queued_schedule_run
@@ -81,10 +90,12 @@ TRIGGER_REASON = "step_timing"
 #: Audit action of the timing change itself.
 AUDIT_ACTION = "project.step_timing"
 
-TIMING_FIELDS = ("duration_override_weeks", "start_not_before_week")
+TIMING_FIELDS = ("duration_override_weeks", "start_not_before_week", "overlap_weeks")
 _RANGES: dict[str, tuple[int, int]] = {
     "duration_override_weeks": (1, DURATION_OVERRIDE_MAX_WEEKS),
     "start_not_before_week": (1, dc.HORIZON_WEEKS),
+    # ADR 0043: 0 is accepted and normalised to null (no overlap).
+    "overlap_weeks": (0, OVERLAP_MAX_WEEKS),
 }
 _STARTED = (WorkflowStepStatus.IN_PROGRESS, WorkflowStepStatus.BLOCKED)
 
@@ -95,6 +106,8 @@ class StepTimingResult:
     step_id: str
     duration_override_weeks: int | None
     start_not_before_week: int | None
+    #: ADR 0043: 1..104, null = no overlap.
+    overlap_weeks: int | None
     effective_duration_weeks: int
     #: ADR 0041 R4: the derived effort value the step falls back to when the
     #: user override is cleared, and the lead-time value.
@@ -141,7 +154,10 @@ def validate_timing_changes(changes: dict[str, Any]) -> None:
             [
                 {
                     "loc": ["body"],
-                    "msg": "Send duration_override_weeks, start_not_before_week or both.",
+                    "msg": (
+                        "Send duration_override_weeks, start_not_before_week, "
+                        "overlap_weeks or any combination."
+                    ),
                     "type": "value_error",
                 }
             ],
@@ -153,6 +169,15 @@ def validate_timing_changes(changes: dict[str, Any]) -> None:
             errors.append(field_error(name, f"{name} must be between {low} and {high}."))
     if errors:
         raise CodedHTTPException(HTTP_422, "VALIDATION_ERROR", errors)
+
+
+def normalise_timing_changes(changes: dict[str, int | None]) -> dict[str, int | None]:
+    """ADR 0043: `overlap_weeks: 0` means "no overlap" and is stored as null
+    (the column's CHECK is 1..104), so 0 and null are the same request."""
+
+    if changes.get("overlap_weeks") == 0:
+        return {**changes, "overlap_weeks": None}
+    return changes
 
 
 def _served_effective(
@@ -200,6 +225,7 @@ async def apply_step_timing(
     """
 
     validate_timing_changes(changes)
+    changes = normalise_timing_changes(changes)
     row = (
         await db.execute(
             select(ProjectWorkflowStep).where(
@@ -219,6 +245,19 @@ async def apply_step_timing(
                     "msg": "Not a step of this project's workflow.",
                     "type": "value_error",
                 }
+            ],
+        )
+    # ADR 0043: the workflow's first step (no template predecessors) has
+    # nothing to run in parallel with, so it never carries an overlap.
+    if changes.get("overlap_weeks") is not None and not template.predecessor_ids:
+        raise CodedHTTPException(
+            HTTP_422,
+            "VALIDATION_ERROR",
+            [
+                field_error(
+                    "overlap_weeks",
+                    "The first step of the workflow has no previous step to overlap.",
+                )
             ],
         )
 
@@ -246,6 +285,7 @@ async def apply_step_timing(
     before: dict[str, int | None] = {
         "duration_override_weeks": row.duration_override_weeks,
         "start_not_before_week": row.start_not_before_week,
+        "overlap_weeks": row.overlap_weeks,
     }
     after = {name: changes.get(name, before[name]) for name in TIMING_FIELDS}
     # ADR 0041 R4/R5: a step the client's effort split zeroed (effective 0,
@@ -266,6 +306,7 @@ async def apply_step_timing(
             step_id=step_id,
             duration_override_weeks=before["duration_override_weeks"],
             start_not_before_week=before["start_not_before_week"],
+            overlap_weeks=before["overlap_weeks"],
             effective_duration_weeks=_served_effective(
                 row, template.kind, cert_required, before["duration_override_weeks"]
             ),
@@ -275,11 +316,11 @@ async def apply_step_timing(
         )
     if row.status == WorkflowStepStatus.DONE:
         raise _conflict("STEP_DONE", "A Done step is history; its timing cannot change.")
-    new_floor = after["start_not_before_week"]
-    if (
-        row.status in _STARTED
-        and new_floor is not None
-        and new_floor != before["start_not_before_week"]
+    # The floor and (ADR 0043) the overlap both move a step's start: a new
+    # value on a started step is refused; clearing either is allowed.
+    if row.status in _STARTED and any(
+        after[name] is not None and after[name] != before[name]
+        for name in ("start_not_before_week", "overlap_weeks")
     ):
         raise _conflict(
             "STEP_STARTED",
@@ -288,6 +329,7 @@ async def apply_step_timing(
 
     row.duration_override_weeks = after["duration_override_weeks"]
     row.start_not_before_week = after["start_not_before_week"]
+    row.overlap_weeks = after["overlap_weeks"]
     project.schedule_stale = True
 
     recalc: RecalcStatus
@@ -328,6 +370,7 @@ async def apply_step_timing(
             step_id=step_id,
             duration_override_weeks=after["duration_override_weeks"],
             start_not_before_week=after["start_not_before_week"],
+            overlap_weeks=after["overlap_weeks"],
             effective_duration_weeks=effective,
             effort_weeks=row.effort_weeks,
             lead_time_weeks=row.duration_weeks,
@@ -360,6 +403,7 @@ async def apply_step_timing(
             step_id=step_id,
             duration_override_weeks=after["duration_override_weeks"],
             start_not_before_week=after["start_not_before_week"],
+            overlap_weeks=after["overlap_weeks"],
             effective_duration_weeks=effective,
             effort_weeks=row.effort_weeks,
             lead_time_weeks=row.duration_weeks,
@@ -392,6 +436,7 @@ async def apply_step_timing(
         step_id=step_id,
         duration_override_weeks=after["duration_override_weeks"],
         start_not_before_week=after["start_not_before_week"],
+        overlap_weeks=after["overlap_weeks"],
         effective_duration_weeks=effective,
         effort_weeks=row.effort_weeks,
         lead_time_weeks=row.duration_weeks,
