@@ -54,11 +54,11 @@ describe('StatusOverviewCards', () => {
   it('renders the five cards with served counts and "% of total"', () => {
     render(<StatusOverviewCards data={DATA} />);
     const expected: [string, string, string][] = [
-      ['in-development', '40', '23.53% of total'],
-      ['under-industrialization', '12', '7.06% of total'],
-      ['in-queue', '100', '58.82% of total'],
-      ['commercialized', '8', '4.71% of total'],
-      ['on-hold', '2', '1.18% of total'],
+      ['in-development', '40', '24% of total'],
+      ['under-industrialization', '12', '7% of total'],
+      ['in-queue', '100', '59% of total'],
+      ['commercialized', '8', '5% of total'],
+      ['on-hold', '2', '1% of total'],
     ];
     for (const [id, count, caption] of expected) {
       expect(screen.getByTestId(`status-count-${id}`)).toHaveTextContent(count);
@@ -90,7 +90,7 @@ describe('StatusOverviewCards', () => {
 
   it('shows the "Other statuses" remainder from the served count', () => {
     render(<StatusOverviewCards data={DATA} />);
-    expect(screen.getByTestId('status-other')).toHaveTextContent('Other statuses: 8 (4.7% of total)');
+    expect(screen.getByTestId('status-other')).toHaveTextContent('Other statuses: 8 (5% of total)');
     // ADR 0017: the status On Hold is explained apart from the stage-level outcome.
     expect(screen.getByRole('button', { name: 'Status overview source' })).toBeInTheDocument();
   });

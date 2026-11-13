@@ -186,7 +186,7 @@ describe('Import plan (Excel)', () => {
     // --- capacity
     await user.click(screen.getByRole('tab', { name: 'Capacity' }));
     const cap = await screen.findByTestId('import-capacity');
-    expect(within(cap).getAllByLabelText('Design capacity by hub')[0]).toHaveTextContent('75.18');
+    expect(within(cap).getAllByLabelText('Design capacity by hub')[0]).toHaveTextContent('75');
     expect(cap.querySelector('[data-booking-status="full"]')).not.toBeNull();
     expect(within(cap).getAllByLabelText('Designers')[0]).toHaveTextContent('Antonis');
     expect(await seriousAxeViolations(container)).toEqual([]);

@@ -4,7 +4,7 @@ import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 
 import type { EstimateResponse } from '../../api/whatif-types';
-import { int, num } from './figures';
+import { factor, int, num } from './figures';
 import { BookedShift, FigureTile, ScopeNote, SectionHeading, WorkingsDisclosure } from './result-parts';
 
 const TOUCHED_ROW = 'border-l-4 border-l-primary bg-primary-subtle/30';
@@ -107,7 +107,7 @@ export function EstimateView({ data }: { data: EstimateResponse }): React.JSX.El
                   <TableCell className="text-right tabular-nums">{int(r.added_projects)}</TableCell>
                   <TableCell className="text-right tabular-nums">{int(r.extra_design_weeks)}</TableCell>
                   <TableCell className="text-right tabular-nums">
-                    {num(r.fte_before)} / {num(r.fte_after_scenario)}
+                    {factor(r.fte_before)} / {factor(r.fte_after_scenario)}
                   </TableCell>
                   <TableCell>
                     <BookedShift
@@ -123,7 +123,7 @@ export function EstimateView({ data }: { data: EstimateResponse }): React.JSX.El
                     ) : r.min_extra_designers > 0 ? (
                       <span className="font-semibold">
                         need {int(r.min_extra_designers)} more designer{r.min_extra_designers === 1 ? '' : 's'}
-                        <span className="font-normal text-text-muted"> ({num(r.designer_fte)} FTE each)</span>
+                        <span className="font-normal text-text-muted"> ({factor(r.designer_fte)} FTE each)</span>
                       </span>
                     ) : (
                       <span className="text-text-muted">No extra designers</span>

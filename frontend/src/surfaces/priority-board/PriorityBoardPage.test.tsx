@@ -226,7 +226,7 @@ describe('PriorityBoardPage — P13-T12 weeks and toolbar', () => {
     renderWithProviders(<PriorityBoardPage />);
     await screen.findByRole('link', { name: 'Alpha Cooler' });
     expect(within(column('P1')).getByTestId('board-column-weeks')).toHaveTextContent('Remaining D 926 w · L 907 w');
-    expect(within(column('Q')).getByTestId('board-column-weeks')).toHaveTextContent('Remaining D 310.5 w · L 308 w');
+    expect(within(column('Q')).getByTestId('board-column-weeks')).toHaveTextContent('Remaining D 311 w · L 308 w');
   });
 
   it('debounces the search and sends it to the server as q', async () => {
@@ -296,8 +296,8 @@ describe('PriorityBoardPage — P13-T12 weeks and toolbar', () => {
     });
     renderWithProviders(<PriorityBoardPage />);
     const design = await screen.findByTestId('hub-load-PD-India-design');
-    expect(design).toHaveTextContent('587 / 252.62 wks (232.36 %)');
-    expect(screen.getByTestId('hub-load-PD-India-lab')).toHaveTextContent('496.5 / 186.22 wks (266.62 %)');
+    expect(design).toHaveTextContent('587 / 253 wks (232 %)');
+    expect(screen.getByTestId('hub-load-PD-India-lab')).toHaveTextContent('497 / 186 wks (267 %)');
     // P30 (ADR 0041): these are the served full-year DEMAND figures, labelled so.
     expect(design).toHaveTextContent('Design demand');
     expect(screen.getByTestId('hub-load-PD-India-lab')).toHaveTextContent('Lab demand (India)');

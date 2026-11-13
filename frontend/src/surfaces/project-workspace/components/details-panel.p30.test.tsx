@@ -30,7 +30,7 @@ describe('Workspace Details — P30 client figures', () => {
     );
     const details = screen.getByTestId('details-read');
     expect(within(details).getByText('Design effort (client)').nextElementSibling).toHaveTextContent('4 wk');
-    expect(within(details).getByText('Lab effort (client)').nextElementSibling).toHaveTextContent('10.5 wk');
+    expect(within(details).getByText('Lab effort (client)').nextElementSibling).toHaveTextContent('11 wk');
     expect(within(details).queryByText('Estimated design weeks')).toBeNull();
     unmount();
     renderWithProviders(<DetailsPanel data={data()} canEditDetails={false} canEditScores={false} financialsVisible={false} />);
@@ -48,8 +48,8 @@ describe('Workspace Details — P30 client figures', () => {
     );
     const charter = screen.getByTestId('details-charter');
     const value = (label: string) => within(charter).getByText(label).nextElementSibling;
-    expect(value('Safety lab weeks')).toHaveTextContent('3.5 wk');
-    expect(value('Actual design weeks')).toHaveTextContent('18.25 wk');
+    expect(value('Safety lab weeks')).toHaveTextContent('4 wk');
+    expect(value('Actual design weeks')).toHaveTextContent('18 wk');
     expect(value('Actual testing weeks')).toHaveTextContent('—');
     expect(value('Safety cert. required')).toHaveTextContent('Yes');
     expect(value('Capacity flag')).toHaveTextContent('No');

@@ -73,7 +73,7 @@ export function DeltaChip({ value, label, higherIsBetter = true, className }: De
         ? 'bg-success-subtle text-success-subtle-fg'
         : 'bg-danger-subtle text-danger-subtle-fg';
 
-  const text = label ?? `${value > 0 ? '+' : ''}${value.toFixed(1)}%`;
+  const text = label ?? `${value > 0 ? '+' : ''}${String(Math.round(value))}%`;
 
   return (
     <span

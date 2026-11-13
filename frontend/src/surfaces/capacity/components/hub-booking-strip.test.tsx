@@ -20,12 +20,12 @@ describe('HubBookingStrip (P19-T02: hubs only, no Europe / India areas)', () => 
   it('shows one tile per hub with its design booked % and its lab region booked %, labelled by region', () => {
     renderWithProviders(<HubBookingStrip rows={all} view={{ horizon: 'year', unit: 'weeks' }} />);
     expect(screen.getAllByTestId(/^booked-hub-/)).toHaveLength(6);
-    expect(screen.getByTestId('booked-design-OEM-HCK')).toHaveTextContent('12.5%');
+    expect(screen.getByTestId('booked-design-OEM-HCK')).toHaveTextContent('13%');
     expect(within(screen.getByTestId('booked-design-OEM-HCK')).getByText('Available')).toBeInTheDocument();
     expect(within(screen.getByTestId('booked-design-OEM-Seitek')).getByText('Near full')).toBeInTheDocument();
     const hckLab = screen.getByTestId('booked-lab-OEM-HCK');
     expect(hckLab).toHaveTextContent('Lab (Greece region)');
-    expect(hckLab).toHaveTextContent('100.5%');
+    expect(hckLab).toHaveTextContent('101%');
     expect(screen.getByTestId('booked-lab-PD-Romania')).toHaveTextContent('Lab (Romania region)');
     expect(screen.getByTestId('booked-lab-PD-Romania')).toHaveTextContent('51%');
     expect(screen.getByTestId('booked-lab-PD-India')).toHaveTextContent('Lab (India region)');
@@ -54,7 +54,7 @@ describe('HubBookingStrip (P19-T02: hubs only, no Europe / India areas)', () => 
     // each family header is the name only: nothing summed in the browser
     expect(within(boxes[2] as HTMLElement).getByRole('heading', { level: 3 })).toHaveTextContent(/^OEM$/);
     // tile content kept
-    expect(within(screen.getByTestId('booked-family-oem')).getByTestId('booked-lab-OEM-HCK')).toHaveTextContent('100.5%');
+    expect(within(screen.getByTestId('booked-family-oem')).getByTestId('booked-lab-OEM-HCK')).toHaveTextContent('101%');
     // wide 3 / medium 2 / narrow 1 boxes per row
     expect(screen.getByTestId('booked-families')).toHaveClass('md:grid-cols-2', 'xl:grid-cols-3');
   });
@@ -74,8 +74,8 @@ describe('HubBookingStrip (P19-T02: hubs only, no Europe / India areas)', () => 
 
   it('follows the horizon', () => {
     renderWithProviders(<HubBookingStrip rows={[hubRow({ hub: 'PD-India' })]} view={{ horizon: 'remaining', unit: 'weeks' }} />);
-    expect(screen.getByTestId('booked-design-PD-India')).toHaveTextContent('326.56%');
-    expect(screen.getByTestId('booked-lab-PD-India')).toHaveTextContent('374.72%');
+    expect(screen.getByTestId('booked-design-PD-India')).toHaveTextContent('327%');
+    expect(screen.getByTestId('booked-lab-PD-India')).toHaveTextContent('375%');
     expect(screen.getByTestId('booked-strip-horizon')).toHaveTextContent(/Remaining year/);
   });
 

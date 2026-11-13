@@ -1,10 +1,9 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { screen, within } from '@testing-library/react';
-import userEvent from '@testing-library/user-event';
 
 import { renderWithProviders } from '@/test/render';
 import { useHubFilterStore } from '@/stores/hub-filter';
-import type { ClassBreakdown, EngineerUtilizationResponse, HubCapacitySummary } from './api/types';
+import type { ClassBreakdown, HubCapacitySummary } from './api/types';
 import { classRow, greeceRow, SUMMARY_P11, totalsRow } from './test-fixtures';
 
 /**
@@ -70,7 +69,7 @@ describe('CapacityPage — OEM hub filter (P29, ADR 0042 §4)', () => {
     expect(within(greece).getByTestId('design-load')).toHaveTextContent('131');
     expect(screen.getByTestId('hub-summary-member-OEM-HCK')).toHaveAttribute('data-selected', 'true');
     // Booked tile: Greece's served booked %, naming the filtered member.
-    expect(within(screen.getByTestId('booked-design-R&D-Greece')).getByText('104.9%')).toBeInTheDocument();
+    expect(within(screen.getByTestId('booked-design-R&D-Greece')).getByText('105%')).toBeInTheDocument();
     expect(screen.getByTestId('booked-selected-R&D-Greece')).toHaveTextContent('Filtered on OEM-HCK');
   });
 
@@ -84,23 +83,6 @@ describe('CapacityPage — OEM hub filter (P29, ADR 0042 §4)', () => {
   });
 });
 
-describe('CapacityPage — engineer heatmap roster marker (P29, contract §3.3)', () => {
-  it('marks only engineers whose served counts_in_capacity is false', async () => {
-    const user = userEvent.setup();
-    hooks.useHubLoadVsCapacity.mockReturnValue(ready(oemFiltered));
-    const util: EngineerUtilizationResponse = {
-      week_range: [1, 2],
-      current_week: 1,
-      engineers: [
-        { id: 'e1', name: 'Dimopoulou', hub: 'R&D-Greece', role: 'Designer', counts_in_capacity: true, total_booked: 1, total_capacity: 2, utilization_pct: 50, weeks: [] },
-        { id: 'e2', name: 'Theoni', hub: 'R&D-Greece', role: 'Designer', counts_in_capacity: false, total_booked: 2, total_capacity: 2, utilization_pct: 100, weeks: [] },
-      ],
-    };
-    hooks.useEngineerUtilization.mockReturnValue(ready(util));
-    renderWithProviders(<CapacityPage />);
-    await user.click(screen.getByRole('button', { name: /Show engineer utilization/ }));
-    const rows = await screen.findAllByTestId('engineer-row');
-    expect(within(rows[0]!).queryByTestId('not-in-capacity-roster')).toBeNull();
-    expect(within(rows[1]!).getByTestId('not-in-capacity-roster')).toHaveTextContent('Not in capacity roster');
-  });
-});
+// Owner ask 2026-11-13: the engineer utilization section is removed from the
+// Capacity page, so the roster-marker test that went through it is gone. The
+// heatmap component is no longer rendered anywhere (its own tests remain).

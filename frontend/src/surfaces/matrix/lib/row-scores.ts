@@ -62,5 +62,5 @@ export function formatPoints(points: number, max: number): string {
 }
 
 function formatNum(v: number): string {
-  return Number.isInteger(v) ? String(v) : v.toFixed(1);
+  return String(Math.round(v));
 }

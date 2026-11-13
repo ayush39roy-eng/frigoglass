@@ -11,8 +11,8 @@ describe('analytics layout helpers (P13-T10)', () => {
     expect(typeCode('Unmapped')).toBe('—');
   });
 
-  it('prints a served percentage as served (no re-rounding)', () => {
-    expect(formatServedPct(8.54)).toBe('8.54%');
+  it('prints a served percentage rounded to a whole number', () => {
+    expect(formatServedPct(8.54)).toBe('9%');
     expect(formatServedPct(100)).toBe('100%');
   });
 

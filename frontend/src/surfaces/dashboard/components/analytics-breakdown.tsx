@@ -30,9 +30,10 @@ import {
 import { cn } from '@/lib/utils';
 import { HUB_NAMES, PROJECT_TYPES, type ProjectType } from '@/types/enums';
 
-import type { AnalyticsBucket, DashboardAnalytics } from '../api/types';
+import type { AnalyticsBucket, DashboardAnalytics, ProjectFilterRow } from '../api/types';
 import { formatServedPct, typeCode, typeLabel } from '../lib/analytics';
 import type { DashboardSelectionState } from '../lib/selection';
+import { useOpenProjectList } from './project-list-dialog';
 
 /**
  * "Analytics & breakdown" (P13-T10, API_CONTRACT_P13 §5; mock-up images 7–8).
@@ -63,6 +64,17 @@ export interface AnalyticsBreakdownProps {
   selection?: DashboardSelectionState | undefined;
 }
 
+/** Owner ask 2026-11-13: a bar / slice lists its projects. Each chart's key
+ *  is matched against the served row field it buckets by. */
+const UNMAPPED_KEYS = new Set(['Unmapped', 'Unknown', '—', 'None']);
+const matchType = (key: string) => (row: ProjectFilterRow) =>
+  UNMAPPED_KEYS.has(key) ? row.type === null : row.type === key;
+const matchYear = (key: string) => (row: ProjectFilterRow) =>
+  UNMAPPED_KEYS.has(key) ? row.reg_year === null : String(row.reg_year) === key;
+const matchHub = (key: string) => (row: ProjectFilterRow) => row.hub === key;
+const matchCategory = (key: string) => (row: ProjectFilterRow) =>
+  UNMAPPED_KEYS.has(key) ? row.category === null : row.category === key;
+
 export function AnalyticsBreakdown({
   data,
   pipelineTotal,
@@ -71,6 +83,20 @@ export function AnalyticsBreakdown({
   categoryTotal,
   selection,
 }: AnalyticsBreakdownProps): React.JSX.Element {
+  const openList = useOpenProjectList();
+  const lister = (
+    chart: string,
+    match: (key: string) => (row: ProjectFilterRow) => boolean,
+    ignoreSelection?: 'types' | 'categories',
+  ): BucketOpen | undefined =>
+    openList
+      ? (bucket, label) => {
+          openList(
+            { title: `${chart} · ${label}`, expected: bucket.count, match: match(bucket.key), ignoreSelection },
+            null,
+          );
+        }
+      : undefined;
   const typeSelect: BucketSelect | undefined = selection
     ? {
         allowed: TYPE_FILTER_VALUES,
@@ -119,6 +145,7 @@ export function AnalyticsBreakdown({
             nameOf={(k) => typeLabel(k)}
             colorOf={(k, i) => typeColorRank(k, i)}
             select={typeSelect}
+            onOpen={lister('Project type', matchType, typeBuckets ? 'types' : undefined)}
           />
         </ChartCard>
         <ChartCard
@@ -133,6 +160,7 @@ export function AnalyticsBreakdown({
             codeOf={(k) => k}
             nameOf={(k) => k}
             colorOf={(_k, i) => i + 4}
+            onOpen={lister('Registered', matchYear)}
           />
         </ChartCard>
         <ChartCard
@@ -146,6 +174,7 @@ export function AnalyticsBreakdown({
             ariaLabel="Pipeline projects by hub"
             colorOf={(k, i) => hubColorRank(k, i)}
             total={pipelineTotal}
+            onOpen={lister('Hub', matchHub)}
           />
         </ChartCard>
         <ChartCard
@@ -160,6 +189,7 @@ export function AnalyticsBreakdown({
             colorOf={(k) => categoryRank(k)}
             total={categoryBuckets !== undefined ? categoryTotal : pipelineTotal}
             select={categorySelect}
+            onOpen={lister('Category', matchCategory, categoryBuckets ? 'categories' : undefined)}
           />
         </ChartCard>
       </div>
@@ -167,7 +197,12 @@ export function AnalyticsBreakdown({
   );
 }
 
-/** P31: a chart whose bars / slices drive the Dashboard selection. */
+/** Opens the project list behind one bucket (bar, slice, legend row). */
+type BucketOpen = (bucket: AnalyticsBucket, label: string) => void;
+
+/** P31: a chart whose legend chips drive the Dashboard selection. Since the
+ *  owner ask of 2026-11-13 a bar / slice click lists its projects instead
+ *  (when a project list is available); the chips still filter. */
 interface BucketSelect {
   allowed: readonly string[];
   selected: readonly string[];
@@ -280,6 +315,7 @@ function BucketBars({
   nameOf,
   colorOf,
   select,
+  onOpen,
 }: {
   buckets: AnalyticsBucket[];
   ariaLabel: string;
@@ -287,6 +323,7 @@ function BucketBars({
   nameOf: (key: string) => string;
   colorOf: (key: string, index: number) => number;
   select?: BucketSelect | undefined;
+  onOpen?: BucketOpen | undefined;
 }): React.JSX.Element {
   const { reduced } = useMotionTokens();
   const data = React.useMemo<BucketDatum[]>(
@@ -331,16 +368,24 @@ function BucketBars({
               radius={[8, 8, 0, 0]}
               maxBarSize={64}
               isAnimationActive={!reduced}
-              {...(select
+              {...(onOpen
                 ? {
                     onClick: (_: unknown, index: number) => {
-                      const key = data[index]?.key;
-                      if (key !== undefined && select.allowed.includes(key)) {
-                        select.onChange(toggleSelection(select.selected, key, select.allowed));
-                      }
+                      const d = data[index];
+                      const b = d ? buckets.find((x) => x.key === d.key) : undefined;
+                      if (d && b) onOpen(b, d.name);
                     },
                   }
-                : {})}
+                : select
+                  ? {
+                      onClick: (_: unknown, index: number) => {
+                        const key = data[index]?.key;
+                        if (key !== undefined && select.allowed.includes(key)) {
+                          select.onChange(toggleSelection(select.selected, key, select.allowed));
+                        }
+                      },
+                    }
+                  : {})}
             >
               {data.map((d) => {
                 const st = selectState(select, d.key);
@@ -349,7 +394,7 @@ function BucketBars({
                     key={d.key}
                     fill={d.fill}
                     fillOpacity={st.dim ? 0.28 : 1}
-                    className={st.clickable ? 'cursor-pointer' : undefined}
+                    className={onOpen || st.clickable ? 'cursor-pointer' : undefined}
                   />
                 );
               })}
@@ -403,12 +448,14 @@ function BucketDonut({
   colorOf,
   total,
   select,
+  onOpen,
 }: {
   buckets: AnalyticsBucket[];
   ariaLabel: string;
   colorOf: (key: string, index: number) => number;
   total?: number | undefined;
   select?: BucketSelect | undefined;
+  onOpen?: BucketOpen | undefined;
 }): React.JSX.Element {
   const { reduced } = useMotionTokens();
   const data = React.useMemo(
@@ -434,16 +481,23 @@ function BucketDonut({
               startAngle={90}
               endAngle={-270}
               isAnimationActive={!reduced}
-              {...(select
+              {...(onOpen
                 ? {
                     onClick: (_: unknown, index: number) => {
-                      const key = data[index]?.key;
-                      if (key !== undefined && select.allowed.includes(key)) {
-                        select.onChange(toggleSelection(select.selected, key, select.allowed));
-                      }
+                      const b = data[index];
+                      if (b) onOpen(b, b.key);
                     },
                   }
-                : {})}
+                : select
+                  ? {
+                      onClick: (_: unknown, index: number) => {
+                        const key = data[index]?.key;
+                        if (key !== undefined && select.allowed.includes(key)) {
+                          select.onChange(toggleSelection(select.selected, key, select.allowed));
+                        }
+                      },
+                    }
+                  : {})}
             >
               {data.map((d) => {
                 const st = selectState(select, d.key);
@@ -452,7 +506,7 @@ function BucketDonut({
                     key={d.key}
                     fill={d.fill}
                     fillOpacity={st.dim ? 0.28 : 1}
-                    className={st.clickable ? 'cursor-pointer' : undefined}
+                    className={onOpen || st.clickable ? 'cursor-pointer' : undefined}
                   />
                 );
               })}
@@ -506,6 +560,32 @@ function BucketDonut({
               </li>
             );
           })}
+        </ul>
+      ) : onOpen ? (
+        // Owner ask 2026-11-13: with no filter on this chart (By hub, or By
+        // category when the selection is off), each
+        // legend row lists its projects (the keyboard path to the slice click).
+        <ul aria-label={ariaLabel} className="w-full min-w-0 flex-1 space-y-s2" data-testid="analytics-open-legend">
+          {data.map((d) => (
+            <li key={d.key}>
+              <button
+                type="button"
+                aria-haspopup="dialog"
+                aria-label={`${d.key}: ${formatInteger(d.count)} projects (${formatServedPct(d.share_pct)}), list them`}
+                onClick={() => { onOpen(d, d.key); }}
+                className="flex w-full items-center gap-s3 rounded-lg border border-dash-hairline bg-dash-alt px-s3 py-1.5 text-left transition-colors hover:border-border-strong focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring motion-reduce:transition-none"
+              >
+                <span aria-hidden="true" className="size-2.5 shrink-0 rounded-sm" style={{ background: d.fill }} />
+                <span className="min-w-0 flex-1 truncate text-sm font-medium text-text">{d.key}</span>
+                <span className="font-mono text-sm font-semibold tabular-nums text-text" data-numeric="">
+                  {formatInteger(d.count)}
+                </span>
+                <span className="w-16 text-right text-2xs tabular-nums text-text-muted" data-numeric="">
+                  {formatServedPct(d.share_pct)}
+                </span>
+              </button>
+            </li>
+          ))}
         </ul>
       ) : (
       <dl aria-label={ariaLabel} className="w-full min-w-0 flex-1 space-y-s2">

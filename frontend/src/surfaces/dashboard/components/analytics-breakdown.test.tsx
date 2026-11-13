@@ -33,16 +33,16 @@ describe('AnalyticsBreakdown (P13-T10)', () => {
   it('states every served bucket verbatim (count + served share)', () => {
     renderWithProviders(<AnalyticsBreakdown data={DATA} pipelineTotal={236} />);
     const byType = screen.getByRole('list', { name: 'Pipeline projects by project type' });
-    expect(byType).toHaveTextContent('Cost Optimization: 89 (37.71%)');
-    expect(byType).toHaveTextContent('Unmapped: 3 (1.27%)');
+    expect(byType).toHaveTextContent('Cost Optimization: 89 (38%)');
+    expect(byType).toHaveTextContent('Unmapped: 3 (1%)');
     const byYear = screen.getByRole('list', { name: 'Pipeline projects by registration year' });
-    expect(byYear).toHaveTextContent('2026: 160 (67.8%)');
-    expect(byYear).toHaveTextContent('Unknown: 2 (0.85%)');
+    expect(byYear).toHaveTextContent('2026: 160 (68%)');
+    expect(byYear).toHaveTextContent('Unknown: 2 (1%)');
     const byHub = screen.getByLabelText('Pipeline projects by hub');
     expect(byHub).toHaveTextContent('PD-India');
-    expect(byHub).toHaveTextContent('76.27%');
+    expect(byHub).toHaveTextContent('76%');
     const byCategory = screen.getByLabelText('Pipeline projects by category');
-    expect(byCategory).toHaveTextContent('68.64%');
+    expect(byCategory).toHaveTextContent('69%');
     // P17-R08: the completing table and the pipeline-vs-completing chart moved to hub-type-section.
     expect(screen.queryByRole('list', { name: 'Pipeline vs completing by project type' })).not.toBeInTheDocument();
     expect(screen.queryByRole('table')).not.toBeInTheDocument();

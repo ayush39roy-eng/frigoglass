@@ -91,7 +91,7 @@ describe('HubEngineerCard — P29 Greece card', () => {
     expect(within(theoniRow).getByTestId('not-in-capacity-roster')).toHaveTextContent('Not in capacity roster');
     const capCell = theoniRow.querySelector('td[data-numeric].font-mono');
     expect(capCell).toHaveClass('text-text-muted');
-    expect(capCell?.textContent).toMatch(/44\.6/);
+    expect(capCell?.textContent).toMatch(/45/);
     expect(screen.getByTestId('engineer-row-e-dim').querySelector('td[data-numeric].font-mono')).toHaveClass('text-primary-subtle-fg');
     expect(within(screen.getByTestId('engineer-row-e-dim')).queryByTestId('not-in-capacity-roster')).toBeNull();
   });

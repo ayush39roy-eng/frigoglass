@@ -7,7 +7,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { formatBookedPct } from '@/lib/format';
 
 import { NativeSelect } from '../../components/form-controls';
-import { num } from '../../components/figures';
+import { factor, num } from '../../components/figures';
 import { ProjectRowsTable, SectionHeading, type RowColumn } from '../../components/result-parts';
 import type { CapacityWindowDef, CapacityWindowFigure, DesignerRow, ImportSimulateResponse } from '../import-types';
 import { capacityHubDrill, capacityLabDrill, designerDrill, type Drill } from '../drilldown';
@@ -145,7 +145,7 @@ export function ResultsCapacity({ result }: { result: ImportSimulateResponse }):
     { header: 'Hub', cell: (d) => d.hub },
     {
       header: 'FTE',
-      cell: (d) => <span className="font-mono tabular-nums">{num(d.fte)}</span>,
+      cell: (d) => <span className="font-mono tabular-nums">{factor(d.fte)}</span>,
     },
     ...cap.windows.map((w): RowColumn<DesignerRow> => ({
       header: `${w.label} — booked effort / available (wks)`,
@@ -181,7 +181,7 @@ export function ResultsCapacity({ result }: { result: ImportSimulateResponse }):
         rows={cap.hubs.map((h) => ({
           key: h.hub,
           name: h.hub,
-          extra: num(h.fte),
+          extra: factor(h.fte),
           figures: h.windows,
           drill: (wk: string) => capacityHubDrill(result, h.hub, wk),
         }))}

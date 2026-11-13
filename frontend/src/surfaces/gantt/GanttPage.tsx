@@ -35,6 +35,36 @@ import type { GanttQueryParams } from './api/gantt-api';
 import type { FreezeToggleRequest, GanttProjectRow } from './api/types';
 import { ZOOM_DEFAULT_PX } from './lib/gantt-coordinates';
 
+/** Space the timeline card keeps below its chart (card padding + page gutter). */
+const CHART_BOTTOM_RESERVE_PX = 56;
+const CHART_MIN_HEIGHT_PX = 320;
+
+/**
+ * Owner ask 2026-11-13 (floating filters): the chart's height is the surface
+ * region's height minus the floating filter card, so that once the page has
+ * scrolled the chart up to the card, the whole chart — its sticky week axis
+ * included — is on screen and further scrolling happens inside the chart.
+ * Re-measured when the region or the card resizes. Layout only.
+ */
+function useChartHeightBelow(card: HTMLElement | null): number | undefined {
+  const [height, setHeight] = React.useState<number | undefined>(undefined);
+  React.useLayoutEffect(() => {
+    const region = card?.closest<HTMLElement>('[data-testid="surface-region"]');
+    if (!card || !region) return undefined;
+    const read = () => {
+      const available = region.clientHeight - card.getBoundingClientRect().height - CHART_BOTTOM_RESERVE_PX;
+      setHeight(Math.max(CHART_MIN_HEIGHT_PX, Math.round(available)));
+    };
+    read();
+    if (typeof ResizeObserver === 'undefined') return undefined;
+    const ro = new ResizeObserver(read);
+    ro.observe(card);
+    ro.observe(region);
+    return () => { ro.disconnect(); };
+  }, [card]);
+  return height;
+}
+
 /** P13-T13: the toolbar state as server params; unset filters are left out
  *  (`undefined`), so they are neither sent nor distinct in the cache key. */
 function toQueryParams(
@@ -94,6 +124,9 @@ export default function GanttPage(): React.JSX.Element {
     [filters, setBoth],
   );
   const [forest, setForest] = React.useState(false);
+  // A callback ref (state), so measuring starts whenever the card mounts.
+  const [filtersEl, setFiltersEl] = React.useState<HTMLDivElement | null>(null);
+  const chartHeight = useChartHeightBelow(filtersEl);
   const [hideStats, setHideStats] = React.useState(false);
   const debouncedQ = useDebouncedValue(filters.q, 300);
   const [expandedIds, setExpandedIds] = React.useState<ReadonlySet<string>>(new Set());
@@ -205,11 +238,18 @@ export default function GanttPage(): React.JSX.Element {
                 ]}
               />
             ) : null}
-            <Card>
-              <CardHeader>
-                <CardTitle>View</CardTitle>
-              </CardHeader>
-              <CardContent className="flex flex-col gap-3">
+            {/* Owner ask 2026-11-13: the filters float. The card sticks to the top
+                of the surface region while the timeline scrolls under it (the
+                chart's own week axis is sticky inside its own scroller, so the
+                two never overlap). */}
+            <Card
+              ref={setFiltersEl}
+              className="sticky top-0 z-40 shadow-pop"
+              role="region"
+              aria-label="Timeline filters"
+              data-testid="gantt-filters-floating"
+            >
+              <CardContent className="flex flex-col gap-3 pt-s4">
                 <GanttFilterBar
                   filters={filters}
                   onChange={setFilters}
@@ -357,6 +397,7 @@ export default function GanttPage(): React.JSX.Element {
                           onToggleExpand={handleToggleExpand}
                           onFreezeClick={handleFreezeClick}
                           canWrite={canWrite}
+                          {...(chartHeight !== undefined ? { maxHeight: chartHeight } : {})}
                         />
                       </>
                     )}

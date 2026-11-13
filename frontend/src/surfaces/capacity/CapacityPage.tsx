@@ -17,10 +17,8 @@ import { CapacityReportingNotice } from './components/capacity-reporting-notice'
 import { ClassBreakdownPanel } from './components/class-breakdown-panel';
 import { CapacityKpiRow } from './components/capacity-kpi-row';
 import { CapacityToolbar } from './components/capacity-toolbar';
-import { CollapsibleSection } from './components/collapsible-section';
 import { HubBookingStrip } from './components/hub-booking-strip';
 import { HubSummaryTable } from './components/hub-summary-table';
-import { EngineerUtilizationPanel } from './components/engineer-utilization-panel';
 import { LoadCapacityCharts } from './components/load-capacity-charts';
 import { useActiveScheduleRun, useClassBreakdown, useHubLoadVsCapacity } from './hooks/use-capacity';
 
@@ -165,19 +163,10 @@ export default function CapacityPage(): React.JSX.Element {
             </SectionBoundary>
           </StaggerSection>
 
-          {/* 6. Engineer utilization, collapsed and lazy: nothing renders or fetches until
-              opened. (P19-T07, owner removal: the class chart and the chamber utilization
-              matrix that sat here are gone, and the page no longer reads
-              /capacity/utilization-matrix.) */}
-          <div className="flex flex-col gap-s3" data-testid="capacity-more-detail">
-            <CollapsibleSection
-              showLabel="Show engineer utilization"
-              hint="Named per-engineer weekly load (personal data; read only when opened)"
-              testId="section-engineers"
-            >
-              <EngineerUtilizationPanel />
-            </CollapsibleSection>
-          </div>
+          {/* Owner ask 2026-11-13: the "Show engineer utilization" section is
+              removed from the Capacity page; the page no longer reads
+              /capacity/engineer-utilization. (P19-T07 had already removed the
+              class chart and the chamber utilization matrix.) */}
         </motion.div>
       )}
     </>

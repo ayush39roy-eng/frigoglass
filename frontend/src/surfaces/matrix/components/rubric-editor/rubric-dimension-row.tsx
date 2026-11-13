@@ -105,7 +105,7 @@ export function DimensionRow({
         </span>
         <span className="tnum text-right text-text-muted" data-numeric="">
           weight {dim.weight}
-          {scaled !== null ? ` (${scaled.toFixed(2)} of 100)` : ''}
+          {scaled !== null ? ` (${String(Math.round(scaled))} of 100)` : ''}
         </span>
       </li>
     );
@@ -266,7 +266,7 @@ export function DimensionRow({
             className="tnum h-8 text-right text-xs"
           />
           <span id={`${base}-scaled`} className="tnum text-2xs text-text-muted" data-numeric="">
-            {scaled !== null ? `${scaled.toFixed(2)} of 100` : dim.active ? 'scaled on save' : 'inactive'}
+            {scaled !== null ? `${String(Math.round(scaled))} of 100` : dim.active ? 'scaled on save' : 'inactive'}
           </span>
           {errors?.weight ? (
             <span id={errId('weight')} className="text-2xs text-danger" data-testid="rubric-error-weight">

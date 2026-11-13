@@ -164,10 +164,10 @@ describe('ResourceLoadSection', () => {
     expect(within(eng).getByText('Ada (R&D-Greece)')).toBeInTheDocument();
     const ada = within(eng).getByTestId('load-row-e1');
     expect(ada).toHaveTextContent('Ada');
-    expect(ada).toHaveTextContent('9.3');
-    expect(ada).toHaveTextContent('12.5');
-    expect(ada).toHaveTextContent('135.14%');
-    expect(within(eng).getByText('105.45%')).toBeInTheDocument(); // served total
+    expect(ada).toHaveTextContent('9');
+    expect(ada).toHaveTextContent('13');
+    expect(ada).toHaveTextContent('135%');
+    expect(within(eng).getByText('105%')).toBeInTheDocument(); // served total
     const ch = screen.getByRole('region', { name: /^Chamber load vs capacity \(/ });
     expect(within(ch).getByText('GR-CH1 (Greece)')).toBeInTheDocument();
     expect(within(ch).getByRole('columnheader', { name: /Region/ })).toBeInTheDocument();
@@ -181,7 +181,7 @@ describe('ResourceLoadSection', () => {
     renderWithProviders(<ResourceLoadSection basis="remaining" unit="weeks" hubs={HUBS} />);
     reveal();
     const ada = screen.getByTestId('load-row-e1');
-    const util = within(ada).getByText(/135.14%/).closest('td')!;
+    const util = within(ada).getByText(/135%/).closest('td')!;
     expect(util).toHaveAttribute('data-over');
     expect(util.className).toContain('text-danger');
     expect(util).toHaveTextContent('(over capacity)');

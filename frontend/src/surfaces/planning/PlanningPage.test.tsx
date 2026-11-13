@@ -194,41 +194,41 @@ describe('PlanningPage (P19-T04 Overview)', () => {
     const user = userEvent.setup();
     renderWithProviders(<PlanningPage />);
     // YTD (remaining), weeks
-    expect(totals()).toEqual(['13.8 wks', '1.7 wks']);
+    expect(totals()).toEqual(['14 wks', '2 wks']);
     expect(screen.getByText(/≈ 73 man-days/)).toBeInTheDocument();
     expect(screen.getByText(/≈ 9 lab-days/)).toBeInTheDocument();
     expect(screen.getByText(/Total design capacity — YTD 2026/)).toBeInTheDocument();
 
     await user.click(toolbar().getByRole('radio', { name: 'Full year' }));
-    expect(totals()).toEqual(['66.3 wks', '8.1 wks']);
+    expect(totals()).toEqual(['66 wks', '8 wks']);
     expect(screen.getByText(/Total design capacity — 2026 full year/)).toBeInTheDocument();
 
     await user.click(toolbar().getByRole('radio', { name: 'Days' }));
     expect(totals()).toEqual(['353 man-days', '41 lab-days']);
-    expect(screen.getByText(/≈ 66.3 weeks/)).toBeInTheDocument();
+    expect(screen.getByText(/≈ 66 weeks/)).toBeInTheDocument();
   });
 
   it('hub and lab cards show the served share % and the weeks / days pills', async () => {
     const user = userEvent.setup();
     renderWithProviders(<PlanningPage />);
     const greece = screen.getByTestId('hub-card-R&D-Greece');
-    expect(within(greece).getByRole('heading', { name: /R&D-Greece Hub \(67.27%\)/ })).toBeInTheDocument();
-    expect(within(greece).getByRole('list', { name: 'R&D-Greece design capacity' })).toHaveTextContent('9.3 wks46 days');
+    expect(within(greece).getByRole('heading', { name: /R&D-Greece Hub \(67%\)/ })).toBeInTheDocument();
+    expect(within(greece).getByRole('list', { name: 'R&D-Greece design capacity' })).toHaveTextContent('9 wks46 days');
     const lab = screen.getByTestId('lab-card-Greece');
     expect(within(lab).getByRole('heading', { name: /Greece labs \(100%\)/ })).toBeInTheDocument();
 
     await user.click(toolbar().getByRole('radio', { name: 'Full year' }));
-    expect(within(greece).getByRole('heading', { name: /R&D-Greece Hub \(67.17%\)/ })).toBeInTheDocument();
-    expect(within(greece).getByRole('list', { name: 'R&D-Greece design capacity' })).toHaveTextContent('44.5 wks223 days');
+    expect(within(greece).getByRole('heading', { name: /R&D-Greece Hub \(67%\)/ })).toBeInTheDocument();
+    expect(within(greece).getByRole('list', { name: 'R&D-Greece design capacity' })).toHaveTextContent('45 wks223 days');
   });
 
   it('per-engineer and per-chamber capacity come from their own served fields', async () => {
     const user = userEvent.setup();
     renderWithProviders(<PlanningPage />);
-    expect(within(screen.getByTestId('engineer-row-e1')).getByText('9.3')).toBeInTheDocument();
+    expect(within(screen.getByTestId('engineer-row-e1')).getByText('9')).toBeInTheDocument();
     const ch = screen.getByTestId('chamber-row-c1');
-    expect(within(ch).getByText('1.7')).toBeInTheDocument();
-    expect(within(ch).getByText('38.6')).toBeInTheDocument(); // working_weeks, not working_weeks_per_chamber
+    expect(within(ch).getByText('2')).toBeInTheDocument();
+    expect(within(ch).getByText('39')).toBeInTheDocument(); // working_weeks, not working_weeks_per_chamber
     await user.click(toolbar().getByRole('radio', { name: 'Days' }));
     expect(within(screen.getByTestId('engineer-row-e1')).getByText('46')).toBeInTheDocument();
   });
@@ -333,7 +333,7 @@ describe('PlanningPage (P19-T04 Overview)', () => {
     expect(within(greece).getByTestId('share')).toHaveTextContent('(—)');
     expect(within(greece).getByRole('list', { name: 'R&D-Greece design capacity' })).toHaveTextContent('— wks— days');
     // Per-row figures are the rows' own served fields and still show.
-    expect(within(screen.getByTestId('engineer-row-e1')).getByText('9.3')).toBeInTheDocument();
+    expect(within(screen.getByTestId('engineer-row-e1')).getByText('9')).toBeInTheDocument();
     expect(screen.getByText(/capacity summary could not be loaded/)).toBeInTheDocument();
   });
 

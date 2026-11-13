@@ -32,13 +32,14 @@ export function pickUnit<T extends { capacity_weeks?: BasisPair | undefined; cap
   return pick(unit === 'weeks' ? row.capacity_weeks : row.capacity_days, basis);
 }
 
-const weeksFmt = new Intl.NumberFormat('en-GB', { maximumFractionDigits: 1, minimumFractionDigits: 1 });
+// Owner ask 2026-11-13: whole numbers everywhere (display rounding only).
+const weeksFmt = new Intl.NumberFormat('en-GB', { maximumFractionDigits: 0 });
 const daysFmt = new Intl.NumberFormat('en-GB', { maximumFractionDigits: 0 });
-// Served percentages are 2 dp; printed as served (no re-rounding).
-const pctFmt = new Intl.NumberFormat('en-GB', { maximumFractionDigits: 2 });
+// Served percentages are 2 dp; printed as whole numbers (owner ask 2026-11-13).
+const pctFmt = new Intl.NumberFormat('en-GB', { maximumFractionDigits: 0 });
 const plainFmt = new Intl.NumberFormat('en-GB', { maximumFractionDigits: 2 });
 
-/** Weeks to one decimal, days to whole days (display rounding only). */
+/** Weeks and days as whole numbers (display rounding only). */
 export function formatAmount(value: number | null | undefined, unit: CapacityUnit): string {
   if (value === null || value === undefined || !Number.isFinite(value)) return MISSING;
   return unit === 'weeks' ? weeksFmt.format(value) : daysFmt.format(value);
@@ -48,13 +49,14 @@ export function unitShort(unit: CapacityUnit): string {
   return unit === 'weeks' ? 'wks' : 'days';
 }
 
-/** A served 0-100 percentage, e.g. "22.4%". */
+/** A served 0-100 percentage, printed whole, e.g. "22%". */
 export function formatPct(value: number | null | undefined): string {
   if (value === null || value === undefined || !Number.isFinite(value)) return MISSING;
   return `${pctFmt.format(value)}%`;
 }
 
-/** A served plain number (FTE, efficiency, weeks per chamber). */
+/** A fraction-by-nature figure (FTE, efficiency, platforms): up to 2 dp,
+ *  exempt from the whole-number rule because rounding would change its meaning. */
 export function formatPlain(value: number | null | undefined): string {
   if (value === null || value === undefined || !Number.isFinite(value)) return MISSING;
   return plainFmt.format(value);

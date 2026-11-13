@@ -17,8 +17,8 @@ describe('PipelineVsCompletingChart (moved in P17-R08)', () => {
   it('states each served type figure verbatim', () => {
     renderWithProviders(<PipelineVsCompletingChart rows={rows} />);
     const list = screen.getByRole('list', { name: 'Pipeline vs completing by project type' });
-    expect(list).toHaveTextContent('New Model: pipeline 36, completing 14 (38.89%)');
-    expect(list).toHaveTextContent('New Option: pipeline 56, completing 30 (53.57%)');
+    expect(list).toHaveTextContent('New Model: pipeline 36, completing 14 (39%)');
+    expect(list).toHaveTextContent('New Option: pipeline 56, completing 30 (54%)');
   });
 
   it('shows an empty state and is axe-clean', async () => {

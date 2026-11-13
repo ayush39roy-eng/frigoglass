@@ -20,8 +20,8 @@ describe('EstimateView', () => {
 
     const row = screen.getByTestId('est-design-row');
     expect(row).toHaveTextContent('PD-India');
-    expect(row).toHaveTextContent('68.18 %');
-    expect(row).toHaveTextContent('170.45 %');
+    expect(row).toHaveTextContent('68 %');
+    expect(row).toHaveTextContent('170 %');
     expect(within(row).getByText('Available')).toBeInTheDocument();
     expect(within(row).getByText('Full')).toBeInTheDocument();
     expect(row).toHaveTextContent('need 3 more designers');

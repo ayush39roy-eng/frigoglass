@@ -105,8 +105,8 @@ export function HubRankList({ rows, pipelineTotal = null, regionSummary = null }
         ) : (
           <ol aria-label="Real project count per hub, ranked" className="flex flex-col gap-s4">
             {totals.map((hubTotal, index) => {
-              // Share of all projects in view, 2 dp like every other Dashboard share.
-              const pct = total > 0 ? Math.round((hubTotal.count / total) * 10000) / 100 : 0;
+              // Share of all projects in view, as a whole number (owner ask 2026-11-13).
+              const pct = total > 0 ? Math.round((hubTotal.count / total) * 100) : 0;
               return (
                 <li
                   key={hubTotal.hub}

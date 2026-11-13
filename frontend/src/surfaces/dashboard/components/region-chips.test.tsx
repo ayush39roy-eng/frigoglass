@@ -60,7 +60,7 @@ describe('RegionChips', () => {
     const list = screen.getByRole('list', { name: 'In Queue by country' });
     const items = within(list).getAllByRole('listitem');
     expect(items).toHaveLength(3);
-    expect(items[0]).toHaveTextContent('Greece:2(33.33%)');
+    expect(items[0]).toHaveTextContent('Greece:2(33%)');
     expect(items[1]).toHaveTextContent('India:4');
     expect(items[1]).not.toHaveTextContent('%');
     // A missing status count is zero (the contract serves every status).

@@ -47,8 +47,8 @@ describe('PipelineRow', () => {
     expect(screen.getByTestId('pipeline-count-new')).toHaveTextContent('160');
     expect(screen.queryByTestId('pipeline-count-unregistered')).not.toBeInTheDocument();
     expect(screen.getByTestId('pipeline-count-total')).toHaveTextContent('239');
-    expect(screen.getByTestId('pipeline-caption-spillover')).toHaveTextContent('31.8% of total');
-    expect(screen.getByTestId('pipeline-caption-new')).toHaveTextContent('66.95% of total');
+    expect(screen.getByTestId('pipeline-caption-spillover')).toHaveTextContent('32% of total');
+    expect(screen.getByTestId('pipeline-caption-new')).toHaveTextContent('67% of total');
     // The served unregistered count is still inside the total, so the caption names it.
     expect(screen.getByTestId('pipeline-caption-total')).toHaveTextContent('All statuses · incl. 3 with no registration year');
   });
@@ -73,10 +73,10 @@ describe('PipelineRow', () => {
     const spill = screen.getByRole('list', { name: `Spillover ${String(CARRY_OVER_YEAR)} by country` });
     const items = within(spill).getAllByRole('listitem');
     expect(items).toHaveLength(3);
-    expect(items[0]).toHaveTextContent('Greece:8(11.11%)');
+    expect(items[0]).toHaveTextContent('Greece:8(11%)');
     expect(items[1]).toHaveTextContent('India:60');
     expect(items[2]).toHaveTextContent('Romania:8');
-    expect(screen.getByRole('list', { name: 'Total projects by country' })).toHaveTextContent('Greece:80(33.33%)');
+    expect(screen.getByRole('list', { name: 'Total projects by country' })).toHaveTextContent('Greece:80(33%)');
   });
 
   it('says nothing about unregistered projects in the total when there are none', () => {

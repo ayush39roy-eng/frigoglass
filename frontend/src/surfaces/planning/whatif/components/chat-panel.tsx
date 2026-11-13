@@ -25,7 +25,7 @@ import { EstimateView } from './estimate-view';
 import { SimulateView } from './simulate-view';
 import { SolveView } from './solve-view';
 import { EXAMPLE_PROMPTS } from './chat-prompts';
-import { int, num } from './figures';
+import { factor, int } from './figures';
 import { SectionHeading, WorkingsDisclosure, ScopeNote } from './result-parts';
 import { WhatIfErrorNotice } from './whatif-error';
 
@@ -71,7 +71,7 @@ function SnapshotView({ data }: { data: CapacitySnapshotResponse }): React.JSX.E
           {data.hubs.map((h) => (
             <TableRow key={h.hub}>
               <TableCell className="font-medium">{h.hub}</TableCell>
-              <TableCell className="text-right tabular-nums">{num(h.engineer_fte_total)}</TableCell>
+              <TableCell className="text-right tabular-nums">{factor(h.engineer_fte_total)}</TableCell>
               <TableCell>
                 <span className="inline-flex flex-wrap items-center gap-1.5">
                   <span className="font-mono tabular-nums">{formatBookedPct(h.design_booked_pct_year)}</span>

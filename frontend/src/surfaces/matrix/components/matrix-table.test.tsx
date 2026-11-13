@@ -292,7 +292,7 @@ describe('MatrixTable', () => {
     expect(startCells.map((c) => c.getAttribute('data-tint'))).toEqual([null, 'true', null, 'true', null, 'true']);
     expect(bodyRow.querySelectorAll('[data-box-kind="pillar"][data-line="inner"]')).toHaveLength(14 - 6);
     // The new dimension's header is its served label; its weight comes from the served table.
-    expect(screen.getByRole('button', { name: /^Sustainability & ESG \(Sustainability, weight 30 \(9\.2 of 100\)\)$/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^Sustainability & ESG \(Sustainability, weight 30 \(9 of 100\)\)$/ })).toBeInTheDocument();
     expect(screen.getByTestId('dim-sustainability_esg')).toHaveTextContent('Sustainability & ESG: 4 of 5, 24/30 pts');
     // Column order: dimension columns appear in display order inside each pillar.
     const headKeys = [...container.querySelectorAll('[data-testid^="dim-head-"]')].map((h) => h.getAttribute('data-testid'));
@@ -352,7 +352,7 @@ describe('MatrixTable', () => {
         detailed
       />,
     );
-    const gp = screen.getByTitle('Gross Profitability: 3 of 5, 15/25 pts (5.08 of 100)');
+    const gp = screen.getByTitle('Gross Profitability: 3 of 5, 15/25 pts (5 of 100)');
     expect(gp).toHaveTextContent('15/25 pts');
   });
 

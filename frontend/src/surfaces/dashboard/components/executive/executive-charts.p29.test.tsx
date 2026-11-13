@@ -15,7 +15,7 @@ describe('TypeDonut — RC label (P29-T04, P31)', () => {
     );
     const donut = screen.getByTestId('exec-type-donut');
     expect(within(donut).getByTestId('exec-type-donut-slice-RC')).toHaveTextContent('Regulatory / Business Compliance');
-    expect(within(donut).getByTestId('exec-type-donut-slice-RC')).toHaveTextContent('63 · 24.9%');
+    expect(within(donut).getByTestId('exec-type-donut-slice-RC')).toHaveTextContent('63 · 25%');
     const chip = within(donut).getByRole('button', { name: 'Regulatory / Business Compliance' });
     expect(chip).toHaveClass('whitespace-nowrap');
     expect(chip.className).not.toContain('truncate');

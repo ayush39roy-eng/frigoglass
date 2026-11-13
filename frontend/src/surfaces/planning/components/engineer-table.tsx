@@ -13,7 +13,7 @@ import {
 } from '@/components/ui/table';
 import { NotInCapacityRosterBadge } from '@/components/shared/capacity-roster-markers';
 import { CountryFlag } from '@/components/shared/hub-filter/country-flag';
-import { formatDecimal, formatInteger } from '@/lib/format';
+import { formatFactor, formatInteger } from '@/lib/format';
 import { HUB_NAMES, type LabRegion } from '@/types/enums';
 
 import type { EngineerRead } from '../api/types';
@@ -79,7 +79,7 @@ export function EngineerTable({ rows, canEdit, onEdit, onDelete }: EngineerTable
               </span>
             </TableCell>
             <TableCell className="text-right tnum" data-numeric="">
-              {formatDecimal(row.fte)}
+              {formatFactor(row.fte)}
             </TableCell>
             <TableCell>
               <div className="flex flex-wrap gap-1">

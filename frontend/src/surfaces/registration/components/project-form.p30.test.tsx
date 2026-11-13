@@ -124,8 +124,8 @@ describe('Project form — client effort figures (P30)', () => {
     renderEdit();
     const block = screen.getByTestId('client-workbook-figures');
     expect(block).toHaveTextContent('From the client workbook (read-only)');
-    expect(block).toHaveTextContent('Safety lab3.5 wk');
-    expect(block).toHaveTextContent('Actual design18.25 wk');
+    expect(block).toHaveTextContent('Safety lab4 wk');
+    expect(block).toHaveTextContent('Actual design18 wk');
     expect(block).toHaveTextContent('Actual testing–');
     expect(block).toHaveTextContent('Safety cert. requiredYes');
     expect(block).toHaveTextContent('Capacity flagYes');

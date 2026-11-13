@@ -298,10 +298,10 @@ describe('DashboardPage — P13 country filter (ADR 0025)', () => {
     // Served count + served share, verbatim (no browser arithmetic).
     expect(inQueue).toHaveTextContent('80');
     expect(inQueue).toHaveTextContent('(80%)');
-    expect(screen.getByRole('list', { name: 'Total projects by country' })).toHaveTextContent('(77.12%)');
+    expect(screen.getByRole('list', { name: 'Total projects by country' })).toHaveTextContent('(77%)');
     const spill = screen.getByRole('list', { name: `Spillover ${String(CARRY_OVER_YEAR)} by country` });
     expect(spill).toHaveTextContent('59');
-    expect(spill).toHaveTextContent('(77.63%)');
+    expect(spill).toHaveTextContent('(78%)');
   });
 
   it('no longer renders the all-projects register; "All projects" links to the Projects page (owner ask 2026-11-13)', () => {
@@ -548,11 +548,11 @@ describe('DashboardPage — P13-T10 analytics & breakdown', () => {
     const hubType = screen.getAllByText('Project pipeline summary: Hub × Type')[0]!;
     expect(hubType.compareDocumentPosition(heading) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(screen.getByRole('list', { name: 'Pipeline projects by project type' })).toHaveTextContent(
-      'Cost Optimization: 89 (37.71%)',
+      'Cost Optimization: 89 (38%)',
     );
-    expect(screen.getByRole('table', { name: /completing within the year/i })).toHaveTextContent('7 8.54%');
+    expect(screen.getByRole('table', { name: /completing within the year/i })).toHaveTextContent('7 9%');
     // Per-hub Total column = served completing_by_hub.
-    expect(screen.getByRole('row', { name: /PD-India/ })).toHaveTextContent('14 7.78%');
+    expect(screen.getByRole('row', { name: /PD-India/ })).toHaveTextContent('14 8%');
     // Donut centres show the served PipelineTotals.total_count (239), not a client sum.
     expect(screen.getAllByText('239').length).toBeGreaterThanOrEqual(2);
   });

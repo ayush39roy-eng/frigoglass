@@ -113,10 +113,10 @@ describe('CapacityPage', () => {
     expect(screen.queryByText(/Europe/)).not.toBeInTheDocument();
     expect(screen.getAllByTestId(/^booked-hub-/)).toHaveLength(1);
     expect(screen.getByTestId('booked-lab-R&D-Greece')).toHaveTextContent('Lab (Greece region)');
-    expect(screen.getByTestId('booked-design-R&D-Greece')).toHaveTextContent('232.36%');
+    expect(screen.getByTestId('booked-design-R&D-Greece')).toHaveTextContent('232%');
     await user.click(screen.getByRole('radio', { name: 'YTD 2026' }));
     expect(screen.getByTestId('booked-strip-horizon')).toHaveTextContent(/Remaining year/);
-    expect(screen.getByTestId('booked-design-R&D-Greece')).toHaveTextContent('326.56%');
+    expect(screen.getByTestId('booked-design-R&D-Greece')).toHaveTextContent('327%');
   });
 
   it('P13-T11: KPI cards and the matrix TOTAL row render the served totals verbatim, following the horizon', async () => {
@@ -142,11 +142,11 @@ describe('CapacityPage', () => {
     hooks.useClassBreakdown.mockReturnValue(ready(classBreakdown));
     renderWithProviders(<CapacityPage />);
 
-    expect(screen.getByRole('group', { name: 'Design demand' })).toHaveTextContent('207.86 %');
-    expect(screen.getByTestId('kpi-design-capacity-value')).toHaveTextContent('290.1');
+    expect(screen.getByRole('group', { name: 'Design demand' })).toHaveTextContent('208 %');
+    expect(screen.getByTestId('kpi-design-capacity-value')).toHaveTextContent('290');
     expect(screen.getByTestId('kpi-Design demand-P1')).toHaveTextContent('416');
     expect(screen.getByTestId('kpi-Lab demand-P1')).toHaveTextContent('300');
-    expect(screen.getByLabelText('Lab demand by lab region')).toHaveTextContent('India: 496.5');
+    expect(screen.getByLabelText('Lab demand by lab region')).toHaveTextContent('India: 497');
 
     // P19-T06: the merged "Load vs. capacity by hub" table carries the served buckets
     // (behind "Show priority split") and the served totals.
@@ -154,17 +154,17 @@ describe('CapacityPage', () => {
     expect(screen.getByTestId('split-PD-India-P2-D')).toHaveTextContent('100');
     expect(screen.getByTestId('split-R&D-India-Queue-L')).toHaveTextContent('100');
     expect(screen.getByTestId('split-total-P1-D')).toHaveTextContent('416');
-    expect(screen.getByTestId('hub-summary-row-PD-India')).toHaveTextContent('232.36%');
+    expect(screen.getByTestId('hub-summary-row-PD-India')).toHaveTextContent('232%');
     const total = screen.getByTestId('hub-summary-total');
     expect(total).toHaveTextContent('603');
-    expect(total).toHaveTextContent('207.86%');
+    expect(total).toHaveTextContent('208%');
 
     await user.click(screen.getByRole('radio', { name: 'YTD 2026' }));
-    expect(screen.getByTestId('hub-summary-total')).toHaveTextContent('299.5%');
-    expect(screen.getByRole('group', { name: 'Design demand' })).toHaveTextContent('299.5 %');
+    expect(screen.getByTestId('hub-summary-total')).toHaveTextContent('300%');
+    expect(screen.getByRole('group', { name: 'Design demand' })).toHaveTextContent('300 %');
   });
 
-  it('renders the client layout in order: KPI cards, class cards, charts, booked tiles, the merged load vs. capacity table, then the engineer section', () => {
+  it('renders the client layout in order: KPI cards, class cards, charts, booked tiles, then the merged load vs. capacity table (no engineer section, owner ask 2026-11-13)', () => {
     hooks.useHubLoadVsCapacity.mockReturnValue(ready({ ...hubLoad, areas: [areaRow()] }));
     hooks.useClassBreakdown.mockReturnValue(ready(classBreakdown));
     renderWithProviders(<CapacityPage />);
@@ -175,7 +175,6 @@ describe('CapacityPage', () => {
       screen.getByTestId('load-capacity-charts'),
       screen.getByTestId('hub-booking-strip'),
       screen.getByTestId('hub-summary-table'),
-      screen.getByTestId('section-engineers'),
     ];
     for (let i = 1; i < order.length; i++) {
       const prev = order[i - 1];
@@ -188,10 +187,11 @@ describe('CapacityPage', () => {
     expect(screen.getByRole('group', { name: 'Lab capacity' })).toBeInTheDocument();
     expect(screen.getByRole('group', { name: 'Lab demand' })).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'Class breakdown — deliverable vs. left out' })).toBeInTheDocument();
-    // P19-T07: the seven class cards stay; the engineer disclosure is the only one left
+    // P19-T07: the seven class cards stay. Owner ask 2026-11-13: the engineer
+    // utilization disclosure is gone too.
     expect(screen.getByTestId('class-cards')).toBeInTheDocument();
-    const more = screen.getByTestId('capacity-more-detail');
-    expect(within(more).getAllByRole('button').map((b) => b.getAttribute('aria-label'))).toEqual(['Show engineer utilization']);
+    expect(screen.queryByTestId('capacity-more-detail')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('section-engineers')).not.toBeInTheDocument();
     expect(screen.getByText('Design Demand vs Capacity by Hub')).toBeInTheDocument();
     // provenance names the exact active run version
     expect(screen.getAllByTestId('schedule-run-provenance')[0]).toHaveTextContent(/v6/);
@@ -225,28 +225,14 @@ describe('CapacityPage', () => {
     expect(screen.queryByText(/Chambers × weeks/)).not.toBeInTheDocument();
   });
 
-  it('the engineer section stays collapsed and fetches nothing until opened (engineer utilization is audited per read)', async () => {
-    const user = userEvent.setup();
+  it('has no engineer utilization section and never reads engineer utilization (owner ask 2026-11-13)', () => {
     hooks.useHubLoadVsCapacity.mockReturnValue(ready(hubLoad));
     hooks.useClassBreakdown.mockReturnValue(ready(classBreakdown));
     hooks.useEngineerUtilization.mockReturnValue(ready(engUtil));
     renderWithProviders(<CapacityPage />);
-
-    expect(hooks.useEngineerUtilization).not.toHaveBeenCalled();
+    expect(screen.queryByRole('button', { name: /engineer utilization/i })).not.toBeInTheDocument();
     expect(screen.queryByRole('table', { name: 'Engineer utilization by week' })).not.toBeInTheDocument();
-    expect(screen.queryByText('Priya N')).not.toBeInTheDocument();
-
-    const engineers = screen.getByRole('button', { name: 'Show engineer utilization' });
-    expect(engineers).toHaveAttribute('aria-expanded', 'false');
-    await user.click(engineers);
-    expect(hooks.useEngineerUtilization).toHaveBeenCalled();
-    // ADR 0028: the Engineers x weeks heatmap replaces the old GDPR placeholder
-    expect(screen.getByRole('table', { name: 'Engineer utilization by week' })).toBeInTheDocument();
-    expect(screen.getByText('Priya N')).toBeInTheDocument();
-
-    // closing hides it again
-    await user.click(screen.getByRole('button', { name: 'Hide engineer utilization' }));
-    expect(screen.queryByText('Priya N')).not.toBeInTheDocument();
+    expect(hooks.useEngineerUtilization).not.toHaveBeenCalled();
   });
 
   it('P19-T05: Weeks | Days and YTD | Full year are one view state; all four combinations show the served fields', async () => {
@@ -265,38 +251,38 @@ describe('CapacityPage', () => {
     const booked = (): HTMLElement => screen.getByTestId('booked-design-R&D-Greece');
 
     // 1. Weeks + Full year
-    expect(cap()).toHaveTextContent('252.62');
+    expect(cap()).toHaveTextContent('253');
     expect(screen.getByRole('group', { name: 'Design capacity' })).toHaveTextContent('wks');
-    expect(booked()).toHaveTextContent('232.36%');
-    expect(booked()).toHaveTextContent('120 of 252.62 engineer-wks');
+    expect(booked()).toHaveTextContent('232%');
+    expect(booked()).toHaveTextContent('120 of 253 engineer-wks');
 
     // 2. Days + Full year
     await user.click(days);
     expect(days).toHaveAttribute('aria-checked', 'true');
-    expect(cap()).toHaveTextContent('1,515.72');
+    expect(cap()).toHaveTextContent('1,516');
     expect(screen.getByRole('group', { name: 'Design capacity' })).toHaveTextContent('days');
-    expect(booked()).toHaveTextContent('232.36%');
-    expect(booked()).toHaveTextContent('3,522 of 1,515.72 engineer-days');
-    expect(screen.getByTestId('booked-lab-R&D-Greece')).toHaveTextContent('2,979 of 1,117.32 chamber-days');
+    expect(booked()).toHaveTextContent('232%');
+    expect(booked()).toHaveTextContent('3,522 of 1,516 engineer-days');
+    expect(screen.getByTestId('booked-lab-R&D-Greece')).toHaveTextContent('2,979 of 1,117 chamber-days');
     expect(screen.getAllByTestId('priority-load-chart-axis').map((e) => e.textContent)).toEqual(['engineer-days', 'chamber-days']);
     expect(screen.getByTestId('hub-summary-unit-note')).toHaveTextContent('Demand and capacity in working days');
-    expect(within(screen.getByTestId('hub-summary-row-R&D-Greece')).getByTestId('design-capacity')).toHaveTextContent('1,515.72');
+    expect(within(screen.getByTestId('hub-summary-row-R&D-Greece')).getByTestId('design-capacity')).toHaveTextContent('1,516');
     expect(screen.getByTestId('total-design-load')).toHaveTextContent('3,522');
 
     // 3. Days + YTD 2026
     await user.click(screen.getByRole('radio', { name: 'YTD 2026' }));
     expect(days).toHaveAttribute('aria-checked', 'true');
-    expect(cap()).toHaveTextContent('1,078.5');
-    expect(booked()).toHaveTextContent('326.56%');
+    expect(cap()).toHaveTextContent('1,079');
+    expect(booked()).toHaveTextContent('327%');
     // P30 (I19 rev.): YTD pairs the REMAINING demand (served days) with the remaining capacity
-    expect(booked()).toHaveTextContent('2,616 of 1,078.5 engineer-days');
+    expect(booked()).toHaveTextContent('2,616 of 1,079 engineer-days');
 
     // 4. Weeks + YTD 2026
     await user.click(weeks);
     expect(screen.getByRole('radio', { name: 'YTD 2026' })).toHaveAttribute('aria-checked', 'true');
-    expect(cap()).toHaveTextContent('179.75');
-    expect(booked()).toHaveTextContent('326.56%');
-    expect(booked()).toHaveTextContent('436 of 179.75 engineer-wks');
+    expect(cap()).toHaveTextContent('180');
+    expect(booked()).toHaveTextContent('327%');
+    expect(booked()).toHaveTextContent('436 of 180 engineer-wks');
     expect(screen.getByTestId('hub-summary-unit-note')).toHaveTextContent(/^Weeks\./);
   });
 
@@ -314,11 +300,11 @@ describe('CapacityPage', () => {
     expect(days).toHaveFocus();
     await user.keyboard(' ');
     expect(days).toHaveAttribute('aria-checked', 'true');
-    expect(screen.getByTestId('kpi-design-capacity-value')).toHaveTextContent('1,515.72');
+    expect(screen.getByTestId('kpi-design-capacity-value')).toHaveTextContent('1,516');
     await user.keyboard('{ArrowLeft}');
     await user.keyboard('{Enter}');
     expect(screen.getByRole('radio', { name: 'Weeks' })).toHaveAttribute('aria-checked', 'true');
-    expect(screen.getByTestId('kpi-design-capacity-value')).toHaveTextContent('252.62');
+    expect(screen.getByTestId('kpi-design-capacity-value')).toHaveTextContent('253');
   });
 
   it('keeps the exports reachable', () => {

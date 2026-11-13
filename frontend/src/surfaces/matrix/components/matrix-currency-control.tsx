@@ -2,7 +2,7 @@ import * as React from 'react';
 
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
-import { formatDecimal } from '@/lib/format';
+import { formatFactor } from '@/lib/format';
 import { cn } from '@/lib/utils';
 
 import {
@@ -37,7 +37,7 @@ function optionsFor(served: CurrencyOption[] | undefined): CurrencyOption[] {
 function rateCaption(value: MatrixCurrencyCode, option: CurrencyOption | undefined): string {
   if (value === 'EUR') return 'Base currency — 1 EUR = 1 EUR.';
   if (!option || option.rate_to_eur === null) return 'Active conversion rate unavailable.';
-  return `Active rate: 1 EUR = ${formatDecimal(option.rate_to_eur)} ${value} (server-applied).`;
+  return `Active rate: 1 EUR = ${formatFactor(option.rate_to_eur)} ${value} (server-applied).`;
 }
 
 export interface MatrixCurrencyControlProps {

@@ -258,7 +258,11 @@ export function PriorityLoadChart({
         </div>
       </div>
 
-      <table className="sr-only">
+      {/* `sr-only` cannot shrink a <table> (tables size to their content), so the
+          wrapper is the 1px clipped box; the bare table leaked ~300px of
+          horizontal overflow onto the Capacity page (2026-11-13). */}
+      <div className="sr-only">
+      <table>
         <caption>
           {ariaLabel}; {loadLabel.toLowerCase()} and capacity in {unit}
           {hasSplit ? `, priority split in ${splitUnit}` : ''}
@@ -292,6 +296,7 @@ export function PriorityLoadChart({
           ))}
         </tbody>
       </table>
+      </div>
     </figure>
   );
 }

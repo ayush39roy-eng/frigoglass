@@ -174,11 +174,11 @@ describe('WorkflowSettingsPage — lead times, calendars, chambers', () => {
     renderWithProviders(<WorkflowSettingsPage />, TEMPLATES);
     await user.click(screen.getByRole('tab', { name: 'Hub calendars' }));
     const card = screen.getByTestId('calendar-R&D-Greece');
-    expect(within(card).getByTestId('saved-working-weeks')).toHaveTextContent('44.6');
+    expect(within(card).getByTestId('saved-working-weeks')).toHaveTextContent('45');
     const annual = within(card).getByLabelText('Annual leave (days)');
     await user.clear(annual);
     await user.type(annual, '20');
-    expect(within(card).getByTestId('preview-working-weeks')).toHaveTextContent('45.6');
+    expect(within(card).getByTestId('preview-working-weeks')).toHaveTextContent('46');
     expect(within(card).getByTestId('preview-working-weeks')).toHaveTextContent('preview');
     await user.click(within(card).getByRole('button', { name: 'Save' }));
     expect(hooks.saveCalendar).toHaveBeenCalledWith({
@@ -198,12 +198,12 @@ describe('WorkflowSettingsPage — lead times, calendars, chambers', () => {
     renderWithProviders(<WorkflowSettingsPage />, TEMPLATES);
     await user.click(screen.getByRole('tab', { name: 'Chambers' }));
     const row = screen.getByTestId('chamber-IN-CH-2');
-    expect(row).toHaveTextContent('35.4');
-    expect(row).toHaveTextContent('84.96');
+    expect(row).toHaveTextContent('35');
+    expect(row).toHaveTextContent('85');
     const breakdown = within(row).getByLabelText('IN-CH-2 Breakdown (wk)');
     await user.clear(breakdown);
     await user.type(breakdown, '5');
-    expect(within(row).getByTestId('preview-working')).toHaveTextContent('41.4 preview');
+    expect(within(row).getByTestId('preview-working')).toHaveTextContent('41 preview');
     await user.click(within(row).getByRole('button', { name: 'Save IN-CH-2' }));
     expect(hooks.saveChamber).toHaveBeenCalledWith({ chamberId: 'ch-2', body: { breakdown_weeks: 5 } });
   });

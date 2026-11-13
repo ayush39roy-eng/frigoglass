@@ -58,8 +58,8 @@ describe('HubSummaryTable — P29 capacity hubs (ADR 0042)', () => {
     renderWithProviders(<HubSummaryTable data={fourRows()} activeRun={undefined} view={WEEKS_YEAR} />);
     const greece = screen.getByTestId('hub-summary-row-R&D-Greece');
     expect(within(greece).getByTestId('design-load')).toHaveTextContent('131');
-    expect(within(greece).getByTestId('design-capacity')).toHaveTextContent('124.88');
-    expect(within(greece).getByTestId('design-booked')).toHaveTextContent('104.9%');
+    expect(within(greece).getByTestId('design-capacity')).toHaveTextContent('125');
+    expect(within(greece).getByTestId('design-booked')).toHaveTextContent('105%');
     const toggle = within(greece).getByRole('button', { name: 'Includes OEM-HCK and OEM-Seitek' });
     expect(toggle).toHaveAttribute('aria-expanded', 'false');
     expect(screen.queryByTestId('hub-summary-member-OEM-HCK')).toBeNull();
@@ -208,7 +208,7 @@ describe('HubBookingStrip — P29 Greece tile', () => {
     expect(screen.getAllByTestId(/^booked-hub-/)).toHaveLength(4);
     expect(screen.queryByTestId('booked-family-oem')).toBeNull();
     expect(screen.getByTestId('booked-members-R&D-Greece')).toHaveTextContent('Includes OEM-HCK and OEM-Seitek');
-    expect(within(screen.getByTestId('booked-design-R&D-Greece')).getByText('104.9%')).toBeInTheDocument();
+    expect(within(screen.getByTestId('booked-design-R&D-Greece')).getByText('105%')).toBeInTheDocument();
     expect(screen.queryByTestId('booked-members-PD-India')).toBeNull();
     // Two boxes: two columns, no empty third column at xl.
     expect(screen.getByTestId('booked-families')).toHaveClass('md:grid-cols-2');

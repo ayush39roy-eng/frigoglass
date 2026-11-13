@@ -35,9 +35,15 @@ export interface ProjectListRequest {
   expected: number;
   /** Selection rule over served row fields. */
   match: (row: ProjectFilterRow) => boolean;
+  /** A chart that ignores part of the Dashboard selection (the type chart
+   *  ignores the type filter, the category chart the category filter) lists
+   *  its projects with that part dropped too, so the list matches the bar. */
+  ignoreSelection?: 'types' | 'categories' | undefined;
 }
 
-type OpenProjectList = (request: ProjectListRequest, opener: HTMLElement) => void;
+/** `opener` receives focus back when the dialog closes (a chart bar has no
+ *  focusable element, so it may be null). */
+type OpenProjectList = (request: ProjectListRequest, opener: HTMLElement | null) => void;
 
 const ProjectListContext = React.createContext<OpenProjectList | null>(null);
 
@@ -80,12 +86,14 @@ export function ProjectListProvider({
   );
 }
 
-function scopeParams(scope: ProjectListScope): ProjectFilterParams {
+function scopeParams(scope: ProjectListScope, ignore: ProjectListRequest['ignoreSelection']): ProjectFilterParams {
+  const categories = ignore === 'categories' ? [] : scope.selection.categories;
+  const types = ignore === 'types' ? [] : scope.selection.types;
   return {
     ...(scope.hubId !== null ? { hub_id: scope.hubId } : {}),
     ...(scope.region !== null ? { region: scope.region } : {}),
-    ...(scope.selection.categories.length > 0 ? { category: scope.selection.categories } : {}),
-    ...(scope.selection.types.length > 0 ? { type: scope.selection.types } : {}),
+    ...(categories.length > 0 ? { category: categories } : {}),
+    ...(types.length > 0 ? { type: types } : {}),
   };
 }
 
@@ -157,7 +165,7 @@ function ProjectListDialog({
   onClose: () => void;
   returnFocusTo: React.RefObject<HTMLElement | null>;
 }): React.JSX.Element {
-  const query = useDrilldownProjects(scopeParams(scope), request !== null);
+  const query = useDrilldownProjects(scopeParams(scope, request?.ignoreSelection), request !== null);
   const selected = React.useMemo(
     () => (request && query.data ? query.data.rows.filter(request.match) : []),
     [request, query.data],

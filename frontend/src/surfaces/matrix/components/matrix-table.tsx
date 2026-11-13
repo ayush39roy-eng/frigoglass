@@ -134,7 +134,7 @@ function DimCell({
   const pts = cell.points !== null && cell.maxPoints !== null ? formatPoints(cell.points, cell.maxPoints) : null;
   // Served scaled-to-100 points (`dimension_points[key].scaled_points`), when present.
   const scaled = row.dimension_points?.[dim.key]?.scaled_points;
-  const scaledText = scaled === undefined ? '' : ` (${scaled.toFixed(2)} of 100)`;
+  const scaledText = scaled === undefined ? '' : ` (${String(Math.round(scaled))} of 100)`;
   const summary = `${dim.label}: ${String(cell.score)} of 5${pts ? `, ${pts}${scaledText}` : ''}${regText}`;
   return (
     <span className="flex flex-col items-center gap-0.5 leading-tight" title={summary} data-testid={`dim-${dim.key}`}>

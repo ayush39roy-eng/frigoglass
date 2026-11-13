@@ -78,7 +78,7 @@ function DeltaChip({
 }) {
   const tone = deltaTone(delta, meaning);
   const Icon = delta === 0 ? Minus : delta > 0 ? ArrowUpRight : ArrowDownRight;
-  const text = label ?? `${delta > 0 ? '+' : ''}${delta.toFixed(1)}%`;
+  const text = label ?? `${delta > 0 ? '+' : ''}${String(Math.round(delta))}%`;
 
   return (
     <span

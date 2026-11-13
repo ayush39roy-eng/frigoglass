@@ -12,7 +12,7 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { CountryFlag } from '@/components/shared/hub-filter/country-flag';
-import { formatDecimal, formatInteger } from '@/lib/format';
+import { formatDecimal, formatFactor, formatInteger } from '@/lib/format';
 import { LAB_REGIONS, type LabRegion } from '@/types/enums';
 
 import type { ChamberRead } from '../api/types';
@@ -82,7 +82,7 @@ export function ChamberTable({ rows, canEdit, onEdit, onDelete }: ChamberTablePr
               {formatInteger(row.platforms)}
             </TableCell>
             <TableCell className="text-right tnum" data-numeric="">
-              {formatDecimal(row.efficiency)}
+              {formatFactor(row.efficiency)}
             </TableCell>
             <TableCell className="text-right tnum" data-numeric="">
               {formatDecimal(row.maintenance_weeks)} / {formatDecimal(row.breakdown_weeks)} /{' '}

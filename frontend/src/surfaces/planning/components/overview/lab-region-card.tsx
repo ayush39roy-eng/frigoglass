@@ -227,7 +227,7 @@ function ChamberRow({
         )}
       </TableCell>
       <TableCell className="px-1.5 py-1.5 text-right font-mono tnum" data-numeric="">
-        {formatPlain(chamber.working_weeks)}
+        {formatAmount(chamber.working_weeks, 'weeks')}
       </TableCell>
       <TableCell className="whitespace-nowrap px-1.5 py-1.5 text-right font-mono font-semibold text-success-subtle-fg tnum" data-numeric="">
         {formatAmount(pickUnit(chamber, unit, basis), unit)}

@@ -79,8 +79,8 @@ describe('executive donuts (P28, ADR 0039 §3)', () => {
     // Full names — never initials, never a mid-word break.
     expect(within(donut).getAllByText('Spillover').length).toBeGreaterThan(0);
     expect(within(donut).getAllByText('New').length).toBeGreaterThan(0);
-    expect(within(donut).getByTestId('exec-pipeline-donut-slice-spillover')).toHaveTextContent('17 · 6.72%');
-    expect(within(donut).getByTestId('exec-pipeline-donut-slice-new')).toHaveTextContent('236 · 93.28%');
+    expect(within(donut).getByTestId('exec-pipeline-donut-slice-spillover')).toHaveTextContent('17 · 7%');
+    expect(within(donut).getByTestId('exec-pipeline-donut-slice-new')).toHaveTextContent('236 · 93%');
     expect(within(donut).getByTestId('exec-pipeline-donut-slice-unregistered')).toHaveTextContent('0 · 0%');
     // A zero slice has no arc; it is named in one muted line instead.
     expect(within(donut).getByTestId('exec-pipeline-donut-zero')).toHaveTextContent('No projects: Unregistered');
@@ -99,13 +99,13 @@ describe('executive donuts (P28, ADR 0039 §3)', () => {
     const svgText = donut.querySelector('figure svg');
     expect(svgText).not.toBeNull();
     expect(svgText?.textContent).toContain('Industrialization');
-    expect(svgText?.textContent).toContain('85 · 33.6%');
+    expect(svgText?.textContent).toContain('85 · 34%');
     // Leader lines drawn (one polyline per slice).
     expect(donut.querySelectorAll('figure svg polyline').length).toBeGreaterThanOrEqual(6);
     // The owner-banned `overflow-wrap:anywhere` guard is gone.
     expect(container.querySelector('[class*="anywhere"]')).toBeNull();
-    expect(within(donut).getByTestId('exec-status-donut-slice-in-queue')).toHaveTextContent('85 · 33.6%');
-    expect(within(donut).getByTestId('exec-status-donut-slice-other')).toHaveTextContent('29 · 11.46%');
+    expect(within(donut).getByTestId('exec-status-donut-slice-in-queue')).toHaveTextContent('85 · 34%');
+    expect(within(donut).getByTestId('exec-status-donut-slice-other')).toHaveTextContent('29 · 11%');
   });
 
   it('P31 Projects by type: a donut of the served by_type buckets — full labels, counts + shares verbatim', () => {
@@ -123,10 +123,10 @@ describe('executive donuts (P28, ADR 0039 §3)', () => {
     );
     const donut = screen.getByTestId('exec-type-donut');
     expect(within(donut).getByTestId('exec-type-donut-slice-CO')).toHaveTextContent('Cost Optimization');
-    expect(within(donut).getByTestId('exec-type-donut-slice-CO')).toHaveTextContent('89 · 37.71%');
+    expect(within(donut).getByTestId('exec-type-donut-slice-CO')).toHaveTextContent('89 · 38%');
     expect(within(donut).getAllByText('236').length).toBeGreaterThan(0);
     // Leader-line labels in the chart (same language as the status donut).
-    expect(donut.querySelector('figure svg')?.textContent).toContain('Optimization89 · 37.71%');
+    expect(donut.querySelector('figure svg')?.textContent).toContain('Optimization89 · 38%');
     // The legend toggles carry the FULL served label, never truncated.
     const legend = within(donut).getByRole('group', { name: 'Filter the Dashboard by project type' });
     const rc = within(legend).getByRole('button', { name: 'Regulatory / Business Compliance' });
@@ -183,11 +183,11 @@ describe('PriorityDeliveryChart', () => {
     );
     const card = screen.getByTestId('exec-priority-delivery');
     const list = within(card).getByRole('list', { name: 'Delivery by priority band' });
-    expect(list).toHaveTextContent('P1: 12 of 34 within the year (35.29%)');
-    expect(list).toHaveTextContent('in flight 58.82%');
-    expect(list).toHaveTextContent('not started 23.53%');
-    expect(list).toHaveTextContent('delivered 5.88%');
-    expect(list).toHaveTextContent('not in plan 11.76%');
+    expect(list).toHaveTextContent('P1: 12 of 34 within the year (35%)');
+    expect(list).toHaveTextContent('in flight 59%');
+    expect(list).toHaveTextContent('not started 24%');
+    expect(list).toHaveTextContent('delivered 6%');
+    expect(list).toHaveTextContent('not in plan 12%');
     expect(list).toHaveTextContent('Q: 1 of 10 within the year (10%)');
   });
 

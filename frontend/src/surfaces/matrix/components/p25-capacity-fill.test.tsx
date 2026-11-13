@@ -81,7 +81,7 @@ describe('Capacity fill panel (P25)', () => {
     expect(within(gr).getByTestId('capacity-fill-figures')).toHaveTextContent('P1 load 6 → 9 of 10 wks');
     expect(within(gr).getByTestId('capacity-fill-promoted')).toHaveTextContent('1 promoted');
     const ind = screen.getByTestId('capacity-fill-PD-India');
-    expect(within(ind).getByTestId('capacity-fill-figures')).toHaveTextContent('P1 load 25.5 → 25.5 of 20 wks· over capacity');
+    expect(within(ind).getByTestId('capacity-fill-figures')).toHaveTextContent('P1 load 26 → 26 of 20 wks· over capacity');
     expect(within(ind).getByTestId('capacity-fill-promoted')).toHaveTextContent('0 promoted');
     expect(screen.getByText(/run v12/)).toBeInTheDocument();
     expect(await seriousAxeViolations(container)).toEqual([]);

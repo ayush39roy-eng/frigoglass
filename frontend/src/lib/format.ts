@@ -26,7 +26,8 @@ export function formatCurrency(
       style: 'currency',
       currency,
       notation: opts.compact ? 'compact' : 'standard',
-      maximumFractionDigits: opts.compact ? 1 : 0,
+      // Owner ask 2026-11-13: whole numbers everywhere, compact too.
+      maximumFractionDigits: 0,
     });
     currencyFormatters.set(key, fmt);
   }
@@ -55,27 +56,40 @@ export function formatInteger(value: number): string {
   return integerFormatter.format(value);
 }
 
-const decimalFormatter = new Intl.NumberFormat('en-GB', { maximumFractionDigits: 2 });
-
 /**
- * Format an already-computed fractional figure for display (e.g. the Capacity
- * surface's FTE-scaled `design_capacity_weeks` / efficiency-scaled
- * `lab_capacity_units`, and the `lab_load_units` = Σ lab-weeks × 0.5 figure).
- * Presentation only — the value is taken verbatim from the API, never derived
- * here (CLAUDE.md / Invariants I6 / I7).
+ * Format an already-computed figure that the server serves with decimals (the
+ * Capacity surface's FTE-scaled `design_capacity_weeks`, demand weeks, gaps,
+ * served shares, scores). Presentation only — the value is taken verbatim from
+ * the API, never derived here (CLAUDE.md / Invariants I6 / I7).
+ *
+ * Owner ask 2026-11-13: data is shown as whole numbers, rounded half away from
+ * zero for display (265.07 → 265, 23.5 → 24). The served value is unchanged;
+ * only its printed form is rounded. Quantities that are fractions by nature
+ * (FTE, chamber efficiency, ratios) use `formatFactor` instead.
  */
 export function formatDecimal(value: number): string {
-  return decimalFormatter.format(value);
+  return integerFormatter.format(value);
+}
+
+const factorFormatter = new Intl.NumberFormat('en-GB', { maximumFractionDigits: 2 });
+
+/**
+ * A quantity that is a fraction by nature — an engineer's FTE (0.5, 0.63), a
+ * chamber's efficiency (0.85), a multiplier — printed to up to 2 dp. Rounding
+ * these to a whole number would change their meaning (0.5 FTE is half speed,
+ * DOMAIN_RULES "Booking rules"), so they are exempt from the whole-number rule.
+ */
+export function formatFactor(value: number): string {
+  return factorFormatter.format(value);
 }
 
 /**
- * A served booked % (ADR 0016: load / capacity × 100, already rounded to 2 dp
- * by the server, I19). Printed to the same two decimals, never re-rounded to
- * an integer, so it reconciles with the server figure. `null` (capacity 0)
+ * A served booked % (ADR 0016: load / capacity × 100, served to 2 dp, I19),
+ * printed as a whole number (owner ask 2026-11-13). `null` (capacity 0)
  * prints as "—".
  */
 export function formatBookedPct(value: number | null): string {
-  return value === null ? '—' : `${decimalFormatter.format(value)} %`;
+  return value === null ? '—' : `${integerFormatter.format(value)} %`;
 }
 
 /** Horizon weeks are 1-indexed absolute week numbers (DOMAIN_RULES.md horizon constants). */

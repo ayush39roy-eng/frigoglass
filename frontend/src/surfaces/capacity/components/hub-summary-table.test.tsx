@@ -74,13 +74,13 @@ describe('HubSummaryTable — "Load vs. capacity by hub" (P19-T06 merged table)'
     expect(screen.getByText('Load vs. capacity by hub')).toBeInTheDocument();
     const india = screen.getByTestId('hub-summary-row-PD-India');
     expect(within(india).getByTestId('design-load')).toHaveTextContent('587');
-    expect(within(india).getByTestId('design-capacity')).toHaveTextContent('252.62');
-    expect(within(india).getByTestId('lab-load')).toHaveTextContent('496.5');
-    expect(within(india).getByTestId('lab-capacity')).toHaveTextContent('186.22');
-    expect(within(india).getByTestId('design-booked')).toHaveTextContent('232.36%');
-    expect(within(india).getByTestId('design-gap')).toHaveTextContent('+334.38');
+    expect(within(india).getByTestId('design-capacity')).toHaveTextContent('253');
+    expect(within(india).getByTestId('lab-load')).toHaveTextContent('497');
+    expect(within(india).getByTestId('lab-capacity')).toHaveTextContent('186');
+    expect(within(india).getByTestId('design-booked')).toHaveTextContent('232%');
+    expect(within(india).getByTestId('design-gap')).toHaveTextContent('+334');
     const greece = screen.getByTestId('hub-summary-row-R&D-Greece');
-    expect(within(greece).getByTestId('design-booked')).toHaveTextContent('40.03%');
+    expect(within(greece).getByTestId('design-booked')).toHaveTextContent('40%');
     expect(within(greece).getByTestId('lab-booked')).toHaveTextContent('—'); // served null lab booked %
   });
 
@@ -116,7 +116,7 @@ describe('HubSummaryTable — "Load vs. capacity by hub" (P19-T06 merged table)'
 
     const rdGreece = screen.getByTestId('hub-summary-row-R&D-Greece');
     expect(within(rdGreece).getByTestId('lab-load')).toHaveTextContent('22');
-    expect(within(rdGreece).getByTestId('lab-booked')).toHaveTextContent('100.5%');
+    expect(within(rdGreece).getByTestId('lab-booked')).toHaveTextContent('101%');
     for (const hub of ['OEM-HCK', 'OEM-Seitek']) {
       const r = screen.getByTestId(`hub-summary-row-${hub}`);
       expect(within(r).getByTestId('lab-region')).toHaveTextContent('Greece');
@@ -127,17 +127,17 @@ describe('HubSummaryTable — "Load vs. capacity by hub" (P19-T06 merged table)'
     }
     const pdIndia = screen.getByTestId('hub-summary-row-PD-India');
     expect(within(pdIndia).getByTestId('lab-shared')).toHaveTextContent('Same as R&D-India above');
-    expect(within(screen.getByTestId('hub-summary-row-R&D-India')).getByTestId('lab-load')).toHaveTextContent('496.5');
+    expect(within(screen.getByTestId('hub-summary-row-R&D-India')).getByTestId('lab-load')).toHaveTextContent('497');
     expect(within(screen.getByTestId('hub-summary-row-PD-Romania')).getByTestId('lab-load')).toHaveTextContent('24');
   });
 
   it('the Total row is the served totals (each lab region once), not a sum of the rows', () => {
     renderWithProviders(<HubSummaryTable data={six} activeRun={undefined} view={WEEKS_YEAR} />);
     const total = screen.getByTestId('hub-summary-total');
-    expect(within(total).getByTestId('total-design-load')).toHaveTextContent('1,717.55');
-    expect(within(total).getByTestId('total-lab-load')).toHaveTextContent('542.5');
-    expect(within(total).getByTestId('total-lab-capacity')).toHaveTextContent('290.4');
-    expect(within(total).getByTestId('total-lab-booked')).toHaveTextContent('186.81%');
+    expect(within(total).getByTestId('total-design-load')).toHaveTextContent('1,718');
+    expect(within(total).getByTestId('total-lab-load')).toHaveTextContent('543');
+    expect(within(total).getByTestId('total-lab-capacity')).toHaveTextContent('290');
+    expect(within(total).getByTestId('total-lab-booked')).toHaveTextContent('187%');
     expect(within(total).getByTestId('total-lab-regions')).toHaveTextContent('Greece, India, Romania');
     expect(within(total).getAllByText('not served')).toHaveLength(2); // no served total gap
   });
@@ -203,22 +203,22 @@ describe('HubSummaryTable — "Load vs. capacity by hub" (P19-T06 merged table)'
   it('gap: over capacity is red with "+", spare is green with "−"', () => {
     renderWithProviders(<HubSummaryTable data={data} activeRun={undefined} view={WEEKS_YEAR} />);
     const over = within(screen.getByTestId('hub-summary-row-PD-India')).getByTestId('design-gap');
-    expect(over).toHaveTextContent('+334.38 over capacity');
+    expect(over).toHaveTextContent('+334 over capacity');
     expect(over).toHaveClass('text-danger-subtle-fg');
     expect(over).toHaveAttribute('data-gap-sign', 'over');
     const under = within(screen.getByTestId('hub-summary-row-R&D-Greece')).getByTestId('design-gap');
-    expect(under).toHaveTextContent('−74.9 spare');
+    expect(under).toHaveTextContent('−75 spare');
     expect(under).toHaveClass('text-success-subtle-fg');
-    expect(within(screen.getByTestId('hub-summary-row-R&D-Greece')).getByTestId('lab-gap')).toHaveTextContent('−72.96');
+    expect(within(screen.getByTestId('hub-summary-row-R&D-Greece')).getByTestId('lab-gap')).toHaveTextContent('−73');
   });
 
   it('follows the horizon', () => {
     renderWithProviders(<HubSummaryTable data={data} activeRun={undefined} view={{ horizon: 'remaining', unit: 'weeks' }} />);
     const india = screen.getByTestId('hub-summary-row-PD-India');
-    expect(within(india).getByTestId('design-capacity')).toHaveTextContent('179.75');
-    expect(india).toHaveTextContent('326.56%');
-    expect(within(india).getByTestId('design-gap')).toHaveTextContent('+407.25');
-    expect(screen.getByTestId('hub-summary-row-R&D-Greece')).toHaveTextContent('88.5%');
+    expect(within(india).getByTestId('design-capacity')).toHaveTextContent('180');
+    expect(india).toHaveTextContent('327%');
+    expect(within(india).getByTestId('design-gap')).toHaveTextContent('+407');
+    expect(screen.getByTestId('hub-summary-row-R&D-Greece')).toHaveTextContent('89%');
   });
 
   it('uses Design / Lab header bands with Capacity | Demand | Booked % | Gap | In plan and full accessible names (P30)', () => {
@@ -244,16 +244,16 @@ describe('HubSummaryTable — "Load vs. capacity by hub" (P19-T06 merged table)'
     let india = screen.getByTestId('hub-summary-row-PD-India');
     expect(within(india).getByTestId('design-load')).toHaveTextContent('587');
     expect(within(india).getByTestId('design-in-plan')).toHaveTextContent('420');
-    expect(within(india).getByTestId('lab-load')).toHaveTextContent('496.5');
-    expect(within(india).getByTestId('lab-in-plan')).toHaveTextContent('409.5');
+    expect(within(india).getByTestId('lab-load')).toHaveTextContent('497');
+    expect(within(india).getByTestId('lab-in-plan')).toHaveTextContent('410');
     expect(within(india).getByTestId('design-in-plan')).not.toHaveTextContent('%');
     expect(screen.getByTestId('total-design-in-plan')).toHaveTextContent('420');
-    expect(screen.getByTestId('total-lab-in-plan')).toHaveTextContent('409.5');
+    expect(screen.getByTestId('total-lab-in-plan')).toHaveTextContent('410');
     unmount();
     renderWithProviders(<HubSummaryTable data={data} activeRun={undefined} view={{ horizon: 'remaining', unit: 'weeks' }} />);
     india = screen.getByTestId('hub-summary-row-PD-India');
     expect(within(india).getByTestId('design-load')).toHaveTextContent('436');
-    expect(within(india).getByTestId('lab-load')).toHaveTextContent('408.25');
+    expect(within(india).getByTestId('lab-load')).toHaveTextContent('408');
     expect(within(india).getByTestId('design-in-plan')).toHaveTextContent('420');
     expect(screen.getByRole('columnheader', { name: 'Design remaining demand, in weeks' })).toHaveTextContent('Demandremaining');
     expect(screen.getByTestId('total-design-load')).toHaveTextContent('436');
@@ -273,26 +273,26 @@ describe('HubSummaryTable — "Load vs. capacity by hub" (P19-T06 merged table)'
     renderWithProviders(<HubSummaryTable data={data} activeRun={undefined} view={{ horizon: 'year', unit: 'days' }} />);
     const india = screen.getByTestId('hub-summary-row-PD-India');
     expect(within(india).getByTestId('design-load')).toHaveTextContent('3,522');
-    expect(within(india).getByTestId('design-capacity')).toHaveTextContent('1,515.72');
+    expect(within(india).getByTestId('design-capacity')).toHaveTextContent('1,516');
     expect(within(india).getByTestId('lab-load')).toHaveTextContent('2,979');
-    expect(within(india).getByTestId('lab-capacity')).toHaveTextContent('1,117.32');
-    expect(india).toHaveTextContent('232.36%'); // booked % is unit-free
-    expect(within(india).getByTestId('design-gap')).toHaveTextContent('+334.38'); // gap stays the served weeks
+    expect(within(india).getByTestId('lab-capacity')).toHaveTextContent('1,117');
+    expect(india).toHaveTextContent('232%'); // booked % is unit-free
+    expect(within(india).getByTestId('design-gap')).toHaveTextContent('+334'); // gap stays the served weeks
     expect(screen.getByRole('columnheader', { name: 'Design full-year demand, in days' })).toBeInTheDocument();
     expect(screen.getByRole('columnheader', { name: 'Design gap, demand minus capacity, in weeks' })).toHaveTextContent('Gap (wks)');
     expect(screen.getByTestId('total-design-load')).toHaveTextContent('3,522');
-    expect(screen.getByTestId('total-design-capacity')).toHaveTextContent('1,515.72');
+    expect(screen.getByTestId('total-design-capacity')).toHaveTextContent('1,516');
     expect(screen.getByTestId('total-lab-load')).toHaveTextContent('2,979');
-    expect(screen.getByTestId('total-lab-capacity')).toHaveTextContent('1,117.32');
-    expect(screen.getByTestId('total-design-booked')).toHaveTextContent('168.73%');
+    expect(screen.getByTestId('total-lab-capacity')).toHaveTextContent('1,117');
+    expect(screen.getByTestId('total-design-booked')).toHaveTextContent('169%');
     expect(screen.getByTestId('hub-summary-unit-note')).toHaveTextContent(/working days/);
     expect(screen.getByTestId('hub-summary-unit-note')).toHaveTextContent(/priority split in weeks/);
     // Details dialog follows the unit too
     await user.click(screen.getByRole('button', { name: 'Details for PD-India' }));
     const dialog = screen.getByRole('dialog');
     expect(within(dialog).getByTestId('design-load')).toHaveTextContent('3,522');
-    expect(within(dialog).getByTestId('design-capacity')).toHaveTextContent('1,515.72');
-    expect(within(dialog).getByTestId('lab-capacity')).toHaveTextContent('1,117.32');
+    expect(within(dialog).getByTestId('design-capacity')).toHaveTextContent('1,516');
+    expect(within(dialog).getByTestId('lab-capacity')).toHaveTextContent('1,117');
     expect(within(dialog).getByTestId('design-gap')).toHaveTextContent('Gap, demand − cap. (wks)');
     expect(within(dialog).getByTestId('design-in-plan')).toHaveTextContent(/Booked in plan \(wks\)/);
     expect(within(dialog).getByTestId('detail-weekdays')).toHaveTextContent('6');
@@ -365,8 +365,8 @@ describe('HubSummaryTable — "Load vs. capacity by hub" (P19-T06 merged table)'
     expect(within(design).getByTestId('design-load')).toHaveTextContent('Full-year demand');
     expect(within(design).getByTestId('design-in-plan')).toHaveTextContent('420');
     expect(within(design).queryByTestId('design-load-estimated')).not.toBeInTheDocument();
-    expect(within(design).getByTestId('design-capacity')).toHaveTextContent('252.62');
-    expect(within(design).getByTestId('design-gap')).toHaveTextContent('+334.38');
+    expect(within(design).getByTestId('design-capacity')).toHaveTextContent('253');
+    expect(within(design).getByTestId('design-gap')).toHaveTextContent('+334');
     expect(within(design).getByTestId('design-completion')).toHaveTextContent('43%');
     const lab = within(dialog).getByTestId('capacity-lab');
     expect(within(lab).getByTestId('lab-completion')).toHaveTextContent('38%');

@@ -36,7 +36,7 @@ describe('DeltaChip', () => {
 
   it('formats an unlabelled delta with an explicit sign', () => {
     render(<DeltaChip value={3.25} />);
-    expect(screen.getByText('+3.3%')).toBeInTheDocument();
+    expect(screen.getByText('+3%')).toBeInTheDocument();
   });
 });
 

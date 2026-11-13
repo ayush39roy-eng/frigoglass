@@ -6,8 +6,7 @@
  * `/capacity/utilization-matrix`.
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { screen, waitFor } from '@testing-library/react';
-import userEvent from '@testing-library/user-event';
+import { screen } from '@testing-library/react';
 
 vi.mock('@/lib/api/client', async () => {
   const actual = await vi.importActual<typeof import('@/lib/api/client')>('@/lib/api/client');
@@ -40,10 +39,9 @@ afterEach(() => {
 });
 
 describe('CapacityPage requests (P19-T07)', () => {
-  it('never requests the chamber utilization matrix, before or after opening the engineer section', async () => {
+  it('never requests the chamber utilization matrix or engineer utilization (section removed 2026-11-13)', async () => {
     useHubFilterStore.setState({ hubId: null, region: null });
     mockApiGet.mockImplementation((path: string) => Promise.resolve(respond(path)) as never);
-    const user = userEvent.setup();
     renderWithProviders(<CapacityPage />);
 
     await screen.findByTestId('hub-summary-table');
@@ -51,9 +49,6 @@ describe('CapacityPage requests (P19-T07)', () => {
     expect(paths()).toContain('/capacity/hub-load');
     expect(paths()).toContain('/capacity/class-breakdown');
     expect(paths()).not.toContain('/capacity/engineer-utilization');
-
-    await user.click(screen.getByRole('button', { name: 'Show engineer utilization' }));
-    await waitFor(() => expect(paths()).toContain('/capacity/engineer-utilization'));
     expect(paths().filter((p) => /utilization-matrix|chamber/.test(p))).toEqual([]);
   });
 });

@@ -115,8 +115,8 @@ describe('ChamberFormDialog', () => {
     expect(screen.getByLabelText(/^Calibration/)).toHaveValue(1);
     expect(screen.queryByLabelText(/Weeks per chamber/i)).not.toBeInTheDocument();
     const derived = screen.getByTestId('chamber-derived');
-    expect(derived).toHaveTextContent('35.4');
-    expect(derived).toHaveTextContent('84.96');
+    expect(derived).toHaveTextContent('35');
+    expect(derived).toHaveTextContent('85');
     expect(derived.querySelector('input')).toBeNull();
   });
 

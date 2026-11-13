@@ -1,7 +1,7 @@
 import * as React from 'react';
 
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
-import { formatDecimal } from '@/lib/format';
+import { formatFactor } from '@/lib/format';
 import { cn } from '@/lib/utils';
 import type { CurrencyRate } from '@/lib/api/reference';
 import { CURRENCY_CODES, type CurrencyCode } from '@/types/enums';
@@ -36,7 +36,7 @@ function rateCaption(value: CurrencyCode, rates: CurrencyRate[] | undefined): st
   const row = rates?.find((r) => r.currency_code === value);
   if (!row || row.rate_to_eur === null) return 'Active conversion rate unavailable.';
   // Display only: `rate_to_eur` is rendered as-is, not used in any calculation.
-  return `Active rate: 1 EUR = ${formatDecimal(row.rate_to_eur)} ${value} (server-applied).`;
+  return `Active rate: 1 EUR = ${formatFactor(row.rate_to_eur)} ${value} (server-applied).`;
 }
 
 export function CurrencyToggle({

@@ -66,6 +66,6 @@ export function layoutDimensions(
 
 /** "25 (8.5 of 100)" style text from served figures; scaled omitted when not served. */
 export function formatWeight(weight: number, scaled: number | null): string {
-  return scaled === null ? String(weight) : `${String(weight)} (${scaled.toFixed(1)} of 100)`;
+  return scaled === null ? String(weight) : `${String(weight)} (${String(Math.round(scaled))} of 100)`;
 }
 

@@ -12,7 +12,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-import { formatDecimal, formatFraction } from '@/lib/format';
+import { formatDecimal, formatFactor, formatFraction } from '@/lib/format';
 import { cn } from '@/lib/utils';
 
 import type { HubCapacityRow } from '../api/types';
@@ -231,7 +231,7 @@ export function HubSupplyDetail({ row, view }: HubSupplyDetailProps): React.JSX.
                   Lab region: {row.lab_region}
                 </Badge>
                 <span data-numeric="">
-                  Σ FTE <strong className="text-text">{formatDecimal(row.engineer_fte_total)}</strong>
+                  Σ FTE <strong className="text-text">{formatFactor(row.engineer_fte_total)}</strong>
                 </span>
                 <span data-numeric="">
                   Working weeks / engineer{' '}
@@ -287,7 +287,7 @@ export function HubSupplyDetail({ row, view }: HubSupplyDetailProps): React.JSX.
                   <div>
                     <dt className="text-text-subtle">Yearly design capacity</dt>
                     <dd data-numeric="" className="text-text">
-                      {formatDecimal(row.engineer_fte_total)} FTE ×{' '}
+                      {formatFactor(row.engineer_fte_total)} FTE ×{' '}
                       {formatDecimal(row.working_weeks_per_engineer)} working weeks ={' '}
                       <strong>{formatDecimal(row.design_capacity_year)}</strong> engineer-weeks
                     </dd>
@@ -350,7 +350,7 @@ export function HubSupplyDetail({ row, view }: HubSupplyDetailProps): React.JSX.
                             {formatDecimal(c.platforms)}
                           </TableCell>
                           <TableCell className="text-right" data-numeric="">
-                            {formatDecimal(c.efficiency)}
+                            {formatFactor(c.efficiency)}
                           </TableCell>
                           <TableCell className="text-right" data-numeric="">
                             {formatDecimal(c.working_weeks_per_chamber)}

@@ -4,7 +4,7 @@ import { Check, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { ApiError } from '@/lib/api/client';
-import { formatDecimal } from '@/lib/format';
+import { formatFactor } from '@/lib/format';
 
 import type { MatrixCurrencyCode } from '../api/types';
 
@@ -108,7 +108,7 @@ function FxRateForm({
           (saved
             ? 'Rate saved — figures re-read from the server.'
             : current
-              ? `Active: ${formatDecimal(current.rate_to_eur)} ${currency}. Converted server-side.`
+              ? `Active: ${formatFactor(current.rate_to_eur)} ${currency}. Converted server-side.`
               : 'Active rate unavailable.')}
       </span>
     </form>
