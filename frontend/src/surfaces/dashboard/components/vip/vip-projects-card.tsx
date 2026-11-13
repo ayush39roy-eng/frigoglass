@@ -75,7 +75,7 @@ export function VipProjectsCard({ fill = false }: { fill?: boolean } = {}): Reac
         ) : (
           <div
             className={cn(
-              'max-h-[34rem] overflow-y-auto pr-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+              'relative max-h-[34rem] overflow-y-auto pr-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
               fill && 'xl:max-h-none xl:min-h-0 xl:flex-1',
             )}
             tabIndex={0}

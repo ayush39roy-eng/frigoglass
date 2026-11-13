@@ -18,6 +18,16 @@
     @apply h-full;
   }
 
+  /* The app shell owns scrolling (its surface region is the one scroller), so
+   * the document itself never scrolls or rubber-bands. Without this, anything
+   * that grew the document (an escaped absolute node, a focus jump) scrolled
+   * the whole page and exposed a band of grey canvas under the shell. */
+  html,
+  body {
+    overflow: hidden;
+    overscroll-behavior: none;
+  }
+
   body {
     @apply bg-canvas text-text font-sans antialiased;
     /* cv11 = single-storey 'a' in Inter's alternates; ss01 = disambiguated glyphs.

@@ -92,10 +92,40 @@ export function useGridMaxHeight(
   return `${String(Math.max(320, scrollportH - panelH - reserveBelow))}px`;
 }
 
+/** The child of `parent` that contains `el` (or `el` itself), or null when `el` is not inside it. */
+function childOfParentContaining(el: HTMLElement, parent: HTMLElement): HTMLElement | null {
+  let node: HTMLElement | null = el;
+  while (node && node.parentElement !== parent) node = node.parentElement;
+  return node;
+}
+
+/**
+ * In-flow space below `el` inside the scroll container `parent`, in px: from the bottom of
+ * `el` to the bottom of `parent`'s content child (its own padding, the page gutter, anything
+ * laid out after `el`), plus that child's bottom margin and `parent`'s bottom padding.
+ *
+ * Deliberately NOT `parent.scrollHeight - bottom`: scrollHeight also counts absolutely
+ * positioned overflow (an `sr-only` caption whose static position is deep inside an inner
+ * scroller), which inflated the reserve and clamped the board to its 320px floor
+ * (2026-11-13 scroll-leak fix). Exported for tests. Layout only.
+ */
+export function inFlowSpaceBelow(el: HTMLElement, parent: HTMLElement): number {
+  const child = childOfParentContaining(el, parent);
+  if (!child) return 0;
+  const px = (v: string) => Number.parseFloat(v) || 0;
+  const below =
+    child.getBoundingClientRect().bottom -
+    el.getBoundingClientRect().bottom +
+    px(getComputedStyle(child).marginBottom) +
+    px(getComputedStyle(parent).paddingBottom);
+  return Math.max(0, Math.round(below));
+}
+
 /**
  * P21-T05: the scroll content below the bottom of `ref` (page padding, gutters), in px, so a
  * fixed-height block can end exactly at the bottom of the scroll region when scrolled to the
- * end. Re-measured on resize. Layout only.
+ * end. Re-measured on window resize and whenever `ref` or the page content resizes (data
+ * loading, a note appearing below). Layout only.
  */
 export function useSpaceBelow(ref: React.RefObject<HTMLElement | null>, active: boolean): number {
   const [below, setBelow] = React.useState(0);
@@ -103,14 +133,21 @@ export function useSpaceBelow(ref: React.RefObject<HTMLElement | null>, active: 
     const el = ref.current;
     if (!active || !el) return undefined;
     const parent = scrollParentOf(el);
-    const read = () => {
-      if (!parent) return;
-      const bottom = el.getBoundingClientRect().bottom - parent.getBoundingClientRect().top + parent.scrollTop;
-      setBelow(Math.max(0, Math.round(parent.scrollHeight - bottom)));
-    };
+    if (!parent) return undefined;
+    const read = () => setBelow(inFlowSpaceBelow(el, parent));
     read();
     window.addEventListener('resize', read);
-    return () => window.removeEventListener('resize', read);
+    let ro: ResizeObserver | null = null;
+    if (typeof ResizeObserver !== 'undefined') {
+      ro = new ResizeObserver(read);
+      ro.observe(el);
+      const child = childOfParentContaining(el, parent);
+      if (child && child !== el) ro.observe(child);
+    }
+    return () => {
+      window.removeEventListener('resize', read);
+      ro?.disconnect();
+    };
   }, [ref, active]);
   return below;
 }

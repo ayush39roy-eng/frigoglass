@@ -77,7 +77,7 @@ export function HubEngineerCard({
   return (
     <section
       aria-labelledby={headingId}
-      className="min-w-0 overflow-hidden rounded-card border border-border bg-surface shadow-sm"
+      className="relative min-w-0 overflow-hidden rounded-card border border-border bg-surface shadow-sm"
       data-testid={`hub-card-${hubName}`}
     >
       <header className="flex flex-wrap items-center justify-between gap-2 border-b border-border bg-primary-subtle/50 px-3 py-2">

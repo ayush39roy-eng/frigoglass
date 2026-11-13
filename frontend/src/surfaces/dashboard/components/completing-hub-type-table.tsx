@@ -79,7 +79,7 @@ export function CompletingHubTypeTable({
         <p className="py-s6 text-center text-sm text-text-muted">No pipeline projects in view.</p>
       ) : (
         <div
-          className="flex-1 overflow-x-auto rounded-xl border-[1.5px] border-dash-hairline"
+          className="relative flex-1 overflow-x-auto rounded-xl border-[1.5px] border-dash-hairline"
           tabIndex={0}
           role="region"
           aria-label="Projects completing within the year, by hub and project type"

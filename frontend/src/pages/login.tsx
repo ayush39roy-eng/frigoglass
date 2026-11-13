@@ -96,7 +96,7 @@ export default function LoginPage(): React.JSX.Element {
   const devUsersFailed = devUsers.isError && !(devUsers.error instanceof ApiError && devUsers.error.status === 404);
 
   return (
-    <div className="min-h-screen bg-canvas p-s4 lg:p-s6">
+    <div className="h-full overflow-y-auto overscroll-contain bg-canvas p-s4 lg:p-s6">
       <div className="mx-auto grid min-h-[calc(100vh-3rem)] max-w-7xl items-start gap-s6 lg:grid-cols-[1.05fr_1fr]">
         <BrandPanel />
         <main className="flex items-center justify-center py-s6">

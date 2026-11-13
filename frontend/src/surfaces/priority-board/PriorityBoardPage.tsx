@@ -410,7 +410,7 @@ export function PriorityBoardView({
         )
       ) : (
         <div
-          className="grid auto-cols-[minmax(15rem,1fr)] grid-flow-col gap-3 overflow-x-auto pb-2"
+          className="relative grid auto-cols-[minmax(15rem,1fr)] grid-flow-col gap-3 overflow-x-auto pb-2"
           style={height ? { height } : undefined}
           data-testid="priority-board"
           data-layout={layout}

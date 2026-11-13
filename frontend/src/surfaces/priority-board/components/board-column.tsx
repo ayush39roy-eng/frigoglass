@@ -178,7 +178,7 @@ export function BoardColumn(props: BoardColumnProps): React.JSX.Element {
         </span>
       </header>
       <div ref={scrollRef} className={cn(
-          'flex-1 overflow-y-auto scrollbar-thin',
+          'relative flex-1 overflow-y-auto scrollbar-thin',
           props.fit ? 'min-h-0' : 'max-h-[calc(100vh-15rem)] min-h-[8rem]',
           props.layout === 'list' ? 'p-1' : 'p-2',
         )}

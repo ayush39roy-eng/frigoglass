@@ -140,7 +140,7 @@ export function HubTypePipelineTable({
         <p className="py-s6 text-center text-sm text-text-muted">No projects in the pipeline for your hub scope.</p>
       ) : (
         <div
-          className="flex-1 overflow-x-auto rounded-xl border-[1.5px] border-dash-hairline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className="relative flex-1 overflow-x-auto rounded-xl border-[1.5px] border-dash-hairline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           tabIndex={0}
           role="region"
           aria-label="Project pipeline by hub and project type"

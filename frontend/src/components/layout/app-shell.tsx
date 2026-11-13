@@ -70,22 +70,38 @@ export function AppShell(): React.JSX.Element {
          * density region below it, instead of the header spanning the full
          * viewport width above the sidebar as it did before this task.
          */}
-        <div className="relative h-screen bg-canvas p-5">
+        {/*
+         * Scroll containment (2026-11-13 fix): the surface region is `relative`
+         * so it is the containing block of every `position: absolute` node
+         * inside it (`sr-only` captions, decorative dots). Before, their
+         * containing block was the wrapper below, OUTSIDE the scroller, so they
+         * escaped its clip, grew the document to 16k px on the Priority board
+         * and let focus/scrollIntoView scroll the whole window. Inner scrollers
+         * that hold such nodes are `relative` for the same reason.
+         *
+         * `overflow-clip`, not `overflow-hidden`: a `hidden` box is still a
+         * scroll container, so focus / scrollIntoView / find-in-page can scroll
+         * it programmatically. That shifted the whole shell (sidebar included)
+         * up and left a band of grey canvas below it. `clip` forbids every kind
+         * of scrolling, so the surface region below is the only scroller in the
+         * layout. Radix overlays portal to <body>, so they are unaffected.
+         */}
+        <div className="relative h-dvh overflow-clip bg-canvas p-5">
           {/* Ambient brand tint on the grey canvas, behind the floating sidebar
               and shell panels (both opaque, so this only shows in the gaps
               between them) — present on every surface, unlike `Component`'s
               stronger page-level treatment on `/login`. */}
           <GlowOverlay light />
-          <div className="relative flex h-full items-start gap-5">
+          <div className="relative flex h-full items-stretch gap-5 overflow-clip">
             <AppSidebar />
             {/* Bold Blocks (2026-10-01): the Shell is a light-grey ground (`bg-shell`)
                 rather than white, so the white cards inside it read as separate
                 boxes, and the header floats as its own white bar. */}
-            <div className="flex h-full min-w-0 flex-1 flex-col overflow-hidden rounded-shell border-[1.5px] border-border bg-shell shadow-shell">
+            <div className="relative flex h-full min-w-0 flex-1 flex-col overflow-clip rounded-shell border-[1.5px] border-border bg-shell shadow-shell">
               <AppHeader />
               <DensityRegion
                 density={density}
-                className="min-h-0 flex-1 overflow-auto"
+                className="relative min-h-0 flex-1 overflow-auto overscroll-contain"
                 data-testid="surface-region"
               >
                 {/* Overview is capped at 1680px so a KPI row does not stretch to

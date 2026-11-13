@@ -399,7 +399,7 @@ function PillarTable({ dims }: { dims: readonly ShownDimension[] }): React.JSX.E
   const maxScaled = dims.reduce((m, d) => Math.max(m, d.scaled_weight ?? 0), 0);
   return (
     <div
-      className="mg-pillar-scope max-h-[26rem] overflow-auto rounded border-2 border-border-strong/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      className="mg-pillar-scope relative max-h-[26rem] overflow-auto rounded border-2 border-border-strong/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
       role="region"
       aria-label="Scoring dimensions"
       tabIndex={0}

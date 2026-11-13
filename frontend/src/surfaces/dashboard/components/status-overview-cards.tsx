@@ -133,7 +133,7 @@ export function StatusOverviewCards({ data, regionSummary = null }: StatusOvervi
             aria-label={card.label}
             data-testid={`status-card-${card.testId}`}
             className={cn(
-              'flex min-w-0 flex-col gap-s2 overflow-hidden rounded-dash border-[1.5px] border-t-4 border-dash-hairline bg-surface p-card shadow-dashCard',
+              'relative flex min-w-0 flex-col gap-s2 overflow-hidden rounded-dash border-[1.5px] border-t-4 border-dash-hairline bg-surface p-card shadow-dashCard',
               card.rail,
             )}
           >

@@ -215,7 +215,7 @@ export function AppSidebar(): React.JSX.Element {
     <nav
       ref={navRef}
       aria-label="Surfaces"
-      className="sticky top-5 relative flex h-[calc(100vh-2.5rem)] w-sidebar-collapsed shrink-0 flex-col items-center overflow-y-auto rounded-rail border-[1.5px] border-border bg-surface py-s4 shadow-card scrollbar-thin"
+      className="relative flex h-full w-sidebar-collapsed shrink-0 flex-col items-center overflow-y-auto rounded-rail border-[1.5px] border-border bg-surface py-s4 shadow-card scrollbar-thin"
     >
       {/* The active indicator — a 3×20px blue bar on the rail's inner edge
           (Boltshift spec §4). */}
