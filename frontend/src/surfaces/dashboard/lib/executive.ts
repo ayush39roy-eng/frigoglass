@@ -20,13 +20,16 @@ export const RISK_LIST_CAP = 8;
 /** The run-derived KPI tiles (P28 addendum): each opens the rows behind its
  *  served count. `scheduled` = every row the run placed in one of the four
  *  mutually exclusive buckets (the tile's own sum, `outcomeTotal`). */
-export type KpiBucket = 'scheduled' | 'within_year' | 'spillover' | 'left_out' | 'blocked';
+export type KpiBucket = 'scheduled' | 'within_year' | 'spillover' | 'left_out' | 'past_year' | 'blocked';
 
 export const KPI_BUCKET_META: Record<KpiBucket, { title: string }> = {
   scheduled: { title: 'Scheduled projects' },
   within_year: { title: 'Completing within the year' },
   spillover: { title: 'Spillover (past W52)' },
   left_out: { title: 'Left out (no slot found)' },
+  // The Detailed view's "Spillover (past W52)" tile: spillover + left out
+  // (`lib/outcome.ts::spilloverPastYearCount`, ADR 0024).
+  past_year: { title: 'Spillover (past W52), incl. not yet placed' },
   // Owner ask 2026-10-23: "On hold", not "Blocked" (the schedule outcome, ADR 0017 §3).
   blocked: { title: 'On hold (at a stage)' },
 };
@@ -44,6 +47,12 @@ export function selectOutcomeRows(
   bucket: KpiBucket,
 ): CompletingWithinYearRow[] {
   if (bucket === 'scheduled') return rows.filter((row) => outcomeOf(row) !== 'unresolved');
+  if (bucket === 'past_year') {
+    return rows.filter((row) => {
+      const b = outcomeOf(row);
+      return b === 'spillover' || b === 'left_out';
+    });
+  }
   return rows.filter((row) => outcomeOf(row) === bucket);
 }
 

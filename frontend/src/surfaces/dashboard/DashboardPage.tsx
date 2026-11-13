@@ -40,7 +40,7 @@ import { DashboardViewToggle } from './components/executive/view-toggle';
 import { HubTypeSection } from './components/hub-type-section';
 import { ScheduledCountInfo } from './components/scheduled-count-info';
 import { PipelineRow } from './components/pipeline-row';
-import { ProjectBreakdown } from './components/project-breakdown';
+import { ProjectListProvider } from './components/project-list-dialog';
 import { SectionBoundary } from '@/components/shared/section-boundary';
 import { StaggerSection } from './components/stagger';
 import { StatusOverviewCards } from './components/status-overview-cards';
@@ -84,16 +84,6 @@ const AnalyticsBreakdown = React.lazy(async () => ({
 }));
 
 const DASHBOARD_SURFACE = SURFACES.find((s) => s.path === '/');
-
-/** The header's "All projects" button (ADR 0025 §5): scroll to the register
- *  and move focus there, instantly under reduced motion. */
-function scrollToRegister(reduced: boolean): void {
-  const target = document.getElementById('all-projects');
-  if (!target) return;
-  target.scrollIntoView({ behavior: reduced ? 'auto' : 'smooth', block: 'start' });
-  if (!target.hasAttribute('tabindex')) target.setAttribute('tabindex', '-1');
-  target.focus({ preventScroll: true });
-}
 
 function authKind(errors: unknown[]): 'forbidden' | 'unauthorized' | null {
   for (const err of errors) {
@@ -239,20 +229,19 @@ export default function DashboardPage(): React.JSX.Element {
                   )}
                 </div>
               ) : null}
-              {/* The register lives on the Detailed view only (ADR 0039 §3); its
-                  scroll shortcut would point at nothing in Executive. */}
-              {!executive ? (
-                <Button
-                  type="button"
-                  variant="secondary"
-                  size="sm"
-                  className="rounded-pill border-[1.5px] font-semibold"
-                  onClick={() => scrollToRegister(motionTokens.reduced)}
-                >
+              {/* Owner ask 2026-11-13: the register section is no longer on the
+                  Dashboard; "All projects" opens the Projects page's register. */}
+              <Button
+                asChild
+                variant="secondary"
+                size="sm"
+                className="rounded-pill border-[1.5px] font-semibold"
+              >
+                <Link to="/projects">
                   <List aria-hidden="true" />
                   All projects
-                </Button>
-              ) : null}
+                </Link>
+              </Button>
               <Button
                 asChild
                 variant="secondary"
@@ -280,6 +269,9 @@ export default function DashboardPage(): React.JSX.Element {
         ) : (
           <>
           <DashboardSelectionBar selection={selection} />
+          {/* Owner ask 2026-11-13: clicking a composition figure lists its
+              projects, scoped exactly like the figures. */}
+          <ProjectListProvider scope={{ hubId, region, selection }}>
           <motion.div
             className={cn('flex flex-col gap-s8 transition-opacity duration-base', refreshing && 'opacity-60')}
             aria-busy={refreshing}
@@ -398,6 +390,7 @@ export default function DashboardPage(): React.JSX.Element {
                 pipelineTotal={pipelineTotals.data?.total_count ?? null}
                 hubId={hubId}
                 region={region}
+                regionSummary={regionSummary.data ?? null}
               />
             </StaggerSection>
 
@@ -440,14 +433,10 @@ export default function DashboardPage(): React.JSX.Element {
                 )}
               </SectionBoundary>
             </StaggerSection>
-
-            {/* P17-R08: the all-projects register is the LAST section. */}
-            <StaggerSection>
-              <ProjectBreakdown />
-            </StaggerSection>
               </>
             )}
           </motion.div>
+          </ProjectListProvider>
           </>
         )}
       </div>

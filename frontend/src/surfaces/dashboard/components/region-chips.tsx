@@ -28,34 +28,60 @@ export interface RegionChipsProps {
   /** On the solid (ink / feature) KPI tiles the chips invert. */
   onSolid?: boolean;
   className?: string;
+  /** When set, each chip is a button that lists that country's projects
+   *  (owner ask 2026-11-13). Chips sit above a card-wide `CardOpenButton`. */
+  onSelect?: ((item: RegionChipItem, el: HTMLButtonElement) => void) | undefined;
 }
 
-export function RegionChips({ items, label, onSolid = false, className }: RegionChipsProps): React.JSX.Element {
+export function RegionChips({ items, label, onSolid = false, className, onSelect }: RegionChipsProps): React.JSX.Element {
   return (
     <ul
       aria-label={`${label} by country`}
-      className={cn('flex flex-wrap items-center gap-1.5', className)}
+      // Only the chips themselves take clicks: the gaps between them fall
+      // through to the card-wide open button underneath.
+      className={cn(
+        'relative z-[2] flex flex-wrap items-center gap-1.5',
+        onSelect && 'pointer-events-none [&_button]:pointer-events-auto',
+        className,
+      )}
       data-testid="region-chips"
     >
       {items.map((item) => {
         const share =
           item.sharePct === null || item.sharePct === undefined ? null : `${formatDecimal(item.sharePct)}%`;
-        return (
-          <li
-            key={item.region}
-            title={`${item.region}: ${formatInteger(item.count)}${share ? ` (${share})` : ''}`}
-            className={cn(
-              'inline-flex items-center gap-1 rounded-pill border-[1.5px] px-2 py-0.5 text-2xs font-bold tabular-nums',
-              onSolid ? 'border-white/20 bg-white/10 text-inherit' : 'border-dash-hairline bg-dash-alt text-text',
-            )}
-            data-numeric=""
-          >
+        const title = `${item.region}: ${formatInteger(item.count)}${share ? ` (${share})` : ''}`;
+        const chipClass = cn(
+          'inline-flex items-center gap-1 rounded-pill border-[1.5px] px-2 py-0.5 text-2xs font-bold tabular-nums',
+          onSolid ? 'border-white/20 bg-white/10 text-inherit' : 'border-dash-hairline bg-dash-alt text-text',
+        );
+        const body = (
+          <>
             <CountryFlag region={item.region} />
             <span className="sr-only">{item.region}:</span>
             <span>{formatInteger(item.count)}</span>
             {share ? (
               <span className={cn('font-semibold', onSolid ? 'opacity-75' : 'text-text-muted')}>({share})</span>
             ) : null}
+          </>
+        );
+        return (
+          <li key={item.region} title={title} className={onSelect ? 'inline-flex' : chipClass} data-numeric="">
+            {onSelect ? (
+              <button
+                type="button"
+                aria-haspopup="dialog"
+                aria-label={`${label}, ${title}: list the projects`}
+                onClick={(event) => { onSelect(item, event.currentTarget); }}
+                className={cn(
+                  chipClass,
+                  'cursor-pointer transition-colors duration-fast hover:border-primary/50 hover:bg-primary-subtle focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+                )}
+              >
+                {body}
+              </button>
+            ) : (
+              body
+            )}
           </li>
         );
       })}

@@ -37,6 +37,15 @@ const withRun: CompletingWithinYear = {
 };
 
 describe('WithinYearKpis', () => {
+  it('clicking an outcome card lists the run rows behind it (owner ask 2026-11-13)', async () => {
+    renderWithProviders(<WithinYearKpis data={withRun} activeRun={undefined} />);
+    // Spillover counts spillover + left out (6), and so does its list.
+    expect(screen.getByRole('button', { name: 'Spillover (past W52): list the 6 projects' })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Within year: list the 9 projects' }));
+    const dialog = screen.getByTestId('exec-kpi-dialog');
+    expect(within(dialog).getByTestId('exec-kpi-dialog-title')).toHaveTextContent('Completing within the year');
+  });
+
   it('shows the 52-week outcome KPIs from the endpoint payload, left out inside spillover (ADR 0024)', () => {
     renderWithProviders(<WithinYearKpis data={withRun} activeRun={undefined} />);
 

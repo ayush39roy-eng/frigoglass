@@ -6,9 +6,19 @@ import { CARRY_OVER_YEAR, PLAN_YEAR } from '@/lib/domain-constants';
 import { formatDecimal, formatInteger } from '@/lib/format';
 import { cn } from '@/lib/utils';
 
-import type { PipelineTotals, RegionSummary } from '../api/types';
+import type { PipelineTotals, ProjectFilterRow, RegionSummary } from '../api/types';
 import { pipelineRegionItems, type PipelineBucket } from '../lib/region-summary';
+import { CardOpenButton, useOpenProjectList } from './project-list-dialog';
 import { RegionChips } from './region-chips';
+
+/** The server's bucket rule (`pipeline_totals`): carry_over → spillover; else
+ *  a registration year → newly registered; else unregistered. Total = all. */
+const BUCKET_MATCH: Record<PipelineBucket, (row: ProjectFilterRow) => boolean> = {
+  spillover: (row) => row.carry_over,
+  new: (row) => !row.carry_over && row.reg_year !== null,
+  unregistered: (row) => !row.carry_over && row.reg_year === null,
+  total: () => true,
+};
 
 /**
  * Project Pipeline row (ADR 0030, client's older app):
@@ -56,6 +66,7 @@ function Glyph({ children }: { children: string }): React.JSX.Element {
 
 export function PipelineRow({ totals, regionSummary = null }: PipelineRowProps): React.JSX.Element {
   const share = (pct: number): string => `${formatDecimal(pct)}% of total`;
+  const openList = useOpenProjectList();
   const cards: CardSpec[] = [
     {
       bucket: 'spillover',
@@ -113,10 +124,20 @@ export function PipelineRow({ totals, regionSummary = null }: PipelineRowProps):
               aria-label={card.label}
               data-testid={`pipeline-card-${card.bucket}`}
               className={cn(
-                'flex min-w-0 flex-col gap-1 rounded-dash border-[1.5px] border-t-4 border-dash-hairline bg-surface px-s4 py-s2 shadow-dashCard',
+                'relative flex min-w-0 flex-col gap-1 rounded-dash border-[1.5px] border-t-4 border-dash-hairline bg-surface px-s4 py-s2 shadow-dashCard',
+                openList && 'transition-shadow duration-base hover:shadow-pop',
                 card.rail,
               )}
             >
+              {openList ? (
+                <CardOpenButton
+                  label={`${card.label}: list the ${formatInteger(card.count)} projects`}
+                  testId={`pipeline-open-${card.bucket}`}
+                  onOpen={(el) => {
+                    openList({ title: card.label, expected: card.count, match: BUCKET_MATCH[card.bucket] }, el);
+                  }}
+                />
+              ) : null}
               <h4 className="label-caps text-text-subtle">{card.label}</h4>
               <div className="flex flex-col gap-0.5">
                 <span
@@ -139,6 +160,21 @@ export function PipelineRow({ totals, regionSummary = null }: PipelineRowProps):
                   label={card.label}
                   items={pipelineRegionItems(regionSummary, card.bucket)}
                   className="mt-auto pt-s1"
+                  onSelect={
+                    openList
+                      ? (item, el) => {
+                          const inBucket = BUCKET_MATCH[card.bucket];
+                          openList(
+                            {
+                              title: `${card.label} · ${item.region}`,
+                              expected: item.count,
+                              match: (row) => inBucket(row) && row.region === item.region,
+                            },
+                            el,
+                          );
+                        }
+                      : undefined
+                  }
                 />
               ) : null}
             </section>

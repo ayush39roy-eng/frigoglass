@@ -8,6 +8,8 @@ import { SPILLOVER_YEAR, WITHIN_YEAR_WEEK } from '@/lib/domain-constants';
 import { sharePct, spilloverPastYearCount, withinYearSharePct } from '../lib/outcome';
 
 import type { CompletingWithinYear, ScheduleRunSummary } from '../api/types';
+import type { KpiBucket } from '../lib/executive';
+import { KpiProjectsDialog } from './executive/kpi-projects-dialog';
 import { ScheduledCountInfo, type ScheduledCountFigures } from './scheduled-count-info';
 import { ScheduleRunProvenance } from './schedule-run-provenance';
 import { StatCard } from './stat-card';
@@ -44,6 +46,18 @@ export function WithinYearKpis({
   compact = false,
 }: WithinYearKpisProps & ScheduledCountFigures & { compact?: boolean }): React.JSX.Element {
   const size = compact ? 'compact' : 'default';
+  // Owner ask 2026-11-13: each outcome card lists the run rows behind it
+  // (the Executive view's dialog; selection by served flags, I9).
+  const [openBucket, setOpenBucket] = React.useState<KpiBucket | null>(null);
+  const openerRef = React.useRef<HTMLElement | null>(null);
+  const openFromTile = React.useCallback((bucket: KpiBucket, tile: HTMLButtonElement) => {
+    openerRef.current = tile;
+    setOpenBucket(bucket);
+  }, []);
+  const open = (bucket: KpiBucket, count: number, label: string) => ({
+    openLabel: `${label}: list the ${formatInteger(count)} projects`,
+    onOpen: (tile: HTMLButtonElement) => { openFromTile(bucket, tile); },
+  });
   const totalCount =
     data.within_year_count +
     data.spillover_count +
@@ -106,6 +120,7 @@ export function WithinYearKpis({
             icon={CalendarCheck}
             badge={{ label: `${String(withinYearSharePct(data))}% of run`, tone: 'pop' }}
             caption={`Complete by ${formatWeek(WITHIN_YEAR_WEEK)}`}
+            {...open('within_year', data.within_year_count, 'Within year')}
           />
           {/* ADR 0024 (client ask 2026-10-13): a 52-week year only. Everything not
               done by W52 is spillover — the served spillover count plus the served
@@ -123,6 +138,7 @@ export function WithinYearKpis({
                 ? `Not done by ${formatWeek(WITHIN_YEAR_WEEK)} → ${String(SPILLOVER_YEAR)} · ${String(data.left_out_count)} not yet placed`
                 : `Not done by ${formatWeek(WITHIN_YEAR_WEEK)} → ${String(SPILLOVER_YEAR)}`
             }
+            {...open('past_year', spilloverPastYearCount(data), 'Spillover (past W52)')}
           />
           {/* P9-F02: mutually exclusive with the counts above — Blocked wins
               outright, so a project is never double-counted across tiles. The ink
@@ -138,6 +154,7 @@ export function WithinYearKpis({
             icon={CirclePause}
             badge={{ label: shareLabel(data.blocked_count, data), tone: data.blocked_count > 0 ? 'drop' : 'pop' }}
             caption="In the plan, waiting at a stage"
+            {...open('blocked', data.blocked_count, 'On Hold at a stage')}
             footer={
               onHold !== null && onHold > 0 ? (
                 <p className="text-2xs font-medium text-ink-fg/70" data-testid="paused-projects-note">
@@ -149,6 +166,12 @@ export function WithinYearKpis({
           />
         </div>
       )}
+      <KpiProjectsDialog
+        bucket={openBucket}
+        rows={data.rows}
+        onClose={() => setOpenBucket(null)}
+        returnFocusTo={openerRef}
+      />
     </section>
   );
 }

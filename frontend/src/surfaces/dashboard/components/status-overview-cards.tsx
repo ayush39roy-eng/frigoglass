@@ -8,6 +8,7 @@ import type { ProjectStatus } from '@/types/enums';
 
 import type { RegionSummary, StatusOverview } from '../api/types';
 import { statusRegionItems } from '../lib/region-summary';
+import { CardOpenButton, useOpenProjectList } from './project-list-dialog';
 import { RegionChips } from './region-chips';
 
 /**
@@ -44,6 +45,7 @@ export interface StatusOverviewCardsProps {
 }
 
 export function StatusOverviewCards({ data, regionSummary = null }: StatusOverviewCardsProps): React.JSX.Element {
+  const openList = useOpenProjectList();
   const cards: CardSpec[] = [
     {
       status: 'In Development',
@@ -134,9 +136,19 @@ export function StatusOverviewCards({ data, regionSummary = null }: StatusOvervi
             data-testid={`status-card-${card.testId}`}
             className={cn(
               'relative flex min-w-0 flex-col gap-s2 overflow-hidden rounded-dash border-[1.5px] border-t-4 border-dash-hairline bg-surface p-card shadow-dashCard',
+              openList && 'transition-shadow duration-base hover:shadow-pop',
               card.rail,
             )}
           >
+            {openList ? (
+              <CardOpenButton
+                label={`${card.label}: list the ${formatInteger(card.count)} projects`}
+                testId={`status-open-${card.testId}`}
+                onOpen={(el) => {
+                  openList({ title: card.label, expected: card.count, match: (row) => row.status === card.status }, el);
+                }}
+              />
+            ) : null}
             <h4 className="label-caps text-text-subtle">{card.label}</h4>
             <span
               className={cn('block font-display text-4xl font-extrabold tabular-nums', card.number)}
@@ -149,7 +161,25 @@ export function StatusOverviewCards({ data, regionSummary = null }: StatusOvervi
               {formatDecimal(card.sharePct)}% of total
             </span>
             {regionSummary ? (
-              <RegionChips label={card.label} items={statusRegionItems(regionSummary, card.status)} className="pt-s1" />
+              <RegionChips
+                label={card.label}
+                items={statusRegionItems(regionSummary, card.status)}
+                className="pt-s1"
+                onSelect={
+                  openList
+                    ? (item, el) => {
+                        openList(
+                          {
+                            title: `${card.label} · ${item.region}`,
+                            expected: item.count,
+                            match: (row) => row.status === card.status && row.region === item.region,
+                          },
+                          el,
+                        );
+                      }
+                    : undefined
+                }
+              />
             ) : null}
             <div
               role="progressbar"
@@ -174,10 +204,33 @@ export function StatusOverviewCards({ data, regionSummary = null }: StatusOvervi
         data-testid="status-other"
         data-numeric=""
       >
-        <span>
-          Other statuses: {formatInteger(data.other_statuses_count)}
-          {data.other_statuses_count > 0 ? ` (${formatDecimal(data.other_statuses_share_pct)}% of total)` : ''}
-        </span>
+        {openList && data.other_statuses_count > 0 ? (
+          <button
+            type="button"
+            aria-haspopup="dialog"
+            className="rounded underline decoration-dotted underline-offset-2 hover:text-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            data-testid="status-open-other"
+            onClick={(event) => {
+              const carded = new Set<string>(cards.map((c) => c.status));
+              openList(
+                {
+                  title: 'Other statuses',
+                  expected: data.other_statuses_count,
+                  match: (row) => !carded.has(row.status),
+                },
+                event.currentTarget,
+              );
+            }}
+          >
+            Other statuses: {formatInteger(data.other_statuses_count)} (
+            {formatDecimal(data.other_statuses_share_pct)}% of total)
+          </button>
+        ) : (
+          <span>
+            Other statuses: {formatInteger(data.other_statuses_count)}
+            {data.other_statuses_count > 0 ? ` (${formatDecimal(data.other_statuses_share_pct)}% of total)` : ''}
+          </span>
+        )}
         <CardInfo label="Other statuses breakdown">
           <p>Statuses with no card of their own:</p>
           {otherEntries.length > 0 ? (

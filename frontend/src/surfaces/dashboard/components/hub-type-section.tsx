@@ -8,7 +8,7 @@ import { SectionBoundary } from '@/components/shared/section-boundary';
 import { cn } from '@/lib/utils';
 import type { LabRegion } from '@/types/enums';
 
-import type { CompletingWithinYear, DashboardAnalytics, HubTypePipelineRow } from '../api/types';
+import type { CompletingWithinYear, DashboardAnalytics, HubTypePipelineRow, RegionSummary } from '../api/types';
 import { CompletingHubTypeTable } from './completing-hub-type-table';
 import { HubRankList } from './hub-rank-list';
 import type { DrillTarget } from '../lib/drilldown';
@@ -38,6 +38,8 @@ export interface HubTypeSectionProps {
   pipelineTotal: number | null;
   hubId: string | null;
   region: LabRegion | null;
+  /** Served per-country totals for the "Top hubs" country chips. */
+  regionSummary?: RegionSummary | null | undefined;
 }
 
 export function HubTypeSection({
@@ -47,6 +49,7 @@ export function HubTypeSection({
   pipelineTotal,
   hubId,
   region,
+  regionSummary = null,
 }: HubTypeSectionProps): React.JSX.Element {
   const [target, setTarget] = React.useState<DrillTarget | null>(null);
   const triggerRef = React.useRef<HTMLElement | null>(null);
@@ -116,7 +119,7 @@ export function HubTypeSection({
         ) : null}
       </div>
 
-      {hubTypePipeline.data ? <HubRankList rows={hubTypePipeline.data} /> : null}
+      {hubTypePipeline.data ? <HubRankList rows={hubTypePipeline.data} pipelineTotal={pipelineTotal} regionSummary={regionSummary} /> : null}
 
       <HubTypeDrilldownDialog
         target={target}

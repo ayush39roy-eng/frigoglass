@@ -36,6 +36,8 @@ vi.mock('./hooks/use-dashboard', () => ({
   useHubTypePipeline: (...a: unknown[]) => hooks.useHubTypePipeline(...a),
   useActiveScheduleRun: (...a: unknown[]) => hooks.useActiveScheduleRun(...a),
   useDashboardProjects: (...a: unknown[]) => hooks.useDashboardProjects(...a),
+  // 2026-11-13: the click-to-list dialog's query (idle until a figure is clicked).
+  useDrilldownProjects: () => ({ data: undefined, isPending: false, isError: false }),
   useRegionSummary: (...a: unknown[]) => hooks.useRegionSummary(...a),
   useProjectFacets: (...a: unknown[]) => hooks.useProjectFacets(...a),
   useDashboardAnalytics: (...a: unknown[]) => hooks.useDashboardAnalytics(...a),
@@ -149,7 +151,6 @@ describe('DashboardPage', () => {
     expect(hooks.usePipelineTotals).toHaveBeenLastCalledWith('hub-greece', null, NO_SEL);
     expect(hooks.useStatusOverview).toHaveBeenLastCalledWith('hub-greece', null, NO_SEL);
     expect(hooks.useHubTypePipeline).toHaveBeenLastCalledWith('hub-greece', null, NO_SEL);
-    expect(hooks.useDashboardProjects).toHaveBeenLastCalledWith(expect.objectContaining({ hub_id: 'hub-greece' }));
     expect(capacityHook.useHubLoadVsCapacity).not.toHaveBeenCalled();
     expect(screen.getByTestId('hub-filter-chip')).toBeInTheDocument();
   });
@@ -173,7 +174,8 @@ describe('DashboardPage', () => {
     expect(screen.getByText('Completing within the year')).toBeInTheDocument();
     expect(screen.getByText('Status overview')).toBeInTheDocument();
     expect(screen.getByText('Project pipeline summary: Hub × Type')).toBeInTheDocument();
-    expect(screen.getByText('All registered projects')).toBeInTheDocument();
+    // Owner ask 2026-11-13: the register section is gone from the Dashboard.
+    expect(screen.queryByText('All registered projects')).not.toBeInTheDocument();
     // headline within-year figure comes from the I9 endpoint
     expect(screen.getByTestId('schedule-run-provenance')).toHaveTextContent(/v4/);
   });
@@ -283,7 +285,6 @@ describe('DashboardPage — P13 country filter (ADR 0025)', () => {
     expect(hooks.useStatusOverview).toHaveBeenLastCalledWith(null, 'India', NO_SEL);
     expect(hooks.useHubTypePipeline).toHaveBeenLastCalledWith(null, 'India', NO_SEL);
     expect(hooks.useRegionSummary).toHaveBeenLastCalledWith(null, 'India', NO_SEL);
-    expect(hooks.useDashboardProjects).toHaveBeenLastCalledWith(expect.objectContaining({ region: 'India' }));
     expect(capacityHook.useHubLoadVsCapacity).not.toHaveBeenCalled();
     expect(screen.getByTestId('hub-filter-chip')).toHaveTextContent('Country: India');
     expect(screen.getByRole('radio', { name: /India/ })).toHaveAttribute('aria-checked', 'true');
@@ -303,14 +304,12 @@ describe('DashboardPage — P13 country filter (ADR 0025)', () => {
     expect(spill).toHaveTextContent('(77.63%)');
   });
 
-  it('places the all-projects register directly after the status overview and links to it', () => {
+  it('no longer renders the all-projects register; "All projects" links to the Projects page (owner ask 2026-11-13)', () => {
     readyAll();
     renderWithProviders(<DashboardPage />);
-    const register = screen.getByTestId('all-projects-register');
-    expect(register).toHaveAttribute('id', 'all-projects');
-    const statusHeading = screen.getByText('Status overview', { selector: 'h3, [class*="text-h1"]' });
-    expect(statusHeading.compareDocumentPosition(register) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(screen.getByRole('button', { name: /All projects/ })).toBeInTheDocument();
+    expect(screen.queryByTestId('all-projects-register')).not.toBeInTheDocument();
+    expect(hooks.useDashboardProjects).not.toHaveBeenCalled();
+    expect(screen.getByRole('link', { name: /All projects/ })).toHaveAttribute('href', '/projects');
   });
 });
 
@@ -428,7 +427,7 @@ describe('DashboardPage — P17-R06/R08 rearrangement', () => {
   }
   const follows = (a: Node, b: Node): boolean => Boolean(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING);
 
-  it('2026-10-22 order: Status, profile + delivery rate, compact Completing, the Hub × Type row, the register LAST', async () => {
+  it('2026-10-22 order: Status, profile + delivery rate, compact Completing, the Hub × Type row (register removed 2026-11-13)', async () => {
     readyAll();
     hooks.useDashboardAnalytics.mockReturnValue(ready(ANALYTICS_R08));
     renderWithProviders(<DashboardPage />);
@@ -438,7 +437,6 @@ describe('DashboardPage — P17-R06/R08 rearrangement', () => {
     const completing = screen.getByRole('heading', { name: 'Completing within the year' });
     const pipelineTable = screen.getByRole('heading', { name: 'Project pipeline summary: Hub × Type' });
     const completingTable = screen.getByRole('heading', { name: 'Completing within year: Hub × Type' });
-    const register = screen.getByTestId('all-projects-register');
     expect(follows(status, profile)).toBe(true);
     expect(follows(profile, gauge)).toBe(true);
     expect(follows(gauge, completing)).toBe(true);
@@ -452,13 +450,8 @@ describe('DashboardPage — P17-R06/R08 rearrangement', () => {
     const chart = await screen.findByRole('heading', { name: 'Pipeline vs completing' }, { timeout: 5000 });
     expect(band!.contains(chart)).toBe(true);
     await screen.findByRole('heading', { name: 'Portfolio analytics' }, { timeout: 5000 });
-    const analytics = await screen.findByRole('heading', { name: 'Analytics & breakdown' }, { timeout: 5000 });
-    expect(follows(analytics, register)).toBe(true);
-    // Nothing after the register.
-    const sections = screen.getAllByRole('heading', { level: 2 }).concat(screen.getAllByRole('heading', { level: 3 }));
-    for (const h of sections) {
-      if (!register.contains(h)) expect(follows(h, register)).toBe(true);
-    }
+    await screen.findByRole('heading', { name: 'Analytics & breakdown' }, { timeout: 5000 });
+    expect(screen.queryByTestId('all-projects-register')).not.toBeInTheDocument();
   });
 
   it('P17-R08: the Hub × type bar chart is gone; the VIP card sits beside the pipeline row', () => {
@@ -504,7 +497,7 @@ describe('DashboardPage — P17-R06/R08 rearrangement', () => {
 });
 
 describe('DashboardPage — P14 VIP projects card', () => {
-  it('sits after the pipeline / KPI cards and before the register, and passes the global filter params', () => {
+  it('sits beside the pipeline row and passes the global filter params', () => {
     hooks.useCompletingWithinYear.mockReturnValue(ready(withinYear));
     hooks.usePipelineTotals.mockReturnValue(ready(totals));
     hooks.useStatusOverview.mockReturnValue(ready(status));
@@ -513,8 +506,6 @@ describe('DashboardPage — P14 VIP projects card', () => {
     renderWithProviders(<DashboardPage />);
     const vip = screen.getByTestId('vip-projects-card');
     expect(vipHook.useVipBoard).toHaveBeenCalledWith({ region: 'India' });
-    const register = screen.getByTestId('all-projects-register');
-    expect(vip.compareDocumentPosition(register) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     const pipeline = screen.getAllByText('Project pipeline')[0]!;
     // P17-R05: the pipeline row and status overview now lead the page, ahead of the VIP card.
     expect(pipeline.compareDocumentPosition(vip) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
@@ -595,7 +586,7 @@ describe('DashboardPage — P28 Executive view (ADR 0039)', () => {
     expect(toggle).toHaveAttribute('role', 'radiogroup');
     expect(within(toggle).getByRole('radio', { name: /Detailed/ })).toHaveAttribute('aria-checked', 'true');
     expect(screen.queryByTestId('executive-view')).not.toBeInTheDocument();
-    expect(screen.getByTestId('all-projects-register')).toBeInTheDocument();
+    expect(screen.getByTestId('pipeline-row')).toBeInTheDocument();
   });
 
   it('clicking Executive switches the view, persists to localStorage, shows Upcoming completions (no hub-load request), and keeps focus', async () => {
@@ -703,10 +694,6 @@ describe('DashboardPage — P31 Dashboard-wide category / type selection', () =>
     ]) {
       expect(hook).toHaveBeenLastCalledWith(null, null, sel);
     }
-    // The register (same selection, repeated params).
-    expect(hooks.useDashboardProjects).toHaveBeenLastCalledWith(
-      expect.objectContaining({ category: ['A+', 'A'], type: ['NM'] }),
-    );
     const bar = screen.getByTestId('dashboard-selection-bar');
     const cats = within(bar).getByRole('group', { name: 'Category' });
     expect(within(cats).getByRole('button', { name: 'A+' })).toHaveAttribute('aria-pressed', 'true');

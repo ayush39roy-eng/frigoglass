@@ -103,6 +103,10 @@ export interface StatCardProps {
    *  caption, for a KPI row that repeats figures shown above it in full. */
   size?: 'default' | 'compact';
   className?: string;
+  /** When set, the whole card is one click target (an overlay <button>) that
+   *  opens the data behind its figure; `openLabel` is its accessible name. */
+  onOpen?: ((el: HTMLButtonElement) => void) | undefined;
+  openLabel?: string | undefined;
 }
 
 export function StatCard({
@@ -117,6 +121,8 @@ export function StatCard({
   footer,
   size = 'default',
   className,
+  onOpen,
+  openLabel,
 }: StatCardProps): React.JSX.Element {
   const compact = size === 'compact';
   const motionTokens = useMotionTokens();
@@ -158,9 +164,20 @@ export function StatCard({
         kind === 'ink' && 'border-[1.5px] border-transparent text-ink-fg shadow-ink',
         kind === 'plain' &&
           'border-[1.5px] border-dash-hairline bg-surface text-text shadow-dashCard hover:shadow-pop',
+        onOpen && 'cursor-pointer',
         className,
       )}
     >
+      {onOpen ? (
+        <button
+          type="button"
+          aria-haspopup="dialog"
+          aria-label={openLabel ?? label}
+          title={openLabel ?? label}
+          onClick={(event) => { onOpen(event.currentTarget); }}
+          className="absolute inset-0 z-[3] cursor-pointer rounded-[inherit] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+        />
+      ) : null}
       {/* Decorative dot field, right half — fades toward the figure side. */}
       <span
         aria-hidden="true"

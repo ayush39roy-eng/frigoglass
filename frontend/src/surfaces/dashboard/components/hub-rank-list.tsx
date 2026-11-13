@@ -5,11 +5,14 @@ import { Building2 } from 'lucide-react';
 import { CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { EmptyState } from '@/components/shared/empty-state';
 import { useMotionTokens } from '@/lib/motion';
-import { formatInteger } from '@/lib/format';
+import { formatDecimal, formatInteger } from '@/lib/format';
 import { cn } from '@/lib/utils';
 
-import type { HubTypePipelineRow } from '../api/types';
+import type { HubTypePipelineRow, RegionSummary } from '../api/types';
 import { buildHubTotals, useHubCountry } from '../lib/hub-geo';
+import { pipelineRegionItems } from '../lib/region-summary';
+import { CardOpenButton, useOpenProjectList } from './project-list-dialog';
+import { RegionChips } from './region-chips';
 import { dashRankBg, dashRankSoftBg, dashRankText } from '../lib/dash-chart-theme';
 import { BoltCard } from '@/components/ui/bolt-card';
 import { CardInfo } from '@/components/ui/card-info';
@@ -32,13 +35,20 @@ import { CardInfo } from '@/components/ui/card-info';
 
 export interface HubRankListProps {
   rows: HubTypePipelineRow[];
+  /** Served `pipeline-totals.total_count` (every project in scope). Each hub's
+   *  percentage is its share of THIS total (owner ask 2026-11-13); until it
+   *  loads, the hub rows' own sum is used (the same set, same scope). */
+  pipelineTotal?: number | null | undefined;
+  /** Served per-country totals and shares, shown above the hubs. */
+  regionSummary?: RegionSummary | null | undefined;
 }
 
-export function HubRankList({ rows }: HubRankListProps): React.JSX.Element {
+export function HubRankList({ rows, pipelineTotal = null, regionSummary = null }: HubRankListProps): React.JSX.Element {
   const motionTokens = useMotionTokens();
   const country = useHubCountry();
+  const openList = useOpenProjectList();
   const totals = React.useMemo(() => buildHubTotals(rows, country), [rows, country]);
-  const maxCount = totals.reduce((max, t) => Math.max(max, t.count), 0);
+  const total = pipelineTotal ?? totals.reduce((sum, t) => sum + t.count, 0);
 
   return (
     <BoltCard>
@@ -56,12 +66,37 @@ export function HubRankList({ rows }: HubRankListProps): React.JSX.Element {
           </p>
           <p>
             Portfolio composition, not a schedule outcome: these counts come from the project
-            registry, so Invariant I9 does not apply to them. The percentage is each hub&apos;s
-            count against the largest hub&apos;s, for bar length only.
+            registry, so Invariant I9 does not apply to them. The percentage (and the bar) is each
+            hub&apos;s share of all projects in view (Total projects), so the hubs add up to 100%.
+            The country chips are the server&apos;s per-country totals and shares of that total.
+            Click a hub or a country to list its projects.
           </p>
         </CardInfo>
       </CardHeader>
       <CardContent>
+        {totals.length > 0 ? (
+          <div className="mb-s4 flex flex-wrap items-center gap-s2 border-b border-dash-hairline pb-s3" data-testid="hub-rank-summary">
+            <span className="text-sm font-semibold text-text">
+              <span className="tabular-nums" data-numeric="">{formatInteger(total)}</span> projects
+            </span>
+            {regionSummary ? (
+              <RegionChips
+                label="Projects"
+                items={pipelineRegionItems(regionSummary, 'total')}
+                onSelect={
+                  openList
+                    ? (item, el) => {
+                        openList(
+                          { title: `All projects · ${item.region}`, expected: item.count, match: (row) => row.region === item.region },
+                          el,
+                        );
+                      }
+                    : undefined
+                }
+              />
+            ) : null}
+          </div>
+        ) : null}
         {totals.length === 0 ? (
           <EmptyState
             title="No hubs in scope"
@@ -69,24 +104,43 @@ export function HubRankList({ rows }: HubRankListProps): React.JSX.Element {
           />
         ) : (
           <ol aria-label="Real project count per hub, ranked" className="flex flex-col gap-s4">
-            {totals.map((total, index) => {
-              const pct = maxCount > 0 ? Math.round((total.count / maxCount) * 100) : 0;
+            {totals.map((hubTotal, index) => {
+              // Share of all projects in view, 2 dp like every other Dashboard share.
+              const pct = total > 0 ? Math.round((hubTotal.count / total) * 10000) / 100 : 0;
               return (
-                <li key={total.hub} className="flex flex-col gap-s2">
+                <li
+                  key={hubTotal.hub}
+                  className={cn(
+                    'relative flex flex-col gap-s2 rounded-lg',
+                    openList && '-mx-s2 px-s2 py-s1 transition-colors duration-base hover:bg-dash-alt',
+                  )}
+                >
+                  {openList ? (
+                    <CardOpenButton
+                      label={`${hubTotal.hub}: list the ${formatInteger(hubTotal.count)} projects`}
+                      testId={`hub-rank-open-${hubTotal.hub}`}
+                      onOpen={(el) => {
+                        openList(
+                          { title: hubTotal.hub, expected: hubTotal.count, match: (row) => row.hub === hubTotal.hub },
+                          el,
+                        );
+                      }}
+                    />
+                  ) : null}
                   <div className="flex items-center justify-between gap-s2 text-body">
                     <span className="flex min-w-0 items-center gap-s2 truncate font-medium text-text">
                       <Building2
                         className={cn('size-4 shrink-0', dashRankText(index))}
                         aria-hidden="true"
                       />
-                      <span className="truncate">{total.hub}</span>
+                      <span className="truncate">{hubTotal.hub}</span>
                       <span className="shrink-0 text-2xs font-normal text-text-subtle">
-                        {total.country}
+                        {hubTotal.country}
                       </span>
                     </span>
                     <span className="flex shrink-0 items-center gap-s2">
                       <span className="tnum font-mono text-xs text-text-muted" data-numeric="">
-                        {formatInteger(total.count)}
+                        {formatInteger(hubTotal.count)}
                       </span>
                       <span
                         className={cn(
@@ -95,7 +149,7 @@ export function HubRankList({ rows }: HubRankListProps): React.JSX.Element {
                           dashRankText(index),
                         )}
                       >
-                        {pct}%
+                        {formatDecimal(pct)}%
                       </span>
                     </span>
                   </div>
