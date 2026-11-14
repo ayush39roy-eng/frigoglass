@@ -1,9 +1,7 @@
 /** P13-T12: the Priority board toolbar's state and option labels (kept out of
  *  the component file so React Fast Refresh stays component-only). */
 
-import type { ProjectCategory, ProjectType } from '@/types/enums';
-
-export const ALL = '__all__';
+import type { ProjectCategory, ProjectStatus, ProjectType } from '@/types/enums';
 
 /** Server limit on `q` (contract §3). */
 export const SEARCH_MAX = 100;
@@ -13,11 +11,12 @@ export interface BoardToolbarState {
   /** P31: multi-select (repeated server params, OR); empty = all. */
   category: ProjectCategory[];
   type: ProjectType[];
-  status_: string;
-  leader: string;
+  /** Multi-select (owner ask 2026-11-13): repeated params (OR); empty = all. */
+  status_: ProjectStatus[];
+  leader: string[];
 }
 
-export const EMPTY_TOOLBAR: BoardToolbarState = { search: '', category: [], type: [], status_: ALL, leader: ALL };
+export const EMPTY_TOOLBAR: BoardToolbarState = { search: '', category: [], type: [], status_: [], leader: [] };
 
 export interface LeaderOption {
   id: string;

@@ -52,18 +52,18 @@ const oemFiltered: HubCapacitySummary = {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  useHubFilterStore.setState({ hubId: null, region: null });
+  useHubFilterStore.getState().setSelection([], []);
   hooks.useActiveScheduleRun.mockReturnValue(ready(null));
   hooks.useClassBreakdown.mockReturnValue(ready(classBreakdown));
 });
 
 describe('CapacityPage — OEM hub filter (P29, ADR 0042 §4)', () => {
   it('sends the OEM hub id as is and shows the served Greece row with OEM-HCK highlighted', () => {
-    useHubFilterStore.setState({ hubId: 'hub-oem-hck' });
+    useHubFilterStore.getState().setSelection(['hub-oem-hck'], []);
     hooks.useHubLoadVsCapacity.mockReturnValue(ready(oemFiltered));
     hooks.useEngineerUtilization.mockReturnValue(ready({ week_range: [1, 1], current_week: 1, engineers: [] }));
     renderWithProviders(<CapacityPage />);
-    expect(hooks.useHubLoadVsCapacity).toHaveBeenLastCalledWith({ hubId: 'hub-oem-hck', region: null });
+    expect(hooks.useHubLoadVsCapacity).toHaveBeenLastCalledWith({ hub: { hubIds: ['hub-oem-hck'], regions: [] } });
     // Table: the Greece row, its breakdown open, OEM-HCK highlighted.
     const greece = screen.getByTestId('hub-summary-row-R&D-Greece');
     expect(within(greece).getByTestId('design-load')).toHaveTextContent('131');
@@ -74,7 +74,7 @@ describe('CapacityPage — OEM hub filter (P29, ADR 0042 §4)', () => {
   });
 
   it('an out-of-scope hub id is served as no rows: the page shows the empty state, nothing widened', () => {
-    useHubFilterStore.setState({ hubId: 'hub-out-of-scope' });
+    useHubFilterStore.getState().setSelection(['hub-out-of-scope'], []);
     hooks.useHubLoadVsCapacity.mockReturnValue(ready({ ...oemFiltered, rows: [] }));
     hooks.useEngineerUtilization.mockReturnValue(ready({ week_range: [1, 1], current_week: 1, engineers: [] }));
     renderWithProviders(<CapacityPage />);

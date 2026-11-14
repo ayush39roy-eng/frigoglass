@@ -20,10 +20,11 @@ export interface GanttFilterState {
   /** P31: multi-select, sent as repeated params (OR); empty = all. URL state on the page. */
   category: ProjectCategory[];
   type: ProjectType[];
-  status: ProjectStatus | null;
-  leaderEngineerId: string | null;
-  currentStep: string | null;
-  priority: ProjectPriority | null;
+  /** Multi-select (owner ask 2026-11-13): repeated params (OR); empty = all. */
+  status: ProjectStatus[];
+  leaderEngineerId: string[];
+  currentStep: string[];
+  priority: ProjectPriority[];
   sort: GanttSort;
 }
 
@@ -31,10 +32,10 @@ export const DEFAULT_GANTT_FILTERS: GanttFilterState = {
   q: '',
   category: [],
   type: [],
-  status: null,
-  leaderEngineerId: null,
-  currentStep: null,
-  priority: null,
+  status: [],
+  leaderEngineerId: [],
+  currentStep: [],
+  priority: [],
   sort: 'priority',
 };
 
@@ -43,9 +44,9 @@ export function hasActiveFilters(f: GanttFilterState): boolean {
     f.q.trim() !== '' ||
     f.category.length > 0 ||
     f.type.length > 0 ||
-    f.status !== null ||
-    f.leaderEngineerId !== null ||
-    f.currentStep !== null ||
-    f.priority !== null
+    f.status.length > 0 ||
+    f.leaderEngineerId.length > 0 ||
+    f.currentStep.length > 0 ||
+    f.priority.length > 0
   );
 }

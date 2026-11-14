@@ -177,22 +177,25 @@ export interface ProjectFilterResult {
 }
 
 export interface ProjectFilterParams {
-  hub_id?: Id | undefined;
+  /** Multi-select contract (2026-11-13): every list is a REPEATED param, ORed
+   *  within, ANDed across; omitted or empty = not filtered. `hub_id` and
+   *  `region` are UNIONED by the server. */
+  hub_id?: readonly Id[] | undefined;
   /** P31: repeated `category` params, ORed by the server; omitted = all.
    *  `Unmapped` = no category (Dashboard endpoints only). */
   category?: readonly (ProjectCategory | 'Unmapped')[] | undefined;
-  status_?: ProjectStatus | undefined;
-  priority?: ProjectPriority | undefined;
+  status_?: readonly ProjectStatus[] | undefined;
+  priority?: readonly ProjectPriority[] | undefined;
   // P13 (API_CONTRACT_P13 §3) — every filter is applied server-side.
-  region?: LabRegion | undefined;
+  region?: readonly LabRegion[] | undefined;
   /** Case-insensitive substring of name or external_code, ≤ 100 chars. */
   q?: string | undefined;
   /** P31: repeated `type` params, ORed. `Unmapped` = projects with no type
    *  (`type IS NULL`), served since P17-R09. Omitted = all. */
   type?: readonly (ProjectType | 'Unmapped')[] | undefined;
-  leader_engineer_id?: Id | undefined;
-  /** Step code, e.g. `PDD-E`. */
-  current_step?: string | undefined;
+  leader_engineer_id?: readonly Id[] | undefined;
+  /** Step codes, e.g. `PDD-E`. */
+  current_step?: readonly string[] | undefined;
   sort?: 'name' | 'priority' | undefined;
 }
 

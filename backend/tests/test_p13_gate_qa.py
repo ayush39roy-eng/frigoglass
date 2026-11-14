@@ -102,7 +102,12 @@ async def test_gantt_engineer_region_narrows_own_assignments_only(db_session):
         assert await names(client, region="Greece") == {"Mine GR"}
         assert await names(client, region="Romania") == {"Mine RO"}
         assert await names(client, region="India") == set()
-        assert await names(client, hub_id=str(romania.id), region="Greece") == set()
+        # ADR 0050: hub and region are a union, still inside own assignments.
+        assert await names(client, hub_id=str(romania.id), region="Greece") == {
+            "Mine GR",
+            "Mine RO",
+        }
+        assert await names(client, hub_id=str(romania.id), region="India") == {"Mine RO"}
         assert await names(client, hub_id=str(greece.id), region="Greece") == {"Mine GR"}
 
 

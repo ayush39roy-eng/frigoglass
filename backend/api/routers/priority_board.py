@@ -39,7 +39,6 @@ audit, the recalculation and the coalesced follow-up run.
 
 from __future__ import annotations
 
-import uuid
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query
@@ -49,14 +48,19 @@ from sqlalchemy.orm import selectinload
 
 from api.db import get_db
 from api.deps import require_permission
-from api.query_params import CategoryListQuery, TypeListQuery
+from api.query_params import (
+    CategoryListQuery,
+    HubIdListQuery,
+    LeaderListQuery,
+    RegionListQuery,
+    StatusListQuery,
+    TypeListQuery,
+)
 from core.principal import Principal
 from core.rbac import Action, Surface
 from models.enums import (
     NON_SCHEDULABLE_STATUSES,
-    LabRegion,
     ProjectPriority,
-    ProjectStatus,
 )
 from models.project import Project
 from schemas.priority_board import (
@@ -67,7 +71,7 @@ from schemas.priority_board import (
 from services.active_run import get_active_run
 from services.capacity_priority import remaining_run_load_by_project
 from services.capacity_supply import round2
-from services.category_type_filter import category_type_filter
+from services.category_type_filter import any_of, category_type_filter
 from services.hub_scope import global_hub_filter, hub_scope_filter
 from services.priority_capacity_fill import compute_capacity_fill
 from services.project_cards import build_project_cards
@@ -95,13 +99,13 @@ def _escape_like(value: str) -> str:
 
 @router.get("", response_model=PriorityBoardResponse)
 async def get_priority_board(
-    hub_id: uuid.UUID | None = None,
-    region: LabRegion | None = None,
+    hub_id: HubIdListQuery = None,
+    region: RegionListQuery = None,
     q: Annotated[str | None, Query(max_length=100)] = None,
     category: CategoryListQuery = None,
     type_: TypeListQuery = None,
-    status_: ProjectStatus | None = None,
-    leader_engineer_id: uuid.UUID | None = None,
+    status_: StatusListQuery = None,
+    leader_engineer_id: LeaderListQuery = None,
     db: AsyncSession = Depends(get_db),
     current_user: Principal = Depends(_read),
 ) -> PriorityBoardResponse:
@@ -126,10 +130,14 @@ async def get_priority_board(
     selection = category_type_filter(category, type_)
     if selection is not None:
         stmt = stmt.where(selection)
-    if status_ is not None:
-        stmt = stmt.where(Project.status == status_)
-    if leader_engineer_id is not None:
-        stmt = stmt.where(Project.leader_engineer_id == leader_engineer_id)
+    # ADR 0050: status / leader are lists (OR within, AND across).
+    for column, values in (
+        (Project.status, status_),
+        (Project.leader_engineer_id, leader_engineer_id),
+    ):
+        predicate = any_of(column, values)
+        if predicate is not None:
+            stmt = stmt.where(predicate)
     term = q.strip() if q is not None else ""
     if term:
         pattern = f"%{_escape_like(term)}%"

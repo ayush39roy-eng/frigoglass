@@ -48,11 +48,13 @@ export interface AuditLogEntryList {
  *  control — see `backend/api/routers/audit_log.py`'s module docstring:
  *  Auditor/Admin are both "R (all)", not hub-scoped, for this surface). */
 export interface AuditLogFilterParams {
-  entity_type?: string | undefined;
+  /** Multi-select contract (2026-11-13): repeated params, ORed within one
+   *  param; omitted or empty = not filtered. */
+  entity_type?: readonly string[] | undefined;
   entity_id?: string | undefined;
-  actor_user_id?: string | undefined;
-  action?: string | undefined;
-  hub_id?: string | undefined;
+  actor_user_id?: readonly Id[] | undefined;
+  action?: readonly string[] | undefined;
+  hub_id?: readonly Id[] | undefined;
   occurred_from?: string | undefined;
   occurred_to?: string | undefined;
   limit?: number | undefined;

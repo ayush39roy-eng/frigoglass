@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import { toHubFilterParams } from '@/stores/hub-filter';
+
 import { apiDownload, ApiError, apiGet } from './client';
 
 function jsonResponse(body: unknown, init: ResponseInit = {}): Response {
@@ -51,6 +53,24 @@ describe('apiGet', () => {
     expect(url.search).toContain('category=A%2B&category=A&category=B');
     expect(url.searchParams.has('type')).toBe(false);
     expect(url.searchParams.get('hub_id')).toBe('h1');
+  });
+
+  it('multi-select contract: the hub filter and list filters serialise as repeated params (hub_id=a&hub_id=b)', async () => {
+    const fetchMock = vi.fn((_input: string | URL) => Promise.resolve(jsonResponse({ rows: [] })));
+    vi.stubGlobal('fetch', fetchMock);
+    await apiGet('/dashboard/projects', {
+      query: {
+        ...toHubFilterParams(['hub-b', 'hub-a'], ['Romania', 'India']),
+        status_: ['In Queue', 'On Hold'],
+        leader_engineer_id: ['e1', 'e2'],
+      },
+    });
+    const called = fetchMock.mock.calls[0]?.[0];
+    const url = new URL(typeof called === 'string' ? called : String(called));
+    expect(url.search).toContain('hub_id=hub-a&hub_id=hub-b');
+    expect(url.searchParams.getAll('region')).toEqual(['India', 'Romania']);
+    expect(url.searchParams.getAll('status_')).toEqual(['In Queue', 'On Hold']);
+    expect(url.searchParams.getAll('leader_engineer_id')).toEqual(['e1', 'e2']);
   });
 
   it('throws an ApiError carrying the HTTP status and FastAPI detail', async () => {

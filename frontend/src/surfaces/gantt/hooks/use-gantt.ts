@@ -9,6 +9,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { queryKeys, sortedKeyList } from '@/lib/query-keys';
+import type { HubSelection } from '@/stores/hub-filter';
 import type { LabRegion } from '@/types/enums';
 
 import {
@@ -29,11 +30,17 @@ export function useGantt(params: UseGanttParams) {
     // Every user-facing filter must be in the key or a filter change would
     // serve the previous filter's rows (P4-T04 review). The whole params
     // object is the key, so a new filter can never be forgotten here.
-    // P31: category / type lists are sorted in the key.
+    // P31 / multi-select: every list is sorted in the key (absent when empty).
     queryKey: queryKeys.gantt({
       ...params,
+      hubIds: sortedKeyList(params.hubIds),
+      regions: sortedKeyList(params.regions) as LabRegion[] | undefined,
       category: sortedKeyList(params.category),
       type: sortedKeyList(params.type),
+      status: sortedKeyList(params.status),
+      leaderEngineerId: sortedKeyList(params.leaderEngineerId),
+      currentStep: sortedKeyList(params.currentStep),
+      priority: sortedKeyList(params.priority),
     }),
     queryFn: ({ signal }) => fetchGantt(params, { signal }),
     retry: retryUnlessAuth,
@@ -58,10 +65,10 @@ export function useProjectTimeline(projectId: string | null) {
 
 /** Leader / Step filter options (P13 §3 facets), keyed like the Dashboard's so
  *  the cache is shared. `enabled` is the caller's `dashboard` read. */
-export function useGanttFacets(hubId: string | null, region: LabRegion | null, enabled: boolean) {
+export function useGanttFacets(hub: HubSelection, enabled: boolean) {
   return useQuery({
-    queryKey: queryKeys.dashboardProjectFacets(hubId, region),
-    queryFn: ({ signal }) => fetchGanttFacets(hubId, region, { signal }),
+    queryKey: queryKeys.dashboardProjectFacets(hub),
+    queryFn: ({ signal }) => fetchGanttFacets(hub, { signal }),
     retry: retryUnlessAuth,
     enabled,
     staleTime: 60_000,

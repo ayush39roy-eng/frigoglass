@@ -15,6 +15,7 @@ import { ReadOnlyNotice } from '@/components/session/write-gate';
 import { ApiError } from '@/lib/api/client';
 import { SCHEDULER_HORIZON_WEEKS } from '@/lib/domain-constants';
 import { formatInteger, formatYearWeek } from '@/lib/format';
+import { selectionParam } from '@/lib/multi-select-filter';
 import { queryKeys } from '@/lib/query-keys';
 import { useHubFilter } from '@/stores/hub-filter';
 import { usePermission } from '@/stores/session';
@@ -63,13 +64,13 @@ const noop = (): void => undefined;
 export function ProjectStepTimingSection(): React.JSX.Element {
   const [params, setParams] = useSearchParams();
   const linked = params.get('project');
-  const { hubId, region } = useHubFilter();
-  const [priority, setPriority] = React.useState<ProjectPriority | null>(null);
+  const { hubIds, regions } = useHubFilter();
+  const [priority, setPriority] = React.useState<ProjectPriority[]>([]);
   const [query, setQuery] = React.useState('');
   const gantt = useGantt({
-    hubId: hubId ?? undefined,
-    region: region ?? undefined,
-    priority: priority ?? undefined,
+    hubIds: selectionParam(hubIds),
+    regions: selectionParam(regions),
+    priority: selectionParam(priority),
   });
   const statuses = useProjectStatuses();
   const canWriteGantt = usePermission('gantt').write;

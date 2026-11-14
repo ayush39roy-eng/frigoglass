@@ -74,6 +74,7 @@ from sqlalchemy.orm import selectinload
 import domain_constants as dc
 from api.db import get_db
 from api.deps import require_permission
+from api.query_params import HubIdListQuery, RegionListQuery
 from core.principal import Principal
 from core.rbac import Action, Surface
 from models.audit import AuditLogEntry
@@ -142,8 +143,10 @@ from services.capacity_supply import (
 )
 from services.demand_load import load_demand
 from services.hub_scope import (
+    hub_id_list,
     narrowed_hub_filter,
     narrowed_lab_regions,
+    region_list,
 )
 from services.run_step_effort import weekly_effort_for_rows
 
@@ -159,8 +162,8 @@ async def _active_run(db: AsyncSession) -> ScheduleRun | None:
 @router.get("/hub-load", response_model=HubCapacitySummary)
 @router.get("/hubs", response_model=HubCapacitySummary)
 async def hub_load_vs_capacity(
-    hub_id: uuid.UUID | None = None,
-    region: LabRegion | None = None,
+    hub_id: HubIdListQuery = None,
+    region: RegionListQuery = None,
     db: AsyncSession = Depends(get_db),
     current_user: Principal = Depends(_read),
 ) -> HubCapacitySummary:
@@ -602,8 +605,8 @@ def _area_rows(rows: list[HubCapacityRow]) -> list[CapacityArea]:
 
 @router.get("/class-breakdown", response_model=ClassBreakdown)
 async def class_breakdown(
-    hub_id: uuid.UUID | None = None,
-    region: LabRegion | None = None,
+    hub_id: HubIdListQuery = None,
+    region: RegionListQuery = None,
     db: AsyncSession = Depends(get_db),
     current_user: Principal = Depends(_read),
 ) -> ClassBreakdown:
@@ -695,8 +698,8 @@ async def class_breakdown(
 
 @router.get("/utilization-matrix", response_model=UtilizationMatrix)
 async def utilization_matrix(
-    hub_id: uuid.UUID | None = None,
-    region: LabRegion | None = None,
+    hub_id: HubIdListQuery = None,
+    region: RegionListQuery = None,
     db: AsyncSession = Depends(get_db),
     current_user: Principal = Depends(_read),
 ) -> UtilizationMatrix:
@@ -791,8 +794,8 @@ async def utilization_matrix(
 
 @router.get("/engineer-utilization", response_model=EngineerUtilizationResponse)
 async def engineer_utilization(
-    hub_id: uuid.UUID | None = None,
-    region: LabRegion | None = None,
+    hub_id: HubIdListQuery = None,
+    region: RegionListQuery = None,
     db: AsyncSession = Depends(get_db),
     current_user: Principal = Depends(_read),
 ) -> EngineerUtilizationResponse:
@@ -898,8 +901,12 @@ async def engineer_utilization(
 
     # Coalesce: one audit row per user per filter set per minute (a burst of reloads
     # must not grow the append-only table without bound).
-    hub_text = str(hub_id) if hub_id else None
-    region_text = region.value if region else None
+    # ADR 0050: a list filter is recorded as its sorted, comma-joined values
+    # (one value = the pre-ADR-0050 text), so the coalescing match is exact.
+    hub_values = hub_id_list(hub_id)
+    region_values = region_list(region)
+    hub_text = ",".join(sorted(str(h) for h in hub_values)) or None
+    region_text = ",".join(sorted(r.value for r in region_values)) or None
     recent = (
         await db.execute(
             select(AuditLogEntry.id)
@@ -918,9 +925,13 @@ async def engineer_utilization(
         # unknown filter id would fail it (500). The filter is still recorded
         # in `after_state`; the column only names a hub that exists. The
         # response is unchanged (empty rows, like every other filter).
+        # With several hubs requested the column names none (the filter is in
+        # `after_state`); it is a single FK.
         audit_hub_id = (
-            (await db.execute(select(Hub.id).where(Hub.id == hub_id))).scalar_one_or_none()
-            if hub_id is not None
+            (
+                await db.execute(select(Hub.id).where(Hub.id == hub_values[0]))
+            ).scalar_one_or_none()
+            if len(hub_values) == 1
             else None
         )
         db.add(

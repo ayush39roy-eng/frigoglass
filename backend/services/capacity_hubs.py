@@ -40,10 +40,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.principal import Principal
 from models.engineer import Engineer
-from models.enums import HubName, LabRegion
+from models.enums import HubName
 from models.hub import Hub
 from services.capacity_supply import fte_sum
-from services.hub_scope import is_hub_in_scope, narrowed_hub_filter
+from services.hub_scope import (
+    HubIdsArg,
+    RegionsArg,
+    hub_id_list,
+    is_hub_in_scope,
+    narrowed_hub_filter,
+    region_list,
+)
 
 
 @dataclass(frozen=True)
@@ -89,24 +96,30 @@ class CapacityHubMap:
 def engineer_hub_filter(
     principal: Principal,
     cmap: CapacityHubMap,
-    hub_id: uuid.UUID | None,
-    region: LabRegion | None = None,
+    hub_id: HubIdsArg,
+    region: RegionsArg = None,
 ) -> ColumnElement[bool] | None:
     """The `Engineer.hub_id` predicate of an engineer list under the global
-    `hub_id` / `region` filters (ADR 0020, ADR 0025, ADR 0042).
+    `hub_id` / `region` filters (ADR 0020, ADR 0025, ADR 0042, ADR 0050).
 
-    P30-R01 (S30-I1): the RBAC check applies to the hub the caller ASKED for,
-    before any member → capacity-hub resolution. A `hub_id` outside the
-    caller's scope is an always-false predicate (empty rows, zero totals, no
-    403), even when it resolves to a capacity hub the caller does see. Only
-    an in-scope member hub (OEM-HCK) then resolves to its capacity hub, ANDed
-    with the unchanged row scope (`narrowed_hub_filter`). `None` = no
-    predicate (unrestricted caller, no filter).
+    P30-R01 (S30-I1): the RBAC check applies to each hub the caller ASKED
+    for, before any member → capacity-hub resolution. A requested hub outside
+    the caller's scope contributes nothing (ADR 0050), even when it resolves
+    to a capacity hub the caller does see; when every requested hub is out
+    of scope and no region is requested the predicate is always false (empty
+    rows, zero totals, no 403). Only in-scope hubs then resolve to their
+    capacity hubs, UNIONED with `region` and ANDed with the unchanged row
+    scope (`narrowed_hub_filter`). `None` = no predicate (unrestricted
+    caller, no filter).
     """
 
-    if hub_id is not None and not is_hub_in_scope(principal, hub_id):
+    hubs = hub_id_list(hub_id)
+    regions = region_list(region)
+    in_scope = [h for h in hubs if is_hub_in_scope(principal, h)]
+    if hubs and not in_scope and not regions:
         return false()
-    return narrowed_hub_filter(principal, Engineer.hub_id, cmap.resolve(hub_id), region)
+    resolved = list(dict.fromkeys(cmap.capacity_of.get(h, h) for h in in_scope))
+    return narrowed_hub_filter(principal, Engineer.hub_id, resolved, regions)
 
 
 async def load_capacity_hub_map(db: AsyncSession) -> CapacityHubMap:
@@ -140,12 +153,12 @@ class CapacityRowScope:
 async def visible_hub_ids(
     db: AsyncSession,
     principal: Principal,
-    hub_id: uuid.UUID | None,
-    region: LabRegion | None,
+    hub_id: HubIdsArg,
+    region: RegionsArg,
 ) -> list[uuid.UUID]:
     """The hubs the caller sees for this request: RBAC scope AND the global
     `hub_id` / `region` filter (`services.hub_scope.narrowed_hub_filter`,
-    never widening)."""
+    union of the chosen hubs and countries, never widening)."""
 
     stmt = select(Hub.id)
     hub_filter = narrowed_hub_filter(principal, Hub.id, hub_id, region)
@@ -158,7 +171,7 @@ def scoped_capacity_rows(
     cmap: CapacityHubMap,
     filtered: Collection[uuid.UUID],
     scoped: Collection[uuid.UUID],
-    hub_id: uuid.UUID | None = None,
+    hub_id: HubIdsArg = None,
 ) -> list[CapacityRowScope]:
     """The capacity-hub rows of a read, ordered by capacity hub name
     (ADR 0042 §4, §8).
@@ -167,22 +180,27 @@ def scoped_capacity_rows(
       `hub_id` / `region` filter). A capacity hub has a row when any of its
       hubs (own or member) is in it, so filtering on OEM-HCK gives the Greece
       row.
-    - `scoped`: the hubs visible without the `hub_id` filter (RBAC scope AND
-      `region`). The row's `member_ids` are the row's hubs in it: the members
-      breakdown never shows a hub outside the caller's scope, and the hub
-      filter selects a row without hiding its other in-scope members.
-    - `selected_member`: the filtered hub when it is one of the row's hubs.
+    - `scoped`: the in-scope hubs the members breakdown may show. The row's
+      `member_ids` are the row's hubs in it: the members breakdown never
+      shows a hub outside the caller's scope, and the hub filter selects a
+      row without hiding its other in-scope members.
+    - `selected_member`: the first requested hub (request order) that is one
+      of the row's visible hubs (ADR 0050: with several hubs of one row
+      requested, the first one is highlighted; the field stays single).
     """
 
     filtered_set = set(filtered)
     scoped_set = set(scoped) | filtered_set
+    requested = hub_id_list(hub_id)
     rows: list[CapacityRowScope] = []
     for capacity_id in cmap.capacity_hub_ids():
         all_members = cmap.members_of[capacity_id]
         if not any(m in filtered_set for m in all_members):
             continue
         in_scope = tuple(m for m in all_members if m in scoped_set)
-        selected = hub_id if hub_id is not None and hub_id in all_members else None
+        selected = next(
+            (h for h in requested if h in all_members and h in filtered_set), None
+        )
         rows.append(
             CapacityRowScope(
                 capacity_hub_id=capacity_id,
@@ -197,14 +215,24 @@ def scoped_capacity_rows(
 async def capacity_rows_for_request(
     db: AsyncSession,
     principal: Principal,
-    hub_id: uuid.UUID | None,
-    region: LabRegion | None,
+    hub_id: HubIdsArg,
+    region: RegionsArg,
 ) -> tuple[CapacityHubMap, list[CapacityRowScope]]:
-    """`load_capacity_hub_map` + `scoped_capacity_rows` for one request."""
+    """`load_capacity_hub_map` + `scoped_capacity_rows` for one request.
+
+    ADR 0050: with hubs requested, the members breakdown may show any of the
+    row's in-scope hubs (the RBAC scope alone; a row's members share it), so
+    picking OEM-HCK, alone or with a country, never hides R&D-Greece from the
+    Greece row's breakdown. With only countries requested, the breakdown is
+    the filtered set, as before."""
 
     cmap = await load_capacity_hub_map(db)
     filtered = await visible_hub_ids(db, principal, hub_id, region)
-    scoped = filtered if hub_id is None else await visible_hub_ids(db, principal, None, region)
+    scoped = (
+        filtered
+        if not hub_id_list(hub_id)
+        else await visible_hub_ids(db, principal, None, None)
+    )
     return cmap, scoped_capacity_rows(cmap, filtered, scoped, hub_id)
 
 

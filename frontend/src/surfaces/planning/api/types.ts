@@ -113,8 +113,9 @@ export interface LoadTotals {
 
 /** The filters the server applied, echoed back (`schemas/planning.py`). */
 export interface ResourceLoadFiltersApplied {
-  hub_id: Id | null;
-  region: LabRegion | null;
+  /** Multi-select contract: sorted lists (empty = not filtered). */
+  hub_id: Id[];
+  region: LabRegion[];
   project_type: string[];
   project_status: string[];
   requesting_department: string[];
@@ -153,10 +154,10 @@ export interface FilterOption {
   label: string;
 }
 
-/** The six analytics filters; an empty list / null means "All". `hub_id` is
- *  single-valued on the server, so the hub filter is a single choice. */
+/** The six analytics filters; an empty list means "All". Multi-select
+ *  (owner ask 2026-11-13): `hub_id` is a repeated param too. */
 export interface ResourceLoadFilters {
-  hubId: string | null;
+  hubIds: string[];
   types: string[];
   statuses: string[];
   departments: string[];

@@ -3,7 +3,8 @@ import * as React from 'react';
 import { BOOKING_STATUS_META } from '@/components/shared/booking-status-meta';
 import { formatBookedPct, formatDecimal } from '@/lib/format';
 import { cn } from '@/lib/utils';
-import type { BookingStatus, LabRegion } from '@/types/enums';
+import type { HubSelection } from '@/stores/hub-filter';
+import type { BookingStatus } from '@/types/enums';
 
 import type { HubCapacityRow } from '@/surfaces/capacity/api/types';
 import { useHubLoadVsCapacity } from '@/surfaces/capacity/hooks/use-capacity';
@@ -82,15 +83,13 @@ function HubLoadCard({ row }: { row: HubCapacityRow }): React.JSX.Element {
 }
 
 export function HubLoadStrip({
-  hubId,
-  region,
+  hub,
   enabled,
 }: {
-  hubId: string | null;
-  region: LabRegion | null;
+  hub: HubSelection;
   enabled: boolean;
 }): React.JSX.Element | null {
-  const query = useHubLoadVsCapacity({ enabled, hubId, region });
+  const query = useHubLoadVsCapacity({ enabled, hub });
   if (!enabled || !query.data?.has_active_schedule_run || query.data.rows.length === 0) return null;
   return (
     <section aria-label="Design and lab demand per hub, full year" className="mb-3">

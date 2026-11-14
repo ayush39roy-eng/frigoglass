@@ -8,14 +8,7 @@ import { EmptyState } from '@/components/shared/empty-state';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { Label } from '@/components/ui/label';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
+import { MultiSelectDropdown } from '@/components/shared/multi-select-dropdown';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { ReadOnlyNotice } from '@/components/session/write-gate';
 import { ApiError } from '@/lib/api/client';
@@ -65,7 +58,6 @@ import {
   useUpdateEngineer,
 } from './hooks/use-planning';
 
-const ALL = '__all__';
 const TITLE = 'Capacity Planning';
 const DESCRIPTION = 'Configure resource mapping, availability, and capacity logic for the year.';
 
@@ -80,7 +72,7 @@ function authKind(errors: unknown[]): 'forbidden' | 'unauthorized' | null {
 }
 
 export default function PlanningPage(): React.JSX.Element {
-  const [hubId, setHubId] = React.useState<string>(ALL);
+  const [hubIds, setHubIds] = React.useState<string[]>([]);
   const [writeForbidden, setWriteForbidden] = React.useState(false);
 
   // --- Engineers ---
@@ -107,7 +99,7 @@ export default function PlanningPage(): React.JSX.Element {
   const [defaultRegion, setDefaultRegion] = React.useState<LabRegion | undefined>(undefined);
 
   const hubsQuery = useHubs();
-  const engineerListQuery = useEngineerList(hubId === ALL ? undefined : hubId);
+  const engineerListQuery = useEngineerList(hubIds);
   // The Overview always lists every visible engineer (same key as "All hubs").
   const allEngineersQuery = useEngineerList(undefined);
   const chamberListQuery = useChamberList();
@@ -475,7 +467,7 @@ export default function PlanningPage(): React.JSX.Element {
                     <DownloadButton
                       path="/exports/capacity-planning"
                       filters={{
-                        hub_id: hubId === ALL ? undefined : hubId,
+                        hub_id: hubIds.length > 0 ? [...hubIds].sort() : undefined,
                         entity: 'engineers',
                       }}
                       fallbackFilename="capacity-planning-engineers-export"
@@ -489,24 +481,16 @@ export default function PlanningPage(): React.JSX.Element {
                   </div>
                 </CardHeader>
                 <CardContent className="space-y-4">
-                  <div className="flex flex-col gap-1">
-                    <Label htmlFor="planning-hub-filter" className="text-2xs text-text-muted">
-                      Hub
-                    </Label>
-                    <Select value={hubId} onValueChange={setHubId}>
-                      <SelectTrigger id="planning-hub-filter" className="h-8 w-48">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value={ALL}>All hubs</SelectItem>
-                        {(hubsQuery.data ?? []).map((h) => (
-                          <SelectItem key={h.id} value={h.id}>
-                            {hubPickerLabel(h, hubsQuery.data)}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
+                  <MultiSelectDropdown
+                    id="planning-hub-filter"
+                    label="Hub"
+                    allLabel="All hubs"
+                    value={hubIds}
+                    onChange={setHubIds}
+                    options={(hubsQuery.data ?? []).map((h) => ({ value: h.id, label: hubPickerLabel(h, hubsQuery.data) }))}
+                    triggerClassName="h-8 w-48"
+                    data-testid="planning-hub-filter"
+                  />
                   <SectionBoundary
                     query={engineerListQuery}
                     title="Engineers"

@@ -46,3 +46,40 @@ export function shouldResetRegion(region: LabRegion | null, regions: readonly La
   if (region === null || regions === null || !Array.isArray(regions)) return false;
   return !regions.includes(region);
 }
+
+/**
+ * Multi-select (contract §3): the persisted selection with every hub / country
+ * that is no longer in scope dropped. Returns `null` when nothing needs to change
+ * (or the scope is still loading), so callers write the store only on a real change.
+ */
+export function pruneHubSelection(
+  hubIds: readonly string[],
+  regions: readonly LabRegion[],
+  options: readonly Hub[] | null,
+  scopedRegions: readonly LabRegion[] | null,
+): { hubIds: string[]; regions: LabRegion[] } | null {
+  if (options === null || scopedRegions === null || !Array.isArray(options)) return null;
+  const keepHubs = hubIds.filter((id) => !shouldResetHub(id, options));
+  const keepRegions = regions.filter((r) => !shouldResetRegion(r, scopedRegions));
+  if (keepHubs.length === hubIds.length && keepRegions.length === regions.length) return null;
+  return { hubIds: keepHubs, regions: keepRegions };
+}
+
+/**
+ * The header chip / trigger text for a hub selection: names joined with " + "
+ * for up to two picks ("India + R&D-Greece"), otherwise a count ("3 hubs",
+ * "2 countries", "2 countries + 1 hub"). `hubName` resolves a hub id.
+ */
+export function summarizeHubSelection(
+  hubIds: readonly string[],
+  regions: readonly LabRegion[],
+  hubName: (id: string) => string,
+): string {
+  const n = hubIds.length + regions.length;
+  if (n === 0) return 'All hubs';
+  if (n <= 2) return [...regions, ...hubIds.map(hubName)].join(' + ');
+  const plural = (k: number, one: string, many: string): string => `${String(k)} ${k === 1 ? one : many}`;
+  if (regions.length === 0) return plural(hubIds.length, 'hub', 'hubs');
+  if (hubIds.length === 0) return plural(regions.length, 'country', 'countries');
+  return `${plural(regions.length, 'country', 'countries')} + ${plural(hubIds.length, 'hub', 'hubs')}`;
+}

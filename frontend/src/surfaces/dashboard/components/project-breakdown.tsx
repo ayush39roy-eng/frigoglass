@@ -6,7 +6,6 @@ import { Button } from '@/components/ui/button';
 import { CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { CharterColumnsToggle } from '@/components/shared/charter-fields';
 import { DownloadButton } from '@/components/shared/download-button';
@@ -22,6 +21,7 @@ import { hubPickerLabel } from '@/lib/hub-labels';
 import { formatInteger } from '@/lib/format';
 import { useDebouncedValue } from '@/lib/use-debounced-value';
 import { useHubFilter } from '@/stores/hub-filter';
+import { MultiSelectDropdown } from '@/components/shared/multi-select-dropdown';
 import { usePermission, useSessionStore } from '@/stores/session';
 import { MultiChipFilter } from '@/components/shared/multi-chip-filter';
 import {
@@ -61,40 +61,33 @@ type BreakdownView = 'table' | 'cards';
 
 /** Shared with `surfaces/projects/ProjectsPage.tsx` — the dedicated "all
  *  projects as cards" page filters the same `GET /dashboard/projects` rows
- *  with the same four controls, so it reuses these rather than forking them. */
-export const ALL = '__all__';
-
+ *  with the same four controls, so it reuses these rather than forking them.
+ *  Multi-select (owner ask 2026-11-13): every pick is sent as a repeated param;
+ *  nothing picked = "All". */
 export function FilterSelect({
   label,
   value,
   onChange,
   options,
+  allLabel,
 }: {
   label: string;
-  value: string;
-  onChange: (next: string) => void;
+  value: readonly string[];
+  onChange: (next: string[]) => void;
   options: { value: string; label: string }[];
+  /** "All statuses"; defaults to "All". */
+  allLabel?: string;
 }): React.JSX.Element {
-  const id = React.useId();
   return (
-    <div className="flex flex-col gap-1">
-      <Label htmlFor={id} className="text-2xs text-text-muted">
-        {label}
-      </Label>
-      <Select value={value} onValueChange={onChange}>
-        <SelectTrigger id={id} className="h-8 w-40 rounded-pill">
-          <SelectValue />
-        </SelectTrigger>
-        <SelectContent>
-          <SelectItem value={ALL}>All</SelectItem>
-          {options.map((opt) => (
-            <SelectItem key={opt.value} value={opt.value}>
-              {opt.label}
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
-    </div>
+    <MultiSelectDropdown
+      label={label}
+      allLabel={allLabel ?? 'All'}
+      pluralNoun={allLabel ? undefined : 'selected'}
+      options={options}
+      value={value}
+      onChange={onChange}
+      triggerClassName="h-8 w-40 rounded-pill"
+    />
   );
 }
 
@@ -104,12 +97,12 @@ export function FilterSelect({
  *  are always cut the same way. Everything is sent to the server, nothing is
  *  filtered locally. */
 interface RegisterFilters {
-  status_: string;
-  leader: string;
-  step: string;
+  status_: ProjectStatus[];
+  leader: string[];
+  step: string[];
 }
 
-const REGISTER_EMPTY: RegisterFilters = { status_: ALL, leader: ALL, step: ALL };
+const REGISTER_EMPTY: RegisterFilters = { status_: [], leader: [], step: [] };
 
 /** Server limit on `q` (contract §3). */
 const SEARCH_MAX = 100;
@@ -118,10 +111,6 @@ const SEARCH_MAX = 100;
  *  selectable option, labelled by a short id suffix — never a resolved name. */
 function leaderOptionLabel(leader: { id: string; name: string | null }): string {
   return leader.name ?? `Leader (name unavailable) · ${leader.id.slice(-4)}`;
-}
-
-function pick<T extends string>(value: string): T | undefined {
-  return value === ALL ? undefined : (value as T);
 }
 
 /**
@@ -148,7 +137,8 @@ export function ProjectBreakdown(): React.JSX.Element {
   const tabsId = React.useId();
   const panelId = `${tabsId}-panel`;
   const tabId = (v: BreakdownView): string => `${tabsId}-tab-${v}`;
-  const { hubId, region, setHubId } = useHubFilter();
+  const { hubIds, regions, setHubIds } = useHubFilter();
+  const hub = React.useMemo(() => ({ hubIds, regions }), [hubIds, regions]);
   const selection = useDashboardSelection();
   const me = useSessionStore((st) => st.me);
   const hubsQuery = useHubs();
@@ -158,40 +148,42 @@ export function ProjectBreakdown(): React.JSX.Element {
 
   const params = React.useMemo<ProjectFilterParams>(() => {
     const next: ProjectFilterParams = {
-      hub_id: hubId ?? undefined,
+      hub_id: selectionParam(hubIds),
       category: selectionParam(selection.categories),
-      status_: pick<ProjectStatus>(filters.status_),
+      status_: selectionParam(filters.status_),
       priority: undefined,
     };
     // Optional P13 params are only present when set, so the unfiltered key
-    // and request stay identical to P12's.
-    if (region) next.region = region;
+    // and request stay identical to P12's. Multi-select: repeated params.
+    if (regions.length > 0) next.region = regions;
     if (debouncedSearch) next.q = debouncedSearch.slice(0, SEARCH_MAX);
     if (selection.types.length > 0) next.type = selection.types;
-    if (filters.leader !== ALL) next.leader_engineer_id = filters.leader;
-    if (filters.step !== ALL) next.current_step = filters.step;
+    if (filters.leader.length > 0) next.leader_engineer_id = filters.leader;
+    if (filters.step.length > 0) next.current_step = filters.step;
     return next;
-  }, [filters, hubId, region, debouncedSearch, selection.categories, selection.types]);
+  }, [filters, hubIds, regions, debouncedSearch, selection.categories, selection.types]);
 
   const query = useDashboardProjects(params);
-  const facets = useProjectFacets(hubId, region, selection);
-  const summary = useRegionSummary(hubId, region, selection);
+  const facets = useProjectFacets(hub, selection);
+  const summary = useRegionSummary(hub, selection);
 
+  // Every in-scope hub: hubs and countries are UNIONED (multi-select contract
+  // §2), so a hub outside the picked countries is a valid addition.
   const hubOptions = React.useMemo(() => {
     const inScope = hubsInScope(me, hubsQuery.data) ?? [];
-    return inScope.filter((h) => region === null || h.lab_region === region).map((h) => ({ value: h.id, label: hubPickerLabel(h, hubsQuery.data) }));
-  }, [me, hubsQuery.data, region]);
+    return inScope.map((h) => ({ value: h.id, label: hubPickerLabel(h, hubsQuery.data) }));
+  }, [me, hubsQuery.data]);
 
   const hasLocalFilter =
-    debouncedSearch !== '' || Object.values(filters).some((v) => v !== ALL) || selection.active;
-  const isFiltered = hasLocalFilter || hubId !== null || region !== null;
+    debouncedSearch !== '' || Object.values(filters).some((v) => v.length > 0) || selection.active;
+  const isFiltered = hasLocalFilter || hubIds.length > 0 || regions.length > 0;
   const rows = React.useMemo<RegisterRow[]>(
     () => (query.data?.rows ?? []).map((row, i) => ({ ...row, ordinal: i + 1 })),
     [query.data],
   );
   const columns = React.useMemo(() => registerColumns({ canEdit, showCharter }), [canEdit, showCharter]);
 
-  const set = (key: keyof RegisterFilters) => (next: string) => setFilters((prev) => ({ ...prev, [key]: next }));
+  const set = (key: keyof RegisterFilters) => (next: string[]) => setFilters((prev) => ({ ...prev, [key]: next }));
   const clearLocal = (): void => {
     setFilters(REGISTER_EMPTY);
     setSearch('');
@@ -280,27 +272,28 @@ export function ProjectBreakdown(): React.JSX.Element {
           </div>
           <FilterSelect
             label="Hub"
-            value={hubId ?? ALL}
-            onChange={(next) => {
-              if (next !== ALL) setHubId(next);
-              else if (hubId !== null) setHubId(null);
-            }}
+            allLabel="All hubs"
+            value={hubIds}
+            onChange={setHubIds}
             options={hubOptions}
           />
           <FilterSelect
             label="Status"
+            allLabel="All statuses"
             value={filters.status_}
-            onChange={set('status_')}
+            onChange={(next) => setFilters((prev) => ({ ...prev, status_: next as ProjectStatus[] }))}
             options={UI_PROJECT_STATUSES.map((st) => ({ value: st, label: st }))}
           />
           <FilterSelect
             label="Leader"
+            allLabel="All leaders"
             value={filters.leader}
             onChange={set('leader')}
             options={(facets.data?.leaders ?? []).map((l) => ({ value: l.id, label: leaderOptionLabel(l) }))}
           />
           <FilterSelect
             label="Current step"
+            allLabel="All steps"
             value={filters.step}
             onChange={set('step')}
             options={(facets.data?.steps ?? []).map((st) => ({ value: st.code, label: `${st.code} · ${st.name}` }))}

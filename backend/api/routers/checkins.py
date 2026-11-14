@@ -36,9 +36,10 @@ from __future__ import annotations
 import math
 import uuid
 from collections import defaultdict
-from typing import Any
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from pydantic import StringConstraints
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -47,11 +48,12 @@ import domain_constants as dc
 from api.db import get_db
 from api.deps import get_current_principal, require_permission
 from api.errors import HTTP_422, CodedHTTPException
+from api.query_params import MAX_FILTER_VALUES, HubIdListQuery, RegionListQuery
 from core.principal import Principal
 from core.rbac import Action, Surface
 from models.audit import AuditLogEntry
 from models.checkin import StageCheckin
-from models.enums import NON_SCHEDULABLE_STATUSES, LabRegion, SolverType, WorkflowStepStatus
+from models.enums import NON_SCHEDULABLE_STATUSES, SolverType, WorkflowStepStatus
 from models.project import Project
 from models.schedule import ScheduleRunProjectStep
 from models.user import User
@@ -115,8 +117,8 @@ _PROGRESS_FIELDS = (
 
 @router.get("/due", response_model=CheckInDueResponse)
 async def get_due_check_ins(
-    hub_id: uuid.UUID | None = None,
-    region: LabRegion | None = None,
+    hub_id: HubIdListQuery = None,
+    region: RegionListQuery = None,
     db: AsyncSession = Depends(get_db),
     current_user: Principal = Depends(get_current_principal),
 ) -> CheckInDueResponse:
@@ -552,7 +554,17 @@ async def submit_check_ins(
 @router.get("/history", response_model=list[CheckInHistoryRow])
 async def get_check_in_history(
     project_id: uuid.UUID,
-    step_id: str = Query(min_length=1, max_length=10),
+    step_id: Annotated[
+        list[Annotated[str, StringConstraints(min_length=1, max_length=10)]],
+        Query(
+            min_length=1,
+            max_length=MAX_FILTER_VALUES,
+            description=(
+                "Repeatable (ADR 0050): the history of every listed stage, newest first. "
+                f"At least one, at most {MAX_FILTER_VALUES} values."
+            ),
+        ),
+    ],
     db: AsyncSession = Depends(get_db),
     current_user: Principal = Depends(_workspace_read),
 ) -> list[CheckInHistoryRow]:
@@ -565,10 +577,11 @@ async def get_check_in_history(
             .join(User, User.id == StageCheckin.user_id)
             .where(
                 StageCheckin.project_id == project.id,
-                StageCheckin.step_template_id == step_id,
+                StageCheckin.step_template_id.in_(list(dict.fromkeys(step_id))),
             )
             .order_by(StageCheckin.created_at.desc(), StageCheckin.week.desc())
-            .limit(HISTORY_LIMIT)
+            # HISTORY_LIMIT rows per requested stage (one stage = as before).
+            .limit(HISTORY_LIMIT * len(set(step_id)))
         )
     ).all()
     return [

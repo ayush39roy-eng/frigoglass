@@ -5,13 +5,12 @@ import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { MultiChipFilter } from '@/components/shared/multi-chip-filter';
+import { MultiSelectDropdown } from '@/components/shared/multi-select-dropdown';
 import { CATEGORY_CHIP_OPTIONS, TYPE_CHIP_OPTIONS } from '@/lib/multi-select-filter';
-import { UI_PROJECT_STATUSES } from '@/types/enums';
+import { UI_PROJECT_STATUSES, type ProjectStatus } from '@/types/enums';
 
 import {
-  ALL,
   EMPTY_TOOLBAR,
   SEARCH_MAX,
   leaderOptionLabel,
@@ -26,45 +25,10 @@ import {
  * `GET /priority-board`; nothing is filtered in the browser, and the column
  * counts and D/L weeks are the server's for the filtered set. Hub and country
  * are the global header filter, so they are not repeated here.
+ * Owner ask 2026-11-13: Status and Leader are multi-select dropdowns.
  */
 
-function ToolbarSelect({
-  label,
-  value,
-  onChange,
-  options,
-  disabled,
-  compact = false,
-}: {
-  label: string;
-  value: string;
-  onChange: (next: string) => void;
-  options: { value: string; label: string }[];
-  disabled?: boolean;
-  compact?: boolean;
-}): React.JSX.Element {
-  const id = React.useId();
-  return (
-    <div className="flex flex-col gap-1">
-      <Label htmlFor={id} className={cn('text-2xs text-text-muted', compact && 'sr-only')}>
-        {label}
-      </Label>
-      <Select value={value} onValueChange={onChange} disabled={disabled ?? false}>
-        <SelectTrigger id={id} className="h-8 w-40 rounded-pill">
-          <SelectValue />
-        </SelectTrigger>
-        <SelectContent>
-          <SelectItem value={ALL}>All</SelectItem>
-          {options.map((opt) => (
-            <SelectItem key={opt.value} value={opt.value}>
-              {opt.label}
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
-    </div>
-  );
-}
+const STATUS_OPTIONS = UI_PROJECT_STATUSES.map((s) => ({ value: s, label: s }));
 
 export interface BoardToolbarProps {
   value: BoardToolbarState;
@@ -93,11 +57,10 @@ export function BoardToolbar({
   compact = false,
 }: BoardToolbarProps): React.JSX.Element {
   const searchId = React.useId();
-  const set = (key: 'search' | 'status_' | 'leader') => (next: string) => onChange({ ...value, [key]: next });
   const active =
     value.search.trim() !== '' ||
-    (!embedded && (value.category.length > 0 || value.type.length > 0 || value.status_ !== ALL)) ||
-    value.leader !== ALL;
+    (!embedded && (value.category.length > 0 || value.type.length > 0 || value.status_.length > 0)) ||
+    value.leader.length > 0;
 
   return (
     <div role="search" aria-label="Filter the priority board" className={cn('flex flex-wrap items-end gap-3', !inPanel && 'mb-3')} data-testid="board-toolbar" data-in-panel={inPanel ? 'true' : undefined}>
@@ -115,7 +78,7 @@ export function BoardToolbar({
             type="search"
             value={value.search}
             maxLength={SEARCH_MAX}
-            onChange={(e) => set('search')(e.target.value)}
+            onChange={(e) => onChange({ ...value, search: e.target.value })}
             placeholder="Project name or code"
             className="h-8 rounded-pill pl-8"
           />
@@ -123,11 +86,14 @@ export function BoardToolbar({
       </div>
       {embedded ? null : (
         <>
-          <ToolbarSelect
+          <MultiSelectDropdown<ProjectStatus>
             label="Status"
+            allLabel="All statuses"
             value={value.status_}
-            onChange={set('status_')}
-            options={UI_PROJECT_STATUSES.map((s) => ({ value: s, label: s }))}
+            onChange={(next) => onChange({ ...value, status_: next })}
+            options={STATUS_OPTIONS}
+            triggerClassName="h-8 w-40 rounded-pill"
+            data-testid="board-status-filter"
           />
           {/* P31: multi-select category / type "tabs" (repeated server params). */}
           <div className="order-last flex w-full flex-col gap-2" data-testid="board-chip-filters">
@@ -149,19 +115,22 @@ export function BoardToolbar({
         </>
       )}
       {leaders ? (
-        <ToolbarSelect
-          compact={compact}
+        <MultiSelectDropdown
+          hideLabel={compact}
           label="Leader"
+          allLabel="All leaders"
           value={value.leader}
-          onChange={set('leader')}
+          onChange={(next) => onChange({ ...value, leader: next })}
           options={leaders.map((l) => ({ value: l.id, label: leaderOptionLabel(l) }))}
+          triggerClassName="h-8 w-40 rounded-pill"
+          data-testid="board-leader-filter"
         />
       ) : null}
       {active ? (
         <Button
           variant="ghost"
           size="sm"
-          onClick={() => onChange(embedded ? { ...value, search: '', leader: ALL } : EMPTY_TOOLBAR)}
+          onClick={() => onChange(embedded ? { ...value, search: '', leader: [] } : EMPTY_TOOLBAR)}
         >
           <FilterX />
           Clear filters

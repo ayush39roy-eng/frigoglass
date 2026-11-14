@@ -23,14 +23,21 @@ vi.mock('@/lib/api/reference', () => ({ useHubs: () => hubs }));
 import { HubFilterChip } from './hub-filter-chip';
 import { HubFilterSelect } from './hub-filter-select';
 import { CountrySegmented } from './country-segmented';
-import { hubsInScope, regionsInScope, shouldResetHub, shouldResetRegion } from './hub-scope';
+import {
+  hubsInScope,
+  pruneHubSelection,
+  regionsInScope,
+  shouldResetHub,
+  shouldResetRegion,
+  summarizeHubSelection,
+} from './hub-scope';
 
 beforeEach(() => {
   hubs.data = HUBS;
-  useHubFilterStore.setState({ hubId: null, region: null });
+  useHubFilterStore.getState().setSelection([], []);
 });
 afterEach(() => {
-  useHubFilterStore.setState({ hubId: null, region: null });
+  useHubFilterStore.getState().setSelection([], []);
 });
 
 describe('hubsInScope (ADR 0020 §1)', () => {
@@ -54,57 +61,98 @@ describe('hubsInScope (ADR 0020 §1)', () => {
   });
 });
 
-describe('<HubFilterSelect> (header)', () => {
-  it('has an accessible label and offers "All hubs" + the in-scope hubs only', async () => {
+const state = () => {
+  const { hubIds, regions } = useHubFilterStore.getState();
+  return { hubIds, regions };
+};
+const trigger = () => screen.getByRole('button', { name: 'Hub filter' });
+
+describe('<HubFilterSelect> (header, multi-select)', () => {
+  it('has an accessible name and offers "All hubs" + the in-scope countries and hubs', async () => {
     const user = userEvent.setup();
     renderWithProviders(<HubFilterSelect />, {
       session: { hub_scope_all: false, hub_ids: ['h-in', 'h-pdin'], roles: ['Hub Planner'] },
     });
-    const trigger = screen.getByRole('combobox', { name: 'Hub filter' });
-    expect(trigger).toHaveTextContent('All hubs');
-    await user.click(trigger);
+    expect(trigger()).toHaveAccessibleDescription('All hubs');
+    await user.click(trigger());
     const options = (await screen.findAllByRole('option')).map((o) => o.textContent);
-    // P13 (ADR 0025): "All hubs", then the in-scope countries, then the in-scope hubs.
     expect(options).toEqual(['All hubs', 'India', 'R&D-India', 'PD-India']);
   });
 
-  it('choosing a hub sets the global store; "All hubs" clears it', async () => {
+  it('ticks a country AND hubs together (the country is kept as a country), then "All hubs" clears', async () => {
     const user = userEvent.setup();
     renderWithProviders(<HubFilterSelect />);
-    await user.click(screen.getByRole('combobox', { name: 'Hub filter' }));
-    // P29: a member hub's option reads "OEM-HCK (Greece)"; the trigger keeps the short name.
-    await user.click(await screen.findByRole('option', { name: 'OEM-HCK (Greece)' }));
-    expect(useHubFilterStore.getState().hubId).toBe('h-hck');
-    expect(screen.getByRole('combobox', { name: 'Hub filter' })).toHaveTextContent('OEM-HCK');
-    expect(screen.getByRole('combobox', { name: 'Hub filter' })).not.toHaveTextContent('(Greece)');
-    await user.click(screen.getByRole('combobox', { name: 'Hub filter' }));
-    await user.click(await screen.findByRole('option', { name: 'All hubs' }));
-    expect(useHubFilterStore.getState().hubId).toBeNull();
+    await user.click(trigger());
+    await user.click(await screen.findByRole('option', { name: 'India' }));
+    await user.click(screen.getByRole('option', { name: 'R&D-Greece' }));
+    // Selecting a country selects the COUNTRY, not each of its hubs.
+    expect(state()).toEqual({ hubIds: ['h-gr'], regions: ['India'] });
+    expect(screen.getByRole('option', { name: 'India' })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByRole('option', { name: 'PD-India' })).toHaveAttribute('aria-selected', 'false');
+    expect(trigger()).toHaveTextContent('India + R&D-Greece');
+    // P29: a member hub's option reads "OEM-HCK (Greece)".
+    await user.click(screen.getByRole('option', { name: 'OEM-HCK (Greece)' }));
+    expect(state()).toEqual({ hubIds: ['h-gr', 'h-hck'], regions: ['India'] });
+    expect(trigger()).toHaveTextContent('1 country + 2 hubs');
+    await user.click(screen.getByRole('option', { name: 'All hubs' }));
+    expect(state()).toEqual({ hubIds: [], regions: [] });
+    expect(trigger()).toHaveTextContent('All hubs');
   });
 
-  it('resets a persisted hub that is no longer in scope to "All hubs"', async () => {
-    useHubFilterStore.setState({ hubId: 'h-gr' });
+  it('drops a persisted hub / country that is no longer in scope, keeping the rest', async () => {
+    useHubFilterStore.getState().setSelection(['h-gr', 'h-in'], ['Romania', 'India']);
     renderWithProviders(<HubFilterSelect />, {
       session: { hub_scope_all: false, hub_ids: ['h-in'], roles: ['Hub Planner'] },
     });
-    await waitFor(() => expect(useHubFilterStore.getState().hubId).toBeNull());
+    await waitFor(() => expect(state()).toEqual({ hubIds: ['h-in'], regions: ['India'] }));
   });
 
-  it('keeps a persisted in-scope hub, and does not reset while /hubs is still loading', () => {
+  it('keeps a persisted in-scope selection, and does not prune while /hubs is still loading', () => {
     hubs.data = undefined;
-    useHubFilterStore.setState({ hubId: 'h-gr' });
+    useHubFilterStore.getState().setSelection(['h-gr'], []);
     const { unmount } = renderWithProviders(<HubFilterSelect />);
-    expect(useHubFilterStore.getState().hubId).toBe('h-gr');
+    expect(state().hubIds).toEqual(['h-gr']);
     unmount();
     hubs.data = HUBS;
     renderWithProviders(<HubFilterSelect />);
-    expect(useHubFilterStore.getState().hubId).toBe('h-gr');
-    expect(screen.getByRole('combobox', { name: 'Hub filter' })).toHaveTextContent('R&D-Greece');
+    expect(state().hubIds).toEqual(['h-gr']);
+    expect(trigger()).toHaveTextContent('R&D-Greece');
+  });
+
+  it('shows Countries and Hubs as labelled groups, and hides a country with no in-scope hub', async () => {
+    const user = userEvent.setup();
+    const { unmount } = renderWithProviders(<HubFilterSelect />);
+    await user.click(trigger());
+    expect(await screen.findByRole('group', { name: 'Countries' })).toBeInTheDocument();
+    expect(screen.getByRole('group', { name: 'Hubs' })).toBeInTheDocument();
+    unmount();
+    renderWithProviders(<HubFilterSelect />, {
+      session: { hub_scope_all: false, hub_ids: ['h-in', 'h-pdin'], roles: ['Hub Planner'] },
+    });
+    await user.click(trigger());
+    expect(screen.queryByRole('option', { name: 'Romania' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('option', { name: 'Greece' })).not.toBeInTheDocument();
   });
 
   it('has no serious/critical axe violations', async () => {
     const { container } = renderWithProviders(<HubFilterSelect />);
     expect(await seriousAxeViolations(container)).toEqual([]);
+  });
+});
+
+describe('summarizeHubSelection / pruneHubSelection', () => {
+  const name = (id: string) => HUBS.find((h) => h.id === id)?.name ?? '?';
+  it('names up to two picks, otherwise counts them', () => {
+    expect(summarizeHubSelection([], [], name)).toBe('All hubs');
+    expect(summarizeHubSelection(['h-gr'], ['India'], name)).toBe('India + R&D-Greece');
+    expect(summarizeHubSelection(['h-gr', 'h-ro', 'h-in'], [], name)).toBe('3 hubs');
+    expect(summarizeHubSelection([], ['Greece', 'India', 'Romania'], name)).toBe('3 countries');
+    expect(summarizeHubSelection(['h-gr', 'h-ro'], ['India'], name)).toBe('1 country + 2 hubs');
+  });
+  it('returns null when nothing changes or the scope is loading', () => {
+    expect(pruneHubSelection(['h-gr'], [], null, null)).toBeNull();
+    expect(pruneHubSelection(['h-gr'], ['Greece'], HUBS, ['Greece'])).toBeNull();
+    expect(pruneHubSelection(['h-gr', 'x'], ['India'], HUBS, ['Greece'])).toEqual({ hubIds: ['h-gr'], regions: [] });
   });
 });
 
@@ -114,15 +162,35 @@ describe('<HubFilterChip> (page header)', () => {
     expect(screen.queryByTestId('hub-filter-chip')).not.toBeInTheDocument();
   });
 
-  it('names the hub and clears it', async () => {
+  it('names one hub and clears it', async () => {
     const user = userEvent.setup();
-    useHubFilterStore.setState({ hubId: 'h-ro' });
+    useHubFilterStore.getState().setSelection(['h-ro'], []);
     const { container } = renderWithProviders(<HubFilterChip />);
     expect(screen.getByTestId('hub-filter-chip')).toHaveTextContent('Hub: PD-Romania');
     expect(await seriousAxeViolations(container)).toEqual([]);
     await user.click(screen.getByRole('button', { name: 'Clear hub filter (PD-Romania)' }));
-    expect(useHubFilterStore.getState().hubId).toBeNull();
+    expect(state()).toEqual({ hubIds: [], regions: [] });
     expect(screen.queryByTestId('hub-filter-chip')).not.toBeInTheDocument();
+  });
+
+  it('reads "Country: India" for one country', async () => {
+    const user = userEvent.setup();
+    useHubFilterStore.getState().setSelection([], ['India']);
+    renderWithProviders(<HubFilterChip />);
+    expect(screen.getByTestId('hub-filter-chip')).toHaveTextContent('Country: India');
+    await user.click(screen.getByRole('button', { name: 'Clear country filter (India)' }));
+    expect(state()).toEqual({ hubIds: [], regions: [] });
+  });
+
+  it('summarises a mixed selection ("India + R&D-Greece", "3 hubs")', () => {
+    useHubFilterStore.getState().setSelection(['h-gr'], ['India']);
+    const { unmount } = renderWithProviders(<HubFilterChip />);
+    expect(screen.getByTestId('hub-filter-chip')).toHaveTextContent('Hubs: India + R&D-Greece');
+    unmount();
+    useHubFilterStore.getState().setSelection(['h-gr', 'h-ro', 'h-in'], []);
+    renderWithProviders(<HubFilterChip />);
+    expect(screen.getByTestId('hub-filter-chip')).toHaveTextContent('Hubs: 3 hubs');
+    expect(screen.getByRole('button', { name: 'Clear hubs filter (3 hubs)' })).toBeInTheDocument();
   });
 });
 
@@ -141,106 +209,48 @@ describe('regionsInScope (P13, ADR 0025)', () => {
   });
 });
 
-describe('<HubFilterSelect> countries group (P13, ADR 0025)', () => {
-  it('offers "All hubs", a Countries group and a Hubs group', async () => {
-    const user = userEvent.setup();
-    renderWithProviders(<HubFilterSelect />);
-    await user.click(screen.getByRole('combobox', { name: 'Hub filter' }));
-    const options = (await screen.findAllByRole('option')).map((o) => o.textContent);
-    expect(options).toEqual([
-      'All hubs',
-      'Greece',
-      'India',
-      'Romania',
-      'R&D-Greece',
-      'R&D-India',
-      'PD-India',
-      'PD-Romania',
-      'OEM-HCK (Greece)',
-      'OEM-Seitek (Greece)',
-    ]);
-    expect(screen.getByText('Countries')).toBeInTheDocument();
-    expect(screen.getByText('Hubs')).toBeInTheDocument();
-  });
-
-  it('choosing a country clears the hub; choosing a hub clears the country', async () => {
-    const user = userEvent.setup();
-    useHubFilterStore.setState({ hubId: 'h-gr', region: null });
-    renderWithProviders(<HubFilterSelect />);
-    await user.click(screen.getByRole('combobox', { name: 'Hub filter' }));
-    await user.click(await screen.findByRole('option', { name: 'India' }));
-    expect(useHubFilterStore.getState()).toMatchObject({ hubId: null, region: 'India' });
-    expect(screen.getByRole('combobox', { name: 'Hub filter' })).toHaveTextContent('India');
-    await user.click(screen.getByRole('combobox', { name: 'Hub filter' }));
-    await user.click(await screen.findByRole('option', { name: 'PD-Romania' }));
-    expect(useHubFilterStore.getState()).toMatchObject({ hubId: 'h-ro', region: null });
-    await user.click(screen.getByRole('combobox', { name: 'Hub filter' }));
-    await user.click(await screen.findByRole('option', { name: 'All hubs' }));
-    expect(useHubFilterStore.getState()).toMatchObject({ hubId: null, region: null });
-  });
-
-  it('hides a country with no in-scope hub and resets a persisted one', async () => {
-    const user = userEvent.setup();
-    useHubFilterStore.setState({ hubId: null, region: 'Romania' });
-    renderWithProviders(<HubFilterSelect />, {
-      session: { hub_scope_all: false, hub_ids: ['h-in', 'h-pdin'], roles: ['Hub Planner'] },
-    });
-    await waitFor(() => expect(useHubFilterStore.getState().region).toBeNull());
-    await user.click(screen.getByRole('combobox', { name: 'Hub filter' }));
-    expect(screen.queryByRole('option', { name: 'Romania' })).not.toBeInTheDocument();
-    expect(screen.queryByRole('option', { name: 'Greece' })).not.toBeInTheDocument();
-  });
-});
-
-describe('<HubFilterChip> country (P13)', () => {
-  it('reads "Country: India" and clears it', async () => {
-    const user = userEvent.setup();
-    useHubFilterStore.setState({ hubId: null, region: 'India' });
-    const { container } = renderWithProviders(<HubFilterChip />);
-    expect(screen.getByTestId('hub-filter-chip')).toHaveTextContent('Country: India');
-    expect(await seriousAxeViolations(container)).toEqual([]);
-    await user.click(screen.getByRole('button', { name: 'Clear country filter (India)' }));
-    expect(useHubFilterStore.getState()).toMatchObject({ hubId: null, region: null });
-  });
-});
-
-describe('<CountrySegmented> (Dashboard header, P13)', () => {
-  it('shows All Hubs + the in-scope countries with CSS flags and binds to the store', async () => {
+describe('<CountrySegmented> (Dashboard header, multi-select toggles)', () => {
+  it('shows All Hubs + the in-scope countries with CSS flags; several countries can be on', async () => {
     const user = userEvent.setup();
     const { container } = renderWithProviders(<CountrySegmented />);
-    const group = screen.getByRole('radiogroup', { name: 'Country filter' });
-    expect(group).toBeInTheDocument();
-    const radios = screen.getAllByRole('radio').map((r) => r.textContent);
-    expect(radios).toEqual(['All Hubs', 'Greece', 'India', 'Romania']);
-    expect(screen.getByRole('radio', { name: 'All Hubs' })).toHaveAttribute('aria-checked', 'true');
+    expect(screen.getByRole('group', { name: 'Country filter' })).toBeInTheDocument();
+    const buttons = screen.getAllByRole('button').map((r) => r.textContent);
+    expect(buttons).toEqual(['All Hubs', 'Greece', 'India', 'Romania']);
+    expect(screen.getByRole('button', { name: 'All Hubs' })).toHaveAttribute('aria-pressed', 'true');
     // Inline CSS flags, decorative (no emoji, no injected markup).
     expect(screen.getByTestId('flag-Greece')).toHaveAttribute('aria-hidden', 'true');
     expect(container.textContent).not.toMatch(/\p{Extended_Pictographic}/u);
 
-    await user.click(screen.getByRole('radio', { name: 'Greece' }));
-    expect(useHubFilterStore.getState()).toMatchObject({ hubId: null, region: 'Greece' });
-    expect(screen.getByRole('radio', { name: 'Greece' })).toHaveAttribute('aria-checked', 'true');
-    // Re-clicking the active country keeps it (no accidental empty state).
-    await user.click(screen.getByRole('radio', { name: 'Greece' }));
-    expect(useHubFilterStore.getState().region).toBe('Greece');
-    await user.click(screen.getByRole('radio', { name: 'All Hubs' }));
-    expect(useHubFilterStore.getState()).toMatchObject({ hubId: null, region: null });
+    await user.click(screen.getByRole('button', { name: 'Greece' }));
+    await user.click(screen.getByRole('button', { name: 'Romania' }));
+    expect(state()).toEqual({ hubIds: [], regions: ['Greece', 'Romania'] });
+    expect(screen.getByRole('button', { name: 'Greece' })).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByRole('button', { name: 'All Hubs' })).toHaveAttribute('aria-pressed', 'false');
+    // Un-pressing one keeps the other.
+    await user.click(screen.getByRole('button', { name: 'Greece' }));
+    expect(state().regions).toEqual(['Romania']);
+    // Un-pressing the last one is "All hubs".
+    await user.click(screen.getByRole('button', { name: 'Romania' }));
+    expect(state()).toEqual({ hubIds: [], regions: [] });
+    expect(screen.getByRole('button', { name: 'All Hubs' })).toHaveAttribute('aria-pressed', 'true');
     expect(await seriousAxeViolations(container)).toEqual([]);
   });
 
-  it('a selected hub leaves no button on; picking a country clears the hub', async () => {
+  it('keeps header-picked hubs beside a country; "All Hubs" clears both', async () => {
     const user = userEvent.setup();
-    useHubFilterStore.setState({ hubId: 'h-gr', region: null });
+    useHubFilterStore.getState().setSelection(['h-gr'], []);
     renderWithProviders(<CountrySegmented />);
-    for (const radio of screen.getAllByRole('radio')) expect(radio).toHaveAttribute('aria-checked', 'false');
-    await user.click(screen.getByRole('radio', { name: 'India' }));
-    expect(useHubFilterStore.getState()).toMatchObject({ hubId: null, region: 'India' });
+    for (const b of screen.getAllByRole('button')) expect(b).toHaveAttribute('aria-pressed', 'false');
+    await user.click(screen.getByRole('button', { name: 'India' }));
+    expect(state()).toEqual({ hubIds: ['h-gr'], regions: ['India'] });
+    await user.click(screen.getByRole('button', { name: 'All Hubs' }));
+    expect(state()).toEqual({ hubIds: [], regions: [] });
   });
 
-  it('hides countries outside the caller\'s scope', () => {
+  it("hides countries outside the caller's scope", () => {
     renderWithProviders(<CountrySegmented />, {
       session: { hub_scope_all: false, hub_ids: ['h-ro'], roles: ['Hub Planner'] },
     });
-    expect(screen.getAllByRole('radio').map((r) => r.textContent)).toEqual(['All Hubs', 'Romania']);
+    expect(screen.getAllByRole('button').map((r) => r.textContent)).toEqual(['All Hubs', 'Romania']);
   });
 });

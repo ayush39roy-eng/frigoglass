@@ -50,7 +50,7 @@ const load: ResourceLoadResponse = {
     chambers: { capacity_weeks: 1.71, load_weeks: 1, utilization_pct: 58.48, capacity_days: 8.55, load_days: 5 },
   },
   filters_applied: {
-    hub_id: null, region: null, project_type: [], project_status: [], requesting_department: [], category: [], engineer_id: [], basis: 'remaining',
+    hub_id: [], region: [], project_type: [], project_status: [], requesting_department: [], category: [], engineer_id: [], basis: 'remaining',
   },
 };
 
@@ -85,7 +85,7 @@ function reveal() {
   act(() => ioCallback?.([{ isIntersecting: true }]));
 }
 
-const EMPTY = { hubId: null, types: [], statuses: [], departments: [], categories: [], engineerIds: [] };
+const EMPTY = { hubIds: [] as string[], types: [], statuses: [], departments: [], categories: [], engineerIds: [] };
 
 describe('ResourceLoadSection', () => {
   it('fetches nothing until the section scrolls into view, then enables both queries', () => {
@@ -115,9 +115,12 @@ describe('ResourceLoadSection', () => {
     await user.keyboard('{Escape}');
     await waitFor(() => expect(hooks.useResourceLoad).toHaveBeenLastCalledWith('year', { ...EMPTY, types: ['CO'], engineerIds: ['e2'] }, true), { timeout: 2000 });
 
-    await user.click(screen.getByRole('combobox', { name: 'Hub' }));
-    await user.click(await screen.findByRole('option', { name: 'PD-India' }));
-    await waitFor(() => expect(hooks.useResourceLoad).toHaveBeenLastCalledWith('year', { ...EMPTY, hubId: 'hub-2', types: ['CO'], engineerIds: ['e2'] }, true), { timeout: 2000 });
+    // Multi-select hub (owner ask 2026-11-13): two hubs, sent sorted.
+    await user.click(screen.getByRole('button', { name: 'Hub filter: All' }));
+    await user.click(await screen.findByRole('checkbox', { name: 'PD-India' }));
+    await user.click(screen.getByRole('checkbox', { name: 'R&D-Greece' }));
+    await user.keyboard('{Escape}');
+    await waitFor(() => expect(hooks.useResourceLoad).toHaveBeenLastCalledWith('year', { ...EMPTY, hubIds: ['hub-1', 'hub-2'], types: ['CO'], engineerIds: ['e2'] }, true), { timeout: 2000 });
 
     await user.click(screen.getByRole('button', { name: 'Clear filters' }));
     await waitFor(() => expect(hooks.useResourceLoad).toHaveBeenLastCalledWith('year', EMPTY, true), { timeout: 2000 });

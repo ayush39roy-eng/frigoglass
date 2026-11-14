@@ -15,7 +15,7 @@ import { keepPreviousData, useQuery } from '@tanstack/react-query';
 
 import { ApiError } from '@/lib/api/client';
 import { queryKeys, sortedKeyList, type DashboardProjectFilters } from '@/lib/query-keys';
-import type { LabRegion } from '@/types/enums';
+import { NO_HUB_SELECTION, type HubSelection } from '@/stores/hub-filter';
 
 import {
   fetchActiveScheduleRun,
@@ -42,116 +42,109 @@ function retryUnlessAuth(failureCount: number, error: Error): boolean {
 }
 
 export function useCompletingWithinYear(
-  hubId: string | null = null,
-  region: LabRegion | null = null,
+  hub: HubSelection = NO_HUB_SELECTION,
   selection: DashboardSelection = NO_SELECTION,
 ) {
   return useQuery({
-    queryKey: queryKeys.dashboardCompletingWithinYear(hubId, region, selection),
+    queryKey: queryKeys.dashboardCompletingWithinYear(hub, selection),
     // Keep the last figures on screen while a new hub / country loads, so the
     // page keeps its height and scroll position (owner ask 2026-10-22). The
     // page dims while `isPlaceholderData` is set, so they never pass as current.
     placeholderData: keepPreviousData,
-    queryFn: ({ signal }) => fetchCompletingWithinYear({ signal }, hubId, region, selection),
+    queryFn: ({ signal }) => fetchCompletingWithinYear({ signal }, hub, selection),
     retry: retryUnlessAuth,
   });
 }
 
 export function usePipelineTotals(
-  hubId: string | null = null,
-  region: LabRegion | null = null,
+  hub: HubSelection = NO_HUB_SELECTION,
   selection: DashboardSelection = NO_SELECTION,
 ) {
   return useQuery({
-    queryKey: queryKeys.dashboardPipelineTotals(hubId, region, selection),
+    queryKey: queryKeys.dashboardPipelineTotals(hub, selection),
     // Keep the last figures on screen while a new hub / country loads, so the
     // page keeps its height and scroll position (owner ask 2026-10-22). The
     // page dims while `isPlaceholderData` is set, so they never pass as current.
     placeholderData: keepPreviousData,
-    queryFn: ({ signal }) => fetchPipelineTotals({ signal }, hubId, region, selection),
+    queryFn: ({ signal }) => fetchPipelineTotals({ signal }, hub, selection),
     retry: retryUnlessAuth,
   });
 }
 
 export function useStatusOverview(
-  hubId: string | null = null,
-  region: LabRegion | null = null,
+  hub: HubSelection = NO_HUB_SELECTION,
   selection: DashboardSelection = NO_SELECTION,
 ) {
   return useQuery({
-    queryKey: queryKeys.dashboardStatusOverview(hubId, region, selection),
+    queryKey: queryKeys.dashboardStatusOverview(hub, selection),
     // Keep the last figures on screen while a new hub / country loads, so the
     // page keeps its height and scroll position (owner ask 2026-10-22). The
     // page dims while `isPlaceholderData` is set, so they never pass as current.
     placeholderData: keepPreviousData,
-    queryFn: ({ signal }) => fetchStatusOverview({ signal }, hubId, region, selection),
+    queryFn: ({ signal }) => fetchStatusOverview({ signal }, hub, selection),
     retry: retryUnlessAuth,
   });
 }
 
 export function useHubTypePipeline(
-  hubId: string | null = null,
-  region: LabRegion | null = null,
+  hub: HubSelection = NO_HUB_SELECTION,
   selection: DashboardSelection = NO_SELECTION,
 ) {
   return useQuery({
-    queryKey: queryKeys.dashboardHubTypePipeline(hubId, region, selection),
+    queryKey: queryKeys.dashboardHubTypePipeline(hub, selection),
     // Keep the last figures on screen while a new hub / country loads, so the
     // page keeps its height and scroll position (owner ask 2026-10-22). The
     // page dims while `isPlaceholderData` is set, so they never pass as current.
     placeholderData: keepPreviousData,
-    queryFn: ({ signal }) => fetchHubTypePipeline({ signal }, hubId, region, selection),
+    queryFn: ({ signal }) => fetchHubTypePipeline({ signal }, hub, selection),
     retry: retryUnlessAuth,
   });
 }
 
 /** P13 (API_CONTRACT_P13 §2): per-country chips under the KPI cards. */
 export function useRegionSummary(
-  hubId: string | null = null,
-  region: LabRegion | null = null,
+  hub: HubSelection = NO_HUB_SELECTION,
   selection: DashboardSelection = NO_SELECTION,
 ) {
   return useQuery({
-    queryKey: queryKeys.dashboardRegionSummary(hubId, region, selection),
+    queryKey: queryKeys.dashboardRegionSummary(hub, selection),
     // Keep the last figures on screen while a new hub / country loads, so the
     // page keeps its height and scroll position (owner ask 2026-10-22). The
     // page dims while `isPlaceholderData` is set, so they never pass as current.
     placeholderData: keepPreviousData,
-    queryFn: ({ signal }) => fetchRegionSummary({ signal }, hubId, region, selection),
+    queryFn: ({ signal }) => fetchRegionSummary({ signal }, hub, selection),
     retry: retryUnlessAuth,
   });
 }
 
 /** P13-T10 (API_CONTRACT_P13 §5): the "Analytics & breakdown" section. */
 export function useDashboardAnalytics(
-  hubId: string | null = null,
-  region: LabRegion | null = null,
+  hub: HubSelection = NO_HUB_SELECTION,
   selection: DashboardSelection = NO_SELECTION,
 ) {
   return useQuery({
-    queryKey: queryKeys.dashboardAnalytics(hubId, region, selection),
+    queryKey: queryKeys.dashboardAnalytics(hub, selection),
     // Keep the last figures on screen while a new hub / country loads, so the
     // page keeps its height and scroll position (owner ask 2026-10-22). The
     // page dims while `isPlaceholderData` is set, so they never pass as current.
     placeholderData: keepPreviousData,
-    queryFn: ({ signal }) => fetchDashboardAnalytics({ signal }, hubId, region, selection),
+    queryFn: ({ signal }) => fetchDashboardAnalytics({ signal }, hub, selection),
     retry: retryUnlessAuth,
   });
 }
 
 /** P13 (API_CONTRACT_P13 §3): the register's leader / current-step options. */
 export function useProjectFacets(
-  hubId: string | null = null,
-  region: LabRegion | null = null,
+  hub: HubSelection = NO_HUB_SELECTION,
   selection: DashboardSelection = NO_SELECTION,
 ) {
   return useQuery({
-    queryKey: queryKeys.dashboardProjectFacets(hubId, region, selection),
+    queryKey: queryKeys.dashboardProjectFacets(hub, selection),
     // Keep the last figures on screen while a new hub / country loads, so the
     // page keeps its height and scroll position (owner ask 2026-10-22). The
     // page dims while `isPlaceholderData` is set, so they never pass as current.
     placeholderData: keepPreviousData,
-    queryFn: ({ signal }) => fetchProjectFacets({ signal }, hubId, region, selection),
+    queryFn: ({ signal }) => fetchProjectFacets({ signal }, hub, selection),
     retry: retryUnlessAuth,
     staleTime: 60_000,
   });
@@ -160,18 +153,22 @@ export function useProjectFacets(
 export function useDashboardProjects(params: ProjectFilterParams) {
   // Every changeable filter is in the key (P4-T04 review lesson).
   // P31: category / type are SORTED lists in the key (absent when empty).
+  // Multi-select contract: every other list filter likewise (sorted, absent when empty).
   const category = sortedKeyList(params.category);
   const type = sortedKeyList(params.type);
+  const region = sortedKeyList(params.region) as DashboardProjectFilters['region'];
+  const leader = sortedKeyList(params.leader_engineer_id);
+  const step = sortedKeyList(params.current_step);
   const filters: DashboardProjectFilters = {
-    hub_id: params.hub_id,
+    hub_id: sortedKeyList(params.hub_id),
     category,
-    status_: params.status_,
-    priority: params.priority,
-    ...(params.region !== undefined ? { region: params.region } : {}),
+    status_: sortedKeyList(params.status_),
+    priority: sortedKeyList(params.priority),
+    ...(region !== undefined ? { region } : {}),
     ...(params.q !== undefined ? { q: params.q } : {}),
     ...(type !== undefined ? { type } : {}),
-    ...(params.leader_engineer_id !== undefined ? { leader_engineer_id: params.leader_engineer_id } : {}),
-    ...(params.current_step !== undefined ? { current_step: params.current_step } : {}),
+    ...(leader !== undefined ? { leader_engineer_id: leader } : {}),
+    ...(step !== undefined ? { current_step: step } : {}),
     ...(params.sort !== undefined ? { sort: params.sort } : {}),
   };
   return useQuery({
@@ -191,9 +188,10 @@ export function useDashboardProjects(params: ProjectFilterParams) {
 export function useDrilldownProjects(params: ProjectFilterParams, enabled = true) {
   const category = sortedKeyList(params.category);
   const type = sortedKeyList(params.type);
+  const region = sortedKeyList(params.region) as DashboardProjectFilters['region'];
   const filters: DashboardProjectFilters = {
-    hub_id: params.hub_id,
-    ...(params.region !== undefined ? { region: params.region } : {}),
+    hub_id: sortedKeyList(params.hub_id),
+    ...(region !== undefined ? { region } : {}),
     ...(category !== undefined ? { category } : {}),
     ...(type !== undefined ? { type } : {}),
   };
@@ -225,20 +223,19 @@ export function useActiveScheduleRun(enabled: boolean) {
  * the page's own (same key, one fetch).
  */
 export function useCrossFilterBreakdowns(
-  hubId: string | null,
-  region: LabRegion | null,
+  hub: HubSelection,
   selection: DashboardSelection,
 ) {
   const forType: DashboardSelection = { categories: selection.categories, types: [] };
   const forCategory: DashboardSelection = { categories: [], types: selection.types };
   return {
     type: {
-      analytics: useDashboardAnalytics(hubId, region, forType),
-      totals: usePipelineTotals(hubId, region, forType),
+      analytics: useDashboardAnalytics(hub, forType),
+      totals: usePipelineTotals(hub, forType),
     },
     category: {
-      analytics: useDashboardAnalytics(hubId, region, forCategory),
-      totals: usePipelineTotals(hubId, region, forCategory),
+      analytics: useDashboardAnalytics(hub, forCategory),
+      totals: usePipelineTotals(hub, forCategory),
     },
   };
 }

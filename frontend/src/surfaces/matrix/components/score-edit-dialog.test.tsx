@@ -175,8 +175,8 @@ describe('ScoreEditDialog', () => {
     );
     const fin = screen.getByTestId('score-edit-financials');
     expect(fin).toHaveTextContent('CAPEX (k USD)');
-    expect(fin).toHaveTextContent('129.6');
+    expect(fin).toHaveTextContent('130');
     expect(fin).toHaveTextContent('5,400');
-    expect(fin).toHaveTextContent('37.5%');
+    expect(fin).toHaveTextContent('38%');
   });
 });

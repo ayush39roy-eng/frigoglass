@@ -49,30 +49,46 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
+from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import func, select
+from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy import ColumnElement, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.db import get_db
 from api.deps import require_permission
+from api.query_params import MAX_FILTER_VALUES
 from core.principal import Principal
 from core.rbac import Action, Surface
 from models.audit import AuditLogEntry
 from schemas.audit import AuditLogEntryList, AuditLogEntryRead
+from services.category_type_filter import one_of
 
 router = APIRouter(prefix="/audit-log", tags=["audit-log"])
 
 _read = require_permission(Surface.AUDIT_LOG, Action.READ)
 
+_REPEAT_DOC = (
+    "Repeatable (ADR 0050). Values are ORed; ANDed with every other filter. "
+    f"Absent = no filter. At most {MAX_FILTER_VALUES} values."
+)
+
 
 @router.get("", response_model=AuditLogEntryList)
 async def list_audit_log(
-    entity_type: str | None = None,
+    entity_type: Annotated[
+        list[str] | None, Query(description=_REPEAT_DOC, max_length=MAX_FILTER_VALUES)
+    ] = None,
     entity_id: str | None = None,
-    actor_user_id: uuid.UUID | None = None,
-    action: str | None = None,
-    hub_id: uuid.UUID | None = None,
+    actor_user_id: Annotated[
+        list[uuid.UUID] | None, Query(description=_REPEAT_DOC, max_length=MAX_FILTER_VALUES)
+    ] = None,
+    action: Annotated[
+        list[str] | None, Query(description=_REPEAT_DOC, max_length=MAX_FILTER_VALUES)
+    ] = None,
+    hub_id: Annotated[
+        list[uuid.UUID] | None, Query(description=_REPEAT_DOC, max_length=MAX_FILTER_VALUES)
+    ] = None,
     occurred_from: datetime | None = None,
     occurred_to: datetime | None = None,
     limit: int = 100,
@@ -84,7 +100,9 @@ async def list_audit_log(
     `AUDIT_LOG` surface (401/403 enforced by `_read`) — Auditor and Admin
     only, per the matrix; not hub-scoped (see module docstring).
 
-    Filters (all optional, ANDed together):
+    Filters (all optional, ANDed together; ADR 0050: `entity_type`,
+    `actor_user_id`, `action` and `hub_id` are repeatable, values ORed, at
+    most 50 each):
     - `entity_type` / `entity_id`: e.g. `"Project"` / a specific row's UUID
       string (`AuditLogEntry.entity_id` is free-text, matching how every
       writer stores it — see `models/audit.py`).
@@ -112,17 +130,20 @@ async def list_audit_log(
     if offset < 0:
         raise HTTPException(status_code=422, detail="offset must be >= 0")
 
-    filters = []
-    if entity_type is not None:
-        filters.append(AuditLogEntry.entity_type == entity_type)
+    # ADR 0050: `entity_type`, `actor_user_id`, `action` and `hub_id` are
+    # repeatable (OR within a param, AND across); exact matches, no sentinel.
+    filters: list[ColumnElement[bool]] = []
+    for column, values in (
+        (AuditLogEntry.entity_type, entity_type),
+        (AuditLogEntry.actor_user_id, actor_user_id),
+        (AuditLogEntry.action, action),
+        (AuditLogEntry.hub_id, hub_id),
+    ):
+        predicate = one_of(column, values)
+        if predicate is not None:
+            filters.append(predicate)
     if entity_id is not None:
         filters.append(AuditLogEntry.entity_id == entity_id)
-    if actor_user_id is not None:
-        filters.append(AuditLogEntry.actor_user_id == actor_user_id)
-    if action is not None:
-        filters.append(AuditLogEntry.action == action)
-    if hub_id is not None:
-        filters.append(AuditLogEntry.hub_id == hub_id)
     if occurred_from is not None:
         filters.append(AuditLogEntry.occurred_at >= occurred_from)
     if occurred_to is not None:

@@ -40,7 +40,7 @@ afterEach(() => {
 
 describe('CapacityPage requests (P19-T07)', () => {
   it('never requests the chamber utilization matrix or engineer utilization (section removed 2026-11-13)', async () => {
-    useHubFilterStore.setState({ hubId: null, region: null });
+    useHubFilterStore.getState().setSelection([], []);
     mockApiGet.mockImplementation((path: string) => Promise.resolve(respond(path)) as never);
     renderWithProviders(<CapacityPage />);
 

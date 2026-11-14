@@ -57,29 +57,29 @@ const engUtil: EngineerUtilizationResponse = {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  useHubFilterStore.setState({ hubId: null, region: null });
+  useHubFilterStore.getState().setSelection([], []);
   hooks.useActiveScheduleRun.mockReturnValue(ready(null));
   hooks.useEngineerUtilization.mockReturnValue(pending);
 });
 
 describe('CapacityPage', () => {
   it('P12 (ADR 0020): every panel (incl. the area strip source) follows the global hub filter, with the "Hub:" chip', () => {
-    useHubFilterStore.setState({ hubId: 'hub-india' });
+    useHubFilterStore.getState().setSelection(['hub-india'], []);
     hooks.useHubLoadVsCapacity.mockReturnValue(pending);
     hooks.useClassBreakdown.mockReturnValue(pending);
     renderWithProviders(<CapacityPage />);
-    expect(hooks.useHubLoadVsCapacity).toHaveBeenLastCalledWith({ hubId: 'hub-india', region: null });
-    expect(hooks.useClassBreakdown).toHaveBeenLastCalledWith('hub-india', null);
+    expect(hooks.useHubLoadVsCapacity).toHaveBeenLastCalledWith({ hub: { hubIds: ['hub-india'], regions: [] } });
+    expect(hooks.useClassBreakdown).toHaveBeenLastCalledWith({ hubIds: ['hub-india'], regions: [] });
     expect(screen.getByTestId('hub-filter-chip')).toBeInTheDocument();
   });
 
   it('P13 (ADR 0025): every panel follows the country filter, with the "Country:" chip', () => {
-    useHubFilterStore.setState({ hubId: null, region: 'Romania' });
+    useHubFilterStore.getState().setSelection([], ['Romania']);
     hooks.useHubLoadVsCapacity.mockReturnValue(pending);
     hooks.useClassBreakdown.mockReturnValue(pending);
     renderWithProviders(<CapacityPage />);
-    expect(hooks.useHubLoadVsCapacity).toHaveBeenLastCalledWith({ hubId: null, region: 'Romania' });
-    expect(hooks.useClassBreakdown).toHaveBeenLastCalledWith(null, 'Romania');
+    expect(hooks.useHubLoadVsCapacity).toHaveBeenLastCalledWith({ hub: { hubIds: [], regions: ['Romania'] } });
+    expect(hooks.useClassBreakdown).toHaveBeenLastCalledWith({ hubIds: [], regions: ['Romania'] });
     expect(screen.getByTestId('hub-filter-chip')).toHaveTextContent('Country: Romania');
   });
 

@@ -18,12 +18,12 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Spinner } from '@/components/ui/spinner';
+import { MultiSelectDropdown } from '@/components/shared/multi-select-dropdown';
 import { cn } from '@/lib/utils';
 import { barGeometry, weekEndToX, weekToX, type WeekScale } from '@/surfaces/gantt/lib/gantt-coordinates';
 import type { OverlapStep } from '@/surfaces/gantt/lib/step-overlap';
 
 import type { WhatIfOutcome } from '../../../api/whatif-types';
-import { NativeSelect } from '../../components/form-controls';
 import { OUTCOME_LABEL, OUTCOME_ORDER, OUTCOME_TONE } from '../../components/outcome-meta';
 import { editKey } from '../import-rows';
 import { useImportPlan } from '../import-store';
@@ -40,6 +40,12 @@ const STEP_H = 30;
 const AXIS_H = 34;
 /** Rows are virtualized over 100 (CLAUDE.md); below that every row is drawn. */
 const VIRTUALIZE_OVER = 100;
+
+const SOURCE_OPTIONS: { value: 'file' | 'plan'; label: string }[] = [
+  { value: 'file', label: 'From the file' },
+  { value: 'plan', label: 'Current plan' },
+];
+const OUTCOME_OPTIONS = OUTCOME_ORDER.map((o) => ({ value: o, label: OUTCOME_LABEL[o] }));
 
 type GRow =
   | { kind: 'project'; key: string; p: ImportResultProject }
@@ -103,9 +109,10 @@ export function ResultsGantt({
   // filtered to the project's name, with it expanded, then scrolls to and focuses it.
   const consumeFocus = useImportPlan((s) => s.consumeGanttFocus);
   const [focus] = React.useState(() => useImportPlan.getState().ganttFocus);
-  const [source, setSource] = React.useState<'all' | 'file' | 'plan'>('all');
-  const [hub, setHub] = React.useState('all');
-  const [outcome, setOutcome] = React.useState<'all' | WhatIfOutcome>('all');
+  // Multi-select (owner ask 2026-11-13): nothing picked = all.
+  const [sources, setSources] = React.useState<('file' | 'plan')[]>([]);
+  const [hubFilter, setHubFilter] = React.useState<string[]>([]);
+  const [outcomes, setOutcomes] = React.useState<WhatIfOutcome[]>([]);
   const [search, setSearch] = React.useState(() => focus?.name ?? '');
   const [expanded, setExpanded] = React.useState<Set<string>>(() => new Set(focus ? [focus.ref] : []));
   const [dialog, setDialog] = React.useState<TimingDialogTarget | null>(null);
@@ -123,12 +130,12 @@ export function ResultsGantt({
     return result.projects.filter(
       (p) =>
         projectInYear(p, yearKey, base) &&
-        (source === 'all' || p.source === source) &&
-        (hub === 'all' || p.hub === hub) &&
-        (outcome === 'all' || p.outcome === outcome) &&
+        (sources.length === 0 || sources.includes(p.source)) &&
+        (hubFilter.length === 0 || hubFilter.includes(p.hub)) &&
+        (outcomes.length === 0 || outcomes.includes(p.outcome)) &&
         (q === '' || p.name.toLowerCase().includes(q)),
     );
-  }, [result.projects, source, hub, outcome, search, yearKey, base]);
+  }, [result.projects, sources, hubFilter, outcomes, search, yearKey, base]);
 
   const rows: GRow[] = React.useMemo(() => {
     const out: GRow[] = [];
@@ -225,52 +232,34 @@ export function ResultsGantt({
   return (
     <div className="space-y-s3" data-testid="import-gantt">
       <div className="flex flex-wrap items-end gap-s3">
-        <div className="flex flex-col gap-1">
-          <Label htmlFor="ig-source" className="text-2xs text-text-muted">
-            Source
-          </Label>
-          <NativeSelect
-            id="ig-source"
-            className="w-36"
-            value={source}
-            onChange={(e) => setSource(e.target.value as typeof source)}
-          >
-            <option value="all">All projects</option>
-            <option value="file">From the file</option>
-            <option value="plan">Current plan</option>
-          </NativeSelect>
-        </div>
-        <div className="flex flex-col gap-1">
-          <Label htmlFor="ig-hub" className="text-2xs text-text-muted">
-            Hub
-          </Label>
-          <NativeSelect id="ig-hub" className="w-36" value={hub} onChange={(e) => setHub(e.target.value)}>
-            <option value="all">All hubs</option>
-            {hubs.map((h) => (
-              <option key={h} value={h}>
-                {h}
-              </option>
-            ))}
-          </NativeSelect>
-        </div>
-        <div className="flex flex-col gap-1">
-          <Label htmlFor="ig-outcome" className="text-2xs text-text-muted">
-            Outcome
-          </Label>
-          <NativeSelect
-            id="ig-outcome"
-            className="w-40"
-            value={outcome}
-            onChange={(e) => setOutcome(e.target.value as typeof outcome)}
-          >
-            <option value="all">All outcomes</option>
-            {OUTCOME_ORDER.map((o) => (
-              <option key={o} value={o}>
-                {OUTCOME_LABEL[o]}
-              </option>
-            ))}
-          </NativeSelect>
-        </div>
+        <MultiSelectDropdown<'file' | 'plan'>
+          id="ig-source"
+          label="Source"
+          allLabel="All projects"
+          pluralNoun="sources"
+          value={sources}
+          onChange={setSources}
+          options={SOURCE_OPTIONS}
+          triggerClassName="h-8 w-36"
+        />
+        <MultiSelectDropdown
+          id="ig-hub"
+          label="Hub"
+          allLabel="All hubs"
+          value={hubFilter}
+          onChange={setHubFilter}
+          options={hubs.map((h) => ({ value: h, label: h }))}
+          triggerClassName="h-8 w-36"
+        />
+        <MultiSelectDropdown<WhatIfOutcome>
+          id="ig-outcome"
+          label="Outcome"
+          allLabel="All outcomes"
+          value={outcomes}
+          onChange={setOutcomes}
+          options={OUTCOME_OPTIONS}
+          triggerClassName="h-8 w-40"
+        />
         <div className="flex flex-col gap-1">
           <Label htmlFor="ig-search" className="text-2xs text-text-muted">
             Search

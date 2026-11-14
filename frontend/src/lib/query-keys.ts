@@ -14,29 +14,49 @@
 
 import type { CurrencyCode, HubName, LabRegion, ProjectCategory, WorkflowId } from '@/types/enums';
 
+/** Multi-select hub / country selection as it appears in a key
+ *  (`docs/API_CONTRACT_MULTISELECT.md` §3): SORTED lists, so pick order never
+ *  splits the cache. */
+export interface HubKey {
+  hubIds: readonly string[];
+  regions: readonly LabRegion[];
+}
+
+/** Input accepted by the hub-keyed factories: the store's lists. */
+export interface HubKeyInput {
+  hubIds: readonly string[];
+  regions: readonly LabRegion[];
+}
+
+/** Sorted copies of a hub selection for a key. */
+export function hubKey(hub: HubKeyInput): HubKey {
+  return { hubIds: [...hub.hubIds].sort(), regions: [...hub.regions].sort() };
+}
+
 /**
- * P12 (ADR 0020): append the global hub filter to a key. `undefined` returns
- * the bare prefix, so `invalidateQueries({ queryKey: k() })` still matches every
- * hub's entry; `null` ("All hubs") and a hub uuid are distinct cache entries,
- * so switching hubs refetches instead of serving another hub's figures.
+ * P12 (ADR 0020), multi-select (contract §3): append the global hub filter to a
+ * key. `undefined` returns the bare prefix, so `invalidateQueries({ queryKey:
+ * k() })` still matches every selection's entry; "All hubs" (both lists empty)
+ * and every distinct selection are separate cache entries, so changing the
+ * selection refetches instead of serving another selection's figures.
  */
 function withHub<const K extends readonly string[]>(
   base: K,
-  hubId: string | null | undefined,
-  region?: LabRegion | null,
+  hub: HubKeyInput | undefined,
   selection?: DashSel,
-):
-  | K
-  | readonly [...K, { hubId: string | null; region: LabRegion | null }]
-  | readonly [...K, { hubId: string | null; region: LabRegion | null }, KeySelection] {
-  // P13 (ADR 0025): the country filter is keyed beside the hub, so switching
-  // country refetches instead of serving another country's figures.
-  if (hubId === undefined) return base;
-  const hub = { hubId, region: region ?? null };
+): K | readonly [...K, HubKey] | readonly [...K, HubKey, KeySelection] {
+  if (hub === undefined) return base;
+  const key = hubKey(hub);
   // P31: the Dashboard category / type selection, sorted (canonical order), is
   // appended only when non-empty, so the unfiltered key keeps its old shape.
   const sel = keySelection(selection);
-  return sel === null ? ([...base, hub] as const) : ([...base, hub, sel] as const);
+  return sel === null ? ([...base, key] as const) : ([...base, key, sel] as const);
+}
+
+/** Legacy single-value form (Matrix only, not converted in this pass). */
+function legacyHub(hubId: string | null | undefined, region?: LabRegion | null): HubKeyInput | undefined {
+  if (hubId === undefined) return undefined;
+  return { hubIds: hubId ? [hubId] : [], regions: region ? [region] : [] };
 }
 
 type DashSel = { categories: readonly string[]; types: readonly string[] } | undefined;
@@ -87,8 +107,10 @@ export const queryKeys = {
   // P26 (ADR 0037): the editable rubric and its versions (Matrix only).
   scoringRubric: () => ['scoring-rubric'] as const,
   scoringRubricVersions: () => ['scoring-rubric', 'versions'] as const,
+  // Matrix (out of scope for the multi-select pass): still takes the legacy
+  // single values, keyed in the same list shape as everything else.
   prioritySummary: (hubId?: string | null, region?: LabRegion | null) =>
-    withHub(['priority-matrix', 'summary'], hubId, region),
+    withHub(['priority-matrix', 'summary'], legacyHub(hubId, region)),
   priorityRow: (id: string, currency?: CurrencyCode) =>
     ['priority-matrix', 'detail', id, currency ?? null] as const,
   priorityApplicationRuns: () => ['priority-application-runs'] as const,
@@ -113,42 +135,41 @@ export const queryKeys = {
   // P13-T15: the Versions & History page's name lookup for scenario changes.
   historyProjectNames: () => ['history', 'project-names'] as const,
   dashboard: (versionId?: string) => ['dashboard', versionId ?? 'active'] as const,
-  // P12 (ADR 0020): `hubId` is the global header hub filter. `undefined` gives
-  // the prefix (for invalidation); `null` is "All hubs"; a uuid is one hub.
-  dashboardPipelineTotals: (hubId?: string | null, region?: LabRegion | null, selection?: DashSel) =>
-    withHub(['dashboard', 'pipeline-totals'], hubId, region, selection),
-  dashboardStatusOverview: (hubId?: string | null, region?: LabRegion | null, selection?: DashSel) =>
-    withHub(['dashboard', 'status-overview'], hubId, region, selection),
-  dashboardHubTypePipeline: (hubId?: string | null, region?: LabRegion | null, selection?: DashSel) =>
-    withHub(['dashboard', 'hub-type-pipeline'], hubId, region, selection),
-  dashboardCompletingWithinYear: (hubId?: string | null, region?: LabRegion | null, selection?: DashSel) =>
-    withHub(['dashboard', 'completing-within-year'], hubId, region, selection),
+  // P12 (ADR 0020), multi-select: `hub` is the global header selection. `undefined`
+  // gives the prefix (for invalidation); empty lists are "All hubs".
+  dashboardPipelineTotals: (hub?: HubKeyInput, selection?: DashSel) =>
+    withHub(['dashboard', 'pipeline-totals'], hub, selection),
+  dashboardStatusOverview: (hub?: HubKeyInput, selection?: DashSel) =>
+    withHub(['dashboard', 'status-overview'], hub, selection),
+  dashboardHubTypePipeline: (hub?: HubKeyInput, selection?: DashSel) =>
+    withHub(['dashboard', 'hub-type-pipeline'], hub, selection),
+  dashboardCompletingWithinYear: (hub?: HubKeyInput, selection?: DashSel) =>
+    withHub(['dashboard', 'completing-within-year'], hub, selection),
   // P13 (API_CONTRACT_P13 §2/§3): per-country summary and the register's facets.
-  dashboardRegionSummary: (hubId?: string | null, region?: LabRegion | null, selection?: DashSel) =>
-    withHub(['dashboard', 'region-summary'], hubId, region, selection),
-  dashboardProjectFacets: (hubId?: string | null, region?: LabRegion | null, selection?: DashSel) =>
-    withHub(['dashboard', 'projects-facets'], hubId, region, selection),
+  dashboardRegionSummary: (hub?: HubKeyInput, selection?: DashSel) =>
+    withHub(['dashboard', 'region-summary'], hub, selection),
+  dashboardProjectFacets: (hub?: HubKeyInput, selection?: DashSel) =>
+    withHub(['dashboard', 'projects-facets'], hub, selection),
   // P13-T10 (API_CONTRACT_P13 §5): served analytics + completing Hub × Type.
-  dashboardAnalytics: (hubId?: string | null, region?: LabRegion | null, selection?: DashSel) =>
-    withHub(['dashboard', 'analytics'], hubId, region, selection),
+  dashboardAnalytics: (hub?: HubKeyInput, selection?: DashSel) =>
+    withHub(['dashboard', 'analytics'], hub, selection),
   dashboardProjects: (filters?: DashboardProjectFilters) =>
     ['dashboard', 'projects', filters ?? null] as const,
   // Every changeable Gantt filter input goes in the key (P4-T04 review blocker:
-  // a user-facing filter omitted from the key serves stale cache). `hubId` is the
-  // API's `hub_id` uuid param.
-  // P13-T13 (API_CONTRACT_P13 §7): the toolbar filters join the key as plain strings.
+  // a user-facing filter omitted from the key serves stale cache). `hubIds` are the
+  // API's repeated `hub_id` uuid param.
+  // P31 / multi-select contract: every list is SORTED and absent when empty.
   gantt: (params?: {
     versionId?: string | undefined;
-    hubId?: string | undefined;
-    region?: LabRegion | undefined;
+    hubIds?: readonly string[] | undefined;
+    regions?: readonly LabRegion[] | undefined;
     q?: string | undefined;
-    // P31: sorted multi-select lists.
     category?: readonly string[] | undefined;
     type?: readonly string[] | undefined;
-    status?: string | undefined;
-    leaderEngineerId?: string | undefined;
-    currentStep?: string | undefined;
-    priority?: string | undefined;
+    status?: readonly string[] | undefined;
+    leaderEngineerId?: readonly string[] | undefined;
+    currentStep?: readonly string[] | undefined;
+    priority?: readonly string[] | undefined;
     sort?: string | undefined;
     // P32-R04: the Workflow page's per-project step timing (`project_id`).
     projectId?: string | undefined;
@@ -157,18 +178,25 @@ export const queryKeys = {
   // --- capacity ---
   capacity: (params?: { hub?: HubName; versionId?: string }) => ['capacity', params ?? null] as const,
   // P12 (ADR 0020): same `withHub` convention as the dashboard keys above.
-  capacityHubLoad: (hubId?: string | null, region?: LabRegion | null) => withHub(['capacity', 'hub-load'], hubId, region),
-  capacityClassBreakdown: (hubId?: string | null, region?: LabRegion | null) =>
-    withHub(['capacity', 'class-breakdown'], hubId, region),
-  capacityUtilizationMatrix: (hubId?: string | null, region?: LabRegion | null) =>
-    withHub(['capacity', 'utilization-matrix'], hubId, region),
-  capacityEngineerUtilization: (hubId?: string | null, region?: LabRegion | null) =>
-    withHub(['capacity', 'engineer-utilization'], hubId, region),
+  capacityHubLoad: (hub?: HubKeyInput) =>
+    withHub(['capacity', 'hub-load'], hub),
+  capacityClassBreakdown: (hub?: HubKeyInput) =>
+    withHub(['capacity', 'class-breakdown'], hub),
+  capacityUtilizationMatrix: (hub?: HubKeyInput) =>
+    withHub(['capacity', 'utilization-matrix'], hub),
+  capacityEngineerUtilization: (hub?: HubKeyInput) =>
+    withHub(['capacity', 'engineer-utilization'], hub),
   capacityPlanning: (hub?: HubName) => ['capacity-planning', hub ?? null] as const,
   // `hubId` (uuid, `GET /engineers?hub_id=`) — corrected from an earlier
   // `HubName` typing (P4-T01 placeholder, never exercised until P4-T06's
   // leader-picker lookup and P4-T07's Engineer CRUD).
-  engineers: (hubId?: string) => ['engineers', hubId ?? null] as const,
+  // Multi-select (Planning's Hub filter): a list is keyed SORTED; an empty list
+  // is the same entry as "no hub" (all visible engineers).
+  engineers: (hubId?: string | readonly string[]) =>
+    [
+      'engineers',
+      typeof hubId === 'string' ? hubId : hubId && hubId.length > 0 ? [...hubId].sort() : null,
+    ] as const,
   // `GET /chambers` (backend/api/routers/chambers.py) takes NO query params at
   // all — a caller's visibility is resolved entirely server-side via
   // `services.hub_scope.scoped_lab_regions`, not a client-supplied filter.
@@ -223,23 +251,23 @@ export const queryKeys = {
   mentionSearch: (q: string) => ['users', 'mention-search', q] as const,
 
   // --- P12 (frontend B): Priority board, weekly check-in; P14: VIP board ---
-  // `hubId` is the global hub filter (ADR 0020), sent as `hub_id`.
-  // P13-T12: the board's toolbar filters are appended only when set, so the P12
-  // key shape (and every test asserting it) is unchanged without them.
-  priorityBoard: (hubId: string | null, region: LabRegion | null = null, filters?: PriorityBoardFilters) =>
+  // `hub` is the global hub selection (ADR 0020, multi-select), sent as repeated
+  // `hub_id` / `region`. P13-T12: the board's toolbar filters are appended only
+  // when set.
+  priorityBoard: (hub: HubKeyInput, filters?: PriorityBoardFilters) =>
     filters === undefined
-      ? (['priority-board', hubId, region] as const)
-      : (['priority-board', hubId, region, filters] as const),
+      ? (['priority-board', hubKey(hub)] as const)
+      : (['priority-board', hubKey(hub), filters] as const),
   // P14 (ADR 0027): the curated VIP board on the Dashboard. Both filter params
   // (`hub_id`, `region`) are in the key; `vipBoard()` is the bare prefix.
-  vipBoard: (params?: { hub_id?: string; region?: LabRegion }) =>
+  vipBoard: (params?: { hub_id?: readonly string[]; region?: readonly LabRegion[] }) =>
     params === undefined
       ? (['vip-board'] as const)
-      : (['vip-board', { hubId: params.hub_id ?? null, region: params.region ?? null }] as const),
+      : (['vip-board', hubKey({ hubIds: params.hub_id ?? [], regions: params.region ?? [] })] as const),
   // P14: the VIP item editor's project-link search (`GET /dashboard/projects?q=`).
-  vipLinkSearch: (q: string, hubId: string | null, region: LabRegion | null) =>
-    ['dashboard', 'projects', 'vip-link-search', { q, hubId, region }] as const,
-  checkInsDue: (hubId: string | null, region: LabRegion | null = null) => ['check-ins', 'due', hubId, region] as const,
+  vipLinkSearch: (q: string, hub: HubKeyInput) =>
+    ['dashboard', 'projects', 'vip-link-search', { q, ...hubKey(hub) }] as const,
+  checkInsDue: (hub: HubKeyInput) => ['check-ins', 'due', hubKey(hub)] as const,
   checkInHistory: (projectId: string, stepId: string) => ['check-ins', 'history', projectId, stepId] as const,
 
   // --- cross-cutting ---
@@ -260,11 +288,12 @@ export const queryKeys = {
  *  `DashboardProjectFilters` below, since this endpoint's params are already
  *  snake_case matches of themselves. */
 export interface AuditLogQueryFilters {
-  entity_type?: string | undefined;
+  /** Multi-select contract: repeated params, SORTED lists, absent when empty. */
+  entity_type?: readonly string[] | undefined;
   entity_id?: string | undefined;
-  actor_user_id?: string | undefined;
-  action?: string | undefined;
-  hub_id?: string | undefined;
+  actor_user_id?: readonly string[] | undefined;
+  action?: readonly string[] | undefined;
+  hub_id?: readonly string[] | undefined;
   occurred_from?: string | undefined;
   occurred_to?: string | undefined;
   limit?: number | undefined;
@@ -295,21 +324,22 @@ export interface PriorityBoardFilters {
   /** P31: repeated params; sorted lists in the key. */
   category?: readonly string[] | undefined;
   type?: readonly string[] | undefined;
-  status_?: string | undefined;
-  leader_engineer_id?: string | undefined;
+  /** Multi-select contract: repeated params, sorted lists. */
+  status_?: readonly string[] | undefined;
+  leader_engineer_id?: readonly string[] | undefined;
 }
 
 export interface DashboardProjectFilters {
-  hub_id?: string | undefined;
-  /** P31: sorted lists (repeated params). */
+  /** P31 / multi-select contract: every list is sorted (repeated params). */
+  hub_id?: readonly string[] | undefined;
   category?: readonly string[] | undefined;
-  status_?: string | undefined;
-  priority?: string | undefined;
+  status_?: readonly string[] | undefined;
+  priority?: readonly string[] | undefined;
   // P13 (API_CONTRACT_P13 §3) — all server-side.
-  region?: LabRegion | undefined;
+  region?: readonly LabRegion[] | undefined;
   q?: string | undefined;
   type?: readonly string[] | undefined;
-  leader_engineer_id?: string | undefined;
-  current_step?: string | undefined;
+  leader_engineer_id?: readonly string[] | undefined;
+  current_step?: readonly string[] | undefined;
   sort?: 'name' | 'priority' | undefined;
 }

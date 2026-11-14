@@ -46,10 +46,10 @@ from sqlalchemy.orm import selectinload
 from api.db import get_db
 from api.deps import require_permission
 from api.errors import HTTP_422, CodedHTTPException
+from api.query_params import HubIdListQuery, RegionListQuery
 from core.principal import Principal
 from core.rbac import Action, Surface
 from models.audit import AuditLogEntry
-from models.enums import LabRegion
 from models.hub import Hub
 from models.project import Project
 from models.vip import VipArea, VipItem, VipStatusTag, vip_item_projects
@@ -68,7 +68,7 @@ from schemas.vip_board import (
     VipPillarRef,
 )
 from services.active_run import get_active_run
-from services.hub_scope import hub_scope_filter, narrowed_hub_filter
+from services.hub_scope import HubIdsArg, RegionsArg, hub_scope_filter, narrowed_hub_filter
 from services.project_cards import build_project_cards
 from services.vip_board import (
     AREA_LABELS,
@@ -91,8 +91,8 @@ _write = require_permission(Surface.MATRIX, Action.WRITE)
 async def _hubs_and_visible(
     db: AsyncSession,
     principal: Principal,
-    hub_id: uuid.UUID | None = None,
-    region: LabRegion | None = None,
+    hub_id: HubIdsArg = None,
+    region: RegionsArg = None,
 ) -> tuple[list[Hub], set[uuid.UUID]]:
     """All hubs, and the ids of those in scope AND the global filter."""
 
@@ -259,8 +259,8 @@ def _clean_note(note: str | None) -> str | None:
 
 @board_router.get("", response_model=VipBoardResponse)
 async def get_vip_board(
-    hub_id: uuid.UUID | None = None,
-    region: LabRegion | None = None,
+    hub_id: HubIdListQuery = None,
+    region: RegionListQuery = None,
     db: AsyncSession = Depends(get_db),
     current_user: Principal = Depends(_read),
 ) -> VipBoardResponse:

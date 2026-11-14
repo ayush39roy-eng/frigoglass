@@ -123,7 +123,7 @@ const SUMMARY: RegionSummary = {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  useHubFilterStore.setState({ hubId: null, region: null });
+  useHubFilterStore.getState().setSelection([], []);
   useHubs.mockReturnValue({ data: HUBS });
   useProjectFacets.mockReturnValue({
     data: {
@@ -135,7 +135,7 @@ beforeEach(() => {
 });
 afterEach(() => {
   vi.useRealTimers();
-  useHubFilterStore.setState({ hubId: null, region: null });
+  useHubFilterStore.getState().setSelection([], []);
 });
 
 describe('All registered projects register (P13, ADR 0025 §5)', () => {
@@ -148,8 +148,8 @@ describe('All registered projects register (P13, ADR 0025 §5)', () => {
       status_: undefined,
       priority: undefined,
     });
-    expect(useProjectFacets).toHaveBeenLastCalledWith(null, null, expect.objectContaining({ categories: [], types: [] }));
-    expect(useRegionSummary).toHaveBeenLastCalledWith(null, null, expect.objectContaining({ categories: [], types: [] }));
+    expect(useProjectFacets).toHaveBeenLastCalledWith({ hubIds: [], regions: [] }, expect.objectContaining({ categories: [], types: [] }));
+    expect(useRegionSummary).toHaveBeenLastCalledWith({ hubIds: [], regions: [] }, expect.objectContaining({ categories: [], types: [] }));
   });
 
   it('shows the served total_count and every contract column; workbook columns off by default; no Delete', () => {
@@ -246,7 +246,7 @@ describe('All registered projects register (P13, ADR 0025 §5)', () => {
     expect(items[1]).toHaveTextContent('Que 97');
   });
 
-  it('sends type, status, leader and current step to the server', async () => {
+  it('sends type, status, leader and current step to the server (multi-select: several statuses)', async () => {
     useDashboardProjects.mockReturnValue(ok([]));
     const user = userEvent.setup();
     renderWithProviders(<ProjectBreakdown />);
@@ -255,19 +255,25 @@ describe('All registered projects register (P13, ADR 0025 §5)', () => {
     const types = screen.getByRole('group', { name: 'Type' });
     await user.click(within(types).getByRole('button', { name: 'Cost Optimization' }));
     await user.click(within(types).getByRole('button', { name: 'Unmapped' }));
-    await user.click(screen.getByRole('combobox', { name: 'Status' }));
-    await user.click(await screen.findByRole('option', { name: 'In Queue' }));
-    await user.click(screen.getByRole('combobox', { name: 'Leader' }));
+    await user.click(screen.getByRole('button', { name: 'Status' }));
+    await user.click(await screen.findByRole('option', { name: 'On Hold' }));
+    await user.click(screen.getByRole('option', { name: 'In Queue' }));
+    await user.keyboard('{Escape}');
+    expect(screen.getByRole('button', { name: 'Status' })).toHaveAccessibleDescription('2 statuses');
+    await user.click(screen.getByRole('button', { name: 'Leader' }));
     await user.click(await screen.findByRole('option', { name: 'Rishi' }));
-    await user.click(screen.getByRole('combobox', { name: 'Current step' }));
+    await user.keyboard('{Escape}');
+    await user.click(screen.getByRole('button', { name: 'Current step' }));
     await user.click(await screen.findByRole('option', { name: 'PDD-E · Design Detailing' }));
+    await user.keyboard('{Escape}');
 
     expect(useDashboardProjects).toHaveBeenLastCalledWith(
       expect.objectContaining({
         type: ['CO', 'Unmapped'],
-        status_: 'In Queue',
-        leader_engineer_id: 'eng-1',
-        current_step: 'PDD-E',
+        // Option order, whatever the click order.
+        status_: ['In Queue', 'On Hold'],
+        leader_engineer_id: ['eng-1'],
+        current_step: ['PDD-E'],
       }),
     );
   });
@@ -285,20 +291,23 @@ describe('All registered projects register (P13, ADR 0025 §5)', () => {
     expect(useDashboardProjects).toHaveBeenLastCalledWith(expect.objectContaining({ q: 'icool' }));
   });
 
-  it('follows the global country filter and its Hub select narrows to that country, setting the global hub', async () => {
-    useHubFilterStore.setState({ hubId: null, region: 'India' });
+  it('follows the global country filter; its Hub multi-select adds hubs to the global selection (unioned)', async () => {
+    useHubFilterStore.getState().setSelection([], ['India']);
     useDashboardProjects.mockReturnValue(ok([]));
     const user = userEvent.setup();
     renderWithProviders(<ProjectBreakdown />);
-    expect(useDashboardProjects).toHaveBeenLastCalledWith(expect.objectContaining({ region: 'India' }));
-    expect(useProjectFacets).toHaveBeenLastCalledWith(null, 'India', expect.objectContaining({ categories: [], types: [] }));
+    expect(useDashboardProjects).toHaveBeenLastCalledWith(expect.objectContaining({ region: ['India'] }));
+    expect(useProjectFacets).toHaveBeenLastCalledWith({ hubIds: [], regions: ['India'] }, expect.objectContaining({ categories: [], types: [] }));
 
-    await user.click(screen.getByRole('combobox', { name: 'Hub' }));
+    await user.click(screen.getByRole('button', { name: 'Hub' }));
     const options = (await screen.findAllByRole('option')).map((o) => o.textContent);
-    expect(options).toEqual(['All', 'PD-India']);
+    expect(options[0]).toBe('All hubs');
+    expect(options).toContain('PD-India');
     await user.click(screen.getByRole('option', { name: 'PD-India' }));
-    expect(useHubFilterStore.getState()).toMatchObject({ hubId: 'hub-pdin', region: null });
-    expect(useDashboardProjects).toHaveBeenLastCalledWith(expect.objectContaining({ hub_id: 'hub-pdin' }));
+    expect(useHubFilterStore.getState()).toMatchObject({ hubIds: ['hub-pdin'], regions: ['India'] });
+    expect(useDashboardProjects).toHaveBeenLastCalledWith(
+      expect.objectContaining({ hub_id: ['hub-pdin'], region: ['India'] }),
+    );
   });
 
   it('renders an error state with retry when the list fails to load', () => {
@@ -323,7 +332,7 @@ describe('All registered projects register (P13, ADR 0025 §5)', () => {
 
     expect(useDashboardProjects).toHaveBeenLastCalledWith(expect.objectContaining({ category: ['A+', 'B'] }));
     // Facets and the country summary follow the same selection.
-    expect(useProjectFacets).toHaveBeenLastCalledWith(null, null, expect.objectContaining({ categories: ['A+', 'B'] }));
+    expect(useProjectFacets).toHaveBeenLastCalledWith({ hubIds: [], regions: [] }, expect.objectContaining({ categories: ['A+', 'B'] }));
     expect(screen.getByText(/No projects match these filters/i)).toBeInTheDocument();
     // "All" clears the category selection.
     await user.click(within(cats).getByRole('button', { name: 'All' }));
@@ -344,12 +353,12 @@ describe('All registered projects register (P13, ADR 0025 §5)', () => {
     const user = userEvent.setup();
     renderWithProviders(<ProjectBreakdown />);
     expect(screen.getByText('Name unavailable')).toBeInTheDocument();
-    await user.click(screen.getByRole('combobox', { name: 'Leader' }));
+    await user.click(screen.getByRole('button', { name: 'Leader' }));
     const options = (await screen.findAllByRole('option')).map((o) => o.textContent);
-    expect(options).toEqual(['All', 'Leader (name unavailable) · 1234', 'Leader (name unavailable) · 9999']);
+    expect(options).toEqual(['All leaders', 'Leader (name unavailable) · 1234', 'Leader (name unavailable) · 9999']);
     await user.click(screen.getByRole('option', { name: 'Leader (name unavailable) · 9999' }));
     expect(useDashboardProjects).toHaveBeenLastCalledWith(
-      expect.objectContaining({ leader_engineer_id: 'eng-ffff9999' }),
+      expect.objectContaining({ leader_engineer_id: ['eng-ffff9999'] }),
     );
   });
 

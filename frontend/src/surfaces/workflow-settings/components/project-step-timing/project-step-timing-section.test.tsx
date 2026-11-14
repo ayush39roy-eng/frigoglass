@@ -242,7 +242,7 @@ async function expand(name: string) {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  useHubFilterStore.setState({ hubId: null, region: null });
+  useHubFilterStore.getState().setSelection([], []);
   rowsServed = defaultRows();
   api.fetchGantt.mockImplementation(() => Promise.resolve(gantt(rowsServed)));
   api.setStepTiming.mockResolvedValue(response());
@@ -261,7 +261,7 @@ describe('Workflow page — Project step timing: every project as a timeline (P3
     await waitFor(() => expect(projectRows()).toHaveLength(3));
     expect(screen.queryAllByTestId('gantt-step-row')).toHaveLength(0);
     expect(screen.getByTestId('step-timing-count')).toHaveTextContent('3 of 3 projects shown');
-    expect(api.fetchGantt).toHaveBeenCalledWith({ hubId: undefined, region: undefined, priority: undefined }, expect.anything());
+    expect(api.fetchGantt).toHaveBeenCalledWith({ hubIds: undefined, regions: undefined, priority: undefined }, expect.anything());
     const badges = await screen.findAllByTestId('step-timing-not-placed');
     expect(badges).toHaveLength(1);
     expect(projectRows()[1]).toContainElement(badges[0]!);
@@ -273,10 +273,10 @@ describe('Workflow page — Project step timing: every project as a timeline (P3
   });
 
   it('the hub filter is a server param', async () => {
-    useHubFilterStore.setState({ hubId: 'hub-gr', region: null });
+    useHubFilterStore.getState().setSelection(['hub-gr'], []);
     renderPage();
     await waitFor(() =>
-      expect(api.fetchGantt).toHaveBeenCalledWith({ hubId: 'hub-gr', region: undefined, priority: undefined }, expect.anything()),
+      expect(api.fetchGantt).toHaveBeenCalledWith({ hubIds: ['hub-gr'], regions: undefined, priority: undefined }, expect.anything()),
     );
   });
 
@@ -416,9 +416,10 @@ describe('Workflow page — Project step timing: every project as a timeline (P3
     const user = userEvent.setup();
     renderPage();
     await waitFor(() => expect(projectRows()).toHaveLength(3));
-    await user.click(screen.getByRole('radio', { name: /^P3/ }));
+    await user.click(screen.getByRole('button', { name: /^P3/ }));
+    await user.click(screen.getByRole('button', { name: /^P1/ }));
     await waitFor(() =>
-      expect(api.fetchGantt).toHaveBeenCalledWith({ hubId: undefined, region: undefined, priority: 'P3' }, expect.anything()),
+      expect(api.fetchGantt).toHaveBeenCalledWith({ hubIds: undefined, regions: undefined, priority: ['P1', 'P3'] }, expect.anything()),
     );
   });
 

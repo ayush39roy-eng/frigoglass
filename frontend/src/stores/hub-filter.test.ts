@@ -1,96 +1,160 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { act, renderHook } from '@testing-library/react';
 
-import { migrateHubFilter, toHubFilterParams, useHubFilter, useHubFilterParams, useHubFilterStore } from './hub-filter';
+import {
+  legacyMirrors,
+  migrateHubFilter,
+  toHubFilterParams,
+  useHubFilter,
+  useHubFilterParams,
+  useHubFilterStore,
+  useHubSelection,
+} from './hub-filter';
 
 afterEach(() => {
-  useHubFilterStore.setState({ hubId: null, region: null });
+  useHubFilterStore.getState().clear();
   localStorage.removeItem('rpd-hub-filter');
 });
 
-describe('useHubFilterStore (ADR 0020)', () => {
-  it('defaults to "All hubs" (null)', () => {
-    expect(useHubFilterStore.getState().hubId).toBeNull();
+describe('useHubFilterStore — multi-select (contract §3)', () => {
+  it('defaults to "All hubs" (both lists empty)', () => {
+    expect(useHubFilterStore.getState()).toMatchObject({ hubIds: [], regions: [], hubId: null, region: null });
   });
 
-  it('persists the choice per browser under rpd-hub-filter', () => {
-    useHubFilterStore.getState().setHubId('hub-india');
-    const stored = JSON.parse(localStorage.getItem('rpd-hub-filter') ?? '{}') as { state?: { hubId?: string } };
-    expect(stored.state?.hubId).toBe('hub-india');
-    useHubFilterStore.getState().setHubId(null);
-    const cleared = JSON.parse(localStorage.getItem('rpd-hub-filter') ?? '{}') as { state?: { hubId?: unknown } };
-    expect(cleared.state?.hubId).toBeNull();
-  });
-
-  it('rehydrates a stored choice', async () => {
-    localStorage.setItem('rpd-hub-filter', JSON.stringify({ state: { hubId: 'hub-greece' }, version: 0 }));
-    await useHubFilterStore.persist.rehydrate();
-    expect(useHubFilterStore.getState().hubId).toBe('hub-greece');
-  });
-
-  it('useHubFilter() exposes hubId + setHubId', () => {
-    const { result } = renderHook(() => useHubFilter());
-    expect(result.current.hubId).toBeNull();
-    act(() => result.current.setHubId('hub-romania'));
-    expect(result.current.hubId).toBe('hub-romania');
-  });
-});
-
-describe('country filter (P13, ADR 0025)', () => {
-  it('defaults to no country', () => {
-    expect(useHubFilterStore.getState().region).toBeNull();
-  });
-
-  it('setRegion clears the hub; setHubId clears the country; clear() resets both', () => {
+  it('toggles hubs and countries independently (the server unions them)', () => {
     const st = useHubFilterStore.getState();
-    st.setHubId('hub-india');
-    useHubFilterStore.getState().setRegion('Greece');
-    expect(useHubFilterStore.getState()).toMatchObject({ hubId: null, region: 'Greece' });
-    useHubFilterStore.getState().setHubId('hub-romania');
-    expect(useHubFilterStore.getState()).toMatchObject({ hubId: 'hub-romania', region: null });
-    useHubFilterStore.getState().setRegion('India');
+    st.toggleRegion('India');
+    useHubFilterStore.getState().toggleHub('hub-gr');
+    useHubFilterStore.getState().toggleHub('hub-ro');
+    expect(useHubFilterStore.getState()).toMatchObject({ hubIds: ['hub-gr', 'hub-ro'], regions: ['India'] });
+    useHubFilterStore.getState().toggleHub('hub-gr');
+    useHubFilterStore.getState().toggleRegion('Greece');
+    expect(useHubFilterStore.getState()).toMatchObject({ hubIds: ['hub-ro'], regions: ['Greece', 'India'] });
     useHubFilterStore.getState().clear();
+    expect(useHubFilterStore.getState()).toMatchObject({ hubIds: [], regions: [] });
+  });
+
+  it('setHubId / setRegion replace the whole selection with one value (null clears)', () => {
+    useHubFilterStore.getState().setSelection(['a', 'b'], ['India']);
+    useHubFilterStore.getState().setHubId('hub-pd');
+    expect(useHubFilterStore.getState()).toMatchObject({ hubIds: ['hub-pd'], regions: [] });
+    useHubFilterStore.getState().setRegion('Romania');
+    expect(useHubFilterStore.getState()).toMatchObject({ hubIds: [], regions: ['Romania'] });
+    useHubFilterStore.getState().setRegion(null);
+    expect(useHubFilterStore.getState()).toMatchObject({ hubIds: [], regions: [] });
+  });
+
+  it('drops duplicates and keeps countries in Greece / India / Romania order', () => {
+    useHubFilterStore.getState().setSelection(['x', 'x', ''], ['Romania', 'Greece', 'Romania']);
+    expect(useHubFilterStore.getState()).toMatchObject({ hubIds: ['x'], regions: ['Greece', 'Romania'] });
+  });
+
+  it('keeps the legacy single-value mirrors only for exactly one hub or one country', () => {
+    expect(legacyMirrors(['h'], [])).toEqual({ hubId: 'h', region: null });
+    expect(legacyMirrors([], ['India'])).toEqual({ hubId: null, region: 'India' });
+    expect(legacyMirrors(['h'], ['India'])).toEqual({ hubId: null, region: null });
+    expect(legacyMirrors(['a', 'b'], [])).toEqual({ hubId: null, region: null });
+    useHubFilterStore.getState().setHubId('hub-1');
+    expect(useHubFilterStore.getState()).toMatchObject({ hubId: 'hub-1', region: null });
+    useHubFilterStore.getState().toggleHub('hub-2');
     expect(useHubFilterStore.getState()).toMatchObject({ hubId: null, region: null });
   });
 
-  it('persists the country under rpd-hub-filter, version 1', () => {
-    useHubFilterStore.getState().setRegion('Romania');
+  it('a legacy direct setState({ hubId } / { region }) is reconciled into the lists (Matrix compatibility)', () => {
+    useHubFilterStore.setState({ hubId: 'hub-romania' });
+    expect(useHubFilterStore.getState()).toMatchObject({ hubIds: ['hub-romania'], regions: [] });
+    useHubFilterStore.setState({ hubId: null, region: 'India' });
+    expect(useHubFilterStore.getState()).toMatchObject({ hubIds: [], regions: ['India'] });
+    useHubFilterStore.setState({ hubId: null, region: null });
+    expect(useHubFilterStore.getState()).toMatchObject({ hubIds: [], regions: [] });
+  });
+
+  it('persists the lists under rpd-hub-filter, version 2 (mirrors are not stored)', () => {
+    useHubFilterStore.getState().setSelection(['hub-india'], ['Romania']);
     const stored = JSON.parse(localStorage.getItem('rpd-hub-filter') ?? '{}') as {
-      state?: { hubId?: unknown; region?: unknown };
+      state?: unknown;
       version?: number;
     };
-    expect(stored.state).toEqual({ hubId: null, region: 'Romania' });
-    expect(stored.version).toBe(1);
+    expect(stored.state).toEqual({ hubIds: ['hub-india'], regions: ['Romania'] });
+    expect(stored.version).toBe(2);
   });
 
-  it('migrates an old P12 { hubId } payload (version 0) without losing the hub', async () => {
-    localStorage.setItem('rpd-hub-filter', JSON.stringify({ state: { hubId: 'hub-greece' }, version: 0 }));
+  it('useHubFilter() exposes the lists and the toggles', () => {
+    const { result } = renderHook(() => useHubFilter());
+    expect(result.current.hubIds).toEqual([]);
+    act(() => result.current.toggleHub('hub-romania'));
+    act(() => result.current.toggleRegion('India'));
+    expect(result.current.hubIds).toEqual(['hub-romania']);
+    expect(result.current.regions).toEqual(['India']);
+  });
+
+  it('useHubSelection() is stable across unrelated renders', () => {
+    const { result, rerender } = renderHook(() => useHubSelection());
+    const first = result.current;
+    rerender();
+    expect(result.current).toBe(first);
+    act(() => useHubFilterStore.getState().toggleRegion('Greece'));
+    expect(result.current).not.toBe(first);
+    expect(result.current).toEqual({ hubIds: [], regions: ['Greece'] });
+  });
+});
+
+describe('persisted-state migration (v0 / v1 → v2)', () => {
+  it('v1 { hubId } becomes [hubId]; null becomes []', async () => {
+    localStorage.setItem('rpd-hub-filter', JSON.stringify({ state: { hubId: 'hub-greece', region: null }, version: 1 }));
     await useHubFilterStore.persist.rehydrate();
-    expect(useHubFilterStore.getState()).toMatchObject({ hubId: 'hub-greece', region: null });
+    expect(useHubFilterStore.getState()).toMatchObject({
+      hubIds: ['hub-greece'],
+      regions: [],
+      hubId: 'hub-greece',
+      region: null,
+    });
   });
 
-  it('rehydrates a version-1 country payload', async () => {
+  it('v1 { region } becomes [region]', async () => {
     localStorage.setItem('rpd-hub-filter', JSON.stringify({ state: { hubId: null, region: 'India' }, version: 1 }));
     await useHubFilterStore.persist.rehydrate();
-    expect(useHubFilterStore.getState()).toMatchObject({ hubId: null, region: 'India' });
+    expect(useHubFilterStore.getState()).toMatchObject({ hubIds: [], regions: ['India'], region: 'India' });
   });
 
-  it('migrateHubFilter drops malformed values and keeps the two levels exclusive', () => {
-    expect(migrateHubFilter(undefined)).toEqual({ hubId: null, region: null });
-    expect(migrateHubFilter({ hubId: 42, region: 'Atlantis' })).toEqual({ hubId: null, region: null });
-    expect(migrateHubFilter({ region: 'Greece' })).toEqual({ hubId: null, region: 'Greece' });
-    expect(migrateHubFilter({ hubId: 'h', region: 'Greece' })).toEqual({ hubId: 'h', region: null });
+  it('v0 (P12) { hubId } migrates without losing the hub', async () => {
+    localStorage.setItem('rpd-hub-filter', JSON.stringify({ state: { hubId: 'hub-ro' }, version: 0 }));
+    await useHubFilterStore.persist.rehydrate();
+    expect(useHubFilterStore.getState()).toMatchObject({ hubIds: ['hub-ro'], regions: [] });
   });
 
-  it('useHubFilterParams() gives { hub_id?, region? } with absent keys when unset', () => {
+  it('rehydrates a v2 payload as stored', async () => {
+    localStorage.setItem(
+      'rpd-hub-filter',
+      JSON.stringify({ state: { hubIds: ['a', 'b'], regions: ['Romania', 'India'] }, version: 2 }),
+    );
+    await useHubFilterStore.persist.rehydrate();
+    expect(useHubFilterStore.getState()).toMatchObject({ hubIds: ['a', 'b'], regions: ['India', 'Romania'] });
+  });
+
+  it('migrateHubFilter drops malformed values', () => {
+    expect(migrateHubFilter(undefined)).toEqual({ hubIds: [], regions: [] });
+    expect(migrateHubFilter({ hubId: 42, region: 'Atlantis' })).toEqual({ hubIds: [], regions: [] });
+    expect(migrateHubFilter({ hubId: null, region: null })).toEqual({ hubIds: [], regions: [] });
+    expect(migrateHubFilter({ region: 'Greece' })).toEqual({ hubIds: [], regions: ['Greece'] });
+    expect(migrateHubFilter({ hubId: 'h', region: 'Greece' })).toEqual({ hubIds: ['h'], regions: ['Greece'] });
+    expect(migrateHubFilter({ hubIds: ['a', 7, 'a'], regions: ['Mars', 'India'] })).toEqual({
+      hubIds: ['a'],
+      regions: ['India'],
+    });
+  });
+});
+
+describe('API params (contract §1–§2)', () => {
+  it('useHubFilterParams() gives sorted lists, absent keys when empty', () => {
     const { result } = renderHook(() => useHubFilterParams());
     expect(result.current).toEqual({});
     const first = result.current;
-    act(() => useHubFilterStore.getState().setRegion('India'));
-    expect(result.current).toEqual({ region: 'India' });
+    act(() => useHubFilterStore.getState().setRegions(['Romania', 'India']));
+    expect(result.current).toEqual({ region: ['India', 'Romania'] });
     expect(result.current).not.toBe(first);
-    act(() => useHubFilterStore.getState().setHubId('hub-1'));
-    expect(result.current).toEqual({ hub_id: 'hub-1' });
-    expect(toHubFilterParams(null, null)).toEqual({});
+    act(() => useHubFilterStore.getState().setHubIds(['hub-z', 'hub-a']));
+    expect(result.current).toEqual({ hub_id: ['hub-a', 'hub-z'], region: ['India', 'Romania'] });
+    expect(toHubFilterParams([], [])).toEqual({});
   });
 });

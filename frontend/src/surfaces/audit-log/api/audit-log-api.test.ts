@@ -15,14 +15,14 @@ afterEach(() => {
 });
 
 describe('fetchAuditLog', () => {
-  it('requests GET /audit-log verbatim with every filter forwarded by name', async () => {
+  it('requests GET /audit-log verbatim with every filter forwarded by name (lists = repeated params)', async () => {
     mockApiGet.mockResolvedValueOnce({ items: [], total_count: 0, limit: 50, offset: 0 });
     await fetchAuditLog({
-      entity_type: 'Project',
+      entity_type: ['Project'],
       entity_id: 'p-1',
-      actor_user_id: 'u-1',
-      action: 'project.update',
-      hub_id: 'h-1',
+      actor_user_id: ['u-1'],
+      action: ['project.update', 'project.create'],
+      hub_id: ['h-1', 'h-2'],
       occurred_from: '2026-01-01T00:00:00.000Z',
       occurred_to: '2026-01-31T23:59:59.999Z',
       limit: 50,
@@ -30,11 +30,11 @@ describe('fetchAuditLog', () => {
     });
     expect(mockApiGet).toHaveBeenCalledWith('/audit-log', {
       query: {
-        entity_type: 'Project',
+        entity_type: ['Project'],
         entity_id: 'p-1',
-        actor_user_id: 'u-1',
-        action: 'project.update',
-        hub_id: 'h-1',
+        actor_user_id: ['u-1'],
+        action: ['project.update', 'project.create'],
+        hub_id: ['h-1', 'h-2'],
         occurred_from: '2026-01-01T00:00:00.000Z',
         occurred_to: '2026-01-31T23:59:59.999Z',
         limit: 50,

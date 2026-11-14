@@ -92,7 +92,8 @@ function select(q: Query = {}): ServerProject[] {
       (!q.hub_id || q.hub_id === p.hub_id) &&
       anyOf(q.category, p.category) &&
       anyOf(q.type, p.type) &&
-      (!q.status_ || q.status_ === p.status) &&
+      // ADR 0050: /priority-board sends status_ as a list; /priorities (Matrix) still a string.
+      (!q.status_ || (Array.isArray(q.status_) ? q.status_.includes(p.status) : q.status_ === p.status)) &&
       (!q.q || p.name.toLowerCase().includes(q.q.toLowerCase())),
   );
 }
@@ -385,12 +386,12 @@ describe('P21-T05 Matrix tabs', () => {
 
     await user.click(screen.getByRole('tab', { name: 'Priority board' }));
     await screen.findByRole('link', { name: 'Alpha Cooler' });
-    expect(lastQuery('/priority-board')).toMatchObject({ status_: 'In Development' });
+    expect(lastQuery('/priority-board')).toMatchObject({ status_: ['In Development'] });
     expect(boardTotal()).toBe(grid);
 
     // Category B narrows both (P31: a multi-select chip; repeated params).
     await user.click(within(screen.getByRole('group', { name: 'Category' })).getByRole('button', { name: 'B' }));
-    await waitFor(() => expect(lastQuery('/priority-board')).toMatchObject({ status_: 'In Development', category: ['B'] }));
+    await waitFor(() => expect(lastQuery('/priority-board')).toMatchObject({ status_: ['In Development'], category: ['B'] }));
     await waitFor(() => expect(boardTotal()).toBe(1));
     expect(lastQuery('/priorities')).toMatchObject({ status_: 'In Development', category: ['B'] });
     // A second category ORs: A or B, on both views.

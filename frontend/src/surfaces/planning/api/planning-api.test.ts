@@ -31,10 +31,10 @@ afterEach(() => {
 });
 
 describe('planning-api', () => {
-  it('requests /engineers with the hub_id query param', async () => {
+  it('requests /engineers with the hub_id query param (multi-select: sorted, repeated)', async () => {
     mockApiGet.mockResolvedValueOnce([]);
-    await fetchEngineers('hub-1');
-    expect(mockApiGet).toHaveBeenCalledWith('/engineers', { query: { hub_id: 'hub-1' } });
+    await fetchEngineers(['hub-2', 'hub-1']);
+    expect(mockApiGet).toHaveBeenCalledWith('/engineers', { query: { hub_id: ['hub-1', 'hub-2'] } });
   });
 
   it('requests /engineers with no hub_id when unfiltered', async () => {
@@ -128,12 +128,12 @@ describe('planning-api', () => {
     expect(mockApiGet).toHaveBeenCalledWith('/planning/resource-load/options', {});
   });
 
-  it('P19: resource-load filters map to query params (single hub_id, repeated list params, "All" sends nothing)', () => {
-    const empty = { hubId: null, types: [], statuses: [], departments: [], categories: [], engineerIds: [] };
+  it('P19: resource-load filters map to query params (repeated list params incl. hub_id, "All" sends nothing)', () => {
+    const empty = { hubIds: [], types: [], statuses: [], departments: [], categories: [], engineerIds: [] };
     expect(resourceLoadSearch('remaining', empty)).toBe('basis=remaining');
     expect(
       resourceLoadSearch('year', {
-        hubId: 'hub-1',
+        hubIds: ['hub-2', 'hub-1'],
         types: ['NM', 'CO'],
         statuses: ['In Queue'],
         departments: ['Sales'],
@@ -141,13 +141,13 @@ describe('planning-api', () => {
         engineerIds: ['e2', 'e1'],
       }),
     ).toBe(
-      'basis=year&hub_id=hub-1&project_type=CO&project_type=NM&project_status=In+Queue&requesting_department=Sales&category=B&engineer_id=e1&engineer_id=e2',
+      'basis=year&hub_id=hub-1&hub_id=hub-2&project_type=CO&project_type=NM&project_status=In+Queue&requesting_department=Sales&category=B&engineer_id=e1&engineer_id=e2',
     );
   });
 
   it('P19: fetchResourceLoad puts the params on the path', async () => {
     mockApiGet.mockResolvedValueOnce({});
-    await fetchResourceLoad('remaining', { hubId: null, types: ['NM'], statuses: [], departments: [], categories: [], engineerIds: [] });
+    await fetchResourceLoad('remaining', { hubIds: [], types: ['NM'], statuses: [], departments: [], categories: [], engineerIds: [] });
     expect(mockApiGet).toHaveBeenCalledWith('/planning/resource-load?basis=remaining&project_type=NM', {});
   });
 });

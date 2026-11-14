@@ -63,7 +63,7 @@ describe('AnalyticsBreakdown click-to-list', () => {
       isError: false,
     });
     renderWithProviders(
-      <ProjectListProvider scope={{ hubId: null, region: null, selection: { categories: [], types: [] } }}>
+      <ProjectListProvider scope={{ hub: { hubIds: [], regions: [] }, selection: { categories: [], types: [] } }}>
         <AnalyticsBreakdown data={DATA} pipelineTotal={2} />
       </ProjectListProvider>,
     );

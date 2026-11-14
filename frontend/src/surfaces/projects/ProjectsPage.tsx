@@ -45,7 +45,7 @@ import {
   type ProjectStatus,
 } from '@/types/enums';
 
-import { ALL, FilterSelect } from '@/surfaces/dashboard/components/project-breakdown';
+import { FilterSelect } from '@/surfaces/dashboard/components/project-breakdown';
 import { useDashboardProjects, useProjectFacets } from '@/surfaces/dashboard/hooks/use-dashboard';
 import type { ProjectFilterParams, ProjectFilterRow } from '@/surfaces/dashboard/api/types';
 import { WriteForbiddenNotice } from '@/surfaces/registration/components/access-notice';
@@ -94,13 +94,14 @@ type Sort = 'name' | 'priority';
 /** P31: category and type are NOT here — they are multi-select URL state
  *  (`?category=A%2B&category=B&type=NM`, `useCategoryTypeParams`). */
 interface Filters {
-  status_: string;
-  priority: string;
-  leader: string;
-  step: string;
+  /** Multi-select (owner ask 2026-11-13): repeated params; empty = all. */
+  status_: ProjectStatus[];
+  priority: ProjectPriority[];
+  leader: string[];
+  step: string[];
 }
 
-const EMPTY_FILTERS: Filters = { status_: ALL, priority: ALL, leader: ALL, step: ALL };
+const EMPTY_FILTERS: Filters = { status_: [], priority: [], leader: [], step: [] };
 
 /** Server limit on `q` (API_CONTRACT_P13 §3). */
 const SEARCH_MAX = 100;
@@ -108,10 +109,6 @@ const SEARCH_MAX = 100;
 const HIGHLIGHT_MS = 12_000;
 
 const SORT_LABELS: Record<Sort, string> = { name: 'Name (A–Z)', priority: 'Priority rank' };
-
-function pick<T extends string>(value: string): T | undefined {
-  return value === ALL ? undefined : (value as T);
-}
 
 /** ADR 0028: a leader with no served name stays selectable by an id suffix. */
 function leaderOptionLabel(leader: { id: string; name: string | null }): string {
@@ -137,7 +134,7 @@ export default function ProjectsPage(): React.JSX.Element {
   /** ADR 0040: show only VIP projects (narrows the served rows). */
   const [vipOnly, setVipOnly] = React.useState(false);
   const debouncedSearch = useDebouncedValue(search.trim(), 300);
-  const { hubId, region, setHubId } = useHubFilter();
+  const { hubIds, regions, setHubIds, setHubId } = useHubFilter();
   const me = useSessionStore((st) => st.me);
   const hubsQuery = useHubs();
 
@@ -163,40 +160,40 @@ export default function ProjectsPage(): React.JSX.Element {
 
   const params = React.useMemo<ProjectFilterParams>(() => {
     const next: ProjectFilterParams = {
-      hub_id: hubId ?? undefined,
+      hub_id: selectionParam(hubIds),
       category: selectionParam(chips.categories),
-      status_: pick<ProjectStatus>(filters.status_),
-      priority: pick<ProjectPriority>(filters.priority),
+      status_: selectionParam(filters.status_),
+      priority: selectionParam(filters.priority),
     };
     // Optional params only when set, so the unfiltered key matches the Dashboard's.
-    if (region) next.region = region;
+    if (regions.length > 0) next.region = regions;
     if (debouncedSearch) next.q = debouncedSearch.slice(0, SEARCH_MAX);
     if (chips.types.length > 0) next.type = chips.types;
-    if (filters.leader !== ALL) next.leader_engineer_id = filters.leader;
-    if (filters.step !== ALL) next.current_step = filters.step;
+    if (filters.leader.length > 0) next.leader_engineer_id = filters.leader;
+    if (filters.step.length > 0) next.current_step = filters.step;
     if (sort !== 'name') next.sort = sort;
     return next;
-  }, [filters, hubId, region, debouncedSearch, sort, chips.categories, chips.types]);
+  }, [filters, hubIds, regions, debouncedSearch, sort, chips.categories, chips.types]);
 
   const query = useDashboardProjects(params);
-  const facets = useProjectFacets(hubId, region);
+  const hubSelection = React.useMemo(() => ({ hubIds, regions }), [hubIds, regions]);
+  const facets = useProjectFacets(hubSelection);
 
+  // Every in-scope hub: hubs and countries are UNIONED server-side.
   const hubOptions = React.useMemo(() => {
     const inScope = hubsInScope(me, hubsQuery.data) ?? [];
-    return inScope
-      .filter((h) => region === null || h.lab_region === region)
-      .map((h) => ({ value: h.id, label: hubPickerLabel(h, hubsQuery.data) }));
-  }, [me, hubsQuery.data, region]);
+    return inScope.map((h) => ({ value: h.id, label: hubPickerLabel(h, hubsQuery.data) }));
+  }, [me, hubsQuery.data]);
 
   const hasLocalFilter =
     vipOnly ||
     debouncedSearch !== '' ||
-    Object.values(filters).some((v) => v !== ALL) ||
+    Object.values(filters).some((v) => v.length > 0) ||
     chips.categories.length > 0 ||
     chips.types.length > 0;
-  const isFiltered = hasLocalFilter || hubId !== null || region !== null;
+  const isFiltered = hasLocalFilter || hubIds.length > 0 || regions.length > 0;
 
-  const set = (key: keyof Filters) => (next: string) => setFilters((prev) => ({ ...prev, [key]: next }));
+  const set = (key: keyof Filters) => (next: string[]) => setFilters((prev) => ({ ...prev, [key]: next }));
   const clearChips = chips.clear;
   const clearLocal = (): void => {
     setFilters(EMPTY_FILTERS);
@@ -387,33 +384,35 @@ export default function ProjectsPage(): React.JSX.Element {
           >
             <FilterSelect
               label="Hub"
-              value={hubId ?? ALL}
-              onChange={(next) => {
-                if (next !== ALL) setHubId(next);
-                else if (hubId !== null) setHubId(null);
-              }}
+              allLabel="All hubs"
+              value={hubIds}
+              onChange={setHubIds}
               options={hubOptions}
             />
             <FilterSelect
               label="Status"
+              allLabel="All statuses"
               value={filters.status_}
               onChange={set('status_')}
               options={UI_PROJECT_STATUSES.map((st) => ({ value: st, label: st }))}
             />
             <FilterSelect
               label="Priority"
+              allLabel="All priorities"
               value={filters.priority}
               onChange={set('priority')}
               options={PROJECT_PRIORITIES.map((p) => ({ value: p, label: p }))}
             />
             <FilterSelect
               label="Leader"
+              allLabel="All leaders"
               value={filters.leader}
               onChange={set('leader')}
               options={(facets.data?.leaders ?? []).map((l) => ({ value: l.id, label: leaderOptionLabel(l) }))}
             />
             <FilterSelect
               label="Current step"
+              allLabel="All steps"
               value={filters.step}
               onChange={set('step')}
               options={(facets.data?.steps ?? []).map((st) => ({ value: st.code, label: `${st.code} · ${st.name}` }))}

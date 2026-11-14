@@ -10,7 +10,7 @@
  */
 
 import { apiGet, ApiError, type ApiRequestOptions } from '@/lib/api/client';
-import type { LabRegion } from '@/types/enums';
+import { hasHubSelection, NO_HUB_SELECTION, toHubFilterParams, type HubSelection } from '@/stores/hub-filter';
 
 import type {
   ClassBreakdown,
@@ -24,39 +24,34 @@ type FetchCtx = Pick<ApiRequestOptions, 'signal'>;
 /** P12 (ADR 0020): the global hub filter as `hub_id`, ANDed server-side with the
  *  caller's scope. With a hub, `rows` holds that hub and `areas[]` the area
  *  containing it; lab figures stay region-wide (ADR 0020 §4). */
-function withHubQuery(
-  ctx: FetchCtx,
-  hubId: string | null | undefined,
-  region?: LabRegion | null,
-): ApiRequestOptions {
+function withHubQuery(ctx: FetchCtx, hub: HubSelection = NO_HUB_SELECTION): ApiRequestOptions {
   // P13 (ADR 0025): with a country, hub rows are that country's hubs, `areas[]`
   // the containing area, and lab rows that lab region — all server-side.
-  if (!hubId && !region) return ctx;
-  return { ...ctx, query: { hub_id: hubId ?? undefined, region: region ?? undefined } };
+  // Multi-select contract §2: hubs and countries as repeated params, UNIONED;
+  // lab regions = scoped ∩ (regions of the hubs ∪ the countries), server-side.
+  if (!hasHubSelection(hub)) return ctx;
+  return { ...ctx, query: { ...toHubFilterParams(hub.hubIds, hub.regions) } };
 }
 
 export function fetchHubLoadVsCapacity(
   ctx: FetchCtx = {},
-  hubId?: string | null,
-  region?: LabRegion | null,
+  hub?: HubSelection,
 ): Promise<HubCapacitySummary> {
-  return apiGet<HubCapacitySummary>('/capacity/hub-load', withHubQuery(ctx, hubId, region));
+  return apiGet<HubCapacitySummary>('/capacity/hub-load', withHubQuery(ctx, hub));
 }
 
 export function fetchClassBreakdown(
   ctx: FetchCtx = {},
-  hubId?: string | null,
-  region?: LabRegion | null,
+  hub?: HubSelection,
 ): Promise<ClassBreakdown> {
-  return apiGet<ClassBreakdown>('/capacity/class-breakdown', withHubQuery(ctx, hubId, region));
+  return apiGet<ClassBreakdown>('/capacity/class-breakdown', withHubQuery(ctx, hub));
 }
 
 export function fetchEngineerUtilization(
   ctx: FetchCtx = {},
-  hubId?: string | null,
-  region?: LabRegion | null,
+  hub?: HubSelection,
 ): Promise<EngineerUtilizationResponse> {
-  return apiGet<EngineerUtilizationResponse>('/capacity/engineer-utilization', withHubQuery(ctx, hubId, region));
+  return apiGet<EngineerUtilizationResponse>('/capacity/engineer-utilization', withHubQuery(ctx, hub));
 }
 
 /**

@@ -34065,3 +34065,20 @@ passed alone. **P32-R01 is not the cause.** Tests only; no production code chang
   - Full backend suite (`--no-cov`): 2653 passed, 0 failed.
   - Ruff clean. Mypy: no errors on the edited lines (the untyped-tests baseline is pre-existing).
   - `.coverage` restored.
+
+## [2026-11-15] Multi-select filters (owner ask 2026-11-13) — frontend-builder: DONE (Matrix out of scope)
+
+Contract: `docs/API_CONTRACT_MULTISELECT.md`. Worktree `multi-select-filters`, not committed. No IMPLEMENTATION_PLAN row exists for this ask, so none was marked.
+
+- **Hub store** (`stores/hub-filter.ts`): `hubIds: string[]` + `regions: LabRegion[]`; actions `setHubIds / setRegions / setSelection / toggleHub / toggleRegion`; `setHubId / setRegion` replace the selection with one value (null clears). Persist `version: 2` (`partialize` keeps only the lists). `migrateHubFilter` maps v0/v1 `{ hubId, region }` to `[id]` / `[]`, cleans v2 lists. `toHubFilterParams` / `useHubFilterParams` return SORTED lists; new `useHubSelection()`, `hasHubSelection`, `NO_HUB_SELECTION`. Legacy `hubId` / `region` mirrors are kept (not persisted) for the Matrix only: set when the selection is exactly one hub or exactly one country, else null. A store subscription rebuilds the lists from a direct legacy `setState({ hubId })`, which the Matrix tests use.
+- **Query keys:** `withHub` takes `{ hubIds, regions }` and keys sorted lists (`hubKey`). `prioritySummary` keeps the legacy (hubId, region) signature. `priorityBoard(hub, filters)`, `checkInsDue(hub)`, `vipLinkSearch(q, hub)`, `vipBoard` lists, `engineers(string | string[])`. Audit, board, dashboard-projects and gantt filter lists are sorted in keys.
+- **Shared component** `components/shared/multi-select-dropdown.tsx` (`MultiSelectDropdown`), plus `lib/multi-select-summary.ts`. It is a Radix Popover holding an `aria-multiselectable` listbox. "All …" means nothing selected. A search box shows above 8 options. Options are grouped by `group`. Keyboard: Arrow / Home / End / Space / Enter / Escape. The trigger summarises the selection.
+- **Header:** `HubFilterSelect` is one multi-select with Countries and Hubs groups. `CountrySegmented` is a multiple toggle group. `HubFilterChip` reads "Hub: X", "Country: X" or "Hubs: India + R&D-Greece" / "3 hubs". Out-of-scope picks are pruned with `pruneHubSelection`.
+- **Converted to multi-select:** Gantt Status / Leader / Current step; Gantt and Workflow-timing Priority toggles; Projects and Dashboard-register Hub / Status / Priority / Leader / Current step; Priority board Status / Leader; Planning Engineers Hub; Resource-load Hub; What-if results Source / Hub / Outcome; Audit log Hub.
+- **Audit log Entity type / Actor / Action:** comma-separated values become repeated params (`lib/filter-values.ts`). There is no served option list to build a dropdown from.
+- **Dashboard drill-down:** a hub cell now sends only that hub (`hub_id` and `region` are unioned server-side). VIP link search sends either the header hubs inside the area or the area.
+- **Backend deltas handled:** `ResourceLoadFiltersApplied.hub_id` / `region` are lists. Exports pass the lists.
+- **Left single, by design:** sort, view toggles, zoom, What-if Year (it scopes the KPI tiles), the capacity series picker, the compare pair, and form fields.
+- **Not built:** the check-in page has no step filter. History is still fetched per stage, because a multi-`step_id` reply is one merged list.
+- **Matrix untouched.** `MatrixPage.board.test.tsx` "d:" fails: the embedded board now sends `status_` as a one-element list (same bytes on the wire). The Matrix test's fake server and assertion compare a string. Fix in the Matrix session: `status_: ['In Development']` and a list-aware fake.
+- **Checks:** tsc 0 errors; eslint 0 errors, 9 warnings, none new; vitest 235 files / 1895 tests, 1 failed (the Matrix test above).

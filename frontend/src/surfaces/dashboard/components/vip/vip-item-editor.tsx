@@ -24,6 +24,7 @@ import {
   type VipPillar,
   type VipStatusTag,
 } from '@/lib/api/vip';
+import { useHubs } from '@/lib/api/reference';
 import { queryKeys } from '@/lib/query-keys';
 import { useDebouncedValue } from '@/lib/use-debounced-value';
 import { useHubFilter } from '@/stores/hub-filter';
@@ -213,14 +214,34 @@ function ProjectLinks({
 }): React.JSX.Element {
   const [q, setQ] = React.useState('');
   const debounced = useDebouncedValue(q.trim(), 300);
-  const { hubId } = useHubFilter();
+  const { hubIds } = useHubFilter();
+  const hubsQuery = useHubs();
   const searchId = React.useId();
   // The area is a country (OQ #39): search within it, so every offered project
   // can be linked (the server still checks, 422 VIP_PROJECT_AREA_MISMATCH).
+  // Multi-select: the server UNIONS `hub_id` and `region`, so the two are never
+  // sent together here — the header's hubs that lie in the area narrow the
+  // search; with none, the whole area is searched.
+  const areaHubs = React.useMemo(
+    () => hubIds.filter((id) => hubsQuery.data?.find((h) => h.id === id)?.lab_region === area).sort(),
+    [hubIds, hubsQuery.data, area],
+  );
+  const scope = React.useMemo(
+    (): { hubIds: string[]; regions: VipArea[] } =>
+      areaHubs.length > 0 ? { hubIds: areaHubs, regions: [] } : { hubIds: [], regions: [area] },
+    [areaHubs, area],
+  );
   const search = useQuery({
-    queryKey: queryKeys.vipLinkSearch(debounced, hubId, area),
+    queryKey: queryKeys.vipLinkSearch(debounced, scope),
     queryFn: ({ signal }) =>
-      fetchDashboardProjects({ q: debounced.slice(0, SEARCH_MAX), region: area, hub_id: hubId ?? undefined, sort: 'name' }, { signal }),
+      fetchDashboardProjects(
+        {
+          q: debounced.slice(0, SEARCH_MAX),
+          ...(scope.hubIds.length > 0 ? { hub_id: scope.hubIds } : { region: scope.regions }),
+          sort: 'name',
+        },
+        { signal },
+      ),
     enabled: debounced.length >= 2,
   });
   const linked = new Set(links.map((l) => l.id));

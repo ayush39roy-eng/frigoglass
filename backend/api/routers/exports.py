@@ -77,9 +77,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from api.db import get_db
 from api.deps import get_current_principal, require_permission
 from api.query_params import (
+    MAX_FILTER_VALUES,
     CategoryListQuery,
+    CurrentStepListQuery,
     DashboardCategoryListQuery,
     DashboardTypeListQuery,
+    HubIdListQuery,
+    LeaderListQuery,
+    PriorityListQuery,
+    RegionListQuery,
+    StatusListQuery,
     TypeListQuery,
 )
 from core.minio_config import get_minio_client, get_minio_settings
@@ -91,7 +98,6 @@ from models.enums import (
     ExportFormat,
     ExportJobStatus,
     ExportSurface,
-    LabRegion,
     ProjectType,
     RoleName,
 )
@@ -232,15 +238,15 @@ async def _respond(
 async def export_dashboard(
     response: Response,
     format: ExportFormat = ExportFormat.CSV,
-    hub_id: uuid.UUID | None = None,
+    hub_id: HubIdListQuery = None,
     category: DashboardCategoryListQuery = None,
-    status_: str | None = None,
-    priority: str | None = None,
-    region: LabRegion | None = None,
+    status_: StatusListQuery = None,
+    priority: PriorityListQuery = None,
+    region: RegionListQuery = None,
     q: Annotated[str | None, Query(max_length=100)] = None,
     type_: DashboardTypeListQuery = None,
-    leader_engineer_id: uuid.UUID | None = None,
-    current_step: Annotated[str | None, Query(max_length=10)] = None,
+    leader_engineer_id: LeaderListQuery = None,
+    current_step: CurrentStepListQuery = None,
     sort: Literal["name", "priority"] = "name",
     async_export: bool = False,
     db: AsyncSession = Depends(get_db),
@@ -255,20 +261,22 @@ async def export_dashboard(
     several as a list.
     """
 
+    # ADR 0050: every list filter is stored as `stored_filter` stores it (a
+    # bare string for one value, the pre-ADR-0050 shape; a list for several).
     filters: ExportFilters = {
-        "hub_id": str(hub_id) if hub_id else None,
+        "hub_id": stored_filter(hub_id),
         "category": stored_filter(category),
-        "status_": status_,
-        "priority": priority,
+        "status_": stored_filter(status_),
+        "priority": stored_filter(priority),
     }
     # P13 (ADR 0025): the register's filters, stored only when set so the
     # persisted filter shape of pre-P13 jobs is unchanged.
     p13_filters: ExportFilters = {
-        "region": region.value if region else None,
+        "region": stored_filter(region),
         "q": q,
         "type_": stored_filter(type_),
-        "leader_engineer_id": str(leader_engineer_id) if leader_engineer_id else None,
-        "current_step": current_step,
+        "leader_engineer_id": stored_filter(leader_engineer_id),
+        "current_step": stored_filter(current_step),
         "sort": sort if sort != "name" else None,
     }
     filters.update({k: v for k, v in p13_filters.items() if v is not None})
@@ -312,9 +320,9 @@ async def export_matrix(
     response: Response,
     format: ExportFormat = ExportFormat.CSV,
     currency: str | None = None,
-    hub_id: uuid.UUID | None = None,
+    hub_id: HubIdListQuery = None,
     category: CategoryListQuery = None,
-    region: LabRegion | None = None,
+    region: RegionListQuery = None,
     type_: TypeListQuery = None,
     async_export: bool = False,
     db: AsyncSession = Depends(get_db),
@@ -336,11 +344,11 @@ async def export_matrix(
 
     filters: ExportFilters = {
         "currency": currency,
-        "hub_id": str(hub_id) if hub_id else None,
+        "hub_id": stored_filter(hub_id),
         "category": stored_filter(category),
     }
-    if region is not None:
-        filters["region"] = region.value
+    if region:
+        filters["region"] = stored_filter(region)
     # P31: stored only when set, so a pre-P31 job's filter shape is unchanged.
     if type_:
         filters["type_"] = stored_filter(type_)
@@ -360,8 +368,8 @@ async def export_matrix(
 async def export_gantt(
     response: Response,
     format: ExportFormat = ExportFormat.CSV,
-    hub_id: uuid.UUID | None = None,
-    region: LabRegion | None = None,
+    hub_id: HubIdListQuery = None,
+    region: RegionListQuery = None,
     project_id: uuid.UUID | None = None,
     category: CategoryListQuery = None,
     type_: TypeListQuery = None,
@@ -377,11 +385,11 @@ async def export_gantt(
     """
 
     filters: ExportFilters = {
-        "hub_id": str(hub_id) if hub_id else None,
+        "hub_id": stored_filter(hub_id),
         "project_id": str(project_id) if project_id else None,
     }
-    if region is not None:
-        filters["region"] = region.value
+    if region:
+        filters["region"] = stored_filter(region)
     # P31: the Gantt toolbar's category / type selection, stored only when set.
     if category:
         filters["category"] = stored_filter(category)
@@ -403,14 +411,18 @@ async def export_gantt(
 async def export_project_registration(
     response: Response,
     format: ExportFormat = ExportFormat.CSV,
-    hub_id: uuid.UUID | None = None,
+    hub_id: HubIdListQuery = None,
     category: CategoryListQuery = None,
-    status_: str | None = None,
-    priority: str | None = None,
+    status_: StatusListQuery = None,
+    priority: PriorityListQuery = None,
     type_: TypeListQuery = None,
     legacy_type: Annotated[
         list[ProjectType] | None,
-        Query(alias="type_", description="Pre-P31 spelling of `type`, ORed with it."),
+        Query(
+            alias="type_",
+            description="Pre-P31 spelling of `type`, ORed with it.",
+            max_length=MAX_FILTER_VALUES,
+        ),
     ] = None,
     q: Annotated[str | None, Query(max_length=100)] = None,
     async_export: bool = False,
@@ -423,10 +435,10 @@ async def export_project_registration(
     docstring."""
 
     filters: ExportFilters = {
-        "hub_id": str(hub_id) if hub_id else None,
+        "hub_id": stored_filter(hub_id),
         "category": stored_filter(category),
-        "status_": status_,
-        "priority": priority,
+        "status_": stored_filter(status_),
+        "priority": stored_filter(priority),
         # P31: `type` and the pre-P31 `type_` spelling, as on `GET /projects`.
         "type_": stored_filter([*(type_ or []), *(legacy_type or [])]),
     }
@@ -450,7 +462,7 @@ async def export_project_registration(
 async def export_capacity_planning(
     response: Response,
     format: ExportFormat = ExportFormat.CSV,
-    hub_id: uuid.UUID | None = None,
+    hub_id: HubIdListQuery = None,
     entity: Literal["engineers", "chambers"] = "engineers",
     async_export: bool = False,
     db: AsyncSession = Depends(get_db),
@@ -461,7 +473,7 @@ async def export_capacity_planning(
     `services.export_builder.build_capacity_planning_sheets`.
     """
 
-    filters: ExportFilters = {"hub_id": str(hub_id) if hub_id else None}
+    filters: ExportFilters = {"hub_id": stored_filter(hub_id)}
     csv_sheet = "Engineers" if entity == "engineers" else "Chambers"
     return await _respond(
         db,

@@ -6,7 +6,7 @@ import { useHubs } from '@/lib/api/reference';
 import { cn } from '@/lib/utils';
 import { isLabRegion, useHubFilter } from '@/stores/hub-filter';
 import { useSessionStore } from '@/stores/session';
-import { LAB_REGIONS } from '@/types/enums';
+import { LAB_REGIONS, type LabRegion } from '@/types/enums';
 
 import { CountryFlag } from './country-flag';
 import { hubsInScope, regionsInScope } from './hub-scope';
@@ -15,10 +15,12 @@ const ALL = 'all';
 
 /**
  * The mock-up's Dashboard header buttons: All Hubs · Greece · India · Romania
- * (ADR 0025 §3, contract §4). Bound to the same global store as the header
- * select, so both always agree. Picking a country clears any hub; "All Hubs"
- * clears both. With a single hub selected none of the buttons is on — the
- * `HubFilterChip` beside it names the hub.
+ * (ADR 0025 §3), multi-select (contract §3): each country is a toggle, so
+ * several can be on at once; "All Hubs" clears the whole selection (countries
+ * AND hubs) and is on when nothing is selected. Bound to the same global store
+ * as the header select, so both always agree. Hubs picked in the header stay
+ * selected beside the countries (the server unions them); the `HubFilterChip`
+ * names the full selection.
  *
  * Countries with no hub in the caller's scope are hidden once `/me` and
  * `GET /hubs` have loaded (all three show until then; the server ANDs the
@@ -28,24 +30,27 @@ const ALL = 'all';
 export function CountrySegmented({ className }: { className?: string }): React.JSX.Element {
   const me = useSessionStore((s) => s.me);
   const hubsQuery = useHubs();
-  const { hubId, region, setRegion, clear } = useHubFilter();
+  const { hubIds, regions, setRegions, clear } = useHubFilter();
 
-  const regions = React.useMemo(() => regionsInScope(hubsInScope(me, hubsQuery.data)), [me, hubsQuery.data]);
-  const shown = regions ?? LAB_REGIONS;
+  const scoped = React.useMemo(() => regionsInScope(hubsInScope(me, hubsQuery.data)), [me, hubsQuery.data]);
+  const shown = scoped ?? LAB_REGIONS;
 
-  const value = hubId !== null ? '' : (region ?? ALL);
+  const nothing = hubIds.length === 0 && regions.length === 0;
+  const value = nothing ? [ALL] : [...regions];
 
-  const onValueChange = (next: string): void => {
-    // Radix lets a single-select group be emptied by re-clicking the active
-    // item; keep the current choice instead.
-    if (next === '') return;
-    if (next === ALL) clear();
-    else if (isLabRegion(next)) setRegion(next);
+  const onValueChange = (next: string[]): void => {
+    // "All Hubs" newly pressed (or everything un-pressed) clears the selection.
+    if ((next.includes(ALL) && !nothing) || next.length === 0) {
+      clear();
+      return;
+    }
+    setRegions(next.filter((v): v is LabRegion => isLabRegion(v)));
   };
 
   return (
     <ToggleGroup
-      type="single"
+      type="multiple"
+      role="group"
       value={value}
       onValueChange={onValueChange}
       aria-label="Country filter"

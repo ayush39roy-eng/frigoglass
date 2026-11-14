@@ -26,7 +26,7 @@ describe('Priority board API (P31 multi-select)', () => {
     const wrapper = ({ children }: { children: React.ReactNode }) => (
       <QueryClientProvider client={client}>{children}</QueryClientProvider>
     );
-    const { result } = renderHook(() => usePriorityBoard('h1', null, { category: ['C', 'A+'], type: ['RC', 'NM'] }), {
+    const { result } = renderHook(() => usePriorityBoard({ hubIds: ['h1'], regions: [] }, { category: ['C', 'A+'], type: ['RC', 'NM'] }), {
       wrapper,
     });
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
@@ -36,8 +36,7 @@ describe('Priority board API (P31 multi-select)', () => {
     );
     expect(client.getQueryCache().getAll()[0]!.queryKey).toEqual([
       'priority-board',
-      'h1',
-      null,
+      { hubIds: ['h1'], regions: [] },
       { category: ['A+', 'C'], type: ['NM', 'RC'] },
     ]);
   });

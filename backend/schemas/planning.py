@@ -155,8 +155,10 @@ class ResourceLoadTotals(BaseModel):
 class ResourceLoadFilters(BaseModel):
     """The filters the server applied, echoed back (lists sorted, deduplicated)."""
 
-    hub_id: uuid.UUID | None
-    region: LabRegion | None
+    #: ADR 0050: the requested hubs / countries (sorted, deduplicated; empty
+    #: = no filter). Echoed as requested; the RBAC scope still applies.
+    hub_id: list[uuid.UUID]
+    region: list[LabRegion]
     project_type: list[ProjectType]
     project_status: list[ProjectStatus]
     requesting_department: list[str]
