@@ -4,7 +4,6 @@ import {
   actualSpan,
   barGeometry,
   delayConnectorGeometry,
-  dragLastWeek,
   dragMoveStartWeek,
   projectWaterfallScale,
   dragResizeDuration,
@@ -345,32 +344,25 @@ describe('W52 clipping (ADR 0024 — 52-week display horizon)', () => {
   });
 });
 
-describe('P32-R04 projectWaterfallScale / maxDragWeek', () => {
-  const st = (s: number | null, e: number | null, floor: number | null = null) => ({
+describe('P32-R04 projectWaterfallScale (read-only since P33-T15)', () => {
+  const st = (s: number | null, e: number | null) => ({
     planned_start_week: s,
     planned_end_week: e,
     actual_start_week: null,
     actual_end_week: null,
-    start_not_before_week: floor,
   });
 
-  it('spans 2 weeks before min(first start, CURRENT_WEEK) to max(W52, last end, floor) + 2, capped at W78', () => {
+  it('spans 2 weeks before min(first start, CURRENT_WEEK) to max(W52, last end) + 2, capped at W78', () => {
     const inYear = projectWaterfallScale([st(44, 47), st(48, 50)], 24);
-    expect(inYear).toMatchObject({ originWeek: 40, horizonWeeks: 15, weekWidthPx: 24, maxDragWeek: 78 });
+    expect(inYear).toEqual({ originWeek: 40, horizonWeeks: 15, weekWidthPx: 24, totalWidthPx: 360 });
     expect(lastScaleWeek(inYear)).toBe(54);
     const early = projectWaterfallScale([st(10, 20), st(21, 60)], 24);
     expect(early.originWeek).toBe(8);
     expect(lastScaleWeek(early)).toBe(62);
-    expect(lastScaleWeek(projectWaterfallScale([st(44, 47, 70)], 24))).toBe(72);
     expect(lastScaleWeek(projectWaterfallScale([st(44, 77)], 24))).toBe(78);
   });
 
-  it('a drag may request up to maxDragWeek; without it the axis end (Timeline unchanged)', () => {
-    const scale = projectWaterfallScale([st(44, 47)], 24);
-    expect(dragLastWeek(scale)).toBe(78);
-    expect(dragMoveStartWeek(50, 100, scale)).toBe(78);
-    const timeline = makeWeekScale('weeks');
-    expect(dragLastWeek(timeline)).toBe(52);
-    expect(dragMoveStartWeek(50, 100, timeline)).toBe(52);
+  it('the What-if import drag clamps a move to the axis end', () => {
+    expect(dragMoveStartWeek(50, 100, makeWeekScale('weeks'))).toBe(52);
   });
 });

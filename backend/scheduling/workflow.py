@@ -21,7 +21,11 @@ construction, on:
     capture"): normalised status, derived `remaining`, the `data_error` that
     rejects a project with inconsistent actuals, the `Blocked` hold set;
   - the two pure by-products of a run that need no solve: the
-    *unconstrained* finish week and the duration-weighted `progress_pct` (I12);
+    *unconstrained* finish week (with the R33-6 one-leader rule) and the
+    duration-weighted `progress_pct` (I12);
+  - P33 (ADR 0046 as ruled): the per-project lead (`lead_weeks ?? table`,
+    R33-1), the wait in the gate (R33-4), the category list (`CategoryMaps`,
+    R33-8) and the canonical forms that omit every P33 default (R33-7);
   - the FTE stretch (ADR 0032): a design step of a non-frozen project led by
     an engineer with FTE `f` books `ceil(duration / f)` elapsed weeks (its
     `span`); an In Progress / Blocked tail books `ceil(remaining / f)`. The
@@ -34,20 +38,24 @@ iteration is over an explicitly sorted sequence (Invariant I8).
 
 from __future__ import annotations
 
+import dataclasses
 import math
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from fractions import Fraction
+from typing import Any
 
 from scheduling.types import (
-    CATEGORY_RANK,
     PROGRESS_STATUSES,
     STEP_KINDS,
+    CategoryInput,
     LeadTime,
     ProjectInput,
+    ScheduleInput,
     StepProgressInput,
     StepTimingInput,
     WorkflowStepTemplate,
+    default_categories,
 )
 
 STATUS_NOT_STARTED = "Not Started"
@@ -79,6 +87,23 @@ STEP_DURATION_MAX_WEEKS = DURATION_OVERRIDE_MAX_WEEKS
 #: (the DB stores 0 as NULL, check 1..104).
 OVERLAP_MIN_WEEKS = 0
 OVERLAP_MAX_WEEKS = 104
+
+#: P33 (ADR 0046 §4, R33-4): domain of `StepTimingInput.wait_weeks`; 0 = no wait.
+WAIT_MIN_WEEKS = 0
+WAIT_MAX_WEEKS = 104
+
+#: P33 (R33-1): domain of `StepTimingInput.lead_weeks` (None = the input table).
+LEAD_MIN_WEEKS = 0
+LEAD_MAX_WEEKS = 104
+
+
+def effective_lead_weeks(row: StepTimingInput | None, table_weeks: int) -> int:
+    """R33-1: a project's own lead time for a step, `lead_weeks ?? table`.
+    `row` is the project's timing row for the step (None when it has none)."""
+
+    if row is None or row.lead_weeks is None:
+        return table_weeks
+    return row.lead_weeks
 
 
 # --- The one skip predicate (ADR 0041 R5) -----------------------------------------
@@ -292,6 +317,64 @@ def transitive_successors(workflow: Workflow, step_id: str) -> frozenset[str]:
     return frozenset(seen)
 
 
+# --- Categories (ADR 0047 §3, R33-8) --------------------------------------------
+
+
+@dataclass(frozen=True)
+class CategoryMaps:
+    """The validated category list of a run: `rank[code]` (sort key 5, the
+    rank value) and `workflow[code]` (the workflow the category belongs to).
+    `codes` lists the codes in rank order."""
+
+    rank: Mapping[str, int]
+    workflow: Mapping[str, str]
+    codes: tuple[str, ...]
+
+    def codes_of_workflow(self, workflow_id: str) -> tuple[str, ...]:
+        """The categories of `workflow_id`, in rank order."""
+
+        return tuple(c for c in self.codes if self.workflow[c] == workflow_id)
+
+
+def build_category_maps(
+    categories: Iterable[CategoryInput], workflow_ids: Iterable[str] | None = None
+) -> CategoryMaps:
+    """Validate `ScheduleInput.categories` (R33-8) and index it. `ValueError`
+    for a duplicate code, a duplicate rank, a rank that is not an integer
+    >= 1, an empty code, or (when `workflow_ids` is given) a `workflow_id`
+    that is not one of them. The caller passes `workflow_ids` only for a
+    non-default list: the seeded default names both seeded workflows, and a
+    fixture that carries only one of them must keep running unchanged (no
+    project can use a category whose workflow is absent, because the project
+    check below — category of the project's workflow — still applies)."""
+
+    known = None if workflow_ids is None else frozenset(workflow_ids)
+    rank: dict[str, int] = {}
+    workflow: dict[str, str] = {}
+    seen_ranks: dict[int, str] = {}
+    for c in sorted(categories, key=lambda c: (c.code, c.workflow_id, repr(c.rank))):
+        if not isinstance(c.code, str) or not c.code:
+            raise ValueError(f"category code {c.code!r} must be a non-empty string")
+        if c.code in rank:
+            raise ValueError(f"category {c.code!r} appears more than once")
+        if isinstance(c.rank, bool) or not isinstance(c.rank, int) or c.rank < 1:
+            raise ValueError(f"category {c.code!r}: rank {c.rank!r} must be an integer >= 1")
+        if c.rank in seen_ranks:
+            raise ValueError(
+                f"category {c.code!r}: rank {c.rank} is also the rank of "
+                f"{seen_ranks[c.rank]!r} (ranks must be unique)"
+            )
+        if known is not None and c.workflow_id not in known:
+            raise ValueError(
+                f"category {c.code!r}: workflow_id {c.workflow_id!r} is not one of {sorted(known)}"
+            )
+        rank[c.code] = c.rank
+        workflow[c.code] = c.workflow_id
+        seen_ranks[c.rank] = c.code
+    codes = tuple(sorted(rank, key=lambda code: rank[code]))
+    return CategoryMaps(rank=rank, workflow=workflow, codes=codes)
+
+
 # --- Lead times ------------------------------------------------------------------
 
 
@@ -341,6 +424,11 @@ class StepPlan:
     # a started (In Progress / Blocked / Done) step, so a step the planner ran
     # in parallel and then started keeps running in parallel.
     overlap_weeks: int = 0
+    # P33 (ADR 0046 §4, R33-4) wait: the step may not start before
+    # `release(s) + 1 + wait_weeks`. Set only on a non-skipped Not Started step
+    # of a non-frozen project with predecessors; 0 everywhere else (a started
+    # step's wait is over, a skipped step and a frozen project ignore it).
+    wait_weeks: int = 0
 
     @property
     def anchored(self) -> bool:
@@ -439,16 +527,20 @@ def passed_release(sp: StepPlan, end: int, release: int) -> int:
 
 
 def step_gate(sp: StepPlan, release: int, anchor_starts: Iterable[int], frontier: int) -> int:
-    """`gate(s)`, contract P32 A2. With `o(s) = 0` it is `release(s) + 1`,
-    exactly today's `pred_end + 1` (no extra frontier floor, so every
-    pre-P32 schedule is unchanged). With `o(s) > 0`:
+    """`gate(s)`, contract P32 A2 as amended by R33-4 (DOMAIN_RULES
+    "Category templates" §D). With `o(s) = 0` it is `release(s) + 1 + w(s)`;
+    with `w(s) = 0` that is exactly today's `pred_end + 1` (no extra frontier
+    floor, so every pre-P32 schedule is unchanged). `w(s)` is
+    `StepPlan.wait_weeks`, 0 on every started / skipped / frozen step, so an
+    In Progress / Blocked tail and a Blocked hold never wait. With `o(s) > 0`
+    (`o` and `w` are exclusive, so a wait never meets the anchor):
     `max(release(s) + 1 - o(s), max start of SG(s), frontier)` — the step
     never starts before the step it runs in parallel with has started, nor
     before the project frontier. `anchor_starts` are the starts of
     `ProjectPlan.start_anchor_ids(s)`."""
 
     if sp.overlap_weeks == 0:
-        return release + 1
+        return release + 1 + sp.wait_weeks
     return max(release + 1 - sp.overlap_weeks, frontier, *anchor_starts)
 
 
@@ -460,6 +552,7 @@ def validate_schedulable_project(
     hub_lab_region: Mapping[str, str],
     priority_order: tuple[str, ...],
     horizon_weeks: int,
+    category_workflow: Mapping[str, str],
 ) -> None:
     """Fail loudly (`ValueError`) on malformed *configuration-level* input for a
     project whose status participates in scheduling. Inconsistent *progress
@@ -472,10 +565,11 @@ def validate_schedulable_project(
             f"{priority_order} (required for any project whose status participates in "
             "scheduling)"
         )
-    if project.category not in CATEGORY_RANK:
+    if project.category not in category_workflow:
+        # ADR 0047 §3 / R33-8: the category list comes from the input.
         raise ValueError(
             f"project {project.project_id!r}: category {project.category!r} is not one of "
-            f"{CATEGORY_RANK}"
+            f"{tuple(category_workflow)}"
         )
     if project.hub not in hub_lab_region:
         raise ValueError(
@@ -506,6 +600,14 @@ def validate_schedulable_project(
                 f"project {project.project_id!r}: no lead-time row for "
                 f"({project.workflow_id!r}, {project.category!r}, {s.step_id!r})"
             )
+    # R33-8, after the lead-time row check (whose message pre-P33 callers match):
+    # the category must belong to the project's workflow.
+    if category_workflow[project.category] != project.workflow_id:  # type: ignore[index]
+        raise ValueError(
+            f"project {project.project_id!r}: category {project.category!r} belongs to "
+            f"workflow {category_workflow[project.category]!r}, not the project's "  # type: ignore[index]
+            f"{project.workflow_id!r}"
+        )
     validate_step_timing(project, wf, horizon_weeks=horizon_weeks)
 
 
@@ -554,17 +656,50 @@ def validate_step_timing(project: ProjectInput, workflow: Workflow, *, horizon_w
                 f"{where}: overlap_weeks={overlap} on the workflow's first step (it has no "
                 "predecessor to overlap)"
             )
+        # P33 (R33-4): wait 0..104, never on a first step, never with an overlap.
+        wait = row.wait_weeks
+        if (
+            isinstance(wait, bool)
+            or not isinstance(wait, int)
+            or not WAIT_MIN_WEEKS <= wait <= WAIT_MAX_WEEKS
+        ):
+            raise ValueError(
+                f"{where}: wait_weeks={wait!r} is outside {WAIT_MIN_WEEKS}..{WAIT_MAX_WEEKS}"
+            )
+        if wait != 0 and not workflow.steps_by_id[row.step_id].predecessor_ids:
+            raise ValueError(
+                f"{where}: wait_weeks={wait} on the workflow's first step (a first step's "
+                "gap must be 0)"
+            )
+        if overlap != 0 and wait != 0:
+            raise ValueError(
+                f"{where}: overlap_weeks={overlap} and wait_weeks={wait} are both non-zero "
+                "(one signed gap: at most one of them may be set)"
+            )
+        # P33 (R33-1): the project's own lead time, 0..104 (None = the table).
+        lead = row.lead_weeks
+        if lead is not None and (
+            isinstance(lead, bool)
+            or not isinstance(lead, int)
+            or not LEAD_MIN_WEEKS <= lead <= LEAD_MAX_WEEKS
+        ):
+            raise ValueError(
+                f"{where}: lead_weeks={lead!r} is outside {LEAD_MIN_WEEKS}..{LEAD_MAX_WEEKS}"
+            )
 
 
-def _step_timing_sort_key(row: StepTimingInput) -> tuple[str, int, int, int]:
+def _step_timing_sort_key(row: StepTimingInput) -> tuple[str, int, int, int, int, int]:
     """Total, deterministic order over timing rows (I8): by `step_id`, then the
-    values (None sorts first), so even duplicate rows order identically."""
+    values (None sorts first), so even duplicate rows order identically. The
+    P33 fields come last, so rows without them order exactly as before."""
 
     return (
         row.step_id,
         -1 if row.duration_override_weeks is None else row.duration_override_weeks,
         -1 if row.start_not_before_week is None else row.start_not_before_week,
         row.overlap_weeks,
+        row.wait_weeks,
+        -1 if row.lead_weeks is None else row.lead_weeks,
     )
 
 
@@ -575,6 +710,8 @@ def canonical_step_timing(rows: Iterable[StepTimingInput]) -> tuple[StepTimingIn
     `step_id`. A project with no timing therefore canonicalises to `()`,
     exactly the pre-P12 input, so every existing input hash and golden file
     stays byte-identical. ADR 0043: a row carrying only an overlap is kept.
+    P33 (R33-7): so is a row carrying only a non-zero `wait_weeks` or a
+    non-null `lead_weeks`.
 
     The scheduler itself does not require canonical input: it sorts the rows
     by `step_id` before use, so their supplied order never affects output.
@@ -588,6 +725,8 @@ def canonical_step_timing(rows: Iterable[StepTimingInput]) -> tuple[StepTimingIn
                 if r.duration_override_weeks is not None
                 or r.start_not_before_week is not None
                 or r.overlap_weeks != 0
+                or r.wait_weeks != 0
+                or r.lead_weeks is not None
             ),
             key=_step_timing_sort_key,
         )
@@ -600,7 +739,10 @@ def canonical_step_timing_dict(row: StepTimingInput) -> dict[str, int | str | No
     `overlap_weeks` **only when it is non-zero**, so a row without an overlap
     serialises exactly as it did before P32 and every existing hash, golden
     file and stored run stays byte-identical (I8, I14). Use this (not
-    `dataclasses.asdict`) wherever a `StepTimingInput` is hashed."""
+    `dataclasses.asdict`) wherever a `StepTimingInput` is hashed.
+
+    P33 (R33-7): `wait_weeks` only when non-zero and `lead_weeks` only when
+    non-null, for the same reason."""
 
     out: dict[str, int | str | None] = {
         "step_id": row.step_id,
@@ -609,7 +751,66 @@ def canonical_step_timing_dict(row: StepTimingInput) -> dict[str, int | str | No
     }
     if row.overlap_weeks != 0:
         out["overlap_weeks"] = row.overlap_weeks
+    if row.wait_weeks != 0:
+        out["wait_weeks"] = row.wait_weeks
+    if row.lead_weeks is not None:
+        out["lead_weeks"] = row.lead_weeks
     return out
+
+
+def _category_triples(categories: Iterable[CategoryInput]) -> tuple[tuple[int, str, str], ...]:
+    return tuple(sorted((c.rank, c.code, c.workflow_id) for c in categories))
+
+
+def is_default_categories(categories: Iterable[CategoryInput]) -> bool:
+    """True when `categories` is the seeded seven at ranks 1..7 (in any
+    supplied order): the list the canonical form and the run snapshot omit
+    (R33-7)."""
+
+    return _category_triples(categories) == _category_triples(default_categories())
+
+
+def canonical_categories(
+    categories: Iterable[CategoryInput],
+) -> list[dict[str, int | str]] | None:
+    """The serialised category list for an input hash / the run snapshot's
+    `workflow_snapshot["categories"]` (R33-7, I30): `None` (omit the key)
+    when the list equals the seeded default, else one
+    `{"code", "workflow_id", "rank"}` object per category in rank order."""
+
+    rows = list(categories)
+    if is_default_categories(rows):
+        return None
+    return [
+        {"code": code, "workflow_id": workflow_id, "rank": rank}
+        for rank, code, workflow_id in _category_triples(rows)
+    ]
+
+
+def canonical_schedule_input_asdict(schedule_input: ScheduleInput) -> dict[str, Any]:
+    """`dataclasses.asdict(schedule_input)` with the P33 defaults removed
+    (R33-7): `wait_weeks` when 0 and `lead_weeks` when None on every step
+    timing row, and `categories` when it equals the seeded default; and the
+    P36 default (R36-1(g)): a project's `band_rank` when None. On an
+    input that uses none of them the result equals the pre-P33 `asdict`
+    exactly, so a hash over it (e.g. `services.priority_preview`'s token) is
+    unchanged by the deploy. Non-default values are kept as `asdict` writes
+    them. Pure; the caller sorts / serialises."""
+
+    data = dataclasses.asdict(schedule_input)
+    for project in data["projects"]:
+        # P36 (ADR 0050, R36-1(g)): an unranked project serialises exactly as
+        # before the field existed.
+        if project.get("band_rank") is None:
+            project.pop("band_rank", None)
+        for row in project["step_timing"]:
+            if row.get("wait_weeks") == 0:
+                del row["wait_weeks"]
+            if "lead_weeks" in row and row["lead_weeks"] is None:
+                del row["lead_weeks"]
+    if is_default_categories(schedule_input.categories):
+        del data["categories"]
+    return data
 
 
 def derive_remaining(
@@ -666,13 +867,15 @@ def analyse_project(
         if row.step_id in workflow.steps_by_id:
             timing_by_step.setdefault(row.step_id, row)
 
-    def effective_duration(step: WorkflowStepTemplate, lead_weeks: int) -> int:
-        """`eff(p, s)` (ADR 0041 R5): the merged override `?? lead time`; 0
-        for a lead-0 step or a lab step with certification testing off."""
+    def effective_duration(step: WorkflowStepTemplate, table_weeks: int) -> int:
+        """`eff(p, s)` (ADR 0041 R5, R33-1): `lead = lead_weeks ?? table`, then
+        the merged override `?? lead`; 0 for a lead-0 step or a lab step with
+        certification testing off. A frozen project honours `lead_weeks` too
+        (it is a duration, not timing)."""
 
         row = timing_by_step.get(step.step_id)
         return step_effective_weeks(
-            lead_weeks=lead_weeks,
+            lead_weeks=effective_lead_weeks(row, table_weeks),
             kind=step.kind,
             certification_testing_required=project.certification_testing_required,
             override_weeks=None if row is None else row.duration_override_weeks,
@@ -694,6 +897,17 @@ def analyse_project(
         if project.frozen or row is None or not step.predecessor_ids:
             return 0
         return max(0, row.overlap_weeks)
+
+    def wait_of(step: WorkflowStepTemplate) -> int:
+        """P33 (R33-4): the step's wait; 0 in a frozen project, on a first
+        step and wherever the step also carries an overlap (the validator
+        rejects both inputs; this stays tolerant). Only a Not Started step
+        is given it (see the callers): a started step's wait is over."""
+
+        row = timing_by_step.get(step.step_id)
+        if project.frozen or row is None or not step.predecessor_ids or row.overlap_weeks > 0:
+            return 0
+        return max(0, row.wait_weeks)
 
     # ADR 0032: a non-frozen project with a valid leader FTE is stretched.
     stretch_fte = (
@@ -749,6 +963,7 @@ def analyse_project(
                 remaining_span=remaining_span,
                 start_not_before_week=start_floor(step.step_id),
                 overlap_weeks=overlap_of(step),
+                wait_weeks=wait_of(step),
             )
             continue
 
@@ -817,6 +1032,7 @@ def analyse_project(
                 start_floor(step.step_id) if status == STATUS_NOT_STARTED else None
             ),
             overlap_weeks=overlap_of(step),
+            wait_weeks=wait_of(step) if status == STATUS_NOT_STARTED else 0,
         )
 
     if not project.frozen and leader_fte is not None and not is_valid_fte(leader_fte):
@@ -860,6 +1076,7 @@ def analyse_project(
                     remaining_span=remaining_span,
                     start_not_before_week=start_floor(step.step_id),
                     overlap_weeks=overlap_of(step),
+                    wait_weeks=wait_of(step),
                 )
 
     tracked = any(not sp.skipped and sp.status != STATUS_NOT_STARTED for sp in plans.values())
@@ -920,12 +1137,28 @@ def unconstrained_end_week(plan: ProjectPlan, current_week: int) -> int | None:
     ADR 0043: precedence is the release / gate rule (`release_week`,
     `step_gate`, `passed_release`), identical to the schedulers'; with every
     overlap 0 it is `max(pred.end) + 1`, unchanged.
+
+    P33 (R33-4/R33-5): the gate includes a Not Started step's wait
+    (`release + 1 + w`), a plan input like the floor.
+
+    P33 (R33-6) one-leader rule: a non-frozen, Not Started design step is
+    placed at the first week `>= floor` whose window `[w, w + span)` does not
+    intersect the window of any design step of the same project already
+    placed in walk order (its leader is one person, the same reason the FTE
+    stretch is kept). Anchored windows count from `CURRENT_WEEK` (the part a
+    scheduler books). This is greedy's leader search restricted to the
+    project itself, so I16 (unconstrained <= constrained) still holds. With
+    design steps totally ordered by precedence and no overlap (the seeded
+    strict chain) it never moves anything.
     """
 
     frontier = first_step_frontier(plan.project, current_week)
     ends: dict[str, int] = {}
     starts: dict[str, int] = {}
     g: dict[str, int] = {}
+    # R33-6: design windows of this project already placed, in walk order.
+    design_windows: list[tuple[int, int]] = []
+    one_leader = not plan.project.frozen
     for sid in plan.workflow.walk_order:
         sp = plan.steps[sid]
         release = release_week(sp.step, g, frontier)
@@ -946,6 +1179,8 @@ def unconstrained_end_week(plan: ProjectPlan, current_week: int) -> int | None:
             else:
                 tail_start = max(current_week, gate, sp.actual_start_week)
                 ends[sid] = tail_start + sp.remaining_span - 1
+                if one_leader and sp.step.kind == "design":
+                    design_windows.append((tail_start, ends[sid]))
         else:
             start = gate if plan.project.frozen else max(current_week, gate)
             if sp.start_not_before_week is not None:
@@ -953,11 +1188,38 @@ def unconstrained_end_week(plan: ProjectPlan, current_week: int) -> int | None:
                 # resource limit, so unlimited resources do not lift it (keeps
                 # unconstrained <= constrained, I16).
                 start = max(start, sp.start_not_before_week)
+            if one_leader and sp.step.kind == "design":
+                start = first_free_week(start, sp.span, design_windows)
+                design_windows.append((start, start + sp.span - 1))
             starts[sid] = start
             ends[sid] = start + sp.span - 1
+        if (
+            one_leader
+            and sp.step.kind == "design"
+            and sp.status == STATUS_DONE
+            and ends[sid] >= current_week
+        ):
+            design_windows.append((max(starts[sid], current_week), ends[sid]))
         g[sid] = passed_release(sp, ends[sid], release)
     non_skipped = [ends[sid] for sid, sp in plan.steps.items() if not sp.skipped]
     return max(non_skipped) if non_skipped else None
+
+
+def first_free_week(floor: int, span: int, windows: Iterable[tuple[int, int]]) -> int:
+    """R33-6: the first week `w >= floor` such that `[w, w + span - 1]`
+    intersects none of the inclusive `windows`. Pure and deterministic (the
+    windows are sorted before the scan). A `span` of 0 is placed at `floor`."""
+
+    w = floor
+    if span <= 0:
+        return w
+    for lo, hi in sorted(windows):
+        if hi < w:
+            continue
+        if lo > w + span - 1:
+            break
+        w = hi + 1
+    return w
 
 
 def project_progress_pct(steps: Iterable[tuple[int, int]]) -> int | None:

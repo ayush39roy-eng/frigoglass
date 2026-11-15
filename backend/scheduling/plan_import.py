@@ -48,10 +48,8 @@ from fractions import Fraction
 
 import domain_constants as dc
 from scheduling import hubs as hub_names
-from scheduling.greedy import _sort_key, prepare_run, run_greedy_sgs
+from scheduling.greedy import _sort_key, category_maps_for, prepare_run, run_greedy_sgs
 from scheduling.types import (
-    OEM_CATEGORIES,
-    PDD_CATEGORIES,
     EngineerInput,
     ProjectInput,
     ProjectScheduleOutcome,
@@ -74,6 +72,7 @@ from scheduling.workflow import (
     STATUS_DONE,
     STATUS_IN_PROGRESS,
     STATUS_NOT_STARTED,
+    CategoryMaps,
     ProjectPlan,
     StepPlan,
     Workflow,
@@ -375,9 +374,15 @@ def capacity_hubs() -> tuple[str, ...]:
     return tuple(sorted(h for h in dc.HUB_LAB_REGION if dc.capacity_hub_name(h) == h))
 
 
-def _new_engineer_categories(hub: str) -> tuple[str, ...]:
+def _new_engineer_categories(hub: str, categories: CategoryMaps) -> tuple[str, ...]:
+    """A new designer's eligibility: every PDD-workflow category, plus `OEM` and
+    every OEM-workflow category on a hub that serves the OEM hubs. P33
+    (R33-8): the lists come from the input's categories (rank order), not
+    from constants; the seeded default gives the pre-P33 tuples."""
+
+    pdd = categories.codes_of_workflow("PDD")
     serves_oem = any(dc.capacity_hub_name(h) == hub for h in sorted(dc.OEM_HUBS))
-    return (*PDD_CATEGORIES, "OEM", *OEM_CATEGORIES) if serves_oem else PDD_CATEGORIES
+    return (*pdd, "OEM", *categories.codes_of_workflow("OEM")) if serves_oem else pdd
 
 
 def _workflow_of(hub: str) -> str:
@@ -413,13 +418,32 @@ class _Triple:
     duration: int | None
     floor: int | None
     overlap: int
+    # P33 (R33-1/R33-4): a matched live project's own lead time and wait,
+    # carried through an edit unchanged (an overlap edit clears the wait,
+    # R33-9). New file projects use the table and no wait.
+    wait: int = 0
+    lead: int | None = None
+
+
+def _own_lead(t: _Triple | None, table_weeks: int) -> int:
+    """R33-1: `lead_weeks ?? table` for a step's triple."""
+
+    return table_weeks if t is None or t.lead is None else t.lead
 
 
 def _rows_from_triples(triples: Mapping[str, _Triple]) -> tuple[StepTimingInput, ...]:
     return tuple(
-        _timing_row(sid, t.duration, t.floor, t.overlap)
+        dataclasses.replace(
+            _timing_row(sid, t.duration, t.floor, t.overlap), wait_weeks=t.wait, lead_weeks=t.lead
+        )
+        if t.wait or t.lead is not None
+        else _timing_row(sid, t.duration, t.floor, t.overlap)
         for sid, t in sorted(triples.items())
-        if t.duration is not None or t.floor is not None or t.overlap
+        if t.duration is not None
+        or t.floor is not None
+        or t.overlap
+        or t.wait
+        or t.lead is not None
     )
 
 
@@ -470,6 +494,7 @@ def _validate_request(
     req: PlanImportRequest,
     workflows: Mapping[str, Workflow],
     lead_pairs: frozenset[tuple[str, str]],
+    categories: CategoryMaps,
 ) -> None:
     validate_plan_import_limits(req)
     if req.mode not in IMPORT_MODES:
@@ -502,7 +527,8 @@ def _validate_request(
         if not hub_names.is_known_hub(fp.hub):
             raise ValueError(f"{where}: unknown hub {fp.hub!r}")
         wf_id = _workflow_of(fp.hub)
-        if (wf_id, fp.category) not in lead_pairs:
+        # R33-8: the category must be one of the input's, of the hub's workflow.
+        if (wf_id, fp.category) not in lead_pairs or categories.workflow.get(fp.category) != wf_id:
             raise ValueError(f"{where}: category {fp.category!r} is not valid for workflow {wf_id}")
         if fp.status not in KNOWN_STATUSES:
             raise ValueError(f"{where}: unknown status {fp.status!r}")
@@ -592,6 +618,10 @@ def _apply_edit(
         t.duration = ed.duration_weeks
     t.floor = ed.start_not_before_week
     t.overlap = ed.overlap_weeks or 0
+    if t.overlap:
+        # R33-9: a scenario overlap drag sets `o` and clears `w`, so that one
+        # signed gap remains.
+        t.wait = 0
 
 
 # =====================================================================================
@@ -685,7 +715,8 @@ def _build(baseline: WhatIfBaseline, req: PlanImportRequest, budget: _Budget) ->
     workflows = build_workflows(si0.workflow_steps)
     table = build_lead_time_table(si0.lead_times)
     lead_pairs = frozenset((wf, cat) for wf, cat, _ in table)
-    _validate_request(baseline, req, workflows, lead_pairs)
+    categories = category_maps_for(si0, workflows)
+    _validate_request(baseline, req, workflows, lead_pairs, categories)
     budget.check()
 
     pyew = req.plan_year_end_week
@@ -704,7 +735,7 @@ def _build(baseline: WhatIfBaseline, req: PlanImportRequest, budget: _Budget) ->
                     name=ne.name,
                     hub=hub_names.constants_hub_name(ne.hub),
                     allowed_categories=_new_engineer_categories(
-                        hub_names.constants_hub_name(ne.hub)
+                        hub_names.constants_hub_name(ne.hub), categories
                     ),
                     fte=ne.fte,
                 )
@@ -752,6 +783,22 @@ def _build(baseline: WhatIfBaseline, req: PlanImportRequest, budget: _Budget) ->
         file_inputs[pid] = p
         metas.append(meta)
 
+    # --- band rank (ADR 0050, R36-7) ---------------------------------------------------
+    # Merge mode: a row replacing a plan project that keeps that project's band
+    # takes its `band_rank` (expanded rows sharing one replacement all inherit it;
+    # the tie falls to keys 4-5, allowed by I37a). Every other imported row stays
+    # None (`_build_file_project` never sets a rank). File-only mode: all None.
+    if merge:
+        base_by_id = {p.project_id: p for p in si0.projects}
+        for meta in metas:
+            rid = meta.fp.replaces_project_id
+            replaced_p = base_by_id.get(rid) if rid is not None else None
+            p = file_inputs[meta.project_id]
+            if replaced_p is not None and replaced_p.priority == p.priority:
+                file_inputs[meta.project_id] = dataclasses.replace(
+                    p, band_rank=replaced_p.band_rank
+                )
+
     # --- auto-assign leaders (What-if picker, scheduling order) -----------------------
     load: dict[str, float] = defaultdict(float)
     for p in [*plan_projects, *file_inputs.values()]:
@@ -759,7 +806,7 @@ def _build(baseline: WhatIfBaseline, req: PlanImportRequest, budget: _Budget) ->
             load[p.leader_engineer_id] += _design_weeks(p, workflows, table)
     auto = sorted(
         (file_inputs[m.project_id] for m in metas if m.auto),
-        key=_sort_key,
+        key=lambda p: _sort_key(p, categories.rank),
     )
     auto_assigned: set[str] = set()
     for p in auto:
@@ -798,7 +845,13 @@ def _edit_plan_project(
     if wf is None or p.category is None:
         raise ValueError(f"edit {p.project_id!r}: the project is not scheduled")
     triples: dict[str, _Triple] = {
-        r.step_id: _Triple(r.duration_override_weeks, r.start_not_before_week, _overlap_of(r))
+        r.step_id: _Triple(
+            r.duration_override_weeks,
+            r.start_not_before_week,
+            _overlap_of(r),
+            wait=r.wait_weeks,
+            lead=r.lead_weeks,
+        )
         for r in sorted(p.step_timing, key=lambda r: r.step_id)
     }
     progress = {r.step_id: r.status for r in p.step_progress}
@@ -810,7 +863,10 @@ def _edit_plan_project(
             ed,
             wf,
             triples,
-            lead=table.get((p.workflow_id, p.category, ed.step_id), 0),
+            # R33-1: the project's own lead time `?? table`.
+            lead=_own_lead(
+                triples.get(ed.step_id), table.get((p.workflow_id, p.category, ed.step_id), 0)
+            ),
             cert=p.certification_testing_required,
             progress_status=progress.get(ed.step_id, STATUS_NOT_STARTED),
             frozen=p.frozen,

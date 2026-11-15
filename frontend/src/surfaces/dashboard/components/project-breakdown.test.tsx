@@ -63,6 +63,14 @@ function row(over: Partial<ProjectFilterRow> = {}): ProjectFilterRow {
     plant: null,
     requesting_department: null,
     product_type: null,
+    design_effort_weeks: null,
+    lab_effort_weeks: null,
+    design_weeks_calculated: 0,
+    lab_weeks_calculated: 0,
+    expected_status: null,
+    status_mismatch: false,
+    actual_start_week: null,
+    actual_end_week: null,
     ...over,
   };
 }

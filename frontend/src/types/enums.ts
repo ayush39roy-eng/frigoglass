@@ -16,28 +16,21 @@ export type HubName = (typeof HUB_NAMES)[number];
 export const LAB_REGIONS = ['Greece', 'India', 'Romania'] as const;
 export type LabRegion = (typeof LAB_REGIONS)[number];
 
-// P9 (ADR 0007): non-OEM hubs use A+/A/B/C; OEM hubs (`Hub.is_oem`) use the three
-// OEM categories. The full list is the `ProjectCategory` enum; the two subsets are
-// what Project Registration offers per hub (`GET /reference/categories?hub_id=`,
-// with these as the offline fallback — see `lib/api/reference.ts`).
-export const NON_OEM_CATEGORIES = ['A+', 'A', 'B', 'C'] as const;
-export const OEM_CATEGORIES = ['A-OEM', 'B-OEM', 'C-OEM'] as const;
-export const PROJECT_CATEGORIES = [...NON_OEM_CATEGORIES, ...OEM_CATEGORIES] as const;
-export type ProjectCategory = (typeof PROJECT_CATEGORIES)[number];
+/**
+ * P33-T14 (ADR 0047): a project category is a CODE from the `categories` table
+ * (`GET /reference/categories`, `lib/api/categories.ts`). Admins can add one,
+ * so there is no category list in the frontend: read `useCategories()`.
+ * The alias stays so call sites keep naming what the string is.
+ */
+export type ProjectCategory = string;
 
-// Engineer eligibility superset — includes "OEM" (CAT_NOT_ALLOWED rule) and, since
-// ADR 0007, the three explicit OEM project categories. A project is never "OEM".
-export const ENGINEER_ALLOWED_CATEGORIES = [
-  'A+',
-  'A',
-  'B',
-  'C',
-  'OEM',
-  'A-OEM',
-  'B-OEM',
-  'C-OEM',
-] as const;
-export type EngineerAllowedCategory = (typeof ENGINEER_ALLOWED_CATEGORIES)[number];
+/**
+ * Engineer eligibility (`engineers.allowed_categories`): any category code, or
+ * the reserved blanket `OEM` (every OEM-workflow category, CAT_NOT_ALLOWED rule).
+ */
+export type EngineerAllowedCategory = string;
+/** The reserved eligibility code (never a project category, ADR 0047 §1). */
+export const OEM_ELIGIBILITY_CODE = 'OEM';
 
 // The two workflow templates (DOMAIN_RULES.md "Workflow templates", ADR 0007). A
 // project's workflow is a function of its hub (`Hub.is_oem`).
@@ -244,6 +237,8 @@ export const SURFACE_KEYS = [
   'project_registration',
   'capacity_planning',
   'workflow_settings',
+  // P33 (ADR 0045 §7): the category templates — Admin and Super Admin write.
+  'workflow_templates',
   'audit_log',
   'user_role_admin',
 ] as const;

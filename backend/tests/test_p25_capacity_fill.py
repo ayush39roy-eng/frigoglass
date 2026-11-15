@@ -244,11 +244,12 @@ async def _project(db_session, hub, run, name, pct, weeks, *, pid=None, **overri
         )
         # ADR 0041 R12 (P30): the fill's load is the REMAINING DEMAND of the
         # live rows; mirror the run figure as a Not Started PDD-A row whose
-        # user override is `weeks`.
+        # template copy (`plan_weeks`; P33-T13: was the retired user
+        # override) is `weeks`.
         db_session.add(
             ProjectWorkflowStep(
                 project_id=project.id, step_template_id="PDD-A", sequence_order=1,
-                duration_weeks=1, duration_override_weeks=weeks,
+                duration_weeks=1, plan_weeks=weeks,
             )
         )
         await db_session.flush()

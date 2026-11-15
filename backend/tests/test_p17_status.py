@@ -13,6 +13,7 @@ from sqlalchemy import select
 from models.enums import ProjectStatus, RoleName
 from models.hub import Hub
 from models.project import Project
+from tests.factories import clear_rank_if_out_of_band
 from tests.test_p13_region_filter import (
     REGIONS,
     _act_as,
@@ -44,6 +45,7 @@ async def _shape(db_session) -> list[Project]:
     ]
     for i, status in enumerate(cycle):
         projects[i].status = status
+        clear_rank_if_out_of_band(projects[i])
     await db_session.flush()
     return projects
 

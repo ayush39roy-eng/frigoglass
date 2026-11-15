@@ -15,6 +15,7 @@ router's module docstring for the exact boundary (this PUT updates
 from __future__ import annotations
 
 import uuid
+from datetime import datetime
 from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints
@@ -23,12 +24,12 @@ from models.enums import (
     CurrencyCode,
     HardGateReason,
     HubName,
-    ProjectCategory,
     ProjectPriority,
     ProjectStatus,
     ProjectType,
     ScoringTag,
 )
+from schemas.category import CategoryCodeOut
 
 
 class DimensionPoints(BaseModel):
@@ -121,6 +122,19 @@ class PriorityDimensionsResponse(BaseModel):
     rubric_version: int
 
 
+class LastScoreVersion(BaseModel):
+    """P34-T01 (D34-4): the most recent Scenario Apply version that changed a
+    project's priority score, as seen in the caller's hub scope (the same
+    scope `GET /scenarios/versions` uses, so the version is one the caller
+    can open). Drives the Matrix "changed" marker."""
+
+    version: int
+    created_at: datetime
+    #: `User.full_name` of the applier; null when the run has no applier or
+    #: the user row is unknown.
+    applied_by_name: str | None
+
+
 class PriorityMatrixRow(BaseModel):
     """One row of the scoring grid: project identity + score (nullable —
     a project with no `PriorityScore` row yet shows `has_score=False` and
@@ -137,8 +151,12 @@ class PriorityMatrixRow(BaseModel):
 
     project_id: uuid.UUID
     project_name: str
+    #: P34-T03 (D34-3): `Project.external_code` (the client's project code),
+    #: null when the project has none. Lets the grid's client-side search
+    #: match the code as the old server `q` did.
+    external_code: str | None
     hub: HubName
-    category: ProjectCategory | None
+    category: CategoryCodeOut | None
     type: ProjectType | None
     set_priority: ProjectPriority | None
     #: P13-T14 (docs/API_CONTRACT_P13.md §7).
@@ -193,6 +211,10 @@ class PriorityMatrixRow(BaseModel):
     #: Served so the Matrix can show, filter and float VIP projects (owner ask
     #: 2026-10-22).
     is_vip: bool
+    #: P34-T01 (D34-4): latest Scenario Apply version with a `priority_score`
+    #: change for this project in the caller's hub scope; null when never
+    #: versioned.
+    last_score_version: LastScoreVersion | None
 
     #: Financial columns, converted to `currency` (the query param the grid
     #: endpoint was called with). `gross_margin_pct` is a percentage, never

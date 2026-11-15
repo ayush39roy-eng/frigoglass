@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import uuid
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
 
@@ -34,10 +35,12 @@ from tests.p12_helpers import CW, add_checkin, plan_step, set_progress, stepped_
 
 
 def _live(status=WorkflowStepStatus.NOT_STARTED, duration=4, start=None, effort=None):
-    # ADR 0041 R5: the live row's three durations feed the one skip predicate.
+    # ADR 0041 R5: the live row's three durations feed the one skip predicate;
+    # P33-T08 (ADR 0046 §B): the project's copy `plan_weeks` is its length.
     return SimpleNamespace(
         status=status,
         duration_weeks=duration,
+        plan_weeks=duration,
         actual_start_week=start,
         duration_override_weeks=None,
         effort_weeks=effort,
@@ -80,7 +83,7 @@ def test_plan_percent_degenerate_window():
 
 
 def test_stage_is_due_rules():
-    kw = dict(kind=WorkflowStepKind.DESIGN, cert_required=True, current_week=CW)
+    kw: dict[str, Any] = dict(kind=WorkflowStepKind.DESIGN, cert_required=True, current_week=CW)
     # Window contains CW.
     assert stage_is_due(_live(), _run(28, 34), **kw)
     # Active status, window elsewhere or none.

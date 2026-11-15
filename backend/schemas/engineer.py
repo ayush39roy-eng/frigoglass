@@ -7,13 +7,13 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
-from typing import Annotated, Any
+from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field, Strict, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from pydantic_core import PydanticCustomError
 
-from models.enums import EngineerAllowedCategory
 from schemas.capacity import YearRemaining
+from schemas.category import EligibilityCode
 
 #: P19-R01 (S19-L3): the request models are strict (CLAUDE.md "Pydantic v2
 #: (strict)"): `{"fte": true}` or `{"fte": "0.5"}` is a 422, not a coerced
@@ -21,7 +21,10 @@ from schemas.capacity import YearRemaining
 #: UUID and enum values opt out of strict mode only because a strict UUID /
 #: enum accepts an instance, never its JSON string (same pattern as
 #: `schemas/checkin.py` and `schemas/project.py`).
-_Category = Annotated[EngineerAllowedCategory, Strict(False)]
+#: P33-T07 (ADR 0047, contract B3): an eligibility value is a category code or
+#: the reserved blanket `OEM`, checked against the `categories` table by the
+#: router (`services.categories.check_eligibility_codes`); here, format only.
+_Category = EligibilityCode
 
 #: P19-R01 (S19-L1): the engineer columns that are NOT NULL. An explicit
 #: `null` for one of them in a PATCH body is a 422 here; before, it reached
@@ -104,7 +107,7 @@ class EngineerRead(BaseModel):
     name: str
     hub_id: uuid.UUID
     fte: float
-    allowed_categories: list[EngineerAllowedCategory]
+    allowed_categories: list[str]
     user_id: uuid.UUID | None
     #: P29 (ADR 0042 §5): false = "not in capacity roster" (booked by the
     #: scheduler, never counted as hub supply). The engineer's own

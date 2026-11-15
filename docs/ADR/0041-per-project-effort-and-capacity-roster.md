@@ -332,3 +332,22 @@ weights do not read them. The split is computed and stored outside the solver, w
   client's 8/4. A typed 0 is treated like a blank.
 - **C-category lab effort.** It lands entirely on PDD-H (certification) chambers, even where the client
   means POC testing (OQ #70).
+
+## Amendment (2026-11-13, ADR 0046, P33 — proposed until the workflow-auditor's ruling P33-T00)
+
+`lead(p,s)` becomes the project's own copy (`project_workflow_steps.plan_weeks`). A step whose
+length was applied from the category template (`length_pinned`) uses that length instead of its
+effort share. R2 still computes the share over the project's own lengths; the share is stored but
+shadowed. R6 never changes a pinned step. "A lead-time edit re-derives every project" becomes "an
+apply that changes a project's lengths re-derives that project". Full text: ADR 0046 §2–§3.
+
+## Amendment (2026-11-13, P33-T01 — supersedes the note above)
+
+This is final after the workflow-auditor's ruling and the owner's answer to OQ #76/#77 (ADR 0046
+"Owner ruling"). **Nothing pins.**
+- **A kind with its own figure:** `eff = effort_weeks ?? 0`, whatever the template.
+- **Weights:** R2 uses the immutable `workflow_lead_times.effort_weight_weeks` (backfill = `weeks`),
+  so template length edits never reshape a split.
+- **Other kinds and elapsed steps:** `eff = plan_weeks`, the project's copy of the template.
+- **Apply:** never re-derives effort; it is not an R6 trigger.
+- **Figure cleared:** re-copies the current template weeks onto the not-reached steps of that kind.

@@ -28,6 +28,14 @@ export function checkInRateLimitedMessage(retryAfterSeconds: number | undefined)
     : `Too many check-ins in a row — wait ${String(Math.max(1, retryAfterSeconds))} s and submit again.`;
 }
 
+/** P36-R03: code + copy for 503 `BAND_RANK_BUSY` (API_CONTRACT_P36 §5 wording). */
+export const BAND_RANK_BUSY = 'BAND_RANK_BUSY';
+export const BAND_RANK_BUSY_MESSAGE = 'Another priority change is being saved. Please try again in a moment.';
+
+export function isBandRankBusy(err: unknown): boolean {
+  return err instanceof ApiError && err.code === BAND_RANK_BUSY;
+}
+
 export const API_ERROR_MESSAGES: Record<string, string> = {
   // Session / users (ADR 0010)
   LAST_SUPER_ADMIN: 'This change would leave no active Super Admin. Promote another user to Super Admin first.',
@@ -77,6 +85,9 @@ export const API_ERROR_MESSAGES: Record<string, string> = {
   PROJECT_FROZEN: 'This project is frozen. Unfreeze on the Gantt to record stage progress.',
   // P9-R02 / security S-02: comment creation is rate-limited per user (429).
   RATE_LIMITED: RATE_LIMITED_MESSAGE, // Retry-After-aware copy: rateLimitedMessage()
+  // P36-R03: 503 + Retry-After 5 while another priority / rank write holds the
+  // band-rank lock (API_CONTRACT_P36 §5). Nothing was written; the user retries.
+  BAND_RANK_BUSY: BAND_RANK_BUSY_MESSAGE,
 };
 
 

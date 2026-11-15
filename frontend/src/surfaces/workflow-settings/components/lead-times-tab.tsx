@@ -4,13 +4,14 @@ import { Save, Undo2 } from 'lucide-react';
 import { STEP_KIND_META } from '@/components/shared/step-kind-meta';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { useCategories } from '@/lib/api/categories';
 import { formatDecimal } from '@/lib/format';
 import { cn } from '@/lib/utils';
 import type { WorkflowStepKind } from '@/types/enums';
 
-import type { LeadTimeSetting, LeadTimesUpdateRequest, WorkflowSetting, WorkflowSettingsSaveResult } from '../api/types';
-import { buildLeadTimeGrid, changedLeadTimes, rowTotals, type LeadTimeGridRow } from '../lib/lead-times';
-import { saveErrorMessage } from './save-error';
+import type { LeadTimeSetting, TemplateChangeSet, WorkflowSetting } from '../api/types';
+import { buildLeadTimeGrid, changedLeadTimes, leadTimeChangeSet, rowTotals, type LeadTimeGridRow } from '../lib/lead-times';
+import { WEEKS_MAX } from '../lib/template-drafts';
 
 /**
  * Lead times (ADR 0007): the client's own `Final RPD` table — per workflow,
@@ -18,20 +19,34 @@ import { saveErrorMessage } from './save-error';
  * subtotals (the workbook's row formulas, evaluated over the cells on screen).
  * A 0 is rendered "—" (the step is skipped for that category). Read-only
  * roles see the same grid as text.
+ *
+ * P33-T17 (ADR 0045 §5): editable with `workflow_templates.write` (Admin and
+ * Super Admin). Save goes through the same apply as the timeline editor
+ * (E2 → dialog → E3); the old `PUT /workflow-settings/lead-times` is 410.
  */
 export interface LeadTimesTabProps {
   workflows: WorkflowSetting[];
   leadTimes: LeadTimeSetting[];
+  /** C1 `categories[].template_version` by code: each entry's `base_version`. */
+  versions: Readonly<Record<string, number>>;
   canWrite: boolean;
-  onSave: (body: LeadTimesUpdateRequest) => Promise<WorkflowSettingsSaveResult>;
+  /** Opens the apply dialog; `onApplied` runs once the apply succeeded. */
+  onSave: (changeSet: TemplateChangeSet, summary: string[], onApplied: () => void) => void;
   saving: boolean;
 }
 
 export function LeadTimesTab(props: LeadTimesTabProps): React.JSX.Element {
+  // P33-T14: a newly served category list re-seeds the grids' row order.
+  const { catalog } = useCategories();
+  const categoriesKey = catalog.codes.join('|');
+  const versionsKey = Object.entries(props.versions)
+    .map(([code, v]) => `${code}:${String(v)}`)
+    .join('|');
   return (
     <div className="space-y-4">
       {props.workflows.map((w) => (
-        <LeadTimeGrid key={`${w.id}-${props.leadTimes.length}-${String(props.leadTimes.reduce((a, l) => a + l.weeks, 0))}`} workflow={w} {...props} />
+        // A new template version (an apply, a 409 reload) or category list re-seeds the grid.
+        <LeadTimeGrid key={`${w.id}-${props.leadTimes.length}-${versionsKey}-${categoriesKey}`} workflow={w} {...props} />
       ))}
     </div>
   );
@@ -40,6 +55,7 @@ export function LeadTimesTab(props: LeadTimesTabProps): React.JSX.Element {
 function LeadTimeGrid({
   workflow,
   leadTimes,
+  versions,
   canWrite,
   onSave,
   saving,
@@ -50,15 +66,16 @@ function LeadTimeGrid({
   );
   const stepIds = steps.map((s) => s.step_id);
   const kinds: Record<string, WorkflowStepKind> = Object.fromEntries(steps.map((s) => [s.step_id, s.kind]));
+  // P33-T14: row order = the served categories of this workflow, in rank order.
+  const { catalog } = useCategories();
   const original = React.useMemo(
-    () => buildLeadTimeGrid(leadTimes, workflow.id, stepIds),
+    () => buildLeadTimeGrid(leadTimes, workflow.id, stepIds, catalog.codesForWorkflow(workflow.id)),
     // eslint-disable-next-line react-hooks/exhaustive-deps -- stepIds is derived from steps
-    [leadTimes, workflow.id, steps],
+    [leadTimes, workflow.id, steps, catalog],
   );
   const [rows, setRows] = React.useState<LeadTimeGridRow[]>(original);
-  const [error, setError] = React.useState<string | null>(null);
   const changes = changedLeadTimes(original, rows, workflow.id);
-  const invalid = rows.some((r) => Object.values(r.cells).some((w) => !Number.isInteger(w) || w < 0));
+  const invalid = rows.some((r) => Object.values(r.cells).some((w) => !Number.isInteger(w) || w < 0 || w > WEEKS_MAX));
 
   const setCell = (category: string, stepId: string, raw: string) => {
     const weeks = raw.trim() === '' ? 0 : Number(raw);
@@ -67,13 +84,13 @@ function LeadTimeGrid({
     );
   };
 
-  const handleSave = async () => {
-    setError(null);
-    try {
-      await onSave({ lead_times: changes });
-    } catch (err) {
-      setError(saveErrorMessage(err));
-    }
+  const handleSave = () => {
+    const before = new Map(original.map((r) => [r.category, r.cells]));
+    const summary = changes.map(
+      (c) => `${c.category} \u00b7 ${c.step_id} length ${String(before.get(c.category)?.[c.step_id] ?? 0)}w \u2192 ${String(c.weeks)}w`,
+    );
+    // After a successful apply the refetched template versions re-key (re-seed) the grid.
+    onSave(leadTimeChangeSet(changes, versions), summary, () => undefined);
   };
 
   return (
@@ -86,9 +103,9 @@ function LeadTimeGrid({
               <Undo2 />
               Reset
             </Button>
-            <Button type="button" size="sm" disabled={changes.length === 0 || invalid || saving} onClick={() => void handleSave()}>
+            <Button type="button" size="sm" disabled={changes.length === 0 || invalid || saving} onClick={handleSave}>
               <Save />
-              {saving ? 'Saving…' : `Save ${String(changes.length)} ${changes.length === 1 ? 'change' : 'changes'}`}
+              {saving ? 'Saving…' : `Save ${String(changes.length)} ${changes.length === 1 ? 'change' : 'changes'}…`}
             </Button>
           </div>
         ) : null}
@@ -96,12 +113,7 @@ function LeadTimeGrid({
       <CardContent className="space-y-2">
         {invalid ? (
           <p role="alert" className="text-2xs text-danger">
-            Lead times are whole weeks, 0 or more.
-          </p>
-        ) : null}
-        {error ? (
-          <p role="alert" className="text-2xs text-danger">
-            {error}
+            Lead times are whole weeks, from 0 to 104.
           </p>
         ) : null}
         <div className="overflow-x-auto rounded-dash border-[1.5px] border-border bg-surface">
@@ -149,6 +161,7 @@ function LeadTimeGrid({
                             <input
                               type="number"
                               min={0}
+                              max={WEEKS_MAX}
                               step={1}
                               inputMode="numeric"
                               value={weeks === 0 ? '' : String(weeks)}

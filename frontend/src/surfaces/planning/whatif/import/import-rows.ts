@@ -1,4 +1,5 @@
-import { NON_OEM_CATEGORIES, OEM_CATEGORIES, type ProjectCategory } from '@/types/enums';
+import { getCategoryCatalog, type CategoryCatalog } from '@/lib/category-catalog';
+import type { ProjectCategory } from '@/types/enums';
 
 import type { WhatIfHub } from '../../api/whatif-types';
 import { OEM_HUBS } from '../scenario-schema';
@@ -31,8 +32,13 @@ export function capacityHubOf(hub: string): string {
   return OEM_HUBS.includes(hub) ? 'R&D-Greece' : hub;
 }
 
-export function categoriesForWorkflow(wf: ImportWorkflow): readonly ProjectCategory[] {
-  return wf === 'OEM' ? OEM_CATEGORIES : NON_OEM_CATEGORIES;
+/** P33-T14: the served categories of a workflow, in rank order (`catalog`
+ *  defaults to the mirrored `GET /reference/categories`). */
+export function categoriesForWorkflow(
+  wf: ImportWorkflow,
+  catalog: CategoryCatalog = getCategoryCatalog(),
+): readonly ProjectCategory[] {
+  return catalog.codesForWorkflow(wf);
 }
 
 /** The workflow's steps in sequence order. */
@@ -49,8 +55,11 @@ export function remapStepId(stepId: string, wf: ImportWorkflow): string {
 function mapCategory(cat: ProjectCategory, wf: ImportWorkflow): ProjectCategory {
   const allowed = categoriesForWorkflow(wf);
   if (allowed.includes(cat)) return cat;
-  const candidate = wf === 'OEM' ? `${cat === 'A+' ? 'A' : cat}-OEM` : cat.replace(/-OEM$/, '');
-  return (allowed.find((c) => c === candidate) ?? allowed.at(-1) ?? cat) as ProjectCategory;
+  // Same letter in the other workflow ("B" ↔ "B-OEM"; "A+" → "A-OEM"), else the
+  // workflow's last category in rank order.
+  const candidates =
+    wf === 'OEM' ? [`${cat}-OEM`, `${cat.replace(/\+$/, '')}-OEM`] : [cat.replace(/-OEM$/, '')];
+  return allowed.find((c) => candidates.includes(c)) ?? allowed.at(-1) ?? cat;
 }
 
 export interface RowEditContext {

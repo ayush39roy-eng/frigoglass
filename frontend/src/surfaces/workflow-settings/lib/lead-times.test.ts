@@ -2,6 +2,9 @@ import { describe, expect, it } from 'vitest';
 
 import type { WorkflowStepKind } from '@/types/enums';
 
+import { CategoryCatalog } from '@/lib/category-catalog';
+import { WITH_B2_TEST_CATEGORIES, SEEDED_TEST_CATEGORIES } from '@/test/category-fixtures';
+
 import { buildLeadTimeGrid, changedLeadTimes, rowTotals, type LeadTimeCell } from './lead-times';
 
 const STEP_IDS = Array.from({ length: 14 }, (_, i) => `PDD-${String.fromCharCode(65 + i)}`);
@@ -14,6 +17,9 @@ const KINDS: Record<string, WorkflowStepKind> = Object.fromEntries(
   }),
 );
 // docs/CLIENT_FORMULAS.md §1.1, category A+
+const CATALOG = new CategoryCatalog(SEEDED_TEST_CATEGORIES);
+const PDD_ORDER = CATALOG.codesForWorkflow('PDD');
+
 const A_PLUS = [1, 8, 4, 1, 6, 6, 2, 6, 2, 1, 2, 3, 1, 1];
 const B = [1, 0, 0, 1, 4, 0, 0, 6, 0, 1, 2, 1, 1, 1];
 
@@ -23,26 +29,31 @@ function rows(cat: 'A+' | 'B', weeks: number[]): LeadTimeCell[] {
 
 describe('lead-time grid sums (the workbook’s own row formulas)', () => {
   it('A+ sums to 44 total, 22 design, 12 lab, 10 elapsed', () => {
-    const grid = buildLeadTimeGrid(rows('A+', A_PLUS), 'PDD', STEP_IDS);
+    const grid = buildLeadTimeGrid(rows('A+', A_PLUS), 'PDD', STEP_IDS, PDD_ORDER);
     const aPlus = grid.find((r) => r.category === 'A+')!;
     expect(rowTotals(aPlus.cells, KINDS)).toEqual({ total: 44, design: 22, lab: 12, elapsed: 10 });
   });
 
   it('B sums to 18 total, 10 design, 6 lab, 2 elapsed — A and J kept as design (ADR 0007 / OQ #13; the workbook’s 8 omits them)', () => {
-    const grid = buildLeadTimeGrid(rows('B', B), 'PDD', STEP_IDS);
+    const grid = buildLeadTimeGrid(rows('B', B), 'PDD', STEP_IDS, PDD_ORDER);
     const b = grid.find((r) => r.category === 'B')!;
     expect(rowTotals(b.cells, KINDS)).toEqual({ total: 18, design: 10, lab: 6, elapsed: 2 });
   });
 
   it('builds every category row for the workflow, reading a missing server cell as 0', () => {
-    const grid = buildLeadTimeGrid(rows('A+', A_PLUS), 'PDD', STEP_IDS);
+    const grid = buildLeadTimeGrid(rows('A+', A_PLUS), 'PDD', STEP_IDS, PDD_ORDER);
     expect(grid.map((r) => r.category)).toEqual(['A+', 'A', 'B', 'C']);
     expect(grid.find((r) => r.category === 'C')!.cells['PDD-A']).toBe(0);
-    expect(buildLeadTimeGrid([], 'OEM', STEP_IDS).map((r) => r.category)).toEqual(['A-OEM', 'B-OEM', 'C-OEM']);
+    expect(buildLeadTimeGrid([], 'OEM', STEP_IDS, CATALOG.codesForWorkflow('OEM')).map((r) => r.category)).toEqual(['A-OEM', 'B-OEM', 'C-OEM']);
+  });
+
+  it('P33-T14: rows follow the served rank order, an Admin-added category included', () => {
+    const order = new CategoryCatalog(WITH_B2_TEST_CATEGORIES).codesForWorkflow('PDD');
+    expect(buildLeadTimeGrid(rows('B', B), 'PDD', STEP_IDS, order).map((r) => r.category)).toEqual(['A+', 'A', 'B', 'B2', 'C']);
   });
 
   it('changedLeadTimes emits only the edited cells as PUT rows', () => {
-    const original = buildLeadTimeGrid(rows('A+', A_PLUS), 'PDD', STEP_IDS);
+    const original = buildLeadTimeGrid(rows('A+', A_PLUS), 'PDD', STEP_IDS, PDD_ORDER);
     const edited = original.map((r) =>
       r.category === 'A+' ? { ...r, cells: { ...r.cells, 'PDD-B': 6 } } : r,
     );

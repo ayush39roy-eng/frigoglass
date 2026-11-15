@@ -248,6 +248,8 @@ _PRIORITY_MOVE_TS = FRONTEND_SRC / "lib" / "api" / "priority-move.ts"
 # P12-T03 / P12-T05 (docs/API_CONTRACT_P12.md §2, §5, §6).
 _CHECKINS_TS = FRONTEND_SRC / "lib" / "api" / "check-ins.ts"
 _PRIORITY_BOARD_TS = FRONTEND_SRC / "surfaces" / "priority-board" / "api.ts"
+# P35-T02: the Projects register batch save (`POST /projects/register-edits`).
+_REGISTER_EDITS_TS = FRONTEND_SRC / "surfaces" / "projects" / "api" / "register-edits.ts"
 # P14 (ADR 0027): the `/vip` surface was deleted; the P12 mirrors moved to
 # `lib/api/vip.ts` together with the P14 VIP board types.
 _VIP_TS = FRONTEND_SRC / "lib" / "api" / "vip.ts"
@@ -330,6 +332,10 @@ CONTRACT_TABLE: list[tuple[Path, str, str, str]] = [
     (_CAPACITY_TS, "ScheduleRunSummary", "ScheduleRunSummary", "exact"),
     # --- Matrix (backend/schemas/priority.py) ---
     (_MATRIX_TS, "PriorityMatrixRow", "PriorityMatrixRow", "exact"),
+    # P34-T01 (D34-4): `PriorityMatrixRow.last_score_version` is a nullable
+    # `LastScoreVersion`; `ScenarioApplyRunSummary` (and so the Detail) gains
+    # `project_count`. Red here until P34-T02 mirrors them.
+    (_MATRIX_TS, "LastScoreVersion", "LastScoreVersion", "exact"),
     (_MATRIX_TS, "PriorityPortfolioSummary", "PriorityPortfolioSummary", "exact"),
     # P16-T01 (ADR 0029): the served dimension table and per-row points.
     (_MATRIX_TS, "ScoringDimension", "DimensionInfo", "exact"),
@@ -391,16 +397,19 @@ CONTRACT_TABLE: list[tuple[Path, str, str, str]] = [
     # exactly like `GanttActiveRun` -> `ScheduleRunSummary` below.
     (_MATRIX_TS, "ScenarioApplyChangeSummary", "ScenarioApplyChangeDetail", "subset"),
     # --- Gantt (backend/schemas/gantt.py) ---
+    # P33-T12 (docs/API_CONTRACT_P33.md Part G): `GanttStepRow` drops
+    # `timing_editable` / `duration_override_weeks` / `start_not_before_week` /
+    # `overlap_weeks` and gains `plan_weeks` / `gap_weeks` / `own_effort`;
+    # mirrored by P33-T15.
     (_GANTT_TS, "GanttStepRow", "GanttStepRow", "exact"),
     (_GANTT_TS, "GanttProjectRow", "GanttProjectRow", "exact"),
     (_GANTT_TS, "GanttResponse", "GanttResponse", "exact"),
     # P13-T13 (docs/API_CONTRACT_P13.md §7).
     (_GANTT_TS, "GanttWeeklyActiveCount", "GanttWeeklyActiveCount", "exact"),
     (_GANTT_TS, "FreezeToggleRequest", "FreezeToggleRequest", "exact"),
-    # P12 (docs/API_CONTRACT_P12.md §3): Gantt drag step timing
-    # (backend/schemas/step_timing.py).
-    (_GANTT_TS, "StepTimingRequest", "StepTimingRequest", "exact"),
-    (_GANTT_TS, "StepTimingResponse", "StepTimingResponse", "exact"),
+    # P12 (docs/API_CONTRACT_P12.md §3): the Gantt drag's `StepTimingRequest`
+    # / `StepTimingResponse` are gone with the endpoint (P33-T13, ADR 0048:
+    # it answers 410 `STEP_TIMING_RETIRED`) and their TS mirrors (P33-T15).
     # Deliberate partial mirrors — see each interface's own docstring in
     # `frontend/src/surfaces/gantt/api/types.ts`.
     (_GANTT_TS, "FreezeToggleResponse", "ProjectRead", "subset"),
@@ -450,15 +459,50 @@ CONTRACT_TABLE: list[tuple[Path, str, str, str]] = [
     # --- P9-T03: workflow settings (backend/schemas/workflow_settings.py) ---
     (_WORKFLOW_SETTINGS_TS, "WorkflowStepSetting", "WorkflowStepSetting", "exact"),
     (_WORKFLOW_SETTINGS_TS, "WorkflowSetting", "WorkflowSetting", "exact"),
+    # P33-T09 (contract P33 C1/C2) gap / weight / category / flag / version
+    # fields; mirrored by P33-T16/T17, so back to "exact".
     (_WORKFLOW_SETTINGS_TS, "LeadTimeSetting", "LeadTimeSetting", "exact"),
     (_WORKFLOW_SETTINGS_TS, "HubCalendarSetting", "HubCalendarSetting", "exact"),
     (_WORKFLOW_SETTINGS_TS, "ChamberSetting", "ChamberSetting", "exact"),
     (_WORKFLOW_SETTINGS_TS, "WorkflowSettings", "WorkflowSettings", "exact"),
+    (_WORKFLOW_SETTINGS_TS, "WorkflowSettingsCategory", "CategorySetting", "exact"),
     # P13-T16 (docs/API_CONTRACT_P13.md §5): workflow previews.
     (_WORKFLOW_SETTINGS_TS, "TimelineStep", "TimelineStep", "exact"),
     (_WORKFLOW_SETTINGS_TS, "CategoryTimeline", "CategoryTimeline", "exact"),
+    # P33-T16..T18 (contract P33 B2, D, E): backend/schemas/workflow_templates.py.
+    (_WORKFLOW_SETTINGS_TS, "TemplateStepOverride", "TemplateStepOverride", "exact"),
+    (_WORKFLOW_SETTINGS_TS, "TimelinePreviewRequest", "TimelinePreviewRequest", "exact"),
+    (_WORKFLOW_SETTINGS_TS, "TimelinePreviewResponse", "TimelinePreviewResponse", "exact"),
+    (_WORKFLOW_SETTINGS_TS, "TemplateChangeEntry", "TemplateChangeEntry", "exact"),
+    (_WORKFLOW_SETTINGS_TS, "TemplateChangeSet", "TemplateChangeSet", "exact"),
+    (_WORKFLOW_SETTINGS_TS, "ApplySelection", "ApplySelection", "exact"),
+    (_WORKFLOW_SETTINGS_TS, "TemplateApplyRequest", "TemplateApplyRequest", "exact"),
+    (_WORKFLOW_SETTINGS_TS, "ApplyPreviewStep", "ApplyPreviewStep", "exact"),
+    (_WORKFLOW_SETTINGS_TS, "ApplyPreviewProject", "ApplyPreviewProject", "exact"),
+    (_WORKFLOW_SETTINGS_TS, "CurrentStage", "CurrentStage", "exact"),
+    (
+        _WORKFLOW_SETTINGS_TS,
+        "ApplyPreviewChoosableProject",
+        "ApplyPreviewChoosableProject",
+        "exact",
+    ),
+    (
+        _WORKFLOW_SETTINGS_TS,
+        "ApplyPreviewOwnEffortProject",
+        "ApplyPreviewOwnEffortProject",
+        "exact",
+    ),
+    (_WORKFLOW_SETTINGS_TS, "ApplyPreviewNeverProject", "ApplyPreviewNeverProject", "exact"),
+    (_WORKFLOW_SETTINGS_TS, "ApplyPreviewCategory", "ApplyPreviewCategory", "exact"),
+    (_WORKFLOW_SETTINGS_TS, "ApplyPreviewCounts", "ApplyPreviewCounts", "exact"),
+    (_WORKFLOW_SETTINGS_TS, "ApplyPreviewResponse", "ApplyPreviewResponse", "exact"),
+    (_WORKFLOW_SETTINGS_TS, "TemplateVersion", "TemplateVersion", "exact"),
+    (_WORKFLOW_SETTINGS_TS, "AppliedCounts", "AppliedCounts", "exact"),
+    (_WORKFLOW_SETTINGS_TS, "NotApplied", "NotApplied", "exact"),
+    (_WORKFLOW_SETTINGS_TS, "TemplateApplyResponse", "TemplateApplyResponse", "exact"),
+    (_WORKFLOW_SETTINGS_TS, "CategoryCreateRequest", "CategoryCreateRequest", "exact"),
+    (_WORKFLOW_SETTINGS_TS, "CategoryCreateResponse", "CategoryCreateResponse", "exact"),
     (_WORKFLOW_SETTINGS_TS, "BEquivalentRow", "BEquivalentRow", "exact"),
-    (_WORKFLOW_SETTINGS_TS, "LeadTimesUpdateRequest", "LeadTimesUpdateRequest", "exact"),
     (_WORKFLOW_SETTINGS_TS, "HubCalendarUpdateRequest", "HubCalendarUpdateRequest", "exact"),
     (
         _WORKFLOW_SETTINGS_TS,
@@ -480,6 +524,8 @@ CONTRACT_TABLE: list[tuple[Path, str, str, str]] = [
     # types file; resolved across files by `_resolve_ts_fields_with_imports`.
     (_WORKSPACE_TS, "WorkspaceProject", "WorkspaceProject", "exact"),
     (_WORKSPACE_TS, "WorkspaceSchedule", "WorkspaceSchedule", "exact"),
+    # P33-T12 (Part G): gains `plan_weeks` / `gap_weeks` / `own_effort`;
+    # mirrored by P33-T15.
     (_WORKSPACE_TS, "WorkspaceStage", "WorkspaceStage", "exact"),
     # P25-T03 (ADR 0036, docs/API_CONTRACT_P25.md §5): gains `score_band`,
     # `capacity_fill`, `capacity_fill_reason` (`suggested_band` is now the
@@ -549,6 +595,10 @@ CONTRACT_TABLE: list[tuple[Path, str, str, str]] = [
     (_CHECKINS_TS, "CheckInSubmitRequest", "CheckInRequest", "exact"),
     (_CHECKINS_TS, "CheckInSubmitResponse", "CheckInResponse", "exact"),
     (_CHECKINS_TS, "CheckInHistoryRow", "CheckInHistoryRow", "exact"),
+    # --- P35-T01/T02: register batch save (backend/schemas/project.py) ---
+    (_REGISTER_EDITS_TS, "RegisterEditPatch", "RegisterEditPatch", "exact"),
+    (_REGISTER_EDITS_TS, "RegisterEditsRequest", "RegisterEditsRequest", "exact"),
+    (_REGISTER_EDITS_TS, "RegisterEditsResponse", "RegisterEditsResponse", "exact"),
     # --- P12-T03: priority board (backend/schemas/priority_board.py) ---
     # P25-T03 (ADR 0036, docs/API_CONTRACT_P25.md §5): the card gains
     # `external_code`, `suggested_band`, `score_band`, `capacity_fill`,
@@ -580,6 +630,10 @@ CONTRACT_TABLE: list[tuple[Path, str, str, str]] = [
     (_PRIORITY_MOVE_TS, "PriorityPreviewSummary", "PriorityPreviewSummary", "exact"),
     (_PRIORITY_MOVE_TS, "PriorityPreviewChange", "PriorityPreviewChange", "exact"),
     (_PRIORITY_MOVE_TS, "PriorityPreviewResponse", "PriorityPreviewResponse", "exact"),
+    # P36-T03 (ADR 0050, API_CONTRACT_P36 §2–§3): the re-rank bodies. The
+    # responses reuse PriorityPreviewResponse / PriorityMoveResponse (above).
+    (_PRIORITY_MOVE_TS, "BandRankPreviewRequest", "BandRankPreviewRequest", "exact"),
+    (_PRIORITY_MOVE_TS, "BandRankMoveRequest", "BandRankMoveRequest", "exact"),
     # --- P18-T03: What-if planner (backend/schemas/whatif.py, ADR 0031) ---
     (_WHATIF_TS, "AddProjectIn", "AddProjectIn", "exact"),
     (_WHATIF_TS, "AddEngineerIn", "AddEngineerIn", "exact"),
@@ -851,6 +905,12 @@ class TestOpenApiFrontendContract:
                 # `tests/test_p12_checkins.py` (`{index, code, message}`).
                 "CheckInEntryError",
             },
+            _REGISTER_EDITS_TS: {
+                # One element of the 403 / 422 batch body's `detail.errors`
+                # (error bodies are not OpenAPI components). Backend side:
+                # `schemas.project.RegisterEditError`, pinned below.
+                "RegisterEditError",
+            },
         }
 
         for ts_file, interfaces in ts_interfaces_by_file.items():
@@ -967,3 +1027,16 @@ def test_currency_rate_mirror_p21() -> None:
     assert backend_required <= {n for n, f in ts_fields.items() if not f["optional"]}
     for name in _backend_nullable_fields("CurrencyRateRead"):
         assert _ts_type_is_nullable(ts_fields[name]["type"]), name
+
+
+def test_register_edit_error_shape_p35() -> None:
+    """P35-T02: `RegisterEditError` is not an OpenAPI component (it only
+    appears inside error bodies), so pin the Pydantic model against the TS
+    mirror in `surfaces/projects/api/register-edits.ts` directly."""
+
+    from schemas.project import RegisterEditError
+
+    assert set(RegisterEditError.model_fields) == {"project_id", "code", "message"}
+    ts_fields = _resolve_ts_fields_with_imports(_REGISTER_EDITS_TS, "RegisterEditError")
+    assert set(ts_fields) == {"project_id", "code", "message"}
+    assert not any(f["optional"] for f in ts_fields.values())

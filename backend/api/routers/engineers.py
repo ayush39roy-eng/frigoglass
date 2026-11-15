@@ -58,6 +58,7 @@ from services.capacity_supply import (
     round2,
     to_days,
 )
+from services.categories import check_eligibility_codes
 from services.hub_scope import hub_scope_filter, is_hub_in_scope
 
 router = APIRouter(prefix="/engineers", tags=["capacity-planning", "engineers"])
@@ -250,6 +251,9 @@ async def create_engineer(
     _require_capacity_hub(hub)
     if not body.counts_in_capacity:
         _require_capacity_admin(current_user)
+    await check_eligibility_codes(
+        db, body.allowed_categories, loc=("body", "allowed_categories")
+    )
 
     engineer = Engineer(**body.model_dump())
     db.add(engineer)
@@ -298,6 +302,9 @@ async def update_engineer(
         _require_capacity_hub(hub)
     if "counts_in_capacity" in body.model_fields_set:
         _require_capacity_admin(current_user)
+    await check_eligibility_codes(
+        db, body.allowed_categories, loc=("body", "allowed_categories")
+    )
 
     before_state = engineer_audit_state(engineer)
     for field_name, value in body.model_dump(exclude_unset=True).items():

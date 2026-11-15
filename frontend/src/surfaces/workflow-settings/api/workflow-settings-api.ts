@@ -6,17 +6,24 @@
  * is audit-logged and marks every schedulable project `schedule_stale`.
  */
 
-import { apiGet, apiSendWithHeaders, ApiError, type ApiRequestOptions } from '@/lib/api/client';
+import { apiGet, apiSend, apiSendWithHeaders, ApiError, type ApiRequestOptions } from '@/lib/api/client';
 
 import type { WorkflowId } from '@/types/enums';
 
 import type {
+  ApplyPreviewResponse,
   BEquivalentRow,
+  CategoryCreateRequest,
+  CategoryCreateResponse,
   CategoryTimeline,
   ChamberSettingUpdateRequest,
   HubCalendarUpdateRequest,
-  LeadTimesUpdateRequest,
   StepsUpdateRequest,
+  TemplateApplyRequest,
+  TemplateApplyResponse,
+  TemplateChangeSet,
+  TimelinePreviewRequest,
+  TimelinePreviewResponse,
   WorkflowSettings,
   WorkflowSettingsSaveResult,
 } from './types';
@@ -50,8 +57,29 @@ export function saveSteps(workflowId: string, body: StepsUpdateRequest): Promise
   return put(`/workflow-settings/steps/${workflowId}`, body);
 }
 
-export function saveLeadTimes(body: LeadTimesUpdateRequest): Promise<WorkflowSettingsSaveResult> {
-  return put('/workflow-settings/lead-times', body);
+// P33: `PUT /workflow-settings/lead-times` is retired (410 USE_TEMPLATE_APPLY);
+// the Lead times tab saves through `applyTemplate` below (contract Part G / I).
+
+// --- P33 (API_CONTRACT_P33 Parts B2, D, E): `workflow_templates.write` only. ---
+
+/** D: stateless timeline with the overrides laid over the saved template. */
+export function previewTimeline(body: TimelinePreviewRequest, ctx: FetchCtx = {}): Promise<TimelinePreviewResponse> {
+  return apiSend<TimelinePreviewResponse>('POST', '/workflow-templates/timeline-preview', body, ctx);
+}
+
+/** E2: who would receive the change set. No writes. */
+export function previewApply(body: TemplateChangeSet, ctx: FetchCtx = {}): Promise<ApplyPreviewResponse> {
+  return apiSend<ApplyPreviewResponse>('POST', '/workflow-templates/apply-preview', body, ctx);
+}
+
+/** E3: write the template and the copies, then one recalculation. */
+export function applyTemplate(body: TemplateApplyRequest): Promise<TemplateApplyResponse> {
+  return apiSend<TemplateApplyResponse>('POST', '/workflow-templates/apply', body);
+}
+
+/** B2: add a category (copies a template, inserts at a rank). */
+export function createCategory(body: CategoryCreateRequest): Promise<CategoryCreateResponse> {
+  return apiSend<CategoryCreateResponse>('POST', '/workflow-templates/categories', body);
 }
 
 export function saveHubCalendar(

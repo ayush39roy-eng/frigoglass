@@ -1,4 +1,5 @@
-import { HUB_NAMES, PROJECT_CATEGORIES, PROJECT_PRIORITIES } from '@/types/enums';
+import { getCategoryCatalog } from '@/lib/category-catalog';
+import { HUB_NAMES, PROJECT_PRIORITIES } from '@/types/enums';
 
 import { isMappedStatus } from './import-rows';
 import type { ImportMode, ImportRow } from './import-types';
@@ -82,7 +83,8 @@ export function isCandidate(row: ImportRow): boolean {
 }
 
 function canonicalOrder(dim: RuleDimension): readonly string[] {
-  if (dim === 'category') return PROJECT_CATEGORIES;
+  // P33-T14: served rank order (unknown codes sort last, then by code).
+  if (dim === 'category') return getCategoryCatalog().codes;
   if (dim === 'hub') return HUB_NAMES;
   if (dim === 'priority') return PROJECT_PRIORITIES;
   if (dim === 'source') return ['matched', 'new'];

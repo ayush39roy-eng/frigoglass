@@ -168,7 +168,7 @@ describe('ProjectFormDialog', () => {
         mode="edit"
         project={{
           id: 'p9', name: 'Old cooler', external_code: null, hub_id: 'hub-1', leader_engineer_id: null, leader_is_provisional: false,
-          category: null, type: null, priority: null, status: 'In Queue', frozen: false, actual_start_week: null,
+          category: null, type: null, priority: null, status: 'In Queue', frozen: false, actual_start_week: null, actual_end_week: null,
           delay_weeks: 0, reg_year: null, carry_over: false, comments: null, customer_name: null, tcogs_eur: null,
           selling_price_eur: null, gross_margin_pct: null, capex_keur: null, rm_savings_keur: null,
           target_end_week: null, certification_testing_required: true, estimated_design_weeks: null,
@@ -196,7 +196,7 @@ describe('ProjectFormDialog', () => {
         onDirtyChange={onDirtyChange}
         project={{
           id: 'p9', name: 'Old cooler', external_code: null, hub_id: 'hub-1', leader_engineer_id: null, leader_is_provisional: false,
-          category: null, type: 'NO', priority: null, status: 'In Queue', frozen: false, actual_start_week: null,
+          category: null, type: 'NO', priority: null, status: 'In Queue', frozen: false, actual_start_week: null, actual_end_week: null,
           delay_weeks: 0, reg_year: null, carry_over: false, comments: null, customer_name: null, tcogs_eur: null,
           selling_price_eur: null, gross_margin_pct: null, capex_keur: null, rm_savings_keur: null,
           target_end_week: null, certification_testing_required: true, estimated_design_weeks: null,
@@ -242,7 +242,7 @@ describe('ProjectFormDialog', () => {
         variant="inline"
         project={{
           id: 'p9', name: 'Old cooler', external_code: null, hub_id: 'hub-1', leader_engineer_id: null, leader_is_provisional: false,
-          category: null, type: null, priority: null, status: 'In Queue', frozen: false, actual_start_week: null,
+          category: null, type: null, priority: null, status: 'In Queue', frozen: false, actual_start_week: null, actual_end_week: null,
           delay_weeks: 0, reg_year: null, carry_over: false, comments: null, customer_name: null, tcogs_eur: null,
           selling_price_eur: null, gross_margin_pct: null, capex_keur: null, rm_savings_keur: null,
           target_end_week: null, certification_testing_required: true, estimated_design_weeks: null,
@@ -296,7 +296,7 @@ describe('ProjectFormDialog', () => {
           priority: null,
           status: 'Draft',
           frozen: false,
-          actual_start_week: null,
+          actual_start_week: null, actual_end_week: null,
           delay_weeks: 0,
           reg_year: null,
           carry_over: false,
@@ -361,6 +361,24 @@ describe('ProjectFormDialog', () => {
     expect(
       await screen.findByText('This project has a hard gate (regulatory / certification / safety), so it must stay P1.'),
     ).toBeInTheDocument();
+  });
+
+  it('P36-R03: a 503 BAND_RANK_BUSY on save shows the contract copy', async () => {
+    const user = userEvent.setup();
+    const { ApiError } = await import('@/lib/api/client');
+    const onSubmit = vi.fn().mockRejectedValue(new ApiError(503, 'unavailable', 'raw', 'BAND_RANK_BUSY', 5));
+    renderWithProviders(
+      <ProjectFormDialog mode="create" project={null} open onOpenChange={vi.fn()} hubs={hubs} onSubmit={onSubmit} />,
+    );
+    await user.type(screen.getByLabelText(/^Name/), 'Cooler G');
+    await user.click(screen.getByRole('combobox', { name: /^Hub/ }));
+    await user.click(await screen.findByRole('option', { name: 'R&D-Greece' }));
+    await fillRequired(user);
+    await user.click(screen.getByRole('button', { name: 'Register project' }));
+    expect(
+      await screen.findByText('Another priority change is being saved. Please try again in a moment.'),
+    ).toBeInTheDocument();
+    expect(onSubmit).toHaveBeenCalledTimes(1);
   });
 
   it('submits every financial field, the leader/category/type/priority selects, the carry-over checkbox, and comments', async () => {
@@ -607,7 +625,7 @@ describe('ProjectForm — unsaved-changes reporting (P22-T01)', () => {
   const existing = {
     id: 'p-1', name: 'Cooler A', external_code: null, hub_id: 'hub-1', leader_engineer_id: null, leader_is_provisional: false,
     category: 'A' as const, type: null, priority: 'P2' as const, status: 'In Queue' as const, frozen: false,
-    actual_start_week: null, delay_weeks: 0, reg_year: 2026, carry_over: false, comments: 'one\r\ntwo',
+    actual_start_week: null, actual_end_week: null, delay_weeks: 0, reg_year: 2026, carry_over: false, comments: 'one\r\ntwo',
     customer_name: null, tcogs_eur: 100.5, selling_price_eur: null, gross_margin_pct: null, capex_keur: null,
     rm_savings_keur: null, target_end_week: null, certification_testing_required: true,
     estimated_design_weeks: null, estimated_lab_weeks: null, design_effort_weeks: null, lab_effort_weeks: null, safety_lab_weeks: null, actual_design_weeks: null, actual_testing_weeks: null, safety_certification_required: false, capacity_flag: false, plant: null, requesting_department: null, product_type: null, scoring_tags: [], tag_dimension_keys: [], schedule_stale: false, workflow_id: 'PDD' as const,

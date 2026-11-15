@@ -8,14 +8,17 @@ import { actAs, checkAxe } from './dev-session';
  */
 
 
-test.describe('Workflow Settings (P9, ADR 0007-0009)', () => {
+test.describe('Workflow Settings (P9, ADR 0007-0009; P33 ADR 0045)', () => {
+  // P32-R04: the template settings are the page's second tab.
+  const TEMPLATES = '/settings/workflow?tab=templates';
+
   test('Super Admin: every tab renders and is axe clean', async ({ page }) => {
     await actAs(page, 'superAdmin');
-    await page.goto('/settings/workflow');
+    await page.goto(TEMPLATES);
     await expect(page.getByRole('heading', { name: 'Workflow Settings', exact: true })).toBeVisible();
     await expect(page.getByTestId('read-only-notice')).toHaveCount(0);
 
-    for (const tab of ['Steps & precedence', 'Lead times', 'Hub calendars', 'Chambers']) {
+    for (const tab of ['Steps & precedence', 'Lead times', 'Timeline previews', 'Hub calendars', 'Chambers']) {
       await page.getByRole('tab', { name: tab }).click();
       await expect(page.getByRole('tab', { name: tab })).toHaveAttribute('aria-selected', 'true');
       await page.waitForTimeout(300);
@@ -23,36 +26,41 @@ test.describe('Workflow Settings (P9, ADR 0007-0009)', () => {
     }
   });
 
-  test('Super Admin: lead-time edit saves, shows the stale banner, then reverts', async ({
-    page,
-  }) => {
+  // P33-T17: the Lead times tab saves through the apply (E2 → dialog → E3); the
+  // old PUT answers 410. Applying to none of the started projects still
+  // changes the not-started ones, so the test reverts its own edit.
+  test('Super Admin: a lead-time edit goes through the apply dialog, then reverts', async ({ page }) => {
     await actAs(page, 'superAdmin');
-    await page.goto('/settings/workflow');
+    await page.goto(TEMPLATES);
     await page.getByRole('tab', { name: 'Lead times' }).click();
 
     const cell = page.getByLabel('PDD A+ PDD-A weeks');
     await expect(cell).toHaveValue('1');
-    await cell.fill('2');
-    await page.getByRole('button', { name: 'Save 1 change' }).click();
-    const banner = page.getByTestId('stale-banner');
-    await expect(banner).toBeVisible();
-    await expect(banner).toContainText(/\d+/);
-    await checkAxe(page, 'Workflow Settings: stale banner after save');
-
-    await cell.fill('1');
-    await page.getByRole('button', { name: 'Save 1 change' }).click();
-    await expect(cell).toHaveValue('1');
-    for (const b of await page.getByRole('button', { name: /^Save \d+ change/ }).all()) await expect(b).toBeDisabled();
+    for (const value of ['2', '1']) {
+      await cell.fill(value);
+      await page.getByRole('button', { name: 'Save 1 change…' }).click();
+      const dialog = page.getByTestId('template-apply-dialog');
+      await expect(dialog.getByTestId('apply-counts')).toBeVisible();
+      await checkAxe(page, `Workflow Settings: apply dialog (${value})`);
+      await dialog.getByTestId('apply-confirm').click();
+      await expect(page.getByTestId('template-apply-panel')).toContainText('Template saved');
+      await expect(page.getByLabel('PDD A+ PDD-A weeks')).toHaveValue(value);
+    }
   });
 
-  test('Admin: read-only with the notice, axe clean', async ({ page }) => {
+  test('Admin: edits the category templates; steps, calendars and chambers stay read-only', async ({ page }) => {
     await actAs(page, 'admin');
-    await page.goto('/settings/workflow');
+    await page.goto(TEMPLATES);
     await expect(page.getByRole('heading', { name: 'Workflow Settings', exact: true })).toBeVisible();
     await expect(page.getByTestId('read-only-notice')).toBeVisible();
     await page.getByRole('tab', { name: 'Lead times' }).click();
-    await expect(page.getByRole('button', { name: /^Save \d+ change/ })).toHaveCount(0);
-    await checkAxe(page, 'Workflow Settings: Admin read-only');
+    await expect(page.getByTestId('read-only-notice')).toHaveCount(0);
+    await expect(page.getByLabel('PDD A+ PDD-A weeks')).toBeVisible();
+    await page.getByRole('tab', { name: 'Timeline previews' }).click();
+    await expect(page.getByRole('button', { name: 'Lengthen PDD-E by one week' }).first()).toBeVisible();
+    await page.getByRole('tab', { name: 'Chambers' }).click();
+    await expect(page.getByTestId('read-only-notice')).toBeVisible();
+    await checkAxe(page, 'Workflow Settings: Admin');
   });
 });
 

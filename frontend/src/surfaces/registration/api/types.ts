@@ -108,6 +108,9 @@ export interface ProjectRead {
   status: ProjectStatus;
   frozen: boolean;
   actual_start_week: number | null;
+  /** P35-T01: the week the project actually finished (≥ 1, never before
+   *  `actual_start_week`, else 422 `ACTUAL_END_BEFORE_START`). Not a scheduler input. */
+  actual_end_week: number | null;
   delay_weeks: number;
   reg_year: number | null;
   carry_over: boolean;

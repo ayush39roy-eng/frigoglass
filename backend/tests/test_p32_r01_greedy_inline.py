@@ -25,7 +25,6 @@ from testcontainers.postgres import PostgresContainer
 
 import services.priority_move as priority_move
 import services.run_dispatch as run_dispatch
-import services.step_timing as step_timing
 import workers.schedule_tasks as schedule_tasks
 from core.celery_config import SolverDispatchSettings, get_solver_dispatch_settings
 from models.checkin import ScheduleRunFollowUp
@@ -46,7 +45,6 @@ from models.schedule import ScheduleRun
 from services.priority_move import apply_priority_change
 from services.project_steps import sync_project_steps
 from services.schedule_persistence import create_queued_schedule_run
-from services.step_timing import apply_step_timing
 from tests.auth_helpers import make_principal
 from tests.conftest import run_alembic
 from tests.factories import make_engineer, make_hub, make_project, make_user
@@ -89,7 +87,7 @@ def inline(monkeypatch):
     def _publish(run_id, *, status, **_k):
         events.append((str(run_id), status))
 
-    for module in (run_dispatch, priority_move, step_timing, schedule_tasks):
+    for module in (run_dispatch, priority_move, schedule_tasks):
         monkeypatch.setattr(module, "publish_progress", _publish)
     yield events
     assert run_dispatch.wait_for_inline_runs(60)
@@ -247,7 +245,9 @@ async def test_priority_move_runs_inline_to_completed_and_active(real_db, inline
     assert await _in_session(url, _stale) is False
 
 
-async def test_step_timing_runs_inline_to_completed_and_active(real_db, inline):
+async def test_second_priority_move_runs_inline_and_records_its_task_id(real_db, inline):
+    # P33-T13: was the step-timing drag (retired, ADR 0048); the same
+    # auto-recalc lifecycle through a priority move.
     url = real_db
     await _reset(url)
     project_id, user_id = await _seed(url)
@@ -255,10 +255,7 @@ async def test_step_timing_runs_inline_to_completed_and_active(real_db, inline):
 
     async def _drag(db):
         project = await db.get(Project, project_id)
-        return await apply_step_timing(
-            db, project, "PDD-E", {"duration_override_weeks": 9, "start_not_before_week": 40},
-            principal,
-        )
+        return await apply_priority_change(db, project, ProjectPriority.P2, principal)
 
     result = await _in_session(url, _drag)
     assert result.recalc_status == "queued"
@@ -327,10 +324,9 @@ async def test_failing_body_marks_the_run_failed(real_db, inline, monkeypatch, c
     monkeypatch.setattr(schedule_tasks, "build_schedule_input_from_db", _boom)
 
     async def _drag(db):
+        # P33-T13: a priority move (the step-timing drag is retired).
         project = await db.get(Project, project_id)
-        return await apply_step_timing(
-            db, project, "PDD-E", {"duration_override_weeks": 7}, principal
-        )
+        return await apply_priority_change(db, project, ProjectPriority.P1, principal)
 
     with caplog.at_level(logging.WARNING, logger=run_dispatch.logger.name):
         result = await _in_session(url, _drag)
@@ -379,17 +375,16 @@ def no_redis(monkeypatch):
     celery_config.get_redis_settings.cache_clear()
 
 
-async def test_step_timing_completes_inline_with_redis_down(real_db, no_redis, caplog):
+async def test_auto_recalc_completes_inline_with_redis_down(real_db, no_redis, caplog):
     url = real_db
     await _reset(url)
     project_id, user_id = await _seed(url)
     principal = make_principal(RoleName.PORTFOLIO_MANAGER, user_id=user_id)
 
     async def _drag(db):
+        # P33-T13: a priority move (the step-timing drag is retired).
         project = await db.get(Project, project_id)
-        return await apply_step_timing(
-            db, project, "PDD-E", {"duration_override_weeks": 8}, principal
-        )
+        return await apply_priority_change(db, project, ProjectPriority.P1, principal)
 
     with caplog.at_level(logging.WARNING):
         # The API's own `queued` publish fails but must not fail the request.

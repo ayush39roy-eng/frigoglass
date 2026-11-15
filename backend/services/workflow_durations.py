@@ -13,6 +13,13 @@ migration depending on how the ORM models evolve afterwards:
   rows from the table currently stored in `workflow_lead_times`.
 - `lead_time_lookup(...)` / `duration_for(...)` — the same rule in pure Python,
   for callers that build step rows before they exist in the DB (the seed).
+- P33 (ADR 0046 §B, OR-1..OR-3; contract P33 F4): `own_effort_kinds`,
+  `live_step_effective_weeks` / `live_step_skipped` (THE service-side `eff`
+  and skip predicate on `(plan_weeks, kind, cert, own_effort,
+  effort_weeks)`) and `run_input_lead_and_override` (the live builder's
+  mapping). Since P33, `duration_weeks` is only the table value the row was
+  created / last recomputed with; no `eff` reader uses it — the project's
+  own copy is `plan_weeks`.
 
 No raw SQL string interpolation anywhere here — every value is a bound
 parameter; the statements are built with SQLAlchemy Core.
@@ -28,8 +35,6 @@ from sqlalchemy.engine import CursorResult
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import domain_constants as dc
-from scheduling.workflow import is_step_skipped as scheduling_is_step_skipped
-from scheduling.workflow import merged_step_override, step_effective_weeks
 
 # --- Lightweight table handles (no ORM dependency) ---------------------------
 
@@ -83,8 +88,9 @@ def recompute_step_durations_statement(
         .where(_steps.c.project_id == _projects.c.id)
         .where(_hubs.c.id == _projects.c.hub_id)
         .where(_lead_times.c.step_id == _steps.c.step_template_id)
-        # Both sides are the `project_category` enum — compared directly (a
-        # cast to varchar on one side would make Postgres reject the comparison).
+        # Both sides are `text` referencing `categories.code` (P33-T07, ADR
+        # 0047; before, both were the `project_category` enum) — compared
+        # directly.
         .where(_lead_times.c.category == _projects.c.category)
         .where(_lead_times.c.workflow_id == workflow_id_expression())
     )
@@ -134,93 +140,140 @@ def _kind_value(kind: object) -> str:
     return str(value)
 
 
+#: The kinds a project's own effort figure can govern (OR-1).
+EFFORT_KINDS: frozenset[str] = frozenset({"design", "lab"})
+
+
+def own_effort_kinds(
+    rows: Iterable[tuple[str, int | None]], kind_of: Mapping[str, object]
+) -> frozenset[str]:
+    """ADR 0046 OR-1, DOMAIN_RULES "Category templates" §B: the kinds `k` with
+    `ownEffort(p, k)`, i.e. some step of the project of kind `k` carries a
+    non-null `effort_weeks` (R2 applied: a figure > 0, a step of the kind
+    with `effort_weight_weeks > 0`, certification testing on for lab).
+
+    `rows` are one project's `(step_id, effort_weeks)` pairs; `kind_of`
+    maps a step id to its kind (enum or value). Elapsed steps never have own
+    effort."""
+
+    out: set[str] = set()
+    for step_id, effort_weeks in rows:
+        if effort_weeks is None:
+            continue
+        kind = _kind_value(kind_of.get(step_id, "elapsed"))
+        if kind in EFFORT_KINDS:
+            out.add(kind)
+    return frozenset(out)
+
+
 def live_step_effective_weeks(
     *,
-    lead_weeks: int,
+    plan_weeks: int,
     kind: object,
     certification_testing_required: bool,
-    user_override_weeks: int | None,
+    own_effort: bool,
     effort_weeks: int | None,
 ) -> int:
-    """ADR 0041 "Invariant wording" `eff(p, s)` of a live step row, through
-    the scheduler's own functions (never re-implemented here):
+    """DOMAIN_RULES "Category templates" §B (ADR 0046 OR-2), `eff(p, s)` of a
+    live step row:
 
-        eff = 0                                lead = 0, or lab ∧ ¬cert
-        eff = user ?? effort ?? lead           otherwise (R4)
+        eff = 0                       kind = lab and not cert
+            = effort_weeks ?? 0       ownEffort(p, kind)   # its own figure is the timeline
+            = plan_weeks              otherwise            # the project's template copy
 
-    `lead_weeks` is the step's lead-time duration
-    (`ProjectWorkflowStep.duration_weeks`), `user_override_weeks` the user's
-    `duration_override_weeks` and `effort_weeks` the derived effort column.
-    This is the duration used everywhere the lead time was (remaining
-    duration, roll-up weights, demand load); 0 means skipped (R5)."""
+    `own_effort` is `ownEffort(p, kind(s))` (`own_effort_kinds`). Equal to
+    R33-1 on the live builder's input (contract F4): on an own-effort step
+    the lead is its weight, which is > 0 exactly where `effort_weeks` is
+    non-null (I26), and the override is `effort_weeks`; elsewhere the lead is
+    `plan_weeks` and there is no override. 0 means skipped (the one
+    predicate, `live_step_skipped`).
 
-    return step_effective_weeks(
-        lead_weeks=lead_weeks,
-        kind=_kind_value(kind),
-        certification_testing_required=certification_testing_required,
-        override_weeks=merged_step_override(user_override_weeks, effort_weeks),
-    )
+    P33-T13: the T05-A2 user-override term is gone. Migration p33c cleared
+    every hand-set `duration_override_weeks` and a CHECK keeps it null
+    (ADR 0048)."""
+
+    k = _kind_value(kind)
+    if k == "lab" and not certification_testing_required:
+        return 0
+    if own_effort and k in EFFORT_KINDS:
+        return 0 if effort_weeks is None else effort_weeks
+    return plan_weeks
 
 
 def live_step_skipped(
     *,
-    lead_weeks: int,
+    plan_weeks: int,
     kind: object,
     certification_testing_required: bool,
-    user_override_weeks: int | None,
+    own_effort: bool,
     effort_weeks: int | None,
 ) -> bool:
-    """ADR 0041 R5, THE skip predicate (`scheduling.is_step_skipped`):
-    skipped ⟺ lead = 0 ∨ (lab ∧ ¬cert) ∨ effective = 0."""
+    """THE service-side skip predicate (ADR 0041 R5 as revised by ADR 0046
+    §B; contract P33 F4): skipped ⟺ `live_step_effective_weeks(...) == 0`,
+    on `(plan_weeks, kind, cert, own_effort, effort_weeks)`."""
 
-    return scheduling_is_step_skipped(
-        lead_weeks=lead_weeks,
-        kind=_kind_value(kind),
-        certification_testing_required=certification_testing_required,
-        override_weeks=merged_step_override(user_override_weeks, effort_weeks),
+    return (
+        live_step_effective_weeks(
+            plan_weeks=plan_weeks,
+            kind=kind,
+            certification_testing_required=certification_testing_required,
+            own_effort=own_effort,
+            effort_weeks=effort_weeks,
+        )
+        == 0
     )
 
 
 def display_duration_weeks(
     *,
-    lead_weeks: int,
+    plan_weeks: int,
     kind: object,
     certification_testing_required: bool,
-    user_override_weeks: int | None,
+    own_effort: bool,
     effort_weeks: int | None,
 ) -> int:
     """The duration a stage is shown with (Workspace / agent context): `eff`,
     except that a lab step skipped only because certification testing is off
-    shows its lead-time value (overrides ignored, P12-F04, unchanged), so it
-    still reads as a planned length; a lead-0 step and an effort-zeroed step
-    show 0. Its `skipped` flag is served beside it."""
+    shows its copy (`plan_weeks`, P12-F04, unchanged), so it still reads as a
+    planned length; a 0-length step and an effort-zeroed step show 0. Its
+    `skipped` flag is served beside it."""
 
     if _kind_value(kind) == "lab" and not certification_testing_required:
-        return lead_weeks
+        return plan_weeks
     return live_step_effective_weeks(
-        lead_weeks=lead_weeks,
+        plan_weeks=plan_weeks,
         kind=kind,
         certification_testing_required=certification_testing_required,
-        user_override_weeks=user_override_weeks,
+        own_effort=own_effort,
         effort_weeks=effort_weeks,
     )
 
 
-def effective_duration_weeks(
-    lead_time_weeks: int,
-    duration_override_weeks: int | None,
+def run_input_lead_and_override(
     *,
-    effort_weeks: int | None = None,
-    skipped: bool = False,
-) -> int:
-    """ADR 0019 §1 / ADR 0041 R4: `user ?? effort ?? lead_time` for a step
-    that is not skipped by its lead time; a lead-0 step (or one the caller
-    says is `skipped` for certification) keeps its lead-time value and the
-    overrides are ignored, as the scheduler does. Prefer
-    `live_step_effective_weeks`, which also applies the lab/certification
-    gate and answers 0 for every skipped step."""
+    plan_weeks: int,
+    effort_weight_weeks: int,
+    table_weeks: int,
+    own_effort: bool,
+    effort_weeks: int | None,
+) -> tuple[int | None, int | None]:
+    """Contract P33 F4 (ADR 0046 OR-3), exact since p33c:
+    `(lead_weeks, duration_override_weeks)` of one live step in the solver
+    input.
 
-    if skipped or lead_time_weeks == 0:
-        return lead_time_weeks
-    merged = merged_step_override(duration_override_weeks, effort_weeks)
-    return lead_time_weeks if merged is None else merged
+    - `ownEffort(p, kind(s))`: `lead_weeks` = `effort_weight_weeks`,
+      override = `effort_weeks`;
+    - any other step: `lead_weeks` = `plan_weeks`, override = None;
+    - `lead_weeks` is None when it equals the table.
+
+    `table_weeks` is the input table's value for the project's workflow,
+    category and step (0 when it has none, as `duration_for`). The scheduler
+    then evaluates R33-1: `lead = lead_weeks ?? table`, `eff = 0` if `lead =
+    0` or lab without certification, else `override ?? lead`.
+
+    P33-T13: the T05-A1 user-override term is gone (p33c cleared every
+    hand-set value; a CHECK keeps them null, ADR 0048)."""
+
+    lead = effort_weight_weeks if own_effort else plan_weeks
+    override = effort_weeks if own_effort else None
+    return (None if lead == table_weeks else lead), override

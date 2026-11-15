@@ -35,8 +35,6 @@ import { GanttProjectDetailsDialog } from './gantt-project-details';
 import { ProjectMetaLine, RowWeeks } from './gantt-row-meta';
 import { AXIS_HEIGHT, GanttGridLines, GanttWeekAxis } from './gantt-time-axis';
 import { StepBarGraphic, StepLeftCell } from './gantt-step-row';
-import { StepDragOverlay } from './step-timing/step-drag-overlay';
-import { stepTimingTarget } from './step-timing/step-timing-context';
 
 /**
  * The hand-built virtualized Gantt renderer (`dataviz-gantt` SKILL + Standing
@@ -49,7 +47,7 @@ import { stepTimingTarget } from './step-timing/step-timing-context';
  * P19-R02 (QA-P19-2): below 768 px the two fixed columns collapse to one slim
  * name column (`gantt-layout.ts`); the status chips move into a compact row
  * icon and the project details dialog, so the timeline keeps most of the width
- * and stays draggable on touch. 1280+ layouts are unchanged.
+ * and stays readable on touch. 1280+ layouts are unchanged.
  *
  * Every bar's x / width is a pure render of server week numbers through the
  * week→pixel scale (`gantt-bars.tsx` / `gantt-coordinates.ts`); every badge is a
@@ -153,14 +151,6 @@ export function GanttChart({
   }, []);
   const detailsProject = detailsId === null ? null : (rows.find((r) => r.project_id === detailsId) ?? null);
 
-  // The visible timeline in client px — the scroll viewport minus both sticky
-  // columns — so the drag label can stay inside it (gate observation O1).
-  const timelineViewport = React.useCallback(() => {
-    const el = scrollRef.current;
-    if (!el) return null;
-    const r = el.getBoundingClientRect();
-    return { left: r.left + LEFT_COL_WIDTH, right: r.left + el.clientWidth - BADGE_COL_WIDTH };
-  }, [LEFT_COL_WIDTH, BADGE_COL_WIDTH]);
   const scale = React.useMemo(() => {
     if (!axis) return makeWeekScale(zoom);
     const minPx = typeof zoom === 'number' ? clampZoomPx(zoom) : WEEK_WIDTH_PX[zoom];
@@ -326,7 +316,7 @@ export function GanttChart({
                 return (
                   <div
                     key={vr.key}
-                    className="group/row absolute left-0 flex has-[[data-dragging=true]]:z-20"
+                    className="group/row absolute left-0 flex"
                     style={{ top, height, width: contentWidth }}
                     data-testid={vr.kind === 'project' ? 'gantt-project-row' : 'gantt-step-row'}
                     data-project-id={vr.project.project_id}
@@ -356,7 +346,7 @@ export function GanttChart({
                           extra={rowExtra}
                         />
                       ) : (
-                        <StepLeftCell project={vr.project} step={vr.step} compact={compact} narrow={narrow} timingEdits />
+                        <StepLeftCell step={vr.step} compact={compact} narrow={narrow} />
                       )}
                     </div>
 
@@ -377,17 +367,6 @@ export function GanttChart({
                         >
                           Not placed in the active run
                         </span>
-                      ) : null}
-                      {/* P12 (ADR 0019): drag handles, only where the server says
-                          `timing_editable` allows it (none → nothing rendered). */}
-                      {vr.kind === 'step' && !vr.step.skipped ? (
-                        <StepDragOverlay
-                          target={stepTimingTarget(vr.project, vr.step)}
-                          scale={scale}
-                          rowHeight={height}
-                          viewport={timelineViewport}
-                          touch={narrow}
-                        />
                       ) : null}
                     </div>
 

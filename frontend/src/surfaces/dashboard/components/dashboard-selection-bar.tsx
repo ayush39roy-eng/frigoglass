@@ -3,7 +3,7 @@ import { FilterX } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { MultiChipFilter } from '@/components/shared/multi-chip-filter';
-import { CATEGORY_CHIP_OPTIONS_WITH_UNMAPPED, TYPE_CHIP_OPTIONS_WITH_UNMAPPED } from '@/lib/multi-select-filter';
+import { useCategoryChipOptions, TYPE_CHIP_OPTIONS_WITH_UNMAPPED } from '@/lib/multi-select-filter';
 
 import type { DashboardSelectionState } from '../lib/selection';
 
@@ -14,6 +14,7 @@ import type { DashboardSelectionState } from '../lib/selection';
  * Dashboard figure is re-served for it.
  */
 export function DashboardSelectionBar({ selection }: { selection: DashboardSelectionState }): React.JSX.Element {
+  const categoryChips = useCategoryChipOptions(true);
   return (
     <section
       aria-label="Dashboard filters: category and project type"
@@ -22,7 +23,7 @@ export function DashboardSelectionBar({ selection }: { selection: DashboardSelec
     >
       <MultiChipFilter
         label="Category"
-        options={CATEGORY_CHIP_OPTIONS_WITH_UNMAPPED}
+        options={categoryChips}
         value={selection.categories}
         onChange={selection.setCategories}
         data-testid="dashboard-category-chips"

@@ -172,6 +172,9 @@ export const BAND_THRESHOLDS: readonly { min: number; band: ProjectPriority }[] 
 export interface PriorityMatrixRow {
   project_id: Id;
   project_name: string;
+  /** P34-T03 (D34-3): the project code (`Project.external_code`); null when the project has none.
+   *  Matched by the grid's client-side search. Absent from a pre-P34-T03 API. */
+  external_code: string | null;
   hub: HubName;
   category: ProjectCategory | null;
   type: ProjectType | null;
@@ -228,6 +231,10 @@ export interface PriorityMatrixRow {
   is_rm_saving_project: boolean;
   /** ADR 0027: the VIP pin (`projects.is_vip`). Absent from a pre-2026-10-22 API. */
   is_vip: boolean;
+  /** P34 (D34-4): the most recent scenario-apply version that changed this project's
+   *  priority score, in the caller's hub scope; null when none. Absent from a pre-P34
+   *  API: read it through `rowLastScoreVersion` (treats absent as null). */
+  last_score_version: LastScoreVersion | null;
 
   /** The currency these financial columns were converted to, server-side. */
   currency: CurrencyCode | MatrixCurrencyCode;
@@ -236,6 +243,14 @@ export interface PriorityMatrixRow {
   tcogs_eur: number | null;
   selling_price_eur: number | null;
   gross_margin_pct: number | null;
+}
+
+/** P34-T01 (→ `LastScoreVersion`): the latest `ScenarioApplyRun` with a
+ *  `priority_score` change for a project. Shown verbatim (version, when, who). */
+export interface LastScoreVersion {
+  version: number;
+  created_at: string;
+  applied_by_name: string | null;
 }
 
 /** `GET /priorities/summary` (→ `PriorityPortfolioSummary`). Implicitly scoped
@@ -448,6 +463,9 @@ export interface ScenarioApplyRunSummary {
   notes: string | null;
   entity_types_touched: string[];
   change_count: number;
+  /** P34-T01: distinct projects touched by this version. Absent from a pre-P34 API
+   *  (the history list then falls back to `change_count`). */
+  project_count: number;
   created_at: string;
 }
 

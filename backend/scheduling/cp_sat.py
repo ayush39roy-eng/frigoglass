@@ -82,7 +82,7 @@ is returned as `ScheduleOutput.solver_status`.
 from __future__ import annotations
 
 import math
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 
 from ortools.sat.python import cp_model
@@ -135,6 +135,14 @@ def objective_weights(projects: Iterable[ProjectInput]) -> dict[str, int]:
     "Scheduling order"). Among VIP projects the band still orders them. With
     no VIP project every weight is the plain band weight, so the objective --
     and therefore the solve -- is exactly the pre-ADR-0040 one.
+
+    ADR 0050 / R36-4: `band_rank` (scheduling order key 3a) is deliberately
+    NOT part of the objective, exactly as status and category are not. CP-SAT
+    honours the rank only through `greedy.prepare_run` (`ctx.ordered`: the
+    served `scheduling_order`, the anchored-step prebook order and the greedy
+    warm-start hint), so it may put a lower-ranked project of a band in-year
+    ahead of a higher-ranked one. Documented, intentional greedy/CP-SAT
+    divergence; do not add the rank here.
     """
 
     ordered = sorted(projects, key=lambda p: p.project_id)
@@ -285,8 +293,10 @@ def run_cp_sat(
         # INFEASIBLE instead of resolving to present=False). The "must finish
         # within horizon" rule is a reified constraint below.
         fixed_ends = [pl.end_week + 1 for pl in prebooked.values()]
+        # P33 (R33-5): waits widen the room the absent case needs; + 0 when
+        # no step waits, so the model is unchanged.
         upper_bound = max([horizon, frontier, *fixed_ends]) + sum(
-            sp.span for sp in plan.steps.values()
+            sp.span + sp.wait_weeks for sp in plan.steps.values()
         )
         lower_bound = frontier
         # Tightest valid floor for the derived max/skip vars: a fixed (Done)
@@ -359,11 +369,16 @@ def run_cp_sat(
             start_var = model.NewIntVar(step_lo, upper_bound, f"start[{pid},{sid}]")
             end_var = model.NewIntVar(lower_bound, upper_bound, f"end[{pid},{sid}]")
             o = sp.overlap_weeks
+            w = sp.wait_weeks
             for pe in pred_ends:
                 # Invariant I3 / I15, per DAG edge; ADR 0043 release set when
-                # the project has an overlap (`- o`, I27).
+                # the project has an overlap (`- o`, I27); P33 wait (`+ w`,
+                # R33-5, I28; `o` and `w` are exclusive). With neither, the
+                # constraint is exactly the pre-P32 one.
                 if o:
                     model.add(start_var >= pe - o)
+                elif w:
+                    model.add(start_var >= pe + w)
                 else:
                     model.Add(start_var >= pe)
             if o:
@@ -534,6 +549,7 @@ def run_cp_sat(
             pre_flags=pre_flags_all.get(pid, (False, False)),
             current_week=current_week,
             within_year_week=schedule_input.within_year_week,
+            category_workflow=ctx.categories.workflow,
         )
 
     apply_eng_conflict_flags(outcomes_by_id, state)
@@ -735,9 +751,10 @@ def _extract_outcome(
     pre_flags: tuple[bool, bool],
     current_week: int,
     within_year_week: int,
+    category_workflow: Mapping[str, str],
 ) -> ProjectScheduleOutcome:
     pid = project.project_id
-    cat_not_allowed = _cat_not_allowed(project, leader)
+    cat_not_allowed = _cat_not_allowed(project, leader, category_workflow)
     unconstrained = unconstrained_end_week(plan, current_week)
     progress_pct = compute_progress_pct(plan)
     eng_conflict, overlap = pre_flags

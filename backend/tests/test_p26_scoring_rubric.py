@@ -401,11 +401,12 @@ async def test_preview_equals_the_saved_result_including_capacity_fill(db_sessio
                 end_week=dc.CURRENT_WEEK + weeks - 1,
             )
         )
-        # ADR 0041 R12: the fill reads remaining demand from the live rows.
+        # ADR 0041 R12: the fill reads remaining demand from the live rows
+        # (the template copy; P33-T13: was the retired user override).
         db_session.add(
             ProjectWorkflowStep(
                 project_id=project.id, step_template_id="PDD-A", sequence_order=1,
-                duration_weeks=1, duration_override_weeks=weeks,
+                duration_weeks=1, plan_weeks=weeks,
             )
         )
     await make_project(db_session, hub, name="Unscored")

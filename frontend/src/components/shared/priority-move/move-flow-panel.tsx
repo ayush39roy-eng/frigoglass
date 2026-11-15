@@ -9,7 +9,7 @@ import type { RunFollowState } from '@/lib/use-schedule-run-follow';
 import { cn } from '@/lib/utils';
 
 import { RunProgressStatus } from '../run-progress-status';
-import { MOVE_COPY } from './move-copy';
+import { MOVE_COPY, rankPositionCopy } from './move-copy';
 import { TimelineUpdatedPanel } from './timeline-updated-panel';
 import type { MoveFlowState } from './use-priority-move-flow';
 
@@ -58,6 +58,7 @@ function ChangesBody({
       projectName={flow.target.projectName}
       priorityBefore={flow.before}
       priorityAfter={flow.after}
+      summary={flow.rank ? <span>moved to {rankPositionCopy(flow.rank.position, flow.after ?? '')}</span> : undefined}
     />
   );
 }
@@ -129,8 +130,10 @@ export function MoveFlowPanel({
       {flow.kind === 'running' ? (
         <div className="space-y-2">
           <p className="text-xs text-text-muted">
-            {flow.target.projectName} moved {flow.before ?? 'from no priority'} → {flow.after ?? 'no priority'}. Following
-            the solver run.
+            {flow.rank
+              ? `${flow.target.projectName} moved to ${rankPositionCopy(flow.rank.position, flow.after ?? '')}.`
+              : `${flow.target.projectName} moved ${flow.before ?? 'from no priority'} → ${flow.after ?? 'no priority'}.`}{' '}
+            Following the solver run.
           </p>
           <RunProgressStatus state={runState} />
         </div>

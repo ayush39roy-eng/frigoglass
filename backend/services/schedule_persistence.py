@@ -90,13 +90,15 @@ from scheduling.types import (
     StepTimingInput,
 )
 from scheduling.types import WorkflowStepTemplate as SchedWorkflowStepTemplate
-from scheduling.workflow import is_valid_fte, merged_step_override
+from scheduling.workflow import canonical_categories, is_valid_fte
+from services.categories import load_catalog
 from services.notifications import generate_schedule_change_notifications
 from services.schedule_stale import clear_stale_for_run
+from services.workflow_durations import EFFORT_KINDS, run_input_lead_and_override
 
 
 def _lead_time_sort_key(lt: WorkflowLeadTime) -> tuple[str, str, str]:
-    return (lt.workflow_id, lt.category.value, lt.step_id)
+    return (lt.workflow_id, lt.category, lt.step_id)
 
 
 def build_workflow_snapshot(
@@ -130,7 +132,7 @@ def build_workflow_snapshot(
         "lead_times": [
             {
                 "workflow_id": lt.workflow_id,
-                "category": lt.category.value,
+                "category": lt.category,
                 "step_id": lt.step_id,
                 "weeks": lt.weeks,
             }
@@ -146,6 +148,12 @@ def build_workflow_snapshot_from_input(schedule_input: ScheduleInput) -> dict[st
     `persist_schedule_output` stores, so the snapshot equals the settings the
     run was actually solved with (I15), even when Workflow Settings changed
     while a CP-SAT solve was running.
+
+    P33 (R33-7, I30): `categories` (`scheduling.canonical_categories`) only
+    when the input's list differs from the seeded seven; a timing row's
+    `wait_weeks` only when non-zero and `lead_weeks` only when non-null. A
+    run on default inputs therefore snapshots byte-identically to before P33
+    (I14), and a stored snapshot without `categories` means the defaults.
     """
 
     by_workflow: dict[str, list[dict[str, Any]]] = {}
@@ -160,7 +168,7 @@ def build_workflow_snapshot_from_input(schedule_input: ScheduleInput) -> dict[st
                 "predecessor_ids": list(t.predecessor_ids),
             }
         )
-    return {
+    snapshot: dict[str, Any] = {
         "workflows": [{"id": wf, "steps": steps} for wf, steps in sorted(by_workflow.items())],
         "lead_times": [
             {
@@ -185,11 +193,17 @@ def build_workflow_snapshot_from_input(schedule_input: ScheduleInput) -> dict[st
                 "duration_override_weeks": t.duration_override_weeks,
                 "start_not_before_week": t.start_not_before_week,
                 **({"overlap_weeks": t.overlap_weeks} if t.overlap_weeks else {}),
+                **({"wait_weeks": t.wait_weeks} if t.wait_weeks else {}),
+                **({"lead_weeks": t.lead_weeks} if t.lead_weeks is not None else {}),
             }
             for p in sorted(schedule_input.projects, key=lambda p: p.project_id)
             for t in sorted(p.step_timing, key=lambda t: t.step_id)
         ],
     }
+    categories = canonical_categories(schedule_input.categories)
+    if categories is not None:
+        snapshot["categories"] = categories
+    return snapshot
 
 
 def _project_step_timing(
@@ -248,6 +262,10 @@ async def build_schedule_input_from_db(
     )
     template_rows = (await db.execute(template_stmt)).scalars().all()
     lead_time_rows = (await db.execute(select(WorkflowLeadTime))).scalars().all()
+    # ADR 0047 §3 (P33-T07): the category list, sort key 5 = rank. Equal to
+    # `default_categories()` on the seeded table, so the hashed input and the
+    # run snapshot omit it (R33-7).
+    category_catalog = await load_catalog(db)
 
     # Per-stage progress (ADR 0006, DOMAIN_RULES.md "How progress feeds a
     # schedule run"): the live step rows are advisory *inputs* to the solver,
@@ -266,6 +284,21 @@ async def build_schedule_input_from_db(
     progress_by_project: dict[uuid.UUID, list[StepProgressInput]] = {}
     timing_by_project: dict[uuid.UUID, list[StepTimingInput]] = {}
     template_workflow = {t.id: t.workflow_id for t in template_rows}
+    # P33-T08 (contract F4, OR-3): the table and the immutable R2 weights by
+    # (workflow, category, step), each project's workflow / category, and the
+    # kinds that follow each project's own effort figure (OR-1).
+    table_weeks = {(lt.workflow_id, lt.category, lt.step_id): lt.weeks for lt in lead_time_rows}
+    weight_weeks = {
+        (lt.workflow_id, lt.category, lt.step_id): lt.effort_weight_weeks for lt in lead_time_rows
+    }
+    template_kind = {t.id: t.kind.value for t in template_rows}
+    project_key = {
+        p.id: (workflow_id_for_hub(p.hub.is_oem), p.category or "") for p in project_rows
+    }
+    own_kinds: dict[uuid.UUID, set[str]] = {}
+    for s in step_rows:
+        if s.effort_weeks is not None and template_kind.get(s.step_template_id) in EFFORT_KINDS:
+            own_kinds.setdefault(s.project_id, set()).add(template_kind[s.step_template_id])
     # ADR 0043: a workflow's first step (no predecessors) never carries an
     # overlap; the scheduler rejects one with `ValueError`, which would fail
     # the whole run, so a stale value (e.g. after a template DAG edit) is
@@ -282,26 +315,48 @@ async def build_schedule_input_from_db(
                 remaining_weeks_override=s.remaining_weeks_override,
             )
         )
-        # ADR 0019 (P12): Gantt-set timing, only for steps that carry any.
-        # ADR 0041 R4: the solver input carries the MERGED duration
-        # `user ?? effort` (domain 0..104; 0 = skipped), merged here by the
-        # scheduler's own `merged_step_override`; the floor is the user's.
-        # Sorted by step_id so the hashed input is deterministic (I8).
-        # ADR 0043 (P32): the per-project overlap, null -> 0; a row carrying
-        # only an overlap is included.
-        merged = merged_step_override(s.duration_override_weeks, s.effort_weeks)
-        overlap = (
-            s.overlap_weeks or 0
-            if template_has_predecessors.get(s.step_template_id, False)
-            else 0
+        # Contract F4 (ADR 0046 OR-3), exact since p33c (P33-T13: the T05-A1
+        # transitional terms are gone; the hand-set ADR 0019 / 0043 fields
+        # are always null, CHECK `step_timing_retired`, ADR 0048):
+        # - own-effort step: `lead_weeks` = the template's immutable
+        #   `effort_weight_weeks`, override = `effort_weeks`;
+        # - any other step: `lead_weeks` = the project's copy `plan_weeks`,
+        #   no override;
+        #   `lead_weeks` is None when equal to the input table (R33-9);
+        # - `start_not_before_week` is None;
+        # - `overlap_weeks` = `−plan_gap_weeks` when negative, `wait_weeks` =
+        #   `plan_gap_weeks` when positive. Never on a workflow's first step:
+        #   the scheduler rejects a gap there with `ValueError`, which would
+        #   fail the whole run, so a stale value (e.g. after a template DAG
+        #   edit) is dropped, as before.
+        # With every copy equal to the table and every gap 0 (the p33b
+        # backfill) this is exactly the pre-P33 input (I8, I14). Rows with
+        # every field at its default are dropped; sorted by step_id below.
+        workflow_id, category = project_key[s.project_id]
+        key = (workflow_id, category, s.step_template_id)
+        lead_weeks, override = run_input_lead_and_override(
+            plan_weeks=s.plan_weeks,
+            effort_weight_weeks=weight_weeks.get(key, 0),
+            table_weeks=table_weeks.get(key, 0),
+            own_effort=template_kind.get(s.step_template_id) in own_kinds.get(s.project_id, ()),
+            effort_weeks=s.effort_weeks,
         )
-        if merged is not None or s.start_not_before_week is not None or overlap:
+        has_predecessors = template_has_predecessors.get(s.step_template_id, False)
+        overlap = wait = 0
+        if has_predecessors:
+            if s.plan_gap_weeks < 0:
+                overlap = -s.plan_gap_weeks
+            else:
+                wait = s.plan_gap_weeks
+        if override is not None or overlap or wait or lead_weeks is not None:
             timing_by_project.setdefault(s.project_id, []).append(
                 StepTimingInput(
                     step_id=s.step_template_id,
-                    duration_override_weeks=merged,
-                    start_not_before_week=s.start_not_before_week,
+                    duration_override_weeks=override,
+                    start_not_before_week=None,
                     overlap_weeks=overlap,
+                    wait_weeks=wait,
+                    lead_weeks=lead_weeks,
                 )
             )
 
@@ -311,7 +366,7 @@ async def build_schedule_input_from_db(
             name=p.name,
             hub=p.hub.name.value,
             status=p.status.value,
-            category=p.category.value if p.category else None,
+            category=p.category,
             priority=p.priority.value if p.priority else None,
             frozen=p.frozen,
             leader_engineer_id=str(p.leader_engineer_id) if p.leader_engineer_id else None,
@@ -332,6 +387,9 @@ async def build_schedule_input_from_db(
             capacity_hub=hub_name_by_id.get(
                 p.hub.capacity_hub_id or p.hub.id, p.hub.name.value
             ),
+            # ADR 0050 (P36): the planner-set position inside the band,
+            # scheduling order key 3a. None for non-members (I37b).
+            band_rank=p.band_rank,
         )
         for p in project_rows
     )
@@ -341,7 +399,7 @@ async def build_schedule_input_from_db(
             engineer_id=str(e.id),
             name=e.name,
             hub=e.hub.name.value,
-            allowed_categories=tuple(c.value for c in (e.allowed_categories or ())),
+            allowed_categories=tuple(e.allowed_categories or ()),
             fte=float(e.fte),
             # ADR 0042 §5 (P29-T06): not on the capacity roster = booked but
             # never supply (the what-if engine sums counted engineers only).
@@ -378,7 +436,7 @@ async def build_schedule_input_from_db(
     lead_times = tuple(
         LeadTime(
             workflow_id=lt.workflow_id,
-            category=lt.category.value,
+            category=lt.category,
             step_id=lt.step_id,
             weeks=lt.weeks,
         )
@@ -394,6 +452,7 @@ async def build_schedule_input_from_db(
         current_week=current_week,
         horizon_weeks=horizon_weeks,
         within_year_week=within_year_week,
+        categories=category_catalog.schedule_categories(),
     )
 
 

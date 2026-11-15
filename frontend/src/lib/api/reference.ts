@@ -7,21 +7,21 @@
  */
 
 import { useQuery } from '@tanstack/react-query';
+import { useMemo } from 'react';
 
 import { queryKeys } from '@/lib/query-keys';
+import type { CategoryCatalog } from '@/lib/category-catalog';
 import {
-  NON_OEM_CATEGORIES,
-  OEM_CATEGORIES,
   type CurrencyCode,
   type HubName,
   type LabRegion,
-  type ProjectCategory,
   type ProjectType,
   type WorkflowId,
   type WorkflowStepKind,
 } from '@/types/enums';
 import type { Id } from '@/types/common';
 
+import { fetchCategories, useCategories, type Category } from './categories';
 import { apiGet, ApiError } from './client';
 
 export interface Hub {
@@ -143,35 +143,37 @@ export function useCurrencyRates() {
 }
 
 /**
- * PLACEHOLDER (P9 contract §6) — `GET /reference/categories?hub_id=` returns the
- * project categories valid for that hub's workflow (`A+/A/B/C` for PDD hubs,
- * `A-OEM/B-OEM/C-OEM` for OEM hubs, ADR 0007). The server is the authority
- * (it 422s `CATEGORY_WORKFLOW_MISMATCH` on a wrong pairing); the list here only
- * drives the picker.
+ * P33 B1 (ADR 0047): `GET /reference/categories?hub_id=` returns the category
+ * OBJECTS valid for that hub's workflow, in rank order. The server is the
+ * authority (it 422s `CATEGORY_WORKFLOW_MISMATCH` on a wrong pairing); the list
+ * here only drives the Registration picker.
  */
-export function fetchCategoriesForHub(
-  hubId: string,
-  signal?: AbortSignal,
-): Promise<ProjectCategory[]> {
-  return apiGet<ProjectCategory[]>('/reference/categories', { signal, query: { hub_id: hubId } });
+export function fetchCategoriesForHub(hubId: string, signal?: AbortSignal): Promise<Category[]> {
+  return fetchCategories(hubId, signal);
 }
 
 /**
- * The category options the Registration form offers for a hub. Pure: the
- * server list when we have it, else the ADR 0007 split by `Hub.is_oem` as
- * the offline / in-flight fallback. Exported for tests.
+ * The category codes the Registration form offers for a hub, in rank order.
+ * Pure: the hub's served list when we have it; else the global served list
+ * narrowed to the hub's workflow (`Hub.is_oem` → OEM, ADR 0007) while the hub
+ * request is in flight or failed; every category when no hub is chosen.
+ * Exported for tests.
  */
 export function categoryOptionsForHub(
   hub: Pick<Hub, 'is_oem'> | undefined,
-  serverList: readonly ProjectCategory[] | undefined,
-): readonly ProjectCategory[] {
-  if (serverList && serverList.length > 0) return serverList;
-  if (!hub) return [...NON_OEM_CATEGORIES, ...OEM_CATEGORIES];
-  return hub.is_oem ? OEM_CATEGORIES : NON_OEM_CATEGORIES;
+  serverList: readonly Category[] | undefined,
+  catalog: CategoryCatalog,
+): readonly string[] {
+  if (serverList && serverList.length > 0) {
+    return [...serverList].sort((a, b) => a.rank - b.rank).map((c) => c.code);
+  }
+  if (!hub) return catalog.codes;
+  return catalog.codesForWorkflow(hub.is_oem ? 'OEM' : 'PDD');
 }
 
-/** Categories valid for `hub` — server list with the `is_oem` fallback (above). */
+/** Categories valid for `hub` — server list with the workflow fallback (above). */
 export function useCategoriesForHub(hub: Hub | undefined) {
+  const { catalog } = useCategories();
   const query = useQuery({
     queryKey: queryKeys.categoriesForHub(hub?.id),
     queryFn: ({ signal }) => fetchCategoriesForHub(hub?.id ?? '', signal),
@@ -179,5 +181,6 @@ export function useCategoriesForHub(hub: Hub | undefined) {
     retry: retryUnlessAuth,
     staleTime: 60 * 60_000,
   });
-  return { ...query, options: categoryOptionsForHub(hub, query.data) };
+  const options = useMemo(() => categoryOptionsForHub(hub, query.data, catalog), [hub, query.data, catalog]);
+  return { ...query, options };
 }

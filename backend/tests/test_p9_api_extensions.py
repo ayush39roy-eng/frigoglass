@@ -347,10 +347,17 @@ async def test_reference_categories(db_session):
         hubs = await client.get("/hubs")
         rates = await client.get("/currency-rates")
     assert hubs.status_code == 200 and rates.status_code == 200
-    assert pdd_cats.json() == ["A+", "A", "B", "C"]
-    assert oem_cats.json() == ["A-OEM", "B-OEM", "C-OEM"]
+    # P33-T07 (contract B1): objects from the `categories` table, by rank;
+    # without `hub_id`, every category.
+    assert [c["code"] for c in pdd_cats.json()] == ["A+", "A", "B", "C"]
+    assert pdd_cats.json()[0] == {"code": "A+", "label": "A+", "workflow_id": "PDD", "rank": 1}
+    assert [c["code"] for c in oem_cats.json()] == ["A-OEM", "B-OEM", "C-OEM"]
+    assert {c["workflow_id"] for c in oem_cats.json()} == {"OEM"}
     assert missing.status_code == 404
-    assert no_param.status_code == 422
+    assert no_param.status_code == 200
+    assert [(c["code"], c["rank"]) for c in no_param.json()] == [
+        ("A+", 1), ("A", 2), ("B", 3), ("C", 4), ("A-OEM", 5), ("B-OEM", 6), ("C-OEM", 7)
+    ]
     ids = [t["id"] for t in templates.json()]
     assert ids[:14] == [f"OEM-{c}" for c in "ABCDEFGHIJKLMN"]
     assert ids[14:] == [f"PDD-{c}" for c in "ABCDEFGHIJKLMN"]

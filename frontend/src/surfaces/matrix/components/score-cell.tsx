@@ -6,7 +6,6 @@ import { formatInteger } from '@/lib/format';
 import { BAND_THRESHOLDS, POINTS_RULE_COPY, type PriorityMatrixRow } from '../api/types';
 import { formatOutOf100, rowBand, rowMissingLabels, rowNormalizedScore } from '../lib/row-scores';
 import { IncompleteScoreMarker } from '@/components/shared/incomplete-score-marker';
-import { HardGateBadge } from './hard-gate-badge';
 import { SuggestedBandChip } from '@/components/shared/suggested-band-chip';
 
 /**
@@ -20,6 +19,8 @@ import { SuggestedBandChip } from '@/components/shared/suggested-band-chip';
  *   - `suggested_band`  — backend: the band after the hub's P1 capacity fill (P25, ADR 0036)
  *   - `missing_dimension_keys` — backend (P26, ADR 0037): unscored active
  *     dimensions; non-empty shows a subtle "incomplete" marker
+ * P34-T02: hard gates have their own checkbox columns in the grid, so the
+ * cell no longer repeats them as a badge.
  * Nothing is recomputed here (Invariant I9). The threshold table is shown as
  * static rule copy so the band is *legible*, not to derive it.
  */
@@ -94,7 +95,6 @@ export function ScoreCell({ row, dense = false }: { row: PriorityMatrixRow; dens
         scoreBand={row.score_band}
         dense={dense}
       />
-      <HardGateBadge gates={row.hard_gates} />
       <IncompleteScoreMarker missingLabels={missing} compact />
     </span>
   );

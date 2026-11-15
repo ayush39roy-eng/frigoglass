@@ -1,10 +1,10 @@
 /**
  * The chip lists of the Overview resource tables (P19-T04). Display only.
  *
- * - Project types: every value of the engineer `allowed_categories` model
- *   (`ENGINEER_ALLOWED_CATEGORIES`): A+, A, B, C, the legacy "OEM" (any OEM
- *   category on an OEM hub, DOMAIN_RULES CAT_NOT_ALLOWED) and A-OEM, B-OEM,
- *   C-OEM (ADR 0007). The client's app shows A+, A, B, C, OEM only.
+ * - Project types: every value of the engineer `allowed_categories` model,
+ *   from the served categories (P33-T14, `CategoryCatalog.eligibilityCodes`):
+ *   the PDD categories, the legacy "OEM" (any OEM category on an OEM hub,
+ *   DOMAIN_RULES CAT_NOT_ALLOWED) and the OEM-workflow categories, in rank order.
  * - Stages: the lab-kind workflow steps served by `GET /workflow-step-templates`
  *   (the only ids `PATCH /chambers` accepts), plus any id a chamber already
  *   carries that is not in that list, so nothing served is hidden. The client's
@@ -12,13 +12,15 @@
  *   workflow, so they are not offered.
  */
 import type { WorkflowStepTemplate } from '@/lib/api/reference';
-import { ENGINEER_ALLOWED_CATEGORIES, type EngineerAllowedCategory } from '@/types/enums';
+import type { CategoryCatalog } from '@/lib/category-catalog';
+import { OEM_ELIGIBILITY_CODE } from '@/types/enums';
 
-export const CATEGORY_CHIPS: readonly EngineerAllowedCategory[] = ENGINEER_ALLOWED_CATEGORIES;
-
-export const CATEGORY_TITLE: Partial<Record<EngineerAllowedCategory, string>> = {
-  OEM: 'Any OEM category (OEM hubs)',
-};
+/** Tooltip for an eligibility chip: the reserved `OEM`, or a served label that differs from its code. */
+export function categoryChipTitle(code: string, catalog: CategoryCatalog): string | undefined {
+  if (code === OEM_ELIGIBILITY_CODE) return 'Any OEM category (OEM hubs)';
+  const label = catalog.labelOf(code);
+  return label !== code ? label : undefined;
+}
 
 export interface StageChip {
   id: string;

@@ -14,6 +14,7 @@ from sqlalchemy import select
 from models.enums import ProjectStatus, RoleName
 from models.hub import Hub
 from models.project import Project
+from tests.factories import clear_rank_if_out_of_band
 from tests.test_p13_region_filter import (
     REGIONS,
     _act_as,
@@ -50,6 +51,7 @@ async def _shape_data(db_session) -> dict:
     projects[3].carry_over = False
     projects[3].reg_year = 2026
     projects[4].status = ProjectStatus.COMMERCIALIZED
+    clear_rank_if_out_of_band(projects[4])
     projects[4].carry_over = False
     projects[4].reg_year = None
     await db_session.flush()

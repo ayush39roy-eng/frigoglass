@@ -45,7 +45,7 @@ from tests.auth_helpers import (
     make_principal,
     override_current_principal,
 )
-from tests.factories import make_user
+from tests.factories import clear_rank_if_out_of_band, make_user
 from tests.rubric_helpers import INITIAL_KEYS
 
 _FINANCIAL = ("customer_name", "tcogs", "selling_price", "gross_margin")
@@ -389,6 +389,7 @@ async def test_gantt_queue_tab_is_q_or_no_priority(db_session):
     q_project, null_project = rows[0], rows[1]
     q_project.priority = ProjectPriority.Q
     null_project.priority = None
+    clear_rank_if_out_of_band(null_project)
     await db_session.flush()
     await _act_as(db_session, RoleName.PORTFOLIO_MANAGER)
     projects = await _projects_by_id(db_session)

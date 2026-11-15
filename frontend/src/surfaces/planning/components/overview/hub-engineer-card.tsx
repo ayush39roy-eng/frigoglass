@@ -7,11 +7,12 @@ import { NotInCapacityRosterBadge } from '@/components/shared/capacity-roster-ma
 import { CountryFlag } from '@/components/shared/hub-filter/country-flag';
 import { formatInteger } from '@/lib/format';
 import { cn } from '@/lib/utils';
+import { useCategoryCatalogSnapshot } from '@/lib/category-catalog';
 import type { EngineerAllowedCategory, LabRegion } from '@/types/enums';
 
 import type { CapacityBasis, DesignHubSummary, EngineerRead, EngineerUpdateRequest } from '../../api/types';
 import { engineerFormSchema } from '../engineer-form-schema';
-import { CATEGORY_CHIPS, CATEGORY_TITLE } from '../../lib/chip-options';
+import { categoryChipTitle } from '../../lib/chip-options';
 import { formatAmount, formatPct, formatPlain, pick, pickUnit, unitShort, type CapacityUnit } from '../../lib/figures';
 import { InlineNumber } from './inline-number';
 import { saveErrorMessage } from './save-error';
@@ -213,11 +214,16 @@ function EngineerRow({
   const [chipError, setChipError] = React.useState<string | null>(null);
   const [savingChip, setSavingChip] = React.useState(false);
   const allowed = engineer.allowed_categories;
+  // P33-T14: eligibility chips from the served categories, in rank order. A
+  // stored value the list does not carry is kept (shown and saved), never dropped.
+  const catalog = useCategoryCatalogSnapshot();
+  const chips = catalog.eligibilityCodes();
+  const extras = allowed.filter((c) => !chips.includes(c));
 
   const toggle = async (category: EngineerAllowedCategory) => {
     const next = allowed.includes(category)
       ? allowed.filter((c) => c !== category)
-      : CATEGORY_CHIPS.filter((c) => c === category || allowed.includes(c));
+      : [...chips.filter((c) => c === category || allowed.includes(c)), ...extras];
     setChipError(null);
     setSavingChip(true);
     try {
@@ -264,13 +270,13 @@ function EngineerRow({
       <TableCell className="px-1.5 py-1.5">
         <div className="flex flex-wrap gap-1" role={canEdit ? 'group' : undefined} aria-label={canEdit ? `Project types for ${engineer.name}` : undefined}>
           {canEdit ? (
-            CATEGORY_CHIPS.map((c) => (
+            [...chips, ...extras].map((c) => (
               <ToggleChip
                 key={c}
                 tone="primary"
                 pressed={allowed.includes(c)}
                 label={`Allow category ${c} for ${engineer.name}`}
-                title={CATEGORY_TITLE[c]}
+                title={categoryChipTitle(c, catalog)}
                 disabled={savingChip}
                 onToggle={() => void toggle(c)}
               >
@@ -280,8 +286,8 @@ function EngineerRow({
           ) : allowed.length === 0 ? (
             <span className="text-2xs text-text-subtle">None set</span>
           ) : (
-            CATEGORY_CHIPS.filter((c) => allowed.includes(c)).map((c) => (
-              <StaticChip key={c} tone="primary" title={CATEGORY_TITLE[c]}>
+            [...chips.filter((c) => allowed.includes(c)), ...extras].map((c) => (
+              <StaticChip key={c} tone="primary" title={categoryChipTitle(c, catalog)}>
                 {c}
               </StaticChip>
             ))

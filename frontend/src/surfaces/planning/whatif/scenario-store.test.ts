@@ -29,12 +29,12 @@ describe('useWhatIfScenario', () => {
     expect(useWhatIfScenario.getState().projects[0]?.category).toBe('C');
   });
 
-  it('keeps A when the hub change leaves the category valid', () => {
+  it('keeps the default category (P33-T14: the first PDD category by rank, A+) when the hub change leaves it valid', () => {
     const s = useWhatIfScenario.getState();
     s.addLine('projects');
     const key = useWhatIfScenario.getState().projects[0]?.key ?? '';
     s.updateLine('projects', key, { hub: 'R&D-India' });
-    expect(useWhatIfScenario.getState().projects[0]?.category).toBe('A');
+    expect(useWhatIfScenario.getState().projects[0]?.category).toBe('A+');
   });
 
   it('loads a chat scenario and resets to the empty scenario', () => {

@@ -36,6 +36,7 @@ const runs: ScenarioApplyRunSummary[] = [
     notes: 'Q3 replan',
     entity_types_touched: ['priority_score'],
     change_count: 2,
+    project_count: 1,
     created_at: '2026-08-30T10:15:00Z',
   },
   {
@@ -45,6 +46,7 @@ const runs: ScenarioApplyRunSummary[] = [
     notes: null,
     entity_types_touched: ['priority_score'],
     change_count: 1,
+    project_count: 1,
     created_at: '2026-08-01T09:00:00Z',
   },
 ];
@@ -56,6 +58,7 @@ const detail: ScenarioApplyRunDetail = {
   notes: 'Q3 replan',
   entity_types_touched: ['priority_score'],
   change_count: 2,
+  project_count: 1,
   created_at: '2026-08-30T10:15:00Z',
   changes: [
     {
@@ -148,14 +151,18 @@ describe('VersionHistoryDialog', () => {
     expect(screen.getByText('No scenarios applied yet')).toBeInTheDocument();
   });
 
-  it('lists every version with its applied-by / notes / change count, most-recent-first order as given by the API', async () => {
-    hooks.useScenarioVersions.mockReturnValue(ready(runs));
+  it('lists every version with its applied-by / notes / project count, most-recent-first order as given by the API', async () => {
+    // P34-T01: the served project_count; a pre-P34 API (no field) falls back to change_count.
+    const older = { ...runs[1]!, change_count: 3 } as Partial<ScenarioApplyRunSummary>;
+    delete older.project_count;
+    hooks.useScenarioVersions.mockReturnValue(ready([runs[0]!, older]));
     await openDialog();
     const rows = screen.getAllByTestId('version-history-row');
     expect(rows).toHaveLength(2);
     expect(within(rows[0]!).getByText('v5')).toBeInTheDocument();
     expect(within(rows[0]!).getByText('Q3 replan')).toBeInTheDocument();
-    expect(within(rows[0]!).getByText('2')).toBeInTheDocument();
+    expect(within(rows[0]!).getByTestId('version-project-count')).toHaveTextContent('1 project');
+    expect(within(rows[1]!).getByTestId('version-project-count')).toHaveTextContent('3 projects');
     expect(within(rows[1]!).getByText('v4')).toBeInTheDocument();
     expect(within(rows[1]!).getByText('system')).toBeInTheDocument();
   });
@@ -250,5 +257,22 @@ describe('VersionHistoryDialog', () => {
     expect(screen.getByText('This version could not be loaded.')).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'Retry' }));
     expect(refetch).toHaveBeenCalled();
+  });
+});
+
+describe('VersionHistoryDialog controlled (P34-T02)', () => {
+  it('opens at initialVersion (that version\'s diff) and reports close through onOpenChange', async () => {
+    hooks.useScenarioVersions.mockReturnValue(ready(runs));
+    hooks.useScenarioVersionDetail.mockReturnValue(ready(detail));
+    hooks.useScoringRubric.mockReturnValue(ready(testRubric()));
+    const onOpenChange = vi.fn();
+    const user = userEvent.setup();
+    renderWithProviders(
+      <VersionHistoryDialog projectLookup={{}} open initialVersion={5} onOpenChange={onOpenChange} />,
+    );
+    expect(screen.getByText('Version 5')).toBeInTheDocument();
+    expect(hooks.useScenarioVersionDetail).toHaveBeenLastCalledWith(5);
+    await user.keyboard('{Escape}');
+    expect(onOpenChange).toHaveBeenCalledWith(false);
   });
 });

@@ -2,9 +2,11 @@
 
 `GET /priority-board?hub_id=`: every project in the caller's scope whose
 `priority` is set, grouped into the five `ProjectPriority` columns (P1, P2,
-P3, P4, Q, always all five, in that order) and sorted inside a column by
-weighted score descending (nulls last), then name, then id (determinism
-only). Projects with `priority = null` are not shown.
+P3, P4, Q, always all five, in that order). Projects with `priority = null`
+are not shown. P36 (ADR 0050 §6, API_CONTRACT_P36 §1): inside a column the
+cards are sorted as the scheduler walks the band (`band_rank` asc, nulls
+last, then status, category rank from the `categories` table, id; was:
+weighted score); each card serves its `band_rank` and `frozen`.
 
 **P14-T01 (workflow-auditor finding M4).** ADR 0018 puts "schedulable or
 pipeline" projects on the board, so only schedulable statuses are listed:
@@ -33,7 +35,8 @@ loader (`services.priority_capacity_fill`). Columns stay keyed by the
 committed `Project.priority`, so counts and weeks do not change.
 
 There is no write here: a drop calls the existing `POST
-/projects/{id}/priority` (ADR 0015), which owns RBAC, the hard-gate 409,
+/projects/{id}/priority` (ADR 0015) or, inside a column, `POST
+/projects/{id}/band-rank` (ADR 0050), which owns RBAC, the hard-gate 409,
 audit, the recalculation and the coalesced follow-up run.
 """
 
@@ -47,6 +50,7 @@ from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+import domain_constants as dc
 from api.db import get_db
 from api.deps import require_permission
 from api.query_params import CategoryListQuery, TypeListQuery
@@ -67,6 +71,7 @@ from schemas.priority_board import (
 from services.active_run import get_active_run
 from services.capacity_priority import remaining_run_load_by_project
 from services.capacity_supply import round2
+from services.categories import load_catalog
 from services.category_type_filter import category_type_filter
 from services.hub_scope import global_hub_filter, hub_scope_filter
 from services.priority_capacity_fill import compute_capacity_fill
@@ -176,6 +181,8 @@ async def get_priority_board(
                 capacity_fill_reason=row_fill.capacity_fill_reason,
                 hard_gated=card.hard_gated,
                 is_vip=project.is_vip,
+                band_rank=project.band_rank,
+                frozen=project.frozen,
                 projected_end_week=card.projected_end_week,
                 within_year=card.within_year,
                 health=card.health,
@@ -183,17 +190,27 @@ async def get_priority_board(
             )
         )
 
+    # P36 (ADR 0050 §6, R36-10, API_CONTRACT_P36 §1): the scheduling order's
+    # keys 3a-5 + id, so the board shows the order the scheduler walks inside
+    # a band: band_rank asc (null last), status ordinal, category rank from
+    # the `categories` table (unknown / none last), project_id. VIP and frozen
+    # are not floated (their cards carry badges). The browser never re-sorts.
+    category_rank = (await load_catalog(db)).rank_by_code
+
+    def board_key(c: PriorityBoardCard) -> tuple[bool, int, int, bool, int, str]:
+        cat = category_rank.get(c.category) if c.category is not None else None
+        return (
+            c.band_rank is None,
+            c.band_rank or 0,
+            dc.SCHEDULABLE_STATUS_ORDER.get(c.status.value, len(dc.SCHEDULABLE_STATUS_ORDER)),
+            cat is None,
+            cat or 0,
+            str(c.project_id),
+        )
+
     columns: list[PriorityBoardColumn] = []
     for priority in COLUMN_ORDER:
-        column_cards = sorted(
-            by_column[priority],
-            key=lambda c: (
-                c.score is None,
-                -(c.score or 0.0),
-                c.name,
-                str(c.project_id),
-            ),
-        )
+        column_cards = sorted(by_column[priority], key=board_key)
         columns.append(
             PriorityBoardColumn(
                 priority=priority,

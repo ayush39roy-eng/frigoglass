@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+import enum
 import uuid
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from decimal import Decimal
 from typing import TYPE_CHECKING
 
@@ -15,17 +16,17 @@ from sqlalchemy import (
     Numeric,
     String,
     Text,
+    UniqueConstraint,
     case,
     literal,
     select,
 )
-from sqlalchemy.orm import Mapped, column_property, mapped_column, relationship
+from sqlalchemy.orm import Mapped, column_property, mapped_column, relationship, validates
 
 import domain_constants as dc
 from models.base import Base, TimestampMixin, UUIDPrimaryKeyMixin
+from models.category import category_code
 from models.enums import (
-    OEM_PROJECT_CATEGORIES,
-    ProjectCategory,
     ProjectPriority,
     ProjectStatus,
     ProjectType,
@@ -42,21 +43,44 @@ if TYPE_CHECKING:
     from models.workspace import ProjectComment, ProjectFile
 
 
-def category_allowed_for_hub(hub_is_oem: bool, category: ProjectCategory | None) -> bool:
-    """docs/DOMAIN_RULES.md "Lead times": non-OEM hubs use `A+/A/B/C`; OEM hubs
-    use `A-OEM/B-OEM/C-OEM`. A `None` category is allowed (a Draft row before
-    Project Registration's hard gates are satisfied).
+def category_allowed_for_hub(
+    hub_is_oem: bool,
+    category: str | None,
+    category_workflow: Mapping[str, str] | None = None,
+) -> bool:
+    """docs/DOMAIN_RULES.md "Lead times" / ADR 0047 §5: a project's category
+    must belong to its hub's workflow (`PDD` for a non-OEM hub, `OEM` for an
+    OEM hub). A `None` category is allowed (a Draft row before Project
+    Registration's hard gates are satisfied).
 
-    This is the model-layer half of the rule. A plain CHECK constraint on
-    `projects` cannot see `hubs.is_oem`, so the DB half is the trigger
-    `trg_projects_category_matches_hub` (P9-T01 migration), which raises a
-    `check_violation` (SQLSTATE 23514 → `IntegrityError`) on INSERT/UPDATE of
+    `category_workflow` is the `categories` table's code -> `workflow_id` map
+    (`services.categories.CategoryCatalog.workflow_by_code`); API callers
+    always pass it, so a category added at runtime (P33-T11) is judged by its
+    row. Without it (the seed scripts, pure tests) the seeded seven are used
+    (`domain_constants.OEM_CATEGORIES` / `NON_OEM_CATEGORIES`, the table's
+    seed). An unknown code is not allowed.
+
+    This is the model-layer half of the rule. The DB half is the trigger
+    `trg_projects_category_matches_hub` (rewritten by `p33a_categories` to
+    compare `categories.workflow_id` with the hub's workflow), which raises a
+    `check_violation` (SQLSTATE 23514 -> `IntegrityError`) on INSERT/UPDATE of
     `category`/`hub_id`. Callers (API layer, seed) use this function to give a
     422 *before* hitting the trigger.
     """
     if category is None:
         return True
-    return (category in OEM_PROJECT_CATEGORIES) == hub_is_oem
+    code = str(category.value if isinstance(category, enum.Enum) else category)
+    workflow: str | None
+    if category_workflow is None:
+        if code in dc.OEM_CATEGORIES:
+            workflow = dc.WORKFLOW_ID_FOR_OEM_HUB
+        elif code in dc.NON_OEM_CATEGORIES:
+            workflow = dc.WORKFLOW_ID_FOR_NON_OEM_HUB
+        else:
+            workflow = None
+    else:
+        workflow = category_workflow.get(code)
+    return workflow is not None and workflow == workflow_id_for_hub(hub_is_oem)
 
 
 def workflow_id_for_hub(hub_is_oem: bool) -> str:
@@ -117,12 +141,12 @@ class Project(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     #: hard gates are satisfied (docs/PROJECT_AND_STACK.md §2). The API layer
     #: (P3) is responsible for enforcing "required before leaving draft", not a
     #: DB NOT NULL constraint, since that would make saving a draft impossible.
-    category: Mapped[ProjectCategory | None] = mapped_column(
-        Enum(
-            ProjectCategory,
-            name="project_category",
-            values_callable=lambda enum_cls: [e.value for e in enum_cls],
-        ),
+    #: ADR 0047 (P33-T07): a `categories.code` (text + FK, ON UPDATE / ON
+    #: DELETE RESTRICT), no longer the dropped `project_category` enum. The
+    #: wire values are unchanged.
+    category: Mapped[str | None] = mapped_column(
+        Text,
+        ForeignKey("categories.code", onupdate="RESTRICT", ondelete="RESTRICT"),
         nullable=True,
     )
     #: See models/enums.py ProjectType docstring: sourced from the prototype,
@@ -162,6 +186,15 @@ class Project(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         ),
         nullable=True,
     )
+    #: ADR 0050 (P36, migration `p36a`): the project's position inside its
+    #: committed `priority` band, scheduling order key 3a (`band_rank` asc,
+    #: NULL last). Dense 1..n per band; set iff the project is a band member
+    #: (status schedulable and priority set, I37b, CHECK
+    #: `band_rank_membership`). Written only through
+    #: `services.band_rank` (which uses `scheduling.band_rank`), never by
+    #: hand: a project entering a band goes last, one leaving it is cleared
+    #: and the band renumbered (R36-8).
+    band_rank: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     #: Locks `actual_start_week` and excludes the project from re-scheduling,
     #: per docs/DOMAIN_RULES.md booking rules and Invariant I10.
@@ -169,6 +202,10 @@ class Project(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     #: Week number (against the 78-week horizon / CURRENT_WEEK=31 convention),
     #: not a calendar date — matches DOMAIN_RULES.md's week-integer model.
     actual_start_week: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    #: P35 (D35-3, migration `p35a`): the week the project actually finished,
+    #: entered on the Projects register. Not a scheduler input. The PATCH
+    #: rejects end < start (422 `ACTUAL_END_BEFORE_START`).
+    actual_end_week: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     #: Terminal delay adjustment (weeks), per ADR 0004 — added only to the
     #: completing-within-year check (`last_step_end + delay <= WITHIN_YEAR_WEEK`),
@@ -302,6 +339,10 @@ class Project(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         CheckConstraint(
             "target_end_week IS NULL OR target_end_week >= 1", name="target_end_week_positive"
         ),
+        # P35 (migration p35a).
+        CheckConstraint(
+            "actual_end_week IS NULL OR actual_end_week >= 1", name="actual_end_week_positive"
+        ),
         CheckConstraint(
             "estimated_design_weeks IS NULL OR estimated_design_weeks >= 0",
             name="estimated_design_weeks_non_negative",
@@ -311,6 +352,20 @@ class Project(UUIDPrimaryKeyMixin, TimestampMixin, Base):
             name="estimated_lab_weeks_non_negative",
         ),
         CheckConstraint("rpd_scoring_tags_distinct(scoring_tags)", name="scoring_tags_distinct"),
+        # ADR 0050 / R36-8 (migration p36a).
+        CheckConstraint("band_rank IS NULL OR band_rank >= 1", name="band_rank_positive"),
+        CheckConstraint(
+            "(band_rank IS NOT NULL) = (priority IS NOT NULL AND status::text IN "
+            "('In Buyoff', 'Under Industrialization', 'In Development', 'In Queue'))",
+            name="band_rank_membership",
+        ),
+        UniqueConstraint(
+            "priority",
+            "band_rank",
+            name="uq_projects_priority_band_rank",
+            deferrable=True,
+            initially="DEFERRED",
+        ),
         # ADR 0041 (migration p30a).
         *(
             CheckConstraint(f"{name} IS NULL OR {name} >= 0", name=f"{name}_non_negative")
@@ -331,6 +386,12 @@ class Project(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         those scores "from registration")."""
 
         return [dc.SCORING_TAG_DIMENSION_KEY[t.value] for t in canonical_tags(self.scoring_tags)]
+
+    @validates("category")
+    def _category_as_code(self, _key: str, value: object) -> str | None:
+        """P33-T07: always a plain code string (an enum member is accepted
+        from seed / test code and stored as its value)."""
+        return category_code(value)
 
     def __repr__(self) -> str:  # pragma: no cover - debug convenience only
         # Never include financial fields here — __repr__ output can end up in

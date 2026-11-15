@@ -138,6 +138,71 @@ export function previewProjectPriority(
   );
 }
 
+// ---------------------------------------------------------------------------
+// P36 (ADR 0050, docs/API_CONTRACT_P36.md §2–§3): rank within a priority band.
+// PLACEHOLDER — written against the contract while P36-T03 builds it.
+// The responses reuse the priority move's preview / confirm shapes.
+// ---------------------------------------------------------------------------
+
+/** 409 code: the project has no priority or a non-schedulable status. */
+export const NOT_RANKABLE = 'NOT_RANKABLE';
+/** 422 code: the anchor is not ranked in the same band (or is out of scope, or is the project itself). */
+export const NOT_SAME_BAND = 'NOT_SAME_BAND';
+/** 422 code: both anchors were given. */
+export const BOTH_ANCHORS = 'BOTH_ANCHORS';
+
+/**
+ * Where the project goes inside its band, relative to one project of the full
+ * band (so a drop on a filtered board is well defined, R36-8). At most one is
+ * set; both null = last in the band. The server decides the resulting rank.
+ */
+export interface BandRankPreviewRequest {
+  before_project_id: Id | null;
+  after_project_id: Id | null;
+}
+
+/** `POST /projects/{id}/band-rank`: the previewed placement plus its token. */
+export interface BandRankMoveRequest {
+  before_project_id: Id | null;
+  after_project_id: Id | null;
+  preview_token: string;
+}
+
+export type BandRankPlacement = BandRankPreviewRequest;
+
+/** `POST /projects/{id}/band-rank/preview`. Writes nothing (contract §2). */
+export function previewProjectBandRank(
+  projectId: string,
+  placement: BandRankPlacement,
+  options: Pick<ApiRequestOptions, 'signal'> = {},
+): Promise<PriorityPreviewResponse> {
+  const body: BandRankPreviewRequest = {
+    before_project_id: placement.before_project_id,
+    after_project_id: placement.after_project_id,
+  };
+  return apiSend<PriorityPreviewResponse>(
+    'POST',
+    `/projects/${encodeURIComponent(projectId)}/band-rank/preview`,
+    body,
+    { signal: options.signal },
+  );
+}
+
+/** `POST /projects/{id}/band-rank` (contract §3): the confirm of a re-rank
+ *  preview. 409 `PREVIEW_STALE` if the band changed since. */
+export function moveProjectBandRank(
+  projectId: string,
+  placement: BandRankPlacement,
+  previewToken: string,
+): Promise<PriorityMoveResponse> {
+  const body: BandRankMoveRequest = {
+    before_project_id: placement.before_project_id,
+    after_project_id: placement.after_project_id,
+    preview_token: previewToken,
+  };
+  return apiSend<PriorityMoveResponse>('POST', `/projects/${encodeURIComponent(projectId)}/band-rank`, body);
+}
+
 // PLACEHOLDER (P11 contract §3)
 export interface ScheduleRunChangeRow {
   project_id: Id;

@@ -191,3 +191,34 @@ afterEach(() => {
   window.localStorage.clear();
   document.documentElement.classList.remove('dark');
 });
+
+/**
+ * P33-T14: categories are served data (`GET /reference/categories`). Every unit
+ * test gets the seven seeded categories from `src/test/category-fixtures.ts`
+ * through this global mock of `@/lib/api/categories` (no network, no
+ * QueryClient needed); `setTestCategories` swaps the list for one test. The
+ * module's own test (`lib/api/categories.test.tsx`) unmocks it. A test file's
+ * own `vi.mock('@/lib/api/categories', …)` replaces this one.
+ */
+vi.mock('@/lib/api/categories', async () => {
+  const { useCategoryCatalogSnapshot } = await import('@/lib/category-catalog');
+  return {
+    fetchCategories: vi.fn(() => Promise.reject(new Error('Un-mocked fetch in test — categories are fixtures.'))),
+    useCategories: () => {
+      const catalog = useCategoryCatalogSnapshot();
+      return { categories: catalog.categories, catalog, isPending: false, isError: false };
+    },
+    useCategoryCodes: () => {
+      const catalog = useCategoryCatalogSnapshot();
+      return catalog.isEmpty ? null : catalog.codes;
+    },
+  };
+});
+
+{
+  const { resetTestCategories } = await import('./category-fixtures');
+  resetTestCategories();
+  afterEach(() => {
+    resetTestCategories();
+  });
+}

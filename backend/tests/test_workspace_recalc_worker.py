@@ -49,6 +49,7 @@ from services.project_steps import sync_project_steps
 from services.schedule_persistence import create_queued_schedule_run
 from services.workspace import event_summary
 from tests.conftest import run_alembic
+from tests.factories import rank_all_bands
 
 
 class _FakeTask:
@@ -98,9 +99,11 @@ async def _seed(
                 schedule_stale=True,
                 # No chamber is seeded; without lab steps the project is schedulable.
                 certification_testing_required=False,
+                band_rank=1,  # placeholder, renumbered below (P36)
             )
             db.add(project)
             await db.flush()
+            await rank_all_bands(db)
             await sync_project_steps(db, project, False)
             previous = ScheduleRun(
                 version=version, solver_type=SolverType.GREEDY,

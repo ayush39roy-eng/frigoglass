@@ -132,6 +132,7 @@ from services.rate_limit import TokenBucketLimiter
 from services.run_dispatch import dispatch_greedy, enqueue_or_fail, find_in_flight_run
 from services.schedule_persistence import create_queued_schedule_run
 from services.schedule_stale import mark_projects_stale
+from services.template_apply import lock_projects
 from services.workspace import (
     ACTIVITY_DEFAULT_LIMIT,
     ACTIVITY_MAX_LIMIT,
@@ -142,6 +143,7 @@ from services.workspace import (
     get_scoped_project_or_404,
     list_activity,
     merge_stage_update,
+    project_own_effort_kinds,
     row_is_skipped,
     user_names,
 )
@@ -218,6 +220,10 @@ async def patch_stage(
     db: AsyncSession = Depends(get_db),
     current_user: Principal = Depends(get_current_principal),
 ) -> WorkspaceRead:
+    # P33-T10 (R33-10): the project row lock a template apply takes, before
+    # anything is read, so a stage cannot cross Not Started between an
+    # apply's evaluation and its write.
+    await lock_projects(db, [project_id])
     project = await _project_or_404(db, project_id, current_user)
     # ADR 0012: stage-progress PATCH is one of the three actions an
     # Editor-level `ProjectAccessGrant` may perform (the other two are file
@@ -259,7 +265,12 @@ async def patch_stage(
     ).scalar_one()
     # ADR 0041 R5: the one skip predicate (lead 0, a lab step without
     # certification testing, or an effective duration of 0).
-    if row_is_skipped(row, kind, project.certification_testing_required):
+    if row_is_skipped(
+        row,
+        kind,
+        project.certification_testing_required,
+        own_effort=kind.value in await project_own_effort_kinds(db, project.id),
+    ):
         raise CodedHTTPException(
             HTTP_422,
             "STAGE_SKIPPED",

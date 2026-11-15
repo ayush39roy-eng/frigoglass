@@ -54,6 +54,16 @@ the run-**booked** load; hub `OEM-Seltek` is spelled `OEM-Seitek`. Sections mark
 ADR 0041)* changed. New invariants I25 (demand) and I26 (effort split); I6, I7, I17, I19, I23
 revised.
 
+**Revised 2026-11-13** (P33, owner change request): ADR 0045 (category timeline editing with buttons
+and the stage rule that applies it to projects), ADR 0046 (per-project copies of the category
+template, length vs effort, signed gaps), ADR 0047 (categories become a table and Admins may add
+one) and ADR 0048 (per-project step timing editing is retired). Sections marked *(2026-11-13)*
+changed. New invariants I28–I32; I26, I27 and I31 revised. Binding since P33-T01 (2026-11-13). It
+folds in the workflow-auditor's ruling R33-1..R33-12 (ADR 0046 "Ruling (P33-T00)") and the owner's
+answer to OQ #76/#77 ("if it is manually set then use them only as the timeline"; ADR 0046 "Owner
+ruling" OR-1..OR-6). Until each P33 task lands in code, the rule it replaces stays what the code
+does.
+
 ---
 
 ## Workflow templates — two workflows, 14 steps each *(2026-09-27, ADR 0007)*
@@ -158,6 +168,11 @@ duration_weeks = lead_time[workflow][category][step_id]      # integer weeks, ma
 - The table is edited only on Workflow Settings (Super Admin). Every edit is audit-logged and sets
   `schedule_stale` on every schedulable project; it never triggers a solve. *(ADR 0041 R6)* It also
   re-derives every project's effort split (it depends on the table's shape).
+  *(2026-11-13, ADR 0045/0046 — superseded once P33 lands; see "Category templates" at the end.)*
+  The table becomes the **category template**, edited by Admin and Super Admin. A change reaches a
+  project only through the apply stage rule, and a length change never reaches a project's steps of
+  a kind for which the project has its own effort figure. Steps without own effort take the
+  project's own copy (`plan_weeks`); R2 weights become the immutable `effort_weight_weeks`.
 - *(2026-10-10, ADR 0019; 2026-10-23, ADR 0041 R4)* **Per-project user override.** A project's step
   may carry `duration_override_weeks` (1..104), the **user's** figure from the Gantt / Workspace.
   It wins over the effort split and the table (`eff` above). A step whose table duration is 0 stays
@@ -202,6 +217,9 @@ Design Man Week") and `lab_effort_weeks` (column 21 "Lab Weeks- Process Derived"
 
 Categories: non-OEM hubs use `A+ / A / B / C`; OEM hubs use `A-OEM / B-OEM / C-OEM`. The
 prototype-era multipliers (`A+ 1.0, A 0.8, B 0.5, C 0.25`) are retired and must not be reintroduced.
+*(2026-11-13, ADR 0047)* These seven are the **seeded** categories. Categories become a table
+(`categories`: code, label, workflow, rank), and Admin / Super Admin may add one. A category belongs
+to exactly one workflow; the hub's workflow decides which categories a project may take.
 
 ## Hubs and lab-region mapping
 
@@ -244,8 +262,18 @@ Sort all projects by, in order:
 2. `is_vip` descending: a VIP project schedules before every non-VIP one, whatever its band
    *(2026-10-22, ADR 0040)*
 3. Priority: `P1 → P2 → P3 → P4 → Q`
+3a. *(2026-11-15, ADR 0050, R36-1..R36-10)* `band_rank` ascending, NULL last: the planner-set
+   position inside the band (Priority board). Every schedulable project with a priority has a rank,
+   dense 1..n per band; so keys 4–5 only order unranked (What-if / imported) projects. A project
+   entering a band goes last. CP-SAT takes the order via `prepare_run`; its objective is unchanged.
+   I30 reads "equal on keys 1–3a and 4"; I37 a–d in ADR 0050 / MEMORY P36-T01.
 4. Status: `In Buyoff (0) → Under Industrialization (1) → In Development (2) → In Queue (3)`
 5. Category: `A+ → A → B → C → A-OEM → B-OEM → C-OEM` *(OEM tail added 2026-09-27)*
+   *(2026-11-13, ADR 0047 §3, R33-8)*: ascending `categories.rank`, recorded in
+   `workflow_snapshot["categories"]` when it differs from the default seven. The seeded ranks reproduce the order above exactly. An added category takes the
+   position chosen when it was created. *(2026-11-15, P33-T20)* Since key 3a, every schedulable
+   live project has a band rank, so the category rank is only a tie-breaker. In practice it orders
+   What-if and plan-import projects; it never moves a ranked live project.
 
 ## Precedence *(2026-09-27, ADR 0009)*
 
@@ -797,6 +825,9 @@ These are reporting figures. They never gate booking. The thresholds are
 or demoted. `GET /me` publishes `permissions[surface] = {read, write}`; the frontend gates
 navigation and write controls on it; the server enforces. Full matrix:
 `docs/PROJECT_AND_STACK.md` §5.
+*(2026-11-13, ADR 0045 §7, owner decision)* **Admin and Super Admin** may edit category timelines,
+the Lead times tab and add categories (new surface `workflow_templates`, Admin RW, Super Admin
+RW). Steps & precedence, Hub calendars and Chambers stay Super Admin only (`workflow_settings`).
 
 ## Project access grants and delegation *(2026-09-30, ADR 0012)*
 
@@ -908,6 +939,11 @@ These close the ambiguities the workflow-auditor found in the P9 gate. Recorded 
 ---
 
 ## Step timing from the Gantt *(2026-10-10, ADR 0019)*
+
+*(2026-11-13, ADR 0048: **retired** once P33 lands.)* No surface edits these fields any more. The
+PATCH answers 410 `STEP_TIMING_RETIRED`. The migration clears the stored values (with audit rows)
+and a CHECK forbids new ones. The fields stay in the scheduler input for what-if and plan-import
+scenarios only. The text below is kept as the history of the rule.
 
 Two planner inputs per `ProjectWorkflowStep`, never overwritten by a run:
 
@@ -1024,6 +1060,10 @@ capacity stays region-wide under a hub filter (chambers are shared per region).
 
 ## Parallel steps — per-project overlap *(2026-11-04, ADR 0043)*
 
+*(2026-11-13, ADR 0046/0048:)* The overlap is no longer set by dragging. It is the negative part of
+the project's copy of the category template gap (`plan_gap_weeks`). A positive gap is a wait (see
+"Category templates", below). The formulas here stay in force with `w(s) = 0`.
+
 A `ProjectWorkflowStep` may carry `overlap_weeks` (1..104, null = 0), set by dragging a step bar onto
 the work it waits for (Gantt, live or What-if). It amends "Precedence" for that project only:
 
@@ -1057,3 +1097,345 @@ or take P3; a blank engineer keeps the matched plan project's leader, else is au
 What-if designer. The plan year is selectable (2026 → W52, 2027 → W104, absolute weeks); "within
 the plan year" is `projected_end_week <= plan_year_end_week`. A file without a Status column (or a blank cell) derives the status — PRIORITY "Running" → In Development (P1, first), else the matched plan project's status, else "Spillover" = Yes → In Development, else In Queue — and blank hub / category / stage fall back to the matched plan project; budget lines (blank PRIORITY, "Provision…", "… CAPEX", "… Certification program") are excluded (ADR 0044 amendment 2026-11-05). Full rules: ADR 0044,
 `docs/API_CONTRACT_P32.md`.
+
+
+## Category templates, apply rules, categories table *(2026-11-13, ADR 0045–0048; final at P33-T01)*
+
+Binding. Sources: ADR 0045–0048, the workflow-auditor's ruling R33-1..R33-12 and the owner's
+ruling OR-1..OR-6 (both in ADR 0046). Where the earlier sections ("Lead times", "Per-project
+effort", "Parallel steps", "Step timing from the Gantt") disagree with this one, this one wins.
+
+### A. The category template
+
+One row per workflow × category × step (`workflow_lead_times`):
+
+| Field | Domain | Edited by |
+|---|---|---|
+| `weeks` | 0..104, the category length | Admin, Super Admin, via apply only |
+| `gap_weeks` | −104..104; negative = overlap, positive = wait; 0 on a workflow's first step | Admin, Super Admin, via apply only |
+| `effort_weight_weeks` | 0..104, the R2 split weights; backfill = `weeks` | **never** (immutable; copied by "+ Add category") |
+
+The template is edited on Workflow templates (Move ± / Length ± per step, or the Lead times tab).
+Both save through one apply.
+
+### B. The per-project copy and the effective duration
+
+Each project step carries `plan_weeks` (0..104) and `plan_gap_weeks` (−104..104). The p33b
+migration backfills them from the table and gap 0.
+
+For `k ∈ {design, lab}`: `ownEffort(p,k)` ⟺ some step of `p` of kind `k` carries a non-null
+`effort_weeks`. That is, R2 applied: a figure > 0, a step of the kind with
+`effort_weight_weeks > 0`, and certification testing on for lab.
+
+```
+eff(p,s) = 0                      if kind(s) = lab and not p.certification_testing_required
+         = effort_weeks(p,s) ?? 0 if ownEffort(p, kind(s))       # a project's own figure is its timeline
+         = plan_weeks(p,s)        otherwise                       # elapsed steps, and kinds with no figure
+skipped(p,s) ⟺ eff(p,s) = 0
+```
+
+- **R2** (Per-project effort) splits `E` over the category's `effort_weight_weeks`, not over
+  `weeks`. R3 and R7 are unchanged. A template edit therefore never reshapes a project's split.
+- **R6 triggers** are those of ADR 0041 **minus** "a lead-time edit on Workflow Settings". An apply
+  never re-derives effort and never writes `effort_weeks`.
+- **A figure cleared** for kind `k`: R6 clears the effort, and the current template `weeks` are
+  re-copied onto the steps of kind `k` that are not reached (§C). The project then follows the
+  template. Entering a figure makes it govern that kind; `plan_weeks` is kept but unused.
+- **Registration** copies `weeks` and `gap_weeks` onto all 14 rows. A **category change**
+  re-copies them onto the not-reached steps (and R6 re-derives with the new weights).
+- **Load.** An own-effort kind loads `E + raised`, whatever the template. Every other step loads its
+  `plan_weeks`. Demand (I25) moves at commit; booked loads (I6/I7) move after the run.
+- **Scheduler input.** The live builder maps each step as follows:
+  - **own-effort step:** `lead_weeks = effort_weight_weeks` (None when equal to the table) and
+    `duration_override_weeks = effort_weeks`;
+  - **any other step:** `lead_weeks = plan_weeks` (None when equal to the table) and
+    `duration_override_weeks = None`.
+  The scheduler evaluates `lead = lead_weeks ?? table`, `eff = override ?? lead` (R33-1).
+
+### C. Applying a template change
+
+Evaluation is per (project `p`, changed step `S`), on stored stage statuses, after locking the
+category's project rows `FOR UPDATE` in `project_id` order. The stage PATCH and check-ins take the
+same lock.
+
+```
+reached(p,S)   ⟺ stage(S) ∈ {In Progress, Blocked, Done}
+                  ∨ ∃ t ∈ succ⁺(S) in the DAG in force: stage(t) ≠ Not Started
+never(p,S)     ⟺ p.frozen ∨ p.status ∈ {Cancelled, Commercialized} ∨ reached(p,S)
+automatic(p,S) ⟺ ¬never(p,S) ∧ every stored stage of p is Not Started    (any other status:
+                                                                           On Hold, Draft, In Queue, …)
+choosable(p,S) ⟺ ¬never(p,S) ∧ ¬automatic(p,S)
+```
+
+- **Choosable projects:** the user applies to all or ticks individual ones. Automatic pairs always
+  apply.
+- **What a receiving pair gets:**
+  - a **gap** change → `plan_gap_weeks`, for every project;
+  - a **length** change → `plan_weeks`, only if `¬ownEffort(p, kind(S))`; otherwise nothing,
+    flagged "uses its own effort figure — length not applied".
+- **One transaction:** template (`weeks`, `gap_weeks`, `template_version + 1`), copies,
+  `schedule_stale` on the changed projects, and the audit (one `workflow_template.applied` summary
+  with every affected project id, and one `project.template_applied` per changed project).
+- **Then one greedy run** with the priority-move lifecycle (`trigger_reason="template_apply"`;
+  queued / deferred plus coalesced follow-up / not_needed). It is `not_needed` when no schedulable
+  project's copy changed.
+
+### D. Signed gap
+
+`g = plan_gap_weeks`, `o = max(0, −g)`, `w = max(0, g)`. `G` and the anchor are as in "Parallel
+steps".
+
+```
+gate(s) = release(s) + 1 + w(s)                                       if o(s) = 0
+        = max(release(s) + 1 − o(s), max start of SG(s), frontier)    if o(s) > 0
+```
+
+- **Not Started floor:** `max(CURRENT_WEEK, gate(s), start_not_before_week)`. A wait counts from
+  the release, so an already elapsed wait costs nothing. Waits count against `HORIZON_WEEKS`.
+- **A wait books nothing:** no engineer, no chamber, no row, no load, no progress weight.
+- **`w = 0`** on In Progress / Blocked tails and in a Blocked hold; `o` is kept on started steps.
+- **`g` is ignored** on a skipped step (emitted at `G`) and in a frozen project. A frozen project
+  still honours `lead_weeks` and the effort merge. A non-zero `g` on a first step is rejected.
+  `o > 0 ∧ w > 0` is invalid.
+- **CP-SAT** uses `start ≥ pe + w`. **Monte Carlo** never samples gaps.
+- **`unconstrained_end_week`** applies the one-leader rule: a design step never overlaps another
+  design step of the same project. Under the strict chain with `o = 0` it is vacuous.
+- **Template preview:** the same gate from week 0, with no capacity, FTE 1.0 and the one-leader
+  rule. Flags are `same_leader_serialised` ("Overlap — same leader, runs back-to-back"),
+  `anchor_clamped` and `gap_ignored_zero_length`. It always carries the note that real projects
+  also wait for engineers and chambers.
+- **Canonical / hashed input and the run snapshot** omit `wait_weeks = 0`, `lead_weeks = None` and
+  the default category list (R33-7). Per-project overlaps recorded in stored runs keep their values
+  (I14, T05 ruling 6).
+- *History (T05-A1, retired by P33-T13 on 2026-11-15).* Between p33b and p33c the live builder also
+  carried the hand-set `duration_override_weeks`, `start_not_before_week` and `overlap_weeks`, so
+  that p33b alone changed nothing. p33c cleared those fields, and the CHECK keeps them null. P33-T13
+  removed that term and the user-override term from `services/workflow_durations.py`.
+- **Final effective duration for live projects** (no user-override term): `eff` is §B exactly. The
+  run input carries `duration_override_weeks = effort_weeks` on own-effort steps and None
+  elsewhere, `start_not_before_week = None`, and `overlap_weeks` / `wait_weeks` from
+  `plan_gap_weeks` only. The scheduler's `override ?? lead` (R33-1) remains for what-if and
+  plan-import scenarios. With every gap 0 and every copy equal to the table, every
+  golden file, input hash, fresh run and stored run is byte-identical (I8, I14).
+
+### E. Categories table (ADR 0047)
+
+- `categories(code, label, workflow_id, rank, template_version, …)`, seeded with the seven codes at
+  ranks 1..7.
+- `projects.category`, `workflow_lead_times.category` and `engineers.allowed_categories` reference
+  it (`OEM` stays a reserved eligibility value).
+- **Adding a category** copies the source's `weeks`, `gap_weeks` and `effort_weight_weeks`, extends
+  every engineer eligible for the source, and inserts the new code at the chosen rank. The relative
+  order of the existing categories is unchanged. Nothing becomes stale.
+- **Scheduling order key 5** = rank value. The input's category list is validated (unique codes,
+  unique ranks ≥ 1). Each entry's `workflow_id` is checked for **non-default lists** (T05 ruling 4).
+  Every project's category must be listed and of the project's workflow, always.
+- Rename, deactivate, delete and re-rank are out of scope (OQ #79).
+
+### F. Per-project timing editing retired (ADR 0048)
+
+The Gantt drag and dialog and the Workflow "Project step timing" drag become read-only. The step
+timing PATCH and `PUT /workflow-settings/lead-times` answer 410. Migration `p33c` clears the hand-set
+`duration_override_weeks`, `start_not_before_week` and `overlap_weeks` (with audit rows), and a
+CHECK forbids new values. One recalc follows (`trigger_reason="timing_cleared"`). The fields stay in
+the scheduler input for what-if and plan-import scenarios. I22 is vacuous for live runs and stays in
+the validator.
+
+**Deploy order (2026-11-15).**
+- The P33-T13 code and migration `p33c` ship **together**.
+- After `alembic upgrade head`, run the script **once**, on-prem as
+  `docker compose run --rm api python -m scripts.p33_recalc_after_timing_clear`. Use `run`, not
+  `exec`, consistent with `docs/HANDOVER/DEPLOYMENT_RUNBOOK.md` §8. The container needs
+  `RPD_DATABASE_URL` and the field encryption key.
+- *(2026-11-15, P33-R01)* A second call answers `already_dispatched` only if the first
+  `timing_cleared` run completed or is still running. After a failed, cancelled or abandoned run it
+  dispatches again. With nothing cleared it answers `nothing_cleared`.
+- Exit codes:
+  - `0`: ok (`queued` / `deferred` / `already_dispatched` / `nothing_cleared`);
+  - `1`: `run_failed` or `dispatch_failed`;
+  - `2`: database URL missing;
+  - `3`: `still_running`.
+- Migration chain: `p32a → p35a → p33a → p36a → p33b → p33c`. The P35 and P36 migrations must ship
+  with P33 or before it, never after.
+
+### Invariants (P33)
+
+- **I26** *(rev.)*: for every non-frozen project with figure `x > 0` of a kind whose category has a
+  step of that kind with `effort_weight_weeks > 0` (certification testing on, for lab), the stored
+  `effort_weeks` on those steps equal the R2 apportionment of `E = max(1, round_half_up(x))` over
+  `effort_weight_weeks`, raised to `max(1, ·)` on started steps. Σ = E + the raised count. Other
+  steps carry none.
+- **I27** *(rev.)*: in every run, every non-skipped Not Started step of a non-frozen project that is
+  not in a Blocked hold starts at or after `max(CURRENT_WEEK, gate(s), start_not_before_week)`, with
+  `gate` as in §D and `release`/`G` taken from the run's own rows. I3 holds unchanged for every step
+  with `o(s) = 0`, including `w(s) > 0`.
+- **I28**: every such step with `w(s) > 0` starts at or after `release(s) + 1 + w(s)`. Two inputs
+  differing only in `w` give identical `duration_weeks` on every row, identical I25 demand and
+  identical I12 weights.
+- **I29**: every run row's `duration_weeks` equals `eff` evaluated on the run's input
+  (`lead_weeks ?? table`, then `override ?? lead`), with "skipped" exactly when it is 0. On live
+  input that equals §B's `eff`.
+- **I30** *(rev. 2026-11-15, R36-9)*: for consecutive ids `a, b` in `scheduling_order` (greedy and
+  CP-SAT) equal on sort keys 1–3a and 4: `rank(a) ≤ rank(b)`, and equal rank implies `project_id(a) < project_id(b)`.
+  `workflow_snapshot["categories"]` equals `ScheduleInput.categories` when non-default and is
+  absent otherwise.
+- **I37** *(2026-11-15, ADR 0050)*: a) keys 1–3a never decrease along `scheduling_order` (NULL
+  rank last); b) live state: each band's ranks are exactly 1..n, set iff schedulable with a
+  priority; c) a re-rank puts the project next to its anchor, others keep their relative order;
+  d) a preview's input equals the input rebuilt from the database after confirm.
+- **I31** *(rev.)*: an apply transaction:
+  - (i) writes `plan_gap_weeks` and `template_change_id` only on pairs `¬never(p,S)` evaluated under
+    lock, and writes `plan_weeks` only on such pairs with `¬ownEffort(p, kind(S))`;
+  - (ii) every written value equals the template's new value;
+  - (iii) it writes no `effort_weeks`, no progress field, and nothing on a reached pair;
+  - (iv) every written pair has a `project.template_applied` row naming the apply, with before and
+    after;
+  - (v) automatic pairs apply whatever the selection mode.
+- **I32**:
+  - (i) after an apply, every pair whose length was written has `plan_weeks` = the template's new
+    `weeks`;
+  - (ii) for every step with `¬ownEffort(p, kind(s))`, `eff = plan_weeks` (0 for lab with
+    certification off);
+  - (iii) for every step with `ownEffort(p, kind(s))`, `eff = effort_weeks ?? 0`, independent of
+    `plan_weeks` and of the template `weeks`.
+
+## Per-project step exclusion *(2026-11-15, P35, ADR 0049 as ruled at P35-T03)*
+
+A project may switch off individual applicable steps (owner OQ #81/#82/#83). The items below are
+binding and are copied verbatim from the workflow-auditor ruling (MEMORY "[2026-11-13] P35-T03").
+R35-1 replaces the P33 §B `eff` formula and R35-3 replaces the R2/R3 `S` definition; I26 rev. 2
+replaces I26. Scheduler side: P35-T04 (`effort_split` `excluded`, I35 in the validator). Service side:
+P35-T05.
+
+**Binding items.**
+
+- **R35-1 — effective duration.** It replaces DOMAIN_RULES P33 §B's formula. Exact text:
+  ```
+  eff(p,s) = 0                      if excluded(p,s)                                   # ADR 0049, first
+           = 0                      if kind(s) = lab and not p.certification_testing_required
+           = effort_weeks(p,s) ?? 0 if ownEffort(p, kind(s))
+           = plan_weeks(p,s)        otherwise
+  skipped(p,s) ⟺ eff(p,s) = 0
+  ```
+  Every reader in ADR 0041 R5's list takes `excluded` through the one service predicate. That covers the demand load,
+  workspace, Gantt, cards, tracking, check-in, export and ask-agent context. No surface tests the flag on its own to
+  derive a number.
+
+- **R35-2 — which steps may be excluded** (replaces ADR 0049 §4's first sentence):
+  ```
+  inForce(p,k)    ⟺ figure_k(p) > 0 ∧ (k ≠ lab ∨ p.certification_testing_required)
+                     ∧ ∃ s of kind k: effort_weight_weeks(s) > 0
+  applicable(p,s) ⟺ ¬(kind(s) = lab ∧ ¬p.certification_testing_required)
+                     ∧ (effort_weight_weeks(s) > 0   if inForce(p, kind(s))
+                        plan_weeks(s) > 0            otherwise)
+  ```
+  A step may be excluded iff it is `applicable`, it is not excluded, its stored stage ∈ {Not Started, In Progress,
+  Blocked}, and the project is not frozen and not Cancelled or Commercialized.
+  - Otherwise: 409 `STEP_NOT_APPLICABLE` (the OQ #81 "N/A" step), 409 `STEP_DONE`, 409 `PROJECT_FROZEN` or 409
+    `PROJECT_CLOSED`.
+  - An applicable step the split zeroed (D, J, M of PDD/B with figure 4) **is** excludable. Without that, exclusion
+    cannot be controlled (probe rows 2–3).
+  - The chips show such a step as "0 wk (split)", never as N/A.
+  - Re-include = clearing the flag on an excluded step. It is always allowed under the same frozen/closed rule and
+    revives nothing that was not applicable.
+  - "Include" on a non-excluded step is a no-op, never a revival.
+
+- **R35-3 — R2/R3 over S′.** It replaces the R2/R3 `S` definition. Exact text:
+  > `S′` = the project's steps of that kind with `effort_weight_weeks > 0` **and not excluded**. `T = Σ
+  > effort_weight_weeks over S′`. R2 apportions `E` over S′. **R3:** a step of S′ whose stage status is not Not
+  > Started gets `max(1, share)`. An excluded step is not in S′, gets no share and is never raised. It carries
+  > `effort_weeks = null`.
+
+  Implemented in `scheduling/effort_split` as an explicit `EffortStepInput.excluded: bool = False` (members exclude
+  it), not by the caller zeroing `lead_weeks`, so R3's exemption is tested where R2 is.
+
+- **R35-4 — no progress write.** Excluding or re-including writes only `excluded` (plus R6's `effort_weeks` and
+  `schedule_stale`). No status, percent, actual week, remaining override or hold reason is written.
+
+- **R35-5 — guards** on the project's final state after all edits of one Save, and on every other writer:
+  - category change, certification toggle, figure entry, client import.
+  - (a) `inForce(p,k)` ⇒ S′ non-empty. Otherwise 409 `EFFORT_NEEDS_A_STEP` naming the kind. The message tells the
+    user to clear the design/lab time or keep one step.
+  - (b) The project keeps at least one step with `eff > 0`. Otherwise 409 `NO_STEPS_LEFT`.
+  - A rejected project writes nothing. Whether the batch is all-or-nothing is the P35-T01 contract's choice, but it
+    must be stated there.
+
+- **R35-6 — R6 trigger added.** An exclusion or re-inclusion re-derives the project's effort in the same transaction
+  (`project.effort_rederived` when a share changes).
+  - Audit: one `project.step_excluded` / `project.step_included` row per step, with `step_id`, the stage status at
+    the time, and that kind's `eff` before and after for every step whose `eff` changed. Revived steps are thereby
+    visible.
+  - No financial field appears in these rows.
+
+- **R35-7 — recalculation (OQ #83).** The Save commits first. It then sets `schedule_stale` and dispatches **one**
+  greedy run for the whole Save, with the priority-move lifecycle (queued / deferred plus one coalesced follow-up /
+  not_needed; I20, I24).
+  - `not_needed` applies when no schedulable project's `eff` changed.
+  - The run reads committed state.
+  - The Save response lists, per project, the steps whose `eff` changed (before/after, flags `revived` /
+    `skipped_now`), so the grid can say "D now runs 1 wk". The grid renders the served values and never re-splits in
+    the browser (I9 spirit).
+  - P32-R12 (an auto run replacing an active CP-SAT run, owner-blocked) also governs these runs.
+
+- **R35-8 — gaps and applies.** See Q4. Apply writes never touch `excluded`; E2 flags `excluded_no_effect`.
+
+- **R35-9 — builder mapping.** See Q5. It sits above OR-3's table as its first row. The R33-9 test ("no live row
+  carries `lead_weeks` equal to its table value") still holds: excluded on a table-0 step → None.
+
+- **R35-10 — locking.** Exclude/include takes the project row `FOR UPDATE` (the R33-10 lock) and evaluates
+  stage status, R35-2 and R35-5 under it. A concurrent stage PATCH to Done therefore cannot race an exclusion.
+
+- **R35-11 — lifecycle of the flag.**
+  - Kept on a category change: the same workflow keeps the same activity. R35-5 re-checks.
+  - Cleared on a workflow change (`sync_project_steps` re-point), with a `project.step_included` audit,
+    reason `workflow_change`. A workflow change with progress is already refused, so only Not Started rows are
+    affected.
+  - Kept across freeze and unfreeze. A frozen project honours the exclusions set before it was frozen (they are
+    durations through `lead_weeks`), and none change while frozen (I10).
+  - Seed and client re-import never set `excluded` and never write progress onto an excluded step. Such a row is
+    reported, not silently changed.
+  - Plan import into the What-if replaces a matched project's durations from the file (ADR 0044), unchanged.
+
+- **R35-12 — "calculated" weeks.** P35-T01's `design_weeks_calculated` / `lab_weeks_calculated` (D35-1) = Σ over
+  the kind of R35-1's `eff` with the project's own figure ignored. Excluded steps add 0. "↺ reset" (figure cleared,
+  OR-5) therefore returns the project to the calculated total it shows.
+  - `row_calculated_weeks` must take `excluded`. Its docstring already flags the P33-T08 rewrite.
+  - Naming note (non-binding): `ProjectScheduleOutcome.excluded` already means "project excluded from the run". The
+    step-level wire field should not reuse the bare name on any object that also carries outcome fields
+    (`step_excluded` recommended for API/Gantt payloads).
+
+**Invariants.** I1–I32 are unchanged in text. I5's 14-row shape is kept (an excluded step is a skipped row).
+I25/I29 hold through R35-1/R35-9.
+
+- **I26 (rev. 2, restated)** — For every non-frozen project and kind k with `inForce(p,k)`:
+  - the stored `effort_weeks` on S′ equal the R2 apportionment of `E = max(1, round_half_up(x))` over
+    `effort_weight_weeks` on S′, raised to `max(1, ·)` on started steps of S′;
+  - Σ over S′ = E + the raised count;
+  - excluded steps and all other steps carry none;
+  - S′ is non-empty.
+
+  It holds in the same transaction as every R6 trigger, exclusion included. A project without a figure carries no
+  derived effort.
+
+- **I33 — exclusion is a skip, everywhere.**
+  - For every live step with `excluded`: §B `eff = 0`, the service predicate says skipped, and the built run input
+    has `lead_weeks = 0` (or None with table 0) and override None.
+  - Every run row for it has `skipped = true` and `duration_weeks = 0`.
+  - No surface derives a duration, load, weight or current step for it from anything but that predicate.
+
+- **I34 — Done is never excluded, and exclusion never writes progress.**
+  - No live step is both `excluded` and stored `Done`.
+  - Between an exclude and its re-include, the step's progress fields are byte-equal to their values at exclusion.
+  - Difference test: exclude then re-include with no other edit restores every step's `eff`, `effort_weeks` and
+    progress fields, and the project's run-input canonical form, exactly.
+
+- **I35 — no empty project.** Every non-excluded project in a live run input has at least one step with
+  `eff > 0`. The Dashboard partition within-year + spillover + left-out + blocked + unscheduled therefore covers
+  every run project with no ghost outcome (I9, I23).
+
+- **I36 — byte-identity and the frozen guard.**
+  - With no step excluded, the live input hash, every golden file, a fresh greedy run, re-serialised stored runs and
+    a pre-deploy priority-preview token are byte-identical before and after the `excluded` column lands.
+  - No `excluded` value changes on a frozen project (I10).
+  - Every change has exactly one `project.step_excluded` / `project.step_included` audit row.
+

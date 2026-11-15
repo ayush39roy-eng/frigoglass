@@ -38,10 +38,10 @@ export const DISPLAY_HORIZON_WEEKS = WITHIN_YEAR_WEEK;
 
 /**
  * P32-R02: the scheduler's internal search horizon (`HORIZON_WEEKS` in
- * `backend/domain_constants.py`), exposed for ONE place only: the "Edit
- * timing" dialog's earliest-start field accepts the server's full range
- * (`start_not_before_week` is 1..HORIZON_WEEKS), so a step already floored at
- * W53+ can still be saved. Every axis still presents W1–W52.
+ * `backend/domain_constants.py`), for labels and the Workflow page's
+ * read-only per-project waterfall axis (which runs past W52 to at most this
+ * week), and the Projects register's plan-week dates. The Timeline axis still
+ * presents W1–W52.
  */
 export const SCHEDULER_HORIZON_WEEKS = 78;
 

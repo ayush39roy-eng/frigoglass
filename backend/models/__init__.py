@@ -13,6 +13,7 @@ be pure dataclasses with no DB dependency at all.
 
 from models.audit import AuditLogEntry
 from models.base import Base, TimestampMixin, UUIDPrimaryKeyMixin
+from models.category import Category
 from models.chamber import Chamber
 from models.checkin import ScheduleRunFollowUp, StageCheckin
 from models.currency import CurrencyRate
@@ -34,6 +35,7 @@ from models.user import Role, User, UserHubScope, UserRole
 from models.vip import VipItem, vip_item_projects
 from models.workflow import (
     ProjectWorkflowStep,
+    TemplateChange,
     Workflow,
     WorkflowLeadTime,
     WorkflowStepTemplate,
@@ -44,6 +46,7 @@ __all__ = [
     "Base",
     "TimestampMixin",
     "UUIDPrimaryKeyMixin",
+    "Category",
     "Hub",
     "HubWorkCalendar",
     "Engineer",
@@ -53,6 +56,7 @@ __all__ = [
     "WorkflowStepTemplate",
     "WorkflowLeadTime",
     "ProjectWorkflowStep",
+    "TemplateChange",
     "Project",
     "ProjectAccessGrant",
     "ProjectFile",

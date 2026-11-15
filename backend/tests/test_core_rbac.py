@@ -25,6 +25,7 @@ _MATRIX: dict[RoleName, dict[Surface, set[Action]]] = {
         Surface.PROJECT_REGISTRATION: {R, W},
         Surface.CAPACITY_PLANNING: {R},
         Surface.WORKFLOW_SETTINGS: set(),
+        Surface.WORKFLOW_TEMPLATES: set(),
         Surface.AUDIT_LOG: set(),
         Surface.USER_ROLE_ADMIN: set(),
     },
@@ -37,6 +38,7 @@ _MATRIX: dict[RoleName, dict[Surface, set[Action]]] = {
         Surface.PROJECT_REGISTRATION: {R, W},
         Surface.CAPACITY_PLANNING: {R, W},
         Surface.WORKFLOW_SETTINGS: set(),
+        Surface.WORKFLOW_TEMPLATES: set(),
         Surface.AUDIT_LOG: set(),
         Surface.USER_ROLE_ADMIN: set(),
     },
@@ -49,6 +51,7 @@ _MATRIX: dict[RoleName, dict[Surface, set[Action]]] = {
         Surface.PROJECT_REGISTRATION: set(),
         Surface.CAPACITY_PLANNING: set(),
         Surface.WORKFLOW_SETTINGS: set(),
+        Surface.WORKFLOW_TEMPLATES: set(),
         Surface.AUDIT_LOG: set(),
         Surface.USER_ROLE_ADMIN: set(),
     },
@@ -61,6 +64,7 @@ _MATRIX: dict[RoleName, dict[Surface, set[Action]]] = {
         Surface.PROJECT_REGISTRATION: set(),
         Surface.CAPACITY_PLANNING: set(),
         Surface.WORKFLOW_SETTINGS: set(),
+        Surface.WORKFLOW_TEMPLATES: set(),
         Surface.AUDIT_LOG: set(),
         Surface.USER_ROLE_ADMIN: set(),
     },
@@ -73,6 +77,7 @@ _MATRIX: dict[RoleName, dict[Surface, set[Action]]] = {
         Surface.PROJECT_REGISTRATION: set(),
         Surface.CAPACITY_PLANNING: set(),
         Surface.WORKFLOW_SETTINGS: set(),
+        Surface.WORKFLOW_TEMPLATES: set(),
         Surface.AUDIT_LOG: {R},
         Surface.USER_ROLE_ADMIN: set(),
     },
@@ -85,6 +90,7 @@ _MATRIX: dict[RoleName, dict[Surface, set[Action]]] = {
         Surface.PROJECT_REGISTRATION: {R, W},
         Surface.CAPACITY_PLANNING: {R, W},
         Surface.WORKFLOW_SETTINGS: {R},
+        Surface.WORKFLOW_TEMPLATES: {R, W},
         Surface.AUDIT_LOG: {R},
         Surface.USER_ROLE_ADMIN: {R, W},
     },
@@ -99,6 +105,7 @@ _MATRIX: dict[RoleName, dict[Surface, set[Action]]] = {
         Surface.PROJECT_REGISTRATION: {R, W},
         Surface.CAPACITY_PLANNING: {R, W},
         Surface.WORKFLOW_SETTINGS: {R, W},
+        Surface.WORKFLOW_TEMPLATES: {R, W},
         Surface.AUDIT_LOG: {R},
         Surface.USER_ROLE_ADMIN: {R, W},
     },
@@ -135,6 +142,15 @@ def test_super_admin_is_the_only_role_that_writes_workflow_settings() -> None:
     writers = {r for r in RoleName if role_allows(r, Surface.WORKFLOW_SETTINGS, W)}
     readers = {r for r in RoleName if role_allows(r, Surface.WORKFLOW_SETTINGS, R)}
     assert writers == {RoleName.SUPER_ADMIN}
+    assert readers == {RoleName.SUPER_ADMIN, RoleName.ADMIN}
+
+
+def test_only_admin_and_super_admin_read_and_write_workflow_templates() -> None:
+    """ADR 0045 §7 (amends ADR 0010), P33-T06: category templates are Admin RW
+    and Super Admin RW; every other role has no access."""
+    writers = {r for r in RoleName if role_allows(r, Surface.WORKFLOW_TEMPLATES, W)}
+    readers = {r for r in RoleName if role_allows(r, Surface.WORKFLOW_TEMPLATES, R)}
+    assert writers == {RoleName.SUPER_ADMIN, RoleName.ADMIN}
     assert readers == {RoleName.SUPER_ADMIN, RoleName.ADMIN}
 
 

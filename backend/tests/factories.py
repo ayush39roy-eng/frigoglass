@@ -11,8 +11,10 @@ from __future__ import annotations
 
 import itertools
 import uuid
+from collections.abc import Sequence
 from typing import Any
 
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models import (
@@ -84,14 +86,15 @@ async def make_engineer(
     *,
     name: str = "Test Engineer",
     fte: float = 1.0,
-    allowed_categories: list[EngineerAllowedCategory] | None = None,
+    #: P33-T07: enum members or plain codes (the column is `text[]`).
+    allowed_categories: Sequence[EngineerAllowedCategory | str | None] | None = None,
     counts_in_capacity: bool = True,
 ) -> Engineer:
     eng = Engineer(
         name=name,
         hub_id=hub.id,
         fte=fte,
-        allowed_categories=allowed_categories or [EngineerAllowedCategory.A],
+        allowed_categories=list(allowed_categories or [EngineerAllowedCategory.A]),
         counts_in_capacity=counts_in_capacity,
     )
     session.add(eng)
@@ -185,9 +188,23 @@ async def make_project(
         carry_over=False,
     )
     defaults.update(overrides)
+    # P36 (R36-1(f)): a band member gets a rank by the migration's backfill
+    # rule (status, category rank, id), so a factory-built DB satisfies I37b
+    # and schedules exactly as before P36. An explicit `band_rank` is kept.
+    from services.band_rank import assign_default_band_ranks, band_of_project
+
+    explicit_rank = "band_rank" in overrides
+    band = band_of_project(defaults["status"], defaults.get("priority"))
+    if not explicit_rank and band is not None:
+        current_max = await session.scalar(
+            select(func.max(Project.band_rank)).where(Project.priority == defaults["priority"])
+        )
+        defaults["band_rank"] = (current_max or 0) + 1
     project = Project(**defaults)
     session.add(project)
     await session.flush()
+    if not explicit_rank and band is not None:
+        await assign_default_band_ranks(session, [band])
     return project
 
 
@@ -389,3 +406,35 @@ def registration_body(hub: Hub, leader: Engineer, **overrides: Any) -> dict[str,
     }
     body.update(overrides)
     return body
+
+
+def clear_rank_if_out_of_band(project: Project) -> Project:
+    """P36 (ADR 0050, I37b): for a test that sets `status` / `priority` on a
+    project directly (not through a write path): a project that is no longer
+    a band member loses its `band_rank`, as `services.band_rank.
+    reconcile_band_rank` would do (the membership CHECK is immediate). The
+    band is not renumbered (order-preserving gap; tests that check I37b use
+    the API write paths)."""
+
+    from services.band_rank import band_of_project
+
+    if band_of_project(project.status, project.priority) is None:
+        project.band_rank = None
+    elif project.band_rank is None:
+        # Entering a band: last (a placeholder beyond any real rank; the
+        # unique constraint is deferred and never reached in a savepoint test).
+        project.band_rank = next(_ENTERING_RANKS)
+    return project
+
+
+_ENTERING_RANKS = itertools.count(1_000_000)
+
+
+async def rank_all_bands(session: AsyncSession) -> None:
+    """P36 (R36-1(f)): rank every band by the backfill rule, for a test that
+    inserts `Project` rows itself (with a placeholder `band_rank`) instead of
+    through `make_project`."""
+
+    from services.band_rank import assign_default_band_ranks
+
+    await assign_default_band_ranks(session)

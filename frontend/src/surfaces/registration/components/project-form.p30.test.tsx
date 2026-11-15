@@ -33,7 +33,7 @@ function project(overrides: Partial<ProjectRead> = {}): ProjectRead {
   return {
     id: 'p-1', name: 'Romania cooler', external_code: null, hub_id: 'h-ro', leader_engineer_id: 'eng-1',
     leader_is_provisional: false, category: 'B', type: 'AC', priority: 'P2', status: 'In Queue', frozen: false,
-    actual_start_week: 10, delay_weeks: 0, reg_year: 2026, carry_over: false, comments: null, customer_name: null,
+    actual_start_week: 10, actual_end_week: null, delay_weeks: 0, reg_year: 2026, carry_over: false, comments: null, customer_name: null,
     tcogs_eur: null, selling_price_eur: null, gross_margin_pct: null, capex_keur: null, rm_savings_keur: null,
     target_end_week: null, certification_testing_required: true, estimated_design_weeks: 12, estimated_lab_weeks: null,
     design_effort_weeks: 20, lab_effort_weeks: 70, safety_lab_weeks: 3.5, actual_design_weeks: 18.25,

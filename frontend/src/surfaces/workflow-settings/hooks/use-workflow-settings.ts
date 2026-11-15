@@ -19,13 +19,11 @@ import {
   retryUnlessAuth,
   saveChamber,
   saveHubCalendar,
-  saveLeadTimes,
   saveSteps,
 } from '../api/workflow-settings-api';
 import type {
   ChamberSettingUpdateRequest,
   HubCalendarUpdateRequest,
-  LeadTimesUpdateRequest,
   StepsUpdateRequest,
   WorkflowSettingsSaveResult,
 } from '../api/types';
@@ -56,6 +54,16 @@ export function useBEquivalent(workflow: WorkflowId) {
   });
 }
 
+/**
+ * P33: after a template apply (E3), a 409 `TEMPLATE_CHANGED` reload, or a new
+ * category (B2): the template, its versions, the previews and the category
+ * list all come from the server again.
+ */
+export function invalidateTemplateQueries(queryClient: QueryClient, options: { categories?: boolean } = {}): void {
+  void queryClient.invalidateQueries({ queryKey: queryKeys.workflowSettings() });
+  if (options.categories) void queryClient.invalidateQueries({ queryKey: queryKeys.categoriesAll() });
+}
+
 function afterSave(queryClient: QueryClient, result: WorkflowSettingsSaveResult): void {
   queryClient.setQueryData(queryKeys.workflowSettings(), result.settings);
   // P13-T16: the previews derive from lead times and the DAG; refetch them.
@@ -71,14 +79,6 @@ export function useSaveSteps() {
   return useMutation({
     mutationFn: ({ workflowId, body }: { workflowId: string; body: StepsUpdateRequest }) =>
       saveSteps(workflowId, body),
-    onSuccess: (result) => afterSave(queryClient, result),
-  });
-}
-
-export function useSaveLeadTimes() {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: (body: LeadTimesUpdateRequest) => saveLeadTimes(body),
     onSuccess: (result) => afterSave(queryClient, result),
   });
 }

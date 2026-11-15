@@ -24,7 +24,7 @@
  * is always the same hue, independent of any one table's sort order).
  */
 
-import { PROJECT_CATEGORIES, type ProjectCategory } from '@/types/enums';
+import { getCategoryCatalog, type CategoryCatalog } from '@/lib/category-catalog';
 
 const BOLT_CAT_TOKENS = [
   '--dash-cat-1',
@@ -138,19 +138,43 @@ export function categoricalRankSoftBg(rank: number): string {
 }
 
 /**
- * A DETERMINISTIC rank for a project category — unlike chart series (ranked by
- * value), a category tag's colour must stay the same for "A+" everywhere it
- * appears on the page, so it is assigned by the category's fixed position in
- * the canonical `PROJECT_CATEGORIES` enum, not by any per-table count.
- *
- * Reads the real enum (`@/types/enums`) rather than a second hand-maintained
- * copy of the same seven strings — `dash-chart-theme.ts`'s original version of
- * this function carried its own literal `CATEGORY_ORDER` array that happened
- * to list the same seven values in the same order; this consolidates the two.
+ * P33-T14 (ADR 0047 §4): palette slots of the seven categories that existed
+ * before categories became a table. A colour assignment, not a category list:
+ * nothing iterates it. It keeps "A+" the hue it has always had after an Admin
+ * inserts a category ahead of it (a pure by-rank slot would re-colour every
+ * category below the insertion).
  */
-export function categoryRank(category: string): number {
-  const index = PROJECT_CATEGORIES.indexOf(category as ProjectCategory);
-  return index === -1 ? PROJECT_CATEGORIES.length : index;
+const SEEDED_CATEGORY_SLOTS: ReadonlyMap<string, number> = new Map([
+  ['A+', 0],
+  ['A', 1],
+  ['B', 2],
+  ['C', 3],
+  ['A-OEM', 4],
+  ['B-OEM', 5],
+  ['C-OEM', 6],
+]);
+const FIRST_FREE_SLOT = 7;
+
+/**
+ * A DETERMINISTIC palette slot for a project category, so a category is the
+ * same hue on every surface, never re-coloured per table.
+ *
+ * - The seven seeded codes keep their historical slots (0..6).
+ * - Any other code takes the next free slot by rank (ADR 0047 §4): the n-th
+ *   non-seeded category in the served rank order gets slot 7 + n, wrapping
+ *   over the 10-hue ramp.
+ * - A code the served list does not (yet) carry falls back to slot 7.
+ *
+ * `catalog` defaults to the mirrored served list (`lib/category-catalog.ts`).
+ * The historical name is kept: every caller treats it as the palette index.
+ */
+export function categoryRank(category: string, catalog: CategoryCatalog = getCategoryCatalog()): number {
+  const seeded = SEEDED_CATEGORY_SLOTS.get(category);
+  if (seeded !== undefined) return seeded;
+  const extras = catalog.codes.filter((c) => !SEEDED_CATEGORY_SLOTS.has(c));
+  const n = extras.indexOf(category);
+  if (n === -1) return FIRST_FREE_SLOT;
+  return (FIRST_FREE_SLOT + n) % BOLT_CAT_TOKENS.length;
 }
 
 /**

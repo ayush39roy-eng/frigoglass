@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import uuid
-from typing import TYPE_CHECKING
+from collections.abc import Callable
+from datetime import datetime
+from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import (
     Boolean,
     CheckConstraint,
+    DateTime,
     Enum,
     ForeignKey,
     Integer,
@@ -13,17 +16,32 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    func,
 )
 from sqlalchemy.dialects.postgresql import JSONB
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.engine.default import DefaultExecutionContext
+from sqlalchemy.orm import Mapped, mapped_column, relationship, validates
 
 from models.base import Base, TimestampMixin
-from models.enums import ProjectCategory, WorkflowStepKind, WorkflowStepStatus
+from models.category import category_code
+from models.enums import WorkflowStepKind, WorkflowStepStatus
 
 if TYPE_CHECKING:
     from models.chamber import Chamber
     from models.engineer import Engineer
     from models.project import Project
+
+
+def _default_from(column: str) -> Callable[[DefaultExecutionContext], Any]:
+    """A Python-side INSERT default equal to another column of the same row
+    (P33, migration `p33b`): `effort_weight_weeks` defaults to `weeks`,
+    `plan_weeks` to `duration_weeks` (the table value the row is created
+    with), so every existing construction site keeps working."""
+
+    def default(context: DefaultExecutionContext) -> Any:
+        return context.get_current_parameters()[column]  # type: ignore[no-untyped-call]
+
+    return default
 
 
 class Workflow(TimestampMixin, Base):
@@ -127,23 +145,44 @@ class WorkflowLeadTime(Base):
     __tablename__ = "workflow_lead_times"
 
     workflow_id: Mapped[str] = mapped_column(ForeignKey("workflows.id"), primary_key=True)
-    category: Mapped[ProjectCategory] = mapped_column(
-        Enum(
-            ProjectCategory,
-            name="project_category",
-            values_callable=lambda enum_cls: [e.value for e in enum_cls],
-        ),
+    #: ADR 0047 (P33-T07): a `categories.code` (text + FK, RESTRICT).
+    category: Mapped[str] = mapped_column(
+        Text,
+        ForeignKey("categories.code", onupdate="RESTRICT", ondelete="RESTRICT"),
         primary_key=True,
     )
-    step_id: Mapped[str] = mapped_column(
-        ForeignKey("workflow_step_templates.id"), primary_key=True
-    )
+    step_id: Mapped[str] = mapped_column(ForeignKey("workflow_step_templates.id"), primary_key=True)
+    #: The category length (DOMAIN_RULES "Category templates" §A). Copied
+    #: onto a project's `ProjectWorkflowStep.plan_weeks` at registration, a
+    #: category change, a figure cleared and an apply (P33); it never reaches
+    #: an existing project by itself.
     weeks: Mapped[int] = mapped_column(Integer, nullable=False)
+    #: P33 (ADR 0046 §A, migration `p33b`): the signed gap, −104..104
+    #: (negative = overlap, positive = wait; 0 on a workflow's first step,
+    #: checked by the apply). Copied onto `plan_gap_weeks`.
+    gap_weeks: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    #: P33 (R33-2, migration `p33b`): the R2 effort-split weights, 0..104,
+    #: backfilled = `weeks`. **Immutable** (DB trigger
+    #: `trg_workflow_lead_times_effort_weight`); a new row defaults to its
+    #: `weeks`. `services.project_effort` splits a figure over these, never
+    #: over `weeks`, so a template edit never reshapes a project's split.
+    effort_weight_weeks: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=_default_from("weeks")
+    )
 
     workflow: Mapped[Workflow] = relationship(back_populates="lead_times")
     step_template: Mapped[WorkflowStepTemplate] = relationship(back_populates="lead_times")
 
-    __table_args__ = (CheckConstraint("weeks >= 0", name="weeks_non_negative"),)
+    __table_args__ = (
+        CheckConstraint("weeks >= 0", name="weeks_non_negative"),
+        CheckConstraint("gap_weeks BETWEEN -104 AND 104", name="gap_weeks_range"),
+        CheckConstraint("effort_weight_weeks BETWEEN 0 AND 104", name="effort_weight_weeks_range"),
+    )
+
+    @validates("category")
+    def _category_as_code(self, _key: str, value: object) -> str | None:
+        """P33-T07: always a plain code string."""
+        return category_code(value)
 
     def __repr__(self) -> str:  # pragma: no cover - debug convenience only
         return f"<WorkflowLeadTime {self.workflow_id}/{self.category}/{self.step_id}={self.weeks}>"
@@ -215,6 +254,11 @@ class ProjectWorkflowStep(TimestampMixin, Base):
     blocked_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     # --- Step timing from the Gantt (docs/DOMAIN_RULES.md, ADR 0019) ---------
+    # RETIRED (ADR 0048, migration `p33c_clear_step_timing`): the three
+    # hand-set fields below (`duration_override_weeks`,
+    # `start_not_before_week`, `overlap_weeks`) are always NULL (CHECK
+    # `step_timing_retired`); no service reads or writes them. The columns
+    # are dropped in P33-F01. Their history:
     #: The USER's duration for this step (1..104; ADR 0019, unchanged by ADR
     #: 0041 R4). Null = the derived effort (`effort_weeks`) or the lead-time
     #: table (`duration_weeks`) applies. Never revives a skipped step (table
@@ -239,6 +283,30 @@ class ProjectWorkflowStep(TimestampMixin, Base):
     #: run never overwrites it. Frozen projects ignore it.
     overlap_weeks: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)
 
+    # --- The project's copy of its category template (P33, ADR 0046 §B) -------
+    #: The project's own length for this step, 0..104 (migration `p33b`,
+    #: backfilled from the table in force). Copied from the template's
+    #: `weeks` at registration, on a category / workflow change and when an
+    #: effort figure is cleared (not-reached steps only, R33-10 / OR-5), and
+    #: by an apply (P33-T10) where the kind has no own effort figure (OR-4).
+    #: `eff = plan_weeks` for a step whose kind has no own effort figure
+    #: (`services.workflow_durations.live_step_effective_weeks`); unused
+    #: (kept) while the kind follows the project's figure. Defaults to the
+    #: row's `duration_weeks` on INSERT.
+    plan_weeks: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=_default_from("duration_weeks")
+    )
+    #: The project's own signed gap, −104..104 (negative = overlap, positive
+    #: = wait; DOMAIN_RULES §D). Reaches the run input as `overlap_weeks` /
+    #: `wait_weeks` (contract F4).
+    plan_gap_weeks: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
+    #: The template apply that last wrote this row's copy (P33-T10).
+    template_change_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("template_changes.id"), nullable=True
+    )
+
     #: Design steps only (docs/DOMAIN_RULES.md booking rules).
     assigned_engineer_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("engineers.id"), nullable=True
@@ -260,9 +328,7 @@ class ProjectWorkflowStep(TimestampMixin, Base):
         UniqueConstraint("project_id", "step_template_id", name="uq_project_step_template"),
         UniqueConstraint("project_id", "sequence_order", name="uq_project_sequence_order"),
         CheckConstraint("duration_weeks >= 0", name="duration_non_negative"),
-        CheckConstraint(
-            "percent_complete BETWEEN 0 AND 100", name="percent_complete_range"
-        ),
+        CheckConstraint("percent_complete BETWEEN 0 AND 100", name="percent_complete_range"),
         CheckConstraint(
             "remaining_weeks_override IS NULL OR remaining_weeks_override >= 0",
             name="remaining_override_non_negative",
@@ -312,7 +378,50 @@ class ProjectWorkflowStep(TimestampMixin, Base):
             "overlap_weeks IS NULL OR overlap_weeks BETWEEN 1 AND 104",
             name="overlap_weeks_range",
         ),
+        # ADR 0048 (migration p33c_clear_step_timing): per-project step
+        # timing is retired; the three hand-set fields stay null until
+        # P33-F01 drops them.
+        CheckConstraint(
+            "duration_override_weeks IS NULL AND start_not_before_week IS NULL "
+            "AND overlap_weeks IS NULL",
+            name="step_timing_retired",
+        ),
+        # P33 (migration p33b_template_copy).
+        CheckConstraint("plan_weeks BETWEEN 0 AND 104", name="plan_weeks_range"),
+        CheckConstraint("plan_gap_weeks BETWEEN -104 AND 104", name="plan_gap_weeks_range"),
     )
 
     def __repr__(self) -> str:  # pragma: no cover - debug convenience only
         return f"<ProjectWorkflowStep project={self.project_id} step={self.step_template_id}>"
+
+
+class TemplateChange(Base):
+    """One category-template apply (P33, ADR 0045 §4 / contract P33 E3 step
+    5; migration `p33b_template_copy`): who applied which template changes
+    (before / after per (workflow, category, step)) with which selection.
+    Written once by `POST /workflow-templates/apply` (P33-T10) in the apply's
+    transaction; `ProjectWorkflowStep.template_change_id` points here for
+    every copy it wrote. The audit log carries the same facts
+    (`workflow_template.applied`); this row is the copies' provenance."""
+
+    __tablename__ = "template_changes"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    actor_user_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    #: Optional free text, ≤ 500 characters (contract E3).
+    reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    #: `[{"workflow_id", "category", "base_version", "steps": [{"step_id",
+    #: "weeks_before", "weeks_after", "gap_before", "gap_after"}]}]`.
+    changes: Mapped[Any] = mapped_column(JSONB, nullable=False)
+    #: `{"mode", "project_ids"}` as requested (contract E3).
+    selection: Mapped[Any] = mapped_column(JSONB, nullable=False)
+
+    __table_args__ = (
+        CheckConstraint("reason IS NULL OR char_length(reason) <= 500", name="reason_length"),
+    )
+
+    def __repr__(self) -> str:  # pragma: no cover - debug convenience only
+        return f"<TemplateChange {self.id}>"

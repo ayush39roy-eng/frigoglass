@@ -164,6 +164,29 @@ def default_workflow_templates() -> tuple[WorkflowStepTemplate, ...]:
     return _chain("PDD", _PDD_STEPS) + _chain("OEM", _OEM_STEPS)
 
 
+@dataclass(frozen=True)
+class CategoryInput:
+    """One project category (ADR 0047 §3 as ruled, R33-8): its wire `code`,
+    the workflow it belongs to and its `rank`, scheduling order key 5 (the
+    rank *value*, ascending). Mirrors a `categories` row."""
+
+    code: str
+    workflow_id: str  # "PDD" | "OEM"
+    rank: int  # >= 1, unique within a ScheduleInput
+
+
+def default_categories() -> tuple[CategoryInput, ...]:
+    """The seven seeded categories at ranks 1..7, in `CATEGORY_RANK` order
+    (A+, A, B, C, A-OEM, B-OEM, C-OEM). The default of
+    `ScheduleInput.categories`; the canonical / hashed input and the run
+    snapshot omit a list equal to this one (R33-7)."""
+
+    return tuple(
+        CategoryInput(code=code, workflow_id="OEM" if code in OEM_CATEGORIES else "PDD", rank=rank)
+        for rank, code in enumerate(CATEGORY_RANK, start=1)
+    )
+
+
 def default_lead_times() -> tuple[LeadTime, ...]:
     """The 98-row lead-time table from DOMAIN_RULES.md "Lead times"."""
 
@@ -267,12 +290,31 @@ class StepTimingInput:
       a skipped step. The canonical / hashed form omits it when 0
       (`workflow.canonical_step_timing_dict`), so every pre-P32 hash and
       golden file is byte-identical.
+
+    P33 (ADR 0046 as ruled, R33-1/R33-4/R33-7; DOMAIN_RULES "Category
+    templates" §B/§D):
+
+    - `wait_weeks` (0..104): the positive part of the project's signed
+      template gap. A Not Started step may not start before `release(s) + 1 +
+      wait_weeks`. It books nothing and is ignored on a started step, a
+      skipped step and in a frozen project. At most one of `overlap_weeks`
+      and `wait_weeks` is non-zero, and neither on a first step.
+    - `lead_weeks` (0..104 or None): the project's own lead time for the step
+      (`lead = lead_weeks ?? lead_time_table`), then `eff = 0` if `lead = 0`
+      or lab with certification testing off, else
+      `duration_override_weeks ?? lead`. A frozen project honours it.
+
+    Both are omitted from the canonical / hashed form at their defaults (0 /
+    None), so every pre-P33 hash, golden file and stored run is
+    byte-identical.
     """
 
     step_id: str
     duration_override_weeks: int | None  # 1..104, None = lead-time table
     start_not_before_week: int | None  # 1..HORIZON_WEEKS, None = no floor
     overlap_weeks: int = 0  # ADR 0043: 0..104, 0 = no overlap
+    wait_weeks: int = 0  # P33 (ADR 0046 §4, R33-4): 0..104, 0 = no wait
+    lead_weeks: int | None = None  # P33 (R33-1): 0..104, None = the input's lead-time table
 
 
 @dataclass(frozen=True)
@@ -341,6 +383,14 @@ class ProjectInput:
     # means "same as `hub`" and is resolved in `__post_init__`, so the field is
     # always a real hub name after construction.
     capacity_hub: str = ""
+    # ADR 0050 (P36, R36-1..R36-10): the planner-set position inside the
+    # project's priority band (`projects.band_rank`, dense 1..n per band in
+    # live state). Scheduling order key 3a: ascending, `None` last. `None` =
+    # unranked (What-if added / overridden-band projects, imported rows). The
+    # canonical / hashed form omits it when `None`
+    # (`workflow.canonical_schedule_input_asdict`), so every pre-P36 golden
+    # file, hash and stored run is byte-identical.
+    band_rank: int | None = None
 
     def __post_init__(self) -> None:
         if self.capacity_hub == "":
@@ -442,6 +492,10 @@ class ScheduleInput:
     current_week: int = dc.CURRENT_WEEK
     horizon_weeks: int = dc.HORIZON_WEEKS
     within_year_week: int = dc.WITHIN_YEAR_WEEK
+    # ADR 0047 §3 / R33-8 (P33-T03): the category list, scheduling order key 5
+    # (rank value) and the workflow each category belongs to. The default is
+    # the seven seeded categories, so every pre-P33 caller is unchanged.
+    categories: tuple[CategoryInput, ...] = field(default_factory=default_categories)
 
 
 @dataclass(frozen=True)
@@ -455,7 +509,8 @@ class ScheduleOutput:
 
     `scheduling_order` is the exact sequence `project_id`s were processed in
     by the greedy walk (frozen desc, is_vip desc (ADR 0040), priority, status,
-    category, project_id tiebreak) — excludes `excluded` projects entirely.
+    category rank from `ScheduleInput.categories` (ADR 0047 §3, I30),
+    project_id tiebreak) — excludes `excluded` projects entirely.
     """
 
     project_outcomes: tuple[ProjectScheduleOutcome, ...]

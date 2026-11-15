@@ -83,7 +83,6 @@ from models.enums import (
     NON_SCHEDULABLE_STATUSES,
     HubName,
     LabRegion,
-    ProjectCategory,
     RoleName,
     WorkflowStepKind,
 )
@@ -140,6 +139,7 @@ from services.capacity_supply import (
     round2,
     to_days,
 )
+from services.categories import load_catalog
 from services.demand_load import load_demand
 from services.hub_scope import (
     narrowed_hub_filter,
@@ -616,6 +616,8 @@ async def class_breakdown(
     splits, `by_hub` or `total_count`.
     """
 
+    # P33-T07 (ADR 0047 §4): one row per category of the table, in rank order.
+    category_codes = (await load_catalog(db)).codes
     active_run = await _active_run(db)
     if active_run is None:
         empty_rows = [
@@ -628,7 +630,7 @@ async def class_breakdown(
                 left_out_by_priority=PriorityCountSplit(**count_split({})),
                 by_hub=[],
             )
-            for c in ProjectCategory
+            for c in category_codes
         ]
         return ClassBreakdown(
             has_active_schedule_run=False, schedule_run_version=None, rows=empty_rows
@@ -652,12 +654,12 @@ async def class_breakdown(
         stmt = stmt.where(hub_filter)
     result = (await db.execute(stmt)).all()
 
-    deliverable: dict[ProjectCategory, int] = defaultdict(int)
-    left_out: dict[ProjectCategory, int] = defaultdict(int)
+    deliverable: dict[str, int] = defaultdict(int)
+    left_out: dict[str, int] = defaultdict(int)
     # P13 (contract §6): the same counts per priority bucket and per hub.
-    deliverable_prio: dict[ProjectCategory, dict[str, int]] = defaultdict(lambda: defaultdict(int))
-    left_out_prio: dict[ProjectCategory, dict[str, int]] = defaultdict(lambda: defaultdict(int))
-    by_hub: dict[ProjectCategory, dict[HubName, list[int]]] = defaultdict(
+    deliverable_prio: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
+    left_out_prio: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
+    by_hub: dict[str, dict[HubName, list[int]]] = defaultdict(
         lambda: defaultdict(lambda: [0, 0])
     )
     for category, is_left_out, priority, hub_name in result:
@@ -686,7 +688,7 @@ async def class_breakdown(
                 for name, counts in sorted(by_hub[cat].items(), key=lambda kv: kv[0].value)
             ],
         )
-        for cat in ProjectCategory
+        for cat in category_codes
     ]
     return ClassBreakdown(
         has_active_schedule_run=True, schedule_run_version=active_run.version, rows=rows
@@ -887,7 +889,7 @@ async def engineer_utilization(
                 id=e.id,
                 name=e.name,
                 hub=e.hub.name,
-                role=", ".join(c.value for c in e.allowed_categories),
+                role=", ".join(e.allowed_categories),
                 counts_in_capacity=e.counts_in_capacity,
                 total_booked=total_booked,
                 total_capacity=round2(year_cap),

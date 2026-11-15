@@ -7,7 +7,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { MultiChipFilter } from '@/components/shared/multi-chip-filter';
-import { CATEGORY_CHIP_OPTIONS, TYPE_CHIP_OPTIONS } from '@/lib/multi-select-filter';
+import { TYPE_CHIP_OPTIONS, useCategoryChipOptions } from '@/lib/multi-select-filter';
 import { UI_PROJECT_STATUSES } from '@/types/enums';
 
 import {
@@ -92,6 +92,7 @@ export function BoardToolbar({
   inPanel = false,
   compact = false,
 }: BoardToolbarProps): React.JSX.Element {
+  const categoryChips = useCategoryChipOptions();
   const searchId = React.useId();
   const set = (key: 'search' | 'status_' | 'leader') => (next: string) => onChange({ ...value, [key]: next });
   const active =
@@ -133,7 +134,7 @@ export function BoardToolbar({
           <div className="order-last flex w-full flex-col gap-2" data-testid="board-chip-filters">
             <MultiChipFilter
               label="Category"
-              options={CATEGORY_CHIP_OPTIONS}
+              options={categoryChips}
               value={value.category}
               onChange={(next) => onChange({ ...value, category: next })}
               data-testid="board-category-chips"

@@ -245,19 +245,37 @@ def _perturbed_step_timing(
     lead-time cell, so perturbation never revives a skipped step, and a
     non-zero value keeps the sampling floor of 1, so it never zeroes one.
     Floors are plan inputs and are not perturbed. `()` stays `()`, so pre-P12
-    forecasts are unchanged."""
+    forecasts are unchanged.
+
+    P33 (R33-5, contract F2): a per-project `lead_weeks` is a duration and is
+    perturbed the same way (R10 floor). Gaps are never sampled: `overlap_weeks`
+    and `wait_weeks` are copied unchanged. A row whose values do not change is
+    returned as the same object."""
 
     return tuple(
-        r
-        if r.duration_override_weeks is None or r.duration_override_weeks == 0
-        else replace(
+        replace(
             r,
-            duration_override_weeks=max(
-                DURATION_OVERRIDE_MIN_WEEKS,
-                min(DURATION_OVERRIDE_MAX_WEEKS, round(r.duration_override_weeks * factor)),
-            ),
+            duration_override_weeks=_perturbed_weeks(r.duration_override_weeks, factor),
+            lead_weeks=_perturbed_weeks(r.lead_weeks, factor),
         )
+        if _perturbed_weeks(r.duration_override_weeks, factor) != r.duration_override_weeks
+        or _perturbed_weeks(r.lead_weeks, factor) != r.lead_weeks
+        else r
         for r in rows
+    )
+
+
+def _perturbed_weeks(weeks: int | None, factor: float) -> int | None:
+    """One per-project duration under the iteration's factor (ADR 0041 R10,
+    extended to P33 `lead_weeks`): None and 0 stay as they are (a 0 skips the
+    step, so perturbation never revives one); any other value is re-rounded
+    and clamped to 1..104, so it never zeroes one either."""
+
+    if weeks is None or weeks == 0:
+        return weeks
+    return max(
+        DURATION_OVERRIDE_MIN_WEEKS,
+        min(DURATION_OVERRIDE_MAX_WEEKS, round(weeks * factor)),
     )
 
 

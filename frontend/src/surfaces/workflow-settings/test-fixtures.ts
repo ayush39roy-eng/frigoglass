@@ -1,4 +1,5 @@
-import type { WorkflowSettings, WorkflowStepSetting } from './api/types';
+import { SEEDED_TEST_CATEGORIES } from '@/test/category-fixtures';
+import type { CategoryTimeline, TimelineStep, WorkflowSettings, WorkflowStepSetting } from './api/types';
 
 const PDD: [string, string, string, WorkflowStepSetting['kind']][] = [
   ['A', 'MKTG_BRF', 'Marketing Brief', 'design'],
@@ -29,7 +30,15 @@ export function settingsFixture(): WorkflowSettings {
   }));
   return {
     workflows: [{ id: 'PDD', name: 'Frigoglass in-house', steps }],
-    lead_times: steps.map((s, i) => ({ workflow_id: 'PDD', category: 'A+', step_id: s.step_id, weeks: A_PLUS[i]! })),
+    lead_times: steps.map((s, i) => ({
+      workflow_id: 'PDD',
+      category: 'A+',
+      step_id: s.step_id,
+      weeks: A_PLUS[i]!,
+      gap_weeks: 0,
+      effort_weight_weeks: A_PLUS[i]!,
+    })),
+    categories: SEEDED_TEST_CATEGORIES.map((c) => ({ ...c, template_version: 1 })),
     hub_calendars: [
       {
         hub_id: 'hub-gr',
@@ -62,5 +71,49 @@ export function settingsFixture(): WorkflowSettings {
     within_year_week: 52,
     updated_at: '2026-09-27T09:00:00Z',
     updated_by: 'Sam Super',
+  };
+}
+
+/**
+ * P33: a served C2 timeline for A+ — the strict chain with every gap 0, so the
+ * starts are the running sum of the lengths (as `template_timeline` serves
+ * them). `patch` overrides individual steps (e.g. a flag or a wait).
+ */
+export function timelineFixture(
+  category = 'A+',
+  patch: Record<string, Partial<TimelineStep>> = {},
+  extra: Partial<CategoryTimeline> = {},
+): CategoryTimeline {
+  let start = 0;
+  const steps: TimelineStep[] = PDD.map(([letter, , name, kind], i) => {
+    const code = `PDD-${letter}`;
+    const duration = A_PLUS[i]!;
+    const step: TimelineStep = {
+      code,
+      name,
+      resource_kind: kind,
+      start_week: start,
+      duration_weeks: duration,
+      gap_weeks: 0,
+      effective_gap_weeks: 0,
+      flags: [],
+      predecessor_ids: i === 0 ? [] : [`PDD-${PDD[i - 1]![0]}`],
+      ...patch[code],
+    };
+    start += duration;
+    return step;
+  });
+  return {
+    category,
+    label: category,
+    workflow_id: 'PDD',
+    rank: 1,
+    template_version: 1,
+    note: 'This is the category template with no capacity limits. Real projects also wait for engineers and chambers.',
+    total_weeks: 44,
+    design_weeks: 22,
+    lab_weeks: 12,
+    steps,
+    ...extra,
   };
 }

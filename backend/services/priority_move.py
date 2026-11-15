@@ -31,6 +31,7 @@ window the Workspace recalc uses. A run in flight answers `deferred`, not
 from __future__ import annotations
 
 import uuid
+from collections.abc import Sequence
 from dataclasses import dataclass
 
 from fastapi import status
@@ -50,6 +51,7 @@ from models.priority import PriorityScore
 from models.project import Project
 from schemas.project import RecalcStatus
 from services.active_run import get_active_run
+from services.band_rank import lock_band_ranks, reconcile_band_rank
 from services.run_dispatch import dispatch_greedy, enqueue_or_fail, find_in_flight_run
 from services.schedule_persistence import create_queued_schedule_run
 
@@ -140,15 +142,20 @@ def add_priority_move_audit(
     recalc: RecalcStatus,
     baseline_id: uuid.UUID | None,
     schedule_run_id: uuid.UUID | None = None,
+    band_rank_before: int | None = None,
 ) -> None:
     """The one `project.priority_move` audit row. `schedule_run_id` is only
     passed by the P14 in-process confirm (`applied`), whose run exists by the
     time the row is written; the ADR 0015 paths keep their exact shape.
+    P36 (R36-8): both states carry `band_rank` (after = the project's rank
+    once reconciled: last in the new band, or null), so the neighbours'
+    renumbering is derivable without per-row audit.
     """
 
-    after_state: dict[str, str | None] = {
+    after_state: dict[str, str | int | None] = {
         "project_id": str(project.id),
         "priority": _priority_value(new_priority),
+        "band_rank": project.band_rank,
         "recalc_status": recalc,
         "baseline_run_id": str(baseline_id) if baseline_id is not None else None,
     }
@@ -161,7 +168,11 @@ def add_priority_move_audit(
             entity_type="Project",
             entity_id=str(project.id),
             hub_id=project.hub_id,
-            before_state={"project_id": str(project.id), "priority": _priority_value(before)},
+            before_state={
+                "project_id": str(project.id),
+                "priority": _priority_value(before),
+                "band_rank": band_rank_before,
+            },
             after_state=after_state,
         )
     )
@@ -191,12 +202,22 @@ async def apply_priority_change(
         )
     await ensure_priority_move_allowed(db, project, new_priority)
 
+    # ADR 0050 / R36-8: the band-rank lock first (re-entrant: the PATCH and
+    # the POST take it before reading the project), then the lifecycle: the
+    # moved project goes last in its new band, the band it left is
+    # renumbered. Before any query can autoflush the new priority.
+    await lock_band_ranks(db)
+    rank_before = project.band_rank
     project.priority = new_priority
     project.schedule_stale = True
+    await reconcile_band_rank(
+        db, project, status_before=project.status, priority_before=before
+    )
 
     recalc, baseline_id = await decide_auto_recalc(db, project, trigger_reason=TRIGGER_REASON)
     add_priority_move_audit(
-        db, project, before, new_priority, principal, recalc=recalc, baseline_id=baseline_id
+        db, project, before, new_priority, principal, recalc=recalc, baseline_id=baseline_id,
+        band_rank_before=rank_before,
     )
     outcome = await dispatch_auto_recalc(
         db, project, principal,
@@ -247,8 +268,24 @@ async def decide_auto_recalc(
     next commit (`dispatch_auto_recalc` commits on every path).
     """
 
+    return await decide_auto_recalc_batch(
+        db,
+        needs_run=project.status not in NON_SCHEDULABLE_STATUSES,
+        trigger_reason=trigger_reason,
+    )
+
+
+async def decide_auto_recalc_batch(
+    db: AsyncSession, *, needs_run: bool, trigger_reason: str
+) -> tuple[RecalcStatus, uuid.UUID | None]:
+    """`decide_auto_recalc` for a caller that has decided itself whether the
+    change can move the plan (`needs_run`): `not_needed` when not, else
+    `deferred` (follow-up registered) / `queued` with the active run as the
+    baseline. P35's register batch passes "some changed scheduler input was
+    on a project schedulable before or after the edit"."""
+
     recalc: RecalcStatus
-    if project.status in NON_SCHEDULABLE_STATUSES:
+    if not needs_run:
         recalc = "not_needed"
     elif await find_in_flight_run(db, trigger_reason=trigger_reason) is not None:
         recalc = "deferred"
@@ -270,27 +307,48 @@ async def dispatch_auto_recalc(
     baseline_id: uuid.UUID | None,
     trigger_reason: str,
 ) -> AutoRecalcOutcome:
-    """Step 2, after the caller has staged its own audit row: commit, and
-    when `queued` create the QUEUED greedy run (committed together with the
-    input change, the stale flag and the audit row, I20), enqueue
-    `run_greedy_schedule` (`activate=True`, `recalc_project_id`) on the
-    solver worker, audit `project.recalculate_requested`, commit and publish
+    """Step 2 for one project: `dispatch_auto_recalc_batch` with `[project]`."""
+
+    return await dispatch_auto_recalc_batch(
+        db, [project], principal,
+        recalc=recalc, baseline_id=baseline_id, trigger_reason=trigger_reason,
+    )
+
+
+async def dispatch_auto_recalc_batch(
+    db: AsyncSession,
+    projects: Sequence[Project],
+    principal: Principal,
+    *,
+    recalc: RecalcStatus,
+    baseline_id: uuid.UUID | None,
+    trigger_reason: str,
+) -> AutoRecalcOutcome:
+    """Step 2, after the caller has staged its own audit rows: commit, and
+    when `queued` create ONE QUEUED greedy run (committed together with the
+    input changes, the stale flags and the audit rows, I20), enqueue
+    `run_greedy_schedule` (`activate=True`; `recalc_project_id` only when
+    the batch is one project, as the check-in does) on the solver worker,
+    audit `project.recalculate_requested` per project, commit and publish
     the SSE "queued" event. A broker failure answers `dispatch_failed` (the
-    change is saved and stays stale). Never solves in-process.
+    changes are saved and stay stale). Never solves in-process. P35
+    (`POST /projects/register-edits`) passes several projects.
     """
 
     if recalc != "queued":
         await db.commit()
         return AutoRecalcOutcome(recalc_status=recalc)
+    assert projects, "a queued recalc needs at least one project"
 
-    # Commits the input change, the stale flag, the audit row and the QUEUED
-    # run together, before the worker can read them.
+    # Commits the input changes, the stale flags, the audit rows and the
+    # QUEUED run together, before the worker can read them.
     run = await create_queued_schedule_run(
         db,
         solver_type=SolverType.GREEDY,
         trigger_reason=trigger_reason,
         triggered_by_user_id=principal.user_id,
     )
+    recalc_project_id = str(projects[0].id) if len(projects) == 1 else None
     task_id = await enqueue_or_fail(
         db,
         run,
@@ -299,7 +357,7 @@ async def dispatch_auto_recalc(
             db=db,
             triggered_by_user_id=str(principal.user_id),
             activate=True,
-            recalc_project_id=str(project.id),
+            recalc_project_id=recalc_project_id,
         ),
         actor_user_id=principal.user_id,
     )
@@ -309,23 +367,24 @@ async def dispatch_auto_recalc(
         return AutoRecalcOutcome(recalc_status="dispatch_failed", baseline_run_id=baseline_id)
     run.celery_task_id = task_id
     db.add(run)
-    db.add(
-        AuditLogEntry(
-            actor_user_id=principal.user_id,
-            action="project.recalculate_requested",
-            entity_type="Project",
-            entity_id=str(project.id),
-            hub_id=project.hub_id,
-            before_state=None,
-            after_state={
-                "project_id": str(project.id),
-                "schedule_run_id": str(run.id),
-                "schedule_run_version": run.version,
-                "celery_task_id": run.celery_task_id,
-                "trigger_reason": trigger_reason,
-            },
+    for project in projects:
+        db.add(
+            AuditLogEntry(
+                actor_user_id=principal.user_id,
+                action="project.recalculate_requested",
+                entity_type="Project",
+                entity_id=str(project.id),
+                hub_id=project.hub_id,
+                before_state=None,
+                after_state={
+                    "project_id": str(project.id),
+                    "schedule_run_id": str(run.id),
+                    "schedule_run_version": run.version,
+                    "celery_task_id": run.celery_task_id,
+                    "trigger_reason": trigger_reason,
+                },
+            )
         )
-    )
     await db.commit()
     publish_progress(str(run.id), status="queued")
     return AutoRecalcOutcome(

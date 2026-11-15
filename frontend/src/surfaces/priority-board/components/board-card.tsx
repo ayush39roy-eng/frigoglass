@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { Link } from 'react-router-dom';
-import { GripVertical, Loader2, Lock } from 'lucide-react';
+import { GripVertical, Loader2 } from 'lucide-react';
 
 import { HealthChip, ProjectedFinishChip } from '@/components/shared/project-outcome-chips';
 import { PriorityMoveControl } from '@/components/shared/priority-move/priority-move-control';
@@ -11,8 +11,9 @@ import { SuggestedBandChip } from '@/components/shared/suggested-band-chip';
 import { formatDecimal } from '@/lib/format';
 import { cn } from '@/lib/utils';
 
-import type { DisplayCard } from '../lib/board-model';
+import { handleLabel, type DisplayCard } from '../lib/board-model';
 import { BoardScenarioContext } from '../lib/board-scenario';
+import { BandRankChip, FrozenBadge, HardGateLock } from './board-badges';
 
 export interface BoardCardProps {
   item: DisplayCard;
@@ -46,6 +47,7 @@ export const BoardCard = React.memo(function BoardCard({
   onHandleBlur,
 }: BoardCardProps): React.JSX.Element {
   const { card, servedPriority, pending } = item;
+  const rank = card.band_rank ?? null;
   const locked = card.hard_gated && servedPriority === 'P1';
   const staged = React.useContext(BoardScenarioContext).has(card.project_id);
   // P25-T03: the served suggested (promoted) band; a pre-P25-T03 API only serves `band`.
@@ -71,7 +73,7 @@ export const BoardCard = React.memo(function BoardCard({
           <button
             type="button"
             className="-ml-1 mt-px grid size-6 shrink-0 place-items-center rounded-sm text-text-muted transition-colors hover:bg-primary-subtle hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            aria-label={`Move ${card.name} to another priority column`}
+            aria-label={handleLabel(card.name, locked)}
             aria-describedby={instructionsId}
             aria-pressed={lifted}
             data-testid="board-drag-handle"
@@ -81,16 +83,19 @@ export const BoardCard = React.memo(function BoardCard({
           >
             <GripVertical className="size-4" aria-hidden="true" />
           </button>
-        ) : locked ? (
-          <span
-            className="-ml-1 mt-px grid size-6 shrink-0 place-items-center text-text-muted"
-            title="Hard gate: this project must stay P1"
-            data-testid="board-lock"
-          >
-            <Lock className="size-3.5" aria-hidden="true" />
-            <span className="sr-only">Hard gate: stays P1</span>
-          </span>
         ) : null}
+        {locked ? (
+          draggable ? (
+            <span className="mt-1">
+              <HardGateLock size="size-3" testId="board-lock" />
+            </span>
+          ) : (
+            <span className="-ml-1 mt-px grid size-6 shrink-0 place-items-center">
+              <HardGateLock testId="board-lock" />
+            </span>
+          )
+        ) : null}
+        {rank !== null && !pending ? <BandRankChip rank={rank} band={servedPriority} className="mt-0.5" /> : null}
         <h3 className="min-w-0 flex-1 text-xs font-semibold leading-snug text-text">
           <Link
             to={`/projects/${card.project_id}`}
@@ -100,6 +105,7 @@ export const BoardCard = React.memo(function BoardCard({
             {card.name}
           </Link>
         </h3>
+        {card.frozen ? <FrozenBadge /> : null}
         {card.is_vip ? <VipBadge /> : null}
       </div>
 

@@ -1,6 +1,6 @@
 import { appendFileSync } from 'node:fs';
 import AxeBuilder from '@axe-core/playwright';
-import type { APIRequestContext, CDPSession, Page, Request } from '@playwright/test';
+import type { APIRequestContext, Page, Request } from '@playwright/test';
 
 import { test, expect } from './fixtures';
 import { actAs, apiGet, BACKEND_URL, DEV_EMAILS, type DevRole } from './dev-session';
@@ -636,51 +636,12 @@ async function openProject(page: Page, proj: { project_name: string; external_co
   await settle(page, 500);
 }
 
-/** Visible timeline in client px: the scroll viewport minus both sticky columns. */
-async function timelineVisible(page: Page): Promise<{ left: number; right: number }> {
-  return page.getByTestId('gantt-scroll').evaluate((el) => {
-    const r = el.getBoundingClientRect();
-    const lh = el.querySelector('[data-testid="gantt-left-header"]')?.getBoundingClientRect().width ?? 0;
-    const sh = el.querySelector('[data-testid="gantt-status-header"]')?.getBoundingClientRect().width ?? 0;
-    return { left: r.left + lh, right: r.left + el.clientWidth - sh };
-  });
-}
-
-async function bringHandle(page: Page, handle: ReturnType<Page['getByTestId']>, targetX: number): Promise<void> {
-  const b = (await handle.boundingBox())!;
-  await page.getByTestId('gantt-scroll').evaluate((el, dx) => { el.scrollLeft += dx; }, b.x + b.width / 2 - targetX);
-  await page.waitForTimeout(300);
-}
-
 async function hitTest(page: Page, x: number, y: number, sel: string): Promise<{ ok: boolean; desc: string }> {
   return page.evaluate(([px, py, s]) => {
     const el = document.elementFromPoint(Number(px), Number(py));
     if (!el) return { ok: false, desc: 'none' };
     return { ok: !!el.closest(String(s)), desc: `${el.tagName}.${String(el.getAttribute('data-testid'))} sticky=${String(!!el.closest('.sticky'))}` };
   }, [x, y, sel] as const);
-}
-
-async function expectLabelInside(page: Page, what: string): Promise<void> {
-  const vis = await timelineVisible(page);
-  const lb = (await page.getByTestId('step-drag-label').boundingBox())!;
-  const side = await page.getByTestId('step-drag-label').getAttribute('data-side');
-  const wrapped = await page.getByTestId('step-drag-label').getAttribute('data-wrapped');
-  console.log(`label ${what}: x ${lb.x.toFixed(1)}..${(lb.x + lb.width).toFixed(1)} visible ${vis.left.toFixed(1)}..${vis.right.toFixed(1)} side ${String(side)} wrapped ${String(wrapped)}`);
-  expect(lb.x, `${what}: label left inside timeline`).toBeGreaterThanOrEqual(vis.left - 1);
-  expect(lb.x + lb.width, `${what}: label right inside timeline`).toBeLessThanOrEqual(vis.right + 1);
-}
-
-async function touchStart(page: Page, x: number, y: number): Promise<CDPSession> {
-  const cdp = await page.context().newCDPSession(page);
-  await cdp.send('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 1 });
-  await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x, y }] });
-  return cdp;
-}
-async function touchMove(cdp: CDPSession, x: number, y: number, dx: number): Promise<void> {
-  for (let i = 1; i <= 8; i++) await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: x + (dx * i) / 8, y }] });
-}
-async function touchEnd(cdp: CDPSession): Promise<void> {
-  await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
 }
 
 async function effectiveOpacity(loc: ReturnType<Page['locator']>): Promise<number> {
@@ -695,10 +656,11 @@ async function effectiveOpacity(loc: ReturnType<Page['locator']>): Promise<numbe
 interface GStep {
   step_id: string; step_name: string; kind: string; status: string; skipped: boolean;
   duration_weeks: number | null; planned_start_week: number | null; planned_end_week: number | null;
-  timing_editable: string; span_fte: number | null; assigned_engineer_name: string | null;
+  gap_weeks: number; span_fte: number | null; assigned_engineer_name: string | null;
 }
 interface GRow { project_id: string; project_name: string; external_code: string | null; hub: string; leader_engineer_id: string | null; frozen: boolean; steps: GStep[] }
 
+// P33-T15 (ADR 0048): no role gets drag handles or Edit timing any more; the viewer case stays as a check.
 test('Gantt: Executive Viewer gets span_fte null everywhere and no drag handles', async ({ page, request }) => {
   const g = await api<{ rows: GRow[] }>(request, 'executiveViewer', '/gantt?limit=500');
   const steps = g.rows.flatMap((r) => r.steps);
@@ -715,17 +677,17 @@ test('Gantt: Executive Viewer gets span_fte null everywhere and no drag handles'
   expect(await page.getByRole('button', { name: /^Edit timing for / }).count()).toBe(0);
 });
 
-test('Gantt QA-P19-1 re-check: project with skipped LAB steps expanded, axe 0 at 1440 / 1280 / 390, during a drag, and in the narrow details dialog', async ({ page, request }) => {
+// P33-T15 (ADR 0048): the "during a drag" leg went with the drag; the timeline is read-only.
+test('Gantt QA-P19-1 re-check: project with skipped LAB steps expanded, axe 0 at 1440 / 1280 / 390, and in the narrow details dialog', async ({ page, request }) => {
   test.setTimeout(300_000);
   const g = await api<{ rows: GRow[] }>(request, 'hubPlanner', '/gantt?limit=500');
   const cands = g.rows.filter((r) => !r.frozen
     && r.steps.filter((s) => s.kind === 'lab' && s.skipped).length >= 2
-    && r.steps.some((s) => !s.skipped && s.timing_editable !== 'none' && s.planned_start_week !== null && (s.planned_end_week ?? 99) <= 70));
-  console.log('projects with >=2 skipped LAB steps and an editable step', cands.length);
+    && r.steps.some((s) => !s.skipped && s.planned_start_week !== null && (s.planned_end_week ?? 99) <= 70));
+  console.log('projects with >=2 skipped LAB steps and a placed step', cands.length);
   expect(cands.length).toBeGreaterThan(0);
   const proj = cands[0]!;
-  const step = proj.steps.find((s) => !s.skipped && s.timing_editable !== 'none' && s.planned_start_week !== null && (s.planned_end_week ?? 99) <= 70)!;
-  console.log('target', proj.project_name, 'skipped lab', proj.steps.filter((s) => s.kind === 'lab' && s.skipped).map((s) => s.step_name).join(' | '), 'drag step', step.step_name, step.kind);
+  console.log('target', proj.project_name, 'skipped lab', proj.steps.filter((s) => s.kind === 'lab' && s.skipped).map((s) => s.step_name).join(' | '));
   for (const width of WIDTHS) {
     await setup(page, 'hubPlanner', width);
     await openProject(page, proj);
@@ -746,25 +708,8 @@ test('Gantt QA-P19-1 re-check: project with skipped LAB steps expanded, axe 0 at
     await shot(page, `gantt-skipped-${String(width)}`, false);
     expect(await overflow(page), `gantt overflow ${String(width)}`).toBeLessThanOrEqual(0);
 
-    // During a drag (mouse wide, touch narrow), then cancel with Escape.
-    const handle = page.locator(`[data-testid="step-drag-handle"][title*="${step.step_name}"]`).first();
-    await handle.scrollIntoViewIfNeeded();
-    const vis = await timelineVisible(page);
-    await bringHandle(page, handle, vis.left + Math.min(40, (vis.right - vis.left) / 4));
-    const hb = (await handle.boundingBox())!;
-    const sx = hb.x + hb.width / 2;
-    const sy = hb.y + hb.height / 2;
-    expect((await hitTest(page, sx, sy, '[data-testid="step-drag-handle"]')).ok, `handle reachable ${String(width)}`).toBe(true);
-    let touch: CDPSession | null = null;
-    if (width === 390) { touch = await touchStart(page, sx, sy); await touchMove(touch, sx, sy, 40); }
-    else { await page.mouse.move(sx, sy); await page.mouse.down(); await page.mouse.move(sx + 40, sy, { steps: 6 }); }
-    await expect(page.getByTestId('step-drag-label')).toBeVisible();
-    await expectLabelInside(page, `skipped-project drag ${String(width)}`);
-    await axe(page, `gantt skipped-LAB during drag light ${String(width)}`);
-    await shot(page, `gantt-skipped-drag-${String(width)}`, false);
-    await page.keyboard.press('Escape');
-    if (touch) await touchEnd(touch); else await page.mouse.up();
-    await expect(page.getByTestId('step-drag-label')).toHaveCount(0);
+    expect(await page.getByTestId('step-drag-handle').count(), `no drag handle ${String(width)}`).toBe(0);
+    expect(await page.getByRole('button', { name: /^Edit timing for / }).count(), `no Edit timing ${String(width)}`).toBe(0);
 
     if (width === 390) {
       // Narrow: status lives in the project-details dialog. Real pointer click (hit-test), axe, focus return.
@@ -792,198 +737,4 @@ test('Gantt QA-P19-1 re-check: project with skipped LAB steps expanded, axe 0 at
       expect((await hitTest(page, cb.x + cb.width / 2, cb.y + cb.height / 2, 'button')).ok).toBe(true);
     }
   }
-});
-
-test('Gantt O1 re-check: drag label near W52 stays inside the visible timeline at 1440 and 1280', async ({ page, request }) => {
-  test.setTimeout(240_000);
-  const g = await api<{ rows: GRow[] }>(request, 'hubPlanner', '/gantt?limit=500');
-  const cands = g.rows.flatMap((r) => r.steps.map((s) => ({ r, s })))
-    .filter(({ r, s }) => !r.frozen && !s.skipped && s.timing_editable !== 'none' && (s.planned_end_week ?? 0) >= 49 && (s.planned_end_week ?? 99) <= 52)
-    .sort((a, b) => (b.s.planned_end_week ?? 0) - (a.s.planned_end_week ?? 0));
-  console.log('editable steps ending W49..W52', cands.length);
-  expect(cands.length).toBeGreaterThan(0);
-  const { r: proj, s: step } = cands[0]!;
-  console.log('target', proj.project_name.slice(0, 50), step.step_name, step.kind, `W${String(step.planned_start_week)}-W${String(step.planned_end_week)}`, 'span_fte', step.span_fte);
-  for (const width of [1440, 1280]) {
-    await setup(page, 'hubPlanner', width);
-    await openProject(page, proj);
-    const handle = page.locator(`[data-testid="step-drag-handle"][title*="${step.step_name}"]`).first();
-    await handle.scrollIntoViewIfNeeded();
-    let measured = 0;
-    for (const [where, dxWeeks] of [['right edge', 2], ['right edge +4', 4], ['mid', 3]] as const) {
-      const vis = await timelineVisible(page);
-      await bringHandle(page, handle, where === 'mid' ? (vis.left + vis.right) / 2 : vis.right - 30);
-      const hb = (await handle.boundingBox())!;
-      const vis2 = await timelineVisible(page);
-      const centre = await hitTest(page, hb.x + hb.width / 2, hb.y + hb.height / 2, '[data-testid="step-drag-handle"]');
-      // Grab the part of the handle that is not under the sticky status column.
-      const sx = (hb.x + Math.min(hb.x + hb.width, vis2.right - 1)) / 2;
-      const sy = hb.y + hb.height / 2;
-      const grab = await hitTest(page, sx, sy, '[data-testid="step-drag-handle"]');
-      console.log(`${String(width)} ${where}: handle x ${hb.x.toFixed(1)}..${(hb.x + hb.width).toFixed(1)} visible right ${vis2.right.toFixed(1)}; centre hit ${centre.desc} ok=${String(centre.ok)}; grab hit ${grab.desc} ok=${String(grab.ok)}`);
-      expect(grab.ok, `handle grabbable near W52 at ${String(width)}`).toBe(true);
-      const weekPx = num(await page.locator('[aria-valuetext$="pixels per week"]').first().getAttribute('aria-valuetext'));
-      await page.mouse.move(sx, sy);
-      await page.mouse.down();
-      await page.mouse.move(sx + weekPx * dxWeeks, sy, { steps: 6 });
-      await page.waitForTimeout(200);
-      if (!(await page.getByTestId('step-drag-label').isVisible())) {
-        // A drag that changes no work week sends nothing and draws no ghost (by design).
-        console.log(`${String(width)} ${where}: no label (no-op drag)`);
-        await page.keyboard.press('Escape');
-        await page.mouse.up();
-        continue;
-      }
-      measured += 1;
-      const lt = (await page.getByTestId('step-drag-label').innerText()).replace(/\s+/g, ' ');
-      console.log(`${String(width)} ${where}: "${lt}"`);
-      // ADR 0032 consistency: "C wks on the calendar[, to WE] · W wks of work at f FTE" must have C = ceil(W / f),
-      // and the ", to WE" suffix (P19-R03) appears exactly when the span runs past W52, with E = start + C - 1.
-      // QA-P19-4 fixed in P19-R03: hard assertions (final gate).
-      const m = /^(\d+) wks on the calendar(?:, to W(\d+))? · (\d+) wks of work at ([\d.]+) FTE/.exec(lt);
-      if (m) {
-        const want = Math.ceil(Math.round((Number(m[3]) * 100) / Number(m[4])) / 100);
-        expect(Number(m[1]), `QA-P19-4 calendar weeks for "${lt}"`).toBe(want);
-        const end = step.planned_start_week! + want - 1;
-        if (end > 52) expect(m[2], `past-W52 suffix for "${lt}"`).toBe(String(end));
-        else expect(m[2], `no suffix inside the axis for "${lt}"`).toBeUndefined();
-      }
-      await expectLabelInside(page, `W52 ${where} ${String(width)}`);
-      if (where === 'right edge') {
-        await axe(page, `gantt W52 drag light ${String(width)}`);
-        await shot(page, `gantt-w52-${String(width)}`, false);
-      }
-      await page.keyboard.press('Escape');
-      await page.mouse.up();
-      await page.waitForTimeout(300);
-    }
-    expect(measured, `labels measured near W52 at ${String(width)}`).toBeGreaterThanOrEqual(2);
-  }
-});
-
-test('Gantt: Bob HubPlanner on a 0.5 FTE design step: drag label calendar vs work, PATCH sends work weeks; axe with tooltip and dialog', async ({ page, request }) => {
-  test.setTimeout(300_000);
-  const H = (email: string) => ({ 'X-Dev-User-Email': email, 'content-type': 'application/json' });
-  // Disposable-DB setup: one PD-India leader to 0.5 FTE, then a synchronous greedy run.
-  const before = await api<{ rows: GRow[] }>(request, 'hubPlanner', '/gantt?limit=500');
-  const lead = before.rows.find((r) => r.hub === 'PD-India' && !r.frozen && r.steps.some((s) => s.kind === 'design' && s.timing_editable === 'move_resize' && (s.duration_weeks ?? 0) >= 4 && s.span_fte !== null))!;
-  const engId = lead.leader_engineer_id!;
-  const originalFte = Number((await api<{ fte: number | string }>(request, 'admin', `/engineers/${engId}`)).fte);
-  console.log('leader', engId, 'original fte', originalFte);
-  const p1 =await request.patch(`${BACKEND_URL}/engineers/${engId}`, { headers: H(DEV_EMAILS.admin), data: { fte: 0.5 } });
-  expect(p1.status()).toBe(200);
-  const rc = await request.post(`${BACKEND_URL}/schedule-runs/greedy-recalc`, { headers: H(DEV_EMAILS.admin) });
-  console.log('recalc', rc.status(), (await rc.text()).slice(0, 200));
-  expect(rc.status()).toBe(201);
-
-  const g = await api<{ rows: GRow[] }>(request, 'hubPlanner', '/gantt?limit=500');
-  const cands = g.rows.flatMap((r) => r.steps.map((s) => ({ r, s })))
-    .filter(({ r, s }) => s.span_fte === 0.5 && s.kind === 'design' && (s.timing_editable === 'move_resize' || s.timing_editable === 'resize') && (s.planned_end_week ?? 99) <= 50 && !r.frozen)
-    .sort((a, b) => (b.s.duration_weeks ?? 0) - (a.s.duration_weeks ?? 0));
-  for (const c of cands) console.log('  cand', c.r.project_name.slice(0, 40), c.s.step_id, c.s.status, c.s.timing_editable, c.s.duration_weeks, c.s.planned_start_week, c.s.planned_end_week);
-  console.log('0.5 FTE editable design steps', cands.length);
-  expect(cands.length).toBeGreaterThan(0);
-  const { r: proj, s: step } = cands[0]!;
-  const span = step.planned_end_week! - step.planned_start_week! + 1;
-  console.log('target', proj.project_name.slice(0, 50), proj.external_code, step.step_id, step.step_name, `W${String(step.planned_start_week)}-W${String(step.planned_end_week)}`, 'work', step.duration_weeks, 'span', span);
-  if (step.status === 'Not Started') expect(span).toBe(Math.ceil(step.duration_weeks! / 0.5));
-
-  const patches: unknown[] = [];
-  page.on('request', (rq) => { if (rq.method() === 'PATCH' && rq.url().includes('/timing')) patches.push(rq.postDataJSON()); });
-  let curSpan = span;
-  let curStart = step.planned_start_week!;
-  for (const width of [1440, 390, 1280]) {
-    await setup(page, 'hubPlanner', width);
-    await openProject(page, proj);
-    // Timing dialog (keyboard path, all widths).
-    const editBtn = page.getByRole('button', { name: `Edit timing for ${step.step_name} (${proj.project_name})` });
-    await editBtn.focus();
-    await page.keyboard.press('Enter');
-    const dlg = page.getByTestId('step-timing-dialog');
-    await expect(dlg).toBeVisible();
-    const note = await dlg.getByTestId('step-timing-weeks-note').innerText();
-    console.log(`dialog note ${String(width)}:`, note.replace(/\s+/g, ' '));
-    expect(note).toContain('at 0.5 FTE');
-    await expect(dlg.getByLabel(/Work \(weeks\)/)).toBeVisible();
-    await axe(page, `gantt timing dialog light ${String(width)}`);
-    await shot(page, `gantt-dialog-${String(width)}`, false);
-    await page.keyboard.press('Escape');
-    await expect(dlg).toBeHidden();
-
-    const row = page.getByTestId('gantt-step-row').filter({ has: page.locator(`[data-testid="step-drag-handle"][title*="${step.step_name}"]`) }).first();
-    const handle = row.getByTestId('step-drag-handle');
-    await handle.scrollIntoViewIfNeeded();
-    const vis = await timelineVisible(page);
-    if (width === 390) {
-      // QA-P19-2: narrow layout, the timeline is usable.
-      await expect(page.getByTestId('gantt-scroll')).toHaveAttribute('data-layout', 'narrow');
-      await expect(page.getByTestId('gantt-status-header')).toHaveCount(0);
-      const leftW = (await page.getByTestId('gantt-left-header').boundingBox())!.width;
-      console.log('390 layout: name column', leftW, 'visible timeline', JSON.stringify(vis));
-      expect(leftW).toBeLessThanOrEqual(124);
-      expect(vis.right - vis.left, 'visible timeline px at 390').toBeGreaterThanOrEqual(100);
-      expect(await overflow(page), 'gantt overflow 390').toBeLessThanOrEqual(0);
-    }
-    await bringHandle(page, handle, width === 390 ? vis.left + 16 : vis.left + (vis.right - vis.left) / 3);
-    const hb = (await handle.boundingBox())!;
-    const sx = hb.x + hb.width / 2;
-    const sy = hb.y + hb.height / 2;
-    // Real hit-test (QA-P19-2): the point under the handle's centre is the handle, not a sticky column.
-    const hit = await hitTest(page, sx, sy, '[data-testid="step-drag-handle"]');
-    console.log(`${String(width)}: handle hit-test ->`, hit.desc, 'handle w', hb.width);
-    expect(hit.ok, `handle hit-test ${String(width)}: ${hit.desc}`).toBe(true);
-    if (width === 390) expect(hb.width).toBeGreaterThanOrEqual(19);
-    const weekPx = num(await page.locator('[aria-valuetext$="pixels per week"]').first().getAttribute('aria-valuetext'));
-    expect(weekPx).toBeGreaterThanOrEqual(16);
-    const cal = curSpan + 2;
-    const work = Math.max(1, Math.min(104, Math.floor(cal * 0.5)));
-    const calWeeks = Math.ceil(work / 0.5);
-    const calEnd = curStart + calWeeks - 1;
-    const expectLabel = `${String(calWeeks)} wks on the calendar${calEnd > 52 ? `, to W${String(calEnd)}` : ''} · ${String(work)} wks of work at 0.5 FTE`;
-    const label = page.getByTestId('step-drag-label');
-    let touch: CDPSession | null = null;
-    if (width === 390) {
-      touch = await touchStart(page, sx, sy);
-      await touchMove(touch, sx, sy, weekPx * 2);
-    } else {
-      await page.mouse.move(sx, sy);
-      await page.mouse.down();
-      await page.mouse.move(sx + weekPx, sy, { steps: 4 });
-      await page.mouse.move(sx + weekPx * 2, sy, { steps: 4 });
-    }
-    await expect(label).toBeVisible();
-    const lt = (await label.innerText()).replace(/\s+/g, ' ');
-    console.log(`drag label ${String(width)}: "${lt}" expected "${expectLabel}" weekPx ${weekPx.toFixed(1)}`);
-    // QA-P19-4 fixed in P19-R03: the calendar figure is ceil(work / FTE), with ", to WE" past W52. Hard (final gate).
-    expect(lt, `drag label ${String(width)}`).toBe(expectLabel);
-    await expectLabelInside(page, `drag ${String(width)}`);
-    await axe(page, `gantt drag tooltip light ${String(width)}`);
-    await shot(page, `gantt-drag-${String(width)}`, false);
-    expect(await overflow(page), `gantt overflow ${String(width)}`).toBeLessThanOrEqual(0);
-    if (width === 1440) {
-      await page.keyboard.press('Escape');
-      await page.mouse.up();
-      await page.waitForTimeout(500);
-      expect(patches, 'Escape cancels: nothing sent').toEqual([]);
-      continue;
-    }
-    const k = patches.length;
-    if (touch) await touchEnd(touch);
-    else await page.mouse.up();
-    await expect.poll(() => patches.length, { timeout: 10_000 }).toBe(k + 1);
-    console.log(`PATCH body ${String(width)} (${touch ? 'touch' : 'mouse'})`, JSON.stringify(patches[k]));
-    expect(patches[k]).toEqual({ duration_override_weeks: work });
-    // The step-timing recalc runs on the solver worker (greedy, ~7 s here): wait for the new plan.
-    const read = async () => (await api<{ rows: GRow[] }>(request, 'hubPlanner', `/gantt?limit=500`)).rows.find((x) => x.project_id === proj.project_id)!.steps.find((x) => x.step_id === step.step_id)!;
-    await expect.poll(async () => { const c = await read(); return c.status !== 'Not Started' || c.planned_end_week! - c.planned_start_week! + 1 === Math.ceil(work / 0.5); }, { timeout: 60_000, intervals: [1000] }).toBe(true);
-    const cur = await read();
-    const stored = (cur as unknown as { duration_override_weeks: number | null }).duration_override_weeks;
-    curSpan = cur.planned_end_week! - cur.planned_start_week! + 1;
-    curStart = cur.planned_start_week!;
-    console.log('stored override', stored, 'span_fte', cur.span_fte, 'new plan', cur.planned_start_week, cur.planned_end_week, 'span', curSpan);
-    expect(stored).toBe(work);
-    if (cur.status === 'Not Started') expect(curSpan).toBe(Math.ceil(work / 0.5));
-  }
-  // Restore the FTE (disposable DB anyway).
-  if (originalFte !== 0.5) await request.patch(`${BACKEND_URL}/engineers/${engId}`, { headers: H(DEV_EMAILS.admin), data: { fte: originalFte } });
 });

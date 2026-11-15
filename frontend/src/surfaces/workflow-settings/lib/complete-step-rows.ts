@@ -1,43 +1,21 @@
-import { SCHEDULABLE_STATUSES, type ProjectStatus } from '@/types/enums';
-import type { GanttProjectRow, GanttStepRow, TimingEditable } from '@/surfaces/gantt/api/types';
+import type { GanttProjectRow, GanttStepRow } from '@/surfaces/gantt/api/types';
 import type { WorkspaceStage } from '@/surfaces/project-workspace/api/types';
 
 /**
  * P32-R04 follow-up: `GET /gantt` builds a project's step rows from the
  * steps the active run PLACED (`ScheduleRunProjectStep`). A project the run
  * left out has none (`steps: []`), and a partly placed one only some. The
- * Workflow page still lists all of its steps, so the planner can fix exactly
- * these projects. A missing step is taken from the Workspace stage row
- * (`GET /projects/{id}/workspace`), which has the step id the PATCH needs.
- *
- * That row does NOT serve `timing_editable`, `start_not_before_week`,
- * `overlap_weeks` or `span_fte`, so for such a step:
- * - planned weeks are null (no bar, no drag; the keyboard dialog only);
- * - floor and overlap are shown as unset (unknown);
- * - `timing_editable` mirrors ADR 0019 §4 (`services/step_timing.timing_editable`)
- *   from served facts only — GANTT write, frozen, schedulable status, skipped,
- *   stage status — to decide whether to OFFER the dialog. The server decides
- *   on the PATCH (409 `PROJECT_FROZEN` / `NOT_SCHEDULABLE` / `STEP_*` copy).
- *
- * Gantt rows always win; nothing here touches a placed step.
+ * Workflow page still lists all of its steps, so a missing step is taken from
+ * the Workspace stage row (`GET /projects/{id}/workspace`), which serves the
+ * same template copy (`plan_weeks`, `gap_weeks`, `own_effort`, P33 Part G).
+ * Planned weeks are null (no bar); `span_fte` is not served there, so null.
+ * Read-only since P33-T15 (ADR 0048). Gantt rows always win; nothing here
+ * touches a placed step.
  */
 
 export const STEPS_PER_WORKFLOW = 14;
 
-export function unplacedTimingEditable(args: {
-  canWriteGantt: boolean;
-  frozen: boolean;
-  status: ProjectStatus;
-  stage: Pick<WorkspaceStage, 'skipped' | 'status'>;
-}): TimingEditable {
-  const schedulable = (SCHEDULABLE_STATUSES as readonly string[]).includes(args.status);
-  if (!args.canWriteGantt || args.frozen || !schedulable || args.stage.skipped) return 'none';
-  if (args.stage.status === 'Done') return 'none';
-  if (args.stage.status === 'In Progress' || args.stage.status === 'Blocked') return 'resize';
-  return 'move_resize';
-}
-
-export function stageAsStepRow(stage: WorkspaceStage, timingEditable: TimingEditable): GanttStepRow {
+export function stageAsStepRow(stage: WorkspaceStage): GanttStepRow {
   return {
     step_id: stage.step_id,
     step_name: stage.name,
@@ -57,13 +35,12 @@ export function stageAsStepRow(stage: WorkspaceStage, timingEditable: TimingEdit
     eng_conflict: false,
     chamber_overlap: false,
     lead_time_weeks: stage.lead_time_weeks,
-    duration_override_weeks: stage.duration_override_weeks,
     effort_weeks: stage.effort_weeks,
-    start_not_before_week: null,
-    overlap_weeks: null,
-    predecessor_ids: [...stage.predecessor_ids].sort(),
-    timing_editable: timingEditable,
+    plan_weeks: stage.plan_weeks,
+    gap_weeks: stage.gap_weeks,
+    own_effort: stage.own_effort,
     span_fte: null,
+    predecessor_ids: [...stage.predecessor_ids].sort(),
   };
 }
 
@@ -72,13 +49,10 @@ export function stageAsStepRow(stage: WorkspaceStage, timingEditable: TimingEdit
 export function completeStepRows(
   row: GanttProjectRow,
   stages: readonly WorkspaceStage[] | null,
-  facts: { canWriteGantt: boolean; frozen: boolean; status: ProjectStatus } | null,
 ): { row: GanttProjectRow; addedStepIds: string[] } {
-  if (!stages || !facts) return { row, addedStepIds: [] };
+  if (!stages) return { row, addedStepIds: [] };
   const served = new Set(row.steps.map((s) => s.step_id));
-  const added = stages
-    .filter((st) => !served.has(st.step_id))
-    .map((st) => stageAsStepRow(st, unplacedTimingEditable({ ...facts, stage: st })));
+  const added = stages.filter((st) => !served.has(st.step_id)).map(stageAsStepRow);
   if (added.length === 0) return { row, addedStepIds: [] };
   const steps = [...row.steps, ...added].sort((a, b) => a.sequence_order - b.sequence_order);
   return { row: { ...row, steps }, addedStepIds: added.map((s) => s.step_id) };

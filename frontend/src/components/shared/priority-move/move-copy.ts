@@ -29,6 +29,26 @@ export const MOVE_COPY = {
   formNotApplied: 'The priority move was not applied, so nothing was saved. Change the priority back or save again.',
 } as const;
 
+/** P36 (ADR 0050): copy that differs for a move inside a priority band. */
+export const RANK_COPY = {
+  staleAfterFailure: 'The new position is saved and the timeline is marked stale. Press Recalculate on the project to try again.',
+  dispatchFailed: 'The new position is saved, but the recalculation could not be started. Press Recalculate on the project to update the timeline.',
+  notRankable: "This project can't be reordered: it has no priority or its status isn't in the plan. Nothing was changed.",
+  notSameBand: 'The board changed since you moved the card, so that position is no longer available. Nothing was changed.',
+  applied: 'Position changed and the timeline recalculated.',
+} as const;
+
+/**
+ * "position 2 in P1". Display copy only. Never "of M" (P36-R02, W36-1): the
+ * served column count is narrowed by filters, the hub / country selection and a
+ * Hub Planner's server scope, while `band_rank` is the full-band position, so
+ * no count the browser holds is the band's size.
+ */
+export function rankPositionCopy(position: number | null, band: string): string {
+  if (position === null) return `a new position in ${band}`;
+  return `position ${position} in ${band}`;
+}
+
 /** Preview `not_needed`: nothing is computed, but Yes still saves the priority. */
 export function previewNotNeededCopy(status: string | null | undefined): string {
   return status

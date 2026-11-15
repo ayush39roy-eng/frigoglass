@@ -25,7 +25,7 @@ import { useHubFilter } from '@/stores/hub-filter';
 import { usePermission, useSessionStore } from '@/stores/session';
 import { MultiChipFilter } from '@/components/shared/multi-chip-filter';
 import {
-  CATEGORY_CHIP_OPTIONS_WITH_UNMAPPED,
+  useCategoryChipOptions,
   selectionParam,
   TYPE_CHIP_OPTIONS_WITH_UNMAPPED,
 } from '@/lib/multi-select-filter';
@@ -139,6 +139,7 @@ function pick<T extends string>(value: string): T | undefined {
  *   No Delete here; Edit only where Registration write is permitted.
  */
 export function ProjectBreakdown(): React.JSX.Element {
+  const categoryChips = useCategoryChipOptions(true);
   const [filters, setFilters] = React.useState<RegisterFilters>(REGISTER_EMPTY);
   const [search, setSearch] = React.useState('');
   const [view, setView] = React.useState<BreakdownView>('table');
@@ -318,7 +319,7 @@ export function ProjectBreakdown(): React.JSX.Element {
         <div className="flex flex-col gap-2" data-testid="register-chip-filters">
           <MultiChipFilter
             label="Category"
-            options={CATEGORY_CHIP_OPTIONS_WITH_UNMAPPED}
+            options={categoryChips}
             value={selection.categories}
             onChange={selection.setCategories}
             data-testid="register-category-chips"

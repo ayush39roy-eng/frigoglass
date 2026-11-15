@@ -24,7 +24,8 @@ import {
 import { ApiError } from '@/lib/api/client';
 import type { Hub } from '@/lib/api/reference';
 import { capacityHubsOnly, joinNames, memberHubsByCapacityHub } from '@/lib/hub-labels';
-import { ENGINEER_ALLOWED_CATEGORIES, type EngineerAllowedCategory } from '@/types/enums';
+import { useCategoryCatalogSnapshot } from '@/lib/category-catalog';
+import type { EngineerAllowedCategory } from '@/types/enums';
 
 import type { EngineerCreateRequest, EngineerRead } from '../api/types';
 import {
@@ -122,6 +123,12 @@ function EngineerForm({
     mode: 'onChange',
   });
 
+  // P33-T14: the served categories (PDD, the blanket OEM, OEM-workflow; rank order),
+  // plus any stored value the list does not carry.
+  const catalog = useCategoryCatalogSnapshot();
+  const eligibility = catalog.eligibilityCodes();
+  const categoryChoices = [...eligibility, ...categories.filter((c) => !eligibility.includes(c))];
+
   const toggleCategory = (category: EngineerAllowedCategory, checked: boolean) => {
     setCategories((prev) =>
       checked ? [...prev, category] : prev.filter((c) => c !== category),
@@ -217,7 +224,7 @@ function EngineerForm({
             warning, not a scheduling block).
           </p>
           <div className="flex flex-wrap gap-3">
-            {ENGINEER_ALLOWED_CATEGORIES.map((category) => (
+            {categoryChoices.map((category) => (
               <label key={category} className="flex items-center gap-1.5 text-xs">
                 <Checkbox
                   checked={categories.includes(category)}

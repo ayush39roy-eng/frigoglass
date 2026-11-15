@@ -174,7 +174,8 @@ async def _world(db_session) -> SimpleNamespace:
         )
         # ADR 0041 (P30): the hub-load / capacity-fill load is DEMAND from the
         # live rows. Mirror each run figure as a Not Started live row whose
-        # user override is that figure (OEM-D has lead 0 for B-OEM, so H2's
+        # template copy (`plan_weeks`; P33-T13: was the retired user
+        # override) is that figure (OEM-D has lead 0 for B-OEM, so H2's
         # demand sits on OEM-B instead).
         live_step = "OEM-B" if (key, step_id) == ("h2", "OEM-D") else step_id
         db_session.add(
@@ -183,7 +184,7 @@ async def _world(db_session) -> SimpleNamespace:
                 step_template_id=live_step,
                 sequence_order=i + 1,
                 duration_weeks=1,
-                duration_override_weeks=weeks,
+                plan_weeks=weeks,
             )
         )
     await db_session.flush()

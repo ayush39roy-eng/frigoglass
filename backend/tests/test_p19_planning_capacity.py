@@ -172,12 +172,13 @@ async def _world(db_session, *, with_run: bool = True):
         )
         if not skipped:
             # ADR 0041 (P30): the hub table's load is DEMAND from the live
-            # rows; mirror the run figure as the step's user override so the
+            # rows; mirror the run figure as the step's template copy
+            # (`plan_weeks`; P33-T13: was the retired user override) so the
             # demand equals this hand-built run.
             db_session.add(
                 ProjectWorkflowStep(
                     project_id=project.id, step_template_id=step_id, sequence_order=i + 1,
-                    duration_weeks=1, duration_override_weeks=weeks,
+                    duration_weeks=1, plan_weeks=weeks,
                 )
             )
     await db_session.flush()

@@ -20,13 +20,12 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from models.enums import (
     HubName,
-    ProjectCategory,
     ProjectPriority,
     ProjectType,
     WorkflowStepKind,
     WorkflowStepStatus,
 )
-from schemas.step_timing import TimingEditable
+from schemas.category import CategoryCodeOut
 
 
 class GanttStepRow(BaseModel):
@@ -62,43 +61,40 @@ class GanttStepRow(BaseModel):
     assigned_chamber_code: str | None
     eng_conflict: bool
     chamber_overlap: bool
-    #: P12 (ADR 0019, docs/API_CONTRACT_P12.md §3). `duration_weeks` above is
-    #: the effective duration the active run booked (`override ?? lead
-    #: time`). `lead_time_weeks` is the lead-time table value for the
-    #: project's workflow/category; the two timing fields are the live
-    #: planner inputs (they may be newer than the run while it recalculates).
-    #: ADR 0041 R4 (docs/API_CONTRACT_P30.md §4): `duration_override_weeks`
-    #: is the USER's figure only (1..104); `effort_weeks` is the derived
-    #: per-project effort (0..104, never a user edit). Effective = user ??
-    #: effort ?? lead. A "timing edit" (hasTimingEdit / Reset timing) is a
-    #: non-null `duration_override_weeks` or `start_not_before_week`; Reset
-    #: timing clears both and the step falls back to `effort_weeks`.
+    #: P12 (ADR 0019) / P33 (ADR 0046 §B, contract P33 Part G).
+    #: `duration_weeks` above is the effective duration the active run booked.
+    #: `lead_time_weeks` is the project's own copy of its category template
+    #: length (`plan_weeks`, served under both names for compatibility);
+    #: `effort_weeks` is the derived per-project effort (0..104, never a user
+    #: edit).
     lead_time_weeks: int
-    duration_override_weeks: int | None
     effort_weeks: int | None
-    start_not_before_week: int | None
-    #: ADR 0043 (docs/API_CONTRACT_P32.md A3): the live per-project overlap
-    #: (1..104, null = none), a third planner input. A "timing edit"
-    #: (hasTimingEdit / Reset timing) now also includes a non-null
-    #: `overlap_weeks`, and Reset timing clears all three fields.
-    overlap_weeks: int | None
+    #: P33-T12 (ADR 0046/0048, contract P33 Part G): the project's copy of
+    #: the category template for this step. `plan_weeks` is the copied length
+    #: (0..104). `gap_weeks` is the signed copied gap (`plan_gap_weeks`,
+    #: −104..104): negative = the step runs in parallel with the work it waits
+    #: for by that many weeks ("parallel N wk"), positive = it waits that many
+    #: weeks after it ("wait N wk"), 0 = neither. `own_effort` is true when the
+    #: step's kind follows the project's own effort figure (`ownEffort(p,
+    #: kind(s))`, OR-1), so its duration is `effort_weeks`, not `plan_weeks`.
+    #: All read-only: per-project timing editing is retired (ADR 0048), and
+    #: `timing_editable`, `duration_override_weeks`, `start_not_before_week`
+    #: and `overlap_weeks` are no longer served.
+    plan_weeks: int
+    gap_weeks: int
+    own_effort: bool
     #: ADR 0043: the step's precedence predecessors from the live workflow
     #: template (the DAG the next run will use), sorted. Empty for the
-    #: workflow's first step. The browser computes `release` from these and
-    #: the sibling step rows when a bar is dragged onto its predecessor.
+    #: workflow's first step.
     predecessor_ids: list[str]
-    #: Computed server-side from ADR 0019 §4 and the caller's GANTT write
-    #: permission on the project; the browser never derives it.
-    timing_editable: TimingEditable
     #: P20-T02 (ADR 0032): the leader FTE the active run used to stretch this
     #: step to `ceil(duration_weeks / fte)` elapsed weeks
-    #: (`ScheduleRunProjectStep.span_fte`, from the run's own input). The
-    #: browser converts a right-edge drag's elapsed width back to effort with
-    #: it. `null` for lab, elapsed, skipped and Done steps, frozen projects,
-    #: steps with no leader, rows of runs persisted before P20-T02, and, for
-    #: privacy (OQ #8: part-time status is personal data), for every caller
-    #: who may not edit step timing on this project (GANTT/WRITE with the
-    #: project's hub in scope, the check `PATCH .../timing` applies).
+    #: (`ScheduleRunProjectStep.span_fte`, from the run's own input). `null`
+    #: for lab, elapsed, skipped and Done steps, frozen projects, steps with
+    #: no leader, rows of runs persisted before P20-T02, and, for privacy
+    #: (OQ #8: part-time status is personal data), for every caller without
+    #: GANTT/WRITE on the project's hub (the freeze toggle's check). Unchanged
+    #: by P33 (contract Part G does not touch it).
     span_fte: float | None
 
 
@@ -106,7 +102,7 @@ class GanttProjectRow(BaseModel):
     project_id: uuid.UUID
     project_name: str
     hub: HubName
-    category: ProjectCategory | None
+    category: CategoryCodeOut | None
     priority: ProjectPriority | None
     frozen: bool
     delay_weeks: int

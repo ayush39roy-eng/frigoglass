@@ -7,6 +7,7 @@ import { formatPlanWeek } from '@/lib/format';
 
 import type { GanttStepRow } from '../api/types';
 import { durationSourceSuffix } from './step-duration-source';
+import { gapChipText } from './step-gap';
 import { calendarRangePhrase, workWeeksPhrase } from './step-weeks-copy';
 
 /**
@@ -14,7 +15,7 @@ import { calendarRangePhrase, workWeeksPhrase } from './step-weeks-copy';
  * CALENDAR weeks (served planned weeks, verbatim) and `duration_weeks` is WORK
  * weeks — e.g. "Prototype build · planned W10–W17 on the calendar · 4 wks of
  * work at 0.5 FTE". The suffix needs the served `span_fte`, which is null
- * for unstretched steps and for callers who may not edit the step (OQ #8).
+ * for unstretched steps and for callers without GANTT write on the hub (OQ #8).
  */
 export function stepBarTitle(
   s: GanttStepRow,
@@ -25,9 +26,10 @@ export function stepBarTitle(
 ): string {
   const parts = [s.step_name];
   if (planned) parts.push(`planned ${calendarRangePhrase(planned.startWeek, planned.endWeek, fmt)}`);
-  // P32 (ADR 0043): a stored overlap — the step runs in parallel with the previous one.
-  if ((s.overlap_weeks ?? null) !== null) parts.push(`runs in parallel (${String(s.overlap_weeks)} wk overlap)`);
-  // P30 (ADR 0041 R4): name where the served duration comes from (client effort / timing edit).
+  // P33 (ADR 0048): the template gap copied to the project, served signed.
+  const gap = gapChipText(s.gap_weeks);
+  if (gap !== null && !s.skipped) parts.push(`template gap: ${gap}`);
+  // P30 (ADR 0041) / P33: name where the served duration comes from (own client effort figure).
   if (s.duration_weeks !== null && !s.skipped) {
     parts.push(`${workWeeksPhrase(s.kind, s.duration_weeks, s.span_fte ?? null)}${durationSourceSuffix(s)}`);
   }

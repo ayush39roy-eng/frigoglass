@@ -66,7 +66,6 @@ from models.engineer import Engineer
 from models.enums import (
     CurrencyCode,
     LabRegion,
-    ProjectCategory,
     ProjectPriority,
     ProjectStatus,
     ProjectType,
@@ -101,11 +100,11 @@ _ListFilter = str | list[str] | None
 
 def _categories(value: _ListFilter, *, allow_unmapped: bool = False) -> list[Any]:
     """A stored `category` filter as the route's list (pre-P31 bare string or
-    P31 list). `Unmapped` passes through only where the route admits it."""
+    P31 list). `Unmapped` passes through only where the route admits it.
+    P33-T07: category codes are strings (the `categories` table); a stored
+    value was checked against the table when the job was created."""
 
-    return [
-        v if allow_unmapped and v == UNMAPPED else ProjectCategory(v) for v in as_list(value)
-    ]
+    return [v for v in as_list(value) if allow_unmapped or v != UNMAPPED]
 
 
 def _types(value: _ListFilter, *, allow_unmapped: bool = False) -> list[Any]:
@@ -389,7 +388,7 @@ async def _fetch_all_gantt_rows(
     hub_id: uuid.UUID | None,
     project_id: uuid.UUID | None,
     region: LabRegion | None = None,
-    category: list[ProjectCategory] | None = None,
+    category: list[str] | None = None,
     type_: list[ProjectType] | None = None,
 ) -> list[GanttProjectRow]:
     """`GET /gantt` paginates (`limit`/`offset`, max page size 500,
@@ -488,7 +487,7 @@ async def build_gantt_sheets(
             "project_id": str(project.project_id),
             "project_name": project.project_name,
             "hub": project.hub.value if hasattr(project.hub, "value") else project.hub,
-            "category": project.category.value if project.category else None,
+            "category": project.category,
             "priority": project.priority.value if project.priority else None,
             "leader_name": project.leader_name,
             "frozen": project.frozen,
@@ -536,7 +535,7 @@ async def _fetch_all_projects(
     principal: Principal,
     *,
     hub_id: uuid.UUID | None,
-    category: list[ProjectCategory],
+    category: list[str],
     status_: ProjectStatus | None,
     priority: ProjectPriority | None,
     type_: list[ProjectType],

@@ -21,7 +21,6 @@
 import { useMemo } from 'react';
 
 import {
-  CATEGORY_FILTER_VALUES,
   TYPE_FILTER_VALUES,
   useCategoryTypeParams,
   type CategoryFilterValue,
@@ -44,7 +43,7 @@ export function useDashboardSelection(): DashboardSelectionState {
   const { categories, types, setCategories, setTypes, clear } = useCategoryTypeParams<
     TypeFilterValue,
     CategoryFilterValue
-  >(TYPE_FILTER_VALUES, CATEGORY_FILTER_VALUES);
+  >(TYPE_FILTER_VALUES, { withUnmappedCategory: true });
   return useMemo(
     () => ({
       categories,

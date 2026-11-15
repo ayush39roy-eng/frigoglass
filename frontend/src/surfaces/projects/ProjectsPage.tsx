@@ -1,6 +1,6 @@
 import * as React from 'react';
-import { useQueryClient } from '@tanstack/react-query';
-import { FilterX, Plus, Search, SlidersHorizontal, Star } from 'lucide-react';
+import { useQueries, useQueryClient } from '@tanstack/react-query';
+import { FilterX, PencilLine, Plus, Search, SlidersHorizontal, Star } from 'lucide-react';
 
 import { PageHeader } from '@/components/layout/page-header';
 import { Badge } from '@/components/ui/badge';
@@ -22,14 +22,14 @@ import { ReadOnlyNotice } from '@/components/session/write-gate';
 import { useHubs } from '@/lib/api/reference';
 import { hubPickerLabel } from '@/lib/hub-labels';
 import { formatInteger } from '@/lib/format';
+import { queryKeys } from '@/lib/query-keys';
 import { cn } from '@/lib/utils';
 import { useDebouncedValue } from '@/lib/use-debounced-value';
 import { useHubFilter } from '@/stores/hub-filter';
 import { usePermission, useSessionStore } from '@/stores/session';
 import { MultiChipFilter } from '@/components/shared/multi-chip-filter';
 import {
-  CATEGORY_CHIP_OPTIONS_WITH_UNMAPPED,
-  CATEGORY_FILTER_VALUES,
+  useCategoryChipOptions,
   selectionParam,
   TYPE_CHIP_OPTIONS_WITH_UNMAPPED,
   TYPE_FILTER_VALUES,
@@ -48,11 +48,30 @@ import {
 import { ALL, FilterSelect } from '@/surfaces/dashboard/components/project-breakdown';
 import { useDashboardProjects, useProjectFacets } from '@/surfaces/dashboard/hooks/use-dashboard';
 import type { ProjectFilterParams, ProjectFilterRow } from '@/surfaces/dashboard/api/types';
+import { fetchEngineerOptions, type EngineerOption } from '@/surfaces/registration/api/engineers-api';
 import { WriteForbiddenNotice } from '@/surfaces/registration/components/access-notice';
 import { useEditDeepLink } from '@/surfaces/registration/hooks/use-edit-deep-link';
 
+import { REGISTER_EDITS_MAX, type RegisterEditError } from './api/register-edits';
+import { BulkEditBar } from './components/bulk-edit-bar';
+import { ColumnMenu } from './components/column-menu';
 import { ProjectsExportMenu, type ExportSource } from './components/projects-export-menu';
-import { ProjectsTable } from './components/projects-table';
+import { ProjectsTable, type RegisterGridEdit } from './components/projects-table';
+import { RegisterDiscardDialog, RegisterEditBar, RegisterLeaveGuard } from './components/register-edit-bar';
+import { RegisterSavePanel } from './components/register-save-panel';
+import { useRegisterSave } from './hooks/use-register-save';
+import { useColumnPrefs } from './hooks/use-column-prefs';
+import { HIDEABLE_COLUMNS } from './lib/columns';
+import {
+  buildRegisterEditsBody,
+  changedProjectIds,
+  setDraftBulk,
+  setDraftField,
+  type EditableField,
+  type RegisterDraft,
+  type RegisterDrafts,
+  type RegisterValues,
+} from './lib/register-edit';
 import { orderForDisplay } from './lib/vip-order';
 import type { RegistrationDrawerState, RegistrationSaved } from './components/registration-drawer';
 
@@ -128,7 +147,10 @@ export default function ProjectsPage(): React.JSX.Element {
   const queryClient = useQueryClient();
   const [filters, setFilters] = React.useState<Filters>(EMPTY_FILTERS);
   // `/dashboard/projects` is a Dashboard endpoint: `Unmapped` is accepted on both lists (P31).
-  const chips = useCategoryTypeParams<TypeFilterValue, CategoryFilterValue>(TYPE_FILTER_VALUES, CATEGORY_FILTER_VALUES);
+  const chips = useCategoryTypeParams<TypeFilterValue, CategoryFilterValue>(TYPE_FILTER_VALUES, {
+    withUnmappedCategory: true,
+  });
+  const categoryChips = useCategoryChipOptions(true);
   const [search, setSearch] = React.useState('');
   const [sort, setSort] = React.useState<Sort>('name');
   const [view, setView] = React.useState<View>('list');
@@ -260,6 +282,223 @@ export default function ProjectsPage(): React.JSX.Element {
   );
   const highlightVisible = highlight !== null && rows !== undefined && rows.some((r) => r.project_id === highlight.id);
 
+  // ---- P35-T08: per-user column layout ------------------------------------
+
+  const columnPrefs = useColumnPrefs(me?.user_id);
+
+  // ---- P35-T02: register Edit mode (D35-2) ---------------------------------
+
+  const [editMode, setEditMode] = React.useState(false);
+  const [drafts, setDrafts] = React.useState<RegisterDrafts>({});
+  /** The row each draft was staged against, so a draft hidden by a filter
+   *  change is still saved (and still counted). */
+  const [draftRows, setDraftRows] = React.useState<Readonly<Record<string, ProjectFilterRow>>>({});
+  const [rowErrors, setRowErrors] = React.useState<Readonly<Record<string, readonly RegisterEditError[]>>>({});
+  const [forbiddenIds, setForbiddenIds] = React.useState<ReadonlySet<string>>(() => new Set());
+  const [selected, setSelected] = React.useState<ReadonlySet<string>>(() => new Set());
+  const [saveError, setSaveError] = React.useState<string | null>(null);
+  const [confirmCancel, setConfirmCancel] = React.useState(false);
+  const registerSave = useRegisterSave();
+
+  const hubIdByName = React.useMemo(() => new Map((hubsQuery.data ?? []).map((h) => [h.name, h.id])), [hubsQuery.data]);
+
+  /** The caller's role may write Registration and the row's hub is in their
+   *  hub scope (the server still decides per row: a 403 names the rows). */
+  const isWritable = React.useCallback(
+    (row: ProjectFilterRow): boolean => {
+      if (!canWrite || !me || forbiddenIds.has(row.project_id)) return false;
+      const hub = hubIdByName.get(row.hub);
+      if (hub === undefined) return false;
+      return me.hub_scope_all || me.hub_ids.includes(hub);
+    },
+    [canWrite, me, forbiddenIds, hubIdByName],
+  );
+
+  // The design resource list per hub (`GET /engineers?hub_id=`: the server maps an
+  // OEM hub to its capacity hub's engineers, ADR 0042), fetched only while editing.
+  const editHubIds = React.useMemo(() => {
+    if (!editMode || !rows) return [];
+    const ids = new Set<string>();
+    for (const r of rows) {
+      const id = hubIdByName.get(r.hub);
+      if (id !== undefined) ids.add(id);
+    }
+    return [...ids].sort();
+  }, [editMode, rows, hubIdByName]);
+  const engineerQueries = useQueries({
+    queries: editHubIds.map((id) => ({
+      queryKey: queryKeys.engineers(id),
+      queryFn: ({ signal }: { signal: AbortSignal }) => fetchEngineerOptions(id, { signal }),
+      staleTime: 60_000,
+    })),
+  });
+  const engineersByHub = React.useMemo(() => {
+    const out = new Map<string, { options: EngineerOption[] | undefined; loading: boolean }>();
+    editHubIds.forEach((id, i) => {
+      const q = engineerQueries[i];
+      out.set(id, { options: q?.data, loading: q?.isPending ?? true });
+    });
+    return out;
+  }, [editHubIds, engineerQueries]);
+  const leaderOptions = React.useCallback(
+    (row: ProjectFilterRow) => {
+      const id = hubIdByName.get(row.hub);
+      return (id !== undefined ? engineersByHub.get(id) : undefined) ?? { options: undefined, loading: true };
+    },
+    [engineersByHub, hubIdByName],
+  );
+
+  const rowById = React.useMemo(() => new Map((query.data?.rows ?? []).map((r) => [r.project_id, r])), [query.data]);
+  /** Every row a draft points at: the served row if still listed, else the one staged against. */
+  const draftBaseRows = React.useMemo(
+    () =>
+      Object.keys(drafts)
+        .map((id) => rowById.get(id) ?? draftRows[id])
+        .filter((r): r is ProjectFilterRow => r !== undefined),
+    [drafts, rowById, draftRows],
+  );
+  const changedIds = React.useMemo(() => changedProjectIds(drafts, draftBaseRows), [drafts, draftBaseRows]);
+  const unsavedEdits = editMode && changedIds.length > 0;
+
+  const clearRowError = (id: string): void =>
+    setRowErrors((prev) => {
+      if (!(id in prev)) return prev;
+      const next = { ...prev };
+      delete next[id];
+      return next;
+    });
+
+  const onField = React.useCallback(
+    <F extends EditableField>(row: ProjectFilterRow, field: F, value: RegisterValues[F]) => {
+      setDrafts((d) => setDraftField(d, row, field, value));
+      setDraftRows((r) => ({ ...r, [row.project_id]: row }));
+      clearRowError(row.project_id);
+    },
+    [],
+  );
+
+  const leaveEditMode = React.useCallback(() => {
+    setEditMode(false);
+    setDrafts({});
+    setDraftRows({});
+    setRowErrors({});
+    setSelected(new Set());
+    setSaveError(null);
+    setConfirmCancel(false);
+  }, []);
+  // A 403 for the whole batch (or a lost write permission) ends the session.
+  if (editMode && !canWrite) leaveEditMode();
+
+  const requestCancel = (): void => {
+    if (changedIds.length > 0) setConfirmCancel(true);
+    else leaveEditMode();
+  };
+
+  // ---- P35-T08: ticked rows and the bulk bar --------------------------------
+
+  const shownWritable = React.useMemo(() => (rows ?? []).filter(isWritable), [rows, isWritable]);
+  const tickedRows = React.useMemo(() => shownWritable.filter((r) => selected.has(r.project_id)), [shownWritable, selected]);
+  const allSelected: boolean | 'indeterminate' =
+    tickedRows.length === 0 ? false : tickedRows.length === shownWritable.length ? true : 'indeterminate';
+
+  const onToggleSelect = React.useCallback((id: string, on: boolean) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (on) next.add(id);
+      else next.delete(id);
+      return next;
+    });
+  }, []);
+  const onToggleAll = React.useCallback(
+    (on: boolean) => setSelected(on ? new Set(shownWritable.map((r) => r.project_id)) : new Set()),
+    [shownWritable],
+  );
+
+  /** Engineers valid for every ticked row: the served list of their hub, or the
+   *  engineers common to the served lists of several hubs. */
+  const bulkLeaders = React.useMemo((): { options: EngineerOption[] | null; note: string | null } => {
+    if (tickedRows.length === 0) return { options: null, note: null };
+    const lists = [...new Set(tickedRows.map((r) => hubIdByName.get(r.hub)))].map((id) =>
+      id === undefined ? undefined : engineersByHub.get(id),
+    );
+    if (lists.some((l) => l === undefined || l.loading || l.options === undefined)) {
+      return { options: null, note: 'Loading the design resources…' };
+    }
+    const [first, ...rest] = lists.map((l) => l?.options ?? []);
+    const common = (first ?? []).filter((e) => rest.every((list) => list.some((o) => o.id === e.id)));
+    return common.length > 0
+      ? { options: common, note: null }
+      : { options: null, note: 'The ticked rows share no design resource: tick rows of one hub to set one.' };
+  }, [tickedRows, engineersByHub, hubIdByName]);
+
+  const applyBulk = React.useCallback(
+    (patch: RegisterDraft) => {
+      setDrafts((d) => setDraftBulk(d, tickedRows, patch));
+      setDraftRows((r) => ({ ...r, ...Object.fromEntries(tickedRows.map((row) => [row.project_id, row])) }));
+      setRowErrors((prev) => {
+        const next = { ...prev };
+        for (const row of tickedRows) delete next[row.project_id];
+        return next;
+      });
+    },
+    [tickedRows],
+  );
+
+  // ---- P35-T02: Save -------------------------------------------------------
+
+  const tooMany =
+    changedIds.length > REGISTER_EDITS_MAX
+      ? `Save at most ${String(REGISTER_EDITS_MAX)} projects at a time (${formatInteger(changedIds.length)} changed). Undo some edits, save, then continue.`
+      : null;
+
+  const saveEdits = async (): Promise<void> => {
+    const body = buildRegisterEditsBody(drafts, draftBaseRows);
+    if (body.edits.length === 0 || body.edits.length > REGISTER_EDITS_MAX) return;
+    setSaveError(null);
+    const res = await registerSave.save(body);
+    if (res.ok) {
+      leaveEditMode();
+      return;
+    }
+    if (res.forbidden) {
+      setWriteForbidden(true);
+      return;
+    }
+    const grouped: Record<string, RegisterEditError[]> = {};
+    for (const e of res.rowErrors) (grouped[e.project_id] ??= []).push(e);
+    setRowErrors(grouped);
+    // Rows the server says the caller cannot write become read-only, and their
+    // changes are dropped (they could never be saved); their error stays shown.
+    const forbidden = res.rowErrors.filter((e) => e.code === 'FORBIDDEN_PROJECT').map((e) => e.project_id);
+    if (forbidden.length > 0) {
+      setForbiddenIds((prev) => new Set([...prev, ...forbidden]));
+      setDrafts((d) => {
+        const next = { ...d };
+        for (const id of forbidden) delete next[id];
+        return next;
+      });
+    }
+    setSaveError(res.message);
+  };
+
+  const gridEdit = React.useMemo<RegisterGridEdit | undefined>(
+    () =>
+      editMode && canWrite
+        ? {
+            drafts,
+            isWritable,
+            onField,
+            leaderOptions,
+            rowErrors,
+            selected,
+            onToggleSelect,
+            onToggleAll,
+            allSelected,
+          }
+        : undefined,
+    [editMode, canWrite, drafts, isWritable, onField, leaderOptions, rowErrors, selected, onToggleSelect, onToggleAll, allSelected],
+  );
+
   // ---- Export ------------------------------------------------------------
 
   const exportSources = React.useMemo<ExportSource[]>(() => {
@@ -331,7 +570,13 @@ export default function ProjectsPage(): React.JSX.Element {
                 <TabsTrigger value="list" id={tabId('list')} aria-controls={view === 'list' ? panelId : undefined}>
                   List
                 </TabsTrigger>
-                <TabsTrigger value="cards" id={tabId('cards')} aria-controls={view === 'cards' ? panelId : undefined}>
+                <TabsTrigger
+                  value="cards"
+                  id={tabId('cards')}
+                  aria-controls={view === 'cards' ? panelId : undefined}
+                  disabled={editMode}
+                  title={editMode ? 'Save or cancel your edits to switch view' : undefined}
+                >
                   Cards
                 </TabsTrigger>
               </TabsList>
@@ -450,6 +695,28 @@ export default function ProjectsPage(): React.JSX.Element {
             VIP
           </Button>
           {view === 'list' ? <CharterColumnsToggle pressed={showCharter} onPressedChange={setShowCharter} /> : null}
+          {view === 'list' ? (
+            <ColumnMenu
+              columns={HIDEABLE_COLUMNS}
+              hidden={columnPrefs.prefs.hidden}
+              onToggle={columnPrefs.setVisible}
+              onReset={columnPrefs.reset}
+            />
+          ) : null}
+          {view === 'list' && canWrite && !editMode ? (
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              className="rounded-pill"
+              onClick={() => setEditMode(true)}
+              title="Edit status, leader, actual dates and design / lab time in the list"
+              data-testid="register-edit-start"
+            >
+              <PencilLine aria-hidden="true" />
+              Edit
+            </Button>
+          ) : null}
           {hasLocalFilter ? (
             <Button type="button" variant="ghost" size="sm" onClick={clearLocal}>
               <FilterX aria-hidden="true" />
@@ -462,7 +729,7 @@ export default function ProjectsPage(): React.JSX.Element {
         <div className="flex flex-col gap-2" data-testid="projects-chip-filters">
           <MultiChipFilter
             label="Category"
-            options={CATEGORY_CHIP_OPTIONS_WITH_UNMAPPED}
+            options={categoryChips}
             value={chips.categories}
             onChange={chips.setCategories}
             data-testid="projects-category-chips"
@@ -540,16 +807,48 @@ export default function ProjectsPage(): React.JSX.Element {
             <ProjectsCardGrid rows={rows} canPinVip={registration.write} />
           </React.Suspense>
         ) : (
-          <ProjectsTable
-            rows={rows}
-            canPinVip={registration.write}
-            canEdit={canWrite}
-            onEdit={handleEdit}
-            highlightId={highlight?.id ?? null}
-            highlightLabel={highlight?.mode === 'create' ? 'New' : 'Updated'}
-            showCharter={showCharter}
-          />
+          <>
+            {gridEdit ? (
+              <p className="mb-2 text-2xs font-semibold text-warning-subtle-fg" data-testid="register-edit-mode">
+                Editing: change status, leader, actual dates and design / lab time; tick rows to edit several at once.
+                Read-only rows are outside what you may edit.
+              </p>
+            ) : null}
+            {gridEdit && tickedRows.length > 0 ? (
+              <BulkEditBar
+                selectedCount={tickedRows.length}
+                draftCount={tickedRows.filter((r) => r.status === 'Draft').length}
+                leaderOptions={bulkLeaders.options}
+                leaderNote={bulkLeaders.note}
+                onApply={applyBulk}
+                onClearSelection={() => setSelected(new Set())}
+              />
+            ) : null}
+            <ProjectsTable
+              rows={rows}
+              canPinVip={registration.write}
+              canEdit={canWrite}
+              onEdit={handleEdit}
+              highlightId={highlight?.id ?? null}
+              highlightLabel={highlight?.mode === 'create' ? 'New' : 'Updated'}
+              showCharter={showCharter}
+              edit={gridEdit}
+              hiddenColumns={columnPrefs.prefs.hidden}
+              columnWidths={columnPrefs.prefs.widths}
+              onColumnWidth={columnPrefs.setWidth}
+            />
+          </>
         )}
+        {gridEdit ? (
+          <RegisterEditBar
+            changedCount={changedIds.length}
+            onSave={() => void saveEdits()}
+            onCancel={requestCancel}
+            saving={registerSave.saving}
+            error={saveError}
+            tooMany={tooMany}
+          />
+        ) : null}
       </div>
 
       {drawerLoaded ? (
@@ -566,6 +865,22 @@ export default function ProjectsPage(): React.JSX.Element {
         </React.Suspense>
       ) : null}
       {moveFlow.element}
+      <RegisterSavePanel
+        flow={registerSave.flow}
+        runState={registerSave.runState}
+        changes={registerSave.changes}
+        watchingFollowUp={registerSave.watchingFollowUp}
+        onClose={registerSave.close}
+      />
+      <RegisterDiscardDialog
+        open={confirmCancel}
+        title="Discard your register edits?"
+        description={`${formatInteger(changedIds.length)} ${changedIds.length === 1 ? 'project has' : 'projects have'} unsaved edits. Nothing has been saved.`}
+        onKeep={() => setConfirmCancel(false)}
+        onDiscard={leaveEditMode}
+        testId="register-discard-dialog"
+      />
+      <RegisterLeaveGuard when={unsavedEdits} />
     </>
   );
 }

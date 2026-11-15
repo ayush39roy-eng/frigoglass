@@ -21,10 +21,14 @@ from scheduling.whatif import (
     MAX_ADDED_PROJECTS_TOTAL,
     MAX_REMOVED_DESIGNERS_TOTAL,
 )
+from schemas.category import CategoryCode
 
 HubLiteral = Literal["R&D-Greece", "R&D-India", "PD-India", "PD-Romania", "OEM-HCK", "OEM-Seitek"]
 RegionLiteral = Literal["Greece", "India", "Romania"]
-CategoryLiteral = Literal["A+", "A", "B", "C", "A-OEM", "B-OEM", "C-OEM"]
+#: P33-T07 (ADR 0047): a category code, format only. The scenario engine
+#: (`scheduling.whatif`) checks it against `ScheduleInput.categories` (the
+#: `categories` table) and its hub's workflow -> 422 `INVALID_SCENARIO`.
+CategoryLiteral = CategoryCode
 PriorityLiteral = Literal["P1", "P2", "P3", "P4", "Q"]
 SchedulableStatusLiteral = Literal[
     "In Buyoff", "Under Industrialization", "In Development", "In Queue"
@@ -68,7 +72,7 @@ class AddEngineerIn(_Strict):
     hub: HubLiteral
     fte: float = Field(default=1.0, gt=0, le=1, allow_inf_nan=False)
     count: int = Field(default=1, ge=1, le=MAX_ADDED_DESIGNERS_TOTAL)
-    allowed_categories: list[CategoryLiteral] | None = Field(default=None, max_length=7)
+    allowed_categories: list[CategoryLiteral] | None = Field(default=None, max_length=32)
 
 
 class RemoveEngineerCountIn(_Strict):

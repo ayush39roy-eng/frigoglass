@@ -23,6 +23,7 @@ from models.enums import (
     RoleName,
     WorkflowStepStatus,
 )
+from models.project import Project
 from models.project_access import ProjectAccessGrant
 from tests.auth_helpers import clear_current_principal_override
 from tests.factories import (
@@ -105,8 +106,25 @@ async def test_board_groups_sorts_and_flags(db_session):
     assert body["run_id"] == str(run.id)
     assert [c["priority"] for c in body["columns"]] == ["P1", "P2", "P3", "P4", "Q"]
     names = {c["priority"]: [card["name"] for card in c["cards"]] for c in body["columns"]}
+    # P36 (ADR 0050 §6, API_CONTRACT_P36 §1): a column is in scheduling order
+    # (band_rank, then status, category rank, id), no longer by score. The
+    # four P1 projects are equal on status and category, so the factory's
+    # backfill rule ranked them by id.
+    p1_by_rank = [
+        name
+        for name, _rank in sorted(
+            (
+                (p.name, p.band_rank)
+                for p in (await db_session.execute(select(Project))).scalars()
+                if p.priority == ProjectPriority.P1
+            ),
+            key=lambda t: t[1],
+        )
+    ]
+    assert sorted(p1_by_rank) == ["Aardvark", "Alpha", "Beta", "Gamma"]
+    assert [card["band_rank"] for card in body["columns"][0]["cards"]] == [1, 2, 3, 4]
     assert names == {
-        "P1": ["Beta", "Aardvark", "Alpha", "Gamma"],
+        "P1": p1_by_rank,
         "P2": ["Delta"],
         "P3": [],
         "P4": [],

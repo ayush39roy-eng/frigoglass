@@ -21,7 +21,7 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
-from httpx import AsyncClient
+from httpx import AsyncClient, Response
 from sqlalchemy import select, text, update
 
 import api.routers.checkins as checkins_router
@@ -203,70 +203,64 @@ async def _lead_weeks(db, step_id: str) -> int:
 
 # PDD / B design leads A1 D1 E4 J1 K2 M1 (T = 10). Figure 200:
 # A20 D20 E80 J20 K40 M20, every step <= 104 (accepted at write).
-# PDD-E's lead edited to 10 (T = 16): E = 200 * 10 / 16 = 125 > 104 (R7).
+# PDD-E's lead edited to 10 (T = 16) would have given E = 200 * 10 / 16 = 125
+# > 104 (R7) before P33; since P33-T08 the split's weights are immutable.
 _FIGURE_200 = {"PDD-A": 20, "PDD-D": 20, "PDD-E": 80, "PDD-J": 20, "PDD-K": 40, "PDD-M": 20}
+#: P33-T10: a template edit goes through the apply (the lead-times PUT is 410).
 _E_TO_10 = {
-    "lead_times": [{"workflow_id": "PDD", "category": "B", "step_id": "PDD-E", "weeks": 10}]
+    "changes": [{"workflow_id": "PDD", "category": "B", "base_version": 1,
+                 "steps": [{"step_id": "PDD-E", "weeks": 10}]}],
+    "selection": {"mode": "all_not_reached"},
 }
 
 
-async def test_lead_time_edit_rejected_by_r7_rolls_back(db_session):
+async def test_lead_time_edit_never_reshapes_a_split(db_session):
+    """P33-T08 (DOMAIN_RULES "Category templates" §B, R33-2; was "a lead-time
+    edit rejected by R7 rolls back"). The split's weights are the immutable
+    `effort_weight_weeks`, so the edit that used to push PDD-E to 125 weeks
+    (R7) is accepted and changes no project's split: R6's triggers no longer
+    include the lead-time edit."""
+
     w = await _effort_world(db_session)
     project = await stepped_project(
         db_session, w.greece, name="Big B", leader=w.lead, category=ProjectCategory.B
     )
-    project_id = project.id  # the rollback below expires every loaded object
+    project_id = project.id
     await act_as(db_session, RoleName.ADMIN)
     async with client_for(db_session) as client:
         resp = await client.patch(f"/projects/{project_id}", json={"design_effort_weeks": 200})
         assert resp.status_code == 200, resp.text
     effort = await _effort(db_session, project_id)
     assert {k: effort[k] for k in _FIGURE_200} == _FIGURE_200
-    lead_before = await _lead_weeks(db_session, "PDD-E")
     audits_before = len(await _rederive_audits(db_session, project_id))
-    # The handler rolls the session back on rejection; release the setup's
-    # savepoint first so only the request's own work is undone.
-    await db_session.commit()
 
     await act_as(db_session, RoleName.SUPER_ADMIN)
-    await db_session.commit()
     async with client_for(db_session) as client:
-        resp = await client.put("/workflow-settings/lead-times", json=_E_TO_10)
-    assert resp.status_code == 422, resp.text
-    body = resp.json()
-    assert body["code"] == "EFFORT_SPLIT_REJECTED"
-    assert body["detail"][0]["loc"][-1] == "design_effort_weeks"
-
-    # Nothing was written: lead time, split, audit rows all unchanged.
-    assert await _lead_weeks(db_session, "PDD-E") == lead_before == 4
+        resp = await client.post("/workflow-templates/apply", json=_E_TO_10)
+    assert resp.status_code == 200, resp.text
+    # Own design figure: the length is not applied (OR-4), nothing is written.
+    assert resp.json()["applied"] == {"automatic": 0, "selected": 0, "own_effort_not_applied": 1}
+    assert await _lead_weeks(db_session, "PDD-E") == 10
     effort = await _effort(db_session, project_id)
     assert {k: effort[k] for k in _FIGURE_200} == _FIGURE_200
     assert len(await _rederive_audits(db_session, project_id)) == audits_before
-    lead_audits = (
-        (
-            await db_session.execute(
-                select(AuditLogEntry).where(AuditLogEntry.action.like("%lead_times_update"))
-            )
-        )
-        .scalars()
-        .all()
-    )
-    assert lead_audits == []
 
 
 async def test_unfreeze_rejected_by_r7_keeps_the_project_frozen(db_session):
+    """R7 on unfreeze. Before P33 the over-104 split came from a lead-time
+    edit made while frozen; since P33-T08 a template edit never reshapes a
+    split (R33-2), so the stored figure itself is over the limit here (300
+    over PDD / B's weights gives PDD-E 120 weeks), as a frozen project's
+    figure stored before R7 existed would be."""
+
     w = await _effort_world(db_session)
     project = await stepped_project(
         db_session, w.greece, name="Frozen big B", leader=w.lead, category=ProjectCategory.B,
-        frozen=True, actual_start_week=20, design_effort_weeks=Decimal("200"),
+        frozen=True, actual_start_week=20, design_effort_weeks=Decimal("300"),
     )  # fmt: skip
     await act_as(db_session, RoleName.SUPER_ADMIN)
     async with client_for(db_session) as client:
-        # Accepted while frozen: the frozen project is exempt from the
-        # re-derivation (I10), so its split is not checked here.
-        resp = await client.put("/workflow-settings/lead-times", json=_E_TO_10)
-        assert resp.status_code == 200, resp.text
-        # Unfreezing would re-derive E to 125 weeks: rejected before any write.
+        # Unfreezing would re-derive E to 120 weeks: rejected before any write.
         resp = await client.post(f"/gantt/projects/{project.id}/freeze", json={"frozen": False})
     assert resp.status_code == 422, resp.text
     assert resp.json()["code"] == "EFFORT_SPLIT_REJECTED"
@@ -284,11 +278,17 @@ async def test_unfreeze_rejected_by_r7_keeps_the_project_frozen(db_session):
 
 
 async def test_check_in_start_rederives_the_split_r3_r6(db_session, dispatch):
-    """A check-in that moves a stage off Not Started re-derives (R3 input).
+    """A check-in that moves a stage off Not Started re-derives (R6).
 
-    Figure 4 on PDD / B gives A1 E2 K1 with D at 0 (skipped). An EXISTING
-    user override keeps D schedulable (R4), so it can be due and checked in;
-    once started, R3 raises its effort to max(1, 0) = 1 (Σ = E + 1)."""
+    Figure 4 on PDD / B gives A1 E2 K1 with D at 0 (skipped).
+
+    P33-T13 (ADR 0048): this used to keep D schedulable with a stored user
+    override, check it in and see R3 raise it to 1. p33c made that state
+    impossible (no user override can be stored), so a zero-share step is
+    skipped: it is never due and a check-in on it is refused, writing
+    nothing. Starting E (share 2) re-derives with no share change, so no
+    `project.effort_rederived` row is added (one is written only when a share
+    changes) and the split is unchanged."""
 
     w = await _effort_world(db_session)
     project = await stepped_project(
@@ -300,43 +300,45 @@ async def test_check_in_start_rederives_the_split_r3_r6(db_session, dispatch):
         assert resp.status_code == 200, resp.text
     effort = await _effort(db_session, project)
     assert (effort["PDD-A"], effort["PDD-D"], effort["PDD-E"], effort["PDD-K"]) == (1, 0, 2, 1)
-    row_d = await live_step(db_session, project, "PDD-D")
-    row_d.duration_override_weeks = 2
-    await db_session.flush()
     run = await make_schedule_run(db_session, is_active=True)
     await plan_step(db_session, run, project, "PDD-D", CW - 1, CW, engineer=w.lead)
+    await plan_step(db_session, run, project, "PDD-E", CW - 1, CW, engineer=w.lead)
     audits_before = await _rederive_audits(db_session, project.id)
     assert [a.after_state["trigger"] for a in audits_before] == ["effort_figure"]
 
-    async with client_for(db_session) as client:
-        resp = await client.post(
-            "/check-ins",
-            json={
-                "entries": [
-                    {
-                        "project_id": str(project.id),
-                        "step_id": "PDD-D",
-                        "status": "In Progress",
-                        "percent_complete": 30,
-                    }
-                ]
-            },
-        )
-    assert resp.status_code == 200, resp.text
-    assert resp.json()["accepted"] == 1
+    async def check_in(step_id: str) -> Response:
+        async with client_for(db_session) as client:
+            return await client.post(
+                "/check-ins",
+                json={
+                    "entries": [
+                        {
+                            "project_id": str(project.id),
+                            "step_id": step_id,
+                            "status": "In Progress",
+                            "percent_complete": 30,
+                        }
+                    ]
+                },
+            )
 
+    resp = await check_in("PDD-D")
+    assert resp.status_code == 422, resp.text
+    assert resp.json()["code"] == "CHECKIN_INVALID"
+    assert resp.json()["detail"]["errors"][0]["code"] == "NOT_DUE"
     row_d = await live_step(db_session, project, "PDD-D")
     await db_session.refresh(row_d)
-    assert row_d.status == WorkflowStepStatus.IN_PROGRESS
+    assert row_d.status == WorkflowStepStatus.NOT_STARTED
+
+    resp = await check_in("PDD-E")
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["accepted"] == 1
+    row_e = await live_step(db_session, project, "PDD-E")
+    await db_session.refresh(row_e)
+    assert row_e.status == WorkflowStepStatus.IN_PROGRESS
     effort = await _effort(db_session, project)
-    assert (effort["PDD-A"], effort["PDD-D"], effort["PDD-E"], effort["PDD-K"]) == (1, 1, 2, 1)
-    assert row_d.duration_override_weeks == 2  # the user's figure is never cleared
-    audits = await _rederive_audits(db_session, project.id)
-    assert len(audits) == 2
-    audit = next(a for a in audits if a.after_state["trigger"] == "stage_status")
-    assert audit.after_state["design_split"]["raised_step_ids"] == ["PDD-D"]
-    assert audit.before_state["effort_weeks"]["PDD-D"] == 0
-    assert audit.after_state["effort_weeks"]["PDD-D"] == 1
+    assert (effort["PDD-A"], effort["PDD-D"], effort["PDD-E"], effort["PDD-K"]) == (1, 0, 2, 1)
+    assert await _rederive_audits(db_session, project.id) == audits_before
 
 
 # --- 3. S30-L2: unknown hub_id on engineer-utilization ----------------------------------

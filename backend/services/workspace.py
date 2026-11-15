@@ -83,6 +83,7 @@ from services.workflow_durations import (
     display_duration_weeks,
     live_step_effective_weeks,
     live_step_skipped,
+    own_effort_kinds,
 )
 
 COMMENT_EDIT_WINDOW = timedelta(minutes=15)
@@ -98,54 +99,120 @@ _FINANCIAL_FIELDS = ("customer_name", "tcogs_eur", "selling_price_eur", "gross_m
 
 
 def is_step_skipped(
-    lead_weeks: int,
+    plan_weeks: int,
     kind: WorkflowStepKind,
     cert_required: bool,
     *,
-    user_override_weeks: int | None,
+    own_effort: bool,
     effort_weeks: int | None,
 ) -> bool:
-    """ADR 0041 R5, the one skip predicate (`scheduling.is_step_skipped`):
-    a lead-0 step, a lab step on a project without certification testing, or
-    a step whose effective duration (`user ?? effort ?? lead`, R4) is 0. Every
-    service-side caller passes the live row's three durations
-    (`row_is_skipped`)."""
+    """THE service-side skip predicate (ADR 0041 R5 as revised by ADR 0046
+    §B / OR-2; contract P33 F4) on `(plan_weeks, kind, cert, own_effort,
+    effort_weeks)`: a lab step on a project without certification testing,
+    an own-effort step whose share is 0 or absent, or another step whose
+    copy is 0 (`services.workflow_durations.live_step_skipped`). Every
+    service-side caller passes a live row (`row_is_skipped`)."""
 
     return live_step_skipped(
-        lead_weeks=lead_weeks,
+        plan_weeks=plan_weeks,
         kind=kind,
         certification_testing_required=cert_required,
-        user_override_weeks=user_override_weeks,
+        own_effort=own_effort,
         effort_weeks=effort_weeks,
     )
 
 
+def row_own_effort_kinds(
+    rows: Iterable[ProjectWorkflowStep], kind_of: Mapping[str, object]
+) -> frozenset[str]:
+    """ADR 0046 OR-1 over one project's live rows: the kinds (`"design"` /
+    `"lab"`) whose steps follow the project's own effort figure
+    (`services.workflow_durations.own_effort_kinds`). `kind_of` maps a step
+    id to its kind (enum, value, or a template carrying `.kind`)."""
+
+    kinds = {
+        sid: getattr(k, "kind", k) for sid, k in kind_of.items()
+    }
+    return own_effort_kinds(((r.step_template_id, r.effort_weeks) for r in rows), kinds)
+
+
+async def project_own_effort_kinds(db: AsyncSession, project_id: uuid.UUID) -> frozenset[str]:
+    """`row_own_effort_kinds` of one stored project, in one query (the kinds
+    of its steps that carry a non-null `effort_weeks`)."""
+
+    rows = (
+        await db.execute(
+            select(WorkflowStepTemplate.kind)
+            .join(
+                ProjectWorkflowStep,
+                ProjectWorkflowStep.step_template_id == WorkflowStepTemplate.id,
+            )
+            .where(
+                ProjectWorkflowStep.project_id == project_id,
+                ProjectWorkflowStep.effort_weeks.is_not(None),
+            )
+            .distinct()
+        )
+    ).scalars()
+    return frozenset(k.value for k in rows if k.value in ("design", "lab"))
+
+
 def row_is_skipped(
-    row: ProjectWorkflowStep, kind: WorkflowStepKind, cert_required: bool
+    row: ProjectWorkflowStep,
+    kind: WorkflowStepKind,
+    cert_required: bool,
+    *,
+    own_effort: bool,
 ) -> bool:
-    """`is_step_skipped` of a live `ProjectWorkflowStep` row."""
+    """`is_step_skipped` of a live `ProjectWorkflowStep` row. `own_effort` is
+    `ownEffort(p, kind)` (`row_own_effort_kinds`)."""
 
     return is_step_skipped(
-        row.duration_weeks,
+        row.plan_weeks,
         kind,
         cert_required,
-        user_override_weeks=row.duration_override_weeks,
+        own_effort=own_effort,
         effort_weeks=row.effort_weeks,
     )
 
 
 def row_effective_weeks(
-    row: ProjectWorkflowStep, kind: WorkflowStepKind, cert_required: bool
+    row: ProjectWorkflowStep,
+    kind: WorkflowStepKind,
+    cert_required: bool,
+    *,
+    own_effort: bool,
 ) -> int:
-    """`eff(p, s)` of a live row (0 when skipped): the duration used as the
-    remaining-duration base and the roll-up weight (I12)."""
+    """`eff(p, s)` of a live row (0 when skipped; DOMAIN_RULES §B): the
+    duration used as the remaining-duration base and the roll-up weight
+    (I12)."""
 
     return live_step_effective_weeks(
-        lead_weeks=row.duration_weeks,
+        plan_weeks=row.plan_weeks,
         kind=kind,
         certification_testing_required=cert_required,
-        user_override_weeks=row.duration_override_weeks,
+        own_effort=own_effort,
         effort_weeks=row.effort_weeks,
+    )
+
+
+def row_calculated_weeks(
+    row: ProjectWorkflowStep, kind: WorkflowStepKind, cert_required: bool
+) -> int:
+    """P35 (D35-1): `eff(p, s)` of a live row as if the project had NO effort
+    figure of its own, i.e. `row_effective_weeks` with `own_effort=False`:
+    the project's template copy (`plan_weeks`, P33-T08), 0 for a 0-length step or a lab step without
+    certification testing. Summed per kind it is the "calculated" design /
+    lab time the Projects register shows beside `design_effort_weeks` /
+    `lab_effort_weeks`; clearing the figure ("reset") returns the project to
+    it (OR-5 re-copies the template onto the not-reached steps)."""
+
+    return live_step_effective_weeks(
+        plan_weeks=row.plan_weeks,
+        kind=kind,
+        certification_testing_required=cert_required,
+        own_effort=False,
+        effort_weeks=None,
     )
 
 
@@ -447,6 +514,7 @@ _FIELD_LABELS: dict[str, str] = {
     "priority": "Priority",
     "frozen": "Frozen",
     "actual_start_week": "Actual start week",
+    "actual_end_week": "Actual end week",
     "delay_weeks": "Delay (weeks)",
     "reg_year": "Registration year",
     "carry_over": "Carry-over",
@@ -667,6 +735,8 @@ async def build_workspace(
         .all()
     )
     live_by_step = {r.step_template_id: r for r in live_rows}
+    # ADR 0046 OR-1: the kinds that follow the project's own effort figure.
+    own_kinds = row_own_effort_kinds(live_rows, {t.id: t.kind for t in templates})
 
     outcome: ScheduleRunProjectOutcome | None = None
     run_steps: list[ScheduleRunProjectStep] = []
@@ -727,12 +797,13 @@ async def build_workspace(
         # An override never revives a skipped step (lead time 0, or a lab
         # step without certification testing).
         # ADR 0041 R4/R5: `user ?? effort ?? lead`; the one skip predicate.
+        own_effort = t.kind.value in own_kinds
         duration = (
             display_duration_weeks(
-                lead_weeks=live.duration_weeks,
+                plan_weeks=live.plan_weeks,
                 kind=t.kind,
                 certification_testing_required=project.certification_testing_required,
-                user_override_weeks=live.duration_override_weeks,
+                own_effort=own_effort,
                 effort_weeks=live.effort_weeks,
             )
             if live is not None
@@ -745,7 +816,9 @@ async def build_workspace(
             run_step.skipped
             if run_step is not None
             else (
-                row_is_skipped(live, t.kind, project.certification_testing_required)
+                row_is_skipped(
+                    live, t.kind, project.certification_testing_required, own_effort=own_effort
+                )
                 if live is not None
                 else True
             )
@@ -759,11 +832,15 @@ async def build_workspace(
                 sequence_order=t.sequence_order,
                 predecessor_ids=list(t.predecessor_ids or []),
                 duration_weeks=duration,
-                lead_time_weeks=live.duration_weeks if live is not None else 0,
-                duration_override_weeks=(
-                    live.duration_override_weeks if live is not None else None
-                ),
+                # P33-T08: the project's own copy of its template length.
+                lead_time_weeks=live.plan_weeks if live is not None else 0,
+                # ADR 0048 (p33c): retired, always null (CHECK); not read.
+                duration_override_weeks=None,
                 effort_weeks=live.effort_weeks if live is not None else None,
+                # P33-T12 (contract Part G): the template copy, read-only.
+                plan_weeks=live.plan_weeks if live is not None else 0,
+                gap_weeks=live.plan_gap_weeks if live is not None else 0,
+                own_effort=own_effort,
                 skipped=skipped,
                 planned_start_week=run_step.start_week if run_step is not None else None,
                 planned_end_week=run_step.end_week if run_step is not None else None,
@@ -805,6 +882,8 @@ async def build_workspace(
                 r,
                 kind_by_step.get(r.step_template_id, WorkflowStepKind.DESIGN),
                 project.certification_testing_required,
+                own_effort=kind_by_step.get(r.step_template_id, WorkflowStepKind.DESIGN).value
+                in own_kinds,
             ),
         )
         for r in live_rows

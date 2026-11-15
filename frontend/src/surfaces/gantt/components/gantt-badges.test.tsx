@@ -47,13 +47,12 @@ const baseStep: GanttStepRow = {
   assigned_chamber_code: 'CH-1',
   eng_conflict: false,
   chamber_overlap: false,
-    lead_time_weeks: 2,
-    duration_override_weeks: null,
-    start_not_before_week: null,
-    timing_editable: 'none',
+  lead_time_weeks: 2,
   span_fte: null,
   effort_weeks: null,
-  overlap_weeks: null,
+  plan_weeks: 2,
+  gap_weeks: 0,
+  own_effort: false,
   predecessor_ids: [],
 };
 

@@ -61,6 +61,11 @@ export interface VirtualMatrixGridProps<Row> {
   regionLabel?: string;
   /** P21-T03: a checked (selected) row is highlighted across every cell. */
   isRowSelected?: ((row: Row) => boolean) | undefined;
+  /** P34-T02: a row to keep in view and briefly highlight (e.g. a VIP pin that
+   *  moved it into the VIP group). Scrolled to whenever it or `rows` change. */
+  flashRowKey?: string | null | undefined;
+  /** P34-T02: rows with unsaved edits carry a marker bar. */
+  isRowChanged?: ((row: Row) => boolean) | undefined;
 }
 
 interface BandCell {
@@ -110,6 +115,8 @@ export function VirtualMatrixGrid<Row>({
   className,
   regionLabel,
   isRowSelected,
+  flashRowKey = null,
+  isRowChanged,
 }: VirtualMatrixGridProps<Row>): React.JSX.Element {
   const scrollRef = React.useRef<HTMLDivElement>(null);
 
@@ -144,6 +151,12 @@ export function VirtualMatrixGrid<Row>({
     estimateSize: () => estimateRowHeight,
     overscan: 12,
   });
+
+  // P34-T02: keep the flashed row in view when it moves (only scrolls if it is out of view).
+  const flashIndex = flashRowKey === null ? -1 : rows.findIndex((r) => rowKey(r) === flashRowKey);
+  React.useEffect(() => {
+    if (flashIndex >= 0) virtualizer.scrollToIndex(flashIndex, { align: 'auto' });
+  }, [flashIndex, virtualizer]);
 
   const items = virtualizer.getVirtualItems();
   const hasFilters = columns.some((c) => c.filter !== undefined);
@@ -275,13 +288,17 @@ export function VirtualMatrixGrid<Row>({
               const row = rows[item.index];
               if (row === undefined) return null;
               const selected = isRowSelected?.(row) === true;
+              const key = rowKey(row);
               return (
                 <div
-                  key={rowKey(row)}
+                  key={key}
                   role="row"
                   data-index={item.index}
+                  data-row-key={key}
                   data-zebra={item.index % 2 === 1 ? 'odd' : 'even'}
                   data-selected={selected ? 'true' : undefined}
+                  data-flash={key === flashRowKey ? 'true' : undefined}
+                  data-changed={isRowChanged?.(row) === true ? 'true' : undefined}
                   ref={virtualizer.measureElement}
                   className="mg-row absolute left-0 top-0 flex w-full text-xs"
                   style={{ transform: `translateY(${String(item.start)}px)` }}

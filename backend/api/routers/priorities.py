@@ -55,7 +55,6 @@ from models.audit import AuditLogEntry
 from models.enums import (
     CurrencyCode,
     LabRegion,
-    ProjectCategory,
     ProjectStatus,
     ProjectType,
 )
@@ -66,6 +65,7 @@ from schemas.priority import (
     DimensionInfo,
     DimensionPoints,
     HubP1Fill,
+    LastScoreVersion,
     PriorityCapacityFill,
     PriorityCompareItem,
     PriorityCompareResponse,
@@ -94,6 +94,7 @@ from services.project_filters import (
     score_ranks,
     search_predicate,
 )
+from services.score_versions import latest_score_versions
 from services.scoring_rubric import (
     UnknownDimensionKeyError,
     dimension_score_models,
@@ -143,10 +144,12 @@ def _build_row(
     current_user: Principal,
     rank: int | None,
     fill: RowFill,
+    last_score_version: LastScoreVersion | None,
 ) -> PriorityMatrixRow:
     return PriorityMatrixRow(
         project_id=project.id,
         project_name=project.name,
+        external_code=project.external_code,
         hub=project.hub.name,
         category=project.category,
         type=project.type,
@@ -174,6 +177,7 @@ def _build_row(
         is_new_model=project.type == ProjectType.NM,
         is_rm_saving_project=project.rm_savings_keur is not None,
         is_vip=project.is_vip,
+        last_score_version=last_score_version,
         currency=currency,
         capex_keur=_convert(
             float(project.capex_keur) if project.capex_keur is not None else None, rate
@@ -231,6 +235,8 @@ async def list_priority_matrix(
     ranks = score_ranks(projects, _score_value)
     fill = await compute_capacity_fill(db, {p.hub_id for p in projects})
     rubric = await load_rubric(db)
+    # P34-T01: one grouped query for the whole list (no N+1).
+    versions = await latest_score_versions(db, current_user, [p.id for p in projects])
     rows = [
         _build_row(
             p,
@@ -241,6 +247,7 @@ async def list_priority_matrix(
             current_user=current_user,
             rank=ranks.get(p.id),
             fill=_row_fill(fill, p),
+            last_score_version=versions.get(p.id),
         )
         for p in projects
     ]
@@ -260,7 +267,7 @@ async def _matrix_projects(
     *,
     hub_id: uuid.UUID | None,
     region: LabRegion | None,
-    category: Sequence[ProjectCategory] | None,
+    category: Sequence[str] | None,
     type_: Sequence[ProjectType] | None,
     status_: ProjectStatus | None,
     q: str | None,
@@ -589,6 +596,7 @@ async def get_priority_row(
     rate = await _rate_to_eur(db, currency)
     fill = await compute_capacity_fill(db, {project.hub_id})
     rubric = await load_rubric(db)
+    versions = await latest_score_versions(db, current_user, [project.id])
     return _build_row(
         project,
         project.priority_score,
@@ -598,6 +606,7 @@ async def get_priority_row(
         current_user=current_user,
         rank=None,
         fill=_row_fill(fill, project),
+        last_score_version=versions.get(project.id),
     )
 
 

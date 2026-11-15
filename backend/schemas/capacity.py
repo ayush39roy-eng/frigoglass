@@ -20,7 +20,8 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-from models.enums import HubName, LabRegion, ProjectCategory
+from models.enums import HubName, LabRegion
+from schemas.category import CategoryCodeOut
 
 #: ADR 0016 §2. Server-derived; the browser renders it and never re-derives it.
 BookingStatus = Literal["available", "near_full", "full"]
@@ -357,7 +358,7 @@ class ClassBreakdownRow(BaseModel):
     `total_count`.
     """
 
-    category: ProjectCategory
+    category: CategoryCodeOut
     deliverable_count: int
     left_out_count: int
     # --- P13 (docs/API_CONTRACT_P13.md §6) --------------------------------

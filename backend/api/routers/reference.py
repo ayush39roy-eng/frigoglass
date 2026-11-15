@@ -1,5 +1,6 @@
 """Read-only reference data: `GET /hubs`, `GET /workflow-step-templates`,
-`GET /reference/categories?hub_id=` (P9-T03), `GET /reference/project-types`
+`GET /reference/categories[?hub_id=]` (P9-T03; objects from the `categories`
+table since P33-T07), `GET /reference/project-types`
 (P29-T04).
 
 Both tables are seeded once (P1-T03) and are not user-editable in v1 — no
@@ -19,11 +20,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 import domain_constants as dc
 from api.db import get_db
 from api.deps import get_current_principal
-from models.enums import ProjectCategory, ProjectType
+from models.enums import ProjectType
 from models.hub import Hub
-from models.project import category_allowed_for_hub
+from models.project import workflow_id_for_hub
 from models.workflow import WorkflowStepTemplate
+from schemas.category import CategoryRead
 from schemas.reference import HubRead, ProjectTypeRead, WorkflowStepTemplateRead
+from services.categories import load_catalog
 
 #: P9-R02 (security S-07, carried from P3-T08 #5): any authenticated
 #: principal. No surface permission: every role needs these labels.
@@ -70,22 +73,36 @@ async def list_workflow_step_templates(
     return list(result.scalars().all())
 
 
-@router.get("/reference/categories", response_model=list[ProjectCategory])
-async def list_categories_for_hub(
-    hub_id: uuid.UUID,
+@router.get("/reference/categories", response_model=list[CategoryRead])
+async def list_categories(
+    hub_id: uuid.UUID | None = None,
     db: AsyncSession = Depends(get_db),
-) -> list[ProjectCategory]:
-    """The project categories valid for this hub's workflow (docs/API_CONTRACT_P9.md
-    §6): `A+/A/B/C` for a PDD hub, `A-OEM/B-OEM/C-OEM` for an OEM hub, in the
-    scheduling order of DOMAIN_RULES "Scheduling order". Uses the same rule as
-    project validation (`models.project.category_allowed_for_hub`). Any
-    authenticated principal, like `GET /hubs`. 404 for an unknown hub.
+) -> list[CategoryRead]:
+    """The project categories (contract P33 B1, ADR 0047), from the
+    `categories` table, ordered by `rank` (scheduling order key 5): one
+    `{code, label, workflow_id, rank}` object each.
+
+    With `hub_id`: only the categories of that hub's workflow (the same rule
+    as project validation, `models.project.category_allowed_for_hub`); 404
+    for an unknown hub. Without it: every category. Any authenticated
+    principal, like `GET /hubs`; reference data, nothing hub-scoped.
+
+    P33-T07 breaking change: this used to be a list of code strings and
+    required `hub_id`.
     """
 
-    hub = await db.get(Hub, hub_id)
-    if hub is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Unknown hub")
-    return [c for c in ProjectCategory if category_allowed_for_hub(hub.is_oem, c)]
+    catalog = await load_catalog(db)
+    rows = catalog.rows
+    if hub_id is not None:
+        hub = await db.get(Hub, hub_id)
+        if hub is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Unknown hub")
+        wanted = workflow_id_for_hub(hub.is_oem)
+        rows = tuple(r for r in rows if r.workflow_id == wanted)
+    return [
+        CategoryRead(code=r.code, label=r.label, workflow_id=r.workflow_id, rank=r.rank)
+        for r in rows
+    ]
 
 
 @router.get("/reference/project-types", response_model=list[ProjectTypeRead])

@@ -110,8 +110,8 @@ export function formatPlanWeek(week: number): string {
 
 /**
  * P32-R02: a served week with the spillover year named — `W47` inside the plan
- * year, `W5 '27` for absolute week 57. Used by the step-timing labels and
- * dialog (P32-R02). Formatting only.
+ * year, `W5 '27` for absolute week 57. Used by the Workflow page's per-project
+ * waterfall axis and labels. Formatting only.
  */
 export function formatYearWeek(week: number): string {
   if (week <= DISPLAY_HORIZON_WEEKS) return formatWeek(week);

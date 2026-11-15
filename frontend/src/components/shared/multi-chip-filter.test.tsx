@@ -4,17 +4,18 @@ import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
 import { seriousAxeViolations } from '@/test/axe';
-import { CATEGORY_CHIP_OPTIONS, TYPE_CHIP_OPTIONS_WITH_UNMAPPED } from '@/lib/multi-select-filter';
+import { TYPE_CHIP_OPTIONS_WITH_UNMAPPED, useCategoryChipOptions } from '@/lib/multi-select-filter';
 import type { ProjectCategory } from '@/types/enums';
 
 import { MultiChipFilter } from './multi-chip-filter';
 
 function Harness({ onChange }: { onChange?: (next: ProjectCategory[]) => void }): React.JSX.Element {
   const [value, setValue] = React.useState<ProjectCategory[]>([]);
+  const categoryChips = useCategoryChipOptions();
   return (
     <MultiChipFilter
       label="Category"
-      options={CATEGORY_CHIP_OPTIONS}
+      options={categoryChips}
       value={value}
       onChange={(next) => {
         setValue(next);

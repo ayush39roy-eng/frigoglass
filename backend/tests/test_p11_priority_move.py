@@ -190,13 +190,22 @@ async def test_post_queued_dispatches_one_greedy_activating_run(db_session, disp
 
     (audit,) = await _audits(db_session, "project.priority_move", w.project)
     assert audit.actor_user_id == user.id and audit.hub_id == w.hub.id
-    assert audit.before_state == {"project_id": str(w.project.id), "priority": "P1"}
+    # P36 (R36-8): both states carry `band_rank`; the moved project is last
+    # in P2 after the move.
+    assert audit.before_state == {
+        "project_id": str(w.project.id), "priority": "P1", "band_rank": 1,
+    }
     assert audit.after_state == {
         "project_id": str(w.project.id),
         "priority": "P2",
+        "band_rank": moved.band_rank,
         "recalc_status": "queued",
         "baseline_run_id": str(w.run.id),
     }
+    assert moved.band_rank == max(
+        p.band_rank for p in schedule_input.projects
+        if p.priority == "P2" and p.band_rank is not None
+    )
     (requested,) = await _audits(db_session, "project.recalculate_requested", w.project)
     assert requested.after_state["schedule_run_id"] == body["schedule_run_id"]
     assert requested.after_state["trigger_reason"] == "priority_move"

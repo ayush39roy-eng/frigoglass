@@ -340,3 +340,31 @@ def require_roles(*roles: RoleName) -> _PermissionDependency:
         return principal
 
     return _dependency
+
+
+# --- P33-T06 (ADR 0045 §7, docs/API_CONTRACT_P33.md Part A) ------------------
+#
+# Named dependencies for the category-template surface, so every P33 endpoint
+# (P33-T09..T11) states the contract's rule by name rather than re-spelling
+# the (surface, action) pairs:
+#
+# - `require_workflow_templates_write`: the four P33 writes
+#   (`POST /workflow-templates/timeline-preview`, `/apply-preview`, `/apply`,
+#   `/categories`). The two previews are writes-in-preparation and also
+#   require write (contract Part A). Admin + Super Admin.
+# - `require_workflow_templates_or_settings_read`: `GET /workflow-settings`
+#   and `GET /workflow-settings/category-timelines` — `workflow_templates`
+#   read OR `workflow_settings` read. Today both sets are {Admin, Super
+#   Admin}, so wiring the existing GETs to it changes nothing; it exists so
+#   the two surfaces can diverge later without touching the routers.
+#
+# `workflow_settings` write (Super Admin only) still guards steps /
+# precedence, hub calendars and chambers; nothing here relaxes it.
+
+require_workflow_templates_write: _PermissionDependency = require_permission(
+    Surface.WORKFLOW_TEMPLATES, Action.WRITE
+)
+require_workflow_templates_or_settings_read: _PermissionDependency = require_any_permission(
+    (Surface.WORKFLOW_TEMPLATES, Action.READ),
+    (Surface.WORKFLOW_SETTINGS, Action.READ),
+)

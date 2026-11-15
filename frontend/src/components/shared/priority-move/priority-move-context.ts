@@ -1,6 +1,6 @@
 import * as React from 'react';
 
-import type { PatchRecalcSignal } from '@/lib/api/priority-move';
+import type { BandRankPlacement, PatchRecalcSignal } from '@/lib/api/priority-move';
 import type { ProjectPriority } from '@/types/enums';
 
 /** The project a move acts on. Everything here is display data the caller
@@ -27,10 +27,29 @@ export interface PriorityMoveRequestOptions {
   onSettled?: (outcome: PriorityMoveOutcome) => void;
 }
 
+/**
+ * P36 (ADR 0050): options of a move inside the band. `position` / `fromPosition`
+ * are display copy only ("Move X to position 2 in P1?"), derived by the caller
+ * from the served `band_rank` of the card and its anchor; the server decides
+ * the rank that is written. There is no band size: the copy never says "of M"
+ * (P36-R02).
+ */
+export interface RankMoveRequestOptions extends PriorityMoveRequestOptions {
+  position?: number | null;
+  fromPosition?: number | null;
+}
+
 export interface PriorityMoveApi {
   /** Open the confirm step for a move to `next` (no-op if busy or unchanged;
    *  `options.onSettled` then reports `cancelled`). */
   requestMove: (target: PriorityMoveTarget, next: ProjectPriority, options?: PriorityMoveRequestOptions) => void;
+  /**
+   * P36 (ADR 0050): open the same preview dialog for a move inside the
+   * project's band (`target.priority`), placed directly before / after one
+   * project of the band. Same Yes / No, PREVIEW_STALE re-preview and run
+   * follow as `requestMove`. No-op (`cancelled`) if busy or no band.
+   */
+  requestRankMove: (target: PriorityMoveTarget, placement: BandRankPlacement, options?: RankMoveRequestOptions) => void;
   /**
    * Report a `PATCH /projects/{id}` that changed priority (contract §2). The
    * caller read the `X-Schedule-*` headers; this shows the same progress and

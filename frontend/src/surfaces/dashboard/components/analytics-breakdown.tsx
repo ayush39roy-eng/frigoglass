@@ -22,8 +22,8 @@ import { formatInteger } from '@/lib/format';
 import { useMotionTokens } from '@/lib/motion';
 import { MultiChipFilter } from '@/components/shared/multi-chip-filter';
 import {
-  CATEGORY_FILTER_VALUES,
   toggleSelection,
+  useCategoryFilterValues,
   TYPE_FILTER_VALUES,
   type MultiChipOption,
 } from '@/lib/multi-select-filter';
@@ -75,6 +75,8 @@ const matchHub = (key: string) => (row: ProjectFilterRow) => row.hub === key;
 const matchCategory = (key: string) => (row: ProjectFilterRow) =>
   UNMAPPED_KEYS.has(key) ? row.category === null : row.category === key;
 
+const NO_VALUES: readonly string[] = [];
+
 export function AnalyticsBreakdown({
   data,
   pipelineTotal,
@@ -84,6 +86,8 @@ export function AnalyticsBreakdown({
   selection,
 }: AnalyticsBreakdownProps): React.JSX.Element {
   const openList = useOpenProjectList();
+  // P33-T14: served category codes in rank order (+ Unmapped); none clickable until loaded.
+  const categoryFilterValues = useCategoryFilterValues(true) ?? NO_VALUES;
   const lister = (
     chart: string,
     match: (key: string) => (row: ProjectFilterRow) => boolean,
@@ -107,7 +111,7 @@ export function AnalyticsBreakdown({
     : undefined;
   const categorySelect: BucketSelect | undefined = selection
     ? {
-        allowed: CATEGORY_FILTER_VALUES,
+        allowed: categoryFilterValues,
         selected: selection.categories,
         onChange: (next) => selection.setCategories(next as typeof selection.categories),
         legendLabel: 'Filter the Dashboard by category',

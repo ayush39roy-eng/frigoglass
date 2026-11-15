@@ -26,16 +26,28 @@ Both invariants read `eff(p, s)` exactly as the scheduler does
   - The served `design_load_weeks` / `design_load_remaining_weeks` equal the
     design figures to the week; `lab_load_weeks` / `lab_load_remaining_weeks`
     the lab figures to 2 dp.
-- **I26 — effort split.** For every non-frozen project, the stored
-  `effort_weeks` of its steps equal `effort_split.derive_project_effort` of
-  its figures over the current lead times, with R3's `max(1, ·)` on started
-  steps. Lab steps are not checked when certification testing is off (they
-  are skipped whatever they carry, R7). A figure whose split would exceed 104
+- **I26 — effort split** (rev. 2, P35-T03 / R35-3). For every non-frozen
+  project, the stored `effort_weeks` of its steps equal
+  `effort_split.derive_project_effort` of its figures over the current lead
+  times and the step exclusions (S′ = weighted, non-excluded steps), with
+  R3's `max(1, ·)` on started steps of S′; excluded steps carry none; and a
+  figure in force (`inForce(p, k)`) has a non-empty S′. Lab steps are not
+  checked when certification testing is off (they are skipped whatever they
+  carry, R7). A figure whose split would exceed 104
   weeks on a step must never have been stored (R7). Frozen projects are
   exempt (R6: re-derivation is a no-op on them, I10).
+- **Step exclusion** (ADR 0049 as ruled, R35-1): `eff(p, s) = 0` for an
+  excluded live step, before every other branch; the one predicate then
+  calls it skipped. The live-row halves of I33 (`check_i33_step_exclusion`:
+  an excluded step reaches the run input as `lead_weeks = 0` (None when the
+  table is already 0) with no override, and every run row for it is skipped
+  with duration 0) and I34 (i) (`check_i34_excluded_not_done`: no step is
+  both excluded and Done) are here. The rest of I34 (progress byte-equal
+  across exclude / re-include) and of I36 (audit rows, frozen guard over
+  time) need DB history and are the backend's.
 
 Violations reuse `invariants.InvariantViolation` (`invariant="I25"` /
-`"I26"`); every result is in a deterministic order.
+`"I26"` / `"I33"` / `"I34"`); every result is in a deterministic order.
 """
 
 from __future__ import annotations
@@ -49,13 +61,19 @@ from fractions import Fraction
 import domain_constants as dc
 from scheduling import hubs
 from scheduling.effort_split import (
+    NOT_APPLIED_ALL_EXCLUDED,
     EffortFigure,
     EffortSplitRejected,
     EffortStepInput,
     derive_project_effort,
 )
 from scheduling.invariants import InvariantViolation
-from scheduling.types import LAB_CONSUMPTION_PER_PROJECT_WEEK, PROGRESS_STATUSES
+from scheduling.types import (
+    LAB_CONSUMPTION_PER_PROJECT_WEEK,
+    PROGRESS_STATUSES,
+    ScheduleInput,
+    ScheduleOutput,
+)
 from scheduling.workflow import (
     STATUS_BLOCKED,
     STATUS_DONE,
@@ -87,6 +105,8 @@ class LiveStepRow:
     - `status` / `percent_complete` / `remaining_weeks_override`: the stored
       stage progress (`status` one of Not Started / In Progress / Blocked /
       Done).
+    - `excluded`: the per-project step exclusion (`project_workflow_steps.
+      excluded`, ADR 0049 / R35-1): `eff = 0` before every other branch.
     """
 
     step_id: str
@@ -98,6 +118,7 @@ class LiveStepRow:
     status: str = STATUS_NOT_STARTED
     percent_complete: int = 0
     remaining_weeks_override: int | None = None
+    excluded: bool = False
 
 
 @dataclass(frozen=True)
@@ -155,8 +176,12 @@ class DemandLoad:
 
 
 def live_step_effective_weeks(project: LiveProjectRow, step: LiveStepRow) -> int:
-    """`eff(p, s)` of a live row — the scheduler's own predicate."""
+    """`eff(p, s)` of a live row — the scheduler's own predicate, with R35-1's
+    first branch: an excluded step is 0 (so skipped) whatever else it
+    carries."""
 
+    if step.excluded:
+        return 0
     return step_effective_weeks(
         lead_weeks=step.lead_weeks,
         kind=step.kind,
@@ -324,13 +349,15 @@ def check_i25_demand(
 
 
 def check_i26_effort_split(projects: Iterable[LiveProjectRow]) -> tuple[InvariantViolation, ...]:
-    """I26: for every non-frozen project, each step's stored `effort_weeks`
-    equals `derive_project_effort` (R2 split of `E = max(1,
-    round_half_up(x))` over the current lead times, R3 `max(1, ·)` on
-    started steps; `None` on every step outside an applied split). Lab steps
-    are not checked when certification testing is off (R7). A stored figure
-    whose split exceeds 104 weeks on a step is itself a violation (R7: it
-    must have been rejected at write)."""
+    """I26 (rev. 2): for every non-frozen project, each step's stored
+    `effort_weeks` equals `derive_project_effort` (R2 split of `E = max(1,
+    round_half_up(x))` over the current lead times on S′ = the weighted,
+    non-excluded steps of the kind, R3 `max(1, ·)` on started steps of S′;
+    `None` on every step outside an applied split, excluded steps included).
+    Lab steps are not checked when certification testing is off (R7). A
+    stored figure whose split exceeds 104 weeks on a step is itself a
+    violation (R7: it must have been rejected at write), and so is a figure
+    in force whose S′ is empty (R35-5: every weighted step excluded)."""
 
     violations: list[InvariantViolation] = []
     for p in sorted(projects, key=lambda r: r.project_id):
@@ -343,6 +370,7 @@ def check_i26_effort_split(projects: Iterable[LiveProjectRow]) -> tuple[Invarian
                 kind=s.kind,
                 lead_weeks=s.lead_weeks,
                 started=s.status != STATUS_NOT_STARTED,
+                excluded=s.excluded,
             )
             for s in p.steps
         )
@@ -363,6 +391,19 @@ def check_i26_effort_split(projects: Iterable[LiveProjectRow]) -> tuple[Invarian
                 )
             )
             continue
+        for split in (derivation.design, derivation.lab):
+            if split.not_applied_reason == NOT_APPLIED_ALL_EXCLUDED:
+                violations.append(
+                    InvariantViolation(
+                        invariant="I26",
+                        description=(
+                            f"project {p.project_id!r}: its {split.kind} figure is in force but "
+                            f"every {split.kind} step with a weight is excluded (S′ is empty; "
+                            "R35-5 must refuse this with EFFORT_NEEDS_A_STEP)"
+                        ),
+                        project_id=p.project_id,
+                    )
+                )
         expected = derivation.effort_weeks_by_step()
         for s in sorted(p.steps, key=lambda r: (r.sequence_order, r.step_id)):
             if s.kind == "lab" and not p.certification_testing_required:
@@ -379,5 +420,124 @@ def check_i26_effort_split(projects: Iterable[LiveProjectRow]) -> tuple[Invarian
                         project_id=p.project_id,
                         step_id=s.step_id,
                     )
+                )
+    return tuple(violations)
+
+
+# --- I33 / I34 (live-row halves) ----------------------------------------------------
+
+
+def _excluded_steps(
+    projects: Iterable[LiveProjectRow],
+) -> list[tuple[LiveProjectRow, LiveStepRow]]:
+    out: list[tuple[LiveProjectRow, LiveStepRow]] = []
+    for p in sorted(projects, key=lambda r: r.project_id):
+        for s in sorted(p.steps, key=lambda r: (r.sequence_order, r.step_id)):
+            if s.excluded:
+                out.append((p, s))
+    return out
+
+
+def check_i34_excluded_not_done(
+    projects: Iterable[LiveProjectRow],
+) -> tuple[InvariantViolation, ...]:
+    """I34 (i): no live step is both excluded and stored `Done` (OQ #82,
+    R35-2: a Done step may not be excluded, 409 `STEP_DONE`). The other
+    halves of I34 compare progress fields across time and are the backend's
+    (P35-T05)."""
+
+    return tuple(
+        InvariantViolation(
+            invariant="I34",
+            description=(
+                f"project {p.project_id!r} step {s.step_id!r} is excluded but its stored stage "
+                "is Done (a Done step may never be excluded, R35-2)"
+            ),
+            project_id=p.project_id,
+            step_id=s.step_id,
+        )
+        for p, s in _excluded_steps(projects)
+        if s.status == STATUS_DONE
+    )
+
+
+def check_i33_step_exclusion(
+    projects: Iterable[LiveProjectRow],
+    schedule_input: ScheduleInput,
+    schedule_output: ScheduleOutput | None = None,
+) -> tuple[InvariantViolation, ...]:
+    """I33, the part checkable from live rows, the built run input and the
+    run (R35-1 / R35-9):
+
+    - every excluded live step has `eff = 0` (`live_step_effective_weeks`);
+    - in `schedule_input`, the project's `StepTimingInput` row for it carries
+      `lead_weeks = 0` (or no `lead_weeks` when the input table value is
+      already 0) and `duration_override_weeks = None`;
+    - in `schedule_output` (when given), every row for it is `skipped` with
+      `duration_weeks = 0`.
+
+    A project absent from the input (not in the run) is not checked against
+    it. "No surface derives a number from the flag alone" is a code-review
+    property, not checkable here."""
+
+    violations: list[InvariantViolation] = []
+    inputs = {p.project_id: p for p in schedule_input.projects}
+    table = {
+        (lt.workflow_id, lt.category, lt.step_id): lt.weeks for lt in schedule_input.lead_times
+    }
+    outcomes = (
+        {}
+        if schedule_output is None
+        else {o.project_id: o for o in schedule_output.project_outcomes}
+    )
+
+    def bad(p: LiveProjectRow, s: LiveStepRow, why: str) -> None:
+        violations.append(
+            InvariantViolation(
+                invariant="I33",
+                description=f"project {p.project_id!r} excluded step {s.step_id!r}: {why}",
+                project_id=p.project_id,
+                step_id=s.step_id,
+            )
+        )
+
+    for p, s in _excluded_steps(projects):
+        if live_step_effective_weeks(p, s) != 0:
+            bad(p, s, "eff is not 0")
+        pin = inputs.get(p.project_id)
+        if pin is None:
+            continue
+        rows = [r for r in pin.step_timing if r.step_id == s.step_id]
+        table_weeks = (
+            None if pin.category is None else table.get((pin.workflow_id, pin.category, s.step_id))
+        )
+        leads = sorted(r.lead_weeks for r in rows if r.lead_weeks is not None)
+        if leads:
+            if any(lead != 0 for lead in leads):
+                bad(p, s, f"the run input carries lead_weeks={leads}, not 0 (R35-9)")
+        elif table_weeks != 0:
+            bad(
+                p,
+                s,
+                f"the run input carries no lead_weeks and the table gives {table_weeks}, so "
+                "the step is not skipped (R35-9: lead_weeks = 0)",
+            )
+        overrides = sorted(
+            r.duration_override_weeks for r in rows if r.duration_override_weeks is not None
+        )
+        if overrides:
+            bad(
+                p, s, f"the run input carries duration_override_weeks={overrides}, not None (R35-9)"
+            )
+        outcome = outcomes.get(p.project_id)
+        if outcome is None:
+            continue
+        for row in outcome.steps:
+            if row.step_id == s.step_id and (not row.skipped or row.duration_weeks != 0):
+                bad(
+                    p,
+                    s,
+                    f"the run row has skipped={row.skipped}, duration_weeks="
+                    f"{row.duration_weeks} (must be skipped, 0)",
                 )
     return tuple(violations)

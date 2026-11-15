@@ -1,67 +1,45 @@
-"""Gantt drag: `PATCH /projects/{project_id}/steps/{step_id}/timing`
-(ADR 0019, docs/API_CONTRACT_P12.md §3; `overlap_weeks`: ADR 0043,
-docs/API_CONTRACT_P32.md A3).
+"""Retired: `PATCH /projects/{project_id}/steps/{step_id}/timing`
+(ADR 0048 §2; docs/API_CONTRACT_P33.md Part G, P33-T13).
 
-**RBAC**: the same checks as the Gantt freeze toggle
-(`api/routers/gantt.py::toggle_freeze`): `GANTT`/`WRITE` (Hub Planner, Admin,
-Super Admin; Portfolio Manager, Executive Viewer and Engineer get 403), and a
-hub-scoped project lookup, so a Hub Planner of another hub gets 404 and learns
-nothing about the project. Logic: `services.step_timing.apply_step_timing`.
+Per-project step timing editing (the Gantt drag, ADR 0019; the overlap
+gesture, ADR 0043) is retired: the category template is the one timing tool
+(ADR 0045/0046). For one release the route answers **410** with code
+`STEP_TIMING_RETIRED` to every authenticated caller, whatever the body; it
+writes nothing, reads no project (so it reveals nothing about one) and
+dispatches no run. Without a session it is still 401. P33-F01 removes it.
+It is not kept as an internal path: the template apply writes per-project
+copies through its own service.
 """
 
 from __future__ import annotations
 
-import uuid
+from typing import NoReturn
 
-from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
+from fastapi import APIRouter, Depends, status
 
-from api.db import get_db
-from api.deps import require_permission
+from api.deps import get_current_principal
+from api.errors import CodedHTTPException
 from core.principal import Principal
-from core.rbac import Action, Surface
-from models.project import Project
-from schemas.step_timing import StepTimingRequest, StepTimingResponse
-from services.hub_scope import hub_scope_filter
-from services.step_timing import apply_step_timing
+from schemas.step_timing import (
+    STEP_TIMING_RETIRED,
+    STEP_TIMING_RETIRED_MESSAGE,
+    StepTimingRetiredError,
+)
 
 router = APIRouter(tags=["gantt"])
 
-_write = require_permission(Surface.GANTT, Action.WRITE)
-
 
 @router.patch(
-    "/projects/{project_id}/steps/{step_id}/timing", response_model=StepTimingResponse
+    "/projects/{project_id}/steps/{step_id}/timing",
+    status_code=status.HTTP_410_GONE,
+    response_model=None,
+    responses={status.HTTP_410_GONE: {"model": StepTimingRetiredError}},
+    deprecated=True,
+    summary="Retired (ADR 0048): always 410 STEP_TIMING_RETIRED",
 )
 async def set_step_timing(
-    project_id: uuid.UUID,
+    project_id: str,
     step_id: str,
-    body: StepTimingRequest,
-    db: AsyncSession = Depends(get_db),
-    current_user: Principal = Depends(_write),
-) -> StepTimingResponse:
-    stmt = select(Project).where(Project.id == project_id)
-    hub_filter = hub_scope_filter(current_user, Project.hub_id)
-    if hub_filter is not None:
-        stmt = stmt.where(hub_filter)
-    project = (await db.execute(stmt)).scalar_one_or_none()
-    if project is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found")
-
-    changes = {name: getattr(body, name) for name in body.model_fields_set}
-    result = await apply_step_timing(db, project, step_id, changes, current_user)
-    return StepTimingResponse(
-        project_id=result.project_id,
-        step_id=result.step_id,
-        duration_override_weeks=result.duration_override_weeks,
-        start_not_before_week=result.start_not_before_week,
-        overlap_weeks=result.overlap_weeks,
-        effective_duration_weeks=result.effective_duration_weeks,
-        effort_weeks=result.effort_weeks,
-        lead_time_weeks=result.lead_time_weeks,
-        recalc_status=result.recalc_status,
-        schedule_run_id=result.schedule_run_id,
-        baseline_run_id=result.baseline_run_id,
-        task_id=result.task_id,
-    )
+    _principal: Principal = Depends(get_current_principal),
+) -> NoReturn:
+    raise CodedHTTPException(status.HTTP_410_GONE, STEP_TIMING_RETIRED, STEP_TIMING_RETIRED_MESSAGE)

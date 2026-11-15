@@ -36,8 +36,10 @@ from services.tracking import TrackingStatus, due_stages_for, status_from_due_st
 from services.workspace import (
     engineer_ftes_for_rows,
     health_badge,
+    row_calculated_weeks,
     row_effective_weeks,
     row_is_skipped,
+    row_own_effort_kinds,
 )
 
 CardHealth = Literal["on_track", "at_risk", "off_track", "left_out", "blocked"]
@@ -67,6 +69,12 @@ class ProjectCard:
     #: membership (ADR 0022 §2). Empty when the project is not in the run.
     run_step_ranges: tuple[tuple[int, int], ...]
     in_active_run: bool
+    #: P35 (D35-1): Σ of each step's effective duration of that kind as if the
+    #: project had no effort figure of its own (`row_calculated_weeks`): the
+    #: "calculated" design / lab time beside the figures. From the same live
+    #: rows as the progress weights, so no extra query.
+    design_weeks_calculated: int = 0
+    lab_weeks_calculated: int = 0
 
 
 async def build_project_cards(
@@ -150,18 +158,31 @@ async def build_project_cards(
 
         current: CurrentStage | None = None
         weighted: list[tuple[int, int]] = []
+        calculated = {WorkflowStepKind.DESIGN: 0, WorkflowStepKind.LAB: 0}
+        # ADR 0046 OR-1: the kinds that follow the project's own figure.
+        own_kinds = row_own_effort_kinds(live_rows, templates)
         for row in live_rows:
             template = templates.get(row.step_template_id)
             kind = template.kind if template is not None else WorkflowStepKind.DESIGN
             run_step = run_by_step.get(row.step_template_id)
             # Progress weights: the Workspace's exact formula (ruling 3).
-            # ADR 0041 R4/R5: weight = eff (`user ?? effort ?? lead`, 0 when
-            # skipped by the one predicate).
-            live_skipped = row_is_skipped(row, kind, project.certification_testing_required)
+            # ADR 0041 R4/R5 as revised by ADR 0046 §B: weight = eff (own
+            # effort share, else the project's copy; 0 when skipped by the one
+            # predicate).
+            own_effort = kind.value in own_kinds
+            live_skipped = row_is_skipped(
+                row, kind, project.certification_testing_required, own_effort=own_effort
+            )
+            if kind in calculated:
+                calculated[kind] += row_calculated_weeks(
+                    row, kind, project.certification_testing_required
+                )
             weighted.append(
                 (
                     row.percent_complete,
-                    row_effective_weeks(row, kind, project.certification_testing_required),
+                    row_effective_weeks(
+                        row, kind, project.certification_testing_required, own_effort=own_effort
+                    ),
                 )
             )
             skipped = (run_step.skipped if run_step is not None else False) or live_skipped
@@ -193,5 +214,7 @@ async def build_project_cards(
                 (s.start_week, s.end_week) for s in run_steps if not s.skipped
             ),
             in_active_run=outcome is not None,
+            design_weeks_calculated=calculated[WorkflowStepKind.DESIGN],
+            lab_weeks_calculated=calculated[WorkflowStepKind.LAB],
         )
     return cards

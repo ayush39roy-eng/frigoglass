@@ -12,7 +12,6 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { ReadOnlyNotice } from '@/components/session/write-gate';
 import { PriorityMoveProvider } from '@/components/shared/priority-move/priority-move-provider';
-import { StepTimingProvider } from './components/step-timing/step-timing-provider';
 import { ApiError } from '@/lib/api/client';
 import { useHubFilter } from '@/stores/hub-filter';
 import { HubFilterChip } from '@/components/shared/hub-filter/hub-filter-chip';
@@ -202,219 +201,215 @@ export default function GanttPage(): React.JSX.Element {
   // <PriorityMoveControl> uses it.
   return (
     <PriorityMoveProvider>
-      {/* P12 (ADR 0019): one step-timing flow (drag + "Edit timing" dialog)
-          for the page, so a virtualized row never cancels a followed run. */}
-      <StepTimingProvider>
-        <PageHeader
-          title={title}
-          description={description}
-          actions={
-            <>
-              <CountrySegmented />
-              <HubFilterChip />
-              <ZoomControl value={zoomPx} onChange={setZoomPx} />
-            </>
-          }
-        />
+      <PageHeader
+        title={title}
+        description={description}
+        actions={
+          <>
+            <CountrySegmented />
+            <HubFilterChip />
+            <ZoomControl value={zoomPx} onChange={setZoomPx} />
+          </>
+        }
+      />
 
-        {denied ? (
-          <AccessNotice kind={denied} />
-        ) : (
-          <div className="flex flex-col gap-4">
-            {ganttQuery.data && !hideStats ? (
-              <StatStrip
-                ariaLabel="Timeline summary"
-                segments={[
-                  { label: 'On the timeline', value: rows.length, accent: 'primary', hint: hubId !== null ? 'Selected hub' : region !== null ? region : 'All hubs' },
-                  // ADR 0024: a left-out project is not done by W52 either, so it is
-                  // counted inside spillover (server flags, counted — not recomputed).
-                  {
-                    label: 'Spilling past W52',
-                    value: rows.filter((r) => r.spillover || r.left_out).length,
-                    accent: 'warning',
-                    hint: `→ ${String(SPILLOVER_YEAR)} · ${String(rows.filter((r) => r.left_out).length)} not yet placed`,
-                  },
-                  { label: 'Frozen in place', value: rows.filter((r) => r.frozen).length, accent: 'neutral' },
-                ]}
+      {denied ? (
+        <AccessNotice kind={denied} />
+      ) : (
+        <div className="flex flex-col gap-4">
+          {ganttQuery.data && !hideStats ? (
+            <StatStrip
+              ariaLabel="Timeline summary"
+              segments={[
+                { label: 'On the timeline', value: rows.length, accent: 'primary', hint: hubId !== null ? 'Selected hub' : region !== null ? region : 'All hubs' },
+                // ADR 0024: a left-out project is not done by W52 either, so it is
+                // counted inside spillover (server flags, counted — not recomputed).
+                {
+                  label: 'Spilling past W52',
+                  value: rows.filter((r) => r.spillover || r.left_out).length,
+                  accent: 'warning',
+                  hint: `→ ${String(SPILLOVER_YEAR)} · ${String(rows.filter((r) => r.left_out).length)} not yet placed`,
+                },
+                { label: 'Frozen in place', value: rows.filter((r) => r.frozen).length, accent: 'neutral' },
+              ]}
+            />
+          ) : null}
+          {/* Owner ask 2026-11-13: the filters float. The card sticks to the top
+              of the surface region while the timeline scrolls under it (the
+              chart's own week axis is sticky inside its own scroller, so the
+              two never overlap). */}
+          <Card
+            ref={setFiltersEl}
+            className="sticky top-0 z-40 shadow-pop"
+            role="region"
+            aria-label="Timeline filters"
+            data-testid="gantt-filters-floating"
+          >
+            <CardContent className="flex flex-col gap-3 pt-s4">
+              <GanttFilterBar
+                filters={filters}
+                onChange={setFilters}
+                facets={canReadFacets && !facetsQuery.isError ? facetsQuery.data : undefined}
               />
-            ) : null}
-            {/* Owner ask 2026-11-13: the filters float. The card sticks to the top
-                of the surface region while the timeline scrolls under it (the
-                chart's own week axis is sticky inside its own scroller, so the
-                two never overlap). */}
-            <Card
-              ref={setFiltersEl}
-              className="sticky top-0 z-40 shadow-pop"
-              role="region"
-              aria-label="Timeline filters"
-              data-testid="gantt-filters-floating"
-            >
-              <CardContent className="flex flex-col gap-3 pt-s4">
-                <GanttFilterBar
-                  filters={filters}
-                  onChange={setFilters}
-                  facets={canReadFacets && !facetsQuery.isError ? facetsQuery.data : undefined}
+              <div className="flex flex-wrap items-end gap-4">
+                <PriorityTabs
+                  value={filters.priority}
+                  onChange={(priority) => setFilters((f) => ({ ...f, priority }))}
                 />
-                <div className="flex flex-wrap items-end gap-4">
-                  <PriorityTabs
-                    value={filters.priority}
-                    onChange={(priority) => setFilters((f) => ({ ...f, priority }))}
-                  />
-                  <ViewToggles
-                    forest={forest}
-                    onForestChange={setForest}
-                    hideStats={hideStats}
-                    onHideStatsChange={setHideStats}
-                  />
-                <div className="flex items-end gap-1">
-                  <Button variant="secondary" size="sm" onClick={expandAll} disabled={rows.length === 0}>
-                    <ChevronsUpDown />
-                    Expand all
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={collapseAll}
-                    disabled={expandedIds.size === 0}
-                  >
-                    <ChevronsDownUp />
-                    Collapse all
-                  </Button>
-                </div>
-                <DownloadButton
-                  path="/exports/gantt"
-                  filters={{
-                    hub_id: hubId ?? undefined,
-                    region: region ?? undefined,
-                    // P31: the export carries the category / type selection.
-                    category: selectionParam(filters.category),
-                    type: selectionParam(filters.type),
-                  }}
-                  fallbackFilename="gantt-export"
-                  className="ml-auto"
+                <ViewToggles
+                  forest={forest}
+                  onForestChange={setForest}
+                  hideStats={hideStats}
+                  onHideStatsChange={setHideStats}
                 />
-                </div>
-              </CardContent>
-            </Card>
-
-            <ReadOnlyNotice surface="gantt" what="Freezing projects" />
-            {writeForbidden ? <FreezeForbiddenNotice /> : null}
-            {recalcNeeded ? (
-              <div
-                role="status"
-                className="flex items-start gap-2 rounded-lg border border-warning/50 bg-warning-subtle px-3 py-2 text-2xs text-warning-subtle-fg"
-              >
-                <RefreshCw className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
-                <span>
-                  Freeze state saved — the schedule was not recalculated. A Hub Planner or Admin must
-                  run a schedule recalculation for this change to affect planned dates on this
-                  timeline.
-                </span>
+              <div className="flex items-end gap-1">
+                <Button variant="secondary" size="sm" onClick={expandAll} disabled={rows.length === 0}>
+                  <ChevronsUpDown />
+                  Expand all
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={collapseAll}
+                  disabled={expandedIds.size === 0}
+                >
+                  <ChevronsDownUp />
+                  Collapse all
+                </Button>
               </div>
-            ) : null}
+              <DownloadButton
+                path="/exports/gantt"
+                filters={{
+                  hub_id: hubId ?? undefined,
+                  region: region ?? undefined,
+                  // P31: the export carries the category / type selection.
+                  category: selectionParam(filters.category),
+                  type: selectionParam(filters.type),
+                }}
+                fallbackFilename="gantt-export"
+                className="ml-auto"
+              />
+              </div>
+            </CardContent>
+          </Card>
 
-            <SectionBoundary
-              query={ganttQuery}
-              title="Execution timeline"
-              errorDescription="The project execution timeline could not be loaded from the active schedule run."
+          <ReadOnlyNotice surface="gantt" what="Freezing projects" />
+          {writeForbidden ? <FreezeForbiddenNotice /> : null}
+          {recalcNeeded ? (
+            <div
+              role="status"
+              className="flex items-start gap-2 rounded-lg border border-warning/50 bg-warning-subtle px-3 py-2 text-2xs text-warning-subtle-fg"
             >
-              {(data) => (
-                <Card>
-                  <CardHeader>
-                    <CardTitle>Execution timeline</CardTitle>
-                    {data.has_active_schedule_run ? (
-                      <div className="flex flex-col gap-2">
-                        <ScheduleRunProvenance
-                          scheduleRunVersion={data.schedule_run_version}
-                          activeRun={activeRun.data ?? null}
-                          leadIn="Planned bars below are read directly from"
-                          affordanceLabel="How to read the bars"
-                        >
-                          <span className="space-y-1 text-left">
-                            <span className="block">
-                              <strong>Solid bar</strong> = planned schedule (from the run above).
-                            </span>
-                            <span className="block">
-                              <strong>Hatched bar</strong> = actual / delayed dates (live project
-                              data).
-                            </span>
-                            <span className="block">
-                              <strong>Red connector</strong> = delay magnitude. The timeline shows
-                              the plan year, week 1 to week {WITHIN_YEAR_WEEK}; work that runs past
-                              it is cut at the dashed year-end line and marked{' '}
-                              <strong>Spillover → {SPILLOVER_YEAR}</strong>. Whether a project
-                              completes within the year is the server&apos;s <code>spillover</code>{' '}
-                              / <code>left out</code> flag, shown as a badge — not computed here.
-                            </span>
-                            <span className="block">
-                              <strong>Expected completion</strong> (solid violet) is the project&apos;s
-                              target week, or the process-derived finish when no target is set;{' '}
-                              <strong>will be completed</strong> (dash-dot teal) is the active run&apos;s
-                              finish plus delay. Both weeks and the slip between them are stored on
-                              the run — never computed here (Invariant I16).
-                            </span>
-                            <span className="block">
-                              <strong>Editing timing</strong> (where your role allows): drag a step
-                              bar to set its earliest start, or its right edge to change its
-                              duration, or use the step&apos;s &ldquo;Edit timing&rdquo; button.
-                              The timeline then recalculates; precedence and capacity still apply.
-                            </span>
-                          </span>
-                        </ScheduleRunProvenance>
-                        <span className="flex items-center gap-1 text-2xs text-text-muted">
-                          <Info className="size-3" aria-hidden="true" />
-                          {formatInteger(data.rows.length)} of {formatInteger(data.total_count)}{' '}
-                          {data.total_count === 1 ? 'project' : 'projects'} shown
-                        </span>
-                      </div>
-                    ) : null}
-                  </CardHeader>
-                  <CardContent className="space-y-3">
-                    {!data.has_active_schedule_run ? (
-                      <EmptyState
-                        title="No schedule computed yet"
-                        description="No active schedule run exists. Once the schedule is calculated, each project's 14 workflow steps will appear here as planned bars — sourced directly from that run."
-                      />
-                    ) : data.rows.length === 0 ? (
-                      <EmptyState
-                        title={isFiltered ? 'No projects match these filters' : 'No projects in scope'}
-                        description={
-                          isFiltered
-                            ? 'Try clearing the toolbar filters or the hub filter in the header.'
-                            : 'There are no projects visible in your hub scope.'
-                        }
-                      />
-                    ) : (
-                      <>
-                        <GanttLegend />
-                        <GanttChart
-                          rows={data.rows}
-                          zoom={zoomPx}
-                          density={forest ? 'forest' : 'comfortable'}
-                          weeklyCounts={data.weekly_active_counts}
-                          showStats={!hideStats}
-                          expandedIds={expandedIds}
-                          onToggleExpand={handleToggleExpand}
-                          onFreezeClick={handleFreezeClick}
-                          canWrite={canWrite}
-                          {...(chartHeight !== undefined ? { maxHeight: chartHeight } : {})}
-                        />
-                      </>
-                    )}
-                  </CardContent>
-                </Card>
-              )}
-            </SectionBoundary>
-          </div>
-        )}
+              <RefreshCw className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
+              <span>
+                Freeze state saved — the schedule was not recalculated. A Hub Planner or Admin must
+                run a schedule recalculation for this change to affect planned dates on this
+                timeline.
+              </span>
+            </div>
+          ) : null}
 
-        <FreezeDialog
-          project={freezeProject}
-          open={freezeOpen}
-          onOpenChange={setFreezeOpen}
-          onSubmit={handleFreezeSubmit}
-        />
-      </StepTimingProvider>
+          <SectionBoundary
+            query={ganttQuery}
+            title="Execution timeline"
+            errorDescription="The project execution timeline could not be loaded from the active schedule run."
+          >
+            {(data) => (
+              <Card>
+                <CardHeader>
+                  <CardTitle>Execution timeline</CardTitle>
+                  {data.has_active_schedule_run ? (
+                    <div className="flex flex-col gap-2">
+                      <ScheduleRunProvenance
+                        scheduleRunVersion={data.schedule_run_version}
+                        activeRun={activeRun.data ?? null}
+                        leadIn="Planned bars below are read directly from"
+                        affordanceLabel="How to read the bars"
+                      >
+                        <span className="space-y-1 text-left">
+                          <span className="block">
+                            <strong>Solid bar</strong> = planned schedule (from the run above).
+                          </span>
+                          <span className="block">
+                            <strong>Hatched bar</strong> = actual / delayed dates (live project
+                            data).
+                          </span>
+                          <span className="block">
+                            <strong>Red connector</strong> = delay magnitude. The timeline shows
+                            the plan year, week 1 to week {WITHIN_YEAR_WEEK}; work that runs past
+                            it is cut at the dashed year-end line and marked{' '}
+                            <strong>Spillover → {SPILLOVER_YEAR}</strong>. Whether a project
+                            completes within the year is the server&apos;s <code>spillover</code>{' '}
+                            / <code>left out</code> flag, shown as a badge — not computed here.
+                          </span>
+                          <span className="block">
+                            <strong>Expected completion</strong> (solid violet) is the project&apos;s
+                            target week, or the process-derived finish when no target is set;{' '}
+                            <strong>will be completed</strong> (dash-dot teal) is the active run&apos;s
+                            finish plus delay. Both weeks and the slip between them are stored on
+                            the run — never computed here (Invariant I16).
+                          </span>
+                          <span className="block">
+                            <strong>Step timing</strong> is read-only here: it follows each
+                            project&apos;s category template (Workflow templates). A
+                            &ldquo;parallel N wk&rdquo; or &ldquo;wait N wk&rdquo; chip on a step
+                            is the template&apos;s gap before it.
+                          </span>
+                        </span>
+                      </ScheduleRunProvenance>
+                      <span className="flex items-center gap-1 text-2xs text-text-muted">
+                        <Info className="size-3" aria-hidden="true" />
+                        {formatInteger(data.rows.length)} of {formatInteger(data.total_count)}{' '}
+                        {data.total_count === 1 ? 'project' : 'projects'} shown
+                      </span>
+                    </div>
+                  ) : null}
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  {!data.has_active_schedule_run ? (
+                    <EmptyState
+                      title="No schedule computed yet"
+                      description="No active schedule run exists. Once the schedule is calculated, each project's 14 workflow steps will appear here as planned bars — sourced directly from that run."
+                    />
+                  ) : data.rows.length === 0 ? (
+                    <EmptyState
+                      title={isFiltered ? 'No projects match these filters' : 'No projects in scope'}
+                      description={
+                        isFiltered
+                          ? 'Try clearing the toolbar filters or the hub filter in the header.'
+                          : 'There are no projects visible in your hub scope.'
+                      }
+                    />
+                  ) : (
+                    <>
+                      <GanttLegend />
+                      <GanttChart
+                        rows={data.rows}
+                        zoom={zoomPx}
+                        density={forest ? 'forest' : 'comfortable'}
+                        weeklyCounts={data.weekly_active_counts}
+                        showStats={!hideStats}
+                        expandedIds={expandedIds}
+                        onToggleExpand={handleToggleExpand}
+                        onFreezeClick={handleFreezeClick}
+                        canWrite={canWrite}
+                        {...(chartHeight !== undefined ? { maxHeight: chartHeight } : {})}
+                      />
+                    </>
+                  )}
+                </CardContent>
+              </Card>
+            )}
+          </SectionBoundary>
+        </div>
+      )}
+
+      <FreezeDialog
+        project={freezeProject}
+        open={freezeOpen}
+        onOpenChange={setFreezeOpen}
+        onSubmit={handleFreezeSubmit}
+      />
     </PriorityMoveProvider>
   );
 }

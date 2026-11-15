@@ -465,8 +465,8 @@ State when added projects cannot finish this year whatever is added \
 status In Queue and priority P3 unless the user says otherwise. The planning year ends at \
 week {year_end}.
 
-Hubs the user may plan for: {hubs}. Lab regions: {regions}. Categories: A+, A, B, C for every hub \
-except OEM-HCK and OEM-Seitek, which use A-OEM, B-OEM, C-OEM.
+Hubs the user may plan for: {hubs}. Lab regions: {regions}. Categories: {pdd_categories} for every \
+hub except {oem_hubs}, which use {oem_categories}.
 """
 
 
@@ -551,12 +551,29 @@ async def _execute(
     return view
 
 
+def _category_list(ctx: WhatIfContext, workflow_id: str) -> str:
+    """P33-T11 (ADR 0047): the workflow's categories in rank order, from the
+    baseline's `ScheduleInput.categories` (the `categories` table, so an
+    added category is named too). Codes are restricted to
+    `[A-Za-z0-9+\\- ]{1,16}` by the table's CHECK, so nothing else can reach
+    the prompt through them."""
+
+    cats = sorted(
+        (c for c in ctx.baseline.schedule.categories if c.workflow_id == workflow_id),
+        key=lambda c: (c.rank, c.code),
+    )
+    return ", ".join(c.code for c in cats) or "none"
+
+
 def _system_prompt(ctx: WhatIfContext) -> str:
     return SYSTEM_PROMPT_TEMPLATE.format(
         sentinel=OUT_OF_SCOPE_SENTINEL,
         year_end=dc.WITHIN_YEAR_WEEK,
         hubs=", ".join(sorted(ctx.scope.hubs)) or "none",
         regions=", ".join(sorted(ctx.scope.lab_regions)) or "none",
+        pdd_categories=_category_list(ctx, dc.WORKFLOW_ID_FOR_NON_OEM_HUB),
+        oem_hubs=" and ".join(sorted(dc.OEM_HUBS)),
+        oem_categories=_category_list(ctx, dc.WORKFLOW_ID_FOR_OEM_HUB),
     )
 
 

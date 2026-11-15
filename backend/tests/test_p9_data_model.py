@@ -56,7 +56,8 @@ from tests.test_domain_constants_lead_times import DOMAIN_RULES_LEAD_TIMES
 
 async def _reload_lead_times(db_session: AsyncSession) -> dict[tuple[str, str, str], int]:
     rows = (await db_session.execute(select(WorkflowLeadTime))).scalars().all()
-    return {(r.workflow_id, r.category.value, r.step_id): r.weeks for r in rows}
+    # P33-T07: `category` is a text code (FK to `categories`), not an enum.
+    return {(r.workflow_id, r.category, r.step_id): r.weeks for r in rows}
 
 
 def _domain_rules_literal() -> dict[tuple[str, str, str], int]:
@@ -241,7 +242,8 @@ async def test_trigger_accepts_matching_categories_and_null_for_drafts(
     )
     p = await make_project(db_session, oem_hub, category=ProjectCategory.C_OEM)
     draft = await make_project(db_session, oem_hub, category=None, status=ProjectStatus.DRAFT)
-    assert p.category is ProjectCategory.C_OEM and draft.category is None
+    # P33-T07: a text code now, not an enum member.
+    assert p.category == "C-OEM" and draft.category is None
     # ... and the UPDATE path fires too.
     p.category = ProjectCategory.A
     with pytest.raises(IntegrityError):

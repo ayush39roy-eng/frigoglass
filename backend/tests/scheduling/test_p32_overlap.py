@@ -229,10 +229,10 @@ def test_elapsed_overlap_ending_before_its_predecessor_successor_waits_for_both(
 def test_design_on_design_overlap_is_serialised_by_the_leader() -> None:
     _, by_id = _run(_si(DESIGN_ON_DESIGN))
     assert _weeks(by_id["p"]) == BASELINE
-    # Unlimited resources still serialise nothing but the leader is the same
-    # engineer, so the unconstrained walk *does* overlap (gate 32 -> E 32-35,
-    # H 36-41, ... N 47): unconstrained <= constrained.
-    assert by_id["p"].unconstrained_end_week == 47
+    # R33-6 (P33-T05 re-bless): the unconstrained walk applies the one-leader
+    # rule too. E's gate is 32, but the leader is busy with D in W32, so E runs
+    # 33-36 and N ends 48: unconstrained == constrained.
+    assert by_id["p"].unconstrained_end_week == 48
     assert by_id["p"].end_week == 48
 
 
@@ -377,7 +377,11 @@ def test_canonical_form_omits_zero_overlap() -> None:
         "start_not_before_week": None,
     }
     # Same keys as the pre-P32 asdict of a row (without the new field).
-    pre = {k: v for k, v in dataclasses.asdict(row).items() if k != "overlap_weeks"}
+    pre = {
+        k: v
+        for k, v in dataclasses.asdict(row).items()
+        if k not in ("overlap_weeks", "wait_weeks", "lead_weeks")
+    }
     assert canonical_step_timing_dict(row) == pre
     assert canonical_step_timing_dict(_t("PDD-H", overlap=2))["overlap_weeks"] == 2
     # An overlap-only row is kept; an all-empty row is dropped.
@@ -387,7 +391,11 @@ def test_canonical_form_omits_zero_overlap() -> None:
 def test_default_overlap_is_zero() -> None:
     row = StepTimingInput("PDD-H", None, None)
     assert row.overlap_weeks == 0
-    assert [f.name for f in dataclasses.fields(StepTimingInput)][-1] == "overlap_weeks"
+    assert tuple(f.name for f in dataclasses.fields(StepTimingInput))[-3:] == (
+        "overlap_weeks",
+        "wait_weeks",
+        "lead_weeks",
+    )
 
 
 # --- CP-SAT agreement ------------------------------------------------------------

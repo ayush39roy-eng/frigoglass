@@ -8,7 +8,8 @@ import uuid
 
 from pydantic import BaseModel
 
-from models.enums import HubName, ProjectCategory, ProjectPriority, ProjectStatus
+from models.enums import HubName, ProjectPriority, ProjectStatus
+from schemas.category import CategoryCodeOut
 from services.project_cards import CardHealth
 from services.tracking import TrackingStatus
 
@@ -21,7 +22,7 @@ class PriorityBoardCard(BaseModel):
     external_code: str | None
     hub_id: uuid.UUID
     hub: HubName
-    category: ProjectCategory | None
+    category: CategoryCodeOut | None
     status: ProjectStatus
     #: `PriorityScore.weighted_score`, as the Matrix serves it.
     score: float | None
@@ -42,6 +43,13 @@ class PriorityBoardCard(BaseModel):
     #: True ⇒ pinned to P1 (hard gates), not draggable out of it.
     hard_gated: bool
     is_vip: bool
+    #: P36 (ADR 0050, API_CONTRACT_P36 §1): the position in the FULL band
+    #: (dense 1..n), never renumbered by a board filter. Null only for a
+    #: project that is not a band member.
+    band_rank: int | None
+    #: P36 (R36-2): frozen projects schedule first whatever their position
+    #: (dates locked), badged like VIP.
+    frozen: bool
     projected_end_week: int | None
     within_year: bool | None
     health: CardHealth | None

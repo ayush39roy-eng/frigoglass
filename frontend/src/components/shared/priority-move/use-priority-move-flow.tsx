@@ -4,11 +4,17 @@ import { useQuery, useQueryClient, type QueryClient } from '@tanstack/react-quer
 import { ApiError } from '@/lib/api/client';
 import { apiErrorMessage } from '@/lib/api/error-messages';
 import {
+  BOTH_ANCHORS,
   fetchScheduleRunChanges,
   HARD_GATE_FORCES_P1,
+  moveProjectBandRank,
   moveProjectPriority,
+  NOT_RANKABLE,
+  NOT_SAME_BAND,
   PREVIEW_STALE,
+  previewProjectBandRank,
   previewProjectPriority,
+  type BandRankPlacement,
   type PriorityMoveResponse,
   type PriorityPreviewResponse,
   type RecalcStatus,
@@ -18,7 +24,7 @@ import { invalidateRunDerivedQueries, useScheduleRunFollow } from '@/lib/use-sch
 import { useFollowUpRunWatcher } from '@/lib/use-follow-up-run';
 import type { ProjectPriority } from '@/types/enums';
 
-import { MOVE_COPY, notNeededCopy } from './move-copy';
+import { MOVE_COPY, notNeededCopy, RANK_COPY } from './move-copy';
 import { MoveFlowPanel } from './move-flow-panel';
 import { PriorityPreviewDialog } from './priority-preview-dialog';
 import type {
@@ -26,6 +32,7 @@ import type {
   PriorityMoveOutcome,
   PriorityMoveRequestOptions,
   PriorityMoveTarget,
+  RankMoveRequestOptions,
 } from './priority-move-context';
 
 /**
@@ -49,13 +56,25 @@ import type {
  *     unchanged  → nothing
  *     409 HARD_GATE_FORCES_P1 → the hard-gate copy
  *
+ * P36 (ADR 0050): `requestRankMove` runs the same flow for a move inside the
+ * band (`POST …/band-rank/preview`, then `POST …/band-rank` with the token);
+ * every state then carries `rank` (the placement and its display position).
+ *
  * The server decides every branch. The browser only shows what it was told.
  * The state lives with the page, not with the control, so a virtualized Gantt
  * row scrolling out of view never cancels a run being followed.
  */
 
+/** P36: a move inside the band. `position` etc. are display copy only. */
+export interface RankMoveSpec {
+  placement: BandRankPlacement;
+  position: number | null;
+  fromPosition: number | null;
+}
+
 interface RunMoveFields {
   target: PriorityMoveTarget;
+  rank: RankMoveSpec | null;
   before: ProjectPriority | null;
   after: ProjectPriority | null;
   runId: string;
@@ -65,17 +84,19 @@ interface RunMoveFields {
 export type MoveFlowState =
   | { kind: 'idle' }
   // P14 (ADR 0026): the modal preview dialog.
-  | { kind: 'previewing'; target: PriorityMoveTarget; next: ProjectPriority; refreshed: boolean }
+  // P36: `rank` set = a move inside the band `next` (= the current priority).
+  | { kind: 'previewing'; target: PriorityMoveTarget; next: ProjectPriority; rank: RankMoveSpec | null; refreshed: boolean }
   | {
       kind: 'preview' | 'applying';
       target: PriorityMoveTarget;
       next: ProjectPriority;
+      rank: RankMoveSpec | null;
       preview: PriorityPreviewResponse;
       /** This preview replaced one that went stale before Yes (PREVIEW_STALE). */
       refreshed: boolean;
     }
-  | { kind: 'applied'; target: PriorityMoveTarget; next: ProjectPriority; result: PriorityMoveResponse }
-  | { kind: 'previewError'; target: PriorityMoveTarget; next: ProjectPriority; body: string }
+  | { kind: 'applied'; target: PriorityMoveTarget; next: ProjectPriority; rank: RankMoveSpec | null; result: PriorityMoveResponse }
+  | { kind: 'previewError'; target: PriorityMoveTarget; next: ProjectPriority; rank: RankMoveSpec | null; body: string }
   | ({ kind: 'running' } & RunMoveFields)
   | ({ kind: 'updated' } & RunMoveFields)
   | { kind: 'notice'; target: PriorityMoveTarget; tone: 'success' | 'warning' | 'danger'; title: string; body: string };
@@ -92,6 +113,14 @@ function invalidatePriorityWrite(queryClient: QueryClient): void {
   for (const key of [['projects'], ['gantt'], ['dashboard'], ['priority-matrix'], ['priority-board'], ['vip-board']]) {
     void queryClient.invalidateQueries({ queryKey: key });
   }
+}
+
+/** P36: honest copy for the re-rank refusals (contract §2); null for any other error. */
+function rankErrorCopy(err: unknown): string | null {
+  if (!(err instanceof ApiError)) return null;
+  if (err.code === NOT_RANKABLE) return RANK_COPY.notRankable;
+  if (err.code === NOT_SAME_BAND || err.code === BOTH_ANCHORS) return RANK_COPY.notSameBand;
+  return null;
 }
 
 /** A request is in flight (preview, confirm) or a queued run is being followed. */
@@ -112,7 +141,10 @@ export function usePriorityMoveFlow(): { api: PriorityMoveApi; element: React.JS
       signal: RecalcSignal,
       before: ProjectPriority | null,
       after: ProjectPriority | null,
+      rank: RankMoveSpec | null = null,
     ): Promise<void> => {
+      const copy = rank ? RANK_COPY : MOVE_COPY;
+      const saved = rank ? 'Position saved' : 'Priority saved';
       if (signal.recalc_status === 'unchanged' || signal.recalc_status === 'applied') {
         // `applied` is handled by `confirm` (it carries the change list); a
         // PATCH never reports it.
@@ -121,35 +153,35 @@ export function usePriorityMoveFlow(): { api: PriorityMoveApi; element: React.JS
       }
       if (signal.recalc_status === 'dispatch_failed') {
         invalidatePriorityWrite(queryClient);
-        setFlow({ kind: 'notice', target, tone: 'danger', title: 'Priority saved — timeline not recalculated', body: MOVE_COPY.dispatchFailed });
+        setFlow({ kind: 'notice', target, tone: 'danger', title: `${saved} — timeline not recalculated`, body: copy.dispatchFailed });
         return;
       }
       if (signal.recalc_status === 'deferred') {
         invalidatePriorityWrite(queryClient);
-        setFlow({ kind: 'notice', target, tone: 'success', title: 'Priority saved', body: MOVE_COPY.deferred });
+        setFlow({ kind: 'notice', target, tone: 'success', title: saved, body: MOVE_COPY.deferred });
         // ADR 0023: the server runs one follow-up after the current run; refresh when it lands.
         followUp.start();
         return;
       }
       if (signal.recalc_status === 'not_needed') {
         invalidatePriorityWrite(queryClient);
-        setFlow({ kind: 'notice', target, tone: 'success', title: 'Priority saved', body: notNeededCopy(target.status) });
+        setFlow({ kind: 'notice', target, tone: 'success', title: saved, body: notNeededCopy(target.status) });
         return;
       }
       const runId = signal.schedule_run_id;
       if (!runId) {
         invalidatePriorityWrite(queryClient);
-        setFlow({ kind: 'notice', target, tone: 'warning', title: 'Priority saved', body: MOVE_COPY.queuedWithoutRun });
+        setFlow({ kind: 'notice', target, tone: 'warning', title: saved, body: MOVE_COPY.queuedWithoutRun });
         return;
       }
       const baselineRunId = signal.baseline_run_id;
-      setFlow({ kind: 'running', target, before, after, runId, baselineRunId });
+      setFlow({ kind: 'running', target, rank, before, after, runId, baselineRunId });
       const abort = begin('Queuing the solver…');
       const result = await follow(runId, abort, { completedMessage: 'Timeline recalculated.' });
       if (result.outcome === 'aborted') return;
       if (result.outcome === 'completed') {
         invalidateRunDerivedQueries(queryClient);
-        setFlow({ kind: 'updated', target, before, after, runId, baselineRunId });
+        setFlow({ kind: 'updated', target, rank, before, after, runId, baselineRunId });
         return;
       }
       // SSE or run failure: say so. The project stays schedule_stale, so the
@@ -159,8 +191,8 @@ export function usePriorityMoveFlow(): { api: PriorityMoveApi; element: React.JS
         kind: 'notice',
         target,
         tone: 'danger',
-        title: 'Priority saved — timeline not recalculated',
-        body: `${result.message ?? 'The recalculation did not complete.'} ${MOVE_COPY.staleAfterFailure}`,
+        title: `${saved} — timeline not recalculated`,
+        body: `${result.message ?? 'The recalculation did not complete.'} ${copy.staleAfterFailure}`,
       });
     },
     [begin, follow, followUp, queryClient],
@@ -185,20 +217,22 @@ export function usePriorityMoveFlow(): { api: PriorityMoveApi; element: React.JS
   React.useEffect(() => () => previewAbortRef.current?.abort(), []);
 
   const runPreview = React.useCallback(
-    async (target: PriorityMoveTarget, next: ProjectPriority, refreshed: boolean): Promise<void> => {
+    async (target: PriorityMoveTarget, next: ProjectPriority, rank: RankMoveSpec | null, refreshed: boolean): Promise<void> => {
       previewAbortRef.current?.abort();
       const controller = new AbortController();
       previewAbortRef.current = controller;
-      setFlow({ kind: 'previewing', target, next, refreshed });
+      setFlow({ kind: 'previewing', target, next, rank, refreshed });
       try {
-        const preview = await previewProjectPriority(target.projectId, next, { signal: controller.signal });
+        const preview = rank
+          ? await previewProjectBandRank(target.projectId, rank.placement, { signal: controller.signal })
+          : await previewProjectPriority(target.projectId, next, { signal: controller.signal });
         if (controller.signal.aborted) return;
         if (preview.result === 'unchanged') {
           settle('cancelled');
           setFlow({ kind: 'idle' });
           return;
         }
-        setFlow({ kind: 'preview', target, next, preview, refreshed });
+        setFlow({ kind: 'preview', target, next, rank, preview, refreshed });
       } catch (err) {
         if (controller.signal.aborted || (err instanceof DOMException && err.name === 'AbortError')) return;
         settle('rejected');
@@ -208,8 +242,8 @@ export function usePriorityMoveFlow(): { api: PriorityMoveApi; element: React.JS
             ? MOVE_COPY.hardGate
             : err instanceof ApiError && err.status === 429
               ? MOVE_COPY.previewRateLimited
-              : apiErrorMessage(err, MOVE_COPY.previewFailed);
-        setFlow({ kind: 'previewError', target, next, body });
+              : (rankErrorCopy(err) ?? apiErrorMessage(err, MOVE_COPY.previewFailed));
+        setFlow({ kind: 'previewError', target, next, rank, body });
       }
     },
     [settle],
@@ -223,7 +257,26 @@ export function usePriorityMoveFlow(): { api: PriorityMoveApi; element: React.JS
       }
       settle('cancelled'); // an earlier, unconfirmed request is superseded
       settleRef.current = options?.onSettled ?? null;
-      void runPreview(target, next, false);
+      void runPreview(target, next, null, false);
+    },
+    [runPreview, settle],
+  );
+
+  const requestRankMove = React.useCallback(
+    (target: PriorityMoveTarget, placement: BandRankPlacement, options?: RankMoveRequestOptions) => {
+      const band = target.priority;
+      if (band === null || busyRef.current) {
+        options?.onSettled?.('cancelled');
+        return;
+      }
+      settle('cancelled'); // an earlier, unconfirmed request is superseded
+      settleRef.current = options?.onSettled ?? null;
+      const rank: RankMoveSpec = {
+        placement: { before_project_id: placement.before_project_id, after_project_id: placement.after_project_id },
+        position: options?.position ?? null,
+        fromPosition: options?.fromPosition ?? null,
+      };
+      void runPreview(target, band, rank, false);
     },
     [runPreview, settle],
   );
@@ -231,31 +284,35 @@ export function usePriorityMoveFlow(): { api: PriorityMoveApi; element: React.JS
   /** "Yes, apply": confirm the previewed move with its token (ADR 0026 §2). */
   const confirm = React.useCallback(async () => {
     if (flow.kind !== 'preview') return;
-    const { target, next, preview, refreshed } = flow;
-    setFlow({ kind: 'applying', target, next, preview, refreshed });
+    const { target, next, rank, preview, refreshed } = flow;
+    setFlow({ kind: 'applying', target, next, rank, preview, refreshed });
     try {
-      const res = await moveProjectPriority(target.projectId, next, preview.preview_token);
+      const res = rank
+        ? await moveProjectBandRank(target.projectId, rank.placement, preview.preview_token ?? '')
+        : await moveProjectPriority(target.projectId, next, preview.preview_token);
       settle('accepted');
       if (res.recalc_status === 'applied') {
         // The new run is already active: every view reading it refetches.
         invalidateRunDerivedQueries(queryClient);
-        setFlow({ kind: 'applied', target, next, result: res });
+        if (rank) invalidatePriorityWrite(queryClient); // the board order changed
+        setFlow({ kind: 'applied', target, next, rank, result: res });
         return;
       }
-      await handleSignal(target, res, res.priority_before, res.priority_after);
+      await handleSignal(target, res, res.priority_before, res.priority_after, rank);
     } catch (err) {
       if (err instanceof ApiError && err.code === PREVIEW_STALE && !refreshed) {
         // Something changed since the preview; nothing was written. Show the
         // fresh preview once — the user decides again on what will happen now.
-        await runPreview(target, next, true);
+        await runPreview(target, next, rank, true);
         return;
       }
       settle('rejected');
       const body =
         err instanceof ApiError && err.code === HARD_GATE_FORCES_P1
           ? MOVE_COPY.hardGate
-          : apiErrorMessage(err, 'The priority could not be changed.');
-      setFlow({ kind: 'previewError', target, next, body });
+          : (rankErrorCopy(err) ??
+            apiErrorMessage(err, rank ? 'The position could not be changed.' : 'The priority could not be changed.'));
+      setFlow({ kind: 'previewError', target, next, rank, body });
     }
   }, [flow, handleSignal, queryClient, runPreview, settle]);
 
@@ -293,7 +350,10 @@ export function usePriorityMoveFlow(): { api: PriorityMoveApi; element: React.JS
   });
 
   const busy = isBusy(flow.kind);
-  const api = React.useMemo<PriorityMoveApi>(() => ({ requestMove, followPatch, busy }), [requestMove, followPatch, busy]);
+  const api = React.useMemo<PriorityMoveApi>(
+    () => ({ requestMove, requestRankMove, followPatch, busy }),
+    [requestMove, requestRankMove, followPatch, busy],
+  );
 
   const element = (
     <>

@@ -125,9 +125,17 @@ async def test_get_settings_shape_and_derived_figures(db_session):
         "predecessor_ids": [],
     }
     assert len(body["lead_times"]) == 98
+    # P33-T09 (contract C1): each row carries its signed gap and the
+    # read-only R2 weight; `categories` lists the B1 objects with versions.
     assert body["lead_times"][0] == {
         "workflow_id": "OEM", "category": "A-OEM", "step_id": "OEM-A", "weeks": 1,
+        "gap_weeks": 0, "effort_weight_weeks": 1,
     }
+    assert [(c["code"], c["workflow_id"], c["rank"], c["template_version"])
+            for c in body["categories"]] == [
+        ("A+", "PDD", 1, 1), ("A", "PDD", 2, 1), ("B", "PDD", 3, 1), ("C", "PDD", 4, 1),
+        ("A-OEM", "OEM", 5, 1), ("B-OEM", "OEM", 6, 1), ("C-OEM", "OEM", 7, 1),
+    ]
     cal = next(c for c in body["hub_calendars"] if c["hub_id"] == str(hub.id))
     # 52 − 47/6 = 44.1667 (ADR 0008: every deduction divides by the hub's own weekdays).
     assert cal["working_weeks_per_engineer"] == 44.17
@@ -161,7 +169,8 @@ async def test_settings_rbac(db_session, role, read, write):
             json={"lead_times": [{"workflow_id": "PDD", "category": "A", "step_id": "PDD-B",
                                   "weeks": 4}]},
         )
-        assert lt.status_code == write
+        # P33-T10: retired for everyone (contract Part G).
+        assert lt.status_code == 410
 
 
 async def test_hub_planner_cannot_read_settings(db_session):
@@ -259,32 +268,22 @@ async def test_steps_put_parallel_pair_marks_stale_and_audits(db_session):
     assert live.id is not None
 
 
-async def test_lead_times_put_recomputes_live_durations(db_session):
+async def test_lead_times_put_is_retired_with_410(db_session):
+    """P33-T10 (ADR 0045 §5, contract Part G): `PUT /workflow-settings/
+    lead-times` answers 410 `USE_TEMPLATE_APPLY` whatever the body, changes
+    nothing and writes no audit row; the template is edited through the
+    apply. Still authenticated (401 without a session)."""
+
     await _act_as(db_session, RoleName.SUPER_ADMIN)
     hub = await make_hub(db_session)
     project = await make_project(db_session, hub)  # PDD / category A
     await sync_project_steps(db_session, project, False)
+    row = {"workflow_id": "PDD", "category": "A", "step_id": "PDD-E", "weeks": 9}
     async with _client(db_session) as client:
-        resp = await client.put(
-            "/workflow-settings/lead-times",
-            json={"lead_times": [
-                {"workflow_id": "PDD", "category": "A", "step_id": "PDD-E", "weeks": 9},
-                {"workflow_id": "PDD", "category": "A", "step_id": "PDD-B", "weeks": 0},
-            ]},
-        )
-    assert resp.status_code == 200, resp.text
-    assert resp.headers["X-Schedule-Stale-Count"] == "1"
-    rows = {
-        r.step_template_id: r.duration_weeks
-        for r in (
-            await db_session.execute(
-                select(ProjectWorkflowStep)
-                .where(ProjectWorkflowStep.project_id == project.id)
-                .execution_options(populate_existing=True)
-            )
-        ).scalars()
-    }
-    assert rows["PDD-E"] == 9 and rows["PDD-B"] == 0 and rows["PDD-A"] == 1
+        for body in ({"lead_times": [row]}, {"lead_times": [row, row]}, {"nonsense": 1}, None):
+            resp = await client.put("/workflow-settings/lead-times", json=body)
+            assert resp.status_code == 410, resp.text
+            assert resp.json()["code"] == "USE_TEMPLATE_APPLY"
     lt = (
         await db_session.execute(
             select(WorkflowLeadTime.weeks).where(
@@ -294,36 +293,30 @@ async def test_lead_times_put_recomputes_live_durations(db_session):
             )
         )
     ).scalar_one()
-    assert lt == 9
-
-
-@pytest.mark.parametrize(
-    "row,code",
-    [
-        ({"workflow_id": "PDD", "category": "A", "step_id": "OEM-E", "weeks": 1}, "BAD_LEAD_TIME"),
-        ({"workflow_id": "PDD", "category": "A-OEM", "step_id": "PDD-E", "weeks": 1},
-         "BAD_LEAD_TIME"),
-        ({"workflow_id": "OEM", "category": "A", "step_id": "OEM-E", "weeks": 1}, "BAD_LEAD_TIME"),
-    ],
-)
-async def test_lead_times_put_rejects_mismatched_rows(db_session, row, code):
-    await _act_as(db_session, RoleName.SUPER_ADMIN)
-    async with _client(db_session) as client:
-        resp = await client.put("/workflow-settings/lead-times", json={"lead_times": [row]})
-    assert resp.status_code == 422
-    assert resp.json()["code"] == code
-
-
-async def test_lead_times_put_rejects_duplicates_and_negative(db_session):
-    await _act_as(db_session, RoleName.SUPER_ADMIN)
-    row = {"workflow_id": "PDD", "category": "A", "step_id": "PDD-E", "weeks": 1}
-    async with _client(db_session) as client:
-        dup = await client.put("/workflow-settings/lead-times", json={"lead_times": [row, row]})
-        neg = await client.put(
-            "/workflow-settings/lead-times", json={"lead_times": [{**row, "weeks": -1}]}
+    assert lt == 6
+    rows = {
+        r.step_template_id: (r.duration_weeks, r.plan_weeks)
+        for r in (
+            await db_session.execute(
+                select(ProjectWorkflowStep)
+                .where(ProjectWorkflowStep.project_id == project.id)
+                .execution_options(populate_existing=True)
+            )
+        ).scalars()
+    }
+    assert rows["PDD-E"] == (6, 6)
+    audits = (
+        await db_session.execute(
+            select(AuditLogEntry).where(
+                AuditLogEntry.action == "workflow_settings.lead_times_update"
+            )
         )
-    assert dup.status_code == 422 and dup.json()["code"] == "DUPLICATE_LEAD_TIME"
-    assert neg.status_code == 422
+    ).scalars().all()
+    assert audits == []
+    clear_current_principal_override()
+    async with _client(db_session) as client:
+        anon = await client.put("/workflow-settings/lead-times", json={"lead_times": [row]})
+    assert anon.status_code == 401
 
 
 async def test_hub_calendar_put(db_session):

@@ -37,6 +37,21 @@ t_i > 0 (T = Σ t_i):
 A step of S that receives 0 is skipped by the scheduler (ADR 0041 R5:
 skipped ⟺ effective = 0). Steps outside S (lead 0) carry no derived effort.
 
+**Per-project step exclusion** (ADR 0049 as ruled, R35-3, P35-T04). The split
+runs over `S′` = the steps of the kind with lead (weight) > 0 **and not
+excluded** (`EffortStepInput.excluded`); `T = Σ` weights over S′. R2
+apportions E over S′, and R3 raises only started steps of S′. An excluded
+step is not in S′: it gets no share, is never raised (an excluded In
+Progress step included: R3 yields to an explicit exclusion) and carries
+`effort_weeks = None`. Excluding a step therefore moves its share to the
+remaining steps of S′, and may revive a step that the full split zeroed
+(PDD/B design 4, A excluded → D 1, E 2, K 1). With S′ empty because every
+weighted step of the kind is excluded, the split is not applied
+(`NOT_APPLIED_ALL_EXCLUDED`, R7's T = 0 over S′); the backend refuses that
+state before it is stored (R35-5, 409 `EFFORT_NEEDS_A_STEP`). The scheduler
+never sees the flag: the run-input builder expresses an exclusion as
+`lead_weeks = 0` (R35-9).
+
 Worked examples (DOMAIN_RULES lead-time table): PDD/B design, x = 4 →
 A 1, E 2, K 1 (D, J and M skipped); PDD/C design, x = 3 → A 1, D 1, E 1
 (J and K skipped); PDD/B lab, x = 10 → H 10; PDD/A+ lab, x = 4 → F 2, H 2;
@@ -58,6 +73,10 @@ EFFORT_STEP_MAX_WEEKS = 104
 NOT_APPLIED_NO_FIGURE = "no_figure"  # blank, or 0 (a typed 0 is a blank)
 NOT_APPLIED_NO_NONZERO_STEP = "no_nonzero_step"  # R7: T = 0
 NOT_APPLIED_CERTIFICATION_OFF = "certification_off"  # R7: lab, cert testing off
+#: R35-3 / R35-5: the kind has a step with weight > 0, but every such step is
+#: excluded (S′ empty, T = 0 over S′). The backend must refuse to store this
+#: state while the figure is in force (409 `EFFORT_NEEDS_A_STEP`).
+NOT_APPLIED_ALL_EXCLUDED = "all_steps_excluded"
 
 EFFORT_KINDS: tuple[str, ...] = ("design", "lab")
 
@@ -92,6 +111,11 @@ class EffortStepInput:
       [step]` in force (never the override, never the effort column).
     - `started`: the stored stage status is not `Not Started` (In Progress,
       Blocked or Done) — R3.
+    - `excluded`: the step is switched off for this project
+      (`project_workflow_steps.excluded`, ADR 0049 / R35-3). An excluded step
+      is outside S′: no share, no R3 raise, `effort_weeks = None`. The name
+      is safe here: this object carries no outcome fields (the R35-12 naming
+      note concerns wire payloads next to `ProjectScheduleOutcome.excluded`).
     """
 
     step_id: str
@@ -99,14 +123,15 @@ class EffortStepInput:
     kind: str
     lead_weeks: int
     started: bool = False
+    excluded: bool = False
 
 
 @dataclass(frozen=True)
 class EffortSplit:
     """The split of one figure over one kind's steps.
 
-    `step_weeks` lists `(step_id, weeks)` for every step of S (lead > 0) in
-    `(sequence_order, step_id)` order — 0 is a value (the step is skipped);
+    `step_weeks` lists `(step_id, weeks)` for every step of S′ (lead > 0, not
+    excluded) in `(sequence_order, step_id)` order — 0 is a value (the step is skipped);
     it is empty when the split is not applied. Steps not listed carry no
     derived effort (`effort_weeks` NULL)."""
 
@@ -193,6 +218,8 @@ def _validate_steps(steps: Iterable[EffortStepInput]) -> tuple[EffortStepInput, 
         seen.add(s.step_id)
         if s.lead_weeks < 0:
             raise ValueError(f"step {s.step_id!r} has a negative lead time {s.lead_weeks}")
+        if not isinstance(s.excluded, bool):
+            raise ValueError(f"step {s.step_id!r}: excluded must be a bool, not {s.excluded!r}")
     return ordered
 
 
@@ -231,10 +258,14 @@ def apportion_effort(
         return not_applied(NOT_APPLIED_NO_FIGURE)
     if kind == "lab" and not certification_testing_required:
         return not_applied(NOT_APPLIED_CERTIFICATION_OFF)
-    members = [s for s in ordered if s.kind == kind and s.lead_weeks > 0]
-    total_lead = sum(s.lead_weeks for s in members)
-    if total_lead == 0:
+    weighted = [s for s in ordered if s.kind == kind and s.lead_weeks > 0]
+    if not weighted:
         return not_applied(NOT_APPLIED_NO_NONZERO_STEP)
+    # R35-3: S′ = the weighted steps of the kind that are not excluded.
+    members = [s for s in weighted if not s.excluded]
+    if not members:
+        return not_applied(NOT_APPLIED_ALL_EXCLUDED)
+    total_lead = sum(s.lead_weeks for s in members)
 
     quota = {s.step_id: Fraction(target * s.lead_weeks, total_lead) for s in members}
     weeks = {sid: math.floor(q) for sid, q in quota.items()}
@@ -254,7 +285,7 @@ def apportion_effort(
     assert sum(weeks.values()) == target  # exact arithmetic: Σ⌊q⌋ ≤ E < Σ⌊q⌋ + |S|
 
     raised: list[str] = []
-    for s in members:
+    for s in members:  # S′ only: an excluded step is never raised (R35-3)
         if s.started and weeks[s.step_id] == 0:
             weeks[s.step_id] = 1  # R3: recorded work is never erased
             raised.append(s.step_id)
@@ -285,8 +316,8 @@ def derive_project_effort(
     """The whole `project_workflow_steps.effort_weeks` column of one project
     (R4): the design split over its design steps, the lab split over its lab
     steps (not applied when certification testing is off), `None` on every
-    other step (elapsed steps, lead-0 steps, and every step of a kind whose
-    figure is blank / 0 / not applicable). Raises `EffortSplitRejected` (R7)
+    other step (elapsed steps, lead-0 steps, excluded steps (R35-3), and every
+    step of a kind whose figure is blank / 0 / not applicable). Raises `EffortSplitRejected` (R7)
     if either split would exceed 104 weeks on a step — the caller rejects the
     whole write."""
 

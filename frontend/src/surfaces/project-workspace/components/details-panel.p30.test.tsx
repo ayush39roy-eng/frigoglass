@@ -61,7 +61,7 @@ describe('Workspace stage row — P30 effort-skipped stage', () => {
   it('names the effort split as the reason a stage is skipped', () => {
     renderWithProviders(
       <ul>
-        <StageRow stage={stage(3, { skipped: true, effort_weeks: 0, lead_time_weeks: 1 })} canWrite={false} onSave={vi.fn()} />
+        <StageRow stage={stage(3, { skipped: true, effort_weeks: 0, lead_time_weeks: 1, plan_weeks: 1, own_effort: true })} canWrite={false} onSave={vi.fn()} />
       </ul>,
     );
     expect(screen.getByTestId('stage-skipped-PDD-D')).toHaveAttribute(

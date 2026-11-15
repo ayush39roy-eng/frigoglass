@@ -3,6 +3,8 @@ import * as React from 'react';
 import { Input } from '@/components/ui/input';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 
+import { useTextFilter, type TextFilterField } from '../lib/text-filters';
+
 /**
  * P13-T14 Matrix toolbar pieces (API_CONTRACT_P13 §7; mock-up image 11):
  * Cat / Type / Status chip rows and the per-column filter inputs. Category,
@@ -79,6 +81,35 @@ export function ColumnFilterInput({
       maxLength={maxLength}
       onChange={(e) => onChange(e.currentTarget.value)}
       className="h-7 w-full px-2 text-2xs normal-case tracking-normal"
+    />
+  );
+}
+
+/**
+ * P34-T02 (D34-3): a column filter input bound to one field of the page's text
+ * filter store. The element itself never changes, so the grid's columns stay
+ * memoised while typing and the input keeps focus.
+ */
+export function TextFilterInput({
+  field,
+  column,
+  placeholder,
+  maxLength,
+}: {
+  field: TextFilterField;
+  column: string;
+  placeholder?: string;
+  maxLength?: number;
+}): React.JSX.Element {
+  const value = useTextFilter((s) => s[field]);
+  const set = useTextFilter((s) => s.set);
+  return (
+    <ColumnFilterInput
+      column={column}
+      value={value}
+      onChange={(v) => set(field, v)}
+      {...(placeholder !== undefined ? { placeholder } : {})}
+      {...(maxLength !== undefined ? { maxLength } : {})}
     />
   );
 }

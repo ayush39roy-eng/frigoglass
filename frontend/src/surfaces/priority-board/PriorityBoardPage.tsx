@@ -6,7 +6,8 @@ import { Info } from 'lucide-react';
 import { PageHeader } from '@/components/layout/page-header';
 import { EmptyState } from '@/components/shared/empty-state';
 import { ErrorState } from '@/components/shared/error-state';
-import { usePriorityMoveHost } from '@/components/shared/priority-move/priority-move-context';
+import { rankPositionCopy } from '@/components/shared/priority-move/move-copy';
+import { usePriorityMoveHost, type PriorityMoveOutcome } from '@/components/shared/priority-move/priority-move-context';
 import { PriorityMoveProvider } from '@/components/shared/priority-move/priority-move-provider';
 import { Skeleton } from '@/components/ui/skeleton';
 import { usePermission } from '@/stores/session';
@@ -24,7 +25,7 @@ import {
 
 import { useDebouncedValue } from '@/lib/use-debounced-value';
 
-import { useBoardLeaderFacets, usePriorityBoard, type PriorityBoardFilters } from './api';
+import { useBoardLeaderFacets, usePriorityBoard, type BandRankPlacement, type PriorityBoardFilters } from './api';
 import { selectionParam } from '@/lib/multi-select-filter';
 import { BoardColumn } from './components/board-column';
 import { BoardToolbar } from './components/board-toolbar';
@@ -33,7 +34,19 @@ import { HubLoadStrip } from './components/hub-load-strip';
 import { BoardScenarioContext } from './lib/board-scenario';
 import { useBoardLayout } from './lib/board-layout';
 import { BoardLayoutToggle } from './components/board-layout-toggle';
-import { allowedTargets, applyOverrides, stepTarget, type BoardOverrides, type DisplayCard } from './lib/board-model';
+import {
+  allowedTargets,
+  applyOverrides,
+  canRerank,
+  isNoopSlot,
+  placementForSlot,
+  positionForPlacement,
+  slotForIndex,
+  stepTarget,
+  type BoardOverrides,
+  type DisplayCard,
+  type DisplayColumn,
+} from './lib/board-model';
 
 const NO_STAGED: ReadonlySet<string> = new Set();
 
@@ -41,10 +54,14 @@ interface PointerDrag {
   projectId: string;
   from: ProjectPriority;
   allowed: ProjectPriority[];
+  /** P36: may be reordered inside `from` (served `band_rank`). */
+  canRank: boolean;
 }
 
 interface KeyboardLift extends PointerDrag {
   target: ProjectPriority;
+  /** P36: the 0-based index among the visible cards of `from` the card would hold (Up / Down). */
+  index: number;
 }
 
 function columnName(p: ProjectPriority): string {
@@ -60,6 +77,12 @@ function columnName(p: ProjectPriority): string {
  * token, exactly as the move control on every card. The drop stays pending
  * until Yes; No snaps it back.
  *
+ * P36 (ADR 0050): dropping a card at another place in its OWN column is the
+ * re-rank — the same preview dialog, then `POST /projects/{id}/band-rank`. The
+ * drop is sent relative to a visible card (`before` the card below the drop
+ * line, or `after` the last visible card), so it is well defined on a
+ * filtered board. The served `band_rank` is shown as "#n"; nothing is re-sorted.
+ *
  * Drag is hand-built (no library): native HTML drag events for the pointer, and
  * a keyboard pick-up / arrow / drop on each card's handle, announced through a
  * live region. A drop is shown optimistically and rolled back on any error or
@@ -70,7 +93,7 @@ export default function PriorityBoardPage(): React.JSX.Element {
     <PriorityMoveProvider>
       <PageHeader
         title="Priority board"
-        description="Every project by priority. Drag a card, or use its priority control, to move it. The timeline recalculates as for any priority move."
+        description="Every project by priority. Drag a card to another column, or use its priority control, to change its priority; drag it up or down within a column to change its position, which is its scheduling order inside that priority. The timeline recalculates after either move."
         actions={
           <>
             <CountrySegmented />
@@ -171,6 +194,8 @@ export function PriorityBoardView({
   const [overrides, setOverrides] = React.useState<BoardOverrides>({});
   const [pointerDrag, setPointerDrag] = React.useState<PointerDrag | null>(null);
   const [hoverColumn, setHoverColumn] = React.useState<ProjectPriority | null>(null);
+  /** P36: the drop slot under the pointer in the dragged card's own column. */
+  const [hoverSlot, setHoverSlot] = React.useState<number | null>(null);
   const [lift, setLift] = React.useState<KeyboardLift | null>(null);
   const [announcement, setAnnouncement] = React.useState('');
 
@@ -183,8 +208,14 @@ export function PriorityBoardView({
   );
 
   const canDragCard = React.useCallback(
-    (item: DisplayCard) => dragEnabled && !item.pending && allowedTargets(item.card, item.servedPriority).length > 0,
+    (item: DisplayCard) =>
+      dragEnabled && !item.pending && (allowedTargets(item.card, item.servedPriority).length > 0 || canRerank(item.card)),
     [dragEnabled],
+  );
+
+  const columnOf = React.useCallback(
+    (priority: ProjectPriority): DisplayColumn | null => columns.find((c) => c.priority === priority) ?? null,
+    [columns],
   );
 
   const clearOverride = React.useCallback((projectId: string) => {
@@ -201,8 +232,8 @@ export function PriorityBoardView({
     (item: DisplayCard, to: ProjectPriority) => {
       const { card, servedPriority: from } = item;
       if (!host || to === from || !allowedTargets(card, from).includes(to)) return;
-      setOverrides((cur) => ({ ...cur, [card.project_id]: to }));
-      setAnnouncement(`${card.name} dropped on ${columnName(to)}. Confirm the move.`);
+      setOverrides((cur) => ({ ...cur, [card.project_id]: { priority: to } }));
+      setAnnouncement(`${card.name} dropped on ${columnName(to)}, last in that column. Confirm the move.`);
       host.requestMove(
         { projectId: card.project_id, projectName: card.name, priority: from, status: card.status },
         to,
@@ -222,6 +253,44 @@ export function PriorityBoardView({
               outcome === 'rejected'
                 ? `${card.name} was not moved. It is back in ${columnName(from)}.`
                 : `Move cancelled. ${card.name} stays in ${columnName(from)}.`,
+            );
+          },
+        },
+      );
+    },
+    [clearOverride, host, queryClient],
+  );
+
+  /** P36: a drop inside the card's own column — show it, then the shared re-rank flow. */
+  const rankDrop = React.useCallback(
+    (item: DisplayCard, column: DisplayColumn, placement: BandRankPlacement) => {
+      const { card, servedPriority: band } = item;
+      if (!host) return;
+      const position = positionForPlacement(column.cards, card.project_id, placement);
+      const where = rankPositionCopy(position, columnName(band));
+      setOverrides((cur) => ({ ...cur, [card.project_id]: { priority: band, placement } }));
+      setAnnouncement(`${card.name} dropped at ${where}. Confirm the move.`);
+      host.requestRankMove(
+        { projectId: card.project_id, projectName: card.name, priority: band, status: card.status },
+        placement,
+        {
+          position,
+          fromPosition: card.band_rank,
+          onSettled: (outcome: PriorityMoveOutcome) => {
+            if (outcome === 'accepted') {
+              // Keep the card where it was dropped until the refetched board
+              // serves its new band_rank and order.
+              void queryClient
+                .invalidateQueries({ queryKey: ['priority-board'] })
+                .finally(() => clearOverride(card.project_id));
+              setAnnouncement(`${card.name} moved to ${where}.`);
+              return;
+            }
+            clearOverride(card.project_id);
+            setAnnouncement(
+              outcome === 'rejected'
+                ? `${card.name} was not moved. It is back in its place in ${columnName(band)}.`
+                : `Move cancelled. ${card.name} keeps its place in ${columnName(band)}.`,
             );
           },
         },
@@ -250,64 +319,132 @@ export function PriorityBoardView({
       projectId: item.card.project_id,
       from: item.servedPriority,
       allowed: allowedTargets(item.card, item.servedPriority),
+      canRank: canRerank(item.card),
     });
   }, []);
 
   const onPointerDragEnd = React.useCallback(() => {
     setPointerDrag(null);
     setHoverColumn(null);
+    setHoverSlot(null);
   }, []);
 
   const onColumnDragOver = React.useCallback(
-    (priority: ProjectPriority, event: React.DragEvent<HTMLElement>) => {
-      if (!pointerDrag || !pointerDrag.allowed.includes(priority)) return;
+    (priority: ProjectPriority, event: React.DragEvent<HTMLElement>, slot: number | null) => {
+      if (!pointerDrag) return;
+      const home = priority === pointerDrag.from;
+      if (home ? !pointerDrag.canRank : !pointerDrag.allowed.includes(priority)) return;
       event.preventDefault(); // allow the drop
       event.dataTransfer.dropEffect = 'move';
       if (hoverColumn !== priority) setHoverColumn(priority);
+      if (!home) {
+        if (hoverSlot !== null) setHoverSlot(null);
+      } else if (slot !== null && slot !== hoverSlot) {
+        setHoverSlot(slot);
+      }
     },
-    [hoverColumn, pointerDrag],
+    [hoverColumn, hoverSlot, pointerDrag],
   );
 
   const onColumnDragLeave = React.useCallback((priority: ProjectPriority, event: React.DragEvent<HTMLElement>) => {
     const next = event.relatedTarget;
     if (next instanceof Node && event.currentTarget.contains(next)) return;
     setHoverColumn((cur) => (cur === priority ? null : cur));
+    setHoverSlot(null);
   }, []);
 
   const onColumnDrop = React.useCallback(
-    (priority: ProjectPriority, event: React.DragEvent<HTMLElement>) => {
+    (priority: ProjectPriority, event: React.DragEvent<HTMLElement>, slot: number | null) => {
       if (!pointerDrag) return;
       event.preventDefault();
       const item = findItem(pointerDrag.projectId);
+      const at = slot ?? hoverSlot;
       setPointerDrag(null);
       setHoverColumn(null);
-      if (item && pointerDrag.allowed.includes(priority)) drop(item, priority);
+      setHoverSlot(null);
+      if (!item) return;
+      if (priority === pointerDrag.from) {
+        const column = columnOf(priority);
+        if (!pointerDrag.canRank || !column || at === null) return;
+        const placement = placementForSlot(column.cards, at, item.card.project_id);
+        if (placement) rankDrop(item, column, placement);
+        return;
+      }
+      if (pointerDrag.allowed.includes(priority)) drop(item, priority);
     },
-    [drop, findItem, pointerDrag],
+    [columnOf, drop, findItem, hoverSlot, pointerDrag, rankDrop],
   );
 
-  // ---- keyboard (pick up with Space/Enter, arrows choose a column, Space/Enter drops, Escape cancels) ----
+  // ---- keyboard (pick up with Space/Enter; Left/Right choose a column, Up/Down a position in
+  // the own column (P36, D36-4); Space/Enter drops; Escape cancels) ----
+  /** "position 2 in P1" for a keyboard index, from the served band_ranks (copy only). */
+  const keyboardPosition = React.useCallback(
+    (column: DisplayColumn, projectId: string, index: number): string => {
+      const dragged = column.cards.findIndex((c) => c.card.project_id === projectId);
+      const placement = index === dragged ? null : placementForSlot(column.cards, slotForIndex(index, dragged), projectId);
+      const own = column.cards[dragged]?.card.band_rank ?? null;
+      const position = placement ? positionForPlacement(column.cards, projectId, placement) : own;
+      return rankPositionCopy(position ?? index + 1, columnName(column.priority));
+    },
+    [],
+  );
+
   const onHandleKeyDown = React.useCallback(
     (item: DisplayCard, event: React.KeyboardEvent<HTMLButtonElement>) => {
       const { card, servedPriority } = item;
       const isLifted = lift?.projectId === card.project_id;
       const key = event.key;
+      const home = columnOf(servedPriority);
+      const dragged = home ? home.cards.findIndex((c) => c.card.project_id === card.project_id) : -1;
       if (!isLifted) {
         if (key !== ' ' && key !== 'Enter') return;
         event.preventDefault();
         const allowed = allowedTargets(card, servedPriority);
-        setLift({ projectId: card.project_id, from: servedPriority, allowed, target: servedPriority });
+        const canRank = canRerank(card) && home !== null && dragged >= 0;
+        setLift({ projectId: card.project_id, from: servedPriority, allowed, canRank, target: servedPriority, index: Math.max(dragged, 0) });
+        const keys = [
+          canRank ? 'the up and down arrow keys to change its position in the column' : null,
+          allowed.length > 0 ? 'the left and right arrow keys to choose another column' : null,
+        ].filter((k): k is string => k !== null);
+        const at = canRank && home ? `, ${keyboardPosition(home, card.project_id, dragged)}` : '';
         setAnnouncement(
-          `Picked up ${card.name} in ${columnName(servedPriority)}. Use the left and right arrow keys to choose a column, Space to drop, Escape to cancel.`,
+          `Picked up ${card.name} in ${columnName(servedPriority)}${at}. Use ${keys.join(' and ')}, Space to drop, Escape to cancel.`,
         );
         return;
       }
-      if (key === 'ArrowRight' || key === 'ArrowLeft' || key === 'ArrowDown' || key === 'ArrowUp') {
+      if (key === 'ArrowRight' || key === 'ArrowLeft') {
         event.preventDefault();
-        const direction = key === 'ArrowRight' || key === 'ArrowDown' ? 1 : -1;
+        const direction = key === 'ArrowRight' ? 1 : -1;
         const target = stepTarget(lift.target, lift.from, lift.allowed, direction);
         setLift({ ...lift, target });
-        setAnnouncement(target === lift.from ? `Over ${columnName(target)}, its current column.` : `Over ${columnName(target)}.`);
+        if (target !== lift.from) {
+          setAnnouncement(`Over ${columnName(target)}. It would go last there.`);
+        } else {
+          setAnnouncement(
+            lift.canRank && home
+              ? `Over ${columnName(target)}, its current column: ${keyboardPosition(home, card.project_id, lift.index)}.`
+              : `Over ${columnName(target)}, its current column.`,
+          );
+        }
+        return;
+      }
+      if (key === 'ArrowUp' || key === 'ArrowDown' || key === 'Home' || key === 'End') {
+        event.preventDefault();
+        if (!lift.canRank || !home || lift.target !== lift.from) {
+          setAnnouncement(
+            lift.canRank
+              ? `Up and down change the position in ${columnName(lift.from)} only. Move back to that column first.`
+              : `${card.name} cannot be reordered in its column.`,
+          );
+          return;
+        }
+        const last = home.cards.length - 1;
+        const index =
+          key === 'Home' ? 0 : key === 'End' ? last : Math.min(last, Math.max(0, lift.index + (key === 'ArrowDown' ? 1 : -1)));
+        setLift({ ...lift, index });
+        const where = keyboardPosition(home, card.project_id, index);
+        const spoken = `${where[0]?.toUpperCase() ?? ''}${where.slice(1)}`;
+        setAnnouncement(index === dragged ? `${spoken}, its current place.` : `${spoken}.`);
         return;
       }
       if (key === 'Escape') {
@@ -318,16 +455,24 @@ export function PriorityBoardView({
       }
       if (key === ' ' || key === 'Enter') {
         event.preventDefault();
-        const target = lift.target;
+        const { target, index } = lift;
         setLift(null);
-        if (target === lift.from) {
-          setAnnouncement(`${card.name} stays in ${columnName(servedPriority)}.`);
+        if (target !== lift.from) {
+          drop(item, target);
           return;
         }
-        drop(item, target);
+        const placement =
+          lift.canRank && home && index !== dragged
+            ? placementForSlot(home.cards, slotForIndex(index, dragged), card.project_id)
+            : null;
+        if (!placement || !home) {
+          setAnnouncement(`${card.name} stays where it is in ${columnName(servedPriority)}.`);
+          return;
+        }
+        rankDrop(item, home, placement);
       }
     },
-    [drop, lift],
+    [columnOf, drop, keyboardPosition, lift, rankDrop],
   );
 
   const onHandleBlur = React.useCallback((item: DisplayCard) => {
@@ -335,13 +480,36 @@ export function PriorityBoardView({
   }, []);
 
   const activeDrag = pointerDrag ?? lift;
-  const dropTarget = pointerDrag ? hoverColumn : lift && lift.target !== lift.from ? lift.target : null;
+  // The whole column is the target of a cross-column move; a move inside the
+  // column is shown by the drop line instead.
+  const dropTarget = pointerDrag
+    ? hoverColumn !== pointerDrag.from
+      ? hoverColumn
+      : null
+    : lift && lift.target !== lift.from
+      ? lift.target
+      : null;
+
+  /** P36: the drop line's slot in the dragged card's own column, or null (no line on a no-op place). */
+  const indicator = React.useMemo((): { priority: ProjectPriority; slot: number } | null => {
+    const drag = pointerDrag ?? lift;
+    if (!drag?.canRank) return null;
+    const column = columns.find((c) => c.priority === drag.from);
+    const dragged = column ? column.cards.findIndex((c) => c.card.project_id === drag.projectId) : -1;
+    if (dragged < 0) return null;
+    let slot: number | null = null;
+    if (pointerDrag) slot = hoverColumn === pointerDrag.from ? hoverSlot : null;
+    else if (lift && lift.target === lift.from) slot = slotForIndex(lift.index, dragged);
+    if (slot === null || isNoopSlot(slot, dragged)) return null;
+    return { priority: drag.from, slot };
+  }, [columns, hoverColumn, hoverSlot, lift, pointerDrag]);
 
   return (
     <BoardScenarioContext.Provider value={scenarioActive ? scenarioStagedIds : NO_STAGED}>
       <p id={instructionsId} className="sr-only">
-        Press Space or Enter to pick the card up, the left and right arrow keys to choose a priority column, Space or Enter
-        to drop it there, and Escape to cancel. Each card also has a priority menu.
+        Press Space or Enter to pick the card up. The up and down arrow keys change its position inside its column (its
+        scheduling order within that priority); the left and right arrow keys choose another priority column, where it goes
+        last. Space or Enter drops it, and Escape cancels. Each card also has a priority menu.
       </p>
       <p aria-live="assertive" aria-atomic="true" className="sr-only" data-testid="board-announcer">
         {announcement}
@@ -350,7 +518,8 @@ export function PriorityBoardView({
       {!canWrite ? (
         <p className="mb-3 flex items-center gap-1.5 text-xs text-text-muted" role="note" data-testid="board-read-only">
           <Info className="size-3.5 shrink-0" aria-hidden="true" />
-          You can view the board. Moving a project&rsquo;s priority needs Registration write access.
+          You can view the board and each project&rsquo;s position. Moving or reordering a project needs Registration write
+          access.
         </p>
       ) : null}
       {query.data && query.data.run_id === null ? (
@@ -426,6 +595,7 @@ export function PriorityBoardView({
               liftedId={lift?.projectId ?? null}
               isDropTarget={dropTarget === column.priority}
               acceptsDrop={activeDrag !== null && activeDrag.allowed.includes(column.priority)}
+              indicatorSlot={indicator?.priority === column.priority ? indicator.slot : null}
               instructionsId={instructionsId}
               onPointerDragStart={onPointerDragStart}
               onPointerDragEnd={onPointerDragEnd}

@@ -8,19 +8,26 @@ import { seriousAxeViolations } from '@/test/axe';
 import type { CategoryTimeline } from '../api/types';
 import { CategoryTimelineList } from './category-timeline';
 
+const NOTE = 'This is the category template with no capacity limits. Real projects also wait for engineers and chambers.';
+const extra = (pred: string[]) => ({ gap_weeks: 0, effective_gap_weeks: 0, flags: [], predecessor_ids: pred });
 const A_PLUS: CategoryTimeline = {
   category: 'A+',
+  label: 'A+',
+  workflow_id: 'PDD',
+  rank: 1,
+  template_version: 1,
+  note: NOTE,
   total_weeks: 10,
   design_weeks: 7,
   lab_weeks: 2,
   steps: [
-    { code: 'PDD-A', name: 'Marketing Brief', resource_kind: 'design', start_week: 0, duration_weeks: 1 },
-    { code: 'PDD-B', name: 'Feasibility Study', resource_kind: 'design', start_week: 1, duration_weeks: 6 },
-    { code: 'PDD-C', name: 'Business Case Approval', resource_kind: 'elapsed', start_week: 7, duration_weeks: 0 },
-    { code: 'PDD-F', name: 'Proof of Concept', resource_kind: 'lab', start_week: 7, duration_weeks: 2 },
+    { code: 'PDD-A', name: 'Marketing Brief', resource_kind: 'design', start_week: 0, duration_weeks: 1, ...extra([]) },
+    { code: 'PDD-B', name: 'Feasibility Study', resource_kind: 'design', start_week: 1, duration_weeks: 6, ...extra(['PDD-A']) },
+    { code: 'PDD-C', name: 'Business Case Approval', resource_kind: 'elapsed', start_week: 7, duration_weeks: 0, ...extra(['PDD-B']) },
+    { code: 'PDD-F', name: 'Proof of Concept', resource_kind: 'lab', start_week: 7, duration_weeks: 2, ...extra(['PDD-C']) },
   ],
 };
-const B: CategoryTimeline = { ...A_PLUS, category: 'B', total_weeks: 5, design_weeks: 3, lab_weeks: 0 };
+const B: CategoryTimeline = { ...A_PLUS, category: 'B', label: 'B', total_weeks: 5, design_weeks: 3, lab_weeks: 0 };
 
 describe('CategoryTimelineList (P13-T16)', () => {
   it('shows served totals in each header; first category open, others collapsed', () => {

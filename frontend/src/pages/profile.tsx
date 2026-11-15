@@ -60,6 +60,7 @@ const SURFACE_LABEL: Record<SurfaceKey, string> = {
   project_registration: 'Project Registration',
   capacity_planning: 'Capacity Planning',
   workflow_settings: 'Workflow Settings',
+  workflow_templates: 'Workflow templates',
   audit_log: 'Audit Log',
   user_role_admin: 'User / Role Admin',
 };

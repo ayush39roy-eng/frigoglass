@@ -19,8 +19,9 @@ import {
 
 /**
  * P21 chart row above the grid: the band distribution and the score histogram.
- * Both plot the SERVED `band_distribution` / `score_histogram` for the grid's
- * server filters. Counts and shares are rendered verbatim; the browser never
+ * P34-T02 (D34-2): on the Matrix page the band distribution is the count of the
+ * served bands of the rows the grid shows (`distributionFromRows`); the
+ * histogram plots the served `score_histogram`. Counts and shares are rendered verbatim; the browser never
  * computes a share or re-buckets a score (I9). Bar lengths are only a visual
  * scale of served figures. Each chart has a keyboard-reachable data table.
  */
@@ -216,7 +217,7 @@ export function BandDistributionPanel({
         </p>
       ) : null}
       <DataTable
-        caption="Projects per band, with share of the filtered set (served)"
+        caption="Projects per band, with share of the projects shown"
         head={['Band', 'Projects', 'Share %']}
         rows={ordered.map((e) => [BAND_LABEL[e.band], formatInteger(e.count), formatDecimal(e.share_pct)])}
       />
@@ -316,10 +317,11 @@ export function ScoreChartsRow({
         <CardTitle>Band distribution</CardTitle>
         <CardInfo label="About the band distribution">
           <p>
-            Served counts for the Cat / Type / Status / Hub / search filters above: the suggested bands, after each
-            hub&apos;s P1 capacity fill. Select a band to filter the grid.
+            Counts of the projects the grid shows, under every filter (Cat / Type / Status / Hub, search, the Hub and
+            Leader columns, Capacity fill, VIP) except the band pick: each project&apos;s served suggested band, after
+            its hub&apos;s P1 capacity fill. Select a band to filter the grid; the other bands stay visible.
           </p>
-          <p>Shares are served and rounded each, so they may not add up to exactly 100%.</p>
+          <p>Shares are rounded each, so they may not add up to exactly 100%.</p>
         </CardInfo>
       </CardHeader>
       <CardContent className="pt-0">

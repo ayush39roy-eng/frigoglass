@@ -1,5 +1,7 @@
 import type { ProjectCategory, WorkflowId, WorkflowStepKind } from '@/types/enums';
 
+import type { TemplateChangeEntry, TemplateChangeSet } from '../api/types';
+
 /**
  * The lead-time grid (workflow × category rows × 14 step columns) as the
  * client's own `Final RPD` sheet lays it out (`docs/CLIENT_FORMULAS.md` §1).
@@ -32,19 +34,19 @@ export interface LeadTimeTotals {
   elapsed: number;
 }
 
-/** Category row order per workflow — DOMAIN_RULES "Lead times" table order. */
-export const CATEGORY_ORDER: Record<WorkflowId, readonly ProjectCategory[]> = {
-  PDD: ['A+', 'A', 'B', 'C'],
-  OEM: ['A-OEM', 'B-OEM', 'C-OEM'],
-};
-
+/**
+ * P33-T14: `categoryOrder` is the workflow's served categories in rank order
+ * (`GET /reference/categories`); each gets a row even with no lead-time rows.
+ * A category only the lead times carry follows, in served order.
+ */
 export function buildLeadTimeGrid(
   leadTimes: readonly LeadTimeCell[],
   workflowId: WorkflowId,
   stepIds: readonly string[],
+  categoryOrder: readonly ProjectCategory[],
 ): LeadTimeGridRow[] {
   const rows = new Map<ProjectCategory, Record<string, number>>();
-  for (const cat of CATEGORY_ORDER[workflowId]) {
+  for (const cat of categoryOrder) {
     rows.set(cat, Object.fromEntries(stepIds.map((id) => [id, 0])));
   }
   for (const lt of leadTimes) {
@@ -72,8 +74,7 @@ export function rowTotals(
   return out;
 }
 
-/** The cells that differ from the server's, as `PUT /workflow-settings/lead-times`
- *  rows (partial update is allowed). */
+/** The cells that differ from the server's (one per edited cell). */
 export function changedLeadTimes(
   original: readonly LeadTimeGridRow[],
   edited: readonly LeadTimeGridRow[],
@@ -90,4 +91,26 @@ export function changedLeadTimes(
     }
   }
   return out;
+}
+
+/**
+ * P33-T17 (ADR 0045 §5): the edited cells as one E1 change set — one entry per
+ * (workflow, category), `weeks` only, `base_version` = the category's served
+ * `template_version` (409 `TEMPLATE_CHANGED` if someone saved meanwhile).
+ */
+export function leadTimeChangeSet(
+  changes: readonly LeadTimeCell[],
+  versions: Readonly<Record<string, number>>,
+): TemplateChangeSet {
+  const entries = new Map<string, TemplateChangeEntry>();
+  for (const c of changes) {
+    const key = `${c.workflow_id}|${c.category}`;
+    let entry = entries.get(key);
+    if (!entry) {
+      entry = { workflow_id: c.workflow_id, category: c.category, base_version: versions[c.category] ?? 1, steps: [] };
+      entries.set(key, entry);
+    }
+    entry.steps.push({ step_id: c.step_id, weeks: c.weeks });
+  }
+  return { changes: [...entries.values()] };
 }

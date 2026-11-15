@@ -49,6 +49,13 @@ class ProjectCategory(str, enum.Enum):
     `trg_projects_category_matches_hub` (P9-T01 migration) and
     `models.project.category_allowed_for_hub` enforce that an OEM-hub project
     carries an OEM category and vice-versa.
+
+    P33-T07 (ADR 0047): **seed vocabulary only.** Categories are rows of the
+    `categories` table (`models.category.Category`); the `project_category`
+    Postgres enum was dropped and no column, schema or validator uses this
+    class any more. It stays for the seed scripts and tests, as
+    `domain_constants.CATEGORY_ORDER` does. Never use it to validate or list
+    categories (`services.categories` does that).
     """
 
     A_PLUS = "A+"
@@ -60,7 +67,8 @@ class ProjectCategory(str, enum.Enum):
     C_OEM = "C-OEM"
 
 
-#: The three categories an OEM-hub project must use (ADR 0007).
+#: The three seeded OEM categories (ADR 0007). Seed vocabulary only since
+#: P33-T07: the hub rule reads `categories.workflow_id`.
 OEM_PROJECT_CATEGORIES: frozenset[ProjectCategory] = frozenset(
     {ProjectCategory.A_OEM, ProjectCategory.B_OEM, ProjectCategory.C_OEM}
 )
@@ -76,6 +84,10 @@ class EngineerAllowedCategory(str, enum.Enum):
 
     2026-09-27 (ADR 0007): the three explicit OEM categories are accepted too.
     "OEM" is retained for backward compatibility and means "any OEM category".
+
+    P33-T07 (ADR 0047): seed vocabulary only (see `ProjectCategory`). The
+    `engineer_allowed_category` Postgres enum was dropped; the column is
+    `text[]`, checked by trigger against `categories.code` and `OEM`.
     """
 
     A_PLUS = "A+"

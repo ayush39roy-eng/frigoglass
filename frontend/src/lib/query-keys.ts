@@ -182,7 +182,9 @@ export const queryKeys = {
   // every guard); only the dev-user list is a query.
   devUsers: () => ['me', 'dev-users'] as const,
 
-  // --- reference: categories valid for a hub (P9 contract §6) ---
+  // --- reference: categories (P33 B1, ADR 0047). `categoriesAll` is the prefix
+  // of every entry, so invalidating it after "+ Add category" refreshes all. ---
+  categoriesAll: () => ['reference', 'categories'] as const,
   categoriesForHub: (hubId?: string) => ['reference', 'categories', hubId ?? null] as const,
 
   // --- user / role admin (P9 contract §2) ---

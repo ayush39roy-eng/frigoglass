@@ -16,11 +16,11 @@ from pydantic import BaseModel
 from models.enums import (
     HubName,
     LabRegion,
-    ProjectCategory,
     ProjectPriority,
     ProjectStatus,
     ProjectType,
 )
+from schemas.category import CategoryCodeOut
 
 
 class PipelineTotals(BaseModel):
@@ -93,7 +93,7 @@ class CompletingWithinYearRow(BaseModel):
     project_id: uuid.UUID
     project_name: str
     hub: HubName
-    category: ProjectCategory | None
+    category: CategoryCodeOut | None
     priority: ProjectPriority | None
     #: P13-T10 (docs/API_CONTRACT_P13.md §5): the project's type; null when
     #: unmapped.
@@ -197,7 +197,7 @@ class ProjectFilterRow(BaseModel):
     project_id: uuid.UUID
     project_name: str
     hub: HubName
-    category: ProjectCategory | None
+    category: CategoryCodeOut | None
     status: ProjectStatus
     priority: ProjectPriority | None
     #: P12 (docs/API_CONTRACT_P12.md §5/§6): pinned as VIP (ADR 0022).
@@ -235,6 +235,27 @@ class ProjectFilterRow(BaseModel):
     #: 1-based rank by weighted score (descending, then name) within the
     #: filtered set; null when the project has no score.
     priority_rank: int | None
+    # --- P35 (D35-1, D35-3): the Projects register's editable columns. Not
+    # financial. Written through `PATCH /projects/{id}`.
+    actual_start_week: int | None
+    actual_end_week: int | None
+    #: ADR 0041: the project's own effort figures (man-weeks, 2 dp); null =
+    #: none, the calculated value applies.
+    design_effort_weeks: float | None
+    lab_effort_weeks: float | None
+    #: Σ of the kind's step effective durations as if the project had no
+    #: effort figure of its own (template / table value, certification rule
+    #: for lab, the scheduler's skip predicate): what "reset" returns to.
+    #: Whole weeks; `services.workspace.row_calculated_weeks`.
+    design_weeks_calculated: int
+    lab_weeks_calculated: int
+    # --- P35-T08b (OQ #84 assumption, display warning only; never a scheduler
+    # input): the status the current step implies, `services.expected_status`.
+    #: Null for On Hold / Cancelled / In Buyoff / Draft; Commercialized when
+    #: no step is current.
+    expected_status: ProjectStatus | None
+    #: True iff `expected_status` is set and differs from `status`.
+    status_mismatch: bool
 
 
 class ProjectFilterResult(BaseModel):
@@ -369,7 +390,7 @@ class DashboardAnalytics(BaseModel):
     #: Every `ProjectType` in enum order (zeros included), then `"Unmapped"`
     #: if any project has no type.
     by_type: list[AnalyticsBucket]
-    #: Every `ProjectCategory` in enum order (zeros included), then
+    #: Every category in rank order (the `categories` table) (zeros included), then
     #: `"Unmapped"` if any project has no category.
     by_category: list[AnalyticsBucket]
     #: Every hub in the caller's scope and filter, by name (zeros included).

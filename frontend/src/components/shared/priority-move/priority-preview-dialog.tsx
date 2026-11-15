@@ -23,7 +23,7 @@ import { formatInteger, formatPlanWeek } from '@/lib/format';
 import { cn } from '@/lib/utils';
 
 import { PriorityBandPill } from '../priority-band-pill';
-import { MOVE_COPY, previewNotNeededCopy } from './move-copy';
+import { MOVE_COPY, previewNotNeededCopy, RANK_COPY, rankPositionCopy } from './move-copy';
 import type { MoveFlowState } from './use-priority-move-flow';
 
 /**
@@ -365,7 +365,7 @@ function Body({ flow }: { flow: DialogFlow }): React.JSX.Element {
       <div className="flex flex-col gap-3" data-testid="preview-applied">
         <p role="status" className="flex items-center gap-2 text-sm font-semibold text-text">
           <CircleCheck className="size-4 shrink-0 text-success" aria-hidden="true" />
-          Priority moved and the timeline recalculated.
+          {flow.rank ? RANK_COPY.applied : 'Priority moved and the timeline recalculated.'}
         </p>
         <Impact
           projectName={flow.target.projectName}
@@ -409,17 +409,46 @@ function Body({ flow }: { flow: DialogFlow }): React.JSX.Element {
   );
 }
 
+/** P36 (ADR 0050): "position 2 in P1" — display copy from the caller's served `band_rank`s. */
+function rankWhere(flow: DialogFlow): string {
+  const rank = flow.rank;
+  return rank ? rankPositionCopy(rank.position, flow.next) : flow.next;
+}
+
 function title(flow: DialogFlow): string {
+  if (flow.rank) {
+    const rank = flow.rank;
+    const where = rank.position === null ? `within ${flow.next}` : `to position ${rank.position} in ${flow.next}`;
+    if (flow.kind === 'applied') return `Moved ${where}`;
+    if (flow.kind === 'previewError') return 'Position not changed';
+    return `Move ${flow.target.projectName} ${where}?`;
+  }
   if (flow.kind === 'applied') return `Moved to ${flow.next}`;
   if (flow.kind === 'previewError') return 'Priority not changed';
   return `Move to ${flow.next}?`;
 }
 
+/** P36 (R36-8): a project entering a band goes last in it. Said only when the
+ *  move schedules (a not-in-the-plan project gets no position). */
+function landsLast(flow: DialogFlow): boolean {
+  if (flow.kind === 'applied') return flow.result.recalc_status !== 'not_needed';
+  return flow.kind === 'preview' || flow.kind === 'applying' ? flow.preview.result === 'preview' : false;
+}
+
 function description(flow: DialogFlow): string {
+  const name = flow.target.projectName;
+  if (flow.rank) {
+    const from = flow.rank.fromPosition;
+    const was = from === null ? '' : ` (now position ${from})`;
+    if (flow.kind === 'applied') return `${name} is now at ${rankWhere(flow)}. The new timeline is active.`;
+    if (flow.kind === 'previewError') return `${name} keeps its position in ${flow.next}.`;
+    return `${name}${was} moves to ${rankWhere(flow)}; its priority stays ${flow.next}. ${MOVE_COPY.previewIntro}`;
+  }
   const from = flow.target.priority ?? 'no priority';
-  if (flow.kind === 'applied') return `${flow.target.projectName} moved from ${from} to ${flow.next}. The new timeline is active.`;
-  if (flow.kind === 'previewError') return `${flow.target.projectName} stays ${from}.`;
-  return `${flow.target.projectName} moves from ${from} to ${flow.next}. ${MOVE_COPY.previewIntro}`;
+  const last = landsLast(flow) ? `, last in ${flow.next}` : '';
+  if (flow.kind === 'applied') return `${name} moved from ${from} to ${flow.next}${last}. The new timeline is active.`;
+  if (flow.kind === 'previewError') return `${name} stays ${from}.`;
+  return `${name} moves from ${from} to ${flow.next}${last}. ${MOVE_COPY.previewIntro}`;
 }
 
 export function PriorityPreviewDialog({

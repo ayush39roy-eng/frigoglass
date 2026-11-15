@@ -56,12 +56,11 @@ describe('ScoreCell', () => {
     expect(screen.getByTitle(/Priority band P3/)).toBeInTheDocument();
   });
 
-  it('annotates hard-gated rows as forced to P1', () => {
+  it('P34-T02: a hard-gated row shows its served band only (the gates have their own grid columns)', () => {
     renderWithProviders(
       <ScoreCell row={row({ suggested_band: 'P4', hard_gates: ['Active safety non-compliance'] })} />,
     );
-    expect(screen.getByTestId('hard-gate-badge')).toHaveTextContent('Hard gate → P1');
-    // the computed band pill is still shown verbatim alongside it
+    expect(screen.queryByTestId('hard-gate-badge')).not.toBeInTheDocument();
     expect(screen.getByTitle(/Priority band P4/)).toBeInTheDocument();
   });
 

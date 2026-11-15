@@ -1,8 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { setStepTiming } from '@/surfaces/gantt/api/gantt-api';
-import { TIMING_ERROR_COPY, timingErrorCopy } from '@/surfaces/gantt/components/step-timing/timing-copy';
-
 import { checkInEntryErrors, CHECKIN_INVALID, submitCheckIns } from './check-ins';
 import { ApiError } from './client';
 import { API_ERROR_MESSAGES, apiErrorMessage } from './error-messages';
@@ -56,49 +53,6 @@ describe('priority move 409 HARD_GATE_FORCES_P1 (P11 contract §1)', () => {
     // `use-priority-move-flow.tsx` branches on exactly this comparison.
     expect((err as ApiError).code).toBe(HARD_GATE_FORCES_P1);
     expect(apiErrorMessage(err, 'fallback')).toBe(API_ERROR_MESSAGES.HARD_GATE_FORCES_P1);
-  });
-});
-
-describe('step timing errors (P12 contract §3)', () => {
-  // PROJECT_FROZEN and NOT_SCHEDULABLE were captured live. STEP_SKIPPED,
-  // STEP_DONE and STEP_STARTED use the same envelope with the detail text
-  // from `backend/services/step_timing.py`.
-  const conflicts: [string, string][] = [
-    ['PROJECT_FROZEN', 'The project is frozen. Unfreeze it on the Gantt to change timing.'],
-    ['NOT_SCHEDULABLE', "The project's status is not scheduled, so its step timing cannot be changed."],
-    ['STEP_SKIPPED', 'This step is skipped for the project (0 weeks) and has no timing.'],
-    ['STEP_DONE', 'A Done step is history; its timing cannot change.'],
-    ['STEP_STARTED', 'The step has started, so its start is fixed. Only its duration can change.'],
-  ];
-
-  it.each(conflicts)('409 %s through the wire maps to its "Nothing was saved." copy', async (code, detail) => {
-    stubFetchOnce({ detail, code }, 409);
-    const err = await setStepTiming('p-1', 'PDD-E', { duration_override_weeks: 3 }).catch((e: unknown) => e);
-    expect(err).toBeInstanceOf(ApiError);
-    expect((err as ApiError).code).toBe(code);
-    const copy = timingErrorCopy(err);
-    expect(copy).toBe(TIMING_ERROR_COPY[code]);
-    expect(copy).toMatch(/Nothing was saved\.$/);
-  });
-
-  it('422 VALIDATION_ERROR (a coded field-error list) is flattened into readable text', async () => {
-    // Captured: PATCH …/timing {"duration_override_weeks":500}.
-    stubFetchOnce(
-      {
-        detail: [
-          {
-            loc: ['body', 'duration_override_weeks'],
-            msg: 'duration_override_weeks must be between 1 and 104.',
-            type: 'value_error',
-          },
-        ],
-        code: 'VALIDATION_ERROR',
-      },
-      422,
-    );
-    const err = await setStepTiming('p-1', 'PDD-E', { duration_override_weeks: 500 }).catch((e: unknown) => e);
-    expect((err as ApiError).code).toBe('VALIDATION_ERROR');
-    expect(timingErrorCopy(err)).toBe('duration_override_weeks: duration_override_weeks must be between 1 and 104.');
   });
 });
 

@@ -291,7 +291,8 @@ function LeaveGuard({ when }: { when: boolean }): React.JSX.Element {
   );
 }
 
-function DiscardDialog({
+/** P34-T02: shared with the scoring grid's edit mode. */
+export function DiscardDialog({
   open,
   title,
   description,
@@ -300,6 +301,7 @@ function DiscardDialog({
   onKeep,
   onDiscard,
   returnFocus,
+  testId = 'rubric-discard-dialog',
 }: {
   open: boolean;
   title: string;
@@ -310,6 +312,7 @@ function DiscardDialog({
   onDiscard: () => void;
   /** Where focus goes when the dialog closes (it has no trigger to return to). */
   returnFocus?: () => void;
+  testId?: string;
 }): React.JSX.Element {
   return (
     <Dialog
@@ -321,7 +324,7 @@ function DiscardDialog({
       <DialogContent
         role="alertdialog"
         className="max-w-md"
-        data-testid="rubric-discard-dialog"
+        data-testid={testId}
         onCloseAutoFocus={(e) => {
           if (!returnFocus) return;
           e.preventDefault();

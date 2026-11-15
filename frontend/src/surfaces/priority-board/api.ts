@@ -3,8 +3,11 @@
 
 /**
  * Priority board (ADR 0018). The server groups, sorts and counts the cards and
- * serves every outcome from the active run. A drop is the existing P11 priority
- * move (`POST /projects/{id}/priority`), so there is no write here.
+ * serves every outcome from the active run. A drop on another column is the
+ * existing P11 priority move (`POST /projects/{id}/priority`); a drop inside a
+ * column is the P36 re-rank (`POST /projects/{id}/band-rank`, ADR 0050). Both
+ * writes live in `lib/api/priority-move.ts` (the shared move flow calls them);
+ * they are re-exported here for this surface.
  */
 
 import { useQuery } from '@tanstack/react-query';
@@ -45,6 +48,11 @@ export interface PriorityBoardCard {
   within_year: boolean | null;
   health: ServedHealth | null;
   tracking_status: TrackingStatus;
+  /** P36 (ADR 0050): the position inside the FULL band, 1..n, served (filters never change it);
+   *  null only for a project the server does not rank. Drives scheduling (key 3a). */
+  band_rank: number | null;
+  /** P36 (R36-2): frozen projects schedule first whatever their board position (dates locked). */
+  frozen: boolean;
 }
 
 export interface PriorityBoardColumn {
@@ -58,7 +66,8 @@ export interface PriorityBoardColumn {
   design_weeks: number;
   /** P13-T12: the column's remaining lab work from the current week, in weeks. */
   lab_weeks: number;
-  /** Sorted by score descending (nulls last), then name — by the server. */
+  /** P36 (API_CONTRACT_P36 §1): sorted by `band_rank` (nulls last), then status,
+   *  category rank, project id — the scheduling order, by the server. Never re-sorted here. */
   cards: PriorityBoardCard[];
 }
 
@@ -70,6 +79,7 @@ export interface PriorityBoardResponse {
 }
 
 export type { PriorityBoardFilters } from '@/lib/query-keys';
+export { moveProjectBandRank, previewProjectBandRank, type BandRankPlacement } from '@/lib/api/priority-move';
 
 /** True when no toolbar filter is set (the key then keeps its P12 shape). */
 export function isEmptyBoardFilters(filters: PriorityBoardFilters | undefined): boolean {

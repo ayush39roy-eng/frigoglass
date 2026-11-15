@@ -52,7 +52,7 @@ function row(overrides: Partial<PriorityMatrixRow> = {}): PriorityMatrixRow {
 
 describe('MatrixTable', () => {
   it('P21: no financial columns; the 13 rubric columns under pillar bands and a final Score /100', () => {
-    renderWithProviders(<MatrixTable rows={[row()]} canEdit={false} onEdit={vi.fn()} />);
+    renderWithProviders(<MatrixTable rows={[row()]} />);
     for (const gone of [/^CAPEX \(k/, /^RM sav\. \(k/, /^TCOGS/, /^Selling price/, /^Gross margin %/]) {
       expect(screen.queryByRole("columnheader", { name: gone }), String(gone)).not.toBeInTheDocument();
     }
@@ -84,8 +84,6 @@ describe('MatrixTable', () => {
             ],
           }),
         ]}
-        canEdit={false}
-        onEdit={vi.fn()}
       />,
     );
     const strat = screen.getByTestId('dim-strategic_project');
@@ -97,8 +95,6 @@ describe('MatrixTable', () => {
     renderWithProviders(
       <MatrixTable
         rows={[row({ scoring_tags: ['new_options'], tag_dimension_keys: ['new_options', 'inactive_dimension'] })]}
-        canEdit
-        onEdit={vi.fn()}
       />,
     );
     const tagged = screen.getByTestId('dim-new_options');
@@ -108,8 +104,6 @@ describe('MatrixTable', () => {
     expect(screen.getAllByTestId('from-registration-mark')).toHaveLength(1);
     expect(within(tagged).getByTestId('score-chip')).toHaveAttribute('data-from-registration', 'true');
     expect(screen.getByTestId('dim-new_customer')).not.toHaveTextContent('from registration');
-    // Still edited through the ordinary score dialog.
-    expect(screen.getByRole('button', { name: 'Edit prioritization score for Cooler A' })).toBeEnabled();
   });
 
   it('P21: Compare checkboxes are keyboard-reachable and call the toggle', async () => {
@@ -117,7 +111,7 @@ describe('MatrixTable', () => {
     const { default: userEvent } = await import('@testing-library/user-event');
     const user = userEvent.setup();
     renderWithProviders(
-      <MatrixTable rows={[row()]} canEdit={false} onEdit={vi.fn()} selectedIds={new Set()} onToggleSelect={onToggle} />,
+      <MatrixTable rows={[row()]} selectedIds={new Set()} onToggleSelect={onToggle} />,
     );
     const box = screen.getByRole('checkbox', { name: 'Select Cooler A to compare' });
     box.focus();
@@ -127,7 +121,7 @@ describe('MatrixTable', () => {
 
   it('P21-T03: each pillar is one box — start/end markers, 2px pillar lines, 3px block lines, alternating tint', () => {
     const { container } = renderWithProviders(
-      <MatrixTable rows={[row()]} canEdit={false} onEdit={vi.fn()} selectedIds={new Set()} onToggleSelect={vi.fn()} />,
+      <MatrixTable rows={[row()]} selectedIds={new Set()} onToggleSelect={vi.fn()} />,
     );
     const bodyRow = container.querySelector('.mg-row');
     expect(bodyRow).not.toBeNull();
@@ -161,7 +155,8 @@ describe('MatrixTable', () => {
       c.getAttribute('data-box-kind'),
       c.getAttribute('data-line'),
     ]);
-    expect(lines.filter(([, l]) => l === 'block').map(([k]) => k)).toEqual(['info', 'pillar', 'score']);
+    // P34-T02: the hard-gate columns are their own block between the scores and Score /100.
+    expect(lines.filter(([, l]) => l === 'block').map(([k]) => k)).toEqual(['info', 'pillar', 'gates', 'score']);
     // The last frozen column (Hub) carries the frozen-edge shadow hook.
     expect((bodyRow as Element).querySelectorAll('.mg-frozen-edge')).toHaveLength(1);
     expect((bodyRow as Element).querySelectorAll('.mg-cell-sticky')).toHaveLength(3);
@@ -191,8 +186,6 @@ describe('MatrixTable', () => {
             })),
           }),
         ]}
-        canEdit={false}
-        onEdit={vi.fn()}
       />,
     );
     for (const [key, score] of dims) {
@@ -209,8 +202,6 @@ describe('MatrixTable', () => {
     const { container } = renderWithProviders(
       <MatrixTable
         rows={[row(), row({ project_id: 'p2', project_name: 'Cooler B', normalized_pct: 60 })]}
-        canEdit={false}
-        onEdit={vi.fn()}
         selectedIds={new Set(['p2'])}
         onToggleSelect={vi.fn()}
       />,
@@ -224,23 +215,64 @@ describe('MatrixTable', () => {
     expect(screen.getByRole('checkbox', { name: 'Select Cooler B to compare' })).toBeChecked();
   });
 
-  it('shows no edit affordance for a read-only role (canEdit=false)', () => {
-    renderWithProviders(
-      <MatrixTable rows={[row()]} canEdit={false} onEdit={vi.fn()} />,
-    );
+  it('P34-T02: no per-row edit column; outside edit mode the gates are read-only marks', () => {
+    renderWithProviders(<MatrixTable rows={[row({ hard_gates: ['Active safety non-compliance'] })]} />);
     expect(screen.queryByRole('button', { name: /Edit prioritization score/ })).not.toBeInTheDocument();
     expect(screen.queryByRole('columnheader', { name: 'Edit' })).not.toBeInTheDocument();
+    expect(screen.getByRole('columnheader', { name: 'Hard gates' })).toBeInTheDocument();
+    expect(screen.getAllByTestId('gate-head').map((h) => h.textContent)).toEqual(['Reg. deadline', 'Cert. at risk', 'Safety']);
+    expect(screen.getAllByTestId('gate-mark')).toHaveLength(1);
+    expect(screen.queryByRole('checkbox', { name: /for Cooler A$/ })).not.toBeInTheDocument();
+    expect(screen.queryByTestId('score-input')).not.toBeInTheDocument();
   });
 
-  it('exposes a per-row edit button when canEdit=true', async () => {
-    const onEdit = vi.fn();
+  it('P34-T02: edit mode turns every dimension into a 0–5 input and every gate into a checkbox', async () => {
     const { default: userEvent } = await import('@testing-library/user-event');
     const user = userEvent.setup();
+    const onScore = vi.fn();
+    const onGate = vi.fn();
+    const r = row();
     renderWithProviders(
-      <MatrixTable rows={[row()]} canEdit onEdit={onEdit} />,
+      <MatrixTable
+        rows={[r]}
+        edit={{
+          drafts: { p1: { scores: { ...Object.fromEntries(r.dimension_scores.map((d) => [d.key, d.score])), new_options: 1 }, hard_gates: [] } },
+          baseRow: (x) => x,
+          onScore,
+          onGate,
+        }}
+      />,
     );
-    await user.click(screen.getByRole('button', { name: 'Edit prioritization score for Cooler A' }));
-    expect(onEdit).toHaveBeenCalledWith(expect.objectContaining({ project_id: 'p1' }));
+    expect(screen.getAllByTestId('score-input')).toHaveLength(13);
+    const changed = screen.getByRole('textbox', { name: /^New Options for Cooler A/ });
+    expect(changed).toHaveValue('1');
+    expect(changed).toHaveAttribute('data-changed', 'true');
+    expect(screen.getByRole('textbox', { name: /^Strategic Project for Cooler A/ })).not.toHaveAttribute('data-changed');
+    expect(screen.getByRole('link', { name: 'Cooler A' }).closest('[role="row"]')).toHaveAttribute('data-changed', 'true');
+    await user.click(screen.getByRole('textbox', { name: /^Strategic Project for Cooler A/ }));
+    await user.keyboard('4');
+    expect(onScore).toHaveBeenCalledWith(expect.objectContaining({ project_id: 'p1' }), 'strategic_project', 4);
+    await user.keyboard('{Delete}');
+    expect(onScore).toHaveBeenLastCalledWith(expect.objectContaining({ project_id: 'p1' }), 'strategic_project', null);
+    await user.click(screen.getByRole('checkbox', { name: 'Active safety non-compliance for Cooler A' }));
+    expect(onGate).toHaveBeenCalledWith(expect.objectContaining({ project_id: 'p1' }), 'Active safety non-compliance', true);
+  });
+
+  it('P34 (D34-4): a "changed" marker next to the name calls onOpenVersion with its version', async () => {
+    const { default: userEvent } = await import('@testing-library/user-event');
+    const user = userEvent.setup();
+    const onOpenVersion = vi.fn();
+    renderWithProviders(
+      <MatrixTable
+        rows={[row({ last_score_version: { version: 4, created_at: '2026-11-01T08:00:00Z', applied_by_name: null } })]}
+        onOpenVersion={onOpenVersion}
+      />,
+    );
+    const marker = screen.getByTestId('score-changed-marker');
+    // No name served: the tooltip leaves it out.
+    expect(marker).toHaveAccessibleName(/^Changed in version 4 · [^·]+\. Open in version history$/);
+    await user.click(marker);
+    expect(onOpenVersion).toHaveBeenCalledWith(4);
   });
 
   it('renders an unscored row without inventing a score', () => {
@@ -258,9 +290,6 @@ describe('MatrixTable', () => {
             hard_gates: [],
           }),
         ]}
-       
-        canEdit={false}
-        onEdit={vi.fn()}
       />,
     );
     expect(screen.getByText('Cooler B')).toBeInTheDocument();
@@ -276,8 +305,6 @@ describe('MatrixTable', () => {
       <ScoringModelProvider table={testDimensionTable(FOURTEEN_TEST_DIMENSIONS, 2)}>
         <MatrixTable
           rows={[row({ dimension_scores: testDimensionScores(scores, FOURTEEN_TEST_DIMENSIONS), rubric_version: 2 })]}
-          canEdit={false}
-          onEdit={vi.fn()}
         />
       </ScoringModelProvider>,
     );
@@ -313,8 +340,6 @@ describe('MatrixTable', () => {
               missing_dimension_keys: ['capex_investment', 'sustainability_esg'],
             }),
           ]}
-          canEdit={false}
-          onEdit={vi.fn()}
         />
       </ScoringModelProvider>,
     );
@@ -334,7 +359,7 @@ describe('MatrixTable', () => {
   });
 
   it('P9: links each project to its workspace and exposes the scoring anchors on the dimension headers', () => {
-    renderWithProviders(<MatrixTable rows={[row()]} canEdit={false} onEdit={vi.fn()} />);
+    renderWithProviders(<MatrixTable rows={[row()]} />);
     expect(screen.getByRole('link', { name: 'Cooler A' })).toHaveAttribute('href', '/projects/p1');
     expect(
       screen.getByRole('button', {
@@ -347,8 +372,6 @@ describe('MatrixTable', () => {
     renderWithProviders(
       <MatrixTable
         rows={[row({ dimension_points: { gross_margins: { points: 15, scaled_points: 5.08 } } })]}
-        canEdit={false}
-        onEdit={vi.fn()}
         detailed
       />,
     );
@@ -356,52 +379,10 @@ describe('MatrixTable', () => {
     expect(gp).toHaveTextContent('15/25 pts');
   });
 
-  it('sorts projects in order of the score: rank 1 first, descending score, unscored at bottom', () => {
-    const rowHigh = row({
-      project_id: 'p-high',
-      project_name: 'Project Alpha',
-      weighted_score: 950,
-      rank: 2,
-      has_score: true,
-    });
-    const rowTop = row({
-      project_id: 'p-top',
-      project_name: 'Project Zebra',
-      weighted_score: 1100,
-      rank: 1,
-      has_score: true,
-    });
-    const rowLow = row({
-      project_id: 'p-low',
-      project_name: 'Project Beta',
-      weighted_score: 400,
-      rank: 3,
-      has_score: true,
-    });
-    const rowUnscored = row({
-      project_id: 'p-none',
-      project_name: 'Project Gamma',
-      weighted_score: null,
-      rank: null,
-      has_score: false,
-    });
-
-    // Pass in arbitrary/shuffled order: low, unscored, high, top
-    renderWithProviders(
-      <MatrixTable
-        rows={[rowLow, rowUnscored, rowHigh, rowTop]}
-       
-        canEdit={false}
-        onEdit={vi.fn()}
-      />,
-    );
-
-    const projectLinks = screen.getAllByRole('link', { name: /Project / });
-    expect(projectLinks.map((l) => l.textContent)).toEqual([
-      'Project Zebra', // Rank 1, score 1100
-      'Project Alpha', // Rank 2, score 950
-      'Project Beta',  // Rank 3, score 400
-      'Project Gamma', // Unscored (rank null)
-    ]);
+  it('P34-T02: renders rows in the order given (the page sorts once with sortMatrixRows)', () => {
+    const rowTop = row({ project_id: 'p-top', project_name: 'Project Zebra', rank: 1 });
+    const rowLow = row({ project_id: 'p-low', project_name: 'Project Beta', rank: 3 });
+    renderWithProviders(<MatrixTable rows={[rowLow, rowTop]} />);
+    expect(screen.getAllByRole('link', { name: /Project / }).map((l) => l.textContent)).toEqual(['Project Beta', 'Project Zebra']);
   });
 });

@@ -86,6 +86,7 @@ function BuilderDialog({
   const candidates = rows.filter(isCandidate).length;
   const included = variantRows.filter((r) => r.include).length;
   const categories = React.useMemo(() => dimensionValues(rows, 'category'), [rows]);
+  const topCategory = categories[0];
 
   const pendingName = React.useRef('');
   const simulation = useImportSimulation((response, body) => {
@@ -229,20 +230,21 @@ function BuilderDialog({
                 variant="secondary"
                 disabled={categories.length === 0}
                 onClick={() =>
-                  setRules((r) => ({ ...r, caps: [...r.caps, { category: categories[0] ?? 'A+', max: 5 }] }))
+                  setRules((r) => ({ ...r, caps: [...r.caps, { category: categories[0] ?? '', max: 5 }] }))
                 }
               >
                 <Plus />
                 Add a limit
               </Button>
-              {categories.includes('A+') && !rules.caps.some((c) => c.category === 'A+') ? (
+              {/* P33-T14: the preset caps the top-ranked category present (A+ on the seeded list). */}
+              {topCategory !== undefined && !rules.caps.some((c) => c.category === topCategory) ? (
                 <Button
                   type="button"
                   size="sm"
                   variant="ghost"
-                  onClick={() => setRules((r) => ({ ...r, caps: [...r.caps, { category: 'A+', max: 5 }] }))}
+                  onClick={() => setRules((r) => ({ ...r, caps: [...r.caps, { category: topCategory, max: 5 }] }))}
                 >
-                  Only 5 A+
+                  Only 5 {topCategory}
                 </Button>
               ) : null}
               <span className="text-2xs text-text-muted">

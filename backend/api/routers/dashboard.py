@@ -45,6 +45,7 @@ rows (the exclusive `WITHIN_YEAR` bucket); its composition lists are live
 from __future__ import annotations
 
 import uuid
+from decimal import Decimal
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, Query
@@ -65,7 +66,6 @@ from core.rbac import Action, Surface
 from models.enums import (
     HubName,
     LabRegion,
-    ProjectCategory,
     ProjectPriority,
     ProjectStatus,
     ProjectType,
@@ -98,7 +98,9 @@ from schemas.dashboard import (
 )
 from services.active_run import get_active_run
 from services.capacity_supply import round2
+from services.categories import load_catalog
 from services.category_type_filter import category_type_filter
+from services.expected_status import expected_status_for, status_mismatch
 from services.hub_scope import narrowed_hub_filter
 from services.project_cards import build_project_cards
 from services.text_search import project_search_filter
@@ -592,7 +594,9 @@ async def dashboard_analytics(
     hub_names = list((await db.execute(hubs_stmt)).scalars().all())
 
     by_type: dict[ProjectType | None, int] = dict.fromkeys(ProjectType, 0)
-    by_category: dict[ProjectCategory | None, int] = dict.fromkeys(ProjectCategory, 0)
+    # P33-T07 (ADR 0047 §4): every category of the table, in rank order.
+    category_codes = (await load_catalog(db)).codes
+    by_category: dict[str | None, int] = dict.fromkeys(category_codes, 0)
     by_hub: dict[str, int] = {h.value: 0 for h in hub_names}
     by_year: dict[int | None, int] = {}
     hub_type: dict[tuple[str, ProjectType | None], int] = {}
@@ -615,7 +619,7 @@ async def dashboard_analytics(
     type_counts = {t.value: by_type[t] for t in ProjectType}
     if by_type.get(None):
         type_counts[_UNMAPPED] = by_type[None]
-    category_counts = {c.value: by_category[c] for c in ProjectCategory}
+    category_counts = {c: by_category[c] for c in category_codes}
     if by_category.get(None):
         category_counts[_UNMAPPED] = by_category[None]
     year_counts = {str(y): by_year[y] for y in sorted(y for y in by_year if y is not None)}
@@ -798,6 +802,11 @@ async def analytics_projects(
     `build_project_cards` pass (scores, live steps, run steps, outcomes,
     due stages) and one outcome query for the whole set. No financial field
     is read into the row.
+
+    P35-T01 (D35-1/D35-3): rows also carry `actual_start_week`,
+    `actual_end_week`, the effort figures and `design_weeks_calculated` /
+    `lab_weeks_calculated`, summed by the card builder from the live step
+    rows it already loads (no extra query).
     """
 
     stmt = _register_stmt(
@@ -850,6 +859,9 @@ async def analytics_projects(
         card = cards[p.id]
         outcome = outcomes.get(p.id)
         stage = card.current_stage
+        # P35-T08b (OQ #84 assumption): from the same current stage served
+        # as `current_step_code`; display only.
+        expected = expected_status_for(p.status, stage.step_id if stage is not None else None)
         rows.append(
             ProjectFilterRow(
                 project_id=p.id,
@@ -875,9 +887,23 @@ async def analytics_projects(
                 requesting_department=p.requesting_department,
                 product_type=p.product_type,
                 priority_rank=rank.get(p.id),
+                actual_start_week=p.actual_start_week,
+                actual_end_week=p.actual_end_week,
+                design_effort_weeks=_figure(p.design_effort_weeks),
+                lab_effort_weeks=_figure(p.lab_effort_weeks),
+                design_weeks_calculated=card.design_weeks_calculated,
+                lab_weeks_calculated=card.lab_weeks_calculated,
+                expected_status=expected,
+                status_mismatch=status_mismatch(p.status, expected),
             )
         )
     return ProjectFilterResult(total_count=len(rows), rows=rows)
+
+
+def _figure(value: Decimal | None) -> float | None:
+    """ADR 0041 effort figure (`Numeric(6, 2)`) as served by `ProjectRead`."""
+
+    return float(value) if value is not None else None
 
 
 @router.get("/projects/facets", response_model=ProjectFacets)

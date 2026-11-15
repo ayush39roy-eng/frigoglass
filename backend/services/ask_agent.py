@@ -44,6 +44,7 @@ from services.workspace import (
     health_badge,
     row_effective_weeks,
     row_is_skipped,
+    row_own_effort_kinds,
 )
 
 logger = logging.getLogger(__name__)
@@ -95,6 +96,8 @@ async def build_agent_context(db: AsyncSession, project: Project) -> dict[str, A
         .all()
     )
     live_by_step = {r.step_template_id: r for r in live_rows}
+    # ADR 0046 OR-1: the kinds that follow the project's own effort figure.
+    own_kinds = row_own_effort_kinds(live_rows, {t.id: t.kind for t in templates})
 
     outcome: ScheduleRunProjectOutcome | None = None
     run_steps: list[ScheduleRunProjectStep] = []
@@ -129,13 +132,15 @@ async def build_agent_context(db: AsyncSession, project: Project) -> dict[str, A
         # the lead-time duration was used (remaining duration, roll-up weight).
         # An override never revives a skipped step (lead time 0, or a lab
         # step without certification testing).
-        # ADR 0041 R4/R5: `user ?? effort ?? lead`, the one skip predicate.
+        # ADR 0041 R4/R5 as revised by ADR 0046 §B: the own effort share or
+        # the project's template copy; the one skip predicate.
+        own_effort = t.kind.value in own_kinds
         duration = (
             display_duration_weeks(
-                lead_weeks=live.duration_weeks,
+                plan_weeks=live.plan_weeks,
                 kind=t.kind,
                 certification_testing_required=project.certification_testing_required,
-                user_override_weeks=live.duration_override_weeks,
+                own_effort=own_effort,
                 effort_weeks=live.effort_weeks,
             )
             if live is not None
@@ -151,7 +156,9 @@ async def build_agent_context(db: AsyncSession, project: Project) -> dict[str, A
             run_step.skipped
             if run_step is not None
             else (
-                row_is_skipped(live, t.kind, project.certification_testing_required)
+                row_is_skipped(
+                    live, t.kind, project.certification_testing_required, own_effort=own_effort
+                )
                 if live is not None
                 else True
             )
@@ -201,6 +208,8 @@ async def build_agent_context(db: AsyncSession, project: Project) -> dict[str, A
                 r,
                 kind_by_step.get(r.step_template_id, WorkflowStepKind.DESIGN),
                 project.certification_testing_required,
+                own_effort=kind_by_step.get(r.step_template_id, WorkflowStepKind.DESIGN).value
+                in own_kinds,
             ),
         )
         for r in live_rows
@@ -236,7 +245,7 @@ async def build_agent_context(db: AsyncSession, project: Project) -> dict[str, A
         "project": {
             "name": project.name,
             "external_code": project.external_code,
-            "category": project.category.value if project.category else None,
+            "category": project.category,
             "type": project.type.value if project.type else None,
             "status": project.status.value,
             "priority": project.priority.value if project.priority else None,

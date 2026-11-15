@@ -56,7 +56,6 @@ from scheduling import (
 )
 from seed import client_2026 as c26
 from seed.seed_demo_data import client_2026_step_specs
-from services import step_timing as step_timing_service
 from services.demand_load import load_demand, load_live_project_rows
 from services.priority_capacity_fill import compute_capacity_fill
 from services.project_cards import build_project_cards
@@ -102,7 +101,6 @@ def dispatch(monkeypatch):
         return SimpleNamespace(id=f"celery-task-{len(calls)}")
 
     monkeypatch.setattr(run_greedy_schedule, "delay", _fake_delay)
-    monkeypatch.setattr(step_timing_service, "publish_progress", lambda *a, **k: None)
     return calls
 
 
@@ -355,29 +353,38 @@ async def test_category_change_and_hub_move_rederive(db_session):
 # --- R6: Workflow Settings edits ------------------------------------------------------
 
 
-async def test_lead_time_edit_rederives_and_never_clears_a_user_override(db_session):
+async def test_lead_time_edit_no_longer_rederives_and_never_clears_a_user_override(db_session):
+    """P33-T08 (DOMAIN_RULES "Category templates" §B, R33-2): the R6 triggers
+    are ADR 0041's minus the lead-time edit. The split's weights are the
+    immutable `effort_weight_weeks`, and a template value reaches a project's
+    copy only through the apply, so the edit changes no effort, no copy and
+    no user override (it still mirrors `duration_weeks`)."""
     w = await _world(db_session)
     project = await _b4_project(db_session, w)
-    row_e = await live_step(db_session, project, "PDD-E")
-    row_e.duration_override_weeks = 6  # the user's figure
-    await db_session.flush()
+    # P33-T13: no user override can be stored any more (p33c CHECK, ADR 0048).
     await act_as(db_session, RoleName.SUPER_ADMIN)
     async with client_for(db_session) as client:
-        resp = await client.put(
-            "/workflow-settings/lead-times",
-            json={"lead_times": [
-                {"workflow_id": "PDD", "category": "B", "step_id": "PDD-E", "weeks": 8}
-            ]},
+        # P33-T10: the template is edited through the apply (the lead-times
+        # PUT answers 410); an own-effort project's design length is not
+        # applied (OR-4).
+        resp = await client.post(
+            "/workflow-templates/apply",
+            json={
+                "changes": [{"workflow_id": "PDD", "category": "B", "base_version": 1,
+                             "steps": [{"step_id": "PDD-E", "weeks": 8}]}],
+                "selection": {"mode": "none"},
+            },
         )
         assert resp.status_code == 200, resp.text
+        assert resp.json()["recalc_status"] == "not_needed"
     effort = await _effort(db_session, project)
     assert _nonnull(effort) == {
-        "PDD-A": 0, "PDD-D": 0, "PDD-E": 3, "PDD-J": 0, "PDD-K": 1, "PDD-M": 0,
+        "PDD-A": 1, "PDD-D": 0, "PDD-E": 2, "PDD-J": 0, "PDD-K": 1, "PDD-M": 0,
     }  # fmt: skip
     row_e = await live_step(db_session, project, "PDD-E")
     await db_session.refresh(row_e)
-    assert row_e.duration_override_weeks == 6 and row_e.duration_weeks == 8
-    assert "lead_time_edit" in await _triggers(db_session, project)
+    assert row_e.plan_weeks == 4  # the project's copy is untouched
+    assert "lead_time_edit" not in await _triggers(db_session, project)
     assert await _i26(db_session) == ()
 
 
@@ -475,53 +482,16 @@ async def _b4_project(db, w, **kw) -> Project:
     return await _reload(db, project)
 
 
-async def test_step_timing_r4_precedence_reset_and_409(db_session, dispatch):
-    w = await _world(db_session)
-    project = await _b4_project(db_session, w, status=ProjectStatus.IN_QUEUE)
-    await make_schedule_run(db_session, is_active=True)
-    url = f"/projects/{project.id}/steps/{{}}/timing"
-    async with client_for(db_session) as client:
-        # D is effort-zeroed (skipped): a new user value is refused ...
-        resp = await client.patch(url.format("PDD-D"), json={"duration_override_weeks": 2})
-        assert resp.status_code == 409 and resp.json()["code"] == "STEP_SKIPPED"
-        resp = await client.patch(url.format("PDD-D"), json={"start_not_before_week": 40})
-        assert resp.status_code == 409 and resp.json()["code"] == "STEP_SKIPPED"
-        # ... clearing is allowed (nothing to clear: unchanged).
-        resp = await client.patch(url.format("PDD-D"), json={"duration_override_weeks": None})
-        assert resp.status_code == 200 and resp.json()["recalc_status"] == "unchanged"
-        assert resp.json()["effective_duration_weeks"] == 0
-        # A user override wins over the effort (user ?? effort ?? lead).
-        resp = await client.patch(url.format("PDD-E"), json={"duration_override_weeks": 6})
-        assert resp.status_code == 200, resp.text
-        body = resp.json()
-        assert body["effective_duration_weeks"] == 6
-        assert body["effort_weeks"] == 2 and body["lead_time_weeks"] == 4
-        # Reset timing restores the EFFORT value, not the table.
-        resp = await client.patch(
-            url.format("PDD-E"),
-            json={"duration_override_weeks": None, "start_not_before_week": None},
-        )
-        assert resp.status_code == 200
-        assert resp.json()["effective_duration_weeks"] == 2
-        assert resp.json()["duration_override_weeks"] is None
-    # An EXISTING user override keeps a zeroed step (it is not skipped).
-    row_d = await live_step(db_session, project, "PDD-D")
-    row_d.duration_override_weeks = 2
-    await db_session.flush()
-    async with client_for(db_session) as client:
-        resp = await client.patch(url.format("PDD-D"), json={"duration_override_weeks": 3})
-        assert resp.status_code == 200, resp.text
-        assert resp.json()["effective_duration_weeks"] == 3
+# P33-T13 (ADR 0048): `test_step_timing_r4_precedence_reset_and_409` is
+# retired with the step-timing PATCH (410 STEP_TIMING_RETIRED; see
+# tests/test_p33_t13_timing_retired.py). A user override no longer exists.
 
 
 async def test_solver_input_carries_the_merged_override(db_session):
+    # P33-T13 (ADR 0048, contract F4 after p33c): the override is the effort
+    # share alone; no user override and no floor reach the input any more.
     w = await _world(db_session)
     project = await _b4_project(db_session, w)
-    row_e = await live_step(db_session, project, "PDD-E")
-    row_e.duration_override_weeks = 6
-    row_m = await live_step(db_session, project, "PDD-M")
-    row_m.start_not_before_week = 45  # a floor alone on an effort-zeroed step
-    await db_session.flush()
     schedule_input = await build_schedule_input_from_db(db_session)
     (p,) = [x for x in schedule_input.projects if x.project_id == str(project.id)]
     timing = {
@@ -530,10 +500,10 @@ async def test_solver_input_carries_the_merged_override(db_session):
     assert timing == {
         "PDD-A": (1, None),
         "PDD-D": (0, None),
-        "PDD-E": (6, None),  # user wins
+        "PDD-E": (2, None),  # the effort share
         "PDD-J": (0, None),
         "PDD-K": (1, None),
-        "PDD-M": (0, 45),
+        "PDD-M": (0, None),
     }
 
 
@@ -572,9 +542,11 @@ async def test_gantt_cards_and_tracking_use_the_one_predicate(db_session):
     async with client_for(db_session) as client:
         body = (await client.get("/gantt", params={"project_id": str(project.id)})).json()
     steps = {s["step_id"]: s for s in body["rows"][0]["steps"]}
-    assert steps["PDD-D"]["timing_editable"] == "none"  # effort-zeroed (R5)
-    assert steps["PDD-E"]["timing_editable"] == "move_resize"
-    assert steps["PDD-E"]["effort_weeks"] == 2 and steps["PDD-E"]["duration_override_weeks"] is None
+    # P33-T12: `timing_editable` is retired; the design kind follows the
+    # project's own figure (OR-1), the skip comes from the run row.
+    assert steps["PDD-D"]["own_effort"] is True and steps["PDD-D"]["effort_weeks"] == 0
+    assert steps["PDD-E"]["own_effort"] is True and steps["PDD-E"]["effort_weeks"] == 2
+    assert "duration_override_weeks" not in steps["PDD-E"]
     cards = await build_project_cards(db_session, [project], run)
     assert cards[project.id].current_stage is not None
     assert cards[project.id].current_stage.step_id == "PDD-E"  # D is skipped
@@ -601,14 +573,12 @@ async def _demand_world(db):
     # On Hold counts in the full year only; Cancelled in neither.
     p.h1 = await _project(db, w, name="H1", status=ProjectStatus.ON_HOLD)
     p.x1 = await _project(db, w, name="X1", status=ProjectStatus.CANCELLED)
-    # India: C with a stale user override on lead-0 PDD-B (never revived).
+    # India: C, lead-0 PDD-B stays skipped. (P33-T13: the stale user
+    # override this used to carry is impossible since p33c, ADR 0048.)
     p.i1 = await _project(
         db, w, hub=w.india, leader=w.ind, name="I1", category=ProjectCategory.C,
         status=ProjectStatus.IN_QUEUE,
     )  # fmt: skip
-    row = await live_step(db, p.i1, "PDD-B")
-    row.duration_override_weeks = 9
-    await db.flush()
     await act_as(db, RoleName.ADMIN)
     async with client_for(db) as client:
         assert (
@@ -638,7 +608,7 @@ async def test_hub_load_serves_demand_and_booked_i25_i19(db_session):
     # Remaining: G1 (A Done) 3 + S1 5; On Hold not counted.
     assert gr["design_load_remaining_weeks"] == 3 + 5
     assert gr["design_load_booked_weeks"] == 2 + 1
-    assert ind["design_load_weeks"] == 6  # C table, PDD-B override never revives it
+    assert ind["design_load_weeks"] == 6  # C table, lead-0 PDD-B skipped
     # Lab (Greece region): S1 H6 + H1 H6 (G1's lab has no figure: H6 too) = 18.
     assert gr["lab_load_weeks"] == 18.0 and gr["lab_load_remaining_weeks"] == 12.0
     assert gr["lab_load_booked_weeks"] == 0.0

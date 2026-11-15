@@ -9,9 +9,16 @@ started steps, R7 edge cases). The result is written to
 `duration_override_weeks` is never touched, so "a table edit never clears an
 override" holds and "Reset timing" restores the effort value.
 
-Effective duration everywhere = `user ?? effort ?? lead`
-(`scheduling.merged_step_override` + `step_effective_weeks`); a step whose
+Effective duration everywhere: DOMAIN_RULES "Category templates" §B (ADR
+0046 OR-2) — the effort share on a kind that has the project's own figure,
+else the project's template copy `plan_weeks`
+(`services.workflow_durations.live_step_effective_weeks`); a step whose
 effective duration is 0 is skipped (R5).
+
+**Weights (P33-T08, R33-2).** R2 splits a figure over the category
+template's immutable `effort_weight_weeks` (backfilled = `weeks`), never over
+`weeks` or a project's `plan_weeks`, so a template edit never reshapes a
+project's split.
 
 **Re-derivation** (`rederive_project_effort`, R6) runs, in the same
 transaction, on:
@@ -21,11 +28,20 @@ transaction, on:
   both) — `POST /projects`, `PATCH /projects/{id}`;
 - a workflow change (a hub move between a PDD and an OEM hub;
   `sync_project_steps` re-points the rows and clears their timing);
-- a lead-time table edit and a step-kind edit on Workflow Settings
-  (`rederive_all_projects`);
+- a step-kind edit on Workflow Settings (`rederive_all_projects`). Since
+  P33 (DOMAIN_RULES §B: "R6 triggers minus the lead-time edit") a lead-time
+  / template edit is no trigger: the weights are immutable;
 - unfreezing a project (the Gantt freeze toggle);
 - a stage status crossing `Not Started` (Workspace stage PATCH, weekly
   check-in), because R3's `started` flag is an input of the split.
+
+**A kind that loses its own figure** (OR-5, "figure cleared": a figure
+blanked or 0, certification testing off for lab, or a category / step-kind
+change that leaves the figure no weighted step) has the current template
+`weeks` re-copied onto its not-reached steps (R33-10) in the same
+transaction (`services.template_copy`), so the project then follows the
+template; reached steps keep their copies. The copy before / after is in the
+same audit row (`template_copy`) and on the returned result.
 
 Scope: every project with a figure or a stored effort value, non-schedulable
 ones included (R6). A **frozen** project is a no-op (I10; it is re-derived on
@@ -43,7 +59,7 @@ is *not applied* (no effort written; reported in the audit row).
 from __future__ import annotations
 
 import uuid
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -52,7 +68,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.errors import HTTP_422, CodedHTTPException, field_error
 from models.audit import AuditLogEntry
-from models.enums import ProjectCategory, WorkflowStepStatus
+from models.enums import WorkflowStepStatus
+from models.hub import Hub
 from models.project import Project, workflow_id_for_hub
 from models.workflow import ProjectWorkflowStep, WorkflowLeadTime, WorkflowStepTemplate
 from scheduling.effort_split import (
@@ -61,6 +78,15 @@ from scheduling.effort_split import (
     ProjectEffortDerivation,
     derive_project_effort,
 )
+from services.template_copy import (
+    CopyChanges,
+    copy_template,
+    load_predecessors,
+    load_template,
+    not_reached_rows,
+    share_lock_categories,
+)
+from services.workflow_durations import own_effort_kinds
 
 #: Audit action of a re-derivation that changed at least one step (R6).
 AUDIT_ACTION = "project.effort_rederived"
@@ -86,6 +112,9 @@ class EffortRederivation:
     before: dict[str, int | None]
     after: dict[str, int | None]
     derivation: ProjectEffortDerivation
+    #: OR-5: the template copy re-written because a kind lost its own figure
+    #: (`services.template_copy.CopyChanges`; empty when none).
+    template_copy: CopyChanges | None = None
 
 
 def _figure_str(value: object) -> str | None:
@@ -93,19 +122,21 @@ def _figure_str(value: object) -> str | None:
 
 
 def effort_inputs(
-    rows: Iterable[ProjectWorkflowStep], kinds: dict[str, str]
+    rows: Iterable[ProjectWorkflowStep],
+    kinds: dict[str, str],
+    weights: Mapping[str, int],
 ) -> tuple[EffortStepInput, ...]:
-    """The split's step inputs from live rows: lead = the row's lead-time
-    duration (`duration_weeks`, kept equal to the table by
-    `sync_project_steps` / `recompute_step_durations`), kind = the template's
-    kind on Workflow Settings, started = stored status ≠ Not Started (R3)."""
+    """The split's step inputs from live rows: lead = the category template's
+    `effort_weight_weeks` of the step (R33-2; `weights`, 0 when the template
+    has no row), kind = the template's kind on Workflow Settings, started =
+    stored status ≠ Not Started (R3)."""
 
     return tuple(
         EffortStepInput(
             step_id=r.step_template_id,
             sequence_order=r.sequence_order,
             kind=kinds.get(r.step_template_id, "elapsed"),
-            lead_weeks=r.duration_weeks,
+            lead_weeks=weights.get(r.step_template_id, 0),
             started=r.status != WorkflowStepStatus.NOT_STARTED,
         )
         for r in rows
@@ -113,16 +144,46 @@ def effort_inputs(
 
 
 def derive_for(
-    project: Project, rows: Sequence[ProjectWorkflowStep], kinds: dict[str, str]
+    project: Project,
+    rows: Sequence[ProjectWorkflowStep],
+    kinds: dict[str, str],
+    weights: Mapping[str, int],
 ) -> ProjectEffortDerivation:
-    """`derive_project_effort` of a project's live rows. Raises
-    `EffortSplitRejected` (R7)."""
+    """`derive_project_effort` of a project's live rows over the R2 weights
+    of its category (`effort_weights`). Raises `EffortSplitRejected` (R7)."""
 
     return derive_project_effort(
         design_effort_weeks=project.design_effort_weeks,
         lab_effort_weeks=project.lab_effort_weeks,
         certification_testing_required=project.certification_testing_required,
-        steps=effort_inputs(rows, kinds),
+        steps=effort_inputs(rows, kinds, weights),
+    )
+
+
+async def effort_weights(
+    db: AsyncSession, workflow_id: str, category: str | None
+) -> dict[str, int]:
+    """R33-2: the immutable `effort_weight_weeks` of `workflow_id` × `category`
+    by step id (empty without a category: no split applies)."""
+
+    if category is None:
+        return {}
+    return {
+        step_id: int(w)
+        for step_id, w in (
+            await db.execute(
+                select(WorkflowLeadTime.step_id, WorkflowLeadTime.effort_weight_weeks).where(
+                    WorkflowLeadTime.workflow_id == workflow_id,
+                    WorkflowLeadTime.category == category,
+                )
+            )
+        ).all()
+    }
+
+
+async def _project_workflow_id(db: AsyncSession, project: Project) -> str:
+    return workflow_id_for_hub(
+        (await db.execute(select(Hub.is_oem).where(Hub.id == project.hub_id))).scalar_one()
     )
 
 
@@ -151,7 +212,7 @@ async def validate_effort_split(
     db: AsyncSession,
     *,
     hub_is_oem: bool,
-    category: ProjectCategory | None,
+    category: str | None,
     design_effort_weeks: object,
     lab_effort_weeks: object,
     certification_testing_required: bool,
@@ -174,19 +235,9 @@ async def validate_effort_split(
             ).where(WorkflowStepTemplate.workflow_id == workflow_id)
         )
     ).all()
-    lead: dict[str, int] = {}
-    if category is not None:
-        lead = {
-            step_id: int(weeks)
-            for step_id, weeks in (
-                await db.execute(
-                    select(WorkflowLeadTime.step_id, WorkflowLeadTime.weeks).where(
-                        WorkflowLeadTime.workflow_id == workflow_id,
-                        WorkflowLeadTime.category == category,
-                    )
-                )
-            ).all()
-        }
+    # R33-2: the split's weights are the template's immutable
+    # `effort_weight_weeks`, never `weeks`.
+    lead = await effort_weights(db, workflow_id, category)
     started: set[str] = set()
     if project_id is not None:
         started = {
@@ -252,20 +303,47 @@ async def rederive_project_effort(
             .scalars()
             .all()
         )
+    workflow_id = await _project_workflow_id(db, project)
     # R7 is checked for a frozen project too, so a figure stored while frozen
     # can always be applied on unfreeze; nothing is written for it (I10).
-    derivation = derive_for(project, rows, kinds)
+    derivation = derive_for(
+        project, rows, kinds, await effort_weights(db, workflow_id, project.category)
+    )
     if project.frozen:
         return None
     wanted = derivation.effort_weeks_by_step()
     before = {r.step_template_id: r.effort_weeks for r in rows}
     after = {r.step_template_id: wanted.get(r.step_template_id) for r in rows}
     changed = before != after
+    recopied: CopyChanges = {}
     if changed:
+        # OR-5 "figure cleared": a kind that loses its own effort follows the
+        # template again on its not-reached steps (R33-10).
+        lost = own_effort_kinds(before.items(), kinds) - own_effort_kinds(after.items(), kinds)
         for r in rows:
             r.effort_weeks = after[r.step_template_id]
+        if lost:
+            # P33-T10 ruling (OR-5): wait for an in-flight template apply of
+            # the category, then copy its new template. Every caller that can
+            # clear a figure takes this lock BEFORE any project-row lock
+            # (PATCH, register batch, unfreeze, `rederive_all_projects`), so
+            # here it is already held and re-taking it never waits.
+            await share_lock_categories(db, [project.category])
+            predecessors = await load_predecessors(db, workflow_id)
+            recopied = copy_template(
+                [
+                    r
+                    for r in not_reached_rows(rows, predecessors)
+                    if kinds.get(r.step_template_id, "elapsed") in lost
+                ],
+                await load_template(db, workflow_id, project.category),
+                gaps=False,
+            )
         project.schedule_stale = True
         if audit:
+            after_state = _state(project, after, derivation, trigger=trigger)
+            if recopied:
+                after_state["template_copy"] = recopied
             db.add(
                 AuditLogEntry(
                     actor_user_id=actor_user_id,
@@ -274,7 +352,7 @@ async def rederive_project_effort(
                     entity_id=str(project.id),
                     hub_id=project.hub_id,
                     before_state=_state(project, before, None),
-                    after_state=_state(project, after, derivation, trigger=trigger),
+                    after_state=after_state,
                 )
             )
         await db.flush()
@@ -284,6 +362,7 @@ async def rederive_project_effort(
         before=before,
         after=after,
         derivation=derivation,
+        template_copy=recopied or None,
     )
 
 
@@ -302,7 +381,7 @@ def _state(
         "design_effort_weeks": _figure_str(project.design_effort_weeks),
         "lab_effort_weeks": _figure_str(project.lab_effort_weeks),
         "certification_testing_required": project.certification_testing_required,
-        "category": project.category.value if project.category else None,
+        "category": project.category,
         "effort_weeks": dict(sorted(effort.items())),
     }
     if derivation is not None:
@@ -356,6 +435,9 @@ async def rederive_all_projects(
     )
     if not projects:
         return []
+    # P33-T10 ruling (OR-5): the categories' FOR SHARE before this loop writes
+    # any project row (a re-derivation may re-copy the template).
+    await share_lock_categories(db, [p.category for p in projects])
     rows_by_project: dict[uuid.UUID, list[ProjectWorkflowStep]] = {}
     for r in (
         await db.execute(

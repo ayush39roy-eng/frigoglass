@@ -7,6 +7,7 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Label } from '@/components/ui/label';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { useHubs } from '@/lib/api/reference';
+import { useCategoryCatalogSnapshot } from '@/lib/category-catalog';
 import { capacityHubsOnly, hubPickerLabel } from '@/lib/hub-labels';
 import { HUB_NAMES, LAB_REGIONS, PROJECT_PRIORITIES, PROJECT_TYPES, PROJECT_TYPE_LABELS } from '@/types/enums';
 
@@ -181,6 +182,7 @@ export interface ScenarioBuilderProps {
 
 export function ScenarioBuilder({ validation, chambers }: ScenarioBuilderProps): React.JSX.Element {
   const lines = useWhatIfScenario();
+  const categoryCatalog = useCategoryCatalogSnapshot();
   const errors: LineErrors = validation.errors;
   const { updateLine, removeLine } = lines;
 
@@ -244,7 +246,7 @@ export function ScenarioBuilder({ validation, chambers }: ScenarioBuilderProps):
                 <Field id={id('category')} label="Category" error={err(l.key, 'category')}>
                   {(p) => (
                     <NativeSelect {...p} value={l.category} onChange={(e) => set({ category: e.target.value as typeof l.category })}>
-                      {categoriesForHub(l.hub).map((c) => (
+                      {categoriesForHub(l.hub, categoryCatalog).map((c) => (
                         <option key={c} value={c}>
                           {c}
                         </option>

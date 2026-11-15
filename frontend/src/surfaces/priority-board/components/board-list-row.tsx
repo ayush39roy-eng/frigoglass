@@ -1,17 +1,18 @@
 import * as React from 'react';
 import { Link } from 'react-router-dom';
-import { GripVertical, Loader2, Lock } from 'lucide-react';
+import { GripVertical, Loader2, Snowflake } from 'lucide-react';
 
 import { SuggestedBandChip } from '@/components/shared/suggested-band-chip';
 import { cn } from '@/lib/utils';
 
-import type { DisplayCard } from '../lib/board-model';
 import { BoardScenarioContext } from '../lib/board-scenario';
+import { handleLabel, type DisplayCard } from '../lib/board-model';
 import type { BoardCardProps } from './board-card';
+import { HardGateLock } from './board-badges';
 
 export interface BoardListRowProps extends Omit<BoardCardProps, 'item'> {
   item: DisplayCard;
-  /** 1-based position in the column, in the served order. */
+  /** 1-based visible index in the column — shown only when no `band_rank` is served (P36). */
   position: number;
 }
 
@@ -43,6 +44,7 @@ export const BoardListRow = React.memo(function BoardListRow({
   // tells apart names with a shared prefix); without one, the name keeps two lines.
   const code = card.external_code ?? null;
   const suggested = card.suggested_band ?? card.band;
+  const rank = card.band_rank ?? null;
   return (
     <div
       className={cn(
@@ -60,14 +62,23 @@ export const BoardListRow = React.memo(function BoardListRow({
       data-pending={pending ? 'true' : undefined}
       data-staged={staged ? 'true' : undefined}
     >
-      <span className="mt-1 w-6 shrink-0 text-right font-mono text-2xs tabular-nums text-text-muted" aria-hidden="true">
-        {position}
+      {/* P36 (ADR 0050): the served band_rank — the position in the whole band, which
+          filters never change. While a move is pending the served rank is stale: "…". */}
+      <span
+        className="mt-1 w-6 shrink-0 text-right font-mono text-2xs tabular-nums text-text-muted"
+        aria-hidden="true"
+        data-numeric=""
+        data-testid="board-list-rank"
+        title={rank !== null ? `Position ${String(rank)} in ${servedPriority}: its scheduling order inside the band` : undefined}
+      >
+        {pending ? '…' : (rank ?? position)}
       </span>
+      {rank !== null && !pending ? <span className="sr-only">{`Position ${String(rank)} in ${servedPriority}.`}</span> : null}
       {draggable ? (
         <button
           type="button"
           className="grid size-6 shrink-0 place-items-center rounded-sm text-text-muted hover:bg-primary-subtle hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-          aria-label={`Move ${card.name} to another priority column`}
+          aria-label={handleLabel(card.name, locked)}
           aria-describedby={instructionsId}
           aria-pressed={lifted}
           data-testid="board-drag-handle"
@@ -77,9 +88,8 @@ export const BoardListRow = React.memo(function BoardListRow({
           <GripVertical className="size-3.5" aria-hidden="true" />
         </button>
       ) : locked ? (
-        <span className="grid size-6 shrink-0 place-items-center text-text-muted" title="Hard gate: this project must stay P1">
-          <Lock className="size-3" aria-hidden="true" />
-          <span className="sr-only">Hard gate: stays P1</span>
+        <span className="grid size-6 shrink-0 place-items-center">
+          <HardGateLock size="size-3" />
         </span>
       ) : (
         <span className="size-6 shrink-0" aria-hidden="true" />
@@ -101,6 +111,12 @@ export const BoardListRow = React.memo(function BoardListRow({
           </span>
         ) : null}
       </div>
+      {card.frozen ? (
+        <span className="mt-1 shrink-0 text-primary-subtle-fg" title="Frozen: dates locked; scheduled first whatever its position in the column" data-testid="board-frozen-badge">
+          <Snowflake className="size-3" aria-hidden="true" />
+          <span className="sr-only">Frozen</span>
+        </span>
+      ) : null}
       {suggested ? (
         <span className="mt-0.5 shrink-0" data-testid="board-list-band">
           <SuggestedBandChip

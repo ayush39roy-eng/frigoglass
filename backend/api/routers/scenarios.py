@@ -115,8 +115,10 @@ async def apply_scenario(
     await db.commit()
     await db.refresh(run)
 
+    counts = await _scoped_change_counts(db, current_user, [run.id])
+    change_count, project_count = counts.get(run.id, (0, 0))
     return ScenarioApplyResponse(
-        run=ScenarioApplyRunSummary.model_validate(run),
+        run=_run_summary(run, change_count=change_count, project_count=project_count),
         updated_priority_scores=[s.id for s in written_scores],
         suggested_bands={str(pid): band for pid, band in suggested_bands.items()},
     )
@@ -143,12 +145,33 @@ def _run_hub_scope_exists_clause(current_user: Principal) -> ColumnElement[bool]
     )
 
 
+def _run_summary(
+    run: ScenarioApplyRun, *, change_count: int, project_count: int
+) -> ScenarioApplyRunSummary:
+    """The served summary of `run` with the caller-scoped counts (P34-T01:
+    `project_count` is not an ORM attribute, so it is always passed in)."""
+
+    return ScenarioApplyRunSummary(
+        id=run.id,
+        version=run.version,
+        applied_by_user_id=run.applied_by_user_id,
+        notes=run.notes,
+        entity_types_touched=list(run.entity_types_touched),
+        change_count=change_count,
+        project_count=project_count,
+        created_at=run.created_at,
+    )
+
+
 async def _scoped_change_counts(
     db: AsyncSession,
     current_user: Principal,
     run_ids: Sequence[uuid.UUID],
-) -> dict[uuid.UUID, int]:
-    """Per-`ScenarioApplyRun` count of `ScenarioApplyChange` rows visible to
+) -> dict[uuid.UUID, tuple[int, int]]:
+    """Per-`ScenarioApplyRun` `(change_count, project_count)` — P34-T01 adds
+    `project_count`, the number of distinct non-null `project_id`s among the
+    same caller-scoped change rows (`COUNT(DISTINCT)` ignores nulls). The
+    rest of this docstring is about the count of `ScenarioApplyChange` rows visible to
     `current_user`'s own hub scope (P5-T10 remediation — see module docstring
     addendum below and the `docs/MEMORY.md` "[2026-09-05] P5 gate —
     workflow-auditor" finding #4 this fixes).
@@ -172,14 +195,16 @@ async def _scoped_change_counts(
     if not run_ids:
         return {}
     stmt = select(
-        ScenarioApplyChange.scenario_apply_run_id, func.count(ScenarioApplyChange.id)
+        ScenarioApplyChange.scenario_apply_run_id,
+        func.count(ScenarioApplyChange.id),
+        func.count(func.distinct(ScenarioApplyChange.project_id)),
     ).where(ScenarioApplyChange.scenario_apply_run_id.in_(run_ids))
     change_hub_filter = hub_scope_filter(current_user, ScenarioApplyChange.hub_id)
     if change_hub_filter is not None:
         stmt = stmt.where(change_hub_filter)
     stmt = stmt.group_by(ScenarioApplyChange.scenario_apply_run_id)
     rows = (await db.execute(stmt)).all()
-    return {run_id: count for run_id, count in rows}
+    return {run_id: (count, projects) for run_id, count, projects in rows}
 
 
 @router.get("/versions", response_model=list[ScenarioApplyRunSummary])
@@ -204,11 +229,10 @@ async def list_scenario_apply_versions(
 
     scoped_counts = await _scoped_change_counts(db, current_user, [run.id for run in runs])
     return [
-        ScenarioApplyRunSummary(
-            **{
-                **ScenarioApplyRunSummary.model_validate(run).model_dump(),
-                "change_count": scoped_counts.get(run.id, 0),
-            }
+        _run_summary(
+            run,
+            change_count=scoped_counts.get(run.id, (0, 0))[0],
+            project_count=scoped_counts.get(run.id, (0, 0))[1],
         )
         for run in runs
     ]
@@ -252,10 +276,12 @@ async def get_scenario_apply_version(
     # `run.change_count` — see `_scoped_change_counts`'s docstring. Without
     # this, a Hub Planner viewing a multi-hub Apply would see a `change_count`
     # header disagreeing with the very `changes` rows on the same response.
+    summary = _run_summary(
+        run,
+        change_count=len(changes),
+        project_count=len({c.project_id for c in changes if c.project_id is not None}),
+    )
     return ScenarioApplyRunDetail(
-        **{
-            **ScenarioApplyRunSummary.model_validate(run).model_dump(),
-            "change_count": len(changes),
-        },
+        **summary.model_dump(),
         changes=[ScenarioApplyChangeDetail.model_validate(c) for c in changes],
     )

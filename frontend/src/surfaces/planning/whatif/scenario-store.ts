@@ -49,7 +49,8 @@ export const useWhatIfScenario = create<WhatIfScenarioState>()((set) => ({
         if (list === 'projects' && 'hub' in patch && patch.hub !== undefined) {
           const hub = patch.hub as string;
           const cat = next.category as string;
-          if (!categoriesForHub(hub).some((c) => c === cat)) next.category = categoriesForHub(hub).at(-1) ?? 'C';
+          const allowed = categoriesForHub(hub);
+          if (allowed.length > 0 && !allowed.includes(cat)) next.category = allowed.at(-1) ?? cat;
         }
         return next;
       });

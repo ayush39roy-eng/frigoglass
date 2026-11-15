@@ -34065,3 +34065,4080 @@ passed alone. **P32-R01 is not the cause.** Tests only; no production code chang
   - Full backend suite (`--no-cov`): 2653 passed, 0 failed.
   - Ruff clean. Mypy: no errors on the edited lines (the untyped-tests baseline is pre-existing).
   - `.coverage` restored.
+
+## [2026-11-12] Whole-system audit + P32 gate (P32-T20) — orchestrator: FAIL (workflow-auditor FAIL; security code leg PASS, deployed FAIL on accepted risks; qa PASS)
+
+Owner asked for a complete check of the system (vulnerabilities, system errors, logic errors, leaks). Run as a full
+sweep at HEAD b660b29 and as the P32 gate. No application code changed. The three specialists reported to the
+orchestrator, who wrote this entry (they were told not to write to `docs/`).
+
+**qa-inspector: PASS** (everything that was run).
+- Backend 2653 passed, 97.27% coverage. Scheduling 467 passed, 95.11%. Frontend 231 files / 1860 tests. eslint 0
+  errors / 8 warnings, tsc clean, build budget PASS 190.9 KB. ruff clean. Single alembic head `p32a_step_overlap`.
+- Playwright e2e NOT RUN (needs disposable DB, API on :8010 and port 5183, which a dev server holds; several specs
+  look written for the old 46-project seed).
+- QA-M1 `alembic check` exits 255 on the three hand-written partial unique indexes (known false positives; no drift
+  test). QA-M2 tests run on Python 3.14, image ships 3.13. QA-M3 image installs from `pyproject.toml` lower bounds,
+  not `uv.lock`. QA-M4 mypy: 100 errors in non-test code (38 in `scheduling/cp_sat.py`, CamelCase OR-Tools API), so
+  `make lint-backend` is red.
+- Low: three.js packages in `frontend/package.json` (no imports); `frontend/dist-qa15` tracked; 1148 `act()`
+  warnings; `/audit-log` paging has no tie-breaker (P32-R08 carry-over).
+
+**security-auditor: code PASS (0 Critical, 0 High, 4 Medium, 14 Low); with S26-C1 / S26-H1 / S30-H1: FAIL.**
+- S32-M1 plan import hub-scope bypass: `services/whatif_import.py::to_engine_request` never checks a row's hub or
+  an existing leader against scope; `/whatif/import/parse` matches roster names across all hubs. Out-of-scope
+  designer names, chambers and free weeks are served. Confirmed by code, not by request. Fix before P32 closes.
+- S32-M2 step-timing PATCH and workspace recalculate have no rate limit; each starts an in-process portfolio run;
+  schedule runs are never pruned.
+- S32-M3 `backend/.env.example` ships `RPD_DEV_MODE=true`; no startup guard.
+- S32-M4 first SSO login links on an unverified `email` claim (`api/deps.py:119-138`); decide with P6-T03.
+- S26-C1 cannot close by flipping the flag: the SPA has no production sign-in (P6-T03 not built).
+- Low: `/api/metrics` reachable through nginx; `alg: none` token → 500 not 401; TLS 1.2 still enabled and
+  `'unsafe-inline'` scripts in the on-prem CSP; default CORS origins inherited on-prem; frontend image runs as root,
+  `minio:latest` unpinned; Redis without password; worker engines lack `hide_parameters`; ask-agent ignores
+  `RPD_GROQ_BASE_URL` and stores the question verbatim; sync exports unaudited; runtime DB role owns the audit
+  table; certifi, opentelemetry-api, zod, react-router advisories.
+- Local only (untracked): a Microsoft access token in
+  `.playwright-mcp/console-2026-10-02T09-20-48-145Z.log:5`. Git history is clean of secrets.
+
+**workflow-auditor: FAIL** (solver clean; reconciliation fails).
+- All invariants hold on live active run v9 (I1–I27 as exercisable, ADR 0041/0042); I8 determinism holds; stored
+  run equals a fresh greedy. 500 reconciliation checks, 6 failures (all the one VIP mismatch).
+- F1 (blocks) Dashboard within-year % is computed in the browser (`dashboard/lib/outcome.ts`) as 134/272 = 49%;
+  served basis is 134/330 = 40.61%. Executive "Scheduled" reads 272; the run schedules 221. Breaks I9.
+- F2 (blocks, owner ruling) the first Gantt drag replaced active CP-SAT run v2 (150/53/69) with greedy v4
+  (135/63/74) and the change list attributed 125 finish-week moves to the drag. Normal path since P32-R01.
+- F3 (blocks) plan import "before" is not the live plan when a file row puts a plan project On Hold
+  (`do_import_simulate` calls `without_projects` before both runs); contract B1 line 152 says otherwise.
+- F4 `spread_effort` puts the full duration on the tail when `actual_start_week` = current week (heatmap 176%,
+  board P1 86 vs 85). F5 VIP count 10 vs 8 across surfaces. F6 heatmap hub totals vs hub booked load (leaders
+  outside the capacity hub). F7 week 78 never usable (`w + duration <= horizon`) while docs and UI say 78.
+  F8 frozen OVERLAP flagged on one project only. F9 frontend `CURRENT_WEEK = 42` is a build-time constant.
+
+**Orchestrator live probing.**
+- Hosted `frigoglass-hu6f.onrender.com`, no credentials: `/me` → Admin, all hubs, dev mode; `/users`, `/engineers`,
+  `/audit-log`, `/projects` (customer names), `/docs`, `/me/dev-users` all 200. S26-C1 still open. Repo readable
+  anonymously (S30-H1 still open).
+- Local API: role matrix on all GET endpoints coherent; unknown user 401; read-only roles refused on writes; Hub
+  Planner sees 223 of 330 projects, cross-hub ids 404.
+- Unhandled 500s (generic body, no leak, no pool poisoning): invalid `status_` / `priority` on `/exports/dashboard`
+  and `/exports/project-registration`; NUL byte in `q` and audit-log filters; `offset` above int64; 20000-deep JSON
+  body. No app body cap (12 MB accepted); `/dashboard/projects?page_size=100000` accepted.
+- uvicorn on :8001 runs pre-P32 code (started 23 Oct); `frontend/.env.local` points at it. Dev Postgres, Redis (no
+  auth) and Keycloak published on 0.0.0.0; Keycloak container unhealthy.
+- Browser (5174 → 8011): 15 pages as Admin at 1440 px, workspace, 10 pages at 390 px, Executive Viewer gating: no
+  console errors, no failed requests, no overflow.
+
+**Gate result: FAIL.** Remediation tasks P32-R09..R13 added at the top of P32. P32-T20 stays TODO.
+
+## [2026-11-13] Shell scroll-leak fix (owner bug, /matrix and Priority board "hanging") — frontend-builder
+
+**Symptom.** On /matrix the whole window scrolled: the floating shell panel ended partway down with grey canvas
+below and the page header scrolled off. The Priority board tab looked frozen.
+
+**Root cause.** `position:absolute` nodes inside the surface region (`sr-only` captions and spans, 6px dots) had
+their containing block OUTSIDE the scroller (the shell's `relative` wrapper), so `overflow-auto` did not clip them.
+They grew the document's scrollable overflow, and focus/scrollIntoView then scrolled the window. Measured document
+scrollHeight before the fix: board 16232 px at 1000x572, check-in 9403, capacity 2722, workspace 3184, matrix 1316.
+On the board, 210 `sr-only` nodes escaped the board column bodies.
+
+**Fix (layout only, no data or logic).**
+- `components/layout/app-shell.tsx`: the surface region and the shell panel are `relative`; the outer `h-screen`
+  wrapper is `overflow-hidden`, so the window cannot scroll. Radix overlays portal to `<body>` and still work
+  (popover checked). The sidebar still spans 20..880 at 900 px.
+- Inner scrollers that leaked (found by a runtime detector: absolute nodes whose containing block is outside a
+  clipping ancestor) are now `relative`: board column body, board grid, dashboard status cards, VIP projects
+  list, the two hub/type tables, Planning hub card, Matrix rubric-dimensions scroller. Without these, making the
+  region `relative` would have pushed the leaked nodes into the region's own scrollHeight.
+- `surfaces/matrix/lib/use-stuck.ts` `useSpaceBelow`: the reserve below the board is now the in-flow distance
+  (`inFlowSpaceBelow`: from the element's bottom to the bottom of the region's content child, plus margin and
+  padding), not `scrollHeight - bottom`. So leaked absolute overflow can no longer push the board down to its
+  320 px floor. It also re-measures with a ResizeObserver on the element and the content child, not only on window
+  resize. Before and after, the measured reserve was 12 px in every board case (cards and list, stuck and not
+  stuck, both viewports), so the board height did not change.
+  New test `use-stuck.test.ts`.
+
+**Verified (headless Chromium via the repo's @playwright/test, dev user frank.admin, :5174).** 15 routes × 1000x572
+and 1440x900: document scrollHeight == innerHeight on all of them after the fix; the leak detector finds 0; the
+surface region still scrolls to its bottom. Board timings (dev build, StrictMode): tab switch to Board about 420 ms
+in two long tasks, search filter about 320 ms, drag over 0 ms, back to the grid 280 ms. These were the same before
+and after the fix. Self time is mostly the `jsxDEV` dev runtime over about 5.2k board DOM nodes (each column renders
+up to 100 cards before it virtualizes). This is not a freeze, and production should be faster (not measured). The
+"hang" was the window scroll leak.
+vitest (layout, app, matrix, priority-board, dashboard, planning/components) 77 files / 589 tests pass;
+`pnpm typecheck` clean; eslint clean on the touched files. Not committed.
+
+## [2026-11-13] P33 opened — category template editing, apply rules, categories table, per-project timing retired — orchestrator (planning only)
+
+Owner change request 2026-11-13, with the owner's answers to our clarifying questions. The Timeline
+previews become editable (Move ± / Length ± buttons, signed GAP badge: 0w / −Nw Overlap / Nw wait).
+A stage rule decides which projects receive a change. Admins may add a category. Per-project step
+timing editing is removed. Admin and Super Admin edit templates. No application code was written.
+
+**Written.**
+- `docs/ADR/0045-category-template-editing-and-apply.md`: UI, stage rule, apply transaction,
+  permissions. Accepted.
+- `docs/ADR/0046-per-project-template-copy-lengths-and-gaps.md`: scheduler semantics. **Proposed**,
+  with questions Q1–Q9 for the workflow-auditor.
+- `docs/ADR/0047-table-driven-categories.md`: Accepted, except §3 (rank from data), which is Proposed.
+- `docs/ADR/0048-retire-per-project-step-timing-editing.md`: Accepted, except §4, which is Proposed.
+- Amendment notes appended to ADR 0010, 0019, 0041 and 0043.
+- DOMAIN_RULES:
+  - header revision note;
+  - dated pointers in Lead times, Categories, Scheduling order, Roles, Step timing from the Gantt
+    and Parallel steps;
+  - a new section "Category templates, apply rules, categories table", with the scheduler parts
+    marked PROPOSED;
+  - I27 revised; I28–I31 new.
+- `docs/API_CONTRACT_P33.md`, Parts A–I.
+- `docs/OPEN_QUESTIONS.md` #76–#80.
+- The P33 task table: P33-T00..T20 plus F01.
+
+**Decisions taken (subject to the ruling where marked).**
+- **Per-project copy.** Every step row gets `plan_weeks`, `plan_gap_weeks` and `length_pinned`,
+  backfilled from the table so nothing changes on day one. The table becomes the category template,
+  with `gap_weeks` and `length_set`. Projects keep what was applied to them.
+- **Length vs effort (ADR 0046 §3, Proposed).** A pinned step uses the template length. R2 still
+  splits over the project's own lengths; the pinned step's share is stored but shadowed, so I26 is
+  unchanged. R6 never touches a pinned step. The R6 trigger "lead-time edit" becomes "an apply that
+  changes this project's lengths". Copies of `length_set` rows are pinned, including at
+  registration and category change (Q3(b); the alternative (a) is recorded). Lead times tab edits go
+  through the same apply. `PUT /workflow-settings/lead-times` → 410.
+- **Gap (ADR 0046 §4, Proposed).** A signed per-project gap. The scheduler keeps `overlap_weeks` and
+  adds `wait_weeks` and `lead_weeks`:
+  `gate = max(release + 1 − o + w, anchor if o > 0, frontier)`.
+  - A wait books nothing.
+  - Waits are ignored on started tails, skipped steps, frozen projects and first steps.
+  - The canonical form omits defaults, so golden files and stored runs are unchanged.
+  - The preview applies the one-leader rule and flags "same leader, runs back-to-back".
+- **Categories (ADR 0047).** A `categories` table (code as the natural key, so wire values are
+  unchanged). The enums become text + FK / trigger. Rank comes from data and is snapshotted in
+  `workflow_snapshot["categories"]`. Adding a category copies the template and extends engineer
+  eligibility, and marks nothing stale. Scoring, tags (ADR 0038), the P1 fill and VIP do not read
+  category. Rename, delete and re-rank are deferred (OQ #79).
+- **Timing retired (ADR 0048).** The PATCH answers 410 (not kept as an internal path). Migration
+  `p33c` clears the values with audit rows plus a CHECK. A one-off recalc script follows. The
+  scheduler fields stay for what-if and plan import. The What-if import Gantt keeps its drag
+  (OQ #78). The columns are dropped in P33-F01.
+
+**Not done / carried.**
+- P32 gate still FAIL (P32-R09..R13 open). P32-R12 (owner) now also governs `template_apply` runs.
+  P32-R13's step-timing rate limit becomes moot after P33-T13.
+- Only P33-T06 (RBAC) may run before the ruling. Next task: **P33-T00, workflow-auditor ruling**.
+- `docs/PROJECT_AND_STACK.md` §5 matrix row: left to P33-T06 (orchestrator review).
+- Plan statuses: all TODO.
+
+## [2026-11-13] P33-T06 — RBAC surface `workflow_templates` — backend-builder
+
+ADR 0045 §7 (amends ADR 0010), `docs/API_CONTRACT_P33.md` Part A. Ran before the P33-T00 ruling, as the
+plan allows; nothing here depends on ADR 0046.
+
+**Built.**
+- `backend/core/rbac.py`: `Surface.WORKFLOW_TEMPLATES = "workflow_templates"`. Admin RW, Super Admin RW,
+  Portfolio Manager / Hub Planner / Engineer / Executive Viewer / Auditor none. `workflow_settings`
+  unchanged (Super Admin RW, Admin R). Matrix comment and module docstring updated.
+- `backend/schemas/session.py`: `SurfacePermissions.workflow_templates`. `GET /me` serves it through the
+  existing `resolve_permissions` loop over `Surface` (no router change). Nothing else in `/me` changed.
+- `backend/api/deps.py`: two named dependencies for P33-T09..T11 to use:
+  `require_workflow_templates_write` (`workflow_templates` write; the two previews, apply and
+  add-category per contract Part A) and `require_workflow_templates_or_settings_read`
+  (`workflow_templates` read OR `workflow_settings` read; for `GET /workflow-settings` and
+  `category-timelines`).
+- `docs/PROJECT_AND_STACK.md` §5: new "Workflow Templates" column and a paragraph. **Orchestrator to
+  review** (plan row says so).
+
+**Not done, by design.** No existing endpoint was moved onto the new dependencies. The task row does not
+ask for it, and the read sets of the two surfaces are the same today ({Admin, Super Admin}), so the
+existing `GET /workflow-settings*` guards behave identically. `PUT /workflow-settings/lead-times` still
+requires `workflow_settings` write until P33-T10 retires it (410). Frontend not touched:
+`frontend/src/types/enums.ts` `SURFACE_KEYS` does not list `workflow_templates` yet. The extra `/me` key
+is harmless to the current client. Adding it is for frontend-builder (P33-T16/T17).
+
+**Tests.** New `backend/tests/test_p33_t06_workflow_templates_rbac.py` (25 tests): both helpers × 7 roles,
+multi-role union, principal stashed on the request, `SurfacePermissions` fields == `Surface`, and a `/me`
+contract test per role (real dev-mode principal resolution). The `/me` test checks both workflow cells
+and every other surface against a frozen pre-P33 literal table, so "no change for other surfaces" is
+asserted independently of `core.rbac`. `tests/test_core_rbac.py`: matrix extended, plus a
+writers/readers test for the new surface.
+Results: rbac/session/deps/rbac_enforcement + new file 89 passed. Openapi frontend contract, export,
+p13 slices, p18 whatif, p20, p27 docs-disabled 401 passed. `ruff check .` clean. `ruff format --check` on
+the touched files: only `api/deps.py:171` would reformat, and that line predates this change and was
+left alone. `mypy .` shows no errors in the touched files. The repo-wide count (about 3.1k, in models/
+and tests/) predates this task and is unchanged by it. The full backend suite was not run.
+
+## [2026-11-13] P33-T00 — workflow-auditor ruling on ADR 0046 Q1–Q9, ADR 0047 §3, ADR 0048 §4: ACCEPT WITH CHANGES
+
+This is a ruling on proposed solver-input changes, not a phase gate. No application code was written and nothing was
+committed. The binding text, R33-1..R33-12 and the final I26–I32, is appended to
+`docs/ADR/0046-per-project-template-copy-lengths-and-gaps.md` under "Ruling (P33-T00)". The ADR status,
+DOMAIN_RULES "PROPOSED" markers, the contract and the plan status are left to the orchestrator (P33-T01).
+
+**Re-derived independently** against the code at HEAD: `workflow.step_gate`, `passed_release`,
+`unconstrained_end_week` and `canonical_step_timing*`, the greedy walk and `_sort_key`, CP-SAT's precedence block,
+`schedule_persistence` snapshot and the `priority_preview` token. I probed the real `apportion_effort` (scratchpad
+`p33/r2probe.py`).
+
+**Defect found (blocks §3 as written).** If R2 uses `plan_weeks` as weights, an applied length moves *other* steps'
+effort shares. PDD/B, figure 4:
+- E → 8 gives E3 K1, so Marketing Brief is skipped;
+- E → 40 skips every other design step;
+- K → 6 on a project with E In Progress moves E from 2 to 1, so the apply re-times a started step through R6.
+
+That contradicts the stage rule, I31, the ADR's own "unpinned keep their share", and the preview, which shows changed
+steps only.
+
+**Per question.**
+- Q1 ACCEPT WITH AMENDMENT. `eff` is evaluated on the run input (`lead_weeks ?? table`, then `override ?? lead`).
+  The pin is resolved by the builder (pinned → override None).
+- Q2 REJECT the weights, ACCEPT the shadow. A new immutable `workflow_lead_times.effort_weight_weeks` (backfill =
+  `weeks`, copied by add-category) becomes R2's weights. An apply never re-derives effort: the R6 apply trigger and
+  E3 step 6 are removed.
+- Q3: mechanics ruled for both options; (b) is the default pending OQ #76(b). Under (b), I32 holds. If OQ #76(a) is
+  answered "relative", (b) is impossible: switch to (a) with `clamp(eff_before + Δ, 0, 104)`.
+- Q4 ACCEPT WITH AMENDMENT. The gate is piecewise, `release + 1 + w` when `o = 0` (no frontier term, exactly
+  `step_gate`). `G` is unchanged, because a step that waited ends after its release. The wait counts from the
+  release, not from now. Waits count against the horizon. `w = 0` on tails and holds. A skipped step ignores `g`,
+  and the preview flags it per project. A frozen project ignores `g` but honours `lead_weeks` and the pin.
+- Q5 ACCEPT. CP-SAT uses `start ≥ pe + w`. Monte Carlo never samples gaps.
+- Q6 ACCEPT: yes. `unconstrained_end_week` applies the one-leader rule (greedy's leader search restricted to the
+  project). It is vacuous under the strict chain with `o = 0`. Any golden file that changes is reported, never
+  re-blessed. I16 holds.
+- Q7 ACCEPT WITH AMENDMENT:
+  - snapshot keys `wait_weeks` and `lead_weeks` only when non-default;
+  - `workflow_snapshot["categories"]` only when non-default (this amends ADR 0047 §3 "every run");
+  - `priority_preview._canonical` must stop using `asdict`;
+  - verify byte-identity after p33a and p33b, before p33c.
+- Q8 ACCEPT WITH AMENDMENT. The categories list is validated. Key 5 is the rank value. The OEM checks, what-if and
+  plan-import read `workflow_id`. I30 is stated over `scheduling_order`.
+- Q9 ACCEPT WITH AMENDMENT:
+  - live `duration_override_weeks` carries only the effort merge;
+  - `lead_weeks` is None when it equals the table (tested);
+  - I22 is vacuous for live runs but stays in the validator;
+  - a scenario overlap drag clears `w`.
+
+**Stage rule (ADR 0045) amended (R33-10).** `reached(p,S)` also holds when any transitive successor of `S` is not
+Not Started. Stored statuses are used, not the solver's "skipped ⇒ Done". Project rows are locked `FOR UPDATE`, in
+id order, before evaluation. The stage PATCH and check-in paths take the same lock. A category change re-copies
+exactly the not-reached steps.
+
+**Checks (a)–(d).**
+- (a) With every gap 0, every copy equal to the table, no pins and `effort_weight_weeks = weeks`, every formula
+  reduces to the code at HEAD. This needs R33-7's snapshot and token fixes to hold for the run row as well as the
+  input.
+- (b) Waits book nothing (I28 as a difference test), never meet the anchor (`o` and `w` are exclusive), and leave
+  `G` unchanged.
+- (c) With R33-2, unpinned shares and started steps are untouched, and load per kind =
+  `E + raised − Σ pinned share + Σ pinned plan`. Demand moves at commit and the booked loads after the run.
+- (d) Unambiguous with R33-10.
+
+**Invariants.** I26 rev. (weights = `effort_weight_weeks`), I27 rev. (piecewise gate; I3 for `o = 0` incl. waits),
+I28, I29, I30, I31 rev. (no `effort_weeks` written; locked rule) and I32 new (only under Q3(b)). Final text is in
+the ADR.
+
+**Next.** P33-T01, the orchestrator folds this in, including:
+- `effort_weight_weeks` added to P33-T08 and to contract E3/F;
+- E2 per-project flags (R33-11);
+- ADR 0047 §3 snapshot wording;
+- OQ #76 text noting the relative-answer consequence.
+
+P33-T02..T04 may open after that. P33-T05 must confirm the live DAG keeps design steps totally ordered (R33-6).
+
+## [2026-11-13] Shell scroll fix, part 2: `overflow: clip` and a locked document — committed c4c6897
+
+**Symptom (owner screenshots, /matrix and Priority board).** The shell still shifted up after the scroll-leak fix
+above: the header was cut off and a band of grey canvas showed below the shell.
+
+**Root cause.** The outer `h-screen` wrapper and the shell panel were `overflow: hidden`. A `hidden` box is still a
+scroll container, so focus and `scrollIntoView` could scroll it programmatically. That moved the sidebar and the
+shell together.
+
+**Fix (layout only).**
+- `app-shell.tsx`: the outer wrapper is `h-dvh overflow-clip`. The row and the shell panel are `overflow-clip`.
+  The surface region is the single scroller and adds `overscroll-contain`.
+- `index.css`: `html, body { overflow: hidden; overscroll-behavior: none }`.
+- `app-sidebar.tsx`: `h-full` replaces `sticky top-5 h-[calc(100vh-2.5rem)]`. The row is `items-stretch`.
+- `pages/login.tsx`, the only route outside the shell: the root is its own scroller (`h-full overflow-y-auto`), so
+  the locked body does not stop it scrolling on short screens.
+- The commit also carries the uncommitted part-1 edits from the entry above: `relative` inner scrollers and the
+  `use-stuck` `inFlowSpaceBelow` measure with its test.
+
+**Verified.**
+- Headless Chromium (repo `@playwright/test`, dev user frank.admin, :5174): 14 routes × 1000x572 and 1440x900.
+- After focusing and calling `scrollIntoView` on the last focusable node in the region, and scrolling the region to
+  its end: `window.scrollY` = 0, wrapper `scrollTop` = 0, and document scrollHeight == innerHeight.
+- The shell spans 20 to innerHeight−20, and the region reaches its end.
+- Screenshots of /matrix and the board confirm there is no grey band.
+- vitest: 232 files / 1863 tests pass. `tsc -b` is clean. eslint has no errors on the touched files.
+
+## [2026-11-13] P33-T01 — ruling + owner's OQ #76/#77 answer folded in; T00, T01, T06 DONE — orchestrator
+
+**Inputs:**
+- the workflow-auditor ruling R33-1..R33-12 (ADR 0046 "Ruling (P33-T00)"; MEMORY P33-T00);
+- the P33-T06 entry;
+- the **owner's answer to OQ #76/#77** (relayed by the coordinator, verbatim): "if it is manually set
+  then use them only as the timeline", where "manually set" = the project has its own client effort
+  figure (spreadsheet import or Registration's Design / Lab effort boxes).
+
+No application code.
+
+**Owner ruling, recorded as ADR 0046 OR-1..OR-6 (binding over §1–§3 and over the ruling's pin text).**
+- **OR-1:** `ownEffort(p,k)` ⟺ some step of kind k carries non-null `effort_weeks` (R2 applied).
+- **OR-2:** `eff = 0` (lab, cert off) / `effort_weeks ?? 0` (own effort) / `plan_weeks` (otherwise).
+  It equals today's `effort ?? lead` straight after backfill.
+- **OR-3:** live builder: own-effort step → `lead_weeks = effort_weight_weeks`, override =
+  `effort_weeks`; other step → `lead_weeks = plan_weeks`, override None (None when equal to the
+  table). R33-1's scheduler-level formula is unchanged.
+- **OR-4:** apply writes gaps to every receiving pair, and lengths only where the kind has no own
+  figure (elapsed steps always). Own-effort pairs are flagged `own_effort_length_not_applied`, with
+  a separate E2 `own_effort` list. No effort writes (R33-2).
+- **OR-5:** registration and category change copy the template; a figure, if entered, governs its
+  kind. **A figure cleared re-copies the current template weeks onto not-reached steps of that
+  kind.** That answers OQ #77; there is no unpin control.
+- **OR-6:** `length_pinned` and `length_set` are **removed from the design**. Q3(a)/(b) are moot and
+  R33-3 is superseded. `effort_weight_weeks` stays (it keeps an own-effort split fixed).
+  - I26 loses the pinned clause.
+  - I31 (i) gains the own-effort exclusion.
+  - I32 is restated: (i) written lengths equal the template; (ii) no own effort → `eff =
+    plan_weeks`; (iii) own effort → `eff = effort_weeks ?? 0`, independent of `plan_weeks` and the
+    template.
+  - I27–I30 are unchanged.
+
+**Files.**
+- **ADRs:**
+  - ADR 0046 status → Accepted (precedence: owner ruling > R33 > §1–§6), with OR section and final
+    invariants appended.
+  - ADR 0045 / 0047 / 0048 statuses → Accepted in full, with amendments: R33-10 stage rule + lock;
+    own-effort lengths; add-category copies `effort_weight_weeks`; snapshot only when non-default
+    (R33-7/8); R33-9.
+  - Final notes appended to ADR 0041 and 0043.
+- **DOMAIN_RULES:**
+  - header (binding; I26/I27/I31 revised, I28–I32);
+  - pointer notes in Lead times and Scheduling order corrected;
+  - the PROPOSED P33 section I wrote at opening today was **replaced** by the final section
+    "Category templates, apply rules, categories table" (§A template, §B copy and `eff`, §C apply,
+    §D gap, §E categories, §F timing retired, I26–I32). It was same-day and never binding; the
+    opening entry above still describes it as it was.
+- **`API_CONTRACT_P33.md`:**
+  - no pin fields;
+  - C1 `effort_weight_weeks` read-only;
+  - B2 copies weights;
+  - E2 rewritten with `own_effort` and the R33-11 flags;
+  - E3 order rewritten: lock projects, OR-4 writes, step 6 "re-derive" removed, `not_needed` rule;
+  - E4 adds "figure cleared";
+  - Part F rewritten: R33-1/4/5/6/7/8/9 and F4 builder table;
+  - Gantt `own_effort`;
+  - frontend dialog has four sections.
+- **OPEN_QUESTIONS:** #76 and #77 ANSWERED / closed; #80 annotated (gap ignored on effort-zeroed
+  steps).
+- **Plan:**
+  - T00, T01 and T06 → DONE;
+  - T02 / T03 / T04 / T05 / T07 / T08 / T10 / T11 / T12 / T17 / T19 rows rewritten to the final
+    rules;
+  - `priority_preview._canonical` (R33-7) assigned to T07.
+
+**P33-T06 review (orchestrator).** The `docs/PROJECT_AND_STACK.md` §5 "Workflow Templates" column and
+paragraph match ADR 0045 §7. Accepted. Note carried to T16/T17: frontend `SURFACE_KEYS` lacks
+`workflow_templates`.
+
+**Needs another workflow-auditor look.** Yes, narrowly, folded into **P33-T05** (before T08 opens): the
+owner ruling changes the domain-level `eff`, the builder mapping (OR-3), the apply writes (OR-4), the
+new "figure cleared" re-copy (OR-5) and I31/I32's text. It does not change scheduler semantics, so
+P33-T02..T04 need no re-ruling and may open now. Next task: P33-T02 (algorithm-engineer).
+
+### 2026-11-13 — P34 opened (orchestrator): Matrix inline edit, gates, change markers, fast filters
+
+Owner request with two screenshots of the Matrix. Diagnosis before delegating:
+- VIP: `PUT /projects/{id}/vip` verified working against the dev backend (200, `is_vip` persisted,
+  recalc queued), so the "star does not pin" bug is in the frontend.
+- Band distribution: fetched with server filters only; VIP / Capacity fill / Hub text / Leader
+  narrow the grid client-side, so the bar ignored them.
+- Search: server `q` debounced 300 ms + ~1 s `/priorities` round-trip per change, and every
+  keystroke re-renders the whole page.
+- Version history covers scenario applies only; `change_count` exists, no project count.
+Decisions D34-1..D34-4 recorded in IMPLEMENTATION_PLAN P34. Delegated P34-T01 (backend-builder) and
+P34-T02 (frontend-builder) in parallel.
+
+## [2026-11-13] Dashboard: click-to-list on every composition figure, hub shares of total, register removed — committed a6f000e
+
+**Owner asks (screenshots).**
+1. Pipeline and Status overview cards (and each country) should list their projects on click.
+2. The same for the three "Completing within the year" cards.
+3. "Top hubs by project count" should show each hub's % of ALL projects, plus the country shares.
+4. Remove the "All registered projects" section from the Dashboard.
+
+**Built (frontend only, no API change).**
+- `components/project-list-dialog.tsx`:
+  - `ProjectListProvider`, mounted by DashboardPage in the Detailed view, provides `useOpenProjectList()`, which is
+    null outside the provider so figures stay plain text. It also provides `CardOpenButton`, a card-wide overlay
+    button, so cards never nest interactive elements.
+  - The dialog fetches `useDrilldownProjects` with the Dashboard scope (hub_id, region, category[], type[]: the same
+    `_dashboard_filter` as pipeline-totals, status-overview and region-summary). It then selects rows by the server's
+    rules:
+    - spillover = `carry_over`;
+    - new = `!carry_over && reg_year != null`;
+    - unregistered = `!carry_over && reg_year == null`;
+    - status = `row.status`;
+    - country = `row.region`;
+    - hub = `row.hub`;
+    - "Other statuses" = status not on a card.
+  - If the list length differs from the clicked card's served count, a visible note says so. Nothing is hidden.
+- `RegionChips` `onSelect`: the chips become buttons. The `ul` is `pointer-events-none` with the buttons re-enabled,
+  so clicks on the gaps reach the card overlay. A live Playwright click found that the chip row was swallowing them.
+- `StatCard` (`components/ui/kpi-card.tsx`): optional `onOpen` and `openLabel` render an overlay button.
+  `WithinYearKpis` opens the existing `KpiProjectsDialog` on `data.rows`. New `KpiBucket` `past_year` = spillover +
+  left_out, so the "Spillover (past W52)" list equals its `spilloverPastYearCount` figure.
+- `HubRankList`:
+  - pct = hub count / served `pipeline-totals.total_count`, 2 dp (falls back to the row sum before totals load);
+  - the bar uses the same %, so the bars sum to 100%;
+  - a summary line shows "N projects" plus served `pipelineRegionItems(summary,'total')` chips;
+  - hub rows and chips open lists.
+  `regionSummary` is threaded through `HubTypeSection`.
+- The register (`ProjectBreakdown`) is unmounted from DashboardPage. The header "All projects" is now a link to
+  `/projects`. `DashboardSelectionBar` (category / type) is unchanged and still drives every figure.
+  `project-breakdown.tsx` and its tests are left in the tree, now unused by the Dashboard.
+
+**Verified.**
+- Live (:5174, frank.admin, 1440x900): every dialog title count equals its card, with no mismatch note:
+  - Spillover 2025 77;
+  - New 2026 · India 194;
+  - In Queue 92;
+  - On Hold · Romania 12;
+  - Within year 134;
+  - Spillover past W52 138;
+  - PD-India 223.
+- Hubs read 67.58 / 13.03 / 9.09 / 4.24 / 4.24 / 1.82 %. Countries: 34 (10.3%), 253 (76.67%), 43 (13.03%).
+- The register is absent, and "All projects" has href `/projects`.
+- New `project-list-dialog.test.tsx` (9 tests) and a within-year click test. The DashboardPage tests were updated
+  for the register removal.
+- The full vitest suite is 233 files / 1873 tests green. `tsc -b` is clean, and eslint has 0 errors.
+
+**Note.** The Vercel deployment the owner screenshots (`frontend-rosy-mu-51.vercel.app`) still shows the grey band.
+`main` is 2 commits ahead of `origin/main` (c4c6897 scroll fix, a6f000e), and neither is pushed.
+
+### 2026-11-13 — P34-T01 DONE (backend-builder): Matrix change marker + version project count
+
+**Built.**
+- `schemas/priority.py`: new `LastScoreVersion {version: int, created_at: datetime,
+  applied_by_name: str | None}`; `PriorityMatrixRow.last_score_version: LastScoreVersion | None`
+  (required key, nullable), served on `GET /priorities` and `GET /priorities/{project_id}`.
+- `services/score_versions.py` (new): `latest_score_versions(db, principal, project_ids)` — ONE
+  query for the whole list: `scenario_apply_changes` (entity_type `priority_score`, project_id IN
+  the already-scoped row ids) JOIN `scenario_apply_runs` LEFT JOIN `users`, Postgres
+  `DISTINCT ON (project_id)` ordered by `version DESC` (`postgresql.distinct_on`, the SQLAlchemy 2.1
+  form). Change rows are filtered by `hub_scope_filter` on `ScenarioApplyChange.hub_id` — the same
+  predicate `/scenarios/versions` uses — so the marker always names a version the caller can open;
+  a change recorded under a hub now out of the caller's scope (project moved) gives null.
+  `applied_by_name` = `User.full_name`, null when the run has no applier. No financial field read,
+  nothing logged.
+- `schemas/scenario.py`: `ScenarioApplyRunSummary.project_count: int` (so also on
+  `ScenarioApplyRunDetail` and `ScenarioApplyResponse.run`). `api/routers/scenarios.py`:
+  `_scoped_change_counts` now returns `(change_count, project_count)` per run in the same grouped
+  query (`COUNT(DISTINCT project_id)`, nulls ignored, caller hub scope); the detail counts distinct
+  non-null `project_id` over its already-scoped `changes`; new `_run_summary` builder (the ORM row
+  has no `project_count`, so `model_validate(run)` is no longer used). Side effect: the apply
+  response's `change_count` is now the caller-scoped count too (identical for every real writer,
+  who is hub_scope_all or wrote only in-scope projects).
+
+**Tests.** `tests/test_p34_t01_score_versions.py` (7): null when never versioned (list + detail);
+latest of two versions wins with the second applier's name, other project keeps v1; non
+`priority_score` changes ignored and null applier → null name; hub scoping (Hub Planner sees no
+other hub's rows, and null for a change recorded under an out-of-scope hub); one version query for
+a 5-row list (`do_orm_execute` counter); `project_count` on apply/list/detail incl. a null-project
+change not counted; `project_count` hub-scoped (3 for PM, 1 for a hub-B planner).
+`tests/test_scenario_apply_api.py`, priority/matrix tests, `test_p26_scoring_rubric.py`: green.
+
+**Contract test.** `tests/test_openapi_frontend_contract.py` gains row
+`(_MATRIX_TS, "LastScoreVersion", "LastScoreVersion", "exact")`. Expected RED until P34-T02 mirrors:
+`PriorityMatrixRow` (`last_score_version`), `LastScoreVersion` (interface must be named exactly
+that in `frontend/src/surfaces/matrix/api/types.ts`), `ScenarioApplyRunSummary` and
+`ScenarioApplyRunDetail` (`project_count`). All other 428 tests in that run passed.
+
+**Lint.** ruff clean on touched files. mypy: new service clean; remaining errors in
+`api/routers/priorities.py` (lines 189–196, 364) and `schemas/scenario.py` (73–74) are pre-existing
+and on lines this task did not touch. Unrelated P33 working-tree changes not touched.
+
+## [2026-11-13] P35 opened — project register parity with the client's old tool — orchestrator (planning only)
+
+Owner sent three screenshots of the old tool's Project Registration grid (source read at
+`~/.gemini/antigravity-ide/scratch/RPDCHARTERV1del/src/components/ProjectInput.jsx` and
+`src/utils/effortUtils.js`). Findings:
+- Old `customDesignTime` / `customLabTime` replace the template sum of design / lab weeks for the
+  project (effortUtils `calcEffort`), shown green when auto and orange with "↺ reset" when manual.
+  This is exactly our `design_effort_weeks` / `lab_effort_weeks` (ADR 0041). So the ask needs no
+  new timing concept and does not reopen ADR 0048 (D35-1).
+- Old `disabledStages` = per-project step exclusion. A click on an applicable step excludes it; a
+  click on an N/A (0-week) step INCLUDES it. We have no exclusion field; it is a new scheduler input
+  (D35-4, OQ #81–#83).
+- Old app features worth offering (not in scope until the owner picks): bulk-edit bar on selected
+  rows (current step, design resource, req dept, design/lab time, step include/exclude across
+  projects); status-vs-current-step mismatch outline (red when status disagrees with the stage of
+  the current step); "Unassigned ⚠" highlight on rows with no design resource; actual start/end
+  conflict warning; current-step dropdown; show/hide + resizable columns; per-row Edit/Done lock;
+  Excel import diff review (`ImportDiffModal.jsx`).
+Plan: P35-T01..T07 in IMPLEMENTATION_PLAN. T01/T02 start now; exclusion waits for the owner and
+for P33-T02/T08.
+
+## [2026-11-13] P35 — owner answers OQ #81–#83 and picks extras — orchestrator
+
+OQ #81 exclude only; #82 Not Started + In Progress may be excluded, Done may not; #83 recalculate
+on Save. Extras picked: bulk edit, status mismatch warning, unassigned flag, column show/hide +
+resize (new task P35-T08). ADR 0049 drafted (Proposed, Q1–Q5 for the workflow-auditor). P35-T01
+scope extended with a batch register-edit endpoint that dispatches one greedy run (D35-5).
+
+## [2026-11-13] P35-T03 — workflow-auditor ruling on ADR 0049: ACCEPT WITH CHANGES
+
+This is a ruling on a proposed solver-input change, not a phase gate. No application code was written and nothing was
+committed. The ADR status line, the DOMAIN_RULES §B edit and the plan rows are left to the orchestrator (fold-in).
+R35-1..R35-12 below are binding over ADR 0049 §1–§6, as R33-n were over ADR 0046. Owner facts taken as binding:
+exclude only (OQ #81); Not Started and In Progress may be excluded, Done may not (OQ #82); a Save recalculates at
+once with one greedy run (OQ #83).
+
+**Re-derived independently** against DOMAIN_RULES §B / "Per-project effort" / P33 §B–§D and the code in the working
+tree:
+- `workflow.step_effective_weeks` / `is_step_skipped`: `lead = 0` gives `eff = 0` before any override.
+- `analyse_project`: a skipped step is normalised to Done / 100 % / no actuals, and its stored progress row is ignored.
+  CP-SAT shares this through `greedy.prepare_run`.
+- `effort_split.apportion_effort`: members = kind ∧ `lead_weeks > 0`; R3 raise only on members.
+- `project_cards`: the current stage is the first non-skipped, non-Done live row; progress weight = `eff`.
+- `project_steps.sync_project_steps`: a workflow change re-points rows and clears their timing and effort.
+- `canonical_step_timing*` (R33-7).
+
+Probe: the real `apportion_effort` on PDD/B design, figure 4 (scratchpad `p35/probe.py`):
+
+| Excluded | Started | R2 result |
+|---|---|---|
+| — | — | A1 E2 K1 (D J M 0) |
+| A | — | **D1** E2 K1. D was 0 and is revived |
+| A, D | — | E2 **J1** K1. J is revived |
+| A, D, J, M | — | E3 K1 |
+| E (In Progress) | A | A1 **D1 J1** K1. Total stays 4 |
+| A, D, E, J, K, M | — | **not applied (`no_nonzero_step`)**: the figure silently stops governing |
+
+The last row is the Q3 hazard. Rows 2–3 are a defect in ADR 0049 §4 as written: "only steps with `eff > 0` can be
+excluded" means a user cannot exclude a step the split zeroed, and every exclusion can revive another step.
+
+Second finding: a project whose 14 steps are all skipped gets a ghost outcome from greedy (`end_week = None`,
+`scheduled = False`, not `left_out`, not `within_year`, not `spillover`). It falls in no Dashboard bucket. No live
+project can reach this state today. Exclusion would make it reachable.
+
+**Per question.**
+
+- **Q1 (R3 vs excluding an In Progress step; I26): R3 YIELDS. ACCEPT WITH AMENDMENT (R35-3).** Exclusion erases
+  nothing. The step's stored progress fields (status, `percent_complete`, `actual_start_week`,
+  `remaining_weeks_override`, `blocked_reason`) are not written and come back unchanged on re-include. R3 protects
+  recorded work from a re-split. It does not stop an explicit, audited and reversible user exclusion. R3 now ranges
+  over S′ only (text below).
+
+  Consequence the owner accepted (OQ #82): full-year demand (I25) drops the whole `eff` of the excluded step,
+  including the weeks already worked, and remaining demand drops its remainder. A design figure keeps the kind's
+  load at `E + raised` over S′ (row 5 of the probe).
+
+- **Q2 (stage status of an excluded In Progress step): no new status. Keep the stored status (R35-4).** The step is
+  skipped by the one predicate. A skipped step "has no progress state of its own — it is always treated as
+  complete" (DOMAIN_RULES "Derived remaining duration"), and `analyse_project` already normalises it to Done. A lab
+  step that started before certification testing was turned off already lives in this state (R33-10, last bullet).
+  - Current step: it is passed over (first non-skipped, non-Done row). This already holds in `project_cards`, so the
+    P35-T08 status-mismatch outline sees the next step.
+  - Progress weight: 0 (I12 on `eff`), so `project_progress_pct` may move. That is correct.
+  - Stage PATCH / check-in on an excluded step: 409 `STAGE_SKIPPED`, as for any skipped step. The weekly check-in
+    never asks for it.
+  - R33-10: the stored In Progress still makes the step and the project "reached / started". Unchanged.
+  - A new status would touch the enum, the field-consistency table, I11, the health badge and every frontend
+    surface, for no domain gain. Rejected.
+  - **Blocked** (shown as stage "On Hold") follows In Progress: DOMAIN_RULES defines it "as In Progress, but held".
+    Excluding it also releases the project's BLOCKED hold. This is an assumption the owner did not state. The
+    orchestrator should record it under OQ #82 as non-blocking.
+
+- **Q3 (excluding the last S step of a kind with a figure): 409 (R35-5).** If allowed, R7 makes the figure "not
+  applied" without notice. `ownEffort` turns false, and OR-2 falls back to `plan_weeks` on the kind. That can revive
+  weight-0 steps carrying `plan_weeks > 0` from an earlier apply. So a figure shown orange as "manual" (D35-1) would
+  govern nothing. The user clears the figure first, or keeps a step. In the same Save this is fine: the guard is
+  evaluated on the project's final state.
+
+- **Q4 (gap on an excluded step): ACCEPT (R35-8).**
+  - `g` is ignored and the step is emitted at `G`, exactly as for any skipped step (R33-4, OQ #80). No wait carries
+    over to the successor. The successor's own `g` counts from `release`, which passes through the excluded step's
+    `G`.
+  - An `o > 0` successor anchors on its nearest non-skipped predecessors (`SG`).
+  - With the first step excluded, the second step's wait counts from `frontier − 1`, as today for C-OEM's 0-week
+    first step.
+  - Template apply never writes or clears `excluded`. It still writes `plan_weeks` / `plan_gap_weeks` on an excluded,
+    not-reached step under OR-4, so re-include gets the current copy.
+  - The E2 preview flags such a pair `excluded_no_effect` (alongside R33-11's flags), and `gap_ignored_skipped` covers
+    it through the predicate.
+
+- **Q5 (canonical form / snapshot key): ACCEPT, with a simpler mechanism. No new scheduler field or key (R35-9).**
+  The live builder expresses an exclusion through R33-1's existing `lead_weeks`:
+  - excluded step: `lead_weeks = 0` (None when the input table value is already 0) and
+    `duration_override_weeks = None`, whatever OR-3 would give;
+  - gap fields are passed unchanged (ignored on a skipped step).
+
+  The scheduler already gives `eff = 0` when `lead = 0`, before any override (R33-1, `step_effective_weeks`), in
+  greedy, CP-SAT (shared `prepare_run`), Monte Carlo (0 stays 0, R10), the validator (I5, I29 derive from
+  `lead_weeks ?? table`) and frozen projects (which honour `lead_weeks`, R33-4). `canonical_step_timing*` already keep
+  `lead_weeks` only when non-null. So with no exclusion every golden file, input hash, preview token
+  (`priority_preview._canonical`, R33-7), fresh run and stored run is byte-identical by construction.
+
+  A stored snapshot does not distinguish "excluded" from "copy 0". No invariant needs that distinction: it lives in
+  the live column and the audit log. A what-if override cannot revive an excluded step (lead 0 wins), which is
+  consistent with OQ #81.
+
+**Binding items.**
+
+- **R35-1 — effective duration.** It replaces DOMAIN_RULES P33 §B's formula. Exact text:
+  ```
+  eff(p,s) = 0                      if excluded(p,s)                                   # ADR 0049, first
+           = 0                      if kind(s) = lab and not p.certification_testing_required
+           = effort_weeks(p,s) ?? 0 if ownEffort(p, kind(s))
+           = plan_weeks(p,s)        otherwise
+  skipped(p,s) ⟺ eff(p,s) = 0
+  ```
+  Every reader in ADR 0041 R5's list takes `excluded` through the one service predicate. That covers the demand load,
+  workspace, Gantt, cards, tracking, check-in, export and ask-agent context. No surface tests the flag on its own to
+  derive a number.
+
+- **R35-2 — which steps may be excluded** (replaces ADR 0049 §4's first sentence):
+  ```
+  inForce(p,k)    ⟺ figure_k(p) > 0 ∧ (k ≠ lab ∨ p.certification_testing_required)
+                     ∧ ∃ s of kind k: effort_weight_weeks(s) > 0
+  applicable(p,s) ⟺ ¬(kind(s) = lab ∧ ¬p.certification_testing_required)
+                     ∧ (effort_weight_weeks(s) > 0   if inForce(p, kind(s))
+                        plan_weeks(s) > 0            otherwise)
+  ```
+  A step may be excluded iff it is `applicable`, it is not excluded, its stored stage ∈ {Not Started, In Progress,
+  Blocked}, and the project is not frozen and not Cancelled or Commercialized.
+  - Otherwise: 409 `STEP_NOT_APPLICABLE` (the OQ #81 "N/A" step), 409 `STEP_DONE`, 409 `PROJECT_FROZEN` or 409
+    `PROJECT_CLOSED`.
+  - An applicable step the split zeroed (D, J, M of PDD/B with figure 4) **is** excludable. Without that, exclusion
+    cannot be controlled (probe rows 2–3).
+  - The chips show such a step as "0 wk (split)", never as N/A.
+  - Re-include = clearing the flag on an excluded step. It is always allowed under the same frozen/closed rule and
+    revives nothing that was not applicable.
+  - "Include" on a non-excluded step is a no-op, never a revival.
+
+- **R35-3 — R2/R3 over S′.** It replaces the R2/R3 `S` definition. Exact text:
+  > `S′` = the project's steps of that kind with `effort_weight_weeks > 0` **and not excluded**. `T = Σ
+  > effort_weight_weeks over S′`. R2 apportions `E` over S′. **R3:** a step of S′ whose stage status is not Not
+  > Started gets `max(1, share)`. An excluded step is not in S′, gets no share and is never raised. It carries
+  > `effort_weeks = null`.
+
+  Implemented in `scheduling/effort_split` as an explicit `EffortStepInput.excluded: bool = False` (members exclude
+  it), not by the caller zeroing `lead_weeks`, so R3's exemption is tested where R2 is.
+
+- **R35-4 — no progress write.** Excluding or re-including writes only `excluded` (plus R6's `effort_weeks` and
+  `schedule_stale`). No status, percent, actual week, remaining override or hold reason is written.
+
+- **R35-5 — guards** on the project's final state after all edits of one Save, and on every other writer:
+  - category change, certification toggle, figure entry, client import.
+  - (a) `inForce(p,k)` ⇒ S′ non-empty. Otherwise 409 `EFFORT_NEEDS_A_STEP` naming the kind. The message tells the
+    user to clear the design/lab time or keep one step.
+  - (b) The project keeps at least one step with `eff > 0`. Otherwise 409 `NO_STEPS_LEFT`.
+  - A rejected project writes nothing. Whether the batch is all-or-nothing is the P35-T01 contract's choice, but it
+    must be stated there.
+
+- **R35-6 — R6 trigger added.** An exclusion or re-inclusion re-derives the project's effort in the same transaction
+  (`project.effort_rederived` when a share changes).
+  - Audit: one `project.step_excluded` / `project.step_included` row per step, with `step_id`, the stage status at
+    the time, and that kind's `eff` before and after for every step whose `eff` changed. Revived steps are thereby
+    visible.
+  - No financial field appears in these rows.
+
+- **R35-7 — recalculation (OQ #83).** The Save commits first. It then sets `schedule_stale` and dispatches **one**
+  greedy run for the whole Save, with the priority-move lifecycle (queued / deferred plus one coalesced follow-up /
+  not_needed; I20, I24).
+  - `not_needed` applies when no schedulable project's `eff` changed.
+  - The run reads committed state.
+  - The Save response lists, per project, the steps whose `eff` changed (before/after, flags `revived` /
+    `skipped_now`), so the grid can say "D now runs 1 wk". The grid renders the served values and never re-splits in
+    the browser (I9 spirit).
+  - P32-R12 (an auto run replacing an active CP-SAT run, owner-blocked) also governs these runs.
+
+- **R35-8 — gaps and applies.** See Q4. Apply writes never touch `excluded`; E2 flags `excluded_no_effect`.
+
+- **R35-9 — builder mapping.** See Q5. It sits above OR-3's table as its first row. The R33-9 test ("no live row
+  carries `lead_weeks` equal to its table value") still holds: excluded on a table-0 step → None.
+
+- **R35-10 — locking.** Exclude/include takes the project row `FOR UPDATE` (the R33-10 lock) and evaluates
+  stage status, R35-2 and R35-5 under it. A concurrent stage PATCH to Done therefore cannot race an exclusion.
+
+- **R35-11 — lifecycle of the flag.**
+  - Kept on a category change: the same workflow keeps the same activity. R35-5 re-checks.
+  - Cleared on a workflow change (`sync_project_steps` re-point), with a `project.step_included` audit,
+    reason `workflow_change`. A workflow change with progress is already refused, so only Not Started rows are
+    affected.
+  - Kept across freeze and unfreeze. A frozen project honours the exclusions set before it was frozen (they are
+    durations through `lead_weeks`), and none change while frozen (I10).
+  - Seed and client re-import never set `excluded` and never write progress onto an excluded step. Such a row is
+    reported, not silently changed.
+  - Plan import into the What-if replaces a matched project's durations from the file (ADR 0044), unchanged.
+
+- **R35-12 — "calculated" weeks.** P35-T01's `design_weeks_calculated` / `lab_weeks_calculated` (D35-1) = Σ over
+  the kind of R35-1's `eff` with the project's own figure ignored. Excluded steps add 0. "↺ reset" (figure cleared,
+  OR-5) therefore returns the project to the calculated total it shows.
+  - `row_calculated_weeks` must take `excluded`. Its docstring already flags the P33-T08 rewrite.
+  - Naming note (non-binding): `ProjectScheduleOutcome.excluded` already means "project excluded from the run". The
+    step-level wire field should not reuse the bare name on any object that also carries outcome fields
+    (`step_excluded` recommended for API/Gantt payloads).
+
+**Invariants.** I1–I32 are unchanged in text. I5's 14-row shape is kept (an excluded step is a skipped row).
+I25/I29 hold through R35-1/R35-9.
+
+- **I26 (rev. 2, restated)** — For every non-frozen project and kind k with `inForce(p,k)`:
+  - the stored `effort_weeks` on S′ equal the R2 apportionment of `E = max(1, round_half_up(x))` over
+    `effort_weight_weeks` on S′, raised to `max(1, ·)` on started steps of S′;
+  - Σ over S′ = E + the raised count;
+  - excluded steps and all other steps carry none;
+  - S′ is non-empty.
+
+  It holds in the same transaction as every R6 trigger, exclusion included. A project without a figure carries no
+  derived effort.
+
+- **I33 — exclusion is a skip, everywhere.**
+  - For every live step with `excluded`: §B `eff = 0`, the service predicate says skipped, and the built run input
+    has `lead_weeks = 0` (or None with table 0) and override None.
+  - Every run row for it has `skipped = true` and `duration_weeks = 0`.
+  - No surface derives a duration, load, weight or current step for it from anything but that predicate.
+
+- **I34 — Done is never excluded, and exclusion never writes progress.**
+  - No live step is both `excluded` and stored `Done`.
+  - Between an exclude and its re-include, the step's progress fields are byte-equal to their values at exclusion.
+  - Difference test: exclude then re-include with no other edit restores every step's `eff`, `effort_weeks` and
+    progress fields, and the project's run-input canonical form, exactly.
+
+- **I35 — no empty project.** Every non-excluded project in a live run input has at least one step with
+  `eff > 0`. The Dashboard partition within-year + spillover + left-out + blocked + unscheduled therefore covers
+  every run project with no ghost outcome (I9, I23).
+
+- **I36 — byte-identity and the frozen guard.**
+  - With no step excluded, the live input hash, every golden file, a fresh greedy run, re-serialised stored runs and
+    a pre-deploy priority-preview token are byte-identical before and after the `excluded` column lands.
+  - No `excluded` value changes on a frozen project (I10).
+  - Every change has exactly one `project.step_excluded` / `project.step_included` audit row.
+
+**Sequencing: sequence after, do not fold in.** Exclusion needs no new scheduler semantics. It rides on R33-1's
+`lead_weeks` (P33-T02) and on P33 §B's service `eff`, builder (OR-3) and `effort_weight_weeks` split (P33-T08).
+- Folding it into P33-T02/T08 would change the surface P33-T05 must certify and the byte-identity acceptance of
+  T08. It would also tie a P35 owner decision to the P33 gate.
+- Order:
+  - **P35-T04** (effort_split `excluded` field per R35-3, tests: probe rows above, R3 exemption, In Progress step with
+    `lead_weeks = 0` normalised in greedy ≡ CP-SAT, I33/I35 checks) may open once P33-T02 has its MEMORY entry. The
+    P33-T02 code is in the working tree but not yet recorded.
+  - **P35-T05** (column, guards R35-2/5/10/11, builder R35-9, R35-12, audit) opens after P33-T08 **and** P35-T01 (the
+    batch endpoint that dispatches the R35-7 run).
+  - The P33-T08 implementer should write §B's `eff` with an obvious first-branch slot, so P35-T05 is additive.
+    This is advice, not binding.
+- P33-T05 and P33-T19 do not cover exclusion. The P35-T07 gate asserts I26 rev. 2 and I33–I36 on the seeded data,
+  with at least one excluded In Progress step and one excluded split-zeroed step.
+
+**Next.** The orchestrator folds this in:
+- ADR 0049 → Accepted with R35-1..R35-12;
+- DOMAIN_RULES P33 §B formula and the R2/R3 text replaced, I26 rev. 2 and I33–I36 added;
+- OQ #82 Blocked assumption noted;
+- P35-T04 / T05 rows and their dependencies amended as above.
+
+## [2026-11-13] P35-T03 folded in — orchestrator
+
+ADR 0049 → Accepted with changes (R35-1..R35-12, I33–I36 take precedence). Plan P35-T04/T05/T07
+rewritten to the ruling (exclusion via `lead_weeks = 0` in the builder; split field in
+`effort_split`; sequencing after P33-T02 entry / P33-T08 + P35-T01). DOMAIN_RULES §B text is
+amended at P35-T04 (not now: P33-T02 is editing the same section in the working tree). OQ #82
+gains the Blocked-step assumption. P35-T03 DONE.
+
+### 2026-11-13 — P35-T01 DONE (backend-builder): actual end week, calculated design/lab time, register batch save
+
+**Built.**
+- **`projects.actual_end_week`** (INTEGER NULL, CHECK `ck_projects_actual_end_week_positive` ≥ 1), migration
+  `p35a_project_actual_end_week` (down_revision `p32a_step_overlap`; the P33 migrations must chain on
+  **p35a**, which is now head). Model `Project.actual_end_week`; `ProjectUpdateRequest.actual_end_week`
+  (`int | None`, ge=1, `null` clears); `ProjectRead.actual_end_week` (so detail, `GET /projects`,
+  PATCH / create / submit / freeze responses and `WorkspaceProject`). Not a scheduler input: no
+  `schedule_stale`. `project_audit_state` carries it, so a change is in the `project.update` row;
+  the Workspace activity feed labels it "Actual end week".
+- **422 `ACTUAL_END_BEFORE_START`** (`api/routers/projects.py::_actual_end_before_start`): end < start
+  on the effective values after the patch (body value if sent, else stored). Either side null passes.
+  `detail` = one `field_error`, loc `actual_end_week` when the body sent it, else `actual_start_week`
+  (a start moved past the stored end). No DB CHECK end ≥ start, because the Gantt freeze writes
+  `actual_start_week` on its own; the freeze endpoint does NOT check against `actual_end_week` (gap,
+  left for review).
+- **`GET /dashboard/projects`** (the Projects page grid's endpoint, `useDashboardProjects`) rows
+  (`ProjectFilterRow`) gain: `actual_start_week`, `actual_end_week`, `design_effort_weeks`,
+  `lab_effort_weeks` (float | null), `design_weeks_calculated`, `lab_weeks_calculated` (int).
+  Calculated = Σ over the kind's live steps of `services.workspace.row_calculated_weeks` (new), which
+  is `live_step_effective_weeks` with `effort_weeks=None`: user override ?? lead, 0 for lead 0 or lab
+  without certification testing, i.e. the shared eff/skip helpers with the figure ignored. Summed in
+  `services.project_cards.build_project_cards` from the live rows it already loads: zero extra
+  queries (`ProjectCard.design_weeks_calculated` / `lab_weeks_calculated`). **P33-T08 must update
+  `row_calculated_weeks` alongside `row_effective_weeks`** when eff starts reading `plan_weeks`
+  (docstring says so); with `effort_weeks` absent it must mean "no own effort for this kind".
+- **Scope addition (owner, OQ #83 "recalculate on Save"): `POST /projects/register-edits`.**
+  Body `RegisterEditsRequest {edits: RegisterEditPatch[1..100]}`; a patch is
+  `{project_id, status?, leader_engineer_id?, actual_start_week?, actual_end_week?,
+  design_effort_weeks?, lab_effort_weeks?}` (extra=forbid). `requesting_department` is NOT accepted:
+  it is read-only (ADR 0035 charter field, not in the single PATCH). Priority is not accepted (it
+  has its own move / preview flow). Flow, one transaction, all-or-nothing:
+  1. rate limit `REGISTER_EDITS_RATE_LIMIT` (burst 10, 1 per 6 s per user, as check-ins) → 429
+     `RATE_LIMITED`; a duplicate project → 422 `REGISTER_EDITS_INVALID` / `DUPLICATE_PROJECT`;
+  2. `SELECT … FOR UPDATE` on the named projects ordered by id, then per row the single PATCH's
+     `_get_project_or_404` + `authorize_project_action(min_grant_role="admin")`; any failure → 403
+     `REGISTER_EDITS_FORBIDDEN`, errors `FORBIDDEN_PROJECT` (out-of-scope and nonexistent alike);
+  3. per row `stage_project_update` — the single PATCH's validation + writes, extracted verbatim
+     from `update_project` (which now calls it too): same codes, R7 split check, R6 re-derivation,
+     `schedule_stale`, one `project.update` audit row per project. Every row is validated; any
+     failure → rollback, 422 `REGISTER_EDITS_INVALID` with every row's error;
+  4. ONE greedy run for the batch: `services.priority_move.decide_auto_recalc_batch` /
+     `dispatch_auto_recalc_batch` (new; the single-project `decide_auto_recalc` /
+     `dispatch_auto_recalc` now delegate to them, behaviour unchanged), `trigger_reason=
+     "register_edit"`. `needs_run` = some scheduler input changed on a project schedulable before
+     or after its edit (so moving a project to On Hold still recalculates). `not_needed` /
+     `deferred` (coalesced follow-up, ADR 0023) / `queued` / `dispatch_failed`.
+     `recalc_project_id` only when the batch changed one project. One
+     `project.recalculate_requested` per changed project.
+  Error body: `{"detail": {"code", "message", "errors": [{project_id, code, message}]}, "code"}`.
+  Response `RegisterEditsResponse {project_ids, projects_marked_stale, recalc_status,
+  schedule_run_id, baseline_run_id, task_id}` (recalc fields as `PriorityMoveResponse`).
+  Lock order: project rows, then the dispatch advisory lock (as the P33 apply).
+
+**Tests.** `tests/test_p35_t01_register_fields.py` (11): PATCH set / equal / clear / end-without-start
+with audit rows and no stale; 422 on stored start, on both-in-body, on a start moved past the end, and
+ge=1; calculated 10/6 for PDD/B plain, 10/6 with figures 4 and 10, 10/0 with certification off;
+statement count equal for 2 and 6 rows; batch: 2 rows → one run, `recalc_project_id` None, per-row
+`project.update` + `project.recalculate_requested` (trigger `register_edit`) + R6 re-derive; one invalid
+row → 422, nothing written, no run; duplicate / priority / requesting_department / tcogs → 422;
+out-of-scope (Hub Planner) → 403, nothing written; On Hold figure + actual end only → `not_needed`;
+status → On Hold → `queued`; migration p35a up / down / up in its own container.
+
+**Regression.** 26 related suites (projects / registration / priority move + preview / VIP pin /
+check-ins / follow-up / effort / dashboard / workspace / RBAC / access / audit / contract): 761
+passed, 4 failed — all in `tests/test_openapi_frontend_contract.py`, **expected RED until P35-T02
+mirrors the types**: `ProjectFilterRow` (6 new fields), `ProjectRead` and so `WorkspaceProject`
+(`actual_end_week`, field set + §7 nullability). No contract-test expectation edited (the rows
+already exist as "exact"). P35-T02 should also add TS types for `RegisterEditsRequest` /
+`RegisterEditPatch` / `RegisterEditsResponse` / `RegisterEditError` and a contract row. Full-chain
+`tests/test_migrations.py` + `test_p32_migration.py` green.
+
+**Lint.** ruff clean on every touched file. mypy clean on every touched production file (the two
+`dashboard.py` `_has_stage_progress` errors at 321/420 are pre-existing, not touched); the new test
+file has the same untyped-fixture mypy noise as other test files. Unrelated P33/P34 working-tree
+changes not touched. No financial field read, written or logged (batch rejects `tcogs_eur` etc. by
+extra=forbid). Not committed.
+
+## [2026-11-13] P33-T02 — scheduler `lead_weeks` / `wait_weeks`, one-leader unconstrained finish, I27 rev.–I29 — algorithm-engineer: IMPLEMENTED, BLOCKED (golden change reported, not re-blessed)
+
+Implemented from DOMAIN_RULES "Category templates" §B/§D, ADR 0046 (precedence: owner ruling > R33 > §1–§6) and
+contract P33 F1/F2. `backend/scheduling/` and `backend/tests/scheduling/` only. Not committed.
+
+**What changed.**
+- `types.StepTimingInput` gains `wait_weeks: int = 0` and `lead_weeks: int | None = None`, after `overlap_weeks`
+  (contract F1 order).
+- `workflow`:
+  - `effective_lead_weeks` (`lead_weeks ?? table`); `analyse_project` evaluates R33-1 (`eff = 0` if lead 0 or lab with
+    certification off, else `override ?? lead`). A frozen project honours `lead_weeks`.
+  - `StepPlan.wait_weeks` is set only on a non-skipped Not Started step of a non-frozen project with predecessors, so
+    tails, Blocked holds, skipped steps and frozen projects have `w = 0` by construction.
+  - `step_gate` is piecewise (R33-4): `release + 1 + w` when `o = 0`.
+  - `validate_step_timing`: wait 0..104, lead 0..104 / None (ints, not bools); `ValueError` for a wait on a first step
+    and for `o > 0 ∧ w > 0`.
+  - `unconstrained_end_week` applies the one-leader rule (R33-6) through the new `first_free_week`. It covers
+    non-frozen Not Started design steps. Windows are those of the project's design steps already placed in walk order:
+    In Progress tails from their tail start, and Done steps from `max(start, CURRENT_WEEK)`.
+  - Canonical forms (R33-7): `canonical_step_timing` keeps wait-only / lead-only rows, and `canonical_step_timing_dict`
+    adds `wait_weeks` / `lead_weeks` only when non-default.
+  - New `canonical_schedule_input_asdict(si)`: `asdict` minus the P33 defaults. It equals the pre-P33 `asdict` on any
+    input without them, for `services.priority_preview._canonical` (P33-T07).
+- `greedy`: no code path change beyond the gate. The docstring is updated.
+- `cp_sat`: `start ≥ pe + w` per precedence term (branch only when `w > 0`, so a zero-wait model is unchanged), and
+  `upper_bound` gains `Σ w`.
+- `monte_carlo._perturbed_step_timing`: `lead_weeks` is perturbed with the R10 floor (0 stays 0, else clamp 1..104).
+  `overlap_weeks` / `wait_weeks` are never touched, and an unchanged row is returned as the same object.
+- `invariants`:
+  - I5 and the I26 input part read `lead_weeks ?? table`.
+  - **I27 rev.**: every non-held, non-skipped Not Started step of a non-frozen project. The CURRENT_WEEK term is
+    reported for every such step; the gate term only for `o > 0`.
+  - **I28**: `start ≥ release + 1 + w` from the run's rows. `check_wait_invariance` is the difference half: greedy
+    with and without waits gives the same `duration_weeks` / `skipped` on every common row and the same
+    `progress_pct`. It runs inside `validate_invariants` with I8, only when the input has a wait.
+  - **I29**: (a) `analyse_project`'s `eff` equals the input-derived `eff` on every step; (b) elapsed rows of a frozen
+    project, a Done step or a held step carry the input `eff`.
+  - Each term is reported once, disjoint from I3 / I5 / I6 / I7 / I21 / I22, as I27 already was. Existing negative
+    tests expect exact violation sets.
+- `plan_import`: a matched live project's `lead_weeks` / `wait_weeks` survive an edit. An overlap edit clears the
+  wait (R33-9), and the edit skip test uses `lead_weeks ?? table`.
+- `__init__` exports.
+
+**Golden-file status: 3 tests in `tests/scheduling/test_p32_overlap.py` (the P32-T01 golden-file module) now fail.
+I did NOT re-bless them (R33-6 / task instruction). For the workflow-auditor (P33-T05):**
+1. `test_design_on_design_overlap_is_serialised_by_the_leader` asserts `unconstrained_end_week == 47`; it is now
+   **48**.
+   - Every row, `end_week` (48) and the validator output are unchanged; only the unconstrained by-product moves.
+   - Fixture: `DESIGN_ON_DESIGN`, E overlapping D by 1, so a design ∥ design overlap. This is exactly the case R33-6
+     predicts.
+   - The test's own comment says the old walk "*does* overlap" the one leader. 48 = constrained, I16 holds.
+   - Proposed re-bless: 47 → 48, with the comment rewritten to R33-6.
+2. `test_canonical_form_omits_zero_overlap` builds `pre = asdict(row) − overlap_weeks`. `asdict` now also has
+   `wait_weeks` / `lead_weeks`, so `pre` has two extra keys. The property it protects still holds (canonical dict ==
+   the pre-P32 keys).
+   - Proposed: also drop `wait_weeks` and `lead_weeks` from `pre`.
+3. `test_default_overlap_is_zero` asserts the last dataclass field is `overlap_weeks`. Contract F1 appends
+   `wait_weeks` and `lead_weeks` after it.
+   - Proposed: assert the trailing fields are `("overlap_weeks", "wait_weeks", "lead_weeks")`.
+
+Every other golden file (`test_golden_files.py`, `test_p9_golden.py`, the P12/P20/P29/P30 suites, the other P32
+cases) passes unchanged.
+- `test_p9_golden::test_invalid_project_configuration_rejected` failed once in development. I fixed it in code, not
+  in the test: the new category-workflow check runs after the lead-row check, so the pre-P33 message is kept.
+
+**Byte-identity on the seed.** HEAD's `backend/scheduling` was extracted (`git archive`) and compared with the working
+tree on `load_seed_schedule_input()` (46 projects). The sha256 of `repr` of the following is identical, and
+violations are 0 on both:
+- greedy output;
+- CP-SAT output (10 s / 3 s);
+- `validate_invariants`;
+- the canonical step-timing input.
+
+The probe is in the session scratchpad.
+
+**Tests.**
+- New file `tests/scheduling/test_p33_gaps.py`, 51 tests:
+  - wait on design / lab / elapsed;
+  - wait + capacity (gate before vs. after the chamber frees);
+  - an elapsed wait costs nothing;
+  - wait → LEFT_OUT at the horizon;
+  - the In Progress tail and a Blocked hold ignore the wait;
+  - a skipped step's gap is ignored;
+  - frozen: wait ignored, lead honoured;
+  - lead 0→n revives and n→0 skips; override beats lead; lead 0 beats override; lab lead with cert off stays skipped;
+  - validation (both non-zero, first step, ranges, bools);
+  - I28 difference test (rows, `progress_pct`, design and lab loads; `check_wait_invariance`);
+  - CP-SAT ≡ greedy on design / lab / elapsed / revived / capacity / LEFT_OUT, and a zero-wait CP-SAT run that is
+    byte-identical;
+  - unconstrained one-leader on parallel design branches (35 → 37, = greedy = CP-SAT), on a design overlap, and
+    counting an In Progress tail;
+  - canonical forms, `canonical_schedule_input_asdict` and the Monte Carlo lead/gap rule;
+  - negative tests for I27 (before CURRENT_WEEK), I28, I29 (frozen elapsed row), and I5 reading the per-project lead;
+  - I26-input reads the lead;
+  - plan import keeps lead/wait, an overlap edit clears the wait, and a revived step is editable.
+- The scheduling suite, run with the three tests above deselected: **567 passed, 3 deselected, coverage 89.50 %** (gate 85 %).
+  With them selected: 3 failed, 567 passed.
+- Backend tests that exercise the scheduler pass, 285 in total. They include P32 step overlap, plan-import xlsx, P32
+  greedy inline, schedule persistence, P14 priority preview, workflow settings API, P30 effort, P18 what-if and P32
+  what-if import.
+- ruff check and format are clean. mypy reports only the 38 pre-existing OR-Tools stub errors in `cp_sat.py` (plus
+  the untyped `_selftest*`, as before).
+- Selftest modules run with `python -m`:
+  - `_selftest_monte_carlo` and `_selftest_solver_comparison`: OK.
+  - `_selftest`, `_selftest_cp_sat` and `_selftest_invariants`: report the same failed checks at HEAD. Verified on the
+    extracted HEAD tree; they are pre-existing. `_selftest_invariants`' already-failing "direction2 I1" case now also
+    lists I27, which is correct: its broken output places a Not Started step before CURRENT_WEEK.
+
+**Rulings I made (for P33-T05 to confirm).**
+- The R33-4 hold rule `w = 0` governs the hold's rows. `unconstrained_end_week` assumes a Blocked step clears now (as
+  before), so it *does* honour the waits of the Not Started steps behind it. Example: rows identical, unconstrained
+  47 → 53 with waits 4 + 2.
+- The I26 input check now treats a started step whose per-project `lead_weeks` is 0 like a table-0 step (skipped by
+  its lead, not reported). P35 (exclusion via `lead_weeks = 0`, R35) relies on this path; P35-T04 should confirm it.
+- The I29 split ((a) the plan's `eff` vs the input; (b) only the rows nobody else checks) avoids double-reporting.
+
+**Next.** The workflow-auditor rules on the three P32 tests in P33-T05. If the ruling is accepted, they are
+re-blessed exactly as proposed above and T02 becomes DONE.
+- Backend-builder notes for T07/T08:
+  - `services/schedule_persistence.build_workflow_snapshot_from_input` writes its own inline `step_timing` dicts. It
+    must add `wait_weeks` / `lead_weeks` only when non-default (R33-7), or use `canonical_step_timing_dict` plus the
+    project id.
+  - `services/priority_preview._canonical` should call `scheduling.canonical_schedule_input_asdict`. Today it uses
+    `asdict`, which now includes the new keys and `categories`.
+
+## [2026-11-13] P33-T03 — category scheduling order from data — algorithm-engineer: DONE
+
+ADR 0047 §3 as amended (R33-7, R33-8), DOMAIN_RULES §E, contract F1/F2.
+
+**What changed.**
+- `types`:
+  - `CategoryInput(code, workflow_id, rank)`;
+  - `default_categories()`, the seven seeded categories at ranks 1..7 in `CATEGORY_RANK` order;
+  - `ScheduleInput.categories` (default factory, last field).
+- `workflow`:
+  - `CategoryMaps` (rank, workflow, codes in rank order, `codes_of_workflow`) and `build_category_maps` (R33-8
+    validation: unique non-empty codes, unique integer ranks ≥ 1, and a `workflow_id` among the input's workflows);
+  - `is_default_categories` (order-insensitive);
+  - `canonical_categories` (None = omit; else rank-ordered dicts, for `workflow_snapshot["categories"]` and the hash).
+  - `validate_schedulable_project` takes `category_workflow`. The project's category must be listed and must belong to
+    the project's workflow. This check runs after the lead-row check, so pre-P33 messages are kept.
+- `greedy`:
+  - `_sort_key(project, category_rank=None)`: key 5 = the rank value (default: the seeded map, so pre-P33 callers are
+    unchanged);
+  - `_cat_not_allowed(project, leader, category_workflow=None)`: the OEM test reads the category's workflow;
+  - `prepare_run` builds `RunContext.categories` via `category_maps_for`. CP-SAT gets the order through `ctx.ordered`
+    and passes the map to `_extract_outcome`.
+- `whatif`: `_pick_leader` and `_default_allowed_categories(hub, categories)` read the input's list, and
+  `_validate_scenario` requires the category of the hub's workflow.
+- `plan_import`: `_new_engineer_categories(hub, categories)`, the auto-assign order by input rank, and request
+  validation against the input's list.
+- `invariants`: **I30** over `scheduling_order` (consecutive ids equal on keys 1–4: rank non-decreasing, ties by
+  `project_id`). An invalid list is reported as I30 instead of raising.
+
+**Resolution I made (R33-8 vs pre-P33 fixtures).** "Each `workflow_id` an input workflow" is checked only for a
+**non-default** list.
+- The seeded default names `OEM`, while many fixtures carry a PDD-only template (`_selftest_common.TEMPLATE`).
+- A project can still never use a category whose workflow is absent, because of the per-project check.
+- `build_category_maps(default, workflow_ids=("PDD",))` does raise; this is tested.
+
+**Golden files.** T03 changes none: every golden file passes, and the default list gives byte-identical runs. The
+seed fingerprint is above.
+
+**Tests.** New file `tests/scheduling/test_p33_categories.py`, 25 tests:
+- default list and canonical omission;
+- key 5 is the rank value;
+- B2 inserted between B and C orders between them;
+- the same list without a B2 project gives a byte-identical run, and the other four keep their order;
+- sparse ranks ≡ dense ranks;
+- re-ranking, with keys 1–4 still winning;
+- CP-SAT order and I30;
+- six invalid lists rejected, and each reported as I30 by the validator;
+- missing category; category of another workflow;
+- the default list is not checked against the workflows;
+- I30 negatives (rank inversion, tie out of id order) and a pair differing on key 3 not flagged;
+- the OEM test via `workflow_id` (named, blanket `OEM`, other);
+- a new OEM category scheduling on OEM-HCK;
+- the what-if / plan-import lists for a new PDD and OEM category;
+- the what-if rejecting a category of the wrong workflow.
+
+**For backend-builder (P33-T07).**
+- The builder passes `categories` from the table.
+- The snapshot writes `canonical_categories(...)` under `"categories"` only when it is not None.
+
+## [2026-11-13] P33-T04 — `scheduling.template_timeline` — algorithm-engineer: DONE
+
+Contract P33 F3, DOMAIN_RULES §D "Template preview", ADR 0046 §5 as ruled.
+
+**What changed.** A new module, `backend/scheduling/template_timeline.py`:
+- `template_timeline(*, workflow, lengths, gaps) -> TemplateTimeline`.
+  - `TemplateTimeline` carries `workflow_id`, `steps`, `total_weeks`, `design_weeks`, `lab_weeks` and `note`.
+  - Each `TemplateStep` carries `step_id`, `start_week`, `end_week` (exclusive), `duration_weeks`,
+    `requested_gap_weeks`, `effective_gap_weeks` and `flags`.
+- Weeks are 0-based and end-exclusive. It uses §D's gate with frontier 0, no capacity, FTE 1.0 and the one-leader rule
+  through the shared `workflow.first_free_week`.
+- Flags (constants `FLAG_*` and `TEMPLATE_FLAGS`):
+  - `same_leader_serialised`: the leader rule moved a design step;
+  - `anchor_clamped`: the start anchor beat `release − o`;
+  - `gap_ignored_zero_length`: a non-zero gap on a 0-length step.
+- `effective_gap_weeks = start − release`, 0 on a skipped step.
+- `TEMPLATE_VIEW_NOTE` always rides along ("Real projects also wait for engineers and chambers").
+- Validation: unknown step, length outside 0..104, gap outside −104..104, bools, and a non-zero gap on a first step all
+  raise `ValueError`. A missing length means 0, as in the pre-P33 preview.
+
+**Acceptance.**
+- With all gaps 0 it reproduces today's `services.workflow_previews.category_preview` for all 7 categories: every
+  start, duration, total and design/lab sum. This was checked against the live function, and the recorded values are
+  the test's literal table.
+- Tests in a new file, `tests/scheduling/test_p33_template_timeline.py` (27 tests):
+  - each flag;
+  - a wait;
+  - lab ∥ design overlap;
+  - design ∥ design serialised (equal to the baseline);
+  - a design overlap onto an elapsed step that is not serialised;
+  - parallel design branches;
+  - validation and determinism;
+  - agreement with `unconstrained_end_week` on a fresh Not Started project at FTE 1.0: 280 seeded random
+    length/gap sets over the 7 categories, `finish == CW + total − 1`.
+
+**For backend-builder (P33-T09).** C2's `predecessor_ids`, `name` and `kind` come from the `Workflow`; the function
+returns only what the contract F3 lists. C2 `effective_gap_weeks` / `flags` map 1:1 (flags as a sorted list).
+
+T04 shares T02's one-leader helper. If the workflow-auditor overturns R33-6 for the unconstrained finish, the preview
+keeps the rule: ADR §5 asks for it independently of Q6.
+
+### 2026-11-13 — P34-T02 (frontend-builder): Matrix inline edit, gate columns, VIP star fix, instant filters, change markers — DONE
+
+Scope: `frontend/src/surfaces/matrix` + `frontend/src/lib/api/vip.ts`. No scheduler, scoring or backend change.
+
+**VIP star root cause.** Reproduced headless against the dev server (5174 → backend 8011). The click reached the
+button and `PUT /projects/{id}/vip` answered 200 in ~270 ms. But the star only changed after the full `/priorities`
+re-read (~0.6–1.2 s later); during that gap the button was enabled again and still showed unpinned. When the re-read
+landed, the row jumped into the VIP group at the top (index 13 → 0), so in a scrolled grid it left the viewport and the
+row under the pointer was another, unpinned project.
+Fix:
+- `useSetProjectVip` is optimistic. `onMutate` cancels and patches every cached `priority-matrix` row/list; `onError`
+  rolls back; `onSettled` invalidates the same readers as before.
+- One mutation per table, not per virtualised row, with per-project pending state. A 403 or other failure shows a
+  dismissible `role=alert` line.
+- The pinned row is scrolled to (`virtualizer.scrollToIndex`, align `auto`) and highlighted for 2.5 s (`data-flash`, no
+  animation).
+- Live check: pinned in 77 ms, row visible at its new place. Test pins were reverted on 8011 (10 VIPs, as found). One
+  existing pin was unpinned and re-pinned while probing, which queued two recalcs.
+
+**Edit mode (D34-1).**
+- The pencil column, `ScoreEditDialog` (+ test) and `HardGateBadge` are deleted. The dialog was the only place the
+  grid's financial fields were shown read-only; they remain in exports.
+- "Edit scores" (card header, `matrix` write only) turns each dimension into a one-character 0–5 input. Empty =
+  not scored (null), as the dialog allowed.
+- Keyboard: arrows/Enter move between edit cells, 0–5 replace, Backspace/Delete clear, Tab walks. Hard gates are a
+  separate "Hard gates" column group: one 72 px column per `HARD_GATE_REASONS`, read-only check marks outside edit
+  mode, checkboxes in it.
+- Changed cells and rows are marked. A sticky bar shows "N projects changed", an optional note, Save and Cancel.
+- Save sends ONE `POST /scenarios/apply`: per changed project, the full map of the row's active keys plus the full
+  `hard_gates` (`lib/grid-edit.ts::buildGridApplyBody`). One version results; the grid then re-reads.
+- In scenario mode, Save stages each changed project into the scenario store, with the same baseline/labels as the old
+  dialog.
+- Cancel with changes, in-app navigation (`useBlocker`) and tab close (`beforeunload`) ask to discard. `DiscardDialog`
+  is exported from `scoring-rubric-panel.tsx`.
+- A 403 on save ends edit mode with the read-only notice. Other errors keep the drafts.
+
+**Fast filters (D34-3).**
+- The grid no longer sends `q`. Search, Hub and Leader text live in a per-page zustand store
+  (`lib/text-filters.ts`). The column filter inputs (`TextFilterInput`) subscribe to it, so the column defs are built
+  once and inputs never remount.
+- The pipeline reads `useDeferredValue` text and is memoised (`lib/matrix-rows.ts`). It sorts once (VIP, rank, score,
+  name); `MatrixTable` no longer sorts, and it is `React.memo`.
+- Live: 4 keystrokes in ~400 ms, focus kept.
+- **Gap.** `PriorityMatrixRow` does not serve `external_code`, which the old server `q` matched. Search matches names
+  only until the backend adds it; the code path is already there if it is served.
+
+**Band distribution (D34-2).** `distributionFromRows` counts the served `rowBand` of the rows after every filter except
+the band pick; `capacity_fill_count` counts `capacity_fill`. Q stays 0 and Unscored keeps its bucket. Shares are
+count/shown (1 dp), display only. The page no longer calls `usePriorityDistribution` (the hook stays).
+
+**Sticky filters.** `MatrixViewPanel` always shows the filter row. While stuck it is one `flex-nowrap overflow-x-auto`
+line, and the "Filters (n)" toggle is gone. `useGridMaxHeight` already measures the panel's live height, and the grid
+reserves +64 px while the edit bar shows.
+
+**Versions (D34-4).**
+- Types mirror P34-T01 exactly: `LastScoreVersion`, `PriorityMatrixRow.last_score_version`,
+  `ScenarioApplyRunSummary.project_count`. Absent at runtime reads as null / falls back to `change_count`.
+- A History icon by the project name shows "Changed in version N · date · name"; clicking it opens the now
+  controllable `VersionHistoryDialog` (`open` / `onOpenChange` / `initialVersion`) at that version.
+- The list shows "N projects".
+
+**Tests.** New: `lib/matrix-rows.test.ts`, `lib/api/vip.test.tsx` (optimistic pin + 403 rollback). Updated:
+MatrixPage, MatrixPage.board (edit save = one apply; axe in edit mode), matrix-table, score-cell, version-history.
+`backend/tests/test_openapi_frontend_contract.py` green (229, incl. the 4 P34 rows).
+
+**Not mine, still red.** A parallel whole-number change (P35, `lib/format.ts::formatDecimal` and a matrix-table
+scaled-points edit) breaks some expectations: MatrixPage currency caption ×2, scoring-model, matrix-table P26/P16,
+p25-capacity-fill, scoring-rubric-panel. Separately, a `ProjectRead.actual_end_week` change breaks tsc in
+projects/registration tests. Matrix sources themselves are tsc/eslint clean.
+
+**Test gotcha.** `beforeEach(() => mock.mockReset())` returns the mock, and vitest calls a returned function as a
+teardown. A rejecting mock then "fails" the test after it passed. Use a block body.
+
+## [2026-11-13] P33-T05 — workflow-auditor audit of P33-T02/T03/T04 + OR-3/4/5 builder review: PASS (with binding amendments T05-A1..A3)
+
+Independent audit of the uncommitted `backend/scheduling/` working tree against DOMAIN_RULES "Category templates" §B–§E,
+ADR 0046 (owner ruling > R33 > text) and contract P33 F1–F4. No feature code written; no test edited.
+
+**Method (re-derived, not trusted).**
+- I extracted HEAD's backend with `git archive`, and built a hybrid tree: HEAD backend + the working-tree `scheduling/`.
+  This was needed because working-tree models (P35) reference columns not yet migrated in the dev DB.
+- Both trees were run against the **live dev DB** (330 projects, via `build_schedule_input_from_db`) and the 46-project
+  seed. The engineer's probe used the seed only.
+- Independent scripts, run with the backend venv and `-I`:
+  - `scratchpad/t05/tools/probe.py`
+  - `scratchpad/t05/tools/derive.py`
+  - `scratchpad/t05/tools/hold_f4.py`
+
+**Byte-identity, HEAD vs working tree, default inputs.** Live and seed are identical on:
+- greedy `repr`;
+- CP-SAT `repr` (10 s / 3 s, 1 worker);
+- `validate_invariants` on greedy (with I8) and on CP-SAT (0 violations each);
+- the canonical step-timing input;
+- `build_workflow_snapshot_from_input`;
+- the per-project `unconstrained_end_week` map.
+
+**One difference: the `priority_preview` token** (`1c8defe2…` at HEAD vs `48eb5e5e…` in the working tree). It comes
+from `asdict` serialising `wait_weeks`, `lead_weeks` and `categories` (R33-7). With `_canonical` switched to
+`canonical_schedule_input_asdict`, the token equals HEAD's (`1c8defe2…`). See A3.
+
+**Stored runs.**
+- Active run v12: 330/330 outcomes and 2189/2189 step rows equal a fresh working-tree greedy run (and HEAD's).
+- Its `workflow_snapshot` equals the fresh snapshot.
+- All 12 stored snapshots have no `categories` key.
+- Serialisation code (`schedule_persistence`, `priority_preview`, `domain_constants`) is unchanged from HEAD, so
+  re-serialised stored runs are byte-stable.
+
+**Invariants re-derived on live output with my own code.**
+- My checks, on greedy and CP-SAT:
+  - I29: `duration_weeks` and `skipped` = my own R33-1 `eff`;
+  - I3 / I28: start > every predecessor end, and ≥ pred end + 1 + w;
+  - I27: CURRENT_WEEK term;
+  - I1: no engineer-week double-booked.
+  - Result: 0 failures.
+- Wait stress test: 469 random waits (1–4) on about 40 % of non-frozen live projects.
+  - Greedy and CP-SAT validators: 0 violations.
+  - My I28 / I3 / I1 checks: 0 failures.
+  - On every common row, `duration_weeks` / `skipped` and `progress_pct` are unchanged (a wait books nothing).
+  - Unconstrained finish never earlier; I16 holds.
+  - LEFT_OUT went 74 → 73. That is a greedy SGS anomaly (a delayed project frees a leader window), not a defect.
+- Wait semantics are also covered by `test_p33_gaps.py` (elapsed wait free, LEFT_OUT at horizon, tails / holds /
+  skipped / frozen ignore `w`). I confirmed the elapsed-wait and hold cases by hand.
+- `template_timeline` vs `unconstrained_end_week` vs my own §D + R33-6 walk: 400 random length / signed-gap sets over
+  both workflows, 285 of them with design ∥ design serialisation. All three agree (`finish = CW + total − 1`).
+
+**Selftest claim verified.** On HEAD and on the working tree, `_selftest` and `_selftest_cp_sat` fail the same 2
+checks: "design step starts at current_week" and "excluded projects never consumed engineer capacity".
+`_selftest_invariants` fails the same "direction2 I1" check in both. The working tree additionally lists I27 there,
+which is correct (I27 rev.'s CURRENT_WEEK term on a Not Started row placed before CW). These are pre-existing, not
+introduced.
+
+**Suite.** `pytest -c pytest-scheduling.ini`: 567 passed, 3 failed. The 3 failures are exactly the P32 tests below.
+
+**Rulings.**
+1. **P32 golden tests: ACCEPT all three re-blesses** (the algorithm-engineer applies them):
+   - (a) `test_design_on_design_overlap_is_serialised_by_the_leader`: `unconstrained_end_week` 47 → **48**.
+     - Hand derivation: gate(E) = max(33−1, start D = 32, 31) = 32, but D occupies 32 for the same leader, so E runs
+       33–36, H 37–42, J 43, K 44–45, L 46, M 47, N 48.
+     - This is the intended R33-6 effect. The rows and `end_week` 48 are unchanged, and unconstrained = constrained
+       (I16).
+     - Rewrite the comment to cite R33-6. Do not describe the walk as overlapping.
+   - (b) `test_canonical_form_omits_zero_overlap`: `pre` also drops `wait_weeks` and `lead_weeks`. The literal
+     3-key dict assertion stays.
+   - (c) `test_default_overlap_is_zero`: assert the trailing fields are `("overlap_weeks", "wait_weeks",
+     "lead_weeks")` (contract F1 order).
+
+   P33-T02 → DONE once these are applied and the suite is green.
+2. **Unconstrained finish honours the waits of Not Started steps behind a Blocked hold: ACCEPT.**
+   - The unconstrained figure assumes the block clears now (pre-P33 docstring), so the steps behind it are ordinary
+     Not Started steps and wait. R33-4's `w = 0` governs the hold's emitted rows only.
+   - Re-derived on PDD/B with E Blocked: unconstrained 44 → 50 with waits H 4 + K 2. Rows are identical; CP-SAT
+     equals greedy.
+   - A held project is not "scheduled", so I16's `end ≥ unconstrained` clause does not apply.
+3. **Started step with `lead_weeks = 0` skipped (not reported) in the I26 input check: ACCEPT.**
+   - It is consistent with R33-1 (lead 0 beats override) and with R35-3 (R3 yields to an explicit exclusion).
+   - On live data it is reachable only through a weight-0 own-effort step, a table 0, or a P35 exclusion. R33-10 /
+     OR-4 never write a copy on a reached pair.
+   - P35-T04 still confirms the exclusion path.
+4. **Category `workflow_id` validated only for a non-default list: ACCEPT, as an amendment to R33-8.**
+   - The project-level check (category listed, and of the project's workflow) stays unconditional. It already
+     makes an absent workflow unusable.
+   - The orchestrator adds "(non-default lists)" to the contract F1 validation bullet and to DOMAIN_RULES §E.
+5. **I29 split: ACCEPT.**
+   - (a) plan `eff` = input `eff` on every step of every analysed project.
+   - (b) frozen / Done / held elapsed rows.
+   - Together with I5 (skipped rows), I6/I7 (every design/lab row vs the plan) and I21 (remaining elapsed rows),
+     every row is covered exactly once. I confirmed this by reading the four checks.
+6. **R33-6 DAG: CONFIRMED.**
+   - Live `workflow_step_templates` for PDD and OEM are strict chains, so design steps are totally ordered.
+   - All 12 stored `workflow_snapshot` DAGs are totally ordered too.
+   - Caveat: total order does not exclude design ∥ design via a per-project overlap. Run v4's snapshot carried
+     PDD-E overlap 2, which is exactly the case R33-6 changes.
+   - Stored runs are immutable (I14) and serve stored values, so nothing changes for them. A re-validation of v4
+     against its historical input would now recompute a later unconstrained finish. That is intended, not a
+     regression.
+   - Today's live overlaps (S-250 L 1, S-45 M 1) anchor on an elapsed L, so R33-6 moves nothing. The live map is
+     identical.
+
+**Owner-ruling builder review (OR-3 / OR-4 / OR-5, I31 / I32 vs R33-1 / R33-2).**
+- OR-3 → R33-1 gives exactly §B `eff`:
+  - own effort: `eff = override = effort_weeks`; a weight-0 step gets lead 0 → skipped, as `effort ?? 0`;
+  - otherwise: `eff = plan_weeks` (lab with cert off → 0).
+- After backfill (`plan = weeks = weight`), every `lead_weeks` is None and the merge is today's.
+- OR-4 and I31 write no `effort_weeks` (R33-2). I32 (iii) holds because own-effort `lead_weeks` is the immutable
+  weight, never `plan_weeks` or the template.
+- OR-5 "figure cleared" leaves reached steps on their copy. That equals today's table fallback, and is not a
+  regression.
+
+**Defect found → amendment T05-A1 (binding on contract F4 / P33-T08).** F4 says `start_not_before_week` is None,
+gaps come only from `plan_gap_weeks`, and the non-own-effort override is None. That drops today's hand-set ADR
+0019/0043 values from the moment p33b deploys, before p33c clears them:
+- 4 projects, 5 rows, 7 values: Evaporator PDD-A floor 69; Energy Target PDD-H override 8; S-250 PDD-K override 3
+  over effort 1; S-250 PDD-L overlap 1 + floor 43; S-45 PDD-M overlap 1 + floor 49.
+- Simulated on live data, the input hash changes and **16 greedy outcomes differ**. That breaks F4's own test and the
+  T05/T08 acceptance "byte-identical after p33a/p33b, before p33c".
+
+A1 text: "Until p33c has run, the builder also carries:
+- `duration_override_weeks = user_override ?? (effort_weeks if ownEffort else None)`;
+- `start_not_before_week` as stored;
+- `overlap_weeks = stored overlap_weeks if non-null, else −plan_gap_weeks when negative`, with
+  `wait_weeks = 0` on a step with a stored overlap.
+
+After p33c the CHECK makes these null and the table above is exact." Alternatively, p33c ships in the same deploy as
+p33b with the byte-identity check taken between them. The orchestrator folds A1 into F4 and the T08 row **before T08
+opens**.
+
+**Amendment T05-A2.** When the user-override / overlap fields are non-null (until p33c), the T08 test "builder `eff`
+equals §B" uses R33-1 with the override.
+
+**Amendment T05-A3 (deploy order).** T02/T03 alone change every priority-preview token. They must not reach a deploy
+without T07's `_canonical` → `canonical_schedule_input_asdict` (sorted as today). With that change, I verified the
+token equals HEAD's on live data. Backend-builder must also keep `build_workflow_snapshot_from_input` adding
+`wait_weeks` / `lead_weeks` / `categories` only when non-default (already in T07/T08).
+
+**Verdict: P33-T05 PASS.**
+- Invariants hold on seed and live data with the new code.
+- Stored runs are byte-stable.
+- Greedy, CP-SAT and validator outputs are byte-identical to HEAD on default inputs.
+- Wait semantics and template-vs-unconstrained agreement are verified.
+- Every T02 ruling is accepted.
+- **Blocking conditions carried forward:**
+  - (i) T02 is DONE only after rulings 1(a)–(c) are applied;
+  - (ii) **P33-T08 may not open until A1 (and A2) are folded into contract F4 and the T08 row**;
+  - (iii) A3 binds T07 and the release.
+- No feature code was written by me.
+
+## [2026-11-13] P33-T05 folded in; P33-T05 DONE — orchestrator
+
+Docs only. Inputs: the workflow-auditor's P33-T05 PASS with binding amendments T05-A1..A3 and
+rulings 1–6 (MEMORY "P33-T05 … PASS").
+
+- **T05-A1 → contract F4 and the P33-T08 row.** A transitional builder rule applies until p33c has
+  run:
+  - `duration_override_weeks = user ?? (effort if own effort)`;
+  - `start_not_before_week` as stored;
+  - `overlap_weeks` = stored overlap if non-null, else `−plan_gap_weeks` when negative;
+  - `wait_weeks = 0` on a step with a stored overlap.
+
+  The byte-identity check stays between p33b and p33c. The alternative (ship p33c with p33b) is
+  noted. F4's first bullet now reads "After p33c". DOMAIN_RULES §D carries a one-line pointer.
+- **T05-A2 → contract F4 tests and the T08 row.** "Builder `eff` equals §B" is evaluated with R33-1
+  including the override while those fields exist.
+- **T05-A3 → contract F4 and the T07 row.** `_canonical` → `canonical_schedule_input_asdict` is a
+  release blocker: P33-T02/T03 do not deploy without it. The live token must equal HEAD's.
+- **Ruling 4.** "(non-default lists)" added to the `workflow_id` validation in contract F1 and
+  DOMAIN_RULES §E. The project-level category check stays unconditional.
+- **Ruling 6 caveat.** Stored runs keep their per-project overlaps (I14). Re-validating a
+  historical design ∥ design input (run v4) gives a later unconstrained finish under R33-6, which is
+  intended. Added to contract F4 and DOMAIN_RULES §D.
+- **Rulings 1–3 and 5.** No doc change needed:
+  - Ruling 1 (golden re-blesses) is recorded in the T02 row;
+  - rulings 2, 3 and 5 match the existing text.
+- **Plan statuses:**
+  - P33-T05 → DONE;
+  - P33-T02 BLOCKED → IN_PROGRESS: the re-blesses 1(a)–(c) are accepted, and T02 is DONE once the
+    algorithm-engineer applies them and the suite is green;
+  - **P33-T08 may now open** (A1 and A2 are folded), after T07.
+
+## [2026-11-13] Whole numbers, chart click-to-list, floating Gantt filters, Capacity cleanup — committed e8872b1 (not pushed)
+
+**Owner asks.**
+1. "Remove the digit after decimal anywhere ... round off".
+2. Dashboard analytics charts list their projects on click.
+3. Gantt filters float.
+4. Remove "Show engineer utilization" (Capacity).
+5. The grey band and scrollbar on Capacity.
+
+**Built.**
+- `lib/format.ts`: `formatDecimal` and `formatBookedPct` are 0 dp; compact currency is 0 dp.
+  - NEW `formatFactor` (≤ 2 dp) for fractions by nature: FTE, chamber efficiency and the FX rate. These are kept
+    deliberately (0.5 FTE = half speed, ADR 0032; "1 EUR = 1.08 USD").
+  - Also rounded: Planning `figures.ts` (weeks, %), what-if `num()` (new `factor()` for FTE), matrix "x of 100" and
+    `row-scores`, KPI deltas, hub share, file sizes.
+  - A live text scan of 14 routes found no data decimals left (only project names, e.g. "0.45 à 0.4mm", and
+    "16.3 FTE").
+  - Served values are unchanged. This is display rounding only: I19's "printed verbatim" is now "printed rounded".
+- Analytics & breakdown: a bar or slice (type, reg year, hub, category) opens `ProjectListProvider`.
+  - The type and category chips still filter. The hub legend rows (and the category rows when there is no
+    selection) are buttons.
+  - A chart that ignores its own filter passes `ignoreSelection`, so the list drops the same filter.
+  - Live: New Model 52, 2024 15, R&D-Greece 6, A+ 1, all matching. The first open costs about 3 s (cold
+    `/dashboard/projects`).
+- Gantt:
+  - The filter card is `sticky top-0 z-40`, and its "View" header was dropped (224 px).
+  - The chart `maxHeight` = region height − card − 56 px (`useChartHeightBelow`, ResizeObserver), so the
+    chart's own sticky week axis is visible under the floating card.
+- Capacity:
+  - The engineer utilization section is removed. `EngineerUtilizationPanel` and the heatmap are now unused but
+    left in the tree; the roster-marker page test was dropped.
+  - Root cause of the sideways scrollbar: `<table className="sr-only">` in `priority-load-chart.tsx`. `sr-only`
+    cannot shrink a table, so it overflowed the region by 240–320 px. It is now wrapped in `div.sr-only`. Live:
+    0 overflow at 1000, 1280 and 1440.
+
+**Concurrency note.** Another session has uncommitted P35 work in this tree (Projects register editing, Matrix grid,
+VIP, `actual_end_week`).
+- e8872b1 staged only this task's files.
+- For three mixed files, only the rounding hunks were staged: `matrix-table.tsx` (1 of 34 hunks),
+  `matrix-table.test.tsx` (2 of 23) and `project-form.p30.test.tsx` (1 of 2).
+- The other session's three pre-staged Matrix deletions were unstaged for the commit and re-staged afterwards.
+- The test updates were made by a helper agent (helper: 1881 of 1888 passing; the remaining 7 were the FX rate,
+  fixed via `formatFactor`, and the Capacity section tests, updated).
+
+**Next.** Multi-select filters (owner ask) are in progress in worktree `../frigoglass-multiselect`
+(branch `multi-select-filters`, from e8872b1):
+- the contract is `docs/API_CONTRACT_MULTISELECT.md` (repeated params; hub ∪ region; scope always ANDed);
+- ADR 0050;
+- Matrix filters are out of scope while P35 reworks them.
+
+## [2026-11-13] P33-T02 closed — the three P32 re-blesses accepted at P33-T05 applied — algorithm-engineer: DONE
+
+Applied exactly the three re-blesses that the workflow-auditor accepted in P33-T05 ("P33-T05 … PASS"). Only these
+test lines in `backend/tests/scheduling/test_p32_overlap.py` changed; no scheduler code changed.
+- (a) `test_design_on_design_overlap_is_serialised_by_the_leader`: `unconstrained_end_week` 47 → 48. The comment now
+  cites R33-6: E's gate is 32, the leader is busy with D in W32, so E runs 33–36 and N ends 48.
+- (b) `test_canonical_form_omits_zero_overlap`: `pre` also drops `wait_weeks` and `lead_weeks`.
+- (c) `test_default_overlap_is_zero`: the trailing fields are `("overlap_weeks", "wait_weeks", "lead_weeks")`.
+
+**Results.** `pytest -c pytest-scheduling.ini`: **570 passed, coverage 95.31 %** (gate 85 %). ruff check and format
+are clean.
+
+The T05 amendments (T05-A1 contract F4 floor, T05-A2 T08 test, T05-A3 deploy order) are for backend-builder and the
+orchestrator, not the scheduler.
+
+Plan: P33-T02 → DONE. T02, T03 and T04 are all DONE; next are P33-T07 / T08 (backend-builder).
+
+### 2026-11-13 — P35-T02 DONE, P35-T08 DONE except step exclusions (→ T06) and the status-mismatch outline (BLOCKED) — frontend-builder
+
+**Built (frontend/src/surfaces/projects).**
+- **Edit mode** on the Projects list (D35-2, after the Matrix P34 grid-edit pattern): "Edit" → per-cell inputs over a
+  draft (`lib/register-edit.ts`: only changed fields kept, a field set back to its served value dropped) → sticky
+  bar "N projects changed · Cancel · Save" (`components/register-edit-bar.tsx`). Cancel with edits opens a discard
+  dialog; `beforeunload` and in-app navigation (data router `useBlocker`) are guarded while edits are unsaved. The
+  Cards tab and the per-row "Edit registration" drawer are off while editing. A draft hidden by a later filter
+  change is still counted and saved (the row it was staged against is kept).
+- **Cells** (`components/register-edit-cells.tsx`): Status (native select, `UI_PROJECT_STATUSES`; a served In Buyoff
+  stays selectable as itself; a **Draft row keeps its badge** — it leaves Draft only through Submit, the batch would
+  400 `STATUS_DRAFT_SUBMIT_ONLY`); Design resource (leader) from `GET /engineers?hub_id=<row hub>` (fetched per hub
+  only while editing, `useQueries`; the server maps OEM hubs to their capacity hub, ADR 0042), "Unassigned" sends
+  null; Actual start / end as `<input type="date">` stored as plan weeks, inline "End is before start" warning;
+  Design / Lab time: no figure → served `*_weeks_calculated` in green (title "Calculated: N wk", placeholder N), a
+  typed figure → orange (title "Manual (calculated: N wk)") + "↺ reset" which clears the figure (sends null). Read
+  mode shows the same green / orange values. Nothing is computed in the browser (I9).
+- **Week ↔ date** (`lib/plan-week-date.ts`): no frontend helper existed. I mirrored the seed's existing rule (ADR 0035
+  §11, `seed/extract_client_2026.py::plan_week`): ISO week of 2026 (ISO W53 → 52), 52 + ISO week of 2027 up to W78,
+  anything else has no week (inline error, nothing staged); a week is shown as its ISO Monday. Not a new calendar.
+- **Save** = ONE `POST /projects/register-edits` with only the changed fields per row (`api/register-edits.ts`,
+  `hooks/use-register-save.ts`). 422 `REGISTER_EDITS_INVALID` → per-row errors under the project name, row outlined,
+  the cell named by the code marked `aria-invalid` (ACTUAL_END_BEFORE_START → end; EFFORT_SPLIT_REJECTED → both
+  times; NULL_NOT_ALLOWED / DRAFT_RETIRED / STATUS_DRAFT_SUBMIT_ONLY → status); edits kept. 403
+  `REGISTER_EDITS_FORBIDDEN` with `FORBIDDEN_PROJECT` rows → those rows turn read-only and their drafts are dropped;
+  a 403 naming no row → the page's existing write-forbidden notice. 429 → "wait N s" (Retry-After). Success follows
+  `recalc_status` exactly like the priority move / check-in (shared `useScheduleRunFollow`, `useFollowUpRunWatcher`,
+  `invalidateRunDerivedQueries`, `ChangedProjectsList`, `MOVE_COPY.deferred`): queued → SSE → "Timeline updated";
+  deferred → follow-up watcher; not_needed / dispatch_failed → honest copy (`components/register-save-panel.tsx`).
+  The `['dashboard']` invalidation refetches the list.
+- **Bulk bar (T08a)** (`components/bulk-edit-bar.tsx`): tick boxes in Edit mode (writable rows only, select-all of
+  the writable shown rows); Set design resource / status / design + lab time / "Reset times" on every ticked row,
+  staged into the same draft and saved by the same batch. Status is not staged on ticked Draft rows (said in the bar).
+  The leader list is the served list of the ticked rows' hub, or the engineers common to the served lists of several
+  hubs; none in common → disabled with a note. Requesting department is not offered (read-only, ADR 0035; the batch
+  rejects it).
+- **Unassigned ⚠ (T08c)**: a null leader (served, or the draft in Edit mode) shows an "Unassigned ⚠" chip (sr text
+  "no design resource assigned"), replacing the P24-T02 "No leader" label on this table only (the Left Out hint is
+  kept). The P24-T02 test was updated to the new label.
+- **Columns (T08d)** (`lib/column-prefs.ts`, `hooks/use-column-prefs.ts`, `components/column-menu.tsx`,
+  `lib/columns.ts`): "Columns" menu to hide the 12 optional columns (the charter columns keep their own toggle) and
+  "Reset columns and widths"; every resizable header has a drag handle (`role="separator"`, pointer drag, ←/→ ±16 px,
+  48–640 px). Stored per user under `rpd-projects-register-columns:v1:<user_id>`; every read / write / remove is in
+  try/catch and a junk value is sanitised, so the page works with storage blocked (tested with all three throwing).
+- **Read-only rows**: a row is editable iff Registration write AND its hub is in `/me` scope (`hub_scope_all` or
+  `hub_ids`) AND the server has not refused it this session. Others render read-only with a lock and sr text.
+
+**NOT built — T08b status-vs-current-step mismatch outline: BLOCKED, needs a domain rule.** The served row has
+`status` and `current_step_code`, but nothing in DOMAIN_RULES (or any ADR) maps a step to an expected project status.
+The only mapping is the old tool's `getExpectedStatus` (`utils/scheduleUtils.js`): step A → In Queue, B–H → In
+Development, I–M → Under Industrialization, N → Commercialized (same letters for PDD and OEM). Per the task, not
+invented. Questions for the owner / workflow-auditor: adopt that mapping? what is expected for On Hold / Cancelled /
+In Buyoff / Draft (no outline?) and for a project with every step done (`current_step_code` null)? With exclusions
+(R35-4) the current step is the next non-skipped one. Recommended: the backend serves `expected_status` (or a
+`status_mismatch` flag) on `ProjectFilterRow` so the browser does not hold the rule (I9). Then the outline is a
+one-cell change.
+
+**Types / contract.** `ProjectFilterRow` + 6 fields, `ProjectRead.actual_end_week` (so `WorkspaceProject`);
+`RegisterEditPatch` / `RegisterEditsRequest` / `RegisterEditsResponse` / `RegisterEditError` in
+`surfaces/projects/api/register-edits.ts`. `backend/tests/test_openapi_frontend_contract.py`: three CONTRACT_TABLE
+rows (exact), `RegisterEditError` in the frontend-only allowlist (not an OpenAPI component: error body only) and a new
+`test_register_edit_error_shape_p35` pinning it against the Pydantic model. Contract test: **229 passed** (was 4 red).
+Fixtures given the new fields: `dashboard/test-fixtures.ts` (`P13_ROW_DEFAULTS`), `hub-type-section.test.tsx`,
+`project-breakdown.test.tsx`, `project-workspace/test-fixtures.ts`, `ProjectsPage.test.tsx`,
+`registration/components/{hard-gate-panel,project-form,project-form.p29,project-form.p30}.test.tsx`.
+
+**Tests.** `ProjectsPage.register-edit.test.tsx` (16): auto vs manual rendering (read + edit), reset sends null in
+the one batch, only-changed-fields body for status / leader / actual end, end<start warning, per-row 422 display,
+429, 403 FORBIDDEN_PROJECT → read-only + dropped, out-of-scope + Draft rows read-only, no Edit for a read-only role,
+unsaved guard (cancel dialog keep / discard, beforeunload), queued → SSE → Timeline updated, bulk bar staging (status,
+lab time, Unassigned) saved in one batch, select-all of writable rows, column hide + width persisted per user and
+re-read, storage throwing on get/set/remove, axe (no serious violations) in Edit mode with the bulk bar.
+`lib/register-lib.test.ts` (12): week↔date incl. W1 = 2025-12-29, ISO W53 → 52, 2027 → W53+, round trip 1..78,
+rejects; draft logic; column-prefs storage. `ProjectsPage.test.tsx` 38/38. tsc clean for every file I touched (the
+only tsc errors are unused imports in `surfaces/capacity/*.test.tsx`, another agent's uncommitted work); eslint: 0
+errors (one pre-existing-style `react-hooks/incompatible-library` warning on `useVirtualizer`).
+
+**Assumptions to review.** (1) Week↔date uses the ADR 0035 §11 seed rule (no other convention exists; OQ #19 asks the
+client whether they want dates at all). (2) Per-row writability is inferred from `/me` hub scope (no served
+`can_edit` per row); grant-only admins without the role write are not offered Edit (unchanged from the page today);
+the server stays the authority. (3) A typed 0 shows orange "manual" though R7 treats 0 as "no figure" (the server
+stores what is typed). (4) Leader choices are limited to the row hub's served engineer list (the old tool offered
+every engineer globally; the backend does not check the leader's hub). (5) The grid keeps the "Leader" header; the
+bulk bar and accessible names say "Design resource (leader)". No `dangerouslySetInnerHTML`, no three.js, no new
+dependency. Not committed. Unrelated dashboard / capacity / matrix / P33 working-tree changes not touched.
+
+### 2026-11-13 — P35-T02/T08 addendum (frontend-builder): full Vitest run
+
+Full frontend suite after the change: **237 files, 1915 tests passed** (0 failed). Contract test 229 passed.
+
+## [2026-11-13] P35-T02/T08 reviewed — orchestrator
+
+Projects vitest re-run by the orchestrator. Mismatch outline (T08 4b) blocked on OQ #84 (step →
+expected status mapping, to be served by the backend). Week-precision actual dates logged as OQ #85.
+Remaining P35: T04 (after P33-T02 entry), T05 (after P33-T08), T06, the 4b outline, T07 gate.
+
+## [2026-11-15] P35 continued — orchestrator
+
+Owner said "continue" without answering OQ #84. P33-T02 is DONE, so P35-T04 (algorithm-engineer)
+opened. OQ #84's proposed mapping is adopted as a non-blocking assumption for the status-mismatch
+outline (display warning only, never a scheduler input). The backend serves `expected_status` /
+`status_mismatch` (P35-T08b); a one-cell frontend change follows. P35-T05/T06 still wait on P33-T08.
+
+### 2026-11-15 — P34-T03 DONE (backend-builder): `PriorityMatrixRow.external_code` (D34-3 follow-up)
+
+**Built (additive only; other sessions' P33/P35 edits in the same files untouched).**
+- `backend/schemas/priority.py`: `PriorityMatrixRow.external_code: str | None` (required key,
+  nullable), placed after `project_name`.
+- `backend/api/routers/priorities.py` `_build_row`: `external_code=project.external_code`. Same
+  column `PriorityBoardCard.external_code` and `services/text_search.py` use. It is a column of the
+  already-loaded `Project`, so `GET /priorities` and `GET /priorities/{project_id}` (both go
+  through `_build_row`) issue no extra query. Not a financial field; nothing logged.
+- Frontend mirror: `frontend/src/surfaces/matrix/api/types.ts` `PriorityMatrixRow.external_code:
+  string | null`; `test-fixtures.ts` `P13_MATRIX_ROW_DEFAULTS` gains `external_code: null`;
+  `lib/matrix-rows.ts` `matchesSearch` drops the `MaybeCode` shim and reads the field through
+  `Partial<PriorityMatrixRow>` so a pre-P34-T03 API (field absent) still searches by name.
+
+**Tests.** New `backend/tests/test_p34_t03_external_code.py` (2): code served on list + detail and
+null (key present) when the project has none; statement count of `GET /priorities` is identical for
+1 and 6 rows. `matrix-rows.test.ts` +1 case (null / absent code searches by name only).
+- pytest: P34-T03, P34-T01, p21 matrix, priority scoring, contract test: 294 passed; p11/p13/p14/
+  p17 priority tests + other priority/scoring/rubric/vip files: 214 passed. Contract test green
+  (the existing `PriorityMatrixRow` "exact" row now covers `external_code`; no new row needed).
+- ruff clean on touched backend files. `tsc --noEmit -p frontend/tsconfig.app.json` clean (note:
+  `-p frontend` hits the references-only root tsconfig and checks nothing). eslint clean on touched
+  files. vitest `src/surfaces/matrix`: 18 files / 208 tests passed.
+- No pre-existing failures surfaced in the runs above. Not committed.
+
+## [2026-11-15] P36-T01 — workflow-auditor ruling on ADR 0050
+
+**Verdict: ACCEPT WITH CHANGES.** ADR 0050 may move to Accepted once the orchestrator folds in R36-1..R36-10
+below. Nothing here blocks P36-T02 except R36-9 (I30 must be revised in the same change as the new key).
+Read: DOMAIN_RULES "Scheduling order", I10, I30, VIP/ADR 0040, Plan import/ADR 0044; ADR 0050;
+`scheduling/greedy.py` `_sort_key`/`prepare_run`, `types.py` ProjectInput, `cp_sat.py`, `monte_carlo.py`,
+`whatif.py`, `plan_import.py`, `invariants.py` `_check_i30_category_order`, `services/priority_move.py`,
+`services/priority_preview.py`, `services/schedule_persistence.py` (builder), `api/routers/priority_board.py`,
+`api/routers/projects.py` (PATCH, P35 batch, Draft submit). No file other than this one edited.
+
+- **R36-1 Backfill identity — ACCEPT WITH CHANGES.** The claim holds and is stronger than the ADR says: the
+  first post-migration order is identical for *every* project, VIP and frozen included. Proof: band_rank is a
+  strict total order inside each priority equal to (status, category rank, id); within any (frozen, VIP, priority)
+  group it is the restriction of that order, so key 4 decides every pair exactly as keys 5–7 did. Property-checked
+  on 20 000 random inputs (0 mismatches); Postgres uuid order equals Python `str(uuid)` order (checked on 10^5).
+  Conditions: (a) category rank comes from the live `categories.rank` table at migration time, never the
+  `CATEGORY_RANK` constant (ADR 0047 categories may sit anywhere); (b) status ordinal is a frozen copy of
+  `SCHEDULABLE_STATUS_ORDER`; (c) rank = every project with status in the 4 schedulable ones and priority not null,
+  regardless of frozen / VIP; Draft (with or without priority), On Hold, Cancelled, Commercialized and frozen
+  non-schedulable rows stay NULL; (d) a schedulable row with NULL category cannot run today
+  (`validate_schedulable_project` raises), so it cannot affect identity: rank it after categorised rows by id
+  and log the count; (e) acceptance test in P36-T03: build `ScheduleInput` from the DB before and after the
+  migration, greedy `ScheduleOutput` equal (outcomes and `scheduling_order`), CP-SAT `scheduling_order` equal;
+  (f) seed and test factories assign ranks by the same rule (else fresh DBs violate I37b); (g)
+  `canonical_schedule_input_asdict` omits `band_rank` when None (R33-7 pattern) so goldens and tokens of
+  unranked inputs are unchanged and an old run's stored input replays with every rank None = the old order. A
+  preview token taken before the migration answers 409 `PREVIEW_STALE` after it — acceptable. Fix the ADR wording
+  "keys 1–2 ignored: status, category rank, project_id" (it means "ignoring frozen and VIP, ordered by status,
+  category rank, project_id") and drop the "apart from VIP / frozen" hedge.
+
+- **R36-2 Key placement — ACCEPT.** No conflict with ADR 0040 (VIP stays key 2, above priority; rank orders
+  within the VIP and the non-VIP group of a band) or I10 (frozen projects keep key 1, their dates are locked
+  whatever the order). Re-ranking a frozen project is allowed and must preview with no date change for it (test).
+  The board must badge frozen cards as it badges VIP (their board position is not their walk position).
+  DOMAIN_RULES "Scheduling order" is rewritten as the 7-key list.
+
+- **R36-3 Status and category stop reordering ranked projects — ACCEPT WITH CHANGES (state it).** Because every
+  schedulable banded project is ranked (I37b), keys 5–7 only order NULL-rank projects, which exist only in What-if
+  and import inputs. A schedulable→schedulable status change (In Queue → In Development → In Buyoff) or a category
+  change keeps `band_rank`: a project reaching In Buyoff no longer jumps ahead in its band as it does today. This
+  follows from the owner's "position drives scheduling" but is a material change: put it in ADR Consequences and
+  DOMAIN_RULES, and log an owner OQ (non-blocking; default = rank kept).
+
+- **R36-4 CP-SAT — ACCEPT WITH CHANGES.** CP-SAT consumes the order through `greedy.prepare_run` (`ctx.ordered`):
+  the served `scheduling_order`, the `prebook_anchored_steps` order and the greedy warm-start hint. So adding
+  `band_rank` to `_sort_key` alone makes CP-SAT honour it there; P36-T02 adds the key only in `_sort_key` and
+  greps that no other scheduling sort exists (monte_carlo / whatif / plan_import all reuse `_sort_key` /
+  `prepare_run`). The objective (`objective_weights`: ADR 0005 bands + ADR 0040 VIP tier) does not use status or
+  category today and must not use `band_rank`: unchanged, so CP-SAT may put a lower-ranked project in-year
+  ahead of a higher-ranked one of the same band. That is a documented, intentional greedy/CP-SAT divergence of
+  the same class as status/category today; write it in the ADR. The re-rank recalculation is greedy only
+  (OQ #10), like the priority move.
+
+- **R36-5 What-if priority overrides — ACCEPT WITH CHANGES (finding).** `whatif.py` applies `priority_overrides`
+  with `replace(p, priority=...)`, which would carry the old band's `band_rank` into the new band (P2 rank 1
+  lands at the top of P1). Rule: an override (or an import-UI band change) to a different band sets
+  `band_rank = None` (behind every ranked project of the target band). What-if added projects are None, so they
+  now sort behind every live project of their band instead of interleaving by status/category: an intentional
+  What-if behaviour change, to be listed in Consequences; affected What-if tests are updated, not goldens of
+  inputs without ranks.
+
+- **R36-6 Priority preview / confirm — ACCEPT WITH CHANGES (finding).** `priority_preview.with_priority`
+  replaces only `priority`, and `confirm_priority_move` writes `project.priority` directly (line ~440), not via
+  `apply_priority_change`. Both priority write paths and both preview inputs must apply the rank lifecycle through
+  one pure function (moved project = max(target band) + 1, source band renumbered), so the "after" input, the
+  persisted run's input snapshot and the DB state after commit are equal and the token covers the ranks. The
+  re-rank preview token additionally hashes project id, `before_project_id`/`after_project_id`, band and
+  from_rank; a concurrent re-rank of the same band makes it stale (409).
+
+- **R36-7 Plan import — ACCEPT WITH CHANGES.** No collision in the strict sense (None never equals an integer;
+  ties among None fall to keys 5–7), but "keeps its file-rank behaviour" is inaccurate. Today the file rank lives
+  only in the encoded id `imp-{rank:04d}-…` (key 7), so it orders imported rows only among rows equal on
+  status and category (pre-existing; ADR 0044's "ranks kept in order within the band" is true only there).
+  Alone mode: every rank None → byte-identical to today. Merge mode: live rows are ranked and imported rows None,
+  so every imported row goes behind every live project of its band (today they interleave), and a row that
+  replaces a matched project loses that project's position. Binding: in merge mode a row that replaces a plan
+  project and keeps that project's band inherits its `band_rank` (expanded rows sharing one replacement inherit
+  the same value; the tie falls to keys 5–7, allowed by I37a); every other imported row is None. Document in
+  Consequences; log an owner OQ "should a merged file's PRIORITY rank override the live P1 order?" (default as
+  ruled).
+
+- **R36-8 Rank lifecycle — ACCEPT WITH CHANGES.** One function `reconcile_band_rank(project, status_before,
+  priority_before)` runs at the end of every write path, in the same transaction: enters a band (now schedulable
+  and priority set, before not, or band changed) → `max + 1` there; leaves (non-schedulable or priority null) →
+  NULL; any departure renumbers the old band 1..n; otherwise keep. Paths, all enumerated in the contract:
+  registration (In Queue → last); Draft submit (`projects.py` submit route); PATCH status: un-hold On Hold,
+  Cancelled → reactivated, Commercialized → back (all last), → non-schedulable (clear); PATCH priority via
+  `apply_priority_change`; `confirm_priority_move` (R36-6); P35 register batch (status only: entering projects
+  appended in ascending project_id, each band renumbered once); seed, factories, migration. Keep rank: hub,
+  category, leader, frozen, VIP pin, schedulable→schedulable status (R36-3). No project delete endpoint exists
+  (checked); any future delete/archive and any future bulk committed-priority apply (PriorityApplicationRun) must
+  call the function (project_id order). Scenario apply writes scores only: no rank effect. Re-rank no-op (already
+  in place) → `unchanged`, no write, audit or run. `before_project_id` must be *ranked* in the same band (a P1 On
+  Hold project is not in the band) else 422 `NOT_SAME_BAND`. Filtered board: accept exactly one of
+  `before_project_id` / `after_project_id` (both null = band last) so a drop under the last visible card lands
+  right after it instead of jumping past hidden cards. Concurrency: a transaction-scoped advisory lock for band
+  ranks is the first lock taken by every rank-writing transaction (before the dispatch lock and before row
+  `FOR UPDATE`, including the P35 batch, which locks rows first today) so writers serialise without deadlock.
+  DB: `CHECK (band_rank >= 1)`; `CHECK ((band_rank IS NOT NULL) = (priority IS NOT NULL AND status IN the four
+  schedulable))`; partial unique index `(priority, band_rank) WHERE band_rank IS NOT NULL`, DEFERRABLE INITIALLY
+  DEFERRED (renumbering within one transaction). Only the moved / entering project is set `schedule_stale`;
+  neighbours' order-preserving renumbering is not an input change for them and is not audited per row (derivable
+  from `project.band_rank_move` / `project.priority_move`, whose after_state carries `band_rank`).
+
+- **R36-9 I37 and I30 — ACCEPT WITH CHANGES (blocking for P36-T02).** I30 says "equal on sort keys 1–4", and
+  `invariants._check_i30_category_order` uses the head (frozen, VIP, priority, status). With the new key 4,
+  adjacent projects of one status but different `band_rank` legitimately have decreasing category rank, so the
+  unchanged check reports false I30 violations on every re-ranked band. I30 text and check become "equal on keys
+  1–5 (frozen, VIP, priority, band_rank, status)" in the same change. I37 as worded is not sufficient; split:
+  - **I37a** (every run, validator, any input incl. What-if/import): consecutive ids equal on keys 1–3 have
+    `band_rank` non-decreasing, NULL last; equal falls through to I30. Also assert keys 1–4 are
+    lexicographically non-decreasing across all consecutive pairs (catches non-contiguous groups, which pairwise
+    checks inside a group miss).
+  - **I37b** (live state): for every band, the `band_rank`s of its schedulable projects are exactly {1..n}, and
+    `band_rank` is NOT NULL iff status is schedulable and priority is set. Enforced by the R36-8 constraints,
+    asserted by a test helper after every write path, and by the validator only on DB-built inputs (not
+    What-if / import).
+  - **I37c** (re-rank write): after placing p before b (after a), p is immediately before b (after a) in the
+    band and the relative order of every other band member is unchanged.
+  - **I37d**: a preview's "after" input equals the input rebuilt from the DB after its confirm (token equal),
+    for both priority moves and re-ranks.
+  I10 already covers frozen dates; no change.
+
+- **R36-10 Board order — ACCEPT WITH CHANGES.** Sorted server-side by keys 4–7 with category rank from the
+  `categories` table (not a constant); the browser never re-sorts (I9 spirit). Each card serves `band_rank` and
+  a frozen badge (R36-2); score stays on the card. A hard-gated project may be re-ranked within P1.
+
+**Owner OQs to log (orchestrator assigns numbers):** (1) R36-3 status/category no longer reorder ranked projects
+— confirm; (2) R36-7 merged file rank vs live P1 order. Both non-blocking with the defaults above.
+
+### 2026-11-15 — P35-T08b — expected status (OQ #84 assumption) — backend-builder
+
+**Built.** `GET /dashboard/projects` rows (`ProjectFilterRow`) serve two new fields:
+`expected_status: ProjectStatus | null` and `status_mismatch: bool`. Display warning only, never a
+scheduler input, never written back.
+- One place for the rule: `backend/services/expected_status.py` (docstring cites OQ #84):
+  `EXPECTED_STATUS_BY_STEP_LETTER` (A → In Queue; B–H → In Development; I–M → Under
+  Industrialization; N → Commercialized; PDD and OEM alike, letter = the part of the step id after
+  `PDD-` / `OEM-`), `EXPECTED_STATUS_EXEMPT` (On Hold, Cancelled, In Buyoff, Draft → `null`, never a
+  mismatch), `expected_status_for(status, current_step_id)` (no current step → Commercialized; an
+  unknown letter → `null`, no guess) and `status_mismatch(status, expected)`. Not in
+  `domain_constants.py` because that module is strings-only and imported by `scheduling/`.
+- All four target names are real `ProjectStatus` members; no closest-member substitution needed.
+- Computed in `api/routers/dashboard.py::analytics_projects` from `card.current_stage`, the same
+  stage already served as `current_step_code` (not re-derived). No extra statement.
+
+**Tests.** `backend/tests/test_p35_t08b_expected_status.py`: pure mapping for all 14 letters × PDD/OEM,
+no current step, each exempt status × several steps, unknown letter; served rows for PDD (A+) and
+OEM (A-OEM; the OEM I–M band is tested at J because A-OEM skips I/K/L/M) at A / E / H / I–M / N /
+all-done with match and mismatch; each exempt status served at K and all-done; statement count equal
+with the computation stubbed and for 2 vs 6 rows. Together with `test_p35_t01_register_fields.py`
+and the contract test: 297 passed, 1 failed — the expected
+`test_openapi_frontend_contract.py::test_field_sets_match[ProjectFilterRow::ProjectFilterRow]`
+(exact row; backend-only fields `expected_status`, `status_mismatch`). Not edited: it goes green
+when the frontend mirrors the two fields in `frontend/src/surfaces/dashboard/api/types.ts` (the
+one-cell outline change, frontend-builder). ruff clean; mypy clean on the new files (the two
+`_has_stage_progress` no-untyped-call errors in `routers/dashboard.py` pre-exist in HEAD).
+
+**Not done.** IMPLEMENTATION_PLAN not edited (no T08b row; orchestrator's call). Not committed. OQ #84
+stays open: if the owner answers differently, only `services/expected_status.py` changes.
+Addendum (same task): the nine other suites that read `/dashboard/projects` rows (p12 board/VIP, p12 hub
+filter, p13 slice C, p13 region filter, p15 utilization, p24 charter, p31 multi-select, p33 categories
+table, multi-role row scope): **255 passed**.
+
+### 2026-11-15 — P35-T08 item 4b — status-mismatch outline on the Projects register (frontend-builder)
+
+**Built (frontend only; OQ #84 assumption, display warning, never a scheduler input).**
+- `surfaces/dashboard/api/types.ts` `ProjectFilterRow` + `expected_status: ProjectStatus | null`,
+  `status_mismatch: boolean` (mirrors P35-T08b). Fixtures: `dashboard/test-fixtures.ts`
+  (`P13_ROW_DEFAULTS`: null / false), `hub-type-section.test.tsx`, `project-breakdown.test.tsx`.
+- `surfaces/projects/lib/status-mismatch.ts` `statusMismatchExpected(row, status)`: shown status ==
+  served status → the served `status_mismatch` flag; an edited status → no warning for On Hold /
+  Cancelled / In Buyoff / Draft, else `edited !== served expected_status`. No served
+  `expected_status` (null, or a pre-T08b API omitting it) → no warning. The browser holds no
+  step → status rule (I9); only a comparison against the served value.
+- `register-edit-cells.tsx`: `STATUS_MISMATCH` class (`ring-2 ring-inset ring-danger`, red outline);
+  `StatusSelect` gains `mismatchExpected` (outline + `title` on the wrapper, `aria-describedby` →
+  sr-only text "Status differs from the current step (expected: X)"); `StatusMismatchMark` wraps the
+  read-mode badge (outline, `title`, inline sr-only text). `projects-table.tsx` Status cell uses both
+  (read rows, read-only/Draft rows in Edit mode, and the Edit-mode select from the draft status, so
+  bulk-bar staged statuses get the same warning).
+- Known limit: a row served as On Hold / Cancelled has `expected_status` null, so editing it to an
+  active status shows no warning until saved and re-served (the browser has no expected value to
+  compare against). Lift by serving the step's mapped status regardless of exemption if wanted.
+
+**Tests.** New `surfaces/projects/ProjectsPage.status-mismatch.test.tsx` (9): helper (served flag,
+edited compare, exempt statuses, null / absent fields); read mode outline + tooltip + sr text shown
+and absent; no outline for the four exempt statuses; Edit-mode accessible description present /
+absent; editing to the expected status clears it, editing away creates it, back to served restores
+the served flag; edits to On Hold / Cancelled never warn; axe (no serious) read + edit.
+- vitest `src/surfaces/projects src/surfaces/dashboard`: **44 files / 338 tests passed** (one earlier
+  run had 1 failure while pytest + tsc ran in parallel; two clean reruns after, so a load timeout).
+- tsc (`-p tsconfig.app.json`): clean for every touched file; the only error is
+  `surfaces/priority-board/PriorityBoardPage.test.tsx` (`band_rank`), another session's work.
+- eslint on touched files: 0 errors (the pre-existing `useVirtualizer` incompatible-library warning).
+- `backend/tests/test_openapi_frontend_contract.py`: **227 passed, 2 failed**. The
+  `ProjectFilterRow` row is now green. The 2 failures are another session's uncommitted priority-board
+  band-rank work, not touched here: `PriorityBoardCard` (frontend-only `band_rank`, `frozen`) and
+  `test_every_p4_surface_types_file_is_covered` (`BandRankMoveRequest`, `BandRankPreviewRequest` in
+  `lib/api/priority-move.ts` not in CONTRACT_TABLE / allowlist).
+
+Not committed. IMPLEMENTATION_PLAN P35-T08 row not edited (orchestrator marks the 4b outline DONE).
+No `dangerouslySetInnerHTML`, no new dependency, no three.js.
+
+## [2026-11-15] P35-T08 4b closed — orchestrator
+
+Outline built on the served `expected_status` / `status_mismatch`. The ProjectFilterRow contract
+row is green; the two remaining contract failures belong to another session's uncommitted
+priority-board band-rank work. Follow-up (into P35-T05): serve `expected_status` for exempt
+statuses too (mismatch still false), so an edit from On Hold to an active status warns before save.
+
+## [2026-11-15] P36-T02 — scheduler: `band_rank` (ADR 0050, R36-1..R36-10) — algorithm-engineer
+
+**Built (backend/scheduling only, plus 2 one-line test fixes; nothing committed; other sessions' P33/P35 edits untouched).**
+- `types.py`: `ProjectInput.band_rank: int | None = None` (last field, after `capacity_hub`).
+- `workflow.canonical_schedule_input_asdict` drops a project's `band_rank` when None (R36-1(g)): the hash / preview
+  token / golden form of an unranked input is byte-identical to pre-P36.
+- `greedy._sort_key` → `(frozen, vip, priority, _band_rank_key(band_rank), status, category rank, project_id)`;
+  `_band_rank_key(None) = (1, 0)`, `_band_rank_key(r) = (0, r)` (None last, never compares None with int). Grep
+  confirmed: it is the only scheduling sort; CP-SAT / Monte Carlo / What-if / plan import all use `prepare_run` /
+  `_sort_key`. **Index shift:** category rank is now `_sort_key(...)[5]` (was `[4]`).
+- `cp_sat.objective_weights`: unchanged, with a comment that `band_rank` is deliberately not in the objective
+  (R36-4, documented greedy/CP-SAT divergence).
+- `whatif.py` priority override: a different band → `band_rank=None`; same band → kept (R36-5). The old band is not
+  renumbered in What-if (the gap does not change relative order).
+- `plan_import._build`, merge mode: a file row that replaces a plan project and keeps its priority inherits that
+  project's `band_rank`. Every other row, and every row in file-only mode, is None (R36-7).
+- `invariants.py`: **I30 revised in the same change (R36-9).** Its head is now keys 1–3a and 4 (frozen, VIP,
+  priority, band_rank, status). New checks:
+  - **I37a**, run by `validate_invariants` on every input: `band_rank` is None or an int ≥ 1, and over every
+    consecutive pair of `scheduling_order` keys 1–3a never decrease. This also catches non-contiguous groups.
+  - **I37b**, `check_i37b_band_ranks_dense(projects)`: live state only, i.e. dense 1..n per band and rank set iff
+    member. It also runs via `validate_invariants(..., live_state=True)` (default False, so it never runs on What-if
+    or import inputs).
+  - **I37c**, `check_i37c_placement(before_order, after_order, project_id, *, before_project_id=None,
+    after_project_id=None)`.
+  - I37d is service-side (P36-T03).
+  Violations are labelled "I37a"/"I37b"/"I37c".
+- **New `scheduling/band_rank.py`**, the single pure rank-arithmetic module for every backend write path and
+  preview input (R36-6/R36-8). A band order is the ranked ids in rank order, and ranks are always rederived dense
+  1..n. API:
+  - `BandRankError(ValueError)` with `.code` ∈ {NOT_SAME_BAND, SELF_ANCHOR, BOTH_ANCHORS, NOT_IN_BAND,
+    ALREADY_IN_BAND, DUPLICATE_ID, NOT_A_MEMBER}.
+  - `is_band_member(status, priority)` and `band_of(status, priority) -> str | None`.
+  - `order_by_rank(pairs) -> list` sorts by (rank, id) and repairs gaps.
+  - `ranks(order) -> {id: 1..n}`.
+  - `place(order, pid, *, before=None, after=None) -> list`: at most one anchor; neither = last; pid may be entering;
+    result == input means a no-op.
+  - `append_last(order, pid)` and `append_all_last(order, pids)` (ascending id).
+  - `remove(order, pid)`.
+  - `transition(band_orders, pid, *, band_before, band_after) -> {band: new_order}` returns only the changed bands
+    (`{}` = keep).
+  - `band_orders_from_inputs(projects)`, `move_band_inputs(projects, pid, *, priority, status=None)` (the
+    priority-move preview's "after" input) and `place_inputs(projects, pid, *, before=None, after=None)` (the
+    re-rank preview's "after" input). Both keep the input order and set only the changed ranks.
+
+**Tests.**
+- New `tests/scheduling/test_p36_band_rank.py` (30 tests): default None plus canonical omission; seed all-None
+  byte-identical; backfill identity on the seed (ranking by the current in-band order gives the identical
+  order + outcomes, R36-1); sort-key position; greedy honours rank on a shared leader (In Queue rank 1 beats
+  In Buyoff rank 2); a frozen re-rank moves no frozen date; CP-SAT `scheduling_order` honours rank and its
+  objective is rank-independent; What-if override; plan import merge / file-only; I30 no-false-positive and
+  still-fires; I37a/b/c positive and negative; `place` before / after / last / entering / unchanged / filtered-board
+  hidden order / errors; transition lifecycle; `move_band_inputs` / `place_inputs`.
+- Updated: `test_p33_categories.py` (`_sort_key` index 4 → 5); `test_p33_gaps.py` (the raw asdict comparison drops
+  `band_rank`).
+- `pytest -c pytest-scheduling.ini`: **636 passed, 0 failed**. All golden files unchanged.
+- **Scheduling coverage 96 %** (`coverage report --include="scheduling/*"`; band_rank.py 100 %).
+- **Note:** the ini's `--cov-fail-under=85` reports FAIL at 58 % because the run also measures all of `backend/`
+  (pyproject's coverage config is merged in). This is a measurement-scope problem, not a scheduling gap; it is not
+  fixed here (the ini is outside `scheduling/`).
+- ruff check / format clean. mypy clean on the touched files. The 38 `cp_sat.py` OR-Tools `attr-defined` errors
+  were already there.
+
+**For P36-T03 (backend-builder).**
+- Map `projects.band_rank` → `ProjectInput.band_rank`.
+- Route every rank write and preview input through `scheduling.band_rank`. Use `transition` / `append_all_last`
+  for the lifecycle, `place` for re-rank, `move_band_inputs` for `priority_preview.with_priority`, and
+  `place_inputs` for the re-rank preview.
+- Map `BandRankError.code == "NOT_SAME_BAND"` to 422.
+- Backend tests can assert I37b/I37c with `check_i37b_band_ranks_dense` / `check_i37c_placement`.
+
+### 2026-11-15 — P36-T04 — Priority board: reorder within a column (ADR 0050, API_CONTRACT_P36) — frontend-builder
+
+**Built** (against the contract; the backend P36-T03 was not yet in the tree, so every new shape is a PLACEHOLDER mirror).
+- `lib/api/priority-move.ts`: interfaces `BandRankPreviewRequest {before_project_id, after_project_id}` and
+  `BandRankMoveRequest` (+ `preview_token`), type `BandRankPlacement`, codes `NOT_RANKABLE`, `NOT_SAME_BAND`,
+  `BOTH_ANCHORS`; `previewProjectBandRank(id, placement, {signal})` → `PriorityPreviewResponse` and
+  `moveProjectBandRank(id, placement, token)` → `PriorityMoveResponse` (`apiSend('POST', …)`; there is no `apiPost`).
+  Re-exported from `surfaces/priority-board/api.ts`. `PriorityBoardCard` gains `band_rank: number | null`, `frozen: boolean`.
+- Shared move flow (`components/shared/priority-move/*`): `PriorityMoveApi.requestRankMove(target, placement, options)`
+  with `RankMoveRequestOptions {position, fromPosition, bandSize, onSettled}`. Every dialog/run state carries
+  `rank: RankMoveSpec | null`; preview/confirm switch endpoint on it; PREVIEW_STALE re-previews once with the same
+  placement; queued → SSE follow → "Timeline updated" (summary "moved to position N of M in P1"); notices say
+  "Position saved". `requestMove` unchanged. Dialog title "Move <name> to position N in P1?" / "Moved to position N
+  in P1" / "Position not changed"; `RANK_COPY` (move-copy.ts) for refusals (NOT_RANKABLE, NOT_SAME_BAND/BOTH_ANCHORS).
+  Priority-move description now adds ", last in P2" when the preview schedules (R36-8).
+- Board: `lib/board-model.ts` — `BoardOverride {priority, placement?}` (was a bare priority); a re-ranked card is
+  shown before/after its anchor, pending; a cross-column card is now shown LAST in the target (was first), as the
+  server places it. Pure helpers `canRerank` (served `band_rank` is a number), `placementForSlot`, `isNoopSlot`,
+  `slotForIndex`, `positionForPlacement`, `handleLabel`. A drop slot = gap in the column as shown; above card X →
+  `before_project_id = X`; below the last visible card → `after_project_id = it`; the two gaps next to the dragged card
+  are no move (also on a filtered board, so a no-op drop never jumps hidden cards).
+- `board-column.tsx`: `li[data-slot-index]` on plain and virtualized rows; slot read from the row under the pointer
+  (above/below its middle) or "below the last row"; `DropLine` (decorative, `aria-hidden`) above the slot row / below
+  the last row. `onColumnDragOver/onColumnDrop` gain a `slot` argument. Same in Cards and List layouts.
+- Keyboard: Left/Right choose a column (as before; the copy now says it goes last there); Up/Down (and Home/End) move
+  the position in the own column, announced "Position 2 of 3 in P1." (no "of N" on a filtered board); Up/Down while
+  over another column only announce. Space/Enter drops; Escape cancels. Previously Up/Down also stepped columns (D36-4).
+- Cards: `BandRankChip` "#n" (served `band_rank`, hidden while pending) and `FrozenBadge` (board-badges.tsx); List rows
+  show `band_rank` as the position (fallback: visible index; "…" while pending) + a frozen snowflake. A hard-gated P1
+  card with a rank is now draggable (handle "Reorder <name> within P1", lock kept beside it) but can never leave P1;
+  with `band_rank` null it keeps the old lock-only state. Read-only roles: chips visible, no handle, no drop line.
+- Header description and the sr-only instructions mention reordering within a column; read-only note says "Moving or
+  reordering".
+- I9 note: the only number derived in the browser is the dialog/announcement position, read off the served `band_rank`
+  of the card and its anchor (`anchor ∓ 1` for the gap the card leaves) — display copy, never sent; the server decides
+  the rank. `bandSize` = served column `count`, only when no filter is set.
+
+**Tests** (vitest): `PriorityBoardPage.test.tsx` (existing gated/list-label/list-text cases updated for P36; 13 new:
+chips + frozen, pointer before-anchor with drop line/optimistic order/confirm/run follow, after-last-visible,
+no-op slots, filtered-board anchors + positions, keyboard Up/Down/Home, Left/Right still cross-column (shown last),
+No rolls back, NOT_SAME_BAND rollback, PREVIEW_STALE re-preview once, List layout drop + ranks, read-only, axe);
+`lib/board-model.test.ts` (7); `components/board-column.test.tsx` (virtualized >100 column: slot rows, drop line,
+dragover slot). Board + move flow + Matrix + Gantt + Workspace + Registration: 57 files, 680 tests green. `tsc -b`
+clean; eslint clean on touched areas.
+
+**Backend-owned contract test rows needed** (`backend/tests/test_openapi_frontend_contract.py`, not edited):
+`(_PRIORITY_MOVE_TS, "BandRankPreviewRequest", "<backend body schema>", "exact")` and
+`(_PRIORITY_MOVE_TS, "BandRankMoveRequest", "<backend body schema>", "exact")` — without them the
+"every TS interface accounted for" check fails on these two. The existing `PriorityBoardCard` exact row goes green
+once the backend card serves `band_rank` and `frozen`.
+
+**Not done.** Not committed. IMPLEMENTATION_PLAN row P36-T04 left for the orchestrator. No auto-scroll of a
+virtualized column to the keyboard drop line (announced instead).
+
+### 2026-11-15 — P34 gate — combined result: PASS (Matrix only, P34-T01..T03)
+
+**qa-inspector: PASS.**
+- **Backend:** 442 passed, 1 failed. The one failure is P35's `ProjectFilterRow` contract row (`expected_status` / `status_mismatch` not yet mirrored in the frontend), not P34.
+  - All P34 contract rows are green: PriorityMatrixRow, LastScoreVersion, ScenarioApplyRunSummary, ScenarioApplyRunDetail.
+  - Coverage of the P34 files: score_versions 95%, priorities router 88%, scenarios router 99%, schemas 100%.
+  - Golden files are not applicable (no scheduler change).
+- **Frontend:** matrix, vip and priority-board give 21 files / 238 tests passed.
+  - New `components/grid-edit-bar.test.tsx` (4/4) closes the beforeunload / useBlocker guard gap.
+  - tsc and eslint are clean.
+  - Coverage of matrix + vip.ts: 91.5% lines.
+- **axe:** read mode, edit mode and the leave dialog have 0 critical / serious / moderate violations. There is 1 minor `empty-table-header` on the P21 spacer headers, which is pre-existing.
+- **Transient reds traced to others' work:** P36 `band_rank` edits (tsc, a priority-board test), and matrix timeouts under a load average of 27–36. All of them pass on rerun.
+
+**workflow-auditor: PASS.**
+- **(a) D34-2:** consistent with I9; the browser only tallies the served `suggested_band`, `has_score` and `capacity_fill`.
+  - Live check on :8011: the unfiltered view equals `/priorities/distribution` exactly (P1 49, P2 15, P3 111, P4 155, Q 0, Unscored 0, fill 21).
+  - Six per-hub checks and five searches also match exactly.
+- **(b) D34-1:** apply goes through the same `lock_rubric` → `write_project_scores` → `apply_result` path as the PUT. Same score and band, same recalc semantics (none), MATRIX/WRITE plus hub scope, and a stronger audit trail. Scenario mode only stages.
+- **(c)** Served rank under client-side search is acceptable.
+- **(d)** The VIP router is unchanged; the optimistic update only patches `is_vip` and rolls back on error.
+- **Advisories (non-blocking):** A1 null band → Unscored; A2 `share_pct` decimal places; A3 DOMAIN_RULES note for D34-2; A4 apply does not set `scored_at` (unused); A5 rank wording in API_CONTRACT_P13. These became P34-F03 and P34-F04.
+
+**security-auditor: PASS.** No Critical, High or Medium findings.
+- **S34-L1 (Low):** `ScenarioApplyRequest.notes` has no server-side length limit; the UI caps it at 500. → P34-F02.
+- **S34-L2 (Low, pre-existing, made purposeless by removing the dialog):** the matrix rows still carry tcogs, selling price, gross margin, capex and rm_savings, but the Matrix UI no longer uses them. → P34-F01.
+- **Info:**
+  - `applied_by_name` is behind matrix read and hub-scoped. It is accountability data, not utilisation, so it is GDPR-acceptable.
+  - Gaps in the version-number sequence were already visible before P34.
+  - Save-error text renders as plain text.
+  - VIP rollback race when two pins are in flight (cosmetic).
+  - `encodeURIComponent` hardening on the VIP URL.
+- No raw SQL, no N+1, no logging, no `dangerouslySetInnerHTML`.
+
+**Gate:** P34 closes. Follow-ups P34-F01..F04 have been added to the plan. They are not gate blockers.
+
+## [2026-11-13] P33-T07 — categories table, category columns text + FK, table-driven readers — backend-builder: DONE
+
+ADR 0047 (as amended at P33-T01), DOMAIN_RULES "Category templates" §E, contract P33 B1/B3/F1/F4, P33-T05 A3.
+`backend/scheduling/` not edited (its P33-T03 API is used as is). Not committed.
+
+**Migration `p33a_categories`** (`backend/alembic/versions/p33a_categories.py`).
+- **Revises `p35a_project_actual_end_week`**, the untracked P35-T01 head in the working tree, to keep one linear
+  chain. If P35-T01 is reordered or dropped, `down_revision` must follow.
+- `categories(code text PK, label, workflow_id FK workflows, rank UNIQUE DEFERRABLE INITIALLY IMMEDIATE,
+  template_version, copied_from_code FK self, active, created_at, created_by FK users)`.
+  - CHECKs: code 1..16 of `[A-Za-z0-9+\- ]` and `upper(code) <> 'OEM'`; label 1..60; rank ≥ 1; version ≥ 1.
+  - Unique index on `lower(code)`, created by the migration (Alembic does not compare expression indexes).
+  - DEFERRABLE rank lets P33-T11 renumber with one `UPDATE … SET rank = rank + 1` (tested).
+  - Seeded with A+, A, B, C (PDD) and A-OEM, B-OEM, C-OEM (OEM) at ranks 1..7, label = code.
+- `projects.category`, `workflow_lead_times.category` → `text` + FK `categories.code` (RESTRICT / RESTRICT);
+  `engineers.allowed_categories` → `text[]` (order and duplicates kept). `USING ::text`, so every value is kept.
+- Enums `project_category` and `engineer_allowed_category` dropped. No other column, function or view used them
+  (checked on a schema dump of the dev DB).
+- `trg_projects_category_matches_hub` (same name, SQLSTATE 23514, constraint name and messages) now compares
+  `categories.workflow_id` with the hub's workflow. An unknown code passes the trigger and is reported by the FK.
+- New `trg_engineers_allowed_categories_known`: every element must be a category code or `OEM`; NULL elements are
+  rejected (constraint name `ck_engineers_allowed_categories_known`).
+- Downgrade: refuses (raises, nothing changed) if any project, template row or engineer uses a code outside the
+  seeded seven (+ `OEM`). Otherwise it restores both enums (original label order), the columns and the P9 trigger
+  body verbatim, then drops the table. A category added by P33-T11 always has template rows, so a downgrade after
+  one refuses.
+
+**Shared dev DB not touched.** It is at `p32a_step_overlap`, with `p35a` (P35) and `p33a` pending. I applied
+neither. **The working tree now needs `alembic upgrade head` on the dev DB before the API can serve** (the ORM
+references `categories`; before this task it already referenced P35's column). That is the orchestrator's call.
+
+**Verified on a copy of the dev DB** (`rpd_p33t07` in the `rpd-pg-dev` container, made with pg_dump; 330 projects,
+24 engineers, 98 lead-time rows, 12 runs). It was upgraded to p35a first, then:
+- **Data, up:** a sorted `INSERT` dump of every table is identical before and after `p33a`, except the 7 new
+  `categories` rows.
+- **Data, down:** after the downgrade, the dump is identical to the p35a dump, and the schema-only dump is identical
+  too (only pg_dump's random `\restrict` token differs). It was then re-upgraded.
+- **Triggers and constraints** on the copy, inside rolled-back transactions:
+  - OEM category on a PDD hub → trigger;
+  - unknown code → FK;
+  - engineer `{ZZ}` → trigger, and `{…,OEM}` is accepted;
+  - `b` → `ux_categories_code_lower`, and `oem` → CHECK;
+  - inserting B2 at rank 4 with `rank = rank + 1` renumbering works;
+  - B2 on an OEM hub → trigger.
+- **`alembic check`:** the same 3 pre-existing items before and after (the partial unique indexes
+  `ux_schedule_runs_one_active`, `ux_priority_application_runs_one_active`, `ux_project_access_grants_one_active`).
+  No new drift.
+
+**Byte-identity (acceptance), HEAD vs the working tree.** Probe: `scratchpad/t07/probe.py`. Compared: HEAD (`git
+archive`) on the copy at p35a, the pre-T07 working tree on the same copy, and the working tree on the copy at p33a.
+Identical to HEAD:
+- live input hash (sha256 over `canonical_schedule_input_asdict`, lists sorted);
+- fresh greedy `repr`;
+- `build_workflow_snapshot_from_input` (no `categories` key);
+- the active run's snapshot = a fresh one, and active-run outcomes = fresh greedy (0 diffs);
+- all 12 stored runs re-serialised (run row, snapshot, outcomes and steps, column by column);
+- **priority-preview tokens** for 10 projects × 2 targets.
+  - The pre-T07 working tree differed on the tokens only (T05's finding). After `_canonical` →
+    `canonical_schedule_input_asdict` they equal HEAD's (**T05-A3 satisfied**).
+
+**Application code.**
+- New `models/category.py` (`Category`, code-format constants, `category_code(s)` normalisers).
+  - `Project.category`, `WorkflowLeadTime.category` and `Engineer.allowed_categories` are `str` / `list[str]`.
+  - `@validates` turns an enum member into its value, so seed and test code passing `ProjectCategory.X` still works
+    and the identity map always holds plain strings.
+- New `services/categories.py`: `CategoryCatalog` (codes in rank order, workflow / rank maps, `schedule_categories()`,
+  `eligibility_values` = codes + `OEM`), `load_catalog(db)`, `default_catalog()`, plus validators.
+  - The validators are `unknown_category_error` (a `RequestValidationError` with the enum's shape: `type: "enum"`,
+    `msg "Input should be 'A+', … or 'C-OEM'"`), `check_category_code` and `check_eligibility_codes`.
+- New `schemas/category.py`: `CategoryCode` (format only), `CategoryCodeOut`, `CategoryRead`.
+  - Every `ProjectCategory` / `EngineerAllowedCategory` / `CategoryLiteral` in a schema is replaced.
+  - The what-if `allowed_categories` cap went from 7 to 32.
+- **B1:** `GET /reference/categories[?hub_id=]` returns `{code, label, workflow_id, rank}` objects in rank order.
+  - `hub_id` is now optional (without it: every category). An unknown hub is still 404.
+  - **Breaking for the frontend** (`lib/api/reference.ts::fetchCategoriesForHub` expects strings). The Registration
+    category picker is wrong until P33-T14 lands; ship them together.
+- **B3, validated against the table:**
+  - P31 `category` filters: `api/query_params.py` dependencies, `loc ["query","category"]`; Dashboard ones also
+    admit `Unmapped`. Export builders that call routes directly keep passing lists.
+  - Registration / PATCH: an unknown code gives the enum-shaped 422 before anything else. A wrong workflow gives
+    `CATEGORY_WORKFLOW_MISMATCH` via `category_allowed_for_hub(…, catalog.workflow_by_code)`.
+  - Engineer create / PATCH `allowed_categories` (codes ∪ `OEM`).
+  - Workflow-settings lead-times PUT: unknown → enum 422; wrong workflow → `BAD_LEAD_TIME`. The endpoint is retired
+    at P33-T10.
+  - Resource-load `category`.
+  - What-if `add_projects`: the engine already checks `ScheduleInput.categories` (→ `INVALID_SCENARIO`).
+  - Plan-import simulate rows: unknown → enum 422; wrong workflow → `INVALID_IMPORT` "does not fit hub".
+  - Plan-import parsing: a cell equal to a table code (exact, case-insensitive) that is not one of the workbook
+    spellings is taken as that category when it fits the hub's workflow. `ParseContext.categories` defaults to the
+    seeded seven.
+- **Readers from the table, in rank order:**
+  - capacity class-breakdown rows;
+  - Dashboard analytics `by_category`;
+  - workflow-settings lead-time ordering and B-equivalent / category-timelines (`workflow_previews.categories_for`);
+  - resource-load options;
+  - what-if import `by_category` (from the input's list).
+- **Builder (F4 part):** `build_schedule_input_from_db` passes `categories=catalog.schedule_categories()`, which
+  equals `default_categories()` on the seeded table.
+- **Snapshot:** `build_workflow_snapshot_from_input` writes `canonical_categories(...)` under `"categories"` only when
+  not None, and `wait_weeks` / `lead_weeks` on a timing row only when non-default (R33-7).
+- **`services/priority_preview._canonical`** uses `scheduling.canonical_schedule_input_asdict` (A3), sorted as before.
+- `domain_constants.CATEGORY_ORDER`, `OEM_CATEGORIES` / `NON_OEM_CATEGORIES` and the `ProjectCategory` /
+  `EngineerAllowedCategory` enums are documented as **seed vocabulary only**. They are still used by the seed
+  scripts, by `category_allowed_for_hub` without a catalog (seed / pure tests) and by `default_catalog()`.
+- Seed: writes plain strings.
+
+**Tests.**
+- New `tests/test_p33_categories_table.py` (15):
+  - seed = default catalog = `default_categories()`; column types and enums gone;
+  - FK; hub trigger by workflow (new PDD and OEM codes); engineer trigger; code format / case / rank uniqueness;
+  - B1 with B2 inserted between B and C (all, PDD hub, OEM hub);
+  - registration / PATCH validation (unknown, malformed, wrong hub, B2 accepted);
+  - filters (`/projects`, `/dashboard/projects` + `Unmapped`, unknown → 422 loc); engineer eligibility;
+  - analytics and class-breakdown list B2 in rank order;
+  - builder default byte-identity; the token's form equals the pre-P33 `asdict`;
+  - a new category reaches the input, the snapshot and the token form; the snapshot's wait / lead keys.
+- New `tests/test_p33a_migration.py` (own container):
+  - p35a data (projects incl. NULL and OEM, engineers incl. `OEM` and empty, 98 lead rows);
+  - up → values identical, types `text` / `_text`, enums gone, triggers present, seed rows; the hub trigger's
+    constraint name kept;
+  - B2 in use → downgrade refused, nothing changed;
+  - B2 removed → down → values identical, enum types / labels / P9 trigger back, table gone;
+  - up again.
+- Adapted, because ORM categories are now `str`:
+  - `test_migrations.py` (table count 37, the two enums gone at head and back below p33a, seed and trigger asserts);
+  - `test_p9_api_extensions.py` (B1 objects; no `hub_id` is now 200);
+  - `test_p9_data_model.py` (2 asserts);
+  - `test_p31_multi_select_filters.py` (order helper, `.value`);
+  - `tests/factories.py` (`make_engineer` accepts codes).
+- **Full backend suite:**
+  - baseline (pre-T07 snapshot): 2801 passed, 4 skipped, 0 failed;
+  - after: two full runs, neither clean, and none of the failures are T07's.
+    - Run 1 (in parallel with the baseline and another agent's suite): 2 failed, 2819 passed. Both failures are in
+      `test_p32_r01_greedy_inline` (`test_follow_up_coalesces_*`: a queued run is reaped as abandoned under load,
+      so the answer is `queued` and not `deferred`). They pass alone, and they passed in run 2.
+    - Run 2 (alone): 2 failed, 2819 passed.
+      - `test_openapi_frontend_contract[PriorityMatrixRow]`: the frontend gained `external_code`. That is a
+        concurrent P34 frontend edit, not T07.
+      - `test_schedule_runs_progress_sse::test_progress_endpoint_headers_for_a_live_not_yet_terminal_run`: "attached
+        to a different loop", a flake. It passes alone.
+    - Re-running the contract test now gives 2 other drift failures from the same in-flight frontend work
+      (`PriorityBoardCard.band_rank/frozen`; `BandRankMoveRequest` / `BandRankPreviewRequest` not in
+      CONTRACT_TABLE). Every T07 module and the category-filter suites (P31, P13, P9) pass.
+- ruff: clean (baseline clean).
+- mypy: 3198 errors before and after, **0 new** (the new test files are clean).
+
+**Not done / for others.**
+- Frontend (P33-T14): B1 shape change; categories from the API.
+- `services/whatif_chat.py`'s system prompt still names the seven categories in prose. The scenario schema no longer
+  enumerates them. It should read the table when P33-T11 lands.
+- `copied_from_code` / `created_by` / `template_version` are not written by anything yet (P33-T10 / T11).
+- The hub trigger's messages still say "(A-OEM/B-OEM/C-OEM)" / "A+/A/B/C" (kept verbatim for compatibility). They
+  are slightly inaccurate once a category is added; P33-T11 may reword them.
+- The scratch DB `rpd_p33t07` (copy of dev, at p33a) is left in `rpd-pg-dev`; drop it with
+  `docker exec rpd-pg-dev dropdb -U rpd rpd_p33t07`.
+
+No financial field read, written or logged.
+
+## [2026-11-15] P35-T04 — scheduler side of per-project step exclusion (R35-3, R35-9, I26 rev. 2, I33–I35) — algorithm-engineer: DONE
+
+Implemented from the P35-T03 ruling (R35-1/3/5/8/9, I26 rev. 2, I33–I36) and ADR 0049 as accepted.
+`backend/scheduling/` and `backend/tests/scheduling/` only. Not committed. No golden file changed or
+was re-blessed.
+
+**What changed.**
+- `effort_split` (R35-3): `EffortStepInput.excluded: bool = False` (appended last; every existing
+  caller builds it by keyword). S′ = steps of the kind with weight > 0 and not excluded; R2 and the
+  R3 raise run over S′ only. An excluded step gets no share, is never raised (In Progress
+  included) and is absent from `step_weeks`, so `derive_project_effort` gives it `None`. New reason
+  `NOT_APPLIED_ALL_EXCLUDED = "all_steps_excluded"`: the kind has weighted steps but all are
+  excluded (T = 0 over S′). It is not applied and does not crash. This is exactly R35-5(a)'s
+  `inForce ∧ S′ = ∅`, so the backend guard can test the reason. A kind with no weighted step at
+  all keeps `no_nonzero_step`. `excluded` must be a bool (ValueError otherwise).
+  - Naming: the field is the bare `excluded`, as R35-3's text says. `EffortStepInput` / `LiveStepRow`
+    carry no outcome fields, so the R35-12 naming note (wire payloads next to
+    `ProjectScheduleOutcome.excluded`) does not apply. API/Gantt payloads should still use
+    `step_excluded` (P35-T05).
+- `demand` (live rows): `LiveStepRow.excluded: bool = False`; `live_step_effective_weeks` returns 0
+  for it first (R35-1), so I25 drops the whole `eff` and the remainder. `check_i26_effort_split` is
+  I26 rev. 2: it passes `excluded` into the split and reports a figure in force with S′ empty (I26,
+  no step id). New pure checks, exported from `scheduling`:
+  - `check_i33_step_exclusion(live_projects, schedule_input, schedule_output=None)`. For an excluded
+    live step it checks: eff 0; the input row has `lead_weeks = 0` (or no lead with table 0) and no
+    override; every run row is skipped with duration 0.
+  - `check_i34_excluded_not_done(live_projects)`: I34 (i).
+- `invariants`: **I35** `_check_i35_no_empty_project` runs inside `validate_invariants`. Every
+  schedulable input project must have a step with input-derived `eff > 0`. The all-skipped
+  "ghost" outcome (end None, in no bucket) also trips I9, as before.
+- No `StepTimingInput` field and no snapshot key (R35-9). greedy / cp_sat / monte_carlo / workflow
+  code paths are untouched by this task.
+
+**R35-9 confirmed by tests** (`lead_weeks = 0` = an exclusion). Hand-derived on PDD/B, CW 31; E
+excluded gives A 31, D 32, E skipped at 32, H 33-38 … N 44.
+- greedy ≡ CP-SAT;
+- lead 0 beats a what-if override;
+- In Progress E excluded: normalised to Done, H from 31, N 42, greedy ≡ CP-SAT. The input progress
+  row is untouched and the I26 input check stays silent (P33-T02's lead-0 path is confirmed);
+- Blocked E excluded releases the hold;
+- frozen honours it;
+- unconstrained finish 44;
+- Monte Carlo keeps lead 0 under factors 0.5–2.0 (1 unperturbed iteration = 44);
+- validator: I5 and I6 flag a run that ignores the exclusion;
+- R35-8:
+  - a wait on an excluded H is ignored;
+  - J's wait counts from release through the excluded H (J 39, N 44);
+  - first step A excluded: D's wait counts from frontier − 1 (D 31 → 33);
+  - an overlapping H anchors on D (H 32-37).
+
+**Probe (real `apportion_effort`, PDD/B design figure 4)**, the same as the auditor's table:
+- none excluded → A1 D0 E2 J0 K1 M0;
+- A → D1 E2 J0 K1 M0 (D revived);
+- A, D → E2 J1 K1 M0 (J revived);
+- A, D, J, M → E3 K1;
+- E excluded (In Progress) with A started → A1 D1 J1 K1 M0, nothing raised, Σ 4;
+- A excluded, M In Progress → D1 E2 J0 K1 M1 (M raised, Σ 5). With M also excluded → D1 E2 J0 K1,
+  nothing raised;
+- all six weighted design steps excluded → not applied, `all_steps_excluded`.
+
+**Tests.** New `tests/scheduling/test_p35_step_exclusion.py`, 36 tests:
+- split probes;
+- R3 exemption;
+- empty S′;
+- lab S′ (A+ lab 4: F2 H2 → F excluded H4);
+- order independence;
+- `excluded=False` identical to the pre-P35 split for every category, figure 1..30 and both kinds;
+- the R35-9 / R35-8 cases above;
+- I35 positive and negative (On Hold not flagged, partial exclusion valid);
+- I26 rev. 2 accept / stale split / excluded In Progress not raised / empty S′;
+- I25 drop (full year −4, remaining −2);
+- I33 accept (incl. a table-0 step) and three builder faults;
+- I34 (i).
+
+Results:
+- `pytest -c pytest-scheduling.ini` with an isolated `COVERAGE_FILE`: **636 passed, coverage
+  95.54 %** (demand 99 %, effort_split 99 %, invariants 94 %). Golden files (`test_golden_files`,
+  `test_p9_golden`, `test_p32_overlap`, P12/P20/P29/P30/P33) pass unchanged.
+- Seed (46 projects): 0 violations with I35 added.
+- ruff check / format are clean on the touched files. mypy reports only the 38 pre-existing
+  OR-Tools stub errors in `cp_sat.py`.
+
+**Environment notes.**
+- A P36 session (`band_rank`, I37) edited `scheduling/{types,workflow,greedy,cp_sat,invariants,…}`
+  and two P33 test files while my runs were in flight. One run had 2 transient failures in those
+  P33 files; on re-run they pass, and the final run is green. My I35 / `__init__` edits survived
+  their merge.
+- Running two pytest-cov sessions in `backend/` at once combines their `.coverage` data (one run
+  reported 66 % over `api/` …). Use a per-session `COVERAGE_FILE`.
+
+**For P35-T05 (backend-builder). DB state, not checkable in the scheduler:**
+- pass `excluded=row.excluded` into `services.project_effort.effort_inputs` and the
+  `LiveStepRow` builder;
+- R35-5 guard: (a) `not_applied_reason == "all_steps_excluded"` → 409 `EFFORT_NEEDS_A_STEP`;
+  (b) no step with eff > 0 → 409 `NO_STEPS_LEFT`. I35 is the run-side backstop;
+- the builder maps excluded → `lead_weeks = 0` (None when the table is 0) and override None.
+  Assert it with `check_i33_step_exclusion` on the built input;
+- I34 (ii)/(iii): progress byte-equal across exclude / re-include, and the round-trip difference
+  test;
+- I36: input hash / preview token byte-identity across the column migration, no change on frozen
+  projects, exactly one audit row per change;
+- R35-2 applicability, R35-6 audit, R35-7 run, R35-10 lock, R35-11 lifecycle, R35-12
+  `row_calculated_weeks`.
+
+**Open for the orchestrator.** The DOMAIN_RULES §B text (R35-1 formula, R2/R3 over S′, I26 rev. 2,
+I33–I36) is still not folded in. The P35-T03 fold-in said "amended at P35-T04", but DOMAIN_RULES is
+outside `backend/scheduling/`, so I did not edit it.
+
+## [2026-11-15] P35-T04 reviewed; DOMAIN_RULES folded — orchestrator
+
+P35-T04 accepted (636 passed, 95.54 %, golden files unchanged; probe table matches the ruling).
+DOMAIN_RULES gains "Per-project step exclusion" at the end: R35-1..R35-12, I26 rev. 2 and I33–I36,
+copied verbatim from the P35-T03 ruling (no paraphrase). Wire field name for P35-T05/T06:
+`step_excluded`. Note for every session: parallel pytest-cov runs in backend/ share `.coverage`;
+set a per-session `COVERAGE_FILE`. A P36 session (band_rank, I37) is editing backend/scheduling/
+concurrently. Remaining P35: T05 (after P33-T08, incl. the exempt-status `expected_status`
+follow-up), T06, T07 gate.
+
+## [2026-11-15] ADR 0050 multi-select filters — DONE on branch `multi-select-filters` (76e642e), NOT merged
+
+**Where.** Worktree `../frigoglass-multiselect`, based on e8872b1. The branch carries ADR 0050,
+`docs/API_CONTRACT_MULTISELECT.md`, and its own MEMORY entries from the backend-builder and frontend-builder agents.
+
+**Verified.**
+- Backend full suite: 2668 passed.
+- Frontend: 1885/1895 in a loaded full run. All 10 failures pass in isolation (load timeouts).
+- Live on worktree servers (:8021 / :5185):
+  - unions: 6 + 43 = 49 for two hubs; India + R&D-Greece = 259; In Queue + On Hold = 120;
+  - 51 values → 422;
+  - a Hub Planner requesting all hubs or all countries still sees only PD-India (223);
+  - UI: header multi-select chip "Hubs: R&D-Greece + PD-Romania"; the Gantt Status dropdown sends repeated `status_`.
+
+**Why not merged.** 17 files overlap with another session's uncommitted P35 work in this tree (backend routers
+dashboard / projects / planning / priorities / capacity / engineers, `query_params.py`, `export_builder.py`,
+`ProjectsPage.tsx`, dashboard `api/types.ts`, `priority-board/api.ts`, `docs/MEMORY.md`, …). Merge once P35 is
+committed.
+
+**Follow-ups.**
+- Matrix filters are still single-value. The Matrix reads the global filter only when it is exactly one hub or one
+  country.
+- DOMAIN_RULES "Global hub filter" needs ADR 0050 folded in at merge.
+- No security-auditor gate has been run on the hub_scope change yet. An orchestrator-level review of the diff found
+  the scope ANDed over the union.
+
+## [2026-11-15] P36-T03 — backend: `projects.band_rank`, rank lifecycle, re-rank endpoints, board order (ADR 0050, R36-1..R36-10) — backend-builder
+
+**Built (backend/ only, outside `scheduling/`; nothing committed; other sessions' P33/P35 work left alone).**
+- **Migration `p36a_project_band_rank`** (revises `p33a_categories`; another session's `p33b_template_copy` now revises
+  p36a). `projects.band_rank` INTEGER NULL. Backfill per R36-1: band members (status in the four schedulable statuses
+  and priority set, frozen and VIP included) are ranked per priority by (frozen status-ordinal copy, LIVE
+  `categories.rank`, id). Members with no category come last by id, and their count is logged. Non-members are NULL.
+  Constraints per R36-8:
+  - `ck_projects_band_rank_positive`;
+  - `ck_projects_band_rank_membership` (immediate);
+  - `uq_projects_priority_band_rank`, UNIQUE (priority, band_rank) DEFERRABLE INITIALLY DEFERRED. Postgres cannot
+    defer a partial unique *index*. A UNIQUE constraint treats NULLs as distinct, so it equals the ruled partial index.
+  The model mirrors all of this.
+- **`services/band_rank.py`**, the DB side only. All arithmetic is `scheduling.band_rank`.
+  - `lock_band_ranks`: advisory xact lock `0x5250444252` ("RPDBR").
+  - `reconcile_band_rank(db, project, status_before=, priority_before=)`: `transition`. The moved row's rank is set on
+    the ORM object with its status/priority. Neighbours are renumbered by PK. Reads run under `no_autoflush`, then it
+    flushes.
+  - `plan_batch_band_ranks`: the P35 batch. Leavers are removed and enterers go through `append_all_last` (ascending
+    id), each band renumbered once, before any status is written.
+  - `place_in_band`: `place`.
+  - `default_band_orders` / `assign_default_band_ranks` / `provisional_band_rank`: the R36-1 rule in Python, for the
+    seed and factories.
+- **Write paths**, each taking the band lock first (before the dispatch lock and row locks):
+  - `POST /projects`: last in band.
+  - PATCH: the lock is taken only when the body sets status/priority. `stage_project_update` reconciles a status change
+    before its flush. The priority goes through `apply_priority_change`, which reconciles.
+  - `POST /{id}/submit` (Draft): last in band.
+  - `POST /{id}/priority`, plain and confirm. `confirm_priority_move` no longer writes priority bare (R36-6 fixed).
+  - `POST /projects/register-edits`: lock before the FOR UPDATE, then `plan_batch_band_ranks` → `stage_project_update(...,
+    band_rank_plan=)`.
+  Only the moved/entering project is marked stale. The neighbours are not audited.
+- **Audit:**
+  - `project.priority_move` before/after states now carry `band_rank`.
+  - `project_audit_state` gains `band_rank`.
+  - New `project.band_rank_move`. before = `{project_id, band, band_rank}`. after = `{project_id, band, from_rank,
+    to_rank, before_project_id, after_project_id, recalc_status, baseline_run_id[, schedule_run_id]}`.
+- **Preview/confirm** (`services/priority_preview.py`):
+  - `with_priority` = `move_band_inputs`.
+  - New `with_placement` = `place_inputs`.
+  - `rank_snapshot_token` hashes the after-input + project, band, from_rank and both anchors.
+  - New `check_rankable`, `preview_band_rank_move`, `confirm_band_rank_move`. These are the priority machinery:
+    in-process greedy pair, 409 PREVIEW_STALE, `applied` / `deferred`, trigger_reason `band_rank_move`, run activated.
+  - `unchanged` = no token, no write, no audit, no run.
+- **Routes:** `POST /projects/{id}/band-rank/preview` → `PriorityPreviewResponse`. `POST /projects/{id}/band-rank` →
+  `PriorityMoveResponse` plus `X-Schedule-*` headers. Bodies `BandRankPreviewRequest` / `BandRankMoveRequest` (extra
+  forbidden; the token is required on the move). RBAC is the priority move's: the scoped lookup gives 404, Registration
+  WRITE / Admin grant gives 403. Errors:
+  - 422 BOTH_ANCHORS;
+  - 409 NOT_RANKABLE;
+  - 422 NOT_SAME_BAND, one message for every anchor refusal: other band, unranked, itself, out of hub scope,
+    nonexistent. No existence leak.
+  - Rate limits share the priority preview / confirm buckets.
+  - Hard gates are not checked, so a gated P1 card re-ranks within P1.
+  Contract shapes are unchanged. Headers are added on the confirm (the plain priority POST has none).
+- **Builder:** `band_rank=p.band_rank`.
+- **`GET /priority-board`:** cards sorted by band_rank (nulls last), status ordinal, category rank from the table
+  (`load_catalog`), project_id. Each card serves `band_rank` and `frozen`.
+- **Seed:** both datasets use placeholder ranks, then `assign_default_band_ranks`.
+- **Factory:** `make_project` ranks the band by the backfill rule unless `band_rank` is passed. New helpers:
+  - `clear_rank_if_out_of_band`, for tests that set status/priority on the ORM directly: it clears the rank, or gives
+    an entering project a placeholder last rank;
+  - `rank_all_bands`, for tests that build `Project(...)` directly.
+
+**Tests.**
+- New `tests/test_p36a_band_rank_migration.py` (own container, 2 tests):
+  - client seed at head, then VIP pins, swapped live category ranks and one uncategorised member;
+  - down to p33a, up to head: the SQL backfill equals the Python rule, non-members are NULL, uncategorised is last, and
+    the log line is present;
+  - **identity**: greedy outcomes and `scheduling_order` are equal with ranks vs all-None, and so is `prepare_run`
+    order (CP-SAT's served order);
+  - down/up again gives the same ranks;
+  - CHECK positive/membership, deferred unique (swap commits, duplicate at COMMIT fails).
+- New `tests/test_p36_band_rank_api.py` (21):
+  - factory rule;
+  - preview writes nothing; unchanged (3 forms + confirm);
+  - all error codes plus the hub-scope anchor (same body as nonexistent); 403; strict body; gated P1 re-rank;
+  - confirm: I37c, I37b, audit row, neighbours not stale/audited, headers, change list == preview;
+  - **I37d** for a re-rank and a priority move (token rebuilt from the DB after confirm == preview token);
+  - stale token after a concurrent re-rank → 409, nothing written;
+  - filtered-board `after` anchor; deferred; frozen re-rank does not move its own dates;
+  - lifecycle with I37b after each: registration, Draft submit, PATCH On Hold/back, schedulable→schedulable keeps rank,
+    status+priority PATCH, PATCH priority + plain POST, batch (append_all_last + leaver + keeper), batch rollback;
+  - board order/rank/frozen, and a filter keeps the served rank.
+- Updated for intentional changes:
+  - `test_p11_priority_move` / `test_p14_priority_preview` (audit states carry band_rank);
+  - `test_p12_board_vip` (board order is now scheduling order, not score);
+  - p13 slice A/C, region filter, p17 ×3 (direct ORM status/priority mutation → `clear_rank_if_out_of_band`);
+  - `test_export_worker_task`, `test_workspace_recalc_worker`, `test_p12_follow_up` (direct `Project(...)` →
+    placeholder + `rank_all_bands`).
+- Contract test: rows added for `BandRankPreviewRequest` / `BandRankMoveRequest`. `PriorityBoardCard` is green. 231
+  passed.
+- Results:
+  - full backend (excluding scheduling): 2347 passed, 3 failed. All 3 are fixed and rerun green (an id-order assumption
+    in 2 new tests, and a p17 direct entry into a band).
+  - `pytest -c pytest-scheduling.ini`: 636 passed.
+  - ruff clean on every touched file.
+  - mypy clean on the touched app files. The remaining `seed_demo_data.py` errors were already there; test files are
+    untyped as elsewhere.
+
+**Notes / not done.**
+- The deferred unique is only checked at a real COMMIT, never inside the savepoint fixture. The dedicated migration
+  test covers it.
+- On a PATCH that changes status and priority together, the `project.update` after_state shows the rank after the
+  status step. The `project.priority_move` row carries the final rank.
+- DOMAIN_RULES / ADR text and the IMPLEMENTATION_PLAN P36-T03 row are left to the orchestrator.
+- `test_migrations.py` is being edited by another session (p33b table count). It was not touched here.
+
+## [2026-11-15] P36-T05 security leg — security-auditor (recorded by orchestrator)
+
+**PASS** (ASVS L2; no Critical/High). Probed with a real Postgres 17 container: 401 without token;
+403 for Executive Viewer / Auditor / Engineer on preview + confirm (no audit row); out-of-hub project
+404 byte-identical to a random id; out-of-scope anchor 422 `NOT_SAME_BAND` identical to nonexistent;
+token replay (other project / other anchor / garbage) 409 `PREVIEW_STALE`, nothing written; audit row
+ids + band + ranks only; audit trigger rejects UPDATE; no raw SQL interpolation of request data; no
+`dangerouslySetInnerHTML`; no dependency changes.
+Findings: **M-1** global band-rank advisory lock taken before lookup / authz / rate limit on PATCH
+`/projects/{id}` (status/priority), `POST /projects/{id}/priority`, `POST /projects/register-edits`,
+no `lock_timeout` → any authenticated user can pin pooled connections → remediation P36-R01.
+**L-1** served full-band `band_rank` leaks other hubs' counts per band (same class as P14
+`hidden_count`) — accept, recorded in ADR 0050. **L-2** hub scope not re-checked after lock + refresh
+in `move_project_band_rank` — fold into P36-R01. **I-8** add 401 / Executive Viewer / Auditor /
+confirm-out-of-hub cases to `tests/test_p36_band_rank_api.py` — fold into P36-R01.
+
+## [2026-11-15] P36-T05 gate — workflow-auditor leg: FAIL (one blocking item W36-1, frontend copy; scheduler/backend PASS)
+
+Audited P36-T02/T03/T04 against DOMAIN_RULES "Scheduling order" key 3a and the R36-1..R36-10 ruling
+(MEMORY "[2026-11-15] P36-T01"). Read: `scheduling/band_rank.py`, `greedy.py` (`_sort_key`,
+`prepare_run`), `cp_sat.py` (`objective_weights`, `ctx.ordered`), `invariants.py` (I30 rev., I37a/b/c),
+`whatif.py`, `plan_import.py`, `workflow.py` (canonical omission), `services/band_rank.py`,
+`services/priority_preview.py`, `services/priority_move.py`, `api/routers/projects.py` (create, PATCH,
+`stage_project_update`, register-edits, priority, band-rank preview/confirm, submit),
+`api/routers/priority_board.py`, `alembic/versions/p36a_project_band_rank.py`, `models/project.py`,
+`frontend/src/surfaces/priority-board` (board-model, page, copy). No code edited.
+
+**Independent re-derivation** (scratch script, key written from DOMAIN_RULES, not `_sort_key`):
+- Backfill identity (R36-1) on the seed input with random VIP / frozen flags, 40 trials: ranks per
+  priority by (status ordinal, category rank, id) ignoring frozen/VIP; `prepare_run` order with ranks ==
+  order with all None == my 7-key order: 0 mismatches. Greedy `scheduling_order` and
+  `project_outcomes` identical ranked vs unranked. `validate_invariants(..., live_state=True)` on the
+  ranked seed: 0 violations (I30 rev., I37a, I37b included).
+- 60 random re-ranks (`place_inputs`, before / after / last): I37c holds, I37b dense, no other band
+  touched, `prepare_run` order == my 7-key order. 60 random priority moves (`move_band_inputs`):
+  moved project last in target (rank = n), source band keeps relative order and is dense: 0 failures.
+- Tests rerun: scheduling `test_p36_band_rank.py` 30 passed; `test_p36_band_rank_api.py` +
+  `test_p36a_band_rank_migration.py` 23 passed; contract test 231 passed; vitest priority-board 50 passed.
+
+**R36 items — all honoured in code:**
+- R36-1: SQL backfill uses live `categories.rank` (code is the PK, no join fan-out), a frozen status
+  copy, members regardless of frozen/VIP, uncategorised last + logged; canonical asdict drops None
+  `band_rank`; seed/factories use the same rule. PASS.
+- R36-2/R36-10: key 3a between priority and status; frozen badge served and shown; board sorted
+  server-side by (band_rank nulls last, status, live category rank, id) = keys 3a–5 + id. PASS.
+- R36-3: schedulable→schedulable status, category, hub, leader, frozen, VIP keep the rank
+  (`transition` same band → `{}`). PASS. OQ #86 logged.
+- R36-4: `_sort_key` is the only scheduling sort (grep: CP-SAT / MC / What-if / import use
+  `prepare_run` / `_sort_key`; the other `sorted(...)` calls are id-order bookkeeping);
+  `objective_weights` unchanged. Greedy vs CP-SAT: no new divergence beyond the documented R36-4
+  class (CP-SAT objective rank-blind; `scheduling_order` identical). PASS.
+- R36-5: What-if override to another band → `band_rank=None`; same band kept. PASS.
+- R36-6: `with_priority` = `move_band_inputs`; `confirm_priority_move` now reconciles through
+  `reconcile_band_rank` (no bare priority write); both tokens hash the after-input incl. ranks; the
+  re-rank token adds project, band, from_rank, both anchors; the persisted run input is the
+  previewed after-input and the DB builder includes every project, so I37d holds structurally
+  (and is tested). PASS.
+- R36-7: merge row replacing a plan project with the same priority inherits its rank; everything
+  else None; import edits never change priority. PASS. (A merge row whose own status is
+  non-schedulable may carry a rank; harmless — it is not in the walk and I37b is not run on import.)
+- R36-8: one lifecycle (`reconcile_band_rank` → `scheduling.band_rank.transition`) on registration,
+  Draft submit, PATCH status (un-hold / reactivate / leave), PATCH priority + plain POST
+  (`apply_priority_change`), priority confirm, P35 batch (`plan_batch_band_ranks`, append_all_last
+  ascending id, one renumber per band, planned before any status write). Grep found no other
+  status/priority writer (services, workers, scripts, seed). Lock order: the band advisory lock is the
+  first explicit lock on every rank-writing path (before the dispatch lock in
+  `decide_auto_recalc*` / `find_in_flight_run`, and before the batch's `FOR UPDATE`); preceding
+  statements are plain SELECTs. Only the moved project is marked stale; neighbours unaudited; no-op →
+  `unchanged`, no write/audit/run; anchor must be ranked in the same band (and in scope) else 422
+  NOT_SAME_BAND; at most one anchor. PASS.
+- R36-9: I30 head = keys 1–3a and 4; I37a (lexicographic keys 1–3a over every consecutive pair +
+  value check), I37b (live only, `live_state=True`), I37c helper. PASS.
+
+**Deviation ruling — deferred UNIQUE (priority, band_rank) instead of a partial deferrable unique
+index: ACCEPTED.** Postgres cannot make an index (partial or not) DEFERRABLE; only constraints can be,
+and a UNIQUE constraint cannot carry a WHERE. With the default NULLS DISTINCT, rows with NULL
+`band_rank` never conflict, so the constraint enforces exactly the ruled predicate. Binding: never
+add `NULLS NOT DISTINCT` to it. The membership CHECK stays immediate (correct: the moved row's rank is
+set with its status/priority before any flush).
+
+**Header ruling — `POST /projects/{id}/band-rank` returns `X-Schedule-*`, `POST /{id}/priority`
+does not: ACCEPTED, non-blocking.** API_CONTRACT_P11 puts the headers on PATCH only; the POST bodies
+carry the same fields. The band-rank headers are built from the same result object as the body
+(`AutoRecalcOutcome(result...)`), so they cannot disagree (I9-safe). Fix the contract wording:
+API_CONTRACT_P36 §3 says "same headers as POST /priority", which has none; either document the
+headers as band-rank-only or drop them — no frontend reads them. Do not "align" the priority POST in
+this phase without a contract change.
+
+**BLOCKING — W36-1 (Board copy number not reconciled to its source).** `PriorityBoardPage.tsx`
+`bandSizeOf` = `isFiltered ? null : column.count`, and `isFiltered` (line ~184) counts only the toolbar
+filters (q, category, type, status, leader). The hub / country filter (`hubId`, `region`) and the
+server-side hub scope of a Hub Planner are not counted, yet both shrink the served `count` while
+`band_rank` stays the full-band position. The dialog title / summary and the keyboard announcement
+(`rankPositionCopy`, line ~277 and ~395) then read e.g. "position 23 of 5 in P1". Every Hub Planner
+sees this on every re-rank. Fix (frontend-builder): omit "of M" whenever any narrowing applies (hub,
+country, or a hub-scoped principal), or have the server serve the full band size per column if
+security-auditor clears it (a rank already discloses a lower bound). Add a test with a hub filter.
+
+**Non-blocking follow-ups (orchestrator, before P36 closes):**
+- D36-1 ADR 0050 body not folded: §2 still has the "keys 1–2 ignored" / "apart from VIP / frozen"
+  wording R36-1 asked to fix; §7 still says the import "keeps its file-rank behaviour" (R36-7);
+  the Invariant section is the old single I37 (R36-9 split a–d); Consequences lack R36-3, R36-4
+  (CP-SAT divergence), R36-5 (What-if added/re-banded go last) and R36-7. The Status paragraph says
+  the ruling overrides, so this is text only.
+- D36-2 DOMAIN_RULES I30 bullet (Invariants section) still reads "equal on sort keys 1–4"; the
+  "Scheduling order" note says "1–3a and 4". Rewrite the bullet and add I37a–d to the Invariants
+  section rather than pointing at MEMORY.
+- D36-3 Advisory: the dialog's "position N" is browser-derived from served ranks (arithmetic checked
+  correct, display only, never sent). Serving `to_rank` in the re-rank preview would remove it.
+
+**Verdict: FAIL** for the workflow leg of the P36 gate on W36-1 only. Scheduler order, invariants,
+backfill identity, rank lifecycle, lock ordering, preview/confirm equality and the board's server order
+all PASS; on remediation only W36-1 needs re-checking.
+
+## [2026-11-15] P36 gate follow-up — orchestrator
+
+Workflow leg FAIL on W36-1 only (dialog "position N of M" uses the scoped/filtered column count
+against a full-band rank). Opened P36-R02 (frontend): drop "of M" from the dialog and announcements
+entirely; test with a hub filter. D36-1/D36-2 done: ADR 0050 body rewritten to the R36 ruling;
+DOMAIN_RULES I30 rewording + I37a–d added; API_CONTRACT_P36 §3 documents the band-rank-only
+`X-Schedule-*` headers. D36-3 (serve `to_rank`) deferred, advisory.
+
+## [2026-11-15] P33-T08 — per-project template copy (`plan_weeks` / `plan_gap_weeks`), immutable R2 weights, §B readers, F4 builder with T05-A1 — backend-builder: DONE
+
+ADR 0046 (owner ruling OR-1..OR-6 > R33 > text), DOMAIN_RULES "Category templates" §A/§B (+ §D's F4 pointer),
+contract P33 E4 and F4 (T05-A1 / T05-A2), plan row P33-T08. `backend/scheduling/` not edited. Not committed.
+
+**Migration `p33b_template_copy`** (`backend/alembic/versions/p33b_template_copy.py`).
+- **Revises `p36a_project_band_rank`**, not p33a: P36-T03 added p36a (revises p33a) while this task ran, so the
+  untracked chain is now `p32a → p35a → p33a → p36a → p33b`. If P36-T03 is reordered or dropped, `down_revision`
+  must follow. P36's own migration test already upgrades to "head" through p33b.
+- `template_changes(id, at, actor_user_id FK users, reason ≤ 500, changes JSONB, selection JSONB)` — written by
+  P33-T10 only.
+- `workflow_lead_times.gap_weeks` (NOT NULL DEFAULT 0, CHECK −104..104) and `effort_weight_weeks` (NOT NULL, CHECK
+  0..104, backfill = `weeks`). Immutable: trigger `trg_workflow_lead_times_effort_weight` raises SQLSTATE 23514 /
+  `ck_workflow_lead_times_effort_weight_immutable` on an UPDATE that changes it, and fills it from `weeks` on an
+  INSERT that omits it (so B2's "copy weights" and raw inserts behave).
+- `project_workflow_steps.plan_weeks` (NOT NULL, CHECK 0..104; backfilled from the **table** for the project's
+  workflow × category, 0 without a category — not from the `duration_weeks` mirror, because the builder reads the
+  table), `plan_gap_weeks` (NOT NULL DEFAULT 0, CHECK −104..104), `template_change_id` (FK `template_changes`).
+- No `length_pinned` / `length_set` (OR-6). Downgrade drops all of it.
+- ORM: `WorkflowLeadTime.gap_weeks` / `effort_weight_weeks` (Python default = the row's `weeks`),
+  `ProjectWorkflowStep.plan_weeks` (Python default = the row's `duration_weeks`) / `plan_gap_weeks` /
+  `template_change_id`, new `TemplateChange`. Every existing construction site (seed, factories, tests) works
+  unchanged.
+
+**`eff` (§B, OR-2) — one service implementation.** `services/workflow_durations.py`:
+- `own_effort_kinds(rows, kind_of)` (OR-1: kinds with a non-null `effort_weeks`);
+- `live_step_effective_weeks` / `live_step_skipped` / `display_duration_weeks` now take `(plan_weeks, kind, cert,
+  own_effort, user_override, effort_weeks)`: lab ∧ ¬cert → 0; own effort → `effort ?? 0`; else `plan_weeks`;
+  the stored user override still wins on a non-zero lead until p33c (T05-A2), never reviving a 0 lead;
+- `live_step_lead_is_zero` (step timing's unconditional STEP_SKIPPED);
+- `run_input_lead_and_override` = contract F4 / OR-3 with T05-A1.
+- `services/workspace.py`: `is_step_skipped` / `row_is_skipped` / `row_effective_weeks` take `own_effort=` (keyword,
+  required); new `row_own_effort_kinds`, `project_own_effort_kinds` (one query). P35's `row_calculated_weeks` now
+  reads `plan_weeks` with `own_effort=False` (its docstring asked for exactly this at T08).
+- Readers switched: Workspace (stages, progress, `lead_time_weeks` = `plan_weeks`), stage PATCH STAGE_SKIPPED,
+  project cards, tracking (`stage_is_due(own_effort=None)` = judged from the row alone; `due_stages_for` passes the
+  project-level flag), Gantt (`timing_editable` predicate; `lead_time_weeks` = `plan_weeks`), ask-agent context,
+  step timing (retired at T13, until then on the copy).
+- Demand (`services/demand_load.py`): each `LiveStepRow` carries the builder's own mapping (`lead_weeks` = weight
+  on an own-effort step, else `plan_weeks`), so `scheduling.demand` evaluates exactly the run's `eff` (I25) and
+  `check_i26_effort_split` splits over the weights (I26 rev.).
+- Known edge (documented, unreachable on live and seed data): readers use §B literally (`effort ?? 0` on an
+  own-effort kind), the builder uses F4 (`lead = weight`). They differ only where I26 is broken (a non-null
+  effort on a weight-0 step, or a null effort on a weighted step of an own-effort kind), i.e. on a frozen project
+  whose category changed while frozen, or a P35 exclusion (which P35-T05 maps to `lead_weeks = 0`, matching §B).
+
+**Effort split (R33-2).** `services/project_effort.py` splits over `effort_weight_weeks` of the project's workflow ×
+category (`effort_weights`; `effort_inputs` / `derive_for` take the weights; `validate_effort_split` too). R6 minus
+the lead-time edit: `PUT /workflow-settings/lead-times` no longer calls `rederive_all_projects` (it still
+recomputes the `duration_weeks` mirror and marks stale; T10 retires it with 410). The step-kind edit stays a
+trigger.
+
+**Copy rules (OR-5, R33-10, contract E4).** New `services/template_copy.py`: `reached_step_ids` (started, or a
+transitive predecessor of a started step, on stored statuses and the DAG in force), `not_reached_rows`,
+`load_template`, `copy_template`, `merge_copy_changes`.
+- Registration: `sync_project_steps` gives created rows the template `weeks` / `gap_weeks` (all 14).
+- Category change: `sync_project_steps(..., recopy_template=True)` re-copies every not-reached row; R6 then
+  re-derives with the new category's weights. A workflow change (PDD↔OEM, refused once any stage has progress)
+  re-copies every re-pointed row. A hub move within a workflow and every other `sync_project_steps` call
+  (Workspace stage PATCH) never touch an existing copy.
+- Figure cleared: `rederive_project_effort` re-copies the current template `weeks` onto the not-reached steps of
+  every kind that lost its own effort (`own_before − own_after`; so also lab with certification turned off, or a
+  category / step-kind change that leaves the figure no weighted step). Same transaction; the copy is in the
+  `project.effort_rederived` row (`template_copy`) and on the result.
+- `stage_project_update` (PATCH and P35's register batch) adds `template_copy` before/after (merged sync + rederive)
+  to the `project.update` audit row. Registration's first copy is not audited as a change.
+- Frozen projects: a category change still re-copies (as the pre-P33 table lookup changed their durations); the
+  figure-cleared re-copy does not happen (re-derivation is a no-op while frozen).
+
+**Live builder (`services/schedule_persistence.py`), F4 + T05-A1.** Per step: `lead_weeks` = weight (own effort) or
+`plan_weeks`, None when equal to the input table (0 without a category); override = `user ?? effort` (own effort)
+or `user`; `start_not_before_week` as stored; `overlap_weeks` = stored overlap, else `−plan_gap` when negative;
+`wait_weeks` = `plan_gap` when positive and no overlap is stored; gaps dropped on a first step (as overlaps were).
+`whatif_import`'s plan-project skip checks now use `effective_lead_weeks(row, table)` (the what-if baseline already
+used the builder).
+
+**Acceptance — byte-identity after backfill, before p33c (live data).** Scratch copy `rpd_p33t08` of the dev DB in
+`rpd-pg-dev` (330 projects, 4620 step rows, 12 runs; dev DB untouched, still p32a). Pre = a snapshot of the
+working tree before this task, on the copy at p36a; post = that snapshot plus only this task's files (isolates
+P36's concurrent edits to `priority_preview` / `priority_board` / `projects.py`), on the copy at p33b. Probes:
+`scratchpad/t08/probe.py` (T07's) and `probe2.py`. Identical: live input hash, fresh greedy `repr`, fresh snapshot
+(no new keys), active run outcomes = fresh (0 diffs), all 12 stored runs re-serialised, 20 priority-preview tokens.
+I25 demand totals and all 330 per-project figures identical; I26 0 violations before and after. The T05-A1 path is
+exercised: the copy carries the 7 hand-set values. Builder `eff` (R33-1 with the override) = §B on all 4620 steps
+(T05-A2); 0 rows carry a `lead_weeks` (none equal to the table). Backfill: 0 rows with `plan_weeks ≠
+duration_weeks`, 0 gaps, 0 weights ≠ weeks.
+
+**Seed.** Fresh scratch DB `rpd_p33t08_seed` (p33b, `seed_demo_data --schedule`, client_2026: 330 projects): the same
+probes with the pre and post trees are identical (input hash, greedy, snapshot, run, tokens, I25 totals and
+per-project), I26 0 violations, builder `eff` = §B on 4620 steps.
+
+**Tests.**
+- New `tests/test_p33_t08_template_copy.py` (14): registration copies weeks and gaps on 14 rows; a figure splits over
+  the weights, not the (edited) weeks; weight immutable (trigger) and INSERT default; builder on default copies =
+  pre-P33 input; builder mapping (copy, wait, overlap, stored overlap wins, floor, user override, own-effort lead =
+  weight ≠ table, R33-9 no lead equal to the table, T05-A2 eff = §B); first-step gap dropped; **the T08 own-figure
+  test** (template B/E 4→5 changes neither project's run or demand; then both copies E→5 and the own project's K
+  copy → 0: the own-effort project's run, split and demand are unchanged (I32 iii) while the plain project's E is
+  5 and its demand +1 (I32 ii); a re-derivation keeps the split); figure cleared re-copies only not-reached design
+  steps (K; E reached and D behind it keep theirs; elapsed L untouched) with the audit before/after; category change
+  re-copies not-reached steps (B→A, E In Progress: A..E keep B's copy, F revived) and re-derives over A's weights
+  (K's length 7 ≠ weight 2); a hub move without a category change keeps the copy; Workspace reads the copy
+  (`STAGE_SKIPPED` on a 0 copy, `lead_time_weeks`); pure `reached`, `merge_copy_changes`, §B table.
+  Mutation check: making the builder use `plan_weeks` on own-effort steps fails 2 of them.
+- New `tests/test_p33b_migration.py` (own container): p36a data (PDD, OEM, no-category projects, a stale mirror) →
+  up: copies = table (not the stale mirror), gaps 0, weights = weeks, values unchanged, trigger rejects a weight
+  change → down: columns, trigger, table gone, values unchanged → up again.
+- Adapted to the ruled change:
+  - `test_migrations.py`: table count 38, the weight trigger in `P33_TRIGGERS`;
+  - `test_p12_tracking.py`: the fake live row has `plan_weeks` (and the `kw` dict is typed);
+  - `test_p30_effort_backend.py`: "lead-time edit re-derives" → "no longer re-derives" (A1 E2 K1 kept, copy kept,
+    override kept, mirror 8);
+  - `test_p30_r02_gate_followups.py`: the lead-time R7 rollback test → "never reshapes a split" (200, split
+    unchanged); the unfreeze R7 test now stores figure 300 (E 120 > 104) instead of relying on a lead-time edit.
+- **Full backend suite:** run 1 (`-x`): 2596 passed, then stopped on P36's in-flight
+  `test_p36_band_rank_api.py::test_hard_gated_p1_project_is_rerankable_within_p1` (`'unchanged' == 'preview'`),
+  which passes alone and touches nothing of this task. Run 2 (no `-x`): **2987 passed, 0 failed**, coverage 97 %.
+- ruff: clean. Format: my new files and the two files I formatted (`models/workflow.py`,
+  `services/project_steps.py`) are clean; other touched files were unformatted before and I did not reformat them.
+- mypy (full backend, strict): pre snapshot 3216 errors; working tree 3325. Every new error is in P36's
+  `tests/test_p36_band_rank_api.py` (78) — none in this task's files (`test_p33_t08_template_copy.py` and
+  `test_p33b_migration.py` are clean; `test_p12_tracking.py` went from 78 to 45 errors). `alembic check`: the same
+  3 pre-existing partial-index items, no new drift.
+
+**Not done / for others.**
+- P33-T10: the apply writes `plan_weeks` / `plan_gap_weeks` / `template_change_id` and a `template_changes` row; it
+  should reuse `services.template_copy` (`reached_step_ids`, `copy_template`) and `own_effort_kinds`.
+- P33-T12: the Gantt / Workspace wire fields (`gap_weeks`, `plan_weeks`, `own_effort`); `lead_time_weeks` already
+  serves `plan_weeks` (equal to the old value after backfill).
+- P33-T13 (p33c): after it, `live_step_effective_weeks`' user-override term and T05-A1 in the builder are vacuous;
+  drop them with the CHECK.
+- Between T08 and T10, `PUT /workflow-settings/lead-times` edits the template but reaches no project (by the new
+  rule); the Workflow Settings Lead times tab will look inert until T10/T17 replace it.
+- P35-T05: the exclusion flag must also enter `own_effort_kinds`-based readers (§B gives 0 for an excluded
+  own-effort step already, since its effort is null) and the builder (`lead_weeks = 0`).
+- The dev DB is still at p32a; the working tree now needs `alembic upgrade head` (p35a, p33a, p36a, p33b) before
+  the API can serve. Scratch DBs `rpd_p33t08` and `rpd_p33t08_seed` were dropped; T07's `rpd_p33t07` is still there.
+
+No financial field read into output, written or logged (the probes decrypt rows only to load them; nothing printed).
+
+## [2026-11-15] P36-T05 gate — qa-inspector leg: **PASS**
+
+Scope: working tree at gate time (P36-T02 scheduler, T03 backend, T04 frontend; ADR 0050, `docs/API_CONTRACT_P36.md`).
+Disposable stack: Postgres 17 `qa-p36-pg` (:55936), Redis 7 `qa-p36-redis` (:56936), uvicorn :8936 (RPD_DEV_MODE, current
+tree), `vite --mode e2e` :5936 proxying to :8936. `alembic upgrade head` ran through p33a → **p36a_project_band_rank** →
+p33b; `seed_dev_users`, `seed_currency_rates`, `seed_demo_data --dataset client_2026 --schedule` (330 projects, run v1,
+132 within-year). Backfilled ranks dense per band: P1 1..26, P2 1..7, P3 1..116, P4 1..72. All containers and processes
+were removed afterwards. The owner's :5433 DB, :8001 API and the :8011 / :5174 dev servers were not touched.
+Note: :8011 still runs pre-P36 code (started Nov 5, no `/band-rank` routes). It needs a restart plus migrating :5433 to head
+before anyone checks P36 there. Old code writing a non-schedulable status on a ranked row would hit the new
+`ck_projects_band_rank_membership` CHECK.
+
+**1. Backend (full `pytest`, default addopts): 2987 passed, 0 failed, 96.83 %** (gate 70 %), 15m52s.
+- This is the full re-run the builder skipped after fixing its 3 failures. The fixes hold.
+- The run includes `test_p36_band_rank_api.py` (21) and `test_p36a_band_rank_migration.py` (round-trip, backfill identity,
+  deferred unique).
+- **Scheduling (`pytest -c pytest-scheduling.ini`): 636 passed, 95.54 %** (gate 85 %). Golden files green.
+  `scheduling/band_rank.py` is at 100 %.
+- **Contract test: 231 passed.** The 10 P36-relevant rows are green: BandRankPreviewRequest, BandRankMoveRequest,
+  PriorityBoardCard, PriorityPreview*, PriorityMove*.
+- `ruff`: clean on every P36 file.
+- `mypy`: 0 errors in the P36 files. The 69 errors the run reports are all in imported, pre-existing modules
+  (cp_sat 38, models/types 9, celery_logging 6, priorities 5, schedule_tasks 4, dashboard 2, export_builder 2,
+  models/audit 2, models/scenario 2, celery_app 2, models/engineer 1). They were not caused by P36.
+
+**2. Frontend.**
+- **vitest: 241 files, 1951 tests passed, 0 failed.**
+- Coverage: lines 90.74 %, statements 88.87 %, branches 80.85 %, functions 87.86 %.
+- `tsc -b --noEmit`: clean.
+- `eslint .`: 0 errors and 9 warnings. All 9 are the pre-existing React Compiler `incompatible-library` warnings (useVirtualizer
+  in routes / density-zone / audit-log / capacity heatmap / dashboard dialog / projects-table). None are in priority-board.
+
+**3. Coverage of the new / changed P36 files.**
+- Backend:
+  - `services/band_rank.py` 96.9 % (4 lines missed)
+  - `scheduling/band_rank.py` 100 %
+  - `api/routers/priority_board.py` 100 %
+  - `api/routers/projects.py` 95.2 %
+  - `services/priority_preview.py` 94.8 %
+  - `services/priority_move.py` 100 %
+  - `schemas/priority_board.py` 100 %
+- Frontend (lines / branches):
+  - `PriorityBoardPage.tsx` 93.6 / 80.6
+  - `board-column.tsx` 97.8 / 85.5
+  - `board-card.tsx` 90.0 / 97.6
+  - `board-badges.tsx` 100 / 100
+  - `board-list-row.tsx` 90.9 / 92.3
+  - `lib/board-model.ts` 100 / 91.7
+  - `lib/api/priority-move.ts` 81.0 / 92.3
+  - `use-priority-move-flow.tsx` 91.6 / 83.0
+  - `priority-preview-dialog.tsx` 98.9 / 89.0
+  - `move-copy.ts` 100 / 62.5
+  - Aggregate of priority-board + shared priority-move: **94.8 % lines, 85.7 % branches**. Every file is above 70 % lines.
+
+**4. End-to-end (new `frontend/e2e/p36-gate.spec.ts` + `frontend/playwright.p36qa.config.ts`; headless Chromium
+1440x900, frank.admin): 4/4 passed.**
+- **Unfiltered:**
+  - Drag the P1 card at #3 onto the top of the #2 card. The preview dialog opens with the title "…position 2 in P1".
+  - "Yes, apply". After refetch the card is 2nd in the DOM and its chip reads #2. The served `band_rank` is 2, the
+    old #2 is now 3, and P1 ranks are dense 1..n.
+  - The active run changes. Schedule run `band_rank_move` (greedy, completed, active). Audit `project.band_rank_move`
+    `{band P1, from_rank 3, to_rank 2, before_project_id, recalc_status applied, baseline_run_id, schedule_run_id}`.
+- **Filtered board (search "Coke"):**
+  - Drag the last visible P1 card above the 2nd visible card, with hidden cards between them (rank 23 → 6, and on a
+    re-run 12 → 6).
+  - The mover takes the anchor's rank in the FULL band and the anchor moves to rank+1. Every other project keeps its
+    relative order. A new run is recorded.
+- **Read-only (Executive Viewer):** chips are visible and there are 0 drag handles.
+- **API hub-scope:** bob.hub (scoped to PD-India) uses an out-of-scope anchor and gets 422 NOT_SAME_BAND, with a body
+  identical to a nonexistent anchor (no existence leak).
+- **Axe (serious/critical): 0 violations** in all 9 scans: board unfiltered, board filtered, re-rank preview dialog ×3,
+  Executive Viewer board.
+- **DB after the runs:** 3 `band_rank_move` runs (v2–v4, all completed, the last active) and 3 audit rows. Membership
+  check: 0 rows where `band_rank IS NULL` ≠ (priority set ∧ schedulable status). Every band is dense with distinct ranks.
+- **Extra API sweep on the real endpoints:**
+  - erin.audit / dave.exec → 403
+  - carol.eng → 404 (the priority preview gives the same)
+  - alice.pm → 200
+  - bob own-hub → 200, foreign project → 404
+  - BOTH_ANCHORS 422, self anchor 422 NOT_SAME_BAND, other band 422 NOT_SAME_BAND
+  - On Hold P1 → 409 NOT_RANKABLE
+  - 24-char bogus token → 409 PREVIEW_STALE; token shorter than 16 chars or missing → 422
+  - extra body field → 422
+  - no-op placement → 200 `unchanged` with no token
+  - nonexistent project → 404
+- Spec issues fixed on the first run (not product bugs): the chip text includes sr-only "Position N in P1", so the spec
+  now matches `^#N`. Gate DB quirk: `seed_dev_users` ran before the hubs existed, so bob had `hub_scope_all=true`. I set
+  false + PD-India by SQL in the gate DB only, which is pre-existing seed-ordering behaviour.
+
+**Pre-existing / unrelated:** no test failures in any suite. The only unrelated items are the mypy errors and eslint
+warnings listed above (not P36).
+
+**Observations (non-blocking, for the other two legs):**
+- (a) Engineer gets 404, not the contract's "403", on band-rank preview. This matches the priority preview: the
+  scoped lookup runs first and avoids an existence leak. security-auditor to confirm.
+- (b) `move-copy.ts` branch coverage is 62.5 % (refusal-copy variants). Lines are 100 %.
+
+**qa-inspector verdict for P36: PASS.**
+
+## [2026-11-15] P36-R02 — rank copy never says "of M" (workflow W36-1) — frontend-builder: DONE
+
+Remediation of W36-1 (MEMORY "P36-T05 gate — workflow-auditor leg"). `bandSizeOf` used the served column
+`count`, which the hub / country filter and a Hub Planner's server scope shrink, against a full-band
+`band_rank` → "position 23 of 5 in P1". Fix per the orchestrator: no "of M" anywhere; copy is "position N in P1".
+Frontend only; `backend/` not touched. Not committed.
+
+- `components/shared/priority-move/move-copy.ts`: `rankPositionCopy(position, band)` — the `bandSize` argument is
+  gone (doc comment records why: no count the browser holds is the band's size). Null position still reads
+  "a new position in <band>".
+- Band-size plumbing removed: `bandSizeOf` in `PriorityBoardPage.tsx` (drop, keyboard announcements,
+  `requestRankMove` options), `RankMoveSpec.bandSize` (`use-priority-move-flow.tsx`),
+  `RankMoveRequestOptions.bandSize` (`priority-move-context.ts`), and the dialog / panel callers
+  (`priority-preview-dialog.tsx` `rankWhere`, `move-flow-panel.tsx` summary + announcement). `isFiltered` stays
+  (the empty-state copy uses it). Grep: no `bandSize` left in `frontend/src`.
+- Tests: `PriorityBoardPage.test.tsx` "of 3" assertions rewritten to "position N in P1"; new test "P36-R02
+  (W36-1)": Hub Planner session + hub filter `hub-gr`, served P1 `count` 2 with ranks 21 / 24 — keyboard pick-up,
+  Up, Right/Left, drop announcements, dialog title / summary, applied dialog and the final announcement all read
+  "position 21/24 in P1" and none match `/ of \d/` (old code would have said "of 2"). New
+  `move-copy.test.ts` (10 cases): move-copy.ts branch coverage 62.5 % → 100 % (stmts / funcs / lines 100 %).
+- Checks: `tsc -b --noEmit` clean; eslint clean on `src/components/shared/priority-move` +
+  `src/surfaces/priority-board`; vitest those two dirs 102 passed.
+- D36-3 (serve `to_rank` in the re-rank preview) still deferred; the dialog's N stays browser-derived from served
+  ranks, display only. Needs: workflow-auditor re-check of W36-1.
+
+## [2026-11-15] P36-T05 gate — workflow-auditor leg re-check (W36-1): PASS
+
+Re-check of W36-1 only, against the fix in MEMORY "[2026-11-15] P36-R02". No code edited.
+- `move-copy.ts` `rankPositionCopy(position, band)` takes no size; yields "position N in <band>" or
+  "a new position in <band>". All callers (`PriorityBoardPage.tsx` drop + keyboard, `priority-preview-dialog.tsx`
+  `rankWhere`, `move-flow-panel.tsx` summary + announcement) route through it. Grep of `frontend/src` (non-test):
+  no `bandSize`, no `band_rank` / rank paired with a count, length or "of"; no surface pairs a full-band rank with a
+  scoped/filtered count.
+- vitest `src/surfaces/priority-board` + `src/components/shared/priority-move`: 8 files, 102 passed (incl. the
+  P36-R02 Hub Planner + hub-filter test asserting no `/ of \d/`).
+- Advisory (non-blocking): `keyboardPosition` falls back to `index + 1` (filtered column index) when the dragged
+  card's served `band_rank` is null and no placement is chosen. Not a count pairing, but the N there is scoped; it
+  goes away with D36-3 (serve `to_rank`) or by using `rankPositionCopy(null, …)`.
+**Verdict: PASS** for the workflow leg of the P36 gate (scheduler/backend items PASSed in the earlier entry; W36-1
+now closed). Security leg (P36-R01) and qa leg remain for P36-T05.
+
+## [2026-11-15] P36-R01 — band-rank lock after authz, `lock_timeout` 503, re-authorise after refresh, I-8 tests — backend-builder: DONE (awaiting security-auditor re-check)
+
+Security leg findings M-1, L-2, I-8 (MEMORY "[2026-11-15] P36-T05 security leg"). `backend/scheduling/`
+not edited; frontend not touched. Not committed.
+
+- **M-1 order.** `api/routers/projects.py`: new helpers `_authorize_registration_write` and
+  `_lock_bands_and_reload(db, project, principal)` (lock → `db.refresh` → `_get_project_or_404` +
+  authorize again, L-2). PATCH `/projects/{id}` (status/priority in body), `POST /{id}/priority`
+  (plain + confirm; the confirm rate limit now runs before the lock via `_rate_limited`), `POST
+  /{id}/band-rank`, and `POST /{id}/submit` (same defect, fixed too) now do lookup + authz (+ rate
+  limit) with plain SELECTs, then the lock. `POST /register-edits`: rate limit → duplicates →
+  `_authorize_register_batch` (plain SELECTs, 403 `REGISTER_EDITS_FORBIDDEN` unchanged) → band lock →
+  `FOR UPDATE ... populate_existing` → `_authorize_register_batch` again on the re-read rows.
+  `POST /projects` already locked after its RBAC / hub-scope check; unchanged. R36-8 order kept:
+  band lock → dispatch lock → row `FOR UPDATE`; everything before the band lock is a plain SELECT.
+- **lock_timeout.** `services/band_rank.lock_band_ranks` reads `current_setting('lock_timeout')`,
+  sets it transaction-locally (`set_config(..., true)`, parameterised) to `BAND_RANK_LOCK_TIMEOUT =
+  "5s"`, takes `pg_advisory_xact_lock`, then restores the previous value (so the dispatch lock and
+  row locks after it keep the session setting). SQLSTATE 55P03 → `db.rollback()` + 503
+  `BAND_RANK_BUSY`, `Retry-After: 5` (`band_rank_busy()`). Re-entrant calls in
+  `priority_move` / `priority_preview` go through the same function (instant on re-entry).
+  Contract: `docs/API_CONTRACT_P36.md` §5 (new) lists every locking route and the 503.
+- **Tests** (`tests/test_p36_band_rank_api.py`, +8 cases): 401 no token (preview + confirm);
+  Executive Viewer and Auditor 403 on preview + confirm, nothing written, no advisory lock held;
+  confirm on an out-of-hub project 404 byte-identical to a random id; L-2 (project re-hubbed under the
+  lock → 404, nothing written); with the lock held on a second connection, nine unauthorised writes
+  (PATCH, priority plain + confirm, register-edits, submit as an out-of-hub Hub Planner; PATCH /
+  priority / register-edits as Engineer; band-rank confirm as Executive Viewer) all answer 403/404 in
+  < 5 s and the test backend holds no advisory lock; control: an authorised status PATCH does take it;
+  lock timeout (patched to 200ms) → 503 `BAND_RANK_BUSY` + Retry-After on PATCH, priority POST,
+  register-edits and band-rank confirm, nothing written, a name-only PATCH still 200, the
+  `lock_timeout` is restored after a granted lock. Mutation check: moving the PATCH lock back before
+  the lookup makes the "never take the lock" test fail (503 instead of 404).
+  Test gotcha: a 403/503 path calls `db.rollback()`, which in the suite's savepoint mode drops
+  uncommitted fixtures and expires ORM objects, so these tests `db_session.commit()` the world and
+  keep plain ids.
+- **Runs.** `test_p36_band_rank_api.py` 29 passed. Full backend: 2872 passed, 131 failed — every
+  failure is `ck_project_workflow_steps_step_timing_retired` from the concurrent, untracked
+  `alembic/versions/p33c_clear_step_timing.py` (another agent's in-flight P33 work; 129 errors), plus
+  2 `test_openapi_frontend_contract` field-set cases (GanttStepRow / WorkspaceStage, same in-flight
+  work); none touch P36 / priority / register paths. ruff clean (whole backend); mypy clean on
+  `api/routers/projects.py`, `services/band_rank.py` (the test module has the suite's usual
+  untyped-test mypy noise).
+- **Frontend note (not done here):** the board / priority / register flows should show the 503
+  `BAND_RANK_BUSY` message (contract §5); today they fall through to the generic error.
+
+## [2026-11-15] P36-T05 security leg re-check of P36-R01 (M-1, L-2, I-8) — security-auditor: PASS
+
+Re-checked the P36-R01 remediation (MEMORY "[2026-11-15] P36-R01"). Read
+`api/routers/projects.py` (`_authorize_registration_write`, `_lock_bands_and_reload`, create, PATCH,
+`stage_project_update`, register-edits, priority plain/confirm/preview, band-rank preview/confirm,
+submit), `services/band_rank.py` (`lock_band_ranks`, `band_rank_busy`), `services/priority_move.py`,
+`services/priority_preview.py` (re-entrant lock sites), `api/db.py`, `docs/API_CONTRACT_P36.md` §5,
+`tests/test_p36_band_rank_api.py`. No code edited. `tests/test_p36_band_rank_api.py`: 29 passed
+(module-only run trips the global 70 % coverage floor, expected; `backend/.coverage` rewritten).
+
+- **M-1 closed.** Every band-lock route does lookup (`_get_project_or_404`, plain SELECT) + Admin-grain
+  authz (+ rate limit on priority confirm / band-rank confirm / register-edits) before
+  `lock_band_ranks`; `POST /projects` locks after RBAC + hub-scope + validation. Previews never take
+  the lock (only `confirm_*` / `apply_priority_change` do, re-entrantly, after the route's lock). Test
+  holds the lock on a second connection: nine unauthorised writes answer 403/404 in < 5 s, backend
+  holds no advisory lock; mutation check reported by the builder.
+- **lock_timeout.** `set_config('lock_timeout', $1, true)` with bound params (constant "5s"; restore
+  value read from `current_setting`, also bound) — no interpolation of request data. Transaction-local:
+  reverts on commit/rollback, so it cannot leak to a pooled connection or later transactions; restored
+  right after grant so the dispatch lock / `FOR UPDATE` keep the session value (asserted in test).
+  Non-55P03 errors re-raised; 55P03 → rollback + 503 `BAND_RANK_BUSY` + `Retry-After: 5`.
+- **L-2 closed.** Under the lock: `db.refresh` + `_get_project_or_404` (hub filter in SQL) + authz
+  again; register-edits re-reads rows `FOR UPDATE ... populate_existing` and re-runs the batch authz.
+  Default READ COMMITTED (no isolation override found), so the re-read sees committed hub changes.
+  Test re-hubs under the lock → 404, nothing written.
+- **503 leaks nothing.** Only reachable after 404/403 have passed; fixed generic message, no ids.
+- **Lock order.** Before the band lock only plain SELECTs; then band → dispatch (`find_in_flight_run`)
+  → row `FOR UPDATE`. Re-entrant calls happen before any dispatch lock and no commit occurs between the
+  route lock and them. No new deadlock order.
+- **I-8 closed.** 401 (preview + confirm), Executive Viewer / Auditor 403 with nothing written and no
+  lock, confirm out-of-hub 404 byte-identical to a random id.
+
+Findings: no Critical / High / Medium. **Info-1** plain `POST /projects/{id}/priority` has no rate
+limit (pre-existing; authorised writers only, wait now bounded by the 5 s timeout). **Info-2** frontend
+does not yet render `BAND_RANK_BUSY` (builder's own note; UX, not security). **Info-3**
+`db.refresh` on a concurrently deleted row would 500 — no project delete route exists, so unreachable.
+L-1 remains accepted per ADR 0050.
+
+## [2026-11-15] P36-R03 — frontend: 503 `BAND_RANK_BUSY` copy (frontend-builder)
+
+- **Change.** `frontend/src/lib/api/error-messages.ts`: `BAND_RANK_BUSY` code, `BAND_RANK_BUSY_MESSAGE`
+  = the contract §5 wording verbatim ("Another priority change is being saved. Please try again in a
+  moment."), `isBandRankBusy(err)`, and the code in `API_ERROR_MESSAGES`. Every affected flow already
+  routed through `apiErrorMessage` (shared priority-move flow preview + confirm incl. rank moves, the
+  registration form save, the register batch save in `use-register-save.ts`), so they now show it.
+  `surfaces/registration/components/hard-gate-panel.tsx` (submit) showed the raw `detail`; it now
+  branches on the code. No auto-retry anywhere; board optimistic moves still roll back via the
+  existing previewError → Done path. No backend change.
+- **Tests (+6).** error-messages unit; PriorityBoardPage column move and re-rank confirm 503 (copy,
+  rollback, one call); register batch save 503 (copy, edits kept, one send); hard-gate submit 503;
+  project-form save 503. vitest on touched areas: 21 files / 260 passed; tsc and eslint clean.
+
+## [2026-11-15] P36 gate CLOSED — orchestrator
+
+P36-T05: all three legs PASS for P36 (rank within a priority band, ADR 0050).
+- qa-inspector: PASS (backend 2987 passed, frontend 1951, contract 231; Playwright e2e plain +
+  filtered board, RBAC, axe) — entry "P36-T05 gate — qa-inspector leg".
+- workflow-auditor: FAIL on W36-1 → P36-R02 → re-check PASS.
+- security-auditor: PASS with M-1/L-2/I-8 → P36-R01 → re-check PASS. Info-2 (frontend busy message)
+  closed by P36-R03. Info-1 (no rate limit on plain priority POST, pre-existing) and Info-3 (refresh
+  500 on a deleted project; no delete route) logged, not scheduled.
+Post-R01 full backend run: 131 failures, all from the in-flight P33 `p33c_clear_step_timing`
+migration (untracked, another session) and 2 P33 Gantt/Workspace contract rows; none in P36 code.
+Open follow-ups (non-blocking): D36-3 serve `to_rank` in the re-rank preview (also removes the
+keyboard `index + 1` fallback on an unranked card); OQ #86, #87 await the client. Dev :8011 must be
+restarted and :5433 migrated to head before trying P36 there.
+
+## [2026-11-15] P33-T09 — template timeline: `POST /workflow-templates/timeline-preview` (D), extended `GET /workflow-settings` (C1) and `category-timelines` (C2) via `scheduling.template_timeline` — backend-builder: DONE
+
+ADR 0045/0046 (owner ruling > R33 > text), DOMAIN_RULES "Category templates" §A/§D "Template preview", contract P33
+Parts A, C1, C2, D. `backend/scheduling/` not edited (`template_timeline` is called). No migration. Not committed.
+
+**Built.**
+- `services/workflow_previews.py` (additions only): `TemplateCell`, `WorkflowInForce` (the validated DAG + names,
+  `first_step_ids`), `load_workflow_in_force`, `load_template_cells` (fresh, `populate_existing`),
+  `template_timeline_for` (saved cells with overrides laid over them → `scheduling.template_timeline`; a step with
+  no row is length 0 / gap 0), `ordered_flags`. `category_preview` / `load_category_previews` kept for the
+  B-equivalent view and its tests.
+- New `services/template_editor.py`: `resolve_entry` (shared D / E1 validation), `load_categories` (optionally
+  locked, see T10), `category_timeline_payload` (one C2 object), `category_timelines` (C2 list, rank order).
+  Error codes: unknown workflow / unknown category / category of the other workflow → the enum-shaped 422 of
+  contract B3 (`unknown_category_error`, `loc` `workflow_id` / `category`); unknown step, step of the other
+  workflow, step listed twice, category with no template row for the step → 422 `BAD_STEP`; a non-zero resulting
+  gap on a step with no predecessors → 422 `FIRST_STEP_GAP`; (E1 only) `NO_CHANGE`. Ranges are the schema's.
+- New `schemas/workflow_templates.py` (all four P33 endpoints; strict, `extra="forbid"`; ids opt out of strict
+  through an annotated item type — a field-level `strict=False` does not reach list items, probed).
+- `schemas/workflow_settings.py`: `LeadTimeSetting` is response-only now and gains `gap_weeks`,
+  `effort_weight_weeks`; new `CategorySetting`; `WorkflowSettings.categories`; `TimelineStep` gains `gap_weeks`,
+  `effective_gap_weeks`, `flags`, `predecessor_ids`; `CategoryTimeline` gains `label`, `workflow_id`, `rank`,
+  `template_version`, `note` (the "real projects also wait…" note, DOMAIN_RULES §D). `LeadTimesUpdateRequest`
+  removed (T10).
+- New `api/routers/workflow_templates.py` (registered in `api/main.py`): `POST /workflow-templates/timeline-preview`
+  behind `require_workflow_templates_write` (T06), stateless (no audit row), 120/min per user (429 `RATE_LIMITED`,
+  `Retry-After`). Response = C2 object + `changed_step_ids` (override steps whose length or gap differs from the
+  saved template).
+- `api/routers/workflow_settings.py`: `GET /workflow-settings` and `GET /workflow-settings/category-timelines` now use
+  `require_workflow_templates_or_settings_read` (same set today: Admin, Super Admin); `lead_times[]` carry the two
+  new fields; `categories` served (empty in the scoped chamber-PUT payload); timelines from `template_editor`.
+  `b-equivalent` unchanged.
+
+**Tests.** New `tests/test_p33_t09_timeline_preview.py` (32): C2 fields / note / flags for all 7 categories equal
+`template_timeline` and today's walk with gaps 0; a saved wait shifts later steps by 3; **preview with no overrides
+== C2 for every category of both workflows**; contract D's example (A, E 7 wk, gap −2) == `template_timeline`
+with `same_leader_serialised`, stateless (template unchanged, no audit row); `gap_ignored_zero_length`; lab ∥
+design overlap runs in parallel; RBAC × 7 roles for preview, timelines and `GET /workflow-settings`; 401 without a
+session; validation (ranges, string / bool ints, empty step, extra key, `FIRST_STEP_GAP`, `BAD_STEP` × 3, unknown /
+cross-workflow category and unknown workflow with the enum envelope); 429. Adapted: `test_p13_slice_a.py` (C2 key
+sets, B/E literal), `test_workflow_settings_api.py` (C1 literal + categories), `test_openapi_frontend_contract.py`
+(see "Not done").
+
+**Not done / for others.**
+- Frontend (P33-T16/T17): the contract test rows `LeadTimeSetting`, `WorkflowSettings`, `TimelineStep`,
+  `CategoryTimeline` are temporarily `"subset"` ("backend landed first"); back to `"exact"` when the TS mirrors land.
+
+No financial field read, written or logged.
+
+## [2026-11-15] P33-T10 — apply preview (E2) and apply (E3); R33-10 lock in the stage PATCH and check-in; lead-times PUT → 410 — backend-builder: DONE
+
+ADR 0045 (amended), ADR 0046 owner ruling OR-4 > R33-10 / R33-11 / R33-12, DOMAIN_RULES "Category templates" §C,
+I31, I32, contract P33 E1–E3, Part G, Part H. `backend/scheduling/` not edited. No migration (`template_changes`,
+`plan_*`, `template_change_id` are p33b's). Not committed.
+
+**Built.**
+- New `services/template_apply.py`: `lock_projects` (THE R33-10 lock: `SELECT projects.id … ORDER BY id FOR UPDATE`,
+  ids only, taken before anything is read), `evaluate` (projects of the change set's categories in the caller's hub
+  scope; with `lock=True` locked first and re-read with `populate_existing`), `evaluate_project` (pure: `reached`
+  via T08's `template_copy.reached_step_ids` on stored statuses and the DAG in force; `ownEffort` via T08's
+  `own_effort_kinds`; `eff` via `workflow_durations.live_step_effective_weeks`), `write_copies`, `change_summary`.
+  - OR-4 per receivable pair: gap change → `plan_gap_weeks`; length change → `plan_weeks` only without own effort
+    for the kind, else flag `own_effort_length_not_applied`. No `effort_weeks`, no progress field, no re-derivation.
+  - A pair is **written** only when a copy field actually changes value; only written pairs get
+    `template_change_id`, an audit before/after, and count for stale / dispatch.
+  - Flags (R33-11): `revived`, `skipped_now`, `gap_ignored_skipped` (gap changed, `eff_after = 0`),
+    `cert_off_no_effect` (lab length written on a cert-off project), `own_effort_length_not_applied`.
+  - Lists: a project's `steps` = written receivable changed steps + own-effort lengths not applied (with the flag,
+    `eff_before == eff_after`). Nothing written but own-effort lengths → `own_effort`. Nothing to receive (copy
+    already equal) → no list. `never`: frozen / cancelled / commercialized (all changed steps), else
+    `reached_stage` with the reached changed steps (a project can be in `never` and `choosable` at once).
+    `current_stage` per contract. Ordered by name, id.
+- `POST /workflow-templates/apply-preview` (E2): no writes, no lock, no audit; 30/min (not in the contract — it reads
+  every project of the categories; flagged for the orchestrator).
+- `POST /workflow-templates/apply` (E3), 6/min, one transaction:
+  1. `BAD_PROJECT` (422) for a selected id not in scope (existence only, before locks);
+  2. category rows locked (`load_categories(lock=True)`: **`FOR NO KEY UPDATE`**, code order) and every
+     `base_version` checked → 409 `TEMPLATE_CHANGED` with `detail.versions` (all entries' current versions);
+  3. the category's projects locked `FOR UPDATE` in id order, rule + ownEffort evaluated under the lock;
+  4. template `weeks` / `gap_weeks` (never the weight) + `template_version + 1`;
+  5. `template_changes` row (changes before/after per field and version, selection, reason);
+  6. copies; 7. `mark_projects_stale` on changed projects; 8. one `project.template_applied` per changed project
+     (before/after per written field, `template_change_id`, `received_as`) and one `workflow_template.applied`
+     (change id, changes, mode, automatic / selected / own_effort / never (with reasons and steps) / not_applied
+     id lists, `reason_length` only, `recalc_status`);
+  9–10. `decide_auto_recalc_batch` + `dispatch_auto_recalc_batch` (`trigger_reason="template_apply"`; the P35
+     register batch's lifecycle): `not_needed` when no **schedulable** changed project, else `queued` (one run) or
+     `deferred` + the coalesced follow-up; `dispatch_failed` passes through as for a priority move.
+  Selection: automatic always; `all_not_reached` = every choosable; `selected` = ticked choosable; `none`.
+  `not_applied`: a ticked id that is not received → `reached_stage` (not closed, a changed step reached) else
+  `not_choosable` (frozen, closed, own-effort-only, other category, nothing to receive). A ticked automatic id is
+  simply applied.
+- **Lock in the stage PATCH and check-in (R33-10).** `api/routers/workspace.py::patch_stage` and
+  `api/routers/checkins.py::submit_check_ins` call `lock_projects` first (before the project / stage rows are read).
+  Minimal edits; nothing else in those files changed.
+- **`PUT /workflow-settings/lead-times` → 410 `USE_TEMPLATE_APPLY`** for every authenticated caller, body not read
+  (401 without a session). The old handler, `LeadTimesUpdateRequest` and its validation are gone.
+
+**Decisions / deviations (for the orchestrator).**
+- Category rows are locked `FOR NO KEY UPDATE`, not `FOR UPDATE` (contract E3 step 1 says FOR UPDATE): only
+  `template_version` changes, and a full `FOR UPDATE` conflicts with the `FOR KEY SHARE` FK checks of a concurrent
+  registration / category change, which can deadlock against a register batch that holds a project row. Residual
+  (documented, not fixed): a project registered or moved into the category concurrently with an apply (not yet
+  committed when the apply selects its projects) keeps the pre-apply template copy.
+- Hub scope applies to E3 as to E2: a hub-scoped Admin (none today) would change the template for all but write
+  copies only in scope.
+- `TEMPLATE_CHANGED` and `NO_CHANGE` are checked by both E2 and E3 (E1 is shared).
+
+**Tests.**
+- New `tests/test_p33_t10_template_apply.py` (36): every §C row (In Queue / On Hold / Draft automatic; frozen,
+  Cancelled, Commercialized never; E In Progress, H Blocked, L Done reached; current_stage); the successor clause
+  (B's skipped PDD-B behind an In Progress D: never, while a fresh project gets `revived`); selection modes none /
+  selected / all_not_reached with I31 (i)–(v) and I32 (i)/(ii) asserted on every project and step (no effort,
+  progress or timing field changes; reached pairs untouched; written values = template; `template_change_id`
+  exactly on written pairs), exact audit lists, `template_changes` row, stale set, exactly one run; race summary
+  (ticked, then H starts → `not_applied` reached_stage, nothing written, `not_needed`); not-choosable / automatic
+  ticks; `BAD_PROJECT` (bogus and out-of-scope id); selection validation; OR-4 own effort (design length not applied,
+  lab gap and elapsed length applied, effort unchanged, no `project.effort_rederived`); `own_effort` list; R33-12
+  (E In Progress, K changed: no `effort_weeks` written on own or plain project); every step flag; 409 with
+  versions (apply and preview) then success on the new version; deferred + one follow-up; `not_needed` with only
+  an On Hold project changed (copy written, stale); no project at all; validation codes; RBAC × 7 roles; 429; no
+  financial field (customer name, TCOGS, price, margin) in responses or audit rows.
+- New `tests/test_p33_t10_apply_race.py` (3): its own database in the shared container (`alembic upgrade head`,
+  committed rows, dropped at module end). (1) a stage write holds the project row and starts H; the apply waits,
+  evaluates under the lock and reports `not_applied`; (2) the lock held and the project frozen inside it: the stage
+  PATCH waits and answers 409 `PROJECT_FROZEN`; (3) same for a check-in (`PROJECT_FROZEN` entry error).
+  **Mutation check:** with `lock_projects` no-op'd in the two routers and `evaluate(lock=False)` in the apply, all
+  three fail; restored.
+- Adapted: `test_workflow_settings_api.py` (RBAC row → 410; the three lead-times PUT tests → one 410 test: any body,
+  nothing written, no audit, 401 anonymous), `test_p13_slice_a.py` (B-equivalent edit via the apply),
+  `test_p30_effort_backend.py` and `test_p30_r02_gate_followups.py` (lead-time edits via the apply; own-effort
+  length not applied), `test_openapi_frontend_contract.py` (`LeadTimesUpdateRequest` row removed and listed as
+  frontend-only until P33-T17).
+- Found and fixed during testing: the template UPDATE used `synchronize_session=False`, leaving identity-mapped
+  `WorkflowLeadTime` rows stale in the same session (an order-dependent test failure; weak identity map). Now
+  `"evaluate"`.
+
+**Not done / for others.**
+- The single `PATCH /projects/{id}` (category change re-copy) does not take the R33-10 lock (not required by the
+  contract); the register batch already locks its rows in id order.
+- P35-T05 (R35-8 / R35-10): `lock_projects` is the R33-10 lock to reuse; E2 needs `excluded_no_effect` and the
+  `eff` reader must take `excluded` once the column lands.
+- Frontend P33-T17: apply dialog; the Lead times tab must save through E2 → E3 (the PUT is 410 now).
+
+No financial field read into output, written or logged.
+
+## [2026-11-15] P33-T11 — `POST /workflow-templates/categories` (B2); What-if chat prompt reads the categories table — backend-builder: DONE
+
+ADR 0047 §2 (as amended at P33-T01), DOMAIN_RULES "Category templates" §E, contract P33 B2 / Part H. Not committed.
+No migration.
+
+**Built.**
+- New `services/category_admin.py::add_category` (flushes, never commits): every category row locked `FOR UPDATE`
+  and re-read; `code` trimmed, 1..16 of `[A-Za-z0-9+\- ]`, not `OEM` (any case) → 422 `BAD_CATEGORY_CODE`;
+  duplicate case-insensitively → 409 `CATEGORY_EXISTS`; unknown workflow, unknown source or a source of another
+  workflow → 422 `BAD_COPY_SOURCE`; `insert_after` unknown → 422 `BAD_POSITION` (null = first; any workflow's code
+  allowed). Ranks renumbered densely in ONE `UPDATE … SET rank = CASE …` (rank unique is checked at statement end),
+  then the row (`template_version 1`, `copied_from_code`, `created_by`, `active`), then the source's 14 rows copied
+  with `weeks`, `gap_weeks` **and `effort_weight_weeks`** (explicit, so the weights are the source's, not re-based
+  on `weeks`). Engineers whose `allowed_categories` contain the source (`any_()`, rows locked, id order) get the
+  code appended; blanket `OEM` engineers are not touched (they already cover an OEM-workflow category).
+- Router: 201 `{category, categories, template_rows, engineers_extended}`; audit `category.created` (category,
+  copied rows, rank list) and one `engineer.allowed_categories_extended` per engineer (before/after lists only, no
+  name); commit; nothing stale, no run; 10/min. `label` defaults to the code (also when blank).
+- `services/whatif_chat.py`: the system prompt's "Categories: …" sentence is built from
+  `ctx.baseline.schedule.categories` (rank order, per workflow); identical text for the seeded seven. Codes are
+  CHECK-restricted, so nothing else can reach the prompt through them. `services/ask_agent.py` names no categories
+  in prose (checked) — unchanged.
+
+**Tests.** New `tests/test_p33_t11_add_category.py` (33): B2 between B and C (ranks 1..8, template = source's
+current rows incl. an edited length and gap with the seed weights, version 1, `copied_from_code`, engineers
+extended / untouched, nothing stale, no run, both audit rows, B1 and C2 list it in rank order); first place;
+trimmed code and placement after another workflow's code; OEM-workflow `D-OEM` (blanket `OEM` engineer unchanged and
+not CAT_NOT_ALLOWED in a greedy run on the built input; a B-OEM engineer extended; an `A`-only leader is flagged as
+the control; the input carries `CategoryInput("D-OEM","OEM",8)`); a project registered in B2 with design figure 4
+copies B's current template (E 5, K 6) and splits A1 E2 K1 over the copied weights; 17 rejection cases (each leaves
+the seven untouched); `insert_after` required; RBAC × 7; 429; What-if prompt (default text unchanged; B2 named in
+rank order).
+
+**Not done / for others.**
+- The hub trigger's messages still say "(A-OEM/B-OEM/C-OEM)" / "A+/A/B/C" (P33-T07 note); rewording needs a
+  migration and was left.
+- A `code` longer than 64 characters is a generic schema 422 (bounded input), not `BAD_CATEGORY_CODE`.
+- Frontend P33-T18: the add-category dialog.
+
+No financial field read, written or logged.
+
+**Suite, ruff, mypy (T09–T11 together).** Full backend suite (shared tree, with P33-T12/T13 and P35 edits landing
+concurrently): 2952 passed, 80 failed in 11 min. Every failing module was re-run once those edits had settled:
+the capacity / planning / fill / charter / P29 modules (77 tests) all pass; the only remaining failures are
+`test_openapi_frontend_contract` `GanttStepRow` / `WorkspaceStage` (P33-T12's field changes, frontend not yet
+mirrored). During the run `test_p30_effort_backend.py` could not be collected (T13 had just removed
+`services/step_timing.py`); it now collects and passes (24 with `test_p30_r02_gate_followups.py`). Focused runs:
+my 4 new files plus the adapted and neighbouring suites (workflow settings, P13 slice A, P33 T06/T07/T08, P18
+chat, P12 check-ins, workspace API): 404 passed. ruff: clean on every file I touched (the one repo-wide E501 is in
+`tests/test_p11_capacity_booked.py`, a T13 edit). `ruff format`: my new files are formatted; the unformatted
+signatures in `services/workflow_previews.py` are P33-T07 lines I left alone. mypy (strict): 0 errors in every file
+I created or touched, tests included.
+
+## [2026-11-15] P33-T12 — Gantt / Workspace read-only template copy (contract P33 Part G) — backend-builder: DONE
+
+ADR 0046 §B / ADR 0048, contract P33 Part G, plan row P33-T12. `backend/scheduling/` not edited. Not committed.
+
+- `GET /gantt` step rows (`schemas/gantt.py`, `api/routers/gantt.py`): **removed** `timing_editable`,
+  `duration_override_weeks`, `start_not_before_week`, `overlap_weeks`; **added** `plan_weeks` (the copy),
+  `gap_weeks` (signed `plan_gap_weeks`: negative = "parallel N wk", positive = "wait N wk") and `own_effort`
+  (`ownEffort(p, kind(s))`, OR-1, from `row_own_effort_kinds`). Kept `lead_time_weeks` (= `plan_weeks`),
+  `effort_weeks`, `predecessor_ids`, `span_fte` (still served only with GANTT/WRITE on the hub, OQ #8; Part G
+  does not touch it).
+- `GET /projects/{id}/workspace` stages gain the same three fields. Nothing removed there (Part G removes no
+  Workspace field); `duration_override_weeks` stays on the wire, served as a constant null from T13 on (drop in
+  P33-F01).
+- Ask-agent context already read the copies (T08); T13 removed its user-override term.
+- Contract test `tests/test_openapi_frontend_contract.py`: the `GanttStepRow` and `WorkspaceStage` pairs are
+  **red until P33-T15** mirrors them (annotated in the table, the file's precedent). `test_p20_fte_followups`
+  field set and one `test_p30_effort_backend` Gantt assertion moved to the new fields.
+- New `tests/test_p33_t12_gantt_workspace_fields.py` (8): served fields on own-effort / plain / cert-off
+  projects, same for every reader role, OpenAPI shape, and **I23 with gaps**: on the seed with a wait (+3 on K)
+  and a parallel gap (−1 on E) on 12 projects, a fresh greedy run, per hub the Gantt design weeks equal the
+  Capacity `design_load_booked_weeks` (a wait books nothing). The existing I23 test
+  (`test_p12_hub_filter`) passes unchanged.
+- Full suite / ruff / mypy: see the P33-T13 entry (one run covers both).
+
+## [2026-11-15] P33-T13 — per-project timing retired: 410, migration `p33c`, recalc script, T05-A1 removed — backend-builder: DONE
+
+ADR 0048, contract P33 Part G/H and F4 "After p33c", DOMAIN_RULES §F, plan row P33-T13. `backend/scheduling/`
+not edited. Not committed. Dev DB (`rpd` on :5433) **not** migrated (still p32a).
+
+**Migration `p33c_clear_step_timing`** (`backend/alembic/versions/p33c_clear_step_timing.py`), **revises
+`p33b_template_copy`** (head when written; chain `p32a → p35a → p33a → p36a → p33b → p33c`). Per affected
+project one `project.step_timing_cleared` audit row (actor NULL, `before_state.steps` = the three fields of each
+step that had a value + prior `schedule_stale`, `after_state` = nulls, `schedule_stale: true`, `reason: "ADR
+0048"`, `notes` names the migration); then all three fields NULL; `schedule_stale` on those projects; CHECK
+`ck_project_workflow_steps_step_timing_retired` (all three NULL). Model carries the same CHECK
+(`step_timing_retired`). Downgrade drops the CHECK and **restores the values from those audit rows** (round
+trip value-preserving; audit rows stay; stale stays set). The overlaps are cleared, not converted (owner).
+
+**Verified on a copy of the dev DB** (`rpd_p33t13`, pg_dump of `rpd`; dropped afterwards): at p33b exactly 4
+projects / 5 rows / 7 values (2 overrides, 3 floors, 2 overlaps). Up: 0 values left, 4 audit rows with exact
+before-states, exactly those 4 stale; raw UPDATEs of `start_not_before_week` / `overlap_weeks` rejected by the
+CHECK; down: 4/2/3/2 restored; up again: 8 audit rows. `alembic check`: only the 3 pre-existing partial-index
+items. **Byte identity (F4 "After p33c")**: probe = canonical input (projects sorted by id), fresh greedy
+`repr`, `build_workflow_snapshot_from_input`, I25 demand totals. Old code (a scratch tree with the T08 builder
+/ `workflow_durations` / `demand_load`, T05-A1 included) at p33c == new code at p33c on all four. Old code at
+p33b differs (the 7 values in force): 11 of 330 greedy outcomes change; the one-off script's run on the copy
+moved the served within-year count **134 → 135** (reported, not tuned). Observation, pre-existing and not
+changed: the builder's project query has no ORDER BY and `canonical_schedule_input_asdict` keeps that order,
+so an unsorted input hash follows physical row order (any project UPDATE can move it); greedy output is
+unaffected.
+
+**Code (T05-A1 / T05-A2 removed, only after p33c clears the fields):**
+- `services/workflow_durations.py`: `live_step_effective_weeks` / `live_step_skipped` / `display_duration_weeks`
+  lose `user_override_weeks`; `run_input_lead_and_override` = F4 exactly (override = `effort_weeks` on own
+  effort, else None); `live_step_lead_is_zero` and `effective_duration_weeks` deleted (only the step-timing
+  service and its tests used them).
+- Builder (`services/schedule_persistence.py`): `start_not_before_week=None`, overlap/wait from `plan_gap_weeks`
+  only. Snapshot keys unchanged.
+- Readers: `services/workspace.py` (predicates; stage `duration_override_weeks` served as null),
+  `services/ask_agent.py`, `services/demand_load.py` (`LiveStepRow.user_override_weeks=None`; scheduling type
+  unchanged), `services/project_steps.py` (dropped the three dead null writes on a workflow re-point).
+- `PATCH /projects/{id}/steps/{step_id}/timing` (`api/routers/step_timing.py`): 410 `{"detail": <contract
+  message>, "code": "STEP_TIMING_RETIRED"}` for every authenticated caller whatever the body/project (no
+  project read, so no 404 leak), 401 without a session, `deprecated` in OpenAPI with a `StepTimingRetiredError`
+  410 model and no request body. `services/step_timing.py` **deleted**; `schemas/step_timing.py` now only the
+  error model. What-if / plan-import `StepTimingInput` paths untouched.
+- **Script** `backend/scripts/p33_recalc_after_timing_clear.py` (`python -m scripts.p33_recalc_after_timing_clear`,
+  needs `RPD_DATABASE_URL` + the field key): under the dispatch advisory lock; `nothing_cleared` when no
+  `project.step_timing_cleared` row; `already_dispatched` when a `timing_cleared` run (not a DISPATCH_FAILED one)
+  or a deferred marker exists; else `deferred` (follow-up flag, ADR 0023) or `queued` (one QUEUED greedy run,
+  `trigger_reason="timing_cleared"`, actor NULL, via `dispatch_greedy`; waits for an inline run) with one
+  `schedule_run.dispatched` audit row (project ids, run, baseline). `dispatch_failed` exits 1 and a later call
+  retries. On the copy: first call `queued` → run v13 completed + active, 0 stale; second call
+  `already_dispatched`.
+
+**Tests.**
+- New `tests/test_p33c_migration.py` (own container, 2): the live shape 4 projects / 5 rows / 7 values → cleared,
+  4 audit rows (exact before/after), 4 stale, CHECK rejects each field; down restores; up again; and an empty
+  DB writes no audit row.
+- New `tests/test_p33_t13_timing_retired.py` (25): 410 for 7 roles, 6 bodies (nothing written: no audit, no run,
+  row and stale unchanged), unknown/malformed targets, 401, OpenAPI; CHECK per field; builder never carries a
+  floor/user override, gaps/copies do reach it, other-workflow rows dropped; Workspace and agent context read the
+  copy.
+- New `tests/test_p33_t13_recalc_script.py` (4, own container each): one run then none; nothing cleared; in
+  flight → deferred + exactly one follow-up; broker failure then retry.
+- **Retired** (subject gone): `tests/test_p12_step_timing.py`, `tests/test_p32_step_overlap.py` (deleted; the
+  still-meaningful cases were ported to the T13 module; first-step gap drop is in T08's tests).
+- Adapted: `test_p32_r01_greedy_inline.py` (3 step-timing-triggered inline tests now use a priority move);
+  `test_p30_effort_backend.py` (R4 PATCH test retired; merged-override test = effort only; demand world drops
+  the impossible stale override; **minimal edit inside the other builder's in-flight
+  `test_lead_time_edit_no_longer_rederives...`**: removed only the user-override set/assert the CHECK forbids);
+  `test_p30_r02_gate_followups.py` (R3-on-check-in: a zero-share step can no longer be kept schedulable, so the
+  test now asserts the D check-in is 422 `CHECKIN_INVALID`/`NOT_DUE` and an E check-in re-derives nothing);
+  `test_p33_t08_template_copy.py` (T05-A1 builder cases and the T05-A2 `§B` cases removed / replaced);
+  fixtures in `test_p11_capacity_booked`, `test_p19_planning_capacity`, `test_p25_capacity_fill`,
+  `test_p26_scoring_rubric`, `test_p29_capacity_hubs` used `duration_override_weeks=weeks` to set live demand →
+  `plan_weeks=weeks` (equivalent: their default copy was 1 > 0); frontend contract test: `StepTimingRequest/
+  Response` pairs removed and the TS names allowlisted until P33-T15 deletes them.
+- **Full backend suite (P33-T12 + T13 together): 3030 passed, 2 failed** — exactly the `GanttStepRow` and
+  `WorkspaceStage` mirror pairs, red until P33-T15. Coverage 97 %. (An earlier run showed 83 failures from the 5
+  fixtures above and 2 transient ones in P33-T10's in-flight `test_apply_is_rate_limited` / `test_p13_slice_a`;
+  all green in the final run.)
+- ruff clean on every touched file; my new files `ruff format`-clean (pre-existing files not reformatted). mypy
+  strict: 0 errors in the new modules (migration, script, router, schema, 4 test modules) and in the touched
+  service/schema files; the one new error I introduced in `test_p30_r02_gate_followups.py` (nested helper) was
+  fixed; remaining errors in the adapted pre-existing test files are pre-existing (untyped test signatures).
+
+**For others.**
+- Deploy order: T13 code and p33c ship together (alembic head includes p33c). Running the new code against an
+  un-migrated p33b DB would silently ignore the 7 values (old/new differ there); run `alembic upgrade head`, then
+  the script once.
+- DOMAIN_RULES §D still says "Until p33c clears the hand-set timing fields, the live builder still carries them
+  (T05-A1)" — now historical; orchestrator to fold.
+- P33-T15: drop `StepTimingRequest/Response` from `frontend/src/surfaces/gantt/api/types.ts` (and their allowlist
+  entry), mirror `plan_weeks` / `gap_weeks` / `own_effort` on Gantt and Workspace types, remove the Gantt
+  timing fields.
+- P33-F01: drop the three columns, the CHECK, Workspace `duration_override_weeks`, the 410 route and its schema.
+- The other backend-builder (T09–T11) concurrently edits `test_p30_effort_backend.py` and
+  `test_openapi_frontend_contract.py`; my edits there are listed above.
+
+No financial field read into output, written or logged (probes printed hashes/counts only).
+
+## [2026-11-15] P33-T12/T13 folded in; T09–T11 deviation rulings recorded — orchestrator
+
+Docs only.
+
+**T13 / T05-A1 → history.**
+- DOMAIN_RULES §D: the T05-A1 transitional text is now marked history (retired by P33-T13; p33c
+  cleared the fields; CHECK). The final live rule is stated without a user-override term:
+  `eff` = §B; run input override = `effort_weeks` on own-effort steps, else None; no floor; gaps
+  from `plan_gap_weeks` only. R33-1's `override ?? lead` remains for scenarios.
+- Contract F4: the transitional rule and T05-A2 are marked history.
+- **Deploy order** recorded in DOMAIN_RULES §F, the plan's P33 header and here:
+  - T13 code and `p33c` ship together;
+  - run `python -m scripts.p33_recalc_after_timing_clear` once after `alembic upgrade head`;
+  - chain `p32a → p35a → p33a → p36a → p33b → p33c`; P35/P36 migrations ship with or before P33.
+
+**T09–T11 deviation rulings (contract updated by me).** The builder had not yet edited
+`API_CONTRACT_P33.md`, so it should not repeat these edits. All four are consistent:
+1. **Category rows `FOR NO KEY UPDATE` in the apply (E3 step 1) + registration / category change
+   take the category row `FOR SHARE`.** Consistent: `FOR SHARE` conflicts with `NO KEY UPDATE`,
+   while FK `KEY SHARE` checks do not. This closes T10's residual race.
+   - **Condition added:** take the category `FOR SHARE` before any project row lock, in the register
+     batch and `PATCH /projects/{id}`. Otherwise a register batch holding a project row could
+     deadlock with an apply holding the category.
+   - This is not yet implemented (T10 noted the PATCH takes no R33-10 lock). It is a builder
+     follow-up, listed in the plan's P33 header.
+2. **Apply-preview limited to 30/min:** consistent (stateless, Save-only; timeline-preview stays
+   120/min, apply 6/min).
+3. **Only changed copies listed in E2:** consistent with I31 (only written pairs are audited) and
+   R33-11. Own-effort lengths not applied are still listed.
+4. **`code` > 64 characters → generic 422 `VALIDATION_ERROR`;** 17..64 characters still
+   `BAD_CATEGORY_CODE`. Consistent.
+
+**Not changed.** Plan statuses (T12 and T13 were already marked by their owner). The I22 text is
+unchanged.
+
+## [2026-11-15] P33-T10 follow-up — orchestrator rulings on the T09–T11 deviations; registration / category change wait for an in-flight apply — backend-builder: DONE
+
+The orchestrator accepted all four deviations: (1) category rows `FOR NO KEY UPDATE`, on the condition below;
+(2) apply-preview 30/min; (3) only changed copies listed and stamped; (4) a code over 64 characters is a plain
+schema 422. The orchestrator wrote them into `docs/API_CONTRACT_P33.md`; I did not edit the contract. I checked
+the text against the code. **One mismatch:** B2's ruling says a code over 64 characters gives "422
+`VALIDATION_ERROR`". The app's schema 422 has no `code` at all: the body is the standard `detail` list, and the
+T11 test asserts `code` is absent. Either the contract wording or a new code is the orchestrator's call.
+
+**Built (closes the race T10 documented).**
+- New `services/template_copy.share_lock_categories(db, codes)`: `SELECT categories.code … FOR SHARE`, in code order.
+  It conflicts with the apply's `FOR NO KEY UPDATE`, so a copy started during an apply waits and then reads the new
+  template. FK checks take only `FOR KEY SHARE` and never wait on it.
+- `api/routers/projects.py`: two calls; nothing else changed. Another builder's large diff in the file is untouched.
+  - `create_project` takes it on the project's category just before `sync_project_steps`. That is after the
+    band-rank lock (R36-8 keeps that lock first); the new project row is invisible to an apply, so no cycle.
+  - `stage_project_update` takes it on the target category when the category or workflow changes. This happens
+    before the setattr / flush, i.e. **before the PATCH takes any project-row lock**. The single PATCH holds none
+    before that flush (`_lock_bands_and_reload` takes only the band-rank lock).
+- Register batch: `RegisterEditPatch` has no `category` / `hub_id` (`extra="forbid"`), so the batch cannot change
+  a category. "FOR SHARE before any project-row lock" is therefore vacuous there, and the batch is not edited. If
+  the batch ever gains `category`, the share lock must go before its `FOR UPDATE` on projects.
+- Not covered: the OR-5 "figure cleared" re-copy in `services/project_effort.rederive_project_effort` reads the
+  template without the share lock. It re-copies only the not-reached steps of a project the apply would itself lock
+  and evaluate, so the race is narrower, but it exists; flagged.
+
+**Tests** (in `tests/test_p33_t10_apply_race.py`, using the same committed-rows scratch database; now 6 tests):
+- (4) a registration started during an apply (category row `FOR NO KEY UPDATE`, B/E rewritten, uncommitted) waits,
+  then copies the new E;
+- (5) the same for `PATCH /projects/{id}` A→B;
+- (6) lock order: an apply over A and B locks the moving project's row while the PATCH waits on the category. It
+  gets the row within 5 s, and the PATCH then copies the new template.
+
+Mutation checks:
+- share locks removed: (4) and (5) fail;
+- the project row taken before the category in the PATCH path: (6) fails with Postgres `DeadlockDetectedError`;
+- every mutation was restored.
+
+Reruns: T09–T11 files, T08, the categories table, P23 registration, P35-T01 register fields, P9 API extensions,
+P30 effort, P36 band-rank, workflow settings and P13 slice A: 278 passed, plus 6/6 race. ruff is clean on
+`api/routers/projects.py`, `services/template_copy.py` and the race test. mypy reports 0 errors in
+`services/template_copy.py` and the race test; `api/routers/projects.py` has none on my lines. No commit.
+
+## [2026-11-15] P33-T10 follow-up 2 — OR-5 "figure cleared" re-copy waits for an in-flight apply — backend-builder: DONE
+
+Orchestrator ruling: the template re-copy of `services/project_effort.rederive_project_effort` (a kind loses its own
+effort figure) takes `share_lock_categories` on the project's category, before any project-row lock on every path
+that can reach it. R36-8 (band-rank lock first) is kept. The contract wording for over-64-character codes was fixed
+by the orchestrator. No commit.
+
+**Built.**
+- `services/project_effort.rederive_project_effort`: calls `share_lock_categories(db, [project.category])` just
+  before the re-copy reads the template, only when a kind was lost. Where the caller already holds the lock this
+  returns immediately.
+- Pre-locks, each taken before the path's first project-row lock:
+  - `api/routers/projects.py::stage_project_update` (single PATCH): the condition is widened from category /
+    workflow change to `… or effort_inputs_changed` (figures, certification, category, hub). It runs before the
+    flush that locks the row.
+  - `api/routers/projects.py::save_register_edits` (register batch): after the band-rank lock and before the
+    projects `FOR UPDATE`, the categories of the projects whose edits touch an effort input are share-locked (read
+    with a plain SELECT; the batch cannot change category).
+  - `api/routers/gantt.py` unfreeze: before the flush that writes `frozen`. This is two lines in a router other
+    builders are editing; nothing else there changed.
+  - `services/project_effort.rederive_all_projects` (step-kind edit): every affected project's category, before the
+    loop writes any project row.
+- Stage PATCH and check-in re-derivations (started flag) cannot lose an own-effort kind, so they take no extra lock.
+
+**Tests.** New race test in `tests/test_p33_t10_apply_race.py` (7 tests now, all pass): a project with design figure
+4 whose figure is cleared (`PATCH design_effort_weeks: null`) during an apply waits, then re-copies the apply's new
+B/PDD-E length. **Mutation check:** with the PATCH pre-lock narrowed back to category / workflow and the lock in
+`rederive_project_effort` removed, that test fails; both files were restored. Reruns: race, P30 effort, P30-R02,
+T08, P35-T01, P23 registration: 80 passed. One failure was `test_p35a_up_down_up`, whose own Postgres container
+timed out starting (Docker load); it passes on rerun. ruff is clean on `gantt.py`, `projects.py`,
+`project_effort.py`, `template_copy.py` and the race test. mypy reports 0 errors in those files.
+
+## [2026-11-15] P33-T15 — per-project timing editing removed from the frontend; read-only gap chip (ADR 0048, contract P33 Part G / I) — frontend-builder: DONE
+
+ADR 0048 §1, contract P33 Part G + Part I "Read-only timing", DOMAIN_RULES P33 §D/§F, plan row P33-T15. Not committed.
+Shared tree: P33-T14 (categories from the API) was editing concurrently; none of its files were edited here except
+where noted (none overlapped in the end).
+
+**Removed (no dead code left):**
+- `frontend/src/surfaces/gantt/components/step-timing/` deleted whole: drag overlay (`StepDragOverlay`), provider,
+  context, dialog, panel, schema, state, `use-step-timing-flow`, `timing-copy`, and its 770-line test.
+- `gantt-api.ts` `setStepTiming`; `api/types.ts` `StepTimingRequest` / `StepTimingResponse` / `TimingEditable`.
+- `GanttStepRow` drops `timing_editable`, `duration_override_weeks`, `start_not_before_week`, `overlap_weeks`; gains
+  `plan_weeks`, `gap_weeks` (signed), `own_effort`. `WorkspaceStage` gains the same three (keeps
+  `duration_override_weeks`, served null until P33-F01).
+- `gantt-coordinates.ts`: `WeekScale.maxDragWeek`, `dragLastWeek`, `stepDragCalendar` (only the retired drag used
+  them); `projectWaterfallScale` no longer reads `start_not_before_week`. `gantt-layout.ts` `placeDragLabel`.
+  `step-weeks-copy.ts` `resizeDragLabel` / `stepDragLabel` / `overlapDragLabel` / `WORK_WEEKS_HELP`.
+  `step-duration-source.ts` is now `own_effort` → `effort | template` (no `user` source, no `editBaselineText`).
+- Gantt step row (`gantt-step-row.tsx` `StepLeftCell`): no Edit timing button, no "edited" marker, no `project` /
+  `timingEdits` props. `gantt-chart.tsx`: no drag overlay, no drag viewport, no `data-dragging` z-raise.
+  `GanttPage.tsx`: no `StepTimingProvider`; the "How to read the bars" copy now says timing is read-only and
+  follows the category template.
+- Workflow "Project step timing" tab (`project-step-timing-section.tsx`): no provider, no "Changing step timing"
+  read-only notice (nothing to gate), new read-only description; `complete-step-rows.ts` lost
+  `unplacedTimingEditable` and the `facts` argument, and carries `plan_weeks` / `gap_weeks` / `own_effort` from the
+  Workspace stage for unplaced steps. `nav.ts` summary and the page description no longer promise editing.
+- **Kept on purpose:** the What-if import Gantt drag (P32-T06, OQ #78) is untouched; it still uses
+  `stepDragResult` / `snapWeekDelta` / `barGeometry` / `fteSpanWeeks` / `workWeeksForCalendarWeeks` /
+  `DURATION_OVERRIDE_MAX_WEEKS` (gantt-coordinates) and `overlapForDrop` (step-overlap), so those stay.
+
+**Added:** `gantt/lib/step-gap.ts` (`gapChipText`: negative → "parallel N wk", positive → "wait N wk", 0 → none;
+`gapChipTitle`), the chip `data-testid="step-gap-chip"` (replaces `step-parallel-marker`, with sr-only text) on
+the Timeline and Workflow tab, hidden on skipped steps and on the narrow layout as before. The bar hover text says
+"template gap: …" and names an own-effort duration "(client effort)" from the served `own_effort` (no client
+derivation). Workspace stage row: the effort-zeroed skip reason now reads `own_effort && effort_weeks === 0 &&
+plan_weeks > 0` (served fields only).
+
+**Tests.** Rewritten: `GanttPage.test` (read-only with GANTT write: no drag body/handle/overlay, no Edit/Reset
+timing, no edited marker; chips parallel/wait from `gap_weeks`), `gantt-responsive.test` (read-only at 1440 and
+390, chip text + title + axe, hover text; the O1 / QA-P19-4 / O-R1 drag-label cases deleted with the drag),
+`project-step-timing-section.test` (read-only for Super Admin and a viewer, chips, unplaced steps carry the
+Workspace gap, axe on expanded and left-out), `complete-step-rows.test`, `step-duration-source.test` (+
+`gapChipText`), `gantt-coordinates.test` (waterfall scale without `maxDragWeek`). Fixtures updated
+(`gantt-badges`, `gantt-rows`, workspace `stage()`, `details-panel.p30`). `p11-p12-error-wire.test` lost its
+step-timing PATCH block (endpoint retired). e2e `p19-gate.spec.ts`: the two drag-only tests (O1 near W52, Bob
+0.5 FTE drag + PATCH) and their helpers removed; the QA-P19-1 test keeps its axe/opacity/details checks and now
+asserts no drag handle / Edit timing at each width; `GStep.timing_editable` → `gap_weeks`.
+
+**Backend:** `tests/test_openapi_frontend_contract.py`: `StepTimingRequest/Response` allowlist entry removed and
+the "red until P33-T15" notes updated. **228 passed**, the `GanttStepRow` and `WorkspaceStage` exact pairs green.
+
+**Checks.** eslint clean on every touched file (incl. the e2e spec). `tsc -b --noEmit`: 0 errors in touched files;
+remaining errors are all P33-T14 in flight (`PROJECT_CATEGORIES` / `OEM_CATEGORIES` / `CATEGORY_CHIP_OPTIONS`
+removed from `types/enums` / `multi-select-filter`, `reference-categories.test`). Full vitest: 1843 passed, 42
+failed in 19 files, **all category-chip / category-list tests owned by P33-T14** (Dashboard, Matrix, Projects,
+Registration, Planning, What-if, multi-chip-filter, the Gantt toolbar "Category B" test,
+`WorkflowSettingsPage` lead-time grid, which passes in isolation). Every Gantt / Workflow / Workspace suite
+touched here passes; two timeouts seen in a parallel run (`Expand all`, Workspace header) pass in isolation. axe:
+serious-violation checks pass on the Timeline rows with chips, the Workflow tab (expanded, and a left-out
+project expanded) and the narrow details dialog. Bundle: deletions only (≈2.7k lines removed, one 20-line module
+added); budget not re-measured because `vite build` needs a green `tsc -b`, which P33-T14 currently blocks.
+
+**For others.** P33-T14: the Gantt toolbar "Category" test in `GanttPage.test.tsx` fails on your chip source
+(needs `useCategories` mocked); I did not touch it. P33-F01: Workspace `duration_override_weeks` can go from
+`WorkspaceStage` and the workspace fixture together with the backend field.
+
+## [2026-11-15] P33-T14 — frontend reads categories from the API (`useCategories`, B1) — frontend-builder: DONE
+
+ADR 0047 §4, DOMAIN_RULES "Category templates" §E, API_CONTRACT_P33 B1 / C1 / Part I. Not committed. Shared tree
+with P33-T15 / P34 / P36: other sessions' edits in the files below were kept; only category lines were changed.
+
+**Registration fix (B1 objects).** `lib/api/reference.ts`: `fetchCategoriesForHub` returns `Category[]`;
+`categoryOptionsForHub(hub, serverList, catalog)` gives codes in rank order (hub list, else the served global list
+narrowed to the hub's workflow, else every code). `project-form.tsx` shows the served label in the options and
+no longer clears the picked category while the list is empty.
+
+**Built.**
+- `lib/category-catalog.ts`: `Category`, `CategoryCatalog` (rank order, `labelOf`, `codesForWorkflow`,
+  `eligibilityCodes()` = PDD, `OEM`, OEM-workflow), plus a small external store that mirrors the last served list
+  (`useCategoryCatalogSnapshot`, `getCategoryCatalog`) for the pill, chart colours, zod schemas and the What-if
+  store, which cannot hold a query.
+- `lib/api/categories.ts`: `fetchCategories(hubId?)`, `useCategories()` (1 h stale, writes the mirror),
+  `useCategoryCodes()` (null while no list, so URL params stay as written). `queryKeys.categoriesAll()` is the
+  prefix to invalidate after "+ Add category" (P33-T18). `AppShell` prefetches it once inside `SessionGate`.
+- `types/enums.ts`: `PROJECT_CATEGORIES`, `NON_OEM_CATEGORIES`, `OEM_CATEGORIES`, `ENGINEER_ALLOWED_CATEGORIES`
+  removed. `ProjectCategory` / `EngineerAllowedCategory` are `string`. New `OEM_ELIGIBILITY_CODE = 'OEM'`.
+- `lib/multi-select-filter.ts`: `CATEGORY_FILTER_VALUES` and `CATEGORY_CHIP_OPTIONS(_WITH_UNMAPPED)` are now
+  hooks: `useCategoryFilterValues(withUnmapped)` and `useCategoryChipOptions(withUnmapped)` (the code is the chip
+  text, the label is the tooltip). `useCategoryTypeParams(types, { withUnmappedCategory })` reads the served
+  codes. `canonicalSelection(values, null)` keeps the values de-duplicated in the order given.
+- Palette (`categorical-palette.ts::categoryRank(code, catalog?)`): the seven seeded codes keep slots 0..6 through a
+  colour map, not a list. Any other code gets slot 7 + n by rank among the non-seeded codes, wrapping over the 10
+  hues. A code the list does not carry gets slot 7. `CategoryTag` subscribes to the mirror and uses the label as
+  its tooltip.
+- Consumers: the Dashboard (selection, selection bar, register chips, analytics donut, executive category donut);
+  Projects; the Matrix and Priority board toolbars; the **Gantt toolbar** (one-line chip-source change in
+  `gantt-toolbar.tsx`, a P33-T15 area; nothing else there touched); Planning engineer form and Overview eligibility
+  chips (a stored code missing from the list is shown and kept, never dropped on save); What-if `categoriesForHub`
+  (served list; refine message built from it; skipped while the list is empty); the What-if store hub change;
+  `import-rows` `categoriesForWorkflow` and `mapCategory` (suffix rule, no `'A+'` literal); `import-schema`
+  `category: z.string().min(1)` (B3 server validation); `scenario-rules` order; the scenario-builder "Only 5 …"
+  preset now caps the top-ranked category present (A+ on the seeded data); the Lead times grid rows come from the
+  served workflow categories (re-keyed when the list changes). `WorkflowSettings.categories` (C1, with
+  `template_version`) is mirrored in the types.
+
+**Deliberate behaviour changes.**
+- A new What-if line defaults to the first PDD category by rank (**A+**). It was the literal `A`.
+  `scenario-store.test` was updated to match.
+- The "Only 5 A+" preset follows the top-ranked category in the file.
+
+**Kept literals, named here.**
+1. `SEEDED_CATEGORY_SLOTS` in `categorical-palette.ts` is a colour map, needed by ADR 0047 §4 ("existing codes
+   keep their colours").
+2. `workflow-settings/lib/b-equivalent.ts::referenceCategory` (B / B-OEM). ADR 0047 §4 keeps them as the
+   B-equivalent references.
+
+Nothing iterates either of them.
+
+**Tests.**
+- `src/test/category-fixtures.ts` holds the seeded seven and `WITH_B2_TEST_CATEGORIES`, an 8th category between
+  B and C. `setTestCategories` is reset after each test.
+- `src/test/setup.ts` mocks `@/lib/api/categories` globally from those fixtures.
+- New `lib/categories-p33.test.tsx` (10):
+  - the 8th category in the filter chips (rank order, tooltip), the filter values, `CategoryTag` (slot 7,
+    tooltip), the executive category donut legend (rank order, clickable) and the What-if hub lists;
+  - the seeded slots are unchanged after an insertion;
+  - wrapping, and the fallback for an unknown code.
+- New `lib/api/categories.test.tsx` (2, unmocked): the B1 fetch, rank order, the mirror, null codes on error.
+- Adapted: `reference-categories`, `multi-select-filter`, `multi-chip-filter`, `lead-times` (plus a B2 row-order
+  case), the workflow-settings fixture (`categories`), `scenario-store`.
+
+**Checks.** `tsc -b --noEmit` 0 errors (whole project, after P33-T15 landed). `eslint .` 0 errors (9 pre-existing
+warnings). Full vitest: **243 files, 1897 passed, 0 failed**. The What-if folder was re-run after the last preset
+edit: 172 passed. Bundle budget: **PASS, 191.9 KB gzip initial** (400 KB budget).
+
+**For others.**
+- P33-T18: invalidate `queryKeys.categoriesAll()` after B2.
+- A component test that needs another list calls `setTestCategories(...)` before rendering.
+- A test that mocks `@/lib/api/categories` itself replaces the global mock.
+
+## [2026-11-15] P33-T16 — category timeline editor (Move ± / Length ±, gap badge, flags, live preview) and the `workflow_templates` surface — frontend-builder: DONE
+
+ADR 0045 §1/§7, ADR 0046 owner ruling, DOMAIN_RULES "Category templates" §A/§D, API_CONTRACT_P33 Parts A, C1, C2,
+D, Part I. Not committed. Shared tree: P33-T14/T15 (and P34/P35/P36) uncommitted edits in the same files were kept.
+
+**Built.**
+- **Permissions.** `workflow_templates` added to `SURFACE_KEYS` (`types/enums.ts`), the role matrix fixture
+  (`test/roles.ts`: Admin rw, Super Admin rw), the Profile access list and `nav.ts` `alsoReadableVia` of
+  `/settings/workflow`. The page shows the template tabs on `workflow_settings` OR `workflow_templates` read.
+  `WorkflowTemplatesSection` now gates per tab: Steps & precedence, Hub calendars and Chambers on
+  `workflow_settings.write` (notice "…steps & precedence, hub calendars and chambers (Super Admin only)"); Lead
+  times and Timeline previews on `workflow_templates.write` (notice "Changing the category templates (Admin and
+  Super Admin)"). An Admin therefore sees the notice on the three Super Admin tabs only.
+- **TS mirrors** (`workflow-settings/api/types.ts`): `LeadTimeSetting` + `gap_weeks` / `effort_weight_weeks`;
+  `TimelineStep` + `gap_weeks` / `effective_gap_weeks` / `flags` / `predecessor_ids`; `CategoryTimeline` + `label` /
+  `workflow_id` / `rank` / `template_version` / `note`; every B2 / D / E1–E3 request and response type.
+  `LeadTimesUpdateRequest`, `saveLeadTimes`, `useSaveLeadTimes` removed. Backend
+  `tests/test_openapi_frontend_contract.py`: the four T09 "subset" rows back to "exact", `WorkflowSettingsCategory`
+  ↔ `CategorySetting` paired (that test was red on main since T14 added the interface unpaired), 23 new exact rows,
+  the `LeadTimesUpdateRequest` allowlist entry dropped — **251 passed**.
+- `lib/template-drafts.ts` (pure): drafts per step only while they differ from the saved C1 value (so a draft set
+  never trips E1 `NO_CHANGE`), clamped ± (length 0..104, gap −104..104), per-row reset, prune after a reload,
+  `changeEntry` (E1), gap badge text (`—` first step / `0w` / `−Nw` overlap / `Nw` wait), flag notes
+  ("Overlap — same leader, runs back-to-back"; "Can't start before <served non-skipped predecessors> starts";
+  "0-week step: gap ignored").
+- `hooks/use-template-editor.ts`: drafts → `POST /workflow-templates/timeline-preview` through a 150 ms debounce
+  (TanStack Query, `keepPreviousData`, no retry); with no drafts the saved C2 timeline is drawn and nothing is
+  requested; readers never call it. `pending` until a served reply matches the drafts.
+- `components/category-timeline.tsx`: read-only card unchanged in look; the editable card adds a Gap column,
+  Move −/+ (none on a step with no predecessors), Length −/+ with the value, a per-row reset, flag notes under the
+  row, the hatched wait (from the served `effective_gap_weeks`), the served `note`, an "N unsaved steps" badge,
+  Discard / "Save <category>…". Optimistic per contract D: only the clicked bar shifts / resizes by the drafted
+  difference from the drawn reply (dashed, dimmed) until the reply; every number in text and the sr-only row
+  description is served. Accessible names: "Move PDD-E one week earlier/later", "Shorten/Lengthen PDD-E by one
+  week", "Reset PDD-E to the saved template"; native buttons (Enter / Space).
+
+**Tests.** New `lib/template-drafts.test.ts` (6) and `WorkflowSettingsPage.p33.test.tsx` (T16 block, 8): clicks
+change the debounced request (two quick clicks → one request) and the timeline redraws from the response (total,
+duration, flag, `−2w Overlap` badge); pending state; first step has no Move; clamps (gap +104, length 0); served
+flags, hatched wait and note; Discard / per-row reset / keyboard Enter and Space; a viewer (templates read only)
+sees no controls, the notice and sends nothing; the 7-role matrix (editor only for Admin and Super Admin; Admin's
+notice on Steps and Hub calendars, none on Timeline previews); axe with drafts and flags. Adapted:
+`category-timeline.test`, `WorkflowSettingsPage.test` (Admin now edits lead times; P33 fixture fields),
+`workflow-settings-api.test` (PUT tests on hub calendars; one test pinning all four P33 bodies/paths),
+`test-fixtures.ts` (`timelineFixture`, C1 fields).
+
+**Not verified live.** The shared dev APIs (:8001, :8011) run pre-P33 code and the dev DB is at
+`p32a_step_overlap` (head `p33c_clear_step_timing`); not migrated by me. Checked instead on the :5174 dev server
+with Playwright and the API intercepted with P33-shaped fixtures (screens: saved timeline, drafts with an overlap
+note, apply dialog, add-category dialog); no page errors.
+
+## [2026-11-15] P33-T17 — apply dialog (E2 → E3) and the Lead times tab through the same flow — frontend-builder: DONE
+
+ADR 0045 §2/§5/§6 + amendment, ADR 0046 owner ruling (own effort figures keep their length), DOMAIN_RULES §C,
+API_CONTRACT_P33 E1–E3 (incl. the T10 rulings: only changed copies listed, apply-preview 30/min) and Part I.
+
+**Built.**
+- `hooks/use-template-apply.tsx`, mounted once in `WorkflowTemplatesSection` and shared by the timeline editor and
+  the Lead times tab: `start(changeSet)` → E2 → dialog; Apply → E3 → `recalc_status` handled as a register save /
+  priority move through the shared `useScheduleRunFollow` / `useFollowUpRunWatcher` / `invalidateRunDerivedQueries`
+  (queued → progress → "Timeline recalculated"; deferred → follow-up watcher; not_needed; dispatch_failed; queued
+  without a run id). After E3 the template queries (`['workflow-settings']` prefix), projects, Gantt, Dashboard,
+  Priority board are invalidated and the editor's drafts cleared. 409 `TEMPLATE_CHANGED` (E2 or E3) → template
+  reloaded, "Someone saved this category meanwhile. The latest template has been loaded — check your changes and
+  save again. Nothing was saved."; no Back. 429 → "wait N s" (Retry-After); Back returns to the lists.
+  `NO_CHANGE`, `BAD_PROJECT`, 403 have their own copy (`lib/template-copy.ts`).
+- `components/template-apply/apply-dialog.tsx`: the change lines, four served counts, then sections "Updated
+  automatically", "Choose" (radio "Apply to all N projects that have not reached these stages" / "Choose projects"
+  with search by name or hub, "Tick all shown", "Clear", checkbox rows with name, hub and "Now at <step> <name>
+  (<status>)" — Blocked shown as On Hold), "Uses its own weeks — length not changed", "Not changed" (reasons:
+  Frozen / Cancelled / Commercialized / Already started or finished + reached steps). Every section but Choose is
+  collapsed. Per project: `PDD-E 6w → 7w`, `gap 0w → −2w`, and the R33-11 flags as short notes. Selection →
+  `all_not_reached` / `selected` (ticked ids) / `none`. **Default is "Choose projects" with nothing ticked**
+  (only the automatic projects change unless the user opts in) — the owner may prefer "Apply to all" as default;
+  one line to change. Lists over 100 rows use TanStack Virtual (`project-rows.tsx`, measured rows).
+- `components/template-apply/apply-result-panel.tsx`: non-modal bottom-right panel: applied counts, own-effort
+  count, the `not_applied` race list by name ("… started this step meanwhile — not changed"), and the run state.
+  E3 carries no `baseline_run_id`, so no "what moved" list is shown (unlike a priority move).
+- Lead times tab: editable for `workflow_templates.write`; "Save N changes…" builds one E1 entry per category
+  (`lib/lead-times.ts::leadTimeChangeSet`, `base_version` from C1) and opens the same dialog. Cells validated
+  0..104. The grid re-seeds when a category's `template_version` changes (apply or reload).
+- e2e `p9-settings-admin.spec.ts` rewritten for P33 (`?tab=templates`; lead-time edit through the dialog and
+  reverted; Admin edits templates, read-only on Chambers). **Not run** (needs a live stack at head).
+
+**Tests** (`WorkflowSettingsPage.p33.test.tsx`, T17 block, 10): E2 body with `base_version`, four sections and
+counts, default `none`, drafts cleared after apply; "Apply to all" → `all_not_reached` and a queued run followed
+to "Timeline recalculated"; search + tick → `selected` and the race summary + deferred copy; own-effort section,
+never reasons and all five flag notes, before → after values, axe on the dialog; 409 on E3 (reload re-reads
+`/workflow-settings`, no Back, nothing applied) and on E2; 429 with Retry-After then Back and a successful second
+Apply; an Admin applies; the Lead times tab path (E2 body, change line) for an Admin; Lead times read-only
+without template write.
+
+## [2026-11-15] P33-T18 — "+ Add category" dialog (B2) — frontend-builder: DONE
+
+ADR 0047 §2/§3, DOMAIN_RULES §E, API_CONTRACT_P33 B2 (incl. the >64-character ruling) and Part I.
+
+**Built.** `components/add-category-dialog.tsx` (button "Add category" in the Timeline previews header, only with
+`workflow_templates.write`): Code (max 16), Name (optional → `label`, null when blank), Workflow (Standard PDD /
+OEM), "Copy the template from" (that workflow's categories in rank order; reset on workflow change), "Place in the
+scheduling order" ("First (before <rank-1 code>)", then "After <code>" for every category in rank order, any
+workflow; default after the first source), with a help line saying the order is a tie-breaker after priority,
+position and status (DOMAIN_RULES order keys 3a/4 before 5). Error copy per code in `lib/add-category-copy.ts`,
+shown under its field with `aria-invalid` / `aria-describedby`: `BAD_CATEGORY_CODE`, `CATEGORY_EXISTS` (code),
+`BAD_COPY_SOURCE` (copy from), `BAD_POSITION` (position), the schema 422 for an over-long code, 429 with
+Retry-After, and an empty code (client check, nothing sent). On 201: `queryKeys.categoriesAll()` and
+`['workflow-settings']` (settings, timelines, B-equivalent) invalidated, the toggle switches to the new category's
+workflow and its timeline opens.
+
+**Tests** (`WorkflowSettingsPage.p33.test.tsx`, T18 block, 7): position list in rank order and copy-from per
+workflow + axe; each of the four codes next to its field; 429 and empty code; success body (trimmed code, label,
+source, position), both invalidations, dialog closed, new timeline open. Gating covered by the viewer test (no
+button).
+
+**Checks (T16–T18 together).** `tsc -b --noEmit` 0 errors. `eslint .` 0 errors, 9 warnings (all pre-existing, none
+in files touched here). Full vitest: **245 files, 1929 passed, 0 failed**. Bundle: **PASS, 192.1 KB gzip
+initial** (400 KB). Backend contract test 251 passed. No `dangerouslySetInnerHTML`, no new dependency, no three.js,
+Lottie not used. No financial field or engineer name is read or shown (E2 serves none).
+
+**For others.**
+- Deploy: the UI needs the P33 backend and `alembic upgrade head` (dev DB at `p32a`); against the running pre-P33
+  dev APIs `/me` has no `workflow_templates`, so an Admin sees the template tabs read-only and C2 lacks the new
+  fields (the editor would crash on `predecessor_ids`) — ship frontend and backend together.
+- Owner decision to confirm: the apply dialog's default for started projects ("Choose projects", none ticked).
+
+## [2026-11-15] P33-T19 — audited end-to-end run of the P33 backend on a disposable copy of the dev DB — workflow-auditor: **PASS**
+
+Authority: ADR 0046 owner ruling OR-1..OR-6 > R33 > text; DOMAIN_RULES "Category templates" §A–§F + P33 invariants;
+API_CONTRACT_P33. No feature code. Scratch harness: `scratchpad/t19/` (session scratchpad, not in the repo).
+
+**Setup.** `rpd_p33t19` = `pg_dump` of `rpd` (p32a, 330 projects, 4620 steps, 12 runs; active v12 within-year **134**).
+`alembic upgrade head` ran p32a → p35a → p33a → p36a → p33b → p33c. Then `python -m scripts.p33_recalc_after_timing_clear`
+was run once and once more. The copy was dropped at the end. The dev DB is untouched (still p32a, 12 runs).
+Driven through the real API (ASGI client, Admin principal = a real Admin user, inline greedy dispatch) and in-process
+`build_schedule_input_from_db` / `run_greedy_sgs` / `run_cp_sat` (standalone process, never FastAPI).
+
+**Independent re-derivation (from raw SQL rows, no service code)** after every run:
+- §B `eff` per step vs every run row (I29; skipped ⟺ eff 0);
+- the §D gate (G / release / o / w from the run's own rows) for every Not Started step (I27 / I28 / I3);
+- one-leader (no two design rows of one project overlap);
+- I1 per engineer over non-Done placements;
+- I9: served `within_year_count` = stored outcomes (`within_year ∧ ¬blocked`) = fresh greedy;
+- I6 / I7 / I23: per capacity hub and lab region, Capacity `*_load_booked_weeks` = Σ stored rows = Σ Gantt
+  `design_weeks` / `lab_weeks`;
+- I25: served demand = my Σ eff (status ∉ {Cancelled, Draft});
+- Gantt `plan_weeks` / `gap_weeks` / `own_effort` = raw rows;
+- I26 (Σ = E + raised, no effort on weight-0 steps or without a figure);
+- the stored run = a fresh greedy on the rebuilt input, row for row;
+- plus `validate_invariants(..., check_determinism=True, live_state=True)` (I1–I37a/b, I8, I28 wait invariance).
+
+**Result: zero violations in every run (v13–v19), every reconciliation exact to the week / 2 dp.**
+
+| Step | Served within-year before → after | Notes |
+|---|---|---|
+| p33c + recalc script (S7) | 134 (v12) → **135** (v13 `timing_cleared`) | 4 projects / 5 rows / 7 values cleared; 4 `project.step_timing_cleared` rows with exact before-states; 4 stale → 0; 2nd call `already_dispatched`; CHECK rejects a new value |
+| S1 gap −2: A+ PDD-E (design∥design) + A PDD-F (lab∥design) | 135 → 135 (v14) | E2 lists = mine (2 auto / 2 choosable / 0 own / 7 never); preview A+ E: effective gap 0, `same_leader_serialised` + `anchor_clamped`; run: A+ E starts at D.end+1, unconstrained 84→84; A F starts at E.end+1−2, unconstrained −2 on both; a skipped F gets `gap_ignored_skipped`, Δ0 |
+| S2 wait +3: C PDD-K, all_not_reached | 135 → 135 (v15) | 42 written (30 auto + 12 choosable) = mine; 0 duration changes, 0 rows added/removed, demand and booked identical; unconstrained +3 on the 4 live-K projects, 0 on the 31 skipped-K ones; finish Δ ∈ {0, 3} |
+| S3 length B PDD-E 4→5, all_not_reached | 135 → 135 (v16) | 160/187 B projects own a design figure; 68 listed `own_effort` (nothing written; eff, E copy and run durations unchanged = I32 iii); 13 no-figure not-reached projects got E=5 (= my set); demand +10 PD-India / +3 PD-Romania = my count; booked reconciles |
+| S4 choosable subset: C PDD-L 0→1 (elapsed), 6 of 12 ticked | 135 → **134** (v17) | 30 automatic applied under `selected` (I31 v); 6 ticked received; 6 unticked byte-untouched, not stale, unconstrained unchanged; `revived` flagged |
+| S5 add B2 after B from B, then register a B2 project | 134 → 134 (no run on add) → 134 (v18 manual recalc after registration) | ranks 1..8 with B2 = 4, the existing order kept; 14 rows = B's current template incl. S3's E 5 and B's weights; 13 B-eligible engineers extended (= my set) + 13 audit rows + `category.created`; 0 stale, no run, 0 step/project row changes; registration copies B2 (E 5), figure 4 → A1 E2 K1 over the copied weights; not CAT_NOT_ALLOWED; snapshot `categories` absent v13–v17, = input list from v18 |
+| S6 design figure cleared (PATCH null) on X (all Not Started) and Y (A, E Done) | 134 → 134 (v19 manual recalc) | X: effort cleared, E re-copied 4 → **5** (current template); Y: reached A/B/D/E keep their copies (B, D reached via the successor clause), I/J/K/M re-copied; Y's lab figure untouched; audit `template_copy` before/after; demand +13 PD-India = mine |
+
+- **Stored runs byte-stable.** v1–v12 outcomes, steps and run metadata (incl. `workflow_snapshot`) hash-identical to the
+  dev DB after the migrations and seven new runs.
+- **Greedy vs CP-SAT** on the final input (42 waits, 4 overlaps, B2):
+  - CP-SAT FEASIBLE in 80 s, validator 0 violations (I27/I28/I29/I30 included);
+  - 0 duration / skipped differences on common rows;
+  - within-year greedy 134 vs CP-SAT 151 (26 gained, 9 lost) and left-out 76 vs 62. Explained by the weighted
+    objective, not by P33.
+
+**Findings (none blocking).**
+1. **Recalc script masks a failed inline run** (P33-T13). My first attempt ran without the field key in the
+   environment (`models/types.py` reads it from the process env, not from `.env`).
+   - The inline run v13 FAILED (`RPD_FIELD_ENCRYPTION_KEY is not set`), yet the script printed `status=queued` and
+     exited 0.
+   - A second call answered `already_dispatched`, because only DISPATCH_FAILED runs are retried. The 4 projects
+     would stay stale with no run until someone recalculates by hand.
+   - I recreated the copy and reran with the key; the table above is from the clean run.
+   - Remediation (backend-builder, small): treat a FAILED `timing_cleared` run like `dispatch_failed` (exit 1,
+     retry allowed), or exit non-zero when the inline run fails.
+   - Runbook: the field key must be exported before the script runs.
+2. **Live I30 is vacuous since P36.** Every schedulable project holds a dense, unique `band_rank` within its priority
+   (I37b), so sort keys 1–3a always separate projects and key 5 (category rank) never decides in a live run.
+   - B2's chosen position matters only for unranked inputs (What-if added lines, plan import).
+   - Exercised on the real input with band ranks blanked and the B2 project moved to P4 (73 tied peers): B2 came
+     after all 47 B and before all 19 C; I30 validator clean.
+   - DOMAIN_RULES I30 already scopes ties to keys 1–3a/4, so this is not a divergence. Owner-facing copy should not
+     promise that B2 "schedules between B and C" in the live plan.
+3. **Data observation (pre-existing, not P33).** 1,243 engineer overlaps in the active run all involve at least one
+   Done step (recorded history). There are 0 between Not Started / In Progress placements. The validator treats Done
+   as history, consistent with I1's fixed-placement clause.
+4. **No dispatch on registration or figure clear.** Neither dispatches a run; the stale flag waits for the next run.
+   This matches contract E4 ("sets stale"). Recorded so nobody reads a missing run as a defect.
+5. **Not exercisable on live data:** frozen projects (0 in the copy). The frozen `never` path rests on the P33-T10
+   tests.
+
+No divergence from DOMAIN_RULES / ADR 0046 OR-1..OR-6 / API_CONTRACT_P33 in any served list, write, audit row, run
+or surface figure. **P33-T19: PASS.** Finding 1 is a non-blocking remediation for the orchestrator to schedule. No
+financial field was read into output or logged; the registration probe used dummy figures.
+
+## [2026-11-15] P33-R01 — recalc script no longer masks a failed run (P33-T19 finding 1) — backend-builder: DONE
+
+- `backend/scripts/p33_recalc_after_timing_clear.py`:
+  - after a `queued` dispatch it waits (`--wait-seconds`, default 600) for the inline body, then polls the run row until
+    it is terminal, in both inline and worker modes (`wait_for_outcome`);
+  - COMPLETED → `queued`, exit 0. FAILED / CANCELLED → new status `run_failed`, exit 1, with a stderr hint (secrets,
+    `/schedule-runs`). Still queued / running at the deadline → `still_running`, exit 3 ("do not rerun yet").
+    Exit codes otherwise unchanged (`dispatch_failed` 1, missing URL 2);
+  - `_already_dispatched` now counts only `timing_cleared` runs in QUEUED / RUNNING / COMPLETED (before: anything but
+    `DISPATCH_FAILED`). So a run that failed while executing, a reaped (ABANDONED) run or a cancelled run lets a later
+    invocation retry. The `deferred` marker still counts.
+  - Unchanged: the advisory-lock decision, one `schedule_run.dispatched` marker per dispatch (a retry after a failed
+    run writes a second marker for the new run), and no project or financial data in the output. The error text is not
+    printed; it stays in the Admin-only `error_message`.
+- Tests: `backend/tests/test_p33_t13_recalc_script.py` +3, 7/7 green.
+  - The greedy is patched to raise → `main()` exits 1 with `status=run_failed`; the run is FAILED (not
+    DISPATCH_FAILED); 1 marker; 2 stale. A second `main()` gives exit 0 / `queued`: a new COMPLETED active run, 2
+    markers, 0 stale. A third answers `already_dispatched`.
+  - A completed run → exit 0. A second call → `already_dispatched`, exit 0, empty stderr.
+  - A queued `timing_cleared` run with a 0 s wait → `still_running`, exit 3. It counts as dispatched.
+- Ruff and format are clean on both files. Project-wide `mypy .` reports 0 errors in the touched files; the
+  pre-existing errors elsewhere are unchanged.
+- `docs/HANDOVER/DEPLOYMENT_RUNBOOK.md` §8 has a new "One-off upgrade: P33" section:
+  1. back up first;
+  2. code and `p33c` ship together;
+  3. secrets, including the field encryption key;
+  4. build and up, which runs `p32a → p35a → p33a → p36a → p33b → p33c`;
+  5. check `alembic current`;
+  6. `docker compose run --rm api python -m scripts.p33_recalc_after_timing_clear`.
+  Use `run`, not `exec`, because only `run` goes through the entrypoint's `_FILE` secret resolution. Then check that
+  the exit is 0; the section also covers what exit 1 and 3 mean.
+- Plan row P33-R01 has been added as DONE. Not committed. Running pytest rewrote `backend/.coverage`, which was
+  already modified in the tree.
+
+## [2026-11-15] P33-T20 gate — security-auditor leg: **PASS** (0 Critical, 0 High, 0 Medium, 2 Low, 5 Info)
+
+OWASP ASVS L2 review of P33 (uncommitted tree; P34/P35/P36 work in the same tree is out of scope). Static review
+of `core/rbac.py`, `api/deps.py`, `api/routers/workflow_templates.py`, `api/routers/workflow_settings.py`,
+`api/routers/step_timing.py`, `api/routers/reference.py`, `services/template_apply.py`, `services/category_admin.py`,
+`schemas/workflow_templates.py`, migrations `p33a/b/c`, `scripts/p33_recalc_after_timing_clear.py`, the export,
+What-if-chat and ask-agent category readers, and the P33 frontend (workflow-settings surface, category catalog,
+gap chip). No feature code changed.
+
+**Runs.** Existing suites `test_p33_t06` / `t10_template_apply` / `t11` / `t13_timing_retired` /
+`test_workflow_settings_api`: 144 passed. A temporary adversarial probe module (10 tests, Postgres testcontainer,
+deleted afterwards) passed all of these checks:
+- 401 without a session on all four `/workflow-templates/*` POSTs, the lead-times PUT and the timing PATCH;
+- PM, HP, Engineer, Executive and Auditor get 403 on all four POSTs and on both GETs (`/workflow-settings` and
+  `category-timelines`), with no version bump, no category and no audit row;
+- Admin gets 403 on the steps and hub-calendar PUTs, and the lead-times PUT gives 410 `USE_TEMPLATE_APPLY`;
+- a hub-scoped Admin's apply-preview omits the out-of-scope project's name and id. Ticking that id in apply gives
+  422 `BAD_PROJECT`, the name is not echoed and the template is unchanged;
+- these tampered bodies get 422/409 on preview and apply: an `effort_weight_weeks` smuggled into a step, out-of-range
+  weeks, a category of the other workflow, a SQL-ish category, a step of another workflow;
+- these category codes get 422: `<script>`, SQL-ish, `oem`, ` OEM `, a zero-width char, a full-width B, 17 chars.
+  An extra `rank` field also gets 422;
+- the timing PATCH returns a byte-identical 410 for an existing and a random project (no existence leak).
+
+`pip-audit` / `pnpm audit --prod` / `trivy fs --scanners secret`: no manifest or lock change in P33. The advisories
+(certifi, filelock, msgpack, opentelemetry-api; zod, react-router) and the secret hits (untracked, gitignored
+`deploy/tls/dev/server.key`, `frontend/e2e/.tokens.json`, `.playwright-mcp/` log) are all pre-existing and already
+triaged (S32).
+
+**Verified.**
+- Every P33 write uses `require_workflow_templates_write`, and the steps / hub-calendar PUTs keep
+  `workflow_settings` WRITE.
+- Apply and apply-preview are hub-scoped through `hub_scope_filter`. E2/E3 serve name, hub, status and step weeks
+  only, with no financial field and no engineer name.
+- Rate limits: preview 120/min, apply-preview 30/min, apply 6/min, add-category 10/min.
+- CSRF is not applicable (bearer-only auth, no cookies, exact CORS origins).
+- Audit rows are written for:
+  - apply: a summary plus one row per project;
+  - add-category: `category.created` plus one row per engineer, with lists and ids only (no names);
+  - p33c: one row per project.
+  The reason text is logged as its length only.
+- No new `logger` or `print` in the P33 modules. The recalc script prints status, a count and the run id only; it
+  never prints the DB URL or error text.
+- No migration touches the audit trigger, and the p33c downgrade only reads audit rows.
+- Migrations: every f-string interpolates module constants only, and p33c uses bound `sa.text` parameters. The
+  triggers are correct: weight immutability, engineer eligibility codes, hub/workflow match, the p33c CHECK.
+- Frontend:
+  - no `dangerouslySetInnerHTML` or other HTML sink;
+  - category code and label are rendered as React text (Recharts, not ECharts HTML tooltips);
+  - export cells pass `_neutralise_formula`, which covers codes that start with `+`/`-` and free-text labels;
+  - the LLM prompt uses CHECK-restricted codes only, never labels.
+
+**Findings.**
+- **L-1 (Low):** a hub-scoped Admin (none exist today) can change the global category template, while apply writes
+  copies only to in-scope projects. The builder documented this (T10). Recommendation: require `hub_scope_all` for
+  `workflow_templates` WRITE, or record it in ADR 0045.
+- **L-2 (Low, pre-existing):** dependency advisories (pnpm: zod high-rated memory exhaustion, client-side only;
+  pip-audit 17 in 4 packages). Not introduced by P33. Upgrade in the next dependency pass.
+- **I-1 (Info, pre-existing):** an Admin can still PUT `/workflow-settings/chambers/{id}` through the Capacity
+  Planning WRITE path (P9 design: Admin has chamber CRUD). The Workflow tab's "Chambers (Super Admin only)" notice
+  understates this. The owner should confirm the intent; this is not a P33 regression.
+- **I-2 (Info):** `template_changes.reason` (free text, up to 500 characters) is stored in plaintext. It is not
+  served or logged. The table has no append-only trigger; the immutable `workflow_template.applied` audit row
+  duplicates its content.
+- **I-3 (Info):** rate limits are per process and per user (pre-existing limiter design).
+- **I-4 (Info):** GDPR. P33 adds no per-engineer utilization data. `engineer.allowed_categories_extended` audit rows
+  carry the engineer id, hub and category lists only. OQ #8 is unaffected.
+- **I-5 (Info):** the category label accepts markup-like text (`<img onerror>` stored, 201). It is safe on every
+  current sink (React text, formula-neutralised exports). Any future HTML sink (ECharts HTML tooltip, email) must
+  escape it.
+
+**Result: PASS.** No High or Critical finding.
+
+## [2026-11-15] P33-T20 gate — workflow-auditor leg: **PASS**
+
+Authority: ADR 0046 owner ruling OR-1..OR-6 > R33 > text; DOMAIN_RULES "Category templates" §A–§F + P33 invariants;
+API_CONTRACT_P33. No feature code. Harness: the P33-T19 scripts re-pointed at a new copy (session scratchpad `gate/`,
+not in the repo), plus a builder-mapping check, a frozen-path probe (S7) and a CP-SAT diff.
+
+**Setup.** `rpd_p33gate` = `pg_dump` of `rpd` (p32a, 330 projects, 12 runs). `alembic upgrade head` ran
+p32a → p35a → p33a → p36a → p33b → p33c. Then `python -m scripts.p33_recalc_after_timing_clear` ran twice
+(`queued` exit 0 → v13 COMPLETED `timing_cleared`, 4 `project.step_timing_cleared`, 0 stale; then
+`already_dispatched`). Both copies were dropped. The dev DB is untouched: still p32a, 12 runs, run hashes unchanged.
+
+**Final code = T19 results, exactly.**
+- The baseline report (v13) and S1–S6 reports were diffed key by key against the P33-T19 reports, with UUIDs and
+  timestamps normalised. **0 differences.** That covers within-year 135 → 135 → 135 → 135 → 134 → 134 → 134, every
+  E2 list and eff before/after, write sets, audit counts, capacity and Gantt figures and every unconstrained finish.
+- So the R01 script change and the T10 follow-ups 1–2 changed no scheduling semantics. The follow-ups are
+  `share_lock_categories` = `SELECT … FOR SHARE` only, no writes, at 6 call sites.
+- Every run v13–v22 had zero violations on both checks:
+  - my independent re-derivation: I29/§B eff, I27/I28/I3 gate, one-leader, I1, I26, I9, I6/I7/I23, I25 and the Gantt
+    copy fields;
+  - `validate_invariants(check_determinism=True, live_state=True)`.
+  The stored run equals a fresh greedy on the rebuilt input, row for row.
+
+**Additional checks this gate.**
+- **Builder (§B / F4 / R33-9).** All 331 projects in the input were checked:
+  - every emitted timing row (1,713, of which 1,623 are own-effort) has `lead_weeks` = weight on own-effort steps
+    and `plan_weeks` otherwise (None when equal to the table), `override` = `effort_weeks` / None,
+    `start_not_before` None and `overlap`/`wait` from `plan_gap_weeks`;
+  - every omitted step is default.
+  0 mismatches, and no `lead_weeks` equals its table value.
+- **Retired endpoints.** `PATCH …/timing` → 410 `STEP_TIMING_RETIRED`. `PUT /workflow-settings/lead-times` → 410
+  `USE_TEMPLATE_APPLY`.
+- **Frozen path (S7, not exercisable at T19).** Two Not Started B projects (one own-effort design) were frozen.
+  Then B PDD-H length +1 and gap +1 were applied with `all_not_reached`:
+  - E2 = mine (79 auto / 12 choosable / 0 own / 96 never); both frozen projects are in `never` with reason `frozen`;
+  - 91 pairs written = mine; frozen rows byte-untouched and not stale; validator clean.
+  - Unfreezing one (the FOR SHARE path) wrote no back-fill of the template and marked it stale. The recalc was clean.
+  - Within-year moved 134 → 129 (freeze at W42) → 129 (apply) → 131 (unfreeze + recalc). Reported, not tuned.
+- **Dashboard partition (I9/I35)** on v22: served 131 within + 68 spillover + 74 left-out + 0 blocked + 58
+  unscheduled = 331 = the stored outcomes.
+- **Byte stability.** After the migrations and ten new runs, v1–v12 outcomes and steps are hash-identical to the dev
+  DB. `schedule_runs` rows are identical, `workflow_snapshot` included, except v12's `is_active` / `updated_at`,
+  which the activation of v13 flips (normal lifecycle).
+- **R01 on a second copy.** The script was run without `RPD_FIELD_ENCRYPTION_KEY`:
+  - `run_failed`, the run FAILED, the stderr hint printed and no secret was echoed;
+  - a rerun with the key gave `queued` (a new COMPLETED active run, 2 dispatch markers, 0 stale);
+  - a third call gave `already_dispatched`.
+- **Greedy vs CP-SAT** on the final S6 input: FEASIBLE in 95 s, validator 0 on both, 0 duration/skipped differences.
+  The divergence (134 vs 151, +26 / −9, left-out 76 vs 62) is identical to T19 and explained by the objective.
+- **Suites.** `tests/scheduling` 636 passed (golden files untouched; the only edits are the P33-T05-accepted
+  `test_p32_overlap` re-blesses). `tests/test_p33_*` + `test_schedule_persistence` 208 passed.
+
+**Doc findings (non-blocking: text only, no behaviour or invariant affected). The orchestrator folds them before
+P33 closes.**
+1. **Recalc script retry is undocumented.** DOMAIN_RULES §F "Deploy order" says "A second call answers
+   `already_dispatched`". Since P33-R01 that holds only when the first run COMPLETED or is still in flight. After a
+   FAILED, CANCELLED or ABANDONED run a second call dispatches again. Exit codes 1 (`run_failed` / `dispatch_failed`)
+   and 3 (`still_running`) and the field-key prerequisite are missing. The runbook §8 has them; DOMAIN_RULES should
+   point there or state them.
+2. **Contract E3 lock-order bullet is incomplete.** It names only registration and category change. The T10
+   follow-up 2 ruling extends the category `FOR SHARE` to the figure-cleared re-copy paths:
+   - the PATCH whenever effort inputs change;
+   - the register batch;
+   - unfreeze;
+   - `rederive_all_projects`.
+   Each takes it before its first project-row lock, and `rederive_project_effort` takes it again. Add these to
+   the contract.
+3. **Housekeeping.** A leftover scratch database `rpd_p33t07` (from P33-T07) still sits on the dev Postgres. Not
+   mine; not dropped.
+- Carried from T19 finding 2: live I30 is vacuous under P36 band ranks. Owner-facing copy must not promise that a new
+  category "schedules between B and C" in the live plan.
+
+No financial field was read into output or logged. **Workflow-auditor P33 gate leg: PASS.**
+
+## [2026-11-15] P33-T20 workflow-leg doc fixes folded in — orchestrator
+
+Docs only, from "P33-T20 gate — workflow-auditor leg: PASS".
+1. **DOMAIN_RULES §F "Deploy order":**
+   - the command is `docker compose run --rm api python -m scripts.p33_recalc_after_timing_clear`
+     (`run`, not `exec`; DEPLOYMENT_RUNBOOK §8), with the DB URL and the field encryption key
+     available;
+   - since P33-R01, `already_dispatched` only when the first `timing_cleared` run completed or is
+     running; after a failed, cancelled or abandoned run it dispatches again;
+   - exit codes: 0 ok, 1 run_failed / dispatch_failed, 2 missing DB URL, 3 still_running.
+2. **API_CONTRACT_P33 E3 lock order:** band-rank lock (R36-8), then category `FOR SHARE`, then
+   project rows. Category `FOR SHARE` is also taken on the figure-cleared paths: PATCH on any
+   effort-input change, the register batch, unfreeze, `rederive_all_projects` and inside
+   `rederive_project_effort`.
+3. **Category rank is a tie-breaker since P36 band ranks.**
+   - Note added to DOMAIN_RULES "Scheduling order" key 5.
+   - Note and amendment added to ADR 0047.
+   - Contract Part I gives the add-category position copy: "only breaks ties … mainly What-if and
+     imported plans", and never "schedules between B and C".
+   - **Follow-up for frontend-builder:** check that P33-T18's dialog copy matches.
+
+## [2026-11-15] P33-T20 gate — qa-inspector leg: **FAIL** (one blocking axe violation in the apply dialog, P33-T17; everything else green)
+
+Scope: the working tree at gate time (P33-T00..T19 + R01; ADR 0045–0048; `docs/API_CONTRACT_P33.md`). The tree also holds
+other sessions' uncommitted P34/P35/P36 work. Nothing failed that belongs to them. No feature code was written. The shared dev DB
+(`rpd` on :5433) was not touched; it is still at `p32a_step_overlap`.
+
+**Disposable stack.** Postgres 17 `qa-p33-pg` (:55933), Redis 7 `qa-p33-redis` (:56933), uvicorn :8933 (RPD_DEV_MODE, a
+throwaway Fernet key), `vite --mode e2e` :5933.
+- `alembic upgrade head` ran `p32a → p35a → p33a → p36a → p33b → p33c` cleanly.
+- Then `seed_demo_data --dataset client_2026 --reset --schedule` (330 projects, run v1, 132 within-year) and `seed_dev_users`.
+- All containers and processes were removed afterwards.
+
+**1. Backend: full `pytest` (default addopts): 3062 passed, 0 failed, 0 errors, 97.32 %** (gate 70 %), 12m55s.
+- No flaky test fired this time: `test_p32_r01_greedy_inline`, `test_schedule_runs_progress_sse`, and the migration containers
+  all passed first time, so no isolation reruns were needed.
+- Coverage of the P33 files:
+  - 100 %: `routers/workflow_templates.py`, `routers/step_timing.py` (410), `routers/reference.py`, `category_admin.py`,
+    `workflow_durations.py`, `demand_load.py`, `schemas/category.py`.
+  - 95–99 %: `template_apply.py` 99 %, `schemas/workflow_templates.py` 99 %, `routers/gantt.py` 99 %,
+    `template_copy.py` 97 %, `template_editor.py` 98 %, `workflow_previews.py` 98 %, `routers/workflow_settings.py` 98 %,
+    `project_effort.py` 98 %, `models/category.py` 97 %, `routers/projects.py` 96 %, `services/categories.py` 95 %,
+    `services/workspace.py` 95 %.
+  - `scripts/p33_recalc_after_timing_clear.py` 97 %. It is outside the addopts scope, so I measured it separately on its 7 tests.
+- **Scheduling (`pytest -c pytest-scheduling.ini`): 636 passed, 96 %** (gate 85 %). `template_timeline.py` 99 %, `types.py` 100 %,
+  `workflow.py` 99 %, `cp_sat.py` 97 %, `invariants.py` 94 %, `monte_carlo.py` 93 %, `greedy.py` 91 %.
+- **Golden files: 38/38 green** (`test_golden_files.py`, `test_p9_golden.py`).
+  - The golden fixtures (`test_golden_files.py`, `test_p9_golden.py`, `_fixtures.py`) are unchanged against HEAD.
+  - The only changed scheduling test is `tests/scheduling/test_p32_overlap.py`. Its diff is exactly the 3 re-blesses accepted at
+    P33-T05: (a) unconstrained 47 → 48 under R33-6; (b) the canonical `pre` drops `wait_weeks` / `lead_weeks`; (c) the trailing
+    dataclass fields.
+- **Contract test (`test_openapi_frontend_contract.py`): 251 passed.**
+  - Every P33 row is `"exact"`: LeadTimeSetting, TimelineStep, CategoryTimeline, TimelinePreviewRequest/Response,
+    TemplateChangeEntry/Set, TemplateApplyRequest/Response, CategoryCreateRequest/Response, GanttStepRow, WorkspaceStage.
+  - No temporary "subset" remains from T09/T12.
+- **Migrations: `test_p33a_migration` (up/down/up, every value preserved), `test_p33b_migration` (same), `test_p33c_migration`
+  ×2 (4 projects / 7 values cleared with 4 audit rows, CHECK, down restores; empty DB writes no audit row): 4/4 passed.** All
+  P33 modules together: 305 passed.
+- ruff:
+  - Repo-wide `ruff check .` has 1 error: `tests/test_p11_capacity_booked.py:170` E501 (128 > 100). This line is a P33-T13
+    fixture edit, and it makes `make lint` red. Non-blocking.
+  - Explicitly listed, `alembic/versions/p33a_categories.py:89,119` E501 (alembic is excluded from the repo-wide run).
+
+**2. Frontend.**
+- `tsc -b --noEmit`: clean.
+- `eslint .`: 0 errors, 9 warnings. All 9 are the pre-existing `react-hooks/incompatible-library` (useVirtualizer) warnings; none
+  is in a P33 file.
+- **vitest: 245 files, 1929 tests passed, 0 failed.** Coverage: lines 90.9 %, statements 88.96 %, branches 80.67 %,
+  functions 88.16 %.
+- **Bundle: PASS, 192.1 KB gzip initial** (budget 400 KB).
+- P33 file coverage (lines / branches):
+  - workflow-settings components: `category-timeline.tsx` 94.4 / 85.7, `apply-dialog.tsx` 91.5 / 83.8,
+    `apply-result-panel.tsx` 90.9 / 65.8, `add-category-dialog.tsx` 97.9 / 80.5, `lead-times-tab.tsx` 97.0 / 90.6,
+    `project-step-timing-section.tsx` 100 / 89.4.
+  - workflow-settings hooks and libs: `use-template-apply.tsx` 87.3 / 71.7, `use-template-editor.ts` 90.0 / 87.5,
+    `template-drafts.ts` 100 / 87.3.
+  - shared: `step-gap.ts` 100 / 100, `category-catalog.ts` 86.2 / 73.7, `lib/api/categories.ts` 100 / 63.6.
+  - **Below 70 % lines:** `template-apply/project-rows.tsx` **33.3 / 25.0**. The TanStack Virtual branch for lists over 100 rows
+    is never rendered by a test. `categorical-palette.ts` is 50 / 25.
+- Greps:
+  - No `PROJECT_CATEGORIES` / `CATEGORY_ORDER` / `*_CATEGORIES` constant outside tests. The only literals are the two named
+    T14 exceptions (palette slot map, B-equivalent reference) and fixtures.
+  - No step-timing drag, provider or "Edit timing" outside the What-if import (kept per OQ #78).
+  - `dangerouslySetInnerHTML` appears in comments only.
+
+**3. End-to-end + axe on the P33 surfaces.** New `frontend/e2e/p33-gate.spec.ts` and `frontend/playwright.p33qa.config.ts` (env
+`RPD_P33_MATCH` selects another spec). Headless Chromium, 1440×900, plus 390 for the Timeline.
+- **Timeline editor (Super Admin):**
+  - Lengthen PDD-E (A+) redraws from the server: the length is +1 and the pending state clears.
+  - Two Move-earlier clicks give a `−2w` badge plus the server's `same_leader_serialised` flag, and "1 unsaved step".
+  - The first step (PDD-A) has no Move control. Keyboard Enter on Lengthen PDD-F works. Discard restores.
+- **Apply:**
+  - C PDD-K Move later ×3 shows the hatched wait. "Save C…" opens the dialog. "Apply to all" → panel "Template saved" →
+    "Timeline recalculated".
+  - API: C PDD-K `gap_weeks` +3, `weeks` unchanged, `template_version` +1. Audit `workflow_template.applied`
+    {all_not_reached, queued, 30 automatic, 12 selected} and one `project.template_applied` per changed project. Run
+    `template_apply` completed and active.
+- **Read-only Timeline:** a C project with a live K shows the chip "wait 3 wk". There are 0 drag handles and 0 "Edit timing" at
+  1440 and 390. The Workflow "Project step timing" tab, expanded, has no drag / Edit / Reset.
+- **+ Add category:**
+  - Duplicate `b` → CATEGORY_EXISTS under Code (`aria-invalid`, `role=alert`).
+  - `B2` "Light refresh" from B after B → the dialog closes and `timeline-B2` opens.
+  - B1 ranks B2 directly after B (A+ 1, A 2, B 3, B2 4, C 5, …). B2's 14 template rows equal B's (weeks and gaps).
+  - Audit: `category.created` ×1 and `engineer.allowed_categories_extended` ×13.
+- **RBAC:**
+  - An Admin gets the editor.
+  - Executive Viewer and Portfolio Manager see no Lengthen and no Add category.
+  - Server side, PM / Hub Planner / Engineer / Exec / Auditor get 403 on `POST /workflow-templates/apply` and
+    `/workflow-templates/categories`.
+  - Step-timing PATCH → 410 `STEP_TIMING_RETIRED`; `PUT /workflow-settings/lead-times` → 410 `USE_TEMPLATE_APPLY`.
+  - Anonymous → 401 is not testable on a dev-mode stack: no header means the seeded Admin, per `api/deps.py`. The backend tests
+    cover it.
+- The T17-rewritten `e2e/p9-settings-admin.spec.ts` Workflow Settings block was never run before. **3/3 passed**: every tab axe
+  clean; the Lead times edit goes through the apply dialog and is reverted (both applies `not_needed`, 0 automatic A+
+  projects); Admin edits templates, with Chambers read-only.
+- **Axe (serious/critical) across 22 scans: 21 clean, 1 rule failing.**
+  - **BLOCKING: `scrollable-region-focusable` (serious), 2 nodes, in the apply dialog** once its lists are expanded on real data:
+    - `ul[aria-label="Projects updated automatically"]` (30 rows);
+    - `ul[aria-label="Projects not changed"]`.
+  - It reproduced on 2 runs, in 2 scans per run ("lists expanded, Choose projects" and "Apply to all").
+  - Source: `frontend/src/surfaces/workflow-settings/components/template-apply/project-rows.tsx:27`. The `max-h-72
+    overflow-y-auto` `<ul>` has no focusable content in the automatic / own-effort / never sections, so a keyboard user cannot
+    scroll it.
+  - The virtualized container at `:65` (more than 100 rows) has the same shape and is untested.
+  - The unit axe test in `WorkflowSettingsPage.p33.test.tsx` misses it because its fixture lists have 1–2 rows and never
+    overflow.
+  - Clean scans:
+    - timeline editor: saved A+, with drafts + flag, C with a wait, the new B2, Admin;
+    - apply dialog collapsed;
+    - apply result panel;
+    - Timeline at 1440 and 390;
+    - Project step timing tab;
+    - add-category dialog, empty and in its error state;
+    - the 8 P9-spec scans.
+
+**4. Acceptance criteria → tests.** Every P33 row T02–T18 + R01 has named tests:
+- T02: `tests/scheduling/test_p33_gaps.py` (39), covering every listed case incl. CP-SAT ≡ greedy, I28 difference, one-leader.
+- T03: `test_p33_categories.py` (20).
+- T04: `test_p33_template_timeline.py` (13).
+- T06: `test_p33_t06_workflow_templates_rbac.py` (7 roles, `/me`).
+- T07: `test_p33_categories_table.py` (incl. the T05-A3 token test) and `test_p33a_migration`.
+- T08: `test_p33_t08_template_copy.py` and `test_p33b_migration`.
+- T09: `test_p33_t09_timeline_preview.py`.
+- T10: `test_p33_t10_template_apply.py` (every §C row, selection modes, I31/I32, R33-12, 409, 429, deferred + follow-up, no
+  financial field) and `test_p33_t10_apply_race.py` (7 lock races, mutation-checked).
+- T11: `test_p33_t11_add_category.py`.
+- T12: `test_p33_t12_gantt_workspace_fields.py` (incl. I23 with gaps).
+- T13: `test_p33_t13_timing_retired.py` and `test_p33c_migration`.
+- R01: `test_p33_t13_recalc_script.py` (7).
+- T14: `categories-p33.test.tsx` and `lib/api/categories.test.tsx`.
+- T15: `GanttPage.test`, `gantt-responsive.test`, `project-step-timing-section.test`.
+- T16–T18: `WorkflowSettingsPage.p33.test.tsx`, `template-drafts.test.ts`.
+
+Gap: T17's "axe on the dialog" is met only on toy fixtures; it fails on real data (above).
+
+**Remediation (P33-R02, frontend-builder).**
+- Make the non-interactive scroll containers in `project-rows.tsx` keyboard-scrollable: `tabIndex={0}` on the `overflow-y-auto`
+  element (both the plain `<ul>` and the virtualized `<div>`, the latter with `role="region"` + `aria-label`), plus a visible
+  focus ring.
+- Add a unit test that renders more than 10 automatic rows and runs axe, and a test of the virtualized path (more than 100 rows).
+  `project-rows.tsx` is at 33 % lines.
+- Re-run `frontend/e2e/p33-gate.spec.ts` (test "apply: …") on a disposable stack.
+- Same task, backend-builder or whoever is in the file: wrap `tests/test_p11_capacity_booked.py:170` so `make lint` is green.
+
+**Non-P33 observation (for the orchestrator).** At 390×900 the floating Timeline filter panel (`gantt-filters-floating`, sticky
+`z-40`, committed in e8872b1) is taller than the viewport. It covers every row, so pointer clicks on "Expand steps for …" never
+land; my spec uses the keyboard path. This is a narrow-width usability defect of the 2026-11-13 floating-filters change, not P33.
+
+**qa-inspector verdict for P33: FAIL.** One blocking item: the serious axe violation `scrollable-region-focusable` in the apply
+dialog (P33-T17). Everything else passes. Once P33-R02 lands, re-check only the dialog axe scans and the frontend suite.
+
+## [2026-11-15] P33-T20 gate — combined result: FAIL (orchestrator)
+
+Three-way gate for P33 (all tasks T00–T19 + R01 DONE before the gate ran). Not a vote: one FAIL blocks.
+
+- **security-auditor: PASS** (entry "P33-T20 gate — security-auditor leg: PASS"). OWASP ASVS L2, 0 Critical/High/Medium; 2 Low, 5 Info. Own attack tests (10) clean: 401 without a session on all P33 writes; 403 + nothing written for the 5 non-editor roles; Admin 403 on steps/hub-calendar PUTs, 410 on lead-times PUT; hub-scoped Admin cannot see or apply to out-of-scope projects (422 BAD_PROJECT, no name echoed); tampered bodies and hostile category codes rejected; retired timing PATCH gives identical 410 for real and random ids. Rate limits 120/30/6/10 per min; no financial fields or engineer names in apply-preview; audit rows complete; migrations use constants/bound params only; recalc script prints no secrets. L-1: a hub-scoped Admin can change a category template for everyone though apply only reaches their hubs (no such Admin exists) — require all-hub access or record in ADR 0045. L-2: pre-existing dependency advisories. I-1: Admin can PUT chambers (pre-existing Capacity Planning path, owner to confirm). I-5: category labels may contain markup — safe today; any future raw-HTML output must escape.
+- **workflow-auditor: PASS** (entry "P33-T20 gate — workflow-auditor leg: PASS"). Copy of dev DB migrated to head; final code reproduces the T19 reports with 0 differences (R01 and the FOR SHARE follow-ups change no scheduling behaviour). Runs v13–v22: 0 violations on independent re-derivation (I29/§B, I27/I28/I3, one-leader, I1, I26, I9, I6/I7/I23, I25, Gantt copy fields) and the scheduler validator; stored runs v1–v12 hash-identical; builder mapping checked on all 331 projects (1,713 timing rows, 0 mismatches); frozen path (S7) verified; R01 failure path verified; scheduling suite 636 passed, golden files unchanged. Doc findings (deploy-order text, E3 lock order, category rank only a tie-breaker since P36) fixed by the orchestrator the same day.
+- **qa-inspector: FAIL** (entry "P33-T20 gate — qa-inspector leg: FAIL"). Backend 3062 passed / 97.32 %; scheduling 636 / 96 %; golden 38/38 unchanged except the 3 accepted P32 re-blesses; OpenAPI contract 251 passed (all P33 pairs exact); migrations p33a/b/c pass; frontend tsc clean, eslint 0 errors, vitest 1929 passed (90.9 % lines), bundle 192.1 KB/400. E2E on a disposable head stack: apply and add-category flows and RBAC work; 21 of 22 axe scans clean. **Blocking:** serious axe `scrollable-region-focusable` on the apply dialog's scrollable project lists (project-rows.tsx :27, same shape in the virtualized container :65) once lists overflow on real data; unit fixtures were too small to catch it. Also `ruff check .` red on one long line in backend/tests/test_p11_capacity_booked.py:170 (P33-T13 edit). Outside P33: the floating Timeline filter panel (commit e8872b1) covers all rows at 390×900 — needs an owner.
+
+**Result: P33 does not advance.** Remediation P33-R02 added at the top of the P33 table. After it lands, re-run only the qa-inspector leg (dialog axe scans + frontend suite + ruff); the security and workflow legs stand.
+
+## [2026-11-15] P33-R02 — apply dialog project lists are keyboard-scrollable (P33-T20 qa-inspector FAIL) — frontend-builder: DONE
+
+**Change.** `frontend/src/surfaces/workflow-settings/components/template-apply/project-rows.tsx`:
+- The plain `<ul>` list (≤ 100 rows) gets `tabIndex={0}`. Its `aria-label` and `data-testid` are unchanged, so the e2e selectors still match.
+- The virtualized scroll `<div>` (> 100 rows) gets `role="region"`, `aria-label={label}` and `tabIndex={0}`. The inner `<ul>` keeps its label.
+- Both containers get one shared token focus ring (`SCROLL_FOCUS`): `focus-visible:outline-none ring-2 ring-ring ring-offset-2 ring-offset-surface`, the same classes `card-info.tsx` uses. No markup or behaviour changed otherwise.
+- `backend/tests/test_p11_capacity_booked.py:170`: wrapped one comment line. Nothing else in that file was touched.
+
+**New test.** `template-apply/project-rows.test.tsx` has 9 tests.
+- jsdom has no layout and no Tailwind CSS, so a `layOut()` helper stubs the geometry a browser computes for `max-h-72`:
+  - the container is a 288 px window over 40 px rows;
+  - `scrollHeight`, `clientHeight`, `offsetHeight` and `getBoundingClientRect` are stubbed per element;
+  - `Range#getClientRects` is added, because jsdom lacks it and axe needs it.
+  - `overflow-y: auto` is set inline.
+- **Plain path (30 rows):**
+  - attributes and focus-ring classes;
+  - reachable with Tab;
+  - axe clean;
+  - a **control** test: the same overflowing list with `tabindex` removed **does** report `scrollable-region-focusable`. This proves the overflow setup makes axe evaluate the rule. The first draft without these stubs passed vacuously.
+  - 100 rows are not virtualized.
+- **Virtualized path (240 rows):**
+  - region role, label, tabindex and ring;
+  - only a window of rows is mounted, with `aria-setsize`/`aria-posinset`;
+  - reachable with Tab;
+  - axe clean, plus the same control test.
+- `project-rows.tsx` coverage: **33.3 / 25 → 100 % lines, 94 % statements, 75 % branches**. The one uncovered branch is the defensive `row === undefined`.
+
+**Checks.**
+- `tsc -b --noEmit` clean.
+- `eslint .`: 0 errors, 9 warnings. All 9 are pre-existing, in other files.
+- `vitest run`: 246 files, **1938 passed**.
+- `pnpm build`: bundle **192.1 KB / 400 KB gzip**, PASS.
+- `ruff check .` from `backend/` (`.venv/bin/ruff`): **All checks passed**.
+
+**E2E on a disposable stack.** I followed the qa-inspector's approach; the shared dev DB `rpd` on :5433 was not touched.
+- Stack: Postgres 17 `r02-p33-pg` on :55934, Redis 7 `r02-p33-redis` on :56934, uvicorn on :8934 (RPD_DEV_MODE, a throwaway Fernet key), and `vite --mode e2e` on :5934.
+- `alembic upgrade head` ran p32a → p35a → p33a → p36a → p33b → p33c. Then `seed_demo_data --dataset client_2026 --reset --schedule` (330 projects, 132 within-year) and `seed_dev_users`.
+- `playwright.p33qa.config.ts -g "apply:"`: **passed twice**. With `RPD_E2E_AXE_OUT`, all 7 axe scans in the test logged 0 serious/critical. These include "apply dialog: lists expanded, Choose projects" and "Apply to all", the two scans that failed at the gate.
+- A throwaway probe spec (deleted afterwards) confirmed the fix is real, not vacuous:
+  - The three lists really overflow: automatic 30 rows (scrollHeight 1551 / clientHeight 286), choose 12 rows (653/286), not changed 62 rows (2557/286). All three have `tabindex=0`.
+  - axe lists them under **passes** for `scrollable-region-focusable`.
+  - Tab reaches the automatic list, and ArrowDown/PageDown scrolls it (scrollTop 0 → 330).
+  - The focus ring is visible and not clipped by the dialog: a 2 px surface offset plus a 2 px `--color-ring` ring, checked on a screenshot.
+- Containers, processes and the temporary key were removed afterwards.
+
+**Gap.** The real-data dialog never had a list over 100 rows (largest: 62), so the **virtualized** path is covered only by the unit tests (including axe with the control), not by e2e.
+
+**Next step.** The qa-inspector re-runs its leg (dialog axe scans + frontend suite + ruff) per "P33-T20 gate — combined result: FAIL". The non-P33 note about the 390×900 floating Timeline filter panel is still open; this task did not address it. Not committed.
+
+## [2026-11-15] P33-T20 gate — qa-inspector leg (re-run): **PASS**
+
+Scope, as set by my FAIL entry: the apply-dialog axe scans on a disposable head stack, the full frontend suite, and
+repo-wide `ruff check .`. I checked the P33-R02 builder's claims myself. No feature code was written. The one temporary
+mutation (below) was restored, and the file passes its tests again. The shared dev DB (`rpd`, :5433) was not touched and is
+still at `p32a_step_overlap`.
+
+**Disposable stack.** Postgres 17 `qa-p33r-pg` (:55933), Redis 7 `qa-p33r-redis` (:56933), uvicorn :8933 (RPD_DEV_MODE, a
+throwaway Fernet key) and `vite --mode e2e` :5933.
+- `alembic upgrade head` ran `p32a → p35a → p33a → p36a → p33b → p33c`.
+- Seeded with `seed_demo_data --dataset client_2026 --reset --schedule` (330 projects, 132 within-year) and `seed_dev_users`.
+- Containers and processes were removed afterwards.
+
+**1. Apply dialog axe: fixed.** `frontend/e2e/p33-gate.spec.ts`: **5/5 passed**. The T17-rewritten
+`e2e/p9-settings-admin.spec.ts` Workflow Settings block: **3/3 passed**.
+- **Axe, serious/critical: 22 scans, 0 violations.** The scans include the two that failed at the gate: "apply dialog: lists
+  expanded, Choose projects" and "Apply to all".
+- Also clean: the timeline editor ×5, the collapsed dialog, the result panel, the Timeline at 1440 and 390, the Project step
+  timing tab, the add-category dialog (empty and in error), and the 8 P9 scans.
+- **Checked that the pass is not vacuous**, with a throwaway probe spec, deleted afterwards:
+  - On live data the expanded lists really overflow:
+    - "Projects updated automatically": `<ul>` scrollHeight 1551 vs clientHeight 286;
+    - "Projects not changed": 2557 vs 286;
+    - both have `tabindex="0"`.
+  - axe reports `scrollable-region-focusable` under **passes** (5 nodes) with 0 violations.
+  - The list takes focus, and PageDown scrolls it (scrollTop > 0).
+- **Mutation check on the new unit test:** I removed `tabIndex={0}` from `project-rows.tsx`. Then 6/9 tests in
+  `project-rows.test.tsx` fail, including both overflowing-axe tests (plain 30 rows, virtualized 240 rows). With the file
+  restored, 9/9 pass. So the jsdom overflow stubs make axe evaluate the rule, as the builder said.
+- The virtualized path (more than 100 rows) is covered by unit tests only. The largest real list is 62 rows (same gap the
+  builder reported). Non-blocking.
+
+**2. Frontend suite.**
+- `tsc -b --noEmit`: clean.
+- `eslint .`: 0 errors and the same 9 pre-existing `incompatible-library` warnings (routes, density-zone, audit-log,
+  utilization heatmap, dashboard dialog, projects-table). None is in a P33 file.
+- **vitest: 246 files, 1938 passed, 0 failed.** Coverage: lines 90.98 %, statements 89.03 %, branches 80.68 %, functions
+  88.24 % (gate 70 %).
+- `project-rows.tsx` coverage went from 33.3 / 25 to **100 % lines, 94.1 % statements, 75 % branches**.
+- **Bundle: PASS, 192.1 KB gzip initial** (budget 400 KB).
+
+**3. Backend lint.** `ruff check .` from `backend/`: **All checks passed.** The `test_p11_capacity_booked.py:170` E501 is
+gone. The `p33a_categories.py` E501s are outside the repo-wide run (alembic is excluded) and stay a non-blocking note.
+
+Unchanged from the first run (not re-run, per scope):
+- backend 3062 passed, 97.32 %;
+- scheduling 636 passed, 96 %;
+- golden files 38/38, unchanged except the 3 accepted P32 re-blesses;
+- contract test 251 passed;
+- p33a/b/c migration tests 4/4.
+
+Still open, not P33: the 390×900 floating Timeline filter panel covers the rows (e8872b1). The orchestrator needs to schedule
+it.
+
+**qa-inspector verdict for P33 (re-run): PASS.**
+
+## [2026-11-15] P33-T20 gate — combined result: PASS (orchestrator)
+
+Supersedes the earlier "combined result: FAIL" entry for P33 (that entry stays as history). Remediation P33-R02 (apply-dialog lists keyboard-scrollable, ruff long line) is DONE.
+
+- **qa-inspector: PASS** (entry "P33-T20 gate — qa-inspector leg (re-run): PASS"). Disposable head stack: e2e p33-gate 5/5, p9 Workflow Settings block 3/3, axe 0 serious/critical in 22 scans incl. the two that failed; fix verified non-vacuous (lists overflow 1551/2557 vs 286 px, tabindex=0, rule listed under passes, PageDown scrolls) and by mutation (removing tabIndex fails 6/9 new tests incl. both axe tests). Frontend: tsc clean, eslint 0 errors, vitest 1938 passed (90.98 % lines), project-rows.tsx 33 % → 100 %, bundle 192.1 KB/400. Repo-wide `ruff check .` clean. Backend figures stand from the first run (3062 passed, 97.32 %; scheduling 636, 96 %; golden 38/38; contract 251; migrations 4/4).
+- **workflow-auditor: PASS** — stands (entry "P33-T20 gate — workflow-auditor leg: PASS"; R02 is frontend-only plus a test comment wrap).
+- **security-auditor: PASS** — stands (entry "P33-T20 gate — security-auditor leg: PASS"; 0 Critical/High/Medium).
+
+**P33 is unblocked.** Open non-blocking items: security L-1 (hub-scoped Admin can edit a template for all — owner to decide: require all-hub access or record in ADR 0045), security I-1 (Admin chambers PUT, pre-existing — owner to confirm), apply-dialog default for started projects (currently "Choose projects", none ticked — owner to confirm), virtualized list path covered by unit tests only, two long lines in p33a_categories.py, and outside P33: the floating Timeline filter panel (commit e8872b1) covers all rows at 390×900. Deferred: P33-F01 (drop retired columns/CHECK/410 route). Deploy: P35 and P36 migrations must ship with or before P33 (chain p32a → p35a → p33a → p36a → p33b → p33c), then run the recalc script once (DEPLOYMENT_RUNBOOK §8).

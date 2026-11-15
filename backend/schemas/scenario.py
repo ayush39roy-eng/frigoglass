@@ -83,6 +83,9 @@ class ScenarioApplyRunSummary(BaseModel):
     notes: str | None
     entity_types_touched: list[str]
     change_count: int
+    #: P34-T01: distinct non-null `project_id`s among the run's changes, in
+    #: the caller's hub scope (same scope as `change_count`).
+    project_count: int
     created_at: datetime
 
 

@@ -11,19 +11,16 @@ import { Label } from '@/components/ui/label';
 import { EmptyState } from '@/components/shared/empty-state';
 import { ProjectStatusBadge } from '@/components/shared/project-status-badge';
 import { SectionBoundary } from '@/components/shared/section-boundary';
-import { ReadOnlyNotice } from '@/components/session/write-gate';
 import { ApiError } from '@/lib/api/client';
 import { SCHEDULER_HORIZON_WEEKS } from '@/lib/domain-constants';
 import { formatInteger, formatYearWeek } from '@/lib/format';
 import { queryKeys } from '@/lib/query-keys';
 import { useHubFilter } from '@/stores/hub-filter';
-import { usePermission } from '@/stores/session';
 import type { ProjectPriority, ProjectStatus } from '@/types/enums';
 import { AccessNotice } from '@/surfaces/gantt/components/access-notice';
 import { GanttChart } from '@/surfaces/gantt/components/gantt-chart';
 import { GanttLegend } from '@/surfaces/gantt/components/gantt-legend';
 import { PriorityTabs } from '@/surfaces/gantt/components/gantt-toolbar';
-import { StepTimingProvider } from '@/surfaces/gantt/components/step-timing/step-timing-provider';
 import { useGantt } from '@/surfaces/gantt/hooks/use-gantt';
 import { projectWaterfallScale, ZOOM_DEFAULT_PX } from '@/surfaces/gantt/lib/gantt-coordinates';
 import type { GanttProjectRow } from '@/surfaces/gantt/api/types';
@@ -34,18 +31,19 @@ import { completeStepRows, STEPS_PER_WORKFLOW } from '../../lib/complete-step-ro
 
 /**
  * P32-R04 (owner 2026-11-04/05: "here ALL the projects should come with the
- * timeline and we can expand and then move and drag the bars"): the Workflow
- * page's "Project step timing" tab is the Timeline's own `GanttChart`, with
- * the step-timing host mounted (drag, right-edge resize, drop onto the step
- * above = parallel, Edit timing, Reset, run-follow) over every project in scope
- * (global hub filter). Differences from `/timeline`, all opt-in chart props:
- * - the axis runs past W52 to the latest served end / start floor + 2 (max
- *   W78), labelled "W5 '27", and the weeks grow to fill the card;
+ * timeline"): the Workflow page's "Project step timing" tab is the Timeline's
+ * own `GanttChart` over every project in scope (global hub filter).
+ * Read-only since P33-T15 (ADR 0048): per-project timing editing is retired —
+ * timing is shaped per category on Workflow templates — so there is no drag,
+ * resize, Edit timing or Reset; a step shows its template gap as a chip.
+ * Differences from `/timeline`, all opt-in chart props:
+ * - the axis runs past W52 to the latest served end + 2 (max W78), labelled
+ *   "W5 '27", and the weeks grow to fill the card;
  * - a search box filters the loaded rows (name, code, hub, status);
  * - `?project=<id>` expands that project and scrolls to it;
  * - a project the active run did not (fully) place gets a "Not placed" badge,
  *   and once expanded and on screen its missing steps come from the Workspace
- *   (`completeStepRows`), with Edit timing where it may be offered.
+ *   (`completeStepRows`).
  * Rows are virtualized by the chart.
  */
 
@@ -72,7 +70,6 @@ export function ProjectStepTimingSection(): React.JSX.Element {
     priority: priority ?? undefined,
   });
   const statuses = useProjectStatuses();
-  const canWriteGantt = usePermission('gantt').write;
 
   const [toggled, setExpandedIds] = React.useState<ReadonlySet<string>>(new Set());
   // `?project=<id>` is always expanded (deep link, or the last one opened).
@@ -144,14 +141,9 @@ export function ProjectStepTimingSection(): React.JSX.Element {
     const byId = new Map(stageIds.map((id, i) => [id, workspaces[i] ?? null] as const));
     return rows.map((r) => {
       const ws = byId.get(r.project_id) ?? null;
-      if (!ws) return r;
-      return completeStepRows(r, ws.stages, {
-        canWriteGantt,
-        frozen: ws.project.frozen,
-        status: ws.project.status,
-      }).row;
+      return ws ? completeStepRows(r, ws.stages).row : r;
     });
-  }, [rows, stageIds, workspaces, canWriteGantt]);
+  }, [rows, stageIds, workspaces]);
 
   const q = query.trim().toLowerCase();
   const visible = React.useMemo(
@@ -160,7 +152,7 @@ export function ProjectStepTimingSection(): React.JSX.Element {
   );
 
   // One axis for the whole list (stable while filtering): past W52 up to the
-  // latest served end / floor + 2, max W78.
+  // latest served end + 2, max W78.
   const allSteps = React.useMemo(() => completed.flatMap((r) => r.steps), [completed]);
   const axis = React.useMemo(
     () => ({ scaleFor: (px: number) => projectWaterfallScale(allSteps, px), fill: true, weekLabel: formatYearWeek }),
@@ -188,109 +180,106 @@ export function ProjectStepTimingSection(): React.JSX.Element {
       : null;
 
   return (
-    <StepTimingProvider>
-      <div className="flex flex-col gap-4" data-testid="project-step-timing">
-        <Card>
-          <CardHeader>
-            <CardTitle>Project step timing</CardTitle>
-            <CardDescription>
-              Expand a project to see its steps. Drag a step bar to set its earliest start, drag its right edge to
-              change its duration, or drop it onto the step above to run the two in parallel. Each change
-              recalculates the timeline in a few seconds; capacity and precedence still apply.
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="flex flex-wrap items-end gap-4">
-            <div className="flex w-full max-w-sm flex-col gap-1">
-              <Label htmlFor="step-timing-search" className="text-2xs text-text-muted">
-                Search
-              </Label>
-              <div className="relative">
-                <Search
-                  className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-text-subtle"
-                  aria-hidden="true"
-                />
-                <Input
-                  id="step-timing-search"
-                  type="search"
-                  className="pl-8"
-                  placeholder="Name, code, hub or status"
-                  value={query}
-                  onChange={(e) => setQuery(e.target.value)}
-                  data-testid="step-timing-search"
+    <div className="flex flex-col gap-4" data-testid="project-step-timing">
+      <Card>
+        <CardHeader>
+          <CardTitle>Project step timing</CardTitle>
+          <CardDescription>
+            Expand a project to see its steps as the active schedule placed them. Step timing is read-only here:
+            it follows the project&apos;s category template, edited on Workflow templates. A &ldquo;parallel N
+            wk&rdquo; or &ldquo;wait N wk&rdquo; chip is the template&apos;s gap before that step.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="flex flex-wrap items-end gap-4">
+          <div className="flex w-full max-w-sm flex-col gap-1">
+            <Label htmlFor="step-timing-search" className="text-2xs text-text-muted">
+              Search
+            </Label>
+            <div className="relative">
+              <Search
+                className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-text-subtle"
+                aria-hidden="true"
+              />
+              <Input
+                id="step-timing-search"
+                type="search"
+                className="pl-8"
+                placeholder="Name, code, hub or status"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                data-testid="step-timing-search"
+              />
+            </div>
+          </div>
+          <PriorityTabs value={priority} onChange={setPriority} />
+          <div className="flex items-end gap-1">
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => setExpandedIds(new Set(visible.map((r) => r.project_id)))}
+              disabled={visible.length === 0}
+            >
+              <ChevronsUpDown />
+              Expand all
+            </Button>
+            <Button variant="ghost" size="sm" onClick={collapseAll} disabled={expandedIds.size === 0}>
+              <ChevronsDownUp />
+              Collapse all
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+      {denied ? (
+        <AccessNotice kind={denied} />
+      ) : (
+        <SectionBoundary
+          query={gantt}
+          title="Project timeline"
+          errorDescription="The project timeline could not be loaded from the active schedule run."
+        >
+          {(data) =>
+            !data.has_active_schedule_run ? (
+              <EmptyState
+                title="No schedule yet"
+                description="Project step timing is shown from the active schedule. Run a recalculation first."
+              />
+            ) : visible.length === 0 ? (
+              <EmptyState
+                title={rows.length === 0 ? 'No projects in scope' : 'No project matches the search'}
+                description={
+                  rows.length === 0
+                    ? 'There are no projects visible in your hub scope and filters.'
+                    : 'Clear the search or the priority filter.'
+                }
+              />
+            ) : (
+              <div className="flex flex-col gap-2">
+                <p className="text-2xs text-text-muted" data-testid="step-timing-count">
+                  {formatInteger(visible.length)} of {formatInteger(rows.length)}{' '}
+                  {rows.length === 1 ? 'project' : 'projects'} shown
+                </p>
+                <GanttLegend />
+                <GanttChart
+                  rows={visible}
+                  zoom={ZOOM_DEFAULT_PX}
+                  showStats={false}
+                  expandedIds={expandedIds}
+                  onToggleExpand={toggle}
+                  onFreezeClick={noop}
+                  canWrite={false}
+                  maxHeight={680}
+                  axis={axis}
+                  rowExtra={rowExtra}
+                  markUnplaced
+                  scrollToProjectId={linked}
+                  onVisibleProjectsChange={onVisible}
                 />
               </div>
-            </div>
-            <PriorityTabs value={priority} onChange={setPriority} />
-            <div className="flex items-end gap-1">
-              <Button
-                variant="secondary"
-                size="sm"
-                onClick={() => setExpandedIds(new Set(visible.map((r) => r.project_id)))}
-                disabled={visible.length === 0}
-              >
-                <ChevronsUpDown />
-                Expand all
-              </Button>
-              <Button variant="ghost" size="sm" onClick={collapseAll} disabled={expandedIds.size === 0}>
-                <ChevronsDownUp />
-                Collapse all
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
-        <ReadOnlyNotice surface="gantt" what="Changing step timing" />
-        {denied ? (
-          <AccessNotice kind={denied} />
-        ) : (
-          <SectionBoundary
-            query={gantt}
-            title="Project timeline"
-            errorDescription="The project timeline could not be loaded from the active schedule run."
-          >
-            {(data) =>
-              !data.has_active_schedule_run ? (
-                <EmptyState
-                  title="No schedule yet"
-                  description="Step timing is edited on the active schedule. Run a recalculation first."
-                />
-              ) : visible.length === 0 ? (
-                <EmptyState
-                  title={rows.length === 0 ? 'No projects in scope' : 'No project matches the search'}
-                  description={
-                    rows.length === 0
-                      ? 'There are no projects visible in your hub scope and filters.'
-                      : 'Clear the search or the priority filter.'
-                  }
-                />
-              ) : (
-                <div className="flex flex-col gap-2">
-                  <p className="text-2xs text-text-muted" data-testid="step-timing-count">
-                    {formatInteger(visible.length)} of {formatInteger(rows.length)}{' '}
-                    {rows.length === 1 ? 'project' : 'projects'} shown
-                  </p>
-                  <GanttLegend />
-                  <GanttChart
-                    rows={visible}
-                    zoom={ZOOM_DEFAULT_PX}
-                    showStats={false}
-                    expandedIds={expandedIds}
-                    onToggleExpand={toggle}
-                    onFreezeClick={noop}
-                    canWrite={false}
-                    maxHeight={680}
-                    axis={axis}
-                    rowExtra={rowExtra}
-                    markUnplaced
-                    scrollToProjectId={linked}
-                    onVisibleProjectsChange={onVisible}
-                  />
-                </div>
-              )
-            }
-          </SectionBoundary>
-        )}
-      </div>
-    </StepTimingProvider>
+            )
+          }
+        </SectionBoundary>
+      )}
+    </div>
   );
 }
 
@@ -307,7 +296,7 @@ function NotPlacedBadge({ project }: { project: GanttProjectRow }): React.JSX.El
       : project.cat_not_allowed
         ? "Reason: the project's category is not allowed in this hub."
         : 'The run records no reason; the leader and category are set, so it is usually engineer or chamber capacity.';
-  const title = `Not placed: the scheduler found no slot before the planning horizon (${horizon}). ${reason} Expand it to shorten steps, run steps in parallel or change timing (Edit timing on a step); it then recalculates.`;
+  const title = `Not placed: the scheduler found no slot before the planning horizon (${horizon}). ${reason} Step timing follows the category template (Workflow templates).`;
   return (
     <Badge tone="warning" className="whitespace-nowrap px-1 py-px" title={title} data-testid="step-timing-not-placed">
       <TriangleAlert aria-hidden="true" />

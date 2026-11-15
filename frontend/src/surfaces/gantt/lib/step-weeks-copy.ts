@@ -1,11 +1,10 @@
 import type { WorkflowStepKind } from '@/types/enums';
-import { DISPLAY_HORIZON_WEEKS } from '@/lib/domain-constants';
-import { formatPlanWeek, formatWeek, formatYearWeek } from '@/lib/format';
+import { formatPlanWeek } from '@/lib/format';
 
 /**
- * P20 (ADR 0032): every step-timing label says which number is CALENDAR weeks
+ * P20 (ADR 0032): every step label says which number is CALENDAR weeks
  * (the bar, `planned_start_week..planned_end_week`) and which is WORK weeks
- * (`duration_weeks` / `duration_override_weeks`). Only a design step is
+ * (`duration_weeks`). Only a design step is
  * stretched by its leader's FTE; lab and elapsed steps take as many calendar
  * weeks as their duration. Pure strings from served values — no scheduling
  * maths here.
@@ -30,80 +29,4 @@ export function calendarRangePhrase(
   fmt: (week: number) => string = formatPlanWeek,
 ): string {
   return `${fmt(startWeek)}–${fmt(endWeek)} on the calendar`;
-}
-
-/**
- * The right-edge drag label, e.g. "8 wks on the calendar · 4 wks of work at
- * 0.5 FTE". `calendarWeeks` is the UNCLIPPED calendar span (`stepDragCalendar`),
- * never the ghost bar's width, which stops at W52 (QA-P19-4). When the span
- * runs past W52, `pastEndWeek` is its last week and the label says so: "6 wks
- * on the calendar, to W53 · 3 wks of work at 0.5 FTE". A design step with no
- * served FTE cannot say how long it will be on the calendar, so it says so
- * (and, when even the 1:1 span is past W52, that it runs past the plan year).
- */
-export function resizeDragLabel(
-  kind: WorkflowStepKind,
-  calendarWeeks: number,
-  workWeeks: number,
-  fte: number | null,
-  pastEndWeek: number | null = null,
-): string {
-  // P32-R02: a span past W52 names next year's week ("W1 '27").
-  const to = pastEndWeek === null ? '' : `, to ${formatYearWeek(pastEndWeek)}`;
-  if (kind !== 'design') return `${String(calendarWeeks)} wks on the calendar${to} · not stretched by FTE`;
-  if (fte === null) {
-    const past = pastEndWeek === null ? '' : `, past ${formatWeek(DISPLAY_HORIZON_WEEKS)}`;
-    return `${workWeeksPhrase(kind, workWeeks, null)} · calendar weeks follow the leader's FTE${past}`;
-  }
-  return `${String(calendarWeeks)} wks on the calendar${to} · ${workWeeksPhrase(kind, workWeeks, fte)}`;
-}
-
-/**
- * The live drag label. Move: "Start ≥ W13 · W13–W16". Resize: see
- * `resizeDragLabel`; `calendar` is `stepDragCalendar(...)` for the dragged
- * work. Without it (older callers) the ghost width is used, which is only
- * right while the ghost is inside the axis.
- */
-export function stepDragLabel(
-  mode: 'move' | 'resize',
-  ghost: { startWeek: number; endWeek: number },
-  step: {
-    kind: WorkflowStepKind;
-    workWeeks: number | null;
-    fte: number | null;
-    calendar?: { calendarWeeks: number; endWeek: number; pastAxis: boolean } | null;
-  },
-): string {
-  const span = `${formatYearWeek(ghost.startWeek)}–${formatYearWeek(ghost.endWeek)}`;
-  if (mode === 'move' || step.workWeeks === null) return `Start ≥ ${formatYearWeek(ghost.startWeek)} · ${span}`;
-  const cal = step.calendar ?? null;
-  return resizeDragLabel(
-    step.kind,
-    cal ? cal.calendarWeeks : ghost.endWeek - ghost.startWeek + 1,
-    step.workWeeks,
-    step.fte,
-    cal && cal.pastAxis ? cal.endWeek : null,
-  );
-}
-
-/** Help text for the work-weeks field and the drag handle. */
-export const WORK_WEEKS_HELP =
-  'Weeks of work at full speed. A leader below 1.0 FTE takes longer on the calendar: at 0.5 FTE, 4 weeks of work take 8 calendar weeks (ADR 0032).';
-
-/**
- * P32 (ADR 0043 §5, API_CONTRACT_P32 A4): the live label while a step bar is
- * dropped onto the work it waits for — "Parallel with TF-1 · 3 wk overlap".
- * Two design steps share the project's one designer (I1), so that case says
- * the step will start when the designer is free.
- */
-export function overlapDragLabel(
-  overlapWeeks: number,
-  parallelWith: readonly { name?: string; kind?: string }[],
-  kind: WorkflowStepKind,
-): string {
-  const names = parallelWith.map((p) => p.name).filter((n): n is string => Boolean(n));
-  const who = names.length > 0 ? names.join(' & ') : 'the previous step';
-  const base = `Parallel with ${who} · ${String(overlapWeeks)} wk overlap`;
-  const sameDesigner = kind === 'design' && parallelWith.some((p) => p.kind === 'design');
-  return sameDesigner ? `${base} · same designer — will start when they are free` : base;
 }

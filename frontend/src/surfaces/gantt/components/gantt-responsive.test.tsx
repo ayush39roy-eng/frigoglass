@@ -1,24 +1,21 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, screen, within } from '@testing-library/react';
+import { screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
 import { renderWithProviders } from '@/test/render';
 import { seriousAxeViolations } from '@/test/axe';
 
 import type { GanttProjectRow, GanttStepRow } from '../api/types';
-import { makeWeekScale, stepDragCalendar } from '../lib/gantt-coordinates';
-import { GANTT_NARROW_MAX_PX, ganttColumnWidths, placeDragLabel } from '../lib/gantt-layout';
+import { GANTT_NARROW_MAX_PX, ganttColumnWidths } from '../lib/gantt-layout';
 import { projectStatusLabels, stepStatusLabels } from '../lib/gantt-status-labels';
-import { resizeDragLabel, stepDragLabel } from '../lib/step-weeks-copy';
+import { stepBarTitle } from '../lib/step-row-text';
 import { P13_GANTT_ROW_DEFAULTS } from '../test-fixtures';
 import { GanttChart } from './gantt-chart';
-import { StepDragOverlay } from './step-timing/step-drag-overlay';
-import { StepTimingContext, stepTimingTarget, type StepTimingApi } from './step-timing/step-timing-context';
 
 /**
  * P19-R02 — gate remediation for QA-P19-1 (skipped-step badge dimmed by
- * opacity), QA-P19-2 (fixed columns wider than the 390 px chart) and
- * observation O1 (drag label cut off under the status column near W52).
+ * opacity) and QA-P19-2 (fixed columns wider than the 390 px chart). The
+ * drag-label cases (O1, QA-P19-4, O-R1) went with the drag (P33-T15, ADR 0048).
  */
 
 // Deterministic virtualization: render every visual row.
@@ -50,12 +47,11 @@ function step(over: Partial<GanttStepRow> = {}): GanttStepRow {
     eng_conflict: false,
     chamber_overlap: false,
     lead_time_weeks: 4,
-    duration_override_weeks: null,
-    start_not_before_week: null,
-    timing_editable: 'move_resize',
     span_fte: null,
     effort_weeks: null,
-    overlap_weeks: null,
+    plan_weeks: 4,
+    gap_weeks: 0,
+    own_effort: false,
     predecessor_ids: [],
     ...over,
   };
@@ -70,7 +66,6 @@ const SKIPPED_LAB = step({
   duration_weeks: 0,
   planned_start_week: 14,
   planned_end_week: 14,
-  timing_editable: 'none',
 });
 
 function project(over: Partial<GanttProjectRow> = {}, steps: GanttStepRow[] = [step(), SKIPPED_LAB]): GanttProjectRow {
@@ -118,20 +113,16 @@ function setViewport(width: number) {
   );
 }
 
-const HOST: StepTimingApi = { submit: vi.fn(), openDialog: vi.fn(), pending: null, busy: false };
-
 function renderChart(row: GanttProjectRow = project(), canWrite = true) {
   return renderWithProviders(
-    <StepTimingContext.Provider value={HOST}>
-      <GanttChart
-        rows={[row]}
-        zoom="weeks"
-        expandedIds={new Set([row.project_id])}
-        onToggleExpand={() => undefined}
-        onFreezeClick={() => undefined}
-        canWrite={canWrite}
-      />
-    </StepTimingContext.Provider>,
+    <GanttChart
+      rows={[row]}
+      zoom="weeks"
+      expandedIds={new Set([row.project_id])}
+      onToggleExpand={() => undefined}
+      onFreezeClick={() => undefined}
+      canWrite={canWrite}
+    />,
   );
 }
 
@@ -189,7 +180,6 @@ describe('QA-P19-2: responsive fixed columns', () => {
     setViewport(1440);
     renderChart();
     expect(screen.getByTestId('gantt-scroll')).toHaveAttribute('data-layout', 'wide');
-    expect(screen.getByTestId('step-drag-handle')).toHaveStyle({ width: '8px' });
     expect(screen.getByTestId('gantt-left-header')).toHaveStyle({ width: '272px' });
     expect(screen.getByTestId('gantt-status-header')).toHaveStyle({ width: '148px' });
     const cells = screen.getAllByTestId('gantt-left-cell');
@@ -214,10 +204,9 @@ describe('QA-P19-2: responsive fixed columns', () => {
     expect(screen.queryByRole('link', { name: /Project Workspace/ })).not.toBeInTheDocument();
     // The skipped step says so in words, since the n/a chip column is gone.
     expect(screen.getByTestId('gantt-step-skipped')).toHaveTextContent('n/a');
-    // Drag handles still render, with a wider touch target.
-    expect(screen.getByTestId('step-drag-handle')).toHaveStyle({ width: '20px' });
-    // ... and the keyboard route stays: the Edit timing button on the step row.
-    expect(screen.getByRole('button', { name: /Edit timing for Design Detailing/ })).toBeInTheDocument();
+    // P33-T15 (ADR 0048): read-only — no drag handle and no Edit timing at any width.
+    expect(screen.queryByTestId('step-drag-handle')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Edit timing/ })).not.toBeInTheDocument();
   });
 
   it('390: the status flags are a compact row icon and live in the details dialog', async () => {
@@ -253,172 +242,50 @@ describe('QA-P19-2: responsive fixed columns', () => {
   });
 });
 
-describe('O1: the drag label flips to stay inside the visible timeline', () => {
-  it('pure placement: right of the anchor by default, flipped left near the right edge, clamped, unmeasured = default', () => {
-    const base = { gap: 6, visibleLeft: 0, visibleRight: 500, labelWidth: 120 };
-    expect(placeDragLabel({ ...base, anchorX: 200 })).toEqual({ left: 206, side: 'right' });
-    expect(placeDragLabel({ ...base, anchorX: 374 })).toEqual({ left: 380, side: 'right' }); // 380 + 120 = 500 fits
-    expect(placeDragLabel({ ...base, anchorX: 400 })).toEqual({ left: 274, side: 'left' });
-    expect(placeDragLabel({ ...base, anchorX: 60, visibleRight: 150 })).toEqual({ left: 0, side: 'left' });
-    expect(placeDragLabel({ ...base, anchorX: 400, visibleLeft: 0, visibleRight: 0 })).toEqual({ left: 406, side: 'right' });
+describe('P33-T15 (ADR 0048): read-only step rows with the served gap chip', () => {
+  it.each([1440, 390])('at %i px: no drag overlay, handle, Edit timing or edited marker, with GANTT write', (width) => {
+    setViewport(width);
+    renderChart(project({}, [step({ gap_weeks: -2 }), step({ step_id: 'PDD-G', sequence_order: 7, gap_weeks: 3 })]), true);
+    expect(screen.queryByTestId('step-drag-overlay')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('step-drag-body')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('step-drag-handle')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('step-timing-edited')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Edit timing|Reset timing/ })).not.toBeInTheDocument();
   });
 
-  function renderOverlay(viewportRight: number, viewportLeft = 0) {
-    const host = HOST;
-    const p = project({}, [step({ planned_start_week: 46, planned_end_week: 50 })]);
-    const t = stepTimingTarget(p, p.steps[0]!);
-    // Overlay starts at client x 0; the label is 160 px wide when measured.
-    vi.spyOn(HTMLElement.prototype, 'offsetWidth', 'get').mockReturnValue(160);
-    renderWithProviders(
-      <StepTimingContext.Provider value={host}>
-        <div style={{ position: 'relative' }}>
-          <StepDragOverlay
-            target={t}
-            scale={makeWeekScale('weeks')}
-            rowHeight={44}
-            viewport={() => ({ left: viewportLeft, right: viewportRight })}
-          />
-        </div>
-      </StepTimingContext.Provider>,
+  it('1440: negative gap = "parallel N wk", positive = "wait N wk", zero and skipped = no chip; axe clean', async () => {
+    setViewport(1440);
+    const { container } = renderChart(
+      project({}, [
+        step({ gap_weeks: -2 }),
+        step({ step_id: 'PDD-G', sequence_order: 7, gap_weeks: 3 }),
+        step({ step_id: 'PDD-H', sequence_order: 8, gap_weeks: 0 }),
+        { ...SKIPPED_LAB, gap_weeks: -1 },
+      ]),
     );
-    const handle = screen.getByTestId('step-drag-handle');
-    fireEvent.pointerDown(handle, { pointerId: 1, button: 0, clientX: 700 });
-    fireEvent.pointerMove(handle, { pointerId: 1, clientX: 700 + 2 * 15 });
-    return screen.getByTestId('step-drag-label');
-  }
-
-  it('near the right edge (W52) the label sits left of the cursor and inside the viewport', () => {
-    const label = renderOverlay(800);
-    const anchor = Number(label.dataset.anchor);
-    expect(label).toHaveAttribute('data-side', 'left');
-    expect(parseFloat(label.style.left)).toBe(anchor - 6 - 160);
-    expect(parseFloat(label.style.left) + 160).toBeLessThanOrEqual(800);
+    const chips = screen.getAllByTestId('step-gap-chip');
+    expect(chips).toHaveLength(2);
+    expect(chips[0]).toHaveTextContent(/^parallel 2 wk/);
+    expect(chips[0]).toHaveAttribute('title', expect.stringMatching(/in parallel .*2 wk overlap/));
+    expect(chips[1]).toHaveTextContent(/^wait 3 wk/);
+    expect(await seriousAxeViolations(container)).toEqual([]);
   });
 
-  it('a phone timeline narrower than the label: the label wraps to the visible width (never clipped)', () => {
-    const label = renderOverlay(800, 690); // 110 px of visible timeline, as at 390 px
-    expect(label).toHaveAttribute('data-wrapped', 'true');
-    expect(label.style.maxWidth).toBe('106px');
-    expect(label.style.whiteSpace).toBe('normal');
-    expect(parseFloat(label.style.left)).toBeGreaterThanOrEqual(690);
-    // the dragged row is raised above its neighbours while the label shows
-    expect(screen.getByTestId('step-drag-overlay')).toHaveAttribute('data-dragging', 'true');
-  });
-
-  it('with room on the right the label stays right of the cursor', () => {
-    const label = renderOverlay(2000);
-    expect(label).toHaveAttribute('data-side', 'right');
-    expect(parseFloat(label.style.left)).toBe(Number(label.dataset.anchor) + 6);
+  it('the bar hover text names the template gap and an own-effort duration', () => {
+    const title = stepBarTitle(step({ gap_weeks: 3, own_effort: true, effort_weeks: 4 }), { startWeek: 10, endWeek: 13 }, null);
+    expect(title).toContain('template gap: wait 3 wk');
+    expect(title).toContain('4 wks of work (client effort)');
+    expect(stepBarTitle(step(), { startWeek: 10, endWeek: 13 }, null)).not.toMatch(/gap|client effort/);
   });
 });
 
 describe('span_fte absent from an older server', () => {
   it('is treated as not served (null), so no label reads "undefined FTE"', () => {
-    const p = project({}, [step()]);
-    const legacy = { ...p.steps[0]! } as Partial<GanttStepRow>;
+    const legacy = { ...step() } as Partial<GanttStepRow>;
     delete legacy.span_fte;
-    expect(stepTimingTarget(p, legacy as GanttStepRow).spanFte).toBeNull();
-  });
-});
-
-/** Drag the right-edge handle of a lone step by `weeks` (15 px/week) and return the live label text. */
-function resizeLabel(over: Partial<GanttStepRow>, weeks: number): string {
-  cleanup(); // several drags per test
-  const p = project({}, [step(over)]);
-  renderWithProviders(
-    <StepTimingContext.Provider value={HOST}>
-      <div style={{ position: 'relative' }}>
-        <StepDragOverlay target={stepTimingTarget(p, p.steps[0]!)} scale={makeWeekScale('weeks')} rowHeight={44} />
-      </div>
-    </StepTimingContext.Provider>,
-  );
-  const handle = screen.getByTestId('step-drag-handle');
-  fireEvent.pointerDown(handle, { pointerId: 1, button: 0, clientX: 500 });
-  fireEvent.pointerMove(handle, { pointerId: 1, clientX: 500 + weeks * 15 });
-  return screen.getByTestId('step-drag-label').textContent ?? '';
-}
-
-describe('QA-P19-4: the drag label calendar figure is not clipped at W52', () => {
-  const weeks = makeWeekScale('weeks');
-
-  it('stepDragCalendar: ceil(work / fte) from the served start, past the axis included', () => {
-    // 0.5 FTE, starting W48: 3 wks of work = 6 calendar weeks, W48–W53.
-    expect(stepDragCalendar({ startWeek: 48, endWeek: 49, durationWeeks: 1, fte: 0.5 }, 3, weeks)).toEqual({
-      calendarWeeks: 6,
-      endWeek: 53,
-      pastAxis: true,
-    });
-    // 0.63 FTE, starting W46: 6 wks of work = ceil(600 / 63) = 10 calendar weeks, W46–W55.
-    expect(stepDragCalendar({ startWeek: 46, endWeek: 52, durationWeeks: 4, fte: 0.63 }, 6, weeks)).toEqual({
-      calendarWeeks: 10,
-      endWeek: 55,
-      pastAxis: true,
-    });
-    // inside the axis
-    expect(stepDragCalendar({ startWeek: 10, endWeek: 17, durationWeeks: 4, fte: 0.5 }, 5, weeks)).toEqual({
-      calendarWeeks: 10,
-      endWeek: 19,
-      pastAxis: false,
-    });
-    // no FTE: 1:1 from the served bar
-    expect(stepDragCalendar({ startWeek: 49, endWeek: 52, durationWeeks: 4, fte: null }, 6, weeks)).toEqual({
-      calendarWeeks: 6,
-      endWeek: 54,
-      pastAxis: true,
-    });
-  });
-
-  it("0.5 FTE, W48–W49 dragged +4 calendar weeks: 6 wks on the calendar, to W1 '27 · 3 wks of work at 0.5 FTE", () => {
-    expect(resizeLabel({ planned_start_week: 48, planned_end_week: 49, duration_weeks: 1, span_fte: 0.5 }, 4)).toBe(
-      "6 wks on the calendar, to W1 '27 · 3 wks of work at 0.5 FTE",
-    );
-  });
-
-  it('0.63 FTE, W46–W52 dragged +3: 10 calendar weeks (not the clipped 7), to W55', () => {
-    expect(resizeLabel({ planned_start_week: 46, planned_end_week: 52, duration_weeks: 4, span_fte: 0.63 }, 3)).toBe(
-      "10 wks on the calendar, to W3 '27 · 6 wks of work at 0.63 FTE",
-    );
-  });
-
-  it('0.63 FTE inside the axis: no "to W…" suffix', () => {
-    expect(resizeLabel({ planned_start_week: 30, planned_end_week: 36, duration_weeks: 4, span_fte: 0.63 }, 3)).toBe(
-      '10 wks on the calendar · 6 wks of work at 0.63 FTE',
-    );
-  });
-
-  it('no served FTE: design says the span runs past W52; lab / elapsed give the unclipped 1:1 span', () => {
-    expect(resizeLabel({ planned_start_week: 49, planned_end_week: 52, duration_weeks: 4, span_fte: null }, 2)).toBe(
-      "6 wks of work · calendar weeks follow the leader's FTE, past W52",
-    );
-    expect(
-      resizeLabel({ kind: 'lab', planned_start_week: 49, planned_end_week: 52, duration_weeks: 4, span_fte: null }, 2),
-    ).toBe("6 wks on the calendar, to W2 '27 · not stretched by FTE");
-    expect(resizeLabel({ planned_start_week: 40, planned_end_week: 43, duration_weeks: 4, span_fte: null }, 2)).toBe(
-      "6 wks of work · calendar weeks follow the leader's FTE",
-    );
-  });
-
-  it('pure copy helpers', () => {
-    expect(resizeDragLabel('design', 6, 3, 0.5, 53)).toBe("6 wks on the calendar, to W1 '27 · 3 wks of work at 0.5 FTE");
-    expect(resizeDragLabel('design', 6, 3, 0.5)).toBe('6 wks on the calendar · 3 wks of work at 0.5 FTE');
-    // a caller without `calendar` still gets the ghost width (inside the axis)
-    expect(stepDragLabel('resize', { startWeek: 10, endWeek: 15 }, { kind: 'design', workWeeks: 3, fte: 0.5 })).toBe(
-      '6 wks on the calendar · 3 wks of work at 0.5 FTE',
-    );
-  });
-});
-
-describe('O-R1: the resize handle stays inside the axis', () => {
-  it('a bar ending at W52 insets the handle so none of it is past the axis end', () => {
-    const scale = makeWeekScale('weeks');
-    const p = project({}, [step({ planned_start_week: 49, planned_end_week: 52 })]);
-    renderWithProviders(
-      <StepTimingContext.Provider value={HOST}>
-        <StepDragOverlay target={stepTimingTarget(p, p.steps[0]!)} scale={scale} rowHeight={44} />
-      </StepTimingContext.Provider>,
-    );
-    const handle = screen.getByTestId('step-drag-handle');
-    expect(parseFloat(handle.style.left) + parseFloat(handle.style.width)).toBeLessThanOrEqual(scale.totalWidthPx);
+    const title = stepBarTitle(legacy as GanttStepRow, { startWeek: 10, endWeek: 13 }, null);
+    expect(title).toContain('4 wks of work');
+    expect(title).not.toMatch(/undefined/);
   });
 });
 
@@ -450,4 +317,3 @@ describe('QA-P19-3: focus returns to the Details button when the dialog closes',
     expect(details).toHaveFocus();
   });
 });
-

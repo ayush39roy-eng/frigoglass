@@ -61,11 +61,9 @@ from typing import Literal
 
 import domain_constants as dc
 from scheduling import hubs as hub_names
-from scheduling.greedy import _cat_not_allowed, run_greedy_sgs
+from scheduling.greedy import _cat_not_allowed, category_maps_for, run_greedy_sgs
 from scheduling.invariants import compute_design_load_by_capacity_hub
 from scheduling.types import (
-    OEM_CATEGORIES,
-    PDD_CATEGORIES,
     ChamberInput,
     EngineerInput,
     ProjectInput,
@@ -74,6 +72,7 @@ from scheduling.types import (
     ScheduleOutput,
 )
 from scheduling.workflow import (
+    CategoryMaps,
     analyse_project,
     build_lead_time_table,
     build_workflows,
@@ -417,8 +416,15 @@ def _priority_from(spec: AddProject) -> str:
     return DEFAULT_ADDED_PRIORITY
 
 
-def _default_allowed_categories(hub: str) -> tuple[str, ...]:
-    return ("OEM", *OEM_CATEGORIES) if hub in hub_names.OEM_HUBS else PDD_CATEGORIES
+def _default_allowed_categories(hub: str, categories: CategoryMaps) -> tuple[str, ...]:
+    """A what-if designer's default eligibility: `OEM` plus every OEM-workflow
+    category on an OEM hub, else every PDD-workflow category. P33 (R33-8):
+    read from the input's categories (rank order); the seeded default gives
+    the pre-P33 tuples."""
+
+    if hub in hub_names.OEM_HUBS:
+        return ("OEM", *categories.codes_of_workflow("OEM"))
+    return categories.codes_of_workflow("PDD")
 
 
 def chamber_norm(
@@ -506,6 +512,7 @@ def _validate_scenario(
         validate_scenario_limits(scenario)
     si = baseline.schedule
     lead = {(lt.workflow_id, lt.category) for lt in si.lead_times}
+    categories = category_maps_for(si, build_workflows(si.workflow_steps))
     for ap in scenario.add_projects:
         if ap.hub not in hub_names.HUB_LAB_REGION:
             raise ValueError(f"unknown hub {ap.hub!r}")
@@ -514,7 +521,8 @@ def _validate_scenario(
         wf = "OEM" if ap.hub in hub_names.OEM_HUBS else "PDD"
         if ap.workflow_id is not None and ap.workflow_id != wf:
             raise ValueError(f"hub {ap.hub!r} uses workflow {wf!r}, not {ap.workflow_id!r}")
-        if (wf, ap.category) not in lead:
+        # R33-8: one of the input's categories, of the hub's workflow.
+        if (wf, ap.category) not in lead or categories.workflow.get(ap.category) != wf:
             raise ValueError(f"category {ap.category!r} is not valid for workflow {wf!r}")
         if not 1 <= ap.count <= MAX_COUNT:
             raise ValueError(f"project count must be 1..{MAX_COUNT}")
@@ -602,6 +610,7 @@ def _pick_leader(
     project: ProjectInput,
     engineers: Sequence[EngineerInput],
     load: Mapping[str, float],
+    category_workflow: Mapping[str, str] | None = None,
 ) -> EngineerInput | None:
     # ADR 0032: a designer at FTE <= 0 cannot lead design work (and would
     # divide by zero below), so they are never picked.
@@ -618,7 +627,10 @@ def _pick_leader(
     )
     if not hub_engs:
         return None
-    eligible = [e for e in hub_engs if not _cat_not_allowed(project, e)] or hub_engs
+    # R33-8: the OEM test reads the input's category workflow (default: the seven).
+    eligible = [
+        e for e in hub_engs if not _cat_not_allowed(project, e, category_workflow)
+    ] or hub_engs
     return min(eligible, key=lambda e: (load.get(e.engineer_id, 0.0) / e.fte, e.engineer_id))
 
 
@@ -635,6 +647,7 @@ def apply_scenario(
     _validate_scenario(baseline, scenario, check_limits=_check_limits)
     _budget.check()
     si = baseline.schedule
+    categories = category_maps_for(si, build_workflows(si.workflow_steps))
     weeks_by_project = _project_design_weeks(si)
 
     # --- engineers --------------------------------------------------------------
@@ -660,7 +673,7 @@ def apply_scenario(
     added_eng_ids: list[str] = []
     seq = 0
     for ae in scenario.add_engineers:
-        cats = ae.allowed_categories or _default_allowed_categories(ae.hub)
+        cats = ae.allowed_categories or _default_allowed_categories(ae.hub, categories)
         for _ in range(ae.count):
             seq += 1
             eid = f"whatif-eng-{seq:03d}"
@@ -747,13 +760,18 @@ def apply_scenario(
     orphans: list[ProjectInput] = []
     for p in sorted(si.projects, key=lambda p: p.project_id):
         if p.project_id in overrides:
-            p = dataclasses.replace(p, priority=overrides[p.project_id])
+            new_priority = overrides[p.project_id]
+            # ADR 0050 / R36-5: a project moved to another band enters it
+            # unranked (behind every ranked project there); it never carries
+            # its old band's rank. Same band: rank kept.
+            band_rank = p.band_rank if new_priority == p.priority else None
+            p = dataclasses.replace(p, priority=new_priority, band_rank=band_rank)
         if p.leader_engineer_id is not None and p.leader_engineer_id in removed:
             orphans.append(p)
         else:
             projects.append(p)
     for p in orphans:
-        leader = _pick_leader(p, engineers, load)
+        leader = _pick_leader(p, engineers, load, categories.workflow)
         if leader is not None:
             load[leader.engineer_id] += weeks_by_project.get(p.project_id, 0)
         projects.append(
@@ -785,7 +803,7 @@ def apply_scenario(
                 certification_testing_required=ap.certification_testing_required,
                 capacity_hub=_capacity_hub_for(si, ap.hub, ap.capacity_hub),
             )
-            leader = _pick_leader(proto, engineers, load)
+            leader = _pick_leader(proto, engineers, load, categories.workflow)
             if leader is not None:
                 plan = analyse_project(proto, workflows[wf_id], table)
                 load[leader.engineer_id] += sum(

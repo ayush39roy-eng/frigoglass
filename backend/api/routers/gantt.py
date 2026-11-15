@@ -42,14 +42,17 @@ Step rows carry `kind` from the run's `workflow_snapshot`, `skipped` from
 the run step, and `status`/`percent_complete` from the live progress row.
 Nothing here is recomputed (I16).
 
-**P12 (ADR 0019/0020, docs/API_CONTRACT_P12.md §3–§4).** Step rows also
-carry `lead_time_weeks` (live lead-time value), the live planner inputs
-`duration_override_weeks` / `start_not_before_week`, and `timing_editable`
-(`services.step_timing.timing_editable`: ADR 0019 §4 AND GANTT write with the
-project's hub in scope, the freeze toggle's check). `duration_weeks` is the
-effective duration the active run booked. The drag itself is
-`PATCH /projects/{id}/steps/{step_id}/timing` (`api/routers/step_timing.py`).
-`hub_id` is ANDed with the scope / own-assignment filter and never widens it.
+**P12 (ADR 0020, docs/API_CONTRACT_P12.md §4).** `duration_weeks` is the
+effective duration the active run booked. `hub_id` is ANDed with the scope /
+own-assignment filter and never widens it.
+
+**P33-T12 (ADR 0046/0048, docs/API_CONTRACT_P33.md Part G).** Step rows are
+read-only: per-project timing editing is retired, so `timing_editable`,
+`duration_override_weeks`, `start_not_before_week` and `overlap_weeks` are
+gone. Each step carries the project's template copy (`plan_weeks`, also
+served as `lead_time_weeks`), the signed copied gap `gap_weeks`
+(`plan_gap_weeks`: negative = parallel, positive = wait) and `own_effort`
+(the step's kind follows the project's own effort figure, OR-1).
 
 **P13-T13 (docs/API_CONTRACT_P13.md §7).** Toolbar filters (`q`, `category`,
 `type`, `status_`, `leader_engineer_id`, `current_step`, `priority`) and
@@ -65,7 +68,7 @@ from __future__ import annotations
 
 import uuid
 from collections import defaultdict
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -83,7 +86,6 @@ from models.audit import AuditLogEntry
 from models.chamber import Chamber
 from models.engineer import Engineer
 from models.enums import (
-    NON_SCHEDULABLE_STATUSES,
     LabRegion,
     ProjectPriority,
     ProjectStatus,
@@ -127,9 +129,9 @@ from services.project_filters import (
     search_predicate,
 )
 from services.schedule_stale import mark_projects_stale
-from services.step_timing import timing_editable
+from services.template_copy import share_lock_categories
 from services.tracking import tracking_status_for
-from services.workspace import row_is_skipped
+from services.workspace import row_own_effort_kinds
 
 router = APIRouter(prefix="/gantt", tags=["gantt"])
 
@@ -165,6 +167,11 @@ def _served_span_fte(
     if live_status == WorkflowStepStatus.DONE:
         return None
     return float(step.span_fte)
+
+
+def _kind_of(templates: Mapping[str, WorkflowStepTemplate], step_id: str) -> WorkflowStepKind:
+    template = templates.get(step_id)
+    return template.kind if template is not None else WorkflowStepKind.DESIGN
 
 
 def _kind_weeks(
@@ -410,8 +417,15 @@ async def get_gantt(
         ).scalars().all()
         for live in live_rows:
             actual_steps[(live.project_id, live.step_template_id)] = live
+    # ADR 0046 OR-1: per project, the kinds that follow its own effort figure.
+    live_by_project: dict[uuid.UUID, list[ProjectWorkflowStep]] = {}
+    for live in actual_steps.values():
+        live_by_project.setdefault(live.project_id, []).append(live)
+    own_kinds = {
+        pid: row_own_effort_kinds(rows, templates) for pid, rows in live_by_project.items()
+    }
 
-    # P12 (ADR 0019 §4): `timing_editable` also needs the caller's GANTT
+    # P20-T02 (OQ #8): `span_fte` is served only with the caller's GANTT
     # write permission on the project, the same check as the freeze toggle
     # (GANTT/WRITE and the project's hub in scope).
     gantt_writer = principal_can(current_user, Surface.GANTT, Action.WRITE)
@@ -423,7 +437,7 @@ async def get_gantt(
     for project in projects:
         outcome = outcomes.get(project.id)
         can_write_timing = gantt_writer and is_hub_in_scope(current_user, project.hub_id)
-        schedulable = project.status not in NON_SCHEDULABLE_STATUSES
+        project_own_kinds = own_kinds.get(project.id, frozenset())
         expected = outcome.expected_end_week if outcome else None
         projected = outcome.projected_end_week if outcome else None
         step_rows: list[GanttStepRow] = []
@@ -456,33 +470,18 @@ async def get_gantt(
                     ),
                     eng_conflict=step.eng_conflict,
                     chamber_overlap=step.chamber_overlap,
+                    # P33-T08: the project's own copy of its template length.
                     lead_time_weeks=(
-                        actual.duration_weeks if actual else step.duration_weeks
-                    ),
-                    duration_override_weeks=(
-                        actual.duration_override_weeks if actual else None
+                        actual.plan_weeks if actual else step.duration_weeks
                     ),
                     effort_weeks=actual.effort_weeks if actual else None,
-                    start_not_before_week=actual.start_not_before_week if actual else None,
-                    overlap_weeks=actual.overlap_weeks if actual else None,
-                    predecessor_ids=sorted(template.predecessor_ids or []) if template else [],
-                    timing_editable=timing_editable(
-                        can_write=can_write_timing,
-                        frozen=project.frozen,
-                        schedulable=schedulable,
-                        # ADR 0041 R5: the one skip predicate on the live row
-                        # (lead 0, lab without cert, or effective 0).
-                        skipped=step.skipped
-                        or actual is None
-                        or row_is_skipped(
-                            actual,
-                            templates[step.step_template_id].kind
-                            if step.step_template_id in templates
-                            else WorkflowStepKind.DESIGN,
-                            project.certification_testing_required,
-                        ),
-                        step_status=actual.status if actual else WorkflowStepStatus.NOT_STARTED,
+                    # P33-T12 (contract Part G): the template copy, read-only.
+                    plan_weeks=actual.plan_weeks if actual else step.duration_weeks,
+                    gap_weeks=actual.plan_gap_weeks if actual else 0,
+                    own_effort=(
+                        _kind_of(templates, step.step_template_id).value in project_own_kinds
                     ),
+                    predecessor_ids=sorted(template.predecessor_ids or []) if template else [],
                     span_fte=_served_span_fte(
                         step,
                         can_write_timing=can_write_timing,
@@ -593,6 +592,10 @@ async def toggle_freeze(
             raise split_rejected_error(exc) from exc
     before_state = project_audit_state(project)
     inputs_before = (project.frozen, project.actual_start_week)
+    if unfreezing:
+        # P33-T10 ruling (OR-5): the re-derivation below may re-copy the
+        # template; the category's FOR SHARE before this write locks the row.
+        await share_lock_categories(db, [project.category])
     project.frozen = body.frozen
     if body.actual_start_week is not None:
         project.actual_start_week = body.actual_start_week

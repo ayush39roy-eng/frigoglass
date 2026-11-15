@@ -1,10 +1,10 @@
 import { z } from 'zod';
 
+import { getCategoryCatalog, type CategoryCatalog } from '@/lib/category-catalog';
+
 import {
   HUB_NAMES,
   LAB_REGIONS,
-  NON_OEM_CATEGORIES,
-  OEM_CATEGORIES,
   PROJECT_PRIORITIES,
   PROJECT_TYPES,
   SCHEDULABLE_STATUSES,
@@ -99,9 +99,11 @@ export const WHATIF_STATUSES: readonly WhatIfStatus[] = UI_SCHEDULABLE_STATUSES;
 
 export const OEM_HUBS: readonly string[] = ['OEM-HCK', 'OEM-Seitek'];
 
-/** Categories a hub's workflow accepts (OEM hubs use the -OEM categories). */
-export function categoriesForHub(hub: string): readonly ProjectCategory[] {
-  return OEM_HUBS.includes(hub) ? OEM_CATEGORIES : NON_OEM_CATEGORIES;
+/** Categories a hub's workflow accepts, in rank order (OEM hubs → the OEM
+ *  workflow's categories). P33-T14: from the served list (`catalog` defaults to
+ *  the mirrored `GET /reference/categories`); empty until it has loaded. */
+export function categoriesForHub(hub: string, catalog: CategoryCatalog = getCategoryCatalog()): readonly ProjectCategory[] {
+  return catalog.codesForWorkflow(OEM_HUBS.includes(hub) ? 'OEM' : 'PDD');
 }
 
 // --- draft lines -----------------------------------------------------------------------
@@ -215,6 +217,11 @@ const regionSchema = z.enum(LAB_REGIONS);
 
 const weeks = (label: string) => numeric({ label, min: 0, max: 52, optional: true });
 
+/** "A-OEM, B-OEM and C-OEM". */
+function joinCodes(codes: readonly string[]): string {
+  return codes.length <= 1 ? (codes[0] ?? '') : `${codes.slice(0, -1).join(', ')} and ${codes.at(-1) ?? ''}`;
+}
+
 const projectSchema = z
   .object({
     hub: hubSchema,
@@ -226,13 +233,15 @@ const projectSchema = z
     score: numeric({ label: 'Score', min: 0, max: 100, optional: true }),
   })
   .superRefine((v, ctx) => {
-    if (!categoriesForHub(v.hub).some((c) => c === v.category)) {
+    const allowed = categoriesForHub(v.hub);
+    // No served list yet: the server's INVALID_SCENARIO check still applies.
+    if (allowed.length > 0 && !allowed.includes(v.category)) {
       ctx.addIssue({
         code: 'custom',
         path: ['category'],
         message: OEM_HUBS.includes(v.hub)
-          ? 'OEM hubs use the A-OEM, B-OEM and C-OEM categories'
-          : 'This hub uses the A+, A, B and C categories',
+          ? `OEM hubs use the ${joinCodes(allowed)} categories`
+          : `This hub uses the ${joinCodes(allowed)} categories`,
       });
     }
   });
@@ -454,7 +463,8 @@ export const LINE_FACTORIES: { [K in LineListName]: () => ScenarioLines[K][numbe
   projects: () => ({
     key: nextLineKey(),
     hub: 'PD-India',
-    category: 'A',
+    // P33-T14: the first PDD category in rank order (served list).
+    category: categoriesForHub('PD-India')[0] ?? '',
     count: '1',
     status: 'In Queue',
     priority: '',

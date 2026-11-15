@@ -29,6 +29,7 @@ import { canonicalScoringTags } from '@/lib/scoring-tags';
 import { ApiError } from '@/lib/api/client';
 import { apiErrorMessage } from '@/lib/api/error-messages';
 import { useCategoriesForHub, type Hub } from '@/lib/api/reference';
+import { useCategoryCatalogSnapshot } from '@/lib/category-catalog';
 import { hubPickerLabel } from '@/lib/hub-labels';
 import { DISPLAY_HORIZON_WEEKS } from '@/lib/domain-constants';
 import { formatDecimal } from '@/lib/format';
@@ -222,18 +223,21 @@ export function ProjectForm({
     project?.leader_is_provisional === true &&
     project.leader_engineer_id !== null &&
     leaderId === project.leader_engineer_id;
-  // P9: category options depend on the hub's workflow (contract §6). The server
-  // list wins; the `is_oem` split is the fallback while it loads / offline.
+  // P9: category options depend on the hub's workflow (contract §6). P33-T14:
+  // the hub's served list wins; the served global list narrowed to the hub's
+  // workflow is the fallback while it loads. Options show the served label.
   const selectedHub = React.useMemo(() => hubs.find((h) => h.id === hubId), [hubs, hubId]);
   const categories = useCategoriesForHub(selectedHub);
   const categoryOptions = categories.options;
+  const categoryCatalog = useCategoryCatalogSnapshot();
   // A category from another workflow cannot survive a hub change (the server
   // 422s CATEGORY_WORKFLOW_MISMATCH) — clear it, synchronously, in render.
   const [prevOptionsKey, setPrevOptionsKey] = React.useState(categoryOptions.join('|'));
   const optionsKey = categoryOptions.join('|');
   if (optionsKey !== prevOptionsKey) {
     setPrevOptionsKey(optionsKey);
-    if (category !== NONE && !categoryOptions.includes(category as ProjectCategory)) {
+    // An empty list (not loaded / failed) clears nothing.
+    if (category !== NONE && categoryOptions.length > 0 && !categoryOptions.includes(category)) {
       setCategory(NONE);
     }
   }
@@ -526,7 +530,7 @@ export function ProjectForm({
                   <SelectItem value={NONE}>Unset</SelectItem>
                   {categoryOptions.map((c) => (
                     <SelectItem key={c} value={c}>
-                      {c}
+                      {categoryCatalog.labelOf(c)}
                     </SelectItem>
                   ))}
                 </SelectContent>

@@ -112,6 +112,12 @@ class ParseContext:
     app_lead_times: Mapping[tuple[str, str], Mapping[str, int]]
     current_week: int
     base_year: int = BASE_YEAR
+    #: P33-T07 (ADR 0047 §4, contract B3): the app's categories, code ->
+    #: workflow id (the `categories` table via the what-if input). A file
+    #: value equal to a code (case-insensitive, exact) that is not one of the
+    #: workbook spellings below is taken as that category. Default: the
+    #: seeded seven.
+    categories: Mapping[str, str] = field(default_factory=lambda: dict(_SEED_CATEGORIES))
 
 
 # --- output ----------------------------------------------------------------------------------
@@ -625,6 +631,11 @@ _CATEGORY_BASE: dict[str, tuple[str, str]] = {
     "c-oem": ("C-OEM", "C-OEM"),
 }
 _TO_OEM = {"A+": "A-OEM", "A": "A-OEM", "B": "B-OEM", "C": "C-OEM"}
+#: The seeded seven (code -> workflow), the `ParseContext.categories` default.
+_SEED_CATEGORIES: dict[str, str] = {
+    c: (dc.WORKFLOW_ID_FOR_OEM_HUB if c in dc.OEM_CATEGORIES else dc.WORKFLOW_ID_FOR_NON_OEM_HUB)
+    for c in dc.CATEGORY_ORDER
+}
 SPECIAL_LABEL = "Special Category"
 _NO_ENGINEER = frozenset({"", "tbc", "tbd", "tba", "-", "--", "n/a", "na", "none", "?"})
 _REAL_CODE = re.compile(r"^\d{2}-\d{5}")
@@ -786,6 +797,8 @@ def map_rows(raw: RawWorkbook, ctx: ParseContext) -> ParseResult:
 
     rows: list[ParsedRow] = []
     matched_engineers: set[str] = set()
+    #: P33-T07: app category codes by their folded spelling (exact match).
+    table_codes = {_norm(code): code for code in ctx.categories}
     for rr in raw.rows:
         v = rr.values
         key = f"row-{rr.file_row}"
@@ -958,7 +971,14 @@ def map_rows(raw: RawWorkbook, ctx: ParseContext) -> ParseResult:
             special, ncat = True, ""
         stage_raw = _text(v.get("stage"), _RAW_MAX)
         stage_code = _step_code(stage_raw)
-        cat_is_oem = ncat in ("a-oem", "b-oem", "c-oem")
+        # P33-T07: a category added in the app (not a workbook spelling).
+        table_code = (
+            None if ncat in _CATEGORY_BASE else table_codes.get(ncat) if ncat else None
+        )
+        cat_is_oem = ncat in ("a-oem", "b-oem", "c-oem") or (
+            table_code is not None
+            and ctx.categories[table_code] == dc.WORKFLOW_ID_FOR_OEM_HUB
+        )
         stage_is_oem = stage_code is not None and stage_code.startswith("OEM-")
         if hub not in dc.OEM_HUBS and (cat_is_oem or stage_is_oem):
             forced = None
@@ -988,6 +1008,10 @@ def map_rows(raw: RawWorkbook, ctx: ParseContext) -> ParseResult:
                     f"Category {label} uses its own lead times from the file and is scheduled "
                     f"as {category}.",
                 )
+        elif table_code is not None and ctx.categories[table_code] == _workflow_of(hub):
+            # P33-T07 (contract B3): an app category, exact case-insensitive
+            # match, of the hub's workflow. Its own app lead times are used.
+            category = label = table_code
         elif special:
             category, label = "A+", SPECIAL_LABEL
             issue(

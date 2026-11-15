@@ -137,20 +137,36 @@ export interface VersionHistoryDialogProps {
   projectLookup: Record<string, ProjectLookupEntry | undefined>;
   /** @default 'secondary' */
   triggerVariant?: 'secondary' | 'ghost';
+  /** P34-T02: controlled open state (the grid's "changed" marker opens it). */
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
+  /** P34-T02: the version shown when the dialog opens (its diff); null = the list. */
+  initialVersion?: number | null;
 }
 
 export function VersionHistoryDialog({
   projectLookup,
   triggerVariant = 'secondary',
+  open: controlledOpen,
+  onOpenChange,
+  initialVersion = null,
 }: VersionHistoryDialogProps): React.JSX.Element {
-  const [open, setOpen] = React.useState(false);
-  const [selectedVersion, setSelectedVersion] = React.useState<number | null>(null);
+  const [uncontrolledOpen, setUncontrolledOpen] = React.useState(false);
+  const open = controlledOpen ?? uncontrolledOpen;
+  const [selectedVersion, setSelectedVersion] = React.useState<number | null>(initialVersion);
+  // Opening (or re-targeting) at a version shows that version's diff.
+  const [prevTarget, setPrevTarget] = React.useState<[boolean, number | null]>([open, initialVersion]);
+  if (prevTarget[0] !== open || prevTarget[1] !== initialVersion) {
+    setPrevTarget([open, initialVersion]);
+    if (open) setSelectedVersion(initialVersion);
+  }
 
   const versionsQuery = useScenarioVersions({ enabled: open });
   const detailQuery = useScenarioVersionDetail(open ? selectedVersion : null);
 
   function handleOpenChange(next: boolean): void {
-    setOpen(next);
+    if (controlledOpen === undefined) setUncontrolledOpen(next);
+    onOpenChange?.(next);
     if (!next) setSelectedVersion(null);
   }
 
@@ -239,6 +255,11 @@ export function ScenarioVersionsPanel({
   );
 }
 
+/** Served `project_count` (P34-T01), or `change_count` from an older API. */
+function versionProjectCount(run: ScenarioApplyRunSummary): number {
+  return (run as Partial<ScenarioApplyRunSummary>).project_count ?? run.change_count;
+}
+
 function VersionList({
   query,
   onSelect,
@@ -283,7 +304,7 @@ function VersionList({
           <TableHead>Applied</TableHead>
           <TableHead>Applied by</TableHead>
           <TableHead>Notes</TableHead>
-          <TableHead className="text-right">Changes</TableHead>
+          <TableHead className="text-right">Projects</TableHead>
           <TableHead />
         </TableRow>
       </TableHeader>
@@ -300,8 +321,9 @@ function VersionList({
             <TableCell className="max-w-[200px] truncate text-text-muted" title={run.notes ?? ''}>
               {run.notes && run.notes.trim() !== '' ? run.notes : <span className="text-text-subtle">—</span>}
             </TableCell>
-            <TableCell className="tnum text-right" data-numeric="">
-              {formatInteger(run.change_count)}
+            <TableCell className="tnum text-right" data-numeric="" data-testid="version-project-count">
+              {/* P34-T01: served distinct projects; a pre-P34 API falls back to the change count. */}
+              {`${formatInteger(versionProjectCount(run))} ${versionProjectCount(run) === 1 ? 'project' : 'projects'}`}
             </TableCell>
             <TableCell className="text-right">
               <Button variant="ghost" size="sm" onClick={() => onSelect(run.version)}>

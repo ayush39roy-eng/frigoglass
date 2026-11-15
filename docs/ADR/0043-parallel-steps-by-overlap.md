@@ -83,3 +83,17 @@ precedence DAG on Workflow Settings (ADR 0009), which would change every project
 - *Let the floor override precedence.* A floor is absolute: after a recalculation moves the
   predecessor, the step would sit at a stale week, possibly before its predecessor starts.
 - *Per-project precedence DAG edits.* Far heavier UI and data model for the same gesture.
+
+## Amendment (2026-11-13, ADR 0046 / ADR 0048, P33)
+
+§5 (the Gantt gesture) is **retired** (ADR 0048). The overlap now comes from the project's copy of
+the category template gap (`plan_gap_weeks < 0`). A positive gap is a wait:
+`gate(s) = release(s) + 1 − o(s) + w(s)`, proposed in ADR 0046 §4 and pending the workflow-auditor's
+ruling P33-T00. §1–§4 and I27 stay, with I27 restated through the signed gap.
+
+## Amendment (2026-11-13, P33-T01)
+
+The wait extension is accepted, with the gate stated piecewise (R33-4):
+`gate = release + 1 + w` if `o = 0`; `max(release + 1 − o, anchor, frontier)` if `o > 0`.
+`w = 0` on started tails, and `g` is ignored on skipped steps and in frozen projects. I27 is revised
+as in ADR 0046.

@@ -13,8 +13,9 @@ from typing import Literal
 
 from pydantic import BaseModel
 
-from models.enums import HubName, LabRegion, ProjectCategory, ProjectStatus, ProjectType
+from models.enums import HubName, LabRegion, ProjectStatus, ProjectType
 from schemas.capacity import YearRemaining
+from schemas.category import CategoryCodeOut
 
 #: `year` = full planning year, `remaining` = the rest of it from CURRENT_WEEK.
 CapacityBasis = Literal["year", "remaining"]
@@ -160,7 +161,7 @@ class ResourceLoadFilters(BaseModel):
     project_type: list[ProjectType]
     project_status: list[ProjectStatus]
     requesting_department: list[str]
-    category: list[ProjectCategory]
+    category: list[CategoryCodeOut]
     engineer_id: list[uuid.UUID]
     basis: CapacityBasis
 
@@ -193,7 +194,7 @@ class ResourceLoadOptions(BaseModel):
     #: Distinct values present on visible projects, in enum order.
     project_types: list[ProjectType]
     project_statuses: list[ProjectStatus]
-    categories: list[ProjectCategory]
+    categories: list[CategoryCodeOut]
     #: ADR 0035: the distinct `Project.requesting_department` values of the
     #: visible projects, sorted (the client workbook's values as written).
     requesting_departments: list[str]

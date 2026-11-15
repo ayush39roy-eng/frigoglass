@@ -52,12 +52,6 @@ export interface WeekScale {
   readonly weekWidthPx: number;
   /** Full timeline width in pixels (`horizonWeeks * weekWidthPx`). */
   readonly totalWidthPx: number;
-  /**
-   * P32-R04: the last week a drag may request when it differs from the axis
-   * end (the Workflow page's per-project waterfall: the scheduler horizon,
-   * W78). Absent = the axis' last week (the Timeline and the What-if import).
-   */
-  readonly maxDragWeek?: number;
 }
 
 /** P13-T13 (API_CONTRACT_P13 §7): the toolbar's px zoom slider, 16–48 px per
@@ -107,11 +101,6 @@ export function lastScaleWeek(scale: WeekScale): number {
   return scale.originWeek + scale.horizonWeeks - 1;
 }
 
-/** The last week a drag may request: `maxDragWeek`, else the axis' last week. */
-export function dragLastWeek(scale: WeekScale): number {
-  return scale.maxDragWeek ?? lastScaleWeek(scale);
-}
-
 /** Weeks of margin around the per-project waterfall's served span (P32-R04). */
 export const WATERFALL_MARGIN_WEEKS = 2;
 
@@ -119,10 +108,9 @@ export const WATERFALL_MARGIN_WEEKS = 2;
  * P32-R04: the week scale of one project's step waterfall (Workflow page). It
  * starts `WATERFALL_MARGIN_WEEKS` before the earlier of the project's first
  * served start (planned or actual) and `CURRENT_WEEK`, and ends the same margin
- * after the latest of W52, any served planned / actual end and any stored
- * `start_not_before_week`, capped at the scheduler horizon (W78). Drags may
- * request up to W78 (`maxDragWeek`). A min/max over served week numbers only —
- * pixels, never a schedule.
+ * after the latest of W52 and any served planned / actual end, capped at the
+ * scheduler horizon (W78). Read-only since P33-T15 (ADR 0048). A min/max over
+ * served week numbers only — pixels, never a schedule.
  */
 export function projectWaterfallScale(
   steps: readonly {
@@ -130,7 +118,6 @@ export function projectWaterfallScale(
     planned_end_week: number | null;
     actual_start_week: number | null;
     actual_end_week: number | null;
-    start_not_before_week: number | null;
   }[],
   weekWidthPx: number,
 ): WeekScale {
@@ -138,7 +125,7 @@ export function projectWaterfallScale(
   let last = DISPLAY_HORIZON_WEEKS;
   for (const s of steps) {
     for (const w of [s.planned_start_week, s.actual_start_week]) if (w != null) first = Math.min(first, w);
-    for (const w of [s.planned_end_week, s.actual_end_week, s.start_not_before_week]) if (w != null) last = Math.max(last, w);
+    for (const w of [s.planned_end_week, s.actual_end_week]) if (w != null) last = Math.max(last, w);
   }
   const originWeek = Math.max(1, first - WATERFALL_MARGIN_WEEKS);
   const endWeek = Math.min(SCHEDULER_HORIZON_WEEKS, last + WATERFALL_MARGIN_WEEKS);
@@ -148,7 +135,6 @@ export function projectWaterfallScale(
     horizonWeeks,
     weekWidthPx,
     totalWidthPx: horizonWeeks * weekWidthPx,
-    maxDragWeek: SCHEDULER_HORIZON_WEEKS,
   };
 }
 
@@ -301,12 +287,13 @@ export function slipBracketGeometry(
 
 // ---------------------------------------------------------------------------
 // P12 (ADR 0019): drag a step bar. Pure pointer-pixels → whole-weeks maths for
-// the gesture only. The result is a REQUEST (`start_not_before_week` or
-// `duration_override_weeks`); where the bar really lands is decided by the next
-// schedule run (precedence and capacity still apply), never by this module.
+// the gesture only. Since P33-T15 (ADR 0048) the only caller is the What-if
+// import's scenario Gantt (P32-T06, never persisted). The result is a REQUEST
+// (`start_not_before_week` or `duration_override_weeks`); where the bar really
+// lands is decided by the scenario run, never by this module.
 // ---------------------------------------------------------------------------
 
-/** Upper bound of `duration_override_weeks` (ADR 0019, `backend/schemas/step_timing.py`). */
+/** Upper bound of a scenario `duration_override_weeks` (`StepTimingInput`, 1..104). */
 export const DURATION_OVERRIDE_MAX_WEEKS = 104;
 
 export type StepDragMode = 'move' | 'resize';
@@ -323,10 +310,9 @@ function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
 }
 
-/** Body drag: the requested earliest start week, clamped to the axis (`1..52`),
- *  or to `maxDragWeek` when the scale sets one (P32-R04). */
+/** Body drag: the requested earliest start week, clamped to the axis (`1..52`). */
 export function dragMoveStartWeek(originStartWeek: number, deltaWeeks: number, scale: WeekScale): number {
-  return clamp(originStartWeek + deltaWeeks, scale.originWeek, dragLastWeek(scale));
+  return clamp(originStartWeek + deltaWeeks, scale.originWeek, lastScaleWeek(scale));
 }
 
 /** Right-edge drag: the requested duration, clamped to `1..104` weeks. */
@@ -417,7 +403,7 @@ export function stepDragResult(
   scale: WeekScale,
 ): StepDragResult {
   const delta = snapWeekDelta(dxPx, scale);
-  const lastWeek = dragLastWeek(scale);
+  const lastWeek = lastScaleWeek(scale);
   if (mode === 'move') {
     const start = dragMoveStartWeek(origin.startWeek, delta, scale);
     const shift = start - origin.startWeek;
@@ -445,34 +431,3 @@ export function stepDragResult(
     workWeeks: work,
   };
 }
-
-export interface StepDragCalendar {
-  /** Calendar weeks the step would take with `workWeeks` — NOT clipped at W52. */
-  calendarWeeks: number;
-  /** The last calendar week of that span (may be past the axis, e.g. 53). */
-  endWeek: number;
-  /** `true` when `endWeek` is past the axis' last week (W52); on a scale with
-   *  `maxDragWeek` (P32-R04), past min(axis end, W52) so the label names it. */
-  pastAxis: boolean;
-}
-
-/**
- * QA-P19-4: the calendar figure for the live resize label. The ghost bar is
- * clipped at the axis end (W52) for drawing, so its width must never be read
- * as the calendar span. With an FTE the span is ADR 0032's
- * `ceil(work / fte)` (`fteSpanWeeks`); without one the mapping is 1:1, i.e. the
- * served bar width plus the change in work. The span starts at the served
- * start week.
- */
-export function stepDragCalendar(origin: StepDragOrigin, workWeeks: number, scale: WeekScale): StepDragCalendar {
-  const axisEnd = lastScaleWeek(scale);
-  const lastWeek = scale.maxDragWeek === undefined ? axisEnd : Math.min(axisEnd, DISPLAY_HORIZON_WEEKS);
-  const fte = fteHundredths(origin.fte) === null ? null : (origin.fte as number);
-  const calendarWeeks =
-    fte === null
-      ? Math.max(1, origin.endWeek - origin.startWeek + 1 + (workWeeks - origin.durationWeeks))
-      : fteSpanWeeks(workWeeks, fte);
-  const endWeek = origin.startWeek + calendarWeeks - 1;
-  return { calendarWeeks, endWeek, pastAxis: endWeek > lastWeek };
-}
-

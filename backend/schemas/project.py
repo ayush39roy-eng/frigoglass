@@ -22,13 +22,13 @@ from pydantic import AfterValidator, BaseModel, ConfigDict, Field
 
 from models.enums import (
     HubName,
-    ProjectCategory,
     ProjectPriority,
     ProjectStatus,
     ProjectType,
     ScoringTag,
 )
 from models.project import canonical_tags
+from schemas.category import CategoryCode, CategoryCodeOut
 
 
 def _distinct_tags(tags: list[ScoringTag]) -> list[ScoringTag]:
@@ -80,7 +80,9 @@ class ProjectCreateRequest(BaseModel):
     external_code: str | None = Field(default=None, max_length=100)
     hub_id: uuid.UUID
     leader_engineer_id: uuid.UUID | None = None
-    category: ProjectCategory | None = None
+    #: P33-T07 (ADR 0047): a `categories.code`; existence and the hub's
+    #: workflow are checked against the table by the router (contract B3).
+    category: CategoryCode | None = None
     type: ProjectType | None = None
     priority: ProjectPriority | None = None
     actual_start_week: int | None = Field(default=None, ge=1)
@@ -133,11 +135,17 @@ class ProjectUpdateRequest(BaseModel):
     external_code: str | None = None
     hub_id: uuid.UUID | None = None
     leader_engineer_id: uuid.UUID | None = None
-    category: ProjectCategory | None = None
+    #: P33-T07 (ADR 0047): a `categories.code`; existence and the hub's
+    #: workflow are checked against the table by the router (contract B3).
+    category: CategoryCode | None = None
     type: ProjectType | None = None
     priority: ProjectPriority | None = None
     status: ProjectStatus | None = None
     actual_start_week: int | None = Field(default=None, ge=1)
+    #: P35 (D35-3): `null` clears it. Checked against the effective
+    #: `actual_start_week` after the patch: end < start is a 422
+    #: `ACTUAL_END_BEFORE_START`. Not a scheduler input.
+    actual_end_week: int | None = Field(default=None, ge=1)
     delay_weeks: int | None = Field(default=None, ge=0)
     reg_year: int | None = None
     carry_over: bool | None = None
@@ -174,12 +182,14 @@ class ProjectRead(BaseModel):
     #: migration (least-loaded eligible engineer of the capacity hub), not by a
     #: person. Cleared when a PATCH changes `leader_engineer_id`.
     leader_is_provisional: bool
-    category: ProjectCategory | None
+    category: CategoryCodeOut | None
     type: ProjectType | None
     priority: ProjectPriority | None
     status: ProjectStatus
     frozen: bool
     actual_start_week: int | None
+    #: P35 (D35-3): the week the project actually finished; null = not set.
+    actual_end_week: int | None
     delay_weeks: int
     reg_year: int | None
     carry_over: bool
@@ -299,6 +309,25 @@ class PriorityPreviewRequest(BaseModel):
     priority: ProjectPriority = Field(strict=False)
 
 
+class BandRankPreviewRequest(BaseModel):
+    """Body for `POST /projects/{id}/band-rank/preview` (ADR 0050 §4,
+    docs/API_CONTRACT_P36.md §2). At most one anchor: place the project
+    directly before / after that project in the full band; both null = last
+    in the band. Both set is a 422 `BOTH_ANCHORS` (coded, from the route)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    before_project_id: uuid.UUID | None = None
+    after_project_id: uuid.UUID | None = None
+
+
+class BandRankMoveRequest(BandRankPreviewRequest):
+    """Body for `POST /projects/{id}/band-rank` (contract §3): the previewed
+    placement plus the preview's token (409 `PREVIEW_STALE` when stale)."""
+
+    preview_token: str = Field(min_length=16, max_length=128)
+
+
 PriorityPreviewResult = Literal["preview", "unchanged", "not_needed"]
 
 
@@ -397,3 +426,66 @@ class PriorityMoveResponse(BaseModel):
     summary: PriorityPreviewSummary | None = None
     changes: list[PriorityPreviewChange] = Field(default_factory=list)
     hidden_count: int = 0
+
+
+# --- P35: Projects register batch save (`POST /projects/register-edits`) -----------
+
+#: Most rows one register Save may carry.
+REGISTER_EDITS_MAX = 100
+
+
+class RegisterEditPatch(BaseModel):
+    """One project's changes from the register's Edit mode. A subset of
+    `ProjectUpdateRequest` (same types and bounds, same PATCH semantics:
+    only the keys sent are applied, `null` clears where the PATCH allows it)
+    plus `actual_end_week`. No priority (a priority move has its own
+    preview / confirm flow), no hub / category, no financial field.
+    `requesting_department` is read-only (workbook charter field, ADR 0035)
+    and so is not accepted either."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    project_id: uuid.UUID
+    status: ProjectStatus | None = None
+    leader_engineer_id: uuid.UUID | None = None
+    actual_start_week: int | None = Field(default=None, ge=1)
+    actual_end_week: int | None = Field(default=None, ge=1)
+    design_effort_weeks: EffortWeeks | None = None
+    lab_effort_weeks: EffortWeeks | None = None
+
+
+class RegisterEditsRequest(BaseModel):
+    """1..100 per-project patches, applied all-or-nothing in one transaction."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    edits: list[RegisterEditPatch] = Field(min_length=1, max_length=REGISTER_EDITS_MAX)
+
+
+class RegisterEditError(BaseModel):
+    """One element of `detail.errors` on a 403 `REGISTER_EDITS_FORBIDDEN` or
+    a 422 `REGISTER_EDITS_INVALID`. `code` is the single PATCH's code for
+    the same failure (e.g. `ACTUAL_END_BEFORE_START`, `NULL_NOT_ALLOWED`,
+    `DRAFT_RETIRED`, `EFFORT_SPLIT_REJECTED`), or `DUPLICATE_PROJECT`,
+    `FORBIDDEN_PROJECT` (no write right, out of scope or not found: existence
+    is never revealed) and `STATUS_DRAFT_SUBMIT_ONLY`."""
+
+    project_id: uuid.UUID
+    code: str
+    message: str
+
+
+class RegisterEditsResponse(BaseModel):
+    """Always 200 on success. The recalc fields mirror
+    `PriorityMoveResponse` (ADR 0015 lifecycle, one greedy run for the whole
+    batch, `trigger_reason="register_edit"`): `schedule_run_id` / `task_id`
+    only when `queued`, `baseline_run_id` only when `queued` and a run was
+    active. `not_needed` when no scheduler input changed on a project that
+    was schedulable before or after its edit."""
+
+    project_ids: list[uuid.UUID]
+    projects_marked_stale: list[uuid.UUID]
+    recalc_status: RecalcStatus
+    schedule_run_id: uuid.UUID | None
+    baseline_run_id: uuid.UUID | None
+    task_id: str | None

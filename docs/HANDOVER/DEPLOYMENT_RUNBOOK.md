@@ -326,6 +326,43 @@ before escalating.
   unless you genuinely intend to destroy `postgres-data`/`redis-data`/`minio-data` — there is no
   confirmation prompt.
 
+### One-off upgrade: P33 (per-project step timing retired, ADR 0048)
+
+Do these in order, once, when deploying the P33 release onto a database that predates it. Take a
+backup first (`docs/HANDOVER/BACKUP_RESTORE.md`); `p33c` clears the per-project timing values
+(each cleared value is kept in a `project.step_timing_cleared` audit row).
+
+1. **Code and migration ship together.** Migration `p33c_clear_step_timing` and the P33 backend
+   code must go out in the same deploy. Never run the P33 code against a pre-`p33c` schema, or
+   `p33c` under pre-P33 code.
+2. **Secrets present.** Confirm every secret file the backend needs is in place (`secrets/README.md`),
+   **including the field encryption key** (`RPD_FIELD_ENCRYPTION_KEY_FILE`). The recalculation in
+   step 5 runs a real schedule and reads encrypted columns: without the key the run fails.
+3. **Build and start** (`docker compose build api worker solver-worker`, then
+   `docker compose up -d api worker solver-worker`, then `docker compose restart waf-api`, see
+   above). The entrypoint runs `alembic upgrade head`, which applies, in this order:
+   `p32a → p35a → p33a → p36a → p33b → p33c`.
+4. **Check the schema head.** `docker compose run --rm api alembic current` must show `p33c` (or a
+   later revision) as head.
+5. **Run the recalculation once:**
+   ```
+   docker compose run --rm api python -m scripts.p33_recalc_after_timing_clear
+   ```
+   Use `run`, not `exec`: `run` goes through `docker-entrypoint.sh`, which resolves the `_FILE`
+   secrets (incl. the field key) into the process; `exec` skips it. The script dispatches one greedy
+   run (`trigger_reason=timing_cleared`) and waits for its outcome (default 600 s,
+   `--wait-seconds` to change). **Check the exit code is 0** (`echo $?`):
+   - `0`: `status=queued` (the run completed), `already_dispatched`, `deferred` or
+     `nothing_cleared`. Done.
+   - `1`: `status=dispatch_failed` (broker refused) or `status=run_failed` (the run failed while
+     executing, e.g. a missing secret). The affected projects stay stale. Fix the cause (the run's
+     error is in `GET /schedule-runs`, Admin) and run the same command again: a failed run does not
+     count as dispatched, so the rerun dispatches a new one.
+   - `3`: `status=still_running` (the wait ended first). Do not rerun yet: watch the run in
+     `GET /schedule-runs`; rerun only if it ends `failed`.
+   - `2`: `RPD_DATABASE_URL` not set (the entrypoint normally builds it).
+   A second invocation after a success answers `already_dispatched` and changes nothing.
+
 ## 9. Known issues — documented, not silently omitted
 
 These are real, live-reproduced findings from the P6 phase-gate security audit

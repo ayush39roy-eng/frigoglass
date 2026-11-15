@@ -49,7 +49,7 @@ from tests.auth_helpers import (
     make_principal,
     override_current_principal,
 )
-from tests.factories import make_hub, make_project, make_user
+from tests.factories import clear_rank_if_out_of_band, make_hub, make_project, make_user
 
 REGIONS = ("Greece", "India", "Romania")
 _FINANCIAL = ("customer_name", "tcogs", "selling_price", "gross_margin")
@@ -256,6 +256,7 @@ async def test_analytics_includes_commercialized(db_session):
             )
         ).scalar_one()
         project.status = ProjectStatus.COMMERCIALIZED
+        clear_rank_if_out_of_band(project)
         await db_session.flush()
         after = await _get(client, "/dashboard/analytics")
         totals = await _get(client, "/dashboard/pipeline-totals")
@@ -360,7 +361,11 @@ async def test_category_timelines_follow_the_lead_time_table(db_session):
     for body, expected in ((pdd, _PDD_EXPECTED), (oem, _OEM_EXPECTED)):
         assert [c["category"] for c in body] == list(expected)
         for c in body:
-            assert set(c) == {"category", "total_weeks", "design_weeks", "lab_weeks", "steps"}
+            # P33-T09 (contract C2): label, workflow, rank, version and the note.
+            assert set(c) == {
+                "category", "label", "workflow_id", "rank", "template_version", "note",
+                "total_weeks", "design_weeks", "lab_weeks", "steps",
+            }
             assert (c["design_weeks"], c["lab_weeks"], c["total_weeks"]) == expected[
                 c["category"]
             ]
@@ -370,14 +375,17 @@ async def test_category_timelines_follow_the_lead_time_table(db_session):
             for s in c["steps"]:
                 assert set(s) == {
                     "code", "name", "resource_kind", "start_week", "duration_weeks",
+                    "gap_weeks", "effective_gap_weeks", "flags", "predecessor_ids",
                 }
+                assert (s["gap_weeks"], s["effective_gap_weeks"], s["flags"]) == (0, 0, [])
                 assert s["start_week"] == cursor
                 cursor += s["duration_weeks"]
             assert cursor == c["total_weeks"]
     b = next(c for c in pdd if c["category"] == "B")
     assert b["steps"][4] == {
         "code": "PDD-E", "name": "Design Detailing", "resource_kind": "design",
-        "start_week": 2, "duration_weeks": 4,
+        "start_week": 2, "duration_weeks": 4, "gap_weeks": 0, "effective_gap_weeks": 0,
+        "flags": [], "predecessor_ids": ["PDD-D"],
     }
     # PDD-B and PDD-C are 0 for B: skipped, transparent (start = end = pred end).
     assert [(s["start_week"], s["duration_weeks"]) for s in b["steps"][1:3]] == [(1, 0), (1, 0)]
@@ -437,13 +445,18 @@ async def test_b_equivalent_ratios(db_session):
 
 async def test_b_equivalent_follows_a_lead_time_edit_and_zero_reference_is_null(db_session):
     await _act_as(db_session, RoleName.SUPER_ADMIN)
-    rows = [
-        {"workflow_id": "PDD", "category": "B", "step_id": "PDD-F", "weeks": 0},
-        {"workflow_id": "PDD", "category": "B", "step_id": "PDD-H", "weeks": 0},
-    ]
+    # P33-T10: the template is edited through the apply (no project of B
+    # exists, so nothing else changes and no run is needed).
+    change = {
+        "changes": [{"workflow_id": "PDD", "category": "B", "base_version": 1, "steps": [
+            {"step_id": "PDD-H", "weeks": 0},  # PDD-F is already 0 for B
+        ]}],
+        "selection": {"mode": "none"},
+    }
     async with _client(db_session) as client:
-        resp = await client.put("/workflow-settings/lead-times", json={"lead_times": rows})
+        resp = await client.post("/workflow-templates/apply", json=change)
         assert resp.status_code == 200, resp.text
+        assert resp.json()["recalc_status"] == "not_needed"
         pdd = await _get(client, "/workflow-settings/b-equivalent", workflow="PDD")
     b = next(r for r in pdd if r["category"] == "B")
     assert (b["lab_weeks"], b["lab_ratio"], b["design_ratio"]) == (0, None, 1.0)

@@ -276,6 +276,8 @@ async def test_preview_equals_confirm(db_session):
     assert move.after_state == {
         "project_id": str(last.id), "priority": "P1", "recalc_status": "applied",
         "baseline_run_id": str(w.run.id), "schedule_run_id": str(run.id),
+        # P36 (R36-6): last in P1, which held one project.
+        "band_rank": 2,
     }
     (recalc,) = (await db_session.execute(_audits("project.schedule_recalculated"))).scalars().all()
     assert recalc.after_state["projected_end_week"] == preview["moved"]["end_week_after"]

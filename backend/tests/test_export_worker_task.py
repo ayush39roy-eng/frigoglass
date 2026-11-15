@@ -57,6 +57,7 @@ from models.user import User
 from seed.initial_scoring_rubric import seed_priority_score
 from services.scoring_rubric import load_rubric
 from tests.conftest import run_alembic
+from tests.factories import rank_all_bands
 from workers.export_tasks import _generate_export_async
 
 _MINIO_ACCESS_KEY = "rpdtestaccess"
@@ -159,9 +160,11 @@ async def _seed_matrix_project(postgres_url: str):
                 delay_weeks=0,
                 carry_over=False,
                 tcogs_eur=999.99,
+                band_rank=1,  # placeholder, renumbered below (P36)
             )
             db.add(project)
             await db.flush()
+            await rank_all_bands(db)
 
             # ADR 0037: scores live in priority_dimension_scores.
             score = seed_priority_score(await load_rubric(db), project.id, [4] * 13)

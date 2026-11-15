@@ -38,7 +38,7 @@ from tests.auth_helpers import (
     make_principal,
     override_current_principal,
 )
-from tests.factories import make_user
+from tests.factories import clear_rank_if_out_of_band, make_user
 
 REGIONS = ("Greece", "India", "Romania")
 
@@ -361,6 +361,7 @@ async def test_region_summary_includes_commercialized_in_pipeline(db_session):
         )
     ).scalar_one()
     project.status = ProjectStatus.COMMERCIALIZED
+    clear_rank_if_out_of_band(project)
     await db_session.flush()
     await _act_as(db_session, RoleName.PORTFOLIO_MANAGER)
     async with _client(db_session) as client:

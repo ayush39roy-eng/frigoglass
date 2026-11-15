@@ -24,12 +24,11 @@ function step(seq: number, start: number, end: number): GanttStepRow {
     eng_conflict: false,
     chamber_overlap: false,
     lead_time_weeks: 2,
-    duration_override_weeks: null,
-    start_not_before_week: null,
-    timing_editable: 'none',
     span_fte: null,
     effort_weeks: null,
-    overlap_weeks: null,
+    plan_weeks: 2,
+    gap_weeks: 0,
+    own_effort: false,
     predecessor_ids: [],
   };
 }

@@ -249,21 +249,26 @@ version is queryable (Versions & History, §2).
 
 See the Infrastructure & security table in §3 for the layer list. RBAC role/permission matrix:
 
-| Role | Dashboard | Capacity | Matrix | Gantt | Project Workspace | Project Registration | Capacity Planning | Workflow Settings | Audit Log | User/Role Admin |
-|---|---|---|---|---|---|---|---|---|---|---|
-| Portfolio Manager | R | R | R/W | R | R/W | R/W | R | – | – | – |
-| Hub Planner (scoped) | R (own hub) | R/W (own hub) | R (own hub) | R/W (own hub) | R/W (own hub) | R/W (own hub) | R/W (own hub) | – | – | – |
-| Engineer | – | – | – | R (own assignments) | R (own assignments) | – | – | – | – | – |
-| Executive Viewer | R (all hubs) | R (all hubs) | R (all hubs) | R (all hubs) | R (all hubs) | – | – | – | – | – |
-| Auditor | – | – | – | – | – | – | – | – | R (all) | – |
-| Admin | R/W | R/W | R/W | R/W | R/W | R/W | R/W | R | R | R/W (non-admin roles) |
-| Super Admin | R/W | R/W | R/W | R/W | R/W | R/W | R/W | R/W | R | R/W (all roles) |
+| Role | Dashboard | Capacity | Matrix | Gantt | Project Workspace | Project Registration | Capacity Planning | Workflow Settings | Workflow Templates | Audit Log | User/Role Admin |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| Portfolio Manager | R | R | R/W | R | R/W | R/W | R | – | – | – | – |
+| Hub Planner (scoped) | R (own hub) | R/W (own hub) | R (own hub) | R/W (own hub) | R/W (own hub) | R/W (own hub) | R/W (own hub) | – | – | – | – |
+| Engineer | – | – | – | R (own assignments) | R (own assignments) | – | – | – | – | – | – |
+| Executive Viewer | R (all hubs) | R (all hubs) | R (all hubs) | R (all hubs) | R (all hubs) | – | – | – | – | – | – |
+| Auditor | – | – | – | – | – | – | – | – | – | R (all) | – |
+| Admin | R/W | R/W | R/W | R/W | R/W | R/W | R/W | R | R/W | R | R/W (non-admin roles) |
+| Super Admin | R/W | R/W | R/W | R/W | R/W | R/W | R/W | R/W | R/W | R | R/W (all roles) |
 
 **Super Admin** (added 2026-09-27, ADR 0010) has every right on every surface and is the only role
 that can grant or revoke Admin/Super Admin or edit Workflow Settings (lead-time table, step
 precedence, hub work calendars, chamber downtime — ADRs 0007/0008/0009). The server refuses to
 deactivate or demote the last active Super Admin. `GET /me` publishes the resolved permission table
 so the frontend can gate navigation and write controls; the server stays the enforcement point.
+
+**Workflow Templates** (added 2026-11-13, ADR 0045 §7, amends ADR 0010; P33-T06): category timeline
+editing (step moves and lengths), the Lead times tab and adding a category. Admin and Super Admin
+R/W, every other role none. Workflow Settings keeps Super Admin R/W and Admin R, and still guards
+steps & precedence, hub calendars and chambers. `GET /me` publishes both columns.
 
 The **Project Workspace** column is derived provisionally from the adjacent surfaces (read follows
 Dashboard/Matrix/Gantt; detail + progress writes follow Project Registration and Gantt) and is

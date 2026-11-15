@@ -42,3 +42,11 @@ rights".
 - Audit rows are written for every role/scope change and record actor + target.
 - OQ#8 (GDPR) is untouched: the User/Role Admin surface shows names/emails of *users*, which is
   ordinary account administration, not the engineer-utilisation data OQ#8 covers.
+
+## Amendment (2026-11-13, ADR 0045 §7, P33)
+
+Owner decision: **Admin and Super Admin** may edit category timelines (step moves and lengths),
+edit the Lead times tab and add categories. These now sit on a new surface,
+`workflow_templates`: Admin RW, Super Admin RW, every other role none. Steps & precedence, Hub
+calendars and Chambers stay on `workflow_settings`: Super Admin RW, Admin R. `GET /me` publishes
+both. The frontend gates on them and the server enforces them.

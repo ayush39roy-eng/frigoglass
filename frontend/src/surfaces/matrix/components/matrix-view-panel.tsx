@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { ChevronDown, SlidersHorizontal } from 'lucide-react';
+import { SlidersHorizontal } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import {
@@ -14,8 +14,10 @@ import { cn } from '@/lib/utils';
 /**
  * P21 sticky "View" panel. It sticks to the top of the surface scroll region
  * (directly under the app header) and turns compact while stuck: smaller
- * paddings, a subtle shadow, the controls in one row and the CAT / TYPE / HUB /
- * STATUS filters folded behind a "Filters (n)" button. Below `md` it is a
+ * paddings, a subtle shadow, the controls in one row. P34-T02 (owner ask): the
+ * CAT / TYPE / HUB / STATUS / Capacity fill / VIP filters stay visible while
+ * stuck, as one compact line that scrolls sideways when it does not fit (they
+ * were folded behind a "Filters (n)" button). Below `md` it is a
  * single "View & filters" button that opens a bottom sheet with every control.
  * The grid has its own scroll region, so the panel never covers the grid's
  * sticky header. Motion is a short padding/shadow transition, off under
@@ -29,7 +31,7 @@ export interface MatrixViewPanelProps {
   renderControls: (compact: boolean) => React.ReactNode;
   /** The chip filter rows. */
   filters: React.ReactNode;
-  /** Number of active filters, for "Filters (n)" and "View & filters (n)". */
+  /** Number of active filters, for the narrow "View & filters (n)" button. */
   filterCount: number;
   /** A short summary shown on the narrow bar (e.g. the currency). */
   summary?: React.ReactNode;
@@ -47,16 +49,8 @@ export function MatrixViewPanel({
   panelRef,
 }: MatrixViewPanelProps): React.JSX.Element {
   const filtersId = React.useId();
-  const [filtersOpen, setFiltersOpen] = React.useState(false);
   const [sheetOpen, setSheetOpen] = React.useState(false);
   const countText = filterCount > 0 ? ` (${String(filterCount)})` : '';
-
-  // Leaving the stuck state folds the filter disclosure back (it is always shown then).
-  const [prevStuck, setPrevStuck] = React.useState(stuck);
-  if (prevStuck !== stuck) {
-    setPrevStuck(stuck);
-    if (!stuck) setFiltersOpen(false);
-  }
 
   const shell = cn(
     'sticky top-0 z-20 rounded-card border-2 border-border-strong/60 bg-surface text-text',
@@ -113,35 +107,21 @@ export function MatrixViewPanel({
       </h2>
       <div className={cn('flex flex-wrap items-center', stuck ? 'gap-2' : 'gap-x-4 gap-y-2')}>
         {renderControls(stuck)}
-        {stuck ? (
-          <Button
-            variant={filtersOpen ? 'primary' : 'secondary'}
-            size="sm"
-            aria-expanded={filtersOpen}
-            aria-controls={filtersId}
-            onClick={() => setFiltersOpen((v) => !v)}
-            data-testid="matrix-filters-toggle"
-          >
-            <SlidersHorizontal aria-hidden="true" />
-            Filters{countText}
-            <ChevronDown
-              aria-hidden="true"
-              className={cn('transition-transform motion-reduce:transition-none', filtersOpen && 'rotate-180')}
-            />
-          </Button>
-        ) : null}
       </div>
-      {!stuck || filtersOpen ? (
-        <div
-          id={filtersId}
-          className={cn(
-            'flex flex-wrap items-center gap-x-6 gap-y-2 border-t border-border',
-            stuck ? 'mt-2 pt-2' : 'mt-2.5 pt-2.5',
-          )}
-        >
-          {filters}
-        </div>
-      ) : null}
+      <div
+        id={filtersId}
+        className={cn(
+          'flex items-center border-t border-border',
+          stuck
+            ? // One compact line; scrolls sideways when it does not fit.
+              'mt-1.5 flex-nowrap gap-x-4 overflow-x-auto pt-1.5 scrollbar-thin [&>*]:shrink-0 [&_[role=group]]:flex-nowrap [&_[role=radiogroup]]:flex-nowrap'
+            : 'mt-2.5 flex-wrap gap-x-6 gap-y-2 pt-2.5',
+        )}
+        data-testid="matrix-view-filters"
+        data-compact={stuck ? 'true' : undefined}
+      >
+        {filters}
+      </div>
     </section>
   );
 }

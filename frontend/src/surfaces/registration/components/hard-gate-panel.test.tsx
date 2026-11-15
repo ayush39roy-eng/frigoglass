@@ -25,7 +25,7 @@ const project: ProjectRead = {
   priority: null,
   status: 'Draft',
   frozen: false,
-  actual_start_week: null,
+  actual_start_week: null, actual_end_week: null,
   delay_weeks: 0,
   reg_year: null,
   carry_over: false,
@@ -105,6 +105,18 @@ describe('HardGatePanel', () => {
 
     await user.click(screen.getByRole('button', { name: /submit/i }));
     expect(await screen.findByText('gross_margin_pct is required')).toBeInTheDocument();
+  });
+
+  it('P36-R03: a 503 BAND_RANK_BUSY shows the contract copy (not the raw detail) and does not retry', async () => {
+    const user = userEvent.setup();
+    hooks.useHardGateStatus.mockReturnValue(ready({ can_leave_draft: true, missing_fields: [] }));
+    const onSubmit = vi.fn().mockRejectedValue(new ApiError(503, 'Service Unavailable', 'raw', 'BAND_RANK_BUSY', 5));
+    renderWithProviders(<HardGatePanel project={project} onSubmit={onSubmit} />);
+    await user.click(screen.getByRole('button', { name: /submit/i }));
+    expect(
+      await screen.findByText('Another priority change is being saved. Please try again in a moment.'),
+    ).toBeInTheDocument();
+    expect(onSubmit).toHaveBeenCalledTimes(1);
   });
 
   it('falls back to a generic message for a non-ApiError failure', async () => {

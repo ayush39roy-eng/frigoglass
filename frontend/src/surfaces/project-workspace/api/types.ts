@@ -43,11 +43,19 @@ export interface WorkspaceStage {
   duration_weeks: number;
   /** P30: the lead-time table value. */
   lead_time_weeks: number;
-  /** P30: the USER's duration (Gantt / Workspace), 1..104; null = none. */
+  /** P30: the USER's duration. P33 (ADR 0048): per-project timing is retired,
+   *  so this is always served null; the field is dropped in P33-F01. */
   duration_override_weeks: number | null;
   /** P30: the step's share of the project's client effort figure
    *  (server-derived, 0 = skipped by the split); null = no split. */
   effort_weeks: number | null;
+  /** P33 (contract Part G): the project's copied template length (0..104). */
+  plan_weeks: number;
+  /** P33 (Part G): the signed copied gap — negative = parallel, positive =
+   *  wait, 0 = neither. Read-only. */
+  gap_weeks: number;
+  /** P33 (Part G, OR-1): the step's kind follows the project's own effort figure. */
+  own_effort: boolean;
   skipped: boolean;
   planned_start_week: number | null;
   planned_end_week: number | null;

@@ -35,13 +35,72 @@ export interface BoardColumnProps extends CardHandlers {
   isDropTarget: boolean;
   /** A drag is in progress and this column accepts it. */
   acceptsDrop: boolean;
-  onColumnDragOver: (priority: ProjectPriority, event: React.DragEvent<HTMLElement>) => void;
+  /** P36: the drop slot to mark with a line (0 = above the first card, `cards.length` = below the last); null = none. */
+  indicatorSlot?: number | null;
+  /** `slot`: the gap under the pointer (see `slotFromEvent`), null when not over a card. */
+  onColumnDragOver: (priority: ProjectPriority, event: React.DragEvent<HTMLElement>, slot: number | null) => void;
   onColumnDragLeave: (priority: ProjectPriority, event: React.DragEvent<HTMLElement>) => void;
-  onColumnDrop: (priority: ProjectPriority, event: React.DragEvent<HTMLElement>) => void;
+  onColumnDrop: (priority: ProjectPriority, event: React.DragEvent<HTMLElement>, slot: number | null) => void;
   /** P21-T05: cards (default) or the compact name list. */
   layout?: BoardLayout;
   /** The board has a fixed height (inside the Matrix): the column fills it and its body scrolls. */
   fit?: boolean;
+}
+
+/**
+ * P36: the gap of the column the pointer is over — above a card's middle is the
+ * slot above it, below its middle the slot below it; under the last card is the
+ * last slot. Null when the pointer is not over a card (the caller keeps its last slot).
+ * Read from the rendered rows, so it works the same in a virtualized column.
+ */
+function slotFromEvent(event: React.DragEvent<HTMLElement>, body: HTMLElement | null, count: number): number | null {
+  if (!body) return null;
+  const target = event.target instanceof Element ? event.target.closest<HTMLElement>('[data-slot-index]') : null;
+  if (target && body.contains(target)) {
+    const index = Number(target.dataset.slotIndex);
+    if (!Number.isInteger(index)) return null;
+    const rect = target.getBoundingClientRect();
+    return event.clientY < rect.top + rect.height / 2 ? index : index + 1;
+  }
+  if (count > 0) {
+    const last = body.querySelector<HTMLElement>(`[data-slot-index="${String(count - 1)}"]`);
+    if (last && event.clientY > last.getBoundingClientRect().bottom) return count;
+  }
+  return null;
+}
+
+/** P36: the drop line above (or, for the last card, below) a card. Decorative; the move is announced. */
+function DropLine({ edge, offset }: { edge: 'top' | 'bottom'; offset: number }): React.JSX.Element {
+  return (
+    <span
+      aria-hidden="true"
+      className="pointer-events-none absolute inset-x-1 z-[2] h-0.5 rounded-full bg-primary ring-1 ring-surface"
+      style={{ [edge]: offset }}
+      data-testid="board-drop-indicator"
+      data-edge={edge}
+    />
+  );
+}
+
+function DropLines({
+  index,
+  count,
+  slot,
+  gap,
+  virtual,
+}: {
+  index: number;
+  count: number;
+  slot: number | null | undefined;
+  gap: number;
+  virtual: boolean;
+}): React.JSX.Element | null {
+  if (slot === null || slot === undefined) return null;
+  const half = Math.ceil(gap / 2) + 1;
+  if (slot === index) return <DropLine edge="top" offset={-half} />;
+  // A virtual row's box includes its bottom gap (padding); a plain row's does not.
+  if (slot === count && index === count - 1) return <DropLine edge="bottom" offset={virtual ? gap - half : -half} />;
+  return null;
 }
 
 function CardSlot({
@@ -51,6 +110,7 @@ function CardSlot({
 }: {
   item: DisplayCard;
   props: BoardColumnProps;
+  /** The visible 1-based index — only a fallback when no `band_rank` is served. */
   position: number;
 }): React.JSX.Element {
   if (props.layout === 'list') {
@@ -107,9 +167,11 @@ function VirtualCards({ props, scrollRef }: { props: BoardColumnProps; scrollRef
           <li
             key={item.card.project_id}
             data-index={v.index}
+            data-slot-index={v.index}
             ref={virtualizer.measureElement}
             style={{ position: 'absolute', top: 0, left: 0, right: 0, transform: `translateY(${String(v.start)}px)`, paddingBottom: gap }}
           >
+            <DropLines index={v.index} count={cards.length} slot={props.indicatorSlot} gap={gap} virtual />
             <CardSlot item={item} props={props} position={v.index + 1} />
           </li>
         );
@@ -140,9 +202,9 @@ export function BoardColumn(props: BoardColumnProps): React.JSX.Element {
       data-testid="board-column"
       data-priority={column.priority}
       data-drop-target={isDropTarget ? 'true' : undefined}
-      onDragOver={(e) => props.onColumnDragOver(column.priority, e)}
+      onDragOver={(e) => props.onColumnDragOver(column.priority, e, slotFromEvent(e, scrollRef.current, column.cards.length))}
       onDragLeave={(e) => props.onColumnDragLeave(column.priority, e)}
-      onDrop={(e) => props.onColumnDrop(column.priority, e)}
+      onDrop={(e) => props.onColumnDrop(column.priority, e, slotFromEvent(e, scrollRef.current, column.cards.length))}
     >
       {/* The header sits outside the scrolling body, so it stays visible while the column scrolls. */}
       <header
@@ -194,7 +256,14 @@ export function BoardColumn(props: BoardColumnProps): React.JSX.Element {
             data-virtualized="false"
           >
             {column.cards.map((item, i) => (
-              <li key={item.card.project_id}>
+              <li key={item.card.project_id} className="relative" data-slot-index={i}>
+                <DropLines
+                  index={i}
+                  count={column.cards.length}
+                  slot={props.indicatorSlot}
+                  gap={props.layout === 'list' ? LIST_GAP : CARD_GAP}
+                  virtual={false}
+                />
                 <CardSlot item={item} props={props} position={i + 1} />
               </li>
             ))}

@@ -55,6 +55,7 @@ from scheduling.workflow import (
     Workflow,
     build_lead_time_table,
     build_workflows,
+    effective_lead_weeks,
     is_step_skipped,
 )
 from schemas.whatif_import import (
@@ -92,6 +93,7 @@ from schemas.whatif_import import (
     WeeklySeriesOut,
     WindowLoadOut,
 )
+from services.categories import unknown_category_error
 from services.hub_scope import hub_scope_filter
 from services.plan_import_xlsx import (
     BASE_YEAR,
@@ -179,6 +181,7 @@ def plan_current_steps(ctx: WhatIfContext) -> dict[str, str | None]:
             out[p.project_id] = None
             continue
         timing = {t.step_id: t.duration_override_weeks for t in p.step_timing}
+        rows = {t.step_id: t for t in p.step_timing}
         progress = {r.step_id: r.status for r in p.step_progress}
         out[p.project_id] = next(
             (
@@ -186,7 +189,10 @@ def plan_current_steps(ctx: WhatIfContext) -> dict[str, str | None]:
                 for sid in wf.walk_order
                 if progress.get(sid) != STATUS_DONE
                 and not is_step_skipped(
-                    lead_weeks=table.get((p.workflow_id, p.category, sid), 0),
+                    # P33-T08 (R33-1): the builder's per-project lead.
+                    lead_weeks=effective_lead_weeks(
+                        rows.get(sid), table.get((p.workflow_id, p.category, sid), 0)
+                    ),
                     kind=wf.steps_by_id[sid].kind,
                     certification_testing_required=p.certification_testing_required,
                     override_weeks=timing.get(sid),
@@ -235,6 +241,7 @@ async def build_parse_context(
         app_lead_times=app_lead_times(ctx),
         current_week=ctx.baseline.schedule.current_week,
         base_year=BASE_YEAR,
+        categories={c.code: c.workflow_id for c in ctx.baseline.schedule.categories},
     )
 
 
@@ -421,14 +428,26 @@ def to_engine_request(ctx: WhatIfContext, body: ImportSimulateRequest) -> Engine
             f"{MAX_SIMULATED_FILE_PROJECTS} can be simulated. Exclude rows, lower Num of "
             "Projects or turn off the expansion."
         )
+    category_workflow = {
+        c.code: c.workflow_id
+        for c in sorted(ctx.baseline.schedule.categories, key=lambda c: c.rank)
+    }
+    body_index = {id(r): i for i, r in enumerate(body.rows)}
     for r in rows:
         where = f"row {r.key!r}"
         if r.key in keys:
             raise invalid_import(f"{where}: duplicated row key")
         keys.add(r.key)
         wf = dc.WORKFLOW_ID_FOR_OEM_HUB if r.hub in dc.OEM_HUBS else dc.WORKFLOW_ID_FOR_NON_OEM_HUB
-        oem_cat = r.category in dc.OEM_CATEGORIES
-        if oem_cat != (wf == dc.WORKFLOW_ID_FOR_OEM_HUB):
+        # P33-T07 (ADR 0047 §5, contract B3): categories come from the input
+        # (the `categories` table); an unknown code is the 422 the enum gave.
+        if r.category not in category_workflow:
+            raise unknown_category_error(
+                [r.category],
+                loc=("body", "rows", body_index[id(r)], "category"),
+                allowed=list(category_workflow),
+            )
+        if category_workflow[r.category] != wf:
             raise invalid_import(f"{where}: category {r.category} does not fit hub {r.hub}")
         if r.stage_step_id is not None and not r.stage_step_id.startswith(wf + "-"):
             raise invalid_import(f"{where}: stage {r.stage_step_id} is not a step of {wf}")
@@ -555,6 +574,7 @@ def applicable_edits(
             if wf_opt is None:
                 continue
             timing = {t.step_id: t.duration_override_weeks for t in p.step_timing}
+            rows = {t.step_id: t for t in p.step_timing}
             progress = {r.step_id: r.status for r in p.step_progress}
             ok = p.category is not None and not p.frozen and p.status in dc.SCHEDULABLE_STATUS_ORDER
             skipped = frozenset(
@@ -562,7 +582,10 @@ def applicable_edits(
                 for sid, st in wf_opt.steps_by_id.items()
                 if progress.get(sid) == STATUS_DONE
                 or is_step_skipped(
-                    lead_weeks=table.get((p.workflow_id, p.category or "", sid), 0),
+                    # P33-T08 (R33-1): the builder's per-project lead.
+                    lead_weeks=effective_lead_weeks(
+                        rows.get(sid), table.get((p.workflow_id, p.category or "", sid), 0)
+                    ),
                     kind=st.kind,
                     certification_testing_required=p.certification_testing_required,
                     override_weeks=timing.get(sid),
@@ -733,7 +756,9 @@ def _buckets(
     ]
 
 
-def breakdown_of(projects: list[ImportProjectOut]) -> BreakdownOut:
+def breakdown_of(
+    projects: list[ImportProjectOut], category_order: tuple[str, ...] = dc.CATEGORY_ORDER
+) -> BreakdownOut:
     oc = dict.fromkeys(
         ("within_year", "spillover", "left_out", "blocked", "data_error", "excluded"), 0
     )
@@ -748,7 +773,7 @@ def breakdown_of(projects: list[ImportProjectOut]) -> BreakdownOut:
         file=sum(1 for p in projects if p.source == "file"),
         plan=sum(1 for p in projects if p.source == "plan"),
         outcomes=BreakdownOutcomesOut(**oc),
-        by_category=_buckets(projects, lambda p: p.category, dc.CATEGORY_ORDER),
+        by_category=_buckets(projects, lambda p: p.category, category_order),
         by_hub=_buckets(projects, lambda p: p.hub, _HUB_ORDER),
         by_priority=_buckets(projects, lambda p: p.priority, dc.PRIORITY_ORDER),
         by_status=_buckets(projects, lambda p: p.status, _STATUS_ORDER),
@@ -760,9 +785,13 @@ def breakdown_of(projects: list[ImportProjectOut]) -> BreakdownOut:
     )
 
 
-def import_breakdowns(projects: list[ImportProjectOut]) -> ImportBreakdownsOut:
+def import_breakdowns(
+    projects: list[ImportProjectOut], category_order: tuple[str, ...] = dc.CATEGORY_ORDER
+) -> ImportBreakdownsOut:
     """C1: every chart figure of the Executive tab, over exactly the served
-    (already scoped) `projects`, so the charts reconcile with the list."""
+    (already scoped) `projects`, so the charts reconcile with the list.
+    `category_order`: the input's categories in rank order (P33-T07; default
+    the seeded seven)."""
 
     years = breakdown_years()
     by_key: dict[str, list[ImportProjectOut]] = {y.key: [] for y in years}
@@ -771,7 +800,9 @@ def import_breakdowns(projects: list[ImportProjectOut]) -> ImportBreakdownsOut:
         key = breakdown_year_key(p)
         if key is not None:
             by_key[key].append(p)
-    return ImportBreakdownsOut(years=years, by_year={k: breakdown_of(v) for k, v in by_key.items()})
+    return ImportBreakdownsOut(
+        years=years, by_year={k: breakdown_of(v, category_order) for k, v in by_key.items()}
+    )
 
 
 def scope_import_result(
@@ -956,7 +987,12 @@ def scope_import_result(
         changes=changes,
         issues=issues,
         workings=workings,
-        breakdowns=import_breakdowns(served),
+        breakdowns=import_breakdowns(
+            served,
+            tuple(
+                c.code for c in sorted(ctx.baseline.schedule.categories, key=lambda c: c.rank)
+            ),
+        ),
     )
 
 

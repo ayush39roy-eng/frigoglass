@@ -68,23 +68,35 @@ from fastapi import status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from api.errors import CodedHTTPException
+from api.errors import HTTP_422, CodedHTTPException
 from core.principal import Principal
+from models.audit import AuditLogEntry
 from models.engineer import Engineer
 from models.enums import NON_SCHEDULABLE_STATUSES, ProjectPriority, SolverType
 from models.project import Project
 from models.schedule import ScheduleRun
+from scheduling.band_rank import BandRankError, move_band_inputs, place, place_inputs
 from scheduling.greedy import run_greedy_sgs
 from scheduling.types import ScheduleInput, ScheduleOutput
+from scheduling.workflow import canonical_schedule_input_asdict
 from schemas.project import (
     PriorityMoveResponse,
     PriorityPreviewChange,
     PriorityPreviewMoved,
     PriorityPreviewResponse,
     PriorityPreviewSummary,
+    RecalcStatus,
 )
 from schemas.schedule_run import ScheduleRunChangeRow
 from services.active_run import get_active_run
+from services.band_rank import (
+    band_of_project,
+    band_order,
+    lock_band_ranks,
+    place_in_band,
+    reconcile_band_rank,
+)
+from services.hub_scope import hub_scope_filter
 from services.priority_move import (
     TRIGGER_REASON,
     add_priority_move_audit,
@@ -125,20 +137,51 @@ NO_ACTIVE_RUN_NOTE = (
 def with_priority(
     schedule_input: ScheduleInput, project_id: uuid.UUID, priority: ProjectPriority
 ) -> ScheduleInput:
-    """The input with exactly one project's priority replaced."""
+    """The input with one project's priority replaced and the band-rank
+    lifecycle applied (ADR 0050, R36-6): the moved project last in its new
+    band, the band it left renumbered (`scheduling.band_rank.
+    move_band_inputs`, the same rule `services.band_rank.reconcile_band_rank`
+    writes on confirm), so the preview's "after" input equals the input
+    rebuilt from the DB after the confirm (I37d)."""
 
-    pid = str(project_id)
     return dataclasses.replace(
         schedule_input,
-        projects=tuple(
-            dataclasses.replace(p, priority=priority.value) if p.project_id == pid else p
-            for p in schedule_input.projects
+        projects=move_band_inputs(
+            schedule_input.projects, str(project_id), priority=priority.value
+        ),
+    )
+
+
+def with_placement(
+    schedule_input: ScheduleInput,
+    project_id: uuid.UUID,
+    *,
+    before: uuid.UUID | None,
+    after: uuid.UUID | None,
+) -> ScheduleInput:
+    """The input with one project re-ranked inside its band (ADR 0050 §4,
+    `scheduling.band_rank.place_inputs`): the re-rank preview's "after"
+    input (I37d)."""
+
+    return dataclasses.replace(
+        schedule_input,
+        projects=place_inputs(
+            schedule_input.projects,
+            str(project_id),
+            before=str(before) if before is not None else None,
+            after=str(after) if after is not None else None,
         ),
     )
 
 
 def _canonical(schedule_input: ScheduleInput) -> dict[str, Any]:
-    data = dataclasses.asdict(schedule_input)
+    """The token's input form. P33-T07 (contract F1, R33-7, P33-T05 A3):
+    `scheduling.canonical_schedule_input_asdict`, i.e. `asdict` without the
+    P33 defaults (`wait_weeks = 0`, `lead_weeks = None`, the seeded category
+    list), so a token over a default input is the pre-P33 token: a preview
+    taken before the deploy confirms after it."""
+
+    data = canonical_schedule_input_asdict(schedule_input)
     data["projects"] = sorted(data["projects"], key=lambda p: p["project_id"])
     data["engineers"] = sorted(data["engineers"], key=lambda e: e["engineer_id"])
     data["chambers"] = sorted(data["chambers"], key=lambda c: c["chamber_id"])
@@ -165,6 +208,32 @@ def snapshot_token(
     return hashlib.sha256(blob.encode("utf-8")).hexdigest()
 
 
+def rank_snapshot_token(
+    schedule_input: ScheduleInput,
+    *,
+    project_id: uuid.UUID,
+    band: str,
+    from_rank: int | None,
+    before: uuid.UUID | None,
+    after: uuid.UUID | None,
+) -> str:
+    """The re-rank token (R36-6): the canonical "after" input (its ranks
+    included) plus the project, the anchor, the band and the rank it moves
+    from, so a concurrent re-rank of the band makes it stale (409)."""
+
+    payload = {
+        "kind": "band_rank",
+        "input": _canonical(schedule_input),
+        "project_id": str(project_id),
+        "band": band,
+        "from_rank": from_rank,
+        "before_project_id": str(before) if before is not None else None,
+        "after_project_id": str(after) if after is not None else None,
+    }
+    blob = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
+    return hashlib.sha256(blob.encode("utf-8")).hexdigest()
+
+
 @dataclass(frozen=True)
 class _Snapshot:
     #: The active run: informational only (M2), never a comparison side.
@@ -182,6 +251,26 @@ async def _snapshot(db: AsyncSession, project: Project, target: ProjectPriority)
     schedule_input = with_priority(base_input, project.id, target)
     token = snapshot_token(
         schedule_input, project_id=project.id, from_priority=project.priority, target=target
+    )
+    return _Snapshot(
+        active_run=active_run, base_input=base_input, schedule_input=schedule_input, token=token
+    )
+
+
+async def _rank_snapshot(
+    db: AsyncSession,
+    project: Project,
+    band: str,
+    *,
+    before: uuid.UUID | None,
+    after: uuid.UUID | None,
+) -> _Snapshot:
+    active_run = await get_active_run(db)
+    base_input = await build_schedule_input_from_db(db)
+    schedule_input = with_placement(base_input, project.id, before=before, after=after)
+    token = rank_snapshot_token(
+        schedule_input, project_id=project.id, band=band, from_rank=project.band_rank,
+        before=before, after=after,
     )
     return _Snapshot(
         active_run=active_run, base_input=base_input, schedule_input=schedule_input, token=token
@@ -418,6 +507,9 @@ async def confirm_priority_move(
         # No run either way; ADR 0015's `not_needed` path writes the move.
         return _plain_response(await apply_priority_change(db, project, target, principal))
 
+    # ADR 0050 / R36-8: the band-rank lock before the dispatch lock
+    # (re-entrant: the route takes it before reading the project).
+    await lock_band_ranks(db)
     # Dispatch lock (held until commit/rollback), abandoned-run reaping, and
     # the ADR 0023 follow-up flag when a worker run is genuinely in flight.
     in_flight = await find_in_flight_run(db, trigger_reason=TRIGGER_REASON)
@@ -430,12 +522,20 @@ async def confirm_priority_move(
         # caller's loaded objects, so it is deliberately not done.
         raise _stale()
 
+    # ADR 0050 / R36-6: the same lifecycle as `apply_priority_change` and the
+    # preview's `with_priority` (last in the new band, the old band
+    # renumbered), so the DB equals the previewed input (I37d).
+    rank_before = project.band_rank
     project.priority = target
     project.schedule_stale = True
+    await reconcile_band_rank(
+        db, project, status_before=project.status, priority_before=before_priority
+    )
 
     if in_flight is not None:
         add_priority_move_audit(
-            db, project, before_priority, target, principal, recalc="deferred", baseline_id=None
+            db, project, before_priority, target, principal, recalc="deferred", baseline_id=None,
+            band_rank_before=rank_before,
         )
         await db.commit()
         return PriorityMoveResponse(
@@ -465,6 +565,7 @@ async def confirm_priority_move(
     add_priority_move_audit(
         db, project, before_priority, target, principal, recalc="applied",
         baseline_id=active.id if active is not None else None, schedule_run_id=run.id,
+        band_rank_before=rank_before,
     )
     await db.flush()
 
@@ -493,4 +594,275 @@ async def confirm_priority_move(
         summary=summary,
         changes=changes,
         hidden_count=hidden,
+    )
+
+
+# --- re-rank within a band (ADR 0050 §4, API_CONTRACT_P36 §2–§3) --------------------------
+
+#: `ScheduleRun.trigger_reason` of a run applied by a re-rank confirm.
+RANK_TRIGGER_REASON = "band_rank_move"
+#: Audit action of a re-rank.
+RANK_AUDIT_ACTION = "project.band_rank_move"
+
+
+def _not_same_band() -> CodedHTTPException:
+    # One message for every anchor refusal (not ranked in the band, another
+    # band, out of the caller's scope, nonexistent, the project itself), so
+    # nothing leaks whether an out-of-scope id exists (contract §4).
+    return CodedHTTPException(
+        HTTP_422,
+        "NOT_SAME_BAND",
+        "Place the project next to another project of the same priority column.",
+    )
+
+
+async def check_rankable(
+    db: AsyncSession,
+    principal: Principal,
+    project: Project,
+    *,
+    before: uuid.UUID | None,
+    after: uuid.UUID | None,
+) -> str:
+    """Contract §2 errors, before anything is computed; returns the band.
+
+    - both anchors: 422 `BOTH_ANCHORS`;
+    - the project is not ranked in a band (no priority, or a non-schedulable
+      status): 409 `NOT_RANKABLE`;
+    - the anchor is the project itself, or is not ranked in the same band,
+      or is outside the caller's hub scope (or does not exist): 422
+      `NOT_SAME_BAND`.
+
+    Hard gates do not apply: the priority does not change (a hard-gated
+    project may be re-ranked within P1, contract §4)."""
+
+    if before is not None and after is not None:
+        raise CodedHTTPException(
+            HTTP_422, "BOTH_ANCHORS", "Give before_project_id or after_project_id, not both."
+        )
+    band = band_of_project(project.status, project.priority)
+    if band is None or project.band_rank is None:
+        raise CodedHTTPException(
+            status.HTTP_409_CONFLICT,
+            "NOT_RANKABLE",
+            "Only a schedulable project with a priority has a position in its column.",
+        )
+    anchor = before if before is not None else after
+    if anchor is None:
+        return band
+    if anchor == project.id:
+        raise _not_same_band()
+    stmt = select(Project.id).where(
+        Project.id == anchor,
+        Project.priority == project.priority,
+        Project.band_rank.is_not(None),
+    )
+    scope = hub_scope_filter(principal, Project.hub_id)
+    if scope is not None:
+        stmt = stmt.where(scope)
+    with db.no_autoflush:
+        found = (await db.execute(stmt)).scalar_one_or_none()
+    if found is None:
+        raise _not_same_band()
+    return band
+
+
+def _placed_order(
+    order: list[str], project: Project, before: uuid.UUID | None, after: uuid.UUID | None
+) -> list[str]:
+    try:
+        return place(
+            order,
+            str(project.id),
+            before=str(before) if before is not None else None,
+            after=str(after) if after is not None else None,
+        )
+    except BandRankError as exc:
+        if exc.code == "BOTH_ANCHORS":
+            raise CodedHTTPException(
+                HTTP_422, "BOTH_ANCHORS", "Give before_project_id or after_project_id, not both."
+            ) from exc
+        raise _not_same_band() from exc
+
+
+async def preview_band_rank_move(
+    db: AsyncSession,
+    project: Project,
+    principal: Principal,
+    *,
+    before: uuid.UUID | None,
+    after: uuid.UUID | None,
+) -> PriorityPreviewResponse:
+    """Contract §2: the priority preview's machinery (one snapshot, the
+    in-process greedy pair, the ADR 0015 §4 diff) with the project re-ranked
+    instead of re-banded. `unchanged` (no token, nothing computed) when the
+    placement leaves the band's order as it is. Writes nothing."""
+
+    band = await check_rankable(db, principal, project, before=before, after=after)
+    target = ProjectPriority(band)
+    common: dict[str, Any] = {
+        "project_id": project.id, "from_priority": target, "to_priority": target,
+    }
+    order = await band_order(db, band)
+    if _placed_order(order, project, before, after) == order:
+        return PriorityPreviewResponse(
+            result="unchanged", baseline_run_id=None, preview_token=None, moved=None,
+            summary=_empty_summary(), changes=[], hidden_count=0, elapsed_ms=None, **common,
+        )
+
+    started = time.perf_counter()
+    snap = await _rank_snapshot(db, project, band, before=before, after=after)
+    active_id = snap.active_run.id if snap.active_run is not None else None
+    base_output, output = await run_greedy_pair_capped(snap)
+    before_outcomes = outcomes_from_output(base_output)
+    after_outcomes = outcomes_from_output(output)
+    changes, summary, hidden = await _diff(
+        db, principal, project, before_outcomes, after_outcomes, output
+    )
+    elapsed_ms = round((time.perf_counter() - started) * 1000)
+    logger.info(
+        "band rank preview computed",
+        extra={"project_id": str(project.id), "elapsed_ms": elapsed_ms,
+               "affected": summary.affected, "hidden_count": hidden},
+    )
+    return PriorityPreviewResponse(
+        result="preview", baseline_run_id=active_id, preview_token=snap.token,
+        moved=_moved(project.id, before_outcomes, after_outcomes), summary=summary,
+        changes=changes, hidden_count=hidden, elapsed_ms=elapsed_ms,
+        note=NO_ACTIVE_RUN_NOTE if active_id is None else None, **common,
+    )
+
+
+def _add_rank_audit(
+    db: AsyncSession,
+    project: Project,
+    principal: Principal,
+    *,
+    band: str,
+    from_rank: int | None,
+    before: uuid.UUID | None,
+    after: uuid.UUID | None,
+    recalc: RecalcStatus,
+    baseline_id: uuid.UUID | None,
+    schedule_run_id: uuid.UUID | None = None,
+) -> None:
+    """The one `project.band_rank_move` row (contract §3). Ids, the band and
+    ranks only, never project data."""
+
+    after_state: dict[str, str | int | None] = {
+        "project_id": str(project.id),
+        "band": band,
+        "from_rank": from_rank,
+        "to_rank": project.band_rank,
+        "before_project_id": str(before) if before is not None else None,
+        "after_project_id": str(after) if after is not None else None,
+        "recalc_status": recalc,
+        "baseline_run_id": str(baseline_id) if baseline_id is not None else None,
+    }
+    if schedule_run_id is not None:
+        after_state["schedule_run_id"] = str(schedule_run_id)
+    db.add(
+        AuditLogEntry(
+            actor_user_id=principal.user_id,
+            action=RANK_AUDIT_ACTION,
+            entity_type="Project",
+            entity_id=str(project.id),
+            hub_id=project.hub_id,
+            before_state={"project_id": str(project.id), "band": band, "band_rank": from_rank},
+            after_state=after_state,
+        )
+    )
+
+
+async def confirm_band_rank_move(
+    db: AsyncSession,
+    project: Project,
+    principal: Principal,
+    *,
+    before: uuid.UUID | None,
+    after: uuid.UUID | None,
+    preview_token: str,
+) -> PriorityMoveResponse:
+    """Contract §3: the priority confirm's lifecycle for a re-rank. The
+    route has taken the band-rank lock and re-read the project. Under the
+    dispatch lock: the token is checked against a fresh snapshot (409
+    `PREVIEW_STALE`, nothing written), the band renumbered with the project
+    at its new place (`services.band_rank.place_in_band`), the project
+    marked stale and audited, then the "after" greedy pass persisted and
+    activated in-process (`applied`), or `deferred` when a worker run is in
+    flight. A placement that changes nothing is `unchanged`: no write, audit
+    or run."""
+
+    band = await check_rankable(db, principal, project, before=before, after=after)
+    target = ProjectPriority(band)
+
+    def response(recalc: RecalcStatus, **extra: Any) -> PriorityMoveResponse:
+        return PriorityMoveResponse(
+            project_id=project.id, priority_before=target, priority_after=target,
+            recalc_status=recalc, **{
+                "schedule_run_id": None, "baseline_run_id": None, "task_id": None, **extra,
+            },
+        )
+
+    order = await band_order(db, band)
+    if _placed_order(order, project, before, after) == order:
+        return response("unchanged")
+
+    await lock_band_ranks(db)  # re-entrant; the route took it first
+    in_flight = await find_in_flight_run(db, trigger_reason=RANK_TRIGGER_REASON)
+    snap = await _rank_snapshot(db, project, band, before=before, after=after)
+    if snap.token != preview_token:
+        raise _stale()
+
+    from_rank = project.band_rank
+    await place_in_band(db, project, before=before, after=after)
+    project.schedule_stale = True
+
+    if in_flight is not None:
+        _add_rank_audit(
+            db, project, principal, band=band, from_rank=from_rank, before=before, after=after,
+            recalc="deferred", baseline_id=None,
+        )
+        await db.commit()
+        return response("deferred")
+
+    started_at = datetime.now(UTC)
+    base_output, output = await run_greedy_pair_capped(snap)
+    active = snap.active_run
+    run = await persist_solved_run(
+        db,
+        snap.schedule_input,
+        output,
+        solver=SolverType.GREEDY,
+        trigger_reason=RANK_TRIGGER_REASON,
+        actor_user_id=principal.user_id,
+        activate=True,
+        recalc_project_id=project.id,
+    )
+    run.started_at = started_at
+    run.completed_at = datetime.now(UTC)
+    db.add(run)
+    baseline_id = active.id if active is not None else None
+    _add_rank_audit(
+        db, project, principal, band=band, from_rank=from_rank, before=before, after=after,
+        recalc="applied", baseline_id=baseline_id, schedule_run_id=run.id,
+    )
+    await db.flush()
+
+    before_outcomes = outcomes_from_output(base_output)
+    after_outcomes = await stored_outcomes(db, run.id)
+    changes, summary, hidden = await _diff(
+        db, principal, project, before_outcomes, after_outcomes, output
+    )
+    moved = _moved(project.id, before_outcomes, after_outcomes)
+
+    await db.commit()
+    try:
+        publish_progress(str(run.id), status="completed", percent=100.0)
+    except Exception:  # noqa: BLE001 - SSE is a courtesy; the run is committed
+        logger.warning("band rank move: could not publish run completion", exc_info=True)
+
+    return response(
+        "applied", schedule_run_id=run.id, baseline_run_id=baseline_id,
+        moved=moved, summary=summary, changes=changes, hidden_count=hidden,
     )

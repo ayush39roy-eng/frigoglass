@@ -11,10 +11,15 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from models.enums import HubName, LabRegion, ProjectCategory, WorkflowStepKind
+from models.enums import HubName, LabRegion, WorkflowStepKind
+from schemas.category import CategoryCodeOut
+
+#: `scheduling.template_timeline` flags (contract P33 C2).
+TemplateFlag = Literal["same_leader_serialised", "anchor_clamped", "gap_ignored_zero_length"]
 
 
 class WorkflowStepSetting(BaseModel):
@@ -33,16 +38,35 @@ class WorkflowSetting(BaseModel):
 
 
 class LeadTimeSetting(BaseModel):
-    """One lead-time row. Also the element type of the lead-times `PUT` body,
-    so it forbids unknown keys.
+    """One category-template row (`workflow_lead_times`). Read-only since
+    P33-T10: `PUT /workflow-settings/lead-times` answers 410 and the template
+    is edited through `POST /workflow-templates/apply` (contract P33 Part G).
     """
 
-    model_config = ConfigDict(extra="forbid")
+    workflow_id: str
+    #: P33-T07: a `categories.code` of `workflow_id`.
+    category: CategoryCodeOut
+    step_id: str
+    #: The category length, 0..104.
+    weeks: int
+    #: P33-T09 (contract C1): the signed template gap, -104..104 (negative =
+    #: overlap, positive = wait; 0 on a workflow's first step).
+    gap_weeks: int
+    #: P33-T09 (contract C1): the immutable R2 split weight. Read-only: it is
+    #: never accepted in any request.
+    effort_weight_weeks: int
 
-    workflow_id: str = Field(min_length=1, max_length=10)
-    category: ProjectCategory
-    step_id: str = Field(min_length=1, max_length=10)
-    weeks: int = Field(ge=0, le=200)
+
+class CategorySetting(BaseModel):
+    """P33-T09 (contract C1): one category of the `categories` table (the B1
+    object) with its `template_version` (ADR 0045 §6, the apply's optimistic
+    lock)."""
+
+    code: CategoryCodeOut
+    label: str
+    workflow_id: str
+    rank: int
+    template_version: int
 
 
 class HubCalendarSetting(BaseModel):
@@ -75,6 +99,9 @@ class ChamberSetting(BaseModel):
 class WorkflowSettings(BaseModel):
     workflows: list[WorkflowSetting]
     lead_times: list[LeadTimeSetting]
+    #: P33-T09 (contract C1): every category in rank order, with its
+    #: `template_version`. Empty in the scoped chamber-PUT payload.
+    categories: list[CategorySetting]
     hub_calendars: list[HubCalendarSetting]
     chambers: list[ChamberSetting]
     current_week: int
@@ -104,14 +131,6 @@ class StepsUpdateRequest(BaseModel):
     #: Bounded loosely; the exact "all 14, each once" rule is the router's
     #: `BAD_STEP_SET` check, so a wrong count gets that code.
     steps: list[StepPrecedenceUpdate] = Field(min_length=1, max_length=28)
-
-
-class LeadTimesUpdateRequest(BaseModel):
-    """Partial update: only the listed rows change."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    lead_times: list[LeadTimeSetting] = Field(min_length=1, max_length=98)
 
 
 class HubCalendarUpdateRequest(BaseModel):
@@ -156,13 +175,33 @@ class TimelineStep(BaseModel):
     resource_kind: WorkflowStepKind
     start_week: int
     duration_weeks: int
+    #: P33-T09 (contract C2): the template's signed gap (requested) and the
+    #: gap the walk actually produced (`start_week - release`; 0 on a skipped
+    #: step). Both from `scheduling.template_timeline`.
+    gap_weeks: int
+    effective_gap_weeks: int
+    #: Subset of `same_leader_serialised`, `anchor_clamped`,
+    #: `gap_ignored_zero_length`, in that order.
+    flags: list[TemplateFlag]
+    #: The DAG in force.
+    predecessor_ids: list[str]
 
 
 class CategoryTimeline(BaseModel):
     """`GET /workflow-settings/category-timelines`: earliest start per step
-    from the served lead times and precedence DAG, no capacity."""
+    from the served template (lengths and signed gaps) and precedence DAG, no
+    capacity, FTE 1.0 and the one-leader rule (`scheduling.template_timeline`,
+    contract P33 C2/F3)."""
 
-    category: ProjectCategory
+    category: CategoryCodeOut
+    #: P33-T09 (contract C2): the category's label, workflow, rank and
+    #: template version (the apply's `base_version`).
+    label: str
+    workflow_id: str
+    rank: int
+    template_version: int
+    #: Always shown with a template timeline (DOMAIN_RULES §D).
+    note: str
     #: The critical path (longest path through the DAG), in weeks.
     total_weeks: int
     #: Σ duration over design steps; Σ duration over lab steps.
@@ -177,7 +216,7 @@ class BEquivalentRow(BaseModel):
     weeks, and their ratio to category B (PDD) or B-OEM (OEM), 2 dp. A ratio
     is null when the reference category's weeks are 0 (no ratio exists)."""
 
-    category: ProjectCategory
+    category: CategoryCodeOut
     design_weeks: int
     lab_weeks: int
     design_ratio: float | None

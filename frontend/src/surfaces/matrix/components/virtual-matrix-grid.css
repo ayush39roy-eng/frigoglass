@@ -214,3 +214,49 @@
   overflow: hidden;
   overflow-wrap: break-word;
 }
+
+/* ---- P34-T02: a row that just moved (VIP pin) is highlighted for a moment (no animation) ---- */
+
+.mg-row[data-flash='true'] {
+  --mg-row-bg: color-mix(in srgb, hsl(var(--color-accent)) 18%, hsl(var(--color-surface)));
+  outline: 2px solid hsl(var(--color-accent));
+  outline-offset: -2px;
+}
+
+/* ---- P34-T02: inline edit mode ---- */
+
+.mg-row[data-changed='true'] > .mg-cell:first-child {
+  box-shadow: inset 3px 0 0 hsl(var(--color-warning));
+}
+
+.mg-edit-input {
+  width: 2rem;
+  height: 1.5rem;
+  border-radius: var(--radius);
+  border: 1px solid hsl(var(--color-border-strong));
+  background-color: hsl(var(--color-surface));
+  color: hsl(var(--color-text));
+  text-align: center;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  font-size: 0.75rem;
+}
+
+.mg-edit-input:focus-visible {
+  outline: 2px solid hsl(var(--color-ring));
+  outline-offset: 1px;
+}
+
+.mg-edit-input[data-changed='true'],
+.mg-gate-cell[data-changed='true'] {
+  border-color: hsl(var(--color-warning));
+  background-color: color-mix(in srgb, hsl(var(--color-warning)) 18%, hsl(var(--color-surface)));
+}
+
+.mg-gate-cell {
+  display: inline-grid;
+  place-items: center;
+  border-radius: var(--radius);
+  border: 1px solid transparent;
+  padding: 2px;
+}

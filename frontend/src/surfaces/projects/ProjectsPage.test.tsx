@@ -121,7 +121,7 @@ const project: ProjectRead = {
   priority: null,
   status: 'Draft',
   frozen: false,
-  actual_start_week: null,
+  actual_start_week: null, actual_end_week: null,
   delay_weeks: 0,
   reg_year: null,
   carry_over: false,
@@ -694,7 +694,8 @@ describe('Projects page — P24-T02 workbook fields and "No leader" (ADR 0035)',
     expect(within(table).getAllByText('Not set')).toHaveLength(3);
   });
 
-  it('a null leader reads "No leader" (accessible "No leader assigned"); Left Out adds the hint', () => {
+  // P35-T08 (owner pick): the "No leader" label became the old tool's "Unassigned ⚠" flag.
+  it('a null leader reads "Unassigned ⚠" (accessible "no design resource assigned"); Left Out adds the hint', () => {
     useDashboardProjects.mockReturnValue(
       ok([
         row('a', { project_name: 'Alpha cooler', leader_engineer_id: null, outcome: 'LEFT_OUT' }),
@@ -703,17 +704,15 @@ describe('Projects page — P24-T02 workbook fields and "No leader" (ADR 0035)',
       ]),
     );
     renderWithProviders(<ProjectsPage />);
-    const labels = screen.getAllByTestId('no-leader');
-    expect(labels).toHaveLength(2);
-    for (const label of labels) {
-      expect(within(label).getByText('No leader')).toHaveAttribute('aria-hidden', 'true');
-      expect(within(label).getByText('No leader assigned')).toHaveClass('sr-only');
+    const flags = screen.getAllByTestId('unassigned-flag');
+    expect(flags).toHaveLength(2);
+    for (const flag of flags) {
+      expect(flag).toHaveTextContent('Unassigned');
+      expect(within(flag).getByText(': no design resource assigned')).toHaveClass('sr-only');
     }
     // Only the project that is both leaderless and Left Out gets the hint.
-    const hints = screen.getAllByTestId('no-leader-left-out');
-    expect(hints).toHaveLength(1);
-    expect(hints[0]).toHaveTextContent('Left out: no leader assigned');
-    expect(labels[0]).toContainElement(hints[0]!);
+    expect(flags[0]).toHaveTextContent('Left out: no leader assigned');
+    expect(flags[1]).not.toHaveTextContent('Left out');
     expect(screen.getByText('Nikos')).toBeInTheDocument();
   });
 

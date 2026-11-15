@@ -1,7 +1,7 @@
 /** P21-T03: the scoring grid's visual boxes (identity, info, one per pillar,
  *  Score /100, actions) and the left line each column draws. Layout only. */
 
-export type MatrixBoxKind = 'identity' | 'info' | 'pillar' | 'score' | 'actions';
+export type MatrixBoxKind = 'identity' | 'info' | 'pillar' | 'gates' | 'score' | 'actions';
 
 export interface MatrixBox {
   id: string;

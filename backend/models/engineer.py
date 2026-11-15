@@ -3,11 +3,11 @@ from __future__ import annotations
 import uuid
 from typing import TYPE_CHECKING
 
-from sqlalchemy import ARRAY, Boolean, Enum, ForeignKey, Numeric, String
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy import ARRAY, Boolean, ForeignKey, Numeric, String, Text
+from sqlalchemy.orm import Mapped, mapped_column, relationship, validates
 
 from models.base import Base, TimestampMixin, UUIDPrimaryKeyMixin
-from models.enums import EngineerAllowedCategory
+from models.category import category_codes
 
 if TYPE_CHECKING:
     from models.hub import Hub
@@ -52,16 +52,14 @@ class Engineer(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     fte: Mapped[float] = mapped_column(Numeric(3, 2), nullable=False, default=1.0)
 
     #: Categories (plus optionally "OEM") this engineer may lead, per
-    #: DOMAIN_RULES.md's CAT_NOT_ALLOWED rule. Postgres ARRAY of the
-    #: EngineerAllowedCategory enum.
-    allowed_categories: Mapped[list[EngineerAllowedCategory]] = mapped_column(
-        ARRAY(
-            Enum(
-                EngineerAllowedCategory,
-                name="engineer_allowed_category",
-                values_callable=lambda enum_cls: [e.value for e in enum_cls],
-            )
-        ),
+    #: DOMAIN_RULES.md's CAT_NOT_ALLOWED rule. ADR 0047 (P33-T07): a `text[]`
+    #: of `categories.code` values or the reserved blanket `OEM` ("any
+    #: OEM-workflow category"); an array cannot carry an FK, so the trigger
+    #: `trg_engineers_allowed_categories_known` (migration `p33a_categories`)
+    #: rejects any other element. Element order is preserved (it reaches the
+    #: hashed scheduler input as-is).
+    allowed_categories: Mapped[list[str]] = mapped_column(
+        ARRAY(Text),
         nullable=False,
         default=list,
     )
@@ -82,6 +80,12 @@ class Engineer(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     scheduled_run_steps: Mapped[list[ScheduleRunProjectStep]] = relationship(
         back_populates="assigned_engineer"
     )
+
+    @validates("allowed_categories")
+    def _allowed_as_codes(self, _key: str, value: object) -> list[str | None] | None:
+        """P33-T07: always plain code strings (enum members are accepted from
+        seed / test code and stored as their values; order kept)."""
+        return category_codes(value)  # type: ignore[arg-type]
 
     def __repr__(self) -> str:  # pragma: no cover - debug convenience only
         return f"<Engineer {self.name!r}>"

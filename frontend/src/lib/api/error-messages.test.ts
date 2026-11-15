@@ -23,6 +23,12 @@ describe('apiErrorMessage — codes, not detail text', () => {
     expect(apiErrorMessage(new ApiError(503, 'x', 'raw', 'PREVIEW_TIMEOUT'), 'f')).toMatch(/took too long/);
     expect(apiErrorMessage(new ApiError(503, 'x', 'raw', 'SOLVER_UNAVAILABLE'), 'f')).toMatch(/scheduler is unavailable/);
   });
+  it('P36-R03: 503 BAND_RANK_BUSY reads as the contract §5 copy', () => {
+    expect(apiErrorMessage(new ApiError(503, 'x', 'raw', 'BAND_RANK_BUSY', 5), 'f')).toBe(
+      'Another priority change is being saved. Please try again in a moment.',
+    );
+  });
+
   it('appends field errors for STAGE_INCONSISTENT', () => {
     const detail = JSON.stringify([{ loc: ['body', 'actual_end_week'], msg: 'required when Done', type: 'value_error' }]);
     expect(apiErrorMessage(new ApiError(422, 'x', detail, 'STAGE_INCONSISTENT'), 'f')).toBe(

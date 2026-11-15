@@ -16,17 +16,22 @@ type WorkflowTab = 'project-timing' | 'templates';
 
 /**
  * Workflow (P9-T04; P32-R04). Two tabs:
- * - "Project step timing" (first — owner 2026-11-04: this is where step bars
- *   are mainly dragged): per-project waterfall with the Timeline's editing.
- *   Shown with `gantt` read; editing is the served `timing_editable`.
- * - "Workflow templates": the P9-T04 settings, unchanged — shown with
- *   `workflow_settings` read (Admin reads, Super Admin edits).
+ * - "Project step timing" (first, owner 2026-11-04): per-project waterfall,
+ *   read-only since P33-T15 (ADR 0048: timing follows the category template).
+ *   Shown with `gantt` read.
+ * - "Workflow templates": the P9-T04 settings — shown with `workflow_settings`
+ *   or `workflow_templates` read. Admin and Super Admin edit the category
+ *   templates (P33); Super Admin alone edits steps, calendars and chambers.
  * The tab is URL state (`?tab=templates`), as is the project (`?project=`).
  */
 export default function WorkflowSettingsPage(): React.JSX.Element {
   const [params, setParams] = useSearchParams();
   const canTiming = usePermission('gantt').read;
-  const canTemplates = usePermission('workflow_settings').read;
+  // P33 (ADR 0045 §7): either surface shows the template tabs; each tab gates
+  // its own writes (`workflow_templates` / `workflow_settings`).
+  const canSettings = usePermission('workflow_settings').read;
+  const canCategoryTemplates = usePermission('workflow_templates').read;
+  const canTemplates = canSettings || canCategoryTemplates;
 
   const requested = params.get('tab') === 'templates' ? 'templates' : 'project-timing';
   const tab: WorkflowTab =
@@ -48,7 +53,7 @@ export default function WorkflowSettingsPage(): React.JSX.Element {
     <>
       <PageHeader
         title={SURFACE?.title ?? 'Workflow Settings'}
-        description="Adjust one project's step timing, or the workflow templates every project follows."
+        description="See each project's step timing, or the workflow templates every project follows."
       />
       {!canTiming && !canTemplates ? (
         <AccessNotice kind="forbidden" />

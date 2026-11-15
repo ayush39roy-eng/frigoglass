@@ -19,6 +19,12 @@ construction — it is an immutable append-only log that no principal writes
 through the API (the DB trigger `trg_audit_log_entries_append_only` refuses
 UPDATE/DELETE); the §5 matrix says `R` there for Super Admin and this table
 follows the matrix.
+
+**2026-11-13 (ADR 0045 §7, amended ADR 0010, P33-T06)**: new surface
+`workflow_templates` (category timeline editing, the Lead times tab, adding a
+category): Admin RW, Super Admin RW, every other role none.
+`workflow_settings` is unchanged (Super Admin RW, Admin R) and keeps guarding
+steps & precedence, hub calendars and chambers.
 """
 
 from __future__ import annotations
@@ -29,7 +35,7 @@ from models.enums import RoleName
 
 
 class Surface(str, enum.Enum):
-    """The ten columns of `docs/PROJECT_AND_STACK.md` §5's RBAC matrix."""
+    """The eleven columns of `docs/PROJECT_AND_STACK.md` §5's RBAC matrix."""
 
     DASHBOARD = "dashboard"
     CAPACITY = "capacity"
@@ -39,6 +45,9 @@ class Surface(str, enum.Enum):
     PROJECT_REGISTRATION = "project_registration"
     CAPACITY_PLANNING = "capacity_planning"
     WORKFLOW_SETTINGS = "workflow_settings"
+    #: P33 (ADR 0045 §7): category templates — timeline editing, Lead times
+    #: tab, adding a category. Admin RW, Super Admin RW, others none.
+    WORKFLOW_TEMPLATES = "workflow_templates"
     AUDIT_LOG = "audit_log"
     USER_ROLE_ADMIN = "user_role_admin"
 
@@ -91,6 +100,16 @@ class Action(str, enum.Enum):
 # | Admin                | R/W               | R                 |
 # | Super Admin          | R/W               | R/W               |
 #
+# | Role                 | Workflow Templates |
+# |----------------------|--------------------|
+# | Portfolio Manager    | -                  |
+# | Hub Planner (scoped) | -                  |
+# | Engineer             | -                  |
+# | Executive Viewer     | -                  |
+# | Auditor              | -                  |
+# | Admin                | R/W                |
+# | Super Admin          | R/W                |
+#
 # | Role                 | Audit Log | User/Role Admin      |
 # |----------------------|-----------|----------------------|
 # | Portfolio Manager    | -         | -                    |
@@ -120,6 +139,7 @@ PERMISSIONS: dict[RoleName, dict[Surface, frozenset[Action]]] = {
         Surface.PROJECT_REGISTRATION: _RW,
         Surface.CAPACITY_PLANNING: _R,
         Surface.WORKFLOW_SETTINGS: _NONE,
+        Surface.WORKFLOW_TEMPLATES: _NONE,
         Surface.AUDIT_LOG: _NONE,
         Surface.USER_ROLE_ADMIN: _NONE,
     },
@@ -132,6 +152,7 @@ PERMISSIONS: dict[RoleName, dict[Surface, frozenset[Action]]] = {
         Surface.PROJECT_REGISTRATION: _RW,
         Surface.CAPACITY_PLANNING: _RW,
         Surface.WORKFLOW_SETTINGS: _NONE,
+        Surface.WORKFLOW_TEMPLATES: _NONE,
         Surface.AUDIT_LOG: _NONE,
         Surface.USER_ROLE_ADMIN: _NONE,
     },
@@ -144,6 +165,7 @@ PERMISSIONS: dict[RoleName, dict[Surface, frozenset[Action]]] = {
         Surface.PROJECT_REGISTRATION: _NONE,
         Surface.CAPACITY_PLANNING: _NONE,
         Surface.WORKFLOW_SETTINGS: _NONE,
+        Surface.WORKFLOW_TEMPLATES: _NONE,
         Surface.AUDIT_LOG: _NONE,
         Surface.USER_ROLE_ADMIN: _NONE,
     },
@@ -156,6 +178,7 @@ PERMISSIONS: dict[RoleName, dict[Surface, frozenset[Action]]] = {
         Surface.PROJECT_REGISTRATION: _NONE,
         Surface.CAPACITY_PLANNING: _NONE,
         Surface.WORKFLOW_SETTINGS: _NONE,
+        Surface.WORKFLOW_TEMPLATES: _NONE,
         Surface.AUDIT_LOG: _NONE,
         Surface.USER_ROLE_ADMIN: _NONE,
     },
@@ -168,6 +191,7 @@ PERMISSIONS: dict[RoleName, dict[Surface, frozenset[Action]]] = {
         Surface.PROJECT_REGISTRATION: _NONE,
         Surface.CAPACITY_PLANNING: _NONE,
         Surface.WORKFLOW_SETTINGS: _NONE,
+        Surface.WORKFLOW_TEMPLATES: _NONE,
         Surface.AUDIT_LOG: _R,
         Surface.USER_ROLE_ADMIN: _NONE,
     },
@@ -180,6 +204,7 @@ PERMISSIONS: dict[RoleName, dict[Surface, frozenset[Action]]] = {
         Surface.PROJECT_REGISTRATION: _RW,
         Surface.CAPACITY_PLANNING: _RW,
         Surface.WORKFLOW_SETTINGS: _R,
+        Surface.WORKFLOW_TEMPLATES: _RW,
         Surface.AUDIT_LOG: _R,
         Surface.USER_ROLE_ADMIN: _RW,
     },
@@ -192,6 +217,7 @@ PERMISSIONS: dict[RoleName, dict[Surface, frozenset[Action]]] = {
         Surface.PROJECT_REGISTRATION: _RW,
         Surface.CAPACITY_PLANNING: _RW,
         Surface.WORKFLOW_SETTINGS: _RW,
+        Surface.WORKFLOW_TEMPLATES: _RW,
         Surface.AUDIT_LOG: _R,
         Surface.USER_ROLE_ADMIN: _RW,
     },

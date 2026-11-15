@@ -284,13 +284,60 @@ export function useVipItemWrite() {
 // grant) and audits it; on success every reader of `is_vip` is re-read.
 // ---------------------------------------------------------------------------
 
+/** Readers re-read after a pin settles (every reader of `is_vip`). */
+const VIP_READER_KEYS = ['priority-matrix', 'priority-board', 'vip-board', 'vip-projects', 'dashboard', 'projects', 'gantt'];
+
+/** A cached `priority-matrix` entry with `project_id`'s `is_vip` set to `isVip`;
+ *  anything that is not a Matrix row (or row list) is returned unchanged. */
+function withVipPin(data: unknown, projectId: Id, isVip: boolean): unknown {
+  const pin = (item: unknown): unknown => {
+    if (item === null || typeof item !== 'object') return item;
+    const row = item as { project_id?: unknown; is_vip?: unknown };
+    if (row.project_id !== projectId || !('is_vip' in row) || row.is_vip === isVip) return item;
+    return { ...row, is_vip: isVip };
+  };
+  if (Array.isArray(data)) {
+    let changed = false;
+    const next = data.map((item) => {
+      const out = pin(item);
+      if (out !== item) changed = true;
+      return out;
+    });
+    return changed ? next : data;
+  }
+  return pin(data);
+}
+
+interface VipPinContext {
+  snapshot: [readonly unknown[], unknown][];
+}
+
+/**
+ * P34-T02 (VIP star bug): the pin is shown at once. Before, the star only
+ * changed when the whole `/priorities` list had been re-read (~1 s after the
+ * 200), and the row then jumped into the VIP group at the top of the grid, so
+ * the user saw nothing happen where they clicked. Now the cached Matrix rows
+ * (`priority-matrix` lists and single rows) are updated optimistically, rolled
+ * back on an error (403 included), and every reader is re-read once settled.
+ * `is_vip` is a served flag flipped verbatim; nothing is derived.
+ */
 export function useSetProjectVip() {
   const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: ({ projectId, isVip }: { projectId: Id; isVip: boolean }) =>
+  return useMutation<VipPinResponse, Error, { projectId: Id; isVip: boolean }, VipPinContext>({
+    mutationFn: ({ projectId, isVip }) =>
       apiSend<VipPinResponse>('PUT', `/projects/${projectId}/vip`, { is_vip: isVip } satisfies VipPinRequest),
-    onSuccess: () => {
-      for (const key of ['priority-matrix', 'priority-board', 'vip-board', 'vip-projects', 'dashboard', 'projects', 'gantt']) {
+    onMutate: async ({ projectId, isVip }) => {
+      // An in-flight re-read must not overwrite the optimistic pin.
+      await queryClient.cancelQueries({ queryKey: ['priority-matrix'] });
+      const snapshot = queryClient.getQueriesData({ queryKey: ['priority-matrix'] });
+      queryClient.setQueriesData({ queryKey: ['priority-matrix'] }, (data: unknown) => withVipPin(data, projectId, isVip));
+      return { snapshot };
+    },
+    onError: (_err, _vars, context) => {
+      for (const [key, data] of context?.snapshot ?? []) queryClient.setQueryData(key, data);
+    },
+    onSettled: () => {
+      for (const key of VIP_READER_KEYS) {
         void queryClient.invalidateQueries({ queryKey: [key] });
       }
     },

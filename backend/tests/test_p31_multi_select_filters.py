@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import csv
 import io
+from enum import Enum
 from types import SimpleNamespace
 from typing import Any
 
@@ -29,6 +30,7 @@ from httpx import AsyncClient
 from sqlalchemy import select
 from sqlalchemy.dialects import postgresql
 
+import domain_constants as dc
 from models.enums import ProjectCategory, ProjectType, RoleName
 from models.project import Project
 from services.category_type_filter import (
@@ -91,6 +93,9 @@ async def _world(db_session) -> SimpleNamespace:
 
 
 def _order(e: Any) -> int:
+    # P33-T07: a category is a text code (rank order = the seed order).
+    if isinstance(e, str) and not isinstance(e, Enum):
+        return dc.CATEGORY_ORDER.index(e)
     return list(type(e)).index(e)
 
 
@@ -601,18 +606,18 @@ async def test_builder_reads_pre_p31_and_p31_job_filters(db_session):
     w = await _world(db_session)
     user = await _act_as(db_session, RoleName.SUPER_ADMIN)
     principal = make_principal(RoleName.SUPER_ADMIN, user_id=user.id, email=user.email)
-    c1, c2 = w.cats[0], w.cats[1]
+    c1, c2 = w.cats[0], w.cats[1]  # P33-T07: text codes, not enum members
     legacy = await build_export_sheets(
         db_session,
         principal,
         surface="dashboard",
-        filters={"hub_id": None, "category": c1.value, "status_": None, "priority": None},
+        filters={"hub_id": None, "category": c1, "status_": None, "priority": None},
     )
     as_list_one = await build_export_sheets(
         db_session,
         principal,
         surface="dashboard",
-        filters={"hub_id": None, "category": [c1.value], "status_": None, "priority": None},
+        filters={"hub_id": None, "category": [c1], "status_": None, "priority": None},
     )
     assert legacy == as_list_one
     two = await build_export_sheets(
@@ -621,7 +626,7 @@ async def test_builder_reads_pre_p31_and_p31_job_filters(db_session):
         surface="project_registration",
         filters={
             "hub_id": None,
-            "category": [c1.value, c2.value],
+            "category": [c1, c2],
             "status_": None,
             "priority": None,
             "type_": None,

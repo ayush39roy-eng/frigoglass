@@ -50,7 +50,6 @@ from models.chamber import Chamber
 from models.engineer import Engineer
 from models.enums import (
     LabRegion,
-    ProjectCategory,
     ProjectStatus,
     ProjectType,
     WorkflowStepKind,
@@ -59,6 +58,7 @@ from models.hub import Hub, HubWorkCalendar
 from models.project import Project
 from models.schedule import ScheduleRunProjectStep
 from schemas.capacity import YearRemaining
+from schemas.category import CategoryCode
 from schemas.planning import (
     CapacityBasis,
     CapacitySummaryResponse,
@@ -97,6 +97,7 @@ from services.capacity_supply import (
     round2,
     to_days,
 )
+from services.categories import load_catalog, unknown_category_error
 from services.hub_scope import hub_scope_filter, narrowed_hub_filter, narrowed_lab_regions
 
 router = APIRouter(prefix="/planning", tags=["capacity-planning"])
@@ -274,7 +275,7 @@ def _project_predicate(
     project_type: list[ProjectType],
     project_status: list[ProjectStatus],
     requesting_department: list[str],
-    category: list[ProjectCategory],
+    category: list[str],
     engineer_id: list[uuid.UUID],
     run_id: uuid.UUID,
 ) -> ColumnElement[bool] | None:
@@ -334,7 +335,7 @@ async def resource_load(
     project_type: list[ProjectType] = Query(default=[]),
     project_status: list[ProjectStatus] = Query(default=[]),
     requesting_department: list[str] = Query(default=[]),
-    category: list[ProjectCategory] = Query(default=[]),
+    category: list[CategoryCode] = Query(default=[]),
     engineer_id: list[uuid.UUID] = Query(default=[]),
     basis: CapacityBasis = "year",
     db: AsyncSession = Depends(get_db),
@@ -371,7 +372,13 @@ async def resource_load(
         )
     types = sorted(set(project_type), key=list(ProjectType).index)
     statuses = sorted(set(project_status), key=list(ProjectStatus).index)
-    categories = sorted(set(category), key=list(ProjectCategory).index)
+    # P33-T07 (contract B3): codes of the `categories` table, in rank order;
+    # an unknown code is the 422 the enum gave.
+    catalog = await load_catalog(db)
+    unknown = [c for c in category if not catalog.is_known(c)]
+    if unknown:
+        raise unknown_category_error(unknown, loc=("query", "category"), allowed=catalog.codes)
+    categories = catalog.sort_codes(category)
     departments = sorted({d.strip() for d in requesting_department if d.strip()})
     # P19-R01 (S19-M1): the engineer filter is intersected with the caller's
     # RBAC scope BEFORE any predicate is built. An out-of-scope id must not
@@ -603,7 +610,7 @@ async def resource_load_options(
         proj_stmt = proj_stmt.where(proj_filter)
     types: set[ProjectType] = set()
     statuses: set[ProjectStatus] = set()
-    categories: set[ProjectCategory] = set()
+    categories: set[str] = set()
     departments: set[str] = set()
     for p_type, p_status, p_category, p_department in (await db.execute(proj_stmt)).all():
         if p_type is not None:
@@ -632,7 +639,7 @@ async def resource_load_options(
         lab_regions=sorted({h.lab_region for h in hubs}, key=lambda r: r.value),
         project_types=[t for t in ProjectType if t in types],
         project_statuses=[s for s in ProjectStatus if s in statuses],
-        categories=[c for c in ProjectCategory if c in categories],
+        categories=(await load_catalog(db)).sort_codes(categories),
         requesting_departments=sorted(departments),
         requesting_department_available=bool(departments),
         engineers=engineers,

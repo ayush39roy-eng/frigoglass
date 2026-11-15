@@ -957,3 +957,109 @@ S.No 596 is used on 17 PD-Romania rows (599–622), 392 and 399 twice; PD code `
 front grid fixing improvement for Lidl", "Reed switch ease as alternative to AIN tech. for 1m
 cable", "SFC-700 HC @ 60Hz …"). Are these distinct projects? **Assuming:** yes; the app generates
 unique codes.
+
+### 76. An applied template length beats the project's effort figure — confirm the size of the effect, and later projects *(2026-11-13, P33 / ADR 0046, blocking P33-T08)*
+
+The owner ruled that an applied length replaces that step's effort share. Most projects (275 of
+330) carry an effort figure, and many have a share far below the table. One `+` on a step can
+therefore move such a project by several weeks. Example: a B project with design effort 4 has
+E = 2. After B/E goes 4 → 5 and is applied, E = 5, and the project's design goes 4 → 7.
+
+Two questions:
+- (a) Is the absolute template value intended, rather than "+1 on the project's current length"?
+- (b) Should a project registered later (or moved into the category) also take a length an Admin
+  has set over its effort figure?
+
+**Assuming:** (a) absolute, as ruled; (b) yes: an Admin-set template length governs every project
+that takes the template (ADR 0046 Q3(b)). The apply preview shows every project's before → after so
+the effect is visible before saving.
+
+**ANSWERED 2026-11-13 (owner, verbatim): "if it is manually set then use them only as the timeline".**
+"Manually set" means the project has its own client effort figure (from the spreadsheet import or
+the Registration Design / Lab effort boxes). Ruling (ADR 0046 "Owner ruling" OR-1..OR-6):
+- A project **with** its own figure for a kind keeps its own weeks for that kind. Template length
+  changes are not applied to those steps, and the split shape does not move (weights =
+  `effort_weight_weeks`).
+- A project **without** a figure for a kind follows the template length exactly (absolute value).
+- Gap changes apply to every project under the stage rule.
+- New registrations and category changes use their own figure if entered, otherwise the template.
+So (a) absolute, for projects without a figure; (b) no: nothing ever pins over an effort figure.
+The concern above (one `+` moving an effort project by several weeks) no longer arises. Closed.
+
+### 77. Giving a step back to the effort figure *(2026-11-13, P33, non-blocking)*
+
+Once a length is applied (pinned), nothing in P33 returns that step to the project's effort split,
+except a category change. Is a "use project effort" control wanted on the template step? **Assuming:**
+not in P33. Follow-up if asked.
+
+**ANSWERED 2026-11-13 (owner, with #76):** there is no separate control. Removing a project's effort
+figure (Registration / Workspace edit) makes that kind follow the template: the current template
+weeks are re-copied onto the steps the project has not reached (ADR 0046 OR-5). Closed.
+
+### 78. The What-if import Gantt keeps its drag *(2026-11-13, P33 / ADR 0048, non-blocking)*
+
+Per-project timing editing is removed from the live Timeline and the Workflow "Project step timing"
+tab. The What-if "Import plan" Gantt (P32-T06) is a scenario that is never saved. Should it keep
+its move, resize and overlap drag? **Assuming:** yes, it is a what-if.
+
+### 79. Rename, deactivate, delete or re-rank a category *(2026-11-13, P33 / ADR 0047, non-blocking)*
+
+P33 only adds categories. Should a later phase allow renaming one, deactivating one (no new
+projects), deleting one (only when unused) or moving one in the scheduling order? Re-ranking
+changes the scheduling order of existing projects and would recalculate. **Assuming:** out of scope
+until asked.
+
+### 80. A gap on a 0-week step *(2026-11-13, P33 / ADR 0046, non-blocking)*
+
+Several categories have 0-week steps (for example PDD/B "Business Case Approval"). A 0-week step
+is skipped and takes no time, so a gap set on it is ignored. The preview marks it "0-week step: gap
+ignored". If the client means "wait N weeks for business-case approval", they should give the step
+a length instead (an elapsed step books nothing). **Assuming:** ignore, as above. *(2026-11-13, R33-4:)* The same applies to a step the project's own effort split zeroed (for
+example D, J, M of a B project with design figure 4). The apply preview flags it per project as
+`gap_ignored_skipped`.
+
+### 81. Per-project step exclusion: may a user also INCLUDE a step the category has at 0 weeks? *(2026-11-13, P35, blocking P35-T03)*
+
+The old tool lets a click on an "N/A" step include it. Our 0-week step has no length to run with.
+**Assuming:** exclude only; a project that needs an extra step needs another category (ADR 0047).
+
+### 82. Excluding a step that has started or is Done *(2026-11-13, P35, blocking P35-T03)*
+
+**Assuming:** only Not Started steps can be excluded; recorded work is never erased (ADR 0041 R3).
+
+### 83. Does saving design / lab time or an exclusion recalculate the schedule straight away? *(2026-11-13, P35, non-blocking)*
+
+Today a figure edit marks the schedule stale and never solves (ADR 0041 R6), so the Gantt changes
+only after "Recalculate". The old tool redrew at once. **Assuming:** keep stale + the recalculate
+prompt; one run per Save if the owner wants it immediate.
+
+*(2026-11-13, owner answers.)* **#81:** exclude only. **#82:** Not Started and In Progress steps may
+be excluded; Done steps may not ("the one completed has no significance"). **#83:** recalculate on
+Save (one run per Save). Folded into ADR 0049 (Proposed) and P35.
+*(2026-11-13, P35-T03 ruling, non-blocking assumption on #82.)* A **Blocked** (stage "On Hold") step
+is treated like In Progress: it may be excluded. Its recorded progress is kept and comes back on
+re-include. Weeks already worked on an excluded step drop out of the full-year demand.
+
+### 84. Which status should each current step imply? *(2026-11-13, P35-T08, blocking the mismatch outline only)*
+
+The register should outline Status in red when it disagrees with the current step. The old tool
+used: step A → In Queue; B–H → In Development; I–M → Under Industrialization; N → Commercialized
+(same letters for PDD and OEM). *(2026-11-15: built on this as an assumption; owner may still change it.)* **Proposed:** adopt that mapping, served by the backend as
+`expected_status`; no warning for On Hold, Cancelled, In Buyoff or Draft; all steps done →
+Commercialized.
+
+### 85. Actual dates are stored as plan weeks *(2026-11-13, P35-T02, non-blocking)*
+
+Actual start / end are typed as dates and stored as plan weeks (2026 ISO weeks 1–52, 2027 = 53–78,
+ADR 0035 §11); the day is shown as that week's Monday. Dates outside 2026–27 are refused.
+**Assuming:** week precision is enough, as the old tool's dates fed a weekly Gantt.
+
+### 86. Should a ranked project still jump ahead when its status changes? *(2026-11-15, P36, non-blocking)*
+
+Since ADR 0050 every project in a band has a planner-set rank, so a project moving to In Buyoff no
+longer moves up its band on its own. **Assuming:** the rank is kept; the planner re-ranks by drag.
+
+### 87. In a What-if plan import (merge), should the file's PRIORITY rank override the live P1 order? *(2026-11-15, P36, non-blocking)*
+
+**Assuming:** no. A merged row replacing a live project in the same band keeps that project's rank;
+other imported rows go last in their band (ADR 0050, R36-7).

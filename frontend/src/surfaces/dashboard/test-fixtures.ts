@@ -19,6 +19,14 @@ export const P13_ROW_DEFAULTS: Pick<
   | 'plant'
   | 'requesting_department'
   | 'product_type'
+  | 'actual_start_week'
+  | 'actual_end_week'
+  | 'design_effort_weeks'
+  | 'lab_effort_weeks'
+  | 'design_weeks_calculated'
+  | 'lab_weeks_calculated'
+  | 'expected_status'
+  | 'status_mismatch'
 > = {
   external_code: null,
   type: null,
@@ -35,4 +43,14 @@ export const P13_ROW_DEFAULTS: Pick<
   plant: null,
   requesting_department: null,
   product_type: null,
+  // P35-T01
+  actual_start_week: null,
+  actual_end_week: null,
+  design_effort_weeks: null,
+  lab_effort_weeks: null,
+  design_weeks_calculated: 0,
+  lab_weeks_calculated: 0,
+  // P35-T08b
+  expected_status: null,
+  status_mismatch: false,
 };

@@ -7,7 +7,8 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
 
-from models.enums import HubName, ProjectCategory, ProjectPriority, WorkflowStepStatus
+from models.enums import HubName, ProjectPriority, WorkflowStepStatus
+from schemas.category import CategoryCodeOut
 from services.project_cards import CardHealth
 from services.tracking import TrackingStatus
 
@@ -25,7 +26,7 @@ class VipProject(BaseModel):
     selection: Literal["pinned", "auto"]
     project_id: uuid.UUID
     name: str
-    category: ProjectCategory | None
+    category: CategoryCodeOut | None
     priority: ProjectPriority | None
     score: float | None
     expected_end_week: int | None

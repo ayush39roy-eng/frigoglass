@@ -27,6 +27,19 @@ the callers filter the per-project figures by their own scope.
 Lead times come from the lead-time table in force
 (`workflow_lead_times[workflow][category][step]`), step kinds from Workflow
 Settings, stage progress from the live rows.
+
+**P33-T08 (ADR 0046 OR-3, contract P33 F4).** Each `LiveStepRow` carries the
+live builder's own mapping (`services.workflow_durations.
+run_input_lead_and_override`): `lead_weeks` = the template's immutable
+`effort_weight_weeks` on a step whose kind follows the project's own effort
+figure, else the project's copy `plan_weeks`; the override = the effort
+share on an own-effort step, else none (P33-T13: the hand-set user
+override is retired and always null since p33c, ADR 0048). So the
+scheduler package evaluates exactly the `eff` the run is solved with
+(R33-1), which equals DOMAIN_RULES §B: an own-effort kind loads `E + raised`
+whatever the template says, every other step its `plan_weeks`. Demand moves
+when a copy is written (I25 at commit); a template edit alone moves nothing.
+The weights are also what `check_i26_effort_split` splits over (R33-2).
 """
 
 from __future__ import annotations
@@ -49,6 +62,7 @@ from scheduling.demand import (
     LiveStepRow,
     compute_demand_load,
 )
+from services.workflow_durations import own_effort_kinds, run_input_lead_and_override
 
 
 @dataclass(frozen=True)
@@ -98,6 +112,41 @@ class DemandSnapshot:
         return out
 
 
+def _live_step_row(
+    s: ProjectWorkflowStep,
+    *,
+    kind: str,
+    own_kinds: frozenset[str],
+    table_weeks: int,
+    weight_weeks: int,
+) -> LiveStepRow:
+    """One live row in the run input's terms (OR-3 / F4, see the module
+    docstring): `lead_weeks` is the scheduler's `lead_weeks ?? table`."""
+
+    lead_weeks, _override = run_input_lead_and_override(
+        plan_weeks=s.plan_weeks,
+        effort_weight_weeks=weight_weeks,
+        table_weeks=table_weeks,
+        own_effort=kind in own_kinds,
+        effort_weeks=s.effort_weeks,
+    )
+    return LiveStepRow(
+        step_id=s.step_template_id,
+        sequence_order=s.sequence_order,
+        kind=kind,
+        lead_weeks=table_weeks if lead_weeks is None else lead_weeks,
+        # The scheduler package merges `user ?? effort`, which is the builder's
+        # override on every step: a non-null effort makes its kind own effort
+        # (OR-1), so a step of another kind has no effort to merge. There is
+        # no user figure any more (ADR 0048, p33c: always null).
+        user_override_weeks=None,
+        effort_weeks=s.effort_weeks,
+        status=s.status.value,
+        percent_complete=s.percent_complete,
+        remaining_weeks_override=s.remaining_weeks_override,
+    )
+
+
 async def load_live_project_rows(
     db: AsyncSession, project_ids: list[uuid.UUID] | None = None
 ) -> tuple[list[LiveProjectRow], dict[str, tuple[Project, Hub, Hub]]]:
@@ -120,9 +169,10 @@ async def load_live_project_rows(
             await db.execute(select(WorkflowStepTemplate.id, WorkflowStepTemplate.kind))
         ).all()
     }
-    lead = {
-        (lt.workflow_id, lt.category.value, lt.step_id): int(lt.weeks)
-        for lt in (await db.execute(select(WorkflowLeadTime))).scalars().all()
+    lead_rows = (await db.execute(select(WorkflowLeadTime))).scalars().all()
+    lead = {(lt.workflow_id, lt.category, lt.step_id): int(lt.weeks) for lt in lead_rows}
+    weight = {
+        (lt.workflow_id, lt.category, lt.step_id): int(lt.effort_weight_weeks) for lt in lead_rows
     }
     steps: dict[uuid.UUID, list[ProjectWorkflowStep]] = defaultdict(list)
     step_stmt = select(ProjectWorkflowStep).order_by(
@@ -139,7 +189,10 @@ async def load_live_project_rows(
         hub = hubs[p.hub_id]
         cap = hubs.get(hub.capacity_hub_id or hub.id, hub)
         workflow_id = workflow_id_for_hub(hub.is_oem)
-        category = p.category.value if p.category is not None else None
+        category = p.category
+        own_kinds = own_effort_kinds(
+            ((s.step_template_id, s.effort_weeks) for s in steps.get(p.id, [])), kinds
+        )
         rows.append(
             LiveProjectRow(
                 project_id=str(p.id),
@@ -151,20 +204,14 @@ async def load_live_project_rows(
                 design_effort_weeks=p.design_effort_weeks,
                 lab_effort_weeks=p.lab_effort_weeks,
                 steps=tuple(
-                    LiveStepRow(
-                        step_id=s.step_template_id,
-                        sequence_order=s.sequence_order,
+                    _live_step_row(
+                        s,
                         kind=kinds.get(s.step_template_id, "elapsed"),
-                        lead_weeks=(
-                            lead.get((workflow_id, category, s.step_template_id), 0)
-                            if category is not None
-                            else 0
+                        own_kinds=own_kinds,
+                        table_weeks=lead.get((workflow_id, category or "", s.step_template_id), 0),
+                        weight_weeks=weight.get(
+                            (workflow_id, category or "", s.step_template_id), 0
                         ),
-                        user_override_weeks=s.duration_override_weeks,
-                        effort_weeks=s.effort_weeks,
-                        status=s.status.value,
-                        percent_complete=s.percent_complete,
-                        remaining_weeks_override=s.remaining_weeks_override,
                     )
                     for s in steps.get(p.id, [])
                 ),

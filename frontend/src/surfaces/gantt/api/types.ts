@@ -44,39 +44,38 @@ export interface GanttStepRow {
   assigned_chamber_code: string | null;
   eng_conflict: boolean;
   chamber_overlap: boolean;
-  /** P12 contract §3 (reconciled with `backend/schemas/gantt.py`): the lead-time table value. */
+  /** P12 contract §3; P33 (contract Part G): the project's copy of the
+   *  category template length — the same value as `plan_weeks`, served under
+   *  both names. `duration_weeks` above is the effective duration the active
+   *  run booked. */
   lead_time_weeks: number;
-  /** P12 contract §3, ADR 0019 (reconciled); P30 (ADR 0041 R4): the USER's
-   *  duration for the step (Gantt / Workspace) only; null = none. `duration_weeks`
-   *  above is the effective duration (user ?? effort ?? lead). */
-  duration_override_weeks: number | null;
-  /** P30 (API_CONTRACT_P30 §3, ADR 0041 R4): the step's share of the project's
+  /** P30 (API_CONTRACT_P30 §3, ADR 0041): the step's share of the project's
    *  client effort figure, server-derived (0..104; 0 = skipped by the split);
-   *  null = no effort split. Never a "timing edit". */
+   *  null = no effort split. */
   effort_weeks: number | null;
-  /** P12 contract §3, ADR 0019 (reconciled): earliest start floor; null = none. */
-  start_not_before_week: number | null;
-  /** P12 contract §3 (reconciled): what the Gantt may do with this bar for the
-   *  caller, decided server-side (ADR 0019 §4 + GANTT write on the project). */
-  timing_editable: TimingEditable;
+  /** P33 (contract Part G, ADR 0046 §B): the project's copied template
+   *  length (0..104). Read-only — per-project timing editing is retired
+   *  (ADR 0048). */
+  plan_weeks: number;
+  /** P33 (Part G): the signed copied gap (`plan_gap_weeks`, −104..104):
+   *  negative = runs in parallel with the work it waits for by that many
+   *  weeks ("parallel N wk"), positive = waits that many weeks after it
+   *  ("wait N wk"), 0 = neither. Rendered verbatim, never interpreted. */
+  gap_weeks: number;
+  /** P33 (Part G, OR-1): the step's kind follows the project's own effort
+   *  figure, so its duration is `effort_weeks`, not `plan_weeks`. */
+  own_effort: boolean;
   /** P20-T02 (ADR 0032, reconciled with `backend/schemas/gantt.py`): the leader
    *  FTE the active run stretched this step's calendar span by
    *  (`ceil(work / fte)`). `null` for lab, elapsed, skipped and Done steps,
    *  frozen projects, steps with no leader, runs persisted before P20-T02, and
-   *  (OQ #8, part-time status is personal data) for every caller who may not
-   *  edit this step's timing. Only the right-edge drag and its labels read it. */
+   *  (OQ #8, part-time status is personal data) for every caller without
+   *  GANTT write on the project's hub. Only the bar's hover text reads it. */
   span_fte: number | null;
-  /** P32 (API_CONTRACT_P32 A3, ADR 0043): the planner's overlap with the work
-   *  this step waits for (1..104); null = none. A "timing edit". */
-  overlap_weeks: number | null;
-  /** P32 (A3): the template's predecessor step ids, sorted. Read only by the
-   *  drag gesture to interpret a drop (never to draw a schedule number). */
+  /** P32 (A3): the template's predecessor step ids, sorted. Served; not read
+   *  by the read-only Timeline (P33-T15). */
   predecessor_ids: string[];
 }
-
-/** ADR 0019 §4: `move_resize` (Not Started), `resize` (In Progress / On Hold),
- *  `none` (Done, skipped, frozen / non-schedulable project, or no write). */
-export type TimingEditable = 'move_resize' | 'resize' | 'none';
 
 /** ADR 0021: per-project live tracking status, served. */
 export type TrackingStatus = 'live' | 'due' | 'overdue' | 'idle';
@@ -187,35 +186,4 @@ export interface GanttActiveRun {
   version: number;
   solver_type: 'greedy' | 'cp_sat';
   created_at: string;
-}
-
-/** P12 contract §3 (reconciled with `backend/schemas/step_timing.py`, pinned
- *  `exact` by `test_openapi_frontend_contract.py`): `PATCH …/steps/{step_id}/timing`
- *  body (`extra="forbid"`). Send either field or both; an absent field is left
- *  as it is and an explicit `null` clears it. */
-export interface StepTimingRequest {
-  duration_override_weeks?: number | null;
-  start_not_before_week?: number | null;
-  /** P32 (A3, ADR 0043): 0..104, 0 normalised to null by the server. */
-  overlap_weeks?: number | null;
-}
-
-/** P12 contract §3 (reconciled, pinned `exact`): the 200 response. */
-export interface StepTimingResponse {
-  project_id: Id;
-  step_id: string;
-  duration_override_weeks: number | null;
-  start_not_before_week: number | null;
-  /** P32 (A3, ADR 0043). */
-  overlap_weeks: number | null;
-  /** P30: `user ?? effort ?? lead`, served; 0 when skipped. */
-  effective_duration_weeks: number;
-  /** P30 (API_CONTRACT_P30 §3): what "Reset timing" falls back to. */
-  effort_weeks: number | null;
-  /** P30: the lead-time table value. */
-  lead_time_weeks: number;
-  recalc_status: 'queued' | 'deferred' | 'not_needed' | 'unchanged' | 'applied' | 'dispatch_failed';
-  schedule_run_id: Id | null;
-  baseline_run_id: Id | null;
-  task_id: string | null;
 }

@@ -173,7 +173,8 @@ WORKFLOW_ID_FOR_NON_OEM_HUB: Final[str] = "PDD"
 
 # --- Categories ---
 
-#: Categories an OEM-hub project must carry; non-OEM hubs use A+/A/B/C.
+#: The seeded categories of each workflow (seed default only since P33-T07;
+#: the live rule reads `categories.workflow_id`).
 OEM_CATEGORIES: Final[frozenset[str]] = frozenset({"A-OEM", "B-OEM", "C-OEM"})
 NON_OEM_CATEGORIES: Final[frozenset[str]] = frozenset({"A+", "A", "B", "C"})
 
@@ -205,6 +206,11 @@ SCHEDULABLE_STATUS_ORDER: Final[Mapping[str, int]] = {
     "In Queue": 3,
 }
 
+#: P33-T07 (ADR 0047 §4): the SEED DEFAULT only — the seven codes, in rank
+#: order 1..7, that migration `p33a_categories` seeds into the `categories`
+#: table. Live readers use the table (`services.categories`); sort key 5 is
+#: the table's rank (`ScheduleInput.categories`). Seed scripts and pure tests
+#: use this tuple.
 CATEGORY_ORDER: Final[tuple[str, ...]] = ("A+", "A", "B", "C", "A-OEM", "B-OEM", "C-OEM")
 
 # --- Booking rules ---

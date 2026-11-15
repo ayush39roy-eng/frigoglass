@@ -37,6 +37,13 @@ step with an overlap may start up to `o(s)` weeks before its release, but never
 before the step it runs in parallel with has started; it then passes its
 predecessors' end on, so successors still wait for all upstream work.
 
+P33 (ADR 0046 as ruled, R33-1/R33-4): a Not Started step's gate also carries
+its wait (`release + 1 + w`; `workflow.step_gate`), a wait books nothing, and a
+step's duration is `override ?? (lead_weeks ?? table)` (`analyse_project`).
+Sort key 5 is the category's rank from `ScheduleInput.categories` (ADR 0047
+§3, R33-8), validated in `prepare_run`. With every wait 0, no `lead_weeks` and
+the default category list, every run is byte-identical to before P33.
+
 FTE (ADR 0032, supersedes ADR 0002): a design step of a non-frozen project
 books `span = ceil(duration / leader.fte)` consecutive weeks of its leader (an
 In Progress tail `ceil(remaining / fte)`); `duration_weeks` on the output row
@@ -64,13 +71,12 @@ sorted before iteration.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, replace
 
 import domain_constants as dc
 from scheduling import hubs
 from scheduling.types import (
-    CATEGORY_RANK,
-    OEM_CATEGORIES,
     ChamberInput,
     EngineerInput,
     ProjectInput,
@@ -78,19 +84,23 @@ from scheduling.types import (
     ScheduleInput,
     ScheduleOutput,
     StepSchedule,
+    default_categories,
 )
 from scheduling.workflow import (
     STATUS_BLOCKED,
     STATUS_DONE,
     STATUS_IN_PROGRESS,
+    CategoryMaps,
     ProjectPlan,
     StepPlan,
     Workflow,
     analyse_project,
+    build_category_maps,
     build_lead_time_table,
     build_workflows,
     compute_progress_pct,
     first_step_frontier,
+    is_default_categories,
     leader_fte_of,
     passed_release,
     release_week,
@@ -98,6 +108,10 @@ from scheduling.workflow import (
     unconstrained_end_week,
     validate_schedulable_project,
 )
+
+#: The seeded categories (ranks 1..7, `CATEGORY_RANK` order): the fallback of
+#: `_sort_key` / `_cat_not_allowed` for callers that pass no category list.
+_DEFAULT_CATEGORIES: CategoryMaps = build_category_maps(default_categories())
 
 # --- Small pure helpers ------------------------------------------------------
 
@@ -114,33 +128,64 @@ def _lab_region_for_hub(hub: str) -> str:
     return hubs.HUB_LAB_REGION[hub]
 
 
-def _cat_not_allowed(project: ProjectInput, leader: EngineerInput) -> bool:
+def _cat_not_allowed(
+    project: ProjectInput,
+    leader: EngineerInput,
+    category_workflow: Mapping[str, str] | None = None,
+) -> bool:
     """CAT_NOT_ALLOWED: the leader's `allowed_categories` excludes the project's
     category, "or OEM for OEM-hub projects". An OEM-hub leader is eligible if
     `allowed_categories` carries either the generic `"OEM"` marker or the
-    project's own `X-OEM` category (ADR 0007: engineer eligibility now accepts
-    the three OEM categories explicitly)."""
+    project's own OEM-workflow category (ADR 0007: engineer eligibility now
+    accepts the OEM categories explicitly). P33 (R33-8): "an OEM-workflow
+    category" is read from the input's category list (`category_workflow`,
+    default: the seeded seven), not from a constant."""
 
+    workflow_of = _DEFAULT_CATEGORIES.workflow if category_workflow is None else category_workflow
     allowed = leader.allowed_categories
     if _is_oem_hub(project.hub):
-        oem_cat_ok = project.category in OEM_CATEGORIES and project.category in allowed
+        oem_cat_ok = (
+            project.category is not None
+            and workflow_of.get(project.category) == "OEM"
+            and project.category in allowed
+        )
         return not ("OEM" in allowed or oem_cat_ok)
     return project.category not in allowed
 
 
-def _sort_key(project: ProjectInput) -> tuple[int, int, int, int, int, str]:
-    """DOMAIN_RULES.md "Scheduling order": frozen desc, is_vip desc (ADR 0040),
-    priority, status, category (`A+ → A → B → C → A-OEM → B-OEM → C-OEM`), then
-    an explicit `project_id` tiebreak (P2-T01 decision: a pure function must not
-    derive determinism from caller ordering). With no VIP project the order is
-    exactly the pre-ADR-0040 one."""
+def _band_rank_key(band_rank: int | None) -> tuple[int, int]:
+    """Scheduling order key 3a (ADR 0050, R36-9 / I37a): `band_rank`
+    ascending, `None` after every integer. `(0, rank)` / `(1, 0)` keeps the
+    tuple totally ordered (never compares `None` with an int)."""
 
+    return (1, 0) if band_rank is None else (0, band_rank)
+
+
+def _sort_key(
+    project: ProjectInput, category_rank: Mapping[str, int] | None = None
+) -> tuple[int, int, int, tuple[int, int], int, int, str]:
+    """DOMAIN_RULES.md "Scheduling order": frozen desc, is_vip desc (ADR 0040),
+    priority, band_rank asc with None last (key 3a, ADR 0050), status,
+    category rank, then an explicit `project_id` tiebreak (P2-T01 decision: a
+    pure function must not derive determinism from caller ordering). With no
+    VIP project the order is exactly the pre-ADR-0040 one; with every
+    `band_rank` None it is exactly the pre-P36 one (key 3a is constant).
+
+    Key 5 is the category's `rank` value from the input's category list
+    (ADR 0047 §3, R33-8; default: the seeded seven at ranks 1..7, i.e.
+    `A+ → A → B → C → A-OEM → B-OEM → C-OEM`, the pre-P33 order).
+
+    This is the only scheduling sort (R36-4): CP-SAT, Monte Carlo, What-if
+    and plan import all take their order from `prepare_run` / this key."""
+
+    rank = _DEFAULT_CATEGORIES.rank if category_rank is None else category_rank
     return (
         0 if project.frozen else 1,
         0 if project.is_vip else 1,
         dc.PRIORITY_ORDER.index(project.priority),
+        _band_rank_key(project.band_rank),
         dc.SCHEDULABLE_STATUS_ORDER[project.status],
-        CATEGORY_RANK.index(project.category),
+        rank[project.category],  # type: ignore[index]
         project.project_id,
     )
 
@@ -253,6 +298,8 @@ class RunContext:
     plans: dict[str, ProjectPlan]
     ordered: tuple[ProjectInput, ...]  # schedulable projects in scheduling order
     excluded: tuple[ProjectInput, ...]
+    # ADR 0047 §3 / R33-8: the validated category list (rank, workflow).
+    categories: CategoryMaps = _DEFAULT_CATEGORIES
 
 
 def prepare_run(schedule_input: ScheduleInput) -> RunContext:
@@ -261,6 +308,7 @@ def prepare_run(schedule_input: ScheduleInput) -> RunContext:
 
     workflows = build_workflows(schedule_input.workflow_steps)
     lead_time_table = build_lead_time_table(schedule_input.lead_times)
+    categories = category_maps_for(schedule_input, workflows)
     engineers_by_id = {e.engineer_id: e for e in schedule_input.engineers}
     chambers_by_id = {c.chamber_id: c for c in schedule_input.chambers}
 
@@ -283,6 +331,7 @@ def prepare_run(schedule_input: ScheduleInput) -> RunContext:
             hub_lab_region=hubs.HUB_LAB_REGION,
             priority_order=dc.PRIORITY_ORDER,
             horizon_weeks=schedule_input.horizon_weeks,
+            category_workflow=categories.workflow,
         )
         plans[project.project_id] = analyse_project(
             project,
@@ -298,9 +347,22 @@ def prepare_run(schedule_input: ScheduleInput) -> RunContext:
         engineers_by_id=engineers_by_id,
         chambers_by_id=chambers_by_id,
         plans=plans,
-        ordered=tuple(sorted(schedulable, key=_sort_key)),
+        ordered=tuple(sorted(schedulable, key=lambda p: _sort_key(p, categories.rank))),
         excluded=tuple(excluded),
+        categories=categories,
     )
+
+
+def category_maps_for(
+    schedule_input: ScheduleInput, workflows: Mapping[str, Workflow]
+) -> CategoryMaps:
+    """R33-8: the validated category list of `schedule_input`. A list equal to
+    the seeded default is not checked against the input's workflows (see
+    `build_category_maps`); any other list is."""
+
+    if is_default_categories(schedule_input.categories):
+        return build_category_maps(schedule_input.categories)
+    return build_category_maps(schedule_input.categories, workflow_ids=sorted(workflows))
 
 
 # --- Core algorithm ------------------------------------------------------
@@ -667,7 +729,7 @@ def _schedule_one_project(
     if leader is None:
         return _no_leader_outcome(project, plan, current_week)
 
-    cat_not_allowed = _cat_not_allowed(project, leader)
+    cat_not_allowed = _cat_not_allowed(project, leader, ctx.categories.workflow)
     region = _lab_region_for_hub(project.hub)
     frontier = first_step_frontier(project, current_week)
     frozen = project.frozen

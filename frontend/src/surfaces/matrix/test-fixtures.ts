@@ -22,6 +22,8 @@ export const P13_MATRIX_ROW_DEFAULTS: Pick<
   | 'scoring_tags'
   | 'tag_dimension_keys'
   | 'is_vip'
+  | 'last_score_version'
+  | 'external_code'
 > = {
   status: 'In Development',
   leader_name: null,
@@ -41,6 +43,10 @@ export const P13_MATRIX_ROW_DEFAULTS: Pick<
   tag_dimension_keys: [],
   // ADR 0040: not VIP unless a test says so.
   is_vip: false,
+  // P34 (D34-4): never changed by a saved version unless a test says so.
+  last_score_version: null,
+  // P34-T03: no project code unless a test says so.
+  external_code: null,
 };
 
 /** P25 fields of a compare item, for test builders (+ P26 defaults). */

@@ -54,7 +54,7 @@ from services.project_steps import sync_project_steps
 from services.schedule_persistence import build_schedule_input_from_db, create_queued_schedule_run
 from tests.auth_helpers import clear_current_principal_override, make_principal
 from tests.conftest import run_alembic
-from tests.factories import make_hub, make_schedule_run, make_user
+from tests.factories import make_hub, make_schedule_run, make_user, rank_all_bands
 from tests.p12_helpers import act_as, client_for, plan_step, stepped_project
 from workers.schedule_tasks import run_greedy_schedule
 
@@ -175,9 +175,11 @@ async def _seed_project(url, hub_name: HubName) -> tuple[uuid.UUID, uuid.UUID]:
             type=ProjectType.NM, status=ProjectStatus.IN_QUEUE, priority=ProjectPriority.P3,
             frozen=False, delay_weeks=0, carry_over=False,
             certification_testing_required=False,
+            band_rank=1,  # placeholder, renumbered below (P36)
         )
         db.add(project)
         await db.flush()
+        await rank_all_bands(db)
         await sync_project_steps(db, project, False)
         user = await make_user(db, RoleName.PORTFOLIO_MANAGER)
         await db.commit()

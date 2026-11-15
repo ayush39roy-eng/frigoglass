@@ -1,5 +1,5 @@
-"""Reusable invariant validator — Invariants I1-I17, I21-I22, I27 and the solver-input
-part of I26, per `docs/DOMAIN_RULES.md`. I25 / I26 over live rows are in
+"""Reusable invariant validator — Invariants I1-I17, I21-I22, I27-I30, I35, I37 and the
+solver-input part of I26, per `docs/DOMAIN_RULES.md`. I25 / I26 over live rows are in
 `scheduling.demand`.
 
 This is **the permanent correctness contract** for `backend/scheduling/`.
@@ -67,6 +67,45 @@ What is assertable at the pure-function level (2026-09-27 revision):
     I26 (ADR 0041 R3, input part) a started stage of a non-frozen project is
         never zeroed by its merged override (the live-row I26 split check is
         `scheduling.demand.check_i26_effort_split`)
+    I27 rev. (P33, R33-4) every non-skipped, non-held Not Started step of a
+        non-frozen project starts at or after `max(CURRENT_WEEK, gate(s),
+        start_not_before_week)`, `gate` piecewise (`release + 1 + w` with no
+        overlap). To avoid reporting one failure twice: the `gate` term is
+        reported here for `o(s) > 0` (I3 covers `release + 1`, I28 the wait,
+        I22 the floor) and the `CURRENT_WEEK` term for every such step
+    I28 (P33) every such step with `w(s) > 0` starts at or after `release(s) +
+        1 + w(s)`; and (`check_wait_invariance`, run with I8) two inputs that
+        differ only in waits give identical `duration_weeks` on every common
+        row and identical `progress_pct`
+    I29 (P33, R33-1) every row's `duration_weeks` equals `eff` evaluated on
+        the input alone (`lead = lead_weeks ?? table`; 0 if `lead = 0` or lab
+        with certification off; else `override ?? lead`), and the row is
+        `skipped` exactly when that is 0
+    I30 (P33, ADR 0047 §3, R33-8) the category list is valid, and for
+        consecutive ids in `scheduling_order` equal on sort keys 1-4 the
+        category rank never decreases, ties broken by ascending `project_id`.
+        The snapshot half (`workflow_snapshot["categories"]`) is service-side
+    I35 (P35, ADR 0049 as ruled) every project of the run input in a
+        schedulable status has at least one step with `eff > 0` derived from
+        the inputs (`lead_weeks ?? table`, certification, override). A project
+        whose 14 steps are all skipped (e.g. every step excluded, which the
+        builder sends as `lead_weeks = 0`, R35-9) gets an outcome in no
+        Dashboard bucket; R35-5 (`NO_STEPS_LEFT`) must refuse it before the
+        run. I33 / I34 live-row halves are in `scheduling.demand`
+    I30 rev. (P36, R36-9) the "equal on sort keys" head is keys 1-3a and 4
+        (frozen, VIP, priority, band_rank, status)
+    I37a (P36, ADR 0050, R36-9) every `band_rank` is None or an int >= 1, and
+        keys 1-3a (frozen, VIP, priority, band_rank with None last) are
+        lexicographically non-decreasing over every consecutive pair of
+        `scheduling_order` (so ranks never decrease inside a band group, and
+        no group is split). Run on every input.
+    I37b (P36) live state only (`validate_invariants(live_state=True)` /
+        `check_i37b_band_ranks_dense`): per band, the schedulable projects'
+        ranks are exactly 1..n, and `band_rank` is set iff the status is
+        schedulable and the priority is set
+    I37c (P36) a re-rank write: `check_i37c_placement` over the band's id
+        order before / after the write. I37d (preview input == input rebuilt
+        after confirm) is service-side
     I13 (health badge), I14 (run immutability) and I17 (capacity supply) are
     API/DB-side invariants with nothing to assert on a `ScheduleOutput`; they
     are the workflow-auditor's to check against the live API (P9-T06).
@@ -103,12 +142,12 @@ so the *order* of violations returned is itself deterministic.
 from __future__ import annotations
 
 from collections import defaultdict
-from collections.abc import Mapping
-from dataclasses import dataclass
+from collections.abc import Iterable, Mapping, Sequence
+from dataclasses import dataclass, replace
 
 import domain_constants as dc
 from scheduling import hubs
-from scheduling.greedy import run_greedy_sgs
+from scheduling.greedy import _band_rank_key, category_maps_for, run_greedy_sgs
 from scheduling.types import (
     LAB_CONSUMPTION_PER_PROJECT_WEEK,
     ProjectInput,
@@ -123,6 +162,7 @@ from scheduling.workflow import (
     STATUS_DONE,
     STATUS_IN_PROGRESS,
     STATUS_NOT_STARTED,
+    CategoryMaps,
     ProjectPlan,
     Workflow,
     analyse_project,
@@ -140,7 +180,7 @@ from scheduling.workflow import (
 
 @dataclass(frozen=True)
 class InvariantViolation:
-    """One concrete failure of one of Invariants I1-I17, I21-I22, I25-I27."""
+    """One concrete failure of one of Invariants I1-I17, I21-I22, I25-I30, I35, I37."""
 
     invariant: str
     description: str
@@ -166,6 +206,8 @@ class _Ctx:
     # (ADR 0041 R5: I5 derives "skipped" from the inputs itself).
     workflows: Mapping[str, Workflow]
     lead_time_table: Mapping[tuple[str, str, str], int]
+    # R33-8: the validated category list (None when invalid: I30 reports it).
+    categories: CategoryMaps | None = None
 
     def plan(self, project_id: str) -> ProjectPlan | None:
         return self.plans.get(project_id)
@@ -261,6 +303,15 @@ def _build_ctx(
         )
         table = {}
 
+    categories: CategoryMaps | None
+    try:
+        categories = category_maps_for(schedule_input, workflows)
+    except ValueError as exc:
+        violations.append(
+            InvariantViolation(invariant="I30", description=f"category list invalid: {exc}")
+        )
+        categories = None
+
     fte_by_engineer = {e.engineer_id: e.fte for e in schedule_input.engineers}
     for project in sorted(schedule_input.projects, key=lambda p: p.project_id):
         if project.status not in dc.SCHEDULABLE_STATUS_ORDER:
@@ -277,7 +328,9 @@ def _build_ctx(
         )
 
     return (
-        _Ctx(schedule_input, schedule_output, projects, outcomes, plans, workflows, table),
+        _Ctx(
+            schedule_input, schedule_output, projects, outcomes, plans, workflows, table, categories
+        ),
         violations,
     )
 
@@ -290,10 +343,14 @@ def validate_invariants(
     schedule_output: ScheduleOutput,
     *,
     check_determinism: bool = True,
+    live_state: bool = False,
 ) -> tuple[InvariantViolation, ...]:
     """Run every assertable invariant check and return every violation found,
     in a fixed, deterministic order. `check_determinism=False` skips I8 (which
-    re-runs `run_greedy_sgs` on `schedule_input` twice internally)."""
+    re-runs `run_greedy_sgs` on `schedule_input` twice internally).
+    `live_state=True` (ADR 0050, R36-9) also runs I37b, which holds only on an
+    input built from the live DB (never on What-if / import inputs, whose
+    added or re-banded projects are legitimately unranked)."""
 
     ctx, violations = _build_ctx(schedule_input, schedule_output)
     violations.extend(_check_i1_engineer_conflicts(ctx))
@@ -305,6 +362,7 @@ def validate_invariants(
     violations.extend(_check_i7_lab_load(ctx))
     if check_determinism:
         violations.extend(check_scheduler_determinism(schedule_input))
+        violations.extend(check_wait_invariance(schedule_input))
     violations.extend(_check_i9_within_year_derivation(ctx))
     violations.extend(_check_i10_frozen_dates_immutable(ctx))
     violations.extend(_check_i11_done_stages_immutable(ctx))
@@ -315,6 +373,13 @@ def validate_invariants(
     violations.extend(_check_i22_start_not_before(ctx))
     violations.extend(_check_i26_recorded_work_not_zeroed(ctx))
     violations.extend(_check_i27_overlap_gate(ctx))
+    violations.extend(_check_i28_wait_gate(ctx))
+    violations.extend(_check_i29_duration_from_input(ctx))
+    violations.extend(_check_i30_category_order(ctx))
+    violations.extend(_check_i37a_band_rank_order(ctx))
+    if live_state:
+        violations.extend(check_i37b_band_ranks_dense(schedule_input.projects))
+    violations.extend(_check_i35_no_empty_project(ctx))
     return tuple(violations)
 
 
@@ -761,23 +826,52 @@ def _input_override(project: ProjectInput, step_id: str) -> int | None:
     return None if not values or values[0] < 0 else values[0]
 
 
-def _input_says_skipped(ctx: _Ctx, project: ProjectInput, step_id: str) -> bool | None:
-    """ADR 0041 R5, derived from the inputs only (never from
-    `analyse_project`): skipped ⟺ lead = 0 ∨ (lab ∧ ¬certification) ∨ the
-    merged override is 0. `None` when the inputs cannot say (unknown
-    workflow, step or lead-time row: other checks report those)."""
+def _input_lead(ctx: _Ctx, project: ProjectInput, step_id: str) -> int | None:
+    """R33-1, from the input rows only: the project's own `lead_weeks` for
+    `step_id` (the smallest, with duplicate rows) `??` the input table.
+    `None` when there is no table row (other checks report that)."""
+
+    if project.category is None:
+        return None
+    table = ctx.lead_time_table.get((project.workflow_id, project.category, step_id))
+    if table is None:
+        return None
+    own = sorted(
+        r.lead_weeks
+        for r in project.step_timing
+        if r.step_id == step_id and r.lead_weeks is not None
+    )
+    return own[0] if own else table
+
+
+def _input_eff(ctx: _Ctx, project: ProjectInput, step_id: str) -> int | None:
+    """R33-1 `eff(p, s)` derived from the inputs only (never from
+    `analyse_project`): 0 if `lead = 0` or a lab step with certification
+    testing off, else `override ?? lead`, with `lead = lead_weeks ?? table`.
+    `None` when the inputs cannot say (unknown workflow, step or lead-time
+    row: other checks report those)."""
 
     wf = ctx.workflows.get(project.workflow_id)
-    if wf is None or step_id not in wf.steps_by_id or project.category is None:
+    if wf is None or step_id not in wf.steps_by_id:
         return None
-    lead = ctx.lead_time_table.get((project.workflow_id, project.category, step_id))
+    lead = _input_lead(ctx, project, step_id)
     if lead is None:
         return None
     if lead == 0:
-        return True
+        return 0
     if wf.steps_by_id[step_id].kind == "lab" and not project.certification_testing_required:
-        return True
-    return _input_override(project, step_id) == 0
+        return 0
+    override = _input_override(project, step_id)
+    return lead if override is None else override
+
+
+def _input_says_skipped(ctx: _Ctx, project: ProjectInput, step_id: str) -> bool | None:
+    """ADR 0041 R5 / R33-1, derived from the inputs only: skipped ⟺ `eff = 0`
+    (`lead_weeks ?? table` = 0, lab ∧ ¬certification, or a merged override
+    of 0). `None` when the inputs cannot say."""
+
+    eff = _input_eff(ctx, project, step_id)
+    return None if eff is None else eff == 0
 
 
 def _check_i5_complete_or_left_out(ctx: _Ctx) -> list[InvariantViolation]:
@@ -1590,7 +1684,7 @@ def _check_i26_recorded_work_not_zeroed(ctx: _Ctx) -> list[InvariantViolation]:
         for step_id in started:
             if step_id not in wf.steps_by_id:
                 continue
-            lead = ctx.lead_time_table.get((project.workflow_id, project.category, step_id))
+            lead = _input_lead(ctx, project, step_id)
             if not lead:
                 continue
             if wf.steps_by_id[step_id].kind == "lab" and not project.certification_testing_required:
@@ -1612,32 +1706,26 @@ def _check_i26_recorded_work_not_zeroed(ctx: _Ctx) -> list[InvariantViolation]:
     return violations
 
 
-# --- I27: overlap gate (ADR 0043) -----------------------------------------------------
+# --- I27: gate (ADR 0043, rev. P33 R33-4) ----------------------------------------------
 
 
-def _check_i27_overlap_gate(ctx: _Ctx) -> list[InvariantViolation]:
-    """I27 (ADR 0043): every non-skipped `Not Started` step of a non-frozen
-    project starts at or after `gate(s) = max(release(s) + 1 - o(s), max
-    start of its nearest non-skipped predecessors, frontier)`, with `release`
-    and the anchor starts recomputed from the output rows. Held steps (a
-    Blocked hold places nothing) are exempt. Reported only for `o(s) > 0`:
-    with no overlap `gate(s) = release(s) + 1` and the check is I3."""
+def _not_started_steps(ctx: _Ctx) -> list[tuple[ProjectScheduleOutcome, ProjectPlan, StepSchedule]]:
+    """The rows I27 / I28 govern: non-skipped, non-held `Not Started` steps of
+    non-frozen, non-excluded, non-data-error projects that analyse cleanly,
+    in (project_id, sequence_order, step_id) order."""
 
-    violations: list[InvariantViolation] = []
+    out: list[tuple[ProjectScheduleOutcome, ProjectPlan, StepSchedule]] = []
     for outcome in sorted(ctx.schedule_output.project_outcomes, key=lambda o: o.project_id):
-        pid = outcome.project_id
-        project = ctx.projects.get(pid)
-        plan = ctx.plan(pid)
+        project = ctx.projects.get(outcome.project_id)
+        plan = ctx.plan(outcome.project_id)
         if (
             outcome.excluded
             or outcome.data_error is not None
             or project is None
             or plan is None
             or project.frozen
-            or not plan.has_overlap
         ):
             continue
-        _g, release, by_id = _row_releases(ctx, plan, outcome)
         for step in sorted(outcome.steps, key=lambda s: (s.sequence_order, s.step_id)):
             sp = plan.steps.get(step.step_id)
             if (
@@ -1645,26 +1733,491 @@ def _check_i27_overlap_gate(ctx: _Ctx) -> list[InvariantViolation]:
                 or sp.skipped
                 or step.skipped
                 or sp.status != STATUS_NOT_STARTED
-                or sp.overlap_weeks == 0
                 or step.step_id in plan.held_step_ids
             ):
                 continue
-            gate = _row_gate(ctx, plan, step.step_id, release, by_id)
-            if gate is None:
-                continue  # a predecessor / anchor row is missing: I5's to report
-            if step.start_week < gate:
+            out.append((outcome, plan, step))
+    return out
+
+
+def _check_i27_overlap_gate(ctx: _Ctx) -> list[InvariantViolation]:
+    """I27 (ADR 0043, rev. P33 R33-4): every non-skipped, non-held `Not
+    Started` step of a non-frozen project starts at or after `max(CURRENT_WEEK,
+    gate(s), start_not_before_week)`, with `release` and the anchor starts
+    recomputed from the output rows. Each term is reported once: the gate
+    term here only for `o(s) > 0` (with no overlap `gate = release + 1 + w`,
+    which I3 and I28 report), the floor by I22, and the `CURRENT_WEEK` term
+    here for every such step."""
+
+    violations: list[InvariantViolation] = []
+    cw = ctx.schedule_input.current_week
+    releases: dict[str, tuple[dict[str, int], dict[str, StepSchedule]]] = {}
+    for outcome, plan, step in _not_started_steps(ctx):
+        pid = outcome.project_id
+        sp = plan.steps[step.step_id]
+        if step.start_week < cw:
+            violations.append(
+                InvariantViolation(
+                    invariant="I27",
+                    description=(
+                        f"project {pid!r} step {step.step_id!r} is Not Started but starts at "
+                        f"week {step.start_week}, before CURRENT_WEEK {cw}"
+                    ),
+                    project_id=pid,
+                    step_id=step.step_id,
+                    week=step.start_week,
+                )
+            )
+            continue
+        if sp.overlap_weeks == 0:
+            continue
+        if pid not in releases:
+            _g, release, by_id = _row_releases(ctx, plan, outcome)
+            releases[pid] = (release, by_id)
+        release, by_id = releases[pid]
+        gate = _row_gate(ctx, plan, step.step_id, release, by_id)
+        if gate is None:
+            continue  # a predecessor / anchor row is missing: I5's to report
+        if step.start_week < gate:
+            violations.append(
+                InvariantViolation(
+                    invariant="I27",
+                    description=(
+                        f"project {pid!r} step {step.step_id!r} (overlap_weeks="
+                        f"{sp.overlap_weeks}) starts at week {step.start_week}, before "
+                        f"its gate {gate} (release {release[step.step_id]} + 1 - overlap, "
+                        "the start of the step it runs in parallel with, the frontier)"
+                    ),
+                    project_id=pid,
+                    step_id=step.step_id,
+                    week=step.start_week,
+                )
+            )
+    return violations
+
+
+# --- I28: wait (P33, R33-4) -----------------------------------------------------------
+
+
+def _check_i28_wait_gate(ctx: _Ctx) -> list[InvariantViolation]:
+    """I28 (P33): every non-skipped, non-held `Not Started` step of a
+    non-frozen project with `w(s) > 0` starts at or after `release(s) + 1 +
+    w(s)`, `release` recomputed from the output rows (DOMAIN_RULES
+    "Category templates" §D). The difference half is `check_wait_invariance`."""
+
+    violations: list[InvariantViolation] = []
+    releases: dict[str, dict[str, int]] = {}
+    for outcome, plan, step in _not_started_steps(ctx):
+        pid = outcome.project_id
+        sp = plan.steps[step.step_id]
+        if sp.wait_weeks == 0:
+            continue
+        if pid not in releases:
+            releases[pid] = _row_releases(ctx, plan, outcome)[1]
+        release = releases[pid].get(step.step_id)
+        if release is None:
+            continue  # a predecessor row is missing: I5's to report
+        floor = release + 1 + sp.wait_weeks
+        if step.start_week < floor:
+            violations.append(
+                InvariantViolation(
+                    invariant="I28",
+                    description=(
+                        f"project {pid!r} step {step.step_id!r} (wait_weeks={sp.wait_weeks}) "
+                        f"starts at week {step.start_week}, before release {release} + 1 + "
+                        f"wait = {floor}"
+                    ),
+                    project_id=pid,
+                    step_id=step.step_id,
+                    week=step.start_week,
+                )
+            )
+    return violations
+
+
+def without_waits(schedule_input: ScheduleInput) -> ScheduleInput:
+    """`schedule_input` with every `wait_weeks` set to 0 (I28's comparison
+    input). Rows are otherwise unchanged; an input without waits is returned
+    as is."""
+
+    if not any(r.wait_weeks for p in schedule_input.projects for r in p.step_timing):
+        return schedule_input
+    return replace(
+        schedule_input,
+        projects=tuple(
+            replace(p, step_timing=tuple(replace(r, wait_weeks=0) for r in p.step_timing))
+            if any(r.wait_weeks for r in p.step_timing)
+            else p
+            for p in schedule_input.projects
+        ),
+    )
+
+
+def check_wait_invariance(schedule_input: ScheduleInput) -> tuple[InvariantViolation, ...]:
+    """I28, the difference half: a wait books nothing. Runs greedy on
+    `schedule_input` and on `without_waits(schedule_input)` and requires, for
+    every project, the same `progress_pct` (I12 weights) and the same
+    `duration_weeks` / `skipped` on every step row both runs emit (a wait may
+    push a project to LEFT_OUT, which drops rows; it never changes one). A
+    no-op (no re-run) when the input has no wait. A `ValueError` from the
+    scheduler (malformed input) is not reported here."""
+
+    stripped = without_waits(schedule_input)
+    if stripped is schedule_input:
+        return ()
+    try:
+        with_w = run_greedy_sgs(schedule_input)
+        no_w = run_greedy_sgs(stripped)
+    except ValueError:
+        return ()
+    base = {o.project_id: o for o in no_w.project_outcomes}
+    violations: list[InvariantViolation] = []
+    for outcome in with_w.project_outcomes:
+        other = base.get(outcome.project_id)
+        if other is None:
+            continue
+        pid = outcome.project_id
+        if outcome.progress_pct != other.progress_pct:
+            violations.append(
+                InvariantViolation(
+                    invariant="I28",
+                    description=(
+                        f"project {pid!r}: progress_pct {outcome.progress_pct!r} with waits but "
+                        f"{other.progress_pct!r} without (a wait must not weigh progress)"
+                    ),
+                    project_id=pid,
+                )
+            )
+        rows = {s.step_id: s for s in other.steps}
+        for step in outcome.steps:
+            row = rows.get(step.step_id)
+            if row is None:
+                continue
+            if (step.duration_weeks, step.skipped) != (row.duration_weeks, row.skipped):
                 violations.append(
                     InvariantViolation(
-                        invariant="I27",
+                        invariant="I28",
                         description=(
-                            f"project {pid!r} step {step.step_id!r} (overlap_weeks="
-                            f"{sp.overlap_weeks}) starts at week {step.start_week}, before "
-                            f"its gate {gate} (release {release[step.step_id]} + 1 - overlap, "
-                            "the start of the step it runs in parallel with, the frontier)"
+                            f"project {pid!r} step {step.step_id!r}: duration_weeks="
+                            f"{step.duration_weeks} (skipped={step.skipped}) with waits but "
+                            f"{row.duration_weeks} (skipped={row.skipped}) without (a wait "
+                            "must book nothing)"
                         ),
                         project_id=pid,
                         step_id=step.step_id,
-                        week=step.start_week,
+                    )
+                )
+    return tuple(violations)
+
+
+# --- I29: duration from the input (P33, R33-1) ------------------------------------------
+
+
+def _check_i29_duration_from_input(ctx: _Ctx) -> list[InvariantViolation]:
+    """I29 (P33): every run row's `duration_weeks` equals `eff(p, s)` evaluated
+    on the run's input (`_input_eff`: `lead_weeks ?? table`, then `override ??
+    lead`, 0 for lead 0 or a lab step with certification testing off), with
+    "skipped" exactly when it is 0. Reported once, disjoint from the checks
+    that already compare rows with the scheduler's own `eff`:
+
+    - (a) the scheduler's `eff` (`analyse_project`, which every solver uses)
+      equals the input-derived `eff` on every step of every analysed project.
+      Combined with I5 (skipped rows: duration 0, flag from the input), I6 /
+      I7 (design / lab rows) and I21 (non-frozen, non-Done, non-held rows),
+      this is I29 on those rows;
+    - (b) the rows none of those see: elapsed, non-skipped rows of a frozen
+      project, a Done step or a held step must carry the input `eff`."""
+
+    violations: list[InvariantViolation] = []
+    for pid in sorted(ctx.plans):
+        plan = ctx.plans[pid]
+        project = ctx.projects[pid]
+        for sid in plan.workflow.walk_order:
+            eff = _input_eff(ctx, project, sid)
+            sp = plan.steps[sid]
+            if eff is None or (sp.duration == eff and sp.skipped == (eff == 0)):
+                continue
+            violations.append(
+                InvariantViolation(
+                    invariant="I29",
+                    description=(
+                        f"project {pid!r} step {sid!r}: the scheduler's effective duration is "
+                        f"{sp.duration} (skipped={sp.skipped}) but eff on the input "
+                        f"(lead_weeks ?? table, then override ?? lead) is {eff}"
+                    ),
+                    project_id=pid,
+                    step_id=sid,
+                )
+            )
+    for outcome in sorted(ctx.schedule_output.project_outcomes, key=lambda o: o.project_id):
+        pid = outcome.project_id
+        row_project = ctx.projects.get(pid)
+        row_plan = ctx.plan(pid)
+        if row_project is None or row_plan is None:
+            continue
+        for step in sorted(outcome.steps, key=lambda s: (s.sequence_order, s.step_id)):
+            row_sp = row_plan.steps.get(step.step_id)
+            if row_sp is None or step.skipped or step.kind != "elapsed":
+                continue
+            if not (
+                row_project.frozen
+                or row_sp.status == STATUS_DONE
+                or step.step_id in row_plan.held_step_ids
+            ):
+                continue  # I21's
+            eff = _input_eff(ctx, row_project, step.step_id)
+            if eff is not None and step.duration_weeks != eff:
+                violations.append(
+                    InvariantViolation(
+                        invariant="I29",
+                        description=(
+                            f"project {pid!r} step {step.step_id!r}: duration_weeks="
+                            f"{step.duration_weeks} but eff on the input is {eff}"
+                        ),
+                        project_id=pid,
+                        step_id=step.step_id,
                     )
                 )
     return violations
+
+
+# --- I30: category order (P33, ADR 0047 §3, R33-8) ---------------------------------------
+
+
+def _check_i30_category_order(ctx: _Ctx) -> list[InvariantViolation]:
+    """I30 (P33; R36-9): for consecutive ids `a, b` in `scheduling_order`
+    that are equal on sort keys 1-3a and 4 (frozen, VIP, priority, band_rank,
+    status), `rank(a) <=
+    rank(b)`, and equal rank implies `project_id(a) < project_id(b)`. Ranks
+    come from `ScheduleInput.categories`. An invalid list is reported in
+    `_build_ctx`; ids that are unknown or lack a valid priority / status /
+    category are skipped (other checks and input validation own them)."""
+
+    if ctx.categories is None:
+        return []
+    rank = ctx.categories.rank
+
+    def keys(pid: str) -> tuple[tuple[int, int, int, tuple[int, int], int], int] | None:
+        p = ctx.projects.get(pid)
+        if (
+            p is None
+            or p.priority not in dc.PRIORITY_ORDER
+            or p.status not in dc.SCHEDULABLE_STATUS_ORDER
+            or p.category not in rank
+        ):
+            return None
+        # R36-9: the head is keys 1-3a and 4 (frozen, VIP, priority,
+        # band_rank, status); with every band_rank None it is the P33 head.
+        head = (
+            0 if p.frozen else 1,
+            0 if p.is_vip else 1,
+            dc.PRIORITY_ORDER.index(p.priority),
+            _band_rank_key(p.band_rank),
+            dc.SCHEDULABLE_STATUS_ORDER[p.status],
+        )
+        return head, rank[p.category]  # type: ignore[index]
+
+    violations: list[InvariantViolation] = []
+    order = ctx.schedule_output.scheduling_order
+    for a, b in zip(order, order[1:]):  # noqa: B905
+        ka, kb = keys(a), keys(b)
+        if ka is None or kb is None or ka[0] != kb[0]:
+            continue
+        if ka[1] > kb[1] or (ka[1] == kb[1] and not a < b):
+            violations.append(
+                InvariantViolation(
+                    invariant="I30",
+                    description=(
+                        f"scheduling_order has {a!r} (category rank {ka[1]}) before {b!r} "
+                        f"(category rank {kb[1]}) although they are equal on sort keys "
+                        "1-3a and 4: "
+                        "rank must not decrease, ties by ascending project_id"
+                    ),
+                    project_id=b,
+                )
+            )
+    return violations
+
+
+# --- I35: no empty project (P35, ADR 0049 as ruled) ---------------------------------
+
+
+def _check_i35_no_empty_project(ctx: _Ctx) -> list[InvariantViolation]:
+    """I35: every project of the run input in a schedulable status keeps at
+    least one step with `eff > 0`, derived from the inputs alone
+    (`_input_eff`). Projects the inputs cannot evaluate (unknown workflow,
+    no category, a missing lead-time row) are left to I15 / I6 / the data
+    error path."""
+
+    violations: list[InvariantViolation] = []
+    for project in sorted(ctx.schedule_input.projects, key=lambda p: p.project_id):
+        if project.status not in dc.SCHEDULABLE_STATUS_ORDER:
+            continue
+        wf = ctx.workflows.get(project.workflow_id)
+        if wf is None or project.category is None:
+            continue
+        effs = [_input_eff(ctx, project, step_id) for step_id in sorted(wf.steps_by_id)]
+        if any(e is None for e in effs):
+            continue
+        if all(e == 0 for e in effs):
+            violations.append(
+                InvariantViolation(
+                    invariant="I35",
+                    description=(
+                        f"project {project.project_id!r} has all {len(effs)} steps skipped "
+                        "(eff = 0 on every step): the run gives it no completion week and it "
+                        "falls in no Dashboard bucket (R35-5 NO_STEPS_LEFT must refuse this)"
+                    ),
+                    project_id=project.project_id,
+                )
+            )
+    return violations
+
+
+# --- I37: rank within a priority band (P36, ADR 0050, R36-9) ---------------------------
+
+
+def _check_i37a_band_rank_order(ctx: _Ctx) -> list[InvariantViolation]:
+    """I37a: every `band_rank` in the input is None or an int >= 1; and over
+    every consecutive pair `a, b` of `scheduling_order`, keys 1-3a (frozen,
+    VIP, priority, band_rank with None last) never decrease. That is the
+    pairwise rule "equal on keys 1-3 => band_rank non-decreasing, NULL last"
+    plus the lexicographic check across groups (a non-contiguous group is a
+    decrease somewhere). Ids unknown or lacking a valid priority are skipped
+    (I15 / input validation own them)."""
+
+    violations: list[InvariantViolation] = []
+    for p in sorted(ctx.schedule_input.projects, key=lambda q: q.project_id):
+        r = p.band_rank
+        if r is not None and (isinstance(r, bool) or not isinstance(r, int) or r < 1):
+            violations.append(
+                InvariantViolation(
+                    invariant="I37a",
+                    description=f"band_rank {r!r} is not None or an integer >= 1",
+                    project_id=p.project_id,
+                )
+            )
+
+    def head(pid: str) -> tuple[int, int, int, tuple[int, int]] | None:
+        p = ctx.projects.get(pid)
+        if p is None or p.priority not in dc.PRIORITY_ORDER:
+            return None
+        r = p.band_rank
+        if r is not None and (isinstance(r, bool) or not isinstance(r, int)):
+            return None
+        return (
+            0 if p.frozen else 1,
+            0 if p.is_vip else 1,
+            dc.PRIORITY_ORDER.index(p.priority),
+            _band_rank_key(r),
+        )
+
+    order = ctx.schedule_output.scheduling_order
+    for a, b in zip(order, order[1:]):  # noqa: B905
+        ha, hb = head(a), head(b)
+        if ha is None or hb is None or ha <= hb:
+            continue
+        same_band = ha[:3] == hb[:3]
+        ra, rb = ctx.projects[a].band_rank, ctx.projects[b].band_rank
+        violations.append(
+            InvariantViolation(
+                invariant="I37a",
+                description=(
+                    f"scheduling_order has {a!r} (band_rank {ra}) before {b!r} "
+                    f"(band_rank {rb})"
+                    + (
+                        ": equal on sort keys 1-3, band_rank must not decrease (None last)"
+                        if same_band
+                        else ": sort keys 1-3a (frozen, VIP, priority, band_rank) decrease"
+                    )
+                ),
+                project_id=b,
+            )
+        )
+    return violations
+
+
+def check_i37b_band_ranks_dense(
+    projects: Iterable[ProjectInput],
+) -> tuple[InvariantViolation, ...]:
+    """I37b (live state, R36-9): `band_rank` is set iff the project is a band
+    member (status schedulable and priority set), and per band the members'
+    ranks are exactly {1..n}. Only meaningful on a DB-built input or a list of
+    live projects; never call it on a What-if / import input. Pure; usable by
+    backend tests after every write path."""
+
+    violations: list[InvariantViolation] = []
+    by_band: dict[str, list[ProjectInput]] = defaultdict(list)
+    for p in sorted(projects, key=lambda q: q.project_id):
+        member = p.status in dc.SCHEDULABLE_STATUS_ORDER and p.priority is not None
+        if member != (p.band_rank is not None):
+            violations.append(
+                InvariantViolation(
+                    invariant="I37b",
+                    description=(
+                        f"band_rank {p.band_rank!r} with status {p.status!r} and priority "
+                        f"{p.priority!r}: band_rank must be set iff the status is schedulable "
+                        "and the priority is set"
+                    ),
+                    project_id=p.project_id,
+                )
+            )
+        if member:
+            by_band[p.priority].append(p)  # type: ignore[index]
+    for band in sorted(by_band):
+        ranks = sorted(p.band_rank for p in by_band[band] if p.band_rank is not None)
+        expected = list(range(1, len(by_band[band]) + 1))
+        if ranks != expected:
+            violations.append(
+                InvariantViolation(
+                    invariant="I37b",
+                    description=(
+                        f"band {band!r}: ranks {ranks} are not exactly 1..{len(expected)}"
+                    ),
+                )
+            )
+    return tuple(violations)
+
+
+def check_i37c_placement(
+    before_order: Sequence[str],
+    after_order: Sequence[str],
+    project_id: str,
+    *,
+    before_project_id: str | None = None,
+    after_project_id: str | None = None,
+) -> tuple[InvariantViolation, ...]:
+    """I37c (re-rank write, R36-9): `before_order` / `after_order` are the
+    band's ids in rank order before and after placing `project_id` before
+    `before_project_id` / after `after_project_id` (both None: last).
+    After the write `project_id` is immediately before / after its anchor
+    (last when neither is given), the band holds the same ids, and every
+    other member keeps its relative order. Pure; for backend tests."""
+
+    violations: list[InvariantViolation] = []
+
+    def fail(msg: str) -> None:
+        violations.append(
+            InvariantViolation(invariant="I37c", description=msg, project_id=project_id)
+        )
+
+    expected_ids = set(before_order) | {project_id}
+    if set(after_order) != expected_ids or len(after_order) != len(expected_ids):
+        fail(f"band membership changed by the re-rank: {list(before_order)} -> {list(after_order)}")
+        return tuple(violations)
+    others_before = [i for i in before_order if i != project_id]
+    others_after = [i for i in after_order if i != project_id]
+    if others_before != others_after:
+        fail("the relative order of the other band members changed")
+    pos = list(after_order).index(project_id)
+    if before_project_id is not None and after_project_id is not None:
+        fail("both before_project_id and after_project_id given")
+    elif before_project_id is not None:
+        if pos + 1 >= len(after_order) or after_order[pos + 1] != before_project_id:
+            fail(f"{project_id!r} is not immediately before {before_project_id!r}")
+    elif after_project_id is not None:
+        if pos == 0 or after_order[pos - 1] != after_project_id:
+            fail(f"{project_id!r} is not immediately after {after_project_id!r}")
+    elif pos != len(after_order) - 1:
+        fail(f"{project_id!r} is not last in its band")
+    return tuple(violations)

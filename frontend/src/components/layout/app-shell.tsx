@@ -3,6 +3,7 @@ import { Outlet, useLocation } from 'react-router-dom';
 
 import { SURFACES } from '@/app/nav';
 import { SessionGate } from '@/components/session/session-gate';
+import { useCategories } from '@/lib/api/categories';
 import { GlowOverlay } from '@/components/ui/background-components';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { usePreferencesStore } from '@/stores/preferences';
@@ -43,6 +44,13 @@ function densityForPath(pathname: string): Density {
   return best;
 }
 
+/** P33-T14: load the served categories once per session, so the palette,
+ *  the What-if lines and every chip read the same list (`lib/category-catalog`). */
+function CategoryPrefetch(): null {
+  useCategories();
+  return null;
+}
+
 export function AppShell(): React.JSX.Element {
   const { pathname } = useLocation();
   const density = React.useMemo(() => densityForPath(pathname), [pathname]);
@@ -57,6 +65,7 @@ export function AppShell(): React.JSX.Element {
       {/* Nothing below renders until GET /me resolves (ADR 0010): the sidebar,
           the route guards and every write control read the permission table. */}
       <SessionGate>
+        <CategoryPrefetch />
         {/*
          * Boltshift layout (spec §4), 2026-10-01: a grey PAGE (reusing the
          * EXISTING `bg-canvas` token — it already matches the spec's `--page`

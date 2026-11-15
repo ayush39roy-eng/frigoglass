@@ -59,12 +59,16 @@ def project_audit_state(project: Project) -> dict[str, Any]:
         "leader_engineer_id": _uuid_str(project.leader_engineer_id),
         # P29 (ADR 0042 §7): the leader was assigned provisionally.
         "leader_is_provisional": project.leader_is_provisional,
-        "category": project.category.value if project.category else None,
+        "category": project.category,
         "type": project.type.value if project.type else None,
         "status": project.status.value if project.status else None,
         "priority": project.priority.value if project.priority else None,
+        # P36 (ADR 0050): the position inside the priority band.
+        "band_rank": project.band_rank,
         "frozen": project.frozen,
         "actual_start_week": project.actual_start_week,
+        # P35 (D35-3).
+        "actual_end_week": project.actual_end_week,
         "delay_weeks": project.delay_weeks,
         "reg_year": project.reg_year,
         "carry_over": project.carry_over,
@@ -96,7 +100,7 @@ def engineer_audit_state(engineer: Engineer) -> dict[str, Any]:
         "name": engineer.name,
         "hub_id": _uuid_str(engineer.hub_id),
         "fte": float(engineer.fte) if engineer.fte is not None else None,
-        "allowed_categories": [c.value for c in (engineer.allowed_categories or [])],
+        "allowed_categories": list(engineer.allowed_categories or []),
         "user_id": _uuid_str(engineer.user_id),
         # P29 (ADR 0042 §5).
         "counts_in_capacity": engineer.counts_in_capacity,

@@ -60,6 +60,8 @@ from __future__ import annotations
 
 import math
 import uuid
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from decimal import Decimal
 from typing import Annotated, Any
 
@@ -77,7 +79,6 @@ from models.audit import AuditLogEntry
 from models.engineer import Engineer
 from models.enums import (
     NON_SCHEDULABLE_STATUSES,
-    ProjectCategory,
     ProjectPriority,
     ProjectStatus,
     ProjectType,
@@ -86,6 +87,8 @@ from models.hub import Hub
 from models.project import Project, category_allowed_for_hub
 from scheduling.effort_split import EffortSplitRejected
 from schemas.project import (
+    BandRankMoveRequest,
+    BandRankPreviewRequest,
     HardGateStatus,
     PriorityMoveRequest,
     PriorityMoveResponse,
@@ -96,12 +99,33 @@ from schemas.project import (
     ProjectRead,
     ProjectSubmitRequest,
     ProjectUpdateRequest,
+    RegisterEditError,
+    RegisterEditPatch,
+    RegisterEditsRequest,
+    RegisterEditsResponse,
 )
 from services.audit_helpers import project_audit_state
+from services.band_rank import (
+    lock_band_ranks,
+    plan_batch_band_ranks,
+    reconcile_band_rank,
+)
+from services.categories import CategoryCatalog, check_category_code, load_catalog
 from services.category_type_filter import category_type_filter
 from services.hub_scope import hub_scope_filter, is_hub_in_scope
-from services.priority_move import apply_priority_change, ensure_priority_move_allowed
-from services.priority_preview import confirm_priority_move, preview_priority_move
+from services.priority_move import (
+    AutoRecalcOutcome,
+    apply_priority_change,
+    decide_auto_recalc_batch,
+    dispatch_auto_recalc_batch,
+    ensure_priority_move_allowed,
+)
+from services.priority_preview import (
+    confirm_band_rank_move,
+    confirm_priority_move,
+    preview_band_rank_move,
+    preview_priority_move,
+)
 from services.project_access import authorize_project_action, effective_project_access
 from services.project_effort import (
     TRIGGER_CREATE,
@@ -122,6 +146,7 @@ from services.project_hard_gates import (
 from services.project_steps import WorkflowChangeWithProgress, sync_project_steps
 from services.rate_limit import TokenBucketLimiter
 from services.scoring_tags import apply_tag_prefill
+from services.template_copy import CopyChanges, merge_copy_changes, share_lock_categories
 from services.text_search import Q_MAX_LENGTH, project_search_filter
 
 router = APIRouter(prefix="/projects", tags=["projects"])
@@ -184,21 +209,45 @@ def _figures_to_decimal(data: dict[str, Any]) -> None:
             data[name] = Decimal(str(data[name])).quantize(Decimal("0.01"))
 
 
-def _category_mismatch(hub: Hub, category: ProjectCategory | None) -> CodedHTTPException | None:
-    """DOMAIN_RULES "Lead times": OEM hubs use A-OEM/B-OEM/C-OEM, every other
-    hub A+/A/B/C. Checked here to give a 422 before the DB trigger
-    `trg_projects_category_matches_hub` would raise.
+def _category_mismatch(
+    hub: Hub, category: str | None, catalog: CategoryCatalog
+) -> CodedHTTPException | None:
+    """DOMAIN_RULES "Lead times" / ADR 0047 §5: the category must belong to the
+    hub's workflow (`categories.workflow_id`; OEM hubs use the OEM workflow's
+    categories, every other hub the PDD workflow's). Checked here to give a
+    422 before the DB trigger `trg_projects_category_matches_hub` would raise.
     """
 
-    if category_allowed_for_hub(hub.is_oem, category):
+    if category_allowed_for_hub(hub.is_oem, category, catalog.workflow_by_code):
         return None
     assert category is not None
     workflow = "OEM" if hub.is_oem else "PDD"
     return CodedHTTPException(
         HTTP_422,
         "CATEGORY_WORKFLOW_MISMATCH",
-        f"Category {category.value!r} is not valid for hub {hub.name.value!r} "
+        f"Category {category!r} is not valid for hub {hub.name.value!r} "
         f"(workflow {workflow}).",
+    )
+
+
+def _actual_end_before_start(
+    project: Project, updates: dict[str, Any]
+) -> CodedHTTPException | None:
+    """P35 (D35-3): with the PATCH applied, `actual_end_week` may not be
+    before `actual_start_week`. Either side null passes (an end without a
+    start is allowed, as is clearing either)."""
+
+    start = updates["actual_start_week"] if "actual_start_week" in updates else (
+        project.actual_start_week
+    )
+    end = updates["actual_end_week"] if "actual_end_week" in updates else project.actual_end_week
+    if start is None or end is None or end >= start:
+        return None
+    field = "actual_end_week" if "actual_end_week" in updates else "actual_start_week"
+    return CodedHTTPException(
+        HTTP_422,
+        "ACTUAL_END_BEFORE_START",
+        [field_error(field, f"Actual end week {end} is before actual start week {start}.")],
     )
 
 
@@ -234,6 +283,33 @@ async def _get_project_or_404(
     if fallback is not None and await effective_project_access(db, principal, fallback) is not None:
         return fallback
     raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found")
+
+
+async def _authorize_registration_write(
+    db: AsyncSession, project: Project, principal: Principal
+) -> None:
+    await authorize_project_action(
+        db, principal, project,
+        surface=Surface.PROJECT_REGISTRATION, action=Action.WRITE, min_grant_role="admin",
+    )
+
+
+async def _lock_bands_and_reload(
+    db: AsyncSession, project: Project, principal: Principal
+) -> Project:
+    """P36-R01 (security M-1 / L-2): the caller has already looked the
+    project up and authorised the write with plain SELECTs (no lock taken, so
+    an unauthorised caller never waits on or holds the band-rank lock), and
+    applied its rate limit. Now take the band-rank lock (R36-8: the first
+    lock of the write, bounded by `lock_timeout`, 503 `BAND_RANK_BUSY`),
+    re-read the project under it, and re-check hub scope + permission on the
+    re-read row (its hub may have changed while this request waited)."""
+
+    await lock_band_ranks(db)
+    await db.refresh(project)
+    reloaded = await _get_project_or_404(db, project.id, principal)
+    await _authorize_registration_write(db, reloaded, principal)
+    return reloaded
 
 
 @router.get("", response_model=list[ProjectListItem])
@@ -346,6 +422,9 @@ async def create_project(
     `project.create` audit row, financial fields redacted.
     """
 
+    # P33-T07 (contract B3): an unknown category is the 422 the enum gave,
+    # before anything else (it used to fail body validation).
+    catalog = await check_category_code(db, body.category, loc=("body", "category"))
     hub = (await db.execute(select(Hub).where(Hub.id == body.hub_id))).scalar_one_or_none()
     if hub is None:
         raise HTTPException(
@@ -362,7 +441,7 @@ async def create_project(
         raise hard_gate_error(
             missing, "Project cannot be registered: required fields missing."
         )
-    mismatch = _category_mismatch(hub, body.category)
+    mismatch = _category_mismatch(hub, body.category, catalog)
     if mismatch is not None:
         raise mismatch
     leader = await db.get(Engineer, body.leader_engineer_id)
@@ -388,9 +467,19 @@ async def create_project(
         )
     except EffortSplitRejected as exc:
         raise split_rejected_error(exc, kinds) from exc
-    project = Project(**data, status=ProjectStatus.IN_QUEUE, schedule_stale=True)
+    # ADR 0050 / R36-8: registration enters the priority band last. The
+    # band-rank lock is the first lock of the transaction.
+    await lock_band_ranks(db)
+    project = Project(
+        **data, id=uuid.uuid4(), status=ProjectStatus.IN_QUEUE, schedule_stale=True
+    )
     db.add(project)
-    await db.flush()
+    await reconcile_band_rank(
+        db, project, status_before=ProjectStatus.DRAFT, priority_before=None
+    )
+    # P33-T10 ruling: wait for an in-flight template apply of this category
+    # (FOR SHARE vs its FOR NO KEY UPDATE), then copy the new template (OR-5).
+    await share_lock_categories(db, [project.category])
     await sync_project_steps(db, project, hub.is_oem)
     # ADR 0041 R6: the effort split of a new project's figures (same
     # transaction).
@@ -447,13 +536,68 @@ async def update_project(
     response headers report the recalc outcome (contract §2).
     """
 
+    # P33-T07 (contract B3): an unknown category is the 422 the enum gave,
+    # before anything else (it used to fail body validation).
+    await check_category_code(db, body.category, loc=("body", "category"))
     project = await _get_project_or_404(db, project_id, current_user)
-    await authorize_project_action(
-        db, current_user, project,
-        surface=Surface.PROJECT_REGISTRATION, action=Action.WRITE, min_grant_role="admin",
+    await _authorize_registration_write(db, project, current_user)
+    if body.model_fields_set & {"status", "priority"}:
+        # ADR 0050 / R36-8: a status or priority change may move the band
+        # rank; the band-rank lock is the first lock of the write, taken only
+        # after lookup + authorisation (P36-R01), and the project is re-read
+        # and re-authorised under it.
+        project = await _lock_bands_and_reload(db, project, current_user)
+    staged = await stage_project_update(
+        db, project, body.model_dump(exclude_unset=True), current_user
     )
-    updates = body.model_dump(exclude_unset=True)
+    if staged.priority_moves:
+        # Commits everything above together with the move.
+        move = await apply_priority_change(db, project, staged.new_priority, current_user)
+        response.headers.update(move.response_headers())
+    else:
+        await db.commit()
+    await db.refresh(project)
+    return project
 
+
+@dataclass(frozen=True)
+class StagedProjectUpdate:
+    """What `stage_project_update` staged (nothing committed)."""
+
+    priority_moves: bool
+    new_priority: ProjectPriority | None
+    #: A scheduler input (`SCHEDULE_INPUT_FIELDS`) changed value.
+    schedule_inputs_changed: bool
+    #: The project's status before the update (a status change into a
+    #: non-schedulable one still changes the plan).
+    status_before: ProjectStatus
+
+
+async def stage_project_update(
+    db: AsyncSession,
+    project: Project,
+    updates: dict[str, Any],
+    current_user: Principal,
+    *,
+    band_rank_plan: Mapping[uuid.UUID, int | None] | None = None,
+) -> StagedProjectUpdate:
+    """The single PATCH's validation and writes, shared with the register's
+    batch (`POST /projects/register-edits`, P35). The caller has already
+    resolved the project through the scoped lookup and authorised the
+    write. Every check raises (CodedHTTPException / HTTPException) BEFORE
+    anything is written; then the fields are set, `schedule_stale` raised
+    for a scheduler input, the steps re-synced and the effort re-derived
+    (ADR 0041 R6), tags pre-filled, and the `project.update` audit row
+    staged. Nothing is committed. A `priority` change is NOT applied here:
+    the caller applies `new_priority` as a priority move (ADR 0015).
+
+    ADR 0050 / R36-8: a status change runs the band-rank lifecycle
+    (`services.band_rank.reconcile_band_rank`); the P35 batch instead passes
+    `band_rank_plan` (`plan_batch_band_ranks`, each band renumbered once) and
+    the planned rank is set with the status. The caller holds the band-rank
+    lock."""
+
+    status_before = project.status
     if updates.get("status") == ProjectStatus.DRAFT:
         raise CodedHTTPException(
             HTTP_422,
@@ -467,7 +611,7 @@ async def update_project(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=(
                     "Cannot change status away from Draft via PATCH — use "
-                    f"POST /projects/{project_id}/submit, which runs the hard-gate check."
+                    f"POST /projects/{project.id}/submit, which runs the hard-gate check."
                 ),
             )
 
@@ -512,8 +656,12 @@ async def update_project(
             )
         target_hub = hub
 
+    actual_end_error = _actual_end_before_start(project, updates)
+    if actual_end_error is not None:
+        raise actual_end_error
+
     target_category = updates["category"] if "category" in updates else project.category
-    mismatch = _category_mismatch(target_hub, target_category)
+    mismatch = _category_mismatch(target_hub, target_category, await load_catalog(db))
     if mismatch is not None:
         raise mismatch
 
@@ -546,6 +694,9 @@ async def update_project(
         name in updates and getattr(project, name) != updates[name] for name in _EFFORT_FIGURES
     )
     workflow_changes = target_hub.is_oem != current_hub.is_oem
+    # P33-T08 (OR-5, R33-10): a category change re-copies the template onto
+    # the not-reached steps (a workflow change re-copies every re-pointed one).
+    category_changes = "category" in updates and updates["category"] != project.category
     effort_inputs_changed = any(
         getattr(project, name) != value
         for name, value in updates.items()
@@ -563,14 +714,38 @@ async def update_project(
         # ADR 0042 §7 (P29): a person chose the leader, so it is no longer the
         # seed's / migration's provisional pick.
         project.leader_is_provisional = False
+    if category_changes or workflow_changes or effort_inputs_changed:
+        # P33-T10 ruling: wait for an in-flight template apply of the target
+        # category before a re-copy reads it (OR-5: category change, or a
+        # figure cleared). Taken before this write locks the project row (the
+        # single PATCH holds none yet; the register batch takes it before its
+        # row locks).
+        await share_lock_categories(db, [target_category])
     for field_name, value in updates.items():
         setattr(project, field_name, value)
     if schedule_inputs_changed:
         project.schedule_stale = True
+    if band_rank_plan is not None:
+        if project.id in band_rank_plan:
+            project.band_rank = band_rank_plan[project.id]
+    elif "status" in updates:
+        # ADR 0050 / R36-8: un-hold / reactivation enters the band last, a
+        # non-schedulable status clears the rank and renumbers the band; a
+        # schedulable -> schedulable change keeps it (R36-3). Before the
+        # flush: the membership CHECK is immediate. The caller holds the
+        # band-rank lock. The priority (if any) is reconciled by the move.
+        await reconcile_band_rank(
+            db, project, status_before=status_before, priority_before=project.priority
+        )
     await db.flush()
+    template_copy: list[CopyChanges] = []
     if "hub_id" in updates or "category" in updates:
         try:
-            await sync_project_steps(db, project, target_hub.is_oem)
+            template_copy.append(
+                await sync_project_steps(
+                    db, project, target_hub.is_oem, recopy_template=category_changes
+                )
+            )
         except WorkflowChangeWithProgress as exc:
             await db.rollback()
             raise CodedHTTPException(
@@ -581,7 +756,7 @@ async def update_project(
         # move (PDD <-> OEM re-points the steps). A no-op on a frozen
         # project (I10); R7 rejects the whole PATCH.
         # Validated above, so this cannot be rejected (R7).
-        await rederive_project_effort(
+        rederived = await rederive_project_effort(
             db,
             project,
             trigger=(
@@ -593,6 +768,9 @@ async def update_project(
             ),
             actor_user_id=current_user.user_id,
         )
+        # OR-5: a kind that lost its own figure follows the template again.
+        if rederived is not None and rederived.template_copy:
+            template_copy.append(rederived.template_copy)
     if "scoring_tags" in updates:
         # ADR 0038: only a not-set -> set tag pre-fills its score (same
         # transaction); `scoring_tags` is not a scheduler input, so it never
@@ -601,6 +779,15 @@ async def update_project(
             db, project, before=tags_before, after=project.scoring_tags, principal=current_user
         )
     after_state = project_audit_state(project)
+    # Contract P33 E4: the per-step template copy before / after.
+    copy_changes = merge_copy_changes(*template_copy)
+    if copy_changes:
+        before_state["template_copy"] = {
+            sid: {name: v[0] for name, v in fields.items()} for sid, fields in copy_changes.items()
+        }
+        after_state["template_copy"] = {
+            sid: {name: v[1] for name, v in fields.items()} for sid, fields in copy_changes.items()
+        }
     if priority_moves:
         # The move is applied below, in the same commit; the snapshot shows
         # the project as it will be stored.
@@ -618,14 +805,241 @@ async def update_project(
                 after_state=after_state,
             )
         )
-    if priority_moves:
-        # Commits everything above together with the move.
-        move = await apply_priority_change(db, project, new_priority, current_user)
-        response.headers.update(move.response_headers())
+    return StagedProjectUpdate(
+        priority_moves=priority_moves,
+        new_priority=new_priority,
+        schedule_inputs_changed=schedule_inputs_changed,
+        status_before=status_before,
+    )
+
+
+#: P35: per user, a burst of 10 register saves, then one every 6 seconds
+#: (the check-in batch's limit). Per API process (`services.rate_limit`).
+REGISTER_EDITS_RATE_LIMIT = TokenBucketLimiter(capacity=10, refill_per_second=1 / 6)
+#: `ScheduleRun.trigger_reason` of the register batch's run.
+REGISTER_EDIT_TRIGGER_REASON = "register_edit"
+
+
+def _register_error(project_id: uuid.UUID, exc: HTTPException) -> RegisterEditError:
+    """A single-PATCH failure as one batch error: its code, and its message
+    (a coded detail list is joined; never any field value beyond the week
+    numbers / codes the PATCH itself reports)."""
+
+    code = getattr(exc, "code", None)
+    if code is None:
+        code = (
+            "STATUS_DRAFT_SUBMIT_ONLY"
+            if exc.status_code == status.HTTP_400_BAD_REQUEST
+            else f"HTTP_{exc.status_code}"
+        )
+    detail = exc.detail
+    if isinstance(detail, list):
+        message = "; ".join(str(d.get("msg", d)) if isinstance(d, dict) else str(d) for d in detail)
+    elif isinstance(detail, dict):
+        message = str(detail.get("message", detail.get("msg", code)))
     else:
-        await db.commit()
-    await db.refresh(project)
-    return project
+        message = str(detail)
+    return RegisterEditError(project_id=project_id, code=code, message=message)
+
+
+def _batch_error(status_code: int, code: str, message: str, errors: list[RegisterEditError]) -> (
+    CodedHTTPException
+):
+    return CodedHTTPException(
+        status_code,
+        code,
+        {"code": code, "message": message, "errors": [e.model_dump(mode="json") for e in errors]},
+    )
+
+
+async def _authorize_register_batch(
+    db: AsyncSession, edits: Sequence[RegisterEditPatch], principal: Principal
+) -> dict[uuid.UUID, Project]:
+    """The single PATCH's scoped lookup + Admin-grain write authorisation for
+    every project of a register batch. Any failure is a 403
+    `REGISTER_EDITS_FORBIDDEN` listing those ids as `FORBIDDEN_PROJECT` (out
+    of scope and nonexistent read the same); the transaction is rolled back."""
+
+    projects: dict[uuid.UUID, Project] = {}
+    forbidden: list[RegisterEditError] = []
+    for edit in edits:
+        try:
+            project = await _get_project_or_404(db, edit.project_id, principal)
+            await _authorize_registration_write(db, project, principal)
+        except HTTPException:
+            forbidden.append(
+                RegisterEditError(
+                    project_id=edit.project_id,
+                    code="FORBIDDEN_PROJECT",
+                    message="You cannot edit this project.",
+                )
+            )
+            continue
+        projects[edit.project_id] = project
+    if forbidden:
+        await db.rollback()
+        raise _batch_error(
+            status.HTTP_403_FORBIDDEN, "REGISTER_EDITS_FORBIDDEN",
+            "Nothing was saved: you cannot edit the projects listed in errors.", forbidden,
+        )
+    return projects
+
+
+@router.post("/register-edits", response_model=RegisterEditsResponse)
+async def save_register_edits(
+    body: RegisterEditsRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: Principal = Depends(get_current_principal),
+) -> RegisterEditsResponse:
+    """P35 (OQ #83: recalculate on Save): the Projects register's Edit-mode
+    Save. One transaction, all-or-nothing:
+
+    1. Rate limit (429 `RATE_LIMITED`); a project twice in one batch is a
+       422 `REGISTER_EDITS_INVALID` (`DUPLICATE_PROJECT`).
+    2. Every named project goes through the single PATCH's scoped lookup
+       and write authorisation (`_get_project_or_404` +
+       `authorize_project_action`, Admin-grain) with plain SELECTs. Any
+       failure is a 403 `REGISTER_EDITS_FORBIDDEN` listing those ids as
+       `FORBIDDEN_PROJECT` (out of scope and nonexistent read the same).
+       Only then (P36-R01) the band-rank lock (503 `BAND_RANK_BUSY` on
+       `lock_timeout`), every row locked `FOR UPDATE` in id order and
+       re-read, and the authorisation re-checked on the re-read rows.
+    3. Each patch runs `stage_project_update`, the single PATCH's own
+       validation and writes (incl. `ACTUAL_END_BEFORE_START`, ADR 0041 R7
+       split check, R6 re-derivation, `schedule_stale`, one `project.update`
+       audit row per project). Every row is validated; any failure rolls the
+       whole batch back and answers 422 `REGISTER_EDITS_INVALID` with
+       `detail.errors = [{project_id, code, message}]`.
+    4. ONE greedy recalculation for the batch through the priority move's
+       lifecycle (`decide_auto_recalc_batch` / `dispatch_auto_recalc_batch`,
+       `trigger_reason="register_edit"`): `not_needed` unless a scheduler
+       input changed on a project schedulable before or after its edit,
+       `deferred` (coalesced follow-up) when a run is in flight, else
+       `queued`. Never solves in-process.
+    """
+
+    allowed, retry_after = REGISTER_EDITS_RATE_LIMIT.allow(
+        f"register-edits:{current_user.user_id}"
+    )
+    if not allowed:
+        raise CodedHTTPException(
+            status.HTTP_429_TOO_MANY_REQUESTS,
+            "RATE_LIMITED",
+            "Too many register saves. Please wait a moment and try again.",
+            headers={"Retry-After": str(max(1, math.ceil(retry_after)))},
+        )
+
+    seen: set[uuid.UUID] = set()
+    duplicates: list[RegisterEditError] = []
+    for edit in body.edits:
+        if edit.project_id in seen:
+            duplicates.append(
+                RegisterEditError(
+                    project_id=edit.project_id,
+                    code="DUPLICATE_PROJECT",
+                    message="This project appears more than once in the batch.",
+                )
+            )
+        seen.add(edit.project_id)
+    if duplicates:
+        raise _batch_error(
+            HTTP_422, "REGISTER_EDITS_INVALID",
+            "Nothing was saved: fix the projects listed in errors.", duplicates,
+        )
+
+    edits = sorted(body.edits, key=lambda e: e.project_id)
+    # P36-R01 (security M-1): scoped lookup + write authorisation with plain
+    # SELECTs first, so a batch naming a project the caller may not edit is
+    # refused without ever taking (or waiting on) the band-rank lock.
+    await _authorize_register_batch(db, edits, current_user)
+    # ADR 0050 / R36-8: the band-rank lock is the first lock, before the row
+    # locks below, so this batch and a re-rank / priority move serialise
+    # without deadlock.
+    await lock_band_ranks(db)
+    # P33-T10 ruling (OR-5): a figure cleared re-copies the template; the
+    # categories' FOR SHARE is taken before the row locks (an apply locks
+    # categories, then projects).
+    effort_edit_ids = [
+        e.project_id for e in edits if e.model_fields_set & EFFORT_SPLIT_INPUT_FIELDS
+    ]
+    if effort_edit_ids:
+        await share_lock_categories(
+            db,
+            (
+                await db.execute(
+                    select(Project.category).where(Project.id.in_(effort_edit_ids))
+                )
+            ).scalars(),
+        )
+    await db.execute(
+        select(Project)
+        .where(Project.id.in_([e.project_id for e in edits]))
+        .order_by(Project.id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    # Re-checked on the locked, re-read rows (P36-R01 / L-2: a hub may have
+    # changed while the batch waited for the lock).
+    projects = await _authorize_register_batch(db, edits, current_user)
+
+    # ADR 0050 / R36-8: one band-rank plan for the whole batch (leavers
+    # removed, enterers appended in ascending id, each band renumbered once),
+    # read before any status is written. A row whose staging fails rolls the
+    # whole batch back below.
+    band_rank_plan = await plan_batch_band_ranks(
+        db,
+        [
+            (projects[e.project_id], e.status)
+            for e in edits
+            if "status" in e.model_fields_set
+            and e.status is not None
+            and e.status != ProjectStatus.DRAFT
+            and projects[e.project_id].status != ProjectStatus.DRAFT
+        ],
+    )
+    errors: list[RegisterEditError] = []
+    staged: dict[uuid.UUID, StagedProjectUpdate] = {}
+    for edit in edits:
+        project = projects[edit.project_id]
+        updates = edit.model_dump(exclude_unset=True, exclude={"project_id"})
+        try:
+            staged[project.id] = await stage_project_update(
+                db, project, updates, current_user, band_rank_plan=band_rank_plan
+            )
+        except HTTPException as exc:
+            # Every check raises before the row is written, so the rows staged
+            # so far stay consistent; the whole batch is rolled back below.
+            errors.append(_register_error(project.id, exc))
+    if errors:
+        await db.rollback()
+        raise _batch_error(
+            HTTP_422, "REGISTER_EDITS_INVALID",
+            "Nothing was saved: fix the projects listed in errors.", errors,
+        )
+
+    changed = [
+        projects[pid] for pid, result in staged.items() if result.schedule_inputs_changed
+    ]
+    needs_run = any(
+        staged[p.id].status_before not in NON_SCHEDULABLE_STATUSES
+        or p.status not in NON_SCHEDULABLE_STATUSES
+        for p in changed
+    )
+    recalc, baseline_id = await decide_auto_recalc_batch(
+        db, needs_run=needs_run, trigger_reason=REGISTER_EDIT_TRIGGER_REASON
+    )
+    outcome = await dispatch_auto_recalc_batch(
+        db, changed, current_user,
+        recalc=recalc, baseline_id=baseline_id, trigger_reason=REGISTER_EDIT_TRIGGER_REASON,
+    )
+    return RegisterEditsResponse(
+        project_ids=[e.project_id for e in edits],
+        projects_marked_stale=[p.id for p in changed],
+        recalc_status=outcome.recalc_status,
+        schedule_run_id=outcome.schedule_run_id,
+        baseline_run_id=outcome.baseline_run_id,
+        task_id=outcome.task_id,
+    )
 
 
 @router.post("/{project_id}/priority", response_model=PriorityMoveResponse)
@@ -646,22 +1060,19 @@ async def move_project_priority(
     """
 
     project = await _get_project_or_404(db, project_id, current_user)
-    await authorize_project_action(
-        db, current_user, project,
-        surface=Surface.PROJECT_REGISTRATION, action=Action.WRITE, min_grant_role="admin",
-    )
+    await _authorize_registration_write(db, project, current_user)
     if body.preview_token is not None:
         # P14 (ADR 0026 §2): confirm a preview, applied in-process.
-        allowed, retry_after = PRIORITY_CONFIRM_RATE_LIMIT.allow(
-            f"priority-confirm:{current_user.user_id}"
+        _rate_limited(
+            PRIORITY_CONFIRM_RATE_LIMIT,
+            f"priority-confirm:{current_user.user_id}",
+            "Too many timeline confirmations. Please wait a moment and try again.",
         )
-        if not allowed:
-            raise CodedHTTPException(
-                status.HTTP_429_TOO_MANY_REQUESTS,
-                "RATE_LIMITED",
-                "Too many timeline confirmations. Please wait a moment and try again.",
-                headers={"Retry-After": str(max(1, math.ceil(retry_after)))},
-            )
+    # ADR 0050 / R36-8: the band-rank lock is the first lock of the move (it
+    # re-ranks two bands), taken after lookup, authorisation and the rate
+    # limit (P36-R01); the project is re-read and re-authorised under it.
+    project = await _lock_bands_and_reload(db, project, current_user)
+    if body.preview_token is not None:
         return await confirm_priority_move(
             db, project, body.priority, current_user, body.preview_token
         )
@@ -713,6 +1124,95 @@ async def preview_project_priority(
     return await preview_priority_move(db, project, body.priority, current_user)
 
 
+def _rate_limited(limiter: TokenBucketLimiter, key: str, message: str) -> None:
+    allowed, retry_after = limiter.allow(key)
+    if not allowed:
+        raise CodedHTTPException(
+            status.HTTP_429_TOO_MANY_REQUESTS,
+            "RATE_LIMITED",
+            message,
+            headers={"Retry-After": str(max(1, math.ceil(retry_after)))},
+        )
+
+
+@router.post("/{project_id}/band-rank/preview", response_model=PriorityPreviewResponse)
+async def preview_project_band_rank(
+    project_id: uuid.UUID,
+    body: BandRankPreviewRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: Principal = Depends(get_current_principal),
+) -> PriorityPreviewResponse:
+    """P36 (ADR 0050 §4, docs/API_CONTRACT_P36.md §2): what re-ranking the
+    project inside its priority band would change, from the priority
+    preview's in-process greedy pair. Writes nothing.
+
+    Permission is the priority move's (404 out of scope, 403 without
+    Registration WRITE or an Admin-level grant); the anchor must be ranked in
+    the same band and in the caller's hub scope (else 422 `NOT_SAME_BAND`).
+    422 `BOTH_ANCHORS`, 409 `NOT_RANKABLE`, 429 `RATE_LIMITED` (the priority
+    preview's bucket), 503 `PREVIEW_TIMEOUT`. `result = "unchanged"` when the
+    placement keeps the order."""
+
+    project = await _get_project_or_404(db, project_id, current_user)
+    await authorize_project_action(
+        db, current_user, project,
+        surface=Surface.PROJECT_REGISTRATION, action=Action.WRITE, min_grant_role="admin",
+    )
+    _rate_limited(
+        PRIORITY_PREVIEW_RATE_LIMIT,
+        f"priority-preview:{current_user.user_id}",
+        "Too many timeline previews. Please wait a moment and try again.",
+    )
+    return await preview_band_rank_move(
+        db, project, current_user,
+        before=body.before_project_id, after=body.after_project_id,
+    )
+
+
+@router.post("/{project_id}/band-rank", response_model=PriorityMoveResponse)
+async def move_project_band_rank(
+    project_id: uuid.UUID,
+    body: BandRankMoveRequest,
+    response: Response,
+    db: AsyncSession = Depends(get_db),
+    current_user: Principal = Depends(get_current_principal),
+) -> PriorityMoveResponse:
+    """P36 (ADR 0050 §4, contract §3): confirm a re-rank preview. The band is
+    renumbered with the project at its new place and the greedy run applied
+    in-process (`applied`), or `deferred` when a worker run is in flight.
+    409 `PREVIEW_STALE` on a stale token (nothing written). Audit
+    `project.band_rank_move`. Same permission and errors as the preview; the
+    `X-Schedule-*` headers report the recalc as on the PATCH."""
+
+    project = await _get_project_or_404(db, project_id, current_user)
+    await authorize_project_action(
+        db, current_user, project,
+        surface=Surface.PROJECT_REGISTRATION, action=Action.WRITE, min_grant_role="admin",
+    )
+    _rate_limited(
+        PRIORITY_CONFIRM_RATE_LIMIT,
+        f"priority-confirm:{current_user.user_id}",
+        "Too many timeline confirmations. Please wait a moment and try again.",
+    )
+    # R36-8: the band-rank lock is the first lock of the write; the project
+    # is re-read under it (a concurrent move may have re-ranked it) and its
+    # hub scope / permission re-checked (P36-R01, security L-2).
+    project = await _lock_bands_and_reload(db, project, current_user)
+    result = await confirm_band_rank_move(
+        db, project, current_user,
+        before=body.before_project_id, after=body.after_project_id,
+        preview_token=body.preview_token,
+    )
+    response.headers.update(
+        AutoRecalcOutcome(
+            recalc_status=result.recalc_status,
+            schedule_run_id=result.schedule_run_id,
+            baseline_run_id=result.baseline_run_id,
+        ).response_headers()
+    )
+    return result
+
+
 @router.post("/{project_id}/submit", response_model=ProjectRead)
 async def submit_project(
     project_id: uuid.UUID,
@@ -731,10 +1231,10 @@ async def submit_project(
     # P12-R01: the lookup admits an out-of-scope project on any grant, so the
     # role-level `_write` alone is not enough; the project must be in the
     # caller's hub scope or carry an Admin-level grant.
-    await authorize_project_action(
-        db, current_user, project,
-        surface=Surface.PROJECT_REGISTRATION, action=Action.WRITE, min_grant_role="admin",
-    )
+    await _authorize_registration_write(db, project, current_user)
+    # ADR 0050 / R36-8: the band-rank lock is the first lock (leaving Draft
+    # enters a band), taken after lookup + authorisation (P36-R01).
+    project = await _lock_bands_and_reload(db, project, current_user)
     if project.status != ProjectStatus.DRAFT:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -765,9 +1265,14 @@ async def submit_project(
         )
 
     before_state = project_audit_state(project)
+    status_before = project.status
     project.status = body.target_status
     # Newly schedulable and not in the active run yet (P9-T03).
     project.schedule_stale = True
+    # ADR 0050 / R36-8: leaving Draft enters the priority band last.
+    await reconcile_band_rank(
+        db, project, status_before=status_before, priority_before=project.priority
+    )
     await db.flush()
     after_state = project_audit_state(project)
 

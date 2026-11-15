@@ -1,6 +1,7 @@
 import * as React from 'react';
-import { ArrowUpFromLine, RotateCcw, Star, TableProperties } from 'lucide-react';
+import { ArrowUpFromLine, PencilLine, RotateCcw, Star, TableProperties } from 'lucide-react';
 import { useSearchParams } from 'react-router-dom';
+import { useStore } from 'zustand';
 
 import { PageHeader } from '@/components/layout/page-header';
 import { SectionBoundary } from '@/components/shared/section-boundary';
@@ -19,23 +20,22 @@ import { ApiError } from '@/lib/api/client';
 import { useHubFilter } from '@/stores/hub-filter';
 import { HubFilterChip } from '@/components/shared/hub-filter/hub-filter-chip';
 import { CountrySegmented } from '@/components/shared/hub-filter/country-segmented';
-import { useDebouncedValue } from '@/lib/use-debounced-value';
 import { formatInteger } from '@/lib/format';
 import { SURFACES } from '@/app/nav';
 import { effectivePendingEdits, useScenarioStore } from '@/stores/scenario';
 import { usePermission, useSessionStore } from '@/stores/session';
 import { MultiChipFilter } from '@/components/shared/multi-chip-filter';
 import {
-  CATEGORY_CHIP_OPTIONS,
+  useCategoryChipOptions,
   selectionParam,
   TYPE_CHIP_OPTIONS,
   useCategoryTypeParams,
 } from '@/lib/multi-select-filter';
-import type { ProjectCategory, ProjectType } from '@/types/enums';
+import type { HardGateReason, ProjectCategory, ProjectType } from '@/types/enums';
 
 import { AccessNotice, WriteForbiddenNotice } from './components/access-notice';
 import { FxRateEditor } from './components/fx-rate-editor';
-import { ChipFilter, ColumnFilterInput } from './components/matrix-toolbar';
+import { ChipFilter, TextFilterInput } from './components/matrix-toolbar';
 import { MatrixCurrencyControl } from './components/matrix-currency-control';
 import { MatrixViewPanel } from './components/matrix-view-panel';
 import { ScoreChartsRow } from './components/score-charts';
@@ -49,48 +49,41 @@ import {
   type MatrixViewState,
 } from './lib/matrix-view';
 import { useCompareSelection } from './lib/compare-selection';
-import { rowBand } from './lib/row-scores';
+import { distributionFromRows, narrowByBand, narrowExceptBand, sortMatrixRows } from './lib/matrix-rows';
+import {
+  buildGridApplyBody,
+  changedProjectIds,
+  setDraftGate,
+  setDraftScore,
+  type GridDrafts,
+} from './lib/grid-edit';
+import { createTextFilterStore, TextFilterContext, type TextFilterField } from './lib/text-filters';
 import { useGridMaxHeight, useSpaceBelow, useStuck } from './lib/use-stuck';
 import { NARROW_QUERY, useMediaQuery } from './lib/use-media-query';
-import { MatrixTable } from './components/matrix-table';
-import { isVipRow } from './lib/vip-row';
+import { MatrixTable, type MatrixGridEdit } from './components/matrix-table';
+import { GridEditBar, GridLeaveGuard } from './components/grid-edit-bar';
+import { DiscardDialog } from './components/scoring-rubric-panel';
 import { ScenarioModeToggle, ScenarioPendingPanel } from './components/scenario-panel';
 import { FetchedScoringModelProvider, ScoringTotalLine } from './scoring-model';
 import { ScoringRubricPanel } from './components/scoring-rubric-panel';
 import { liveRequestValuesFromRow, rowWithStaged } from './components/score-edit-schema';
-import { ScoreEditDialog } from './components/score-edit-dialog';
 import { VersionHistoryDialog } from './components/version-history-panel';
-import {
-  useMatrixCurrencies,
-  usePriorityDistribution,
-  usePriorityMatrix,
-  usePrioritySummary,
-  useUpdatePriorityScore,
-} from './hooks/use-matrix';
-import type { MatrixCurrencyCode, PriorityMatrixRow, PriorityScoreUpdateRequest } from './api/types';
+import { useApplyScenario, useMatrixCurrencies, usePriorityMatrix, usePrioritySummary } from './hooks/use-matrix';
+import type { DimensionScoreValue, MatrixCurrencyCode, PriorityMatrixRow } from './api/types';
 
 const MATRIX_SURFACE = SURFACES.find((s) => s.path === '/matrix');
 const SEARCH_MAX_LENGTH = 100;
 
-/** P13-T14: the Hub / Leader column inputs narrow the SERVED rows in view
- *  (text match only — ranks and figures stay as served). An id with no
- *  name matches "unavailable". P21: the band picked on the distribution chart
- *  narrows by each row's SERVED band. */
-function narrowInView(rows: PriorityMatrixRow[], view: MatrixViewState): PriorityMatrixRow[] {
-  const hub = view.hubText.trim().toLowerCase();
-  const leader = view.leaderText.trim().toLowerCase();
-  if (hub === '' && leader === '' && view.band === null && !view.capacityFill && !view.vipOnly) return rows;
-  return rows.filter((r) => {
-    if (view.vipOnly && !isVipRow(r)) return false;
-    if (view.band !== null && rowBand(r) !== view.band) return false;
-    if (view.capacityFill && r.capacity_fill !== true) return false;
-    if (hub !== '' && !r.hub.toLowerCase().includes(hub)) return false;
-    if (leader !== '') {
-      const shown = r.leader_name ?? (r.leader_engineer_id ? 'unavailable' : '');
-      if (!shown.toLowerCase().includes(leader)) return false;
-    }
-    return true;
-  });
+/** P34-T02: the grid reserves this much more below it while the edit bar is shown. */
+const EDIT_BAR_RESERVE = 64;
+
+/** P34-T02: a failed grid save, in words. */
+function saveErrorText(err: unknown): string {
+  if (err instanceof ApiError && err.code === 'UNKNOWN_DIMENSION_KEY') {
+    return 'The scoring rubric changed while you were editing: a dimension you changed is no longer active. Cancel and edit again.';
+  }
+  if (err instanceof ApiError && err.detail) return err.detail;
+  return 'The scores could not be saved. Your edits are kept; please try again.';
 }
 
 function authKind(errors: unknown[]): 'forbidden' | 'unauthorized' | null {
@@ -183,43 +176,51 @@ function MatrixSurface(): React.JSX.Element {
   // P12 (ADR 0020): the hub is the global header filter (was a local select).
   const { hubId, region } = useHubFilter();
   const [localView, setView] = React.useState<MatrixViewState>(DEFAULT_MATRIX_VIEW);
+  // P34-T02 (D34-3): Project search, Hub and Leader text live in a per-page store;
+  // the inputs subscribe to it, so typing never rebuilds the grid columns.
+  const [textStore] = React.useState(createTextFilterStore);
+  const q = useStore(textStore, (st) => st.q);
+  const hubText = useStore(textStore, (st) => st.hubText);
+  const leaderText = useStore(textStore, (st) => st.leaderText);
   // P31: Category / Type are multi-select URL state (`?category=A%2B&type=NM`,
   // old single-value links still parse), shared by the grid and the board.
   const chips = useCategoryTypeParams();
+  const categoryChips = useCategoryChipOptions();
   const view = React.useMemo<MatrixViewState>(
-    () => ({ ...localView, category: chips.categories, type: chips.types }),
-    [localView, chips.categories, chips.types],
+    () => ({ ...localView, category: chips.categories, type: chips.types, q, hubText, leaderText }),
+    [localView, chips.categories, chips.types, q, hubText, leaderText],
   );
-  const debouncedQ = useDebouncedValue(view.q, 300).trim();
+  // The filter pipeline reads deferred text, so the inputs stay instant.
+  const deferredQ = React.useDeferredValue(q);
+  const deferredHub = React.useDeferredValue(hubText);
+  const deferredLeader = React.useDeferredValue(leaderText);
   const { setCategories, setTypes, clear: clearChips } = chips;
   const setViewField = React.useCallback(
     <K extends keyof MatrixViewState>(key: K, value: MatrixViewState[K]) => {
       if (key === 'category') setCategories(value as ProjectCategory[]);
       else if (key === 'type') setTypes(value as ProjectType[]);
-      else setView((v) => ({ ...v, [key]: value }));
+      else if (key === 'q' || key === 'hubText' || key === 'leaderText') {
+        textStore.getState().set(key as TextFilterField, value as string);
+      } else setView((v) => ({ ...v, [key]: value }));
     },
-    [setCategories, setTypes],
+    [setCategories, setTypes, textStore],
   );
   const isAdmin = canEditFxRate(useSessionStore((s) => s.me?.roles));
-  const [editRow, setEditRow] = React.useState<PriorityMatrixRow | null>(null);
-  const [dialogOpen, setDialogOpen] = React.useState(false);
   const [writeForbidden, setWriteForbidden] = React.useState(false);
 
   const currenciesQuery = useMatrixCurrencies();
   const currencies = currenciesQuery.data;
   const selectedRate = currencies?.find((c) => c.currency_code === currency)?.rate_to_eur ?? null;
   const summaryQuery = usePrioritySummary(hubId, region);
-  const serverFilters = {
+  // D34-3: the project search is no longer a server param (it runs over the loaded rows).
+  const matrixQuery = usePriorityMatrix({
+    currency,
     hubId: hubId ?? undefined,
     region: region ?? undefined,
     category: selectionParam(view.category),
     type: selectionParam(view.type),
     status: view.status ?? undefined,
-    q: debouncedQ === '' ? undefined : debouncedQ,
-  };
-  const matrixQuery = usePriorityMatrix({ currency, ...serverFilters });
-  const distributionQuery = usePriorityDistribution(serverFilters);
-  // P25: per-hub P1 capacity fill (global hub / country filter only; the fill ignores row filters).
+  });
 
   // P21 §1: a currency whose rate was removed meanwhile answers 422
   // CURRENCY_NOT_CONFIGURED. Fall back to EUR, say why, and re-read the list.
@@ -250,8 +251,23 @@ function MatrixSurface(): React.JSX.Element {
     [toggleCompare],
   );
   const [compareOpen, setCompareOpen] = React.useState(false);
-  // Below the grid: card padding + page gutter (+ the Compare bar when shown).
-  const gridMaxHeight = useGridMaxHeight(sentinelRef, panelRef, stuck, compareItems.length > 0 ? 176 : 112);
+
+  // P34-T02 (D34-1): inline edit mode.
+  const [editMode, setEditMode] = React.useState(false);
+  const [drafts, setDrafts] = React.useState<GridDrafts>({});
+  const [editNotes, setEditNotes] = React.useState('');
+  const [saveError, setSaveError] = React.useState<string | null>(null);
+  const [confirmCancel, setConfirmCancel] = React.useState(false);
+  const [savedNotice, setSavedNotice] = React.useState<string | null>(null);
+  const applyMutation = useApplyScenario();
+
+  // Below the grid: card padding + page gutter (+ the Compare bar, + the edit bar when shown).
+  const gridMaxHeight = useGridMaxHeight(
+    sentinelRef,
+    panelRef,
+    stuck,
+    (compareItems.length > 0 ? 176 : 112) + (editMode ? EDIT_BAR_RESERVE : 0),
+  );
   // P21-T05 fix: the board uses the same offset as the grid, so once scrolled to, its column
   // headers sit below the stuck View panel; the columns scroll inside that height.
   // The reserve is the measured space below the board, so at the bottom of the page the
@@ -260,11 +276,9 @@ function MatrixSurface(): React.JSX.Element {
   const boardWrapRef = React.useRef<HTMLDivElement>(null);
   const boardBelow = useSpaceBelow(boardWrapRef, onBoard);
   const boardHeight = useGridMaxHeight(sentinelRef, panelRef, stuck, boardBelow);
-  const updateScore = useUpdatePriorityScore();
 
-  // Scenario mode (P5-T01) — a genuinely different interaction model from the
-  // immediate-write flow above, additive, not a replacement: while `active`,
-  // `handleSubmit` stages the edit locally instead of PUTting it.
+  // Scenario mode (P5-T01): while `active`, grid edits stage into the scenario
+  // store instead of being applied.
   const scenarioActive = useScenarioStore((s) => s.active);
   const scenarioPending = useScenarioStore((s) => s.pending);
   const stageScenarioEdit = useScenarioStore((s) => s.stageEdit);
@@ -285,6 +299,34 @@ function MatrixSurface(): React.JSX.Element {
     }
     return lookup;
   }, [matrixQuery.data]);
+  // P34 (D34-4): the "changed" marker opens Version history at its version.
+  const [history, setHistory] = React.useState<{ open: boolean; version: number | null }>({ open: false, version: null });
+  const openVersion = React.useCallback((version: number) => setHistory({ open: true, version }), []);
+  const onHistoryOpenChange = React.useCallback(
+    (open: boolean) => setHistory((h) => (open ? { open: true, version: h.version } : { open: false, version: null })),
+    [],
+  );
+
+  // D34-2 / D34-3: the row pipeline over the served rows, memoised, sorted once.
+  const served = matrixQuery.data;
+  const capacityFillOnly = view.capacityFill;
+  const vipOnly = view.vipOnly;
+  const exceptBand = React.useMemo(
+    () =>
+      served
+        ? narrowExceptBand(served, {
+            q: deferredQ,
+            hubText: deferredHub,
+            leaderText: deferredLeader,
+            capacityFill: capacityFillOnly,
+            vipOnly,
+          })
+        : [],
+    [served, deferredQ, deferredHub, deferredLeader, capacityFillOnly, vipOnly],
+  );
+  const shownDistribution = React.useMemo(() => distributionFromRows(exceptBand), [exceptBand]);
+  const band = view.band;
+  const gridRows = React.useMemo(() => sortMatrixRows(narrowByBand(exceptBand, band)), [exceptBand, band]);
 
   const title = MATRIX_SURFACE?.title ?? 'Prioritization Matrix';
   const description =
@@ -292,17 +334,17 @@ function MatrixSurface(): React.JSX.Element {
     'Scoring dimensions per project (the editable rubric), weighted score and band, with a server-driven currency toggle.';
 
   const denied = authKind([matrixQuery.error, summaryQuery.error]);
-  const setSearch = React.useCallback((next: string) => setViewField('q', next), [setViewField]);
+  const setSearch = React.useCallback((next: string) => textStore.getState().set('q', next), [textStore]);
   const sharedBoardFilters = React.useMemo<SharedBoardFilters>(
-    () => ({ category: view.category, type: view.type, status: view.status, search: view.q, onSearchChange: setSearch }),
-    [view.category, view.type, view.status, view.q, setSearch],
+    () => ({ category: view.category, type: view.type, status: view.status, search: q, onSearchChange: setSearch }),
+    [view.category, view.type, view.status, q, setSearch],
   );
   // On the board only the shared filters count (the band and the Hub / Leader text narrow the grid only).
   const sharedFilterCount =
     (view.category.length > 0 ? 1 : 0) +
     (view.type.length > 0 ? 1 : 0) +
     (view.status !== null ? 1 : 0) +
-    (view.q.trim() !== '' ? 1 : 0);
+    (q.trim() !== '' ? 1 : 0);
   const panelFilterCount = onBoard ? sharedFilterCount : activeFilterCount(view);
   // P21-T05 fix: the board's toolbar lives in the View panel on wide screens.
   const [boardToolbarSlot, setBoardToolbarSlot] = React.useState<HTMLDivElement | null>(null);
@@ -315,88 +357,132 @@ function MatrixSurface(): React.JSX.Element {
     view.band !== null ||
     view.capacityFill ||
     view.vipOnly ||
-    debouncedQ !== '' ||
-    view.hubText.trim() !== '' ||
-    view.leaderText.trim() !== '';
+    q.trim() !== '' ||
+    hubText.trim() !== '' ||
+    leaderText.trim() !== '';
 
+  // Stable elements: each input reads its own field from the text store.
   const columnFilters = React.useMemo(
     () => ({
-      project: (
-        <ColumnFilterInput
-          column="project name or code"
-          placeholder="Search…"
-          maxLength={SEARCH_MAX_LENGTH}
-          value={view.q}
-          onChange={(v) => setViewField('q', v)}
-        />
-      ),
-      hub: <ColumnFilterInput column="hub" value={view.hubText} onChange={(v) => setViewField('hubText', v)} />,
-      leader: (
-        <ColumnFilterInput column="leader" value={view.leaderText} onChange={(v) => setViewField('leaderText', v)} />
-      ),
+      project: <TextFilterInput field="q" column="project name or code" placeholder="Search…" maxLength={SEARCH_MAX_LENGTH} />,
+      hub: <TextFilterInput field="hubText" column="hub" />,
+      leader: <TextFilterInput field="leaderText" column="leader" />,
     }),
-    [view.q, view.hubText, view.leaderText, setViewField],
+    [],
   );
 
   const resetView = React.useCallback(() => {
     setView(DEFAULT_MATRIX_VIEW);
+    textStore.getState().reset();
     clearChips();
     setCurrency('EUR');
-  }, [clearChips]);
+  }, [clearChips, textStore]);
   // Session table first (ADR 0010), server 403 second.
   const permission = usePermission('matrix');
   const canEdit = permission.write && !writeForbidden;
   // `PUT /projects/{id}/vip` is a Project Registration write; the server still decides per project.
   const canPinVip = usePermission('project_registration').write;
 
-  const handleEdit = React.useCallback((row: PriorityMatrixRow) => {
-    setEditRow(row);
-    setDialogOpen(true);
+  // --- P34-T02 edit mode --------------------------------------------------------
+  // The base a draft is compared to: the served row, or in scenario mode the row
+  // with its staged edit applied (re-editing continues from the staged value).
+  const baseRow = React.useCallback(
+    (row: PriorityMatrixRow): PriorityMatrixRow => {
+      const staged = scenarioActive ? scenarioPending[row.project_id] : undefined;
+      return staged ? rowWithStaged(row, staged.next) : row;
+    },
+    [scenarioActive, scenarioPending],
+  );
+  const onScore = React.useCallback(
+    (row: PriorityMatrixRow, key: string, value: DimensionScoreValue) =>
+      setDrafts((d) => setDraftScore(d, baseRow(row), key, value)),
+    [baseRow],
+  );
+  const onGate = React.useCallback(
+    (row: PriorityMatrixRow, gate: HardGateReason, on: boolean) => setDrafts((d) => setDraftGate(d, baseRow(row), gate, on)),
+    [baseRow],
+  );
+  const gridEdit = React.useMemo<MatrixGridEdit | undefined>(
+    () => (editMode && canEdit ? { drafts, baseRow, onScore, onGate } : undefined),
+    [editMode, canEdit, drafts, baseRow, onScore, onGate],
+  );
+  const changedIds = React.useMemo(
+    () => changedProjectIds(drafts, (served ?? []).map(baseRow)),
+    [drafts, served, baseRow],
+  );
+  const unsavedEdits = editMode && changedIds.length > 0;
+
+  const leaveEditMode = React.useCallback(() => {
+    setEditMode(false);
+    setDrafts({});
+    setEditNotes('');
+    setSaveError(null);
+    setConfirmCancel(false);
   }, []);
+  // A 403 elsewhere (or a lost write permission) ends the edit session.
+  if (editMode && !canEdit) leaveEditMode();
 
-  // In scenario mode, the dialog pre-fills from whatever is already staged
-  // for this project (so re-opening the edit continues from the staged
-  // value, not the stale live one) — `editRow` itself always stays the
-  // ORIGINAL live row, used below to capture the diff baseline correctly.
-  const dialogRow = React.useMemo<PriorityMatrixRow | null>(() => {
-    if (!editRow) return null;
-    const staged = scenarioActive ? scenarioPending[editRow.project_id] : undefined;
-    return staged ? rowWithStaged(editRow, staged.next) : editRow;
-  }, [editRow, scenarioActive, scenarioPending]);
+  const startEditMode = React.useCallback(() => {
+    setSavedNotice(null);
+    setEditMode(true);
+  }, []);
+  const requestCancel = React.useCallback(() => {
+    if (changedIds.length > 0) setConfirmCancel(true);
+    else leaveEditMode();
+  }, [changedIds.length, leaveEditMode]);
 
-  const handleSubmit = React.useCallback(
-    async (projectId: string, body: PriorityScoreUpdateRequest) => {
-      if (scenarioActive) {
-        if (!editRow) return;
-        // The dialog sends only what it changed; the staged `next` is the full
-        // picture (live values, then anything staged before, then this edit).
-        const live = liveRequestValuesFromRow(editRow);
-        const prior = scenarioPending[projectId]?.next.scores ?? live.scores;
+  const saveEdits = React.useCallback(async () => {
+    const live = served ?? [];
+    setSaveError(null);
+    if (scenarioActive) {
+      // Stage each changed project (same as the old dialog's scenario submit).
+      for (const id of changedIds) {
+        const row = live.find((r) => r.project_id === id);
+        const next = drafts[id];
+        if (!row || !next) continue;
         stageScenarioEdit({
-          projectId,
-          projectName: editRow.project_name,
-          hub: editRow.hub,
-          liveValues: live,
-          liveHasScore: editRow.has_score,
-          next: { scores: { ...prior, ...body.scores }, hard_gates: body.hard_gates },
-          labels: Object.fromEntries(editRow.dimension_scores.map((d) => [d.key, d.label])),
+          projectId: id,
+          projectName: row.project_name,
+          hub: row.hub,
+          liveValues: liveRequestValuesFromRow(row),
+          liveHasScore: row.has_score,
+          next: { scores: { ...next.scores }, hard_gates: [...next.hard_gates] },
+          labels: Object.fromEntries(row.dimension_scores.map((d) => [d.key, d.label])),
         });
+      }
+      setSavedNotice(
+        `${formatInteger(changedIds.length)} ${changedIds.length === 1 ? 'project' : 'projects'} staged in the scenario. Nothing is saved until you Apply it.`,
+      );
+      leaveEditMode();
+      return;
+    }
+    const body = buildGridApplyBody(drafts, live, editNotes);
+    if (body.priority_scores.length === 0) {
+      leaveEditMode();
+      return;
+    }
+    try {
+      const res = await applyMutation.mutateAsync(body);
+      const n = body.priority_scores.length;
+      setSavedNotice(
+        `Saved ${formatInteger(n)} ${n === 1 ? 'project' : 'projects'} as version ${String(res.run.version)}. Scores and bands are re-read from the server.`,
+      );
+      leaveEditMode();
+    } catch (err) {
+      if (err instanceof ApiError && err.isForbidden) {
+        setWriteForbidden(true);
+        leaveEditMode();
         return;
       }
-      try {
-        await updateScore.mutateAsync({ projectId, body });
-      } catch (err) {
-        if (err instanceof ApiError && err.isForbidden) {
-          setWriteForbidden(true);
-          setDialogOpen(false);
-        }
-        throw err;
-      }
-    },
-    [scenarioActive, editRow, scenarioPending, stageScenarioEdit, updateScore],
-  );
+      setSaveError(saveErrorText(err));
+    }
+  }, [served, scenarioActive, changedIds, drafts, stageScenarioEdit, leaveEditMode, editNotes, applyMutation]);
+
+  // The rubric card never depends on the grid's filters: keep its element stable.
+  const rubricPanel = React.useMemo(() => <ScoringRubricPanel />, []);
 
   return (
+    <TextFilterContext.Provider value={textStore}>
     <FetchedScoringModelProvider>
       <PageHeader
         title={title}
@@ -449,7 +535,12 @@ function MatrixSurface(): React.JSX.Element {
                 ) : null}
                 </div>
                 <ScenarioModeToggle disabled={!canEdit} />
-                <VersionHistoryDialog projectLookup={projectLookup} />
+                <VersionHistoryDialog
+                  projectLookup={projectLookup}
+                  open={history.open}
+                  onOpenChange={onHistoryOpenChange}
+                  initialVersion={history.version}
+                />
                 <div className="ml-auto flex flex-wrap items-center gap-2">
                   <GridOnly onBoard={onBoard} narrow={narrow} compact={compact}>
                   <Button
@@ -493,7 +584,7 @@ function MatrixSurface(): React.JSX.Element {
               <>
                 <MultiChipFilter
                   label="Category"
-                  options={CATEGORY_CHIP_OPTIONS}
+                  options={categoryChips}
                   value={view.category}
                   onChange={(v) => setViewField('category', v)}
                   data-testid="matrix-category-chips"
@@ -551,64 +642,57 @@ function MatrixSurface(): React.JSX.Element {
 
           <TabsContent value="grid" className="mt-0 flex flex-col gap-4">
           {/* P26-T03: the rubric is read and edited (Admins, served `can_edit`) in this card only. */}
-          <ScoringRubricPanel />
+          {rubricPanel}
 
           {/* Owner ask 2026-10-22: of the summary, histogram and capacity-fill
-              panels only the band distribution stays (it filters the grid). */}
-          {distributionQuery.data ? (
+              panels only the band distribution stays (it filters the grid).
+              P34-T02 (D34-2): it counts the served bands of the rows shown. */}
+          {served ? (
             <ScoreChartsRow
-              distribution={distributionQuery.data}
+              distribution={shownDistribution}
               activeBand={view.band}
-              onBandClick={(band) => setViewField('band', band)}
+              onBandClick={(next) => setViewField('band', next)}
             />
-          ) : distributionQuery.isPending ? (
+          ) : matrixQuery.isPending ? (
             <Skeleton className="h-48 w-full rounded-card" aria-label="Loading score overview" />
-          ) : (
-            <p className="text-2xs text-text-muted" data-testid="matrix-chart-row-error">
-              The score overview could not be loaded; the table below is unaffected.
+          ) : null}
+
+          {savedNotice ? (
+            <p role="status" className="rounded border border-success/40 bg-success-subtle px-3 py-2 text-xs text-text" data-testid="grid-saved-notice">
+              {savedNotice}
             </p>
-          )}
+          ) : null}
 
           <SectionBoundary
             query={matrixQuery}
             title="Scoring grid"
             errorDescription="The prioritization scoring grid could not be loaded."
           >
-            {(served) => {
-              const narrowed = narrowInView(served, view);
-              const rows = [...narrowed].sort((a, b) => {
-                // VIP projects first (owner ask 2026-10-22), each group in rank order.
-                if (isVipRow(a) !== isVipRow(b)) return isVipRow(a) ? -1 : 1;
-                if (a.rank !== null && b.rank !== null) {
-                  if (a.rank !== b.rank) return a.rank - b.rank;
-                  return a.project_name.localeCompare(b.project_name);
-                }
-                if (a.rank !== null) return -1;
-                if (b.rank !== null) return 1;
-
-                if (a.weighted_score !== null && b.weighted_score !== null) {
-                  if (b.weighted_score !== a.weighted_score) return b.weighted_score - a.weighted_score;
-                  return a.project_name.localeCompare(b.project_name);
-                }
-                if (a.weighted_score !== null) return -1;
-                if (b.weighted_score !== null) return 1;
-
-                return a.project_name.localeCompare(b.project_name);
-              });
-              return (
+            {(servedRows) => (
               <Card>
                 <CardHeader className="flex-wrap">
                   <CardTitle>Scoring grid</CardTitle>
                   <span className="text-2xs text-text-muted" data-numeric="" data-testid="matrix-row-count">
-                    {rows.length === served.length
-                      ? `${formatInteger(served.length)} ${served.length === 1 ? 'project' : 'projects'}`
-                      : `${formatInteger(rows.length)} of ${formatInteger(served.length)} projects shown`}{' '}
+                    {gridRows.length === servedRows.length
+                      ? `${formatInteger(servedRows.length)} ${servedRows.length === 1 ? 'project' : 'projects'}`
+                      : `${formatInteger(gridRows.length)} of ${formatInteger(servedRows.length)} projects shown`}{' '}
                     · ranked by score · scores 0–5 per dimension, total out of 100
                   </span>
                   <ScoringTotalLine />
+                  {canEdit && !editMode ? (
+                    <Button variant="secondary" size="sm" className="ml-auto" onClick={startEditMode} data-testid="grid-edit-start">
+                      <PencilLine aria-hidden="true" />
+                      Edit scores
+                    </Button>
+                  ) : null}
+                  {editMode ? (
+                    <span className="ml-auto text-2xs font-semibold text-warning-subtle-fg" data-testid="grid-edit-mode">
+                      Editing: type 0–5 (empty = not scored), arrows move, tick the hard gates
+                    </span>
+                  ) : null}
                 </CardHeader>
                 <CardContent>
-                  {rows.length === 0 && !isFiltered ? (
+                  {gridRows.length === 0 && !isFiltered ? (
                     <EmptyState
                       title="No projects in scope"
                       description="There are no projects visible in your hub scope."
@@ -618,29 +702,40 @@ function MatrixSurface(): React.JSX.Element {
                       {/* Kept while filtered, so the column filter inputs stay reachable. */}
                       <MatrixTable
                         canPinVip={canPinVip}
-                        rows={rows}
-                        canEdit={canEdit}
+                        rows={gridRows}
                         selectedIds={selectedIds}
                         onToggleSelect={onToggleSelect}
                         maxHeight={gridMaxHeight}
                         narrow={narrow}
-                        onEdit={handleEdit}
                         scenarioStagedProjectIds={scenarioActive ? scenarioStagedProjectIds : undefined}
                         detailed={view.detailed}
                         columnFilters={columnFilters}
+                        edit={gridEdit}
+                        onOpenVersion={openVersion}
                       />
-                      {rows.length === 0 ? (
+                      {gridRows.length === 0 ? (
                         <EmptyState
                           title="No projects match these filters"
                           description="Try widening or clearing the filters, or use Reset view."
+                        />
+                      ) : null}
+                      {editMode ? (
+                        <GridEditBar
+                          changedCount={changedIds.length}
+                          notes={editNotes}
+                          onNotesChange={setEditNotes}
+                          onSave={() => void saveEdits()}
+                          onCancel={requestCancel}
+                          saving={applyMutation.isPending}
+                          scenario={scenarioActive}
+                          error={saveError}
                         />
                       ) : null}
                     </div>
                   )}
                 </CardContent>
               </Card>
-              );
-            }}
+            )}
           </SectionBoundary>
 
           <CompareBar onOpen={() => setCompareOpen(true)} />
@@ -667,13 +762,16 @@ function MatrixSurface(): React.JSX.Element {
         onForbidden={() => setWriteForbidden(true)}
       />
 
-      <ScoreEditDialog
-        row={dialogRow}
-        open={dialogOpen}
-        onOpenChange={setDialogOpen}
-        onSubmit={handleSubmit}
-        mode={scenarioActive ? 'scenario' : 'immediate'}
+      <DiscardDialog
+        open={confirmCancel}
+        title="Discard your score edits?"
+        description={`${formatInteger(changedIds.length)} ${changedIds.length === 1 ? 'project has' : 'projects have'} unsaved score edits. Nothing has been saved.`}
+        onKeep={() => setConfirmCancel(false)}
+        onDiscard={leaveEditMode}
+        testId="grid-discard-dialog"
       />
+      <GridLeaveGuard when={unsavedEdits} />
     </FetchedScoringModelProvider>
+    </TextFilterContext.Provider>
   );
 }

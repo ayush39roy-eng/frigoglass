@@ -69,3 +69,10 @@ overwrites, like the ADR 0006 progress fields.
   Capacity reconciliation (I6/I7) uses the same value on both sides.
 - CP-SAT honours both fields too (same model, two extra bounds), so the solver comparison stays
   meaningful.
+
+## Amendment (2026-11-13, ADR 0048, P33)
+
+The editing in this ADR is **retired**: Gantt drag and resize, the Edit timing dialog, Reset
+timing, and `PATCH /projects/{id}/steps/{step_id}/timing` (now 410 `STEP_TIMING_RETIRED`). The
+migration clears the hand-set values, with audit rows. The scheduler fields stay for the what-if
+and plan import (ADR 0048 §4). Per-category timing is shaped on Workflow templates (ADR 0045).

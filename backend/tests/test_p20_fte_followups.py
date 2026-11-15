@@ -350,9 +350,12 @@ GANTT_STEP_ROW_FIELDS = {
     "percent_complete", "duration_weeks", "planned_start_week", "planned_end_week",
     "actual_start_week", "actual_end_week", "assigned_engineer_name",
     "assigned_chamber_code", "eng_conflict", "chamber_overlap", "lead_time_weeks",
-    "duration_override_weeks", "start_not_before_week", "timing_editable", "span_fte",
+    "span_fte",
     "effort_weeks",  # ADR 0041 R4 (P30-T02)
-    "overlap_weeks", "predecessor_ids",  # ADR 0043 (P32-T03)
+    "predecessor_ids",  # ADR 0043 (P32-T03)
+    # P33-T12 (contract P33 Part G): the read-only template copy; the timing
+    # inputs and `timing_editable` are retired (ADR 0048).
+    "plan_weeks", "gap_weeks", "own_effort",
 }
 
 

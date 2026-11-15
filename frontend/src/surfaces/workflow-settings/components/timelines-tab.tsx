@@ -1,25 +1,41 @@
 import * as React from 'react';
+import { Plus } from 'lucide-react';
 
 import { SectionBoundary } from '@/components/shared/section-boundary';
+import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
+import type { Category } from '@/lib/category-catalog';
 import { WORKFLOW_IDS, type WorkflowId } from '@/types/enums';
 
 import { useBEquivalent, useCategoryTimelines } from '../hooks/use-workflow-settings';
+import { TEMPLATE_COPY } from '../lib/template-copy';
+import { AddCategoryDialog } from './add-category-dialog';
 import { BEquivalentPanel } from './b-equivalent-panel';
-import { CategoryTimelineList } from './category-timeline';
+import { CategoryTimelineList, type TemplateEditing } from './category-timeline';
 
 /**
- * "Timeline previews" tab (P13-T16): per-category mini-Gantts and the
- * B-equivalent panel for one workflow at a time, both served
- * (API_CONTRACT_P13 §5). Read-only; any role that can read Workflow Settings
- * sees it. Saved lead-time / step changes refetch both (see `afterSave`).
+ * "Timeline previews" tab (P13-T16; the category template editor since
+ * P33-T16, "+ Add category" since P33-T18): per-category mini-Gantts and the
+ * B-equivalent panel for one workflow at a time, all served (API_CONTRACT_P33
+ * C2 / D). With `workflow_templates.write` every step row has Move / Length
+ * buttons and the header has "+ Add category"; other roles read.
  */
-export function TimelinesTab(): React.JSX.Element {
+export function TimelinesTab({
+  editing,
+  categories,
+}: {
+  editing?: TemplateEditing | undefined;
+  /** Every category in rank order (C1), for "+ Add category". */
+  categories?: readonly Category[] | undefined;
+}): React.JSX.Element {
   const [workflow, setWorkflow] = React.useState<WorkflowId>('PDD');
+  const [openCategory, setOpenCategory] = React.useState<string | null>(null);
+  const [adding, setAdding] = React.useState(false);
   const timelines = useCategoryTimelines(workflow);
   const bEquivalent = useBEquivalent(workflow);
   const toggleId = React.useId();
+  const canWrite = editing?.canWrite ?? false;
 
   return (
     <div className="space-y-4">
@@ -40,9 +56,15 @@ export function TimelinesTab(): React.JSX.Element {
           <ToggleGroupItem value="PDD">Standard PDD</ToggleGroupItem>
           <ToggleGroupItem value="OEM">OEM</ToggleGroupItem>
         </ToggleGroup>
-        <p className="text-2xs text-text-subtle">
-          Earliest start of every step over the precedence graph, from the lead-time table only: per-project
-          duration overrides and capacity are not applied. Week 0 is the project start.
+        {canWrite && categories ? (
+          <Button type="button" variant="secondary" size="sm" className="ml-auto" onClick={() => setAdding(true)}>
+            <Plus />
+            Add category
+          </Button>
+        ) : null}
+        <p className="basis-full text-2xs text-text-subtle">
+          Earliest start of every step over the precedence graph, from the category template only: capacity is not
+          applied. Week 0 is the project start.{canWrite ? ` ${TEMPLATE_COPY.editorIntro}` : ''}
         </p>
       </div>
       <div className="grid items-start gap-4 2xl:grid-cols-[minmax(0,1fr)_28rem]">
@@ -55,7 +77,7 @@ export function TimelinesTab(): React.JSX.Element {
             title="Per-category timelines"
             errorDescription="The category timelines could not be loaded."
           >
-            {(data) => <CategoryTimelineList timelines={data} />}
+            {(data) => <CategoryTimelineList timelines={data} editing={editing} openCategory={openCategory} />}
           </SectionBoundary>
         </section>
         <div className="min-w-0">
@@ -68,6 +90,19 @@ export function TimelinesTab(): React.JSX.Element {
           </SectionBoundary>
         </div>
       </div>
+      {canWrite && categories ? (
+        <AddCategoryDialog
+          open={adding}
+          onOpenChange={setAdding}
+          categories={categories}
+          defaultWorkflow={workflow}
+          onCreated={(c) => {
+            // Open the new category's timeline once the refreshed list arrives.
+            setWorkflow(c.workflow_id);
+            setOpenCategory(c.code);
+          }}
+        />
+      ) : null}
     </div>
   );
 }

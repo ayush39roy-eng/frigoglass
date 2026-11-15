@@ -166,9 +166,10 @@ async def _world(db_session):
             )
         )
         # ADR 0041 (P30): the hub table's load is DEMAND from the live rows.
-        # The same step as a live row whose user override is the run's
-        # figure, so demand (full year = remaining, all Not Started) equals
-        # the booked load here.
+        # The same step as a live row whose template copy (`plan_weeks`;
+        # P33-T13: was the retired user override) is the run's figure, so
+        # demand (full year = remaining, all Not Started) equals the booked
+        # load here.
         if key == "oem" and step_id == "OEM-E":
             # This world puts OEM-HCK in the India lab region; the scheduler's
             # mapping (and the demand load, I25) puts OEM lab work in Greece.
@@ -177,7 +178,7 @@ async def _world(db_session):
         db_session.add(
             ProjectWorkflowStep(
                 project_id=projects[key].id, step_template_id=step_id, sequence_order=i + 1,
-                duration_weeks=1, duration_override_weeks=weeks,
+                duration_weeks=1, plan_weeks=weeks,
             )
         )
     await db_session.flush()

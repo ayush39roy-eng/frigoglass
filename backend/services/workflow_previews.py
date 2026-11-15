@@ -15,6 +15,13 @@ DAG, computed here so the browser never derives a figure (I9/I19):
   (Σ design-step durations) and `lab_weeks` (Σ lab-step durations), and
   their ratio to the reference category (`B` for PDD, `B-OEM` for OEM).
 
+**P33-T09.** The category timeline served by `GET
+/workflow-settings/category-timelines` and `POST
+/workflow-templates/timeline-preview` is now `scheduling.template_timeline`
+(signed gaps, one-leader rule; contract P33 C2/F3), through
+`template_timeline_for`. `category_preview` below is kept for the
+B-equivalent view (its design / lab sums are the same) and its own tests.
+
 The DAG is validated and walked by the scheduler's own
 `scheduling.workflow.build_workflows` (called, not reimplemented), so the
 preview uses exactly the walk order the solver uses. The per-project
@@ -24,23 +31,25 @@ inputs, not template inputs, so the preview uses the table as served.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import domain_constants as dc
-from models.enums import OEM_PROJECT_CATEGORIES, ProjectCategory, WorkflowStepKind
+from models.enums import WorkflowStepKind
 from models.workflow import WorkflowLeadTime, WorkflowStepTemplate
+from scheduling.template_timeline import TEMPLATE_FLAGS, TemplateTimeline, template_timeline
 from scheduling.types import WorkflowStepTemplate as SchedWorkflowStepTemplate
 from scheduling.workflow import Workflow, build_workflows
 from services.capacity_supply import round2
+from services.categories import CategoryCatalog, default_catalog, load_catalog
 
 #: The ratio reference per workflow (contract §5).
-REFERENCE_CATEGORY: Mapping[str, ProjectCategory] = {
-    dc.WORKFLOW_ID_FOR_NON_OEM_HUB: ProjectCategory.B,
-    dc.WORKFLOW_ID_FOR_OEM_HUB: ProjectCategory.B_OEM,
+REFERENCE_CATEGORY: Mapping[str, str] = {
+    dc.WORKFLOW_ID_FOR_NON_OEM_HUB: "B",
+    dc.WORKFLOW_ID_FOR_OEM_HUB: "B-OEM",
 }
 
 
@@ -55,7 +64,7 @@ class StepSpan:
 
 @dataclass(frozen=True)
 class CategoryPreview:
-    category: ProjectCategory
+    category: str
     total_weeks: int
     design_weeks: int
     lab_weeks: int
@@ -63,15 +72,17 @@ class CategoryPreview:
     steps: tuple[StepSpan, ...]
 
 
-def categories_for(workflow_id: str) -> tuple[ProjectCategory, ...]:
-    """The workflow's categories in `ProjectCategory` enum order."""
+def categories_for(
+    workflow_id: str, catalog: CategoryCatalog | None = None
+) -> tuple[str, ...]:
+    """The workflow's categories in rank order (P33-T07: the `categories`
+    table; without a catalog, the seeded seven)."""
 
-    oem = workflow_id == dc.WORKFLOW_ID_FOR_OEM_HUB
-    return tuple(c for c in ProjectCategory if (c in OEM_PROJECT_CATEGORIES) == oem)
+    return (catalog or default_catalog()).codes_for_workflow(workflow_id)
 
 
 def category_preview(
-    workflow: Workflow, category: ProjectCategory, weeks: Mapping[str, int]
+    workflow: Workflow, category: str, weeks: Mapping[str, int]
 ) -> CategoryPreview:
     """Pure: earliest-start timeline for one category. `weeks` maps step id →
     lead-time weeks; a missing cell counts as 0 (skipped)."""
@@ -118,6 +129,104 @@ def ratio(value: int, reference: int) -> float | None:
     return round2(value / reference) if reference else None
 
 
+# --- P33-T09: the category template timeline (contract P33 C2 / D, F3) ------------
+
+
+@dataclass(frozen=True)
+class TemplateCell:
+    """One template row's editable values (`workflow_lead_times`)."""
+
+    weeks: int
+    gap_weeks: int
+
+
+@dataclass(frozen=True)
+class WorkflowInForce:
+    """One workflow as the scheduler validates it, plus the display names."""
+
+    workflow: Workflow
+    #: step id -> `WorkflowStepTemplate.name` (display).
+    names: Mapping[str, str]
+
+    @property
+    def first_step_ids(self) -> frozenset[str]:
+        """Steps with no predecessor (the workflow's first step): a non-zero
+        gap there is rejected (`FIRST_STEP_GAP`)."""
+        return frozenset(s.step_id for s in self.workflow.steps if not s.predecessor_ids)
+
+
+async def load_workflow_in_force(db: AsyncSession, workflow_id: str) -> WorkflowInForce | None:
+    """The workflow's DAG in force (`workflow_step_templates`), validated by
+    `scheduling.workflow.build_workflows`; None for an unknown workflow."""
+
+    templates = (
+        (
+            await db.execute(
+                select(WorkflowStepTemplate).where(WorkflowStepTemplate.workflow_id == workflow_id)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    if not templates:
+        return None
+    workflow = build_workflows(
+        tuple(
+            SchedWorkflowStepTemplate(
+                workflow_id=t.workflow_id,
+                step_id=t.id,
+                code=t.code,
+                name=t.name,
+                kind=t.kind.value,
+                sequence_order=t.sequence_order,
+                predecessor_ids=tuple(t.predecessor_ids or ()),
+            )
+            for t in templates
+        )
+    )[workflow_id]
+    return WorkflowInForce(workflow=workflow, names={t.id: t.name for t in templates})
+
+
+async def load_template_cells(
+    db: AsyncSession, workflow_id: str, categories: Sequence[str] | None = None
+) -> dict[str, dict[str, TemplateCell]]:
+    """`{category: {step_id: TemplateCell}}` of `workflow_id` (optionally only
+    `categories`), read fresh (`populate_existing`)."""
+
+    stmt = select(WorkflowLeadTime).where(WorkflowLeadTime.workflow_id == workflow_id)
+    if categories is not None:
+        stmt = stmt.where(WorkflowLeadTime.category.in_(list(categories)))
+    out: dict[str, dict[str, TemplateCell]] = {}
+    for lt in (await db.execute(stmt.execution_options(populate_existing=True))).scalars():
+        out.setdefault(lt.category, {})[lt.step_id] = TemplateCell(
+            weeks=lt.weeks, gap_weeks=lt.gap_weeks
+        )
+    return out
+
+
+def template_timeline_for(
+    wf: WorkflowInForce,
+    cells: Mapping[str, TemplateCell],
+    overrides: Mapping[str, TemplateCell] | None = None,
+) -> TemplateTimeline:
+    """`scheduling.template_timeline` (called, never reimplemented) on the
+    saved cells with `overrides` laid over them. A step without a template row
+    has length 0 and gap 0 (skipped), as the pre-P33 preview did. The caller
+    has validated the ranges and the first-step gap."""
+
+    merged = {**cells, **(overrides or {})}
+    lengths = {sid: c.weeks for sid, c in merged.items() if sid in wf.workflow.steps_by_id}
+    gaps = {sid: c.gap_weeks for sid, c in merged.items() if sid in wf.workflow.steps_by_id}
+    return template_timeline(workflow=wf.workflow, lengths=lengths, gaps=gaps)
+
+
+def ordered_flags(flags: frozenset[str]) -> list[str]:
+    """The template flags in the contract's fixed order (deterministic wire
+    form, I8)."""
+
+    return [f for f in TEMPLATE_FLAGS if f in flags]
+
+
 async def load_category_previews(
     db: AsyncSession, workflow_id: str
 ) -> tuple[CategoryPreview, ...]:
@@ -149,10 +258,11 @@ async def load_category_previews(
             for t in templates
         )
     )[workflow_id]
-    weeks: dict[ProjectCategory, dict[str, int]] = {}
+    weeks: dict[str, dict[str, int]] = {}
     lead_stmt = select(WorkflowLeadTime).where(WorkflowLeadTime.workflow_id == workflow_id)
     for lt in (await db.execute(lead_stmt)).scalars():
         weeks.setdefault(lt.category, {})[lt.step_id] = lt.weeks
     return tuple(
-        category_preview(workflow, c, weeks.get(c, {})) for c in categories_for(workflow_id)
+        category_preview(workflow, c, weeks.get(c, {}))
+        for c in categories_for(workflow_id, await load_catalog(db))
     )

@@ -9,9 +9,10 @@ page) calls `tracking_status_for` here, so they cannot disagree.
 its status is `In Progress` / `Blocked` or the active run's planned window
 `[start_week, end_week]` (inclusive) for the stage contains `CURRENT_WEEK`.
 Skipped: the active run's step row says skipped, or the live row is
-skipped by the one predicate of ADR 0041 R5 (a 0-week lead time, a lab step
-on a project without certification testing, or an effective duration
-`user ?? effort ?? lead` of 0; `services.workspace.row_is_skipped`).
+skipped by the one predicate of ADR 0041 R5 as revised by ADR 0046 §B (a lab
+step on a project without certification testing, an own-effort step whose
+share is 0 or absent, or another step whose template copy `plan_weeks` is 0;
+`services.workspace.row_is_skipped`).
 
 **Decision beyond the contract:** only projects whose status is schedulable
 have due stages. A Draft, On Hold, Commercialized or Cancelled project is out
@@ -62,7 +63,7 @@ from models.project import Project
 from models.schedule import ScheduleRun, ScheduleRunProjectStep
 from models.workflow import ProjectWorkflowStep, WorkflowStepTemplate
 from services.active_run import get_active_run
-from services.workspace import row_is_skipped
+from services.workspace import row_is_skipped, row_own_effort_kinds
 
 TrackingStatus = Literal["live", "due", "overdue", "idle"]
 
@@ -92,18 +93,25 @@ def _is_skipped(
     run_step: ScheduleRunProjectStep | None,
     kind: WorkflowStepKind | None,
     cert_required: bool,
+    own_effort: bool | None,
 ) -> bool:
     """The Workspace rule (`services.workspace.build_workspace`): the active
-    run's flag when the run has the step, else the lead-time/certification
-    rule of ADR 0007.
+    run's flag when the run has the step, else the one skip predicate on the
+    live row.
     """
 
     if run_step is not None and run_step.skipped:
         return True
-    # ADR 0041 R5: the one skip predicate on the live row (lead 0, a lab step
-    # without certification testing, or an effective duration of 0), so a
-    # stage zeroed since the run was computed is never due.
-    return row_is_skipped(live, kind or WorkflowStepKind.DESIGN, cert_required)
+    # ADR 0041 R5 / ADR 0046 §B: the one skip predicate on the live row, so
+    # a stage zeroed since the run was computed is never due. `own_effort`
+    # None: judged from this row alone (its own `effort_weeks` non-null
+    # implies its kind follows the figure); `due_stages_for` passes the
+    # project-level flag.
+    if own_effort is None:
+        own_effort = live.effort_weeks is not None
+    return row_is_skipped(
+        live, kind or WorkflowStepKind.DESIGN, cert_required, own_effort=own_effort
+    )
 
 
 def stage_is_due(
@@ -113,14 +121,17 @@ def stage_is_due(
     kind: WorkflowStepKind | None,
     cert_required: bool,
     current_week: int = dc.CURRENT_WEEK,
+    own_effort: bool | None = None,
 ) -> bool:
     """ADR 0021 §1 for one stage of a schedulable, non-frozen project (the
-    project-level exclusions live in `due_stages_for`).
+    project-level exclusions live in `due_stages_for`). `own_effort` is
+    `ownEffort(p, kind)` (ADR 0046 OR-1); None judges it from this row alone,
+    which is exact unless a sibling of the same kind carries the effort.
     """
 
     if live.status == WorkflowStepStatus.DONE:
         return False
-    if _is_skipped(live, run_step, kind, cert_required):
+    if _is_skipped(live, run_step, kind, cert_required, own_effort):
         return False
     if live.status in _ACTIVE_STATUSES:
         return True
@@ -286,6 +297,14 @@ async def due_stages_for(
             run_steps[(step.project_id, step.step_template_id)] = step
     checkins = await _checkin_summaries(db, schedulable, current_week)
 
+    # ADR 0046 OR-1: per project, the kinds that follow its own figure.
+    rows_by_project: dict[uuid.UUID, list[ProjectWorkflowStep]] = defaultdict(list)
+    for live in live_rows:
+        rows_by_project[live.project_id].append(live)
+    own_kinds = {
+        pid: row_own_effort_kinds(rows, templates) for pid, rows in rows_by_project.items()
+    }
+
     grouped: dict[uuid.UUID, list[DueStage]] = defaultdict(list)
     for live in live_rows:
         key = (live.project_id, live.step_template_id)
@@ -294,7 +313,12 @@ async def due_stages_for(
         kind = template.kind if template is not None else WorkflowStepKind.DESIGN
         cert_required = projects[live.project_id][1]
         if not stage_is_due(
-            live, run_step, kind=kind, cert_required=cert_required, current_week=current_week
+            live,
+            run_step,
+            kind=kind,
+            cert_required=cert_required,
+            current_week=current_week,
+            own_effort=kind.value in own_kinds.get(live.project_id, frozenset()),
         ):
             continue
         summary = checkins.get(key)

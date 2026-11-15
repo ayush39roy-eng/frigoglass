@@ -183,6 +183,21 @@ function serveSend(method: string, path: string, body?: unknown): Promise<unknow
     p.priority = (body as { priority: ProjectPriority }).priority;
     return Promise.resolve({ project_id: p.id, priority_before: before, priority_after: p.priority, recalc_status: 'applied', schedule_run_id: 'run-43', baseline_run_id: 'run-42', task_id: null });
   }
+  if (method === 'POST' && path === '/scenarios/apply') {
+    // P34-T02 (D34-1): the grid's edit session, one version for every changed project.
+    const b = body as { notes: string | null; priority_scores: { project_id: string; scores: Record<string, number>; hard_gates: string[] }[] };
+    const bands: Record<string, ProjectPriority> = {};
+    for (const change of b.priority_scores) {
+      const p = projects.find((x) => x.id === change.project_id)!;
+      p.scores = { ...p.scores, ...change.scores };
+      bands[p.id] = figures(p).band;
+    }
+    return Promise.resolve({
+      run: { id: 'run-v7', version: 7, applied_by_user_id: 'u1', notes: b.notes, entity_types_touched: ['priority_score'], change_count: b.priority_scores.length, project_count: b.priority_scores.length, created_at: '2026-11-13T10:00:00Z' },
+      updated_priority_scores: b.priority_scores.map((c) => `s-${c.project_id}`),
+      suggested_bands: bands,
+    });
+  }
   const put = /^\/priorities\/([^/]+)$/.exec(path);
   if (method === 'PUT' && put) {
     const p = projects.find((x) => x.id === put[1])!;
@@ -289,12 +304,11 @@ describe('P21-T05 Matrix tabs', () => {
     expect(screen.getByTestId('location')).toHaveTextContent('/matrix?view=board');
   });
 
-  it('a: a keyboard move on the board previews, confirms, and re-reads the grid, the distribution, the board and the run views', async () => {
+  it('a: a keyboard move on the board previews, confirms, and re-reads the grid (and its distribution), the board and the run views', async () => {
     const user = userEvent.setup();
     const { invalidate } = renderMatrix('/matrix?view=board', { permissions: ROLE_MATRIX['Hub Planner'] });
     await screen.findByRole('link', { name: 'Alpha Cooler' });
     const gridBefore = getCalls('/priorities').length;
-    const distBefore = getCalls('/priorities/distribution').length;
     const boardBefore = getCalls('/priority-board').length;
 
     const handle = within(boardCard('Alpha Cooler')).getByTestId('board-drag-handle');
@@ -308,8 +322,8 @@ describe('P21-T05 Matrix tabs', () => {
     expect(mockSend).toHaveBeenCalledWith('POST', '/projects/alpha/priority', { priority: 'P2', preview_token: 'tok-1' });
 
     await waitFor(() => expect(getCalls('/priority-board').length).toBeGreaterThan(boardBefore));
+    // D34-2: the band distribution is counted from the re-read grid rows.
     await waitFor(() => expect(getCalls('/priorities').length).toBeGreaterThan(gridBefore));
-    await waitFor(() => expect(getCalls('/priorities/distribution').length).toBeGreaterThan(distBefore));
     const roots = invalidatedRoots(invalidate);
     for (const key of ['priority-matrix', 'priority-board', 'dashboard', 'capacity', 'gantt', 'projects', 'vip-board']) {
       expect(roots).toContain(JSON.stringify([key]));
@@ -322,24 +336,31 @@ describe('P21-T05 Matrix tabs', () => {
     expect(rows.find((r) => r.project_id === 'alpha')?.set_priority).toBe('P2');
   });
 
-  it('b: a score save from the grid re-reads the grid, the distribution and (on the board) the card score and band', async () => {
+  it('b: an edit-mode save is ONE scenario apply; it re-reads the grid, its distribution and (on the board) the card score and band', async () => {
     const user = userEvent.setup();
     const { invalidate } = renderMatrix('/matrix');
-    await user.click(await screen.findByRole('button', { name: 'Edit prioritization score for Alpha Cooler' }));
-    const dialog = await screen.findByRole('dialog', { name: 'Edit prioritization score' });
-    const distBefore = getCalls('/priorities/distribution').length;
+    await user.click(await screen.findByRole('button', { name: 'Edit scores' }));
+    const gridBefore = getCalls('/priorities').length;
     for (const d of INITIAL_TEST_DIMENSIONS) {
-      await user.selectOptions(within(dialog).getByLabelText(d.label), '1');
+      const input = screen.getByRole('textbox', { name: `${d.label} for Alpha Cooler, score 0 to 5, empty for not scored` });
+      await user.click(input);
+      await user.keyboard('1');
     }
-    await user.click(within(dialog).getByRole('button', { name: 'Save score' }));
-    expect(mockSend).toHaveBeenCalledWith('PUT', '/priorities/alpha', { scores: all(1), hard_gates: [] });
-    await waitFor(() => expect(getCalls('/priorities/distribution').length).toBeGreaterThan(distBefore));
+    expect(screen.getByTestId('grid-edit-count')).toHaveTextContent('1 project changed');
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+    expect(mockSend).toHaveBeenCalledWith('POST', '/scenarios/apply', {
+      notes: null,
+      priority_scores: [{ project_id: 'alpha', scores: all(1), hard_gates: [] }],
+    });
+    expect(mockSend.mock.calls.filter((c) => c[1] === '/scenarios/apply')).toHaveLength(1);
+    expect(await screen.findByTestId('grid-saved-notice')).toHaveTextContent('Saved 1 project as version 7');
+    await waitFor(() => expect(getCalls('/priorities').length).toBeGreaterThan(gridBefore));
     const roots = invalidatedRoots(invalidate);
     expect(roots).toContain(JSON.stringify(['priority-matrix']));
     expect(roots).toContain(JSON.stringify(['priority-board']));
-    expect(roots).toContain(JSON.stringify(['projects', 'workspace', 'alpha']));
     // Score /100 in the grid is the server's 20/100 now (all 1s → 59/295).
     await waitFor(() => expect(screen.getAllByText('20/100').length).toBeGreaterThan(0));
+    expect(screen.queryByTestId('grid-edit-bar')).not.toBeInTheDocument();
 
     await user.click(screen.getByRole('tab', { name: 'Priority board' }));
     const card = within(boardCard('Alpha Cooler'));
@@ -352,10 +373,10 @@ describe('P21-T05 Matrix tabs', () => {
     const user = userEvent.setup();
     renderMatrix('/matrix');
     await user.click(await screen.findByRole('checkbox', { name: 'Scenario mode' }));
-    await user.click(await screen.findByRole('button', { name: 'Edit prioritization score for Alpha Cooler' }));
-    const dialog = await screen.findByRole('dialog', { name: 'Stage prioritization score change' });
-    await user.selectOptions(within(dialog).getByLabelText('Strategic Project'), '1');
-    await user.click(within(dialog).getByRole('button', { name: 'Stage change' }));
+    await user.click(await screen.findByRole('button', { name: 'Edit scores' }));
+    await user.click(screen.getByRole('textbox', { name: /^Strategic Project for Alpha Cooler/ }));
+    await user.keyboard('1');
+    await user.click(screen.getByRole('button', { name: 'Stage in scenario' }));
     expect(useScenarioStore.getState().pending.alpha?.next.scores.strategic_project).toBe(1);
 
     await user.click(screen.getByRole('tab', { name: 'Priority board' }));
@@ -377,7 +398,7 @@ describe('P21-T05 Matrix tabs', () => {
   it('d: the View panel filters apply to both views; for schedulable statuses the board total equals the grid count', async () => {
     const user = userEvent.setup();
     renderMatrix('/matrix');
-    await screen.findByRole('button', { name: 'Edit prioritization score for Alpha Cooler' });
+    await screen.findByRole('link', { name: 'Alpha Cooler' });
     await user.click(within(screen.getByRole('radiogroup', { name: 'Status' })).getByRole('radio', { name: 'In Development' }));
     await waitFor(() => expect(lastQuery('/priorities')).toMatchObject({ status_: 'In Development' }));
     await waitFor(() => expect(gridCount()).toBe(2));
@@ -402,7 +423,16 @@ describe('P21-T05 Matrix tabs', () => {
     // The shared search reaches the board as q.
     await user.type(screen.getByRole('searchbox', { name: 'Search' }), 'beta');
     await waitFor(() => expect(lastQuery('/priority-board')).toMatchObject({ q: 'beta' }));
-    await waitFor(() => expect(lastQuery('/priorities')).toMatchObject({ q: 'beta' }));
+    // D34-3: the grid filters its loaded rows in the browser; `q` is not sent to /priorities.
+    expect(getCalls('/priorities').every((c) => (c[1] as { query?: Query } | undefined)?.query?.q === undefined)).toBe(true);
+    await user.click(screen.getByRole('tab', { name: 'Scoring grid' }));
+    await waitFor(() => expect(screen.getByTestId('matrix-row-count')).toHaveTextContent(/^1 project ·/));
+    expect(screen.getByRole('link', { name: 'Beta Freezer' })).toBeInTheDocument();
+    // The search narrows the grid's loaded rows too: a name that is not served shows none.
+    await user.type(screen.getByRole('searchbox', { name: 'Filter by project name or code' }), 'x');
+    await waitFor(() => expect(screen.getByTestId('matrix-row-count')).toHaveTextContent('0 of 1 projects shown'));
+    await user.type(screen.getByRole('searchbox', { name: 'Filter by project name or code' }), '{Backspace}');
+    await user.click(screen.getByRole('tab', { name: 'Priority board' }));
     // The board explains why an unfiltered total can be lower than the grid's.
     expect(screen.getByTestId('board-scope-note')).toHaveTextContent('Cancelled, Commercialized and On Hold projects appear in the scoring grid only');
   });
@@ -441,8 +471,15 @@ describe('P21-T05 Matrix tabs', () => {
     const user = userEvent.setup();
     const container = document.body;
     renderMatrix('/matrix');
-    await screen.findByRole('button', { name: 'Edit prioritization score for Alpha Cooler' });
+    await screen.findByRole('link', { name: 'Alpha Cooler' });
     expect(await seriousAxeViolations(container)).toEqual([]);
+    // P34-T02: edit mode (score inputs, gate checkboxes, the edit bar).
+    await user.click(screen.getByRole('button', { name: 'Edit scores' }));
+    await user.click(screen.getByRole('textbox', { name: /^Strategic Project for Alpha Cooler/ }));
+    await user.keyboard('2');
+    expect(await seriousAxeViolations(container)).toEqual([]);
+    await user.click(screen.getByRole('button', { name: 'Cancel' }));
+    await user.click(await screen.findByRole('button', { name: 'Discard changes' }));
     await user.click(screen.getByRole('tab', { name: 'Priority board' }));
     await screen.findByRole('link', { name: 'Alpha Cooler' });
     expect(await seriousAxeViolations(container)).toEqual([]);

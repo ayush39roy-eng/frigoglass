@@ -77,8 +77,22 @@ class WorkspaceStage(BaseModel):
     #: derived per-project effort (0..104, from `design_effort_weeks` /
     #: `lab_effort_weeks`). Read-only here.
     lead_time_weeks: int
+    #: Retired with per-project timing editing (ADR 0048): always null once
+    #: migration p33c has run (a CHECK forbids a value). Kept on the wire
+    #: until the column is dropped (P33-F01); contract P33 Part G removes no
+    #: Workspace field.
     duration_override_weeks: int | None
     effort_weeks: int | None
+    #: P33-T12 (ADR 0046 §B, contract P33 Part G): the project's copy of the
+    #: category template, read-only. `plan_weeks` is the copied length
+    #: (0..104, the same value as `lead_time_weeks`); `gap_weeks` the signed
+    #: copied gap (`plan_gap_weeks`: negative = parallel, positive = wait, 0 =
+    #: neither); `own_effort` is true when the step's kind follows the
+    #: project's own effort figure (OR-1), so `duration_weeks` comes from
+    #: `effort_weeks`, not from `plan_weeks`.
+    plan_weeks: int
+    gap_weeks: int
+    own_effort: bool
     skipped: bool
     #: From the active run's step row (I13), not recomputed.
     planned_start_week: int | None

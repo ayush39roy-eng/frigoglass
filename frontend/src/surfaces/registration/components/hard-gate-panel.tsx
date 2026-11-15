@@ -11,6 +11,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { ApiError } from '@/lib/api/client';
+import { BAND_RANK_BUSY_MESSAGE, isBandRankBusy } from '@/lib/api/error-messages';
 import { Skeleton } from '@/components/ui/skeleton';
 import { UI_SCHEDULABLE_STATUSES, type ProjectStatus } from '@/types/enums';
 
@@ -47,6 +48,9 @@ export function HardGatePanel({ project, onSubmit }: HardGatePanelProps): React.
     } catch (err) {
       if (err instanceof ApiError && err.isForbidden) {
         setSubmitError('Your role cannot submit projects out of Draft.');
+      } else if (isBandRankBusy(err)) {
+        // P36-R03: 503 BAND_RANK_BUSY — nothing written; the user submits again.
+        setSubmitError(BAND_RANK_BUSY_MESSAGE);
       } else if (err instanceof ApiError) {
         const detail = err.detail;
         setSubmitError(

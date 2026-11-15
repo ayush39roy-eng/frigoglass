@@ -4,7 +4,9 @@ import * as React from 'react';
 import { MemoryRouter, useLocation } from 'react-router-dom';
 
 import { keySelection, sortedKeyList } from '@/lib/query-keys';
-import { PROJECT_CATEGORIES } from '@/types/enums';
+import { SEEDED_TEST_CATEGORIES } from '@/test/category-fixtures';
+
+const FIXTURE_CODES = SEEDED_TEST_CATEGORIES.map((c) => c.code);
 
 import {
   canonicalSelection,
@@ -19,12 +21,12 @@ import {
 describe('P31 multi-select URL state', () => {
   it('parses repeated params in option order, drops unknown values and duplicates', () => {
     const p = new URLSearchParams('category=B&category=A%2B&category=Z&category=B');
-    expect(parseMultiParam(p, 'category', PROJECT_CATEGORIES)).toEqual(['A+', 'B']);
+    expect(parseMultiParam(p, 'category', FIXTURE_CODES)).toEqual(['A+', 'B']);
   });
 
   it('a legacy single-value link is a one-element list; no param is an empty list', () => {
-    expect(parseMultiParam(new URLSearchParams('category=A'), 'category', PROJECT_CATEGORIES)).toEqual(['A']);
-    expect(parseMultiParam(new URLSearchParams('view=board'), 'category', PROJECT_CATEGORIES)).toEqual([]);
+    expect(parseMultiParam(new URLSearchParams('category=A'), 'category', FIXTURE_CODES)).toEqual(['A']);
+    expect(parseMultiParam(new URLSearchParams('view=board'), 'category', FIXTURE_CODES)).toEqual([]);
   });
 
   it('serializes as repeated params (A+ encoded), keeps other params, deletes when empty', () => {
@@ -42,9 +44,11 @@ describe('P31 multi-select URL state', () => {
   });
 
   it('toggles keep option order; an empty selection is not sent', () => {
-    expect(toggleSelection(['B'], 'A+', PROJECT_CATEGORIES)).toEqual(['A+', 'B']);
-    expect(toggleSelection(['A+', 'B'], 'A+', PROJECT_CATEGORIES)).toEqual(['B']);
-    expect(canonicalSelection(['C', 'A'], PROJECT_CATEGORIES)).toEqual(['A', 'C']);
+    expect(toggleSelection(['B'], 'A+', FIXTURE_CODES)).toEqual(['A+', 'B']);
+    expect(toggleSelection(['A+', 'B'], 'A+', FIXTURE_CODES)).toEqual(['B']);
+    expect(canonicalSelection(['C', 'A'], FIXTURE_CODES)).toEqual(['A', 'C']);
+    // P33-T14: no served list yet → the URL values are kept, de-duplicated, as written.
+    expect(canonicalSelection(['B2', 'A', 'B2'], null)).toEqual(['B2', 'A']);
     expect(selectionParam([])).toBeUndefined();
     expect(selectionParam(['A'])).toEqual(['A']);
   });

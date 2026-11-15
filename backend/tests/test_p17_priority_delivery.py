@@ -16,6 +16,7 @@ from models.hub import Hub
 from models.project import Project
 from models.schedule import ScheduleRunProjectOutcome
 from models.workflow import ProjectWorkflowStep
+from tests.factories import clear_rank_if_out_of_band
 from tests.test_p13_region_filter import (
     REGIONS,
     _act_as,
@@ -48,6 +49,7 @@ async def _shape(db_session, run) -> tuple[list[Project], set, dict]:
     ]
     for p, status in zip(p1, cycle, strict=False):
         p.status = status
+        clear_rank_if_out_of_band(p)
     await db_session.flush()
     # One In Queue project with a started stage -> in flight, not "not started".
     queued_with_progress = next(

@@ -18,8 +18,18 @@ deviation (docs/MEMORY.md P9-T03).
 **Every successful PUT** writes one audit row, sets `schedule_stale = true`
 on every schedulable project (`services.schedule_stale.
 mark_all_schedulable_stale`; it never solves), and returns the count in
-`X-Schedule-Stale-Count`. A lead-time edit also recomputes every live
-`ProjectWorkflowStep.duration_weeks` through `services.workflow_durations`.
+`X-Schedule-Stale-Count`.
+
+**P33 (ADR 0045, contract P33 Parts A, C, G).** `GET /workflow-settings` and
+`GET /workflow-settings/category-timelines` need `workflow_templates` READ
+or `workflow_settings` READ. The lead-time table is the category template:
+`lead_times[]` carry `gap_weeks` and the read-only `effort_weight_weeks`, and
+`categories` lists each category with its `template_version`. The timelines
+come from `scheduling.template_timeline` (`services.template_editor`).
+`PUT /workflow-settings/lead-times` is retired (410 `USE_TEMPLATE_APPLY`):
+the template is edited through `POST /workflow-templates/apply`
+(`api.routers.workflow_templates`), so a template value reaches a project
+only by the stage rule.
 
 **Precedence validation (steps PUT).** The final authority is the
 scheduler's own `scheduling.workflow.build_workflows`, called on the
@@ -47,13 +57,18 @@ from sqlalchemy.orm import selectinload
 
 import domain_constants as dc
 from api.db import get_db
-from api.deps import get_current_principal, principal_can, require_permission
+from api.deps import (
+    get_current_principal,
+    principal_can,
+    require_permission,
+    require_workflow_templates_or_settings_read,
+)
 from api.errors import HTTP_422, CodedHTTPException
 from core.principal import Principal
 from core.rbac import Action, Surface
 from models.audit import AuditLogEntry
 from models.chamber import Chamber
-from models.enums import OEM_PROJECT_CATEGORIES, ProjectCategory, WorkflowStepKind
+from models.enums import WorkflowStepKind
 from models.hub import Hub, HubWorkCalendar
 from models.user import User
 from models.workflow import Workflow, WorkflowLeadTime, WorkflowStepTemplate
@@ -62,15 +77,14 @@ from scheduling.types import WorkflowStepTemplate as SchedWorkflowStepTemplate
 from scheduling.workflow import build_workflows
 from schemas.workflow_settings import (
     BEquivalentRow,
+    CategorySetting,
     CategoryTimeline,
     ChamberSetting,
     ChamberSettingUpdateRequest,
     HubCalendarSetting,
     HubCalendarUpdateRequest,
     LeadTimeSetting,
-    LeadTimesUpdateRequest,
     StepsUpdateRequest,
-    TimelineStep,
     WorkflowSetting,
     WorkflowSettings,
     WorkflowStepSetting,
@@ -83,15 +97,15 @@ from services.capacity_supply import (
     region_holiday_weeks,
     round2,
 )
+from services.categories import load_catalog
 from services.hub_scope import hub_scope_filter, scoped_lab_regions
 from services.project_effort import (
-    TRIGGER_LEAD_TIME_EDIT,
     TRIGGER_STEP_KIND_EDIT,
     rederive_all_projects,
     split_rejected_error,
 )
 from services.schedule_stale import mark_all_schedulable_stale
-from services.workflow_durations import recompute_step_durations
+from services.template_editor import category_timelines, load_categories
 from services.workflow_previews import REFERENCE_CATEGORY, load_category_previews, ratio
 
 router = APIRouter(prefix="/workflow-settings", tags=["workflow-settings"])
@@ -101,16 +115,6 @@ _write = require_permission(Surface.WORKFLOW_SETTINGS, Action.WRITE)
 
 STALE_COUNT_HEADER = "X-Schedule-Stale-Count"
 AUDIT_ACTION_PREFIX = "workflow_settings."
-
-
-def categories_for_workflow(workflow_id: str) -> frozenset[ProjectCategory]:
-    """`OEM` uses the three OEM categories; every other workflow uses A+/A/B/C
-    (DOMAIN_RULES "Lead times").
-    """
-
-    if workflow_id == dc.WORKFLOW_ID_FOR_OEM_HUB:
-        return OEM_PROJECT_CATEGORIES
-    return frozenset(ProjectCategory) - OEM_PROJECT_CATEGORIES
 
 
 # --- Read model --------------------------------------------------------------
@@ -126,8 +130,20 @@ async def build_settings_payload(
 
     workflows: list[WorkflowSetting] = []
     lead_times: list[LeadTimeSetting] = []
+    categories: list[CategorySetting] = []
     template_times: list[datetime] = []
     if full:
+        # P33-T09 (contract C1): the B1 list with each `template_version`.
+        categories = [
+            CategorySetting(
+                code=c.code,
+                label=c.label,
+                workflow_id=c.workflow_id,
+                rank=c.rank,
+                template_version=c.template_version,
+            )
+            for c in sorted((await load_categories(db)).values(), key=lambda c: (c.rank, c.code))
+        ]
         wf_rows = (
             (
                 await db.execute(
@@ -163,17 +179,25 @@ async def build_settings_payload(
             t.id: t.sequence_order
             for t in (await db.execute(select(WorkflowStepTemplate))).scalars().all()
         }
-        category_order = {c: i for i, c in enumerate(ProjectCategory)}
+        # P33-T07: categories in rank order (the `categories` table).
+        category_order = (await load_catalog(db)).rank_by_code
         lt_rows = (await db.execute(select(WorkflowLeadTime))).scalars().all()
         lead_times = [
             LeadTimeSetting(
-                workflow_id=lt.workflow_id, category=lt.category, step_id=lt.step_id, weeks=lt.weeks
+                workflow_id=lt.workflow_id,
+                category=lt.category,
+                step_id=lt.step_id,
+                weeks=lt.weeks,
+                # P33-T09 (contract C1).
+                gap_weeks=lt.gap_weeks,
+                effort_weight_weeks=lt.effort_weight_weeks,
             )
             for lt in sorted(
                 lt_rows,
                 key=lambda lt: (
                     lt.workflow_id,
-                    category_order[lt.category],
+                    category_order.get(lt.category, len(category_order) + 1),
+                    lt.category,
                     seq.get(lt.step_id, 0),
                 ),
             )
@@ -252,6 +276,7 @@ async def build_settings_payload(
     return WorkflowSettings(
         workflows=workflows,
         lead_times=lead_times,
+        categories=categories,
         hub_calendars=hub_calendars,
         chambers=chambers,
         current_week=dc.CURRENT_WEEK,
@@ -299,7 +324,9 @@ async def _finish_put(
 @router.get("", response_model=WorkflowSettings)
 async def get_workflow_settings(
     db: AsyncSession = Depends(get_db),
-    current_user: Principal = Depends(_read),
+    # P33-T09 (contract Part A): `workflow_templates` READ or
+    # `workflow_settings` READ (both {Admin, Super Admin} today).
+    current_user: Principal = Depends(require_workflow_templates_or_settings_read),
 ) -> WorkflowSettings:
     return await build_settings_payload(db, current_user, full=True)
 
@@ -313,31 +340,15 @@ WorkflowParam = Literal["PDD", "OEM"]
 async def get_category_timelines(
     workflow: WorkflowParam = "PDD",
     db: AsyncSession = Depends(get_db),
-    current_user: Principal = Depends(_read),
+    current_user: Principal = Depends(require_workflow_templates_or_settings_read),
 ) -> list[CategoryTimeline]:
-    """Per category of `workflow`, each step's earliest start from the served
-    lead times and the precedence DAG, no capacity
-    (`services.workflow_previews`). Read-only, so no audit row."""
+    """Per category of `workflow` (rank order), each step's start and length
+    from the saved template (lengths and signed gaps) and the precedence DAG,
+    no capacity, FTE 1.0, one leader (`scheduling.template_timeline`;
+    contract P33 C2). With all gaps 0 and design steps totally ordered, every
+    start and duration equals the pre-P33 walk. Read-only, so no audit row."""
 
-    return [
-        CategoryTimeline(
-            category=p.category,
-            total_weeks=p.total_weeks,
-            design_weeks=p.design_weeks,
-            lab_weeks=p.lab_weeks,
-            steps=[
-                TimelineStep(
-                    code=s.step_id,
-                    name=s.name,
-                    resource_kind=s.kind,
-                    start_week=s.start_week,
-                    duration_weeks=s.duration_weeks,
-                )
-                for s in p.steps
-            ],
-        )
-        for p in await load_category_previews(db, workflow)
-    ]
+    return await category_timelines(db, workflow)
 
 
 @router.get("/b-equivalent", response_model=list[BEquivalentRow])
@@ -497,106 +508,28 @@ async def put_workflow_steps(
     )
 
 
-# --- Lead times (ADR 0007) -------------------------------------------------------
+# --- Lead times (ADR 0007): retired at P33-T10 ------------------------------------
 
 
-@router.put("/lead-times", response_model=WorkflowSettings)
+@router.put(
+    "/lead-times",
+    status_code=status.HTTP_410_GONE,
+    response_model=None,
+    responses={status.HTTP_410_GONE: {"description": "USE_TEMPLATE_APPLY"}},
+)
 async def put_lead_times(
-    body: LeadTimesUpdateRequest,
-    response: Response,
-    db: AsyncSession = Depends(get_db),
-    current_user: Principal = Depends(_write),
-) -> WorkflowSettings:
-    keys = [(lt.workflow_id, lt.category, lt.step_id) for lt in body.lead_times]
-    if len(keys) != len(set(keys)):
-        raise CodedHTTPException(
-            HTTP_422,
-            "DUPLICATE_LEAD_TIME",
-            "lead_times lists the same (workflow_id, category, step_id) more than once",
-        )
-    step_workflow: dict[str, str] = dict(
-        (
-            await db.execute(select(WorkflowStepTemplate.id, WorkflowStepTemplate.workflow_id))
-        )
-        .tuples()
-        .all()
-    )
-    for lt in body.lead_times:
-        if step_workflow.get(lt.step_id) != lt.workflow_id:
-            raise CodedHTTPException(
-                HTTP_422,
-                "BAD_LEAD_TIME",
-                f"{lt.step_id!r} is not a step of workflow {lt.workflow_id!r}",
-            )
-        if lt.category not in categories_for_workflow(lt.workflow_id):
-            raise CodedHTTPException(
-                HTTP_422,
-                "BAD_LEAD_TIME",
-                f"category {lt.category.value!r} does not belong to workflow {lt.workflow_id!r}",
-            )
+    current_user: Principal = Depends(get_current_principal),
+) -> None:
+    """Retired (ADR 0045 §5, contract P33 Part G): 410 `USE_TEMPLATE_APPLY`.
+    The Lead times tab saves through `POST /workflow-templates/apply-preview`
+    and `/apply`, so a template edit reaches a project only by the stage rule.
+    Still authenticated (401 without a session); the body is not read."""
 
-    existing = {
-        (row.workflow_id, row.category, row.step_id): row
-        for row in (await db.execute(select(WorkflowLeadTime))).scalars().all()
-    }
-    before: list[dict[str, Any]] = []
-    after: list[dict[str, Any]] = []
-    for lt in body.lead_times:
-        row = existing.get((lt.workflow_id, lt.category, lt.step_id))
-        before.append(
-            {
-                "workflow_id": lt.workflow_id,
-                "category": lt.category.value,
-                "step_id": lt.step_id,
-                "weeks": row.weeks if row is not None else None,
-            }
-        )
-        if row is None:
-            db.add(
-                WorkflowLeadTime(
-                    workflow_id=lt.workflow_id,
-                    category=lt.category,
-                    step_id=lt.step_id,
-                    weeks=lt.weeks,
-                )
-            )
-        else:
-            row.weeks = lt.weeks
-        after.append(
-            {
-                "workflow_id": lt.workflow_id,
-                "category": lt.category.value,
-                "step_id": lt.step_id,
-                "weeks": lt.weeks,
-            }
-        )
-    await db.flush()
-    recomputed = await recompute_step_durations(db)
-    # ADR 0041 R6: the split depends on the table's shape, so a lead-time
-    # edit re-derives every project with a figure (frozen ones excepted).
-    # It writes `effort_weeks` only: a user override is never cleared.
-    try:
-        results = await rederive_all_projects(
-            db, trigger=TRIGGER_LEAD_TIME_EDIT, actor_user_id=current_user.user_id
-        )
-    except EffortSplitRejected as exc:
-        await db.rollback()
-        raise split_rejected_error(exc) from exc
-    rederived = sum(1 for r in results if r.changed)
-    return await _finish_put(
-        db,
-        response,
-        current_user,
-        action=f"{AUDIT_ACTION_PREFIX}lead_times_update",
-        entity_type="WorkflowLeadTime",
-        entity_id="lead_times",
-        hub_id=None,
-        before_state={"lead_times": before},
-        after_state={
-            "lead_times": after,
-            "recomputed_step_rows": recomputed,
-            "effort_rederived_projects": rederived,
-        },
+    raise CodedHTTPException(
+        status.HTTP_410_GONE,
+        "USE_TEMPLATE_APPLY",
+        "Lead times are edited through the category template apply "
+        "(POST /workflow-templates/apply).",
     )
 
 

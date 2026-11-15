@@ -66,12 +66,11 @@ function step(seq: number, start: number, end: number, over: Partial<GanttStepRo
     eng_conflict: false,
     chamber_overlap: false,
     lead_time_weeks: 2,
-    duration_override_weeks: null,
-    start_not_before_week: null,
-    timing_editable: 'none',
     span_fte: null,
     effort_weeks: null,
-    overlap_weeks: null,
+    plan_weeks: 2,
+    gap_weeks: 0,
+    own_effort: false,
     predecessor_ids: [],
     ...over,
   };
@@ -167,28 +166,32 @@ describe('GanttPage', () => {
     expect(screen.getAllByTestId('gantt-step-row')).toHaveLength(14);
   });
 
-  it('P32-R02 (owner): step editing lives on this page — editable steps get drag, resize and Edit timing; served "none" gets none', async () => {
+  it('P33-T15 (ADR 0048): read-only for every role — no drag, resize, Edit timing or edited marker, even with GANTT write', async () => {
     const user = userEvent.setup();
-    const editable = project({
+    // `fullPermissions` (the default session) includes GANTT write.
+    const withGaps = project({
       steps: Array.from({ length: 14 }, (_, i) =>
-        step(i + 1, i * 2 + 1, i * 2 + 2, { timing_editable: i === 0 ? 'none' : 'move_resize' }),
+        step(i + 1, i * 2 + 1, i * 2 + 2, { gap_weeks: i === 3 ? -2 : i === 5 ? 3 : 0, own_effort: i === 4 }),
       ),
     });
-    hooks.useGantt.mockReturnValue(ganttData({ rows: [editable] }));
-    const { unmount } = renderWithProviders(<GanttPage />);
-    await user.click(screen.getByRole('button', { name: 'Expand steps for Cooler Alpha' }));
-    expect(screen.getAllByTestId('step-drag-body')).toHaveLength(13);
-    expect(screen.getAllByTestId('step-drag-handle')).toHaveLength(13);
-    expect(screen.getAllByRole('button', { name: /^Edit timing for Step \d+ \(Cooler Alpha\)$/ })).toHaveLength(13);
-    expect(screen.queryByRole('link', { name: /Edit steps/ })).not.toBeInTheDocument();
-    unmount();
-
-    // A viewer: every step served `timing_editable: "none"` (the default fixture).
-    hooks.useGantt.mockReturnValue(ganttData());
+    hooks.useGantt.mockReturnValue(ganttData({ rows: [withGaps] }));
     renderWithProviders(<GanttPage />);
     await user.click(screen.getByRole('button', { name: 'Expand steps for Cooler Alpha' }));
+    expect(screen.getAllByTestId('gantt-step-row')).toHaveLength(14);
     expect(screen.queryByTestId('step-drag-overlay')).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /Edit timing/ })).not.toBeInTheDocument();
+    expect(screen.queryByTestId('step-drag-body')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('step-drag-handle')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('step-timing-edited')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Edit timing|Reset timing/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(screen.queryByText(/drag a step bar/i)).not.toBeInTheDocument();
+
+    // The served signed gap becomes a read-only chip: negative = parallel, positive = wait.
+    const chips = screen.getAllByTestId('step-gap-chip');
+    expect(chips.map((c) => c.dataset.gapWeeks)).toEqual(['-2', '3']);
+    expect(chips[0]).toHaveTextContent(/^parallel 2 wk/);
+    expect(chips[1]).toHaveTextContent(/^wait 3 wk/);
+    expect(chips.every((c) => c.tagName === 'SPAN')).toBe(true);
   });
 
   it('degrades to an access notice on a 403 (Auditor)', () => {

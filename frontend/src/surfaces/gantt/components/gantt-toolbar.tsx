@@ -12,7 +12,7 @@ import {
 } from '@/components/ui/select';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { MultiChipFilter } from '@/components/shared/multi-chip-filter';
-import { CATEGORY_CHIP_OPTIONS, TYPE_CHIP_OPTIONS } from '@/lib/multi-select-filter';
+import { TYPE_CHIP_OPTIONS, useCategoryChipOptions } from '@/lib/multi-select-filter';
 import { UI_PROJECT_STATUSES, type ProjectPriority, type ProjectStatus } from '@/types/enums';
 
 import type { GanttFacets, GanttSort } from '../api/types';
@@ -99,6 +99,7 @@ export interface GanttToolbarProps {
 }
 
 export function GanttFilterBar({ filters, onChange, facets }: GanttToolbarProps): React.JSX.Element {
+  const categoryChips = useCategoryChipOptions();
   const searchId = React.useId();
   const set = <K extends keyof GanttFilterState>(key: K, value: GanttFilterState[K]): void =>
     onChange({ ...filters, [key]: value });
@@ -175,7 +176,7 @@ export function GanttFilterBar({ filters, onChange, facets }: GanttToolbarProps)
       <div className="flex w-full flex-col gap-2" data-testid="gantt-chip-filters">
         <MultiChipFilter
           label="Category"
-          options={CATEGORY_CHIP_OPTIONS}
+          options={categoryChips}
           value={filters.category}
           onChange={(next) => set('category', next)}
           data-testid="gantt-category-chips"

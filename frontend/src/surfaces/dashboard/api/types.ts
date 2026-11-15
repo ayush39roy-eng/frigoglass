@@ -166,6 +166,22 @@ export interface ProjectFilterRow {
   product_type: string | null;
   /** Rank by score within the filtered set, 1-based; null when unscored. */
   priority_rank: number | null;
+  // P35-T01: the register's editable fields (Projects page Edit mode, P35-T02).
+  actual_start_week: WeekNumber | null;
+  actual_end_week: WeekNumber | null;
+  /** The client's typed design / lab time figures (ADR 0041), 2 dp; null = none. */
+  design_effort_weeks: number | null;
+  lab_effort_weeks: number | null;
+  /** D35-1: Σ effective weeks of the kind with the project's own figure
+   *  ignored — what "↺ reset" returns to. Served; never summed in the browser. */
+  design_weeks_calculated: number;
+  lab_weeks_calculated: number;
+  // P35-T08b (OQ #84 assumption): display warning only, never a scheduler input.
+  /** The status the current step implies (served by the backend); null for
+   *  On Hold / Cancelled / In Buyoff / Draft, or an unmapped step. */
+  expected_status: ProjectStatus | null;
+  /** Served: `status` differs from `expected_status`. */
+  status_mismatch: boolean;
 }
 
 /** The active run's outcome for a project (P13 contract §3). */

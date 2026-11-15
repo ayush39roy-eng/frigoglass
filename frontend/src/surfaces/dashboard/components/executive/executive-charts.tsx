@@ -7,8 +7,8 @@ import { CARRY_OVER_YEAR, PLAN_YEAR } from '@/lib/domain-constants';
 import { formatInteger } from '@/lib/format';
 import { categoryRank, dashCatFill } from '@/lib/categorical-palette';
 import {
-  CATEGORY_FILTER_VALUES,
   toggleSelection,
+  useCategoryFilterValues,
   TYPE_FILTER_VALUES,
   type MultiChipOption,
 } from '@/lib/multi-select-filter';
@@ -532,8 +532,12 @@ export function TypeDonut({ buckets, total, selected, onChange }: CrossFilterDon
   );
 }
 
+const NO_CATEGORY_VALUES: readonly string[] = [];
+
 /** P31 "Projects by category": the served `by_category` buckets, the same way. */
 export function CategoryDonut({ buckets, total, selected, onChange }: CrossFilterDonutProps): React.JSX.Element {
+  // P33-T14: served category codes in rank order (+ Unmapped).
+  const allowed = useCategoryFilterValues(true) ?? NO_CATEGORY_VALUES;
   const slices: Slice[] = buckets.map((b) => ({
     key: b.key,
     label: b.key,
@@ -548,7 +552,7 @@ export function CategoryDonut({ buckets, total, selected, onChange }: CrossFilte
       slices={slices}
       total={total}
       totalLabel="projects"
-      select={{ allowed: CATEGORY_FILTER_VALUES, selected, onChange, legendLabel: 'Filter the Dashboard by category' }}
+      select={{ allowed, selected, onChange, legendLabel: 'Filter the Dashboard by category' }}
       info={
         <>
           <p>

@@ -142,6 +142,7 @@ from seed.initial_scoring_rubric import (  # noqa: E402
 )
 from seed.seed_vip_board import seed_vip_board  # noqa: E402
 from services.audit_helpers import project_audit_state  # noqa: E402
+from services.band_rank import assign_default_band_ranks, provisional_band_rank  # noqa: E402
 from services.schedule_persistence import (  # noqa: E402
     build_schedule_input_from_db,
     persist_schedule_output,
@@ -403,7 +404,8 @@ async def seed_workflows(session: AsyncSession) -> dict[str, int]:
         await session.merge(
             WorkflowLeadTime(
                 workflow_id=workflow_id,
-                category=ProjectCategory(category),
+                # P33-T07: text + FK to `categories` (seeded by p33a).
+                category=ProjectCategory(category).value,
                 step_id=step_id,
                 weeks=weeks,
             )
@@ -489,7 +491,7 @@ async def seed_engineers(
             name=e["name"],
             hub_id=hubs_by_name[e["hub"]].id,
             fte=e["fte"],
-            allowed_categories=[EngineerAllowedCategory(c) for c in e["cats"]],
+            allowed_categories=[EngineerAllowedCategory(c).value for c in e["cats"]],
         )
         session.add(eng)
         engineers_by_name[e["name"]] = eng
@@ -574,19 +576,25 @@ async def seed_projects(
     rubric = await ensure_scoring_rubric(session)
 
     count = 0
+    # P36 (R36-1(f)): placeholder ranks, renumbered by the backfill rule below.
+    rank_counter: dict[str, int] = {}
     for p in data["projects"]:
         hub = hubs_by_name[p["hub"]]
         category = project_category_for_hub(hub, ProjectCategory(p["cat"]))
         workflow_id = workflow_id_for_hub(hub.is_oem)
+        status = seed_project_status(p["status"])
         project = Project(
             name=p["name"],
             external_code=p["id"],
             hub_id=hub.id,
             leader_engineer_id=engineers_by_name[p["leader"]].id,
-            category=category,
+            category=category.value,
             type=ProjectType(p["type"]),
-            status=seed_project_status(p["status"]),
+            status=status,
             priority=ProjectPriority(p["prio"]),
+            band_rank=provisional_band_rank(
+                status, ProjectPriority(p["prio"]), rank_counter
+            ),
             frozen=p["frozen"],
             # Per DOMAIN_RULES.md booking rules, the prototype's `actualStart`
             # is only a real "actual" execution date when `frozen` — for
@@ -631,6 +639,8 @@ async def seed_projects(
         )
         count += 1
     await session.flush()
+    # ADR 0050 / R36-1(f): every band ranked by the migration's rule.
+    await assign_default_band_ranks(session)
     return count
 
 
@@ -760,7 +770,7 @@ async def seed_client_2026(
             name=e.name,
             hub_id=hubs_by_name[e.hub].id,
             fte=e.fte,
-            allowed_categories=[EngineerAllowedCategory(c) for c in e.allowed_categories],
+            allowed_categories=[EngineerAllowedCategory(c).value for c in e.allowed_categories],
             counts_in_capacity=e.counts_in_capacity,
         )
         session.add(eng)
@@ -800,6 +810,8 @@ async def seed_client_2026(
     templates = {
         step_id: seq for _wf, step_id, _c, _n, _k, seq, _p in dc.WORKFLOW_STEP_TEMPLATE_SEED
     }
+    # P36 (R36-1(f)): placeholder ranks, renumbered by the backfill rule below.
+    rank_counter: dict[str, int] = {}
     for i, p in enumerate(projects):
         hub = hubs_by_name[p["hub"]]
         category = ProjectCategory(p["category"])
@@ -814,10 +826,13 @@ async def seed_client_2026(
             hub_id=hub.id,
             leader_engineer_id=engineers_by_name[leader].id if leader is not None else None,
             leader_is_provisional=i in provisional,
-            category=category,
+            category=category.value,
             type=ProjectType(p["type"]) if p["type"] else None,
             status=seed_project_status(p["status"]),
             priority=ProjectPriority(p["priority"]),
+            band_rank=provisional_band_rank(
+                seed_project_status(p["status"]), ProjectPriority(p["priority"]), rank_counter
+            ),
             frozen=False,
             delay_weeks=0,
             reg_year=reg_year,
@@ -883,6 +898,8 @@ async def seed_client_2026(
                 )
             )
     await session.flush()
+    # ADR 0050 / R36-1(f): every band ranked by the migration's rule.
+    await assign_default_band_ranks(session)
 
     # --- Summary run: one in-memory greedy run (nothing persisted) ---------
     schedule_input = await build_schedule_input_from_db(session, current_week=current_week)

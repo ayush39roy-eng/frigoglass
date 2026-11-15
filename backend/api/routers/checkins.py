@@ -78,6 +78,7 @@ from services.rate_limit import TokenBucketLimiter
 from services.run_dispatch import dispatch_greedy, enqueue_or_fail, find_in_flight_run
 from services.schedule_persistence import create_queued_schedule_run
 from services.schedule_stale import mark_projects_stale
+from services.template_apply import lock_projects
 from services.tracking import DueStage, due_stages_for, status_from_due_stages
 from services.workspace import get_scoped_project_or_404, merge_stage_update
 
@@ -355,6 +356,10 @@ async def submit_check_ins(
             headers={"Retry-After": str(max(1, math.ceil(retry_after)))},
         )
 
+    # P33-T10 (R33-10): the project row lock a template apply takes, in id
+    # order, before any project or stage row is read, so a stage cannot cross
+    # Not Started between an apply's evaluation and its write.
+    await lock_projects(db, {e.project_id for e in body.entries})
     access = await resolve_access(db, current_user)
     planned, errors = await _validate(db, access, body.entries)
     if errors:

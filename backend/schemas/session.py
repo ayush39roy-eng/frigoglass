@@ -28,6 +28,9 @@ class SurfacePermissions(BaseModel):
     project_registration: SurfacePermission
     capacity_planning: SurfacePermission
     workflow_settings: SurfacePermission
+    #: P33-T06 (ADR 0045 §7, docs/API_CONTRACT_P33.md Part A): category
+    #: templates. Admin and Super Admin RW, every other role none.
+    workflow_templates: SurfacePermission
     audit_log: SurfacePermission
     user_role_admin: SurfacePermission
 

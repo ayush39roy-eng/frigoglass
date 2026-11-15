@@ -2,7 +2,6 @@ import { z } from 'zod';
 
 import {
   HUB_NAMES,
-  PROJECT_CATEGORIES,
   PROJECT_PRIORITIES,
   WORKFLOW_STEP_KINDS,
   WORKFLOW_STEP_STATUSES,
@@ -45,7 +44,8 @@ export const importRowSchema: z.ZodType<ImportRow> = z.object({
   name: z.string(),
   hub: z.enum(HUB_NAMES),
   hub_raw: nstr,
-  category: z.enum(PROJECT_CATEGORIES),
+  // P33-T14: any served category code; the server checks it against the table (B3).
+  category: z.string().min(1),
   category_raw: nstr,
   lead_time_label: z.string(),
   status: z.string(),

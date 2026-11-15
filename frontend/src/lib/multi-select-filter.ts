@@ -17,8 +17,8 @@
 import { useCallback, useMemo } from 'react';
 import { useSearchParams } from 'react-router-dom';
 
+import { useCategories, useCategoryCodes } from '@/lib/api/categories';
 import {
-  PROJECT_CATEGORIES,
   PROJECT_TYPE_LABELS,
   PROJECT_TYPES,
   type ProjectCategory,
@@ -35,22 +35,34 @@ export type TypeFilterValue = ProjectType | typeof UNMAPPED_TYPE;
 export const TYPE_FILTER_VALUES: readonly TypeFilterValue[] = [...PROJECT_TYPES, UNMAPPED_TYPE];
 
 export type CategoryFilterValue = ProjectCategory | typeof UNMAPPED_TYPE;
-/** Category options with the Dashboard-only `Unmapped` appended. */
-export const CATEGORY_FILTER_VALUES: readonly CategoryFilterValue[] = [...PROJECT_CATEGORIES, UNMAPPED_TYPE];
+
+/**
+ * P33-T14 (ADR 0047): the category filter values, served codes in rank order,
+ * with the Dashboard-only `Unmapped` appended when asked. `null` while no list
+ * is available (the URL selection is then kept as written, see
+ * `canonicalSelection`).
+ */
+export function useCategoryFilterValues(withUnmapped = false): readonly CategoryFilterValue[] | null {
+  const codes = useCategoryCodes();
+  return useMemo(() => (codes === null ? null : withUnmapped ? [...codes, UNMAPPED_TYPE] : codes), [codes, withUnmapped]);
+}
 
 /** The URL / API param names (the same on every surface). */
 export const CATEGORY_PARAM = 'category';
 export const TYPE_PARAM = 'type';
 
-/** Keep only allowed values, drop duplicates, return them in option order. */
-export function canonicalSelection<T extends string>(values: Iterable<string>, allowed: readonly T[]): T[] {
+/** Keep only allowed values, drop duplicates, return them in option order.
+ *  `allowed === null` (P33-T14: the served category list has not arrived):
+ *  keep every value, de-duplicated, in the given order. */
+export function canonicalSelection<T extends string>(values: Iterable<string>, allowed: readonly T[] | null): T[] {
   const picked = new Set<string>();
   for (const v of values) picked.add(v);
+  if (allowed === null) return [...picked] as T[];
   return allowed.filter((a) => picked.has(a));
 }
 
 /** Toggle one value in a selection, keeping the option order. */
-export function toggleSelection<T extends string>(current: readonly T[], value: T, allowed: readonly T[]): T[] {
+export function toggleSelection<T extends string>(current: readonly T[], value: T, allowed: readonly T[] | null): T[] {
   const next = new Set<string>(current);
   if (next.has(value)) next.delete(value);
   else next.add(value);
@@ -66,7 +78,7 @@ export function toggleSelection<T extends string>(current: readonly T[], value: 
 export function parseMultiParam<T extends string>(
   params: URLSearchParams,
   key: string,
-  allowed: readonly T[],
+  allowed: readonly T[] | null,
 ): T[] {
   return canonicalSelection(params.getAll(key), allowed);
 }
@@ -91,7 +103,7 @@ export function selectionParam<T extends string>(values: readonly T[]): T[] | un
  */
 export function useMultiSearchParam<T extends string>(
   key: string,
-  allowed: readonly T[],
+  allowed: readonly T[] | null,
 ): [T[], (next: readonly T[]) => void] {
   const [params, setParams] = useSearchParams();
   const raw = params.getAll(key).join('\u0000');
@@ -118,7 +130,9 @@ export function useCategoryTypeParams<
   TCat extends string = ProjectCategory,
 >(
   typeValues: readonly TType[] = PROJECT_TYPES as unknown as readonly TType[],
-  categoryValues: readonly TCat[] = PROJECT_CATEGORIES as unknown as readonly TCat[],
+  /** P33-T14: the served category codes are the allowed values; `Unmapped`
+   *  is appended for the Dashboard-style registers. */
+  { withUnmappedCategory = false }: { withUnmappedCategory?: boolean } = {},
 ): {
   categories: TCat[];
   types: TType[];
@@ -129,6 +143,7 @@ export function useCategoryTypeParams<
   setBoth: (categories: readonly TCat[], types: readonly TType[]) => void;
   clear: () => void;
 } {
+  const categoryValues = useCategoryFilterValues(withUnmappedCategory) as readonly TCat[] | null;
   const [categories, setCategories] = useMultiSearchParam(CATEGORY_PARAM, categoryValues);
   const [types, setTypes] = useMultiSearchParam(TYPE_PARAM, typeValues);
   const [, setParams] = useSearchParams();
@@ -164,11 +179,23 @@ export interface MultiChipOption<T extends string> {
   meta?: string | undefined;
 }
 
-/** Category chips: the codes are the labels ("A+", "B-OEM"). */
-export const CATEGORY_CHIP_OPTIONS: readonly MultiChipOption<ProjectCategory>[] = PROJECT_CATEGORIES.map((c) => ({
-  value: c,
-  label: c,
-}));
+/**
+ * P33-T14: category chips from the served list, in rank order. The code is the
+ * chip text ("A+", "B-OEM"); the served label is the tooltip when it differs.
+ * `withUnmapped` appends the Dashboard-only `Unmapped` (no category).
+ */
+export function useCategoryChipOptions(withUnmapped = false): readonly MultiChipOption<CategoryFilterValue>[] {
+  const { categories } = useCategories();
+  return useMemo(() => {
+    const chips: MultiChipOption<CategoryFilterValue>[] = categories.map((c) => ({
+      value: c.code,
+      label: c.code,
+      title: c.label !== c.code ? c.label : undefined,
+    }));
+    if (withUnmapped) chips.push({ value: UNMAPPED_TYPE, label: 'Unmapped', title: 'Projects with no category' });
+    return chips;
+  }, [categories, withUnmapped]);
+}
 
 /** Type chips: the served labels (`PROJECT_TYPE_LABELS`), the code as tooltip. */
 export const TYPE_CHIP_OPTIONS: readonly MultiChipOption<ProjectType>[] = PROJECT_TYPES.map((t) => ({
@@ -176,12 +203,6 @@ export const TYPE_CHIP_OPTIONS: readonly MultiChipOption<ProjectType>[] = PROJEC
   label: PROJECT_TYPE_LABELS[t],
   title: t,
 }));
-
-/** Category chips plus the Dashboard-only `Unmapped` (no category). */
-export const CATEGORY_CHIP_OPTIONS_WITH_UNMAPPED: readonly MultiChipOption<CategoryFilterValue>[] = [
-  ...CATEGORY_CHIP_OPTIONS,
-  { value: UNMAPPED_TYPE, label: 'Unmapped', title: 'Projects with no category' },
-];
 
 /** Type chips plus the Dashboard-only `Unmapped` (no type). */
 export const TYPE_CHIP_OPTIONS_WITH_UNMAPPED: readonly MultiChipOption<TypeFilterValue>[] = [

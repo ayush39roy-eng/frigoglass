@@ -65,20 +65,22 @@ from tests.conftest import run_alembic
 # schedule_run_follow_ups + P14-T02's vip_items and vip_item_projects + P26-T01's
 # scoring_dimensions, rubric_versions and priority_dimension_scores), plus
 # `alembic_version`.
-EXPECTED_TABLE_COUNT = 36
-#: P26-T01 (`p26a_scoring_rubric_tables`, head): every downgrade target below is
+#: P33-T07 (`p33a_categories`): + `categories`; P33-T08
+#: (`p33b_template_copy`, head): + `template_changes`.
+EXPECTED_TABLE_COUNT = 38
+#: Every downgrade target below is older than `p33a_categories`.
+PRE_P33_TABLE_COUNT = EXPECTED_TABLE_COUNT - 2
+#: P26-T01 (`p26a_scoring_rubric_tables`): every downgrade target below it is
 #: older, so each one also drops these three tables.
-PRE_P26_TABLE_COUNT = EXPECTED_TABLE_COUNT - 3
+PRE_P26_TABLE_COUNT = PRE_P33_TABLE_COUNT - 3
 
 EXPECTED_ENUM_TYPES = {
     "lab_region",
     "hub_name",
     "workflow_step_kind",
     "currency_code",
-    "engineer_allowed_category",
     "solver_type",
     "schedule_run_status",
-    "project_category",
     "project_type",
     "project_status",
     "project_priority",
@@ -96,6 +98,16 @@ EXPECTED_ENUM_TYPES = {
     # P27-T01 (`p27a_project_scoring_tags`): Registration "project nature" tags.
     "project_scoring_tag",
 }
+#: P33-T07 (`p33a_categories`) drops these two (categories become a table);
+#: every downgrade target below restores them.
+P33_DROPPED_ENUM_TYPES = {"project_category", "engineer_allowed_category"}
+PRE_P33_ENUM_TYPES = EXPECTED_ENUM_TYPES | P33_DROPPED_ENUM_TYPES
+_CATEGORIES_SQL = "SELECT string_agg(code, ',' ORDER BY rank) FROM categories"
+P33_TRIGGERS = (
+    "trg_engineers_allowed_categories_known",
+    # P33-T08 (`p33b_template_copy`): immutable R2 weights.
+    "trg_workflow_lead_times_effort_weight",
+)
 
 # P29-T01 (`p29a_capacity_hubs`, `p29b_bc_type_regulatory`, head): three
 # columns and the flat-capacity-hub trigger.
@@ -223,6 +235,8 @@ def test_migration_up_down_up_down_cycle():
         assert _query_scalar(url, _IS_VIP_COLUMN_SQL) == 1
         assert _query_scalar(url, _FOLLOW_UP_SEED_SQL) == 1
         assert _query_scalar(url, _STEP_TIMING_COLUMNS_SQL) == 2
+        assert _query_scalar(url, _CATEGORIES_SQL) == "A+,A,B,C,A-OEM,B-OEM,C-OEM"
+        assert set(P33_TRIGGERS) <= _trigger_names(url)
 
         # --- P29-T01 (`p29a_capacity_hubs` + `p29b_bc_type_regulatory`, head):
         # downgrade both (columns, trigger and function go; tables and enums
@@ -233,8 +247,9 @@ def test_migration_up_down_up_down_cycle():
         assert r.returncode == 0, f"downgrade to p27a (P29-T01) failed:\n{r.stdout}\n{r.stderr}"
         assert _query_scalar(url, _P29_COLUMNS_SQL) == 0
         assert not (set(P29_TRIGGERS) & _trigger_names(url))
-        assert _table_count(url) == EXPECTED_TABLE_COUNT
-        assert _enum_type_names(url) == EXPECTED_ENUM_TYPES
+        assert not (set(P33_TRIGGERS) & _trigger_names(url))
+        assert _table_count(url) == PRE_P33_TABLE_COUNT
+        assert _enum_type_names(url) == PRE_P33_ENUM_TYPES
         r = run_alembic(["upgrade", "head"], url)
         assert r.returncode == 0, f"re-upgrade to p29b failed:\n{r.stdout}\n{r.stderr}"
         assert _query_scalar(url, _P29_COLUMNS_SQL) == 3
@@ -245,8 +260,8 @@ def test_migration_up_down_up_down_cycle():
         r = run_alembic(["downgrade", "p26a_scoring_rubric_tables"], url)
         assert r.returncode == 0, f"downgrade to p26a (P27-T01) failed:\n{r.stdout}\n{r.stderr}"
         assert _query_scalar(url, _SCORING_TAGS_COLUMN_SQL) == 0
-        assert _enum_type_names(url) == EXPECTED_ENUM_TYPES - {"project_scoring_tag"}
-        assert _table_count(url) == EXPECTED_TABLE_COUNT
+        assert _enum_type_names(url) == PRE_P33_ENUM_TYPES - {"project_scoring_tag"}
+        assert _table_count(url) == PRE_P33_TABLE_COUNT
         r = run_alembic(["upgrade", "head"], url)
         assert r.returncode == 0, f"re-upgrade to head after p27a failed:\n{r.stdout}\n{r.stderr}"
         assert _query_scalar(url, _SCORING_TAGS_COLUMN_SQL) == 1

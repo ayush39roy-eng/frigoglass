@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { fireEvent, screen, waitFor, within } from '@testing-library/react';
+import { createEvent, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { useLocation } from 'react-router-dom';
 
@@ -16,7 +16,13 @@ vi.mock('@/lib/api/client', async () => {
   const actual = await vi.importActual<typeof import('@/lib/api/client')>('@/lib/api/client');
   return { ...actual, apiGet: (...a: unknown[]) => client.apiGet(...a) };
 });
-const move = { moveProjectPriority: vi.fn(), fetchScheduleRunChanges: vi.fn(), previewProjectPriority: vi.fn() };
+const move = {
+  moveProjectPriority: vi.fn(),
+  fetchScheduleRunChanges: vi.fn(),
+  previewProjectPriority: vi.fn(),
+  previewProjectBandRank: vi.fn(),
+  moveProjectBandRank: vi.fn(),
+};
 vi.mock('@/lib/api/priority-move', async () => {
   const actual = await vi.importActual<typeof import('@/lib/api/priority-move')>('@/lib/api/priority-move');
   return {
@@ -24,6 +30,8 @@ vi.mock('@/lib/api/priority-move', async () => {
     moveProjectPriority: (...a: unknown[]) => move.moveProjectPriority(...a),
     fetchScheduleRunChanges: (...a: unknown[]) => move.fetchScheduleRunChanges(...a),
     previewProjectPriority: (...a: unknown[]) => move.previewProjectPriority(...a),
+    previewProjectBandRank: (...a: unknown[]) => move.previewProjectBandRank(...a),
+    moveProjectBandRank: (...a: unknown[]) => move.moveProjectBandRank(...a),
   };
 });
 const sse = { streamSolverProgress: vi.fn() };
@@ -86,6 +94,8 @@ function card(id: string, overrides: Partial<PriorityBoardCard> = {}): PriorityB
     within_year: true,
     health: 'on_track',
     tracking_status: 'live',
+    band_rank: 1,
+    frozen: false,
     ...overrides,
   };
 }
@@ -106,10 +116,10 @@ function board(cols: Partial<Record<ProjectPriority, PriorityBoardCard[]>>): Pri
 
 const DEFAULT_BOARD = board({
   P1: [
-    card('gated', { name: 'Gated Cooler', hard_gated: true, is_vip: true, tracking_status: 'overdue' }),
-    card('alpha', { name: 'Alpha Cooler', score: 65.5 }),
+    card('gated', { name: 'Gated Cooler', hard_gated: true, is_vip: true, tracking_status: 'overdue', band_rank: 1 }),
+    card('alpha', { name: 'Alpha Cooler', score: 65.5, band_rank: 2 }),
   ],
-  P2: [card('beta', { name: 'Beta Freezer', score: 50, within_year: false, projected_end_week: 60, health: 'off_track' })],
+  P2: [card('beta', { name: 'Beta Freezer', score: 50, within_year: false, projected_end_week: 60, health: 'off_track', frozen: true })],
   Q: [card('gamma', { name: 'Gamma Queue', score: null, health: null, projected_end_week: null, within_year: null, tracking_status: 'idle' })],
 });
 
@@ -145,6 +155,46 @@ function cardEl(name: string): HTMLElement {
   // `hidden`: the confirm dialog (modal) hides the board from the a11y tree.
   const link = screen.getByRole('link', { name, hidden: true });
   const el = link.closest<HTMLElement>('[data-testid="board-card"]');
+  if (!el) throw new Error(`no card ${name}`);
+  return el;
+}
+
+/** P36: the column slot (`li`) holding the card or list row of `name`. */
+function slotOf(name: string): HTMLElement {
+  const link = screen.getByRole('link', { name, hidden: true });
+  const el = link.closest<HTMLElement>('[data-slot-index]');
+  if (!el) throw new Error(`no slot ${name}`);
+  return el;
+}
+
+/** jsdom lays nothing out: give a slot a 100 px box at y = 0 so "above / below its middle" is decidable. */
+function boxSlot(el: HTMLElement): void {
+  vi.spyOn(el, 'getBoundingClientRect').mockReturnValue({
+    top: 0, bottom: 100, height: 100, left: 0, right: 200, width: 200, x: 0, y: 0, toJSON: () => ({}),
+  } as DOMRect);
+}
+
+/** jsdom has no DragEvent, so an init `clientY` is dropped: set it on the event itself. */
+function dragAt(kind: 'dragOver' | 'drop', el: HTMLElement, clientY: number, dt = dataTransfer()): void {
+  const event = createEvent[kind](el, { dataTransfer: dt });
+  Object.defineProperty(event, 'clientY', { value: clientY });
+  fireEvent(el, event);
+}
+
+/** P36: pointer drag of `name` over the card `over`, `half` = above or below its middle, then drop. */
+function rankDrop(name: string, over: string, half: 'above' | 'below', { drop = true } = {}): void {
+  const dt = dataTransfer();
+  const slot = slotOf(over);
+  boxSlot(slot);
+  const clientY = half === 'above' ? 10 : 90;
+  fireEvent.dragStart(cardOrRow(name), { dataTransfer: dt });
+  dragAt('dragOver', slot, clientY, dt);
+  if (drop) dragAt('drop', slot, clientY, dt);
+}
+
+function cardOrRow(name: string): HTMLElement {
+  const link = screen.getByRole('link', { name, hidden: true });
+  const el = link.closest<HTMLElement>('[data-testid="board-card"], [data-testid="board-list-row"]');
   if (!el) throw new Error(`no card ${name}`);
   return el;
 }
@@ -328,17 +378,31 @@ describe('PriorityBoardPage — P13-T12 weeks and toolbar', () => {
 });
 
 describe('PriorityBoardPage — drag gating', () => {
-  it('a hard-gated P1 card shows a lock and has no drag handle', async () => {
+  it('a hard-gated P1 card shows a lock; it can be reordered within P1 (R36-10) but never leaves P1', async () => {
     renderWithProviders(<PriorityBoardPage />);
     await screen.findByRole('link', { name: 'Gated Cooler' });
     const gated = cardEl('Gated Cooler');
     expect(within(gated).getByTestId('board-lock')).toHaveTextContent('Hard gate: stays P1');
-    expect(within(gated).queryByTestId('board-drag-handle')).not.toBeInTheDocument();
-    expect(gated).toHaveAttribute('draggable', 'false');
-    // a pointer drag of it never opens the move flow
+    expect(within(gated).getByRole('button', { name: 'Reorder Gated Cooler within P1' })).toBeInTheDocument();
+    expect(gated).toHaveAttribute('draggable', 'true');
+    // a pointer drag of it onto another column never opens the move flow
     pointerDrop('Gated Cooler', 'P2');
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(move.previewProjectPriority).not.toHaveBeenCalled();
     expect(move.moveProjectPriority).not.toHaveBeenCalled();
+  });
+
+  it('a hard-gated P1 card with no served band_rank keeps the old lock-only behaviour', async () => {
+    client.apiGet.mockImplementation((path: string) => {
+      if (path === '/priority-board') {
+        return Promise.resolve(board({ P1: [card('gated', { name: 'Gated Cooler', hard_gated: true, band_rank: null })] }));
+      }
+      return Promise.resolve(FACETS);
+    });
+    renderWithProviders(<PriorityBoardPage />);
+    await screen.findByRole('link', { name: 'Gated Cooler' });
+    expect(within(cardEl('Gated Cooler')).queryByTestId('board-drag-handle')).not.toBeInTheDocument();
+    expect(cardEl('Gated Cooler')).toHaveAttribute('draggable', 'false');
   });
 
   it('without Registration write (Executive Viewer) nothing is draggable and the pill is read-only', async () => {
@@ -350,6 +414,14 @@ describe('PriorityBoardPage — drag gating', () => {
     expect(screen.getByTestId('board-read-only')).toBeInTheDocument();
     pointerDrop('Alpha Cooler', 'P2');
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    // P36: the order is visible (the served band_rank), but cannot be changed.
+    expect(within(cardEl('Alpha Cooler')).getByTestId('board-rank-chip')).toHaveTextContent('#2');
+    const dt = dataTransfer();
+    fireEvent.dragStart(cardEl('Alpha Cooler'), { dataTransfer: dt });
+    fireEvent.dragOver(slotOf('Gated Cooler'), { dataTransfer: dt });
+    fireEvent.drop(slotOf('Gated Cooler'), { dataTransfer: dt });
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(move.previewProjectBandRank).not.toHaveBeenCalled();
   });
 
   it('with Registration write (Hub Planner) cards are draggable and carry the move control', async () => {
@@ -415,6 +487,25 @@ describe('PriorityBoardPage — a drop is the P11 priority move', () => {
     await waitFor(() => expect(within(column('P1')).getByRole('link', { name: 'Alpha Cooler' })).toBeInTheDocument());
     expect(within(column('P4')).queryByRole('link', { name: 'Alpha Cooler' })).not.toBeInTheDocument();
     expect(screen.getByTestId('board-announcer')).toHaveTextContent('Alpha Cooler was not moved. It is back in P1.');
+  });
+
+  it('P36-R03: 503 BAND_RANK_BUSY on a column move shows the contract copy and the card rolls back', async () => {
+    move.moveProjectPriority.mockRejectedValue(
+      new ApiError(503, 'Service Unavailable', 'busy', 'BAND_RANK_BUSY', 5),
+    );
+    const user = userEvent.setup();
+    renderWithProviders(<PriorityBoardPage />);
+    await screen.findByRole('link', { name: 'Alpha Cooler' });
+    pointerDrop('Alpha Cooler', 'P4');
+    const dialog = await screen.findByRole('dialog', { name: 'Move to P4?' });
+    await clickYes(user, dialog);
+    expect(await screen.findByTestId('preview-error')).toHaveTextContent(
+      'Another priority change is being saved. Please try again in a moment.',
+    );
+    expect(move.moveProjectPriority).toHaveBeenCalledTimes(1);
+    await user.click(screen.getByRole('button', { name: 'Done' }));
+    await waitFor(() => expect(within(column('P1')).getByRole('link', { name: 'Alpha Cooler' })).toBeInTheDocument());
+    expect(within(column('P4')).queryByRole('link', { name: 'Alpha Cooler' })).not.toBeInTheDocument();
   });
 
   it('P14: the drop stays pending through the preview; Yes applies in-process and the board refetches', async () => {
@@ -506,8 +597,10 @@ describe('PriorityBoardPage — P21-T05 Cards | List layout', () => {
     expect(rows).toHaveLength(4);
     // Names only: no score, chips or status in a row; the position and the name.
     const alpha = rows.find((r) => r.textContent?.includes('Alpha Cooler')) as HTMLElement;
-    // Names only, plus the same suggested-band chip as the grid ("P1").
-    expect(alpha).toHaveTextContent(/^2Alpha CoolerP1$/);
+    // Names only, plus the same suggested-band chip as the grid ("P1"). P36: the
+    // position is the served band_rank (with its spoken form for screen readers).
+    expect(alpha).toHaveTextContent(/^2Position 2 in P1\.Alpha CoolerP1$/);
+    expect(within(alpha).getByTestId('board-list-rank')).toHaveTextContent('2');
     expect(within(alpha).getByRole('link', { name: 'Alpha Cooler' })).toHaveAttribute('title', 'Alpha Cooler');
     // Owner feedback: the full name over up to two lines (fixed 46 px row), never one truncated line.
     expect(within(alpha).getByRole('link', { name: 'Alpha Cooler' })).toHaveClass('line-clamp-2');
@@ -527,7 +620,7 @@ describe('PriorityBoardPage — P21-T05 Cards | List layout', () => {
     await screen.findByRole('link', { name: 'Alpha Cooler' });
     await user.click(screen.getByRole('button', { name: 'List' }));
     const row = screen.getAllByTestId('board-list-row').find((r) => r.textContent?.includes('Alpha Cooler')) as HTMLElement;
-    const handle = within(row).getByRole('button', { name: 'Move Alpha Cooler to another priority column' });
+    const handle = within(row).getByRole('button', { name: 'Move Alpha Cooler within or between priority columns' });
     handle.focus();
     await user.keyboard(' {ArrowRight}{ArrowRight} ');
     const dialog = await screen.findByRole('dialog', { name: 'Move to P3?' });
@@ -619,6 +712,385 @@ describe('PriorityBoardPage — P21-T05 Cards | List layout', () => {
     const { container } = renderWithProviders(<PriorityBoardPage />);
     await screen.findByRole('link', { name: 'Alpha Cooler' });
     await user.click(screen.getByRole('button', { name: 'List' }));
+    expect(await seriousAxeViolations(container)).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// P36 (ADR 0050, API_CONTRACT_P36): reorder inside a priority column.
+// ---------------------------------------------------------------------------
+
+function rankPreview(id: string): PriorityPreviewResponse {
+  return { ...boardPreview('P1'), project_id: id, from_priority: 'P1', to_priority: 'P1' };
+}
+
+const RANKED_BOARD = board({
+  P1: [
+    card('a', { name: 'Ann Cooler', band_rank: 1 }),
+    card('b', { name: 'Bob Cooler', band_rank: 2 }),
+    card('c', { name: 'Cid Cooler', band_rank: 3 }),
+  ],
+  P2: [card('x', { name: 'Xen Freezer', band_rank: 1 })],
+});
+
+function p1Names(): string[] {
+  return within(column('P1'))
+    .getAllByRole('link', { hidden: true })
+    .map((l) => l.textContent ?? '');
+}
+
+describe('PriorityBoardPage — P36 reorder within a column', () => {
+  beforeEach(() => {
+    localStorage.clear();
+    client.apiGet.mockImplementation((path: string) => {
+      if (path === '/priority-board') return Promise.resolve(RANKED_BOARD);
+      if (path === '/dashboard/projects/facets') return Promise.resolve(FACETS);
+      return Promise.reject(new Error(`unexpected GET ${path}`));
+    });
+    move.previewProjectBandRank.mockImplementation((id: string) => Promise.resolve(rankPreview(id)));
+  });
+
+  it('shows the served band_rank as #n on every card and the frozen badge', async () => {
+    client.apiGet.mockImplementation((path: string) =>
+      path === '/priority-board' ? Promise.resolve(DEFAULT_BOARD) : Promise.resolve(FACETS),
+    );
+    renderWithProviders(<PriorityBoardPage />);
+    await screen.findByRole('link', { name: 'Alpha Cooler' });
+    expect(within(cardEl('Gated Cooler')).getByTestId('board-rank-chip')).toHaveTextContent('#1');
+    expect(within(cardEl('Alpha Cooler')).getByTestId('board-rank-chip')).toHaveTextContent('#2');
+    expect(within(cardEl('Alpha Cooler')).getByTestId('board-rank-chip')).toHaveTextContent('Position 2 in P1');
+    expect(within(cardEl('Beta Freezer')).getByTestId('board-frozen-badge')).toHaveTextContent('Frozen');
+    expect(within(cardEl('Alpha Cooler')).queryByTestId('board-frozen-badge')).not.toBeInTheDocument();
+  });
+
+  it('pointer: dropping above a card previews before_project_id = that card; Yes confirms with the token and follows the run', async () => {
+    move.moveProjectBandRank.mockResolvedValue(response({ project_id: 'c', priority_before: 'P1', priority_after: 'P1' }));
+    const user = userEvent.setup();
+    renderWithProviders(<PriorityBoardPage />);
+    await screen.findByRole('link', { name: 'Cid Cooler' });
+
+    rankDrop('Cid Cooler', 'Bob Cooler', 'above', { drop: false });
+    // The drop line sits above Bob; the column itself is not highlighted as a cross-column target.
+    const line = within(slotOf('Bob Cooler')).getByTestId('board-drop-indicator');
+    expect(line).toHaveAttribute('data-edge', 'top');
+    expect(column('P1')).not.toHaveAttribute('data-drop-target');
+    dragAt('drop', slotOf('Bob Cooler'), 10);
+
+    expect(move.previewProjectBandRank).toHaveBeenCalledWith(
+      'c',
+      { before_project_id: 'b', after_project_id: null },
+      expect.anything(),
+    );
+    expect(move.previewProjectPriority).not.toHaveBeenCalled();
+    // Optimistic: Cid now shows between Ann and Bob, pending; the served count is unchanged.
+    expect(p1Names()).toEqual(['Ann Cooler', 'Cid Cooler', 'Bob Cooler']);
+    expect(cardEl('Cid Cooler')).toHaveAttribute('data-pending', 'true');
+    expect(within(column('P1')).getByTestId('board-column-count')).toHaveTextContent('3');
+
+    const dialog = await screen.findByRole('dialog', { name: 'Move Cid Cooler to position 2 in P1?' });
+    expect(dialog).toHaveTextContent('Cid Cooler (now position 3) moves to position 2 in P1; its priority stays P1.');
+    await clickYes(user, dialog);
+    expect(move.moveProjectBandRank).toHaveBeenCalledWith('c', { before_project_id: 'b', after_project_id: null }, 'tok-b');
+    expect(move.moveProjectPriority).not.toHaveBeenCalled();
+    await waitFor(() => expect(sse.streamSolverProgress).toHaveBeenCalledWith('run-43', expect.any(Function), expect.any(AbortSignal)));
+    const panel = await screen.findByTestId('priority-move-panel');
+    expect(await within(panel).findByRole('heading', { name: 'Timeline updated' })).toBeInTheDocument();
+    expect(panel).toHaveTextContent('moved to position 2 in P1');
+    expect(panel).not.toHaveTextContent(/ of \d/);
+    await waitFor(() => expect(client.apiGet.mock.calls.filter(([p]) => p === '/priority-board').length).toBeGreaterThan(1));
+  });
+
+  it('pointer: dropping below the last visible card sends after_project_id = that card', async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<PriorityBoardPage />);
+    await screen.findByRole('link', { name: 'Ann Cooler' });
+    rankDrop('Ann Cooler', 'Cid Cooler', 'below');
+    expect(move.previewProjectBandRank).toHaveBeenCalledWith(
+      'a',
+      { before_project_id: null, after_project_id: 'c' },
+      expect.anything(),
+    );
+    expect(p1Names()).toEqual(['Bob Cooler', 'Cid Cooler', 'Ann Cooler']);
+    const dialog = await screen.findByRole('dialog', { name: 'Move Ann Cooler to position 3 in P1?' });
+    await user.click(within(dialog).getByRole('button', { name: 'No, cancel' }));
+  });
+
+  it('pointer: a drop right above or below the dragged card itself is no move', async () => {
+    renderWithProviders(<PriorityBoardPage />);
+    await screen.findByRole('link', { name: 'Bob Cooler' });
+    rankDrop('Bob Cooler', 'Ann Cooler', 'below', { drop: false });
+    expect(screen.queryByTestId('board-drop-indicator')).not.toBeInTheDocument();
+    dragAt('drop', slotOf('Ann Cooler'), 90);
+    rankDrop('Bob Cooler', 'Bob Cooler', 'above');
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(move.previewProjectBandRank).not.toHaveBeenCalled();
+  });
+
+  it('filtered board: anchors are visible cards; the position comes from their served band_rank', async () => {
+    const filtered = board({
+      P1: [
+        card('a', { name: 'Ann Cooler', band_rank: 1 }),
+        card('e', { name: 'Eve Cooler', band_rank: 5 }),
+        card('i', { name: 'Ida Cooler', band_rank: 9 }),
+      ],
+    });
+    client.apiGet.mockImplementation((path: string, opts?: { query?: Record<string, unknown> }) => {
+      if (path === '/priority-board') return Promise.resolve(opts?.query?.q ? filtered : RANKED_BOARD);
+      return Promise.resolve(FACETS);
+    });
+    const user = userEvent.setup();
+    renderWithProviders(<PriorityBoardPage />);
+    await screen.findByRole('link', { name: 'Ann Cooler' });
+    await user.type(screen.getByRole('searchbox', { name: 'Search' }), 'cooler');
+    await screen.findByRole('link', { name: 'Ida Cooler' });
+
+    // Ida (#9) above Eve (#5): before Eve → position 5 in the full band.
+    rankDrop('Ida Cooler', 'Eve Cooler', 'above');
+    expect(move.previewProjectBandRank).toHaveBeenLastCalledWith(
+      'i',
+      { before_project_id: 'e', after_project_id: null },
+      expect.anything(),
+    );
+    let dialog = await screen.findByRole('dialog', { name: 'Move Ida Cooler to position 5 in P1?' });
+    // Never "of n" (P36-R02).
+    expect(dialog).toHaveTextContent('moves to position 5 in P1;');
+    await user.click(within(dialog).getByRole('button', { name: 'No, cancel' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+
+    // Ann (#1) below the last visible card (Ida #9): after Ida → position 9, never past hidden cards.
+    rankDrop('Ann Cooler', 'Ida Cooler', 'below');
+    expect(move.previewProjectBandRank).toHaveBeenLastCalledWith(
+      'a',
+      { before_project_id: null, after_project_id: 'i' },
+      expect.anything(),
+    );
+    dialog = await screen.findByRole('dialog', { name: 'Move Ann Cooler to position 9 in P1?' });
+    await user.click(within(dialog).getByRole('button', { name: 'No, cancel' }));
+  });
+
+  it('P36-R02 (W36-1): hub filter + hub-scoped Hub Planner — the scoped count (2) is smaller than the rank (24); no "of" anywhere', async () => {
+    // A Hub Planner with the Greece hub selected: the server serves only the
+    // in-scope part of P1 (count 2) while band_rank is the full-band position.
+    const scoped = board({
+      P1: [
+        card('k', { name: 'Kai Cooler', band_rank: 21 }),
+        card('m', { name: 'Mia Cooler', band_rank: 24 }),
+      ],
+    });
+    expect(scoped.columns[0]?.count).toBe(2);
+    useHubFilterStore.setState({ hubId: 'hub-gr', region: null });
+    client.apiGet.mockImplementation((path: string, opts?: { query?: Record<string, unknown> }) => {
+      if (path === '/priority-board') return Promise.resolve(opts?.query?.hub_id === 'hub-gr' ? scoped : RANKED_BOARD);
+      if (path === '/hubs') return Promise.resolve([]);
+      return Promise.resolve(FACETS);
+    });
+    move.moveProjectBandRank.mockResolvedValue(
+      response({ project_id: 'm', priority_before: 'P1', priority_after: 'P1', recalc_status: 'applied', task_id: null }),
+    );
+    const noCount = / of \d/;
+    const user = userEvent.setup();
+    renderWithProviders(<PriorityBoardPage />, { session: { permissions: ROLE_MATRIX['Hub Planner'] } });
+    await screen.findByRole('link', { name: 'Mia Cooler' });
+    expect(client.apiGet).toHaveBeenCalledWith('/priority-board', expect.objectContaining({ query: expect.objectContaining({ hub_id: 'hub-gr' }) }));
+    expect(within(column('P1')).getByTestId('board-column-count')).toHaveTextContent('2');
+    const announcer = screen.getByTestId('board-announcer');
+
+    // Keyboard: pick up Mia (#24), Up to above Kai (#21).
+    within(cardEl('Mia Cooler')).getByTestId('board-drag-handle').focus();
+    await user.keyboard(' ');
+    expect(announcer).toHaveTextContent('Picked up Mia Cooler in P1, position 24 in P1.');
+    expect(announcer).not.toHaveTextContent(noCount);
+    await user.keyboard('{ArrowUp}');
+    expect(announcer).toHaveTextContent('Position 21 in P1.');
+    expect(announcer).not.toHaveTextContent(noCount);
+    await user.keyboard('{ArrowRight}{ArrowLeft}');
+    expect(announcer).toHaveTextContent('Over P1, its current column: position 21 in P1.');
+    expect(announcer).not.toHaveTextContent(noCount);
+    await user.keyboard(' ');
+    expect(move.previewProjectBandRank).toHaveBeenCalledWith('m', { before_project_id: 'k', after_project_id: null }, expect.anything());
+    expect(announcer).toHaveTextContent('Mia Cooler dropped at position 21 in P1. Confirm the move.');
+
+    // Dialog: title, summary and the applied result.
+    const dialog = await screen.findByRole('dialog', { name: 'Move Mia Cooler to position 21 in P1?' });
+    expect(dialog).toHaveTextContent('Mia Cooler (now position 24) moves to position 21 in P1; its priority stays P1.');
+    expect(dialog).not.toHaveTextContent(noCount);
+    await clickYes(user, dialog);
+    const done = await screen.findByRole('dialog', { name: 'Moved to position 21 in P1' });
+    expect(done).not.toHaveTextContent(noCount);
+    expect(announcer).toHaveTextContent('Mia Cooler moved to position 21 in P1.');
+    expect(announcer).not.toHaveTextContent(noCount);
+  });
+
+  it('keyboard: Up/Down move the position, announced "position n in P1" (never "of N"); Space drops into the re-rank flow', async () => {
+    move.moveProjectBandRank.mockResolvedValue(
+      response({ project_id: 'c', priority_before: 'P1', priority_after: 'P1', recalc_status: 'applied', task_id: null }),
+    );
+    const user = userEvent.setup();
+    renderWithProviders(<PriorityBoardPage />);
+    await screen.findByRole('link', { name: 'Cid Cooler' });
+    const handle = within(cardEl('Cid Cooler')).getByRole('button', { name: 'Move Cid Cooler within or between priority columns' });
+    handle.focus();
+    await user.keyboard(' ');
+    expect(screen.getByTestId('board-announcer')).toHaveTextContent('Picked up Cid Cooler in P1, position 3 in P1.');
+    await user.keyboard('{ArrowUp}');
+    expect(screen.getByTestId('board-announcer')).toHaveTextContent('Position 2 in P1.');
+    expect(within(slotOf('Bob Cooler')).getByTestId('board-drop-indicator')).toBeInTheDocument();
+    await user.keyboard('{ArrowUp}{ArrowUp}');
+    expect(screen.getByTestId('board-announcer')).toHaveTextContent('Position 1 in P1.');
+    await user.keyboard('{ArrowDown}{ArrowDown}');
+    expect(screen.getByTestId('board-announcer')).toHaveTextContent('Position 3 in P1, its current place.');
+    expect(screen.queryByTestId('board-drop-indicator')).not.toBeInTheDocument();
+    await user.keyboard('{Home}');
+    expect(screen.getByTestId('board-announcer')).toHaveTextContent('Position 1 in P1.');
+    await user.keyboard(' ');
+    expect(move.previewProjectBandRank).toHaveBeenCalledWith(
+      'c',
+      { before_project_id: 'a', after_project_id: null },
+      expect.anything(),
+    );
+    const dialog = await screen.findByRole('dialog', { name: 'Move Cid Cooler to position 1 in P1?' });
+    await clickYes(user, dialog);
+    expect(await screen.findByRole('dialog', { name: 'Moved to position 1 in P1' })).toHaveTextContent(
+      'Position changed and the timeline recalculated.',
+    );
+    expect(screen.getByTestId('board-announcer')).toHaveTextContent('Cid Cooler moved to position 1 in P1.');
+  });
+
+  it('keyboard: Left/Right still choose a column (the card goes last there); Up/Down there do nothing', async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<PriorityBoardPage />);
+    await screen.findByRole('link', { name: 'Ann Cooler' });
+    within(cardEl('Ann Cooler')).getByTestId('board-drag-handle').focus();
+    await user.keyboard(' {ArrowRight}');
+    expect(screen.getByTestId('board-announcer')).toHaveTextContent('Over P2. It would go last there.');
+    await user.keyboard('{ArrowDown}');
+    expect(screen.getByTestId('board-announcer')).toHaveTextContent('Up and down change the position in P1 only.');
+    await user.keyboard(' ');
+    const dialog = await screen.findByRole('dialog', { name: 'Move to P2?' });
+    expect(move.previewProjectPriority).toHaveBeenCalledWith('a', 'P2', expect.anything());
+    expect(move.previewProjectBandRank).not.toHaveBeenCalled();
+    // Cross-column: the optimistic card is shown last in P2, where the server will put it.
+    const p2 = within(column('P2')).getAllByRole('link', { hidden: true }).map((l) => l.textContent);
+    expect(p2).toEqual(['Xen Freezer', 'Ann Cooler']);
+    expect(dialog).toHaveTextContent('Ann Cooler moves from P1 to P2, last in P2.');
+  });
+
+  it('P36-R03: 503 BAND_RANK_BUSY on a re-rank confirm shows the contract copy, rolls back, never retries', async () => {
+    move.moveProjectBandRank.mockRejectedValue(
+      new ApiError(503, 'Service Unavailable', 'Another priority change is being saved. Please try again in a moment.', 'BAND_RANK_BUSY', 5),
+    );
+    const user = userEvent.setup();
+    renderWithProviders(<PriorityBoardPage />);
+    await screen.findByRole('link', { name: 'Cid Cooler' });
+    rankDrop('Cid Cooler', 'Ann Cooler', 'above');
+    const dialog = await screen.findByRole('dialog', { name: 'Move Cid Cooler to position 1 in P1?' });
+    await clickYes(user, dialog);
+    expect(await screen.findByTestId('preview-error')).toHaveTextContent(
+      'Another priority change is being saved. Please try again in a moment.',
+    );
+    expect(move.moveProjectBandRank).toHaveBeenCalledTimes(1);
+    await user.click(screen.getByRole('button', { name: 'Done' }));
+    await waitFor(() => expect(p1Names()).toEqual(['Ann Cooler', 'Bob Cooler', 'Cid Cooler']));
+    expect(move.moveProjectBandRank).toHaveBeenCalledTimes(1);
+  });
+
+  it('No on the preview rolls the order back without a write', async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<PriorityBoardPage />);
+    await screen.findByRole('link', { name: 'Cid Cooler' });
+    rankDrop('Cid Cooler', 'Ann Cooler', 'above');
+    expect(p1Names()).toEqual(['Cid Cooler', 'Ann Cooler', 'Bob Cooler']);
+    const dialog = await screen.findByRole('dialog', { name: 'Move Cid Cooler to position 1 in P1?' });
+    await user.click(within(dialog).getByRole('button', { name: 'No, cancel' }));
+    await waitFor(() => expect(p1Names()).toEqual(['Ann Cooler', 'Bob Cooler', 'Cid Cooler']));
+    expect(cardEl('Cid Cooler')).not.toHaveAttribute('data-pending');
+    expect(move.moveProjectBandRank).not.toHaveBeenCalled();
+    expect(screen.getByTestId('board-announcer')).toHaveTextContent('Move cancelled. Cid Cooler keeps its place in P1.');
+  });
+
+  it('a refused re-rank (422 NOT_SAME_BAND) rolls back with honest copy', async () => {
+    move.previewProjectBandRank.mockRejectedValue(new ApiError(422, 'Unprocessable', 'anchor', 'NOT_SAME_BAND'));
+    const user = userEvent.setup();
+    renderWithProviders(<PriorityBoardPage />);
+    await screen.findByRole('link', { name: 'Cid Cooler' });
+    rankDrop('Cid Cooler', 'Ann Cooler', 'above');
+    expect(await screen.findByTestId('preview-error')).toHaveTextContent('The board changed since you moved the card');
+    expect(screen.getByRole('dialog', { name: 'Position not changed' })).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Done' }));
+    await waitFor(() => expect(p1Names()).toEqual(['Ann Cooler', 'Bob Cooler', 'Cid Cooler']));
+    expect(screen.getByTestId('board-announcer')).toHaveTextContent('Cid Cooler was not moved.');
+  });
+
+  it('409 PREVIEW_STALE on Yes re-previews once with the same placement, then confirms the fresh token', async () => {
+    move.previewProjectBandRank
+      .mockResolvedValueOnce(rankPreview('c'))
+      .mockResolvedValueOnce({ ...rankPreview('c'), preview_token: 'tok-fresh' });
+    move.moveProjectBandRank
+      .mockRejectedValueOnce(new ApiError(409, 'Conflict', 'stale', 'PREVIEW_STALE'))
+      .mockResolvedValueOnce(response({ project_id: 'c', priority_before: 'P1', priority_after: 'P1', recalc_status: 'applied', task_id: null }));
+    const user = userEvent.setup();
+    renderWithProviders(<PriorityBoardPage />);
+    await screen.findByRole('link', { name: 'Cid Cooler' });
+    rankDrop('Cid Cooler', 'Ann Cooler', 'above');
+    let dialog = await screen.findByRole('dialog', { name: 'Move Cid Cooler to position 1 in P1?' });
+    await clickYes(user, dialog);
+    expect(await screen.findByTestId('preview-refreshed')).toBeInTheDocument();
+    expect(move.previewProjectBandRank).toHaveBeenCalledTimes(2);
+    expect(move.previewProjectBandRank).toHaveBeenLastCalledWith(
+      'c',
+      { before_project_id: 'a', after_project_id: null },
+      expect.anything(),
+    );
+    // Still pending in its dropped place while the user decides again.
+    expect(cardEl('Cid Cooler')).toHaveAttribute('data-pending', 'true');
+    dialog = screen.getByRole('dialog', { name: 'Move Cid Cooler to position 1 in P1?' });
+    await clickYes(user, dialog);
+    expect(move.moveProjectBandRank).toHaveBeenLastCalledWith('c', { before_project_id: 'a', after_project_id: null }, 'tok-fresh');
+    expect(await screen.findByRole('dialog', { name: 'Moved to position 1 in P1' })).toBeInTheDocument();
+  });
+
+  it('List layout: a row dropped above another row re-ranks through the same flow; rows show band_rank', async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<PriorityBoardPage />);
+    await screen.findByRole('link', { name: 'Ann Cooler' });
+    await user.click(screen.getByRole('button', { name: 'List' }));
+    const ranks = within(column('P1')).getAllByTestId('board-list-rank').map((r) => r.textContent);
+    expect(ranks).toEqual(['1', '2', '3']);
+    rankDrop('Bob Cooler', 'Ann Cooler', 'above');
+    expect(move.previewProjectBandRank).toHaveBeenCalledWith(
+      'b',
+      { before_project_id: 'a', after_project_id: null },
+      expect.anything(),
+    );
+    expect(await screen.findByRole('dialog', { name: 'Move Bob Cooler to position 1 in P1?' })).toBeInTheDocument();
+  });
+
+  it('read-only roles see the order (#n) but no handles and no drop line', async () => {
+    renderWithProviders(<PriorityBoardPage />, { session: { permissions: ROLE_MATRIX['Executive Viewer'] } });
+    await screen.findByRole('link', { name: 'Ann Cooler' });
+    expect(screen.queryAllByTestId('board-drag-handle')).toHaveLength(0);
+    expect(within(column('P1')).getAllByTestId('board-rank-chip').map((c) => c.textContent)).toEqual([
+      '#1Position 1 in P1',
+      '#2Position 2 in P1',
+      '#3Position 3 in P1',
+    ]);
+    rankDrop('Cid Cooler', 'Ann Cooler', 'above', { drop: false });
+    expect(screen.queryByTestId('board-drop-indicator')).not.toBeInTheDocument();
+    dragAt('drop', slotOf('Ann Cooler'), 10);
+    expect(move.previewProjectBandRank).not.toHaveBeenCalled();
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  });
+
+  it('has no serious/critical axe violations with the rank chips, frozen badge and a drop line shown', async () => {
+    client.apiGet.mockImplementation((path: string) =>
+      path === '/priority-board'
+        ? Promise.resolve(board({ P1: [card('a', { name: 'Ann Cooler', band_rank: 1, frozen: true }), card('b', { name: 'Bob Cooler', band_rank: 2 })] }))
+        : Promise.resolve(FACETS),
+    );
+    const { container } = renderWithProviders(<PriorityBoardPage />);
+    await screen.findByRole('link', { name: 'Bob Cooler' });
+    rankDrop('Bob Cooler', 'Ann Cooler', 'above', { drop: false });
+    expect(screen.getByTestId('board-drop-indicator')).toBeInTheDocument();
     expect(await seriousAxeViolations(container)).toEqual([]);
   });
 });

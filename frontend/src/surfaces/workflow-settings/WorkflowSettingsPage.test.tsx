@@ -11,7 +11,6 @@ import { settingsFixture } from './test-fixtures';
 const hooks = {
   useWorkflowSettings: vi.fn(),
   saveSteps: vi.fn(),
-  saveLeadTimes: vi.fn(),
   saveCalendar: vi.fn(),
   saveChamber: vi.fn(),
   useCategoryTimelines: vi.fn(),
@@ -21,7 +20,8 @@ const mut = (fn: ReturnType<typeof vi.fn>) => ({ mutateAsync: fn, isPending: fal
 vi.mock('./hooks/use-workflow-settings', () => ({
   useWorkflowSettings: () => hooks.useWorkflowSettings(),
   useSaveSteps: () => mut(hooks.saveSteps),
-  useSaveLeadTimes: () => mut(hooks.saveLeadTimes),
+  // P33: the category templates save through the apply flow (its own test file).
+  invalidateTemplateQueries: vi.fn(),
   useSaveHubCalendar: () => mut(hooks.saveCalendar),
   useSaveChamber: () => mut(hooks.saveChamber),
   useCategoryTimelines: (...a: unknown[]) => hooks.useCategoryTimelines(...a),
@@ -42,7 +42,7 @@ beforeEach(() => {
   hooks.useWorkflowSettings.mockReturnValue(ready());
   hooks.useCategoryTimelines.mockReturnValue({ data: undefined, isPending: true, isError: false, error: null, refetch: vi.fn() });
   hooks.useBEquivalent.mockReturnValue({ data: undefined, isPending: true, isError: false, error: null, refetch: vi.fn() });
-  for (const k of ['saveSteps', 'saveLeadTimes', 'saveCalendar', 'saveChamber'] as const) {
+  for (const k of ['saveSteps', 'saveCalendar', 'saveChamber'] as const) {
     hooks[k].mockImplementation(() => saved(236));
   }
 });
@@ -148,7 +148,7 @@ describe('WorkflowSettingsPage — step-kind editor (Super Admin only)', () => {
 });
 
 describe('WorkflowSettingsPage — lead times, calendars, chambers', () => {
-  it('lead-time grid: row sums and subtotals, 0 rendered as "—", edit updates the total and saves only the change', async () => {
+  it('lead-time grid: row sums and subtotals, 0 rendered as "—", edit updates the total and offers a save of the change', async () => {
     const user = userEvent.setup();
     renderWithProviders(<WorkflowSettingsPage />, TEMPLATES);
     await user.click(screen.getByRole('tab', { name: 'Lead times' }));
@@ -163,10 +163,8 @@ describe('WorkflowSettingsPage — lead times, calendars, chambers', () => {
     await user.clear(cell);
     await user.type(cell, '6');
     expect(within(aPlus).getByTestId('total')).toHaveTextContent('42');
-    await user.click(screen.getByRole('button', { name: 'Save 1 change' }));
-    expect(hooks.saveLeadTimes).toHaveBeenCalledWith({
-      lead_times: [{ workflow_id: 'PDD', category: 'A+', step_id: 'PDD-B', weeks: 6 }],
-    });
+    // P33-T17: Save opens the apply flow (WorkflowSettingsPage.p33.test.tsx).
+    expect(screen.getByRole('button', { name: 'Save 1 change…' })).toBeEnabled();
   });
 
   it('hub calendar: saved figure from the server, live preview labelled "preview" while editing', async () => {
@@ -209,8 +207,8 @@ describe('WorkflowSettingsPage — lead times, calendars, chambers', () => {
   });
 });
 
-describe('WorkflowSettingsPage — RBAC (Admin reads, Super Admin writes)', () => {
-  it('Admin sees everything read-only: no editors, no save buttons, a read-only notice', async () => {
+describe('WorkflowSettingsPage — RBAC (Super Admin writes the settings; Admin also writes the category templates, P33)', () => {
+  it('Admin sees steps read-only with a notice, and can edit the lead times (workflow_templates.write)', async () => {
     const user = userEvent.setup();
     renderWithProviders(<WorkflowSettingsPage />, { ...TEMPLATES, session: { roles: ['Admin'], permissions: ROLE_MATRIX.Admin } });
     expect(screen.getByTestId('read-only-notice')).toBeInTheDocument();
@@ -218,7 +216,8 @@ describe('WorkflowSettingsPage — RBAC (Admin reads, Super Admin writes)', () =
     expect(screen.queryByRole('button', { name: /Can start after/ })).not.toBeInTheDocument();
     expect(screen.getByTestId('preds-PDD-B')).toHaveTextContent('A');
     await user.click(screen.getByRole('tab', { name: 'Lead times' }));
-    expect(screen.queryByLabelText('PDD A+ PDD-B weeks')).not.toBeInTheDocument();
+    expect(screen.getByLabelText('PDD A+ PDD-B weeks')).toBeInTheDocument();
+    expect(screen.queryByTestId('read-only-notice')).not.toBeInTheDocument();
     expect(within(screen.getByTestId('lead-row-A+')).getByTestId('total')).toHaveTextContent('44');
   });
 
@@ -238,10 +237,27 @@ describe('WorkflowSettingsPage — timeline previews (P13-T16)', () => {
       served([
         {
           category: wf === 'OEM' ? 'A-OEM' : 'A+',
+          label: wf === 'OEM' ? 'A-OEM' : 'A+',
+          workflow_id: wf,
+          rank: 1,
+          template_version: 1,
+          note: 'Template view.',
           total_weeks: wf === 'OEM' ? 21 : 44,
           design_weeks: 20,
           lab_weeks: 12,
-          steps: [{ code: `${wf}-A`, name: 'Marketing Brief', resource_kind: 'design', start_week: 1, duration_weeks: 1 }],
+          steps: [
+            {
+              code: `${wf}-A`,
+              name: 'Marketing Brief',
+              resource_kind: 'design',
+              start_week: 1,
+              duration_weeks: 1,
+              gap_weeks: 0,
+              effective_gap_weeks: 0,
+              flags: [],
+              predecessor_ids: [],
+            },
+          ],
         },
       ]),
     );
