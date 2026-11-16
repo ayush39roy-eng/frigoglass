@@ -126,11 +126,11 @@ describe('Scoring scale and dimensions card (P26-T03)', { timeout: 30_000 }, () 
     expect(groups.map((g) => g.getAttribute('data-tint'))).toEqual(['false', 'true', 'false', 'true', 'false']);
     // Pillar summary from the served weights: count · weight (scaled of 100).
     expect(cells[0]).toHaveTextContent('Strategic Alignment');
-    expect(cells[0]).toHaveTextContent('3 · 75 (27 of 100)');
-    expect(cells[4]).toHaveTextContent('2 · 40 (14 of 100)'); // Market & Volume without New Models
+    expect(cells[0]).toHaveTextContent('3 · 75');
+    expect(cells[4]).toHaveTextContent('2 · 40'); // Market & Volume without New Models
     // A dimension row: its label is the row header, then the served weight.
     expect(within(rows[0]!).getByRole('rowheader', { name: 'Strategic Project' })).toBeInTheDocument();
-    expect(rows[0]).toHaveTextContent('25 (9 of 100)');
+    expect(rows[0]).toHaveTextContent('25');
     expect(within(groups[0]!).getAllByTestId('rubric-dimension-row')).toHaveLength(3);
     expect(within(c).getByTestId('rubric-total-line')).toHaveTextContent('Active weights total 280, shown scaled to 100.');
     expect(within(c).getByTestId('rubric-inactive-list')).toHaveTextContent('New Models');

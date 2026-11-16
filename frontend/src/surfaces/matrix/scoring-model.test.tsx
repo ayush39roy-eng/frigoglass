@@ -20,7 +20,7 @@ describe('scoring model (ADR 0029; P26 ADR 0037)', () => {
     expect(m.total_weight).toBe(325);
     expect(m.rubric_version).toBe(3);
     const roi = m.dimensions.find((d) => d.key === 'profitability');
-    expect(formatWeight(roi?.weight ?? 0, roi?.scaled_weight ?? null)).toBe('25 (8 of 100)');
+    expect(formatWeight(roi?.weight ?? 0, roi?.scaled_weight ?? null)).toBe('25');
   });
 
   it('lays out the served table, else the first row with dimensions', () => {

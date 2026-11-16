@@ -64,8 +64,9 @@ export function layoutDimensions(
   return first ? modelFromDimensionScores(first.dimension_scores) : [];
 }
 
-/** "25 (8.5 of 100)" style text from served figures; scaled omitted when not served. */
-export function formatWeight(weight: number, scaled: number | null): string {
-  return scaled === null ? String(weight) : `${String(weight)} (${String(Math.round(scaled))} of 100)`;
+/** The weight as served ("25"). Owner ask 2026-11-16: the scaled "(8 of 100)"
+ *  figure is no longer shown; `scaled` is kept in the signature for callers. */
+export function formatWeight(weight: number, _scaled?: number | null): string {
+  return String(weight);
 }
 
