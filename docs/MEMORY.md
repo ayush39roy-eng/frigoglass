@@ -41216,3 +41216,114 @@ the :8011 backend.
 - P42's `queued` outcome changed the import breakdown counts. 3 tests in
   `test_p32_r05_import_breakdowns` fail at ed96e6f; P42 owns the fix.
 - P38's OpenAPI contract test fails on `EngineerRead`.
+
+## [2026-11-17] P38-T04 — Backend: engineer deactivation data, endpoints and leader-write rules (ADR 0053, R38-1..R38-9) — backend-builder: DONE
+
+Built to `docs/API_CONTRACT_P38.md` and the frontend client already shipped in `frontend/src/surfaces/planning/api/planning-api.ts`
+(paths, bodies and codes match). `backend/scheduling/` untouched. No git index change and no commit by me. Another session's
+commit `ed96e6f` swept these working-tree files into HEAD while I was still testing; the content in HEAD is what is described here.
+
+**Migration** `p38a_engineer_deactivation` (revises `p40a_step_pins`, the single head; now the head):
+- `engineers`: `active` (NOT NULL, default true, backfills every row active), `deactivated_at`, `deactivated_week` (1..52),
+  `deactivated_plan_year`, `deactivated_by_user_id` (FK users), `deactivation_reason` (CHECK on the four codes). CHECK
+  `deactivation_fields`: active means all null; inactive needs at, week, year and reason.
+- `engineer_inactive_periods` (from/to plan year + week, `closed_at`; CHECKs; partial unique index
+  `uq_engineer_inactive_periods_one_open` WHERE `to_week IS NULL`).
+- `project_leader_history` (`engineer_id` = the leader before, `new_engineer_id` = the leader after, `plan_year`, `from_week`
+  (the tenure start if a row recorded it), `to_week` (calendar week of the change), `cause` ∈ registration / project_update /
+  register_edit / engineer_deactivated, `changed_by_user_id`). Append-only trigger; DELETE allowed only under
+  `SET LOCAL rpd.allow_leader_history_delete = 'on'` (the seed reset sets it, as for check-ins).
+- I42 as **deferred constraint triggers**: `active = false` iff exactly one open period, and no project outside
+  Commercialized/Cancelled led by an inactive engineer. They are checked at COMMIT, so they also cover the seed, scripts and
+  re-import (R38-4 "client re-import and the seed": both create engineers fresh and active; the triggers are the guard).
+- Up / down / up tested on its own container.
+
+**Endpoints** (`api/routers/engineers.py`):
+- `EngineerRead` + `active`, `deactivated_at`, `deactivated_week`, `deactivated_plan_year`, `deactivation_reason` (the actor is
+  never served). `GET /engineers?status=active|inactive|all` (default active; unknown → 422). This minimal T05-adjacent part is
+  included because the T06 roster needs it.
+- `GET /{id}/deactivation-preview`, `POST /{id}/deactivate`, `POST /{id}/reactivate`: Admin / Super Admin only (403
+  `ENGINEER_STATUS_ADMIN_ONLY`). RBAC → admin → rate limit → scoped lookup, all before any lock.
+- Locks (`services/engineer_status.py`): engineer `FOR UPDATE`, then target leaders `FOR SHARE`, then open projects `FOR UPDATE`
+  by id. A transaction-local `lock_timeout` of 5s; a timeout or deadlock → rollback + 503 `ENGINEER_STATUS_BUSY`
+  (Retry-After 5).
+- Deactivate: 409 `LED_PROJECTS_CHANGED` when the token or the id set differs from the set under lock. The body `detail` is
+  `{message, open_projects, led_projects_token}` (fresh). Per-row 422s carry `row_index` and loc
+  `["body","reassignments",i,"leader_engineer_id"]`; the code is the first row's: `FROZEN_NEEDS_LEADER`, `LEADER_INACTIVE`
+  (inactive, FTE ≤ 0, or the engineer itself), `UNKNOWN_LEADER` (missing, or outside the caller's hub scope).
+- One transaction: the engineer row, the period, every row (leader or NULL, `leader_is_provisional=false`, `schedule_stale` for
+  schedulable rows only, band rank untouched), one `project.update` audit row each (`after_state.cause =
+  "engineer_deactivated"`, financials redacted), one history row each, and `engineer.deactivate` (adds
+  `deactivated_by_user_id` and the counts). Run per R38-5 via `decide_auto_recalc_batch` / `dispatch_auto_recalc_batch`
+  (`trigger_reason="engineer_deactivated"`, week read at QUEUED): (a) a schedulable project changed, or (b) the active run has
+  a non-skipped design row of the engineer with `end_week > d`. Otherwise `not_needed`.
+- Reactivate: closes the period at (plan_year, week), clamped to the period start under a lowered pin; clears the fields;
+  `engineer.reactivate` audit; no run; no project given back. 409 `ENGINEER_ALREADY_ACTIVE` / `ENGINEER_ALREADY_INACTIVE`.
+- `DELETE /engineers/{id}`: 410 `ENGINEER_DELETE_RETIRED` for every caller with write. Nothing is looked up, deleted or audited.
+- `PATCH` on an inactive engineer: `name` only, else 409 `ENGINEER_INACTIVE`. PATCH now locks the engineer row after
+  lookup/authz and re-checks.
+- Weeks come from `get_plan_clock` (P37-T04 has landed). A closed year records `(plan_year, 52)`, which is tested.
+
+**Leader writes** (`api/routers/projects.py`, `services/engineer_status.check_leader_write`):
+- Registration, PATCH and the register batch (bulk edit uses it) give 422 `LEADER_INACTIVE` for an inactive leader. They also
+  give it for a reopen (out of Commercialized/Cancelled) that keeps an inactive stored leader (R38-4); a null or active leader
+  in the same write passes. They lock the leader `FOR SHARE`.
+- PATCH with an unknown leader is now 422 `UNKNOWN_LEADER`. Before, it hit the FK.
+- The register batch locks the named and stored leaders `FOR SHARE` before its project row locks (R38-5 order).
+- Every leader change writes `project_leader_history` (registration, PATCH, batch, deactivation), at the request clock.
+- `users.py`: a new link to an inactive engineer gives 422 `ENGINEER_INACTIVE`.
+- `services/priority_move.dispatch_auto_recalc_batch` no longer asserts a non-empty project list (for R38-5 (b)).
+
+**Supply** (`services/engineer_supply.py`, new): the R38-1 `hub_design_supply` uses `scheduling.covered_plan_weeks` /
+`active_week_count` (Decimal/Fraction, and the pre-P38 `fte_sum` path when no member has a period). The preview's
+`supply_effect` uses it. **T05 should reuse it** for every Capacity reader.
+
+**Decisions beyond the contract (for the gate):**
+1. 403 `ENGINEER_STATUS_OUT_OF_SCOPE` on preview and deactivate when a hub-scoped Admin cannot see every open project. The
+   exact-set rule cannot be met otherwise, and nothing is listed.
+2. Warning code `NOT_IN_CAPACITY_HUB` for a target outside the project's capacity hub (the contract names only
+   `CAT_NOT_ALLOWED`).
+3. `run.status` may also be `dispatch_failed` (the existing broker-failure path; changes saved, projects stale).
+4. Candidate `load_weeks` = Σ the active run's design effort after the calendar week (the utilization weekly spread). They are
+   sorted by load ÷ FTE, then name, then id.
+5. Rate limits: deactivate/reactivate burst 10, then 1 per 6 s; preview burst 20, then 1 per 2 s (429 `RATE_LIMITED`).
+
+**Tests:**
+- `tests/test_p38_engineer_deactivation.py` (40):
+  - the `?status=` filter and read fields;
+  - RBAC (Hub Planner, PM, Viewer 403; Admin and Super Admin OK);
+  - preview facts, candidates and supply;
+  - mixed rows → exactly one run, correct `left_without_leader` ids, audit (no financial values, codes only), history, ranks
+    kept, I42 query clean;
+  - On Hold only → `not_needed`; R38-5 (b) → queued; deferred;
+  - assigned-between-preview-and-confirm → 409;
+  - every row 422 with `row_index`; strict body (free-text reason 422);
+  - reactivate gives back nothing and dispatches nothing (the same-week period covers nothing);
+  - DELETE 410 with no audit row;
+  - name-only PATCH;
+  - `LEADER_INACTIVE` on PATCH, batch, registration and reopen;
+  - history on every path;
+  - the user link;
+  - closed year W52;
+  - the I42 triggers, the CHECKs, append-only history;
+  - contract shapes.
+- `tests/test_p38_engineer_race.py` (4, own container): migration round-trip; lock timeout → 503 for deactivate and a leader
+  PATCH; deactivate-first → the PATCH gets `LEADER_INACTIVE` after commit; PATCH-first → the deactivate gets
+  `LED_PROJECTS_CHANGED`.
+- `test_openapi_frontend_contract.py`: `DeactivationCandidate` / `DeactivationOpenProject` are exact rows. The four
+  inline-typed shapes are on the frontend_only list, pinned by `test_contract_shapes`. `EngineerRead` now matches the frontend
+  type.
+
+**Suite:** 3368 passed, 86 failed. On a rerun of the failing modules everything passes except:
+- `test_seed_scripts` (the P42 `queued` outcome changes the seed run's sum to 221);
+- the known `test_p33_t12` Gantt / P40 failures;
+- `test_p27_render_csp`.
+
+The remaining What-if / P32 / P41 failures were transient: `KeyError 'queued'` while the parallel P42 work edited
+`scheduling/plan_import.py` during the run. The openapi contract test's only failure is `PlanWeek` in `lib/api/session.ts`, which
+comes from another session's frontend change. ruff is clean on every touched file. mypy is clean on the touched files; the
+remaining errors are pre-existing elsewhere.
+
+**For T05:** the builder filter, readers, `inactive_engineers`, the `active` flags on served names and `former_leaders` (from
+`project_leader_history` rows where `engineer_id` is not null; `to_week` is "until"). Utilization: zero capacity in covered
+weeks; use `services/engineer_supply.py`.
