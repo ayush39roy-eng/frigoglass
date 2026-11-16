@@ -14,6 +14,7 @@ import { AskAgentPanel } from './components/ask-agent-panel';
 import { DetailsPanel } from './components/details-panel';
 import { FilesPanel } from './components/files-panel';
 import { ProgressPanel } from './components/progress-panel';
+import { WorkspaceEditHost } from './components/workspace-edit-host';
 import { WorkspaceHeader } from './components/workspace-header';
 import { useRecalcFlow } from './hooks/use-recalc-flow';
 import { useStagePatch, useWorkspace } from './hooks/use-workspace';
@@ -41,6 +42,21 @@ export default function ProjectWorkspacePage(): React.JSX.Element {
   const matrix = usePermission('matrix');
   const canWrite = ws.write;
   const canModerate = me?.roles.some((r) => r === 'Admin' || r === 'Super Admin') ?? false;
+  // Register popup (owner 2026-11-17): the project's one "Edit" popup, also
+  // opened from the Projects list. Registration write, like Edit details.
+  const [editOpen, setEditOpen] = React.useState(false);
+  const [editForbidden, setEditForbidden] = React.useState(false);
+  const editTrigger = React.useRef<HTMLElement | null>(null);
+  const canEditProject = canWrite && reg.write && !editForbidden;
+  const openEdit = React.useCallback((trigger: HTMLElement) => {
+    editTrigger.current = trigger;
+    setEditOpen(true);
+  }, []);
+  const closeEdit = React.useCallback(() => setEditOpen(false), []);
+  const forbidEdit = React.useCallback(() => {
+    setEditForbidden(true);
+    setEditOpen(false);
+  }, []);
 
   React.useEffect(() => {
     document.title = workspace.data ? `${workspace.data.project.name} — RPD` : 'Project Workspace — RPD';
@@ -68,7 +84,12 @@ export default function ProjectWorkspacePage(): React.JSX.Element {
       <SectionBoundary query={workspace} title="Project Workspace" errorDescription="This project's workspace could not be loaded.">
         {(data) => (
           <div data-testid="project-workspace">
-            <WorkspaceHeader data={data} canRecalculate={canWrite} recalc={recalc} />
+            <WorkspaceHeader
+              data={data}
+              canRecalculate={canWrite}
+              recalc={recalc}
+              onEdit={canEditProject ? openEdit : undefined}
+            />
             <ReadOnlyNotice surface="project_workspace" what="Editing details, progress, files and comments" className="mb-stack" />
             {/* Full-width and first, above the two-column body: this is the one
                 panel every project workspace shares regardless of role or write
@@ -101,6 +122,15 @@ export default function ProjectWorkspacePage(): React.JSX.Element {
           </div>
         )}
       </SectionBoundary>
+      {canEditProject || editOpen ? (
+        <WorkspaceEditHost
+          projectId={projectId}
+          open={editOpen && canEditProject}
+          onClose={closeEdit}
+          returnFocusTo={editTrigger}
+          onForbidden={forbidEdit}
+        />
+      ) : null}
     </PriorityMoveProvider>
   );
 }

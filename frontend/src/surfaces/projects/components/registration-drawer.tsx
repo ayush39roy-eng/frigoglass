@@ -11,21 +11,35 @@ import { ErrorState } from '@/components/shared/error-state';
 import { ProjectStatusBadge } from '@/components/shared/project-status-badge';
 import { applyFormPriorityMove } from '@/components/shared/priority-move/form-priority-move';
 import type { PriorityMoveApi } from '@/components/shared/priority-move/priority-move-context';
+import { hubsInScope } from '@/components/shared/hub-filter/hub-scope';
 import { ApiError } from '@/lib/api/client';
 import type { Hub } from '@/lib/api/reference';
 import { queryKeys } from '@/lib/query-keys';
 import { cn } from '@/lib/utils';
+import { useSessionStore } from '@/stores/session';
 import type { ProjectStatus } from '@/types/enums';
 
+import type { ProjectFilterRow } from '@/surfaces/dashboard/api/types';
 import { fetchProject } from '@/surfaces/registration/api/registration-api';
-import type { ProjectCreateRequest, ProjectRead } from '@/surfaces/registration/api/types';
+import type { ProjectCreateRequest, ProjectRead, ProjectUpdateRequest } from '@/surfaces/registration/api/types';
 import { HardGatePanel } from '@/surfaces/registration/components/hard-gate-panel';
+import { FormSubmitError } from '@/surfaces/registration/components/form-submit-error';
 import { ProjectForm } from '@/surfaces/registration/components/project-form';
 import {
   useCreateProject,
   useSubmitProject,
   useUpdateProject,
 } from '@/surfaces/registration/hooks/use-registration';
+
+import {
+  fetchRegisterSteps,
+  type RegisterEditError,
+  type RegisterEditsRequest,
+} from '../api/register-edits';
+import type { RegisterSaveResult } from '../hooks/use-register-save';
+import { identityChanges } from '../lib/identity-patch';
+import { buildPopupPatch, popupBase, popupChanged, projectStepLock, type PopupDraft } from '../lib/register-popup';
+import { RegisterPopupSection } from './register-popup-section';
 
 /**
  * P22-T01: the Project Registration form as a full-height side drawer on the
@@ -42,9 +56,22 @@ import {
  * Radix Dialog gives the focus trap, Escape and focus return to the trigger.
  * Every close path (Escape, overlay, the X, Cancel) goes through `requestClose`,
  * which asks before discarding edits. A successful save closes without asking.
+ *
+ * Register popup (owner 2026-11-17): the edit mode is the ONE "Edit" popup of
+ * a project, opened from the Projects row and from the project folder. Next to
+ * the identity fields it edits the register's fields (status, hub, leader,
+ * actual dates, design / lab time, lab testing, current step, step chips).
+ * One Save: a changed priority first goes through its own preview / confirm;
+ * the identity fields that changed go through `PATCH /projects/{id}`; the
+ * register fields go through ONE `POST /projects/register-edits` patch (one
+ * recalculation, followed by the host's "recalculating" panel).
  */
 
 export type RegistrationDrawerState = { mode: 'create' } | { mode: 'edit'; projectId: string } | null;
+
+/** The host's register batch save (`useRegisterSave().save`): the host shows
+ *  the recalculation panel, which outlives the popup. */
+export type RegisterSaveFn = (body: RegisterEditsRequest) => Promise<RegisterSaveResult>;
 
 export interface RegistrationSaved {
   mode: 'create' | 'edit';
@@ -67,6 +94,11 @@ export interface RegistrationDrawerProps {
   /** The control that opened the drawer; focus returns to it on close when it
    *  is still on the page (Radix's own return covers the rest). */
   returnFocusTo?: React.RefObject<HTMLElement | null>;
+  /** Register popup: the register batch save of the host page. */
+  registerSave: RegisterSaveFn;
+  /** The project's served register row, when the host has it (the Projects
+   *  list): its calculated design / lab weeks and End wk. */
+  row?: ProjectFilterRow | undefined;
 }
 
 export default function RegistrationDrawer({
@@ -77,6 +109,8 @@ export default function RegistrationDrawer({
   onForbidden,
   onSubmitted,
   returnFocusTo,
+  registerSave,
+  row,
 }: RegistrationDrawerProps): React.JSX.Element {
   const open = state !== null;
   const [dirty, setDirty] = React.useState(false);
@@ -162,6 +196,8 @@ export default function RegistrationDrawer({
           ) : (
             <EditBody
               projectId={state.projectId}
+              row={row?.project_id === state.projectId ? row : undefined}
+              registerSave={registerSave}
               hubs={hubs}
               moveApi={moveApi}
               dirty={dirty}
@@ -243,6 +279,8 @@ function isProject(value: unknown): value is ProjectRead {
 
 function EditBody({
   projectId,
+  row,
+  registerSave,
   hubs,
   moveApi,
   dirty,
@@ -253,6 +291,8 @@ function EditBody({
   onSubmitted,
 }: {
   projectId: string;
+  row: ProjectFilterRow | undefined;
+  registerSave: RegisterSaveFn;
   hubs: Hub[];
   moveApi: PriorityMoveApi;
   dirty: boolean;
@@ -267,9 +307,33 @@ function EditBody({
     queryFn: ({ signal }) => fetchProject(projectId, { signal }),
     retry: false,
   });
+  const steps = useQuery({
+    queryKey: queryKeys.projectRegisterSteps(projectId),
+    queryFn: ({ signal }) => fetchRegisterSteps(projectId, { signal }),
+    retry: false,
+  });
   const updateMut = useUpdateProject();
   const submitMut = useSubmitProject();
   const [submitted, setSubmitted] = React.useState<ProjectStatus | null>(null);
+  const me = useSessionStore((st) => st.me);
+
+  // The register fields' draft (only what differs from the served values).
+  const [regDraft, setRegDraft] = React.useState<PopupDraft>({});
+  const [regErrors, setRegErrors] = React.useState<RegisterEditError[]>([]);
+  const [formDirty, setFormDirty] = React.useState(false);
+  const loaded = query.data;
+  const base = React.useMemo(() => (loaded ? popupBase(loaded, steps.data) : null), [loaded, steps.data]);
+  const regDirty = base !== null && popupChanged(base, regDraft);
+  const anyDirty = formDirty || regDirty;
+  React.useEffect(() => {
+    onDirtyChange(anyDirty);
+  }, [anyDirty, onDirtyChange]);
+  const handleFormDirty = React.useCallback((next: boolean) => setFormDirty(next), []);
+  const onRegDraft = React.useCallback((next: PopupDraft) => {
+    setRegDraft(next);
+    setRegErrors([]);
+  }, []);
+  const scopedHubs = React.useMemo(() => hubsInScope(me, hubs) ?? hubs, [me, hubs]);
 
   if (query.isPending) {
     return (
@@ -305,33 +369,63 @@ function EditBody({
   }
 
   const project = query.data;
+  const popupBaseValues = base ?? popupBase(project, undefined);
 
   const handleSubmit = async (body: ProjectCreateRequest): Promise<void> => {
     try {
       // P14 (ADR 0026): a changed priority goes through the preview dialog first;
-      // Yes applies it, then the rest of the form is PATCHed. No saves nothing.
+      // Yes applies it, then the rest is saved. No saves nothing.
       const rest = await applyFormPriorityMove(
         moveApi,
         { projectId: project.id, projectName: project.name, priority: project.priority, status: project.status },
         body,
       );
-      const result = await updateMut.mutateAsync({ projectId: project.id, body: rest });
-      // P11 (ADR 0015): a PATCH that changed priority reports the recalc in its
-      // X-Schedule-* headers; show the same progress / "Timeline updated" panel.
-      if (result?.recalc) {
-        moveApi.followPatch(
-          {
-            projectId: project.id,
-            projectName: result.project.name,
-            priority: project.priority,
-            status: result.project.status,
-          },
-          result.recalc,
-          project.priority,
-          result.project.priority,
-        );
+      let saved = rest !== body;
+      let latest: ProjectRead = project;
+      // The identity fields that changed, through the existing PATCH. The
+      // register fields (hub, leader, actual start, lab testing, times) are not
+      // in it: they go in the register batch below.
+      const identity: ProjectUpdateRequest = identityChanges(rest, project);
+      if (Object.keys(identity).length > 0) {
+        const result = await updateMut.mutateAsync({ projectId: project.id, body: identity });
+        saved = true;
+        // P11 (ADR 0015): a PATCH that changed priority reports the recalc in its
+        // X-Schedule-* headers; show the same progress / "Timeline updated" panel.
+        if (result?.recalc) {
+          moveApi.followPatch(
+            {
+              projectId: project.id,
+              projectName: result.project.name,
+              priority: project.priority,
+              status: result.project.status,
+            },
+            result.recalc,
+            project.priority,
+            result.project.priority,
+          );
+        }
+        latest = result?.project ?? project;
       }
-      onSaved({ mode: 'edit', project: result?.project ?? project });
+      // The register fields: ONE patch in ONE batch (one recalculation).
+      const patch = buildPopupPatch(
+        project.id,
+        popupBaseValues,
+        regDraft,
+        (steps.data?.steps ?? []).map((st) => st.step_code),
+      );
+      if (patch) {
+        setRegErrors([]);
+        const res = await registerSave({ edits: [patch] });
+        if (!res.ok) {
+          if (res.forbidden) onForbidden();
+          setRegErrors(res.rowErrors);
+          const message = res.message ?? 'The status and progress fields were not saved.';
+          throw new FormSubmitError(saved ? `${message} Your other changes were saved.` : message);
+        }
+        saved = true;
+        setRegDraft({});
+      }
+      if (saved) onSaved({ mode: 'edit', project: latest });
     } catch (err) {
       if (err instanceof ApiError && err.isForbidden) onForbidden();
       throw err;
@@ -356,7 +450,29 @@ function EditBody({
       project={project}
       hubs={hubs}
       variant="sheet"
-      onDirtyChange={onDirtyChange}
+      onDirtyChange={handleFormDirty}
+      hubIdOverride={regDraft.hub_id ?? project.hub_id}
+      registerSection={
+        <RegisterPopupSection
+          base={popupBaseValues}
+          draft={regDraft}
+          onDraft={onRegDraft}
+          steps={{
+            data: steps.data,
+            isPending: steps.isPending,
+            isError: steps.isError,
+            refetch: () => void steps.refetch(),
+          }}
+          hubs={scopedHubs}
+          calculated={{
+            design: steps.data?.design_weeks_calculated ?? row?.design_weeks_calculated ?? null,
+            lab: steps.data?.lab_weeks_calculated ?? row?.lab_weeks_calculated ?? null,
+          }}
+          endWeek={steps.data?.end_week ?? row?.end_week ?? null}
+          errors={regErrors}
+          projectLock={projectStepLock(project)}
+        />
+      }
       onOpenChange={(next) => {
         if (!next) requestClose();
       }}
@@ -364,7 +480,7 @@ function EditBody({
       prelude={
         <RegistrationSummary
           project={project}
-          dirty={dirty}
+          dirty={dirty || anyDirty}
           submitted={submitted}
           onGateSubmit={handleGateSubmit}
         />

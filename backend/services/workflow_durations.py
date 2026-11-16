@@ -173,11 +173,13 @@ def live_step_effective_weeks(
     certification_testing_required: bool,
     own_effort: bool,
     effort_weeks: int | None,
+    excluded: bool = False,
 ) -> int:
-    """DOMAIN_RULES "Category templates" §B (ADR 0046 OR-2), `eff(p, s)` of a
-    live step row:
+    """DOMAIN_RULES "Category templates" §B (ADR 0046 OR-2) as replaced by
+    R35-1 (P35, ADR 0049), `eff(p, s)` of a live step row:
 
-        eff = 0                       kind = lab and not cert
+        eff = 0                       excluded(p, s)       # ADR 0049, first
+            = 0                       kind = lab and not cert
             = effort_weeks ?? 0       ownEffort(p, kind)   # its own figure is the timeline
             = plan_weeks              otherwise            # the project's template copy
 
@@ -192,6 +194,9 @@ def live_step_effective_weeks(
     every hand-set `duration_override_weeks` and a CHECK keeps it null
     (ADR 0048)."""
 
+    if excluded:
+        # R35-1 (ADR 0049 as ruled at P35-T03): first branch.
+        return 0
     k = _kind_value(kind)
     if k == "lab" and not certification_testing_required:
         return 0
@@ -207,10 +212,12 @@ def live_step_skipped(
     certification_testing_required: bool,
     own_effort: bool,
     effort_weeks: int | None,
+    excluded: bool = False,
 ) -> bool:
     """THE service-side skip predicate (ADR 0041 R5 as revised by ADR 0046
-    §B; contract P33 F4): skipped ⟺ `live_step_effective_weeks(...) == 0`,
-    on `(plan_weeks, kind, cert, own_effort, effort_weeks)`."""
+    §B; contract P33 F4; R35-1): skipped ⟺ `live_step_effective_weeks(...)
+    == 0`, on `(plan_weeks, kind, cert, own_effort, effort_weeks,
+    excluded)`."""
 
     return (
         live_step_effective_weeks(
@@ -219,6 +226,7 @@ def live_step_skipped(
             certification_testing_required=certification_testing_required,
             own_effort=own_effort,
             effort_weeks=effort_weeks,
+            excluded=excluded,
         )
         == 0
     )
@@ -231,13 +239,16 @@ def display_duration_weeks(
     certification_testing_required: bool,
     own_effort: bool,
     effort_weeks: int | None,
+    excluded: bool = False,
 ) -> int:
     """The duration a stage is shown with (Workspace / agent context): `eff`,
     except that a lab step skipped only because certification testing is off
     shows its copy (`plan_weeks`, P12-F04, unchanged), so it still reads as a
-    planned length; a 0-length step and an effort-zeroed step show 0. Its
-    `skipped` flag is served beside it."""
+    planned length; a 0-length step, an effort-zeroed step and an excluded
+    step (P35, R35-1) show 0. Its `skipped` flag is served beside it."""
 
+    if excluded:
+        return 0
     if _kind_value(kind) == "lab" and not certification_testing_required:
         return plan_weeks
     return live_step_effective_weeks(
@@ -256,6 +267,7 @@ def run_input_lead_and_override(
     table_weeks: int,
     own_effort: bool,
     effort_weeks: int | None,
+    excluded: bool = False,
 ) -> tuple[int | None, int | None]:
     """Contract P33 F4 (ADR 0046 OR-3), exact since p33c:
     `(lead_weeks, duration_override_weeks)` of one live step in the solver
@@ -272,8 +284,16 @@ def run_input_lead_and_override(
     0` or lab without certification, else `override ?? lead`.
 
     P33-T13: the T05-A1 user-override term is gone (p33c cleared every
-    hand-set value; a CHECK keeps them null, ADR 0048)."""
+    hand-set value; a CHECK keeps them null, ADR 0048).
 
+    R35-9 (P35, ADR 0049): an **excluded** step maps to `lead_weeks = 0`
+    (None when the table is already 0) and no override, whatever the rows
+    above would give. It sits above OR-3's table as its first row; the
+    scheduler then gives `eff = 0` before any override (R33-1), so no new
+    scheduler field or snapshot key exists (I33)."""
+
+    if excluded:
+        return (None if table_weeks == 0 else 0), None
     lead = effort_weight_weeks if own_effort else plan_weeks
     override = effort_weeks if own_effort else None
     return (None if lead == table_weeks else lead), override

@@ -129,6 +129,7 @@ def _live_step_row(
         table_weeks=table_weeks,
         own_effort=kind in own_kinds,
         effort_weeks=s.effort_weeks,
+        excluded=s.excluded,
     )
     return LiveStepRow(
         step_id=s.step_template_id,
@@ -144,6 +145,8 @@ def _live_step_row(
         status=s.status.value,
         percent_complete=s.percent_complete,
         remaining_weeks_override=s.remaining_weeks_override,
+        # R35-1 (P35): `eff = 0` first, in `scheduling.demand` too (I25/I33).
+        excluded=s.excluded,
     )
 
 

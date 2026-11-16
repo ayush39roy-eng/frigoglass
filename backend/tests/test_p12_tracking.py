@@ -34,9 +34,12 @@ from tests.factories import make_hub, make_schedule_run, make_user
 from tests.p12_helpers import CW, add_checkin, plan_step, set_progress, stepped_project
 
 
-def _live(status=WorkflowStepStatus.NOT_STARTED, duration=4, start=None, effort=None):
+def _live(
+    status=WorkflowStepStatus.NOT_STARTED, duration=4, start=None, effort=None, excluded=False
+):
     # ADR 0041 R5: the live row's three durations feed the one skip predicate;
-    # P33-T08 (ADR 0046 §B): the project's copy `plan_weeks` is its length.
+    # P33-T08 (ADR 0046 §B): the project's copy `plan_weeks` is its length;
+    # P35-T05 (R35-1): an excluded step is skipped first.
     return SimpleNamespace(
         status=status,
         duration_weeks=duration,
@@ -44,6 +47,7 @@ def _live(status=WorkflowStepStatus.NOT_STARTED, duration=4, start=None, effort=
         actual_start_week=start,
         duration_override_weeks=None,
         effort_weeks=effort,
+        excluded=excluded,
     )
 
 
@@ -101,6 +105,10 @@ def test_stage_is_due_rules():
     # still plans it over CW.
     assert not stage_is_due(_live(effort=0), _run(28, 34), **kw)
     assert stage_is_due(_live(effort=2), _run(28, 34), **kw)
+    # P35-T05 (R35-1): an excluded step is never due, In Progress included.
+    assert not stage_is_due(
+        _live(WorkflowStepStatus.IN_PROGRESS, start=20, excluded=True), _run(28, 34), **kw
+    )
     # A lab step on a project without certification testing is skipped.
     assert not stage_is_due(
         _live(WorkflowStepStatus.IN_PROGRESS, start=5),

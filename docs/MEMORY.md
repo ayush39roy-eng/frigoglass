@@ -38172,3 +38172,123 @@ session), so :8011 and :5174 now serve a clean worktree at 6d3c760
 (`/Users/ayushroy/frigoglass-p35view`, CORS env adds :5174, vite config `vite.p35view.config.ts`
 allows the shared node_modules). :8001 is down. Verified in a browser: register columns and the
 status outline render. Edit needs a write role (an Executive Viewer is read-only).
+
+### 2026-11-17 — Register Edit popup (owner request 2026-11-17, P35-T05/T06 frontend) — frontend-builder
+
+Worktree `register-edit-popup` (`/Users/ayushroy/frigoglass-register-edit`), not committed. Contract:
+`docs/API_CONTRACT_REGISTER_POPUP.md` (re-read and reconciled after the build).
+
+**Built.**
+- **One Edit popup** = the existing registration side sheet (`projects/components/registration-drawer.tsx`, "Edit <name>"),
+  edit mode extended. Opens from the Projects row "Edit" and from a new **"Edit" button in the project folder header**
+  (`project-workspace/components/workspace-header.tsx` → `workspace-edit-host.tsx`, inside the page's
+  `PriorityMoveProvider`; Registration write + Workspace write). The host owns `useRegisterSave()` and its
+  `RegisterSavePanel`, so the "recalculating" panel outlives the popup.
+- **Register section** (`components/register-popup-section.tsx`, slotted into `ProjectForm` via new `registerSection` /
+  `hubIdOverride` props): Status (Draft stays a badge), Hub (in-scope hubs), Leader, End wk (forecast, read-only, served
+  `register-steps.end_week` ?? row), Actual start / end (date → plan week, end<start warning), Design / Lab time (green
+  calculated / orange manual + ↺ reset, reusing `EffortInput`), Needs lab testing, Current step (served steps not
+  `Skipped`, minus draft exclusions) with "Earlier steps will be marked Done." / "...; later steps go back to Not
+  Started." notes, and the **step chips** (`components/step-chips.tsx`): code + short name, design indigo (existing
+  `dashChart-7` category indigo), lab green (success), elapsed neutral; N/A greyed + disabled; Done disabled; current
+  ringed; excluded struck/greyed with "off" (✓ otherwise); applicable `Skipped` = "0 wk (split)", excludable; native
+  toggle buttons (`aria-pressed`, name "Exclude PDD-C Design review, design step[, current step][, lock reason]").
+  With registerSection the form hides its own Hub / Leader / Actual start week / Certification / effort inputs.
+- **One Save** (EditBody): priority preview/confirm as before → `PATCH /projects/{id}` with **only the changed identity
+  fields** (`lib/identity-patch.ts`; register keys never; '' ≡ null, CRLF ≡ LF) → ONE `POST /projects/register-edits`
+  with ONE patch of only changed keys (`lib/register-popup.ts` `buildPopupPatch`; hub and lab flag go here, exclusions
+  in workflow order). Nothing changed → nothing sent. Batch 422/403 rows shown inline per field
+  (`lib/popup-errors.ts`); rows carry no step code, so STEP_NOT_APPLICABLE / UNKNOWN_STEP / PROJECT_FROZEN land on the
+  chips and/or current step by what the Save changed, and the changed chips get `aria-invalid`. A refused batch after
+  a saved PATCH says "Your other changes were saved". Unsaved guard = form dirty OR register draft dirty.
+  Invalidation: `useRegisterSave` already invalidates `['projects']` (detail, `register-steps` key added under it,
+  workspace) and `['dashboard']`. Served `eff_changes` listed in the save panel ("PDD-C: 3 → 0 wk, skipped now").
+- **Editable look** (no new colours): `EDIT_INPUT` gains shadow + primary hover/focus; `NativeSelect` with chevron for
+  grid/popup selects; pencil cue on editable column headers in grid Edit mode; scoped `.editable-fields` CSS
+  (`index.css`) on the popup body (inputs, textarea, selects, Radix triggers; invalid keeps its danger border).
+- Types (`api/register-edits.ts`) mirror the contract: patch + `hub_id`, `certification_testing_required`,
+  `step_exclusions`, `current_step_code` (nullable = no change), `StepExclusionEdit`, `RegisterStep`
+  (kind incl. `elapsed`, status incl. `Skipped`), `RegisterStepsResponse`, `RegisterEditEffChange`, response
+  `eff_changes?`. New error copy: STEP_DONE, STEP_NOT_APPLICABLE, UNKNOWN_STEP, EFFORT_NEEDS_A_STEP (server message),
+  NO_STEPS_LEFT, PROJECT_FROZEN, PROJECT_CLOSED, UNKNOWN_HUB, WORKFLOW_CHANGE_WITH_PROGRESS, INCONSISTENT_PROGRESS.
+
+**Assumptions / gaps.** (1) From the project folder there are no served `design_weeks_calculated` /
+`lab_weeks_calculated` (not on `ProjectRead` nor `register-steps`): the time inputs show "auto" / "Calculated by the
+server" instead of a number. Serving them on `RegisterStepsRead` would close it. (2) Re-include of an excluded chip is
+locked from the served project (`frozen`, Cancelled/Commercialized) since `excludable` is false for excluded steps.
+(3) Changing the lab flag locks lab chips until saved; a PDD↔OEM hub change locks chips + current step until saved
+(drafts dropped). (4) N/A marks reflect the saved state; a changed time is re-checked by the server on Save.
+(5) Existing ProjectsPage drawer tests updated to the changed-fields-only PATCH (4 tests).
+
+**Checks.** tsc (`-p tsconfig.app.json`) clean; eslint on changed files 0 errors (pre-existing `useVirtualizer`
+warning). New tests: `projects/ProjectsPage.register-popup.test.tsx` (16), `projects/lib/register-popup.test.ts` (7),
+`project-workspace/ProjectWorkspacePage.edit.test.tsx` (2). projects + project-workspace + registration: 24 files /
+258 passed. Full frontend suite: **250 files / 1982 passed**. Backend contract test
+`test_openapi_frontend_contract.py`: 255 passed (run with the main tree's venv; the overwritten `backend/.coverage`
+was restored). Bundle: 190.2 KB gzip / 400 initial. No `dangerouslySetInnerHTML`, no three.js, no new dependency,
+nothing logged. IMPLEMENTATION_PLAN not edited (orchestrator marks P35-T06).
+
+## [2026-11-17] P35-T05 + register Edit popup backend (hub, certification, step exclusion, current step, register-steps read) — backend-builder: DONE (worktree `register-edit-popup`, not committed)
+
+Owner request 2026-11-17 (row Edit opens a popup; one Save, one recalculation; End wk read-only;
+picking a Current step marks earlier applicable steps Done, the picked step In Progress) plus P35-T05
+as planned (ADR 0049, R35-1..R35-12, I33–I36). Contract: `docs/API_CONTRACT_REGISTER_POPUP.md`.
+
+**Built.**
+- Migration `p35b_step_excluded` (revises `p33c_clear_step_timing`; chain now
+  `p32a → p35a → p33a → p36a → p33b → p33c → p35b`): `project_workflow_steps.excluded` BOOLEAN NOT
+  NULL DEFAULT false + CHECK `ck_project_workflow_steps_excluded_not_done` (I34 i). Wire name
+  `step_excluded` everywhere.
+- R35-1 in the one predicate: `workflow_durations.live_step_effective_weeks / live_step_skipped /
+  display_duration_weeks` take `excluded` (first branch); `workspace.row_*` pass `row.excluded`, so
+  Workspace, stage PATCH (`STAGE_SKIPPED`), check-in (never due), tracking, cards, ask-agent,
+  `row_calculated_weeks` (R35-12) follow. R35-9: `run_input_lead_and_override(excluded=)` → lead 0
+  (None on table 0), no override; demand `LiveStepRow.excluded`. R35-3: `effort_inputs` /
+  `validate_effort_split` pass exclusions (validate now returns the derivation);
+  `exclusion_guard_error` (409 `EFFORT_NEEDS_A_STEP`). R35-8: apply flag `excluded_no_effect`
+  (`StepFlag` literal + `template_apply`). R35-11: `sync_project_steps(actor_user_id=)` clears flags on
+  a workflow change with a `project.step_included` row, reason `workflow_change`.
+- New `services/register_steps.py`: R35-2 applicability, exclusion edits (refusals UNKNOWN_STEP,
+  PROJECT_FROZEN, PROJECT_CLOSED, STEP_NOT_APPLICABLE, STEP_DONE; R6 re-derive, trigger
+  `step_exclusion`; one `project.step_excluded/included` row per step with stage status and the
+  kind's eff before/after), `current_step_code` (sequence order; before → Done, C → In Progress,
+  after → Not Started; skipped steps never written; weeks = CURRENT_WEEK via `merge_stage_update`;
+  one `project.current_step_set` row; R3 re-derive), R35-5 final-state guards (EFFORT_NEEDS_A_STEP,
+  NO_STEPS_LEFT), the popup read model.
+- `POST /projects/register-edits`: `RegisterEditPatch` + `hub_id` (old AND new hub in the caller's
+  scope else 403 FORBIDDEN_PROJECT; admin unknown hub → per-row 422 UNKNOWN_HUB),
+  `certification_testing_required`, `step_exclusions` (≤14, unique), `current_step_code`; applied in
+  `stage_project_update(step_edits=)` after the fields; counted as scheduler inputs; still one
+  transaction, one greedy run. Response + `eff_changes[]` (R35-7). The single PATCH also gets the
+  R35-5 guards (409) for figure / category / certification / hub edits.
+- `GET /projects/{id}/register-steps` (`RegisterStepsRead`: project_id, current_step_code, end_week,
+  design_weeks_calculated, lab_weeks_calculated — the last two added at the frontend's request —
+  and 14 `RegisterStepRead`); read scope as GET /projects/{id}; constant statement count.
+
+**Tests.** New `tests/test_p35_t05_register_popup.py` (16, incl. p35b up/down/up): round trip with
+I33/I34 + canonical input identity, probe row 2 revival + I26, In Progress exclusion writes no
+progress, every refusal code with nothing written and no run, both guards incl. the PATCH, current
+step forward/back/no-op/Blocked kept, hub RBAC (Hub Planner other hub / out-of-scope move → 403,
+both hubs → 200 audited), workflow change clears flags, full popup Save = one run + no financial field
+in any new audit row, one failing row rolls back all, read shape + list parity + statement count,
+apply flag. `test_p12_tracking.py` fake row gains `excluded` (+1 assertion). Contract rows added:
+StepExclusionEdit, RegisterEditEffChange, RegisterStepsResponse→RegisterStepsRead,
+RegisterStep→RegisterStepRead. Full backend suite (before the calculated-weeks addition): **3097
+passed**. After it: affected files 357 passed, 1 expected red
+(`RegisterStepsResponse` until the TS type adds the two calculated fields). ruff clean; mypy clean
+on touched production files. `backend/.coverage` untouched (per-session COVERAGE_FILE, --no-cov).
+
+**For the workflow-auditor (new domain behaviour, assumptions):** current-step order is
+`sequence_order`, not the DAG; a Blocked C stays Blocked; steps after C are reset to Not Started even
+if Done (destructive, audited); a reopened Done C restarts at 0 %; split-zeroed steps cannot be C
+(evaluated before the progress write); no `stage_checkins` row written; allowed on Cancelled /
+Commercialized non-frozen projects; `excludable` also needs an editable project. Not done: the
+exempt-status `expected_status` follow-up (P35-T08 note); seed/import R35-11 reporting; the
+frontend `excluded_no_effect` label. IMPLEMENTATION_PLAN not edited (orchestrator marks P35-T05).
+
+## [2026-11-17] Register Edit popup (owner ask 2026-11-17) + P35-T05 step exclusion — live-verified, merged
+
+- Branch `register-edit-popup`. Backend and frontend entries above. Orchestrator addition: `GET /projects/{id}/register-steps` serves `design_weeks_calculated` / `lab_weeks_calculated`; the popup prefers them over the list row (the project-folder popup now shows the green number, not "auto").
+- Live check on a separate DB `rpd_popup` (fresh migrate + seed; the shared dev DB was not touched). Row Edit opens the popup with 14 chips; Done / N/A chips disabled; End wk read-only. Excluding PDD-D + design time 9 sent ONE `POST /projects/register-edits` with only those two keys; DB: step excluded, figure 9.00, audit `project.step_excluded` + `project.effort_rederived` + `project.recalculate_requested`.
+- Migration `p35b_step_excluded` re-parented onto origin/main's head at merge (chain … p33c → p41a → p40a → p35b).
+- OPEN: workflow-auditor ruling on `current_step_code` semantics (assumptions listed in the backend entry); P35-T05/T06 rows in IMPLEMENTATION_PLAN not marked — the P35 gate (P35-T07) is still TODO.

@@ -1,11 +1,12 @@
 import * as React from 'react';
 import { Link } from 'react-router-dom';
-import { ArrowLeft, RefreshCw } from 'lucide-react';
+import { ArrowLeft, Pencil, RefreshCw } from 'lucide-react';
 
 import { ProvisionalLeaderBadge } from '@/components/shared/capacity-roster-markers';
 import { NoLeaderLabel } from '@/components/shared/no-leader-label';
 import { PriorityMoveControl } from '@/components/shared/priority-move/priority-move-control';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 import { PROJECT_TYPE_LABELS } from '@/types/enums';
 
 import type { WorkspaceResponse } from '../api/types';
@@ -23,10 +24,14 @@ export function WorkspaceHeader({
   data,
   canRecalculate,
   recalc,
+  onEdit,
 }: {
   data: WorkspaceResponse;
   canRecalculate: boolean;
   recalc: { state: RecalcState; start: () => void; busy: boolean };
+  /** Register popup (owner 2026-11-17): opens the project's one "Edit" popup,
+   *  the same one the Projects list's row Edit opens. Absent = no write. */
+  onEdit?: ((trigger: HTMLElement) => void) | undefined;
 }): React.JSX.Element {
   const p = data.project;
   return (
@@ -85,10 +90,26 @@ export function WorkspaceHeader({
             )}
           </div>
         </div>
-        {canRecalculate ? (
+        {canRecalculate || onEdit ? (
           <div className="flex flex-col items-end gap-1">
-            <RecalculateButton onClick={recalc.start} busy={recalc.busy} />
-            <RecalcStatus state={recalc.state} />
+            <div className="flex flex-wrap items-center justify-end gap-2">
+              {onEdit ? (
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  aria-label={`Edit ${p.name}`}
+                  title="Edit the project: registration, status, dates, times and steps"
+                  onClick={(event) => onEdit(event.currentTarget)}
+                  data-testid="workspace-edit"
+                >
+                  <Pencil aria-hidden="true" />
+                  Edit
+                </Button>
+              ) : null}
+              {canRecalculate ? <RecalculateButton onClick={recalc.start} busy={recalc.busy} /> : null}
+            </div>
+            {canRecalculate ? <RecalcStatus state={recalc.state} /> : null}
           </div>
         ) : null}
       </div>

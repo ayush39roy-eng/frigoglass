@@ -15,6 +15,7 @@ import {
   REGISTER_EDITS_INVALID,
   registerEditErrors,
   saveRegisterEdits,
+  type RegisterEditEffChange,
   type RegisterEditError,
   type RegisterEditsRequest,
 } from '../api/register-edits';
@@ -84,10 +85,14 @@ export function useRegisterSave() {
   const watcher = useFollowUpRunWatcher();
   const { start: startWatcher } = watcher;
   const [flow, setFlow] = React.useState<RegisterSaveFlow>({ kind: 'idle' });
+  /** Register popup contract §2.5: the served per-step duration changes of
+   *  the last successful Save (shown by the panel, never recomputed). */
+  const [effChanges, setEffChanges] = React.useState<readonly RegisterEditEffChange[]>([]);
 
   const save = React.useCallback(
     async (body: RegisterEditsRequest): Promise<RegisterSaveResult> => {
       setFlow({ kind: 'saving' });
+      setEffChanges([]);
       let res;
       try {
         res = await saveRegisterEdits(body);
@@ -114,6 +119,7 @@ export function useRegisterSave() {
       }
 
       invalidateRegisterWrite(queryClient);
+      setEffChanges(res.eff_changes ?? []);
       const saved = savedText(res.project_ids.length);
       const ok: RegisterSaveResult = { ok: true, rowErrors: [], message: null, forbidden: false };
 
@@ -167,6 +173,7 @@ export function useRegisterSave() {
   const close = React.useCallback(() => {
     reset();
     setFlow({ kind: 'idle' });
+    setEffChanges([]);
   }, [reset]);
 
   const changesRunId = flow.kind === 'updated' ? flow.runId : null;
@@ -185,6 +192,7 @@ export function useRegisterSave() {
     runState: run.state,
     changes,
     watchingFollowUp: watcher.watching,
+    effChanges,
     saving: flow.kind === 'saving',
     save,
     close,

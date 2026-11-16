@@ -91,6 +91,9 @@ export const queryKeys = {
   // (GET /projects/{id}/hard-gate-status), NOT the Matrix's P1-override hard
   // gate (`priorityRow`/`priorityMatrix` above) — see api/types.ts's note.
   projectHardGateStatus: (id: string) => ['projects', 'detail', id, 'hard-gate-status'] as const,
+  /** Register popup (2026-11-17): `GET /projects/{id}/register-steps`. Under the
+   *  project's detail key, so every `['projects']` invalidation refetches it. */
+  projectRegisterSteps: (id: string) => ['projects', 'detail', id, 'register-steps'] as const,
 
   // --- prioritization matrix ---
   priorityMatrix: (params?: {

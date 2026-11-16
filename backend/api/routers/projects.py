@@ -91,7 +91,7 @@ from models.enums import (
     ProjectType,
 )
 from models.hub import Hub
-from models.project import Project, category_allowed_for_hub
+from models.project import Project, category_allowed_for_hub, workflow_id_for_hub
 from scheduling.effort_split import EffortSplitRejected
 from schemas.project import (
     BandRankMoveRequest,
@@ -106,11 +106,15 @@ from schemas.project import (
     ProjectRead,
     ProjectSubmitRequest,
     ProjectUpdateRequest,
+    RegisterEditEffChange,
     RegisterEditError,
     RegisterEditPatch,
     RegisterEditsRequest,
     RegisterEditsResponse,
+    RegisterStepRead,
+    RegisterStepsRead,
 )
+from services.active_run import get_active_run
 from services.audit_helpers import project_audit_state
 from services.band_rank import (
     lock_band_ranks,
@@ -134,11 +138,13 @@ from services.priority_preview import (
     preview_priority_move,
 )
 from services.project_access import authorize_project_action, effective_project_access
+from services.project_cards import build_project_cards
 from services.project_effort import (
     TRIGGER_CREATE,
     TRIGGER_FIGURE,
     TRIGGER_PROJECT_FIELDS,
     TRIGGER_WORKFLOW_CHANGE,
+    exclusion_guard_error,
     rederive_project_effort,
     split_rejected_error,
     template_kinds,
@@ -152,6 +158,13 @@ from services.project_hard_gates import (
 )
 from services.project_steps import WorkflowChangeWithProgress, sync_project_steps
 from services.rate_limit import TokenBucketLimiter
+from services.register_steps import (
+    StepEdits,
+    apply_step_edits,
+    build_step_views,
+    load_step_context,
+    project_eff_map,
+)
 from services.scoring_tags import apply_tag_prefill
 from services.template_copy import CopyChanges, merge_copy_changes, share_lock_categories
 from services.text_search import Q_MAX_LENGTH, project_search_filter
@@ -591,6 +604,7 @@ async def stage_project_update(
     current_user: Principal,
     *,
     band_rank_plan: Mapping[uuid.UUID, int | None] | None = None,
+    step_edits: StepEdits | None = None,
 ) -> StagedProjectUpdate:
     """The single PATCH's validation and writes, shared with the register's
     batch (`POST /projects/register-edits`, P35). The caller has already
@@ -606,7 +620,15 @@ async def stage_project_update(
     (`services.band_rank.reconcile_band_rank`); the P35 batch instead passes
     `band_rank_plan` (`plan_batch_band_ranks`, each band renumbered once) and
     the planned rank is set with the status. The caller holds the band-rank
-    lock."""
+    lock.
+
+    P35-T05 / register popup: `step_edits` (the batch's `step_exclusions` and
+    `current_step_code`) are applied after the project fields, exclusions
+    first (`services.register_steps.apply_step_edits`); the R35-5 guards then
+    run on the final state, also for a figure / category / certification /
+    hub edit on a project with an excluded step. Those checks run after the
+    writes: the batch rolls back on any error, the single PATCH never
+    commits."""
 
     status_before = project.status
     if updates.get("status") == ProjectStatus.DRAFT:
@@ -686,7 +708,7 @@ async def stage_project_update(
         # project would get (frozen projects included: a figure stored while
         # frozen must apply on unfreeze).
         try:
-            await validate_effort_split(
+            derivation = await validate_effort_split(
                 db,
                 hub_is_oem=target_hub.is_oem,
                 category=target_category,
@@ -699,6 +721,12 @@ async def stage_project_update(
             )
         except EffortSplitRejected as exc:
             raise split_rejected_error(exc, await template_kinds(db)) from exc
+        if step_edits is None or step_edits.empty:
+            # R35-5 (a) before anything is written, on the stored exclusions:
+            # a figure in force needs one weighted step that is not excluded.
+            guard = exclusion_guard_error(derivation)
+            if guard is not None:
+                raise guard
     before_state = project_audit_state(project)
     tags_before = list(project.scoring_tags or [])
     figures_changed = any(
@@ -754,7 +782,11 @@ async def stage_project_update(
         try:
             template_copy.append(
                 await sync_project_steps(
-                    db, project, target_hub.is_oem, recopy_template=category_changes
+                    db,
+                    project,
+                    target_hub.is_oem,
+                    recopy_template=category_changes,
+                    actor_user_id=current_user.user_id,
                 )
             )
         except WorkflowChangeWithProgress as exc:
@@ -782,6 +814,18 @@ async def stage_project_update(
         # OR-5: a kind that lost its own figure follows the template again.
         if rederived is not None and rederived.template_copy:
             template_copy.append(rederived.template_copy)
+    steps_changed = False
+    if (step_edits is not None and not step_edits.empty) or effort_inputs_changed:
+        # P35-T05: exclusions, then the current step, then the R35-5 guards
+        # on the final state (audited in their own rows).
+        steps_changed = await apply_step_edits(
+            db,
+            project,
+            step_edits or StepEdits(),
+            workflow_id=workflow_id_for_hub(target_hub.is_oem),
+            actor_user_id=current_user.user_id,
+            check_guards=effort_inputs_changed,
+        )
     if "scoring_tags" in updates:
         # ADR 0038: only a not-set -> set tag pre-fills its score (same
         # transaction); `scoring_tags` is not a scheduler input, so it never
@@ -804,7 +848,7 @@ async def stage_project_update(
         # the project as it will be stored.
         after_state["priority"] = new_priority.value if new_priority is not None else None
 
-    if updates or not priority_moves:
+    if updates or (not priority_moves and (step_edits is None or step_edits.empty)):
         db.add(
             AuditLogEntry(
                 actor_user_id=current_user.user_id,
@@ -819,7 +863,7 @@ async def stage_project_update(
     return StagedProjectUpdate(
         priority_moves=priority_moves,
         new_priority=new_priority,
-        schedule_inputs_changed=schedule_inputs_changed,
+        schedule_inputs_changed=schedule_inputs_changed or steps_changed,
         status_before=status_before,
     )
 
@@ -829,6 +873,10 @@ async def stage_project_update(
 REGISTER_EDITS_RATE_LIMIT = TokenBucketLimiter(capacity=10, refill_per_second=1 / 6)
 #: `ScheduleRun.trigger_reason` of the register batch's run.
 REGISTER_EDIT_TRIGGER_REASON = "register_edit"
+#: Register popup patch fields that are not `Project` columns (applied by
+#: `services.register_steps` after the project fields). Both are scheduler
+#: inputs: a change counts for the recalculation decision.
+_STEP_EDIT_FIELDS: frozenset[str] = frozenset({"step_exclusions", "current_step_code"})
 
 
 def _register_error(project_id: uuid.UUID, exc: HTTPException) -> RegisterEditError:
@@ -877,6 +925,20 @@ async def _authorize_register_batch(
         try:
             project = await _get_project_or_404(db, edit.project_id, principal)
             await _authorize_registration_write(db, project, principal)
+            if (
+                "hub_id" in edit.model_fields_set
+                and edit.hub_id is not None
+                and edit.hub_id != project.hub_id
+                and not (
+                    is_hub_in_scope(principal, project.hub_id)
+                    and is_hub_in_scope(principal, edit.hub_id)
+                )
+            ):
+                # Register popup: a hub move needs write scope on the old AND
+                # the new hub (a project grant alone does not move a project
+                # between hubs). Same answer as any other refusal here, so an
+                # unknown or foreign hub is never revealed.
+                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN)
         except HTTPException:
             forbidden.append(
                 RegisterEditError(
@@ -971,7 +1033,9 @@ async def save_register_edits(
     # categories' FOR SHARE is taken before the row locks (an apply locks
     # categories, then projects).
     effort_edit_ids = [
-        e.project_id for e in edits if e.model_fields_set & EFFORT_SPLIT_INPUT_FIELDS
+        e.project_id
+        for e in edits
+        if e.model_fields_set & (EFFORT_SPLIT_INPUT_FIELDS | _STEP_EDIT_FIELDS)
     ]
     if effort_edit_ids:
         await share_lock_categories(
@@ -1010,16 +1074,62 @@ async def save_register_edits(
     )
     errors: list[RegisterEditError] = []
     staged: dict[uuid.UUID, StagedProjectUpdate] = {}
+    eff_changes: list[RegisterEditEffChange] = []
+    known_hubs: dict[uuid.UUID, bool] = {}
     for edit in edits:
         project = projects[edit.project_id]
-        updates = edit.model_dump(exclude_unset=True, exclude={"project_id"})
+        updates = edit.model_dump(
+            exclude_unset=True, exclude={"project_id", *_STEP_EDIT_FIELDS}
+        )
+        step_edits = StepEdits(
+            exclusions=[(x.step_code, x.step_excluded) for x in edit.step_exclusions or []],
+            current_step_code=edit.current_step_code,
+        )
+        tracks_eff = bool(
+            edit.model_fields_set & (SCHEDULE_INPUT_FIELDS | _STEP_EDIT_FIELDS)
+        )
         try:
-            staged[project.id] = await stage_project_update(
-                db, project, updates, current_user, band_rank_plan=band_rank_plan
+            if updates.get("hub_id") is not None:
+                hub_id = updates["hub_id"]
+                if hub_id not in known_hubs:
+                    known_hubs[hub_id] = (
+                        await db.execute(select(Hub.id).where(Hub.id == hub_id))
+                    ).scalar_one_or_none() is not None
+                if not known_hubs[hub_id]:
+                    raise CodedHTTPException(
+                        HTTP_422, "UNKNOWN_HUB", [field_error("hub_id", "Unknown hub.")]
+                    )
+            eff_before = (
+                await project_eff_map(db, project, await _workflow_id(db, project))
+                if tracks_eff
+                else {}
             )
+            staged[project.id] = await stage_project_update(
+                db,
+                project,
+                updates,
+                current_user,
+                band_rank_plan=band_rank_plan,
+                step_edits=step_edits,
+            )
+            if tracks_eff:
+                eff_after = await project_eff_map(db, project, await _workflow_id(db, project))
+                eff_changes.extend(
+                    RegisterEditEffChange(
+                        project_id=project.id,
+                        step_code=step_id,
+                        eff_before=eff_before[step_id],
+                        eff_after=after,
+                        revived=eff_before[step_id] == 0 and after > 0,
+                        skipped_now=eff_before[step_id] > 0 and after == 0,
+                    )
+                    for step_id, after in eff_after.items()
+                    if step_id in eff_before and eff_before[step_id] != after
+                )
         except HTTPException as exc:
-            # Every check raises before the row is written, so the rows staged
-            # so far stay consistent; the whole batch is rolled back below.
+            # The whole batch is rolled back below, so a row that failed after
+            # some of its writes (the step edits and the R35-5 guards are
+            # checked on the written state) leaves nothing behind.
             errors.append(_register_error(project.id, exc))
     if errors:
         await db.rollback()
@@ -1050,6 +1160,53 @@ async def save_register_edits(
         schedule_run_id=outcome.schedule_run_id,
         baseline_run_id=outcome.baseline_run_id,
         task_id=outcome.task_id,
+        eff_changes=eff_changes,
+    )
+
+
+async def _workflow_id(db: AsyncSession, project: Project) -> str:
+    return workflow_id_for_hub(
+        (await db.execute(select(Hub.is_oem).where(Hub.id == project.hub_id))).scalar_one()
+    )
+
+
+@router.get("/{project_id}/register-steps", response_model=RegisterStepsRead)
+async def get_register_steps(
+    project_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: Principal = Depends(_read),
+) -> RegisterStepsRead:
+    """The register Edit popup's step chips (P35-T05 / P35-T06,
+    docs/API_CONTRACT_REGISTER_POPUP.md §3). Same permission and hub scope
+    as `GET /projects/{id}` (404 out of scope). Read-only, so no audit row.
+    A constant number of statements: the project, its workflow's templates,
+    its live rows, the category weights and one `build_project_cards` pass
+    (which gives `current_step_code` and `end_week` exactly as the register
+    list serves them)."""
+
+    project = await _get_project_or_404(db, project_id, current_user)
+    ctx = await load_step_context(db, project, workflow_id=await _workflow_id(db, project))
+    card = (await build_project_cards(db, [project], await get_active_run(db)))[project.id]
+    current = card.current_stage.step_id if card.current_stage is not None else None
+    return RegisterStepsRead(
+        project_id=project.id,
+        current_step_code=current,
+        end_week=card.projected_end_week,
+        design_weeks_calculated=card.design_weeks_calculated,
+        lab_weeks_calculated=card.lab_weeks_calculated,
+        steps=[
+            RegisterStepRead(
+                step_code=v.step_code,
+                step_name=v.step_name,
+                kind=v.kind,
+                status=v.status,
+                step_excluded=v.step_excluded,
+                applicable=v.applicable,
+                excludable=v.excludable,
+                is_current=v.is_current,
+            )
+            for v in build_step_views(project, ctx, current_step_code=current)
+        ],
     )
 
 

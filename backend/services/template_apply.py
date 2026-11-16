@@ -61,6 +61,9 @@ FLAG_SKIPPED_NOW = "skipped_now"
 FLAG_GAP_IGNORED_SKIPPED = "gap_ignored_skipped"
 FLAG_CERT_OFF_NO_EFFECT = "cert_off_no_effect"
 FLAG_OWN_EFFORT_LENGTH_NOT_APPLIED = "own_effort_length_not_applied"
+#: P35 (R35-8): the pair is received (the copy is written, so a re-include
+#: gets the current copy) but the step is excluded for this project.
+FLAG_EXCLUDED_NO_EFFECT = "excluded_no_effect"
 #: Contract order of the step flags (deterministic wire form).
 STEP_FLAGS: tuple[str, ...] = (
     FLAG_REVIVED,
@@ -68,6 +71,7 @@ STEP_FLAGS: tuple[str, ...] = (
     FLAG_GAP_IGNORED_SKIPPED,
     FLAG_CERT_OFF_NO_EFFECT,
     FLAG_OWN_EFFORT_LENGTH_NOT_APPLIED,
+    FLAG_EXCLUDED_NO_EFFECT,
 )
 
 _STARTED_STAGES = frozenset(
@@ -204,6 +208,9 @@ def _step_outcome(
                 flags.add(FLAG_CERT_OFF_NO_EFFECT)
     if delta.gap_changed:
         new_gap = delta.gap_after
+    if row.excluded and (delta.length_changed or delta.gap_changed):
+        # R35-8: an apply never touches `excluded`; the copy still lands.
+        flags.add(FLAG_EXCLUDED_NO_EFFECT)
 
     def eff(plan_weeks: int) -> int:
         return live_step_effective_weeks(
@@ -212,6 +219,7 @@ def _step_outcome(
             certification_testing_required=certification_testing_required,
             own_effort=own_effort,
             effort_weeks=row.effort_weeks,
+            excluded=row.excluded,
         )
 
     eff_before, eff_after = eff(row.plan_weeks), eff(new_plan)

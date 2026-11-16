@@ -22,6 +22,10 @@ exactly one row per step of its workflow:
   re-copied too. Otherwise an existing row's copy is never touched: a
   template edit reaches a project only through the apply (P33-T10). The
   per-step copy before / after is returned for the caller's audit row.
+- **P35 (R35-11)**: a re-pointed row loses its step exclusion (`excluded`):
+  PDD-B and OEM-B are different activities. Each cleared flag writes one
+  `project.step_included` audit row, reason `workflow_change`. A workflow
+  change with progress is refused, so only Not Started rows are affected.
 - a re-pointed row loses its derived effort (`effort_weeks`, ADR 0041);
   every other row keeps it. (The Gantt-set timing fields, ADR 0019 / 0043,
   are retired and always null since p33c, ADR 0048.) The caller re-derives
@@ -33,9 +37,12 @@ Planned weeks are not touched here. They belong to schedule runs.
 
 from __future__ import annotations
 
+import uuid
+
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from models.audit import AuditLogEntry
 from models.enums import WorkflowStepStatus
 from models.project import Project, workflow_id_for_hub
 from models.workflow import ProjectWorkflowStep, WorkflowStepTemplate
@@ -51,12 +58,23 @@ class WorkflowChangeWithProgress(Exception):
     """Raised when a workflow change would drop recorded stage progress."""
 
 
+#: R35-11: the audit action and reason of a flag a workflow change cleared.
+AUDIT_STEP_INCLUDED = "project.step_included"
+REASON_WORKFLOW_CHANGE = "workflow_change"
+
+
 async def sync_project_steps(
-    db: AsyncSession, project: Project, hub_is_oem: bool, *, recopy_template: bool = False
+    db: AsyncSession,
+    project: Project,
+    hub_is_oem: bool,
+    *,
+    recopy_template: bool = False,
+    actor_user_id: uuid.UUID | None = None,
 ) -> CopyChanges:
     """See the module docstring. Returns the template-copy changes
     (`services.template_copy.CopyChanges`) of the existing rows; a created
-    row's first copy is not a change."""
+    row's first copy is not a change. `actor_user_id` is the actor of the
+    R35-11 audit rows."""
 
     workflow_id = workflow_id_for_hub(hub_is_oem)
     templates = (
@@ -97,7 +115,35 @@ async def sync_project_steps(
             if target is None:  # pragma: no cover - both workflows have 14 steps
                 await db.delete(row)
                 continue
+            old_step_id = row.step_template_id
             row.step_template_id = target.id
+            if row.excluded:
+                # R35-11: the flag belonged to the old workflow's activity.
+                row.excluded = False
+                db.add(
+                    AuditLogEntry(
+                        actor_user_id=actor_user_id,
+                        action=AUDIT_STEP_INCLUDED,
+                        entity_type="Project",
+                        entity_id=str(project.id),
+                        hub_id=project.hub_id,
+                        before_state={
+                            "project_id": str(project.id),
+                            "step_id": old_step_id,
+                            "step_row_id": str(row.id),
+                            "step_excluded": True,
+                            "stage_status": row.status.value,
+                        },
+                        after_state={
+                            "project_id": str(project.id),
+                            "step_id": target.id,
+                            "step_row_id": str(row.id),
+                            "step_excluded": False,
+                            "stage_status": row.status.value,
+                            "reason": REASON_WORKFLOW_CHANGE,
+                        },
+                    )
+                )
             # ADR 0048 (p33c): the Gantt-set timing fields are always null
             # (CHECK), so nothing of them carries across.
             # ADR 0041 R6: the derived effort belonged to the old step too;

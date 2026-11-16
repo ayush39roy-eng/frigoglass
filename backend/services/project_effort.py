@@ -63,6 +63,7 @@ from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
+from fastapi import status
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -73,6 +74,7 @@ from models.hub import Hub
 from models.project import Project, workflow_id_for_hub
 from models.workflow import ProjectWorkflowStep, WorkflowLeadTime, WorkflowStepTemplate
 from scheduling.effort_split import (
+    NOT_APPLIED_ALL_EXCLUDED,
     EffortSplitRejected,
     EffortStepInput,
     ProjectEffortDerivation,
@@ -101,6 +103,8 @@ TRIGGER_UNFREEZE = "unfreeze"
 TRIGGER_STAGE_STATUS = "stage_status"
 TRIGGER_CREATE = "project_create"
 TRIGGER_IMPORT = "import"
+#: P35 (R35-6): an exclusion or re-inclusion re-derives the split over S′.
+TRIGGER_STEP_EXCLUSION = "step_exclusion"
 
 
 @dataclass(frozen=True)
@@ -129,7 +133,8 @@ def effort_inputs(
     """The split's step inputs from live rows: lead = the category template's
     `effort_weight_weeks` of the step (R33-2; `weights`, 0 when the template
     has no row), kind = the template's kind on Workflow Settings, started =
-    stored status ≠ Not Started (R3)."""
+    stored status ≠ Not Started (R3), excluded = the row's P35 flag (R35-3:
+    the split runs over S′, the weighted steps that are not excluded)."""
 
     return tuple(
         EffortStepInput(
@@ -138,6 +143,7 @@ def effort_inputs(
             kind=kinds.get(r.step_template_id, "elapsed"),
             lead_weeks=weights.get(r.step_template_id, 0),
             started=r.status != WorkflowStepStatus.NOT_STARTED,
+            excluded=bool(r.excluded),
         )
         for r in rows
     )
@@ -217,14 +223,23 @@ async def validate_effort_split(
     lab_effort_weeks: object,
     certification_testing_required: bool,
     project_id: uuid.UUID | None = None,
-) -> None:
+    excluded_step_ids: Iterable[str] | None = None,
+    started_step_ids: Iterable[str] | None = None,
+) -> ProjectEffortDerivation | None:
     """R7 BEFORE anything is written: the split the target state would get
     (the workflow of `hub_is_oem`, the lead times of `category`, the stored
     stage statuses of `project_id` for R3). Raises `EffortSplitRejected`; the
-    write paths call it first so a rejection leaves the session untouched."""
+    write paths call it first so a rejection leaves the session untouched.
+
+    P35 (R35-3 / R35-5): the split runs over S′. The excluded steps are the
+    stored flags of `project_id` (only those of the target workflow: a
+    workflow change clears them, R35-11) unless `excluded_step_ids` gives the
+    final state of a Save; `started_step_ids` likewise overrides the stored
+    R3 flags. Returns the derivation (None without a figure), so the caller
+    can apply `exclusion_guard_error` (R35-5 (a))."""
 
     if design_effort_weeks is None and lab_effort_weeks is None:
-        return
+        return None
     workflow_id = workflow_id_for_hub(hub_is_oem)
     templates = (
         await db.execute(
@@ -239,19 +254,26 @@ async def validate_effort_split(
     # `effort_weight_weeks`, never `weeks`.
     lead = await effort_weights(db, workflow_id, category)
     started: set[str] = set()
+    excluded: set[str] = set()
     if project_id is not None:
-        started = {
-            step_id
-            for step_id, status in (
-                await db.execute(
-                    select(ProjectWorkflowStep.step_template_id, ProjectWorkflowStep.status).where(
-                        ProjectWorkflowStep.project_id == project_id
-                    )
-                )
-            ).all()
-            if status != WorkflowStepStatus.NOT_STARTED
-        }
-    derive_project_effort(
+        for step_id, status, is_excluded in (
+            await db.execute(
+                select(
+                    ProjectWorkflowStep.step_template_id,
+                    ProjectWorkflowStep.status,
+                    ProjectWorkflowStep.excluded,
+                ).where(ProjectWorkflowStep.project_id == project_id)
+            )
+        ).all():
+            if status != WorkflowStepStatus.NOT_STARTED:
+                started.add(step_id)
+            if is_excluded:
+                excluded.add(step_id)
+    if excluded_step_ids is not None:
+        excluded = set(excluded_step_ids)
+    if started_step_ids is not None:
+        started = set(started_step_ids)
+    return derive_project_effort(
         design_effort_weeks=design_effort_weeks,  # type: ignore[arg-type]
         lab_effort_weeks=lab_effort_weeks,  # type: ignore[arg-type]
         certification_testing_required=certification_testing_required,
@@ -262,10 +284,39 @@ async def validate_effort_split(
                 kind=kind.value,
                 lead_weeks=lead.get(step_id, 0),
                 started=step_id in started,
+                excluded=step_id in excluded,
             )
             for step_id, seq, kind in templates
         ),
     )
+
+
+def exclusion_guard_error(derivation: ProjectEffortDerivation | None) -> CodedHTTPException | None:
+    """R35-5 (a) on a derivation of the project's final state: a figure in
+    force (`inForce(p, k)`) whose every weighted step is excluded (S′ empty,
+    `scheduling.effort_split.NOT_APPLIED_ALL_EXCLUDED`) is a 409
+    `EFFORT_NEEDS_A_STEP` naming the kind. None when the state is allowed."""
+
+    if derivation is None:
+        return None
+    for split, field in (
+        (derivation.design, "design_effort_weeks"),
+        (derivation.lab, "lab_effort_weeks"),
+    ):
+        if split.not_applied_reason == NOT_APPLIED_ALL_EXCLUDED:
+            label = "design" if split.kind == "design" else "lab"
+            return CodedHTTPException(
+                status.HTTP_409_CONFLICT,
+                "EFFORT_NEEDS_A_STEP",
+                [
+                    field_error(
+                        field,
+                        f"The project's {label} time needs at least one {label} step. "
+                        f"Clear the {label} time or keep one {label} step.",
+                    )
+                ],
+            )
+    return None
 
 
 async def template_kinds(db: AsyncSession) -> dict[str, str]:
