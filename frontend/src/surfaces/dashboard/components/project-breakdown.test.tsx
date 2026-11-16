@@ -71,6 +71,9 @@ function row(over: Partial<ProjectFilterRow> = {}): ProjectFilterRow {
     status_mismatch: false,
     actual_start_week: null,
     actual_end_week: null,
+    priority_label: null,
+    counts_toward_year: null,
+    not_scheduled_priority: null,
     ...over,
   };
 }

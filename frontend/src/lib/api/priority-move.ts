@@ -76,7 +76,22 @@ export interface PriorityPreviewMoved {
   within_year_after: boolean | null;
   left_out_before: boolean | null;
   left_out_after: boolean | null;
+  /** P42 (API_CONTRACT_P42 §7): the stored flags on each side; null when that
+   *  side has no outcome. */
+  counts_toward_year_before?: boolean | null;
+  counts_toward_year_after?: boolean | null;
+  not_scheduled_priority_before?: boolean | null;
+  not_scheduled_priority_after?: boolean | null;
+  /** P42 (R42-8): `leaves_plan` (into P4 / Q) or `joins_queue` (now a queued
+   *  P3); null otherwise. The moved project is never "drops out of the year". */
+  effect?: PriorityMoveEffect | null;
+  /** P42: the served copy — "leaves the plan" / "joins the queue — not counted
+   *  this year". Printed verbatim. */
+  effect_label?: string | null;
 }
+
+/** P42 (R42-8): what a priority move does to the moved project's plan. */
+export type PriorityMoveEffect = 'leaves_plan' | 'joins_queue';
 
 /** Served counts over the other affected projects in the caller's scope. */
 export interface PriorityPreviewSummary {
@@ -102,6 +117,14 @@ export interface PriorityPreviewChange {
   left_out_after: boolean | null;
   blocked_before: boolean | null;
   blocked_after: boolean | null;
+  /** P42 (API_CONTRACT_P42 §7): the stored flags; a side with no outcome reads
+   *  counts = true, not scheduled = false. */
+  counts_toward_year_before?: boolean;
+  counts_toward_year_after?: boolean;
+  not_scheduled_priority_before?: boolean;
+  not_scheduled_priority_after?: boolean;
+  /** P42 (R42-1): the label of `priority`. */
+  priority_label?: string | null;
 }
 
 export interface PriorityPreviewResponse {
@@ -237,6 +260,14 @@ export interface ScheduleRunChangeRow {
   is_new: boolean;
   /** No outcome row in the new run. */
   is_removed: boolean;
+  /** P42 (API_CONTRACT_P42 §9): the stored flags on each side (false with no
+   *  outcome row). A project that only changed class is listed (I20). */
+  before_counts_toward_year: boolean;
+  after_counts_toward_year: boolean;
+  before_not_scheduled_priority: boolean;
+  after_not_scheduled_priority: boolean;
+  /** P42 (R42-1): the label of `priority`. */
+  priority_label: string | null;
 }
 
 // PLACEHOLDER (P11 contract §3)

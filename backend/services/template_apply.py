@@ -43,7 +43,7 @@ from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
-from sqlalchemy import select
+from sqlalchemy import ColumnElement, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -103,6 +103,29 @@ async def lock_projects(db: AsyncSession, project_ids: Iterable[uuid.UUID]) -> N
     await db.execute(
         select(Project.id).where(Project.id.in_(ids)).order_by(Project.id).with_for_update()
     )
+
+
+async def lock_projects_in_scope(
+    db: AsyncSession,
+    project_ids: Iterable[uuid.UUID],
+    scope: ColumnElement[bool] | None,
+) -> set[uuid.UUID]:
+    """The scoped variant of `lock_projects` (P40-F01, security S40-L1):
+    the same `SELECT id … FOR UPDATE` in `project_id` order, but only on the
+    rows `scope` admits (`services.hub_scope.hub_scope_filter(...)` on
+    `Project.hub_id`; `None` = unrestricted), so a scoped caller never locks
+    a row it may not see. Returns the ids actually locked; a caller should
+    treat any other id as not found (an out-of-scope id and a nonexistent
+    one then read the same). `lock_projects` itself is unchanged."""
+
+    ids = sorted(set(project_ids))
+    if not ids:
+        return set()
+    stmt = select(Project.id).where(Project.id.in_(ids))
+    if scope is not None:
+        stmt = stmt.where(scope)
+    locked = (await db.execute(stmt.order_by(Project.id).with_for_update())).scalars().all()
+    return set(locked)
 
 
 @dataclass

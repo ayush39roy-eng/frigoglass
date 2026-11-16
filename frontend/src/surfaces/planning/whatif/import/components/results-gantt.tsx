@@ -594,7 +594,15 @@ function ProjectBar({
 }): React.JSX.Element | null {
   const geom = visibleBar(p.start_week, p.end_week, scale);
   if (!geom) {
-    if (p.outcome !== 'left_out' && p.outcome !== 'data_error' && p.outcome !== 'blocked' && p.outcome !== 'excluded')
+    if (
+      p.outcome !== 'left_out' &&
+      p.outcome !== 'data_error' &&
+      p.outcome !== 'blocked' &&
+      p.outcome !== 'excluded' &&
+      // P42: a queued project with no slot, or a P4 never planned, is labelled too.
+      p.outcome !== 'queued' &&
+      p.outcome !== 'not_scheduled_priority'
+    )
       return null;
     return (
       <text

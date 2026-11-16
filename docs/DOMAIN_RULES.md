@@ -1791,7 +1791,11 @@ ADR 0048 is unchanged: the old timing fields stay retired. A pin is a different,
     `End < Start` is refused.
   - The server serves `current_length_weeks`, `pin_editable` and `pin_block_reason` per step. Current
     length is the active run row's window length, or the live pin's length if one is set; with no
-    run row it is `ceil(eff / fte)` for a design step of a non-frozen project, `eff` otherwise.
+    run row it is `ceil(eff / fte)` for a design step of a non-frozen project whose leader has a valid
+    FTE (> 0, finite), `eff` otherwise. *(2026-11-17, P40-R02: FTE condition stated.)*
+  - For a step with no live row, `pin_block_reason` is `STEP_STARTED` (or `PROJECT_FROZEN` on a
+    frozen project). `pin_clearable` and a per-step `pin_lapsed` are also served (P40-R02); the
+    browser derives neither.
 - **A pin is a placement, not effort.**
   - The step occupies exactly its window. `duration_weeks` on its row stays `eff`.
   - Effort split (R2/R3/R6, I26), demand (I25), booked loads (I6/I7), roll-up weights (I12) and
@@ -1804,7 +1808,8 @@ ADR 0048 is unchanged: the old timing fields stay retired. A pin is a different,
   - Non-frozen project: only on a Not Started step that is not skipped and not in a Blocked hold.
   - Frozen project: on every non-skipped step (frozen ignores progress, ADR 0006).
   - A pin on a skipped step is inert and stays stored (I33). On a started step it is ignored.
-  - A write moving a stage out of Not Started (check-in, stage PATCH, client re-import, seed) clears
+  - A write moving a stage out of Not Started (check-in, stage PATCH, the register's current step
+    via `POST /projects/register-edits` (P40-R01), client re-import, seed) clears
     that step's pin in the same transaction, under the project row lock. It writes a
     `project.step_pin_cleared` audit row with `cause = "stage_started"`. From then on the progress
     rules govern.
@@ -1862,7 +1867,10 @@ ADR 0048 is unchanged: the old timing fields stay retired. A pin is a different,
   - Bars and flags come from the active run. Per-project design and lab weeks stay Σ
     `duration_weeks` (I9, I23).
   - The inputs show the live pin. While it differs from the run's row window, the step reads "Pin
-    applies on the next run".
+    applies on the next run", unless the step's served `pin_lapsed` is true: a truly lapsed pin
+    (R40-5) differs from its run window permanently and reads "Lapsed: placed from W{n}". Only the
+    step's own `pin_lapsed` marks a step lapsed, never the project flag. *(2026-11-17, P40-R02
+    re-check: aligned with ADR 0054 R40-13 as amended.)*
   - The browser derives no length, flag, domain or editability.
 
 ### Invariants (P40, exact text of ruling P40-T02)

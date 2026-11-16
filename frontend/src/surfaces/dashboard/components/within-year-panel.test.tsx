@@ -7,8 +7,9 @@ import type { CompletingWithinYear } from '../api/types';
 import { withinYearSharePct } from '../lib/outcome';
 import { DeliveryGaugeCard } from './delivery-gauge-card';
 import { WithinYearKpis } from './within-year-panel';
+import { servedCompleting } from '@/surfaces/dashboard/test-fixtures';
 
-const withRun: CompletingWithinYear = {
+const withRun: CompletingWithinYear = servedCompleting({
   has_active_schedule_run: true,
   schedule_run_version: 3,
   within_year_count: 9,
@@ -35,7 +36,7 @@ const withRun: CompletingWithinYear = {
       not_started: false,
     },
   ],
-};
+});
 
 describe('WithinYearKpis', () => {
   it('clicking an outcome card lists the run rows behind it (owner ask 2026-11-13)', async () => {
@@ -93,7 +94,7 @@ describe('WithinYearKpis', () => {
   it('renders a non-error empty state when no schedule run is active', () => {
     renderWithProviders(
       <WithinYearKpis
-        data={{
+        data={servedCompleting({
           has_active_schedule_run: false,
           schedule_run_version: null,
           within_year_count: 0,
@@ -103,7 +104,7 @@ describe('WithinYearKpis', () => {
           priority_delivery: [],
           regions: [],
           rows: [],
-        }}
+        })}
         activeRun={null}
       />,
     );

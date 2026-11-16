@@ -15,6 +15,7 @@ import {
   type CurrencyCode,
   type HubName,
   type LabRegion,
+  type ProjectPriority,
   type ProjectType,
   type WorkflowId,
   type WorkflowStepKind,
@@ -45,6 +46,26 @@ export interface Hub {
 export interface ProjectTypeRead {
   code: ProjectType;
   label: string;
+}
+
+/** P42 (ADR 0056 R42-1, API_CONTRACT_P42 §1): one row of
+ *  `GET /reference/priorities`, served in band order P1, P2, P3, P4, Q. The
+ *  app's label source is `PRIORITY_LABELS` in `types/enums.ts`, which mirrors
+ *  `label` (pinned by the backend contract test), so no pill waits on a fetch. */
+export interface PriorityBandRead {
+  code: ProjectPriority;
+  label: string;
+  /** The chip text: the band code. */
+  short_label: string;
+  /** A non-frozen project of this band in a schedulable status is never scheduled (P4, Q). */
+  not_scheduled: boolean;
+  /** An In Queue project of this band does not count toward the year (P3, P4, Q). */
+  queued_when_in_queue: boolean;
+}
+
+/** P42: `GET /reference/priorities`. */
+export function fetchPriorityBands(signal?: AbortSignal): Promise<PriorityBandRead[]> {
+  return apiGet<PriorityBandRead[]>('/reference/priorities', { signal });
 }
 
 /**

@@ -36,12 +36,13 @@ vi.mock('../../hooks/use-dashboard', async () => {
 });
 
 import { ExecutiveView } from './executive-view';
+import { servedCompleting } from '@/surfaces/dashboard/test-fixtures';
 
 function ready<T>(data: T): UseQueryResult<T, Error> {
   return { data, isPending: false, isError: false, error: null, refetch: vi.fn() } as unknown as UseQueryResult<T, Error>;
 }
 
-const withinYear: CompletingWithinYear = {
+const withinYear: CompletingWithinYear = servedCompleting({
   has_active_schedule_run: true,
   schedule_run_version: 4,
   within_year_count: 41,
@@ -71,9 +72,9 @@ const withinYear: CompletingWithinYear = {
   ],
   // Owner ask 2026-11-16: served per-country counts (sum to the totals above).
   regions: [
-    { region: 'Greece', within_year_count: 20, spillover_count: 20, left_out_count: 60, blocked_count: 8 },
-    { region: 'India', within_year_count: 15, spillover_count: 12, left_out_count: 50, blocked_count: 6 },
-    { region: 'Romania', within_year_count: 6, spillover_count: 10, left_out_count: 16, blocked_count: 4 },
+    { region: 'Greece', within_year_count: 20, spillover_count: 20, left_out_count: 60, blocked_count: 8 , queued_count: 0, not_scheduled_priority_count: 0},
+    { region: 'India', within_year_count: 15, spillover_count: 12, left_out_count: 50, blocked_count: 6 , queued_count: 0, not_scheduled_priority_count: 0},
+    { region: 'Romania', within_year_count: 6, spillover_count: 10, left_out_count: 16, blocked_count: 4 , queued_count: 0, not_scheduled_priority_count: 0},
   ],
   rows: [
     {
@@ -109,7 +110,7 @@ const withinYear: CompletingWithinYear = {
       not_started: false,
     },
   ],
-};
+});
 
 const totals: PipelineTotals = {
   spillover_count: 17,
@@ -153,7 +154,7 @@ const analytics: DashboardAnalytics = {
   by_reg_year: [],
   completing_hub_type: [],
   completing_by_type: [],
-  completing_by_hub: [{ key: 'PD-India', pipeline_count: 180, completing_count: 14, completing_pct: 7.78 }],
+  completing_by_hub: [{ key: 'PD-India', pipeline_count: 180, counting_count: 180, completing_count: 14, completing_pct: 7.78 }],
   has_active_schedule_run: true,
 };
 

@@ -13,6 +13,7 @@ import type {
   LabRegion,
   SolverType,
   ScheduleRunStatus,
+  ScheduleOutcome,
 } from '@/types/enums';
 import type { TrackingStatus } from '@/components/shared/tracking-status-meta';
 import type { Id, WeekNumber } from '@/types/common';
@@ -86,6 +87,18 @@ export interface CompletingWithinYearRow {
   status: ProjectStatus;
   /** P17-R03: In Queue AND no stage has progress (server-derived). */
   not_started: boolean;
+  /** P42 (API_CONTRACT_P42 §8): the stored flag (R42-4); false for a queued
+   *  P3 and a P4 / Q in a schedulable status. */
+  counts_toward_year: boolean;
+  /** P42: a non-frozen P4 / Q, never planned (R42-3). */
+  not_scheduled_priority: boolean;
+  /** P42: the row's served exclusive bucket — the top-level counts partition
+   *  by it. null = in no bucket (On Hold / Cancelled / Draft / data error). */
+  outcome: ProjectRunOutcome | null;
+  /** P42 (R42-1): the band label; null with no band. */
+  priority_label: string | null;
+  /** P42: the stored projected finish week (for the queued copy). */
+  projected_end_week: WeekNumber | null;
 }
 
 /** P17-R03: one priority band of "Delivery by priority", counted server-side
@@ -110,6 +123,19 @@ export interface PriorityDeliveryBand {
   not_started_share_pct: number;
   delivered_share_pct: number;
   other_share_pct: number;
+  /** P42 (API_CONTRACT_P42 §8): the band label. */
+  priority_label: string;
+  /** P42: projects of the band whose active-run bucket is QUEUED. */
+  queued_total: number;
+  /** P42: … NOT_SCHEDULED_PRIORITY. */
+  not_scheduled_priority_total: number;
+  /** P42: `total − queued_total − not_scheduled_priority_total`; the
+   *  denominator of `within_year_share_pct` (meaning change, I53). */
+  counting_total: number;
+  /** P42: counting projects of `in_flight_total`. */
+  in_flight_counting_total: number;
+  /** P42: counting projects of `not_started_total`. */
+  not_started_counting_total: number;
 }
 
 /** GET /dashboard/completing-within-year — the Invariant I9 endpoint. Every
@@ -126,6 +152,17 @@ export interface CompletingWithinYear {
    *  also be set on the same row. Blocked wins outright so the four counts
    *  partition the schedulable, non-excluded portfolio without overlap. */
   blocked_count: number;
+  /** P42 (API_CONTRACT_P42 §8): rows in bucket QUEUED (a P3 in queue). */
+  queued_count: number;
+  /** P42: rows in bucket NOT_SCHEDULED_PRIORITY (a P4 / Q, never planned). */
+  not_scheduled_priority_count: number;
+  /** P42: rows in no bucket (On Hold / Cancelled / Draft / data error). */
+  excluded_count: number;
+  /** P42 (I53): within + spillover + left out + blocked — THE denominator of
+   *  every within-year share. Served; the browser never sums it. */
+  counting_outcome_count: number;
+  /** P42: `within_year_count / counting_outcome_count × 100`, 2 dp, 0 on 0. */
+  within_year_share_pct: number;
   /** P17-R03: always P1, P2, P3, P4, Q in that order. */
   priority_delivery: PriorityDeliveryBand[];
   /** Owner ask 2026-11-16: the four outcome counts per country. Always three
@@ -143,6 +180,9 @@ export interface DeliveryRegionRow {
   spillover_count: number;
   left_out_count: number;
   blocked_count: number;
+  /** P42: the region's QUEUED / NOT_SCHEDULED_PRIORITY rows. */
+  queued_count: number;
+  not_scheduled_priority_count: number;
 }
 
 /** One row of GET /dashboard/projects (the "analytics breakdown with filters"). */
@@ -196,10 +236,16 @@ export interface ProjectFilterRow {
   expected_status: ProjectStatus | null;
   /** Served: `status` differs from `expected_status`. */
   status_mismatch: boolean;
+  /** P42 (API_CONTRACT_P42 §8): the band label; null with no band. */
+  priority_label: string | null;
+  /** P42: the stored flags; null with no outcome row in the active run. */
+  counts_toward_year: boolean | null;
+  not_scheduled_priority: boolean | null;
 }
 
-/** The active run's outcome for a project (P13 contract §3). */
-export type ProjectRunOutcome = 'WITHIN_YEAR' | 'SPILLOVER' | 'LEFT_OUT' | 'BLOCKED';
+/** The active run's outcome for a project (P13 contract §3); P42 adds
+ *  QUEUED and NOT_SCHEDULED_PRIORITY (API_CONTRACT_P42 §0). */
+export type ProjectRunOutcome = ScheduleOutcome;
 
 export interface ProjectFilterResult {
   total_count: number;
@@ -286,7 +332,9 @@ export interface CompletingHubTypeCell {
   type: ProjectType | null;
   pipeline_count: number;
   completing_count: number;
-  /** completing / pipeline × 100, 2 dp, server-side. */
+  /** P42: `pipeline_count` minus the cell's queued and not-scheduled projects. */
+  counting_count: number;
+  /** completing / counting × 100, 2 dp, server-side (P42 meaning change). */
   completing_pct: number;
 }
 
@@ -295,6 +343,8 @@ export interface CompletingByTypeRow {
   key: AnalyticsTypeKey;
   pipeline_count: number;
   completing_count: number;
+  /** P42: see `CompletingHubTypeCell.counting_count`. */
+  counting_count: number;
   completing_pct: number;
 }
 
@@ -303,6 +353,8 @@ export interface CompletingByHubRow {
   key: HubName;
   pipeline_count: number;
   completing_count: number;
+  /** P42: see `CompletingHubTypeCell.counting_count`. */
+  counting_count: number;
   completing_pct: number;
 }
 

@@ -111,7 +111,7 @@ export function PriorityLoadChart({
           PRIORITY_BUCKETS.map((b) => (
             <li key={b} className="flex items-center gap-1">
               <span className={cn('inline-block size-2.5 rounded-sm', BUCKET_BG[b])} />
-              {b === 'Queue' ? 'Queue' : b}
+              {BUCKET_SHORT[b]}
             </li>
           ))
         ) : (

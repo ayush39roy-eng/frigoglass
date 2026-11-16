@@ -15,7 +15,7 @@ import { DrillButton } from './hub-type-drilldown';
  * "Projects completing within year: Hub × Type" (P13-T10, mock-up image 7).
  *
  * Each cell is one served `completing_hub_type` row: completing count and its
- * served `completing_pct` (of that cell's pipeline). The Total row is the
+ * served `completing_pct` (P42: of that cell's projects counted this year, `counting_count`). The Total row is the
  * served `completing_by_type`; the Total column is the served
  * `completing_by_hub`. Nothing is summed here (I9). The corner is the served
  * `CompletingWithinYear.within_year_count` (ADR 0030: the cross-tab sums to it
@@ -130,7 +130,7 @@ export function CompletingHubTypeTable({
                           <CellFigure
                             count={c.completing_count}
                             pct={c.completing_pct}
-                            title={`${hub} · ${typeLabel(t)}: ${formatInteger(c.completing_count)} of ${formatInteger(c.pipeline_count)} pipeline projects complete within the year`}
+                            title={`${hub} · ${typeLabel(t)}: ${formatInteger(c.completing_count)} complete within the year · ${formatInteger(c.counting_count)} counted · ${formatInteger(c.pipeline_count)} in the pipeline`}
                             target={{ source: 'completing', hub: c.hub, typeKey: t as AnalyticsTypeKey, count: c.completing_count }}
                             onDrill={onDrill}
                           />
@@ -149,7 +149,7 @@ export function CompletingHubTypeTable({
                             count={h.completing_count}
                             pct={h.completing_pct}
                             strong
-                            title={`${hub}: ${formatInteger(h.completing_count)} of ${formatInteger(h.pipeline_count)} pipeline projects complete within the year`}
+                            title={`${hub}: ${formatInteger(h.completing_count)} complete within the year · ${formatInteger(h.counting_count)} counted · ${formatInteger(h.pipeline_count)} in the pipeline`}
                             target={{ source: 'completing', hub: h.key, typeKey: null, count: h.completing_count }}
                             onDrill={onDrill}
                           />
@@ -177,7 +177,7 @@ export function CompletingHubTypeTable({
                             count={r.completing_count}
                             pct={r.completing_pct}
                             strong
-                            title={`${typeLabel(t)}: ${formatInteger(r.completing_count)} of ${formatInteger(r.pipeline_count)} pipeline projects complete within the year`}
+                            title={`${typeLabel(t)}: ${formatInteger(r.completing_count)} complete within the year · ${formatInteger(r.counting_count)} counted · ${formatInteger(r.pipeline_count)} in the pipeline`}
                             target={{ source: 'completing', hub: null, typeKey: r.key, count: r.completing_count }}
                             onDrill={onDrill}
                           />

@@ -149,24 +149,43 @@ describe('drafts and the batch body', () => {
   });
 });
 
-describe('pinRunState (R40-13)', () => {
+describe('pinRunState (R40-13; P40-R02: lapse only from the step\'s own served pin_lapsed)', () => {
   it('applied when the run row sits on the live pin', () => {
-    expect(pinRunState(step({ pinned: true, manual_start_week: 40, manual_end_week: 43 }), project())).toBe('applied');
+    expect(pinRunState(step({ pinned: true, manual_start_week: 40, manual_end_week: 43 }))).toBe('applied');
   });
 
   it('pending while the saved pin differs from the bar, or a cleared pin is still on the bar', () => {
-    expect(pinRunState(step({ manual_start_week: 44, manual_end_week: 46 }), project())).toBe('pending');
-    expect(pinRunState(step({ pinned: true }), project())).toBe('pending');
+    expect(pinRunState(step({ manual_start_week: 44, manual_end_week: 46 }))).toBe('pending');
+    expect(pinRunState(step({ pinned: true }))).toBe('pending');
   });
 
-  it('lapsed when the served pin_lapsed placed the pinned row after its passed start', () => {
+  it('lapsed only when the step itself is served pin_lapsed', () => {
     const s = step({ pinned: true, manual_start_week: 30, manual_end_week: 33, planned_start_week: 31, planned_end_week: 34 });
-    expect(pinRunState(s, project({ pin_lapsed: true }))).toBe('lapsed');
-    expect(pinRunState(s, project())).toBe('pending');
+    expect(pinRunState({ ...s, pin_lapsed: true })).toBe('lapsed');
+    expect(pinRunState(s)).toBe('pending');
+  });
+
+  it('sibling case: project pin_lapsed true, this step not lapsed, live pin earlier than its window -> pending', () => {
+    // The workflow-auditor's P40 gate reproduction: a sibling PDD-E lapsed (so
+    // the project flag is true); this step's live pin (36–37) was saved earlier
+    // than its run window (40–41) after the run. It is NOT lapsed.
+    const lapsedProject = project({ pin_lapsed: true });
+    expect(lapsedProject.pin_lapsed).toBe(true);
+    const sibling = step({
+      step_id: 'PDD-G',
+      pinned: true,
+      pin_lapsed: false,
+      manual_start_week: 36,
+      manual_end_week: 37,
+      planned_start_week: 40,
+      planned_end_week: 41,
+    });
+    expect(pinRunState(sibling)).toBe('pending');
   });
 
   it('nothing for an unpinned step, or an inert pin on a skipped step', () => {
-    expect(pinRunState(step(), project())).toBeNull();
-    expect(pinRunState(step({ skipped: true, manual_start_week: 44, manual_end_week: 46 }), project())).toBeNull();
+    expect(pinRunState(step())).toBeNull();
+    expect(pinRunState(step({ skipped: true, manual_start_week: 44, manual_end_week: 46 }))).toBeNull();
+    expect(pinRunState(step({ skipped: true, pin_lapsed: true, manual_start_week: 44, manual_end_week: 46 }))).toBeNull();
   });
 });

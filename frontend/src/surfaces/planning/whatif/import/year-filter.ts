@@ -57,7 +57,12 @@ export function projectInYear(
   baseYear: number,
 ): boolean {
   if (key === YEAR_ALL) return true;
-  if (key === YEAR_NOT_PLACED) return NOT_PLACED_OUTCOMES.has(p.outcome);
+  // P42 (API_CONTRACT_P42 §10): a queued project with no slot is `not_placed`;
+  // with a finish week it goes by that week like a placed one. A
+  // not-scheduled (P4) project is only in `all` (it has no finish week).
+  if (key === YEAR_NOT_PLACED) {
+    return NOT_PLACED_OUTCOMES.has(p.outcome) || (p.outcome === 'queued' && p.finish_week === null);
+  }
   if (p.finish_week === null || NOT_PLACED_OUTCOMES.has(p.outcome)) return false;
   if (key === YEAR_LATER) return p.finish_week > LATER_AFTER_WEEK;
   if (!/^\d{4}$/.test(key)) return false;

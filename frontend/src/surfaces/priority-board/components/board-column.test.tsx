@@ -19,7 +19,7 @@ function card(i: number): PriorityBoardCard {
 function bigColumn(): DisplayColumn {
   const n = VIRTUALIZE_OVER + 20;
   return {
-    priority: 'P1', count: n, design_weeks: 0, lab_weeks: 0,
+    priority: 'P1', count: n, design_weeks: 0, lab_weeks: 0, label: 'Must do this year', not_scheduled: false, queued_count: 0,
     cards: Array.from({ length: n }, (_, i) => ({ card: card(i), servedPriority: 'P1' as const, pending: false })),
   };
 }

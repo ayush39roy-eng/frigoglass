@@ -215,8 +215,7 @@ async def test_vip_ranking_pins_first_then_auto(db_session):
         (3, "A1", "auto"),
         (4, "A2", "auto"),
         (5, "B1", "auto"),
-        (6, "D1", "auto"),
-        (7, "Q1", "auto"),
+        # P42 (ADR 0056 R42-6): non-frozen P4 / Q never auto-fill (D1, Q1).
     ]
 
 

@@ -6,12 +6,13 @@ import { renderWithProviders } from '@/test/render';
 import type { CompletingWithinYearRow, PriorityDeliveryBand } from '../api/types';
 import { seriousAxeViolations } from '@/test/axe';
 import { PortfolioAnalytics, PRIORITY_NOTE } from './portfolio-analytics';
+import { servedBand, servedRow } from '@/surfaces/dashboard/test-fixtures';
 
 function row(
   id: string,
   overrides: Partial<CompletingWithinYearRow> = {},
 ): CompletingWithinYearRow {
-  return {
+  return servedRow({
     project_id: id,
     project_name: `Project ${id}`,
     hub: 'R&D-Greece',
@@ -27,14 +28,14 @@ function row(
     status: 'In Development',
     not_started: false,
     ...overrides,
-  };
+  });
 }
 
 function band(
   priority: PriorityDeliveryBand['priority'],
   o: Partial<PriorityDeliveryBand> = {},
 ): PriorityDeliveryBand {
-  return {
+  return servedBand({
     priority,
     total: 0,
     within_year: 0,
@@ -53,7 +54,7 @@ function band(
     delivered_share_pct: 0,
     other_share_pct: 0,
     ...o,
-  };
+  });
 }
 
 // Audited shape of the client data: P1 has 13 not started; P3 all in flight;

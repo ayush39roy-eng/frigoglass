@@ -76,12 +76,14 @@ const changes: ScheduleRunChanges = {
       before_projected_end_week: 40, after_projected_end_week: 46, delta_weeks: 6,
       before_within_year: true, after_within_year: true, before_left_out: false, after_left_out: false,
       before_blocked: false, after_blocked: false, is_new: false, is_removed: false,
+      before_counts_toward_year: true, after_counts_toward_year: true, before_not_scheduled_priority: false, after_not_scheduled_priority: false, priority_label: null,
     },
     {
       project_id: 'p2', project_name: 'Freezer Two', hub: 'R&D-India', priority: 'P1',
       before_projected_end_week: 55, after_projected_end_week: 50, delta_weeks: -5,
       before_within_year: false, after_within_year: true, before_left_out: false, after_left_out: false,
       before_blocked: false, after_blocked: false, is_new: false, is_removed: false,
+      before_counts_toward_year: true, after_counts_toward_year: true, before_not_scheduled_priority: false, after_not_scheduled_priority: false, priority_label: null,
     },
   ],
 };
@@ -97,7 +99,7 @@ function renderControl(options?: Parameters<typeof renderWithProviders>[1], stat
 
 async function chooseP2(user: ReturnType<typeof userEvent.setup>) {
   await user.click(screen.getByRole('button', { name: /Priority P1 for Cooler One\. Change priority/ }));
-  await user.click(await screen.findByRole('menuitemradio', { name: /Priority band P2/ }));
+  await user.click(await screen.findByRole('menuitemradio', { name: /^P2 · Good to have this year/ }));
   const dialog = await screen.findByRole('dialog', { name: 'Move to P2?' });
   // Owner request 2026-11-17: the move control (Gantt row, Workspace header, board card menu)
   // previews in the right-hand side panel, not a centred modal.
@@ -228,7 +230,7 @@ describe('PriorityMoveControl — recalc_status outcomes', () => {
     const user = userEvent.setup();
     renderControl();
     await user.click(screen.getByTestId('priority-move-trigger'));
-    await user.click(await screen.findByRole('menuitemradio', { name: /Priority band P3/ }));
+    await user.click(await screen.findByRole('menuitemradio', { name: /^P3 · In queue/ }));
     await user.click(await screen.findByRole('button', { name: 'No, cancel' }));
     expect(api.moveProjectPriority).not.toHaveBeenCalled();
     expect(api.previewProjectPriority).toHaveBeenCalledWith('p1', 'P3', expect.objectContaining({ signal: expect.any(AbortSignal) }));

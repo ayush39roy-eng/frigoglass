@@ -518,6 +518,8 @@ async def test_exact_payload_has_no_forbidden_field_or_name(db_session, scoped):
                         assert set(item) == {
                             "hub", "category", "priority", "outcome", "finish_week",
                             "unconstrained_end_week",
+                            # P42 (R42-4): the engine's flag, no project data.
+                            "counts_toward_year",
                         }  # fmt: skip
                 if view["tool"] == "get_capacity_snapshot":
                     for h in view["hubs"]:

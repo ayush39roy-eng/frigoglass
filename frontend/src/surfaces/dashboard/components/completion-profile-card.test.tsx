@@ -5,12 +5,13 @@ import userEvent from '@testing-library/user-event';
 import { renderWithProviders } from '@/test/render';
 import type { CompletingWithinYear, CompletingWithinYearRow } from '../api/types';
 import { CompletionProfileCard } from './completion-profile-card';
+import { servedCompleting, servedRow } from '@/surfaces/dashboard/test-fixtures';
 
 function row(
   id: string,
   overrides: Partial<CompletingWithinYearRow> = {},
 ): CompletingWithinYearRow {
-  return {
+  return servedRow({
     project_id: id,
     project_name: `Project ${id}`,
     hub: 'R&D-Greece',
@@ -26,10 +27,10 @@ function row(
     status: 'In Development',
     not_started: false,
     ...overrides,
-  };
+  });
 }
 
-const payload: CompletingWithinYear = {
+const payload: CompletingWithinYear = servedCompleting({
   has_active_schedule_run: true,
   schedule_run_version: 3,
   within_year_count: 9,
@@ -47,7 +48,7 @@ const payload: CompletingWithinYear = {
     row('b1', { blocked: true, within_year: true, last_step_end_week: 20 }),
     row('l1', { left_out: true, last_step_end_week: null }),
   ],
-};
+});
 
 describe('CompletionProfileCard', () => {
   it('counts within-year finishes per calendar month, each month on its own, excluding blocked rows', () => {
@@ -66,13 +67,13 @@ describe('CompletionProfileCard', () => {
 
   it('opens a month into its weeks and the projects finishing in it, and narrows to a week', async () => {
     const user = userEvent.setup();
-    const data: CompletingWithinYear = {
+    const data: CompletingWithinYear = servedCompleting({
       ...payload,
       rows: [
         ...payload.rows,
         row('w3', { within_year: true, last_step_end_week: 11, hub: 'PD-India', priority: 'P2' }),
       ],
-    };
+    });
     renderWithProviders(<CompletionProfileCard data={data} />);
 
     await user.click(screen.getByRole('button', { name: 'March: 2' }));

@@ -49,7 +49,8 @@ async function fillRequired(
   await user.type(screen.getByLabelText(/^Gross margin/), '20');
   if (priority !== null) {
     await user.click(screen.getByRole('combobox', { name: /^Priority/ }));
-    await user.click(await screen.findByRole('option', { name: priority }));
+    // P42 (R42-1): options read "P2 · Good to have this year"; Q reads "Q".
+    await user.click(await screen.findByRole('option', { name: new RegExp(`^${priority}( ·|$)`) }));
   }
 }
 
@@ -415,7 +416,7 @@ describe('ProjectFormDialog', () => {
     await user.click(await screen.findByRole('option', { name: /New Model/i }));
 
     await user.click(screen.getByRole('combobox', { name: /^Priority/ }));
-    await user.click(await screen.findByRole('option', { name: 'P1' }));
+    await user.click(await screen.findByRole('option', { name: 'P1 · Must do this year' }));
 
     await user.click(screen.getByRole('checkbox', { name: /Carried over from a prior year/ }));
 
@@ -656,7 +657,7 @@ describe('ProjectForm — unsaved-changes reporting (P22-T01)', () => {
     expect(onDirtyChange).toHaveBeenLastCalledWith(false);
 
     await user.click(screen.getByRole('combobox', { name: /^Priority/ }));
-    await user.click(await screen.findByRole('option', { name: 'P3' }));
+    await user.click(await screen.findByRole('option', { name: 'P3 · In queue' }));
     expect(onDirtyChange).toHaveBeenLastCalledWith(true);
   });
 

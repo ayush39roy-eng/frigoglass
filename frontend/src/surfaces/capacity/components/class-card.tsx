@@ -1,12 +1,12 @@
 import * as React from 'react';
-import { Check, CircleCheck, TriangleAlert, X } from 'lucide-react';
+import { Check, CircleCheck, Hourglass, TriangleAlert, X } from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
 import { CategoryTag } from '@/components/ui/category-tag';
 import { formatInteger } from '@/lib/format';
 
-import type { ClassBreakdownRow, PriorityCountSplit } from '../api/types';
-import { BUCKET_SHORT, nonZeroBuckets } from '../lib/priority-split';
+import type { ClassBreakdownRow, PriorityBucketLabels, PriorityCountSplit } from '../api/types';
+import { bucketLabel, nonZeroBuckets } from '../lib/priority-split';
 
 /**
  * P13-T11: one category card from the mock-up (Class A+/A/B/C …): the served
@@ -15,17 +15,32 @@ import { BUCKET_SHORT, nonZeroBuckets } from '../lib/priority-split';
  * Every number is one field of the served `ClassBreakdownRow`, including the
  * "Total" badge (served `total_count`, P13-T11 addendum); nothing is added up here.
  */
-function SplitCaption({ split, label }: { split: PriorityCountSplit; label: string }): React.JSX.Element | null {
+function SplitCaption({
+  split,
+  label,
+  labels,
+}: {
+  split: PriorityCountSplit;
+  label: string;
+  labels: PriorityBucketLabels | undefined;
+}): React.JSX.Element | null {
   const parts = nonZeroBuckets(split);
   if (parts.length === 0) return null;
   return (
     <span className="block text-[0.625rem] font-normal normal-case tracking-normal text-text-subtle" aria-label={`${label} by priority`} data-numeric="">
-      ({parts.map((p) => `${BUCKET_SHORT[p.bucket]}: ${formatInteger(p.value)}`).join(', ')})
+      ({parts.map((p) => `${bucketLabel(p.bucket, labels)}: ${formatInteger(p.value)}`).join(', ')})
     </span>
   );
 }
 
-export function ClassCard({ row }: { row: ClassBreakdownRow }): React.JSX.Element {
+export function ClassCard({
+  row,
+  bucketLabels,
+}: {
+  row: ClassBreakdownRow;
+  /** P42: the served `priority_bucket_labels` (`Queue` → "Q"). */
+  bucketLabels?: PriorityBucketLabels;
+}): React.JSX.Element {
   const titleId = React.useId();
   return (
     <section
@@ -49,7 +64,7 @@ export function ClassCard({ row }: { row: ClassBreakdownRow }): React.JSX.Elemen
             <CircleCheck className="mt-px size-3.5 shrink-0 text-success" aria-hidden="true" />
             <span>
               Deliverable
-              <SplitCaption split={row.deliverable_by_priority} label="Deliverable" />
+              <SplitCaption split={row.deliverable_by_priority} label="Deliverable" labels={bucketLabels} />
             </span>
           </dt>
           <dd className="font-mono text-sm font-bold tabular-nums text-success-subtle-fg" data-testid={`class-${row.category}-deliverable`}>
@@ -61,7 +76,7 @@ export function ClassCard({ row }: { row: ClassBreakdownRow }): React.JSX.Elemen
             <TriangleAlert className="mt-px size-3.5 shrink-0 text-danger" aria-hidden="true" />
             <span>
               Left out
-              <SplitCaption split={row.left_out_by_priority} label="Left out" />
+              <SplitCaption split={row.left_out_by_priority} label="Left out" labels={bucketLabels} />
             </span>
           </dt>
           <dd className="font-mono text-sm font-bold tabular-nums text-danger-subtle-fg" data-testid={`class-${row.category}-left-out`}>
@@ -69,6 +84,27 @@ export function ClassCard({ row }: { row: ClassBreakdownRow }): React.JSX.Elemen
           </dd>
         </div>
       </dl>
+
+      {/* P42 (R42-6): served counts outside deliverable / left out / total —
+          a queued P3 waits for spare capacity, a P4 is never planned; neither
+          counts toward the year. */}
+      {row.queued_count > 0 || row.not_scheduled_priority_count > 0 ? (
+        <p className="flex flex-wrap items-center gap-x-s2 gap-y-0.5 text-2xs text-text-muted" data-testid={`class-${row.category}-not-counted`}>
+          <Hourglass className="size-3 shrink-0" aria-hidden="true" />
+          <span>Not counted this year:</span>
+          {row.queued_count > 0 ? (
+            <span data-testid={`class-${row.category}-queued`}>
+              Queued <span className="font-mono font-semibold tabular-nums text-text" data-numeric="">{formatInteger(row.queued_count)}</span>
+            </span>
+          ) : null}
+          {row.not_scheduled_priority_count > 0 ? (
+            <span data-testid={`class-${row.category}-not-scheduled`}>
+              Not scheduled (P4){' '}
+              <span className="font-mono font-semibold tabular-nums text-text" data-numeric="">{formatInteger(row.not_scheduled_priority_count)}</span>
+            </span>
+          ) : null}
+        </p>
+      ) : null}
 
       {row.by_hub.length > 0 ? (
         <div className="flex flex-col gap-1">

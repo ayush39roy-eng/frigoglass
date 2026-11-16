@@ -4,8 +4,9 @@ import userEvent from '@testing-library/user-event';
 
 import { renderWithProviders } from '@/test/render';
 import { seriousAxeViolations } from '@/test/axe';
-import type { CompletingWithinYear, CompletingWithinYearRow } from '../api/types';
+import type { CompletingWithinYearRow } from '../api/types';
 import { CompletionProfileCard } from './completion-profile-card';
+import { servedCompleting, servedRow } from '@/surfaces/dashboard/test-fixtures';
 
 /**
  * Owner request 2026-11-16: Hub / Project type / Category multi-selects on the
@@ -14,7 +15,7 @@ import { CompletionProfileCard } from './completion-profile-card';
  */
 
 function row(id: string, overrides: Partial<CompletingWithinYearRow> = {}): CompletingWithinYearRow {
-  return {
+  return servedRow({
     project_id: id,
     project_name: `Project ${id}`,
     hub: 'R&D-Greece',
@@ -30,11 +31,11 @@ function row(id: string, overrides: Partial<CompletingWithinYearRow> = {}): Comp
     status: 'In Development',
     not_started: false,
     ...overrides,
-  };
+  });
 }
 
 // W10 / W11 → March 2026; W30 / W31 → July 2026.
-const data = {
+const data = servedCompleting({
   has_active_schedule_run: true,
   schedule_run_version: 3,
   within_year_count: 4,
@@ -51,7 +52,7 @@ const data = {
     // Spillover: not plotted, so its hub is not offered.
     row('s', { hub: 'PD-Romania', within_year: false, spillover: true, last_step_end_week: 60 }),
   ],
-} as CompletingWithinYear;
+});
 
 function months(): HTMLElement {
   return screen.getByRole('list', { name: 'Within-year projects completed per month' });

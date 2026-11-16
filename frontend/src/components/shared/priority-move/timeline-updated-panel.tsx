@@ -9,7 +9,7 @@ import { cn } from '@/lib/utils';
 import type { ProjectPriority } from '@/types/enums';
 
 import { PriorityBandPill } from '../priority-band-pill';
-import { MOVE_COPY } from './move-copy';
+import { BAND_EFFECT_COPY, bandEffectOfChange, MOVE_COPY, type BandEffect } from './move-copy';
 
 /**
  * "Timeline updated" (ADR 0015 §4, P11 contract §3): what moved between the
@@ -58,13 +58,38 @@ function FlagFlip({ before, after, yes, no }: { before: boolean; after: boolean;
   );
 }
 
+/** P42 (R42-8): the row's class change as a chip, from the stored flags. */
+function BandEffectChip({ effect }: { effect: BandEffect }): React.JSX.Element {
+  const text = BAND_EFFECT_COPY[effect];
+  return (
+    <Badge
+      tone={effect === 'enters_plan' ? 'success' : 'neutral'}
+      className="rounded-pill"
+      data-testid="timeline-band-effect"
+      data-effect={effect}
+    >
+      {text.charAt(0).toUpperCase() + text.slice(1)}
+    </Badge>
+  );
+}
+
 function Flips({ row }: { row: ScheduleRunChangeRow }): React.JSX.Element {
+  const effect = bandEffectOfChange(row);
+  // A project that leaves the plan or joins the queue is not counted this
+  // year: its within-year / unplaced flips would read as a delivery loss, so
+  // the class change is shown instead (R42-8).
+  const notCountedNow = effect === 'leaves_plan' || effect === 'joins_queue';
   return (
     <span className="flex flex-wrap items-center gap-1">
       {row.is_new ? <Badge tone="primary" className="rounded-pill">New in this run</Badge> : null}
       {row.is_removed ? <Badge tone="neutral" className="rounded-pill">Not in this run</Badge> : null}
-      <FlagFlip before={row.before_within_year} after={row.after_within_year} yes="Within year" no="Past W52" />
-      <FlagFlip before={row.before_left_out} after={row.after_left_out} yes="Spillover · unplaced" no="In the plan" />
+      {effect ? <BandEffectChip effect={effect} /> : null}
+      {notCountedNow ? null : (
+        <>
+          <FlagFlip before={row.before_within_year} after={row.after_within_year} yes="Within year" no="Past W52" />
+          <FlagFlip before={row.before_left_out} after={row.after_left_out} yes="Spillover · unplaced" no="In the plan" />
+        </>
+      )}
       <FlagFlip before={row.before_blocked} after={row.after_blocked} yes="On hold at a stage" no="Not on hold" />
     </span>
   );

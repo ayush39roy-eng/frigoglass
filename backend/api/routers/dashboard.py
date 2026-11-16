@@ -359,9 +359,7 @@ async def _priority_delivery(
     grouped = (await db.execute(stmt)).all()
 
     acc = {
-        p: dict.fromkeys(
-            ("if", "ifw", "ns", "nsw", "dl", "dlw", "ot", "q", "nsp", "ifc", "nsc"), 0
-        )
+        p: dict.fromkeys(("if", "ifw", "ns", "nsw", "dl", "dlw", "ot", "q", "nsp", "ifc", "nsc"), 0)
         for p in _DELIVERY_BANDS
     }
     for priority, status, has_progress, wy, nsp, counts in grouped:

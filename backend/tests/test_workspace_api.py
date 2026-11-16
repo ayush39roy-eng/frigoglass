@@ -227,6 +227,9 @@ async def test_workspace_read_model(db_session):
         "has_active_run": True, "run_version": w.run.version, "expected_end_week": 48,
         "projected_end_week": 50, "unconstrained_end_week": 44, "slip_weeks": 2,
         "within_year": True, "left_out": False, "schedule_stale": False,
+        # P42 (ADR 0056, API_CONTRACT_P42 §3).
+        "counts_toward_year": True, "not_scheduled_priority": False,
+        "outcome": "WITHIN_YEAR", "outcome_label": None, "priority_label": "In queue",
     }
     stages = body["stages"]
     assert [s["step_id"] for s in stages] == [f"PDD-{c}" for c in "ABCDEFGHIJKLMN"]

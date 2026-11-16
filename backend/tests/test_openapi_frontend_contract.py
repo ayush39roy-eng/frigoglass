@@ -220,6 +220,8 @@ _NULLABILITY_ALLOWLIST: dict[tuple[str, str], str] = {
 # row tolerates exactly these as "only in backend" until the frontend task
 # named in the reason adds them; that task removes the entry (a stale entry
 # fails `test_pending_frontend_fields_are_still_pending`).
+#: P42-T04 mirrored every P42-T03 field (docs/API_CONTRACT_P42.md) and
+#: emptied this list.
 _PENDING_FRONTEND_FIELDS: dict[tuple[str, str], str] = {}
 
 
@@ -307,6 +309,8 @@ CONTRACT_TABLE: list[tuple[Path, str, str, str]] = [
     (_CAPACITY_TS, "CapacityHubMember", "CapacityHubMember", "exact"),
     (_REFERENCE_TS, "Hub", "HubRead", "exact"),
     (_REFERENCE_TS, "ProjectTypeRead", "ProjectTypeRead", "exact"),
+    # P42-T04 (API_CONTRACT_P42 §1): `GET /reference/priorities`.
+    (_REFERENCE_TS, "PriorityBandRead", "PriorityBandRead", "exact"),
     (_REFERENCE_TS, "CurrencyRate", "CurrencyRateRead", "exact"),
     # P30-T03: the prototype-era `base_weeks` shape was replaced by the served one.
     (_REFERENCE_TS, "WorkflowStepTemplate", "WorkflowStepTemplateRead", "exact"),
@@ -1038,7 +1042,11 @@ def test_section7_nullability_matches_exactly(ts_interface: str, backend_schema:
     ts_fields = _resolve_ts_fields_with_imports(_WORKSPACE_TS, ts_interface)
     ts_nullable = {n for n, f in ts_fields.items() if _ts_type_is_nullable(f["type"])}
     backend_nullable = _backend_nullable_fields(backend_schema)
-    only_backend = backend_nullable - ts_nullable
+    only_backend = {
+        n
+        for n in backend_nullable - ts_nullable
+        if (backend_schema, n) not in _PENDING_FRONTEND_FIELDS
+    }
     only_ts = {
         n
         for n in ts_nullable - backend_nullable
@@ -1128,3 +1136,18 @@ def test_band_rank_request_union_p36_to_rank() -> None:
     assert move_required == {"preview_token"}
     src = _strip_ts_comments(_PRIORITY_MOVE_TS.read_text())
     assert "BandRankMoveRequest = BandRankPreviewRequest & { preview_token: string }" in src
+
+
+def test_priority_labels_mirror_p42() -> None:
+    """P42-T04 (ADR 0056 R42-1, API_CONTRACT_P42 §1): the frontend's static
+    `PRIORITY_LABELS` (`types/enums.ts`, read by every pill tooltip, select
+    and board header so none waits on a fetch) equals the served
+    `GET /reference/priorities` labels, `domain_constants.PRIORITY_LABELS`."""
+
+    import domain_constants as dc
+
+    src = _strip_ts_comments((FRONTEND_SRC / "types" / "enums.ts").read_text())
+    m = re.search(r"export const PRIORITY_LABELS: Record<ProjectPriority, string> = \{([^}]*)\}", src)
+    assert m, "PRIORITY_LABELS not found in types/enums.ts"
+    ts_labels = dict(re.findall(r"(\w+):\s*'([^']*)'", m.group(1)))
+    assert ts_labels == dict(dc.PRIORITY_LABELS)

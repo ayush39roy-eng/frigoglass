@@ -242,4 +242,3 @@ async def get_priority_board(
     return PriorityBoardResponse(
         run_id=active_run.id if active_run is not None else None, columns=columns
     )
-

@@ -10,6 +10,7 @@ import { seriousAxeViolations } from '@/test/axe';
 import { renderWithProviders } from '@/test/render';
 import { ROLE_MATRIX } from '@/test/roles';
 import type { ProjectPriority } from '@/types/enums';
+import { PRIORITY_LABELS } from '@/types/enums';
 
 const client = { apiGet: vi.fn() };
 vi.mock('@/lib/api/client', async () => {
@@ -106,6 +107,10 @@ function board(cols: Partial<Record<ProjectPriority, PriorityBoardCard[]>>): Pri
     columns: (['P1', 'P2', 'P3', 'P4', 'Q'] as const).map((p) => ({
       priority: p,
       count: cols[p]?.length ?? 0,
+      // P42 (API_CONTRACT_P42 §2): served label, P4 / Q flag and queued count.
+      label: PRIORITY_LABELS[p],
+      not_scheduled: p === 'P4' || p === 'Q',
+      queued_count: (cols[p] ?? []).filter((c) => c.queued === true).length,
       // P13-T12: served per-column remaining weeks (illustrative values).
       design_weeks: p === 'P1' ? 926 : p === 'Q' ? 310.5 : 0,
       lab_weeks: p === 'P1' ? 907 : p === 'Q' ? 308 : 0,

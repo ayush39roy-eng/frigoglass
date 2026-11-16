@@ -5,9 +5,10 @@ import { renderWithProviders } from '@/test/render';
 
 import type { CompletingWithinYearRow } from '../../api/types';
 import { UpcomingCompletionsCard } from './upcoming-completions-card';
+import { servedRow } from '@/surfaces/dashboard/test-fixtures';
 
 function row(id: string, week: number | null, overrides: Partial<CompletingWithinYearRow> = {}): CompletingWithinYearRow {
-  return {
+  return servedRow({
     project_id: id,
     project_name: `Cooler ${id}`,
     hub: 'R&D-Greece',
@@ -23,7 +24,7 @@ function row(id: string, week: number | null, overrides: Partial<CompletingWithi
     status: 'In Development',
     not_started: false,
     ...overrides,
-  };
+  });
 }
 
 describe('UpcomingCompletionsCard', () => {

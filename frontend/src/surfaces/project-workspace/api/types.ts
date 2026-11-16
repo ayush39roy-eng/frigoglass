@@ -4,7 +4,14 @@
 // (P9-T03); reconciled against the regenerated OpenAPI in the P9 gate (P3-T07
 // contract test). Same convention as every per-surface `api/types.ts`.
 
-import type { HardGateReason, HubName, ProjectPriority, WorkflowStepKind, WorkflowStepStatus } from '@/types/enums';
+import type {
+  HardGateReason,
+  HubName,
+  ProjectPriority,
+  ScheduleOutcome,
+  WorkflowStepKind,
+  WorkflowStepStatus,
+} from '@/types/enums';
 import type { Id } from '@/types/common';
 import type { ProjectRead } from '@/surfaces/registration/api/types';
 import type { DimensionScore } from '@/surfaces/matrix/api/types';
@@ -28,6 +35,15 @@ export interface WorkspaceSchedule {
   within_year: boolean | null;
   left_out: boolean;
   schedule_stale: boolean;
+  /** P42 (API_CONTRACT_P42 §3): null when the project has no outcome row in
+   *  the active run. `health` is unchanged (I13); show `outcome_label` when set. */
+  counts_toward_year?: boolean | null;
+  not_scheduled_priority?: boolean | null;
+  outcome?: ScheduleOutcome | null;
+  /** P42: "Queued — fits by W40", "Not scheduled (P4)", …; null for a counting project. */
+  outcome_label?: string | null;
+  /** P42 (R42-1): the live band's label; null with no band. */
+  priority_label?: string | null;
 }
 
 export interface WorkspaceStage {

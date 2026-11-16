@@ -46,8 +46,12 @@ def year_rule(p: dict[str, Any], key: str) -> bool:
     if key == "all":
         return True
     if key == "not_placed":
-        return p["outcome"] in NOT_PLACED
-    if p["outcome"] not in PLACED or p["finish_week"] is None:
+        # P42 (ADR 0056 R42-6): a queued project with no slot is not placed.
+        return p["outcome"] in NOT_PLACED or (
+            p["outcome"] == "queued" and p["finish_week"] is None
+        )
+    # P42: a placed queued project goes by its finish week (its own column).
+    if p["outcome"] not in PLACED | {"queued"} or p["finish_week"] is None:
         return False
     w = p["finish_week"]
     return {"2026": 1 <= w <= 52, "2027": 53 <= w <= 104, "later": w > 104}[key]
@@ -78,7 +82,14 @@ def assert_invariants(body: dict[str, Any]) -> None:
             assert sum(x["total"] for x in buckets) == block["total"], (key, dim)
             assert all(x["total"] > 0 for x in buckets)  # empty buckets omitted
             for x in buckets:
-                assert x["within_year"] + x["spillover"] + x["not_placed"] <= x["total"]
+                assert (
+                    x["within_year"] + x["spillover"] + x["not_placed"] + x["queued"]
+                    <= x["total"]
+                )
+        # P42 (R42-6): queued never counts within the year; its own column.
+        assert sum(x["queued"] for x in block["by_source"]) == sum(
+            1 for p in match if p["outcome"] == "queued"
+        )
         assert sum(x["within_year"] for x in block["by_source"]) == sum(
             1 for p in match if p["within_plan_year"]
         )
@@ -90,7 +101,11 @@ def assert_invariants(body: dict[str, Any]) -> None:
         assert ordered([x["key"] for x in block["by_hub"]], HUB_ORDER)
         assert ordered([x["key"] for x in block["by_status"]], STATUS_ORDER)
         assert ordered([x["key"] for x in block["by_source"]], ["file", "plan"])
-        placed = [p for p in match if p["outcome"] in PLACED and p["finish_week"] is not None]
+        placed = [
+            p
+            for p in match
+            if p["outcome"] in PLACED | {"queued"} and p["finish_week"] is not None
+        ]
         quarters = block["by_finish_quarter"]
         assert sum(q["count"] for q in quarters) == len(placed)
         assert [q["key"] for q in quarters] == sorted(q["key"] for q in quarters)
@@ -159,7 +174,7 @@ def test_breakdowns_on_hand_built_projects():
     al = years["all"]
     assert al["outcomes"] == {
         "within_year": 2, "spillover": 2, "left_out": 1, "blocked": 0, "data_error": 1,
-        "excluded": 1,
+        "excluded": 1, "queued": 0, "not_scheduled_priority": 0,  # P42 (R42-6)
     }  # fmt: skip
     assert [x["key"] for x in al["by_category"]] == ["A+", "A", "B", "C", "C-OEM", "unknown"]
     aplus = al["by_category"][0]

@@ -4,11 +4,12 @@ import userEvent from '@testing-library/user-event';
 
 import { renderWithProviders } from '@/test/render';
 import type { ClassBreakdown } from '../api/types';
-import { classRow } from '../test-fixtures';
+import { classRow, PRIORITY_BUCKET_LABELS } from '../test-fixtures';
 import { ClassBreakdownPanel } from './class-breakdown-panel';
 
 const withRun: ClassBreakdown = {
   has_active_schedule_run: true,
+  priority_bucket_labels: PRIORITY_BUCKET_LABELS,
   schedule_run_version: 3,
   rows: [
     classRow({ category: 'A+', deliverable_count: 7, left_out_count: 2, total_count: 9 }),
@@ -30,7 +31,7 @@ describe('ClassBreakdownPanel', () => {
 
   it('P13-T11: each class card shows the served total, priority split and per-hub ✓/✗ counts', () => {
     renderWithProviders(
-      <ClassBreakdownPanel data={{ has_active_schedule_run: true, schedule_run_version: 3, rows: [classRow()] }} />,
+      <ClassBreakdownPanel data={{ has_active_schedule_run: true, schedule_run_version: 3, priority_bucket_labels: PRIORITY_BUCKET_LABELS, rows: [classRow()] }} />,
     );
     const card = screen.getByTestId('class-card-B');
     // Only the non-zero buckets, as served.
@@ -63,7 +64,7 @@ describe('ClassBreakdownPanel', () => {
   it('shows a non-error empty state when no schedule run is active', () => {
     renderWithProviders(
       <ClassBreakdownPanel
-        data={{ has_active_schedule_run: false, schedule_run_version: null, rows: [] }}
+        data={{ has_active_schedule_run: false, schedule_run_version: null, priority_bucket_labels: PRIORITY_BUCKET_LABELS, rows: [] }}
       />,
     );
     expect(screen.getByText('No schedule computed yet')).toBeInTheDocument();
@@ -76,6 +77,7 @@ describe('ClassBreakdownPanel', () => {
       <ClassBreakdownPanel
         data={{
           has_active_schedule_run: true,
+          priority_bucket_labels: PRIORITY_BUCKET_LABELS,
           schedule_run_version: 3,
           rows: cats.map((category) =>
             classRow({

@@ -19,6 +19,7 @@ vi.mock('recharts', async (importOriginal) => {
 });
 
 import { CategoryDonut, PipelineDonut, PriorityDeliveryChart, StatusDonut, TypeDonut } from './executive-charts';
+import { servedBand } from '@/surfaces/dashboard/test-fixtures';
 
 const TOTALS: PipelineTotals = {
   spillover_count: 17,
@@ -50,7 +51,7 @@ const STATUS: StatusOverview = {
 };
 
 function band(overrides: Partial<PriorityDeliveryBand> = {}): PriorityDeliveryBand {
-  return {
+  return servedBand({
     priority: 'P1',
     total: 34,
     within_year: 12,
@@ -69,7 +70,7 @@ function band(overrides: Partial<PriorityDeliveryBand> = {}): PriorityDeliveryBa
     delivered_share_pct: 5.88,
     other_share_pct: 11.76,
     ...overrides,
-  };
+  });
 }
 
 describe('executive donuts (P28, ADR 0039 §3)', () => {

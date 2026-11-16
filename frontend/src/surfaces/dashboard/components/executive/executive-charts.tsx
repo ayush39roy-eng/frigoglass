@@ -623,7 +623,8 @@ function BandBar({ band }: { band: PriorityDeliveryBand }): React.JSX.Element {
  * band's served composition shares (`in_flight_share_pct`,
  * `not_started_share_pct`, `delivered_share_pct`, `other_share_pct` — served
  * 2 dp figures, never a browser ratio), and the numbers column prints the
- * served counts verbatim: `within_year/total · within_year_share_pct`.
+ * served counts verbatim: `within_year/counting_total · within_year_share_pct`
+ * (P42, I53: the share's denominator is the band's counting total).
  */
 export function PriorityDeliveryChart({ bands }: { bands: PriorityDeliveryBand[] }): React.JSX.Element {
   const shown = bands.filter((b) => b.total > 0);
@@ -635,8 +636,9 @@ export function PriorityDeliveryChart({ bands }: { bands: PriorityDeliveryBand[]
         <p>
           One bar per priority band. Segment widths are the band&apos;s served composition shares — solid
           green in flight, light green not started, blue already delivered, grey not in plan — and the
-          numbers beside each bar are the served count finishing within the year out of the band&apos;s
-          served total, with the served within-year share. Nothing is recomputed in the browser; the full
+          numbers beside each bar are the served count finishing within the year over the band&apos;s
+          projects counted this year, with the served within-year share. Year figures count P1, P2
+          and started P3 only; queued P3 and P4 projects are not counted. Nothing is recomputed in the browser; the full
           six-way split is on the Detailed view.
         </p>
       }
@@ -657,7 +659,7 @@ export function PriorityDeliveryChart({ bands }: { bands: PriorityDeliveryBand[]
                   <BandBar band={b} />
                 </span>
                 <span className="whitespace-nowrap text-right text-2xs font-semibold tabular-nums text-text" data-numeric="">
-                  {formatInteger(b.within_year)}/{formatInteger(b.total)} · {formatServedPct(b.within_year_share_pct)}
+                  {formatInteger(b.within_year)}/{formatInteger(b.counting_total)} · {formatServedPct(b.within_year_share_pct)}
                 </span>
               </div>
             ))}
@@ -674,7 +676,8 @@ export function PriorityDeliveryChart({ bands }: { bands: PriorityDeliveryBand[]
           <ul className="sr-only" aria-label="Delivery by priority band">
             {shown.map((b) => (
               <li key={b.priority}>
-                {b.priority}: {formatInteger(b.within_year)} of {formatInteger(b.total)} within the year (
+                {b.priority} ({b.priority_label}): {formatInteger(b.within_year)} within the year,{' '}
+                {formatInteger(b.counting_total)} counted (
                 {formatServedPct(b.within_year_share_pct)}); in flight {formatServedPct(b.in_flight_share_pct)},
                 not started {formatServedPct(b.not_started_share_pct)}, delivered{' '}
                 {formatServedPct(b.delivered_share_pct)}, not in plan {formatServedPct(b.other_share_pct)}.

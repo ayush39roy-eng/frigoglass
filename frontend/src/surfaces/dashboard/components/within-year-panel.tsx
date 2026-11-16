@@ -6,7 +6,7 @@ import { EmptyState } from '@/components/shared/empty-state';
 import { formatInteger, formatWeek } from '@/lib/format';
 import { WITHIN_YEAR_WEEK } from '@/lib/domain-constants';
 import { usePlanYearLabels } from '@/lib/plan-clock';
-import { sharePct, spilloverPastYearCount, withinYearSharePct } from '../lib/outcome';
+import { outcomeTotal, sharePct, spilloverPastYearCount, withinYearSharePct } from '../lib/outcome';
 
 import type { CompletingWithinYear, ScheduleRunSummary } from '../api/types';
 import type { KpiBucket } from '../lib/executive';
@@ -14,6 +14,7 @@ import { KpiProjectsDialog } from './executive/kpi-projects-dialog';
 import { ScheduledCountInfo, type ScheduledCountFigures } from './scheduled-count-info';
 import { ScheduleRunProvenance } from './schedule-run-provenance';
 import { StatCard } from './stat-card';
+import { YearBasisNote } from './year-basis-note';
 
 /**
  * The Invariant I9 surface region. Every figure here comes from a single field on
@@ -26,8 +27,8 @@ export interface WithinYearKpisProps {
   activeRun: ScheduleRunSummary | null | undefined;
 }
 
-/** Share of the run's four served outcome buckets, as a display label ("51%").
- *  Same formula as the delivery gauge (`lib/outcome.ts::sharePct`). */
+/** Share of the served `counting_outcome_count`, as a display label ("51%").
+ *  Same denominator as the delivery gauge (`lib/outcome.ts::sharePct`, P42 I53). */
 function shareLabel(count: number, data: CompletingWithinYear): string {
   return `${String(sharePct(count, data))}%`;
 }
@@ -60,11 +61,8 @@ export function WithinYearKpis({
     openLabel: `${label}: list the ${formatInteger(count)} projects`,
     onOpen: (tile: HTMLButtonElement) => { openFromTile(bucket, tile); },
   });
-  const totalCount =
-    data.within_year_count +
-    data.spillover_count +
-    data.left_out_count +
-    data.blocked_count;
+  // P42 (I53): the served counting denominator — queued P3 and P4 projects are outside it.
+  const totalCount = outcomeTotal(data);
 
   return (
     <section className="space-y-s4">
@@ -81,9 +79,7 @@ export function WithinYearKpis({
                 data-testid="within-year-total-projects"
                 className="rounded-pill font-bold px-2.5 py-1 text-2xs"
               >
-                {pipelineTotal !== null
-                  ? `${formatInteger(totalCount)} scheduled of ${formatInteger(pipelineTotal)}`
-                  : `${formatInteger(totalCount)} scheduled`}
+                {`${formatInteger(totalCount)} counted this year`}
               </Badge>
             ) : null}
             {data.has_active_schedule_run ? (
@@ -97,7 +93,7 @@ export function WithinYearKpis({
             ) : null}
           </div>
           <p className="text-sm font-medium text-text-muted">
-            Outcome of the scheduled projects in the active schedule run
+            Outcome of the projects counted this year in the active schedule run
           </p>
         </div>
         {data.has_active_schedule_run ? (
@@ -168,6 +164,9 @@ export function WithinYearKpis({
           />
         </div>
       )}
+      {data.has_active_schedule_run ? (
+        <YearBasisNote data={data} onOpen={openFromTile} />
+      ) : null}
       <KpiProjectsDialog
         bucket={openBucket}
         rows={data.rows}

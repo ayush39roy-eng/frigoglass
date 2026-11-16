@@ -29,6 +29,7 @@ import type {
   ProjectFilterRow,
 } from '../api/types';
 import { HubTypeSection } from './hub-type-section';
+import { servedCompleting, servedRow } from '@/surfaces/dashboard/test-fixtures';
 
 /* ------------------------- one fixture, every payload ------------------------ */
 
@@ -92,11 +93,14 @@ function registerRow(p: P): ProjectFilterRow {
     status_mismatch: false,
     actual_start_week: null,
     actual_end_week: null,
+    priority_label: null,
+    counts_toward_year: null,
+    not_scheduled_priority: null,
   };
 }
 
 function runRow(p: P): CompletingWithinYearRow {
-  return {
+  return servedRow({
     project_id: p.id,
     project_name: `Project ${p.id}`,
     hub: p.hub,
@@ -111,7 +115,7 @@ function runRow(p: P): CompletingWithinYearRow {
     type: p.type,
     status: 'In Development',
     not_started: false,
-  };
+  });
 }
 
 /** Builds every served payload from `scope` (what the server would do). */
@@ -132,26 +136,26 @@ function payloads(scope: P[]) {
     completing_hub_type: [...cells.values()].map((ps) => ({
       hub: ps[0]!.hub,
       type: ps[0]!.type,
-      pipeline_count: ps.length,
+      pipeline_count: ps.length, counting_count: ps.length,
       completing_count: ps.filter(completes).length,
       completing_pct: 0,
     })),
     completing_by_type: types.map((t) => ({
       key: t,
-      pipeline_count: count((p) => tk(p) === t),
+      pipeline_count: count((p) => tk(p) === t), counting_count: count((p) => tk(p) === t),
       completing_count: count((p) => tk(p) === t && completes(p)),
       completing_pct: 0,
     })),
     completing_by_hub: hubs.map((h) => ({
       key: h,
-      pipeline_count: count((p) => p.hub === h),
+      pipeline_count: count((p) => p.hub === h), counting_count: count((p) => p.hub === h),
       completing_count: count((p) => p.hub === h && completes(p)),
       completing_pct: 0,
     })),
     has_active_schedule_run: true,
   };
   const inRun = scope.filter((p) => p.inRun !== false);
-  const withinYear: CompletingWithinYear = {
+  const withinYear: CompletingWithinYear = servedCompleting({
     has_active_schedule_run: true,
     schedule_run_version: 3,
     within_year_count: count(completes),
@@ -161,7 +165,7 @@ function payloads(scope: P[]) {
     priority_delivery: [],
     regions: [],
     rows: inRun.map(runRow),
-  };
+  });
   return { hubType, analytics, withinYear, total: scope.length };
 }
 

@@ -70,10 +70,9 @@ export function CompletionStrip({
           <span className="inline-block h-3 w-0.5 border-l-2 border-dashed border-gantt-projected" aria-hidden="true" />
           <dt>Will be completed</dt>
           <dd className="font-mono font-semibold text-text" data-testid="strip-projected">
+            {/* P42: a queued / not-scheduled project reads the served outcome text. */}
             {schedule.projected_end_week === null
-              ? schedule.left_out
-                ? 'Spillover · unplaced'
-                : '—'
+              ? (schedule.outcome_label ?? (schedule.left_out ? 'Spillover · unplaced' : '—'))
               : formatPlanWeek(schedule.projected_end_week)}
           </dd>
         </div>

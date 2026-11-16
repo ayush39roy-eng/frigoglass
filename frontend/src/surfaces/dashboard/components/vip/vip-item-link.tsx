@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { ChevronDown, EyeOff } from 'lucide-react';
 
 import { HealthChip, ProjectedFinishChip } from '@/components/shared/project-outcome-chips';
+import { servedNonCountingOutcome } from '@/components/shared/schedule-outcome-meta';
 import { PriorityBandPill } from '@/components/shared/priority-band-pill';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import type { VipItem } from '@/lib/api/vip';
@@ -60,7 +61,12 @@ export function VipItemLink({ item, className }: { item: VipItem; className?: st
                   <span className="flex flex-wrap items-center gap-1.5 text-2xs text-text-muted">
                     <span>{p.hub}</span>
                     {p.priority ? <PriorityBandPill priority={p.priority} /> : null}
-                    <ProjectedFinishChip projectedEndWeek={p.projected_end_week} withinYear={p.within_year} />
+                    <ProjectedFinishChip
+                      projectedEndWeek={p.projected_end_week}
+                      withinYear={p.within_year}
+                      outcome={servedNonCountingOutcome(p)}
+                      outcomeLabel={p.outcome_label ?? null}
+                    />
                     <HealthChip health={p.health} />
                   </span>
                 </Link>

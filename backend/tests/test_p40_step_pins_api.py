@@ -22,6 +22,7 @@ import pytest
 from sqlalchemy import func, select
 
 import api.routers.checkins as checkins_router
+import api.routers.gantt as gantt_router
 import services.priority_move as priority_move
 from api.db import get_db
 from api.main import app
@@ -65,10 +66,12 @@ PIN_ROLES = {RoleName.ADMIN, RoleName.SUPER_ADMIN}
 @pytest.fixture(autouse=True)
 def _cleanup():
     checkins_router.CHECKIN_RATE_LIMIT.reset()
+    gantt_router.STEP_PINS_RATE_LIMIT.reset()
     yield
     clear_current_principal_override()
     app.dependency_overrides.pop(get_db, None)
     checkins_router.CHECKIN_RATE_LIMIT.reset()
+    gantt_router.STEP_PINS_RATE_LIMIT.reset()
 
 
 @pytest.fixture

@@ -4,14 +4,14 @@
  *
  * Pure helpers. Every length, flag and permission is SERVED
  * (`current_length_weeks`, `pin_editable`, `pin_block_reason`, `pinned`,
- * `pin_lapsed`); nothing here derives one. The only arithmetic is the owner's
+ * the step's `pin_lapsed`, `pin_clearable`); nothing here derives one. The only arithmetic is the owner's
  * typing rule as written in R40-2 — typing a Start gives
  * `End = Start + current_length_weeks − 1` — and the red range check of the
  * write domain `current week ≤ start ≤ end ≤ 52` (the server checks it again
  * under its lock and is the authority).
  */
 
-import type { GanttProjectRow, GanttStepRow, StepPinItem } from '../api/types';
+import type { GanttStepRow, StepPinItem } from '../api/types';
 
 /** One drafted step. Week values are the raw input text: `''` + `''` = Clear. */
 export interface StepPinDraft {
@@ -126,31 +126,25 @@ export function draftsToItems(drafts: readonly StepPinDraft[]): StepPinItem[] {
 }
 
 /**
- * How the step's live pin relates to the active run (R40-13). Comparisons of
- * served weeks only:
- * - `pending`: the live pin differs from the run's row window, or the pin was
- *   cleared while the run still has the row pinned → "Pin applies on the next
- *   run";
- * - `lapsed`: the run placed the pinned row later than its pin because the
- *   pin's start had passed (the served `pin_lapsed`, R40-5);
- * - `applied`: the run row sits on the pin;
+ * How the step's live pin relates to the active run (R40-13; contract §2,
+ * P40-R02). Comparisons of served weeks plus the step's OWN served
+ * `pin_lapsed`; the browser never infers a lapse from the project flag:
+ * - `pending`: the live pin differs from the run's row window and the step is
+ *   not lapsed, or the pin was cleared while the run still has the row pinned
+ *   → "Pin applies on the next run";
+ * - `lapsed`: the served `step.pin_lapsed` (the run placed the pinned row from
+ *   its own week because the pin's start had passed, R40-5);
+ * - `applied`: the run row sits on the live pin;
  * - null: no pin either side.
  */
 export type PinRunState = 'pending' | 'lapsed' | 'applied' | null;
 
-export function pinRunState(step: GanttStepRow, project: GanttProjectRow): PinRunState {
+export function pinRunState(step: GanttStepRow): PinRunState {
   const ms = step.manual_start_week;
   const me = step.manual_end_week;
   if (ms == null || me == null) return step.pinned ? 'pending' : null;
   if (step.skipped) return null; // an inert pin (I33): the run never places it
   if (step.pinned && step.planned_start_week === ms && step.planned_end_week === me) return 'applied';
-  if (
-    step.pinned &&
-    project.pin_lapsed &&
-    step.planned_start_week != null &&
-    ms < step.planned_start_week
-  ) {
-    return 'lapsed';
-  }
+  if (step.pin_lapsed) return 'lapsed';
   return 'pending';
 }

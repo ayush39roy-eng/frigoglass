@@ -36,6 +36,8 @@ export const P40_GANTT_STEP_PIN_DEFAULTS: Pick<
   | 'current_length_weeks'
   | 'pin_editable'
   | 'pin_block_reason'
+  | 'pin_lapsed'
+  | 'pin_clearable'
 > = {
   manual_start_week: null,
   manual_end_week: null,
@@ -44,4 +46,7 @@ export const P40_GANTT_STEP_PIN_DEFAULTS: Pick<
   current_length_weeks: 0,
   pin_editable: false,
   pin_block_reason: 'NOT_ALLOWED',
+  // P40-R02: served per-step lapse and Clear permission.
+  pin_lapsed: false,
+  pin_clearable: false,
 };

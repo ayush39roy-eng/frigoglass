@@ -2,9 +2,10 @@ import { describe, expect, it } from 'vitest';
 
 import type { CompletingWithinYearRow } from '../api/types';
 import { noFinishWeekCount, planWeekQuarter, quarterCounts, selectUpcomingCompletions } from './upcoming-completions';
+import { servedRow } from '@/surfaces/dashboard/test-fixtures';
 
 function row(id: string, overrides: Partial<CompletingWithinYearRow> = {}): CompletingWithinYearRow {
-  return {
+  return servedRow({
     project_id: id,
     project_name: `Project ${id}`,
     hub: 'PD-India',
@@ -20,7 +21,7 @@ function row(id: string, overrides: Partial<CompletingWithinYearRow> = {}): Comp
     status: 'In Development',
     not_started: false,
     ...overrides,
-  };
+  });
 }
 
 describe('selectUpcomingCompletions', () => {

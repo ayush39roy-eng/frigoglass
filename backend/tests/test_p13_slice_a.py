@@ -196,9 +196,18 @@ async def test_analytics_shape_and_reconciliation(db_session):
         (r["hub"], r["type"]) for r in cwy["rows"]
         if r["within_year"] and not r["blocked"]
     )
+    # P42 (I53): a cell's non-counting projects (QUEUED / NOT_SCHEDULED_PRIORITY).
+    non_counting = Counter(
+        (r["hub"], r["type"]) for r in cwy["rows"]
+        if r["outcome"] in ("QUEUED", "NOT_SCHEDULED_PRIORITY")
+    )  # fmt: skip
     for r in body["completing_hub_type"]:
         assert r["completing_count"] == within.get((r["hub"], r["type"]), 0), r
-        assert r["completing_pct"] == _share(r["completing_count"], r["pipeline_count"])
+        assert r["counting_count"] == r["pipeline_count"] - non_counting.get(
+            (r["hub"], r["type"]), 0
+        )
+        # P42 (ADR 0056 I53): the denominator is the counting projects.
+        assert r["completing_pct"] == _share(r["completing_count"], r["counting_count"])
     completing_total = sum(r["completing_count"] for r in body["completing_hub_type"])
     assert completing_total == sum(within.values())
     # Reconciliation with the Dashboard's within-year card (I9): since P17
@@ -222,7 +231,8 @@ async def test_analytics_shape_and_reconciliation(db_session):
     for r, b in zip(body["completing_by_type"], body["by_type"], strict=True):
         assert r["pipeline_count"] == b["count"]
         assert r["completing_count"] == done_by_type.get(r["key"], 0)
-        assert r["completing_pct"] == _share(r["completing_count"], r["pipeline_count"])
+        # P42 (ADR 0056 I53): the denominator is the counting projects.
+        assert r["completing_pct"] == _share(r["completing_count"], r["counting_count"])
 
     # completing_by_hub: the per-hub Total column, the sum of that hub's cells,
     # hubs with pipeline > 0 only, in by_hub order.
@@ -234,10 +244,13 @@ async def test_analytics_shape_and_reconciliation(db_session):
     hub_order = [b["key"] for b in body["by_hub"] if b["count"] > 0]
     assert [r["key"] for r in body["completing_by_hub"]] == hub_order
     for r in body["completing_by_hub"]:
-        assert set(r) == {"key", "pipeline_count", "completing_count", "completing_pct"}
+        assert set(r) == {
+            "key", "pipeline_count", "completing_count", "completing_pct", "counting_count",
+        }  # fmt: skip
         assert r["pipeline_count"] == hub_pipeline[r["key"]] > 0
         assert r["completing_count"] == hub_done[r["key"]]
-        assert r["completing_pct"] == _share(r["completing_count"], r["pipeline_count"])
+        # P42 (ADR 0056 I53): the denominator is the counting projects.
+        assert r["completing_pct"] == _share(r["completing_count"], r["counting_count"])
     assert sum(r["pipeline_count"] for r in body["completing_by_hub"]) == total
     assert sum(r["completing_count"] for r in body["completing_by_hub"]) == completing_total
 

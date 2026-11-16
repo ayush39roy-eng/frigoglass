@@ -382,4 +382,8 @@ export interface GreedyRecalcResponse {
   left_out_count: number;
   within_year_count: number;
   spillover_count: number;
+  /** P42 (API_CONTRACT_P42 §9): not counted this year — queued P3 and P4 / Q
+   *  never planned. The three counts above count counting outcomes only. */
+  queued_count: number;
+  not_scheduled_priority_count: number;
 }

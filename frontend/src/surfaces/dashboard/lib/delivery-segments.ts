@@ -23,7 +23,9 @@ export type SegmentKey =
   | 'not_started_finishing'
   | 'not_started_not_finishing'
   | 'delivered'
-  | 'not_in_plan';
+  | 'not_in_plan'
+  | 'queued'
+  | 'not_scheduled';
 
 export interface DeliverySegment {
   key: SegmentKey;
@@ -102,6 +104,27 @@ export const DELIVERY_SEGMENTS: readonly DeliverySegment[] = [
     alpha: 1,
     ground: TRACK,
   },
+  // P42 (ADR 0056): served apart, not counted this year.
+  {
+    key: 'queued',
+    label: 'Queued P3, not counted',
+    fill: 'bg-primary/25',
+    ink: 'text-text',
+    fillToken: '--color-primary',
+    inkToken: '--color-text',
+    alpha: 0.25,
+    ground: TRACK,
+  },
+  {
+    key: 'not_scheduled',
+    label: 'Not scheduled (P4)',
+    fill: 'bg-border',
+    ink: 'text-text',
+    fillToken: '--color-border',
+    inkToken: '--color-text',
+    alpha: 1,
+    ground: TRACK,
+  },
 ];
 
 /**
@@ -111,7 +134,8 @@ export const DELIVERY_SEGMENTS: readonly DeliverySegment[] = [
  * count uses the ink of its token pair, never a fixed white.
  */
 export interface HubOutcomeSegment {
-  bucket: DisplayOutcome;
+  /** P42: counted outcomes only (queued P3 and P4 are not stacked). */
+  bucket: Exclude<DisplayOutcome, 'queued' | 'not_scheduled'>;
   label: string;
   fill: string;
   dot: string;

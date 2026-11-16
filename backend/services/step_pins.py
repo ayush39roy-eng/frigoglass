@@ -10,10 +10,12 @@ ADR 0054 "Ruling (P40-T02)" R40-1, R40-2, R40-11; docs/DOMAIN_RULES.md
    `PIN_INVALID` (a partial pair, or end < start) — shape only, before any
    lock.
 2. The project rows `FOR UPDATE` in `project_id` order (the R33-10 lock the
-   stage PATCH, the check-in and the template apply take), then the scoped
-   lookup: a project out of the caller's hub scope, or nonexistent, is 404
-   `PROJECT_NOT_FOUND` (existence is never revealed); a step that is not a
-   live step of the project's workflow is 422 `UNKNOWN_STEP`.
+   stage PATCH, the check-in and the template apply take), restricted to the
+   caller's hub scope (P40-F01, S40-L1: an out-of-scope row is never
+   locked), then the scoped lookup on the locked ids: a project out of
+   the caller's hub scope, or nonexistent, is 404 `PROJECT_NOT_FOUND`
+   (existence is never revealed); a step that is not a live step of the
+   project's workflow is 422 `UNKNOWN_STEP`.
 3. Under the lock, for every item whose pair differs from the stored one
    (an equal pair is a no-op and is never refused):
    - set: 422 `PIN_OUT_OF_RANGE` unless `CW <= ms <= me <= 52` (CW = the
@@ -38,6 +40,7 @@ from __future__ import annotations
 import uuid
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from typing import Any
 
 from fastapi import status
 from sqlalchemy import select
@@ -73,7 +76,7 @@ from services.priority_move import (
 )
 from services.schedule_stale import mark_projects_stale
 from services.step_pin_clear import CAUSE_MANUAL, add_pin_audit
-from services.template_apply import lock_projects
+from services.template_apply import lock_projects_in_scope
 from services.workspace import row_is_skipped, row_own_effort_kinds
 
 #: `ScheduleRun.trigger_reason` of the run a pin save starts (R40-11).
@@ -142,6 +145,54 @@ def pin_block_reason(
     if row is None:
         return "STEP_STARTED" if not project.frozen else "PROJECT_FROZEN"
     return set_block_reason(project, row, skipped=skipped)
+
+
+def pin_clearable(
+    principal: Principal, project: Project, row: ProjectWorkflowStep | None
+) -> bool:
+    """P40-R02, served as `pin_clearable`: whether `save_step_pins` would
+    accept a Clear of this step from this caller. The same rules as the save:
+    the Admin / Super Admin role (`_pin_writer`), the project in the caller's
+    hub scope (else 404), a live step row (else 422 `UNKNOWN_STEP`) and the
+    project not frozen (else 409 `PROJECT_FROZEN`). Started, skipped and
+    closed steps may be cleared."""
+
+    return (
+        can_write_pins(principal)
+        and is_hub_in_scope(principal, project.hub_id)
+        and row is not None
+        and not project.frozen
+    )
+
+
+def run_pin_windows(snapshot: Mapping[str, Any] | None) -> dict[tuple[str, str], tuple[int, int]]:
+    """P40-R02: `{(project_id, step_id): (start_week, end_week)}`, the pins a
+    run was solved with, from its `workflow_snapshot["step_pins"]` (absent
+    when the run had none). Malformed entries are skipped."""
+
+    windows: dict[tuple[str, str], tuple[int, int]] = {}
+    if not snapshot:
+        return windows
+    for entry in snapshot.get("step_pins") or []:
+        try:
+            key = (str(entry["project_id"]), str(entry["step_id"]))
+            windows[key] = (int(entry["start_week"]), int(entry["end_week"]))
+        except (KeyError, TypeError, ValueError):
+            continue
+    return windows
+
+
+def step_pin_lapsed(
+    run_step: ScheduleRunProjectStep | None, recorded: tuple[int, int] | None
+) -> bool:
+    """P40-R02, served as `GanttStepRow.pin_lapsed`: the run placed this
+    step on a pin (`pinned`) and its window is not the recorded pin, i.e.
+    the pin was lapsed and placed from the run's week (R40-5). Stored values
+    compared, nothing recomputed."""
+
+    if run_step is None or not run_step.pinned or recorded is None:
+        return False
+    return (run_step.start_week, run_step.end_week) != recorded
 
 
 def current_length_weeks(
@@ -250,11 +301,16 @@ async def save_step_pins(
 
     # --- 2. lock, scoped lookup, live rows ------------------------------------------------
     project_ids = sorted({item.project_id for item in items})
-    await lock_projects(db, project_ids)
-    stmt = (
-        select(Project).where(Project.id.in_(project_ids)).execution_options(populate_existing=True)
-    )
     scope = hub_scope_filter(principal, Project.hub_id)
+    # P40-F01 (S40-L1): lock only the rows in the caller's scope (same
+    # `FOR UPDATE`, same `project_id` order). An id not locked here reads as
+    # 404 below, exactly like a nonexistent one.
+    locked_ids = await lock_projects_in_scope(db, project_ids, scope)
+    stmt = (
+        select(Project)
+        .where(Project.id.in_(sorted(locked_ids)))
+        .execution_options(populate_existing=True)
+    )
     if scope is not None:
         stmt = stmt.where(scope)
     projects = {p.id: p for p in (await db.execute(stmt)).scalars()}
@@ -431,7 +487,10 @@ __all__ = [
     "can_write_pins",
     "current_length_weeks",
     "pin_block_reason",
+    "pin_clearable",
     "pin_length",
+    "run_pin_windows",
     "save_step_pins",
     "set_block_reason",
+    "step_pin_lapsed",
 ]

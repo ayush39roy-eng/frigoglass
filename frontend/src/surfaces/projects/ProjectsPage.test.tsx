@@ -176,7 +176,7 @@ async function fillRequired(user: ReturnType<typeof userEvent.setup>, drawer: HT
   await user.type(within(drawer).getByLabelText(/^Selling price/), '1500');
   await user.type(within(drawer).getByLabelText(/^Gross margin/), '20');
   await user.click(within(drawer).getByRole('combobox', { name: /^Priority/ }));
-  await user.click(await screen.findByRole('option', { name: 'P2' }));
+  await user.click(await screen.findByRole('option', { name: /^P2 · / }));
 }
 
 const READ_ONLY = { roles: ['Executive Viewer'] as RoleName[], permissions: ROLE_MATRIX['Executive Viewer'] };
@@ -640,7 +640,7 @@ describe('Projects page — registration drawer', () => {
     await user.click(screen.getByRole('button', { name: 'Edit registration of Cooler A' }));
     const drawer = await screen.findByRole('dialog', { name: 'Edit Cooler A' });
     await user.click(within(drawer).getByRole('combobox', { name: /^Priority/ }));
-    await user.click(await screen.findByRole('option', { name: 'P2' }));
+    await user.click(await screen.findByRole('option', { name: /^P2 · / }));
     await user.type(within(drawer).getByLabelText(/^External code/), 'X-1');
     await user.click(within(drawer).getByRole('button', { name: 'Save changes' }));
 
@@ -674,7 +674,7 @@ describe('Projects page — registration drawer', () => {
     await user.click(screen.getByRole('button', { name: 'Edit registration of Cooler A' }));
     const drawer = await screen.findByRole('dialog', { name: 'Edit Cooler A' });
     await user.click(within(drawer).getByRole('combobox', { name: /^Priority/ }));
-    await user.click(await screen.findByRole('option', { name: 'P3' }));
+    await user.click(await screen.findByRole('option', { name: /^P3 · / }));
     await user.click(within(drawer).getByRole('button', { name: 'Save changes' }));
     const preview = await screen.findByRole('dialog', { name: 'Move to P3?' });
     await user.click(within(preview).getByRole('button', { name: 'No, cancel' }));

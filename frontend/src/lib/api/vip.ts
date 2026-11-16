@@ -59,6 +59,13 @@ export interface VipProject {
   progress_pct: number | null;
   current_stage: VipCurrentStage | null;
   tracking_status: TrackingStatus;
+  /** P42 (API_CONTRACT_P42 §6): the band label; the stored flags (null when
+   *  not in the active run) and the served non-counting text ("Not scheduled
+   *  (P4)", "Queued — fits by W40"; null for a counting project). */
+  priority_label?: string | null;
+  counts_toward_year?: boolean | null;
+  not_scheduled_priority?: boolean | null;
+  outcome_label?: string | null;
 }
 
 export interface VipHub {
@@ -137,6 +144,13 @@ export interface VipItemProject {
   projected_end_week: number | null;
   within_year: boolean | null;
   health: ServedHealth | null;
+  /** P42 (API_CONTRACT_P42 §6): the band label; the stored flags (null when
+   *  not in the active run) and the served non-counting text ("Not scheduled
+   *  (P4)", "Queued — fits by W40"; null for a counting project). */
+  priority_label?: string | null;
+  counts_toward_year?: boolean | null;
+  not_scheduled_priority?: boolean | null;
+  outcome_label?: string | null;
 }
 
 export interface VipItem {

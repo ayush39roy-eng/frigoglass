@@ -170,6 +170,8 @@ describe('use-planning', () => {
       left_out_count: 8,
       within_year_count: 9,
       spillover_count: 10,
+      queued_count: 0,
+      not_scheduled_priority_count: 0,
     });
     const { client, Wrapper } = makeWrapper();
     const spy = vi.spyOn(client, 'invalidateQueries');

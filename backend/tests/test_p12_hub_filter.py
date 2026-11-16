@@ -255,6 +255,9 @@ async def test_i23_filtered_figures_equal_unfiltered_per_hub_figures(db_session)
             )
             buckets: Counter[str] = Counter()
             for r in rows_h:
+                # P42 (ADR 0056 R42-6): non-counting rows have their own buckets.
+                if not r["counts_toward_year"] or r["not_scheduled_priority"]:
+                    continue
                 for flag in ("blocked", "within_year", "spillover", "left_out"):
                     if r[flag]:
                         buckets[flag] += 1
@@ -267,7 +270,14 @@ async def test_i23_filtered_figures_equal_unfiltered_per_hub_figures(db_session)
             # Class breakdown: the hub's categorised outcome rows of schedulable
             # projects only (P13-F06, 2026-10-19).
             klass = await _get(client, "/capacity/class-breakdown", hub_id=hub.id)
-            assert sum(r["deliverable_count"] + r["left_out_count"] for r in klass["rows"]) == (
+            # P42 (R42-6): queued and not-scheduled rows are counted apart.
+            assert sum(
+                r["deliverable_count"]
+                + r["left_out_count"]
+                + r["queued_count"]
+                + r["not_scheduled_priority_count"]
+                for r in klass["rows"]
+            ) == (
                 sum(
                     1
                     for r in rows_h
@@ -321,8 +331,13 @@ async def test_i23_filtered_figures_equal_unfiltered_per_hub_figures(db_session)
                 checked_hubs += 1
 
         # The class breakdown sums over hubs to the unfiltered one.
+        # P42 (ADR 0056 R42-6): queued / not-scheduled rows are counted apart.
         assert sum(
-            r["deliverable_count"] + r["left_out_count"] for r in all_class["rows"]
+            r["deliverable_count"]
+            + r["left_out_count"]
+            + r["queued_count"]
+            + r["not_scheduled_priority_count"]
+            for r in all_class["rows"]
         ) == sum(
             1
             for r in all_within["rows"]

@@ -1,11 +1,13 @@
 import * as React from 'react';
 import { Link } from 'react-router-dom';
-import { GripVertical, Loader2 } from 'lucide-react';
+import { GripVertical, Hourglass, Loader2 } from 'lucide-react';
 
 import { HealthChip, ProjectedFinishChip } from '@/components/shared/project-outcome-chips';
+import { servedNonCountingOutcome } from '@/components/shared/schedule-outcome-meta';
 import { PriorityMoveControl } from '@/components/shared/priority-move/priority-move-control';
 import { TrackingStatusChip } from '@/components/shared/tracking-status-chip';
 import { VipBadge } from '@/components/shared/vip-badge';
+import { Badge } from '@/components/ui/badge';
 import { CategoryTag } from '@/components/ui/category-tag';
 import { SuggestedBandChip } from '@/components/shared/suggested-band-chip';
 import { formatDecimal } from '@/lib/format';
@@ -135,6 +137,7 @@ export const BoardCard = React.memo(function BoardCard({
           </Link>
         </h3>
         {card.frozen ? <FrozenBadge /> : null}
+        {card.queued ? <QueuedBadge /> : null}
         {card.is_vip ? <VipBadge /> : null}
       </div>
 
@@ -166,7 +169,12 @@ export const BoardCard = React.memo(function BoardCard({
       ) : null}
 
       <div className="flex flex-wrap items-center gap-1">
-        <ProjectedFinishChip projectedEndWeek={card.projected_end_week} withinYear={card.within_year} />
+        <ProjectedFinishChip
+          projectedEndWeek={card.projected_end_week}
+          withinYear={card.within_year}
+          outcome={servedNonCountingOutcome(card)}
+          outcomeLabel={card.outcome_label ?? null}
+        />
         <HealthChip health={card.health} />
         <TrackingStatusChip status={card.tracking_status} />
       </div>
@@ -202,3 +210,22 @@ export const BoardCard = React.memo(function BoardCard({
     </div>
   );
 });
+
+/**
+ * P42 (R42-7): a P3 still in queue. The board keeps rank order, but the
+ * scheduler places every started P3 before every queued one, with spare
+ * capacity only — this badge is what tells them apart. Served (`card.queued`).
+ */
+function QueuedBadge(): React.JSX.Element {
+  return (
+    <Badge
+      tone="primary"
+      className="shrink-0"
+      title="Queued: planned only with spare capacity, after every started project. Not counted this year."
+      data-testid="board-card-queued"
+    >
+      <Hourglass aria-hidden="true" />
+      Queued
+    </Badge>
+  );
+}

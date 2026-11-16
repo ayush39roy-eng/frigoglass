@@ -28,6 +28,7 @@ from models.enums import (
     HubName,
     LabRegion,
     ProjectCategory,
+    ProjectPriority,
     ProjectStatus,
     RoleName,
     SolverType,
@@ -255,6 +256,9 @@ async def test_i23_gantt_design_weeks_equal_capacity_booked_with_gaps(
             await db_session.execute(
                 select(Project.id)
                 .where(Project.status == ProjectStatus.IN_QUEUE)
+                # P42 (ADR 0056 R42-3): a non-frozen P4 / Q project is never
+                # scheduled, so it has no Gantt rows to serve a gap on.
+                .where(Project.priority.not_in([ProjectPriority.P4, ProjectPriority.Q]))
                 .order_by(Project.id)
                 .limit(12)
             )

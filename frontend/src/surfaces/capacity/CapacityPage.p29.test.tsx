@@ -4,7 +4,7 @@ import { screen, within } from '@testing-library/react';
 import { renderWithProviders } from '@/test/render';
 import { useHubFilterStore } from '@/stores/hub-filter';
 import type { ClassBreakdown, HubCapacitySummary } from './api/types';
-import { classRow, greeceRow, SUMMARY_P11, totalsRow } from './test-fixtures';
+import { classRow, greeceRow, SUMMARY_P11, totalsRow, PRIORITY_BUCKET_LABELS } from './test-fixtures';
 
 /**
  * P29-T03 (ADR 0042, API_CONTRACT_P29 §2.3): the OEM hub-filter behaviour on
@@ -36,6 +36,7 @@ function ready<T>(data: T) {
 
 const classBreakdown: ClassBreakdown = {
   has_active_schedule_run: true,
+  priority_bucket_labels: PRIORITY_BUCKET_LABELS,
   schedule_run_version: 9,
   rows: [classRow({ category: 'B-OEM', deliverable_count: 4, left_out_count: 1, total_count: 5 })],
 };

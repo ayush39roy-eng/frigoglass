@@ -492,7 +492,9 @@ function BarLayer({
       isPastScaleEnd(actual?.endWeek, scale) ||
       isPastScaleEnd(delayedEndWeek, scale) ||
       isPastScaleEnd(p.projected_end_week, scale);
-    if (p.spillover || p.left_out || runsPastAxis) {
+    // P42 (ADR 0056): a project that does not count toward the year (queued P3,
+    // P4 / Q) never "spills over" — it was never in this year's plan.
+    if (p.counts_toward_year !== false && (p.spillover || p.left_out || runsPastAxis)) {
       spilloverMarker = (
         <GanttSpilloverMarker
           scale={scale}

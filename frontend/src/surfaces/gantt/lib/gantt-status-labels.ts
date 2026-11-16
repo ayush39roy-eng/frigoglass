@@ -1,4 +1,4 @@
-import { SCHEDULE_OUTCOME_META } from '@/components/shared/schedule-outcome-meta';
+import { BAND_OUTCOME_META, nonCountingOutcome, SCHEDULE_OUTCOME_META } from '@/components/shared/schedule-outcome-meta';
 
 import type { GanttProjectRow, GanttStepRow } from '../api/types';
 
@@ -11,7 +11,15 @@ export function projectStatusLabels(project: GanttProjectRow): string[] {
   const out: string[] = [];
   if (project.frozen) out.push('Frozen');
   if (project.delay_weeks > 0) out.push(`Delay +${String(project.delay_weeks)}w`);
-  if (project.left_out) out.push(SCHEDULE_OUTCOME_META.LEFT_OUT.label);
+  // P42 (ADR 0056): a queued or not-scheduled project shows the SERVED
+  // `outcome_label` ("Queued — no slot", "Not scheduled (P4)") in place of the
+  // left-out / spillover words — it is not counted this year.
+  const band = nonCountingOutcome(project.outcome);
+  if (band) {
+    out.push(project.outcome_label ?? BAND_OUTCOME_META[band].label);
+  } else if (project.left_out) {
+    out.push(SCHEDULE_OUTCOME_META.LEFT_OUT.label);
+  }
   if (project.spillover) out.push(SCHEDULE_OUTCOME_META.SPILLOVER.label);
   if (project.cat_not_allowed) out.push(SCHEDULE_OUTCOME_META.CAT_NOT_ALLOWED.label);
   if (project.blocked) out.push('On Hold');

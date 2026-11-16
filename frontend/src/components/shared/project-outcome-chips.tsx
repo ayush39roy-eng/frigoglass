@@ -7,6 +7,9 @@ import { formatWeek } from '@/lib/format';
 import { usePlanYearLabels } from '@/lib/plan-clock';
 import { cn } from '@/lib/utils';
 import { HEALTH_META } from '@/surfaces/project-workspace/lib/health-meta';
+import type { NonCountingOutcome } from '@/types/enums';
+
+import { BAND_OUTCOME_META } from './schedule-outcome-meta';
 
 /**
  * Small, non-interactive chips for served schedule outcomes on a project card
@@ -44,19 +47,60 @@ export function HealthChip({ health, className }: { health: ServedHealth | null;
 }
 
 /**
+ * P42 (ADR 0056): a project that does not count toward the year — a queued P3
+ * or a P4 / Q that is never planned. The text is the SERVED `outcome_label`
+ * verbatim ("Queued — fits by W40", "Not scheduled (P4)"); the bucket only
+ * picks the tone and icon. Never composed here.
+ */
+export function BandOutcomeChip({
+  outcome,
+  label,
+  className,
+}: {
+  outcome: NonCountingOutcome;
+  /** The served `outcome_label`; falls back to the bucket's short name. */
+  label: string | null | undefined;
+  className?: string;
+}): React.JSX.Element {
+  const meta = BAND_OUTCOME_META[outcome];
+  return (
+    <Badge
+      tone={meta.tone}
+      className={cn('whitespace-nowrap', className)}
+      title={meta.description}
+      data-testid="band-outcome-chip"
+      data-outcome={outcome}
+    >
+      <meta.Icon aria-hidden="true" />
+      {label ?? meta.label}
+    </Badge>
+  );
+}
+
+/**
  * Projected finish week and the served within-year flag, e.g. "W48 · Within
  * year". `withinYear === null` means the run has no outcome for the project.
  */
 export function ProjectedFinishChip({
   projectedEndWeek,
   withinYear,
+  outcome = null,
+  outcomeLabel = null,
   className,
 }: {
   projectedEndWeek: number | null;
   withinYear: boolean | null;
+  /** P42: the served non-counting bucket (`servedNonCountingOutcome`). When
+   *  set, the chip shows the served `outcomeLabel` instead of the finish — a
+   *  queued or P4 project is never "past W52 → spillover". */
+  outcome?: NonCountingOutcome | null;
+  outcomeLabel?: string | null;
   className?: string;
 }): React.JSX.Element {
   const { spilloverYear } = usePlanYearLabels();
+  if (outcome !== null) {
+    return <BandOutcomeChip outcome={outcome} label={outcomeLabel} {...(className !== undefined ? { className } : {})} />;
+  }
   if (projectedEndWeek === null || withinYear === null) {
     return (
       <Badge tone="outline" className={cn('whitespace-nowrap', className)} data-testid="finish-chip" data-within-year="none">

@@ -55,8 +55,20 @@ const OUTCOME_FILL: Record<keyof Breakdown['outcomes'], string> = {
   blocked: 'hsl(var(--color-border-strong))',
   data_error: 'hsl(var(--color-danger))',
   excluded: 'hsl(var(--color-text-subtle))',
+  // P42 (ADR 0056): not counted this year.
+  queued: 'hsl(var(--color-primary) / 0.45)',
+  not_scheduled_priority: 'hsl(var(--color-text-muted) / 0.35)',
 };
-const OUTCOME_KEYS = ['within_year', 'spillover', 'left_out', 'blocked', 'data_error', 'excluded'] as const;
+const OUTCOME_KEYS = [
+  'within_year',
+  'spillover',
+  'left_out',
+  'blocked',
+  'queued',
+  'not_scheduled_priority',
+  'data_error',
+  'excluded',
+] as const;
 type OutcomeKey = (typeof OUTCOME_KEYS)[number];
 
 type DonutDim = 'by_category' | 'by_hub' | 'by_priority' | 'by_status';
@@ -213,7 +225,7 @@ export function ResultsExecutive({ result }: { result: ImportSimulateResponse })
   const afterDrill = tile('after');
 
   const slices: Slice[] = block
-    ? OUTCOME_KEYS.map((o) => ({ key: o, label: OUTCOME_LABEL[o], count: block.outcomes[o], fill: OUTCOME_FILL[o] }))
+    ? OUTCOME_KEYS.map((o) => ({ key: o, label: OUTCOME_LABEL[o], count: block.outcomes[o] ?? 0, fill: OUTCOME_FILL[o] }))
     : [];
 
   return (

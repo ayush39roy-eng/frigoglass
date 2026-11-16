@@ -5,7 +5,7 @@ import { formatInteger } from '@/lib/format';
 import { cn } from '@/lib/utils';
 
 import type { DeliveryRegionRow } from '../api/types';
-import { outcomeTotal, withinYearSharePct } from '../lib/outcome';
+import { regionOutcomeTotal, regionWithinYearSharePct } from '../lib/outcome';
 
 /**
  * Per-country delivery rate under the overall gauge (owner ask 2026-11-16):
@@ -49,9 +49,10 @@ export function DeliveryRegionBreakdown({ regions, compact = false }: DeliveryRe
 }
 
 function RegionRow({ row, compact }: { row: DeliveryRegionRow; compact: boolean }): React.JSX.Element {
-  const total = outcomeTotal(row);
+  // P42: the country's four counting buckets (queued P3 and P4 are outside them).
+  const total = regionOutcomeTotal(row);
   const empty = total === 0;
-  const pct = withinYearSharePct(row);
+  const pct = regionWithinYearSharePct(row);
   const oem = row.region === 'Greece';
 
   return (

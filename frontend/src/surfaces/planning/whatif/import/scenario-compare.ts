@@ -74,6 +74,14 @@ export const COMPARE_KPIS: CompareKpi[] = [
   { key: 'left_out', label: 'Left out', value: (r) => r.kpis.left_out, higherIsBetter: false },
   { key: 'blocked', label: 'Blocked', value: (r) => r.kpis.blocked, higherIsBetter: false },
   { key: 'data_error', label: 'Data errors', value: (r) => r.kpis.data_error, higherIsBetter: false },
+  // P42 (API_CONTRACT_P42 §10): served, default 0 (a P41 snapshot reads 0 — taken under pre-P42 rules).
+  { key: 'queued', label: 'Queued (not counted)', value: (r) => r.kpis.queued ?? 0, higherIsBetter: null },
+  {
+    key: 'not_scheduled_priority',
+    label: 'Not scheduled (P4)',
+    value: (r) => r.kpis.not_scheduled_priority ?? 0,
+    higherIsBetter: null,
+  },
   { key: 'newly_slipping', label: 'Newly slipping', value: (r) => r.kpis.newly_slipping, higherIsBetter: false },
 ];
 

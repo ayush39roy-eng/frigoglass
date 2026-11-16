@@ -41,7 +41,8 @@ export function DeliveryGaugeCard({ data, compact = false }: DeliveryGaugeCardPr
   // source (`GET /dashboard/completing-within-year`), so the figures never drift.
   const total = outcomeTotal(data);
   const pct = withinYearSharePct(data);
-  const lit = total > 0 ? Math.round((data.within_year_count / total) * SEGMENTS) : 0;
+  // P42 (I53): lit segments follow the SERVED share, never a browser ratio.
+  const lit = total > 0 ? Math.round((data.within_year_share_pct / 100) * SEGMENTS) : 0;
   const shownPct = useCountUp(pct);
   // Owner ask 2026-11-16: the per-country rows (served). Read defensively so a
   // backend that predates the field still renders the overall gauge.
@@ -71,9 +72,11 @@ export function DeliveryGaugeCard({ data, compact = false }: DeliveryGaugeCardPr
         )}
         <CardInfo label="How the delivery rate is read">
           <p>
-            Within-year projects (done by W52) divided by every project in the active schedule
-            run: within year, spillover past W52 (including any not yet placed) and on hold at a
-            stage. The counts come straight from the run; nothing is re-scheduled in your browser.
+            Within-year projects (done by W52) divided by the projects counted this year in the
+            active schedule run: within year, spillover past W52 (including any not yet placed) and
+            on hold at a stage. Year figures count P1, P2 and started P3 only; queued P3 and P4
+            projects are not counted. The share is served by the run; nothing is re-scheduled in
+            your browser.
             The same share appears on the Within year tile. The per-country rows apply the same
             ratio to each country&apos;s own counts; OEM hubs are counted under Greece.
           </p>
@@ -130,12 +133,12 @@ export function DeliveryGaugeCard({ data, compact = false }: DeliveryGaugeCardPr
 
       {compact ? (
         <p className="text-2xs font-medium tabular-nums text-text-muted" data-numeric="">
-          {formatInteger(data.within_year_count)} of {formatInteger(total)} in the run
+          {formatInteger(data.within_year_count)} within the year · {formatInteger(total)} counted
         </p>
       ) : (
         <div className="mt-s4 grid grid-cols-2 gap-s3">
           <MiniTile label="Within year" value={data.within_year_count} accent />
-          <MiniTile label="In the run" value={total} />
+          <MiniTile label="Counted this year" value={total} />
         </div>
       )}
 

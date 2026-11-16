@@ -8,6 +8,7 @@ import type {
   ProjectCategory,
   ProjectPriority,
   ProjectType,
+  ScheduleOutcome,
   WorkflowId,
   WorkflowStepKind,
   WorkflowStepStatus,
@@ -91,6 +92,13 @@ export interface GanttStepRow {
   pin_editable: boolean;
   /** P40: why not, when `pin_editable` is false. */
   pin_block_reason: PinBlockReason | null;
+  /** P40-R02 (docs/API_CONTRACT_P40.md §2): this step's own lapse, served.
+   *  True iff the active run's row is `pinned` and its window differs from the
+   *  pin recorded in that run's snapshot. Never derived here. */
+  pin_lapsed: boolean;
+  /** P40-R02: the caller may Clear this step's pin now (Admin / Super Admin,
+   *  in scope, live step, project not frozen). Same rules as the save. */
+  pin_clearable: boolean;
 }
 
 /** P40 (R40-2): served reason a step's pin cannot be set. */
@@ -159,6 +167,17 @@ export interface GanttProjectRow {
   pin_lapsed: boolean;
   /** P40 (R40-7): OR of the steps' `manual_overlap`. */
   manual_overlap: boolean;
+  /** P42 (API_CONTRACT_P42 §4, R42-1): the band label; null with no band. */
+  priority_label?: string | null;
+  /** P42: the stored flags (defaults true / false with no outcome row). A
+   *  not-scheduled project has no step rows, so its weeks are null (I23). */
+  counts_toward_year?: boolean;
+  not_scheduled_priority?: boolean;
+  /** P42: the served exclusive bucket; null with no outcome row. */
+  outcome?: ScheduleOutcome | null;
+  /** P42: the served non-counting text ("Queued — fits by W40", "Not
+   *  scheduled (P4)"); null for a counting project. */
+  outcome_label?: string | null;
   steps: GanttStepRow[];
 }
 

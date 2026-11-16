@@ -22,6 +22,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { MOVE_COPY } from '@/components/shared/priority-move/move-copy';
+import { PRIORITY_BAND_TITLE, priorityBandName } from '@/components/shared/priority-band-meta';
 import { PriorityMoveNotAppliedError } from '@/components/shared/priority-move/form-priority-move';
 import { ProvisionalLeaderBadge } from '@/components/shared/capacity-roster-markers';
 import { ScoringTagsField } from '@/components/shared/scoring-tags';
@@ -591,8 +592,8 @@ export function ProjectForm({
                 <SelectContent>
                   <SelectItem value={NONE}>Unset</SelectItem>
                   {PROJECT_PRIORITIES.map((p) => (
-                    <SelectItem key={p} value={p}>
-                      {p}
+                    <SelectItem key={p} value={p} title={PRIORITY_BAND_TITLE[p]}>
+                      {priorityBandName(p)}
                     </SelectItem>
                   ))}
                 </SelectContent>

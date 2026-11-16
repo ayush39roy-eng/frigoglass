@@ -54,10 +54,26 @@ export interface PriorityBoardCard {
   band_rank: number | null;
   /** P36 (R36-2): frozen projects schedule first whatever their board position (dates locked). */
   frozen: boolean;
+  /** P42 (API_CONTRACT_P42 §2): the stored flags; null when not in the active run. */
+  counts_toward_year?: boolean | null;
+  not_scheduled_priority?: boolean | null;
+  /** P42 (R42-7): the "Queued" badge — the stored bucket is QUEUED. The board
+   *  keeps rank order; the scheduler walks every started P3 before every queued
+   *  one (key 1a), so this badge is what tells them apart. */
+  queued?: boolean;
+  /** P42: the served non-counting text ("Queued — fits by W40", "Not
+   *  scheduled (P4)"); null for a counting card. */
+  outcome_label?: string | null;
 }
 
 export interface PriorityBoardColumn {
   priority: ProjectPriority;
+  /** P42 (R42-1): the band label, e.g. "Must do this year". Q is still shown as "Q". */
+  label: string;
+  /** P42: true for P4 and Q — their (non-frozen) projects are never scheduled. Cards keep their ranks. */
+  not_scheduled: boolean;
+  /** P42: cards of this column with `queued` true. Served; never counted here. */
+  queued_count: number;
   /** Served; equals `cards.length`. */
   count: number;
   /** P13-T12 (API_CONTRACT_P13 §6): the column's REMAINING design work from

@@ -36,10 +36,10 @@ const DATA: DashboardAnalytics = {
   by_hub: [{ key: 'PD-India', count: 180, share_pct: 76.27 }],
   by_reg_year: [{ key: '2026', count: 160, share_pct: 67.8 }],
   completing_hub_type: [
-    { hub: 'PD-India', type: 'CO', pipeline_count: 82, completing_count: 7, completing_pct: 8.54 },
+    { hub: 'PD-India', type: 'CO', pipeline_count: 82, counting_count: 82, completing_count: 7, completing_pct: 8.54 },
   ],
-  completing_by_type: [{ key: 'CO', pipeline_count: 89, completing_count: 10, completing_pct: 11.24 }],
-  completing_by_hub: [{ key: 'PD-India', pipeline_count: 180, completing_count: 14, completing_pct: 7.78 }],
+  completing_by_type: [{ key: 'CO', pipeline_count: 89, counting_count: 89, completing_count: 10, completing_pct: 11.24 }],
+  completing_by_hub: [{ key: 'PD-India', pipeline_count: 180, counting_count: 180, completing_count: 14, completing_pct: 7.78 }],
   has_active_schedule_run: true,
 };
 

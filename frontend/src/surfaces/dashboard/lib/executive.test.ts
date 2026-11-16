@@ -5,9 +5,10 @@ import type { VipBoardResponse, VipItem, VipItemProject } from '@/lib/api/vip';
 import type { CompletingWithinYearRow, ProjectFilterRow } from '../api/types';
 import { P13_ROW_DEFAULTS } from '../test-fixtures';
 import { selectOutcomeRows, selectRiskRows, vipHighlightedTotal, vipProjectsNotInYear } from './executive';
+import { servedRow } from '@/surfaces/dashboard/test-fixtures';
 
 function wyRow(overrides: Partial<CompletingWithinYearRow> = {}): CompletingWithinYearRow {
-  return {
+  return servedRow({
     project_id: 'p-1',
     project_name: 'Project One',
     hub: 'PD-India',
@@ -23,7 +24,7 @@ function wyRow(overrides: Partial<CompletingWithinYearRow> = {}): CompletingWith
     status: 'In Development',
     not_started: false,
     ...overrides,
-  };
+  });
 }
 
 function regRow(overrides: Partial<ProjectFilterRow> = {}): ProjectFilterRow {

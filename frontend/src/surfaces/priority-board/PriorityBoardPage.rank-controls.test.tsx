@@ -9,6 +9,7 @@ import { seriousAxeViolations } from '@/test/axe';
 import { renderWithProviders } from '@/test/render';
 import { ROLE_MATRIX } from '@/test/roles';
 import type { ProjectPriority } from '@/types/enums';
+import { PRIORITY_LABELS } from '@/types/enums';
 
 /**
  * Owner request 2026-11-17: ↑ / ↓ and a typed position on every board card
@@ -81,6 +82,10 @@ function board(cols: Partial<Record<ProjectPriority, PriorityBoardCard[]>>): Pri
     columns: (['P1', 'P2', 'P3', 'P4', 'Q'] as const).map((p) => ({
       priority: p,
       count: cols[p]?.length ?? 0,
+      // P42 (API_CONTRACT_P42 §2): served label, P4 / Q flag and queued count.
+      label: PRIORITY_LABELS[p],
+      not_scheduled: p === 'P4' || p === 'Q',
+      queued_count: (cols[p] ?? []).filter((c) => c.queued === true).length,
       design_weeks: 0,
       lab_weeks: 0,
       cards: cols[p] ?? [],

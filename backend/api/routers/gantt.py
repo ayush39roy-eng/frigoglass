@@ -66,6 +66,7 @@ and `weekly_active_counts` over the whole filtered set (see `get_gantt`).
 
 from __future__ import annotations
 
+import math
 import uuid
 from collections import defaultdict
 from collections.abc import Mapping, Sequence
@@ -139,12 +140,16 @@ from services.project_filters import (
     leader_name_if_self,
     search_predicate,
 )
+from services.rate_limit import TokenBucketLimiter
 from services.schedule_stale import mark_projects_stale
 from services.step_pins import (
     can_write_pins,
     current_length_weeks,
     pin_block_reason,
+    pin_clearable,
+    run_pin_windows,
     save_step_pins,
+    step_pin_lapsed,
 )
 from services.template_copy import share_lock_categories
 from services.tracking import tracking_status_for
@@ -157,6 +162,13 @@ _read = require_permission(Surface.GANTT, Action.READ)
 _write = require_permission(Surface.GANTT, Action.WRITE)
 #: P40 (ADR 0054 R40-2): pins are written by the Admin / Super Admin ROLES only.
 _pin_writer = require_roles(RoleName.ADMIN, RoleName.SUPER_ADMIN)
+
+#: P40-F01 (security S40-M1): each pin save takes project row locks and can
+#: dispatch a greedy run, so it is limited per user like the register save
+#: (`REGISTER_EDITS_RATE_LIMIT`): a burst of 10, then one every 6 seconds.
+#: Checked after authentication and the role check (401 / 403 come first),
+#: before any lock. Per API process (`services.rate_limit`).
+STEP_PINS_RATE_LIMIT = TokenBucketLimiter(capacity=10, refill_per_second=1 / 6)
 
 GanttSort = Literal["name", "priority", "start", "end"]
 
@@ -497,6 +509,9 @@ async def get_gantt(
     tracking = await tracking_status_for(
         db, project_ids, active_run=active_run, current_week=clock.week
     )
+    # P40-R02: the pins the active run was solved with, for the per-step
+    # `pin_lapsed` (stored values compared; the browser derives nothing).
+    run_pins = run_pin_windows(active_run.workflow_snapshot if active_run else None)
 
     gantt_rows: list[GanttProjectRow] = []
     for project in projects:
@@ -530,6 +545,10 @@ async def get_gantt(
             eff = row_effective_weeks(live, kind, cert, own_effort=own) if live else 0
             reason = pin_block_reason(current_user, project, live, skipped=skipped)
             return {
+                "pin_lapsed": step_pin_lapsed(
+                    run_step, run_pins.get((str(project.id), step_id))
+                ),
+                "pin_clearable": pin_clearable(current_user, project, live),
                 "manual_start_week": live.manual_start_week if live else None,
                 "manual_end_week": live.manual_end_week if live else None,
                 "pinned": bool(run_step.pinned) if run_step is not None else False,
@@ -836,8 +855,18 @@ async def save_pins(
     On success: one audit row per changed pair, `schedule_stale` on the
     changed projects and ONE greedy run (`trigger_reason="step_pin"`, the
     priority move's lifecycle and `X-Schedule-*` headers). Never solves
-    in-process.
+    in-process. 429 `RATE_LIMITED` with `Retry-After` past the per-user
+    limit (`STEP_PINS_RATE_LIMIT`), before any lock.
     """
+
+    allowed, retry_after = STEP_PINS_RATE_LIMIT.allow(f"step-pins:{current_user.user_id}")
+    if not allowed:
+        raise CodedHTTPException(
+            status.HTTP_429_TOO_MANY_REQUESTS,
+            "RATE_LIMITED",
+            "Too many pin saves. Please wait a moment and try again.",
+            headers={"Retry-After": str(max(1, math.ceil(retry_after)))},
+        )
 
     result = await save_step_pins(db, body.items, current_user, current_week=clock.week)
     response.headers.update(result.response_headers())

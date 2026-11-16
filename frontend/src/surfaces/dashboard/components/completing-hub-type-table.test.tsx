@@ -8,13 +8,13 @@ import { seriousAxeViolations } from '@/test/axe';
 import { CompletingHubTypeTable } from './completing-hub-type-table';
 
 const cells = [
-  { hub: 'PD-India' as const, type: 'CO' as const, pipeline_count: 82, completing_count: 7, completing_pct: 8.54 },
-  { hub: 'R&D-Greece' as const, type: 'NM' as const, pipeline_count: 5, completing_count: 1, completing_pct: 20 },
+  { hub: 'PD-India' as const, type: 'CO' as const, pipeline_count: 82, counting_count: 82, completing_count: 7, completing_pct: 8.54 },
+  { hub: 'R&D-Greece' as const, type: 'NM' as const, pipeline_count: 5, counting_count: 5, completing_count: 1, completing_pct: 20 },
 ];
 const byType = [
-  { key: 'NM' as const, pipeline_count: 5, completing_count: 1, completing_pct: 20 },
+  { key: 'NM' as const, pipeline_count: 5, counting_count: 5, completing_count: 1, completing_pct: 20 },
   // Deliberately NOT the sum of the cells: the Total row must show the served figure.
-  { key: 'CO' as const, pipeline_count: 89, completing_count: 10, completing_pct: 11.24 },
+  { key: 'CO' as const, pipeline_count: 89, counting_count: 89, completing_count: 10, completing_pct: 11.24 },
 ];
 
 describe('CompletingHubTypeTable (P13-T10)', () => {
@@ -35,7 +35,7 @@ describe('CompletingHubTypeTable (P13-T10)', () => {
   it('adds the served per-hub Total column (never a row sum) and leaves the unserved corner empty', () => {
     const byHub = [
       // Deliberately not the row's cell sum.
-      { key: 'PD-India' as const, pipeline_count: 180, completing_count: 14, completing_pct: 7.78 },
+      { key: 'PD-India' as const, pipeline_count: 180, counting_count: 180, completing_count: 14, completing_pct: 7.78 },
     ];
     renderWithProviders(<CompletingHubTypeTable cells={cells} byType={byType} byHub={byHub} />);
     const table = screen.getByRole('table', { name: /completing within the year/i });
@@ -76,7 +76,7 @@ describe('CompletingHubTypeTable (P13-T10)', () => {
 
   it('P17-R08: corner shows the served within-year count, and figures open their project list', async () => {
     const onDrill = vi.fn();
-    const byHub = [{ key: 'PD-India' as const, pipeline_count: 180, completing_count: 14, completing_pct: 7.78 }];
+    const byHub = [{ key: 'PD-India' as const, pipeline_count: 180, counting_count: 180, completing_count: 14, completing_pct: 7.78 }];
     renderWithProviders(
       <CompletingHubTypeTable cells={cells} byType={byType} byHub={byHub} grandTotal={107} onDrill={onDrill} />,
     );
@@ -93,8 +93,8 @@ describe('CompletingHubTypeTable (P13-T10)', () => {
   it('P17-R08: a zero count is not clickable', () => {
     renderWithProviders(
       <CompletingHubTypeTable
-        cells={[{ hub: 'PD-India', type: 'NM', pipeline_count: 4, completing_count: 0, completing_pct: 0 }]}
-        byType={[{ key: 'NM', pipeline_count: 4, completing_count: 0, completing_pct: 0 }]}
+        cells={[{ hub: 'PD-India', type: 'NM', pipeline_count: 4, counting_count: 4, completing_count: 0, completing_pct: 0 }]}
+        byType={[{ key: 'NM', pipeline_count: 4, counting_count: 4, completing_count: 0, completing_pct: 0 }]}
         onDrill={vi.fn()}
       />,
     );

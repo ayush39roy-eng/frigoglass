@@ -77,6 +77,7 @@ vi.mock('@/lib/api/vip', async () => {
 
 import DashboardPage from './DashboardPage';
 import { TEST_PLAN_YEAR } from '@/test/session';
+import { servedCompleting } from '@/surfaces/dashboard/test-fixtures';
 
 // P37: year labels come from the served /me.plan_year (test session fixture).
 const CARRY_OVER_YEAR = TEST_PLAN_YEAR - 1;
@@ -89,7 +90,7 @@ function failed(error: Error) {
   return { data: undefined, isPending: false, isError: true, error, refetch: vi.fn() };
 }
 
-const withinYear: CompletingWithinYear = {
+const withinYear: CompletingWithinYear = servedCompleting({
   has_active_schedule_run: true,
   schedule_run_version: 4,
   within_year_count: 9,
@@ -99,12 +100,12 @@ const withinYear: CompletingWithinYear = {
   priority_delivery: [],
   // Owner ask 2026-11-16: served per-country counts (sum to the totals above).
   regions: [
-    { region: 'Greece', within_year_count: 6, spillover_count: 2, left_out_count: 1, blocked_count: 1 },
-    { region: 'India', within_year_count: 3, spillover_count: 2, left_out_count: 1, blocked_count: 0 },
-    { region: 'Romania', within_year_count: 0, spillover_count: 0, left_out_count: 0, blocked_count: 0 },
+    { region: 'Greece', within_year_count: 6, spillover_count: 2, left_out_count: 1, blocked_count: 1 , queued_count: 0, not_scheduled_priority_count: 0},
+    { region: 'India', within_year_count: 3, spillover_count: 2, left_out_count: 1, blocked_count: 0 , queued_count: 0, not_scheduled_priority_count: 0},
+    { region: 'Romania', within_year_count: 0, spillover_count: 0, left_out_count: 0, blocked_count: 0 , queued_count: 0, not_scheduled_priority_count: 0},
   ],
   rows: [],
-};
+});
 const totals: PipelineTotals = {
   spillover_count: 76,
   new_count: 160,
@@ -400,14 +401,14 @@ const ANALYTICS_R08: DashboardAnalytics = {
   by_category: [],
   by_hub: [{ key: 'R&D-Greece', count: 3, share_pct: 100 }],
   by_reg_year: [],
-  completing_hub_type: [{ hub: 'R&D-Greece', type: 'NM', pipeline_count: 3, completing_count: 1, completing_pct: 33.33 }],
-  completing_by_type: [{ key: 'NM', pipeline_count: 3, completing_count: 1, completing_pct: 33.33 }],
-  completing_by_hub: [{ key: 'R&D-Greece', pipeline_count: 3, completing_count: 1, completing_pct: 33.33 }],
+  completing_hub_type: [{ hub: 'R&D-Greece', type: 'NM', pipeline_count: 3, counting_count: 3, completing_count: 1, completing_pct: 33.33 }],
+  completing_by_type: [{ key: 'NM', pipeline_count: 3, counting_count: 3, completing_count: 1, completing_pct: 33.33 }],
+  completing_by_hub: [{ key: 'R&D-Greece', pipeline_count: 3, counting_count: 3, completing_count: 1, completing_pct: 33.33 }],
   has_active_schedule_run: true,
 };
 
 describe('DashboardPage — P17-R06/R08 rearrangement', () => {
-  const rowsRun: CompletingWithinYear = {
+  const rowsRun: CompletingWithinYear = servedCompleting({
     ...withinYear,
     rows: [
       {
@@ -427,7 +428,7 @@ describe('DashboardPage — P17-R06/R08 rearrangement', () => {
         not_started: false,
       },
     ],
-  };
+  });
   function readyAll(run: CompletingWithinYear = rowsRun) {
     hooks.useCompletingWithinYear.mockReturnValue(ready(run));
     hooks.usePipelineTotals.mockReturnValue(ready(totals));
@@ -528,10 +529,10 @@ describe('DashboardPage — P13-T10 analytics & breakdown', () => {
     by_hub: [{ key: 'PD-India', count: 180, share_pct: 76.27 }],
     by_reg_year: [{ key: '2026', count: 160, share_pct: 67.8 }],
     completing_hub_type: [
-      { hub: 'PD-India', type: 'CO', pipeline_count: 82, completing_count: 7, completing_pct: 8.54 },
+      { hub: 'PD-India', type: 'CO', pipeline_count: 82, counting_count: 82, completing_count: 7, completing_pct: 8.54 },
     ],
-    completing_by_type: [{ key: 'CO', pipeline_count: 89, completing_count: 10, completing_pct: 11.24 }],
-    completing_by_hub: [{ key: 'PD-India', pipeline_count: 180, completing_count: 14, completing_pct: 7.78 }],
+    completing_by_type: [{ key: 'CO', pipeline_count: 89, counting_count: 89, completing_count: 10, completing_pct: 11.24 }],
+    completing_by_hub: [{ key: 'PD-India', pipeline_count: 180, counting_count: 180, completing_count: 14, completing_pct: 7.78 }],
     has_active_schedule_run: true,
   };
 

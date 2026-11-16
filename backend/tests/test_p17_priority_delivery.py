@@ -242,5 +242,6 @@ async def test_zero_bands(db_session):
     assert [b["priority"] for b in body["priority_delivery"]] == BANDS
     for band in body["priority_delivery"]:
         for key, value in band.items():
-            if key != "priority":
+            # P42 (R42-1): `priority_label` is the band's text.
+            if key not in ("priority", "priority_label"):
                 assert value == 0 or value == 0.0

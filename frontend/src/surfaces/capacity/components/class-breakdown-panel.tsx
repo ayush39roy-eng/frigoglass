@@ -48,6 +48,10 @@ export function ClassBreakdownPanel({ data }: ClassBreakdownPanelProps): React.J
             it spills over unscheduled.
           </p>
           <p>
+            Both count P1, P2 and started P3 only. Queued P3 projects (planned with spare capacity)
+            and P4 projects (not scheduled) are shown apart and are not counted this year.
+          </p>
+          <p>
             Source: active schedule run
             {version === null ? '' : ` v${String(version)}`}
             . Not recomputed in the browser.
@@ -65,7 +69,7 @@ export function ClassBreakdownPanel({ data }: ClassBreakdownPanelProps): React.J
         <>
           <div className="grid gap-gutter sm:grid-cols-2 xl:grid-cols-4" data-testid="class-cards">
             {data.rows.map((row: ClassBreakdownRow) => (
-              <ClassCard key={row.category} row={row} />
+              <ClassCard key={row.category} row={row} bucketLabels={data.priority_bucket_labels} />
             ))}
           </div>
 

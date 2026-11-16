@@ -23,7 +23,7 @@ import { formatInteger, formatPlanWeek } from '@/lib/format';
 import { cn } from '@/lib/utils';
 
 import { PriorityBandPill } from '../priority-band-pill';
-import { MOVE_COPY, previewNotNeededCopy, RANK_COPY, rankPositionCopy } from './move-copy';
+import { BAND_EFFECT_COPY, bandEffectSentence, MOVE_COPY, previewNotNeededCopy, RANK_COPY, rankPositionCopy } from './move-copy';
 import type { MoveFlowState } from './use-priority-move-flow';
 
 /**
@@ -115,10 +115,14 @@ function FlagFlip({ before, after, label }: { before: boolean | null; after: boo
 }
 
 function isPushedOut(row: PriorityPreviewChange): boolean {
-  return row.within_year_before === true && row.within_year_after === false;
+  // P42: the served `pushed_out_of_year` counts only rows still counting after the move.
+  return row.within_year_before === true && row.within_year_after === false && row.counts_toward_year_after !== false;
 }
 
 function MovedProject({ name, moved }: { name: string; moved: PriorityPreviewMoved }): React.JSX.Element {
+  // The served text, verbatim; the same words as a fallback for a served
+  // `effect` without a label.
+  const effectLabel = moved.effect_label ?? (moved.effect ? BAND_EFFECT_COPY[moved.effect] : null);
   return (
     <div className="rounded-md border border-border bg-surface-raised p-3" data-testid="preview-moved">
       <p className="text-2xs font-bold uppercase tracking-wider text-text-subtle">This project</p>
@@ -129,9 +133,20 @@ function MovedProject({ name, moved }: { name: string; moved: PriorityPreviewMov
         <span className="text-xs text-text-muted">
           Finish <WeekMove before={moved.end_week_before} after={moved.end_week_after} />
         </span>
-        <YearChange before={moved.within_year_before} after={moved.within_year_after} />
-        <FlagFlip before={moved.left_out_before} after={moved.left_out_after} label="Left out" />
+        {/* P42 (R42-8): a move into P4 / Q or into a queued P3 is not a
+            within-year loss — the served effect says what happens instead. */}
+        {effectLabel ? null : (
+          <>
+            <YearChange before={moved.within_year_before} after={moved.within_year_after} />
+            <FlagFlip before={moved.left_out_before} after={moved.left_out_after} label="Left out" />
+          </>
+        )}
       </div>
+      {effectLabel ? (
+        <p className="mt-1.5 text-xs font-semibold text-text" data-testid="preview-moved-effect" data-effect={moved.effect ?? undefined}>
+          {bandEffectSentence(effectLabel)}
+        </p>
+      ) : null}
     </div>
   );
 }

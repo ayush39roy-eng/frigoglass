@@ -21,7 +21,7 @@ export interface ScheduledCountFigures {
 }
 
 export interface ScheduledCountInfoProps extends ScheduledCountFigures {
-  /** Projects the active run plans (the served outcome buckets). */
+  /** Projects the active run counts this year (served `counting_outcome_count`, P42). */
   scheduled: number;
   label?: string;
   className?: string;
@@ -42,7 +42,9 @@ export function ScheduledCountInfo({
   return (
     <CardInfo label={label} {...(className ? { className } : {})}>
       <p data-testid="scheduled-count-note">
-        {formatInteger(scheduled)} projects are planned in the active schedule run.
+        {formatInteger(scheduled)} projects are counted this year in the active schedule run.
+        {/* P42 (ADR 0056): the counted set; queued P3 and P4 are served apart. */}
+        {' Year figures count P1, P2 and started P3 only; queued P3 and P4 projects are not counted.'}
         {pipelineTotal !== null
           ? ` The pipeline total is ${formatInteger(pipelineTotal)}. `
           : ' The pipeline total is higher. '}

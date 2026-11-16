@@ -2,7 +2,9 @@ import * as React from 'react';
 import { Clock, History, OctagonAlert, Pin, Snowflake, TimerReset, Waypoints } from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
+import { BandOutcomeChip } from '@/components/shared/project-outcome-chips';
 import { ScheduleOutcomeBadge } from '@/components/shared/schedule-outcome-badge';
+import { nonCountingOutcome } from '@/components/shared/schedule-outcome-meta';
 
 import type { GanttProjectRow, GanttStepRow } from '../api/types';
 
@@ -21,6 +23,8 @@ import type { GanttProjectRow, GanttStepRow } from '../api/types';
  *   ADR 0017); `Stale` ←
  *   `row.schedule_stale` (progress or settings changed since this run, P9).
  * - `n/a` on a step row ← `step.skipped` (ADR 0007).
+ * - P42 (ADR 0056): "Queued — …" / "Not scheduled (P4)" ← the served
+ *   `row.outcome` + `row.outcome_label`, shown verbatim (replaces the left-out chip).
  * - P40-T03c (ADR 0054): "Pinned" ← `step.pinned` (the run placed the step on
  *   its typed weeks); "Manual overlap" ← `step.manual_overlap` /
  *   `row.manual_overlap` (R40-7, a warning only); "Pin lapsed" ←
@@ -42,6 +46,9 @@ function ManualOverlapBadge({ iconOnly = false }: { iconOnly?: boolean }): React
 }
 
 export function ProjectRowBadges({ project }: { project: GanttProjectRow }): React.JSX.Element {
+  // P42 (ADR 0056): the served bucket; a queued / not-scheduled project shows
+  // the served `outcome_label` instead of the left-out chip (not counted this year).
+  const band = nonCountingOutcome(project.outcome);
   return (
     <div className="flex flex-wrap items-center justify-end gap-1">
       {project.frozen ? (
@@ -59,7 +66,8 @@ export function ProjectRowBadges({ project }: { project: GanttProjectRow }): Rea
           <Clock className="size-3" aria-hidden="true" />+{project.delay_weeks}w
         </Badge>
       ) : null}
-      {project.left_out ? <ScheduleOutcomeBadge flag="LEFT_OUT" /> : null}
+      {band ? <BandOutcomeChip outcome={band} label={project.outcome_label} /> : null}
+      {project.left_out && !band ? <ScheduleOutcomeBadge flag="LEFT_OUT" /> : null}
       {project.spillover ? <ScheduleOutcomeBadge flag="SPILLOVER" /> : null}
       {project.cat_not_allowed ? <ScheduleOutcomeBadge flag="CAT_NOT_ALLOWED" iconOnly /> : null}
       {project.blocked ? (

@@ -1,8 +1,8 @@
 import type * as React from 'react';
-import { CircleAlert, CircleOff, Clock, TriangleAlert, UserX } from 'lucide-react';
+import { CircleAlert, CircleOff, CircleSlash, Clock, Hourglass, TriangleAlert, UserX } from 'lucide-react';
 
 import type { BadgeProps } from '@/components/ui/badge';
-import type { ScheduleOutcomeFlag } from '@/types/enums';
+import type { NonCountingOutcome, ScheduleOutcome, ScheduleOutcomeFlag } from '@/types/enums';
 
 /**
  * Presentation metadata for the five named scheduling outcomes (DOMAIN_RULES.md
@@ -62,3 +62,44 @@ export const SCHEDULE_OUTCOME_META: Record<ScheduleOutcomeFlag, OutcomeMeta> = {
       "Assigned leader's allowed categories exclude this project's category. Warning, not a scheduling block.",
   },
 };
+
+/**
+ * P42 (ADR 0056, R42-3 / R42-4): the two outcomes that do not count toward the
+ * year. The chip TEXT is always the served `outcome_label` ("Not scheduled
+ * (P4)", "Queued — fits by W40", "Queued — after W52", "Queued — no slot");
+ * `label` here is only the short legend name. Neither is a warning: a queued
+ * P3 waits for spare capacity, a P4 is never planned — so neutral tones.
+ */
+export const BAND_OUTCOME_META: Record<NonCountingOutcome, OutcomeMeta> = {
+  QUEUED: {
+    tone: 'primary',
+    label: 'Queued',
+    Icon: Hourglass,
+    description: 'P3 in queue: planned only with spare capacity and not counted in this year\'s figures.',
+  },
+  NOT_SCHEDULED_PRIORITY: {
+    tone: 'neutral',
+    label: 'Not scheduled (P4)',
+    Icon: CircleSlash,
+    description: 'P4 or Q: never planned, books nobody and is not counted in this year\'s figures.',
+  },
+};
+
+/** The served bucket, narrowed to the two non-counting outcomes (else null). */
+export function nonCountingOutcome(outcome: ScheduleOutcome | null | undefined): NonCountingOutcome | null {
+  return outcome === 'QUEUED' || outcome === 'NOT_SCHEDULED_PRIORITY' ? outcome : null;
+}
+
+/**
+ * P42: which non-counting bucket a served payload is in, read from its STORED
+ * flags only (API_CONTRACT_P42 §0: QUEUED = `counts_toward_year` false and not
+ * `not_scheduled_priority`). null = counts toward the year, or not in the run.
+ */
+export function servedNonCountingOutcome(flags: {
+  counts_toward_year?: boolean | null;
+  not_scheduled_priority?: boolean | null;
+}): NonCountingOutcome | null {
+  if (flags.not_scheduled_priority === true) return 'NOT_SCHEDULED_PRIORITY';
+  if (flags.counts_toward_year === false) return 'QUEUED';
+  return null;
+}

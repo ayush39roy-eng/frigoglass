@@ -7,10 +7,10 @@ import { seriousAxeViolations } from '@/test/axe';
 import { PipelineVsCompletingChart } from './pipeline-vs-completing-chart';
 
 const rows = [
-  { key: 'NM' as const, pipeline_count: 36, completing_count: 14, completing_pct: 38.89 },
+  { key: 'NM' as const, pipeline_count: 36, counting_count: 36, completing_count: 14, completing_pct: 38.89 },
   // A zero bar: before P17-R08 every label after it shifted by one bar.
-  { key: 'RC' as const, pipeline_count: 0, completing_count: 0, completing_pct: 0 },
-  { key: 'NO' as const, pipeline_count: 56, completing_count: 30, completing_pct: 53.57 },
+  { key: 'RC' as const, pipeline_count: 0, counting_count: 0, completing_count: 0, completing_pct: 0 },
+  { key: 'NO' as const, pipeline_count: 56, counting_count: 56, completing_count: 30, completing_pct: 53.57 },
 ];
 
 describe('PipelineVsCompletingChart (moved in P17-R08)', () => {

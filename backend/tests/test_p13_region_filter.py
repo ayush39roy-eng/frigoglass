@@ -431,7 +431,11 @@ async def test_projects_new_fields_and_no_financials(db_session):
     for row in body["rows"]:
         assert new_fields <= set(row)
         assert not any(f in key for key in row for f in _FINANCIAL)
-        assert row["outcome"] in (None, "WITHIN_YEAR", "SPILLOVER", "LEFT_OUT", "BLOCKED")
+        # P42 (ADR 0056 R42-6): two more buckets.
+        assert row["outcome"] in (
+            None, "WITHIN_YEAR", "SPILLOVER", "LEFT_OUT", "BLOCKED", "QUEUED",
+            "NOT_SCHEDULED_PRIORITY",
+        )  # fmt: skip
         # ADR 0028: leader names are served.
         assert (row["leader_name"] is not None) == (row["leader_engineer_id"] is not None)
     assert any(r["current_step_code"] for r in body["rows"])
@@ -446,7 +450,11 @@ async def test_projects_end_week_and_outcome_follow_the_active_run(db_session):
         projects = await _get(client, "/dashboard/projects")
         within = await _get(client, "/dashboard/completing-within-year")
     by_id = {r["project_id"]: r for r in projects["rows"]}
-    counts = {"WITHIN_YEAR": 0, "SPILLOVER": 0, "LEFT_OUT": 0, "BLOCKED": 0}
+    counts = {
+        "WITHIN_YEAR": 0, "SPILLOVER": 0, "LEFT_OUT": 0, "BLOCKED": 0,
+        # P42 (R42-6).
+        "QUEUED": 0, "NOT_SCHEDULED_PRIORITY": 0,
+    }  # fmt: skip
     for row in projects["rows"]:
         if row["outcome"] is not None:
             counts[row["outcome"]] += 1
@@ -454,6 +462,8 @@ async def test_projects_end_week_and_outcome_follow_the_active_run(db_session):
     assert counts["SPILLOVER"] == within["spillover_count"]
     assert counts["LEFT_OUT"] == within["left_out_count"]
     assert counts["BLOCKED"] == within["blocked_count"]
+    assert counts["QUEUED"] == within["queued_count"]
+    assert counts["NOT_SCHEDULED_PRIORITY"] == within["not_scheduled_priority_count"]
     for r in within["rows"]:
         assert by_id[r["project_id"]]["outcome"] is not None or not (
             r["within_year"] or r["spillover"] or r["left_out"] or r["blocked"]

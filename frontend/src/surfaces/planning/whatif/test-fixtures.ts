@@ -116,6 +116,8 @@ export function simulateFixture(over: Partial<SimulateResponse> = {}): SimulateR
     finish_week: 70,
     within_year: false,
     unconstrained_end_week: 60,
+    counts_toward_year: true,
+    not_scheduled_priority: false,
   };
   return {
     kind: 'simulation',

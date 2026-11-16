@@ -214,7 +214,13 @@ export interface HubCapacitySummary {
   /** P19-T03 (API_CONTRACT_P19 §1): one row per lab region, served once
    *  (Greece, India, Romania; only regions of the served rows). */
   lab_regions: LabRegionCapacityRow[];
+  /** P42 (API_CONTRACT_P42 §5, R42-1): display label per split key —
+   *  `{"P1":"P1",…,"Queue":"Q"}`. The key `Queue` stays on the wire. */
+  priority_bucket_labels: PriorityBucketLabels;
 }
+
+/** P42: served display label per priority split key (`Queue` → "Q"). */
+export type PriorityBucketLabels = Record<string, string>;
 
 /** P19-T03 (API_CONTRACT_P19 §1). */
 export interface LabRegionCapacityRow {
@@ -308,12 +314,20 @@ export interface ClassBreakdownRow {
   left_out_by_priority: PriorityCountSplit;
   /** P13-T11: per-hub deliverable / left-out counts for this category. */
   by_hub: ClassHubSplit[];
+  /** P42 (API_CONTRACT_P42 §5): schedulable projects of the category whose
+   *  active-run outcome is QUEUED (a P3 in queue). Outside every count above —
+   *  deliverable / left out / total now count counting rows only. */
+  queued_count: number;
+  /** P42: … whose outcome is NOT_SCHEDULED_PRIORITY (a P4 / Q, never planned). */
+  not_scheduled_priority_count: number;
 }
 
 export interface ClassBreakdown {
   has_active_schedule_run: boolean;
   schedule_run_version: number | null;
   rows: ClassBreakdownRow[];
+  /** P42: as on `HubCapacitySummary`. */
+  priority_bucket_labels: PriorityBucketLabels;
 }
 
 /**

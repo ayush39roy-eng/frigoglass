@@ -18,9 +18,10 @@ vi.mock('@tanstack/react-virtual', () => ({
 }));
 
 import { KpiProjectsDialog } from './kpi-projects-dialog';
+import { servedRow } from '@/surfaces/dashboard/test-fixtures';
 
 function row(overrides: Partial<CompletingWithinYearRow>): CompletingWithinYearRow {
-  return {
+  return servedRow({
     project_id: 'p-x',
     project_name: 'Project X',
     hub: 'PD-India',
@@ -36,7 +37,7 @@ function row(overrides: Partial<CompletingWithinYearRow>): CompletingWithinYearR
     status: 'In Development',
     not_started: false,
     ...overrides,
-  };
+  });
 }
 
 describe('KpiProjectsDialog (P28 addendum)', () => {

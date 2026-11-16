@@ -263,7 +263,10 @@ def test_seed_demo_data_default_is_the_client_2026_dataset(seeded_schema_url, mo
     # suite's pin); progress is derived at SEED_STATUS_WEEK = 42 regardless.
     assert run["current_week"] == plan_clock.current_week()
     assert seed_demo_data.c26.SEED_STATUS_WEEK == 42
-    assert run["within_year"] + run["spillover"] + run["left_out"] + run["blocked"] == 221
+    # P42 (ADR 0056 R42-3/R42-6): the 72 P4 In Queue projects are not
+    # scheduled; no P3 is In Queue in this dataset, so nothing is queued.
+    assert run["not_scheduled_priority"] == 72 and run["queued"] == 0
+    assert run["within_year"] + run["spillover"] + run["left_out"] + run["blocked"] == 149
     assert run["no_leader"] == 1  # P29: 17 OEM projects now have a provisional leader
 
     # ADR 0041: the seed's effort split satisfies I26; B / 4 is A1 E2 K1.

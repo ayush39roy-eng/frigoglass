@@ -33,7 +33,17 @@ const nint = int.nullable();
 const nstr = z.string().nullable();
 const severity = z.enum(['info', 'warning', 'error']);
 const workflow = z.enum(['PDD', 'OEM']);
-const outcome = z.enum(['within_year', 'spillover', 'left_out', 'blocked', 'excluded', 'data_error']);
+// P42 (API_CONTRACT_P42 §10): the engine adds `not_scheduled_priority` and `queued`.
+const outcome = z.enum([
+  'within_year',
+  'spillover',
+  'left_out',
+  'blocked',
+  'excluded',
+  'data_error',
+  'not_scheduled_priority',
+  'queued',
+]);
 
 export const leaderSchema = z.discriminatedUnion('kind', [
   z.object({
@@ -162,6 +172,8 @@ const bucket = z.object({
   within_year: int,
   spillover: int,
   not_placed: int,
+  // P42: optional so a pre-P42 stored response still validates (served default 0).
+  queued: int.optional(),
 });
 
 const breakdown = z.object({
@@ -175,6 +187,9 @@ const breakdown = z.object({
     blocked: int,
     data_error: int,
     excluded: int,
+    // P42: optional so a pre-P42 stored response still validates (served default 0).
+    queued: int.optional(),
+    not_scheduled_priority: int.optional(),
   }),
   by_category: z.array(bucket),
   by_hub: z.array(bucket),
@@ -208,6 +223,9 @@ const kpisSchema: z.ZodType<ImportKpis> = z.object({
   recovered: int,
   // P41 (contract B): optional so a pre-P41 stored response still validates.
   plan_excluded: int.optional(),
+  // P42 (API_CONTRACT_P42 §10): optional for the same reason (served default 0).
+  queued: int.optional(),
+  not_scheduled_priority: int.optional(),
 });
 
 /** P41 (contract B): a tickable plan project of the picker. */
@@ -257,6 +275,9 @@ export const importSimulateResponseSchema: z.ZodType<ImportSimulateResponse> = z
       within_plan_year: z.boolean().optional(),
       lab_overlap: z.boolean().optional(),
       no_leader: z.boolean().optional(),
+      // P42: the engine's flags (served defaults true / false).
+      counts_toward_year: z.boolean().optional(),
+      not_scheduled_priority: z.boolean().optional(),
       steps: z.array(
         z.object({
           step_id: z.string(),

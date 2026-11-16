@@ -32,6 +32,11 @@ function row(overrides: Partial<ScheduleRunChangeRow> = {}): ScheduleRunChangeRo
     after_blocked: false,
     is_new: false,
     is_removed: false,
+    before_counts_toward_year: true,
+    after_counts_toward_year: true,
+    before_not_scheduled_priority: false,
+    after_not_scheduled_priority: false,
+    priority_label: 'In queue',
     ...overrides,
   };
 }

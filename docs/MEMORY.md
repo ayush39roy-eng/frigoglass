@@ -41723,3 +41723,290 @@ test-DB ambiguity).
 **Result: PASS.** P40-T03d and P40-R01 are marked DONE in IMPLEMENTATION_PLAN.
 
 **Next:** P40-T04 gate (qa, workflow, security).
+
+**Final result (P42-T03):** the backend suite (`pytest tests --ignore=tests/scheduling`) gives 3 failed and 2697
+passed. Before my changes it gave 89 failed. All 3 remaining failures predate P42 and come from other phases:
+- `test_migrations` table count: P38/P41 tables;
+- `test_p27_render_csp`: frontend build;
+- the contract test's `PlanWeek` interface: P37 frontend.
+
+P42-T03 is marked DONE in IMPLEMENTATION_PLAN.
+
+## [2026-11-17] P40-F01 (security S40-M1 / S40-L1 / S40-I1) + P40-R02 backend half (per-step `pin_lapsed`, `pin_clearable`) — backend-builder: DONE
+
+**P40-F01 (security follow-ups from the P40 gate):**
+- **S40-M1:** `api/routers/gantt.py` gets `STEP_PINS_RATE_LIMIT = TokenBucketLimiter(capacity=10, refill_per_second=1/6)`.
+  This is the same mechanism and values as `REGISTER_EDITS_RATE_LIMIT`, keyed `step-pins:{user_id}`.
+  - `save_pins` checks it first in the handler: after auth and the `_pin_writer` role check (so 401/403 come first), and
+    before any lock or write.
+  - A refusal is 429 `RATE_LIMITED` (CodedHTTPException, plain string detail) with `Retry-After` (whole seconds, ≥ 1).
+  - It is per process, which is the documented `services.rate_limit` limitation.
+  - The frontend already maps it (`use-step-pin-save.ts`).
+- **S40-L1:** new `services.template_apply.lock_projects_in_scope(db, ids, scope) -> set[ids]`. It is the same
+  `SELECT id … FOR UPDATE ORDER BY id` plus the hub scope predicate, and returns the ids it locked.
+  - `lock_projects` itself is unchanged for its other callers (apply, stage PATCH, check-in, register).
+  - `save_step_pins` now locks with the scoped variant. Its lookup reads only the locked ids (and keeps the scope
+    predicate), so an id that was not locked can never be processed.
+  - Out-of-scope and nonexistent ids give the identical 404 `PROJECT_NOT_FOUND` body. This is tested, including that
+    the out-of-scope row is not locked.
+- **S40-I1:** `services/project_steps.py` delete branch (`target is None`, unreachable: both workflows have 14 steps).
+  It now calls `clear_pin_on_repoint(..., old_step_id=row.step_template_id)` before `db.delete(row)`, giving one
+  `project.step_pin_cleared` row with `cause = "workflow_change"`.
+- **Tests:** `backend/tests/test_p40_f01_security_followups.py` (8).
+  - Row locks are observed with **`pgrowlocks`** (contrib), created inside the test transaction and rolled back.
+  - Mode `For Update` is checked; the fixtures' FK inserts already put `For Key Share` on project rows, so a plain
+    `xmax` probe is useless. Do not retry it.
+  - A control test proves the probe sees `lock_projects`.
+  - A throw-away mutant run (old unscoped lock) made the L1 test fail, as it should.
+  - The test skips if the extension is missing.
+  - The delete branch is forced by giving a pinned row `sequence_order = 99` and syncing to OEM.
+  - `test_p40_step_pins_api.py`'s autouse fixture also resets the new limiter. This was an additive edit.
+
+**P40-R02, backend half (workflow-auditor gate FAIL: the browser derived per-step lapse):**
+- `GanttStepRow` gains:
+  - `pin_lapsed`: the active run's row is `pinned` and `(start_week, end_week)` ≠ the pin recorded for that
+    `(project_id, step_id)` in `run.workflow_snapshot["step_pins"]`. False with no run row, an unpinned row, or no
+    recorded pin.
+  - `pin_clearable`: `can_write_pins` and hub in scope and a live row exists and the project is not frozen. These are
+    exactly the save's Clear rules (role / 404 / `UNKNOWN_STEP` / `PROJECT_FROZEN`).
+- Helpers live in `services/step_pins.py`: `run_pin_windows`, `step_pin_lapsed`, `pin_clearable`.
+- The project-level `pin_lapsed` is unchanged (the outcome). It can be true with no step flagged: a lapsed pin of a
+  left-out project has no run row.
+- A re-sent equal pair is still a no-op whatever `pin_clearable` says.
+- **Frontend (types only):** `surfaces/gantt/api/types.ts` adds the two fields to `GanttStepRow`, and
+  `test-fixtures.ts` `P40_GANTT_STEP_PIN_DEFAULTS` gains `pin_lapsed: false, pin_clearable: false`.
+  - The contract test's `GanttStepRow` row is "exact" and passes.
+  - tsc shows no gantt errors; gantt vitest 226 passed.
+  - `pinRunState` is NOT switched yet: that is the frontend-builder's step.
+- **Contract (docs/API_CONTRACT_P40.md):**
+  - §1: rate-limit row + paragraph, scoped lock.
+  - §2: both fields; the Clear guidance now points at `pin_clearable`; lapse comes only from the step's own field.
+  - §2: `current_length_weeks` needs a valid leader FTE (`is_valid_fte`) when there is no run row, else `eff`.
+  - §2: `pin_block_reason` is `STEP_STARTED` (`PROJECT_FROZEN` if frozen) for a step with no live row.
+  - §2: project `pin_lapsed` can be true with no step flagged (left-out note).
+  - §5: register-edits current step named as a clearing writer, plus the delete-branch note.
+- **Tests:** `backend/tests/test_p40_r02_step_pin_lapsed_clearable.py` (13). It covers:
+  - a lapsed PDD-E next to a sibling PDD-G whose live pin (36,37) is earlier than its run window 40–41 and is NOT lapsed
+    (the old browser rule misfired here);
+  - an unpinned row, and a pinned row with no recorded pin;
+  - served to every reader, and `include_unplaced` rows never lapsed;
+  - Admin and Super Admin can clear everything, including started steps; every other role cannot;
+  - frozen is not clearable and the save answers 409 `PROJECT_FROZEN`, while clearable steps save 200;
+  - a scoped Admin.
+
+**Checks:**
+- P40 files (F01, R02, step_pins_api, step_pins_backend, R01) plus `test_rbac_enforcement.py`, `--no-cov`: 100 passed.
+- Also `test_p33_t10_apply_race.py`, `test_p33_t10_template_apply.py` and `test_p35_t01_register_fields.py`: 54 passed.
+- ruff check is clean on touched files, and mypy shows nothing in touched files.
+- `ruff format --check` flags pre-existing lines of gantt.py (not reformatted: other sessions' file).
+- `test_openapi_frontend_contract.py`: 2 failures, both pre-existing from in-flight P42 frontend work
+  (`CompletingWithinYearRow.counts_toward_year` pending list, `PriorityBandRead` in reference.ts), not from this task.
+- Frontend tsc has non-gantt errors from the same P42 work.
+
+**Files:**
+- `backend/api/routers/gantt.py`, `backend/services/step_pins.py`, `backend/services/template_apply.py` (new function
+  only), `backend/services/project_steps.py`, `backend/schemas/gantt.py`.
+- `backend/tests/test_p40_f01_security_followups.py` and `backend/tests/test_p40_r02_step_pin_lapsed_clearable.py`
+  (both new), `backend/tests/test_p40_step_pins_api.py` (limiter reset).
+- `frontend/src/surfaces/gantt/api/types.ts`, `frontend/src/surfaces/gantt/test-fixtures.ts`.
+- `docs/API_CONTRACT_P40.md`, `docs/IMPLEMENTATION_PLAN.md` (P40-F01 row added DONE; P40-R02 → IN PROGRESS, backend
+  half done), and this entry.
+
+Nothing committed. The shared dev DB was not touched.
+
+**Next:**
+- frontend-builder: switch `lib/step-pin-drafts.ts::pinRunState` to `step.pin_lapsed`, and Clear to `pin_clearable`.
+- orchestrator: DOMAIN_RULES / ADR 0054 R40-4 (register-edits writer) and R40-13 wording.
+- workflow-auditor: re-check P40-R02.
+- security-auditor: re-check S40-M1/L1/I1 at the P40-T04 gate.
+
+### 2026-11-17 — P40 gate (P40-T04) — combined result: FAIL (workflow-auditor); qa PASS, security PASS
+
+Scope: P40-T01, T03a, T03b, T03c, R01 at commit 15cabdc.
+
+**qa-inspector: PASS.**
+- **Backend:**
+  - Scheduling suite: 804 passed; golden files + pin selection: 113.
+  - P40 API / backend / R01 tests: 54/54. RBAC: 25/25.
+  - The P40 contract rows are green.
+  - Migration p40a round-trips on PG17.
+- **Coverage:**
+  - `scheduling/`: 95.8%.
+  - P40 services and routers: 78–100%.
+  - `surfaces/gantt` overall: 86.5% lines, but three files sit below 70% on their own: `step-pin-save-panel` 50%, `use-step-pin-save` 61%, `step-pin-edit-bar` 67%. The untested paths are the queued → "Timeline updated" lifecycle and the 403 / 429 messages. These become P40-R02 tests.
+- **Frontend:** vitest 498/498; tsc and eslint clean.
+- **axe:** 0 serious or critical violations in every state, including invalid inputs. The one moderate finding is a `heading-order` that predates P40.
+- **Change made:** the P40-T01 axe test timeout was raised to 90 s. The test was slow, not failing.
+- **Non-P40 failures:** 32 failures in the wide run, all attributed to P42 fields and rules, P38's `PlanWeek`, and stale table-count constants in `test_migrations`.
+
+**workflow-auditor: FAIL** (one defect).
+- **Defect:** `lib/step-pin-drafts.ts::pinRunState` derives a per-step "lapsed" state from `project.pin_lapsed && ms < planned_start`, against R40-13 / contract §2. It misfires on a sibling pin that was saved earlier than its run window. Reproduced.
+- **Passed:**
+  - (a) Nothing changed since the re-audit snapshot: 873 passed.
+  - (b) Every other presentation item uses served figures.
+  - (c) The multi-select filters are server-side. Gantt, Dashboard and Capacity reconcile under 6 selections (ASGI scratch test on the 15cabdc snapshot).
+- **Doc drift:** the register-edits clearing writer, the FTE condition on current length, `pin_block_reason` with no live row, and the R40-13 wording. The orchestrator fixed DOMAIN_RULES and ADR 0054 on 2026-11-17; the contract is being fixed in P40-R02.
+
+**security-auditor: PASS.** No High or Critical findings.
+- **S40-M1 (Medium):** `PUT /gantt/step-pins` has no rate limit.
+- **S40-L1 (Low):** project rows are locked before the hub-scope filter.
+- **S40-I1 (Info):** the `project_steps` delete branch has no pin-clear audit.
+- All three are being fixed as P40-F01.
+- **Verified with 19 negative probes:**
+  - Admin and Super Admin only; a project-grant Admin and a Hub Planner get 403.
+  - Out-of-scope projects return 404 with no existence oracle.
+  - Unfreeze is enforced server-side.
+  - `by_step`, `current_step_counts` and `include_unplaced` are scoped.
+  - Audit rows carry no sensitive fields.
+
+**Gate:** P40 does not close. Remediation P40-R02 is at the top of P40's rows. Re-run the gate (all three legs) after P40-R02 and P40-F01 land.
+
+## [2026-11-17] P40-R02 frontend half — per-step lapse and Clear from served fields; save-lifecycle tests — frontend-builder: code DONE, workflow re-check pending
+
+**Did (remediation of the P40 gate workflow-auditor FAIL):**
+- `frontend/src/surfaces/gantt/lib/step-pin-drafts.ts::pinRunState(step)` no longer takes the project. "Lapsed" comes
+  only from the step's own served `pin_lapsed`; the `project.pin_lapsed && ms < planned_start_week` derivation is gone.
+  Order: no live pin → `pending` if the run row is pinned, else null; skipped → null (inert, I33); run row on the live
+  pin → `applied`; `step.pin_lapsed` → `lapsed`; otherwise `pending` ("Pin applies on the next run").
+- `components/step-pin-cell.tsx`: Clear is offered when `step.pin_clearable && !edit.locked` and the shown pair is not
+  empty. It no longer reads `project.frozen` or `pin_block_reason !== 'NOT_ALLOWED'`.
+- Grep of `surfaces/gantt` for other derived flags / permissions: none left on pins. `pin_editable`,
+  `pin_block_reason`, `current_length_weeks`, `pinned`, `manual_overlap`, project `pin_lapsed` were already served.
+  The one remaining client-side gate is `GanttPage.tsx` `canUnfreeze` (session roles Admin / Super Admin, R40-10). The
+  contract serves no per-row unfreeze field (§4), the server enforces 403 `UNFREEZE_REQUIRES_ADMIN`, and the gate's
+  workflow leg passed it; left as is. If a served field is wanted, it is a backend contract change.
+
+**Tests:**
+- `lib/step-pin-drafts.test.ts`: `pinRunState` block rewritten for the new signature, plus the sibling case (project
+  `pin_lapsed` true, step PDD-G `pin_lapsed` false, live pin 36–37 earlier than its window 40–41 → `pending`) and a
+  skipped step with `pin_lapsed` → null.
+- `GanttPage.pins.test.tsx` (additive): mocks for `@/lib/api/sse`, `fetchScheduleRunChanges` and
+  `useFollowUpRunWatcher`; the file's `step()` default gains `pin_clearable: true`. New tests:
+  - page: one "Lapsed: placed from W31" on the served-lapsed step and "Pin applies on the next run" on its sibling;
+  - page: Clear follows `pin_clearable` (hidden on a non-frozen, unblocked, pinned step served `false`; shown on a
+    started step served `true`; hidden with nothing to clear);
+  - queued: running panel (no Close), then "Timeline updated" with the loading skeleton, then the changed-projects
+    list, then Close; the changes-fetch error alert; no baseline (no fetch); run failed (danger notice); queued
+    without a run id;
+  - deferred: watcher started, follow-up line, Escape closes;
+  - 403 (role message, drafts kept), 429 `RATE_LIMITED` with `Retry-After: 7` ("Wait 7 s"), 429 without it, and a
+    non-API error fallback.
+- `components/step-pin-edit-bar.test.tsx` (new): the bar's counts, red-steps / too-many / error messages and disabled
+  states; `StepPinLeaveGuard` beforeunload, and the data-router blocker (Stay / Leave / not blocked) with
+  `createMemoryRouter`.
+- One test first flaked under coverage (the changes fetch asserted synchronously); it is now inside `waitFor`. Two
+  coverage runs after the fix were green.
+
+**Checks (from frontend/):**
+- `npx vitest run src/surfaces/gantt`: 19 files, 247 passed (twice with coverage).
+- Coverage (lines): `step-pin-save-panel.tsx` 100% (was 50%), `use-step-pin-save.ts` 100% (was 61%),
+  `step-pin-edit-bar.tsx` 94.4% (was 67%), `step-pin-cell.tsx` 100%. `surfaces/gantt` overall 95.0% lines.
+- `npx tsc --noEmit -p tsconfig.app.json`: clean (no errors anywhere at the time of the run, P42 included).
+- `npx eslint src/surfaces/gantt`: clean.
+
+**Files:** `frontend/src/surfaces/gantt/lib/step-pin-drafts.ts`, `lib/step-pin-drafts.test.ts`,
+`components/step-pin-cell.tsx`, `GanttPage.pins.test.tsx`, `components/step-pin-edit-bar.test.tsx` (new);
+`docs/IMPLEMENTATION_PLAN.md` (P40-R02 status only); this entry. `GanttPage.test.tsx` (P42 in-flight) untouched.
+Nothing committed.
+
+**Next:** workflow-auditor re-check of P40-R02; orchestrator's DOMAIN_RULES / ADR 0054 wording items as listed on the
+row; then re-run the P40 gate (all three legs).
+
+## [2026-11-17] P40-R02 re-check — per-step `pin_lapsed` / `pin_clearable` served, browser derives neither — workflow-auditor: PASS
+
+**Scope:** the P40-R02 remediation of the P40 gate workflow FAIL, plus P40-F01's effect on scheduling. The working tree
+was tested in place with `--no-cov`, against testcontainers Postgres only; the shared dev DB was not touched. P42 work in
+the tree was ignored (`scheduling/` and `services/schedule_persistence.py` have no uncommitted changes).
+
+**(1) `pin_lapsed` is exact. Independent check (scratch test, not committed):**
+- I re-derived R40-5 `(a, b)` from DOMAIN_RULES. The check ran real `run_greedy_sgs` / `run_cp_sat` output through the
+  real `build_workflow_snapshot_from_input`, then through the served `run_pin_windows` + `step_pin_lapsed`.
+- Cases: lapsed + on-time sibling; frozen pin in the past (not lapsed); lapsed pin past the horizon; a started (inert)
+  pin; 40 seeded multi-project inputs (pins on design and lab steps, frozen mix, CW 20/31/45, CP-SAT on every 4th).
+- Result: 47/47. Every served step flag equals the derivation, and greedy and CP-SAT flag the same steps.
+- Why it is exact: the snapshot records the input `(ms, me)`, and a pinned row sits on `(a, b)`. So
+  `row ≠ recorded` ⟺ `(a, b) ≠ (ms, me)` ⟺ lapsed.
+- Inert pins (skipped or started) produce no pinned row, so they are never flagged. (My first seed set pinned the
+  lead-0 PDD-I and confirmed I33 inertness.)
+- Left-out case (b > horizon): the project `pin_lapsed` is true, the step has no run row, and the served step
+  `pin_lapsed` is false. Contract §2 and the schema docstring document exactly this.
+  - With `include_unplaced` that step reads "Pin applies on the next run" (no run row, so it differs). That is
+    consistent with the rules as written. Advisory: the label is optimistic, because the next run leaves it out
+    again while CW + L − 1 > 78.
+- Sibling case: the frontend `pinRunState` shows `pending`, not `lapsed`. Covered by unit and page tests.
+
+**(2) `pin_clearable` matches the save's Clear rules:**
+- Rules matched: role (`_pin_writer`), hub scope (404), live row (`UNKNOWN_STEP`), and not frozen (409, only when the
+  pair changes).
+- Closed, started and skipped steps are clearable, as R40-2 says.
+- Residual (theoretical, non-blocking): the save's `UNKNOWN_STEP` also requires the template's workflow to equal the
+  project's. `pin_clearable` does not check this. It can differ only on a live row left on the other workflow, which
+  `sync_project_steps` prevents.
+
+**(3) No client-side pin derivation remains in `surfaces/gantt`:**
+- Lapse comes from `step.pin_lapsed`, and Clear from `step.pin_clearable`.
+- The remaining arithmetic is the R40-2 typing rule and the red range check on the served current week. Both were
+  accepted at the gate.
+- `canUnfreeze` (session role Admin / Super Admin ∧ GANTT/WRITE): **acceptable**.
+  - It only hides an affordance. The server enforces 403 `UNFREEZE_REQUIRES_ADMIN` (verified by the security leg), and
+    the dialog handles a refusal.
+  - R40-10 is a pure role rule with no per-row data, so a served field would carry no extra information.
+  - It does not compute a schedule number, so I9 is unaffected. If a per-row unfreeze rule ever appears, serve it.
+
+**(4) F01 changes no scheduling semantics:**
+- `lock_projects_in_scope` is used only by `save_step_pins`. `lock_projects` is unchanged. In-scope ids lock the same
+  rows in the same order.
+- The rate limit sits before `save_step_pins`, and the delete-branch clear is unreachable.
+- Tests, all `--no-cov`:
+  - scheduler suite (`pytest-scheduling.ini`): 804 passed, the same count as the gate;
+  - P40 scheduler + golden + invariants-negative + what-if + plan import: 236 passed;
+  - P40 API (F01, R02, step_pins_api, step_pins_backend, R01) + RBAC + P33-T10 apply / race: 143 passed;
+  - frontend step-pin-drafts / GanttPage.pins / step-pin-edit-bar: 51 passed.
+
+**(5) Docs.** The contract §2/§5 and ADR 0054 R40-4/R40-13 agree with the code. Two residual drifts were fixed here,
+docs only, with tagged amendments:
+- DOMAIN_RULES "Manual step weeks" → Surfaces: added the lapsed exception to "Pin applies on the next run", aligned
+  with R40-13 as amended.
+- ADR 0054 R40-2 "Current length": added the valid-FTE condition, the no-live-row `pin_block_reason`, and a mention of
+  `pin_clearable` / `pin_lapsed`.
+
+**Result: PASS.** P40-R02 is set to DONE in IMPLEMENTATION_PLAN. The gate entry is the orchestrator's.
+
+**Files:** `docs/DOMAIN_RULES.md` (Surfaces bullet), `docs/ADR/0054-manual-step-start-end-weeks.md` (R40-2),
+`docs/IMPLEMENTATION_PLAN.md` (P40-R02 status), this entry. No code changed. Nothing committed.
+
+### 2026-11-17 — P40 gate (P40-T04) re-run — combined result: PASS
+
+The re-run follows the FAIL above, after P40-F01 (security follow-ups) and P40-R02 (served per-step `pin_lapsed` / `pin_clearable`, the frontend switch and the save-lifecycle tests).
+
+**qa-inspector: PASS.**
+- **Backend:**
+  - Scheduling: 804 passed, coverage 95.8%.
+  - P40 API files + RBAC: 100 passed.
+  - P40 contract rows: 10/10.
+- **Frontend:**
+  - Gantt: 251/251.
+  - Gantt coverage: 95.1% lines. `step-pin-save-panel` is now 100%, `use-step-pin-save` 100% and `step-pin-edit-bar` 94%.
+  - tsc and eslint: clean.
+- **axe:** 0 serious or critical violations across 28 pin states. The pre-existing `heading-order` (moderate) remains.
+- **Non-P40 failures:**
+  - `PlanWeek` is not in the contract table (P37/P38).
+  - The `priority-band-pill` label test fails (P42).
+
+**workflow-auditor: PASS.**
+- The served `pin_lapsed` is exact: 47/47 cases, greedy = CP-SAT.
+- `pin_clearable` follows the save's Clear rules.
+- No derivation remains in the browser. The `canUnfreeze` role gate is ruled acceptable, because the server enforces it.
+- F01 changes no scheduling semantics: 804 scheduler tests and 143 API tests passed.
+- DOMAIN_RULES (Surfaces bullet) and ADR 0054 R40-2 wording were tightened.
+- **Advisories:**
+  - a left-out project's pin reads "applies on the next run" (optimistic);
+  - `pin_clearable` does not check workflow membership, which `sync_project_steps` makes unreachable.
+
+**security-auditor: PASS.**
+- S40-M1, S40-L1 and S40-I1 are closed and verified: 78 tests, `pgrowlocks` lock checks, and 3 extra probes.
+- **Info:**
+  - `pin_lapsed` is served to every reader by design;
+  - the rate limiter counts per process (known).
+
+**Gate:** P40 closes. P40-T04 is DONE.

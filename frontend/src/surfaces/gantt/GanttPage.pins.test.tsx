@@ -46,6 +46,22 @@ vi.mock('./api/step-pins-api', async (importOriginal) => {
   return { ...actual, saveStepPins: (...args: unknown[]) => saveStepPins(...args) as unknown };
 });
 
+// P40-R02 (qa note): the save lifecycle — the run stream, the "what moved"
+// fetch and the follow-up watcher are mocked; the step-pins API above too.
+const sse = { streamSolverProgress: vi.fn() };
+vi.mock('@/lib/api/sse', () => ({
+  streamSolverProgress: (...a: unknown[]) => sse.streamSolverProgress(...a) as unknown,
+}));
+const runChanges = { fetchScheduleRunChanges: vi.fn() };
+vi.mock('@/lib/api/priority-move', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/api/priority-move')>();
+  return { ...actual, fetchScheduleRunChanges: (...a: unknown[]) => runChanges.fetchScheduleRunChanges(...a) as unknown };
+});
+const followUp = { start: vi.fn() };
+vi.mock('@/lib/use-follow-up-run', () => ({
+  useFollowUpRunWatcher: () => ({ start: followUp.start, watching: followUp.start.mock.calls.length > 0 }),
+}));
+
 import GanttPage from './GanttPage';
 import { P13_GANTT_ROW_DEFAULTS, P40_GANTT_STEP_PIN_DEFAULTS } from './test-fixtures';
 
@@ -78,6 +94,7 @@ function step(seq: number, start: number | null, end: number | null, over: Parti
     current_length_weeks: 4,
     pin_editable: true,
     pin_block_reason: null,
+    pin_clearable: true,
     ...over,
   };
 }
@@ -366,4 +383,275 @@ describe('P40-T03c step Start / End weeks', () => {
     await user.type(screen.getByRole('spinbutton', { name: 'Start week, Step 1' }), '20');
     expect(await seriousAxeViolations(container)).toEqual([]);
   }, 90_000);
+});
+
+/* ------------------------------------------------------------------------- */
+/* P40-R02: served per-step lapse and Clear; the save lifecycle (qa note).    */
+/* ------------------------------------------------------------------------- */
+
+function deferredPromise<T>() {
+  let resolve!: (v: T) => void;
+  let reject!: (e: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
+const CHANGES = {
+  run_id: 'run-2',
+  run_version: 6,
+  against_run_id: 'run-1',
+  against_run_version: 5,
+  baseline_week: 31,
+  run_week: 31,
+  hidden_count: 0,
+  rows: [
+    {
+      project_id: 'p1',
+      project_name: 'Cooler Alpha',
+      hub: 'R&D-Greece',
+      priority: 'P1',
+      before_projected_end_week: 40,
+      after_projected_end_week: 44,
+      delta_weeks: 4,
+      before_within_year: true,
+      after_within_year: true,
+      before_left_out: false,
+      after_left_out: false,
+      before_blocked: false,
+      after_blocked: false,
+      is_new: false,
+      is_removed: false,
+      before_counts_toward_year: true,
+      after_counts_toward_year: true,
+      before_not_scheduled_priority: false,
+      after_not_scheduled_priority: false,
+      priority_label: 'P1',
+    },
+  ],
+};
+
+async function typeAndSave(user: ReturnType<typeof userEvent.setup>) {
+  await expand(user);
+  await user.type(screen.getByRole('spinbutton', { name: 'Start week, Step 1' }), '44');
+  await user.click(screen.getByTestId('step-pin-edit-save'));
+}
+
+describe('P40-R02 served per-step lapse and Clear', () => {
+  it('"Lapsed" only on the step served pin_lapsed; its sibling pinned earlier than its window reads "next run"', async () => {
+    const steps = [
+      step(5, 31, 34, { pinned: true, pin_lapsed: true, manual_start_week: 30, manual_end_week: 33 }),
+      // The gate's reproduction: project pin_lapsed, this step NOT lapsed, live pin (36–37) before its window (40–41).
+      step(7, 40, 41, { pinned: true, pin_lapsed: false, manual_start_week: 36, manual_end_week: 37 }),
+    ];
+    hooks.useGantt.mockReturnValue(ganttData({ rows: [project({ pin_lapsed: true }, steps)] }));
+    const user = userEvent.setup();
+    renderWithProviders(<GanttPage />);
+    await expand(user);
+    const lapsed = screen.getAllByTestId('step-pin-lapsed');
+    expect(lapsed).toHaveLength(1);
+    expect(lapsed[0]).toHaveTextContent('Lapsed: placed from W31');
+    expect(lapsed[0]?.closest('[data-testid="step-pin-cell"]')).toHaveAttribute('data-step', 'PDD-E');
+    const next = screen.getAllByTestId('step-pin-next-run');
+    expect(next).toHaveLength(1);
+    expect(next[0]?.closest('[data-testid="step-pin-cell"]')).toHaveAttribute('data-step', 'PDD-G');
+  });
+
+  it('Clear follows the served pin_clearable, not frozen / pin_block_reason', async () => {
+    const steps = [
+      // Not frozen, no block reason, a live pin, but the server says it cannot be cleared.
+      step(1, 32, 35, { pinned: true, manual_start_week: 32, manual_end_week: 35, pin_clearable: false }),
+      // Started (cannot be SET), yet clearable: an Admin may clear a started step's pin.
+      step(2, 36, 38, {
+        manual_start_week: 36,
+        manual_end_week: 38,
+        pin_editable: false,
+        pin_block_reason: 'STEP_STARTED',
+        status: 'In Progress',
+        pin_clearable: true,
+      }),
+      // Clearable but nothing to clear: no button.
+      step(3, 40, 42, { pin_clearable: true }),
+    ];
+    hooks.useGantt.mockReturnValue(ganttData({ rows: [project({}, steps)] }));
+    const user = userEvent.setup();
+    renderWithProviders(<GanttPage />);
+    await expand(user);
+    expect(screen.queryByRole('button', { name: 'Clear weeks, Step 1' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Clear weeks, Step 3' })).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Clear weeks, Step 2' }));
+    expect(screen.getByTestId('step-pin-will-clear')).toHaveTextContent('Cleared on save');
+    expect(screen.getByTestId('step-pin-edit-count')).toHaveTextContent('1 step changed in 1 project');
+  });
+});
+
+describe('P40-R02 save lifecycle (queued → "Timeline updated", deferred, 403, 429)', () => {
+  beforeEach(() => {
+    sse.streamSolverProgress.mockImplementation(async (id: string, onEvent: (e: unknown) => void) => {
+      onEvent({ schedule_run_id: id, status: 'running', percent: 50, message: 'Solver running…' });
+      return { schedule_run_id: id, status: 'completed' };
+    });
+    runChanges.fetchScheduleRunChanges.mockResolvedValue(CHANGES);
+  });
+
+  it('queued: follows the run (no close while running), then loads and shows what moved', async () => {
+    const stream = deferredPromise<unknown>();
+    sse.streamSolverProgress.mockImplementation((id: string, onEvent: (e: unknown) => void) => {
+      onEvent({ schedule_run_id: id, status: 'running', percent: 40, message: 'Solver running…' });
+      return stream.promise;
+    });
+    const changes = deferredPromise<typeof CHANGES>();
+    runChanges.fetchScheduleRunChanges.mockReturnValue(changes.promise);
+    saveStepPins.mockResolvedValue(
+      okResponse({
+        recalc_status: 'queued',
+        schedule_run_id: 'run-2',
+        baseline_run_id: 'run-1',
+        task_id: 't-1',
+        changes: [{ project_id: 'p1', step_template_id: 'PDD-A', action: 'pinned', before_start_week: null, before_end_week: null, manual_start_week: 44, manual_end_week: 47 }],
+      }),
+    );
+    const user = userEvent.setup();
+    renderWithProviders(<GanttPage />);
+    await typeAndSave(user);
+
+    const panel = await screen.findByTestId('step-pin-save-panel');
+    await waitFor(() => expect(panel).toHaveAttribute('data-kind', 'running'));
+    expect(within(panel).getByRole('heading')).toHaveTextContent('Step weeks saved — recalculating the timeline…');
+    expect(within(panel).getByText(/1 step saved\. Following the solver run\./)).toBeInTheDocument();
+    expect(within(panel).queryByRole('button', { name: 'Close' })).not.toBeInTheDocument();
+    expect(sse.streamSolverProgress).toHaveBeenCalledWith('run-2', expect.any(Function), expect.any(AbortSignal));
+    // The drafts are gone once the save succeeded, even while the run is followed.
+    expect(screen.queryByTestId('step-pin-edit-bar')).not.toBeInTheDocument();
+
+    stream.resolve({ schedule_run_id: 'run-2', status: 'completed' });
+    await waitFor(() => expect(screen.getByTestId('step-pin-save-panel')).toHaveAttribute('data-kind', 'updated'));
+    const updated = screen.getByTestId('step-pin-save-panel');
+    expect(within(updated).getByRole('heading')).toHaveTextContent('Timeline updated');
+    // Loading state while the list of what moved is fetched.
+    expect(within(updated).getByText('Loading what moved…')).toBeInTheDocument();
+    expect(updated.querySelector('[aria-busy="true"]')).not.toBeNull();
+    await waitFor(() => expect(runChanges.fetchScheduleRunChanges).toHaveBeenCalledWith('run-2', 'run-1', expect.anything()));
+
+    changes.resolve(CHANGES);
+    expect(await within(updated).findByTestId('changed-projects-list')).toHaveTextContent('Run v6 compared with v5');
+    expect(within(updated).getByText('Cooler Alpha')).toBeInTheDocument();
+
+    await user.click(within(updated).getByRole('button', { name: 'Close' }));
+    expect(screen.queryByTestId('step-pin-save-panel')).not.toBeInTheDocument();
+  });
+
+  it('queued: the list of what moved fails to load → the alert in the panel', async () => {
+    runChanges.fetchScheduleRunChanges.mockRejectedValue(new ApiError(500, 'Server error', 'Boom.'));
+    saveStepPins.mockResolvedValue(okResponse({ recalc_status: 'queued', schedule_run_id: 'run-2', baseline_run_id: 'run-1', task_id: 't' }));
+    const user = userEvent.setup();
+    renderWithProviders(<GanttPage />);
+    await typeAndSave(user);
+    const alert = await screen.findByText(/the list of what moved could not be loaded/, {}, { timeout: 5_000 });
+    expect(alert).toHaveAttribute('role', 'alert');
+    expect(alert).toHaveTextContent('Boom.');
+  }, 15_000);
+
+  it('queued with no baseline run: no list to compare, and no changes fetch', async () => {
+    saveStepPins.mockResolvedValue(okResponse({ recalc_status: 'queued', schedule_run_id: 'run-2', baseline_run_id: null, task_id: 't' }));
+    const user = userEvent.setup();
+    renderWithProviders(<GanttPage />);
+    await typeAndSave(user);
+    await waitFor(() => expect(screen.getByTestId('step-pin-save-panel')).toHaveAttribute('data-kind', 'updated'));
+    expect(screen.getByText(/no earlier schedule to compare against/)).toBeInTheDocument();
+    expect(runChanges.fetchScheduleRunChanges).not.toHaveBeenCalled();
+  });
+
+  it('queued but the run fails: a danger notice, the pins stay saved', async () => {
+    sse.streamSolverProgress.mockResolvedValue({ schedule_run_id: 'run-2', status: 'failed', error: 'Solver crashed.' });
+    saveStepPins.mockResolvedValue(okResponse({ recalc_status: 'queued', schedule_run_id: 'run-2', baseline_run_id: 'run-1', task_id: 't' }));
+    const user = userEvent.setup();
+    renderWithProviders(<GanttPage />);
+    await typeAndSave(user);
+    await waitFor(() => expect(screen.getByTestId('step-pin-save-panel')).toHaveAttribute('data-status', 'failed'));
+    const body = screen.getByTestId('step-pin-save-body');
+    expect(body).toHaveAttribute('role', 'alert');
+    expect(body).toHaveTextContent('Solver crashed.');
+    expect(body).toHaveTextContent('Your step weeks are saved');
+  });
+
+  it('queued without a run id: a warning notice, nothing followed', async () => {
+    saveStepPins.mockResolvedValue(okResponse({ recalc_status: 'queued', schedule_run_id: null }));
+    const user = userEvent.setup();
+    renderWithProviders(<GanttPage />);
+    await typeAndSave(user);
+    const panel = await screen.findByTestId('step-pin-save-panel');
+    expect(panel).toHaveAttribute('data-status', 'queued');
+    expect(within(panel).getByTestId('step-pin-save-body')).toHaveTextContent('no run was reported back');
+    expect(sse.streamSolverProgress).not.toHaveBeenCalled();
+  });
+
+  it('deferred: saved, the coalesced follow-up run is watched; Escape closes', async () => {
+    saveStepPins.mockResolvedValue(okResponse({ recalc_status: 'deferred' }));
+    const user = userEvent.setup();
+    renderWithProviders(<GanttPage />);
+    await typeAndSave(user);
+    const panel = await screen.findByTestId('step-pin-save-panel');
+    expect(panel).toHaveAttribute('data-status', 'deferred');
+    expect(followUp.start).toHaveBeenCalledTimes(1);
+    expect(sse.streamSolverProgress).not.toHaveBeenCalled();
+    expect(within(panel).getByTestId('step-pin-save-body')).toHaveTextContent('Saved 0 steps.');
+    expect(within(panel).getByTestId('step-pin-save-body')).toHaveTextContent('updates automatically after the current recalculation');
+    expect(within(panel).getByTestId('step-pin-save-follow-up')).toHaveTextContent('Waiting for the follow-up recalculation');
+    within(panel).getByRole('button', { name: 'Close' }).focus();
+    await user.keyboard('{Escape}');
+    expect(screen.queryByTestId('step-pin-save-panel')).not.toBeInTheDocument();
+  });
+
+  it('403: nothing saved, the role message on the bar, drafts kept', async () => {
+    saveStepPins.mockRejectedValue(new ApiError(403, 'Forbidden', 'Not enough permissions'));
+    const user = userEvent.setup();
+    renderWithProviders(<GanttPage />);
+    await typeAndSave(user);
+    await waitFor(() =>
+      expect(screen.getByTestId('step-pin-edit-error')).toHaveTextContent('Nothing was saved. Only Admin and Super Admin can set step weeks.'),
+    );
+    expect(screen.getByTestId('step-pin-edit-error')).toHaveAttribute('role', 'alert');
+    expect(screen.getByTestId('step-pin-edit-count')).toHaveTextContent('1 step changed');
+    expect(screen.queryByTestId('step-pin-save-panel')).not.toBeInTheDocument();
+  });
+
+  it('429 RATE_LIMITED with Retry-After: the wait in seconds, drafts kept', async () => {
+    saveStepPins.mockRejectedValue(
+      new ApiError(429, 'Too Many Requests', 'Too many pin saves. Please wait a moment and try again.', 'RATE_LIMITED', 7),
+    );
+    const user = userEvent.setup();
+    renderWithProviders(<GanttPage />);
+    await typeAndSave(user);
+    await waitFor(() =>
+      expect(screen.getByTestId('step-pin-edit-error')).toHaveTextContent('Too many saves in a row. Wait 7 s and save again. Nothing was saved.'),
+    );
+    expect(screen.getByTestId('step-pin-edit-count')).toHaveTextContent('1 step changed');
+    // The bar can be saved again (the drafts were not dropped).
+    expect(screen.getByTestId('step-pin-edit-save')).toBeEnabled();
+  });
+
+  it('429 without Retry-After: the generic wait message', async () => {
+    saveStepPins.mockRejectedValue(new ApiError(429, 'Too Many Requests', undefined, 'RATE_LIMITED'));
+    const user = userEvent.setup();
+    renderWithProviders(<GanttPage />);
+    await typeAndSave(user);
+    await waitFor(() =>
+      expect(screen.getByTestId('step-pin-edit-error')).toHaveTextContent(
+        'Too many saves in a row. Wait a few seconds and save again. Nothing was saved.',
+      ),
+    );
+  });
+
+  it('any other failure: the server detail, else the fallback', async () => {
+    saveStepPins.mockRejectedValue(new Error('network'));
+    const user = userEvent.setup();
+    renderWithProviders(<GanttPage />);
+    await typeAndSave(user);
+    await waitFor(() =>
+      expect(screen.getByTestId('step-pin-edit-error')).toHaveTextContent('The step weeks could not be saved. Nothing was changed.'),
+    );
+  });
 });

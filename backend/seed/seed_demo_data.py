@@ -921,11 +921,18 @@ async def seed_client_2026(
 
     # Dashboard classification (I9): excluded and data-error projects are not
     # counted; then left out, on hold (blocked), within year, else spillover.
+    # P42 (ADR 0056 R42-6): a not-scheduled (P4/Q) or queued (P3 In Queue)
+    # outcome is counted apart, before the four year buckets.
     verdicts: Counter[str] = Counter()
     for o in output.project_outcomes:
+        if o.not_scheduled_priority:
+            verdicts["not_scheduled_priority"] += 1
+            continue
         if o.excluded or o.data_error is not None:
             continue
-        if o.left_out:
+        if not o.counts_toward_year:
+            verdicts["queued"] += 1
+        elif o.left_out:
             verdicts["left_out"] += 1
             if o.no_leader:
                 verdicts["no_leader"] += 1
@@ -947,7 +954,15 @@ async def seed_client_2026(
             "current_week": current_week,
             **{
                 k: verdicts[k]
-                for k in ("within_year", "spillover", "left_out", "no_leader", "blocked")
+                for k in (
+                    "within_year",
+                    "spillover",
+                    "left_out",
+                    "no_leader",
+                    "blocked",
+                    "queued",
+                    "not_scheduled_priority",
+                )
             },
         },
     }

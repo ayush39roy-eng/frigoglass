@@ -161,6 +161,10 @@ export interface ImportKpis {
   recovered: number;
   /** P41 (contract B): plan projects taken out by `exclude_plan_project_ids`, served. */
   plan_excluded?: number | undefined;
+  /** P42 (API_CONTRACT_P42 §10): queued P3 projects (not counted this year) and
+   *  P4 / Q projects the engine never schedules; served (default 0). */
+  queued?: number | undefined;
+  not_scheduled_priority?: number | undefined;
 }
 
 export interface ImportResultStep {
@@ -211,6 +215,9 @@ export interface ImportResultProject {
   within_plan_year?: boolean | undefined;
   lab_overlap?: boolean | undefined;
   no_leader?: boolean | undefined;
+  /** P42: the engine's flags (served defaults true / false). */
+  counts_toward_year?: boolean | undefined;
+  not_scheduled_priority?: boolean | undefined;
   steps: ImportResultStep[];
 }
 
@@ -306,8 +313,10 @@ export interface BreakdownBucket {
   total: number;
   within_year: number;
   spillover: number;
-  /** left_out + blocked + data_error, served. */
+  /** left_out + blocked + data_error (+ queued with no slot), served. */
   not_placed: number;
+  /** P42: queued projects finishing in this block — never in `within_year`. */
+  queued?: number | undefined;
 }
 
 export interface FinishQuarter {
@@ -327,6 +336,9 @@ export interface Breakdown {
     blocked: number;
     data_error: number;
     excluded: number;
+    /** P42 (served default 0). */
+    queued?: number | undefined;
+    not_scheduled_priority?: number | undefined;
   };
   by_category: BreakdownBucket[];
   by_hub: BreakdownBucket[];

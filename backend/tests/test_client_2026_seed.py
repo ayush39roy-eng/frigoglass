@@ -679,12 +679,21 @@ def test_seed_inputs_schedule_without_invariant_violations(data: dict[str, Any])
     assert not any(o.data_error for o in output.project_outcomes)
     outcomes = output.project_outcomes
     assert not any(o.eng_conflict or o.overlap for o in outcomes)
-    assert sum(o.excluded for o in output.project_outcomes) == 109
+    # P42 (ADR 0056 R42-3, R42-10): the 72 non-frozen P4 In Queue projects are
+    # now excluded too (`not_scheduled_priority`): 109 status-excluded + 72.
+    assert sum(o.excluded for o in output.project_outcomes) == 181
+    assert sum(o.not_scheduled_priority for o in output.project_outcomes) == 72
     no_leader = {o.project_id for o in outcomes if o.no_leader}
-    assert len(no_leader) == 21
+    # P42 (R42-3): 4 of the 21 leaderless open projects are P4, now not
+    # scheduled (never `no_leader`); nothing in this dataset is frozen.
+    assert len(no_leader) == 17
     assert all(o.left_out for o in outcomes if o.no_leader)
     assert no_leader == {
-        ids[i] for i, p in enumerate(projects) if leaders[i] is None and c26.is_open(p)
+        ids[i]
+        for i, p in enumerate(projects)
+        if leaders[i] is None
+        and c26.is_open(p)
+        and p["priority"] not in dc.NOT_SCHEDULED_PRIORITIES
     }
     # I38: a run solved from this input would store this week.
     assert (

@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
+import { PRIORITY_LABELS } from '@/types/enums';
+
 import type { PriorityBoardCard, PriorityBoardColumn } from '../api';
 import {
   applyOverrides,
@@ -24,7 +26,16 @@ function card(id: string, band_rank: number | null): PriorityBoardCard {
 }
 
 function col(priority: 'P1' | 'P2', ids: [string, number | null][]): PriorityBoardColumn {
-  return { priority, count: ids.length, design_weeks: 0, lab_weeks: 0, cards: ids.map(([id, r]) => card(id, r)) };
+  return {
+    priority,
+    count: ids.length,
+    design_weeks: 0,
+    lab_weeks: 0,
+    label: PRIORITY_LABELS[priority],
+    not_scheduled: false,
+    queued_count: 0,
+    cards: ids.map(([id, r]) => card(id, r)),
+  };
 }
 
 function shown(ids: [string, number | null][]): DisplayCard[] {

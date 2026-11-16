@@ -34,7 +34,10 @@ import { breakdownFor, NOT_PLACED_OUTCOMES, YEAR_ALL, YEAR_LATER, YEAR_NOT_PLACE
 
 const WEEKS_PER_YEAR = 52;
 const QUARTER_WEEKS = 13;
-const PLACED: ReadonlySet<WhatIfOutcome> = new Set(['within_year', 'spillover']);
+/** Projects that sit in a year block and quarter by `finish_week`. P42 (C1 as served):
+ *  a queued project with a finish week sits there like a placed one (its block's
+ *  `queued` column, never `within_year`). */
+const IN_FINISH_BLOCKS: ReadonlySet<WhatIfOutcome> = new Set(['within_year', 'spillover', 'queued']);
 export const UNKNOWN_BUCKET = 'unknown';
 
 /** Why a list can be shorter than its served figure. */
@@ -127,7 +130,9 @@ export function drillLabel(d: Drill): string {
 /** The served year block of a project besides `all` (C1 `breakdown_year_key`), or null. */
 export function yearKeyOf(p: Pick<ImportResultProject, 'outcome' | 'finish_week'>, baseYear: number): string | null {
   if (NOT_PLACED_OUTCOMES.has(p.outcome)) return YEAR_NOT_PLACED;
-  if (!PLACED.has(p.outcome) || p.finish_week === null) return null;
+  // P42: a queued project with no slot is not placed; a not-scheduled one is only in `all`.
+  if (p.outcome === 'queued' && p.finish_week === null) return YEAR_NOT_PLACED;
+  if (!IN_FINISH_BLOCKS.has(p.outcome) || p.finish_week === null) return null;
   if (p.finish_week <= WEEKS_PER_YEAR) return String(baseYear);
   if (p.finish_week <= 2 * WEEKS_PER_YEAR) return String(baseYear + 1);
   return YEAR_LATER;
@@ -336,7 +341,8 @@ export function quarterDrill(result: ImportSimulateResponse, key: string, quarte
     `Finish in ${label}`,
     served?.count ?? 0,
     projectsInBlock(result, key).filter(
-      (p) => PLACED.has(p.outcome) && p.finish_week !== null && quarterKeyOf(p.finish_week, result.base_year) === quarter,
+      (p) =>
+        IN_FINISH_BLOCKS.has(p.outcome) && p.finish_week !== null && quarterKeyOf(p.finish_week, result.base_year) === quarter,
     ),
     `finishing in ${label}`,
     { context: yearContext(result, key) },
@@ -440,7 +446,7 @@ export function compareKpiDrill(
       projects = outcome('spillover');
       break;
     case 'not_placed':
-      projects = served ? all.filter((p) => NOT_PLACED_OUTCOMES.has(p.outcome)) : outcome('left_out');
+      projects = served ? all.filter((p) => yearKeyOf(p, response.base_year) === YEAR_NOT_PLACED) : outcome('left_out');
       break;
     case 'file_projects':
       projects = all.filter((p) => p.source === 'file');
@@ -456,6 +462,8 @@ export function compareKpiDrill(
     case 'left_out':
     case 'blocked':
     case 'data_error':
+    case 'queued':
+    case 'not_scheduled_priority':
       projects = outcome(kpiKey);
       break;
     case 'newly_slipping': {

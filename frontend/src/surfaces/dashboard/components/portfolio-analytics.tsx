@@ -2,6 +2,7 @@ import * as React from 'react';
 import { motion } from 'framer-motion';
 import { Layers, Target } from 'lucide-react';
 
+import { priorityBandName } from '@/components/shared/priority-band-meta';
 import { BoltCard } from '@/components/ui/bolt-card';
 import { formatInteger } from '@/lib/format';
 import { useMotionTokens } from '@/lib/motion';
@@ -13,6 +14,9 @@ import { displayOutcomeOf, type DisplayOutcome } from '../lib/outcome';
 import { formatServedPct } from '../lib/analytics';
 import { DELIVERY_SEGMENTS, HUB_OUTCOME_STACK, type SegmentKey } from '../lib/delivery-segments';
 import { CardInfo } from '@/components/ui/card-info';
+
+/** P42: the display buckets that count toward the year. */
+type CountedDisplayOutcome = Exclude<DisplayOutcome, 'queued' | 'not_scheduled'>;
 
 /**
  * Portfolio analytics (2026-10-01, client ask: "lots of graphs, fascinating").
@@ -113,24 +117,35 @@ export const PRIORITY_NOTE =
 const MIN_LABEL_SHARE = 0.04;
 
 /** Segment sizes are served counts; the two "not finishing" parts are the
- *  difference of two served integers (owner ruling, P17-R08). */
+ *  difference of two served integers (owner ruling, P17-R08). P42 (I53): over
+ *  the served COUNTING totals, so a queued P3 or a P4 is never "not finishing"
+ *  — each has its own served segment. */
 function segmentCounts(b: PriorityDeliveryBand): Record<SegmentKey, number> {
   return {
     in_flight_finishing: b.in_flight_within_year,
-    in_flight_not_finishing: b.in_flight_total - b.in_flight_within_year,
+    in_flight_not_finishing: b.in_flight_counting_total - b.in_flight_within_year,
     not_started_finishing: b.not_started_within_year,
-    not_started_not_finishing: b.not_started_total - b.not_started_within_year,
+    not_started_not_finishing: b.not_started_counting_total - b.not_started_within_year,
     delivered: b.delivered_total,
     not_in_plan: b.other_total,
+    queued: b.queued_total,
+    not_scheduled: b.not_scheduled_priority_total,
   };
 }
 
 function bandParts(b: PriorityDeliveryBand): string[] {
   const parts: string[] = [];
-  if (b.in_flight_total > 0) parts.push(`In flight: ${formatInteger(b.in_flight_within_year)} of ${formatInteger(b.in_flight_total)}`);
-  if (b.not_started_total > 0) parts.push(`Not started: ${formatInteger(b.not_started_within_year)} of ${formatInteger(b.not_started_total)}`);
+  const notFinishing = (counted: number, finishing: number) =>
+    `${formatInteger(finishing)} finishing, ${formatInteger(counted - finishing)} not`;
+  if (b.in_flight_counting_total > 0) parts.push(`In flight: ${notFinishing(b.in_flight_counting_total, b.in_flight_within_year)}`);
+  if (b.not_started_counting_total > 0) {
+    parts.push(`Not started: ${notFinishing(b.not_started_counting_total, b.not_started_within_year)}`);
+  }
   if (b.delivered_total > 0) parts.push(`Already delivered: ${formatInteger(b.delivered_total)}`);
   if (b.other_total > 0) parts.push(`Not in plan: ${formatInteger(b.other_total)}`);
+  // P42 (ADR 0056): served apart, not counted this year.
+  if (b.queued_total > 0) parts.push(`Queued: ${formatInteger(b.queued_total)}`);
+  if (b.not_scheduled_priority_total > 0) parts.push(`Not scheduled: ${formatInteger(b.not_scheduled_priority_total)}`);
   return parts;
 }
 
@@ -150,7 +165,9 @@ function PriorityDeliveryBars({ bands }: { bands: PriorityDeliveryBand[] }): Rea
               One bar per priority band, as long as the band&apos;s projects. Green parts finish within
               the year in the active run, amber parts do not; solid is work in flight, the light tint
               is work not started yet. Commercialized projects are shown as already delivered. Paused
-              (status On Hold) and Cancelled projects are listed as not in plan.
+              (status On Hold) and Cancelled projects are listed as not in plan. Year figures count
+              P1, P2 and started P3 only: queued P3 and P4 projects have their own segments and are
+              outside the share.
             </p>
             <p className="mt-s2">{PRIORITY_NOTE}</p>
           </>
@@ -184,7 +201,8 @@ function PriorityDeliveryBars({ bands }: { bands: PriorityDeliveryBand[] }): Rea
 
 function PriorityBandRow({ band: b }: { band: PriorityDeliveryBand }): React.JSX.Element {
   const counts = segmentCounts(b);
-  const headline = `${formatInteger(b.within_year)} of ${formatInteger(b.total)} finishing this year`;
+  // P42 (I53): the served share is within year over the band's COUNTING total.
+  const headline = `${formatInteger(b.within_year)} finishing this year · ${formatInteger(b.counting_total)} counted`;
   const parts = bandParts(b);
   const aria = [`${b.priority}: ${headline}`, ...parts.map((p) => p.replace(': ', ' ').toLowerCase())].join('; ');
   return (
@@ -192,7 +210,7 @@ function PriorityBandRow({ band: b }: { band: PriorityDeliveryBand }): React.JSX
       <div className="flex flex-wrap items-baseline gap-x-s3 gap-y-0.5">
         <span className="flex items-center gap-1.5">
           <span className={cn('size-2.5 shrink-0 rounded-full', PRIORITY_DOT[b.priority])} aria-hidden="true" />
-          <span className="text-sm font-bold text-text">{b.priority}</span>
+          <span className="text-sm font-bold text-text">{priorityBandName(b.priority, b.priority_label)}</span>
         </span>
         <span className="text-sm font-semibold text-text" data-numeric="">
           {headline}
@@ -245,12 +263,16 @@ const STACK_ORDER = HUB_OUTCOME_STACK;
 function HubOutcomeStack({ rows }: { rows: CompletingWithinYearRow[] }): React.JSX.Element {
   const { reduced } = useMotionTokens();
   const hubs = React.useMemo(() => {
-    const map = new Map<string, Record<DisplayOutcome, number>>();
+    const map = new Map<string, Record<CountedDisplayOutcome, number>>();
     for (const row of rows) {
+      // P42 (I53): the stack shows the projects counted this year; a queued P3
+      // or a P4 (served bucket) is not counted, so it is not stacked.
+      const bucket = displayOutcomeOf(row);
+      if (bucket === 'queued' || bucket === 'not_scheduled') continue;
       const entry =
         map.get(row.hub) ??
-        ({ within_year: 0, spillover: 0, blocked: 0, unresolved: 0 } as Record<DisplayOutcome, number>);
-      entry[displayOutcomeOf(row)] += 1;
+        ({ within_year: 0, spillover: 0, blocked: 0, unresolved: 0 } as Record<CountedDisplayOutcome, number>);
+      entry[bucket] += 1;
       map.set(row.hub, entry);
     }
     return [...map.entries()]
@@ -268,11 +290,12 @@ function HubOutcomeStack({ rows }: { rows: CompletingWithinYearRow[] }): React.J
       <CardHead
         icon={Layers}
         title="Outcomes by hub"
-        subtitle="Every project in the run, stacked by its outcome"
+        subtitle="Projects counted this year, stacked by outcome"
         info={
           <p>
-            One bar per hub, sized by how many of its projects are in the active run, split by each
-            project&apos;s outcome flag. A project appears in exactly one segment.
+            One bar per hub, sized by how many of its projects the active run counts this year, split
+            by each project&apos;s served outcome. A project appears in exactly one segment. Queued P3
+            and P4 projects are not counted, so they are not stacked.
           </p>
         }
         right={

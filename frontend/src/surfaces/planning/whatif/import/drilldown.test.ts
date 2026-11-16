@@ -118,7 +118,7 @@ describe('P32-R07 drill-down selection', () => {
       }
       for (const o of OUTCOMES) {
         const d = outcomeDrill(r, key, o, OUTCOME_LABEL[o]);
-        expect(d.projects, `${key}/${o}`).toHaveLength(b.outcomes[o]);
+        expect(d.projects, `${key}/${o}`).toHaveLength(b.outcomes[o] ?? 0);
       }
       for (const q of b.by_finish_quarter) {
         const d = quarterDrill(r, key, q.key);

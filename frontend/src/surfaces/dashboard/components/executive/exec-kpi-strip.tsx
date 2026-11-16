@@ -11,15 +11,17 @@ import type { CompletingWithinYear, ProjectFilterRow } from '../../api/types';
 import { vipHighlightedTotal, type KpiBucket } from '../../lib/executive';
 import { outcomeTotal, withinYearSharePct } from '../../lib/outcome';
 import { VipBoardDialog } from '../vip/vip-board-dialog';
+import { YearBasisNote } from '../year-basis-note';
 import { ExecKpiTile } from './exec-kpi-tile';
 import { KpiProjectsDialog } from './kpi-projects-dialog';
 
 /**
  * Executive summary KPI strip (P28, ADR 0039 §3 + addenda): six IDENTICAL
  * fixed-size tiles (equal grid columns, `ExecKpiTile`'s fixed frame), every
- * figure a served field shown verbatim — except the two established Detailed
- * derivations: "Scheduled" = `outcomeTotal` (the Detailed header's sum) and
- * the within-year badge = `withinYearSharePct`. VIP = the served per-area
+ * figure a served field shown verbatim. P42 (I53): "Counted" = the served
+ * `counting_outcome_count` (`outcomeTotal`) and the within-year badge = the
+ * served `within_year_share_pct` (`withinYearSharePct`); queued P3 and P4
+ * projects are served apart and named under the strip (`YearBasisNote`). VIP = the served per-area
  * `vip_project_count`s summed (`vipHighlightedTotal`; pinned projects, ADR 0040).
  *
  * Click-through (owner addendum): each run tile opens a dialog with exactly
@@ -200,12 +202,11 @@ export function ExecKpiStrip({
       <div className="grid grid-cols-2 gap-gutter sm:grid-cols-3 xl:grid-cols-6">
         <div data-testid="exec-kpi-scheduled" className="min-w-0">
           <ExecKpiTile
-            label="Scheduled"
+            label="Counted this year"
             value={outcomeTotal(data)}
             icon={FolderKanban}
-            {...(pipelineTotal !== null ? { badge: `of ${formatInteger(pipelineTotal)}` } : {})}
             onOpen={open('scheduled')}
-            openLabel={openLabel('Scheduled', outcomeTotal(data))}
+            openLabel={openLabel('Counted this year', outcomeTotal(data))}
             testId="exec-kpi-scheduled-tile"
           />
         </div>
@@ -259,6 +260,7 @@ export function ExecKpiStrip({
           {vipTile}
         </div>
       </div>
+      <YearBasisNote data={data} onOpen={openFromTile} className="mt-s2" />
       <KpiProjectsDialog
         bucket={openBucket}
         rows={data.rows}

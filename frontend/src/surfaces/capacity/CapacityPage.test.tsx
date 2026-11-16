@@ -6,7 +6,7 @@ import { renderWithProviders } from '@/test/render';
 import { useHubFilterStore } from '@/stores/hub-filter';
 import { ApiError } from '@/lib/api/client';
 import type { ClassBreakdown, EngineerUtilizationResponse, HubCapacitySummary } from './api/types';
-import { areaRow, classRow, hubRow, SUMMARY_P11, totalsRow } from './test-fixtures';
+import { areaRow, classRow, hubRow, SUMMARY_P11, totalsRow, PRIORITY_BUCKET_LABELS } from './test-fixtures';
 
 const hooks = {
   useHubLoadVsCapacity: vi.fn(),
@@ -41,6 +41,7 @@ const hubLoad: HubCapacitySummary = {
 };
 const classBreakdown: ClassBreakdown = {
   has_active_schedule_run: true,
+  priority_bucket_labels: PRIORITY_BUCKET_LABELS,
   schedule_run_version: 6,
   rows: [classRow({ category: 'A+', deliverable_count: 4, left_out_count: 1, total_count: 5 })],
 };
@@ -346,7 +347,7 @@ describe('CapacityPage', () => {
     };
     hooks.useHubLoadVsCapacity.mockReturnValue(ready(noRun));
     hooks.useClassBreakdown.mockReturnValue(
-      ready({ has_active_schedule_run: false, schedule_run_version: null, rows: [] }),
+      ready({ has_active_schedule_run: false, schedule_run_version: null, priority_bucket_labels: PRIORITY_BUCKET_LABELS, rows: [] }),
     );
     renderWithProviders(<CapacityPage />);
     expect(screen.getAllByText('No schedule computed yet').length).toBeGreaterThan(0);

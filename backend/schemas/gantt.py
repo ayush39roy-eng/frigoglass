@@ -121,6 +121,19 @@ class GanttStepRow(BaseModel):
         ]
         | None
     ) = None
+    #: P40-R02: this step's own lapse. True iff the active run's row is
+    #: `pinned` and its window `(planned_start_week, planned_end_week)`
+    #: differs from the pin recorded for the step in that run's
+    #: `workflow_snapshot.step_pins` (R40-5: placed from the run's week).
+    #: False with no run row, an unpinned row or no recorded pin. The
+    #: project row's `pin_lapsed` (the run outcome) can also be true for a
+    #: lapsed pin whose project was left out (that step has no run row).
+    pin_lapsed: bool = False
+    #: P40-R02: the caller may **clear** this step's pin now, by the save
+    #: endpoint's rules: Admin / Super Admin role, project in the caller's hub
+    #: scope, a live step row, and the project not frozen. Independent of
+    #: `pin_editable` (Clear is allowed on a started, skipped or closed step).
+    pin_clearable: bool = False
 
 
 class GanttProjectRow(BaseModel):

@@ -206,7 +206,10 @@ async def test_preview_lists_knock_on_changes_and_writes_nothing(db_session):
     assert len(body["preview_token"]) == 64
     assert body["elapsed_ms"] is not None and body["elapsed_ms"] >= 0
     moved = body["moved"]
-    assert moved["end_week_after"] < moved["end_week_before"]  # jumps the queue
+    # P42 (ADR 0056 R42-3): a non-frozen P4 project was never scheduled, so
+    # it has no "before" week; the move schedules it (R42-8: no effect label).
+    assert moved["end_week_before"] is None and moved["not_scheduled_priority_before"] is True
+    assert moved["end_week_after"] is not None and moved["effect"] is None
     # The other three are delayed; the moved project is never listed.
     ids = [c["project_id"] for c in body["changes"]]
     assert str(last.id) not in ids
@@ -377,7 +380,9 @@ async def test_no_active_run_still_compares_against_a_fresh_baseline(db_session)
         confirm = (await _confirm(client, w.projects[3].id, "P1", preview["preview_token"])).json()
     assert preview["baseline_run_id"] is None and preview["note"]
     assert str(w.projects[2].id) in {c["project_id"] for c in preview["changes"]}
-    assert preview["moved"]["end_week_before"] > preview["moved"]["end_week_after"]
+    # P42 (R42-3): the P4 project was not scheduled before the move.
+    assert preview["moved"]["end_week_before"] is None
+    assert preview["moved"]["end_week_after"] is not None
     assert confirm["recalc_status"] == "applied" and confirm["baseline_run_id"] is None
     assert confirm["changes"] == preview["changes"]
     assert confirm["moved"] == preview["moved"]

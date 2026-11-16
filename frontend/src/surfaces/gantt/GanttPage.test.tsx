@@ -473,7 +473,7 @@ describe('GanttPage', () => {
         session: { permissions: { ...fullPermissions(), project_registration: { read: true, write: false } } },
       });
       expect(screen.queryByTestId('priority-move-trigger')).not.toBeInTheDocument();
-      expect(screen.getByTitle('Priority band P1 — highest')).toHaveTextContent('P1');
+      expect(screen.getByTitle('Priority band P1 — Must do this year')).toHaveTextContent('P1');
     });
 
     it('a read-only role (gantt: read, no write) sees the timeline with no freeze control and a read-only notice', () => {
@@ -617,7 +617,9 @@ describe('GanttPage', () => {
       expect(await seriousAxeViolations(container)).toEqual([]);
       await user.click(screen.getByRole('button', { name: 'Forest view' }));
       expect(await seriousAxeViolations(container)).toEqual([]);
-    });
+      // P40-T04 (qa): two full-page axe scans; ~4 s at load 20 on 10 cores, so the
+      // 10 s default timed out under heavier parallel load. Slow, not failing.
+    }, 90_000);
 
     it('P40-T01: the toolbar is one compact row with every control in it', () => {
       renderWithProviders(<GanttPage />);

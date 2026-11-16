@@ -119,6 +119,9 @@ export function ApplyLogicCard({
             {/* ADR 0024: both are "not done by W52" on the 52-week year. */}
             <ResultStat label="Spillover (past W52)" value={lastResult.spillover_count} />
             <ResultStat label="Spillover · unplaced" value={lastResult.left_out_count} />
+            {/* P42 (ADR 0056): served apart; the year figures count P1, P2 and started P3 only. */}
+            <ResultStat label="Queued (not counted)" value={lastResult.queued_count} />
+            <ResultStat label="Not scheduled (P4)" value={lastResult.not_scheduled_priority_count} />
           </dl>
         ) : null}
 

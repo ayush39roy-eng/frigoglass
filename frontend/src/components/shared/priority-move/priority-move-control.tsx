@@ -14,7 +14,7 @@ import { cn } from '@/lib/utils';
 import { usePermission } from '@/stores/session';
 import { PROJECT_PRIORITIES, type ProjectPriority } from '@/types/enums';
 
-import { PRIORITY_BAND_STYLES, PRIORITY_BAND_TITLE } from '../priority-band-meta';
+import { PRIORITY_BAND_STYLES, PRIORITY_BAND_TITLE, priorityBandName } from '../priority-band-meta';
 import { PriorityBandPill } from '../priority-band-pill';
 import { MOVE_COPY } from './move-copy';
 import { usePriorityMoveHost, type PriorityMoveTarget } from './priority-move-context';
@@ -78,9 +78,9 @@ export function PriorityMoveControl({ className, ...target }: PriorityMoveContro
           }}
         >
           {PROJECT_PRIORITIES.map((p) => (
-            <DropdownMenuRadioItem key={p} value={p} className="text-xs">
+            <DropdownMenuRadioItem key={p} value={p} className="text-xs" title={PRIORITY_BAND_TITLE[p]}>
               <span className={cn('size-2 shrink-0 rounded-full', PRIORITY_BAND_STYLES[p].dot)} aria-hidden="true" />
-              {PRIORITY_BAND_TITLE[p]}
+              {priorityBandName(p)}
             </DropdownMenuRadioItem>
           ))}
         </DropdownMenuRadioGroup>

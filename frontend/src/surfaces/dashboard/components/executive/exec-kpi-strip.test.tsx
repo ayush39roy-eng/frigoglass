@@ -29,9 +29,10 @@ vi.mock('../vip/vip-board-dialog', () => ({
 }));
 
 import { ExecKpiStrip } from './exec-kpi-strip';
+import { servedCompleting, servedRow } from '@/surfaces/dashboard/test-fixtures';
 
 function row(overrides: Partial<CompletingWithinYearRow>): CompletingWithinYearRow {
-  return {
+  return servedRow({
     project_id: 'p-x',
     project_name: 'Project X',
     hub: 'PD-India',
@@ -47,7 +48,7 @@ function row(overrides: Partial<CompletingWithinYearRow>): CompletingWithinYearR
     status: 'In Development',
     not_started: false,
     ...overrides,
-  };
+  });
 }
 
 const ROWS: CompletingWithinYearRow[] = [
@@ -59,7 +60,7 @@ const ROWS: CompletingWithinYearRow[] = [
   row({ project_id: 'b1', project_name: 'Blocked One', blocked: true, within_year: true }),
 ];
 
-const DATA: CompletingWithinYear = {
+const DATA: CompletingWithinYear = servedCompleting({
   has_active_schedule_run: true,
   schedule_run_version: 4,
   within_year_count: 1,
@@ -69,7 +70,7 @@ const DATA: CompletingWithinYear = {
   priority_delivery: [],
   regions: [],
   rows: ROWS,
-};
+});
 
 function board(areaCount: 1 | 2): VipBoardResponse {
   const mk = (area: 'Greece' | 'India', highlighted: number) => ({
@@ -96,16 +97,17 @@ describe('ExecKpiStrip (P28, ADR 0039 §3 + addenda)', () => {
     renderWithProviders(<ExecKpiStrip data={DATA} pipelineTotal={253} vipBoard={board(1)} />);
     const tile = (id: string) => within(screen.getByTestId(id));
     expect(tile('exec-kpi-scheduled').getByText('5')).toBeInTheDocument();
-    expect(tile('exec-kpi-scheduled').getByText('of 253')).toBeInTheDocument();
+    // P42: the counted figure carries no "of <pipeline>" badge (never "of M").
+    expect(tile('exec-kpi-scheduled').queryByText('of 253')).toBeNull();
     expect(tile('exec-kpi-within-year').getByText('1')).toBeInTheDocument();
     expect(tile('exec-kpi-spillover').getByText('2')).toBeInTheDocument();
     expect(tile('exec-kpi-left-out').getAllByText('1').length).toBeGreaterThan(0);
     expect(tile('exec-kpi-blocked').getAllByText('1').length).toBeGreaterThan(0);
     expect(tile('exec-kpi-vip').getByText('3')).toBeInTheDocument();
-    for (const label of ['Scheduled', 'Within year', 'Spillover', 'Left out', 'On hold', 'VIP']) {
+    for (const label of ['Counted this year', 'Within year', 'Spillover', 'Left out', 'On hold', 'VIP']) {
       expect(screen.getByText(label)).toBeInTheDocument();
     }
-    // Within-year badge: the shared share formula (1 of 5 → 20%).
+    // Within-year badge: the served within_year_share_pct (1 / 5 → 20%).
     expect(tile('exec-kpi-within-year').getByText('20%')).toBeInTheDocument();
 
     // Equal size by construction: every tile carries the SAME fixed frame.
@@ -143,8 +145,8 @@ describe('ExecKpiStrip (P28, ADR 0039 §3 + addenda)', () => {
       expect(label.className).not.toMatch(/truncate|ellipsis|line-clamp|whitespace-nowrap|break-words|anywhere|break-all/);
     }
     const scheduled = within(screen.getByTestId('exec-kpi-scheduled'));
-    expect(scheduled.getByTestId('exec-kpi-tile-label')).toHaveTextContent(/^Scheduled$/);
-    expect(scheduled.getByTestId('exec-kpi-tile-figure-line')).toHaveTextContent(/^5of 253$/);
+    expect(scheduled.getByTestId('exec-kpi-tile-label')).toHaveTextContent(/^Counted this year$/);
+    expect(scheduled.getByTestId('exec-kpi-tile-figure-line')).toHaveTextContent(/^5$/);
   });
 
   it('each run tile is a button that opens the dialog with exactly its served rows', async () => {
@@ -156,7 +158,7 @@ describe('ExecKpiStrip (P28, ADR 0039 §3 + addenda)', () => {
     await user.click(scheduled);
     let dialog = screen.getByTestId('exec-kpi-dialog');
     // Count in the title matches the tile's number (selection = served flags).
-    expect(within(dialog).getByTestId('exec-kpi-dialog-title')).toHaveTextContent('Scheduled projects — 5 projects');
+    expect(within(dialog).getByTestId('exec-kpi-dialog-title')).toHaveTextContent('Projects counted this year — 5 projects');
     expect(within(dialog).getByText('Within One')).toBeInTheDocument();
     expect(within(dialog).getByText('Blocked One')).toBeInTheDocument();
     // Row anatomy: link target, hub, end week ("—" when null), outcome chip.

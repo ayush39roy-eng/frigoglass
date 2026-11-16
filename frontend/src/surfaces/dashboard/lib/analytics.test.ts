@@ -19,13 +19,13 @@ describe('analytics layout helpers (P13-T10)', () => {
   it('pivots served cells: canonical hub order, served type order, served totals', () => {
     const pivot = pivotCompleting(
       [
-        { hub: 'PD-India', type: 'CO', pipeline_count: 82, completing_count: 7, completing_pct: 8.54 },
-        { hub: 'R&D-Greece', type: 'NM', pipeline_count: 5, completing_count: 1, completing_pct: 20 },
-        { hub: 'PD-India', type: null, pipeline_count: 2, completing_count: 0, completing_pct: 0 },
+        { hub: 'PD-India', type: 'CO', pipeline_count: 82, counting_count: 82, completing_count: 7, completing_pct: 8.54 },
+        { hub: 'R&D-Greece', type: 'NM', pipeline_count: 5, counting_count: 5, completing_count: 1, completing_pct: 20 },
+        { hub: 'PD-India', type: null, pipeline_count: 2, counting_count: 2, completing_count: 0, completing_pct: 0 },
       ],
       [
-        { key: 'NM', pipeline_count: 5, completing_count: 1, completing_pct: 20 },
-        { key: 'CO', pipeline_count: 89, completing_count: 10, completing_pct: 11.24 },
+        { key: 'NM', pipeline_count: 5, counting_count: 5, completing_count: 1, completing_pct: 20 },
+        { key: 'CO', pipeline_count: 89, counting_count: 89, completing_count: 10, completing_pct: 11.24 },
       ],
     );
     expect(pivot.hubs).toEqual(['R&D-Greece', 'PD-India']);
@@ -41,7 +41,7 @@ describe('analytics layout helpers (P13-T10)', () => {
 
   it('exposes served per-hub totals, adding a hub that only appears there', () => {
     const pivot = pivotCompleting([], [], [
-      { key: 'PD-Romania', pipeline_count: 24, completing_count: 11, completing_pct: 45.83 },
+      { key: 'PD-Romania', pipeline_count: 24, counting_count: 24, completing_count: 11, completing_pct: 45.83 },
     ]);
     expect(pivot.hubs).toEqual(['PD-Romania']);
     expect(pivot.hubTotal('PD-Romania')?.completing_pct).toBe(45.83);

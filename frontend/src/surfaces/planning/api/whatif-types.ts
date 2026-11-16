@@ -20,7 +20,17 @@ export type WhatIfRegion = 'Greece' | 'India' | 'Romania';
 export type WhatIfStatus = 'In Buyoff' | 'Under Industrialization' | 'In Development' | 'In Queue';
 export type WhatIfBasis = 'year' | 'remaining';
 export type WhatIfTarget = 'all_new_within_year' | 'no_existing_slips';
-export type WhatIfOutcome = 'within_year' | 'spillover' | 'left_out' | 'blocked' | 'excluded' | 'data_error';
+/** P42 (API_CONTRACT_P42 §10) adds `not_scheduled_priority` (a P4 / Q, never
+ *  planned) and `queued` (a P3 in queue, not counted this year). */
+export type WhatIfOutcome =
+  | 'within_year'
+  | 'spillover'
+  | 'left_out'
+  | 'blocked'
+  | 'excluded'
+  | 'data_error'
+  | 'not_scheduled_priority'
+  | 'queued';
 
 // --- scenario (request) ---------------------------------------------------------------
 
@@ -184,6 +194,9 @@ export interface ProjectResultOut {
   finish_week: number | null;
   within_year: boolean;
   unconstrained_end_week: number | null;
+  /** P42 (API_CONTRACT_P42 §10): the engine's flags (R42-3 / R42-4). */
+  counts_toward_year: boolean;
+  not_scheduled_priority: boolean;
 }
 
 export interface UtilizationRowOut {

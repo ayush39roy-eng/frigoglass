@@ -2,9 +2,10 @@ import { describe, expect, it } from 'vitest';
 
 import type { CompletingWithinYearRow } from '../api/types';
 import { OUTCOME_STYLE, outcomeOf } from './outcome';
+import { servedRow } from '@/surfaces/dashboard/test-fixtures';
 
 function row(overrides: Partial<CompletingWithinYearRow>): CompletingWithinYearRow {
-  return {
+  return servedRow({
     project_id: 'p1',
     project_name: 'Project',
     hub: 'R&D-Greece',
@@ -20,7 +21,7 @@ function row(overrides: Partial<CompletingWithinYearRow>): CompletingWithinYearR
     status: 'In Development',
     not_started: false,
     ...overrides,
-  };
+  });
 }
 
 describe('outcomeOf', () => {

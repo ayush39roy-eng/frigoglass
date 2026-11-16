@@ -28,9 +28,11 @@ const INPUT_CLASS = cn(
  *   typing an End keeps the Start. Neighbouring steps never change.
  * - The inputs show the draft, else the LIVE pin, else nothing (the served
  *   planned weeks are the placeholder).
+ * - "Pin applies on the next run" / "Lapsed: placed from W{n}" from the
+ *   step's served weeks and its own `pin_lapsed` (`pinRunState`).
  * - Red (`aria-invalid`, error text linked by `aria-describedby`) for End <
  *   Start, a week outside current week..W52, or a refusal from the last Save.
- * - Clear (send nulls) on any step of a project that is not frozen.
+ * - Clear (send nulls) only where the server serves `pin_clearable`.
  *
  * Renders nothing outside the Timeline (no `StepPinEditProvider`).
  */
@@ -50,21 +52,18 @@ export function StepPinCell({ project, step }: { project: GanttProjectRow; step:
 
   const editable = step.pin_editable && !edit.locked;
   const reason = step.pin_editable ? null : step.pin_block_reason ? PIN_BLOCK_REASON_COPY[step.pin_block_reason] : null;
-  // Clear (R40-2): any step of a project that is not frozen, for a caller
-  // with the role (`NOT_ALLOWED` = no role / out of scope); only when there is
-  // something to clear.
-  const canClear =
-    !project.frozen &&
-    step.pin_block_reason !== 'NOT_ALLOWED' &&
-    !edit.locked &&
-    (pair.start !== '' || pair.end !== '');
+  // Clear (R40-2, contract §2 P40-R02): only the served `pin_clearable`
+  // (the save's own Clear rules: role, hub scope, live row, not frozen) says
+  // whether the caller may clear; the browser adds only "there is something
+  // to clear".
+  const canClear = step.pin_clearable && !edit.locked && (pair.start !== '' || pair.end !== '');
 
   const errorId = `${baseId}-error`;
   const reasonId = `${baseId}-reason`;
   const describedBy = [message ? errorId : null, reason ? reasonId : null].filter(Boolean).join(' ') || undefined;
   const willClear = draft !== undefined && pair.start === '' && pair.end === '';
   // R40-13: while the saved pin differs from the run's bar, say so.
-  const runState = draft === undefined ? pinRunState(step, project) : null;
+  const runState = draft === undefined ? pinRunState(step) : null;
 
   const inputProps = (which: 'start' | 'end') => {
     const invalid = which === 'start' ? startInvalid : endInvalid;

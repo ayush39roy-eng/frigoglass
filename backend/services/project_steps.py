@@ -118,6 +118,16 @@ async def sync_project_steps(
         for row in foreign:
             target = by_seq.get(row.sequence_order)
             if target is None:  # pragma: no cover - both workflows have 14 steps
+                # P40-F01 (S40-I1): a deleted row loses its pin too; record
+                # it (`cause = "workflow_change"`) before the row goes, so
+                # I46 (d) holds if this branch ever becomes reachable.
+                clear_pin_on_repoint(
+                    db,
+                    project,
+                    row,
+                    old_step_id=row.step_template_id,
+                    actor_user_id=actor_user_id,
+                )
                 await db.delete(row)
                 continue
             old_step_id = row.step_template_id

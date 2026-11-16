@@ -163,10 +163,13 @@ gantt-coordinates.ts` and the old tool's `Charter.jsx` (lines 284–300, 420–6
   - **Current length:**
     - the length of the active run's row window, or of the live pin if one is set;
     - for a step with no run row: `eff` stretched by the leader's FTE (`ceil(eff / fte)`) for a
-      design step of a non-frozen project, otherwise `eff`.
+      design step of a non-frozen project whose leader has a valid FTE (> 0, finite), otherwise
+      `eff`. *(Amended 2026-11-17, P40-R02: FTE condition stated.)*
     - The server serves it per step as `current_length_weeks`. The browser never derives it.
   - The server also serves `pin_editable` and `pin_block_reason` (one of the codes above) per step,
-    so the browser re-implements no rule.
+    so the browser re-implements no rule. A step with no live row reads `STEP_STARTED`
+    (`PROJECT_FROZEN` on a frozen project). *(Amended 2026-11-17, P40-R02.)* It also serves
+    `pin_clearable` (the save's Clear rules) and a per-step `pin_lapsed` (R40-13).
 - **R40-3 — a pin is a placement, not effort (clarifies M4's "overrides … the effort split").**
   - The pin fixes the step's window. `duration_weeks` on the run row stays `eff(p,s)`, so I29 holds.
   - `effort_weeks`, R2/R3, R6 and I26 are untouched. No pin write is an R6 trigger.
@@ -185,7 +188,8 @@ gantt-coordinates.ts` and the old tool's `Charter.jsx` (lines 284–300, 420–6
 - **R40-4 — pins govern Not Started steps only (progress, ADR 0006, I11).**
   - **Clearing on start.** A write that moves a stage out of Not Started clears that step's pin in the
     same transaction. It writes a `project.step_pin_cleared` audit row with `cause = "stage_started"`.
-    - This covers check-ins, the Workspace stage PATCH, client re-import and the seed.
+    - This covers check-ins, the Workspace stage PATCH, the register's current step
+      (`POST /projects/register-edits`, added by P40-R01), client re-import and the seed.
     - It runs under the project row lock (R33-10 / R35-10).
   - **After the start.** The progress rules govern from then on:
     - the tail is `remaining_span`, derived from `eff`, not from the pin length;
@@ -342,6 +346,11 @@ gantt-coordinates.ts` and the old tool's `Charter.jsx` (lines 284–300, 420–6
     equal Capacity's booked figures. Dashboard and Capacity change only through the run.
   - The inputs show the **live** pin. While it differs from the active run's row window (run queued,
     deferred or failed), the step shows "Pin applies on the next run".
+  - *(Amended 2026-11-17, P40-R02.)* A truly lapsed pin (R40-5) differs from its run window
+    permanently. The server serves a per-step `pin_lapsed` (the run row is pinned and its window
+    differs from the pin recorded in that run's `workflow_snapshot.step_pins`); the step shows
+    "Lapsed: placed from W{n}" only when that flag is true, never from the project flag. The server
+    also serves `pin_clearable`.
   - The browser computes no length, flag, domain or editability.
 - **R40-14 — invariants (M7, amended).**
   - I45–I48 are new. I1, I2, I3/I15, I21 and I22/I27 are amended.

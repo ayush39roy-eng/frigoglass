@@ -41,6 +41,39 @@ export const PROJECT_PRIORITIES = ['P1', 'P2', 'P3', 'P4', 'Q'] as const;
 export type ProjectPriority = (typeof PROJECT_PRIORITIES)[number];
 
 /**
+ * P42 (ADR 0056, R42-1): the band labels. A mirror of the served
+ * `GET /reference/priorities` `label` (backend `domain_constants.PRIORITY_LABELS`,
+ * pinned by `test_openapi_frontend_contract.py`), kept here so no pill or select
+ * waits on a fetch — the same pattern as `PROJECT_TYPE_LABELS`. Q is shown as
+ * "Q" on screen (`priorityBandName`); its label only appears in tooltips.
+ */
+export const PRIORITY_LABELS: Record<ProjectPriority, string> = {
+  P1: 'Must do this year',
+  P2: 'Good to have this year',
+  P3: 'In queue',
+  P4: 'Miscellaneous',
+  Q: 'Unprioritised',
+};
+
+/**
+ * P42 (API_CONTRACT_P42 §0): one exclusive bucket per active-run outcome row,
+ * served by the backend (precedence
+ * NOT_SCHEDULED_PRIORITY > QUEUED > BLOCKED > WITHIN_YEAR > SPILLOVER > LEFT_OUT).
+ * The browser reads it; it never derives it from flags, priority or status.
+ */
+export const SCHEDULE_OUTCOMES = [
+  'WITHIN_YEAR',
+  'SPILLOVER',
+  'LEFT_OUT',
+  'BLOCKED',
+  'QUEUED',
+  'NOT_SCHEDULED_PRIORITY',
+] as const;
+export type ScheduleOutcome = (typeof SCHEDULE_OUTCOMES)[number];
+/** The two P42 buckets that do not count toward the year (R42-4). */
+export type NonCountingOutcome = Extract<ScheduleOutcome, 'QUEUED' | 'NOT_SCHEDULED_PRIORITY'>;
+
+/**
  * Every project status the API can carry (the wire enum, `backend/models/enums.py`).
  * `ProjectStatus` is derived from this list and stays complete: data may still hold
  * "In Buyoff" or "Draft" (the scheduler's status order includes In Buyoff; a new

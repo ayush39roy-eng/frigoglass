@@ -1,5 +1,8 @@
 import * as React from 'react';
+import { CircleSlash, Hourglass } from 'lucide-react';
 
+import { BAND_OUTCOME_META } from '@/components/shared/schedule-outcome-meta';
+import { Badge } from '@/components/ui/badge';
 import { WITHIN_YEAR_WEEK } from '@/lib/domain-constants';
 import { useCurrentWeek, usePlanYearLabels } from '@/lib/plan-clock';
 
@@ -152,6 +155,21 @@ export function GanttLegend({ rows = [] }: { rows?: readonly GanttProjectRow[] }
       <div className="flex items-center gap-1.5">
         <span className="h-2.5 w-5 rounded-sm border-[1.25px] border-dashed border-text" aria-hidden="true" />
         <dt>Frozen project (dashed outline)</dt>
+      </div>
+      {/* P42 (ADR 0056): the two outcomes that do not count toward the year. */}
+      <div className="flex items-center gap-1.5">
+        <Badge tone={BAND_OUTCOME_META.QUEUED.tone} aria-hidden="true">
+          <Hourglass />
+          {BAND_OUTCOME_META.QUEUED.label}
+        </Badge>
+        <dt>P3 in queue — planned with spare capacity, not counted this year</dt>
+      </div>
+      <div className="flex items-center gap-1.5">
+        <Badge tone={BAND_OUTCOME_META.NOT_SCHEDULED_PRIORITY.tone} aria-hidden="true">
+          <CircleSlash />
+          P4
+        </Badge>
+        <dt>Not scheduled (P4) — never planned, no bars</dt>
       </div>
     </dl>
     </div>

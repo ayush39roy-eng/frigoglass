@@ -104,6 +104,9 @@ export function greeceRow(overrides: Partial<HubCapacityRow> = {}): HubCapacityR
   });
 }
 
+/** P42 (API_CONTRACT_P42 §5): the served `priority_bucket_labels`. */
+export const PRIORITY_BUCKET_LABELS: Record<string, string> = { P1: 'P1', P2: 'P2', P3: 'P3', P4: 'P4', Queue: 'Q' };
+
 /** P13-T11: one served class-breakdown row (counts as the server would serve them). */
 export function classRow(overrides: Partial<ClassBreakdownRow> = {}): ClassBreakdownRow {
   return {
@@ -118,6 +121,9 @@ export function classRow(overrides: Partial<ClassBreakdownRow> = {}): ClassBreak
       { hub: 'PD-Romania', deliverable: 16, left_out: 3 },
       { hub: 'PD-India', deliverable: 21, left_out: 120 },
     ],
+    // P42: outside every count above.
+    queued_count: 0,
+    not_scheduled_priority_count: 0,
     ...overrides,
   };
 }
@@ -190,8 +196,10 @@ export function totalsRow(overrides: Partial<CapacityTotals> = {}): CapacityTota
  *  that build a `HubCapacitySummary`. */
 export const SUMMARY_P11: Pick<
   HubCapacitySummary,
-  'near_full_threshold_pct' | 'full_threshold_pct' | 'areas' | 'totals' | 'lab_regions'
+  'near_full_threshold_pct' | 'full_threshold_pct' | 'areas' | 'totals' | 'lab_regions' | 'priority_bucket_labels'
 > = {
+  // P42 (API_CONTRACT_P42 §5): the served labels; `Queue` is shown as "Q".
+  priority_bucket_labels: PRIORITY_BUCKET_LABELS,
   near_full_threshold_pct: 85,
   full_threshold_pct: 100,
   areas: [],

@@ -165,11 +165,10 @@ export default function DashboardPage(): React.JSX.Element {
   // Owner ask 2026-10-22: no description line under the title (it repeated the
   // cards); the header is one compact band (PageHeader `aside`).
 
+  // P42 (I53): with a run, the served counting denominator (P1, P2 and
+  // started P3); queued P3 and P4 projects are outside it.
   const totalProjectsCount = withinYear.data?.has_active_schedule_run
-    ? withinYear.data.within_year_count +
-      withinYear.data.spillover_count +
-      withinYear.data.left_out_count +
-      withinYear.data.blocked_count
+    ? withinYear.data.counting_outcome_count
     : (pipelineTotals.data?.total_count ?? null);
 
   // The chip counts the schedule run's projects only when a run is active; then it
@@ -214,7 +213,7 @@ export default function DashboardPage(): React.JSX.Element {
                       {formatInteger(totalProjectsCount)}
                     </span>
                     <span className="text-xs font-bold uppercase tracking-wider text-text-muted">
-                      {scheduledSubset ? 'scheduled' : totalProjectsCount === 1 ? 'project' : 'projects'}
+                      {scheduledSubset ? 'counted' : totalProjectsCount === 1 ? 'project' : 'projects'}
                     </span>
                   </span>
                   {scheduledSubset ? (

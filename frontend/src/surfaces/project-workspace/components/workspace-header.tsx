@@ -5,6 +5,8 @@ import { ArrowLeft, Pencil, RefreshCw } from 'lucide-react';
 import { ProvisionalLeaderBadge } from '@/components/shared/capacity-roster-markers';
 import { NoLeaderLabel } from '@/components/shared/no-leader-label';
 import { PriorityMoveControl } from '@/components/shared/priority-move/priority-move-control';
+import { BandOutcomeChip } from '@/components/shared/project-outcome-chips';
+import { nonCountingOutcome } from '@/components/shared/schedule-outcome-meta';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { PROJECT_TYPE_LABELS } from '@/types/enums';
@@ -34,6 +36,7 @@ export function WorkspaceHeader({
   onEdit?: ((trigger: HTMLElement) => void) | undefined;
 }): React.JSX.Element {
   const p = data.project;
+  const band = nonCountingOutcome(data.schedule.outcome);
   return (
     <header
       className="sticky top-0 z-20 -mx-gutter mb-stack border-b border-border bg-canvas/95 px-gutter py-s3 backdrop-blur-0"
@@ -53,6 +56,15 @@ export function WorkspaceHeader({
               {p.name}
             </h1>
             <HealthBadge health={data.health} size="lg" />
+            {/* P42 (ADR 0056): health is unchanged (I13); a queued P3 or a P4
+                that is never planned also shows the served outcome text. */}
+            {band ? (
+              <BandOutcomeChip
+                outcome={band}
+                label={data.schedule.outcome_label}
+                className="text-xs font-semibold"
+              />
+            ) : null}
             {data.schedule.schedule_stale ? (
               <Badge
                 tone="warning"

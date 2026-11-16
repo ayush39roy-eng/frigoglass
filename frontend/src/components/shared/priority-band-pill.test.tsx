@@ -11,6 +11,6 @@ describe('PriorityBandPill', () => {
 
   it('never relies on colour alone — icon-only mode still exposes an accessible label', () => {
     render(<PriorityBandPill priority="Q" iconOnly />);
-    expect(screen.getByText(/queue/i)).toBeInTheDocument();
+    expect(screen.getByText('Priority band Q — Unprioritised')).toBeInTheDocument();
   });
 });

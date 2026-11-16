@@ -22,6 +22,7 @@ import {
   usePipelineTotals,
 } from './use-dashboard';
 import { ApiError } from '@/lib/api/client';
+import { servedCompleting } from '@/surfaces/dashboard/test-fixtures';
 
 let lastClient: QueryClient | null = null;
 function wrapper() {
@@ -36,7 +37,7 @@ beforeEach(() => vi.clearAllMocks());
 
 describe('dashboard hooks', () => {
   it('useCompletingWithinYear surfaces the I9 endpoint payload verbatim', async () => {
-    vi.mocked(api.fetchCompletingWithinYear).mockResolvedValue({
+    vi.mocked(api.fetchCompletingWithinYear).mockResolvedValue(servedCompleting({
       has_active_schedule_run: true,
       schedule_run_version: 2,
       within_year_count: 9,
@@ -46,7 +47,7 @@ describe('dashboard hooks', () => {
       priority_delivery: [],
       regions: [],
       rows: [],
-    });
+    }));
     const { result } = renderHook(() => useCompletingWithinYear(), { wrapper: wrapper() });
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
     expect(result.current.data?.within_year_count).toBe(9);

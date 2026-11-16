@@ -42,6 +42,10 @@ export interface DisplayColumn {
   /** P13-T12: served remaining design / lab weeks — never summed from cards. */
   design_weeks: number;
   lab_weeks: number;
+  /** P42 (R42-1 / R42-7): the served band label, P4 / Q flag and queued count. */
+  label: string;
+  not_scheduled: boolean;
+  queued_count: number;
   cards: DisplayCard[];
 }
 
@@ -92,6 +96,9 @@ export function applyOverrides(columns: readonly PriorityBoardColumn[], override
       count: column.count,
       design_weeks: column.design_weeks,
       lab_weeks: column.lab_weeks,
+      label: column.label,
+      not_scheduled: column.not_scheduled,
+      queued_count: column.queued_count,
       cards: [...kept, ...(moved[column.priority] ?? [])],
     };
   });

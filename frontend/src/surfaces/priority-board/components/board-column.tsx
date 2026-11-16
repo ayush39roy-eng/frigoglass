@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 
-import { PRIORITY_BAND_STYLES, PRIORITY_BAND_TITLE } from '@/components/shared/priority-band-meta';
+import { PRIORITY_BAND_STYLES, PRIORITY_BAND_TITLE, priorityBandName } from '@/components/shared/priority-band-meta';
 import { formatDecimal, formatInteger } from '@/lib/format';
 import { cn } from '@/lib/utils';
 import type { ProjectPriority } from '@/types/enums';
@@ -229,8 +229,27 @@ export function BoardColumn(props: BoardColumnProps): React.JSX.Element {
         <div className="flex min-w-0 flex-col gap-0.5">
           <h2 id={headingId} className="flex items-center gap-1.5 text-sm font-bold text-text" title={PRIORITY_BAND_TITLE[column.priority]}>
             <span className={cn('size-2 rounded-full', style.dot)} aria-hidden="true" />
-            {column.priority === 'Q' ? 'Q — queue' : column.priority}
+            {/* P42 (R42-1): the served band label; Q is shown as "Q". */}
+            <span className="min-w-0 truncate">{priorityBandName(column.priority, column.label)}</span>
           </h2>
+          {/* P42 (R42-3 / R42-7): served — P4 / Q are never scheduled; a queued P3 waits for spare capacity. */}
+          {column.not_scheduled ? (
+            <p
+              className="text-2xs font-medium text-text-muted"
+              data-testid="board-column-not-scheduled"
+              title="Projects in this band are not planned and not counted this year. A frozen project keeps its locked dates."
+            >
+              Not scheduled
+            </p>
+          ) : column.queued_count > 0 ? (
+            <p
+              className="text-2xs font-medium text-text-muted"
+              data-testid="board-column-queued"
+              title="Projects still in queue: planned only with spare capacity and not counted this year."
+            >
+              {formatInteger(column.queued_count)} queued
+            </p>
+          ) : null}
           {/* P13-T12: the served REMAINING design / lab work of this column from
               the current week (not the total planned load, so it is not the
               Capacity surface's load figure). Never summed from the cards (I9). */}

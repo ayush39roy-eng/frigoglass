@@ -5,9 +5,10 @@ import { renderWithProviders } from '@/test/render';
 import { seriousAxeViolations } from '@/test/axe';
 import type { CompletingWithinYear } from '../api/types';
 import { DeliveryGaugeCard } from './delivery-gauge-card';
+import { servedCompleting } from '@/surfaces/dashboard/test-fixtures';
 
 function payload(overrides: Partial<CompletingWithinYear> = {}): CompletingWithinYear {
-  return {
+  return servedCompleting({
     has_active_schedule_run: true,
     schedule_run_version: 4,
     within_year_count: 9,
@@ -16,23 +17,23 @@ function payload(overrides: Partial<CompletingWithinYear> = {}): CompletingWithi
     blocked_count: 1,
     priority_delivery: [],
     regions: [
-      { region: 'Greece', within_year_count: 6, spillover_count: 2, left_out_count: 1, blocked_count: 1 },
-      { region: 'India', within_year_count: 3, spillover_count: 2, left_out_count: 1, blocked_count: 0 },
-      { region: 'Romania', within_year_count: 0, spillover_count: 0, left_out_count: 0, blocked_count: 0 },
+      { region: 'Greece', within_year_count: 6, spillover_count: 2, left_out_count: 1, blocked_count: 1 , queued_count: 0, not_scheduled_priority_count: 0},
+      { region: 'India', within_year_count: 3, spillover_count: 2, left_out_count: 1, blocked_count: 0 , queued_count: 0, not_scheduled_priority_count: 0},
+      { region: 'Romania', within_year_count: 0, spillover_count: 0, left_out_count: 0, blocked_count: 0 , queued_count: 0, not_scheduled_priority_count: 0},
     ],
     rows: [],
     ...overrides,
-  };
+  });
 }
 
 describe('DeliveryGaugeCard', () => {
   it('reads all four outcome counts off the endpoint payload, never re-deriving them', () => {
     renderWithProviders(<DeliveryGaugeCard data={payload()} />);
 
-    // 9 within year of 9 + 4 + 2 + 1 = 16 in the run.
+    // 9 within year; 16 counted this year (the served counting_outcome_count, P42).
     expect(screen.getByText('Within year')).toBeInTheDocument();
     expect(screen.getByText('9')).toBeInTheDocument();
-    expect(screen.getByText('In the run')).toBeInTheDocument();
+    expect(screen.getByText('Counted this year')).toBeInTheDocument();
     expect(screen.getByText('16')).toBeInTheDocument();
   });
 
@@ -116,9 +117,9 @@ describe('DeliveryGaugeCard', () => {
             left_out_count: 1,
             blocked_count: 0,
             regions: [
-              { region: 'Greece', within_year_count: 0, spillover_count: 0, left_out_count: 0, blocked_count: 0 },
-              { region: 'India', within_year_count: 3, spillover_count: 2, left_out_count: 1, blocked_count: 0 },
-              { region: 'Romania', within_year_count: 0, spillover_count: 0, left_out_count: 0, blocked_count: 0 },
+              { region: 'Greece', within_year_count: 0, spillover_count: 0, left_out_count: 0, blocked_count: 0 , queued_count: 0, not_scheduled_priority_count: 0},
+              { region: 'India', within_year_count: 3, spillover_count: 2, left_out_count: 1, blocked_count: 0 , queued_count: 0, not_scheduled_priority_count: 0},
+              { region: 'Romania', within_year_count: 0, spillover_count: 0, left_out_count: 0, blocked_count: 0 , queued_count: 0, not_scheduled_priority_count: 0},
             ],
           })}
         />,

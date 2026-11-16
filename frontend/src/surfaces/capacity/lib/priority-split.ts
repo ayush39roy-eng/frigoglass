@@ -7,7 +7,10 @@ import type { PriorityCountSplit, PriorityLoadSplit } from '../api/types';
 export const PRIORITY_BUCKETS = ['P1', 'P2', 'P3', 'P4', 'Queue'] as const;
 export type PriorityBucket = (typeof PRIORITY_BUCKETS)[number];
 
-/** Short labels, e.g. for "P1-D" matrix headers and "Q: 5" captions. */
+/** Short labels, e.g. for "P1-D" matrix headers and "Q: 5" captions. The
+ *  same values as the served `priority_bucket_labels` (P42, R42-1: the
+ *  `Queue` key is shown as "Q", never "Queue", so it cannot be confused with
+ *  P3 "In queue"); `bucketLabel` prefers the served map. */
 export const BUCKET_SHORT: Record<PriorityBucket, string> = {
   P1: 'P1',
   P2: 'P2',
@@ -15,6 +18,11 @@ export const BUCKET_SHORT: Record<PriorityBucket, string> = {
   P4: 'P4',
   Queue: 'Q',
 };
+
+/** P42: the display label of a split key — the served map first, else `BUCKET_SHORT`. */
+export function bucketLabel(bucket: PriorityBucket, served?: Partial<Record<string, string>> | null): string {
+  return served?.[bucket] ?? BUCKET_SHORT[bucket];
+}
 
 /** Band tokens (same as the priority pill) — colour always paired with a text label. */
 export const BUCKET_BG: Record<PriorityBucket, string> = {
