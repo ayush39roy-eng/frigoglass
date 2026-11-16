@@ -2592,7 +2592,7 @@ Contract: `docs/API_CONTRACT_P41.md`. No scheduler change.
 | P41-T01 | ADR 0055, contract, DOMAIN_RULES amendment, OQ #104–#106 | orchestrator | — | docs written | DONE (MEMORY 2026-11-17 P41-T01) |
 | P41-T02 | Backend: migration `p41a`, format GET/PUT/reset/template, parser aliases arg, `exclude_plan_project_ids` + `plan_excluded` + `plan_projects`, saved scenarios CRUD with scope, exports (scenario, current, compare), audit, limits; tests | backend-builder | T01 | pytest green, ruff/mypy clean, template round-trips through the parser, scope probe tests, formula-injection test, no-financial-keys test; MEMORY entry | DONE (MEMORY 2026-11-17 P41-T02) |
 | P41-T03 | Frontend: Excel format card + Admin edit dialog, Executive Scenario bar + project picker sheet, Save / Export, saved library, cross-import Compare + export; tests | frontend-builder | T01 (contract) | tsc, eslint, vitest green; role-gated edit; MEMORY entry | DONE (MEMORY 2026-11-17 P41-T03) |
-| P41-T04 | Gate: qa, workflow (reconciliation only), security | three gatekeepers | T02, T03 | three PASSes | TODO |
+| P41-T04 | Gate: qa, workflow (reconciliation only), security | three gatekeepers | T02, T03 | three PASSes | DONE (MEMORY 2026-11-17 P41-T04 gate closed) |
 
 ## P42 — Priority bands mean something for scheduling (ADR 0056)
 

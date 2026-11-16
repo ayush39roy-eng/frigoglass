@@ -40958,3 +40958,142 @@ No backend file was touched, and no commit was made.
 - Bundle budget: initial load 195.3 KB gzip of 400 KB (PASS), built to the scratchpad so the repo `dist/` is untouched.
 - `tsc -b` and eslint clean. `test_openapi_frontend_contract.py`: 260 pass; the 1 failure is P38's `Deactivation*`
   interfaces (not P37).
+
+## [2026-11-17] P41-T04 — qa-inspector gate (ADR 0055, API_CONTRACT_P41, incl. P41-R01 + addendum A1/A3/A4): PASS
+
+**Judged on clean trees, not the shared working tree** (parallel P37/P38/P40/P42 edits made the shared tree unstable during the gate):
+- **Tree A:** `git archive 4669e54` + only the uncommitted P41 files (R01: `api/routers/whatif.py`, `models/import_scenario.py`,
+  `schemas/import_scenarios.py`, `services/whatif_import.py`, `services/whatif_import_scenarios.py`, migration `p41b`, the two
+  P41 test files, `frontend/src/surfaces/planning/whatif/import/*`). Excluded the non-P41 hunks: `models/__init__.py` (P38),
+  `error-messages.ts` and the `SimulatedWeekNotice` hunks in `results-step.tsx` / `simulate-view.tsx` / `solve-view.tsx` (P37).
+- **Tree B:** `git archive ed96e6f`. Someone committed P37–P42 mid-gate, after which the P41 service files also carry P42
+  hunks, so Tree A could no longer be refreshed. Tree B carries R01 plus addendum A1 (exclusion ids the plan/file already drop
+  give count 0, not 422), A3 (the audit `plan_excluded` is the served count) and A4 (compare.xlsx "Projects scheduled" and
+  "Not placed" rows).
+
+**Backend.** The suites are test_p41_* (incl. the new qa file), test_p32_plan_import_xlsx, test_p32_whatif_import_api,
+test_p32_r05_import_breakdowns, test_p18_whatif_api, test_export_api and test_export_worker_task.
+- Tree A: **238 passed, 0 failed**.
+- Tree B: **235 passed, 3 failed**. All 3 are `test_p32_r05_import_breakdowns` (`test_breakdowns_on_hand_built_projects`,
+  `test_simulate_serves_reconciling_breakdowns`, `test_hub_planner_breakdowns_cover_only_returned_projects`). They fail on
+  `assert 6 == 3` / `7 == 3` breakdown invariant counts after P42 added the `queued` / `not_scheduled_priority` columns.
+  This is **P42**; P41 did not touch that file or the breakdown code.
+- ruff: clean on the P41 files.
+- mypy: 0 errors in `whatif_import_scenarios.py`, `import_format.py`, `whatif_import.py` and `routers/whatif.py`. The
+  following-imports errors elsewhere predate P41: `export_builder.py:256` `WriteOnlyCell` comes from P13 (760949b1),
+  `scheduling/cp_sat.py` has 38, and `models/types.py` has 9.
+
+**Coverage** (Tree B; P41 tests + p32 xlsx/api):
+| Module | Coverage |
+|---|---|
+| `services/import_format.py` | 100% |
+| `models/import_scenario.py` | 100% |
+| `schemas/import_scenarios.py` | 100% |
+| `services/whatif_import_scenarios.py` | 98% (5 lines missed) |
+| `services/plan_import_xlsx.py` | 98% |
+| `services/whatif_import.py` | 95% (the miss is mostly P40 `pin_dropped_issues`) |
+| `api/routers/whatif.py` | 85% (the misses are P18 solve/chat routes) |
+
+All are at or above 70%. `scheduling/` is untouched by P41, so the 85% bar was not re-measured.
+
+**Migration.**
+- `test_p41_migration` passes (p33c → p41a → down → head).
+- A full-chain check on a throwaway PG17 (Tree A): head → p33c → head → p40a (undo p41b) → head, all exit 0.
+- Not tested: the p41b `hub_codes` backfill over pre-existing rows. Only empty tables were migrated.
+
+**Frontend** (`surfaces/planning/whatif`):
+- Tree B: tsc -b clean, eslint clean (whatif + `lib/api/client.ts`), vitest **194/194** in 21 files.
+- Tree A: tsc and eslint clean after frontend-builder's line-105 fix in `saved-scenarios-library.tsx`. vitest 179/183 under
+  `--maxWorkers=2`; the 4 failures (drill-sheet ×2, import-plan-view, review-p32-r06) were 10 s timeouts under concurrent
+  pytest load and pass 19/19 alone.
+- Axe: it runs inside `p41-import-scenarios.test.tsx` (format card, picker sheet) and `import-plan-view` (each step). No
+  violations.
+
+**Contract test** (`test_openapi_frontend_contract.py`, Tree A): 257 passed, 2 failed. Both failures are the known **P38**
+drift: `EngineerRead` deactivation fields, and `Deactivation*` interfaces in `planning/api/types.ts`. The P41 import types
+are not in that test's map. The frontend zod schema (`savedScenarioListSchema` `{items,total,limit,offset}`, page 50 / max
+200) matches `SavedScenarioListOut` and `DEFAULT_LIST_LIMIT` / `MAX_LIST_LIMIT` by inspection.
+
+**New tests:** `backend/tests/test_p41_qa_gate.py`, 12 tests, all passing. One test per acceptance point in the brief:
+- **Template round-trip:** every field filled, for the built-in format and a fully edited one. The header row equals
+  `aliases[0].title()` in FIELD_KEYS order. Checked through both the pure parser and `/parse`.
+- **Edited alias used by `/parse`:** a second alias, with other case and extra spaces, is read. The built-in header is then
+  refused, and reset restores it.
+- **409 version conflict:** a stale version (0, 2 or 99) on PUT and on reset gets 409, the stored format is unchanged, and
+  exactly 1 audit row is written.
+- **403 for non-admins:** Portfolio Manager and Hub Planner get 403 on PUT (including a no-op body) and on reset. The format
+  is unchanged, `can_edit` is false, and no audit row is written.
+- **Excluded projects absent from both runs:** excluding Gamma gives exactly the run where Gamma is Cancelled. Every other
+  project has the same before/after outcome, finish and steps, and the before/after KPIs are equal. `plan_excluded` counts
+  only ids actually taken out (replaced ids count 0; an id becomes counted when its file row is unticked).
+- **Saved scenario == fresh simulate:** checked with an active run (`plan_version` = run.version), plan year 52,
+  `expand_multi=false`, an edit plus an exclusion, and also file_only. "Re-run" of the stored request equals the stored result.
+- **Compare-id rules:** 1, 5, duplicate (including the uppercase form of the same uuid), non-uuid, `,a,` and no `ids` all get
+  422. A missing id gets 404, and a mix of one visible and one invisible id gets 404 for a Hub Planner. 2 and 4 ids work,
+  columns follow the caller's order, and there are 1 + 4 + 3 delta columns.
+- **Export workbooks:** all four (scenario, current, compare, template) open in both openpyxl modes and have the stated
+  sheets. The saved and unsaved exports of the same request have identical Breakdown / Projects / Steps / Capacity sheets.
+- **D1 probe:** an Admin's snapshot gets 404 for a Greece planner on list (`total` 0), read, export and compare.
+  Positive side: a same-scope snapshot carries no out-of-scope designers, hubs or names in the JSON or the xlsx.
+
+**Defects found:**
+- **D1 (High, GDPR / OQ #8). Remediated by P41-R01 and verified.** Before R01, `hub_codes` came only from `result.projects`,
+  while the stored `result.capacity` was the creator's scope and was served verbatim. A Greece Hub Planner opening an Admin's
+  Greece-only file_only snapshot received the PD-India and R&D-India `capacity.designers` and `capacity.hubs` rows: engineer
+  names and utilisation. R01's `snapshot_hub_codes` closes it. The strict-xfail test has been rewritten as the 404 probe
+  plus the positive test above.
+- **Observation, now fixed by A3:** the simulate audit `plan_excluded` counted the ids sent rather than the ids taken out.
+- **Observation, not a defect:** `compare.xlsx?ids=a,,b` is accepted (200), because `_compare_ids` drops empty segments.
+  This is lenient by design; the test documents it.
+
+**Interference, classified as not P41:**
+- Shared tree, around 01:28: the in-progress **P42** engine `queued` outcome raised `KeyError: 'queued'` at
+  `services/whatif_import.py:846` (`scope_import_result`). That broke 34 import tests, and 49 across the gate suites
+  including p18. With a scratch-only pytest plugin mapping the P42 classes back onto the pre-P42 chain, the gate suites gave
+  227 passed. The 1 failure was `test_admin_kpis_equal_the_engine`, where the engine KPIs gained `queued` /
+  `not_scheduled_priority` (P42). P42 has since fixed this in ed96e6f.
+- **P38:** the `EngineerRead` contract test, as above.
+- The listed Gantt `manual_start_week` and app.test Zoom failures are outside the whatif scope run here and were not
+  observed.
+
+**Dev-stack smoke: not completed.**
+- :8011 is a uvicorn started at 00:00 without `--reload`, before P41. Its OpenAPI serves only `/whatif/import/parse` and
+  `/simulate`.
+- The dev DB `rpd` (:5433) is at `p41a`; head is `p38a` via p40a → p41b.
+- A private read-only instance on :8099 against that DB gave:
+  - `GET /whatif/import/format`: 200 (v0, default, 16 fields);
+  - `GET /format/template.xlsx`: 200 xlsx;
+  - `/parse` and `GET /scenarios`: 500, `UndefinedColumn engineers.active` (P38) and `whatif_import_scenarios.kpis` (p41b).
+- No writes were made to the dev DB, and the shared servers were not restarted. To do before the owner's acceptance:
+  `alembic upgrade head` on `rpd`, then restart :8011.
+
+Verdict: **qa PASS for P41.**
+
+## [2026-11-17] P41-T04 — gate closed: qa PASS, workflow PASS, security PASS (after P41-R01) — orchestrator
+
+**Gate results:**
+- **security-auditor:** FAIL on H-1. Saved-scenario `hub_codes` missed hubs whose data was in the
+  snapshot, and an empty `[]` was visible to everyone. P41-R01 fixed it with a hub union plus the
+  saver's scope, non-empty visibility, the `kpis` column, a paged list, rate-limited reads, and
+  thread-pool workbooks. The re-review was a PASS.
+- **workflow-auditor:** PASS. Advisories A1, A3 and A4 were fixed in the P41-R01 addendum. A2 is
+  still open: plan_version does not fully identify the import baseline when inputs change without a
+  new run; a later task could store a baseline digest.
+- **qa-inspector:** PASS. `test_p41_qa_gate.py` has 12 tests.
+- **Frontend follow-up:** P41-R02 moved the frontend to the paged list.
+
+**ADR 0055** gained the gate amendments, which record L-2 and L-3 as accepted. OQ #105 was updated.
+
+**Migration chain** (re-chained by the orchestrator so that main never depends on uncommitted
+work): p41a → p40a → p41b → p38a.
+
+**Code location.** All P41 code reached main through the owner-requested snapshot commits 4669e54
+and ed96e6f.
+
+**Before owner acceptance on dev:** run `alembic upgrade head` on `rpd` (it is at p41a) and restart
+the :8011 backend.
+
+**Not P41:**
+- P42's `queued` outcome changed the import breakdown counts. 3 tests in
+  `test_p32_r05_import_breakdowns` fail at ed96e6f; P42 owns the fix.
+- P38's OpenAPI contract test fails on `EngineerRead`.
