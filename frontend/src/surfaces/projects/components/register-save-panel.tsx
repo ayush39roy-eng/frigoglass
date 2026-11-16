@@ -11,7 +11,49 @@ import type { ScheduleRunChanges } from '@/lib/api/priority-move';
 import type { RunFollowState } from '@/lib/use-schedule-run-follow';
 import { cn } from '@/lib/utils';
 
+import type { RegisterEditEffChange } from '../api/register-edits';
 import type { RegisterSaveFlow } from '../hooks/use-register-save';
+
+/** At most this many step lines; the rest is counted. */
+const EFF_LINES_MAX = 12;
+
+/**
+ * Register popup contract §2.5 (R35-7): the steps whose effective duration
+ * the Save changed, as served ("PDD-D: 0 → 1 wk, runs again"). Nothing is
+ * split or summed here (I9).
+ */
+function EffChangesList({
+  changes,
+  projectName,
+}: {
+  changes: readonly RegisterEditEffChange[];
+  projectName?: ((projectId: string) => string | undefined) | undefined;
+}): React.JSX.Element | null {
+  if (changes.length === 0) return null;
+  const many = new Set(changes.map((c) => c.project_id)).size > 1;
+  const shown = changes.slice(0, EFF_LINES_MAX);
+  return (
+    <div className="space-y-1" data-testid="register-save-eff-changes">
+      <p className="text-2xs font-semibold uppercase tracking-wide text-text-muted">Step durations changed</p>
+      <ul className="space-y-0.5 text-xs text-text">
+        {shown.map((c) => {
+          const name = many ? projectName?.(c.project_id) : undefined;
+          const note = c.skipped_now ? ', skipped now' : c.revived ? ', runs again' : '';
+          return (
+            <li key={`${c.project_id}:${c.step_code}`} className="tabular-nums" data-numeric="">
+              {name ? `${name} · ` : ''}
+              <span className="font-semibold">{c.step_code}</span>
+              {`: ${String(c.eff_before)} → ${String(c.eff_after)} wk${note}`}
+            </li>
+          );
+        })}
+      </ul>
+      {changes.length > shown.length ? (
+        <p className="text-2xs text-text-muted">{`and ${String(changes.length - shown.length)} more`}</p>
+      ) : null}
+    </div>
+  );
+}
 
 const TONE_ICON = {
   success: { Icon: CircleCheck, className: 'text-success' },
@@ -57,12 +99,18 @@ export function RegisterSavePanel({
   changes,
   watchingFollowUp,
   onClose,
+  effChanges = [],
+  projectName,
 }: {
   flow: RegisterSaveFlow;
   runState: RunFollowState;
   changes: UseQueryResult<ScheduleRunChanges>;
   watchingFollowUp: boolean;
   onClose: () => void;
+  /** The served step-duration changes of the Save (contract §2.5). */
+  effChanges?: readonly RegisterEditEffChange[];
+  /** Names the project of a change when a Save touched several. */
+  projectName?: (projectId: string) => string | undefined;
 }): React.JSX.Element | null {
   const headingId = React.useId();
   if (flow.kind === 'idle' || flow.kind === 'saving') return null;
@@ -129,6 +177,7 @@ export function RegisterSavePanel({
           ) : null}
         </div>
       )}
+      <EffChangesList changes={effChanges} projectName={projectName} />
     </section>
   );
 }

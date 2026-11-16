@@ -395,6 +395,8 @@ async def build_schedule_input_from_db(
             table_weeks=table_weeks.get(key, 0),
             own_effort=template_kind.get(s.step_template_id) in own_kinds.get(s.project_id, ()),
             effort_weeks=s.effort_weeks,
+            # R35-9 (P35): an excluded step is `lead_weeks = 0`, no override.
+            excluded=s.excluded,
         )
         has_predecessors = template_has_predecessors.get(s.step_template_id, False)
         overlap = wait = 0

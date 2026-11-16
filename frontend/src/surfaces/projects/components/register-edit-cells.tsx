@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { RotateCcw, TriangleAlert } from 'lucide-react';
+import { ChevronDown, RotateCcw, TriangleAlert } from 'lucide-react';
 
 import { formatPlanWeek } from '@/lib/format';
 import { usePlanYear } from '@/lib/plan-clock';
@@ -23,10 +23,35 @@ import { statusMismatchText } from '../lib/status-mismatch';
  * (ADR 0041); the server splits it over the steps.
  */
 
+/**
+ * An editable control (owner 2026-11-17: "editable fields must clearly look
+ * editable"): a visible border, the surface background and a slight inset
+ * shadow, a primary border on hover and focus. Existing tokens only.
+ */
 export const EDIT_INPUT =
-  'h-7 min-w-0 rounded border border-border-strong bg-surface px-1.5 text-xs text-text ' +
-  'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ' +
-  'aria-[invalid=true]:border-danger aria-[invalid=true]:ring-1 aria-[invalid=true]:ring-danger disabled:opacity-60';
+  'h-7 min-w-0 rounded border border-border-strong bg-surface px-1.5 text-xs text-text shadow-sm transition-colors ' +
+  'hover:border-primary/60 hover:bg-primary-subtle/30 ' +
+  'focus-visible:border-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ' +
+  'aria-[invalid=true]:border-danger aria-[invalid=true]:ring-1 aria-[invalid=true]:ring-danger ' +
+  'disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:border-border-strong disabled:hover:bg-surface';
+
+/** A native `<select>` with its own chevron (the browser arrow is hidden so
+ *  every select reads the same in Edit mode and in the popup). */
+export function NativeSelect({
+  className,
+  wrapperClassName,
+  ...props
+}: React.SelectHTMLAttributes<HTMLSelectElement> & { wrapperClassName?: string }): React.JSX.Element {
+  return (
+    <span className={cn('relative flex min-w-0', wrapperClassName)}>
+      <select {...props} className={cn(EDIT_INPUT, 'w-full cursor-pointer appearance-none pr-6', className)} />
+      <ChevronDown
+        className="pointer-events-none absolute right-1.5 top-1/2 size-3.5 -translate-y-1/2 text-text-muted"
+        aria-hidden="true"
+      />
+    </span>
+  );
+}
 
 /** Marks a cell whose value differs from the served one. */
 export const CHANGED = 'bg-warning-subtle/60 ring-1 ring-inset ring-warning/50 rounded';
@@ -41,12 +66,14 @@ function weeksText(n: number): string {
   return `${String(n)} wk`;
 }
 
-function calculatedTooltip(calculated: number): string {
-  return `Calculated: ${weeksText(calculated)}`;
+/** `calculated` is null only where the served calculated weeks are not at
+ *  hand (the popup opened from the project folder on an API without them). */
+function calculatedTooltip(calculated: number | null): string {
+  return calculated === null ? 'Calculated by the server' : `Calculated: ${weeksText(calculated)}`;
 }
 
-function manualTooltip(calculated: number): string {
-  return `Manual (calculated: ${weeksText(calculated)})`;
+function manualTooltip(calculated: number | null): string {
+  return calculated === null ? 'Manual' : `Manual (calculated: ${weeksText(calculated)})`;
 }
 
 /** Read mode: the served figure (orange) or the served calculated weeks (green). */
@@ -79,16 +106,25 @@ export function EffortInput({
   label,
   invalid = false,
   onChange,
+  id,
+  inputClassName,
+  describedBy,
 }: {
   /** The draft figure (null = none: the calculated weeks apply). */
   figure: number | null;
-  calculated: number;
+  calculated: number | null;
   changed: boolean;
   /** "Design time of Cooler A". */
   label: string;
   /** A server error names this cell. */
   invalid?: boolean;
   onChange: (next: number | null) => void;
+  /** The popup's id for its `<label htmlFor>`. */
+  id?: string;
+  /** Wider input (the popup). */
+  inputClassName?: string;
+  /** `aria-describedby` (the popup's inline error). */
+  describedBy?: string | undefined;
 }): React.JSX.Element {
   // Local text so a half-typed "4." is kept; re-synced when the draft changes
   // from outside (reset, bulk bar, Cancel).
@@ -105,6 +141,7 @@ export function EffortInput({
   return (
     <span className={cn('flex min-w-0 items-center gap-1 p-0.5', changed && CHANGED)}>
       <input
+        id={id}
         type="text"
         inputMode="decimal"
         autoComplete="off"
@@ -113,9 +150,11 @@ export function EffortInput({
           'w-14 text-right font-semibold tabular-nums',
           manual ? MANUAL_TEXT : CALCULATED_TEXT,
           'placeholder:font-semibold placeholder:text-success-subtle-fg',
+          inputClassName,
         )}
         value={text}
-        placeholder={String(calculated)}
+        placeholder={calculated === null ? 'auto' : String(calculated)}
+        aria-describedby={describedBy}
         title={tip}
         aria-label={`${label}, weeks. ${tip}. Empty uses the calculated weeks.`}
         aria-invalid={bad || invalid ? true : undefined}
@@ -133,8 +172,8 @@ export function EffortInput({
         <button
           type="button"
           className="inline-flex shrink-0 items-center gap-0.5 rounded px-1 text-2xs font-semibold text-warning-subtle-fg hover:bg-warning-subtle focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-          aria-label={`Reset ${label} to the calculated ${weeksText(calculated)}`}
-          title={`Reset to calculated (${weeksText(calculated)})`}
+          aria-label={calculated === null ? `Reset ${label} to the calculated weeks` : `Reset ${label} to the calculated ${weeksText(calculated)}`}
+          title={calculated === null ? 'Reset to calculated' : `Reset to calculated (${weeksText(calculated)})`}
           data-testid="effort-reset"
           onClick={() => {
             setText('');
@@ -183,8 +222,8 @@ export function StatusSelect({
           {mismatch}
         </span>
       ) : null}
-      <select
-        className={cn(EDIT_INPUT, 'w-full')}
+      <NativeSelect
+        wrapperClassName="w-full"
         value={value}
         aria-label={`Status of ${label}`}
         aria-describedby={mismatch !== null ? descId : undefined}
@@ -198,7 +237,7 @@ export function StatusSelect({
             {s}
           </option>
         ))}
-      </select>
+      </NativeSelect>
     </span>
   );
 }
@@ -252,8 +291,8 @@ export function LeaderSelect({
   const servedMissing = servedId !== null && !list.some((e) => e.id === servedId);
   return (
     <span className={cn('flex min-w-0 p-0.5', changed && CHANGED)}>
-      <select
-        className={cn(EDIT_INPUT, 'w-full')}
+      <NativeSelect
+        wrapperClassName="w-full"
         value={value ?? UNASSIGNED}
         aria-label={`Design resource (leader) of ${label}`}
         aria-invalid={invalid ? true : undefined}
@@ -269,7 +308,7 @@ export function LeaderSelect({
             {e.name}
           </option>
         ))}
-      </select>
+      </NativeSelect>
     </span>
   );
 }
@@ -311,6 +350,7 @@ export function WeekDateInput({
   warning,
   invalid = false,
   onChange,
+  id,
 }: {
   week: number | null;
   changed: boolean;
@@ -320,6 +360,8 @@ export function WeekDateInput({
   warning: string | null;
   invalid?: boolean;
   onChange: (next: number | null) => void;
+  /** The popup's id for its `<label htmlFor>`. */
+  id?: string;
 }): React.JSX.Element {
   const [error, setError] = React.useState<string | null>(null);
   const warnId = React.useId();
@@ -331,8 +373,9 @@ export function WeekDateInput({
     <span className={cn('flex min-w-0 flex-col gap-0.5 p-0.5', changed && CHANGED)}>
       <span className="flex items-center gap-1">
         <input
+          id={id}
           type="date"
-          className={cn(EDIT_INPUT, 'w-[8.5rem]')}
+          className={cn(EDIT_INPUT, 'w-[8.5rem] cursor-pointer')}
           value={planWeekToDateInput(week, planYear)}
           min={bounds.min}
           max={bounds.max}

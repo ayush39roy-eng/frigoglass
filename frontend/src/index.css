@@ -174,3 +174,20 @@
     to { opacity: 1; }
   }
 }
+
+@layer components {
+  /* Register popup (owner 2026-11-17: "editable fields must clearly look
+   * editable"). Scoped to `.editable-fields`: every text / number / date input,
+   * textarea, native select and Radix select trigger inside reads as a control —
+   * border, surface background, inset shadow, primary border on hover and focus.
+   * Existing tokens only. An invalid control keeps its danger border. */
+  .editable-fields :is(input:not([type='checkbox']):not([type='radio']):not([type='hidden']), textarea, select, button[role='combobox']):not([aria-invalid='true']) {
+    @apply border-border-strong bg-surface shadow-sm transition-colors;
+  }
+  .editable-fields :is(input:not([type='checkbox']):not([type='radio']):not([type='hidden']), textarea, select, button[role='combobox']):hover:not(:disabled):not([aria-invalid='true']) {
+    @apply border-primary/60 bg-primary-subtle/30;
+  }
+  .editable-fields :is(input:not([type='checkbox']):not([type='radio']):not([type='hidden']), textarea, select, button[role='combobox']):focus-visible:not([aria-invalid='true']) {
+    @apply border-primary;
+  }
+}

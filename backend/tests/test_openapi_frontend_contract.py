@@ -620,6 +620,13 @@ CONTRACT_TABLE: list[tuple[Path, str, str, str]] = [
     (_REGISTER_EDITS_TS, "RegisterEditPatch", "RegisterEditPatch", "exact"),
     (_REGISTER_EDITS_TS, "RegisterEditsRequest", "RegisterEditsRequest", "exact"),
     (_REGISTER_EDITS_TS, "RegisterEditsResponse", "RegisterEditsResponse", "exact"),
+    # Register Edit popup (P35-T05, docs/API_CONTRACT_REGISTER_POPUP.md):
+    # `step_exclusions[]`, the Save's per-step `eff` changes (R35-7) and the
+    # popup read `GET /projects/{id}/register-steps`.
+    (_REGISTER_EDITS_TS, "StepExclusionEdit", "StepExclusionEdit", "exact"),
+    (_REGISTER_EDITS_TS, "RegisterEditEffChange", "RegisterEditEffChange", "exact"),
+    (_REGISTER_EDITS_TS, "RegisterStepsResponse", "RegisterStepsRead", "exact"),
+    (_REGISTER_EDITS_TS, "RegisterStep", "RegisterStepRead", "exact"),
     # --- P12-T03: priority board (backend/schemas/priority_board.py) ---
     # P25-T03 (ADR 0036, docs/API_CONTRACT_P25.md §5): the card gains
     # `external_code`, `suggested_band`, `score_band`, `capacity_fill`,

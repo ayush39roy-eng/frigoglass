@@ -18,7 +18,7 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Annotated, Literal
 
-from pydantic import AfterValidator, BaseModel, ConfigDict, Field
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field, StringConstraints
 
 from models.enums import (
     HubName,
@@ -26,6 +26,7 @@ from models.enums import (
     ProjectStatus,
     ProjectType,
     ScoringTag,
+    WorkflowStepKind,
 )
 from models.project import canonical_tags
 from schemas.category import CategoryCode, CategoryCodeOut
@@ -463,14 +464,44 @@ class PriorityMoveResponse(BaseModel):
 REGISTER_EDITS_MAX = 100
 
 
+#: A workflow step id as served by the register (`current_step_code`, e.g.
+#: "PDD-E", "OEM-B"). An unknown id for the project's workflow is a per-row
+#: 422 `UNKNOWN_STEP`.
+StepCode = Annotated[str, StringConstraints(min_length=1, max_length=10)]
+
+
+class StepExclusionEdit(BaseModel):
+    """P35-T05 (ADR 0049, R35-2): switch one step off (`true`) or back on
+    (`false`) for the project. Sending a step's current value is a no-op."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    step_code: StepCode
+    step_excluded: bool = Field(strict=True)
+
+
+def _unique_step_codes(edits: list[StepExclusionEdit] | None) -> list[StepExclusionEdit] | None:
+    if edits is not None and len({e.step_code for e in edits}) != len(edits):
+        raise ValueError("each step_code may appear once")
+    return edits
+
+
 class RegisterEditPatch(BaseModel):
-    """One project's changes from the register's Edit mode. A subset of
-    `ProjectUpdateRequest` (same types and bounds, same PATCH semantics:
-    only the keys sent are applied, `null` clears where the PATCH allows it)
-    plus `actual_end_week`. No priority (a priority move has its own
-    preview / confirm flow), no hub / category, no financial field.
+    """One project's changes from the register's Edit mode / Edit popup. A
+    subset of `ProjectUpdateRequest` (same types and bounds, same PATCH
+    semantics: only the keys sent are applied, `null` clears where the PATCH
+    allows it) plus `actual_end_week`. No priority (a priority move has its
+    own preview / confirm flow), no category, no financial field.
     `requesting_department` is read-only (workbook charter field, ADR 0035)
-    and so is not accepted either."""
+    and so is not accepted either.
+
+    Register popup (2026-11-17, docs/API_CONTRACT_REGISTER_POPUP.md):
+    `hub_id` and `certification_testing_required` follow the PATCH's rules
+    (a hub move needs write scope on the old and the new hub, else the batch
+    is a 403 `FORBIDDEN_PROJECT`; `null` is 422 `NULL_NOT_ALLOWED`);
+    `step_exclusions` (P35-T05) and `current_step_code` are applied after the
+    project fields, exclusions first. `null` on either of those two means
+    "no change"."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -481,6 +512,14 @@ class RegisterEditPatch(BaseModel):
     actual_end_week: int | None = Field(default=None, ge=1)
     design_effort_weeks: EffortWeeks | None = None
     lab_effort_weeks: EffortWeeks | None = None
+    hub_id: uuid.UUID | None = None
+    certification_testing_required: bool | None = Field(default=None, strict=True)
+    step_exclusions: Annotated[
+        list[StepExclusionEdit] | None,
+        Field(max_length=14),
+        AfterValidator(_unique_step_codes),
+    ] = None
+    current_step_code: StepCode | None = None
 
 
 class RegisterEditsRequest(BaseModel):
@@ -504,6 +543,19 @@ class RegisterEditError(BaseModel):
     message: str
 
 
+class RegisterEditEffChange(BaseModel):
+    """One step whose `eff` changed with a register Save (R35-7)."""
+
+    project_id: uuid.UUID
+    step_code: str
+    eff_before: int
+    eff_after: int
+    #: `eff_before == 0 and eff_after > 0`.
+    revived: bool
+    #: `eff_before > 0 and eff_after == 0`.
+    skipped_now: bool
+
+
 class RegisterEditsResponse(BaseModel):
     """Always 200 on success. The recalc fields mirror
     `PriorityMoveResponse` (ADR 0015 lifecycle, one greedy run for the whole
@@ -518,3 +570,56 @@ class RegisterEditsResponse(BaseModel):
     schedule_run_id: uuid.UUID | None
     baseline_run_id: uuid.UUID | None
     task_id: str | None
+    #: P35-T05 (R35-7): per project, every step whose effective duration
+    #: (`eff`, DOMAIN_RULES R35-1) changed with this Save, so the popup can say
+    #: "D now runs 1 wk" without re-splitting in the browser. Ordered by
+    #: project id, then workflow order. Empty when nothing changed.
+    eff_changes: list[RegisterEditEffChange] = Field(default_factory=list)
+
+
+# --- Register popup read (`GET /projects/{id}/register-steps`) -----------------------
+
+#: The stored stage status (`WorkflowStepStatus` wire values; `Blocked` is
+#: shown as "On Hold", ADR 0017), or `Skipped` when the step's effective
+#: duration is 0 (excluded, 0-length copy, lab without certification
+#: testing, or an own-effort step the split gave 0): it then counts as
+#: complete for the scheduler and cannot be the current step.
+RegisterStepStatus = Literal["Not Started", "In Progress", "Blocked", "Done", "Skipped"]
+
+
+class RegisterStepRead(BaseModel):
+    """One of the project's 14 steps, in workflow order."""
+
+    #: The workflow step id ("PDD-E"), the value `current_step_code` and
+    #: `step_exclusions[].step_code` take.
+    step_code: str
+    step_name: str
+    kind: WorkflowStepKind
+    status: RegisterStepStatus
+    step_excluded: bool
+    #: R35-2 `applicable(p, s)` from the template copy, ignoring the step's own
+    #: exclusion (a step the split gave 0 weeks is applicable).
+    applicable: bool
+    #: May be switched off now: applicable, not Done, and the project is not
+    #: frozen, Cancelled or Commercialized. Re-including an excluded step
+    #: needs only the project condition.
+    excludable: bool
+    is_current: bool
+
+
+class RegisterStepsRead(BaseModel):
+    """`GET /projects/{id}/register-steps`: the register popup's step chips."""
+
+    project_id: uuid.UUID
+    #: The register's current step (the same value `GET /dashboard/projects`
+    #: serves as `current_step_code`); null when every step is Done or skipped.
+    current_step_code: str | None
+    #: The forecast finish week (the active run's projected end, the same
+    #: value the register serves as `end_week`). Read-only.
+    end_week: int | None
+    #: P35 (D35-1, R35-12): Σ over the kind's steps of `eff` with the
+    #: project's own figure ignored, excluded steps adding 0: the same values
+    #: and predicate as the register list row (`GET /dashboard/projects`).
+    design_weeks_calculated: int
+    lab_weeks_calculated: int
+    steps: list[RegisterStepRead]

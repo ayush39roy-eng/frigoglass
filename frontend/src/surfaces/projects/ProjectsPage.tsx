@@ -860,6 +860,8 @@ export default function ProjectsPage(): React.JSX.Element {
             onForbidden={handleForbidden}
             onSubmitted={refreshList}
             returnFocusTo={triggerRef}
+            registerSave={registerSave.save}
+            row={drawer?.mode === 'edit' ? rowById.get(drawer.projectId) : undefined}
           />
         </React.Suspense>
       ) : null}
@@ -870,6 +872,8 @@ export default function ProjectsPage(): React.JSX.Element {
         changes={registerSave.changes}
         watchingFollowUp={registerSave.watchingFollowUp}
         onClose={registerSave.close}
+        effChanges={registerSave.effChanges}
+        projectName={(id) => rowById.get(id)?.project_name}
       />
       <RegisterDiscardDialog
         open={confirmCancel}

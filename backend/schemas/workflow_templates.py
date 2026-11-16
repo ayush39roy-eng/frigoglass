@@ -141,6 +141,9 @@ StepFlag = Literal[
     "gap_ignored_skipped",
     "cert_off_no_effect",
     "own_effort_length_not_applied",
+    # P35 (R35-8): the step is excluded for this project; the copy is still
+    # written (re-include gets it), but it has no effect while excluded.
+    "excluded_no_effect",
 ]
 
 

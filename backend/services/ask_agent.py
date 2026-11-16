@@ -141,6 +141,7 @@ async def build_agent_context(db: AsyncSession, project: Project) -> dict[str, A
                 certification_testing_required=project.certification_testing_required,
                 own_effort=own_effort,
                 effort_weeks=live.effort_weeks,
+                excluded=live.excluded,
             )
             if live is not None
             else 0

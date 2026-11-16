@@ -106,13 +106,15 @@ def is_step_skipped(
     *,
     own_effort: bool,
     effort_weeks: int | None,
+    excluded: bool = False,
 ) -> bool:
     """THE service-side skip predicate (ADR 0041 R5 as revised by ADR 0046
-    §B / OR-2; contract P33 F4) on `(plan_weeks, kind, cert, own_effort,
-    effort_weeks)`: a lab step on a project without certification testing,
-    an own-effort step whose share is 0 or absent, or another step whose
-    copy is 0 (`services.workflow_durations.live_step_skipped`). Every
-    service-side caller passes a live row (`row_is_skipped`)."""
+    §B / OR-2; contract P33 F4; R35-1) on `(plan_weeks, kind, cert,
+    own_effort, effort_weeks, excluded)`: an excluded step (P35), a lab step
+    on a project without certification testing, an own-effort step whose
+    share is 0 or absent, or another step whose copy is 0
+    (`services.workflow_durations.live_step_skipped`). Every service-side
+    caller passes a live row (`row_is_skipped`)."""
 
     return live_step_skipped(
         plan_weeks=plan_weeks,
@@ -120,6 +122,7 @@ def is_step_skipped(
         certification_testing_required=cert_required,
         own_effort=own_effort,
         effort_weeks=effort_weeks,
+        excluded=excluded,
     )
 
 
@@ -174,6 +177,7 @@ def row_is_skipped(
         cert_required,
         own_effort=own_effort,
         effort_weeks=row.effort_weeks,
+        excluded=row.excluded,
     )
 
 
@@ -194,6 +198,7 @@ def row_effective_weeks(
         certification_testing_required=cert_required,
         own_effort=own_effort,
         effort_weeks=row.effort_weeks,
+        excluded=row.excluded,
     )
 
 
@@ -206,7 +211,10 @@ def row_calculated_weeks(
     certification testing. Summed per kind it is the "calculated" design /
     lab time the Projects register shows beside `design_effort_weeks` /
     `lab_effort_weeks`; clearing the figure ("reset") returns the project to
-    it (OR-5 re-copies the template onto the not-reached steps)."""
+    it (OR-5 re-copies the template onto the not-reached steps).
+
+    R35-12 (P35): an excluded step adds 0 (R35-1's `eff` with the figure
+    ignored)."""
 
     return live_step_effective_weeks(
         plan_weeks=row.plan_weeks,
@@ -214,6 +222,7 @@ def row_calculated_weeks(
         certification_testing_required=cert_required,
         own_effort=False,
         effort_weeks=None,
+        excluded=row.excluded,
     )
 
 
@@ -813,6 +822,7 @@ async def build_workspace(
                 certification_testing_required=project.certification_testing_required,
                 own_effort=own_effort,
                 effort_weeks=live.effort_weeks,
+                excluded=live.excluded,
             )
             if live is not None
             else 0

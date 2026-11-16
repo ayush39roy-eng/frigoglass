@@ -33,6 +33,7 @@ import { useCategoryCatalogSnapshot } from '@/lib/category-catalog';
 import { hubPickerLabel } from '@/lib/hub-labels';
 import { DISPLAY_HORIZON_WEEKS } from '@/lib/domain-constants';
 import { formatDecimal } from '@/lib/format';
+import { cn } from '@/lib/utils';
 import {
   PROJECT_PRIORITIES,
   PROJECT_TYPES,
@@ -45,6 +46,7 @@ import {
 
 import { useEngineerOptions } from '../hooks/use-registration';
 import type { ProjectCreateRequest, ProjectRead } from '../api/types';
+import { FormSubmitError } from './form-submit-error';
 import {
   REQUIRED_FIELD_LABELS,
   missingRequiredFields,
@@ -174,6 +176,8 @@ export function ProjectForm({
   variant = 'dialog',
   onDirtyChange,
   prelude,
+  registerSection,
+  hubIdOverride,
 }: {
   mode: 'create' | 'edit';
   project: ProjectRead | null;
@@ -192,7 +196,18 @@ export function ProjectForm({
   /** P22-T01: rendered at the top of the scrolling body (the drawer puts the
    *  project summary, and for a legacy Draft the leave-Draft hard gate, here). */
   prelude?: React.ReactNode;
+  /**
+   * Register popup (owner 2026-11-17): the register fields (status, hub,
+   * leader, actual dates, design / lab time, lab testing, steps) rendered by
+   * the caller after Identity. The form then hides its own Hub, Leader,
+   * Actual start week, Certification testing and effort inputs (the caller
+   * owns and saves them), and keeps every other field.
+   */
+  registerSection?: React.ReactNode;
+  /** With `registerSection`: the hub picked there (category options follow it). */
+  hubIdOverride?: string | undefined;
 }): React.JSX.Element {
+  const withRegister = registerSection !== undefined;
   const radix = variant !== 'inline';
   const sheet = variant === 'sheet';
   const Header = radix ? DialogHeader : InlineHeader;
@@ -226,7 +241,8 @@ export function ProjectForm({
   // P9: category options depend on the hub's workflow (contract §6). P33-T14:
   // the hub's served list wins; the served global list narrowed to the hub's
   // workflow is the fallback while it loads. Options show the served label.
-  const selectedHub = React.useMemo(() => hubs.find((h) => h.id === hubId), [hubs, hubId]);
+  const effectiveHubId = withRegister && hubIdOverride !== undefined ? hubIdOverride : hubId;
+  const selectedHub = React.useMemo(() => hubs.find((h) => h.id === effectiveHubId), [hubs, effectiveHubId]);
   const categories = useCategoriesForHub(selectedHub);
   const categoryOptions = categories.options;
   const categoryCatalog = useCategoryCatalogSnapshot();
@@ -343,14 +359,14 @@ export function ProjectForm({
   const submit = handleSubmit(async (values) => {
     setSubmitError(null);
     setEffortRejected(null);
-    if (!hubId) {
+    if (!effectiveHubId) {
       setSubmitError('Hub is required.');
       return;
     }
     const body: ProjectCreateRequest = {
       name: values.name,
       external_code: values.external_code ?? null,
-      hub_id: hubId,
+      hub_id: effectiveHubId,
       leader_engineer_id: leaderId === NONE ? null : leaderId,
       category: category === NONE ? null : (category as ProjectCategory),
       type: type === NONE ? null : (type as ProjectType),
@@ -389,7 +405,7 @@ export function ProjectForm({
     } catch (err) {
       // Never include `body` (customer_name / tcogs_eur / selling_price_eur /
       // gross_margin_pct) in an error message or log — CLAUDE.md.
-      if (err instanceof PriorityMoveNotAppliedError) {
+      if (err instanceof PriorityMoveNotAppliedError || err instanceof FormSubmitError) {
         // P14: the priority preview was declined or refused; nothing was saved.
         setSubmitError(err.message);
       } else if (err instanceof ApiError && err.isForbidden) {
@@ -441,7 +457,7 @@ export function ProjectForm({
       <div
         className={
           sheet
-            ? 'min-h-0 flex-1 space-y-5 overflow-y-auto px-5 py-4 scrollbar-thin'
+            ? cn('min-h-0 flex-1 space-y-5 overflow-y-auto px-5 py-4 scrollbar-thin', withRegister && 'editable-fields')
             : variant === 'dialog'
               ? 'my-4 max-h-[60vh] space-y-5 overflow-y-auto pr-1'
               : 'my-4 space-y-5'
@@ -460,6 +476,7 @@ export function ProjectForm({
             <Field label="External code" htmlFor="reg-external-code" error={errors.external_code?.message}>
               <Input id="reg-external-code" {...register('external_code')} />
             </Field>
+            {withRegister ? null : (
             <Field label="Hub" htmlFor="reg-hub" required>
               <Select value={hubId} onValueChange={setHubId}>
                 <SelectTrigger id="reg-hub" className="h-8">
@@ -474,6 +491,8 @@ export function ProjectForm({
                 </SelectContent>
               </Select>
             </Field>
+            )}
+            {withRegister ? null : (
             <Field
               label={<>Leader{requiredMark('leader_engineer_id')}</>}
               htmlFor="reg-leader"
@@ -506,6 +525,7 @@ export function ProjectForm({
                 </SelectContent>
               </Select>
             </Field>
+            )}
             <Field
               label={<>Category{requiredMark('category')}</>}
               htmlFor="reg-category"
@@ -578,6 +598,7 @@ export function ProjectForm({
                 </SelectContent>
               </Select>
             </Field>
+            {withRegister ? null : (
             <Field
               label={<>Actual start week{requiredMark('actual_start_week')}</>}
               htmlFor="reg-start-week"
@@ -594,6 +615,7 @@ export function ProjectForm({
                 {...register('actual_start_week')}
               />
             </Field>
+            )}
             <Field label="Delay (weeks)" htmlFor="reg-delay" error={errors.delay_weeks?.message}>
               <Input
                 id="reg-delay"
@@ -621,6 +643,8 @@ export function ProjectForm({
             Carried over from a prior year
           </label>
         </fieldset>
+
+        {registerSection}
 
         {/* P27 (ADR 0038): own section, same separation as Planning / Financial. */}
         <div className="border-t border-border pt-5">
@@ -658,6 +682,7 @@ export function ProjectForm({
                 {...register('target_end_week')}
               />
             </Field>
+            {withRegister ? null : (
             <div className="flex flex-col gap-1">
               {/* An empty label-height spacer, not text, keeps this control's
                   checkbox row aligned with the <Input> baseline of its siblings
@@ -676,6 +701,9 @@ export function ProjectForm({
                 Lab steps are skipped when off.
               </span>
             </div>
+            )}
+            {withRegister ? null : (
+            <>
             <Field
               label="Design effort (client, weeks)"
               htmlFor={EFFORT_FIELD_IDS.design_effort_weeks}
@@ -712,6 +740,8 @@ export function ProjectForm({
                 {...register('lab_effort_weeks')}
               />
             </Field>
+            </>
+            )}
           </div>
           {project ? <ClientWorkbookFigures project={project} /> : null}
         </fieldset>

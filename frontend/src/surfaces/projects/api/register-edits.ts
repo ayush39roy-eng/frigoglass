@@ -9,10 +9,18 @@
  * browser never splits an effort figure or derives a week (I9).
  */
 
-import { ApiError, apiSend } from '@/lib/api/client';
+import { ApiError, apiGet, apiSend, type ApiRequestOptions } from '@/lib/api/client';
 import type { RecalcStatus } from '@/lib/api/priority-move';
 import type { Id, WeekNumber } from '@/types/common';
-import type { ProjectStatus } from '@/types/enums';
+import type { ProjectStatus, WorkflowStepKind, WorkflowStepStatus } from '@/types/enums';
+
+/** Register popup (owner 2026-11-17, ADR 0049): one step's exclusion flag.
+ *  `false` re-includes an excluded step; "include" on a step that is not
+ *  excluded is a no-op on the server (R35-2). */
+export interface StepExclusionEdit {
+  step_code: string;
+  step_excluded: boolean;
+}
 
 /** One project's changes. Only the keys sent are applied; `null` clears
  *  `leader_engineer_id`, the actual weeks and the effort figures (a null
@@ -26,6 +34,58 @@ export interface RegisterEditPatch {
   /** Design / lab time figure (ADR 0041), ≥ 0, 2 dp. `null` = "↺ reset". */
   design_effort_weeks?: number | null;
   lab_effort_weeks?: number | null;
+  /** Register popup (2026-11-17, API_CONTRACT_REGISTER_POPUP §2): sent in the
+   *  batch, not the PATCH, so one Save is one recalculation. A `null` hub or
+   *  lab flag is a 422 `NULL_NOT_ALLOWED`: the popup never sends one. */
+  hub_id?: Id | null;
+  /** "Needs lab testing": off skips every lab step (ADR 0007 §5). */
+  certification_testing_required?: boolean | null;
+  /** Only the steps whose flag the user changed (`null` = no change). */
+  step_exclusions?: StepExclusionEdit[] | null;
+  /** The step the project is on now (§2.2): the server marks the earlier steps
+   *  Done and the later ones Not Started. `null` = no change. */
+  current_step_code?: string | null;
+}
+
+/** A step's status on the register read (contract §1): the stored stage
+ *  status, or `Skipped` when the step's effective duration is 0 (excluded, a
+ *  0-week copy, a lab step with lab testing off, or a split share of 0). A
+ *  Skipped step cannot be the current step. */
+export type RegisterStepStatus = WorkflowStepStatus | 'Skipped';
+
+/** One step of `GET /projects/{id}/register-steps` (backend `RegisterStepRead`),
+ *  in workflow order. Every flag is served; the popup derives none (I9). */
+export interface RegisterStep {
+  step_code: string;
+  step_name: string;
+  kind: WorkflowStepKind;
+  status: RegisterStepStatus;
+  step_excluded: boolean;
+  /** False = the old tool's "N/A" step (R35-2): never excludable. */
+  applicable: boolean;
+  /** The server's verdict whether this (not excluded) step may be excluded
+   *  now: applicable, not stored Done, project not frozen / closed. */
+  excludable: boolean;
+  is_current: boolean;
+}
+
+/** Backend `RegisterStepsRead`. */
+export interface RegisterStepsResponse {
+  project_id: Id;
+  current_step_code: string | null;
+  /** The scheduler's forecast finish (the register list's `end_week`), read-only. */
+  end_week: WeekNumber | null;
+  /** Calculated design / lab weeks (same rule as the register row; excluded steps add 0). */
+  design_weeks_calculated: number;
+  lab_weeks_calculated: number;
+  steps: RegisterStep[];
+}
+
+export function fetchRegisterSteps(
+  projectId: Id,
+  ctx: Pick<ApiRequestOptions, 'signal'> = {},
+): Promise<RegisterStepsResponse> {
+  return apiGet<RegisterStepsResponse>(`/projects/${encodeURIComponent(projectId)}/register-steps`, ctx);
 }
 
 /** 1..100 patches, applied all-or-nothing. */
@@ -43,6 +103,22 @@ export interface RegisterEditsResponse {
   /** Only when `queued` and a run was active. */
   baseline_run_id: Id | null;
   task_id: string | null;
+  /** Register popup contract §2.5 (R35-7): every step whose effective duration
+   *  changed with this Save, by project then workflow order. Served; the
+   *  browser never re-splits. Optional only so a pre-contract API still parses. */
+  eff_changes?: RegisterEditEffChange[];
+}
+
+/** One step whose effective duration (weeks) changed with a register Save. */
+export interface RegisterEditEffChange {
+  project_id: Id;
+  step_code: string;
+  eff_before: number;
+  eff_after: number;
+  /** `eff_before == 0 && eff_after > 0`. */
+  revived: boolean;
+  /** `eff_before > 0 && eff_after == 0`. */
+  skipped_now: boolean;
 }
 
 /** One element of `detail.errors` on 403 `REGISTER_EDITS_FORBIDDEN` / 422
@@ -94,9 +170,24 @@ const ROW_ERROR_COPY: Record<string, string> = {
   STATUS_DRAFT_SUBMIT_ONLY: 'A Draft project leaves Draft through Edit registration (Submit).',
   FORBIDDEN_PROJECT: 'You cannot edit this project.',
   DUPLICATE_PROJECT: 'This project was listed twice.',
+  // Register popup (ADR 0049, R35-2 / R35-5).
+  STEP_DONE: 'A Done step cannot be excluded.',
+  STEP_NOT_APPLICABLE: 'That step does not apply to this project (N/A).',
+  UNKNOWN_STEP: 'That step is not in this project’s workflow.',
+  EFFORT_NEEDS_A_STEP: 'A design / lab time needs at least one step of its kind: clear the time or keep one step.',
+  NO_STEPS_LEFT: 'The project needs at least one step that runs.',
+  PROJECT_FROZEN: 'The project is frozen: its steps cannot change.',
+  PROJECT_CLOSED: 'The project is Cancelled or Commercialized: its steps cannot change.',
+  UNKNOWN_HUB: 'That hub does not exist.',
+  WORKFLOW_CHANGE_WITH_PROGRESS: 'This hub uses the other workflow, and the project has recorded progress: it cannot move.',
+  INCONSISTENT_PROGRESS: 'The recorded weeks of the steps do not allow this current step.',
 };
+
+/** Codes whose server message is more precise than the fixed copy (it names
+ *  the field, the step or the kind). */
+const PREFER_SERVER_MESSAGE = new Set(['NULL_NOT_ALLOWED', 'EFFORT_NEEDS_A_STEP', 'INCONSISTENT_PROGRESS']);
 
 export function registerRowErrorText(error: RegisterEditError): string {
   const known = ROW_ERROR_COPY[error.code];
-  return known && error.code !== 'NULL_NOT_ALLOWED' ? known : error.message || known || error.code;
+  return known && !PREFER_SERVER_MESSAGE.has(error.code) ? known : error.message || known || error.code;
 }

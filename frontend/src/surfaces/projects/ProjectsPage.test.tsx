@@ -500,7 +500,9 @@ describe('Projects page — registration drawer', () => {
     const [method, path, body] = http.sendWithHeaders.mock.calls[0]! as [string, string, Record<string, unknown>];
     expect(method).toBe('PATCH');
     expect(path).toBe(`/projects/${P1}`);
-    expect(body).toMatchObject({ name: 'Cooler A2', hub_id: 'hub-1', priority: 'P1' });
+    // Register popup (owner 2026-11-17): the PATCH carries only the identity
+    // fields that changed; hub / leader / dates / times go in the register batch.
+    expect(body).toEqual({ name: 'Cooler A2' });
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
     expect(screen.getByTestId('projects-saved-status')).toHaveTextContent('Saved the registration of “Cooler A2”.');
     expect(screen.getByTestId('row-highlight-badge')).toHaveTextContent('Updated');
@@ -610,13 +612,15 @@ describe('Projects page — registration drawer', () => {
     await user.click(screen.getByRole('button', { name: 'Edit registration of Cooler A' }));
     const drawer = await screen.findByRole('dialog', { name: 'Edit Cooler A' });
     expect(within(drawer).getByText('Changing priority recalculates the timeline.')).toBeInTheDocument();
+    // Only a changed identity field is PATCHed (register popup, 2026-11-17).
+    await user.type(within(drawer).getByLabelText(/^External code/), 'X-1');
     await user.click(within(drawer).getByRole('button', { name: 'Save changes' }));
     expect(await screen.findByTestId('priority-move-notice')).toHaveTextContent(
       'Saved — the timeline updates automatically after the current recalculation',
     );
   });
 
-  it('P14: a priority change previews first; Yes applies it with the token, then PATCHes the rest without priority', async () => {
+  it('P14: a priority change previews first; Yes applies it with the token, then PATCHes the changed rest without priority', async () => {
     const user = userEvent.setup();
     const inQueue = { ...project, status: 'In Queue' as const, priority: 'P1' as const };
     serveGets(inQueue);
@@ -637,6 +641,7 @@ describe('Projects page — registration drawer', () => {
     const drawer = await screen.findByRole('dialog', { name: 'Edit Cooler A' });
     await user.click(within(drawer).getByRole('combobox', { name: /^Priority/ }));
     await user.click(await screen.findByRole('option', { name: 'P2' }));
+    await user.type(within(drawer).getByLabelText(/^External code/), 'X-1');
     await user.click(within(drawer).getByRole('button', { name: 'Save changes' }));
 
     const preview = await screen.findByRole('dialog', { name: 'Move to P2?' });
@@ -651,8 +656,7 @@ describe('Projects page — registration drawer', () => {
     expect(moveApi.moveProjectPriority).toHaveBeenCalledWith(P1, 'P2', 'tok-r');
     await waitFor(() => expect(http.sendWithHeaders).toHaveBeenCalledTimes(1));
     const body = http.sendWithHeaders.mock.calls[0]![2] as Record<string, unknown>;
-    expect(body).not.toHaveProperty('priority');
-    expect(body).toHaveProperty('name', 'Cooler A');
+    expect(body).toEqual({ external_code: 'X-1' });
   });
 
   it('P14: No on the priority preview saves nothing and keeps the drawer open with an explanation', async () => {
@@ -742,6 +746,7 @@ describe('Projects page — P24-T02 workbook fields and "No leader" (ADR 0035)',
     expect(block).toHaveTextContent('Requesting departmentMarketing');
     expect(block).toHaveTextContent('Product typeNot set');
     expect(within(block).queryByRole('textbox')).not.toBeInTheDocument();
+    await user.type(within(drawer).getByLabelText(/^External code/), 'X-1');
     await user.click(within(drawer).getByRole('button', { name: 'Save changes' }));
     await waitFor(() => expect(http.sendWithHeaders).toHaveBeenCalledTimes(1));
     const body = http.sendWithHeaders.mock.calls[0]![2] as Record<string, unknown>;

@@ -106,6 +106,8 @@ interface Column {
   align?: 'left' | 'right' | 'center';
   /** Width can be dragged (every column but the tick box). */
   resizable?: boolean;
+  /** Edit mode edits this column: its header carries a pencil cue. */
+  editable?: boolean;
   cell: (row: ProjectFilterRow, index: number) => React.ReactNode;
 }
 
@@ -344,6 +346,7 @@ export function ProjectsTable({
         : []),
       {
         id: 'status',
+        editable: true,
         header: 'Status',
         min: editing ? 10.5 : 7.5,
         fr: 1,
@@ -375,6 +378,7 @@ export function ProjectsTable({
       },
       {
         id: 'leader',
+        editable: true,
         header: 'Leader',
         min: editing ? 10 : 6.5,
         fr: 0.8,
@@ -413,6 +417,7 @@ export function ProjectsTable({
       },
       {
         id: 'actual-start',
+        editable: true,
         header: 'Actual start',
         min: editing ? 11 : 5.5,
         align: editing ? 'left' : 'center',
@@ -432,6 +437,7 @@ export function ProjectsTable({
       },
       {
         id: 'actual-end',
+        editable: true,
         header: 'Actual end',
         min: editing ? 11 : 5.5,
         align: editing ? 'left' : 'center',
@@ -453,6 +459,7 @@ export function ProjectsTable({
       },
       {
         id: 'design-time',
+        editable: true,
         header: 'Design time',
         min: editing ? 8 : 5.5,
         align: 'center',
@@ -475,6 +482,7 @@ export function ProjectsTable({
       },
       {
         id: 'lab-time',
+        editable: true,
         header: 'Lab time',
         min: editing ? 8 : 5.5,
         align: 'center',
@@ -665,7 +673,13 @@ export function ProjectsTable({
                     data-testid="select-all"
                   />
                 ) : (
-                  <span className="truncate">{col.header}</span>
+                  <span className="flex min-w-0 items-center gap-1">
+                    <span className="truncate">{col.header}</span>
+                    {/* Owner 2026-11-17: in Edit mode, the columns that can be edited say so. */}
+                    {editing && col.editable ? (
+                      <Pencil className="size-3 shrink-0 opacity-80" aria-hidden="true" data-testid="editable-column-cue" />
+                    ) : null}
+                  </span>
                 )}
                 {col.resizable && onColumnWidth ? (
                   <ResizeHandle

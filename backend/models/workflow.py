@@ -317,6 +317,15 @@ class ProjectWorkflowStep(TimestampMixin, Base):
     template_change_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("template_changes.id"), nullable=True
     )
+    #: P35 (ADR 0049 as ruled, R35-1; migration `p35b_step_excluded`): the
+    #: step is switched off for this project. `eff = 0` before every other
+    #: branch (`services.workflow_durations.live_step_effective_weeks`), so
+    #: every reader follows through the one skip predicate. Written only by
+    #: the register batch (`step_exclusions`); cleared by a workflow change
+    #: (R35-11). Never on a Done step (CHECK, I34). Wire name: `step_excluded`.
+    excluded: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false"
+    )
 
     #: Design steps only (docs/DOMAIN_RULES.md booking rules).
     assigned_engineer_id: Mapped[uuid.UUID | None] = mapped_column(
@@ -400,6 +409,8 @@ class ProjectWorkflowStep(TimestampMixin, Base):
         # P33 (migration p33b_template_copy).
         CheckConstraint("plan_weeks BETWEEN 0 AND 104", name="plan_weeks_range"),
         CheckConstraint("plan_gap_weeks BETWEEN -104 AND 104", name="plan_gap_weeks_range"),
+        # P35 (migration p35b_step_excluded): I34 (i).
+        CheckConstraint("NOT (excluded AND status = 'Done')", name="excluded_not_done"),
         # P40 (migration p40a_step_pins, ADR 0054 R40-1).
         CheckConstraint(
             "(manual_start_week IS NULL AND manual_end_week IS NULL) OR ("
