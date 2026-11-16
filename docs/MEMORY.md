@@ -41327,3 +41327,399 @@ remaining errors are pre-existing elsewhere.
 **For T05:** the builder filter, readers, `inactive_engineers`, the `active` flags on served names and `former_leaders` (from
 `project_leader_history` rows where `engineer_id` is not null; `to_week` is "until"). Utilization: zero capacity in covered
 weeks; use `services/engineer_supply.py`.
+
+## [2026-11-17] P40-T03d — audited run, manual step pins (ADR 0054 ruling, I45–I48) — workflow-auditor: FAIL (one defect; everything else PASS)
+
+**What was audited.** Code at `bd134bb` (ed96e6f + the P35-T05/T06 merge). It ran from a detached worktree so that
+concurrent sessions could not change it mid-run. HEAD had moved off ed96e6f while setup was running, and its migration
+head is now `p35b_step_excluded`, which sits on `p42a`. The database was a pg_dump of the dev DB, restored into a
+throwaway `postgres:17` container on :55433 and migrated to `p35b`. The shared dev DB at :5433 was only read (by the
+dump). It is still at p41a with 14 runs. The container, worktree and dump were removed afterwards.
+
+**How.**
+- Pins were written through the real `PUT /gantt/step-pins` (ASGI, Admin principal), with real inline greedy runs.
+  Freeze, stage PATCH and register-edits went through their real endpoints.
+- CP-SAT ran through the `run_cp_sat_schedule` worker body (`activate=False`), outside FastAPI.
+- Every persisted run was checked three ways:
+  - (a) an independent checker that re-derives I45, I47(a), amended I1/I2 (I47(d)), I3/I15/I27/I28 and I21/I22 from the
+    persisted rows, the live DB and DOMAIN_RULES "Manual step weeks";
+  - (b) persisted rows compared field by field with a fresh in-memory solve of the rebuilt input;
+  - (c) `validate_invariants(..., run_week=)`, as a cross-check only.
+- Scripts are in the session scratchpad (`t03d/`), not in the repo.
+
+**Runs.** v15–v28 at CW 10, 36 and 42: 12 greedy runs (baseline, step_pin, follow_up, register_edit) and 2 CP-SAT runs.
+In every run: 0 independent violations, 0 persisted-vs-memory differences and 0 `validate_invariants` violations.
+
+**Pin types exercised, with the result in the full-mix run v27 (CW 42):**
+- on time (a40fd218 E 51–52, longer than eff);
+- lapsed (55e79db0 E written 36–38 at CW 36 → 42–44, `pin_lapsed` true, MANUAL_OVERLAP, successors after G);
+- frozen with a pin in the past (aca06df2 K 39–40, then frozen with actual start 36 → placed exactly, not lapsed);
+- past the horizon (0e067101 E written 10–50 at CW 10 → 42–82: LEFT_OUT and no E row, while its K pin 51–52 keeps its
+  pinned row);
+- squeezed below the FTE span (37c0851a E 47–48, FTE 0.5, eff 4: `duration_weeks` stays 4, `span_fte` NULL);
+- overlapping a predecessor (95dcd46b K 50 against an H release of 56 → `manual_overlap` true);
+- behind a Blocked hold (25da48f1 L, with K set to Blocked by stage PATCH → held, no pinned row, pin kept);
+- inert pins (5b9d139a E excluded through register-edits `step_exclusions`, and d4d8808d H made inert by cert off: no row
+  pinned, pins kept);
+- a same-project clash (7e19fbe5 A 45–46 / E 46–47 → ENG_CONFLICT; also cross-project clashes with anchored steps, both
+  sides flagged);
+- lab overbooking (8 India PDD-H pins in W50 against 6 slots → IN-CH3 4/2 with 2 OVERLAP-flagged fixed rows, IN-CH2 full;
+  7 pins in v27 → 1 overflow);
+- Clear (single, and all).
+
+**Assertions that hold:**
+- **I45:** windows, `pinned`, `duration_weeks = eff` (pin-free comparison run), leader / eligible chamber, LEFT_OUT past
+  the horizon, `pin_lapsed` iff, and no stray pinned row.
+- **I47(a):** 13 rows evaluated per run, all equal. First steps are not evaluable (release = frontier − 1) and are all
+  correctly false.
+- **I47(b):** I3/I15/I27/I28 hold for unpinned steps, with G of a pinned predecessor.
+- **I47(d) / I1 / I2:** every clash involving a pin carries ENG_CONFLICT on both projects. Every overflowed chamber-week
+  has enough OVERLAP-flagged fixed rows, and no pinned lab row is flagged while another eligible chamber had room. The
+  only unpinned clash is anchored against anchored (two In Progress steps, both flagged).
+- **I21 / I22:** hold (the `start_not_before_week` column is all null).
+- **I46(a):** after every run, the live pins equal exactly what people wrote. Freeze, unfreeze, cert-off and exclusion
+  touch no pin.
+- **I46(b):** refusals with nothing written, no run and no audit row: 422 PIN_OUT_OF_RANGE (before CW, after 52),
+  PIN_INVALID, DUPLICATE_STEP; 409 STEP_STARTED, STEP_SKIPPED, PROJECT_CLOSED, PROJECT_FROZEN (set and clear);
+  all-or-nothing on a mixed batch; 403 for Engineer and Hub Planner. Unfreeze by a Hub Planner gives 403
+  UNFREEZE_REQUIRES_ADMIN.
+- **I46(d):** one audit row per changed pair: 14/14, 2/2, 7/7, 12/12 and 13/13 (clear all). The before/after keys and
+  `cause = manual` are correct. The stage PATCH wrote one `project.step_pin_cleared` with `cause = stage_started`.
+- **One run per save:** each saved batch gave exactly one `step_pin` run. An identical re-send gave `unchanged`, with no
+  run and no audit row.
+- **Coalescing:** two saves back to back gave `queued` then `deferred`, followed by exactly one `follow_up` run whose
+  input reflects the second save (I24).
+- **I48(a):** after clear-all, run v21 matches baseline v15 byte for byte: the persisted row/outcome signature, the
+  canonical greedy output, the workflow snapshot, and the preview and band-rank tokens.
+  - The raw `canonical_schedule_input_asdict` JSON differed only in project list order (DB row order, not a hash form).
+    `priority_preview._canonical` is equal.
+- **I48(b):** row durations are identical with and without pins.
+- **R40-13 / I9 / I23 on the active run v27:**
+  - Gantt: 330 rows. Every step's planned weeks and pinned / manual_overlap flags, the live pins, and the project's
+    `pin_lapsed` / `manual_overlap` equal the run and DB.
+  - Gantt per-project design/lab weeks are Σ `duration_weeks`.
+  - Capacity totals booked design: 818 = Σ Gantt = SQL. Lab: 691 = Σ Gantt = SQL. Per hub and per lab region they are
+    equal too.
+  - Dashboard buckets (within 138 / spill 47 / left 14 / blocked 1 / not-scheduled 72) equal the stored outcome rows.
+  - `by_step`: Σ = pdd + oem, and equal to SQL, for all 52 weeks. `current_step_counts` equal SQL.
+
+**Greedy vs CP-SAT** (same input hash; v16 vs v17, v27 vs v28):
+- Pinned rows are identical: 14/14 and 15/15 rows, same windows, durations, engineers and chambers. `pin_lapsed` is
+  identical.
+- The only pinned-row differences are `manual_overlap` (3 and 5 rows): an open choice under I47(c), because CP-SAT places
+  some unpinned predecessors after the pin.
+- `compare_solvers`: no UNEXPLAINED divergence, and 0 frozen projects diverge.
+- Attribution check (CP-SAT with and without pins, same data): the projects where CP-SAT is late (02f290a0, a40fd218) are
+  just as late without pins. This is not pin-caused.
+
+**FAIL — R40-4 / I46(c) and I46(e): the register "current step" writer does not clear pins.**
+- `services/register_steps.py::apply_current_step` (P35-T06, merged in `1eb6deb` after P40-T03b) moves stages out of Not
+  Started but never calls `step_pin_clear.clear_pin_if_started`.
+- Reproduced: `POST /projects/register-edits {current_step_code: "PDD-L"}` on 83ebb913 set PDD-K Not Started → Done.
+  The pin (45, 45) stayed stored, and no `project.step_pin_cleared` audit row was written.
+- The I46(e) scan of the DB found 1 violating row. It is still present at `e688424`.
+- The scheduler ignored the stale pin in the next run (non-frozen, started).
+- Latent harm:
+  - if the project is later frozen, R40-4 applies pins on every non-skipped step whatever the stage, so the stale pin
+    would be placed on a Done step;
+  - if the current step is moved back, the "after" reset returns the step to Not Started and the stale pin silently
+    revives;
+  - the Gantt shows a live pin on a started step.
+- **Remediation, for the orchestrator to create, e.g. P40-R01, backend-builder:**
+  - in `apply_current_step`, call `clear_pin_if_started` for every planned row whose stage leaves Not Started, under the
+    existing project lock and in the same transaction (`cause = "stage_started"`);
+  - add a test (register-edits current step on a pinned Not Started step → pin cleared plus one audit row; the I46(e)
+    scan stays empty);
+  - grep-audit any other stage writer added since P40-T03b. Today only workspace PATCH, check-ins and register_steps
+    write stages.
+- **Not covered empirically:** the check-in clear path (covered by T03b unit tests), and the narrow / Forest UI.
+
+**Status:** P40-T03d is **not** marked DONE. The FAIL blocks P40-T04 until the remediation lands and this audit's
+register-edits step is re-run. That is one targeted re-check; the rest of the audit stands.
+
+---
+
+## [2026-11-17] P40-R01 — register "current step" clears manual step pins (remediation of P40-T03d FAIL) — backend-builder
+
+**Did:**
+- `backend/services/register_steps.py::apply_current_step` now calls
+  `services.step_pin_clear.clear_pin_if_started` for every planned row, right after its merged stage is written. This
+  is the same helper the Workspace stage PATCH and check-ins use. It records `stage_before`; the actor is the request
+  user.
+- It runs inside the caller's transaction (`POST /projects/register-edits`), under the R35-10 project row lock that is
+  already held. It flushes with the rest of the stage write.
+- It writes one `project.step_pin_cleared` audit row per cleared pin (`cause = "stage_started"`, before/after per
+  `pin_audit_state`), alongside the existing `project.current_step_set` row. No financial field is touched.
+- The helper is a no-op for rows that stay in or return to Not Started. It is also a no-op for rows without a pin.
+
+**Backward move:**
+- Nothing is resurrected. A row that reached Done or In Progress through this writer (or any other stage writer) has
+  already lost its pin.
+- When the "after" reset later returns that row to Not Started, there is no stored pair left to revive. The test covers
+  this.
+- **Residual (data, not code):** a pin left stale by the pre-fix code on a started step (P40-T03d found 1 such row in
+  the dev DB, 83ebb913 PDD-K (45, 45)) would still revive if that project's current step were moved back before the
+  pin is removed.
+  - This needs a one-off repair: clear it through `PUT /gantt/step-pins` as Admin (cause `manual`), or with an audited
+    data fix.
+  - I did not touch the shared dev DB. Re-running the T03d I46(e) scan will show whether it is still there.
+
+**Stage-writer grep-audit (since P40-T03b):**
+- Only three paths write stage `status` on live rows: `api/routers/workspace.py` (stage PATCH), `api/routers/checkins.py`
+  and `services/register_steps.py`. All three now clear pins.
+- The seed and the client re-import only insert fresh rows, which carry no pin.
+
+**Tests:** new `backend/tests/test_p40_r01_register_current_step_pins.py`, with 3 tests:
+- (1) Picking PDD-K past a pinned PDD-E (Not Started → Done):
+  - clears E's pin with exactly one `project.step_pin_cleared` row, with the exact before/after and
+    `cause = stage_started`, and no `project.step_pinned` row;
+  - PDD-M's pin (stays Not Started) survives;
+  - the I46(e) scan is empty;
+  - moving back to PDD-D returns E to Not Started with no pin and writes no further pin audit row.
+- (2) A pin on the picked step itself (→ In Progress) is cleared, and the pins on the later J and N survive.
+- (3) A refused patch (422 `STEP_NOT_APPLICABLE`) keeps the pin, writes no audit row and dispatches no run.
+- Ran that file plus `test_p40_step_pins_api.py`, `test_p40_step_pins_backend.py`, `test_p35_t01_register_fields.py`,
+  `test_p35_t05_register_popup.py` and `test_p35_t08b_expected_status.py`: 139 passed (`--no-cov`).
+- ruff is clean on both files. mypy reports nothing in `register_steps.py` (the remaining errors are pre-existing ones in
+  other modules).
+
+**Files touched:** `backend/services/register_steps.py` (one import and the clear call in the write loop),
+`backend/tests/test_p40_r01_register_current_step_pins.py` (new), `docs/IMPLEMENTATION_PLAN.md` (P40-R01 status only),
+this entry. No other session's uncommitted file was edited. Nothing committed.
+
+**Status:** P40-R01 code DONE, re-audit pending. P40-T03d stays FAIL until workflow-auditor re-runs its register-edits
+step (and the I46(e) scan) and records PASS.
+
+**Next:** workflow-auditor re-checks P40-T03d's register-edits step and repairs or flags the stale dev-DB pin. Then
+P40-T04 gate.
+
+## [2026-11-17] P42-T03 — backend side of ADR 0056 (R42-1, R42-3..R42-10): stored band flags, KPI basis, labels, rollout — backend-builder: DONE
+
+Built from DOMAIN_RULES "Priority band meaning" (and key 1a), ruling P42-T01 R42-1..R42-12, and the P42-T02
+scheduler names. No file under `backend/scheduling/` was edited. Not committed by me. Note: the other session's
+commit `ed96e6f` ("P37-P42 work in progress") swept up most of these files while they were in progress. The working
+tree is the reference.
+
+**Contract:** `docs/API_CONTRACT_P42.md`. It lists every changed response field and every meaning change. P42-T04
+builds from it.
+
+**Persistence (R42-4, I50).**
+- Migration `p42a_outcome_band_flags` revises the single head `p38a_engineer_deactivation` (checked with
+  `alembic heads`). It adds `schedule_run_project_outcomes.counts_toward_year` (bool NOT NULL DEFAULT true) and
+  `not_scheduled_priority` (bool NOT NULL DEFAULT false); the defaults are truthful for old runs (I14).
+- The migration sets `schedule_stale` on every project in a schedulable status with priority P4/Q or P3 In
+  Queue. One `project.schedule_stale` audit row is written per project not already stale (actor null,
+  `reason: "ADR 0056"`). Downgrade drops the two columns. The SQL is constant; the only bound values are uuids.
+- p42a is **not applied to the dev DB**. Dev is at p41a, and an upgrade would also apply other agents' p40a,
+  p41b and p38a. Whoever applies those runs `alembic upgrade head` and then the rollout script.
+- `persist_schedule_output` stores both flags verbatim.
+- `services/demand_load` now passes `LiveProjectRow.priority`, so I25 remaining demand drops non-frozen P4/Q.
+- The legacy `estimated_*` remaining sum in `capacity.py` follows the same rule.
+
+**One bucket helper.**
+- New `services/outcome_buckets.py` provides `outcome_bucket` (precedence NOT_SCHEDULED_PRIORITY > QUEUED >
+  BLOCKED > WITHIN_YEAR > SPILLOVER > LEFT_OUT), `priority_label`, `queued_display`, `outcome_label` and the SQL
+  predicates `sql_counting` and `sql_bucket_*`. It reads stored flags only.
+- `ScheduleOutcome` gains `QUEUED` and `NOT_SCHEDULED_PRIORITY`.
+
+**Surfaces.**
+- **Dashboard.**
+  - `/completing-within-year` adds `queued_count`, `not_scheduled_priority_count`, `excluded_count`,
+    `counting_outcome_count` and `within_year_share_pct`. Rows add `counts_toward_year`,
+    `not_scheduled_priority`, `outcome`, `priority_label` and `projected_end_week`. `regions[]` adds the two
+    counts.
+  - `priority_delivery[]` adds `priority_label`, `queued_total`, `not_scheduled_priority_total`, the counting
+    totals and counting denominators.
+  - `/analytics` adds `counting_count`, and `completing_pct` is computed over it.
+  - The register adds the new buckets, `priority_label` and the flags.
+- **Capacity.**
+  - The class breakdown adds `queued_count` and `not_scheduled_priority_count`. Deliverable and left out now
+    count counting rows only.
+  - `priority_bucket_labels` (`Queue` → "Q") is served on `/capacity/hubs` and on the class breakdown.
+- **Gantt and Workspace** serve the flags, `outcome`, `outcome_label` and `priority_label`. The Gantt export adds
+  two columns.
+- **Priority board.**
+  - Columns add `label`, `not_scheduled` and `queued_count`.
+  - Cards add the flags, `queued` (the R42-7 badge) and `outcome_label`.
+- **VIP and VIP board** serve the flags and labels. A non-frozen P4/Q project never auto-fills.
+- **Run summary** (`greedy-recalc`) counts counting rows only and adds `queued_count` and
+  `not_scheduled_priority_count`. `run_changes` compares both flags (I20) and adds `priority_label`.
+- **Notifications.** A non-counting new outcome raises no LEFT_OUT or DELAY event. Conflicts still notify.
+- **Check-ins and tracking.** A non-frozen P4/Q project has nothing due.
+- **Priority preview.**
+  - The moved project gains before/after flags, plus `effect` and `effect_label`: "leaves the plan" or "joins
+    the queue — not counted this year".
+  - Changes gain the flags. `pushed_out_of_year` counts only rows that still count.
+- **What-if.** `OutcomeLiteral` gains the two classes, and `ProjectResultOut` gains the flags.
+- **Import.**
+  - `ImportKpisOut` gains `queued` and `not_scheduled_priority`, `ImportProjectOut` gains the flags, and
+    `BreakdownOutcomesOut` and `BreakdownBucketOut` gain the new counts. All default, so P41 saved snapshots still
+    read.
+  - `scope_import_result` and `breakdown_of` handle the new classes, which fixes the P41 `KeyError: 'queued'`.
+  - Scenario workbooks carry the new columns.
+- **Ask the agent and What-if chat** carry `counts_toward_year`.
+- The seed summary run counts the two classes apart.
+- New `GET /reference/priorities` serves the band, label, `not_scheduled` and `queued_when_in_queue`.
+
+**Rollout (R42-10).**
+- `RPD_DATABASE_URL=… python -m scripts.p42_band_rules_run` dispatches exactly one greedy run with
+  `trigger_reason="band_rules"`, under the dispatch lock. It writes one `schedule_run.dispatched` marker.
+- It returns `already_dispatched` on rerun and `nothing_to_do` when no project changes class. It never runs
+  CP-SAT.
+- Exit codes are 0, 1, 2 or 3, as for the P33 script.
+
+**Decisions and deviations (for the orchestrator and the gate).**
+1. `excluded_count` was added. The six buckets alone cannot sum to the row count, because On Hold, Cancelled and
+   data-error rows are in the run in none of them (dev: 58). Served invariant:
+   `Σ six + excluded_count == len(rows)`.
+2. `/dashboard/region-summary` is unchanged. It is live composition (its "spillover" is carry-over). The
+   per-region outcome split is `CompletingWithinYear.regions`, which gained the counts.
+3. There is no Executive endpoint. The Executive view reads the served fields (contract §8).
+4. The health badge (I13) is unchanged. `outcome_label` carries the queued and not-scheduled display.
+5. Two rules use the live band, because there is no outcome row to read:
+   - check-ins and tracking (a work list, not a KPI);
+   - VIP for projects not yet in any run.
+   Every KPI reads the stored row only.
+6. `joins_queue` also covers a counting In Queue project moved to P3, not only P4 → P3.
+7. Import:
+   - A queued project sits in its finish-year block, in its own `queued` column, and never in `within_year`.
+   - A queued project with no slot goes to `not_placed`.
+   - Not-scheduled projects appear only in `all`.
+   - Hidden P4/Q plan projects in merge mode count as `not_scheduled_priority`, not `excluded`.
+8. P41 saved scenarios keep their pre-P42 figures, read with the defaults.
+9. Open, not decided here: P42-T02 (b), What-if-added projects default to P3 In Queue and are therefore queued.
+   This needs an orchestrator decision or an OQ.
+
+**Tests.**
+- New `tests/test_p42_band_backend.py` (20) covers:
+  - bucket precedence and labels;
+  - flags persisted as emitted on the seed;
+  - six buckets plus `excluded_count` = rows on the seed and on hand-built rows, with region reconciliation;
+  - counting denominators (`counting_outcome_count`, priority delivery, analytics);
+  - the register buckets and the greedy-recalc counts;
+  - `/reference/priorities`;
+  - priority board labels and the queued badge;
+  - Gantt and Workspace fields;
+  - the class breakdown and `Queue`→"Q";
+  - I25 remaining demand with non-frozen versus frozen P4;
+  - `run_changes` flags, the notification suppression, tracking and check-ins, VIP auto-fill;
+  - preview `leaves_plan`, `joins_queue` and no effect;
+  - Gantt export columns, import breakdown classes, and P41 snapshot defaults.
+- New `tests/test_p42_migration_and_rollout.py` (4): p42a up/down/up (stale set only on reclassified projects,
+  audit rows, column defaults); the script dispatches one greedy `band_rules` run that stores the flags, then
+  `already_dispatched`; `nothing_to_do`; exit 2 without a URL.
+- P42 expectations updated, each attributed to R42-3 or R42-6:
+  - `test_p14_priority_preview` (P4 had no before week);
+  - `test_p17_priority_delivery` (`priority_label`);
+  - `test_p12_board_vip` (P4/Q no auto-fill);
+  - `test_p14_vip_board`, `test_workspace_api` (new fields);
+  - `test_p18_whatif_chat` (`counts_toward_year`);
+  - `test_p32_r05_import_breakdowns` (queued rules);
+  - `test_p12_hub_filter`, `test_p13_region_filter`, `test_p13_slice_a` (new buckets and denominators);
+  - `test_p33_t12_gantt_workspace_fields` (gap fixtures avoid P4/Q);
+  - `test_client_2026_seed` (excluded 109 → 181, no_leader 21 → 17);
+  - `test_seed_scripts` (summary 221 → 149 counting + 72 not scheduled).
+- `test_openapi_frontend_contract`:
+  - every new field is listed in `_PENDING_FRONTEND_FIELDS` with reason P42-T04, so P42-T04 removes the entries
+    as it mirrors them;
+  - the §7 nullability check honours the pending list.
+- Backend suite (excluding `tests/scheduling`):
+  - baseline before my changes: 89 failed;
+  - after: see the final line below;
+  - the remaining failures are not P42: `test_migrations` table count 38 vs 42 (P38/P41 tables),
+    `test_p27_render_csp` (frontend build), and the contract test `PlanWeek` interface (P37 frontend).
+- ruff check is clean on every touched file. mypy reports no new errors on the touched files; the ones left are
+  pre-existing (`dashboard._has_stage_progress`, `export_builder` WriteOnlyCell, seed `dict` generics).
+
+**Next:**
+- P42-T04 (frontend-builder) builds from `docs/API_CONTRACT_P42.md` and removes the `_P42` pending entries.
+- At rollout: `alembic upgrade head`, then `python -m scripts.p42_band_rules_run`.
+- P42-T05 re-runs the P41 import reconciliation (MEMORY P41 workflow leg).
+
+---
+
+## [2026-11-17] P40-T03d re-audit — register-edits current step clears pins (P40-R01) — workflow-auditor: PASS
+
+**Scope.** This re-runs only the step that FAILed in P40-T03d: R40-4 / I46(c)(e) through `POST /projects/register-edits`.
+The rest of the T03d audit stands.
+
+**Setup.**
+- Code: a snapshot of the working tree at `e688424` plus the uncommitted P40-R01 change (`register_steps.py` sha256
+  `008e7213…`).
+- Database: a read-only `pg_dump` of the shared dev DB, restored into a throwaway `postgres:17` container on :55433 and
+  migrated to `p35b_step_excluded`. The dump was restored fresh for each pass.
+- Redis pointed at a dead port, with inline greedy.
+- The container, the dump and the code snapshot (which held a `.env` copy) were removed afterwards. The scripts are in the
+  session scratchpad `r01/`.
+- **Shared dev DB at :5433, confirmed read-only before and after:** `alembic_version = p41a_import_format_and_scenarios`,
+  0 `manual_*_week` columns, 14 runs. So the stale 83ebb913 PDD-K (45, 45) pin reported in T03d existed only in the T03d
+  disposable copy, which is gone. Nothing needs repairing on the dev DB. A database migrated to p40a starts with every
+  pin null.
+
+**Scenario.** Project 83ebb913 at CW 42. Its non-skipped steps are A, E, H, K, L and N; B, C, D, F, G, I, J and M are
+skipped. The pin write correctly refused M and J with 409 STEP_SKIPPED, nothing saved.
+- Pins written through the real `PUT /gantt/step-pins` (Admin): E 43–44, K 47, L 48–49, N 50, plus a control pin on
+  a40fd218 E 51–52. Result: 200, one `step_pin` run, 5 `project.step_pinned` rows.
+- **Current step → PDD-H** (passes pinned E):
+  - E goes Not Started → Done with its pin null;
+  - exactly one `project.step_pin_cleared` row: `cause = stage_started`, before {E, Not Started, 43, 44}, after
+    {Done, null, null};
+  - a `project.current_step_set` row; no `project.step_pinned` row;
+  - the pins on K, L and N survive (still Not Started);
+  - exactly one `register_edit` run.
+- **Current step → PDD-L** (passes pinned K, lands on pinned L):
+  - K → Done and L → In Progress, both pins null;
+  - exactly one `stage_started` clear row each for K and L, and no other pin row;
+  - N survives;
+  - one run.
+- **Backward move, current step → PDD-A:**
+  - E, K and L return to Not Started with null pins: nothing is resurrected;
+  - no pin audit row;
+  - N and the control pin are untouched;
+  - live pins equal exactly {83ebb913 N, a40fd218 E};
+  - one run.
+- **I46(e) scan** (half-null pairs, outside 1..52, `me < ms`, or a pin on a step that is not Not Started): empty after
+  every step and at the end.
+
+**Runs after each step** (v15–v18 greedy, v19 CP-SAT, v20 after clear-all). Each run was checked as soon as it completed
+(against the live state it was solved from), in three ways:
+- the independent T03d checker: I45, I47(a), I47(b) (I3/I15/I27/I28), amended I1/I2 (I47(d)), I21 and I22;
+- persisted rows compared with a fresh in-memory solve;
+- `validate_invariants`.
+
+Results: 0 violations, 0 differences and 0 violations in every run.
+- The final greedy run's pinned rows are exactly N 50–50 and the control 51–52.
+- **I47(c):** greedy and CP-SAT give identical pinned rows (window, duration, engineer, chamber) and identical
+  `pin_lapsed`. The only difference is `manual_overlap` on a40fd218 E (greedy false, CP-SAT true). That is the open
+  choice I47(c) allows: each solver evaluates (a) on its own rows, and the independent checker confirms both.
+- **I48(b):** durations are identical with and without pins on all 1955 common rows.
+- **I48(a):** after clear-all through the API (one run), the live input equals `without_pins(input)` under
+  `priority_preview._canonical`. The raw `canonical_schedule_input_asdict` differs only in project list order, as noted in
+  T03d. The fresh greedy output is byte-identical to the pin-free solve.
+- **I48(d):** no pin changed on a frozen project.
+
+**Checker false positive, recorded so it is not re-raised.** On the first pass, my checker reported I2 on IN-CH3 W42 (3
+rows against max 2). The rows were 83ebb913 PDD-H, newly In Progress and shown 42–48 for duration 6, plus two other In
+Progress rows.
+- The same finding reproduced with no pins at all, so it is neither P40- nor R01-caused.
+- The cause was my checker counting the whole displayed window. Under DOMAIN_RULES progress, only the In-Progress tail
+  `[end − remaining + 1 .. end]` books, which here is 43–48. `validate_invariants.effective_weeks` already does this.
+- After the checker was fixed, IN-CH3 never exceeds 2.
+- It is not a product defect.
+
+**Stage-writer grep-audit** (backend `api/`, `services/`, `workers/`, `scripts/`, `seed/`):
+- Only three code paths write a live step's stage: `api/routers/workspace.py` (stage PATCH, l.316),
+  `api/routers/checkins.py` (l.419) and `services/register_steps.py` (l.504). All three call `clear_pin_if_started`.
+- `services/project_steps.py` only inserts Not Started rows and refuses a re-point once a stage has started. Its re-point
+  clears with `workflow_change`.
+- `schedule_persistence` bulk updates write only `planned_*` / `eng_conflict` / `chamber_overlap`, which is I46(a).
+  `workflow_durations` writes only `duration_weeks`.
+- The seed inserts fresh rows. The other `status=` hits are read-model DTOs.
+- No further writer needs remediation.
+
+**Not re-checked:** the browser side (unchanged by R01), and the R01 pytest file (the builder ran it; I did not, to avoid any
+test-DB ambiguity).
+
+**Result: PASS.** P40-T03d and P40-R01 are marked DONE in IMPLEMENTATION_PLAN.
+
+**Next:** P40-T04 gate (qa, workflow, security).

@@ -71,6 +71,7 @@ from services.project_effort import (
     rederive_project_effort,
     split_rejected_error,
 )
+from services.step_pin_clear import clear_pin_if_started
 from services.workspace import (
     merge_stage_update,
     row_effective_weeks,
@@ -492,8 +493,17 @@ async def apply_current_step(
     started_flip = False
     for row, merged in planned:
         was_started = row.status != WorkflowStepStatus.NOT_STARTED
+        stage_before = row.status
         for name, value in merged.items():
             setattr(row, name, value)
+        # P40-R01 (ADR 0054 R40-4, I46 (c)(e)): a stage leaving Not Started
+        # loses its pin, in this transaction, under the caller's R35-10
+        # project row lock; one `project.step_pin_cleared` audit row per
+        # cleared pin (cause `stage_started`). A no-op for rows that stay or
+        # return to Not Started, so a later backward move cannot revive a pin.
+        clear_pin_if_started(
+            db, project, row, stage_before=stage_before, actor_user_id=actor_user_id
+        )
         started_flip |= was_started != (row.status != WorkflowStepStatus.NOT_STARTED)
     project.schedule_stale = True
     await db.flush()
