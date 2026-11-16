@@ -86,13 +86,13 @@ describe('PortfolioAnalytics', () => {
     expect(screen.getByRole('heading', { name: 'Outcomes by hub' })).toBeInTheDocument();
   });
 
-  it('headline per band is "<within_year> of <total> finishing this year" plus the served share', () => {
+  it('headline per band is "<within_year> finishing this year · <counting_total> counted" plus the served share (P42, never "of M")', () => {
     renderWithProviders(<PortfolioAnalytics rows={[row('a')]} priorityDelivery={BANDS_SHARED} />);
     const p1 = screen.getByTestId('priority-band-P1');
-    expect(p1).toHaveTextContent('19 of 25 finishing this year');
+    expect(p1).toHaveTextContent('19 finishing this year · 25 counted');
     expect(p1).toHaveTextContent('76%');
-    expect(p1).toHaveTextContent('In flight: 12 of 12 · Not started: 7 of 13');
-    expect(p1).toHaveAccessibleName('P1: 19 of 25 finishing this year; in flight 12 of 12; not started 7 of 13');
+    expect(p1).toHaveTextContent('In flight: 12 finishing, 0 not · Not started: 7 finishing, 6 not');
+    expect(p1).toHaveAccessibleName('P1: 19 finishing this year · 25 counted; in flight 12 finishing, 0 not; not started 7 finishing, 6 not');
   });
 
   it('never prints "0 of 0" or a bare dash; omits parts whose total is 0', () => {
@@ -101,11 +101,11 @@ describe('PortfolioAnalytics', () => {
     expect(card).not.toHaveTextContent('0 of 0');
     expect(card.textContent).not.toMatch(/(^|\s)[–-](\s|$)/);
     const p3 = screen.getByTestId('priority-band-P3');
-    expect(p3).toHaveTextContent('In flight: 92 of 94');
+    expect(p3).toHaveTextContent('In flight: 92 finishing, 2 not');
     expect(p3).not.toHaveTextContent('Not started');
     const p4 = screen.getByTestId('priority-band-P4');
     expect(p4).not.toHaveTextContent('In flight');
-    expect(p4).toHaveTextContent('Not started: 26 of 68 · Already delivered: 17 · Not in plan: 43');
+    expect(p4).toHaveTextContent('Not started: 26 finishing, 42 not · Already delivered: 17 · Not in plan: 43');
   });
 
   it('sizes the stacked segments from the served counts, and they add up to the band total', () => {
@@ -159,8 +159,8 @@ describe('PortfolioAnalytics', () => {
   it('renders a hub-filtered payload (fewer bands) without the unfiltered ones', () => {
     const filtered = [band('P1', { total: 3, within_year: 3, within_year_share_pct: 100, in_flight_total: 3, in_flight_within_year: 3, in_flight_within_year_share_pct: 100 }), band('P2'), band('P3'), band('P4'), band('Q')];
     renderWithProviders(<PortfolioAnalytics rows={[row('a')]} priorityDelivery={filtered} />);
-    expect(screen.getByTestId('priority-band-P1')).toHaveTextContent('3 of 3 finishing this year');
-    expect(screen.getByTestId('priority-band-P1')).toHaveTextContent('In flight: 3 of 3');
+    expect(screen.getByTestId('priority-band-P1')).toHaveTextContent('3 finishing this year · 3 counted');
+    expect(screen.getByTestId('priority-band-P1')).toHaveTextContent('In flight: 3 finishing, 0 not');
     expect(screen.queryByRole('listitem', { name: /^P3: / })).not.toBeInTheDocument();
   });
 

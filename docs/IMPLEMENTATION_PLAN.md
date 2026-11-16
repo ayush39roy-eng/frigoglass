@@ -2610,5 +2610,5 @@ Opened 2026-11-17 (owner request).
 | P42-T01 | Ruling on ADR 0056 D1–D6 (frozen P4, CP-SAT weight, impact map of every "schedulable" site, invariants) | workflow-auditor | — | ruling R42-n in MEMORY | DONE (MEMORY 2026-11-17 P42-T01, R42-1..R42-12) |
 | P42-T02 | Scheduler: P4/Q exclusion + `not_scheduled_priority`, `counts_toward_year`, CP-SAT prepare_run, What-if / plan import, validator invariants; tests | algorithm-engineer | T01 | selftests + pytest green; MEMORY entry | DONE (MEMORY 2026-11-17 P42-T02) |
 | P42-T03 | Backend: band labels served, KPI / dashboard / executive / capacity demand per ruling, persistence of new result fields (migration if needed), contract `docs/API_CONTRACT_P42.md`; tests | backend-builder | T01, T02 types | pytest green, ruff/mypy clean; MEMORY entry | DONE (MEMORY 2026-11-17 P42-T03) |
-| P42-T04 | Frontend: band labels, "Queued" / "Not scheduled (P4)" display, KPI copy, priority-move preview copy; tests | frontend-builder | T03 contract | tsc, eslint, vitest green; MEMORY entry | TODO |
-| P42-T05 | Gate: qa, workflow, security | three gatekeepers | T02–T04 | three PASSes | TODO |
+| P42-T04 | Frontend: band labels, "Queued" / "Not scheduled (P4)" display, KPI copy, priority-move preview copy; tests | frontend-builder | T03 contract | tsc, eslint, vitest green; MEMORY entry | DONE (MEMORY 2026-11-17 P42-T04) |
+| P42-T05 | Gate: qa, workflow, security | three gatekeepers | T02–T04 | three PASSes | DONE (MEMORY 2026-11-17 P42-T05: qa, workflow, security PASS) |

@@ -184,12 +184,12 @@ describe('PriorityDeliveryChart', () => {
     );
     const card = screen.getByTestId('exec-priority-delivery');
     const list = within(card).getByRole('list', { name: 'Delivery by priority band' });
-    expect(list).toHaveTextContent('P1: 12 of 34 within the year (35%)');
+    expect(list).toHaveTextContent('P1 (Must do this year): 12 within the year, 34 counted (35%)');
     expect(list).toHaveTextContent('in flight 59%');
     expect(list).toHaveTextContent('not started 24%');
     expect(list).toHaveTextContent('delivered 6%');
     expect(list).toHaveTextContent('not in plan 12%');
-    expect(list).toHaveTextContent('Q: 1 of 10 within the year (10%)');
+    expect(list).toHaveTextContent('Q (Unprioritised): 1 within the year, 10 counted (10%)');
   });
 
   it('hides empty bands and says so when none remain', () => {

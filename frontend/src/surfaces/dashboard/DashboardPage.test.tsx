@@ -351,16 +351,16 @@ describe('DashboardPage — P17-R05 layout and scheduled-count labelling', () =>
     expect(follows(statusHeading, screen.getByText('Project pipeline summary: Hub × Type'))).toBe(true);
   });
 
-  it('labels the header chip "scheduled", never "projects", and explains the gap from the served figures', async () => {
+  it('labels the header chip "counted" (P42), never "projects", and explains the gap from the served figures', async () => {
     readyAll();
     renderWithProviders(<DashboardPage />);
     const chip = screen.getByTestId('dashboard-total-projects');
     expect(chip).toHaveTextContent('16');
-    expect(chip).toHaveTextContent(/scheduled/i);
+    expect(chip).toHaveTextContent(/counted/i);
     expect(chip).not.toHaveTextContent(/projects/i);
     await userEvent.click(within(chip).getByRole('button', { name: /scheduled project count/i }));
     expect(await screen.findByTestId('scheduled-count-note')).toHaveTextContent(
-      '16 projects are planned in the active schedule run. The pipeline total is 239. Cancelled (29) and paused (status On Hold) (2) projects are not scheduled.',
+      '16 projects are counted this year in the active schedule run. Year figures count P1, P2 and started P3 only; queued P3 and P4 projects are not counted. The pipeline total is 239. Cancelled (29) and paused (status On Hold) (2) projects are not scheduled.',
     );
   });
 
@@ -376,10 +376,10 @@ describe('DashboardPage — P17-R05 layout and scheduled-count labelling', () =>
     expect(screen.queryByRole('group', { name: 'On Hold' })).not.toBeInTheDocument();
   });
 
-  it('labels the Completing-within-the-year badge "N scheduled of <pipeline total>" and the pipeline Total separately', () => {
+  it('labels the Completing-within-the-year badge "N counted this year" (P42, never "of M") and the pipeline Total separately', () => {
     readyAll();
     renderWithProviders(<DashboardPage />);
-    expect(screen.getByTestId('within-year-total-projects')).toHaveTextContent('16 scheduled of 239');
+    expect(screen.getByTestId('within-year-total-projects')).toHaveTextContent('16 counted this year');
     expect(screen.queryByText(/\d total projects$/)).not.toBeInTheDocument();
     const total = screen.getByRole('region', { name: 'Total projects' });
     expect(within(total).getByTestId('pipeline-count-total')).toHaveTextContent('239');

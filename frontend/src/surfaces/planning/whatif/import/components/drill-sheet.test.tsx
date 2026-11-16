@@ -202,7 +202,8 @@ describe('P32-R07 drill-down sheet', () => {
     renderWithProviders(<ImportPlanView />);
     await screen.findByTestId('import-compare');
     const cells = screen.getAllByTestId(/^compare-drill-/);
-    expect(cells.length).toBe(22);
+    // P42: two more key figures (queued, not scheduled) for both scenarios.
+    expect(cells.length).toBe(26);
     for (const c of cells) {
       const shown = displayed(c);
       const read = await openRead(c);

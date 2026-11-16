@@ -81,6 +81,9 @@ describe('Delivery by priority: segment label contrast (QA-F23-1, WCAG AA 4.5:1)
       'bg-warning/40',
       'bg-primary',
       'bg-border-strong',
+      // P42 (ADR 0056): served apart, not counted this year.
+      'bg-primary/25',
+      'bg-border',
     ]);
     // No segment hard-codes white any more.
     expect(DELIVERY_SEGMENTS.some((s) => s.ink === 'text-white')).toBe(false);

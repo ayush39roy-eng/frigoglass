@@ -146,7 +146,7 @@ describe('ExecKpiStrip (P28, ADR 0039 §3 + addenda)', () => {
     }
     const scheduled = within(screen.getByTestId('exec-kpi-scheduled'));
     expect(scheduled.getByTestId('exec-kpi-tile-label')).toHaveTextContent(/^Counted this year$/);
-    expect(scheduled.getByTestId('exec-kpi-tile-figure-line')).toHaveTextContent(/^5$/);
+    expect(scheduled.getByTestId('exec-kpi-tile-figure-line')).toHaveTextContent(/^5—$/); // no badge: the tile's empty badge slot
   });
 
   it('each run tile is a button that opens the dialog with exactly its served rows', async () => {

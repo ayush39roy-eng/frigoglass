@@ -19,6 +19,7 @@ import { HubRankList } from './hub-rank-list';
 import { PipelineRow } from './pipeline-row';
 import { ProjectListProvider, type ProjectListScope } from './project-list-dialog';
 import { StatusOverviewCards } from './status-overview-cards';
+import { servedRow } from '@/surfaces/dashboard/test-fixtures';
 
 // P37: year labels come from the served /me.plan_year (test session fixture).
 const CARRY_OVER_YEAR = TEST_PLAN_YEAR - 1;
@@ -257,12 +258,15 @@ describe('selectOutcomeRows past_year', () => {
       left_out: false,
       blocked: false,
     } as const;
-    const rows = [
-      { ...base, project_id: 'a', project_name: 'a', within_year: true },
-      { ...base, project_id: 'b', project_name: 'b', spillover: true },
-      { ...base, project_id: 'c', project_name: 'c', left_out: true },
-      { ...base, project_id: 'd', project_name: 'd', left_out: true, blocked: true },
-    ] as CompletingWithinYearRow[];
+    // P42: the served bucket (`outcome`) is filled as the server would.
+    const rows = (
+      [
+        { ...base, project_id: 'a', project_name: 'a', within_year: true },
+        { ...base, project_id: 'b', project_name: 'b', spillover: true },
+        { ...base, project_id: 'c', project_name: 'c', left_out: true },
+        { ...base, project_id: 'd', project_name: 'd', left_out: true, blocked: true },
+      ] as CompletingWithinYearRow[]
+    ).map((r) => servedRow(r)); // the literals carry no `outcome`, so servedRow derives it
     expect(selectOutcomeRows(rows, 'past_year').map((r) => r.project_id)).toEqual(['b', 'c']);
   });
 });

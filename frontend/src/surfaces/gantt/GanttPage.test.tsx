@@ -556,11 +556,11 @@ describe('GanttPage', () => {
       await user.click(screen.getByRole('combobox', { name: 'Sort' }));
       await user.click(await screen.findByRole('option', { name: 'End week' }));
       await user.click(screen.getByRole('button', { name: 'Priority' }));
-      await user.click(await screen.findByRole('option', { name: 'In Queue' }));
+      await user.click(await screen.findByRole('option', { name: 'Q' }));
       await user.click(screen.getByRole('option', { name: 'P1' }));
       expect(screen.getByRole('option', { name: 'All priorities' })).toHaveAttribute('aria-selected', 'false');
       await user.keyboard('{Escape}');
-      expect(screen.getByRole('button', { name: 'Priority' })).toHaveAccessibleDescription('P1, Queue');
+      expect(screen.getByRole('button', { name: 'Priority' })).toHaveAccessibleDescription('P1, Q');
       expect(hooks.useGantt).toHaveBeenLastCalledWith({
         includeUnplaced: true, // P40-T03c
         // Option order, whatever the press order.

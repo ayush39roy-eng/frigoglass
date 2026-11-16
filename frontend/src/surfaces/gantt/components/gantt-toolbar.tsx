@@ -1,3 +1,4 @@
+import { priorityBandName } from '@/components/shared/priority-band-meta';
 import * as React from 'react';
 import { BarChart3, ChevronsDownUp, ChevronsUpDown, FilterX, Search, Trees } from 'lucide-react';
 
@@ -51,7 +52,7 @@ const PRIORITY_OPTIONS: { value: ProjectPriority; label: string }[] = [
   { value: 'P2', label: 'P2' },
   { value: 'P3', label: 'P3' },
   { value: 'P4', label: 'P4' },
-  { value: 'Q', label: 'In Queue' },
+  { value: 'Q', label: priorityBandName('Q') },
 ];
 
 const STATUS_OPTIONS = UI_PROJECT_STATUSES.map((s) => ({ value: s, label: s }));
@@ -193,7 +194,7 @@ export function GanttFilterBar({
         value={filters.priority}
         onChange={(v) => set('priority', v)}
         options={PRIORITY_OPTIONS}
-        summarize={(sel) => sel.map((o) => (o.value === 'Q' ? 'Queue' : o.value)).join(', ')}
+        summarize={(sel) => sel.map((o) => o.value).join(', ')}
         triggerClassName={TRIGGER}
         data-testid="gantt-priority-filter"
       />

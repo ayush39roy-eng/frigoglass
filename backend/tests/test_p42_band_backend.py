@@ -421,6 +421,15 @@ async def test_reference_priorities_serves_labels(db_session: AsyncSession) -> N
     ]
 
 
+async def test_reference_priorities_requires_authentication(db_session: AsyncSession) -> None:
+    """P42-T05 / S42-L1: no principal (no token) is 401, as for every reference route."""
+
+    clear_current_principal_override()
+    async with client_for(db_session) as client:
+        resp = await client.get("/reference/priorities")
+    assert resp.status_code == 401
+
+
 async def test_priority_board_columns_labels_and_queued_badge(db_session: AsyncSession) -> None:
     run, projects = await _hand_built(db_session)
     await act_as(db_session, RoleName.PORTFOLIO_MANAGER)

@@ -245,7 +245,7 @@ describe('P42 portfolio analytics', () => {
     const band = screen.getByTestId('priority-band-P3');
     expect(band).toHaveTextContent('P3 · In queue');
     expect(band).toHaveTextContent('2 finishing this year · 3 counted');
-    expect(band).toHaveTextContent('66.67');
+    expect(band).toHaveTextContent('67%');
     expect(band.querySelector('[data-segment="queued"]')).toHaveAttribute('data-count', '6');
     expect(band.querySelector('[data-segment="not_scheduled"]')).toHaveAttribute('data-count', '1');
     // A queued project is never "not started, not finishing".

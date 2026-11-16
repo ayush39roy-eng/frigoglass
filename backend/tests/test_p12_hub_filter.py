@@ -125,12 +125,24 @@ def _zeroed(path: str, body) -> None:
     elif path == "/dashboard/completing-within-year":
         assert (body["within_year_count"], body["spillover_count"], body["left_out_count"],
                 body["blocked_count"], body["rows"]) == (0, 0, 0, 0, [])
+        # P42-T05 / S42-L1 (ADR 0056 R42-6): the new served counts never leak scope.
+        assert (body["queued_count"], body["not_scheduled_priority_count"],
+                body["excluded_count"], body["counting_outcome_count"]) == (0, 0, 0, 0)
+        assert all(
+            (r["queued_count"], r["not_scheduled_priority_count"]) == (0, 0)
+            for r in body["regions"]
+        )
     elif path == "/dashboard/projects":
         assert body == {"total_count": 0, "rows": []}
     elif path in ("/capacity/hubs", "/capacity/hub-load"):
         assert body["rows"] == [] and body["areas"] == []
     elif path == "/capacity/class-breakdown":
         assert all(r["deliverable_count"] == 0 and r["left_out_count"] == 0 for r in body["rows"])
+        # P42-T05 / S42-L1: the class breakdown's non-counting counts are scoped too.
+        assert all(
+            r["queued_count"] == 0 and r["not_scheduled_priority_count"] == 0
+            for r in body["rows"]
+        )
     elif path == "/capacity/utilization-matrix":
         assert body["engineers"] == [] and body["chambers"] == []
     elif path == "/priorities/summary":
@@ -179,6 +191,37 @@ def _without_selected_member(body):
         ]
         return {**body, "rows": rows}
     return body
+
+
+async def test_p42_counts_are_non_zero_in_scope_and_zero_out_of_scope(db_session):
+    """P42-T05 / S42-L1: the zero answer for an out-of-scope hub is not vacuous —
+    the same seed serves non-zero queued / not-scheduled / excluded / counting
+    figures to an all-hubs reader, and a Hub Planner asking for another hub
+    gets 0 for every one of them."""
+
+    w = await _seeded(db_session)
+    greece, india = w.hubs["R&D-Greece"], w.hubs["PD-India"]
+    await _act_as(db_session, RoleName.PORTFOLIO_MANAGER)
+    async with _client(db_session) as client:
+        everything = await _get(client, "/dashboard/completing-within-year")
+    for key in (
+        "queued_count",
+        "not_scheduled_priority_count",
+        "excluded_count",
+        "counting_outcome_count",
+    ):
+        assert everything[key] > 0, key
+    clear_current_principal_override()
+    await _act_as(db_session, RoleName.HUB_PLANNER, hub_ids=[greece.id])
+    async with _client(db_session) as client:
+        _zeroed(
+            "/dashboard/completing-within-year",
+            await _get(client, "/dashboard/completing-within-year", hub_id=india.id),
+        )
+        _zeroed(
+            "/capacity/class-breakdown",
+            await _get(client, "/capacity/class-breakdown", hub_id=india.id),
+        )
 
 
 async def test_unknown_hub_gives_zeros_for_an_all_hubs_reader(db_session):

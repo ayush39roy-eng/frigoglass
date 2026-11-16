@@ -42010,3 +42010,424 @@ The re-run follows the FAIL above, after P40-F01 (security follow-ups) and P40-R
   - the rate limiter counts per process (known).
 
 **Gate:** P40 closes. P40-T04 is DONE.
+
+## [2026-11-17] P42-T04 — frontend side of ADR 0056 (R42-1, R42-6, R42-7, R42-8): band labels, Queued / Not scheduled (P4), served year basis — frontend-builder: DONE
+
+Built from `docs/API_CONTRACT_P42.md`, DOMAIN_RULES "Priority band meaning" and ruling P42-T01. No business logic in
+the browser. Every new count, share and bucket is a served field (I9, I53). Not committed. Another session was editing
+Gantt / Projects / Capacity files at the same time; none of its changes were reverted.
+
+**Shared.**
+- `types/enums.ts`:
+  - `PRIORITY_LABELS` mirrors the served `GET /reference/priorities` labels. It is pinned against
+    `domain_constants.PRIORITY_LABELS` by the new `test_priority_labels_mirror_p42`.
+  - `SCHEDULE_OUTCOMES` / `ScheduleOutcome` is the served six-bucket type; `NonCountingOutcome` is new.
+- `priority-band-meta.ts`:
+  - `priorityBandName()` returns "P1 · Must do this year". Q is shown as "Q".
+  - The pill tooltip reads "Priority band P1 — Must do this year".
+- `lib/api/reference.ts` gains `PriorityBandRead` and `fetchPriorityBands`. These are mapped `exact` in the contract
+  table.
+- `schedule-outcome-meta.ts` gains `BAND_OUTCOME_META` (QUEUED / NOT_SCHEDULED_PRIORITY), `nonCountingOutcome()` and
+  `servedNonCountingOutcome()`, which reads the stored flags only.
+- `project-outcome-chips.tsx`:
+  - new `BandOutcomeChip`, which prints the served `outcome_label` verbatim;
+  - `ProjectedFinishChip` takes `outcome` / `outcomeLabel`, so a queued or P4 project is never "Past W52 → spillover".
+
+**Surfaces.**
+- **Priority selects** show band labels:
+  - the move control dropdown;
+  - the Registration form select.
+  - The Projects page filter still shows codes. It was left alone because another session is editing that page.
+- **Priority board:**
+  - column header = served `label` (Q = "Q");
+  - "Not scheduled" note on P4 / Q columns;
+  - served "N queued" count;
+  - "Queued" badge on cards with served `queued` (R42-7);
+  - the card finish chip shows the served `outcome_label`.
+  - `DisplayColumn` carries `label`, `not_scheduled` and `queued_count`.
+- **Priority-move preview:**
+  - the served `effect_label` appears as "This project leaves the plan." or "This project joins the queue — not
+    counted this year.";
+  - the within-year chips are hidden for that move;
+  - a pushed-out row requires `counts_toward_year_after !== false`.
+- **"Timeline updated":** `bandEffectOfChange()` reads the run's stored before / after flags and shows "Leaves the
+  plan", "Joins the queue — not counted this year" or "Is back in the plan". Within-year / unplaced flips are hidden
+  when the project stops counting.
+- **Dashboard:**
+  - `lib/outcome.ts::outcomeOf` reads the served `row.outcome`. The browser no longer applies a flag precedence.
+  - `outcomeTotal` is `counting_outcome_count`.
+  - `withinYearSharePct` is the rounded served `within_year_share_pct`. The gauge's lit segments follow it.
+  - The header chip and the within-year badge read "N counted this year". The "scheduled of <pipeline>" text is
+    removed (never "of M").
+  - New `YearBasisNote` says "Year figures count P1, P2 and started P3 only. Not counted: Queued P3 n · Not scheduled
+    (P4) m". Both counts are served and clickable (the KPI dialog gains `queued` / `not_scheduled` buckets).
+  - Delivery by priority:
+    - "not finishing" now uses the served counting totals;
+    - new served `queued` and `not_scheduled` segments (contrast test extended);
+    - band label on each row;
+    - headline "x finishing this year · y counted".
+  - Outcomes by hub stacks counted rows only.
+  - Completing hub × type titles show counted / pipeline.
+- **Executive:**
+  - the "Counted this year" tile replaces "Scheduled" and drops its "of 253" badge;
+  - the strip shows the same `YearBasisNote`;
+  - risks leave out non-counting rows: blocked by served bucket, overdue with `counts_toward_year === false` skipped,
+    and VIP with `counts_toward_year === false` skipped;
+  - the priority chart prints within / `counting_total`.
+- **Capacity:**
+  - class cards show "Not counted this year: Queued n · Not scheduled (P4) m";
+  - split captions use the served `priority_bucket_labels`;
+  - the load-chart legend shows "Q", not "Queue".
+- **Gantt:**
+  - a `BandOutcomeChip` replaces the left-out chip for QUEUED / NOT_SCHEDULED_PRIORITY;
+  - narrow-layout status words use `outcome_label`;
+  - no spillover marker when `counts_toward_year === false`;
+  - the legend gains two entries.
+- **Workspace:**
+  - the header shows a `BandOutcomeChip` next to the unchanged health badge;
+  - the completion strip uses `outcome_label` when there is no projected week.
+- **What-if / import:**
+  - `WhatIfOutcome` gains `queued` and `not_scheduled_priority`, with labels "Queued (not counted)" and "Not
+    scheduled (P4)";
+  - the import zod schema accepts the new classes, the optional P42 KPI / breakdown counts and the project flags. A
+    pre-P42 stored response still validates.
+  - Year blocks follow the served C1 rule: a queued project goes by its finish week, or to `not_placed` with no slot;
+    a P4 project appears only in `all`.
+  - Compare gains two rows. The executive donut and the import Gantt label the new classes.
+- **Apply Logic result** shows the served queued and not-scheduled counts.
+
+**Contract test.**
+- `_PENDING_FRONTEND_FIELDS` is empty again.
+- `PriorityBandRead` is mapped.
+- `test_priority_labels_mirror_p42` is added.
+- Result: 267 passed, 1 failed. The failure is the pre-existing P37 `PlanWeek` in `lib/api/session.ts`, which is not
+  P42.
+
+**Tests.**
+- New:
+  - `components/shared/p42-band-outcomes.test.tsx` (labels, chips, flag helpers, axe);
+  - `components/shared/priority-move/p42-move-effect.test.tsx` (preview "leaves the plan" / "joins the queue",
+    timeline chips, `bandEffectOfChange`, axe);
+  - `surfaces/priority-board/components/p42-board-band.test.tsx` (headers, Q, Not scheduled, Queued badge, axe);
+  - `surfaces/dashboard/p42-dashboard-counts.test.tsx` (served bucket, served denominator / share, year-basis note
+    and its dialog, Executive strip, risk exclusion, delivery segments, axe);
+  - `surfaces/gantt/components/p42-gantt-band.test.tsx`;
+  - `surfaces/planning/whatif/import/p42-year-blocks.test.ts`.
+- Fixtures:
+  - `surfaces/dashboard/test-fixtures.ts` gains `servedRow`, `servedCompleting`, `servedBand` and `servedRegion`.
+    These are test-only and fill P42 fields the way the server does.
+  - Capacity fixtures gain `PRIORITY_BUCKET_LABELS` and the class counts.
+  - Copy assertions were updated to the P42 wording (counted, no "of M").
+- Results:
+  - `tsc -b --noEmit` is clean.
+  - eslint on the touched directories: 0 errors. The 3 warnings are in untouched files (`engineer-utilization-heatmap`,
+    `project-list-dialog`).
+  - Full vitest: 2240 passed, 1 failed. The failure is `src/app/app.test.tsx` "navigates to the Project Execution
+    Timeline surface": Gantt "Zoom" slider not found. It was already failing in the baseline run and is not caused by
+    P42 (the concurrent Gantt work).
+
+**Open / for the gate.**
+- `regions[]` serves no per-country denominator. The per-country share is therefore the sum of that country's four
+  served counting buckets (`regionOutcomeTotal`), which is the same pattern as before P42. A served
+  `counting_outcome_count` / share on `DeliveryRegionRow` would remove this last browser division (backend follow-up,
+  optional).
+- The KPI dialog's outcome chip for a queued row reads "Queued (not counted)". `CompletingWithinYearRow` serves no
+  `outcome_label`, so the dialog does not compose "fits by W{n}".
+
+## [2026-11-17] P42-T05 — security-auditor gate
+
+**Verdict: PASS** (0 Critical, 0 High, 0 Medium, 1 Low, 5 Info). Scope: ADR 0056 / `docs/API_CONTRACT_P42.md`, the working tree, including the P42 files swept into `ed96e6f`. Read-only review. The only write is this entry.
+
+**What was checked and how**
+- **Migration `p42a_outcome_band_flags`.**
+  - The SQL is constant `sa.text`, and the only bound values are uuids, enum text and JSON.
+  - It does not interpolate.
+  - It only INSERTs into `audit_log_entries`. It does not touch, disable or drop the UPDATE/DELETE/TRUNCATE immutability triggers.
+  - Each audit row records the actor as null (system), the hub, priority, status and reason. It carries no financial or personal data.
+  - Downgrade drops only the two outcome columns. The audit rows stay.
+- **Rollout script `scripts/p42_band_rules_run`.**
+  - Only an operator with the DB URL can run it, read from `RPD_DATABASE_URL`. Nothing is stored in the repo, and the engine uses `hide_parameters=True`.
+  - It runs under the dispatch advisory lock and is idempotent (`already_dispatched` / `nothing_to_do`).
+  - It is greedy only. It never runs CP-SAT.
+  - It prints only the status, the count and the run id, and reads no financial field.
+- **`services/outcome_buckets.py`.** It is pure functions plus SQLAlchemy expressions. It builds no SQL strings.
+- **`GET /reference/priorities`.** Authentication comes from the router-level `Depends(get_current_principal)`. It serves only static constants, so nothing leaks.
+  - Probe: no token returns 401, and a garbage bearer token returns 401.
+- **Hub scoping of the new counts.**
+  - Code read:
+    - `completing-within-year`: all five new totals and `regions[]` are computed from rows that have already passed `_dashboard_filter`.
+    - `priority_delivery`: scoped the same way.
+    - `/analytics` `counting_count`: both statements are scoped.
+    - Class breakdown: uses `narrowed_hub_filter`.
+    - Board `queued_count`: counts only the visible cards.
+    - Import `scope_import_result`: hidden plan rows are filtered by `hub_ok` before `not_scheduled_priority` is counted.
+    - VIP board: linked projects appear only when in scope.
+  - Probe, as a Hub Planner for R&D-Greece with India data present: an out-of-scope `hub_id` gives every new count as 0, and every `regions[]`, `priority_delivery[]`, class-breakdown, board and analytics count as 0. A mixed `hub_id` list gives the same result as own scope. Own scope satisfies Σ six + `excluded_count` == own rows. The board's `queued_count` equals its visible queued cards.
+- **`outcome_label` and `effect_label`.**
+  - `outcome_label` is fixed server text, built only from the row's own stored flags and the `projected_end_week` that is already served.
+  - `effect_label` is computed from the moved project's own before/after flags only. The moved project is a hub-scoped lookup (probe: a Greece planner previewing an India project gets 403/404 with no `effect` in the body).
+  - `changes` and `hidden_count` still go through `diff_outcomes` and `project_row_scope`, as accepted at P14.
+  - Neither label leaks more than P14 / P36 already accepted.
+- **Logging, exports and secrets.**
+  - The P42 backend diff adds no logger lines. The script's prints are the only new output.
+  - The Gantt export, the scenario workbook and the Ask-agent context gain only boolean flags. No financial field is logged or exported.
+  - No secrets were found in the diff.
+  - No dependency manifest changed, so pip-audit / npm audit / Trivy have no new surface.
+- **Frontend.**
+  - There is no `dangerouslySetInnerHTML`, `innerHTML` or `insertAdjacentHTML` sink in the source (comments only).
+  - `outcome_label`, `effect_label` and `priority_label` are rendered as JSX text (`BandOutcomeChip`, `bandEffectSentence`, the board card, workspace header, completion strip, Gantt badges, the VIP link, executive charts).
+  - No served label reaches an ECharts HTML formatter.
+- **Tests.** `test_p42_band_backend.py` and `test_p42_migration_and_rollout.py` pass (24). The probe passes (3). The probe file is in the scratchpad only and is not committed.
+
+**Findings**
+
+| ID | Severity | Finding |
+|---|---|---|
+| S42-L1 | Low | The committed P42 suite has no negative tests: no 401 test for `/reference/priorities`, and no out-of-scope test for `queued_count` / `not_scheduled_priority_count` / `excluded_count` / `counting_outcome_count`. The `test_p12_hub_filter._zeroed` check for `/dashboard/completing-within-year` still asserts only the four old counts. Behaviour is correct (probe), but nothing guards against a regression. Recommendation: extend `_zeroed` with the four new counts and add a 401 case. Not gate-blocking. |
+| S42-I1 | Info | `/schedule-runs/{id}/changes` `hidden_count` now also counts out-of-scope projects that changed class only (I20). It is a count only, at the information level accepted at P14/P15. |
+| S42-I2 | Info | `/reference/priorities` is open to any authenticated principal, like `/hubs`. It serves static band metadata only. |
+| S42-I3 | Info | The p42a audit rows have a null actor (system migration), matching the P33 rollout precedent. They carry hub, priority and status only. |
+| S42-I4 | Info | Running the rollout script requires DB credentials (ops-only). It holds no HTTP surface and no in-repo secret. |
+| S42-I5 | Info | The frontend falls back to its own `BAND_EFFECT_COPY` keyed on the served `effect` enum when `effect_label` is null. It is constant text, so there is no injection path. |
+
+The OQ #8 (GDPR engineer utilization) sign-off restriction is unaffected. P42 touches no per-engineer data.
+
+---
+
+## [2026-11-17] P42-T05 — workflow-auditor gate
+
+**Verdict: PASS** (0 invariant failures, 0 reconciliation failures). Advisories A1–A4 below do not block. No feature
+code written, git not touched, live `rpd` DB never written.
+
+**Method.** I re-derived R42-3/R42-4/R42-6 from DOMAIN_RULES "Priority band meaning" in my own checker and did not
+reuse `outcome_buckets` or `invariants`. I then compared the checker against the stored rows, the fresh solves and
+the served endpoints.
+- **Disposable copy.** `createdb -T rpd` was blocked by 11 live connections, so I used `pg_dump | pg_restore` into
+  `rpd_p42audit` (rpd-pg-dev). It was at p41a, with active run v14 (greedy, W42). `alembic upgrade head` took it
+  p41a → p40a → p41b → p38a → p42a → p35b. p42a set `schedule_stale` on exactly the 72 P4 In Queue projects.
+- **Rollout.** `RPD_CURRENT_WEEK=42`, inline greedy, `python -m scripts.p42_band_rules_run`.
+  - The first attempt failed (`RPD_FIELD_ENCRYPTION_KEY` not set). That was my environment, not P42.
+  - I was refused permission to read the dev key from a running process. I did not look for it elsewhere. Instead,
+    on the copy only, I set `customer_name` (the only populated encrypted column) to NULL and used a throwaway
+    Fernet key.
+  - No module under `scheduling/` or on the run path reads financial fields (grep), so this cannot affect the
+    schedule.
+  - The rerun gave v16: `band_rules`, greedy, W42, COMPLETED, active. A third invocation returned
+    `already_dispatched`.
+  - The copy was dropped afterwards. Live `rpd` is still at p41a with 14 runs, and its `customer_name` data is
+    intact.
+
+**R42-10 predictions vs v16 (diff against pre-P42 v14), all confirmed:**
+- **72 `not_scheduled_priority`.** All are P4 In Queue. In v14 they were LO 61, SP 10 and WY 1.
+- **Outcomes.** WITHIN_YEAR 135 → 134, SPILLOVER 63 → 53, LEFT_OUT 74 → 13, BLOCKED 0, excluded 58.
+- **Share.** The counting denominator goes 272 → 200, so the within-year share goes **49.6% → 67.0%**.
+- **Step rows.** 2190 → 1955: exactly 235 rows left, all belonging to the 72 projects. Booked effort (Σ
+  `duration_weeks`): design 929 → 814, lab 715 → 692, matching R42-10 to the week.
+- **P1–P3 unchanged.** Every non-P4-In-Queue outcome row and step row is identical between v14 and v16, on all
+  fields except ids and the two new flags.
+
+**Invariants on v16 and on fresh solves of the copy's input (W42):**
+- **I49.** Every schedulable non-frozen P4/Q row has `excluded`, `nsp` and ¬counts, all flags false, no rows, every
+  week null and progress null. It is absent from `scheduling_order`. No other row has `nsp`. The 105 status-excluded
+  P4 rows have `nsp` = false and counts = true, and Commercialized rows are within-year (OQ #109 assumption). In a
+  synthetic portfolio, a started VIP P4 is also excluded.
+- **I50.** `counts_toward_year` equals my R42-4 on all 330 rows. `within_year`/`spillover` equal
+  counts ∧ scheduled ∧ (end + delay ≤ 52) on every non-excluded row. Stored v16 equals a fresh greedy solve on all
+  330 rows (flags, end, projected, row count).
+- **I51.** The (frozen, counts) key never decreases, and the full key down to status is monotone. This holds for
+  greedy and CP-SAT, on dev and on the synthetic portfolio.
+- **I52.** I ran my own X vs X⁻ comparison: 0 differing outcomes for greedy and for CP-SAT (same parameters,
+  FEASIBLE). It held on dev and on a synthetic X in which 20 P1/P2 In Queue projects became queued P3 (one of them
+  VIP). `check_band_neutrality` also returned no violations.
+- **Key 1a and the CP-SAT post-solve walk.**
+  - On the synthetic X, all 20 queued projects come last in both solvers.
+  - `num_queued_walked` = 20, and solvable = 100 (121 − 20 queued − 1 started P4).
+  - `_book_solved_placements` books the searched design/lab rows before the walk.
+  - Queued outcomes: 13 placed and 7 left out, the same in both solvers, never within or spillover.
+  - Independent capacity check: no engineer or chamber over-cell at week ≥ 42 in any run. The 77 engineer and 38
+    chamber over-cells are all before W42 (anchored history) and identical in v14 and v16.
+- **Frozen P4 booking.** By code reading, `is_not_scheduled_priority` requires ¬frozen, so a frozen P4 stays in
+  `ordered` and is walked first with counts = false. Dev has 0 frozen projects, so I relied on
+  `test_frozen_p4_books_capacity_and_never_counts` (both solvers). `test_p42_band_meaning.py`: 36 passed.
+- **`validate_invariants`.** 0 violations on dev greedy (live_state, determinism), dev CP-SAT, synthetic greedy and
+  synthetic CP-SAT.
+
+**Bucket order, I25 and I20:**
+- **Bucket order.** `outcome_buckets.outcome_bucket` follows R42-6 exactly. The browser reads the served
+  `row.outcome` (`dashboard/lib/outcome.ts`). There is no client-side comparison of P4/Q/In Queue that decides a
+  bucket.
+- **I25.** I25 remaining design = 352 = 688 (priority-blind) − 336 (the non-frozen P4 projects' own remaining
+  demand). Lab = 142.0 = 492.0 − 350.0. Full-year demand is unchanged. Served Σ `/capacity/hubs`
+  `design_load_remaining_weeks` = 352.
+- **I20.** `run_changes` compares both flags. `/schedule-runs/v16/changes?against=v14` returns exactly 72 rows,
+  exactly the NSP set, each carrying before/after `counts_toward_year` and `not_scheduled_priority`, with
+  `hidden_count` 0. No P1–P3 row appears.
+
+**Surface reconciliation against stored v16 rows** (real endpoints, Super Admin, all hubs):
+- **`/dashboard/completing-within-year`.** The served counts 134/53/13/0/0/72, plus 58 excluded, equal my stored
+  buckets. Σ six + excluded = 330, counting = 200, share 67.0. All 330 rows' outcome and flags match. `regions[]`
+  sums equal the totals.
+- **`/gantt`.** Paged to all 330 rows. Flags, outcome and projected week match on every row. "Not scheduled (P4)"
+  appears ×72. I23 holds: per-project `design_weeks`/`lab_weeks` equal Σ stored row effort on 330/330 rows.
+- **`/capacity/class-breakdown`.** Σ deliverable 136 = 83 schedulable WY + 53 SP; Σ left_out 13; Σ
+  `not_scheduled_priority_count` 72; Σ queued 0; the Queue bucket key is labelled "Q".
+- **`/dashboard/analytics`.** Σ completing 134 equals the WITHIN_YEAR bucket.
+
+**Greedy vs CP-SAT.** On dev's counting schedulable rows, greedy gives WY 83 / SP 53 / LO 13 and CP-SAT gives
+99 / 39 / 11. This is the optimiser's usual advantage. P42 does not cause it, because P4 is out of both models
+identically and I52 holds for both.
+
+**Advisories (non-blocking):**
+- **A1 (R42-1 copy, frontend, should be fixed before owner acceptance).** Band Q is still labelled in ways that
+  collide with P3 "In queue":
+  - `surfaces/gantt/components/gantt-toolbar.tsx:54` labels it "In Queue" in the Priority filter option list;
+  - line 196 of the same file summarises it as "Queue";
+  - `surfaces/priority-board/PriorityBoardPage.tsx:69` uses "Q (queue)" in screen-reader announcements.
+  - Fix: use "Q" or `priorityBandName`.
+- **A2 (I53 basis note).** `/dashboard/analytics` `counting_count` is the live pipeline minus the run's non-counting
+  rows: 258 on dev, which includes 58 status-excluded rows. Its `completing_pct` (134/258 = 51.9%) therefore differs
+  from the headline share (134/200 = 67.0%).
+  - It literally meets I53, since status-excluded rows count per R42-3, and the pipeline basis predates P42.
+  - However, a project registered after the run would enter the denominator with no stored row.
+  - Suggest a caption ("of pipeline") or a stored-row denominator in a later task.
+- **A3.** `priority_delivery` P4 shows `within_year` 51 (Commercialized) over `counting_total` 106 (it includes On
+  Hold and Cancelled). This is consistent with OQ #109's assumption. The owner should see it when answering #109.
+- **A4.** I did not use `createdb -T`: the live DB had open connections. Dump/restore was equivalent.
+
+**Gate: workflow leg PASS for P42.**
+
+## [2026-11-17] P42-T05 A1 — Q band copy
+
+Workflow-auditor advisory A1 is fixed. Priority band Q now shows as "Q" everywhere, so it no longer reads like the P3 label "In queue". Gantt toolbar: the Q filter option now uses `priorityBandName('Q')` and the selected-filter summary prints `o.value` (it used to say "Queue"). Priority Board: the screen-reader `columnName` now says "Q" (it used to say "Q (queue)"). The project status "In Queue" is unchanged. The capacity `Queue` wire key already displayed as "Q". Tests: in GanttPage.test.tsx the option name is now 'Q' and the summary is 'P1, Q'. tsc, eslint and vitest pass for gantt and priority-board (331 tests). Not committed.
+
+## [2026-11-17] P42-T05 — qa-inspector gate
+
+**Verdict: PASS.** ADR 0056 (priority band meaning, R42-1..R42-12) is tested and green. Every failing test is
+pre-existing or owned by another phase, and none touches a P42 file. Git not touched. No feature code written.
+
+**Runs.**
+- **Scheduling suite** (`python -m pytest -c pytest-scheduling.ini`): 810 passed, 0 failed. Coverage on
+  `backend/scheduling/` is **95.79%** (gate ≥ 85%). The first run gave 804; the extra 6 are my gap tests below.
+  P42 modules: greedy 93%, cp_sat 98%, invariants 94%, demand 99%, whatif 95%, plan_import 97%. The uncovered
+  greedy lines 1035-1094 are the pre-existing defensive "anchored step not pre-booked" paths, not P42 code.
+- **Backend suite** (`pytest tests --ignore=tests/scheduling`): 2719 passed, 4 failed. Coverage **97.55%**
+  (gate ≥ 70%). The 4 failures:
+  1. `test_migrations::test_migration_up_down_up_down_cycle`: table count 42 vs 38. Known. P38/P41 tables;
+     `p42a` adds two columns and no table.
+  2. `test_p27_render_csp`: the `frontend/index.html` inline-script hash differs from `render.yaml`. Known. Not a
+     P42 file.
+  3. `test_openapi_frontend_contract::test_every_p4_surface_types_file_is_covered`: `PlanWeek` in
+     `frontend/src/lib/api/session.ts`. Known, P37. The rest of the contract file is green (266 passed),
+     including `test_priority_labels_mirror_p42`, and `_PENDING_FRONTEND_FIELDS` is empty.
+  4. **Not on the known list:** `test_p20_fte_followups::test_gantt_step_row_contract`. The step row has
+     extra `pin_clearable` and `pin_lapsed`. These are P40-R02 per-step pin fields (commit 9564a3e,
+     `schemas/gantt.py:129-131`). The test's expected field set was not updated. **Owner: P40-R02
+     (backend-builder), not P42.** A rerun on the current tree still fails. Follow-up: add the two fields to
+     that test's expected set.
+- **Frontend.**
+  - `tsc -b --noEmit`: clean.
+  - eslint: 0 errors, 9 warnings. All are pre-existing `react-hooks/incompatible-library` or
+    `react-refresh/only-export-components` warnings in non-P42 files: routes, density-zone, audit-log-table,
+    engineer-utilization-heatmap, project-list-dialog and projects-table.
+  - vitest run 1: 2240 passed, 1 failed (272 files). The failure is the known `app.test.tsx` "Project Execution
+    Timeline" case: `slider "Zoom"` not found. No non-test source declares a Zoom slider any more, because the
+    concurrent Gantt "compact filters" work (ed96e6f) removed it. Not P42.
+  - vitest run 2 (with coverage): 2239 passed, 2 failed. The second failure was `GanttPage.test.tsx` P13-T13
+    toolbar, which expected "P1, Queue" and received "P1, Q". The concurrent session was editing
+    `gantt-toolbar.tsx` and its test during my run (the Gantt priority Q label, in line with R42-1). A rerun of
+    that file gave 35/35. Transient.
+  - Frontend coverage: statements 89.82%, branches 81.35%, functions 89.19%, lines 91.74% (gate ≥ 70%).
+
+**Acceptance criteria → tests.**
+- **Labels (R42-1):**
+  - scheduling `test_labels_and_not_scheduled_set`;
+  - backend `test_labels_and_queued_display` and `test_reference_priorities_serves_labels`;
+  - contract `test_priority_labels_mirror_p42`;
+  - vitest `p42-band-outcomes` (labels, "Q" display, pill tooltip);
+  - `p42-board-band` (column headers).
+- **P4/Q exclusion (R42-2, R42-3, I49):**
+  - `test_p4_and_q_are_never_scheduled_vip_or_not` (P4 and Q × VIP or not × greedy and CP-SAT);
+  - `test_started_p4_books_nothing...`, `test_status_exclusion_is_checked_first` and
+    `test_frozen_p4_books_capacity_and_never_counts`;
+  - What-if, plan import and MC tests;
+  - the I49 negative test.
+  - **Gap filled:** frozen Q, frozen VIP P4/Q, started VIP Q, and a frozen queued P3 were not asserted. See below.
+- **Queued P3 not counted (R42-4, I50, I51):**
+  - the truth table, `test_year_flags`, `test_vip_queued_p3_walks_after_counting_work` and the I50/I51
+    negatives;
+  - backend hand-built rows `queued_fit` and `queued_left`, where P3 `counting_total` = 0.
+- **Queued board badge (R42-7):**
+  - backend `test_priority_board_columns_labels_and_queued_badge`;
+  - vitest `p42-board-band` ("Queued" badge on a queued P3, none on a started P3).
+- **Buckets + `excluded_count`:** `test_completing_within_year_buckets_sum_to_row_count` (seed, with regions
+  reconciling) and `test_hand_built_buckets_and_denominators` (6 + 1 = 8).
+- **Denominators (R42-6, I53):**
+  - `counting_outcome_count` = 4 and share = 25.0;
+  - priority delivery `counting_total`;
+  - analytics `counting_count` = 5 and `completing_pct` = 20.0;
+  - `test_greedy_recalc_counts_counting_rows_only`;
+  - `test_class_breakdown_excludes_non_counting`;
+  - `test_remaining_demand_drops_non_frozen_p4` (I25);
+  - vitest `p42-dashboard-counts` (served denominator and share; Executive strip; risks).
+- **Migration up/down:** `test_p42a_up_down_up_marks_reclassified_projects_stale` covers:
+  - the columns are absent after downgrade;
+  - after re-upgrade, NOT NULL with defaults true/false;
+  - stale is set only on the reclassified projects;
+  - one audit row per project not already stale, with actor null and reason "ADR 0056".
+- **Rollout idempotency:**
+  - `test_script_dispatches_one_greedy_band_rules_run`: one greedy `band_rules` run, flags stored, one marker; a
+    rerun gives `already_dispatched` and still one run;
+  - `test_script_nothing_to_do`;
+  - exit 2 without a URL.
+- **Move copy (R42-8):**
+  - backend `test_preview_into_p4_leaves_the_plan`, `..._p4_to_p3_in_queue_joins_the_queue` and
+    `..._p4_to_p1_has_no_effect_label`;
+  - vitest `p42-move-effect` (preview and "Timeline updated" copy, from stored flags only).
+
+**Tests added by this gate (test files only).**
+- `backend/tests/scheduling/test_p42_t05_qa_gaps.py` (6 tests, greedy and CP-SAT, `validate_invariants` clean):
+  - frozen P4/Q × VIP or not: books its locked capacity, `counts_toward_year = false`, never within year or
+    spillover, walks first, and the P1 waits;
+  - a started (In Development) VIP Q with an In Progress step is not scheduled and pre-books nothing;
+  - a frozen queued P3 books capacity, never counts, and key 1 outranks key 1a.
+  - All passed first time. No defect found. ruff check and format are clean.
+- **Security S42-L1 (Low, requested by the orchestrator):**
+  - `backend/tests/test_p12_hub_filter.py`:
+    - `_zeroed` now asserts that `queued_count`, `not_scheduled_priority_count`, `excluded_count` and
+      `counting_outcome_count` are 0, and that each region's queued and not-scheduled counts are 0, on
+      `/dashboard/completing-within-year`;
+    - it also asserts that the class breakdown's `queued_count` and `not_scheduled_priority_count` are 0;
+    - the two existing out-of-scope and unknown-hub tests exercise this;
+    - new sibling test `test_p42_counts_are_non_zero_in_scope_and_zero_out_of_scope`: all four are > 0 for an
+      all-hubs reader on the seed (so the zero check is not vacuous), and a Greece Hub Planner asking for
+      PD-India gets 0.
+  - `backend/tests/test_p42_band_backend.py`: new `test_reference_priorities_requires_authentication`. With no
+    principal, `GET /reference/priorities` gives 401.
+  - 10 passed (the whole hub-filter file plus both reference tests); ruff is clean.
+  - The full-suite counts above came from a run that started before these edits. The new tests were run on their
+    own.
+
+**Axe:** the P42 vitest files run axe on the band chips, the move preview, the priority board and the Dashboard
+Detailed view. No serious or critical violations.
+
+**Open (not blocking, carried from T03/T04):**
+- P42-T02 (b): What-if-added projects default to P3 In Queue, so they are queued. This needs an OQ or a decision.
+- `regions[]` has no served per-country denominator, so the browser sums four served buckets.
+- The KPI dialog's queued chip does not compose "fits by W{n}".
+- `test_p20_fte_followups` P40-R02 field list (above).
+
+## [2026-11-17] P42 gate CLOSED (orchestrator)
+
+qa-inspector, workflow-auditor and security-auditor each recorded a PASS at P42-T05. Workflow
+advisory A1 (Q band copy) is fixed.
+
+Follow-ups, none blocking:
+- OQ #109–#111;
+- A2: the analytics share uses a live denominator;
+- the `regions[]` per-country denominator;
+- the KPI dialog's queued chip shows no "fits by W{n}";
+- `test_p20_fte_followups::test_gantt_step_row_contract` fails because of P40-R02's new
+  `pin_clearable` / `pin_lapsed`. That belongs to the P40 owner, not P42.
+
+Rollout on dev: `alembic upgrade head`, then `python -m scripts.p42_band_rules_run`. This is not
+done on the live dev DB, because the upgrade also applies the other sessions' p38a/p40a/p41b.

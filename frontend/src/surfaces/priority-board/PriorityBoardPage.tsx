@@ -67,7 +67,7 @@ interface KeyboardLift extends PointerDrag {
 }
 
 function columnName(p: ProjectPriority): string {
-  return p === 'Q' ? 'Q (queue)' : p;
+  return p;
 }
 
 /**
