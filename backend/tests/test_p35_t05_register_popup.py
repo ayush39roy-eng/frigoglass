@@ -830,7 +830,7 @@ def _check_def(url: str) -> list[asyncpg.Record]:
 def test_p35b_up_down_up() -> None:
     with PostgresContainer("postgres:17", driver="asyncpg") as pg:
         url = pg.get_connection_url()
-        r = run_alembic(["upgrade", "p40a_step_pins"], url)
+        r = run_alembic(["upgrade", "p42a_outcome_band_flags"], url)
         assert r.returncode == 0, r.stderr
         assert _column(url) == []
 
@@ -843,7 +843,7 @@ def test_p35b_up_down_up() -> None:
         (check,) = _check_def(url)
         assert "excluded" in check["d"] and "Done" in check["d"]
 
-        r = run_alembic(["downgrade", "p40a_step_pins"], url)
+        r = run_alembic(["downgrade", "p42a_outcome_band_flags"], url)
         assert r.returncode == 0, r.stderr
         assert _column(url) == [] and _check_def(url) == []
 

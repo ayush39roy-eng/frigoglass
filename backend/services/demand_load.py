@@ -206,6 +206,9 @@ async def load_live_project_rows(
                 certification_testing_required=p.certification_testing_required,
                 design_effort_weeks=p.design_effort_weeks,
                 lab_effort_weeks=p.lab_effort_weeks,
+                # P42 (R42-6, I25 remaining): the stored band, so a non-frozen
+                # P4/Q project leaves remaining demand.
+                priority=p.priority.value if p.priority is not None else None,
                 steps=tuple(
                     _live_step_row(
                         s,

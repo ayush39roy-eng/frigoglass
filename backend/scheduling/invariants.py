@@ -130,6 +130,20 @@ What is assertable at the pure-function level (2026-09-27 revision):
     I48 (P40) (b) `check_pin_load_neutrality` (run with I8): pins change no
         `duration_weeks` / `skipped` on a common row and no `progress_pct`;
         (d) I10 for a frozen project with pins recomputes its frozen walk
+    I49 (P42, ADR 0056 R42-3) band exclusion: a non-frozen P4 / Q project in a
+        schedulable status has the not-scheduled outcome (excluded,
+        `not_scheduled_priority`, no rows, null weeks, never counted) and is
+        absent from `scheduling_order`; no other outcome carries the flag; a
+        status-excluded project keeps `counts_toward_year = true`
+    I50 (P42, R42-4) year basis: `counts_toward_year` equals
+        `domain_constants.counts_toward_year` on the input; I9 is re-derived
+        with it (`_check_i9_within_year_derivation`, tagged I50 on a
+        non-counting project)
+    I51 (P42, R42-5) the (frozen, counts_toward_year) tier never decreases
+        over `scheduling_order`; I30 / I37a heads gain key 1a
+    I52 (P42, R42-5) `check_band_neutrality(schedule_input, solver)`: the
+        outcomes of counting work are identical with and without the
+        non-frozen non-counting projects (run with I8 for greedy)
     I13 (health badge), I14 (run immutability) and I17 (capacity supply) are
     API/DB-side invariants with nothing to assert on a `ScheduleOutput`; they
     are the workflow-auditor's to check against the live API (P9-T06).
@@ -171,7 +185,13 @@ from dataclasses import dataclass, field, replace
 
 import domain_constants as dc
 from scheduling import hubs
-from scheduling.greedy import _band_rank_key, category_maps_for, run_greedy_sgs
+from scheduling.greedy import (
+    _band_rank_key,
+    category_maps_for,
+    is_not_scheduled_priority,
+    project_counts_toward_year,
+    run_greedy_sgs,
+)
 from scheduling.types import (
     LAB_CONSUMPTION_PER_PROJECT_WEEK,
     PLAN_WEEK_MAX,
@@ -357,6 +377,8 @@ def _build_ctx(
     for project in sorted(schedule_input.projects, key=lambda p: p.project_id):
         if project.status not in dc.SCHEDULABLE_STATUS_ORDER:
             continue
+        if is_not_scheduled_priority(project):
+            continue  # ADR 0056 R42-3: never scheduled, so nothing to analyse (I49)
         wf = workflows.get(project.workflow_id)
         if wf is None or project.category is None:
             continue
@@ -447,6 +469,7 @@ def validate_invariants(
         violations.extend(check_scheduler_determinism(schedule_input))
         violations.extend(check_wait_invariance(schedule_input))
         violations.extend(check_pin_load_neutrality(schedule_input))
+        violations.extend(check_band_neutrality(schedule_input))
     violations.extend(_check_i9_within_year_derivation(ctx))
     violations.extend(_check_i10_frozen_dates_immutable(ctx))
     violations.extend(_check_i11_done_stages_immutable(ctx))
@@ -466,6 +489,8 @@ def validate_invariants(
     violations.extend(_check_i35_no_empty_project(ctx))
     violations.extend(_check_i45_pins_placed(ctx))
     violations.extend(_check_i47a_manual_overlap(ctx))
+    violations.extend(_check_i49_band_exclusion(ctx))
+    violations.extend(_check_i51_tier_order(ctx))
     return tuple(violations)
 
 
@@ -1396,15 +1421,40 @@ def check_scheduler_determinism(
 
 
 def _check_i9_within_year_derivation(ctx: _Ctx) -> list[InvariantViolation]:
-    """I9: `within_year` / `spillover` re-derived from the outcome's own fields:
-    excluded -> `status == Commercialized`; left_out / data_error / Blocked
-    hold -> False; else `end_week + delay_weeks <= WITHIN_YEAR_WEEK`."""
+    """I9 as amended by I50 (ADR 0056, R42-4 / R42-9): `counts_toward_year`
+    equals `domain_constants.counts_toward_year(priority, status)` on the run
+    input (I50), and `within_year` / `spillover` are re-derived from the
+    outcome's own fields:
+    - status-excluded -> `within_year = status == Commercialized` (unchanged);
+    - `not_scheduled_priority` -> False / False (I49 owns the rest);
+    - otherwise `within_year = counts ∧ scheduled ∧ end_week + delay_weeks <=
+      within_year_week` and `spillover = counts ∧ scheduled ∧ ¬within_year`,
+      "scheduled" as before (not left_out / data_error / Blocked hold).
+    A within/spill mismatch is tagged I9 on a counting project (the pre-P42
+    rule) and I50 on a non-counting one."""
 
     violations: list[InvariantViolation] = []
     for outcome in sorted(ctx.schedule_output.project_outcomes, key=lambda o: o.project_id):
         project = ctx.projects.get(outcome.project_id)
         if project is None:
             continue
+        counts = project_counts_toward_year(project)
+        tag = "I9" if counts else "I50"
+        if outcome.counts_toward_year != counts:
+            violations.append(
+                InvariantViolation(
+                    invariant="I50",
+                    description=(
+                        f"project {outcome.project_id!r}: counts_toward_year="
+                        f"{outcome.counts_toward_year!r} but R42-4 on the input "
+                        f"(priority {project.priority!r}, status {project.status!r}) gives "
+                        f"{counts!r}"
+                    ),
+                    project_id=outcome.project_id,
+                )
+            )
+        if outcome.not_scheduled_priority:
+            continue  # I49 asserts its flags
         if outcome.excluded:
             expected = project.status == "Commercialized"
         elif not ctx.is_scheduled(outcome):
@@ -1422,27 +1472,29 @@ def _check_i9_within_year_derivation(ctx: _Ctx) -> list[InvariantViolation]:
                     )
                 )
                 continue
-            expected = outcome.end_week + project.delay_weeks <= ctx.schedule_input.within_year_week
+            expected = counts and (
+                outcome.end_week + project.delay_weeks <= ctx.schedule_input.within_year_week
+            )
 
         if outcome.within_year != expected:
             violations.append(
                 InvariantViolation(
-                    invariant="I9",
+                    invariant=tag,
                     description=(
                         f"project {outcome.project_id!r}: within_year={outcome.within_year!r} but "
-                        f"re-derived from left_out/end_week/delay_weeks/status the expected value "
-                        f"is {expected!r}"
+                        f"re-derived from counts_toward_year/left_out/end_week/delay_weeks/status "
+                        f"the expected value is {expected!r}"
                     ),
                     project_id=outcome.project_id,
                 )
             )
             continue
         if not outcome.excluded:
-            expected_spill = ctx.is_scheduled(outcome) and not outcome.within_year
+            expected_spill = counts and ctx.is_scheduled(outcome) and not outcome.within_year
             if outcome.spillover != expected_spill:
                 violations.append(
                     InvariantViolation(
-                        invariant="I9",
+                        invariant=tag,
                         description=(
                             f"project {outcome.project_id!r}: spillover={outcome.spillover!r} but "
                             f"re-derived expected {expected_spill!r}"
@@ -2203,9 +2255,9 @@ def _check_i29_duration_from_input(ctx: _Ctx) -> list[InvariantViolation]:
 
 
 def _check_i30_category_order(ctx: _Ctx) -> list[InvariantViolation]:
-    """I30 (P33; R36-9): for consecutive ids `a, b` in `scheduling_order`
-    that are equal on sort keys 1-3a and 4 (frozen, VIP, priority, band_rank,
-    status), `rank(a) <=
+    """I30 (P33; R36-9; R42-9): for consecutive ids `a, b` in
+    `scheduling_order` that are equal on sort keys 1, 1a, 2, 3, 3a and 4
+    (frozen, counts_toward_year, VIP, priority, band_rank, status), `rank(a) <=
     rank(b)`, and equal rank implies `project_id(a) < project_id(b)`. Ranks
     come from `ScheduleInput.categories`. An invalid list is reported in
     `_build_ctx`; ids that are unknown or lack a valid priority / status /
@@ -2215,7 +2267,7 @@ def _check_i30_category_order(ctx: _Ctx) -> list[InvariantViolation]:
         return []
     rank = ctx.categories.rank
 
-    def keys(pid: str) -> tuple[tuple[int, int, int, tuple[int, int], int], int] | None:
+    def keys(pid: str) -> tuple[tuple[int, int, int, int, tuple[int, int], int], int] | None:
         p = ctx.projects.get(pid)
         if (
             p is None
@@ -2224,10 +2276,12 @@ def _check_i30_category_order(ctx: _Ctx) -> list[InvariantViolation]:
             or p.category not in rank
         ):
             return None
-        # R36-9: the head is keys 1-3a and 4 (frozen, VIP, priority,
-        # band_rank, status); with every band_rank None it is the P33 head.
+        # R36-9 / R42-9: the head is keys 1, 1a, 2, 3, 3a and 4 (frozen,
+        # counts_toward_year, VIP, priority, band_rank, status); with every
+        # band_rank None and every project counting it is the P33 head.
         head = (
             0 if p.frozen else 1,
+            0 if project_counts_toward_year(p) else 1,
             0 if p.is_vip else 1,
             dc.PRIORITY_ORDER.index(p.priority),
             _band_rank_key(p.band_rank),
@@ -2248,7 +2302,7 @@ def _check_i30_category_order(ctx: _Ctx) -> list[InvariantViolation]:
                     description=(
                         f"scheduling_order has {a!r} (category rank {ka[1]}) before {b!r} "
                         f"(category rank {kb[1]}) although they are equal on sort keys "
-                        "1-3a and 4: "
+                        "1, 1a, 2, 3, 3a and 4: "
                         "rank must not decrease, ties by ascending project_id"
                     ),
                     project_id=b,
@@ -2271,6 +2325,8 @@ def _check_i35_no_empty_project(ctx: _Ctx) -> list[InvariantViolation]:
     for project in sorted(ctx.schedule_input.projects, key=lambda p: p.project_id):
         if project.status not in dc.SCHEDULABLE_STATUS_ORDER:
             continue
+        if is_not_scheduled_priority(project):
+            continue  # R42-3: never scheduled; its bucket is NOT_SCHEDULED_PRIORITY
         wf = ctx.workflows.get(project.workflow_id)
         if wf is None or project.category is None:
             continue
@@ -2297,8 +2353,9 @@ def _check_i35_no_empty_project(ctx: _Ctx) -> list[InvariantViolation]:
 
 def _check_i37a_band_rank_order(ctx: _Ctx) -> list[InvariantViolation]:
     """I37a: every `band_rank` in the input is None or an int >= 1; and over
-    every consecutive pair `a, b` of `scheduling_order`, keys 1-3a (frozen,
-    VIP, priority, band_rank with None last) never decrease. That is the
+    every consecutive pair `a, b` of `scheduling_order`, keys 1, 1a, 2, 3, 3a
+    (frozen, counts_toward_year (R42-9), VIP, priority, band_rank with None
+    last) never decrease. That is the
     pairwise rule "equal on keys 1-3 => band_rank non-decreasing, NULL last"
     plus the lexicographic check across groups (a non-contiguous group is a
     decrease somewhere). Ids unknown or lacking a valid priority are skipped
@@ -2316,15 +2373,17 @@ def _check_i37a_band_rank_order(ctx: _Ctx) -> list[InvariantViolation]:
                 )
             )
 
-    def head(pid: str) -> tuple[int, int, int, tuple[int, int]] | None:
+    def head(pid: str) -> tuple[int, int, int, int, tuple[int, int]] | None:
         p = ctx.projects.get(pid)
         if p is None or p.priority not in dc.PRIORITY_ORDER:
             return None
         r = p.band_rank
         if r is not None and (isinstance(r, bool) or not isinstance(r, int)):
             return None
+        # R42-9: keys 1, 1a, 2, 3, 3a.
         return (
             0 if p.frozen else 1,
+            0 if project_counts_toward_year(p) else 1,
             0 if p.is_vip else 1,
             dc.PRIORITY_ORDER.index(p.priority),
             _band_rank_key(r),
@@ -2335,7 +2394,7 @@ def _check_i37a_band_rank_order(ctx: _Ctx) -> list[InvariantViolation]:
         ha, hb = head(a), head(b)
         if ha is None or hb is None or ha <= hb:
             continue
-        same_band = ha[:3] == hb[:3]
+        same_band = ha[:4] == hb[:4]
         ra, rb = ctx.projects[a].band_rank, ctx.projects[b].band_rank
         violations.append(
             InvariantViolation(
@@ -2344,9 +2403,10 @@ def _check_i37a_band_rank_order(ctx: _Ctx) -> list[InvariantViolation]:
                     f"scheduling_order has {a!r} (band_rank {ra}) before {b!r} "
                     f"(band_rank {rb})"
                     + (
-                        ": equal on sort keys 1-3, band_rank must not decrease (None last)"
+                        ": equal on sort keys 1, 1a, 2, 3, band_rank must not decrease (None last)"
                         if same_band
-                        else ": sort keys 1-3a (frozen, VIP, priority, band_rank) decrease"
+                        else ": sort keys 1, 1a, 2, 3, 3a (frozen, counts_toward_year, VIP, "
+                        "priority, band_rank) decrease"
                     )
                 ),
                 project_id=b,
@@ -2658,3 +2718,192 @@ def _compare_pin_neutral(
                     )
                 )
     return violations
+
+
+# --- I49 / I51 / I52: priority band meaning (P42, ADR 0056, R42-9) ---------------------
+
+
+def _check_i49_band_exclusion(ctx: _Ctx) -> list[InvariantViolation]:
+    """I49: every input project with a schedulable status, priority in
+    {P4, Q} and `frozen = false` has an outcome with `excluded`,
+    `not_scheduled_priority` True, `counts_toward_year` False,
+    `within_year = spillover = left_out = blocked = False`, no step rows and
+    null start / end / projected / expected / unconstrained weeks, and is
+    absent from `scheduling_order` (so it books nothing: I6 / I7 load 0). No
+    other outcome has `not_scheduled_priority`. A status-excluded project
+    keeps today's excluded outcome with `not_scheduled_priority = False` and
+    `counts_toward_year = True`. `is_vip` changes none of this."""
+
+    violations: list[InvariantViolation] = []
+    order = set(ctx.schedule_output.scheduling_order)
+
+    def bad(pid: str, msg: str) -> None:
+        violations.append(
+            InvariantViolation(
+                invariant="I49", description=f"project {pid!r}: {msg}", project_id=pid
+            )
+        )
+
+    for project in sorted(ctx.schedule_input.projects, key=lambda p: p.project_id):
+        pid = project.project_id
+        outcome = ctx.outcomes.get(pid)
+        if outcome is None:
+            continue  # the outcome set is I5's
+        if is_not_scheduled_priority(project):
+            flags = {
+                "excluded": (outcome.excluded, True),
+                "not_scheduled_priority": (outcome.not_scheduled_priority, True),
+                "counts_toward_year": (outcome.counts_toward_year, False),
+                "within_year": (outcome.within_year, False),
+                "spillover": (outcome.spillover, False),
+                "left_out": (outcome.left_out, False),
+                "blocked": (outcome.blocked, False),
+            }
+            for name, (got, want) in flags.items():
+                if got != want:
+                    bad(
+                        pid,
+                        f"non-frozen {project.priority} project has {name}={got!r}, not {want!r}",
+                    )
+            if outcome.steps:
+                bad(pid, f"non-frozen {project.priority} project carries {len(outcome.steps)} rows")
+            weeks = {
+                "start_week": outcome.start_week,
+                "end_week": outcome.end_week,
+                "projected_end_week": outcome.projected_end_week,
+                "expected_end_week": outcome.expected_end_week,
+                "unconstrained_end_week": outcome.unconstrained_end_week,
+            }
+            for name, value in weeks.items():
+                if value is not None:
+                    bad(
+                        pid, f"non-frozen {project.priority} project has {name}={value!r}, not None"
+                    )
+            if pid in order:
+                bad(pid, f"non-frozen {project.priority} project is in scheduling_order")
+            continue
+        if outcome.not_scheduled_priority:
+            bad(
+                pid,
+                "not_scheduled_priority=True but the project is not a non-frozen P4/Q project "
+                f"in a schedulable status (priority {project.priority!r}, status "
+                f"{project.status!r}, frozen {project.frozen!r})",
+            )
+        if project.status not in dc.SCHEDULABLE_STATUS_ORDER and not outcome.counts_toward_year:
+            bad(pid, "a status-excluded project must have counts_toward_year=True")
+    return violations
+
+
+def _check_i51_tier_order(ctx: _Ctx) -> list[InvariantViolation]:
+    """I51: over consecutive ids `a, b` of `scheduling_order`, the pair
+    (frozen key, `counts_toward_year` key) never decreases: frozen projects
+    first, then every counting project, then the queued ones. Unknown ids
+    are skipped (I15 / input validation own them)."""
+
+    def tier(pid: str) -> tuple[int, int] | None:
+        p = ctx.projects.get(pid)
+        if p is None:
+            return None
+        return (0 if p.frozen else 1, 0 if project_counts_toward_year(p) else 1)
+
+    violations: list[InvariantViolation] = []
+    order = ctx.schedule_output.scheduling_order
+    for a, b in zip(order, order[1:]):  # noqa: B905
+        ta, tb = tier(a), tier(b)
+        if ta is None or tb is None or ta <= tb:
+            continue
+        violations.append(
+            InvariantViolation(
+                invariant="I51",
+                description=(
+                    f"scheduling_order has {a!r} (frozen/counts tier {ta}) before {b!r} "
+                    f"(tier {tb}): the (frozen, counts_toward_year) tier must not decrease"
+                ),
+                project_id=b,
+            )
+        )
+    return violations
+
+
+def _has_anchored_or_pinned_step(project: ProjectInput) -> bool:
+    """I52's premise, on the input: a Done / In Progress / Blocked progress
+    row, or any manual pin."""
+
+    if project.step_pins:
+        return True
+    return any(
+        pr.status in (STATUS_DONE, STATUS_IN_PROGRESS, STATUS_BLOCKED)
+        for pr in project.step_progress
+    )
+
+
+def without_spare_capacity_projects(schedule_input: ScheduleInput) -> ScheduleInput:
+    """I52's X⁻: `schedule_input` without its non-frozen projects whose
+    `counts_toward_year` is False (queued P3 and non-frozen P4/Q)."""
+
+    return replace(
+        schedule_input,
+        projects=tuple(
+            p for p in schedule_input.projects if p.frozen or project_counts_toward_year(p)
+        ),
+    )
+
+
+def check_band_neutrality(
+    schedule_input: ScheduleInput,
+    solver: str = "greedy",
+    **solver_params: object,
+) -> tuple[InvariantViolation, ...]:
+    """I52 (spare-capacity neutrality, ADR 0056 R42-5 / R42-9). Pure.
+
+    Let X be `schedule_input` and X⁻ = `without_spare_capacity_projects(X)`.
+    When no non-frozen non-counting project of X has an anchored (Done, In
+    Progress, Blocked) or pinned step, every outcome of a project of X⁻ must
+    be identical (every field and row) in run(X) and run(X⁻), for `solver`
+    `"greedy"` or `"cp_sat"` (`solver_params` passed to `run_cp_sat`
+    unchanged on both runs, i.e. identical parameters).
+
+    The premise is evaluated over the queued (scheduled, non-counting)
+    projects only: a non-frozen P4/Q project books nothing whatever its
+    progress (R42-3, asserted by I49), so it cannot break neutrality. This
+    makes the check apply to strictly more inputs than the literal text.
+    Returns `()` when the premise does not hold or X has no such project."""
+
+    if solver not in ("greedy", "cp_sat"):
+        raise ValueError(f"unknown solver {solver!r}; expected 'greedy' or 'cp_sat'")
+    removed = [
+        p
+        for p in sorted(schedule_input.projects, key=lambda p: p.project_id)
+        if not p.frozen and not project_counts_toward_year(p)
+    ]
+    if not removed:
+        return ()
+    if any(_has_anchored_or_pinned_step(p) for p in removed if not is_not_scheduled_priority(p)):
+        return ()
+    reduced = without_spare_capacity_projects(schedule_input)
+    if solver == "greedy":
+        full_out = run_greedy_sgs(schedule_input)
+        reduced_out = run_greedy_sgs(reduced)
+    else:
+        from scheduling.cp_sat import run_cp_sat  # local: cp_sat imports this module's peers
+
+        full_out, _ = run_cp_sat(schedule_input, **solver_params)  # type: ignore[arg-type]
+        reduced_out, _ = run_cp_sat(reduced, **solver_params)  # type: ignore[arg-type]
+    full_by_id = {o.project_id: o for o in full_out.project_outcomes}
+    violations: list[InvariantViolation] = []
+    for o in reduced_out.project_outcomes:
+        other = full_by_id.get(o.project_id)
+        if other != o:
+            violations.append(
+                InvariantViolation(
+                    invariant="I52",
+                    description=(
+                        f"project {o.project_id!r}: its {solver} outcome differs between the "
+                        f"input and the input without its {len(removed)} non-frozen "
+                        "non-counting project(s): queued / P4 work took capacity from counting "
+                        "work"
+                    ),
+                    project_id=o.project_id,
+                )
+            )
+    return tuple(violations)

@@ -30,6 +30,7 @@ from models.priority import PriorityScore
 from models.project import Project
 from models.schedule import ScheduleRun, ScheduleRunProjectOutcome, ScheduleRunProjectStep
 from models.workflow import ProjectWorkflowStep, WorkflowStepTemplate
+from services.outcome_buckets import outcome_label
 from services.progress import project_progress_pct
 from services.tracking import TrackingStatus, due_stages_for, status_from_due_stages
 from services.workspace import (
@@ -74,6 +75,12 @@ class ProjectCard:
     #: rows as the progress weights, so no extra query.
     design_weeks_calculated: int = 0
     lab_weeks_calculated: int = 0
+    #: P42 (ADR 0056 R42-4): the active run's stored flags; null when the
+    #: project is not in the run.
+    counts_toward_year: bool | None = None
+    not_scheduled_priority: bool | None = None
+    #: P42: `services.outcome_buckets.outcome_label` of the stored outcome.
+    outcome_label: str | None = None
 
 
 async def build_project_cards(
@@ -221,5 +228,12 @@ async def build_project_cards(
             in_active_run=outcome is not None,
             design_weeks_calculated=calculated[WorkflowStepKind.DESIGN],
             lab_weeks_calculated=calculated[WorkflowStepKind.LAB],
+            counts_toward_year=outcome.counts_toward_year if outcome is not None else None,
+            not_scheduled_priority=(
+                outcome.not_scheduled_priority if outcome is not None else None
+            ),
+            outcome_label=outcome_label(
+                outcome, outcome.projected_end_week if outcome is not None else None
+            ),
         )
     return cards

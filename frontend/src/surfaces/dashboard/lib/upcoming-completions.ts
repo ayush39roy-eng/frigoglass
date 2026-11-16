@@ -1,4 +1,3 @@
-import { PLAN_YEAR } from '@/lib/domain-constants';
 
 import type { CompletingWithinYearRow } from '../api/types';
 import { outcomeOf } from './outcome';
@@ -65,7 +64,7 @@ export function selectUpcomingCompletions(
 }
 
 /** 0-based quarter (0 = Q1) of plan week `week`, via the ISO-Thursday month rule. */
-export function planWeekQuarter(week: number, year: number = PLAN_YEAR): number {
+export function planWeekQuarter(week: number, year: number): number {
   return Math.floor(planWeekMonth(week, year) / 3);
 }
 
@@ -80,7 +79,7 @@ export function noFinishWeekCount(rows: readonly CompletingWithinYearRow[]): num
 }
 
 /** Within-year finishes counted per quarter of the plan year (Q1..Q4). */
-export function quarterCounts(rows: readonly CompletingWithinYearRow[], year: number = PLAN_YEAR): number[] {
+export function quarterCounts(rows: readonly CompletingWithinYearRow[], year: number): number[] {
   const counts = [0, 0, 0, 0];
   for (const f of withinYearFinishes(rows)) {
     const q = planWeekQuarter(f.week, year);

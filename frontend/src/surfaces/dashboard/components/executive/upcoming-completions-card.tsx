@@ -5,10 +5,9 @@ import { CalendarCheck, CalendarClock } from 'lucide-react';
 import { PriorityBandPill } from '@/components/shared/priority-band-pill';
 import { BoltCard } from '@/components/ui/bolt-card';
 import { CardInfo } from '@/components/ui/card-info';
-import { CURRENT_WEEK, PLAN_YEAR } from '@/lib/domain-constants';
+import { usePlanClock } from '@/lib/plan-clock';
 import { formatInteger, formatWeek } from '@/lib/format';
 import { cn } from '@/lib/utils';
-import { useSessionStore } from '@/stores/session';
 
 import type { CompletingWithinYearRow } from '../../api/types';
 import {
@@ -46,12 +45,20 @@ export function UpcomingCompletionsCard({
   rows: readonly CompletingWithinYearRow[];
 }): React.JSX.Element {
   const headingId = React.useId();
-  const currentWeek = useSessionStore((s) => s.me?.current_week) ?? CURRENT_WEEK;
+  // P37 (ADR 0052): the served calendar week and plan year. Every surface
+  // renders under the session gate; the zero fallbacks only show an empty card.
+  const clock = usePlanClock();
+  const currentWeek = clock?.week ?? 0;
+  const planYear = clock?.planYear ?? null;
 
-  const upcoming = React.useMemo(() => selectUpcomingCompletions(rows, currentWeek), [rows, currentWeek]);
-  const quarters = React.useMemo(() => quarterCounts(rows), [rows]);
+  const hasClock = clock !== null;
+  const upcoming = React.useMemo(
+    () => (hasClock ? selectUpcomingCompletions(rows, currentWeek) : []),
+    [rows, currentWeek, hasClock],
+  );
+  const quarters = React.useMemo(() => (planYear === null ? [0, 0, 0, 0] : quarterCounts(rows, planYear)), [rows, planYear]);
   const delivered = React.useMemo(() => noFinishWeekCount(rows), [rows]);
-  const currentQuarter = planWeekQuarter(Math.min(currentWeek, 52));
+  const currentQuarter = planYear === null ? -1 : planWeekQuarter(Math.min(currentWeek, 52), planYear);
   const shown = upcoming.slice(0, UPCOMING_LIST_CAP);
   const more = upcoming.length - shown.length;
   const windowEnd = currentWeek + UPCOMING_WINDOW_WEEKS - 1;
@@ -72,7 +79,7 @@ export function UpcomingCompletionsCard({
           <p>
             Projects the active run completes <strong className="text-text">within the year</strong> (On hold
             excluded). <strong className="text-text">Delivered</strong> are those with no stage left in the
-            run; the quarter tiles count the rest by the quarter of {String(PLAN_YEAR)} their last stage ends in
+            run; the quarter tiles count the rest by the quarter of {String(planYear ?? 'the plan year')} their last stage ends in
             (an ISO week belongs to the month holding its Thursday). Together they add up to the Within year
             figure. The list shows those finishing in
             the next {String(UPCOMING_WINDOW_WEEKS)} weeks from the current week, soonest first. Every week is
@@ -88,7 +95,7 @@ export function UpcomingCompletionsCard({
       <ol
         className="grid grid-cols-2 gap-s2 sm:grid-cols-5"
         data-testid="exec-upcoming-strip"
-        aria-label={`Within-year completions by when they land in ${String(PLAN_YEAR)}`}
+        aria-label={`Within-year completions by when they land in ${String(planYear ?? 'the plan year')}`}
       >
         <li
           className="col-span-2 flex flex-row items-center justify-between gap-s2 rounded-lg border border-dash-hairline bg-success-subtle px-s2 py-1.5 sm:col-span-1 sm:flex-col sm:items-stretch sm:justify-start sm:gap-0"

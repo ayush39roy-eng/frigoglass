@@ -1,6 +1,7 @@
 import * as React from 'react';
 
-import { CURRENT_WEEK, SPILLOVER_YEAR, WITHIN_YEAR_WEEK } from '@/lib/domain-constants';
+import { WITHIN_YEAR_WEEK } from '@/lib/domain-constants';
+import { useCurrentWeek, usePlanYearLabels } from '@/lib/plan-clock';
 
 import type { GanttProjectRow } from '../api/types';
 import { STEP_COLORS, STEP_LETTERS, stepTint, type StepCode } from '../lib/step-colors';
@@ -69,6 +70,9 @@ export function StepColorLegend({ rows }: { rows: readonly GanttProjectRow[] }):
  * STEP's colour (`StepColorLegend`); the marks below are drawn in it.
  */
 export function GanttLegend({ rows = [] }: { rows?: readonly GanttProjectRow[] }): React.JSX.Element {
+  const years = usePlanYearLabels();
+  // P37: the served calendar week (ADR 0052 §4: "now" markers use it).
+  const currentWeek = useCurrentWeek();
   const sample = STEP_COLORS['PDD-A'];
   return (
     <div className="flex flex-col gap-2" data-testid="gantt-legend">
@@ -135,14 +139,16 @@ export function GanttLegend({ rows = [] }: { rows?: readonly GanttProjectRow[] }
           className="inline-flex h-3.5 items-center rounded-pill border border-gantt-marker-year bg-warning-subtle px-1.5 text-[0.625rem] font-bold leading-none text-warning-subtle-fg"
           aria-hidden="true"
         >
-          → {SPILLOVER_YEAR}
+          → {years.spilloverYear}
         </span>
         <dt>Spillover — not done by week {WITHIN_YEAR_WEEK}, bar cut at year-end</dt>
       </div>
-      <div className="flex items-center gap-1.5">
-        <span className="h-3 w-0.5 border-l-2 border-gantt-marker-now" aria-hidden="true" />
-        <dt>Week {CURRENT_WEEK} — now</dt>
-      </div>
+      {currentWeek !== null ? (
+        <div className="flex items-center gap-1.5">
+          <span className="h-3 w-0.5 border-l-2 border-gantt-marker-now" aria-hidden="true" />
+          <dt>Week {currentWeek} — now</dt>
+        </div>
+      ) : null}
       <div className="flex items-center gap-1.5">
         <span className="h-2.5 w-5 rounded-sm border-[1.25px] border-dashed border-text" aria-hidden="true" />
         <dt>Frozen project (dashed outline)</dt>

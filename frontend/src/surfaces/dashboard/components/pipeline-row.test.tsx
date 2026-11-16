@@ -1,11 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import { screen, within } from '@testing-library/react';
 
-import { CARRY_OVER_YEAR, PLAN_YEAR } from '@/lib/domain-constants';
+import { TEST_PLAN_YEAR } from '@/test/session';
 import { renderWithProviders } from '@/test/render';
 
 import type { PipelineTotals, RegionSummary } from '../api/types';
 import { PipelineRow } from './pipeline-row';
+
+// P37: year labels come from the served /me.plan_year (test session fixture).
+const PLAN_YEAR = TEST_PLAN_YEAR;
+const CARRY_OVER_YEAR = TEST_PLAN_YEAR - 1;
 
 /** ADR 0030: every figure and share is served; nothing is computed in the browser (I19). */
 

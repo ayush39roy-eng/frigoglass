@@ -4,6 +4,7 @@ import { useParams } from 'react-router-dom';
 import { SectionBoundary } from '@/components/shared/section-boundary';
 import { PriorityMoveProvider } from '@/components/shared/priority-move/priority-move-provider';
 import { ReadOnlyNotice } from '@/components/session/write-gate';
+import { PlanWeekNotice } from '@/components/shared/plan-week-notice';
 import { ApiError } from '@/lib/api/client';
 import { usePermission, useSessionStore } from '@/stores/session';
 
@@ -90,6 +91,8 @@ export default function ProjectWorkspacePage(): React.JSX.Element {
               recalc={recalc}
               onEdit={canEditProject ? openEdit : undefined}
             />
+            {/* P37 (ADR 0052 §6): health and overrun read the active run's week (I13). */}
+            <PlanWeekNotice className="mb-stack" />
             <ReadOnlyNotice surface="project_workspace" what="Editing details, progress, files and comments" className="mb-stack" />
             {/* Full-width and first, above the two-column body: this is the one
                 panel every project workspace shares regardless of role or write

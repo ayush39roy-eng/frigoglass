@@ -402,6 +402,8 @@ WITHIN_YEAR_WEEK = 52, DISPLAY_HORIZON = 52, HORIZON_WEEKS = 78   (unchanged, ab
 Sort all projects by, in order:
 
 1. `frozen` descending (frozen projects scheduled first, dates locked)
+1a. *(2026-11-17, ADR 0056 R42-5; binding once P42-T02 lands)* `counts_toward_year` descending:
+    queued P3 (In Queue) projects walk after every counting project. See "Priority band meaning".
 2. `is_vip` descending: a VIP project schedules before every non-VIP one, whatever its band
    *(2026-10-22, ADR 0040)*
 3. Priority: `P1 → P2 → P3 → P4 → Q`
@@ -469,6 +471,9 @@ deterministic walk/tie-break order; it is not a dependency.
 - **Completing within year**: `!left_out AND (last_step_end + delay <= WITHIN_YEAR_WEEK)`. Otherwise
   `SPILLOVER`.
 - Status `Commercialized`, `On Hold`, `Cancelled` and `Draft` are excluded from scheduling entirely.
+- *(2026-11-17, ADR 0056 R42-3)* A non-frozen project with priority `P4` or `Q` in a schedulable status
+  is excluded too (`not_scheduled_priority`). "Completing within year" also requires
+  `counts_toward_year`. See "Priority band meaning".
 
 ## Project statuses and registration *(2026-10-21, ADR 0034)*
 
@@ -1909,3 +1914,57 @@ ADR 0048 is unchanged: the old timing fields stay retired. A pin is a different,
     `effort_weeks`.
   - (c) Per-week readers spread a pinned row's `duration_weeks` evenly over its window.
   - (d) No pin changes on a frozen project (I10).
+
+## Priority band meaning *(2026-11-17, P42, ADR 0056 as ruled at P42-T01, R42-1..R42-12)*
+
+The full ruling is in MEMORY "[2026-11-17] P42-T01". Until P42-T02/T03 land in code, today's rules
+apply.
+
+- **Labels (R42-1):**
+
+  | Band | Label |
+  |---|---|
+  | P1 | Must do this year |
+  | P2 | Good to have this year |
+  | P3 | In queue |
+  | P4 | Miscellaneous |
+  | Q | Unprioritised (displayed as "Q") |
+
+  Score bands and the P1 capacity fill are unchanged.
+- **P4 / Q (R42-2, R42-3):**
+  - A non-frozen P4 or Q project in a schedulable status is never scheduled, in every solver and
+    path (greedy, CP-SAT, Monte Carlo, What-if, scenarios, plan import).
+  - Its outcome is `not_scheduled_priority`, shown as "Not scheduled (P4)".
+  - VIP does not override this, and it applies whatever the project's status.
+  - A frozen P4 or Q project books its locked capacity, with `counts_toward_year = false`
+    (OQ #107).
+  - Status exclusion is checked first.
+- **Counts toward the year (R42-4):**
+  ```
+  counts_toward_year(p) = NOT ( p.status ∈ SCHEDULABLE_STATUS_ORDER
+                                AND ( p.priority ∈ {P4,Q} OR (p.priority = P3 AND p.status = "In Queue") ) )
+  within_year = counts ∧ scheduled ∧ end+delay ≤ within_year_week
+  spillover   = counts ∧ scheduled ∧ ¬within_year
+  ```
+  - Both flags are stored on the run's outcome rows (migration `p42a`), and surfaces read only the
+    stored row.
+  - A queued P3 is shown as "Queued — fits by W{n}", "Queued — after W52" or "Queued — no slot".
+- **Spare capacity (R42-5):**
+  - Sort key 1a (above). Frozen walks, and the anchored and pinned steps, still book first.
+  - CP-SAT leaves queued projects out of the model. After the solve it books its placements and
+    then walks the queued projects with the greedy single-project routine.
+- **KPIs (R42-6):**
+  - Bucket order: `NOT_SCHEDULED_PRIORITY > QUEUED > BLOCKED > WITHIN_YEAR > SPILLOVER > LEFT_OUT`.
+  - Every within-year, spillover and left-out count and denominator uses counting rows only.
+  - `queued_count` and `not_scheduled_priority_count` are served.
+  - I25 remaining demand covers schedulable status ∧ (priority ∉ {P4, Q} ∨ frozen).
+  - I20 compares both flags.
+- **Band rank (R42-7):**
+  - P4 keeps its ranks, and I37b is unchanged.
+  - Board cards for queued P3 show a "Queued" badge.
+- **Moves (R42-8):**
+  - Into P4: "leaves the plan".
+  - In Queue, P4 → P3: "joins the queue — not counted this year".
+- **Invariants:** I49 (band exclusion), I50 (year basis), I51 (tier order), I52 (spare-capacity
+  neutrality) and I53 (KPI basis), exact text in R42-9. I30 and I37a read "equal on keys 1, 1a, 2,
+  3, 3a (, 4)". I9 follows I50.

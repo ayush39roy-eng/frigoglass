@@ -116,6 +116,13 @@ from services.categories import load_catalog
 from services.category_type_filter import any_of, category_type_filter
 from services.expected_status import expected_status_for, status_mismatch
 from services.hub_scope import HubIdsArg, RegionsArg, narrowed_hub_filter
+from services.outcome_buckets import (
+    OutcomeBucket,
+    outcome_bucket,
+    priority_label,
+    sql_bucket_within_year,
+    sql_counting,
+)
 from services.plan_clock import PlanClock, get_plan_clock
 from services.project_cards import build_project_cards
 from services.text_search import project_search_filter
@@ -335,10 +342,11 @@ async def _priority_delivery(
         Project.priority,
         Project.status,
         _has_stage_progress(),
-        func.coalesce(
-            ScheduleRunProjectOutcome.within_year & ~ScheduleRunProjectOutcome.blocked,
-            False,
-        ),
+        # P42 (R42-6): the exclusive WITHIN_YEAR bucket, counting rows only.
+        func.coalesce(sql_bucket_within_year(), False),
+        # P42: the stored flags; no outcome row = counting (the column default).
+        func.coalesce(ScheduleRunProjectOutcome.not_scheduled_priority, False),
+        func.coalesce(ScheduleRunProjectOutcome.counts_toward_year, True),
     ).select_from(Project)
     stmt = stmt.outerjoin(
         ScheduleRunProjectOutcome,
@@ -351,13 +359,21 @@ async def _priority_delivery(
     grouped = (await db.execute(stmt)).all()
 
     acc = {
-        p: dict.fromkeys(("if", "ifw", "ns", "nsw", "dl", "dlw", "ot"), 0) for p in _DELIVERY_BANDS
+        p: dict.fromkeys(
+            ("if", "ifw", "ns", "nsw", "dl", "dlw", "ot", "q", "nsp", "ifc", "nsc"), 0
+        )
+        for p in _DELIVERY_BANDS
     }
-    for priority, status, has_progress, wy in grouped:
+    for priority, status, has_progress, wy, nsp, counts in grouped:
         count = 1
         if priority is None:
             continue
         a = acc[priority]
+        counting = counts and not nsp
+        if nsp:
+            a["nsp"] += count
+        elif not counts:
+            a["q"] += count
         if status == ProjectStatus.COMMERCIALIZED:
             a["dl"] += count
             a["dlw"] += count if wy else 0
@@ -366,18 +382,22 @@ async def _priority_delivery(
         elif _is_not_started(status, has_progress):
             a["ns"] += count
             a["nsw"] += count if wy else 0
+            a["nsc"] += count if counting else 0
         else:
             a["if"] += count
             a["ifw"] += count if wy else 0
+            a["ifc"] += count if counting else 0
 
     bands: list[PriorityDeliveryBand] = []
     for priority in _DELIVERY_BANDS:
         a = acc[priority]
         total = a["if"] + a["ns"] + a["dl"] + a["ot"]
         within = a["ifw"] + a["nsw"] + a["dlw"]
+        counting_total = total - a["q"] - a["nsp"]
         bands.append(
             PriorityDeliveryBand(
                 priority=priority,
+                priority_label=priority_label(priority) or priority.value,
                 total=total,
                 within_year=within,
                 in_flight_total=a["if"],
@@ -387,9 +407,14 @@ async def _priority_delivery(
                 delivered_total=a["dl"],
                 delivered_within_year=a["dlw"],
                 other_total=a["ot"],
-                within_year_share_pct=_share(within, total),
-                in_flight_within_year_share_pct=_share(a["ifw"], a["if"]),
-                not_started_within_year_share_pct=_share(a["nsw"], a["ns"]),
+                queued_total=a["q"],
+                not_scheduled_priority_total=a["nsp"],
+                counting_total=counting_total,
+                in_flight_counting_total=a["ifc"],
+                not_started_counting_total=a["nsc"],
+                within_year_share_pct=_share(within, counting_total),
+                in_flight_within_year_share_pct=_share(a["ifw"], a["ifc"]),
+                not_started_within_year_share_pct=_share(a["nsw"], a["nsc"]),
                 in_flight_share_pct=_share(a["if"], total),
                 not_started_share_pct=_share(a["ns"], total),
                 delivered_share_pct=_share(a["dl"], total),
@@ -426,6 +451,11 @@ async def completing_within_year(
             spillover_count=0,
             left_out_count=0,
             blocked_count=0,
+            queued_count=0,
+            not_scheduled_priority_count=0,
+            excluded_count=0,
+            counting_outcome_count=0,
+            within_year_share_pct=0.0,
             rows=[],
             priority_delivery=await _priority_delivery(
                 db, None, current_user, hub_id, region, category, type_
@@ -445,35 +475,24 @@ async def completing_within_year(
     # P30-R02 (gate N3): deterministic row order (project name, then id).
     result = await db.execute(stmt.order_by(Project.name, Project.id))
     rows: list[CompletingWithinYearRow] = []
-    within_year_count = spillover_count = left_out_count = blocked_count = 0
+    # P42 (R42-6): one exclusive bucket per row, precedence
+    # NOT_SCHEDULED_PRIORITY > QUEUED > BLOCKED > WITHIN_YEAR > SPILLOVER >
+    # LEFT_OUT (`services.outcome_buckets`). P9-F02's "Blocked wins over the
+    # year flags" is kept below the two non-counting buckets.
+    totals: dict[str, int] = dict.fromkeys(_BUCKET_KEYS.values(), 0)
+    excluded_count = 0
     # Owner request 2026-11-16: the same buckets per lab region (the hub's
     # `lab_region`, as ADR 0025's country filter and /region-summary use).
     by_region: dict[LabRegion, dict[str, int]] = {}
     for outcome, project, has_progress in result.all():
-        bucket: str | None
-        # P9-F02: Blocked is an exclusive bucket — a project the active run
-        # marked `blocked=True` counts ONLY here, never also in
-        # within_year/spillover/left_out, even on the (currently believed
-        # impossible, but not schema-enforced) row where one of those raw
-        # flags is also set. See `schemas.dashboard.CompletingWithinYear`'s
-        # docstring on `blocked_count`.
-        if outcome.blocked:
-            blocked_count += 1
-            bucket = "blocked_count"
-        elif outcome.within_year:
-            within_year_count += 1
-            bucket = "within_year_count"
-        elif outcome.spillover:
-            spillover_count += 1
-            bucket = "spillover_count"
-        elif outcome.left_out:
-            left_out_count += 1
-            bucket = "left_out_count"
+        row_bucket = outcome_bucket(outcome)
+        if row_bucket is None:
+            excluded_count += 1
         else:
-            bucket = None
-        if bucket is not None:
+            key = _BUCKET_KEYS[row_bucket]
+            totals[key] += 1
             counts = by_region.setdefault(project.hub.lab_region, {})
-            counts[bucket] = counts.get(bucket, 0) + 1
+            counts[key] = counts.get(key, 0) + 1
         rows.append(
             CompletingWithinYearRow(
                 project_id=project.id,
@@ -490,16 +509,32 @@ async def completing_within_year(
                 last_step_end_week=outcome.last_step_end_week,
                 status=project.status,
                 not_started=_is_not_started(project.status, has_progress),
+                counts_toward_year=outcome.counts_toward_year,
+                not_scheduled_priority=outcome.not_scheduled_priority,
+                outcome=row_bucket,
+                priority_label=priority_label(project.priority),
+                projected_end_week=outcome.projected_end_week,
             )
         )
 
+    counting = (
+        totals["within_year_count"]
+        + totals["spillover_count"]
+        + totals["left_out_count"]
+        + totals["blocked_count"]
+    )
     return CompletingWithinYear(
         has_active_schedule_run=True,
         schedule_run_version=active_run.version,
-        within_year_count=within_year_count,
-        spillover_count=spillover_count,
-        left_out_count=left_out_count,
-        blocked_count=blocked_count,
+        within_year_count=totals["within_year_count"],
+        spillover_count=totals["spillover_count"],
+        left_out_count=totals["left_out_count"],
+        blocked_count=totals["blocked_count"],
+        queued_count=totals["queued_count"],
+        not_scheduled_priority_count=totals["not_scheduled_priority_count"],
+        excluded_count=excluded_count,
+        counting_outcome_count=counting,
+        within_year_share_pct=_share(totals["within_year_count"], counting),
         rows=rows,
         priority_delivery=await _priority_delivery(
             db, active_run.id, current_user, hub_id, region, category, type_
@@ -519,6 +554,10 @@ def _delivery_regions(by_region: dict[LabRegion, dict[str, int]]) -> list[Delive
             spillover_count=by_region.get(r, {}).get("spillover_count", 0),
             left_out_count=by_region.get(r, {}).get("left_out_count", 0),
             blocked_count=by_region.get(r, {}).get("blocked_count", 0),
+            queued_count=by_region.get(r, {}).get("queued_count", 0),
+            not_scheduled_priority_count=by_region.get(r, {}).get(
+                "not_scheduled_priority_count", 0
+            ),
         )
         for r in _REGION_ORDER
     ]
@@ -684,8 +723,8 @@ async def dashboard_analytics(
             .join(Hub, Project.hub_id == Hub.id)
             .where(
                 ScheduleRunProjectOutcome.schedule_run_id == active_run.id,
-                ScheduleRunProjectOutcome.within_year.is_(True),
-                ScheduleRunProjectOutcome.blocked.is_(False),
+                # P42 (R42-6): the exclusive WITHIN_YEAR bucket, counting only.
+                sql_bucket_within_year(),
             )
         )
         if hub_filter is not None:
@@ -696,6 +735,26 @@ async def dashboard_analytics(
                 await db.execute(completing_stmt.group_by(Hub.name, Project.type))
             ).all()
         }
+        # P42 (I53): the cell's non-counting projects (QUEUED or
+        # NOT_SCHEDULED_PRIORITY in the active run) leave the denominator.
+        non_counting_stmt = (
+            select(Hub.name, Project.type, func.count())
+            .select_from(ScheduleRunProjectOutcome)
+            .join(Project, ScheduleRunProjectOutcome.project_id == Project.id)
+            .join(Hub, Project.hub_id == Hub.id)
+            .where(
+                ScheduleRunProjectOutcome.schedule_run_id == active_run.id,
+                ~sql_counting(),
+            )
+        )
+        if hub_filter is not None:
+            non_counting_stmt = non_counting_stmt.where(hub_filter)
+        non_counting: dict[tuple[str, ProjectType | None], int] = {
+            (nc_hub.value, nc_type): nc_count
+            for nc_hub, nc_type, nc_count in (
+                await db.execute(non_counting_stmt.group_by(Hub.name, Project.type))
+            ).all()
+        }
         type_order: dict[ProjectType | None, int] = {t: i for i, t in enumerate(ProjectType)}
         type_order[None] = len(type_order)
         hub_order = {h: i for i, h in enumerate(by_hub)}
@@ -704,42 +763,53 @@ async def dashboard_analytics(
         ):
             pipeline = hub_type[cell]
             done = completing.get(cell, 0)
+            cell_counting = pipeline - non_counting.get(cell, 0)
             completing_hub_type.append(
                 CompletingHubTypeRow(
                     hub=HubName(cell[0]),
                     type=cell[1],
                     pipeline_count=pipeline,
                     completing_count=done,
-                    completing_pct=_share(done, pipeline),
+                    counting_count=cell_counting,
+                    completing_pct=_share(done, cell_counting),
                 )
             )
         done_by_type: dict[str, int] = {}
         for (_, done_type), done_count in completing.items():
             type_key = done_type.value if done_type is not None else _UNMAPPED
             done_by_type[type_key] = done_by_type.get(type_key, 0) + done_count
+        nc_by_type: dict[str, int] = {}
+        for (_, nc_type), nc_count in non_counting.items():
+            type_key = nc_type.value if nc_type is not None else _UNMAPPED
+            nc_by_type[type_key] = nc_by_type.get(type_key, 0) + nc_count
         completing_by_type = [
             CompletingByTypeRow(
                 key=type_key,
                 pipeline_count=type_pipeline,
                 completing_count=done_by_type.get(type_key, 0),
-                completing_pct=_share(done_by_type.get(type_key, 0), type_pipeline),
+                counting_count=type_pipeline - nc_by_type.get(type_key, 0),
+                completing_pct=_share(
+                    done_by_type.get(type_key, 0), type_pipeline - nc_by_type.get(type_key, 0)
+                ),
             )
             for type_key, type_pipeline in type_counts.items()
         ]
         # The per-hub Total column: the sum of each hub's cells above.
         hub_totals: dict[str, list[int]] = {}
         for cell_row in completing_hub_type:
-            totals = hub_totals.setdefault(cell_row.hub.value, [0, 0])
+            totals = hub_totals.setdefault(cell_row.hub.value, [0, 0, 0])
             totals[0] += cell_row.pipeline_count
             totals[1] += cell_row.completing_count
+            totals[2] += cell_row.counting_count
         completing_by_hub = [
             CompletingByHubRow(
                 key=HubName(hub_key),
                 pipeline_count=hub_pipeline,
                 completing_count=hub_done,
-                completing_pct=_share(hub_done, hub_pipeline),
+                counting_count=hub_counting,
+                completing_pct=_share(hub_done, hub_counting),
             )
-            for hub_key, (hub_pipeline, hub_done) in hub_totals.items()
+            for hub_key, (hub_pipeline, hub_done, hub_counting) in hub_totals.items()
         ]
 
     return DashboardAnalytics(
@@ -808,19 +878,21 @@ def _leader_name_if_self(project: Project, current_user: Principal) -> str | Non
 
 
 def _outcome_bucket(outcome: ScheduleRunProjectOutcome | None) -> ScheduleOutcome | None:
-    """The exclusive bucket `/completing-within-year` counts (P9-F02)."""
+    """The exclusive bucket `/completing-within-year` counts (P9-F02; P42
+    R42-6 precedence, `services.outcome_buckets`)."""
 
-    if outcome is None:
-        return None
-    if outcome.blocked:
-        return "BLOCKED"
-    if outcome.within_year:
-        return "WITHIN_YEAR"
-    if outcome.spillover:
-        return "SPILLOVER"
-    if outcome.left_out:
-        return "LEFT_OUT"
-    return None
+    return outcome_bucket(outcome)
+
+
+#: `OutcomeBucket` → the `CompletingWithinYear` count field it feeds.
+_BUCKET_KEYS: dict[OutcomeBucket, str] = {
+    "NOT_SCHEDULED_PRIORITY": "not_scheduled_priority_count",
+    "QUEUED": "queued_count",
+    "BLOCKED": "blocked_count",
+    "WITHIN_YEAR": "within_year_count",
+    "SPILLOVER": "spillover_count",
+    "LEFT_OUT": "left_out_count",
+}
 
 
 @router.get("/projects", response_model=ProjectFilterResult)
@@ -932,6 +1004,11 @@ async def analytics_projects(
                 current_step_name=stage.step_name if stage is not None else None,
                 end_week=outcome.projected_end_week if outcome is not None else None,
                 outcome=_outcome_bucket(outcome),
+                priority_label=priority_label(p.priority),
+                counts_toward_year=outcome.counts_toward_year if outcome is not None else None,
+                not_scheduled_priority=(
+                    outcome.not_scheduled_priority if outcome is not None else None
+                ),
                 reg_year=p.reg_year,
                 carry_over=p.carry_over,
                 plant=p.plant,

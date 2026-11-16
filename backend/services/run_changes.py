@@ -1,7 +1,8 @@
 """Run-to-run change list (ADR 0015 §4, docs/API_CONTRACT_P11.md §3, I20).
 
-Compares the **stored** `ScheduleRunProjectOutcome` rows of two runs on four
-fields: `projected_end_week`, `within_year`, `left_out` and `blocked`. Both
+Compares the **stored** `ScheduleRunProjectOutcome` rows of two runs on six
+fields: `projected_end_week`, `within_year`, `left_out`, `blocked` and, since
+P42 (ADR 0056 R42-6, I20), `counts_toward_year` and `not_scheduled_priority`. Both
 runs are immutable (I14), so the list for a given pair never changes.
 Nothing is recomputed: every value served is a stored column.
 
@@ -33,6 +34,7 @@ from models.schedule import ScheduleRun, ScheduleRunProjectOutcome, ScheduleRunP
 from scheduling.types import ScheduleOutput
 from schemas.schedule_run import ScheduleRunChangeRow, ScheduleRunChanges
 from services.hub_scope import needs_own_assignments, project_row_scope
+from services.outcome_buckets import priority_label
 
 
 class _Compared(NamedTuple):
@@ -40,9 +42,13 @@ class _Compared(NamedTuple):
     within_year: bool
     left_out: bool
     blocked: bool
+    # P42 (R42-6, I20).
+    counts_toward_year: bool
+    not_scheduled_priority: bool
 
 
-_EMPTY = _Compared(None, False, False, False)
+#: The side of a project present in only one run: every flag false.
+_EMPTY = _Compared(None, False, False, False, False, False)
 #: Public name for the compared-fields tuple (P14 preview).
 Compared = _Compared
 
@@ -56,10 +62,14 @@ async def _outcomes(db: AsyncSession, run_id: uuid.UUID) -> dict[uuid.UUID, _Com
                 ScheduleRunProjectOutcome.within_year,
                 ScheduleRunProjectOutcome.left_out,
                 ScheduleRunProjectOutcome.blocked,
+                ScheduleRunProjectOutcome.counts_toward_year,
+                ScheduleRunProjectOutcome.not_scheduled_priority,
             ).where(ScheduleRunProjectOutcome.schedule_run_id == run_id)
         )
     ).all()
-    return {pid: _Compared(end, wy, lo, bl) for pid, end, wy, lo, bl in rows}
+    return {
+        pid: _Compared(end, wy, lo, bl, ct, nsp) for pid, end, wy, lo, bl, ct, nsp in rows
+    }
 
 
 async def _own_assignment_project_ids(
@@ -188,6 +198,11 @@ async def diff_outcomes(
                     after_left_out=a.left_out,
                     before_blocked=b.blocked,
                     after_blocked=a.blocked,
+                    before_counts_toward_year=b.counts_toward_year,
+                    after_counts_toward_year=a.counts_toward_year,
+                    before_not_scheduled_priority=b.not_scheduled_priority,
+                    after_not_scheduled_priority=a.not_scheduled_priority,
+                    priority_label=priority_label(priority),
                     is_new=pid not in before,
                     is_removed=pid not in after,
                 )
@@ -209,7 +224,12 @@ def outcomes_from_output(output: ScheduleOutput) -> dict[uuid.UUID, Compared]:
 
     return {
         uuid.UUID(o.project_id): _Compared(
-            o.projected_end_week, o.within_year, o.left_out, o.blocked
+            o.projected_end_week,
+            o.within_year,
+            o.left_out,
+            o.blocked,
+            o.counts_toward_year,
+            o.not_scheduled_priority,
         )
         for o in output.project_outcomes
     }

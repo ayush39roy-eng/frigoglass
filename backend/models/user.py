@@ -69,7 +69,9 @@ class User(UUIDPrimaryKeyMixin, TimestampMixin, Base):
 
     roles: Mapped[list[UserRole]] = relationship(back_populates="user")
     hub_scopes: Mapped[list[UserHubScope]] = relationship(back_populates="user")
-    engineer: Mapped[Engineer | None] = relationship(back_populates="user")
+    engineer: Mapped[Engineer | None] = relationship(
+        back_populates="user", foreign_keys="Engineer.user_id"
+    )
 
     __table_args__ = (
         CheckConstraint(

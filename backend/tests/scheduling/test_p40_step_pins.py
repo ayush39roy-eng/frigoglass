@@ -125,7 +125,8 @@ def test_new_fields_default_to_empty_and_false() -> None:
     names = [f.name for f in dataclasses.fields(ProjectInput)]
     assert names[-1] == "step_pins"
     assert [f.name for f in dataclasses.fields(StepSchedule)][-2:] == ["pinned", "manual_overlap"]
-    assert [f.name for f in dataclasses.fields(ProjectScheduleOutcome)][-2:] == [
+    # P42 (ADR 0056): `not_scheduled_priority` / `counts_toward_year` follow.
+    assert [f.name for f in dataclasses.fields(ProjectScheduleOutcome)][-4:-2] == [
         "manual_overlap",
         "pin_lapsed",
     ]
@@ -156,6 +157,8 @@ def test_canonical_output_omits_the_p40_flags_at_their_defaults() -> None:
     raw = dataclasses.asdict(out)
     for o in raw["project_outcomes"]:
         del o["manual_overlap"], o["pin_lapsed"]
+        # P42 (ADR 0056): omitted at their defaults too.
+        del o["not_scheduled_priority"], o["counts_toward_year"]
         for s in o["steps"]:
             del s["pinned"], s["manual_overlap"]
     assert data == raw
@@ -672,7 +675,10 @@ def test_greedy_and_cp_sat_emit_identical_pinned_rows_and_pin_lapsed() -> None:
         _project("b", priority="P2", step_pins=(_pin("PDD-H", 40, 45), _pin("PDD-D", 36, 36))),
         _project("c", priority="P3", leader_engineer_id="eng-b"),
         _project("d", frozen=True, actual_start_week=25, step_pins=(_pin("PDD-E", 26, 27),)),
-        _project("e", priority="P4", leader_engineer_id="eng-b", step_pins=(_pin("PDD-E", 1, 50),)),
+        # P42 (R42-3): was P4, which is no longer scheduled; a queued P3
+        # (In Queue) keeps the lapsed-pin case and also exercises CP-SAT's
+        # post-solve walk of queued projects (R42-5).
+        _project("e", priority="P3", leader_engineer_id="eng-b", step_pins=(_pin("PDD-E", 1, 50),)),
         _project(
             "f",
             priority="P2",

@@ -319,15 +319,19 @@ async def test_gantt_freeze_allowed_for_hub_planner(db_session):
     from tests.factories import make_project
 
     hub = await make_hub(db_session)
-    project = await make_project(db_session, hub, frozen=True, actual_start_week=10)
+    project = await make_project(db_session, hub, frozen=False)
     try:
         async with await _as(db_session, RoleName.HUB_PLANNER) as client:
-            # Unfreezing (frozen=False) needs no actual_start_week, so this
-            # exercises the RBAC-allowed path without also depending on the
-            # handler's own hard-gate validation logic.
+            resp = await client.post(
+                f"/gantt/projects/{project.id}/freeze",
+                json={"frozen": True, "actual_start_week": 10},
+            )
+            assert resp.status_code == 200
+            assert resp.json()["frozen"] is True
+            # P40 (ADR 0054 R40-10): unfreezing needs the Admin / Super Admin role.
             resp = await client.post(f"/gantt/projects/{project.id}/freeze", json={"frozen": False})
-        assert resp.status_code == 200
-        assert resp.json()["frozen"] is False
+        assert resp.status_code == 403
+        assert resp.json()["code"] == "UNFREEZE_REQUIRES_ADMIN"
     finally:
         _teardown()
 

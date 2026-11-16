@@ -351,6 +351,8 @@ async def test_builder_passes_the_table_and_default_inputs_stay_byte_identical(
     pre_p33 = dataclasses.asdict(si)
     del pre_p33["categories"]
     for project in pre_p33["projects"]:
+        # P40 (R40-12): `step_pins` is omitted from the canonical form when empty.
+        project.pop("step_pins", None)
         for row in project["step_timing"]:
             del row["wait_weeks"], row["lead_weeks"]
     assert priority_preview._canonical(si) == {

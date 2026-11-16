@@ -2,7 +2,8 @@ import * as React from 'react';
 
 import { CardInfo } from '@/components/ui/card-info';
 import { RunProvenanceChips } from '@/components/ui/run-provenance-chips';
-import { SPILLOVER_YEAR, WITHIN_YEAR_WEEK } from '@/lib/domain-constants';
+import { WITHIN_YEAR_WEEK } from '@/lib/domain-constants';
+import { usePlanYearLabels } from '@/lib/plan-clock';
 import { formatWeek } from '@/lib/format';
 
 import type { ScheduleRunSummary } from '../api/types';
@@ -44,6 +45,7 @@ export function ScheduleRunProvenance({
   showSolverChip = false,
   showTimestampChip = false,
 }: ScheduleRunProvenanceProps): React.JSX.Element {
+  const years = usePlanYearLabels();
   return (
     <RunProvenanceChips
       scheduleRunVersion={scheduleRunVersion}
@@ -64,7 +66,7 @@ export function ScheduleRunProvenance({
         </p>
         <p>
           <strong className="text-text">Spillover (past {formatWeek(WITHIN_YEAR_WEEK)})</strong> = not
-          done by {formatWeek(WITHIN_YEAR_WEEK)}, carried into {SPILLOVER_YEAR}. It includes any
+          done by {formatWeek(WITHIN_YEAR_WEEK)}, carried into {years.spilloverYear}. It includes any
           project the run could not place yet (shown as &quot;not yet placed&quot;).{' '}
           <strong className="text-text">On Hold at a stage</strong> = in the plan, waiting at a stage
           that is on hold; it wins outright over the others, so the counts never overlap. It is not

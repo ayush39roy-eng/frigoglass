@@ -60,11 +60,18 @@ from scheduling.effort_split import (
     effort_target_weeks,
     round_half_up,
 )
-from scheduling.greedy import run_greedy_sgs
+from scheduling.greedy import (
+    is_not_scheduled_priority,
+    not_scheduled_priority_outcome,
+    project_counts_toward_year,
+    run_greedy_sgs,
+    year_flags,
+)
 from scheduling.hubs import canonical_hub_name
 from scheduling.invariants import (
     CrossCapacityHubLeader,
     InvariantViolation,
+    check_band_neutrality,
     check_i38_run_week,
     check_i41_week_domain,
     check_pin_load_neutrality,
@@ -76,6 +83,7 @@ from scheduling.invariants import (
     cross_capacity_hub_leaders,
     validate_invariants,
     without_pins,
+    without_spare_capacity_projects,
     without_waits,
 )
 from scheduling.monte_carlo import (
@@ -337,4 +345,11 @@ __all__ = [
     "pins_lapsed",
     "validate_step_pins",
     "without_pins",
+    # P42 (ADR 0056 as ruled, R42-2..R42-9): priority band meaning.
+    "check_band_neutrality",
+    "is_not_scheduled_priority",
+    "not_scheduled_priority_outcome",
+    "project_counts_toward_year",
+    "without_spare_capacity_projects",
+    "year_flags",
 ]

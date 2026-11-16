@@ -1,6 +1,6 @@
 # ADR 0056 — What each priority band means for scheduling
 
-- **Status:** Proposed (2026-11-17, orchestrator, owner request). Binding only after the
+- **Status:** Accepted with amendments (2026-11-17, P42-T01 ruling R42-1..R42-12, see the end).
   workflow-auditor's ruling at P42-T01. The ruling overrides this text where they differ.
 - **Amends:** DOMAIN_RULES "Scheduling order" (key 3) and "Booking rules" (the excluded set), and the
   within-year KPIs. It also affects I25 (remaining demand) and the I37b membership in ADR 0050.
@@ -91,3 +91,21 @@ their engineers and chambers, so P1–P3 dates may move earlier. This is intende
   change on the day of the rollout.
 - Remaining demand drops by the P4 projects' load.
 - What-if: an override to P4 removes the project from the scenario.
+
+## Ruling (P42-T01)
+
+The workflow-auditor's verdict on 2026-11-17 is **ACCEPT WITH AMENDMENTS**. The full text is in `docs/MEMORY.md`,
+"[2026-11-17] P42-T01 — workflow-auditor ruling on ADR 0056", R42-1..R42-12. Where this ADR differs from the
+ruling, the ruling wins. The main differences:
+
+- **Frozen P4 (R42-2).** A frozen P4 or Q project books its locked capacity but counts nothing toward the year.
+  This reverses the D2 proposal and is the new assumption for OQ #107.
+- **"Spare capacity only" (R42-5).**
+  - It needs a new sort key 1a, `counts_toward_year` descending, placed between frozen and VIP.
+  - In CP-SAT, queued projects are placed after the solve, on the capacity left over. They are not weighted at
+    zero.
+- **Schema (R42-10).** A schema change is needed: `p42a` adds the outcome columns `counts_toward_year` and
+  `not_scheduled_priority`.
+- **D6 on dev data (R42-10).** P1–P3 dates do not move because of P4 leaving: P4 was already last in the
+  scheduling order.
+- **New invariants (R42-9).** I49–I53.

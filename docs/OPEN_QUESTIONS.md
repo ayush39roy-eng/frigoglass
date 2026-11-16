@@ -1276,7 +1276,7 @@ A saved scenario is visible to:
 
 So a scenario that touches all hubs is visible only to users who can see all hubs. Should it instead
 be private to the user who saved it, with sharing optional?
-**Assuming until answered:** hub-scoped, as above. **Who must answer:** owner.
+**Assuming until answered:** hub-scoped, as above; the creator always sees their own (ADR 0055 gate amendments). **Who must answer:** owner.
 
 ### 106. How long should saved import scenarios be kept? *(2026-11-17, P41, non-blocking)*
 
@@ -1296,3 +1296,24 @@ nothing, and a planner who wants it planned moves it to P3 or higher. **Who must
 The owner kept started P3 projects scheduled. P4 has no started projects today, so P4 is excluded
 whatever its status. Should a P4 project that is In Development keep scheduling, as P3 does?
 **Assuming until answered:** no, P4 is never scheduled. **Who must answer:** owner.
+
+### 109. Do delivered (Commercialized) P4 projects still count as within year? *(2026-11-17, P42 R42-11, non-blocking)*
+
+Dev has 51 of them, and today they count. **Assuming until answered:** yes, as today. **Who must
+answer:** owner.
+
+### 110. A VIP pin on a queued P3 no longer jumps ahead of P1/P2 *(2026-11-17, P42 R42-5, non-blocking)*
+
+Queued work only gets spare capacity, so VIP orders projects only inside the queued tier.
+**Assuming until answered:** as stated. **Who must answer:** owner to confirm.
+
+*(OQ #107 update, P42-T01 ruling R42-2:)* the assumption is now that **a frozen P4 still books its
+locked capacity**, and does not count toward the year.
+
+### 111. Default priority of a What-if added project *(2026-11-17, P42-T02, non-blocking)*
+
+A hypothetical project added with no priority or score defaults to P3 and In Queue. Under P42 that
+means it is queued and never counts toward the year. A score below 40 maps to P4, which is never
+scheduled. Should an added project default to P2 instead?
+**Assuming until answered:** unchanged (P3, In Queue). The What-if shows it as "Queued". **Who must
+answer:** owner.

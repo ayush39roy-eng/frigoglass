@@ -161,8 +161,10 @@ def _f2_input() -> ScheduleInput:
     """One Greece chamber, horizon 50. Each project needs PDD-H (6 weeks) and
     cannot finish before the horizon if it queues behind the other's PDD-H,
     so only one fits. CP-SAT keeps the P1 (ADR 0005 weight 4) and leaves out
-    the progress-tracked Q project (weight 0), whose Done PDD-A and
-    In-Progress PDD-E must still be in the run."""
+    the progress-tracked P3 project (weight 2), whose Done PDD-A and
+    In-Progress PDD-E must still be in the run. (P42 R42-3: was a started Q
+    project, which is no longer scheduled; a started P3 counts and is still
+    a CP-SAT decision variable.)"""
 
     p1 = ProjectInput(
         project_id="p1-new",
@@ -180,7 +182,7 @@ def _f2_input() -> ScheduleInput:
         hub="R&D-Greece",
         status="In Development",
         category="B",
-        priority="Q",
+        priority="P3",
         frozen=False,
         leader_engineer_id="eng-gr2",
         step_progress=(

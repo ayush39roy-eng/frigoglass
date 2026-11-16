@@ -357,6 +357,9 @@ GANTT_STEP_ROW_FIELDS = {
     # P33-T12 (contract P33 Part G): the read-only template copy; the timing
     # inputs and `timing_editable` are retired (ADR 0048).
     "plan_weeks", "gap_weeks", "own_effort",
+    # P40 (ADR 0054, docs/API_CONTRACT_P40.md §2): manual step pins.
+    "manual_start_week", "manual_end_week", "pinned", "manual_overlap",
+    "current_length_weeks", "pin_editable", "pin_block_reason",
 }
 
 

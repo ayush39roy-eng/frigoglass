@@ -1,4 +1,4 @@
-import { DISPLAY_HORIZON_WEEKS, PLAN_YEAR, SCHEDULER_HORIZON_WEEKS } from '@/lib/domain-constants';
+import { DISPLAY_HORIZON_WEEKS, SCHEDULER_HORIZON_WEEKS } from '@/lib/domain-constants';
 
 /**
  * P35-T02 (D35-3): the register's actual start / end are picked as dates and
@@ -6,9 +6,11 @@ import { DISPLAY_HORIZON_WEEKS, PLAN_YEAR, SCHEDULER_HORIZON_WEEKS } from '@/lib
  * for workbook dates (ADR 0035 §11, `backend/seed/extract_client_2026.py::
  * plan_week`), not a new calendar:
  *
- * - a date in ISO week-year 2026 → its ISO week (ISO week 53 → 52);
- * - a date in ISO week-year 2027 → 52 + its ISO week, while that is ≤ W78;
- * - anything else has no plan week (`null`): week numbers start at 2026 W1.
+ * - a date in ISO week-year `planYear` → its ISO week (ISO week 53 → 52);
+ * - a date in ISO week-year `planYear + 1` → 52 + its ISO week, while that is ≤ W78;
+ * - anything else has no plan week (`null`): week numbers start at `planYear` W1.
+ *
+ * P37 (ADR 0052): `planYear` is the served `/me.plan_year`, passed in by the caller.
  *
  * Shown back as the Monday of that ISO week. Pure formatting / parsing of the
  * value the user types; no schedule figure is derived here (I9).
@@ -52,10 +54,10 @@ function toInputValue(d: Date): string {
 
 /** `<input type="date">` value (`YYYY-MM-DD`) for a plan week, or `''` when
  *  the week has no date in the rule above (null, < 1 or past W78). */
-export function planWeekToDateInput(week: number | null | undefined): string {
+export function planWeekToDateInput(week: number | null | undefined, planYear: number): string {
   if (week === null || week === undefined || !Number.isInteger(week) || week < 1) return '';
-  if (week <= DISPLAY_HORIZON_WEEKS) return toInputValue(isoWeekMonday(PLAN_YEAR, week));
-  if (week <= SCHEDULER_HORIZON_WEEKS) return toInputValue(isoWeekMonday(PLAN_YEAR + 1, week - DISPLAY_HORIZON_WEEKS));
+  if (week <= DISPLAY_HORIZON_WEEKS) return toInputValue(isoWeekMonday(planYear, week));
+  if (week <= SCHEDULER_HORIZON_WEEKS) return toInputValue(isoWeekMonday(planYear + 1, week - DISPLAY_HORIZON_WEEKS));
   return '';
 }
 
@@ -65,7 +67,7 @@ export function planWeekToDateInput(week: number | null | undefined): string {
  * past W78) or does not parse — the cell then shows an error and stages
  * nothing.
  */
-export function dateInputToPlanWeek(value: string): number | null | undefined {
+export function dateInputToPlanWeek(value: string, planYear: number): number | null | undefined {
   const t = value.trim();
   if (t === '') return null;
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(t);
@@ -73,15 +75,19 @@ export function dateInputToPlanWeek(value: string): number | null | undefined {
   const d = utcDate(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
   if (Number.isNaN(d.getTime()) || toInputValue(d) !== t) return undefined;
   const { year, week } = isoWeekOf(d);
-  if (year === PLAN_YEAR) return Math.min(week, DISPLAY_HORIZON_WEEKS);
-  if (year === PLAN_YEAR + 1 && DISPLAY_HORIZON_WEEKS + week <= SCHEDULER_HORIZON_WEEKS) {
+  if (year === planYear) return Math.min(week, DISPLAY_HORIZON_WEEKS);
+  if (year === planYear + 1 && DISPLAY_HORIZON_WEEKS + week <= SCHEDULER_HORIZON_WEEKS) {
     return DISPLAY_HORIZON_WEEKS + week;
   }
   return undefined;
 }
 
-/** Bounds for the date picker: Monday of 2026 W1 … Sunday of W78. */
-export const PLAN_DATE_MIN = planWeekToDateInput(1);
-export const PLAN_DATE_MAX = toInputValue(
-  new Date(isoWeekMonday(PLAN_YEAR + 1, SCHEDULER_HORIZON_WEEKS - DISPLAY_HORIZON_WEEKS).getTime() + 6 * DAY_MS),
-);
+/** Bounds for the date picker: Monday of `planYear` W1 … Sunday of W78. */
+export function planDateBounds(planYear: number): { min: string; max: string } {
+  return {
+    min: planWeekToDateInput(1, planYear),
+    max: toInputValue(
+      new Date(isoWeekMonday(planYear + 1, SCHEDULER_HORIZON_WEEKS - DISPLAY_HORIZON_WEEKS).getTime() + 6 * DAY_MS),
+    ),
+  };
+}

@@ -2,8 +2,9 @@ import * as React from 'react';
 import { Ban, CalendarCheck, CalendarX, CircleCheck, CirclePause, CircleX, TriangleAlert } from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
-import { DISPLAY_HORIZON_WEEKS, SPILLOVER_YEAR } from '@/lib/domain-constants';
+import { DISPLAY_HORIZON_WEEKS } from '@/lib/domain-constants';
 import { formatWeek } from '@/lib/format';
+import { usePlanYearLabels } from '@/lib/plan-clock';
 import { cn } from '@/lib/utils';
 import { HEALTH_META } from '@/surfaces/project-workspace/lib/health-meta';
 
@@ -55,6 +56,7 @@ export function ProjectedFinishChip({
   withinYear: boolean | null;
   className?: string;
 }): React.JSX.Element {
+  const { spilloverYear } = usePlanYearLabels();
   if (projectedEndWeek === null || withinYear === null) {
     return (
       <Badge tone="outline" className={cn('whitespace-nowrap', className)} data-testid="finish-chip" data-within-year="none">
@@ -72,7 +74,7 @@ export function ProjectedFinishChip({
       title={
         withinYear
           ? 'Projected to finish inside the plan year'
-          : `Projected to finish after week 52 — spillover to ${String(SPILLOVER_YEAR)}`
+          : `Projected to finish after week 52 — spillover to ${spilloverYear}`
       }
     >
       <Icon aria-hidden="true" />
@@ -86,7 +88,7 @@ export function ProjectedFinishChip({
           <span aria-hidden="true">·</span>
         </>
       ) : null}
-      {withinYear ? 'Within year' : `Past W52 → ${String(SPILLOVER_YEAR)}`}
+      {withinYear ? 'Within year' : `Past W52 → ${spilloverYear}`}
     </Badge>
   );
 }

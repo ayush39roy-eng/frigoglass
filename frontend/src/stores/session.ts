@@ -70,6 +70,11 @@ export interface SessionState {
   load: () => Promise<void>;
   /** Skip the current backoff wait and try `/me` now. No-op otherwise. */
   retryNow: () => void;
+  /** P37: re-read `/me` in the background (week rollover, window focus, a
+   *  plan that is behind). One attempt, no status change; a failure keeps the
+   *  current session. Resolves to the new `/me`, or null when it failed or a
+   *  boot / reset happened meanwhile. */
+  refresh: () => Promise<MeResponse | null>;
   /** Test/bootstrap seam: install a session without a network call. */
   seed: (me: MeResponse) => void;
   reset: () => void;
@@ -173,6 +178,19 @@ export const useSessionStore = create<SessionState>()((set) => ({
 
   retryNow: () => {
     wakeEarly?.();
+  },
+
+  refresh: async () => {
+    if (inflight) return null;
+    const gen = generation;
+    try {
+      const me = await fetchMeOnce();
+      if (gen !== generation || inflight) return null;
+      set({ status: 'ready', me, errorKind: null, waking: null });
+      return me;
+    } catch {
+      return null;
+    }
   },
 
   seed: (me) => set({ status: 'ready', me, errorKind: null, waking: null }),

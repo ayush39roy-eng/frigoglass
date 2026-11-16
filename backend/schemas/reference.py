@@ -10,7 +10,7 @@ import uuid
 
 from pydantic import BaseModel, ConfigDict
 
-from models.enums import HubName, LabRegion, ProjectType, WorkflowStepKind
+from models.enums import HubName, LabRegion, ProjectPriority, ProjectType, WorkflowStepKind
 
 
 class HubRead(BaseModel):
@@ -50,3 +50,20 @@ class ProjectTypeRead(BaseModel):
 
     code: ProjectType
     label: str
+
+
+class PriorityBandRead(BaseModel):
+    """P42 (ADR 0056 R42-1, docs/API_CONTRACT_P42.md §1): one priority band,
+    its label and what it means for scheduling. Served in `PRIORITY_ORDER`."""
+
+    code: ProjectPriority
+    #: `domain_constants.PRIORITY_LABELS` ("Must do this year", ...).
+    label: str
+    #: The short code shown on chips: the band code; "Q" for Q.
+    short_label: str
+    #: R42-3: a non-frozen project of this band (schedulable status) is never
+    #: scheduled (P4, Q).
+    not_scheduled: bool
+    #: R42-4: an In Queue project of this band never counts toward the year
+    #: (P3; P4 and Q never count at all).
+    queued_when_in_queue: bool

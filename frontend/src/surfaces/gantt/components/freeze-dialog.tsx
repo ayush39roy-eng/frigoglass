@@ -78,7 +78,10 @@ export function FreezeDialog({
 function useSubmitError() {
   const [submitError, setSubmitError] = React.useState<string | null>(null);
   const handle = React.useCallback((err: unknown) => {
-    if (err instanceof ApiError && err.isForbidden) {
+    if (err instanceof ApiError && err.code === 'UNFREEZE_REQUIRES_ADMIN') {
+      // P40-T03c (ADR 0054 R40-10): unfreezing is Admin / Super Admin only.
+      setSubmitError('Only an Admin or Super Admin can unfreeze a project.');
+    } else if (err instanceof ApiError && err.isForbidden) {
       setSubmitError('Your role cannot freeze projects (Hub Planner / Admin only).');
     } else if (err instanceof ApiError) {
       setSubmitError(err.detail ?? 'The change could not be saved. Please try again.');

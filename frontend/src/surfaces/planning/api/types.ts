@@ -127,7 +127,10 @@ export interface ResourceLoadFiltersApplied {
 export interface ResourceLoadResponse {
   has_active_schedule_run: boolean;
   schedule_run_version: number | null;
+  /** P37: the calendar week (was the run week). */
   current_week: number;
+  /** P37: the active run's week (the response is run-booked); null without a run. */
+  run_week: number | null;
   basis: CapacityBasis;
   engineers: EngineerLoadRow[];
   chambers: ChamberLoadRow[];

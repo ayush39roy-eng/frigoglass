@@ -15,6 +15,7 @@ import type {
   ImportSimulateRequest,
   ImportSimulateResponse,
   SavedScenario,
+  SavedScenarioPage,
   SavedScenarioSummary,
 } from './import-types';
 
@@ -397,7 +398,13 @@ const savedSummaryShape = {
 
 export const savedScenarioSummarySchema: z.ZodType<SavedScenarioSummary> = z.object(savedSummaryShape);
 
-export const savedScenarioListSchema = z.object({ items: z.array(savedScenarioSummarySchema) });
+/** P41-R01: one page of the list, newest first (`limit` 1–200, default 50). */
+export const savedScenarioListSchema: z.ZodType<SavedScenarioPage> = z.object({
+  items: z.array(savedScenarioSummarySchema),
+  total: int,
+  limit: int,
+  offset: int,
+});
 
 export const savedScenarioSchema: z.ZodType<SavedScenario> = z.object({
   ...savedSummaryShape,

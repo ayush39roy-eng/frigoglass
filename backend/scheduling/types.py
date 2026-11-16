@@ -513,6 +513,18 @@ class ProjectScheduleOutcome:
     # week has passed). Warnings only; default False, omitted at the default.
     manual_overlap: bool = False
     pin_lapsed: bool = False
+    # ADR 0056 as ruled at P42-T01 (R42-3 / R42-4, I49 / I50).
+    # `not_scheduled_priority`: True exactly on a non-frozen P4/Q project in a
+    # schedulable status, excluded before validation (`excluded` is True, no
+    # rows, null weeks, never within year / spillover / left out / blocked).
+    # `counts_toward_year`: `domain_constants.counts_toward_year(priority,
+    # status)` on the run input; `within_year` and `spillover` are AND-ed with
+    # it (`greedy.year_flags`). A queued P3 (In Queue) is scheduled with spare
+    # capacity only and is False. Both are omitted from the canonical /
+    # hashed form at their default (False / True), so a run with no P4/Q and
+    # no queued P3 serialises exactly as before P42.
+    not_scheduled_priority: bool = False
+    counts_toward_year: bool = True
 
 
 @dataclass(frozen=True)

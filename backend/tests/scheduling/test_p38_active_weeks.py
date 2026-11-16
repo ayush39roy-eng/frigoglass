@@ -257,15 +257,20 @@ def test_baseline_rejects_duplicate_entries() -> None:
 
 # sha256 of `to_jsonable` (sorted-key JSON) on `portfolio_baseline()`, measured on the
 # code BEFORE P38-T03 (HEAD whatif.py / plan_import.py) and after: identical.
+# Re-pinned at P42-T02 (ADR 0056): the portfolio holds P4 / Q and In Queue P3
+# projects (R42-3 not scheduled, R42-4 / R42-5 queued) and the result types gain
+# `counts_toward_year` / `not_scheduled_priority` / `queued` (R42-6). With those
+# bands neutralised, every figure is byte-identical to pre-P42
+# (`test_p42_band_meaning.test_neutral_inputs_are_byte_identical_to_pre_p42`).
 _PRE_P38_HASHES = {
-    "analytic_add_remaining": "9b770885b59e552c509c3b310b0c0e0c6a62a11461eabcd8f40aa1b15ccafd43",
-    "analytic_add_year": "f7fcb3ffb11f1050d96664d5fd44a7e9b2a8f8632fa335ba7cf7753f3e4d2283",
-    "analytic_remove_remaining": "307783eb782b3626899f02485a0996b2e779947ad91bd8e21bb242d5d9fb5e72",
-    "analytic_remove_year": "510a3ea433f1f784d532ec93dec0a69e9d94a384e35d706195206b273f252ea3",
-    "plan_import_104": "18949e488865b1667d99e0693cad3a5159d71a29cf2bf85978bbfe9a0bc2929a",
-    "plan_import_52": "9c6fa3bed306ab5bbad58ab3934e94feb16fd8d7853022761d37469c605daa41",
-    "simulate_add": "5fcdccbff2f9c59239571db66f0b8794ac72cdf2fff81c86218cbc5b71b99e07",
-    "simulate_remove": "6e0d20de8523ee0791eca2169c1fd8f74d203aeab44a7620c594cb4249b78abb",
+    "analytic_add_remaining": "5064bdfe4059020600851720f7dbb0a6f14dd648a43f0db797018fb55dea1c7a",
+    "analytic_add_year": "7065e65163908055fd13736ad432d9523c48343e5a27ede52aba574ea990ecbb",
+    "analytic_remove_remaining": "e8ba5423058ccc11fe5c576c67d33b7a0e794df8e698e896a1c5828d681829ac",
+    "analytic_remove_year": "681eb8002f5870d1bc773d93ff69fec056dff8fd9c4d592c806c84eb262bddcd",
+    "plan_import_104": "3a134c3d1e776114f39e69c5904204af793c483f5dea9fe76146d1c17e755b0e",
+    "plan_import_52": "17183c0cba70c1131986e387e4c56219011e8346ea8b01a79b5f65e4512b73fd",
+    "simulate_add": "c6f756f7eb551480c32fec95fd43739b6042c7faa1e664a4143068423cf8f01b",
+    "simulate_remove": "4adad30ab52b8b55c96a1fc5bef2d86c9723e070266cc0ac3c6a1aafb6e62ce1",
 }
 
 

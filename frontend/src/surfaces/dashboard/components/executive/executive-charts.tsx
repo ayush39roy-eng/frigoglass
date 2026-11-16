@@ -3,7 +3,7 @@ import { Cell, Pie, PieChart, ResponsiveContainer, Tooltip } from 'recharts';
 
 import { BoltCard } from '@/components/ui/bolt-card';
 import { CardInfo } from '@/components/ui/card-info';
-import { CARRY_OVER_YEAR, PLAN_YEAR } from '@/lib/domain-constants';
+import { usePlanYearLabels } from '@/lib/plan-clock';
 import { formatInteger } from '@/lib/format';
 import { categoryRank, dashCatFill } from '@/lib/categorical-palette';
 import {
@@ -405,6 +405,7 @@ export function HeroDonut({
 /** Donut 1 — the portfolio COMPOSITION (carry-over vs new, ADR 0030), from
  *  `GET /dashboard/pipeline-totals`. Not the schedule "Spillover (past W52)". */
 export function PipelineDonut({ totals }: { totals: PipelineTotals }): React.JSX.Element {
+  const years = usePlanYearLabels();
   const slices: Slice[] = [
     {
       key: 'spillover',
@@ -437,8 +438,8 @@ export function PipelineDonut({ totals }: { totals: PipelineTotals }): React.JSX
       totalLabel="projects"
       info={
         <p>
-          The portfolio&apos;s composition: projects carried over from {String(CARRY_OVER_YEAR)}{' '}
-          (&quot;Spillover&quot;), projects registered for {String(PLAN_YEAR)} (&quot;New&quot;), and projects
+          The portfolio&apos;s composition: projects carried over from {years.carryOverYear}{' '}
+          (&quot;Spillover&quot;), projects registered for {years.planYear} (&quot;New&quot;), and projects
           with no registration year. Counts, shares and the total are served by the API for the current hub /
           country filter; nothing is derived in the browser.
         </p>

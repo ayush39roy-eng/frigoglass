@@ -369,7 +369,7 @@ async def import_format_template(
     current_user: Principal = Depends(_read),
 ) -> Response:
     _throttle(WHATIF_RATE_LIMIT, current_user)
-    data = template_xlsx(await current_aliases(db))
+    data = await run_in_threadpool(template_xlsx, await current_aliases(db))
     return _xlsx_response(data, "plan-import-template.xlsx")
 
 
@@ -386,7 +386,7 @@ async def export_current_result(
     _throttle(WHATIF_RATE_LIMIT, current_user)
     ctx = await load_context(db, current_user, clock=clock)
     result = await do_import_simulate(ctx, body.request)
-    data = scenarios.current_result_xlsx(result, body.name)
+    data = await run_in_threadpool(scenarios.current_result_xlsx, result, body.name)
     scenarios.audit_export(
         db, current_user, "current",
         names=[body.name] if body.name else [], projects=len(result.projects),
@@ -414,11 +414,16 @@ async def save_import_scenario(
 @router.get("/import/scenarios", response_model=SavedScenarioListOut)
 async def list_import_scenarios(
     source_file_sha256: str | None = Query(default=None, pattern=r"^[0-9a-f]{64}$"),
+    limit: int = Query(default=scenarios.DEFAULT_LIST_LIMIT, ge=1, le=scenarios.MAX_LIST_LIMIT),
+    offset: int = Query(default=0, ge=0, le=1_000_000),
     db: AsyncSession = Depends(get_db),
     current_user: Principal = Depends(_read),
 ) -> SavedScenarioListOut:
-    items = await scenarios.list_scenarios(db, current_user, source_file_sha256)
-    return SavedScenarioListOut(items=items)
+    _throttle(WHATIF_RATE_LIMIT, current_user)
+    items, total = await scenarios.list_scenarios(
+        db, current_user, source_file_sha256, limit=limit, offset=offset
+    )
+    return SavedScenarioListOut(items=items, total=total, limit=limit, offset=offset)
 
 
 def _compare_ids(ids: str) -> list[uuid.UUID]:
@@ -452,7 +457,7 @@ async def export_scenario_comparison(
     _throttle(WHATIF_RATE_LIMIT, current_user)
     parsed = _compare_ids(ids)
     rows = await scenarios.visible_rows(db, current_user, parsed)
-    data = scenarios.compare_xlsx(rows)
+    data = await run_in_threadpool(scenarios.compare_xlsx, rows)
     scenarios.audit_export(
         db, current_user, "compare",
         ids=[r.id for r in rows], names=[r.name for r in rows],
@@ -468,6 +473,7 @@ async def get_import_scenario(
     db: AsyncSession = Depends(get_db),
     current_user: Principal = Depends(_read),
 ) -> SavedScenarioOut:
+    _throttle(WHATIF_RATE_LIMIT, current_user)
     return await scenarios.get_scenario(db, current_user, scenario_id)
 
 
@@ -508,7 +514,7 @@ async def export_import_scenario(
 ) -> Response:
     _throttle(WHATIF_RATE_LIMIT, current_user)
     (row,) = await scenarios.visible_rows(db, current_user, [scenario_id])
-    data = scenarios.saved_scenario_xlsx(row)
+    data = await run_in_threadpool(scenarios.saved_scenario_xlsx, row)
     scenarios.audit_export(
         db, current_user, "scenario",
         ids=[row.id], names=[row.name], projects=len(row.result.get("projects", [])),

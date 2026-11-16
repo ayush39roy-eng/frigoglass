@@ -519,7 +519,9 @@ def test_seed_with_every_figure_apportioned_is_clean_on_both_solvers(fte: float)
     # Greedy and CP-SAT agree on every skipped flag they both emit.
     g, c = _skipped_flags(greedy), _skipped_flags(cp)
     common = sorted(set(g) & set(c))
-    assert len(common) > 300
+    # P42 (ADR 0056 R42-3): the seed's 25 non-frozen P4/Q projects carry no
+    # rows any more (was > 300 rows in common; 266 after P42).
+    assert len(common) > 250
     assert all(g[k] == c[k] for k in common)
     # Every zeroed step that is emitted is skipped.
     for p in si.projects:

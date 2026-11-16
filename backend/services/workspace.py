@@ -69,6 +69,7 @@ from schemas.workspace import (
 from services.active_run import get_active_run, slip_weeks
 from services.display_labels import stage_status_label
 from services.hub_scope import hub_scope_filter, is_engineer_self_scoped, is_hub_in_scope
+from services.outcome_buckets import outcome_bucket, outcome_label, priority_label
 from services.priority_capacity_fill import compute_capacity_fill
 from services.progress import project_progress_pct
 from services.project_access import effective_project_access
@@ -918,6 +919,13 @@ async def build_workspace(
         within_year=outcome.within_year if outcome is not None else None,
         left_out=outcome.left_out if outcome is not None else False,
         schedule_stale=project.schedule_stale,
+        counts_toward_year=outcome.counts_toward_year if outcome is not None else None,
+        not_scheduled_priority=(
+            outcome.not_scheduled_priority if outcome is not None else None
+        ),
+        outcome=outcome_bucket(outcome),
+        outcome_label=outcome_label(outcome, projected),
+        priority_label=priority_label(project.priority),
     )
     health = health_badge(
         outcome,

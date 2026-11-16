@@ -62,7 +62,7 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import status
 from sqlalchemy import select
@@ -338,11 +338,18 @@ def _to_change(row: ScheduleRunChangeRow) -> PriorityPreviewChange:
         left_out_after=row.after_left_out,
         blocked_before=row.before_blocked,
         blocked_after=row.after_blocked,
+        counts_toward_year_before=row.before_counts_toward_year,
+        counts_toward_year_after=row.after_counts_toward_year,
+        not_scheduled_priority_before=row.before_not_scheduled_priority,
+        not_scheduled_priority_after=row.after_not_scheduled_priority,
+        priority_label=row.priority_label,
     )
 
 
 def _pushed_out(c: PriorityPreviewChange) -> bool:
-    return c.within_year_before and not c.within_year_after
+    # P42 (R42-8): a project that stops counting is not "pushed out of the
+    # year"; only a counting outcome can drop out.
+    return c.within_year_before and not c.within_year_after and c.counts_toward_year_after
 
 
 def _order_key(c: PriorityPreviewChange) -> tuple[bool, bool, int, str, str]:
@@ -390,6 +397,21 @@ def _moved(
 ) -> PriorityPreviewMoved:
     b = before.get(project_id)
     a = after.get(project_id)
+    nsp_before = b.not_scheduled_priority if b is not None else None
+    nsp_after = a.not_scheduled_priority if a is not None else None
+    counts_after = a.counts_toward_year if a is not None else None
+    # P42 (R42-8): the moved project's own effect, from the new flags.
+    effect: Literal["leaves_plan", "joins_queue"] | None = None
+    if nsp_after and not nsp_before:
+        effect = "leaves_plan"
+    elif (
+        nsp_after is False
+        and counts_after is False
+        and (b is None or nsp_before or b.counts_toward_year)
+    ):
+        # Out of P4/Q into P3 while In Queue, or a counting In Queue project
+        # moved to P3: it is queued now.
+        effect = "joins_queue"
     return PriorityPreviewMoved(
         end_week_before=b.projected_end_week if b is not None else None,
         end_week_after=a.projected_end_week if a is not None else None,
@@ -397,7 +419,20 @@ def _moved(
         within_year_after=a.within_year if a is not None else None,
         left_out_before=b.left_out if b is not None else None,
         left_out_after=a.left_out if a is not None else None,
+        counts_toward_year_before=b.counts_toward_year if b is not None else None,
+        counts_toward_year_after=counts_after,
+        not_scheduled_priority_before=nsp_before,
+        not_scheduled_priority_after=nsp_after,
+        effect=effect,
+        effect_label=_EFFECT_LABELS[effect] if effect is not None else None,
     )
+
+
+#: R42-8 copy.
+_EFFECT_LABELS: dict[str, str] = {
+    "leaves_plan": "leaves the plan",
+    "joins_queue": "joins the queue — not counted this year",
+}
 
 
 async def _diff(

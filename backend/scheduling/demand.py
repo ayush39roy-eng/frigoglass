@@ -16,7 +16,9 @@ Both invariants read `eff(p, s)` exactly as the scheduler does
     {Cancelled, Draft}.
   - Remaining design demand(h) = Σ rem over the same steps, for projects in a
     schedulable status (In Buyoff, Under Industrialization, In Development,
-    In Queue). `rem` is 0 when eff = 0 or the stage is Done;
+    In Queue) with priority ∉ {P4, Q} or frozen (ADR 0056 R42-6: a
+    non-frozen P4/Q project is never scheduled; a queued P3 is). `rem` is
+    0 when eff = 0 or the stage is Done;
     `derive_remaining(eff, percent_complete, remaining_weeks_override)` for
     In Progress / Blocked; eff for Not Started. Effort, never a span; not
     windowed to W52; stored progress counts for every project, frozen
@@ -141,6 +143,11 @@ class LiveProjectRow:
     design_effort_weeks: EffortFigure | None
     lab_effort_weeks: EffortFigure | None
     steps: tuple[LiveStepRow, ...]
+    # ADR 0056 R42-6 (I25 remaining): the project's priority band. A
+    # non-frozen P4/Q project is never scheduled, so it leaves remaining
+    # demand. The default `None` keeps every pre-P42 caller unchanged; the
+    # backend builder must pass the stored `projects.priority`.
+    priority: str | None = None
 
 
 @dataclass(frozen=True)
@@ -226,11 +233,15 @@ def compute_demand_load(projects: Iterable[LiveProjectRow]) -> DemandLoad:
     for p in sorted(projects, key=lambda r: r.project_id):
         if p.status in FULL_YEAR_EXCLUDED_STATUSES:
             continue
-        open_ = p.status in dc.SCHEDULABLE_STATUS_ORDER
+        schedulable = p.status in dc.SCHEDULABLE_STATUS_ORDER
+        # R42-6: remaining demand covers schedulable ∧ (priority ∉ {P4, Q} ∨
+        # frozen). The hub / region key still appears for any schedulable
+        # project (its figure may be 0), as before P42.
+        open_ = schedulable and (p.frozen or p.priority not in dc.NOT_SCHEDULED_PRIORITIES)
         region = _lab_region(p)
         design_year[p.capacity_hub] += 0
         lab_year[region] += 0.0
-        if open_:
+        if schedulable:
             design_rem[p.capacity_hub] += 0
             lab_rem[region] += 0.0
         for s in sorted(p.steps, key=lambda r: (r.sequence_order, r.step_id)):

@@ -369,7 +369,6 @@ async def test_exclude_plan_projects_rejections(db_session):
         for ids, kw in (
             ([str(world.beta.id)], {}),  # out of scope
             ([str(uuid.uuid4())], {}),  # unknown
-            ([str(world.delta.id)], {}),  # not in the baseline (On Hold)
             ([str(world.gamma.id), str(world.gamma.id)], {}),  # duplicated
             ([str(world.gamma.id)], {"mode": "file_only"}),
         ):
@@ -426,7 +425,10 @@ async def test_save_recomputes_and_stores_a_frozen_record(db_session):
     assert saved["simulated_week"] == fresh["current_week"]
     assert saved["plan_version"] is None  # no active run in this world
     assert saved["mode"] == "merge" and saved["plan_year_end_week"] == 104
-    assert saved["hub_codes"] == sorted({p["hub"] for p in fresh["projects"]})
+    # P41-R01 (H-1): every hub of the snapshot plus the saver's scope (all hubs).
+    import domain_constants as dc
+
+    assert saved["hub_codes"] == sorted(dc.HUB_LAB_REGION)
     assert saved["can_edit"] is True and saved["created_by_name"] == "Test User"
     assert saved["note"] == "first try" and saved["source_file_sha256"] == SHA
 
@@ -663,6 +665,16 @@ async def test_compare_export(db_session):
     assert wb.sheetnames == ["KPIs", "Outcome changes"]
     kpis = _cells(wb["KPIs"])
     assert kpis[0] == ["KPI", "S1: A", "S2: =B", "S2 - S1"]
+    # Workflow A4: the Compare tab's two derived rows, row for row.
+    a_res, b_res = a.json()["result"], b.json()["result"]
+    sched = next(r for r in kpis if r[0] == "Projects scheduled")
+    a_all = a_res["breakdowns"]["by_year"]["all"]["total"]
+    b_all = b_res["breakdowns"]["by_year"]["all"]["total"]
+    assert sched[1:] == [a_all, b_all, b_all - a_all]
+    not_placed = next(r for r in kpis if r[0] == "Not placed")
+    a_np = a_res["breakdowns"]["by_year"]["not_placed"]["total"]
+    b_np = b_res["breakdowns"]["by_year"]["not_placed"]["total"]
+    assert not_placed[1:] == [a_np, b_np, b_np - a_np]
     line = next(r for r in kpis if r[0] == "plan_excluded")
     assert line[1:] == [0, 1, 1]
     src = next(r for r in kpis if r[0] == "source_file_name")
@@ -687,4 +699,175 @@ async def test_rate_limit_applies_to_mutations_and_exports(db_session, monkeypat
         assert put.status_code == 429
         save = await c.post("/whatif/import/scenarios", json=save_body({"rows": []}))
         assert save.status_code == 429
-        assert (await c.get("/whatif/import/scenarios")).status_code == 200  # reads are free
+        # P41-R01 (M-1): the list and the read are limited too.
+        assert (await c.get("/whatif/import/scenarios")).status_code == 429
+        assert (await c.get(f"/whatif/import/scenarios/{uuid.uuid4()}")).status_code == 429
+
+
+# --- P41-R01: security H-1 probes (hub_codes covers the whole snapshot) and M-1 paging ------
+
+
+async def _invisible_to(db_session, sid: str, hub_ids) -> None:
+    await act_as(db_session, RoleName.HUB_PLANNER, hub_ids=hub_ids)
+    async with client_for(db_session) as c:
+        items = (await c.get("/whatif/import/scenarios")).json()["items"]
+        assert sid not in {i["id"] for i in items}
+        assert (await c.get(f"/whatif/import/scenarios/{sid}")).status_code == 404
+        assert (await c.get(f"/whatif/import/scenarios/{sid}/export.xlsx")).status_code == 404
+
+
+async def _save_as_india_planner(db_session, world, request_of) -> dict[str, Any]:
+    await act_as(db_session, RoleName.HUB_PLANNER, hub_ids=[world.ind.id])
+    async with client_for(db_session) as c:
+        rows = await _parsed_rows(c)
+        resp = await c.post("/whatif/import/scenarios", json=save_body(request_of(rows)))
+    assert resp.status_code == 201, resp.text
+    return resp.json()
+
+
+async def test_probe_unticked_india_rows_file_only(db_session):
+    world = await make_world(db_session)
+
+    def req(rows):
+        for r in rows:
+            r["include"] = r["hub"] == "R&D-Greece" and r["name"] == "Fresh Auto"
+        return {"rows": rows, "mode": "file_only"}
+
+    saved = await _save_as_india_planner(db_session, world, req)
+    assert {p["hub"] for p in saved["result"]["projects"]} == {"R&D-Greece"}
+    assert {"PD-India", "R&D-Greece", "R&D-India"} <= set(saved["hub_codes"])
+    await _invisible_to(db_session, saved["id"], [world.gr.id])
+
+
+async def test_probe_everything_unticked(db_session):
+    world = await make_world(db_session)
+
+    def req(rows):
+        for r in rows:
+            r["include"] = False
+        return {"rows": rows, "mode": "file_only"}
+
+    saved = await _save_as_india_planner(db_session, world, req)
+    assert saved["result"]["projects"] == [] and saved["hub_codes"]
+    await _invisible_to(db_session, saved["id"], [world.ri.id])
+    await _invisible_to(db_session, saved["id"], [world.gr.id])
+
+
+async def test_probe_merge_with_india_plan_project_excluded(db_session):
+    world = await make_world(db_session)
+
+    def req(rows):
+        gr = [r for r in rows if r["hub"] == "R&D-Greece"]
+        return {"rows": gr, "exclude_plan_project_ids": [str(world.beta.id)]}
+
+    saved = await _save_as_india_planner(db_session, world, req)
+    assert str(world.beta.id) not in {p["ref"] for p in saved["result"]["projects"]}
+    assert "PD-India" in saved["hub_codes"]
+    await _invisible_to(db_session, saved["id"], [world.gr.id])
+
+
+async def test_probe_admin_saves_one_greece_row(db_session):
+    world = await make_world(db_session)
+    await act_as(db_session, RoleName.ADMIN)
+    async with client_for(db_session) as c:
+        rows = [r for r in await _parsed_rows(c) if r["name"] == "Fresh Auto"]
+        resp = await c.post(
+            "/whatif/import/scenarios", json=save_body({"rows": rows, "mode": "file_only"})
+        )
+    assert resp.status_code == 201, resp.text
+    saved = resp.json()
+    # An all-hubs saver: every hub (its result holds every hub's capacity).
+    assert set(saved["hub_codes"]) >= {"PD-India", "R&D-Greece", "R&D-India"}
+    await _invisible_to(db_session, saved["id"], [world.gr.id])
+
+
+async def test_probe_greece_peer_still_sees_a_greece_scenario(db_session):
+    world = await make_world(db_session)
+    await act_as(db_session, RoleName.HUB_PLANNER, hub_ids=[world.gr.id])
+    async with client_for(db_session) as c:
+        rows = [r for r in await _parsed_rows(c) if r["hub"] == "R&D-Greece"]
+        saved = (await c.post("/whatif/import/scenarios", json=save_body({"rows": rows}))).json()
+    assert saved["hub_codes"] == ["R&D-Greece"]
+    await act_as(db_session, RoleName.HUB_PLANNER, hub_ids=[world.gr.id])
+    async with client_for(db_session) as c:
+        got = await c.get(f"/whatif/import/scenarios/{saved['id']}")
+    assert got.status_code == 200
+    cap = got.json()["result"]["capacity"]
+    assert {d["hub"] for d in cap["designers"]} <= {"R&D-Greece"}
+    assert {h["hub"] for h in cap["hubs"]} <= {"R&D-Greece"}
+
+
+async def test_empty_hub_codes_never_grants_visibility(db_session):
+    world = await make_world(db_session)
+    owner = await act_as(db_session, RoleName.ADMIN)
+    async with client_for(db_session) as c:
+        resp = await c.post("/whatif/import/scenarios", json=save_body({"rows": []}))
+    sid = resp.json()["id"]
+    row = await db_session.get(WhatifImportScenario, uuid.UUID(sid))
+    row.hub_codes = []
+    await db_session.flush()
+    await _invisible_to(db_session, sid, [world.gr.id])
+    # The creator still sees it (and Admin always).
+    from tests.auth_helpers import make_principal, override_current_principal
+
+    override_current_principal(
+        make_principal(RoleName.ADMIN, user_id=owner.id, email=owner.email, hub_scope_all=True)
+    )
+    async with client_for(db_session) as c:
+        assert (await c.get(f"/whatif/import/scenarios/{sid}")).status_code == 200
+
+
+async def test_list_is_paged_and_reads_the_kpis_column(db_session):
+    await make_world(db_session)
+    await act_as(db_session, RoleName.ADMIN)
+    async with client_for(db_session) as c:
+        for i in range(3):
+            r = await c.post("/whatif/import/scenarios", json=save_body({"rows": []}, name=f"S{i}"))
+            assert r.status_code == 201
+        page = (await c.get("/whatif/import/scenarios?limit=2")).json()
+        assert page["total"] == 3 and page["limit"] == 2 and page["offset"] == 0
+        assert [i["name"] for i in page["items"]] == ["S2", "S1"]
+        nxt = (await c.get("/whatif/import/scenarios?limit=2&offset=2")).json()
+        assert [i["name"] for i in nxt["items"]] == ["S0"] and nxt["total"] == 3
+        default = (await c.get("/whatif/import/scenarios")).json()
+        assert default["limit"] == 50
+        for bad in ("limit=0", "limit=201", "offset=-1"):
+            assert (await c.get(f"/whatif/import/scenarios?{bad}")).status_code == 422
+    rows = (await db_session.execute(select(WhatifImportScenario))).scalars().all()
+    assert all(r.kpis == r.result["kpis"] for r in rows)
+
+
+# --- P41-R01 addendum (workflow A1, A3) --------------------------------------------------
+
+
+async def test_exclude_accepts_ids_the_plan_or_file_already_drop(db_session):
+    world = await make_world(db_session)
+    await act_as(db_session, RoleName.ADMIN)
+    async with client_for(db_session) as c:
+        rows = await _parsed_rows(c)
+        # Delta is On Hold in the live plan (in scope, not schedulable): counted 0.
+        held = await c.post(
+            "/whatif/import/simulate",
+            json={"rows": rows, "exclude_plan_project_ids": [str(world.delta.id)]},
+        )
+        assert held.status_code == 200, held.text
+        assert held.json()["kpis"]["plan_excluded"] == 0
+        # The file removes Alpha (an On Hold row matching it): counted 0, no 422.
+        alpha_row = next(r for r in rows if r["matched_project_id"] == str(world.alpha.id))
+        alpha_row["status"] = "On Hold"
+        removed = await c.post(
+            "/whatif/import/simulate",
+            json={
+                "rows": rows,
+                "exclude_plan_project_ids": [str(world.alpha.id), str(world.gamma.id)],
+            },
+        )
+        assert removed.status_code == 200, removed.text
+        body = removed.json()
+        assert body["kpis"]["plan_excluded"] == 1  # gamma only
+        refs = {p["ref"] for p in body["projects"]}
+        assert str(world.alpha.id) not in refs and str(world.gamma.id) not in refs
+    audits = await audit_rows(db_session, "whatif.import_simulate")
+    shapes = sorted(a.after_state["scenario"]["plan_excluded"] for a in audits)
+    # Workflow A3: the audit carries the served count, not the ids sent (2).
+    assert shapes == [0, 1]

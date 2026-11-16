@@ -1,10 +1,11 @@
 import * as React from 'react';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { ApiError, type DownloadedFile } from '@/lib/api/client';
 import { saveBlob } from '@/lib/download';
 import { useSessionStore } from '@/stores/session';
 
+import { classifyWhatIfError } from '../use-whatif';
 import {
   createSavedScenario,
   deleteSavedScenario,
@@ -15,6 +16,8 @@ import {
   patchSavedScenario,
   putImportFormat,
   resetImportFormat,
+  SCENARIO_PAGE,
+  SCENARIO_PAGE_MAX,
 } from './import-api';
 import type { ImportFormatUpdate, SavedScenario, SaveScenarioBody } from './import-types';
 
@@ -28,8 +31,13 @@ import type { ImportFormatUpdate, SavedScenario, SaveScenarioBody } from './impo
 export const FORMAT_KEY = ['whatif-import-format'] as const;
 export const SCENARIOS_KEY = ['whatif-import-scenarios'] as const;
 
+/**
+ * P41-R01: the list is paged, so the library (an infinite query) and the per-file lookup
+ * (one page) need distinct keys under the shared prefix; invalidating SCENARIOS_KEY still
+ * refreshes both.
+ */
 export function scenariosKey(sha?: string | null): readonly unknown[] {
-  return sha ? [...SCENARIOS_KEY, sha] : SCENARIOS_KEY;
+  return sha ? [...SCENARIOS_KEY, 'file', sha] : [...SCENARIOS_KEY, 'library'];
 }
 
 function scenarioDetailKey(id: string): readonly unknown[] {
@@ -71,12 +79,34 @@ export function useResetImportFormat() {
   });
 }
 
-/** The saved scenarios the caller can see; `sha` narrows to one import (served filter). */
-export function useSavedScenarios(sha?: string | null, enabled = true) {
+/**
+ * The saved scenarios of ONE import, for the Scenario bar's selector: a single page of up
+ * to 200 (the served cap), newest first.
+ */
+export function useSavedScenarios(sha: string | null, enabled = true) {
   return useQuery({
     queryKey: scenariosKey(sha),
-    queryFn: ({ signal }) => listSavedScenarios(sha ?? undefined, { signal }),
-    enabled,
+    queryFn: ({ signal }) =>
+      listSavedScenarios({ sha: sha ?? undefined, limit: SCENARIO_PAGE_MAX, offset: 0 }, { signal }),
+    enabled: enabled && sha !== null,
+    staleTime: 30_000,
+    retry: false,
+  });
+}
+
+/**
+ * The library: every saved scenario the caller can see, 50 per page; `fetchNextPage` ("Load
+ * more") while the loaded count is below the served `total`.
+ */
+export function useSavedScenarioLibrary() {
+  return useInfiniteQuery({
+    queryKey: scenariosKey(),
+    queryFn: ({ signal, pageParam }) => listSavedScenarios({ limit: SCENARIO_PAGE, offset: pageParam }, { signal }),
+    initialPageParam: 0,
+    getNextPageParam: (last, pages) => {
+      const loaded = pages.reduce((n, p) => n + p.items.length, 0);
+      return loaded < last.total && last.items.length > 0 ? loaded : undefined;
+    },
     staleTime: 30_000,
     retry: false,
   });
@@ -143,7 +173,8 @@ export function libraryErrorMessage(error: unknown): string {
     if (error.status === 422 && error.code === 'SCENARIO_LIMIT')
       return 'The saved-scenario limit is reached. Delete an old scenario first.';
     if (error.status === 422) return error.detail ? `Not accepted: ${error.detail}` : 'The server did not accept this.';
-    if (error.status === 429) return 'Too many requests. Wait a moment and try again.';
+    // The What-if planner's "please wait" wording (with the Retry-After seconds when sent).
+    if (error.status === 429) return classifyWhatIfError(error, 'scenario').message;
   }
   return 'Something went wrong. Try again.';
 }

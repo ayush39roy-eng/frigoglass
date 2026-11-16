@@ -104,6 +104,11 @@ def engineer_audit_state(engineer: Engineer) -> dict[str, Any]:
         "user_id": _uuid_str(engineer.user_id),
         # P29 (ADR 0042 §5).
         "counts_in_capacity": engineer.counts_in_capacity,
+        # P38 (API_CONTRACT_P38 §4): status, week and the reason *code* (never
+        # free text; there is none).
+        "active": engineer.active if engineer.active is not None else True,
+        "deactivated_week": engineer.deactivated_week,
+        "deactivation_reason": engineer.deactivation_reason,
     }
 
 

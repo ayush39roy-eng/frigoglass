@@ -55,6 +55,9 @@ export interface GanttQueryParams {
   sort?: GanttSort | undefined;
   /** P32-R04: one project only (`project_id`), ANDed with the RBAC scope. */
   projectId?: string | undefined;
+  /** P40-T03c (API_CONTRACT_P40 §2): also list each project's live steps with
+   *  no row in the active run (planned weeks null), so they can be pinned. */
+  includeUnplaced?: boolean | undefined;
 }
 
 /**
@@ -77,6 +80,7 @@ export function fetchGantt(params: GanttQueryParams, ctx: FetchCtx = {}): Promis
       priority: params.priority,
       sort: params.sort,
       project_id: params.projectId,
+      include_unplaced: params.includeUnplaced === true ? true : undefined,
       limit: 500,
     },
   });

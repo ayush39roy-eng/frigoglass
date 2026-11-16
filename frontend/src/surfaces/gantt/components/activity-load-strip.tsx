@@ -3,6 +3,7 @@ import * as React from 'react';
 import { formatWeek } from '@/lib/format';
 
 import { lastScaleWeek, weekToX, type WeekScale } from '../lib/gantt-coordinates';
+import { stepColor } from '../lib/step-colors';
 import type { GanttWeeklyActiveCount } from '../api/types';
 
 /**
@@ -16,7 +17,27 @@ import type { GanttWeeklyActiveCount } from '../api/types';
  * The bar height is only a visual scale of the served number; each bar's
  * `<title>` prints the served figures verbatim. These are step counts, not
  * capacity: load vs capacity lives on the RPD Capacity surface (I6 / I7).
+ *
+ * P40-T03c (P40-T01 item 4): the strip is stacked PER STEP from the served
+ * `by_step` (step id → active steps that week, e.g. `"PDD-A": 3`), each layer in
+ * its step colour (`lib/step-colors.ts`), PDD steps first then OEM, in step
+ * order. A week without `by_step` (an older payload) keeps the two-colour
+ * PDD / OEM stack. Each segment's height is only a visual scale of its served
+ * count; the strip's height scale is the served `pdd + oem` of the busiest week.
  */
+
+/** Served per-step entries of one week, PDD then OEM, each in step order. */
+function stepLayers(c: GanttWeeklyActiveCount): [string, number][] {
+  const entries = Object.entries(c.by_step ?? {}).filter(([, n]) => n > 0);
+  return entries.sort(([a], [b]) => {
+    const wa = a.startsWith('OEM') ? 1 : 0;
+    const wb = b.startsWith('OEM') ? 1 : 0;
+    if (wa !== wb) return wa - wb;
+    const sa = stepColor(a).slot;
+    const sb = stepColor(b).slot;
+    return sa !== sb ? sa - sb : a.localeCompare(b);
+  });
+}
 
 export const LOAD_STRIP_HEIGHT = 26;
 export const COUNT_ROW_HEIGHT = 18;
@@ -42,7 +63,7 @@ export function ActivityLoadStrip({ scale, counts }: ActivityLoadStripProps): Re
       width={scale.totalWidthPx}
       height={LOAD_STRIP_HEIGHT}
       role="img"
-      aria-label="Active workflow steps per week, PDD and OEM, for the projects in this view (served counts, not a capacity figure)"
+      aria-label="Active workflow steps per week, stacked by step in the step colours, for the projects in this view (served counts, not a capacity figure)"
       className="block"
       data-testid="gantt-activity-strip"
     >
@@ -50,10 +71,39 @@ export function ActivityLoadStrip({ scale, counts }: ActivityLoadStripProps): Re
         if (c.pdd + c.oem <= 0) return null;
         const x = weekToX(c.week, scale);
         const w = Math.max(1, scale.weekWidthPx - 1);
+        const layers = stepLayers(c);
+        if (layers.length > 0) {
+          let y = LOAD_STRIP_HEIGHT;
+          return (
+            <g key={c.week} data-week={c.week}>
+              <title>
+                {`${formatWeek(c.week)}: ${String(c.pdd)} PDD · ${String(c.oem)} OEM active steps — ${layers
+                  .map(([code, n]) => `${code} ${String(n)}`)
+                  .join(', ')}`}
+              </title>
+              {layers.map(([code, n]) => {
+                const h = (n / max) * inner;
+                y -= h;
+                return (
+                  <rect
+                    key={code}
+                    x={x}
+                    y={y}
+                    width={w}
+                    height={h}
+                    fill={stepColor(code).fill}
+                    data-step={code}
+                    data-count={n}
+                  />
+                );
+              })}
+            </g>
+          );
+        }
         const pddH = (c.pdd / max) * inner;
         const oemH = (c.oem / max) * inner;
         return (
-          <g key={c.week}>
+          <g key={c.week} data-week={c.week}>
             <title>{`${formatWeek(c.week)}: ${String(c.pdd)} PDD · ${String(c.oem)} OEM active steps`}</title>
             {c.pdd > 0 ? (
               <rect

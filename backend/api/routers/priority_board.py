@@ -199,6 +199,10 @@ async def get_priority_board(
                 within_year=card.within_year,
                 health=card.health,
                 tracking_status=card.tracking_status,
+                counts_toward_year=card.counts_toward_year,
+                not_scheduled_priority=card.not_scheduled_priority,
+                queued=card.counts_toward_year is False and not card.not_scheduled_priority,
+                outcome_label=card.outcome_label,
             )
         )
 
@@ -226,6 +230,9 @@ async def get_priority_board(
         columns.append(
             PriorityBoardColumn(
                 priority=priority,
+                label=dc.PRIORITY_LABELS[priority.value],
+                not_scheduled=priority.value in dc.NOT_SCHEDULED_PRIORITIES,
+                queued_count=sum(1 for c in column_cards if c.queued),
                 count=len(column_cards),
                 cards=column_cards,
                 design_weeks=round2(design_by_column[priority]),
@@ -235,3 +242,4 @@ async def get_priority_board(
     return PriorityBoardResponse(
         run_id=active_run.id if active_run is not None else None, columns=columns
     )
+

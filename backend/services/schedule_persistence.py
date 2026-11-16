@@ -781,6 +781,9 @@ async def persist_schedule_output(
                 data_error=outcome.data_error,
                 manual_overlap=outcome.manual_overlap,
                 pin_lapsed=outcome.pin_lapsed,
+                # P42 (R42-4, I50): stored exactly as the scheduler emitted them.
+                counts_toward_year=outcome.counts_toward_year,
+                not_scheduled_priority=outcome.not_scheduled_priority,
             )
         )
 

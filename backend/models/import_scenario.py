@@ -78,3 +78,6 @@ class WhatifImportScenario(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     hub_codes: Mapped[list[str]] = mapped_column(ARRAY(Text), nullable=False)
     request: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
     result: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    #: P41-R01 (M-1): `result["kpis"]`, kept apart so the list never reads
+    #: the (up to 8 MB) result.
+    kpis: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)

@@ -6,7 +6,7 @@ import { ArrowUpRight, ChevronRight, Info, Snowflake } from 'lucide-react';
 
 import { cn } from '@/lib/utils';
 import { formatPlanWeek } from '@/lib/format';
-import { SPILLOVER_YEAR } from '@/lib/domain-constants';
+import { usePlanYearLabels } from '@/lib/plan-clock';
 import { usePrefersReducedMotion } from '@/lib/use-prefers-reduced-motion';
 import { PriorityMoveControl } from '@/components/shared/priority-move/priority-move-control';
 import { TrackingStatusChip } from '@/components/shared/tracking-status-chip';
@@ -37,6 +37,8 @@ import { GanttProjectDetailsDialog } from './gantt-project-details';
 import { ProjectMetaLine, RowWeeks } from './gantt-row-meta';
 import { AXIS_HEIGHT, GanttGridLines, GanttWeekAxis } from './gantt-time-axis';
 import { StepBarGraphic, StepLeftCell } from './gantt-step-row';
+import { STEP_PIN_CELL_WIDTH, StepPinCell } from './step-pin-cell';
+import { useStepPinEdit } from '../hooks/use-step-pin-edit';
 
 /**
  * The hand-built virtualized Gantt renderer (`dataviz-gantt` SKILL + Standing
@@ -75,6 +77,9 @@ export interface GanttChartProps {
   onToggleExpand: (projectId: string) => void;
   onFreezeClick: (project: GanttProjectRow) => void;
   canWrite: boolean;
+  /** P40-T03c (R40-10): unfreezing needs the Admin or Super Admin role, so the
+   *  snowflake on a FROZEN project shows only with this (default: canWrite). */
+  canUnfreeze?: boolean;
   maxHeight?: number;
   /**
    * P32-R04 (Workflow page "Project step timing"): an axis other than the
@@ -108,6 +113,7 @@ export function GanttChart({
   onToggleExpand,
   onFreezeClick,
   canWrite,
+  canUnfreeze = canWrite,
   maxHeight = 560,
   axis,
   rowExtra,
@@ -125,9 +131,14 @@ export function GanttChart({
   const boxWidth = useElementWidth(boxRef);
   // P40-T01: Forest view is the name + one line, so it drops the status
   // column and narrows the name column (`forestColumnWidths`).
-  const { left: LEFT_COL_WIDTH, status: BADGE_COL_WIDTH } = compact
-    ? forestColumnWidths(narrow, boxWidth)
-    : ganttColumnWidths(narrow, boxWidth);
+  const baseColumns = compact ? forestColumnWidths(narrow, boxWidth) : ganttColumnWidths(narrow, boxWidth);
+  // P40-T03c: on the Timeline (a pin-edit provider), expanded step rows carry
+  // the Start / End inputs, so the wide name column grows by their width.
+  // Not in Forest view (no step rows) nor on the narrow layout.
+  const pinEdit = useStepPinEdit();
+  const showPinInputs = pinEdit !== null && !compact && !narrow;
+  const LEFT_COL_WIDTH = baseColumns.left + (showPinInputs ? STEP_PIN_CELL_WIDTH : 0);
+  const BADGE_COL_WIDTH = baseColumns.status;
   const hasStatusCol = BADGE_COL_WIDTH > 0;
   const [detailsId, setDetailsId] = React.useState<string | null>(null);
   // QA-P19-3 (WCAG 2.4.3): the Details button that opened the dialog, so focus
@@ -356,6 +367,7 @@ export function GanttChart({
                           focused={focusedId === vr.project.project_id}
                           animate={animate}
                           canWrite={canWrite}
+                          canUnfreeze={canUnfreeze}
                           onToggleExpand={onToggleExpand}
                           onFreezeClick={onFreezeClick}
                           narrow={narrow}
@@ -363,7 +375,10 @@ export function GanttChart({
                           extra={rowExtra}
                         />
                       ) : (
-                        <StepLeftCell step={vr.step} compact={compact} narrow={narrow} />
+                        <>
+                          <StepLeftCell step={vr.step} compact={compact} narrow={narrow} />
+                          {showPinInputs ? <StepPinCell project={vr.project} step={vr.step} /> : null}
+                        </>
                       )}
                     </div>
 
@@ -416,7 +431,7 @@ export function GanttChart({
         onOpenChange={(open) => {
           if (!open) setDetailsId(null);
         }}
-        canWrite={canWrite}
+        canWrite={canWrite && (detailsProject?.frozen !== true || canUnfreeze)}
         onFreezeClick={onFreezeClick}
         onCloseAutoFocus={restoreDetailsFocus}
       />
@@ -441,6 +456,7 @@ function BarLayer({
   height: number;
   animate: boolean;
 }): React.JSX.Element {
+  const years = usePlanYearLabels();
   let group: React.ReactNode;
   // ADR 0024: the axis ends at W52. A row whose work runs past it (clipped
   // geometry), or that the server flags spillover / left out, gets the
@@ -484,8 +500,8 @@ function BarLayer({
           variant={compact ? 'chevron' : 'label'}
           title={
             p.left_out
-              ? `${p.project_name}: not done by W52 — no slot found yet, spills over to ${String(SPILLOVER_YEAR)} unscheduled`
-              : `${p.project_name}: not done by W52 — spillover to ${String(SPILLOVER_YEAR)}`
+              ? `${p.project_name}: not done by W52 — no slot found yet, spills over to ${years.spilloverYear} unscheduled`
+              : `${p.project_name}: not done by W52 — spillover to ${years.spilloverYear}`
           }
         />
       );
@@ -575,6 +591,7 @@ function ProjectLeftCell({
   focused,
   animate,
   canWrite,
+  canUnfreeze,
   onToggleExpand,
   onFreezeClick,
   narrow = false,
@@ -588,6 +605,7 @@ function ProjectLeftCell({
   focused: boolean;
   animate: boolean;
   canWrite: boolean;
+  canUnfreeze: boolean;
   onToggleExpand: (id: string) => void;
   onFreezeClick: (project: GanttProjectRow) => void;
   /** P19-R02: phone layout — name only; everything else is in the details dialog. */
@@ -704,7 +722,7 @@ function ProjectLeftCell({
       >
         <ArrowUpRight className="size-3.5" aria-hidden="true" />
       </Link>
-      {canWrite ? (
+      {canWrite && (!project.frozen || canUnfreeze) ? (
         <button
           type="button"
           className="shrink-0 rounded-sm p-1 text-text-muted hover:bg-surface-raised hover:text-text"

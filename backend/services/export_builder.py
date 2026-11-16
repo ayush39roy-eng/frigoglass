@@ -498,6 +498,9 @@ async def build_gantt_sheets(
         "left_out",
         "spillover",
         "cat_not_allowed",
+        # P42 (ADR 0056 R42-6, docs/API_CONTRACT_P42.md §8): the stored flags.
+        "counts_toward_year",
+        "not_scheduled_priority",
         "step_id",
         "step_name",
         "kind",
@@ -526,6 +529,8 @@ async def build_gantt_sheets(
             "left_out": project.left_out,
             "spillover": project.spillover,
             "cat_not_allowed": project.cat_not_allowed,
+            "counts_toward_year": project.counts_toward_year,
+            "not_scheduled_priority": project.not_scheduled_priority,
         }
         if not project.steps:
             rows.append(

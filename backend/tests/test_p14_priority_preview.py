@@ -723,6 +723,8 @@ async def test_freeze_and_unfreeze_mark_the_project_stale(db_session):
         assert frozen.json()["schedule_stale"] is True
         target.schedule_stale = False
         await db_session.flush()
+        # P40 (ADR 0054 R40-10): only Admin / Super Admin may unfreeze.
+        await _act_as(db_session, RoleName.ADMIN)
         unfrozen = await client.post(
             f"/gantt/projects/{target.id}/freeze", json={"frozen": False}
         )

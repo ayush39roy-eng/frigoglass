@@ -6,6 +6,11 @@ DOMAIN_RULES "Scheduling order" (amended 2026-10-22): (1) `frozen` desc,
 (`cp_sat.objective_weights`). `ProjectInput.is_vip` defaults to `False`, so
 every pre-ADR-0040 fixture and golden file is unchanged (asserted below too).
 
+P42 (ADR 0056 as ruled, R42-3 / R42-5): a non-frozen P4 is never scheduled,
+VIP or not, and key 1a (`counts_toward_year`) sits above VIP. The "low band
+VIP beats P1" fixtures therefore use a *started* P3 (In Development, which
+counts) instead of a P4; the P4 / queued cases are asserted explicitly.
+
 Fixture arithmetic (tests/scheduling/_fixtures.py TEMPLATE / LEAD_TIMES):
 PDD-A design 2 weeks on the leader -> PDD-F lab 3 weeks on a chamber.
 Pure, in-process; no DB.
@@ -61,19 +66,27 @@ def test_is_vip_defaults_false():
 
 def test_sort_key_vip_between_frozen_and_priority():
     frozen_p4 = base_project(project_id="a", priority="P4", frozen=True, actual_start_week=1)
-    vip_p4 = base_project(project_id="b", priority="P4", is_vip=True)
+    # R42-3 / R42-5: a started P3 counts, so VIP lifts it above a non-VIP P1.
+    vip_p3 = base_project(project_id="b", priority="P3", status="In Development", is_vip=True)
     vip_p2 = base_project(project_id="c", priority="P2", is_vip=True)
     p1 = base_project(project_id="d", priority="P1")
-    order = [p.project_id for p in sorted([p1, vip_p4, vip_p2, frozen_p4], key=_sort_key)]
-    assert order == ["a", "c", "b", "d"]
+    # R42-5 (key 1a): a VIP queued P3 (In Queue) stays behind all counting work.
+    vip_queued = base_project(project_id="e", priority="P3", is_vip=True)
+    queued = base_project(project_id="f", priority="P3")
+    order = [
+        p.project_id
+        for p in sorted([queued, p1, vip_queued, vip_p3, vip_p2, frozen_p4], key=_sort_key)
+    ]
+    assert order == ["a", "c", "b", "d", "e", "f"]
 
 
-def test_vip_p4_beats_non_vip_p1_on_shared_leader():
+def test_vip_p3_beats_non_vip_p1_on_shared_leader():
     """Both projects are led by eng-a. Without VIP the P1 project books eng-a
-    first; with the P4 project pinned VIP it books first and P1 waits."""
+    first; with the started P3 project pinned VIP it books first and P1 waits.
+    (P42 R42-3: was a P4, which is no longer scheduled.)"""
 
     p1 = base_project(project_id="p-p1", name="P1", priority="P1")
-    p4 = base_project(project_id="p-p4", name="P4", priority="P4")
+    p4 = base_project(project_id="p-p4", name="P3", priority="P3", status="In Development")
 
     base_si = _input(p1, p4)
     base_out = run_greedy_sgs(base_si)
@@ -93,13 +106,18 @@ def test_vip_p4_beats_non_vip_p1_on_shared_leader():
     assert validate_invariants(vip_si, vip_out) == ()
 
 
-def test_vip_p4_beats_non_vip_p1_on_shared_chamber():
-    """Different leaders, one chamber (max_concurrent=1): the VIP P4 project's
-    lab step gets the chamber first."""
+def test_vip_p3_beats_non_vip_p1_on_shared_chamber():
+    """Different leaders, one chamber (max_concurrent=1): the VIP started P3
+    project's lab step gets the chamber first (P42 R42-3: was a P4)."""
 
     p1 = base_project(project_id="p-p1", name="P1", priority="P1", leader_engineer_id="eng-a")
     p4 = base_project(
-        project_id="p-p4", name="P4", priority="P4", leader_engineer_id="eng-b", is_vip=True
+        project_id="p-p4",
+        name="P3",
+        priority="P3",
+        status="In Development",
+        leader_engineer_id="eng-b",
+        is_vip=True,
     )
     si = _input(p1, p4)
     out = run_greedy_sgs(si)
@@ -153,7 +171,11 @@ def test_seed_with_vip_validates_invariants():
 
     si = load_seed_schedule_input()
     base = run_greedy_sgs(si)
-    non_frozen = [pid for pid in base.scheduling_order if not _frozen(si, pid)]
+    # P42 R42-5: VIP lifts a project to the front of its (frozen, counts)
+    # tier only, so the target is the last *counting* non-frozen project.
+    non_frozen = [
+        pid for pid in base.scheduling_order if not _frozen(si, pid) and outcome_counts(base, pid)
+    ]
     target = non_frozen[-1]
     vip_si = dataclasses.replace(
         si,
@@ -163,9 +185,36 @@ def test_seed_with_vip_validates_invariants():
         ),
     )
     out = run_greedy_sgs(vip_si)
-    n_frozen = len(base.scheduling_order) - len(non_frozen)
+    n_frozen = sum(1 for pid in base.scheduling_order if _frozen(si, pid))
     assert out.scheduling_order[n_frozen] == target
     assert validate_invariants(vip_si, out) == ()
+
+
+def test_vip_queued_p3_stays_in_the_queued_tier_on_seed():
+    """R42-5 / OQ #110: VIP on a queued P3 orders it first among the queued
+    projects, never before a counting one."""
+
+    si = load_seed_schedule_input()
+    base = run_greedy_sgs(si)
+    queued = [pid for pid in base.scheduling_order if not outcome_counts(base, pid)]
+    assert queued, "the seed has queued P3 projects"
+    target = queued[-1]
+    vip_si = dataclasses.replace(
+        si,
+        projects=tuple(
+            dataclasses.replace(p, is_vip=True) if p.project_id == target else p
+            for p in si.projects
+        ),
+    )
+    out = run_greedy_sgs(vip_si)
+    first_queued = len(base.scheduling_order) - len(queued)
+    assert out.scheduling_order[first_queued] == target
+    assert out.scheduling_order[:first_queued] == base.scheduling_order[:first_queued]
+    assert validate_invariants(vip_si, out) == ()
+
+
+def outcome_counts(out, pid: str) -> bool:
+    return _by_id(out)[pid].counts_toward_year
 
 
 def _frozen(si: ScheduleInput, pid: str) -> bool:
@@ -196,7 +245,7 @@ def test_objective_weights_vip_tier_dominates():
     assert w["d"] > w["c"]  # band still orders VIP projects among themselves
 
 
-def test_cp_sat_prefers_vip_p4_within_year():
+def test_cp_sat_prefers_vip_p3_within_year():
     """Two projects on eng-a; only the first one placed can finish by the
     within-year week (design 2 + lab 3 = 5 weeks; the second ends 2 weeks
     later). CP-SAT puts the P1 project in the year without VIP and the VIP P4
@@ -204,7 +253,8 @@ def test_cp_sat_prefers_vip_p4_within_year():
 
     cw = 10
     p1 = base_project(project_id="p-p1", name="P1", priority="P1")
-    p4 = base_project(project_id="p-p4", name="P4", priority="P4")
+    # P42 R42-3: a started P3 (counts) stands in for the old P4 fixture.
+    p4 = base_project(project_id="p-p4", name="P3", priority="P3", status="In Development")
     kw = dict(current_week=cw, within_year_week=cw + 5)
 
     base_si = _input(p1, p4, **kw)

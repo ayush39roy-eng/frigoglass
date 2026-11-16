@@ -37,6 +37,7 @@ const load: ResourceLoadResponse = {
   has_active_schedule_run: true,
   schedule_run_version: 7,
   current_week: 42,
+  run_week: 42,
   basis: 'remaining',
   engineers: [
     { engineer_id: 'e1', name: 'Ada', hub: 'R&D-Greece', counts_in_capacity: true, weekdays_per_week: 5, capacity_weeks: 9.25, load_weeks: 12.5, utilization_pct: 135.14, capacity_days: 46.25, load_days: 62.5 },

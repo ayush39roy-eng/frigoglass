@@ -78,6 +78,16 @@ emitted rows (`workflow.manual_overlap_by_row`). The row reports `eff` as
 `duration_weeks` (R40-3). With no pin anywhere every run is byte-identical to
 before P40 (I48(a)).
 
+Priority band meaning (ADR 0056 as ruled at P42-T01, R42-2..R42-5; DOMAIN_RULES
+"Priority band meaning"): `prepare_run` checks status exclusion first, then
+sets aside every non-frozen P4/Q project in a schedulable status
+(`ctx.not_scheduled`, before validation; `not_scheduled_priority_outcome`).
+Sort key 1a (`counts_toward_year` desc) walks every queued P3 (In Queue) after
+all counting work, so it only takes spare capacity; its anchored and pinned
+steps are still pre-booked in phase 3. Every outcome carries
+`counts_toward_year` and its year flags come from `year_flags` (I50). With no
+P4/Q and no queued P3 in the input every run is byte-identical to before P42.
+
 No DB access, no network access, no filesystem access, no randomness, no
 wall-clock dependence. Every collection this module iterates is explicitly
 sorted before iteration.
@@ -179,15 +189,57 @@ def _band_rank_key(band_rank: int | None) -> tuple[int, int]:
     return (1, 0) if band_rank is None else (0, band_rank)
 
 
+def project_counts_toward_year(project: ProjectInput) -> bool:
+    """R42-4 on one input project (`domain_constants.counts_toward_year`)."""
+
+    return dc.counts_toward_year(project.priority, project.status)
+
+
+def is_not_scheduled_priority(project: ProjectInput) -> bool:
+    """R42-3: a non-frozen project in a schedulable status with priority P4
+    or Q is never scheduled, in every solver and path. Status exclusion is
+    checked first (a status-excluded project is never this), and VIP does
+    not override it."""
+
+    return (
+        project.status in dc.SCHEDULABLE_STATUS_ORDER
+        and not project.frozen
+        and project.priority in dc.NOT_SCHEDULED_PRIORITIES
+    )
+
+
+def year_flags(
+    *, counts_toward_year: bool, scheduled: bool, completion_week: int | None, within_year_week: int
+) -> tuple[bool, bool]:
+    """The one shared year-basis rule (R42-4, I50; I9 follows it), used by
+    the greedy walk (frozen and non-frozen) and by CP-SAT extraction::
+
+        within_year = counts ∧ scheduled ∧ completion_week ≤ within_year_week
+        spillover   = counts ∧ scheduled ∧ ¬within_year
+
+    Returns `(within_year, spillover)`. With `counts_toward_year` True this
+    is exactly the pre-P42 rule."""
+
+    if not (counts_toward_year and scheduled) or completion_week is None:
+        return False, False
+    within = completion_week <= within_year_week
+    return within, not within
+
+
 def _sort_key(
     project: ProjectInput, category_rank: Mapping[str, int] | None = None
-) -> tuple[int, int, int, tuple[int, int], int, int, str]:
-    """DOMAIN_RULES.md "Scheduling order": frozen desc, is_vip desc (ADR 0040),
+) -> tuple[int, int, int, int, tuple[int, int], int, int, str]:
+    """DOMAIN_RULES.md "Scheduling order": frozen desc, `counts_toward_year`
+    desc (key 1a, ADR 0056 R42-5), is_vip desc (ADR 0040),
     priority, band_rank asc with None last (key 3a, ADR 0050), status,
     category rank, then an explicit `project_id` tiebreak (P2-T01 decision: a
     pure function must not derive determinism from caller ordering). With no
     VIP project the order is exactly the pre-ADR-0040 one; with every
     `band_rank` None it is exactly the pre-P36 one (key 3a is constant).
+    With no queued P3 (and no frozen P4/Q; a non-frozen P4/Q never reaches
+    the sort) key 1a is constant, so the order is exactly the pre-P42 one.
+    Key 1a puts every queued P3 after all counting work, VIP included
+    (R42-5): spare capacity only.
 
     Key 5 is the category's `rank` value from the input's category list
     (ADR 0047 §3, R33-8; default: the seeded seven at ranks 1..7, i.e.
@@ -199,6 +251,7 @@ def _sort_key(
     rank = _DEFAULT_CATEGORIES.rank if category_rank is None else category_rank
     return (
         0 if project.frozen else 1,
+        0 if project_counts_toward_year(project) else 1,
         0 if project.is_vip else 1,
         dc.PRIORITY_ORDER.index(project.priority),
         _band_rank_key(project.band_rank),
@@ -343,6 +396,10 @@ class RunContext:
     excluded: tuple[ProjectInput, ...]
     # ADR 0047 §3 / R33-8: the validated category list (rank, workflow).
     categories: CategoryMaps = _DEFAULT_CATEGORIES
+    # ADR 0056 R42-3: non-frozen P4/Q projects in a schedulable status,
+    # excluded before validation (input order; outcomes are emitted by id).
+    # Never in `ordered`, `plans` or `scheduling_order`.
+    not_scheduled: tuple[ProjectInput, ...] = ()
 
 
 def prepare_run(schedule_input: ScheduleInput) -> RunContext:
@@ -357,12 +414,18 @@ def prepare_run(schedule_input: ScheduleInput) -> RunContext:
 
     schedulable: list[ProjectInput] = []
     excluded: list[ProjectInput] = []
+    not_scheduled: list[ProjectInput] = []
     for project in schedule_input.projects:
-        if project.status in dc.SCHEDULABLE_STATUS_ORDER:
-            schedulable.append(project)
-        else:
+        if project.status not in dc.SCHEDULABLE_STATUS_ORDER:
             # Commercialized / On Hold / Cancelled / Draft / anything else.
+            # R42-3: status exclusion is checked first, whatever the band.
             excluded.append(project)
+        elif is_not_scheduled_priority(project):
+            # R42-3: non-frozen P4/Q, excluded before validation (VIP or not,
+            # started or not: its anchored stages are not pre-booked).
+            not_scheduled.append(project)
+        else:
+            schedulable.append(project)
 
     fte_by_engineer = {e.engineer_id: e.fte for e in schedule_input.engineers}
     plans: dict[str, ProjectPlan] = {}
@@ -393,6 +456,7 @@ def prepare_run(schedule_input: ScheduleInput) -> RunContext:
         ordered=tuple(sorted(schedulable, key=lambda p: _sort_key(p, categories.rank))),
         excluded=tuple(excluded),
         categories=categories,
+        not_scheduled=tuple(not_scheduled),
     )
 
 
@@ -444,6 +508,8 @@ def run_greedy_sgs(schedule_input: ScheduleInput) -> ScheduleOutput:
 
     for project in ctx.excluded:
         outcomes_by_id[project.project_id] = _excluded_outcome(project)
+    for project in ctx.not_scheduled:
+        outcomes_by_id[project.project_id] = not_scheduled_priority_outcome(project)
 
     apply_eng_conflict_flags(outcomes_by_id, state)
     by_project_id = sorted(schedule_input.projects, key=lambda p: p.project_id)
@@ -473,6 +539,38 @@ def _excluded_outcome(project: ProjectInput) -> ProjectScheduleOutcome:
         steps=(),
         start_week=None,
         end_week=None,
+        # R42-3: a status-excluded project counts toward the year (True).
+        counts_toward_year=project_counts_toward_year(project),
+    )
+
+
+def not_scheduled_priority_outcome(project: ProjectInput) -> ProjectScheduleOutcome:
+    """R42-3 / I49: the outcome of a non-frozen P4/Q project in a schedulable
+    status. Excluded, never scheduled, never counted: no rows, every week
+    null, `progress_pct` null, every year / structural flag False."""
+
+    return ProjectScheduleOutcome(
+        project_id=project.project_id,
+        excluded=True,
+        left_out=False,
+        eng_conflict=False,
+        overlap=False,
+        cat_not_allowed=False,
+        spillover=False,
+        within_year=False,
+        no_leader=False,
+        no_chamber_step_id=None,
+        steps=(),
+        start_week=None,
+        end_week=None,
+        unconstrained_end_week=None,
+        expected_end_week=None,
+        projected_end_week=None,
+        blocked=False,
+        progress_pct=None,
+        data_error=None,
+        not_scheduled_priority=True,
+        counts_toward_year=False,
     )
 
 
@@ -502,6 +600,7 @@ def _no_leader_outcome(
         blocked=plan.blocked,
         progress_pct=compute_progress_pct(plan),
         pin_lapsed=pins_lapsed(plan, current_week) if plan.pinned_step_ids else False,
+        counts_toward_year=project_counts_toward_year(project),
     )
 
 
@@ -531,6 +630,7 @@ def _data_error_outcome(project: ProjectInput, plan: ProjectPlan) -> ProjectSche
         blocked=False,
         progress_pct=None,
         data_error=plan.data_error,
+        counts_toward_year=project_counts_toward_year(project),
     )
 
 
@@ -1083,8 +1183,15 @@ def _schedule_one_project(
 
     scheduled = not left_out and not held and end_week is not None
     completion_week = end_week + project.delay_weeks if scheduled and end_week is not None else None
-    within_year = completion_week is not None and completion_week <= si.within_year_week
-    spillover = scheduled and not within_year
+    # R42-4 / I50: the shared year basis (a frozen walk too: a frozen P4/Q or
+    # queued P3 books its capacity but never counts).
+    counts = project_counts_toward_year(project)
+    within_year, spillover = year_flags(
+        counts_toward_year=counts,
+        scheduled=scheduled,
+        completion_week=completion_week,
+        within_year_week=si.within_year_week,
+    )
 
     unconstrained = unconstrained_end_week(plan, current_week)
     return ProjectScheduleOutcome(
@@ -1109,4 +1216,5 @@ def _schedule_one_project(
         data_error=None,
         manual_overlap=manual_overlap,
         pin_lapsed=pins_lapsed(plan, current_week) if pins else False,
+        counts_toward_year=counts,
     )

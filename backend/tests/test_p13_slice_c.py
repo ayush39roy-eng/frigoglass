@@ -269,6 +269,8 @@ async def test_gantt_without_active_run_serves_empty_counts(db_session):
     assert body == {
         "has_active_schedule_run": False, "schedule_run_version": None, "total_count": 0,
         "rows": [], "weekly_active_counts": [],
+        # P40 (docs/API_CONTRACT_P40.md §3).
+        "current_step_counts": {}, "current_week": None,
     }
 
 

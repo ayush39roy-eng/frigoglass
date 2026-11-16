@@ -1017,6 +1017,12 @@ def canonical_schedule_input_asdict(schedule_input: ScheduleInput) -> dict[str, 
 #: ADR 0054 (R40-12): output fields omitted from the canonical form at False.
 _OUTCOME_PIN_FLAGS: tuple[str, ...] = ("manual_overlap", "pin_lapsed")
 _STEP_PIN_FLAGS: tuple[str, ...] = ("pinned", "manual_overlap")
+#: ADR 0056 (R42-4): outcome fields omitted from the canonical form at their
+#: default, so a run with no P4/Q and no queued P3 is byte-identical to P41.
+_OUTCOME_BAND_DEFAULTS: tuple[tuple[str, bool], ...] = (
+    ("not_scheduled_priority", False),
+    ("counts_toward_year", True),
+)
 
 
 def canonical_schedule_output_asdict(schedule_output: ScheduleOutput) -> dict[str, Any]:
@@ -1030,6 +1036,10 @@ def canonical_schedule_output_asdict(schedule_output: ScheduleOutput) -> dict[st
     for outcome in data["project_outcomes"]:
         for key in _OUTCOME_PIN_FLAGS:
             if outcome.get(key) is False:
+                del outcome[key]
+        # ADR 0056 (R42-4): the P42 outcome flags at their default.
+        for key, default in _OUTCOME_BAND_DEFAULTS:
+            if outcome.get(key) is default:
                 del outcome[key]
         for step in outcome["steps"]:
             for key in _STEP_PIN_FLAGS:

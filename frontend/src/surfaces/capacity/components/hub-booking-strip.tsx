@@ -3,7 +3,8 @@ import * as React from 'react';
 import { BookingStatusChip } from '@/components/shared/booking-status-chip';
 import { Badge } from '@/components/ui/badge';
 import { CardInfo } from '@/components/ui/card-info';
-import { CURRENT_WEEK, WITHIN_YEAR_WEEK } from '@/lib/domain-constants';
+import { WITHIN_YEAR_WEEK } from '@/lib/domain-constants';
+import { useCurrentWeek, usePlanYearLabels } from '@/lib/plan-clock';
 import { cn } from '@/lib/utils';
 import { useSessionStore } from '@/stores/session';
 
@@ -35,10 +36,14 @@ import { formatFigure, formatPctCompact } from '../lib/status-format';
  * sees no empty box. No family total is shown: the API serves none (I19).
  */
 
-const HORIZON_CAPTION: Record<CapacityHorizon, string> = {
-  year: 'Full year',
-  remaining: `Remaining year (W${String(CURRENT_WEEK)}–W${String(WITHIN_YEAR_WEEK)})`,
-};
+/** P37: the remaining year starts at the served calendar week (the same week
+ *  the hub-load response's `remaining_weeks` is evaluated at, I19/I40). */
+function horizonCaption(horizon: CapacityHorizon, currentWeek: number | null): string {
+  if (horizon === 'year') return 'Full year';
+  return currentWeek === null
+    ? 'Remaining year'
+    : `Remaining year (W${String(currentWeek)}–W${String(WITHIN_YEAR_WEEK)})`;
+}
 
 function BookedLine({
   label,
@@ -79,6 +84,8 @@ export function HubBookingStrip({
 }): React.JSX.Element | null {
   const { horizon } = view;
   const scopedToHubs = useSessionStore((s) => (s.me ? !s.me.hub_scope_all : false));
+  const currentWeek = useCurrentWeek();
+  const { planYear } = usePlanYearLabels();
   if (rows.length === 0) return null;
   const groups = groupByHubFamily(rows);
   return (
@@ -94,13 +101,13 @@ export function HubBookingStrip({
             </Badge>
           ) : null}
           <Badge tone="outline" className="rounded-pill" data-testid="booked-strip-horizon">
-            {HORIZON_CAPTION[horizon]}
+            {horizonCaption(horizon, currentWeek)}
           </Badge>
           <CardInfo label="How booked % is defined">
             <p>
               <strong className="text-text">Booked %</strong> = demand / capacity &times; 100, computed on the
               server to two decimals (ADR&nbsp;0016, Invariant I19). Full year: the full-year demand of every
-              project (On Hold and Commercialized included) against the yearly capacity. YTD 2026: the
+              project (On Hold and Commercialized included) against the yearly capacity. YTD {planYear}: the
               remaining demand of open projects against the remaining capacity (ADR&nbsp;0041). Over 100&nbsp;%
               means more work is asked of the hub than its capacity can deliver.
             </p>
@@ -111,7 +118,7 @@ export function HubBookingStrip({
             </p>
             <p>
               Design is per hub. Lab capacity belongs to a lab region (its chambers), so the lab figure is the
-              region&rsquo;s and is the same on every hub of that region. The YTD 2026 / Full year and Weeks /
+              region&rsquo;s and is the same on every hub of that region. The YTD {planYear} / Full year and Weeks /
               Days toggles in the page header pick which figures are shown here; booked % is the same in weeks
               and days.
             </p>

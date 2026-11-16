@@ -21,6 +21,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { formatDecimal, formatInteger } from '@/lib/format';
 import { cn } from '@/lib/utils';
 import type { BookingStatus } from '@/types/enums';
+import { usePlanYearLabels } from '@/lib/plan-clock';
 
 import type { HubCapacityRow, HubCapacitySummary, PriorityLoadSplit, ScheduleRunSummary } from '../api/types';
 import { firstHubPerLabRegion, groupByHubFamily } from '../lib/hub-families';
@@ -331,6 +332,8 @@ export interface HubSummaryTableProps {
 }
 
 export function HubSummaryTable({ data, activeRun, view }: HubSummaryTableProps): React.JSX.Element {
+  // P37: the served plan year labels the remaining-year horizon.
+  const { planYear } = usePlanYearLabels();
   const { horizon, unit } = view;
   const days = unit === 'days';
   const [detailHub, setDetailHub] = React.useState<string | null>(null);
@@ -408,7 +411,7 @@ export function HubSummaryTable({ data, activeRun, view }: HubSummaryTableProps)
               <strong className="text-text">Capacity</strong> is the client&rsquo;s own supply
               formula (ADR&nbsp;0008): working weeks per engineer &times; Σ FTE for design;
               Σ (working weeks &times; efficiency &times; platforms) over the region&rsquo;s
-              chambers for lab. &ldquo;Remaining year&rdquo; (YTD 2026) scales by (52 &minus; current
+              chambers for lab. &ldquo;Remaining year&rdquo; (YTD {planYear}) scales by (52 &minus; current
               week) / 52. Full year: booked = full-year demand / yearly capacity. Remaining year:
               booked = remaining demand / remaining capacity. Gap = demand &minus; capacity.
             </p>
@@ -781,7 +784,7 @@ export function HubSummaryTable({ data, activeRun, view }: HubSummaryTableProps)
               <DialogHeader>
                 <DialogTitle>{detailRow.hub}: load vs. capacity</DialogTitle>
                 <DialogDescription>
-                  Full figures for this hub ({horizon === 'year' ? 'full year' : 'YTD 2026, remaining year'}, in {unit}),
+                  Full figures for this hub ({horizon === 'year' ? 'full year' : `YTD ${planYear}, remaining year`}, in {unit}),
                   exactly as served.
                 </DialogDescription>
               </DialogHeader>

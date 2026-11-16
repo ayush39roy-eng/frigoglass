@@ -17,7 +17,7 @@ from models.category import Category
 from models.chamber import Chamber
 from models.checkin import ScheduleRunFollowUp, StageCheckin
 from models.currency import CurrencyRate
-from models.engineer import Engineer
+from models.engineer import Engineer, EngineerInactivePeriod, ProjectLeaderHistory
 from models.export import ExportJob
 from models.hub import Hub, HubWorkCalendar
 from models.import_scenario import ImportFormatSettings, WhatifImportScenario
@@ -51,6 +51,8 @@ __all__ = [
     "Hub",
     "HubWorkCalendar",
     "Engineer",
+    "EngineerInactivePeriod",
+    "ProjectLeaderHistory",
     "Chamber",
     "CurrencyRate",
     "Workflow",

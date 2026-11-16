@@ -1,7 +1,7 @@
 """per-project step exclusion (P35-T05, ADR 0049 as ruled at P35-T03)
 
 Revision ID: p35b_step_excluded
-Revises: p40a_step_pins
+Revises: p42a_outcome_band_flags
 Create Date: 2026-11-17
 
 One column on `project_workflow_steps` (`models.workflow.ProjectWorkflowStep`):
@@ -22,8 +22,8 @@ hash, golden file, stored run and preview token is byte-identical (I36). The
 builder maps an excluded step to `lead_weeks = 0`, so there is no new
 scheduler field or snapshot key (R35-9).
 
-Revises `p40a_step_pins` (re-parented at merge, 2026-11-17); the chain is
-`p32a → p35a → p33a → p36a → p33b → p33c → p41a → p40a → p35b`.
+Revises `p42a_outcome_band_flags` (re-parented at merge, 2026-11-17); the chain is
+`… p33c → p41a → p40a → p41b → p38a → p42a → p35b`.
 """
 
 from collections.abc import Sequence
@@ -33,7 +33,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "p35b_step_excluded"
-down_revision: str | Sequence[str] | None = "p40a_step_pins"
+down_revision: str | Sequence[str] | None = "p42a_outcome_band_flags"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

@@ -93,7 +93,11 @@ from dataclasses import dataclass, replace
 from random import Random
 
 from scheduling.cp_sat import DEFAULT_DETERMINISTIC_TIME, run_cp_sat
-from scheduling.greedy import run_greedy_sgs
+from scheduling.greedy import (
+    is_not_scheduled_priority,
+    project_counts_toward_year,
+    run_greedy_sgs,
+)
 from scheduling.types import (
     LeadTime,
     ProjectInput,
@@ -167,6 +171,12 @@ class ProjectDeliveryForecast:
     min_completion_week: int | None
     max_completion_week: int | None
     completion_weeks: tuple[int, ...]
+    # ADR 0056 (R42-3 / R42-4): the project's band classification on the
+    # forecast input (perturbation never changes priority or status, so it
+    # is the same in every iteration). `within_year` frequencies already
+    # follow it: the solver emits `within_year` AND-ed with it (I50).
+    not_scheduled_priority: bool = False
+    counts_toward_year: bool = True
 
 
 @dataclass(frozen=True)
@@ -422,6 +432,8 @@ def forecast_delivery(
             left_out=left_out_counts[p.project_id],
             within_year=within_year_counts[p.project_id],
             excluded=excluded_flags[p.project_id],
+            not_scheduled_priority=is_not_scheduled_priority(p),
+            counts_toward_year=project_counts_toward_year(p),
         )
         for p in projects_sorted
     )
@@ -471,6 +483,8 @@ def _build_project_forecast(
     left_out: int,
     within_year: int,
     excluded: bool,
+    not_scheduled_priority: bool = False,
+    counts_toward_year: bool = True,
 ) -> ProjectDeliveryForecast:
     ordered = sorted(samples)
     return ProjectDeliveryForecast(
@@ -487,6 +501,8 @@ def _build_project_forecast(
         min_completion_week=ordered[0] if ordered else None,
         max_completion_week=ordered[-1] if ordered else None,
         completion_weeks=tuple(ordered),
+        not_scheduled_priority=not_scheduled_priority,
+        counts_toward_year=counts_toward_year,
     )
 
 
@@ -523,8 +539,12 @@ def format_forecast(forecast: DeliveryForecast, *, max_projects: int = 60) -> st
     lines.append(f"{'project':<12} {'P50':>5} {'P80':>5} {'left_out':>9} {'within_yr':>10}  note")
     lines.append("-" * 78)
     for pf in forecast.project_forecasts[:max_projects]:
-        if pf.excluded:
+        if pf.not_scheduled_priority:
+            note = "not scheduled (P4)"
+        elif pf.excluded:
             note = "excluded"
+        elif not pf.counts_toward_year:
+            note = "queued (not counted)"
         elif pf.iterations_scheduled == 0:
             note = "left out every iteration"
         else:

@@ -245,6 +245,11 @@ export interface ScheduleRunChanges {
   run_version: number;
   against_run_id: Id;
   against_run_version: number;
+  /** P37 R37-4: the baseline run's stored `current_week`. */
+  baseline_week: number;
+  /** P37 R37-4: this run's stored `current_week`. When it differs from
+   *  `baseline_week` the list "includes the move from W<a> to W<b>". */
+  run_week: number;
   /** Changed projects outside the caller's hub scope — a count only. */
   hidden_count: number;
   /** Only projects whose compared fields differ, sorted by the server. */

@@ -106,3 +106,26 @@ injection neutralised (a cell starting with `= + - @` gets a leading `'`):
 - The Gate needs qa-inspector, security-auditor and workflow-auditor. For workflow-auditor this is a
   reconciliation only: a saved snapshot's figures equal a fresh simulate of the same request at the
   same week and plan version.
+
+## Gate amendments (P41-R01, 2026-11-17)
+
+- **Visibility (D3, as built).** Who can see a saved scenario:
+  - its creator always sees it (security L-2: even after the creator's own scope narrows; accepted);
+  - Admin and Super Admin see every scenario (L-3: a hub-scoped Admin would also see every one;
+    none exists today);
+  - anyone else sees it only when `hub_codes` is non-empty and `hub_codes ⊆ scope`.
+- **How `hub_codes` is built.** It is the union of every hub referenced anywhere in the stored
+  request and result:
+  - project, capacity, designer, weekly, `plan_projects` and `changes` hubs;
+  - every request row's hub;
+  - matched and excluded project ids;
+  - lab regions, mapped to the saver's own hubs in that region;
+  - **plus the saver's whole hub scope**.
+
+  An all-hubs saver therefore stores every hub. Migration `p41b` backfills the existing rows to all
+  hubs.
+- **The list** is paged as `{items, total, limit, offset}` (default 50, max 200) and reads a separate
+  `kpis` column. The list and the GET are rate-limited.
+- **Exclusions.** An excluded id that the file already removes, or that is no longer schedulable,
+  is accepted and counted 0. An unknown or out-of-scope id is still a 422.
+- **Erasure (L-4).** Any future erasure feature must also purge saved snapshots (OQ #106).

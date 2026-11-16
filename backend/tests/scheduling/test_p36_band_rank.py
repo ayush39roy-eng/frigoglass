@@ -111,8 +111,9 @@ def test_backfill_identity_on_seed() -> None:
     counter: dict[str, int] = {}
     rank_of: dict[str, int] = {}
     # The current in-band order ignoring frozen / VIP = the walk order sorted
-    # by (priority, status, category, id), i.e. _sort_key without keys 1-2.
-    for p in sorted((by_id[i] for i in base.scheduling_order), key=lambda p: _sort_key(p)[2:]):
+    # by (priority, status, category, id), i.e. _sort_key without keys 1, 1a
+    # (P42) and 2.
+    for p in sorted((by_id[i] for i in base.scheduling_order), key=lambda p: _sort_key(p)[3:]):
         counter[p.priority] = counter.get(p.priority, 0) + 1  # type: ignore[index]
         rank_of[p.project_id] = counter[p.priority]  # type: ignore[index]
     ranked = dataclasses.replace(
@@ -144,8 +145,8 @@ def test_sort_key_band_rank_between_priority_and_status() -> None:
     ]
     # VIP above everything non-frozen; in P1: rank 1, rank 3, then unranked; P2 last.
     assert order == ["e", "b", "a", "c", "d"]
-    # category rank is still the value at index 5
-    assert _sort_key(base_project(category="C"), {"C": 40})[5] == 40
+    # category rank is the value at index 6 (P42: key 1a sits at index 1)
+    assert _sort_key(base_project(category="C"), {"C": 40})[6] == 40
 
 
 def test_greedy_honours_rank_on_shared_leader() -> None:

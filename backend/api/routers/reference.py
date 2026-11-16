@@ -20,12 +20,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 import domain_constants as dc
 from api.db import get_db
 from api.deps import get_current_principal
-from models.enums import ProjectType
+from models.enums import ProjectPriority, ProjectType
 from models.hub import Hub
 from models.project import workflow_id_for_hub
 from models.workflow import WorkflowStepTemplate
 from schemas.category import CategoryRead
-from schemas.reference import HubRead, ProjectTypeRead, WorkflowStepTemplateRead
+from schemas.reference import (
+    HubRead,
+    PriorityBandRead,
+    ProjectTypeRead,
+    WorkflowStepTemplateRead,
+)
 from services.categories import load_catalog
 
 #: P9-R02 (security S-07, carried from P3-T08 #5): any authenticated
@@ -112,3 +117,20 @@ async def list_project_types() -> list[ProjectTypeRead]:
     client's `BC`). Any authenticated principal, like `GET /hubs`."""
 
     return [ProjectTypeRead(code=t, label=dc.PROJECT_TYPE_LABELS[t.value]) for t in ProjectType]
+
+
+@router.get("/reference/priorities", response_model=list[PriorityBandRead])
+async def list_priorities() -> list[PriorityBandRead]:
+    """P42 (ADR 0056 R42-1): the five bands with their labels, in
+    `PRIORITY_ORDER`. Any authenticated principal, like `GET /hubs`."""
+
+    return [
+        PriorityBandRead(
+            code=ProjectPriority(code),
+            label=dc.PRIORITY_LABELS[code],
+            short_label=code,
+            not_scheduled=code in dc.NOT_SCHEDULED_PRIORITIES,
+            queued_when_in_queue=not dc.counts_toward_year(code, dc.QUEUED_STATUS),
+        )
+        for code in dc.PRIORITY_ORDER
+    ]

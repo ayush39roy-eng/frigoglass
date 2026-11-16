@@ -37,6 +37,7 @@ from core.principal import Principal
 from models.enums import HubName, ProjectStatus
 from models.hub import Hub
 from models.project import Project
+from scheduling import is_not_scheduled_priority
 from scheduling.plan_import import (
     IN_PROGRESS_ON_IMPORT,
     ImportNewEngineer,
@@ -678,6 +679,8 @@ def _project_out(
         no_chamber_step_id=p.no_chamber_step_id,
         data_error=p.data_error,
         steps=[_step_out(st, eng_name, ch_code) for st in p.steps],
+        counts_toward_year=p.counts_toward_year,
+        not_scheduled_priority=p.not_scheduled_priority,
     )
 
 
@@ -685,6 +688,18 @@ def _project_out(
 
 _NOT_PLACED_OUTCOMES = frozenset({"left_out", "blocked", "data_error"})
 _PLACED_OUTCOMES = frozenset({"within_year", "spillover"})
+#: Every outcome class (`scheduling.whatif.OUTCOME_CLASSES`; P42 adds
+#: `not_scheduled_priority` and `queued`), the keys of `BreakdownOutcomesOut`.
+_OUTCOME_KEYS: tuple[str, ...] = (
+    "within_year",
+    "spillover",
+    "left_out",
+    "blocked",
+    "data_error",
+    "excluded",
+    "queued",
+    "not_scheduled_priority",
+)
 #: A project with no value for a dimension (a data-error file row) is counted
 #: under this key, last, so every dimension still sums to the block's total.
 UNKNOWN_BUCKET = "unknown"
@@ -698,11 +713,18 @@ def breakdown_year_key(p: ImportProjectOut) -> str | None:
     """The year block a served project belongs to besides `all` (C1): placed
     projects by `finish_week` (1..52 base year, 53..104 next year, > 104
     `later`); left_out / blocked / data_error are `not_placed`; excluded file
-    rows are only in `all`."""
+    rows are only in `all`.
+
+    P42 (R42-6): a `queued` project goes by its finish week like a placed one
+    (counted in its block's `queued` column, never in `within_year`), or to
+    `not_placed` when it has no slot. `not_scheduled_priority` is only in
+    `all`, like `excluded`."""
 
     if p.outcome in _NOT_PLACED_OUTCOMES:
         return "not_placed"
-    if p.outcome not in _PLACED_OUTCOMES or p.finish_week is None:
+    if p.outcome == "queued" and p.finish_week is None:
+        return "not_placed"
+    if p.outcome not in (*_PLACED_OUTCOMES, "queued") or p.finish_week is None:
         return None
     if p.finish_week <= dc.WEEKS_IN_YEAR:
         return str(BASE_YEAR)
@@ -737,12 +759,15 @@ def _buckets(
     counts: dict[str, list[int]] = {}
     for p in projects:
         key = value(p) or UNKNOWN_BUCKET
-        c = counts.setdefault(key, [0, 0, 0, 0])
+        c = counts.setdefault(key, [0, 0, 0, 0, 0])
         c[0] += 1
         if p.outcome in _NOT_PLACED_OUTCOMES:
             c[3] += 1
         elif p.outcome in _PLACED_OUTCOMES:
             c[1 if p.within_plan_year else 2] += 1
+        elif p.outcome == "queued":
+            # P42 (R42-6): never within the year, its own column.
+            c[4] += 1
     rank = {k: i for i, k in enumerate(order)}
     keys = sorted(counts, key=lambda k: (k == UNKNOWN_BUCKET, rank.get(k, len(rank)), k))
     return [
@@ -752,6 +777,7 @@ def _buckets(
             within_year=counts[k][1],
             spillover=counts[k][2],
             not_placed=counts[k][3],
+            queued=counts[k][4],
         )
         for k in keys
     ]
@@ -760,13 +786,11 @@ def _buckets(
 def breakdown_of(
     projects: list[ImportProjectOut], category_order: tuple[str, ...] = dc.CATEGORY_ORDER
 ) -> BreakdownOut:
-    oc = dict.fromkeys(
-        ("within_year", "spillover", "left_out", "blocked", "data_error", "excluded"), 0
-    )
+    oc = dict.fromkeys(_OUTCOME_KEYS, 0)
     quarters: dict[tuple[int, int], int] = {}
     for p in projects:
         oc[p.outcome] += 1
-        if p.outcome in _PLACED_OUTCOMES and p.finish_week is not None:
+        if p.outcome in (*_PLACED_OUTCOMES, "queued") and p.finish_week is not None:
             yq = finish_quarter(p.finish_week)
             quarters[yq] = quarters.get(yq, 0) + 1
     return BreakdownOut(
@@ -826,25 +850,28 @@ def scope_import_result(
     # Plan projects of the run that are excluded (not served as rows, counted).
     replaced = {fp.replaces_project_id for fp in er.request.projects} if merge else set()
     served_plan = {p.ref for p in raw.projects if p.source == "plan"}
-    excluded_plan_in_scope = (
-        sum(
-            1
+    hidden_plan = (
+        [
+            bp
             for bp in ctx.baseline.schedule.projects
             if bp.project_id not in replaced
             and bp.project_id not in served_plan
             and scope.hub_ok(bp.hub)
-        )
+        ]
         if merge
-        else 0
+        else []
     )
+    excluded_plan_in_scope = len(hidden_plan)
+    # P42 (R42-6): a hidden plan project that is a non-frozen P4/Q is
+    # `not_scheduled_priority`, not `excluded` (P42-T02 resolution (c)).
+    hidden_not_scheduled = sum(1 for bp in hidden_plan if is_not_scheduled_priority(bp))
 
     rows = file_rows + plan_rows
-    oc = {
-        k: 0 for k in ("within_year", "spillover", "left_out", "blocked", "excluded", "data_error")
-    }
+    oc = dict.fromkeys(_OUTCOME_KEYS, 0)
     for p in rows:
         oc[p.outcome] += 1
-    oc["excluded"] += excluded_plan_in_scope
+    oc["excluded"] += excluded_plan_in_scope - hidden_not_scheduled
+    oc["not_scheduled_priority"] += hidden_not_scheduled
 
     def ch_ok(c: Any) -> bool:
         return scope.hub_ok(c.hub)
@@ -883,6 +910,8 @@ def scope_import_result(
         ),
         newly_slipping=len(changes.newly_slipping),
         recovered=len(changes.recovered),
+        queued=oc["queued"],
+        not_scheduled_priority=oc["not_scheduled_priority"],
     )
 
     cap = raw.capacity
@@ -1045,13 +1074,15 @@ def excluded_plan_project_ids(
     that this request actually takes out of both runs.
 
     Merge mode only (a non-empty list in file_only is 422). Each id must be
-    unique and one of `plan_projects_out` (a schedulable plan project of the
-    baseline in the caller's scope); anything else is answered like an
-    unknown id (422, no existence leak). An id that an
-    included schedulable file row matches is not an error: that row replaces
-    the project, so it is not taken out (the before run keeps it, like any
-    replaced project). An id the file already removes (On Hold row) is not
-    counted twice."""
+    unique and a project of the baseline in the caller's scope; an unknown or
+    out-of-scope id is 422 (no existence leak). Only a tickable one (in
+    `plan_projects_out` after the file's removals) is taken out. Accepted and
+    counted 0 in `plan_excluded` (P41-R01 addendum, workflow A1):
+    - an id that an included schedulable file row matches (that row replaces
+      the project; the before run keeps it, like any replaced project);
+    - an id the file already removes (On Hold / Cancelled / Commercialized row);
+    - an id whose project is in scope but no longer schedulable in the live
+      plan (so "Re-run on today's plan" on a saved request does not fail)."""
 
     ids = body.exclude_plan_project_ids
     if not ids:
@@ -1060,16 +1091,18 @@ def excluded_plan_project_ids(
         raise invalid_import("exclude_plan_project_ids applies to merge mode only")
     if len(set(ids)) != len(ids):
         raise invalid_import("exclude_plan_project_ids: duplicated project id")
-    pickable = {p.id for p in plan_projects_out(without_projects(ctx, removed), body.mode)}
+    base_ids = {p.project_id for p in ctx.baseline.schedule.projects}
     for pid in ids:
-        if pid not in pickable:
+        hub = ctx.project_hub.get(pid)
+        if pid not in base_ids or hub is None or not ctx.scope.hub_ok(hub):
             raise invalid_import(f"exclude_plan_project_ids: unknown project id {pid!r}")
+    pickable = {p.id for p in plan_projects_out(without_projects(ctx, removed), body.mode)}
     replaced = {
         r.matched_project_id
         for r in body.rows
         if r.include and r.status in dc.SCHEDULABLE_STATUS_ORDER and r.matched_project_id
     }
-    return frozenset(pid for pid in ids if pid not in replaced and pid not in removed)
+    return frozenset(pid for pid in ids if pid in pickable and pid not in replaced)
 
 
 def plan_projects_out(ctx: WhatIfContext, mode: str) -> list[PlanProjectOut]:
@@ -1191,7 +1224,8 @@ async def audit_import_simulate(
         "auto_leaders": sum(1 for r in included if r.leader.kind == "auto"),
         "new_leaders": sum(1 for r in included if r.leader.kind == "new"),
         "edits": len(body.edits),
-        "plan_excluded": len(body.exclude_plan_project_ids),
+        # P41-R01 addendum (workflow A3): the served count, not the ids sent.
+        "plan_excluded": result.kpis.plan_excluded,
         "request_digest": digest_of(body.model_dump(mode="json")),
     }
     k = result.kpis

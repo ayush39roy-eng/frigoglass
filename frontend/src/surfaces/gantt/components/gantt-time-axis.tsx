@@ -1,13 +1,15 @@
 import * as React from 'react';
 
-import { CURRENT_WEEK, WITHIN_YEAR_WEEK } from '@/lib/domain-constants';
+import { WITHIN_YEAR_WEEK } from '@/lib/domain-constants';
+import { useCurrentWeek } from '@/lib/plan-clock';
 
 import { lastScaleWeek, weekToX, weekEndToX, type WeekScale } from '../lib/gantt-coordinates';
 
 /**
- * Week ruler + the two fixed marker lines. The markers are drawn at DOMAIN_RULES
- * constants (`CURRENT_WEEK`, `WITHIN_YEAR_WEEK`) — a fixed position, not a
- * calculation. The per-project "completing within year" verdict is still the
+ * Week ruler + the two marker lines. "Now" is the SERVED calendar week
+ * (`/me.current_week`, P37 / ADR 0052 §4: "now" markers use the calendar
+ * week); year-end is the DOMAIN_RULES constant `WITHIN_YEAR_WEEK`. Positions,
+ * not calculations. The per-project "completing within year" verdict is still the
  * server's `row.spillover` / `row.left_out` flag.
  *
  * The axis is the 52-week plan year (ADR 0024): W1–W52, no W53+ columns. The
@@ -52,7 +54,9 @@ export function GanttWeekAxis({ scale, weekLabel, ariaLabel }: GanttWeekAxisProp
   const weeks: number[] = [];
   for (let w = first; w <= last; w += 1) weeks.push(w);
 
-  const nowX = weekToX(CURRENT_WEEK, scale);
+  const currentWeek = useCurrentWeek();
+  // Off-axis (not drawn) until `/me` has resolved.
+  const nowX = currentWeek === null ? -1 : weekToX(currentWeek, scale);
   const yearX = weekEndToX(WITHIN_YEAR_WEEK, scale);
 
   return (
@@ -115,7 +119,7 @@ export function GanttWeekAxis({ scale, weekLabel, ariaLabel }: GanttWeekAxisProp
             textAnchor="middle"
             dominantBaseline="central"
           >
-            W{CURRENT_WEEK} now
+            W{currentWeek} now
           </text>
         </>
       ) : null}
@@ -162,7 +166,9 @@ export function GanttGridLines({ scale, height }: GanttGridLinesProps): React.JS
   const lines: number[] = [];
   for (let w = first; w <= lastScaleWeek(scale) + 1; w += 1) lines.push(w);
 
-  const nowX = weekToX(CURRENT_WEEK, scale);
+  const currentWeek = useCurrentWeek();
+  // Off-axis (not drawn) until `/me` has resolved.
+  const nowX = currentWeek === null ? -1 : weekToX(currentWeek, scale);
   const yearX = weekEndToX(WITHIN_YEAR_WEEK, scale);
 
   return (

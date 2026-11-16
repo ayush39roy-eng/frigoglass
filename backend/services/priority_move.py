@@ -338,7 +338,9 @@ async def dispatch_auto_recalc_batch(
     if recalc != "queued":
         await db.commit()
         return AutoRecalcOutcome(recalc_status=recalc)
-    assert projects, "a queued recalc needs at least one project"
+    # P38 (R38-5 (b)): an engineer deactivation may queue a run with no
+    # project of its own (the active run still books the engineer); then no
+    # `project.recalculate_requested` row is written.
 
     # Commits the input changes, the stale flags, the audit rows and the
     # QUEUED run together, before the worker can read them.

@@ -39653,3 +39653,1427 @@ Wrote:
 - OQ #107 (frozen P4) and #108 (started P4).
 
 Next: workflow-auditor ruling at P42-T01.
+
+## [2026-11-17] P42-T01 — workflow-auditor ruling on ADR 0056
+
+**Verdict: ACCEPT WITH AMENDMENTS.** ADR 0056 becomes binding as amended by R42-1..R42-12. Where the ADR text and
+this ruling differ, the ruling wins. Docs only: no code, DOMAIN_RULES.md not edited (the orchestrator folds the
+invariant text in), git not touched. Dev DB read only (rpd-pg-dev, active run v14, greedy, run week 42).
+
+**Findings (re-derived from DOMAIN_RULES and the code, not from the ADR).**
+- **F1. "Serial order already gives spare capacity" is false as written.** Backfill in the serial SGS is safe: a
+  project placed later only fills gaps, and placed projects are never revisited. The leaks come from order and
+  pre-booking:
+  - VIP (key 2) sits above priority (key 3), so a VIP P3 In Queue project schedules before every non-VIP P1/P2.
+  - `band_rank` (key 3a) sits above status (key 4), so a P3 In Queue project can precede a started P3 project.
+    Started P3 counts toward the year.
+  - Frozen projects are walked first (`greedy.py:394-398`).
+  - `prebook_anchored_steps` (`greedy.py:544`) books the Done, In Progress and Blocked steps, and the pins, of
+    every non-frozen project before any walk.
+- **F2. CP-SAT is not band-safe for queued P3.** The objective is `PRIORITY_OBJECTIVE_WEIGHT` P3 = 2 × within_year
+  (`cp_sat.py:136, 510-512`). Three queued P3 projects in-year (6) outweigh one P1 (4). The presence tie-break and
+  the earliness pass (`cp_sat.py:619-646`, Σ finish) also trade queued placements against counting ones. A
+  FEASIBLE solution under a deterministic-time budget can leave a queued project holding a slot. Weight 0 alone is
+  not enough.
+- **F3. The run outcome has no field for the band.** `schedule_run_project_outcomes` has no `excluded`, no reason
+  and no band column. Surfaces would have to read the live `Project.priority` and `status`, which are stale after
+  any edit: an I9/I16 breach. **D6's "no schema change" is wrong.**
+- **F4. Commercialized outcomes count as within year today** (`greedy.py:470`). On dev, 51 Commercialized P4
+  projects make up 51 of the 135 in the WITHIN_YEAR bucket.
+- **F5. D6's "P1–P3 dates may move earlier" does not hold on dev.** All 72 P4 In Queue projects are non-frozen and
+  non-VIP. All their steps are Not Started, with no start_not_before and no pins. So they are last in serial order
+  and pre-book nothing. Greedy rows of P1–P3 are therefore identical by construction. The real P1/P2 shortfall
+  (6 P1 + 2 P2 In Queue LEFT_OUT) is not caused by P4.
+- **F6. Moving an In Queue P4 project to P3 does not put it in the year.** It becomes queued P3, so it still counts
+  nothing. Only P1/P2 or a started status counts.
+
+**R42-1 — Labels (D1). ACCEPT.**
+- Serve `domain_constants.PRIORITY_LABELS = {P1: "Must do this year", P2: "Good to have this year",
+  P3: "In queue", P4: "Miscellaneous", Q: "Unprioritised"}`.
+- The Capacity priority bucket key `"Queue"` (Q or null priority, `capacity_priority.py:61-66`) must not be
+  *labelled* "Queue" any more, because it now collides with P3 "In queue". Keep the key; display "Q".
+
+**R42-2 — Frozen P4/Q (OQ #107). OVERRIDE of the ADR proposal: a frozen P4/Q project books its locked
+capacity.**
+- It is walked as every frozen project is today, with `counts_toward_year = false`. Never within year, never
+  spillover.
+- Reasons:
+  - Freeze is a lock on real committed work, not a scheduling decision. Not booking it would show engineers as
+    free while they are working.
+  - This keeps I10 and I20 unamended. If a frozen project left the run on a move into P4, I20's "frozen projects'
+    dates are identical across baseline and new run" would break.
+- If the owner answers OQ #107 "no", the fallback is:
+  - a frozen P4 gets the R42-3 outcome;
+  - I10 and I20 gain "except a project whose outcome is `not_scheduled_priority`";
+  - freeze/unfreeze audit is unchanged.
+- Dev data has 0 frozen projects, so the rollout is the same either way. OQ #107 stays open with this assumption.
+
+**R42-3 — Non-frozen P4/Q is never scheduled (D2). ACCEPT, with the precedence and shape fixed.**
+- Precedence: status exclusion first, then band.
+  - A Commercialized, On Hold, Cancelled or Draft project keeps today's `_excluded_outcome` whatever its band:
+    `not_scheduled_priority = false`, `counts_toward_year = true`, Commercialized ⇒ `within_year = true`.
+  - A schedulable-status, non-frozen project with priority ∈ {P4, Q} is excluded in `prepare_run` before
+    validation. Its outcome:
+    - `excluded = true`, `not_scheduled_priority = true`, `counts_toward_year = false`;
+    - `within_year = spillover = left_out = blocked = false`, `no_leader = false`, `data_error = None`;
+    - `steps = ()`, start/end/projected/expected/unconstrained weeks `None`, `progress_pct None`;
+    - not in `scheduling_order`.
+- It applies in every solver and path: greedy, CP-SAT, Monte Carlo, What-if, scenarios and plan import.
+- VIP does not override it. Q = P4.
+- A started non-frozen P4 is also not scheduled (OQ #108 assumption). Its anchored stages are not pre-booked.
+- Null priority with a schedulable status stays a validation error (`workflow.py:586`), unchanged.
+- Result reason name: `not_scheduled_priority` (snake_case, as `no_leader`).
+  - Exclusive bucket: `NOT_SCHEDULED_PRIORITY`.
+  - What-if/import class: `not_scheduled_priority`.
+  - Display: "Not scheduled (P4)".
+
+**R42-4 — `counts_toward_year` (D3), exact definition, evaluated by the scheduler on the run input.**
+```
+counts_toward_year(p) = NOT ( p.status ∈ SCHEDULABLE_STATUS_ORDER
+                              AND ( p.priority ∈ {P4, Q}
+                                    OR (p.priority = P3 AND p.status = "In Queue") ) )
+```
+- Frozen does not change it: a frozen P4 or a frozen queued P3 is false.
+- Status-excluded projects are true, per R42-3.
+- The scheduler writes the year flags, so no reader can forget the band:
+  - `within_year := counts_toward_year ∧ scheduled ∧ end_week + delay ≤ WITHIN_YEAR_WEEK` (status-excluded
+    projects as today);
+  - `spillover := counts_toward_year ∧ scheduled ∧ ¬within_year`.
+  - One shared helper does this in greedy (`greedy.py:1084-1087`, plus the frozen walk) and in CP-SAT
+    (`cp_sat.py:887-898`).
+- `left_out` and `blocked` stay structural facts. They may be true on a queued project, so every left-out or
+  blocked *KPI* must apply R42-6.
+- Both flags are stored on `schedule_run_project_outcomes` and served from the stored row only:
+  - `counts_toward_year boolean NOT NULL DEFAULT true`;
+  - `not_scheduled_priority boolean NOT NULL DEFAULT false`.
+  - Migration `p42a`. The defaults are truthful for historic runs (I14: old runs are never rewritten).
+  - No surface derives either flag from the live project.
+- Queued display: "Queued — fits by W{projected_end_week}" when served `projected_end_week ≤ 52`; "Queued —
+  after W52" otherwise; "Queued — no slot" when `left_out`.
+
+**R42-5 — Spare capacity only: a new sort tier, plus CP-SAT residual placement.**
+- *Order.* Insert key **1a, `counts_toward_year` descending**, between key 1 (frozen) and key 2 (VIP):
+  `(frozen↓, counts_toward_year↓, VIP↓, priority, band_rank, status, category, id)`.
+  - Every queued P3 then follows all counting work, including started P3 and VIP P1/P2.
+  - VIP still orders queued projects among themselves. OQ to log: VIP on a queued P3 no longer jumps P1/P2.
+  - With no non-counting project in the input, the key is constant, so `scheduling_order` and output are
+    byte-identical (dev: 0 P3 In Queue).
+  - `_sort_key` is the only sort (R36-4). I30 and I37a heads gain key 1a.
+- *Exemptions*, stated in I52: frozen walks, and the anchored and pinned steps of a queued project. These still
+  pre-book, because they are recorded facts or human placements.
+- *CP-SAT.* "Weight 0" is rejected as insufficient (F2). Instead:
+  - Non-frozen projects with `counts_toward_year = false` are **not decision variables**.
+  - After both CP-SAT passes, book every extracted CP-SAT placement into the `_ResourceState` (engineer per
+    span week, one platform per lab week). Then walk the queued projects with the shared
+    `_schedule_one_project` in `ctx.ordered` order.
+  - Queued projects that `_needs_greedy` or that are no_leader/data_error are deferred to this post-solve walk,
+    not walked in step 3.
+  - This makes the CP-SAT model of X identical to that of X⁻ (I52).
+  - `PRIORITY_OBJECTIVE_WEIGHT` P4/Q entries become unreachable for non-frozen projects (frozen projects are
+    never in the model). Leave them; document.
+
+**R42-6 — KPI basis (D3). Every within-year count, % and target, and every spillover/left-out KPI, counts only
+outcomes with `counts_toward_year = true`, read from the stored row.**
+- Exclusive bucket precedence on every surface: `NOT_SCHEDULED_PRIORITY > QUEUED (¬counts_toward_year) >
+  BLOCKED > WITHIN_YEAR > SPILLOVER > LEFT_OUT`.
+  - The existing four buckets, and therefore every denominator built from them (`outcomeTotal`,
+    within-year share), exclude queued and P4 automatically.
+  - New served counts: `queued_count` and `not_scheduled_priority_count`.
+- Surfaces:
+  - **Dashboard:** completing-within-year, region summary, priority delivery, analytics.
+  - **Executive:** KPI strip, risks ("VIP not in year" excludes non-counting).
+  - **Capacity:** class breakdown deliverable/left-out exclude both; add queued.
+  - **Gantt:** flags plus label; per-project weeks still sum to booked (I23).
+  - **Run summary.**
+  - **Exports:** add both columns.
+  - **What-if / plan-import KPIs:** new classes.
+  - **Notifications:** no LEFT_OUT/SPILLOVER regression event when the new outcome is non-counting.
+  - **Check-ins / tracking:** exclude non-frozen P4/Q, which have nothing planned. Queued P3 stays.
+  - **VIP:** non-frozen P4/Q never auto-fill and are not "pipeline, not yet in run". A pinned one is shown as
+    "Not scheduled (P4)".
+- **Demand (I25):** remaining demand covers status schedulable ∧ (priority ∉ {P4, Q} ∨ frozen). Full-year demand
+  is unchanged (it already includes On Hold and Commercialized). Queued P3 stays in remaining demand because it is
+  scheduled. The legacy `estimated_*` sum (`capacity.py:258-268`) follows the same rule.
+- **Booked (I6/I7):** automatic, because there are no rows.
+- **Run changes (I20):** compared fields gain `counts_toward_year` and `not_scheduled_priority`.
+
+**R42-7 — Band rank (D4). ACCEPT.**
+- P4 keeps dense ranks, and I37b membership is unchanged (status schedulable ∧ priority set).
+- The scheduler never reads a P4 rank because the project is excluded before sorting. I37a/I30 see no P4 id in
+  `scheduling_order`.
+- Accepted consequence: in the P3 column, the board shows rank order while the scheduler places every started P3
+  before every queued P3 (key 1a). The board must badge queued cards "Queued". The re-rank preview stays truthful
+  because it runs the scheduler.
+
+**R42-8 — Moves (D5). ACCEPT, with copy.**
+- Into P4/Q: the preview lists the project as "leaves the plan". It does not count as "drops out of the year"
+  (the moved project's own row is classified by the new flags).
+- Out of P4 into P3 while In Queue: "joins the queue — not counted this year" (F6).
+- Out of P4 into P1/P2: enters last in band (R36-3).
+- Recalc is as today (ADR 0015/0026).
+
+**R42-9 — Invariants (new, numbered after I48).**
+- **I49 — band exclusion.**
+  - In every run (any solver, What-if, scenario, plan import), every input project with a schedulable status,
+    priority ∈ {P4, Q} and `frozen = false` has an outcome with:
+    - `excluded = true`, `not_scheduled_priority = true`, `counts_toward_year = false`;
+    - `within_year = spillover = left_out = blocked = false`;
+    - no step rows and null start, end, projected, expected and unconstrained weeks.
+  - It is absent from `scheduling_order`.
+  - It contributes 0 to I6/I7 booked load and to I25 remaining demand.
+  - No other outcome has `not_scheduled_priority = true`.
+  - A status-excluded project keeps today's excluded outcome whatever its band, with
+    `not_scheduled_priority = false` and `counts_toward_year = true`.
+  - `is_vip` changes none of this.
+- **I50 — year basis.**
+  - Every outcome's `counts_toward_year` equals R42-4 evaluated on the run input.
+  - For every outcome that is not status-excluded:
+    - `within_year = counts_toward_year ∧ scheduled ∧ end_week + delay_weeks ≤ within_year_week`;
+    - `spillover = counts_toward_year ∧ scheduled ∧ ¬within_year`;
+    - "scheduled" is as in I9 today.
+  - The stored outcome row carries both flags exactly as the scheduler emitted them.
+- **I51 — tier order.**
+  - Over consecutive ids a, b of `scheduling_order`, the pair (frozen key, `counts_toward_year` key) never
+    decreases.
+  - I30 and I37a read "equal on keys 1, 1a, 2, 3, 3a (and 4)".
+- **I52 — spare-capacity neutrality.**
+  - Let X be an input in which no non-frozen project with `counts_toward_year = false` has an anchored (Done,
+    In Progress, Blocked) or pinned step.
+  - Let X⁻ be X without its non-frozen non-counting projects.
+  - For greedy, and for CP-SAT with identical parameters, every outcome of a project of X⁻ is identical (all
+    fields and rows) in run(X) and run(X⁻).
+  - Asserted by a pure `check_band_neutrality(schedule_input, solver)` in selftests and on every audited run.
+- **I53 — KPI basis (extends I9, I19, I23).**
+  - Every served within-year, spillover and left-out count and share, and their denominators, on Dashboard,
+    Executive, Capacity, run summary, VIP, exports and What-if/import, counts only stored outcomes with
+    `counts_toward_year = true`.
+  - Queued and not-scheduled projects are served as their own counts from the same rows.
+  - The six exclusive buckets of R42-6 sum to the row count.
+  - The browser derives none of these.
+- **Amended text to fold in:**
+  - I9: `within_year` is as in I50.
+  - I25 remaining: as in R42-6.
+  - I20 compared fields: as in R42-6.
+  - DOMAIN_RULES "Scheduling order": key 1a.
+  - DOMAIN_RULES "Booking rules": the excluded set gains "non-frozen P4/Q, any status"; "Completing within year"
+    gains `counts_toward_year ∧`.
+  - VIP section: "VIP does not lift a project out of the queued tier, nor schedule P4/Q".
+
+**R42-10 — Rollout (D6). AMEND.**
+- A schema change is needed: migration `p42a`, two outcome columns. The migration sets `schedule_stale = true` on
+  the projects whose classification changes (dev: the 72 P4 In Queue projects). The orchestrator then dispatches
+  one greedy run (`trigger_reason = "band_rules"`). Nothing auto-solves (ADR 0006).
+- Expected effect on dev, attributable to P42 alone (same week 42):
+  - 72 P4 outcomes become NOT_SCHEDULED_PRIORITY;
+  - 235 step rows leave the run: design 929 → 814, lab 715 → 692 booked weeks;
+  - P1–P3 outcomes are byte-identical (F5);
+  - WITHIN_YEAR 135 → 134, SPILLOVER 63 → 53, LEFT_OUT 74 → 13;
+  - outcome denominator 272 → 200, so the within-year share moves 49.6% → 67.0%. This is a visible headline
+    change and must be called out to the owner.
+- **Confound:** the next run will also use the calendar week (W47, ADR 0052), not 42. So `/changes` after rollout
+  mixes week-roll movement with P42.
+  - The T05 audit must diff on a disposable DB copy with `RPD_CURRENT_WEEK=42` to isolate P42, and assert
+    I49–I53 there.
+- Golden selftest files with P4/Q or P3 In Queue fixtures will change. Each diff must be attributed to R42-n in the
+  T02 MEMORY entry.
+
+**R42-11 — Proposed OQs (orchestrator to number).**
+1. Should delivered (Commercialized) P4 projects still count as within year (51 on dev, F4)? Assumed yes, as today.
+2. VIP on a queued P3: confirm it no longer jumps P1/P2 (R42-5).
+3. OQ #107 assumption is now "frozen P4 books" (R42-2).
+
+**R42-12 — Ownership.**
+- algorithm-engineer: `backend/scheduling` and the two constants in `domain_constants.py`.
+- backend-builder: the rest of the backend, migration `p42a` and `docs/API_CONTRACT_P42.md`.
+- frontend-builder: `frontend/src`.
+- The impact map with file:line is in the P42-T01 report to the orchestrator and is summarised below.
+
+Impact map (summary):
+- **algorithm-engineer:**
+  - `domain_constants.py:193-205` (labels, `NOT_SCHEDULED_PRIORITIES`);
+  - `greedy.py` 196-207 (key 1a), 358-386 (prepare_run split, before validation), 394-418 (walks), 455-472
+    (excluded outcome + reason), 1084-1087 (year flags);
+  - `cp_sat.py` 230-262 (solvable/defer), 506-512, 619-646, 766-900 (book state, residual walk);
+  - `types.py` 471-515 (two fields);
+  - `demand.py` 88, 227-229 (I25);
+  - `whatif.py` 131-139, 545-547, 588-590, 600, 884, 1584-1593 (classes and balancing);
+  - `plan_import.py` 460, 537, 875, 918, 1200, 1284, 1331, 1364, 1491-1520;
+  - `monte_carlo.py` 515-530;
+  - `solver_comparison.py` 114-119, 250;
+  - `invariants.py` 42, 312-314, 1398-1456 (I9/I50), 2205-2240 (I30), 2298-2340 (I37a), plus new I49, I51 and
+    I52 checks;
+  - `band_rank.py:79` unchanged.
+- **backend-builder:**
+  - `models/schedule.py:209-215` + `p42a`;
+  - `schedule_persistence.py:765-768`;
+  - `dashboard.py` 320-395, 403-520, 527-600, 806-822;
+  - `schemas/dashboard.py`;
+  - `schedule_runs.py:398-427`;
+  - `run_changes.py` 40-60, 185-188, 212;
+  - `notifications.py:303-325`;
+  - `priority_preview.py` 335-400;
+  - `capacity.py` 258-268, 640-690;
+  - `capacity_priority.py:61-66` (label);
+  - `gantt.py:663` + `schemas/gantt.py:134`;
+  - `checkins.py:142` + `tracking.py:275`;
+  - `vip.py:160` + `vip_board`;
+  - `project_cards.py` 62, 215;
+  - `workspace.py` 321-336, 908;
+  - `priority_board.py:199`;
+  - `export_builder.py` 498-526;
+  - `services/whatif.py` 299-305, 400-433;
+  - `whatif_import.py` 686-687, 764, 843-882;
+  - `whatif_import_scenarios.py` 420, 458;
+  - `whatif_chat.py:263`;
+  - `ask_agent.py:283`.
+  - Unchanged: `schedule_stale.py:49`, `priority_move.py:273`, `priority_capacity_fill.py:195`,
+    `workflow_templates.py:445`, `projects.py:641`.
+- **frontend-builder:**
+  - `priority-band-meta.ts:9`;
+  - `schedule-outcome-meta.ts`;
+  - `project-outcome-chips.tsx:51-89`;
+  - `dashboard/lib/outcome.ts:36-42, 140-156`;
+  - `dashboard/lib/executive.ts:92-100`;
+  - `exec-kpi-strip.tsx`;
+  - `delivery-segments.ts`;
+  - `within-year-panel`;
+  - `gantt-status-labels.ts:14-15` + legend/badges;
+  - `capacity/lib/priority-split.ts:7-15`;
+  - class-breakdown panel;
+  - `whatif/components/outcome-meta.ts:4-21`;
+  - `import/year-filter.ts:20`, `drilldown.ts:37`, `scenario-compare.ts`;
+  - priority-board `board-card.tsx`;
+  - priority-move preview dialog and timeline panel;
+  - workspace health-meta;
+  - `types/schedule.ts`.
+
+**Next:** orchestrator folds R42-9 text into DOMAIN_RULES, numbers the R42-11 OQs, marks P42-T01 DONE, and
+dispatches T02 (algorithm-engineer), then T03 and T04.
+
+## [2026-11-17] P42-T01 close — ruling folded in (orchestrator)
+
+- DOMAIN_RULES: key 1a, a Booking-rules exclusion line, and a new section "Priority band meaning".
+- ADR 0056 status set to Accepted with amendments.
+- OQ #109 (Commercialized P4 counts) and #110 (VIP inside the queued tier) added; #107's assumption
+  updated per R42-2.
+- P42-T01 marked DONE.
+
+Owner to be told: on dev, the within-year share moves from 49.6% to 67.0% because the denominator
+drops from 272 to 200 (R42-10).
+
+## [2026-11-17] P40-T03a — manual step pins in the scheduler (ADR 0054 ruling R40-3..R40-8, R40-12; I45–I48) — algorithm-engineer: DONE
+
+**Scope:** `backend/scheduling/` and `backend/tests/scheduling/` only. Edits were additive; the parallel P35/P37/P38/P39/P41
+work in the tree was left alone. No git index change, no commit.
+
+**Final names (backend-builder builds against these):**
+- `scheduling.types.StepPinInput(step_id: str, start_week: int, end_week: int)`. The end is inclusive.
+- `ProjectInput.step_pins: tuple[StepPinInput, ...] = ()`. This is the last field.
+- `StepSchedule.pinned: bool = False` and `StepSchedule.manual_overlap: bool = False`. These are the last two fields.
+- `ProjectScheduleOutcome.manual_overlap: bool = False` and `ProjectScheduleOutcome.pin_lapsed: bool = False`. These are the
+  last two fields.
+- `workflow` helpers, all exported from `scheduling`:
+  - `validate_step_pins`;
+  - `PinWindow`, `pin_window`, `pin_windows(plan, cw, include_held=False)` and `pins_lapsed`;
+  - `canonical_schedule_output_asdict(output)`, which drops the four flags when they are False;
+  - `ProjectPlan.pins` (the pins that apply) and `ProjectPlan.pinned_step_ids` (the same, minus any Blocked hold).
+- `invariants` helpers: `check_pin_load_neutrality` and `without_pins`.
+
+**Built:**
+- **Validation (R40-12).** A `ValueError` for:
+  - an unknown step, or a step of the other workflow;
+  - a duplicate step;
+  - a bool or non-int week;
+  - anything outside `1 <= start <= end <= horizon_weeks`.
+
+  It runs for schedulable projects, in `validate_schedulable_project`. `analyse_project` stays tolerant.
+- **Which pins apply (R40-4/R40-9).**
+  - A pin applies to a non-skipped step, and in a non-frozen project only to a Not Started one.
+  - A pin on a skipped or excluded step (`eff = 0`) is inert. On a started step of a non-frozen project it is ignored.
+  - On a frozen project it applies whatever the stored stage says.
+  - A Blocked hold wins: the step is held, nothing is booked and no row is pinned.
+- **Effective window (R40-5).**
+  - The window is exact when the project is frozen or `ms >= cw`. Otherwise it is `cw .. cw + L - 1`, with `pin_lapsed`.
+  - If the window ends after `horizon_weeks`, the project is LEFT_OUT. The step gets no row and nothing is booked.
+  - The project's other pins keep their rows.
+- **Greedy (R40-6/R40-7).**
+  - Frozen projects' pins are booked in their phase-2 walk. Non-frozen pins are pre-booked in `prebook_anchored_steps`
+    (same pass, scheduling order, walk order), so a later-priority pin keeps its weeks.
+  - Booking goes through `_book_anchored(..., pinned=True)`:
+    - a design pin books the leader in every week;
+    - a lab pin takes the first eligible chamber with room, else the first eligible chamber with OVERLAP;
+    - an elapsed pin books nothing;
+    - with no eligible chamber the project is LEFT_OUT with `no_chamber_step_id`.
+  - A pinned step ignores its gate, wait, overlap, floor and frontier, and passes on `G = max(end, release)`.
+  - The row reports `eff` as `duration_weeks`.
+  - A LEFT_OUT project still emits its pre-booked pinned rows.
+  - `manual_overlap` is evaluated on the emitted rows (`workflow.manual_overlap_by_row`): `a < release + 1 - o`, with the
+    release taken from the rows.
+- **Same-project ENG_CONFLICT (F4).** `_ResourceState.book_engineer(..., pinned=)` keeps `eng_pin_owners`. A week the same
+  project already holds is a conflict only when either booking is a pin. Two non-pinned fixed steps of one project stay
+  unflagged, as before.
+- **CP-SAT.**
+  - Pins come in through the same pre-booking and frozen walk.
+  - A project with a pin uses the release-set path. `release_sources` treats a pinned step like an overlapping one
+    (`{q} ∪ ⋃R(p)`), so there is no constraint into the pin and its successors start after `max(end, release) (+ w)`.
+  - A pin that could not be pre-booked sends the project to the greedy walk (`_needs_greedy`).
+  - `manual_overlap` is computed after the solve, on CP-SAT's own rows.
+- **Unconstrained finish (R40-8).**
+  - Pins sit on their effective windows and pass on `G`.
+  - Held pins are included too ("the block clears now", as for Blocked stages).
+  - In a non-frozen project the pinned design windows are given to the one-leader rule up front, because the schedulers
+    book them before any search. I16 (unconstrained <= constrained) still holds.
+- **Monte Carlo.** It perturbs only `StepTimingInput` and uses `replace`, so pins are never perturbed. A test spies on
+  every sampled input.
+- **Solver comparison.**
+  - `pinned` and `manual_overlap` (step) and `manual_overlap` and `pin_lapsed` (outcome) are now compared.
+  - Any divergence on a pinned row, `pinned` or `pin_lapsed` is UNEXPLAINED. `manual_overlap` is bucketed as an open choice
+    (I47(c)).
+  - Without pins all of these are False on both sides, so no report changes.
+- **Canonical forms (I48(a)).**
+  - `canonical_schedule_input_asdict` drops an empty `step_pins` and sorts a set one by step.
+  - `canonical_schedule_output_asdict` drops the four flags when they are False.
+- **Invariants.**
+  - New I45: input-derived applicability, independent of `analyse_project`. It checks the window, `pinned`,
+    `duration_weeks = eff`, the leader or chamber, LEFT_OUT past the horizon, `pin_lapsed`, and that no stray row is pinned.
+  - New I47(a): `manual_overlap` per row and the OR on the outcome.
+  - New I48(b): `check_pin_load_neutrality`, run with I8.
+  - Amended, I1: a same-project pair needs ENG_CONFLICT when one side is pinned. I1/I2: `is_fixed` includes pins.
+  - Amended, I2: the room rule covers pinned lab rows, frozen projects included.
+  - Amended, I3/I15/I21/I27/I28: pinned rows are exempt as successors, and `_row_releases` gives a pinned predecessor
+    `G = max(end, release)`.
+  - Amended, I21: pins are exempt, and an In Progress tail behind a pin uses the gate.
+  - Amended, I22/I27/I28: unpinned steps only.
+  - Amended, I10: a frozen project with a pin is recomputed by its frozen walk, from `actual_start_week`, durations and
+    pins.
+
+**Judgement calls (recorded, not in the ruling text):**
+1. **Same-project ENG_CONFLICT needs a pin on one side.** Flagging every same-project overlap would change runs with no pin,
+   for example parallel anchored tails, and break I48(a).
+2. **Frozen pinned lab steps use the room rule.** They take the first chamber with room (R40-6, "fixed placements"), not
+   the frozen walk's `eligible[0]`.
+3. **I45 and a dead-ended project.** A project with `no_chamber_step_id` (a dead end) need not carry its pinned rows, as
+   `_required_anchored_rows` already exempts anchored rows. A frozen project can dead-end before reaching a later pin.
+4. **`manual_overlap` with an unknown release.** It is False when the release cannot be computed from the rows (a LEFT_OUT
+   project missing a predecessor row).
+5. **`pin_lapsed` on a no-leader project.** It is also set on a `no_leader` outcome (no rows), as a fact about the input.
+   It is False on a data-error outcome.
+6. **FTE <= 0.** A leader at FTE <= 0 is still a data error even when every design step is pinned (unchanged).
+7. **`PIN_DROPPED` is not emitted by the engine.**
+   - The backend-builder already emits it service-side (`services.whatif_import.pin_dropped_issues`). That version is
+     hub-scoped and discloses no project detail.
+   - An engine copy would have duplicated it and could have named an out-of-scope project.
+   - The engine half of R40-12 holds by construction: a replaced project is rebuilt from the file, so its pins never reach
+     the run. This is tested.
+
+**Byte-identity proof (I48(a)).**
+- **Method.** A pytest plugin (kept in the scratchpad, not the repo) wrapped `ScheduleInput.__post_init__` and
+  `ScheduleOutput.__init__`. Per test, it recorded the sha256 of:
+  - every input, in canonical form;
+  - every output, in `asdict` form with the four P40 flags dropped at False.
+- **Runs.** The whole `tests/scheduling` suite ran before the change and after it.
+- **Result.** All 521 pre-existing tests are identical: 6739 digests, 3568 of them outputs. That covers every golden file,
+  greedy and CP-SAT, What-if, Monte Carlo and plan import.
+- **Hash pins in `test_p37_current_week`.**
+  - The canonical input hash `87341158…` is unchanged.
+  - The raw input `asdict` minus the empty `step_pins`, `d3542beb…`, is unchanged.
+  - The greedy output's canonical form, `27bf165b…`, is unchanged.
+- **Tests adjusted, not re-blessed.** Three tests compared a raw `asdict` and now drop `step_pins` or use the canonical
+  output form, the same pattern as P36's `band_rank`:
+  - `test_p33_gaps::test_canonical_schedule_input_asdict_omits_p33_defaults`;
+  - `test_p36_band_rank::test_canonical_asdict_omits_none_band_rank_and_keeps_a_set_one`;
+  - `test_p37_current_week::test_canonical_hash_and_greedy_output_byte_identical_to_pre_p37`.
+
+  No expected value changed.
+
+**Tests.** New `tests/scheduling/test_p40_step_pins.py`, 69 tests.
+- **Types, canonical forms and validation:**
+  - defaults and field order;
+  - the canonical input and output omit the defaults;
+  - explicit `()` equals the default;
+  - 8 invalid-pin cases;
+  - a pin at the horizon.
+- **Fixtures, hand-derived on PDD/B at W31:**
+  - on time: E 35–38, so H 39–44 and the project ends at W50;
+  - squeezed below the FTE span: FTE 0.5, E pinned 35–36, `duration_weeks` 4;
+  - lapsed: E 20–23 runs at 31–34, so A 35 and D 36, with MANUAL_OVERLAP and G = 36;
+  - frozen in the past: actual start W10, D pinned 5–6, E at 11;
+  - frozen pinned later than its plan;
+  - past the horizon: E 1–50 makes the project LEFT_OUT, and H 60–65 keeps its row;
+  - overlap with a predecessor;
+  - the template overlap allowance, o = 0, 1 and 2;
+  - a pin inside a wait;
+  - a wait after a pin;
+  - a floor;
+  - a Blocked hold;
+  - inert pins: lead 0, excluded, certification off, In Progress, Done;
+  - a frozen pin on a started stage;
+  - same-project clashes: pin and pin, pin and anchored tail, pin and frozen step;
+  - a byte-identity guard: two unpinned anchored steps of one project are not flagged;
+  - a cross-project conflict flags both projects;
+  - a later-priority pin keeps its weeks;
+  - unpinned steps search around pins;
+  - lab: overbooking with OVERLAP, the first chamber with room, and no eligible chamber;
+  - the unconstrained finish;
+  - Monte Carlo;
+  - determinism.
+- **Greedy vs CP-SAT:** identical pinned rows (modulo `manual_overlap`) and identical `pin_lapsed` on a 6-project mix, plus
+  a clean `compare_solvers` report.
+- **Plan import:** the engine half.
+- **Negative tests:**
+  - I45: moved off the pin, flag missing, flag spurious, duration, `pin_lapsed` both ways, a lapsed pin left in the past,
+    past the horizon, design leader;
+  - I47(a): the row flag both ways, and the outcome OR;
+  - I47(b): a successor before G breaks I3 and I15;
+  - I47(d): same-project and cross-project ENG_CONFLICT, and lab overbooking with a roomy chamber;
+  - I10: frozen with pins;
+  - I48(b): the compare helper.
+
+`pytest -c pytest-scheduling.ini`: **767 passed** (698 before this task, plus the 69 new). The coverage gate is met (92.73 % over
+the configured set). Per module: `types.py` 100 %, `workflow.py` 98 %, `cp_sat.py` 98 %, `invariants.py` 94 %,
+`greedy.py` 93 % and `solver_comparison.py` 92 %. The uncovered greedy lines are the pre-existing defensive branches. `ruff check` and `ruff format --check` are clean on `scheduling` and
+`tests/scheduling`. `mypy --strict` on `types.py`, `invariants.py` and `_selftest_common.py` reports only the pre-existing
+ortools CamelCase errors in `cp_sat.py` (followed import; the package is mypy-excluded).
+
+**For backend-builder (P40-T03b), outside my scope:**
+- `backend/tests/test_p33_categories_table.py:351` compares `priority_preview._canonical(si)` with a raw `asdict(si)`.
+  Once the builder sets `step_pins`, the raw side carries `step_pins: ()` per project and needs
+  `project.pop("step_pins", None)`, the same fix as the three scheduling tests above.
+- Persist and hash outputs with `canonical_schedule_output_asdict`, or the column defaults, never a raw `asdict`.
+- A pinned row's `span_fte` is NULL (R40-3). The row with `pinned=True` is the marker.
+
+**Git:** another session committed the working tree while this task ran (`4669e54`, "P37-P41 work in progress"). That
+commit contains this task's files exactly as they are in the working copy. This task made no commit itself.
+
+**Not done (other parts):** T03b (backend), T03c (frontend) and T03d (the audited run). P40-T03a is marked DONE in
+IMPLEMENTATION_PLAN.md.
+
+## [2026-11-17] P37-T04 — plan clock, calendar/run week split, /me fields, R37-1/2/4/5/10 — backend-builder: DONE
+
+No git index changes and no commit by this session. Note: commit 4669e54, made by another session during this task, already
+contains most of this work-in-progress tree.
+
+**Clock** (`backend/services/plan_clock.py`):
+- `PlanClock` fields: `as_of_date`, `iso_year`, `iso_week`, `week`, `plan_year`, `plan_year_closed`, `source`,
+  `week_ends_at` (the next Monday 00:00 Europe/Athens), and `weeks_left_in_year` = 52 − week.
+- `compute(instant, plan_year, pin)` is the pure rule:
+  - pin wins, and is never closed;
+  - same ISO year → min(iso_week, 52);
+  - later ISO year → 52, closed;
+  - earlier ISO year → 1.
+- `now()` and `current_week()` read the env on every call, and the injectable `override_now()` supplies "now" in tests.
+- `get_plan_clock` is the FastAPI dependency, cached per request (I40).
+- `validate_environment()` checks the pin (1..52) and `RPD_PLAN_YEAR` (2000..2100). It runs in the API lifespan and on
+  Celery `worker_init` in both apps, so a bad value stops startup.
+- `domain_constants.CURRENT_WEEK` is removed.
+- `tests/_plan_week.py` `TEST_WEEK = 31` replaces it in test fixtures.
+
+**Readers (ADR 0052 Appendix).**
+- These take `clock.week` through the dependency: me, check-ins, capacity hub-load/hubs and engineer-utilization,
+  planning capacity-summary and resource-load, engineers, chambers, workflow-settings (GET + 3 PUTs), priorities
+  (6 endpoints), priority board, vip, vip-board, dashboard analytics projects/facets, gantt, workspace (GET + PATCH),
+  scoring-rubric preview, whatif (6 endpoints, via `load_context(clock=)`; the chat uses `ctx.clock`), and
+  greedy-recalc.
+- `export_builder` passes `plan_clock.now()` to the router functions it calls directly.
+- Defaults made required: `capacity_supply.*`, `tracking.*`, `build_project_cards`, `compute_capacity_fill`,
+  `build_workspace`, `preview_rubric`, `build_schedule_input_from_db`.
+- Run-week fallbacks:
+  - the health badge uses only `run.current_week`;
+  - in `ask_agent`, with no run the badge is "unscheduled".
+- Capacity `remaining_weeks` is now the calendar week, not the run week.
+- Engineer-utilization and resource-load serve `current_week` = calendar plus new `run_week` (null without a run).
+
+**R37-1** (`tracking.stage_is_due` / `due_since_week`):
+- A Not Started stage is due once its planned start ≤ the week; it is due since that planned start.
+- The one existing test that asserted the old past-window rule (`test_p12_tracking`) was updated.
+- A reduction test is in `test_p37_plan_clock`.
+
+**R37-2 / I38.**
+- `create_queued_schedule_run(current_week=None)` reads the clock once and stores it. It calls
+  `scheduling.require_plan_week`, per the coordinator after T03.
+- The worker builds the input with `current_week=run.current_week`.
+- `persist_schedule_output(existing_run=)` now raises if the input's week ≠ the row's week, instead of overwriting.
+- `build_schedule_input_from_db` requires a week and calls `require_plan_week` (I41).
+- Synchronous callers read the clock once per request: greedy-recalc, priority/band-rank preview + confirm
+  (`_snapshot` / `_rank_snapshot`), What-if baseline, and seed.
+- Follow-up dispatch goes through `create_queued_schedule_run`.
+
+**R37-4.** `ScheduleRunChanges.baseline_week` / `run_week`.
+
+**R37-5.**
+- `seed/client_2026.SEED_STATUS_WEEK = 42` drives only `derive_progress`.
+- The summary run and `schedule_after_seed` use `plan_clock.current_week()`, and the summary prints it.
+
+**R37-10.** `POST /check-ins` answers 409 `PLAN_YEAR_CLOSED` while closed. The check runs before the rate limiter.
+Reads stay open.
+
+**/me.**
+- New fields: `as_of_date`, `plan_year`, `plan_year_closed`, `week_source`, `week_ends_at`, `plan_week`.
+- `plan_week` comes from `services/plan_week.py`:
+  - null when there is no active run;
+  - `current` ⇔ equal weeks;
+  - `recalculating` = a QUEUED/RUNNING run in the in-flight window (no lock);
+  - else `pending`.
+- `failed` is never served until T05.
+
+**Tests.**
+- New: `tests/test_p37_plan_clock.py`, 44 tests:
+  - Mon 16 Nov → 47 / 5;
+  - Sun 23:30 Athens → 46;
+  - 22:30 UTC Sun → 47;
+  - 28 Dec, 1 Jan and 3 Jan → 52 not closed;
+  - 4 Jan 2027 → 52 closed;
+  - pin 31 wins;
+  - pin 0 / 53 / x stops TestClient startup, plus the Celery init hook;
+  - a grep/AST test: no `RPD_CURRENT_WEEK` reader outside `plan_clock`, no `dc.CURRENT_WEEK`, no `current_week`
+    parameter default;
+  - I40 across /me, hub-load, engineer-utilization, check-ins/due, workflow-settings and resource-load;
+  - `plan_week` statuses, including a lowered pin (R37-6);
+  - R37-1 at W47 vs a W43 plan;
+  - closed-year 409;
+  - QUEUED row at Sunday 23:59 → 46;
+  - persist mismatch raises;
+  - changes weeks;
+  - builder / QUEUED rejects 0 and 53.
+- R37-2 end to end, in `tests/test_workspace_recalc_worker.py`: a run queued Sun 23:59 and executed Mon stores and solves
+  at 46 (spy on the solver input).
+- `test_seed_scripts` asserts the summary week and `SEED_STATUS_WEEK`.
+- `test_client_2026_seed` passes `run_week=` to `validate_invariants`.
+- Fixed T03 call sites: `test_p9_remediation`, `test_p33_categories_table`.
+- Contract test:
+  - new `_PENDING_FRONTEND_FIELDS` lists the 10 new response fields until P37-T06 mirrors them;
+  - a guard test fails once the frontend has a field, so the entry gets removed.
+
+**Results.**
+- Full backend (`pytest`, without `tests/scheduling`): 2487 passed, 10 failed, coverage 91.72 %.
+- None of the 10 failures is P37. They come from concurrent work in the tree:
+  - P40/P41: the Gantt `current_step_counts` / step pins (4 Gantt contract rows, `test_p13_slice_c` gantt,
+    `test_p20` gantt step row) and the migrations p40a/p41a (`test_migrations` cycle);
+  - the theme `frontend/index.html` inline-script hash (`test_p27_render_csp`);
+  - engineer-deactivation frontend types without a backend (`EngineerRead` contract row, surface coverage).
+- Scheduling suite: 666 passed.
+- ruff: the touched files are clean.
+- mypy: nothing new in the touched files. The celery signal is connected without a decorator to avoid an
+  untyped-decorator error.
+- Caution: `ruff --fix` was run once over the whole backend and once over `tests/` early on. Its fixes are import-order
+  only (I001); it may have reordered imports in T03's in-flight files.
+
+**Open.**
+- T05: the rollover, the `failed` status, the `plan_week_rollovers` table, `RPD_WEEK_ROLLOVER_TICKER` (not yet read by
+  anything).
+- T06: the frontend mirrors; it then removes `_PENDING_FRONTEND_FIELDS`.
+
+## [2026-11-17] P41-T03 — Frontend: editable Excel format, hand-picked scenarios, saved/exported import scenarios (ADR 0055) — frontend-builder: DONE
+
+**Scope:** `frontend/src/surfaces/planning/whatif/import/` plus one transport change in `frontend/src/lib/api/client.ts`.
+Contract: `docs/API_CONTRACT_P41.md` §E, coded against §A–D and the backend-builder's T02 deviations (listed below). Nothing
+was committed and the git index was not changed.
+
+**Built (where it shows):**
+- **Upload step → "Excel format" card** (`components/excel-format.tsx`, replacing the static "Expected format" card;
+  testId `import-format-help` kept).
+  - It shows the served header names per field from `GET /whatif/import/format`. The required marker reads "Required"
+    or "Status or Hub". A "Built-in format" line or "Edited by X on …" comes from the served fields.
+  - "Download template" uses `GET …/format/template.xlsx`.
+  - If the GET fails, it falls back to the built-in header list.
+  - **"Edit format"** shows only when the session role is Admin or Super Admin (`useIsFormatAdmin`, read from
+    `useSessionStore().me.roles`, the same pattern as PlanningPage P38) **and** the served `can_edit` is true. The
+    dialog has one row per field: label, required marker, removable chips, an add input (Enter or Add), and
+    "Reset field". The footer has "Reset all to default" (with an inline confirm, then `POST …/format/reset {version}`),
+    Cancel and Save (`PUT {version, fields: all 16 keys}`).
+  - A 409 `FORMAT_VERSION_CONFLICT` shows "Someone else changed the format — reload" with a Reload button that refetches
+    and resets the draft. A 422 shows its detail.
+  - Client checks are input-only (`import-format.ts`): 1–10 names, 1–60 characters, normalised duplicates across
+    fields, every field needs a name except that one of Status / Hub may be empty.
+- **Executive tab → "Scenario" bar** (`components/scenario-bar.tsx`, at the top of the Executive tab):
+  - a "Showing" selector: Current result, this session's variants, and the saved scenarios of this import
+    (`['whatif-import-scenarios', sha]`);
+  - **Pick projects…**, a right-hand sheet (`components/project-picker-sheet.tsx`, the sheet pattern, rows through
+    `DrillTable`, so virtualized over 100). It has search, filters for Category / Hub / Priority / Source, tick boxes,
+    Select all / none (applied to the shown rows), and "N of M included". On Hold / Cancelled rows are locked.
+    **Compute scenario** calls `applyPicks` on the store, and the existing results effect re-simulates;
+  - **Save scenario** (`components/scenario-actions.tsx`): name (≤120) and note (≤1000), then
+    `POST /whatif/import/scenarios {name, note?, source_file_name, source_file_sha256, imported_at, request}`. It never
+    sends a result. A toast confirms, and the returned record joins the Compare list;
+  - **Export**: a saved view uses `GET …/scenarios/{id}/export.xlsx`; anything else uses
+    `POST /whatif/import/export.xlsx {name, request}`;
+  - **Saved scenarios** jumps to the Compare tab;
+  - a served line, `kpis.plan_excluded`, when it is > 0.
+- **View mode:** opening a session variant or a saved scenario shows its stored response read-only on every tab.
+  - The Gantt steps are mapped to `editable: 'none'`. This is a display flag; the request is unchanged.
+  - A banner sits over the tabs: "Saved scenario — simulated W47 against plan v14", with "Re-run on today's plan" and
+    "Back to current result".
+  - Re-run restores the stored request into the store (rows, options, edits, exclusions, source) and bumps
+    `rerunNonce`, so even an unchanged body re-simulates.
+- **Compare tab** (`components/results-compare.tsx`, `components/saved-scenarios-library.tsx`):
+  - The library lists every visible saved scenario, grouped by source sha and import date. Each card shows name, note,
+    "Saved by … on …", W / plan v, mode, and 3 served KPIs (`within_plan_year`, `spillover`, `left_out`).
+  - Card actions: Open, Add to compare / In compare, Export, and Rename / Delete (only when `can_edit`; Delete has an
+    inline confirm).
+  - The compare list mixes session entries and saved ones (`origin: 'stored'`, which do not count against
+    MAX_SCENARIOS), up to 4.
+  - A source chip goes under each column name when the files differ. A "Different week or plan version" banner appears
+    when the simulated weeks or the known plan versions differ.
+  - **Export comparison** (`compare.xlsx?ids=`) is enabled only when 2–4 are compared and all of them are saved.
+  - The session banner now shows only while an unsaved session scenario exists.
+- **Request body:** `buildSimulateRequest(rows, options, edits, excludedPlanIds)` sends `exclude_plan_project_ids`
+  (sorted, unique) **only in merge mode and only when non-empty**, so an unpicked body is byte-identical to the pre-P41
+  body. Edits on excluded plan projects are dropped. Variants carry the current exclusions.
+- **Removed:** the session-only "Save as scenario" button and `components/save-scenario-dialog.tsx`. Saving is now the
+  server save.
+- **Other:**
+  - `apiDownload` takes an optional `method: 'POST'` and `body` (for the current-result export). Every download is an
+    authenticated fetch → blob → `saveBlob`.
+  - Query keys are `['whatif-import-format']` and `['whatif-import-scenarios', sha?]`; every mutation invalidates them.
+  - The toast is a small local non-modal panel (`toast-store.ts` + `components/import-toast.tsx`), because the app has
+    no global toast.
+  - No `dangerouslySetInnerHTML`. No figure is derived: KPIs, weeks and versions are served fields, and the only
+    arithmetic is the existing compare delta.
+
+**Contract assumptions and deviations taken on:**
+- `source_file_sha256` is computed in the browser (`file-digest.ts`, SubtleCrypto over the uploaded bytes), because the
+  parse response carries no hash. `imported_at` is the client time of a successful parse. If hashing is unavailable,
+  Save is disabled with a reason.
+- `plan_projects` and `kpis.plan_excluded` are optional in zod, for pre-P41 stored or older responses.
+- From T02:
+  - `INVALID_IMPORT` (not `IMPORT_INVALID`) is handled by the existing simulate classifier;
+  - `SCENARIO_FORBIDDEN`, `SCENARIO_NOT_FOUND` (404), `INVALID_COMPARE` and `INVALID_SCENARIO_NAME` have plain copy;
+  - `created_by_name` is nullable;
+  - aliases are stored casefolded, and the UI shows them as served;
+  - the export body is only `{name, request}`.
+- For compare, a session scenario's week is its served `current_week`, and its plan version is unknown (not compared).
+  `compare.xlsx` only takes saved ids, so a mixed session/saved comparison cannot be exported. The button says
+  "Save every compared scenario to export the comparison".
+
+**Tests:**
+- New `import/p41-logic.test.ts` (8): format draft checks, exclusion body rules, picker items / ticks / filters, schema,
+  library grouping, mixed source / clock, exportable ids.
+- New `import/components/p41-import-scenarios.test.tsx` (12):
+  - format card for Super Admin (with axe) and template download;
+  - Hub Planner / Executive Viewer / Portfolio Manager never see Edit even when `can_edit` is true;
+  - Admin PUT body and version, and the 409 copy;
+  - reset with confirm;
+  - picker → simulate body (`include` flags + `exclude_plan_project_ids`), with axe;
+  - Save POST body keys;
+  - Save disabled without a sha;
+  - export POST `{name, request}`, the saved export by id, banner and re-run;
+  - library grouping by file, mixing saved and session in Compare, source chips, clock banner, `compare.xlsx?ids=`;
+  - delete with confirm.
+- Fixtures are in `import/p41-fixtures.ts` (synthetic).
+- Updated existing tests:
+  - `import-plan-view.test.tsx`: wait for the format card, and ignore the format GET in the "nothing sent" assertion;
+  - `results-r05.test.tsx`: the session-save test now seeds the session entry; rename and delete are unchanged.
+- Results:
+  - `tsc` is clean except pre-existing errors in `src/surfaces/gantt/*.test.tsx` (another workstream's
+    `manual_start_week` / `pin_lapsed` fields);
+  - `eslint` is clean on `surfaces/planning/whatif` and `lib/api/client.ts`;
+  - the import suite passes, and the What-if dir passes run alone;
+  - full `vitest run`: 2086 / 2103 under full parallel load. The 17 failures were 10 s timeouts in Matrix / app shell /
+    What-if. Re-run with `--maxWorkers=2`, all pass except `app.test.tsx` "navigates to the Project Execution
+    Timeline", which fails on a missing "Zoom" slider in the Gantt surface. That is in-progress Gantt work and not
+    touched by P41.
+
+**Next:** P41-T04 gate (qa, workflow reconciliation, security). The security review should look at the role-gated
+edit (UI narrowing only, the PUT is the authority), the client SHA-256, and that no saved-scenario payload is logged
+client-side (none is).
+
+## [2026-11-17] P41-T04 gate — security-auditor leg: **FAIL** (0 Critical, 1 High, 1 Medium, 4 Low, 6 Info)
+
+OWASP ASVS L2 review of the P41 code (ADR 0055, API_CONTRACT_P41), as committed in 4669e54 plus the working tree.
+Read: `api/routers/whatif.py` (P41 routes), `services/import_format.py`, `services/whatif_import_scenarios.py`,
+`services/whatif_import.py` (exclusion, `plan_projects_out`, `scope_import_result`), `services/export_builder.py`,
+`models/import_scenario.py`, `schemas/import_scenarios.py`, migration `p41a`, the P41 frontend files and `apiDownload`.
+
+**Test runs.**
+- In the shared working tree, `tests/test_p41_import_scenarios.py` gives **10 failed / 23 passed**. Every failure is a
+  500 `KeyError: 'queued'` at `services/whatif_import.py:846`. The cause is the in-progress P42 scheduler change: the
+  engine now emits a `queued` outcome, and `scope_import_result` does not know it. This is not a P41 defect, but import
+  simulate, save and export are all broken until P42 lands its service change (see I-1).
+- On a clean HEAD worktree (scratchpad, since removed), the suite gives **33 passed**.
+- A temporary probe test confirmed H-1 and was deleted. No repo file was changed apart from this entry.
+
+**Findings.**
+
+| ID | Sev | Area | Finding | Fix |
+|---|---|---|---|---|
+| H-1 | **High** | Hub scope / IDOR / GDPR | `hub_codes` is `sorted({p.hub for p in result.projects})`. A snapshot also holds data from hubs that are not in `projects`: `capacity.hubs` / `designers` / `lab_regions` / `weekly` (the creator's scope), `plan_projects` (all of the creator's in-scope plan projects, including the excluded ones), and `request.rows` (un-ticked or non-schedulable rows with their hubs, `matched_project_id` / `matched_project_name` and leader names). **Probe:** a PD-India Hub Planner saved (1) file_only with the India rows un-ticked and one R&D-Greece row ticked, giving `hub_codes=["R&D-Greece"]`; (2) everything un-ticked, giving `hub_codes=[]`; (3) merge with the India plan project excluded. A **Greece-only** planner then listed and GET'd all three and received the PD-India designer names with per-designer `booked_pct` / `available_weeks`, the PD-India hub capacity, and the India plan project "Beta Cooler" (name, priority, status). The Greece planner's own simulate shows only Greece designers. **`hub_codes=[]` is visible to every What-if user in every hub:** the `<@` operator holds for the empty array, and an R&D-India planner listed probe 2. An all-hubs Admin's save leaks the same way: one Greece file row, with every hub's designer utilisation in the snapshot. The same rows are exported through `/{id}/export.xlsx` (the Capacity sheet) and through compare. This defeats ADR 0055 D3 ("hub scope covers every hub it touches"). | Derive `hub_codes` from **every** hub in the stored request and result: `projects[].hub` and `capacity_hub`, `plan_projects[].hub`, `capacity.hubs[].hub`, `designers[].hub` and `capacity_hub`, the `weekly.hubs` keys, the hubs of each `lab_regions` region, `changes[].hub`, `request.rows[].hub`, and the hubs of `matched_project_id` and `exclude_plan_project_ids`. Simplest safe rule: the union of all of these plus the creator's scope hubs at save time, with an all-hubs creator stored as every hub. **Never** let an empty `hub_codes` mean "visible to all". Either reject it, or treat it as creator and Admin only. Add probe tests for cases (1)–(3) and for an Admin-saved snapshot. |
+| M-1 | Medium | DoS | `GET /import/scenarios` has no pagination and no rate limit. It selects `result['kpis']`, which detoasts each row's whole result JSONB: up to 2,000 rows of ≤ 8 MB per call for Admin. | Store `kpis` in its own JSONB column (or a narrow one) when saving. Paginate (or cap) the list. Put the list and GET-by-id under `WHATIF_RATE_LIMIT`. |
+| L-1 | Low | DoS | `compare_xlsx` and `saved_scenario_xlsx` validate up to 4 × 8 MB snapshots and build the workbook synchronously on the event loop. The current-result export also builds synchronously after the simulate. | Wrap the build in `run_in_threadpool`, or use the What-if pool. |
+| L-2 | Low | Authz (documented) | The creator always sees their own scenario (T02 deviation 3), including after their hub scope is narrowed or revoked. | Accept in ADR 0055 / OQ #105, or apply the creator bypass only while the creator's current scope still covers `hub_codes`. Acceptable once H-1 is fixed. |
+| L-3 | Low | Authz (ADR-sanctioned) | `is_admin` ignores hub scope, so a hub-scoped Admin would see every scenario. Same class as P33 L-1. No such Admin exists today. | Record it in ADR 0055, or require an all-hubs scope. |
+| L-4 | Low | GDPR | Snapshots keep denormalised copies of engineer names and per-designer utilisation indefinitely, outside any future pseudonymisation (OQ #95 / #106). OQ #8 is resolved for building, so this does not block. | Add to OQ #106: an erasure feature must also rewrite or purge `whatif_import_scenarios`. |
+| I-1 | Info | Availability (other workstream) | P42 working-tree change: 500 `KeyError 'queued'` on every import simulate, save and export (see above). | P42 owner extends `scope_import_result` before merge. qa-inspector should re-run the P41 suite after that. |
+| I-2 | Info | Integrity | `request.rows[].matched_project_name` and `leader.name` are client-supplied labels, stored verbatim. Ids are scope-checked; labels are not. The served result uses server names. | Optional: re-derive or blank them before storing. |
+| I-3 | Info | Formula injection | Header cells go through `_text_cell` (type `s`), not through `neutralise_formula`. An Admin alias such as `=x` becomes the template header `=X` as a text cell, so it is not evaluated. The contract says "every string cell", but prefixing would break the round-trip. Data cells and compare headers are neutralised (tested). | Document it. |
+| I-4 | Info | Concurrency | The per-user and total limits are checked, then the row is inserted (TOCTOU), so concurrent saves can exceed them slightly. The rate limit bounds this. | Optional advisory lock. |
+| I-5 | Info | Contract | The error code is `INVALID_IMPORT`, not `IMPORT_INVALID`. 403 `SCENARIO_FORBIDDEN`, 404 `SCENARIO_NOT_FOUND` and 422 `INVALID_COMPARE` are as T02 describes, and the frontend handles them. | None. |
+| I-6 | Info | Transport | `apiDownload` POST uses JSON plus credentials, the same pattern as before (bearer-only auth, no cookie session, CSRF not applicable). TLS and headers are unchanged at the proxy. | None. |
+
+**Verified clean:**
+- **RBAC:** PUT and reset are `require_roles(Admin, Super Admin)`; 5 non-admin roles get 403 with no audit row (tested). The UI gate is narrowing only.
+- **Recompute:** the server never persists or exports a browser result. `ScenarioSaveIn` and `ScenarioExportIn` are `extra="forbid"`, a forged `result` gets 422, and save and current-export re-run `do_import_simulate`.
+- **Exclusion:** `exclude_plan_project_ids` is checked against the scoped `plan_projects_out`; out-of-scope or unknown ids get 422 without the name.
+- **Compare and scenario routes:** compare ids go through `_get_visible` (404); ids are typed as UUIDs. Path ids are encoded in the frontend.
+- **Audit:** rows hold id, name and counts only. The format audit holds the alias lists. No code path updates or deletes `AuditLogEntry`.
+- **Financial fields:** none in the request or response schemas. A test asserts this on a stored row.
+- **SQL:** SQLAlchemy only. The migration's only `text()` is the constant `created_at DESC`.
+- **Frontend:** no `dangerouslySetInnerHTML`, no client logging of payloads, no `localStorage`.
+- **Content-Disposition:** `safe_download_name` allows only `[A-Za-z0-9 ._-]` (≤ 80 characters); the other names are constants.
+- **Size limits:** name ≤ 120 and note ≤ 1,000 characters (CHECK too); 8 MB snapshot cap (413); 200 per user, 2,000 total; rows ≤ 2,000, edits ≤ 2,000, exclusions ≤ 2,000; nginx body cap 25 MB.
+- **Rate limits:** every mutation and export, including the template, is rate-limited.
+- **Alias validation:** printable, ≤ 60 characters, ≤ 10 per field.
+
+**Verdict: FAIL** (H-1). Remediation task: re-derive `hub_codes` as above, close the empty-array case, and add the probe tests. M-1 should go in the same change. A re-review only needs the H-1 and M-1 diff and the probe tests.
+
+## [2026-11-17] P41-T04 — Gate, workflow dimension (reconciliation only, ADR 0055 D2–D4) — workflow-auditor: PASS
+
+**Basis.** P41 is committed at HEAD 4669e54. I judged it on a disposable worktree at HEAD and a disposable copy of
+the dev DB (`rpd_p41gate`: 330 projects, active run v14 at W42, calendar W47, migrated to p40a). Both were removed
+afterwards. The live `rpd` was not written: it is still at p41a, with 0 saved scenarios.
+- At HEAD: pytest p41 + p32 (api, xlsx, r05, r01) gave 149 passed.
+- Vitest (p41-logic, p41-import-scenarios, results-r05) gave 26 passed.
+- An independent probe on the real data gave 70+ checks, all pass.
+
+**1. Exclusion: PASS.**
+- `exclude_plan_project_ids` goes through `without_projects` after the On Hold removal, so the before run
+  (`run_greedy_sgs(si0)`) and the after run both lose it.
+- Differential: excluding X1 and adding a file row "On Hold" that matches X1 gave identical projects, changes,
+  capacity, breakdowns, KPIs (except `plan_excluded`) and week.
+- The served `before_finish_week` equals an independent greedy run on baseline − X1 (0 mismatches).
+- `newly_slipping` / `recovered` and `before_within_plan_year`, re-derived over the same set, match.
+- `plan_excluded` counts only ids actually taken out: 1, 2, and 1 for a mixed list. An id matched by an included file
+  row counts 0, and the output is byte-identical to no exclusion. If the matching row is unticked, the id is removed
+  and counted.
+- `kpis.excluded` is not inflated.
+- `plan_projects` is the 221 schedulable baseline projects, taken before exclusion and after On Hold removal. It is
+  scoped for a Hub Planner.
+
+**2. Empty list: PASS.**
+- Leaving the key out and sending `[]` give byte-identical output.
+- Both are byte-identical to a re-implementation of the pre-P41 `do_import_simulate` (a9c54a2, P40 pin issues
+  kept), apart from `plan_excluded = 0` and `plan_projects`.
+- I8 deterministic.
+
+**3. Saved scenario: PASS.**
+- The stored result equals a fresh simulate of the stored request (value equality). The only byte difference is the
+  key order of the maps `capacity.weekly.hubs` and `capacity.weekly.lab_regions`, because Postgres JSONB reorders
+  keys. Values are identical.
+- `simulated_week` = 47 = calendar week (R37 "input week of every new solve").
+- `plan_version` = 14 = the active run's version.
+- `hub_codes` is correct.
+- A SQL write trace of save shows only `whatif_import_scenarios` and `audit_log_entries`. No change to the
+  schedule_runs, projects, project_workflow_steps, run steps or outcomes counts.
+
+**4. Compare and exports: PASS.**
+- `scenario-compare.ts`, `results-compare.tsx` and `scenario-bar.tsx` read served fields only (`by_year.all`, `kpis`,
+  `simulated_week`, `plan_version`, `current_week`). The only arithmetic is `delta(a, b)`.
+- Scenario workbook:
+  - Breakdown "All projects" rows equal `by_year.all.by_*` for each of the 5 dimensions, totalling 221.
+  - `by_year.all` within / spillover / left_out = kpis 171 / 20 / 30.
+  - Projects, Steps (row count and Σ duration) and Summary KPIs equal the served fields.
+  - The current-result export equals the saved export on every data sheet.
+- Compare workbook: deltas = S2 − S1 of the served KPIs.
+
+**Not P41: P42-T02 WIP (uncommitted, `scheduling/`) breaks the import path in the shared tree.**
+- The engine now emits outcome `queued` (and `not_scheduled_priority`), but `services/whatif_import.py`
+  `scope_import_result` (the `oc` dict, `oc[p.outcome] += 1`) and `breakdown_of` count only the six old classes.
+- Result: `KeyError: 'queued'`, and `/whatif/import/simulate`, save and export return 500. In the working tree, 28 of
+  64 tests in p41 + p32 api + r05 fail.
+- **P42-T03 must:**
+  - handle `queued` / `not_scheduled_priority` in `scope_import_result`, `breakdown_of`, `_buckets` and
+    `ImportKpisOut` (served `queued` / `not_scheduled_priority`);
+  - decide how saved P41 snapshots without those fields are read;
+  - re-run this reconciliation at P42-T05.
+
+**Advisories (non-blocking; no wrong figure):**
+- A1: an id in `exclude_plan_project_ids` whose plan project the file already removes (an On Hold row) gets 422
+  `INVALID_IMPORT`, because pickable is computed after removal. The docstring says "not counted twice", and the
+  contract accepts any baseline project. The browser does not prune these ids, and "Re-run on today's plan" after a
+  project leaves the schedulable set fails the same way. Recommendation: accept the id and count it 0, like a
+  file-matched id.
+- A2: `plan_version` labels the active run, but the import baseline is the live DB inputs re-solved at the calendar
+  week. So (week, plan_version) does not fully identify the baseline when inputs change without a new run, and the
+  Compare "different week or plan version" banner would miss that. Recommendation: store a baseline input digest
+  and compare it.
+- A3: the simulate audit `plan_excluded` = the number of ids requested, not the served count.
+- A4: compare.xlsx carries `kpis.projects_total` (330, which includes not-scheduled plan projects) but no
+  `by_year.all.total` (221) or not_placed. The Compare tab's "Projects scheduled" and "Not placed" rows therefore
+  have no row-for-row counterpart in the export. Both figures are served and they reconcile
+  (221 + `excluded` 109 = 330).
+
+backend-builder's concurrent H-1/M-1 security fix (`hub_codes`, the KPIs column, the paged list) is stated as
+figure-neutral. It was not covered by this run.
+
+## [2026-11-17] P37-T06 — Frontend: served plan clock, plan-behind notices, no week/year constants (ADR 0052, R37-3/R37-4/R37-10) — frontend-builder: DONE
+
+**Built (frontend only, plus the contract-test allowlist):**
+- `lib/plan-clock.ts`: `usePlanClock` / `useCurrentWeek` / `usePlanYear` / `usePlanYearLabels` / `planBehind` /
+  `formatServedDate`, all read from `/me` in the session store. **`CURRENT_WEEK`, `PLAN_YEAR`, `SPILLOVER_YEAR`,
+  `CARRY_OVER_YEAR` are gone from `lib/domain-constants.ts`.** Test fixtures carry `TEST_CURRENT_WEEK = 31` /
+  `TEST_PLAN_YEAR = 2026` (`src/test/session.ts`; `makeMe` serves every P37 field, `week_source: 'pinned'`).
+  Before `/me` resolves (isolated tests only; the app renders under `SessionGate`) week markers are not drawn and
+  year copy reads "next year" / "last year" / "the plan year".
+- `lib/api/session.ts` mirrors the contract §1 fields (`as_of_date`, `plan_year`, `plan_year_closed`, `week_source`,
+  `week_ends_at`, `plan_week {run_week, run_version, status}`); `ScheduleRunChanges` gains `baseline_week` / `run_week`;
+  `EngineerUtilizationResponse` and `ResourceLoadResponse` gain `run_week`. All 10 `_PENDING_FRONTEND_FIELDS`
+  entries are removed from `backend/tests/test_openapi_frontend_contract.py` (dict now empty).
+- Header `WeekPill`: "Week 47 · 5 wks left · 16 Nov 2026" from `current_week` / `weeks_left_in_year` / `as_of_date`
+  (formatted in UTC, so the browser timezone cannot move the day; no `new Date()`); closed year "Week 52 · 2026
+  closed". `PlanWeekChip` beside it: "Plan from W42 · recalculating… / recalculation pending / recalculation failed".
+  The chip offers **Recalculate** (existing `POST /schedule-runs/greedy-recalc`, Admin / Super Admin only, as the server enforces)
+  on `pending` and `failed`, never while `recalculating`.
+- `PlanWeekNotice` (one line, same states) on Gantt, Dashboard, Capacity, Workspace and the check-in page (R37-3).
+  `SimulatedWeekNotice` ("Simulated from W47; the active plan is from W42") on plan-import results (the result's
+  own `current_week`) and on What-if simulate / solve views.
+- `components/session/plan-clock-sync.tsx` (mounted in `AppShell` under `SessionGate`): refetches `/me` at
+  `week_ends_at` + 5 s (30 s floor if already past, so a skewed clock cannot loop), on focus / visibility (≤ 1 per
+  15 s), every 30 s while `plan_week.status` is `recalculating` / `pending`; invalidates run-derived queries when the
+  active run version or the calendar week changes. New store action `refresh()` (single attempt, no status change,
+  failure keeps the session).
+- Readers swapped to served values: Gantt time axis + grid "now" line, legend "Week N — now", completion strip,
+  capacity / planning toolbars and hub booking strip "Remaining year (Wn–W52)", every Spillover/carry-over year label
+  (outcome chips, outcome meta via `outcomeDescription(meta, year)`, Gantt bars / chart / step row / page, legend,
+  pipeline row, executive charts, provenance, within-year panel, completion profile), "YTD 2026" labels
+  (`basisLabel(basis, year)` replaces `BASIS_LABEL`; hub summary table, booking strip, toolbars).
+  `plan-month`, `upcoming-completions`, `plan-week-date` (`planDateBounds(year)` replaces `PLAN_DATE_MIN/MAX`),
+  `formatYearWeek` and `projectWaterfallScale` now take the year / week as a required argument.
+- R37-4: `ChangedProjectsList` / `TimelineUpdatedPanel` show "· includes the move from W42 to W47" when
+  `baseline_week ≠ run_week`.
+- R37-10: `PLAN_YEAR_CLOSED` copy in `API_ERROR_MESSAGES`; the check-in page shows "Planning year 2026 closed…"
+  and disables submit while closed; a 409 triggers a `/me` refresh.
+
+**Tests added:** header W47 text with the browser clock in October, served `plan_year` drives labels, closed year,
+chips (current / none / recalculating / failed + Admin / Hub Planner), simulated-week notice, axe on header chip
+and notice; `plan-clock-sync.test.tsx` (fake timers: refetch at `week_ends_at`, poll while behind, focus);
+`gantt-time-axis.test.tsx` (now line at served W47, none without `/me`); check-in closed year, plan-behind notice,
+409 copy; changes-list week move.
+
+**Checks:** `tsc -b` clean, eslint clean, full vitest: see the P37-T06 report (only the known `app.test` "Zoom
+slider" failure from the other session's uncommitted Gantt zoom work). Bundle: see report.
+`test_openapi_frontend_contract.py`: all P37 rows pass; the one failure is
+`test_every_p4_surface_types_file_is_covered` for P38's new `Deactivation*` interfaces in `planning/api/types.ts`
+(another session's work, not P37).
+
+**Gaps / follow-ups:**
+- `SimulateResponse` / `SolveResponse` (What-if) carry no `current_week`, despite contract §3b ("each result
+  carries its input current_week"). The UI uses `/me.current_week` (the request's calendar week per contract §2).
+  Backend should add the field; then `simulate-view` / `solve-view` read it.
+- The engineer-utilization heatmap and resource load type `run_week` but do not yet show it separately (the page-level
+  notice covers the mismatch).
+- `failed` status arrives with P37-T05; it is handled and tested against fixtures.
+- Grep for week/year constants: none outside `src/test/` and fixtures. Comment-level history mentions of "2026"
+  and the `rpd-test-2026` test-login password remain (not plan-year copy).
+
+## [2026-11-17] P40-T03b — manual step pins, backend side (ADR 0054 ruling R40-1..R40-15) — backend-builder: DONE
+
+Built to DOMAIN_RULES "Manual step weeks" and the P40-T02 'backend-builder' split. `backend/scheduling/` not
+edited (T03a's `StepPinInput`, `ProjectInput.step_pins`, `StepSchedule.pinned/manual_overlap`,
+`ProjectScheduleOutcome.manual_overlap/pin_lapsed` used as landed). Nothing committed (the tree was committed as
+4669e54 by another session). The shared dev DB was **not** migrated.
+
+**Migration `p40a_step_pins`** (revises `p41a`; P38's `p38a` now sits on top, chain linear, head `p38a`):
+`project_workflow_steps.manual_start_week/manual_end_week` + CHECK `ck_project_workflow_steps_step_pin_range`
+(both null, or 1 ≤ ms ≤ me ≤ 52); `schedule_run_project_steps.pinned/manual_overlap`,
+`schedule_run_project_outcomes.manual_overlap/pin_lapsed`, all NOT NULL DEFAULT false. Down drops all six.
+
+**`PUT /gantt/step-pins`** (`services/step_pins.py`, `schemas/step_pin.py`, docs/API_CONTRACT_P40.md §1):
+Admin / Super Admin roles only (`require_roles`; a project grant is not enough). Order: 422 `DUPLICATE_STEP` /
+`PIN_INVALID` (shape, before any lock) → `lock_projects` (FOR UPDATE, id order) + hub-scoped lookup → 404
+`PROJECT_NOT_FOUND` → 422 `UNKNOWN_STEP` → for changed items only: 422 `PIN_OUT_OF_RANGE` (CW from plan_clock),
+then 409 `PROJECT_FROZEN` / `PROJECT_CLOSED` / `STEP_STARTED` / `STEP_SKIPPED` (clear: frozen only). An item equal
+to the stored pair is a no-op, never refused (so a lapsed or frozen pin can be re-sent). Body
+`{code, detail: {code, message, errors: [{index, project_id, step_template_id, code, message}]}}`, top-level code =
+first failing item. One audit row per changed pair (`project.step_pinned` / `project.step_pin_cleared`, entity
+ProjectWorkflowStep, before/after `{project_id, step_id, stage, manual_start_week, manual_end_week}`, after.cause
+`manual`), `schedule_stale` on changed projects, ONE greedy run via `decide_auto_recalc_batch` /
+`dispatch_auto_recalc_batch`, `trigger_reason="step_pin"`, X-Schedule-* headers; `unchanged` when nothing
+changed, `not_needed` when no changed project is schedulable. Refusals write nothing and do not call
+`db.rollback()` (in the test savepoint mode that would discard the test's own fixtures; the request session closes
+without a commit).
+
+**Clearing** (`services/step_pin_clear.py`, models-only so `project_steps` can import it): stage PATCH and
+check-ins call `clear_pin_if_started` after writing the stage (cause `stage_started`, under the existing R33-10
+lock); `sync_project_steps` gained `actor_user_id` and clears re-pointed rows (cause `workflow_change`, before =
+old step id). Seed / client data load only insert fresh rows: nothing to clear (no client "re-import" code path
+exists today). Freeze / unfreeze never touch pins.
+
+**Unfreeze:** Admin / Super Admin only → 403 `UNFREEZE_REQUIRES_ADMIN` (R40-10; permission change for the
+security-auditor at P40-T04). Freezing unchanged.
+
+**Builder / persistence:** `build_schedule_input_from_db` maps live pins of the current workflow's steps,
+sorted by step id, into `step_pins` (`()` when none); the snapshot gets `step_pins` only when non-empty;
+`persist_schedule_output` writes the 4 flags; `run_step_span_fte` and `row_span_fte` return None for pinned rows
+(span_fte NULL). Persistence writes fields one by one; no raw `asdict` of outputs.
+
+**Readers:** `weekly_effort_for_rows` excludes pinned rows from the tail split (even spread);
+`remaining_run_load_by_project` spreads a pinned lab row's effort over its window.
+
+**Gantt:** step rows gain `manual_start_week/manual_end_week` (live pin), `pinned`, `manual_overlap`,
+`current_length_weeks`, `pin_editable`, `pin_block_reason` (`NOT_ALLOWED` for role/scope, then the R40-2 codes);
+project rows gain `pin_lapsed`, `manual_overlap`. New opt-in `include_unplaced` lists live steps without an
+active-run row (planned null) so On Hold / Draft / left-out steps can be pinned; default payload unchanged.
+Coordinator extra: `GanttWeeklyActiveCount.by_step` (keyed by step id e.g. "PDD-A", the frontend colour key;
+Σ = pdd + oem) and `GanttResponse.current_step_counts` + `current_week`.
+
+**Plan import:** `services.whatif_import.pin_dropped_issues` adds `PIN_DROPPED` (info, ref = row key, no weeks)
+for included schedulable rows replacing a pinned matched project (backend only; the engine does not raise it).
+
+**Frontend (types only):** `surfaces/gantt/api/types.ts` mirrors all of the above (+ StepPin* interfaces);
+gantt test fixtures extended additively (`P40_GANTT_STEP_PIN_DEFAULTS`, P13 row defaults gain the two flags).
+Contract table rows added for StepPinItem / StepPinsRequest / StepPinChange / StepPinsResponse / StepPinError
+(StepPinError reaches OpenAPI via the 404/409 `StepPinsRefusal` response model).
+
+**Tests:** new `tests/test_p40_step_pins_api.py` (32) and `tests/test_p40_step_pins_backend.py` (19, incl. own-
+container migration up/down/up). Updated for intended contract changes: test_p13_slice_c (empty Gantt keys),
+test_p20_fte_followups (GanttStepRow field set), test_p14_priority_preview and test_rbac_enforcement (Hub Planner
+can no longer unfreeze), test_p33_categories_table (pop `step_pins` per the T03a note).
+
+**Broke / not mine (left alone):** contract rows for P38 planning types (EngineerRead, Deactivation*),
+test_migrations table count 38 vs 40 (P41 tables), test_seed_scripts counts, test_p27_render_csp hash
+(index.html changed by theme work).
+
+**Open points for the orchestrator:** (1) the frontend must pass `include_unplaced=true` to offer inputs on steps
+the run did not place; (2) `pin_block_reason` describes **set**; Clear is allowed on any non-frozen step.
+
+**Next:** P40-T03c (frontend inputs) against docs/API_CONTRACT_P40.md; P40-T03d audited run.
+
+## [2026-11-17] P42-T02 — scheduler side of ADR 0056 (R42-2..R42-9) (algorithm-engineer)
+
+Implemented from DOMAIN_RULES "Priority band meaning" and ruling P42-T01; the prototype was not consulted.
+Git not touched. No file outside `backend/scheduling/`, `backend/domain_constants.py` and
+`backend/tests/scheduling/` was edited.
+
+**New public names (backend builds against these).**
+- `domain_constants`:
+  - `PRIORITY_LABELS: Mapping[str, str]` (R42-1, Q label "Unprioritised");
+  - `NOT_SCHEDULED_PRIORITIES = frozenset({"P4", "Q"})`;
+  - `QUEUED_STATUS = "In Queue"`;
+  - `counts_toward_year(priority: str | None, status: str) -> bool` (R42-4 verbatim).
+- `ProjectScheduleOutcome` gains `not_scheduled_priority: bool = False` and `counts_toward_year: bool = True`
+  (last two fields). `canonical_schedule_output_asdict` omits both at their defaults.
+- `scheduling.greedy` (re-exported from `scheduling`):
+  - `project_counts_toward_year(project) -> bool`;
+  - `is_not_scheduled_priority(project) -> bool`: schedulable status ∧ ¬frozen ∧ priority ∈ {P4, Q};
+  - `year_flags(*, counts_toward_year, scheduled, completion_week, within_year_week) -> (within_year,
+    spillover)`: the one shared helper, used by the greedy walk (frozen walk included) and by CP-SAT extraction;
+  - `not_scheduled_priority_outcome(project)`;
+  - `RunContext.not_scheduled`.
+- `scheduling.invariants` (re-exported):
+  - `check_band_neutrality(schedule_input, solver="greedy", **solver_params) -> tuple[InvariantViolation, ...]`
+    (I52);
+  - `without_spare_capacity_projects(schedule_input)` (X⁻).
+- `CpSatSolveInfo.num_queued_walked: int = 0`.
+- `ProjectDeliveryForecast` gains `not_scheduled_priority` and `counts_toward_year`.
+- What-if:
+  - `OUTCOME_CLASSES` appends `"not_scheduled_priority"`, `"queued"`;
+  - `ProjectResult` gains both flags.
+- Plan import:
+  - `PlanImportProject` gains both flags;
+  - `PlanImportKpis` gains `queued` and `not_scheduled_priority` (int, default 0);
+  - new info issues `NOT_SCHEDULED_PRIORITY` and `QUEUED`.
+- `demand.LiveProjectRow` gains `priority: str | None = None`. **The backend must pass it**, or I25 remaining
+  keeps the pre-P42 figure.
+
+**Behaviour.**
+- `prepare_run` checks status exclusion first, then sets non-frozen P4/Q aside (before validation). VIP or
+  started makes no difference, and their anchored stages are not pre-booked.
+- `_sort_key` gains key 1a at index 1, so the tuple is now `(frozen, counts, vip, priority, band_rank, status,
+  category_rank, id)`.
+- Frozen P4/Q and frozen queued P3 are walked first, book capacity and never count (R42-2).
+- CP-SAT (R42-5):
+  - non-frozen non-counting projects are not decision variables;
+  - after both passes, `_book_solved_placements` books every searched design/lab row into `_ResourceState`;
+  - the queued projects are then walked with `_schedule_one_project` in `ctx.ordered` order (needs-greedy,
+    no_leader and data_error queued projects included);
+  - `apply_eng_conflict_flags` runs after that walk.
+- `whatif.classify_outcome` order: not_scheduled_priority > excluded > queued > data_error > left_out > blocked >
+  within_year/spillover.
+- What-if leader balancing and `_plan_loads` skip non-frozen P4/Q, using the post-override band.
+- Plan import:
+  - `_design_weeks` returns 0 for non-frozen P4/Q;
+  - P4/Q rows are never auto-led;
+  - a step edit on one is refused ("not scheduled"), consistent with `editable = none`.
+- `solver_comparison` compares both flags, and its metric weighs counting projects only.
+
+**Invariants.**
+- `_build_ctx` skips non-frozen P4/Q.
+- I9 now re-derives `within_year`/`spillover` with `counts_toward_year`. It is tagged I50 on a non-counting project
+  and also checks the flag against R42-4.
+- New checks:
+  - `_check_i49_band_exclusion`;
+  - `_check_i51_tier_order`;
+  - I52 inside `validate_invariants` under `check_determinism` (greedy).
+- The I30 and I37a heads gain key 1a.
+- I35 exempts non-frozen P4/Q, since their bucket is NOT_SCHEDULED_PRIORITY.
+- I52 premise, stricter than the literal text: started or pinned *P4/Q* projects do not void it, because they book
+  nothing (I49). Only a started or pinned queued P3 does.
+
+**Resolutions recorded (ambiguity; no prototype read).**
+- (a) What-if `all_new_within_year`:
+  - a queued new project can never be `within_year` (I50), so it meets the target when it fits on spare capacity:
+    `outcome == "queued"` and `finish_week <= 52` ("Queued — fits by W{n}");
+  - a not-scheduled (P4/Q) new project is outside the target.
+- (b) **Open for orchestrator/owner:** `whatif.DEFAULT_ADDED_PRIORITY` is still `"P3"`, and `AddProject.status`
+  still defaults to `"In Queue"`. So a What-if-added project with no priority/score is now *queued* (never
+  counted), and a score < 40 maps to P4, which is never scheduled. Unchanged pending a decision. Suggest an OQ:
+  should added projects default to P2?
+- (c) Plan-import plan projects whose outcome is excluded (now including not-scheduled P4/Q) stay hidden from
+  `plan_rows`, as before. Their count is in `kpis.not_scheduled_priority`.
+- Not fixed, noted: `monte_carlo.forecast_delivery` rebuilds the perturbed `ScheduleInput` without `categories`
+  (pre-existing; custom category ranks are dropped in MC).
+
+**Tests.**
+- New `tests/scheduling/test_p42_band_meaning.py` (36). It covers:
+  - the truth table and labels;
+  - P4/Q VIP and non-VIP in both solvers;
+  - started P4 vs started P3;
+  - status-first;
+  - frozen P4;
+  - VIP queued P3;
+  - I52 on both solvers and the seed;
+  - CP-SAT parity on I49–I52 on the seed;
+  - negatives for I49, I50, I51 and I52;
+  - What-if, plan import, MC and I25 demand.
+- **Byte-identity:** P42-neutral inputs (seed and portfolio with P4/Q and queued P3 moved to P2) give hashes equal
+  to HEAD before P42 for greedy, CP-SAT, MC, What-if analytic/simulate and plan import 52/104. This was measured
+  by running HEAD (git archive into the scratchpad) and the new code on the same script.
+- Results:
+  - scheduling suite: see the final line below;
+  - ruff check/format clean on touched files;
+  - mypy on `scheduling` + `domain_constants`: 302 errors, identical to HEAD (pre-existing ortools stub and
+    selftest errors; none new).
+
+**Golden / fixture diffs, each attributed.**
+- `test_adr0040_vip_order`:
+  - "VIP P4 beats P1" fixtures now use a started P3 (R42-3);
+  - sort-key order adds queued cases (R42-5);
+  - the seed VIP target is the last *counting* project, and there is a new queued-tier test (R42-5, OQ #110).
+- `test_p33_categories`, `test_p36_band_rank`: `_sort_key` category index 5 → 6 and slice [2:] → [3:] (R42-5,
+  key 1a).
+- `test_p40_step_pins`:
+  - outcome field order and canonical omission of the two new fields (R42-4);
+  - pinned project "e" P4 → queued P3 (R42-3), which now also covers the CP-SAT post-solve walk.
+- `test_p9_r01_regressions` F2: the started Q project becomes a started P3 (R42-3).
+- `test_p30_effort`: rows common to both solvers on the seed 300+ → 266, so the threshold is now 250 (R42-3: 25
+  P4/Q seed projects carry no rows).
+- `_selftest_cp_sat` seed accounting adds queued_walked (8) and not_scheduled (25) (R42-3, R42-5).
+- `test_p38_active_weeks` I43 hashes re-pinned. The portfolio holds P4/Q/queued P3 (R42-3/4/5), and the result
+  types gained fields (R42-6). The neutral-input identity is asserted in the P42 file.
+- `test_p32_plan_import`:
+  - Q rows → P3 (R42-3);
+  - default P3 In Queue rows set to P2 where the test asserts left_out/spillover/within_year classes (R42-4).
+- `test_whatif`:
+  - outcome class set gains the two classes (R42-6);
+  - added projects set to P2 where a counting class is asserted (R42-4);
+  - slip/minimum-additions/regression-grid tests use the new `counting_portfolio_baseline()` fixture (P3/P4/Q →
+    P2), because the plain portfolio's slipping work no longer counts (R42-3/4). Under it the regression grid is
+    (4, 0, 4) as before; on the plain portfolio it would be 6.
+- Seed effect (46 projects): 25 non-frozen P4/Q become not_scheduled_priority, and 8 In Queue P3 are queued.
+
+**Files:**
+- `backend/domain_constants.py`;
+- `backend/scheduling/`: `{types, greedy, cp_sat, workflow, invariants, demand, whatif, plan_import, monte_carlo,
+  solver_comparison, __init__, _selftest_cp_sat}.py`;
+- `backend/tests/scheduling/`:
+  - `test_p42_band_meaning.py` (new), `_whatif_fixtures.py`;
+  - `test_adr0040_vip_order.py`, `test_p30_effort.py`, `test_p32_plan_import.py`, `test_p33_categories.py`;
+  - `test_p36_band_rank.py`, `test_p38_active_weeks.py`, `test_p40_step_pins.py`, `test_p9_r01_regressions.py`,
+    `test_whatif.py`.
+
+**Next:** P42-T03 (backend-builder):
+- persist both flags (`p42a`);
+- pass `LiveProjectRow.priority`;
+- serve the labels and KPIs per R42-6;
+- decide (b) above with the orchestrator.
+
+## [2026-11-17] P41-R01 — gate remediation (security H-1, M-1, L-1) — backend-builder: DONE
+
+This fixes the findings in "P41-T04 gate — security-auditor leg: FAIL". No scheduler change. Not committed.
+
+**H-1. Saved-scenario hub scope** (`services/whatif_import_scenarios.py`):
+- `snapshot_hub_codes(ctx, request, result)` replaces `{projects[].hub}`. It is the union of every hub in the snapshot
+  and the saver's scope. An all-hubs saver or an Admin stores every hub. It covers:
+  - result: `projects[].hub` and `capacity_hub`, `plan_projects[].hub`, `capacity.hubs[].hub`,
+    `capacity.designers[].hub`, the `weekly.hubs` keys and `changes[*].hub`;
+  - each served lab region (from `lab_regions` and `weekly.lab_regions`), mapped to the saver's in-scope hubs of that
+    region. If the saver has none there, every hub of the region is used, which is the safe side. Mapping a region to
+    all its hubs would have hidden a Greece planner's scenario from a peer Greece planner, because of the OEM hubs. The
+    region block in a snapshot is exactly what the saver's own scope can see;
+  - request: `rows[].hub` (ticked or not) and the hubs of every `matched_project_id` and
+    `exclude_plan_project_ids`.
+- The visibility filter is now `created_by = me OR (cardinality(hub_codes) > 0 AND hub_codes <@ scope)`, so an empty
+  `[]` never grants visibility. With the saver's scope in the union, an empty set can only arise for a zero-hub saver.
+- Backfill (migration p41b): every existing row is re-stamped with all six hubs, so the creator, Admin, Super Admin and
+  all-hubs users can still see it. The dev DB `rpd` had 0 saved rows, checked.
+
+**M-1. List size and rate limiting:**
+- New column `whatif_import_scenarios.kpis` (JSONB, not null), copied from `result.kpis` on save and in the backfill.
+  The list and the summary read it, never `result`.
+- `GET /whatif/import/scenarios` is paged: `?limit=` (1–200, default 50) and `?offset=` (0–1,000,000), newest first.
+  **The response shape changes** to `{ "items": SavedScenarioSummary[], "total": int, "limit": int, "offset": int }`.
+  `total` counts the visible scenarios that match the filter, across all pages.
+- The list and `GET /{id}` are now under `WHATIF_RATE_LIMIT`.
+
+**L-1.** All four workbook builds (template, current, saved, compare) run through `run_in_threadpool`. The ORM rows are
+fully loaded before the thread call.
+
+**Migration** `p41b_scenario_kpis_and_hub_codes`. It revises the current head `p38a_engineer_deactivation` (chain:
+p41a → p40a → p38a → p41b). It was **not** applied to the dev DB: dev is at p41a, and applying p41b would also apply
+other agents' p40a and p38a. Whoever applies p38a should run `alembic upgrade head` afterwards. Amending p41a was not an
+option, because p40a already sits on it.
+
+**Tests** in `tests/test_p41_import_scenarios.py`, 7 new:
+- probes 1–4: India rows unticked in file_only; everything unticked; merge with the India plan project excluded; an
+  Admin saving one Greece row. In each, the Greece- or India-only planner gets 404 on list, GET and export;
+- a Greece peer still sees a Greece scenario, with Greece-only capacity;
+- an empty `hub_codes` is invisible to others but visible to its creator;
+- paging (total, limit, offset, 422 bounds), and `kpis` equal to `result.kpis`.
+
+Two existing assertions changed:
+- the save test now expects all hubs for an Admin saver;
+- the rate-limit test now expects 429 on the list and the GET.
+
+**Verified on a clean worktree at HEAD 4669e54** with this diff applied (final re-run of `test_p41_import_scenarios.py`: 40 passed) (p41b re-pointed at p40a there, since p38a is
+not committed):
+- P41 + qa-gate + p32 suites: 151 passed and 1 xfailed, before the save-test assertion was updated. The P41 file was
+  then re-run (see the report).
+- The shared tree's `KeyError: 'queued'` failures come from in-progress P42 work and were not touched.
+- `test_p41_qa_gate.py::test_saved_scenario_served_to_hub_viewer_has_no_out_of_scope_capacity` (strict xfail, qa D1)
+  still xfails. Its premise, that a Greece planner opens an Admin's snapshot, is superseded by H-1: the Greece planner
+  now gets 404. qa-inspector should rewrite it as a 404 probe and drop the marker.
+
+ruff check, ruff format --check and mypy are clean on the touched files. No other file was formatted.
+
+**Not changed:** L-2, L-3 and L-4 (documentation or OQ items for the orchestrator) and I-2.
+
+**Final result (P42-T02):** `python -m pytest -c pytest-scheduling.ini`: 804 passed. Scheduling coverage is 87.61%
+(gate 85%). A rerun after formatting also gave 804 passed. P42-T02 is marked DONE in IMPLEMENTATION_PLAN.
+
+## [2026-11-17] P41-R01 (addendum) — workflow advisories A1, A3, A4 — backend-builder: DONE
+
+This addendum covers advisories A1, A3 and A4 from the "P41-T04 — Gate, workflow dimension" entry. Not committed.
+
+**Migration chain.** The orchestrator re-chained it to p41a → p40a → p41b → p38a (head). I left it as it is.
+
+**A1** (`services/whatif_import.excluded_plan_project_ids`):
+- An id in `exclude_plan_project_ids` must still be unique and belong to a baseline project in the caller's scope. An
+  unknown or out-of-scope id still gets a 422 `INVALID_IMPORT`, and a non-empty list in file_only still gets a 422.
+- Only tickable ids are taken out. A tickable id is one in `plan_projects_out` after the file's removals, and not
+  replaced by an included file row.
+- These ids are now accepted and counted 0 in `plan_excluded`:
+  - a project the file removes with an On Hold, Cancelled or Commercialized row;
+  - a project that is in scope but no longer schedulable in the live plan. "Re-run on today's plan" no longer fails
+    on it;
+  - a project that a file row replaces. This was already the behaviour.
+
+**A3.** The `whatif.import_simulate` audit field `plan_excluded` now holds the served `kpis.plan_excluded`, not the
+number of ids sent.
+
+**A4.** The `compare.xlsx` KPIs sheet gains two rows, each with a delta against S1. They come only from served figures
+and match the frontend `COMPARE_KPIS`:
+- "Projects scheduled": `breakdowns.by_year.all.total`, or `kpis.projects_total` when that is not served;
+- "Not placed": `breakdowns.by_year.not_placed.total`, or `kpis.left_out` when that is not served.
+
+**Tests** (`tests/test_p41_import_scenarios.py`):
+- The On Hold plan project case moved from the rejection list to a new test,
+  `test_exclude_accepts_ids_the_plan_or_file_already_drop`. That test covers:
+  - an On Hold plan project, counted 0;
+  - a file-removed project plus a real exclusion, counted 1;
+  - the audit holding the served counts, [0, 1].
+- `test_compare_export` asserts both new rows against the served breakdowns.
+
+**Verified** on a clean worktree at HEAD 4669e54, with the P41 files and p41b (whose down_revision is p40a in this chain)
+applied. `test_p41_import_scenarios`, `test_p41_qa_gate`, `test_p41_migration` and `test_p32_whatif_import_api`:
+78 passed. ruff, ruff format --check and mypy are clean on the touched files.
+
+## [2026-11-17] P41-R01 re-review — security-auditor leg: **PASS** (0 Critical, 0 High, 0 Medium; H-1, M-1 and L-1 closed)
+
+This re-reviews the remediation of "P41-T04 gate — security-auditor leg: FAIL". The scope was the H-1, M-1 and L-1 diff only:
+- `services/whatif_import_scenarios.py`
+- `api/routers/whatif.py`
+- `models/import_scenario.py`
+- `schemas/import_scenarios.py`
+- migration `p41b`
+- `tests/test_p41_import_scenarios.py`
+
+**Basis.** I used a clean scratch worktree at HEAD 4669e54 with the uncommitted diff and `p41b` applied. `p38a` was left out, so `p41b` (down_revision `p40a`) is head there. The worktree has since been removed. I changed no repo file apart from this entry.
+- `test_p41_import_scenarios.py`: **40 passed**.
+- `test_p41_migration.py`: passed.
+- ruff: clean on the touched files.
+- mypy: 69 errors before the diff and 69 after. None are in the touched files.
+- Temporary probe tests (deleted): 6 passed. I also ran an ad hoc up/down/up of `p41b` with a pre-existing row. The backfill gives `hub_codes` = all 6 hubs and `kpis` = `result->'kpis'`. The column is NOT NULL, and downgrade then upgrade is clean.
+
+**H-1, hub scope: closed.**
+- **Unticked other-hub rows.** A PD-India planner saved one ticked Greece row with the India rows unticked. `hub_codes` = `[PD-India, R&D-Greece, R&D-India]`. A Greece-only planner got:
+  - list total 0;
+  - 404 on GET, export, compare, PATCH and DELETE.
+
+  Positive control: a viewer covering all three hubs gets list total 1, GET 200, export 200, and 403 on PATCH and DELETE (not the creator).
+- **Everything unticked.** `hub_codes` is non-empty (it includes the saver's scope). The R&D-India and Greece planners both get 404.
+- **Excluded plan project.** `PD-India` is in `hub_codes` (from `exclude_plan_project_ids` and the saver's scope). Greece gets 404.
+- **Admin saving a single-hub scenario.** `hub_codes` = all hubs. Greece gets 404.
+- **Empty `hub_codes`.** The visibility clause is `created_by = me OR (cardinality(hub_codes) > 0 AND hub_codes <@ scope)`, so `[]` no longer matches every scope. A zero-hub Hub Planner can still save (201, `[]`). Such a row is visible only to its creator and to Admin, Super Admin and all-hubs users; Greece gets 404.
+- **Lab-region mapping: sound.** The saver's whole scope is in the union, so any non-creator viewer's scope ⊇ the saver's scope, and the viewer's regions ⊇ every region in the snapshot. Each region block is served after `scope_import_result`, filtered by `region_ok`.
+  - The region-to-hubs mapping therefore cannot weaken visibility. Where it adds anything, it narrows it, and the "no in-scope hub" fallback is the stricter of the two.
+  - A drift between DB `Hub.lab_region` and `dc.HUB_LAB_REGION` cannot open a leak, for the same reason.
+  - Verified: an R&D-India saver gets `hub_codes = [R&D-India]` with the India region block, and a PD-India peer gets 404. This is conservative and acceptable.
+- **Every scenario route goes through the clause.** GET, PATCH, DELETE, export and compare all go through `_get_visible` and `_visible_clause`. List and count use the same clause. The `source_file_sha256` filter does not change `total` for an out-of-scope caller (0).
+- **Other hub-bearing fields.** Everything the server serves inside the snapshot is already filtered by the saver's scope, and that scope is in the union. Client-supplied rows are covered by `rows[].hub`. Matched and excluded ids are covered through `ctx.project_hub`, which holds every schedulable baseline project. Capacity-hub rows that an OEM saver can see are covered by `capacity.hubs` and `designers`.
+
+**M-1, list size and paging: closed.**
+- The list selects named columns plus the new `kpis` column, never `request` or `result`. Probe: after overwriting a row's `result` with `{"broken": true}`, the list still returns 200 with total 1.
+- `limit` is 1–200 (default 50) and `offset` is 0–1,000,000. Values outside those bounds, or non-integers, get 422. On a table capped at 2,000 rows, OFFSET is cheap.
+- List and GET are under `WHATIF_RATE_LIMIT`, applied after authentication (so 401 or 403 comes first), and give 429 when exhausted (tested).
+- GET-by-id still loads `result`, which is required for the full record. The summary part of GET reads `row.kpis`.
+
+**L-1, exports off the event loop: closed.** The template, current, saved and compare builds all go through `run_in_threadpool`.
+
+**Still open (Low, non-blocking; for the orchestrator to document, unchanged by this diff):**
+- L-2: creator bypass after the creator's scope is narrowed.
+- L-3: a hub-scoped Admin sees every scenario.
+- L-4: snapshots must be covered by any OQ #106 erasure.
+
+**New Info:**
+- I-7: `p41b` has no committed up/down/up test. Verified ad hoc; qa may add one.
+- I-8: list and GET share the 30-token per-user What-if bucket with simulate and exports, so heavy UI paging could reach 429. This is a usability matter, not a security one.
+- I-9: the list response is now `{items, total, limit, offset}` with a default of 50. The frontend only sees the first page unless it pages. This is for qa and the frontend.
+- I-10: the qa D1 strict-xfail test (`test_p41_qa_gate.py`) must be rewritten as a 404 probe, as P41-R01 noted.
+- The P42 `KeyError: 'queued'` in the shared tree is out of scope (I-1 is unchanged).
+
+**Verdict: PASS.** The security leg of P41-T04 may be recorded as passed once the qa and workflow legs pass too.
+
+## [2026-11-17] P40-T03c — Timeline manual step Start / End weeks, frontend (ADR 0054 ruling R40-1..R40-15) — frontend-builder: DONE
+
+Built against docs/API_CONTRACT_P40.md and DOMAIN_RULES "Manual step weeks". `backend/` not touched; the
+P40-T03b TS mirror in `surfaces/gantt/api/types.ts` used as landed (unchanged). Not committed. Other sessions'
+uncommitted edits in GanttPage.tsx, gantt-chart.tsx, gantt-step-row.tsx, gantt-time-axis.tsx etc. were kept;
+my edits are targeted inserts.
+
+**Inputs (item 1–2).** Expanded step rows (comfortable density, wide layout) get two small number boxes,
+`StepPinCell` (`components/step-pin-cell.tsx`), as the old tool's S / E boxes (`Charter.jsx` ~1320). The name
+column grows by `STEP_PIN_CELL_WIDTH` = 96 px (272 → 368) only when a `StepPinEditProvider` is present (the
+Timeline); other `GanttChart` hosts and the responsive test keep 272.
+- Editable only when served `pin_editable`; otherwise `readOnly` with the served `pin_block_reason` as title and
+  sr-only description (`PIN_BLOCK_REASON_COPY`, `api/step-pins-api.ts`).
+- Shown value: draft, else the LIVE pin, else empty with the served planned weeks as placeholder.
+- Typing Start → End = Start + served `current_length_weeks` − 1; typing End keeps Start (with no pin and no
+  typed Start, Start = the served `planned_start_week`). Only that step's draft changes.
+- Red (2 px danger border, `aria-invalid`, message chip linked by `aria-describedby`): partial pair, non-whole
+  week, End < Start, or outside `current_week..52` (`GanttResponse.current_week`, fallback the `/me` week;
+  cap `WITHIN_YEAR_WEEK`). The server re-checks everything; this is display only.
+- Labels "Start week, <step name>" / "End week, <step name>"; Clear button "Clear weeks, <step name>".
+
+**Drafts and Save (item 3).** `hooks/use-step-pin-edit.tsx`: page-level draft map (key `project:step`, first-
+edit order = batch order, a draft equal to the live pin is dropped), per-step server errors, React context
+for the virtualized rows. `StepPinEditBar` (sticky, "N steps changed in M projects", Save disabled while any
+draft is red, > 500 items, or saving), Cancel → discard dialog, `StepPinLeaveGuard` (beforeunload + router
+`useBlocker`). `hooks/use-step-pin-save.ts` = the register-save lifecycle on `PUT /gantt/step-pins`
+(`unchanged` / `not_needed` / `deferred` + follow-up watcher / `queued` → run follow → "Timeline updated" with
+`ChangedProjectsList` / `dispatch_failed` / run failed), shown in `StepPinSavePanel` built from the shared
+priority-move pieces (`RunProgressStatus`, `ChangedProjectsList`, `MOVE_COPY`). Refusals: `detail.errors`
+mapped by `index` (fallback ids) onto the inputs, the projects with errors are expanded, drafts kept; a 403
+without items reads "Only Admin and Super Admin…". Clear is offered on any step of a non-frozen project unless
+`pin_block_reason = NOT_ALLOWED` (role / scope), and only when there is something to clear; it sends nulls.
+`GET /gantt` now always sends `include_unplaced=true` (`GanttQueryParams.includeUnplaced`, added to the gantt
+query key type) and the Timeline passes `markUnplaced`, so unplaced steps show "Not placed in the active run".
+
+**Badges and markers (item 4).** `PinnedSegmentMarker` (`components/pinned-marker.tsx`, a small diamond at the
+segment start, title "Pinned: typed weeks Wa–Wb") on the step bar and on the project line segment when served
+`pinned`; step badge column "Pinned" and icon-only "Manual overlap" (`manual_overlap`); project badges
+"Manual overlap" and "Pin lapsed" (`pin_lapsed`). Next to the inputs: "Pin applies on the next run" while the
+live pin differs from the run row (or a cleared pin is still `pinned`), "Lapsed: placed from W{planned_start}"
+when the project is `pin_lapsed` and the pinned row starts after the pin, "Cleared on save" for a Clear draft
+(`pinRunState`, comparisons of served weeks only). Effort chip unchanged (`duration_weeks`).
+
+**Unfreeze (item 5).** The snowflake on a FROZEN project (row and narrow details dialog) shows only for the
+Admin / Super Admin role (`GanttChart.canUnfreeze`); Freeze unchanged. A 403 `UNFREEZE_REQUIRES_ADMIN` reads
+"Only an Admin or Super Admin can unfreeze a project." in the dialog and no longer withdraws all freeze controls.
+
+**Per-step counts (item 7, the P40-T01 blocked part).** `ActivityLoadStrip` stacks served `by_step` per step in
+the step colours (PDD then OEM, step order), title lists every step count; a week without `by_step` keeps the
+old PDD/OEM stack. `StepCountChips` (`components/step-count-chips.tsx`) shows served `current_step_counts`
+("In each step, W31"), one chip per step in its colour, under Legend & stats. Nothing counted client-side.
+
+**Tests.** New `lib/step-pin-drafts.test.ts` (typing rules, red states, batch body, run state) and
+`GanttPage.pins.test.tsx` (include_unplaced, labels, push / squeeze, red + Save disabled, read-only reason,
+batch body incl. Clear, not_needed / deferred / dispatch_failed / unchanged panels, per-item error mapping,
+Cancel, badges + markers, unplaced marker, Unfreeze by role, by_step strip + chips, axe on expanded rows with a
+red input): 30 passed. `GanttPage.test.tsx`: 12 exact `useGantt` call assertions gained `includeUnplaced: true`.
+tsc (`tsconfig.app.json`) clean; eslint on `src/surfaces/gantt` clean. Full gantt suite 252 tests: all pass
+except "P40-T01: toolbar, legend & stats and Forest view have no serious axe violation", which hits the 10 s
+default timeout under machine load (it timed out in the baseline before this task too). Run alone with
+`--testTimeout=120000` it passes, so there is no axe violation. Its timeout may need raising (qa).
+
+**Gaps / open.**
+- The narrow (< 768 px) layout and Forest view have no inputs (no room / no step rows).
+- Typing a Start always uses the served `current_length_weeks`, so a squeeze typed into End is lost if Start is
+  retyped before saving (by design: the browser derives no length).
+- "Pin applies on the next run" also shows for a pin the run never places (a Blocked hold, a left-out project):
+  the payload does not say why a pin was not applied.
+- `pinRunState` "lapsed" is a heuristic (served `pin_lapsed` + pinned row start later than the pin); a pin
+  moved earlier on a project that is already `pin_lapsed` would read "Lapsed" until the next run.
+- The panel copies RegisterSavePanel's structure instead of importing across surfaces.
+
+**Files:** `frontend/src/surfaces/gantt/{GanttPage.tsx, GanttPage.pins.test.tsx}`;
+`gantt/api/{gantt-api.ts, step-pins-api.ts}`; `gantt/hooks/{use-step-pin-edit.tsx, use-step-pin-save.ts}`;
+`gantt/lib/{step-pin-drafts.ts, step-pin-drafts.test.ts}`; `gantt/components/{step-pin-cell, step-pin-edit-bar,
+step-pin-save-panel, step-count-chips, pinned-marker}.tsx` (new) and `{gantt-chart, gantt-badges, gantt-step-row,
+gantt-project-line, activity-load-strip, freeze-dialog}.tsx` (edited); `frontend/src/lib/query-keys.ts`.
+
+**Next:** P40-T03d audited run (workflow-auditor); P40-T04 gate (security: Unfreeze UI gating + pin writes).
+
+## [2026-11-17] P41-R02 frontend follow-up — paged saved-scenario list, 429 copy — frontend-builder: DONE
+
+**Why:** In P41-R01 the backend changed `GET /whatif/import/scenarios?source_file_sha256=&limit=&offset=`. It now returns
+`{items, total, limit, offset}` (`limit` 1–200, default 50, newest first). The list and `GET /{id}` may answer 429.
+No backend file was touched, and no commit was made.
+
+**Changed** (all in `frontend/src/surfaces/planning/whatif/import/`):
+- **Types, schema and API:**
+  - `SavedScenarioPage` added in `import-types.ts`;
+  - `savedScenarioListSchema` in `import-schema.ts` now checks `items`, `total`, `limit` and `offset`;
+  - `listSavedScenarios({sha?, limit, offset})` returns the page (`import-api.ts`);
+  - new `SCENARIO_PAGE = 50` and `SCENARIO_PAGE_MAX = 200`.
+- **`use-import-library.ts`:**
+  - The Scenario bar's per-file lookup (`useSavedScenarios(sha)`) is one page with `limit=200&offset=0`.
+  - The library uses a new `useSavedScenarioLibrary()`, a `useInfiniteQuery` with pages of 50. The next offset is the
+    number of items loaded, and paging stops at the served `total`.
+  - **Keys:** the library is `['whatif-import-scenarios','library']` and the per-file lookup is
+    `['whatif-import-scenarios','file',sha]`. They must differ because their data shapes differ. This refines the
+    contract's E4 `['whatif-import-scenarios', sha?]`. The mutations still invalidate the shared prefix.
+  - A 429 now uses the What-if planner's wording (`classifyWhatIfError(…).message`): "Too many requests in a short time.
+    Wait a moment, then try again.", or "You can try again in N s." when `Retry-After` is sent. This covers the list,
+    Open, Add to compare, and the selector.
+- **`components/saved-scenarios-library.tsx`:**
+  - the title count is the served `total`;
+  - "Load more" with "N of M shown" appears while the loaded count is below `total`;
+  - a failed "Load more" shows an inline alert and keeps the pages already loaded.
+- **`components/scenario-bar.tsx`:** reads `data.items`.
+
+**Tests** (`components/p41-import-scenarios.test.tsx`):
+- The mock list now pages by `limit` and `offset` and serves `total`.
+- The per-file lookup is asserted to send `limit=200&offset=0`.
+- New: 53 saved scenarios → 50 cards, "Saved scenarios (53)", "50 of 53 shown"; "Load more" fetches `offset=50` and
+  shows 53 cards, then the button goes away.
+- New: a 429 (`Retry-After: 7`) on the list shows "…You can try again in 7 s."; a 429 on `GET /{id}` from the selector
+  shows "…Wait a moment".
+- With `p41-logic.test.ts`, there are 22 P41 tests in total, and all pass (serial run).
+
+**Checks:**
+- `tsc` is clean for `surfaces/planning/whatif`, and `eslint` is clean on `surfaces/planning/whatif`.
+- `vitest` on `surfaces/planning/whatif` (`--maxWorkers=2`): 183 of 185 passed. The 2 failures hit the timeouts set
+  inside those tests, with no assertion failure:
+  - `drill-sheet` "every Executive figure…" (60 s) passes alone;
+  - `import-plan-view` "upload → review → results…" (20 s) passed alone at T03.
+  - Both runs were on a machine at load average ~40–46.
+
+## [2026-11-17] P37-T06 checks addendum — frontend-builder
+
+- Full vitest under heavy machine load (load average ~35, other sessions' VM, eslint and vitest): 68 timeouts across 21
+  files, including a pure-math `gantt-coordinates` test. Re-running those 21 files with `--testTimeout=60000`: 403/406
+  pass. The two Matrix files that still timed out pass on their own (28/28). The only real failure is the known
+  `app.test` "Zoom slider" test (the other session's uncommitted Gantt zoom work). An earlier full run at lower load
+  had only that test plus `session-gate` (fixed: the 30 s week-end timer floor).
+- Bundle budget: initial load 195.3 KB gzip of 400 KB (PASS), built to the scratchpad so the repo `dist/` is untouched.
+- `tsc -b` and eslint clean. `test_openapi_frontend_contract.py`: 260 pass; the 1 failure is P38's `Deactivation*`
+  interfaces (not P37).

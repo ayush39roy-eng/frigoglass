@@ -108,9 +108,10 @@ def test_is_default_and_canonical_categories() -> None:
 
 def test_sort_key_rank_is_the_value_not_an_index() -> None:
     p = _project("x", "C")
-    # P36 (ADR 0050): key 3a (band_rank) sits at index 3, so category is index 5.
-    assert _sort_key(p)[5] == 4
-    assert _sort_key(p, {"C": 40})[5] == 40
+    # P36 (ADR 0050): key 3a (band_rank); P42 (ADR 0056 R42-5): key 1a
+    # (counts_toward_year) at index 1, so category is index 6.
+    assert _sort_key(p)[6] == 4
+    assert _sort_key(p, {"C": 40})[6] == 40
 
 
 # --- Ordering ------------------------------------------------------------------------------

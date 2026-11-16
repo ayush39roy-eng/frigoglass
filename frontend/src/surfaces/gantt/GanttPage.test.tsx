@@ -218,7 +218,7 @@ describe('GanttPage', () => {
   it('follows the global hub filter (P12, ADR 0020): the toolbar Hub dropdown is that filter, hub id passed, chip clears it', async () => {
     const user = userEvent.setup();
     renderWithProviders(<GanttPage />);
-    expect(hooks.useGantt).toHaveBeenLastCalledWith({ hubIds: undefined, sort: 'priority' });
+    expect(hooks.useGantt).toHaveBeenLastCalledWith({ includeUnplaced: true, hubIds: undefined, sort: 'priority' });
     // P40-T01: the toolbar's Hub dropdown edits the GLOBAL hub store (no page-local hub state).
     // Compact trigger: the field name while nothing is picked.
     expect(screen.getByRole('button', { name: 'Hub' })).toHaveAccessibleDescription('Hub');
@@ -227,20 +227,20 @@ describe('GanttPage', () => {
     await user.click(await screen.findByRole('option', { name: 'R&D-Greece' }));
     await user.keyboard('{Escape}');
     expect(useHubFilterStore.getState().hubIds).toEqual(['hub-greece']);
-    expect(hooks.useGantt).toHaveBeenLastCalledWith({ hubIds: ['hub-greece'], sort: 'priority' });
+    expect(hooks.useGantt).toHaveBeenLastCalledWith({ includeUnplaced: true, hubIds: ['hub-greece'], sort: 'priority' });
     act(() => useHubFilterStore.getState().clear());
 
     act(() => useHubFilterStore.getState().setHubId('hub-india'));
-    expect(hooks.useGantt).toHaveBeenLastCalledWith({ hubIds: ['hub-india'], sort: 'priority' });
+    expect(hooks.useGantt).toHaveBeenLastCalledWith({ includeUnplaced: true, hubIds: ['hub-india'], sort: 'priority' });
     expect(screen.getByTestId('hub-filter-chip')).toHaveTextContent('Hub: R&D-India');
     // Multi-select: a country beside the hub is sent too (the server unions them).
     // (A country with no hub in scope would be pruned by the Hub dropdown, so use Greece.)
     act(() => useHubFilterStore.getState().toggleRegion('Greece'));
-    expect(hooks.useGantt).toHaveBeenLastCalledWith({ hubIds: ['hub-india'], regions: ['Greece'], sort: 'priority' });
+    expect(hooks.useGantt).toHaveBeenLastCalledWith({ includeUnplaced: true, hubIds: ['hub-india'], regions: ['Greece'], sort: 'priority' });
 
     await user.click(screen.getByRole('button', { name: /^Clear hubs filter/ }));
     expect(useHubFilterStore.getState().hubIds).toEqual([]);
-    expect(hooks.useGantt).toHaveBeenLastCalledWith({ hubIds: undefined, sort: 'priority' });
+    expect(hooks.useGantt).toHaveBeenLastCalledWith({ includeUnplaced: true, hubIds: undefined, sort: 'priority' });
   });
 
   it('renders the outcome badges from the server flags', () => {
@@ -562,6 +562,7 @@ describe('GanttPage', () => {
       await user.keyboard('{Escape}');
       expect(screen.getByRole('button', { name: 'Priority' })).toHaveAccessibleDescription('P1, Queue');
       expect(hooks.useGantt).toHaveBeenLastCalledWith({
+        includeUnplaced: true, // P40-T03c
         // Option order, whatever the press order.
         type: ['NM', 'CO'],
         status: ['In Queue', 'On Hold'],
@@ -574,7 +575,7 @@ describe('GanttPage', () => {
       expect((hooks.useGantt.mock.lastCall?.[0] as { leaderEngineerId?: string[] }).leaderEngineerId).toHaveLength(2);
       // "Clear filters" resets every filter but keeps the chosen sort.
       await user.click(screen.getByRole('button', { name: 'Clear filters' }));
-      expect(hooks.useGantt).toHaveBeenLastCalledWith({ sort: 'end' });
+      expect(hooks.useGantt).toHaveBeenLastCalledWith({ includeUnplaced: true, sort: 'end' });
     });
 
     it('P31 / P40-T01: legacy single-value links and repeated params both parse from the URL, for every filter', () => {
@@ -583,6 +584,7 @@ describe('GanttPage', () => {
           '/timeline?category=A&type=NM&type=SER&type=bogus&status=On%20Hold&priority=Q&priority=P2&priority=P9&step=PDD-E&step=XX&leader=eng-0002',
       });
       expect(hooks.useGantt).toHaveBeenLastCalledWith({
+        includeUnplaced: true, // P40-T03c
         category: ['A'],
         type: ['NM', 'SER'],
         status: ['On Hold'],
@@ -601,10 +603,10 @@ describe('GanttPage', () => {
       const user = userEvent.setup();
       act(() => useHubFilterStore.getState().setHubId('hub-india'));
       renderWithProviders(<GanttPage />, { route: '/timeline?status=On%20Hold' });
-      expect(hooks.useGantt).toHaveBeenLastCalledWith({ hubIds: ['hub-india'], status: ['On Hold'], sort: 'priority' });
+      expect(hooks.useGantt).toHaveBeenLastCalledWith({ includeUnplaced: true, hubIds: ['hub-india'], status: ['On Hold'], sort: 'priority' });
       await user.click(screen.getByRole('button', { name: 'Clear filters' }));
       expect(useHubFilterStore.getState().hubIds).toEqual([]);
-      expect(hooks.useGantt).toHaveBeenLastCalledWith({ hubIds: undefined, sort: 'priority' });
+      expect(hooks.useGantt).toHaveBeenLastCalledWith({ includeUnplaced: true, hubIds: undefined, sort: 'priority' });
       expect(screen.queryByRole('button', { name: 'Clear filters' })).not.toBeInTheDocument();
     });
 
@@ -649,7 +651,7 @@ describe('GanttPage', () => {
         await act(async () => {
           await vi.advanceTimersByTimeAsync(400);
         });
-        expect(hooks.useGantt).toHaveBeenLastCalledWith({ q: '24-002', sort: 'priority' });
+        expect(hooks.useGantt).toHaveBeenLastCalledWith({ includeUnplaced: true, q: '24-002', sort: 'priority' });
       } finally {
         vi.useRealTimers();
       }
@@ -747,7 +749,7 @@ describe('GanttPage', () => {
       expect(screen.getByRole('img', { name: 'Week axis, week 1 to week 52' })).toHaveAttribute('width', String(52 * 20));
       expect(screen.getByRole('slider', { name: 'Zoom' })).toHaveValue('20');
       // Zoom is a rendering concern: the query params are unchanged.
-      expect(hooks.useGantt).toHaveBeenLastCalledWith({ sort: 'priority' });
+      expect(hooks.useGantt).toHaveBeenLastCalledWith({ includeUnplaced: true, sort: 'priority' });
     });
   });
 });

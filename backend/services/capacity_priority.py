@@ -41,6 +41,17 @@ PriorityBucket = Literal["P1", "P2", "P3", "P4", "Queue"]
 #: Served key order (contract §6).
 PRIORITY_BUCKETS: tuple[PriorityBucket, ...] = ("P1", "P2", "P3", "P4", "Queue")
 
+#: P42 (ADR 0056 R42-1): the display label of each bucket key. The key
+#: `Queue` stays (wire compatibility) but must not read "Queue" any more: P3
+#: is now "In queue". It is displayed "Q".
+PRIORITY_BUCKET_LABELS: Mapping[PriorityBucket, str] = {
+    "P1": "P1",
+    "P2": "P2",
+    "P3": "P3",
+    "P4": "P4",
+    "Queue": "Q",
+}
+
 #: P13-F06 (2026-10-19): the statuses the scheduler plans
 #: (DOMAIN_RULES "Status `Commercialized`, `On Hold`, `Cancelled` and `Draft`
 #: are excluded from scheduling entirely"). The class breakdown counts only

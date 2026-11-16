@@ -54,10 +54,27 @@ class PriorityBoardCard(BaseModel):
     within_year: bool | None
     health: CardHealth | None
     tracking_status: TrackingStatus
+    # --- P42 (ADR 0056 R42-4/R42-7, docs/API_CONTRACT_P42.md §2) -------------
+    #: The active run's stored flags; null when the project is not in the run.
+    counts_toward_year: bool | None = None
+    not_scheduled_priority: bool | None = None
+    #: R42-7 "Queued" badge: the stored outcome is QUEUED (counts_toward_year
+    #: false, not P4-excluded). False when not in the run.
+    queued: bool = False
+    #: "Not scheduled (P4)" / "Queued — fits by W{n}" / "Queued — after W52" /
+    #: "Queued — no slot"; null for a counting card or one not in the run.
+    outcome_label: str | None = None
 
 
 class PriorityBoardColumn(BaseModel):
     priority: ProjectPriority
+    #: P42 (R42-1): the band's label ("Must do this year", ...).
+    label: str
+    #: P42 (R42-3): the band is never scheduled (P4, Q) for a non-frozen
+    #: project. Its cards keep their ranks (R42-7).
+    not_scheduled: bool
+    #: P42: cards of this column with `queued` true.
+    queued_count: int
     count: int
     cards: list[PriorityBoardCard]
     #: P13 (docs/API_CONTRACT_P13.md §6): the column's remaining design load

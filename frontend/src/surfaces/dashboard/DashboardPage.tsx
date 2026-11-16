@@ -49,6 +49,7 @@ import { DeliveryGaugeCard } from './components/delivery-gauge-card';
 import { VipProjectsCard } from './components/vip/vip-projects-card';
 import { Button } from '@/components/ui/button';
 import { PanelSkeleton } from '@/components/ui/panel-skeleton';
+import { PlanWeekNotice } from '@/components/shared/plan-week-notice';
 
 /**
  * Deferred analytics panels (2026-10-01).
@@ -268,6 +269,8 @@ export default function DashboardPage(): React.JSX.Element {
           <AccessNotice kind={denied} />
         ) : (
           <>
+          {/* P37 (ADR 0052 §6): verdicts stay the active run's (I9), which may be from an earlier week. */}
+          <PlanWeekNotice className="mb-4" />
           <DashboardSelectionBar selection={selection} />
           {/* Owner ask 2026-11-13: clicking a composition figure lists its
               projects, scoped exactly like the figures. */}

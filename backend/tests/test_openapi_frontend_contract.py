@@ -220,18 +220,7 @@ _NULLABILITY_ALLOWLIST: dict[tuple[str, str], str] = {
 # row tolerates exactly these as "only in backend" until the frontend task
 # named in the reason adds them; that task removes the entry (a stale entry
 # fails `test_pending_frontend_fields_are_still_pending`).
-_PENDING_FRONTEND_FIELDS: dict[tuple[str, str], str] = {
-    ("MeResponse", "as_of_date"): "P37-T04, frontend P37-T06",
-    ("MeResponse", "plan_year"): "P37-T04, frontend P37-T06",
-    ("MeResponse", "plan_year_closed"): "P37-T04, frontend P37-T06",
-    ("MeResponse", "week_source"): "P37-T04, frontend P37-T06",
-    ("MeResponse", "week_ends_at"): "P37-T04, frontend P37-T06",
-    ("MeResponse", "plan_week"): "P37-T04, frontend P37-T06",
-    ("ScheduleRunChanges", "baseline_week"): "P37-T04 (R37-4), frontend P37-T06",
-    ("ScheduleRunChanges", "run_week"): "P37-T04 (R37-4), frontend P37-T06",
-    ("EngineerUtilizationResponse", "run_week"): "P37-T04, frontend P37-T06",
-    ("ResourceLoadResponse", "run_week"): "P37-T04, frontend P37-T06",
-}
+_PENDING_FRONTEND_FIELDS: dict[tuple[str, str], str] = {}
 
 
 # --------------------------------------------------------------------------
@@ -596,6 +585,12 @@ CONTRACT_TABLE: list[tuple[Path, str, str, str]] = [
     (_PLANNING_TS, "EngineerCreateRequest", "EngineerCreateRequest", "exact"),
     (_PLANNING_TS, "ScheduleRunSummary", "ScheduleRunSummary", "exact"),
     (_PLANNING_TS, "GreedyRecalcResponse", "GreedyRecalcResponse", "exact"),
+    # --- P38-T04: deactivation (backend/schemas/engineer.py, API_CONTRACT_P38 §2) ---
+    (_PLANNING_TS, "DeactivationCandidate", "DeactivationCandidate", "exact"),
+    (_PLANNING_TS, "DeactivationOpenProject", "DeactivationOpenProject", "exact"),
+    # The supply effect, preview, request and response declare inline object
+    # types this parser cannot read: frontend_only below, pinned by
+    # `tests/test_p38_engineer_deactivation.py::test_contract_shapes`.
     # --- P19-T03: capacity summary + resource load (backend/schemas/planning.py) ---
     (_PLANNING_TS, "BasisPair", "YearRemaining", "exact"),
     (_PLANNING_TS, "DesignHubSummary", "DesignHubSummary", "exact"),
@@ -934,6 +929,13 @@ class TestOpenApiFrontendContract:
                 # `tests/test_p19_planning_capacity.py` (summary / options tests).
                 "CapacitySummary",
                 "ResourceLoadOptionsResponse",
+                # P38-T04: inline object types (`{ before; after }`, the preview's
+                # `engineer`, request rows, `warnings` / `run`). Pinned by
+                # `tests/test_p38_engineer_deactivation.py::test_contract_shapes`.
+                "DeactivationSupplyEffect",
+                "DeactivationPreview",
+                "DeactivateRequest",
+                "DeactivateResponse",
             },
             _GANTT_TS: {
                 # P13-T13: the Gantt's Leader / Step filter options, served by

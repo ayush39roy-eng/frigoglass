@@ -3,6 +3,7 @@ import { Outlet, useLocation } from 'react-router-dom';
 
 import { SURFACES } from '@/app/nav';
 import { SessionGate } from '@/components/session/session-gate';
+import { PlanClockSync } from '@/components/session/plan-clock-sync';
 import { useCategories } from '@/lib/api/categories';
 import { GlowOverlay } from '@/components/ui/background-components';
 import { TooltipProvider } from '@/components/ui/tooltip';
@@ -66,6 +67,8 @@ export function AppShell(): React.JSX.Element {
           the route guards and every write control read the permission table. */}
       <SessionGate>
         <CategoryPrefetch />
+        {/* P37: refetch /me at the served week end, on focus, and while the plan is behind. */}
+        <PlanClockSync />
         {/*
          * Boltshift layout (spec §4), 2026-10-01: a grey PAGE (reusing the
          * EXISTING `bg-canvas` token — it already matches the spec's `--page`

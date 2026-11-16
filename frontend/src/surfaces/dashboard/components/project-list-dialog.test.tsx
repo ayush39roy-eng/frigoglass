@@ -2,7 +2,7 @@ import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { screen, within } from '@testing-library/react';
 
-import { CARRY_OVER_YEAR } from '@/lib/domain-constants';
+import { TEST_PLAN_YEAR } from '@/test/session';
 import { renderWithProviders } from '@/test/render';
 import type { LabRegion, ProjectStatus } from '@/types/enums';
 
@@ -19,6 +19,9 @@ import { HubRankList } from './hub-rank-list';
 import { PipelineRow } from './pipeline-row';
 import { ProjectListProvider, type ProjectListScope } from './project-list-dialog';
 import { StatusOverviewCards } from './status-overview-cards';
+
+// P37: year labels come from the served /me.plan_year (test session fixture).
+const CARRY_OVER_YEAR = TEST_PLAN_YEAR - 1;
 
 /** Owner ask 2026-11-13: clicking a Dashboard figure lists its projects. */
 

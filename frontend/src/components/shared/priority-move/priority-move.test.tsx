@@ -67,6 +67,8 @@ const changes: ScheduleRunChanges = {
   run_version: 43,
   against_run_id: 'run-42',
   against_run_version: 42,
+  baseline_week: 31,
+  run_week: 31,
   hidden_count: 3,
   rows: [
     {

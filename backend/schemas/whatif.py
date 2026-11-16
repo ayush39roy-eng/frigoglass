@@ -37,8 +37,17 @@ ProjectTypeLiteral = Literal["NM", "CO", "RC", "NO", "IMP"]
 WorkflowLiteral = Literal["PDD", "OEM"]
 BasisLiteral = Literal["year", "remaining"]
 TargetLiteral = Literal["all_new_within_year", "no_existing_slips"]
+#: P42 (ADR 0056 R42-6): gains `not_scheduled_priority` and `queued`
+#: (`scheduling.whatif.OUTCOME_CLASSES`).
 OutcomeLiteral = Literal[
-    "within_year", "spillover", "left_out", "blocked", "excluded", "data_error"
+    "within_year",
+    "spillover",
+    "left_out",
+    "blocked",
+    "excluded",
+    "data_error",
+    "not_scheduled_priority",
+    "queued",
 ]
 BookingStatusLiteral = Literal["available", "near_full", "full"]
 
@@ -254,6 +263,9 @@ class ProjectResultOut(BaseModel):
     finish_week: int | None
     within_year: bool
     unconstrained_end_week: int | None
+    #: P42 (R42-4): the run's flags, copied from the engine's outcome.
+    counts_toward_year: bool
+    not_scheduled_priority: bool
 
 
 class UtilizationRowOut(BaseModel):

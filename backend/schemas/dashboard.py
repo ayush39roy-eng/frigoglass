@@ -113,6 +113,18 @@ class CompletingWithinYearRow(BaseModel):
     #: P17-R03: true when status is In Queue AND no stage has progress
     #: (every stage "Not Started"). Server-computed; see API_CONTRACT_P17.
     not_started: bool
+    # --- P42 (ADR 0056, docs/API_CONTRACT_P42.md): stored flags (R42-4) ---
+    #: The stored outcome's `counts_toward_year` (false: queued P3 or P4/Q).
+    counts_toward_year: bool
+    #: The stored outcome's `not_scheduled_priority` (non-frozen P4/Q).
+    not_scheduled_priority: bool
+    #: R42-6 exclusive bucket of this row (the counts above partition by it);
+    #: null for a status-excluded On Hold / Cancelled / Draft or data-error row.
+    outcome: ScheduleOutcome | None
+    #: R42-1 band label; null when the project has no band.
+    priority_label: str | None
+    #: The stored `projected_end_week` (end + delay); null when unscheduled.
+    projected_end_week: int | None
 
 
 class PriorityDeliveryBand(BaseModel):
@@ -125,6 +137,8 @@ class PriorityDeliveryBand(BaseModel):
     """
 
     priority: ProjectPriority
+    #: P42 (R42-1): the band's label.
+    priority_label: str
     total: int
     within_year: int
     in_flight_total: int
@@ -134,11 +148,24 @@ class PriorityDeliveryBand(BaseModel):
     delivered_total: int
     delivered_within_year: int
     other_total: int
-    #: within_year / total
+    # --- P42 (R42-6, I53): projects of the band whose active-run outcome is
+    # non-counting. A project with no outcome row counts (default true). ---
+    #: Outcome `QUEUED` (counts_toward_year false, not P4-excluded).
+    queued_total: int
+    #: Outcome `NOT_SCHEDULED_PRIORITY`.
+    not_scheduled_priority_total: int
+    #: `total - queued_total - not_scheduled_priority_total`: the denominator
+    #: of `within_year_share_pct`.
+    counting_total: int
+    #: P42: counting projects of `in_flight_total` / `not_started_total`, the
+    #: denominators of the two shares below.
+    in_flight_counting_total: int
+    not_started_counting_total: int
+    #: within_year / counting_total (P42: was / total)
     within_year_share_pct: float
-    #: in_flight_within_year / in_flight_total
+    #: in_flight_within_year / in_flight_counting_total (P42: was / in_flight_total)
     in_flight_within_year_share_pct: float
-    #: not_started_within_year / not_started_total
+    #: not_started_within_year / not_started_counting_total (P42: was / not_started_total)
     not_started_within_year_share_pct: float
     #: shares of `total`
     in_flight_share_pct: float
@@ -160,6 +187,9 @@ class DeliveryRegionRow(BaseModel):
     spillover_count: int
     left_out_count: int
     blocked_count: int
+    #: P42 (R42-6): the two non-counting buckets, same rows.
+    queued_count: int
+    not_scheduled_priority_count: int
 
 
 class CompletingWithinYear(BaseModel):
@@ -189,6 +219,19 @@ class CompletingWithinYear(BaseModel):
     #: badge; here Blocked wins outright so the four counts partition the
     #: schedulable, non-excluded portfolio without overlap).
     blocked_count: int
+    # --- P42 (ADR 0056 R42-6, I53, docs/API_CONTRACT_P42.md) ---
+    #: Bucket precedence NOT_SCHEDULED_PRIORITY > QUEUED > BLOCKED >
+    #: WITHIN_YEAR > SPILLOVER > LEFT_OUT: the four counts above hold
+    #: counting rows only. Σ of the six counts + `excluded_count` = len(rows).
+    queued_count: int
+    not_scheduled_priority_count: int
+    #: Rows in none of the six buckets (status-excluded On Hold / Cancelled /
+    #: Draft, or a data error).
+    excluded_count: int
+    #: within + spillover + left_out + blocked: the counting denominator.
+    counting_outcome_count: int
+    #: within_year_count / counting_outcome_count × 100, 2 dp; 0.0 on 0.
+    within_year_share_pct: float
     rows: list[CompletingWithinYearRow]
     #: P17-R03: always the five bands P1, P2, P3, P4, Q in that order.
     priority_delivery: list[PriorityDeliveryBand]
@@ -199,7 +242,11 @@ class CompletingWithinYear(BaseModel):
 
 
 #: The active run's per-project outcome bucket (P13 register column).
-ScheduleOutcome = Literal["WITHIN_YEAR", "SPILLOVER", "LEFT_OUT", "BLOCKED"]
+#: P42 (R42-6): gains `NOT_SCHEDULED_PRIORITY` and `QUEUED` (they take
+#: precedence over the other four).
+ScheduleOutcome = Literal[
+    "WITHIN_YEAR", "SPILLOVER", "LEFT_OUT", "BLOCKED", "QUEUED", "NOT_SCHEDULED_PRIORITY"
+]
 
 
 #: P17-R09: the `type` filter of `GET /dashboard/projects`. A `ProjectType`
@@ -242,8 +289,14 @@ class ProjectFilterRow(BaseModel):
     #: with no active run or when the project is not scheduled in it.
     end_week: int | None
     #: The active run's exclusive outcome bucket, same precedence as
-    #: `/dashboard/completing-within-year` (Blocked first); null if none.
+    #: `/dashboard/completing-within-year` (P42: NOT_SCHEDULED_PRIORITY >
+    #: QUEUED > BLOCKED > ...); null if none.
     outcome: ScheduleOutcome | None
+    #: P42 (R42-1): the band's label; null with no band.
+    priority_label: str | None
+    #: P42 (R42-4): the active run's stored flags; null with no outcome row.
+    counts_toward_year: bool | None
+    not_scheduled_priority: bool | None
     reg_year: int | None
     carry_over: bool
     #: ADR 0035: the client workbook's charter fields, as written (null when
@@ -368,7 +421,11 @@ class CompletingHubTypeRow(BaseModel):
     #: Projects of this cell whose active-run bucket is `WITHIN_YEAR` (the
     #: `/completing-within-year` exclusive bucket: Blocked wins).
     completing_count: int
-    #: `completing_count` / `pipeline_count` × 100, 2 dp; 0.0 when 0.
+    #: P42 (I53): `pipeline_count` minus the cell's projects whose active-run
+    #: outcome is QUEUED or NOT_SCHEDULED_PRIORITY.
+    counting_count: int
+    #: `completing_count` / `counting_count` × 100, 2 dp; 0.0 when 0
+    #: (P42: was / `pipeline_count`).
     completing_pct: float
 
 
@@ -378,6 +435,9 @@ class CompletingByTypeRow(BaseModel):
     key: str
     pipeline_count: int
     completing_count: int
+    #: P42 (I53): as `CompletingHubTypeRow.counting_count`.
+    counting_count: int
+    #: completing_count / counting_count.
     completing_pct: float
 
 
@@ -388,7 +448,9 @@ class CompletingByHubRow(BaseModel):
     key: HubName
     pipeline_count: int
     completing_count: int
-    #: `completing_count` / `pipeline_count` × 100, 2 dp.
+    #: P42 (I53): as `CompletingHubTypeRow.counting_count`.
+    counting_count: int
+    #: `completing_count` / `counting_count` × 100, 2 dp (P42: was / pipeline).
     completing_pct: float
 
 

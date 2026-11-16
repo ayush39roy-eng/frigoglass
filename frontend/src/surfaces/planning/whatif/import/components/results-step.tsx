@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Spinner } from '@/components/ui/spinner';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { SimulatedWeekNotice } from '@/components/shared/plan-week-notice';
 
 import { WhatIfErrorNotice } from '../../components/whatif-error';
 import { isMappedStatus } from '../import-rows';
@@ -90,6 +91,8 @@ export function ResultsStep({
         />
       ) : null}
       <ScenarioViewBanner current={current} />
+      {/* R37-3: the result's own input week against the active run's. */}
+      <SimulatedWeekNotice simulatedWeek={result.current_week} />
       <Tabs value={tab} onValueChange={(v) => setTab(v as ResultsTab)}>
         <div className="flex flex-wrap items-center justify-between gap-s3">
           <TabsList aria-label="Results" className="max-w-full flex-wrap">

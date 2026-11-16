@@ -56,6 +56,7 @@ from typing import Literal
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+import domain_constants as dc
 from models.checkin import StageCheckin
 from models.enums import (
     NON_SCHEDULABLE_STATUSES,
@@ -255,24 +256,29 @@ async def due_stages_for(
         active_run = await get_active_run(db)
 
     projects = {
-        pid: (status, cert, frozen)
-        for pid, status, cert, frozen in (
+        pid: (status, cert, frozen, priority)
+        for pid, status, cert, frozen, priority in (
             await db.execute(
                 select(
                     Project.id,
                     Project.status,
                     Project.certification_testing_required,
                     Project.frozen,
+                    Project.priority,
                 ).where(Project.id.in_(ids))
             )
         ).all()
     }
     # Frozen projects are treated like non-schedulable ones: nothing is due
-    # (P12-R03; see module docstring).
+    # (P12-R03; see module docstring). P42 (ADR 0056 R42-6): so is a
+    # non-frozen P4/Q project, which the scheduler never plans (R42-3). The
+    # frozen ones are already out above, so the band alone decides here.
     schedulable = [
         pid
-        for pid, (status, _cert, frozen) in projects.items()
-        if status not in NON_SCHEDULABLE_STATUSES and not frozen
+        for pid, (status, _cert, frozen, priority) in projects.items()
+        if status not in NON_SCHEDULABLE_STATUSES
+        and not frozen
+        and not (priority is not None and priority.value in dc.NOT_SCHEDULED_PRIORITIES)
     ]
     if not schedulable:
         return result

@@ -64,7 +64,12 @@ from typing import Literal
 import domain_constants as dc
 from scheduling import hubs as hub_names
 from scheduling.active_weeks import EngineerActiveWeeks
-from scheduling.greedy import _cat_not_allowed, category_maps_for, run_greedy_sgs
+from scheduling.greedy import (
+    _cat_not_allowed,
+    category_maps_for,
+    is_not_scheduled_priority,
+    run_greedy_sgs,
+)
 from scheduling.invariants import compute_design_load_by_capacity_hub
 from scheduling.types import (
     ChamberInput,
@@ -137,6 +142,12 @@ OUTCOME_CLASSES: tuple[str, ...] = (
     "blocked",
     "excluded",
     "data_error",
+    # ADR 0056 (R42-3 / R42-6): appended so the existing keys keep their order.
+    # `not_scheduled_priority`: a non-frozen P4/Q project (never scheduled).
+    # `queued`: a scheduled-or-not project with `counts_toward_year = false`
+    # (a queued P3, or a frozen P4/Q); never within year, never spillover.
+    "not_scheduled_priority",
+    "queued",
 )
 
 _ALL_HUBS: tuple[str, ...] = tuple(sorted(dc.HUB_LAB_REGION))
@@ -771,6 +782,9 @@ def apply_scenario(
     # are re-assigned below, then new projects).
     load: dict[str, float] = defaultdict(float)
     for p in si.projects:
+        band = overrides.get(p.project_id, p.priority)
+        if is_not_scheduled_priority(dataclasses.replace(p, priority=band)):
+            continue  # ADR 0056 R42-3: never scheduled, so it loads no leader
         if p.leader_engineer_id is not None and p.leader_engineer_id not in removed:
             load[p.leader_engineer_id] += weeks_by_project.get(p.project_id, 0)
     orphans: list[ProjectInput] = []
@@ -788,7 +802,7 @@ def apply_scenario(
             projects.append(p)
     for p in orphans:
         leader = _pick_leader(p, engineers, load, categories.workflow)
-        if leader is not None:
+        if leader is not None and not is_not_scheduled_priority(p):
             load[leader.engineer_id] += weeks_by_project.get(p.project_id, 0)
         projects.append(
             dataclasses.replace(p, leader_engineer_id=leader.engineer_id if leader else None)
@@ -820,7 +834,7 @@ def apply_scenario(
                 capacity_hub=_capacity_hub_for(si, ap.hub, ap.capacity_hub),
             )
             leader = _pick_leader(proto, engineers, load, categories.workflow)
-            if leader is not None:
+            if leader is not None and not is_not_scheduled_priority(proto):
                 plan = analyse_project(proto, workflows[wf_id], table)
                 load[leader.engineer_id] += sum(
                     sp.duration
@@ -883,6 +897,8 @@ def _plan_loads(
     for p in sorted(si.projects, key=lambda p: p.project_id):
         if p.status not in dc.SCHEDULABLE_STATUS_ORDER or p.category is None:
             continue
+        if is_not_scheduled_priority(p):
+            continue  # R42-3 / I49: contributes 0 to I6/I7 load
         if p.hub not in hub_names.HUB_LAB_REGION:
             continue
         wf = workflows.get(p.workflow_id)
@@ -1521,6 +1537,9 @@ class ProjectResult:
     #: Whether a project cannot finish in the year whatever is added is decided
     #: at the fastest designer's speed (`_unattainable_new_projects`).
     unconstrained_end_week: int | None
+    #: ADR 0056 (R42-3 / R42-4): copied from the outcome (I49 / I50).
+    counts_toward_year: bool = True
+    not_scheduled_priority: bool = False
 
 
 @dataclass(frozen=True)
@@ -1582,8 +1601,17 @@ class SimulationResult:
 
 
 def classify_outcome(o: ProjectScheduleOutcome) -> str:
+    """One class per outcome. ADR 0056 R42-6: `not_scheduled_priority`, then
+    `queued` (`counts_toward_year = false`), outrank every other class; a
+    status-excluded project always counts, so the two never meet `excluded`
+    otherwise. With no P4/Q and no queued P3 the classes are as before P42."""
+
+    if o.not_scheduled_priority:
+        return "not_scheduled_priority"
     if o.excluded:
         return "excluded"
+    if not o.counts_toward_year:
+        return "queued"
     if o.data_error is not None:
         return "data_error"
     if o.left_out:
@@ -1735,6 +1763,8 @@ def _simulate_with(
                 finish_week=o.projected_end_week,
                 within_year=o.within_year,
                 unconstrained_end_week=o.unconstrained_end_week,
+                counts_toward_year=o.counts_toward_year,
+                not_scheduled_priority=o.not_scheduled_priority,
             )
         )
 
@@ -1753,6 +1783,8 @@ def _simulate_with(
             and b.left_out == o.left_out
             and b.blocked == o.blocked
             and b.excluded == o.excluded
+            and b.counts_toward_year == o.counts_toward_year
+            and b.not_scheduled_priority == o.not_scheduled_priority
         )
         if same:
             continue
@@ -1929,7 +1961,9 @@ def _violators(
     if target == "all_new_within_year":
         for r in res.projects:
             skip = _unattainable(r) if unattainable is None else r.project_id in unattainable
-            if r.is_new and r.outcome != "within_year" and not skip:
+            # R42-3: a not-scheduled (P4/Q) new project is outside the plan.
+            skip = skip or r.not_scheduled_priority
+            if r.is_new and not _meets_new_target(r) and not skip:
                 ids.append(r.project_id)
                 late += _lateness(r)
     else:
@@ -1941,6 +1975,22 @@ def _violators(
                 ids.append(r.project_id)
                 late += _lateness(r)
     return tuple(ids), late
+
+
+def _meets_new_target(r: ProjectResult) -> bool:
+    """`all_new_within_year` for one new project. A counting project must be
+    `within_year`. ADR 0056 (P42-T02 resolution, see MEMORY): a queued new
+    project (`counts_toward_year = false`) can never be `within_year` (I50),
+    so it meets the target when it fits on spare capacity: scheduled, with
+    `projected_end_week <= WITHIN_YEAR_WEEK` ("Queued — fits by W{n}")."""
+
+    if r.counts_toward_year:
+        return r.outcome == "within_year"
+    return (
+        r.outcome == "queued"
+        and r.finish_week is not None
+        and (r.finish_week <= dc.WITHIN_YEAR_WEEK)
+    )
 
 
 def _unattainable(r: ProjectResult) -> bool:

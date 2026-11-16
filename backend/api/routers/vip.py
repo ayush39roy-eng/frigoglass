@@ -79,6 +79,7 @@ from schemas.vip import (
 from services.active_run import get_active_run
 from services.category_type_filter import category_type_filter
 from services.hub_scope import global_hub_filter, hub_scope_filter
+from services.outcome_buckets import priority_label
 from services.plan_clock import PlanClock, get_plan_clock
 from services.priority_move import decide_auto_recalc, dispatch_auto_recalc
 from services.project_access import authorize_project_action
@@ -138,8 +139,29 @@ def select_vip(
     pinned = [p for p in ordered if p.is_vip]
     chosen: list[tuple[Project, Literal["pinned", "auto"]]] = [(p, "pinned") for p in pinned]
     room = max(0, limit - len(pinned))
-    chosen.extend((p, "auto") for p in [p for p in ordered if not p.is_vip][:room])
+    candidates = [p for p in ordered if not p.is_vip and not never_auto_fill(p, cards[p.id])]
+    chosen.extend((p, "auto") for p in candidates[:room])
     return chosen, len(pinned)
+
+
+def never_auto_fill(project: Project, card: ProjectCard) -> bool:
+    """P42 (ADR 0056 R42-6): a non-frozen P4/Q project never auto-fills.
+
+    Read from the active run's stored outcome (`not_scheduled_priority`).
+    A project with no outcome row yet ("pipeline, not yet in run") is not
+    in any run, so its live band decides: a non-frozen P4/Q one will never
+    be scheduled either. A pinned one is still shown ("Not scheduled (P4)").
+    """
+
+    if card.not_scheduled_priority:
+        return True
+    if card.in_active_run:
+        return False
+    return (
+        not project.frozen
+        and project.priority is not None
+        and project.priority.value in dc.NOT_SCHEDULED_PRIORITIES
+    )
 
 
 @router.get("", response_model=VipProjectsResponse)
@@ -212,6 +234,10 @@ async def get_vip_projects(
                         else None
                     ),
                     tracking_status=card.tracking_status,
+                    priority_label=priority_label(project.priority),
+                    counts_toward_year=card.counts_toward_year,
+                    not_scheduled_priority=card.not_scheduled_priority,
+                    outcome_label=card.outcome_label,
                 )
             )
         first = hub_projects[0]
