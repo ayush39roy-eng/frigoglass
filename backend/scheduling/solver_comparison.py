@@ -79,7 +79,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from scheduling.cp_sat import CpSatSolveInfo, objective_weights, run_cp_sat
-from scheduling.greedy import run_greedy_sgs
+from scheduling.greedy import project_counts_toward_year, run_greedy_sgs
 from scheduling.invariants import InvariantViolation, validate_invariants
 from scheduling.types import (
     ProjectInput,
@@ -134,6 +134,11 @@ _OUTCOME_FIELDS: tuple[str, ...] = (
     # Both are False on both sides without pins, so no report changes.
     "manual_overlap",
     "pin_lapsed",
+    # P42 (ADR 0056, R42-3 / R42-4): both are functions of the input (I49 /
+    # I50) and must agree. Both are at their default on both sides with no
+    # P4/Q and no queued P3, so no pre-P42 report changes.
+    "not_scheduled_priority",
+    "counts_toward_year",
 )
 
 _STEP_FIELDS: tuple[str, ...] = (
@@ -420,7 +425,13 @@ def compare_solvers(
     cp_sat_output, cp_sat_info = run_cp_sat(schedule_input, **cp_sat_kwargs)  # type: ignore[arg-type]
 
     projects_by_id: dict[str, ProjectInput] = {p.project_id: p for p in schedule_input.projects}
-    weight_by_id = objective_weights(schedule_input.projects)
+    # R42-5: the metric weighs the projects CP-SAT optimises over, i.e. the
+    # counting ones (a non-counting project is never within year, I50, and
+    # is not in the model, so it must not inflate the ADR 0040 VIP bonus).
+    # With no P4/Q and no queued P3 this is every project, as before P42.
+    weight_by_id = objective_weights(
+        p for p in schedule_input.projects if project_counts_toward_year(p)
+    )
 
     greedy_violations = validate_invariants(schedule_input, greedy_output)
     # I8 (determinism) re-runs the greedy scheduler internally and is not a

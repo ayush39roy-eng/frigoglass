@@ -4,6 +4,8 @@ import { ArrowRight } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { formatPlanWeek } from '@/lib/format';
+import { SimulatedWeekNotice } from '@/components/shared/plan-week-notice';
+import { useCurrentWeek } from '@/lib/plan-clock';
 
 import type {
   ProjectChangeOut,
@@ -189,8 +191,12 @@ export function SimulateView({ data, compact = false }: { data: SimulateResponse
     data.utilization_before.filter((r) => r.scope === 'lab_region'),
     data.utilization_after.filter((r) => r.scope === 'lab_region'),
   );
+  // R37-3: the What-if re-solves at the request's calendar week (the response
+  // carries no week of its own), against an active run that may be older.
+  const simulatedWeek = useCurrentWeek();
   return (
     <div className="space-y-s4" data-testid="whatif-simulate">
+      <SimulatedWeekNotice simulatedWeek={simulatedWeek} />
       {compact ? null : <ScopeNote scope={data.scope} />}
       <div className="grid gap-s3 sm:grid-cols-2 lg:grid-cols-4">
         <FigureTile

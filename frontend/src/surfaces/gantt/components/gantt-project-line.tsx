@@ -6,6 +6,7 @@ import { barGeometry, delayConnectorGeometry, type WeekScale } from '../lib/gant
 import { stepColor, stepHatchId, stepTint } from '../lib/step-colors';
 import { stepBarTitle } from '../lib/step-row-text';
 import type { GanttProjectRow } from '../api/types';
+import { PinnedSegmentMarker } from './pinned-marker';
 
 /**
  * P40-T01 (owner ask 2026-11-17, after the client's old Charter tool): a
@@ -116,6 +117,17 @@ export function GanttProjectLine({
               >
                 {color.letter}
               </text>
+            ) : null}
+            {/* P40-T03c: "Pinned" mark on the segment (served `pinned`). */}
+            {s.pinned ? (
+              <PinnedSegmentMarker
+                startWeek={s.planned_start_week}
+                endWeek={s.planned_end_week}
+                scale={scale}
+                cy={plannedY + barH / 2}
+                size={compact ? 3 : 4}
+                fmt={fmt}
+              />
             ) : null}
           </g>
         );

@@ -246,6 +246,14 @@ async def _validate_engineer(
             "ENGINEER_ALREADY_LINKED",
             "That engineer is already linked to another user account.",
         )
+    # P38 (contract §3): a new link to an inactive engineer is refused; an
+    # existing link (the same engineer re-sent) is left alone (ADR 0053 §8).
+    if not engineer.active and (engineer.user_id is None or engineer.user_id != for_user_id):
+        raise CodedHTTPException(
+            HTTP_422,
+            "ENGINEER_INACTIVE",
+            "That engineer is inactive and cannot be linked to a user account.",
+        )
     return engineer
 
 

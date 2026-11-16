@@ -1,6 +1,7 @@
 import * as React from 'react';
 
-import { CURRENT_WEEK, DISPLAY_HORIZON_WEEKS, WITHIN_YEAR_WEEK } from '@/lib/domain-constants';
+import { DISPLAY_HORIZON_WEEKS, WITHIN_YEAR_WEEK } from '@/lib/domain-constants';
+import { useCurrentWeek } from '@/lib/plan-clock';
 import { formatPlanWeek, formatWeek } from '@/lib/format';
 import { GanttCompletionMarkers } from '@/surfaces/gantt/components/gantt-completion-markers';
 import { expectedLabel, slipLabel } from '@/surfaces/gantt/lib/completion-labels';
@@ -33,7 +34,9 @@ export function CompletionStrip({
     weekWidthPx: WEEK_PX,
     totalWidthPx: DISPLAY_HORIZON_WEEKS * WEEK_PX,
   };
-  const nowX = weekToX(CURRENT_WEEK, scale);
+  // P37: "now" is the served calendar week (ADR 0052 §4).
+  const currentWeek = useCurrentWeek();
+  const nowX = currentWeek === null ? null : weekToX(currentWeek, scale);
   const yearX = weekEndToX(WITHIN_YEAR_WEEK, scale);
 
   return (
@@ -41,7 +44,9 @@ export function CompletionStrip({
       <svg viewBox={`0 0 ${String(scale.totalWidthPx)} ${String(HEIGHT)}`} className="block h-9 w-full" preserveAspectRatio="none">
         <rect x={0} y={HEIGHT / 2 - 1} width={scale.totalWidthPx} height={2} fill="hsl(var(--color-gantt-grid-strong))" />
         <rect x={yearX} y={0} width={scale.totalWidthPx - yearX} height={HEIGHT} fill="hsl(var(--color-gantt-marker-year) / 0.06)" />
-        <line x1={nowX} y1={0} x2={nowX} y2={HEIGHT} stroke="hsl(var(--color-gantt-marker-now))" strokeWidth={1} />
+        {nowX !== null ? (
+          <line x1={nowX} y1={0} x2={nowX} y2={HEIGHT} stroke="hsl(var(--color-gantt-marker-now))" strokeWidth={1} />
+        ) : null}
         <line x1={yearX} y1={0} x2={yearX} y2={HEIGHT} stroke="hsl(var(--color-gantt-marker-year))" strokeWidth={1} strokeDasharray="3 2" />
         <GanttCompletionMarkers
           scale={scale}
@@ -89,7 +94,7 @@ export function CompletionStrip({
         </div>
         <div className="flex items-center gap-1">
           <dt>Now</dt>
-          <dd className="font-mono">{formatWeek(CURRENT_WEEK)}</dd>
+          <dd className="font-mono">{currentWeek === null ? '—' : formatWeek(currentWeek)}</dd>
           <dt className="ml-2">Year-end</dt>
           <dd className="font-mono">{formatWeek(WITHIN_YEAR_WEEK)}</dd>
         </div>

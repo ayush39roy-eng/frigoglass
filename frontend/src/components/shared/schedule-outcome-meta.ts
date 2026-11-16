@@ -2,7 +2,6 @@ import type * as React from 'react';
 import { CircleAlert, CircleOff, Clock, TriangleAlert, UserX } from 'lucide-react';
 
 import type { BadgeProps } from '@/components/ui/badge';
-import { SPILLOVER_YEAR } from '@/lib/domain-constants';
 import type { ScheduleOutcomeFlag } from '@/types/enums';
 
 /**
@@ -17,7 +16,14 @@ export interface OutcomeMeta {
   tone: NonNullable<BadgeProps['tone']>;
   label: string;
   Icon: React.ComponentType<{ className?: string }>;
+  /** May contain `{spillover_year}`; render through `outcomeDescription`,
+   *  which fills it from the served `plan_year` (P37, ADR 0052). */
   description: string;
+}
+
+/** The meta's description with `{spillover_year}` filled in. */
+export function outcomeDescription(meta: OutcomeMeta, spilloverYear: string): string {
+  return meta.description.replaceAll('{spillover_year}', spilloverYear);
 }
 
 export const SCHEDULE_OUTCOME_META: Record<ScheduleOutcomeFlag, OutcomeMeta> = {
@@ -40,13 +46,13 @@ export const SCHEDULE_OUTCOME_META: Record<ScheduleOutcomeFlag, OutcomeMeta> = {
     // by W52), not as a separate "beyond the horizon" concept. Flag unchanged.
     label: 'Spillover · unplaced',
     Icon: CircleOff,
-    description: `Not done by week 52 — no slot found in the plan yet, so it spills over to ${String(SPILLOVER_YEAR)} unscheduled.`,
+    description: 'Not done by week 52 — no slot found in the plan yet, so it spills over to {spillover_year} unscheduled.',
   },
   SPILLOVER: {
     tone: 'warning',
     label: 'Spillover',
     Icon: Clock,
-    description: `Not done by week 52 — finishes after the plan year and spills over to ${String(SPILLOVER_YEAR)}.`,
+    description: 'Not done by week 52 — finishes after the plan year and spills over to {spillover_year}.',
   },
   CAT_NOT_ALLOWED: {
     tone: 'warning',

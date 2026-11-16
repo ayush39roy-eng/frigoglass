@@ -2,7 +2,7 @@ import * as React from 'react';
 
 import { Card, CardHeader, CardTitle } from '@/components/ui/card';
 import { CardInfo } from '@/components/ui/card-info';
-import { CARRY_OVER_YEAR, PLAN_YEAR } from '@/lib/domain-constants';
+import { usePlanYearLabels } from '@/lib/plan-clock';
 import { formatDecimal, formatInteger } from '@/lib/format';
 import { cn } from '@/lib/utils';
 
@@ -22,7 +22,7 @@ const BUCKET_MATCH: Record<PipelineBucket, (row: ProjectFilterRow) => boolean> =
 
 /**
  * Project Pipeline row (ADR 0030, client's older app):
- *   Spillover {PLAN_YEAR-1} + Newly registered {PLAN_YEAR} = Total projects.
+ *   Spillover {plan_year − 1} + Newly registered {plan_year} = Total projects (served `/me.plan_year`, P37).
  *
  * Owner ask 2026-10-22: the "Unregistered date" card is removed. The served
  * `unregistered_count` is still part of the total (ADR 0030), so when it is
@@ -65,12 +65,13 @@ function Glyph({ children }: { children: string }): React.JSX.Element {
 }
 
 export function PipelineRow({ totals, regionSummary = null }: PipelineRowProps): React.JSX.Element {
+  const years = usePlanYearLabels();
   const share = (pct: number): string => `${formatDecimal(pct)}% of total`;
   const openList = useOpenProjectList();
   const cards: CardSpec[] = [
     {
       bucket: 'spillover',
-      label: `Spillover ${String(CARRY_OVER_YEAR)}`,
+      label: `Spillover ${years.carryOverYear}`,
       count: totals.spillover_count,
       caption: share(totals.spillover_share_pct),
       rail: 'border-t-warning',
@@ -78,7 +79,7 @@ export function PipelineRow({ totals, regionSummary = null }: PipelineRowProps):
     },
     {
       bucket: 'new',
-      label: `Newly registered ${String(PLAN_YEAR)}`,
+      label: `Newly registered ${years.planYear}`,
       count: totals.new_count,
       caption: share(totals.new_share_pct),
       rail: 'border-t-primary',
@@ -91,7 +92,7 @@ export function PipelineRow({ totals, regionSummary = null }: PipelineRowProps):
       caption:
         totals.unregistered_count > 0
           ? `All statuses · incl. ${formatInteger(totals.unregistered_count)} with no registration year`
-          : `All statuses · full ${String(PLAN_YEAR)} pipeline`,
+          : `All statuses · full ${years.planYear} pipeline`,
       rail: 'border-t-ink',
       muted: false,
       big: true,
@@ -110,7 +111,7 @@ export function PipelineRow({ totals, regionSummary = null }: PipelineRowProps):
             (Commercialized too). Shares are computed by the server.
           </p>
           <p>
-            &quot;Spillover {CARRY_OVER_YEAR}&quot; here means a project carried over from the
+            &quot;Spillover {years.carryOverYear}&quot; here means a project carried over from the
             prior planning year. It is NOT the schedule outcome{' '}
             <strong className="text-text">Spillover (past W52)</strong> shown in the completion
             panel, which is a property of the active schedule run.

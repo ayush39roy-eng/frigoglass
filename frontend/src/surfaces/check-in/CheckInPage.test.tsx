@@ -261,6 +261,17 @@ describe('CheckInPage — form validation and batch submit', () => {
     expect(document.body).not.toHaveTextContent(/commenting/i);
   });
 
+  it('P37 R37-10: 409 PLAN_YEAR_CLOSED shows the closed-year copy and keeps the drafts', async () => {
+    client.apiSend.mockRejectedValue(new ApiError(409, 'Conflict', 'closed', 'PLAN_YEAR_CLOSED'));
+    const { user } = await renderPage();
+    await user.click(within(stageEl('Design Detailing')).getByRole('button', { name: 'Confirm Design Detailing unchanged' }));
+    await user.click(screen.getByTestId('check-in-submit'));
+
+    const panel = await screen.findByTestId('check-in-result');
+    expect(within(panel).getByTestId('check-in-result-body')).toHaveTextContent('The planning year is closed');
+    expect(within(stageEl('Design Detailing')).getByTestId('confirm-unchanged')).toHaveAttribute('aria-pressed', 'true');
+  });
+
   it('deferred (ADR 0023): says the timeline updates automatically and starts the follow-up watcher', async () => {
     client.apiSend.mockResolvedValue(submitResponse({ recalc_status: 'deferred' }));
     const { user } = await renderPage();
@@ -295,6 +306,23 @@ describe('CheckInPage — form validation and batch submit', () => {
     await waitFor(() => expect(move.fetchScheduleRunChanges).toHaveBeenCalledWith('run-43', 'run-42', expect.anything()));
     expect(await within(panel).findByTestId('changed-projects-list')).toHaveTextContent('Cooler One');
     expect(within(panel).getByTestId('timeline-hidden-count')).toHaveTextContent('+2 more in hubs outside your scope');
+  });
+});
+
+describe('CheckInPage — plan clock (P37)', () => {
+  it('closed planning year: notice, and no submit', async () => {
+    renderWithProviders(<CheckInPage />, { session: { current_week: 52, weeks_left_in_year: 0, plan_year_closed: true } });
+    await screen.findByRole('heading', { name: 'Design Detailing', level: 4 });
+    expect(screen.getByTestId('plan-year-closed-notice')).toHaveTextContent('Planning year 2026 closed');
+    expect(screen.getByTestId('check-in-submit')).toBeDisabled();
+  });
+
+  it('R37-3: the plan-behind notice shows on the check-in page', async () => {
+    renderWithProviders(<CheckInPage />, {
+      session: { current_week: 47, weeks_left_in_year: 5, plan_week: { run_week: 42, run_version: 8, status: 'recalculating' } },
+    });
+    await screen.findByRole('heading', { name: 'Design Detailing', level: 4 });
+    expect(screen.getByTestId('plan-week-notice')).toHaveTextContent('This plan is from W42; the current week is W47.');
   });
 });
 

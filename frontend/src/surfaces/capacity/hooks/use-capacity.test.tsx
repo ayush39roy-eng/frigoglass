@@ -58,7 +58,7 @@ describe('useEngineerUtilization (P15)', () => {
     const { useHubFilterStore } = await import('@/stores/hub-filter');
     const { useEngineerUtilization } = await import('./use-capacity');
     useHubFilterStore.getState().setSelection(['hub-1'], ['Greece']);
-    vi.mocked(api.fetchEngineerUtilization).mockResolvedValue({ week_range: [1, 52], current_week: 3, engineers: [] });
+    vi.mocked(api.fetchEngineerUtilization).mockResolvedValue({ week_range: [1, 52], current_week: 3, run_week: 3, engineers: [] });
     const { result } = renderHook(() => useEngineerUtilization(), { wrapper: wrapper() });
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
     expect(vi.mocked(api.fetchEngineerUtilization).mock.calls[0]?.slice(1)).toEqual([{ hubIds: ['hub-1'], regions: ['Greece'] }]);

@@ -273,7 +273,15 @@ def _view_simulation_body(r: SimulateResponse) -> dict[str, Any]:
         "new_projects": [
             _pick(
                 p,
-                ("hub", "category", "priority", "outcome", "finish_week", "unconstrained_end_week"),
+                (
+                    "hub",
+                    "category",
+                    "priority",
+                    "outcome",
+                    "finish_week",
+                    "unconstrained_end_week",
+                    "counts_toward_year",
+                ),
             )
             for p in new_projects[:VIEW_LIST_CAP]
         ],

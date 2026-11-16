@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from pydantic_core import PydanticCustomError
@@ -119,3 +119,134 @@ class EngineerRead(BaseModel):
     weekdays_per_week: float
     capacity_weeks: YearRemaining
     capacity_days: YearRemaining
+    # --- P38 (docs/API_CONTRACT_P38.md §1) -----------------------------------
+    #: False once deactivated. `deactivated_by_user_id` is never served.
+    active: bool = True
+    deactivated_at: datetime | None = None
+    #: Calendar week of the deactivation (it counts as worked), 1..52.
+    deactivated_week: int | None = None
+    #: The served `plan_year`, not the ISO year.
+    deactivated_plan_year: int | None = None
+    deactivation_reason: DeactivationReason | None = None
+
+
+# --- P38: deactivation (docs/API_CONTRACT_P38.md §2) --------------------------------
+
+#: The four fixed codes (OQ #97: never free text). Mirrors
+#: `models.engineer.DEACTIVATION_REASONS` and the DB CHECK.
+DeactivationReason = Literal["left_company", "changed_role", "long_absence", "other"]
+
+#: `GET /engineers?status=` (default `active`); anything else is a 422.
+EngineerStatusFilter = Literal["active", "inactive", "all"]
+
+
+class DeactivationEngineer(BaseModel):
+    id: uuid.UUID
+    name: str
+    #: The engineer's (capacity) hub name, e.g. "R&D-Greece".
+    hub: str
+    active: bool
+
+
+class DeactivationCandidate(BaseModel):
+    """An eligible active engineer of the project's capacity hub (R38-3)."""
+
+    engineer_id: uuid.UUID
+    name: str
+    fte: float
+    #: Remaining run-booked design load (effort weeks after the calendar
+    #: week) in the active run, 2 dp.
+    load_weeks: float
+
+
+class DeactivationOpenProject(BaseModel):
+    project_id: uuid.UUID
+    name: str
+    hub: str
+    status: str
+    priority: str | None
+    category: str | None
+    schedulable: bool
+    frozen: bool
+    progress_tracked: bool
+    done_stages: int
+    in_flight_lab: bool
+    candidates: list[DeactivationCandidate]
+
+
+class BeforeAfter(BaseModel):
+    before: float
+    after: float
+
+
+class DeactivationSupplyEffect(BaseModel):
+    capacity_hub: str
+    yearly_design_capacity: BeforeAfter
+    remaining_design_capacity: BeforeAfter
+
+
+class DeactivationPreview(BaseModel):
+    engineer: DeactivationEngineer
+    deactivation_week: int
+    has_linked_login: bool
+    open_projects: list[DeactivationOpenProject]
+    #: Present only when the engineer counts in capacity (null otherwise).
+    supply_effect: DeactivationSupplyEffect | None = None
+    led_projects_token: str
+
+
+class DeactivationReassignment(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    project_id: uuid.UUID = Field(strict=False)
+    #: `null` = leave the project with no leader ("Deactivate anyway").
+    leader_engineer_id: uuid.UUID | None = Field(strict=False)
+
+
+class DeactivateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    reason: DeactivationReason
+    led_projects_token: str = Field(min_length=1, max_length=128)
+    #: Exactly the open-project set found under lock (409 otherwise). The
+    #: largest roster lead is far below the cap.
+    reassignments: list[DeactivationReassignment] = Field(max_length=2000)
+
+    @field_validator("reassignments")
+    @classmethod
+    def _unique_projects(
+        cls, value: list[DeactivationReassignment]
+    ) -> list[DeactivationReassignment]:
+        seen: set[uuid.UUID] = set()
+        for row in value:
+            if row.project_id in seen:
+                raise PydanticCustomError("duplicate_project", "A project appears more than once.")
+            seen.add(row.project_id)
+        return value
+
+
+class DeactivationWarning(BaseModel):
+    project_id: uuid.UUID
+    #: `CAT_NOT_ALLOWED` (the new leader's categories exclude the project's)
+    #: or `NOT_IN_CAPACITY_HUB` (the new leader is outside the project's
+    #: capacity hub). Accepted, as a leader PATCH would be.
+    code: Literal["CAT_NOT_ALLOWED", "NOT_IN_CAPACITY_HUB"]
+
+
+DeactivationRunStatus = Literal["queued", "deferred", "not_needed", "dispatch_failed"]
+
+
+class DeactivationRun(BaseModel):
+    #: `dispatch_failed` only when the broker refused the task: the
+    #: deactivation is saved and the projects stay stale (ADR 0023 / P14-T01).
+    status: DeactivationRunStatus
+    run_id: uuid.UUID | None = None
+
+
+class DeactivateResponse(BaseModel):
+    engineer: EngineerRead
+    reassigned: int
+    left_without_leader: int
+    left_without_leader_project_ids: list[uuid.UUID]
+    warnings: list[DeactivationWarning]
+    run: DeactivationRun

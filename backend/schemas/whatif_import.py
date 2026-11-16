@@ -220,6 +220,14 @@ class ImportKpisOut(BaseModel):
     recovered: int
     #: ADR 0055 D2: plan projects taken out by `exclude_plan_project_ids`.
     plan_excluded: int = 0
+    # --- P42 (ADR 0056 R42-6, docs/API_CONTRACT_P42.md §9). The four year
+    # counts above hold counting outcomes only (the classes are exclusive).
+    # Defaults 0 so a P41 saved snapshot (taken before P42) still reads. ---
+    #: Outcome class `queued` (P3 In Queue: spare capacity only).
+    queued: int = 0
+    #: Outcome class `not_scheduled_priority` (non-frozen P4/Q), including
+    #: the plan projects not served as rows (the engine hides excluded ones).
+    not_scheduled_priority: int = 0
 
 
 class ImportStepOut(BaseModel):
@@ -271,6 +279,9 @@ class ImportProjectOut(BaseModel):
     no_chamber_step_id: str | None
     data_error: str | None
     steps: list[ImportStepOut]
+    #: P42 (R42-4): the engine's flags. Defaults keep P41 snapshots readable.
+    counts_toward_year: bool = True
+    not_scheduled_priority: bool = False
 
 
 class CapacityWindowOut(BaseModel):
@@ -378,6 +389,9 @@ class BreakdownOutcomesOut(_Strict):
     blocked: int
     data_error: int
     excluded: int
+    #: P42 (R42-6). Defaults keep P41 snapshots readable.
+    queued: int = 0
+    not_scheduled_priority: int = 0
 
 
 class BreakdownBucketOut(_Strict):
@@ -391,6 +405,11 @@ class BreakdownBucketOut(_Strict):
     spillover: int
     #: left_out + blocked + data_error.
     not_placed: int
+    #: P42 (R42-6): outcome class `queued` (never in the three above). In a
+    #: finish-year block a placed queued project sits here, not in
+    #: `within_year`; a queued project with no slot is in the `not_placed`
+    #: block. Default keeps P41 snapshots readable.
+    queued: int = 0
 
 
 class FinishQuarterOut(_Strict):

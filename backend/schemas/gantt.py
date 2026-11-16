@@ -26,6 +26,7 @@ from models.enums import (
     WorkflowStepStatus,
 )
 from schemas.category import CategoryCodeOut
+from schemas.dashboard import ScheduleOutcome
 
 
 class GanttStepRow(BaseModel):
@@ -169,6 +170,17 @@ class GanttProjectRow(BaseModel):
     design_weeks: int | None
     lab_weeks: int | None
     total_weeks: int | None
+    # --- P42 (ADR 0056 R42-1/R42-4/R42-6, docs/API_CONTRACT_P42.md §4) ---
+    #: The band's label; null with no band.
+    priority_label: str | None = None
+    #: The active run's stored flags (no outcome row: true / false).
+    counts_toward_year: bool = True
+    not_scheduled_priority: bool = False
+    #: The R42-6 exclusive bucket; null with no outcome row or none of six.
+    outcome: ScheduleOutcome | None = None
+    #: "Not scheduled (P4)" / "Queued — fits by W{n}" / "Queued — after W52" /
+    #: "Queued — no slot"; null for a counting project.
+    outcome_label: str | None = None
     #: P40 (R40-5 / R40-7): from the active run's outcome. `pin_lapsed`: some
     #: pin's start had passed and the step was placed from the run's week;
     #: `manual_overlap`: OR of the steps' flag. Warnings only.

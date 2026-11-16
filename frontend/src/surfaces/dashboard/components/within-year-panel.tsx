@@ -4,7 +4,8 @@ import { CalendarCheck, CirclePause, Clock } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { EmptyState } from '@/components/shared/empty-state';
 import { formatInteger, formatWeek } from '@/lib/format';
-import { SPILLOVER_YEAR, WITHIN_YEAR_WEEK } from '@/lib/domain-constants';
+import { WITHIN_YEAR_WEEK } from '@/lib/domain-constants';
+import { usePlanYearLabels } from '@/lib/plan-clock';
 import { sharePct, spilloverPastYearCount, withinYearSharePct } from '../lib/outcome';
 
 import type { CompletingWithinYear, ScheduleRunSummary } from '../api/types';
@@ -45,6 +46,7 @@ export function WithinYearKpis({
   onHold = null,
   compact = false,
 }: WithinYearKpisProps & ScheduledCountFigures & { compact?: boolean }): React.JSX.Element {
+  const years = usePlanYearLabels();
   const size = compact ? 'compact' : 'default';
   // Owner ask 2026-11-13: each outcome card lists the run rows behind it
   // (the Executive view's dialog; selection by served flags, I9).
@@ -135,8 +137,8 @@ export function WithinYearKpis({
             badge={{ label: shareLabel(spilloverPastYearCount(data), data), tone: 'neutral' }}
             caption={
               data.left_out_count > 0
-                ? `Not done by ${formatWeek(WITHIN_YEAR_WEEK)} → ${String(SPILLOVER_YEAR)} · ${String(data.left_out_count)} not yet placed`
-                : `Not done by ${formatWeek(WITHIN_YEAR_WEEK)} → ${String(SPILLOVER_YEAR)}`
+                ? `Not done by ${formatWeek(WITHIN_YEAR_WEEK)} → ${years.spilloverYear} · ${String(data.left_out_count)} not yet placed`
+                : `Not done by ${formatWeek(WITHIN_YEAR_WEEK)} → ${years.spilloverYear}`
             }
             {...open('past_year', spilloverPastYearCount(data), 'Spillover (past W52)')}
           />

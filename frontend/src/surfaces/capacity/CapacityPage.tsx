@@ -10,6 +10,7 @@ import { useMotionTokens } from '@/lib/motion';
 import { useHubSelection } from '@/stores/hub-filter';
 import { HubFilterChip } from '@/components/shared/hub-filter/hub-filter-chip';
 import { CountrySegmented } from '@/components/shared/hub-filter/country-segmented';
+import { PlanWeekNotice } from '@/components/shared/plan-week-notice';
 
 import { DEFAULT_CAPACITY_VIEW, type CapacityView } from './lib/pick-figures';
 import { AccessNotice } from './components/access-notice';
@@ -103,6 +104,8 @@ export default function CapacityPage(): React.JSX.Element {
           </>
         }
       />
+      {/* P37 (ADR 0052 §6): the bookings come from the active run's week. */}
+      {denied ? null : <PlanWeekNotice className="mb-4" />}
 
       {denied ? (
         <AccessNotice kind={denied} />

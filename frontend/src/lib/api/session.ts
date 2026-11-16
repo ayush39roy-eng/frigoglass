@@ -40,12 +40,39 @@ export interface MeResponse {
    *  route guard OR (`routes.tsx`) for a manager-delegate who holds no
    *  `user_role_admin` surface permission at all. */
   is_delegate_manager: boolean;
-  /** P13-T15 (API_CONTRACT_P13 §7, ADR 0024): the planning week, served. */
+  /** P13-T15, source changed at P37 (API_CONTRACT_P37 §1, ADR 0052): the
+   *  CALENDAR week (Europe/Athens, or the `RPD_CURRENT_WEEK` pin), 1..52. */
   current_week: number;
-  /** P13-T15: weeks left in the 52-week year (`max(0, 52 − current_week)`),
+  /** P13-T15: weeks left in the 52-week year (`52 − current_week`),
    *  served — the header never subtracts. */
   weeks_left_in_year: number;
+  /** P37: today's date in Europe/Athens (`YYYY-MM-DD`). The header shows this,
+   *  never the browser's date. */
+  as_of_date: string;
+  /** P37: the planning year (`RPD_PLAN_YEAR`). Every year label derives from it. */
+  plan_year: number;
+  /** P37: the ISO year is past `plan_year`; the week stays 52 and
+   *  `POST /check-ins` answers 409 `PLAN_YEAR_CLOSED` (R37-10). */
+  plan_year_closed: boolean;
+  /** P37: `"pinned"` when the server runs with `RPD_CURRENT_WEEK` set. */
+  week_source: 'calendar' | 'pinned';
+  /** P37: the next Monday 00:00 Europe/Athens (ISO-8601 with offset). The
+   *  client refetches `/me` then. */
+  week_ends_at: string;
+  /** P37: the active run's week against the calendar week; null with no active
+   *  run (R37-7). */
+  plan_week: PlanWeek | null;
 }
+
+/** `GET /me` `plan_week` (API_CONTRACT_P37 §1). `current` ⇔ `run_week ==
+ *  current_week` (R37-6). */
+export interface PlanWeek {
+  run_week: number;
+  run_version: number;
+  status: PlanWeekStatus;
+}
+
+export type PlanWeekStatus = 'current' | 'recalculating' | 'pending' | 'failed';
 
 /** One row of `GET /me/dev-users` (dev mode only; 404 otherwise). */
 export interface DevUser {

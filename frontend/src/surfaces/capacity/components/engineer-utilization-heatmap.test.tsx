@@ -20,6 +20,7 @@ function eng(id: string, name: string, hub: 'R&D-Greece' | 'PD-India', pcts: num
 const data: EngineerUtilizationResponse = {
   week_range: [1, 3],
   current_week: 2,
+  run_week: 2,
   engineers: [eng('e1', 'Priya N', 'PD-India', [40, 85, 120]), eng('e2', 'Nikos K', 'R&D-Greece', [0, 0, 0])],
 };
 

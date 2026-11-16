@@ -72,6 +72,17 @@ A pin that could not be pre-booked (window past the horizon, lab pin with no
 eligible chamber) sends the project to the greedy walk (LEFT_OUT).
 `manual_overlap` is evaluated after the solve on this solve's own rows.
 
+Priority band meaning (ADR 0056 R42-5): a non-frozen project with
+`counts_toward_year = false` (a queued P3) is never a decision variable, nor
+walked before the model. After both passes every CP-SAT placement is booked
+into the shared `_ResourceState` and the queued projects are walked, in
+`ctx.ordered` order, with the shared `greedy._schedule_one_project` (spare
+capacity only). So the model of an input X equals the model of X without its
+queued projects (I52). Non-frozen P4/Q projects never reach the model
+(`ctx.not_scheduled`, R42-3); the P4/Q entries of `PRIORITY_OBJECTIVE_WEIGHT`
+are therefore unreachable (frozen projects are never in the model either) and
+are kept only for the record.
+
 Objective weighting: ADR 0005 (documented gap-fill, not DOMAIN_RULES.md text)
 -- `PRIORITY_OBJECTIVE_WEIGHT = {P1:4, P2:3, P3:2, P4:1, Q:0}` times
 `within_year`, plus a coarse presence tie-break scaled so it can never
@@ -110,11 +121,15 @@ from scheduling.greedy import (
     _ResourceState,
     _schedule_one_project,
     apply_eng_conflict_flags,
+    not_scheduled_priority_outcome,
     prebook_anchored_steps,
     prepare_run,
+    project_counts_toward_year,
     run_greedy_sgs,
+    year_flags,
 )
 from scheduling.types import (
+    ChamberInput,
     EngineerInput,
     ProjectInput,
     ProjectScheduleOutcome,
@@ -193,6 +208,9 @@ class CpSatSolveInfo:
     # chamber, data_error, Blocked hold, anchored-behind-not-started, or
     # nothing left to search.
     num_pre_resolved_left_out: int
+    # ADR 0056 R42-5: non-frozen non-counting (queued P3) projects kept out of
+    # the model and walked after the solve on the residual capacity.
+    num_queued_walked: int = 0
 
 
 @dataclass
@@ -256,10 +274,18 @@ def run_cp_sat(
     prebooked_all, pre_flags_all = prebook_anchored_steps(ctx, state, non_frozen)
 
     # --- 3. Projects that cannot be optimised: resolved outside the solver ---
+    # ADR 0056 R42-5: a non-frozen project with `counts_toward_year = false`
+    # (a queued P3) is never a decision variable. It is walked after the
+    # solve (step 6), whatever its kind (needs-greedy, no_leader,
+    # data_error), so the model of X equals the model of X⁻ (I52).
     solvable: list[ProjectInput] = []
+    queued: list[ProjectInput] = []
     num_pre_resolved = 0
     for project in non_frozen:
         pid = project.project_id
+        if not project_counts_toward_year(project):
+            queued.append(project)
+            continue
         plan = ctx.plans[pid]
         prebooked = prebooked_all.get(pid, {})
         pre_flags = pre_flags_all.get(pid, (False, False))
@@ -568,10 +594,28 @@ def run_cp_sat(
             category_workflow=ctx.categories.workflow,
         )
 
+    # --- 6. R42-5 residual placement: spare capacity only -------------------
+    # Book every CP-SAT placement into the shared state, then walk the queued
+    # projects in `ctx.ordered` order with the shared greedy routine (their
+    # anchored / pinned steps were pre-booked in step 2, as in greedy).
+    if queued:
+        _book_solved_placements(state, ctx.chambers_by_id, solvable, outcomes_by_id, prebooked_all)
+        for project in queued:
+            pid = project.project_id
+            outcomes_by_id[pid] = _schedule_one_project(
+                ctx,
+                state,
+                ctx.plans[pid],
+                prebooked=prebooked_all.get(pid, {}),
+                pre_flags=pre_flags_all.get(pid, (False, False)),
+            )
+
     apply_eng_conflict_flags(outcomes_by_id, state)
 
     for project in ctx.excluded:
         outcomes_by_id[project.project_id] = _excluded_outcome(project)
+    for project in ctx.not_scheduled:
+        outcomes_by_id[project.project_id] = not_scheduled_priority_outcome(project)
 
     by_project_id = sorted(schedule_input.projects, key=lambda p: p.project_id)
     project_outcomes = tuple(outcomes_by_id[p.project_id] for p in by_project_id)
@@ -609,8 +653,38 @@ def run_cp_sat(
         num_solvable_projects=len(solvable),
         num_frozen_projects=len(frozen),
         num_pre_resolved_left_out=num_pre_resolved,
+        num_queued_walked=len(queued),
     )
     return output, info
+
+
+def _book_solved_placements(
+    state: _ResourceState,
+    chambers_by_id: Mapping[str, ChamberInput],
+    solvable: list[ProjectInput],
+    outcomes_by_id: Mapping[str, ProjectScheduleOutcome],
+    prebooked_all: Mapping[str, Mapping[str, _Placement]],
+) -> None:
+    """R42-5: book the searched (non-pre-booked) design and lab rows of every
+    solved project into `state`, in `solvable` order (= `ctx.ordered`): the
+    leader per span week, one platform of the chosen chamber per lab week.
+    Pre-booked rows (anchored, pinned) are already in `state`; skipped and
+    elapsed rows book nothing. CP-SAT placements never overlap the
+    background or each other, so this raises no conflict."""
+
+    for project in solvable:
+        outcome = outcomes_by_id[project.project_id]
+        if outcome.left_out:
+            continue  # absent: only its pre-booked rows were emitted
+        prebooked = prebooked_all.get(project.project_id, {})
+        for row in outcome.steps:
+            if row.skipped or row.step_id in prebooked:
+                continue
+            weeks = range(row.start_week, row.end_week + 1)
+            if row.kind == "design" and row.assigned_engineer_id is not None:
+                state.book_engineer(row.assigned_engineer_id, weeks, project.project_id)
+            elif row.kind == "lab" and row.assigned_chamber_id is not None:
+                state.book_chamber(chambers_by_id[row.assigned_chamber_id], weeks)
 
 
 # --- Phase 2 ---------------------------------------------------------------------
@@ -828,6 +902,7 @@ def _extract_outcome(
             progress_pct=progress_pct,
             manual_overlap=manual_overlap,
             pin_lapsed=lapsed,
+            counts_toward_year=project_counts_toward_year(project),
         )
 
     def value(e: cp_model.IntVar | int) -> int:
@@ -884,9 +959,18 @@ def _extract_outcome(
     non_skipped = [s for s in steps_tuple if not s.skipped]
     start_week = min(s.start_week for s in non_skipped)
     end_week = max(s.end_week for s in non_skipped)
-    within_year = bool(solver.Value(pv.within_year))
+    # R42-4 / I50: the shared year basis. A solvable project always counts
+    # (non-counting ones are not in the model), so this equals the model's
+    # `within_year` literal; it is recomputed here so both solvers emit the
+    # flags through one helper.
     projected = end_week + project.delay_weeks
-    _ = within_year_week
+    counts = project_counts_toward_year(project)
+    within_year, spillover = year_flags(
+        counts_toward_year=counts,
+        scheduled=True,
+        completion_week=projected,
+        within_year_week=within_year_week,
+    )
 
     return ProjectScheduleOutcome(
         project_id=pid,
@@ -895,7 +979,7 @@ def _extract_outcome(
         eng_conflict=eng_conflict,
         overlap=overlap,
         cat_not_allowed=cat_not_allowed,
-        spillover=not within_year,
+        spillover=spillover,
         within_year=within_year,
         no_leader=False,
         no_chamber_step_id=None,
@@ -909,6 +993,7 @@ def _extract_outcome(
         progress_pct=progress_pct,
         manual_overlap=manual_overlap,
         pin_lapsed=lapsed,
+        counts_toward_year=counts,
     )
 
 

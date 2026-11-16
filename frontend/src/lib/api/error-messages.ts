@@ -66,6 +66,8 @@ export const API_ERROR_MESSAGES: Record<string, string> = {
   STAGE_INCONSISTENT: 'These progress values contradict each other.',
   STAGE_SKIPPED: 'This stage is skipped for the project and has no progress of its own.',
   RUN_IN_PROGRESS: 'A recalculation is already running. Wait for it to finish, then try again.',
+  // P37 R37-10: check-ins are refused while the planning year is closed.
+  PLAN_YEAR_CLOSED: 'The planning year is closed, so no check-in can be recorded. An Admin must open the next planning year first; your entries are kept on this page.',
   // Priority move (ADR 0015 §2, P11 contract §1/§2): hard gates pin P1.
   HARD_GATE_FORCES_P1: 'This project has a hard gate (regulatory / certification / safety), so it must stay P1.',
   // Run-to-run changes (P11 contract §3).

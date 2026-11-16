@@ -7,10 +7,11 @@ import { ErrorState } from '@/components/shared/error-state';
 import type { Hub } from '@/lib/api/reference';
 import { hubPickerLabel } from '@/lib/hub-labels';
 import { PROJECT_TYPE_LABELS, type ProjectType } from '@/types/enums';
+import { usePlanYearLabels } from '@/lib/plan-clock';
 
 import type { CapacityBasis, FilterOption, ResourceLoadFilters } from '../../api/types';
 import { useResourceLoad, useResourceLoadOptions } from '../../hooks/use-planning';
-import { BASIS_LABEL, type CapacityUnit } from '../../lib/figures';
+import { basisLabel, type CapacityUnit } from '../../lib/figures';
 import { LoadPanel, type LoadRow } from './load-panel';
 import { MultiSelectFilter } from './multi-select-filter';
 
@@ -82,6 +83,7 @@ export function ResourceLoadSection({
    *  while it loads, this section sits near the top and would fetch at once. */
   armed?: boolean;
 }): React.JSX.Element {
+  const { planYear } = usePlanYearLabels();
   const [ref, seen] = useSeen<HTMLElement>(armed);
   const [filters, setFilters] = React.useState<ResourceLoadFilters>(EMPTY_FILTERS);
   const debounced = useDebounced(filters, DEBOUNCE_MS);
@@ -161,7 +163,7 @@ export function ResourceLoadSection({
           Resource load analytics
         </h2>
         <p className="text-2xs text-text-muted">
-          {BASIS_LABEL[basis]} · load = weeks booked by the active schedule
+          {basisLabel(basis, planYear)} · load = weeks booked by the active schedule
           {data?.schedule_run_version != null ? ` (run v${String(data.schedule_run_version)})` : ''}
         </p>
       </div>

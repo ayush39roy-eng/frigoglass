@@ -34,14 +34,14 @@ export function ScenarioBar({ pending }: { pending: boolean }): React.JSX.Elemen
   const closeView = useImportPlan((s) => s.closeView);
   const setTab = useImportPlan((s) => s.setResultsTab);
   const sessionScenarios = useImportScenarios((s) => s.scenarios);
-  const saved = useSavedScenarios(sha, sha !== null);
+  const saved = useSavedScenarios(sha);
   const fetchSaved = useFetchSavedScenario();
   const [loading, setLoading] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   const selectId = React.useId();
 
   const session = sessionScenarios.filter((s) => s.origin !== 'stored');
-  const savedHere = saved.data ?? [];
+  const savedHere = saved.data?.items ?? [];
   const value = view === null ? CURRENT : `${view.kind}:${view.id}`;
   // A saved scenario opened from the library (another import) is listed too, so the
   // selector always names what is shown.

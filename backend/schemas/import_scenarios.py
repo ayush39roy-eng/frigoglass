@@ -110,6 +110,10 @@ class SavedScenarioOut(SavedScenarioSummary):
 
 class SavedScenarioListOut(BaseModel):
     items: list[SavedScenarioSummary]
+    #: P41-R01 (M-1): visible scenarios matching the filter, all pages.
+    total: int
+    limit: int
+    offset: int
 
 
 # --- D. export ------------------------------------------------------------------------------

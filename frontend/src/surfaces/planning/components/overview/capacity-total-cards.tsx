@@ -3,9 +3,10 @@ import { HardHat, Thermometer } from 'lucide-react';
 
 import { formatInteger } from '@/lib/format';
 import { cn } from '@/lib/utils';
+import { usePlanYearLabels } from '@/lib/plan-clock';
 
 import type { CapacityBasis, CapacitySummary } from '../../api/types';
-import { BASIS_LABEL, formatAmount, formatPlain, pick, type CapacityUnit } from '../../lib/figures';
+import { basisLabel, formatAmount, formatPlain, pick, type CapacityUnit } from '../../lib/figures';
 
 /**
  * The two total cards (P19-T04, the client's "TOTAL DESIGN CAPACITY — YTD 2026:
@@ -22,6 +23,7 @@ export function CapacityTotalCards({
   basis: CapacityBasis;
   unit: CapacityUnit;
 }): React.JSX.Element {
+  const { planYear } = usePlanYearLabels();
   const design = summary?.design.total;
   const lab = summary?.lab.total;
   return (
@@ -29,7 +31,7 @@ export function CapacityTotalCards({
       <TotalCard
         tone="primary"
         icon={<HardHat className="size-5" />}
-        title={`Total design capacity — ${BASIS_LABEL[basis]}`}
+        title={`Total design capacity — ${basisLabel(basis, planYear)}`}
         weeks={pick(design?.capacity_weeks, basis)}
         days={pick(design?.capacity_days, basis)}
         unit={unit}
@@ -43,7 +45,7 @@ export function CapacityTotalCards({
       <TotalCard
         tone="success"
         icon={<Thermometer className="size-5" />}
-        title={`Total lab capacity — ${BASIS_LABEL[basis]}`}
+        title={`Total lab capacity — ${basisLabel(basis, planYear)}`}
         weeks={pick(lab?.capacity_weeks, basis)}
         days={pick(lab?.capacity_days, basis)}
         unit={unit}

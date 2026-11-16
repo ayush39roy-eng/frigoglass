@@ -36,6 +36,14 @@ class VipProject(BaseModel):
     progress_pct: int | None
     current_stage: VipCurrentStage | None
     tracking_status: TrackingStatus
+    # --- P42 (ADR 0056, docs/API_CONTRACT_P42.md §6) ---
+    #: R42-1 band label; null with no band.
+    priority_label: str | None = None
+    #: The active run's stored flags; null when not in the run.
+    counts_toward_year: bool | None = None
+    not_scheduled_priority: bool | None = None
+    #: "Not scheduled (P4)" (a pinned P4/Q) or the queued text; null otherwise.
+    outcome_label: str | None = None
 
 
 class VipHub(BaseModel):

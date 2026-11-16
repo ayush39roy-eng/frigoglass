@@ -9,7 +9,7 @@
  * just format what the API already computed.
  */
 
-import { DISPLAY_HORIZON_WEEKS, SPILLOVER_YEAR } from '@/lib/domain-constants';
+import { DISPLAY_HORIZON_WEEKS } from '@/lib/domain-constants';
 import type { CurrencyCode } from '@/types/enums';
 
 const currencyFormatters = new Map<string, Intl.NumberFormat>();
@@ -110,12 +110,12 @@ export function formatPlanWeek(week: number): string {
 
 /**
  * P32-R02: a served week with the spillover year named — `W47` inside the plan
- * year, `W5 '27` for absolute week 57. Used by the Workflow page's per-project
- * waterfall axis and labels. Formatting only.
+ * year, `W5 '27` for absolute week 57 (plan year 2026). Formatting only.
+ * P37: `planYear` is the served `/me.plan_year`; the spillover year is the next one.
  */
-export function formatYearWeek(week: number): string {
+export function formatYearWeek(week: number, planYear: number): string {
   if (week <= DISPLAY_HORIZON_WEEKS) return formatWeek(week);
-  return `W${String(week - DISPLAY_HORIZON_WEEKS)} '${String(SPILLOVER_YEAR % 100).padStart(2, '0')}`;
+  return `W${String(week - DISPLAY_HORIZON_WEEKS)} '${String((planYear + 1) % 100).padStart(2, '0')}`;
 }
 
 /**

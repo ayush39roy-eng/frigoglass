@@ -20,7 +20,7 @@ import {
   useDownload,
   useFetchSavedScenario,
   useRenameSavedScenario,
-  useSavedScenarios,
+  useSavedScenarioLibrary,
 } from '../use-import-library';
 import { FeatureCard } from './feature-card';
 import { useImportToast } from '../toast-store';
@@ -33,13 +33,15 @@ import { useImportToast } from '../toast-store';
  */
 
 export function SavedScenariosLibrary(): React.JSX.Element {
-  const list = useSavedScenarios();
-  const groups = React.useMemo(() => groupBySource(list.data ?? []), [list.data]);
-  const count = list.data?.length ?? 0;
+  const list = useSavedScenarioLibrary();
+  // P41-R01: pages of 50, concatenated in served (newest-first) order.
+  const items = React.useMemo(() => list.data?.pages.flatMap((p) => p.items) ?? [], [list.data]);
+  const groups = React.useMemo(() => groupBySource(items), [items]);
+  const total = list.data?.pages.at(-1)?.total ?? 0;
   return (
     <FeatureCard
       icon={Library}
-      title={`Saved scenarios (${int(count)})`}
+      title={`Saved scenarios (${int(total)})`}
       hint="From every import you can see, grouped by file and import date"
       testId="import-library"
       info={
@@ -57,7 +59,7 @@ export function SavedScenariosLibrary(): React.JSX.Element {
           <Skeleton className="h-16 w-full" />
           <Skeleton className="h-16 w-full" />
         </div>
-      ) : list.isError ? (
+      ) : list.isError && list.data === undefined ? (
         <p role="alert" className="text-xs font-medium text-danger-subtle-fg">
           {libraryErrorMessage(list.error)}
         </p>
@@ -80,6 +82,28 @@ export function SavedScenariosLibrary(): React.JSX.Element {
               </ul>
             </section>
           ))}
+          {list.hasNextPage ? (
+            <div className="flex flex-wrap items-center gap-s2">
+              <Button
+                type="button"
+                size="sm"
+                variant="secondary"
+                disabled={list.isFetchingNextPage}
+                onClick={() => void list.fetchNextPage()}
+              >
+                {list.isFetchingNextPage ? <Spinner className="size-3.5" /> : null}
+                Load more
+              </Button>
+              <span className="text-2xs text-text-muted" data-testid="library-loaded">
+                {`${int(items.length)} of ${int(total)} shown`}
+              </span>
+            </div>
+          ) : null}
+          {list.isFetchNextPageError ? (
+            <p role="alert" className="text-xs font-medium text-danger-subtle-fg">
+              {libraryErrorMessage(list.error)}
+            </p>
+          ) : null}
         </div>
       )}
     </FeatureCard>

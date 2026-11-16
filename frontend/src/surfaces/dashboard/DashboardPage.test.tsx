@@ -76,7 +76,10 @@ vi.mock('@/lib/api/vip', async () => {
 });
 
 import DashboardPage from './DashboardPage';
-import { CARRY_OVER_YEAR } from '@/lib/domain-constants';
+import { TEST_PLAN_YEAR } from '@/test/session';
+
+// P37: year labels come from the served /me.plan_year (test session fixture).
+const CARRY_OVER_YEAR = TEST_PLAN_YEAR - 1;
 
 const pending = { data: undefined, isPending: true, isError: false, error: null, refetch: vi.fn() };
 function ready<T>(data: T) {

@@ -333,7 +333,8 @@ async def get_schedule_run_changes(
 ) -> ScheduleRunChanges:
     """What moved between two runs (ADR 0015 §4, docs/API_CONTRACT_P11.md
     §3, I20): the projects whose stored `projected_end_week`, `within_year`,
-    `left_out` or `blocked` differ, or that exist in only one run.
+    `left_out`, `blocked`, `counts_toward_year` or `not_scheduled_priority`
+    (P42) differ, or that exist in only one run.
 
     404 when either run does not exist; 409 `RUN_NOT_COMPLETED` when
     `run_id` is not `COMPLETED`. Unlike the rest of this router, the rows
@@ -395,9 +396,22 @@ async def trigger_greedy_recalc(
         activate=True,
     )
 
-    left_out = sum(1 for o in schedule_output.project_outcomes if o.left_out)
-    within_year = sum(1 for o in schedule_output.project_outcomes if o.within_year)
-    spillover = sum(1 for o in schedule_output.project_outcomes if o.spillover)
+    # P42 (R42-6, I53): year counts over counting outcomes only; the two
+    # non-counting classes are served as their own counts.
+    counting = [
+        o
+        for o in schedule_output.project_outcomes
+        if o.counts_toward_year and not o.not_scheduled_priority
+    ]
+    left_out = sum(1 for o in counting if o.left_out)
+    within_year = sum(1 for o in counting if o.within_year)
+    spillover = sum(1 for o in counting if o.spillover)
+    not_scheduled = sum(1 for o in schedule_output.project_outcomes if o.not_scheduled_priority)
+    queued = sum(
+        1
+        for o in schedule_output.project_outcomes
+        if not o.counts_toward_year and not o.not_scheduled_priority
+    )
 
     db.add(
         AuditLogEntry(
@@ -414,6 +428,8 @@ async def trigger_greedy_recalc(
                 "left_out_count": left_out,
                 "within_year_count": within_year,
                 "spillover_count": spillover,
+                "queued_count": queued,
+                "not_scheduled_priority_count": not_scheduled,
             },
         )
     )
@@ -426,6 +442,8 @@ async def trigger_greedy_recalc(
         left_out_count=left_out,
         within_year_count=within_year,
         spillover_count=spillover,
+        queued_count=queued,
+        not_scheduled_priority_count=not_scheduled,
     )
 
 

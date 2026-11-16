@@ -691,17 +691,28 @@ def real_seed_dataset() -> None:
     )
     schedulable_statuses = {"In Buyoff", "Under Industrialization", "In Development", "In Queue"}
     num_excluded = sum(1 for p in projects if p.status not in schedulable_statuses)
+    # P42 (ADR 0056 R42-3 / R42-5): non-frozen P4/Q projects are excluded
+    # before the model; queued P3 projects are walked after the solve.
+    num_not_scheduled = sum(
+        1
+        for p in projects
+        if p.status in schedulable_statuses and not p.frozen and p.priority in ("P4", "Q")
+    )
     accounted_for = (
         info.num_solvable_projects
         + info.num_frozen_projects
         + info.num_pre_resolved_left_out
+        + info.num_queued_walked
         + num_excluded
+        + num_not_scheduled
     )
     check(
         f"real_seed_dataset: solvable({info.num_solvable_projects}) + "
         f"frozen({info.num_frozen_projects}) + "
         f"pre_resolved_left_out({info.num_pre_resolved_left_out}) + "
-        f"excluded({num_excluded}) == 46 project total (got {accounted_for})",
+        f"queued_walked({info.num_queued_walked}) + "
+        f"excluded({num_excluded}) + not_scheduled_priority({num_not_scheduled}) "
+        f"== 46 project total (got {accounted_for})",
         accounted_for == 46,
     )
 

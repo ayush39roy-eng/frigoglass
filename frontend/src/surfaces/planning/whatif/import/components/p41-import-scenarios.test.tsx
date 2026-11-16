@@ -46,10 +46,12 @@ function route(url: URL, init: RequestInit): Response {
   if (p === '/whatif/import/scenarios/compare.xlsx') return xlsxFile('compare.xlsx');
   if (p === '/whatif/import/scenarios' && method === 'GET') {
     const sha = url.searchParams.get('source_file_sha256');
-    const items = Object.values(savedById)
+    const limit = Number(url.searchParams.get('limit') ?? '50');
+    const offset = Number(url.searchParams.get('offset') ?? '0');
+    const all = Object.values(savedById)
       .filter((s) => sha === null || s.source_file_sha256 === sha)
       .map(({ request: _r, result: _x, ...summary }) => summary);
-    return json({ items });
+    return json({ items: all.slice(offset, offset + limit), total: all.length, limit, offset });
   }
   if (p === '/whatif/import/scenarios' && method === 'POST') {
     const body = JSON.parse(String(init.body)) as { name: string; note?: string };
@@ -263,7 +265,10 @@ describe('P41 Executive scenario bar', () => {
     // The selector lists this import's saved scenarios (filtered by the file's sha).
     const select = within(bar).getByTestId('scenario-select');
     await within(select).findByRole('option', { name: 'Saved base' });
-    expect(calls.some((c) => c.url.searchParams.get('source_file_sha256') === SHA_A)).toBe(true);
+    // P41-R01: the per-file lookup takes one page of up to 200.
+    const lookup = calls.find((c) => c.url.searchParams.get('source_file_sha256') === SHA_A);
+    expect(lookup?.url.searchParams.get('limit')).toBe('200');
+    expect(lookup?.url.searchParams.get('offset')).toBe('0');
     await user.selectOptions(select, 'saved:saved-1');
     expect(await screen.findByTestId('import-view-banner')).toHaveTextContent(
       'Saved scenario — simulated W40 against plan v14',
@@ -369,5 +374,68 @@ describe('P41 library and compare', () => {
     );
     await waitFor(() => expect(useImportScenarios.getState().scenarios).toEqual([]));
     expect(await within(library).findByTestId('import-library-empty')).toBeInTheDocument();
+  });
+
+  it('P41-R01: the library pages by 50 and "Load more" fetches the next offset until the total is reached', async () => {
+    const user = userEvent.setup();
+    savedById = Object.fromEntries(
+      Array.from({ length: 53 }, (_, i) => {
+        const id = `bulk-${String(i).padStart(2, '0')}`;
+        return [id, p41Saved({ id, name: `Bulk ${String(i)}` })];
+      }),
+    );
+    startAtResults();
+    renderWithProviders(<ImportPlanView />);
+    await user.click(await screen.findByRole('tab', { name: /Compare/ }));
+    const library = await screen.findByTestId('import-library');
+    await waitFor(() => expect(within(library).getAllByTestId('library-card')).toHaveLength(50));
+    expect(library).toHaveTextContent('Saved scenarios (53)');
+    expect(within(library).getByTestId('library-loaded')).toHaveTextContent('50 of 53 shown');
+    const first = calls.find((c) => c.url.pathname === '/whatif/import/scenarios' && !c.url.searchParams.has('source_file_sha256'));
+    expect([first?.url.searchParams.get('limit'), first?.url.searchParams.get('offset')]).toEqual(['50', '0']);
+
+    await user.click(within(library).getByRole('button', { name: 'Load more' }));
+    await waitFor(() => expect(within(library).getAllByTestId('library-card')).toHaveLength(53));
+    expect(
+      calls.some(
+        (c) => c.url.pathname === '/whatif/import/scenarios' && c.url.searchParams.get('offset') === '50' && c.url.searchParams.get('limit') === '50',
+      ),
+    ).toBe(true);
+    expect(within(library).queryByRole('button', { name: 'Load more' })).toBeNull();
+  });
+
+  it('P41-R01: a 429 on the list or on opening a scenario shows the What-if "please wait" wording', async () => {
+    const user = userEvent.setup();
+    savedById = { 'saved-1': p41Saved() };
+    let throttleList = true;
+    override = (url) => {
+      if (url.pathname === '/whatif/import/scenarios' && !url.searchParams.has('source_file_sha256') && throttleList)
+        return new Response(JSON.stringify({ detail: 'slow down', code: 'RATE_LIMITED' }), {
+          status: 429,
+          headers: { 'Content-Type': 'application/json', 'Retry-After': '7' },
+        });
+      if (url.pathname === '/whatif/import/scenarios/saved-1')
+        return new Response(JSON.stringify({ detail: 'slow down', code: 'RATE_LIMITED' }), {
+          status: 429,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      return undefined;
+    };
+    startAtResults();
+    renderWithProviders(<ImportPlanView />);
+    await user.click(await screen.findByRole('tab', { name: /Compare/ }));
+    const library = await screen.findByTestId('import-library');
+    expect(await within(library).findByRole('alert')).toHaveTextContent(
+      'Too many requests in a short time. You can try again in 7 s.',
+    );
+
+    // Opening from the Scenario bar's selector (per-file lookup is not throttled here).
+    throttleList = false;
+    await user.click(screen.getByRole('tab', { name: 'Executive' }));
+    const bar = await idleBar();
+    const select = within(bar).getByTestId('scenario-select');
+    await within(select).findByRole('option', { name: 'Saved base' });
+    await user.selectOptions(select, 'saved:saved-1');
+    expect(await within(bar).findByRole('alert')).toHaveTextContent('Too many requests in a short time. Wait a moment');
   });
 });

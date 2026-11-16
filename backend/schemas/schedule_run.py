@@ -36,9 +36,15 @@ class GreedyRecalcResponse(BaseModel):
 
     schedule_run: ScheduleRunSummary
     project_count: int
+    #: P42 (R42-6, I53): the three year counts cover counting outcomes only
+    #: (`counts_toward_year` true and not `not_scheduled_priority`).
     left_out_count: int
     within_year_count: int
     spillover_count: int
+    #: P42: outcomes with `counts_toward_year` false that are not P4-excluded.
+    queued_count: int
+    #: P42: outcomes with `not_scheduled_priority` true.
+    not_scheduled_priority_count: int
 
 
 class CpSatDispatchRequest(BaseModel):
@@ -113,6 +119,13 @@ class ScheduleRunChangeRow(BaseModel):
     after_left_out: bool
     before_blocked: bool
     after_blocked: bool
+    #: P42 (R42-6, I20): compared too.
+    before_counts_toward_year: bool
+    after_counts_toward_year: bool
+    before_not_scheduled_priority: bool
+    after_not_scheduled_priority: bool
+    #: P42 (R42-1): the live band's label; null with no band.
+    priority_label: str | None
     is_new: bool
     is_removed: bool
 
@@ -121,7 +134,8 @@ class ScheduleRunChanges(BaseModel):
     """`GET /schedule-runs/{run_id}/changes?against={baseline_run_id}`.
 
     `rows` holds only in-scope projects whose compared fields
-    (`projected_end_week`, `within_year`, `left_out`, `blocked`) differ, or
+    (`projected_end_week`, `within_year`, `left_out`, `blocked`, and since
+    P42 `counts_toward_year`, `not_scheduled_priority`) differ, or
     that are present in only one of the runs. They are sorted by
     `|delta_weeks|` descending (null last), then `project_name`.
     `hidden_count` counts the changed projects outside the caller's scope;

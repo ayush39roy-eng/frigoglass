@@ -13,7 +13,7 @@ vi.mock('@tanstack/react-virtual', () => ({
   }),
 }));
 
-import { TimelineUpdatedPanel } from './timeline-updated-panel';
+import { ChangedProjectsList, TimelineUpdatedPanel } from './timeline-updated-panel';
 
 function row(overrides: Partial<ScheduleRunChangeRow> = {}): ScheduleRunChangeRow {
   return {
@@ -37,7 +37,7 @@ function row(overrides: Partial<ScheduleRunChangeRow> = {}): ScheduleRunChangeRo
 }
 
 function changes(rows: ScheduleRunChangeRow[], hidden = 0): ScheduleRunChanges {
-  return { run_id: 'r2', run_version: 8, against_run_id: 'r1', against_run_version: 7, hidden_count: hidden, rows };
+  return { run_id: 'r2', run_version: 8, against_run_id: 'r1', against_run_version: 7, baseline_week: 31, run_week: 31, hidden_count: hidden, rows };
 }
 
 function renderPanel(data: ScheduleRunChanges) {
@@ -109,5 +109,17 @@ describe('TimelineUpdatedPanel', () => {
     renderPanel(changes(Array.from({ length: 12 }, (_, i) => row({ project_id: `y${String(i)}` }))));
     expect(screen.getByTestId('timeline-change-list')).toHaveAttribute('data-virtualized', 'false');
     expect(screen.getAllByTestId('timeline-change-row')).toHaveLength(12);
+  });
+});
+
+describe('ChangedProjectsList week move (P37 R37-4)', () => {
+  it('labels the list when the two runs were solved at different weeks', () => {
+    render(<ChangedProjectsList changes={{ ...changes([]), baseline_week: 42, run_week: 47 }} />);
+    expect(screen.getByTestId('changes-week-move')).toHaveTextContent('includes the move from W42 to W47');
+  });
+
+  it('says nothing extra when the weeks match', () => {
+    render(<ChangedProjectsList changes={changes([])} />);
+    expect(screen.queryByTestId('changes-week-move')).not.toBeInTheDocument();
   });
 });

@@ -1,6 +1,6 @@
 import * as React from 'react';
 
-import { SPILLOVER_YEAR } from '@/lib/domain-constants';
+import { usePlanYearLabels } from '@/lib/plan-clock';
 import { formatPlanWeek } from '@/lib/format';
 import type { WorkflowStepKind } from '@/types/enums';
 
@@ -272,6 +272,7 @@ export function GanttSpilloverMarker({
   variant,
   title,
 }: GanttSpilloverMarkerProps): React.JSX.Element {
+  const years = usePlanYearLabels();
   const edge = scale.totalWidthPx;
   if (variant === 'chevron') {
     const cy = rowHeight / 2;
@@ -311,7 +312,7 @@ export function GanttSpilloverMarker({
         fill="hsl(var(--color-warning-subtle-fg))"
         pointerEvents="none"
       >
-        {`Spillover → ${String(SPILLOVER_YEAR)}`}
+        {`Spillover → ${years.spilloverYear}`}
       </text>
     </g>
   );

@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Clock, History, OctagonAlert, Snowflake } from 'lucide-react';
+import { Clock, History, OctagonAlert, Pin, Snowflake, TimerReset, Waypoints } from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
 import { ScheduleOutcomeBadge } from '@/components/shared/schedule-outcome-badge';
@@ -21,7 +21,25 @@ import type { GanttProjectRow, GanttStepRow } from '../api/types';
  *   ADR 0017); `Stale` ←
  *   `row.schedule_stale` (progress or settings changed since this run, P9).
  * - `n/a` on a step row ← `step.skipped` (ADR 0007).
+ * - P40-T03c (ADR 0054): "Pinned" ← `step.pinned` (the run placed the step on
+ *   its typed weeks); "Manual overlap" ← `step.manual_overlap` /
+ *   `row.manual_overlap` (R40-7, a warning only); "Pin lapsed" ←
+ *   `row.pin_lapsed` (R40-5).
  */
+
+const MANUAL_OVERLAP_TITLE =
+  'Manual overlap: typed weeks start before the work this step waits for is released. A warning only; the plan keeps the typed weeks.';
+const PIN_LAPSED_TITLE =
+  "Pin lapsed: a typed start week had already passed, so the step was placed from the run's week, keeping its length.";
+
+function ManualOverlapBadge({ iconOnly = false }: { iconOnly?: boolean }): React.JSX.Element {
+  return (
+    <Badge tone="warning" title={MANUAL_OVERLAP_TITLE} data-testid="manual-overlap-chip">
+      <Waypoints aria-hidden="true" />
+      {iconOnly ? <span className="sr-only">Manual overlap</span> : 'Manual overlap'}
+    </Badge>
+  );
+}
 
 export function ProjectRowBadges({ project }: { project: GanttProjectRow }): React.JSX.Element {
   return (
@@ -48,6 +66,13 @@ export function ProjectRowBadges({ project }: { project: GanttProjectRow }): Rea
         <Badge tone="danger" title="A stage is on hold — the project stays in the plan, held at its earliest feasible frontier until the hold is lifted">
           <OctagonAlert className="size-3" aria-hidden="true" />
           On Hold
+        </Badge>
+      ) : null}
+      {project.manual_overlap ? <ManualOverlapBadge /> : null}
+      {project.pin_lapsed ? (
+        <Badge tone="warning" title={PIN_LAPSED_TITLE} data-testid="pin-lapsed-chip">
+          <TimerReset aria-hidden="true" />
+          Pin lapsed
         </Badge>
       ) : null}
       {project.schedule_stale ? (
@@ -80,9 +105,22 @@ export function StepRowBadges({ step }: { step: GanttStepRow }): React.JSX.Eleme
       </div>
     );
   }
-  if (!step.eng_conflict && !step.chamber_overlap && step.status !== 'Blocked') return null;
+  if (!step.eng_conflict && !step.chamber_overlap && step.status !== 'Blocked' && !step.pinned && !step.manual_overlap) {
+    return null;
+  }
   return (
     <div className="flex flex-wrap items-center justify-end gap-1">
+      {step.pinned ? (
+        <Badge
+          tone="primary"
+          title="Pinned: the active run placed this step on its typed Start / End weeks"
+          data-testid="pinned-chip"
+        >
+          <Pin aria-hidden="true" />
+          Pinned
+        </Badge>
+      ) : null}
+      {step.manual_overlap ? <ManualOverlapBadge iconOnly /> : null}
       {step.status === 'Blocked' ? (
         <Badge tone="danger" title="Stage is on hold">
           <OctagonAlert className="size-3" aria-hidden="true" />

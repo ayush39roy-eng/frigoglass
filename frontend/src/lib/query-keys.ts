@@ -173,6 +173,8 @@ export const queryKeys = {
     sort?: string | undefined;
     // P32-R04: the Workflow page's per-project step timing (`project_id`).
     projectId?: string | undefined;
+    // P40-T03c: the Timeline also asks for the steps the run did not place.
+    includeUnplaced?: boolean | undefined;
   }) => ['gantt', params ?? null] as const,
 
   // --- capacity ---

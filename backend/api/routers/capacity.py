@@ -67,7 +67,7 @@ from collections import defaultdict
 from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Depends
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -84,6 +84,7 @@ from models.enums import (
     NON_SCHEDULABLE_STATUSES,
     HubName,
     LabRegion,
+    ProjectPriority,
     RoleName,
     WorkflowStepKind,
 )
@@ -119,6 +120,7 @@ from services.capacity_hubs import (
     load_capacity_hub_map,
 )
 from services.capacity_priority import (
+    PRIORITY_BUCKET_LABELS,
     PRIORITY_BUCKETS,
     SCHEDULABLE_STATUSES,
     count_split,
@@ -152,6 +154,11 @@ from services.plan_clock import PlanClock, get_plan_clock
 from services.run_step_effort import weekly_effort_for_rows
 
 router = APIRouter(prefix="/capacity", tags=["capacity"])
+
+#: P42 (ADR 0056 R42-3): bands a non-frozen project is never scheduled in.
+_NOT_SCHEDULED_BANDS: tuple[ProjectPriority, ...] = tuple(
+    ProjectPriority(code) for code in sorted(dc.NOT_SCHEDULED_PRIORITIES)
+)
 
 _read = require_permission(Surface.CAPACITY, Action.READ)
 
@@ -266,6 +273,15 @@ async def hub_load_vs_capacity(
             )
             .join(Hub, Project.hub_id == Hub.id)
             .where(Project.status.not_in(list(NON_SCHEDULABLE_STATUSES)))
+            # P42 (R42-6, I25): a non-frozen P4/Q project is never scheduled,
+            # so it leaves the remaining-demand figures (frozen ones book).
+            .where(
+                or_(
+                    Project.frozen.is_(True),
+                    Project.priority.is_(None),
+                    Project.priority.not_in(_NOT_SCHEDULED_BANDS),
+                )
+            )
         )
     ).all()
     for est_hub_id, est_region, est_d, est_l, cert_required in est_rows:
@@ -425,6 +441,7 @@ async def hub_load_vs_capacity(
         areas=_area_rows(rows),
         totals=_totals(rows),
         lab_regions=_lab_region_rows(rows, chambers_by_region),
+        priority_bucket_labels=dict(PRIORITY_BUCKET_LABELS),
     )
 
 
@@ -631,6 +648,8 @@ async def class_breakdown(
                 deliverable_count=0,
                 left_out_count=0,
                 total_count=0,
+                queued_count=0,
+                not_scheduled_priority_count=0,
                 deliverable_by_priority=PriorityCountSplit(**count_split({})),
                 left_out_by_priority=PriorityCountSplit(**count_split({})),
                 by_hub=[],
@@ -638,7 +657,10 @@ async def class_breakdown(
             for c in category_codes
         ]
         return ClassBreakdown(
-            has_active_schedule_run=False, schedule_run_version=None, rows=empty_rows
+            has_active_schedule_run=False,
+            schedule_run_version=None,
+            rows=empty_rows,
+            priority_bucket_labels=dict(PRIORITY_BUCKET_LABELS),
         )
 
     stmt = (
@@ -647,6 +669,8 @@ async def class_breakdown(
             ScheduleRunProjectOutcome.left_out,
             Project.priority,
             Hub.name,
+            ScheduleRunProjectOutcome.counts_toward_year,
+            ScheduleRunProjectOutcome.not_scheduled_priority,
         )
         .join(Project, ScheduleRunProjectOutcome.project_id == Project.id)
         .join(Hub, Project.hub_id == Hub.id)
@@ -667,11 +691,18 @@ async def class_breakdown(
     by_hub: dict[str, dict[HubName, list[int]]] = defaultdict(
         lambda: defaultdict(lambda: [0, 0])
     )
-    for category, is_left_out, priority, hub_name in result:
+    queued: dict[str, int] = defaultdict(int)
+    not_scheduled: dict[str, int] = defaultdict(int)
+    for category, is_left_out, priority, hub_name, counts, nsp in result:
         if category is None:  # excluded by the query; narrows the type
             continue
         bucket = priority_bucket(priority)
-        if is_left_out:
+        # P42 (R42-6, I53): deliverable / left out hold counting rows only.
+        if nsp:
+            not_scheduled[category] += 1
+        elif not counts:
+            queued[category] += 1
+        elif is_left_out:
             left_out[category] += 1
             left_out_prio[category][bucket] += 1
             by_hub[category][hub_name][1] += 1
@@ -686,6 +717,8 @@ async def class_breakdown(
             deliverable_count=deliverable.get(cat, 0),
             left_out_count=left_out.get(cat, 0),
             total_count=deliverable.get(cat, 0) + left_out.get(cat, 0),
+            queued_count=queued.get(cat, 0),
+            not_scheduled_priority_count=not_scheduled.get(cat, 0),
             deliverable_by_priority=PriorityCountSplit(**count_split(deliverable_prio[cat])),
             left_out_by_priority=PriorityCountSplit(**count_split(left_out_prio[cat])),
             by_hub=[
@@ -696,7 +729,10 @@ async def class_breakdown(
         for cat in category_codes
     ]
     return ClassBreakdown(
-        has_active_schedule_run=True, schedule_run_version=active_run.version, rows=rows
+        has_active_schedule_run=True,
+        schedule_run_version=active_run.version,
+        rows=rows,
+        priority_bucket_labels=dict(PRIORITY_BUCKET_LABELS),
     )
 
 

@@ -44,6 +44,8 @@ class PriorityLoadSplit(BaseModel):
     """P13 (docs/API_CONTRACT_P13.md §6): a load split by priority bucket, in
     weeks, 2 dp. `P1`..`P4` are the project's priority band; `Queue` is band
     `Q` or a null priority (`services.capacity_priority.priority_bucket`).
+    P42 (R42-1): the key stays `Queue`; its display label is "Q"
+    (`priority_bucket_labels`).
     The five values sum to the load they split (to 2 dp)."""
 
     P1: float
@@ -335,6 +337,9 @@ class HubCapacitySummary(BaseModel):
     totals: CapacityTotals
     #: P19-T03 (§1): one row per lab region of `rows`, Greece, India, Romania.
     lab_regions: list[LabRegionCapacityRow]
+    #: P42 (R42-1): the display label of each `*_by_priority` key; the key
+    #: `Queue` (band Q or none) is displayed "Q".
+    priority_bucket_labels: dict[str, str]
 
 
 class ClassBreakdownHubRow(BaseModel):
@@ -370,12 +375,22 @@ class ClassBreakdownRow(BaseModel):
     left_out_by_priority: PriorityCountSplit
     #: Per hub; Σ deliverable = `deliverable_count`, Σ left_out = `left_out_count`.
     by_hub: list[ClassBreakdownHubRow]
+    # --- P42 (ADR 0056 R42-6, I53, docs/API_CONTRACT_P42.md §5) -------------
+    #: Schedulable projects of the category whose active-run outcome is
+    #: QUEUED (`counts_toward_year` false, not P4-excluded). In neither
+    #: column above, nor in `total_count`, the splits or `by_hub`.
+    queued_count: int
+    #: ... whose outcome is NOT_SCHEDULED_PRIORITY. Same exclusion.
+    not_scheduled_priority_count: int
 
 
 class ClassBreakdown(BaseModel):
     has_active_schedule_run: bool
     schedule_run_version: int | None
     rows: list[ClassBreakdownRow]
+    #: P42 (R42-1): the display label of each priority-split key; the key
+    #: `Queue` (band Q or none) is displayed "Q".
+    priority_bucket_labels: dict[str, str]
 
 
 class EngineerWeekLoad(BaseModel):

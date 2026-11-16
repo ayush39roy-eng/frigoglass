@@ -244,6 +244,18 @@ class ScheduleRunProjectOutcome(Base):
     pin_lapsed: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=False, server_default="false"
     )
+    #: P42 (ADR 0056 R42-4, I50): R42-4 evaluated by the scheduler on the run
+    #: input. False for a queued P3 (In Queue) and for every P4/Q project in a
+    #: schedulable status. Every within-year / spillover / left-out KPI counts
+    #: only rows where this is true (R42-6, I53). Served from this row only.
+    counts_toward_year: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True, server_default="true"
+    )
+    #: P42 (R42-3, I49): a non-frozen P4/Q project in a schedulable status,
+    #: never scheduled ("Not scheduled (P4)").
+    not_scheduled_priority: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false"
+    )
 
     schedule_run: Mapped[ScheduleRun] = relationship(back_populates="project_outcomes")
     project: Mapped[Project] = relationship(back_populates="schedule_run_outcomes")

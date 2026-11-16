@@ -350,6 +350,20 @@ class PriorityPreviewMoved(BaseModel):
     within_year_after: bool | None
     left_out_before: bool | None
     left_out_after: bool | None
+    # --- P42 (ADR 0056 R42-8, docs/API_CONTRACT_P42.md §7) ---
+    #: The stored / previewed flags on each side; null with no outcome row.
+    counts_toward_year_before: bool | None = None
+    counts_toward_year_after: bool | None = None
+    not_scheduled_priority_before: bool | None = None
+    not_scheduled_priority_after: bool | None = None
+    #: R42-8: `leaves_plan` when the move makes the project not scheduled
+    #: (into P4/Q); `joins_queue` when it leaves P4/Q but stays non-counting
+    #: (In Queue, P4 → P3); else null. A `leaves_plan` move is never counted as
+    #: "drops out of the year".
+    effect: Literal["leaves_plan", "joins_queue"] | None = None
+    #: The R42-8 copy for `effect`: "leaves the plan" / "joins the queue —
+    #: not counted this year"; null when `effect` is null.
+    effect_label: str | None = None
 
 
 class PriorityPreviewSummary(BaseModel):
@@ -361,7 +375,7 @@ class PriorityPreviewSummary(BaseModel):
     delayed: int
     #: `end_week_after < end_week_before` (both set).
     earlier: int
-    #: within year before, not after.
+    #: within year before, not after (P42: and counting after).
     pushed_out_of_year: int
     #: not within year before, within after.
     pulled_into_year: int
@@ -384,6 +398,13 @@ class PriorityPreviewChange(BaseModel):
     left_out_after: bool
     blocked_before: bool
     blocked_after: bool
+    #: P42 (R42-6, I20): the two compared flags; a side with no row reads false.
+    counts_toward_year_before: bool = True
+    counts_toward_year_after: bool = True
+    not_scheduled_priority_before: bool = False
+    not_scheduled_priority_after: bool = False
+    #: P42 (R42-1): the band label of `priority`; null with no band.
+    priority_label: str | None = None
 
 
 class PriorityPreviewResponse(BaseModel):

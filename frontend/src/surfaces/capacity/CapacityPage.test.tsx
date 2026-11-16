@@ -47,6 +47,7 @@ const classBreakdown: ClassBreakdown = {
 const engUtil: EngineerUtilizationResponse = {
   week_range: [1, 4],
   current_week: 2,
+  run_week: 2,
   engineers: [
     {
       id: 'e1', name: 'Priya N', hub: 'R&D-Greece', role: 'Designer', counts_in_capacity: true, total_booked: 3.5, total_capacity: 4, utilization_pct: 87.5,

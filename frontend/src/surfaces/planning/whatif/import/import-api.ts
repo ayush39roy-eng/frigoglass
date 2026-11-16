@@ -29,7 +29,7 @@ import type {
   ImportSimulateRequest,
   ImportSimulateResponse,
   SavedScenario,
-  SavedScenarioSummary,
+  SavedScenarioPage,
   SaveScenarioBody,
 } from './import-types';
 
@@ -89,10 +89,20 @@ export async function resetImportFormat(version: number): Promise<ImportFormat> 
   return checked(importFormatSchema, await apiSend<unknown>('POST', path, { version }), path);
 }
 
-/** `GET /whatif/import/scenarios[?source_file_sha256=]`, newest first, as served. */
-export async function listSavedScenarios(sha: string | undefined, ctx: FetchCtx = {}): Promise<SavedScenarioSummary[]> {
-  const raw = await apiGet<unknown>(SCENARIOS_PATH, { ...ctx, query: { source_file_sha256: sha } });
-  return checked(savedScenarioListSchema, raw, SCENARIOS_PATH).items;
+/** Page size of the library (P41-R01 default) and of the per-file lookup (the cap). */
+export const SCENARIO_PAGE = 50;
+export const SCENARIO_PAGE_MAX = 200;
+
+/** `GET /whatif/import/scenarios[?source_file_sha256=]&limit=&offset=`: one page, newest first, as served. */
+export async function listSavedScenarios(
+  page: { sha?: string | undefined; limit: number; offset: number },
+  ctx: FetchCtx = {},
+): Promise<SavedScenarioPage> {
+  const raw = await apiGet<unknown>(SCENARIOS_PATH, {
+    ...ctx,
+    query: { source_file_sha256: page.sha, limit: page.limit, offset: page.offset },
+  });
+  return checked(savedScenarioListSchema, raw, SCENARIOS_PATH);
 }
 
 /** `GET /whatif/import/scenarios/{id}`: the frozen request + response. */

@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { ProjectFilterRow } from '@/surfaces/dashboard/api/types';
 import { P13_ROW_DEFAULTS } from '@/surfaces/dashboard/test-fixtures';
+import { TEST_PLAN_YEAR as Y } from '@/test/session';
 
 import { columnPrefsKey, readColumnPrefs, sanitizeColumnPrefs, writeColumnPrefs } from './column-prefs';
 import { dateInputToPlanWeek, isoWeekOf, planWeekToDateInput } from './plan-week-date';
@@ -30,33 +31,33 @@ function row(id: string, over: Partial<ProjectFilterRow> = {}): ProjectFilterRow
 }
 
 describe('plan week ↔ date (ADR 0035 §11 rule)', () => {
-  it('maps 2026 ISO weeks to W1–W52 and shows the Monday', () => {
-    expect(planWeekToDateInput(1)).toBe('2025-12-29'); // ISO 2026-W01 starts Mon 29 Dec 2025
-    expect(planWeekToDateInput(10)).toBe('2026-03-02');
-    expect(dateInputToPlanWeek('2026-03-02')).toBe(10);
-    expect(dateInputToPlanWeek('2026-03-08')).toBe(10); // Sunday of the same week
-    expect(dateInputToPlanWeek('2025-12-29')).toBe(1);
+  it('maps the served plan year (2026) ISO weeks to W1–W52 and shows the Monday', () => {
+    expect(planWeekToDateInput(1, Y)).toBe('2025-12-29'); // ISO 2026-W01 starts Mon 29 Dec 2025
+    expect(planWeekToDateInput(10, Y)).toBe('2026-03-02');
+    expect(dateInputToPlanWeek('2026-03-02', Y)).toBe(10);
+    expect(dateInputToPlanWeek('2026-03-08', Y)).toBe(10); // Sunday of the same week
+    expect(dateInputToPlanWeek('2025-12-29', Y)).toBe(1);
   });
 
   it('folds ISO week 53 into W52 and continues 2027 as W53+', () => {
     expect(isoWeekOf(new Date(Date.UTC(2026, 11, 31)))).toEqual({ year: 2026, week: 53 });
-    expect(dateInputToPlanWeek('2026-12-31')).toBe(52);
-    expect(dateInputToPlanWeek('2027-01-04')).toBe(53); // ISO 2027-W01
-    expect(planWeekToDateInput(53)).toBe('2027-01-04');
-    expect(dateInputToPlanWeek(planWeekToDateInput(78))).toBe(78);
+    expect(dateInputToPlanWeek('2026-12-31', Y)).toBe(52);
+    expect(dateInputToPlanWeek('2027-01-04', Y)).toBe(53); // ISO 2027-W01
+    expect(planWeekToDateInput(53, Y)).toBe('2027-01-04');
+    expect(dateInputToPlanWeek(planWeekToDateInput(78, Y), Y)).toBe(78);
   });
 
   it('round-trips every plan week 1..78', () => {
-    for (let w = 1; w <= 78; w += 1) expect(dateInputToPlanWeek(planWeekToDateInput(w))).toBe(w);
+    for (let w = 1; w <= 78; w += 1) expect(dateInputToPlanWeek(planWeekToDateInput(w, Y), Y)).toBe(w);
   });
 
   it('a date with no plan week is undefined; empty clears', () => {
-    expect(dateInputToPlanWeek('2025-12-01')).toBeUndefined();
-    expect(dateInputToPlanWeek('2027-12-31')).toBeUndefined();
-    expect(dateInputToPlanWeek('2026-02-30')).toBeUndefined();
-    expect(dateInputToPlanWeek('')).toBeNull();
-    expect(planWeekToDateInput(null)).toBe('');
-    expect(planWeekToDateInput(79)).toBe('');
+    expect(dateInputToPlanWeek('2025-12-01', Y)).toBeUndefined();
+    expect(dateInputToPlanWeek('2027-12-31', Y)).toBeUndefined();
+    expect(dateInputToPlanWeek('2026-02-30', Y)).toBeUndefined();
+    expect(dateInputToPlanWeek('', Y)).toBeNull();
+    expect(planWeekToDateInput(null, Y)).toBe('');
+    expect(planWeekToDateInput(79, Y)).toBe('');
   });
 });
 

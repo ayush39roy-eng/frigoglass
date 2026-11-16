@@ -165,6 +165,7 @@ def capacity_hub_name(hub: str) -> str:
 
     return HUB_CAPACITY_HUB.get(hub, hub)
 
+
 #: Which workflow a hub's projects follow (docs/DOMAIN_RULES.md: "A project's
 #: workflow is a function of its hub (`Hub.is_oem`)").
 WORKFLOW_ID_FOR_OEM_HUB: Final[str] = "OEM"
@@ -203,6 +204,48 @@ SCHEDULABLE_STATUS_ORDER: Final[Mapping[str, int]] = {
     "In Development": 2,
     "In Queue": 3,
 }
+
+# --- Priority band meaning (docs/DOMAIN_RULES.md "Priority band meaning",
+#     ADR 0056 as ruled at P42-T01, R42-1..R42-4) ---
+
+#: R42-1: the display label of each band. Score bands and the P1 capacity
+#: fill are unchanged. Q is displayed as "Q" on surfaces; this is its label.
+PRIORITY_LABELS: Final[Mapping[str, str]] = {
+    "P1": "Must do this year",
+    "P2": "Good to have this year",
+    "P3": "In queue",
+    "P4": "Miscellaneous",
+    "Q": "Unprioritised",
+}
+
+#: R42-3: a non-frozen project in one of these bands, in a schedulable
+#: status, is never scheduled (outcome `not_scheduled_priority`). A frozen
+#: one books its locked capacity (R42-2). VIP does not override this.
+NOT_SCHEDULED_PRIORITIES: Final[frozenset[str]] = frozenset({"P4", "Q"})
+
+#: R42-4: the status of a P3 project that is "queued" (spare capacity only,
+#: never counted toward the year).
+QUEUED_STATUS: Final[str] = "In Queue"
+
+
+def counts_toward_year(priority: str | None, status: str) -> bool:
+    """R42-4, exact definition (frozen does not change it)::
+
+        counts_toward_year(p) = NOT ( p.status ∈ SCHEDULABLE_STATUS_ORDER
+                                      AND ( p.priority ∈ {P4, Q}
+                                            OR (p.priority = P3 AND p.status = "In Queue") ) )
+
+    A status-excluded project (Commercialized / On Hold / Cancelled / Draft)
+    is True. Pure; the scheduler evaluates it on the run input and stores
+    the result on the outcome row; no surface re-derives it from the live
+    project (R42-4, I50)."""
+
+    if status not in SCHEDULABLE_STATUS_ORDER:
+        return True
+    if priority in NOT_SCHEDULED_PRIORITIES:
+        return False
+    return not (priority == "P3" and status == QUEUED_STATUS)
+
 
 #: P33-T07 (ADR 0047 §4): the SEED DEFAULT only — the seven codes, in rank
 #: order 1..7, that migration `p33a_categories` seeds into the `categories`

@@ -300,7 +300,12 @@ async def generate_schedule_change_notifications(
             # docstring.
             continue
 
-        if not prev.left_out and outcome.left_out:
+        if not outcome.counts_toward_year:
+            # P42 (ADR 0056 R42-6): a non-counting outcome (queued P3, or a
+            # frozen P4/Q) raises no LEFT_OUT / SPILLOVER regression event;
+            # the year target never included it. A conflict is still real.
+            pass
+        elif not prev.left_out and outcome.left_out:
             events.append((project_id, NotificationReason.PROJECT_LEFT_OUT, None, None, False))
         elif not outcome.left_out:
             end_week_moved = (

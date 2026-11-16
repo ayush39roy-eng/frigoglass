@@ -49,6 +49,7 @@ from scheduling.whatif import (
 from tests.scheduling._whatif_fixtures import (
     CURRENT_WEEK,
     ENGINEER_NAME_MARKER,
+    counting_portfolio_baseline,
     portfolio_baseline,
     tiny_baseline,
 )
@@ -513,7 +514,9 @@ def test_simulation_matches_the_real_scheduler():
 
 
 def test_diff_lists_newly_slipping_existing_projects():
-    base = portfolio_baseline()
+    # P42 (R42-3 / R42-4): the plain portfolio's slips were P3-queued / P4 / Q
+    # projects, which no longer count; the counting variant keeps the case.
+    base = counting_portfolio_baseline()
     sc = Scenario(add_projects=(AddProject("R&D-Greece", "B", count=8, priority="P1"),))
     res = simulate(base, sc)
     assert res.diff.newly_slipping, "8 P1 projects must push existing Greece work out"
@@ -539,7 +542,12 @@ def test_outcome_classes_and_counts():
         "blocked",
         "excluded",
         "data_error",
+        # P42 (ADR 0056 R42-6): the portfolio holds P4 / Q and In Queue P3.
+        "not_scheduled_priority",
+        "queued",
     }
+    assert res.outcome_counts_after["not_scheduled_priority"] > 0
+    assert res.outcome_counts_after["queued"] > 0
 
 
 def test_utilization_rows_follow_the_booked_rule():
@@ -609,7 +617,9 @@ def test_no_leader_hub_leaves_new_projects_out():
     res = simulate(
         base,
         Scenario(
-            add_projects=(AddProject("PD-Romania", "C"),),
+            # P42 (R42-4): P2, so the new project counts (default P3 In Queue
+            # is queued).
+            add_projects=(AddProject("PD-Romania", "C", priority="P2"),),
         ),
     )
     new = [p for p in res.projects if p.is_new]
@@ -618,7 +628,8 @@ def test_no_leader_hub_leaves_new_projects_out():
 
 def test_added_project_in_empty_world_finishes_per_lead_time():
     base = tiny_baseline(engineers=1)
-    res = simulate(base, Scenario(add_projects=(AddProject("R&D-Greece", "C"),)))
+    # P42 (R42-4): P2, so the new project counts (default P3 In Queue is queued).
+    res = simulate(base, Scenario(add_projects=(AddProject("R&D-Greece", "C", priority="P2"),)))
     p = next(p for p in res.projects if p.is_new)
     # C: A1 D1 E2 H1 J1 K1 N1 (serial) from W31 -> 31 + 8 - 1 = 38
     assert p.unconstrained_end_week == 38
@@ -677,8 +688,11 @@ def test_empty_scenario_meets_both_targets_trivially():
 
 @pytest.mark.parametrize("target", ["all_new_within_year", "no_existing_slips"])
 def test_solver_finds_a_verified_minimum(target):
-    base = portfolio_baseline()
-    sc = Scenario(add_projects=(AddProject("R&D-Greece", "B", count=8, priority="P2"),))
+    # P42 (R42-3 / R42-4): on the plain portfolio 8 added P2 projects only push
+    # non-counting work, so `no_existing_slips` needs no addition; the counting
+    # variant and P1 additions keep a real minimum for both targets.
+    base = counting_portfolio_baseline()
+    sc = Scenario(add_projects=(AddProject("R&D-Greece", "B", count=8, priority="P1"),))
     r = solve_minimum_additions(base, sc, target)
     assert r.met, r.workings
     assert not r.capped
@@ -1052,7 +1066,9 @@ def test_regression_cheaper_point_on_the_zero_chamber_axis_is_found():
     with none only 4. A corner-first search proved 5 'exact'; the true minimum is 4
     designers and no chamber (found by brute force over the grid)."""
 
-    base = portfolio_baseline(4)
+    # P42 (R42-3 / R42-4): the counting variant keeps the pre-P42 grid (the
+    # plain portfolio's minimum moved to 6 once P4 / Q / queued stopped counting).
+    base = counting_portfolio_baseline(4)
     sc = Scenario(add_projects=(AddProject("R&D-India", "B", count=30, priority="P1"),))
     r = solve_minimum_additions(base, sc, "no_existing_slips")
     brute = _grid_minimum(base, sc, "R&D-India", "India", "no_existing_slips")

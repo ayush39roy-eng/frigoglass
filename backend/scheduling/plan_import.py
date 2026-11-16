@@ -48,7 +48,13 @@ from fractions import Fraction
 
 import domain_constants as dc
 from scheduling import hubs as hub_names
-from scheduling.greedy import _sort_key, category_maps_for, prepare_run, run_greedy_sgs
+from scheduling.greedy import (
+    _sort_key,
+    category_maps_for,
+    is_not_scheduled_priority,
+    prepare_run,
+    run_greedy_sgs,
+)
 from scheduling.types import (
     EngineerInput,
     ProjectInput,
@@ -59,6 +65,7 @@ from scheduling.types import (
     StepTimingInput,
 )
 from scheduling.whatif import (
+    OUTCOME_CLASSES,
     WhatIfBaseline,
     _booking,
     _Budget,
@@ -222,6 +229,9 @@ class PlanImportProject:
     no_chamber_step_id: str | None
     data_error: str | None
     steps: tuple[PlanImportStep, ...]  # all 14, sequence order
+    # ADR 0056 (R42-3 / R42-4): copied from the outcome (I49 / I50).
+    counts_toward_year: bool = True
+    not_scheduled_priority: bool = False
 
 
 @dataclass(frozen=True)
@@ -315,6 +325,11 @@ class PlanImportKpis:
     after_within_plan_year_existing: int | None
     newly_slipping: int
     recovered: int
+    # ADR 0056 (R42-6): served from the same outcomes as their own counts.
+    # `within_plan_year` / `spillover` / `left_out` / `blocked` count only
+    # counting outcomes (the classes are exclusive, `whatif.classify_outcome`).
+    queued: int = 0
+    not_scheduled_priority: int = 0
 
 
 @dataclass(frozen=True)
@@ -459,6 +474,8 @@ def _design_weeks(
 
     if p.status not in dc.SCHEDULABLE_STATUS_ORDER or p.category is None:
         return 0
+    if is_not_scheduled_priority(p):
+        return 0  # ADR 0056 R42-3: never scheduled, so it loads no leader
     wf = workflows.get(p.workflow_id)
     if wf is None or any((p.workflow_id, p.category, s.step_id) not in table for s in wf.steps):
         return 0
@@ -872,7 +889,9 @@ def _edit_plan_project(
             cert=p.certification_testing_required,
             progress_status=progress.get(ed.step_id, STATUS_NOT_STARTED),
             frozen=p.frozen,
-            schedulable=p.status in dc.SCHEDULABLE_STATUS_ORDER,
+            # R42-3: a non-frozen P4/Q project is not scheduled either.
+            schedulable=p.status in dc.SCHEDULABLE_STATUS_ORDER
+            and not is_not_scheduled_priority(p),
             done_before_import=False,
         )
     return dataclasses.replace(p, step_timing=_rows_from_triples(triples))
@@ -915,7 +934,10 @@ def _build_file_project(
             override_weeks=None if t is None else t.duration,
         )
 
-    schedulable = fp.status in dc.SCHEDULABLE_STATUS_ORDER
+    # R42-3: a file row is never frozen, so a P4/Q row is never scheduled.
+    schedulable = (
+        fp.status in dc.SCHEDULABLE_STATUS_ORDER and fp.priority not in dc.NOT_SCHEDULED_PRIORITIES
+    )
     in_progress: str | None = None
     if schedulable and fp.status in IN_PROGRESS_ON_IMPORT:
         in_progress = next((s for s in wf.walk_order if not skipped(s)), None)
@@ -1295,6 +1317,8 @@ def _project_row(
         no_chamber_step_id=o.no_chamber_step_id,
         data_error=o.data_error,
         steps=_steps(p, o, plan, wf, frozenset() if meta is None else meta.done_before),
+        counts_toward_year=o.counts_toward_year,
+        not_scheduled_priority=o.not_scheduled_priority,
     )
 
 
@@ -1327,6 +1351,26 @@ def _project_issues(
     if row.outcome == "data_error":
         out.append(
             PlanImportIssue(ref, "error", "DATA_ERROR", "The project could not be scheduled.")
+        )
+    if row.not_scheduled_priority:
+        # ADR 0056 R42-3: display "Not scheduled (P4)".
+        out.append(
+            PlanImportIssue(
+                ref,
+                "info",
+                "NOT_SCHEDULED_PRIORITY",
+                f"Not scheduled ({row.priority}): priority {row.priority} is never scheduled.",
+            )
+        )
+    elif not row.counts_toward_year:
+        # R42-4 / R42-5: queued, spare capacity only, not counted this year.
+        out.append(
+            PlanImportIssue(
+                ref,
+                "info",
+                "QUEUED",
+                "Queued: scheduled with spare capacity only, not counted toward the year.",
+            )
         )
     if row.outcome == "left_out":
         if row.no_leader:
@@ -1361,7 +1405,7 @@ def _project_issues(
             )
         )
     if (
-        row.outcome not in ("excluded", "data_error")
+        row.outcome not in ("excluded", "data_error", "not_scheduled_priority")
         and row.unconstrained_end_week is not None
         and row.unconstrained_end_week > pyew
     ):
@@ -1467,6 +1511,8 @@ def _assemble(
                 and b.left_out == o.left_out
                 and b.blocked == o.blocked
                 and b.excluded == o.excluded
+                and b.counts_toward_year == o.counts_toward_year
+                and b.not_scheduled_priority == o.not_scheduled_priority
             ):
                 continue
             kind = "moved"
@@ -1487,9 +1533,7 @@ def _assemble(
             {"newly_slipping": slipping, "recovered": recovered, "moved": moved}[kind].append(ch)
 
     # --- KPIs ---------------------------------------------------------------------------
-    counts = {
-        k: 0 for k in ("within_year", "spillover", "left_out", "blocked", "excluded", "data_error")
-    }
+    counts = {k: 0 for k in OUTCOME_CLASSES}
     for o in out.project_outcomes:
         counts[classify_outcome(o)] += 1
     file_pids = [m.project_id for m in metas]
@@ -1523,6 +1567,8 @@ def _assemble(
         ),
         newly_slipping=len(slipping),
         recovered=len(recovered),
+        queued=counts["queued"],
+        not_scheduled_priority=counts["not_scheduled_priority"],
     )
 
     capacity = _capacity(baseline, run_si, out, plans, new_eng_ids, pyew)

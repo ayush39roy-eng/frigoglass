@@ -11,10 +11,11 @@
  * flag, never a client comparison (Invariant I9).
  */
 
-/** 1-indexed absolute week number that "now" falls in. Matches the backend's
- *  `CURRENT_WEEK` default (42 since the 2026-10-13 reseed with the client's real
- *  2026 data). */
-export const CURRENT_WEEK = 42;
+/* P37 (ADR 0052): there is no current-week or plan-year constant. The week
+ * follows the calendar and is served by `GET /me` (`current_week`,
+ * `plan_year`, …); read it through `@/lib/plan-clock` (`usePlanClock`,
+ * `useCurrentWeek`, `usePlanYearLabels`). Test fixtures carry their own week
+ * and year (`src/test/session.ts`). */
 
 /** A project completes "within the year" iff its last step ends (plus delay) by
  *  this week. The per-project verdict is `row.spillover` / `row.left_out` from the
@@ -26,7 +27,7 @@ export const WITHIN_YEAR_WEEK = 52;
  * 2026-10-13: "keep the 52-week horizon only, show till week 52, and projects
  * not done by then show as spillover"). Every axis, label, tooltip and week
  * input in the app is framed on this. Work past W52 is drawn clipped at W52 and
- * labelled "Spillover → {SPILLOVER_YEAR}"; it is never drawn on W53+ columns.
+ * labelled "Spillover → {plan_year + 1}"; it is never drawn on W53+ columns.
  *
  * NOT the scheduler's horizon: the server still searches up to its internal
  * 78-week horizon (`HORIZON_WEEKS` in `backend/scheduling/domain_constants.py`,
@@ -44,14 +45,6 @@ export const DISPLAY_HORIZON_WEEKS = WITHIN_YEAR_WEEK;
  * presents W1–W52.
  */
 export const SCHEDULER_HORIZON_WEEKS = 78;
-
-/** The calendar year the 52-week plan covers, and the year work past W52 spills
- *  into. Display copy only. */
-export const PLAN_YEAR = 2026;
-export const SPILLOVER_YEAR = PLAN_YEAR + 1;
-/** The year whose unfinished projects are carried over INTO the plan year
- *  (Dashboard pipeline "Spillover" composition card, ADR 0030). Label only. */
-export const CARRY_OVER_YEAR = PLAN_YEAR - 1;
 
 /**
  * Prioritization scoring anchors (P9 contract §8; deck slide 4 "Scoring Logic").

@@ -364,7 +364,10 @@ export interface EngineerUtilizationRow {
 /** GET /capacity/engineer-utilization?hub_id=&region= (P15-T01, ADR 0028). */
 export interface EngineerUtilizationResponse {
   week_range: [number, number];
+  /** P37: the calendar week (the "now" column). */
   current_week: number;
+  /** P37: the active run's week the bookings come from; null without a run. */
+  run_week: number | null;
   engineers: EngineerUtilizationRow[];
 }
 

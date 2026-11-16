@@ -39,6 +39,11 @@ class VipBoardProject(BaseModel):
     projected_end_week: int | None
     within_year: bool | None
     health: CardHealth | None
+    # --- P42 (ADR 0056, docs/API_CONTRACT_P42.md §6) ---
+    priority_label: str | None = None
+    counts_toward_year: bool | None = None
+    not_scheduled_priority: bool | None = None
+    outcome_label: str | None = None
 
 
 class VipBoardItem(BaseModel):

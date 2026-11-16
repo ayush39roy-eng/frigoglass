@@ -125,6 +125,7 @@ from services.hub_scope import (
     needs_own_assignments,
     project_row_scope,
 )
+from services.outcome_buckets import outcome_bucket, outcome_label, priority_label
 from services.plan_clock import PlanClock, get_plan_clock
 from services.project_cards import build_project_cards
 from services.project_effort import (
@@ -682,6 +683,11 @@ async def get_gantt(
                 total_weeks=total_weeks,
                 pin_lapsed=bool(outcome.pin_lapsed) if outcome else False,
                 manual_overlap=bool(outcome.manual_overlap) if outcome else False,
+                priority_label=priority_label(project.priority),
+                counts_toward_year=outcome.counts_toward_year if outcome else True,
+                not_scheduled_priority=outcome.not_scheduled_priority if outcome else False,
+                outcome=outcome_bucket(outcome),
+                outcome_label=outcome_label(outcome, projected),
                 steps=step_rows,
             )
         )

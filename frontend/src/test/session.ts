@@ -31,6 +31,11 @@ export function permissionsFrom(
   ) as Record<SurfaceKey, SurfacePermission>;
 }
 
+/** P37: the week and year every test session serves (the backend suites pin
+ *  31). The app itself has no week or year constant; these are fixtures. */
+export const TEST_CURRENT_WEEK = 31;
+export const TEST_PLAN_YEAR = 2026;
+
 export function makeMe(overrides: Partial<MeResponse> = {}): MeResponse {
   return {
     user_id: 'user-super',
@@ -44,8 +49,15 @@ export function makeMe(overrides: Partial<MeResponse> = {}): MeResponse {
     dev_mode: false,
     is_delegate_manager: false,
     // P13-T15: served planning week (tests pin 31, like the backend suites).
-    current_week: 31,
-    weeks_left_in_year: 21,
+    current_week: TEST_CURRENT_WEEK,
+    weeks_left_in_year: 52 - TEST_CURRENT_WEEK,
+    // P37 (API_CONTRACT_P37 §1): the served plan clock. Monday of 2026-W31.
+    as_of_date: '2026-07-27',
+    plan_year: TEST_PLAN_YEAR,
+    plan_year_closed: false,
+    week_source: 'pinned',
+    week_ends_at: '2026-08-03T00:00:00+03:00',
+    plan_week: null,
     ...overrides,
   };
 }

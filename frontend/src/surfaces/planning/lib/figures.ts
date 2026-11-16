@@ -8,10 +8,10 @@ import type { BasisPair, CapacityBasis } from '../api/types';
 
 export type CapacityUnit = 'weeks' | 'days';
 
-export const BASIS_LABEL: Record<CapacityBasis, string> = {
-  remaining: 'YTD 2026',
-  year: '2026 full year',
-};
+/** "YTD 2026" / "2026 full year", from the served plan year (P37: `/me.plan_year`). */
+export function basisLabel(basis: CapacityBasis, planYear: string): string {
+  return basis === 'remaining' ? `YTD ${planYear}` : `${planYear} full year`;
+}
 
 export const MISSING = '—';
 

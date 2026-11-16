@@ -3,6 +3,8 @@ import { CircleCheck, Info } from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
 import { formatPlanWeek } from '@/lib/format';
+import { SimulatedWeekNotice } from '@/components/shared/plan-week-notice';
+import { useCurrentWeek } from '@/lib/plan-clock';
 
 import type { SolveResponse } from '../../api/whatif-types';
 import { SimulateView } from './simulate-view';
@@ -39,8 +41,11 @@ export function SolveView({ data }: { data: SolveResponse }): React.JSX.Element 
   const designers = data.additions.designers;
   const chambers = data.additions.chambers;
   const nothingToAdd = data.additions.total === 0;
+  // R37-3: solved at the request's calendar week (no week on the response).
+  const simulatedWeek = useCurrentWeek();
   return (
     <div className="space-y-s4" data-testid="whatif-solve">
+      <SimulatedWeekNotice simulatedWeek={simulatedWeek} />
       <ScopeNote scope={data.scope} />
 
       {/* Headline: what to add. */}

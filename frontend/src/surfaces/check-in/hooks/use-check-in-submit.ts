@@ -2,6 +2,7 @@ import * as React from 'react';
 import { useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
 
 import { ApiError } from '@/lib/api/client';
+import { useSessionStore } from '@/stores/session';
 import { apiErrorMessage, checkInRateLimitedMessage } from '@/lib/api/error-messages';
 import { checkInEntryErrors, submitCheckIns, type CheckInEntry, type CheckInEntryError } from '@/lib/api/check-ins';
 import { fetchScheduleRunChanges } from '@/lib/api/priority-move';
@@ -64,6 +65,7 @@ export function useCheckInSubmit() {
   const watcher = useFollowUpRunWatcher();
   const { start: startWatcher } = watcher;
   const [flow, setFlow] = React.useState<CheckInFlow>({ kind: 'idle' });
+  const refreshSession = useSessionStore((s) => s.refresh);
 
   const submit = React.useCallback(
     async (entries: CheckInEntry[]): Promise<SubmitResult> => {
@@ -73,6 +75,8 @@ export function useCheckInSubmit() {
         res = await submitCheckIns(entries);
       } catch (err) {
         const entryErrors = checkInEntryErrors(err);
+        // P37 R37-10: the year closed under us; re-read /me so the page shows it.
+        if (err instanceof ApiError && err.code === 'PLAN_YEAR_CLOSED') void refreshSession();
         const message =
           entryErrors.length > 0
             ? null
@@ -131,7 +135,7 @@ export function useCheckInSubmit() {
       });
       return { ok: true, entryErrors: [], message: null };
     },
-    [begin, follow, queryClient, startWatcher],
+    [begin, follow, queryClient, refreshSession, startWatcher],
   );
 
   const close = React.useCallback(() => {

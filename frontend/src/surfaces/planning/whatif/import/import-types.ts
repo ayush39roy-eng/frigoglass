@@ -427,6 +427,14 @@ export interface SavedScenarioSummary {
   kpis: ImportKpis;
 }
 
+/** P41-R01: `GET /whatif/import/scenarios?source_file_sha256=&limit=&offset=`. */
+export interface SavedScenarioPage {
+  items: SavedScenarioSummary[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
 export interface SavedScenario extends SavedScenarioSummary {
   request: ImportSimulateRequest;
   result: ImportSimulateResponse;

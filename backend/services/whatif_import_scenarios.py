@@ -35,9 +35,10 @@ from collections.abc import Sequence
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import ColumnElement, delete, func, or_, select
+from sqlalchemy import ColumnElement, and_, delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+import domain_constants as dc
 from api.errors import HTTP_413, HTTP_422, CodedHTTPException
 from core.principal import Principal
 from models.audit import AuditLogEntry
@@ -66,6 +67,9 @@ MAX_SCENARIOS_PER_USER = 200
 MAX_SCENARIOS_TOTAL = 2000
 MAX_SNAPSHOT_BYTES = 8 * 1024 * 1024
 #: API_CONTRACT_P41 D.
+#: P41-R01 (M-1): list paging.
+DEFAULT_LIST_LIMIT = 50
+MAX_LIST_LIMIT = 200
 MIN_COMPARE = 2
 MAX_COMPARE = 4
 
@@ -96,10 +100,65 @@ def _visible_clause(principal: Principal, scope: Scope) -> ColumnElement[bool] |
 
     if is_admin(principal) or scope.all_hubs:
         return None
+    # P41-R01 (security H-1): an empty `hub_codes` never grants visibility
+    # (`'{}' <@ x` is true for every x); such a row is creator / Admin only.
     return or_(
         WhatifImportScenario.created_by == principal.user_id,
-        WhatifImportScenario.hub_codes.contained_by(sorted(scope.hubs)),
+        and_(
+            func.cardinality(WhatifImportScenario.hub_codes) > 0,
+            WhatifImportScenario.hub_codes.contained_by(sorted(scope.hubs)),
+        ),
     )
+
+
+def snapshot_hub_codes(
+    ctx: WhatIfContext, request: ImportSimulateRequest, result: ImportSimulateResponse
+) -> list[str]:
+    """P41-R01 (security H-1): every hub the stored request and result touch,
+    together with the saver's hub scope (every hub for an all-hubs saver).
+
+    - result: `projects[].hub` / `capacity_hub`, `plan_projects[].hub`,
+      `capacity.hubs[].hub`, `capacity.designers[].hub`, `weekly.hubs` keys,
+      `changes[*].hub`, and each served lab region as hubs (the saver's
+      in-scope hubs of that region; every hub of the region when none, which
+      cannot happen since a region is served only to a scope that has one);
+    - request: `rows[].hub` (ticked or not) and the hubs of every
+      `matched_project_id` and `exclude_plan_project_ids` in the baseline;
+    - the saver's scope.
+
+    A viewer sees the scenario only when their scope covers all of these, so
+    no field of the snapshot holds data their own simulate would not."""
+
+    scope = ctx.scope
+    hubs: set[str] = set(scope.hubs)
+    hubs.update(p.hub for p in result.projects)
+    hubs.update(p.capacity_hub for p in result.projects)
+    hubs.update(p.hub for p in result.plan_projects)
+    cap = result.capacity
+    hubs.update(h.hub for h in cap.hubs)
+    hubs.update(d.hub for d in cap.designers)
+    hubs.update(cap.weekly.hubs)
+    regions = {r.region for r in cap.lab_regions} | set(cap.weekly.lab_regions)
+    for region in regions:
+        members = {h for h, reg in dc.HUB_LAB_REGION.items() if reg == region}
+        mine = members & scope.hubs
+        hubs.update(mine or members)
+    for change in (
+        *result.changes.newly_slipping,
+        *result.changes.recovered,
+        *result.changes.moved,
+    ):
+        hubs.add(change.hub)
+    hubs.update(r.hub for r in request.rows)
+    for pid in (
+        *(r.matched_project_id for r in request.rows if r.matched_project_id),
+        *request.exclude_plan_project_ids,
+    ):
+        hub = ctx.project_hub.get(pid)
+        if hub is not None:
+            hubs.add(hub)
+    hubs.discard("")
+    return sorted(hubs)
 
 
 def _can_edit(principal: Principal, row_created_by: uuid.UUID | None) -> bool:
@@ -155,7 +214,7 @@ async def scenario_out(
 ) -> SavedScenarioOut:
     creator = await _creator_name(db, row.created_by)
     return SavedScenarioOut(
-        **_summary(principal, row, row.result["kpis"], creator),
+        **_summary(principal, row, row.kpis, creator),
         request=ImportSimulateRequest.model_validate(row.request),
         result=ImportSimulateResponse.model_validate(row.result),
     )
@@ -256,9 +315,10 @@ async def save_scenario(
         plan_year_end_week=result.plan_year_end_week,
         simulated_week=result.current_week,
         plan_version=None if active is None else active.version,
-        hub_codes=sorted({p.hub for p in result.projects}),
+        hub_codes=snapshot_hub_codes(ctx, body.request, result),
         request=request_json,
         result=result_json,
+        kpis=result_json["kpis"],
     )
     db.add(row)
     await db.flush()
@@ -274,8 +334,16 @@ async def save_scenario(
 
 
 async def list_scenarios(
-    db: AsyncSession, principal: Principal, source_file_sha256: str | None
-) -> list[SavedScenarioSummary]:
+    db: AsyncSession,
+    principal: Principal,
+    source_file_sha256: str | None,
+    *,
+    limit: int = DEFAULT_LIST_LIMIT,
+    offset: int = 0,
+) -> tuple[list[SavedScenarioSummary], int]:
+    """One page, newest first, and the visible total. Never reads the
+    request / result JSONB (P41-R01 M-1): the KPIs have their own column."""
+
     scope = await resolve_scope(db, principal)
     s = WhatifImportScenario
     stmt = (
@@ -293,17 +361,22 @@ async def list_scenarios(
             s.simulated_week,
             s.plan_version,
             s.hub_codes,
-            s.result["kpis"].label("kpis"),
+            s.kpis,
             User.full_name,
         )
         .outerjoin(User, User.id == s.created_by)
         .order_by(s.created_at.desc(), s.id)
     )
+    count_stmt = select(func.count()).select_from(s)
     clause = _visible_clause(principal, scope)
     if clause is not None:
         stmt = stmt.where(clause)
+        count_stmt = count_stmt.where(clause)
     if source_file_sha256 is not None:
         stmt = stmt.where(s.source_file_sha256 == source_file_sha256)
+        count_stmt = count_stmt.where(s.source_file_sha256 == source_file_sha256)
+    total = (await db.execute(count_stmt)).scalar_one()
+    stmt = stmt.limit(limit).offset(offset)
     out: list[SavedScenarioSummary] = []
     for r in (await db.execute(stmt)).all():
         out.append(
@@ -325,7 +398,7 @@ async def list_scenarios(
                 kpis=ImportKpisOut.model_validate(r.kpis),
             )
         )
-    return out
+    return out, total
 
 
 async def get_scenario(
@@ -420,6 +493,7 @@ def _bucket_rows(
             "within_year": b.within_year,
             "spillover": b.spillover,
             "not_placed": b.not_placed,
+            "queued": b.queued,
         }
         for b in buckets
     ]
@@ -456,13 +530,14 @@ def scenario_sheets(
             breakdown.extend(_bucket_rows(year.label, dimension[3:], getattr(block, dimension)))
     breakdown_headers = [
         "year", "dimension", "key", "total", "within_year", "spillover", "not_placed",
+        "queued",
     ]  # fmt: skip
 
     project_headers = [
         "ref", "source", "name", "hub", "capacity_hub", "category", "priority", "status",
         "outcome", "within_plan_year", "start_week", "finish_week", "before_outcome",
         "before_finish_week", "leader_name", "leader_auto_assigned", "replaces_project_id",
-        "file_row", "data_error",
+        "file_row", "data_error", "counts_toward_year", "not_scheduled_priority",
     ]  # fmt: skip
     projects = [p.model_dump(mode="json", include=set(project_headers)) for p in result.projects]
 
@@ -561,6 +636,34 @@ def compare_sheets(rows: Sequence[WhatifImportScenario]) -> ExportSheets:
     ]
     for label in metas[0]:
         meta_rows.append({"KPI": label, **{c: m[label] for c, m in zip(cols, metas, strict=True)}})
+
+    def served_total(res: ImportSimulateResponse, year: str) -> int | None:
+        block = res.breakdowns.by_year.get(year)
+        return None if block is None else block.total
+
+    # P41-R01 addendum (workflow A4): the Compare tab's "Projects scheduled"
+    # and "Not placed" rows (frontend `COMPARE_KPIS`), served figures only.
+    derived: list[tuple[str, list[int]]] = [
+        (
+            "Projects scheduled",
+            [
+                t if (t := served_total(res, "all")) is not None else res.kpis.projects_total
+                for res in results
+            ],
+        ),
+        (
+            "Not placed",
+            [
+                t if (t := served_total(res, "not_placed")) is not None else res.kpis.left_out
+                for res in results
+            ],
+        ),
+    ]
+    for label, ints in derived:
+        line0: dict[str, Any] = {"KPI": label, **dict(zip(cols, ints, strict=True))}
+        for d, v in zip(deltas, ints[1:], strict=True):
+            line0[d] = v - ints[0]
+        meta_rows.append(line0)
     for name in ImportKpisOut.model_fields:
         values = [getattr(res.kpis, name) for res in results]
         line: dict[str, Any] = {"KPI": name, **dict(zip(cols, values, strict=True))}

@@ -26,6 +26,7 @@ from models.enums import (
     WorkflowStepKind,
     WorkflowStepStatus,
 )
+from schemas.dashboard import ScheduleOutcome
 from schemas.priority import DimensionScore
 from schemas.project import ProjectRead
 
@@ -59,6 +60,15 @@ class WorkspaceSchedule(BaseModel):
     within_year: bool | None
     left_out: bool
     schedule_stale: bool
+    # --- P42 (ADR 0056, docs/API_CONTRACT_P42.md §3): from the active run's
+    # stored outcome; null with no outcome row. The health badge (I13) is
+    # unchanged; `outcome_label` is the display for a non-counting project.
+    counts_toward_year: bool | None = None
+    not_scheduled_priority: bool | None = None
+    outcome: ScheduleOutcome | None = None
+    outcome_label: str | None = None
+    #: R42-1: the project's band label; null with no band.
+    priority_label: str | None = None
 
 
 class WorkspaceStage(BaseModel):

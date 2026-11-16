@@ -32,6 +32,7 @@ from dataclasses import dataclass, field
 from sqlalchemy import ColumnElement, false, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+import domain_constants as dc
 from api.deps import principal_can
 from core.principal import Principal
 from core.rbac import Action, Surface
@@ -188,6 +189,10 @@ def visible_stages(
     """
 
     if project.frozen:
+        return []
+    # P42 (ADR 0056 R42-6): a non-frozen P4/Q project has nothing planned
+    # (never scheduled, R42-3); `due_stages_for` returns nothing for it either.
+    if project.priority is not None and project.priority.value in dc.NOT_SCHEDULED_PRIORITIES:
         return []
     if access.project_wide_write(project):
         return [(s, True) for s in stages]

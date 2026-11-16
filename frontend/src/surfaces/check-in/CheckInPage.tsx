@@ -6,12 +6,14 @@ import { Info, Send, TriangleAlert } from 'lucide-react';
 import { SURFACES } from '@/app/nav';
 import { PageHeader } from '@/components/layout/page-header';
 import { EmptyState } from '@/components/shared/empty-state';
+import { PlanWeekNotice, PlanYearClosedNotice } from '@/components/shared/plan-week-notice';
 import { ErrorState } from '@/components/shared/error-state';
 import { TrackingStatusChip } from '@/components/shared/tracking-status-chip';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { CHECKIN_BATCH_MAX, type CheckInDueProject, type CheckInDueSummary } from '@/lib/api/check-ins';
 import { formatInteger, formatWeek } from '@/lib/format';
+import { usePlanClock } from '@/lib/plan-clock';
 import { useHubSelection } from '@/stores/hub-filter';
 import { CountrySegmented } from '@/components/shared/hub-filter/country-segmented';
 import { HubFilterChip } from '@/components/shared/hub-filter/hub-filter-chip';
@@ -165,6 +167,9 @@ export default function CheckInPage(): React.JSX.Element {
   const hub = useHubSelection();
   const query = useCheckInsDue(hub, true);
   const submitFlow = useCheckInSubmit();
+  // P37 R37-10: while the planning year is closed the server refuses every
+  // check-in (409 PLAN_YEAR_CLOSED); the page says so and offers no submit.
+  const yearClosed = usePlanClock()?.closed ?? false;
   const [drafts, setDrafts] = React.useState<Record<string, CheckInDraft>>({});
   const [showErrors, setShowErrors] = React.useState(false);
   const [serverErrors, setServerErrors] = React.useState<Record<string, string>>({});
@@ -247,6 +252,9 @@ export default function CheckInPage(): React.JSX.Element {
         <ErrorState description="This week's check-in could not be loaded." onRetry={() => void query.refetch()} />
       ) : (
         <>
+          <PlanYearClosedNotice className="mb-3" detail="Check-ins are not accepted until then." />
+          {/* R37-3: the stages are due against the active run, which may be from an earlier week. */}
+          <PlanWeekNotice className="mb-3" />
           <SummaryStrip week={query.data.week} summary={query.data.summary} />
 
           {projects.length === 0 ? (
@@ -300,7 +308,11 @@ export default function CheckInPage(): React.JSX.Element {
                         : `${formatInteger(plan.entries.length)} ${plan.entries.length === 1 ? 'stage' : 'stages'} ready to submit.`}
                     </p>
                   )}
-                  <Button type="submit" disabled={submitFlow.submitting || plan.entries.length === 0} data-testid="check-in-submit">
+                  <Button
+                    type="submit"
+                    disabled={submitFlow.submitting || plan.entries.length === 0 || yearClosed}
+                    data-testid="check-in-submit"
+                  >
                     <Send aria-hidden="true" />
                     {submitFlow.submitting ? 'Submitting…' : 'Submit check-in'}
                   </Button>

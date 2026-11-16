@@ -119,7 +119,18 @@ from services.band_rank import (
 )
 from services.categories import CategoryCatalog, check_category_code, load_catalog
 from services.category_type_filter import any_of, category_type_filter
+from services.engineer_status import (
+    CAUSE_PROJECT_UPDATE,
+    CAUSE_REGISTER_EDIT,
+    CAUSE_REGISTRATION,
+    CLOSED_STATUSES,
+    check_leader_write,
+    lock_engineers,
+    record_leader_change,
+)
 from services.hub_scope import global_hub_filter, hub_scope_filter, is_hub_in_scope
+from services.plan_clock import PlanClock, get_plan_clock
+from services.plan_clock import now as plan_clock_now
 from services.priority_move import (
     AutoRecalcOutcome,
     apply_priority_change,
@@ -421,6 +432,7 @@ async def create_project(
     body: ProjectCreateRequest,
     db: AsyncSession = Depends(get_db),
     current_user: Principal = Depends(_write),
+    clock: PlanClock = Depends(get_plan_clock),
 ) -> Project:
     """Register a project (ADR 0034): it is created `In Queue`, never Draft.
 
@@ -481,6 +493,9 @@ async def create_project(
     # ADR 0050 / R36-8: registration enters the priority band last. The
     # band-rank lock is the first lock of the transaction.
     await lock_band_ranks(db)
+    # P38 (I42, R38-5): the leader row `FOR SHARE`, then 422 `LEADER_INACTIVE`
+    # for an inactive engineer.
+    await check_leader_write(db, None, {"leader_engineer_id": body.leader_engineer_id})
     project = Project(
         **data, id=uuid.uuid4(), status=ProjectStatus.IN_QUEUE, schedule_stale=True
     )
@@ -500,6 +515,17 @@ async def create_project(
     # ADR 0038: every tag of a new project is a not-set -> set transition.
     await apply_tag_prefill(
         db, project, before=[], after=project.scoring_tags, principal=current_user
+    )
+    await db.flush()
+    # P38 (R38-6): the first leader starts a tenure the history can close.
+    await record_leader_change(
+        db,
+        project_id=project.id,
+        old_leader_id=None,
+        new_leader_id=project.leader_engineer_id,
+        cause=CAUSE_REGISTRATION,
+        actor_user_id=current_user.user_id,
+        clock=clock,
     )
 
     db.add(
@@ -525,6 +551,7 @@ async def update_project(
     response: Response,
     db: AsyncSession = Depends(get_db),
     current_user: Principal = Depends(get_current_principal),
+    clock: PlanClock = Depends(get_plan_clock),
 ) -> Project:
     """Partial update. See `schemas.project.ProjectUpdateRequest`'s docstring:
     `frozen` is not settable here (use the Gantt freeze toggle), and `status`
@@ -559,7 +586,7 @@ async def update_project(
         # and re-authorised under it.
         project = await _lock_bands_and_reload(db, project, current_user)
     staged = await stage_project_update(
-        db, project, body.model_dump(exclude_unset=True), current_user
+        db, project, body.model_dump(exclude_unset=True), current_user, clock=clock
     )
     if staged.priority_moves:
         # Commits everything above together with the move.
@@ -591,6 +618,8 @@ async def stage_project_update(
     current_user: Principal,
     *,
     band_rank_plan: Mapping[uuid.UUID, int | None] | None = None,
+    clock: PlanClock | None = None,
+    leader_cause: str = CAUSE_PROJECT_UPDATE,
 ) -> StagedProjectUpdate:
     """The single PATCH's validation and writes, shared with the register's
     batch (`POST /projects/register-edits`, P35). The caller has already
@@ -606,7 +635,13 @@ async def stage_project_update(
     (`services.band_rank.reconcile_band_rank`); the P35 batch instead passes
     `band_rank_plan` (`plan_batch_band_ranks`, each band renumbered once) and
     the planned rank is set with the status. The caller holds the band-rank
-    lock."""
+    lock.
+
+    P38 (ADR 0053, I42 / R38-4 / R38-6): a written leader must exist and be
+    active, and a reopen (out of Commercialized / Cancelled) needs an active
+    leader or an explicit one in the same write (422 `LEADER_INACTIVE`); the
+    leader row is locked `FOR SHARE` (R38-5). Every leader change writes one
+    `project_leader_history` row (`leader_cause`), at `clock`'s week."""
 
     status_before = project.status
     if updates.get("status") == ProjectStatus.DRAFT:
@@ -671,6 +706,9 @@ async def stage_project_update(
     if actual_end_error is not None:
         raise actual_end_error
 
+    # P38 (I42, R38-4): before anything is written.
+    await check_leader_write(db, project, updates)
+
     target_category = updates["category"] if "category" in updates else project.category
     mismatch = _category_mismatch(target_hub, target_category, await load_catalog(db))
     if mismatch is not None:
@@ -718,6 +756,7 @@ async def stage_project_update(
         for name, value in updates.items()
         if name in SCHEDULE_INPUT_FIELDS
     )
+    leader_before = project.leader_engineer_id
     if (
         "leader_engineer_id" in updates
         and updates["leader_engineer_id"] != project.leader_engineer_id
@@ -749,6 +788,17 @@ async def stage_project_update(
             db, project, status_before=status_before, priority_before=project.priority
         )
     await db.flush()
+    if project.leader_engineer_id != leader_before:
+        # P38 (R38-6): every leader change, on every path.
+        await record_leader_change(
+            db,
+            project_id=project.id,
+            old_leader_id=leader_before,
+            new_leader_id=project.leader_engineer_id,
+            cause=leader_cause,
+            actor_user_id=current_user.user_id,
+            clock=clock if clock is not None else plan_clock_now(),
+        )
     template_copy: list[CopyChanges] = []
     if "hub_id" in updates or "category" in updates:
         try:
@@ -905,6 +955,7 @@ async def save_register_edits(
     body: RegisterEditsRequest,
     db: AsyncSession = Depends(get_db),
     current_user: Principal = Depends(get_current_principal),
+    clock: PlanClock = Depends(get_plan_clock),
 ) -> RegisterEditsResponse:
     """P35 (OQ #83: recalculate on Save): the Projects register's Edit-mode
     Save. One transaction, all-or-nothing:
@@ -986,6 +1037,30 @@ async def save_register_edits(
                 )
             ).scalars(),
         )
+    # P38 (R38-5): the engineer rows a leader write names (a written leader,
+    # or the stored leader of a project whose status is edited, which may be
+    # a reopen) are locked `FOR SHARE` before the project rows, so this batch
+    # and a deactivation lock in the same order.
+    leader_ids = {
+        e.leader_engineer_id
+        for e in edits
+        if "leader_engineer_id" in e.model_fields_set and e.leader_engineer_id is not None
+    }
+    status_edit_ids = [e.project_id for e in edits if "status" in e.model_fields_set]
+    if status_edit_ids:
+        leader_ids.update(
+            lid
+            for lid in (
+                await db.execute(
+                    select(Project.leader_engineer_id).where(
+                        Project.id.in_(status_edit_ids),
+                        Project.status.in_(list(CLOSED_STATUSES)),
+                    )
+                )
+            ).scalars()
+            if lid is not None
+        )
+    await lock_engineers(db, leader_ids, share=True)
     await db.execute(
         select(Project)
         .where(Project.id.in_([e.project_id for e in edits]))
@@ -1019,7 +1094,13 @@ async def save_register_edits(
         updates = edit.model_dump(exclude_unset=True, exclude={"project_id"})
         try:
             staged[project.id] = await stage_project_update(
-                db, project, updates, current_user, band_rank_plan=band_rank_plan
+                db,
+                project,
+                updates,
+                current_user,
+                band_rank_plan=band_rank_plan,
+                clock=clock,
+                leader_cause=CAUSE_REGISTER_EDIT,
             )
         except HTTPException as exc:
             # Every check raises before the row is written, so the rows staged

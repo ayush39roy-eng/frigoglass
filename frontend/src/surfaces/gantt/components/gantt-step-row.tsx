@@ -3,7 +3,7 @@ import { TriangleAlert } from 'lucide-react';
 
 import { cn } from '@/lib/utils';
 import { formatPlanWeek } from '@/lib/format';
-import { SPILLOVER_YEAR } from '@/lib/domain-constants';
+import { usePlanYearLabels } from '@/lib/plan-clock';
 import { StepKindBadge } from '@/components/shared/step-kind-badge';
 
 import { stepStatusLabels } from '../lib/gantt-status-labels';
@@ -14,6 +14,7 @@ import { stepBarTitle } from '../lib/step-row-text';
 import { stepColor } from '../lib/step-colors';
 import type { GanttProjectRow, GanttStepRow } from '../api/types';
 import { GanttBarGroup, GanttSpilloverMarker } from './gantt-bars';
+import { PinnedSegmentMarker } from './pinned-marker';
 
 /**
  * One step's bar (planned + actual, served weeks verbatim) and, when it runs
@@ -36,6 +37,7 @@ export function StepBarGraphic({
   height: number;
   fmt?: ((week: number) => string) | undefined;
 }): React.JSX.Element {
+  const years = usePlanYearLabels();
   const planned =
     s.planned_start_week != null && s.planned_end_week != null
       ? { startWeek: s.planned_start_week, endWeek: s.planned_end_week }
@@ -62,12 +64,22 @@ export function StepBarGraphic({
         skipped={s.skipped}
         color={stepColor(s.step_id, s.sequence_order)}
       />
+      {/* P40-T03c: the run placed this step on its typed weeks (served flag). */}
+      {s.pinned && !s.skipped ? (
+        <PinnedSegmentMarker
+          startWeek={s.planned_start_week}
+          endWeek={s.planned_end_week}
+          scale={scale}
+          cy={height / 2}
+          fmt={fmt}
+        />
+      ) : null}
       {runsPast ? (
         <GanttSpilloverMarker
           scale={scale}
           rowHeight={height}
           variant="chevron"
-          title={`${s.step_name} continues past ${fmt(lastScaleWeek(scale))} — spillover to ${String(SPILLOVER_YEAR)}`}
+          title={`${s.step_name} continues past ${fmt(lastScaleWeek(scale))} — spillover to ${years.spilloverYear}`}
         />
       ) : null}
     </>

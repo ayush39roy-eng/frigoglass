@@ -283,6 +283,12 @@ async def build_agent_context(db: AsyncSession, project: Project) -> dict[str, A
             "within_year": outcome.within_year if outcome is not None else None,
             "left_out": outcome.left_out if outcome is not None else False,
             "schedule_stale": project.schedule_stale,
+            # P42 (ADR 0056 R42-4): the stored flags, so the agent never counts
+            # a queued or not-scheduled project toward the year.
+            "counts_toward_year": outcome.counts_toward_year if outcome is not None else None,
+            "not_scheduled_priority": (
+                outcome.not_scheduled_priority if outcome is not None else None
+            ),
         },
         "progress_pct": progress,
         "stages": stages,

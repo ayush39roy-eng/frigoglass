@@ -4,7 +4,7 @@ import { ArrowRight, EyeOff } from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
 import type { ScheduleRunChangeRow, ScheduleRunChanges } from '@/lib/api/priority-move';
-import { formatPlanWeek } from '@/lib/format';
+import { formatPlanWeek, formatWeek } from '@/lib/format';
 import { cn } from '@/lib/utils';
 import type { ProjectPriority } from '@/types/enums';
 
@@ -170,6 +170,7 @@ export function TimelineUpdatedPanel({
         <span aria-hidden="true">·</span>
         <span data-numeric="">
           Run v{changes.run_version} compared with v{changes.against_run_version}
+          <WeekMoveNote changes={changes} />
         </span>
       </p>
 
@@ -216,6 +217,21 @@ export function TimelineUpdatedPanel({
 }
 
 /**
+ * P37 R37-4: the two runs were solved at different weeks, so the list also
+ * carries the effect of the week moving on (not just this trigger). Both weeks
+ * are the runs' stored `current_week` values, served on the changes response.
+ */
+function WeekMoveNote({ changes }: { changes: ScheduleRunChanges }): React.JSX.Element | null {
+  if (changes.baseline_week === changes.run_week) return null;
+  return (
+    <span className="font-semibold text-warning-subtle-fg" data-testid="changes-week-move">
+      {' '}
+      · includes the move from {formatWeek(changes.baseline_week)} to {formatWeek(changes.run_week)}
+    </span>
+  );
+}
+
+/**
  * The served change list on its own, with no "this project" section — for a
  * recalculation that was not caused by one project (the P12 weekly check-in
  * batch, ADR 0023). Same rows, same rendering, same virtualization rule.
@@ -226,6 +242,7 @@ export function ChangedProjectsList({ changes }: { changes: ScheduleRunChanges }
     <section aria-label="Projects that moved" className="space-y-1" data-testid="changed-projects-list">
       <p className="text-2xs text-text-muted" data-numeric="">
         Run v{changes.run_version} compared with v{changes.against_run_version}
+        <WeekMoveNote changes={changes} />
       </p>
       <h3 className="label-caps text-text-subtle">
         Projects that moved <span className="normal-case tracking-normal">({rows.length})</span>

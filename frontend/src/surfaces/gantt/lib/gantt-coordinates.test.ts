@@ -32,7 +32,7 @@ describe('gantt-coordinates — week→pixel scale', () => {
     expect(scale.totalWidthPx).toBe(52 * WEEK_WIDTH_PX.weeks);
     // week 1 (origin) is at x = 0
     expect(weekToX(1, scale)).toBe(0);
-    // week 42 (CURRENT_WEEK) start edge
+    // week 42 start edge
     expect(weekToX(42, scale)).toBe(41 * WEEK_WIDTH_PX.weeks);
     // year-end marker = END edge of week 52 = the axis' right edge
     expect(weekEndToX(52, scale)).toBe(52 * WEEK_WIDTH_PX.weeks);
@@ -352,14 +352,14 @@ describe('P32-R04 projectWaterfallScale (read-only since P33-T15)', () => {
     actual_end_week: null,
   });
 
-  it('spans 2 weeks before min(first start, CURRENT_WEEK) to max(W52, last end) + 2, capped at W78', () => {
-    const inYear = projectWaterfallScale([st(44, 47), st(48, 50)], 24);
+  it('spans 2 weeks before min(first start, the served week) to max(W52, last end) + 2, capped at W78', () => {
+    const inYear = projectWaterfallScale([st(44, 47), st(48, 50)], 24, 42);
     expect(inYear).toEqual({ originWeek: 40, horizonWeeks: 15, weekWidthPx: 24, totalWidthPx: 360 });
     expect(lastScaleWeek(inYear)).toBe(54);
-    const early = projectWaterfallScale([st(10, 20), st(21, 60)], 24);
+    const early = projectWaterfallScale([st(10, 20), st(21, 60)], 24, 42);
     expect(early.originWeek).toBe(8);
     expect(lastScaleWeek(early)).toBe(62);
-    expect(lastScaleWeek(projectWaterfallScale([st(44, 77)], 24))).toBe(78);
+    expect(lastScaleWeek(projectWaterfallScale([st(44, 77)], 24, 42))).toBe(78);
   });
 
   it('the What-if import drag clamps a move to the axis end', () => {

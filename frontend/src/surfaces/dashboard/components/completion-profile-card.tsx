@@ -9,7 +9,8 @@ import { EmptyState } from '@/components/shared/empty-state';
 import { MultiSelectDropdown, type MultiSelectOption } from '@/components/shared/multi-select-dropdown';
 import { useCategories } from '@/lib/api/categories';
 import { useMultiSearchParam } from '@/lib/multi-select-filter';
-import { DISPLAY_HORIZON_WEEKS, PLAN_YEAR, SPILLOVER_YEAR, WITHIN_YEAR_WEEK } from '@/lib/domain-constants';
+import { DISPLAY_HORIZON_WEEKS, WITHIN_YEAR_WEEK } from '@/lib/domain-constants';
+import { planYearLabels, usePlanYear } from '@/lib/plan-clock';
 import { formatInteger, formatWeek } from '@/lib/format';
 import { usePrefersReducedMotion } from '@/lib/use-prefers-reduced-motion';
 import { cn } from '@/lib/utils';
@@ -255,22 +256,26 @@ export function CompletionProfileCard({ data }: CompletionProfileCardProps): Rea
   const reducedMotion = usePrefersReducedMotion();
   const [chartRef, revealed] = useRevealOnce<HTMLDivElement>();
   const horizon = DISPLAY_HORIZON_WEEKS;
+  // P37: the served plan year places a week in its month (ISO-Thursday rule).
+  const planYear = usePlanYear();
+  const yearLabels = planYearLabels(planYear);
   const [month, setMonth] = React.useState<number | null>(null);
   const [week, setWeek] = React.useState<number | null>(null);
 
   // Every plotted finish of the served rows, before the card's own filters.
   const allFinishes = React.useMemo<Finish[]>(() => {
     const out: Finish[] = [];
+    if (planYear === null) return out;
     for (const row of data.rows) {
       // The server's within-year flag decides membership (I9); its finish week
       // only positions it on the W1–W52 axis.
       if (outcomeOf(row) !== 'within_year') continue;
       if (row.last_step_end_week === null) continue;
       const w = Math.min(Math.max(row.last_step_end_week, 1), horizon);
-      out.push({ row, week: w, month: planWeekMonth(w) });
+      out.push({ row, week: w, month: planWeekMonth(w, planYear) });
     }
     return out.sort((a, b) => a.week - b.week || a.row.project_name.localeCompare(b.row.project_name));
-  }, [data.rows, horizon]);
+  }, [data.rows, horizon, planYear]);
 
   // Options: only values present among the plotted rows (already scoped to the
   // header hub / country filter), in canonical / served rank order.
@@ -319,14 +324,14 @@ export function CompletionProfileCard({ data }: CompletionProfileCardProps): Rea
   );
 
   const weeks = React.useMemo<BarPoint[]>(() => {
-    if (month === null) return [];
+    if (month === null || planYear === null) return [];
     const out: BarPoint[] = [];
     for (let w = 1; w <= horizon; w += 1) {
-      if (planWeekMonth(w) !== month) continue;
+      if (planWeekMonth(w, planYear) !== month) continue;
       out.push({ key: w, label: formatWeek(w), completed: finishes.filter((f) => f.week === w).length });
     }
     return out;
-  }, [finishes, month, horizon]);
+  }, [finishes, month, horizon, planYear]);
 
   const listed = finishes.filter((f) => (week !== null ? f.week === week : f.month === month));
 
@@ -362,7 +367,7 @@ export function CompletionProfileCard({ data }: CompletionProfileCardProps): Rea
           </p>
           <p>
             Spillover projects are not done by {formatWeek(WITHIN_YEAR_WEEK)} (they carry into{' '}
-            {SPILLOVER_YEAR}, including any not yet placed), and on-hold projects have no finish week, so
+            {yearLabels.spilloverYear}, including any not yet placed), and on-hold projects have no finish week, so
             neither is plotted; their counts are on the cards below.
           </p>
           <p>
@@ -479,7 +484,7 @@ export function CompletionProfileCard({ data }: CompletionProfileCardProps): Rea
                 All months
               </button>
               <h4 className="text-sm font-bold text-text">
-                {MONTH_NAMES[month]} {PLAN_YEAR}
+                {MONTH_NAMES[month]} {planYear ?? ''}
                 <span className="ml-s2 font-medium text-text-muted">
                   {plural(months[month]?.completed ?? 0)}
                   {week !== null ? ` · ${formatWeek(week)}: ${plural(listed.length)}` : ''}

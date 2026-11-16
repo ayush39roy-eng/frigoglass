@@ -96,6 +96,7 @@ from models import (  # noqa: E402
     AuditLogEntry,
     Chamber,
     Engineer,
+    EngineerInactivePeriod,
     Hub,
     HubWorkCalendar,
     Notification,
@@ -106,6 +107,7 @@ from models import (  # noqa: E402
     ProjectAccessGrant,
     ProjectComment,
     ProjectFile,
+    ProjectLeaderHistory,
     ProjectWorkflowStep,
     ScenarioApplyChange,
     ScenarioApplyRun,
@@ -191,6 +193,9 @@ _DEPENDENT_TABLES_CHILD_FIRST = (
     ScenarioApplyRun,
     StageCheckin,
     ProjectAccessGrant,
+    # P38: both reference projects / engineers.
+    ProjectLeaderHistory,
+    EngineerInactivePeriod,
 )
 
 # Children-first order, safe for both DELETE (this order) and the
@@ -201,6 +206,7 @@ _TABLES_CHILD_FIRST = (
     PriorityScore,
     ProjectWorkflowStep,
     ProjectFile,
+    ProjectLeaderHistory,
     ProjectComment,
     Project,
     Chamber,
@@ -303,6 +309,9 @@ async def _reset(session: AsyncSession) -> _UserConfig:
     # `audit_log_entries` has no escape hatch and is never touched.
     await session.execute(text("SET LOCAL rpd.allow_comment_delete = 'on'"))
     await session.execute(text("SET LOCAL rpd.allow_checkin_delete = 'on'"))
+    # P38 (p38a): `project_leader_history` is append-only with the same
+    # reseed-only DELETE escape hatch.
+    await session.execute(text("SET LOCAL rpd.allow_leader_history_delete = 'on'"))
 
     preserved = await _snapshot_user_config(session)
     has_audit = bool(await session.scalar(select(func.count()).select_from(AuditLogEntry)))

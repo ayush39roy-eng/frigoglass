@@ -115,3 +115,28 @@ def portfolio_baseline(projects_per_engineer: int = 3) -> WhatIfBaseline:
         for c in chambers
     )
     return WhatIfBaseline(schedule=si, calendars=calendars, chamber_supply=supply)
+
+
+def counting_portfolio_baseline(projects_per_engineer: int = 3) -> WhatIfBaseline:
+    """`portfolio_baseline` with every P3 / P4 / Q project moved to P2.
+
+    P42 (ADR 0056 as ruled, R42-3 / R42-4): a non-frozen P4 / Q project is no
+    longer scheduled and an In Queue P3 never counts toward the year, so the
+    plain portfolio has few counting projects left to slip. Tests whose
+    subject is slip / recovery mechanics (not the band rules) use this
+    variant, whose counting work behaves as the pre-P42 portfolio did."""
+
+    import dataclasses
+
+    b = portfolio_baseline(projects_per_engineer)
+    si = b.schedule
+    return dataclasses.replace(
+        b,
+        schedule=dataclasses.replace(
+            si,
+            projects=tuple(
+                dataclasses.replace(p, priority="P2") if p.priority in ("P3", "P4", "Q") else p
+                for p in si.projects
+            ),
+        ),
+    )

@@ -17,7 +17,7 @@
  * computed to pixels. It is unit-tested (`gantt-coordinates.test.ts`).
  */
 
-import { CURRENT_WEEK, DISPLAY_HORIZON_WEEKS, SCHEDULER_HORIZON_WEEKS } from '@/lib/domain-constants';
+import { DISPLAY_HORIZON_WEEKS, SCHEDULER_HORIZON_WEEKS } from '@/lib/domain-constants';
 
 /** Two zoom levels (`dataviz-gantt` SKILL): weeks (default, full horizon roughly
  *  fits) and days (wider, for inspecting step boundaries). Zoom changes only
@@ -109,7 +109,8 @@ export const WATERFALL_MARGIN_WEEKS = 2;
 /**
  * P32-R04: the week scale of one project's step waterfall (Workflow page). It
  * starts `WATERFALL_MARGIN_WEEKS` before the earlier of the project's first
- * served start (planned or actual) and `CURRENT_WEEK`, and ends the same margin
+ * served start (planned or actual) and the served calendar week (`currentWeek`,
+ * `/me.current_week`, P37), and ends the same margin
  * after the latest of W52 and any served planned / actual end, capped at the
  * scheduler horizon (W78). Read-only since P33-T15 (ADR 0048). A min/max over
  * served week numbers only — pixels, never a schedule.
@@ -122,8 +123,9 @@ export function projectWaterfallScale(
     actual_end_week: number | null;
   }[],
   weekWidthPx: number,
+  currentWeek: number,
 ): WeekScale {
-  let first = CURRENT_WEEK;
+  let first = currentWeek;
   let last = DISPLAY_HORIZON_WEEKS;
   for (const s of steps) {
     for (const w of [s.planned_start_week, s.actual_start_week]) if (w != null) first = Math.min(first, w);

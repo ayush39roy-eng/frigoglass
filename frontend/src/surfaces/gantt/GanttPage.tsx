@@ -14,10 +14,12 @@ import { PriorityMoveProvider } from '@/components/shared/priority-move/priority
 import { ApiError } from '@/lib/api/client';
 import { hasHubSelection, useHubFilter, useHubSelection, type HubSelection } from '@/stores/hub-filter';
 import { HubFilterChip } from '@/components/shared/hub-filter/hub-filter-chip';
+import { PlanWeekNotice } from '@/components/shared/plan-week-notice';
 import { formatInteger } from '@/lib/format';
-import { SPILLOVER_YEAR, WITHIN_YEAR_WEEK } from '@/lib/domain-constants';
+import { WITHIN_YEAR_WEEK } from '@/lib/domain-constants';
+import { useCurrentWeek, usePlanYearLabels } from '@/lib/plan-clock';
 import { SURFACES } from '@/app/nav';
-import { usePermission } from '@/stores/session';
+import { usePermission, useSessionStore } from '@/stores/session';
 import { useDebouncedValue } from '@/lib/use-debounced-value';
 
 import { AccessNotice, FreezeForbiddenNotice } from './components/access-notice';
@@ -32,6 +34,12 @@ import { useGanttUrlFilters } from './hooks/use-gantt-url-filters';
 import type { GanttQueryParams } from './api/gantt-api';
 import type { FreezeToggleRequest, GanttProjectRow } from './api/types';
 import { ZOOM_DEFAULT_PX } from './lib/gantt-coordinates';
+import { STEP_PINS_MAX } from './api/step-pins-api';
+import { StepPinEditProvider, useStepPinDraftState } from './hooks/use-step-pin-edit';
+import { useStepPinSave } from './hooks/use-step-pin-save';
+import { StepPinDiscardDialog, StepPinEditBar, StepPinLeaveGuard } from './components/step-pin-edit-bar';
+import { StepPinSavePanel } from './components/step-pin-save-panel';
+import { StepCountChips } from './components/step-count-chips';
 
 /** Space the timeline card keeps below its chart (card padding + page gutter). */
 const CHART_BOTTOM_RESERVE_PX = 56;
@@ -79,6 +87,9 @@ function toQueryParams(hub: HubSelection, f: GanttFilterState, q: string): Gantt
     currentStep: selectionParam(f.currentStep),
     priority: selectionParam(f.priority),
     sort: f.sort,
+    // P40-T03c: the steps the run did not place are listed too, so their
+    // Start / End weeks can be typed (API_CONTRACT_P40 §2).
+    includeUnplaced: true,
   };
 }
 
@@ -103,6 +114,7 @@ function authKind(errors: unknown[]): 'forbidden' | 'unauthorized' | null {
 }
 
 export default function GanttPage(): React.JSX.Element {
+  const years = usePlanYearLabels();
   // P12 (ADR 0020): the global header hub filter replaces the page-local select.
   const hub = useHubSelection();
   const [zoomPx, setZoomPx] = React.useState<number>(ZOOM_DEFAULT_PX);
@@ -180,6 +192,56 @@ export default function GanttPage(): React.JSX.Element {
   // Session table first (ADR 0010), server 403 second — both withdraw the freeze control.
   const permission = usePermission('gantt');
   const canWrite = permission.write && !writeForbidden;
+  // P40-T03c (R40-10): unfreezing needs the Admin or Super Admin ROLE; the
+  // server answers 403 UNFREEZE_REQUIRES_ADMIN to anyone else.
+  const isAdminRole = useSessionStore((st) => st.me?.roles.some((r) => r === 'Admin' || r === 'Super Admin') ?? false);
+  const canUnfreeze = canWrite && isAdminRole;
+
+  // P40-T03c (ADR 0054): drafted step Start / End weeks, one batch Save.
+  const calendarWeek = useCurrentWeek();
+  const pinSave = useStepPinSave();
+  const pinDrafts = useStepPinDraftState({
+    minWeek: ganttQuery.data?.current_week ?? calendarWeek ?? 1,
+    maxWeek: WITHIN_YEAR_WEEK,
+    locked: pinSave.saving,
+  });
+  const [pinBarError, setPinBarError] = React.useState<string | null>(null);
+  const [confirmPinCancel, setConfirmPinCancel] = React.useState(false);
+  const pinTooMany =
+    pinDrafts.list.length > STEP_PINS_MAX
+      ? `One save takes at most ${formatInteger(STEP_PINS_MAX)} steps. Save fewer at a time.`
+      : null;
+  const { list: pinList, reset: resetPins, applyServerErrors } = pinDrafts;
+  const { save: savePins } = pinSave;
+  const handlePinSave = React.useCallback(async () => {
+    const sent = pinList;
+    setPinBarError(null);
+    const result = await savePins({ items: pinDrafts.items() });
+    if (result.ok) {
+      resetPins();
+      return;
+    }
+    applyServerErrors(result.itemErrors, sent);
+    setPinBarError(result.message);
+    // Show the refused steps: expand their projects.
+    if (result.itemErrors.length > 0) {
+      setExpandedIds((prev) => {
+        const next = new Set(prev);
+        for (const err of result.itemErrors) next.add(err.project_id);
+        return next;
+      });
+    }
+  }, [pinList, savePins, pinDrafts, resetPins, applyServerErrors]);
+  const discardPins = React.useCallback(() => {
+    resetPins();
+    setPinBarError(null);
+    setConfirmPinCancel(false);
+  }, [resetPins]);
+  const stepNames = React.useMemo(() => {
+    const out = new Map<string, string>();
+    for (const r of rows) for (const st of r.steps) if (!out.has(st.step_id)) out.set(st.step_id, st.step_name);
+    return out;
+  }, [rows]);
 
   const handleToggleExpand = React.useCallback((projectId: string) => {
     setExpandedIds((prev) => {
@@ -206,7 +268,9 @@ export default function GanttPage(): React.JSX.Element {
         await freezeMut.mutateAsync({ projectId, body });
         setRecalcNeeded(true);
       } catch (err) {
-        if (err instanceof ApiError && err.isForbidden) {
+        // P40-T03c: a refused UNFREEZE (Admin / Super Admin only) does not
+        // withdraw freezing; the dialog shows the reason.
+        if (err instanceof ApiError && err.isForbidden && err.code !== 'UNFREEZE_REQUIRES_ADMIN') {
           setWriteForbidden(true);
           setFreezeOpen(false);
         }
@@ -220,11 +284,15 @@ export default function GanttPage(): React.JSX.Element {
   // <PriorityMoveControl> uses it.
   return (
     <PriorityMoveProvider>
+      {/* P40-T03c: the expanded step rows' Start / End inputs read the drafts here. */}
+      <StepPinEditProvider value={pinDrafts.api}>
       <PageHeader
         title={title}
         description={description}
         actions={<HubFilterChip />}
       />
+      {/* P37 (ADR 0052 §6): the active plan may be from an earlier week. */}
+      <PlanWeekNotice className="mb-4" />
 
       {denied ? (
         <AccessNotice kind={denied} />
@@ -241,7 +309,7 @@ export default function GanttPage(): React.JSX.Element {
                   label: 'Spilling past W52',
                   value: rows.filter((r) => r.spillover || r.left_out).length,
                   accent: 'warning',
-                  hint: `→ ${String(SPILLOVER_YEAR)} · ${String(rows.filter((r) => r.left_out).length)} not yet placed`,
+                  hint: `→ ${years.spilloverYear} · ${String(rows.filter((r) => r.left_out).length)} not yet placed`,
                 },
                 { label: 'Frozen in place', value: rows.filter((r) => r.frozen).length, accent: 'neutral' },
               ]}
@@ -342,7 +410,7 @@ export default function GanttPage(): React.JSX.Element {
                             <strong>Red connector</strong> = delay magnitude. The timeline shows
                             the plan year, week 1 to week {WITHIN_YEAR_WEEK}; work that runs past
                             it is cut at the dashed year-end line and marked{' '}
-                            <strong>Spillover → {SPILLOVER_YEAR}</strong>. Whether a project
+                            <strong>Spillover → {years.spilloverYear}</strong>. Whether a project
                             completes within the year is the server&apos;s <code>spillover</code>{' '}
                             / <code>left out</code> flag, shown as a badge — not computed here.
                           </span>
@@ -354,10 +422,13 @@ export default function GanttPage(): React.JSX.Element {
                             the run — never computed here (Invariant I16).
                           </span>
                           <span className="block">
-                            <strong>Step timing</strong> is read-only here: it follows each
-                            project&apos;s category template (Workflow templates). A
-                            &ldquo;parallel N wk&rdquo; or &ldquo;wait N wk&rdquo; chip on a step
-                            is the template&apos;s gap before it.
+                            <strong>Step timing</strong> follows each project&apos;s category
+                            template (Workflow templates). A &ldquo;parallel N wk&rdquo; or
+                            &ldquo;wait N wk&rdquo; chip on a step is the template&apos;s gap
+                            before it. An Admin may type a step&apos;s <strong>Start / End
+                            week</strong> (both inclusive) on an expanded project: the step
+                            then sits on those weeks (<strong>Pinned</strong>), and its
+                            neighbours keep their own timing.
                           </span>
                         </span>
                       </ScheduleRunProvenance>
@@ -387,6 +458,13 @@ export default function GanttPage(): React.JSX.Element {
                   ) : (
                     <>
                       {showDetails ? <GanttLegend rows={data.rows} /> : null}
+                      {showDetails ? (
+                        <StepCountChips
+                          counts={data.current_step_counts ?? {}}
+                          week={data.current_week ?? null}
+                          names={stepNames}
+                        />
+                      ) : null}
                       <GanttChart
                         rows={data.rows}
                         zoom={zoomPx}
@@ -397,6 +475,8 @@ export default function GanttPage(): React.JSX.Element {
                         onToggleExpand={handleToggleExpand}
                         onFreezeClick={handleFreezeClick}
                         canWrite={canWrite}
+                        canUnfreeze={canUnfreeze}
+                        markUnplaced
                         {...(chartHeight !== undefined ? { maxHeight: chartHeight } : {})}
                       />
                     </>
@@ -405,8 +485,39 @@ export default function GanttPage(): React.JSX.Element {
               </Card>
             )}
           </SectionBoundary>
+          {pinDrafts.list.length > 0 ? (
+            <StepPinEditBar
+              changedCount={pinDrafts.list.length}
+              projectCount={pinDrafts.projectCount}
+              invalidCount={pinDrafts.invalidCount}
+              onSave={() => void handlePinSave()}
+              onCancel={() => setConfirmPinCancel(true)}
+              saving={pinSave.saving}
+              error={pinBarError}
+              tooMany={pinTooMany}
+            />
+          ) : null}
         </div>
       )}
+
+      <StepPinLeaveGuard when={pinDrafts.list.length > 0} />
+      <StepPinDiscardDialog
+        open={confirmPinCancel}
+        title="Discard your step weeks?"
+        description={`${formatInteger(pinDrafts.list.length)} ${
+          pinDrafts.list.length === 1 ? 'step has' : 'steps have'
+        } unsaved Start / End weeks. Nothing has been saved.`}
+        onKeep={() => setConfirmPinCancel(false)}
+        onDiscard={discardPins}
+        testId="step-pin-discard-dialog"
+      />
+      <StepPinSavePanel
+        flow={pinSave.flow}
+        runState={pinSave.runState}
+        changes={pinSave.changes}
+        watchingFollowUp={pinSave.watchingFollowUp}
+        onClose={pinSave.close}
+      />
 
       <FreezeDialog
         project={freezeProject}
@@ -414,6 +525,7 @@ export default function GanttPage(): React.JSX.Element {
         onOpenChange={setFreezeOpen}
         onSubmit={handleFreezeSubmit}
       />
+      </StepPinEditProvider>
     </PriorityMoveProvider>
   );
 }

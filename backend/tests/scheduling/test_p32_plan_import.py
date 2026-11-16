@@ -217,9 +217,11 @@ def test_in_progress_anchor_is_not_moved_by_a_busy_designer() -> None:
     # Anchored work is booked before any search: a live P1 project on e0 waits
     # for the In Development row, and an In Queue row waits for both. Two
     # In Development rows on one designer are both anchored at CW: ENG_CONFLICT.
+    # P42 (ADR 0056 R42-3): the rows were Q, which is no longer scheduled; P3
+    # keeps the case (the In Queue P3 row is queued, R42-5: it still waits).
     base = tiny_baseline(projects=(plan_project("p1", cat="A", prio="P1"),), engineers=1)
-    dev = row(4, cat="B", status="In Development", stage="PDD-E", prio="Q")
-    que = row(5, cat="B", status="In Queue", stage="PDD-E", prio="Q")
+    dev = row(4, cat="B", status="In Development", stage="PDD-E", prio="P3")
+    que = row(5, cat="B", status="In Queue", stage="PDD-E", prio="P3")
     res = run_plan_import(base, PlanImportRequest(projects=(dev, que)))
     d, q, p1 = by_ref(res, "row-4"), by_ref(res, "row-5"), by_ref(res, "p1")
     assert step(d, "PDD-E").start_week == CW and not d.eng_conflict
@@ -227,7 +229,7 @@ def test_in_progress_anchor_is_not_moved_by_a_busy_designer() -> None:
     assert step(q, "PDD-E").status == "Not Started"
     assert wk(step(q, "PDD-E").start_week) > CW
 
-    dev2 = row(6, cat="C", status="In Development", stage="PDD-E", prio="Q")
+    dev2 = row(6, cat="C", status="In Development", stage="PDD-E", prio="P3")
     res2 = run_plan_import(base, PlanImportRequest(projects=(dev, dev2), mode="file_only"))
     for ref in ("row-4", "row-6"):
         pr = by_ref(res2, ref)
@@ -296,7 +298,8 @@ def test_auto_assign_accounts_for_existing_load() -> None:
 
 def test_auto_assign_without_designers_is_left_out_no_leader() -> None:
     base = tiny_baseline(engineers=1)
-    r = row(1, leader=None, hub="PD-Romania")  # no Romania designer in the tiny baseline
+    # P42 (R42-4): P2, so the row counts and is classed left_out, not queued.
+    r = row(1, leader=None, hub="PD-Romania", prio="P2")  # no Romania designer in the baseline
     res = run_plan_import(base, PlanImportRequest(projects=(r,), mode="file_only"))
     p = by_ref(res, "row-1")
     assert p.outcome == "left_out" and p.no_leader and not p.leader_auto_assigned
@@ -447,7 +450,8 @@ def test_edit_on_a_replaced_or_file_only_plan_project_is_rejected() -> None:
 def test_plan_year_verdicts_52_vs_104() -> None:
     base = tiny_baseline(engineers=1)
     # A+ critical path 44 weeks from CW 31 -> ends ~W74: past W52, inside W104.
-    r = row(1, cat="A+")
+    # P42 (R42-4): P2, so the row counts (an In Queue P3 row is queued).
+    r = row(1, cat="A+", prio="P2")
     y52 = run_plan_import(
         base, PlanImportRequest(projects=(r,), mode="file_only", plan_year_end_week=52)
     )
@@ -474,7 +478,7 @@ def test_plan_year_verdicts_52_vs_104() -> None:
 def test_long_project_left_out_at_52_fits_at_104() -> None:
     base = tiny_baseline(engineers=1)
     weeks = (("PDD-E", 60),)  # 60-week design step from CW 31 cannot end by W78
-    r = row(1, cat="B", weeks=weeks)
+    r = row(1, cat="B", weeks=weeks, prio="P2")  # P42 (R42-4): a counting row
     y52 = run_plan_import(
         base, PlanImportRequest(projects=(r,), mode="file_only", plan_year_end_week=52)
     )

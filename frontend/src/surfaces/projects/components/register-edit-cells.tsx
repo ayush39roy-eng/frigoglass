@@ -2,12 +2,13 @@ import * as React from 'react';
 import { RotateCcw, TriangleAlert } from 'lucide-react';
 
 import { formatPlanWeek } from '@/lib/format';
+import { usePlanYear } from '@/lib/plan-clock';
 import { cn } from '@/lib/utils';
 import { UI_PROJECT_STATUSES, type ProjectStatus } from '@/types/enums';
 
 import type { EngineerOption } from '@/surfaces/registration/api/engineers-api';
 
-import { dateInputToPlanWeek, PLAN_DATE_MAX, PLAN_DATE_MIN, planWeekToDateInput } from '../lib/plan-week-date';
+import { dateInputToPlanWeek, planDateBounds, planWeekToDateInput } from '../lib/plan-week-date';
 import { parseEffortInput } from '../lib/register-edit';
 import { statusMismatchText } from '../lib/status-mismatch';
 
@@ -292,10 +293,11 @@ export function UnassignedFlag({ leftOut = false }: { leftOut?: boolean }): Reac
 
 /** Read mode: a served actual week. */
 export function WeekValue({ week }: { week: number | null }): React.JSX.Element {
+  const planYear = usePlanYear();
   return week === null ? (
     <span className="text-text-subtle">—</span>
   ) : (
-    <span className="text-xs font-semibold tabular-nums text-text" data-numeric="" title={planWeekToDateInput(week) || undefined}>
+    <span className="text-xs font-semibold tabular-nums text-text" data-numeric="" title={(planYear === null ? '' : planWeekToDateInput(week, planYear)) || undefined}>
       {formatPlanWeek(week)}
     </span>
   );
@@ -321,6 +323,9 @@ export function WeekDateInput({
 }): React.JSX.Element {
   const [error, setError] = React.useState<string | null>(null);
   const warnId = React.useId();
+  // The served plan year (P37); every cell renders under the session gate.
+  const planYear = usePlanYear() ?? Number.NaN;
+  const bounds = planDateBounds(planYear);
   const message = error ?? warning;
   return (
     <span className={cn('flex min-w-0 flex-col gap-0.5 p-0.5', changed && CHANGED)}>
@@ -328,18 +333,18 @@ export function WeekDateInput({
         <input
           type="date"
           className={cn(EDIT_INPUT, 'w-[8.5rem]')}
-          value={planWeekToDateInput(week)}
-          min={PLAN_DATE_MIN}
-          max={PLAN_DATE_MAX}
+          value={planWeekToDateInput(week, planYear)}
+          min={bounds.min}
+          max={bounds.max}
           aria-label={`${label} (date, stored as a plan week)`}
           aria-invalid={message !== null || invalid ? true : undefined}
           aria-describedby={message !== null ? warnId : undefined}
           data-changed={changed ? 'true' : undefined}
           data-testid="week-date-input"
           onChange={(e) => {
-            const next = dateInputToPlanWeek(e.currentTarget.value);
+            const next = dateInputToPlanWeek(e.currentTarget.value, planYear);
             if (next === undefined) {
-              setError('No plan week for this date (2026 W1 to W78)');
+              setError(`No plan week for this date (${String(planYear)} W1 to W78)`);
               return;
             }
             setError(null);
