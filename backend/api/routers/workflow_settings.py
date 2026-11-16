@@ -99,6 +99,7 @@ from services.capacity_supply import (
 )
 from services.categories import load_catalog
 from services.hub_scope import hub_scope_filter, scoped_lab_regions
+from services.plan_clock import PlanClock, get_plan_clock
 from services.project_effort import (
     TRIGGER_STEP_KIND_EDIT,
     rederive_all_projects,
@@ -121,7 +122,7 @@ AUDIT_ACTION_PREFIX = "workflow_settings."
 
 
 async def build_settings_payload(
-    db: AsyncSession, principal: Principal, *, full: bool
+    db: AsyncSession, principal: Principal, *, full: bool, clock: PlanClock
 ) -> WorkflowSettings:
     """The `GET` payload. With `full=False` (a chamber-PUT caller without
     Workflow Settings READ) workflows and lead times are omitted, and
@@ -227,7 +228,7 @@ async def build_settings_payload(
                 annual_leave_days=float(cal.annual_leave_days),
                 weeks_in_year=cal.weeks_in_year,
                 working_weeks_per_engineer=round2(
-                    calendar_figures(cal).working_weeks_per_engineer
+                    calendar_figures(cal, clock.week).working_weeks_per_engineer
                 ),
             )
         )
@@ -279,7 +280,8 @@ async def build_settings_payload(
         categories=categories,
         hub_calendars=hub_calendars,
         chambers=chambers,
-        current_week=dc.CURRENT_WEEK,
+        # P37-T04 (API_CONTRACT_P37 §2): the request's calendar week.
+        current_week=clock.week,
         horizon_weeks=dc.HORIZON_WEEKS,
         within_year_week=dc.WITHIN_YEAR_WEEK,
         updated_at=updated_at,
@@ -298,6 +300,7 @@ async def _finish_put(
     hub_id: uuid.UUID | None,
     before_state: dict[str, Any],
     after_state: dict[str, Any],
+    clock: PlanClock,
     full_payload: bool = True,
 ) -> WorkflowSettings:
     """The common tail of every PUT: stale flags, audit row, commit, header,
@@ -318,7 +321,7 @@ async def _finish_put(
     )
     await db.commit()
     response.headers[STALE_COUNT_HEADER] = str(stale_count)
-    return await build_settings_payload(db, principal, full=full_payload)
+    return await build_settings_payload(db, principal, full=full_payload, clock=clock)
 
 
 @router.get("", response_model=WorkflowSettings)
@@ -327,8 +330,9 @@ async def get_workflow_settings(
     # P33-T09 (contract Part A): `workflow_templates` READ or
     # `workflow_settings` READ (both {Admin, Super Admin} today).
     current_user: Principal = Depends(require_workflow_templates_or_settings_read),
+    clock: PlanClock = Depends(get_plan_clock),
 ) -> WorkflowSettings:
-    return await build_settings_payload(db, current_user, full=True)
+    return await build_settings_payload(db, current_user, full=True, clock=clock)
 
 
 # --- Previews (P13-T16, docs/API_CONTRACT_P13.md §5) -------------------------------
@@ -390,6 +394,7 @@ async def put_workflow_steps(
     response: Response,
     db: AsyncSession = Depends(get_db),
     current_user: Principal = Depends(_write),
+    clock: PlanClock = Depends(get_plan_clock),
 ) -> WorkflowSettings:
     workflow = await db.get(Workflow, workflow_id)
     if workflow is None:
@@ -499,6 +504,7 @@ async def put_workflow_steps(
         db,
         response,
         current_user,
+        clock=clock,
         action=f"{AUDIT_ACTION_PREFIX}steps_update",
         entity_type="Workflow",
         entity_id=workflow_id,
@@ -554,6 +560,7 @@ async def put_hub_calendar(
     response: Response,
     db: AsyncSession = Depends(get_db),
     current_user: Principal = Depends(_write),
+    clock: PlanClock = Depends(get_plan_clock),
 ) -> WorkflowSettings:
     hub = await db.get(Hub, hub_id)
     if hub is None:
@@ -595,6 +602,7 @@ async def put_hub_calendar(
         db,
         response,
         current_user,
+        clock=clock,
         action=f"{AUDIT_ACTION_PREFIX}hub_calendar_update",
         entity_type="HubWorkCalendar",
         entity_id=str(hub_id),
@@ -614,6 +622,7 @@ async def put_chamber(
     response: Response,
     db: AsyncSession = Depends(get_db),
     current_user: Principal = Depends(get_current_principal),
+    clock: PlanClock = Depends(get_plan_clock),
 ) -> WorkflowSettings:
     """Super Admin (Workflow Settings WRITE) edits any chamber. A caller with
     Capacity Planning WRITE edits chambers in their own lab region(s) only.
@@ -653,6 +662,7 @@ async def put_chamber(
         db,
         response,
         current_user,
+        clock=clock,
         action=f"{AUDIT_ACTION_PREFIX}chamber_update",
         entity_type="Chamber",
         entity_id=str(chamber.id),

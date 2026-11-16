@@ -46,6 +46,7 @@ from models.audit import AuditLogEntry
 from models.enums import WorkflowStepStatus
 from models.project import Project, workflow_id_for_hub
 from models.workflow import ProjectWorkflowStep, WorkflowStepTemplate
+from services.step_pin_clear import clear_pin_on_repoint
 from services.template_copy import (
     CopyChanges,
     copy_template,
@@ -74,7 +75,11 @@ async def sync_project_steps(
     """See the module docstring. Returns the template-copy changes
     (`services.template_copy.CopyChanges`) of the existing rows; a created
     row's first copy is not a change. `actor_user_id` is the actor of the
-    R35-11 audit rows."""
+    R35-11 audit rows.
+
+    P40 (ADR 0054 R40-9): a re-pointed row loses its manual pin, with a
+    `project.step_pin_cleared` audit row (`cause = "workflow_change"`,
+    actor `actor_user_id`)."""
 
     workflow_id = workflow_id_for_hub(hub_is_oem)
     templates = (
@@ -144,6 +149,10 @@ async def sync_project_steps(
                         },
                     )
                 )
+            # P40 (R40-9): a pin belonged to the old step.
+            clear_pin_on_repoint(
+                db, project, row, old_step_id=old_step_id, actor_user_id=actor_user_id
+            )
             # ADR 0048 (p33c): the Gantt-set timing fields are always null
             # (CHECK), so nothing of them carries across.
             # ADR 0041 R6: the derived effort belonged to the old step too;

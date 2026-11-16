@@ -34,6 +34,7 @@ from scheduling.types import CategoryInput
 from services import whatif_chat
 from services.rate_limit import TokenBucketLimiter
 from services.schedule_persistence import build_schedule_input_from_db
+from tests._plan_week import TEST_WEEK
 from tests.auth_helpers import clear_current_principal_override
 from tests.factories import make_engineer, make_hub, registration_body
 from tests.p12_helpers import act_as, client_for, stepped_project
@@ -225,7 +226,7 @@ async def test_oem_workflow_category_and_blanket_oem_engineers(db_session: Async
         db_session, oem_hub, name="New OEM 3", leader=a_only, category="D-OEM",
         status=ProjectStatus.IN_QUEUE,
     )  # fmt: skip
-    schedule_input = await build_schedule_input_from_db(db_session)
+    schedule_input = await build_schedule_input_from_db(db_session, current_week=TEST_WEEK)
     assert CategoryInput(code="D-OEM", workflow_id="OEM", rank=8) in schedule_input.categories
     outcomes = {o.project_id: o for o in run_greedy_sgs(schedule_input).project_outcomes}
     assert outcomes[str(led_by_blanket.id)].cat_not_allowed is False

@@ -318,7 +318,7 @@ async def test_failing_body_marks_the_run_failed(real_db, inline, monkeypatch, c
     project_id, user_id = await _seed(url)
     principal = make_principal(RoleName.PORTFOLIO_MANAGER, user_id=user_id)
 
-    async def _boom(_db):
+    async def _boom(_db, **_kwargs):
         raise RuntimeError("secret-ish detail")
 
     monkeypatch.setattr(schedule_tasks, "build_schedule_input_from_db", _boom)

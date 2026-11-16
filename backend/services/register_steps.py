@@ -56,7 +56,6 @@ from fastapi import status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-import domain_constants as dc
 from api.errors import HTTP_422, CodedHTTPException, field_error
 from models.audit import AuditLogEntry
 from models.enums import ProjectStatus, WorkflowStepKind, WorkflowStepStatus
@@ -435,15 +434,12 @@ async def apply_current_step(
     code: str,
     *,
     actor_user_id: uuid.UUID | None,
-    week: int | None = None,
+    week: int,
 ) -> bool:
     """Set the project's progress so `code` is its current step (module
     docstring), recording weeks as a check-in at `week` would (default: the
-    plan's `CURRENT_WEEK`, read at call time as the check-in does). Returns
-    True when some stage changed."""
-
-    if week is None:
-        week = dc.CURRENT_WEEK
+    calendar plan week from `services.plan_clock`, read once per request by
+    the route, P37). Returns True when some stage changed."""
 
     if code not in ctx.rows or code not in ctx.kinds:
         raise _unknown_step("current_step_code", code)
@@ -557,6 +553,7 @@ async def apply_step_edits(
     workflow_id: str,
     actor_user_id: uuid.UUID | None,
     check_guards: bool,
+    plan_week: int | None = None,
 ) -> bool:
     """The register patch's step part, after its project fields are written:
     exclusions, then the current step, then the R35-5 guards on the final
@@ -573,8 +570,11 @@ async def apply_step_edits(
             db, project, ctx, edits.exclusions, actor_user_id=actor_user_id
         )
     if edits.current_step_code is not None:
+        if plan_week is None:  # the route must read the plan clock (P37)
+            raise RuntimeError("apply_step_edits: current_step_code needs plan_week")
         changed |= await apply_current_step(
-            db, project, ctx, edits.current_step_code, actor_user_id=actor_user_id
+            db, project, ctx, edits.current_step_code,
+            actor_user_id=actor_user_id, week=plan_week,
         )
     error = final_state_guard(project, ctx)
     if error is not None:

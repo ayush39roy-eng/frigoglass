@@ -32,6 +32,7 @@ from models.schedule import ScheduleRunProjectOutcome, ScheduleRunProjectStep
 from scheduling.types import ProjectScheduleOutcome, StepSchedule
 from services.notifications import generate_schedule_change_notifications
 from services.schedule_persistence import build_schedule_input_from_db, persist_schedule_output
+from tests._plan_week import TEST_WEEK
 from tests.factories import (
     make_engineer,
     make_hub,
@@ -674,7 +675,7 @@ async def test_persist_schedule_output_generates_notifications_only_when_activat
     await make_workflow_step_template(db_session, step_id="PDD-A", sequence_order=1)
     project = await make_project(db_session, hub, leader=engineer)
 
-    schedule_input = await build_schedule_input_from_db(db_session)
+    schedule_input = await build_schedule_input_from_db(db_session, current_week=TEST_WEEK)
 
     from scheduling.types import ScheduleOutput
 

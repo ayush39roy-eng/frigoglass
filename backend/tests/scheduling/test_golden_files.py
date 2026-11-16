@@ -28,6 +28,7 @@ from scheduling import (
     run_greedy_sgs,
     validate_invariants,
 )
+from scheduling._selftest_common import SELFTEST_WEEK
 from tests.scheduling._fixtures import (
     CHAMBER_GR1,
     CHAMBER_GR2,
@@ -63,6 +64,7 @@ def test_normal_case_sequential_booking():
         leader_engineer_id="eng-a",
     )
     si = ScheduleInput(
+        current_week=SELFTEST_WEEK,
         projects=(proj,),
         engineers=(ENGINEER_A,),
         chambers=(CHAMBER_GR1,),
@@ -103,6 +105,7 @@ def test_single_engineer_contention():
     p1 = ProjectInput(project_id="p-eng-1", name="First", priority="P1", **common)
     p2 = ProjectInput(project_id="p-eng-2", name="Second", priority="P2", **common)
     si = ScheduleInput(
+        current_week=SELFTEST_WEEK,
         projects=(p2, p1),  # deliberately out of priority order in the input
         engineers=(ENGINEER_A,),
         chambers=(CHAMBER_GR1, CHAMBER_GR2),
@@ -133,6 +136,7 @@ def test_chamber_saturation():
     p1 = ProjectInput(project_id="p-lab-1", name="First", leader_engineer_id="eng-a", **common)
     p2 = ProjectInput(project_id="p-lab-2", name="Second", leader_engineer_id="eng-b", **common)
     si = ScheduleInput(
+        current_week=SELFTEST_WEEK,
         projects=(p1, p2),
         engineers=(ENGINEER_A, ENGINEER_B),
         chambers=(CHAMBER_GR1,),  # only one chamber, max_concurrent=1
@@ -174,6 +178,7 @@ def test_frozen_conflict_raises_eng_conflict():
     p1 = ProjectInput(project_id="p-frozen-1", name="Frozen A", **common)
     p2 = ProjectInput(project_id="p-frozen-2", name="Frozen B", **common)
     si = ScheduleInput(
+        current_week=SELFTEST_WEEK,
         projects=(p1, p2),
         engineers=(ENGINEER_A,),
         chambers=(CHAMBER_GR1,),
@@ -219,6 +224,7 @@ def test_frozen_chamber_overlap_raises_overlap():
         project_id="p-fr-lab-2", name="Frozen lab B", leader_engineer_id="eng-b", **common
     )
     si = ScheduleInput(
+        current_week=SELFTEST_WEEK,
         projects=(p1, p2),
         engineers=(ENGINEER_A, ENGINEER_B),
         chambers=(CHAMBER_GR1,),  # max_concurrent=1, both land here in the same weeks
@@ -293,6 +299,7 @@ def test_category_mismatch_is_warning_not_block():
         leader_engineer_id="eng-c",
     )
     si = ScheduleInput(
+        current_week=SELFTEST_WEEK,
         projects=(proj,),
         engineers=(ENGINEER_C_NARROW,),
         chambers=(CHAMBER_GR1,),
@@ -331,6 +338,7 @@ def test_category_mismatch_oem_hub_variant():
         "ch-in1", "IN-CH1", "India", max_concurrent=2, allowed_stages=("PDD-F",)
     )
     si = ScheduleInput(
+        current_week=SELFTEST_WEEK,
         projects=(p_no, p_yes),
         engineers=(eng_without_oem, eng_with_oem),
         chambers=(india_chamber,),
@@ -481,6 +489,7 @@ def test_excluded_status_commercialized():
         leader_engineer_id="eng-a",
     )
     si = ScheduleInput(
+        current_week=SELFTEST_WEEK,
         projects=(proj,),
         engineers=(ENGINEER_A,),
         chambers=(CHAMBER_GR1,),
@@ -528,6 +537,7 @@ def test_excluded_status_on_hold():
         leader_engineer_id="eng-a",
     )
     si = ScheduleInput(
+        current_week=SELFTEST_WEEK,
         projects=(on_hold, active),
         engineers=(ENGINEER_A,),
         chambers=(CHAMBER_GR1,),
@@ -574,6 +584,7 @@ def test_determinism_byte_identical_rerun():
         "ch-ro1", "RO-CH1", "Romania", max_concurrent=2, allowed_stages=("PDD-F",)
     )
     si = ScheduleInput(
+        current_week=SELFTEST_WEEK,
         projects=projects,
         engineers=(ENGINEER_A, ENGINEER_B),
         chambers=(CHAMBER_GR1, CHAMBER_GR2, romania_chamber),
@@ -586,6 +597,7 @@ def test_determinism_byte_identical_rerun():
     assert repr(out1) == repr(out2)
 
     shuffled = ScheduleInput(
+        current_week=SELFTEST_WEEK,
         projects=tuple(reversed(projects)),
         engineers=(ENGINEER_A, ENGINEER_B),
         chambers=(CHAMBER_GR1, CHAMBER_GR2, romania_chamber),

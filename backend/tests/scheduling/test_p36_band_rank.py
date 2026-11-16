@@ -14,7 +14,7 @@ import dataclasses
 import pytest
 
 from scheduling import ProjectInput, ScheduleInput, run_cp_sat, run_greedy_sgs, validate_invariants
-from scheduling._selftest_common import load_seed_schedule_input
+from scheduling._selftest_common import SELFTEST_WEEK, load_seed_schedule_input
 from scheduling.band_rank import (
     BandRankError,
     append_all_last,
@@ -59,7 +59,7 @@ def _input(*projects: ProjectInput, **kw: object) -> ScheduleInput:
         chambers=(CHAMBER_GR1,),
         workflow_steps=TEMPLATE,
         lead_times=LEAD_TIMES,
-        **kw,  # type: ignore[arg-type]
+        **{"current_week": SELFTEST_WEEK, **kw},  # type: ignore[arg-type]
     )
 
 
@@ -85,6 +85,8 @@ def test_canonical_asdict_omits_none_band_rank_and_keeps_a_set_one() -> None:
     raw = dataclasses.asdict(si)
     del raw["categories"]
     del raw["projects"][0]["band_rank"]
+    for project in raw["projects"]:
+        del project["step_pins"]  # P40 (R40-12): omitted when empty
     assert data == raw
 
 

@@ -37,6 +37,7 @@ const payload: CompletingWithinYear = {
   left_out_count: 2,
   blocked_count: 1,
   priority_delivery: [],
+  regions: [],
   rows: [
     row('w1', { within_year: true, last_step_end_week: 10 }),
     row('w2', { within_year: true, last_step_end_week: 30 }),

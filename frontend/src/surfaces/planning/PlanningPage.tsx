@@ -12,6 +12,7 @@ import { MultiSelectDropdown } from '@/components/shared/multi-select-dropdown';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { ReadOnlyNotice } from '@/components/session/write-gate';
 import { ApiError } from '@/lib/api/client';
+import { apiErrorMessage } from '@/lib/api/error-messages';
 import { useHubs, useWorkflowStepTemplates } from '@/lib/api/reference';
 import { hubPickerLabel } from '@/lib/hub-labels';
 import { hubsInScope, regionsInScope } from '@/components/shared/hub-filter/hub-scope';
@@ -26,10 +27,15 @@ import { ChamberTable } from './components/chamber-table';
 import { ConfirmDialog } from './components/confirm-dialog';
 import { EngineerFormDialog } from './components/engineer-form';
 import { EngineerTable, type EngineerTableRow } from './components/engineer-table';
+import { DeactivateEngineerDialog } from './components/deactivate-engineer-dialog';
+import { DeactivationResultPanel } from './components/deactivation-result-panel';
+import { EngineerStatusFilterControl } from './components/engineer-status-filter';
 import { WhatIfPlanner } from './whatif/components/whatif-planner';
 import { CapacityTotalCards } from './components/overview/capacity-total-cards';
 import { HubEngineerCard } from './components/overview/hub-engineer-card';
 import { LabRegionCard } from './components/overview/lab-region-card';
+import { useCardEditStore } from './components/overview/card-edit-store';
+import { OverviewLeaveGuard } from './components/overview/overview-leave-guard';
 import { PlanningToolbar } from './components/overview/planning-toolbar';
 import { ResourceLoadSection } from './components/resource-load/resource-load-section';
 import { stageChips } from './lib/chip-options';
@@ -42,8 +48,11 @@ import type {
   ChamberUpdateRequest,
   EngineerCreateRequest,
   EngineerRead,
+  EngineerStatusFilter,
   EngineerUpdateRequest,
 } from './api/types';
+import { DEACTIVATION_COPY } from './lib/deactivation';
+import { useDeactivationResult } from './hooks/use-deactivation-result';
 import {
   useActiveScheduleRun,
   useApplyLogic,
@@ -52,8 +61,8 @@ import {
   useCreateChamber,
   useCreateEngineer,
   useDeleteChamber,
-  useDeleteEngineer,
   useEngineerList,
+  useReactivateEngineer,
   useUpdateChamber,
   useUpdateEngineer,
 } from './hooks/use-planning';
@@ -79,7 +88,11 @@ export default function PlanningPage(): React.JSX.Element {
   const [engineerFormOpen, setEngineerFormOpen] = React.useState(false);
   const [engineerFormMode, setEngineerFormMode] = React.useState<'create' | 'edit'>('create');
   const [editEngineer, setEditEngineer] = React.useState<EngineerRead | null>(null);
-  const [deleteEngineerTarget, setDeleteEngineerTarget] = React.useState<EngineerRead | null>(null);
+  // P38 (ADR 0053): Delete is retired; Deactivate / Reactivate replace it.
+  const [engineerStatus, setEngineerStatus] = React.useState<EngineerStatusFilter>('active');
+  const [deactivateTarget, setDeactivateTarget] = React.useState<EngineerRead | null>(null);
+  const [reactivateTarget, setReactivateTarget] = React.useState<EngineerRead | null>(null);
+  const [reactivateError, setReactivateError] = React.useState<string | null>(null);
 
   // --- Chambers ---
   const [chamberFormOpen, setChamberFormOpen] = React.useState(false);
@@ -99,9 +112,10 @@ export default function PlanningPage(): React.JSX.Element {
   const [defaultRegion, setDefaultRegion] = React.useState<LabRegion | undefined>(undefined);
 
   const hubsQuery = useHubs();
-  const engineerListQuery = useEngineerList(hubIds);
-  // The Overview always lists every visible engineer (same key as "All hubs").
-  const allEngineersQuery = useEngineerList(undefined);
+  const engineerListQuery = useEngineerList(hubIds, engineerStatus);
+  // The Overview always lists every visible engineer (same key as "All hubs"),
+  // narrowed by the same Show filter (P38: active by default).
+  const allEngineersQuery = useEngineerList(undefined, engineerStatus);
   const chamberListQuery = useChamberList();
   const activeRunQuery = useActiveScheduleRun(true);
   const summaryQuery = useCapacitySummary();
@@ -110,7 +124,8 @@ export default function PlanningPage(): React.JSX.Element {
 
   const createEngineerMut = useCreateEngineer();
   const updateEngineerMut = useUpdateEngineer();
-  const deleteEngineerMut = useDeleteEngineer();
+  const reactivateEngineerMut = useReactivateEngineer();
+  const deactivation = useDeactivationResult();
   const createChamberMut = useCreateChamber();
   const updateChamberMut = useUpdateChamber();
   const deleteChamberMut = useDeleteChamber();
@@ -120,6 +135,10 @@ export default function PlanningPage(): React.JSX.Element {
   // Session table first (ADR 0010), server 403 second.
   const permission = usePermission('capacity_planning');
   const canEdit = permission.write && !writeForbidden;
+  // P38 (ADR 0053 §1, OQ #93): Admin / Super Admin only, by role, as with
+  // `counts_in_capacity`. A narrowing of the UI; the server answers 403.
+  const isAdmin = me?.roles.some((r) => r === 'Admin' || r === 'Super Admin') ?? false;
+  const canChangeStatus = canEdit && isAdmin;
 
   const hubById = React.useMemo(() => {
     const map = new Map<string, { name: string; lab_region: LabRegion }>();
@@ -152,10 +171,10 @@ export default function PlanningPage(): React.JSX.Element {
     setEngineerFormOpen(true);
   }, []);
   const handleEngineerSubmit = React.useCallback(
-    async (body: EngineerCreateRequest) => {
+    async (body: EngineerCreateRequest | EngineerUpdateRequest) => {
       try {
         if (engineerFormMode === 'create') {
-          await createEngineerMut.mutateAsync(body);
+          await createEngineerMut.mutateAsync(body as EngineerCreateRequest);
         } else if (editEngineer) {
           await updateEngineerMut.mutateAsync({ engineerId: editEngineer.id, body });
         }
@@ -169,17 +188,38 @@ export default function PlanningPage(): React.JSX.Element {
     },
     [engineerFormMode, editEngineer, createEngineerMut, updateEngineerMut, handleForbidden],
   );
-  const handleDeleteEngineerConfirm = React.useCallback(async () => {
-    if (!deleteEngineerTarget) return;
+  const handleReactivateConfirm = React.useCallback(async () => {
+    if (!reactivateTarget) return;
+    setReactivateError(null);
     try {
-      await deleteEngineerMut.mutateAsync(deleteEngineerTarget.id);
-      setDeleteEngineerTarget(null);
+      await reactivateEngineerMut.mutateAsync(reactivateTarget.id);
+      setReactivateTarget(null);
     } catch (err) {
-      if (err instanceof ApiError && err.isForbidden) handleForbidden();
-      // Leave the dialog open on a 409 (still referenced) / other errors so
-      // the message (surfaced via mutation state below) stays visible.
+      if (err instanceof ApiError && err.isForbidden) {
+        handleForbidden();
+        setReactivateError(DEACTIVATION_COPY.adminOnly);
+      } else if (err instanceof ApiError && err.code === 'ENGINEER_ALREADY_ACTIVE') {
+        setReactivateError(DEACTIVATION_COPY.alreadyActive);
+      } else if (err instanceof ApiError && err.status === 503) {
+        setReactivateError(DEACTIVATION_COPY.busy);
+      } else {
+        setReactivateError(apiErrorMessage(err, 'The engineer could not be reactivated. Nothing was changed. Please try again.'));
+      }
     }
-  }, [deleteEngineerTarget, deleteEngineerMut, handleForbidden]);
+  }, [reactivateTarget, reactivateEngineerMut, handleForbidden]);
+  const openReactivate = React.useCallback((row: EngineerRead) => {
+    setReactivateError(null);
+    setReactivateTarget(row);
+  }, []);
+  const closeDeactivate = React.useCallback(() => setDeactivateTarget(null), []);
+  const { show: showDeactivation } = deactivation;
+  const handleDeactivated = React.useCallback(
+    (result: Parameters<typeof showDeactivation>[0], name: string) => {
+      setDeactivateTarget(null);
+      showDeactivation(result, name);
+    },
+    [showDeactivation],
+  );
 
   const handleNewChamber = React.useCallback((region?: LabRegion) => {
     setDefaultRegion(typeof region === 'string' ? region : undefined);
@@ -303,12 +343,17 @@ export default function PlanningPage(): React.JSX.Element {
     }
   }, [applyLogicMut, handleForbidden]);
 
+  // Owner ask 2026-11-17: card drafts live in a store that outlives the
+  // Overview tab; leaving the page drops them (the guard asks first).
+  React.useEffect(() => () => useCardEditStore.getState().reset(), []);
+
   const provenance = activeRunQuery.data
     ? { version: activeRunQuery.data.version, solverType: activeRunQuery.data.solver_type }
     : null;
 
   return (
     <>
+      <OverviewLeaveGuard />
       <PageHeader
         title={TITLE}
         description={DESCRIPTION}
@@ -351,17 +396,22 @@ export default function PlanningPage(): React.JSX.Element {
 
               <div className="grid items-start gap-4 xl:grid-cols-2">
                 <section aria-labelledby="design-resources-heading" className="flex min-w-0 flex-col gap-3">
-                  <h2 id="design-resources-heading" className="flex items-center gap-2 font-display text-base font-bold text-text">
-                    <HardHat aria-hidden="true" className="size-4 text-primary" />
-                    Design resources (engineers)
-                  </h2>
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <h2 id="design-resources-heading" className="flex items-center gap-2 font-display text-base font-bold text-text">
+                      <HardHat aria-hidden="true" className="size-4 text-primary" />
+                      Design resources (engineers)
+                    </h2>
+                    <EngineerStatusFilterControl value={engineerStatus} onChange={setEngineerStatus} idSuffix="overview" />
+                  </div>
                   <SectionBoundary
                     query={allEngineersQuery}
                     title="Engineers"
                     errorDescription="The engineer list could not be loaded."
                   >
                     {() =>
-                      engineerGroups.length === 0 ? (
+                      engineerGroups.length === 0 && engineerStatus === 'inactive' ? (
+                        <EmptyState title="No inactive engineers" description="Every engineer you can see is active." />
+                      ) : engineerGroups.length === 0 ? (
                         <EmptyState
                           title="No engineers registered yet"
                           description="Add an engineer to make them available as a project leader and a design-step scheduling resource."
@@ -391,8 +441,11 @@ export default function PlanningPage(): React.JSX.Element {
                                 canEdit={canEdit && hub !== undefined && editableHubIds.has(hub.id)}
                                 onUpdate={handleInlineEngineer}
                                 onEdit={handleEditEngineer}
-                                onDelete={setDeleteEngineerTarget}
+                                canChangeStatus={canChangeStatus}
+                                onDeactivate={setDeactivateTarget}
+                                onReactivate={openReactivate}
                                 onAdd={handleNewEngineer}
+                                emptyLabel={engineerStatus === 'inactive' ? 'No inactive engineers in this hub.' : undefined}
                               />
                             );
                           })}
@@ -481,6 +534,7 @@ export default function PlanningPage(): React.JSX.Element {
                   </div>
                 </CardHeader>
                 <CardContent className="space-y-4">
+                  <div className="flex flex-wrap items-center gap-3">
                   <MultiSelectDropdown
                     id="planning-hub-filter"
                     label="Hub"
@@ -491,13 +545,17 @@ export default function PlanningPage(): React.JSX.Element {
                     triggerClassName="h-8 w-48"
                     data-testid="planning-hub-filter"
                   />
+                  <EngineerStatusFilterControl value={engineerStatus} onChange={setEngineerStatus} idSuffix="engineers" />
+                  </div>
                   <SectionBoundary
                     query={engineerListQuery}
                     title="Engineers"
                     errorDescription="The engineer list could not be loaded."
                   >
                     {() =>
-                      engineerRows.length === 0 ? (
+                      engineerRows.length === 0 && engineerStatus === 'inactive' ? (
+                        <EmptyState title="No inactive engineers" description="Every engineer you can see is active." />
+                      ) : engineerRows.length === 0 ? (
                         <EmptyState
                           title="No engineers registered yet"
                           description="Add an engineer to make them available as a project leader and a design-step scheduling resource."
@@ -514,8 +572,10 @@ export default function PlanningPage(): React.JSX.Element {
                         <EngineerTable
                           rows={engineerRows}
                           canEdit={canEdit}
+                          canChangeStatus={canChangeStatus}
                           onEdit={handleEditEngineer}
-                          onDelete={setDeleteEngineerTarget}
+                          onDeactivate={setDeactivateTarget}
+                          onReactivate={openReactivate}
                         />
                       )
                     }
@@ -622,15 +682,31 @@ export default function PlanningPage(): React.JSX.Element {
         hubs={hubsQuery.data ?? []}
         onSubmit={handleEngineerSubmit}
       />
+      <DeactivateEngineerDialog
+        engineer={deactivateTarget}
+        onClose={closeDeactivate}
+        onDeactivated={handleDeactivated}
+        onForbidden={handleForbidden}
+      />
       <ConfirmDialog
-        open={deleteEngineerTarget !== null}
+        open={reactivateTarget !== null}
         onOpenChange={(open) => {
-          if (!open) setDeleteEngineerTarget(null);
+          if (!open) setReactivateTarget(null);
         }}
-        title={`Delete ${deleteEngineerTarget?.name ?? 'this engineer'}?`}
-        description="This cannot be undone. Deleting an engineer fails if they are still referenced by an existing project, workflow step or schedule-run snapshot."
-        busy={deleteEngineerMut.isPending}
-        onConfirm={() => void handleDeleteEngineerConfirm()}
+        title={`Reactivate ${reactivateTarget?.name ?? 'this engineer'}?`}
+        description={DEACTIVATION_COPY.reactivateBody}
+        confirmLabel="Reactivate"
+        busyLabel="Reactivating…"
+        tone="primary"
+        error={reactivateError}
+        busy={reactivateEngineerMut.isPending}
+        onConfirm={() => void handleReactivateConfirm()}
+      />
+      <DeactivationResultPanel
+        state={deactivation.state}
+        runState={deactivation.runState}
+        watchingFollowUp={deactivation.watchingFollowUp}
+        onClose={deactivation.close}
       />
 
       <ChamberFormDialog

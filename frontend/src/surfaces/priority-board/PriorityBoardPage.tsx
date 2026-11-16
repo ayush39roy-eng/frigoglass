@@ -10,7 +10,7 @@ import { rankPositionCopy } from '@/components/shared/priority-move/move-copy';
 import { usePriorityMoveHost, type PriorityMoveOutcome } from '@/components/shared/priority-move/priority-move-context';
 import { PriorityMoveProvider } from '@/components/shared/priority-move/priority-move-provider';
 import { Skeleton } from '@/components/ui/skeleton';
-import { usePermission } from '@/stores/session';
+import { usePermission, useSession } from '@/stores/session';
 import { hasHubSelection, useHubSelection } from '@/stores/hub-filter';
 import { CountrySegmented } from '@/components/shared/hub-filter/country-segmented';
 import { HubFilterChip } from '@/components/shared/hub-filter/hub-filter-chip';
@@ -25,7 +25,7 @@ import {
 
 import { useDebouncedValue } from '@/lib/use-debounced-value';
 
-import { useBoardLeaderFacets, usePriorityBoard, type BandRankPlacement, type PriorityBoardFilters } from './api';
+import { useBoardLeaderFacets, usePriorityBoard, type BandRankAnchorPlacement, type PriorityBoardFilters } from './api';
 import { selectionParam } from '@/lib/multi-select-filter';
 import { BoardColumn } from './components/board-column';
 import { BoardToolbar } from './components/board-toolbar';
@@ -38,7 +38,9 @@ import {
   allowedTargets,
   applyOverrides,
   canRerank,
+  displayPlacementForRank,
   isNoopSlot,
+  lastServedIdIfFullBand,
   placementForSlot,
   positionForPlacement,
   slotForIndex,
@@ -82,6 +84,12 @@ function columnName(p: ProjectPriority): string {
  * drop is sent relative to a visible card (`before` the card below the drop
  * line, or `after` the last visible card), so it is well defined on a
  * filtered board. The served `band_rank` is shown as "#n"; nothing is re-sorted.
+ *
+ * Owner request 2026-11-17: a session that may re-rank also gets ↑ / ↓ and an
+ * editable position on every card (both layouts). They send `{ to_rank }` (the
+ * target position in the full band) through the same preview side panel. ↓ is
+ * disabled only on a card the served data says is last in its band; otherwise a
+ * position past the end is answered by the server (422 `BAD_RANK`).
  *
  * Drag is hand-built (no library): native HTML drag events for the pointer, and
  * a keyboard pick-up / arrow / drop on each card's handle, announced through a
@@ -190,6 +198,7 @@ export function PriorityBoardView({
   const queryClient = useQueryClient();
   const host = usePriorityMoveHost();
   const canWrite = usePermission('project_registration').write;
+  const me = useSession().me;
   const instructionsId = React.useId();
 
   const [overrides, setOverrides] = React.useState<BoardOverrides>({});
@@ -262,9 +271,33 @@ export function PriorityBoardView({
     [clearOverride, host, queryClient],
   );
 
+  /** P36: how a re-rank ended (drop or `to_rank`): keep the shown place until the refetch, or roll back. */
+  const rankSettled = React.useCallback(
+    (item: DisplayCard, where: string) =>
+      (outcome: PriorityMoveOutcome): void => {
+        const { card, servedPriority: band } = item;
+        if (outcome === 'accepted') {
+          // Keep the card where it was shown until the refetched board serves
+          // its new band_rank and order.
+          void queryClient
+            .invalidateQueries({ queryKey: ['priority-board'] })
+            .finally(() => clearOverride(card.project_id));
+          setAnnouncement(`${card.name} moved to ${where}.`);
+          return;
+        }
+        clearOverride(card.project_id);
+        setAnnouncement(
+          outcome === 'rejected'
+            ? `${card.name} was not moved. It is back in its place in ${columnName(band)}.`
+            : `Move cancelled. ${card.name} keeps its place in ${columnName(band)}.`,
+        );
+      },
+    [clearOverride, queryClient],
+  );
+
   /** P36: a drop inside the card's own column — show it, then the shared re-rank flow. */
   const rankDrop = React.useCallback(
-    (item: DisplayCard, column: DisplayColumn, placement: BandRankPlacement) => {
+    (item: DisplayCard, column: DisplayColumn, placement: BandRankAnchorPlacement) => {
       const { card, servedPriority: band } = item;
       if (!host) return;
       const position = positionForPlacement(column.cards, card.project_id, placement);
@@ -274,31 +307,55 @@ export function PriorityBoardView({
       host.requestRankMove(
         { projectId: card.project_id, projectName: card.name, priority: band, status: card.status },
         placement,
-        {
-          position,
-          fromPosition: card.band_rank,
-          onSettled: (outcome: PriorityMoveOutcome) => {
-            if (outcome === 'accepted') {
-              // Keep the card where it was dropped until the refetched board
-              // serves its new band_rank and order.
-              void queryClient
-                .invalidateQueries({ queryKey: ['priority-board'] })
-                .finally(() => clearOverride(card.project_id));
-              setAnnouncement(`${card.name} moved to ${where}.`);
-              return;
-            }
-            clearOverride(card.project_id);
-            setAnnouncement(
-              outcome === 'rejected'
-                ? `${card.name} was not moved. It is back in its place in ${columnName(band)}.`
-                : `Move cancelled. ${card.name} keeps its place in ${columnName(band)}.`,
-            );
-          },
-        },
+        { position, fromPosition: card.band_rank, onSettled: rankSettled(item, where) },
       );
     },
-    [clearOverride, host, queryClient],
+    [host, rankSettled],
   );
+
+  /**
+   * Owner request 2026-11-17: ↑ / ↓ (served rank ± 1) or a typed position — the
+   * same preview side panel with `{ to_rank }`. The card is shown next to the
+   * visible card holding that rank now, or stays put (pending) when none is shown.
+   */
+  const rankTo = React.useCallback(
+    (item: DisplayCard, toRank: number) => {
+      const { card, servedPriority: band } = item;
+      const from = card.band_rank;
+      if (!host || from === null || item.pending || !Number.isSafeInteger(toRank) || toRank < 1 || toRank === from) return;
+      const column = columnOf(band);
+      const shown = column ? displayPlacementForRank(column.cards, card.project_id, toRank) : null;
+      const where = rankPositionCopy(toRank, columnName(band));
+      setLift(null);
+      setOverrides((cur) => ({
+        ...cur,
+        [card.project_id]: shown ? { priority: band, placement: shown } : { priority: band, rankPending: true },
+      }));
+      setAnnouncement(`${card.name}: move to ${where}. Confirm the move.`);
+      host.requestRankMove(
+        { projectId: card.project_id, projectName: card.name, priority: band, status: card.status },
+        { to_rank: toRank },
+        { position: toRank, fromPosition: from, onSettled: rankSettled(item, where) },
+      );
+    },
+    [columnOf, host, rankSettled],
+  );
+
+  const canRankCard = React.useCallback(
+    (item: DisplayCard) => canWrite && host !== null && canRerank(item.card),
+    [canWrite, host],
+  );
+
+  /** Served-data-only "last in the band": the column shows the whole band (P36-R02: no count is derived). */
+  const fullBandShown = !isFiltered && !hasHubSelection(hub) && me?.hub_scope_all === true;
+  const lastInBandIds = React.useMemo<ReadonlySet<string>>(() => {
+    const ids = new Set<string>();
+    for (const column of query.data?.columns ?? []) {
+      const id = lastServedIdIfFullBand(column, fullBandShown);
+      if (id) ids.add(id);
+    }
+    return ids;
+  }, [fullBandShown, query.data]);
 
   const findItem = React.useCallback(
     (projectId: string): DisplayCard | null => {
@@ -510,7 +567,8 @@ export function PriorityBoardView({
       <p id={instructionsId} className="sr-only">
         Press Space or Enter to pick the card up. The up and down arrow keys change its position inside its column (its
         scheduling order within that priority); the left and right arrow keys choose another priority column, where it goes
-        last. Space or Enter drops it, and Escape cancels. Each card also has a priority menu.
+        last. Space or Enter drops it, and Escape cancels. Each card also has a priority menu, move up and move down
+        buttons, and a position field: type a number and press Enter.
       </p>
       <p aria-live="assertive" aria-atomic="true" className="sr-only" data-testid="board-announcer">
         {announcement}
@@ -593,6 +651,10 @@ export function PriorityBoardView({
               layout={layout}
               fit={height !== undefined}
               canDragCard={canDragCard}
+              canRankCard={canRankCard}
+              rankInert={busy}
+              lastInBandIds={lastInBandIds}
+              onRankTo={rankTo}
               liftedId={lift?.projectId ?? null}
               isDropTarget={dropTarget === column.priority}
               acceptsDrop={activeDrag !== null && activeDrag.allowed.includes(column.priority)}

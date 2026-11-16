@@ -246,6 +246,7 @@ from schemas.schedule_run import (
     ScheduleRunChanges,
     ScheduleRunSummary,
 )
+from services.plan_clock import PlanClock, get_plan_clock
 from services.run_changes import compute_run_changes
 from services.run_dispatch import enqueue_or_fail, find_in_flight_run
 from services.schedule_persistence import (
@@ -362,6 +363,7 @@ async def get_schedule_run_changes(
 async def trigger_greedy_recalc(
     db: AsyncSession = Depends(get_db),
     current_user: Principal = Depends(_admin_only),
+    clock: PlanClock = Depends(get_plan_clock),
 ) -> GreedyRecalcResponse:
     """Synchronously recompute the schedule over every current `Project`/
     `Engineer`/`Chamber` row using the greedy scheduler, persist it as a new
@@ -370,7 +372,9 @@ async def trigger_greedy_recalc(
     scope (CP-SAT, "Apply Priorities", "Auto-assign" — all P3-T06/deferred).
     """
 
-    schedule_input = await build_schedule_input_from_db(db)
+    # P37-T04 (R37-2, I38): a synchronous solve reads the clock once, for
+    # this request.
+    schedule_input = await build_schedule_input_from_db(db, current_week=clock.week)
     try:
         schedule_output = run_greedy_sgs(schedule_input)
     except ValueError as exc:

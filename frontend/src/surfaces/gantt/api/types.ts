@@ -75,7 +75,31 @@ export interface GanttStepRow {
   /** P32 (A3): the template's predecessor step ids, sorted. Served; not read
    *  by the read-only Timeline (P33-T15). */
   predecessor_ids: string[];
+  /** P40 (ADR 0054, docs/API_CONTRACT_P40.md §2): the LIVE manual pin, end
+   *  inclusive; both null when none. While it differs from this row's run
+   *  window the step reads "Pin applies on the next run". */
+  manual_start_week: number | null;
+  manual_end_week: number | null;
+  /** P40: the active run placed this step on a pin. */
+  pinned: boolean;
+  /** P40 (R40-7): the pinned row starts before its release allows. Warning only. */
+  manual_overlap: boolean;
+  /** P40 (R40-2): served current length; typing a Start gives
+   *  `End = Start + current_length_weeks − 1`. Never derived here. */
+  current_length_weeks: number;
+  /** P40: the caller may set a pin on this step now. */
+  pin_editable: boolean;
+  /** P40: why not, when `pin_editable` is false. */
+  pin_block_reason: PinBlockReason | null;
 }
+
+/** P40 (R40-2): served reason a step's pin cannot be set. */
+export type PinBlockReason =
+  | 'NOT_ALLOWED'
+  | 'PROJECT_FROZEN'
+  | 'PROJECT_CLOSED'
+  | 'STEP_STARTED'
+  | 'STEP_SKIPPED';
 
 /** ADR 0021: per-project live tracking status, served. */
 export type TrackingStatus = 'live' | 'due' | 'overdue' | 'idle';
@@ -131,6 +155,10 @@ export interface GanttProjectRow {
   design_weeks: number | null;
   lab_weeks: number | null;
   total_weeks: number | null;
+  /** P40 (R40-5): some pin's start had passed; placed from the run's week. */
+  pin_lapsed: boolean;
+  /** P40 (R40-7): OR of the steps' `manual_overlap`. */
+  manual_overlap: boolean;
   steps: GanttStepRow[];
 }
 
@@ -140,6 +168,9 @@ export interface GanttWeeklyActiveCount {
   week: number;
   pdd: number;
   oem: number;
+  /** P40-T01 (docs/API_CONTRACT_P40.md §3): the same active steps per step
+   *  code (e.g. `"PDD-A"`), zero counts omitted; sums to `pdd + oem`. */
+  by_step: Record<string, number>;
 }
 
 /** `GET /dashboard/projects/facets` (P13 contract §3), reused for the Gantt's
@@ -162,6 +193,67 @@ export interface GanttResponse {
   rows: GanttProjectRow[];
   /** P13 contract §7 (T13): one entry per week; drives the PDD / OEM count row. */
   weekly_active_counts: GanttWeeklyActiveCount[];
+  /** P40-T01: projects of the filtered set with an active run step covering
+   *  `current_week`, per step code. `{}` without an active run. */
+  current_step_counts: Record<string, number>;
+  /** P40-T01: the plan week `current_step_counts` was taken at; null without
+   *  an active run. */
+  current_week: number | null;
+}
+
+/** P40 (docs/API_CONTRACT_P40.md §1): one item of `PUT /gantt/step-pins`.
+ *  Both weeks null = Clear. End inclusive. */
+export interface StepPinItem {
+  project_id: Id;
+  step_template_id: string;
+  manual_start_week: number | null;
+  manual_end_week: number | null;
+}
+
+/** `PUT /gantt/step-pins` body (`StepPinsRequest`, 1..500 items). */
+export interface StepPinsRequest {
+  items: StepPinItem[];
+}
+
+/** One changed stored pair in `StepPinsResponse.changes`. */
+export interface StepPinChange {
+  project_id: Id;
+  step_template_id: string;
+  action: 'pinned' | 'cleared';
+  before_start_week: number | null;
+  before_end_week: number | null;
+  manual_start_week: number | null;
+  manual_end_week: number | null;
+}
+
+/** `PUT /gantt/step-pins` 200 body. Recalc fields as the priority move. */
+export interface StepPinsResponse {
+  changes: StepPinChange[];
+  unchanged_count: number;
+  projects_marked_stale: Id[];
+  current_week: number;
+  recalc_status: 'queued' | 'deferred' | 'not_needed' | 'unchanged' | 'applied' | 'dispatch_failed';
+  schedule_run_id: Id | null;
+  baseline_run_id: Id | null;
+  task_id: string | null;
+}
+
+/** One element of `detail.errors` on a refused `PUT /gantt/step-pins`. */
+export interface StepPinError {
+  index: number;
+  project_id: Id;
+  step_template_id: string;
+  code:
+    | 'DUPLICATE_STEP'
+    | 'PIN_INVALID'
+    | 'PIN_OUT_OF_RANGE'
+    | 'PROJECT_NOT_FOUND'
+    | 'UNKNOWN_STEP'
+    | 'PROJECT_FROZEN'
+    | 'PROJECT_CLOSED'
+    | 'STEP_STARTED'
+    | 'STEP_SKIPPED';
+  message: string;
 }
 
 /** `POST /gantt/projects/{project_id}/freeze` body (`FreezeToggleRequest`,

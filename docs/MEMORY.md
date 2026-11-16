@@ -38292,3 +38292,1364 @@ frontend `excluded_no_effect` label. IMPLEMENTATION_PLAN not edited (orchestrato
 - Live check on a separate DB `rpd_popup` (fresh migrate + seed; the shared dev DB was not touched). Row Edit opens the popup with 14 chips; Done / N/A chips disabled; End wk read-only. Excluding PDD-D + design time 9 sent ONE `POST /projects/register-edits` with only those two keys; DB: step excluded, figure 9.00, audit `project.step_excluded` + `project.effort_rederived` + `project.recalculate_requested`.
 - Migration `p35b_step_excluded` re-parented onto origin/main's head at merge (chain … p33c → p41a → p40a → p35b).
 - OPEN: workflow-auditor ruling on `current_step_code` semantics (assumptions listed in the backend entry); P35-T05/T06 rows in IMPLEMENTATION_PLAN not marked — the P35 gate (P35-T07) is still TODO.
+## [2026-11-16] P37 opened — the current week follows the calendar (ADR 0052) — orchestrator
+
+**Ask (owner):** the header shows "Week 42 · 10 wks left · 16 Nov 2026" while today is ISO W47. Cause:
+`domain_constants.CURRENT_WEEK` read once at import (default 42, ADR 0024 §3) plus a frontend
+build-time copy (P32 workflow F9). Docs only; no application code.
+
+**Files:** `docs/ADR/0052-current-week-follows-the-calendar.md` (Proposed, with reader inventory at
+6d3c760), `docs/API_CONTRACT_P37.md`, `docs/DOMAIN_RULES.md` (revision note + "The current week
+follows the calendar" under Horizon constants, proposed I38–I41), `docs/IMPLEMENTATION_PLAN.md` (P37,
+T01–T08), `docs/OPEN_QUESTIONS.md` #88–#92.
+
+**Found:** the scheduler already takes `ScheduleInput.current_week` and runs store it
+(`schedule_runs.current_week`); the problem is the import-bound default there and in ~15 service
+defaults, ~15 direct router reads, and 4 run-week fallbacks. Capacity `remaining_weeks` uses the run
+week while the remaining supply beside it uses the constant (agree only because both are 42). The
+seed derives progress at `current_week`. Celery beat exists (backup jobs) but hosted/dev run greedy
+inline without beat (P32-R01). ISO 2026 has W53 = 28 Dec–3 Jan; ADR 0035 §11 already maps W53 → 52.
+
+**Decisions (D37-1..D37-7, see plan):** one clock service, Europe/Athens, read per request/dispatch,
+env pin kept and validated; served `plan_year`, W53 → 52, after the plan year → 52 + closed (no
+re-basing; OQ #88); calendar week for facts / new solves / run-independent figures / "now" markers,
+run week for interpreting stored runs; weekly rollover greedy run via one idempotent function called
+by beat AND an in-app ticker (deviation from the recommended beat-only design, because beat does not
+run on the hosted/dev stacks), bounded retry, no per-project stale; header always calendar week +
+served Athens date with a "Plan from W*n*" chip while behind (rather than showing the run's week —
+a failed rollover would otherwise freeze the header again); seed status week pinned 42; deploy
+only after the owner sees P37-T07 figures.
+
+**Effects stated for the owner:** within-year drops (6 placement weeks W47–W52 instead of 11),
+in-progress tails get no credit for W42–W46 without check-ins, LEFT_OUT limit 36 → 31 weeks, all
+due stages go overdue at once, check-ins since 19 Oct stamped 42, preview tokens across Monday 409.
+
+**Next:** P37-T01 (workflow-auditor ruling on ADR 0052 Q1–Q5). Owner: OQ #88 (blocking before
+28 Dec), #92 (blocking the release), #89–#91 non-blocking.
+
+## [2026-11-16] Completion profile card — Hub / Project type / Category multi-select filters (owner request) — frontend-builder: DONE
+
+Small owner request; no IMPLEMENTATION_PLAN row (same convention as the 2026-11-13 multi-select ask). Not committed.
+
+- **Where:** Dashboard "Completion profile" card (`surfaces/dashboard/components/completion-profile-card.tsx`). Pure helpers in `surfaces/dashboard/lib/completion-profile-filter.ts`.
+- **Behaviour:** three compact `MultiSelectDropdown`s (Hub, Project type, Category) in the card header. Each shows a count badge on its trigger when active. There is a "Clear" button and a "Filtered: N of M projects" note (`role="status"`). If nothing matches, an empty state with "Clear filters" appears. Category was added beyond the owner's "hub, type" because the rows carry it.
+- **Client-side row filter, by owner request:** the served `CompletingWithinYear.rows` are kept or dropped on their served `hub` / `type` / `category` (OR within a dimension, AND across dimensions, null = `Unmapped`, empty = all). This happens BEFORE the existing month/week grouping, so the bars, the month heading, the weeks and the project list all use the same kept rows. Membership is still `outcomeOf` (I9). Nothing the server decides is recomputed.
+- **Options:** only values present among the plotted (within-year) rows. Those rows are already scoped by the header hub/country filter and the Dashboard-wide category/type selection. Order: hubs by `HUB_NAMES`, types by `PROJECT_TYPES` with `PROJECT_TYPE_LABELS`, categories by served rank via `useCategories()` (P33-T14). `Unmapped` comes last.
+- **State:** stored in the URL, following the Dashboard convention, under card-prefixed params `cp_hub` / `cp_type` / `cp_category` so they do not collide with the Dashboard-wide `category` / `type`. It uses `useMultiSearchParam`. A URL value that is not among the current options is ignored. Clear writes all three params in one navigation.
+- **Tests:** `completion-profile-card.filters.test.tsx` has 10 tests: options and their order, each dimension, OR/AND combinations, drill-down consistency, Clear, empty state, URL read, filters hidden when there are no finishes, keyboard operation and axe. Dashboard suite: 41 files / 275 tests pass. tsc 0 errors; eslint clean on the touched files.
+- The shared `MultiSelectDropdown` was not modified. The badge is passed through its `triggerIcon` prop.
+
+## [2026-11-16] Delivery rate per country (owner request) — backend-builder: DONE (backend side)
+
+Small owner request. No IMPLEMENTATION_PLAN row, same convention as the other 2026-11-13/16 owner asks (orchestrator to add one if wanted). Not committed. The main checkout is mid-merge: the git index was not touched, and the other sessions' unstaged work in `api/routers/dashboard.py` was kept.
+
+- **Field:** `GET /dashboard/completing-within-year` → `CompletingWithinYear.regions: list[DeliveryRegionRow]`. Each row is `{region: LabRegion, within_year_count: int, spillover_count: int, left_out_count: int, blocked_count: int}`. There are always exactly three rows, Greece, India, Romania, in that order, with zero rows included (the `_REGION_ORDER` that `/region-summary` uses). This includes the no-active-run response.
+- **Counting:** the rows are counted in the same loop over the same scoped and filtered outcome rows as the top-level counts. That means the same run, RBAC scope, hub/country union (ADR 0051) and category/type filter, and the same exclusive bucket precedence (Blocked first). A row is grouped by `project.hub.lab_region`, the hub's stored lab region that the ADR 0025 country filter and `/region-summary` group by. OEM-HCK and OEM-Seitek are therefore counted under Greece. No percentages are served, matching the top-level counts. The client derives the rate (`withinYearSharePct`).
+- **Executive view:** it reads the same endpoint (`executive-view.tsx` takes the Dashboard's `withinYear` query, and `DeliveryGaugeCard` reads it). No other endpoint was changed.
+- **Contract:** `DeliveryRegionRow` was added as an "exact" pair in `tests/test_openapi_frontend_contract.py`. The frontend TS side (`dashboard/api/types.ts`) already carries `regions` / `DeliveryRegionRow` from the parallel frontend-builder.
+- **Tests:** `tests/test_dashboard_delivery_regions.py` has 4 tests. They use the real `seed_hubs` mapping and cover: the sums reconcile in every bucket, OEM counts under Greece (a blocked+left_out OEM row counts Blocked only), no active run gives three zero rows, a Hub Planner (R&D-India) sees only their own hub with the other regions at zero, an out-of-scope `region=Greece` gives all zeros, and `region=` narrows correctly, including the hub_id ∪ region union. ruff is clean on the touched files. mypy reports nothing new: the test file is clean, and the two `_has_stage_progress` no-untyped-call errors in `dashboard.py` were there before.
+
+## [2026-11-16] Owner request: header theme toggle is Light / Dark only ("System" removed) — frontend-builder: DONE
+
+Small owner request; the plan has no row convention for one-line UI asks (cf. the multi-select entry), so no IMPLEMENTATION_PLAN row was added or marked. Not committed.
+
+- **Types:** `ThemePreference = 'light' | 'dark'`; `ResolvedTheme` is now an alias of it; `isThemePreference('system')` is false (`components/theme/theme-context.ts`).
+- **Provider** (`theme-provider.tsx`): no live OS following (the `matchMedia` change listener is gone). On start, a stored `light`/`dark` wins; nothing stored (first visit), a legacy `'system'` or any junk value resolves `prefers-color-scheme` ONCE and writes that concrete value to `localStorage['rpd-theme']`. `setPreference` always writes the value. The theme was only ever in localStorage (no preferences-store field, no server profile field), so that is the only migration.
+- **index.html** pre-paint script mirrors it: if the stored value is not light/dark it applies the OS theme and saves it, so the first paint and React agree.
+- **Toggle** (`theme-toggle.tsx`): two items, Sun / Moon; `Monitor` import removed. **Profile** Appearance card: Light / Dark cards, 2-column grid.
+- `frontend/README.md` theming paragraph updated.
+- **Tests:** `theme.test.tsx` rewritten (first visit saves the OS theme; migration of stored 'system' to light and to dark; explicit choice kept against the OS and no change listener; 'system' invalid; toggle has exactly 2 radios and no "System theme"; switching persists; re-click keeps the choice; axe 0 serious/critical on the toggle). New `pages/profile.theme.test.tsx` (Appearance offers Light and Dark only; picking Dark saves it).
+- **Checks:** eslint 0 errors (9 warnings, none in touched files). `tsc -p tsconfig.app.json` clean; `tsc -b` reports 5 TS6133 unused-symbol errors only in `surfaces/dashboard/components/completion-profile-card.tsx`, another session's uncommitted work. vitest: theme + profile 20/20; full run 1957 passed, 13 failed in 9 files (app nav timeouts, Dashboard, executive a11y, Matrix scoring-model, Planning resource-load/what-if/import, Workflow Settings p33). None of them uses the theme preference; the app-shell theme-toggle test passes. They match the in-progress multi-select merge and dashboard work in the shared tree.
+
+## [2026-11-16] P37-T01 — workflow-auditor ruling on ADR 0052 (current week follows the calendar): ACCEPT WITH AMENDMENTS
+
+The full text is in ADR 0052 "Ruling (P37-T01)". No feature code was written and git was not touched. The main checkout is
+mid-merge (frigoglass-98); I read code at the clean 6d3c760 worktree (`frigoglass-p35view`) and in the main tree.
+
+**Q1–Q5: all ACCEPT WITH AMENDMENT.** The binding items are R37-1..R37-10.
+
+- **R37-1: the tracking "due" rule.** A Not Started stage is due when its active-run planned start is ≤ the calendar week,
+  instead of when its window *contains* the week. Due-since is the planned start.
+  - It reduces exactly to today's rule whenever the run's week equals the calendar week, so under every pin.
+  - Without it, stages planned in W43–W46 drop off the check-in list while the plan is behind.
+- **R37-2: the run's week is fixed when the `QUEUED` row is created.**
+  - Today the worker builds the input at execution (`workers/schedule_tasks.py:382`) and overwrites `run.current_week`
+    (`schedule_persistence.py:589`). A run that crosses Monday therefore disagrees with the rollover decision.
+  - Fix: the worker passes `current_week=run.current_week`.
+  - Builder callers to add to the Appendix: `schedule_tasks.py:382`, `schedule_runs.py:373`,
+    `priority_preview.py:250/269`, `whatif_baseline.py:103`, `run_dispatch` follow-up, `seed_demo_data.py:905/975`.
+- **R37-3: the "Plan from Wn" notice is extended.**
+  - New surfaces: the check-in page, and the What-if / plan-import results ("Simulated from W47; active plan from W42").
+  - Frontend readers to add to the Appendix: `gantt-legend.tsx:81`, `gantt-coordinates.ts:124`, `plan-month.ts`,
+    `format.ts`, and every `SPILLOVER_YEAR` / `CARRY_OVER_YEAR` label.
+- **R37-4: the changes response gains `baseline_week` and `run_week`.** The first automatic run of a week may be a
+  check-in or priority run that absorbs the week move. I20 is unchanged.
+- **R37-5: the seed summary run uses the calendar week.** `SEED_STATUS_WEEK = 42` drives only the progress derivation.
+- **R37-6: the rollover and `plan_week.status` compare with "==" / "≠", never "<".** This handles a lowered pin. The
+  calendar behaviour is identical.
+- **R37-7: `not_needed` when there is no active run.** This replaces "no schedulable project", which left the status
+  `pending` forever.
+- **R37-8: state decides every tick.**
+  - `plan_week_rollovers` counts only queued attempts.
+  - `not_needed` and `deferred` are not terminal for the week.
+  - A failure is a queued run ending FAILED, DISPATCH_FAILED or ABANDONED.
+  - At most 3 attempts per week, at least 30 minutes apart.
+  - The rollover never dispatches CP-SAT.
+- **R37-9: lifespan ticker and beat schedule.** The ticker can be turned off by a setting and is off in both conftests
+  (`TestClient` runs the lifespan). Beat is evaluated in Europe/Athens. The 15-minute entry is the guarantee.
+- **R37-10: `POST /check-ins` answers 409 `PLAN_YEAR_CLOSED` while the year is closed.** Otherwise January check-ins
+  would be stamped 52, repeating OQ #90.
+
+**Invariants, exact text in the ADR.**
+- I13 restated: week comparisons use the run's stored week.
+- I19 gains a sentence: remaining capacity and `remaining_weeks` are at the response's calendar week; demand does not
+  depend on the week.
+- I9 gains a sentence: while the plan is behind, the count is still the run's, with the run's week shown.
+- I24 gains a sentence: a follow-up's week is read when its row is created.
+- I38–I41 amended:
+  - I38: the week is read once at row creation and the input is built with it;
+  - I39: "≠", an active run exists, the year is not closed, the retry bound, never CP-SAT;
+  - I40: the notice, no year constant, no browser clock;
+  - I41: the ISO week-year decides.
+
+**Checks (a)–(f).**
+- **(a)** Every Appendix reader is on the right side. What-if and the priority preview are internally consistent
+  (both sides are solved at the input week).
+- **(b)** The pin reduces to today's behaviour if:
+  - (i) no stored active run is at a week other than the pin;
+  - (ii) `current_week` loses its default without a new canonical-input field (keyword-only field or sentinel).
+  Then golden files and stored runs are byte-identical.
+- **(c)** Sound with R37-6..9. P32-R12 / OQ #89 (a) means a CP-SAT plan now lives at most until the next Monday. If the
+  owner answers (c), the decision needs a `held` status.
+- **(d)** Coherent. 1–3 Jan 2027 is 2026-W53, mapped to 52 and not closed. The unconstrained finish, anchored tails
+  (ruling 10) and Done intervals past the week need no special case.
+- **(e)** Check-in stamps use the calendar week; R37-10 covers the closed year; R37-5 covers the seed.
+
+**(f) Measured.** On a disposable copy of the dev DB (`pg_dump` → `rpd_p37t01_copy`, dropped; `rpd` untouched,
+still p33c, 13 runs).
+- Greedy in memory, I8 repeat byte-identical. The W42 re-solve equals stored v13 project by project (0 differences).
+- Dashboard buckets, within / spillover / left out:
+
+  | Hub | W42 | W47 | W52 |
+  |---|---|---|---|
+  | All | 135 / 63 / 74 | 114 / 82 / 76 | 77 / 113 / 82 |
+  | PD-India | 88/34/63 | 78/42/65 | 59/60/66 |
+  | PD-Romania | 20/6/2 | 16/10/2 | 14/11/3 |
+  | R&D-India | 7/17/6 | 2/22/6 | 0/22/8 |
+  | R&D-Greece | 3/0/3 | 3/0/3 | 1/2/3 |
+  | OEM-HCK | 8/3/0 | 6/5/0 | 1/9/1 |
+  | OEM-Seitek | 9/3/0 | 9/3/0 | 2/9/1 |
+
+- The 135 includes 51 Commercialized projects. The scheduled within-year count is 84 → 63 → 26. Blocked is 0.
+- W42 → W47: 21 projects go within → spillover and 2 go spillover → left out. None improves.
+- 144 of 145 projected finishes move exactly +5. One moves −5: a serial-SGS knock-on from a higher-ranked project that
+  became LEFT_OUT; explained, not a defect.
+- Done history is unchanged (I11).
+- The dev DB has 0 `stage_checkins`, so the OQ #90 and overdue-jump counts must be measured on client data at T07.
+- Effect for the owner (OQ #92): without check-ins, every later Monday costs about +1 week on every finish.
+
+**Next:** P37-T02 (orchestrator) folds in R37-1..R37-10 and the invariant texts, ADR → Accepted. T03/T04/T05 acceptance
+should add the R37-2, R37-6, R37-8 and R37-9 tests. The figures above go to the owner for OQ #92. Remind the owner that
+OQ #88 must be answered before 28 Dec.
+
+## [2026-11-16] Delivery rate per country on Dashboard + Executive (owner ask 2026-11-16) — frontend-builder: DONE
+
+**Ask:** "for delivery rate in both executive and dashboard show the delivery rate of India, Greece and Romania, all
+(OEM are also under one of them)".
+
+**Built (frontend only; backend-builder adds `CompletingWithinYear.regions` in parallel):**
+- `frontend/src/surfaces/dashboard/api/types.ts`: `DeliveryRegionRow { region: LabRegion; within_year_count;
+  spillover_count; left_out_count; blocked_count }` and `CompletingWithinYear.regions: DeliveryRegionRow[]` (always
+  Greece, India, Romania; OEM in Greece; per bucket the rows sum to the top-level counts).
+- `lib/outcome.ts`: new `OutcomeCounts` (Pick of the four counts); `outcomeTotal` / `withinYearSharePct` / `sharePct`
+  now take `OutcomeCounts`, so a country's rate is the SAME formula on its served counts (I9 — no recount of `rows`).
+- New `components/delivery-region-breakdown.tsx`: "By country" list under the unchanged overall gauge — flag
+  (`CountryFlag`), name, whole-% rate, slim primary bar, "within / total". Zero-project country → "—" (never 0 %).
+  Greece row carries a visible "incl. OEM" tag, plus a note "OEM projects are counted under Greece." Each row has an
+  sr-only sentence; the visual parts are aria-hidden.
+- `delivery-gauge-card.tsx` renders it in both variants (Dashboard full + Executive `compact`), so neither
+  `DashboardPage.tsx` nor `executive-view.tsx` changed. Read defensively: a payload without `regions` (older
+  backend) still renders the gauge, no breakdown.
+- **Country-filter decision:** all three rows always shown, the out-of-filter ones at "—" — the server sends zero
+  rows for them, the same "all three, zeros included" behaviour as the KPI region chips (ADR 0025 §4,
+  API_CONTRACT_P13 §2). No client-side filter reading.
+- Click-to-list per country: not done (optional; would need DashboardPage plumbing while another builder edits it).
+
+**Tests:** `delivery-gauge-card.test.tsx` (+7: order/formula, zero-region "—", one-country filter, OEM note, compact,
+legacy payload, axe both variants); `executive-view.a11y.test.tsx` asserts the breakdown inside the exec gauge (axe
+covers it) and gets a 30 s timeout (whole-view axe runs ~11 s in jsdom, was flaking at the 10 s default). Fixtures
+gained `regions` in DashboardPage, within-year-panel, hub-type-section, exec-kpi-strip, use-dashboard and
+completion-profile-card tests (the last a one-line `regions: []`, unavoidable for tsc).
+
+**Verified:** tsc clean; eslint clean on `src/surfaces/dashboard` (one pre-existing warning in
+project-list-dialog.tsx); vitest `src/surfaces/dashboard` 41 files / 282 tests pass; `pnpm build` bundle budget PASS
+189.7 KB gzip initial. No commit, git index untouched.
+
+## [2026-11-17] multi-select-filters merged into main (9a41987) — orchestrator
+
+Owner asked to resolve the merge that was left half-done (12 conflicted files rewritten by an
+unknown actor, not frigoglass-0c). Staged the combined resolutions plus the ADR 0050→0051
+renumbering fix-ups. Kept other sessions' in-progress edits out: dashboard regions, theme, P37
+docs. The committed `api/routers/dashboard.py` is the resolution without the regions code, which
+stays in the working tree for frigoglass-0c. Staged tree verified: ruff + compile clean, 550
+affected backend tests, tsc clean, 753 frontend surface tests (2 Matrix tests fail only under
+parallel load and pass alone and on both parents). Dev :5174/:8011 now serve a clean worktree at
+9a41987 (`/Users/ayushroy/frigoglass-p35view`). :5185 is the old multi-select worktree, which
+lacks P35, and that's what the owner was looking at.
+
+## [2026-11-17] P37-T02 — ADR 0052 ruling and owner answers folded in — orchestrator: DONE
+
+**Inputs:** the workflow-auditor's ruling (ADR 0052 "Ruling (P37-T01)", R37-1..R37-10, exact texts for
+I9/I13/I19/I24/I38–I41, measured 135 → 114 within-year at W47, 77 at W52). The owner's answer to
+OQ #88–#92 on 2026-11-17: "no problem, now we don't need to show dummy data, so make the week
+follow". Every recommended assumption was accepted.
+
+**Changed (docs only):**
+
+- **ADR 0052 → Accepted with changes.** The status block quotes the owner's answer.
+- **ADR 0052 §4–§8 edited to match the ruling:**
+  - R37-1: due = planned start ≤ week;
+  - R37-2: the week is fixed at QUEUED-row creation;
+  - R37-6: compare with ==/≠;
+  - R37-7: `not_needed` when there is no active run;
+  - R37-8: state decides, and the table counts only queued attempts;
+  - R37-9: a ticker setting, beat on the Athens clock;
+  - R37-3/R37-4: notices on the check-in page and What-if, plus `baseline_week` / `run_week` on
+    changes;
+  - R37-5: the seed summary runs at the calendar week;
+  - new §7a, R37-10: closed year → 409 `PLAN_YEAR_CLOSED`.
+- **ADR 0052 Appendix, "Added at P37-T02":** the R37-2 builder callers and the R37-3 frontend readers.
+- **ADR 0052 "Owner answers and fold-in" section:** OQ #89 (a) means the ruling's conditional `held`
+  branch is not adopted.
+- **DOMAIN_RULES:**
+  - the P37 subsection under Horizon constants is rewritten as binding, with the exact I38–I41 text;
+  - I9, I13, I19 and I24 are amended;
+  - the R37-1 clause is added to the check-in Due stage;
+  - the revision note says it is binding.
+- **`API_CONTRACT_P37.md` final:**
+  - `plan_week.status` equality semantics, null with no active run;
+  - `baseline_week` / `run_week` on `/schedule-runs/{run}/changes`;
+  - 409 `PLAN_YEAR_CLOSED` on `POST /check-ins`;
+  - the due rule;
+  - no new What-if field;
+  - `RPD_WEEK_ROLLOVER_TICKER`.
+- **OPEN_QUESTIONS #88–#92** closed with the verbatim answer.
+- **Plan:**
+  - P37-T01 and P37-T02 DONE.
+  - New acceptance tests on T03 (pin condition ii: no new canonical field, hashes byte-identical),
+    T04 (R37-1/2/4/5/10, including the Sunday-queued / Monday-executed test), T05 (R37-6/7/8/9) and
+    T06 (R37-3/4, closed-year 409).
+  - D37-7 superseded: the release is not gated on the T07 figures.
+  - New **P37-F01**: ADR plus phase to open planning year 2027. It must be planned before 28 Dec
+    2026, because from 4 Jan 2027 the app is closed and refuses check-ins.
+
+**Repo note:** the multi-select merge is committed (9a41987). The migration chain head is p33c, and
+the dev DB is at p33c. P37-T05's `plan_week_rollovers` migration revises p33c unless another phase
+lands first.
+
+**Next:** P37-T03 (algorithm-engineer) can open now. T04 opens after T03, which owns the
+`ScheduleInput.current_week` field; T04 may start its non-scheduler parts in parallel. T05 follows
+T04, and T06 can build to the contract once T04 starts. Reminder for the owner: P37-F01 by 28 Dec.
+
+## [2026-11-17] P38 opened — deactivate engineers instead of deleting them (ADR 0053) — orchestrator
+
+**Ask (owner 2026-11-16):** "rather than deleting an engineer add an option to deactivate them, so in
+older projects in which they were assigned it shows them". **Owner ruling 2026-11-17** (relayed,
+verbatim): "it is Frigoglass's headache for engineer, but give a popup when deactivating: show the
+list of active assigned projects and then ask to change the leader too". Docs only; no application
+code. The repo is mid-merge by another session; only docs were touched (append to MEMORY,
+OPEN_QUESTIONS, IMPLEMENTATION_PLAN; two inserts and one appended section in DOMAIN_RULES).
+
+**Files:** `docs/ADR/0053-deactivate-engineers-instead-of-deleting.md` (Proposed), `docs/API_CONTRACT_P38.md`,
+`docs/DOMAIN_RULES.md` (revision note, "Capacity supply" amendment, new section "Engineer
+deactivation", proposed I42–I44), `docs/IMPLEMENTATION_PLAN.md` (P38, T01–T09), `docs/OPEN_QUESTIONS.md`
+#93–#99.
+
+**Found (today's behaviour):**
+- `DELETE /engineers/{id}` takes Capacity Planning write: Hub Planner (own hub), Admin, Super Admin.
+- It writes an `engineer.delete` audit row and then deletes. Three FKs with no ON DELETE
+  (`projects.leader_engineer_id`, `project_workflow_steps.assigned_engineer_id`,
+  `schedule_run_project_steps.assigned_engineer_id`) make any used engineer fail with 409, and the
+  audit row is rolled back. There is no cascade, no SET NULL, and nothing to orphan.
+- UI: the Capacity Planning roster's Delete ConfirmDialog.
+- There is no "active" concept anywhere. The scheduler-input builder, supply (whole year,
+  regardless of creation date), the P1 fill, the What-if `_pick_leader`, plan-import name matching
+  and every picker use all engineers.
+- Names are resolved live from `engineers`, so keeping the row keeps history.
+- Check-ins are keyed on `user_id`. The audit log is immutable and holds names.
+  `project_workflow_steps.assigned_engineer_id` is never written. `users.is_active` is separate.
+  OQ #8 is still open.
+
+**Decisions:** D38-1..D38-6 in the plan. In short:
+- Admin and Super Admin deactivate or reactivate (OQ #93). DELETE returns 410. The reason is a
+  code. There is no purge (OQ #95).
+- The popup lists open projects (every status except Commercialized or Cancelled). Each row has a
+  picker of eligible active engineers of the capacity hub, plus "use one for all". **"Deactivate
+  anyway"** is allowed: projects left empty get leader NULL, i.e. the existing "No leader" /
+  `LEFT_OUT no_leader`.
+- **This deviates from my first recommendation** (a new leader forced on every open project): the
+  owner ruled the Admin decides. I chose NULL over keeping the inactive id, because every existing
+  marker, filter and hard gate keys on NULL. The name survives through `project_leader_history`
+  ("Former leader").
+- One transaction, then one greedy run (`engineer_deactivated`, ADR 0023) only if a schedulable
+  project changed leader. Reactivation runs nothing.
+- Supply is pro rata on active weeks through `engineer_inactive_periods`, and the deactivation week
+  counts as worked (OQ #94).
+- The scheduler is unchanged: the builder filters inactive engineers out, so T03 is conditional
+  on the T01 ruling.
+- Every served name gets an `active` flag, and the "Inactive" tag shows where the name shows.
+
+**Next:** P38-T01 (workflow-auditor ruling on ADR 0053 Q1–Q6). It does not depend on P37. P38-T04
+reads the week through whatever accessor exists, and P38-T02 adds that reader to the ADR 0052
+Appendix if P37-T04 has not landed.
+
+## [2026-11-17] P39 opened — Marketing Brief is not a design step (ADR 0007 amendment) — orchestrator
+
+**Trigger:** owner correction, verbatim: "also marketing is under others, not a design step".
+
+**Evidence read:**
+- ADR 0007 put PDD-A in design because of the A+/A design formula.
+- The B/C design formulas omit PDD-A (`docs/CLIENT_FORMULAS.md` inconsistency 5, OQ #13).
+- The old tool's "Responsible for activity" row says PDD-A is Marketing (`docs/DATA_RECONCILIATION_2026.md` §2.3, OQ #61).
+- The same row lists OEM-A, B, G and H as "R&D Resource", OEM C and F as Marketing, and OEM D, E and I–N as done by OEM.
+- The workbook's step-name fills put PDD-A in the same blue as the design steps, so the owner's ruling settles PDD-A.
+- Nothing in the roster or capacity model represents Marketing. `elapsed` (books nobody, keeps calendar time) is
+  therefore the exact fit, and a distinct `other` kind would schedule identically.
+
+**Decisions:** D39-1..D39-5 in the plan.
+- PDD-A becomes `elapsed`.
+- No new kind; "Others" is at most a label (OQ #100 b).
+- Applied through the existing step-kind edit path by an idempotent script, not a migration. One transaction covers the
+  kind, `rederive_all_projects` (R6), the audit and `schedule_stale`; one greedy run (`step_kind_changed`) follows.
+  Fresh installs get the kind from `domain_constants`.
+- History is kept.
+- OEM-A Commercial Brief is not changed (old tool: "R&D Resource"); OQ #100 a asks the owner.
+
+**R2 recomputed** with `scheduling.effort_split.apportion_effort` over the seeded weights (R33-2):
+
+| Case | Before | After |
+|---|---|---|
+| B 4 | A 1, E 2, K 1 | D 1, E 2, K 1 |
+| C 3 | A 1, D 1, E 1 | D 1, E 1, J 1 |
+| B 8 | A 1, D 1, E 3, J 1, K 1, M 1 | D 1, E 3, J 1, K 2, M 1 |
+| A 18 | … E 6 … | B 4, D 1, E 7, I 2, J 1, K 2, M 1 |
+| A+ 44 | A 2, B 16, D 2, E 12, … | B 17, D 2, E 13, I 4, J 2, K 4, M 2 |
+| B 1.5 / A 5 / C 1 | unchanged | unchanged |
+
+**Effects stated:**
+- The leader is no longer booked for PDD-A, and a 0.5 FTE leader no longer stretches it.
+- Design demand drops by `plan_weeks(PDD-A)` (1 wk) for each PDD project without a figure, plus any R3-raised
+  PDD-A weeks.
+- Figure projects keep E, but their chain gains PDD-A's calendar week.
+- Booked %, within-year and the P1 fill move with the run.
+
+**Files touched:**
+- `docs/ADR/0007-client-lead-time-table-and-step-kinds.md` (dated amendment, Proposed, Q1–Q6)
+- `docs/DOMAIN_RULES.md` (P39 header note, step table, R2 examples)
+- `docs/OPEN_QUESTIONS.md` (#100)
+- `docs/IMPLEMENTATION_PLAN.md` (P39, T01–T06)
+- No code.
+- I did not edit P37/P38 sections. I took no new ADR number (0053 is P38's), and P39 adds no Alembic revision.
+
+**Gate:** P39-T06 may be combined with P37-T08 if P39-T05 is DONE before P37-T08 starts.
+
+**Next:** P39-T01, the workflow-auditor ruling plus the measurement on a disposable copy of the dev DB (the existing
+steps PUT can flip the kind there today). It does not depend on P37 or P38.
+
+### 2026-11-17 — P40 opened (orchestrator): timeline step colours, filters, forest view, frozen per-step dates
+
+Owner request with five screenshots (the old tool's Charter timeline and our Gantt). The old tool
+(`Charter.jsx`) has per-step `act_<step>_s` / `_e` / `_delay` inputs. It honours the typed dates
+only when the project is frozen (`isManual = p.isFrozen && s > 0 && e > s`); otherwise its
+auto-schedule overwrites them. Its colours are 14 hex values by step index. Our Freeze takes one
+`actual_start_week` for the whole project and locks the scheduled steps (I10). Items (1)–(2)
+partly reverse ADR 0048, so they are held for the owner's confirmation. Presentation items
+(3)–(7) were delegated as P40-T01.
+
+## [2026-11-17] Band-rank `to_rank` (arrow buttons / typed position, owner ask 2026-11-17) — backend-builder: DONE
+
+**Ask:** move a project up/down one or to a typed position on the Priority board. Additive to P36 (ADR 0050,
+API_CONTRACT_P36 §6 amendment dated 2026-11-17). `backend/scheduling/` not edited.
+
+- **Request shape** (both `POST /projects/{id}/band-rank/preview` and `POST /projects/{id}/band-rank`):
+  `BandRankPreviewRequest` gains `to_rank: int | null` (strict JSON int, 1..n in the FULL band). The board sends
+  `{ "to_rank": n }` (+ `preview_token` on confirm). Anchor bodies and their tokens unchanged.
+- **Errors:** 422 `ANCHOR_AND_RANK` (to_rank with either anchor, checked first), 409 `NOT_RANKABLE`, then 422
+  `BAD_RANK` outside 1..n. **Decision: 422, no clamping**; the message never states n (P36-R02). No band-size field
+  added to any response. Probing 1..n via BAD_RANK can bound the band size; a served `band_rank` already discloses a
+  lower bound (W36-1 was copy correctness, not confidentiality) — flag to security-auditor if it matters.
+- **Resolution:** `services.priority_preview.anchors_for_rank(order, project, to_rank)` maps to the equivalent
+  `place` call (rank n = no anchor/last; else `before = (order minus project)[to_rank-1]`), so I37c holds and a
+  scoped user may land next to an out-of-scope project without naming it (the anchor scope check applies only to
+  anchors the caller sends). Preview resolves on the band as read (no lock, as anchor previews); confirm resolves
+  after lookup/authz/rate limit/band-rank lock/re-read+scope re-check (P36-R01 order). Current rank → `unchanged`.
+- **Token:** `rank_snapshot_token(..., to_rank=)` adds `to_rank` to the payload only when given (anchor tokens
+  byte-identical). Confirm must repeat the same body; mixing to_rank preview with anchor confirm → 409 `PREVIEW_STALE`.
+- **Audit** `project.band_rank_move`: anchors as sent (null) + `requested_rank`; `to_rank` = resulting rank as before.
+- **Contract test:** the frontend-builder (in parallel) made the TS body a union (`BandRankAnchorPlacement |
+  BandRankToRankPlacement`, request types now aliases). CONTRACT_TABLE rows changed to the two placement interfaces
+  as `subset` of `BandRankPreviewRequest`, plus `test_band_rank_request_union_p36_to_rank` pinning that the halves
+  are disjoint, cover the backend fields exactly, and confirm = preview + `preview_token`.
+- **Tests** (`tests/test_p36_band_rank_api.py`, +5): up/down/first/last/typed jump (I37b/c, audit), unchanged,
+  errors (0, −2, n+1, 10^9, string, bool, with before/after, confirm variants, NOT_RANKABLE), Hub Planner moving past
+  an out-of-scope project (no id leak, out-of-hub project 404), token binding/stale/re-preview.
+- **Verified:** p36 band-rank + p14 + p11 suites green (341 passed with the contract file; the band-rank contract
+  rows pass). Contract file: 2 failures not mine (`MeResponse`, `ScheduleRunChanges` week fields — another session's
+  in-flight P37 backend work awaiting its TS mirror). ruff clean on my edits; `services/priority_preview.py` has an
+  I001 from another session's in-flight `from services import plan_clock` import (left alone). mypy: 0 errors in the
+  touched files. Not committed; git index untouched.
+
+Files: `backend/schemas/project.py`, `backend/services/priority_preview.py`, `backend/api/routers/projects.py`,
+`backend/tests/test_p36_band_rank_api.py`, `backend/tests/test_openapi_frontend_contract.py`, `docs/API_CONTRACT_P36.md`.
+
+## [2026-11-17] Capacity Planning Overview: per-card Edit / Save / Cancel (owner ask 2026-11-17) — frontend-builder: DONE
+
+**Ask:** "it should have a save and edit option for selecting and deselecting in each card". Before this, the chips
+and FTE / platforms / efficiency inputs saved on every click or blur.
+
+**Built (frontend only, `frontend/src/surfaces/planning/components/overview/`):**
+- Each hub engineer card and lab region card is read-only by default. Chips are plain `StaticChip` labels (only the
+  selected ones), and values are plain text. The header has "Edit" next to "+ Add", but only when `canEdit` (the same
+  gate as before) and the card has rows.
+- In edit mode the chips are `ToggleChip` (`aria-pressed`, in a labelled group) and the values are inputs. The header
+  shows "N rows unsaved", Cancel and Save (primary). Save is disabled when nothing changed, a value is invalid
+  (existing form schema message under the input) or a save is running. Escape in an input restores that field.
+- A changed chip gets a dashed amber outline and a changed input an amber border and fill. The row gets a visible
+  "Unsaved" tag, which is also the screen-reader cue.
+- New `card-edit-store.ts` (zustand): per card, drafts per row and field, holding only the changed fields. It lives
+  outside the cards, so drafts survive Overview tab switches. `PlanningPage` resets it on unmount.
+- New `use-card-editor.ts`: "changed" is judged against the current served value. Save sends ONE PATCH per changed
+  row with only its changed fields, through the existing `onUpdate`, so the mutation hooks, optimistic patch,
+  invalidations and 403 → read-only handling are unchanged.
+  - Rows are saved one after another, not in parallel, so the optimistic rollbacks cannot clobber each other.
+  - Rows that saved leave edit state. A failed row keeps its draft and shows the `save-error.ts` message
+    (`role="alert"`). The card stays in edit mode until all its rows have saved.
+  - Losing write ends edit mode and drops the drafts. A deleted row's draft is pruned.
+- **Choice:** several cards may be in edit mode at once; each saves on its own.
+- New `overview-leave-guard.tsx`: one page-level guard (a router supports one blocker), the same pattern as the Matrix
+  and register guards (`beforeunload` plus the data-router `useBlocker`).
+- New `card-edit-controls.tsx`. `inline-number.tsx` is now a controlled draft input (no commit-on-blur) and
+  `toggle-chip.tsx` gained `changed`. `card-pills.tsx` and `save-error.ts` are unchanged.
+- The per-row pencil and trash work as before, delete semantics included.
+
+**Tests:**
+- `PlanningPage.test.tsx`: the old immediate-save tests are replaced by 12 edit-mode tests. They cover read mode
+  being non-interactive, toggles in edit mode, edit → toggle → save sending exactly the changed fields, a value set
+  back not being sent, Cancel restoring, invalid values blocking Save, partial failure and retry, 403, drafts
+  surviving tab switches, read-only and Hub Planner gating, and axe in edit mode.
+- New `overview-leave-guard.test.tsx` (store, `beforeunload`, blocker with axe).
+
+**Verified:**
+- eslint clean on `src/surfaces/planning`. `tsc -b` was clean on my files; a later run fails only in another
+  session's new untracked `src/components/ui/sheet.test.tsx`.
+- Planning vitest: 33 files, 281 tests pass. Full suite: 1970/1974; the 4 failures were timeouts under load in
+  Matrix, Workspace and What-if import, and all 101 tests in those files pass when re-run alone.
+- vite build plus budget PASS: 189.8 KB gzip.
+- No commit, git index untouched.
+
+## [2026-11-16] Workflow Settings: "Project step timing" removed, "+ Add category" prominent, P33-T16 flake fixed (owner asks 2026-11-16) — frontend-builder: DONE
+
+**1. "Project step timing" tab removed (owner's explicit request; reverses the P32-R04 / P33-T15 tab).**
+- Deleted (working tree only, index untouched): `surfaces/workflow-settings/components/project-step-timing/`
+  (section + test), `hooks/use-project-statuses.ts` (only consumer was the section), `lib/complete-step-rows.ts`
+  + test (same). Another session's staged edits in `project-step-timing-section.tsx/.test.tsx` and
+  `use-project-statuses.ts` are moot — the user should unstage/stage the deletions.
+- `WorkflowSettingsPage.tsx` renders `WorkflowTemplatesSection` only: no top-level tab switcher; description now
+  "The workflow templates every project follows: steps and precedence, lead times, category timelines, hub
+  calendars and chambers." Old deep links: `?tab=` (any value: projects, project-timing, templates) and
+  `?project=` are dropped with a `replace` navigation and the templates show.
+- Access consequence: `nav.ts` `/settings/workflow` `alsoReadableVia` is now `['workflow_templates']` (was
+  `['gantt', 'workflow_templates']`). A role with only `gantt` read (Hub Planner, Engineer, ...) no longer sees
+  the Workflow nav item and gets the 403 page — they had nothing left to see there. Per-project step timing stays
+  on `/timeline`. Server unchanged.
+- Kept (shared with `/timeline`): all `surfaces/gantt/*`. Now unused by any page, left in place for a follow-up
+  decision: `GanttChart` opt-in props `axis`, `rowExtra`, `markUnplaced`, `scrollToProjectId`,
+  `onVisibleProjectsChange` and `gantt-coordinates.projectWaterfallScale` (still unit-tested).
+- e2e: `p33-gate.spec.ts` test "Workflow 'Project step timing' tab is read-only and axe clean" removed; the
+  `?tab=templates` URLs elsewhere still work (param stripped).
+
+**2. "+ Add category"** (`components/timelines-tab.tsx`): moved from a `secondary`/`sm` pill beside the
+description to the tab's header row (workflow switch left, button right), `variant="primary" size="md"` (the
+design system's standard size; h-9), `aria-haspopup="dialog"`, `data-testid="add-category-button"`; the
+description sits on its own line below. Same accessible name, so tests and e2e locators are unchanged.
+
+**3. Flaky test** `WorkflowSettingsPage.p33.test.tsx` "each click changes the preview request (debounced) …":
+not a regression (the full suite passed 249/249 on the pre-change tree; the file passes alone). Root cause is
+test design under load: two awaited `user.click`s on Move were expected to land inside one 150 ms debounce
+window; on a loaded run they can be > 150 ms apart, the debounce correctly sends a gap −1 request first, and
+`sends[1]` is not −2. Fix: the two clicks are `fireEvent.click` in one `act` (deterministic). Additionally the
+two `waitFor`s that wait on the real debounce timer get `{ timeout: 5_000 }` — that part is purely timing
+headroom (default 1 s), assertions unchanged. Stress: 6 concurrent runs, all pass.
+
+**Tests added/changed:** `WorkflowSettingsPage.test.tsx` (+5: templates-only/no tab switcher/description; deep
+links `?tab=projects|project-timing|templates`, `?project=` land on templates with the param removed);
+`p33.test.tsx` (+1: Add category is primary h-9 with `aria-haspopup`); `session.test.tsx` route-guard test now:
+Admin sees templates (no tabs, `?tab=projects` ok), Hub Planner and Auditor get 403.
+
+**Verified:** `tsc -b` clean on my files (one error in another session's new untracked
+`src/components/ui/sheet.test.tsx`, not mine); `eslint .` 0 errors (9 pre-existing warnings); full vitest
+1971/1974 — the 3 failures (DashboardPage "2026-10-22 order", whatif `results-r05` ×2) ran while another
+session's full vitest ran concurrently (576 s vs 194 s), and both files pass alone (39/39); all workflow-settings,
+session and app tests pass. Bundle budget PASS 189.8 KB gzip initial. No commit, git index untouched.
+
+## [2026-11-17] P38-T01 — workflow-auditor ruling on ADR 0053 (deactivate engineers): ACCEPT WITH AMENDMENTS; P38-T03 NEEDED
+
+The full text is in ADR 0053 "Ruling (P38-T01)": R38-1..R38-9, exact I42–I44, and the measured
+table. Docs only. No feature code, and git was not touched.
+
+**Q1–Q6: all ACCEPT WITH AMENDMENT.**
+
+- **R38-1 (Q1), one active-weeks helper `A_e(Y, a..b)`.**
+  - Yearly supply = `ww × Σ fte_e × A_e(1..52)/52`.
+  - Remaining supply = `rem_ww × Σ fte_e × A_e(CW+1..52)/(52−CW)`. This equals "active now" in
+    practice and stays right under a lowered pin.
+  - Exact Decimal/Fraction arithmetic. With no period, the result is the same float as before P38.
+  - Engineer capacity is 0 in every covered week (reactivation included).
+  - The P1 fill uses the served remaining figure, and its own FTE query is retired.
+  - Counted / not-counted / inactive counts sum to the roster.
+  - The plan year is the served `plan_year`. A deactivation in a closed year is recorded at
+    (plan_year, 52).
+- **R38-2 (Q2), builder filter.**
+  - Accepted: measured, it changes no outcome except through leaders.
+  - But What-if `_supply` and the plan-import weekly supply read the input's engineers, so an
+    inactive engineer would drop out for the whole year. PD-Romania year `capacity_before` would be
+    209.00 against Capacity's 248.77, which breaks `test_p18_r02`.
+  - **P38-T03 NEEDED:** a supply-only field on `WhatIfBaseline` (not `ScheduleInput`, so the hash is
+    unchanged); `_supply` and plan import apply R38-1.
+  - Plan-import "keep matched leader" uses active engineers only.
+- **R38-3 (Q3).**
+  - **Frozen open projects must get a leader** (422 `FROZEN_NEEDS_LEADER`; unfreeze first).
+    `_no_leader_outcome` emits no rows even for frozen projects, and the I10 check skips empty
+    outcomes, so clearing would silently drop the locked dates. The dev data has 0 frozen projects.
+    The owner is to confirm (proposed OQ).
+  - Non-frozen clearing is allowed (owner ruling). The preview serves `progress_tracked`,
+    `done_stages` and `in_flight_lab`. The warning must say the recorded stages leave the Gantt and
+    any in-flight lab test gives up its chamber in the plan (ruling-2 `no_leader` exemption).
+  - A scheduler follow-up to keep anchored rows on no-leader projects is a proposed OQ.
+  - Candidate eligibility is exactly `greedy._cat_not_allowed`.
+- **R38-4 (I42 gap).** PATCH has no status-transition guard. Reopening a Commercialized or Cancelled
+  project whose leader is inactive must set a leader (active or null) in the same write, or it gets
+  422 `LEADER_INACTIVE`.
+- **R38-5 (Q4).**
+  - ADR 0023 lifecycle exactly. The week is read at QUEUED-row creation (R37-2).
+  - The dispatch condition is amended: a schedulable project changed leader, **or** the active run
+    has a design row of the engineer ending after `d`. Otherwise `not_needed`.
+  - Reactivation dispatches nothing.
+  - Lock order: engineer row first (FOR UPDATE deactivate, FOR SHARE leader writes), then projects
+    in id order. Busy → 503.
+- **R38-6 (Q6).**
+  - A project-level Former leader is enough. A new run attributing Done rows to the new leader is
+    not an I14 rewrite.
+  - `project_leader_history` gets a row for every leader change from P38 on. There is no backfill.
+  - History readers never filter by `active`.
+- **R38-7 (P37).** Deactivation and period weeks are calendar weeks from `plan_clock`. They are
+  added to the ADR 0052 Appendix if P37-T04 has not landed. While the plan is behind, utilization
+  may show the engineer booked after `d` until the run lands; the I40 notice covers it.
+- **R38-8 (P36 / P33).** A leaderless schedulable project keeps its band rank (R36-3, I37b) and
+  holds no capacity. No P33 interaction.
+- **R38-9.** With no inactive engineer, everything is byte-identical.
+
+**Measured** on a disposable copy of the dev DB (`rpd_p38t01_copy`, dropped; `rpd` untouched at
+p33c with 14 runs). Greedy at W47; the baseline equals P37-T01 (114 / 82 / 76). There were 0
+invariant violations in every scenario.
+
+- **Elena Micu** (PD-Romania, 1.0 FTE): 4 schedulable projects, all In Development and
+  progress-tracked.
+  - Reassigned: overall unchanged at 63 / 82 / 76. Two non-led P4 projects were pushed 8 and 13
+    weeks later.
+  - "Anyway": 62 / 79 / 80 (5 no leader). One within-year project was lost, 56 rows dropped
+    including Done history, and booked PD-Romania design went 186 → 116.
+  - Supply: yearly 253.00 → 248.77, remaining 24.33 → 20.10.
+- **Praveer** (no open projects): 0 changes, no run. R&D-India supply 88.33 → 86.21 / 8.49 → 6.37.
+- **Sailesh** (leads only a Commercialized project): 0 changes.
+- **Theoni** (not counted):
+  - 3 of 6 schedulable projects have **no eligible candidate** (only she allows B/C in R&D-Greece).
+  - Within year 63 → 58, spillover 82 → 84, left out 76 → 79.
+  - Supply unchanged.
+
+**For the owner (T02 to number the OQs):**
+- (a) Should frozen projects require a leader?
+- (b) Should a no-leader project keep its recorded stages on the Gantt (a scheduler change)?
+- (c) Theoni's B/C projects have no eligible replacement in R&D-Greece.
+
+**Next:** P38-T02 folds in R38-1..R38-9, the I42–I44 texts and the new codes (`FROZEN_NEEDS_LEADER`;
+`LEADER_INACTIVE` on reopen; preview fields `progress_tracked`, `done_stages`, `in_flight_lab`) and
+marks T03 NEEDED with the R38-2 scope. T04 and T05 acceptance gain the R38-1/4/5 tests.
+
+## [2026-11-17] P38-T02 — workflow-auditor ruling folded into ADR 0053 (Accepted) — orchestrator
+
+Docs only; no application code. Folded R38-1..R38-9 and the exact I42–I44 into:
+- `docs/ADR/0053-deactivate-engineers-instead-of-deleting.md`: Status **Accepted**. The ruling wins
+  where text differs. Sections §2–§6 are amended with *(R38-n)* marks, and the questions are marked
+  answered.
+- `docs/DOMAIN_RULES.md`: the revision note is binding. The "Capacity supply" amendment now uses the
+  `A_e` helper. "Engineer deactivation" is rewritten to the ruling, and its invariants are the
+  ruling's exact text.
+- `docs/API_CONTRACT_P38.md`:
+  - preview fields `progress_tracked` / `done_stages` / `in_flight_lab`, and candidates by the
+    `greedy._cat_not_allowed` predicate;
+  - 422 `FROZEN_NEEDS_LEADER`, and 422 `LEADER_INACTIVE` on reopen;
+  - verbatim warning copy;
+  - dispatch condition (a) or (b) and lock order;
+  - calendar weeks from `plan_clock`, and `plan_year` closed → 52;
+  - the band rank is kept;
+  - What-if / plan-import supply equal to Capacity.
+- `docs/IMPLEMENTATION_PLAN.md`:
+  - T01 and T02 are DONE.
+  - **T03 is NEEDED.** Scope: a supply-only `WhatIfBaseline` field, not `ScheduleInput`, so the hash
+    is unchanged; `_supply` and the plan-import weekly series apply `A_e`.
+  - T04, T05 and T06 acceptance gain the R38 tests.
+  - The decisions header notes that the ruling wins.
+- `docs/OPEN_QUESTIONS.md`:
+  - #101: frozen projects always need a leader (assume yes).
+  - #102: no-leader projects keeping their recorded stages; a scheduler change, assumed no for P38,
+    follow-up.
+  - #103: Theoni's B/C projects have no eligible replacement (informational).
+
+OQ #93–#99 stay pending and use their stated assumptions.
+
+**Open now:** P38-T03 (algorithm-engineer) and P38-T04 (backend-builder) can run in parallel. Both
+depend only on T02.
+- T05 needs T04 and the T03 field name.
+- T06 can start from the contract (it depends on the T04 contract, now fixed).
+- T07 follows the T05 contract and T06.
+- Then T08 (audited run) and T09 (gate).
+- P37-T04 has not landed, so T04 reads the week through the existing constant. The deactivate and
+  reactivate endpoints are to be added to the ADR 0052 Appendix (R38-7).
+
+## [2026-11-17] Priority board: move preview in a right-hand side panel; ↑ / ↓ and typed position via `to_rank` (owner requests) — frontend-builder: DONE
+
+**Ask 1:** the priority-move / band-rank preview ("Move X to position 1 in P1?", finish W→W, the five counts,
+change list, No / Yes / Applying…) opens in a right-hand side panel, not a centred modal, for every caller.
+**Ask 2:** ↑ / ↓ and an editable position on every board card (Cards + List), sent as `{ to_rank }`
+(backend-builder adds that body to `POST /projects/{id}/band-rank[/preview]` in parallel; 422 `BAD_RANK`).
+
+- **New `components/ui/sheet.tsx`** (shadcn Sheet on Radix Dialog): side `right` (default) / `left`, full height,
+  `sm:max-w-xl`, light overlay (`bg-slate-950/15`) so the page stays visible, `data-variant="sheet"` +
+  `data-side`, slide animations off under `motion-reduce`. Radix gives focus trap, Escape and aria; it does not
+  set `aria-modal` (it hides siblings instead).
+- **`priority-preview-dialog.tsx`** now renders in that Sheet (`lg:max-w-2xl`). States, copy, buttons, focus-first
+  on "No, cancel", Escape / outside blocked while applying, `data-testid="priority-preview-dialog"` are all
+  unchanged. Two additions: the impact body is a focusable `role="region"` scroller, and focus goes back to the
+  element that opened the panel (it has no Radix trigger, so before this focus went to `body`). Every caller
+  shares this one element from `usePriorityMoveFlow` (PriorityMoveProvider on Board / Matrix / Gantt / Workspace,
+  and ProjectsPage), so all callers switch at once: board drop, card priority menu, rank drag / keyboard, ↑ / ↓ /
+  typed, Gantt row control, Workspace header, Workspace details form and Registration drawer form.
+- **`move-flow-panel.tsx`** (queued run progress, "Timeline updated", notices) is now docked at the right edge,
+  full height, `sm:max-w-md`. It stays non-modal and its behaviour is unchanged, so the whole flow lives in the
+  side bar.
+- **API (`lib/api/priority-move.ts`):** `BandRankPlacement = BandRankAnchorPlacement | { to_rank }`, plus
+  `isToRankPlacement` and `BAD_RANK`. A `to_rank` body sends only `{to_rank}` (+ `preview_token`), never anchor
+  keys. The flow (`use-priority-move-flow.tsx`) carries `to_rank` through preview, confirm and the
+  PREVIEW_STALE re-preview. `BAD_RANK` → `badRankCopy` (move-copy.ts): "X is already last in P1, so it can't
+  move down" when `to_rank = from + 1`, otherwise "There is no position N in P1: the band has fewer projects
+  than that". It never shows a band size (P36-R02). 503 `BAND_RANK_BUSY` keeps the R03 copy.
+- **Board:** new `components/band-rank-controls.tsx`.
+  - `BandRankInput` replaces the `#n` chip for re-rank-capable sessions (same gate as drag: Registration write
+    + a host + a served `band_rank`). Enter or blur submits; Escape cancels; the value must be an integer ≥ 1
+    (`parseTypedRank`), otherwise an inline `role="alert"` error with `aria-invalid` / `aria-describedby`. The same
+    rank sends nothing, and a ref stops the blur that follows Enter from sending twice.
+  - `BandRankStepButtons`: "Move <name> up/down one position in <band>". In the Cards layout they sit in the
+    footer beside the priority menu; in the List layout they stack next to the input.
+  - ↑ is `disabled` at rank 1. ↓ is `disabled` only when served data proves the card is last:
+    `lastServedIdIfFullBand`, i.e. the last served card when nothing is filtered, there is no hub / country
+    selection and the session has `hub_scope_all`. Otherwise ↓ stays enabled and the server answers `BAD_RANK`.
+  - Busy / pending use `aria-disabled` (not `disabled`), so focus survives and returns to the control.
+  - `PriorityBoardPage.rankTo` puts the card next to the visible card that holds the target rank
+    (`displayPlacementForRank`), or keeps it in place with `rankPending` if none is shown. It then calls
+    `requestRankMove(target, {to_rank}, {position: to_rank, fromPosition})` with the same settle / rollback as a
+    drop (`rankSettled`, now shared with `rankDrop`).
+  - Read-only roles still see the plain chip. Keyboard pick-up Up / Down on the handle is untouched.
+- **Tests:**
+  - New `PriorityBoardPage.rank-controls.test.tsx` (20): ↑ / ↓ to_rank + sheet + confirm token; disabled states
+    (rank 1, known last, scoped session never disabled); cancel rollback + focus return; BAD_RANK "already last"
+    for a Hub Planner with a hub filter (no "of N"); typed BAD_RANK; BAND_RANK_BUSY; List layout; read-only;
+    inert while busy; typed Enter / blur / Escape / same rank / 4 invalid inputs; axe on Cards, List and the open
+    panel.
+  - New `components/ui/sheet.test.tsx` (2) and `lib/api/priority-move-band-rank.test.ts` (3, wire bodies).
+  - `priority-preview-dialog.test.tsx` +4: sheet not modal-centred, Escape cancel + focus return, applying
+    blocks Escape, axe applied.
+  - Sheet assertions added to the caller tests in `priority-move.test.tsx` (move control: Gantt / Workspace /
+    card menu), `MatrixPage.board.test.tsx` and `ProjectsPage.test.tsx` (registration form).
+  - `board-model.test.ts` +3 and `move-copy.test.ts` +1.
+  - 3 existing board tests now look for the input instead of the chip for writer sessions.
+- **Checks:**
+  - `tsc -b --noEmit` clean; eslint clean on the touched files.
+  - Full vitest: 2006 passed, 1 failed. The failure is `GanttPage.test.tsx` "clips a project … W52 edge" (bar
+    width 32 vs 368). It is in another session's uncommitted Gantt work (gantt-bars / gantt-coordinates
+    modified in the tree) and also fails alone; it is not touched here.
+  - `pnpm build`: bundle budget PASS, 190.0 KB gzip initial.
+  - No backend edits; workflow-settings and planning/overview were not touched; no commit; git index untouched.
+- **Depends on:** the backend `to_rank` body. Until it ships, ↑ / ↓ / typed previews get a 422 and show the
+  generic preview-failed copy. Nothing is written.
+
+## [2026-11-17] P37-T03 — `ScheduleInput.current_week` has no import-time default — algorithm-engineer: DONE
+
+**Scope:** `backend/scheduling/` and `backend/tests/scheduling/` only. No git index change, no commit.
+
+**Built:**
+- `scheduling/types.py`: `current_week: int = field(kw_only=True)` — required, keyword-only, no default. This was the
+  only import-bound week default in the package (was `= dc.CURRENT_WEEK`, line 492). `kw_only` changes only
+  `__init__`; `fields()` / `asdict()` keep the field set and order, so pin condition (ii) holds. No caller passed it
+  positionally.
+- `ScheduleInput.__post_init__` → `validate_current_week(week, horizon_weeks)`: `TypeError` for a bool or non-int,
+  `ValueError` outside `1..horizon_weeks`. It is re-checked on `dataclasses.replace`.
+- New `PLAN_WEEK_MIN = 1` / `PLAN_WEEK_MAX = 52` and `require_plan_week(week)`, the raising I41 check for builders.
+- `scheduling/invariants.py`:
+  - `check_i41_week_domain(week)` and `check_i38_run_week(schedule_input, run_week)`;
+  - `validate_invariants(..., run_week=None)`: when given, runs I38 (row week == input week) and I41;
+  - `live_state=True` without `run_week` runs I41 on the input week.
+  - All of these are exported from `scheduling`.
+- Self-tests take the week explicitly:
+  - `_selftest_common.SELFTEST_WEEK = 31` is a literal, never env or clock;
+  - `load_seed_schedule_input(current_week=SELFTEST_WEEK)`;
+  - 63 constructor sites in `_selftest*.py` and `tests/scheduling/` pass `current_week=SELFTEST_WEEK`, and six
+    `**kw` helpers default it.
+  - No expected value was touched, so nothing was re-blessed.
+- What-if, plan import, Monte Carlo, CP-SAT and `unconstrained_end_week` already read only `ScheduleInput.current_week`.
+  This is verified by an AST test (no `CURRENT_WEEK` attribute or import in any `scheduling/*.py`) and a runtime test
+  (patching `dc.CURRENT_WEEK` leaves greedy, CP-SAT, `simulate` and `forecast_delivery` outputs byte-identical).
+
+**Deviation from the plan text, needs orchestrator ack:**
+- The plan asks for `1 ≤ current_week ≤ within_year_week` (the brief said 1..52) on `ScheduleInput`. Enforcing that
+  in the dataclass would reject five existing golden / self-test horizon-overflow scenarios, which solve from W77 or
+  W60 (`test_golden_files` horizon test, `test_p9_golden::test_left_out_and_excluded_have_no_projected_week`
+  expecting unconstrained 103, `_selftest` / `_selftest_cp_sat` / `_selftest_invariants` W77). Making them legal would
+  change golden inputs or expected values (60+44−1 = 103), and re-blessing is not allowed.
+- So the bound is split:
+  - the engine rejects weeks outside `1..horizon_weeks` (0, negative, 79+, bool, non-int);
+  - the I41 domain 1..52 is enforced by `require_plan_week` (for the T04 builders / `plan_clock`), by the validator's
+    I38/I41 checks on `run_week`, and by `live_state`.
+- If the orchestrator wants 1..52 in the dataclass anyway, those five scenarios must be rewritten. That is an explicit
+  golden change for the orchestrator to approve.
+
+**Byte-identity (pin 31):**
+- Before vs after, on a fixed 5-project input (the default under pin 31 vs explicit `current_week=31`), these were
+  identical: canonical input sha256 `87341158…0b96`, `asdict` sha256 `d3542beb…2d4f`, greedy output `27bf165b…917b`, and
+  the CP-SAT output.
+- The first three are pinned in `tests/scheduling/test_p37_current_week.py`, along with the field list and the
+  canonical key list.
+- No golden expected value changed.
+
+**Tests:** new `tests/scheduling/test_p37_current_week.py`, 30 tests, covering:
+- required / kw_only;
+- field order;
+- hash pins;
+- out-of-range and non-int rejection;
+- `require_plan_week` 1..52;
+- W47 vs W42: the canonical inputs differ only in `current_week`, every unconstrained finish is +5, and no step starts
+  before the week;
+- I8 at W47, greedy and CP-SAT;
+- the AST and runtime "reads only the input" checks;
+- I38 match and mismatch, and I41 via `run_week` and `live_state`.
+
+`pytest -c pytest-scheduling.ini`: 666 passed, coverage 95.57 % (`types.py` 100 %). `ruff check` and `ruff format
+--check` are clean on `scheduling` and `tests/scheduling`. `mypy --strict` is clean on `types.py`, `invariants.py` and
+`_selftest_common.py`; the package is mypy-excluded in pyproject.
+
+**Parallel state observed:** P37-T04 work is already in the tree. `domain_constants.CURRENT_WEEK` is gone,
+`services/plan_clock.py` exists, and `schedule_persistence` takes `current_week` as a required argument and checks the
+row week. The runtime test therefore patches with `raising=False`.
+
+**Callers outside `backend/scheduling/` that relied on the default, for backend-builder (P37-T04).** They now fail
+with `TypeError: missing ... 'current_week'`:
+- `backend/tests/test_p9_remediation.py:148` and `:161` (`ScheduleInput(...)` without `current_week`);
+- `backend/tests/test_p33_categories_table.py:419` (same).
+
+No production module (`services/`, `workers/`, `api/`, `seed/`, `scripts/`) constructs `ScheduleInput` without
+`current_week` in the current tree; checked with an AST scan. T04 should call `scheduling.require_plan_week(week)`
+where the clock or row week enters a builder, and the auditor can pass `run_week=run.current_week` to
+`validate_invariants` for I38.
+
+## [2026-11-17] P39-T01 — workflow-auditor ruling on the ADR 0007 amendment (PDD-A Marketing Brief → elapsed): Q1 ACCEPT, Q2–Q6 ACCEPT WITH AMENDMENT, R39-1 owner decision
+
+The full text is in ADR 0007, "Ruling (P39-T01, workflow-auditor, 2026-11-17)". No feature code was written. Git was
+not touched. DOMAIN_RULES was not edited; P39-T02 folds the ruling in.
+
+**Measured** on the disposable copy `rpd_p39t01_copy`.
+- The copy was a `pg_dump` of `rpd` at p33c. It has been dropped. `rpd` is untouched: p33c, 14 runs, PDD-A still
+  `design`.
+- Code: the clean worktree at 9a41987. `RPD_CURRENT_WEEK=47` was pinned for both runs.
+- Harness check: a W42 re-solve equals stored v14, with 0 differences.
+- Sequence: a fresh greedy run v15, then `PUT /workflow-settings/steps/PDD` with PDD-A set to `elapsed`, then a
+  fresh greedy run v16.
+
+| | v15 (before) | v16 (after) |
+|---|---|---|
+| Within / spillover / left out, all | 114 / 82 / 76 | **82 / 75 / 115** |
+| PD-India | 78 / 42 / 65 | 46 / 45 / 94 |
+| R&D-India | 2 / 22 / 6 | 2 / 12 / 16 |
+| PD-Romania, R&D-Greece, OEM-HCK, OEM-Seitek | 16/10/2, 3/0/3, 6/5/0, 9/3/0 | unchanged |
+| Design demand, full year (PD-I / PD-R / R&D-G / R&D-I) | 884 / 534 / 266 / 150 | 866 / 517 / 266 / 150 |
+| Design demand, remaining | 436 / 81 / 106 / 65 (688) | 487 / 84 / 109 / 89 (**769**) |
+| Booked load from the run | 401 / 186 / 189 / 117 (893) | 339 / 177 / 188 / 99 (803) |
+| Design booked % remaining | 1785 / 333 / 883 / 766 | 1994 / 345 / 908 / 1048 |
+| P1 capacity fill | 15 | 13 (2 R&D-India B projects) |
+
+- **Moves.** 52 projects got worse and none got better. 107 finishes moved, 102 of them on projects with a design
+  figure.
+- **Audit.** 247 `project.effort_rederived`, 0 `template_copy`. 221 projects were marked stale.
+- **Invariants and reconciliation.** 0 violations on v15 and v16: `validate_invariants`, I8, I25, I26, I37b.
+  - I6/I9/I23: Capacity booked = run rows = Gantt, exactly.
+  - I14: stored runs v1–v14 are hash-identical.
+  - Not applicable on this code: I33/I34, I38–I44.
+- **Split examples.** The DOMAIN_RULES examples are confirmed by hand and on real projects: B4 ×122, C3 ×63, B8 ×13.
+
+**Cause.** The drop is explained and is not a code defect.
+- 99 schedulable figure projects have a started PDD-A: B 60, C 35, A 3 Done, plus 1 A+ In Progress. Their PDD-A
+  share of E moves to a Not Started D or J.
+- In 80 of them that step sits behind a successor that has already started.
+- PD-India leaders are full from W47 to W77, so the extra week sends P3 projects to left out.
+- Counterfactual, rolled back: crediting a started PDD-A's share against the figure gives 114 / 82 / 76, identical
+  to v15.
+
+**Ruling.**
+- **Q1:** `elapsed`, no new kind.
+- **Q2:** In Progress PDD-A is anchored with no engineer (measured). "History kept" means status, actual weeks and
+  check-ins. It does not mean `effort_weeks`: R3 can change a Done step's share.
+- **Q3:** script, not migration.
+  - The runbook runs it right after the seed-bearing deploy.
+  - Its run is created through `run_dispatch`, with the week read when the row is created (R37-2).
+  - A failed run exits non-zero (P33-R01).
+  - The audit actor is NULL.
+- **Q4:** OR-5 does not fire (`elapsed` is not an effort kind), so the script re-copies a stale not-reached PDD-A
+  `plan_weeks` explicitly. That is a no-op on dev data (302 / 302 rows equal the template).
+- **Q5:** no schema change. Dispatch and second-invocation rules are as written in the ADR ruling.
+- **Q6:** prospective, since there is no `excluded` column at p33c. The script and the PUT must refuse an empty S′
+  (`EFFORT_NEEDS_A_STEP`); the script refuses with a rollback and a non-zero exit.
+- **R39-1 (owner, blocks T05 and the release):**
+  - (a) literal: within-year 114 → 82;
+  - (b) history credit: unchanged, but it needs a stored credit plus an R2/I26 amendment.
+- **R39-2:** corrected consequences. Remaining demand rises. Booked % and the P1 fill move at commit, not with the
+  run.
+- **R39-3:** "bypassed" Not Started steps take capacity. That is a separate future ruling. The "drop from S′"
+  variant was tested and rejected (63 → 24 scheduled within-year).
+- **R39-4:** T05 conditions. Pin W47. No P38 deactivations, or separate their effect. P37's clock reads the week
+  when the run row is created.
+
+**Interactions.** P37 and P38: nothing beyond the week pin and the leaders P38 clears.
+- One caveat for P37. The main tree's `build_schedule_input_from_db` week handling is mid-change (P37-T04). The P39
+  script must not depend on a builder default.
+
+**Next:** P39-T02 (orchestrator). Fold in Q2–Q6, R39-2 and R39-4. Raise R39-1 to the owner as a new OQ, with
+both figures. T03 can be built. T05 and the release wait for the answer, and a (b) answer adds a T03 addendum and a
+migration.
+
+## [2026-11-17] P41-T01 — ADR 0055: editable import format, hand-picked scenarios, saved/exported import scenarios — orchestrator: DONE
+
+**Owner request:**
+- Admin and Super Admin set and edit the What-if import Excel format.
+- The Executive view gets scenarios built by ticking projects before including them, with Save and
+  Export.
+- Scenarios from different imports can be compared and stay saved.
+
+**Decisions** (ADR 0055):
+- **Format.** The format is stored header aliases per parser field, in the single-row table
+  `import_format_settings` (no row means the built-in `_FIELDS`). Admin and Super Admin edit it with
+  `PUT` (optimistic `version`) or reset it; both are audited. Everyone can read it and download a
+  template `.xlsx`.
+- **Hand-picked scenario.** It uses the file rows' `include` plus the new `exclude_plan_project_ids`
+  (merge mode only). Those plan projects are removed from both runs, so there is no engine change.
+- **Saved scenarios.** They go in the table `whatif_import_scenarios`. The server recomputes the
+  request on save, and the saved row is a frozen record with its week and plan version. It is
+  visible to Admin and Super Admin, and to a user whose hub scope covers all of its hubs; anyone
+  else gets 404. Limits: 200 per user, 2,000 in total, 8 MB.
+- **Compare.** Compare takes saved and session scenarios across imports, up to 4.
+- **Export.** The server builds `.xlsx` files for a scenario, the current result (recomputed) and a
+  comparison, and neutralises formula injection.
+
+**DOMAIN_RULES:** the "Plan import" section is amended. **Contract:** `docs/API_CONTRACT_P41.md`.
+**Plan:** P41. **OQ:** #104 (format beyond headers), #105 (scenario visibility), #106 (retention).
+
+**Next:** T02 (backend-builder) and T03 (frontend-builder) run in parallel against the contract.
+Then T04 is the gate.
+
+## [2026-11-17] P40-T02 — workflow-auditor ruling on ADR 0054 (manual step Start / End weeks): ACCEPT WITH AMENDMENTS
+
+The full text is in ADR 0054 "Ruling (P40-T02)": R40-1..R40-15, findings F1–F6 and three proposed
+owner questions. The binding section is DOMAIN_RULES "Manual step weeks (ADR 0054)", with the exact
+I45–I48. Dated pointers were added at I1, I2, I3, I15, I21, I22 and I27. Docs only: no code, git not
+touched. ADR 0054 Status: **Accepted with ruling**. P40-T02 is marked DONE.
+
+**Findings.**
+- **F1.** The old tool honours typed dates only on frozen projects (`isManual = p.isFrozen && …`). The
+  owner's "do for all" is a deliberate extension, recorded as a divergence.
+- **F2.** Our Freeze does not lock the current weeks. It writes `frozen` and `actual_start_week`, and
+  the frozen walk re-derives steps from there. M5's "locks every step at its current weeks" is
+  therefore not true of our system.
+- **F3.** Our end is inclusive everywhere (greedy `end = w + span − 1`, Gantt width `end − start + 1`).
+  The old tool's end is exclusive: old `(s, e)` = ours `(s, e − 1)`.
+- **F4.** `book_engineer` does not flag same-project double bookings.
+- **F5.** A pin that passed on only its own end would let successors overtake upstream work.
+- **F6.** The `capacity_priority` lab per-week shortcut assumes the window equals the effort.
+
+**Ruling (short).**
+- **Pins.** A pin applies to non-frozen projects too.
+  - The end is inclusive; written domain `CW ≤ ms ≤ me ≤ 52`.
+  - Admin and Super Admin roles only.
+  - Settable only on Not Started, non-skipped steps of projects that are not frozen and not closed.
+- **Placement, not effort.**
+  - `duration_weeks` stays `eff`, so I6, I7, I12, I25, I26 and I29 do not change.
+  - The pin replaces the FTE span.
+  - Per-week readers spread effort over the window, lab included.
+- **Stages and the week.**
+  - A stage leaving Not Started clears the pin, with an audit row.
+  - A non-frozen pin in the past "lapses" to `cw..cw + L − 1` with a `pin_lapsed` flag; a frozen pin
+    stays exact.
+  - A Blocked hold wins, and a pin on a skipped step is inert.
+- **Precedence.**
+  - Pins are pre-booked with the anchored steps.
+  - They pass on `G = max(end, release)`.
+  - `MANUAL_OVERLAP` ⟺ `a < release + 1 − o`.
+  - Same-project leader overlaps raise `ENG_CONFLICT`.
+- **Input and run.**
+  - Pins travel as `ProjectInput.step_pins`, not `StepTimingInput`. Canonical form and snapshot omit
+    them when empty, so with no pins everything is byte-identical.
+  - CP-SAT, What-if, plan import (`PIN_DROPPED`) and Monte Carlo rules are set.
+  - One greedy run per batch save (`step_pin`).
+- **Unfreeze.** Admin and Super Admin only: a permission change for the security-auditor.
+
+**Proposed OQs (orchestrator to number):**
+1. End editable on started steps?
+2. Freeze copying run weeks into pins?
+3. Pins past W52?
+
+**Next:** P40-T03 split into algorithm-engineer, backend-builder and frontend-builder parts (see the
+report to the orchestrator). Then an audited run on a disposable dev-DB copy, with I45–I48 and the
+greedy-vs-CP-SAT diff, before the P40-T04 gate.
+
+## [2026-11-17] P40-T01 — Timeline step colours, multi-select toolbar, compact Forest view — frontend-builder: DONE (one part blocked on the backend)
+
+**Scope:** presentation only. There is no step start/end editing: that waits for P40-T02/T03, and ADR 0048 still holds.
+`backend/` was not touched. The Gantt files were clean in git when I started.
+
+**Step colour map (item 3):**
+- The colours are in `styles/tokens.css`, section "WORKFLOW STEP PALETTE": `--step-1..14` (fill) and `--step-ink-1..14` (label text), with
+  `.dark` overrides.
+- `surfaces/gantt/lib/step-colors.ts` holds `STEP_COLORS`, keyed by step code (`PDD-A..N` and `OEM-A..N`). Step N of PDD and step N of OEM
+  share slot N, as in the old tool's index palette. Fallback: the served `sequence_order`.
+- Palette (light), A..N: #1A6FE0 #8B7FFF #0D9488 #00C9A7 #F59E0B #E11D48 #7C3AED #2563EB #059669 #D97706 #DB2777 #4F46E5 #0891B2
+  **#65A30D**. The old tool had #059669 at both I and N; N is now lime.
+- Label ink is white for slots 1, 6, 7, 8, 11 and 12. It is slate-900 for the rest. Every slot reaches at least 4.5:1 in both themes
+  (`step-colors.test.ts` computes this from tokens.css).
+- Dark theme: only slot 7 (→62% lightness) and slot 12 (→63%) are lifted, so every fill is at least 3:1 against the dark surface.
+- Known limit: slots 1 and 8 (#1A6FE0 and #2563EB) are both blue. They are distinct but close; that is kept from the old palette.
+
+**Bars:**
+- **Project row:** `components/gantt-project-line.tsx`. It draws one segment per non-skipped step at the served planned weeks, solid in
+  the step colour.
+  - Elapsed steps get a tint with a step-colour outline.
+  - Actuals get a hatch in the step colour (`GanttHatchDefs({slots})`, pattern `gantt-hatch-step-N`).
+  - The step letter is drawn in the ink colour when the segment is at least 14 px wide.
+  - Parallel (overlapping) steps get a thin surface-coloured edge.
+  - Frozen projects get a dashed outline. The delay connector is unchanged.
+  - The old "W5 – W30" span label is gone. The span is in the hover title.
+- **Step rows:** `GanttBarGroup` takes an optional `color`. Without it the old blue/amber is used, so the existing tests are unchanged.
+  The step rows also get a colour swatch.
+- No priority or category colour was on the bars. The priority pill stays in the row.
+
+**Legend (item 4):**
+- `StepColorLegend` shows one chip row per workflow present: colour, letter and the SERVED `step_name`.
+- The mark legend is reworded to "solid / hatched in the step colour".
+- The Step filter options carry swatches.
+
+**Blocked (item 4, counts):** per-step counts are not served. Today `weekly_active_counts` has only `{week, pdd, oem}`, and the facets have
+no counts. Counting per step in the browser would break I9 (P13-T13 removed exactly such a histogram). So:
+- the PDD/OEM rows and the activity strip still show the served per-workflow figures;
+- the per-step stacking from the old tool is not built.
+
+Needed from backend-builder: add `by_step: dict[str, int]` (step code → active steps that week) to `GanttWeeklyActiveCount`. Optionally
+also a per-step "projects currently in step" count for chips like the old tool's. The TS mirror is an "exact" contract row, so the TS type
+must change together with the schema.
+
+**Filters (item 5):**
+- All seven toolbar filters are served-side. `GET /gantt` already took them as repeated params, so no filter is applied in the browser.
+- Hub is the global store (ADR 0020). It is shown as `HubFilterSelect variant="toolbar"` and has a Countries group, so
+  `CountrySegmented` left this page's header.
+- The other six filters are URL state with repeated params, via `hooks/use-gantt-url-filters.ts`: `category`, `type`, `status`
+  (→`status_`), `leader` (→`leader_engineer_id`), `step` (→`current_step`) and `priority`.
+  - Writes are one navigation with `replace`.
+  - Legacy single values parse. Unknown values are dropped.
+  - Leader ids and step codes are checked against the facets once those load.
+- Hub stays in the global persisted store, not the URL.
+- The "Clear filters" button (FilterX icon) resets search, hub and all dropdowns, and keeps the sort.
+- The export still carries hub, category and type only, as before.
+
+**Forest view (item 6):**
+- Only the name, at a 22 px row (`ROW_HEIGHTS.forest`), plus one 8 px line. The left column is 208 px (`forestColumnWidths`).
+- There is no status column, no step rows (expansion is ignored and Expand all is disabled), no completion markers, and no letters.
+  Spillover shows as the small chevron.
+- Fixed bug: the virtualizer cached the old per-index sizes when density or rows changed. `gantt-chart.tsx` now calls
+  `virtualizer.measure()` on `[visualRows, density]`. The test mocks gained `measure`.
+
+**Compact layout (item 7):**
+- The toolbar is one 48 px row at 1440: Search, Hub, Category, Type, Status, Leader, Step, Priority, Sort, Forest, Expand/Collapse, a
+  Legend & stats icon toggle (off by default; it shows the summary, the legend and the weekly counts) and Download.
+- The dropdowns use `hideLabel` and the new `MultiSelectDropdown` prop `emptySummary`, so the trigger shows the field name when nothing
+  is picked.
+- The zoom moved onto the timeline card's slim header (`ZoomControl compact`). On a 403 the zoom is no longer shown.
+
+**Measured on the dev data at 1440×900:**
+
+| | Before | After |
+|---|---|---|
+| Filter card | 224 px | 48 px |
+| Chart top | 759 px | 323 px |
+| Forest rows in view | 7 (58 px rows) | 24 (22 px rows) |
+
+The screenshots are in the session scratchpad (`before-*` / `after-*`, light and dark). Port :5174 serves the `frigoglass-p35view`
+worktree, so the "after" shots used a vite on :5191 against :8011, with a Playwright CORS shim.
+
+**Tests:**
+- New: `lib/step-colors.test.ts` (map, distinctness, ink contrast in both themes, dark-surface 3:1),
+  `components/gantt-project-line.test.tsx`, `hooks/use-gantt-url-filters.test.tsx`, and an `emptySummary` case in
+  `multi-select-dropdown.test.tsx`.
+- `GanttPage.test.tsx` updated: dropdowns, URL parsing for all filters, clear-all with hub, the one-row toolbar, Legend & stats, Forest
+  contents, segment geometry for spillover, and axe on toolbar + legend + forest.
+- Results: vitest for gantt + components/shared + lib passes (464). eslint is clean. tsc is clean apart from 4 errors in
+  `surfaces/planning` from another session's in-flight `deleteEngineer` work (not mine).
+
+Files: `frontend/src/styles/tokens.css`; `frontend/src/surfaces/gantt/{GanttPage.tsx, GanttPage.test.tsx}`;
+`gantt/components/{gantt-bars, gantt-chart, gantt-legend, gantt-step-row, gantt-toolbar, zoom-control, gantt-project-line(+test),
+gantt-responsive.test}.tsx`; `gantt/lib/{step-colors(+test), gantt-coordinates, gantt-layout}.ts`;
+`gantt/hooks/use-gantt-url-filters(.ts, .test.tsx)`; `frontend/src/components/shared/{multi-select-dropdown(.tsx, .test.tsx),
+hub-filter/hub-filter-select.tsx}`. Not committed.
+
+## [2026-11-17] P38-T03 — `WhatIfBaseline.engineer_active_weeks`: What-if and plan-import supply follow R38-1 — algorithm-engineer: DONE
+
+**Scope:** `backend/scheduling/` and `backend/tests/scheduling/` only. No git index change, no commit. Greedy, CP-SAT
+and the validator are untouched; `ScheduleInput` is untouched (canonical input and hash unchanged).
+
+**Field for T05 (backend-builder fills it):**
+- `WhatIfBaseline.engineer_active_weeks: tuple[EngineerActiveWeeks, ...] = ()`. Pass entries sorted by `engineer_id`.
+  A duplicate `engineer_id` raises `ValueError`.
+- `EngineerActiveWeeks(engineer_id: str, hub: str, fte: float, covered_weeks: tuple[int, ...])`, from the new
+  `scheduling/active_weeks.py`, exported from `scheduling`.
+  - One entry per **counted** engineer (`counts_in_capacity`) with at least one `engineer_inactive_periods` row,
+    inactive now or reactivated.
+  - `hub` is the engineer's own hub, as on `EngineerInput`. `fte` is the stored FTE.
+  - `covered_weeks` are plan-horizon weeks relative to the served plan year Y: 1..52 are Y, 53..104 are Y+1. They are
+    sorted, unique and in 1..104.
+- Build `covered_weeks` with `scheduling.covered_plan_weeks(periods, plan_year)`, where `periods` are
+  `InactivePeriod(from_plan_year, from_week, to_plan_year=None, to_week=None)`.
+  - That function is the one copy of the whole-week rule: d+1..r, open → 52 and all of Y+1, earlier year → from 1,
+    same-week reactivate → nothing.
+  - `scheduling.active_week_count(covered, a, b)` is R38-1's `A_e(Y, a..b)`. T05's Capacity-side helper can import
+    both, so there is one rule.
+- Inactive engineers stay out of `ScheduleInput.engineers` (builder filter) and appear only here.
+  - A reactivated engineer is in both. The entry then replaces their roster contribution, with no double count.
+  - An entry for a roster engineer with `counts_in_capacity = false` is ignored.
+  - What-if `remove_engineers` of a reactivated engineer drops their entry from the "after" supply. An inactive
+    engineer's entry is never removed by a scenario.
+
+**Arithmetic (R38-1):**
+- What-if `_supply`, for a hub with an entry:
+  - `fte_year = Σ_no-period fte + Σ fte_e × A_e(1..52)/52`;
+  - `fte_remaining = Σ_no-period fte + Σ fte_e × A_e(CW+1..52)/(52−CW)`, where the entries add 0 when CW ≥ 52;
+  - FTE is `Decimal(str(fte))` and the week factor is a `Fraction`.
+  - `_design_capacity` multiplies the per-engineer working weeks of the basis by that basis's FTE.
+- A hub without an entry keeps today's float path.
+- `fte_by_hub` (the `UtilizationRow.units` / headcount) is the FTE active in week CW+1.
+  - In `analytic_requirements`, `fte_before` / `fte_after_scenario` and the workings line show the basis FTE, so
+    "wk/FTE × FTE = capacity" still multiplies out. With no entry they are unchanged.
+- Plan import, for a capacity hub with an entry:
+  - the weekly capacity is `(Σ fte of engineers active in week w) × wwpe / 52`, and windows sum it, so a covered
+    week supplies 0 from that engineer;
+  - `HubCapacityRow.fte` is the FTE active in week CW+1;
+  - a reactivated designer's `available_weeks` count only active weeks.
+  - Inactive engineers get no designer row, because they are not on the plan roster. Their hub supply still counts
+    their active weeks.
+
+**Byte identity (I43 / R38-9):**
+- Reference: `whatif.py` and `plan_import.py` at HEAD, in a scratch copy of the package.
+- I hashed `to_jsonable` of `analytic_requirements` (2 scenarios × 2 bases), `simulate` (×2) and `run_plan_import`
+  (52 / 104) on `portfolio_baseline()`. The 8 sha256 values were identical before and after, and are pinned in the
+  new test.
+- No golden file or golden expected value changed. The full pre-existing suite still passes (666).
+
+**Tests:** new `tests/scheduling/test_p38_active_weeks.py` (32 tests), covering:
+- the whole-week rule cases, `A_e`, and validation;
+- the pre-P38 hash pins;
+- the field is absent from `ScheduleInput`, and the canonical input is equal with and without entries;
+- greedy output and simulate outcomes are unchanged by the field;
+- the ruling's PD-Romania case reproduced synthetically (wwpe 44, 5.75 FTE, CW 47):
+  - 253.00 / 24.33 with no period;
+  - Elena deactivated at W47 → What-if year / remaining `capacity_before` and `utilization_before`
+    **248.77 / 20.10**, equal to an independent Capacity-page formula;
+  - without the field the year is 209.00, which is the R38-2 divergence;
+- the plan-import weekly series: W47 full (the deactivation week is worked), W48..W104 at 4.75 FTE, and the y0 / y1
+  windows;
+- reactivation gap W10→W20: year 44 × (4.75 + 42/52) and remaining unchanged;
+- a gap under pin 31: the weekly series dips in exactly W41..W45, and the designer's availability excludes the gap;
+- removing a reactivated engineer, a non-counted entry, CW 52, and determinism.
+
+`pytest -c pytest-scheduling.ini`: 698 passed, coverage 95.67 %. `ruff check` and `ruff format --check` are clean.
+`mypy --strict` is clean on `active_weeks.py`, `whatif.py`, `plan_import.py` and the new test. The remaining errors are
+pre-existing in `cp_sat.py` (OR-Tools stubs, followed import).
+
+**For T05:** `test_p18_r02` should build the baseline with these entries from the stored periods. The What-if and
+Capacity figures then agree to 2 dp on year and remaining.
+
+## [2026-11-17] P38-T06 — Capacity Planning roster Deactivate / Reactivate and the deactivation popup — frontend-builder: DONE
+
+Built to the fixed `docs/API_CONTRACT_P38.md` (T04 is not built yet), with mocked hooks in tests. Frontend only, in
+`frontend/src/surfaces/planning/` (plus the planning engineer API client). No other surface was touched. No commit,
+and the git index is untouched.
+
+**Built:**
+- **API client and types** (`api/types.ts`, `api/planning-api.ts`):
+  - `EngineerRead` gains `active`, `deactivated_at`, `deactivated_week`, `deactivated_plan_year` and
+    `deactivation_reason`. They are optional because an API before T04 omits them, and absent means active.
+  - New preview / request / response types.
+  - `fetchEngineers(hubIds, ctx, status)` sends `?status=` only when it is not `active`, so the default request is
+    unchanged.
+  - New `fetchDeactivationPreview`, `deactivateEngineer` and `reactivateEngineer`.
+  - `deleteEngineer` / `useDeleteEngineer` are removed (DELETE now answers 410).
+- **Hooks** (`hooks/use-planning.ts`):
+  - `useEngineerList(hubIds, status)`: `active` keeps the shared key; any other status extends it under `['engineers']`.
+  - `useDeactivationPreview` uses its own key (`['engineer-deactivation-preview', id]`, not under `['engineers']`), so a
+    roster invalidation never refetches an open preview into a 409. It has staleTime and gcTime 0.
+  - `useDeactivateEngineer` invalidates engineers / capacity / planning and the project-leader views (projects,
+    dashboard, gantt, matrix, boards).
+  - `useReactivateEngineer` invalidates engineers / capacity only. It gives back no project and starts no run.
+- **Roster** (`engineer-table.tsx`, `overview/hub-engineer-card.tsx`):
+  - The trash icon is gone. Admin / Super Admin see `Deactivate {name}` on active rows and `Reactivate {name}` on
+    inactive rows (shared `StatusAction`). This is gated by role, as with `counts_in_capacity`. Hub Planners and
+    read-only roles never see these actions (OQ #93).
+  - Inactive rows carry the local `InactiveTag` ("Inactive", as text). On the Engineers tab they also show
+    "Since W47 · Left the company", from the served fields.
+  - The pencil on an inactive row becomes `Edit name of {name}`. `engineer-form.tsx` then disables hub, FTE and
+    categories and sends `{ name }` only (ADR 0053 §7).
+- **Show filter** (`engineer-status-filter.tsx`):
+  - Active (default) / Inactive / All. It is one page-level state, shown on both the Overview "Design resources"
+    heading and the Engineers tab, and it feeds `GET /engineers?status=`.
+  - Empty states read "No inactive engineers" and "No inactive engineers in this hub."
+- **Card Edit/Save integration:** only active rows are passed to `useCardEditor`. An inactive engineer's FTE and chips
+  stay read-only in edit mode. A row that becomes inactive or hidden has its draft pruned by the existing
+  `pruneRows`. Deactivate / Reactivate is a row action outside the draft and is available while the card is in edit
+  mode.
+- **Popup** (`deactivate-engineer-dialog.tsx` + `lib/deactivation.ts`):
+  - **Header facts:** the served deactivation week, the supply effect (or "Not on the capacity roster…"), and the
+    linked login (yes / no; no name).
+  - **Open-project list:** shown through `workflow-settings/…/project-rows.tsx` `ProjectRows`, which is
+    keyboard-scrollable (P33-R02) and virtualized over 100 rows. Each row shows hub · status · priority · category,
+    plus tags for Frozen ("leader required"), Progress tracked, "N stages done" and "Lab test in progress".
+  - **Per-row picker:** a native select of the served candidates in served order, labelled "Name · FTE · N wks booked".
+    Its empty option is "No leader", or "Choose a leader…" on a frozen row (`required`, and `aria-invalid` while
+    empty).
+  - **Empty candidates:** the row reads "No eligible engineer in {hub}". On a frozen row it adds "Unfreeze this project
+    on the Timeline (Gantt) first."
+  - **"Use one leader for all":** fills only the empty rows where that engineer is a served candidate.
+  - **Reason:** a select of the four fixed codes, required.
+  - **Confirm button:** "Deactivate", or "Deactivate anyway" when any non-frozen row is empty. In that case the warning
+    shows the contract §2 copy verbatim and names those projects. The second sentence is added only when an empty
+    row is `progress_tracked` or `in_flight_lab`.
+  - **Frozen rows:** a frozen row left empty disables the confirm and shows a block message, so the request is never
+    sent with a null frozen row.
+  - **409 `LED_PROJECTS_CHANGED`:** the preview is refetched and a notice is shown. Choices are kept where the project
+    and the chosen candidate are still listed (derived during render, `keepValidChoices`). The new token is used.
+  - **Other errors:**
+    - 422 `FROZEN_NEEDS_LEADER`, `LEADER_INACTIVE` and `UNKNOWN_LEADER` refetch the preview with their own copy.
+    - 503 `ENGINEER_STATUS_BUSY` shows "…being saved. Nothing was changed. Try again in a moment."
+    - 403 shows "Admin only" and downgrades the page to read-only.
+    - 409 `ENGINEER_ALREADY_INACTIVE` has its own copy.
+- **Success toast** (`deactivation-result-panel.tsx` + `hooks/use-deactivation-result.ts`):
+  - A non-modal panel (bottom-right) showing the served `reassigned` / `left_without_leader` and the
+    `CAT_NOT_ALLOWED` warnings count.
+  - The run status reuses the shared recalculation status: `useScheduleRunFollow` + `RunProgressStatus` for `queued`,
+    then `invalidateRunDerivedQueries`; `useFollowUpRunWatcher` for `deferred`; a plain line for `not_needed`.
+  - When projects were left without a leader, a link "Show projects with no leader" points to
+    `/projects?leader=no_leader`.
+- **Reactivate:** confirmed through the planning `ConfirmDialog`, which gained `busyLabel`, `tone` and `error`. The
+  copy says no projects come back and no recalculation runs. 409 `ENGINEER_ALREADY_ACTIVE` and 503 are shown in place.
+
+**Hand-offs:**
+- **T07:**
+  - The register must read `?leader=no_leader` into its leader filter (the "No leader" option, contract §4). Until
+    then the toast link lands on the unfiltered register.
+  - Move `components/inactive-tag.tsx` to the shared `InactiveTag` and reuse it here.
+  - `isInactive` lives in `planning/lib/deactivation.ts`.
+- **Copy choice:** the frozen no-candidate message says "Timeline (Gantt)". It covers both the plan's "Gantt" and the
+  owner's "Timeline" wording (the nav label is "Timeline").
+
+**Tests:**
+- `lib/deactivation.test.ts` (6 tests).
+- `components/deactivate-engineer-dialog.test.tsx` (12 tests):
+  - served facts and candidate order;
+  - all filled gives "Deactivate" with the exact request;
+  - one empty gives "Deactivate anyway" plus the verbatim warning naming it, with null sent for that row;
+  - the second sentence's gating;
+  - one-for-all fills only empty, eligible rows;
+  - the empty-candidate message;
+  - frozen rows are required, show the unfreeze copy and disable the confirm;
+  - a 409 refresh keeps choices and uses the new token;
+  - the 503 copy;
+  - no open project;
+  - a 403 preview;
+  - axe on the dialog, with the list at tabindex 0.
+- `PlanningPage.test.tsx` (+8 tests):
+  - the Show filter on both tabs, with the tag and Reactivate;
+  - an inactive row stays out of the card draft;
+  - the empty inactive state;
+  - Hub Planner sees no action;
+  - popup → toast with counts, the not_needed line and the No-leader link;
+  - Reactivate confirm with 409 in place and a retry;
+  - the name-only edit;
+  - axe.
+- Existing tests were updated from Delete to Deactivate: `engineer-table.test.tsx` (+2 tests), `p29-capacity-hubs`,
+  `planning-api.test.ts` (status param, the three endpoints) and `use-planning.test.tsx` (invalidations).
+
+**Verified:**
+- `tsc -b` clean. eslint clean on `src/surfaces/planning`.
+- Planning vitest: 35 files, 309 tests pass.
+- Full suite: 2082 / 2083. The one failure is `src/app/app.test.tsx` "navigates to the Project Execution Timeline…
+  slider Zoom". It also fails alone, and it comes from another session's in-progress Gantt edits (`zoom-control.tsx`,
+  `gantt-toolbar.tsx` are modified in the tree). It is not from this task.
+- `npm run build` with the bundle budget: PASS, 190.2 KB gzip initial.
+
+**Not verified:** against a live backend (T04 not built). The contract shapes are mirrored by hand in `api/types.ts`;
+the T04 contract test must catch drift.
+
+## [2026-11-17] P41-T02 — Backend: import format, hand-picked scenarios, saved/exported import scenarios (ADR 0055) — backend-builder: DONE
+
+Implements docs/API_CONTRACT_P41.md A–D. No scheduler change; `backend/scheduling/` untouched. Not committed.
+
+**Migration** `p41a_import_format_and_scenarios` (revises `p33c_clear_step_timing`). It creates
+`import_format_settings` (id = 1 CHECK, version >= 1, `field_aliases` JSONB, `updated_by` FK SET NULL) and
+`whatif_import_scenarios` (the contract columns, `hub_codes text[]`, request/result JSONB, CHECKs on mode,
+plan_year_end_week 52|104 and name length, indexes on created_by, source_file_sha256 and created_at DESC). Applied to
+the dev DB `rpd` on :5433, which is now at p41a. A parallel P40 agent has since chained `p40a_step_pins` onto p41a.
+That migration was not applied here.
+
+**Routes** (all under `/whatif`):
+- `GET /import/format`
+- `PUT /import/format` (Admin, Super Admin)
+- `POST /import/format/reset` (Admin, Super Admin)
+- `GET /import/format/template.xlsx`
+- `POST /import/export.xlsx`
+- `POST /import/scenarios` (201)
+- `GET /import/scenarios[?source_file_sha256=]`
+- `GET /import/scenarios/compare.xlsx?ids=`
+- `GET|PATCH|DELETE /import/scenarios/{id}`
+- `GET /import/scenarios/{id}/export.xlsx`
+
+Rate limiting: `WHATIF_RATE_LIMIT` applies to every POST, PUT, PATCH and DELETE, and to every export including the
+template. The GET reads are not limited.
+
+**Code:**
+- `models/import_scenario.py`
+- `schemas/import_scenarios.py`
+- `services/import_format.py` (validation, the optimistic lock, audit, the template)
+- `services/whatif_import_scenarios.py` (visibility, CRUD, limits, the sheet builders)
+- `services/plan_import_xlsx.py`: `read_workbook` and `parse_plan_workbook` take `aliases=` (default `_FIELDS`).
+  `FIELD_KEYS` and `default_field_aliases()` are exported. The "No projects sheet" message lists the current aliases
+  when the format is not the default.
+- `services/whatif_import.py`: `excluded_plan_project_ids` and `plan_projects_out`. `do_import_simulate` sets
+  `kpis.plan_excluded` and `plan_projects`.
+- `schemas/whatif_import.py`: `exclude_plan_project_ids` (max 2000), `ImportKpisOut.plan_excluded` (default 0) and
+  `ImportSimulateResponse.plan_projects` (`PlanProjectOut`, default []).
+- `services/export_builder.py`: a public alias `neutralise_formula`. Exports reuse `xlsx_bytes`.
+
+**Decisions and clarifications beyond the contract (for the gate):**
+1. **Error code.** The contract says 422 `IMPORT_INVALID` for a bad `exclude_plan_project_ids`. The code serves the
+   existing code `INVALID_IMPORT`, the one every other simulate validation error uses.
+2. **Which plan projects can be ticked.** `plan_projects` lists only schedulable plan projects (the four schedulable
+   statuses) of the baseline that are in scope. It is computed after the file's On Hold / Cancelled / Commercialized
+   rows have removed their matches, and before the exclusion.
+   - An id outside this set gets a 422, the same answer as an unknown id. That includes an On Hold plan project.
+   - An id that an included schedulable file row matches is accepted and not taken out: the file row replaces it.
+     `plan_excluded` counts only the ids actually taken out.
+3. **The creator always sees their own saved scenario,** as well as the ADR rule. The reason: a Hub Planner may import
+   rows for another hub, since file rows are not scope-checked. `hub_codes` is the sorted set of `projects[].hub` of the
+   served result. The visibility filter runs in SQL: `created_by = me OR hub_codes <@ scope`, and no filter for Admin,
+   Super Admin or an all-hubs caller.
+4. **Errors and response fields not named in the contract:**
+   - PATCH or DELETE by someone who can see the scenario but did not create it: 403 `SCENARIO_FORBIDDEN`.
+   - A missing or invisible scenario: 404 `SCENARIO_NOT_FOUND`.
+   - A bad compare id list (malformed, duplicated, or not 2–4 ids): 422 `INVALID_COMPARE`.
+   - `PATCH {"name": null}`: 422 `INVALID_SCENARIO_NAME`. `"note": null` clears the note.
+   - `created_by_name` is null when the user has been deleted.
+5. **Format validation.**
+   - Every field needs 1–10 aliases. The exception is Status or Hub: one of the two may be `[]`. A field with no
+     alias has no column in the template.
+   - Aliases are normalised the way the parser normalises a header (casefold, single spaces), and duplicates within
+     one field are folded.
+   - The audit rows `import_format.updated` and `import_format.reset` hold the before and after version and aliases.
+6. **Template.**
+   - `Projects`: the first alias of each field in Title Case, in FIELD_KEYS order.
+   - `Process steps`: a PDD section row (`PD RoadMap Steps -->` plus PDD-A…N), the "Project Category | Lead Times" row
+     and one empty category row, then the same for OEM.
+   - The parser accepts it with the existing `NO_PROCESS_STEPS` warning (no category has numbers yet).
+7. **`created_at` is set in Python on save,** so "newest first" also holds inside one transaction.
+8. **Audit payloads:**
+   - `whatif_scenario.saved`: {id, name, counts}.
+   - `.renamed`: before {id, name}, after {id, name, changed}.
+   - `.deleted`: {id, name}.
+   - `.exported`: {kind scenario|current|compare, ids, names, counts}.
+   - No request or result is ever audited. The simulate audit shape gains a `plan_excluded` count.
+9. **Workbooks.**
+   - Scenario workbook: Summary, Breakdown, Projects, Steps, Capacity.
+   - Compare workbook: KPIs, Outcome changes. Column headers are `S<n>: <name>`, neutralised. A project missing from a
+     scenario shows "not in scenario".
+   - All text goes through `_stringify`/`neutralise_formula` and is written as text cells.
+
+**Tests:**
+- New: `tests/test_p41_import_scenarios.py` (33) and `tests/test_p41_migration.py` (1, up/down/up on its own
+  container).
+- They cover:
+  - RBAC on the format: every non-admin role gets 403 on PUT and reset;
+  - every validation code;
+  - the 409 version conflict and reset;
+  - the parser using the stored format;
+  - the template round-trip (pure parser, API, and a filled template);
+  - exclusion across both runs, the rejections and the scoped `plan_projects`;
+  - save recomputing (a forged `result` gets 422) and a stored record equal to a fresh simulate;
+  - no financial keys or secrets in the stored snapshot;
+  - scope probes (404 on GET, PATCH, DELETE, export and compare; 403 for a non-creator who can see it);
+  - limits (per user, total, 413 size, name and note lengths);
+  - formula injection in Summary and Projects;
+  - the current export recomputing;
+  - the compare sheets;
+  - rate limiting.
+- Changed: `tests/test_p32_whatif_import_api.py::test_admin_kpis_equal_the_engine` pops the new `plan_excluded` (0)
+  before comparing with the engine's KPIs. That is the only existing-test edit.
+- Results: p41 + p32 (xlsx, api, r05) + p18 whatif + export_api gave 216 passed.
+  - `test_openapi_frontend_contract.py` has 2 failures from P38 (EngineerRead deactivation fields). They are not
+    from this task.
+- ruff check, ruff format --check and mypy are clean on the touched files.
+
+**Incident (mine, disclosed):**
+- A `ruff format services/` run reformatted about 21 other service files that were not format-clean at HEAD.
+- Files whose reformatted content equalled `fmt(HEAD)` were restored with `git checkout HEAD`. The other files had the
+  reverse formatting patch applied, which reverted every hunk outside the parallel agents' in-progress edits.
+- Formatting-only changes remain in the regions parallel agents are editing:
+  - `services/priority_preview.py` (4 hunks);
+  - `services/tracking.py` (1);
+  - the untracked `services/plan_clock.py` and `services/step_pins.py`.
+- These are semantics-free, but owners may see layout noise.
+
+**Not done:** the frontend (T03). The gate is T04.
+
+## [2026-11-17] P42-T00 — owner request: priority bands mean something for scheduling (orchestrator)
+
+The owner set the band meanings:
+- P1 = must do this year;
+- P2 = good to have this year;
+- P3 = in queue;
+- P4 = miscellaneous.
+
+P1 and P2 are scheduled, P3 stays in the queue, and P4 is not scheduled.
+
+The owner's answers (AskUserQuestion):
+- Started P3 projects keep scheduling (Recommended).
+- "P3 in queue" = scheduled only with spare capacity and never counted toward this year's target.
+- P1 and P2 differ by label only.
+
+Dev data: P3 = 116, all started. P4 = 72, all In Queue. Q = 0.
+
+Wrote:
+- ADR 0056 (Proposed, D1–D6);
+- IMPLEMENTATION_PLAN P42 (T01–T05);
+- OQ #107 (frozen P4) and #108 (started P4).
+
+Next: workflow-auditor ruling at P42-T01.

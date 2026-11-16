@@ -318,6 +318,31 @@ class StepTimingInput:
 
 
 @dataclass(frozen=True)
+class StepPinInput:
+    """A manual step pin (ADR 0054 as ruled at P40-T02, R40-1 / R40-12;
+    DOMAIN_RULES "Manual step weeks"). Mirrors
+    `ProjectWorkflowStep.manual_start_week` / `.manual_end_week`.
+
+    - `start_week` / `end_week`: the pinned window, **end inclusive** (the
+      same convention as `StepSchedule.end_week`); the pin length is
+      `end_week - start_week + 1 >= 1`. Scheduler input domain:
+      `1 <= start_week <= end_week <= ScheduleInput.horizon_weeks`, else
+      `ValueError` at validation (`workflow.validate_step_pins`).
+    - A pin is a **placement, not effort** (R40-3): the step occupies exactly
+      its effective window (R40-5: the pin, or `cw .. cw + L - 1` when a
+      non-frozen pin has lapsed) and its row still reports `eff` as
+      `duration_weeks`.
+    - Never carried in `StepTimingInput` (Monte Carlo perturbs that; it never
+      perturbs a pin). The canonical / hashed input omits an empty
+      `ProjectInput.step_pins` (`workflow.canonical_schedule_input_asdict`).
+    """
+
+    step_id: str
+    start_week: int
+    end_week: int  # inclusive
+
+
+@dataclass(frozen=True)
 class ProjectInput:
     """One project to be scheduled (or excluded/left out).
 
@@ -391,6 +416,11 @@ class ProjectInput:
     # (`workflow.canonical_schedule_input_asdict`), so every pre-P36 golden
     # file, hash and stored run is byte-identical.
     band_rank: int | None = None
+    # ADR 0054 (P40, R40-12): manual step pins, one per step at most, sorted
+    # by `step_id` by the builder (the scheduler sorts again). The default
+    # `()` is omitted from the canonical / hashed form, so every pre-P40
+    # caller, golden file, hash and stored run is byte-identical (I48(a)).
+    step_pins: tuple[StepPinInput, ...] = ()
 
     def __post_init__(self) -> None:
         if self.capacity_hub == "":
@@ -428,6 +458,13 @@ class StepSchedule:
     assigned_engineer_id: str | None  # design steps only
     assigned_chamber_id: str | None  # lab steps only
     skipped: bool = False
+    # ADR 0054 (P40, R40-12, I45 / I47): `pinned` is True exactly on the row of
+    # a step placed on its manual pin's effective window; `manual_overlap` on a
+    # pinned row whose start `a < release(s) + 1 - o(s)` (a warning only).
+    # Both default to False and are omitted from every serialised / hashed
+    # form at that default (`workflow.canonical_schedule_output_asdict`).
+    pinned: bool = False
+    manual_overlap: bool = False
 
 
 @dataclass(frozen=True)
@@ -470,6 +507,12 @@ class ProjectScheduleOutcome:
     blocked: bool = False
     progress_pct: int | None = None
     data_error: str | None = None
+    # ADR 0054 (P40, R40-5 / R40-7 / R40-12): `manual_overlap` is the OR over
+    # the project's rows; `pin_lapsed` is True iff some applied pin's
+    # effective window differs from the pin (a non-frozen pin whose start
+    # week has passed). Warnings only; default False, omitted at the default.
+    manual_overlap: bool = False
+    pin_lapsed: bool = False
 
 
 @dataclass(frozen=True)
@@ -489,13 +532,62 @@ class ScheduleInput:
         default_factory=default_workflow_templates
     )
     lead_times: tuple[LeadTime, ...] = field(default_factory=default_lead_times)
-    current_week: int = dc.CURRENT_WEEK
+    # P37-T03 (ADR 0052, I38): the week the plan is solved from. REQUIRED and
+    # keyword-only: there is no default, so no value is ever bound at import
+    # (the old `dc.CURRENT_WEEK` default is gone). `kw_only` changes only the
+    # `__init__` signature: `dataclasses.fields()` / `asdict()` keep the
+    # declaration order and the field set, so `canonical_schedule_input_asdict`
+    # and every hash over it are byte-identical (ADR 0052 pin condition (ii)).
+    # `__post_init__` rejects anything that is not a week (see there).
+    current_week: int = field(kw_only=True)
     horizon_weeks: int = dc.HORIZON_WEEKS
     within_year_week: int = dc.WITHIN_YEAR_WEEK
     # ADR 0047 §3 / R33-8 (P33-T03): the category list, scheduling order key 5
     # (rank value) and the workflow each category belongs to. The default is
     # the seven seeded categories, so every pre-P33 caller is unchanged.
     categories: tuple[CategoryInput, ...] = field(default_factory=default_categories)
+
+    def __post_init__(self) -> None:
+        validate_current_week(self.current_week, self.horizon_weeks)
+
+
+#: I41: the domain of a served / stored plan week (DOMAIN_RULES "The current
+#: week follows the calendar"). Literal, not read from the environment.
+PLAN_WEEK_MIN: int = 1
+PLAN_WEEK_MAX: int = 52
+
+
+def validate_current_week(week: object, horizon_weeks: int) -> None:
+    """Structural check on `ScheduleInput.current_week` (P37-T03).
+
+    Rejects a bool, any non-`int`, and a week outside `1..horizon_weeks`: a
+    week before W1 or past the search horizon cannot be solved from. Raised
+    as `ValueError` (`TypeError` for a wrong type) at construction, so no
+    solver ever sees such an input.
+
+    The narrower I41 domain `1..52` (`PLAN_WEEK_MIN..PLAN_WEEK_MAX`) is a
+    property of the clock, enforced by `require_plan_week` (the builders'
+    check) and by the validator's I41 check, not here: the engine's
+    edge-case golden scenarios solve from weeks past 52 (horizon overflow
+    to LEFT_OUT, e.g. W77 / W60) and must stay byte-identical."""
+
+    if isinstance(week, bool) or not isinstance(week, int):
+        raise TypeError(f"current_week must be an int week, got {week!r}")
+    if week < 1 or week > horizon_weeks:
+        raise ValueError(f"current_week {week} is outside 1..{horizon_weeks} (horizon_weeks)")
+
+
+def require_plan_week(week: object) -> int:
+    """I41 / API_CONTRACT_P37: a plan week is an int in 1..52. Returns it,
+    or raises (`TypeError` for a non-int or bool, `ValueError` out of
+    range). The check every caller that builds a live, What-if, plan-import
+    or Monte Carlo input from the clock or a stored run applies."""
+
+    if isinstance(week, bool) or not isinstance(week, int):
+        raise TypeError(f"plan week must be an int, got {week!r}")
+    if not PLAN_WEEK_MIN <= week <= PLAN_WEEK_MAX:
+        raise ValueError(f"plan week {week} is outside {PLAN_WEEK_MIN}..{PLAN_WEEK_MAX} (I41)")
+    return week
 
 
 @dataclass(frozen=True)

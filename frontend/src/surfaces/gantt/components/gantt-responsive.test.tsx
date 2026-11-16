@@ -9,7 +9,7 @@ import type { GanttProjectRow, GanttStepRow } from '../api/types';
 import { GANTT_NARROW_MAX_PX, ganttColumnWidths } from '../lib/gantt-layout';
 import { projectStatusLabels, stepStatusLabels } from '../lib/gantt-status-labels';
 import { stepBarTitle } from '../lib/step-row-text';
-import { P13_GANTT_ROW_DEFAULTS } from '../test-fixtures';
+import { P13_GANTT_ROW_DEFAULTS, P40_GANTT_STEP_PIN_DEFAULTS } from '../test-fixtures';
 import { GanttChart } from './gantt-chart';
 
 /**
@@ -25,6 +25,7 @@ vi.mock('@tanstack/react-virtual', () => ({
     getVirtualItems: () =>
       Array.from({ length: count }, (_, index) => ({ key: index, index, start: index * 44, size: 44 })),
     measureElement: () => undefined,
+    measure: () => undefined,
   }),
 }));
 
@@ -53,6 +54,7 @@ function step(over: Partial<GanttStepRow> = {}): GanttStepRow {
     gap_weeks: 0,
     own_effort: false,
     predecessor_ids: [],
+    ...P40_GANTT_STEP_PIN_DEFAULTS,
     ...over,
   };
 }

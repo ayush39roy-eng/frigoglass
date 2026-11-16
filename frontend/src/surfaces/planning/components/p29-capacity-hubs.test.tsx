@@ -72,7 +72,9 @@ function card(summary: DesignHubSummary | undefined, canEdit = false) {
       canEdit={canEdit}
       onUpdate={vi.fn()}
       onEdit={vi.fn()}
-      onDelete={vi.fn()}
+      canChangeStatus={canEdit}
+      onDeactivate={vi.fn()}
+      onReactivate={vi.fn()}
       onAdd={vi.fn()}
     />
   );
@@ -124,8 +126,10 @@ describe('EngineerTable — roster marker', () => {
           { ...theoni, hubName: 'R&D-Greece' },
         ]}
         canEdit={false}
+        canChangeStatus={false}
         onEdit={vi.fn()}
-        onDelete={vi.fn()}
+        onDeactivate={vi.fn()}
+        onReactivate={vi.fn()}
       />,
     );
     expect(screen.getAllByTestId('not-in-capacity-roster')).toHaveLength(1);

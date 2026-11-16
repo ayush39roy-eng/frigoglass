@@ -11,6 +11,7 @@ import { isEffortZeroed } from '../lib/step-duration-source';
 import { gapChipText, gapChipTitle } from '../lib/step-gap';
 import { isPastScaleEnd, lastScaleWeek, type WeekScale } from '../lib/gantt-coordinates';
 import { stepBarTitle } from '../lib/step-row-text';
+import { stepColor } from '../lib/step-colors';
 import type { GanttProjectRow, GanttStepRow } from '../api/types';
 import { GanttBarGroup, GanttSpilloverMarker } from './gantt-bars';
 
@@ -59,6 +60,7 @@ export function StepBarGraphic({
         compact
         kind={s.kind}
         skipped={s.skipped}
+        color={stepColor(s.step_id, s.sequence_order)}
       />
       {runsPast ? (
         <GanttSpilloverMarker
@@ -95,12 +97,21 @@ export function StepLeftCell({
     kind === 'lab' ? step.assigned_chamber_code : kind === 'design' ? step.assigned_engineer_name : null;
   const gap = gapChipText(step.gap_weeks);
   const flags = narrow && !skipped ? stepStatusLabels(step) : [];
+  const color = stepColor(step.step_id, sequenceOrder);
   // QA-P19-1: a skipped row is NOT dimmed with opacity (that dimmed the kind
   // badge below AA). Only the name is muted — a full-strength token that still
   // clears AA — with a strikethrough and a "skipped" word; the badge stays at
   // full contrast.
   return (
     <div className={cn('flex min-w-0 flex-1 items-center', narrow ? 'gap-1 pl-1' : 'gap-1.5 pl-4')} data-skipped={skipped || undefined}>
+      {/* P40-T01: the step's bar colour, so the row and its bar pair up. */}
+      <span
+        aria-hidden="true"
+        className="size-2 shrink-0 rounded-sm"
+        style={{ background: color.fill }}
+        data-testid="gantt-step-swatch"
+        data-step-slot={color.slot}
+      />
       <StepKindBadge kind={kind} compact />
       <span className="min-w-0 flex-1">
         <span

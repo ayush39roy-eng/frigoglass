@@ -35,6 +35,13 @@ from scheduling.types import (
     WorkflowStepTemplate,
 )
 
+#: P37-T03 (ADR 0052): the week every self-test and golden scenario is solved
+#: from. `ScheduleInput.current_week` has no default any more, so each
+#: scenario passes this literal explicitly (it is the week the golden files
+#: were hand-derived at, formerly the `RPD_CURRENT_WEEK=31` suite pin read at
+#: import). Never read from the environment or the clock.
+SELFTEST_WEEK: int = 31
+
 TEMPLATE: tuple[WorkflowStepTemplate, ...] = (
     WorkflowStepTemplate("PDD", "PDD-A", "MKTG_BRF", "Marketing Brief", "design", 1, ()),
     WorkflowStepTemplate("PDD", "PDD-F", "POC", "Proof of Concept", "lab", 2, ("PDD-A",)),
@@ -68,7 +75,10 @@ def seed_path() -> Path:
     return Path(__file__).resolve().parent.parent / "seed" / "prototype_seed_data.json"
 
 
-def load_seed_schedule_input() -> ScheduleInput:
+def load_seed_schedule_input(current_week: int = SELFTEST_WEEK) -> ScheduleInput:
+    """The seed dataset as a `ScheduleInput` solved from `current_week`
+    (the literal fixture week `SELFTEST_WEEK` unless a test passes another)."""
+
     seed = json.loads(seed_path().read_text())
 
     engineers = tuple(
@@ -121,4 +131,9 @@ def load_seed_schedule_input() -> ScheduleInput:
                 capacity_hub=OEM_CAPACITY_HUB if is_oem else hub,
             )
         )
-    return ScheduleInput(projects=tuple(projects), engineers=engineers, chambers=chambers)
+    return ScheduleInput(
+        projects=tuple(projects),
+        engineers=engineers,
+        chambers=chambers,
+        current_week=current_week,
+    )

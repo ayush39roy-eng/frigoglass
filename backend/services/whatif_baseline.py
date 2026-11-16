@@ -23,6 +23,7 @@ from core.principal import Principal
 from models.chamber import Chamber
 from models.hub import Hub, HubWorkCalendar
 from scheduling.whatif import ChamberSupplyInput, HubCalendarInput, WhatIfBaseline
+from services.plan_clock import PlanClock
 from services.schedule_persistence import build_schedule_input_from_db
 
 
@@ -71,6 +72,10 @@ class WhatIfContext:
     engineer_hub: dict[str, str]
     project_hub: dict[str, str]
     chamber_region: dict[str, str]
+    #: P37-T04 (ADR 0052 §4 (b)): the request's plan clock. Every new solve in
+    #: this context (What-if, plan import, the chat) is at `clock.week`, which
+    #: is also `baseline.schedule.current_week`.
+    clock: PlanClock
     #: The caller's user id (text). Keys the per-user in-flight limit
     #: (`services.whatif.run_capped`, S18-M1). Empty = no limit (internal use).
     user_key: str = ""
@@ -99,8 +104,10 @@ async def resolve_scope(db: AsyncSession, principal: Principal) -> Scope:
     )
 
 
-async def load_context(db: AsyncSession, principal: Principal) -> WhatIfContext:
-    schedule = await build_schedule_input_from_db(db)
+async def load_context(
+    db: AsyncSession, principal: Principal, *, clock: PlanClock
+) -> WhatIfContext:
+    schedule = await build_schedule_input_from_db(db, current_week=clock.week)
     calendars = tuple(
         HubCalendarInput(
             hub=hub_name.value,
@@ -139,6 +146,7 @@ async def load_context(db: AsyncSession, principal: Principal) -> WhatIfContext:
         engineer_hub={e.engineer_id: e.hub for e in schedule.engineers},
         project_hub={p.project_id: p.hub for p in schedule.projects},
         chamber_region={str(c.id): c.lab_region.value for c in chamber_rows},
+        clock=clock,
         user_key=str(principal.user_id),
     )
 

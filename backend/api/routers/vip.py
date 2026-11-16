@@ -79,6 +79,7 @@ from schemas.vip import (
 from services.active_run import get_active_run
 from services.category_type_filter import category_type_filter
 from services.hub_scope import global_hub_filter, hub_scope_filter
+from services.plan_clock import PlanClock, get_plan_clock
 from services.priority_move import decide_auto_recalc, dispatch_auto_recalc
 from services.project_access import authorize_project_action
 from services.project_cards import ProjectCard, build_project_cards
@@ -151,6 +152,7 @@ async def get_vip_projects(
     type_: DashboardTypeListQuery = None,
     db: AsyncSession = Depends(get_db),
     current_user: Principal = Depends(_read),
+    clock: PlanClock = Depends(get_plan_clock),
 ) -> VipProjectsResponse:
     stmt = (
         select(Project)
@@ -172,7 +174,7 @@ async def get_vip_projects(
     projects = list((await db.execute(stmt)).scalars().all())
 
     active_run = await get_active_run(db)
-    cards = await build_project_cards(db, projects, active_run)
+    cards = await build_project_cards(db, projects, active_run, current_week=clock.week)
 
     by_hub: dict[uuid.UUID, list[Project]] = defaultdict(list)
     for project in projects:

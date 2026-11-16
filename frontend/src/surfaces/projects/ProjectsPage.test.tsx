@@ -645,6 +645,9 @@ describe('Projects page — registration drawer', () => {
     await user.click(within(drawer).getByRole('button', { name: 'Save changes' }));
 
     const preview = await screen.findByRole('dialog', { name: 'Move to P2?' });
+    // Owner request 2026-11-17: the registration form's move previews in the right-hand side panel too.
+    expect(preview).toHaveAttribute('data-variant', 'sheet');
+    expect(preview).toHaveAttribute('data-side', 'right');
     expect(moveApi.previewProjectPriority).toHaveBeenCalledWith(P1, 'P2', expect.anything());
     expect(http.sendWithHeaders).not.toHaveBeenCalled();
     const yes = within(preview).getByRole('button', { name: 'Yes, apply' });

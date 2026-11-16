@@ -25,7 +25,7 @@ from scheduling import (
     ScheduleInput,
     run_greedy_sgs,
 )
-from scheduling._selftest_common import LEAD_TIMES, TEMPLATE
+from scheduling._selftest_common import LEAD_TIMES, SELFTEST_WEEK, TEMPLATE
 
 FAILURES: list[str] = []
 
@@ -68,6 +68,7 @@ def scenario_normal_case() -> None:
     )
     out = run_greedy_sgs(
         ScheduleInput(
+            current_week=SELFTEST_WEEK,
             projects=(proj,),
             engineers=(ENGINEER_A,),
             chambers=(CHAMBER_GR1,),
@@ -104,6 +105,7 @@ def scenario_single_engineer_contention() -> None:
     p2 = ProjectInput(project_id="p-eng-2", name="Second", priority="P2", **common)
     out = run_greedy_sgs(
         ScheduleInput(
+            current_week=SELFTEST_WEEK,
             projects=(p2, p1),  # deliberately out of priority order in the input
             engineers=(ENGINEER_A,),
             chambers=(CHAMBER_GR1, CHAMBER_GR2),
@@ -136,6 +138,7 @@ def scenario_chamber_saturation() -> None:
     p2 = ProjectInput(project_id="p-lab-2", name="Second", leader_engineer_id="eng-b", **common)
     out = run_greedy_sgs(
         ScheduleInput(
+            current_week=SELFTEST_WEEK,
             projects=(p1, p2),
             engineers=(ENGINEER_A, ENGINEER_B),
             chambers=(CHAMBER_GR1,),  # only one chamber, max_concurrent=1
@@ -183,6 +186,7 @@ def scenario_frozen_conflict() -> None:
     )
     out = run_greedy_sgs(
         ScheduleInput(
+            current_week=SELFTEST_WEEK,
             projects=(p1, p2),
             engineers=(ENGINEER_A,),
             chambers=(CHAMBER_GR1,),
@@ -252,6 +256,7 @@ def scenario_category_mismatch() -> None:
     )
     out = run_greedy_sgs(
         ScheduleInput(
+            current_week=SELFTEST_WEEK,
             projects=(proj,),
             engineers=(ENGINEER_C_NARROW,),
             chambers=(CHAMBER_GR1,),
@@ -285,6 +290,7 @@ def scenario_oem_hub_requires_oem_allowed_category() -> None:
     )
     out = run_greedy_sgs(
         ScheduleInput(
+            current_week=SELFTEST_WEEK,
             projects=(p_no, p_yes),
             engineers=(eng_without_oem, eng_with_oem),
             chambers=(india_chamber,),
@@ -485,6 +491,7 @@ def scenario_excluded_statuses() -> None:
     active = ProjectInput(project_id="p-active", name="Active", status="In Queue", **common)
     out = run_greedy_sgs(
         ScheduleInput(
+            current_week=SELFTEST_WEEK,
             projects=(commercialized, on_hold, active),
             engineers=(ENGINEER_A,),
             chambers=(CHAMBER_GR1,),
@@ -534,6 +541,7 @@ def scenario_determinism() -> None:
         "ch-ro1", "RO-CH1", "Romania", max_concurrent=2, allowed_stages=("PDD-F",)
     )
     schedule_input = ScheduleInput(
+        current_week=SELFTEST_WEEK,
         projects=projects,
         engineers=(ENGINEER_A, ENGINEER_B),
         chambers=(CHAMBER_GR1, CHAMBER_GR2, romania_chamber),
@@ -548,6 +556,7 @@ def scenario_determinism() -> None:
     # Re-run with the SAME projects supplied in a shuffled tuple order — the
     # project_id tiebreak (see _sort_key docstring) must make this irrelevant.
     shuffled_input = ScheduleInput(
+        current_week=SELFTEST_WEEK,
         projects=tuple(reversed(projects)),
         engineers=(ENGINEER_A, ENGINEER_B),
         chambers=(CHAMBER_GR1, CHAMBER_GR2, romania_chamber),

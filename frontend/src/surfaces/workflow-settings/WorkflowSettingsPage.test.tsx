@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { screen, within } from '@testing-library/react';
+import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { useLocation } from 'react-router-dom';
 
 import { renderWithProviders } from '@/test/render';
 import { ROLE_MATRIX } from '@/test/roles';
@@ -33,8 +34,8 @@ import WorkflowSettingsPage from './WorkflowSettingsPage';
 function ready() {
   return { data: settingsFixture(), isPending: false, isError: false, error: null, refetch: vi.fn() };
 }
-/** P32-R04: the template settings are the page's second tab (`?tab=templates`). */
-const TEMPLATES = { route: '/settings/workflow?tab=templates' };
+/** The page is the workflow templates only (the "Project step timing" tab was removed 2026-11-16). */
+const TEMPLATES = { route: '/settings/workflow' };
 const saved = (staleCount: number) => Promise.resolve({ settings: settingsFixture(), staleCount });
 
 beforeEach(() => {
@@ -45,6 +46,37 @@ beforeEach(() => {
   for (const k of ['saveSteps', 'saveCalendar', 'saveChamber'] as const) {
     hooks[k].mockImplementation(() => saved(236));
   }
+});
+
+function LocationProbe() {
+  const { search } = useLocation();
+  return <output data-testid="location-search">{search}</output>;
+}
+
+describe('WorkflowSettingsPage — templates only (owner 2026-11-16)', () => {
+  it('shows the templates with no top-level tab switcher and a templates-only description', () => {
+    renderWithProviders(<WorkflowSettingsPage />, TEMPLATES);
+    expect(screen.getByTestId('step-row-PDD-A')).toBeInTheDocument();
+    expect(screen.queryByRole('tab', { name: 'Project step timing' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('tab', { name: 'Workflow templates' })).not.toBeInTheDocument();
+    expect(screen.getByText(/workflow templates every project follows/)).toBeInTheDocument();
+    expect(screen.queryByText(/step timing/i)).not.toBeInTheDocument();
+  });
+
+  it.each(['?tab=projects', '?tab=project-timing', '?tab=templates', '?project=p-1'])(
+    'an old deep link (%s) lands on the templates and drops the retired parameter',
+    async (query) => {
+      renderWithProviders(
+        <>
+          <WorkflowSettingsPage />
+          <LocationProbe />
+        </>,
+        { route: `/settings/workflow${query}` },
+      );
+      expect(screen.getByTestId('step-row-PDD-A')).toBeInTheDocument();
+      await waitFor(() => expect(screen.getByTestId('location-search')).toHaveTextContent(/^$/));
+    },
+  );
 });
 
 describe('WorkflowSettingsPage — steps & precedence', () => {

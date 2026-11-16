@@ -85,10 +85,11 @@ vs. pull from shadcn" rule:
 
 ### Theming — `src/components/theme/`
 
-`ThemeProvider` + `useTheme()` support `light` / `dark` / `system`, persisted to
-`localStorage['rpd-theme']` and mirrored by the pre-paint inline script in `index.html` (avoids a
-flash of the wrong theme before React hydrates). `ThemeToggle` is a three-way radio group in the
-app header.
+`ThemeProvider` + `useTheme()` support `light` / `dark` only (owner request 2026-11-16 removed
+`system`), persisted to `localStorage['rpd-theme']` and mirrored by the pre-paint inline script in
+`index.html` (avoids a flash of the wrong theme before React hydrates). A first visit, or a legacy
+stored `system`, resolves the OS `prefers-color-scheme` once and saves it; the OS is not followed
+live. `ThemeToggle` is a two-way radio group in the app header.
 
 ### App shell — `src/components/layout/`, `src/app/`
 

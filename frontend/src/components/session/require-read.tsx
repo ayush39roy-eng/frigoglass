@@ -37,7 +37,7 @@ export function RequireRead({
 /**
  * P32-R04: a route readable through further surfaces as well as its own
  * (`nav.ts` `alsoReadableVia`; `/settings/workflow` = `workflow_settings` OR
- * `gantt` read). The shared `alsoAllow` escape hatch above, nothing more.
+ * `workflow_templates` read). The shared `alsoAllow` escape hatch above, nothing more.
  */
 export function RequireAnyRead({
   surface,

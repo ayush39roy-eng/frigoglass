@@ -148,6 +148,7 @@ from services.hub_scope import (
     narrowed_lab_regions,
     region_list,
 )
+from services.plan_clock import PlanClock, get_plan_clock
 from services.run_step_effort import weekly_effort_for_rows
 
 router = APIRouter(prefix="/capacity", tags=["capacity"])
@@ -166,6 +167,7 @@ async def hub_load_vs_capacity(
     region: RegionListQuery = None,
     db: AsyncSession = Depends(get_db),
     current_user: Principal = Depends(_read),
+    clock: PlanClock = Depends(get_plan_clock),
 ) -> HubCapacitySummary:
     """Per-capacity-hub load vs. supply (docs/API_CONTRACT_P9.md §4, ADR 0008;
     ADR 0042, docs/API_CONTRACT_P29.md §2).
@@ -191,7 +193,9 @@ async def hub_load_vs_capacity(
 
     cmap, row_scopes = await capacity_rows_for_request(db, current_user, hub_id, region)
     active_run = await _active_run(db)
-    current_week = dc.CURRENT_WEEK
+    # P37-T04 (ADR 0052 §4 (c), I19): the remaining supply and the
+    # `remaining_weeks` beside it are at the request's calendar week.
+    current_week = clock.week
 
     # --- Booked load (I6/I7 rev., ADR 0041), from the active run only, per
     # PROJECT hub: Σ effort of the non-skipped rows the run booked. Served as
@@ -408,11 +412,9 @@ async def hub_load_vs_capacity(
 
     # ADR 0024: weeks left in the 52-week planning year (the same basis as
     # the "remaining" capacity figures), not the scheduler's internal horizon.
-    remaining_weeks = max(
-        0,
-        dc.WITHIN_YEAR_WEEK
-        - (active_run.current_week if active_run is not None else dc.CURRENT_WEEK),
-    )
+    # P37-T04 (I19 rev.): the calendar week, as the remaining supply above;
+    # before P37 it was the run's week, which agreed only while both were 42.
+    remaining_weeks = clock.weeks_left_in_year
     return HubCapacitySummary(
         has_active_schedule_run=active_run is not None,
         schedule_run_version=active_run.version if active_run is not None else None,
@@ -800,6 +802,7 @@ async def engineer_utilization(
     region: RegionListQuery = None,
     db: AsyncSession = Depends(get_db),
     current_user: Principal = Depends(_read),
+    clock: PlanClock = Depends(get_plan_clock),
 ) -> EngineerUtilizationResponse:
     """Engineers x Weeks utilization (ADR 0028, P4-T08).
 
@@ -872,7 +875,7 @@ async def engineer_utilization(
 
     rows: list[EngineerUtilizationRow] = []
     for e in engineers:
-        cal = calendar_figures(calendar_by_hub.get(e.hub_id), dc.CURRENT_WEEK)
+        cal = calendar_figures(calendar_by_hub.get(e.hub_id), clock.week)
         weekly_cap = cal.working_weeks_per_engineer * float(e.fte) / dc.WITHIN_YEAR_WEEK
         mine = booked.get(e.id, {})
         weeks = [
@@ -954,6 +957,9 @@ async def engineer_utilization(
     await db.commit()
     return EngineerUtilizationResponse(
         week_range=(1, dc.WITHIN_YEAR_WEEK),
-        current_week=active_run.current_week if active_run is not None else dc.CURRENT_WEEK,
+        # P37-T04 (API_CONTRACT_P37 §2): the "now" column is the calendar
+        # week; the booked cells are the active run's, at `run_week`.
+        current_week=clock.week,
+        run_week=active_run.current_week if active_run is not None else None,
         engineers=rows,
     )

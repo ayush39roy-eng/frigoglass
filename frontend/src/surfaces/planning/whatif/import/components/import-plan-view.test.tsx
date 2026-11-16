@@ -62,7 +62,8 @@ describe('Import plan (Excel)', () => {
     const user = userEvent.setup();
     const { container } = renderWithProviders(<ImportPlanView />);
     expect(screen.getByRole('heading', { name: 'Import plan (Excel)' })).toBeInTheDocument();
-    expect(screen.getByTestId('import-format-help')).toHaveTextContent('Recommended Design Engineer');
+    // P41: the format card reads `GET /whatif/import/format` (404 here) and falls back to the built-in names.
+    await waitFor(() => expect(screen.getByTestId('import-format-help')).toHaveTextContent('Recommended Design Engineer'));
     expect(await seriousAxeViolations(container)).toEqual([]);
 
     // --- upload
@@ -280,7 +281,8 @@ describe('Import plan (Excel)', () => {
     await user.upload(screen.getByLabelText('Choose a file'), new File(['x'], 'plan.csv', { type: 'text/csv' }));
     expect(screen.getByTestId('import-file-error')).toHaveTextContent('.xlsx');
     expect(screen.getByRole('button', { name: 'Parse file' })).toBeDisabled();
-    expect(calls).toHaveLength(0);
+    // Only the format card's read (P41) went out; no parse.
+    expect(calls.filter((c) => !c.url.includes('/whatif/import/format'))).toHaveLength(0);
   });
 
   it('a simulate 422 INVALID_IMPORT stays on Review with the message', async () => {

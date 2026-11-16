@@ -21,6 +21,7 @@ from scheduling import (
     run_greedy_sgs,
     validate_invariants,
 )
+from scheduling._selftest_common import SELFTEST_WEEK
 from tests.scheduling._fixtures import progress
 
 ENG_1 = EngineerInput("eng-1", "One", "R&D-India", ("A+", "A", "B", "C"))
@@ -71,7 +72,7 @@ def _si(*projects: ProjectInput, chambers=(IN_CH1, IN_CH3), **kw: object) -> Sch
         projects=projects,
         engineers=(ENG_1, ENG_2, ENG_3),
         chambers=chambers,
-        **kw,  # type: ignore[arg-type]
+        **{"current_week": SELFTEST_WEEK, **kw},  # type: ignore[arg-type]
     )
 
 
@@ -193,7 +194,11 @@ def _f2_input() -> ScheduleInput:
         ),
     )
     return ScheduleInput(
-        projects=(p1, q), engineers=(ENG_GR1, ENG_GR2), chambers=(CH_GR,), horizon_weeks=50
+        current_week=SELFTEST_WEEK,
+        projects=(p1, q),
+        engineers=(ENG_GR1, ENG_GR2),
+        chambers=(CH_GR,),
+        horizon_weeks=50,
     )
 
 

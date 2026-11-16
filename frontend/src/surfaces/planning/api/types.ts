@@ -194,6 +194,86 @@ export interface EngineerRead {
   /** P29 (ADR 0042 §5, API_CONTRACT_P29 §5.1): false for a leader who is booked
    *  but not on the client's capacity roster (never counted as supply). */
   counts_in_capacity: boolean;
+  /** P38 (ADR 0053, API_CONTRACT_P38 §1): false once deactivated. Optional only
+   *  because an API before P38-T04 omits it; absent means active. */
+  active?: boolean;
+  deactivated_at?: string | null;
+  /** Calendar week of the deactivation (it counts as worked). */
+  deactivated_week?: number | null;
+  /** The served plan year, not the ISO year. */
+  deactivated_plan_year?: number | null;
+  deactivation_reason?: DeactivationReason | null;
+}
+
+// --- P38 (ADR 0053, API_CONTRACT_P38 §2): deactivation ----------------------
+
+/** `GET /engineers?status=` (default `active`). */
+export type EngineerStatusFilter = 'active' | 'inactive' | 'all';
+
+/** The fixed reason codes; never free text (OQ #97). */
+export type DeactivationReason = 'left_company' | 'changed_role' | 'long_absence' | 'other';
+
+/** One eligible new leader for an open project, as served (sorted least-loaded first). */
+export interface DeactivationCandidate {
+  engineer_id: Id;
+  name: string;
+  fte: number;
+  /** Remaining run-booked load in weeks, served. */
+  load_weeks: number;
+}
+
+/** One open project the engineer leads (status not Commercialized / Cancelled). */
+export interface DeactivationOpenProject {
+  project_id: Id;
+  name: string;
+  hub: string;
+  status: string;
+  priority: string | null;
+  category: string | null;
+  schedulable: boolean;
+  /** A frozen project must get a leader (422 FROZEN_NEEDS_LEADER otherwise). */
+  frozen: boolean;
+  progress_tracked: boolean;
+  /** Count of Done stages. */
+  done_stages: number;
+  /** A lab stage In Progress or Blocked. */
+  in_flight_lab: boolean;
+  candidates: DeactivationCandidate[];
+}
+
+export interface DeactivationSupplyEffect {
+  capacity_hub: string;
+  yearly_design_capacity: { before: number; after: number };
+  remaining_design_capacity: { before: number; after: number };
+}
+
+/** `GET /engineers/{id}/deactivation-preview`. */
+export interface DeactivationPreview {
+  engineer: { id: Id; name: string; hub: string; active: boolean };
+  deactivation_week: number;
+  has_linked_login: boolean;
+  open_projects: DeactivationOpenProject[];
+  /** Present only when the engineer counts in capacity. */
+  supply_effect?: DeactivationSupplyEffect | null;
+  led_projects_token: string;
+}
+
+/** `POST /engineers/{id}/deactivate` body. `null` = leave with no leader. */
+export interface DeactivateRequest {
+  reason: DeactivationReason;
+  led_projects_token: string;
+  reassignments: { project_id: Id; leader_engineer_id: Id | null }[];
+}
+
+export type DeactivationRunStatus = 'queued' | 'deferred' | 'not_needed';
+
+export interface DeactivateResponse {
+  engineer: EngineerRead;
+  reassigned: number;
+  left_without_leader: number;
+  left_without_leader_project_ids: Id[];
+  warnings: { project_id: Id; code: string }[];
+  run: { status: DeactivationRunStatus; run_id: Id | null };
 }
 
 /** `POST /engineers` body (`EngineerCreateRequest`). `fte` defaults server-side

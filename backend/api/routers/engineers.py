@@ -37,7 +37,6 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-import domain_constants as dc
 from api.db import get_db
 from api.deps import require_permission
 from api.errors import HTTP_422, CodedHTTPException
@@ -61,6 +60,7 @@ from services.capacity_supply import (
 )
 from services.categories import check_eligibility_codes
 from services.hub_scope import hub_scope_filter, is_hub_in_scope
+from services.plan_clock import PlanClock, get_plan_clock
 
 router = APIRouter(prefix="/engineers", tags=["capacity-planning", "engineers"])
 
@@ -120,7 +120,9 @@ async def _get_engineer_or_404(
     return engineer
 
 
-async def _engineer_reads(db: AsyncSession, engineers: list[Engineer]) -> list[EngineerRead]:
+async def _engineer_reads(
+    db: AsyncSession, engineers: list[Engineer], *, current_week: int
+) -> list[EngineerRead]:
     """`EngineerRead` plus the P19-T03 supply figures (ADR 0008): the hub's
     calendar × the engineer's own fte, and the days at the hub's
     `weekdays_per_week` (docs/API_CONTRACT_P19.md §2)."""
@@ -141,7 +143,7 @@ async def _engineer_reads(db: AsyncSession, engineers: list[Engineer]) -> list[E
     out: list[EngineerRead] = []
     for e in engineers:
         cal = calendars.get(e.hub_id)
-        year, remaining = design_capacity(cal, fte_sum([e.fte]), dc.CURRENT_WEEK)
+        year, remaining = design_capacity(cal, fte_sum([e.fte]), current_week)
         wd = hub_weekdays_per_week(cal)
         weeks = YearRemaining(year=round2(year), remaining=round2(remaining))
         out.append(
@@ -202,6 +204,7 @@ async def list_engineers(
     hub_id: HubIdListQuery = None,
     db: AsyncSession = Depends(get_db),
     current_user: Principal = Depends(_read),
+    clock: PlanClock = Depends(get_plan_clock),
 ) -> list[EngineerRead]:
     """List engineers, optionally filtered by hub (`hub_id` repeatable,
     ADR 0051: any of the listed hubs; an out-of-scope hub contributes nothing).
@@ -221,7 +224,7 @@ async def list_engineers(
     if hub_filter is not None:
         stmt = stmt.where(hub_filter)
     result = await db.execute(stmt.order_by(Engineer.name))
-    return await _engineer_reads(db, list(result.scalars().all()))
+    return await _engineer_reads(db, list(result.scalars().all()), current_week=clock.week)
 
 
 @router.get("/{engineer_id}", response_model=EngineerRead)
@@ -229,9 +232,10 @@ async def get_engineer(
     engineer_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
     current_user: Principal = Depends(_read),
+    clock: PlanClock = Depends(get_plan_clock),
 ) -> EngineerRead:
     engineer = await _get_engineer_or_404(db, engineer_id, current_user)
-    return (await _engineer_reads(db, [engineer]))[0]
+    return (await _engineer_reads(db, [engineer], current_week=clock.week))[0]
 
 
 @router.post("", response_model=EngineerRead, status_code=status.HTTP_201_CREATED)
@@ -239,6 +243,7 @@ async def create_engineer(
     body: EngineerCreateRequest,
     db: AsyncSession = Depends(get_db),
     current_user: Principal = Depends(_write),
+    clock: PlanClock = Depends(get_plan_clock),
 ) -> EngineerRead:
     hub = (await db.execute(select(Hub).where(Hub.id == body.hub_id))).scalar_one_or_none()
     if hub is None:
@@ -278,7 +283,7 @@ async def create_engineer(
     )
     await db.commit()
     await db.refresh(engineer)
-    return (await _engineer_reads(db, [engineer]))[0]
+    return (await _engineer_reads(db, [engineer], current_week=clock.week))[0]
 
 
 @router.patch("/{engineer_id}", response_model=EngineerRead)
@@ -287,6 +292,7 @@ async def update_engineer(
     body: EngineerUpdateRequest,
     db: AsyncSession = Depends(get_db),
     current_user: Principal = Depends(_write),
+    clock: PlanClock = Depends(get_plan_clock),
 ) -> EngineerRead:
     engineer = await _get_engineer_or_404(db, engineer_id, current_user)
 
@@ -331,7 +337,7 @@ async def update_engineer(
     )
     await db.commit()
     await db.refresh(engineer)
-    return (await _engineer_reads(db, [engineer]))[0]
+    return (await _engineer_reads(db, [engineer], current_week=clock.week))[0]
 
 
 @router.delete("/{engineer_id}", status_code=status.HTTP_204_NO_CONTENT)

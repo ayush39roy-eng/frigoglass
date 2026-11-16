@@ -14,6 +14,7 @@ from models.hub import Hub
 from scheduling.greedy import run_greedy_sgs
 from seed import seed_demo_data
 from services.schedule_persistence import build_schedule_input_from_db, persist_schedule_output
+from tests._plan_week import TEST_WEEK
 from tests.auth_helpers import clear_current_principal_override
 from tests.factories import make_engineer, make_hub, make_schedule_run
 from tests.p12_helpers import act_as, client_for, link_engineer, plan_step, stepped_project
@@ -36,7 +37,7 @@ async def _seeded(db_session):
     await seed_demo_data.seed_chambers(db_session)
     await seed_demo_data.seed_projects(db_session, data, hubs, engineers)
     await db_session.flush()
-    schedule_input = await build_schedule_input_from_db(db_session)
+    schedule_input = await build_schedule_input_from_db(db_session, current_week=TEST_WEEK)
     output = run_greedy_sgs(schedule_input)
     await persist_schedule_output(
         db_session, schedule_input, output, solver_type=SolverType.GREEDY,

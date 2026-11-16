@@ -150,25 +150,46 @@ export const NOT_RANKABLE = 'NOT_RANKABLE';
 export const NOT_SAME_BAND = 'NOT_SAME_BAND';
 /** 422 code: both anchors were given. */
 export const BOTH_ANCHORS = 'BOTH_ANCHORS';
+/** 422 code (owner request 2026-11-17): `to_rank` is outside 1..n of the full band. */
+export const BAD_RANK = 'BAD_RANK';
 
 /**
  * Where the project goes inside its band, relative to one project of the full
  * band (so a drop on a filtered board is well defined, R36-8). At most one is
  * set; both null = last in the band. The server decides the resulting rank.
  */
-export interface BandRankPreviewRequest {
+export interface BandRankAnchorPlacement {
   before_project_id: Id | null;
   after_project_id: Id | null;
 }
+
+/**
+ * Owner request 2026-11-17: the target position in the FULL band (1-based), for
+ * the ↑ / ↓ buttons (current rank ± 1) and a typed position. Never combined with
+ * the anchors (422). Out of range → 422 `BAD_RANK`; the same rank → `unchanged`.
+ */
+export interface BandRankToRankPlacement {
+  to_rank: number;
+}
+
+export type BandRankPlacement = BandRankAnchorPlacement | BandRankToRankPlacement;
+
+export function isToRankPlacement(placement: BandRankPlacement): placement is BandRankToRankPlacement {
+  return 'to_rank' in placement;
+}
+
+/** `POST /projects/{id}/band-rank/preview` body: anchors, or `to_rank` alone. */
+export type BandRankPreviewRequest = BandRankAnchorPlacement | BandRankToRankPlacement;
 
 /** `POST /projects/{id}/band-rank`: the previewed placement plus its token. */
-export interface BandRankMoveRequest {
-  before_project_id: Id | null;
-  after_project_id: Id | null;
-  preview_token: string;
-}
+export type BandRankMoveRequest = BandRankPreviewRequest & { preview_token: string };
 
-export type BandRankPlacement = BandRankPreviewRequest;
+/** The wire body for a placement: only the keys of its own form, so a `to_rank`
+ *  request never carries anchor keys (the server answers 422 to both). */
+function placementBody(placement: BandRankPlacement): BandRankPreviewRequest {
+  if (isToRankPlacement(placement)) return { to_rank: placement.to_rank };
+  return { before_project_id: placement.before_project_id, after_project_id: placement.after_project_id };
+}
 
 /** `POST /projects/{id}/band-rank/preview`. Writes nothing (contract §2). */
 export function previewProjectBandRank(
@@ -176,14 +197,10 @@ export function previewProjectBandRank(
   placement: BandRankPlacement,
   options: Pick<ApiRequestOptions, 'signal'> = {},
 ): Promise<PriorityPreviewResponse> {
-  const body: BandRankPreviewRequest = {
-    before_project_id: placement.before_project_id,
-    after_project_id: placement.after_project_id,
-  };
   return apiSend<PriorityPreviewResponse>(
     'POST',
     `/projects/${encodeURIComponent(projectId)}/band-rank/preview`,
-    body,
+    placementBody(placement),
     { signal: options.signal },
   );
 }
@@ -195,11 +212,7 @@ export function moveProjectBandRank(
   placement: BandRankPlacement,
   previewToken: string,
 ): Promise<PriorityMoveResponse> {
-  const body: BandRankMoveRequest = {
-    before_project_id: placement.before_project_id,
-    after_project_id: placement.after_project_id,
-    preview_token: previewToken,
-  };
+  const body: BandRankMoveRequest = { ...placementBody(placement), preview_token: previewToken };
   return apiSend<PriorityMoveResponse>('POST', `/projects/${encodeURIComponent(projectId)}/band-rank`, body);
 }
 

@@ -8,7 +8,7 @@ needs for a set of hubs, and runs it once per hub:
   exactly as `GET /capacity/hub-load` serves `design_capacity_remaining`
   (`services.capacity_supply.design_capacity` on the capacity hub's calendar,
   Σ FTE of its engineers with `counts_in_capacity`,
-  `domain_constants.CURRENT_WEEK`, rounded to 2 dp). ADR 0042 (P29): the walk
+  the calendar week (`services.plan_clock`), rounded to 2 dp). ADR 0042 (P29): the walk
   is per capacity hub, over the projects of the capacity hub AND its member
   hubs (R&D-Greece walks its own, OEM-HCK's and OEM-Seitek's projects as one
   set); a member hub id resolves to its capacity hub everywhere here;
@@ -38,7 +38,6 @@ from types import EllipsisType
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-import domain_constants as dc
 from models.engineer import Engineer
 from models.enums import NON_SCHEDULABLE_STATUSES, HubName, ProjectPriority
 from models.hub import HubWorkCalendar
@@ -106,6 +105,7 @@ async def compute_capacity_fill(
     *,
     active_run: ScheduleRun | None | EllipsisType = ...,
     normalized_override: Mapping[uuid.UUID, int | None] | None = None,
+    current_week: int,
 ) -> CapacityFill:
     """The P1 capacity fill of the capacity hubs of `hub_ids` (callers pass
     in-scope hubs only; a member hub brings in its capacity hub, whose walk
@@ -121,7 +121,10 @@ async def compute_capacity_fill(
     `normalized_pct` of the projects it names (None = unscored), so the
     rubric preview can show the suggested band a proposed rubric would give,
     through the very same walk. Projects it does not name keep their stored
-    score."""
+    score.
+
+    P37-T04 (ADR 0052 §4 (c)): `current_week` is the request's calendar week;
+    the remaining design supply is evaluated at it (run-independent)."""
 
     run = await get_active_run(db) if isinstance(active_run, EllipsisType) else active_run
     if not hub_ids:
@@ -151,7 +154,7 @@ async def compute_capacity_fill(
     capacity: dict[uuid.UUID, Decimal] = {}
     for h_id in hub_names:
         _year, remaining = design_capacity(
-            calendars.get(h_id), fte_sum(fte_values.get(h_id, [])), dc.CURRENT_WEEK
+            calendars.get(h_id), fte_sum(fte_values.get(h_id, [])), current_week
         )
         capacity[h_id] = to_weeks(round2(remaining))
 

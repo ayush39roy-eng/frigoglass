@@ -2,64 +2,43 @@ import * as React from 'react';
 
 import { cn } from '@/lib/utils';
 
-import { saveErrorMessage } from './save-error';
-
 /**
- * Inline numeric editor for one resource input (FTE, platforms, efficiency).
- * Commits on Enter or blur when the text changed and passes `validate` (the
- * same rules as the existing engineer / chamber form schemas); Escape restores
- * the saved value. A rejected save (server 422 / 403) shows the message under
- * the input and restores the saved value; the optimistic list cache is rolled
- * back by the mutation hook.
+ * Numeric input for one resource field (FTE, platforms, efficiency) while its
+ * card is in edit mode (owner ask 2026-11-17). Controlled by the card's draft:
+ * typing only changes the draft, nothing is sent until the card's Save.
+ * Escape restores the served value. A changed value is marked (amber border
+ * and fill, plus the row's "Unsaved" tag for screen readers); an invalid one
+ * shows the existing form schema message under the input.
  */
 export interface InlineNumberProps {
   id: string;
   label: string;
-  value: number;
+  text: string;
   step: string;
   min: number;
   inputMode: 'decimal' | 'numeric';
-  validate: (text: string) => string | null;
-  onCommit: (value: number) => Promise<unknown>;
+  changed: boolean;
+  error: string | null;
+  disabled?: boolean;
+  onChange: (text: string) => void;
+  onRevert: () => void;
   className?: string;
 }
 
-export function InlineNumber({ id, label, value, step, min, inputMode, validate, onCommit, className }: InlineNumberProps): React.JSX.Element {
-  const [text, setText] = React.useState(String(value));
-  const [error, setError] = React.useState<string | null>(null);
-  const [busy, setBusy] = React.useState(false);
-
-  // A new served value (refetch, someone else's edit) replaces the text
-  // (state adjusted during render, not in an effect).
-  const [seenValue, setSeenValue] = React.useState(value);
-  if (seenValue !== value) {
-    setSeenValue(value);
-    setText(String(value));
-  }
-
-  const commit = async () => {
-    const trimmed = text.trim();
-    if (trimmed === String(value)) {
-      setError(null);
-      return;
-    }
-    const problem = validate(trimmed);
-    if (problem) {
-      setError(problem);
-      return;
-    }
-    setError(null);
-    setBusy(true);
-    try {
-      await onCommit(Number(trimmed));
-    } catch (err) {
-      setText(String(value));
-      setError(saveErrorMessage(err));
-    } finally {
-      setBusy(false);
-    }
-  };
-
+export function InlineNumber({
+  id,
+  label,
+  text,
+  step,
+  min,
+  inputMode,
+  changed,
+  error,
+  disabled,
+  onChange,
+  onRevert,
+  className,
+}: InlineNumberProps): React.JSX.Element {
   const errorId = `${id}-error`;
   return (
     <div className={cn('flex flex-col items-end', className)}>
@@ -71,32 +50,30 @@ export function InlineNumber({ id, label, value, step, min, inputMode, validate,
         step={step}
         min={min}
         inputMode={inputMode}
+        disabled={disabled}
         aria-invalid={error ? true : undefined}
         aria-describedby={error ? errorId : undefined}
-        aria-busy={busy || undefined}
-        onChange={(e) => setText(e.target.value)}
-        onBlur={() => void commit()}
+        data-changed={changed ? 'true' : undefined}
+        onChange={(e) => onChange(e.target.value)}
         onKeyDown={(e) => {
           if (e.key === 'Enter') {
             e.preventDefault();
-            void commit();
           } else if (e.key === 'Escape') {
-            setText(String(value));
-            setError(null);
+            onRevert();
           }
         }}
         className={cn(
           'tnum h-7 w-14 rounded-control border border-border bg-surface px-1 text-right text-xs text-text',
-          'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+          'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-60',
+          'data-[changed=true]:border-2 data-[changed=true]:border-warning data-[changed=true]:bg-warning-subtle',
           'aria-[invalid=true]:border-danger [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none',
         )}
       />
       {error ? (
-        <span id={errorId} role="alert" className="mt-0.5 max-w-[8rem] text-right text-2xs text-danger">
+        <span id={errorId} className="mt-0.5 max-w-[8rem] text-right text-2xs text-danger">
           {error}
         </span>
       ) : null}
     </div>
   );
 }
-

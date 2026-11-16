@@ -57,6 +57,7 @@ from services.demand_load import load_live_project_rows
 from services.schedule_persistence import build_schedule_input_from_db
 from services.template_apply import FLAG_EXCLUDED_NO_EFFECT, _step_outcome
 from services.template_editor import StepDelta
+from tests._plan_week import TEST_WEEK
 from tests.auth_helpers import clear_current_principal_override
 from tests.conftest import run_alembic
 from tests.factories import make_engineer, make_hub, make_schedule_run
@@ -189,7 +190,9 @@ async def test_exclude_and_reinclude_round_trip(db_session, dispatch):
     await act_as(db_session, RoleName.ADMIN)
     await db_session.commit()
     pid = project.id
-    input_before = canonical_schedule_input_asdict(await build_schedule_input_from_db(db_session))
+    input_before = canonical_schedule_input_asdict(
+        await build_schedule_input_from_db(db_session, current_week=TEST_WEEK)
+    )
     progress_before = {k: _progress(r) for k, r in (await _rows(db_session, pid)).items()}
 
     async with client_for(db_session) as client:
@@ -232,7 +235,7 @@ async def test_exclude_and_reinclude_round_trip(db_session, dispatch):
     assert audit.after_state["step_row_id"] == str(live["PDD-E"].id)
 
     # R35-9 / I33 on the built input: E's lead is 0, no override.
-    schedule_input = await build_schedule_input_from_db(db_session)
+    schedule_input = await build_schedule_input_from_db(db_session, current_week=TEST_WEEK)
     live_rows, _ = await load_live_project_rows(db_session, [pid])
     assert check_i33_step_exclusion(live_rows, schedule_input) == ()
     assert check_i34_excluded_not_done(live_rows) == ()
@@ -251,7 +254,9 @@ async def test_exclude_and_reinclude_round_trip(db_session, dispatch):
     # I34 difference test: progress and the run input are restored exactly.
     progress_after = {k: _progress(r) for k, r in (await _rows(db_session, pid)).items()}
     assert progress_after == progress_before
-    input_after = canonical_schedule_input_asdict(await build_schedule_input_from_db(db_session))
+    input_after = canonical_schedule_input_asdict(
+        await build_schedule_input_from_db(db_session, current_week=TEST_WEEK)
+    )
     assert input_after == input_before
     _assert_no_financial(
         await _audits(db_session, pid, "project.step_excluded")
@@ -825,7 +830,7 @@ def _check_def(url: str) -> list[asyncpg.Record]:
 def test_p35b_up_down_up() -> None:
     with PostgresContainer("postgres:17", driver="asyncpg") as pg:
         url = pg.get_connection_url()
-        r = run_alembic(["upgrade", "p33c_clear_step_timing"], url)
+        r = run_alembic(["upgrade", "p40a_step_pins"], url)
         assert r.returncode == 0, r.stderr
         assert _column(url) == []
 
@@ -838,7 +843,7 @@ def test_p35b_up_down_up() -> None:
         (check,) = _check_def(url)
         assert "excluded" in check["d"] and "Done" in check["d"]
 
-        r = run_alembic(["downgrade", "p33c_clear_step_timing"], url)
+        r = run_alembic(["downgrade", "p40a_step_pins"], url)
         assert r.returncode == 0, r.stderr
         assert _column(url) == [] and _check_def(url) == []
 

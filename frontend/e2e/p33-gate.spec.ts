@@ -10,7 +10,8 @@ import { actAs, apiGet, BACKEND_URL, checkAxe, DEV_EMAILS, type DevRole } from '
  *   - Workflow Settings timeline editor (saved, with drafts + flags)
  *   - the apply dialog (lists collapsed / expanded, "Apply to all")
  *   - the add-category dialog (empty, error state)
- *   - read-only Timeline (/timeline) and the Workflow "Project step timing" tab
+ *   - read-only Timeline (/timeline) (the Workflow "Project step timing" tab was
+ *     removed at the owner's request, 2026-11-16)
  *
  * Mutates the disposable gate DB only.
  */
@@ -157,19 +158,6 @@ test('apply: C PDD-K wait +3 through the dialog to all not-reached, run follows,
     expect(await page.getByRole('button', { name: /^Edit timing for / }).count(), `no Edit timing at ${String(width)}`).toBe(0);
     await checkAxe(page, `P33 Timeline read-only, wait chip, ${String(width)}`);
   }
-});
-
-test('Workflow "Project step timing" tab is read-only and axe clean', async ({ page }) => {
-  await setup(page, 'superAdmin');
-  await page.goto('/settings/workflow');
-  await expect(page.getByTestId('project-step-timing')).toBeVisible({ timeout: 30_000 });
-  await page.waitForTimeout(800);
-  const expand = page.getByRole('button', { name: /^Expand steps for / }).first();
-  if ((await expand.count()) > 0) await expand.click();
-  await page.waitForTimeout(500);
-  expect(await page.getByTestId('step-drag-handle').count()).toBe(0);
-  expect(await page.getByRole('button', { name: /Edit timing|Reset timing/ }).count()).toBe(0);
-  await checkAxe(page, 'P33 Workflow Project step timing tab (expanded)');
 });
 
 test('+ Add category: errors per field, B2 after B copies B, timeline opens, B1 serves rank 4 (Super Admin)', async ({ page, request }) => {

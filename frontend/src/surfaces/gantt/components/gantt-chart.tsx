@@ -23,12 +23,14 @@ import {
   type GanttDensity,
   type GanttZoom,
 } from '../lib/gantt-coordinates';
-import { ganttColumnWidths, useElementWidth, useNarrowGantt } from '../lib/gantt-layout';
+import { forestColumnWidths, ganttColumnWidths, useElementWidth, useNarrowGantt } from '../lib/gantt-layout';
+import { actualSlots, stepColor } from '../lib/step-colors';
 import { projectStatusLabels } from '../lib/gantt-status-labels';
 import { buildVisualRows, visualRowHeight } from '../lib/gantt-rows';
 import type { GanttProjectRow, GanttWeeklyActiveCount } from '../api/types';
 import { ActivityLoadStrip, COUNT_ROW_HEIGHT, LOAD_STRIP_HEIGHT, WeeklyCountRow } from './activity-load-strip';
-import { GanttBarGroup, GanttHatchDefs, GanttSpilloverMarker } from './gantt-bars';
+import { GanttHatchDefs, GanttSpilloverMarker } from './gantt-bars';
+import { GanttProjectLine } from './gantt-project-line';
 import { ProjectRowBadges, StepRowBadges } from './gantt-badges';
 import { GanttCompletionMarkers } from './gantt-completion-markers';
 import { GanttProjectDetailsDialog } from './gantt-project-details';
@@ -56,6 +58,7 @@ import { StepBarGraphic, StepLeftCell } from './gantt-step-row';
  */
 
 const SPRING = { type: 'spring', stiffness: 300, damping: 30 } as const;
+const NO_EXPANDED: ReadonlySet<string> = new Set();
 
 export interface GanttChartProps {
   rows: GanttProjectRow[];
@@ -120,7 +123,11 @@ export function GanttChart({
   const boxRef = React.useRef<HTMLDivElement>(null);
   const narrow = useNarrowGantt();
   const boxWidth = useElementWidth(boxRef);
-  const { left: LEFT_COL_WIDTH, status: BADGE_COL_WIDTH } = ganttColumnWidths(narrow, boxWidth);
+  // P40-T01: Forest view is the name + one line, so it drops the status
+  // column and narrows the name column (`forestColumnWidths`).
+  const { left: LEFT_COL_WIDTH, status: BADGE_COL_WIDTH } = compact
+    ? forestColumnWidths(narrow, boxWidth)
+    : ganttColumnWidths(narrow, boxWidth);
   const hasStatusCol = BADGE_COL_WIDTH > 0;
   const [detailsId, setDetailsId] = React.useState<string | null>(null);
   // QA-P19-3 (WCAG 2.4.3): the Details button that opened the dialog, so focus
@@ -160,9 +167,10 @@ export function GanttChart({
     return axis.fill && available > min.totalWidthPx ? axis.scaleFor(available / min.horizonWeeks) : min;
   }, [axis, zoom, boxWidth, LEFT_COL_WIDTH, BADGE_COL_WIDTH]);
   const weekText = axis?.weekLabel;
+  // P40-T01: Forest view never shows step rows (one line per project).
   const visualRows = React.useMemo(
-    () => buildVisualRows(rows, expandedIds),
-    [rows, expandedIds],
+    () => buildVisualRows(rows, compact ? NO_EXPANDED : expandedIds),
+    [rows, expandedIds, compact],
   );
 
   // Cumulative pixel offsets — deterministic from fixed row heights.
@@ -198,6 +206,13 @@ export function GanttChart({
     });
     prevExpanded.current = expandedIds;
   }, [expandedIds]);
+
+  // Row heights are fixed per row kind and density, but the virtualizer caches
+  // each index's size: re-measure when the rows or the density change (P40-T01:
+  // Forest view's 22 px rows would otherwise keep the old 58 px slots).
+  React.useLayoutEffect(() => {
+    virtualizer.measure();
+  }, [virtualizer, visualRows, density]);
 
   const items = virtualizer.getVirtualItems();
 
@@ -245,7 +260,7 @@ export function GanttChart({
                 style={{ width: LEFT_COL_WIDTH }}
                 data-testid="gantt-left-header"
               >
-                {narrow ? 'Project' : 'Project / step'}
+                {narrow || compact ? 'Project' : 'Project / step'}
               </div>
               <div style={{ width: scale.totalWidthPx }} className="shrink-0">
                 <GanttWeekAxis scale={scale} weekLabel={weekText} />
@@ -331,7 +346,9 @@ export function GanttChart({
                       style={{ width: LEFT_COL_WIDTH }}
                       data-testid="gantt-left-cell"
                     >
-                      {vr.kind === 'project' ? (
+                      {vr.kind === 'project' && compact ? (
+                        <ForestNameCell project={vr.project} />
+                      ) : vr.kind === 'project' ? (
                         <ProjectLeftCell
                           project={vr.project}
                           compact={compact}
@@ -355,7 +372,7 @@ export function GanttChart({
                       className="relative shrink-0 border-b border-border/70 transition-colors group-hover/row:bg-primary-subtle/30"
                       style={{ width: scale.totalWidthPx }}
                     >
-                      <BarLayer row={vr} scale={scale} height={height} animate={animate} fmt={weekText} />
+                      <BarLayer row={vr} scale={scale} height={height} animate={animate} fmt={weekText} compact={compact} />
                       {markUnplaced &&
                       vr.kind === 'step' &&
                       !vr.step.skipped &&
@@ -413,8 +430,12 @@ function BarLayer({
   height,
   animate,
   fmt = formatPlanWeek,
+  compact = false,
 }: {
   fmt?: ((week: number) => string) | undefined;
+  /** P40-T01 Forest view: the line only — no completion markers, and the
+   *  spillover cue is the small chevron instead of the pill. */
+  compact?: boolean;
   row: ReturnType<typeof buildVisualRows>[number];
   scale: WeekScale;
   height: number;
@@ -435,17 +456,18 @@ function BarLayer({
         : actual
           ? actual.endWeek
           : null;
+    // P40-T01: one execution line, coloured per step segment.
     group = (
-      <GanttBarGroup
+      <GanttProjectLine
+        project={row.project}
         scale={scale}
-        y={0}
         rowHeight={height}
+        compact={compact}
         planned={planned}
-        actual={actual}
         plannedEndWeek={plannedEndWeek}
         delayedEndWeek={delayedEndWeek}
-        frozen={row.project.frozen}
         title={barTitle(row.project.project_name, planned, actual, fmt)}
+        fmt={fmt}
       />
     );
     const p = row.project;
@@ -459,7 +481,7 @@ function BarLayer({
         <GanttSpilloverMarker
           scale={scale}
           rowHeight={height}
-          variant="label"
+          variant={compact ? 'chevron' : 'label'}
           title={
             p.left_out
               ? `${p.project_name}: not done by W52 — no slot found yet, spills over to ${String(SPILLOVER_YEAR)} unscheduled`
@@ -476,7 +498,7 @@ function BarLayer({
   // The two completion lines are per PROJECT row (DOMAIN_RULES "Expected vs
   // projected completion"); drawn after the bars so they sit on top.
   const markers =
-    row.kind === 'project' ? (
+    row.kind === 'project' && !compact ? (
       <GanttCompletionMarkers
         scale={scale}
         rowHeight={height}
@@ -490,7 +512,13 @@ function BarLayer({
 
   const svg = (
     <svg width={scale.totalWidthPx} height={height} className="block">
-      <GanttHatchDefs />
+      <GanttHatchDefs
+        slots={
+          row.kind === 'project'
+            ? actualSlots(row.project.steps)
+            : [stepColor(row.step.step_id, row.step.sequence_order).slot]
+        }
+      />
       {group}
       {markers}
       {spilloverMarker}
@@ -522,6 +550,22 @@ function barTitle(
   if (planned) parts.push(`planned ${fmt(planned.startWeek)}–${fmt(planned.endWeek)}`);
   if (actual) parts.push(`actual ${fmt(actual.startWeek)}–${fmt(actual.endWeek)}`);
   return parts.join(' · ');
+}
+
+/**
+ * P40-T01 Forest view: the project name and nothing else (owner ask), so many
+ * projects fit. The full name is the tooltip; the row's line carries the rest.
+ */
+function ForestNameCell({ project }: { project: GanttProjectRow }): React.JSX.Element {
+  return (
+    <span
+      className="block min-w-0 flex-1 truncate text-2xs font-semibold leading-none text-text"
+      title={project.project_name}
+      data-testid="gantt-forest-name"
+    >
+      {project.project_name}
+    </span>
+  );
 }
 
 function ProjectLeftCell({

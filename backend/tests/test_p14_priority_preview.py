@@ -56,6 +56,7 @@ from services.project_steps import sync_project_steps
 from services.run_dispatch import ABANDONED_ERROR, in_flight_window
 from services.schedule_apply import persist_solved_run
 from services.schedule_persistence import build_schedule_input_from_db
+from tests._plan_week import TEST_WEEK
 from tests.auth_helpers import (
     clear_current_principal_override,
     make_principal,
@@ -107,7 +108,7 @@ async def _activate_baseline(db_session) -> ScheduleRun:
     """A real greedy run over the current DB inputs, persisted and activated
     exactly as the worker does it."""
 
-    schedule_input = await build_schedule_input_from_db(db_session)
+    schedule_input = await build_schedule_input_from_db(db_session, current_week=TEST_WEEK)
     run = await persist_solved_run(
         db_session, schedule_input, run_greedy_sgs(schedule_input),
         solver=SolverType.GREEDY, trigger_reason="manual", actor_user_id=None, activate=True,

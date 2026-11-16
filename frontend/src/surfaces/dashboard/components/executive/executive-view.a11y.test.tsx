@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
-import { screen } from '@testing-library/react';
+import { screen, within } from '@testing-library/react';
 
 import { renderWithProviders } from '@/test/render';
 import { seriousAxeViolations } from '@/test/axe';
@@ -68,6 +68,12 @@ const withinYear: CompletingWithinYear = {
       delivered_share_pct: 5.88,
       other_share_pct: 11.76,
     },
+  ],
+  // Owner ask 2026-11-16: served per-country counts (sum to the totals above).
+  regions: [
+    { region: 'Greece', within_year_count: 20, spillover_count: 20, left_out_count: 60, blocked_count: 8 },
+    { region: 'India', within_year_count: 15, spillover_count: 12, left_out_count: 50, blocked_count: 6 },
+    { region: 'Romania', within_year_count: 6, spillover_count: 10, left_out_count: 16, blocked_count: 4 },
   ],
   rows: [
     {
@@ -193,6 +199,16 @@ describe('ExecutiveView a11y (P28)', () => {
     expect(screen.getAllByTestId('exec-upcoming-row')).toHaveLength(1);
     expect(screen.getByTestId('exec-provenance')).toBeInTheDocument();
 
+    // Owner ask 2026-11-16: the per-country delivery rate under the compact
+    // gauge, same formula per served country row (axe-checked below too).
+    // Greece 20/108 → 19%, India 15/83 → 18%, Romania 6/36 → 17%.
+    const gauge = screen.getByTestId('exec-delivery-gauge');
+    expect(within(gauge).getByRole('list', { name: 'Delivery rate by country' })).toBeInTheDocument();
+    expect(within(gauge).getByText('Greece (including OEM): 19% delivered, 20 of 108 within the year')).toBeInTheDocument();
+    expect(within(gauge).getByText('India: 18% delivered, 15 of 83 within the year')).toBeInTheDocument();
+    expect(within(gauge).getByText('Romania: 17% delivered, 6 of 36 within the year')).toBeInTheDocument();
+    expect(within(gauge).getByTestId('delivery-oem-note')).toHaveTextContent('OEM projects are counted under Greece.');
+
     // P13-R01: aria-hidden chart figures must hold nothing tabbable.
     for (const figure of Array.from(container.querySelectorAll('figure[aria-hidden="true"]'))) {
       const tabbable = Array.from(figure.querySelectorAll('[tabindex]')).filter(
@@ -202,7 +218,9 @@ describe('ExecutiveView a11y (P28)', () => {
     }
 
     expect(await seriousAxeViolations(container)).toEqual([]);
-  });
+    // axe over the whole view (five Recharts surfaces + the per-country rows)
+    // runs ~11 s in jsdom, past the 10 s default — same headroom as drill-sheet.
+  }, 30_000);
 
   it('P31: the register rows behind Risks are requested with the Dashboard selection', async () => {
     vipHook.useVipBoard.mockReturnValue(ready({ run_id: 'r', pillars: [], areas: [] }));

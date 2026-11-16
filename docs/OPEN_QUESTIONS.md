@@ -1063,3 +1063,236 @@ longer moves up its band on its own. **Assuming:** the rank is kept; the planner
 
 **Assuming:** no. A merged row replacing a live project in the same band keeps that project's rank;
 other imported rows go last in their band (ADR 0050, R36-7).
+
+### 88. What happens to the planning year on 4 January 2027? *(2026-11-16, P37 / ADR 0052, blocking before 28 Dec 2026)*
+
+Every stored week number is in 2026 plan weeks: 2026 W1–W52, then 2027 = 53–78. That covers runs,
+actual start and end weeks, check-ins, target end weeks and the 78-week search limit. On 4 Jan 2027
+the calendar enters 2027-W01. Options:
+- (a) the week **stays at 52** and the app says "Planning year 2026 closed" until an Admin opens
+  2027;
+- (b) the app **rolls to 2027 automatically**. Every stored week is re-based by −52 in one audited
+  migration, and the 2026 runs are kept read-only as history. Within-year then means 2027, and the
+  search limit moves to 2028-W26;
+- (c) a **rolling 52-week window** from today instead of a calendar year. That is a different
+  within-year rule.
+
+A related point: the search limit is fixed at 2027-W26. At W47 a not-started step longer than 31
+weeks can no longer be placed (late December: 26 weeks).
+
+**Assuming until answered:** (a). The week holds at 52 from 28 Dec 2026, and from 4 Jan 2027 it is
+flagged as closed. Nothing is re-based. (b) needs its own phase, so we need the answer by
+mid-December to build it in time. **Who must answer:** owner / client.
+
+**Answered 2026-11-17 (owner):** "no problem, now we don't need to show dummy data, so make the week follow". Closed: assumption (a) and its contract follow-up (R37-10: check-ins are refused while the year is closed). Opening 2027 needs its own ADR and phase (P37-F01), which must be planned before 28 Dec 2026.
+
+### 89. Should the Monday recalculation replace a plan made with the optimizer (CP-SAT)? *(2026-11-16, P37, non-blocking; same question as P32-R12)*
+
+Every Monday the plan is recalculated so it starts from the new week. If the active plan came from
+the optimizer, a greedy run replaces it, as every other automatic recalculation does today (P32
+gate finding F2). Options:
+- (a) greedy replaces it;
+- (b) re-run the optimizer. This takes minutes and needs the solver worker, which the hosted demo
+  does not run;
+- (c) keep the optimizer plan and show "plan from W*n*" until someone recalculates.
+
+**Assuming until answered:** (a), consistent with today. **Who must answer:** owner.
+
+**Answered 2026-11-17 (owner):** "no problem, now we don't need to show dummy data, so make the week follow". Closed: (a): the Monday greedy rollover may replace an optimizer plan. No `held` status is built.
+
+### 90. Check-ins since 19 October were recorded as week 42 *(2026-11-16, P37, non-blocking)*
+
+Because the week was fixed, every check-in submitted from 19 Oct onwards was stamped week 42, and
+so were the actual start and end weeks it filled in. Check-in rows are immutable history. Options:
+- (a) leave them, and let a planner correct actual dates on the project register (P35);
+- (b) re-stamp them from their submission date in one audited migration.
+
+**Assuming until answered:** (a). P37-T07 reports how many rows are affected. **Who must answer:**
+owner.
+
+**Answered 2026-11-17 (owner):** "no problem, now we don't need to show dummy data, so make the week follow". Closed: (a): rows stamped 42 stay as they are; planners may correct actual dates on the register.
+
+### 91. "Weeks left" does not count the current week *(2026-11-16, P37, non-blocking)*
+
+At W47 the header says "5 wks left" (W48–W52), but work can still be placed in W47, so there are 6
+placement weeks. The remaining-capacity formulas use the same `52 − week` basis (ADR 0008).
+**Assuming until answered:** keep "5 wks left" and the formulas as they are. **Who must answer:**
+owner.
+
+**Answered 2026-11-17 (owner):** "no problem, now we don't need to show dummy data, so make the week follow". Closed: keep "N wks left" = 52 − week (the current week excluded).
+
+### 92. Accepting the drop when the plan jumps from week 42 to week 47 *(2026-11-16, P37, blocking the P37 release, not the build)*
+
+The first recalculation after P37 ships starts the plan at W47, not W42:
+- not-started work can no longer use W42–W46;
+- in-progress work gets no credit for those five weeks without check-ins;
+- within-year falls, and spillover and left-out rise.
+
+P37-T07 measures the before and after per hub; nothing is tuned. Everyone due a check-in will show
+"overdue" at once, because no check-in carries W46 or W47. The progress data is still the client's
+April status (ADR 0041).
+
+**Questions:**
+- Do we ship P37 to the client as it stands?
+- Or do we first ask the client for current progress, or for a bulk check-in?
+
+**Assuming until answered:** build and audit now; deploy to the client only after the owner sees the
+P37-T07 figures. **Who must answer:** owner.
+
+**Answered 2026-11-17 (owner):** "no problem, now we don't need to show dummy data, so make the week follow". Closed: the drop is accepted (measured at P37-T01: 135 → 114 within-year at W47, 77 at W52); the owner no longer needs the demo figures, so the P37 release is not gated on P37-T07's figures.
+
+### 93. Who may deactivate an engineer? *(2026-11-17, P38, ADR 0053, non-blocking)*
+
+Today a Hub Planner can delete an engineer of their own hub; Admin and Super Admin can delete any
+engineer. In practice the delete almost always fails, because the engineer is still referenced.
+Deactivating changes the hub's capacity and can take leaders off projects. That is the same kind
+of change as "counts in capacity", which only Admin and Super Admin may make.
+**Assuming until answered:** Admin and Super Admin only. A Hub Planner sees inactive engineers but
+cannot deactivate or reactivate them. **Who must answer:** owner.
+
+### 94. An engineer who leaves mid-year: how much of their year counts as capacity? *(2026-11-17, P38, ADR 0053 §4, non-blocking)*
+
+Example: someone leaves in week 40. Options:
+- (a) **pro rata**: their weeks 1–40 count in the year's capacity and they add nothing after;
+- (b) they are removed from the **whole year**, so the year's capacity drops as if they never
+  worked. The work they did stays in the demand, so the hub looks over-booked;
+- (c) they count for the whole year.
+
+Remaining capacity drops to zero for them in every option.
+**Assuming until answered:** (a), with the leaving week counted as worked. **Who must answer:**
+owner.
+
+### 95. GDPR: how long do we keep the data of engineers who have left, and how do we erase it? *(2026-11-17, P38, extends #8, non-blocking for P38; blocking any erasure feature)*
+
+An inactive engineer is kept forever so that old projects still show their name. Their name
+also sits in stored plans (by reference) and in the audit log, which cannot be changed by
+design. A full delete is impossible without rewriting history. The possible erasure is
+**pseudonymisation**: a Super Admin replaces the name with "Former engineer NN". Names already in
+audit-log rows would stay unless the DPO allows an exception.
+**Questions:**
+- What is the retention period?
+- Is pseudonymisation on request enough?
+- May the audit log keep the original name?
+
+**Assuming until answered:** nothing is erased and no purge is built. **Who must answer:**
+Frigoglass DPO.
+
+### 96. Should deactivating an engineer also switch off their login? *(2026-11-17, P38, non-blocking)*
+
+Some engineers have an app login linked to their engineer record. Deactivating the engineer does
+not touch the login. While the login stays active, it can still see the projects they led. The
+deactivate popup says whether a login is linked and points to Users.
+**Assuming until answered:** the two are kept separate. Logins are usually removed through
+Frigoglass's single sign-on when someone leaves. **Who must answer:** owner.
+
+### 97. Reason for deactivation: fixed list or free text? *(2026-11-17, P38, non-blocking)*
+
+**Assuming until answered:** a fixed list: Left the company, Changed role, Long absence, Other. No
+free text, so that no one records health or personal details about a colleague in a permanent
+record. **Who must answer:** owner (DPO if free text is wanted).
+
+### 98. Past stages of a reassigned project: whose name? *(2026-11-17, P38, non-blocking)*
+
+When an open project gets a new leader, the plan treats the new leader as leading the whole project.
+That includes stages already done by the person who left, so those stages show the new name on the
+Gantt. P38 adds a "Former leader: Name (Inactive), until week N" line on the project. Options:
+- (a) the project-level line is enough;
+- (b) each past stage keeps the name of whoever led it at the time. This needs per-stage history:
+  more work, and a scheduler-adjacent change.
+
+**Assuming until answered:** (a). **Who must answer:** owner.
+
+### 99. Deactivating someone in advance ("leaves on 31 December")? *(2026-11-17, P38, non-blocking)*
+
+**Assuming until answered:** a deactivation takes effect at once, in the current week. To plan
+ahead for a departure, use the What-if planner (remove a designer). **Who must answer:** owner.
+
+### 100. Marketing Brief is "others": what about Commercial Brief, and the word on screen? *(2026-11-17, P39, ADR 0007 amendment, non-blocking)*
+
+The owner ruled on 2026-11-17 that PDD-A Marketing Brief is "under others, not a design step". From
+P39 it books nobody but still takes its calendar weeks.
+
+**Questions:**
+- **(a) OEM-A Commercial Brief** is still a design step: it books the project leader (Theoni, via
+  the Greece capacity hub). The client's old tool lists OEM-A as "R&D Resource", so we left it
+  unchanged. Is that right, or is it also Marketing / "others"?
+- **(b) The label.** Steps that book nobody are labelled "Elapsed" today (approvals, Pilot,
+  Commercialization, and now Marketing Brief). Should the label say "Others" (the old tool's word)?
+  Only the label would change.
+- **(c) Pr. Pr (PDD-J)** is "engineering" in the old tool, and Pilot and Commercialization are too.
+  We book the leader for Pr. Pr and nobody for Pilot and Commercialization. Keep it that way? (Still
+  open from #13 / #61.)
+
+**Assuming until answered:** (a) OEM-A stays design; (b) the label stays "Elapsed"; (c) no change.
+**Who must answer:** owner.
+
+### 101. Must a frozen project always get a new leader when its leader is deactivated? *(2026-11-17, P38, ruling R38-3, non-blocking)*
+
+The deactivate popup lets the Admin leave projects without a leader. For a **frozen** project
+(dates locked on the Gantt), "no leader" would make the plan drop its locked dates and release its
+lab chamber weeks, silently. So the popup does not allow it: the Admin picks a new leader, or
+first unfreezes the project on the Gantt. Today no project is frozen.
+**Assuming until answered:** yes, a frozen project always needs a new leader. **Who must answer:**
+owner.
+
+### 102. Should a project with no leader keep its recorded stages on the Gantt? *(2026-11-17, P38, ruling R38-3, non-blocking; follow-up, not in P38)*
+
+Today a project with no leader drops out of the plan entirely. Its Done stages, its in-progress
+stages and any lab test in flight disappear from the Gantt, and the chamber is freed in the plan.
+This already applies to the projects with no leader that exist today. A "Deactivate anyway" adds
+more. For example, leaving Elena Micu's 4 projects without a leader drops 56 plan rows, including
+their Done history. The popup warns about this. Keeping those stages would be a scheduler change
+for every project with no leader.
+**Assuming until answered:** no change in P38. It is listed as a follow-up. **Who must answer:**
+owner.
+
+### 103. Theoni's R&D-Greece B/C projects have no eligible replacement *(2026-11-17, P38, ruling R38-3, informational)*
+
+In R&D-Greece only Theoni may lead category B or C projects. If she is deactivated, 3 of her 6
+active projects (R&D-Greece, B/C, In Development) have nobody to offer in the popup. They can only
+be left without a leader, or given a leader after someone's allowed categories are widened on
+Capacity Planning. Measured: deactivating her, with reassignment where possible, moves the
+within-year count 63 → 58.
+**Assuming until answered:** nothing changes; the popup shows "No eligible engineer in
+R&D-Greece" for those rows. **Who must answer:** owner (for information; widen categories first if
+she leaves).
+
+### 104. Should the editable import format cover more than the column header names? *(2026-11-17, P41, ADR 0055, non-blocking)*
+
+Admin and Super Admin can now rename the columns the import recognises. The parser also uses
+words inside the cells, and these are still fixed in code:
+- the Status words, for example "Running" and "Spillover";
+- the hub words, for example "Rom/…", "Unbound" and "OEM";
+- the layout of the `Process steps` sheet.
+
+**Assuming until answered:** only the header names are editable. **Who must answer:** owner and
+client.
+
+### 105. Who may see a saved import scenario? *(2026-11-17, P41, ADR 0055 D3, non-blocking)*
+
+A saved scenario is visible to:
+- Admin and Super Admin;
+- any What-if user whose hubs cover every hub in the scenario.
+
+So a scenario that touches all hubs is visible only to users who can see all hubs. Should it instead
+be private to the user who saved it, with sharing optional?
+**Assuming until answered:** hub-scoped, as above. **Who must answer:** owner.
+
+### 106. How long should saved import scenarios be kept? *(2026-11-17, P41, non-blocking)*
+
+The limits are 200 per user and 2,000 in total. Nothing is deleted automatically. A saved scenario
+holds engineer names (GDPR, OQ #8).
+**Assuming until answered:** they are kept until someone deletes them. **Who must answer:** client
+(DPO).
+
+### 107. A frozen P4 project: does it still book capacity? *(2026-11-17, P42, ADR 0056 D2, non-blocking)*
+
+P4 is "no scheduling". A frozen project has its dates locked because work has started.
+**Assuming until answered:** the workflow-auditor's P42-T01 ruling. The proposal is that it books
+nothing, and a planner who wants it planned moves it to P3 or higher. **Who must answer:** owner.
+
+### 108. A started P4 project *(2026-11-17, P42, non-blocking)*
+
+The owner kept started P3 projects scheduled. P4 has no started projects today, so P4 is excluded
+whatever its status. Should a P4 project that is In Development keep scheduling, as P3 does?
+**Assuming until answered:** no, P4 is never scheduled. **Who must answer:** owner.

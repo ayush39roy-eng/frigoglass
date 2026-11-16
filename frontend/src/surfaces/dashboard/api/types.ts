@@ -128,7 +128,21 @@ export interface CompletingWithinYear {
   blocked_count: number;
   /** P17-R03: always P1, P2, P3, P4, Q in that order. */
   priority_delivery: PriorityDeliveryBand[];
+  /** Owner ask 2026-11-16: the four outcome counts per country. Always three
+   *  rows ordered Greece, India, Romania (zero rows included); OEM hubs are
+   *  counted in Greece (ADR 0025). For each bucket the rows sum to the
+   *  top-level count. Served, never recounted from `rows` (I9). */
+  regions: DeliveryRegionRow[];
   rows: CompletingWithinYearRow[];
+}
+
+/** One country row of `CompletingWithinYear.regions` (owner ask 2026-11-16). */
+export interface DeliveryRegionRow {
+  region: LabRegion;
+  within_year_count: number;
+  spillover_count: number;
+  left_out_count: number;
+  blocked_count: number;
 }
 
 /** One row of GET /dashboard/projects (the "analytics breakdown with filters"). */

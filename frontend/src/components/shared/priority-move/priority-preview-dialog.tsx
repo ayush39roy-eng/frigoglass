@@ -5,13 +5,13 @@ import { ArrowRight, CircleCheck, EyeOff, Info, TriangleAlert } from 'lucide-rea
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog';
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetFooter,
+  SheetHeader,
+  SheetTitle,
+} from '@/components/ui/sheet';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import type {
@@ -27,9 +27,14 @@ import { MOVE_COPY, previewNotNeededCopy, RANK_COPY, rankPositionCopy } from './
 import type { MoveFlowState } from './use-priority-move-flow';
 
 /**
- * The priority-move preview dialog (P14, ADR 0026 §5). Every move entry point
- * opens it first: the Priority board drop, the move control on the Gantt row
- * and the Workspace header, and the Registration / Workspace edit form.
+ * The priority-move preview (P14, ADR 0026 §5). Every move entry point opens it
+ * first: the Priority board drop, card priority menu, ↑ / ↓ and typed position
+ * (P36), the move control on the Gantt row and the Workspace header, and the
+ * Registration / Workspace edit form.
+ *
+ * Since 2026-11-17 (owner request) it is a right-hand side panel (the design
+ * system's Sheet) instead of a centred modal, so the board / Gantt stays
+ * visible beside it. Same states, buttons, focus order and Escape rules.
  *
  *   loading  → the in-process greedy preview is running (nothing written)
  *   preview  → the moved project's finish before → after, the served counts,
@@ -141,7 +146,7 @@ const COUNT_FIELDS: { key: keyof PriorityPreviewSummary; label: string }[] = [
 
 function SummaryCounts({ summary }: { summary: PriorityPreviewSummary }): React.JSX.Element {
   return (
-    <dl className="grid grid-cols-2 gap-2 sm:grid-cols-5" aria-label="Other projects" data-testid="preview-summary">
+    <dl className="grid grid-cols-2 gap-2 sm:grid-cols-3" aria-label="Other projects" data-testid="preview-summary">
       {COUNT_FIELDS.map(({ key, label }) => {
         const value = summary[key];
         const alarm = key === 'pushed_out_of_year' && value > 0;
@@ -472,16 +477,27 @@ export function PriorityPreviewDialog({
   React.useEffect(() => {
     if (settled) closeRef.current?.focus();
   }, [settled]);
+  // The panel has no Radix trigger (a drop, ↑ / ↓, a form save open it), so
+  // remember what had focus when it opened and give focus back there on close.
+  // A layout effect runs before the sheet's focus scope moves focus inside.
+  const openerRef = React.useRef<HTMLElement | null>(null);
+  React.useLayoutEffect(() => {
+    if (open && openerRef.current === null) {
+      const active = document.activeElement;
+      openerRef.current = active instanceof HTMLElement && active !== document.body ? active : null;
+    }
+  }, [open]);
 
   return (
-    <Dialog
+    <Sheet
       open={open}
       onOpenChange={(next) => {
         if (!next) onCancel();
       }}
     >
-      <DialogContent
-        className="flex max-h-[min(44rem,calc(100vh-2rem))] max-w-3xl flex-col motion-reduce:animate-none"
+      <SheetContent
+        side="right"
+        className="sm:max-w-xl lg:max-w-2xl"
         data-testid="priority-preview-dialog"
         data-kind={flow.kind}
         aria-busy={flow.kind === 'previewing' || applying}
@@ -489,6 +505,12 @@ export function PriorityPreviewDialog({
         onOpenAutoFocus={(event) => {
           event.preventDefault();
           (cancelRef.current ?? closeRef.current)?.focus();
+        }}
+        onCloseAutoFocus={(event) => {
+          event.preventDefault();
+          const opener = openerRef.current;
+          openerRef.current = null;
+          if (opener?.isConnected) opener.focus();
         }}
         onEscapeKeyDown={(event) => {
           if (applying) event.preventDefault();
@@ -499,14 +521,21 @@ export function PriorityPreviewDialog({
       >
         {open ? (
           <>
-            <DialogHeader className="pr-6">
-              <DialogTitle>{title(flow)}</DialogTitle>
-              <DialogDescription>{description(flow)}</DialogDescription>
-            </DialogHeader>
-            <div className="min-h-0 overflow-y-auto">
+            <SheetHeader>
+              <SheetTitle>{title(flow)}</SheetTitle>
+              <SheetDescription>{description(flow)}</SheetDescription>
+            </SheetHeader>
+            {/* Keyboard-scrollable on its own (axe scrollable-region-focusable) when the impact list is long. */}
+            <div
+              className="-mx-1 min-h-0 flex-1 overflow-y-auto rounded-md px-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              role="region"
+              aria-label={flow.rank ? 'What this position change does' : 'What this priority move does'}
+              tabIndex={0}
+              data-testid="priority-preview-body"
+            >
               <Body flow={flow} />
             </div>
-            <DialogFooter>
+            <SheetFooter>
               {deciding ? (
                 <>
                   <Button ref={cancelRef} type="button" variant="secondary" onClick={onCancel} disabled={applying}>
@@ -521,10 +550,10 @@ export function PriorityPreviewDialog({
                   Done
                 </Button>
               )}
-            </DialogFooter>
+            </SheetFooter>
           </>
         ) : null}
-      </DialogContent>
-    </Dialog>
+      </SheetContent>
+    </Sheet>
   );
 }

@@ -94,6 +94,12 @@ const withinYear: CompletingWithinYear = {
   left_out_count: 2,
   blocked_count: 1,
   priority_delivery: [],
+  // Owner ask 2026-11-16: served per-country counts (sum to the totals above).
+  regions: [
+    { region: 'Greece', within_year_count: 6, spillover_count: 2, left_out_count: 1, blocked_count: 1 },
+    { region: 'India', within_year_count: 3, spillover_count: 2, left_out_count: 1, blocked_count: 0 },
+    { region: 'Romania', within_year_count: 0, spillover_count: 0, left_out_count: 0, blocked_count: 0 },
+  ],
   rows: [],
 };
 const totals: PipelineTotals = {

@@ -10,7 +10,9 @@ import {
   createChamber,
   createEngineer,
   deleteChamber,
-  deleteEngineer,
+  deactivateEngineer,
+  fetchDeactivationPreview,
+  reactivateEngineer,
   fetchActiveScheduleRun,
   fetchCapacitySummary,
   fetchChambers,
@@ -56,10 +58,26 @@ describe('planning-api', () => {
     expect(mockApiSend).toHaveBeenCalledWith('PATCH', '/engineers/e1', { fte: 0.5 });
   });
 
-  it('DELETEs an engineer', async () => {
-    mockApiSend.mockResolvedValueOnce(undefined);
-    await deleteEngineer('e1');
-    expect(mockApiSend).toHaveBeenCalledWith('DELETE', '/engineers/e1');
+  it('P38: sends ?status= only when it is not the server default (active)', async () => {
+    mockApiGet.mockResolvedValue([]);
+    await fetchEngineers(undefined, {}, 'active');
+    expect(mockApiGet).toHaveBeenLastCalledWith('/engineers', { query: { hub_id: undefined, status: undefined } });
+    await fetchEngineers(['hub-1'], {}, 'inactive');
+    expect(mockApiGet).toHaveBeenLastCalledWith('/engineers', { query: { hub_id: ['hub-1'], status: 'inactive' } });
+    await fetchEngineers(undefined, {}, 'all');
+    expect(mockApiGet).toHaveBeenLastCalledWith('/engineers', { query: { hub_id: undefined, status: 'all' } });
+  });
+
+  it('P38: preview, deactivate and reactivate hit the contract endpoints verbatim', async () => {
+    mockApiGet.mockResolvedValueOnce({});
+    await fetchDeactivationPreview('e1');
+    expect(mockApiGet).toHaveBeenCalledWith('/engineers/e1/deactivation-preview', {});
+    mockApiSend.mockResolvedValue({});
+    const body = { reason: 'left_company' as const, led_projects_token: 't', reassignments: [{ project_id: 'p1', leader_engineer_id: null }] };
+    await deactivateEngineer('e1', body);
+    expect(mockApiSend).toHaveBeenCalledWith('POST', '/engineers/e1/deactivate', body);
+    await reactivateEngineer('e1');
+    expect(mockApiSend).toHaveBeenCalledWith('POST', '/engineers/e1/reactivate');
   });
 
   it('requests /chambers with no query params (server-side lab-region scoping only)', async () => {

@@ -64,6 +64,29 @@ answer to OQ #76/#77 ("if it is manually set then use them only as the timeline"
 ruling" OR-1..OR-6). Until each P33 task lands in code, the rule it replaces stays what the code
 does.
 
+**Revised 2026-11-16 (P37, ADR 0052; binding since P37-T02, 2026-11-17, with ruling R37-1..R37-10 and the owner's answers to OQ #88–#92).** The
+owner wants the current week to follow the calendar: it is the ISO week of today in Europe/Athens,
+computed per request and per solve, and `RPD_CURRENT_WEEK` stays as a pin. A weekly rollover run
+keeps the plan current. See "Horizon constants" (2026-11-16 amendment) and invariants I38–I41;
+I9, I13, I19 and I24 and the check-in Due stage are amended. Until P37 lands in code, the week
+stays the fixed constant.
+
+**Revised 2026-11-17 (P38, ADR 0053; binding since P38-T02, with the workflow-auditor's ruling R38-1..R38-9).**
+Engineers are deactivated, not deleted. Inactive engineers keep their name, with an "Inactive" tag,
+everywhere history shows them. They are hidden from every choice of a leader. They supply nothing
+after their deactivation week. The owner ruled on 2026-11-17 that the deactivate popup asks for a
+new leader on each open project they lead, and the Admin may leave some with no leader, except
+frozen projects (R38-3). See
+"Engineer deactivation", the "Capacity supply" amendment and invariants I42–I44. Until P38 lands in
+code, engineers can only be deleted (and almost never can be).
+
+**Revised 2026-11-17 (P39, ADR 0007 amendment 2026-11-17, PROPOSED until the workflow-auditor rules
+at P39-T01).** Owner: "marketing is under others, not a design step". PDD-A Marketing Brief changes
+kind `design` → `elapsed`: it books nobody (no leader week, no FTE stretch, no design demand or
+booked load) but still occupies its calendar weeks on the critical path. The design effort split
+(R2) runs over PDD's other design steps only (examples below). Recorded stage history is kept.
+OEM-A Commercial Brief is unchanged (OQ #100). Until P39-T03 lands in code, PDD-A stays `design`.
+
 ---
 
 ## Workflow templates — two workflows, 14 steps each *(2026-09-27, ADR 0007)*
@@ -77,7 +100,7 @@ nothing but occupies calendar weeks on the project's critical path.
 
 | ID | Code | Name | Kind |
 |---|---|---|---|
-| PDD-A | MKTG_BRF | Marketing Brief | design |
+| PDD-A | MKTG_BRF | Marketing Brief | elapsed *(2026-11-17, P39; `design` until P39-T03 lands)* |
 | PDD-B | FEAS_STD | Feasibility Study (Conceptual Design) | design |
 | PDD-C | BUS_CASE | Business Case Approval | elapsed |
 | PDD-D | TECH_BRIEF | Final Technical Brief & Project Kick-off | design |
@@ -195,6 +218,15 @@ Design Man Week") and `lab_effort_weeks` (column 21 "Lab Weeks- Process Derived"
   at a time by larger fractional part, then larger `lead_i`, then smaller `sequence_order`, then
   `step_id`. `Σ = E`. A step that gets 0 is skipped. Examples: PDD/B design 4 → A 1, E 2, K 1 (D, J,
   M skipped); PDD/C design 3 → A 1, D 1, E 1; PDD/B lab 10 → H 10; PDD/A+ lab 4 → F 2, H 2; 1.5 → 2.
+  *(2026-11-17, P39 — PDD-A elapsed; weights = `effort_weight_weeks`, R33-2.)* The design examples
+  become: PDD/B design 4 → D 1, E 2, K 1 (J, M skipped); PDD/C design 3 → D 1, E 1, J 1 (K
+  skipped); PDD/B design 8 → D 1, E 3, J 1, K 2, M 1 (was A 1, D 1, E 3, J 1, K 1, M 1); PDD/A design
+  18 → B 4, D 1, E 7, I 2, J 1, K 2, M 1 (was A 1 … E 6); PDD/A+ design 44 → B 17, D 2, E 13, I 4,
+  J 2, K 4, M 2 (was A 2, B 16, … E 12). Σ is still E. PDD-A is then not in S′: it carries no
+  `effort_weeks`, is never raised by R3, and its `eff` is its `plan_weeks` (elapsed). A project with
+  a design figure therefore keeps its design load (E) but its chain gains PDD-A's `plan_weeks` of
+  calendar time (before, PDD-A was either one of the E weeks or skipped); a project without a figure
+  keeps its calendar and loses PDD-A's weeks of design load. R3-raised PDD-A weeks leave the load.
 - **Recorded work is never erased (R3).** A step whose stage status is not Not Started gets
   `max(1, share)`; the total may then exceed `E` by the number of raised steps. The seed apportions
   before deriving progress, and derives progress on effective durations.
@@ -253,6 +285,117 @@ The planning year is 52 weeks. No surface shows a week past W52; work that runs 
 shown as **spillover**. `HORIZON_WEEKS` is still the scheduler's search limit, so it can tell
 spillover (it fits by W78) apart from `LEFT_OUT`. Surfaces present any `LEFT_OUT` project
 inside the spillover framing ("past W52"). The server still decides each verdict (I9).
+
+### The current week follows the calendar *(2026-11-16, ADR 0052; binding since P37-T02, 2026-11-17)*
+
+This replaces the `CURRENT_WEEK = 42` line above. Until each P37 task lands in code, the rule it
+replaces stays what the code does. The text folds in the workflow-auditor's ruling R37-1..R37-10
+(ADR 0052 "Ruling (P37-T01)") and the owner's answers to OQ #88–#92 (2026-11-17).
+
+```
+plan_year        = RPD_PLAN_YEAR (default 2026), served
+(iso_year, iso_week) = ISO week-date of today in Europe/Athens (every hub); the ISO week-year decides
+CURRENT_WEEK     = RPD_CURRENT_WEEK                      if set (pin, 1..52, validated at startup;
+                                                          test suites pin 31)
+                 = min(iso_week, 52)                     if iso_year == plan_year   (W53 → 52, not closed)
+                 = 52, plan_year_closed = true           if iso_year >  plan_year   (OQ #88 (a))
+                 = 1                                     if iso_year <  plan_year
+weeks_left_in_year = 52 − CURRENT_WEEK                   (the current week not counted; OQ #91)
+WITHIN_YEAR_WEEK = 52, DISPLAY_HORIZON = 52, HORIZON_WEEKS = 78   (unchanged, absolute)
+```
+
+- **One clock, read late.** The week is evaluated through one service, `plan_clock`:
+  - once per request;
+  - once when a run row is created: the `QUEUED` row, the coalesced follow-up included, or the
+    request of a synchronous solve.
+
+  The worker builds the solver input with the row's week (R37-2). The week is never evaluated at
+  import, and no function parameter defaults to it. The browser never derives the week or the date
+  from its own clock; it shows the served `current_week` and `as_of_date`.
+- **Two readings.** Everywhere this document writes `CURRENT_WEEK`, it means one of two things:
+  - **Calendar week** (the formula above) is used for:
+    - recording facts: the check-in stamps, `stage_checkins.week`, and the tracking status and
+      "per plan" % (see "Weekly check-in", Due stage as amended by R37-1);
+    - the input week of every new solve: live, What-if, plan import and Monte Carlo;
+    - run-independent figures: remaining capacity supply ("Capacity supply"), remaining demand
+      (I25), the Capacity `remaining_weeks` and the P1 capacity fill;
+    - every "now" marker.
+  - **Run week** (`ScheduleRun.current_week`) is used for anything that interprets a stored run:
+    the health badge, overrun and overdue against plan (I13), the capacity priority split, run step
+    effort and ask-agent context. A stored run is never re-evaluated at another week (I14).
+- **Weekly rollover run.** One idempotent function, `ensure_week_rollover()`, is called by:
+  - a Celery beat schedule on the Europe/Athens clock: every 15 minutes, which is the guarantee,
+    plus Mondays 00:05;
+  - an in-app ticker, every 5 minutes. A setting turns it off, and it is off in the test suites
+    (R37-9).
+
+  Under the dispatch advisory lock, it recomputes the decision from state on every tick (R37-8):
+  - `not_needed`:
+    - there is no active run (R37-7);
+    - or the active run's week **==** `CURRENT_WEEK`;
+    - or an in-flight run's stored week **==** `CURRENT_WEEK` (R37-6: equality, never "<");
+    - or `plan_year_closed`.
+  - `deferred` when a run at another week is in flight. This registers the one coalesced follow-up
+    (ADR 0023), which reads the week when its row is created.
+  - `queued` otherwise: greedy, `activate=True`, `trigger_reason="week_rollover"`, system actor,
+    audit `schedule.week_rollover`. It runs even when no project is schedulable.
+
+  Retry: `plan_week_rollovers` counts only queued attempts. A failed attempt is a queued run ending
+  `FAILED`, `DISPATCH_FAILED` or `ABANDONED` while the weeks still differ. There are at most 3
+  attempts per `(plan_year, week)`, at least 30 minutes apart, and then the status is `failed`.
+
+  The rollover never dispatches CP-SAT and never sets per-project `schedule_stale`. It may replace
+  an active CP-SAT plan (owner, OQ #89 (a)). This is the fourth exception to "Rescheduling is
+  explicit".
+- **While the plan is behind** (`active run week ≠ CURRENT_WEEK`):
+  - surfaces still show the active run's verdicts (I9);
+  - the header, Gantt, Dashboard, Capacity, Workspace and check-in page say "Plan from W*n*" with
+    the rollover status;
+  - the What-if and plan-import results say "Simulated from W*c*; the active plan is from W*n*"
+    whenever their input week differs (R37-3);
+  - `GET /schedule-runs/{run}/changes` serves `baseline_week` and `run_week`, and the UI labels a
+    list where they differ "includes the move from W*a* to W*b*" (R37-4).
+
+  A surface never shows a calendar-week value beside a run of another week without saying so.
+- **Closed year (R37-10, OQ #88 (a)).** While `plan_year_closed`, `POST /check-ins` answers 409
+  `PLAN_YEAR_CLOSED`. Reads stay available, and no rollover is dispatched. An Admin opening 2027 is
+  a separate ADR and phase (P37-F01).
+- **Seed status week (R37-5).** The client seed derives stage progress as of `SEED_STATUS_WEEK = 42`
+  (the client's April status, ADR 0041), whatever the calendar says. The seed's summary run and its
+  persisted first run use the calendar week.
+- **History (OQ #90 (a)).** Check-in rows already stamped 42 are left as they are.
+- *Observations.*
+  - At W47 a Not Started step can start at W47 at the earliest, so within-year has 6 placement
+    weeks (W47–W52), and a Not Started step longer than 78 − 47 = 31 weeks is `LEFT_OUT`.
+  - No stage advances for weeks without a check-in (ADR 0023). Without check-ins, every Monday
+    therefore moves about every projected finish by +1.
+  - Measured at P37-T01 on the dev data, within-year / spillover / left out were 135/63/74 at W42,
+    114/82/76 at W47 and 77/113/82 at W52 (accepted by the owner, OQ #92).
+
+**Invariants (ruled at P37-T01, exact text):**
+
+- **I38 — one week per solve.** Every `ScheduleRun` stores `current_week` equal to its input's
+  `current_week`. That value is the calendar week (or the pin), read once when the run row is
+  created (the `QUEUED` row, or the request of a synchronous solve), and the solver input is built
+  with the row's week. It is never a value bound at import. Every row and outcome of the run is
+  computed at that week. Re-reading a stored run uses its stored week.
+- **I39 — one rollover per week.** For each calendar week `w`, while an active run exists whose week
+  ≠ `w` and the planning year is not closed:
+  - the system dispatches at most one `week_rollover` run per attempt, and at most 3 attempts at
+    least 30 minutes apart; or it registers one coalesced follow-up when a run at another week is in
+    flight;
+  - after a dispatched or follow-up run completes, the active run's week is `w`;
+  - concurrent or repeated ticks create no further run;
+  - a pinned week that does not change creates none;
+  - the rollover never dispatches CP-SAT and never sets per-project `schedule_stale`.
+- **I40 — one served week.** Within one response, every field derived from "today" uses the same
+  calendar week. `GET /me.current_week` equals it and `weeks_left_in_year = 52 − current_week`.
+  Every view that shows run-derived values beside a "now" value shows the run's week when it differs
+  ("Plan from W*n*"). The frontend holds no week or plan-year constant outside test fixtures and
+  never derives the week or the date from the browser clock.
+- **I41 — week domain.** `1 ≤ CURRENT_WEEK ≤ 52` always. The ISO week-year (not the calendar year)
+  decides: an ISO W53 date maps to 52, and a date in a later ISO week-year than `plan_year` maps to
+  52 with `plan_year_closed`. Stored plan weeks are never re-based by the clock.
 
 ## Scheduling order (serial schedule-generation scheme)
 
@@ -552,11 +695,14 @@ so no agent "fixes" them without approval and no agent copies them blindly.
 
 - **I1**: No engineer is assigned two design steps in the same week — unless at least one project is
   `frozen`, in which case `ENG_CONFLICT` is raised. *(ADR 0032: "in the same week" means any week of
-  either step's FTE-stretched span.)*
+  either step's FTE-stretched span.)* *(2026-11-17, ADR 0054: amended. See "Manual step weeks":
+  pinned placements are exempt with `ENG_CONFLICT`, including two placements of the same project.)*
 - **I2**: No chamber exceeds `max` concurrent projects in any week — unless frozen, then `OVERLAP`.
+  *(2026-11-17, ADR 0054: amended. See "Manual step weeks": pinned placements, like anchored ones.)*
 - **I3** *(revised 2026-09-27, ADR 0009)*: Every non-skipped step starts after all of its
   predecessors end: `step.start >= max(pred.end) + 1`. Under the seeded strict chain this is the
-  old `step[n].start >= step[n-1].end + 1`.
+  old `step[n].start >= step[n-1].end + 1`. *(2026-11-17, ADR 0054: every non-skipped,
+  **non-pinned** step; a pinned step answers to I47. See "Manual step weeks".)*
 - **I4**: A lab step is only ever booked to a chamber in the project's lab region whose
   `allowed_stages` contains that step.
 - **I5** *(revised)*: Every scheduled project has either a complete 14-step schedule (skipped steps
@@ -573,6 +719,8 @@ so no agent "fixes" them without approval and no agent copies them blindly.
   (determinism).
 - **I9**: `within_year` count on the Dashboard equals the count of projects satisfying the
   within-year rule in the current schedule run. No independent calculation anywhere.
+  *(2026-11-17, ADR 0052 / P37-T01)* While the active run's week differs from the calendar week, the
+  count is still the active run's, and the surface shows the run's week (ADR 0052 §6).
 - **I10**: Applying priorities never mutates a `frozen` project's dates.
 
 These invariants are the permanent correctness contract (see P2-T04). The prototype oracle is
@@ -723,9 +871,11 @@ rule and ADR 0004 — delay is still terminal).
   quotient is rounded half-to-even — a tie at exactly .5 goes to the even integer (62.5 → 62,
   87.5 → 88). Scheduler and Workspace share `scheduling.project_progress_pct`. This deliberately
   differs from the half-up rounding of scores (ADR 0037) and effort (I26).
-- **I13**: The Project Workspace health badge for a project is a pure function of that project's
-  stored outcome in the active `ScheduleRun` (finish week, per-stage overrun, `left_out`). No
-  independent recomputation anywhere — mirrors I9.
+- **I13** *(restated 2026-11-17, ADR 0052 / P37-T01)*: The Project Workspace health badge for a
+  project is a pure function of that project's stored outcome in the active `ScheduleRun` (finish
+  week, per-stage overrun, `left_out`, `blocked`). Every week comparison it makes (overrun, overdue
+  against plan) uses that run's stored `current_week`, never the calendar week. No independent
+  recomputation anywhere; mirrors I9.
 - **I14**: "Recalculate schedule" creates a new `ScheduleRun` row; it never mutates an existing one.
   Every historical schedule version remains byte-stable after later recalculations.
 
@@ -757,6 +907,14 @@ remaining_lab_capacity      = yearly_lab_capacity × remaining_fraction
 gap                         = load − capacity
 completion_pct              = capacity / load          (null when load == 0)
 ```
+
+*(2026-11-17, ADR 0053 §4, R38-1)* Inactive engineers count only for their active weeks:
+- `Σ fte` in `yearly_design_capacity` becomes `Σ fte_e × A_e(Y, 1..52) / 52`.
+- `Σ fte` in `remaining_design_capacity` becomes `Σ fte_e × A_e(Y, CW+1..52) / (52 − CW)`, which is
+  0 when CW = 52.
+
+`A_e` counts the weeks not covered by an inactive period, and the deactivation week counts as
+worked. See "Engineer deactivation".
 
 ### Load basis *(2026-10-23, ADR 0041 §2, R8, R9, R12)*
 
@@ -856,6 +1014,7 @@ AGENT_UNAVAILABLE` when `RPD_GROQ_API_KEY` is unset. Provisional pending `docs/O
 - **I15**: The stored precedence graph of each workflow is acyclic, and in every `ScheduleRun` every
   non-skipped step starts strictly after every predecessor ends (this is I3 stated over the DAG).
   The `workflow_snapshot` on the run equals the settings in force when the run was created.
+  *(2026-11-17, ADR 0054: non-pinned steps only, with `G` of a pinned predecessor as in I47.)*
 - **I16**: `expected_end_week`, `projected_end_week` and `unconstrained_end_week` shown anywhere in
   the UI equal the values stored on the active run's outcome row / the project record. No client
   recomputation.
@@ -875,7 +1034,10 @@ AGENT_UNAVAILABLE` when `RPD_GROQ_API_KEY` is unset. Provisional pending `docs/O
   `*_load_remaining_weeks` with the remaining capacity; `gap` and `completion_pct` use the same
   pairs. Nothing of this kind is served for `*_load_booked_weeks`. Its status follows the threshold
   rule. An area's lab load and lab capacity count each lab region exactly once. No booked figure or
-  status is computed in the browser.
+  status is computed in the browser. *(2026-11-17, ADR 0052 / P37-T01)* The remaining capacity, and
+  the `remaining_weeks` served beside it, are evaluated at the response's calendar week (I40).
+  Remaining demand (I25) does not depend on the week. Neither depends on the active run, so the
+  remaining pair is never mixed with a run's week.
 - **I20** *(2026-10-09, ADR 0015)*: A priority move that returns `queued` creates exactly one new
   `ScheduleRun`, and that run's input carries the new priority. Frozen projects' dates are identical
   across the baseline and the new run (I10). Every row of `GET /schedule-runs/{run}/changes` equals
@@ -979,6 +1141,13 @@ capacity stays region-wide under a hub filter (chambers are shared per region).
 - **Due stage** (for the current week): the project is schedulable and not `frozen` (P12-T03 / P12-R03
   rulings — such projects are `idle`); the stage is not skipped, not `Done`, and either `status ∈ {In Progress,
   Blocked}` or the active run's planned window for the stage contains `CURRENT_WEEK`.
+  *(2026-11-17, ADR 0052 R37-1; replaces the last clause once P37 lands)* "…either `status ∈ {In
+  Progress, Blocked}` or the active run's planned start for the stage is `≤ CURRENT_WEEK` (calendar
+  week)". Due-since for such a stage is its planned start.
+  - This reduces exactly to the old rule whenever the run's week equals the calendar week.
+  - While the plan is behind, it keeps missed Not Started stages on the check-in list.
+  - `plan_percent` reads 100 for a window wholly in the past.
+  - While `plan_year_closed`, `POST /check-ins` answers 409 `PLAN_YEAR_CLOSED` (R37-10).
 - **Who may check in:** an Engineer for stages of projects they lead or stages assigned to them
   (their engineer = `Engineer.user_id`); Hub Planner (own hub), Portfolio Manager, Admin, Super Admin
   for any due stage in scope; an Editor-or-higher project grant for that project.
@@ -1023,12 +1192,14 @@ capacity stays region-wide under a hub filter (chambers are shared per region).
   `Done` and not in a frozen project carries its effective duration (effort) as `duration_weeks`
   and books a span of `ceil(duration / fte)` weeks if it is a design step (leader FTE `fte`), else
   `duration` weeks. For `In Progress`/`Blocked` the tail is `ceil(remaining / fte)` (design) or
-  `remaining`, with `remaining` derived from the effective duration.
-- **I22** (ADR 0019): every `Not Started` step with `start_not_before_week` set starts at or after it
+  `remaining`, with `remaining` derived from the effective duration. *(2026-11-17, ADR 0054: pinned
+  steps are exempt. A pinned row's window is its pin (I45); its `duration_weeks` is still `eff`.)*
+- **I22** (ADR 0019; 2026-11-17, ADR 0054: unpinned steps only): every `Not Started` step with `start_not_before_week` set starts at or after it
   (frozen projects exempt — their dates are locked, I10; ruled 2026-10-10 at P12-T01 review).
 - **I24** (ADR 0023): for any burst of auto-triggers answering `deferred` during one in-flight run,
   exactly one `follow_up` run is created after it, and its input snapshot reflects every change saved
-  before it was dispatched.
+  before it was dispatched. *(2026-11-17, ADR 0052 R37-2)* A coalesced follow-up's input week is the
+  calendar week read when its row is created.
 - **I23** (ADR 0020; rev. 2026-10-23, ADR 0041): for any hub `h` in scope, each hub-filtered Dashboard
   total equals the corresponding unfiltered per-hub figure for `h`, and the Gantt, Capacity and
   Dashboard agree for `h` to two decimals: Dashboard and Capacity show the same served capacity fields
@@ -1097,6 +1268,16 @@ or take P3; a blank engineer keeps the matched plan project's leader, else is au
 What-if designer. The plan year is selectable (2026 → W52, 2027 → W104, absolute weeks); "within
 the plan year" is `projected_end_week <= plan_year_end_week`. A file without a Status column (or a blank cell) derives the status — PRIORITY "Running" → In Development (P1, first), else the matched plan project's status, else "Spillover" = Yes → In Development, else In Queue — and blank hub / category / stage fall back to the matched plan project; budget lines (blank PRIORITY, "Provision…", "… CAPEX", "… Certification program") are excluded (ADR 0044 amendment 2026-11-05). Full rules: ADR 0044,
 `docs/API_CONTRACT_P32.md`.
+
+*(2026-11-17, ADR 0055 amendment.)* "Nothing is persisted" now means nothing in the **live plan**
+is changed. The header names the parser recognises are a stored format; Admin and Super Admin
+edit it, and the built-in names are the default. A scenario may be hand-picked: unticked file rows
+are excluded, and unticked plan projects (`exclude_plan_project_ids`, merge only) are removed from
+**both** runs. A **saved import scenario** is a frozen record of a server-recomputed request and
+response, with the week and plan version it was simulated from. It is visible to Admin and Super
+Admin, and to a user whose hub scope covers all of its hubs. It never feeds the live plan. Exports
+are server-built `.xlsx` with formula injection neutralised. Full rules: ADR 0055,
+`docs/API_CONTRACT_P41.md`.
 
 
 ## Category templates, apply rules, categories table *(2026-11-13, ADR 0045–0048; final at P33-T01)*
@@ -1265,8 +1446,8 @@ the validator.
   `effort_weeks` on those steps equal the R2 apportionment of `E = max(1, round_half_up(x))` over
   `effort_weight_weeks`, raised to `max(1, ·)` on started steps. Σ = E + the raised count. Other
   steps carry none.
-- **I27** *(rev.)*: in every run, every non-skipped Not Started step of a non-frozen project that is
-  not in a Blocked hold starts at or after `max(CURRENT_WEEK, gate(s), start_not_before_week)`, with
+- **I27** *(rev.; 2026-11-17, ADR 0054: "and not pinned")*: in every run, every non-skipped Not
+  Started step of a non-frozen project that is not in a Blocked hold and not pinned starts at or after `max(CURRENT_WEEK, gate(s), start_not_before_week)`, with
   `gate` as in §D and `release`/`G` taken from the run's own rows. I3 holds unchanged for every step
   with `o(s) = 0`, including `w(s) > 0`.
 - **I28**: every such step with `w(s) > 0` starts at or after `release(s) + 1 + w(s)`. Two inputs
@@ -1439,3 +1620,292 @@ I25/I29 hold through R35-1/R35-9.
   - No `excluded` value changes on a frozen project (I10).
   - Every change has exactly one `project.step_excluded` / `project.step_included` audit row.
 
+
+## Engineer deactivation *(2026-11-17, P38, ADR 0053 as ruled at P38-T01, R38-1..R38-9)*
+
+Engineers are never deleted. `DELETE /engineers/{id}` is retired: it answers 410 and writes
+nothing. Admin and Super Admin deactivate or reactivate an engineer. Whether a Hub Planner may too
+is OQ #93; until answered, they may not.
+
+- **State.**
+  - An engineer is `active` or inactive.
+  - A deactivation records:
+    - the time;
+    - the **calendar** week `d` from `plan_clock` (the constant until P37-T04 lands);
+    - the served `plan_year`;
+    - the actor;
+    - a reason code (`left_company`, `changed_role`, `long_absence`, `other`; never free text).
+  - While `plan_year_closed`, a deactivation is recorded at `(plan_year, 52)`.
+  - Each deactivation opens one `engineer_inactive_periods` row. A reactivation in week `r`
+    closes it.
+- **Whole-week rule.**
+  - The deactivation week counts as worked. A period covers weeks `from_week + 1 .. to_week` of its
+    plan year.
+  - An open period runs to 52. In later plan years a period covers 1..52; a period that began in an
+    earlier year starts at 1.
+  - Deactivating and reactivating in the same week covers nothing.
+- **Supply** (R38-1), one helper for every reader:
+  - The helper is `A_e(Y, a..b)`: the number of weeks in `a..b` of plan year Y not covered by any
+    of e's periods.
+  - The formulas below run per capacity hub, over engineers with `counts_in_capacity`, active or
+    not:
+    ```
+    yearly_design_capacity    = working_weeks_per_engineer × Σ fte_e × A_e(Y, 1..52) / 52
+    remaining_design_capacity = ((52 − CW) − deduction_weeks × remaining_fraction)
+                                × Σ fte_e × A_e(Y, CW+1..52) / (52 − CW)            (0 when CW = 52)
+    ```
+  - CW is the response's calendar week.
+  - FTE is summed as Decimal and the week factor as an exact Fraction. With no period, the result
+    is the same float as before P38.
+  - Engineer-level capacity is 0 in every covered week. Per-engineer yearly and remaining figures
+    use the same helper and sum, unrounded, to the hub figure.
+  - The P1 capacity fill's `C` is the served remaining figure.
+  - The What-if and plan-import supply apply the same rule (`WhatIfBaseline` supply-only field,
+    P38-T03).
+  - `counted` and `not_counted` count active engineers only. `inactive_engineers` counts the rest,
+    and the three sum to the roster.
+- **Open projects at deactivation** (owner ruling 2026-11-17; R38-3, R38-5).
+  - *Open* means the engineer leads it and its status is not Commercialized or Cancelled.
+  - The popup lists every open project, with per-row facts: `frozen`, `progress_tracked`,
+    `done_stages`, `in_flight_lab`.
+  - Each row offers the eligible engineers for it:
+    - the scheduler's own category predicate (`greedy._cat_not_allowed`) passes;
+    - the engineer is active, FTE > 0, and in the same capacity hub;
+    - the engineer is not the one being deactivated.
+  - "Use one leader for all" fills the empty rows.
+  - Non-frozen rows may be left empty after a "Deactivate anyway" warning. Those projects get
+    `leader_engineer_id = NULL`: the existing "No leader" state, and `LEFT_OUT no_leader` on the next
+    run.
+  - When a cleared row is progress-tracked or has a lab test in flight, the warning adds:
+    *"Their recorded stages will not show on the Gantt, and any lab test in progress gives up its
+    chamber in the plan, until someone sets a leader."*
+  - Leaving projects without a leader is Frigoglass's responsibility (owner). They stay findable
+    through the "No leader" marker, the "No leader" filter option and the left-out lists.
+  - **A frozen open project must get a leader:** a null row returns 422 `FROZEN_NEEDS_LEADER`. The
+    path is to unfreeze on the Gantt first. OQ #101 confirms this with the owner.
+  - Commercialized and Cancelled projects keep the inactive leader.
+  - The deactivation and every reassignment or clear happen in one transaction. Each project gets
+    one `project.update` audit row (`cause = "engineer_deactivated"`) and one
+    `project_leader_history` row.
+  - The request must name exactly the open set found under lock. Otherwise 409
+    `LED_PROJECTS_CHANGED`.
+  - Exactly one greedy run (`engineer_deactivated`, ADR 0023 lifecycle, I24, week read at QUEUED)
+    is dispatched iff:
+    - (a) a schedulable project changed leader, or
+    - (b) the active run has a design row of this engineer that ends after `d`.
+    Otherwise the run is `not_needed`.
+  - Reactivation dispatches nothing and gives back no project.
+  - **Lock order:** the engineer row first (FOR UPDATE in deactivate and reactivate, FOR SHARE in
+    any leader write naming an engineer), then projects in id order. The band-rank lock comes first
+    only on paths that write ranks. Busy returns 503 `ENGINEER_STATUS_BUSY`.
+  - A leader change keeps the band rank (R36-3). A project cleared to NULL keeps its rank (I37b) and
+    holds no capacity.
+- **Scheduler input.**
+  - The builder leaves inactive engineers out of `ScheduleInput.engineers`, sorted as today. So the
+    scheduler, Monte Carlo, the What-if pool and plan-import auto-assignment never see them.
+  - No scheduling rule changes, and greedy, CP-SAT and the validator are unchanged.
+  - Stored runs are never touched (I14). A new run that attributes past Done design rows to a new
+    leader is not a rewrite.
+  - Whether a no-leader project should keep its anchored rows (Done history, in-flight tails) is a
+    scheduler change, OQ #102. It is not in P38: today `_no_leader_outcome` emits no rows (Gate
+    remediation ruling 2 exemption).
+- **No new choice of an inactive engineer.**
+  - No write may set an inactive leader: 422 `LEADER_INACTIVE`. This covers registration, PATCH,
+    register batch, bulk edit, the deactivate targets and the user-engineer link.
+  - *(R38-4)* A write that moves a project out of {Commercialized, Cancelled} while its stored
+    leader is inactive must set a leader (active, or null) in the same write. Otherwise 422
+    `LEADER_INACTIVE`. This covers PATCH, register batch, bulk edit, client re-import and the seed.
+  - Plan import matches all names, warns `ENGINEER_INACTIVE` and auto-assigns. Its "keep matched
+    leader" branch uses active engineers only.
+  - Inactive engineers are absent from every leader picker, the What-if candidate lists and the
+    eligibility editors. Rosters and utilization views hide them by default, with a Show filter.
+  - An inactive engineer's only editable field is `name`.
+- **History keeps the name.**
+  - Every surface that names an engineer still names an inactive one, with an "Inactive" tag and a
+    served `active` flag. The flag is withheld with the name (OQ #8 / P13).
+  - History readers never filter by `active`: projects, active and stored runs, run changes, the
+    audit log and exports (`Name (inactive)`).
+  - The Workspace shows "Former leader" from `project_leader_history`, which gets a row for every
+    leader change from P38 on (no backfill).
+
+### Invariants (P38, exact text of ruling P38-T01)
+
+- **I42 — no open project is led by an inactive engineer.**
+  - At every commit, no project whose status is not Commercialized or Cancelled has a
+    `leader_engineer_id` of an engineer with `active = false`.
+  - Every write that would create such a row is rejected with 422 `LEADER_INACTIVE`. That includes
+    naming an inactive leader, and moving a project out of Commercialized or Cancelled while its
+    stored leader is inactive.
+  - A deactivation never leaves a frozen open project without a leader.
+  - `engineers.active = false` holds iff the engineer has exactly one open `engineer_inactive_periods`
+    row, and no engineer has two open rows.
+- **I43 — inactive engineers supply nothing in the weeks their periods cover.**
+  - These figures equal R38-1 evaluated on the stored periods at the response's calendar week, to
+    two decimals: the Capacity supply (hub, area, per-engineer), the P1 fill's `C`, and the What-if
+    and plan-import `capacity_before` and weekly supply. Engineer-level capacity is 0 in every
+    covered week.
+  - Every `ScheduleInput` built from the database after a deactivation commits contains no inactive
+    engineer. No run whose input was built after that commit books them in any week.
+  - With no `engineer_inactive_periods` row, every supply figure, the live input hash, every golden
+    file and every stored run is byte-identical to before P38.
+- **I44 — deactivation never rewrites history.**
+  - Deactivation and reactivation change none of the following: a stored `ScheduleRun` or run row,
+    an audit row, a check-in row, a `project_leader_history` row already written, or the leader of a
+    Commercialized or Cancelled project.
+  - Each leader change a deactivation causes has exactly one `project.update` audit row
+    (`cause = "engineer_deactivated"`) and one `project_leader_history` row. Reactivation changes no
+    leader.
+  - No engineer row is ever deleted. `DELETE` answers 410 and writes nothing.
+  - Every served engineer name carries its `active` flag, which is withheld with the name. Readers of
+    projects, active and stored runs, run changes, the audit log and exports never filter engineers
+    by `active`. They never replace a name with "No leader" or "Unknown" because the engineer is
+    inactive.
+
+## Manual step weeks *(2026-11-17, P40, ADR 0054 as ruled at P40-T02, R40-1..R40-15)*
+
+Binding. Source: ADR 0054 "Ruling (P40-T02)". Where an earlier section ("Booking rules",
+"Precedence", "How progress feeds a schedule run", "Relationship to the `frozen` flag", "Category
+templates" §D, "Per-project step exclusion") disagrees with this one, this one wins for pinned steps.
+ADR 0048 is unchanged: the old timing fields stay retired. A pin is a different, explicit mechanism.
+
+- **Fields.** `ProjectWorkflowStep.manual_start_week` (`ms`) and `manual_end_week` (`me`).
+  - Both are set, or neither. The end is **inclusive**; the length is `L = me − ms + 1 ≥ 1`.
+  - Stored: `1 ≤ ms ≤ me ≤ 52`.
+  - Written: `CW ≤ ms ≤ me ≤ 52`, where CW is the request's calendar week. Otherwise 422
+    `PIN_OUT_OF_RANGE`; a partial pair or `me < ms` is 422 `PIN_INVALID`.
+  - The old tool's end-exclusive pair `(s, e)` is `(s, e − 1)` here.
+- **Who and where.**
+  - Admin and Super Admin roles only (403 otherwise).
+  - A pin may be set only on a step that:
+    - belongs to a project that is not frozen (409 `PROJECT_FROZEN`) and not Cancelled or
+      Commercialized (409 `PROJECT_CLOSED`);
+    - has stored stage **Not Started** (409 `STEP_STARTED`);
+    - is not skipped (R35-1 `eff > 0`, excluded steps included; 409 `STEP_SKIPPED`).
+  - Clear is allowed on any step of a non-frozen project.
+  - Typing a Start gives `End = Start + current length − 1`. Typing an End keeps the Start.
+    `End < Start` is refused.
+  - The server serves `current_length_weeks`, `pin_editable` and `pin_block_reason` per step. Current
+    length is the active run row's window length, or the live pin's length if one is set; with no
+    run row it is `ceil(eff / fte)` for a design step of a non-frozen project, `eff` otherwise.
+- **A pin is a placement, not effort.**
+  - The step occupies exactly its window. `duration_weeks` on its row stays `eff`.
+  - Effort split (R2/R3/R6, I26), demand (I25), booked loads (I6/I7), roll-up weights (I12) and
+    booked % do not change with pins.
+  - A pinned design step books its leader in every pin week, replacing the FTE span
+    (`span_fte = NULL`). A pinned lab step books 1.0 platform-week per pin week. An elapsed step books
+    nothing.
+  - Per-week readers spread `duration_weeks` evenly over a pinned row's window, lab rows included.
+- **Which pins the scheduler applies.**
+  - Non-frozen project: only on a Not Started step that is not skipped and not in a Blocked hold.
+  - Frozen project: on every non-skipped step (frozen ignores progress, ADR 0006).
+  - A pin on a skipped step is inert and stays stored (I33). On a started step it is ignored.
+  - A write moving a stage out of Not Started (check-in, stage PATCH, client re-import, seed) clears
+    that step's pin in the same transaction, under the project row lock. It writes a
+    `project.step_pin_cleared` audit row with `cause = "stage_started"`. From then on the progress
+    rules govern.
+  - A workflow re-point clears pins (`cause = "workflow_change"`).
+  - None of these writers touch a pin: exclusion, category change, template apply, effort figures,
+    certification, freeze/unfreeze, precedence, band rank, VIP.
+- **Effective window** (run week `cw`):
+  ```
+  (a, b) = (ms, me)                     if frozen or ms ≥ cw
+         = (cw, cw + L − 1)             otherwise ("lapsed"; outcome flag pin_lapsed)
+  if b > horizon_weeks:                 the project is LEFT_OUT; the pin is not booked
+  ```
+- **Placement order.**
+  - Frozen projects (first): pinned steps sit on their pins; unpinned steps follow the frozen rule.
+  - Non-frozen projects: pins are pre-booked with the anchored steps, before any search. The pass runs
+    per project in scheduling order, steps in walk order. Unpinned steps then search as today.
+  - Fixed placements consume capacity regardless of conflict:
+    - `ENG_CONFLICT` on every project involved, **including two fixed design placements of the same
+      project** that share a week;
+    - a lab step takes the first eligible chamber with room in every consumed week, else the first
+      eligible chamber with `OVERLAP`;
+    - no eligible chamber gives `LEFT_OUT` with `no_chamber_step_id`.
+  - A `LEFT_OUT` project keeps its pre-booked pinned rows.
+- **Precedence.**
+  - A pinned step ignores its own gate, wait, overlap, `start_not_before_week` and the frontier.
+  - It passes on `G(q) = max(end(q), release(q))`.
+  - Unpinned steps use §D / ADR 0043 unchanged on that `G`. A neighbour is never moved by a pin, and
+    never moves one.
+  - `MANUAL_OVERLAP` (`manual_overlap` on the row and, as an OR, on the outcome) ⟺
+    `a < release(s) + 1 − o(s)`, where `o(s)` is the template overlap (0 when frozen). It is a
+    warning only.
+- **Unconstrained finish.** Pinned steps sit on their effective windows, and `G` is as above.
+- **Save.**
+  - One all-or-nothing batch. It takes the project rows `FOR UPDATE` in `project_id` order and checks
+    the rules above under that lock.
+  - Each step whose stored pair changes gets exactly one audit row, `project.step_pinned` or
+    `project.step_pin_cleared`, with before and after.
+  - `schedule_stale` is set on the changed projects.
+  - Then **one** greedy run follows: `trigger_reason = "step_pin"`, with the priority-move lifecycle
+    (I20, I24) and the week read at QUEUED. It is `not_needed` when no schedulable project changed.
+- **Freeze.**
+  - Freeze and unfreeze never write a pin. Unfreezing needs Admin or Super Admin.
+  - Freezing does **not** copy the plan's weeks into pins (proposed OQ). The unpinned steps of a
+    frozen project are placed from `actual_start_week` as before.
+- **Scheduler input.**
+  - Pins are carried as `ProjectInput.step_pins` (`StepPinInput(step_id, start_week, end_week)`,
+    default `()`), never in `StepTimingInput`. An empty value is omitted from the canonical/hashed
+    form, and from the run snapshot.
+  - **What-if** baselines carry pins.
+  - **Plan import** drops the pins of a replaced matched project and lists it (`PIN_DROPPED`).
+  - **Monte Carlo** never perturbs pins.
+  - **CP-SAT** fixes pins through the shared pre-booking, with no precedence constraint into a pinned
+    step.
+- **Surfaces.**
+  - Bars and flags come from the active run. Per-project design and lab weeks stay Σ
+    `duration_weeks` (I9, I23).
+  - The inputs show the live pin. While it differs from the run's row window, the step reads "Pin
+    applies on the next run".
+  - The browser derives no length, flag, domain or editability.
+
+### Invariants (P40, exact text of ruling P40-T02)
+
+- **I45 — pinned steps sit on their pins.** For every run, every project `p` with rows in it, and
+  every step `s` with a pin `(ms, me)` in the run's input that is not skipped, not in a Blocked hold
+  and (if `p` is not frozen) has input stage Not Started:
+  - let `L = me − ms + 1`;
+  - let `(a, b) = (ms, me)` when `p` is frozen or `ms ≥ current_week`, and
+    `(current_week, current_week + L − 1)` otherwise.
+
+  Then:
+  - if `b ≤ horizon_weeks`, `s`'s row has `start_week = a`, `end_week = b`, `pinned = true` and
+    `duration_weeks = eff(p,s)`. A design row books the leader and a lab row books one platform of
+    one chamber in every week `a..b`;
+  - if `b > horizon_weeks`, `p` is `left_out` and `s` has no row;
+  - the outcome's `pin_lapsed` is true iff some such step has `(a, b) ≠ (ms, me)`;
+  - no other row has `pinned = true`.
+- **I46 — only people write pins.**
+  - (a) No schedule run (any solver, any trigger) writes `manual_start_week` or `manual_end_week`.
+    Nor do these: a week rollover, a template apply, an exclusion or inclusion, an effort
+    re-derivation, a category change, freeze or unfreeze.
+  - (b) A pin is set or changed only by the pin batch write: an Admin or Super Admin role; the project
+    not frozen and not closed; the step Not Started and not skipped; `CW ≤ ms ≤ me ≤ 52`.
+  - (c) A pin is cleared only by that write, by its stage leaving Not Started
+    (`cause = "stage_started"`) or by a workflow re-point (`cause = "workflow_change"`).
+  - (d) Each change of a stored pair has exactly one `project.step_pinned` /
+    `project.step_pin_cleared` audit row with before and after.
+  - (e) At every commit, every live step has both fields null or `1 ≤ ms ≤ me ≤ 52`, and no step
+    whose stage is not Not Started carries a pin.
+- **I47 — precedence around pins.** In every run:
+  - (a) A pinned row `s` with start `a` has `manual_overlap = true` iff `a < release(s) + 1 − o(s)`.
+    Here `release` comes from the run's own rows, `G(q) = max(end(q), release(q))` for a pinned `q`,
+    and `o(s)` is the template overlap (0 in a frozen project). The outcome's `manual_overlap` is the
+    OR over its rows.
+  - (b) I3, I15, I27 and I28 hold for every non-pinned step, with `G` of a pinned predecessor as in
+    (a).
+  - (c) Greedy and CP-SAT emit identical pinned rows and identical `pin_lapsed` for the same input.
+    Each evaluates `manual_overlap` on its own rows by (a).
+  - (d) I1 and I2 allow a pinned placement only with `ENG_CONFLICT` / `OVERLAP` raised. That
+    includes two fixed design placements of one project in the same week. For a lab step it also
+    requires that no eligible chamber had room.
+- **I48 — byte-identity and load neutrality.**
+  - (a) With no pin in the input, these are byte-identical to before P40: every golden file, the live
+    input hash, the priority-preview and band-rank tokens, the workflow snapshot, fresh greedy and
+    CP-SAT output, and re-serialised stored runs.
+  - (b) Two inputs that differ only in pins give, on every row present in both runs, identical
+    `duration_weeks`. They also give identical I25 demand, identical I12 weights and identical
+    `effort_weeks`.
+  - (c) Per-week readers spread a pinned row's `duration_weeks` evenly over its window.
+  - (d) No pin changes on a frozen project (I10).

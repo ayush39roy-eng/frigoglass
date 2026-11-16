@@ -29,6 +29,7 @@ from scheduling.types import (
 )
 from seed import client_2026 as c26
 from seed import extract_client_2026 as ex
+from tests._plan_week import TEST_WEEK
 
 DATA_PATH = Path(__file__).resolve().parent.parent / "seed" / "client_2026_seed_data.json"
 
@@ -611,7 +612,7 @@ def test_seed_inputs_schedule_without_invariant_violations(data: dict[str, Any])
     categories); it is a warning, not a block."""
 
     projects = data["projects"]
-    current_week = dc.CURRENT_WEEK
+    current_week = TEST_WEEK
     roster = c26.build_roster(data).engineers
     leaders = c26.project_leaders(projects, roster)
     progress = _derive_all(projects, leaders, current_week)
@@ -685,4 +686,10 @@ def test_seed_inputs_schedule_without_invariant_violations(data: dict[str, Any])
     assert no_leader == {
         ids[i] for i, p in enumerate(projects) if leaders[i] is None and c26.is_open(p)
     }
-    assert validate_invariants(schedule_input, output, check_determinism=False) == ()
+    # I38: a run solved from this input would store this week.
+    assert (
+        validate_invariants(
+            schedule_input, output, check_determinism=False, run_week=current_week
+        )
+        == ()
+    )

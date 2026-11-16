@@ -4,10 +4,15 @@ import type { EditMap, ImportOptions } from './import-rows';
 import type { ImportRow, ImportSimulateResponse } from './import-types';
 
 /**
- * Saved plan-import scenarios (P32-R05, docs/API_CONTRACT_P32.md C2). Session only: no
- * `persist`, nothing is sent to the server, a page refresh clears them. Each scenario is a
- * snapshot of the request (rows + options + edits) and the response exactly as served, so
- * the Compare tab only reads served figures.
+ * The Compare tab's scenario list (P32-R05, docs/API_CONTRACT_P32.md C2; P41 ADR 0055 D4).
+ * No `persist`: a page refresh clears it. Each entry is a snapshot of the request (rows +
+ * options + edits + plan exclusions) and the response exactly as served, so the Compare tab
+ * only reads served figures.
+ *
+ * - `variant` / `saved`: made in this session, kept in the browser only.
+ * - `stored`: a server-saved scenario (P41) loaded for comparison; its frozen response comes
+ *   from `GET /whatif/import/scenarios/{id}`. It does not count against MAX_SCENARIOS, and
+ *   removing it here never deletes it on the server.
  */
 
 export const MAX_SCENARIOS = 10;
@@ -17,8 +22,8 @@ export const MAX_SCENARIO_NAME = 60;
 export interface ImportScenario {
   id: string;
   name: string;
-  /** `saved` from the current result; `variant` from the scenario builder. */
-  origin: 'saved' | 'variant';
+  /** `saved` from the current result; `variant` from the scenario builder; `stored` (P41) a server record. */
+  origin: 'saved' | 'variant' | 'stored';
   /** A one-line description of the builder rules (variants only). */
   rules: string | null;
   fileName: string | null;
@@ -26,7 +31,21 @@ export interface ImportScenario {
   rows: ImportRow[];
   options: ImportOptions;
   edits: EditMap;
+  /** P41: plan projects unticked in the picker when the scenario was computed. */
+  excludedPlanIds?: string[] | undefined;
   response: ImportSimulateResponse;
+  /** P41: the server record behind a `stored` entry (as served). */
+  stored?: StoredMeta | undefined;
+}
+
+export interface StoredMeta {
+  id: string;
+  sourceSha256: string;
+  simulatedWeek: number;
+  planVersion: number | null;
+  createdByName: string | null;
+  createdAt: string;
+  canEdit: boolean;
 }
 
 export type NewScenario = Omit<ImportScenario, 'id' | 'createdAt'>;
@@ -46,6 +65,18 @@ export interface ScenariosState {
   makeBaseline: (id: string) => void;
   setDiffPair: (pair: [string | null, string | null]) => void;
   clear: () => void;
+  /**
+   * P41: adds a server-saved scenario to the list and ticks it for comparison when there is
+   * room (an entry for the same record is refreshed and ticked instead). Returns the list id.
+   */
+  addStored: (s: NewScenario & { stored: StoredMeta }) => string;
+  /** P41: a stored record was renamed or deleted on the server. */
+  syncStored: (storedId: string, patch: { name: string } | null) => void;
+}
+
+/** Session scenarios (the ones limited by MAX_SCENARIOS). */
+export function sessionCount(scenarios: readonly ImportScenario[]): number {
+  return scenarios.filter((s) => s.origin !== 'stored').length;
 }
 
 let seq = 0;
@@ -78,7 +109,7 @@ export const useImportScenarios = create<ScenariosState>()((set, get) => ({
   compareIds: [],
   diffPair: [null, null],
   save: (input) => {
-    if (get().scenarios.length >= MAX_SCENARIOS) return null;
+    if (sessionCount(get().scenarios) >= MAX_SCENARIOS) return null;
     const id = newId();
     set((s) => {
       const compareIds = s.compareIds.length < MAX_COMPARE ? [...s.compareIds, id] : s.compareIds;
@@ -123,4 +154,28 @@ export const useImportScenarios = create<ScenariosState>()((set, get) => ({
     }),
   setDiffPair: (pair) => set((s) => ({ diffPair: pairAfter(s.compareIds, pair) })),
   clear: () => set({ scenarios: [], compareIds: [], diffPair: [null, null] }),
+  addStored: (input) => {
+    const existing = get().scenarios.find((x) => x.stored?.id === input.stored.id);
+    const id = existing?.id ?? newId();
+    set((s) => {
+      const entry: ImportScenario = { ...input, origin: 'stored', id, createdAt: existing?.createdAt ?? Date.now() };
+      const scenarios = existing ? s.scenarios.map((x) => (x.id === id ? entry : x)) : [...s.scenarios, entry];
+      const compareIds =
+        s.compareIds.includes(id) || s.compareIds.length >= MAX_COMPARE ? s.compareIds : [...s.compareIds, id];
+      return { scenarios, compareIds, diffPair: pairAfter(compareIds, s.diffPair) };
+    });
+    return id;
+  },
+  syncStored: (storedId, patch) =>
+    set((s) => {
+      const hit = s.scenarios.find((x) => x.stored?.id === storedId);
+      if (!hit) return {};
+      if (patch) return { scenarios: s.scenarios.map((x) => (x.id === hit.id ? { ...x, name: patch.name } : x)) };
+      const compareIds = s.compareIds.filter((x) => x !== hit.id);
+      return {
+        scenarios: s.scenarios.filter((x) => x.id !== hit.id),
+        compareIds,
+        diffPair: pairAfter(compareIds, s.diffPair),
+      };
+    }),
 }));

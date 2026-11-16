@@ -22,7 +22,7 @@ from scheduling import (
     run_greedy_sgs,
     validate_invariants,
 )
-from scheduling._selftest_common import load_seed_schedule_input
+from scheduling._selftest_common import SELFTEST_WEEK, load_seed_schedule_input
 from scheduling.cp_sat import PRIORITY_OBJECTIVE_WEIGHT, objective_weights
 from scheduling.greedy import _sort_key
 from tests.scheduling._fixtures import (
@@ -50,7 +50,7 @@ def _input(*projects: ProjectInput, **kw) -> ScheduleInput:
         chambers=(CHAMBER_GR1,),
         workflow_steps=TEMPLATE,
         lead_times=LEAD_TIMES,
-        **kw,
+        **{"current_week": SELFTEST_WEEK, **kw},
     )
 
 

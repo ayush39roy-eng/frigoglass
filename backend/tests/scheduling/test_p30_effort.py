@@ -61,7 +61,7 @@ from scheduling import (
     step_effective_weeks,
     validate_invariants,
 )
-from scheduling._selftest_common import load_seed_schedule_input
+from scheduling._selftest_common import SELFTEST_WEEK, load_seed_schedule_input
 from scheduling.effort_split import (
     NOT_APPLIED_CERTIFICATION_OFF,
     NOT_APPLIED_NO_FIGURE,
@@ -127,7 +127,9 @@ def _project(pid: str = "p", **kw: object) -> ProjectInput:
 
 
 def _si(*projects: ProjectInput, fte: float = 1.0) -> ScheduleInput:
-    return ScheduleInput(projects=projects, engineers=(_eng(fte),), chambers=(CH_GR,))
+    return ScheduleInput(
+        current_week=SELFTEST_WEEK, projects=projects, engineers=(_eng(fte),), chambers=(CH_GR,)
+    )
 
 
 def _cp(si: ScheduleInput) -> ScheduleOutput:
@@ -896,7 +898,9 @@ def test_both_hub_spellings_are_accepted_and_schedule_identically() -> None:
     outs = []
     for spelling in ("OEM-Seltek", "OEM-Seitek"):
         p = _project(hub=spelling, category="B-OEM", workflow_id="OEM", capacity_hub="R&D-Greece")
-        si = ScheduleInput(projects=(p,), engineers=(eng,), chambers=(ch,))
+        si = ScheduleInput(
+            current_week=SELFTEST_WEEK, projects=(p,), engineers=(eng,), chambers=(ch,)
+        )
         g, c = run_greedy_sgs(si), _cp(si)
         assert validate_invariants(si, g) == ()
         assert validate_invariants(si, c, check_determinism=False) == ()

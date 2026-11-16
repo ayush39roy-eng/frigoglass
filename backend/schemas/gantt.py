@@ -96,6 +96,30 @@ class GanttStepRow(BaseModel):
     #: GANTT/WRITE on the project's hub (the freeze toggle's check). Unchanged
     #: by P33 (contract Part G does not touch it).
     span_fte: float | None
+    #: P40 (ADR 0054 R40-2 / R40-13, docs/API_CONTRACT_P40.md §2). The LIVE
+    #: pin (`null`/`null` when none); end inclusive. While it differs from
+    #: this row's run window, the pin applies on the next run.
+    manual_start_week: int | None = None
+    manual_end_week: int | None = None
+    #: The active run placed this step on a pin (its effective window, R40-5).
+    pinned: bool = False
+    #: The pinned row starts before its release allows (R40-7). Warning only.
+    manual_overlap: bool = False
+    #: R40-2 "current length": the live pin's length, else the run row's
+    #: window length (0 when skipped), else `ceil(eff / fte)` for a design
+    #: step of a non-frozen project, else `eff`. Typing a Start gives
+    #: `End = Start + current_length_weeks − 1`. The browser never derives it.
+    current_length_weeks: int = 0
+    #: The caller may set a pin on this step now (role, hub scope, R40-2).
+    pin_editable: bool = False
+    #: Why not, when `pin_editable` is false: `NOT_ALLOWED` (role / scope),
+    #: `PROJECT_FROZEN`, `PROJECT_CLOSED`, `STEP_STARTED`, `STEP_SKIPPED`.
+    pin_block_reason: (
+        Literal[
+            "NOT_ALLOWED", "PROJECT_FROZEN", "PROJECT_CLOSED", "STEP_STARTED", "STEP_SKIPPED"
+        ]
+        | None
+    ) = None
 
 
 class GanttProjectRow(BaseModel):
@@ -145,6 +169,11 @@ class GanttProjectRow(BaseModel):
     design_weeks: int | None
     lab_weeks: int | None
     total_weeks: int | None
+    #: P40 (R40-5 / R40-7): from the active run's outcome. `pin_lapsed`: some
+    #: pin's start had passed and the step was placed from the run's week;
+    #: `manual_overlap`: OR of the steps' flag. Warnings only.
+    pin_lapsed: bool = False
+    manual_overlap: bool = False
     steps: list[GanttStepRow]
 
 
@@ -158,6 +187,10 @@ class GanttWeeklyActiveCount(BaseModel):
     week: int
     pdd: int
     oem: int
+    #: P40-T01 (docs/API_CONTRACT_P40.md §3): the same active steps per step
+    #: code (e.g. `"PDD-A"`), codes with a zero count omitted. Sums to
+    #: `pdd + oem`.
+    by_step: dict[str, int] = Field(default_factory=dict)
 
 
 class GanttResponse(BaseModel):
@@ -168,6 +201,13 @@ class GanttResponse(BaseModel):
     #: P13-T13: one entry per week 1..52 while an active run exists; `[]`
     #: without one.
     weekly_active_counts: list[GanttWeeklyActiveCount]
+    #: P40-T01 (docs/API_CONTRACT_P40.md §3): projects of the whole filtered
+    #: set with an active (non-skipped) run step covering the current week,
+    #: per step code. A project in two steps that week counts once in each.
+    #: `{}` without an active run.
+    current_step_counts: dict[str, int] = Field(default_factory=dict)
+    #: The plan week `current_step_counts` was taken at (`plan_clock`).
+    current_week: int | None = None
 
 
 class FreezeToggleRequest(BaseModel):

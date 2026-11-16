@@ -62,6 +62,7 @@ from services.project_cards import build_project_cards
 from services.schedule_persistence import build_schedule_input_from_db
 from services.tracking import due_stages_for
 from services.workflow_durations import lead_time_lookup
+from tests._plan_week import TEST_WEEK
 from tests.auth_helpers import clear_current_principal_override
 from tests.factories import (
     make_engineer,
@@ -81,7 +82,7 @@ from tests.p12_helpers import (
 )
 from workers.schedule_tasks import run_greedy_schedule
 
-CW = dc.CURRENT_WEEK
+CW = TEST_WEEK
 PDD_DESIGN = ("PDD-A", "PDD-B", "PDD-D", "PDD-E", "PDD-I", "PDD-J", "PDD-K", "PDD-M")
 
 
@@ -492,7 +493,7 @@ async def test_solver_input_carries_the_merged_override(db_session):
     # share alone; no user override and no floor reach the input any more.
     w = await _world(db_session)
     project = await _b4_project(db_session, w)
-    schedule_input = await build_schedule_input_from_db(db_session)
+    schedule_input = await build_schedule_input_from_db(db_session, current_week=TEST_WEEK)
     (p,) = [x for x in schedule_input.projects if x.project_id == str(project.id)]
     timing = {
         t.step_id: (t.duration_override_weeks, t.start_not_before_week) for t in p.step_timing
@@ -547,13 +548,13 @@ async def test_gantt_cards_and_tracking_use_the_one_predicate(db_session):
     assert steps["PDD-D"]["own_effort"] is True and steps["PDD-D"]["effort_weeks"] == 0
     assert steps["PDD-E"]["own_effort"] is True and steps["PDD-E"]["effort_weeks"] == 2
     assert "duration_override_weeks" not in steps["PDD-E"]
-    cards = await build_project_cards(db_session, [project], run)
+    cards = await build_project_cards(db_session, [project], run, current_week=TEST_WEEK)
     assert cards[project.id].current_stage is not None
     assert cards[project.id].current_stage.step_id == "PDD-E"  # D is skipped
     # Roll-up weights are eff (I12): A1 E2 H6 K1 L1 N1 = 12 weeks, A done
     # -> round(100 / 12) = 8 % (D, J, M weigh 0).
     assert cards[project.id].progress_pct == 8
-    due = await due_stages_for(db_session, [project.id], active_run=run)
+    due = await due_stages_for(db_session, [project.id], active_run=run, current_week=TEST_WEEK)
     assert "PDD-D" not in {d.step_id for d in due.get(project.id, [])}
 
 
@@ -657,7 +658,7 @@ async def test_hub_load_serves_demand_and_booked_i25_i19(db_session):
 async def test_capacity_fill_uses_remaining_demand(db_session):
     w, p, run = await _demand_world(db_session)
     await make_priority_score(db_session, p.g1, dims=[5] * 13, normalized_pct=100)  # P1 base
-    fill = await compute_capacity_fill(db_session, [w.greece.id])
+    fill = await compute_capacity_fill(db_session, [w.greece.id], current_week=TEST_WEEK)
     hub = fill.hubs[w.greece.id]
     demand = await load_demand(db_session)
     assert float(hub.base_load_weeks) == demand.projects[p.g1.id].design_remaining == 3
@@ -699,7 +700,7 @@ async def test_unrelated_effort_readers_do_not_break_without_figures(db_session)
 
     w = await _world(db_session)
     project = await _project(db_session, w, name="plain")
-    schedule_input = await build_schedule_input_from_db(db_session)
+    schedule_input = await build_schedule_input_from_db(db_session, current_week=TEST_WEEK)
     (p,) = [x for x in schedule_input.projects if x.project_id == str(project.id)]
     assert p.step_timing == ()
     demand = await load_demand(db_session)

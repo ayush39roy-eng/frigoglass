@@ -165,6 +165,17 @@ class ScheduleRunProjectStep(Base):
     skipped: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=False, server_default="false"
     )
+    #: P40 (ADR 0054 R40-12, I45): the step sat on a manual pin in this run
+    #: (its effective window, R40-5). `span_fte` is NULL on such a row: the pin
+    #: replaces the FTE span (R40-3). Migration `p40a_step_pins`.
+    pinned: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false"
+    )
+    #: P40 (R40-7, I47 (a)): the pinned row starts before its release allows
+    #: (`a < release + 1 − o`). A warning only.
+    manual_overlap: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false"
+    )
 
     schedule_run: Mapped[ScheduleRun] = relationship(back_populates="project_steps")
     project: Mapped[Project] = relationship(back_populates="schedule_run_steps")
@@ -224,6 +235,15 @@ class ScheduleRunProjectOutcome(Base):
     #: Non-null when the run rejected the project as a data error (e.g. an
     #: In-Progress stage missing `actual_start_week`) instead of scheduling it.
     data_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    #: P40 (R40-7): OR of the project's rows' `manual_overlap`. Warning only.
+    manual_overlap: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false"
+    )
+    #: P40 (R40-5, I45): some applied pin's start had passed, so the step was
+    #: placed at `current_week .. current_week + L − 1` instead.
+    pin_lapsed: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false"
+    )
 
     schedule_run: Mapped[ScheduleRun] = relationship(back_populates="project_outcomes")
     project: Mapped[Project] = relationship(back_populates="schedule_run_outcomes")

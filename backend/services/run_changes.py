@@ -112,6 +112,8 @@ async def compute_run_changes(
         run_version=run.version,
         against_run_id=baseline.id,
         against_run_version=baseline.version,
+        baseline_week=baseline.current_week,
+        run_week=run.current_week,
         hidden_count=hidden,
         rows=rows,
     )

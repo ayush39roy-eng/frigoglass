@@ -20,6 +20,7 @@ from models.currency import CurrencyRate
 from models.engineer import Engineer
 from models.export import ExportJob
 from models.hub import Hub, HubWorkCalendar
+from models.import_scenario import ImportFormatSettings, WhatifImportScenario
 from models.notification import Notification
 from models.priority import (
     PriorityApplicationResult,
@@ -83,4 +84,6 @@ __all__ = [
     "UserHubScope",
     "VipItem",
     "vip_item_projects",
+    "ImportFormatSettings",
+    "WhatifImportScenario",
 ]

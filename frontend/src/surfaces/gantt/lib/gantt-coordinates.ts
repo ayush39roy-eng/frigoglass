@@ -40,7 +40,9 @@ export const STEP_ROW_HEIGHT = 28;
 export type GanttDensity = 'comfortable' | 'forest';
 export const ROW_HEIGHTS: Record<GanttDensity, { project: number; step: number }> = {
   comfortable: { project: 58, step: STEP_ROW_HEIGHT },
-  forest: { project: 26, step: 22 },
+  // P40-T01 (owner ask 2026-11-17): Forest view is the name + one line at
+  // ~22 px a row, so several times more projects fit on screen.
+  forest: { project: 22, step: 22 },
 };
 
 export interface WeekScale {

@@ -44,6 +44,7 @@ from scheduling.workflow import build_workflows
 from seed import seed_demo_data
 from services.schedule_persistence import build_schedule_input_from_db, persist_schedule_output
 from services.workflow_previews import category_preview, ratio
+from tests._plan_week import TEST_WEEK
 from tests.auth_helpers import (
     clear_current_principal_override,
     make_principal,
@@ -92,7 +93,7 @@ async def _seeded(db_session, *, schedule: bool = True) -> SimpleNamespace:
     await db_session.flush()
     run = None
     if schedule:
-        schedule_input = await build_schedule_input_from_db(db_session)
+        schedule_input = await build_schedule_input_from_db(db_session, current_week=TEST_WEEK)
         run = await persist_schedule_output(
             db_session, schedule_input, run_greedy_sgs(schedule_input),
             solver_type=SolverType.GREEDY, trigger_reason="test", activate=True,

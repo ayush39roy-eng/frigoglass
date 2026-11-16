@@ -78,6 +78,7 @@ from services.capacity_supply import round2
 from services.categories import load_catalog
 from services.category_type_filter import any_of, category_type_filter
 from services.hub_scope import global_hub_filter, hub_scope_filter
+from services.plan_clock import PlanClock, get_plan_clock
 from services.priority_capacity_fill import compute_capacity_fill
 from services.project_cards import build_project_cards
 
@@ -113,6 +114,7 @@ async def get_priority_board(
     leader_engineer_id: LeaderListQuery = None,
     db: AsyncSession = Depends(get_db),
     current_user: Principal = Depends(_read),
+    clock: PlanClock = Depends(get_plan_clock),
 ) -> PriorityBoardResponse:
     stmt = (
         select(Project)
@@ -155,12 +157,14 @@ async def get_priority_board(
     projects = (await db.execute(stmt)).scalars().all()
 
     active_run = await get_active_run(db)
-    cards = await build_project_cards(db, projects, active_run)
+    cards = await build_project_cards(db, projects, active_run, current_week=clock.week)
     remaining = await remaining_run_load_by_project(db, active_run, [p.id for p in projects])
     # P25-T03 (ADR 0036): the same one-pass loader as the Matrix, over the
     # hubs of the cards shown (already scoped). The walk itself uses every
     # project of each hub, so a card's fill matches its Matrix row.
-    fill = await compute_capacity_fill(db, {p.hub_id for p in projects}, active_run=active_run)
+    fill = await compute_capacity_fill(
+        db, {p.hub_id for p in projects}, active_run=active_run, current_week=clock.week
+    )
 
     by_column: dict[ProjectPriority, list[PriorityBoardCard]] = {p: [] for p in COLUMN_ORDER}
     design_by_column: dict[ProjectPriority, float] = {p: 0.0 for p in COLUMN_ORDER}

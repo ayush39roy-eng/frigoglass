@@ -6,27 +6,17 @@ import { Spinner } from '@/components/ui/spinner';
 import { cn } from '@/lib/utils';
 
 import { WhatIfErrorNotice } from '../../components/whatif-error';
+import { sha256Hex } from '../file-digest';
 import { checkImportFile } from '../import-schema';
 import { useImportPlan } from '../import-store';
 import { classifyImportError, useImportParse } from '../use-import';
+import { ExcelFormatCard } from './excel-format';
 import { FeatureCard } from './feature-card';
-
-const EXPECTED_HEADERS = [
-  'Project description',
-  'Status',
-  'RPD HUB',
-  'Project Category',
-  'PDD Project Stage',
-  'PRIORITY',
-  'Recommended Design Engineer',
-  'Project code',
-  'Plant',
-  'Num of Projects',
-];
 
 /** Step 1: choose the workbook and parse it (`POST /whatif/import/parse`). */
 export function UploadStep(): React.JSX.Element {
   const setParsed = useImportPlan((s) => s.setParsed);
+  const setSource = useImportPlan((s) => s.setSource);
   const parse = useImportParse();
   const [file, setFile] = React.useState<File | null>(null);
   const [clientError, setClientError] = React.useState<string | null>(null);
@@ -44,7 +34,14 @@ export function UploadStep(): React.JSX.Element {
 
   const submit = () => {
     if (!file) return;
-    parse.mutate(file, { onSuccess: (data) => setParsed(data) });
+    const digest = sha256Hex(file);
+    parse.mutate(file, {
+      onSuccess: (data) => {
+        setParsed(data);
+        const importedAt = new Date().toISOString();
+        void digest.then((sha256) => setSource({ file_name: data.file_name, sha256, imported_at: importedAt }));
+      },
+    });
   };
 
   return (
@@ -120,37 +117,7 @@ export function UploadStep(): React.JSX.Element {
         </Button>
       </FeatureCard>
 
-      <FeatureCard
-        icon={FileSpreadsheet}
-        title="Expected format"
-        hint="Columns found by name, in any order"
-        testId="import-format-help"
-        bodyClassName="text-xs text-text-muted"
-        info={
-          <>
-            <p>
-              One sheet with a header row (in the first 10 rows) that has at least Project description and Status or
-              RPD HUB.
-            </p>
-            <p>
-              A Process steps sheet with the PDD-A…PDD-N and OEM-A…OEM-N lead times per category gives the step
-              durations. Without it the app&apos;s lead-time table is used.
-            </p>
-            <p>Customer, CAPEX, tooling, volume and comment columns are ignored and never read.</p>
-          </>
-        }
-      >
-        <ul className="flex flex-wrap gap-1.5" aria-label="Columns read">
-          {EXPECTED_HEADERS.map((h) => (
-            <li key={h} className="rounded-pill border border-border bg-surface-sunken px-2 py-0.5 text-2xs text-text">
-              {h}
-            </li>
-          ))}
-        </ul>
-        <p>
-          Plus a <span className="font-medium text-text">Process steps</span> sheet for the step lead times.
-        </p>
-      </FeatureCard>
+      <ExcelFormatCard />
     </div>
   );
 }

@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { BarChart3, FilterX, Search, Trees } from 'lucide-react';
+import { BarChart3, ChevronsDownUp, ChevronsUpDown, FilterX, Search, Trees } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -10,30 +10,33 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
-import { MultiChipFilter } from '@/components/shared/multi-chip-filter';
 import { MultiSelectDropdown } from '@/components/shared/multi-select-dropdown';
+import { HubFilterSelect } from '@/components/shared/hub-filter/hub-filter-select';
 import { TYPE_CHIP_OPTIONS, useCategoryChipOptions } from '@/lib/multi-select-filter';
-import { UI_PROJECT_STATUSES, type ProjectPriority, type ProjectStatus } from '@/types/enums';
+import {
+  UI_PROJECT_STATUSES,
+  type ProjectCategory,
+  type ProjectPriority,
+  type ProjectStatus,
+  type ProjectType,
+} from '@/types/enums';
 
 import type { GanttFacets, GanttSort } from '../api/types';
-import {
-  ALL,
-  DEFAULT_GANTT_FILTERS,
-  SEARCH_MAX_LENGTH,
-  hasActiveFilters,
-  type GanttFilterState,
-} from '../lib/gantt-filters';
+import { SEARCH_MAX_LENGTH, type GanttFilterState } from '../lib/gantt-filters';
+import { stepColor } from '../lib/step-colors';
 
 /**
- * P13-T13 Gantt toolbar (API_CONTRACT_P13 §7; mock-up image 12): search,
- * Category / Type / Status / Leader / Step filters, sort, P1–P4 / Queue tabs.
- * P31: Category and Type are multi-select chip rows (`MultiChipFilter`).
- * Owner ask 2026-11-13: Status / Leader / Current step are multi-select
- * dropdowns (`MultiSelectDropdown`) and the Priority tabs are toggles; Sort
- * stays a single choice (it is not a filter).
- * Every filter is a SERVER param — this component only edits the filter state;
- * it never narrows rows itself.
+ * The Timeline toolbar. P40-T01 (owner ask 2026-11-17): ONE compact row —
+ * Search, then the multi-select dropdowns Hub, Category, Type, Status, Leader,
+ * Step and Priority, then Sort, Forest view, Expand / Collapse, the legend &
+ * stats toggle and Download. The field names are kept for screen readers (each
+ * dropdown's accessible name is its label) while the trigger shows the
+ * selection ("All statuses", "2 statuses"), so the row needs no label line.
+ *
+ * Every filter is a SERVER param (repeated, ORed within a filter, ANDed
+ * across): this component only edits the filter state, it never narrows rows.
+ * Hub is the global hub / country filter (ADR 0020 / 0025), the same store as
+ * the header's.
  */
 
 const SORT_LABELS: Record<GanttSort, string> = {
@@ -43,7 +46,7 @@ const SORT_LABELS: Record<GanttSort, string> = {
   end: 'End week',
 };
 
-const PRIORITY_TABS: { value: ProjectPriority; label: string }[] = [
+const PRIORITY_OPTIONS: { value: ProjectPriority; label: string }[] = [
   { value: 'P1', label: 'P1' },
   { value: 'P2', label: 'P2' },
   { value: 'P3', label: 'P3' },
@@ -58,43 +61,18 @@ function leaderLabel(leader: { id: string; name: string | null }): string {
   return leader.name ?? `Leader (name unavailable) · ${leader.id.slice(-4)}`;
 }
 
-function ToolbarSelect({
-  label,
-  value,
-  onChange,
-  options,
-  allLabel,
-  className,
-}: {
-  label: string;
-  value: string | null;
-  onChange: (next: string | null) => void;
-  options: readonly { value: string; label: string }[];
-  allLabel: string;
-  className?: string;
-}): React.JSX.Element {
-  const id = React.useId();
+/** A small step-colour swatch in the Step options (P40-T01). */
+function StepSwatch({ code }: { code: string }): React.JSX.Element {
   return (
-    <div className="flex flex-col gap-1">
-      <label htmlFor={id} className="text-2xs text-text-muted">
-        {label}
-      </label>
-      <Select value={value ?? ALL} onValueChange={(next) => onChange(next === ALL ? null : next)}>
-        <SelectTrigger id={id} className={className ?? 'h-8 w-36'} aria-label={label}>
-          <SelectValue />
-        </SelectTrigger>
-        <SelectContent>
-          <SelectItem value={ALL}>{allLabel}</SelectItem>
-          {options.map((opt) => (
-            <SelectItem key={opt.value} value={opt.value}>
-              {opt.label}
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
-    </div>
+    <span
+      aria-hidden="true"
+      className="size-2.5 shrink-0 rounded-sm"
+      style={{ background: stepColor(code).fill }}
+    />
   );
 }
+
+const TRIGGER = 'h-7 w-[5.5rem] px-2';
 
 export interface GanttToolbarProps {
   filters: GanttFilterState;
@@ -102,186 +80,223 @@ export interface GanttToolbarProps {
   /** Leader / Step options from the served facets; `undefined` (no dashboard
    *  read, or still loading) hides those two filters. */
   facets: GanttFacets | undefined;
+  /** True when any toolbar filter OR the hub selection is set. */
+  anyActive: boolean;
+  /** Clears every toolbar filter and the hub selection; keeps the sort. */
+  onClearAll: () => void;
 }
 
-export function GanttFilterBar({ filters, onChange, facets }: GanttToolbarProps): React.JSX.Element {
-  const categoryChips = useCategoryChipOptions();
+export function GanttFilterBar({
+  filters,
+  onChange,
+  facets,
+  anyActive,
+  onClearAll,
+}: GanttToolbarProps): React.JSX.Element {
+  const categoryOptions = useCategoryChipOptions();
   const searchId = React.useId();
+  const sortId = React.useId();
   const set = <K extends keyof GanttFilterState>(key: K, value: GanttFilterState[K]): void =>
     onChange({ ...filters, [key]: value });
 
   return (
-    <div className="flex flex-wrap items-end gap-3" data-testid="gantt-filter-bar">
-      <div className="flex flex-col gap-1">
-        <label htmlFor={searchId} className="text-2xs text-text-muted">
+    <div className="contents" data-testid="gantt-filter-bar">
+      <div className="relative">
+        <label htmlFor={searchId} className="sr-only">
           Search
         </label>
-        <div className="relative">
-          <Search
-            className="pointer-events-none absolute left-2 top-1/2 size-3.5 -translate-y-1/2 text-text-subtle"
-            aria-hidden="true"
-          />
-          <Input
-            id={searchId}
-            type="search"
-            value={filters.q}
-            maxLength={SEARCH_MAX_LENGTH}
-            placeholder="Project name or code"
-            onChange={(e) => set('q', e.currentTarget.value)}
-            className="h-8 w-52 pl-7 text-xs"
-          />
-        </div>
+        <Search
+          className="pointer-events-none absolute left-2 top-1/2 size-3.5 -translate-y-1/2 text-text-subtle"
+          aria-hidden="true"
+        />
+        <Input
+          id={searchId}
+          type="search"
+          value={filters.q}
+          maxLength={SEARCH_MAX_LENGTH}
+          placeholder="Search"
+          onChange={(e) => set('q', e.currentTarget.value)}
+          className="h-7 w-32 pl-7 text-xs"
+        />
       </div>
+      <HubFilterSelect variant="toolbar" />
+      <MultiSelectDropdown<ProjectCategory>
+        label="Category"
+        hideLabel
+        emptySummary="Category"
+        allLabel="All categories"
+        value={filters.category}
+        onChange={(v) => set('category', v)}
+        options={categoryOptions.map((o) => ({ value: o.value as ProjectCategory, label: o.label, title: o.title }))}
+        triggerClassName="h-7 w-24 px-2"
+        data-testid="gantt-category-filter"
+      />
+      <MultiSelectDropdown<ProjectType>
+        label="Type"
+        hideLabel
+        emptySummary="Type"
+        allLabel="All types"
+        value={filters.type}
+        onChange={(v) => set('type', v)}
+        options={TYPE_CHIP_OPTIONS.map((o) => ({ value: o.value, label: o.label, title: o.title }))}
+        summarize={(sel) => (sel.length === 1 ? (sel[0]?.value ?? '') : `${String(sel.length)} types`)}
+        triggerClassName={TRIGGER}
+        data-testid="gantt-type-filter"
+      />
       <MultiSelectDropdown<ProjectStatus>
         label="Status"
+        hideLabel
+        emptySummary="Status"
         allLabel="All statuses"
         value={filters.status}
         onChange={(v) => set('status', v)}
         options={STATUS_OPTIONS}
-        triggerClassName="h-8 w-40"
+        triggerClassName={TRIGGER}
         data-testid="gantt-status-filter"
       />
       {facets ? (
         <>
           <MultiSelectDropdown
             label="Leader"
+            hideLabel
+            emptySummary="Leader"
             allLabel="All leaders"
             value={filters.leaderEngineerId}
             onChange={(v) => set('leaderEngineerId', v)}
             options={facets.leaders.map((l) => ({ value: l.id, label: leaderLabel(l) }))}
-            triggerClassName="h-8 w-44"
+            triggerClassName={TRIGGER}
             data-testid="gantt-leader-filter"
           />
           <MultiSelectDropdown
             label="Current step"
+            hideLabel
+            emptySummary="Step"
             allLabel="All steps"
             value={filters.currentStep}
             onChange={(v) => set('currentStep', v)}
-            options={facets.steps.map((s) => ({ value: s.code, label: `${s.code} · ${s.name}` }))}
-            triggerClassName="h-8 w-48"
+            options={facets.steps.map((s) => ({
+              value: s.code,
+              label: `${s.code} · ${s.name}`,
+              icon: <StepSwatch code={s.code} />,
+            }))}
+            summarize={(sel) => (sel.length === 1 ? (sel[0]?.value ?? '') : `${String(sel.length)} steps`)}
+            triggerClassName={TRIGGER}
             data-testid="gantt-step-filter"
           />
         </>
       ) : null}
-      <ToolbarSelect
-        label="Sort"
-        allLabel={SORT_LABELS.priority}
-        value={filters.sort === 'priority' ? null : filters.sort}
-        onChange={(v) => set('sort', (v ?? 'priority') as GanttSort)}
-        options={(['name', 'start', 'end'] as const).map((s) => ({ value: s, label: SORT_LABELS[s] }))}
-        className="h-8 w-44"
+      <MultiSelectDropdown<ProjectPriority>
+        label="Priority"
+        hideLabel
+        emptySummary="Priority"
+        allLabel="All priorities"
+        value={filters.priority}
+        onChange={(v) => set('priority', v)}
+        options={PRIORITY_OPTIONS}
+        summarize={(sel) => sel.map((o) => (o.value === 'Q' ? 'Queue' : o.value)).join(', ')}
+        triggerClassName={TRIGGER}
+        data-testid="gantt-priority-filter"
       />
-      {hasActiveFilters(filters) ? (
+      <label htmlFor={sortId} className="sr-only">
+        Sort
+      </label>
+      <Select value={filters.sort} onValueChange={(next) => set('sort', next as GanttSort)}>
+        <SelectTrigger id={sortId} className="h-7 w-28 text-xs" aria-label="Sort" title="Sort">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          {(['priority', 'name', 'start', 'end'] as const).map((s) => (
+            <SelectItem key={s} value={s}>
+              {SORT_LABELS[s]}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+      {anyActive ? (
         <Button
           variant="ghost"
           size="sm"
-          onClick={() => onChange({ ...DEFAULT_GANTT_FILTERS, sort: filters.sort })}
+          className="h-7 w-7 px-0 text-danger"
+          onClick={onClearAll}
+          aria-label="Clear filters"
+          title="Clear all filters (search, hub and every dropdown)"
         >
           <FilterX aria-hidden="true" />
-          Clear filters
         </Button>
       ) : null}
-      {/* P31: multi-select category / type "tabs" (repeated server params). */}
-      <div className="flex w-full flex-col gap-2" data-testid="gantt-chip-filters">
-        <MultiChipFilter
-          label="Category"
-          options={categoryChips}
-          value={filters.category}
-          onChange={(next) => set('category', next)}
-          data-testid="gantt-category-chips"
-        />
-        <MultiChipFilter
-          label="Type"
-          options={TYPE_CHIP_OPTIONS}
-          value={filters.type}
-          onChange={(next) => set('type', next)}
-          data-testid="gantt-type-chips"
-        />
-      </div>
     </div>
   );
 }
 
-/** The P1–P4 / In Queue toggles (repeated `priority` server param; "All"
- *  sends none). Multi-select (owner ask 2026-11-13): several bands can be on
- *  at once; "All" clears them and is on when none is. */
-export function PriorityTabs({
-  value,
-  onChange,
-}: {
-  value: readonly ProjectPriority[];
-  onChange: (next: ProjectPriority[]) => void;
-}): React.JSX.Element {
-  const labelId = React.useId();
-  const none = value.length === 0;
-  return (
-    <div className="flex flex-col gap-1">
-      <span className="text-2xs text-text-muted" id={labelId}>
-        Priority
-      </span>
-      <ToggleGroup
-        type="multiple"
-        role="group"
-        size="sm"
-        aria-labelledby={labelId}
-        value={none ? [ALL] : [...value]}
-        onValueChange={(next) => {
-          // "All" newly pressed, or the last band un-pressed: no filter.
-          if ((next.includes(ALL) && !none) || next.length === 0) {
-            onChange([]);
-            return;
-          }
-          // Option order, so the request and the key never depend on click order.
-          const picked = new Set(next);
-          onChange(PRIORITY_TABS.map((t) => t.value).filter((p) => picked.has(p)));
-        }}
-      >
-        <ToggleGroupItem value={ALL}>All</ToggleGroupItem>
-        {PRIORITY_TABS.map((t) => (
-          <ToggleGroupItem key={t.value} value={t.value}>
-            {t.label}
-          </ToggleGroupItem>
-        ))}
-      </ToggleGroup>
-    </div>
-  );
-}
-
-/** Forest (compact) view and Hide stats — pressed-state toggles. */
+/** Forest view, Expand / Collapse all and the legend & stats toggle —
+ *  compact icon buttons, each with an accessible name and a tooltip. */
 export function ViewToggles({
   forest,
   onForestChange,
-  hideStats,
-  onHideStatsChange,
+  showDetails,
+  onShowDetailsChange,
+  onExpandAll,
+  onCollapseAll,
+  canExpand,
+  canCollapse,
 }: {
   forest: boolean;
   onForestChange: (next: boolean) => void;
-  hideStats: boolean;
-  onHideStatsChange: (next: boolean) => void;
+  showDetails: boolean;
+  onShowDetailsChange: (next: boolean) => void;
+  onExpandAll: () => void;
+  onCollapseAll: () => void;
+  canExpand: boolean;
+  canCollapse: boolean;
 }): React.JSX.Element {
   return (
-    <div className="flex items-end gap-1">
+    <div className="flex items-center gap-1" role="group" aria-label="View">
       <Button
         type="button"
         variant={forest ? 'primary' : 'secondary'}
         size="sm"
+        className="h-7 px-2"
         aria-pressed={forest}
         onClick={() => onForestChange(!forest)}
-        title="Compact rows: one line per project"
+        title="Forest view: one thin line per project, names only"
+        aria-label="Forest view"
       >
         <Trees aria-hidden="true" />
-        Forest view
+        Forest
+      </Button>
+      <Button
+        variant="secondary"
+        size="sm"
+        className="h-7 w-7 px-0"
+        onClick={onExpandAll}
+        disabled={!canExpand}
+        aria-label="Expand all"
+        title={forest ? 'Expand all (not in Forest view)' : 'Expand all: show every step row'}
+      >
+        <ChevronsUpDown aria-hidden="true" />
+      </Button>
+      <Button
+        variant="secondary"
+        size="sm"
+        className="h-7 w-7 px-0"
+        onClick={onCollapseAll}
+        disabled={!canCollapse}
+        aria-label="Collapse all"
+        title="Collapse all"
+      >
+        <ChevronsDownUp aria-hidden="true" />
       </Button>
       <Button
         type="button"
-        variant={hideStats ? 'primary' : 'secondary'}
+        variant={showDetails ? 'primary' : 'secondary'}
         size="sm"
-        aria-pressed={hideStats}
-        onClick={() => onHideStatsChange(!hideStats)}
-        title="Hide the summary and the weekly PDD / OEM counts"
+        className="h-7 w-7 px-0"
+        aria-pressed={showDetails}
+        aria-label="Legend & stats"
+        onClick={() => onShowDetailsChange(!showDetails)}
+        title="Legend & stats: the summary, the step-colour legend and the weekly PDD / OEM counts"
       >
         <BarChart3 aria-hidden="true" />
-        Hide stats
       </Button>
     </div>
   );

@@ -147,6 +147,21 @@ class PriorityDeliveryBand(BaseModel):
     other_share_pct: float
 
 
+class DeliveryRegionRow(BaseModel):
+    """Owner request 2026-11-16: one country's share of the four exclusive
+    outcome buckets of `CompletingWithinYear`, counted from the SAME scoped,
+    filtered outcome rows of the same active run, grouped by the project's
+    hub's lab region (DOMAIN_RULES "Hubs and lab-region mapping": OEM-HCK and
+    OEM-Seitek count under Greece). Counts only, like the top-level
+    response; the client derives the delivery rate."""
+
+    region: LabRegion
+    within_year_count: int
+    spillover_count: int
+    left_out_count: int
+    blocked_count: int
+
+
 class CompletingWithinYear(BaseModel):
     """Response for `GET /dashboard/completing-within-year`.
 
@@ -177,6 +192,10 @@ class CompletingWithinYear(BaseModel):
     rows: list[CompletingWithinYearRow]
     #: P17-R03: always the five bands P1, P2, P3, P4, Q in that order.
     priority_delivery: list[PriorityDeliveryBand]
+    #: Owner request 2026-11-16: always Greece, India, Romania, in that order,
+    #: zero rows included. For each bucket, Σ over `regions` == the top-level
+    #: count above.
+    regions: list[DeliveryRegionRow]
 
 
 #: The active run's per-project outcome bucket (P13 register column).

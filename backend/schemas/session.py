@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import uuid
+from datetime import date, datetime
+from typing import Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from models.enums import RoleName
 
@@ -35,6 +37,17 @@ class SurfacePermissions(BaseModel):
     user_role_admin: SurfacePermission
 
 
+class PlanWeek(BaseModel):
+    """API_CONTRACT_P37 §1. `current` ⇔ `run_week == current_week` (R37-6).
+    `recalculating`: a run is queued or running. `pending`: the weeks differ
+    and nothing is in flight. `failed`: the week's rollover attempts are
+    spent (P37-T05)."""
+
+    run_week: int
+    run_version: int
+    status: Literal["current", "recalculating", "pending", "failed"]
+
+
 class MeResponse(BaseModel):
     user_id: uuid.UUID
     email: str
@@ -58,12 +71,27 @@ class MeResponse(BaseModel):
     #: manager without re-opening it for every role (P10-F03's frontend
     #: half, queued after this).
     is_delegate_manager: bool
-    #: P13-T15 (docs/API_CONTRACT_P13.md §7, ADR 0024): the planning "today"
-    #: (`domain_constants.CURRENT_WEEK`, env `RPD_CURRENT_WEEK`) and
-    #: `max(0, 52 − current_week)` — the same remaining-weeks basis as the
-    #: Capacity remaining-year figures. For the header "Week N · M wks left".
-    current_week: int
-    weeks_left_in_year: int
+    #: P13-T15, source changed at P37-T04 (ADR 0052, API_CONTRACT_P37 §1): the
+    #: calendar week (`services.plan_clock`, Europe/Athens, or the
+    #: `RPD_CURRENT_WEEK` pin) and `52 − current_week` (the current week not
+    #: counted, OQ #91). For the header "Week N · M wks left".
+    current_week: int = Field(ge=1, le=52)
+    weeks_left_in_year: int = Field(ge=0, le=51)
+    #: P37-T04: today's date in Europe/Athens (the header shows it, never the
+    #: browser's date).
+    as_of_date: date
+    #: P37-T04: `RPD_PLAN_YEAR` (default 2026).
+    plan_year: int
+    #: P37-T04: the ISO week-year is later than `plan_year`; `current_week` is
+    #: then 52 and `POST /check-ins` answers 409 `PLAN_YEAR_CLOSED` (R37-10).
+    plan_year_closed: bool
+    #: P37-T04: `"pinned"` when `RPD_CURRENT_WEEK` is set.
+    week_source: Literal["calendar", "pinned"]
+    #: P37-T04: the next Monday 00:00 Europe/Athens; the client refetches then.
+    week_ends_at: datetime
+    #: P37-T04: the active run's week against the calendar week; null when
+    #: there is no active run (R37-7).
+    plan_week: PlanWeek | None
 
 
 class DevUser(BaseModel):

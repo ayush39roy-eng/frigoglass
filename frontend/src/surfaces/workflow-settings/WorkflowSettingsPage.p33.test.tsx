@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { act, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient } from '@tanstack/react-query';
 
@@ -40,7 +40,13 @@ import WorkflowSettingsPage from './WorkflowSettingsPage';
 
 vi.setConfig({ testTimeout: 30_000 });
 
-const TEMPLATES = { route: '/settings/workflow?tab=templates' };
+const TEMPLATES = { route: '/settings/workflow' };
+/**
+ * The preview is debounced on a real 150 ms timer; under a loaded full run the
+ * default 1 s `waitFor` window can close before the request goes out. Timing
+ * headroom only — the assertions are unchanged.
+ */
+const DEBOUNCED = { timeout: 5_000 };
 const ADMIN = { roles: ['Admin' as const], permissions: ROLE_MATRIX.Admin };
 /** Reads the templates, writes nothing (no role has this today; the gating must still hold). */
 const VIEWER = { roles: ['Admin' as const], permissions: permissionsFrom({ workflow_settings: 'r', workflow_templates: 'r' }) };
@@ -101,10 +107,12 @@ describe('P33-T16 — category timeline editor', () => {
     expect(within(card()).getByTestId('length-PDD-E')).toHaveTextContent('7w');
     // Pending until the reply: the clicked bar is drawn optimistically, the status says so.
     expect(within(card()).getByTestId('step-PDD-E')).toHaveAttribute('data-pending', 'true');
-    await waitFor(() =>
-      expect(sends('/workflow-templates/timeline-preview')).toEqual([
-        { workflow_id: 'PDD', category: 'A+', steps: [{ step_id: 'PDD-E', weeks: 7 }] },
-      ]),
+    await waitFor(
+      () =>
+        expect(sends('/workflow-templates/timeline-preview')).toEqual([
+          { workflow_id: 'PDD', category: 'A+', steps: [{ step_id: 'PDD-E', weeks: 7 }] },
+        ]),
+      DEBOUNCED,
     );
     expect(within(card()).getByRole('status')).toHaveTextContent('Updating the preview');
 
@@ -120,9 +128,16 @@ describe('P33-T16 — category timeline editor', () => {
     expect(within(card()).getByTestId('unsaved-A+')).toHaveTextContent('1 unsaved step');
 
     // Two Move − clicks quickly: ONE request (debounced) carrying both values.
-    await user.click(screen.getByRole('button', { name: 'Move PDD-E one week earlier' }));
-    await user.click(screen.getByRole('button', { name: 'Move PDD-E one week earlier' }));
-    await waitFor(() => expect(sends('/workflow-templates/timeline-preview')).toHaveLength(2));
+    // Both clicks land in the same act, so no debounce timer can fire between
+    // them. (Two awaited `user.click`s were flaky under a loaded full run: when
+    // more than PREVIEW_DEBOUNCE_MS passed between them, the debounce rightly
+    // sent a gap −1 request first and `sends[1]` was not −2.)
+    const moveEarlier = screen.getByRole('button', { name: 'Move PDD-E one week earlier' });
+    act(() => {
+      fireEvent.click(moveEarlier);
+      fireEvent.click(moveEarlier);
+    });
+    await waitFor(() => expect(sends('/workflow-templates/timeline-preview')).toHaveLength(2), DEBOUNCED);
     expect(sends('/workflow-templates/timeline-preview')[1]).toEqual({
       workflow_id: 'PDD',
       category: 'A+',
@@ -488,6 +503,15 @@ describe('P33-T18 — add category', () => {
     await user.click(screen.getByRole('button', { name: 'Add category' }));
     return screen.findByTestId('add-category-dialog');
   }
+
+  it('"+ Add category" is a standard-size primary button in the tab header (owner 2026-11-16)', async () => {
+    const user = userEvent.setup();
+    await openTimelines(user, { session: ADMIN });
+    const button = screen.getByRole('button', { name: 'Add category' });
+    expect(button).toHaveClass('bg-primary', 'h-9');
+    expect(button).not.toHaveClass('h-8');
+    expect(button).toHaveAttribute('aria-haspopup', 'dialog');
+  });
 
   it('lists the position in rank order and copy-from within the chosen workflow', async () => {
     const user = userEvent.setup();

@@ -31,10 +31,11 @@ solve. Early ack means a terminated task is simply gone.
 
 from __future__ import annotations
 
-from celery import Celery
+from celery import Celery, signals
 
 from core.celery_config import get_celery_settings, get_redis_settings
 from core.celery_logging import install_celery_logging, install_task_duration_logging
+from services import plan_clock
 
 # P6-T06: structured (JSON) stdout logging for this process, wired via
 # Celery's own `setup_logging` signal — connected at IMPORT time (before
@@ -101,6 +102,17 @@ def _build_celery_app() -> Celery:
 
 celery_app = _build_celery_app()
 
+
+def _validate_plan_clock_env(**_kwargs: object) -> None:
+    """P37-T04 (API_CONTRACT_P37 §4): a bad `RPD_CURRENT_WEEK` /
+    `RPD_PLAN_YEAR` stops the worker before it consumes a task."""
+
+    plan_clock.validate_environment()
+
+
 # P6-T06: one structured `task_completed` log line per finished task
 # (`duration_seconds`, no task arguments — see `core/celery_logging.py`).
 install_task_duration_logging(celery_app, queue="solver")
+
+
+signals.worker_init.connect(_validate_plan_clock_env, weak=False)

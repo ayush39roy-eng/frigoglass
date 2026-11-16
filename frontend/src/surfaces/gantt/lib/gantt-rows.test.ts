@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { buildVisualRows, visualRowHeight } from './gantt-rows';
 import { PROJECT_ROW_HEIGHT, STEP_ROW_HEIGHT } from './gantt-coordinates';
 import type { GanttProjectRow, GanttStepRow } from '../api/types';
-import { P13_GANTT_ROW_DEFAULTS } from '../test-fixtures';
+import { P13_GANTT_ROW_DEFAULTS, P40_GANTT_STEP_PIN_DEFAULTS } from '../test-fixtures';
 
 function step(seq: number, start: number, end: number): GanttStepRow {
   return {
@@ -30,6 +30,7 @@ function step(seq: number, start: number, end: number): GanttStepRow {
     gap_weeks: 0,
     own_effort: false,
     predecessor_ids: [],
+    ...P40_GANTT_STEP_PIN_DEFAULTS,
   };
 }
 

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { MOVE_COPY, notNeededCopy, previewNotNeededCopy, RANK_COPY, rankPositionCopy } from './move-copy';
+import { badRankCopy, MOVE_COPY, notNeededCopy, previewNotNeededCopy, RANK_COPY, rankPositionCopy } from './move-copy';
 
 describe('rankPositionCopy (P36-R02, W36-1)', () => {
   it('reads "position N in <band>" and never "of M"', () => {
@@ -48,5 +48,16 @@ describe('copy tables', () => {
     for (const text of [...Object.values(RANK_COPY), ...Object.values(MOVE_COPY)]) {
       expect(text).not.toMatch(/position \d+ of \d+/);
     }
+  });
+});
+
+describe('badRankCopy (owner request 2026-11-17)', () => {
+  it('one past the current rank reads "already last"; any other says the position does not exist; never a band size', () => {
+    expect(badRankCopy('Ann', 'P1', 4, 3)).toBe("Ann is already last in P1, so it can't move down. Nothing was changed.");
+    expect(badRankCopy('Ann', 'P2', 40, 3)).toBe(
+      'There is no position 40 in P2: the band has fewer projects than that. Choose a smaller number. Nothing was changed.',
+    );
+    expect(badRankCopy('Ann', 'P2', null, null)).toBe('That position does not exist in P2. Choose a smaller number. Nothing was changed.');
+    for (const text of [badRankCopy('Ann', 'P1', 4, 3), badRankCopy('Ann', 'P1', 40, 3)]) expect(text).not.toMatch(/ of \d/);
   });
 });

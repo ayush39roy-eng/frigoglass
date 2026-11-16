@@ -36,14 +36,16 @@ import { queryKeys } from '@/lib/query-keys';
 import {
   createChamber,
   createEngineer,
+  deactivateEngineer,
   deleteChamber,
-  deleteEngineer,
+  fetchDeactivationPreview,
   fetchActiveScheduleRun,
   fetchCapacitySummary,
   fetchResourceLoad,
   fetchResourceLoadOptions,
   fetchChambers,
   fetchEngineers,
+  reactivateEngineer,
   triggerApplyLogic,
   updateChamber,
   updateEngineer,
@@ -53,8 +55,10 @@ import type {
   ChamberCreateRequest,
   ChamberRead,
   ChamberUpdateRequest,
+  DeactivateRequest,
   EngineerCreateRequest,
   EngineerRead,
+  EngineerStatusFilter,
   EngineerUpdateRequest,
   ResourceLoadFilters,
 } from '../api/types';
@@ -83,12 +87,14 @@ function retryUnlessAuth(failureCount: number, error: Error): boolean {
 
 // --- Engineers ---
 
-export function useEngineerList(hubIds: readonly string[] | undefined) {
+export function useEngineerList(hubIds: readonly string[] | undefined, status: EngineerStatusFilter = 'active') {
   return useQuery({
     // `hubIds` is a user-facing filter — part of the key (the P4-T04 review
     // lesson on stale hub-scoped caches); multi-select, sorted in the key.
-    queryKey: queryKeys.engineers(hubIds),
-    queryFn: ({ signal }) => fetchEngineers(hubIds, { signal }),
+    // P38: the default (`active`) keeps the shared key; another Show value
+    // extends it, still under `['engineers']` so every invalidation reaches it.
+    queryKey: status === 'active' ? queryKeys.engineers(hubIds) : [...queryKeys.engineers(hubIds), status],
+    queryFn: ({ signal }) => fetchEngineers(hubIds, { signal }, status),
     retry: retryUnlessAuth,
     placeholderData: (prev) => prev,
   });
@@ -141,10 +147,51 @@ function stripUndefined<T extends object>(body: T): Partial<T> {
   return Object.fromEntries(Object.entries(body).filter(([, v]) => v !== undefined)) as Partial<T>;
 }
 
-export function useDeleteEngineer() {
+// --- P38 (ADR 0053): deactivate / reactivate ---
+
+export const deactivationKeys = {
+  // Not under `['engineers']`: a roster invalidation must not refetch an open
+  // preview (after a successful deactivation it would answer 409).
+  preview: (engineerId: string) => ['engineer-deactivation-preview', engineerId] as const,
+};
+
+/** The dialog's preview. Never cached across openings: the open-project set and
+ *  the candidates' load must be current (the server re-checks under lock). */
+export function useDeactivationPreview(engineerId: string | null) {
+  return useQuery({
+    queryKey: deactivationKeys.preview(engineerId ?? ''),
+    queryFn: ({ signal }) => fetchDeactivationPreview(engineerId ?? '', { signal }),
+    enabled: engineerId !== null,
+    retry: retryUnlessAuth,
+    staleTime: 0,
+    gcTime: 0,
+    refetchOnWindowFocus: false,
+  });
+}
+
+/** A deactivation changes the roster, supply and the leader of every listed
+ *  project; the run-derived views refresh again when the run completes. */
+function invalidateAfterDeactivation(queryClient: ReturnType<typeof useQueryClient>) {
+  invalidateEngineerCapacityKeys(queryClient);
+  for (const key of [['projects'], ['dashboard'], ['gantt'], ['priority-matrix'], ['priority-board'], ['vip-board']]) {
+    void queryClient.invalidateQueries({ queryKey: key });
+  }
+}
+
+export function useDeactivateEngineer() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (engineerId: string) => deleteEngineer(engineerId),
+    mutationFn: ({ engineerId, body }: { engineerId: string; body: DeactivateRequest }) =>
+      deactivateEngineer(engineerId, body),
+    onSuccess: () => invalidateAfterDeactivation(queryClient),
+  });
+}
+
+/** Reactivation gives back no project and runs nothing; supply changes at once. */
+export function useReactivateEngineer() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (engineerId: string) => reactivateEngineer(engineerId),
     onSuccess: () => invalidateEngineerCapacityKeys(queryClient),
   });
 }

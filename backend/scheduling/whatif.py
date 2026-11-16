@@ -57,10 +57,13 @@ import time
 from collections import defaultdict
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
+from decimal import Decimal
+from fractions import Fraction
 from typing import Literal
 
 import domain_constants as dc
 from scheduling import hubs as hub_names
+from scheduling.active_weeks import EngineerActiveWeeks
 from scheduling.greedy import _cat_not_allowed, category_maps_for, run_greedy_sgs
 from scheduling.invariants import compute_design_load_by_capacity_hub
 from scheduling.types import (
@@ -176,11 +179,24 @@ class ChamberSupplyInput:
 class WhatIfBaseline:
     """The current plan: the scheduler input plus the supply inputs the
     scheduler itself does not need (calendars, chamber downtime).
-    `schedule.current_week` fixes the "remaining" capacity basis."""
+    `schedule.current_week` fixes the "remaining" capacity basis.
+
+    `engineer_active_weeks` (P38-T03, ADR 0053 R38-1 / R38-2) is supply-only:
+    one entry per counted engineer with an inactive period (inactive now or
+    reactivated), sorted by `engineer_id`. Design supply then follows the
+    Capacity page's active-weeks rule. Empty (the default) leaves every figure
+    byte-identical to before P38. It never reaches the scheduler.
+    """
 
     schedule: ScheduleInput
     calendars: tuple[HubCalendarInput, ...] = ()
     chamber_supply: tuple[ChamberSupplyInput, ...] = ()
+    engineer_active_weeks: tuple[EngineerActiveWeeks, ...] = ()
+
+    def __post_init__(self) -> None:
+        ids = [a.engineer_id for a in self.engineer_active_weeks]
+        if len(set(ids)) != len(ids):
+            raise ValueError("engineer_active_weeks has a duplicate engineer_id")
 
 
 @dataclass(frozen=True)
@@ -889,6 +905,7 @@ def _plan_loads(
 
 @dataclass(frozen=True)
 class _Supply:
+    #: Σ fte of the counted engineers active in week CW + 1 (headcount FTE).
     fte_by_hub: Mapping[str, float]
     wwpe_by_hub: Mapping[str, float]
     remaining_wwpe_by_hub: Mapping[str, float]
@@ -896,6 +913,32 @@ class _Supply:
     lab_remaining_fraction: float
     chambers_by_region: Mapping[str, int]
     region_holidays: Mapping[str, float]
+    #: R38-1 `Σ fte_e × A_e(1..52) / 52` and `Σ fte_e × A_e(CW+1..52) / (52 − CW)`
+    #: for hubs with an `EngineerActiveWeeks` entry; other hubs use `fte_by_hub`.
+    fte_year_by_hub: Mapping[str, float] = field(default_factory=dict)
+    fte_remaining_by_hub: Mapping[str, float] = field(default_factory=dict)
+
+
+def _exact_fte(v: float) -> Fraction:
+    """A stored `Numeric(3, 2)` FTE, exactly (as `services.capacity_supply.fte_sum`)."""
+
+    return Fraction(Decimal(str(v)))
+
+
+def _supply_entries(
+    engineers: Sequence[EngineerInput],
+    active_weeks: Iterable[EngineerActiveWeeks],
+    removed_ids: frozenset[str],
+) -> dict[str, EngineerActiveWeeks]:
+    """The `EngineerActiveWeeks` that supply: not removed by the scenario, and
+    not a roster engineer who does not count in capacity (ADR 0042 §5)."""
+
+    not_counted = {e.engineer_id for e in engineers if not e.counts_in_capacity}
+    return {
+        a.engineer_id: a
+        for a in active_weeks
+        if a.engineer_id not in removed_ids and a.engineer_id not in not_counted
+    }
 
 
 def _supply(
@@ -904,14 +947,53 @@ def _supply(
     calendars: Iterable[HubCalendarInput],
     chamber_supply: Iterable[ChamberSupplyInput],
     current_week: int,
+    active_weeks: Iterable[EngineerActiveWeeks] = (),
+    removed_ids: frozenset[str] = frozenset(),
 ) -> _Supply:
     cals = _calendar_map(calendars)
+    engs = tuple(engineers)
+    entries = _supply_entries(engs, active_weeks, removed_ids)
     fte: dict[str, float] = defaultdict(float)
-    for e in engineers:
+    for e in engs:
         # ADR 0042 §5: supply is Σ fte over *counted* engineers only; a
-        # non-counted leader is booked but never supply.
-        if e.counts_in_capacity:
+        # non-counted leader is booked but never supply. An engineer with an
+        # active-weeks entry supplies through the entry below instead.
+        if e.counts_in_capacity and e.engineer_id not in entries:
             fte[e.hub] += e.fte
+    fte_year: dict[str, float] = {}
+    fte_rem: dict[str, float] = {}
+    if entries:
+        # R38-1, exact: FTE as Decimal, week factor as Fraction. Hubs without an
+        # entry keep the float path above, so their figures do not move.
+        cw = current_week
+        wy = dc.WITHIN_YEAR_WEEK
+        for hub in sorted({a.hub for a in entries.values()}):
+            base = sum(
+                (
+                    _exact_fte(e.fte)
+                    for e in engs
+                    if e.hub == hub and e.counts_in_capacity and e.engineer_id not in entries
+                ),
+                Fraction(0),
+            )
+            mine = [entries[k] for k in sorted(entries) if entries[k].hub == hub]
+            y = base + sum(
+                (_exact_fte(a.fte) * Fraction(a.active_weeks(1, wy), wy) for a in mine),
+                Fraction(0),
+            )
+            r = base
+            if cw < wy:
+                r += sum(
+                    (
+                        _exact_fte(a.fte) * Fraction(a.active_weeks(cw + 1, wy), wy - cw)
+                        for a in mine
+                    ),
+                    Fraction(0),
+                )
+            now = base + sum(
+                (_exact_fte(a.fte) for a in mine if a.is_active_in(cw + 1)), Fraction(0)
+            )
+            fte_year[hub], fte_rem[hub], fte[hub] = float(y), float(r), float(now)
     wwpe: dict[str, float] = {}
     rem: dict[str, float] = {}
     for hub in _ALL_HUBS:
@@ -945,12 +1027,24 @@ def _supply(
         lab_remaining_fraction=max(0.0, year - current_week) / year,
         chambers_by_region=dict(n_ch),
         region_holidays=holidays,
+        fte_year_by_hub=fte_year,
+        fte_remaining_by_hub=fte_rem,
     )
+
+
+def _fte(sup: _Supply, hub: str, basis: str) -> float:
+    """The FTE that multiplies the per-engineer working weeks on `basis`
+    (R38-1). Without an active-weeks entry for `hub` it is `fte_by_hub`."""
+
+    by = sup.fte_year_by_hub if basis == "year" else sup.fte_remaining_by_hub
+    if hub in by:
+        return by[hub]
+    return sup.fte_by_hub.get(hub, 0.0)
 
 
 def _design_capacity(sup: _Supply, hub: str, basis: str) -> float:
     per = sup.wwpe_by_hub[hub] if basis == "year" else sup.remaining_wwpe_by_hub[hub]
-    return per * sup.fte_by_hub.get(hub, 0.0)
+    return per * _fte(sup, hub, basis)
 
 
 def _lab_capacity(sup: _Supply, region: str, basis: str) -> float:
@@ -1160,13 +1254,22 @@ def analytic_requirements(
     )
     add_hub_load, add_region_load, add_per_project = _plan_loads(new_only)
 
-    sup_before = _supply(si.engineers, si.chambers, baseline.calendars, baseline.chamber_supply, cw)
+    sup_before = _supply(
+        si.engineers,
+        si.chambers,
+        baseline.calendars,
+        baseline.chamber_supply,
+        cw,
+        baseline.engineer_active_weeks,
+    )
     sup_after = _supply(
         applied.schedule_input.engineers,
         applied.schedule_input.chambers,
         applied.calendars,
         applied.chamber_supply,
         cw,
+        baseline.engineer_active_weeks,
+        _removed_ids(si, applied.schedule_input),
     )
     # After removing engineers the surviving projects keep their load; the
     # re-assigned ones only change leader, never demand.
@@ -1210,7 +1313,7 @@ def analytic_requirements(
     for hub in _ALL_HUBS:
         relevant = (
             n_added_by_hub.get(hub, 0) > 0
-            or sup_before.fte_by_hub.get(hub, 0.0) != sup_after.fte_by_hub.get(hub, 0.0)
+            or _fte(sup_before, hub, basis) != _fte(sup_after, hub, basis)
             or base_hub_load.get(hub, 0.0) > 0
         )
         if not relevant:
@@ -1240,7 +1343,7 @@ def analytic_requirements(
         workings.append(
             f"{hub}: load {_fmt(base_load)} + {extra} = {_fmt(new_load)} wk; capacity = "
             f"{_fmt(_round2(per_fte))} wk/FTE x "
-            f"{_fmt(_round2(sup_after.fte_by_hub.get(hub, 0.0)))} "
+            f"{_fmt(_round2(_fte(sup_after, hub, basis)))} "
             f"FTE = {_fmt(_round2(cap_a))} wk; booked "
             f"{'n/a' if pct_a is None else _fmt(pct_a) + ' %'} ({st_a}); was "
             f"{'n/a' if pct_b is None else _fmt(pct_b) + ' %'} ({st_b})."
@@ -1260,9 +1363,9 @@ def analytic_requirements(
             workings.append(
                 f"{hub}: need capacity > {_fmt(_round2(new_load * 100.0 / target_below_pct))} wk, "
                 f"i.e. > {_fmt(_round2(need_fte))} FTE; have "
-                f"{_fmt(_round2(sup_after.fte_by_hub.get(hub, 0.0)))}; add ceil("
+                f"{_fmt(_round2(_fte(sup_after, hub, basis)))}; add ceil("
                 f"({_fmt(_round2(need_fte))} - "
-                f"{_fmt(_round2(sup_after.fte_by_hub.get(hub, 0.0)))}) / {_fmt(designer_fte)}) "
+                f"{_fmt(_round2(_fte(sup_after, hub, basis)))}) / {_fmt(designer_fte)}) "
                 f"= {n_des} designer(s) at {_fmt(designer_fte)} FTE."
             )
         design_rows.append(
@@ -1272,8 +1375,8 @@ def analytic_requirements(
                 extra_design_weeks=extra,
                 baseline_load_weeks=base_load,
                 new_load_weeks=new_load,
-                fte_before=_round2(sup_before.fte_by_hub.get(hub, 0.0)),
-                fte_after_scenario=_round2(sup_after.fte_by_hub.get(hub, 0.0)),
+                fte_before=_round2(_fte(sup_before, hub, basis)),
+                fte_after_scenario=_round2(_fte(sup_after, hub, basis)),
                 working_weeks_per_engineer=_round2(sup_after.wwpe_by_hub[hub]),
                 capacity_before=_round2(cap_b),
                 capacity_after_scenario=_round2(cap_a),
@@ -1490,13 +1593,30 @@ def classify_outcome(o: ProjectScheduleOutcome) -> str:
     return "within_year" if o.within_year else "spillover"
 
 
+def _removed_ids(before: ScheduleInput, after: ScheduleInput) -> frozenset[str]:
+    """Engineers of `before` that the scenario removed from `after`."""
+
+    kept = {e.engineer_id for e in after.engineers}
+    return frozenset(e.engineer_id for e in before.engineers if e.engineer_id not in kept)
+
+
 def _utilization(
     si: ScheduleInput,
     output: ScheduleOutput,
     calendars: Iterable[HubCalendarInput],
     chamber_supply: Iterable[ChamberSupplyInput],
+    active_weeks: Iterable[EngineerActiveWeeks] = (),
+    removed_ids: frozenset[str] = frozenset(),
 ) -> tuple[UtilizationRow, ...]:
-    sup = _supply(si.engineers, si.chambers, calendars, chamber_supply, si.current_week)
+    sup = _supply(
+        si.engineers,
+        si.chambers,
+        calendars,
+        chamber_supply,
+        si.current_week,
+        active_weeks,
+        removed_ids,
+    )
     # ADR 0042 §3: the hub rows are capacity-hub rows (OEM load on Greece).
     hub_load = compute_design_load_by_capacity_hub(si, output)
     # lab load by region from outcomes (I7)
@@ -1569,7 +1689,9 @@ def _run_baseline(baseline: WhatIfBaseline, budget: _Budget = _NO_BUDGET) -> _Ba
     return _BaselineRun(
         output=out,
         by_id={o.project_id: o for o in out.project_outcomes},
-        utilization=_utilization(si, out, baseline.calendars, baseline.chamber_supply),
+        utilization=_utilization(
+            si, out, baseline.calendars, baseline.chamber_supply, baseline.engineer_active_weeks
+        ),
         names={p.project_id: p.name for p in si.projects},
         hubs={p.project_id: p.hub for p in si.projects},
     )
@@ -1669,7 +1791,14 @@ def _simulate_with(
         recovered=tuple(recovered),
         moved=tuple(moved),
     )
-    after_util = _utilization(si, out, applied.calendars, applied.chamber_supply)
+    after_util = _utilization(
+        si,
+        out,
+        applied.calendars,
+        applied.chamber_supply,
+        baseline.engineer_active_weeks,
+        _removed_ids(baseline.schedule, si),
+    )
     workings = [
         f"Greedy SGS re-run on a copy of the plan with the scenario applied "
         f"({len(si.projects)} projects, {len(si.engineers)} designers, "

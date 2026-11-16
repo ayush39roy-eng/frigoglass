@@ -27,7 +27,15 @@ const HUB_PREFIX = 'hub:';
  * `stores/hub-filter.ts` (persisted per browser); hubs or countries that are no
  * longer in scope are dropped from it.
  */
-export function HubFilterSelect({ className }: { className?: string }): React.JSX.Element {
+export function HubFilterSelect({
+  className,
+  variant = 'header',
+}: {
+  className?: string;
+  /** P40-T01: `toolbar` is the same global filter drawn as a compact toolbar
+   *  dropdown (accessible name "Hub"), e.g. in the Timeline's one-row toolbar. */
+  variant?: 'header' | 'toolbar';
+}): React.JSX.Element {
   const me = useSessionStore((s) => s.me);
   const hubsQuery = useHubs();
   const { hubIds, regions, setSelection } = useHubFilter();
@@ -78,25 +86,33 @@ export function HubFilterSelect({ className }: { className?: string }): React.JS
   const onlyRegion = hubIds.length === 0 && regions.length === 1 ? regions[0] : undefined;
 
   return (
-    <div className={cn('flex min-w-0 items-center', className)} data-testid="hub-filter">
+    <div
+      className={cn('flex min-w-0 items-center', className)}
+      data-testid={variant === 'toolbar' ? 'toolbar-hub-filter' : 'hub-filter'}
+    >
       <MultiSelectDropdown
-        label="Hub filter"
+        label={variant === 'toolbar' ? 'Hub' : 'Hub filter'}
         hideLabel
         options={items}
         value={value}
         onChange={onChange}
         allLabel="All hubs"
+        emptySummary={variant === 'toolbar' ? 'Hub' : undefined}
         summarize={() => summarizeHubSelection(hubIds, regions, hubName)}
-        align="end"
+        align={variant === 'toolbar' ? 'start' : 'end'}
         triggerIcon={
           onlyRegion ? <CountryFlag region={onlyRegion} /> : <Building2 className="size-3.5 shrink-0" aria-hidden="true" />
         }
-        triggerClassName={cn(
-          'h-8 w-auto min-w-0 max-w-[10rem] gap-1.5 rounded-pill border-transparent bg-transparent px-s3 text-2xs font-semibold sm:max-w-52',
-          'hover:bg-surface-sunken',
-          active && 'bg-primary-subtle text-primary-subtle-fg hover:bg-primary-subtle',
-        )}
-        data-testid="hub-filter-select"
+        triggerClassName={
+          variant === 'toolbar'
+            ? 'h-7 w-24 gap-1 px-2'
+            : cn(
+                'h-8 w-auto min-w-0 max-w-[10rem] gap-1.5 rounded-pill border-transparent bg-transparent px-s3 text-2xs font-semibold sm:max-w-52',
+                'hover:bg-surface-sunken',
+                active && 'bg-primary-subtle text-primary-subtle-fg hover:bg-primary-subtle',
+              )
+        }
+        data-testid={variant === 'toolbar' ? 'toolbar-hub-filter-select' : 'hub-filter-select'}
       />
     </div>
   );

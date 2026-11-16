@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { BarChart3, Check, GitCompareArrows, Gauge, Info, Layers, Pencil, Star, Trash2, X } from 'lucide-react';
+import { AlertTriangle, BarChart3, Check, Download, GitCompareArrows, Gauge, Info, Layers, Pencil, Star, Trash2, X } from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
 import { BarChart } from '@/components/ui/bar-chart';
@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Spinner } from '@/components/ui/spinner';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { formatBookedPct } from '@/lib/format';
 import { cn } from '@/lib/utils';
@@ -15,14 +16,21 @@ import { int } from '../../components/figures';
 import { NativeSelect } from '../../components/form-controls';
 import { OUTCOME_LABEL, OUTCOME_TONE } from '../../components/outcome-meta';
 import { Callout, ProjectRowsTable, type RowColumn } from '../../components/result-parts';
+import { downloadComparison } from '../import-api';
 import {
   capacityCompare,
   COMPARE_KPIS,
   delta,
+  exportableIds,
   formatDelta,
+  mixedClock,
+  mixedSources,
   outcomeChanges,
+  simulatedWeekOf,
   type OutcomeChange,
 } from '../scenario-compare';
+import { useDownload } from '../use-import-library';
+import { SavedScenariosLibrary } from './saved-scenarios-library';
 import { MAX_COMPARE, MAX_SCENARIO_NAME, useImportScenarios, type ImportScenario } from '../scenarios-store';
 import { planYearOf, weekOrDash } from '../week-labels';
 import { compareKpiDrill, outcomeChangeDrill } from '../drilldown';
@@ -36,12 +44,27 @@ import { ServedStatusChip } from './status-chip';
  * figures, and "projects that change outcome" matches served rows by ref.
  */
 
+const ORIGIN_LABEL: Record<ImportScenario['origin'], string> = { variant: 'variant', saved: 'session', stored: 'saved' };
+const ORIGIN_TONE: Record<ImportScenario['origin'], 'primary' | 'neutral' | 'success'> = {
+  variant: 'primary',
+  saved: 'neutral',
+  stored: 'success',
+};
+
 function ScenarioMeta({ s }: { s: ImportScenario }): React.JSX.Element {
   const year = planYearOf(s.response.plan_year_end_week, s.response.base_year);
   return (
     <span className="flex flex-wrap items-center gap-1 text-2xs text-text-muted">
-      <Badge tone={s.origin === 'variant' ? 'primary' : 'neutral'}>{s.origin === 'variant' ? 'variant' : 'saved'}</Badge>
+      <Badge tone={ORIGIN_TONE[s.origin]}>{ORIGIN_LABEL[s.origin]}</Badge>
+      {s.fileName ? <span className="min-w-0 break-all">{s.fileName}</span> : null}
+      {s.fileName ? <span aria-hidden="true">·</span> : null}
       <span>{s.response.mode === 'merge' ? 'merged with plan' : 'file only'}</span>
+      {s.stored ? (
+        <>
+          <span aria-hidden="true">·</span>
+          <span>{`simulated W${String(s.stored.simulatedWeek)}${s.stored.planVersion === null ? '' : ` · plan v${String(s.stored.planVersion)}`}`}</span>
+        </>
+      ) : null}
       <span aria-hidden="true">·</span>
       <span>plan year {String(year)}</span>
       {s.rules ? (
@@ -117,21 +140,30 @@ function ScenarioItem({ s, position }: { s: ImportScenario; position: number }):
             <Star />
           </Button>
         ) : null}
-        <Button
-          type="button"
-          size="sm"
-          variant="ghost"
-          onClick={() => {
-            setDraft(s.name);
-            setEditing(true);
-          }}
-          aria-label={`Rename ${s.name}`}
-        >
-          <Pencil />
-        </Button>
-        <Button type="button" size="sm" variant="ghost" onClick={() => remove(s.id)} aria-label={`Delete ${s.name}`}>
-          <Trash2 />
-        </Button>
+        {s.origin === 'stored' ? (
+          // A saved scenario is renamed / deleted in the library; here it only leaves the list.
+          <Button type="button" size="sm" variant="ghost" onClick={() => remove(s.id)} aria-label={`Remove ${s.name} from the list`}>
+            <X />
+          </Button>
+        ) : (
+          <>
+            <Button
+              type="button"
+              size="sm"
+              variant="ghost"
+              onClick={() => {
+                setDraft(s.name);
+                setEditing(true);
+              }}
+              aria-label={`Rename ${s.name}`}
+            >
+              <Pencil />
+            </Button>
+            <Button type="button" size="sm" variant="ghost" onClick={() => remove(s.id)} aria-label={`Delete ${s.name}`}>
+              <Trash2 />
+            </Button>
+          </>
+        )}
       </div>
     </li>
   );
@@ -139,6 +171,8 @@ function ScenarioItem({ s, position }: { s: ImportScenario; position: number }):
 
 function KpiTable({ picked }: { picked: ImportScenario[] }): React.JSX.Element {
   const base = picked[0];
+  // P41: scenarios from different workbooks carry their file under the name.
+  const showSources = mixedSources(picked);
   // "Finish in 2027" as on the Executive tab when every scenario has the same plan year.
   const years = new Set(picked.map((s) => planYearOf(s.response.plan_year_end_week, s.response.base_year)));
   const planYear = years.size === 1 ? ([...years][0] ?? null) : null;
@@ -153,6 +187,13 @@ function KpiTable({ picked }: { picked: ImportScenario[] }): React.JSX.Element {
             <TableHead key={s.id} className="text-right">
               {s.name}
               {i === 0 ? <span className="sr-only"> (baseline)</span> : null}
+              {showSources && s.fileName ? (
+                <span className="mt-0.5 block">
+                  <Badge tone="outline" data-testid="compare-source-chip">
+                    {s.fileName}
+                  </Badge>
+                </span>
+              ) : null}
             </TableHead>
           ))}
         </TableRow>
@@ -361,13 +402,21 @@ export function ResultsCompare(): React.JSX.Element {
   );
   const position = (id: string) => compareIds.indexOf(id);
 
+  const unsaved = scenarios.some((s) => s.origin !== 'stored');
+  const clockMixed = picked.length >= 2 && mixedClock(picked);
+  const exportIds = exportableIds(picked);
+  const download = useDownload();
+
   return (
     <div className="space-y-s5" data-testid="import-compare">
-      <Callout tone="neutral" title="Scenarios are kept for this session only" testId="import-session-banner">
-        <p className="flex items-center gap-1">
-          <Info className="size-3.5" aria-hidden="true" />A page refresh clears them; nothing is saved to the plan.
-        </p>
-      </Callout>
+      {unsaved ? (
+        <Callout tone="neutral" title="Unsaved scenarios are kept for this session only" testId="import-session-banner">
+          <p className="flex items-center gap-1">
+            <Info className="size-3.5" aria-hidden="true" />A page refresh clears the variants; save one to keep it.
+            The real plan is never changed.
+          </p>
+        </Callout>
+      ) : null}
 
       <FeatureCard
         icon={Layers}
@@ -377,7 +426,7 @@ export function ResultsCompare(): React.JSX.Element {
       >
         {scenarios.length === 0 ? (
           <p className="text-xs text-text-muted">
-            No scenario yet. Use “Save as scenario” or “Build a variant” below the results.
+            No scenario yet. Use “Build a variant” below the results, or “Add to compare” on a saved scenario.
           </p>
         ) : (
           <ul className="space-y-s2">
@@ -388,13 +437,57 @@ export function ResultsCompare(): React.JSX.Element {
         )}
       </FeatureCard>
 
+      <SavedScenariosLibrary />
+
       {picked.length < 2 ? (
         <p className="text-xs text-text-muted" data-testid="compare-need-two">
           Pick two to four scenarios to compare them.
         </p>
       ) : (
         <>
-          <FeatureCard icon={GitCompareArrows} title="Key figures" hint="Change from the baseline beside each figure">
+          {clockMixed ? (
+            <Callout tone="warning" title="Different week or plan version" testId="compare-clock-banner" role="status">
+              <p className="flex flex-wrap items-center gap-1">
+                <AlertTriangle className="size-3.5" aria-hidden="true" />
+                {picked
+                  .map(
+                    (s) =>
+                      `${s.name}: W${String(simulatedWeekOf(s))}${
+                        s.stored?.planVersion != null ? ` · plan v${String(s.stored.planVersion)}` : ''
+                      }`,
+                  )
+                  .join(' — ')}
+                . The figures were computed on different plans, so part of a difference may come from the plan.
+              </p>
+            </Callout>
+          ) : null}
+          <FeatureCard
+            icon={GitCompareArrows}
+            title="Key figures"
+            hint="Change from the baseline beside each figure"
+            actions={
+              <span className="inline-flex flex-wrap items-center gap-s2">
+                {download.error ? (
+                  <span role="alert" className="text-2xs font-medium text-danger-subtle-fg">
+                    {download.error}
+                  </span>
+                ) : null}
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="secondary"
+                  disabled={exportIds === null || download.pending !== null}
+                  title={exportIds === null ? 'Save every compared scenario to export the comparison' : undefined}
+                  onClick={() => {
+                    if (exportIds) void download.run('compare', () => downloadComparison(exportIds));
+                  }}
+                >
+                  {download.pending ? <Spinner className="size-3.5" /> : <Download />}
+                  Export comparison
+                </Button>
+              </span>
+            }
+          >
             <KpiTable picked={picked} />
           </FeatureCard>
           <FeatureCard icon={BarChart3} title="Outcomes" hint="Within the plan year, spill over and not placed">

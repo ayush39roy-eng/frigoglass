@@ -20,7 +20,6 @@ three-way `kind` (design | lab | elapsed) and the seeded strict-chain
 
 from __future__ import annotations
 
-import os
 from collections.abc import Mapping
 from typing import Final
 
@@ -180,11 +179,10 @@ NON_OEM_CATEGORIES: Final[frozenset[str]] = frozenset({"A+", "A", "B", "C"})
 
 # --- Horizon constants ---
 
-#: ADR 0024 (2026-10-13): 42 is the demo's "today" (ISO week 42 of 2026).
-#: `RPD_CURRENT_WEEK` overrides it; both test suites pin it to 31 (their
-#: golden files and fixtures were built at week 31) in their conftest files,
-#: before this module is first imported. Read once, at import time.
-CURRENT_WEEK: Final[int] = int(os.environ.get("RPD_CURRENT_WEEK", "42"))
+#: P37-T04 (ADR 0052): there is no current-week constant. "Today's" plan week
+#: is `services.plan_clock.now().week` (ISO week of today in Europe/Athens, or
+#: the `RPD_CURRENT_WEEK` pin), read per request / per run row, never at
+#: import. A stored run carries its own `ScheduleRun.current_week`.
 WITHIN_YEAR_WEEK: Final[int] = 52
 #: The scheduler's internal search limit (tells spillover from LEFT_OUT).
 #: No surface displays a week past WITHIN_YEAR_WEEK (ADR 0024).

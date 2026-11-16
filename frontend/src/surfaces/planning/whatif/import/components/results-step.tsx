@@ -18,7 +18,7 @@ import { ActionBar } from './feature-card';
 import { ResultsCapacity } from './results-capacity';
 import { ResultsGantt } from './results-gantt';
 import { ResultsProjects } from './results-projects';
-import { SaveScenarioButton } from './save-scenario-dialog';
+import { ScenarioBar, ScenarioViewBanner } from './scenario-bar';
 import { ScenarioBuilderButton } from './scenario-builder-dialog';
 import { YearFilterBar } from './year-filter-bar';
 
@@ -40,7 +40,7 @@ function TabFallback(): React.JSX.Element {
 }
 
 export function ResultsStep({
-  result,
+  result: servedResult,
   simulation,
   onRetry,
 }: {
@@ -52,6 +52,12 @@ export function ResultsStep({
   const setTab = useImportPlan((s) => s.setResultsTab);
   const setStep = useImportPlan((s) => s.setStep);
   const scenarioCount = useImportScenarios((s) => s.scenarios.length);
+  // P41: a scenario opened from the Scenario bar or the library is shown read-only on every
+  // tab, exactly as served / stored; the current result is untouched underneath.
+  const view = useImportPlan((s) => s.view);
+  const current = servedResult;
+  const result = view?.result ?? current;
+  const viewing = view !== null;
   const yearKey = useEffectiveYear(result);
   // "Show on Gantt" from a drill-down remounts the Gantt on the requested project (P32-R07).
   const ganttNonce = useImportPlan((s) => s.ganttFocusNonce);
@@ -60,9 +66,12 @@ export function ResultsStep({
   const shown = React.useMemo(
     () => ({
       ...result,
-      projects: result.projects.filter((p) => p.source !== 'file' || isMappedStatus(p.status)),
+      projects: result.projects
+        .filter((p) => p.source !== 'file' || isMappedStatus(p.status))
+        // A viewed scenario is read-only: its bars cannot be dragged (display flag only).
+        .map((p) => (viewing ? { ...p, steps: p.steps.map((st) => ({ ...st, editable: 'none' as const })) } : p)),
     }),
-    [result],
+    [result, viewing],
   );
   // The Year filter on the Projects rows (served finish week / outcome; rows only).
   const yearProjects = React.useMemo(
@@ -80,6 +89,7 @@ export function ResultsStep({
           onRetry={onRetry}
         />
       ) : null}
+      <ScenarioViewBanner current={current} />
       <Tabs value={tab} onValueChange={(v) => setTab(v as ResultsTab)}>
         <div className="flex flex-wrap items-center justify-between gap-s3">
           <TabsList aria-label="Results" className="max-w-full flex-wrap">
@@ -94,9 +104,12 @@ export function ResultsStep({
           {YEAR_TABS.has(tab) ? <YearFilterBar result={result} /> : null}
         </div>
         <TabsContent value="executive">
-          <React.Suspense fallback={<TabFallback />}>
-            <ResultsExecutive result={result} />
-          </React.Suspense>
+          <div className="space-y-s5">
+            <ScenarioBar pending={simulation.pending} />
+            <React.Suspense fallback={<TabFallback />}>
+              <ResultsExecutive result={result} />
+            </React.Suspense>
+          </div>
         </TabsContent>
         <TabsContent value="gantt">
           <ResultsGantt key={ganttNonce} result={shown} pending={simulation.pending} yearKey={yearKey} />
@@ -118,7 +131,6 @@ export function ResultsStep({
           <ArrowLeft />
           Back to review
         </Button>
-        <SaveScenarioButton disabled={simulation.pending} />
         <ScenarioBuilderButton onSaved={toCompare} />
         <span className="ml-auto inline-flex items-center gap-1.5 text-2xs text-text-muted" role="status" aria-live="polite">
           {simulation.pending ? (
@@ -127,7 +139,7 @@ export function ResultsStep({
               Recomputing…
             </>
           ) : (
-            'Edits are kept · nothing is saved'
+            'Edits are kept · the real plan is never changed'
           )}
         </span>
       </ActionBar>

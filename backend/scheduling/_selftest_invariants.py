@@ -44,6 +44,7 @@ from scheduling import (
 )
 from scheduling._selftest_common import (
     LEAD_TIMES,
+    SELFTEST_WEEK,
     TEMPLATE,
     load_seed_schedule_input,
     seed_path,
@@ -95,6 +96,7 @@ def direction1_normal_case() -> None:
         leader_engineer_id="eng-a",
     )
     si = ScheduleInput(
+        current_week=SELFTEST_WEEK,
         projects=(proj,),
         engineers=(ENGINEER_A,),
         chambers=(CHAMBER_GR1,),
@@ -113,6 +115,7 @@ def direction1_single_engineer_contention() -> None:
     p1 = ProjectInput(project_id="p-eng-1", name="First", priority="P1", **common)
     p2 = ProjectInput(project_id="p-eng-2", name="Second", priority="P2", **common)
     si = ScheduleInput(
+        current_week=SELFTEST_WEEK,
         projects=(p2, p1),
         engineers=(ENGINEER_A,),
         chambers=(CHAMBER_GR1, CHAMBER_GR2),
@@ -129,6 +132,7 @@ def direction1_chamber_saturation() -> None:
     p1 = ProjectInput(project_id="p-lab-1", name="First", leader_engineer_id="eng-a", **common)
     p2 = ProjectInput(project_id="p-lab-2", name="Second", leader_engineer_id="eng-b", **common)
     si = ScheduleInput(
+        current_week=SELFTEST_WEEK,
         projects=(p1, p2),
         engineers=(ENGINEER_A, ENGINEER_B),
         chambers=(CHAMBER_GR1,),
@@ -164,6 +168,7 @@ def direction1_frozen_conflict() -> None:
         actual_start_week=10,
     )
     si = ScheduleInput(
+        current_week=SELFTEST_WEEK,
         projects=(p1, p2),
         engineers=(ENGINEER_A,),
         chambers=(CHAMBER_GR1,),
@@ -206,6 +211,7 @@ def direction1_frozen_chamber_overlap() -> None:
         actual_start_week=10,
     )
     si = ScheduleInput(
+        current_week=SELFTEST_WEEK,
         projects=(p1, p2),
         engineers=(ENGINEER_A, ENGINEER_B),
         chambers=(CHAMBER_GR1,),  # max_concurrent=1, both projects land here in the same weeks
@@ -254,6 +260,7 @@ def direction1_category_mismatch_and_oem() -> None:
         leader_engineer_id="eng-c",
     )
     si = ScheduleInput(
+        current_week=SELFTEST_WEEK,
         projects=(proj,),
         engineers=(ENGINEER_C_NARROW,),
         chambers=(CHAMBER_GR1,),
@@ -337,6 +344,7 @@ def direction1_excluded_statuses() -> None:
     on_hold = ProjectInput(project_id="p-hold", name="Paused", status="On Hold", **common)
     active = ProjectInput(project_id="p-active", name="Active", status="In Queue", **common)
     si = ScheduleInput(
+        current_week=SELFTEST_WEEK,
         projects=(commercialized, on_hold, active),
         engineers=(ENGINEER_A,),
         chambers=(CHAMBER_GR1,),
@@ -450,7 +458,9 @@ def direction1_full_14_step_multi_hub() -> None:
             workflow_id="OEM",
         ),
     )
-    si = ScheduleInput(projects=projects, engineers=engineers, chambers=chambers)
+    si = ScheduleInput(
+        current_week=SELFTEST_WEEK, projects=projects, engineers=engineers, chambers=chambers
+    )
     out = run_greedy_sgs(si)
     v = validate_invariants(si, out)
     check("direction1 full_14_step_multi_hub: zero violations", v == ())
@@ -509,6 +519,7 @@ def direction2_i1_engineer_double_booked_non_frozen() -> None:
     p1 = _base_project(project_id="p-i1-a")
     p2 = _base_project(project_id="p-i1-b")
     si = ScheduleInput(
+        current_week=SELFTEST_WEEK,
         projects=(p1, p2),
         engineers=(ENGINEER_A,),
         chambers=(CHAMBER_GR1,),
@@ -562,6 +573,7 @@ def direction2_i2_chamber_over_capacity_no_frozen() -> None:
     p1 = _base_project(project_id="p-i2-a")
     p2 = _base_project(project_id="p-i2-b", leader_engineer_id="eng-b")
     si = ScheduleInput(
+        current_week=SELFTEST_WEEK,
         projects=(p1, p2),
         engineers=(ENGINEER_A, ENGINEER_B),
         chambers=(CHAMBER_GR1,),  # max_concurrent=1
@@ -612,6 +624,7 @@ def direction2_i3_steps_overlap_within_project() -> None:
 
     p1 = _base_project(project_id="p-i3-a")
     si = ScheduleInput(
+        current_week=SELFTEST_WEEK,
         projects=(p1,),
         engineers=(ENGINEER_A,),
         chambers=(CHAMBER_GR1,),
@@ -654,6 +667,7 @@ def direction2_i4_wrong_lab_region_and_stage() -> None:
         allowed_stages=("PDD-H",),  # not PDD-F
     )
     si = ScheduleInput(
+        current_week=SELFTEST_WEEK,
         projects=(p1,),
         engineers=(ENGINEER_A,),
         chambers=(CHAMBER_GR1, romania_chamber),
@@ -688,6 +702,7 @@ def direction2_i5_incomplete_not_flagged_left_out() -> None:
 
     p1 = _base_project(project_id="p-i5-a")
     si = ScheduleInput(
+        current_week=SELFTEST_WEEK,
         projects=(p1,),
         engineers=(ENGINEER_A,),
         chambers=(CHAMBER_GR1,),
@@ -722,6 +737,7 @@ def direction2_i6_negative_design_duration() -> None:
 
     p1 = _base_project(project_id="p-i6-a")
     si = ScheduleInput(
+        current_week=SELFTEST_WEEK,
         projects=(p1,),
         engineers=(ENGINEER_A,),
         chambers=(CHAMBER_GR1,),
@@ -757,6 +773,7 @@ def direction2_i7_negative_lab_duration() -> None:
 
     p1 = _base_project(project_id="p-i7-a")
     si = ScheduleInput(
+        current_week=SELFTEST_WEEK,
         projects=(p1,),
         engineers=(ENGINEER_A,),
         chambers=(CHAMBER_GR1,),
@@ -797,6 +814,7 @@ def direction2_i8_nondeterministic_input_rejected() -> None:
 
     p1 = _base_project(project_id="p-i8-a")
     si = ScheduleInput(
+        current_week=SELFTEST_WEEK,
         projects=(p1,),
         engineers=(ENGINEER_A,),
         chambers=(CHAMBER_GR1,),
@@ -825,6 +843,7 @@ def direction2_i9_within_year_flag_wrong() -> None:
 
     p1 = _base_project(project_id="p-i9-a", delay_weeks=0)
     si = ScheduleInput(
+        current_week=SELFTEST_WEEK,
         projects=(p1,),
         engineers=(ENGINEER_A,),
         chambers=(CHAMBER_GR1,),
@@ -862,6 +881,7 @@ def direction2_i10_frozen_dates_mutated() -> None:
         project_id="p-i10-a", frozen=True, actual_start_week=10, status="In Development"
     )
     si = ScheduleInput(
+        current_week=SELFTEST_WEEK,
         projects=(p1,),
         engineers=(ENGINEER_A,),
         chambers=(CHAMBER_GR1,),

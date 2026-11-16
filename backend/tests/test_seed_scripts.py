@@ -22,6 +22,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from testcontainers.postgres import PostgresContainer
 
+from services import plan_clock
 from tests.conftest import run_alembic
 
 
@@ -258,6 +259,10 @@ def test_seed_demo_data_default_is_the_client_2026_dataset(seeded_schema_url, mo
     assert counts["projects_without_leader"] == 3
     assert counts["carry_over_projects"] == 77
     run = counts["summary_run"]
+    # R37-5 (P37-T04): the summary run solves at the calendar week (here the
+    # suite's pin); progress is derived at SEED_STATUS_WEEK = 42 regardless.
+    assert run["current_week"] == plan_clock.current_week()
+    assert seed_demo_data.c26.SEED_STATUS_WEEK == 42
     assert run["within_year"] + run["spillover"] + run["left_out"] + run["blocked"] == 221
     assert run["no_leader"] == 1  # P29: 17 OEM projects now have a provisional leader
 
@@ -311,7 +316,7 @@ def test_seed_demo_data_default_is_the_client_2026_dataset(seeded_schema_url, mo
             ),
         )
     )
-    assert done and all(s.actual_end_week < seed_demo_data.dc.CURRENT_WEEK for s in done)
+    assert done and all(s.actual_end_week < seed_demo_data.c26.SEED_STATUS_WEEK for s in done)
 
     again = asyncio.run(seed_demo_data.run(reset_first=True))
     assert again["summary_run"] == run

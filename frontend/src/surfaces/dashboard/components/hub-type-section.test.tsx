@@ -159,6 +159,7 @@ function payloads(scope: P[]) {
     left_out_count: 0,
     blocked_count: 0,
     priority_delivery: [],
+    regions: [],
     rows: inRun.map(runRow),
   };
   return { hubType, analytics, withinYear, total: scope.length };

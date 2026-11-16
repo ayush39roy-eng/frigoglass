@@ -41,6 +41,8 @@ MAX_IMPORT_ROWS = 2000
 MAX_SIMULATED_FILE_PROJECTS = 600
 MAX_EDITS = 2000
 MAX_NUM_PROJECTS = 100
+#: ADR 0055 D2 / API_CONTRACT_P41 B.
+MAX_EXCLUDED_PLAN_PROJECTS = 2000
 
 _RowKey = Annotated[str, Field(pattern=r"^row-\d{1,7}$")]
 _StepId = Annotated[str, Field(pattern=r"^(PDD|OEM)-[A-N]$")]
@@ -193,6 +195,11 @@ class ImportSimulateRequest(_Strict):
     expand_multi: bool = True
     rows: list[ImportRow] = Field(max_length=MAX_IMPORT_ROWS)
     edits: list[StepEditIn] = Field(default_factory=list, max_length=MAX_EDITS)
+    #: ADR 0055 D2: unticked plan projects, taken out of both runs (merge
+    #: only; unique; each must be an in-scope plan project of the baseline).
+    exclude_plan_project_ids: list[_Id] = Field(
+        default_factory=list, max_length=MAX_EXCLUDED_PLAN_PROJECTS
+    )
 
 
 class ImportKpisOut(BaseModel):
@@ -211,6 +218,8 @@ class ImportKpisOut(BaseModel):
     after_within_plan_year_existing: int | None
     newly_slipping: int
     recovered: int
+    #: ADR 0055 D2: plan projects taken out by `exclude_plan_project_ids`.
+    plan_excluded: int = 0
 
 
 class ImportStepOut(BaseModel):
@@ -410,6 +419,18 @@ class ImportBreakdownsOut(_Strict):
     by_year: dict[str, BreakdownOut]
 
 
+class PlanProjectOut(BaseModel):
+    """ADR 0055 D2: an in-scope plan project that could be in the run (the
+    tick list of a hand-picked scenario)."""
+
+    id: str
+    name: str
+    hub: str
+    category: str | None
+    priority: str | None
+    status: str
+
+
 class ImportSimulateResponse(BaseModel):
     base_year: int
     current_week: int
@@ -425,3 +446,5 @@ class ImportSimulateResponse(BaseModel):
     workings: list[str]
     #: Chart figures over exactly `projects` (P32-R05, C1).
     breakdowns: ImportBreakdownsOut
+    #: ADR 0055 D2: merge mode only, before exclusion; `[]` in file_only.
+    plan_projects: list[PlanProjectOut] = Field(default_factory=list)

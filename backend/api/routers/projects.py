@@ -124,6 +124,7 @@ from services.band_rank import (
 from services.categories import CategoryCatalog, check_category_code, load_catalog
 from services.category_type_filter import any_of, category_type_filter
 from services.hub_scope import global_hub_filter, hub_scope_filter, is_hub_in_scope
+from services.plan_clock import PlanClock, get_plan_clock
 from services.priority_move import (
     AutoRecalcOutcome,
     apply_priority_change,
@@ -605,6 +606,7 @@ async def stage_project_update(
     *,
     band_rank_plan: Mapping[uuid.UUID, int | None] | None = None,
     step_edits: StepEdits | None = None,
+    plan_week: int | None = None,
 ) -> StagedProjectUpdate:
     """The single PATCH's validation and writes, shared with the register's
     batch (`POST /projects/register-edits`, P35). The caller has already
@@ -825,6 +827,7 @@ async def stage_project_update(
             workflow_id=workflow_id_for_hub(target_hub.is_oem),
             actor_user_id=current_user.user_id,
             check_guards=effort_inputs_changed,
+            plan_week=plan_week,
         )
     if "scoring_tags" in updates:
         # ADR 0038: only a not-set -> set tag pre-fills its score (same
@@ -963,6 +966,7 @@ async def save_register_edits(
     body: RegisterEditsRequest,
     db: AsyncSession = Depends(get_db),
     current_user: Principal = Depends(get_current_principal),
+    clock: PlanClock = Depends(get_plan_clock),
 ) -> RegisterEditsResponse:
     """P35 (OQ #83: recalculate on Save): the Projects register's Edit-mode
     Save. One transaction, all-or-nothing:
@@ -1111,6 +1115,7 @@ async def save_register_edits(
                 current_user,
                 band_rank_plan=band_rank_plan,
                 step_edits=step_edits,
+                plan_week=clock.week,
             )
             if tracks_eff:
                 eff_after = await project_eff_map(db, project, await _workflow_id(db, project))
@@ -1175,6 +1180,7 @@ async def get_register_steps(
     project_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
     current_user: Principal = Depends(_read),
+    clock: PlanClock = Depends(get_plan_clock),
 ) -> RegisterStepsRead:
     """The register Edit popup's step chips (P35-T05 / P35-T06,
     docs/API_CONTRACT_REGISTER_POPUP.md §3). Same permission and hub scope
@@ -1186,7 +1192,11 @@ async def get_register_steps(
 
     project = await _get_project_or_404(db, project_id, current_user)
     ctx = await load_step_context(db, project, workflow_id=await _workflow_id(db, project))
-    card = (await build_project_cards(db, [project], await get_active_run(db)))[project.id]
+    card = (
+        await build_project_cards(
+            db, [project], await get_active_run(db), current_week=clock.week
+        )
+    )[project.id]
     current = card.current_stage.step_id if card.current_stage is not None else None
     return RegisterStepsRead(
         project_id=project.id,
@@ -1317,6 +1327,8 @@ async def preview_project_band_rank(
     Permission is the priority move's (404 out of scope, 403 without
     Registration WRITE or an Admin-level grant); the anchor must be ranked in
     the same band and in the caller's hub scope (else 422 `NOT_SAME_BAND`).
+    `to_rank` (1..n in the full band) is the alternative to an anchor: 422
+    `ANCHOR_AND_RANK` with one, 422 `BAD_RANK` out of range.
     422 `BOTH_ANCHORS`, 409 `NOT_RANKABLE`, 429 `RATE_LIMITED` (the priority
     preview's bucket), 503 `PREVIEW_TIMEOUT`. `result = "unchanged"` when the
     placement keeps the order."""
@@ -1333,7 +1345,7 @@ async def preview_project_band_rank(
     )
     return await preview_band_rank_move(
         db, project, current_user,
-        before=body.before_project_id, after=body.after_project_id,
+        before=body.before_project_id, after=body.after_project_id, to_rank=body.to_rank,
     )
 
 
@@ -1369,7 +1381,7 @@ async def move_project_band_rank(
     result = await confirm_band_rank_move(
         db, project, current_user,
         before=body.before_project_id, after=body.after_project_id,
-        preview_token=body.preview_token,
+        preview_token=body.preview_token, to_rank=body.to_rank,
     )
     response.headers.update(
         AutoRecalcOutcome(

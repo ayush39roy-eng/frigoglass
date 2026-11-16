@@ -93,6 +93,7 @@ from services.hub_scope import (
     hub_scope_filter,
     narrowed_hub_filter,
 )
+from services.plan_clock import PlanClock, get_plan_clock
 from services.priority_capacity_fill import CapacityFill, RowFill, compute_capacity_fill
 from services.priority_scoring import (
     Rubric,
@@ -220,6 +221,7 @@ async def list_priority_matrix(
     q: Annotated[str | None, Query(max_length=Q_MAX_LENGTH)] = None,
     db: AsyncSession = Depends(get_db),
     current_user: Principal = Depends(_read),
+    clock: PlanClock = Depends(get_plan_clock),
 ) -> list[PriorityMatrixRow]:
     """The scoring grid, one row per project (left-joined to `PriorityScore`
     so projects not yet scored still appear, with `has_score=False`).
@@ -244,7 +246,7 @@ async def list_priority_matrix(
         q=q,
     )
     ranks = score_ranks(projects, _score_value)
-    fill = await compute_capacity_fill(db, {p.hub_id for p in projects})
+    fill = await compute_capacity_fill(db, {p.hub_id for p in projects}, current_week=clock.week)
     rubric = await load_rubric(db)
     # P34-T01: one grouped query for the whole list (no N+1).
     versions = await latest_score_versions(db, current_user, [p.id for p in projects])
@@ -350,6 +352,7 @@ async def priority_portfolio_summary(
     region: RegionListQuery = None,
     db: AsyncSession = Depends(get_db),
     current_user: Principal = Depends(_read),
+    clock: PlanClock = Depends(get_plan_clock),
 ) -> PriorityPortfolioSummary:
     """Portfolio decision summary — band/priority counts across all projects
     in the caller's hub scope (P3-T03) — the summary label says "portfolio"
@@ -366,7 +369,7 @@ async def priority_portfolio_summary(
     scored = [p for p in projects if is_scored(p.priority_score)]
     # ADR 0036: `suggested_band_counts` follow the promoted band, the score
     # band is counted separately.
-    fill = await compute_capacity_fill(db, {p.hub_id for p in projects})
+    fill = await compute_capacity_fill(db, {p.hub_id for p in projects}, current_week=clock.week)
     row_fills = [_row_fill(fill, p) for p in scored]
     suggested_band_counts = Counter(
         f.suggested_band.value for f in row_fills if f.suggested_band is not None
@@ -416,6 +419,7 @@ async def priority_distribution(
     q: Annotated[str | None, Query(max_length=Q_MAX_LENGTH)] = None,
     db: AsyncSession = Depends(get_db),
     current_user: Principal = Depends(_read),
+    clock: PlanClock = Depends(get_plan_clock),
 ) -> PriorityDistribution:
     """P21-T01 (docs/API_CONTRACT_P21.md §4): band distribution and a 10-point
     histogram of `normalized_pct` over exactly the rows `GET /priorities`
@@ -435,7 +439,7 @@ async def priority_distribution(
         q=q,
     )
     total = len(projects)
-    fill = await compute_capacity_fill(db, {p.hub_id for p in projects})
+    fill = await compute_capacity_fill(db, {p.hub_id for p in projects}, current_week=clock.week)
     counts: Counter[str] = Counter()
     histogram = [0] * (100 // _HISTOGRAM_WIDTH)
     scored = 0
@@ -476,6 +480,7 @@ async def priority_capacity_fill(
     region: RegionListQuery = None,
     db: AsyncSession = Depends(get_db),
     current_user: Principal = Depends(_read),
+    clock: PlanClock = Depends(get_plan_clock),
 ) -> PriorityCapacityFill:
     """P25-T01 (ADR 0036, docs/API_CONTRACT_P25.md §2): the P1 capacity fill of
     every hub in the caller's scope, narrowed by the global `hub_id` /
@@ -487,7 +492,9 @@ async def priority_capacity_fill(
     OEM-Seitek (`members`), and `hub_id` = an OEM hub selects it."""
 
     cmap, row_scopes = await capacity_rows_for_request(db, current_user, hub_id, region)
-    fill = await compute_capacity_fill(db, [r.capacity_hub_id for r in row_scopes])
+    fill = await compute_capacity_fill(
+        db, [r.capacity_hub_id for r in row_scopes], current_week=clock.week
+    )
     out: list[HubP1Fill] = []
     for scope in row_scopes:
         hub_fill = fill.hubs[scope.capacity_hub_id]
@@ -520,6 +527,7 @@ async def compare_priorities(
     project_id: Annotated[list[uuid.UUID], Query()],
     db: AsyncSession = Depends(get_db),
     current_user: Principal = Depends(_read),
+    clock: PlanClock = Depends(get_plan_clock),
 ) -> PriorityCompareResponse:
     """P21-T01 (docs/API_CONTRACT_P21.md §5): 2-5 distinct projects side by
     side, in the order given. Hub-scoped: an unknown id and an id outside the
@@ -550,7 +558,9 @@ async def compare_priorities(
             "One or more projects cannot be compared.",
         )
 
-    fill = await compute_capacity_fill(db, {p.hub_id for p in found.values()})
+    fill = await compute_capacity_fill(
+        db, {p.hub_id for p in found.values()}, current_week=clock.week
+    )
     rubric = await load_rubric(db)
     items: list[PriorityCompareItem] = []
     for pid in project_id:
@@ -588,6 +598,7 @@ async def get_priority_row(
     currency: CurrencyCode = CurrencyCode.EUR,
     db: AsyncSession = Depends(get_db),
     current_user: Principal = Depends(_read),
+    clock: PlanClock = Depends(get_plan_clock),
 ) -> PriorityMatrixRow:
     stmt = (
         select(Project)
@@ -606,7 +617,7 @@ async def get_priority_row(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found")
 
     rate = await _rate_to_eur(db, currency)
-    fill = await compute_capacity_fill(db, {project.hub_id})
+    fill = await compute_capacity_fill(db, {project.hub_id}, current_week=clock.week)
     rubric = await load_rubric(db)
     versions = await latest_score_versions(db, current_user, [project.id])
     return _build_row(

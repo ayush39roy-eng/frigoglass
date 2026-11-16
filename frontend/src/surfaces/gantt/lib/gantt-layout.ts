@@ -41,6 +41,18 @@ export function ganttColumnWidths(narrow: boolean, chartWidth = 0): GanttColumnW
   return { left: Math.min(GANTT_NARROW_LEFT_MAX, Math.max(GANTT_NARROW_LEFT_MIN, share)), status: 0 };
 }
 
+/** P40-T01: Forest view's name column (wide layout), px — names only. */
+export const GANTT_FOREST_LEFT = 208;
+
+/**
+ * Column widths in Forest view (P40-T01): no status column at any width
+ * (name + one line only), and a narrower name column on the wide layout.
+ */
+export function forestColumnWidths(narrow: boolean, chartWidth = 0): GanttColumnWidths {
+  if (narrow) return ganttColumnWidths(true, chartWidth);
+  return { left: GANTT_FOREST_LEFT, status: 0 };
+}
+
 /** Width of an element, live (ResizeObserver); 0 until measured. */
 export function useElementWidth(ref: React.RefObject<HTMLElement | null>): number {
   const [width, setWidth] = React.useState(0);

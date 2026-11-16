@@ -2402,3 +2402,209 @@ Decisions (orchestrator, 2026-11-15):
 | P36-R02 | Remediation (workflow W36-1): the rank dialog / keyboard announcement never shows "of M" (full-band rank vs scoped count); test with hub filter + hub-scoped user | frontend-builder | workflow leg | vitest green; workflow-auditor re-check of W36-1; MEMORY entry | DONE (MEMORY 2026-11-15 P36-R02: no "of M"; hub-filter + Hub Planner test; awaiting workflow-auditor re-check) |
 | P36-R03 | Remediation (frontend for P36-R01): show contract §5 503 `BAND_RANK_BUSY` copy on priority/rank moves, registration save/submit and the register batch save; rollback kept, no auto-retry | frontend-builder | P36-R01 | tsc, eslint, vitest green; MEMORY entry | DONE (MEMORY 2026-11-15 P36-R03) |
 | P36-T05 | Gate: qa-inspector, workflow-auditor (re-derive order incl. I37), security-auditor (RBAC/hub scope on the new endpoint) | gate | T02–T04 | Three PASS in MEMORY | DONE (MEMORY 2026-11-15 "P36 gate CLOSED") |
+
+## P37 — The current week follows the calendar (ADR 0052)
+
+Opened 2026-11-16 (owner request). The header reads "Week 42 · 10 wks left · 16 Nov 2026" on
+ISO week 47, because `backend/domain_constants.py` reads `CURRENT_WEEK` once at import (default 42,
+ADR 0024 §3) and the frontend carries its own `CURRENT_WEEK = 42` / `PLAN_YEAR = 2026` (P32
+workflow finding F9). Contract: `docs/API_CONTRACT_P37.md`. DOMAIN_RULES "Horizon constants"
+(2026-11-16 amendment), proposed invariants I38–I41. Owner questions OQ #88–#92.
+
+**Status at P37-T02 (2026-11-17).**
+- ADR 0052 is Accepted with ruling R37-1..R37-10. DOMAIN_RULES, the contract and the invariants (I9,
+  I13, I19, I24, I38–I41) are final.
+- The owner answered OQ #88–#92: "no problem, now we don't need to show dummy data, so make the week
+  follow". Every assumption is accepted; the release is not gated on the T07 figures.
+- R37-6 changes D37-4: the rollover compares weeks with "==" / "≠", and is `not_needed` with no
+  active run. R37-8: state decides each tick, and the table only counts queued attempts. R37-9: the
+  ticker can be turned off and is off in the test suites.
+- Repo: multi-select merge committed (9a41987); migration head p33c (dev DB at p33c). P37's
+  migration revises `p33c`, unless another phase lands first.
+
+Decisions (orchestrator, 2026-11-16; confirmed at P37-T02):
+- D37-1: one clock (`services/plan_clock.py`): ISO week of today in Europe/Athens, read per request
+  (FastAPI dependency) and per solve dispatch, never at import, no defaulted parameters;
+  `RPD_CURRENT_WEEK` stays as a validated pin (1..52; tests pin 31).
+- D37-2: `RPD_PLAN_YEAR` (default 2026) is served; ISO W53 → 52; after the plan year → 52 +
+  `plan_year_closed` (OQ #88 decides the real rollover); stored weeks are never re-based by the clock.
+- D37-3: calendar week for facts (check-in stamps, tracking), new solves, run-independent figures
+  (remaining supply/demand, Capacity `remaining_weeks`) and "now" markers; run week for interpreting
+  a stored run (I13/I14).
+- D37-4: weekly rollover: one idempotent `ensure_week_rollover()` called by a Celery beat entry
+  (Mon 00:05 Athens + every 15 min) and an in-app lifespan ticker (5 min; hosted/dev run greedy
+  inline without beat, P32-R01); greedy, `trigger_reason="week_rollover"`, system actor, ADR 0023
+  lifecycle, ≤ 3 attempts/week ≥ 30 min apart, no per-project `schedule_stale`. CP-SAT replacement
+  follows P32-R12 / OQ #89.
+- D37-5: header = calendar week + served Athens date; "Plan from W*n* · recalculating / failed" chip
+  and the same notice on Gantt, Dashboard, Capacity, Workspace while the active run is behind.
+- D37-6: seed progress derivation pinned to `SEED_STATUS_WEEK = 42`.
+- D37-7: ~~deploy only after the owner has seen P37-T07's figures~~. Superseded 2026-11-17: the owner
+  accepted the drop (OQ #92), so the release follows the normal gate.
+
+| ID | Task | Owner | Depends on | Acceptance | Status |
+|---|---|---|---|---|---|
+| P37-T01 | **Ruling** on ADR 0052 Q1–Q5: the calendar-week / run-week split and the Appendix reader list; tracking "due" while the plan is behind; I13/I19 restatement; the rollover's queued / deferred / not_needed rule vs ADR 0023 (I24) and no per-project stale; W53 and `plan_year_closed` clamps vs unconstrained finish, anchored tails (Gate ruling 10) and Done intervals past the week; invariants I38–I41 confirmed or amended with exact text | workflow-auditor | — | MEMORY entry with accept / amend per Q1–Q5 and any R37-items; no code | DONE (MEMORY 2026-11-16 P37-T01: ACCEPT WITH AMENDMENTS, R37-1..R37-10; measured 135 → 114 within-year at W47) |
+| P37-T02 | Fold the ruling in: ADR 0052 → Accepted (with R-items); DOMAIN_RULES 2026-11-16 amendment loses "PROPOSED"; contract updated; dependencies re-checked | orchestrator | P37-T01 | ADR, DOMAIN_RULES and contract consistent with the ruling; MEMORY entry | DONE (MEMORY 2026-11-17 P37-T02; owner answers OQ #88–#92 folded in) |
+| P37-T03 | Scheduler: `ScheduleInput.current_week` has no import-time default (required, or a sentinel the builder must replace); validation `1 ≤ current_week ≤ within_year_week`; What-if, plan import, Monte Carlo and the unconstrained finish read only the input; I38 in the validator (run row week = input week); `scheduling/_selftest*` take the week explicitly; **pin condition (ii): no new field in `canonical_schedule_input_asdict` (keyword-only field or a sentinel validation rejects)** | algorithm-engineer (`backend/scheduling/` only) | P37-T02 | All golden files, input hashes and re-serialised stored runs byte-identical (suites pin 31); scheduling suite ≥ 85 %; tests: a solve at W47 vs W42 on the same input differs only through the week, two solves at the same week byte-identical (I8), out-of-range week rejected; MEMORY entry | DONE (MEMORY 2026-11-17 P37-T03; range check split: engine 1..horizon, I41 1..52 via `require_plan_week` / validator — see entry) |
+| P37-T04 | Backend: `services/plan_clock.py` (`PlanClock`, injectable `now`, Europe/Athens, pin, `RPD_PLAN_YEAR`, clamps per D37-2) + request dependency + startup validation of both env vars; replace every reader in ADR 0052 Appendix (direct reads, import-bound defaults made required, run-week fallbacks → calendar week); Capacity `remaining_weeks` and engineer-utilization `current_week` → calendar week + `run_week`; check-ins stamp the calendar week; `/me` fields per contract §1 (except `plan_week.status` values that need T05, served as `current` / `pending` until then); `SEED_STATUS_WEEK = 42` in the seed; a test that no module outside `plan_clock` and test fixtures reads `RPD_CURRENT_WEEK` or a module-level week; **R37-1** due rule (planned start ≤ week, due-since = planned start); **R37-2** week read once at `create_queued_schedule_run` / synchronous request, worker builds with `current_week=run.current_week`, every builder caller in the ADR Appendix "Added at P37-T02"; **R37-4** `baseline_week` / `run_week` on the changes response; **R37-5** seed summary and first run at the calendar week; **R37-10** `POST /check-ins` 409 `PLAN_YEAR_CLOSED`; P1 capacity fill at the calendar week | backend-builder | P37-T02, P37-T03 | pytest green with clock-injected tests: Mon 16 Nov 2026 → 47 / 5 left; Sun 15 Nov 23:30 Athens → 46; Sun 22:30 UTC on 15 Nov (= Mon 00:30 Athens) → 47; 28 Dec 2026 and 3 Jan 2027 → 52; 4 Jan 2027 → 52 + closed; pin 31 wins; pin 0 / 53 / "x" fails startup; I40 (one week per response) on /me, capacity, check-ins due; **R37-2 test: a run queued Sunday 23:59 Athens and executed Monday stores and solves at the Sunday week**; R37-1 test (a stage planned W43 is still due at W47; identical to the old rule when weeks match); closed-year 409; contract test rows; MEMORY entry | TODO |
+| P37-T05 | Backend: `ensure_week_rollover()` per D37-4 (dispatch advisory lock; migration for `plan_week_rollovers(plan_year, week, attempts, last_attempt_at, last_run_id, status)`; audit `schedule.week_rollover`; system actor), Celery beat entry, FastAPI lifespan ticker with jitter and clean shutdown; `/me.plan_week` status values; decision per DOMAIN_RULES 2026-11-17 text (R37-6 equality, R37-7 no active run, R37-8 state decides, table counts queued attempts only, never CP-SAT, `not_needed` while closed); **R37-9** `RPD_WEEK_ROLLOVER_TICKER` (false in both conftests), beat on Europe/Athens | backend-builder | P37-T04 | Tests: two concurrent callers → one run (I39); **R37-6** lowered pin (active run W47, pin 31) → one run, status not `current`; **R37-7** no active run → `not_needed`, `plan_week` null; active run with no schedulable project → `queued`; **R37-8** `deferred` / `not_needed` then a later tick queues, DISPATCH_FAILED and ABANDONED count as failures, a follow-up does not consume the budget; **R37-9** `TestClient` lifespan with the setting false dispatches nothing; repeated ticks → none; in-flight run at the old week → `deferred` + exactly one follow-up at the new week (I24); in-flight run already at the new week → `not_needed`; no schedulable project → `not_needed`; failed run → retried ≤ 3 times ≥ 30 min apart, then `failed`; unchanged pin → nothing; migration round-trip; no financial field or engineer name in the audit row; MEMORY entry | TODO |
+| P37-T06 | Frontend: header from served `current_week`, `weeks_left_in_year`, `as_of_date` (no browser date); "Plan from W*n*" chip + Recalculate where permitted; same notice on Gantt, Dashboard, Capacity, Workspace; remove `CURRENT_WEEK` / `PLAN_YEAR` (and derived years) from `lib/domain-constants.ts` — every reader in ADR 0052 Appendix uses the served values (Gantt today line, heatmap, What-if import geometry, completion strip, upcoming completions, planning toolbar, plan-week-date); refetch `/me` at `week_ends_at` and on focus, invalidating run-derived queries when the active run version changes; "Planning year closed" state; **R37-3**: notice also on the check-in page and the What-if / plan-import results ("Simulated from W*c*; the active plan is from W*n*"), and every reader added to the ADR Appendix at P37-T02 (`gantt-legend`, `gantt-coordinates`, `plan-month`, `format.ts`, every `SPILLOVER_YEAR` / `CARRY_OVER_YEAR` label); **R37-4**: change list labelled "includes the move from W*a* to W*b*"; check-in submit shows 409 `PLAN_YEAR_CLOSED` | frontend-builder | P37-T04 (contract), P37-T05 (status values) | tsc, eslint, vitest green; grep finds no week/year constant outside fixtures; tests: W47 header text, behind/recalculating/failed chips, closed year, refetch at `week_ends_at` (fake timers), Gantt today line at the served week; axe on header and notice; MEMORY entry (closes P32 finding F9) | TODO |
+| P37-T07 | Audited run on a disposable copy of the dev DB: active run at W42 vs rollover run at W47 — within-year, spillover, left-out, blocked counts overall and per hub, and the change list size (**reported, not tuned**); I1–I41 on the new run; stored runs byte-stable; two ticks → one run; clock-injected W52, W53 and 4 Jan 2027 runs; count of check-in rows stamped 42 after 19 Oct (OQ #90) and of stages turning `overdue` | workflow-auditor | P37-T03, P37-T04, P37-T05 | PASS in MEMORY with the figures (informational; the owner accepted the drop, OQ #92) | TODO |
+| P37-T08 | Gate: qa, workflow, security | qa-inspector + workflow-auditor + security-auditor | all P37 tasks | Three PASSes recorded in MEMORY. Security in particular: the ticker and beat job run with no user context and cannot be triggered by a request; startup env validation; no secret or financial field in rollover audit rows or logs; `/me` new fields leak nothing hub-scoped | TODO |
+| P37-F01 | Open planning year 2027 (OQ #88 (a): "until an Admin opens 2027"): ADR covering re-basing stored plan weeks by −52 or an equivalent, 2026 runs kept as history, within-year and horizon for 2027, the Admin action and its RBAC; then its own phase | orchestrator (ADR) + owner | P37-T08 | ADR drafted and the phase planned **before 28 Dec 2026**. From 4 Jan 2027 the app is closed and refuses check-ins until this lands | TODO |
+
+## P38 — Deactivate engineers instead of deleting them (ADR 0053)
+
+Opened 2026-11-17. Owner request, 2026-11-16: "rather than deleting an engineer add an option to
+deactivate them, so in older projects in which they were assigned it shows them". Owner ruling,
+2026-11-17: "it is Frigoglass's headache for engineer, but give a popup when deactivating: show the
+list of active assigned projects and then ask to change the leader too".
+
+Today `DELETE /engineers/{id}` (Hub Planner own hub, Admin, Super Admin) almost always returns 409.
+Three FKs with no ON DELETE block it: `projects.leader_engineer_id`,
+`project_workflow_steps.assigned_engineer_id` and `schedule_run_project_steps.assigned_engineer_id`.
+There is no "active" concept anywhere: the scheduler input, supply, pickers, What-if and plan
+import all use every engineer.
+
+- Contract: `docs/API_CONTRACT_P38.md`.
+- DOMAIN_RULES: "Engineer deactivation" (2026-11-17) and the "Capacity supply" amendment.
+- Proposed invariants: I42–I44.
+- Owner questions: OQ #93–#99.
+
+Decisions (orchestrator, 2026-11-17; confirmed and amended by the P38-T01 ruling R38-1..R38-9, folded in at P38-T02 — ADR 0053 is Accepted; where a decision below differs from the ruling, the ruling wins: frozen projects must get a leader (R38-3), the run also fires when the active run books the engineer after `d` (R38-5), T03 is NEEDED (R38-2)):
+- D38-1: Deactivate / Reactivate replace Delete. DELETE returns 410. Admin and Super Admin only
+  until OQ #93. The reason is a code, never free text. There is no purge (OQ #95).
+- D38-2: the popup lists every open project the engineer leads (any status except Commercialized
+  or Cancelled):
+  - each row has a picker of eligible active engineers of the project's capacity hub;
+  - "Use one leader for all" fills the empty rows;
+  - rows left empty are allowed after a "Deactivate anyway" warning, and those projects get
+    `leader_engineer_id = NULL` (the existing "No leader" marker, `LEFT_OUT no_leader`);
+  - per the owner, that outcome is Frigoglass's responsibility.
+  One transaction, then one greedy run (`engineer_deactivated`, ADR 0023) if a schedulable
+  project changed leader.
+- D38-3: supply is pro rata on active weeks. The deactivation week counts as worked, and an
+  `engineer_inactive_periods` table drives it (ADR 0053 §4; OQ #94 confirms).
+- D38-4: the scheduler is unchanged. The builder leaves inactive engineers out of the input, and
+  `scheduling/` is touched only if T01 says so (P38-T03 is conditional).
+- D38-5: history keeps the name, with an "Inactive" tag and a served `active` flag beside every
+  served name. `project_leader_history` gives a Workspace "Former leader" line.
+- D38-6: the linked login is not touched (OQ #96). There is no future-dated deactivation
+  (OQ #99).
+
+| ID | Task | Owner | Depends on | Acceptance | Status |
+|---|---|---|---|---|---|
+| P38-T01 | **Ruling** on ADR 0053 Q1–Q6: the pro rata supply formula and week convention vs ADR 0008 / I17 / I19 / P1 fill; the builder filter (What-if baseline, plan import, Monte Carlo, demand I25, excluded projects); the open set and clearing to NULL (frozen projects, readers that assume a leader); the `engineer_deactivated` run vs ADR 0023 / I24 and `not_needed`; exact text of I42–I44; whether a project-level "Former leader" satisfies I44; whether `scheduling/` changes (T03 needed or skipped) | workflow-auditor | — | MEMORY entry with accept / amend per Q1–Q6 and any R38-items; no code | DONE (MEMORY 2026-11-17 P38-T01: ACCEPT WITH AMENDMENTS R38-1..R38-9; T03 NEEDED) |
+| P38-T02 | Fold the ruling in: ADR 0053 → Accepted (with R-items); DOMAIN_RULES 2026-11-17 amendment loses "PROPOSED"; contract updated; T03 marked needed or SKIPPED; add this reader to the ADR 0052 Appendix list if P37-T04 has not landed | orchestrator | P38-T01 | ADR, DOMAIN_RULES, contract and plan consistent with the ruling; MEMORY entry | DONE (MEMORY 2026-11-17 P38-T02; OQ #101–#103 added) |
+| P38-T03 | **NEEDED (R38-2).** `backend/scheduling/` only: a supply-only field on `WhatIfBaseline` (**not** `ScheduleInput`; canonical input and hash unchanged) carrying per-engineer active weeks (hub, FTE, covered weeks) for every counted engineer with an inactive period, inactive or reactivated; `whatif._supply` (estimate before/after, simulate `utilization_before`) and the `plan_import` weekly supply series apply the R38-1 helper `A_e` (a covered week supplies 0; exact Decimal/Fraction); greedy, CP-SAT and the validator unchanged | algorithm-engineer | P38-T02 | With the field empty, every golden file, What-if and plan-import output byte-identical (R38-9); tests: a deactivated engineer and a reactivated one give What-if `capacity_before` equal to the R38-1 hub figure (year and remaining) and a weekly series with 0 in covered weeks; scheduling suite ≥ 85 %; field name published for T05; MEMORY entry | DONE (MEMORY 2026-11-17 P38-T03; field `WhatIfBaseline.engineer_active_weeks`) |
+| P38-T04 | Backend, data and engineer endpoints: migration (`engineers.active`, `deactivated_at`, `deactivated_week`, `deactivated_plan_year`, `deactivated_by_user_id`, `deactivation_reason` + CHECK; `engineer_inactive_periods` with a partial unique open-period index; `project_leader_history`; backfill every engineer active, no periods); `EngineerRead` fields and `?status=`; `GET …/deactivation-preview` (eligible capacity-hub candidates, supply effect, `led_projects_token`), `POST …/deactivate` (exact-set check → 409 `LED_PROJECTS_CHANGED`, per-row leader or NULL, one transaction, audit, leader history, `schedule_stale`, one greedy run via `run_dispatch` or `not_needed`), `POST …/reactivate`; DELETE → 410; PATCH on inactive → name only; `LEADER_INACTIVE` on registration, PATCH, register batch, bulk edit, user-engineer link; lookup + authz before locks, coded 503 on lock timeout; week read through the request's week accessor | backend-builder | P38-T02 | pytest green; *(T02 additions)* preview serves `frozen`, `progress_tracked`, `done_stages`, `in_flight_lab` and candidates by the `greedy._cat_not_allowed` predicate; null row on a frozen project → 422 `FROZEN_NEEDS_LEADER`; reopen (out of Commercialized / Cancelled) with an inactive stored leader and no leader in the write → 422 `LEADER_INACTIVE` on PATCH, register batch, bulk edit, re-import and seed (R38-4); dispatch iff schedulable leader change OR the active run has a design row of the engineer ending after `d`, else `not_needed` (R38-5, both branches tested); lock order engineer row → projects by id, concurrent leader PATCH vs deactivate in both orders, busy → 503 `ENGINEER_STATUS_BUSY`; `deactivated_week` / periods from `plan_clock` (calendar), `plan_year` served, closed year → (plan_year, 52) (R38-7); `project_leader_history` written on **every** leader-change path (R38-6); band rank unchanged by a leader change or clear (R38-8); I42 incl. the open-period uniqueness; migration round-trip; tests: Hub Planner 403, Admin OK; mixed reassign / NULL rows → exactly one run, `left_without_leader` ids correct; only On Hold changed → `not_needed`; a project assigned to the engineer between preview and confirm → 409; concurrent leader PATCH naming the engineer → `LEADER_INACTIVE` after commit; reactivate restores no project and dispatches nothing; audit rows hold no financial field and no reason text; DELETE 410 creates no audit row; I42 checked after every write path; contract test rows; MEMORY entry | TODO |
+| P38-T05 | Backend, readers: builder excludes inactive engineers (`schedule_persistence`); supply per ADR 0053 §4 in `capacity_supply` / `capacity_hubs`, P1 fill, per-engineer YearRemaining, `/capacity-summary`, `inactive_engineers` count; utilization matrix, engineer utilization and resource load with `?include_inactive=` and 0 capacity after `d`; What-if pool and plan import (match all names, strip " (inactive)", warn `ENGINEER_INACTIVE`, auto-assign, never a new hypothetical engineer); `leader_active` / `assigned_engineer_active` / `active` on every served name per contract §4; `former_leaders` on the Workspace; exports `Name (inactive)`; leader filter options with inactive last and a `no_leader` option | backend-builder | P38-T04, P38-T03 | pytest green; *(T02 additions)* one `A_e` helper (R38-1) feeding year, remaining, per-engineer, P1 fill `C` (fill's own FTE query retired) and the T03 `WhatIfBaseline` field; `design_capacity()` takes year and remaining Σfte separately; no-period path is today's `fte_sum` (same float); engineer capacity 0 in every covered week; counted / not_counted active-only + `inactive_engineers` summing to the roster; `test_p18_r02` gains an inactive and a reactivated engineer; plan-import keep-leader branch active-only; explicit NULL-leader tests for export, Matrix, cards and the leader filter; history readers never filter by `active` (R38-6); with no inactive engineer every supply figure, the live input hash and golden runs are byte-identical (I43); supply tests for deactivate at W47, deactivate + reactivate in the same week (no change), across a plan-year boundary, `counts_in_capacity = false` (no effect); the input built after deactivation has no inactive engineer; stored runs byte-stable (I44); name-withholding tests unchanged and the flag withheld with the name; contract test rows; MEMORY entry | TODO |
+| P38-T06 | Frontend, roster and dialogs: Capacity Planning roster Delete → Deactivate / Reactivate (Admin / Super Admin only, by role as with `counts_in_capacity`); Show filter Active (default) / Inactive / All; Inactive tag, no write actions on inactive rows except Reactivate and name; the Deactivate dialog per ADR 0053 §3: open-project list, per-row picker of the served candidates, "Use one leader for all", reason select, supply effect line, linked-login note (yes/no), button switches to "Deactivate anyway" with the warning listing projects left without a leader, 409 `LED_PROJECTS_CHANGED` refreshes the list keeping choices, success toast with run status and a link to the register filtered to "No leader" | frontend-builder | P38-T04 (contract) | tsc, eslint, vitest green; *(T02 additions)* frozen rows are marked required and cannot be left empty (no candidate on a frozen row → message "Unfreeze this project on the Gantt first", confirm disabled); the contract §2 warning copy verbatim, the second sentence only when an empty row is `progress_tracked` or `in_flight_lab`; rows show done-stage count / lab-in-flight; tests: all rows filled → plain "Deactivate"; one empty → "Deactivate anyway" + warning naming it; "one leader for all" fills only empty rows; empty candidate list message; 409 refresh; Hub Planner sees no action; axe on the dialog (keyboard-scrollable list, P33-R02); MEMORY entry | DONE (MEMORY 2026-11-17 P38-T06; built to the contract with mocks, live check after T04) |
+| P38-T07 | Frontend, everywhere else: shared `InactiveTag` next to every engineer name using the served flags (register, cards, Priority / VIP boards, Dashboard lists, Workspace incl. "Former leader", Gantt rows and stages, run changes, utilization views with an include-inactive toggle); every leader picker excludes inactive (Registration, register cell, bulk edit, Workspace, What-if, user form); leader filters list inactive in an "Inactive" group and offer "No leader"; projects cleared to NULL show the existing `NoLeaderLabel` | frontend-builder | P38-T05 (contract), P38-T06 | tsc, eslint, vitest green; grep finds no picker fed from an unfiltered engineer list; tests per surface for tag rendering and picker exclusion; bundle budget; axe on tag (text, not colour only); MEMORY entry | TODO |
+| P38-T08 | Audited run on a disposable copy of the dev DB: deactivate one real engineer with open projects twice (all reassigned; some left empty), and one with none; supply before / after per capacity hub vs the formula; one run each (none for the third); within-year, spillover, left-out (`no_leader`) counts and the change list (**reported, not tuned**); I1–I44 on the new runs; stored runs byte-stable; history surfaces still name the engineer | workflow-auditor | P38-T03, P38-T04, P38-T05 | PASS in MEMORY with the figures | TODO |
+| P38-T09 | Gate: qa, workflow, security | qa-inspector + workflow-auditor + security-auditor | all P38 tasks | Three PASSes recorded in MEMORY. Security in particular: Admin-only writes and hub scope on preview (no out-of-scope project or engineer revealed through candidates or `open_projects`); the `active` flag never leaks a withheld name; DELETE 410 for every role; no reason free text; audit rows complete and no financial field; the race (409) and lock-before-authz order | TODO |
+
+## P39 — Marketing Brief is not a design step (ADR 0007 amendment 2026-11-17)
+
+Opened 2026-11-17. Owner correction, verbatim: "also marketing is under others, not a design step".
+PDD-A Marketing Brief (`MKTG_BRF`) changes kind `design` → `elapsed`.
+- ADR 0007 "Amendment 2026-11-17 (P39)" has the evidence, the decision, the consequences and
+  questions Q1–Q6.
+- DOMAIN_RULES has the 2026-11-17 (P39) header note, the step table and the recomputed R2 examples.
+- Owner question: OQ #100 (OEM-A Commercial Brief; the "Elapsed" vs "Others" label; Pr. Pr).
+- No migration, so P39 adds nothing to the Alembic chain that P37 and P38 are extending.
+
+Decisions (orchestrator, 2026-11-17; binding once P39-T01 confirms):
+- **D39-1: `elapsed`, not a new kind.** A new kind would schedule identically. The old tool's word
+  "Others" is at most a label (OQ #100 b).
+- **D39-2: mechanism.** One transaction: kind, `rederive_all_projects` (R6), audit
+  (`workflow_settings.steps_update`, system actor, plus `project.effort_rederived` per change) and
+  `schedule_stale`. Then one greedy run (`step_kind_changed`, ADR 0023 lifecycle). It runs through an
+  idempotent script that reuses the router's step-kind path, extracted into a service. Fresh
+  installs get the kind from `domain_constants`. The script always re-derives, so a seed merge
+  cannot leave a stale split.
+- **D39-3: history is kept.** PDD-A stage statuses, actual dates and check-ins stay as recorded.
+  Stored runs keep their snapshot kinds (I14).
+- **D39-4: OEM-A Commercial Brief is not changed.** The old tool says "R&D Resource". OQ #100 a
+  asks the owner.
+- **D39-5: the effects.**
+  - The leader is no longer booked for PDD-A.
+  - Design demand drops by 1 week per PDD project without a design figure, plus any R3-raised
+    PDD-A weeks.
+  - Figure projects keep E, spread over B/D/E/I/J/K/M, and gain PDD-A's calendar week.
+  - Booked %, within-year and the P1 fill move with the run.
+  - These are reported, not tuned.
+
+| ID | Task | Owner | Depends on | Acceptance | Status |
+|---|---|---|---|---|---|
+| P39-T01 | **Ruling** on the ADR 0007 amendment Q1–Q6 (elapsed vs a new kind; In Progress PDD-A; script vs migration; stale `plan_weeks` on own-effort PDD-A rows and an OR-5 style re-copy; `trigger_reason` and `not_needed`; R35-5 when PDD-A was the only non-excluded design step) **plus the measured effect on a disposable copy of the dev DB** (dev DB at p33c, never touched). Pin `RPD_CURRENT_WEEK` to one week for both runs. Fresh greedy run on the copy before the change; flip PDD-A through the existing Workflow Settings steps PUT (it already re-derives); fresh greedy run after. Report per hub and overall: within-year / spillover / left-out; design demand (full year, remaining) and design booked % per capacity hub; P1 fill suggestions changed; projects whose finish moved, and how many of those carry a design figure; count of `project.effort_rederived`; I1–I44 on the new run. **Reported, not tuned.** | workflow-auditor | — | MEMORY entry with accept / amend per Q1–Q6, any R39 items, and the before / after table; the copy is dropped; no code | TODO |
+| P39-T02 | Fold the ruling in: ADR 0007 amendment → Accepted (with R-items); DOMAIN_RULES P39 note loses "PROPOSED"; T04 marked needed or SKIPPED | orchestrator | P39-T01 | ADR, DOMAIN_RULES and plan consistent with the ruling; MEMORY entry | TODO |
+| P39-T03 | Backend: `domain_constants.WORKFLOW_STEP_TEMPLATE_SEED` PDD-A → `elapsed`; extract the steps-PUT kind path into a service (router behaviour and audit unchanged); `scripts/p39_marketing_brief_elapsed.py` per D39-2 (dispatch advisory lock, idempotent, exit codes as the p33 script, prints counts only, no financial field read); any R39 items; update tests that assert the seeded kind (`test_domain_constants_lead_times`, `test_workflow_settings_api`, `tests/factories`) | backend-builder | P39-T02 | pytest, ruff, mypy green. Tests: the split examples in DOMAIN_RULES (B 4 → D 1, E 2, K 1; C 3 → D 1, E 1, J 1; B 8; A 18; A+ 44); a project with a Done PDD-A keeps status, actual dates and check-ins, has `effort_weeks` NULL on PDD-A, and is not raised; In Progress PDD-A books no leader in the next run; the script run twice → one `steps_update` audit and one run; a script run on a DB already `elapsed` with a stale split re-derives; frozen projects untouched (I10); excluded PDD-A unchanged; a fresh seeded DB equals a script-migrated DB on kinds; `scheduling/` untouched; MEMORY entry | TODO |
+| P39-T04 | *(Conditional on OQ #100 b / T01.)* Frontend: only if the label changes ("Elapsed" → "Others") in `step-kind-meta.ts` and the legends that read it. Today no surface names PDD-A's kind outside the served data, so nothing is needed | frontend-builder | P39-T02 | tsc, eslint, vitest green; MEMORY entry | TODO |
+| P39-T05 | Audited script run on a fresh disposable copy of the dev DB: the figures match T01 (or every difference is explained); second invocation dispatches nothing; audit rows as specified; I1–I44 on the run | workflow-auditor | P39-T03 | MEMORY entry with the table; copy dropped | TODO |
+| P39-T06 | Gate: qa, workflow, security. **May be combined with P37-T08** if P39-T05 is DONE before P37-T08 starts (one MEMORY PASS per auditor naming both phases); otherwise its own gate | qa-inspector + workflow-auditor + security-auditor | all P39 tasks | Three PASSes recorded in MEMORY. Security in particular: the script runs with no request context, logs counts only, and the audit actor is the system | TODO |
+
+## P40 — Project Execution Timeline: step colours, multi-select filters, compact forest view, frozen per-step dates
+
+Opened 2026-11-17 (owner request with screenshots of the client's old tool,
+`~/.gemini/antigravity-ide/scratch/RPDCHARTERV1del/src/components/Charter.jsx`). Asks:
+(1) per-step Start / End week on the timeline: changing Start pushes End by the step's length;
+changing End by hand squeezes / stretches the step; the typed dates override the scheduled ones;
+(2) a frozen project keeps those dates and is not moved by the scheduler;
+(3) a distinct colour per workflow step on the bars (old tool: a 14-colour palette by step index)
+with a legend;
+(4) the per-step count chips (PDD / OEM rows) and activity load coloured per step, with the
+colours named;
+(5) the toolbar filters (Hub, Category, Type, Status, Leader/Engineer, Step) are multi-select;
+(6) Forest view shows only the project name and one execution line per project, so many
+projects fit;
+(7) the upper half (filters, stats) is compacted so the timeline gets the space: one row of
+dropdown filters.
+
+Items (1)–(2) partly reverse ADR 0048 (per-project timing retired, owner 2026-11-13). They wait
+for the owner's confirmation of the model (OQ, asked 2026-11-17) and a new ADR. Items (3)–(7)
+are presentation only and start now.
+
+| ID | Task | Owner | Depends on | Acceptance | Status |
+|---|---|---|---|---|---|
+| P40-T01 | Frontend: items (3)–(7): per-step colour palette (one token map keyed by step code, PDD and OEM, legend), step-count chips and activity-load strip coloured per step, multi-select Hub/Category/Type/Status/Leader/Step filters (URL state, clear-all), compact Forest view (name + one line, small row height), compact one-row toolbar with dropdown filters and collapsible stats | frontend-builder | — | tsc, eslint, vitest green; axe; colour contrast of bar labels; MEMORY entry | DONE (2026-11-17; per-step weekly counts need a backend field, see MEMORY) |
+| P40-T02 | ADR 0054 + DOMAIN_RULES: frozen per-step start/end dates (model per owner answer) | orchestrator + workflow-auditor | owner answer | ADR Accepted; invariants | DONE (2026-11-17, workflow-auditor: ADR 0054 Accepted with ruling R40-1..R40-15; DOMAIN_RULES "Manual step weeks", I45–I48; MEMORY entry) |
+| P40-T03a | Scheduler per ADR 0054 ruling R40-3..R40-8, R40-12, I45–I48 (work split 'algorithm-engineer' in MEMORY P40-T02): `StepPinInput`, `ProjectInput.step_pins`, pinned placement in greedy + CP-SAT pre-booking, same-project ENG_CONFLICT, `manual_overlap` / `pin_lapsed`, invariants, byte-identity proof | algorithm-engineer | P40-T02 | golden files byte-identical with no pins; fixtures per pin type; greedy = CP-SAT on pinned rows; MEMORY entry | TODO |
+| P40-T03b | Backend per R40-1/2/4/9/10/11/13 (work split 'backend-builder'): migration, `PUT /gantt/step-pins` batch save + audit + one greedy run, clear-on-start hooks, Admin/Super-Admin unfreeze, builder/persistence, per-week spread, Gantt payload fields, plan-import PIN_DROPPED, contract | backend-builder | P40-T02 (types from T03a) | pytest; contract doc + table; MEMORY entry | DONE (2026-11-17, backend-builder: migration p40a, `PUT /gantt/step-pins`, clear hooks, Admin-only unfreeze, builder/persistence/readers, Gantt fields + `by_step` / `current_step_counts`, PIN_DROPPED; docs/API_CONTRACT_P40.md; MEMORY entry) |
+| P40-T03c | Frontend Start/End inputs per the 'frontend-builder' work split | frontend-builder | P40-T01, P40-T03b | tsc/eslint/vitest/axe; MEMORY entry | TODO |
+| P40-T03d | Audited run on a disposable DB copy: every pin type, I45–I48, greedy vs CP-SAT | workflow-auditor | T03a–c | PASS in MEMORY | TODO |
+| P40-T04 | Gate: qa, workflow, security | three gatekeepers | all P40 tasks | three PASSes | TODO |
+
+## P41 — What-if import: editable Excel format, hand-picked scenarios, saved/exported scenarios across imports (ADR 0055)
+
+Opened 2026-11-17 (owner request). Asks:
+1. Admin and Super Admin can set and edit the import Excel format.
+2. The Executive view gets scenarios built by ticking projects before including them, with Save and
+   Export.
+3. Scenarios from different imports can be compared and stay saved for future reference.
+
+Contract: `docs/API_CONTRACT_P41.md`. No scheduler change.
+
+| ID | Task | Owner | Depends on | Acceptance | Status |
+|---|---|---|---|---|---|
+| P41-T01 | ADR 0055, contract, DOMAIN_RULES amendment, OQ #104–#106 | orchestrator | — | docs written | DONE (MEMORY 2026-11-17 P41-T01) |
+| P41-T02 | Backend: migration `p41a`, format GET/PUT/reset/template, parser aliases arg, `exclude_plan_project_ids` + `plan_excluded` + `plan_projects`, saved scenarios CRUD with scope, exports (scenario, current, compare), audit, limits; tests | backend-builder | T01 | pytest green, ruff/mypy clean, template round-trips through the parser, scope probe tests, formula-injection test, no-financial-keys test; MEMORY entry | DONE (MEMORY 2026-11-17 P41-T02) |
+| P41-T03 | Frontend: Excel format card + Admin edit dialog, Executive Scenario bar + project picker sheet, Save / Export, saved library, cross-import Compare + export; tests | frontend-builder | T01 (contract) | tsc, eslint, vitest green; role-gated edit; MEMORY entry | TODO |
+| P41-T04 | Gate: qa, workflow (reconciliation only), security | three gatekeepers | T02, T03 | three PASSes | TODO |
+
+## P42 — Priority bands mean something for scheduling (ADR 0056)
+
+Opened 2026-11-17 (owner request).
+- P1 "Must do this year" and P2 "Good to have this year" schedule as today.
+- P3 "In queue": started P3 schedules as today. P3 still In Queue schedules with spare capacity
+  only and never counts toward the year.
+- P4 "Miscellaneous" is never scheduled.
+
+| ID | Task | Owner | Depends on | Acceptance | Status |
+|---|---|---|---|---|---|
+| P42-T01 | Ruling on ADR 0056 D1–D6 (frozen P4, CP-SAT weight, impact map of every "schedulable" site, invariants) | workflow-auditor | — | ruling R42-n in MEMORY | TODO |
+| P42-T02 | Scheduler: P4/Q exclusion + `not_scheduled_priority`, `counts_toward_year`, CP-SAT prepare_run, What-if / plan import, validator invariants; tests | algorithm-engineer | T01 | selftests + pytest green; MEMORY entry | TODO |
+| P42-T03 | Backend: band labels served, KPI / dashboard / executive / capacity demand per ruling, persistence of new result fields (migration if needed), contract `docs/API_CONTRACT_P42.md`; tests | backend-builder | T01, T02 types | pytest green, ruff/mypy clean; MEMORY entry | TODO |
+| P42-T04 | Frontend: band labels, "Queued" / "Not scheduled (P4)" display, KPI copy, priority-move preview copy; tests | frontend-builder | T03 contract | tsc, eslint, vitest green; MEMORY entry | TODO |
+| P42-T05 | Gate: qa, workflow, security | three gatekeepers | T02–T04 | three PASSes | TODO |

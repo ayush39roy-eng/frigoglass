@@ -54,7 +54,8 @@ class StageCheckin(UUIDPrimaryKeyMixin, Base):
     step_template_id: Mapped[str] = mapped_column(
         ForeignKey("workflow_step_templates.id"), nullable=False
     )
-    #: `domain_constants.CURRENT_WEEK` at submit time.
+    #: The calendar week at submit time (`services.plan_clock`, ADR 0052;
+    #: rows stamped before P37-T04 carry the old constant 42, OQ #90).
     week: Mapped[int] = mapped_column(Integer, nullable=False)
     user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"), nullable=False)
     status: Mapped[WorkflowStepStatus] = mapped_column(

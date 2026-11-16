@@ -1103,3 +1103,53 @@
   --vip-performance-subtle: 176 60% 12%;
   --vip-performance-ink: 170 70% 72%;
 }
+
+/* ===========================================================================
+ * WORKFLOW STEP PALETTE  (2026-11-17, P40-T01 — owner ask: one colour per step).
+ *
+ * Slot N is the Nth step of a workflow (PDD-A / OEM-A = 1 … PDD-N / OEM-N = 14),
+ * taken from the client's old Charter tool (`Charter.jsx`, 14 hex values by step
+ * index). Its duplicate (#059669 at slots 9 and 14) is fixed: slot 14 is lime
+ * #65A30D, so all 14 steps of a workflow are distinct. The code → slot map is
+ * `surfaces/gantt/lib/step-colors.ts`.
+ *
+ * `--step-ink-N` is the label text drawn ON the fill: white or slate-900,
+ * whichever reaches WCAG AA 4.5:1 (asserted by `step-colors.test.ts` from these
+ * values, both themes). The dark theme only lifts the two hues that fell under
+ * 3:1 against the dark surface (slots 7 and 12).
+ * ========================================================================= */
+:root {
+  --step-1: 214 79% 49%;
+  --step-2: 246 100% 75%;
+  --step-3: 175 84% 32%;
+  --step-4: 170 100% 39%;
+  --step-5: 38 92% 50%;
+  --step-6: 347 77% 50%;
+  --step-7: 262 83% 58%;
+  --step-8: 221 83% 53%;
+  --step-9: 161 94% 30%;
+  --step-10: 32 95% 44%;
+  --step-11: 333 71% 51%;
+  --step-12: 243 75% 59%;
+  --step-13: 192 91% 36%;
+  --step-14: 85 85% 35%;
+  --step-ink-1: 0 0% 100%;
+  --step-ink-2: 222 44% 9%;
+  --step-ink-3: 222 44% 9%;
+  --step-ink-4: 222 44% 9%;
+  --step-ink-5: 222 44% 9%;
+  --step-ink-6: 0 0% 100%;
+  --step-ink-7: 0 0% 100%;
+  --step-ink-8: 0 0% 100%;
+  --step-ink-9: 222 44% 9%;
+  --step-ink-10: 222 44% 9%;
+  --step-ink-11: 0 0% 100%;
+  --step-ink-12: 0 0% 100%;
+  --step-ink-13: 222 44% 9%;
+  --step-ink-14: 222 44% 9%;
+}
+
+.dark {
+  --step-7: 262 83% 62%;
+  --step-12: 243 75% 63%;
+}

@@ -88,10 +88,15 @@ from api.routers.workflow_templates import router as workflow_templates_router  
 from api.routers.workspace import router as workspace_router  # noqa: E402
 from core.config import is_dev_mode  # noqa: E402
 from core.observability import ObservabilityMiddleware, render_metrics  # noqa: E402
+from services import plan_clock  # noqa: E402
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    # P37-T04 (ADR 0052 §3, API_CONTRACT_P37 §4): a bad `RPD_CURRENT_WEEK`
+    # (not 1..52) or `RPD_PLAN_YEAR` (not 2000..2100) stops the process here,
+    # before it serves a request, with a message naming the variable.
+    plan_clock.validate_environment()
     yield
     await dispose_engine()
 

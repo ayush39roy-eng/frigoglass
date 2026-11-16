@@ -7,9 +7,10 @@ import { formatInteger } from '@/lib/format';
 import { useCountUp } from '@/lib/use-count-up';
 import { useMotionTokens } from '@/lib/motion';
 
-import type { CompletingWithinYear } from '../api/types';
+import type { CompletingWithinYear, DeliveryRegionRow } from '../api/types';
 import { outcomeTotal, withinYearSharePct } from '../lib/outcome';
 import { CardInfo } from '@/components/ui/card-info';
+import { DeliveryRegionBreakdown } from './delivery-region-breakdown';
 
 /**
  * Delivery-rate gauge (Bold Blocks, 2026-10-01) — the segmented half-ring from
@@ -42,6 +43,9 @@ export function DeliveryGaugeCard({ data, compact = false }: DeliveryGaugeCardPr
   const pct = withinYearSharePct(data);
   const lit = total > 0 ? Math.round((data.within_year_count / total) * SEGMENTS) : 0;
   const shownPct = useCountUp(pct);
+  // Owner ask 2026-11-16: the per-country rows (served). Read defensively so a
+  // backend that predates the field still renders the overall gauge.
+  const regions = data.regions as DeliveryRegionRow[] | undefined;
 
   return (
     <BoltCard
@@ -70,7 +74,8 @@ export function DeliveryGaugeCard({ data, compact = false }: DeliveryGaugeCardPr
             Within-year projects (done by W52) divided by every project in the active schedule
             run: within year, spillover past W52 (including any not yet placed) and on hold at a
             stage. The counts come straight from the run; nothing is re-scheduled in your browser.
-            The same share appears on the Within year tile.
+            The same share appears on the Within year tile. The per-country rows apply the same
+            ratio to each country&apos;s own counts; OEM hubs are counted under Greece.
           </p>
         </CardInfo>
       </div>
@@ -133,6 +138,8 @@ export function DeliveryGaugeCard({ data, compact = false }: DeliveryGaugeCardPr
           <MiniTile label="In the run" value={total} />
         </div>
       )}
+
+      {regions && regions.length > 0 ? <DeliveryRegionBreakdown regions={regions} compact={compact} /> : null}
     </BoltCard>
   );
 }

@@ -302,6 +302,17 @@ class ProjectWorkflowStep(TimestampMixin, Base):
     plan_gap_weeks: Mapped[int] = mapped_column(
         Integer, nullable=False, default=0, server_default="0"
     )
+    # --- Manual step pins (P40, ADR 0054 ruling R40-1..R40-15) ----------------
+    #: A person's fixed placement of this step: weeks `manual_start_week ..
+    #: manual_end_week`, end inclusive (length `me − ms + 1`). Both set or both
+    #: null; stored `1 <= ms <= me <= 52` (CHECK `step_pin_range`). Written only
+    #: by `PUT /gantt/step-pins` (Admin / Super Admin) and cleared by it, by the
+    #: stage leaving Not Started (`cause = "stage_started"`) or by a workflow
+    #: re-point (`cause = "workflow_change"`), each with an audit row (I46). A
+    #: schedule run never writes them. A placement, not effort: `eff` is
+    #: unchanged by a pin (R40-3).
+    manual_start_week: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    manual_end_week: Mapped[int | None] = mapped_column(Integer, nullable=True)
     #: The template apply that last wrote this row's copy (P33-T10).
     template_change_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("template_changes.id"), nullable=True
@@ -400,6 +411,14 @@ class ProjectWorkflowStep(TimestampMixin, Base):
         CheckConstraint("plan_gap_weeks BETWEEN -104 AND 104", name="plan_gap_weeks_range"),
         # P35 (migration p35b_step_excluded): I34 (i).
         CheckConstraint("NOT (excluded AND status = 'Done')", name="excluded_not_done"),
+        # P40 (migration p40a_step_pins, ADR 0054 R40-1).
+        CheckConstraint(
+            "(manual_start_week IS NULL AND manual_end_week IS NULL) OR ("
+            "manual_start_week IS NOT NULL AND manual_end_week IS NOT NULL "
+            "AND manual_start_week >= 1 AND manual_start_week <= manual_end_week "
+            "AND manual_end_week <= 52)",
+            name="step_pin_range",
+        ),
     )
 
     def __repr__(self) -> str:  # pragma: no cover - debug convenience only

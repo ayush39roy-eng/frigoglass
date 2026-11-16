@@ -35,6 +35,7 @@ from schemas.scoring_rubric import (
     ScoringRubricUpdateRequest,
     ScoringRubricVersionsResponse,
 )
+from services.plan_clock import PlanClock, get_plan_clock
 from services.priority_scoring import Rubric, RubricDimension, scaled_weight
 from services.scoring_rubric import (
     ProposedDimension,
@@ -215,6 +216,7 @@ async def preview_scoring_rubric(
     body: ScoringRubricPreviewRequest,
     db: AsyncSession = Depends(get_db),
     current_user: Principal = Depends(_admin),
+    clock: PlanClock = Depends(get_plan_clock),
 ) -> ScoringRubricPreview:
     """The impact of a proposed rubric, without saving: new total weight,
     per project (in the caller's scope) old vs new normalized score, score
@@ -226,7 +228,7 @@ async def preview_scoring_rubric(
         proposed = resolve_proposal(current, _proposed(body))
     except RubricValidationError as exc:
         raise _validation_error(exc) from exc
-    rows = await preview_rubric(db, current_user, current, proposed)
+    rows = await preview_rubric(db, current_user, current, proposed, current_week=clock.week)
 
     def label(band: object) -> str:
         return band.value if band is not None else "Unscored"  # type: ignore[attr-defined]

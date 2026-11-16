@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { screen, within } from '@testing-library/react';
+import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
 import { renderWithProviders } from '@/test/render';
@@ -13,7 +13,9 @@ const hooks = {
   useChamberList: vi.fn(),
   useCreateEngineer: vi.fn(),
   useUpdateEngineer: vi.fn(),
-  useDeleteEngineer: vi.fn(),
+  useReactivateEngineer: vi.fn(),
+  useDeactivationPreview: vi.fn(),
+  useDeactivateEngineer: vi.fn(),
   useCreateChamber: vi.fn(),
   useUpdateChamber: vi.fn(),
   useDeleteChamber: vi.fn(),
@@ -24,11 +26,13 @@ const hooks = {
   useResourceLoadOptions: vi.fn(),
 };
 vi.mock('./hooks/use-planning', () => ({
-  useEngineerList: (hubId: unknown) => hooks.useEngineerList(hubId),
+  useEngineerList: (hubId: unknown, status: unknown) => hooks.useEngineerList(hubId, status),
   useChamberList: () => hooks.useChamberList(),
   useCreateEngineer: () => hooks.useCreateEngineer(),
   useUpdateEngineer: () => hooks.useUpdateEngineer(),
-  useDeleteEngineer: () => hooks.useDeleteEngineer(),
+  useReactivateEngineer: () => hooks.useReactivateEngineer(),
+  useDeactivationPreview: (id: unknown) => hooks.useDeactivationPreview(id),
+  useDeactivateEngineer: () => hooks.useDeactivateEngineer(),
   useCreateChamber: () => hooks.useCreateChamber(),
   useUpdateChamber: () => hooks.useUpdateChamber(),
   useDeleteChamber: () => hooks.useDeleteChamber(),
@@ -144,7 +148,9 @@ beforeEach(() => {
   hooks.useChamberList.mockReturnValue(ready([chamber]));
   hooks.useCreateEngineer.mockReturnValue({ mutateAsync: vi.fn().mockResolvedValue({}) });
   hooks.useUpdateEngineer.mockReturnValue({ mutateAsync: updateEngineer });
-  hooks.useDeleteEngineer.mockReturnValue({ mutateAsync: vi.fn().mockResolvedValue({}), isPending: false });
+  hooks.useReactivateEngineer.mockReturnValue({ mutateAsync: vi.fn().mockResolvedValue({}), isPending: false });
+  hooks.useDeactivationPreview.mockReturnValue(pending());
+  hooks.useDeactivateEngineer.mockReturnValue({ mutateAsync: vi.fn().mockResolvedValue({}), isPending: false });
   hooks.useCreateChamber.mockReturnValue({ mutateAsync: vi.fn().mockResolvedValue({}) });
   hooks.useUpdateChamber.mockReturnValue({ mutateAsync: updateChamber });
   hooks.useDeleteChamber.mockReturnValue({ mutateAsync: vi.fn().mockResolvedValue({}), isPending: false });
@@ -233,8 +239,28 @@ describe('PlanningPage (P19-T04 Overview)', () => {
     expect(within(screen.getByTestId('engineer-row-e1')).getByText('46')).toBeInTheDocument();
   });
 
-  it('category chips reflect allowed_categories (all eight values) and stage chips the lab steps, PDD first', () => {
+  it('cards are read-only until "Edit": chips are plain labels, values plain text, no toggles or inputs', () => {
     renderWithProviders(<PlanningPage />);
+    expect(screen.queryAllByRole('spinbutton')).toHaveLength(0);
+    expect(screen.queryAllByRole('button', { name: /^Allow / })).toHaveLength(0);
+    const row = screen.getByTestId('engineer-row-e1');
+    expect(within(row).getByText('A+')).toBeInTheDocument();
+    expect(within(row).queryByText('C')).not.toBeInTheDocument();
+    expect(within(row).queryByRole('group')).not.toBeInTheDocument();
+    // Each card has its own Edit next to "+ Add"; the per-row pencil / trash stay.
+    expect(screen.getByRole('button', { name: 'Edit R&D-Greece Hub' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Edit Greece labs' })).toBeInTheDocument();
+    expect(within(row).getByRole('button', { name: 'Edit Ada Lovelace' })).toBeInTheDocument();
+    expect(within(row).getByRole('button', { name: 'Deactivate Ada Lovelace' })).toBeInTheDocument();
+    expect(within(row).queryByRole('button', { name: 'Delete Ada Lovelace' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^Save / })).not.toBeInTheDocument();
+  });
+
+  it('in edit mode the chips are toggle buttons reflecting allowed_categories (all eight) and the lab steps, PDD first', async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<PlanningPage />);
+    await user.click(screen.getByRole('button', { name: 'Edit R&D-Greece Hub' }));
+    await user.click(screen.getByRole('button', { name: 'Edit Greece labs' }));
     const row = screen.getByTestId('engineer-row-e1');
     const chips = within(row).getAllByRole('button', { name: /^Allow category / });
     expect(chips.map((c) => c.textContent)).toEqual(['A+', 'A', 'B', 'C', 'OEM', 'A-OEM', 'B-OEM', 'C-OEM']);
@@ -249,69 +275,187 @@ describe('PlanningPage (P19-T04 Overview)', () => {
       'Allow stage OEM-E Proof of concept for GR-CH1',
     ]);
     expect(within(ch).getByRole('button', { name: 'Allow stage PDD-F Proof of concept for GR-CH1' })).toHaveAttribute('aria-pressed', 'true');
+    // Only the edited cards: PD-India stays read-only.
+    expect(within(screen.getByTestId('hub-card-PD-India')).queryAllByRole('spinbutton')).toHaveLength(0);
   });
 
-  it('chip toggles and inline FTE / platforms / efficiency save through the existing PATCH mutations', async () => {
+  it('edit → toggle → Save sends exactly the changed fields, once per changed row; nothing before Save', async () => {
     const user = userEvent.setup();
     renderWithProviders(<PlanningPage />);
-    await user.click(screen.getByRole('button', { name: 'Allow category C for Ada Lovelace' }));
-    expect(updateEngineer).toHaveBeenLastCalledWith({ engineerId: 'e1', body: { allowed_categories: ['A+', 'B', 'C'] } });
-    await user.click(screen.getByRole('button', { name: 'Allow category B for Ada Lovelace' }));
-    expect(updateEngineer).toHaveBeenLastCalledWith({ engineerId: 'e1', body: { allowed_categories: ['A+'] } });
+    await user.click(screen.getByRole('button', { name: 'Edit R&D-Greece Hub' }));
+    const save = screen.getByRole('button', { name: 'Save R&D-Greece Hub' });
+    expect(save).toBeDisabled();
 
+    await user.click(screen.getByRole('button', { name: 'Allow category C for Ada Lovelace' }));
+    await user.click(screen.getByRole('button', { name: 'Allow category B for Ada Lovelace' }));
+    expect(screen.getByRole('button', { name: 'Allow category C for Ada Lovelace' })).toHaveAttribute('data-changed', 'true');
+    expect(within(screen.getByTestId('engineer-row-e1')).getByText('Unsaved')).toBeInTheDocument();
+    expect(updateEngineer).not.toHaveBeenCalled();
+    expect(save).toBeEnabled();
+
+    await user.click(save);
+    expect(updateEngineer).toHaveBeenCalledTimes(1);
+    expect(updateEngineer).toHaveBeenCalledWith({ engineerId: 'e1', body: { allowed_categories: ['A+', 'C'] } });
+    // Back to read mode.
+    expect(screen.getByRole('button', { name: 'Edit R&D-Greece Hub' })).toBeInTheDocument();
+    expect(screen.queryAllByRole('button', { name: /^Allow / })).toHaveLength(0);
+  });
+
+  it('FTE, platforms, efficiency and stages are drafted and saved together per row; a value set back is not sent', async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<PlanningPage />);
+    await user.click(screen.getByRole('button', { name: 'Edit R&D-Greece Hub' }));
     const fte = screen.getByRole('spinbutton', { name: 'FTE for Ada Lovelace' });
     await user.clear(fte);
     await user.type(fte, '0.8{Enter}');
-    expect(updateEngineer).toHaveBeenLastCalledWith({ engineerId: 'e1', body: { fte: 0.8 } });
+    expect(fte).toHaveAttribute('data-changed', 'true');
+    await user.click(screen.getByRole('button', { name: 'Allow category C for Ada Lovelace' }));
+    await user.click(screen.getByRole('button', { name: 'Allow category C for Ada Lovelace' })); // back to served
+    expect(updateEngineer).not.toHaveBeenCalled();
+    await user.click(screen.getByRole('button', { name: 'Save R&D-Greece Hub' }));
+    expect(updateEngineer).toHaveBeenCalledTimes(1);
+    expect(updateEngineer).toHaveBeenCalledWith({ engineerId: 'e1', body: { fte: 0.8 } });
 
+    await user.click(screen.getByRole('button', { name: 'Edit Greece labs' }));
     const plat = screen.getByRole('spinbutton', { name: 'Platforms for GR-CH1' });
     await user.clear(plat);
     await user.type(plat, '3');
     await user.tab();
-    expect(updateChamber).toHaveBeenLastCalledWith({ chamberId: 'c1', body: { platforms: 3 } });
-
     await user.click(screen.getByRole('button', { name: 'Allow stage PDD-H Certification for GR-CH1' }));
-    expect(updateChamber).toHaveBeenLastCalledWith({ chamberId: 'c1', body: { allowed_stages: ['PDD-F', 'PDD-H'] } });
+    expect(updateChamber).not.toHaveBeenCalled();
+    await user.click(screen.getByRole('button', { name: 'Save Greece labs' }));
+    expect(updateChamber).toHaveBeenCalledTimes(1);
+    expect(updateChamber).toHaveBeenCalledWith({ chamberId: 'c1', body: { platforms: 3, allowed_stages: ['PDD-F', 'PDD-H'] } });
   });
 
-  it('an invalid inline value is rejected with the form schema message and not sent', async () => {
+  it('Cancel restores the saved values and sends nothing', async () => {
     const user = userEvent.setup();
     renderWithProviders(<PlanningPage />);
+    await user.click(screen.getByRole('button', { name: 'Edit Greece labs' }));
+    const eff = screen.getByRole('spinbutton', { name: 'Efficiency for GR-CH1' });
+    await user.clear(eff);
+    await user.type(eff, '0.5');
+    await user.click(screen.getByRole('button', { name: 'Allow stage OEM-E Proof of concept for GR-CH1' }));
+    expect(screen.getByTestId('card-edit-count')).toHaveTextContent('1 row unsaved');
+    await user.click(screen.getByRole('button', { name: 'Cancel Greece labs edits' }));
+    expect(updateChamber).not.toHaveBeenCalled();
+    const ch = screen.getByTestId('chamber-row-c1');
+    expect(within(ch).getByText('0.21')).toBeInTheDocument();
+    expect(within(ch).queryByText(/OEM-E/)).not.toBeInTheDocument();
+    // Editing again starts from the saved values.
+    await user.click(screen.getByRole('button', { name: 'Edit Greece labs' }));
+    expect(screen.getByRole('spinbutton', { name: 'Efficiency for GR-CH1' })).toHaveValue(0.21);
+    expect(screen.getByRole('button', { name: 'Allow stage OEM-E Proof of concept for GR-CH1' })).toHaveAttribute('aria-pressed', 'false');
+  });
+
+  it('an invalid value shows the form schema message, disables Save and is not sent', async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<PlanningPage />);
+    await user.click(screen.getByRole('button', { name: 'Edit R&D-Greece Hub' }));
     const fte = screen.getByRole('spinbutton', { name: 'FTE for Ada Lovelace' });
     await user.clear(fte);
     await user.type(fte, '0{Enter}');
-    expect(screen.getByRole('alert')).toHaveTextContent('FTE must be greater than 0');
+    expect(screen.getByText('FTE must be greater than 0')).toBeInTheDocument();
+    expect(fte).toHaveAttribute('aria-invalid', 'true');
+    expect(screen.getByRole('button', { name: 'Save R&D-Greece Hub' })).toBeDisabled();
+    expect(updateEngineer).not.toHaveBeenCalled();
+    // Escape restores the saved value.
+    await user.type(fte, '{Escape}');
+    expect(fte).toHaveValue(1);
+  });
+
+  it('partial failure: saved rows leave edit state, a failed row keeps its draft and shows the server message', async () => {
+    const user = userEvent.setup();
+    const grace: EngineerRead = { ...engineer, id: 'e3', name: 'Grace Hopper', allowed_categories: ['A'] };
+    hooks.useEngineerList.mockReturnValue(ready([engineer, grace, lokesh]));
+    updateEngineer.mockImplementation(({ engineerId }: { engineerId: string }) =>
+      engineerId === 'e3' ? Promise.reject(new ApiError(422, 'bad', 'fte exceeds the hub limit')) : Promise.resolve({}),
+    );
+    renderWithProviders(<PlanningPage />);
+    await user.click(screen.getByRole('button', { name: 'Edit R&D-Greece Hub' }));
+    await user.click(screen.getByRole('button', { name: 'Allow category C for Ada Lovelace' }));
+    const fte = screen.getByRole('spinbutton', { name: 'FTE for Grace Hopper' });
+    await user.clear(fte);
+    await user.type(fte, '2');
+    expect(screen.getByTestId('card-edit-count')).toHaveTextContent('2 rows unsaved');
+    await user.click(screen.getByRole('button', { name: 'Save R&D-Greece Hub' }));
+
+    expect(updateEngineer).toHaveBeenCalledTimes(2);
+    expect(updateEngineer).toHaveBeenNthCalledWith(1, { engineerId: 'e1', body: { allowed_categories: ['A+', 'B', 'C'] } });
+    expect(updateEngineer).toHaveBeenNthCalledWith(2, { engineerId: 'e3', body: { fte: 2 } });
+    const failedRow = screen.getByTestId('engineer-row-e3');
+    expect(await within(failedRow).findByRole('alert')).toHaveTextContent('Not saved: fte exceeds the hub limit');
+    expect(within(failedRow).getByText('Unsaved')).toBeInTheDocument();
+    expect(screen.getByRole('spinbutton', { name: 'FTE for Grace Hopper' })).toHaveValue(2);
+    // Still in edit mode for the failed row only.
+    expect(screen.getByRole('button', { name: 'Save R&D-Greece Hub' })).toBeEnabled();
+    expect(screen.getByTestId('card-edit-count')).toHaveTextContent('1 row unsaved');
+    expect(within(screen.getByTestId('engineer-row-e1')).queryByRole('alert')).not.toBeInTheDocument();
+
+    // Retrying sends only the failed row.
+    updateEngineer.mockReset();
+    updateEngineer.mockResolvedValue({});
+    await user.click(screen.getByRole('button', { name: 'Save R&D-Greece Hub' }));
+    expect(updateEngineer).toHaveBeenCalledTimes(1);
+    expect(updateEngineer).toHaveBeenCalledWith({ engineerId: 'e3', body: { fte: 2 } });
+    expect(screen.getByRole('button', { name: 'Edit R&D-Greece Hub' })).toBeInTheDocument();
+  });
+
+  it('a 403 on Save downgrades the page to read-only and drops edit mode', async () => {
+    const user = userEvent.setup();
+    updateChamber.mockRejectedValueOnce(new ApiError(403, 'forbidden'));
+    renderWithProviders(<PlanningPage />);
+    await user.click(screen.getByRole('button', { name: 'Edit Greece labs' }));
+    await user.click(screen.getByRole('button', { name: 'Allow stage PDD-H Certification for GR-CH1' }));
+    await user.click(screen.getByRole('button', { name: 'Save Greece labs' }));
+    expect(screen.queryByRole('button', { name: /^Edit Greece labs/ })).not.toBeInTheDocument();
+    expect(screen.queryAllByRole('button', { name: /^Allow / })).toHaveLength(0);
+  });
+
+  it('drafts survive switching tabs and back', async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<PlanningPage />);
+    await user.click(screen.getByRole('button', { name: 'Edit R&D-Greece Hub' }));
+    await user.click(screen.getByRole('button', { name: 'Allow category C for Ada Lovelace' }));
+    await user.click(screen.getByRole('tab', { name: 'Chambers' }));
+    await user.click(screen.getByRole('tab', { name: 'Overview' }));
+    expect(screen.getByRole('button', { name: 'Allow category C for Ada Lovelace' })).toHaveAttribute('aria-pressed', 'true');
     expect(updateEngineer).not.toHaveBeenCalled();
   });
 
-  it('a rejected chip save shows the server message', async () => {
-    const user = userEvent.setup();
-    updateChamber.mockRejectedValueOnce(new ApiError(422, 'bad', 'allowed_stages must be lab-kind steps only'));
-    renderWithProviders(<PlanningPage />);
-    await user.click(screen.getByRole('button', { name: 'Allow stage PDD-H Certification for GR-CH1' }));
-    expect(await screen.findByText(/Not saved: allowed_stages must be lab-kind/)).toBeInTheDocument();
-  });
-
-  it('a read-only role sees static values and no editable controls', () => {
+  it('a read-only role sees static values and no Edit, toggles or inputs', () => {
     renderWithProviders(<PlanningPage />, { session: { roles: ['Portfolio Manager'], permissions: permissionsFrom({ capacity_planning: 'r' }) } });
     expect(screen.queryAllByRole('spinbutton')).toHaveLength(0);
     expect(screen.queryAllByRole('button', { name: /^Allow / })).toHaveLength(0);
+    expect(screen.queryByRole('button', { name: /^Edit .*(Hub|labs)$/ })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /^Add engineer to/ })).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /^Delete / })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^(Delete|Deactivate|Reactivate) / })).not.toBeInTheDocument();
     const row = screen.getByTestId('engineer-row-e1');
     expect(within(row).getByText('A+')).toBeInTheDocument();
     expect(within(row).queryByText('C')).not.toBeInTheDocument();
     expect(within(row).getByText('1')).toBeInTheDocument();
   });
 
-  it('a Hub Planner edits only the cards of their own hub (and its lab region)', () => {
+  it('a Hub Planner gets Edit only on the cards of their own hub (and its lab region)', async () => {
+    const user = userEvent.setup();
     renderWithProviders(<PlanningPage />, {
       session: { roles: ['Hub Planner'], hub_scope_all: false, hub_ids: ['hub-2'], permissions: permissionsFrom({ capacity_planning: 'rw' }) },
     });
+    expect(screen.queryByRole('button', { name: 'Edit R&D-Greece Hub' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Edit Greece labs' })).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Edit PD-India Hub' }));
     expect(within(screen.getByTestId('hub-card-PD-India')).getAllByRole('spinbutton')).toHaveLength(1);
     expect(within(screen.getByTestId('hub-card-R&D-Greece')).queryAllByRole('spinbutton')).toHaveLength(0);
-    expect(within(screen.getByTestId('lab-card-Greece')).queryAllByRole('spinbutton')).toHaveLength(0);
   });
+
+  it('has no serious axe violations with cards in edit mode and a change pending', async () => {
+    const user = userEvent.setup();
+    const { container } = renderWithProviders(<PlanningPage />);
+    await user.click(screen.getByRole('button', { name: 'Edit R&D-Greece Hub' }));
+    await user.click(screen.getByRole('button', { name: 'Edit Greece labs' }));
+    await user.click(screen.getByRole('button', { name: 'Allow category C for Ada Lovelace' }));
+    expect(await seriousAxeViolations(container)).toEqual([]);
+  }, 30000);
 
   it('"Add" on a hub card opens the existing engineer form with that hub selected, and creates through the existing mutation', async () => {
     const user = userEvent.setup();
@@ -368,23 +512,11 @@ describe('PlanningPage (kept capability)', () => {
     const user = userEvent.setup();
     renderWithProviders(<PlanningPage />);
     await user.click(screen.getByRole('tab', { name: 'Engineers' }));
-    expect(hooks.useEngineerList).toHaveBeenCalledWith([]);
+    expect(hooks.useEngineerList).toHaveBeenCalledWith([], 'active');
     await user.click(screen.getByRole('button', { name: 'Hub' }));
     await user.click(await screen.findByRole('option', { name: 'R&D-Greece' }));
     await user.click(screen.getByRole('option', { name: 'PD-India' }));
-    expect(hooks.useEngineerList).toHaveBeenCalledWith(['hub-1', 'hub-2']);
-  });
-
-  it('deleting an engineer requires confirmation', async () => {
-    const user = userEvent.setup();
-    const del = vi.fn().mockResolvedValue(undefined);
-    hooks.useDeleteEngineer.mockReturnValue({ mutateAsync: del, isPending: false });
-    renderWithProviders(<PlanningPage />);
-    await user.click(within(screen.getByTestId('engineer-row-e1')).getByRole('button', { name: 'Delete Ada Lovelace' }));
-    const dialog = await screen.findByRole('dialog');
-    expect(del).not.toHaveBeenCalled();
-    await user.click(within(dialog).getByRole('button', { name: 'Delete' }));
-    expect(del).toHaveBeenCalledWith('e1');
+    expect(hooks.useEngineerList).toHaveBeenCalledWith(['hub-1', 'hub-2'], 'active');
   });
 
   it('Chambers tab lists chambers with the full detail table', async () => {
@@ -437,4 +569,167 @@ describe('PlanningPage (kept capability)', () => {
     await user.click(screen.getByRole('tab', { name: 'What-if planner' }));
     expect(screen.getByRole('group', { name: /Added projects, line 1/ })).toBeInTheDocument();
   });
+});
+
+describe('PlanningPage (P38-T06 deactivate / reactivate)', () => {
+  const inactive: EngineerRead = {
+    ...engineer,
+    id: 'e9',
+    name: 'Theoni',
+    active: false,
+    deactivated_week: 47,
+    deactivated_plan_year: 2026,
+    deactivation_reason: 'left_company',
+  };
+
+  function listFor(status: unknown) {
+    if (status === 'inactive') return ready([inactive]);
+    if (status === 'all') return ready([engineer, inactive, lokesh]);
+    return ready([engineer, lokesh]);
+  }
+
+  it('the roster shows active engineers by default; Show Inactive / All asks the server and tags inactive rows', async () => {
+    const user = userEvent.setup();
+    hooks.useEngineerList.mockImplementation((_hub: unknown, status: unknown) => listFor(status));
+    renderWithProviders(<PlanningPage />);
+    expect(hooks.useEngineerList).toHaveBeenCalledWith(undefined, 'active');
+    expect(screen.queryByTestId('engineer-row-e9')).not.toBeInTheDocument();
+    const show = within(screen.getByTestId('engineer-status-filter-overview'));
+    expect(show.getByRole('radio', { name: 'Active' })).toHaveAttribute('aria-checked', 'true');
+    await user.click(show.getByRole('radio', { name: 'All' }));
+    expect(hooks.useEngineerList).toHaveBeenCalledWith(undefined, 'all');
+    const row = screen.getByTestId('engineer-row-e9');
+    expect(within(row).getByTestId('inactive-tag')).toHaveTextContent('Inactive');
+    expect(within(row).getByRole('button', { name: 'Reactivate Theoni' })).toBeInTheDocument();
+    expect(within(row).queryByRole('button', { name: 'Deactivate Theoni' })).not.toBeInTheDocument();
+    // Same Show state on the Engineers tab.
+    await user.click(screen.getByRole('tab', { name: 'Engineers' }));
+    expect(within(screen.getByTestId('engineer-status-filter-engineers')).getByRole('radio', { name: 'All' })).toHaveAttribute('aria-checked', 'true');
+    expect(hooks.useEngineerList).toHaveBeenCalledWith([], 'all');
+  });
+
+  it('an inactive engineer is outside the card draft: no FTE input or chip toggles in edit mode', async () => {
+    const user = userEvent.setup();
+    hooks.useEngineerList.mockImplementation((_hub: unknown, status: unknown) => listFor(status));
+    renderWithProviders(<PlanningPage />);
+    await user.click(within(screen.getByTestId('engineer-status-filter-overview')).getByRole('radio', { name: 'All' }));
+    await user.click(screen.getByRole('button', { name: 'Edit R&D-Greece Hub' }));
+    const active = screen.getByTestId('engineer-row-e1');
+    const gone = screen.getByTestId('engineer-row-e9');
+    expect(within(active).getAllByRole('spinbutton')).toHaveLength(1);
+    expect(within(gone).queryAllByRole('spinbutton')).toHaveLength(0);
+    expect(within(gone).queryAllByRole('button', { name: /^Allow category / })).toHaveLength(0);
+    // Deactivate stays a row action outside the draft.
+    expect(within(active).getByRole('button', { name: 'Deactivate Ada Lovelace' })).toBeInTheDocument();
+  });
+
+  it('"Show Inactive" with none says so', async () => {
+    const user = userEvent.setup();
+    hooks.useEngineerList.mockImplementation((_hub: unknown, status: unknown) => (status === 'inactive' ? ready([]) : listFor(status)));
+    renderWithProviders(<PlanningPage />);
+    await user.click(within(screen.getByTestId('engineer-status-filter-overview')).getByRole('radio', { name: 'Inactive' }));
+    expect(screen.getAllByText('No inactive engineers in this hub.').length).toBeGreaterThan(0);
+  });
+
+  it('a Hub Planner (write, own hub) sees no Deactivate or Reactivate anywhere', async () => {
+    const user = userEvent.setup();
+    hooks.useEngineerList.mockImplementation((_hub: unknown, status: unknown) => listFor(status));
+    renderWithProviders(<PlanningPage />, {
+      session: { roles: ['Hub Planner'], hub_scope_all: false, hub_ids: ['hub-1'], permissions: permissionsFrom({ capacity_planning: 'rw' }) },
+    });
+    await user.click(within(screen.getByTestId('engineer-status-filter-overview')).getByRole('radio', { name: 'All' }));
+    expect(screen.getByRole('button', { name: 'Edit Ada Lovelace' })).toBeInTheDocument();
+    // (Chamber Delete is unchanged by P38.)
+    expect(screen.queryByRole('button', { name: /^(Deactivate|Reactivate|Delete) (Ada|Theoni|Lokesh)/ })).not.toBeInTheDocument();
+    await user.click(screen.getByRole('tab', { name: 'Engineers' }));
+    expect(screen.queryByRole('button', { name: /^(Deactivate|Reactivate|Delete) (Ada|Theoni|Lokesh)/ })).not.toBeInTheDocument();
+  });
+
+  it('Deactivate opens the popup; on success the toast reports the served counts and links to the "No leader" register', async () => {
+    const user = userEvent.setup();
+    const mutateAsync = vi.fn().mockResolvedValue({
+      engineer: { ...engineer, active: false },
+      reassigned: 0,
+      left_without_leader: 1,
+      left_without_leader_project_ids: ['p1'],
+      warnings: [],
+      run: { status: 'not_needed', run_id: null },
+    });
+    hooks.useDeactivateEngineer.mockReturnValue({ mutateAsync, isPending: false });
+    hooks.useDeactivationPreview.mockReturnValue({
+      ...ready({
+        engineer: { id: 'e1', name: 'Ada Lovelace', hub: 'R&D-Greece', active: true },
+        deactivation_week: 47,
+        has_linked_login: false,
+        open_projects: [
+          {
+            project_id: 'p1', name: 'Cooler One', hub: 'R&D-Greece', status: 'On Hold', priority: 'P2', category: 'B',
+            schedulable: false, frozen: false, progress_tracked: false, done_stages: 0, in_flight_lab: false, candidates: [],
+          },
+        ],
+        supply_effect: null,
+        led_projects_token: 'tok',
+      }),
+      isFetching: false,
+    });
+    renderWithProviders(<PlanningPage />);
+    await user.click(within(screen.getByTestId('engineer-row-e1')).getByRole('button', { name: 'Deactivate Ada Lovelace' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Deactivate Ada Lovelace?' });
+    expect(hooks.useDeactivationPreview).toHaveBeenCalledWith('e1');
+    await user.selectOptions(within(dialog).getByTestId('deactivate-reason'), 'changed_role');
+    await user.click(within(dialog).getByRole('button', { name: 'Deactivate anyway' }));
+    expect(mutateAsync).toHaveBeenCalledWith({
+      engineerId: 'e1',
+      body: { reason: 'changed_role', led_projects_token: 'tok', reassignments: [{ project_id: 'p1', leader_engineer_id: null }] },
+    });
+    const toast = await screen.findByTestId('deactivation-result');
+    expect(screen.queryByRole('dialog', { name: 'Deactivate Ada Lovelace?' })).not.toBeInTheDocument();
+    expect(toast).toHaveTextContent('Ada Lovelace deactivated');
+    expect(within(toast).getByTestId('deactivation-result-counts')).toHaveTextContent('0 projects got a new leader. 1 project has no leader.');
+    expect(within(toast).getByTestId('deactivation-run-message')).toHaveTextContent('No recalculation was needed');
+    expect(within(toast).getByRole('link', { name: 'Show projects with no leader' })).toHaveAttribute('href', '/projects?leader=no_leader');
+    await user.click(within(toast).getByRole('button', { name: 'Close' }));
+    expect(screen.queryByTestId('deactivation-result')).not.toBeInTheDocument();
+  });
+
+  it('Reactivate asks first, calls the endpoint, and shows a 409 ENGINEER_ALREADY_ACTIVE in place', async () => {
+    const user = userEvent.setup();
+    const reactivate = vi.fn().mockRejectedValueOnce(new ApiError(409, 'conflict', undefined, 'ENGINEER_ALREADY_ACTIVE')).mockResolvedValueOnce({});
+    hooks.useReactivateEngineer.mockReturnValue({ mutateAsync: reactivate, isPending: false });
+    hooks.useEngineerList.mockImplementation((_hub: unknown, status: unknown) => listFor(status));
+    renderWithProviders(<PlanningPage />);
+    await user.click(within(screen.getByTestId('engineer-status-filter-overview')).getByRole('radio', { name: 'Inactive' }));
+    await user.click(screen.getByRole('button', { name: 'Reactivate Theoni' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Reactivate Theoni?' });
+    expect(dialog).toHaveTextContent(/do not get back the projects/);
+    expect(reactivate).not.toHaveBeenCalled();
+    await user.click(within(dialog).getByRole('button', { name: 'Reactivate' }));
+    expect(reactivate).toHaveBeenCalledWith('e9');
+    expect(await within(dialog).findByRole('alert')).toHaveTextContent('already active');
+    await user.click(within(dialog).getByRole('button', { name: 'Reactivate' }));
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Reactivate Theoni?' })).not.toBeInTheDocument());
+  });
+
+  it('editing an inactive engineer changes the name only', async () => {
+    const user = userEvent.setup();
+    hooks.useEngineerList.mockImplementation((_hub: unknown, status: unknown) => listFor(status));
+    renderWithProviders(<PlanningPage />);
+    await user.click(within(screen.getByTestId('engineer-status-filter-overview')).getByRole('radio', { name: 'Inactive' }));
+    await user.click(screen.getByRole('button', { name: 'Edit name of Theoni' }));
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getByLabelText(/^FTE/)).toBeDisabled();
+    const name = within(dialog).getByLabelText(/^Name/);
+    await user.clear(name);
+    await user.type(name, 'Theoni K.');
+    await user.click(within(dialog).getByRole('button', { name: 'Save changes' }));
+    expect(updateEngineer).toHaveBeenCalledWith({ engineerId: 'e9', body: { name: 'Theoni K.' } });
+  });
+
+  it('has no serious axe violations with inactive rows and the Show filter', async () => {
+    const user = userEvent.setup();
+    hooks.useEngineerList.mockImplementation((_hub: unknown, status: unknown) => listFor(status));
+    const { container } = renderWithProviders(<PlanningPage />);
+    await user.click(within(screen.getByTestId('engineer-status-filter-overview')).getByRole('radio', { name: 'All' }));
+    expect(await seriousAxeViolations(container)).toEqual([]);
+  }, 30000);
 });

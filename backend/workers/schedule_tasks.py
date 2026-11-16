@@ -379,7 +379,11 @@ async def _run_schedule_body(
                 schedule_run_id, status="running", message=f"{solver_label} solve started"
             )
 
-            schedule_input = await build_schedule_input_from_db(db)
+            # P37-T04 (ADR 0052 R37-2, I38): the week was fixed when the
+            # QUEUED row was created; never re-read the clock at execution.
+            schedule_input = await build_schedule_input_from_db(
+                db, current_week=run.current_week
+            )
             objective_value: float | None = None
             # Ruling 6: "OPTIMAL"/"FEASIBLE" for CP-SAT, None for greedy
             # (matches `ScheduleOutput.solver_status`; `solver_type` records

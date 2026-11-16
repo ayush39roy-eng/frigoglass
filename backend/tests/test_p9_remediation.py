@@ -27,6 +27,7 @@ from models.workspace import ProjectComment
 from scheduling.types import ScheduleInput, ScheduleOutput
 from services.rate_limit import TokenBucketLimiter
 from services.schedule_persistence import persist_schedule_output
+from tests._plan_week import TEST_WEEK
 from tests.auth_helpers import (
     clear_current_principal_override,
     make_principal,
@@ -145,7 +146,7 @@ async def test_fifty_worst_case_comments_read_fast(db_session):
 async def test_solver_status_persisted_and_exposed(db_session):
     run = await persist_schedule_output(
         db_session,
-        ScheduleInput(projects=(), engineers=(), chambers=()),
+        ScheduleInput(projects=(), engineers=(), chambers=(), current_week=TEST_WEEK),
         ScheduleOutput(project_outcomes=(), scheduling_order=()),
         solver_type=SolverType.CP_SAT,
         trigger_reason="test",
@@ -158,7 +159,7 @@ async def test_solver_status_persisted_and_exposed(db_session):
     fake_output = SimpleNamespace(project_outcomes=(), solver_status="OPTIMAL")
     run2 = await persist_schedule_output(
         db_session,
-        ScheduleInput(projects=(), engineers=(), chambers=()),
+        ScheduleInput(projects=(), engineers=(), chambers=(), current_week=TEST_WEEK),
         fake_output,  # type: ignore[arg-type]
         solver_type=SolverType.CP_SAT,
         trigger_reason="test",

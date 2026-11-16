@@ -106,6 +106,7 @@ from services.hub_scope import (
     narrowed_lab_regions,
     region_list,
 )
+from services.plan_clock import PlanClock, get_plan_clock
 
 router = APIRouter(prefix="/planning", tags=["capacity-planning"])
 
@@ -145,12 +146,14 @@ async def capacity_summary(
     region: RegionListQuery = None,
     db: AsyncSession = Depends(get_db),
     current_user: Principal = Depends(_read),
+    clock: PlanClock = Depends(get_plan_clock),
 ) -> CapacitySummaryResponse:
     """Design supply per visible hub and lab supply per lab region of those
     hubs, with shares of the visible total. Same basis and same served
     figures as `GET /capacity/hub-load` for the same filters."""
 
-    current_week = dc.CURRENT_WEEK
+    # P37-T04 (ADR 0052 §4 (c)): remaining supply at the calendar week.
+    current_week = clock.week
     # ADR 0042: one design row per CAPACITY hub with a hub in scope AND the
     # filter (an OEM hub selects R&D-Greece); supply over counted engineers.
     cmap, row_scopes = await capacity_rows_for_request(db, current_user, hub_id, region)
@@ -347,6 +350,7 @@ async def resource_load(
     basis: CapacityBasis = "year",
     db: AsyncSession = Depends(get_db),
     current_user: Principal = Depends(_read),
+    clock: PlanClock = Depends(get_plan_clock),
 ) -> ResourceLoadResponse:
     """Engineer and chamber load vs. capacity on `basis` (§5).
 
@@ -396,7 +400,8 @@ async def resource_load(
     #: (empty lists, zero totals), never like "no engineer filter".
     no_visible_engineer = bool(engineer_id) and not engineer_ids
 
-    current_week = dc.CURRENT_WEEK
+    # P37-T04 (ADR 0052 §4 (c)): remaining supply at the calendar week.
+    current_week = clock.week
     active_run = await get_active_run(db)
 
     # --- Engineers (hub scope AND hub/region, AND the engineer filter) --------
@@ -533,7 +538,9 @@ async def resource_load(
     return ResourceLoadResponse(
         has_active_schedule_run=active_run is not None,
         schedule_run_version=active_run.version if active_run is not None else None,
-        current_week=active_run.current_week if active_run is not None else current_week,
+        # P37-T04 (API_CONTRACT_P37 §2): the calendar week, plus the run's.
+        current_week=current_week,
+        run_week=active_run.current_week if active_run is not None else None,
         basis=basis,
         engineers=eng_rows,
         chambers=ch_rows,

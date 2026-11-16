@@ -44,6 +44,7 @@ from services.capacity_supply import round2
 from services.export_builder import build_capacity_sheets, csv_bytes
 from services.schedule_persistence import build_schedule_input_from_db
 from services.whatif_baseline import Scope
+from tests._plan_week import TEST_WEEK
 from tests.auth_helpers import clear_current_principal_override, make_principal
 from tests.factories import (
     make_engineer,
@@ -54,7 +55,7 @@ from tests.factories import (
 )
 from tests.p12_helpers import act_as, client_for
 
-CW = dc.CURRENT_WEEK
+CW = TEST_WEEK
 GREECE_WWPE = 52 - 37 / 5  # 44.6
 INDIA_WWPE = 52 - 47 / 6
 
@@ -548,7 +549,7 @@ async def test_provisional_leader_flag_served_and_cleared_on_leader_change(db_se
 
 async def test_schedule_input_carries_capacity_hub_and_counted_flag(db_session):
     w = await _world(db_session)
-    si = await build_schedule_input_from_db(db_session)
+    si = await build_schedule_input_from_db(db_session, current_week=TEST_WEEK)
     by_name = {p.name: p for p in si.projects}
     assert by_name["H1"].hub == "OEM-HCK" and by_name["H1"].capacity_hub == "R&D-Greece"
     assert by_name["S1"].capacity_hub == "R&D-Greece"

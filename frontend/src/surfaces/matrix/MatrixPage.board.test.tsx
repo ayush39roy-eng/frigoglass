@@ -316,6 +316,10 @@ describe('P21-T05 Matrix tabs', () => {
     handle.focus();
     await user.keyboard(' {ArrowRight} ');
     const dialog = await screen.findByRole('dialog', { name: 'Move to P2?' });
+    // Owner request 2026-11-17: the preview is the right-hand side panel, the board stays beside it.
+    expect(dialog).toHaveAttribute('data-variant', 'sheet');
+    expect(dialog).toHaveAttribute('data-side', 'right');
+    expect(screen.getByTestId('priority-board')).toBeInTheDocument();
     expect(mockSend).toHaveBeenCalledWith('POST', '/projects/alpha/priority/preview', { priority: 'P2' }, expect.anything());
     const yes = within(dialog).getByRole('button', { name: 'Yes, apply' });
     await waitFor(() => expect(yes).toBeEnabled());

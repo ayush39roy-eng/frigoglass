@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Pencil, Plus, Trash2 } from 'lucide-react';
+import { Pencil, Plus } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
@@ -15,9 +15,13 @@ import { engineerFormSchema } from '../engineer-form-schema';
 import { categoryChipTitle } from '../../lib/chip-options';
 import { formatAmount, formatPct, formatPlain, pick, pickUnit, unitShort, type CapacityUnit } from '../../lib/figures';
 import { InlineNumber } from './inline-number';
-import { saveErrorMessage } from './save-error';
 import { StaticChip, ToggleChip } from './toggle-chip';
 import { CardPills } from './card-pills';
+import { CardEditControls, UnsavedTag } from './card-edit-controls';
+import { useCardEditor, type CardEditor, type FieldSpec } from './use-card-editor';
+import { StatusAction } from '../engineer-table';
+import { InactiveTag } from '../inactive-tag';
+import { isInactive } from '../../lib/deactivation';
 
 /**
  * One hub's design resources (P19-T04, the client's "R&D-Greece Hub (22%)"
@@ -34,8 +38,17 @@ import { CardPills } from './card-pills';
  * it is not part of the hub's capacity).
  *
  * Editing (`canEdit`: Capacity Planning write AND the hub in the caller's
- * scope, the server being the authority): FTE inline, category chips as toggle
- * buttons, edit / delete / add through the existing form and confirm dialogs.
+ * scope, the server being the authority): edit / delete / add through the
+ * existing form and confirm dialogs, as before. Owner ask 2026-11-17: FTE and
+ * the category chips are read-only until the header's "Edit"; in edit mode
+ * the FTE inputs and chip toggles change a draft, and "Save" sends one PATCH
+ * per changed engineer with only the changed fields (`use-card-editor.ts`).
+ *
+ * P38-T06 (ADR 0053): the trash icon is gone (DELETE answers 410). Deactivate /
+ * Reactivate is a row action outside the edit draft, for Admin / Super Admin
+ * only. An inactive engineer (listed only when the page's Show filter asks for
+ * them) carries the "Inactive" tag and is never part of the draft: their FTE
+ * and chips stay read-only in edit mode, and the pencil edits the name only.
  */
 export interface HubEngineerCardProps {
   hubName: string;
@@ -48,8 +61,13 @@ export interface HubEngineerCardProps {
   canEdit: boolean;
   onUpdate: (engineerId: string, body: EngineerUpdateRequest) => Promise<unknown>;
   onEdit: (row: EngineerRead) => void;
-  onDelete: (row: EngineerRead) => void;
+  /** P38: Admin / Super Admin (OQ #93); independent of the card's edit mode. */
+  canChangeStatus: boolean;
+  onDeactivate: (row: EngineerRead) => void;
+  onReactivate: (row: EngineerRead) => void;
   onAdd: (hubId: string | undefined) => void;
+  /** P38: the empty-card line (the Show filter may list inactive engineers only). */
+  emptyLabel?: string | undefined;
 }
 
 const fteSchema = engineerFormSchema.shape.fte;
@@ -58,6 +76,11 @@ function validateFte(text: string): string | null {
   const r = fteSchema.safeParse(text);
   return r.success ? null : (r.error.issues[0]?.message ?? 'Enter a positive number');
 }
+
+const ENGINEER_FIELDS: readonly FieldSpec<EngineerRead, EngineerUpdateRequest>[] = [
+  { kind: 'number', key: 'fte', served: (e) => e.fte, validate: validateFte },
+  { kind: 'set', key: 'allowed_categories', served: (e) => e.allowed_categories },
+];
 
 export function HubEngineerCard({
   hubName,
@@ -70,11 +93,24 @@ export function HubEngineerCard({
   canEdit,
   onUpdate,
   onEdit,
-  onDelete,
+  canChangeStatus,
+  onDeactivate,
+  onReactivate,
   onAdd,
+  emptyLabel = 'No engineers in this hub.',
 }: HubEngineerCardProps): React.JSX.Element {
   const headingId = React.useId();
   const share = pick(summary?.share_pct, basis);
+  // P38: only active engineers take part in the draft; a row that becomes
+  // inactive (or is hidden) takes its draft with it (the editor prunes).
+  const editableRows = React.useMemo(() => engineers.filter((e) => !isInactive(e)), [engineers]);
+  const editor = useCardEditor<EngineerRead, EngineerUpdateRequest>({
+    cardKey: `hub:${hubName}`,
+    rows: editableRows,
+    fields: ENGINEER_FIELDS,
+    canEdit,
+    onUpdate,
+  });
   return (
     <section
       aria-labelledby={headingId}
@@ -110,12 +146,24 @@ export function HubEngineerCard({
               Add
             </Button>
           ) : null}
+          {canEdit && editableRows.length > 0 ? (
+            <CardEditControls
+              subject={`${hubName} Hub`}
+              editing={editor.editing}
+              saving={editor.saving}
+              changedRowCount={editor.changedRowCount}
+              hasInvalid={editor.hasInvalid}
+              onBegin={editor.begin}
+              onCancel={editor.cancel}
+              onSave={() => void editor.save()}
+            />
+          ) : null}
         </div>
       </header>
       <HubCardNotes summary={summary} />
 
       {engineers.length === 0 ? (
-        <p className="px-3 py-3 text-2xs text-text-subtle">No engineers in this hub.</p>
+        <p className="px-3 py-3 text-2xs text-text-subtle">{emptyLabel}</p>
       ) : (
         <Table className="text-xs" scrollLabel={`${hubName} engineers`}>
           <TableHeader>
@@ -130,7 +178,7 @@ export function HubEngineerCard({
                 <span className="sr-only">Capacity in {unit}</span>
               </TableHead>
               <TableHead className="h-8 whitespace-nowrap px-1.5 text-2xs">Project types</TableHead>
-              {canEdit ? (
+              {canEdit || canChangeStatus ? (
                 <TableHead className="h-8 w-16 px-1 text-2xs">
                   <span className="sr-only">Actions</span>
                 </TableHead>
@@ -145,9 +193,11 @@ export function HubEngineerCard({
                 basis={basis}
                 unit={unit}
                 canEdit={canEdit}
-                onUpdate={onUpdate}
+                editor={editor}
                 onEdit={onEdit}
-                onDelete={onDelete}
+                canChangeStatus={canChangeStatus}
+                onDeactivate={onDeactivate}
+                onReactivate={onReactivate}
               />
             ))}
           </TableBody>
@@ -199,60 +249,65 @@ function EngineerRow({
   basis,
   unit,
   canEdit,
-  onUpdate,
+  editor,
   onEdit,
-  onDelete,
+  canChangeStatus,
+  onDeactivate,
+  onReactivate,
 }: {
   engineer: EngineerRead;
   basis: CapacityBasis;
   unit: CapacityUnit;
   canEdit: boolean;
-  onUpdate: HubEngineerCardProps['onUpdate'];
+  editor: CardEditor<EngineerRead>;
   onEdit: HubEngineerCardProps['onEdit'];
-  onDelete: HubEngineerCardProps['onDelete'];
+  canChangeStatus: boolean;
+  onDeactivate: HubEngineerCardProps['onDeactivate'];
+  onReactivate: HubEngineerCardProps['onReactivate'];
 }): React.JSX.Element {
-  const [chipError, setChipError] = React.useState<string | null>(null);
-  const [savingChip, setSavingChip] = React.useState(false);
-  const allowed = engineer.allowed_categories;
+  const inactive = isInactive(engineer);
+  // P38: an inactive engineer's FTE and chips are never editable.
+  const editing = editor.editing && !inactive;
+  const allowed = editor.selected(engineer, 'allowed_categories');
+  const served = engineer.allowed_categories;
   // P33-T14: eligibility chips from the served categories, in rank order. A
   // stored value the list does not carry is kept (shown and saved), never dropped.
   const catalog = useCategoryCatalogSnapshot();
   const chips = catalog.eligibilityCodes();
   const extras = allowed.filter((c) => !chips.includes(c));
+  const rowError = editor.rowError(engineer);
+  const fteError = editor.invalid(engineer, 'fte');
 
-  const toggle = async (category: EngineerAllowedCategory) => {
+  const toggle = (category: EngineerAllowedCategory) => {
     const next = allowed.includes(category)
       ? allowed.filter((c) => c !== category)
       : [...chips.filter((c) => c === category || allowed.includes(c)), ...extras];
-    setChipError(null);
-    setSavingChip(true);
-    try {
-      await onUpdate(engineer.id, { allowed_categories: next });
-    } catch (err) {
-      setChipError(saveErrorMessage(err));
-    } finally {
-      setSavingChip(false);
-    }
+    editor.set(engineer, 'allowed_categories', next);
   };
 
   return (
-    <TableRow data-testid={`engineer-row-${engineer.id}`}>
-      <TableCell className="px-1.5 py-1.5 font-semibold text-text">
+    <TableRow data-testid={`engineer-row-${engineer.id}`} data-inactive={inactive ? 'true' : undefined}>
+      <TableCell className={cn('px-1.5 py-1.5 font-semibold', inactive ? 'text-text-muted' : 'text-text')}>
         {engineer.name}
+        {inactive ? <InactiveTag className="mt-0.5 flex" /> : null}
         {/* P29 (API_CONTRACT_P29 §3.3): served flag; an older API omits it. */}
         {engineer.counts_in_capacity === false ? <NotInCapacityRosterBadge className="mt-0.5 flex w-fit" /> : null}
+        {editing && editor.rowChanged(engineer) ? <UnsavedTag /> : null}
       </TableCell>
       <TableCell className="px-1.5 py-1.5 text-right tnum" data-numeric="">
-        {canEdit ? (
+        {editing ? (
           <InlineNumber
             id={`fte-${engineer.id}`}
             label={`FTE for ${engineer.name}`}
-            value={engineer.fte}
+            text={editor.text(engineer, 'fte')}
             step="0.1"
             min={0.1}
             inputMode="decimal"
-            validate={validateFte}
-            onCommit={(fte) => onUpdate(engineer.id, { fte })}
+            changed={editor.isChanged(engineer, 'fte')}
+            error={fteError}
+            disabled={editor.saving}
+            onChange={(t) => editor.set(engineer, 'fte', t)}
+            onRevert={() => editor.revert(engineer, 'fte')}
           />
         ) : (
           formatPlain(engineer.fte)
@@ -268,17 +323,18 @@ function EngineerRow({
         {formatAmount(pickUnit(engineer, unit, basis), unit)}
       </TableCell>
       <TableCell className="px-1.5 py-1.5">
-        <div className="flex flex-wrap gap-1" role={canEdit ? 'group' : undefined} aria-label={canEdit ? `Project types for ${engineer.name}` : undefined}>
-          {canEdit ? (
+        <div className="flex flex-wrap gap-1" role={editing ? 'group' : undefined} aria-label={editing ? `Project types for ${engineer.name}` : undefined}>
+          {editing ? (
             [...chips, ...extras].map((c) => (
               <ToggleChip
                 key={c}
                 tone="primary"
                 pressed={allowed.includes(c)}
+                changed={allowed.includes(c) !== served.includes(c)}
                 label={`Allow category ${c} for ${engineer.name}`}
                 title={categoryChipTitle(c, catalog)}
-                disabled={savingChip}
-                onToggle={() => void toggle(c)}
+                disabled={editor.saving}
+                onToggle={() => toggle(c)}
               >
                 {c}
               </ToggleChip>
@@ -293,21 +349,30 @@ function EngineerRow({
             ))
           )}
         </div>
-        {chipError ? (
+        {rowError ? (
           <p role="alert" className="mt-1 text-2xs text-danger">
-            {chipError}
+            {rowError}
           </p>
         ) : null}
       </TableCell>
-      {canEdit ? (
+      {canEdit || canChangeStatus ? (
         <TableCell className="px-1 py-1.5">
           <div className="flex justify-end">
-            <Button type="button" variant="ghost" size="icon" className="size-7" aria-label={`Edit ${engineer.name}`} onClick={() => onEdit(engineer)}>
-              <Pencil />
-            </Button>
-            <Button type="button" variant="ghost" size="icon" className="size-7" aria-label={`Delete ${engineer.name}`} onClick={() => onDelete(engineer)}>
-              <Trash2 />
-            </Button>
+            {canEdit ? (
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="size-7"
+                aria-label={inactive ? `Edit name of ${engineer.name}` : `Edit ${engineer.name}`}
+                onClick={() => onEdit(engineer)}
+              >
+                <Pencil />
+              </Button>
+            ) : null}
+            {canChangeStatus ? (
+              <StatusAction row={engineer} className="size-7" onDeactivate={onDeactivate} onReactivate={onReactivate} />
+            ) : null}
           </div>
         </TableCell>
       ) : null}

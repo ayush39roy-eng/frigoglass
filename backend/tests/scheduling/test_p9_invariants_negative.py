@@ -19,6 +19,7 @@ from scheduling import (
     run_greedy_sgs,
     validate_invariants,
 )
+from scheduling._selftest_common import SELFTEST_WEEK
 from tests.scheduling._fixtures import progress
 
 ENG_A = EngineerInput("eng-a", "A", "R&D-Greece", ("A+", "A", "B", "C"))
@@ -41,7 +42,12 @@ def _project(pid: str = "p", **kw: object) -> ProjectInput:
 
 
 def _si(*projects: ProjectInput, **kw: object) -> ScheduleInput:
-    return ScheduleInput(projects=projects, engineers=(ENG_A,), chambers=(CH_GR,), **kw)  # type: ignore[arg-type]
+    return ScheduleInput(
+        projects=projects,
+        engineers=(ENG_A,),
+        chambers=(CH_GR,),
+        **{"current_week": SELFTEST_WEEK, **kw},
+    )  # type: ignore[arg-type]
 
 
 def _break_step(out: ScheduleOutput, pid: str, target: str, /, **changes: object) -> ScheduleOutput:

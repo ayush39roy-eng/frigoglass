@@ -10,6 +10,7 @@ import type { ImportSimulateRequest } from '../import-types';
 import { RESIMULATE_DEBOUNCE_MS, useImportSimulation } from '../use-import';
 import { useDrill } from '../drill-store';
 import { DrillSheet } from './drill-sheet';
+import { ImportToast } from './import-toast';
 import { ResultsStep } from './results-step';
 import { ReviewStep } from './review-step';
 import { UploadStep } from './upload-step';
@@ -81,6 +82,8 @@ export default function ImportPlanView(): React.JSX.Element {
   const rows = useImportPlan((s) => s.rows);
   const options = useImportPlan((s) => s.options);
   const edits = useImportPlan((s) => s.edits);
+  const excludedPlanIds = useImportPlan((s) => s.excludedPlanIds);
+  const rerunNonce = useImportPlan((s) => s.rerunNonce);
   const setResult = useImportPlan((s) => s.setResult);
   const setStep = useImportPlan((s) => s.setStep);
   const pruneEdits = useImportPlan((s) => s.pruneEdits);
@@ -97,10 +100,11 @@ export default function ImportPlanView(): React.JSX.Element {
   const { run } = simulation;
 
   const body: ImportSimulateRequest = React.useMemo(
-    () => buildSimulateRequest(rows, options, edits),
-    [rows, options, edits],
+    () => buildSimulateRequest(rows, options, edits, excludedPlanIds),
+    [rows, options, edits, excludedPlanIds],
   );
-  const bodyKey = React.useMemo(() => JSON.stringify(body), [body]);
+  // P41: "Re-run on today's plan" bumps the nonce so an unchanged body is simulated again.
+  const bodyKey = React.useMemo(() => `${String(rerunNonce)}|${JSON.stringify(body)}`, [body, rerunNonce]);
 
   const compute = () => {
     // Stale edits are pruned from the map itself (the body never carries them anyway).
@@ -136,12 +140,13 @@ export default function ImportPlanView(): React.JSX.Element {
                 project: a Gantt you can adjust and the capacity it needs.
               </p>
               <p>
-                Save a result as a scenario, or build variants with quick rules, and compare up to four side by side.
-                Scenarios last for this session only. Nothing is saved or applied to the real plan.
+                Pick the projects of a scenario, build variants with quick rules, save a scenario for later and
+                compare up to four side by side, from this or earlier imports. Saved scenarios are kept for reference;
+                variants last for this session only. Nothing is ever applied to the real plan.
               </p>
             </CardInfo>
           </div>
-          <p className="text-xs text-text-muted">Try a workbook against the plan. Nothing is saved.</p>
+          <p className="text-xs text-text-muted">Try a workbook against the plan. The real plan is never changed.</p>
         </div>
         <Stepper step={step} canResults={result !== null} onGo={setStep} />
       </div>
@@ -153,6 +158,7 @@ export default function ImportPlanView(): React.JSX.Element {
         <ResultsStep result={result} simulation={simulation} onRetry={simulation.retry} />
       )}
       <DrillSheet />
+      <ImportToast />
     </section>
   );
 }

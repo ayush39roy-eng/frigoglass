@@ -28,7 +28,6 @@ from sqlalchemy import select, text, update
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-import domain_constants as dc
 from api.db import get_db
 from api.main import app
 from models.audit import AuditLogEntry
@@ -49,11 +48,12 @@ from services.demand_load import load_demand
 from services.schedule_persistence import build_schedule_input_from_db
 from services.template_copy import merge_copy_changes, reached_step_ids
 from services.workflow_durations import live_step_effective_weeks, own_effort_kinds
+from tests._plan_week import TEST_WEEK
 from tests.auth_helpers import clear_current_principal_override
 from tests.factories import make_chamber, make_engineer, make_hub, registration_body
 from tests.p12_helpers import act_as, client_for, live_step, set_progress, stepped_project
 
-CW = dc.CURRENT_WEEK
+CW = TEST_WEEK
 PDD = [f"PDD-{c}" for c in "ABCDEFGHIJKLMN"]
 
 
@@ -143,7 +143,7 @@ async def _run_of(db: AsyncSession) -> dict[str, str]:
     """`repr` of each project's outcome in a fresh greedy run on the live
     input (rows, finish weeks, flags)."""
 
-    out = run_greedy_sgs(await build_schedule_input_from_db(db))
+    out = run_greedy_sgs(await build_schedule_input_from_db(db, current_week=TEST_WEEK))
     return {o.project_id: repr(o) for o in out.project_outcomes}
 
 
@@ -256,7 +256,7 @@ async def test_builder_default_copy_is_the_pre_p33_input(db_session: AsyncSessio
     q = await stepped_project(
         db_session, w.greece, name="A0", leader=w.other, category=ProjectCategory.A
     )
-    si = await build_schedule_input_from_db(db_session)
+    si = await build_schedule_input_from_db(db_session, current_week=TEST_WEEK)
     by_id = {x.project_id: x for x in si.projects}
     assert all(
         t.lead_weeks is None and t.wait_weeks == 0 for x in si.projects for t in x.step_timing
@@ -292,7 +292,7 @@ async def test_builder_maps_copies_and_gaps(  # P33-T13: T05-A1 terms removed
     # A template edit makes the own-effort weights differ from the table.
     await _set_template(db_session, "B", "PDD-K", weeks=5)
 
-    si = await build_schedule_input_from_db(db_session)
+    si = await build_schedule_input_from_db(db_session, current_week=TEST_WEEK)
     timing = {x.project_id: {t.step_id: t for t in x.step_timing} for x in si.projects}
     tq, tp = timing[str(q.id)], timing[str(p.id)]
     assert (tq["PDD-E"].lead_weeks, tq["PDD-E"].duration_override_weeks) == (6, None)
@@ -349,7 +349,7 @@ async def test_builder_drops_a_gap_on_a_first_step(db_session: AsyncSession) -> 
     )
     (await live_step(db_session, q, "PDD-A")).plan_gap_weeks = 2
     await db_session.flush()
-    si = await build_schedule_input_from_db(db_session)
+    si = await build_schedule_input_from_db(db_session, current_week=TEST_WEEK)
     assert next(x for x in si.projects if x.project_id == str(q.id)).step_timing == ()
 
 
@@ -398,7 +398,7 @@ async def test_template_weeks_leave_an_own_effort_projects_split_and_run_unchang
     assert demand[own.id] == demand_before[own.id]
     # I32 ii: the plain project's E is its copy.
     assert demand[plain.id].design_full_year == demand_before[plain.id].design_full_year + 1
-    out = run_greedy_sgs(await build_schedule_input_from_db(db_session))
+    out = run_greedy_sgs(await build_schedule_input_from_db(db_session, current_week=TEST_WEEK))
     plain_out = next(o for o in out.project_outcomes if o.project_id == str(plain.id))
     assert next(s for s in plain_out.steps if s.step_id == "PDD-E").duration_weeks == 5
 

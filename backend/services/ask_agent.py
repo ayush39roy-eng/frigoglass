@@ -27,7 +27,6 @@ import httpx
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-import domain_constants as dc
 from core.config import get_groq_settings
 from models.enums import WorkflowStepKind, WorkflowStepStatus
 from models.project import Project
@@ -215,13 +214,20 @@ async def build_agent_context(db: AsyncSession, project: Project) -> dict[str, A
         )
         for r in live_rows
     )
-    health = health_badge(
-        outcome,
-        run_steps,
-        live_by_step,
-        run.current_week if run is not None else dc.CURRENT_WEEK,
-        fte_by_engineer=await engineer_ftes_for_rows(db, run_steps),
-        frozen=project.frozen,
+    # I13: the run's stored week. Without an active run there is no outcome,
+    # so the badge is "unscheduled" and no week is compared (P37-T04: no
+    # fallback to a module-level week).
+    health = (
+        health_badge(
+            outcome,
+            run_steps,
+            live_by_step,
+            run.current_week,
+            fte_by_engineer=await engineer_ftes_for_rows(db, run_steps),
+            frozen=project.frozen,
+        )
+        if run is not None
+        else "unscheduled"
     )
 
     files = (

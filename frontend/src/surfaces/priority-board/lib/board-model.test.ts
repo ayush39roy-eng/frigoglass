@@ -4,7 +4,10 @@ import type { PriorityBoardCard, PriorityBoardColumn } from '../api';
 import {
   applyOverrides,
   canRerank,
+  displayPlacementForRank,
   isNoopSlot,
+  lastServedIdIfFullBand,
+  parseTypedRank,
   placementForSlot,
   positionForPlacement,
   slotForIndex,
@@ -81,5 +84,30 @@ describe('P36 board-model', () => {
   it('only a card with a served band_rank can be re-ranked', () => {
     expect(canRerank(card('a', 3))).toBe(true);
     expect(canRerank(card('a', null))).toBe(false);
+  });
+});
+
+describe('owner request 2026-11-17: ↑ / ↓ / typed position helpers', () => {
+  it('displayPlacementForRank: next to the visible holder of the target rank, else null (stays put)', () => {
+    const cards = shown([['a', 4], ['b', 7], ['c', 9]]);
+    expect(displayPlacementForRank(cards, 'c', 7)).toEqual({ before_project_id: 'b', after_project_id: null });
+    expect(displayPlacementForRank(cards, 'a', 7)).toEqual({ before_project_id: null, after_project_id: 'b' });
+    expect(displayPlacementForRank(cards, 'a', 5)).toBeNull(); // rank 5 is not shown (filtered / out of scope)
+    expect(displayPlacementForRank(cards, 'a', 4)).toBeNull();
+    expect(displayPlacementForRank(shown([['a', null], ['b', 1]]), 'a', 1)).toBeNull();
+  });
+
+  it('lastServedIdIfFullBand: the served last card only when the whole band is shown', () => {
+    const column = col('P1', [['a', 1], ['b', 2]]);
+    expect(lastServedIdIfFullBand(column, true)).toBe('b');
+    expect(lastServedIdIfFullBand(column, false)).toBeNull();
+    expect(lastServedIdIfFullBand(col('P1', []), true)).toBeNull();
+    expect(lastServedIdIfFullBand(col('P1', [['a', 1], ['z', null]]), true)).toBeNull();
+  });
+
+  it('parseTypedRank: whole numbers ≥ 1 only', () => {
+    expect(parseTypedRank(' 12 ')).toBe(12);
+    expect(parseTypedRank('1')).toBe(1);
+    for (const bad of ['', '0', '-1', '1.5', '1e3', 'abc', '99999999999999999999']) expect(parseTypedRank(bad)).toBeNull();
   });
 });

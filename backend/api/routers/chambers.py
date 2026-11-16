@@ -29,7 +29,6 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-import domain_constants as dc
 from api.db import get_db
 from api.deps import require_permission
 from core.principal import Principal
@@ -51,6 +50,7 @@ from services.capacity_supply import (
     to_days,
 )
 from services.hub_scope import is_lab_region_in_scope, scoped_lab_regions
+from services.plan_clock import PlanClock, get_plan_clock
 
 router = APIRouter(prefix="/chambers", tags=["capacity-planning", "chambers"])
 
@@ -110,11 +110,13 @@ async def _get_chamber_or_404(
     return chamber
 
 
-async def _chamber_reads(db: AsyncSession, chambers: list[Chamber]) -> list[ChamberRead]:
+async def _chamber_reads(
+    db: AsyncSession, chambers: list[Chamber], *, current_week: int
+) -> list[ChamberRead]:
     """`ChamberRead` plus the ADR 0008 derived figures (P9-T03)."""
 
     calendars = await load_calendars_by_region(db)
-    fraction = lab_remaining_fraction(dc.CURRENT_WEEK)
+    fraction = lab_remaining_fraction(current_week)
     out: list[ChamberRead] = []
     for c in chambers:
         figures = chamber_figures(c, region_holiday_weeks(calendars, c.lab_region))
@@ -182,6 +184,7 @@ async def _validate_allowed_stages(db: AsyncSession, allowed_stages: list[str]) 
 async def list_chambers(
     db: AsyncSession = Depends(get_db),
     current_user: Principal = Depends(_read),
+    clock: PlanClock = Depends(get_plan_clock),
 ) -> list[ChamberRead]:
     """List chambers, hub-scoped (P3-T03) via lab region: a Hub Planner sees
     every chamber in their hub(s)' lab region(s) (`services.hub_scope.
@@ -194,7 +197,7 @@ async def list_chambers(
     if regions is not None:
         stmt = stmt.where(Chamber.lab_region.in_(regions))
     result = await db.execute(stmt.order_by(Chamber.code))
-    return await _chamber_reads(db, list(result.scalars().all()))
+    return await _chamber_reads(db, list(result.scalars().all()), current_week=clock.week)
 
 
 @router.get("/{chamber_id}", response_model=ChamberRead)
@@ -202,9 +205,10 @@ async def get_chamber(
     chamber_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
     current_user: Principal = Depends(_read),
+    clock: PlanClock = Depends(get_plan_clock),
 ) -> ChamberRead:
     chamber = await _get_chamber_or_404(db, chamber_id, current_user)
-    return (await _chamber_reads(db, [chamber]))[0]
+    return (await _chamber_reads(db, [chamber], current_week=clock.week))[0]
 
 
 @router.post("", response_model=ChamberRead, status_code=status.HTTP_201_CREATED)
@@ -212,6 +216,7 @@ async def create_chamber(
     body: ChamberCreateRequest,
     db: AsyncSession = Depends(get_db),
     current_user: Principal = Depends(_write),
+    clock: PlanClock = Depends(get_plan_clock),
 ) -> ChamberRead:
     await _validate_allowed_stages(db, body.allowed_stages)
 
@@ -243,7 +248,7 @@ async def create_chamber(
     )
     await db.commit()
     await db.refresh(chamber)
-    return (await _chamber_reads(db, [chamber]))[0]
+    return (await _chamber_reads(db, [chamber], current_week=clock.week))[0]
 
 
 @router.patch("/{chamber_id}", response_model=ChamberRead)
@@ -252,6 +257,7 @@ async def update_chamber(
     body: ChamberUpdateRequest,
     db: AsyncSession = Depends(get_db),
     current_user: Principal = Depends(_write),
+    clock: PlanClock = Depends(get_plan_clock),
 ) -> ChamberRead:
     chamber = await _get_chamber_or_404(db, chamber_id, current_user)
 
@@ -292,7 +298,7 @@ async def update_chamber(
     )
     await db.commit()
     await db.refresh(chamber)
-    return (await _chamber_reads(db, [chamber]))[0]
+    return (await _chamber_reads(db, [chamber], current_week=clock.week))[0]
 
 
 @router.delete("/{chamber_id}", status_code=status.HTTP_204_NO_CONTENT)

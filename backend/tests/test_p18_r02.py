@@ -44,6 +44,7 @@ from models.enums import (
 from models.hub import HubWorkCalendar
 from scheduling.greedy import run_greedy_sgs
 from schemas.whatif import ScenarioRequest
+from services import plan_clock
 from services.llm_client import LlmProviderError, OpenAICompatibleClient
 from services.schedule_persistence import build_schedule_input_from_db, persist_schedule_output
 from services.whatif import (
@@ -58,6 +59,7 @@ from services.whatif import (
 )
 from services.whatif_baseline import load_context
 from services.whatif_chat import SYSTEM_PROMPT_TEMPLATE, ungrounded_numbers
+from tests._plan_week import TEST_WEEK
 from tests.auth_helpers import make_principal
 from tests.factories import make_chamber, make_engineer, make_hub, make_project
 from tests.test_p18_whatif_api import (  # noqa: F401  (autouse cleanup fixture)
@@ -83,7 +85,7 @@ async def activate_greedy_run(db_session) -> None:
     """Persist the greedy schedule of the DB as the active run (what the
     Dashboard and Capacity read)."""
 
-    si = await build_schedule_input_from_db(db_session)
+    si = await build_schedule_input_from_db(db_session, current_week=TEST_WEEK)
     await persist_schedule_output(
         db_session,
         si,
@@ -171,7 +173,7 @@ async def test_added_projects_keep_the_commercialized_ones_in_before_and_after(d
         dash = await dashboard_wy(c)
         d = (await c.post("/whatif/simulate", json={"scenario": scenario})).json()["diff"]
     raw = engine.simulate(
-        (await load_context(db_session, principal)).baseline,
+        (await load_context(db_session, principal, clock=plan_clock.now())).baseline,
         whatif_service.to_engine_scenario(ScenarioRequest(**scenario)),
     )
     assert d["within_year_before"] == dash == raw.diff.within_year_before

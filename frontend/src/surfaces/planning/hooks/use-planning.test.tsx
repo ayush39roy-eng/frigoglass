@@ -7,7 +7,9 @@ vi.mock('../api/planning-api', () => ({
   fetchEngineers: vi.fn(),
   createEngineer: vi.fn(),
   updateEngineer: vi.fn(),
-  deleteEngineer: vi.fn(),
+  deactivateEngineer: vi.fn(),
+  reactivateEngineer: vi.fn(),
+  fetchDeactivationPreview: vi.fn(),
   fetchChambers: vi.fn(),
   createChamber: vi.fn(),
   updateChamber: vi.fn(),
@@ -26,7 +28,8 @@ import {
   useCreateChamber,
   useCreateEngineer,
   useDeleteChamber,
-  useDeleteEngineer,
+  useDeactivateEngineer,
+  useReactivateEngineer,
   useEngineerList,
   useResourceLoad,
   useUpdateChamber,
@@ -85,9 +88,10 @@ describe('use-planning', () => {
     }
   });
 
-  it('on update/delete engineer, also invalidates the live capacity keys', async () => {
+  it('on update / deactivate / reactivate engineer, also invalidates the live capacity keys', async () => {
     vi.mocked(api.updateEngineer).mockResolvedValue({ id: 'e1' } as never);
-    vi.mocked(api.deleteEngineer).mockResolvedValue(undefined);
+    vi.mocked(api.deactivateEngineer).mockResolvedValue({} as never);
+    vi.mocked(api.reactivateEngineer).mockResolvedValue({ id: 'e1' } as never);
     const { client, Wrapper } = makeWrapper();
     const spy = vi.spyOn(client, 'invalidateQueries');
 
@@ -97,10 +101,26 @@ describe('use-planning', () => {
     expect(spy.mock.calls.map((c) => c[0]?.queryKey)).toContainEqual(['capacity', 'hub-load']);
 
     spy.mockClear();
-    const { result: deleteResult } = renderHook(() => useDeleteEngineer(), { wrapper: Wrapper });
-    await deleteResult.current.mutateAsync('e1');
+    const { result: deactivateResult } = renderHook(() => useDeactivateEngineer(), { wrapper: Wrapper });
+    await deactivateResult.current.mutateAsync({
+      engineerId: 'e1',
+      body: { reason: 'other', led_projects_token: 't', reassignments: [] },
+    });
     await waitFor(() => expect(spy).toHaveBeenCalled());
-    expect(spy.mock.calls.map((c) => c[0]?.queryKey)).toContainEqual(['capacity', 'utilization-matrix']);
+    let keys = spy.mock.calls.map((c) => c[0]?.queryKey);
+    expect(keys).toContainEqual(['capacity', 'utilization-matrix']);
+    expect(keys).toContainEqual(['engineers']);
+    // The leaders of the listed projects changed.
+    expect(keys).toContainEqual(['projects']);
+
+    spy.mockClear();
+    const { result: reactivateResult } = renderHook(() => useReactivateEngineer(), { wrapper: Wrapper });
+    await reactivateResult.current.mutateAsync('e1');
+    await waitFor(() => expect(spy).toHaveBeenCalled());
+    keys = spy.mock.calls.map((c) => c[0]?.queryKey);
+    expect(keys).toContainEqual(['planning']);
+    // Reactivation gives back no project and runs nothing.
+    expect(keys).not.toContainEqual(['projects']);
   });
 
   it('on create/update/delete chamber, invalidates the chamber list AND the live capacity keys', async () => {

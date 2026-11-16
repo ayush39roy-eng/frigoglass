@@ -374,3 +374,60 @@ describe('Priority move preview dialog (ADR 0026)', () => {
     expect(await seriousAxeViolations(dialog)).toEqual([]);
   });
 });
+
+describe('Priority move preview — right-hand side panel (owner request 2026-11-17)', () => {
+  it('opens as a right-docked Sheet, not a centred modal, with the same title, counts and buttons', async () => {
+    const user = userEvent.setup();
+    renderHarness();
+    const panel = await openPreview(user);
+    expect(panel).toHaveAttribute('data-variant', 'sheet');
+    expect(panel).toHaveAttribute('data-side', 'right');
+    expect(panel).toHaveClass('right-0', 'h-full');
+    expect(panel).not.toHaveClass('top-1/2', 'left-1/2');
+    // Modal like the Dialog: the page behind is hidden from assistive tech while it is open.
+    expect(screen.queryByRole('button', { name: 'Drop on P1' })).not.toBeInTheDocument();
+    expect(panel).toHaveAccessibleDescription(/Nothing is saved until you choose Yes/);
+    // The entry point stays on the page beside the panel.
+    expect(screen.getByRole('button', { name: 'Drop on P1', hidden: true })).toBeInTheDocument();
+    for (const label of ['Affected', 'Delayed', 'Earlier', 'Pushed out of year', 'Pulled into year']) {
+      expect(within(within(panel).getByTestId('preview-summary')).getByText(label)).toBeInTheDocument();
+    }
+    expect(within(panel).getByRole('button', { name: 'No, cancel' })).toHaveFocus();
+    // The impact body scrolls on its own and is reachable from the keyboard.
+    expect(within(panel).getByRole('region', { name: 'What this priority move does' })).toHaveAttribute('tabindex', '0');
+  });
+
+  it('Escape cancels (rollback outcome), and focus returns to the entry point', async () => {
+    const user = userEvent.setup();
+    const { onSettled } = renderHarness();
+    await openPreview(user);
+    await user.keyboard('{Escape}');
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(onSettled).toHaveBeenCalledWith('cancelled');
+    expect(api.moveProjectPriority).not.toHaveBeenCalled();
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Drop on P1' })).toHaveFocus());
+  });
+
+  it('while applying: Escape does nothing and the panel shows "Applying…"', async () => {
+    let resolve: (v: PriorityMoveResponse) => void = () => undefined;
+    api.moveProjectPriority.mockReturnValue(new Promise((r) => (resolve = r)));
+    const user = userEvent.setup();
+    renderHarness();
+    const panel = await openPreview(user);
+    await user.click(within(panel).getByRole('button', { name: 'Yes, apply' }));
+    expect(within(panel).getByRole('button', { name: 'Applying…' })).toBeDisabled();
+    await user.keyboard('{Escape}');
+    expect(screen.getByRole('dialog')).toHaveAttribute('data-kind', 'applying');
+    resolve(applied());
+    expect(await within(panel).findByTestId('preview-applied')).toBeInTheDocument();
+  });
+
+  it('has no serious/critical axe violations in the applied state', async () => {
+    const user = userEvent.setup();
+    renderHarness();
+    const panel = await openPreview(user);
+    await user.click(within(panel).getByRole('button', { name: 'Yes, apply' }));
+    await within(panel).findByTestId('preview-applied');
+    expect(await seriousAxeViolations(panel)).toEqual([]);
+  });
+});
