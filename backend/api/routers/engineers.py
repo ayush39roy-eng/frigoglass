@@ -41,6 +41,7 @@ import domain_constants as dc
 from api.db import get_db
 from api.deps import require_permission
 from api.errors import HTTP_422, CodedHTTPException
+from api.query_params import HubIdListQuery
 from core.principal import Principal
 from core.rbac import Action, Surface
 from models.audit import AuditLogEntry
@@ -198,11 +199,12 @@ def _require_capacity_admin(principal: Principal) -> None:
 
 @router.get("", response_model=list[EngineerRead])
 async def list_engineers(
-    hub_id: uuid.UUID | None = None,
+    hub_id: HubIdListQuery = None,
     db: AsyncSession = Depends(get_db),
     current_user: Principal = Depends(_read),
 ) -> list[EngineerRead]:
-    """List engineers, optionally filtered by hub.
+    """List engineers, optionally filtered by hub (`hub_id` repeatable,
+    ADR 0051: any of the listed hubs; an out-of-scope hub contributes nothing).
 
     Requires READ on Capacity Planning (401/403 enforced by `_read`,
     P3-T02) and is hub-scoped (P3-T03): a Hub Planner's list is silently

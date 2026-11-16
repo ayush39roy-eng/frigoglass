@@ -74,7 +74,7 @@ const ROWS: ProjectFilterRow[] = [
   project({ project_name: 'New Romania', region: 'Romania', status: 'Cancelled' }),
 ];
 
-const SCOPE: ProjectListScope = { hubId: null, region: null, selection: { categories: [], types: [] } };
+const SCOPE: ProjectListScope = { hub: { hubIds: [], regions: [] }, selection: { categories: [], types: [] } };
 
 const TOTALS: PipelineTotals = {
   spillover_count: 2,
@@ -168,14 +168,14 @@ describe('Project pipeline cards', () => {
   it('fetches with the Dashboard scope (hub, country, category, type)', async () => {
     renderWithProviders(
       <ProjectListProvider
-        scope={{ hubId: 'hub-1', region: 'India', selection: { categories: ['A'], types: ['NM'] } }}
+        scope={{ hub: { hubIds: ['hub-2', 'hub-1'], regions: ['India'] }, selection: { categories: ['A'], types: ['NM'] } }}
       >
         <PipelineRow totals={TOTALS} regionSummary={SUMMARY} />
       </ProjectListProvider>,
     );
     await userEvent.click(screen.getByTestId('pipeline-open-total'));
     expect(drill.useDrilldownProjects).toHaveBeenLastCalledWith(
-      { hub_id: 'hub-1', region: 'India', category: ['A'], type: ['NM'] },
+      { hub_id: ['hub-1', 'hub-2'], region: ['India'], category: ['A'], type: ['NM'] },
       true,
     );
   });

@@ -143,7 +143,7 @@ async function openGreeceSlide(user: ReturnType<typeof userEvent.setup>): Promis
 
 beforeEach(() => {
   vi.clearAllMocks();
-  useHubFilterStore.setState({ hubId: null, region: null });
+  useHubFilterStore.getState().setSelection([], []);
   client.apiGet.mockImplementation((path: string) => {
     if (path === '/vip-board') return Promise.resolve(BOARD);
     if (path === '/dashboard/projects') {
@@ -176,10 +176,10 @@ describe('Dashboard VIP projects card (ADR 0027, OQ #39)', () => {
   });
 
   it('sends the global hub / country filter', async () => {
-    useHubFilterStore.setState({ hubId: null, region: 'India' });
+    useHubFilterStore.getState().setSelection([], ['India']);
     renderCard();
     await screen.findAllByTestId('vip-area-tile');
-    expect(client.apiGet).toHaveBeenCalledWith('/vip-board', expect.objectContaining({ query: { hub_id: undefined, region: 'India' } }));
+    expect(client.apiGet).toHaveBeenCalledWith('/vip-board', expect.objectContaining({ query: { hub_id: undefined, region: ['India'] } }));
   });
 
   it('a VIP item with one project navigates straight to its Workspace', async () => {
@@ -310,7 +310,7 @@ describe('VIP edit mode (MATRIX WRITE only)', () => {
     await user.click(within(editor).getByLabelText('VIP (highlighted on the slide)'));
     await user.type(within(editor).getByRole('searchbox', { name: 'Search projects in Greece to link' }), 'coffee');
     await user.click(await within(editor).findByRole('button', { name: 'Link Coffee and vending cooler combo (R&D-Greece)' }));
-    expect(client.apiGet).toHaveBeenCalledWith('/dashboard/projects', expect.objectContaining({ query: expect.objectContaining({ q: 'coffee', region: 'Greece' }) }));
+    expect(client.apiGet).toHaveBeenCalledWith('/dashboard/projects', expect.objectContaining({ query: expect.objectContaining({ q: 'coffee', region: ['Greece'] }) }));
     expect(within(editor).getByRole('list', { name: 'Linked projects' })).toHaveTextContent('Coffee and vending cooler combo');
 
     await user.click(within(editor).getByRole('button', { name: 'Save item' }));

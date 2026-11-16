@@ -67,6 +67,7 @@ to see everything; anything else defaults closed.
 from __future__ import annotations
 
 import uuid
+from collections.abc import Sequence
 from typing import Any
 
 from sqlalchemy import ColumnElement, and_, false, or_, select
@@ -262,46 +263,85 @@ def needs_own_assignments(principal: Principal) -> bool:
     return is_engineer_self_scoped(principal) or not principal.hub_scope_all
 
 
+#: ADR 0051: what the global hub / country filter accepts. The routers pass
+#: the repeatable `hub_id` / `region` query lists; a bare value (internal
+#: callers) is read as a one-element list. `None` or empty = no filter.
+HubIdsArg = uuid.UUID | Sequence[uuid.UUID] | None
+RegionsArg = LabRegion | Sequence[LabRegion] | None
+
+
+def hub_id_list(hub_ids: HubIdsArg) -> list[uuid.UUID]:
+    """The distinct requested hub ids, first-seen order (`None` → `[]`)."""
+
+    if hub_ids is None:
+        return []
+    values: Sequence[uuid.UUID] = [hub_ids] if isinstance(hub_ids, uuid.UUID) else hub_ids
+    return list(dict.fromkeys(values))
+
+
+def region_list(regions: RegionsArg) -> list[LabRegion]:
+    """The distinct requested lab regions, first-seen order (`None` → `[]`).
+    `LabRegion` is a `str` enum, so a bare value is detected before it could
+    be iterated character by character."""
+
+    if regions is None:
+        return []
+    values: Sequence[LabRegion] = [regions] if isinstance(regions, LabRegion) else regions
+    return list(dict.fromkeys(values))
+
+
 def global_hub_filter(
     hub_id_column: InstrumentedAttribute[Any],
-    hub_id: uuid.UUID | None,
-    region: LabRegion | None = None,
+    hub_id: HubIdsArg,
+    region: RegionsArg = None,
 ) -> ColumnElement[bool] | None:
-    """The global filter alone (ADR 0020 hub, ADR 0025 country), without the
-    RBAC scope: `column == hub_id` AND `column IN (hubs of region)`. `None`
-    when neither is given. Callers that scope by something other than
-    `hub_scope_filter` (the Gantt's own-assignment Engineer path) AND this
-    with their own scope; everyone else uses `narrowed_hub_filter`.
+    """The global filter alone (ADR 0020 hub, ADR 0025 country, ADR 0051
+    multi-select), without the RBAC scope: `column IN hub_id` OR `column IN
+    (hubs of any region in region)`. The chosen hubs and countries are a
+    UNION ("India + R&D-Greece" means both). `None` when neither list has a
+    value. Callers that scope by something other than `hub_scope_filter`
+    (the Gantt's own-assignment Engineer path) AND this with their own
+    scope; everyone else uses `narrowed_hub_filter`.
+
+    One hub / one region builds the pre-ADR-0051 predicate (`column ==
+    :hub`, `column IN (hubs WHERE lab_region = :region)`). Every value is a
+    bound parameter, never interpolated.
     """
 
+    hubs = hub_id_list(hub_id)
+    regions = region_list(region)
     parts: list[ColumnElement[bool]] = []
-    if hub_id is not None:
-        parts.append(hub_id_column == hub_id)
-    if region is not None:
-        # ADR 0025: "country" is the hub's served lab region. Bound parameter,
-        # never interpolated.
-        parts.append(hub_id_column.in_(select(Hub.id).where(Hub.lab_region == region)))
+    if len(hubs) == 1:
+        parts.append(hub_id_column == hubs[0])
+    elif hubs:
+        parts.append(hub_id_column.in_(hubs))
+    if regions:
+        # ADR 0025: "country" is the hub's served lab region.
+        region_pred = (
+            Hub.lab_region == regions[0] if len(regions) == 1 else Hub.lab_region.in_(regions)
+        )
+        parts.append(hub_id_column.in_(select(Hub.id).where(region_pred)))
     if not parts:
         return None
-    return parts[0] if len(parts) == 1 else and_(*parts)
+    return parts[0] if len(parts) == 1 else or_(*parts)
 
 
 def narrowed_hub_filter(
     principal: Principal,
     hub_id_column: InstrumentedAttribute[Any],
-    hub_id: uuid.UUID | None,
-    region: LabRegion | None = None,
+    hub_id: HubIdsArg,
+    region: RegionsArg = None,
 ) -> ColumnElement[bool] | None:
-    """ADR 0020: the RBAC scope (`hub_scope_filter`) AND the optional global
-    hub filter (`hub_id` query parameter). The filter only ever narrows: a
-    `hub_id` outside the caller's scope gives an always-empty predicate
-    (scope AND `column == hub_id`), so the endpoint answers with empty rows
-    and zero totals rather than a 403 that would reveal the hub has data.
-    `None` means no predicate at all (unrestricted caller, no filter).
+    """ADR 0020 / 0025 / 0051: the RBAC scope (`hub_scope_filter`) AND the
+    global filter (`global_hub_filter`: chosen hubs OR chosen countries).
 
-    ADR 0025: `region` (a `LabRegion`, "country") is ANDed the same way:
-    scope AND (`hub_id`) AND (hub in `region`). A region with no hub in the
-    caller's scope gives empty rows, never a 403 and never a wider scope.
+    The filter only ever narrows. The scope is ANDed onto the whole union, so
+    a requested hub or country outside the caller's scope contributes
+    nothing: `scope AND (hub ∈ hub_id OR region ∈ region)`. A list made only
+    of out-of-scope values gives an always-empty predicate, so the endpoint
+    answers with empty rows and zero totals rather than a 403 that would
+    reveal the hub has data. `None` means no predicate at all (unrestricted
+    caller, no filter).
     """
 
     scope = hub_scope_filter(principal, hub_id_column)
@@ -314,26 +354,27 @@ def narrowed_hub_filter(
 async def narrowed_lab_regions(
     db: AsyncSession,
     principal: Principal,
-    hub_id: uuid.UUID | None,
-    region: LabRegion | None = None,
+    hub_id: HubIdsArg,
+    region: RegionsArg = None,
 ) -> set[LabRegion] | None:
-    """The lab regions whose chambers a filtered Capacity view shows: the
-    caller's scoped regions (`scoped_lab_regions`), narrowed to the chosen
-    hub's region (ADR 0020 §4; an out-of-scope or unknown hub gives none) and
-    to `region` (ADR 0025). `None` = unrestricted, no filter.
+    """The lab regions whose chambers a filtered Capacity view shows (ADR
+    0020 §4, ADR 0025, ADR 0051): the caller's scoped regions
+    (`scoped_lab_regions`) ∩ (the regions of the chosen in-scope hubs ∪ the
+    chosen regions). A chosen hub outside the caller's scope (or unknown)
+    contributes no region. `None` = unrestricted, no filter (nothing chosen
+    and `hub_scope_all`).
     """
 
     regions = await scoped_lab_regions(db, principal)
-    if hub_id is not None:
-        hub_region = (
-            await db.execute(select(Hub.lab_region).where(Hub.id == hub_id))
-        ).scalar_one_or_none()
-        chosen = (
-            {hub_region}
-            if hub_region is not None and is_hub_in_scope(principal, hub_id)
-            else set()
+    hubs = hub_id_list(hub_id)
+    chosen_regions = region_list(region)
+    if not hubs and not chosen_regions:
+        return regions
+    chosen: set[LabRegion] = set(chosen_regions)
+    in_scope_hubs = [h for h in hubs if is_hub_in_scope(principal, h)]
+    if in_scope_hubs:
+        rows = await db.execute(
+            select(Hub.lab_region).where(Hub.id.in_(in_scope_hubs)).distinct()
         )
-        regions = chosen if regions is None else regions & chosen
-    if region is not None:
-        regions = {region} if regions is None else regions & {region}
-    return regions
+        chosen |= {row[0] for row in rows.all()}
+    return chosen if regions is None else regions & chosen

@@ -1,131 +1,103 @@
 import * as React from 'react';
 import { Building2 } from 'lucide-react';
 
-import { Label } from '@/components/ui/label';
-import {
-  Select,
-  SelectContent,
-  SelectGroup,
-  SelectItem,
-  SelectLabel,
-  SelectSeparator,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
+import { MultiSelectDropdown, type MultiSelectOption } from '@/components/shared/multi-select-dropdown';
 import { useHubs } from '@/lib/api/reference';
 import { hubPickerLabel } from '@/lib/hub-labels';
 import { cn } from '@/lib/utils';
 import { isLabRegion, useHubFilter } from '@/stores/hub-filter';
 import { useSessionStore } from '@/stores/session';
+import type { LabRegion } from '@/types/enums';
 
 import { CountryFlag } from './country-flag';
-import { hubsInScope, regionsInScope, shouldResetHub, shouldResetRegion } from './hub-scope';
+import { hubsInScope, pruneHubSelection, regionsInScope, summarizeHubSelection } from './hub-scope';
 
-/** Radix Select needs a non-empty value for the "All hubs" item. Countries and
- *  hubs are prefixed so a hub id can never collide with a country name. */
-const ALL = '__all_hubs__';
+/** Option values are prefixed so a hub id can never collide with a country name. */
 const REGION_PREFIX = 'region:';
 const HUB_PREFIX = 'hub:';
 
 /**
- * The global hub / country filter in the app header (ADR 0020, ADR 0025):
- * "All hubs", then a "Countries" group (each served `lab_region` holding at
- * least one in-scope hub), then a "Hubs" group (every hub in the caller's
- * scope). The choice lives in `stores/hub-filter.ts` (persisted per browser);
- * every portfolio surface reads it and sends `hub_id` / `region`. A persisted
- * hub or country that is no longer in scope resets to "All hubs".
+ * The global hub / country filter in the app header (ADR 0020, ADR 0025;
+ * multi-select per `docs/API_CONTRACT_MULTISELECT.md` §3): ONE multi-select
+ * with "All hubs" (clears), a "Countries" group (each served `lab_region` with
+ * at least one in-scope hub) and a "Hubs" group (every hub in the caller's
+ * scope), all checkboxes. Ticking a country selects the COUNTRY (sent as
+ * `region`), not each of its hubs; the server unions countries and hubs. The
+ * trigger summarises ("India + R&D-Greece", "3 hubs"). The choice lives in
+ * `stores/hub-filter.ts` (persisted per browser); hubs or countries that are no
+ * longer in scope are dropped from it.
  */
 export function HubFilterSelect({ className }: { className?: string }): React.JSX.Element {
   const me = useSessionStore((s) => s.me);
   const hubsQuery = useHubs();
-  const { hubId, region, setHubId, setRegion, clear } = useHubFilter();
-  const id = React.useId();
+  const { hubIds, regions, setSelection } = useHubFilter();
 
   const options = React.useMemo(() => hubsInScope(me, hubsQuery.data), [me, hubsQuery.data]);
-  const regions = React.useMemo(() => regionsInScope(options), [options]);
+  const scopedRegions = React.useMemo(() => regionsInScope(options), [options]);
 
   React.useEffect(() => {
-    if (shouldResetHub(hubId, options)) setHubId(null);
-  }, [hubId, options, setHubId]);
-  React.useEffect(() => {
-    if (shouldResetRegion(region, regions)) setRegion(null);
-  }, [region, regions, setRegion]);
+    const pruned = pruneHubSelection(hubIds, regions, options, scopedRegions);
+    if (pruned) setSelection(pruned.hubIds, pruned.regions);
+  }, [hubIds, regions, options, scopedRegions, setSelection]);
 
-  const value = hubId !== null ? `${HUB_PREFIX}${hubId}` : region !== null ? `${REGION_PREFIX}${region}` : ALL;
-  // Explicit trigger text: while the hub list loads, a persisted id has no
-  // matching item yet, and Radix would otherwise print nothing.
-  const label =
-    hubId !== null
-      ? (hubsQuery.data?.find((h) => h.id === hubId)?.name ?? 'Selected hub')
-      : region !== null
-        ? region
-        : 'All hubs';
+  const hubName = React.useCallback(
+    (id: string) => hubsQuery.data?.find((h) => h.id === id)?.name ?? 'Selected hub',
+    [hubsQuery.data],
+  );
 
-  const onValueChange = (next: string): void => {
-    if (next.startsWith(HUB_PREFIX)) setHubId(next.slice(HUB_PREFIX.length));
-    else if (next.startsWith(REGION_PREFIX)) {
-      const r = next.slice(REGION_PREFIX.length);
-      if (isLabRegion(r)) setRegion(r);
-    } else clear();
+  const items = React.useMemo<MultiSelectOption[]>(() => {
+    const out: MultiSelectOption[] = [];
+    for (const r of scopedRegions ?? []) {
+      out.push({ value: `${REGION_PREFIX}${r}`, label: r, group: 'Countries', icon: <CountryFlag region={r} /> });
+    }
+    for (const h of options ?? []) {
+      // P29: a member hub reads "OEM-HCK (Greece)" (served capacity hub).
+      out.push({ value: `${HUB_PREFIX}${h.id}`, label: hubPickerLabel(h, hubsQuery.data), group: 'Hubs' });
+    }
+    return out;
+  }, [scopedRegions, options, hubsQuery.data]);
+
+  const value = React.useMemo(
+    () => [...regions.map((r) => `${REGION_PREFIX}${r}`), ...hubIds.map((id) => `${HUB_PREFIX}${id}`)],
+    [regions, hubIds],
+  );
+
+  const onChange = (next: string[]): void => {
+    const nextRegions: LabRegion[] = [];
+    const nextHubs: string[] = [];
+    for (const v of next) {
+      if (v.startsWith(REGION_PREFIX)) {
+        const r = v.slice(REGION_PREFIX.length);
+        if (isLabRegion(r)) nextRegions.push(r);
+      } else if (v.startsWith(HUB_PREFIX)) nextHubs.push(v.slice(HUB_PREFIX.length));
+    }
+    setSelection(nextHubs, nextRegions);
   };
+
+  const active = hubIds.length > 0 || regions.length > 0;
+  const onlyRegion = hubIds.length === 0 && regions.length === 1 ? regions[0] : undefined;
 
   return (
     <div className={cn('flex min-w-0 items-center', className)} data-testid="hub-filter">
-      <Label htmlFor={id} className="sr-only">
-        Hub filter
-      </Label>
-      <Select value={value} onValueChange={onValueChange}>
-        <SelectTrigger
-          id={id}
-          className={cn(
-            'h-8 w-auto min-w-0 max-w-[8.5rem] gap-1.5 rounded-pill border-transparent bg-transparent px-s3 text-2xs font-semibold sm:max-w-44',
-            'hover:bg-surface-sunken',
-            value !== ALL && 'bg-primary-subtle text-primary-subtle-fg hover:bg-primary-subtle',
-          )}
-        >
-          {region !== null && hubId === null ? (
-            <CountryFlag region={region} />
-          ) : (
-            <Building2 className="size-3.5 shrink-0" aria-hidden="true" />
-          )}
-          <span className="min-w-0 truncate">
-            <SelectValue>{label}</SelectValue>
-          </span>
-        </SelectTrigger>
-        <SelectContent align="end">
-          <SelectItem value={ALL}>All hubs</SelectItem>
-          {regions && regions.length > 0 ? (
-            <>
-              <SelectSeparator />
-              <SelectGroup>
-                <SelectLabel>Countries</SelectLabel>
-                {regions.map((r) => (
-                  <SelectItem key={r} value={`${REGION_PREFIX}${r}`}>
-                    <span className="inline-flex items-center gap-2">
-                      <CountryFlag region={r} />
-                      {r}
-                    </span>
-                  </SelectItem>
-                ))}
-              </SelectGroup>
-            </>
-          ) : null}
-          {options && options.length > 0 ? (
-            <>
-              <SelectSeparator />
-              <SelectGroup>
-                <SelectLabel>Hubs</SelectLabel>
-                {options.map((h) => (
-                  <SelectItem key={h.id} value={`${HUB_PREFIX}${h.id}`}>
-                    {/* P29: a member hub reads "OEM-HCK (Greece)" (served capacity hub). */}
-                    {hubPickerLabel(h, hubsQuery.data)}
-                  </SelectItem>
-                ))}
-              </SelectGroup>
-            </>
-          ) : null}
-        </SelectContent>
-      </Select>
+      <MultiSelectDropdown
+        label="Hub filter"
+        hideLabel
+        options={items}
+        value={value}
+        onChange={onChange}
+        allLabel="All hubs"
+        summarize={() => summarizeHubSelection(hubIds, regions, hubName)}
+        align="end"
+        triggerIcon={
+          onlyRegion ? <CountryFlag region={onlyRegion} /> : <Building2 className="size-3.5 shrink-0" aria-hidden="true" />
+        }
+        triggerClassName={cn(
+          'h-8 w-auto min-w-0 max-w-[10rem] gap-1.5 rounded-pill border-transparent bg-transparent px-s3 text-2xs font-semibold sm:max-w-52',
+          'hover:bg-surface-sunken',
+          active && 'bg-primary-subtle text-primary-subtle-fg hover:bg-primary-subtle',
+        )}
+        data-testid="hub-filter-select"
+      />
     </div>
   );
 }

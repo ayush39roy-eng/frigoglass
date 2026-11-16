@@ -72,7 +72,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from api.db import get_db
 from api.deps import get_current_principal, require_permission
 from api.errors import HTTP_422, CodedHTTPException, field_error
-from api.query_params import CategoryListQuery, TypeListQuery
+from api.query_params import (
+    MAX_FILTER_VALUES,
+    CategoryListQuery,
+    HubIdListQuery,
+    PriorityListQuery,
+    StatusListQuery,
+    TypeListQuery,
+)
 from core.principal import Principal
 from core.rbac import Action, Surface
 from models.audit import AuditLogEntry
@@ -111,8 +118,8 @@ from services.band_rank import (
     reconcile_band_rank,
 )
 from services.categories import CategoryCatalog, check_category_code, load_catalog
-from services.category_type_filter import category_type_filter
-from services.hub_scope import hub_scope_filter, is_hub_in_scope
+from services.category_type_filter import any_of, category_type_filter
+from services.hub_scope import global_hub_filter, hub_scope_filter, is_hub_in_scope
 from services.priority_move import (
     AutoRecalcOutcome,
     apply_priority_change,
@@ -314,10 +321,10 @@ async def _lock_bands_and_reload(
 
 @router.get("", response_model=list[ProjectListItem])
 async def list_projects(
-    hub_id: uuid.UUID | None = None,
+    hub_id: HubIdListQuery = None,
     category: CategoryListQuery = None,
-    status_: ProjectStatus | None = None,
-    priority: ProjectPriority | None = None,
+    status_: StatusListQuery = None,
+    priority: PriorityListQuery = None,
     type_: TypeListQuery = None,
     legacy_type: Annotated[
         list[ProjectType] | None,
@@ -327,6 +334,7 @@ async def list_projects(
                 "Pre-P31 spelling of `type`, still accepted (repeatable). "
                 "Its values are ORed with `type`."
             ),
+            max_length=MAX_FILTER_VALUES,
         ),
     ] = None,
     q: Annotated[str | None, Query(max_length=Q_MAX_LENGTH)] = None,
@@ -362,15 +370,18 @@ async def list_projects(
     hub_filter = hub_scope_filter(current_user, Project.hub_id)
     if hub_filter is not None:
         stmt = stmt.where(hub_filter)
-    if hub_id is not None:
-        stmt = stmt.where(Project.hub_id == hub_id)
+    # ADR 0051: `hub_id`, `status_`, `priority` are lists (OR within, AND
+    # across), ANDed with the scope above, so they only ever narrow.
+    chosen_hubs = global_hub_filter(Project.hub_id, hub_id)
+    if chosen_hubs is not None:
+        stmt = stmt.where(chosen_hubs)
     selection = category_type_filter(category, [*(type_ or []), *(legacy_type or [])])
     if selection is not None:
         stmt = stmt.where(selection)
-    if status_ is not None:
-        stmt = stmt.where(Project.status == status_)
-    if priority is not None:
-        stmt = stmt.where(Project.priority == priority)
+    for column, values in ((Project.status, status_), (Project.priority, priority)):
+        predicate = any_of(column, values)
+        if predicate is not None:
+            stmt = stmt.where(predicate)
     search = project_search_filter(q)
     if search is not None:
         stmt = stmt.where(search)

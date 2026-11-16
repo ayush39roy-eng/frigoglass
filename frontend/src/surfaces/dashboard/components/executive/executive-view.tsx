@@ -4,9 +4,8 @@ import type { UseQueryResult } from '@tanstack/react-query';
 import { SectionBoundary } from '@/components/shared/section-boundary';
 import { PanelSkeleton } from '@/components/ui/panel-skeleton';
 import { useVipBoard } from '@/lib/api/vip';
-import { toHubFilterParams } from '@/stores/hub-filter';
+import { toHubFilterParams, type HubSelection } from '@/stores/hub-filter';
 import { usePermission } from '@/stores/session';
-import type { LabRegion } from '@/types/enums';
 
 import type {
   CompletingWithinYear,
@@ -68,8 +67,8 @@ export interface ExecutiveViewProps {
   statusOverview: UseQueryResult<StatusOverview, Error>;
   analytics: UseQueryResult<DashboardAnalytics, Error>;
   activeRun: ScheduleRunSummary | null | undefined;
-  hubId: string | null;
-  region: LabRegion | null;
+  /** The global hub / country selection (multi-select). */
+  hub: HubSelection;
   /** P31: the Dashboard category / type selection (already applied to every query above). */
   selection: DashboardSelectionState;
   /** P31 cross-filter: each donut's own served distribution. */
@@ -81,20 +80,20 @@ export function ExecutiveView({
   pipelineTotals,
   statusOverview,
   activeRun,
-  hubId,
-  region,
+  hub,
   selection,
   breakdowns,
 }: ExecutiveViewProps): React.JSX.Element {
   // Executive-only fetches (mount-gated): the VIP board (KPI tile + VIP-at-risk
   // rows) and the register rows (served `tracking_status` for overdue check-ins)
   // — both under the global hub / country filter, no extra filters (ADR 0039 §3).
-  const vipBoard = useVipBoard(toHubFilterParams(hubId, region));
+  const hubParams = React.useMemo(() => toHubFilterParams(hub.hubIds, hub.regions), [hub]);
+  const vipBoard = useVipBoard(hubParams);
   // VIP dialog edit mode follows the VIP card's rule (ADR 0027): MATRIX write.
   const canEditVip = usePermission('matrix').write;
   const projects = useDashboardProjects({
-    hub_id: hubId ?? undefined,
-    region: region ?? undefined,
+    hub_id: hubParams.hub_id,
+    region: hubParams.region,
     // P31: the same category / type selection as every other figure here.
     category: selectionParam(selection.categories),
     type: selectionParam(selection.types),

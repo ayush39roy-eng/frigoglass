@@ -168,18 +168,23 @@ function ok<T>(data: T): UseQueryResult<T> {
   return { data, isPending: false, isError: false, error: null, refetch: vi.fn() } as unknown as UseQueryResult<T>;
 }
 
-/** A fake `GET /dashboard/projects`: ANDs `hub_id`, `region` and `type`, like the server
- *  (`type=Unmapped` = no type, P17-R09; P31: `type` is a repeated param, ORed). */
+/** A fake `GET /dashboard/projects`: like the server, `hub_id` and `region` are UNIONED
+ *  (multi-select contract §2) and ANDed with `type` (`type=Unmapped` = no type,
+ *  P17-R09; P31: `type` is a repeated param, ORed). */
 function fakeServer(path: string, opts?: { query?: Record<string, string | readonly string[] | undefined> }) {
   if (path === '/hubs') return Promise.resolve(HUBS);
   if (path === '/dashboard/projects') {
     const q = opts?.query ?? {};
-    const hubName = q.hub_id ? HUBS.find((h) => h.id === q.hub_id)?.name : undefined;
-    const types = q.type === undefined ? [] : typeof q.type === 'string' ? [q.type] : q.type;
+    const list = (v: string | readonly string[] | undefined): readonly string[] =>
+      v === undefined ? [] : typeof v === 'string' ? [v] : v;
+    const hubNames = list(q.hub_id).map((id) => HUBS.find((h) => h.id === id)?.name);
+    const regions = list(q.region);
+    const types = list(q.type);
     const rows = PROJECTS.filter(
       (p) =>
-        (!q.hub_id || p.hub === hubName) &&
-        (!q.region || regionOf(p.hub) === q.region) &&
+        ((hubNames.length === 0 && regions.length === 0) ||
+          hubNames.includes(p.hub) ||
+          regions.includes(regionOf(p.hub))) &&
         (types.length === 0 || types.includes(p.type ?? 'Unmapped')),
     ).map(registerRow);
     return Promise.resolve({ total_count: rows.length, rows });
@@ -200,8 +205,7 @@ function renderSection(
       analytics={ok(d.analytics)}
       withinYear={d.withinYear}
       pipelineTotal={d.total}
-      hubId={hubId}
-      region={region}
+      hub={{ hubIds: hubId ? [hubId] : [], regions: region ? [region] : [] }}
     />,
     { route },
   );
@@ -228,7 +232,7 @@ describe('HubTypeSection drill-down (P17-R08)', () => {
     const r = await openAndCount('View 4 New Model projects in PD-India');
     expect(r.list).toBe(r.cell);
     expect(r.list).toBe(4);
-    expect(client.apiGet).toHaveBeenCalledWith('/dashboard/projects', expect.objectContaining({ query: expect.objectContaining({ hub_id: 'h-pdin', type: ['NM'] }) }));
+    expect(client.apiGet).toHaveBeenCalledWith('/dashboard/projects', expect.objectContaining({ query: expect.objectContaining({ hub_id: ['h-pdin'], type: ['NM'] }) }));
     expect(within(r.dialog).getByRole('heading', { name: 'New Model · PD-India' })).toBeInTheDocument();
     expect(within(r.dialog).queryByTestId('drilldown-mismatch')).not.toBeInTheDocument();
   });
@@ -264,7 +268,7 @@ describe('HubTypeSection drill-down (P17-R08)', () => {
     let r = await openAndCount('View 1 untyped project in PD-India');
     expect(r.list).toBe(r.cell);
     expect(r.list).toBe(1);
-    expect(client.apiGet).toHaveBeenLastCalledWith('/dashboard/projects', expect.objectContaining({ query: expect.objectContaining({ hub_id: 'h-pdin', type: ['Unmapped'] }) }));
+    expect(client.apiGet).toHaveBeenLastCalledWith('/dashboard/projects', expect.objectContaining({ query: expect.objectContaining({ hub_id: ['h-pdin'], type: ['Unmapped'] }) }));
     expect(within(r.dialog).getByText('Project f')).toBeInTheDocument();
     expect(within(r.dialog).queryByTestId('drilldown-mismatch')).not.toBeInTheDocument();
     await userEvent.keyboard('{Escape}');
@@ -278,17 +282,17 @@ describe('HubTypeSection drill-down (P17-R08)', () => {
     renderSection(scope, 'h-gr');
     const r = await openAndCount('View all 2 projects');
     expect(r.list).toBe(r.cell);
-    expect(client.apiGet).toHaveBeenLastCalledWith('/dashboard/projects', expect.objectContaining({ query: expect.objectContaining({ hub_id: 'h-gr' }) }));
+    expect(client.apiGet).toHaveBeenLastCalledWith('/dashboard/projects', expect.objectContaining({ query: expect.objectContaining({ hub_id: ['h-gr'] }) }));
     await userEvent.keyboard('{Escape}');
     const c = await openAndCount('View all 1 project completing within the year');
     expect(c.list).toBe(c.cell);
   });
 
-  it('country-filtered: sends region with the cell hub', async () => {
+  it('country-filtered: a hub cell sends that hub only (countries are unioned, so never beside it)', async () => {
     renderSection(PROJECTS.filter((p) => p.hub === 'PD-India'), null, 'India');
     const r = await openAndCount('View 1 Cost Optimization project in PD-India');
     expect(r.list).toBe(1);
-    expect(client.apiGet).toHaveBeenLastCalledWith('/dashboard/projects', expect.objectContaining({ query: expect.objectContaining({ hub_id: 'h-pdin', region: 'India', type: ['CO'] }) }));
+    expect(client.apiGet).toHaveBeenLastCalledWith('/dashboard/projects', expect.objectContaining({ query: expect.objectContaining({ hub_id: ['h-pdin'], region: undefined, type: ['CO'] }) }));
   });
 
   it('returns focus to the clicked figure on close, shows no financial fields, and is axe-clean', async () => {
@@ -323,7 +327,7 @@ describe('HubTypeSection drill-down (P17-R08)', () => {
     await screen.findByTestId('hub-type-drilldown');
     expect(client.apiGet).toHaveBeenCalledWith(
       '/dashboard/projects',
-      expect.objectContaining({ query: expect.objectContaining({ hub_id: 'h-pdin', type: ['NM'], category: ['A+', 'B'] }) }),
+      expect.objectContaining({ query: expect.objectContaining({ hub_id: ['h-pdin'], type: ['NM'], category: ['A+', 'B'] }) }),
     );
   });
 });

@@ -213,7 +213,7 @@ function pointerDrop(name: string, to: ProjectPriority): void {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  useHubFilterStore.setState({ hubId: null, region: null });
+  useHubFilterStore.getState().setSelection([], []);
   client.apiGet.mockImplementation((path: string) => {
     if (path === '/priority-board') return Promise.resolve(DEFAULT_BOARD);
     if (path === '/dashboard/projects/facets') return Promise.resolve(FACETS);
@@ -236,7 +236,7 @@ describe('PriorityBoardPage — served grouping', () => {
     expect(within(column('P3')).getByTestId('board-column-count')).toHaveTextContent('0');
     const p1Names = within(column('P1')).getAllByRole('link').map((l) => l.textContent);
     expect(p1Names).toEqual(['Gated Cooler', 'Alpha Cooler']);
-    expect(client.apiGet).toHaveBeenCalledWith('/priority-board', expect.objectContaining({ query: { hub_id: undefined } }));
+    expect(client.apiGet).toHaveBeenCalledWith('/priority-board', expect.objectContaining({ query: expect.objectContaining({ hub_id: undefined, region: undefined }) }));
   });
 
   it('shows the served card facts: VIP badge, tracking chip, finish vs within-year, health, score', async () => {
@@ -258,10 +258,10 @@ describe('PriorityBoardPage — served grouping', () => {
   });
 
   it('passes the global hub filter as hub_id', async () => {
-    useHubFilterStore.setState({ hubId: 'hub-gr' });
+    useHubFilterStore.getState().setSelection(['hub-gr'], []);
     renderWithProviders(<PriorityBoardPage />);
     await screen.findByRole('link', { name: 'Alpha Cooler' });
-    expect(client.apiGet).toHaveBeenCalledWith('/priority-board', expect.objectContaining({ query: { hub_id: 'hub-gr' } }));
+    expect(client.apiGet).toHaveBeenCalledWith('/priority-board', expect.objectContaining({ query: expect.objectContaining({ hub_id: ['hub-gr'] }) }));
   });
 
   it('has no serious/critical axe violations', async () => {
@@ -292,7 +292,7 @@ describe('PriorityBoardPage — P13-T12 weeks and toolbar', () => {
   });
 
   it('sends Category / Type / Status / Leader as server-side filters, with the country', async () => {
-    useHubFilterStore.setState({ hubId: null, region: 'India' });
+    useHubFilterStore.getState().setSelection([], ['India']);
     const user = userEvent.setup();
     renderWithProviders(<PriorityBoardPage />);
     await screen.findByRole('link', { name: 'Alpha Cooler' });
@@ -300,10 +300,14 @@ describe('PriorityBoardPage — P13-T12 weeks and toolbar', () => {
     await user.click(within(screen.getByRole('group', { name: 'Category' })).getByRole('button', { name: 'B' }));
     await user.click(within(screen.getByRole('group', { name: 'Category' })).getByRole('button', { name: 'A' }));
     await user.click(within(screen.getByRole('group', { name: 'Type' })).getByRole('button', { name: 'Cost Optimization' }));
-    await user.click(screen.getByRole('combobox', { name: 'Status' }));
-    await user.click(await screen.findByRole('option', { name: 'In Queue' }));
-    await user.click(screen.getByRole('combobox', { name: 'Leader' }));
+    // Multi-select (owner ask 2026-11-13): two statuses, OR-ed by the server.
+    await user.click(screen.getByRole('button', { name: 'Status' }));
+    await user.click(await screen.findByRole('option', { name: 'On Hold' }));
+    await user.click(screen.getByRole('option', { name: 'In Queue' }));
+    await user.keyboard('{Escape}');
+    await user.click(screen.getByRole('button', { name: 'Leader' }));
     await user.click(await screen.findByRole('option', { name: 'Rishi' }));
+    await user.keyboard('{Escape}');
     // The last BOARD request carries every filter. (Not the last GET of any
     // path: under a loaded runner a facets fetch can land after it.)
     await waitFor(
@@ -312,18 +316,18 @@ describe('PriorityBoardPage — P13-T12 weeks and toolbar', () => {
         expect(boardCalls[boardCalls.length - 1]?.[1]).toEqual(
           expect.objectContaining({
             query: expect.objectContaining({
-              region: 'India',
+              region: ['India'],
               category: ['A', 'B'],
               type: ['CO'],
-              status_: 'In Queue',
-              leader_engineer_id: 'eng-self-0001',
+              status_: ['In Queue', 'On Hold'],
+              leader_engineer_id: ['eng-self-0001'],
             }),
           }),
         );
       },
       { timeout: 5_000 },
     );
-    expect(client.apiGet).toHaveBeenCalledWith('/dashboard/projects/facets', expect.objectContaining({ query: { hub_id: undefined, region: 'India' } }));
+    expect(client.apiGet).toHaveBeenCalledWith('/dashboard/projects/facets', expect.objectContaining({ query: { region: ['India'] } }));
     // Four Radix selects: allow for a loaded runner.
   }, 15_000);
 
@@ -358,9 +362,9 @@ describe('PriorityBoardPage — P13-T12 weeks and toolbar', () => {
     const user = userEvent.setup();
     renderWithProviders(<PriorityBoardPage />);
     await screen.findByRole('link', { name: 'Alpha Cooler' });
-    await user.click(screen.getByRole('combobox', { name: 'Leader' }));
+    await user.click(screen.getByRole('button', { name: 'Leader' }));
     const options = (await screen.findAllByRole('option')).map((o) => o.textContent);
-    expect(options).toEqual(['All', 'Rishi', 'Name unavailable · 9f3c']);
+    expect(options).toEqual(['All leaders', 'Rishi', 'Name unavailable · 9f3c']);
   });
 
   it('a filtered empty board says no project matches, and Clear filters resets the toolbar', async () => {
@@ -880,7 +884,7 @@ describe('PriorityBoardPage — P36 reorder within a column', () => {
     expect(scoped.columns[0]?.count).toBe(2);
     useHubFilterStore.setState({ hubId: 'hub-gr', region: null });
     client.apiGet.mockImplementation((path: string, opts?: { query?: Record<string, unknown> }) => {
-      if (path === '/priority-board') return Promise.resolve(opts?.query?.hub_id === 'hub-gr' ? scoped : RANKED_BOARD);
+      if (path === '/priority-board') return Promise.resolve(String(opts?.query?.hub_id) === 'hub-gr' ? scoped : RANKED_BOARD);
       if (path === '/hubs') return Promise.resolve([]);
       return Promise.resolve(FACETS);
     });
@@ -891,7 +895,7 @@ describe('PriorityBoardPage — P36 reorder within a column', () => {
     const user = userEvent.setup();
     renderWithProviders(<PriorityBoardPage />, { session: { permissions: ROLE_MATRIX['Hub Planner'] } });
     await screen.findByRole('link', { name: 'Mia Cooler' });
-    expect(client.apiGet).toHaveBeenCalledWith('/priority-board', expect.objectContaining({ query: expect.objectContaining({ hub_id: 'hub-gr' }) }));
+    expect(client.apiGet).toHaveBeenCalledWith('/priority-board', expect.objectContaining({ query: expect.objectContaining({ hub_id: ['hub-gr'] }) }));
     expect(within(column('P1')).getByTestId('board-column-count')).toHaveTextContent('2');
     const announcer = screen.getByTestId('board-announcer');
 

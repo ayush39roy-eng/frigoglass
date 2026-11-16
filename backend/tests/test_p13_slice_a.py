@@ -308,12 +308,15 @@ async def test_analytics_region_and_hub_narrowing(db_session):
             for b in body["by_type"]:
                 assert b["share_pct"] == _share(b["count"], totals["total_count"])
         pd_india = w.hubs["PD-India"].id
-        anded = await _get(client, "/dashboard/analytics", hub_id=pd_india, region="Greece")
-        assert anded["by_hub"] == []
-        assert all(b["count"] == 0 for b in anded["by_type"])
-        assert anded["completing_hub_type"] == []
+        # ADR 0051: hub and region are a union (was: AND, so this was empty).
+        union = await _get(client, "/dashboard/analytics", hub_id=pd_india, region="Greece")
+        assert {b["key"] for b in union["by_hub"]} == {"PD-India"} | {
+            h for h, r in region_of.items() if r == "Greece"
+        }
+        assert all(r["hub"] == "PD-India" or region_of[r["hub"]] == "Greece"
+                   for r in union["completing_hub_type"])
         assert await _get(client, "/dashboard/analytics", hub_id=pd_india, region="India") == (
-            await _get(client, "/dashboard/analytics", hub_id=pd_india)
+            await _get(client, "/dashboard/analytics", region="India")
         )
         resp = await client.get("/dashboard/analytics", params={"region": "Europe"})
         assert resp.status_code == 422

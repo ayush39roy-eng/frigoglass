@@ -79,16 +79,23 @@ from sqlalchemy.orm import selectinload
 import domain_constants as dc
 from api.db import get_db
 from api.deps import principal_can, require_permission
-from api.query_params import CategoryListQuery, TypeListQuery
+from api.query_params import (
+    MAX_FILTER_VALUES,
+    CategoryListQuery,
+    CurrentStepListQuery,
+    HubIdListQuery,
+    LeaderListQuery,
+    RegionListQuery,
+    StatusListQuery,
+    TypeListQuery,
+)
 from core.principal import Principal
 from core.rbac import Action, Surface
 from models.audit import AuditLogEntry
 from models.chamber import Chamber
 from models.engineer import Engineer
 from models.enums import (
-    LabRegion,
     ProjectPriority,
-    ProjectStatus,
     WorkflowStepKind,
     WorkflowStepStatus,
 )
@@ -107,7 +114,7 @@ from schemas.gantt import (
 from schemas.project import ProjectRead
 from services.active_run import slip_weeks, step_kinds_for_run
 from services.audit_helpers import project_audit_state
-from services.category_type_filter import category_type_filter
+from services.category_type_filter import any_of, category_type_filter
 from services.hub_scope import (
     global_hub_filter,
     hub_scope_filter,
@@ -124,7 +131,6 @@ from services.project_effort import (
 )
 from services.project_filters import (
     Q_MAX_LENGTH,
-    STEP_CODE_MAX_LENGTH,
     leader_name_if_self,
     search_predicate,
 )
@@ -219,8 +225,8 @@ def _weekly_active_counts(
 
 @router.get("", response_model=GanttResponse)
 async def get_gantt(
-    hub_id: uuid.UUID | None = None,
-    region: LabRegion | None = None,
+    hub_id: HubIdListQuery = None,
+    region: RegionListQuery = None,
     project_id: uuid.UUID | None = None,
     limit: int = 100,
     # P13-F12 (security-auditor Info-5): a negative offset would slice the
@@ -229,16 +235,18 @@ async def get_gantt(
     q: Annotated[str | None, Query(max_length=Q_MAX_LENGTH)] = None,
     category: CategoryListQuery = None,
     type_: TypeListQuery = None,
-    status_: ProjectStatus | None = None,
-    leader_engineer_id: uuid.UUID | None = None,
-    current_step: Annotated[str | None, Query(max_length=STEP_CODE_MAX_LENGTH)] = None,
+    status_: StatusListQuery = None,
+    leader_engineer_id: LeaderListQuery = None,
+    current_step: CurrentStepListQuery = None,
     priority: Annotated[
-        ProjectPriority | None,
+        list[ProjectPriority] | None,
         Query(
             description=(
-                "P1..P4 match exactly. Q is the Queue bucket: priority Q OR no "
-                "priority (the Capacity / Priority board rule)."
-            )
+                "Repeatable (ORed). P1..P4 match exactly. Q is the Queue bucket: "
+                "priority Q OR no priority (the Capacity / Priority board rule). "
+                f"At most {MAX_FILTER_VALUES} values."
+            ),
+            max_length=MAX_FILTER_VALUES,
         ),
     ] = None,
     sort: GanttSort = "name",
@@ -311,15 +319,20 @@ async def get_gantt(
     selection = category_type_filter(category, type_)
     if selection is not None:
         stmt = stmt.where(selection)
-    if status_ is not None:
-        stmt = stmt.where(Project.status == status_)
-    if leader_engineer_id is not None:
-        stmt = stmt.where(Project.leader_engineer_id == leader_engineer_id)
-    if priority == ProjectPriority.Q:
+    # ADR 0051: status / leader / priority are lists (OR within, AND across).
+    for column, values in (
+        (Project.status, status_),
+        (Project.leader_engineer_id, leader_engineer_id),
+    ):
+        predicate = any_of(column, values)
+        if predicate is not None:
+            stmt = stmt.where(predicate)
+    priority_filter = any_of(Project.priority, priority)
+    if priority_filter is not None and ProjectPriority.Q in (priority or ()):
         # The Queue bucket (P13, same as Capacity / Priority board): Q or none.
-        stmt = stmt.where(or_(Project.priority == priority, Project.priority.is_(None)))
-    elif priority is not None:
-        stmt = stmt.where(Project.priority == priority)
+        priority_filter = or_(priority_filter, Project.priority.is_(None))
+    if priority_filter is not None:
+        stmt = stmt.where(priority_filter)
     search = search_predicate(q)
     if search is not None:
         stmt = stmt.where(search)
@@ -354,15 +367,15 @@ async def get_gantt(
             ).scalars()
         }
 
-    if current_step is not None or sort == "priority":
+    if current_step or sort == "priority":
         # The register's current-step and score source (one batch pass).
         cards = await build_project_cards(db, filtered, active_run)
-        if current_step is not None:
+        if current_step:
+            steps = set(current_step)
             filtered = [
                 p
                 for p in filtered
-                if (stage := cards[p.id].current_stage) is not None
-                and stage.step_id == current_step
+                if (stage := cards[p.id].current_stage) is not None and stage.step_id in steps
             ]
         if sort == "priority":
             def _priority_key(p: Project) -> tuple[int, int, float, str, str]:

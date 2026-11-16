@@ -55,13 +55,13 @@ describe('dashboard hooks', () => {
   it('useDashboardProjects forwards its params to the fetcher', async () => {
     vi.mocked(api.fetchDashboardProjects).mockResolvedValue({ total_count: 0, rows: [] });
     const { result } = renderHook(
-      () => useDashboardProjects({ status_: 'In Queue', priority: 'P1' }),
+      () => useDashboardProjects({ status_: ['In Queue'], priority: ['P1'] }),
       { wrapper: wrapper() },
     );
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
     expect(vi.mocked(api.fetchDashboardProjects).mock.calls[0]![0]).toEqual({
-      status_: 'In Queue',
-      priority: 'P1',
+      status_: ['In Queue'],
+      priority: ['P1'],
     });
   });
 
@@ -79,7 +79,7 @@ describe('dashboard hooks', () => {
   it('P31: the selection is in the query key, SORTED (press order never splits the cache)', async () => {
     vi.mocked(api.fetchPipelineTotals).mockResolvedValue({} as never);
     const { result } = renderHook(
-      () => usePipelineTotals('h1', null, { categories: ['B', 'A+'], types: ['NM', 'CO'] }),
+      () => usePipelineTotals({ hubIds: ['h2', 'h1'], regions: [] }, { categories: ['B', 'A+'], types: ['NM', 'CO'] }),
       { wrapper: wrapper() },
     );
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
@@ -87,7 +87,7 @@ describe('dashboard hooks', () => {
     expect(keys).toContainEqual([
       'dashboard',
       'pipeline-totals',
-      { hubId: 'h1', region: null },
+      { hubIds: ['h1', 'h2'], regions: [] },
       { category: ['A+', 'B'], type: ['CO', 'NM'] },
     ]);
   });
@@ -95,14 +95,18 @@ describe('dashboard hooks', () => {
   it('P31 cross-filter: each donut is served WITHOUT its own dimension, with the other one', async () => {
     vi.mocked(api.fetchDashboardAnalytics).mockResolvedValue({} as never);
     vi.mocked(api.fetchPipelineTotals).mockResolvedValue({} as never);
-    renderHook(() => useCrossFilterBreakdowns(null, 'Greece', { categories: ['A'], types: ['NM'] }), {
+    renderHook(() => useCrossFilterBreakdowns({ hubIds: [], regions: ['Greece'] }, { categories: ['A'], types: ['NM'] }), {
       wrapper: wrapper(),
     });
     await waitFor(() => expect(api.fetchDashboardAnalytics).toHaveBeenCalledTimes(2));
-    const sels = vi.mocked(api.fetchDashboardAnalytics).mock.calls.map((c) => c[3]);
+    const sels = vi.mocked(api.fetchDashboardAnalytics).mock.calls.map((c) => c[2]);
     expect(sels).toContainEqual({ categories: ['A'], types: [] });
     expect(sels).toContainEqual({ categories: [], types: ['NM'] });
-    expect(vi.mocked(api.fetchDashboardAnalytics).mock.calls.every((c) => c[1] === null && c[2] === 'Greece')).toBe(true);
+    expect(
+      vi.mocked(api.fetchDashboardAnalytics).mock.calls.every(
+        (c) => c[1]?.hubIds.length === 0 && c[1].regions.join() === 'Greece',
+      ),
+    ).toBe(true);
     await waitFor(() => expect(api.fetchPipelineTotals).toHaveBeenCalledTimes(2));
   });
 
@@ -116,5 +120,31 @@ describe('dashboard hooks', () => {
     expect(vi.mocked(api.fetchDashboardProjects).mock.calls[0]![0]).toEqual({ category: ['C', 'A'], type: ['RC', 'NM'] });
     const key = lastClient!.getQueryCache().getAll()[0]!.queryKey;
     expect(key).toEqual(['dashboard', 'projects', { category: ['A', 'C'], type: ['NM', 'RC'] }]);
+  });
+
+  it('multi-select: hub / region / status / leader / step lists are SORTED in the key, sent as given', async () => {
+    vi.mocked(api.fetchDashboardProjects).mockResolvedValue({ total_count: 0, rows: [] });
+    const params = {
+      hub_id: ['h-b', 'h-a'],
+      region: ['Romania', 'India'] as ('Romania' | 'India')[],
+      status_: ['On Hold', 'In Queue'] as ('On Hold' | 'In Queue')[],
+      leader_engineer_id: ['e-2', 'e-1'],
+      current_step: ['PDD-B', 'PDD-A'],
+    };
+    const { result } = renderHook(() => useDashboardProjects(params), { wrapper: wrapper() });
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(vi.mocked(api.fetchDashboardProjects).mock.calls[0]![0]).toEqual(params);
+    const key = lastClient!.getQueryCache().getAll()[0]!.queryKey;
+    expect(key).toEqual([
+      'dashboard',
+      'projects',
+      {
+        hub_id: ['h-a', 'h-b'],
+        region: ['India', 'Romania'],
+        status_: ['In Queue', 'On Hold'],
+        leader_engineer_id: ['e-1', 'e-2'],
+        current_step: ['PDD-A', 'PDD-B'],
+      },
+    ]);
   });
 });

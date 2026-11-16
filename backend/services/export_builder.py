@@ -91,7 +91,9 @@ ExportSheets = dict[str, tuple[list[str], list[dict[str, Any]]]]
 #: parses its own expected keys back into the typed values the underlying
 #: router function actually wants.
 #: P31: a multi-select filter (`category`, `type_`) is stored as a bare string
-#: for one value (the pre-P31 shape) and a list for several.
+#: for one value (the pre-P31 shape) and a list for several. ADR 0051: the same
+#: for `hub_id`, `region`, `status_`, `priority`, `leader_engineer_id` and
+#: `current_step`, so a single-value job's stored filters are unchanged.
 ExportFilters = dict[str, str | list[str] | None]
 
 #: A persisted multi-select filter value (see `ExportFilters`).
@@ -111,6 +113,25 @@ def _types(value: _ListFilter, *, allow_unmapped: bool = False) -> list[Any]:
     """A stored `type_` filter as the route's list (see `_categories`)."""
 
     return [v if allow_unmapped and v == UNMAPPED else ProjectType(v) for v in as_list(value)]
+
+
+def _uuids(value: _ListFilter) -> list[uuid.UUID]:
+    """ADR 0051: a stored id filter (`hub_id`, `leader_engineer_id`) as the
+    route's list; a pre-ADR-0051 bare string reads as one value."""
+
+    return [uuid.UUID(v) for v in as_list(value)]
+
+
+def _regions(value: _ListFilter) -> list[LabRegion]:
+    return [LabRegion(v) for v in as_list(value)]
+
+
+def _statuses(value: _ListFilter) -> list[ProjectStatus]:
+    return [ProjectStatus(v) for v in as_list(value)]
+
+
+def _priorities(value: _ListFilter) -> list[ProjectPriority]:
+    return [ProjectPriority(v) for v in as_list(value)]
 
 
 # --------------------------------------------------------------------------
@@ -273,15 +294,15 @@ async def build_dashboard_sheets(
     db: AsyncSession,
     principal: Principal,
     *,
-    hub_id: str | None = None,
+    hub_id: _ListFilter = None,
     category: _ListFilter = None,
-    status_: str | None = None,
-    priority: str | None = None,
-    region: str | None = None,
+    status_: _ListFilter = None,
+    priority: _ListFilter = None,
+    region: _ListFilter = None,
     q: str | None = None,
     type_: _ListFilter = None,
-    leader_engineer_id: str | None = None,
-    current_step: str | None = None,
+    leader_engineer_id: _ListFilter = None,
+    current_step: _ListFilter = None,
     sort: str | None = None,
 ) -> ExportSheets:
     """The Dashboard's own filterable "analytics breakdown" table
@@ -295,15 +316,15 @@ async def build_dashboard_sheets(
     from api.routers.dashboard import analytics_projects
 
     result = await analytics_projects(
-        hub_id=uuid.UUID(hub_id) if hub_id else None,
+        hub_id=_uuids(hub_id),
         category=_categories(category, allow_unmapped=True),
-        status_=ProjectStatus(status_) if status_ else None,
-        priority=ProjectPriority(priority) if priority else None,
-        region=LabRegion(region) if region else None,
+        status_=_statuses(status_),
+        priority=_priorities(priority),
+        region=_regions(region),
         q=q,
         type_=_types(type_, allow_unmapped=True),
-        leader_engineer_id=uuid.UUID(leader_engineer_id) if leader_engineer_id else None,
-        current_step=current_step,
+        leader_engineer_id=_uuids(leader_engineer_id),
+        current_step=as_list(current_step),
         sort="priority" if sort == "priority" else "name",
         db=db,
         current_user=principal,
@@ -341,9 +362,9 @@ async def build_matrix_sheets(
     principal: Principal,
     *,
     currency: str | None = None,
-    hub_id: str | None = None,
+    hub_id: _ListFilter = None,
     category: _ListFilter = None,
-    region: str | None = None,
+    region: _ListFilter = None,
     type_: _ListFilter = None,
 ) -> ExportSheets:
     """The scoring grid (one column per active rubric dimension, ADR 0037),
@@ -354,10 +375,10 @@ async def build_matrix_sheets(
 
     rows_models = await list_priority_matrix(
         currency=CurrencyCode(currency) if currency else CurrencyCode.EUR,
-        hub_id=uuid.UUID(hub_id) if hub_id else None,
+        hub_id=_uuids(hub_id),
         category=_categories(category),
         type_=_types(type_),
-        region=LabRegion(region) if region else None,
+        region=_regions(region),
         db=db,
         current_user=principal,
     )
@@ -385,9 +406,9 @@ async def _fetch_all_gantt_rows(
     db: AsyncSession,
     principal: Principal,
     *,
-    hub_id: uuid.UUID | None,
+    hub_id: list[uuid.UUID],
     project_id: uuid.UUID | None,
-    region: LabRegion | None = None,
+    region: list[LabRegion] | None = None,
     category: list[str] | None = None,
     type_: list[ProjectType] | None = None,
 ) -> list[GanttProjectRow]:
@@ -430,9 +451,9 @@ async def build_gantt_sheets(
     db: AsyncSession,
     principal: Principal,
     *,
-    hub_id: str | None = None,
+    hub_id: _ListFilter = None,
     project_id: str | None = None,
-    region: str | None = None,
+    region: _ListFilter = None,
     category: _ListFilter = None,
     type_: _ListFilter = None,
 ) -> ExportSheets:
@@ -448,9 +469,9 @@ async def build_gantt_sheets(
     project_rows = await _fetch_all_gantt_rows(
         db,
         principal,
-        hub_id=uuid.UUID(hub_id) if hub_id else None,
+        hub_id=_uuids(hub_id),
         project_id=uuid.UUID(project_id) if project_id else None,
-        region=LabRegion(region) if region else None,
+        region=_regions(region),
         category=_categories(category),
         type_=_types(type_),
     )
@@ -534,10 +555,10 @@ async def _fetch_all_projects(
     db: AsyncSession,
     principal: Principal,
     *,
-    hub_id: uuid.UUID | None,
+    hub_id: list[uuid.UUID],
     category: list[str],
-    status_: ProjectStatus | None,
-    priority: ProjectPriority | None,
+    status_: list[ProjectStatus],
+    priority: list[ProjectPriority],
     type_: list[ProjectType],
     q: str | None = None,
 ) -> list[Project]:
@@ -575,10 +596,10 @@ async def build_project_registration_sheets(
     db: AsyncSession,
     principal: Principal,
     *,
-    hub_id: str | None = None,
+    hub_id: _ListFilter = None,
     category: _ListFilter = None,
-    status_: str | None = None,
-    priority: str | None = None,
+    status_: _ListFilter = None,
+    priority: _ListFilter = None,
     type_: _ListFilter = None,
     q: str | None = None,
 ) -> ExportSheets:
@@ -587,10 +608,10 @@ async def build_project_registration_sheets(
     projects = await _fetch_all_projects(
         db,
         principal,
-        hub_id=uuid.UUID(hub_id) if hub_id else None,
+        hub_id=_uuids(hub_id),
         category=_categories(category),
-        status_=ProjectStatus(status_) if status_ else None,
-        priority=ProjectPriority(priority) if priority else None,
+        status_=_statuses(status_),
+        priority=_priorities(priority),
         type_=_types(type_),
         q=q,
     )
@@ -616,7 +637,7 @@ async def build_capacity_planning_sheets(
     db: AsyncSession,
     principal: Principal,
     *,
-    hub_id: str | None = None,
+    hub_id: _ListFilter = None,
 ) -> ExportSheets:
     """Two sheets, always both generated regardless of format — Capacity
     Planning is the one surface covering two distinct entities (Engineer,
@@ -634,9 +655,7 @@ async def build_capacity_planning_sheets(
     from schemas.chamber import ChamberRead
     from schemas.engineer import EngineerRead
 
-    engineers = await list_engineers(
-        hub_id=uuid.UUID(hub_id) if hub_id else None, db=db, current_user=principal
-    )
+    engineers = await list_engineers(hub_id=_uuids(hub_id), db=db, current_user=principal)
     chambers = await list_chambers(db=db, current_user=principal)
 
     eng_headers, eng_rows = rows_from_models([EngineerRead.model_validate(e) for e in engineers])

@@ -12,7 +12,8 @@ import { useHubs } from '@/lib/api/reference';
 import { categoricalRankSoftBg, categoricalRankText, categoryRank } from '@/lib/categorical-palette';
 import { formatInteger, formatPlanWeek } from '@/lib/format';
 import { cn } from '@/lib/utils';
-import type { HubName, LabRegion, ProjectCategory, ProjectPriority, ProjectStatus, ProjectType } from '@/types/enums';
+import { toHubFilterParams, type HubSelection } from '@/stores/hub-filter';
+import type { HubName, ProjectCategory, ProjectPriority, ProjectStatus, ProjectType } from '@/types/enums';
 
 import type { CompletingWithinYearRow, ProjectFilterRow } from '../api/types';
 import { useDrilldownProjects } from '../hooks/use-dashboard';
@@ -217,9 +218,8 @@ function columns(source: DrillSource): VirtualColumn<DrillRow>[] {
 export interface HubTypeDrilldownDialogProps {
   target: DrillTarget | null;
   onClose: () => void;
-  /** Global filter, passed to the register query (ANDed with the scope server-side). */
-  hubId: string | null;
-  region: LabRegion | null;
+  /** Global hub / country selection, passed to the register query (ANDed with the scope server-side). */
+  hub: HubSelection;
   /** The loaded `/dashboard/completing-within-year` rows (same filter). */
   runRows: CompletingWithinYearRow[] | null;
   /** Where focus returns on close (the clicked figure). */
@@ -229,8 +229,7 @@ export interface HubTypeDrilldownDialogProps {
 export function HubTypeDrilldownDialog({
   target,
   onClose,
-  hubId,
-  region,
+  hub,
   runRows,
   returnFocusTo,
 }: HubTypeDrilldownDialogProps): React.JSX.Element {
@@ -258,7 +257,7 @@ export function HubTypeDrilldownDialog({
               </DialogDescription>
             </DialogHeader>
             {target.source === 'pipeline' ? (
-              <PipelineList target={target} hubId={hubId} region={region} />
+              <PipelineList target={target} hub={hub} />
             ) : (
               <CompletingList target={target} runRows={runRows} />
             )}
@@ -271,16 +270,20 @@ export function HubTypeDrilldownDialog({
 
 function PipelineList({
   target,
-  hubId,
-  region,
+  hub,
 }: {
   target: DrillTarget;
-  hubId: string | null;
-  region: LabRegion | null;
+  hub: HubSelection;
 }): React.JSX.Element {
   const hubs = useHubs();
   const cellHubId = target.hub ? hubs.data?.find((h) => h.name === target.hub)?.id : undefined;
-  const resolvedHubId = target.hub ? cellHubId : (hubId ?? undefined);
+  // A hub cell lists that hub only (it is inside the global selection, the
+  // table was served for it). A Total cell lists the global selection: hubs and
+  // countries, which the server UNIONS (multi-select contract §2) — so the
+  // countries must not be sent beside a single cell hub.
+  const hubParams = target.hub
+    ? { hub_id: cellHubId !== undefined ? [cellHubId] : undefined, region: undefined }
+    : toHubFilterParams(hub.hubIds, hub.regions);
   const hubResolved = target.hub === null || cellHubId !== undefined;
   // P31: the cell's own type, else (a Total cell) the Dashboard type selection;
   // and always the Dashboard category selection — the cell counts were served
@@ -288,8 +291,8 @@ function PipelineList({
   const selection = useDashboardSelection();
   const query = useDrilldownProjects(
     {
-      hub_id: resolvedHubId,
-      region: region ?? undefined,
+      hub_id: hubParams.hub_id,
+      region: hubParams.region,
       type: target.typeKey !== null ? [target.typeKey] : selectionParam(selection.types),
       category: selectionParam(selection.categories),
     },

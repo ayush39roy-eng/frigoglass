@@ -83,12 +83,12 @@ function retryUnlessAuth(failureCount: number, error: Error): boolean {
 
 // --- Engineers ---
 
-export function useEngineerList(hubId: string | undefined) {
+export function useEngineerList(hubIds: readonly string[] | undefined) {
   return useQuery({
-    // `hubId` is a user-facing filter — part of the key (the P4-T04 review
-    // lesson on stale hub-scoped caches).
-    queryKey: queryKeys.engineers(hubId),
-    queryFn: ({ signal }) => fetchEngineers(hubId, { signal }),
+    // `hubIds` is a user-facing filter — part of the key (the P4-T04 review
+    // lesson on stale hub-scoped caches); multi-select, sorted in the key.
+    queryKey: queryKeys.engineers(hubIds),
+    queryFn: ({ signal }) => fetchEngineers(hubIds, { signal }),
     retry: retryUnlessAuth,
     placeholderData: (prev) => prev,
   });

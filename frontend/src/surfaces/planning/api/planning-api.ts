@@ -34,10 +34,14 @@ type FetchCtx = Pick<ApiRequestOptions, 'signal'>;
 // --- Engineers ---
 
 export function fetchEngineers(
-  hubId: string | undefined,
+  hubIds: readonly string[] | undefined,
   ctx: FetchCtx = {},
 ): Promise<EngineerRead[]> {
-  return apiGet<EngineerRead[]>('/engineers', { ...ctx, query: { hub_id: hubId } });
+  // Multi-select: repeated `hub_id` (ORed by the server); empty = every visible engineer.
+  return apiGet<EngineerRead[]>('/engineers', {
+    ...ctx,
+    query: { hub_id: hubIds && hubIds.length > 0 ? [...hubIds].sort() : undefined },
+  });
 }
 
 export function createEngineer(body: EngineerCreateRequest): Promise<EngineerRead> {
@@ -119,16 +123,16 @@ export function fetchCapacitySummary(ctx: FetchCtx = {}): Promise<CapacitySummar
 }
 
 /**
- * The resource-load filters as query params. `hub_id` is single-valued; each
- * multi-select sends its values as REPEATED params (`project_type=NM&
+ * The resource-load filters as query params. Each multi-select (the hub
+ * included, owner ask 2026-11-13) sends its values as REPEATED params (`project_type=NM&
  * project_type=CO`, the server's `list[...] = Query()`); "All" sends nothing.
  * Values are sorted so equal selections give equal URLs.
  */
 export function resourceLoadSearch(basis: CapacityBasis, filters: ResourceLoadFilters): string {
   const params = new URLSearchParams();
   params.append('basis', basis);
-  if (filters.hubId) params.append('hub_id', filters.hubId);
   const pairs: [string, string[]][] = [
+    ['hub_id', filters.hubIds],
     ['project_type', filters.types],
     ['project_status', filters.statuses],
     ['requesting_department', filters.departments],

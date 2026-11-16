@@ -2,7 +2,7 @@ import * as React from 'react';
 import { useQuery } from '@tanstack/react-query';
 
 import { queryKeys } from '@/lib/query-keys';
-import { useHubFilter } from '@/stores/hub-filter';
+import { toHubFilterParams, useHubFilter } from '@/stores/hub-filter';
 import { usePermission } from '@/stores/session';
 import type { ProjectStatus } from '@/types/enums';
 import { fetchDashboardProjects } from '@/surfaces/dashboard/api/dashboard-api';
@@ -16,16 +16,18 @@ import { retryUnlessAuth } from '@/surfaces/gantt/api/gantt-api';
  * Engineer) the map is empty and rows simply show no status.
  */
 export function useProjectStatuses(): ReadonlyMap<string, ProjectStatus> {
-  const { hubId, region } = useHubFilter();
+  const { hubIds, regions } = useHubFilter();
   const enabled = usePermission('dashboard').read;
+  // Same key shape as `useDashboardProjects` (sorted lists, absent when empty).
+  const hub = toHubFilterParams(hubIds, regions);
   const query = useQuery({
     queryKey: queryKeys.dashboardProjects({
-      hub_id: hubId ?? undefined,
-      ...(region !== null ? { region } : {}),
+      hub_id: hub.hub_id,
+      ...(hub.region !== undefined ? { region: hub.region } : {}),
       sort: 'name',
     }),
     queryFn: ({ signal }) =>
-      fetchDashboardProjects({ hub_id: hubId ?? undefined, region: region ?? undefined, sort: 'name' }, { signal }),
+      fetchDashboardProjects({ hub_id: hub.hub_id, region: hub.region, sort: 'name' }, { signal }),
     retry: retryUnlessAuth,
     enabled,
     staleTime: 60_000,

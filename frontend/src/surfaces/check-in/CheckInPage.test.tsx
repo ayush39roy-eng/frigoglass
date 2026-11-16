@@ -115,7 +115,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   watcher.watching = true;
   dueBody = due();
-  useHubFilterStore.setState({ hubId: null, region: null });
+  useHubFilterStore.getState().setSelection([], []);
   client.apiGet.mockImplementation((path: string) => {
     if (path === '/check-ins/due') return Promise.resolve(dueBody);
     if (path === '/check-ins/history') {
@@ -143,7 +143,7 @@ beforeEach(() => {
 describe('CheckInPage — served display', () => {
   it('shows the served summary, per-plan %, last check-in, checked-in-this-week and tracking chips', async () => {
     await renderPage();
-    expect(client.apiGet).toHaveBeenCalledWith('/check-ins/due', expect.objectContaining({ query: { hub_id: undefined } }));
+    expect(client.apiGet).toHaveBeenCalledWith('/check-ins/due', expect.objectContaining({ query: {} }));
     expect(screen.getByTestId('check-in-week')).toHaveTextContent('W31');
     expect(screen.getByTestId('summary-due-stages')).toHaveTextContent('3');
     expect(screen.getByTestId('summary-checked-in')).toHaveTextContent('1');
@@ -161,9 +161,9 @@ describe('CheckInPage — served display', () => {
   });
 
   it('passes the global hub filter as hub_id', async () => {
-    useHubFilterStore.setState({ hubId: 'hub-in' });
+    useHubFilterStore.getState().setSelection(['hub-in'], []);
     await renderPage();
-    expect(client.apiGet).toHaveBeenCalledWith('/check-ins/due', expect.objectContaining({ query: { hub_id: 'hub-in' } }));
+    expect(client.apiGet).toHaveBeenCalledWith('/check-ins/due', expect.objectContaining({ query: { hub_id: ['hub-in'] } }));
   });
 
   it('opens a stage history drawer from GET /check-ins/history', async () => {

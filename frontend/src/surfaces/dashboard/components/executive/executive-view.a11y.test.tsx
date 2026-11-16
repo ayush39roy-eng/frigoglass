@@ -163,8 +163,7 @@ describe('ExecutiveView a11y (P28)', () => {
         statusOverview={ready(status)}
         analytics={ready(analytics)}
         activeRun={null}
-        hubId={null}
-        region={null}
+        hub={{ hubIds: [], regions: [] }}
         selection={{
           categories: ['A+'],
           types: [],
@@ -215,8 +214,7 @@ describe('ExecutiveView a11y (P28)', () => {
         statusOverview={ready(status)}
         analytics={ready(analytics)}
         activeRun={null}
-        hubId="h1"
-        region={null}
+        hub={{ hubIds: ['h1'], regions: [] }}
         selection={{
           categories: ['A+', 'A'],
           types: ['NM'],
@@ -233,7 +231,7 @@ describe('ExecutiveView a11y (P28)', () => {
     );
     expect(await screen.findByTestId('exec-type-donut')).toBeInTheDocument();
     expect(dashHooks.useDashboardProjects).toHaveBeenLastCalledWith({
-      hub_id: 'h1',
+      hub_id: ['h1'],
       region: undefined,
       category: ['A+', 'A'],
       type: ['NM'],

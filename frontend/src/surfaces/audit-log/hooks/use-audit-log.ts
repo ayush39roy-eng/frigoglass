@@ -9,7 +9,7 @@
 import { useQuery } from '@tanstack/react-query';
 
 import { ApiError } from '@/lib/api/client';
-import { queryKeys, type AuditLogQueryFilters } from '@/lib/query-keys';
+import { queryKeys, sortedKeyList, type AuditLogQueryFilters } from '@/lib/query-keys';
 
 import { fetchAuditLog } from '../api/audit-log-api';
 import type { AuditLogFilterParams } from '../api/types';
@@ -21,7 +21,14 @@ function retryUnlessAuth(failureCount: number, error: Error): boolean {
 }
 
 export function useAuditLog(params: AuditLogFilterParams) {
-  const keyFilters: AuditLogQueryFilters = { ...params };
+  // Multi-select: lists are SORTED in the key (absent when empty).
+  const keyFilters: AuditLogQueryFilters = {
+    ...params,
+    entity_type: sortedKeyList(params.entity_type),
+    actor_user_id: sortedKeyList(params.actor_user_id),
+    action: sortedKeyList(params.action),
+    hub_id: sortedKeyList(params.hub_id),
+  };
   return useQuery({
     queryKey: queryKeys.auditLog(keyFilters),
     queryFn: ({ signal }) => fetchAuditLog(params, { signal }),

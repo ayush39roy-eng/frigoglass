@@ -6,20 +6,24 @@ import { cn } from '@/lib/utils';
 import { useHubFilter } from '@/stores/hub-filter';
 
 import { CountryFlag } from './country-flag';
+import { summarizeHubSelection } from './hub-scope';
 
 /**
- * "Hub: <name>" or "Country: <name>" with a clear button (ADR 0020 §2, ADR
- * 0025 §3). Sits in the header of every page that follows the global filter,
- * so a filtered figure is never mistaken for the portfolio total. Renders
- * nothing under "All hubs".
+ * The current hub / country selection with a clear button (ADR 0020 §2, ADR
+ * 0025 §3; multi-select contract §3): "Hub: OEM-HCK", "Country: India",
+ * "Hubs: India + R&D-Greece", "Hubs: 3 hubs". Sits in the header of every page
+ * that follows the global filter, so a filtered figure is never mistaken for
+ * the portfolio total. Renders nothing under "All hubs".
  */
 export function HubFilterChip({ className }: { className?: string }): React.JSX.Element | null {
-  const { hubId, region, clear } = useHubFilter();
+  const { hubIds, regions, clear } = useHubFilter();
   const hubsQuery = useHubs();
-  if (hubId === null && region === null) return null;
-  const isHub = hubId !== null;
-  const name = isHub ? (hubsQuery.data?.find((h) => h.id === hubId)?.name ?? 'selected hub') : (region ?? '');
-  const kind = isHub ? 'Hub' : 'Country';
+  const n = hubIds.length + regions.length;
+  if (n === 0) return null;
+  const hubName = (id: string): string => hubsQuery.data?.find((h) => h.id === id)?.name ?? 'selected hub';
+  const name = summarizeHubSelection(hubIds, regions, hubName);
+  const kind = n > 1 ? 'Hubs' : hubIds.length === 1 ? 'Hub' : 'Country';
+  const onlyRegion = n === 1 && regions.length === 1 ? regions[0] : undefined;
 
   return (
     <span
@@ -29,11 +33,7 @@ export function HubFilterChip({ className }: { className?: string }): React.JSX.
       )}
       data-testid="hub-filter-chip"
     >
-      {!isHub && region !== null ? (
-        <CountryFlag region={region} />
-      ) : (
-        <Building2 className="size-3.5 shrink-0" aria-hidden="true" />
-      )}
+      {onlyRegion ? <CountryFlag region={onlyRegion} /> : <Building2 className="size-3.5 shrink-0" aria-hidden="true" />}
       <span className="truncate">
         {kind}: {name}
       </span>

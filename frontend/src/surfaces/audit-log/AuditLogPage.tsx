@@ -8,13 +8,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
+import { MultiSelectDropdown } from '@/components/shared/multi-select-dropdown';
 import { ApiError } from '@/lib/api/client';
 import { useHubs } from '@/lib/api/reference';
 import { hubPickerLabel } from '@/lib/hub-labels';
@@ -25,11 +19,14 @@ import { AccessNotice } from './components/access-notice';
 import { AuditLogTable, type AuditLogRow } from './components/audit-log-table';
 import { useAuditLog } from './hooks/use-audit-log';
 import { useDebouncedValue } from './hooks/use-debounced-value';
+import { splitFilterValues } from './lib/filter-values';
 
 const AUDIT_LOG_SURFACE = SURFACES.find((s) => s.path === '/audit-log');
-const ALL = '__all__';
 const PAGE_SIZE = 100;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+function listParam(values: readonly string[]): string[] | undefined {
+  return values.length > 0 ? [...values] : undefined;
+}
 
 function authKind(error: unknown): 'forbidden' | 'unauthorized' | null {
   if (error instanceof ApiError && error.isForbidden) return 'forbidden';
@@ -53,7 +50,7 @@ export default function AuditLogPage(): React.JSX.Element {
   const [entityId, setEntityId] = React.useState('');
   const [actorUserId, setActorUserId] = React.useState('');
   const [action, setAction] = React.useState('');
-  const [hubId, setHubId] = React.useState<string>(ALL);
+  const [hubIds, setHubIds] = React.useState<string[]>([]);
   const [occurredFrom, setOccurredFrom] = React.useState('');
   const [occurredTo, setOccurredTo] = React.useState('');
   const [offset, setOffset] = React.useState(0);
@@ -64,8 +61,13 @@ export default function AuditLogPage(): React.JSX.Element {
   const debouncedActorUserId = useDebouncedValue(actorUserId.trim());
   const debouncedAction = useDebouncedValue(action.trim());
 
-  const actorUserIdValid = debouncedActorUserId === '' || UUID_RE.test(debouncedActorUserId);
-  const actorFilterShown = actorUserId.trim() !== '' && !actorUserIdValid;
+  const entityTypes = React.useMemo(() => splitFilterValues(debouncedEntityType), [debouncedEntityType]);
+  const actions = React.useMemo(() => splitFilterValues(debouncedAction), [debouncedAction]);
+  const actorIds = React.useMemo(() => splitFilterValues(debouncedActorUserId), [debouncedActorUserId]);
+  // Every actor id must be a UUID; until then the actor filter is ignored.
+  const actorUserIdValid = actorIds.every((v) => UUID_RE.test(v));
+  const actorFilterShown =
+    actorUserId.trim() !== '' && !splitFilterValues(actorUserId).every((v) => UUID_RE.test(v));
 
   const hubsQuery = useHubs();
 
@@ -84,7 +86,7 @@ export default function AuditLogPage(): React.JSX.Element {
     debouncedEntityId,
     debouncedActorUserId,
     debouncedAction,
-    hubId,
+    hubIds,
     occurredFrom,
     occurredTo,
   ]);
@@ -95,11 +97,11 @@ export default function AuditLogPage(): React.JSX.Element {
   }
 
   const listQuery = useAuditLog({
-    entity_type: debouncedEntityType || undefined,
+    entity_type: listParam(entityTypes),
     entity_id: debouncedEntityId || undefined,
-    actor_user_id: actorUserIdValid && debouncedActorUserId ? debouncedActorUserId : undefined,
-    action: debouncedAction || undefined,
-    hub_id: hubId === ALL ? undefined : hubId,
+    actor_user_id: actorUserIdValid ? listParam(actorIds) : undefined,
+    action: listParam(actions),
+    hub_id: listParam(hubIds),
     occurred_from: occurredFrom ? startOfDayUtc(occurredFrom) : undefined,
     occurred_to: occurredTo ? endOfDayUtc(occurredTo) : undefined,
     limit: PAGE_SIZE,
@@ -117,7 +119,7 @@ export default function AuditLogPage(): React.JSX.Element {
     entityId !== '' ||
     actorUserId !== '' ||
     action !== '' ||
-    hubId !== ALL ||
+    hubIds.length > 0 ||
     occurredFrom !== '' ||
     occurredTo !== '';
 
@@ -147,7 +149,7 @@ export default function AuditLogPage(): React.JSX.Element {
     setEntityId('');
     setActorUserId('');
     setAction('');
-    setHubId(ALL);
+    setHubIds([]);
     setOccurredFrom('');
     setOccurredTo('');
   }, []);
@@ -165,39 +167,44 @@ export default function AuditLogPage(): React.JSX.Element {
               <CardTitle>Filters</CardTitle>
             </CardHeader>
             <CardContent className="flex flex-wrap items-end gap-4">
-              <TextFilter label="Entity type" value={entityType} onChange={setEntityType} placeholder="Project" />
+              <TextFilter
+                label="Entity type"
+                value={entityType}
+                onChange={setEntityType}
+                placeholder="Project, Engineer"
+                hint="Separate several with commas"
+              />
               <TextFilter label="Entity ID" value={entityId} onChange={setEntityId} placeholder="UUID" />
               <div className="flex flex-col gap-1">
                 <TextFilter
                   label="Actor user ID"
                   value={actorUserId}
                   onChange={setActorUserId}
-                  placeholder="UUID"
+                  placeholder="UUID, UUID"
                   invalid={actorFilterShown}
+                  hint="Separate several with commas"
                 />
                 {actorFilterShown ? (
-                  <p className="max-w-40 text-2xs text-danger">Must be a valid UUID — ignored until then.</p>
+                  <p className="max-w-40 text-2xs text-danger">Each must be a valid UUID — ignored until then.</p>
                 ) : null}
               </div>
-              <TextFilter label="Action" value={action} onChange={setAction} placeholder="project.update" />
-              <div className="flex flex-col gap-1">
-                <Label htmlFor="audit-hub-filter" className="text-2xs text-text-muted">
-                  Hub
-                </Label>
-                <Select value={hubId} onValueChange={setHubId}>
-                  <SelectTrigger id="audit-hub-filter" className="h-8 w-40">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value={ALL}>All</SelectItem>
-                    {(hubsQuery.data ?? []).map((h) => (
-                      <SelectItem key={h.id} value={h.id}>
-                        {hubPickerLabel(h, hubsQuery.data)}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
+              <TextFilter
+                label="Action"
+                value={action}
+                onChange={setAction}
+                placeholder="project.update, project.create"
+                hint="Separate several with commas"
+              />
+              <MultiSelectDropdown
+                id="audit-hub-filter"
+                label="Hub"
+                allLabel="All hubs"
+                value={hubIds}
+                onChange={setHubIds}
+                options={(hubsQuery.data ?? []).map((h) => ({ value: h.id, label: hubPickerLabel(h, hubsQuery.data) }))}
+                triggerClassName="h-8 w-40"
+                data-testid="audit-hub-filter"
+              />
               <div className="flex flex-col gap-1">
                 <Label htmlFor="audit-from" className="text-2xs text-text-muted">
                   From
@@ -305,14 +312,18 @@ function TextFilter({
   onChange,
   placeholder,
   invalid,
+  hint,
 }: {
   label: string;
   value: string;
   onChange: (next: string) => void;
   placeholder?: string;
   invalid?: boolean;
+  /** Short help shown to screen readers (`aria-describedby`) and as a tooltip. */
+  hint?: string;
 }): React.JSX.Element {
   const id = React.useId();
+  const hintId = `${id}-hint`;
   return (
     <div className="flex flex-col gap-1">
       <Label htmlFor={id} className="text-2xs text-text-muted">
@@ -323,9 +334,16 @@ function TextFilter({
         className="h-8 w-40"
         value={value}
         placeholder={placeholder}
+        title={hint}
+        aria-describedby={hint ? hintId : undefined}
         aria-invalid={invalid ? 'true' : undefined}
         onChange={(e) => onChange(e.target.value)}
       />
+      {hint ? (
+        <span id={hintId} className="sr-only">
+          {hint}
+        </span>
+      ) : null}
     </div>
   );
 }

@@ -12,6 +12,7 @@ import {
 } from '@/components/ui/select';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { MultiChipFilter } from '@/components/shared/multi-chip-filter';
+import { MultiSelectDropdown } from '@/components/shared/multi-select-dropdown';
 import { TYPE_CHIP_OPTIONS, useCategoryChipOptions } from '@/lib/multi-select-filter';
 import { UI_PROJECT_STATUSES, type ProjectPriority, type ProjectStatus } from '@/types/enums';
 
@@ -28,6 +29,9 @@ import {
  * P13-T13 Gantt toolbar (API_CONTRACT_P13 §7; mock-up image 12): search,
  * Category / Type / Status / Leader / Step filters, sort, P1–P4 / Queue tabs.
  * P31: Category and Type are multi-select chip rows (`MultiChipFilter`).
+ * Owner ask 2026-11-13: Status / Leader / Current step are multi-select
+ * dropdowns (`MultiSelectDropdown`) and the Priority tabs are toggles; Sort
+ * stays a single choice (it is not a filter).
  * Every filter is a SERVER param — this component only edits the filter state;
  * it never narrows rows itself.
  */
@@ -46,6 +50,8 @@ const PRIORITY_TABS: { value: ProjectPriority; label: string }[] = [
   { value: 'P4', label: 'P4' },
   { value: 'Q', label: 'In Queue' },
 ];
+
+const STATUS_OPTIONS = UI_PROJECT_STATUSES.map((s) => ({ value: s, label: s }));
 
 /** ADR 0028: names are served; an id with no name is labelled as such. */
 function leaderLabel(leader: { id: string; name: string | null }): string {
@@ -126,31 +132,34 @@ export function GanttFilterBar({ filters, onChange, facets }: GanttToolbarProps)
           />
         </div>
       </div>
-      <ToolbarSelect
+      <MultiSelectDropdown<ProjectStatus>
         label="Status"
         allLabel="All statuses"
         value={filters.status}
-        onChange={(v) => set('status', v as ProjectStatus | null)}
-        options={UI_PROJECT_STATUSES.map((s) => ({ value: s, label: s }))}
-        className="h-8 w-40"
+        onChange={(v) => set('status', v)}
+        options={STATUS_OPTIONS}
+        triggerClassName="h-8 w-40"
+        data-testid="gantt-status-filter"
       />
       {facets ? (
         <>
-          <ToolbarSelect
+          <MultiSelectDropdown
             label="Leader"
             allLabel="All leaders"
             value={filters.leaderEngineerId}
             onChange={(v) => set('leaderEngineerId', v)}
             options={facets.leaders.map((l) => ({ value: l.id, label: leaderLabel(l) }))}
-            className="h-8 w-44"
+            triggerClassName="h-8 w-44"
+            data-testid="gantt-leader-filter"
           />
-          <ToolbarSelect
+          <MultiSelectDropdown
             label="Current step"
             allLabel="All steps"
             value={filters.currentStep}
             onChange={(v) => set('currentStep', v)}
             options={facets.steps.map((s) => ({ value: s.code, label: `${s.code} · ${s.name}` }))}
-            className="h-8 w-48"
+            triggerClassName="h-8 w-48"
+            data-testid="gantt-step-filter"
           />
         </>
       ) : null}
@@ -193,28 +202,38 @@ export function GanttFilterBar({ filters, onChange, facets }: GanttToolbarProps)
   );
 }
 
-/** The P1–P4 / In Queue tabs (`priority` server param; "All" sends none). */
+/** The P1–P4 / In Queue toggles (repeated `priority` server param; "All"
+ *  sends none). Multi-select (owner ask 2026-11-13): several bands can be on
+ *  at once; "All" clears them and is on when none is. */
 export function PriorityTabs({
   value,
   onChange,
 }: {
-  value: ProjectPriority | null;
-  onChange: (next: ProjectPriority | null) => void;
+  value: readonly ProjectPriority[];
+  onChange: (next: ProjectPriority[]) => void;
 }): React.JSX.Element {
+  const labelId = React.useId();
+  const none = value.length === 0;
   return (
     <div className="flex flex-col gap-1">
-      <span className="text-2xs text-text-muted" id="gantt-priority-tabs-label">
+      <span className="text-2xs text-text-muted" id={labelId}>
         Priority
       </span>
       <ToggleGroup
-        type="single"
+        type="multiple"
+        role="group"
         size="sm"
-        aria-labelledby="gantt-priority-tabs-label"
-        value={value ?? ALL}
+        aria-labelledby={labelId}
+        value={none ? [ALL] : [...value]}
         onValueChange={(next) => {
-          // Radix emits "" on re-click of the active item: keep a selection.
-          if (next === '') return;
-          onChange(next === ALL ? null : (next as ProjectPriority));
+          // "All" newly pressed, or the last band un-pressed: no filter.
+          if ((next.includes(ALL) && !none) || next.length === 0) {
+            onChange([]);
+            return;
+          }
+          // Option order, so the request and the key never depend on click order.
+          const picked = new Set(next);
+          onChange(PRIORITY_TABS.map((t) => t.value).filter((p) => picked.has(p)));
         }}
       >
         <ToggleGroupItem value={ALL}>All</ToggleGroupItem>

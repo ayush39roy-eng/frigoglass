@@ -14,8 +14,9 @@ import { useQuery } from '@tanstack/react-query';
 
 import type { TrackingStatus } from '@/components/shared/tracking-status-meta';
 import { queryKeys } from '@/lib/query-keys';
+import { NO_HUB_SELECTION, toHubFilterParams, type HubSelection } from '@/stores/hub-filter';
 import type { Id } from '@/types/common';
-import type { HubName, LabRegion, WorkflowStepKind, WorkflowStepStatus } from '@/types/enums';
+import type { HubName, WorkflowStepKind, WorkflowStepStatus } from '@/types/enums';
 
 import { ApiError, apiGet, apiSend, type ApiRequestOptions } from './client';
 
@@ -116,13 +117,14 @@ export const CHECKIN_NOTE_MAX = 1000;
 /** Max hold-reason length (`schemas/checkin.py::BLOCKED_REASON_MAX_LENGTH`). */
 export const CHECKIN_REASON_MAX = 2000;
 
+/** Multi-select contract §2: the hub / country selection as repeated
+ *  `hub_id` / `region` params (sorted; absent when empty). */
 export function fetchCheckInsDue(
-  hubId: string | null,
+  hub: HubSelection = NO_HUB_SELECTION,
   options: Pick<ApiRequestOptions, 'signal'> = {},
-  region: LabRegion | null = null,
 ): Promise<CheckInDueResponse> {
   return apiGet<CheckInDueResponse>('/check-ins/due', {
-    query: { hub_id: hubId ?? undefined, region: region ?? undefined },
+    query: { ...toHubFilterParams(hub.hubIds, hub.regions) },
     signal: options.signal,
   });
 }
@@ -170,11 +172,11 @@ export function checkInEntryErrors(err: unknown): CheckInEntryError[] {
 
 /** `GET /check-ins/due?hub_id=`. The sidebar badge and the check-in page share
  *  this key, so one fetch serves both. */
-export function useCheckInsDue(hubId: string | null, enabled = true, region: LabRegion | null = null) {
+export function useCheckInsDue(hub: HubSelection, enabled = true) {
   return useQuery({
     // P13 (ADR 0025): the country filter is keyed and sent beside the hub.
-    queryKey: queryKeys.checkInsDue(hubId, region),
-    queryFn: ({ signal }) => fetchCheckInsDue(hubId, { signal }, region),
+    queryKey: queryKeys.checkInsDue(hub),
+    queryFn: ({ signal }) => fetchCheckInsDue(hub, { signal }),
     enabled,
   });
 }

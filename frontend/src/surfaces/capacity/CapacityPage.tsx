@@ -7,7 +7,7 @@ import { SectionBoundary } from '@/components/shared/section-boundary';
 import { SURFACES } from '@/app/nav';
 import { ApiError } from '@/lib/api/client';
 import { useMotionTokens } from '@/lib/motion';
-import { useHubFilter } from '@/stores/hub-filter';
+import { useHubSelection } from '@/stores/hub-filter';
 import { HubFilterChip } from '@/components/shared/hub-filter/hub-filter-chip';
 import { CountrySegmented } from '@/components/shared/hub-filter/country-segmented';
 
@@ -61,9 +61,9 @@ export default function CapacityPage(): React.JSX.Element {
   // P12 (ADR 0020): the global header hub filter. The server filters hub rows;
   // lab figures stay region-wide (§4). Nothing is re-derived here. (P19-T02: the
   // served `areas[]` Europe / India roll-up is no longer shown, owner ruling.)
-  const { hubId, region } = useHubFilter();
-  const hubLoad = useHubLoadVsCapacity({ hubId, region });
-  const classBreakdown = useClassBreakdown(hubId, region);
+  const hub = useHubSelection();
+  const hubLoad = useHubLoadVsCapacity({ hub });
+  const classBreakdown = useClassBreakdown(hub);
 
   const hasRun =
     hubLoad.data?.has_active_schedule_run === true || classBreakdown.data?.has_active_schedule_run === true;

@@ -183,7 +183,7 @@ const READ_ONLY = { roles: ['Executive Viewer'] as RoleName[], permissions: ROLE
 
 beforeEach(() => {
   vi.clearAllMocks();
-  useHubFilterStore.setState({ hubId: null, region: null });
+  useHubFilterStore.getState().setSelection([], []);
   serveGets();
 });
 
@@ -223,15 +223,15 @@ describe('Projects page — list and header', () => {
   });
 
   it('the hub comes from the global header filter (ADR 0020) and shows its chip', () => {
-    useHubFilterStore.setState({ hubId: 'hub-1' });
+    useHubFilterStore.getState().setSelection(['hub-1'], []);
     useDashboardProjects.mockReturnValue(ok([]));
     renderWithProviders(<ProjectsPage />);
-    expect(useDashboardProjects).toHaveBeenLastCalledWith(expect.objectContaining({ hub_id: 'hub-1' }));
+    expect(useDashboardProjects).toHaveBeenLastCalledWith(expect.objectContaining({ hub_id: ['hub-1'] }));
     expect(screen.getByTestId('hub-filter-chip')).toHaveTextContent('Hub: R&D-Greece');
     expect(screen.getByText('No projects match these filters')).toBeInTheDocument();
   });
 
-  it('sends every filter, the search and the sort to the server', async () => {
+  it('sends every filter (multi-select: two values each), the search and the sort to the server', async () => {
     const user = userEvent.setup();
     useDashboardProjects.mockReturnValue(ok([]));
     renderWithProviders(<ProjectsPage />);
@@ -241,10 +241,17 @@ describe('Projects page — list and header', () => {
     await user.click(within(screen.getByRole('group', { name: 'Category' })).getByRole('button', { name: 'A+' }));
     await user.click(within(screen.getByRole('group', { name: 'Type' })).getByRole('button', { name: 'Alternative Component' }));
     await user.click(within(screen.getByRole('group', { name: 'Type' })).getByRole('button', { name: 'Unmapped' }));
-    await user.click(screen.getByRole('combobox', { name: 'Priority' }));
+    await user.click(screen.getByRole('button', { name: 'Priority' }));
     await user.click(await screen.findByRole('option', { name: 'P2' }));
-    await user.click(screen.getByRole('combobox', { name: 'Leader' }));
+    await user.click(screen.getByRole('option', { name: 'P1' }));
+    await user.keyboard('{Escape}');
+    expect(screen.getByRole('button', { name: 'Priority' })).toHaveAccessibleDescription('2 priorities');
+    await user.click(screen.getByRole('button', { name: 'Hub' }));
+    await user.click(await screen.findByRole('option', { name: 'R&D-Greece' }));
+    await user.keyboard('{Escape}');
+    await user.click(screen.getByRole('button', { name: 'Leader' }));
     await user.click(await screen.findByRole('option', { name: 'Nikos Papadopoulos' }));
+    await user.keyboard('{Escape}');
     await user.click(screen.getByRole('combobox', { name: 'Sort' }));
     await user.click(await screen.findByRole('option', { name: 'Priority rank' }));
     const box = screen.getByRole('searchbox', { name: 'Search' });
@@ -256,8 +263,9 @@ describe('Projects page — list and header', () => {
         expect.objectContaining({
           category: ['A+', 'C'],
           type: ['AC', 'Unmapped'],
-          priority: 'P2',
-          leader_engineer_id: 'eng-1',
+          hub_id: ['hub-1'],
+          priority: ['P1', 'P2'],
+          leader_engineer_id: ['eng-1'],
           sort: 'priority',
           q: 'tauras',
         }),
@@ -289,7 +297,7 @@ describe('Projects page — list and header', () => {
     renderWithProviders(<ProjectsPage />);
 
     expect(screen.queryByRole('button', { name: 'Drafts' })).not.toBeInTheDocument();
-    await user.click(screen.getByRole('combobox', { name: 'Status' }));
+    await user.click(screen.getByRole('button', { name: 'Status' }));
     const options = (await screen.findAllByRole('option')).map((o) => o.textContent);
     expect(options).not.toContain('In Buyoff');
     expect(options).not.toContain('Draft');
@@ -297,7 +305,8 @@ describe('Projects page — list and header', () => {
       expect(options).toContain(st);
     }
     await user.click(screen.getByRole('option', { name: 'Cancelled' }));
-    expect(useDashboardProjects).toHaveBeenLastCalledWith(expect.objectContaining({ status_: 'Cancelled' }));
+    await user.click(screen.getByRole('option', { name: 'On Hold' }));
+    expect(useDashboardProjects).toHaveBeenLastCalledWith(expect.objectContaining({ status_: ['On Hold', 'Cancelled'] }));
   });
 
   it('P23-T01: a row that still carries In Buyoff or Draft renders its status badge', () => {

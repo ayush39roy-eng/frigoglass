@@ -48,13 +48,18 @@ from sqlalchemy.orm import selectinload
 from api.db import get_db
 from api.deps import require_permission
 from api.errors import HTTP_422, CodedHTTPException
-from api.query_params import CategoryListQuery, TypeListQuery
+from api.query_params import (
+    CategoryListQuery,
+    HubIdListQuery,
+    RegionListQuery,
+    StatusListQuery,
+    TypeListQuery,
+)
 from core.principal import Principal
 from core.rbac import Action, Surface
 from models.audit import AuditLogEntry
 from models.enums import (
     CurrencyCode,
-    LabRegion,
     ProjectStatus,
     ProjectType,
 )
@@ -79,9 +84,15 @@ from schemas.priority import (
 )
 from services.audit_helpers import priority_score_audit_state
 from services.capacity_hubs import capacity_rows_for_request
-from services.category_type_filter import category_type_filter
+from services.category_type_filter import any_of, category_type_filter
 from services.currency import rate_to_eur as _currency_rate_to_eur
-from services.hub_scope import global_hub_filter, hub_scope_filter, narrowed_hub_filter
+from services.hub_scope import (
+    HubIdsArg,
+    RegionsArg,
+    global_hub_filter,
+    hub_scope_filter,
+    narrowed_hub_filter,
+)
 from services.priority_capacity_fill import CapacityFill, RowFill, compute_capacity_fill
 from services.priority_scoring import (
     Rubric,
@@ -201,11 +212,11 @@ def _build_row(
 @router.get("", response_model=list[PriorityMatrixRow])
 async def list_priority_matrix(
     currency: CurrencyCode = CurrencyCode.EUR,
-    hub_id: uuid.UUID | None = None,
-    region: LabRegion | None = None,
+    hub_id: HubIdListQuery = None,
+    region: RegionListQuery = None,
     category: CategoryListQuery = None,
     type_: TypeListQuery = None,
-    status_: ProjectStatus | None = None,
+    status_: StatusListQuery = None,
     q: Annotated[str | None, Query(max_length=Q_MAX_LENGTH)] = None,
     db: AsyncSession = Depends(get_db),
     current_user: Principal = Depends(_read),
@@ -265,11 +276,11 @@ async def _matrix_projects(
     db: AsyncSession,
     current_user: Principal,
     *,
-    hub_id: uuid.UUID | None,
-    region: LabRegion | None,
+    hub_id: HubIdsArg,
+    region: RegionsArg,
     category: Sequence[str] | None,
     type_: Sequence[ProjectType] | None,
-    status_: ProjectStatus | None,
+    status_: Sequence[ProjectStatus] | None,
     q: str | None,
 ) -> Sequence[Project]:
     """The Matrix's row set: hub scope AND the global hub / country filter AND
@@ -292,8 +303,9 @@ async def _matrix_projects(
     selection = category_type_filter(category, type_)
     if selection is not None:
         stmt = stmt.where(selection)
-    if status_ is not None:
-        stmt = stmt.where(Project.status == status_)
+    status_filter = any_of(Project.status, status_)  # ADR 0051: OR within
+    if status_filter is not None:
+        stmt = stmt.where(status_filter)
     search = search_predicate(q)
     if search is not None:
         stmt = stmt.where(search)
@@ -334,8 +346,8 @@ async def priority_dimensions(
 
 @router.get("/summary", response_model=PriorityPortfolioSummary)
 async def priority_portfolio_summary(
-    hub_id: uuid.UUID | None = None,
-    region: LabRegion | None = None,
+    hub_id: HubIdListQuery = None,
+    region: RegionListQuery = None,
     db: AsyncSession = Depends(get_db),
     current_user: Principal = Depends(_read),
 ) -> PriorityPortfolioSummary:
@@ -396,11 +408,11 @@ def _histogram_bucket(pct: int) -> int:
 
 @router.get("/distribution", response_model=PriorityDistribution)
 async def priority_distribution(
-    hub_id: uuid.UUID | None = None,
-    region: LabRegion | None = None,
+    hub_id: HubIdListQuery = None,
+    region: RegionListQuery = None,
     category: CategoryListQuery = None,
     type_: TypeListQuery = None,
-    status_: ProjectStatus | None = None,
+    status_: StatusListQuery = None,
     q: Annotated[str | None, Query(max_length=Q_MAX_LENGTH)] = None,
     db: AsyncSession = Depends(get_db),
     current_user: Principal = Depends(_read),
@@ -460,8 +472,8 @@ async def priority_distribution(
 
 @router.get("/capacity-fill", response_model=PriorityCapacityFill)
 async def priority_capacity_fill(
-    hub_id: uuid.UUID | None = None,
-    region: LabRegion | None = None,
+    hub_id: HubIdListQuery = None,
+    region: RegionListQuery = None,
     db: AsyncSession = Depends(get_db),
     current_user: Principal = Depends(_read),
 ) -> PriorityCapacityFill:

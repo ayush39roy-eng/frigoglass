@@ -11,7 +11,7 @@ import { cn } from '@/lib/utils';
 import { useKeepScrollAnchor } from '@/lib/use-keep-scroll-anchor';
 import { ApiError } from '@/lib/api/client';
 import { useMotionTokens } from '@/lib/motion';
-import { useHubFilter } from '@/stores/hub-filter';
+import { useHubSelection } from '@/stores/hub-filter';
 import { useSessionStore } from '@/stores/session';
 import { HubFilterChip } from '@/components/shared/hub-filter/hub-filter-chip';
 import { CountrySegmented } from '@/components/shared/hub-filter/country-segmented';
@@ -124,28 +124,28 @@ export default function DashboardPage(): React.JSX.Element {
   // P12 (ADR 0020): every Dashboard figure follows the global header hub filter;
   // the server filters and totals (I9/I19/I23), the browser only renders.
   // P13 (ADR 0025): and the country filter beside it.
-  const { hubId, region } = useHubFilter();
+  const hub = useHubSelection();
   // P31: the Dashboard-wide category / type selection (URL), sent with every
   // Dashboard request in both views; the donuts and the bar below edit it.
   const selection = useDashboardSelection();
-  const withinYear = useCompletingWithinYear(hubId, region, selection);
-  const pipelineTotals = usePipelineTotals(hubId, region, selection);
-  const statusOverview = useStatusOverview(hubId, region, selection);
-  const hubTypePipeline = useHubTypePipeline(hubId, region, selection);
+  const withinYear = useCompletingWithinYear(hub, selection);
+  const pipelineTotals = usePipelineTotals(hub, selection);
+  const statusOverview = useStatusOverview(hub, selection);
+  const hubTypePipeline = useHubTypePipeline(hub, selection);
   // Per-country chips under the KPI cards (contract §2). Optional enrichment:
   // the cards render without it, so its error never blanks a card.
-  const regionSummary = useRegionSummary(hubId, region, selection);
+  const regionSummary = useRegionSummary(hub, selection);
   // P13-T10 (API_CONTRACT_P13 §5): served breakdowns + completing Hub × Type.
-  const analytics = useDashboardAnalytics(hubId, region, selection);
+  const analytics = useDashboardAnalytics(hub, selection);
   // P31 cross-filter: each selectable donut's own served distribution.
-  const breakdowns = useCrossFilterBreakdowns(hubId, region, selection);
+  const breakdowns = useCrossFilterBreakdowns(hub, selection);
   // A hub / country change keeps the previous figures on screen (placeholderData)
   // so the page holds its scroll position; dim it until every section is current.
   // …and hold the section the reader is on in place while the layout settles.
   const sectionsRef = React.useRef<HTMLDivElement>(null);
   useKeepScrollAnchor(
     sectionsRef,
-    `${hubId ?? ''}|${region ?? ''}|${selection.categories.join(',')}|${selection.types.join(',')}`,
+    `${hub.hubIds.join(',')}|${hub.regions.join(',')}|${selection.categories.join(',')}|${selection.types.join(',')}`,
   );
   const refreshing = [
     withinYear,
@@ -271,7 +271,7 @@ export default function DashboardPage(): React.JSX.Element {
           <DashboardSelectionBar selection={selection} />
           {/* Owner ask 2026-11-13: clicking a composition figure lists its
               projects, scoped exactly like the figures. */}
-          <ProjectListProvider scope={{ hubId, region, selection }}>
+          <ProjectListProvider scope={{ hub, selection }}>
           <motion.div
             className={cn('flex flex-col gap-s8 transition-opacity duration-base', refreshing && 'opacity-60')}
             aria-busy={refreshing}
@@ -301,8 +301,7 @@ export default function DashboardPage(): React.JSX.Element {
                 statusOverview={statusOverview}
                 analytics={analytics}
                 activeRun={activeRun.data}
-                hubId={hubId}
-                region={region}
+                hub={hub}
                 selection={selection}
                 breakdowns={breakdowns}
               />
@@ -388,8 +387,7 @@ export default function DashboardPage(): React.JSX.Element {
                 analytics={analytics}
                 withinYear={withinYear.data ?? null}
                 pipelineTotal={pipelineTotals.data?.total_count ?? null}
-                hubId={hubId}
-                region={region}
+                hub={hub}
                 regionSummary={regionSummary.data ?? null}
               />
             </StaggerSection>

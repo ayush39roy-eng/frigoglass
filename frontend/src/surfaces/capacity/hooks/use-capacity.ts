@@ -11,8 +11,7 @@ import { useQuery } from '@tanstack/react-query';
 
 import { ApiError } from '@/lib/api/client';
 import { queryKeys } from '@/lib/query-keys';
-import { useHubFilterParams } from '@/stores/hub-filter';
-import type { LabRegion } from '@/types/enums';
+import { NO_HUB_SELECTION, useHubSelection, type HubSelection } from '@/stores/hub-filter';
 
 import {
   fetchActiveScheduleRun,
@@ -33,35 +32,32 @@ function retryUnlessAuth(failureCount: number, error: Error): boolean {
  *  cannot read Capacity. */
 export function useHubLoadVsCapacity({
   enabled = true,
-  hubId = null,
-  region = null,
-}: { enabled?: boolean; hubId?: string | null; region?: LabRegion | null } = {}) {
+  hub = NO_HUB_SELECTION,
+}: { enabled?: boolean; hub?: HubSelection } = {}) {
   return useQuery({
-    // P12 (ADR 0020) + P13 (ADR 0025): the hub and country filters are in the key and the request.
-    queryKey: queryKeys.capacityHubLoad(hubId, region),
-    queryFn: ({ signal }) => fetchHubLoadVsCapacity({ signal }, hubId, region),
+    // P12 (ADR 0020) + P13 (ADR 0025), multi-select: the hub / country lists are in the key and the request.
+    queryKey: queryKeys.capacityHubLoad(hub),
+    queryFn: ({ signal }) => fetchHubLoadVsCapacity({ signal }, hub),
     retry: retryUnlessAuth,
     enabled,
   });
 }
 
-export function useClassBreakdown(hubId: string | null = null, region: LabRegion | null = null) {
+export function useClassBreakdown(hub: HubSelection = NO_HUB_SELECTION) {
   return useQuery({
-    queryKey: queryKeys.capacityClassBreakdown(hubId, region),
-    queryFn: ({ signal }) => fetchClassBreakdown({ signal }, hubId, region),
+    queryKey: queryKeys.capacityClassBreakdown(hub),
+    queryFn: ({ signal }) => fetchClassBreakdown({ signal }, hub),
     retry: retryUnlessAuth,
   });
 }
 
 /** P15 (ADR 0028): named per-engineer weekly utilization. The global hub and
- *  country filters (`useHubFilterParams`) are both in the key and the request. */
+ *  country selection (`useHubSelection`) is in the key and the request. */
 export function useEngineerUtilization() {
-  const { hub_id, region } = useHubFilterParams();
-  const hubId = hub_id ?? null;
-  const reg = region ?? null;
+  const hub = useHubSelection();
   return useQuery({
-    queryKey: queryKeys.capacityEngineerUtilization(hubId, reg),
-    queryFn: ({ signal }) => fetchEngineerUtilization({ signal }, hubId, reg),
+    queryKey: queryKeys.capacityEngineerUtilization(hub),
+    queryFn: ({ signal }) => fetchEngineerUtilization({ signal }, hub),
     retry: retryUnlessAuth,
   });
 }

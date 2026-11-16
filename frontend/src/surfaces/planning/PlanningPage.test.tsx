@@ -368,10 +368,11 @@ describe('PlanningPage (kept capability)', () => {
     const user = userEvent.setup();
     renderWithProviders(<PlanningPage />);
     await user.click(screen.getByRole('tab', { name: 'Engineers' }));
-    expect(hooks.useEngineerList).toHaveBeenLastCalledWith(undefined);
-    await user.click(screen.getByRole('combobox', { name: 'Hub' }));
+    expect(hooks.useEngineerList).toHaveBeenCalledWith([]);
+    await user.click(screen.getByRole('button', { name: 'Hub' }));
     await user.click(await screen.findByRole('option', { name: 'R&D-Greece' }));
-    expect(hooks.useEngineerList).toHaveBeenCalledWith('hub-1');
+    await user.click(screen.getByRole('option', { name: 'PD-India' }));
+    expect(hooks.useEngineerList).toHaveBeenCalledWith(['hub-1', 'hub-2']);
   });
 
   it('deleting an engineer requires confirmation', async () => {

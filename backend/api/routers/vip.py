@@ -55,12 +55,17 @@ from sqlalchemy.orm import selectinload
 import domain_constants as dc
 from api.db import get_db
 from api.deps import get_current_principal, require_permission
-from api.query_params import DashboardCategoryListQuery, DashboardTypeListQuery
+from api.query_params import (
+    DashboardCategoryListQuery,
+    DashboardTypeListQuery,
+    HubIdListQuery,
+    RegionListQuery,
+)
 from api.routers.projects import _get_project_or_404
 from core.principal import Principal
 from core.rbac import Action, Surface
 from models.audit import AuditLogEntry
-from models.enums import NON_SCHEDULABLE_STATUSES, LabRegion, ProjectPriority
+from models.enums import NON_SCHEDULABLE_STATUSES, ProjectPriority
 from models.project import Project
 from schemas.vip import (
     VipCurrentStage,
@@ -139,8 +144,8 @@ def select_vip(
 @router.get("", response_model=VipProjectsResponse)
 async def get_vip_projects(
     year: VipYear = "plan",
-    hub_id: uuid.UUID | None = None,
-    region: LabRegion | None = None,
+    hub_id: HubIdListQuery = None,
+    region: RegionListQuery = None,
     limit: int = Query(default=VIP_LIMIT_DEFAULT, ge=VIP_LIMIT_MIN, le=VIP_LIMIT_MAX),
     category: DashboardCategoryListQuery = None,
     type_: DashboardTypeListQuery = None,

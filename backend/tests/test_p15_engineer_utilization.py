@@ -96,10 +96,13 @@ async def test_region_and_hub_filters_and_hub_planner_scope(db_session):
         hubs = (await db_session.execute(select(Hub))).scalars().all()
         one = next(h for h in hubs if h.name == HubName.RD_GREECE)
         by_hub = await _get(client, hub_id=one.id)
-        other = await _get(client, hub_id=one.id, region="India")  # ANDed: no overlap
+        # ADR 0051: hub and region are a union (was: AND, no overlap → empty).
+        union = await _get(client, hub_id=one.id, region="India")
     assert 0 < len(india["engineers"]) < len(everyone["engineers"])
     assert {r["hub"] for r in by_hub["engineers"]} == {"R&D-Greece"}
-    assert other["engineers"] == []
+    assert sorted(r["id"] for r in union["engineers"]) == sorted(
+        r["id"] for r in [*by_hub["engineers"], *india["engineers"]]
+    )
     india_hubs = {h.name.value for h in hubs if h.lab_region == LabRegion.INDIA}
     assert {r["hub"] for r in india["engineers"]} <= india_hubs
 

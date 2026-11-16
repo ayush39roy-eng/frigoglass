@@ -42,44 +42,45 @@ describe('dashboard-api', () => {
 
   it('forwards filters using the backend param names (status_ trailing underscore)', async () => {
     mockApiGet.mockResolvedValueOnce({ total_count: 0, rows: [] });
-    await fetchDashboardProjects({ status_: 'In Queue', category: ['A+'] });
+    await fetchDashboardProjects({ status_: ['In Queue', 'On Hold'], category: ['A+'], priority: ['P1', 'P2'] });
     expect(mockApiGet).toHaveBeenCalledWith('/dashboard/projects', {
       query: {
         hub_id: undefined,
         category: ['A+'],
-        status_: 'In Queue',
-        priority: undefined,
+        status_: ['In Queue', 'On Hold'],
+        priority: ['P1', 'P2'],
       },
     });
   });
 
   it('P31: every Dashboard aggregate sends the category / type selection as repeated params beside hub / region', async () => {
     const sel = { categories: ['A+', 'A'] as const, types: ['NM'] as const };
+    const h1 = { hubIds: ['h1'], regions: [] };
     const cases: [string, () => Promise<unknown>][] = [
-      ['/dashboard/pipeline-totals', () => fetchPipelineTotals({}, 'h1', null, sel)],
-      ['/dashboard/status-overview', () => fetchStatusOverview({}, 'h1', null, sel)],
-      ['/dashboard/hub-type-pipeline', () => fetchHubTypePipeline({}, 'h1', null, sel)],
-      ['/dashboard/completing-within-year', () => fetchCompletingWithinYear({}, 'h1', null, sel)],
-      ['/dashboard/region-summary', () => fetchRegionSummary({}, 'h1', null, sel)],
-      ['/dashboard/analytics', () => fetchDashboardAnalytics({}, 'h1', null, sel)],
-      ['/dashboard/projects/facets', () => fetchProjectFacets({}, 'h1', null, sel)],
+      ['/dashboard/pipeline-totals', () => fetchPipelineTotals({}, h1, sel)],
+      ['/dashboard/status-overview', () => fetchStatusOverview({}, h1, sel)],
+      ['/dashboard/hub-type-pipeline', () => fetchHubTypePipeline({}, h1, sel)],
+      ['/dashboard/completing-within-year', () => fetchCompletingWithinYear({}, h1, sel)],
+      ['/dashboard/region-summary', () => fetchRegionSummary({}, h1, sel)],
+      ['/dashboard/analytics', () => fetchDashboardAnalytics({}, h1, sel)],
+      ['/dashboard/projects/facets', () => fetchProjectFacets({}, h1, sel)],
     ];
     for (const [path, call] of cases) {
       mockApiGet.mockResolvedValueOnce({});
       await call();
       expect(mockApiGet).toHaveBeenLastCalledWith(path, {
-        query: { hub_id: 'h1', region: undefined, category: ['A+', 'A'], type: ['NM'] },
+        query: { hub_id: ['h1'], region: undefined, category: ['A+', 'A'], type: ['NM'] },
       });
     }
     // Only a type selection: no category param at all (empty list = no filter).
     mockApiGet.mockResolvedValueOnce({});
-    await fetchPipelineTotals({}, null, 'India', { categories: [], types: ['CO', 'Unmapped'] });
+    await fetchPipelineTotals({}, { hubIds: [], regions: ['India'] }, { categories: [], types: ['CO', 'Unmapped'] });
     expect(mockApiGet).toHaveBeenLastCalledWith('/dashboard/pipeline-totals', {
-      query: { hub_id: undefined, region: 'India', category: undefined, type: ['CO', 'Unmapped'] },
+      query: { hub_id: undefined, region: ['India'], category: undefined, type: ['CO', 'Unmapped'] },
     });
     // No selection and no hub: the request is unchanged from before P31.
     mockApiGet.mockResolvedValueOnce({});
-    await fetchPipelineTotals({}, null, null, { categories: [], types: [] });
+    await fetchPipelineTotals({}, { hubIds: [], regions: [] }, { categories: [], types: [] });
     expect(mockApiGet).toHaveBeenLastCalledWith('/dashboard/pipeline-totals', {});
   });
 
@@ -103,9 +104,17 @@ describe('fetchDashboardAnalytics (P13-T10)', () => {
 
   it('forwards the global hub / country filter as hub_id / region', async () => {
     mockApiGet.mockResolvedValueOnce({});
-    await fetchDashboardAnalytics({}, null, 'India');
+    await fetchDashboardAnalytics({}, { hubIds: [], regions: ['India'] });
     expect(mockApiGet).toHaveBeenCalledWith('/dashboard/analytics', {
-      query: { hub_id: undefined, region: 'India' },
+      query: { hub_id: undefined, region: ['India'] },
+    });
+  });
+
+  it('multi-select: hubs and countries go together as SORTED repeated lists (the server unions them)', async () => {
+    mockApiGet.mockResolvedValueOnce({});
+    await fetchDashboardAnalytics({}, { hubIds: ['h-z', 'h-a'], regions: ['Romania', 'India'] });
+    expect(mockApiGet).toHaveBeenCalledWith('/dashboard/analytics', {
+      query: { hub_id: ['h-a', 'h-z'], region: ['India', 'Romania'] },
     });
   });
 });

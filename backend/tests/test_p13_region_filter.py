@@ -1,8 +1,8 @@
 """P13-T01: country filter (ADR 0025, docs/API_CONTRACT_P13.md §1–§3).
 
-- `region` on every hub-filtered endpoint, ANDed with the RBAC scope and with
-  `hub_id`; never widens (out-of-scope region → empty rows / zero totals, not
-  403); a bad value is 422.
+- `region` on every hub-filtered endpoint, ANDed with the RBAC scope and
+  (ADR 0051) UNIONED with `hub_id`; never widens (out-of-scope region →
+  empty rows / zero totals, not 403); a bad value is 422.
 - Capacity under a region: that region's hub rows, the containing area, the
   region's chambers.
 - `GET /dashboard/region-summary` reconciles with `/pipeline-totals` and
@@ -208,16 +208,45 @@ async def test_check_ins_due_follows_region(db_session):
         )
 
 
-async def test_hub_id_and_region_are_anded(db_session):
+async def test_hub_id_and_region_are_unioned(db_session):
+    """ADR 0051 (amends ADR 0025 §2): `hub_id` and `region` are a UNION. A hub
+    inside the chosen region adds nothing; a hub of another region adds its
+    own rows to the region's."""
+
     w = await _seeded(db_session)
     pd_india = w.hubs["PD-India"].id
+    region_of = await _region_of(db_session)
     await _act_as(db_session, RoleName.PORTFOLIO_MANAGER)
     async with _client(db_session) as client:
         for path in FILTERED_PATHS:
-            _zeroed(path, await _get(client, path, hub_id=pd_india, region="Greece"))
-            assert await _get(client, path, hub_id=pd_india, region="India") == await _get(
-                client, path, hub_id=pd_india
-            ), path
+            # A capacity row names the requested hub in `selected_member`
+            # (P29); every figure is the region's.
+            assert _without_selected_member(
+                await _get(client, path, hub_id=pd_india, region="India")
+            ) == _without_selected_member(await _get(client, path, region="India")), path
+        everything = await _get(client, "/dashboard/projects")
+        union = await _get(client, "/dashboard/projects", hub_id=pd_india, region="Greece")
+        expected = {
+            r["project_id"]
+            for r in everything["rows"]
+            if r["hub"] == "PD-India" or region_of[r["hub"]] == "Greece"
+        }
+        assert {r["project_id"] for r in union["rows"]} == expected
+        assert union["total_count"] == len(expected) > 0
+        greece_only = await _get(client, "/dashboard/pipeline-totals", region="Greece")
+        pd_only = await _get(client, "/dashboard/pipeline-totals", hub_id=pd_india)
+        both = await _get(client, "/dashboard/pipeline-totals", hub_id=pd_india, region="Greece")
+        assert both["total_count"] == greece_only["total_count"] + pd_only["total_count"]
+
+
+def _without_selected_member(body):
+    if isinstance(body, dict) and isinstance(body.get("rows"), list):
+        rows = [
+            {k: v for k, v in r.items() if k != "selected_member"} if isinstance(r, dict) else r
+            for r in body["rows"]
+        ]
+        return {**body, "rows": rows}
+    return body
 
 
 async def test_bad_region_is_422(db_session):
@@ -612,6 +641,7 @@ def test_region_predicate_composes_with_scope_and_hub():
     assert only_region is not None and "lab_region" in str(only_region)
     both = narrowed_hub_filter(planner, Hub.id, b, LabRegion.GREECE)
     sql = str(both)
-    assert sql.count(" AND ") >= 2 and "lab_region" in sql and "hubs.id = " in sql
+    # ADR 0051: scope AND (hub OR region).
+    assert " AND " in sql and " OR " in sql and "lab_region" in sql and "hubs.id = " in sql
     # The region value is a bound parameter, never interpolated.
     assert "Greece" not in sql and "GREECE" not in sql

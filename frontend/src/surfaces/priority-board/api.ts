@@ -18,7 +18,8 @@ import { apiGet } from '@/lib/api/client';
 import { queryKeys, sortedKeyList, type PriorityBoardFilters } from '@/lib/query-keys';
 import type { ProjectFacets } from '@/surfaces/dashboard/api/types';
 import type { Id } from '@/types/common';
-import type { HubName, LabRegion, ProjectCategory, ProjectPriority, ProjectStatus } from '@/types/enums';
+import { toHubFilterParams, type HubSelection } from '@/stores/hub-filter';
+import type { HubName, ProjectCategory, ProjectPriority, ProjectStatus } from '@/types/enums';
 
 export interface PriorityBoardCard {
   project_id: Id;
@@ -89,49 +90,55 @@ export function isEmptyBoardFilters(filters: PriorityBoardFilters | undefined): 
   );
 }
 
-/** P31: the key form — category / type lists sorted, so press order never splits the cache. */
+/** P31 / multi-select: the key form — every list sorted, so press order never splits the cache. */
 function keyBoardFilters(filters: PriorityBoardFilters): PriorityBoardFilters {
-  return { ...filters, category: sortedKeyList(filters.category), type: sortedKeyList(filters.type) };
+  return {
+    ...filters,
+    category: sortedKeyList(filters.category),
+    type: sortedKeyList(filters.type),
+    status_: sortedKeyList(filters.status_),
+    leader_engineer_id: sortedKeyList(filters.leader_engineer_id),
+  };
 }
 
 export function fetchPriorityBoard(
-  hubId: string | null,
+  hub: HubSelection,
   signal?: AbortSignal,
-  region: LabRegion | null = null,
   filters?: PriorityBoardFilters,
 ): Promise<PriorityBoardResponse> {
+  const hubParams = toHubFilterParams(hub.hubIds, hub.regions);
   return apiGet<PriorityBoardResponse>('/priority-board', {
     query: {
-      hub_id: hubId ?? undefined,
-      region: region ?? undefined,
+      // Multi-select contract §2: repeated, UNIONED by the server.
+      hub_id: hubParams.hub_id,
+      region: hubParams.region,
       // P13-T12: every filter is applied by the server (§3 semantics); the
       // column counts and D/L weeks follow the filtered set.
       q: filters?.q || undefined,
       // P31: repeated params (OR within, AND across); an empty list sends nothing.
       category: filters?.category && filters.category.length > 0 ? filters.category : undefined,
       type: filters?.type && filters.type.length > 0 ? filters.type : undefined,
-      status_: filters?.status_ || undefined,
-      leader_engineer_id: filters?.leader_engineer_id || undefined,
+      status_: filters?.status_ && filters.status_.length > 0 ? filters.status_ : undefined,
+      leader_engineer_id:
+        filters?.leader_engineer_id && filters.leader_engineer_id.length > 0 ? filters.leader_engineer_id : undefined,
     },
     signal,
   });
 }
 
-/** P13 (ADR 0025): `region` is the global country filter, keyed beside the hub.
- *  P13-T12: `filters` are the toolbar's server-side filters. */
-export function usePriorityBoard(
-  hubId: string | null,
-  region: LabRegion | null = null,
-  filters?: PriorityBoardFilters,
-) {
+/** P13 (ADR 0025), multi-select: `hub` is the global hub / country selection,
+ *  keyed as sorted lists. P13-T12: `filters` are the toolbar's server-side filters. */
+export function usePriorityBoard(hub: HubSelection, filters?: PriorityBoardFilters) {
   const keyFilters = isEmptyBoardFilters(filters) || filters === undefined ? undefined : keyBoardFilters(filters);
+  const key = queryKeys.priorityBoard(hub, keyFilters);
+  const hubKeyJson = JSON.stringify(key[1]);
   return useQuery({
-    queryKey: queryKeys.priorityBoard(hubId, region, keyFilters),
-    queryFn: ({ signal }) => fetchPriorityBoard(hubId, signal, region, keyFilters),
+    queryKey: key,
+    queryFn: ({ signal }) => fetchPriorityBoard(hub, signal, keyFilters),
     // Keep the board on screen while a new search / filter loads — but only
-    // for the same hub and country, never another selection's columns.
+    // for the same hub / country selection, never another selection's columns.
     placeholderData: (previous, previousQuery) =>
-      previousQuery?.queryKey[1] === hubId && previousQuery.queryKey[2] === region ? previous : undefined,
+      previousQuery !== undefined && JSON.stringify(previousQuery.queryKey[1]) === hubKeyJson ? previous : undefined,
   });
 }
 
@@ -143,12 +150,12 @@ type BoardLeaderFacets = Pick<ProjectFacets, 'leaders'>;
 
 /** P13-T12: Leader filter options. Every role that can read the board
  *  (`matrix`) can read the Dashboard; `enabled` still guards it. */
-export function useBoardLeaderFacets(hubId: string | null, region: LabRegion | null, enabled: boolean) {
+export function useBoardLeaderFacets(hub: HubSelection, enabled: boolean) {
   return useQuery({
-    queryKey: queryKeys.dashboardProjectFacets(hubId, region),
+    queryKey: queryKeys.dashboardProjectFacets(hub),
     queryFn: ({ signal }) =>
       apiGet<BoardLeaderFacets>('/dashboard/projects/facets', {
-        query: { hub_id: hubId ?? undefined, region: region ?? undefined },
+        query: { ...toHubFilterParams(hub.hubIds, hub.regions) },
         signal,
       }),
     enabled,

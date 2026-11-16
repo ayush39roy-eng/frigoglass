@@ -42,7 +42,7 @@ describe('useGantt', () => {
     expect(client.getQueryCache().getAll()[0]!.queryKey).toEqual(['gantt', { category: ['A', 'C'], type: ['AC', 'SER'] }]);
   });
 
-  it('re-fetches when the hub filter changes (hubId is part of the query key)', async () => {
+  it('re-fetches when the hub selection changes (sorted hubIds are part of the query key)', async () => {
     vi.mocked(api.fetchGantt).mockResolvedValue({
       has_active_schedule_run: true,
       schedule_run_version: 3,
@@ -52,15 +52,19 @@ describe('useGantt', () => {
     });
     const { Wrapper } = makeWrapper();
     const { rerender } = renderHook(
-      ({ hubId }: { hubId: string | undefined }) => useGantt({ hubId }),
-      { wrapper: Wrapper, initialProps: { hubId: undefined } as { hubId: string | undefined } },
+      ({ hubIds }: { hubIds: string[] | undefined }) => useGantt({ hubIds }),
+      { wrapper: Wrapper, initialProps: { hubIds: undefined } as { hubIds: string[] | undefined } },
     );
     await waitFor(() => expect(api.fetchGantt).toHaveBeenCalledTimes(1));
-    rerender({ hubId: 'hub-1' });
+    rerender({ hubIds: ['hub-1'] });
     await waitFor(() => expect(api.fetchGantt).toHaveBeenCalledTimes(2));
-    rerender({ hubId: 'hub-2' });
+    rerender({ hubIds: ['hub-2', 'hub-1'] });
     await waitFor(() => expect(api.fetchGantt).toHaveBeenCalledTimes(3));
-    expect(vi.mocked(api.fetchGantt).mock.calls[2]?.[0]).toEqual({ hubId: 'hub-2' });
+    expect(vi.mocked(api.fetchGantt).mock.calls[2]?.[0]).toEqual({ hubIds: ['hub-2', 'hub-1'] });
+    // The same set in another order is the same (sorted) cache entry: no refetch.
+    rerender({ hubIds: ['hub-1', 'hub-2'] });
+    await new Promise((r) => setTimeout(r, 20));
+    expect(api.fetchGantt).toHaveBeenCalledTimes(3);
   });
 });
 

@@ -11,6 +11,7 @@
  */
 
 import { apiGet, apiSend, ApiError, type ApiRequestOptions } from '@/lib/api/client';
+import { hasHubSelection, toHubFilterParams, type HubSelection } from '@/stores/hub-filter';
 import type {
   LabRegion,
   ProjectCategory,
@@ -31,24 +32,26 @@ import type {
 type FetchCtx = Pick<ApiRequestOptions, 'signal'>;
 
 export interface GanttQueryParams {
-  /** `hub_id` uuid filter (optional). */
-  hubId?: string | undefined;
-  /** P13 (ADR 0025): `region` country filter (optional). */
-  region?: LabRegion | undefined;
+  /** Repeated `hub_id` uuid filter (optional). Multi-select contract §2:
+   *  UNIONED with `region` by the server, then ANDed with the scope. */
+  hubIds?: readonly string[] | undefined;
+  /** P13 (ADR 0025): repeated `region` country filter (optional). */
+  regions?: readonly LabRegion[] | undefined;
   // P13-T13 (API_CONTRACT_P13 §7): server-side toolbar filters, all ANDed with
-  // the scope and with `hub_id` / `region`. Undefined = not sent.
+  // the scope and with the hub selection. Undefined / empty = not sent.
+  // Multi-select (owner ask 2026-11-13): every list is a repeated param, ORed.
   /** Case-insensitive substring of name or external code, ≤ 100 chars. */
   q?: string | undefined;
   /** P31: repeated params (OR within, AND across); omitted = all. */
   category?: readonly ProjectCategory[] | undefined;
   type?: readonly ProjectType[] | undefined;
-  /** Sent as `status_` (the API's param name). */
-  status?: ProjectStatus | undefined;
-  leaderEngineerId?: string | undefined;
-  /** A step code, e.g. `PDD-E`. */
-  currentStep?: string | undefined;
-  /** The P1–P4 / Queue tab. `Q` is the queue band. */
-  priority?: ProjectPriority | undefined;
+  /** Sent as repeated `status_` (the API's param name). */
+  status?: readonly ProjectStatus[] | undefined;
+  leaderEngineerId?: readonly string[] | undefined;
+  /** Step codes, e.g. `PDD-E`. */
+  currentStep?: readonly string[] | undefined;
+  /** The P1–P4 / Queue toggles. `Q` is the queue band. */
+  priority?: readonly ProjectPriority[] | undefined;
   sort?: GanttSort | undefined;
   /** P32-R04: one project only (`project_id`), ANDed with the RBAC scope. */
   projectId?: string | undefined;
@@ -63,8 +66,8 @@ export function fetchGantt(params: GanttQueryParams, ctx: FetchCtx = {}): Promis
   return apiGet<GanttResponse>('/gantt', {
     ...ctx,
     query: {
-      hub_id: params.hubId,
-      region: params.region,
+      hub_id: params.hubIds,
+      region: params.regions,
       q: params.q,
       category: params.category,
       type: params.type,
@@ -86,14 +89,10 @@ export function fetchGantt(params: GanttQueryParams, ctx: FetchCtx = {}): Promis
  * Dashboard register's facets. Needs `dashboard` read: a role without it (an
  * Engineer) gets a 403 and the two filters are simply not offered.
  */
-export function fetchGanttFacets(
-  hubId: string | null,
-  region: LabRegion | null,
-  ctx: FetchCtx = {},
-): Promise<GanttFacets> {
+export function fetchGanttFacets(hub: HubSelection, ctx: FetchCtx = {}): Promise<GanttFacets> {
   return apiGet<GanttFacets>(
     '/dashboard/projects/facets',
-    hubId || region ? { ...ctx, query: { hub_id: hubId ?? undefined, region: region ?? undefined } } : ctx,
+    hasHubSelection(hub) ? { ...ctx, query: { ...toHubFilterParams(hub.hubIds, hub.regions) } } : ctx,
   );
 }
 

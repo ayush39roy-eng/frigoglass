@@ -13,7 +13,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { ReadOnlyNotice } from '@/components/session/write-gate';
 import { PriorityMoveProvider } from '@/components/shared/priority-move/priority-move-provider';
 import { ApiError } from '@/lib/api/client';
-import { useHubFilter } from '@/stores/hub-filter';
+import { hasHubSelection, useHubSelection, type HubSelection } from '@/stores/hub-filter';
 import { HubFilterChip } from '@/components/shared/hub-filter/hub-filter-chip';
 import { CountrySegmented } from '@/components/shared/hub-filter/country-segmented';
 import { formatInteger } from '@/lib/format';
@@ -66,25 +66,29 @@ function useChartHeightBelow(card: HTMLElement | null): number | undefined {
 
 /** P13-T13: the toolbar state as server params; unset filters are left out
  *  (`undefined`), so they are neither sent nor distinct in the cache key. */
-function toQueryParams(
-  hubId: string | null,
-  region: GanttQueryParams['region'] | null,
-  f: GanttFilterState,
-  q: string,
-): GanttQueryParams {
+function toQueryParams(hub: HubSelection, f: GanttFilterState, q: string): GanttQueryParams {
   const trimmed = q.trim();
   return {
-    hubId: hubId ?? undefined,
-    region: region ?? undefined,
+    hubIds: selectionParam(hub.hubIds),
+    regions: selectionParam(hub.regions),
     q: trimmed === '' ? undefined : trimmed,
     category: selectionParam(f.category),
     type: selectionParam(f.type),
-    status: f.status ?? undefined,
-    leaderEngineerId: f.leaderEngineerId ?? undefined,
-    currentStep: f.currentStep ?? undefined,
-    priority: f.priority ?? undefined,
+    // Multi-select (owner ask 2026-11-13): repeated params, ORed by the server.
+    status: selectionParam(f.status),
+    leaderEngineerId: selectionParam(f.leaderEngineerId),
+    currentStep: selectionParam(f.currentStep),
+    priority: selectionParam(f.priority),
     sort: f.sort,
   };
+}
+
+/** The "On the timeline" hint for the hub selection (labels only, no figure). */
+function hubHint(hub: HubSelection): string {
+  if (!hasHubSelection(hub)) return 'All hubs';
+  if (hub.hubIds.length === 0 && hub.regions.length === 1) return hub.regions[0] ?? 'Selected country';
+  if (hub.regions.length === 0 && hub.hubIds.length === 1) return 'Selected hub';
+  return 'Selected hubs';
 }
 
 const TIMELINE_SURFACE = SURFACES.find((s) => s.path === '/timeline');
@@ -101,7 +105,7 @@ function authKind(errors: unknown[]): 'forbidden' | 'unauthorized' | null {
 
 export default function GanttPage(): React.JSX.Element {
   // P12 (ADR 0020): the global header hub filter replaces the page-local select.
-  const { hubId, region } = useHubFilter();
+  const hub = useHubSelection();
   const [zoomPx, setZoomPx] = React.useState<number>(ZOOM_DEFAULT_PX);
   const [localFilters, setLocalFilters] = React.useState<GanttFilterState>(DEFAULT_GANTT_FILTERS);
   // P31: category / type are multi-select URL state (`?category=A%2B&type=NM`);
@@ -135,14 +139,14 @@ export default function GanttPage(): React.JSX.Element {
   const [recalcNeeded, setRecalcNeeded] = React.useState(false);
 
   const queryParams = React.useMemo(
-    () => toQueryParams(hubId, region, filters, debouncedQ),
-    [hubId, region, filters, debouncedQ],
+    () => toQueryParams(hub, filters, debouncedQ),
+    [hub, filters, debouncedQ],
   );
   const ganttQuery = useGantt(queryParams);
   // Leader / Step options need `dashboard` read (the facets endpoint); without
   // it (an Engineer) those two filters are simply not offered.
   const canReadFacets = usePermission('dashboard').read;
-  const facetsQuery = useGanttFacets(hubId, region, canReadFacets);
+  const facetsQuery = useGanttFacets(hub, canReadFacets);
   const hasRun = ganttQuery.data?.has_active_schedule_run === true;
   const activeRun = useActiveScheduleRun(hasRun);
   const freezeMut = useToggleFreeze();
@@ -157,7 +161,7 @@ export default function GanttPage(): React.JSX.Element {
     () => ganttQuery.data?.rows ?? [],
     [ganttQuery.data],
   );
-  const isFiltered = hubId !== null || region !== null || hasActiveFilters(filters);
+  const isFiltered = hasHubSelection(hub) || hasActiveFilters(filters);
   // Session table first (ADR 0010), server 403 second — both withdraw the freeze control.
   const permission = usePermission('gantt');
   const canWrite = permission.write && !writeForbidden;
@@ -221,7 +225,7 @@ export default function GanttPage(): React.JSX.Element {
             <StatStrip
               ariaLabel="Timeline summary"
               segments={[
-                { label: 'On the timeline', value: rows.length, accent: 'primary', hint: hubId !== null ? 'Selected hub' : region !== null ? region : 'All hubs' },
+                { label: 'On the timeline', value: rows.length, accent: 'primary', hint: hubHint(hub) },
                 // ADR 0024: a left-out project is not done by W52 either, so it is
                 // counted inside spillover (server flags, counted — not recomputed).
                 {
@@ -280,8 +284,8 @@ export default function GanttPage(): React.JSX.Element {
               <DownloadButton
                 path="/exports/gantt"
                 filters={{
-                  hub_id: hubId ?? undefined,
-                  region: region ?? undefined,
+                  hub_id: selectionParam(hub.hubIds),
+                  region: selectionParam(hub.regions),
                   // P31: the export carries the category / type selection.
                   category: selectionParam(filters.category),
                   type: selectionParam(filters.type),

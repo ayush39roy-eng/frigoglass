@@ -2,8 +2,6 @@ import * as React from 'react';
 import { Activity, X } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
-import { Label } from '@/components/ui/label';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
 import { ErrorState } from '@/components/shared/error-state';
 import type { Hub } from '@/lib/api/reference';
@@ -29,11 +27,10 @@ import { MultiSelectFilter } from './multi-select-filter';
  * Every figure is a served field of `GET /planning/resource-load` for the
  * page's basis and unit (I9/I19).
  */
-const ALL = '__all__';
 const DEBOUNCE_MS = 400;
 
 const EMPTY_FILTERS: ResourceLoadFilters = {
-  hubId: null,
+  hubIds: [],
   types: [],
   statuses: [],
   departments: [],
@@ -93,10 +90,13 @@ export function ResourceLoadSection({
   const loadQuery = useResourceLoad(basis, debounced, seen);
   const options = optionsQuery.data;
 
-  const hubOptions = React.useMemo(() => {
+  const hubOptions = React.useMemo<FilterOption[]>(() => {
     const served = options?.hubs;
     // The options list names the hubs the caller can see; the filter sends the id.
-    return hubs.filter((h) => (served ? served.includes(h.name) : true));
+    // P29: a member hub lists its capacity hub's engineers (contract §3.2).
+    return hubs
+      .filter((h) => (served ? served.includes(h.name) : true))
+      .map((h) => ({ value: h.id, label: hubPickerLabel(h, hubs) }));
   }, [hubs, options?.hubs]);
 
   const typeOptions = React.useMemo<FilterOption[]>(
@@ -114,8 +114,13 @@ export function ResourceLoadSection({
 
   const set = <K extends keyof ResourceLoadFilters>(key: K) => (v: ResourceLoadFilters[K]) => setFilters((f) => ({ ...f, [key]: v }));
   const active =
-    filters.hubId !== null ||
-    filters.types.length + filters.statuses.length + filters.departments.length + filters.categories.length + filters.engineerIds.length > 0;
+    filters.hubIds.length +
+      filters.types.length +
+      filters.statuses.length +
+      filters.departments.length +
+      filters.categories.length +
+      filters.engineerIds.length >
+    0;
 
   const data = loadQuery.data;
   const engineerRows = React.useMemo<LoadRow[]>(
@@ -162,25 +167,13 @@ export function ResourceLoadSection({
       </div>
 
       <div role="group" aria-label="Resource load filters" className="flex flex-wrap items-center gap-2 rounded-card border border-border bg-surface-sunken p-2">
-        <div className="flex items-center gap-1.5">
-          <Label htmlFor="rl-hub" className="text-2xs font-bold uppercase tracking-wide text-text-muted">
-            Hub
-          </Label>
-          <Select value={filters.hubId ?? ALL} onValueChange={(v) => set('hubId')(v === ALL ? null : v)}>
-            <SelectTrigger id="rl-hub" className="h-8 w-40 text-xs">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value={ALL}>All hubs</SelectItem>
-              {hubOptions.map((h) => (
-                <SelectItem key={h.id} value={h.id}>
-                  {/* P29: a member hub lists its capacity hub's engineers (contract §3.2). */}
-                  {hubPickerLabel(h, hubs)}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
+        {/* Owner ask 2026-11-13: the hub is a multi-select too (repeated `hub_id`). */}
+        <MultiSelectFilter
+          label="Hub"
+          options={hubOptions}
+          value={filters.hubIds}
+          onChange={(next) => set('hubIds')([...next].sort())}
+        />
         <MultiSelectFilter label="Type" options={typeOptions} value={filters.types} onChange={set('types')} />
         <MultiSelectFilter label="Status" options={plain(options?.project_statuses)} value={filters.statuses} onChange={set('statuses')} />
         <MultiSelectFilter

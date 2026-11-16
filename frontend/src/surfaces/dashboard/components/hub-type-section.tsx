@@ -6,7 +6,7 @@ import { BoltCard } from '@/components/ui/bolt-card';
 import { PanelSkeleton } from '@/components/ui/panel-skeleton';
 import { SectionBoundary } from '@/components/shared/section-boundary';
 import { cn } from '@/lib/utils';
-import type { LabRegion } from '@/types/enums';
+import type { HubSelection } from '@/stores/hub-filter';
 
 import type { CompletingWithinYear, DashboardAnalytics, HubTypePipelineRow, RegionSummary } from '../api/types';
 import { CompletingHubTypeTable } from './completing-hub-type-table';
@@ -36,8 +36,8 @@ export interface HubTypeSectionProps {
   analytics: UseQueryResult<DashboardAnalytics>;
   withinYear: CompletingWithinYear | null;
   pipelineTotal: number | null;
-  hubId: string | null;
-  region: LabRegion | null;
+  /** The global hub / country selection (for the drill-down list). */
+  hub: HubSelection;
   /** Served per-country totals for the "Top hubs" country chips. */
   regionSummary?: RegionSummary | null | undefined;
 }
@@ -47,8 +47,7 @@ export function HubTypeSection({
   analytics,
   withinYear,
   pipelineTotal,
-  hubId,
-  region,
+  hub,
   regionSummary = null,
 }: HubTypeSectionProps): React.JSX.Element {
   const [target, setTarget] = React.useState<DrillTarget | null>(null);
@@ -124,8 +123,7 @@ export function HubTypeSection({
       <HubTypeDrilldownDialog
         target={target}
         onClose={() => setTarget(null)}
-        hubId={hubId}
-        region={region}
+        hub={hub}
         runRows={runRows}
         returnFocusTo={triggerRef}
       />

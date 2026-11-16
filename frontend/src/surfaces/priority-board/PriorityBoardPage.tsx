@@ -11,7 +11,7 @@ import { usePriorityMoveHost, type PriorityMoveOutcome } from '@/components/shar
 import { PriorityMoveProvider } from '@/components/shared/priority-move/priority-move-provider';
 import { Skeleton } from '@/components/ui/skeleton';
 import { usePermission } from '@/stores/session';
-import { useHubFilter } from '@/stores/hub-filter';
+import { hasHubSelection, useHubSelection } from '@/stores/hub-filter';
 import { CountrySegmented } from '@/components/shared/hub-filter/country-segmented';
 import { HubFilterChip } from '@/components/shared/hub-filter/hub-filter-chip';
 import { Badge } from '@/components/ui/badge';
@@ -29,7 +29,7 @@ import { useBoardLeaderFacets, usePriorityBoard, type BandRankPlacement, type Pr
 import { selectionParam } from '@/lib/multi-select-filter';
 import { BoardColumn } from './components/board-column';
 import { BoardToolbar } from './components/board-toolbar';
-import { ALL, EMPTY_TOOLBAR, SEARCH_MAX, type BoardToolbarState } from './lib/toolbar-state';
+import { EMPTY_TOOLBAR, SEARCH_MAX, type BoardToolbarState } from './lib/toolbar-state';
 import { HubLoadStrip } from './components/hub-load-strip';
 import { BoardScenarioContext } from './lib/board-scenario';
 import { useBoardLayout } from './lib/board-layout';
@@ -146,7 +146,7 @@ export function PriorityBoardView({
   compactToolbar = false,
   height,
 }: PriorityBoardViewProps = {}): React.JSX.Element {
-  const { hubId, region } = useHubFilter();
+  const hub = useHubSelection();
   // P13-T12: toolbar filters, all applied server-side; the search is debounced.
   const [ownToolbar, setOwnToolbar] = React.useState<BoardToolbarState>(EMPTY_TOOLBAR);
   const toolbar = React.useMemo<BoardToolbarState>(
@@ -157,7 +157,8 @@ export function PriorityBoardView({
             search: shared.search,
             category: shared.category,
             type: shared.type,
-            status_: shared.status ?? ALL,
+            // The Matrix View panel still picks one status (not converted in this pass).
+            status_: shared.status ? [shared.status] : [],
           }
         : ownToolbar,
     [shared, ownToolbar],
@@ -172,20 +173,20 @@ export function PriorityBoardView({
   const debouncedSearch = useDebouncedValue(toolbar.search.trim(), 300);
   const [layout, setLayout] = useBoardLayout();
   const filters = React.useMemo<PriorityBoardFilters>(() => {
-    const pick = (v: string) => (v === ALL ? undefined : v);
     return {
       q: debouncedSearch ? debouncedSearch.slice(0, SEARCH_MAX) : undefined,
       category: selectionParam(toolbar.category),
       type: selectionParam(toolbar.type),
-      status_: pick(toolbar.status_),
-      leader_engineer_id: pick(toolbar.leader),
+      // Multi-select (owner ask 2026-11-13): repeated params.
+      status_: selectionParam(toolbar.status_),
+      leader_engineer_id: selectionParam(toolbar.leader),
     };
   }, [debouncedSearch, toolbar.category, toolbar.type, toolbar.status_, toolbar.leader]);
   const isFiltered = Object.values(filters).some((v) => v !== undefined);
-  const query = usePriorityBoard(hubId, region, filters);
+  const query = usePriorityBoard(hub, filters);
   const canReadDashboard = usePermission('dashboard').read;
   const canReadCapacity = usePermission('capacity').read;
-  const facets = useBoardLeaderFacets(hubId, region, canReadDashboard);
+  const facets = useBoardLeaderFacets(hub, canReadDashboard);
   const queryClient = useQueryClient();
   const host = usePriorityMoveHost();
   const canWrite = usePermission('project_registration').write;
@@ -543,7 +544,7 @@ export function PriorityBoardView({
         </p>
       ) : null}
 
-      <HubLoadStrip hubId={hubId} region={region} enabled={canReadCapacity} />
+      <HubLoadStrip hub={hub} enabled={canReadCapacity} />
 
       {(() => {
         const bar = (
@@ -574,7 +575,7 @@ export function PriorityBoardView({
         ) : (
           <EmptyState
             title="No prioritised projects"
-            description={hubId || region ? 'No project in this selection has a priority yet.' : 'No project in your scope has a priority yet.'}
+            description={hasHubSelection(hub) ? 'No project in this selection has a priority yet.' : 'No project in your scope has a priority yet.'}
           />
         )
       ) : (

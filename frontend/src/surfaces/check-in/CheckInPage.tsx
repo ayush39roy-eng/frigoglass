@@ -12,7 +12,7 @@ import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { CHECKIN_BATCH_MAX, type CheckInDueProject, type CheckInDueSummary } from '@/lib/api/check-ins';
 import { formatInteger, formatWeek } from '@/lib/format';
-import { useHubFilter } from '@/stores/hub-filter';
+import { useHubSelection } from '@/stores/hub-filter';
 import { CountrySegmented } from '@/components/shared/hub-filter/country-segmented';
 import { HubFilterChip } from '@/components/shared/hub-filter/hub-filter-chip';
 
@@ -162,8 +162,8 @@ function VirtualGroups({ projects, props }: { projects: CheckInDueProject[]; pro
  * tracking status and the "per plan" %, and recalculates the timeline.
  */
 export default function CheckInPage(): React.JSX.Element {
-  const { hubId, region } = useHubFilter();
-  const query = useCheckInsDue(hubId, true, region);
+  const hub = useHubSelection();
+  const query = useCheckInsDue(hub, true);
   const submitFlow = useCheckInSubmit();
   const [drafts, setDrafts] = React.useState<Record<string, CheckInDraft>>({});
   const [showErrors, setShowErrors] = React.useState(false);

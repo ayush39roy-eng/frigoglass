@@ -24,7 +24,7 @@ function pathsFor(role: keyof typeof ROLE_MATRIX): string[] {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  useHubFilterStore.setState({ hubId: null, region: null });
+  useHubFilterStore.getState().setSelection([], []);
   client.apiGet.mockImplementation((path: string) => {
     if (path === '/check-ins/due') {
       return Promise.resolve({
@@ -63,12 +63,12 @@ describe('P12 nav entries (API_CONTRACT_P12 §7)', () => {
 
 describe('Sidebar Weekly check-in due badge', () => {
   it('shows the served due_stages − checked_in_stages count, for the current hub filter', async () => {
-    useHubFilterStore.setState({ hubId: 'hub-gr' });
+    useHubFilterStore.getState().setSelection(['hub-gr'], []);
     renderWithProviders(<AppSidebar />, { session: { permissions: ROLE_MATRIX['Hub Planner'] } });
     const badge = await screen.findByTestId('nav-badge-/check-in');
     expect(badge).toHaveTextContent('5');
     expect(badge).toHaveTextContent(/^5$/);
-    expect(client.apiGet).toHaveBeenCalledWith('/check-ins/due', expect.objectContaining({ query: { hub_id: 'hub-gr' } }));
+    expect(client.apiGet).toHaveBeenCalledWith('/check-ins/due', expect.objectContaining({ query: { hub_id: ['hub-gr'] } }));
     // The link's accessible name is unchanged; the count is its description.
     expect(screen.getByRole('link', { name: 'Weekly check-in' })).toHaveAccessibleDescription('5 stages still to check in this week');
   });

@@ -48,13 +48,13 @@ describe('use-planning', () => {
     vi.mocked(api.fetchEngineers).mockResolvedValue([]);
     const { Wrapper } = makeWrapper();
     const { rerender } = renderHook(
-      ({ hubId }: { hubId: string | undefined }) => useEngineerList(hubId),
-      { wrapper: Wrapper, initialProps: { hubId: undefined } as { hubId: string | undefined } },
+      ({ hubIds }: { hubIds: string[] | undefined }) => useEngineerList(hubIds),
+      { wrapper: Wrapper, initialProps: { hubIds: undefined } as { hubIds: string[] | undefined } },
     );
     await waitFor(() => expect(api.fetchEngineers).toHaveBeenCalledTimes(1));
-    rerender({ hubId: 'hub-1' });
+    rerender({ hubIds: ['hub-1'] });
     await waitFor(() => expect(api.fetchEngineers).toHaveBeenCalledTimes(2));
-    expect(vi.mocked(api.fetchEngineers).mock.calls[1]?.[0]).toBe('hub-1');
+    expect(vi.mocked(api.fetchEngineers).mock.calls[1]?.[0]).toEqual(['hub-1']);
   });
 
   it('fetches the chamber list with no arguments', async () => {
@@ -191,7 +191,7 @@ describe('use-planning', () => {
   it('P19: resource load stays idle until enabled, and keys on basis + filters', async () => {
     vi.mocked(api.fetchResourceLoad).mockResolvedValue({} as never);
     const { Wrapper } = makeWrapper();
-    const filters = { hubId: null, types: ['NM'], statuses: [], departments: [], categories: [], engineerIds: [] };
+    const filters = { hubIds: [], types: ['NM'], statuses: [], departments: [], categories: [], engineerIds: [] };
     const { rerender } = renderHook(({ on }: { on: boolean }) => useResourceLoad('year', filters, on), {
       wrapper: Wrapper,
       initialProps: { on: false },

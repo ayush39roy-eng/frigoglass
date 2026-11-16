@@ -13,10 +13,31 @@ afterEach(() => vi.clearAllMocks());
 describe('fetchGantt', () => {
   it('GETs /gantt with the hub_id filter and the max page size (no client math)', async () => {
     vi.mocked(apiGet).mockResolvedValue({ has_active_schedule_run: true, rows: [] });
-    await fetchGantt({ hubId: 'hub-7' });
+    await fetchGantt({ hubIds: ['hub-7'] });
     expect(apiGet).toHaveBeenCalledWith('/gantt', expect.objectContaining({
-      query: { hub_id: 'hub-7', limit: 500 },
+      query: { hub_id: ['hub-7'], limit: 500 },
     }));
+  });
+
+  it('multi-select: every list filter is sent as a repeated param (array) under its API name', async () => {
+    vi.mocked(apiGet).mockResolvedValue({ has_active_schedule_run: true, rows: [] });
+    await fetchGantt({
+      hubIds: ['h1', 'h2'],
+      regions: ['India'],
+      status: ['In Queue', 'On Hold'],
+      leaderEngineerId: ['e1', 'e2'],
+      currentStep: ['PDD-A', 'PDD-B'],
+      priority: ['P1', 'Q'],
+    });
+    expect(vi.mocked(apiGet).mock.calls[0]?.[1]?.query).toEqual({
+      hub_id: ['h1', 'h2'],
+      region: ['India'],
+      status_: ['In Queue', 'On Hold'],
+      leader_engineer_id: ['e1', 'e2'],
+      current_step: ['PDD-A', 'PDD-B'],
+      priority: ['P1', 'Q'],
+      limit: 500,
+    });
   });
 
   it('omits hub_id when no hub filter is set', async () => {

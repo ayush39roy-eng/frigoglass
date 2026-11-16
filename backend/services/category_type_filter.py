@@ -60,6 +60,21 @@ def any_of(column: Any, values: Sequence[Any] | None) -> ColumnElement[bool] | N
     return clauses[0] if len(clauses) == 1 else or_(*clauses)
 
 
+def one_of(column: Any, values: Sequence[Any] | None) -> ColumnElement[bool] | None:
+    """ADR 0051: `column` equals any of `values`, with no sentinel (free-text
+    filters such as the audit log's `action`, where "Unmapped" is a value
+    like any other). One value builds `column = :value`; several `IN`;
+    `None` when there is nothing to filter. Bound parameters only."""
+
+    distinct = dedupe(values)
+    if not distinct:
+        return None
+    predicate: ColumnElement[bool] = (
+        column == distinct[0] if len(distinct) == 1 else column.in_(distinct)
+    )
+    return predicate
+
+
 def category_type_filter(
     categories: Sequence[Any] | None,
     types: Sequence[Any] | None,

@@ -124,7 +124,7 @@ function ganttData(over: Record<string, unknown> = {}) {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  useHubFilterStore.setState({ hubId: null, region: null });
+  useHubFilterStore.getState().setSelection([], []);
   hooks.useActiveScheduleRun.mockReturnValue({ data: null });
   hooks.useToggleFreeze.mockReturnValue({ mutateAsync: vi.fn().mockResolvedValue({}) });
   hooks.useGantt.mockReturnValue(ganttData());
@@ -213,17 +213,20 @@ describe('GanttPage', () => {
   it('follows the global header hub filter (P12, ADR 0020): no page-local select, hub id passed, chip clears it', async () => {
     const user = userEvent.setup();
     renderWithProviders(<GanttPage />);
-    expect(hooks.useGantt).toHaveBeenLastCalledWith({ hubId: undefined, sort: 'priority' });
-    expect(screen.queryByRole('combobox', { name: 'Hub' })).not.toBeInTheDocument();
+    expect(hooks.useGantt).toHaveBeenLastCalledWith({ hubIds: undefined, sort: 'priority' });
+    expect(screen.queryByRole('button', { name: 'Hub' })).not.toBeInTheDocument();
     expect(screen.queryByTestId('hub-filter-chip')).not.toBeInTheDocument();
 
     act(() => useHubFilterStore.getState().setHubId('hub-india'));
-    expect(hooks.useGantt).toHaveBeenLastCalledWith({ hubId: 'hub-india', sort: 'priority' });
+    expect(hooks.useGantt).toHaveBeenLastCalledWith({ hubIds: ['hub-india'], sort: 'priority' });
     expect(screen.getByTestId('hub-filter-chip')).toHaveTextContent('Hub: R&D-India');
+    // Multi-select: a country beside the hub is sent too (the server unions them).
+    act(() => useHubFilterStore.getState().toggleRegion('Romania'));
+    expect(hooks.useGantt).toHaveBeenLastCalledWith({ hubIds: ['hub-india'], regions: ['Romania'], sort: 'priority' });
 
-    await user.click(screen.getByRole('button', { name: 'Clear hub filter (R&D-India)' }));
-    expect(useHubFilterStore.getState().hubId).toBeNull();
-    expect(hooks.useGantt).toHaveBeenLastCalledWith({ hubId: undefined, sort: 'priority' });
+    await user.click(screen.getByRole('button', { name: /^Clear hubs filter/ }));
+    expect(useHubFilterStore.getState().hubIds).toEqual([]);
+    expect(hooks.useGantt).toHaveBeenLastCalledWith({ hubIds: undefined, sort: 'priority' });
   });
 
   it('renders the outcome badges from the server flags', () => {
@@ -507,35 +510,45 @@ describe('GanttPage', () => {
   });
 
   describe('P13-T13 toolbar (API_CONTRACT_P13 §7)', () => {
-    it('sends Type, Status, Leader, Step, Category, sort and the priority tab to the server', async () => {
+    it('sends Type, Status, Leader, Step, Category, sort and the priority toggles to the server (two values each)', async () => {
       const user = userEvent.setup();
       renderWithProviders(<GanttPage />);
       // P31: Category / Type are multi-select chip groups.
       const types = screen.getByRole('group', { name: 'Type' });
       await user.click(within(types).getByRole('button', { name: 'Cost Optimization' }));
       await user.click(within(types).getByRole('button', { name: 'New Model' }));
-      await user.click(screen.getByRole('combobox', { name: 'Status' }));
-      await user.click(await screen.findByRole('option', { name: 'In Queue' }));
-      await user.click(screen.getByRole('combobox', { name: 'Leader' }));
+      await user.click(screen.getByRole('button', { name: 'Status' }));
+      await user.click(await screen.findByRole('option', { name: 'On Hold' }));
+      await user.click(screen.getByRole('option', { name: 'In Queue' }));
+      await user.keyboard('{Escape}');
+      expect(screen.getByRole('button', { name: 'Status' })).toHaveAccessibleDescription('2 statuses');
+      await user.click(screen.getByRole('button', { name: 'Leader' }));
       await user.click(await screen.findByRole('option', { name: 'Sam Super' }));
-      await user.click(screen.getByRole('combobox', { name: 'Current step' }));
+      await user.click(screen.getByRole('option', { name: 'Leader (name unavailable) · 0001' }));
+      await user.keyboard('{Escape}');
+      await user.click(screen.getByRole('button', { name: 'Current step' }));
       await user.click(await screen.findByRole('option', { name: 'PDD-E · Design Detailing' }));
+      await user.keyboard('{Escape}');
       const cats = screen.getByRole('group', { name: 'Category' });
       await user.click(within(cats).getByRole('button', { name: 'B' }));
       await user.click(within(cats).getByRole('button', { name: 'A+' }));
       await user.click(screen.getByRole('combobox', { name: 'Sort' }));
       await user.click(await screen.findByRole('option', { name: 'End week' }));
-      await user.click(screen.getByRole('radio', { name: 'In Queue' }));
+      const priority = screen.getByRole('group', { name: 'Priority' });
+      await user.click(within(priority).getByRole('button', { name: 'In Queue' }));
+      await user.click(within(priority).getByRole('button', { name: 'P1' }));
+      expect(within(priority).getByRole('button', { name: 'All' })).toHaveAttribute('aria-pressed', 'false');
       expect(hooks.useGantt).toHaveBeenLastCalledWith({
         // Option order, whatever the press order.
         type: ['NM', 'CO'],
-        status: 'In Queue',
-        leaderEngineerId: 'eng-0002',
-        currentStep: 'PDD-E',
+        status: ['In Queue', 'On Hold'],
+        leaderEngineerId: expect.arrayContaining(['eng-0002']) as unknown,
+        currentStep: ['PDD-E'],
         category: ['A+', 'B'],
         sort: 'end',
-        priority: 'Q',
+        priority: ['P1', 'Q'],
       });
+      expect((hooks.useGantt.mock.lastCall?.[0] as { leaderEngineerId?: string[] }).leaderEngineerId).toHaveLength(2);
       // "Clear filters" resets every filter but keeps the chosen sort.
       await user.click(screen.getByRole('button', { name: 'Clear filters' }));
       expect(hooks.useGantt).toHaveBeenLastCalledWith({ sort: 'end' });
@@ -570,15 +583,15 @@ describe('GanttPage', () => {
     it('labels a leader with no name, and hides Leader / Step without dashboard read', async () => {
       const user = userEvent.setup();
       const { unmount } = renderWithProviders(<GanttPage />);
-      await user.click(screen.getByRole('combobox', { name: 'Leader' }));
+      await user.click(screen.getByRole('button', { name: 'Leader' }));
       expect(await screen.findByRole('option', { name: 'Leader (name unavailable) · 0001' })).toBeInTheDocument();
       await user.keyboard('{Escape}');
       unmount();
 
       renderWithProviders(<GanttPage />, { session: { permissions: { ...fullPermissions(), dashboard: { read: false, write: false } } } });
-      expect(hooks.useGanttFacets).toHaveBeenLastCalledWith(null, null, false);
-      expect(screen.queryByRole('combobox', { name: 'Leader' })).not.toBeInTheDocument();
-      expect(screen.queryByRole('combobox', { name: 'Current step' })).not.toBeInTheDocument();
+      expect(hooks.useGanttFacets).toHaveBeenLastCalledWith({ hubIds: [], regions: [] }, false);
+      expect(screen.queryByRole('button', { name: 'Leader' })).not.toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: 'Current step' })).not.toBeInTheDocument();
     });
 
     it('renders the row meta: leader or "Name unavailable", code, type and the served weeks', () => {

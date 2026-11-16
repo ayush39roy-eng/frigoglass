@@ -7,7 +7,7 @@ import { ProjectStatusBadge } from '@/components/shared/project-status-badge';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Skeleton } from '@/components/ui/skeleton';
 import { formatInteger, formatPlanWeek } from '@/lib/format';
-import type { LabRegion } from '@/types/enums';
+import { toHubFilterParams, type HubSelection } from '@/stores/hub-filter';
 
 import type { DashboardSelection } from '../api/dashboard-api';
 import type { ProjectFilterParams, ProjectFilterRow } from '../api/types';
@@ -54,8 +54,8 @@ export function useOpenProjectList(): OpenProjectList | null {
 }
 
 export interface ProjectListScope {
-  hubId: string | null;
-  region: LabRegion | null;
+  /** The global hub / country selection (multi-select; the server unions hubs and countries). */
+  hub: HubSelection;
   selection: DashboardSelection;
 }
 
@@ -89,9 +89,10 @@ export function ProjectListProvider({
 function scopeParams(scope: ProjectListScope, ignore: ProjectListRequest['ignoreSelection']): ProjectFilterParams {
   const categories = ignore === 'categories' ? [] : scope.selection.categories;
   const types = ignore === 'types' ? [] : scope.selection.types;
+  const hub = toHubFilterParams(scope.hub.hubIds, scope.hub.regions);
   return {
-    ...(scope.hubId !== null ? { hub_id: scope.hubId } : {}),
-    ...(scope.region !== null ? { region: scope.region } : {}),
+    ...(hub.hub_id ? { hub_id: hub.hub_id } : {}),
+    ...(hub.region ? { region: hub.region } : {}),
     ...(categories.length > 0 ? { category: categories } : {}),
     ...(types.length > 0 ? { type: types } : {}),
   };

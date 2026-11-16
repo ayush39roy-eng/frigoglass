@@ -23,10 +23,12 @@ import { usePriorityMatrix, usePrioritySummary } from '@/surfaces/matrix/hooks/u
 import { useGantt } from '@/surfaces/gantt/hooks/use-gantt';
 
 /**
- * P12 (ADR 0020, API_CONTRACT_P12 §4/§7) + P13 (ADR 0025, API_CONTRACT_P13 §4):
- * every portfolio query carries the global hub AND country filter in its key
- * and sends them as `hub_id` / `region`; "All hubs" (both null) sends neither
- * and has its own cache entry.
+ * P12 (ADR 0020, API_CONTRACT_P12 §4/§7) + P13 (ADR 0025, API_CONTRACT_P13 §4),
+ * multi-select (docs/API_CONTRACT_MULTISELECT.md §2–§3): every portfolio query
+ * carries the global hub AND country selection in its key (SORTED lists) and
+ * sends them as repeated `hub_id` / `region` params; "All hubs" (both empty)
+ * sends neither and has its own cache entry. The Matrix is not converted in
+ * this pass and still sends single values.
  */
 
 const mockApiGet = vi.mocked(apiGet);
@@ -60,29 +62,33 @@ beforeEach(() => {
   mockApiGet.mockResolvedValue({});
 });
 
+const one = { hubIds: [HUB], regions: [] };
+const india = { hubIds: [], regions: ['India' as const] };
+const none = { hubIds: [], regions: [] };
+
 describe('hub filter wiring: query key + hub_id per surface', () => {
-  it.each<[string, () => unknown, string, unknown[]]>([
-    ['dashboard pipeline totals', () => usePipelineTotals(HUB), '/dashboard/pipeline-totals', ['dashboard', 'pipeline-totals', { hubId: HUB, region: null }]],
-    ['dashboard status overview', () => useStatusOverview(HUB), '/dashboard/status-overview', ['dashboard', 'status-overview', { hubId: HUB, region: null }]],
-    ['dashboard hub × type', () => useHubTypePipeline(HUB), '/dashboard/hub-type-pipeline', ['dashboard', 'hub-type-pipeline', { hubId: HUB, region: null }]],
-    ['dashboard within year', () => useCompletingWithinYear(HUB), '/dashboard/completing-within-year', ['dashboard', 'completing-within-year', { hubId: HUB, region: null }]],
-    ['dashboard / projects list', () => useDashboardProjects({ hub_id: HUB }), '/dashboard/projects', ['dashboard', 'projects', { hub_id: HUB, category: undefined, status_: undefined, priority: undefined }]],
-    ['capacity hub load (+ dashboard booked card)', () => useHubLoadVsCapacity({ hubId: HUB }), '/capacity/hub-load', ['capacity', 'hub-load', { hubId: HUB, region: null }]],
-    ['capacity class breakdown', () => useClassBreakdown(HUB), '/capacity/class-breakdown', ['capacity', 'class-breakdown', { hubId: HUB, region: null }]],
-    ['matrix summary', () => usePrioritySummary(HUB), '/priorities/summary', ['priority-matrix', 'summary', { hubId: HUB, region: null }]],
-    ['matrix grid', () => usePriorityMatrix({ currency: 'EUR', hubId: HUB }), '/priorities', ['priority-matrix', { currency: 'EUR', hubId: HUB, category: undefined }]],
-    ['gantt', () => useGantt({ hubId: HUB }), '/gantt', ['gantt', { hubId: HUB }]],
-  ])('%s', async (_name, hook, path, key) => {
+  it.each<[string, () => unknown, string, unknown, unknown[]]>([
+    ['dashboard pipeline totals', () => usePipelineTotals(one), '/dashboard/pipeline-totals', [HUB], ['dashboard', 'pipeline-totals', { hubIds: [HUB], regions: [] }]],
+    ['dashboard status overview', () => useStatusOverview(one), '/dashboard/status-overview', [HUB], ['dashboard', 'status-overview', { hubIds: [HUB], regions: [] }]],
+    ['dashboard hub × type', () => useHubTypePipeline(one), '/dashboard/hub-type-pipeline', [HUB], ['dashboard', 'hub-type-pipeline', { hubIds: [HUB], regions: [] }]],
+    ['dashboard within year', () => useCompletingWithinYear(one), '/dashboard/completing-within-year', [HUB], ['dashboard', 'completing-within-year', { hubIds: [HUB], regions: [] }]],
+    ['dashboard / projects list', () => useDashboardProjects({ hub_id: [HUB] }), '/dashboard/projects', [HUB], ['dashboard', 'projects', { hub_id: [HUB], category: undefined, status_: undefined, priority: undefined }]],
+    ['capacity hub load (+ dashboard booked card)', () => useHubLoadVsCapacity({ hub: one }), '/capacity/hub-load', [HUB], ['capacity', 'hub-load', { hubIds: [HUB], regions: [] }]],
+    ['capacity class breakdown', () => useClassBreakdown(one), '/capacity/class-breakdown', [HUB], ['capacity', 'class-breakdown', { hubIds: [HUB], regions: [] }]],
+    ['matrix summary (legacy single value)', () => usePrioritySummary(HUB), '/priorities/summary', HUB, ['priority-matrix', 'summary', { hubIds: [HUB], regions: [] }]],
+    ['matrix grid (legacy single value)', () => usePriorityMatrix({ currency: 'EUR', hubId: HUB }), '/priorities', HUB, ['priority-matrix', { currency: 'EUR', hubId: HUB, category: undefined }]],
+    ['gantt', () => useGantt({ hubIds: [HUB] }), '/gantt', [HUB], ['gantt', { hubIds: [HUB] }]],
+  ])('%s', async (_name, hook, path, sentValue, key) => {
     const client = setup(hook);
     await waitFor(() => expect(mockApiGet).toHaveBeenCalled());
-    expect(hubIdSent(path)).toBe(HUB);
+    expect(hubIdSent(path)).toEqual(sentValue);
     expect(keys(client)).toContainEqual(key);
   });
 
   it('"All hubs" sends no hub_id and is a distinct cache entry', async () => {
     const client = setup(() => {
-      usePipelineTotals(null);
-      useHubLoadVsCapacity({ hubId: null });
+      usePipelineTotals(none);
+      useHubLoadVsCapacity({ hub: none });
       return usePrioritySummary(null);
     });
     await waitFor(() => expect(mockApiGet).toHaveBeenCalledTimes(3));
@@ -91,15 +97,15 @@ describe('hub filter wiring: query key + hub_id per surface', () => {
     }
     expect(keys(client)).toEqual(
       expect.arrayContaining([
-        ['dashboard', 'pipeline-totals', { hubId: null, region: null }],
-        ['capacity', 'hub-load', { hubId: null, region: null }],
-        ['priority-matrix', 'summary', { hubId: null, region: null }],
+        ['dashboard', 'pipeline-totals', { hubIds: [], regions: [] }],
+        ['capacity', 'hub-load', { hubIds: [], regions: [] }],
+        ['priority-matrix', 'summary', { hubIds: [], regions: [] }],
       ]),
     );
   });
 
   it('prefix invalidation still reaches every hub entry', async () => {
-    const client = setup(() => useHubLoadVsCapacity({ hubId: HUB }));
+    const client = setup(() => useHubLoadVsCapacity({ hub: one }));
     await waitFor(() => expect(mockApiGet).toHaveBeenCalled());
     const before = mockApiGet.mock.calls.length;
     await client.invalidateQueries({ queryKey: ['capacity', 'hub-load'] });
@@ -108,38 +114,52 @@ describe('hub filter wiring: query key + hub_id per surface', () => {
 });
 
 describe('country filter wiring (P13, ADR 0025): region in the key and the request', () => {
-  it.each<[string, () => unknown, string, unknown[]]>([
-    ['dashboard pipeline totals', () => usePipelineTotals(null, 'India'), '/dashboard/pipeline-totals', ['dashboard', 'pipeline-totals', { hubId: null, region: 'India' }]],
-    ['dashboard status overview', () => useStatusOverview(null, 'India'), '/dashboard/status-overview', ['dashboard', 'status-overview', { hubId: null, region: 'India' }]],
-    ['dashboard hub × type', () => useHubTypePipeline(null, 'India'), '/dashboard/hub-type-pipeline', ['dashboard', 'hub-type-pipeline', { hubId: null, region: 'India' }]],
-    ['dashboard within year', () => useCompletingWithinYear(null, 'India'), '/dashboard/completing-within-year', ['dashboard', 'completing-within-year', { hubId: null, region: 'India' }]],
-    ['dashboard region summary', () => useRegionSummary(null, 'India'), '/dashboard/region-summary', ['dashboard', 'region-summary', { hubId: null, region: 'India' }]],
-    ['dashboard register facets', () => useProjectFacets(null, 'India'), '/dashboard/projects/facets', ['dashboard', 'projects-facets', { hubId: null, region: 'India' }]],
-    ['dashboard / projects list', () => useDashboardProjects({ region: 'India' }), '/dashboard/projects', ['dashboard', 'projects', { hub_id: undefined, category: undefined, status_: undefined, priority: undefined, region: 'India' }]],
-    ['capacity hub load', () => useHubLoadVsCapacity({ region: 'India' }), '/capacity/hub-load', ['capacity', 'hub-load', { hubId: null, region: 'India' }]],
-    ['capacity class breakdown', () => useClassBreakdown(null, 'India'), '/capacity/class-breakdown', ['capacity', 'class-breakdown', { hubId: null, region: 'India' }]],
-    ['matrix summary', () => usePrioritySummary(null, 'India'), '/priorities/summary', ['priority-matrix', 'summary', { hubId: null, region: 'India' }]],
-    ['matrix grid', () => usePriorityMatrix({ currency: 'EUR', region: 'India' }), '/priorities', ['priority-matrix', { currency: 'EUR', hubId: undefined, region: 'India', category: undefined }]],
-    ['gantt', () => useGantt({ region: 'India' }), '/gantt', ['gantt', { hubId: undefined, region: 'India' }]],
-  ])('%s', async (_name, hook, path, key) => {
+  it.each<[string, () => unknown, string, unknown, unknown[]]>([
+    ['dashboard pipeline totals', () => usePipelineTotals(india), '/dashboard/pipeline-totals', ['India'], ['dashboard', 'pipeline-totals', { hubIds: [], regions: ['India'] }]],
+    ['dashboard status overview', () => useStatusOverview(india), '/dashboard/status-overview', ['India'], ['dashboard', 'status-overview', { hubIds: [], regions: ['India'] }]],
+    ['dashboard hub × type', () => useHubTypePipeline(india), '/dashboard/hub-type-pipeline', ['India'], ['dashboard', 'hub-type-pipeline', { hubIds: [], regions: ['India'] }]],
+    ['dashboard within year', () => useCompletingWithinYear(india), '/dashboard/completing-within-year', ['India'], ['dashboard', 'completing-within-year', { hubIds: [], regions: ['India'] }]],
+    ['dashboard region summary', () => useRegionSummary(india), '/dashboard/region-summary', ['India'], ['dashboard', 'region-summary', { hubIds: [], regions: ['India'] }]],
+    ['dashboard register facets', () => useProjectFacets(india), '/dashboard/projects/facets', ['India'], ['dashboard', 'projects-facets', { hubIds: [], regions: ['India'] }]],
+    ['dashboard / projects list', () => useDashboardProjects({ region: ['India'] }), '/dashboard/projects', ['India'], ['dashboard', 'projects', { hub_id: undefined, category: undefined, status_: undefined, priority: undefined, region: ['India'] }]],
+    ['capacity hub load', () => useHubLoadVsCapacity({ hub: india }), '/capacity/hub-load', ['India'], ['capacity', 'hub-load', { hubIds: [], regions: ['India'] }]],
+    ['capacity class breakdown', () => useClassBreakdown(india), '/capacity/class-breakdown', ['India'], ['capacity', 'class-breakdown', { hubIds: [], regions: ['India'] }]],
+    ['matrix summary (legacy)', () => usePrioritySummary(null, 'India'), '/priorities/summary', 'India', ['priority-matrix', 'summary', { hubIds: [], regions: ['India'] }]],
+    ['matrix grid (legacy)', () => usePriorityMatrix({ currency: 'EUR', region: 'India' }), '/priorities', 'India', ['priority-matrix', { currency: 'EUR', hubId: undefined, region: 'India', category: undefined }]],
+    ['gantt', () => useGantt({ regions: ['India'] }), '/gantt', ['India'], ['gantt', { hubIds: undefined, regions: ['India'] }]],
+  ])('%s', async (_name, hook, path, sentValue, key) => {
     const client = setup(hook);
     await waitFor(() => expect(mockApiGet).toHaveBeenCalled());
-    expect(sent(path, 'region')).toBe('India');
+    expect(sent(path, 'region')).toEqual(sentValue);
     expect(sent(path, 'hub_id')).toBeUndefined();
     expect(keys(client)).toContainEqual(key);
   });
 
   it('a country and "All hubs" are distinct cache entries', async () => {
     const client = setup(() => {
-      usePipelineTotals(null, null);
-      return usePipelineTotals(null, 'Greece');
+      usePipelineTotals(none);
+      return usePipelineTotals({ hubIds: [], regions: ['Greece'] });
     });
     await waitFor(() => expect(mockApiGet).toHaveBeenCalledTimes(2));
     expect(keys(client)).toEqual(
       expect.arrayContaining([
-        ['dashboard', 'pipeline-totals', { hubId: null, region: null }],
-        ['dashboard', 'pipeline-totals', { hubId: null, region: 'Greece' }],
+        ['dashboard', 'pipeline-totals', { hubIds: [], regions: [] }],
+        ['dashboard', 'pipeline-totals', { hubIds: [], regions: ['Greece'] }],
       ]),
     );
+  });
+});
+
+describe('multi-select wiring (contract §2): hubs AND countries together, repeated + sorted', () => {
+  it('sends both lists as repeated params and keys them sorted (pick order never splits the cache)', async () => {
+    const client = setup(() => {
+      usePipelineTotals({ hubIds: ['h-b', 'h-a'], regions: ['Romania', 'India'] });
+      return usePipelineTotals({ hubIds: ['h-a', 'h-b'], regions: ['India', 'Romania'] });
+    });
+    await waitFor(() => expect(mockApiGet).toHaveBeenCalled());
+    expect(sent('/dashboard/pipeline-totals', 'hub_id')).toEqual(['h-a', 'h-b']);
+    expect(sent('/dashboard/pipeline-totals', 'region')).toEqual(['India', 'Romania']);
+    const totals = keys(client).filter((k) => (k as unknown[])[1] === 'pipeline-totals');
+    expect(totals).toEqual([['dashboard', 'pipeline-totals', { hubIds: ['h-a', 'h-b'], regions: ['India', 'Romania'] }]]);
   });
 });

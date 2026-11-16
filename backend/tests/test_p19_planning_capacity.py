@@ -18,6 +18,8 @@ the region calendar is R&D-Greece's (5 weekdays, not OEM-HCK's 6).
 
 from __future__ import annotations
 
+import uuid
+
 import pytest
 from sqlalchemy import select
 
@@ -318,9 +320,12 @@ async def test_summary_zero_and_filters(db_session):
     w = await _world(db_session, with_run=False)
     await act_as(db_session, RoleName.PORTFOLIO_MANAGER)
     async with client_for(db_session) as client:
-        none = await _get(client, SUMMARY, hub_id=str(w["greece"].id), region="Romania")
+        # ADR 0051: hub and region are a union (was: AND, so this was empty).
+        union = await _get(client, SUMMARY, hub_id=str(w["greece"].id), region="Romania")
+        none = await _get(client, SUMMARY, hub_id=str(uuid.uuid4()))
         oem = await _get(client, SUMMARY, hub_id=str(w["oem"].id))
         india = await _get(client, SUMMARY, region="India")
+    assert sorted(h["hub"] for h in union["design"]["hubs"]) == ["PD-Romania", "R&D-Greece"]
     assert none["design"]["hubs"] == [] and none["lab"]["regions"] == []
     assert none["design"]["total"]["capacity_weeks"] == {"year": 0.0, "remaining": 0.0}
     assert none["lab"]["total"]["chamber_count"] == 0

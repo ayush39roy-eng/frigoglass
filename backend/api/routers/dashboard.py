@@ -22,6 +22,12 @@ totals, not 403. Totals are computed here for the filtered set (I9, I23).
 `/region-summary` serves the per-country KPI chips; `/projects` is the
 "All registered projects" register and `/projects/facets` its dropdowns.
 
+**Multi-select (ADR 0051, `docs/API_CONTRACT_MULTISELECT.md`).** `hub_id` and
+`region` are repeatable and UNIONED (hub listed OR its lab region listed),
+always ANDed with the scope; an out-of-scope value contributes nothing. The
+register's `status_`, `priority`, `leader_engineer_id` and `current_step` are
+repeatable too (OR within a param, AND across). At most 50 values per param.
+
 **Category / type selection (P31, `docs/API_CONTRACT_P31.md`).** Every GET
 here also takes repeatable `category` and `type` params (OR within a param,
 AND across params and with the hub / country filter; absent = all; one
@@ -45,6 +51,7 @@ rows (the exclusive `WITHIN_YEAR` bucket); its composition lists are live
 from __future__ import annotations
 
 import uuid
+from collections.abc import Sequence
 from decimal import Decimal
 from typing import Annotated, Literal
 
@@ -56,10 +63,16 @@ from sqlalchemy.orm import selectinload
 from api.db import get_db
 from api.deps import require_permission
 from api.query_params import (
+    CurrentStepListQuery,
     DashboardCategoryListQuery,
     DashboardCategoryValue,
     DashboardTypeListQuery,
     DashboardTypeValue,
+    HubIdListQuery,
+    LeaderListQuery,
+    PriorityListQuery,
+    RegionListQuery,
+    StatusListQuery,
 )
 from core.principal import Principal
 from core.rbac import Action, Surface
@@ -99,9 +112,9 @@ from schemas.dashboard import (
 from services.active_run import get_active_run
 from services.capacity_supply import round2
 from services.categories import load_catalog
-from services.category_type_filter import category_type_filter
+from services.category_type_filter import any_of, category_type_filter
 from services.expected_status import expected_status_for, status_mismatch
-from services.hub_scope import narrowed_hub_filter
+from services.hub_scope import HubIdsArg, RegionsArg, narrowed_hub_filter
 from services.project_cards import build_project_cards
 from services.text_search import project_search_filter
 
@@ -128,8 +141,8 @@ _FOUR_SCHEDULABLE_STATUSES = (
 
 def _dashboard_filter(
     current_user: Principal,
-    hub_id: uuid.UUID | None,
-    region: LabRegion | None,
+    hub_id: HubIdsArg,
+    region: RegionsArg,
     category: list[DashboardCategoryValue] | None,
     type_: list[DashboardTypeValue] | None,
 ) -> ColumnElement[bool] | None:
@@ -153,8 +166,8 @@ def _dashboard_filter(
 
 @router.get("/pipeline-totals", response_model=PipelineTotals)
 async def pipeline_totals(
-    hub_id: uuid.UUID | None = None,
-    region: LabRegion | None = None,
+    hub_id: HubIdListQuery = None,
+    region: RegionListQuery = None,
     category: DashboardCategoryListQuery = None,
     type_: DashboardTypeListQuery = None,
     db: AsyncSession = Depends(get_db),
@@ -193,8 +206,8 @@ async def pipeline_totals(
 
 @router.get("/status-overview", response_model=StatusOverview)
 async def status_overview(
-    hub_id: uuid.UUID | None = None,
-    region: LabRegion | None = None,
+    hub_id: HubIdListQuery = None,
+    region: RegionListQuery = None,
     category: DashboardCategoryListQuery = None,
     type_: DashboardTypeListQuery = None,
     db: AsyncSession = Depends(get_db),
@@ -247,8 +260,8 @@ async def status_overview(
 
 @router.get("/hub-type-pipeline", response_model=list[HubTypePipelineRow])
 async def hub_type_pipeline(
-    hub_id: uuid.UUID | None = None,
-    region: LabRegion | None = None,
+    hub_id: HubIdListQuery = None,
+    region: RegionListQuery = None,
     category: DashboardCategoryListQuery = None,
     type_: DashboardTypeListQuery = None,
     db: AsyncSession = Depends(get_db),
@@ -304,8 +317,8 @@ async def _priority_delivery(
     db: AsyncSession,
     run_id: uuid.UUID | None,
     current_user: Principal,
-    hub_id: uuid.UUID | None,
-    region: LabRegion | None,
+    hub_id: HubIdsArg,
+    region: RegionsArg,
     category: list[DashboardCategoryValue] | None = None,
     type_: list[DashboardTypeValue] | None = None,
 ) -> list[PriorityDeliveryBand]:
@@ -386,8 +399,8 @@ async def _priority_delivery(
 
 @router.get("/completing-within-year", response_model=CompletingWithinYear)
 async def completing_within_year(
-    hub_id: uuid.UUID | None = None,
-    region: LabRegion | None = None,
+    hub_id: HubIdListQuery = None,
+    region: RegionListQuery = None,
     category: DashboardCategoryListQuery = None,
     type_: DashboardTypeListQuery = None,
     db: AsyncSession = Depends(get_db),
@@ -480,8 +493,8 @@ async def completing_within_year(
 
 @router.get("/region-summary", response_model=RegionSummary)
 async def region_summary(
-    hub_id: uuid.UUID | None = None,
-    region: LabRegion | None = None,
+    hub_id: HubIdListQuery = None,
+    region: RegionListQuery = None,
     category: DashboardCategoryListQuery = None,
     type_: DashboardTypeListQuery = None,
     db: AsyncSession = Depends(get_db),
@@ -555,8 +568,8 @@ _UNKNOWN_YEAR = "Unknown"
 
 @router.get("/analytics", response_model=DashboardAnalytics)
 async def dashboard_analytics(
-    hub_id: uuid.UUID | None = None,
-    region: LabRegion | None = None,
+    hub_id: HubIdListQuery = None,
+    region: RegionListQuery = None,
     category: DashboardCategoryListQuery = None,
     type_: DashboardTypeListQuery = None,
     db: AsyncSession = Depends(get_db),
@@ -715,14 +728,14 @@ def _share(part: int, whole: int) -> float:
 def _register_stmt(
     current_user: Principal,
     *,
-    hub_id: uuid.UUID | None,
-    region: LabRegion | None,
+    hub_id: HubIdsArg,
+    region: RegionsArg,
     category: list[DashboardCategoryValue] | None = None,
-    status_: ProjectStatus | None = None,
-    priority: ProjectPriority | None = None,
+    status_: Sequence[ProjectStatus] | None = None,
+    priority: Sequence[ProjectPriority] | None = None,
     q: str | None = None,
     type_: list[DashboardTypeValue] | None = None,
-    leader_engineer_id: uuid.UUID | None = None,
+    leader_engineer_id: Sequence[uuid.UUID] | None = None,
 ) -> Select[Project]:
     """The register's scoped, filtered project set. Every predicate is a
     SQLAlchemy expression with bound parameters; nothing is interpolated.
@@ -739,12 +752,15 @@ def _register_stmt(
     hub_filter = _dashboard_filter(current_user, hub_id, region, category, type_)
     if hub_filter is not None:
         stmt = stmt.where(hub_filter)
-    if status_ is not None:
-        stmt = stmt.where(Project.status == status_)
-    if priority is not None:
-        stmt = stmt.where(Project.priority == priority)
-    if leader_engineer_id is not None:
-        stmt = stmt.where(Project.leader_engineer_id == leader_engineer_id)
+    # ADR 0051: each list is ORed (`IN`), the lists ANDed; empty = no filter.
+    for column, values in (
+        (Project.status, status_),
+        (Project.priority, priority),
+        (Project.leader_engineer_id, leader_engineer_id),
+    ):
+        predicate = any_of(column, values)
+        if predicate is not None:
+            stmt = stmt.where(predicate)
     search = project_search_filter(q)
     if search is not None:
         stmt = stmt.where(search)
@@ -776,15 +792,15 @@ def _outcome_bucket(outcome: ScheduleRunProjectOutcome | None) -> ScheduleOutcom
 
 @router.get("/projects", response_model=ProjectFilterResult)
 async def analytics_projects(
-    hub_id: uuid.UUID | None = None,
+    hub_id: HubIdListQuery = None,
     category: DashboardCategoryListQuery = None,
-    status_: ProjectStatus | None = None,
-    priority: ProjectPriority | None = None,
-    region: LabRegion | None = None,
+    status_: StatusListQuery = None,
+    priority: PriorityListQuery = None,
+    region: RegionListQuery = None,
     q: Annotated[str | None, Query(max_length=100)] = None,
     type_: DashboardTypeListQuery = None,
-    leader_engineer_id: uuid.UUID | None = None,
-    current_step: Annotated[str | None, Query(max_length=10)] = None,
+    leader_engineer_id: LeaderListQuery = None,
+    current_step: CurrentStepListQuery = None,
     sort: Literal["name", "priority"] = "name",
     db: AsyncSession = Depends(get_db),
     current_user: Principal = Depends(_read),
@@ -825,11 +841,12 @@ async def analytics_projects(
     # P12 (ADR 0021 §4): tracking status comes from the card builder, which
     # calls the one tracking-status implementation (`services.tracking`).
     cards = await build_project_cards(db, projects, active_run)
-    if current_step is not None:
+    if current_step:
+        steps = set(current_step)
         projects = [
             p
             for p in projects
-            if (stage := cards[p.id].current_stage) is not None and stage.step_id == current_step
+            if (stage := cards[p.id].current_stage) is not None and stage.step_id in steps
         ]
 
     outcomes: dict[uuid.UUID, ScheduleRunProjectOutcome] = {}
@@ -908,8 +925,8 @@ def _figure(value: Decimal | None) -> float | None:
 
 @router.get("/projects/facets", response_model=ProjectFacets)
 async def analytics_project_facets(
-    hub_id: uuid.UUID | None = None,
-    region: LabRegion | None = None,
+    hub_id: HubIdListQuery = None,
+    region: RegionListQuery = None,
     category: DashboardCategoryListQuery = None,
     type_: DashboardTypeListQuery = None,
     db: AsyncSession = Depends(get_db),

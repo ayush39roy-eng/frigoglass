@@ -43,6 +43,7 @@ from sqlalchemy.orm import selectinload
 import domain_constants as dc
 from api.db import get_db
 from api.deps import require_permission
+from api.query_params import HubIdListQuery, RegionListQuery
 from core.principal import Principal
 from core.rbac import Action, Surface
 from models.audit import AuditLogEntry
@@ -98,7 +99,13 @@ from services.capacity_supply import (
     to_days,
 )
 from services.categories import load_catalog, unknown_category_error
-from services.hub_scope import hub_scope_filter, narrowed_hub_filter, narrowed_lab_regions
+from services.hub_scope import (
+    hub_id_list,
+    hub_scope_filter,
+    narrowed_hub_filter,
+    narrowed_lab_regions,
+    region_list,
+)
 
 router = APIRouter(prefix="/planning", tags=["capacity-planning"])
 
@@ -134,8 +141,8 @@ def _sum(pairs: list[YearRemaining]) -> YearRemaining:
 
 @router.get("/capacity-summary", response_model=CapacitySummaryResponse)
 async def capacity_summary(
-    hub_id: uuid.UUID | None = None,
-    region: LabRegion | None = None,
+    hub_id: HubIdListQuery = None,
+    region: RegionListQuery = None,
     db: AsyncSession = Depends(get_db),
     current_user: Principal = Depends(_read),
 ) -> CapacitySummaryResponse:
@@ -330,8 +337,8 @@ def _total(rows: list[EngineerResourceLoad] | list[ChamberResourceLoad]) -> Reso
 
 @router.get("/resource-load", response_model=ResourceLoadResponse)
 async def resource_load(
-    hub_id: uuid.UUID | None = None,
-    region: LabRegion | None = None,
+    hub_id: HubIdListQuery = None,
+    region: RegionListQuery = None,
     project_type: list[ProjectType] = Query(default=[]),
     project_status: list[ProjectStatus] = Query(default=[]),
     requesting_department: list[str] = Query(default=[]),
@@ -513,8 +520,8 @@ async def resource_load(
         )
 
     filters = ResourceLoadFilters(
-        hub_id=hub_id,
-        region=region,
+        hub_id=sorted(hub_id_list(hub_id), key=str),
+        region=sorted(region_list(region), key=lambda r: r.value),
         project_type=types,
         project_status=statuses,
         requesting_department=departments,
@@ -560,13 +567,23 @@ async def _audit_read(
         )
     ).first()
     if recent is None:
+        # ADR 0051: the column is a single FK to `hubs`; it names the hub only
+        # when exactly one existing hub was requested (the filter itself is in
+        # `filter_key`).
+        audit_hub_id = (
+            (
+                await db.execute(select(Hub.id).where(Hub.id == filters.hub_id[0]))
+            ).scalar_one_or_none()
+            if len(filters.hub_id) == 1
+            else None
+        )
         db.add(
             AuditLogEntry(
                 actor_user_id=principal.user_id,
                 action=AUDIT_ACTION,
                 entity_type="ResourceLoad",
                 entity_id="resource-load",
-                hub_id=filters.hub_id,
+                hub_id=audit_hub_id,
                 before_state=None,
                 after_state={
                     "filter_key": filter_key,
@@ -583,8 +600,8 @@ async def _audit_read(
 
 @router.get("/resource-load/options", response_model=ResourceLoadOptions)
 async def resource_load_options(
-    hub_id: uuid.UUID | None = None,
-    region: LabRegion | None = None,
+    hub_id: HubIdListQuery = None,
+    region: RegionListQuery = None,
     db: AsyncSession = Depends(get_db),
     current_user: Principal = Depends(_read),
 ) -> ResourceLoadOptions:
